@@ -18,6 +18,8 @@ const libSkus = st => st.list('Charm_Master_Index').map(e => e._id).sort();
 
 (async () => {
   const br = await R.browser(), st = br.st, page = br.page;
+  // the standard size (charm-nest-pdf.js fitCharmSize) would draw every body here at 11.5 mm; this test is about the drawing as drawn (its plates and plugs are drawn at 15-18 mm), so the rule is off (its own test: master-beady-1023.cjs)
+  await page.evaluate(() => { CN.S.settings.charmMaxMm = 0; });
   const job = () => page.evaluate(() => { const j = [...B.master.jobs.values()].pop(); return { state: j.state, error: j.error || null, written: j.written, held: j.held, stale: (j.stale || []).map(x => x.sku), rejected: (j.rejected || []).map(x => x.sku), missing: j.missing || [], unlabelled: (j.lab && j.lab.unlabelled) || [], log: j.log }; });
   const sheet = await pairAndLone();
   try {

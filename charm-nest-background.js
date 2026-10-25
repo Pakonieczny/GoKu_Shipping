@@ -26,7 +26,8 @@
   }
   const geometry=client(),preview=client();let key=0;
   const plain=p=>{const {doc,page,...rest}=p;return rest;};
-  const charm=c=>Object.fromEntries(['id','sourceId','name','slug','bbox','outline','members','strokePt','topIndices','dropIndices','centerPt','side'].filter(k=>c[k]!==undefined).map(k=>[k,c[k]]));
+  // (sizeXform: the matrix the standard size scaled the charm by, charm-nest-pdf.js fitCharmSize; the writers copy its source artwork under it. Without it a scaled charm's file held the scaled cut line over the artwork at its old size)
+  const charm=c=>Object.fromEntries(['id','sourceId','name','slug','bbox','outline','members','strokePt','topIndices','dropIndices','centerPt','side','sizeXform'].filter(k=>c[k]!==undefined).map(k=>[k,c[k]]));
   P.parseSource=(bytes,name)=>geometry.run('parse',{bytes,name,key:'source-'+(++key)});
   // the grouping names the worker's copies of the segments; the page takes its own back (labels are matched by identity)
   P.groupCharmsAsync=async(parsed,opts)=>P.adoptGrouping(await geometry.run('group',{parsed:plain(parsed),opts}),parsed);

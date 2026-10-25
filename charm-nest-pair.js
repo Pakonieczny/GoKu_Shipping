@@ -1021,6 +1021,9 @@
       const labelled = (charms || []).filter(c => c && c.mergedInto == null && c.sku && c.outline && c.outline.bbox);
       for (const i of (lab && lab.unlabelled) || []) {
         const c = byIndex.get(i); if (!c || !c.outline || !c.outline.bbox) continue;
+        // a design drawn twice with the same label under both (SKUs_BEADY_2026-1023 has ten): the SKU is indexed once, from the charm that kept it, and this copy is left out
+        const dup = ((lab && lab.duplicates) || []).find(d => d && d.charmIndex === i);
+        if (dup) { out[i] = "its label repeats " + dup.sku + (dup.size ? " · " + dup.size : "") + ", which charm #" + dup.firstIndex + " has: a SKU is indexed once, so this drawing is left out"; continue; }
         const row = (rows || []).find(r => r && (r.charms || []).includes(i));
         if (row) { out[i] = "in a row of " + row.bodies + " bodies with " + ((row.skus || [])[0] || "a labelled one") + ": " + (row.why || row.kind || "") + (row.folded ? "" : row.sure ? " — not built into it" : " — left for a person to decide"); continue; }
         // touching bodies in one row, labelled but with no label centred under the row (two pairs side by side, whose rows chain into one): no pair can be told from them

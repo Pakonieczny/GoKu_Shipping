@@ -3123,6 +3123,14 @@ const Master = window.Master = (() => {
   /** Index a master file in the browser (design §6.3); the server route is used above `masterServerAbove` charms. */
   /** How many charms in this file carry a SKU written under them — is it a master library sheet, not a sheet to nest?
       Stray text elsewhere on a page does not count: the line has to sit under an outline, as a label does. */
+  /** The standard size (STANDARD SIZE, charm-nest-pdf.js fitCharmSize) for the charms a run is about to weld and write: a body over the setting is drawn at it, its ring at its own size; a body touching one
+   *  without a SKU (a row the pair layer may build into one design) keeps the size drawn. all: the sheet's charms; targets: the ones to size. Returns [{ sku, r }] for the run's note. Called BEFORE integrateRings. */
+  function standardSize(all, targets) {
+    if (!P.fitCharmSize) return [];
+    const maxMm = S.settings.charmMaxMm == null ? P.SIZE_RULE.maxMm : +S.settings.charmMaxMm, longRatio = +S.settings.charmLongRatio || P.SIZE_RULE.longRatio, skip = new Set();
+    try { for (const row of window.CharmNestPair.rowsOf(all)) if (row.some(x => !x.sku)) for (const x of row) skip.add(x.index); } catch (_) {}
+    return targets.map(c => ({ sku: c.sku, r: P.fitCharmSize(c, { maxMm, longRatio, skip, sized: !!c.skuSize || (c.extraSkus || []).some(x => x.size) }) }));
+  }
   function looksLikeMaster(parsed, charms) {
     const pat = skuRegex(), gap = (+S.settings.labelGapMm || 6.4) * PT;
     const runs = parsed.segments.concat(parsed.nested).filter(x => x.kind === "text"), lines = [];
@@ -3173,7 +3181,7 @@ const Master = window.Master = (() => {
       if (+S.settings.masterServerAbove > 0 && g.charms.length > +S.settings.masterServerAbove && S.cloud.ok) {
         say("MASTER", `over ${S.settings.masterServerAbove} charms — indexing on the server`);
         const up = await upBytes(`charmnest/master/files/${masterHash.slice(0, 12)}-${file.name.replace(/[^\w.\-]+/g, "_")}`, bytes, "application/pdf", "Uploading master", `“${file.name}”`);
-        const r = await repoApi("upload", upAsk(`“${file.name}”`), { op: "startMaster", path: up.path, name: file.name, opts: { skuPattern: S.settings.skuPattern, labelGapMm: S.settings.labelGapMm, minPt: S.settings.minPt, engraveMarginMm: S.settings.engraveMarginMm, replaces: B.master.files.filter(f => f.name === file.name && f.masterHash !== masterHash).map(f => f.masterHash), newest: mode !== "keep", by: employeeName() || null } });
+        const r = await repoApi("upload", upAsk(`“${file.name}”`), { op: "startMaster", path: up.path, name: file.name, opts: { skuPattern: S.settings.skuPattern, labelGapMm: S.settings.labelGapMm, charmMaxMm: S.settings.charmMaxMm == null ? P.SIZE_RULE.maxMm : +S.settings.charmMaxMm, charmLongRatio: +S.settings.charmLongRatio || P.SIZE_RULE.longRatio, minPt: S.settings.minPt, engraveMarginMm: S.settings.engraveMarginMm, replaces: B.master.files.filter(f => f.name === file.name && f.masterHash !== masterHash).map(f => f.masterHash), newest: mode !== "keep", by: employeeName() || null } });
         job.state = "server"; job.jobId = r.id;
         const t0 = Date.now(); let lastChange = Date.now(), lastSig = "";
         for (;;) { await sleep(3000); const j = await api("charmNestLibrary", { op: "getJob", id: r.id }); const d = j.job; if (!d) throw new Error("server job vanished");
@@ -3188,6 +3196,8 @@ const Master = window.Master = (() => {
         await load(true);
         for (const t of (job.result.liveText || [])) say("MASTER", t);
         if ((job.result.titles || []).length) say("MASTER", `${job.result.titles.length} name(s) written above a charm that has its own SKU under it are titles, not SKUs: ${job.result.titles.slice(0, 8).map(t => `${t.str} (over ${t.over})`).join(", ")}`);
+        { const note = P.onDesignNote ? P.onDesignNote(job.result.onDesign, 8) : null; if (note) say("MASTER", note); }   // (words on a design with its own SKU: its live text, no orphan label)
+        if (job.result.sizeNote) say("MASTER", job.result.sizeNote);   // (STANDARD SIZE: what the server's size rule did)
         if ((job.result.inlays || []).length) say("MASTER", `${job.result.inlays.length} letter(s) set inside their design were welded into its cut line, as outlines`);
         job.state = "done"; say("ok", `server indexed ${job.result.labelled} SKU(s), ${job.result.unlabelled.length} unlabelled, ${job.result.orphans.length} orphan label(s), ${job.result.blocked.length} blocked${(job.result.pairs || []).filter(x => x.folded).length ? ` · ${(job.result.pairs || []).filter(x => x.folded).length} pair design(s) built from both bodies` : ""}`);
         if ((job.result.ringsLeft || []).length) say("warn", `${job.result.ringsLeft.length} charm(s) have a hoop that could not join them: ${job.result.ringsLeft.slice(0, 12).map(x => `${x.sku} (${x.why})`).join("; ")}`);
@@ -3202,6 +3212,7 @@ const Master = window.Master = (() => {
       const lab = P.labelCharms(parsed, g.charms, { pattern: skuRegex(), gapPt: (+S.settings.labelGapMm || 6.4) * PT, widen: 0.25 });
       say("MASTER", `${lab.labels.size} labelled (${lab.skuCount} SKU line(s)) · ${lab.unlabelled.length} unlabelled · ${lab.orphans.length} orphan label(s) · ${lab.duplicates.length} duplicate(s)${lab.undecodable.length ? ` · ${lab.undecodable.length} text run(s) unreadable (outlined or CID font without ToUnicode)` : ""}`);
       if ((lab.titles || []).length) say("MASTER", `${lab.titles.length} name(s) written above a charm that has its own SKU under it are titles, not SKUs with no charm above them: ${lab.titles.slice(0, 8).map(t => `${t.str} (over ${t.over})`).join(", ")}${lab.titles.length > 8 ? " …" : ""}`);
+      { const note = P.onDesignNote ? P.onDesignNote(lab.onDesign, 8) : null; if (note) say("MASTER", note); }   // (words on a design with its own SKU: its live text, no orphan label)
       if ((lab.inlays || []).length) say("MASTER", `${lab.inlays.length} letter(s) set inside their design are welded into its cut line, as outlines: ${lab.inlays.slice(0, 8).map(x => `${x.char} in ${x.sku}`).join(", ")}${lab.inlays.length > 8 ? " …" : ""}`);
       // parts the grouping left as charms of their own (a loose hoop, an outline written twice, a piece in a plate's hole) joined their charm; a hoop that could not be attached, and a label read with a hyphen for its "/", are said, never dropped
       if ((lab.absorbed || []).length) { const by = {}; for (const a of lab.absorbed) by[a.why] = (by[a.why] || 0) + 1; say("MASTER", `${lab.absorbed.length} part(s) the grouping left as charms of their own joined their charm (${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")})`); }
@@ -3281,6 +3292,8 @@ const Master = window.Master = (() => {
       job.state = "silhouettes";
       // only the charms that carry a SKU are indexed, so only they are traced: on the real master that is 1,038 of 3,408
       // a ring drawn beside the body is welded into the cut line before the charm is measured or written
+      // the standard size (standardSize): a body over the setting is drawn at it, its ring at its own size, before the ring is welded
+      { const note = P.sizeRuleNote ? P.sizeRuleNote(standardSize(g.charms, g.charms.filter(c => c.mergedInto == null && c.sku && !c.alreadyHeld)), S.settings.charmMaxMm == null ? P.SIZE_RULE.maxMm : +S.settings.charmMaxMm, 12) : null; if (note) say("MASTER", note); }
       { let welded = 0, left = 0, letters = 0; const stuck = [], loose = []; for (const c of g.charms) { if (c.mergedInto != null || !c.sku || c.alreadyHeld) continue; const r = P.integrateRings(c); welded += r.welded; left += r.left.length; letters += r.letters || 0; for (const x of r.islands || []) loose.push(`${x.char} in ${x.sku}`); if (r.left.length) stuck.push({ sku: c.sku, why: r.left[0] }); } if (loose.length) say("warn", `${loose.length} letter(s) stand clear of the metal and would drop out when cut: ${loose.slice(0, 12).join(", ")}`); if (letters) say("MASTER", `${letters} letter(s) welded into their design's cut line`); job.ringsLeft = stuck; if (stuck.length) say("warn", `${stuck.length} charm(s) have a hoop that could not join them: ${stuck.slice(0, 12).map(x => `${x.sku} (${x.why})`).join("; ")}${stuck.length > 12 ? " …" : ""}`); if (welded || left) say("MASTER", `${welded} jump ring(s) welded into their charm's cut line${left ? ` · ${left} need a geometry check` : ""}`); }
       await P.buildSilhouettes(parsed, g.charms.filter(c => c.mergedInto == null && c.sku && !c.alreadyHeld), +S.settings.silhouetteRes || 6, (d, t) => { if (job.bar) job.bar.label(`Tracing charms · ${file.name}`).set(d, t); job.progress = `silhouettes ${d}/${t}`; if (d % 10 === 0) render(); });
       const liveCount = g.charms.filter(c => c.mergedInto == null).length;
@@ -3487,6 +3500,7 @@ const Master = window.Master = (() => {
       // a charm with no SKU was never traced (the run traces the labelled ones): its hoop is welded and its silhouette and picture are made now, and only the confirmed charms are written
       const cs = reads.map(v => v.charm);
       job.state = "writing"; render();
+      try { standardSize(job.charms || cs, cs); } catch (_) { /* the drawing stays as drawn */ }   // (STANDARD SIZE, as the run sizes the charms it read itself)
       for (const c of cs) { try { P.integrateRings(c); } catch (_) { /* a hoop that cannot join is reported by the writer's own check */ } }
       await P.buildSilhouettes(job.parsed, cs, +S.settings.silhouetteRes || 6);
       job.only = new Set(cs.map(c => c.index));

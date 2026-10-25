@@ -909,6 +909,13 @@
     if ((td.captions || []).length) out.push({ kind: "info", text: `${td.captions.length} word(s) written over the rows of letters name the row and are no SKU: ${td.captions.slice(0, 8).map(c => "“" + c.str + "”").join(", ")}` });
     return out;
   }
+  /** What the Master tab, the server route and the local indexer say about labelCharms' `onDesign` (words written on a design that has its own SKU), the same words on every route; null when there are none. */
+  function onDesignNote(onDesign, max) {
+    const list = onDesign || []; if (!list.length) return null;
+    const by = new Map(); for (const w of list) { if (!by.has(w.on)) by.set(w.on, []); by.get(w.on).push(w.str); }
+    const shown = [...by].slice(0, max || 12).map(([sku, ws]) => `“${ws.join(" ").slice(0, 40)}” on ${sku}`).join(", ");
+    return `${list.length} word(s) written on ${by.size} design(s) with a SKU of their own are its live text, not SKUs: as sample text they are left out of its library file (outline them in Illustrator if they are part of the design): ${shown}${by.size > (max || 12) ? " …" : ""}`;
+  }
 
   /* ═══ 4 · parseSource ══════════════════════════════════════════════════ */
   async function parseSource(bytes, name) {
@@ -1653,13 +1660,16 @@
      edge, and whose horizontal centre lies within the outline's horizontal extent widened by `widen` on each side.
      Two qualifying outlines → the nearer bottom edge wins. A label that no outline is cleanly above (and no list holds) may poke up to
      `overlapPt` (3 pt) into the bottom of an outline's box and still stand under it (a font's box is taller than its letters).
-     Labels are never part of the charm: they are dropped from
+     Deeper than that, the line is measured against the outline's own lower edge over the line's width (lowEdgeOver), not its box: a path's
+     box is taken from its Bézier control points, which reach past the curve (a round ornament's box ends 3.4 pt below the circle), and a
+     label set between a horse's legs is inside the box but under the body. The same `overlapPt` holds against the edge, and the line must
+     end below it. Labels are never part of the charm: they are dropped from
      every charm's members (and top-level indices) so a SKU string can never be cut or written into a per-SKU file. */
   // The shop's SKUs are free text ("T-Rex_84495", "Huggie Hoops- Umbrella", "Cheer 1 - Megaphone(CHEER)"): a label is any
   // one-line string of the characters SKUs use, 2–60 long, read in upper case. Anything stricter is a setting (skuPattern).
   /** The version of what this reader makes of a master (MASTER3, Paul 15 Oct 2026). Every index entry carries the one that wrote it (`readerV`); a master added again rebuilds the designs of ITS OWN earlier indexing that an older
-   *  reader wrote, so a fix to the reader (a plug drawn into the Circle, a hoop welded, a bar's retraced edge) reaches designs that were already held. Raise it whenever the reader's drawing of a design changes. 2: pieces in a plate's window are drawn in. 3: a letter set inside a design is welded into its cut line, and a thin body with its hoop is the charm's outline. */
-  const READER_VERSION = 3;
+   *  reader wrote, so a fix to the reader (a plug drawn into the Circle, a hoop welded, a bar's retraced edge) reaches designs that were already held. Raise it whenever the reader's drawing of a design changes. 2: pieces in a plate's window are drawn in. 3: a letter set inside a design is welded into its cut line, and a thin body with its hoop is the charm's outline. 4: a design drawn as two outlines that share a seam, with one ring between them, is one charm with one cut line (absorbLooseParts rule 4). 5: a body longer than the standard size (11.5 mm) is drawn at it, its ring at its own size (fitCharmSize). */
+  const READER_VERSION = 5;
   /** The reader that first welded a letter set inside a design (HEARTKEY_NECKLACE_A…Z) into its cut line: a held design written by an older one, whose sheet carries such a letter, is built again (the indexers' `held` test). */
   const LETTERS_READER_VERSION = 3;
   const SKU_PATTERN_DEFAULT = /^[A-Z0-9][A-Z0-9 _.,'&()+\-]{1,60}$/;
@@ -1693,6 +1703,22 @@
   }
   /** How far (pt) a label's box may poke into the bottom of the outline's box and still stand under that charm (labelCharms `overlapPt`). */
   const LABEL_OVERLAP_PT = 3;
+  /** How high (share of the outline's height) a label may stand inside the outline's box and still be measured against its lower edge (labelCharms, lowEdgeOver): a label
+   *  up among the drawing is no label of it. */
+  const LABEL_NOTCH_SHARE = 0.35;
+  /** The lowest point of an outline's edge over x0…x1 (a vertical line at each of `n` places across, wherever it crosses the outline), or null when no line crosses it. */
+  function lowEdgeOver(polys, x0, x1, n) {
+    n = n || 12; let low = Infinity;
+    for (let k = 0; k <= n; k++) {
+      const x = x0 + (x1 - x0) * k / n;
+      for (const p of polys) for (let i = 0; i < p.length; i++) {
+        const a = p[i], b = p[(i + 1) % p.length];
+        if (a[0] === b[0] || (a[0] - x) * (b[0] - x) > 0) continue;
+        const y = a[1] + (b[1] - a[1]) * (x - a[0]) / (b[0] - a[0]); if (y < low) low = y;
+      }
+    }
+    return low === Infinity ? null : low;
+  }
   /** How far (pt) above a charm's top a name may stand and still be the title of that charm (labelCharms `titles`: about 10 mm; the zodiac names stand 4 mm above theirs). */
   const TITLE_GAP_PT = 30;
   /** The one character a SKU ends in after a separator ("HeartKey_Necklace_B" is "B"), upper case; "" when it ends in a longer word or has no separator. */
@@ -1750,6 +1776,7 @@
     }
     lines.sort((a, b) => b.top - a.top);                                 // top of the page first, so a list is met first line first
     const attached = [];                                                 // { line, charm }
+    const edgeCache = new Map();                                         // outline → its flattened edge, for the lines measured against it
     const owner = new Map();                                             // "SKU" or "SKU__SIZE" → first charm index
     const under = (cx, c) => { const b = c.outline.bbox, w = b[2] - b[0]; return cx >= b[0] - w * opts.widen && cx <= b[2] + w * opts.widen; };
     // a letter drawn from live text is joined to its label when it is read (section 3c): the label of a narrow letter is not centred under it, and the letter's SKU is the one printed for it
@@ -1773,8 +1800,21 @@
           // A label whose box pokes a hair into the outline's own box still stands under that charm: a font's box is taller than its letters, and a mortarboard's tassel or a
           // crescent's horn hangs a point or two below the box the label is measured from (GRAD CAP 1 sat 1.2 pt inside it, Crescent_50058 1.3 pt). Only when no outline is
           // cleanly above the line and no list holds it; the label's lower edge must still be below the outline's, its middle under the outline as always, the nearest wins.
+          // Deeper than overlapPt into the box, the line is measured against the outline's own lower edge over the line's width (SKUs_BEADY_2026-1023): Joy_53599 stood 3.3 pt
+          // into the box of its round ornament and is 0.2 pt clear of the circle itself (the box is the curve's control points); Jumping_35230 stands between the horse's legs,
+          // 4.3 pt up inside the box, 2 pt clear of the belly above it.
           let ov = null, ovDepth = Infinity;
-          for (const c of live) { const gap = c.outline.bbox[1] - L.top; if (gap >= -1 || gap < -opts.overlapPt || L.bottom > c.outline.bbox[1] || !under(L.cx, c)) continue; if (-gap < ovDepth) { ovDepth = -gap; ov = c; } }
+          for (const c of live) {
+            const b = c.outline.bbox, gap = b[1] - L.top; if (gap >= -1 || !under(L.cx, c)) continue;
+            let depth = -gap;
+            if (gap < -opts.overlapPt || L.bottom > b[1]) {
+              if (L.top > b[1] + LABEL_NOTCH_SHARE * (b[3] - b[1])) continue;
+              let polys = edgeCache.get(c.outline); if (!polys) { polys = flatten(c.outline, 8); edgeCache.set(c.outline, polys); }
+              const low = lowEdgeOver(polys, L.t.bbox[0], L.t.bbox[2]); if (low == null || L.bottom > low) continue;
+              depth = L.top - low; if (depth > opts.overlapPt) continue;
+            }
+            if (depth < ovDepth) { ovDepth = depth; ov = c; }
+          }
           if (!ov) { orphans.push({ sku: L.lab.sku, size: L.lab.size, str: L.t.str, bbox: L.t.bbox }); continue; }
           best = ov; bestGap = -ovDepth;
         } else { best = chain; bestGap = chainGap; }
@@ -1819,6 +1859,20 @@
       }
       if (host) { titles.unshift({ str: String(o.str).trim(), sku: o.sku, over: host.sku, bbox: o.bbox.slice() }); orphans.splice(i, 1); }
     }
+    /* Words written ON a design that has its own SKU under it (live text inside its cut outline: "The Martins" on a cottage, the days of a calendar, "Best Artist" on a crayon) are no SKU
+       with no charm above them: 43 of the 45 "orphan labels" of SKUs_BEADY_2026-1023 were. They are the design's live text, which the grouping takes out of the piece as sample text
+       (sampleTextOf), so they are said as that: `onDesign` names each one and the SKU of the design it is written on. A line inside a charm WITHOUT a SKU stays an orphan (it may be its label). */
+    const onDesign = [];
+    for (let i = orphans.length - 1; i >= 0; i--) {
+      const o = orphans[i]; if (!o.bbox) continue;
+      const cx = (o.bbox[0] + o.bbox[2]) / 2, cy = (o.bbox[1] + o.bbox[3]) / 2; let host = null, hostArea = Infinity;
+      for (const c of live) {
+        const l2 = labels.get(c.index), b = c.outline.bbox; if (!l2 || cx < b[0] || cx > b[2] || cy < b[1] || cy > b[3] || bbArea(b) >= hostArea) continue;
+        let polys = edgeCache.get(c.outline); if (!polys) { polys = flatten(c.outline, 8); edgeCache.set(c.outline, polys); }
+        if (pointInPolys(cx, cy, polys)) { host = l2; hostArea = bbArea(b); }
+      }
+      if (host) { onDesign.unshift({ str: String(o.str).trim(), on: host.sku, bbox: o.bbox.slice() }); orphans.splice(i, 1); }
+    }
     /* Letters set inside a design (liftTextDesigns `inlays`): a single glyph lying inside a charm's outline whose SKU ends in that very character after a separator ("HeartKey_Necklace_B" and the B in its
        key) is that design's own letter. It goes on the charm as `inlayLetters`, and integrateRings welds it into the cut line. A letter that is not the last word of a SKU stays what it always was: sample
        text on a piece (the initial on a disc). `inlays` names each one that was picked, so the run can say so. */
@@ -1849,7 +1903,7 @@
       if (c.mergedInto == null && !labels.has(c.index)) unlabelled.push(c.index);
     }
     let skuCount = 0; for (const l of labels.values()) skuCount += 1 + l.extra.length;
-    return { labels, unlabelled, orphans, duplicates, undecodable, skuCount, absorbed: parts.absorbed, looseRings: parts.looseRings, joined: joinedRuns, skipped: skipped.slice(0, 5000), ignoredText: ignoredText.slice(0, 200), captions, titles, inlays };
+    return { labels, unlabelled, orphans, duplicates, undecodable, skuCount, absorbed: parts.absorbed, looseRings: parts.looseRings, joined: joinedRuns, skipped: skipped.slice(0, 5000), ignoredText: ignoredText.slice(0, 200), captions, titles, inlays, onDesign };
   }
   /* ═══ 5a″ · parts of a charm that came out of the grouping as charms of their own ═════════════════════
      groupCharms makes a charm of every closed cut outline that is no detail and no attached ring. Three kinds of part still stood alone, and each was counted as "a charm with no SKU
@@ -1921,7 +1975,53 @@
       }
       if (host) join(u, host, "piece inside the charm's own outline", true);          // drawn into the design: the plug of the Circle_4432 ring is cut with it (the hanging-hole rule ignores a cut line in a window of the plate)
     }
+    // 4 · the other half of a design drawn as two outlines that share a seam (PHOENIX_30705 in SKUs_BEADY_2026-1023: a yin-yang of two birds, each bird its own closed cut line, the two meeting
+    //     along an S, ONE ring for the whole): the label stood under the half without the ring, so the library got half a phoenix with no hanging hole and the half with the ring was "a charm
+    //     with no SKU". The halves are one charm and one cut line: the two outlines are united (the seam is not cut: it would leave the ringless half loose). Only when it surely is one piece:
+    //     a long shared seam, no material drawn twice, one lump together, the boxes over each other (not a row of two pieces side by side: charm-nest-pair.js rowsOf), and exactly ONE ring
+    //     between them. Two halves that each carry a ring are two pieces (the BEST FRIENDS broken heart) and stay as they are.
+    if (V) for (const u of loose()) {
+      const ub = u.outline.bbox, uPolys = polysOf(u);
+      let best = null;
+      for (const h of labelled) {
+        if (h === u || h.mergedInto != null || !h.outline.subpaths) continue;
+        const hb = h.outline.bbox, iw = Math.min(ub[2], hb[2]) - Math.max(ub[0], hb[0]), ih = Math.min(ub[3], hb[3]) - Math.max(ub[1], hb[1]);
+        if (iw < SEAM_BOX_OVERLAP * Math.min(ub[2] - ub[0], hb[2] - hb[0]) || ih < SEAM_BOX_OVERLAP * Math.min(ub[3] - ub[1], hb[3] - hb[1])) continue;
+        const hPolys = polysOf(h); let seam = 0, perU = 0, perH = 0;
+        for (const p of uPolys) for (let i = 0; i < p.length; i++) { const a = p[i], b = p[(i + 1) % p.length], len = Math.hypot(b[0] - a[0], b[1] - a[1]); perU += len; if (distToPolys((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, hPolys) <= SEAM_PT) seam += len; }
+        for (const p of hPolys) for (let i = 0; i < p.length; i++) { const a = p[i], b = p[(i + 1) % p.length]; perH += Math.hypot(b[0] - a[0], b[1] - a[1]); }
+        if (seam < SEAM_SHARE * Math.min(perU, perH) || (best && seam <= best.seam)) continue;
+        best = { h, seam };
+      }
+      if (!best) continue;
+      const h = best.h, ringsOf = c => { try { return findHoops(c, V).length; } catch (_) { return -1; } }, ru = ringsOf(u), rh = ringsOf(h);
+      if (ru < 0 || rh < 0 || ru + rh !== 1) continue;
+      const weld = seamWeld(h, u, V); if (!weld) continue;
+      join(u, h, "other half of the design (its cut line shares a seam with this one: welded into one)", true, { seamPt: +best.seam.toFixed(1) });
+      weld();
+    }
     return out;
+  }
+  /** Seam welding (absorbLooseParts rule 4): a long stretch (SEAM_SHARE of the shorter outline) within SEAM_PT of the other outline, the boxes over each other by SEAM_BOX_OVERLAP both ways. */
+  const SEAM_PT = 0.4, SEAM_SHARE = 0.2, SEAM_BOX_OVERLAP = 0.3;
+  /** The weld of two outlines that share a seam into one cut line (the halves' union), or null when they are not one lump or are drawn over each other. Returns a function that
+   *  replaces h's outline (and the other half's) with the union, written as a hairline stroke the way weldInlays and integrateRings write theirs; nothing is changed until it is called. */
+  function seamWeld(h, u, V) {
+    const a = h.outline, b = u.outline, pts = sp => V.flatten(sp).points, A = a.subpaths.map(pts), B = b.subpaths.map(pts);
+    const area = list => list.reduce((s, p) => s + (p.hole ? -1 : 1) * polyArea(p.points), 0);
+    const ua = area(V.boolean(A, [], "union", "evenodd")), ub = area(V.boolean(B, [], "union", "evenodd")), united = V.boolean(A, B, "union", "evenodd", "evenodd");
+    const exteriors = united.filter(p => !p.hole), holes = united.filter(p => p.hole && polyArea(p.points) >= .1);
+    if (exteriors.length !== 1 || ua + ub - area(united) > 0.05 * Math.min(ua, ub)) return null;   // one piece, and no material drawn twice
+    const replaced = new Set([a, ...(a.parts || []), b, ...(b.parts || [])].filter(Boolean)), parents = new Set([...replaced].map(p => p.parent).filter(i => i != null));
+    if (h.members.concat(u.members).some(m => !replaced.has(m) && parents.has(m.parent) && m.kind !== "path")) return null;   // (a text in the outlines' own group could not be redrawn)
+    return () => {
+      const base = { kind: "path", manufacturingRole: "cut", synthetic: true, paintOp: "S", stroke: true, fill: false, strokeRGB: [0, 0, 0], fillRGB: [0, 0, 0], lwPt: a.stroke ? (a.lwPt || CUT_HAIRLINE_PT) : CUT_HAIRLINE_PT, closed: true, depth: a.depth || 0, layer: a.layer || null, start: -1, end: -1 };
+      const outline = { ...a, ...base, subpaths: exteriors.concat(holes).map(p => V.subpath(p.points)), bbox: bboxOf(exteriors.flatMap(p => p.points)), parts: [...replaced], welded: (a.welded || 0) + 1 };
+      h.dropIndices = new Set([...(h.dropIndices || []), ...[...replaced].map(p => p.parent ?? p.index).filter(i => i != null)]);
+      for (const m of h.members) if (!replaced.has(m) && parents.has(m.parent)) m.synthetic = true;
+      h.members = h.members.filter(m => !replaced.has(m)); h.members.push(outline); h.outline = outline;
+      h.bbox = h.members.reduce((acc, m) => bbUnion(acc, m.bbox), null);
+    };
   }
   const polyBox = poly => poly.reduce((b, q) => b ? [Math.min(b[0], q[0]), Math.min(b[1], q[1]), Math.max(b[2], q[0]), Math.max(b[3], q[1])] : [q[0], q[1], q[0], q[1]], null);
   /** Top-level indices a charm's writer keeps, from its current members (a Do stays while any of its children is a member). */
@@ -2555,6 +2655,8 @@
       // a black fill inside the charm is hatching (the black-fill rule): its operators are written again in blue, in the same place, layer and order
       const hatch = hatchCopies(c, src.parsed, keep0), keep = hatch ? keep0.filter(i => !hatch.has(i)) : keep0;
       let bytes = stripEmptyBlocks(isolate(src.content, src.parsed.segments, keep, hatch));
+      // a charm the size rule scaled (fitCharmSize): the source artwork is copied under its matrix; its members are already in the scaled place, so what is redrawn below is not
+      if (c.sizeXform) { const f6 = v => String(Math.round(v * 1e6) / 1e6), enc = new TextEncoder(), pre = enc.encode(`q ${c.sizeXform.map(f6).join(" ")} cm\n`), post = enc.encode("\nQ"), all = new Uint8Array(pre.length + bytes.length + post.length); all.set(pre, 0); all.set(bytes, pre.length); all.set(post, pre.length + bytes.length); bytes = all; }
       // members the source never held (a welded outline, a ring's hole) are written after the copied bytes, in the same space
       { const extra = syntheticOps(c.members || [], n => layerKeyOf(src, n)); if (extra) { const add = new TextEncoder().encode("\n" + extra); const joined = new Uint8Array(bytes.length + add.length); joined.set(bytes, 0); joined.set(add, bytes.length); bytes = joined; } }
       const pad = c.strokePt / 2 + 1;
@@ -3072,6 +3174,61 @@
     }
     c.ringGeometryVersion=3;return res;
   }
+  /* ═══ STANDARD SIZE (Paul, 25 Oct 2026, on SKUs_BEADY_2026-1023): "Most charms should be approximately 10.5-11.5mm unless they are very long and narrow. Ensure the system adjusts the sizes when uploading this and
+     future sheets." That master draws its bodies at about 12 mm (the median; 267 of its 306 charms that are not long and narrow were over 11.5 mm). Every indexer (the Master tab, the server route,
+     scripts/index-master.cjs) calls this for a charm it builds, BEFORE its hoop is welded on (integrateRings):
+       · the size is the BODY's: the longer side of its cut outline, measured on the curve itself (not the Bézier control points' box), without the hanging ring;
+       · a body longer than maxMm (11.5) is scaled down about its own centre until that side is maxMm; a body at or under it is left as drawn (Paul: only the big ones shrink);
+       · a long and narrow body (its longer side at least longRatio (1.6) times its shorter: a pencil, a ruler, a bar, a word in script) is left as drawn;
+       · the ring keeps its real size, so a jump ring still goes through it: it moves with the point of the body it hangs from, and integrateRings welds it as it always did; a hanging hole
+         punched inside the body keeps its size too and moves with its centre;
+       · never touched: a design whose label names a size ("DISC · 14MM" is 14 mm), a letter set inside a design, a ring drawn in one group with the body, and a charm the caller names in opts.skip
+         (a body touching one without a SKU: the pair layer may build both into one design, at the size drawn; neighbours that each have their own SKU are sized one by one).
+     The members' geometry becomes the scaled one; the source artwork copied into a file is written under the same matrix (c.sizeXform, buildSheet), a redrawn member (a welded outline) in place.
+     Returns { k, fromMm, toMm } when it scaled, else { skipped: why, fromMm }. maxMm 0 turns it off. */
+  const SIZE_RULE = { maxMm: 11.5, longRatio: 1.6 };
+  function fitCharmSize(c, opts) {
+    const o = Object.assign({}, SIZE_RULE, opts || {}), maxMm = +o.maxMm, longRatio = +o.longRatio || SIZE_RULE.longRatio;
+    if (!c || !c.outline || !Array.isArray(c.outline.subpaths) || !c.outline.subpaths.length) return { skipped: "no outline" };
+    if (c.sizeXform) return { skipped: "already sized" };
+    const polys = flatten(c.outline, 16), pts = polys.flat(); if (!pts.length) return { skipped: "no outline" };
+    const b = bboxOf(pts), L = Math.max(b[2] - b[0], b[3] - b[1]), S = Math.min(b[2] - b[0], b[3] - b[1]), fromMm = +(L * MMPT).toFixed(2), out = why => ({ skipped: why, fromMm });
+    if (!(maxMm > 0)) return out("off");
+    if (L * MMPT <= maxMm + 0.005) return out("fits");
+    if (!(S > 0) || L / S >= longRatio) return out("long and narrow");
+    if (o.skip && o.skip.has && o.skip.has(c.index)) return out("touches a body without a SKU (a possible pair)");
+    if (o.sized || c.skuSize) return out("its label names a size");
+    if (c.inlayLetters && c.inlayLetters.length) return out("a letter is set inside it");
+    const V = vec(); if (!V) return out("no vector library");
+    let hoops; try { hoops = findHoops(c, V).filter(h => h.members.every(m => c.members.includes(m))); } catch (_) { return out("its ring could not be read"); }
+    // every hoop keeps its size: a ring beside the body, and a hanging hole punched inside it (EASTER_24934, SKULL_49072: a lone circle in the plate; scaled with the body it fell under the hoop size, 1.84 → 1.77 pt)
+    const rings = hoops, inside = h => pointInPolys(h.cx, h.cy, polys) && nearestOnPolys(h.cx, h.cy, polys).d >= h.outer.r - 0.01;
+    const ringOf = new Map(); for (const h of rings) for (const m of h.members) ringOf.set(m, h);
+    if (ringOf.has(c.outline)) return out("the outline is its ring");
+    const unit = m => m.parent != null ? m.parent : m.index, ringUnits = new Set([...ringOf.keys()].map(unit).filter(u => u != null));
+    if (c.members.some(m => !ringOf.has(m) && ringUnits.has(unit(m)))) return out("its ring is drawn in one group with the body");
+    const k = maxMm / (L * MMPT), cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2, M = [k, 0, 0, k, cx * (1 - k), cy * (1 - k)];
+    const move = (m, T) => m.subpaths && m.subpaths.length ? transformSegment(m, T) : m.bbox ? Object.assign({}, m, { bbox: bboxOf([ap(T, m.bbox[0], m.bbox[1]), ap(T, m.bbox[2], m.bbox[3])]), transformed: true, original: m.original || m }) : m;
+    // each ring goes where the point it hangs from goes (a hole: where its centre goes), at its own size, and is redrawn from its geometry (its source bytes are dropped: they would be scaled with the body)
+    const shift = new Map(); for (const h of rings) { const a = inside(h) ? [h.cx, h.cy] : nearestOnPolys(h.cx, h.cy, polys).p || [h.cx, h.cy], a2 = ap(M, a[0], a[1]); shift.set(h, [1, 0, 0, 1, a2[0] - a[0], a2[1] - a[1]]); }
+    const swapped = new Map();
+    c.members = c.members.map(m => { const h = ringOf.get(m), n = h ? Object.assign(move(m, shift.get(h)), { synthetic: true }) : move(m, M); swapped.set(m, n); return n; });
+    if (ringUnits.size) c.dropIndices = new Set([...(c.dropIndices || []), ...ringUnits]);
+    c.outline = swapped.get(c.outline) || move(c.outline, M);
+    if (Array.isArray(c.extras)) c.extras = c.extras.map(m => swapped.get(m) || m);
+    c.bbox = c.members.reduce((a, m) => bbUnion(a, m.bbox), null) || c.outline.bbox.slice();
+    if (c.centerPt) c.centerPt = ap(M, c.centerPt[0], c.centerPt[1]);
+    c.sizeXform = M; c.sizedFrom = { fromMm, toMm: maxMm, k: +k.toFixed(4) };
+    return { k, fromMm, toMm: maxMm };
+  }
+  /** One line for a run's log: what the size rule did to the charms of a sheet. results: [{ sku, r }] from fitCharmSize. null when nothing was over the size. */
+  function sizeRuleNote(results, maxMm, max) {
+    const list = results || [], done = list.filter(x => x.r && x.r.k), kept = list.filter(x => x.r && x.r.skipped && x.r.skipped !== "fits" && x.r.skipped !== "off" && x.r.fromMm > maxMm);
+    if (!done.length && !kept.length) return null;
+    const why = {}; for (const x of kept) why[x.r.skipped] = (why[x.r.skipped] || 0) + 1;
+    return `${done.length} charm(s) longer than ${maxMm} mm were drawn at ${maxMm} mm (the body; the ring keeps its size)${done.length ? ": " + done.slice(0, max || 12).map(x => `${x.sku} ${x.r.fromMm.toFixed(1)}`).join(", ") + (done.length > (max || 12) ? " …" : "") : ""}`
+      + (kept.length ? ` · ${kept.length} over it left as drawn (${Object.entries(why).map(([w, n]) => `${n} ${w}`).join(", ")})` : "");
+  }
   /** The blue copy of each black fill the rule stamped as hatching (`hatchBlue`), as content-stream text keyed by the top-level segment it replaces: that segment's
    *  own path, painted `0 0 1 rg … f` under the matrix it was painted under, so it keeps its place in the stack and in its layer. Only a plain top-level path of
    *  this page is replaced (not one inside a Form, not a merged one, not one whose matrix is unknown): the rest stays as the master drew it. null: nothing to replace. */
@@ -3112,6 +3269,10 @@
   root.CharmNestPDF.findHoops = findHoops; root.CharmNestPDF.circleOf = circleOf;
   // live text drawn as outlines (section 3c; kept off the long list for the same reason)
   root.CharmNestPDF.liftTextDesigns = liftTextDesigns; root.CharmNestPDF.liveTextNotes = liveTextNotes; root.CharmNestPDF.LIVE_TEXT_MIN_PT = LIVE_TEXT_MIN_PT;
+  // words written on a design with its own SKU (labelCharms `onDesign`), in the words every route says them with (kept off the long list for the same reason)
+  root.CharmNestPDF.onDesignNote = onDesignNote;
+  // the standard charm size every indexer applies before a ring is welded (kept off the long list for the same reason)
+  root.CharmNestPDF.fitCharmSize = fitCharmSize; root.CharmNestPDF.sizeRuleNote = sizeRuleNote; root.CharmNestPDF.SIZE_RULE = SIZE_RULE;
   // the loose-ink-outside-the-piece rule (section 5a″; kept off the long list for the same reason)
   root.CharmNestPDF.takeStrayInk = takeStrayInk; root.CharmNestPDF.strayInkOf = strayInkOf;
   // the black-fill rule (kept off the long list for the same reason)

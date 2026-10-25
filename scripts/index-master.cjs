@@ -41,6 +41,8 @@
  *    --no-pairs          do not look for designs that draw two bodies under one label (mismatched pairs: see pairLayer). With it the run is exactly what it was before the pair layer.
  *    --pair-also LIST    also fold these doubtful rows into one design (a JSON list or SKUs separated by commas, as --only): a row the layer found but was not sure of
  *                        (see "pairs" in the report). A row with a label of its own on a second body cannot be folded.
+ *    --max-mm N          the standard charm size: a body longer than N mm is drawn at N mm, its ring at its own size (11.5; 0 leaves every size as drawn: STANDARD SIZE, charm-nest-pdf.js fitCharmSize)
+ *    --long-ratio N      a body whose longer side is at least N times its shorter is long and narrow and keeps its size (1.6)
  *    (the passcode is read from the EDIT_PASSCODE environment variable when --passcode is not given: it is never printed)
  *  The master library (index and per-SKU files) is one library, read by production and the sandbox alike; it holds
  *  designs, not orders, so there is no sandbox copy of it.
@@ -53,7 +55,7 @@ const root = path.join(__dirname, "..");
 const MM = 25.4 / 72;
 
 function args(argv) {
-  const o = { file: null, origin: "", passcode: "", dry: false, pattern: "", gapMm: 6.4, minPt: 6, concurrency: 4, uploadMaster: false, replaces: [], resume: false, engraveMarginMm: 0.8 };
+  const o = { file: null, origin: "", passcode: "", dry: false, pattern: "", gapMm: 6.4, minPt: 6, concurrency: 4, uploadMaster: false, replaces: [], resume: false, engraveMarginMm: 0.8, maxMm: 11.5, longRatio: 1.6 };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i], v = argv[i + 1];
     if (a === "--origin") { o.origin = String(v || "").replace(/\/+$/, ""); i++; }
@@ -77,6 +79,8 @@ function args(argv) {
     else if (a === "--no-pairs") o.noPairs = true;
     else if (a === "--pair-also") { o.pairAlso = String(v || ""); i++; }
     else if (a === "--engrave-margin-mm") { o.engraveMarginMm = +v || 0.8; i++; }
+    else if (a === "--max-mm") { o.maxMm = Math.max(0, +v || 0); i++; }
+    else if (a === "--long-ratio") { o.longRatio = +v > 1 ? +v : 1.6; i++; }
     else if (!a.startsWith("--") && !o.file) o.file = a;
   }
   if (!o.passcode && process.env.EDIT_PASSCODE) o.passcode = process.env.EDIT_PASSCODE;
@@ -289,6 +293,7 @@ async function main(argv, log = console.log) {
   { const sl = [...lab.labels.values()].flatMap(l => [l].concat(l.extra || [])).filter(x => x.slash); if (sl.length) log(`  ${sl.length} label(s) carry a "/", which a SKU (a library document name) cannot hold: read with a hyphen instead (the orders find them by their spelling): ${sl.slice(0, 20).map(x => `"${String(x.str).trim()}" -> ${x.sku}`).join(", ")}`); }
   if (lab.orphans.length) log(`  orphan labels (no charm within ${o.gapMm} mm above): ${lab.orphans.slice(0, 40).map(x => x.sku).join(", ")}${lab.orphans.length > 40 ? " …" : ""}`);
   if ((lab.titles || []).length) log(`  ${lab.titles.length} name(s) written above a charm that has its own SKU under it are titles, not SKUs with no charm above them: ${lab.titles.slice(0, 20).map(t => `${t.str} (over ${t.over})`).join(", ")}${lab.titles.length > 20 ? " …" : ""}`);
+  { const note = P.onDesignNote ? P.onDesignNote(lab.onDesign, 20) : null; if (note) log(`  ${note}`); }   // (words on a design with its own SKU: its live text, no orphan label)
   if ((lab.inlays || []).length) log(`  ${lab.inlays.length} letter(s) set inside their design are welded into its cut line, as outlines: ${lab.inlays.slice(0, 30).map(x => `${x.char} in ${x.sku}`).join(", ")}${lab.inlays.length > 30 ? " …" : ""}`);
   if (lab.unlabelled.length) log(`  unlabelled charms (by index): ${lab.unlabelled.slice(0, 40).join(", ")}${lab.unlabelled.length > 40 ? " …" : ""}`);
   if (lab.duplicates.length) log(`  duplicates: ${lab.duplicates.slice(0, 40).map(d => `${d.sku}/${d.also}`).join(", ")}`);
@@ -353,6 +358,10 @@ async function main(argv, log = console.log) {
   { const partners = new Set(); for (const r of pairs.rows) if (r.folded) for (const i of r.partners || []) partners.add(i); const was = lab.unlabelled.length; if (partners.size) lab.unlabelled = lab.unlabelled.filter(i => !partners.has(i)); if (was !== lab.unlabelled.length) log(`  ${was - lab.unlabelled.length} charm(s) counted unlabelled above are the other body of a pair built into its labelled design: ${[...partners].map(i => "#" + i).join(", ")}`); }
   const unlabelledWhy = Pair && Pair.whereUnlabelled ? Pair.whereUnlabelled(g.charms, lab, pairs.rows) : {};   // where each charm that is still without a SKU sits, in words
   if (lab.unlabelled.length) log(`  still without a SKU: ${lab.unlabelled.slice(0, 40).map(i => "#" + i + (unlabelledWhy[i] ? " (" + unlabelledWhy[i] + ")" : "")).join(", ")}${lab.unlabelled.length > 40 ? " …" : ""}`);
+  // the standard size (STANDARD SIZE): a body touching one WITHOUT a SKU (a row the pair layer may build into one design) keeps the size drawn, so the bodies of a pair stay alike; neighbours that each have
+  // their own SKU are separate designs and each is sized alone. Decided on the sheet as drawn, before any charm is scaled
+  const sizeSkip = new Set(); if (Pair && Pair.rowsOf) for (const row of Pair.rowsOf(g.charms)) if (row.some(x => !x.sku)) for (const x of row) sizeSkip.add(x.index);
+  const sized = [];
   const rank = new WeakMap(), addEntry = (e, index) => { entries.push(e); rank.set(e, index); };   // (builds finish in any order; the records are written in drawing order)
   let done = 0, skipped = 0, hashesKept = 0; const total = items.length; const queue = items.slice();
   const one = async ({ index, l, c }) => {
@@ -364,6 +373,7 @@ async function main(argv, log = console.log) {
     }
     if (progress.done[key] && !!progress.done[key].entry.pair === !!pm) { const d = progress.done[key]; addEntry(d.entry, index); if (d.blocked) blocked.push(d.blocked); skus.push(l.sku); for (const x of l.extra || []) { addEntry(Object.assign({}, d.entry, { sku: x.sku, size: x.size }), index); skus.push(x.sku); if (d.blocked) blocked.push({ sku: x.sku, reason: d.blocked.reason }); } skipped++; return; }
     // a hoop drawn beside the body is welded into the cut line before the charm is measured or written, as the Master tab and the server route do
+    if (!pm && P.fitCharmSize) sized.push({ sku: l.sku, r: P.fitCharmSize(c, { maxMm: o.maxMm, longRatio: o.longRatio, skip: sizeSkip, sized: [l].concat(l.extra || []).some(x => x.size) }) });   // (before the ring is welded: the ring keeps its size)
     if (!pm) { const r = P.integrateRings(c); if (r.left.length) { ringsLeft.push({ sku: l.sku, why: r.left[0] }); log(`  ! ${l.sku}: a hoop could not join its charm: ${r.left[0]}`); } for (const x of r.islands || []) { islands.push({ sku: l.sku, char: x.char }); log(`  ! ${l.sku}: the letter ${x.char} stands clear of the metal (it touches no edge of the key), so it would drop out when cut`); } }   // (a pair's bodies were welded before they were folded)
     const sil = G.silhouetteBits(pm ? pm.view : c, 6, {});
     const charmHash = P.fnv(P.signature(sil.bits, sil.w, sil.h) + "|" + Math.round((sil.bboxOuter[2] - sil.bboxOuter[0]) * 2) + "x" + Math.round((sil.bboxOuter[3] - sil.bboxOuter[1]) * 2) + "|" + c.members.length);
@@ -406,6 +416,7 @@ async function main(argv, log = console.log) {
   saveProgress();
   // a small ring left loose beside a charm blocks it, as the other routes do
   for (const orp of g.orphans || []) { const b = orp.bbox; if (!b || orp.kind !== "path" || !orp.closed) continue; if (Math.max(b[2] - b[0], b[3] - b[1]) > 13) continue; const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2; for (const c of g.charms) { if (!c.sku) continue; const ob = c.outline.bbox; if (cx < ob[0] - 4 / MM || cx > ob[2] + 4 / MM || cy < ob[1] - 4 / MM || cy > ob[3] + 4 / MM) continue; if (G.distToPolys(cx, cy, G.flatten(c.outline, 8)) <= 3 / MM) { const e = entries.find(x => x.sku === c.sku); if (e && !/detached ring/.test(e.blocked || "")) { e.blocked = (e.blocked ? e.blocked + "; " : "") + "detached ring not merged"; blocked.push({ sku: c.sku, reason: "detached ring not merged" }); } } } }
+  { const note = P.sizeRuleNote ? P.sizeRuleNote(sized, o.maxMm, 20) : null; if (note) log(note); }
   if (hashesKept) log(`${hashesKept} design(s) keep the charm hash they have (same size, area and holes; --new-hash writes the new one)`);
   if (kept.length) log(`${kept.length} pair design(s) were NOT written, because this run drew them as one body and the library holds them as a pair: ${kept.slice(0, 40).map(k => k.sku).join(", ")}${kept.length > 40 ? " …" : ""}`);
   log(`${entries.length} SKU entr${entries.length === 1 ? "y" : "ies"} ready (${skipped} from the previous run) · ${blocked.length} blocked · ${((Date.now() - t0) / 1000).toFixed(0)} s`);
@@ -454,7 +465,7 @@ async function main(argv, log = console.log) {
   }
   log(`index written: ${written} SKU(s) on ${o.origin} — the Master tab shows them after Reload index`);
   }
-  const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: liveCharms, labelled: lab.labels.size, unlabelled: lab.unlabelled, absorbed: lab.absorbed || [], titles: lab.titles || [], inlays: lab.inlays || [], islands, looseRings: lab.looseRings || [], ringsLeft, slashLabels: [...lab.labels.values()].flatMap(l => [l].concat(l.extra || [])).filter(x => x.slash).map(x => ({ typed: String(x.str).trim(), sku: x.sku })), orphans: lab.orphans, duplicates: lab.duplicates, unlabelledWhy, joinedLabels: lab.joined || [], ignoredText: lab.ignoredText || [], liveText: (P.liveTextNotes ? P.liveTextNotes(parsed) : []).map(n => n.text), captions: (lab.captions || []).map(c => c.str), pageCount: parsed.pageCount || 1, twins, pairs: pairs.rows, pairsKept: kept, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, replaced, pairsKeptAtServer: keptAtServer, rejected, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
+  const report = { file: name, bytes: buf.length, masterHash, held: heldCount, charms: liveCharms, labelled: lab.labels.size, unlabelled: lab.unlabelled, absorbed: lab.absorbed || [], titles: lab.titles || [], onDesign: lab.onDesign || [], sized: sized.filter(x => x.r && x.r.k).map(x => ({ sku: x.sku, fromMm: x.r.fromMm, toMm: x.r.toMm })), sizeKept: sized.filter(x => x.r && x.r.skipped && x.r.fromMm > o.maxMm).map(x => ({ sku: x.sku, mm: x.r.fromMm, why: x.r.skipped })), inlays: lab.inlays || [], islands, looseRings: lab.looseRings || [], ringsLeft, slashLabels: [...lab.labels.values()].flatMap(l => [l].concat(l.extra || [])).filter(x => x.slash).map(x => ({ typed: String(x.str).trim(), sku: x.sku })), orphans: lab.orphans, duplicates: lab.duplicates, unlabelledWhy, joinedLabels: lab.joined || [], ignoredText: lab.ignoredText || [], liveText: (P.liveTextNotes ? P.liveTextNotes(parsed) : []).map(n => n.text), captions: (lab.captions || []).map(c => c.str), pageCount: parsed.pageCount || 1, twins, pairs: pairs.rows, pairsKept: kept, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, replaced, pairsKeptAtServer: keptAtServer, rejected, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
   try { fs.writeFileSync(workBase + ".index-report.json", JSON.stringify(report, null, 1)); log(`report: ${workBase}.index-report.json`); } catch (_) {}
   return report;
 }
