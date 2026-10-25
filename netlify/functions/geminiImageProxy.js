@@ -185,9 +185,12 @@ exports.handler = async (event) => {
   // ---------------------------------------------------------------
   if (kind === "batch_submit" || kind === "batch_sweep") {
     const origin = selfOrigin(event);
+    // A background function answers 202 within a second; after a registration that used most of the
+    // sync limit, the kick gets only what is left, so the page never receives Netlify's HTML 504.
+    const startedAt = Date.now();
     const kick = (payload) => origin ? fetch(`${origin}/.netlify/functions/${BACKGROUND_FN}`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(DISPATCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(Math.max(500, Math.min(DISPATCH_TIMEOUT_MS, INLINE_DEADLINE_MS + 1500 - (Date.now() - startedAt)))),
     }).catch((err) => console.warn("[geminiImageProxy] sweep dispatch failed; the scheduled run will start it:", err?.message || err)) : null;
     if (kind === "batch_sweep") {
       await kick(body);

@@ -14291,8 +14291,10 @@ async function _handlerImpl(event) {
         if (typeof db.runTransaction !== "function") { await guardRef.set(patch, { merge: true }); return true; }
         return await db.runTransaction(async (tx) => {
           const snap = await tx.get(guardRef);
+          // Anyone else's id, or none (another run took over and has since finished), means this run
+          // no longer holds the lease: it stops writing, and every loop below stops too.
           const holder = snap.exists ? (snap.data() || {}).runId : null;
-          if (holder && holder !== runId) { superseded = true; return false; }
+          if (holder !== runId) { superseded = true; return false; }
           tx.set(guardRef, patch, { merge: true });
           return true;
         });
@@ -14584,8 +14586,12 @@ async function _handlerImpl(event) {
       // always reached; what is left is done by an immediate continuation (checksDeferred).
       const CHECK_PHASE_MS = 6 * 60 * 1000;
       let checksDeferred = false, collectsBackedOff = 0;
-      for (const b of open) {
-        if (Date.now() - sweepStart > CHECK_PHASE_MS) { checksDeferred = true; break; }
+      // What the loop below would act on (a continuation for anything else would only re-read the lists).
+      const needsCheck = (b) => !!b.batchName && !b.collected && !b.locallyQueued && !b.retryBatchName &&
+        !(isFinal(b.state) && !b.collectionPending);
+      for (const [index, b] of open.entries()) {
+        if (superseded) break;
+        if (Date.now() - sweepStart > CHECK_PHASE_MS) { checksDeferred = open.slice(index).some(needsCheck); break; }
         if (b.state === "JOB_STATE_FAILED" && quotaFailure(b.providerError) && !b.retryRequested &&
             !["capacity_refused", "attempts_exhausted", "preparation_failed", "cancelled"].includes(b.retryStatus) &&
             !b.collected && !b.retryBatchName && !b.responsesFile && b.sets?.length === 1 && b.sets[0].setKind !== "charm_maker") {
@@ -14659,6 +14665,7 @@ async function _handlerImpl(event) {
         ["JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED", "JOB_STATE_FAILED"].includes(normState(b.state)));
       if (restartable.length) await guardWrite({ stage: "restarting stalled jobs" });
       for (const b of restartable) {
+        if (superseded) break;
         if (Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
         const path = String(b.sets?.[0]?.outputBasePath || "");
         if (!path || setsInFlight.has(path)) continue;
@@ -14684,6 +14691,7 @@ async function _handlerImpl(event) {
       // as the token-limit stop does, so it is not shown as queued forever
       // and the page stops polling for it.
       for (const b of open) {
+        if (superseded) break;
         if (!b.retryRequested || b.retryBatchName || b.collected || !b.batchName ||
             Number(b.retryAttempt || 0) < 5 ||
             !["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(normState(b.state))) continue;
@@ -14711,6 +14719,7 @@ async function _handlerImpl(event) {
         Number(b.retryNotBefore || 0) <= Date.now());
       let refillNeedsContinuation = false, validationUnconfirmed = null, sourceErrors = 0;
       for (const b of waiting) {
+        if (superseded) break;
         if (activeCount >= 30) {
           // Other jobs can finish while new ones validate. Recount before
           // stopping so an old snapshot cannot leave free places unused.
@@ -14802,7 +14811,7 @@ async function _handlerImpl(event) {
       // that records written before 2026-10-25 kept is cleared, so the queue read stops returning them.
       const isPointer = (b) => !!b?.batchName && !b.collected && !!b.retryBatchName && (b.locallyQueued || isFinal(b.state));
       const pointers = open.filter((b) => isPointer(b) && (b.sweepParked !== true || b.retryRequested) && openRefs.get(b.batchName));
-      for (let i = 0; i < pointers.length && typeof db.batch === "function"; i += 400) {
+      for (let i = 0; i < pointers.length && typeof db.batch === "function" && !superseded; i += 400) {
         if (Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
         const writes = db.batch();
         // retryRequested:false as well: pointers written before 2026-10-25 kept it (admission.complete).
@@ -14812,7 +14821,7 @@ async function _handlerImpl(event) {
         catch (err) { console.warn("[batch_sweep] pointer park marks not written:", err?.message || err); }
       }
       for (const b of open) {
-        if (Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
+        if (Date.now() - sweepStart > SWEEP_BUDGET_MS || superseded) break;
         if (!b.batchName || b.collected || isPointer(b)) continue;
         const want = parkable(b);
         if (b.sweepParked !== undefined && want === (b.sweepParked === true)) continue;
@@ -14865,7 +14874,7 @@ async function _handlerImpl(event) {
         }
       }
       if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
-      await guardWrite({
+      const released = await guardWrite({
         runningSince: null,
         runId: null,
         stage: "idle",
@@ -14886,7 +14895,9 @@ async function _handlerImpl(event) {
       // guard still validates every job and enforces the global 30-job cap.
       // A continuation is a scheduled run (cronTriggered: the same cost rules) that goes straight on
       // from where this one stopped, instead of re-reading every session as a person's run would.
-      if ((refillNeedsContinuation || checksDeferred) && origin && !superseded) {
+      // Only once the lease is given back: a continuation sent while it is still held finds "sweep
+      // already running" and the deferred work waits for the next scheduled run.
+      if ((refillNeedsContinuation || checksDeferred) && origin && released) {
         try {
           const next = await fetch(`${origin}/.netlify/functions/geminiImageProxy-background`, {
             method: "POST", headers: { "Content-Type": "application/json" },
@@ -15330,7 +15341,8 @@ async function _handlerImpl(event) {
       let sourceName = String(body?.retryOf || "");
       const hasImageTasks = sets.some((set) => set.tasks.some((task) => task.type !== "copy"));
       if (hasImageTasks) {
-        if (!sourceName && sets.length <= 10) {
+        // One set per call, as the page sends them: a call of several sets is registered or answered as a whole.
+        if (!sourceName && sets.length === 1) {
           // A set that already has work pending under another name (a queued repair, a job OpenAI is
           // running, results being saved) is not registered again: "Resume empty sets" sees only the
           // folder, and a second record would pay for the set twice and race into the same folder.
@@ -15478,7 +15490,7 @@ async function _handlerImpl(event) {
           return await Promise.race([(async () => {
             const raw = await storagePathToBuffer(path);
             const img = await normalizeBatchInputImage(raw.buffer, { contentType: raw.mime, path, role,
-              canonical: role === "Charm image" });
+              canonical: role === "Charm image" }).catch((err) => { if (err?.inputImage) Object.assign(err, { path, role }); throw err; });
             if (img.action !== "as-is" && inputFixes.length < 20) {
               inputFixes.push({ path, from: img.from, to: img.mime, action: img.action, detail: img.detail });
               console.log(`[batch_submit] ${role} ${path}: ${img.action} (${img.from} -> ${img.mime}; ${img.detail})`);
@@ -15621,7 +15633,12 @@ async function _handlerImpl(event) {
       catch (err) {
         // OpenAI's file service being down or slow says nothing about this listing: no strike
         // against it, and the refill pauses until the next run instead of striking every set.
-        if (!(err?.status >= 400 && err.status < 500) || [408, 429].includes(err.status)) err.providerSide = true;
+        // Provider-side: a 5xx, a timeout or rate limit, or the network; not our own errors (no file
+        // id in the answer, a full /tmp), which are counted against the set like any preparation failure.
+        if (err?.status >= 500 || [408, 429].includes(err?.status) ||
+            !err?.status && /fetch failed|network|ECONN|socket|ETIMEDOUT|EAI_AGAIN|timed out|aborted/i.test(String(err?.message || ""))) {
+          err.providerSide = true;
+        }
         throw err;
       }
       memLog(`after Files API upload`);
@@ -15689,9 +15706,24 @@ async function _handlerImpl(event) {
         // OpenAI refused THIS job at creation (a 4xx that is not a token limit, rate limit or
         // timeout): it is a fault of the listing, counted and backed off like a preparation failure.
         // Before, nothing was counted and the sweep stopped the whole refill behind it on every run.
-        const createRefused = createStarted && !refused && err?.status >= 400 && err.status < 500 && ![408, 409, 429].includes(err.status);
+        // Only a refusal about this job's input counts against the set; any other 4xx (a permission,
+        // model or billing refusal for the whole account) pauses the refill instead of striking every
+        // queued set in turn until all of them were stopped.
+        const createRefused = createStarted && !refused && err?.status >= 400 && err.status < 500 && ![408, 409, 429].includes(err.status) &&
+          failureKind({ error: err?.message, code: err?.code }) === "input";
         const preparationFailed = !createStarted && !refused && !providerSide && await admission.failPreparation(claim, err);
         await admission.release(claim, err);
+        // A charm file that cannot be read stops its set (above) and leaves the pool, so the next set
+        // to pick it is not stopped the same way. It is kept, not deleted, under Unreadable_Charms/.
+        const poolCharm = /^listing-generator-1\/Charm_Maker\/New_Charms(?:_Earrings)?\/([^/]+)$/.exec(String(err?.path || ""));
+        if (err?.inputImage && err.role === "Charm image" && poolCharm) {
+          try {
+            const charmFile = admin.storage().bucket().file(err.path);
+            await charmFile.copy(admin.storage().bucket().file(`listing-generator-1/Charm_Maker/Unreadable_Charms/${poolCharm[1]}`));
+            await charmFile.delete();
+            console.warn(`[batch_submit] unreadable charm moved out of the pool: ${err.path}`);
+          } catch (moveErr) { console.warn("[batch_submit] unreadable charm not moved:", err.path, moveErr?.message || moveErr); }
+        }
         if (refused) await admission.rejected(sourceName);
         const sourceRef = getDb().collection(BATCHES_COLL).doc(batchDocIdFromName(sourceName));
         if (createRefused) {
@@ -16594,17 +16626,16 @@ async function _handlerImpl(event) {
       // single flaky charm doesn't block the batch from being marked
       // collected.
       //
-      // Only the charm of a set that has a generated picture saved is moved. On 2026-10-23/24 the
-      // charms of 505 sets OpenAI had made nothing for were moved too, leaving the pool at 9; a set
-      // with nothing saved keeps its charm in the pool, held for it while it is retried.
+      // This holds for a set OpenAI made nothing for as well: its charm is its own (a retry reads it
+      // from the Used pool), and left in New_Charms it could be picked for a second set before the
+      // retry is queued, or, when the file itself is the problem, stop every set that picks it next.
       const charmsUsed = new Set();
-      setsMeta.forEach((s, setIdx) => {
-        if (!setsWithImages.has(setIdx)) return;
+      for (const s of setsMeta) {
         for (const t of (s.tasks || [])) {
           const p = t?.input_charm_storage_path;
           if (p) charmsUsed.add(p);
         }
-      });
+      }
       const charmMoveErrors = [];
       let charmsMoved = 0;
       for (const srcPath of charmsUsed) {

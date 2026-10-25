@@ -1,9 +1,13 @@
 'use strict';
 const batchCharmPaths = record => [...new Set((record.sets || []).flatMap(set =>
   (set.allTasks || set.tasks || []).map(task => task.input_charm_storage_path).filter(Boolean)))];
+const STOPPED = ['capacity_refused', 'attempts_exhausted', 'complete_or_protected', 'preparation_failed', 'cancelled'];
 function pendingBatchWork(record) {
   if (record.retryBatchName || record.setComplete) return false;
   if (record.collectionPending || record.repairPending) return true;
+  // A set still waiting to be sent holds its charm whatever happened to an earlier stall restart:
+  // a closed restart (the job ended FAILED, then was queued again) let the charm be picked twice.
+  if (!record.collected && record.retryRequested && !STOPPED.includes(record.retryStatus)) return true;
   if (record.stallRestartBlocked || record.stallRestartClosed) return false;
   if (record.collected) return false;
   if (record.retryRequested && !['capacity_refused', 'attempts_exhausted', 'complete_or_protected'].includes(record.retryStatus)) return true;
