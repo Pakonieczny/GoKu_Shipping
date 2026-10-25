@@ -3842,7 +3842,7 @@ const Master = window.Master = (() => {
     //  the rest folded under "+N more SKUs"; the search still reads every SKU of the design (d.skus above), and the folded list holds them all
     const skuMore = (extra, q) => {
       if (!extra.length) return "";
-      if (extra.length <= 3) return `<div class="meta">${extra.map(s => `<div>${esc(s)}</div>`).join("")}</div>`;
+      if (extra.length <= 3) return `<div class="meta">${extra.map(s => `<div${q && s.includes(q) ? ' class="skuHit"' : ""}>${esc(s)}</div>`).join("")}</div>`;
       const hit = q ? extra.filter(s => s.includes(q)) : [], lead = (hit.length ? hit : extra).slice(0, 2), rest = extra.filter(s => !lead.includes(s));
       return `<div class="meta">${lead.map(s => `<div${hit.includes(s) ? ' class="skuHit"' : ""}>${esc(s)}</div>`).join("")}</div>`
         + `<details class="meta skuMore"><summary>+${rest.length} more SKU${rest.length === 1 ? "" : "s"}</summary>${rest.map(s => `<div>${esc(s)}</div>`).join("")}</details>`;
