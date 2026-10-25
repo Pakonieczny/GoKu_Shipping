@@ -5071,7 +5071,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   // this tab (a claim names the screen that holds it; a reload of the same tab is the same screen)
   const MC_TAB = (() => { const mk = () => "t" + Math.random().toString(36).slice(2, 12); try { let t = sessionStorage.getItem("cn.sheetwin.tab"); if (!/^[\w-]{4,40}$/.test(t || "")) { t = mk(); sessionStorage.setItem("cn.sheetwin.tab", t); } return t; } catch (_) { return mk(); } })();
   const MC = { on: false, sh: null, id: null, who: "", sel: null, lift: null, drag: null, edits: new Map(), from: new Map(), G: null, valid: null, msg: "", tone: "", msgT: 0, beat: 0, spring: 0, springBad: false, claiming: false, subs: new Set(), grids: new Map(), owed: new Set() };   // (owed: the sheets charms were moved between while it was on, MANUALHOP)
-  const drawScale = () => (typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.975);
+  const drawScale = () => (typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971);
   const scaleOf = size => +(drawScale() * size).toFixed(5);
   const sizeOf = c => { const v = c && c.manual ? +c.manual.size : 0; return v >= MC_MIN && v <= MC_MAX ? v : 1; };
   const normDeg = a => { const v = (((+a || 0) % 360) + 360) % 360; return Math.round(v * 1000) / 1000 % 360; };

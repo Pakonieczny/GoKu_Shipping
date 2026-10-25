@@ -168,7 +168,7 @@
   function slimPaths(paths,tolerance){return (paths||[]).map(path=>{const round=pts=>pts.map(([x,y])=>[+x.toFixed(3),+y.toFixed(3)]),slim=round(simplify(path,tolerance));return slim.length>=3||path.length<3?slim:round(path);});}
   // Idempotent: already slimmed outlines are returned unchanged.
   function slimShape(s){return s.slim?s:{...s,paths:slimPaths(s.paths,OUTLINE_PT),ink:slimPaths(s.ink,INK_PT),slim:1};}
-  function shapes(charms,placements){const byId=new Map(charms.map(c=>[c.id,c]));return placements.map(p=>{const c=byId.get(p.id);if(!c?.outline)throw new Error('Reload the charm vectors before preparing a cut');const angle=p.angle*Math.PI/180,cos=Math.cos(angle),sin=Math.sin(angle),scale=p.scale||.975;
+  function shapes(charms,placements){const byId=new Map(charms.map(c=>[c.id,c]));return placements.map(p=>{const c=byId.get(p.id);if(!c?.outline)throw new Error('Reload the charm vectors before preparing a cut');const angle=p.angle*Math.PI/180,cos=Math.cos(angle),sin=Math.sin(angle),scale=p.scale||(typeof CHARM_SCALE==="number"?CHARM_SCALE:.971);
     const transform=paths=>paths.map(path=>path.map(([x,y])=>{const dx=(x-c.centerPt[0])*scale,dy=(c.centerPt[1]-y)*scale;return [+(p.cxPt+dx*cos-dy*sin).toFixed(4),+(p.cyPt+dx*sin+dy*cos).toFixed(4)];}));
     return slimShape({id:p.id,paths:transform(flatten(c.outline)),ink:transform((c.members||[]).filter(m=>m!==c.outline).flatMap(flatten))});
   });}

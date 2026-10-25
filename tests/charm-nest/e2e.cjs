@@ -144,6 +144,8 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   const charmCms = cms.filter(k => Math.abs(k - 1) > 1e-6);
   console.log('optimizing stage', JSON.stringify({ optimized: opt.optimized, stageSeen: opt.stageSeen, matrices: cms.length, scaled: charmCms.length, scale: charmCms[0] }));
   assert(charmCms.length === result.placed && charmCms.every(k => Math.abs(k - opt.optimized.scale) < 1e-3), 'each charm matrix in the .ai is scaled by ' + opt.optimized.scale);
+  assert(Math.abs(opt.optimized.scale - 0.971) < 1e-9 && charmCms.every(k => Math.abs(k - 0.971) < 1e-3), 'the shrink is 2.9 % (Paul, 25 Oct 2026): every charm in the written .ai at 0.971: ' + JSON.stringify([opt.optimized.scale, charmCms.slice(0, 5)]));
+  console.log('  shrink in the written .ai:', charmCms.length, 'charm matrices at', [...new Set(charmCms.map(k => +k.toFixed(4)))].join(', '));
   // report dialog opens and lists every charm
   await page.click('.sheetCard[data-m=gold] [data-r=report]');
   await page.waitForSelector('#dlgReport[open]');
