@@ -936,10 +936,12 @@ async function readUpstreamJson(resp, providerLabel) {
   try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
   if (!resp.ok) {
     const requestId = resp.headers?.get?.("x-request-id");
+    // An error page from a proxy in front of the provider (nginx "502 Bad Gateway") is HTML: its title says it all.
+    const page = !data && /^\s*</.test(raw) ? (/<title>([^<]{1,120})<\/title>/i.exec(raw)?.[1] || "error page").trim() : null;
     const message =
       data?.error?.message ||
       data?.message ||
-      raw ||
+      (page ? `${providerLabel} failed with HTTP ${resp.status} (${page})` : raw) ||
       `${providerLabel} failed with HTTP ${resp.status} (empty body)`;
     const err = new Error(requestId ? `${message} [request ${requestId}]` : message);
     err.status = resp.status;

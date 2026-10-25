@@ -13852,9 +13852,10 @@ Click the button again to permanently delete eligible temporary files, or cancel
     }
     function _batchShortError(text) {
       const t = String(text || "");
-      const http = /HTTP (\d{3})/.exec(t);
+      // An error page from OpenAI's edge arrives as HTML ("<title>502 Bad Gateway</title>"): its status is enough.
+      const http = /HTTP (\d{3})/.exec(t) || /\b(5\d\d)\s+(?:Bad Gateway|Service (?:Temporarily )?Unavailable|Gateway Time-?out|Internal Server Error)/i.exec(t);
       if (/upstream connect error|disconnect\/reset before headers/i.test(t)) return /refused/i.test(t) ? "connection refused" : "connection reset";
-      return http ? `HTTP ${http[1]}` : t.replace(/\s+/g, " ").slice(0, 80);
+      return http ? `HTTP ${http[1]}` : t.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
     }
     function _batchStoppedByServer(b) {
       return b.recoveryStatus === "blocked" ||
