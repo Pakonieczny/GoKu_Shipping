@@ -3693,7 +3693,10 @@ const Master = window.Master = (() => {
         // the counts are the report; the lists behind them are for a file, not for a wall of red
         const l = job.lab, left = [], MAX = 24;
         const some = (arr, f) => arr.slice(0, MAX).map(f).join(", ") + (arr.length > MAX ? ` <i>… and ${arr.length - MAX} more</i>` : "");
-        if (l.unlabelled.length) left.push(`<b>${l.unlabelled.length} charm(s) with no SKU under them</b>: ${some(l.unlabelled, i2 => "#" + i2 + (job.unlabelledWhy && job.unlabelledWhy[i2] ? ` <i>(${esc(job.unlabelledWhy[i2])})</i>` : ""))}`);
+        // (Paul, 25 Oct 2026: "I thought there was only 10 charms with missing SKUs?": the second drawing of a design under the same label is no charm without a SKU, its SKU is
+        //  indexed from the first drawing; it is said once, on its own line below, not counted here as well)
+        const copies = new Set((l.duplicates || []).map(d => d.charmIndex)), bare = l.unlabelled.filter(i2 => !copies.has(i2));
+        if (bare.length) left.push(`<b>${bare.length} charm(s) with no SKU under them</b>: ${some(bare, i2 => "#" + i2 + (job.unlabelledWhy && job.unlabelledWhy[i2] ? ` <i>(${esc(job.unlabelledWhy[i2])})</i>` : ""))}`);
         if (l.orphans.length) left.push(`<b>${l.orphans.length} line(s) with no charm above</b>: ${some(l.orphans, o => esc(o.sku))}`);
         if ((job.ringsLeft || []).length) left.push(`<b>${job.ringsLeft.length} charm(s) whose hoop could not join them</b>: ${some(job.ringsLeft, r => `${esc(r.sku)} — ${esc(r.why)}`)}`);
         if ((l.looseRings || []).length) left.push(`<b>${l.looseRings.length} loose ring(s) not attached to a charm</b>: ${some(l.looseRings, r => `#${r.index} near ${esc(r.nearSku || "no SKU")} — ${esc(r.why)}`)}`);
@@ -3702,7 +3705,7 @@ const Master = window.Master = (() => {
         if ((job.kept || []).length) left.push(`<b>${job.kept.length} pair design(s) not written</b>: ${some(job.kept, x => `${esc(x.sku)} — ${esc(x.why)}`)}`);
         if ((job.pairKept || []).length) left.push(`<b>${job.pairKept.length} SKU(s) the library holds as a pair were not overwritten with one body</b>: ${some(job.pairKept, x => esc(x.sku))}`);
         if ((job.stale || []).length) left.push(`<b>${(job.stale || []).length} design(s) held as ONE body of a pair</b>: ${some(job.stale || [], x => `${esc(x.sku)} (${x.bodies} bodies on this sheet)`)} — choose “rebuild every charm” under SKUs already held and add the file again`);
-        if (l.duplicates.length) left.push(`<b>${l.duplicates.length} SKU(s) written under two charms</b>: ${some(l.duplicates, d => `${esc(d.sku)} (#${d.charmIndex})`)}`);
+        if (l.duplicates.length) left.push(`<b>${l.duplicates.length} design(s) drawn twice under the same SKU</b> (each SKU is indexed from its first drawing; the second is left out): ${some(l.duplicates, d => `${esc(d.sku)} (#${d.firstIndex} kept, #${d.charmIndex} left out)`)}`);
         if (job.blocked && job.blocked.length) left.push(`<b>${job.blocked.length} blocked</b>: ${some(job.blocked, b => `${esc(b.sku)} — ${esc(b.reason)}`)}`);
         if (job.conflicts && job.conflicts.length) left.push(`<b>${job.conflicts.length} in another master too</b>: ${some(job.conflicts, b => esc(b.sku))}`);
         if (job.entries) { const oor = job.entries.filter(e => e.outOfRange); if (oor.length) left.push(`<b>${oor.length} outside the ${S.settings.sizeMinMm}–${S.settings.sizeMaxMm} mm range</b>: ${some(oor, e => esc(e.sku))}`); }
@@ -3746,7 +3749,7 @@ const Master = window.Master = (() => {
         const d = el("details", "masterFileRow"), sum = document.createElement("summary");
         const when = new Date(job.finishedAt || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
         // what the run left for a person is counted on the line itself: a result that is not whole must not hide behind a click
-        const needs = job.state === "error" ? 0 : ((job.lab && job.lab.unlabelled ? job.lab.unlabelled.length : 0) + ((job.lab && job.lab.orphans) || []).length + ((job.lab && job.lab.duplicates) || []).length + (job.rejected || []).length + (job.missing || []).length + (job.stale || []).length + (job.kept || []).length + (job.pairKept || []).length + (job.blocked || []).length + (job.conflicts || []).length + (job.ringsLeft || []).length + (((job.lab && job.lab.looseRings) || []).length) + ((job.entries || []).filter(e => e.outOfRange).length));
+        const needs = job.state === "error" ? 0 : ((job.lab && job.lab.unlabelled ? job.lab.unlabelled.filter(i2 => !((job.lab.duplicates || []).some(d => d.charmIndex === i2))).length : 0) + ((job.lab && job.lab.orphans) || []).length + ((job.lab && job.lab.duplicates) || []).length + (job.rejected || []).length + (job.missing || []).length + (job.stale || []).length + (job.kept || []).length + (job.pairKept || []).length + (job.blocked || []).length + (job.conflicts || []).length + (job.ringsLeft || []).length + (((job.lab && job.lab.looseRings) || []).length) + ((job.entries || []).filter(e => e.outOfRange).length));
         sum.innerHTML = `<b>${esc(job.name)}</b><span class="hash">${when}</span><span>${job.state === "error" ? "failed" : `${job.written || 0} SKU(s) written`}</span>${(job.replaced || []).length ? `<span class="hash">${job.replaced.length} replaced</span>` : ""}${job.held ? `<span class="hash">${job.held} already held</span>` : ""}${needs ? `<span style="color:#8a3a26">${needs} to look at</span>` : ""}`;
         d.appendChild(sum); d.appendChild(card); jobs.appendChild(d);
       } else jobs.appendChild(card);
@@ -3834,6 +3837,16 @@ const Master = window.Master = (() => {
       const box = (value, options, extra) => `<select data-faces="${keys}" data-repo="modify"${extra || ""} title="${esc(fc.hint)}" style="border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px;max-width:112px">` + options.map(([v, t]) => `<option value="${v}"${v === value ? " selected" : ""}>${esc(t)}</option>`).join("") + `</select>`;
       return fc.bodies ? fc.bodies.map(bd => box(bd.value, bd.options, ` data-body="${bd.index}"`)).join("") : box(fc.value, fc.options);
     };
+    // (Paul, 25 Oct 2026: "compact these SKUs in the UI so they don't look like these runes. Ensure everything is still searchable": a Viking rune is sold under 31
+    //  SKUs and its tile was a column of them.) A design with more than three further SKUs shows two (the ones the search found, when it found one of them) and
+    //  the rest folded under "+N more SKUs"; the search still reads every SKU of the design (d.skus above), and the folded list holds them all
+    const skuMore = (extra, q) => {
+      if (!extra.length) return "";
+      if (extra.length <= 3) return `<div class="meta">${extra.map(s => `<div>${esc(s)}</div>`).join("")}</div>`;
+      const hit = q ? extra.filter(s => s.includes(q)) : [], lead = (hit.length ? hit : extra).slice(0, 2), rest = extra.filter(s => !lead.includes(s));
+      return `<div class="meta">${lead.map(s => `<div${hit.includes(s) ? ' class="skuHit"' : ""}>${esc(s)}</div>`).join("")}</div>`
+        + `<details class="meta skuMore"><summary>+${rest.length} more SKU${rest.length === 1 ? "" : "s"}</summary>${rest.map(s => `<div>${esc(s)}</div>`).join("")}</details>`;
+    };
     grid.innerHTML = shown.map(d => {
       const e0 = d.head, keys = esc(d.skus.join("|"));
       // a design a person named as ONE body (charm-nest-pair.js section 4d, the wolf of WOLF.ai): the card shows that body alone, with its own size, holes and up angle; the record (the pair's, the moon's hole) is not changed
@@ -3843,7 +3856,7 @@ const Master = window.Master = (() => {
       return `<div class="skuTile hoverItem${blocked ? " blocked" : ""}" data-sku="${esc(e.sku)}">` +
         `<div data-preview-sku="${esc(e.sku)}"${ob ? ` data-one="${ob.index}"` : ""} style="aspect-ratio:1;background:#ece7dc;border-radius:6px;overflow:hidden;display:grid;place-items:center;color:var(--ink45)">Loading preview…</div>` +
         `<div class="sku" title="${esc(d.skus.join(", "))}">${esc(e.sku)}</div>` +
-        (d.skus.length > 1 ? `<div class="meta">${d.skus.slice(1).map(s => `<div>${esc(s)}</div>`).join("")}</div>` : "") +
+        skuMore(d.skus.slice(1), q) +
         (e.pair && e.pair.mismatched ? `<div class="meta"><span class="pill ok" title="A mismatched pair: two different charms under one SKU, a left earring and a right earring. Both are drawn side by side, each marked Left or Right.">Left + Right pair</span></div>` : "") +
         `<div class="meta"${ob ? ` title="A necklace charm: ${esc(ob.what)} only. The master file still holds the other body; it is not shown, cut or counted."` : ""}>${(e.widthPt * MM).toFixed(1)} × ${(e.heightPt * MM).toFixed(1)} mm${e.pair && e.pair.mismatched ? " both together" : ""} · ${e.holes} hole${e.holes === 1 ? "" : "s"}${sizes.length ? ` · sizes ${sizes.map(([k]) => k).join("/")}` : ""}${d.skus.length > 1 ? ` · ${d.skus.length} SKUs` : ""}</div>` +
         `<div class="meta">up ${e.upAngle == null ? "as drawn" : Math.round(e.upAngle) + "°"}${e.upSource === "long" ? " (long side flat)" : ""} · ${esc(e.labelSource || "text")}${e.hashSource === "server" ? " · server" : ""}</div>` +

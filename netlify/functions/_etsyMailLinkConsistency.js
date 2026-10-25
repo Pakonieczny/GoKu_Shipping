@@ -22,9 +22,17 @@
  *                readComplete, written by etsyMailSnapshot.js for a conversation asked to be re-read in full): nothing is missing,
  *                the counter was off. How far off is remembered (proven), so the same drift is not reported again while it stays
  *                the same, and any change in it is judged afresh; or
- *    · gone      the conversation no longer exists.
- *  Nothing else closes it, and a person's Dismiss only hides the notice (see dismiss()): the gap, the checking and the re-reads
- *  go on.
+ *    · gone      the conversation no longer exists;
+ *    · settled   (a missing NEWEST message only) SETTLE_READS re-reads in a row FINISHED (the extension opened and read the conversation)
+ *                and stored nothing: the count and the newest stored message stayed exactly as they were. Every read, complete or not,
+ *                reads the newest messages, so the message the record claims is not on Etsy's page and re-reading cannot change anything. Before this, a conversation the extension could read but never
+ *                read "completely" (readComplete is written only for a full scrape with no scrape issue: one whose messages matched
+ *                none stored, or came in without their text, never gets it) stayed red for good, re-read every few hours, and after a
+ *                long interruption nothing ever cleared it (Paul, 25 Oct 2026: "short for 6 days after 25 tries"). Remembered like
+ *                proven, so it comes back only when the conversation changes;
+ *    · checked   a person compared the conversation with Etsy and pressed "Matches Etsy" (resolve()): the same, on a person's word.
+ *  A person's Dismiss only hides the notice (see dismiss()): the gap, the checking and the re-reads go on. Why a re-read was not a
+ *  complete one (readIncomplete, written by etsyMailSnapshot.js) is kept on the gap (why), so the notice can say it.
  *
  *  THE SELF-HEAL. For each open gap one re-read is queued as a scrape job (an ordinary job for the Chrome extension, which reads
  *  the Etsy PAGE: no Etsy API call, nothing sent to a customer), and the conversation is flagged fullReread so that the extension
@@ -51,8 +59,9 @@ const WINDOW = 150, REPAIR_MAX = 5, SLACK_MS = 3 * MIN, FRESH_MS = 30 * MIN, BUD
 const GAPS_MAX = 50, LOOK_EVERY_MS = 30 * MIN, PROVEN_MAX = 40, PROVEN_KEEP_MS = 30 * DAY, HEALED_MAX = 5;
 const BACKOFF = [20 * MIN, HOUR, 3 * HOUR, 6 * HOUR];   // the wait after the 1st, 2nd, 3rd and every later finished try
 const TRIES_PER_DAY = 6, MANUAL_GAP_MS = 10 * MIN, MANUAL_PER_DAY = 3, TICK_EVERY_MS = 4 * MIN;
+const SETTLE_READS = 3;   // finished re-reads in a row that stored nothing: the gap is settled (see the header)
 const THREADS = "EtsyMail_Threads", JOBS = "EtsyMail_Jobs", CFG = "EtsyMail_Config", DOC = "linkConsistency";
-const THREAD_FIELDS = ["messageCount", "lastInboundAt", "updatedAt", "status", "etsyConversationUrl", "etsyOrderId", "gmailThreadId", "readComplete"];
+const THREAD_FIELDS = ["messageCount", "lastInboundAt", "updatedAt", "status", "etsyConversationUrl", "etsyOrderId", "gmailThreadId", "readComplete", "readIncomplete"];
 
 const ms = v => (v == null ? 0 : typeof v.toMillis === "function" ? v.toMillis() : typeof v === "object" && typeof v.ms === "number" ? v.ms : typeof v === "number" ? v : 0);
 /** 02:00-05:00 in New York is 06:00-09:00 UTC in summer and 07:00-10:00 in winter: 07:00-09:00 UTC is inside the window all year. */
@@ -79,13 +88,13 @@ async function judge(db, id, t, now, opts) {
     col.orderBy("timestamp", "desc").limit(1).select("timestamp").get().then(s => (s.empty ? 0 : ms(s.docs[0].data().timestamp)))
   ]);
   const claimed = typeof t.messageCount === "number" ? t.messageCount : null, lastIn = ms(t.lastInboundAt);
-  if (opts.seen) { opts.seen.stored = c; opts.seen.claimed = claimed; }
+  if (opts.seen) { opts.seen.stored = c; opts.seen.claimed = claimed; opts.seen.newest = newest; }
   let v = null;
   if (claimed != null && claimed > 0 && c === 0) v = { kind: "claimed_but_none", claimed, stored: c };
   else if (claimed != null && claimed - c >= 3) v = { kind: "fewer_than_counted", claimed, stored: c };
   else if (lastIn > 0 && newest < lastIn - SLACK_MS) v = { kind: "inbound_missing", claimed, stored: c };
   if (!v) return null;
-  v.lastIn = lastIn;
+  v.lastIn = lastIn; v.newest = newest;
   if (opts.proven && provenHolds(opts.proven[id], v)) return null;
   return v;
 }
@@ -123,14 +132,14 @@ async function queueReread(db, id, g, now) {
 }
 
 const newGap = (t, v, now) => ({
-  o: orderOf(t), k: v.kind, c: v.claimed == null ? -1 : v.claimed, s: v.stored, li: v.lastIn || 0,
+  o: orderOf(t), k: v.kind, c: v.claimed == null ? -1 : v.claimed, s: v.stored, li: v.lastIn || 0, sn: v.newest || 0, same: 0, why: "",
   url: !!t.etsyConversationUrl, u: t.etsyConversationUrl || "", gt: t.gmailThreadId || "",
   firstAtMs: now, checkedAtMs: now, tries: 0, reads: 0, lastTryAtMs: 0, nextTryAtMs: 0, jobId: "", seenJob: "", pend: false,
   day: "", dayTries: 0, manualDay: "", manualN: 0
 });
 /** What a fresh look at the conversation says about its gap (the numbers, the order number, whether it can be re-read). */
 const refreshGap = (g, t, v, now) => Object.assign(g, {
-  k: v.kind, c: v.claimed == null ? -1 : v.claimed, s: v.stored, li: v.lastIn || 0, o: orderOf(t) || g.o || "",
+  k: v.kind, c: v.claimed == null ? -1 : v.claimed, s: v.stored, li: v.lastIn || 0, sn: v.newest || 0, o: orderOf(t) || g.o || "",
   url: !!t.etsyConversationUrl, u: t.etsyConversationUrl || g.u || "", checkedAtMs: now
 });
 
@@ -155,11 +164,11 @@ async function advance(db, st, { now, manual = false, max = REPAIR_MAX, budgetMs
     try {
       // the re-read's job: has it finished? (the back-off counts from its end)
       const job = g.jobId ? await jobInfo(db, g.jobId) : null;
-      let finishedNow = false;
+      let finishedNow = false, readNow = false;
       if (job && !pendingJob(job) && g.seenJob !== g.jobId) {
         finishedNow = true;
         g.seenJob = g.jobId;
-        if (job.status === "succeeded") g.reads = (g.reads || 0) + 1;
+        if (job.status === "succeeded") { g.reads = (g.reads || 0) + 1; readNow = true; }
         g.nextTryAtMs = Math.max(g.nextTryAtMs || 0, (job.atMs || g.lastTryAtMs || now) + backoffMs(g.tries || 1));   // (a job that is gone finished no later than now: its own end time is not known, so count from when it was asked)
       }
       g.pend = pendingJob(job);
@@ -181,11 +190,22 @@ async function advance(db, st, { now, manual = false, max = REPAIR_MAX, budgetMs
           else if (!v) { closed = "matched"; res.s = seen.stored; res.c = seen.stored; }
           else {
             const rc = t.readComplete && typeof t.readComplete === "object" ? t.readComplete : null;
+            const ri = t.readIncomplete && typeof t.readIncomplete === "object" ? t.readIncomplete : null;
+            if (ri && g.lastTryAtMs && ms(ri.atMs) >= g.lastTryAtMs - SLACK_MS) g.why = String(ri.why || "").slice(0, 120);   // (what kept the last re-read from being a complete one: the notice says it)
+            // a finished re-read that stored nothing (the same count, the same newest message) counts towards settling; one that stored anything starts again
+            // (a gap written before the newest time was kept has sn undefined: its count alone is compared, once)
+            if (readNow) g.same = v.stored === g.s && (g.sn === undefined || v.newest === g.sn) ? (g.same || 0) + 1 : 0;
             if (rc && g.lastTryAtMs && ms(rc.atMs) >= g.lastTryAtMs - SLACK_MS) {
               // Etsy's conversation was read in full after our request and every message on it was already stored (or has just been):
               // nothing is missing; the record's counter was off. Remember how far off, so the same drift is not reported again.
               proven[id] = { k: v.kind, d: (v.claimed == null ? 0 : v.claimed) - v.stored, lastIn: v.lastIn || 0, atMs: now };
               closed = "proven"; res.s = v.stored; res.c = v.stored;
+            } else if (v.kind === "inbound_missing" && (g.same || 0) >= SETTLE_READS) {
+              // read SETTLE_READS times in a row, every read finished, nothing stored: the newest message the record claims is not on Etsy's page (see the header).
+              // Only for the newest message: every read, complete or not, reads the newest messages. A count that is off may hide OLDER messages a read that was
+              // not complete never reached, so those still need a complete read's proof (or a person's Matches Etsy).
+              proven[id] = { k: v.kind, d: (v.claimed == null ? 0 : v.claimed) - v.stored, lastIn: v.lastIn || 0, atMs: now, how: "settled" };
+              closed = "settled"; res.s = v.stored; res.c = v.stored;
             } else { refreshGap(g, t, v, now); res.c = g.c; res.s = g.s; res.o = g.o || ""; }
           }
         }
@@ -350,4 +370,32 @@ async function dismiss(db, { sig, by = "", now = Date.now() } = {}) {
   return Object.assign({ doc }, outcome);
 }
 
-module.exports = { maybeRun, run, judge, recheck, tick, dismiss, advance, BACKOFF, TRIES_PER_DAY, MANUAL_GAP_MS };
+/**
+ * A person compared the conversation(s) of the notice with Etsy and pressed "Matches Etsy" (Paul, 25 Oct 2026: the link could
+ * not be reset). Every open gap of the notice they saw (sig) closes as "checked": its drift is remembered as proven, so it does not
+ * come back while the conversation stays as it is, and does the moment it changes (a new message, another count). The re-reads stop;
+ * the notice, the inbox's banner and the conversation's chip clear everywhere at once. Nothing else is touched: no message, no
+ * conversation field. Returns { ok, n }, { changed } when the gaps are not the ones they saw, or { nothing }.
+ */
+async function resolve(db, { sig, by = "", now = Date.now() } = {}) {
+  let outcome = { nothing: true };
+  const who = String(by || "").replace(/\s+/g, " ").trim().slice(0, 40);
+  const doc = await commit(db, fresh => {
+    const gp = LinkHealth.gapSummary(fresh, now);
+    if (!gp || !gp.n) { outcome = { nothing: true }; return null; }
+    if (!sig || gp.sig !== sig) { outcome = { changed: true }; return null; }
+    const proven = Object.assign({}, fresh.proven || {}), healed = (fresh.healed || []).slice();
+    const ids = Object.keys(fresh.gaps || {});
+    for (const id of ids) {
+      const g = fresh.gaps[id] || {};
+      proven[id] = { k: g.k, d: g.k === "inbound_missing" ? 0 : (g.c == null || g.c < 0 ? 0 : g.c) - (g.s || 0), lastIn: g.li || 0, atMs: now, how: "checked", by: who };
+      healed.unshift({ o: g.o || "", atMs: now, how: "checked", by: who });
+    }
+    healed.length = Math.min(healed.length, HEALED_MAX);
+    outcome = { ok: true, n: ids.length };
+    return Object.assign({}, fresh, { gaps: {}, proven: pruneProven(proven, now), healed, unresolved: 0, noAddress: 0, overflow: 0, dismissed: null, tickAtMs: now });
+  });
+  return Object.assign({ doc }, outcome);
+}
+
+module.exports = { maybeRun, run, judge, recheck, tick, dismiss, resolve, advance, BACKOFF, TRIES_PER_DAY, MANUAL_GAP_MS, SETTLE_READS };

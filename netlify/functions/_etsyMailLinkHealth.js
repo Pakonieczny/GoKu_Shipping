@@ -98,7 +98,7 @@ function gapSummary(cs, now) {
   const sig = open.length || ov ? crypto.createHash("sha1").update(open.map(g => `${g.id}|${g.k}|${short(g)}`).join(";") + (esc ? "|red" : "") + (ov ? "|+" + ov : "")).digest("hex").slice(0, 12) : "";
   return {
     n: open.length + ov, noAddr: all.length - open.length, esc, sig,
-    items: open.slice(0, 3).map(g => ({ o: g.o || "", k: g.k || "", c: g.c == null ? -1 : g.c, s: g.s || 0, st: gapState(g), lt: g.lastTryAtMs || 0, nt: g.nextTryAtMs || 0, tr: g.tries || 0, fa: g.firstAtMs || 0 })),
+    items: open.slice(0, 3).map(g => ({ o: g.o || "", k: g.k || "", c: g.c == null ? -1 : g.c, s: g.s || 0, st: gapState(g), lt: g.lastTryAtMs || 0, nt: g.nextTryAtMs || 0, tr: g.tries || 0, fa: g.firstAtMs || 0, why: g.why || "", same: g.same || 0 })),
     more: Math.max(0, open.length + ov - 3)
   };
 }
@@ -126,8 +126,11 @@ function gapText(gs, now) {
   if (!last) doing = `The inbox is about to re-read ${gs.n === 1 ? "it" : "them"} from Etsy.`;
   else if (waiting) doing = `The inbox asked the Etsy helper to re-read ${gs.n === 1 ? "it" : "them"} ${ago(now - last)} ago and is waiting for the helper's turn.`;
   else doing = `The inbox last re-read ${gs.n === 1 ? "it" : "them"} ${ago(now - last)} ago and ${gs.n === 1 ? "it is" : "they are"} still short; next try ${retry && retry > now ? "in about " + ago(retry - now) : "any minute now"}.`;
-  const red = gs.esc ? ` It has stayed short for ${ago(now - Math.min(...gs.items.map(g => g.fa || now)))} after ${Math.max(...gs.items.map(g => g.tr))} tries: open ${gs.n === 1 ? "it" : "them"} in the inbox and compare with Etsy.` : "";
-  return `${what}. ${doing}${red}`;
+  // why the helper's reads are no proof, when it said (a conversation it reads but never "completely" settles by itself after SETTLE_READS reads that stored nothing)
+  const why = gs.items.map(g => g.why).find(Boolean);
+  const because = why ? ` The helper's last read was not a complete one: ${String(why).replace(/[.\s]+$/, "")}.` : "";
+  const red = gs.esc ? ` It has stayed short for ${ago(now - Math.min(...gs.items.map(g => g.fa || now)))} after ${Math.max(...gs.items.map(g => g.tr))} tries: open ${gs.n === 1 ? "it" : "them"} in the inbox, compare with Etsy, and press Matches Etsy if nothing is missing.` : "";
+  return `${what}. ${doing}${because}${red}`;
 }
 
 /** The plain-words reason behind a raw error (what the person reads, never a stack or a JSON body). */

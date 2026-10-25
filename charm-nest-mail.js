@@ -418,13 +418,15 @@
     if (!last) doing = "The inbox is about to re-read it from Etsy.";
     else if (waiting) doing = `The inbox asked the Etsy helper to re-read ${g.n === 1 ? "it" : "them"} ${when(last)}; it is waiting for the helper's turn (at night that can take up to an hour).`;
     else doing = `Last tried ${when(last)}, still short. Next try ${nexts.length ? (nexts[0] > now ? "about " + clock(nexts[0]) + " (in " + mins(nexts[0] - now) + ")" : "any minute now") : "soon"}.`;
-    const red = g.esc ? ` Short for ${mins(now - Math.min(...it.map(x => x.fa || now)))} after ${Math.max(...it.map(x => x.tr || 0))} tries: open ${g.n === 1 ? "it" : "them"} in the inbox and compare with Etsy.` : "";
-    return `${what} ${doing}${red}`;
+    const why = it.map(x => x.why).find(Boolean);
+    const because = why ? ` The helper's last read was not a complete one: ${String(why).replace(/[.\s]+$/, "")}.` : "";
+    const red = g.esc ? ` Short for ${mins(now - Math.min(...it.map(x => x.fa || now)))} after ${Math.max(...it.map(x => x.tr || 0))} tries: open ${g.n === 1 ? "it" : "them"} in the inbox and compare with Etsy. If nothing is missing, press Matches Etsy.` : "";
+    return `${what} ${doing}${because}${red}`;
   }
   /** The line that says how a Check now went (the server's result for each conversation). */
   function gapNoteFrom(res) {
     const now = Date.now(), rs = res.results || [];
-    const left = rs.filter(x => !["matched", "proven", "gone"].includes(x.outcome));
+    const left = rs.filter(x => !["matched", "proven", "gone", "settled"].includes(x.outcome));
     const done = rs.length - left.length;
     if (!res.ran) return res.health && res.health.level === "ok" ? { tone: "ok", text: "All messages match.", at: now } : null;
     if (!left.length) {
@@ -432,6 +434,7 @@
       const text = rs.length > 1 ? `Re-read: all ${rs.length} conversations match.`
         : x.outcome === "gone" ? "That conversation no longer exists, so nothing is missing."
         : x.outcome === "matched" ? `Re-read: all ${x.s} messages match.`
+        : x.outcome === "settled" ? "Read from Etsy several times and nothing more was there, so nothing is missing: cleared."
         : `Re-read from Etsy: nothing is missing${x.s ? ` (all ${x.s} messages are in the inbox)` : ""}.`;
       return { tone: "ok", text, at: now };
     }
@@ -493,13 +496,30 @@
       gapNote = { tone: "warn", text: `Could not dismiss just now (${e.message}). Try again in a minute.`, at: Date.now() };
     } finally { gapBusy = false; paintLights(); healthLater(); }
   }
-  /** The notice's two buttons and the line under it. */
+  /** "Matches Etsy" (Paul, 25 Oct 2026: the notice could not be reset): a person compared the conversation with Etsy and nothing is missing. The gap closes for
+   *  everybody (the notice, the inbox's banner, the chip) and the re-reads stop; it comes back only if the conversation changes. */
+  async function resolveGap(sig) {
+    if (!M.key || gapBusy || healthBusy || !sig) return;
+    gapBusy = true; gapNote = null; paintLights();
+    try {
+      const res = await call("link_resolve", { sig }, { timeout: 30000 });
+      applyLinkResult(res);
+      gapNote = res.ok ? { tone: "ok", text: "Cleared: marked as matching Etsy. It comes back only if that conversation changes.", at: Date.now() }
+        : res.changed ? { tone: "warn", text: "The gap changed just now, so it is shown again with the new numbers. Compare again, then press Matches Etsy.", at: Date.now() }
+        : { tone: "ok", text: "Nothing is missing any more.", at: Date.now() };
+    } catch (e) {
+      if (authLost(e)) return;
+      gapNote = { tone: "warn", text: e.status === 400 ? "This server cannot clear it yet: reload the page in a minute (a new version is on its way)." : `Could not clear it just now (${e.message}). Try again in a minute.`, at: Date.now() };
+    } finally { gapBusy = false; paintLights(); healthLater(); }
+  }
+  /** The notice's buttons and the line under it. */
   function gapButtons(sig) {
     return `<button type="button" class="lnk" data-pill-check${gapBusy || healthBusy ? " disabled" : ""}>${gapBusy ? '<span class="cmSpin" aria-hidden="true"></span> Re-reading…' : "Check now"}</button>`
+      + (sig ? ` <button type="button" class="lnk" data-gap-resolve="${E(sig)}"${gapBusy || healthBusy ? " disabled" : ""} title="You compared it with Etsy and nothing is missing: clear it for everybody">Matches Etsy</button>` : "")
       + (sig ? ` <button type="button" class="lnk" data-gap-dismiss="${E(sig)}"${gapBusy || healthBusy ? " disabled" : ""}>Dismiss</button>` : "");
   }
   const gapNoteHtml = () => gapNote && Date.now() - gapNote.at < 180000 ? `<div class="cmGapNote ${gapNote.tone}" role="status" aria-live="polite">${E(gapNote.text)}</div>` : "";
-  const gapHint = '<div class="cmGapHint">Check now re-reads it right away. Dismiss hides this notice until something changes; the inbox keeps re-reading it either way. Nothing is lost.</div>';
+  const gapHint = '<div class="cmGapHint">Check now re-reads it right away. Matches Etsy clears it for good once you have compared it with Etsy (it comes back only if that conversation changes). Dismiss only hides this notice; the inbox keeps re-reading it. Nothing is lost.</div>';
 
   let healthBox = null;   // { box, owner } — the one details panel open, if any
   function healthRows() {
@@ -543,6 +563,8 @@
     if (b && healthBox && healthBox.box.contains(b)) { recheckNow(); return; }
     const x = e.target.closest("[data-gap-dismiss]");
     if (x && healthBox && healthBox.box.contains(x)) dismissGap(x.dataset.gapDismiss);
+    const rv = e.target.closest("[data-gap-resolve]");
+    if (rv && healthBox && healthBox.box.contains(rv)) resolveGap(rv.dataset.gapResolve);
     const pa = e.target.closest("[data-hputaway]");
     if (pa && healthBox && healthBox.box.contains(pa)) putAway();
   });
@@ -715,6 +737,7 @@
     pillMenu.querySelectorAll(".mmRow").forEach(x => x.onclick = () => { const s = M.store.get(x.dataset.id); pillMenu.remove(); pillMenu = null; if (s) openConversation(s); });
     pillMenu.querySelectorAll("[data-pill-check]").forEach(x => x.onclick = e => { e.stopPropagation(); recheckNow(); });
     pillMenu.querySelectorAll("[data-gap-dismiss]").forEach(x => x.onclick = e => { e.stopPropagation(); dismissGap(x.dataset.gapDismiss); });
+    pillMenu.querySelectorAll("[data-gap-resolve]").forEach(x => x.onclick = e => { e.stopPropagation(); resolveGap(x.dataset.gapResolve); });
     pillMenu.querySelectorAll("[data-pill-putaway]").forEach(x => x.onclick = e => { e.stopPropagation(); putAway(); });
   }
 

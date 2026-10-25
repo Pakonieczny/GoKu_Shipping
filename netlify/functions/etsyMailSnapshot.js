@@ -828,6 +828,13 @@ exports.handler = async (event) => {
             fullReread: FV.delete(),
             readComplete: { atMs: Date.now(), reqAtMs: prevThread.fullReread.atMs, pageMessages: messages.length, inserted: writtenCount }
           }, { merge: true });
+        } else {
+          // why this read is no proof, so the link's notice can say it instead of "waiting" for good (_etsyMailLinkConsistency.js keeps it on the gap)
+          const why = session && session.etsyLoggedIn === false ? "Etsy had signed the extension out"
+            : scrapeIssue ? String(scrapeIssue)
+            : !messages.length ? "no messages were read from the conversation page"
+            : scrapeMode !== "full" ? "the extension read only the newest messages, not the whole conversation" : "the read was not complete";
+          await tRef.set({ readIncomplete: { atMs: Date.now(), why: why.slice(0, 120), mode: scrapeMode || null, pageMessages: messages.length } }, { merge: true });
         }
       } catch (e) { console.warn("[snapshot] complete-read mark not written:", e.message); }
     }

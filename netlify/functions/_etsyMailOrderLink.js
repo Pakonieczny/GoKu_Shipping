@@ -1600,6 +1600,17 @@ async function linkDismiss(station, body = {}) {
   return { ok: !!r.ok, changed: !!r.changed, nothing: !!r.nothing, health: pub.res, link: LinkHealth.summaryOf(pub.doc) };
 }
 
+/** "Matches Etsy" (Paul, 25 Oct 2026: the missing-messages notice could not be reset): a person compared the conversation(s) with Etsy and nothing is missing.
+ *  The gaps of the notice they saw close as checked (_etsyMailLinkConsistency.js resolve), and the judgement is published at once, so every sorter and the
+ *  inbox's banner clear. Only the link's own bookkeeping changes; it comes back only if a conversation changes. */
+async function linkResolve(station, body = {}) {
+  const now = Date.now();
+  const r = await require("./_etsyMailLinkConsistency").resolve(db, { sig: String(body.sig || "").slice(0, 40), by: station && station.name, now });
+  const pub = await LinkHealth.publish(db, now, { keepStamp: true });
+  _health = { at: now, value: pub.res }; _recheck = { at: 0, value: null };
+  return { ok: !!r.ok, n: r.n || 0, changed: !!r.changed, nothing: !!r.nothing, health: pub.res, link: LinkHealth.summaryOf(pub.doc) };
+}
+
 /** MAILAWAY (Paul, 14 Oct 2026): the notice's "Put away": every dead letter of the send queue is put away without sending (a person looked at the notice and chose it), then the light is judged again. */
 async function linkPutAway(station, body = {}) {
   const now = Date.now();
@@ -1953,7 +1964,7 @@ module.exports = {
   cancel: withFlush(cancel), markCopied: withFlush(markCopied), markSent: withFlush(markSent), read: withFlush(read),
   onQueueChange: withFlush(onQueueChange),
   setStatus: withFlush(setStatus), setLang: withFlush(setLang), linkUrl: withFlush(linkUrl),
-  simulateReply: withFlush(simulateReply), translate, health, linkRecheck, linkDismiss, linkPutAway, historyInfo, history,
+  simulateReply: withFlush(simulateReply), translate, health, linkRecheck, linkDismiss, linkResolve, linkPutAway, historyInfo, history,
   testInfo: withFlush(testInfo), testStart: withFlush(testStart), testCancel,
   // exposed for tests
   _internal: { foldMessages, sameText, normText, summary, cleanText, cleanId, applyPatch, friendlyFailure, parkedCopy, isDelete, SB, sbQueueView, resetRecheck: () => { _recheck = { at: 0, value: null }; } }
