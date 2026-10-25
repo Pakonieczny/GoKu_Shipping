@@ -15482,7 +15482,14 @@ async function _handlerImpl(event) {
       // Every reference is checked from its bytes before it is sent (see lib/listingBatchImages.cjs):
       // the Storage label is not trusted. What was relabelled or converted is kept on the job record.
       const inputFixes = [];
-      const readReference = async (path, role) => {
+      // A set's six requests share its charm: it is read and checked once, not once per slot.
+      const referenceReads = new Map();
+      const readReference = (path, role) => {
+        const key = `${role}|${path}`;
+        if (!referenceReads.has(key)) referenceReads.set(key, readReferenceOnce(path, role));
+        return referenceReads.get(key);
+      };
+      const readReferenceOnce = async (path, role) => {
         let timer;
         try {
           // This deadline is before batch creation. A late storage read cannot
@@ -15909,7 +15916,10 @@ async function _handlerImpl(event) {
           // Preparation failed for THIS set and admission has already recorded it (a wait, or a stop
           // such as an unreadable reference). Rewriting it as "queued" undid the stop on every run,
           // and the answer without sourceError made the sweep stop the whole refill behind it.
-          await originalRef.set({ retryStartedAt: null, rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+          // The claim above wrote "submitting"; a set that is only waiting to be tried again reads "queued".
+          const now = (await originalRef.get()).data() || {};
+          await originalRef.set({ retryStartedAt: null, ...(now.retryStatus === "submitting" ? { retryStatus: "queued" } : {}),
+            rev: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
           return json(200, { ok: true, queued: true, sourceError: true, reason: result.reason || null, batchName: originalName });
         }
         if (response.statusCode === 200 && result.ok && result.queued) {

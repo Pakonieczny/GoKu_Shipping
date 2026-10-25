@@ -71,9 +71,10 @@ function interruptionPatch(record, message, now, timestamp) {
     return { ...preparationFailurePatch(record, `${message} This set stopped the worker ${interruptions} times.`, now, timestamp, true),
       preparationInterruptions: interruptions };
   }
+  // repairPending is left as it is: a repair of a finished job is queued by it (the sweep's queue).
   return { preparationInterruptions: interruptions, retryError: String(message).slice(0, 500),
     retryNotBefore: now + Math.min(240, 10 * 2 ** (interruptions - 1)) * 60000,
-    retryRequested: true, repairPending: false, updatedAt: timestamp(), rev: timestamp() };
+    retryRequested: true, updatedAt: timestamp(), rev: timestamp() };
 }
 // An unconfirmed create is given up (and its set queued again) only when it is this old and the
 // provider's job list reaches back past it without the job: OpenAI lists a new job within seconds.
@@ -203,8 +204,16 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
       if (!sourceName) return;
       const ss = await tx.get(batches.doc(sourceName));
       const s = ss.data();
-      if (!s || s.retryBatchName || s.setComplete || s.retryStatus === 'preparation_failed' ||
-          !s.locallyQueued || stalled?.stalledAt && Number(s.preparationFailureAt || 0) >= stalled.stalledAt) return;
+      // Any set still to be sent counts, not only a locally queued one: a missing-image repair of a
+      // finished job (every input-image repair) is prepared the same way and can stop the worker too.
+      // An expired reservation is given back whatever the source looks like.
+      const skip = !s || s.retryBatchName || s.setComplete || s.retryStatus === 'preparation_failed' ||
+          !s.locallyQueued && !s.repairPending && !s.retryRequested ||
+          stalled?.stalledAt && Number(s.preparationFailureAt || 0) >= stalled.stalledAt;
+      if (skip) {
+        if (expired) tx.set(gate, { owner: null, phase: 'idle', sourceName: null, lastError: null }, { merge: true });
+        return;
+      }
       const message = `Listing preparation stopped before submission${g.preparationStage ? ` while ${g.preparationStage}` : ''}. Other listings can continue.`;
       // The worker stopped (time limit, restart, frozen process): that says nothing against the
       // set, so it does not count toward PREPARATION_FAILURE_LIMIT. It waits longer each time and

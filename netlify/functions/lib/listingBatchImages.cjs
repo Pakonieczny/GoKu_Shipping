@@ -22,6 +22,8 @@ const MAX_SIDE = 4096;
 const CHARM_MAX_SIDE = 2048;
 const MIN_SIDE = 32;
 const MAX_BYTES = 15 * 1024 * 1024;
+// Larger than any reference could usefully be (100 MP); refused before it is decoded.
+const MAX_INPUT_PIXELS = 100 * 1000 * 1000;
 
 class InputImageError extends Error {
   constructor(message) {
@@ -113,7 +115,7 @@ async function normalizeBatchInputImage(buf, { contentType = '', path = '', role
     throw new InputImageError(`${label} is ${what(type)}, labelled ${from}. OpenAI accepts PNG, JPEG or WebP.`);
   }
   let meta;
-  try { meta = await sharp(buf, { failOn: 'none' }).metadata(); }
+  try { meta = await sharp(buf, { failOn: 'none', limitInputPixels: MAX_INPUT_PIXELS }).metadata(); }
   catch (err) {
     throw new InputImageError(`${label} cannot be read as an image (${what(type)}, ${buf.length} bytes, labelled ${from}): ${err?.message || err}. Replace the file with a PNG or JPEG.`);
   }
@@ -123,7 +125,10 @@ async function normalizeBatchInputImage(buf, { contentType = '', path = '', role
   // A complete decode is the only proof the file is whole: a cut-off upload has a valid header and
   // a browser still shows the part that arrived. Such a file is refused, not patched: the model
   // would be shown half a charm, and the listing made from it would be wrong.
-  try { await sharp(buf, { failOn: 'warning' }).raw().toBuffer(); }
+  // The check reads all the data but keeps only a small picture, so memory stays bounded whatever
+  // the file's size (a full 4096 px bitmap is 64 MB; two references are read at a time).
+  if (width * height > MAX_INPUT_PIXELS) throw new InputImageError(`${label} is ${width}x${height} pixels, too large to use as a reference. Replace the file.`);
+  try { await sharp(buf, { failOn: 'warning', sequentialRead: true, limitInputPixels: MAX_INPUT_PIXELS }).resize({ width: 64, height: 64, fit: 'inside' }).raw().toBuffer(); }
   catch (err) {
     throw new InputImageError(`${label} is damaged or incomplete (${what(type)}, ${buf.length} bytes, labelled ${from}): ${
       String(err?.message || err).split('\n')[0]}. Upload the file again.`);
@@ -144,7 +149,7 @@ async function normalizeBatchInputImage(buf, { contentType = '', path = '', role
     const mime = OPENAI_MIME[type];
     return { buffer: buf, mime, from, action: mime === from ? 'as-is' : 'relabelled', detail: `${type} ${width}x${height}` };
   }
-  const pipeline = () => sharp(buf, { failOn: 'none', pages: 1 })
+  const pipeline = () => sharp(buf, { failOn: 'none', pages: 1, sequentialRead: true, limitInputPixels: MAX_INPUT_PIXELS })
     .rotate()
     .resize({ width: maxSide, height: maxSide, fit: 'inside', withoutEnlargement: true })
     .toColourspace('srgb');

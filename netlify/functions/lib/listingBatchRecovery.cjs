@@ -11,13 +11,15 @@ const normalizeState = value => String(value || '').replace(/^BATCH_STATE_/, 'JO
 // uploaded image."). Before 2026-10-25 that text matched 'upload' below and was read as a storage
 // failure, so every such set was re-collected on every sweep for good and never retried or stopped.
 // A failure recorded with source 'provider' was answered by OpenAI and is never a storage failure.
-const INPUT_IMAGE_RE = /invalid (?:input )?image|image file|unsupported image|(?:could not|cannot|unable to|failed to) (?:decode|read|process|download|fetch|load) (?:the |an |input )?image|invalid_image|image_parse|not a (?:usable|valid|readable) (?:reference|image)/i;
+const INPUT_IMAGE_RE = /invalid (?:input )?image(?! size)|image file|unsupported image|(?:could not|cannot|unable to|failed to) (?:decode|read|process|download|fetch|load) (?:the |an |input )?image|invalid_image|image_parse|not a (?:usable|valid|readable) (?:reference|image)/i;
 const failureKind = value => {
   const failure = value && typeof value === 'object' ? value : { error: value };
   const text = String(failure.error ?? failure.message ?? '');
+  // What failed here is decided by who recorded it before what the text says.
+  if (failure.source === 'storage') return 'storage';
   if (/safety system|safety_violations|moderation|content_policy/i.test(text)) return 'content';
   if (INPUT_IMAGE_RE.test(text) || /invalid_image|image_parse/i.test(String(failure.code || ''))) return 'input';
-  const transient = /rate.limit|overload|temporar|internal.server|timeout|no result returned|no inline_data|batch error|completion window expired|batch_expired/i;
+  const transient = /rate.limit|overload|temporar|internal.server|timeout|no result returned|no inline_data|batch error|completion window expired|batch_expired|socket hang up|ECONN|ETIMEDOUT|network|fetch failed|server_error|server had an error|timed out|HTTP (?:429|5\d\d)/i;
   if (failure.source === 'provider') return transient.test(text) ? 'transient' : 'other';
   return /socket hang up|ECONN|ETIMEDOUT|storage\.googleapis|upload|download|network|fetch failed|manifest:/i.test(text) ? 'storage'
     : transient.test(text) ? 'transient' : 'other';
@@ -167,7 +169,7 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
       if (canSave && Number(latest.collectAttempts || 0) >= COLLECT_ATTEMPT_LIMIT) {
         status = 'blocked'; summary.blocked++;
         note = `Saving the finished images failed ${latest.collectAttempts} times: ${String(latest.lastCollectError ||
-          failures.find(f => failureKind(f) === 'storage')?.error || 'no answer').slice(0, 200)}. Use "Recover available results" to try again.`;
+          failures.find(f => failureKind(f) === 'storage')?.error || 'no answer').slice(0, 200)}. The collector still tries again every few hours; a set that saves then completes by itself.`;
         // collectionPending:false takes it off the sweep's saving read; the collector still tries a
         // finished job now and then (collectNotBefore), so a later success is not lost.
         patch = { recoveryStatus: 'blocked', recoveryReason: note, setComplete: false, repairPending: false, retryRequested: false,

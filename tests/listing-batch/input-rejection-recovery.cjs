@@ -114,7 +114,9 @@ const setOf = (result, n) => result.sets.find(s => s.setN === n);
   assert.equal(providerRec.collected, true);
 
   assert.equal(first.result.saving, 1, 'only the storage failure is saving');
-  assert.equal(first.result.queued, 2);
+  // A network error OpenAI reported is transient: that set is queued again too (not stopped for good).
+  assert.equal(provider.status, 'queued', `a network error OpenAI reported is tried again (got ${provider.status})`);
+  assert.equal(first.result.queued, 3);
   assert.equal(first.result.status, 'in_progress');
 
   // The next check finds the same sets queued and writes nothing more to them (no loop either way).
