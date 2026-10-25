@@ -2769,13 +2769,17 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .ogHead .ogSaid{flex:1 1 200px}.ogHead .rowExcerpt{line-height:1.6;-webkit-line-clamp:3}
 .ogHead .ogActs{margin-left:auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px 12px;border:0;padding:0;min-width:0}
 .ogHead .ogActs .revSendMsg{flex:1 0 100%;max-width:none;text-align:right}
+/* (HOLDALIGN, Paul 25 Oct 2026: "These Hold buttons are not horizontally aligned.") A one-piece order's Hold Order stood at the left of its actions column, a grouped order's at the card's right edge (.ogActs);
+   in the list both end at the right edge now, its line under it with it */
+.ordList .orderListRow > .rowActions > .revSendBtn,.ordList .orderListRow > .rowActions > .revSendMsg{align-self:flex-end;justify-self:end;text-align:right}
+@container(max-width:1100px){.ordList .orderListRow > .rowActions > .revSendBtn{order:9;margin-left:auto}.ordList .orderListRow > .rowActions > .revSendMsg{order:10;flex:1 0 100%;max-width:none}}   /* (the actions are a strip under the row here: the button at its right end, as the grouped order's) */
 .ogPiece{min-width:0}
 .ordList .ordGroup,.ordList .ordGroup:hover{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--slate);border-radius:9px;width:100%;min-width:0;box-sizing:border-box;cursor:pointer;text-align:left;font-size:12.5px}
 .ordList .ordGroup:hover{border-color:var(--ink45);border-left-color:var(--slate)}
 .ordGroup.cnBusy{transform:translateY(-2px);transition:transform .24s cubic-bezier(.2,.8,.2,1)}
 @media(prefers-reduced-motion:reduce){.ordGroup.cnBusy{transform:none;transition:none}}
 .mGhost>.ordGroup.mCopy,.mGhost>.hoverItem.mCopy{transition:none}   /* (RHSAME, Paul 20 Oct 2026: a single-line card's flying copy too: the copy of a hovered card drops its hover lift on the motion layer, and .hoverItem's box-shadow transition must not animate it; only transform and opacity fly) */
-.ordList .ordGroup .ogHead{padding:14px 16px 10px 14px}
+.ordList .ordGroup .ogHead{padding:14px 18px 10px 14px}   /* (HOLDALIGN: the rows' own right padding, so a grouped order's Hold Order ends where a one-piece order's does) */
 .ordList .ordGroup .ogPiece.doneRow.workRow{border:0;border-top:1px solid var(--line2);border-radius:0;background:transparent;box-shadow:none;min-height:0;padding:12px 16px 12px 14px}
 .ordList .ordGroup .ogPiece.doneRow.workRow:hover{background:var(--paper2)}
 .ordList .ordGroup .ogPiece.doneRow.workRow:last-child{border-radius:0 0 8px 6px}
