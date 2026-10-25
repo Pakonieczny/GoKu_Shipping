@@ -130,6 +130,14 @@ async function failedPreparationIsolationScenario() {
   assert.equal((await gate.reserve('broken')).sourceError,true,'stopped preparation is not paid again');
   assert((await gate.reserve('healthy')).token,'terminal source failure does not hold the next listing');
 }
+// Preparation now reads references to files and checks them in a child process (lib/listingBatchPrepare.cjs,
+// its own test: prepare-memory.cjs); admission is about what happens around it.
+const prep=require('../../netlify/functions/lib/listingBatchPrepare.cjs');
+const prepStubs={require, appendJsonlLine:prep.appendJsonlLine, imageToken:prep.imageToken,
+  checkReferenceFiles:async items=>({mode:'test',results:items.map(item=>({file:item.file,mime:item.contentType,from:item.contentType,action:'as-is'}))})};
+// No disk I/O: the scenarios speed the 45 s download deadline up to "at once", and nothing reads the
+// references here (the line builder is a stub without images).
+const writeTestImage=async()=>({mime:'image/png'});
 async function originalSubmissionScenario() {
   const db=database(35); let uploads=0, creates=0, now=1000000;
   const body={kind:'batch_submit',sessionId:'sess_original',displayName:'lg1-Beady_Necklace-300sets-test-part282of300',
@@ -146,12 +154,13 @@ async function originalSubmissionScenario() {
     process,Buffer,console:{log:()=>{}}, json:(statusCode,data)=>({statusCode,...data}), quotaFailure,
     setTimeout: fn => setTimeout(fn, 0), clearTimeout,
     runBoundedConcurrent:async(items,_n,fn)=>Promise.all(items.map(async(item,i)=>{try{return await fn(item,i);}catch(__error){return {__error};}})),
-    storagePathToBuffer:async path=>path === 'unreadable' ? new Promise(()=>{}) : ({mime:'image/png',buffer:Buffer.from('test image')}),
+    storagePathToFile:async (path,destination)=>path === 'unreadable' ? new Promise(()=>{}) : writeTestImage(path,destination),
     // The byte check has its own test (input-images.cjs); admission is about what happens around it.
-    normalizeBatchInputImage:async(buffer,{contentType})=>({buffer,mime:contentType,from:contentType,action:'as-is'}),
+    ...prepStubs,
     buildOpenAIBatchJsonlLine:()=>({request:'test'}),listingImageSize:()=> '2048x2048',
     withCurrentBeadyCharmSize:(_set,_slot,prompt)=>prompt,
-    uploadOpenAIBatchFile:async()=>{uploads++;return 'file-input';},
+    uploadOpenAIBatchFile:async(_key,file)=>{uploads++;assert.equal(typeof file,'string','the JSONL is uploaded from its file');
+      assert.match(await require('node:fs/promises').readFile(file,'utf8'),/"request":"test"/);return 'file-input';},
     createOpenAIImageBatch:async()=>{creates++;return {batchName:'batch_one',raw:{id:'batch_one'}};},
   });
   const first=await submit(body), repeated=await submit(body);
@@ -240,8 +249,7 @@ async function submitRefusalCountScenario() {
     admin:{storage:()=>({bucket:()=>({})}),firestore:{FieldValue:{serverTimestamp:()=>1,increment:n=>({increment:n})}}},
     process,Buffer,console:{log:()=>{}}, json:(statusCode,data)=>({statusCode,...data}), setTimeout, clearTimeout,
     runBoundedConcurrent:async(items,_n,fn)=>Promise.all(items.map(fn)),
-    storagePathToBuffer:async()=>({mime:'image/png',buffer:Buffer.from('test image')}),
-    normalizeBatchInputImage:async(buffer,{contentType})=>({buffer,mime:contentType,from:contentType,action:'as-is'}),
+    storagePathToFile:writeTestImage, ...prepStubs,
     buildOpenAIBatchJsonlLine:()=>({request:'test'}),listingImageSize:()=> '2048x2048',
     withCurrentBeadyCharmSize:(_set,_slot,prompt)=>prompt,
     uploadOpenAIBatchFile:async()=>'file-input',
@@ -250,4 +258,67 @@ async function submitRefusalCountScenario() {
   assert.equal(result.queued,true);
   assert.deepEqual(db.data.get('batches/batch_src').capacityRefusals,{increment:1});
 }
-(async()=>{await unitScenarios();await staleProbeScenario();await abandonedPreparationScenario();await failedPreparationIsolationScenario();await originalSubmissionScenario();await quotaRecoveryScenario();await cancellationFeedbackScenario();await submitRefusalCountScenario();console.log('Shared admission: concurrency, isolated bounded preparation failures, abandoned workers, capacity, validation, durable queue, idempotency and paid-create reconciliation passed');})().catch(e=>{console.error(e);process.exitCode=1;});
+// 2026-10-25: OpenAI's file service refused about one upload in six. After uploadOpenAIBatchFile's own tries the
+// set gets no strike, waits 5, then 10 … minutes (retryNotBefore), and admission is free for the next set.
+async function uploadRefusedScenario() {
+  const db=database(0);
+  db.data.set('batches/batch_src',{batchName:'batch_src',state:'JOB_STATE_SUCCEEDED',collected:true,repairPending:true,retryRequested:true});
+  const start=src.indexOf('    if (kind === "batch_submit") {');
+  const end=src.indexOf('    if (kind === "batch_retry_queue") {',start);
+  let creates=0;
+  const body={kind:'batch_submit',sessionId:'sess_original',displayName:'retry-y',retryOf:'batch_src',
+    sets:[{category:'Beady_Necklace',setN:10,outputBasePath:'listing-generator-1/Beady_Necklace/Ready_To_List/Set_10',
+      tasks:[{type:'edits',slotIndex:0,prompt:'p',input_storage_path:'ref.png',input_charm_storage_path:'charm.png'}]}]};
+  const submit=()=>vm.runInNewContext(`(async()=>{ ${src.slice(start,end)} })()`,{
+    kind:'batch_submit', body:clone(body), modelConfig:{id:'gpt-image-2.5-sunburst',supportsBatch:true},
+    apiKeyForImageModel:()=> 'test', batchDocIdFromName:x=>x, getDb:()=>db, BATCHES_COLL:'batches', admissionControl, queuedName, quotaFailure,
+    batchCharmPaths: require('../../netlify/functions/lib/listingBatchReservations.cjs').batchCharmPaths,
+    normalizeCategory:x=>x,GENERATABLE_CATEGORIES:new Set(['Beady_Necklace']),assertAllowedOutputBase:()=>{},
+    admin:{storage:()=>({bucket:()=>({})}),firestore:{FieldValue:{serverTimestamp:()=>1,increment:n=>({increment:n})}}},
+    process,Buffer,console:{log:()=>{},warn:()=>{}}, json:(statusCode,data)=>({statusCode,...data}), setTimeout, clearTimeout,
+    runBoundedConcurrent:async(items,_n,fn)=>Promise.all(items.map(fn)),
+    storagePathToFile:writeTestImage, ...prepStubs,
+    buildOpenAIBatchJsonlLine:()=>({request:'test'}),listingImageSize:()=> '2048x2048',
+    withCurrentBeadyCharmSize:(_set,_slot,prompt)=>prompt,
+    uploadOpenAIBatchFile:async()=>{throw Object.assign(new Error('OpenAI Batch failed with HTTP 503 (empty body)'),{status:503});},
+    createOpenAIImageBatch:async()=>{creates++;return {batchName:'batch_x',raw:{}};},
+  });
+  const t0=Date.now();
+  const first=await submit();
+  assert.equal(first.queued,true);
+  assert.equal(first.sourceError,false,'a refused upload is not the set\'s fault');
+  assert.match(first.reason,/^OpenAI file upload unavailable/);
+  let rec=db.data.get('batches/batch_src');
+  assert.equal(rec.uploadFailures,1);
+  assert(rec.retryNotBefore>=t0+5*60000-1000 && rec.retryNotBefore<=Date.now()+5*60000,'it waits five minutes');
+  assert(!rec.preparationFailures,'no strike');
+  assert.equal(db.data.get('LG1_Config/batchAdmission').owner,null,'admission is free for the next set');
+  rec.retryNotBefore=0;
+  await submit();
+  rec=db.data.get('batches/batch_src');
+  assert.equal(rec.uploadFailures,2);
+  assert(rec.retryNotBefore>=t0+10*60000-1000,'then ten');
+  assert.equal(creates,0,'nothing is created without an input file');
+}
+// A stopped image-check worker (lib/listingBatchPrepare.cjs, err.interrupted) is no fault of the set: it is backed
+// off as an interruption (interruptionPatch: 10, 20 … minutes, a stop only after six), not a strike of three.
+async function interruptedCheckScenario() {
+  const db=database(0);
+  db.data.set('batches/batch_src',{batchName:'batch_src',state:'JOB_STATE_SUCCEEDED',collected:true,repairPending:true,retryRequested:true});
+  const gate=admissionControl(db,'batches',()=>1);
+  for (let n=1;n<=3;n++) {
+    db.data.get('batches/batch_src').retryNotBefore=0;
+    const claim=await gate.reserve('batch_src');
+    assert(claim.token,`attempt ${n} is admitted`);
+    const err=Object.assign(new Error('The reference image check stopped (SIGKILL) before it finished; this listing is tried again later.'),{interrupted:true});
+    assert.equal(await gate.failPreparation(claim,err),true);
+    await gate.release(claim,err);
+  }
+  const rec=db.data.get('batches/batch_src');
+  assert.equal(rec.preparationInterruptions,3);
+  assert(!rec.preparationFailures,'no strikes');
+  assert.notEqual(rec.retryStatus,'preparation_failed','three kills do not stop the set');
+  assert.equal(rec.retryRequested,true);
+  assert(rec.retryNotBefore>Date.now()+30*60000,'it waits longer each time (40 minutes after the third)');
+}
+(async()=>{await unitScenarios();await staleProbeScenario();await abandonedPreparationScenario();await failedPreparationIsolationScenario();await originalSubmissionScenario();await quotaRecoveryScenario();await cancellationFeedbackScenario();await submitRefusalCountScenario();await uploadRefusedScenario();await interruptedCheckScenario();console.log('Shared admission: concurrency, isolated bounded preparation failures, abandoned workers, capacity, validation, durable queue, idempotency and paid-create reconciliation passed');})().catch(e=>{console.error(e);process.exitCode=1;});

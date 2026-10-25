@@ -50,22 +50,48 @@ async function scenario(path, options = {}, stalled = false, ignoresAbort = fals
   await scenario('/files', {method: 'POST'});
   await scenario('/batches/test-job');
   const tempDirs=[], fsAsync=require('node:fs/promises');
-  let uploadFails=false;
+  let uploadFails=0, attempts=0;
+  const waits=[];
   const upload = vm.runInNewContext(`${cut('uploadOpenAIBatchFile')}\nuploadOpenAIBatchFile;`, {
     require:name=>name==='node:fs/promises' ? {...fsAsync,mkdtemp:async prefix=>{
       const dir=await fsAsync.mkdtemp(prefix);tempDirs.push(dir);return dir;
-    }} : require(name), FormData,
+    }} : require(name), FormData, console:{warn:()=>{}},
+    setTimeout:(fn,ms)=>{waits.push(ms);return setTimeout(fn,0);},
     openAIBatchRequest:async (_key,_path,opts)=>{
+      attempts++;
       const file=opts.body.get('file');
       assert.equal(file.name,'listing-images.jsonl');
       assert.equal(await file.text(),'test JSONL\n');
-      if(uploadFails) throw Object.assign(new Error('Upload timed out'),{status:504});
+      if(uploadFails-- > 0) throw Object.assign(new Error('Upload timed out'),{status:504});
       return {id:'file-test'};
     },
   });
   assert.equal(await upload('test-key',Buffer.from('test JSONL\n'),'test'),'file-test');
-  uploadFails=true;
-  await assert.rejects(upload('test-key',Buffer.from('test JSONL\n'),'test'),/Upload timed out/);
+  // OpenAI's edge refusing one upload (2026-10-25: "upstream connect error ... Connection refused") is tried again.
+  uploadFails=2; attempts=0;
+  assert.equal(await upload('test-key',Buffer.from('test JSONL\n'),'test'),'file-test');
+  assert.equal(attempts,3,'two transient failures, then the upload goes through');
+  assert.deepEqual(waits,[3000,10000]);
+  uploadFails=9; attempts=0; waits.length=0;
+  const retried=[];
+  await assert.rejects(upload('test-key',Buffer.from('test JSONL\n'),'test',{onRetry:n=>retried.push(n)}),/Upload timed out/);
+  assert.equal(attempts,4,'it gives up after four tries');
+  assert.deepEqual(waits,[3000,10000,30000]);
+  assert.deepEqual(retried,[1,2,3],'the caller hears of each new try (batch_submit renews its reservation)');
+  // A refusal of the file itself is not tried again.
+  const refuse = vm.runInNewContext(`${cut('uploadOpenAIBatchFile')}\nuploadOpenAIBatchFile;`, {
+    require, FormData, console:{warn:()=>{}}, setTimeout,
+    openAIBatchRequest:async ()=>{attempts++;throw Object.assign(new Error('Invalid file format'),{status:400});},
+  });
+  attempts=0;
+  await assert.rejects(refuse('test-key',Buffer.from('x\n'),'test'),/Invalid file format/);
+  assert.equal(attempts,1);
+  // A path is uploaded as it is (batch_submit writes the JSONL to a file), and is not removed.
+  const own=require('node:path').join(await fsAsync.mkdtemp(require('node:path').join(require('node:os').tmpdir(),'own-')),'in.jsonl');
+  await fsAsync.writeFile(own,'test JSONL\n');
+  uploadFails=0;
+  assert.equal(await upload('test-key',own,'test'),'file-test');
+  assert.equal(await fsAsync.readFile(own,'utf8'),'test JSONL\n','the caller owns its file');
   for(const dir of tempDirs) await assert.rejects(fsAsync.access(dir),error=>error.code==='ENOENT',
     'temporary input files are removed after success and failure');
   console.log('Batch provider requests: hard full-response deadlines even when cancellation is ignored, file-backed uploads and successful cleanup passed');

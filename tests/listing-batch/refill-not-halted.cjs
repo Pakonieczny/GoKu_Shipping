@@ -92,6 +92,50 @@ const submitFor = (records, broken) => async (payload) => {
   return { statusCode: 200, body: JSON.stringify({ ok: true, batchName: `batch_new_for_${payload.retryOf}` }) };
 };
 
+// The sweep's refill (the real code) over repair records `order`, each submitted through batch_retry_missing and `submit`.
+async function refillWith(order, submitOf) {
+  const records = Object.fromEntries(order.map((n) => [repairRecord(n).batchName, repairRecord(n)]));
+  const world = retryWorld(records, submitOf(records));
+  const calls = [];
+  const open = order.map((n) => {
+    const r = repairRecord(n);
+    return { batchName: r.batchName, state: r.state, collected: true, repairPending: true, retryRequested: true,
+      retryAttempt: 0, setComplete: false, sessionId: r.sessionId, sets: r.sets.map((x) => ({ outputBasePath: x.outputBasePath, setKind: null })) };
+  });
+  const context = {
+    open, retriesSubmitted: 0, normState: (x) => String(x || "").replace(/^BATCH_STATE_/, "JOB_STATE_"),
+    isFinal: (x) => ["JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(x), sweepStart: Date.now(),
+    isSucceeded: (x) => x === "JOB_STATE_SUCCEEDED",
+    checkValidation: async () => ({ ok: true, state: "JOB_STATE_RUNNING" }),
+    SWEEP_BUDGET_MS: 11 * 60 * 1000,
+    inProcess: async (payload) => { calls.push(payload.batchName); return JSON.parse((await world.run(payload.batchName)).body); },
+    db: { collection: () => ({ doc: () => ({ set: async () => {} }),
+      where: () => ({ select: () => ({ get: async () => ({ docs: [] }) }), get: async () => ({ docs: [] }) }) }),
+      runTransaction: async () => false },
+    admin: { firestore: { FieldValue: { serverTimestamp: () => 1 } } },
+    guardRef: { set: async () => {} }, guardWrite: async () => true, superseded: false, checkpoint: async () => {},
+    touch: () => {}, openRefs: new Map(), lightFields: [], compact: (r) => r,
+    BATCHES_COLL: "batches", batchDocIdFromName: (x) => x,
+    stallRestartPending: admissionLib.stallRestartPending, quotaFailure: admissionLib.quotaFailure,
+    console: { warn: () => {}, log: () => {} },
+  };
+  const outcome = await vm.runInNewContext(
+    `(async () => { ${refill} return { activeCount, retriesSubmitted, sourceErrors, uploadRefusals, refillNeedsContinuation }; })()`, context);
+  return { outcome, calls, records };
+}
+// batch_submit when OpenAI's file service refuses the upload of the sets in `refused` (after its own tries):
+// the set keeps a wait, and the answer is a plain "queued" with the reason (no sourceError: no strike).
+const uploadRefusedFor = (refused) => (records) => async (payload) => {
+  const n = Number(/Set_(\d+)$/.exec(payload.sets[0].outputBasePath)[1]);
+  if (refused.includes(n)) {
+    Object.assign(records[payload.retryOf], { retryError: "OpenAI Batch failed with HTTP 503 (empty body)", uploadFailures: 1,
+      retryNotBefore: Date.now() + 5 * 60000 });
+    return { statusCode: 200, body: JSON.stringify({ ok: true, queued: true, batchName: payload.retryOf, state: "JOB_STATE_QUEUED",
+      sourceError: false, reason: "OpenAI file upload unavailable: OpenAI Batch failed with HTTP 503 (empty body)" }) };
+  }
+  return { statusCode: 200, body: JSON.stringify({ ok: true, batchName: `batch_new_for_${payload.retryOf}` }) };
+};
+
 (async () => {
   // (1) batch_retry_missing passes the set's own failure through.
   {
@@ -157,5 +201,27 @@ const submitFor = (records, broken) => async (payload) => {
     assert.equal(records[broken].retryStatus, "preparation_failed", "and the broken set keeps its stop");
     assert.equal(outcome.activeCount, 3);
   }
-  console.log("Listing batch refill: a set's own submission failure is passed through (sourceError) and the refill submits the sets behind it passed");
+  // (3) 2026-10-25: OpenAI's file service refused one upload in six (HTTP 503, "upstream connect error ...
+  // Connection refused"), and each refusal ended the run's refill. One refusal: that set waits, the rest go.
+  {
+    const order = [2001, 2002, 2003, 2004];
+    const { outcome, calls, records } = await refillWith(order, uploadRefusedFor([2001]));
+    assert.equal(calls.length, 4, "every set is offered");
+    assert.equal(outcome.uploadRefusals, 1);
+    assert.equal(outcome.retriesSubmitted, 3, `the sets behind a refused upload are submitted (got ${outcome.retriesSubmitted})`);
+    const refused = records[repairRecord(2001).batchName];
+    assert(refused.retryNotBefore > Date.now(), "the refused set waits before it is tried again");
+    assert.equal(refused.retryRequested, true, "and stays queued");
+    assert.notEqual(refused.retryStatus, "preparation_failed", "with no strike against it");
+  }
+  // (4) A second refusal in the same run means the service is down: the refill pauses until the next run.
+  {
+    const order = [2101, 2102, 2103, 2104];
+    const { outcome, calls } = await refillWith(order, uploadRefusedFor([2101, 2103]));
+    assert.deepEqual(calls, [2101, 2102, 2103].map((n) => repairRecord(n).batchName), "the set after the second refusal waits");
+    assert.equal(outcome.retriesSubmitted, 1);
+    assert.equal(outcome.uploadRefusals, 2);
+    assert.equal(outcome.refillNeedsContinuation, false, "no immediate continuation into a service that is down");
+  }
+  console.log("Listing batch refill: a set's own submission failure is passed through (sourceError) and the refill submits the sets behind it; one refused upload waits and the refill goes on, a second pauses it passed");
 })().catch((err) => { console.error(err); process.exitCode = 1; });

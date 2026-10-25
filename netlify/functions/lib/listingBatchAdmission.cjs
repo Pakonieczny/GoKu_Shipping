@@ -184,8 +184,10 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
       const [gs, ss] = await Promise.all([tx.get(gate), tx.get(batches.doc(claim.sourceName))]);
       const g = gs.data() || {}, s = ss.data() || {};
       if (g.owner !== claim.token || g.phase !== 'preparing' || s.retryBatchName) return false;
-      tx.set(batches.doc(claim.sourceName), preparationFailurePatch(s, error?.message || error, now(), timestamp,
-        error?.permanent === true), { merge: true });
+      // A stopped image-check worker (lib/listingBatchPrepare.cjs) is an interruption, not the set's fault.
+      tx.set(batches.doc(claim.sourceName), error?.interrupted === true
+        ? interruptionPatch(s, error?.message || error, now(), timestamp)
+        : preparationFailurePatch(s, error?.message || error, now(), timestamp, error?.permanent === true), { merge: true });
       tx.set(gate, { owner: null, phase: 'idle', sourceName: null,
         lastError: String(error?.message || error).slice(0, 500) }, { merge: true });
       return true;

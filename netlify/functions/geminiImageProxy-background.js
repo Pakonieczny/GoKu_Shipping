@@ -8,6 +8,7 @@ const { capBeadyCharmSize } = require("./_beadyCharmCap");
 const { SESSIONS_COLL, failureKind, isModelTask, compliantModelTask, reconcileSession } = require("./lib/listingBatchRecovery.cjs");
 const { batchCharmPaths, readReservedCharms, pendingBatchWork } = require("./lib/listingBatchReservations.cjs");
 const { normalizeBatchInputImage, sniffImageType } = require("./lib/listingBatchImages.cjs");
+const { checkReferenceFiles, appendJsonlLine, imageToken } = require("./lib/listingBatchPrepare.cjs");
 const { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
   neverStarted, stallRestartPending, SWEEP_CALL_LIMITS, withLimit, VALIDATION_WAIT_MS, PREPARATION_RESERVATION_MS,
   stallCutoffMs, preparationFailurePatch } = require("./lib/listingBatchAdmission.cjs");
@@ -333,6 +334,19 @@ async function assertCharmBelongsToSet(category, outputBasePath, charmPath) {
 }
 
 async function storagePathToBuffer(storagePath) {
+  const { file, mime } = await openStorageInput(storagePath);
+  const [buffer] = await file.download();
+  return { mime, buffer };
+}
+
+// The same read, straight to a file on disk: a listing submission never holds its references in memory.
+async function storagePathToFile(storagePath, destination) {
+  const { file, mime } = await openStorageInput(storagePath);
+  await file.download({ destination });
+  return { mime };
+}
+
+async function openStorageInput(storagePath) {
   const p = String(storagePath || "").trim();
   if (!p) throw new Error("input_storage_path must be a non-empty string");
 
@@ -377,9 +391,7 @@ async function storagePathToBuffer(storagePath) {
   } catch {
     // ignore metadata failure; still download bytes
   }
-
-  const [buffer] = await file.download();
-  return { mime, buffer };
+  return { file, mime };
 }
 
 function safeErr(err) {
@@ -2529,24 +2541,42 @@ function buildOpenAIBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, c
       quality: "high", size: imageSize === "1K" ? "1024x1024" : "2048x2048", output_format: "png", n: 1 } };
 }
 
-async function uploadOpenAIBatchFile(apiKey, buffer, displayName) {
+// `input` is the JSONL as a Buffer, or the path of a file that holds it (batch_submit writes one).
+// onRetry runs before each new try (batch_submit renews its admission reservation there).
+async function uploadOpenAIBatchFile(apiKey, input, displayName, { onRetry } = {}) {
   const fs = require("node:fs/promises");
   const { openAsBlob } = require("node:fs");
   const path = require("node:path");
-  const dir = await fs.mkdtemp(path.join(require("node:os").tmpdir(), "listing-batch-"));
+  const dir = typeof input === "string" ? null : await fs.mkdtemp(path.join(require("node:os").tmpdir(), "listing-batch-"));
   try {
-    const input = path.join(dir, "listing-images.jsonl");
-    await fs.writeFile(input, buffer, { mode: 0o600 });
-    const form = new FormData();
-    form.append("purpose", "batch");
-    // A memory-backed Blob duplicates the entire JSONL, and multipart
-    // serialization can make another large copy in a 1 GB function.
-    form.append("file", await openAsBlob(input, { type: "application/jsonl" }), "listing-images.jsonl");
-    const raw = await openAIBatchRequest(apiKey, "/files", { method: "POST", body: form });
-    if (!raw.id) throw new Error("OpenAI file upload returned no file ID");
-    return raw.id;
+    const file = dir ? path.join(dir, "listing-images.jsonl") : input;
+    if (dir) await fs.writeFile(file, input, { mode: 0o600 });
+    // OpenAI's edge refused about one upload in six on 2026-10-25 (HTTP 503, "upstream connect error
+    // ... Connection refused"), and each one ended the run's whole refill for ten minutes. A 5xx, 408,
+    // 429 or network failure is tried again up to three times here (after 3, 10 and 30 seconds); an
+    // upload that did arrive only leaves an unused file.
+    const started = Date.now();
+    for (let attempt = 0; ; attempt++) {
+      const form = new FormData();
+      form.append("purpose", "batch");
+      // A memory-backed Blob duplicates the entire JSONL, and multipart
+      // serialization can make another large copy in a 1 GB function.
+      form.append("file", await openAsBlob(file, { type: "application/jsonl" }), "listing-images.jsonl");
+      try {
+        const raw = await openAIBatchRequest(apiKey, "/files", { method: "POST", body: form });
+        if (!raw.id) throw new Error("OpenAI file upload returned no file ID");
+        return raw.id;
+      } catch (err) {
+        const transient = err?.status >= 500 || [408, 429].includes(err?.status) ||
+          !err?.status && /fetch failed|network|ECONN|socket|ETIMEDOUT|EAI_AGAIN|timed out|aborted/i.test(String(err?.message || ""));
+        if (!transient || attempt >= 3 || Date.now() - started > 150000) throw err;
+        console.warn(`[batch_submit] file upload failed (${err?.status || "network"}), trying again:`, String(err?.message || err).slice(0, 200));
+        await new Promise((resolve) => setTimeout(resolve, [3000, 10000, 30000][attempt]));
+        if (onRetry) await onRetry(attempt + 1);
+      }
+    }
   } finally {
-    await fs.rm(dir, { recursive: true, force: true });
+    if (dir) await fs.rm(dir, { recursive: true, force: true });
   }
 }
 
@@ -14717,7 +14747,7 @@ async function _handlerImpl(event) {
         // A restart re-sends an attempt OpenAI never started, so it does not use one of the five.
         (Number(b.retryAttempt || 0) < 5 || b.locallyQueued && Number(b.stallRestarts || 0) > 0) &&
         Number(b.retryNotBefore || 0) <= Date.now());
-      let refillNeedsContinuation = false, validationUnconfirmed = null, sourceErrors = 0;
+      let refillNeedsContinuation = false, validationUnconfirmed = null, sourceErrors = 0, uploadRefusals = 0;
       for (const b of waiting) {
         if (superseded) break;
         if (activeCount >= 30) {
@@ -14741,6 +14771,10 @@ async function _handlerImpl(event) {
           // Reference preparation failed before any paid create call. That
           // listing keeps its error, while unrelated listings can still run.
           if (retry.sourceError) { sourceErrors++; continue; }
+          // OpenAI's file service refused this set's upload (after the tries in uploadOpenAIBatchFile): the
+          // set now waits (retryNotBefore) and the next one is tried. A second refusal in the same run says
+          // the service is down: the refill pauses until the next run.
+          if (/^OpenAI file upload unavailable/.test(String(retry.reason || "")) && ++uploadRefusals < 2) continue;
           refillNeedsContinuation = retry.reason === "Waiting for provider validation" &&
             Date.now() - sweepStart + 5000 >= SWEEP_BUDGET_MS;
           break;
@@ -14884,7 +14918,7 @@ async function _handlerImpl(event) {
         lastResult: { statusChecked, collected, collectErrors, resumed, retriesSubmitted,
           stalledCancelled, stalledRestarted,
           waiting: waiting.length, activeAtAdmission: activeCount, openBatches: open.length,
-          refillContinuing: refillNeedsContinuation, validationUnconfirmed, sourceErrors, parked, openFullPass,
+          refillContinuing: refillNeedsContinuation, validationUnconfirmed, sourceErrors, uploadRefusals, parked, openFullPass,
           checksDeferred, collectsBackedOff },
         // COST (Oct 2026): the hour's mark used to be written only when the list was shorter than the 2,000 the sweep can hold. With
         // 2,000 or more uncollected records no run was ever the cheap kind: every run, every ten minutes, listed the same first 2,000.
@@ -15382,6 +15416,8 @@ async function _handlerImpl(event) {
         if (!claim.token) return json(200, { ok: true, batchName: sourceName, queued: true,
           state: "JOB_STATE_QUEUED", setsCount: sets.length, reason: claim.reason, sourceError: !!claim.sourceError });
       }
+      // The submission's working folder (references, converted copies, the JSONL), removed at the end.
+      let prepDir = null;
       try {
       // Step A: Run all "copy" tasks synchronously. They don't go through
       // Gemini and shouldn't wait for batch turnaround. This mirrors what
@@ -15424,22 +15460,13 @@ async function _handlerImpl(event) {
       // routing key encoding setIndex and slotIndex so we can place
       // the result back in the right folder.
       //
-      // MEMORY-CRITICAL DESIGN NOTE
-      // ----------------------------
-      // We never accumulate full line OBJECTS in memory. Instead:
-      //   1. Worker fetches both reference images.
-      //   2. Worker base64-encodes them into a single line object.
-      //   3. Worker JSON.stringify's the line, encodes UTF-8 → Buffer.
-      //   4. Worker pushes that Buffer into jsonlChunks[] and drops
-      //      every other reference (line object, base64 strings, raw
-      //      buffers) so GC can reclaim them immediately.
-      //
-      // This prevents the OOM that happened previously when we held
-      // all 96 line objects (each ~1.6MB) alive simultaneously, then
-      // doubled memory by serializing them into one giant string.
-      // Per worker peak ≈ 5 MB; total peak ≈ jsonlChunks size + (10
-      // workers × 5 MB).
-      const jsonlChunks = []; // Buffer[] — each chunk is one JSONL line + "\n"
+      // MEMORY-CRITICAL DESIGN NOTE (2026-10-25)
+      // ----------------------------------------
+      // Nothing large is held in memory: references are downloaded to files, checked in a child
+      // process, and the JSONL is written to a file with the images streamed into it
+      // (lib/listingBatchPrepare.cjs). Reading them into memory and checking them here left the
+      // image decoder's memory behind after every set, and a refill was killed at Netlify's 1024 MB
+      // on its third to fifth set, every run.
       const routes = []; // parallel array: routes[i] = { setIndex, slotIndex, outputBasePath }
       const fetchJobs = []; // { setIdx, slot, promptT, refPath, charmPath, outputBasePath }
       for (let setIdx = 0; setIdx < sets.length; setIdx++) {
@@ -15472,80 +15499,88 @@ async function _handlerImpl(event) {
         routes.push({ setIndex: j.setIdx, slotIndex: j.slot, outputBasePath: j.outputBasePath });
       }
 
-      // Fetch + build with low concurrency. See memory note above.
-      // Each worker holds raw, base64 and serialized copies. After it returns, only the
-      // pushed Buffer chunk in jsonlChunks survives.
-      // Repeated references in a single listing can be large. Two workers
-      // bound the temporary raw/base64/string copies while JSONL is prepared.
-      const FETCH_CONCURRENCY = 2;
-      if (claim?.token) await admission.progress(claim, "downloading reference images");
-      // Every reference is checked from its bytes before it is sent (see lib/listingBatchImages.cjs):
-      // the Storage label is not trusted. What was relabelled or converted is kept on the job record.
+      // Each distinct reference is downloaded once (a set's six requests share its charm), checked
+      // from its bytes (lib/listingBatchImages.cjs: the Storage label is not trusted), and what was
+      // relabelled or converted is kept on the job record.
+      const fsp = require("node:fs/promises"), nodePath = require("node:path"), nodeOs = require("node:os");
       const inputFixes = [];
-      // A set's six requests share its charm: it is read and checked once, not once per slot.
-      const referenceReads = new Map();
-      const readReference = (path, role) => {
-        const key = `${role}|${path}`;
-        if (!referenceReads.has(key)) referenceReads.set(key, readReferenceOnce(path, role));
-        return referenceReads.get(key);
-      };
-      const readReferenceOnce = async (path, role) => {
-        let timer;
+      let inputCheck = null, checkRssMb = null, jsonlPath = null, jsonlBytes = 0;
+      if (fetchJobs.length) {
+        if (claim?.token) await admission.progress(claim, "downloading reference images");
+        // A run stopped mid-preparation leaves its folder behind; the container keeps /tmp.
         try {
-          // This deadline is before batch creation. A late storage read cannot
-          // submit a job after preparation has already returned an error.
-          return await Promise.race([(async () => {
-            const raw = await storagePathToBuffer(path);
-            const img = await normalizeBatchInputImage(raw.buffer, { contentType: raw.mime, path, role,
-              canonical: role === "Charm image" }).catch((err) => { if (err?.inputImage) Object.assign(err, { path, role }); throw err; });
-            if (img.action !== "as-is" && inputFixes.length < 20) {
-              inputFixes.push({ path, from: img.from, to: img.mime, action: img.action, detail: img.detail });
-              console.log(`[batch_submit] ${role} ${path}: ${img.action} (${img.from} -> ${img.mime}; ${img.detail})`);
-            }
-            return { mime: img.mime, buffer: img.buffer };
-          })(), new Promise((_, reject) => {
-            timer = setTimeout(() => reject(new Error("Listing reference download timed out; remaining listings can continue.")), 45000);
-          })]);
-        } finally { clearTimeout(timer); }
-      };
-      memLog(`before fetch loop (${fetchJobs.length} jobs)`);
-      let fetchCounter = 0;
-      const preparedResults = await runBoundedConcurrent(fetchJobs, FETCH_CONCURRENCY, async (j, idx) => {
-        const [ref, charm] = await Promise.all([
-          readReference(j.refPath, "Template image"),
-          j.charmPath ? readReference(j.charmPath, "Charm image") : Promise.resolve(null),
-        ]);
-        const key = `s${j.setIdx}_slot${j.slot}`;
-
-        // Build the line, stringify, encode to Buffer, then explicitly
-        // null out big locals so V8 has a strong hint to free them
-        // before the next worker iteration starts.
-        let line = buildOpenAIBatchJsonlLine(
-          key, j.promptT,
-          ref.mime, ref.buffer.toString("base64"),
-          charm ? charm.mime : null, charm ? charm.buffer.toString("base64") : null,
-          listingImageSize(j.outputBasePath, j.slot) === "1024x1024" ? "1K" : imageSize,
-          { imageRoles: j.imageRoles, backgroundPolicy: j.backgroundPolicy, geometryPolicy: j.geometryPolicy }
-        );
-        let jsonStr = JSON.stringify(line) + "\n";
-        line = null;
-        const chunkBuf = Buffer.from(jsonStr, "utf8");
-        jsonStr = null;
-
-        // jsonlChunks order doesn't matter for correctness — the JSONL
-        // routing key on each line tells Gemini which response is which.
-        jsonlChunks.push(chunkBuf);
-        // Periodic memory log so we see in-loop growth.
-        const c = ++fetchCounter;
-        if (c === 1 || c % 5 === 0 || c === fetchJobs.length) {
-          memLog(`fetch ${c}/${fetchJobs.length}`);
+          for (const name of await fsp.readdir(nodeOs.tmpdir())) {
+            if (!name.startsWith("listing-prep-")) continue;
+            const dir = nodePath.join(nodeOs.tmpdir(), name);
+            if (Date.now() - (await fsp.stat(dir)).mtimeMs > 30 * 60000) await fsp.rm(dir, { recursive: true, force: true });
+          }
+        } catch (_) {}
+        prepDir = await fsp.mkdtemp(nodePath.join(nodeOs.tmpdir(), "listing-prep-"));
+        const references = new Map();
+        const reference = (p, role) => {
+          const key = `${role}|${p}`;
+          if (!references.has(key)) {
+            const n = references.size;
+            references.set(key, { path: p, role, canonical: role === "Charm image",
+              file: nodePath.join(prepDir, `in_${n}`), out: nodePath.join(prepDir, `out_${n}`) });
+          }
+          return references.get(key);
+        };
+        for (const j of fetchJobs) {
+          j.ref = reference(j.refPath, "Template image");
+          j.charm = j.charmPath ? reference(j.charmPath, "Charm image") : null;
         }
-      });
-      const preparationError = preparedResults.find(result => result?.__error)?.__error;
-      if (preparationError) throw preparationError;
-      memLog(`after fetch loop`);
+        const items = [...references.values()];
+        const downloads = await runBoundedConcurrent(items, 3, async (item) => {
+          let timer;
+          try {
+            // This deadline is before batch creation. A late storage read cannot
+            // submit a job after preparation has already returned an error.
+            const { mime } = await Promise.race([storagePathToFile(item.path, item.file), new Promise((_, reject) => {
+              timer = setTimeout(() => reject(new Error("Listing reference download timed out; remaining listings can continue.")), 45000);
+            })]);
+            item.contentType = mime;
+          } finally { clearTimeout(timer); }
+        });
+        const downloadError = downloads.find((result) => result?.__error)?.__error;
+        if (downloadError) throw downloadError;
+        memLog(`after reference downloads (${items.length} files)`);
 
-      if (jsonlChunks.length === 0) {
+        if (claim?.token) await admission.progress(claim, "checking reference images");
+        const checked = await checkReferenceFiles(items.map((item) => ({ file: item.file, out: item.out,
+          contentType: item.contentType, path: item.path, role: item.role, canonical: item.canonical })));
+        inputCheck = checked.mode;
+        checkRssMb = checked.childRssMb;
+        items.forEach((item, i) => {
+          const img = checked.results[i];
+          Object.assign(item, { send: img.file, mime: img.mime });
+          if (img.action !== "as-is" && inputFixes.length < 20) {
+            inputFixes.push({ path: item.path, from: img.from, to: img.mime, action: img.action, detail: img.detail });
+            console.log(`[batch_submit] ${item.role} ${item.path}: ${img.action} (${img.from} -> ${img.mime}; ${img.detail})`);
+          }
+        });
+        memLog(`after reference check (${inputCheck}${checkRssMb ? `, child peak ${checkRssMb}MB` : ""})`);
+
+        if (claim?.token) await admission.progress(claim, "writing the batch input file");
+        jsonlPath = nodePath.join(prepDir, "listing-images.jsonl");
+        const out = await fsp.open(jsonlPath, "w", 0o600);
+        try {
+          for (const j of fetchJobs) {
+            const refToken = imageToken(), charmToken = j.charm ? imageToken() : null;
+            const line = buildOpenAIBatchJsonlLine(
+              `s${j.setIdx}_slot${j.slot}`, j.promptT,
+              j.ref.mime, refToken, j.charm ? j.charm.mime : null, charmToken,
+              listingImageSize(j.outputBasePath, j.slot) === "1024x1024" ? "1K" : imageSize,
+              { imageRoles: j.imageRoles, backgroundPolicy: j.backgroundPolicy, geometryPolicy: j.geometryPolicy }
+            );
+            jsonlBytes += await appendJsonlLine(out, line, [{ token: refToken, file: j.ref.send },
+              { token: charmToken, file: j.charm ? j.charm.send : null }]);
+          }
+        } finally { await out.close(); }
+        memLog(`after JSONL file (${(jsonlBytes / 1e6).toFixed(1)}MB)`);
+      }
+
+      if (!fetchJobs.length) {
         // Edge case: all-copy batch (no Gemini calls needed). Write
         // manifests immediately and short-circuit. We emit slots in the
         // same shape as the gen-collect path so the Review tab renders
@@ -15618,16 +15653,6 @@ async function _handlerImpl(event) {
         });
       }
 
-      // Concat once into a single Buffer for upload. This is the only
-      // moment when we hold the full JSONL in memory — and it's a
-      // single contiguous Buffer, not a doubled UTF-16 string.
-      memLog(`before Buffer.concat (${jsonlChunks.length} chunks)`);
-      const jsonlBuffer = Buffer.concat(jsonlChunks);
-      const jsonlBytes = jsonlBuffer.length;
-      // Free chunk array — Buffer.concat copied them, originals can go.
-      jsonlChunks.length = 0;
-      memLog(`after Buffer.concat (${(jsonlBytes/1e6).toFixed(1)}MB JSONL)`);
-
       // OpenAI Batch input files must remain below 200 MB.
       if (jsonlBytes > 190000000 || routes.length > 50000) {
         throw new Error(`JSONL too large (${(jsonlBytes / 1e9).toFixed(2)} GB). Reduce sets per batch.`);
@@ -15636,7 +15661,10 @@ async function _handlerImpl(event) {
       // Step C: Upload JSONL to Gemini Files API, then create the batch.
       if (claim?.token) await admission.progress(claim, "uploading the batch input file");
       let fileName;
-      try { fileName = await uploadOpenAIBatchFile(apiKey, jsonlBuffer, displayName); }
+      try {
+        fileName = await uploadOpenAIBatchFile(apiKey, jsonlPath, displayName, {
+          onRetry: (n) => claim?.token ? admission.progress(claim, `uploading the batch input file (try ${n + 1})`) : null });
+      }
       catch (err) {
         // OpenAI's file service being down or slow says nothing about this listing: no strike
         // against it, and the refill pauses until the next run instead of striking every set.
@@ -15691,6 +15719,9 @@ async function _handlerImpl(event) {
         routes,
         copyStats: { copied: copiedCount, errors: copyErrors },
         inputFixes,
+        // How the references were checked ('child' or 'in-process') and the collector's memory when it
+        // sent them: what shows, from the job list, that a run's memory no longer grows set by set.
+        inputCheck, prepRssMb: Math.round(process.memoryUsage().rss / 1048576), prepCheckRssMb: checkRssMb,
       };
       await admission.beforeCreate(claim, persistDoc);
       createStarted = true;
@@ -15739,6 +15770,12 @@ async function _handlerImpl(event) {
             Date.now(), () => admin.firestore.FieldValue.serverTimestamp()), { merge: true });
         } else if (!preparationFailed) await sourceRef.set({
           retryError: String(err?.message || err).slice(0, 500),
+          // OpenAI's file service refused this set's upload even after the tries above: no strike, but the
+          // set waits 5, 10, 20 … minutes (at most two hours), so it never holds the head of the queue.
+          ...(providerSide ? await (async () => {
+            const failures = Number(((await sourceRef.get()).data() || {}).uploadFailures || 0) + 1;
+            return { uploadFailures: failures, retryNotBefore: Date.now() + Math.min(120, 5 * 2 ** (failures - 1)) * 60000 };
+          })() : {}),
           // A refusal at submission counts toward the set's refusal ceiling too.
           ...(refused ? { capacityRefusals: admin.firestore.FieldValue.increment(1) } : {}),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -15749,6 +15786,8 @@ async function _handlerImpl(event) {
           reason: providerSide ? `OpenAI file upload unavailable: ${String(err?.message || err).slice(0, 200)}`
             : "Submission saved; waiting for the next server check" });
       } finally {
+        // The folder first: a release that throws must not leave up to 190 MB in the container's /tmp.
+        if (prepDir) await require("node:fs/promises").rm(prepDir, { recursive: true, force: true }).catch(() => {});
         if (claim?.token) await admission.release(claim, null);
       }
     }
@@ -16787,7 +16826,8 @@ async function _handlerImpl(event) {
         "stallRestartBlocked", "stallRestartClosed", "stallRestarts", "retryStatus", "retryError",
         "createdAt", "updatedAt", "collectedAt", "setsCount", "setKeys", "setComplete",
         "collectionPending", "repairPending", "recoveryStatus", "recoveryReason", "requestCount", "results",
-        "inputFixes", "collectAttempts", "collectNotBefore", "lastCollectError", "retryQueuedAt", "inputRepairAttempt"];
+        "inputFixes", "collectAttempts", "collectNotBefore", "lastCollectError", "retryQueuedAt", "inputRepairAttempt",
+        "inputCheck", "prepRssMb", "prepCheckRssMb"];
       // ---- the answer around the job records: collector status, admission, session summaries ----
       const readSweepAndAdmission = () => Promise.all([
         db.collection("LG1_Config").doc("batchSweep").get().catch(err => {
@@ -16807,6 +16847,8 @@ async function _handlerImpl(event) {
               lastProgressAt: millis(d.lastProgressAt),
               runningSince: millis(d.runningSince),
               lastSweepAt: millis(d.lastSweepAt),
+              // A run that stopped (killed mid-run) shows here: its heartbeat no longer moves.
+              heartbeatAt: Number(d.heartbeatAt || 0) || null,
               lastFailureAt: millis(d.lastFailureAt),
               lastError: d.lastError || null,
               lastResult: d.lastResult || null,
@@ -16895,6 +16937,9 @@ async function _handlerImpl(event) {
         lastCollectError: d.lastCollectError || null,
         retryQueuedAt: d.retryQueuedAt?.toMillis ? d.retryQueuedAt.toMillis() : null,
         inputRepairAttempt: Number(d.inputRepairAttempt || 0),
+        inputCheck: d.inputCheck || null,
+        prepRssMb: Number(d.prepRssMb || 0) || null,
+        prepCheckRssMb: Number(d.prepCheckRssMb || 0) || null,
       });
       // COST: every pass of the panel's poll reads up to 1,500 job records although a few dozen change. Every write to a job
       // record sets `rev` (a server timestamp), so the poll can ask for the records written since the read it already holds

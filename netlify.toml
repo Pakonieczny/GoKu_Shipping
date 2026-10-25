@@ -16,6 +16,11 @@
 [functions."{geminiImageProxy,geminiImageProxy-background,geminiImageProxyKick,geminiImageProxybackground,googleAdsAutopilot-background,googleAdsAutopilotApi,googleAdsAutopilotKick,openaiImageProxy,openaiImageProxy-background,shopifyOrderWebhook}"]
   external_node_modules = ["sharp"]
 
+# A listing submission checks its reference images in a child process that ends with the set
+# (lib/listingBatchPrepare.cjs): the script it runs must be a real file in the deployed function.
+[functions."geminiImageProxy-background"]
+  included_files = ["netlify/functions/lib/listingBatchImageWorker.cjs", "netlify/functions/lib/listingBatchImages.cjs"]
+
 [functions."etsyMailTrackingSnapshot-background"]
   external_node_modules = ["@resvg/resvg-js"]
 

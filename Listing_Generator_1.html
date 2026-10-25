@@ -13643,7 +13643,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const sweepStale = !!sweep?.lastSweepAt && Date.now() - sweep.lastSweepAt > 25 * 60 * 1000;
       if (waitingRetries) {
         rows.push(["Collector", sweepIsRunning ? `Running · ${sweep.stage || "checking jobs"}` :
-          sweep?.lastError ? `Error: ${sweep.lastError}` : sweep?.lastSweepAt ?
+          sweep?.lastError && !_batchTransientError(sweep.lastError) ? `Error: ${sweep.lastError}` : sweep?.lastSweepAt ?
           `Last completed ${new Date(sweep.lastSweepAt).toLocaleTimeString()} · ${sweep.lastResult?.retriesSubmitted || 0} retries submitted${Number.isFinite(sweep.lastResult?.waiting) && sweep.lastResult.waiting < waitingRetries ? ` · saw ${sweep.lastResult.waiting} of ${waitingRetries} queued` : ""}${sweep.lastResult?.collectErrors ? ` · ${sweep.lastResult.collectErrors} collection errors` : ""}` :
           "Waiting for first recorded sweep"]);
         if (_batchNextSweepAt) rows.push(["Next sweep", new Date(_batchNextSweepAt).toLocaleTimeString()]);
@@ -13697,7 +13697,12 @@ Click the button again to permanently delete eligible temporary files, or cancel
         ? `${capacityStopped.length} set(s) stopped after repeated token-limit refusals from OpenAI and will not retry automatically.` : "";
       const attemptsNote = attemptsStopped.length
         ? `${attemptsStopped.length} set(s) stopped after five retry attempts and will not retry automatically.` : "";
-      const sweepProblem = !allDone && (sweep?.lastError ? `Collector error: ${sweep.lastError}` :
+      // A refused upload or a dropped connection at OpenAI (2026-10-25: "upstream connect error ... Connection
+      // refused", HTTP 503) is tried again by the server and its set waits a few minutes: a note, not an alarm.
+      const sweepTransient = !!sweep?.lastError && _batchTransientError(sweep.lastError);
+      const transientNote = !allDone && sweepTransient
+        ? `OpenAI briefly refused a request (${_batchShortError(sweep.lastError)}); it is tried again automatically.` : "";
+      const sweepProblem = !allDone && (sweep?.lastError && !sweepTransient ? `Collector error: ${sweep.lastError}` :
         sweep?.runningSince && !sweepIsRunning ? "The image collector has not finished its last check." :
         sweepStale ? "The image collector has not completed a check in over 25 minutes." :
         // The server retries a failed collection by itself with a growing wait (it no longer re-reads every
@@ -13715,7 +13720,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         queueStalled ? `Needs action: queued sets have not been sent for ${_formatDuration(Date.now() - queuedSince)}. Refresh asks the collector again; if none are sent, the collector is not reaching them${
           Number.isFinite(sweep?.lastResult?.waiting) ? ` (its last run saw ${sweep.lastResult.waiting} of ${waitingRetries} queued)` : ""}.` : "",
       ].filter(Boolean);
-      const queueExplanation = [explanation, recoveringNote].filter(Boolean)
+      const queueExplanation = [explanation, recoveringNote, transientNote].filter(Boolean)
         .map((text) => `<p class="batch-note">${_batchSafeText(text)}</p>`).join("");
       const alertHtml = [...nextStep, capacityNote, attemptsNote, sweepProblem].filter(Boolean)
         .map((text) => `<div class="batch-alert" role="alert">${_batchSafeText(text)}</div>`).join("");
@@ -13788,7 +13793,13 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const message = (["capacity_refused", "attempts_exhausted"].includes(b.retryStatus) && b.retryError) ||
           b.recoveryReason || b.providerError || b.error?.message || b.error || b.statusError ||
           b.retryError || results.failures?.[0]?.error || "";
-        const detail = message ? `<div style="color:#fca5a5; margin-top:3px; overflow-wrap:anywhere;">${_batchSafeText(message)}</div>` : "";
+        // Red only for a set the server has stopped; a set being sent again (a refused upload, a resend with
+        // checked images) shows its reason as information.
+        const recovering = !_batchStoppedByServer(b) && !b.setComplete &&
+          (b.recoveryStatus === "queued" || b.retryRequested === true || _batchTransientError(message));
+        const shown = recovering && _batchTransientError(message) && !b.recoveryReason
+          ? `Tried again automatically: ${_batchShortError(message)}.` : message;
+        const detail = message ? `<div style="color:${recovering ? "#fcd34d" : "#fca5a5"}; margin-top:3px; overflow-wrap:anywhere;">${_batchSafeText(shown)}</div>` : "";
         return `<div style="padding:6px 0; border-top:1px solid var(--line); overflow-wrap:anywhere;">
           <strong>${name}</strong> · ${_batchSafeText(state)}${b.setComplete || b.collected && !b.results?.failedCount ? " · saved" : b.collected ? (b.results?.succeededCount === 0 ? " · no images saved" : " · partially saved") : ""}${b.retryBatchName ? " · retried" : ""}
           · ${_batchSafeText(String(done))} complete · ${_batchSafeText(String(failures))} failed
@@ -13834,6 +13845,17 @@ Click the button again to permanently delete eligible temporary files, or cancel
     // Stopped is what the server recorded, never inferred: a set collected moments ago is neither retrying
     // nor stopped until the server's next check queues it again (2026-10-25: 12 such sets were shown as
     // "stopped and will not recover" while the server's own summary had 0 stopped).
+    // A temporary failure at OpenAI or on the network, which the server tries again by itself.
+    function _batchTransientError(text) {
+      return /upstream connect error|disconnect\/reset before headers|Connection refused|HTTP 5\d\d|\b50[0234]\b|socket hang up|ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|timed out|server had an error|temporarily unavailable/i
+        .test(String(text || ""));
+    }
+    function _batchShortError(text) {
+      const t = String(text || "");
+      const http = /HTTP (\d{3})/.exec(t);
+      if (/upstream connect error|disconnect\/reset before headers/i.test(t)) return /refused/i.test(t) ? "connection refused" : "connection reset";
+      return http ? `HTTP ${http[1]}` : t.replace(/\s+/g, " ").slice(0, 80);
+    }
     function _batchStoppedByServer(b) {
       return b.recoveryStatus === "blocked" ||
         ["capacity_refused", "attempts_exhausted", "preparation_failed", "cancelled"].includes(b.retryStatus);
@@ -14175,7 +14197,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
             await sleep(2500);
             const latest = await postJson("geminiImageProxy", { kind: "batch_list", limit: 1, includeCollected: true });
             _batchSweepInfo = latest?.sweep || _batchSweepInfo;
-            if (_batchSweepInfo?.lastError) { sweepNote = `Collector error: ${_batchSweepInfo.lastError}.`; break; }
+            if (_batchSweepInfo?.lastError && !_batchTransientError(_batchSweepInfo.lastError)) { sweepNote = `Collector error: ${_batchSweepInfo.lastError}.`; break; }
             if ((_batchSweepInfo?.lastSweepAt || 0) > previousSweepAt) {
               // Say what the run did, including when it sent nothing although sets wait and places are free.
               const result = _batchSweepInfo.lastResult || {};
