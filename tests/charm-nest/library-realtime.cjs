@@ -146,7 +146,7 @@ function meter(st) {
 /* ── the pages ── */
 const PDFMAKE = `window.pdfMake = { createPdf(dd) { return { getBlob(cb) { cb(new Blob(['<!doctype html><title>label</title><script>window.print = () => {};<\\/script>'], { type: 'text/html' })); } }; } };`;
 async function libraryPage(browser, srv, shop, name, ctxOf) {
-  const pg = ctxOf ? { ctx: ctxOf.ctx, page: await ctxOf.ctx.newPage(), errors: [] } : await O.openPage(browser, srv, { owner: false, name });
+  const pg = ctxOf ? { ctx: ctxOf.ctx, page: await ctxOf.ctx.newPage(), errors: [] } : await O.openPage(browser, srv, { owner: false, name, before: process.env.BRIDGE_PATCH ? ctx => ctx.route(/charm-nest-bridge\.js/, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: fs.readFileSync(process.env.BRIDGE_PATCH) })) : undefined });
   if (ctxOf) { pg.page.setDefaultTimeout(20000); pg.page.on('pageerror', e => pg.errors.push('page: ' + e.message)); await pg.page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { timeout: 90000 }); await pg.page.waitForFunction(() => window.CN && CN.S.cloud.ok === true && window.Orders && window.OrderWin, null, { timeout: 90000 }); }
   else await pg.ctx.route(u => /pdfmake|vfs_fonts/.test(u.href), r => r.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin', 'Access-Control-Allow-Origin': '*' }, body: /vfs_fonts/.test(r.request().url()) ? '' : PDFMAKE }));
   const rows = pageRows(shop);
@@ -293,7 +293,11 @@ const closeWin = async pg => { await pg.page.evaluate(() => { try { OrderWin.clo
   /* Two ways of pressing, the same call into the Library. `api`: the page's own api() call that the Complete Order button and the Print QR label button make (customPut), timed
      strictly: from the moment the page has the answer of the write (the Library is told then) to the card showing it. `ui`: the real button in the order window, which on a
      big shop also draws the order's timeline, pieces and Review (seconds of the page's main thread that are the order window's, not the Library's): only that the card gets there. */
-  for (const mode of ['api', 'ui']) for (const how of ['button', 'print']) {
+  /* (RELHOLD, Paul 18 Oct 2026, and RELORDER, Paul 20 Oct 2026: "Remove the 'Complete Order' button ... and replace it with the new 'Release Order' button") The order window has no
+     Complete Order button any more: a piece whose card is an Unknown SKU (these three) has that Review card's Release Hold where it stood, which sends the order back to the queue and
+     completes nothing (charm-nest-bridge.js cuControls). Its real button in the order window is Print QR label alone; the completion by hand (customPut how 'button', what a Custom Orders
+     card's Release Hold writes) is still timed through the page's own api() call above it. */
+  for (const [mode, how] of [['api', 'button'], ['api', 'print'], ['ui', 'print']]) {
     for (const pg of [A, B]) await openPanel(pg);
     const rid = shop.target.blockers[0].rid, w0 = writes.length, b0 = shop.target.blockers[0], limit = mode === 'ui' ? 60000 : 20000;
     const watchA = A.page.evaluate(([rid, limit]) => window.__lr.waitFor(`s.panel && !s.panel.includes('${rid}')`, limit), [rid, limit]);
@@ -332,6 +336,7 @@ const closeWin = async pg => { await pg.page.evaluate(() => { try { OrderWin.clo
     const a = ra.at ? ra.at - tw : null, b = rb.at ? rb.at - tw : null; crossMs.push(a, b);
     if (!last) { check(ra.sig && ra.sig.area === 'pending' && ra.sig.approveBoxes === 1, `piece ${i + 1} of 3: the set stays ONE card in In progress with one Approve gate (it advances only when all are done)`, JSON.stringify(ra.sig)); }
     else check(ra.sig && ra.sig.area === 'ready' && ra.sig.approveBoxes <= 1 && ra.sig.states.every(s => s === 'ready' || s === 'done'), `piece 3 of 3: the set moves to Laser cutting as ONE card (rail ${ra.sig && ra.sig.states.join('/')}, ${ra.sig && ra.sig.approveBoxes} Approve gate)`, JSON.stringify(ra.sig));
+    if (last) say('DBGCARD', await A.page.evaluate(() => { const c = [...document.querySelectorAll('#libBody .setCard')].find(c => c._laserSet && c._laserSet.setId === 'set-T'); return c ? [...c.querySelectorAll('.flowBox,.approveBox')].map(b => (b.dataset.state || b.dataset.mode) + ': ' + b.textContent.replace(/\s+/g, ' ').slice(0, 300)).join(' || ') : 'no card'; }));
     say(`  piece ${i + 1} (${i === 1 ? 'print' : 'button'}): computer A ${a} ms, computer B ${b} ms after the record`);
     say(`     A: ${afterWrite(await readsOf(A), tw).text}; B: ${afterWrite(await readsOf(B), tw).text}`);
     check(a !== null && a <= CROSS_MS && b !== null && b <= CROSS_MS, `piece ${i + 1} of 3: both computers show it within ${CROSS_MS} ms of the record`, `A ${a} ms, B ${b} ms`);

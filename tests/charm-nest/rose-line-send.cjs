@@ -25,6 +25,8 @@ const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 2, 17) / 1000);
 const order = (rid, n) => ({ receiptId: rid, orderNumber: rid, createTs: SHIP - n * DAY, updateTs: SHIP - n * DAY + 60, shipBy: SHIP, buyer: { name: 'Buyer ' + rid.slice(-4) }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [],
   lines: [{ transactionId: rid + '1', listingId: '18000' + rid.slice(-5), sku: 'CUSTOM-N-001-' + rid.slice(-6), title: 'Custom Name Necklace, Personalized Charm Necklace', quantity: 1, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: 'Rose Gold Filled' }], metalKey: 'rose', metalLabel: 'RG 14/20', personalization: [], buyerMessage: '' }] });
 const A = '4175423829', Bo = '4175423830';
+// (R1 / R4 / R12, Paul 10-12 Oct 2026: a Rose Gold sheet never starts a set, it joins one that has formed with a completed GF and a completed SS sheet: the world builds that set first)
+const GfSs = require('./_gfSsSet.cjs');
 
 (async () => {
   const { start } = require(path.join(here, 'tests/charm-nest/bridge-server.cjs'));
@@ -46,7 +48,8 @@ const A = '4175423829', Bo = '4175423830';
       Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('review'); Review.render();
       // a run under way, past its pool step: a design sent now goes onto its sheet at once
       const day = new Date().toISOString().slice(0, 10); B.run = { runId: `run-${day}-rg`, day, setId: null, releasePolicy: 2, solidIncluded: {}, step: 'nest', status: 'running', mode: 'manual', startedAt: Date.now(), updatedAt: Date.now(), lines: {}, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [] };
-    }, [order(A, 5), order(Bo, 4)]);
+    }, [order(A, 5), order(Bo, 4), ...GfSs.orders(SHIP, DAY)]);
+    await GfSs.form(page);
     const rg = () => page.evaluate(() => { const sh = CN.S.sheets.rose.pages.at(-1); return { sheetId: sh.sheetId, placed: sh.placements.map(p => ({ id: p.id, x: p.cxPt })), plan: (sh.rosePlan?.stages || []).map(s => ({ n: s.n, at: s.at, ids: s.ids })), guard: (sh.roseProtected?.stages || []).map(s => ({ n: s.n, ids: s.ids })), marks: [...(sh.el?.querySelectorAll('.roseLineTimeline .roseMark') || [])].map(m => m.querySelector('time')?.getAttribute('datetime') || m.textContent.trim()), cutButton: !!sh.el?.querySelector('.roseCut:not([hidden]) [data-rose="cut"]'), inSet: !!sh.setId && !sh.draft, error: sh._roseError || null, cutAt: sh.roseCutAt || null }; });
     const planCalls = () => srv.st.calls.filter(c => c.op === 'rosePlan').map(c => c.body.cut === true ? 'cut' : 'plain');
     const record = id => srv.st.doc('Charm_Nest_Sheets', id) || srv.st.doc('Sandbox_Charm_Nest_Sheets', id);
@@ -74,9 +77,9 @@ const A = '4175423829', Bo = '4175423830';
       await page.waitForTimeout(800);
     };
 
-    // 1 · sent, nested, into the set: no line
+    // 1 · sent, nested, into the set: no line (SETFIX, Paul 17 Oct 2026: Rose Gold is included a sheet at a time, the Include names its sheet)
     await send(A, 'a.dxf');
-    await page.evaluate(() => Gate.changeMembership('rose', true));
+    await page.evaluate(() => Gate.changeMembership('rose', true, CN.S.sheets.rose.pages.at(-1)));
     await page.waitForTimeout(2000);
     let s = await rg();
     check(s.placed.length === 1 && s.inSet && !s.plan.length && !s.marks.length && s.cutButton && !planCalls().length, `1 · sent and in the set: no green line until Cut Sheet (${JSON.stringify({ inSet: s.inSet, plan: s.plan, marks: s.marks, calls: planCalls() })})`);
@@ -91,7 +94,7 @@ const A = '4175423829', Bo = '4175423830';
     await send(Bo, 'b.dxf');
     await page.evaluate(async () => { const sh = CN.S.sheets.rose.pages.at(-1); sh._roseError = null; await Gate.assemble(B.run); CN.renderCard(sh); });
     await page.waitForTimeout(1500);
-    await page.evaluate(async () => { await Gate.flush(B.run).catch(() => {}); await Gate.changeMembership('rose', true).catch(() => {}); });
+    await page.evaluate(async () => { await Gate.flush(B.run).catch(() => {}); await Gate.changeMembership('rose', true, CN.S.sheets.rose.pages.at(-1)).catch(() => {}); });
     await page.evaluate(() => { const sh = CN.S.sheets.rose.pages.at(-1); const box = sh.el.querySelector('[data-rose-allowance]'); if (box) { box.value = '0.3'; box.dispatchEvent(new Event('change')); } });
     await page.waitForTimeout(2500);
     s = await rg();

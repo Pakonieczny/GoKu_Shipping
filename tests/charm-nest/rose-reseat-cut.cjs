@@ -23,6 +23,8 @@ const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 2, 17) / 1000);
 const order = (rid, n) => ({ receiptId: rid, orderNumber: rid, createTs: SHIP - n * DAY, updateTs: SHIP - n * DAY + 60, shipBy: SHIP, buyer: { name: 'Buyer ' + rid.slice(-4) }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [],
   lines: [{ transactionId: rid + '1', listingId: '18000' + rid.slice(-5), sku: 'CUSTOM-N-001-' + rid.slice(-6), title: 'Custom Name Necklace, Personalized Charm Necklace', quantity: 1, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: 'Rose Gold Filled' }], metalKey: 'rose', metalLabel: 'RG 14/20', personalization: [], buyerMessage: '' }] });
 const A = '4175423829';
+// (R1 / R4 / R12, Paul 10-12 Oct 2026: a Rose Gold sheet never starts a set, it joins one that has formed with a completed GF and a completed SS sheet: the world builds that set first)
+const GfSs = require('./_gfSsSet.cjs');
 // the readiness stages (QR labels, production checks) are not what is tested here; the first cut works live
 const readinessReal = Readiness.sheet; Readiness.sheet = s => ({ ...readinessReal(s), ready: true });
 const fails = [], check = (ok, what) => { if (!ok) fails.push(what); console.log((ok ? '  ok   ' : '  FAIL ') + what); };
@@ -47,7 +49,8 @@ async function scenario(name, { commit, lost }) {
       for (const order of orders) for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); }
       Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('review'); Review.render();
       const day = new Date().toISOString().slice(0, 10); B.run = { runId: `run-${day}-rg`, day, setId: null, releasePolicy: 2, solidIncluded: {}, step: 'nest', status: 'running', mode: 'manual', startedAt: Date.now(), updatedAt: Date.now(), lines: {}, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [] };
-    }, [order(A, 5)]);
+    }, [order(A, 5), ...GfSs.orders(SHIP, DAY)]);
+    await GfSs.form(page);
     // a custom design sent to Rose Gold (Custom Orders → Send to Sheet), nested
     await page.evaluate(() => CN.setMode('review'));
     await page.click('#reviewView .egTab[data-k="customOrder"]');
@@ -64,7 +67,7 @@ async function scenario(name, { commit, lost }) {
     await nested();
     await page.evaluate(() => CN.setMode('nest'));
     await page.waitForTimeout(1500);
-    await page.evaluate(() => Gate.changeMembership('rose', true));
+    await page.evaluate(() => Gate.changeMembership('rose', true, CN.S.sheets.rose.pages.at(-1)));   // (SETFIX, Paul 17 Oct 2026: Rose Gold is included a sheet at a time, the Include names its sheet)
     await page.waitForTimeout(2000);
     const sid = await page.evaluate(() => CN.S.sheets.rose.pages.at(-1).sheetId);
     const rec = () => srv.st.doc('Charm_Nest_Sheets', sid) || srv.st.doc('Sandbox_Charm_Nest_Sheets', sid);
