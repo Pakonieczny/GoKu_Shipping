@@ -97,8 +97,9 @@ const OLD = [
     const sentKey = SENT + '_41791000011';
     await page.waitForFunction(k => CustomSheet.sentOf(B.orders.byKey.get(k)) && !document.querySelector('#rvList .reviewListRow[data-rid="4179100001"]'), sentKey, { timeout: 30000 });
 
-    // 2 · Complete Order on the other one, by hand
-    await page.click(card(HAND) + ' [data-cu-release]');
+    // 2 · Complete Order on the other one, by hand: the Unknown SKU card's Print QR label, "its piece is then completed by hand and moves to Resolved" (its Release Hold sends the
+    //     order back to the nesting queue since RELHOLD, Paul 18 Oct 2026; Complete Order became that button, RELORDER 20 Oct)
+    await press(card(HAND) + ' [data-cu-print]');
     await page.waitForFunction(k => B.maps.customDone[k] && !document.querySelector('#rvList .reviewListRow[data-rid="4179100002"]'), HAND + '_41791000021', { timeout: 30000 });
     // the notes said where the cards went: Completed, never Decided
     const notes = await page.evaluate(() => window.__notes.slice());
@@ -112,9 +113,9 @@ const OLD = [
     assert.deepEqual(await page.evaluate(() => Review.settled().map(d => d.orders[0])), ['4179100003', '4179100004'], 'nothing was written for the send, nothing kept was deleted');
     assert(await page.evaluate(() => CustomSheet.sentOf(B.orders.byKey.get('4179100001_41791000011'))), 'the send itself stands');
     const btn = rid => page.evaluate(sel => [...document.querySelector(sel).querySelectorAll('.rowActions button')].map(b => b.textContent.trim()).filter(t => t !== 'Hold'), card(rid));
-    assert.deepEqual(await btn(HAND), ['Print QR label', 'Reopen'], 'the hand-completed order keeps its seal and buttons');
+    assert.deepEqual(await btn(HAND), ['Print again', 'Reopen'], 'the hand-completed order keeps its seal and buttons (completed by its print: Print again)');
     // NOMARKOK / NOSHEETBTN / REVDROP (Paul, 19 Oct 2026): the Open sheet button is gone from the card; History stays
-    assert.deepEqual((await btn(SENT)).filter(t => /sheet|History/i.test(t)), ['History'], 'the sent order keeps its history link (no Open sheet button)');
+    assert.deepEqual((await btn(SENT)).filter(t => /sheet|History/i.test(t)), ['Sent to Sheet', 'History'], 'the sent order keeps its history link (no Open sheet button); Send to Sheet rests in its done state, "Sent to Sheet" with its seal (SEALSHEET, Paul 20 Oct 2026: the seal stays on the Review card)');
     assert.equal(await page.evaluate(sel => document.querySelectorAll(sel + ' .seal-sheet').length, card(SENT)), 1, 'and its Sent to Sheet seal');
     assert.match(await page.evaluate(sel => document.querySelector(sel + ' .queueLabel').textContent, card(SENT)), /^Resolved · sent to sheet$/, 'its card says Resolved, not Decided');
 

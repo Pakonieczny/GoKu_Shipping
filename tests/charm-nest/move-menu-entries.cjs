@@ -49,7 +49,7 @@ function seed(st, blobUrl, roseReady = false) {
       const rec = { id, metal, metalLabel: metal, day: today, setId: s.setId, setSeq: s.seq, sheetIndex: k + 1, fileBase: `${metal.slice(0, 2).toUpperCase()}_${today}_Set-${s.seq}_Sheet-${k + 1}`, folder: `${metal}_${id}`, orders, poolIds: orders.map(o => `${o}_1_1`), listings: orders.map((o, i) => String(1718000 + (i % 4))), placedCount: orders.length, charmCount: orders.length, density: 0.7, freePt2: 2000, stock: { wIn: 6, hIn: 5 }, outputs: { preview: { path: p, url: blobUrl(p) } }, verification: { ok: true }, names: orders.join(' '), status: 'complete', updatedAt: Timestamp.fromMillis(now - n * 1000), createdAt: Timestamp.fromMillis(now - 86400000 + n), archived: false, runId: `run-${today}` };
       if (s.ready && (roseReady || metal !== 'rose')) {
         orders.forEach(o => { (lines[rec.runId] = lines[rec.runId] || {})[`${o}_1`] = { orderId: o, state: 'written', quantity: 1, poolIds: [`${o}_1_1`], engraveCandidate: false }; });
-        Object.assign(rec, { processReady: true, processSeals: [{ id: `laserReady-${now}-${n}`, how: 'laserReady', at: now - 3600000, by: 'Anna' }], outputs: Object.assign({}, rec.outputs, { ai: { path: `${id}.ai`, url: blobUrl(`${id}.ai`) } }), label: { files: [{ path: `${id}-qr.png`, url: rec.outputs.preview.url, payload: orders[0], orders }] } });
+        Object.assign(rec, { releaseFull: true, processReady: true, processSeals: [{ id: `laserReady-${now}-${n}`, how: 'laserReady', at: now - 3600000, by: 'Anna' }], outputs: Object.assign({}, rec.outputs, { ai: { path: `${id}.ai`, url: blobUrl(`${id}.ai`) } }), label: { files: [{ path: `${id}-qr.png`, url: rec.outputs.preview.url, payload: orders[0], orders }] } });
       } else Object.assign(rec, { placedCount: orders.length - 1 });
       st.put(SHEETS, id, rec);
     });
@@ -171,9 +171,13 @@ const until = async (fn, ms = 20000, what = '') => { const t0 = Date.now(); for 
       await page.keyboard.press('Enter');
       await settled(page);
       await page.waitForTimeout(250);
-      if (await page.evaluate(() => !!document.querySelector('#libBody .dndMenuWrap') && document.activeElement && !!document.activeElement.closest('#libBody'))) break;
+      if (!(await page.evaluate(() => !!document.querySelector('#libBody .dndMenuWrap') && document.activeElement && !!document.activeElement.closest('#libBody')))) continue;
+      const m = await read(page); if (m) return m;   // (a redraw between the check and the read: opened again)
     }
-    return page.evaluate(() => ({
+    return read(page);
+  }
+  function read(page) {
+    return page.evaluate(() => !document.querySelector('#libBody .dndMenuTitle') ? null : ({
       title: document.querySelector('#libBody .dndMenuTitle').textContent,
       items: [...document.querySelectorAll('#libBody .dndMenu .dndMenuItem')].map(x => ({ name: x.firstChild.textContent, off: x.getAttribute('aria-disabled') === 'true', note: x.lastChild.textContent })),
       none: [...document.querySelectorAll('#libBody .dndMenuNone')].map(x => x.textContent),
