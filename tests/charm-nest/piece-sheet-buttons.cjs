@@ -23,7 +23,8 @@ const OT = { rid: '4170500004', ta: '41705000041' };                            
 const OUT = { rid: '4170500005', ta: '41705000051', tb: '41705000052' };                  // outside the pull: one piece on SS Sheet 1, one pooled
 const GF1 = 'sheet-psb-gf1', SS1 = 'sheet-psb-ss1';
 const pid = (o, t) => `${o.rid}_${o[t]}_1`;
-const line = (tid, sku, metalKey, metalLabel) => ({ transactionId: tid, listingId: '19000' + tid.slice(-5), sku, title: (sku || 'Charm') + ' earrings', quantity: 1, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: metalLabel }], metalKey, metalLabel, personalization: [], buyerMessage: '' });
+const line = (tid, sku, metalKey, metalLabel) => ({ transactionId: tid, listingId: '19000' + tid.slice(-5), sku, title: (sku || 'Charm') + ' charm',   // (not "earrings": since the pair rule, Paul 9 Oct 2026, an earrings title is a Left + Right pair, and these are single charms)
+   quantity: 1, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: metalLabel }], metalKey, metalLabel, personalization: [], buyerMessage: '' });
 const order = (rid, buyer, lines) => ({ receiptId: rid, orderNumber: rid, createTs: SHIP - 7 * DAY, updateTs: SHIP - 7 * DAY + 60, shipBy: SHIP, buyer: { name: buyer }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [], lines });
 
 async function main() {
@@ -64,6 +65,8 @@ async function main() {
     await page.waitForFunction(() => window.CN && window.Orders && window.OrderWin && window.SheetWin && SheetWin.drawOrder && CN.S.cloud.ok === true, null, { timeout: 60000 });
     await page.evaluate(async ({ orders }) => {
       await Orders.loadMaps(true);
+      // (the pieces on sheets have their design in the master; only CUTE and the line with no SKU have none: a line whose SKU is in no master file goes to Review, and its row shows the card's buttons, not its sheet)
+      for (const s of ['HEALTH1', 'HEART_A', 'STAR_C', 'OTHER_GF']) B.master.entries.set(s, { sku: s, updatedAt: 1 });
       for (const [order, pools] of orders) order.lines.forEach((line, i) => { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: pools[i] ? 'pooled' : 'pulled', reason: null, claimedBy: null, poolIds: pools[i] ? [pools[i]] : [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); });
       Orders.interpretAll();
       // the CUTE piece: held, its SKU in no master file (as Emily Chambers' order shows it)
@@ -113,7 +116,7 @@ async function main() {
     assert(u.tab.off && u.tab.cls && /^Not on a sheet yet: its SKU is not in any master file$/.test(u.tab.why) && u.tab.count === '', 'the Sheet tab is greyed with its reason and counts nothing: ' + JSON.stringify(u.tab));
     // each piece's own sheet, separately: HEALTH1's row chip is a button that opens GF Sheet 1, the CUTE rows only say where the piece is
     assert.deepEqual(doors(u), [[keyOf(I5, 'tb'), 'GF Sheet 1']], JSON.stringify(u.rowChips));
-    assert(u.rowChips.filter(c => c.k === keyOf(I5, 'ta')).length >= 1 && u.rowChips.filter(c => c.k === keyOf(I5, 'ta')).every(c => !c.button && c.text), 'the CUTE piece\'s row chip is words only: ' + JSON.stringify(u.rowChips));
+    assert(u.rowChips.filter(c => c.k === keyOf(I5, 'ta')).length >= 1 && u.rowChips.filter(c => c.k === keyOf(I5, 'ta')).every(c => !c.button), 'the CUTE piece\'s row has no sheet button (it is in Review: its card\'s buttons stand where its words stood, Paul 5 Oct 2026 round 6; the Sheet tab says why): ' + JSON.stringify(u.rowChips));
     await shot('1-overview-all-opened-on-cute');
     // pressing the greyed Sheet tab (twice): nothing opens; the reason is said, once at a time
     await page.click('.owTabsV [data-ow-view="sheet"]', { force: true });
