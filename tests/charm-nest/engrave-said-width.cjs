@@ -16,7 +16,7 @@
 // markup in a note stays text, nothing in the section prints an entity raw, and what is stored (the order's own text) is not changed.
 // NOT this test's: the engraving JOB's own words (what a card prints under its picture) are the job's text as the intake made it; a personalisation that carries an entity gives a job that carries it too (found by ENGTEXT with a made-up
 // "Name One&#39;s": the card, its picture and the job read it raw, and a front + back job upper-cases "&amp;" to "&AMP;"). That is the engraving intake's, not display: this test does not decode it (it would hide it).
-// Known red on main BEFORE NOSAID (the commit before it fails the same 54 checks, all of them "the section does not scroll sideways": the section's scrollWidth is its clientWidth + 20px at every width): kept as it was, not this test's change.
+// The section's scrollWidth is its clientWidth + 20px at every width: that is the grid's seal room (charm-nest-1.html, #owEng.engGrid padding-right / margin-right), allowed by the check, nothing scrolls (26 Oct 2026).
 // Run:  PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-said-width.cjs      SHOTS=<dir> keeps SAIDW-<scenario>-<width>.png (the section as the person sees it)
 // What a pass does NOT prove: a live order (the fake site has the real drawings and fonts but not the live data), a browser other than headless Chromium, widths other than the five run.
 'use strict';
@@ -72,7 +72,7 @@ function probe() {
     cards: cards.length, first: rc(cards[0]), cardRects: cards.map(rc), grid: rc(host), sec: rc(sec),
     tracks: grid ? grid.gridTemplateColumns.split(' ').length : 0,
     firstFaces: cards[0] ? (cards[0].querySelector('.engFaces') || { dataset: {} }).dataset.n || '' : '',
-    secScrollW: sec ? sec.scrollWidth : 0, secClientW: sec ? sec.clientWidth : 0, hostScrollW: host ? host.scrollWidth : 0, hostClientW: host ? host.clientWidth : 0,
+    gutter: host ? Math.max(0, -parseFloat(getComputedStyle(host).marginRight) || 0) : 0, secScrollW: sec ? sec.scrollWidth : 0, secClientW: sec ? sec.clientWidth : 0, hostScrollW: host ? host.scrollWidth : 0, hostClientW: host ? host.clientWidth : 0,
     docScrollW: document.documentElement.scrollWidth, innerW: innerWidth, scrollerScrollW: scroller ? scroller.scrollWidth : 0, scrollerClientW: scroller ? scroller.clientWidth : 0,
     notesScrollW: notes ? notes.scrollWidth : 0, notesClientW: notes ? notes.clientWidth : 0, notesBox: rc(notes),
     notesText: notes ? notes.innerText.replace(/\s+/g, ' ').trim() : '', notesContent: notes ? notes.textContent : '', notesHtml: notes ? notes.innerHTML : '',
@@ -102,7 +102,9 @@ function laidOut(tag, p) {
   if (!f || !p.sec) return;
   ok(p.sec.b - p.lastRowBottom <= 4, `${tag}: the Engraving section ends where its last row of cards ends (${(p.sec.b - p.lastRowBottom).toFixed(1)}px below it)`, { sec: p.sec, lastRowBottom: p.lastRowBottom });
   ok(f.r <= p.sec.r + E && f.l >= p.sec.l - E, `${tag}: the first card is inside the section`, { card: f, sec: p.sec });
-  ok(p.secScrollW <= p.secClientW + 1 && p.hostScrollW <= p.hostClientW + 1, `${tag}: the section does not scroll sideways`, { sec: [p.secScrollW, p.secClientW], host: [p.hostScrollW, p.hostClientW] });
+  // (the grid's seal room: #owEng padding-right 20px taken back by margin-right -20px, so a seal hanging off a card's corner is not clipped; the section does not clip (overflow visible), so that room is
+  // in its scrollWidth without anything scrolling: the window's own scroll area is checked just below. More than that room is a real overflow)
+  ok(p.secScrollW <= p.secClientW + p.gutter + 1 && p.hostScrollW <= p.hostClientW + 1, `${tag}: the section does not scroll sideways (beyond the grid's ${p.gutter}px seal room)`, { sec: [p.secScrollW, p.secClientW], gutter: p.gutter, host: [p.hostScrollW, p.hostClientW] });
   ok(p.scrollerScrollW <= p.scrollerClientW + 1 && p.docScrollW <= p.innerW + 1, `${tag}: the window's scroll area and the page do not scroll sideways`, { scroller: [p.scrollerScrollW, p.scrollerClientW], doc: [p.docScrollW, p.innerW] });
 }
 const noRawEntity = (tag, p) => ok(!/&(?:#\d+|#x[0-9a-f]+|amp|quot|lt|gt|apos);/i.test(p.notesContent) && !/&(?:#\d+|#x[0-9a-f]+|amp|quot|lt|gt|apos);/i.test(p.cardsText), `${tag}: no entity printed raw in the Overview's box or in the cards`, { notes: p.notesContent.slice(0, 160), cards: p.cardsText.slice(0, 160) });
