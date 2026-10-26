@@ -215,10 +215,11 @@
   /** The one plain line a set gives for partner sheets that cannot join yet: "orders shared with RG Draft 1: add that sheet to this set". */
   const partnerWords = (labels, partials) => {
     const l = list(labels).map(str).filter(Boolean), p = list(partials).map(str).filter(x => l.includes(x)), add = l.filter(x => !p.includes(x));
-    if (!p.length) return `orders shared with ${l.join(' and ')}: add ${l.length > 1 ? 'those sheets' : 'that sheet'} to this set`;
+    // (Paul, 26 Oct 2026, Decision 2: a partner joins by itself, a green-line sheet with its line cut automatically, once it is ready: nothing for a person to add)
+    if (!p.length) return `orders shared with ${l.join(' and ')}: ${l.length > 1 ? 'they join' : 'it joins'} this set by itself (a green line is cut automatically) once ${l.length > 1 ? 'they are' : 'it is'} ready`;
     // (Paul, 13 Oct: a partner that is not full yet cannot be added; it joins by itself once it is full)
     const once = `once ${p.length > 1 ? 'they are' : 'it is'} full`;
-    return add.length ? `orders shared with ${l.join(' and ')}: add ${add.join(' and ')} to this set; ${p.join(' and ')} ${p.length > 1 ? 'join' : 'joins'} it ${once}` : `orders shared with ${p.join(' and ')}, which ${p.length > 1 ? 'are' : 'is'} not full yet: ${p.length > 1 ? 'they join' : 'it joins'} this set ${once}`;
+    return add.length ? `orders shared with ${l.join(' and ')}: ${add.join(' and ')} ${add.length > 1 ? 'join' : 'joins'} this set by itself once ready; ${p.join(' and ')} ${p.length > 1 ? 'join' : 'joins'} it ${once}` : `orders shared with ${p.join(' and ')}, which ${p.length > 1 ? 'are' : 'is'} not full yet: ${p.length > 1 ? 'they join' : 'it joins'} this set ${once}`;
   };
 
   /** What a completed sheet that waits for the NEXT set is told when the newest set has formed already. */
@@ -312,6 +313,11 @@
     const partnerGate = have => { const w = partnerWords(partners, notFull); return { applies: true, ok: false, missing: [], reason: `This set has ${w}.`, short: w, line: `Waiting: ${w}, so that orders are not spread over two sets.`, have, partners, partial: flag }; };
     if (!members.some(s => Object.prototype.hasOwnProperty.call(s, 'releaseFull'))) return partners.length ? partnerGate(none.have) : none;
     const v = validSet(members);
+    // (Paul, 26 Oct 2026, Decision 3: "the Set of Sheets should hold its place until a sheet is full again". A partial sheet never joins a set, so one IN a set went back to filling
+    //  (nested again, merged by hand): the set waits for it, says so, and is not approved meanwhile. Nothing is rebuilt and no Rebuild is offered for it: charm-nest-set-repair.js)
+    if (flag.length) { const who = flag.length === 1 ? flag[0] : flag.slice(0, -1).join(', ') + ' and ' + flag[flag.length - 1];
+      return { applies: true, ok: false, missing: v.missing, reason: `${who} ${flag.length === 1 ? 'is' : 'are'} filling again.`, short: `waits for ${who} to be full again`,
+        line: `Waiting for ${who} to be full again: the set holds its place until ${flag.length === 1 ? 'it is' : 'they are'}.`, have: v.have, partial: flag, holding: true }; }
     if (v.ok) return partners.length ? partnerGate(v.have) : Object.assign({}, none, { applies: true, have: v.have });
     const need = `a completed ${v.missing.join(' sheet and a completed ')} sheet`;
     return { applies: true, ok: false, missing: v.missing, reason: v.reason, short: `needs ${need}`,

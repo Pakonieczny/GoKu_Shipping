@@ -56,27 +56,29 @@ const set1 = () => ({ setId: 'set-1', seq: 1, name: 'Set-1', group: 'dispatch', 
 
   /* 3 · the readiness gate: Set-1 is flagged, not dissolved; it is not ready, says so in one line, and a completed SS makes it right */
   const gate = Rules.gate(set1(), members);
-  assert.deepEqual([gate.applies, gate.ok, gate.missing], [true, false, ['SS']]); assert.match(gate.line, /^Waiting for a completed SS sheet: a set needs at least 1 completed GF sheet and 1 completed SS sheet before it can go to laser cutting\.$/);
+  assert.deepEqual([gate.applies, gate.ok, gate.missing], [true, false, ['SS']]); assert.match(gate.line, /^Waiting for SS Sheet 1 to be full again: the set holds its place until it is\.$/);   // (Decision 3, 26 Oct 2026: its SS sheet is filling again: the set waits for it by name)
   const flagged = R.laserGroup(set1(), clone(members));
   assert.equal(flagged.ready, false, 'every sheet is ready, the set is not: it has no completed SS');
   assert.equal(R.laserSheet(clone(S.g2)).ready, true, 'a sheet of it is ready on its own');
   const g = R.setGate(set1(), clone(members));
-  assert.equal(g.ready, false); assert.equal(g.reason, 'Set-1 · needs a completed SS sheet'); assert.equal(g.blockers[0].rule, 'setPrinciple');
+  assert.equal(g.ready, false); assert.equal(g.reason, 'Set-1 · waits for SS Sheet 1 to be full again'); assert.equal(g.blockers[0].rule, 'setPrinciple');
   assert.equal(R.explain(set1(), { kind: 'set', sheets: clone(members) }).nextText, gate.line, 'the card says it in the one plain line');
   const right = members.concat([{ ...S.ss1, ...inSet1, sheetIndex: 2 }]), setRight = { ...set1(), sheetIds: set1().sheetIds.concat(S.ss1.id) };
-  assert.equal(R.laserGroup(setRight, clone(right)).ready, true, 'with a completed SS sheet the same set is ready'); assert.equal(R.setGate(setRight, clone(right)).ready, true);
+  // (Decision 3, 26 Oct 2026: a sheet of the set that is filling again holds the set: another completed SS sheet does not make it ready while SS Sheet 1 is not full; R3)
+  assert.equal(R.laserGroup(setRight, clone(right)).ready, false, 'with a completed SS sheet it still waits for its partial SS sheet'); assert.match(R.setGate(setRight, clone(right)).reason, /waits for SS Sheet 1 to be full again/);
   assert.equal(R.laserGroup(set1(), clone(members.map(m => m === S.sp ? { ...m, releaseFull: true } : m))).ready, true, 'the partial SS sheet reaching its fill (released) is enough as well');
   // Paul, 12 Oct: back engraving is NOT a criterion for a set to exist or to form (backs 0 / N on every card of his picture): the same set with no back engraving done is still a valid set,
   // each sheet is still Completed; only Approve for laser cutting waits for the backs (that gate is unchanged)
-  const noBacks = clone(right).map(s => ({ ...s, backPool: [] }));
+  const noBacks = clone(right).map(s => ({ ...s, backPool: [], ...(s.id === S.sp.id ? { releaseFull: true } : {}) }));   // (its partial SS sheet full: this reads the backs alone, Decision 3 holds a set for a filling sheet)
   assert.deepEqual([Rules.validSet(noBacks).ok, Rules.gate(setRight, noBacks).ok, noBacks.every(s => !['gold', 'silver'].includes(s.metal) || !s.releaseFull || Rules.isCompleted(s))], [true, true, true], 'no back engraving done: the set exists and its sheets count');
   assert.equal(R.laserGroup(setRight, noBacks).ready, false, 'Approve for laser cutting still waits for the backs'); assert.match(R.setGate(setRight, noBacks).reason, /back engravings 0 of 1/);
+  const rightFull = right.map(s => s.id === S.sp.id ? { ...s, releaseFull: true } : s);   // (its partial SS sheet full: these read the partner alone; Decision 3 holds a set for a filling sheet)
   // a set formed beside a partner sheet that cannot join yet (the page derives set.cardinalWait, never saved): grey with that one reason until the partner is in the set
   const waiting = { ...setRight, cardinalWait: [{ label: 'RG Draft 1', id: 'rose-1' }] };
-  assert.equal(R.laserGroup(setRight, clone(right)).ready, true, 'without the partner outside, every sheet is ready'); assert.equal(R.laserGroup(waiting, clone(right)).ready, false, 'the same sheets, the set waits for the partner'); const wg = R.setGate(waiting, clone(right));
-  assert.deepEqual([wg.ready, wg.reason, wg.blockers[0].rule], [false, 'Set-1 · orders shared with RG Draft 1: add that sheet to this set', 'setPrinciple']);
-  assert.equal(R.explain(waiting, { kind: 'set', sheets: clone(right) }).nextText, 'Waiting: orders shared with RG Draft 1: add that sheet to this set, so that orders are not spread over two sets.');
-  assert.equal(R.setGate(setRight, clone(right)).ready, true, 'the partner in the set: nothing in the way');
+  assert.equal(R.laserGroup(setRight, clone(rightFull)).ready, true, 'without the partner outside, every sheet is ready'); assert.equal(R.laserGroup(waiting, clone(rightFull)).ready, false, 'the same sheets, the set waits for the partner'); const wg = R.setGate(waiting, clone(rightFull));
+  assert.deepEqual([wg.ready, wg.reason, wg.blockers[0].rule], [false, 'Set-1 · orders shared with RG Draft 1: it joins this set by itself (a green line is cut automatically) once it is ready', 'setPrinciple']);
+  assert.equal(R.explain(waiting, { kind: 'set', sheets: clone(rightFull) }).nextText, 'Waiting: orders shared with RG Draft 1: it joins this set by itself (a green line is cut automatically) once it is ready, so that orders are not spread over two sets.');
+  assert.equal(R.setGate(setRight, clone(rightFull)).ready, true, 'the partner in the set: nothing in the way');
   const committed = { ...set1(), status: 'complete', committedAt: 5 };
   assert.deepEqual([Rules.gate(committed, members).applies, R.laserGroup(committed, clone(members)).ready], [false, true], 'a set committed before is never blocked afterwards');
   assert.equal(Rules.gate(set1(), members.map(({ releaseFull, ...m }) => m)).applies, false, 'records without a completion mark are not judged');
@@ -130,7 +132,7 @@ const set1 = () => ({ setId: 'set-1', seq: 1, name: 'Set-1', group: 'dispatch', 
     put('sets/set1', { setId: 'set1', sheetIds: list.map(s => s.id), status: 'open', ...setDoc });
   };
   setup(S.g2, S.sp);                                                                    // a completed GF and the partial SS: refused, nothing written
-  await assert.rejects(ctx.op_setUpdate({ setId: 'set1', patch: { status: 'complete' } }), /Set cannot be completed: .* needs a completed SS sheet\. A set needs at least 1 completed GF sheet and 1 completed SS sheet\./);
+  await assert.rejects(ctx.op_setUpdate({ setId: 'set1', patch: { status: 'complete' } }), /Set cannot be completed: .* (needs a completed SS sheet|waits for SS Sheet 1 to be full again)\. A set needs at least 1 completed GF sheet and 1 completed SS sheet\./);
   assert.equal(writes, 0, 'a refused completion writes nothing');
   setup(S.g2, { ...S.ss1, releaseFull: true });                                         // a completed GF and a completed SS: recorded
   await ctx.op_setUpdate({ setId: 'set1', patch: { status: 'complete', sheetIds: ['gold-s2-mv1nyiv7', 'silver-mv1n51oa'] } }); assert.equal(writes, 1); assert.equal(data.get('sets/set1').status, 'complete');

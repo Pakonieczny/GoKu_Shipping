@@ -4607,7 +4607,33 @@ const Pool = window.Pool = (() => {
       order, oldest first. It cannot ship before that line, and the orders ahead of it in a big update would fill the sheet it joined and release it before the line arrives. [[row, prep]] */
   function attachOrder(made, batch) {
     const behind = ([row, prep]) => { try { const m = prep.custom ? null : prep.sp.material; if (!m || S.settings.nospread === "off" || !window.CharmNestNoSpread) return 0; const info = orderInfo(row.order.receiptId, m, prep.charms, batch, null); return info.expected > info.pieces.length + info.placed ? 1 : 0; } catch (_) { return 0; } };
-    return made.map((x, i) => [x, i, behind(x)]).sort((a, b) => a[2] - b[2] || a[1] - b[1]).map(x => x[0]);
+    // (Paul, 26 Oct 2026, Decision 2: a Rose Gold / 10K / 14K line goes on after the order's Gold Filled and Sterling Silver lines, so its sheet is chosen knowing where they went: greenFits)
+    const green = ([row, prep]) => { const m = prep && !prep.custom && prep.sp ? prep.sp.material : null; return lineCuts(m) ? 1 : 0; };
+    return made.map((x, i) => [x, i, behind(x)]).sort((a, b) => green(a[0]) - green(b[0]) || a[2] - b[2] || a[1] - b[1]).map(x => x[0]);
+  }
+  /* (Paul, 26 Oct 2026, Decision 2) "A Rose Gold sheet should be only allowed to mix pieces and charms from a given multi-charm order with 1 Gold Filled sheet and/or 1 Sterling Silver sheet.
+     Only if the GF and SS sheets are part of the same Set Of Sheet can the RG sheet contain shared charms from both ... No other multi-charm orders should be allowed to intertwine the RG sheet
+     with any other GF and SS sheets unless they belong to the same Set of Sheets." The same for 10K and 14K (every metal with a green line). A green-line sheet's partners are the GF and SS
+     sheets holding pieces of the orders it holds; a line whose order would give it a second GF or a second SS partner, or a GF and an SS partner in different sets, goes to the next
+     green-line sheet that keeps the rule, a new one when none does. Its set is then the one set of its partners (Gate: its green line is cut automatically once that set is complete). */
+  const lineCuts = m => m === "rose" || (typeof CharmNestRose !== "undefined" && typeof CharmNestRose.cuts === "function" && CharmNestRose.cuts(m));
+  const orderOfCharm = c => String(c && c.order != null ? c.order : "").split("/")[0];
+  function partnerSheets(orderIds, run) {
+    const ids = new Set([...orderIds].map(String).filter(Boolean)), out = { gold: new Set(), silver: new Set() };
+    if (!ids.size) return out;
+    for (const p of allSheets()) {
+      if (!out[p.metal] || (run && p.runId && p.runId !== run.runId)) continue;
+      if (p.charms.some(c => ids.has(orderOfCharm(c)))) out[p.metal].add(p);
+    }
+    return out;
+  }
+  function greenFits(page, orderId, run) {
+    const add = partnerSheets([orderId], run); if (!add.gold.size && !add.silver.size) return true;      // (an order with no GF / SS piece ties the sheet to nothing)
+    const mine = partnerSheets(page.charms.map(orderOfCharm), run);
+    const gf = new Set([...mine.gold, ...add.gold]), ss = new Set([...mine.silver, ...add.silver]);
+    if (gf.size > 1 || ss.size > 1) return false;
+    if (gf.size && ss.size) { const setOf = p => (p.setId && !p.draft ? p.setId : null), a = setOf([...gf][0]), b = setOf([...ss][0]); if (a !== b) return false; }   // (both partners in one set, or neither in a set yet)
+    return true;
   }
   /* ═══ INPLACE · a replaced piece goes into the spot its old piece left, or that spot stays empty (Paul, 20 Oct 2026) ═══════════════════════════════════════════════════════════════════
      Paul: "I just wanna make sure that you're not nesting the entire sheet because of one charm/charms change. If the new updated charm does not fit into the spot of the previously removed
@@ -4748,6 +4774,11 @@ const Pool = window.Pool = (() => {
         // (PICKFULL, Paul 19 Oct 2026: a home sheet that was only FULL, still a draft waiting for its set, is not full any more once the old pieces came off: it takes the picked charm back into their room; the sorter marks it full again when it is)
         for (const p of row._relink.homes) if (p && p.metal === metal && p.releaseFull && (p.draft || !p.setId) && Gate.modern(p.runId) && !(p.label && p.label.own) && pagesOf(p.metal).includes(p)) { p.releaseFull = false; if (p.keepRelease && p.keepRelease.full) p.keepRelease = null; }   // (and the hold Gate.keep put on it when its pieces came off: a draft has no set to keep)
         const home = row._relink.homes.find(p => p && p.metal === metal && pagesOf(metal).includes(p) && !shut(p) && (!run || !p.runId || p.runId === run.runId)); if (home) page = home;
+      }
+      if (!ip && lineCuts(metal) && !matePages.includes(page) && !greenFits(page, String(row.order.receiptId), run)) {   // (Decision 2: one GF and/or one SS partner sheet, in one set)
+        const was = page, alt = pagesOf(metal).find(p => p !== was && !shut(p) && (!run || !p.runId || p.runId === run.runId) && greenFits(p, String(row.order.receiptId), run));
+        page = alt || addPage(metal);
+        try { agent({ metal, pool: true }, "nest", `Order ${row.order.receiptId}: its ${labelOf(metal)} piece goes on ${alt ? "another" : "a new"} ${labelOf(metal)} sheet, so that each ${labelOf(metal)} sheet shares orders with one Gold Filled and one Sterling Silver sheet of one set`); } catch (_) { /* a note only */ }
       }
       if(!ip && ((run && page.runId && page.runId!==run.runId) || shut(page)))page=addPage(metal);
       if (!(ip && ip.placed)) { S.sheets[metal].active=pagesOf(metal).indexOf(page);if(!page.el)window.CN?.showPage(metal,S.sheets[metal].active); }   // the card shows the page its buttons act on
@@ -5640,8 +5671,86 @@ const Gate = window.Gate = (() => {
     }
     for (const p of pages) delete p.handSet;      // (a drop is read by one assembly)
     run.heldSheets = pages.filter(p => p.draft).length;
+    if (!(context && context.trimming)) { await trimSurplus(run, context); Promise.resolve().then(() => autoCut(run)); }   // (autoCut: after this look, never inside it: its Cut Sheet press runs an assembly of its own)
     refreshAllCards();
     if (S.mode === "library") CN.loadLibrary().catch(e=>toast("Library refresh: "+e.message,"bad"));
+  }
+  /* (Paul, 26 Oct 2026, Decision 1: "Remove automatically".) A late order line can make a FORMED set bigger than the minimum: the cardinal rule rightly pulls a whole complete unit in
+     (R9), and an older unit of the set is then spare (R7). C6 kept the assembly from taking it out by itself and the Library offered "Rebuild this set correctly"; now the assembly
+     does it: the spare unit leaves (it is marked taken out, as the Rebuild does, and the set's own tending lets it go), the mark is lifted, and the freed sheets form the NEXT set.
+     Only a set that is not committed, not approved for laser cutting (or on its way), with no sheet of the unit cut, being nested, saved or edited by hand; every view follows at
+     once (the cards, the Library, the run's record). A unit that cannot leave stays and is flagged as before. */
+  /* (Paul, 26 Oct 2026, Decision 2: "once a Set of Sheets is complete then the given RG sheets with intertwined multi-charm orders must have a green cut line auto-cut and that cut portion of
+     the RG sheet must be placed as part of a given Set of Sheets which contains the GF, SS, and partial (Green Cut Line) RG sheets"; 10K and 14K the same.) A green-line sheet outside every
+     set whose Gold Filled / Sterling Silver partners (the sheets holding the other pieces of its orders; the intake keeps them to one GF and one SS sheet of one set, greenFits) are all in
+     ONE set that is complete and not committed gets the Cut Sheet press by itself (RoseStock.record: it joins that set, its green line is drawn and dated, the cut is recorded; the stock
+     left over goes on for the next set). The cut is recorded only when the sheet is ready (nested, verified, saved, its back engraving approved and its files made: the server's
+     roseRecordCut), so until then it waits, said on its card, and it is tried again at the next look (at most once a minute while nothing changed). Every view follows at once. */
+  const autoCutTried = new Map();
+  function autoCut(run) {
+    try {
+      const RS = window.RoseStock; if (!RS || typeof RS.record !== "function" || !run || !modern(run.runId) || !S.cloud.ok) return;
+      const SRa = window.CharmNestSetRules, sets = Sets.ofRun(run.runId).filter(st => !st.committedAt);
+      const orderOf = c => String(c && c.order != null ? c.order : "").split("/")[0];
+      for (const p of allSheets().filter(p => p.runId === run.runId && goldFamily(p.metal) && !inSetNow(p) && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled)) {
+        if (p._roseAction || p._rosePlanning || p._roseLoading || p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || !p.persistedDone || !p.verification?.ok || !p.placements.length || p._manualHold) continue;
+        const mine = new Set(p.charms.filter(c => p.placements.some(x => x.id === c.id)).map(orderOf).filter(Boolean)); if (!mine.size) continue;
+        const partners = allSheets().filter(q => q !== p && q.runId === run.runId && (q.metal === "gold" || q.metal === "silver") && q.charms.some(c => mine.has(orderOf(c))));
+        if (!partners.length || partners.some(q => !inSetNow(q))) continue;                     // (a partner not in a set yet: its set is not complete)
+        const homes = [...new Set(partners.map(q => q.setId))]; if (homes.length !== 1) continue;  // (partners in two sets: the intake keeps this from happening; said by the cardinal rule)
+        const st = sets.find(x => x.setId === homes[0]); if (!st || !SRa || !SRa.closed(membersOfSet(st))) continue;
+        const key = p.sheetId + "|" + st.setId + "|" + (p.jobId || "") + "|" + Object.keys(p.backPool || {}).length, last = autoCutTried.get(p.sheetId);
+        if (last && last.key === key && Date.now() - last.at < 60000) continue;
+        autoCutTried.set(p.sheetId, { key, at: Date.now() });
+        p._roseAction = true;
+        const by = (typeof stampWho === "function" && stampWho().by) || "Charm Nest (automatic)";
+        RS.record(p, { by, via: "auto" }).then(() => {
+          try { agent({ run: run.runId, metal: p.metal }, "ok", `${sheetNameOf(p)}: green line cut automatically; it is in ${st.name || "its set"} with the Gold Filled and Sterling Silver sheets it shares orders with`); } catch (_) {}
+          delete p.autoCutWait;
+        }, e => { p.autoCutWait = `Its green line is cut automatically, and it joins ${st.name || "its set"}, once it is ready: ${String(e && e.message || e).replace(/^Not cut: /, "")}`; })
+          .finally(() => { p._roseAction = false; liveRefresh(p); });
+      }
+    } catch (e) { try { console.warn("[Gate.autoCut]", e); } catch (_) {} }
+  }
+  /** After a membership or cut change: every view of this screen at once (the cards, the gate, the Library and its Approve buttons, the order window, the run banner, an open sheet window); other screens
+      follow through the library write broadcast and their live read. */
+  function liveRefresh(p) {
+    const tryDo = f => { try { f(); } catch (_) { /* a view that is not there */ } };
+    tryDo(() => refreshAllCards()); tryDo(() => refreshMembership());
+    tryDo(() => { if (window.LaserReview) { LaserReview.changed && LaserReview.changed(); LaserReview.nudge && LaserReview.nudge(); } });
+    tryDo(() => { if (S.mode === "library") CN.loadLibrary().catch(() => {}); });
+    tryDo(() => { if (window.OrderWin && OrderWin.isOpen && OrderWin.isOpen()) OrderWin.paint(); });
+    tryDo(() => RunCtl.poke());
+    tryDo(() => { if (p && window.SheetWin && SheetWin.isOpen && SheetWin.isOpen() && SheetWin.current && SheetWin.current() === p.sheetId) SheetWin.open(p.sheetId, { keepWork: true }); });
+  }
+  async function trimSurplus(run, context) {
+    const SO = SOrd(); if (!SO || !run || !modern(run.runId)) return false;
+    const spare = violations(run).filter(v => v.rule === "surplus" && Array.isArray(v.unit) && v.unit.length);
+    if (!spare.length) return false;
+    const pageOf = new Map(); for (const p of allSheets().filter(p => p.runId === run.runId)) { const n = SO.fromPage(p); if (n) pageOf.set(n.id, p); }
+    const sets = new Map(Sets.ofRun(run.runId).map(st => [st.setId, st]));
+    const approved = st => !!(st.committedAt || st.processReady || st.laserSetPending || st.laserDoneAt);
+    const busy = p => p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone) || p._manualHold || p._incBusy || p._rosePlanning || p._roseAction || (window.SheetWin && typeof SheetWin.isOpen === "function" && SheetWin.isOpen() && typeof SheetWin.current === "function" && SheetWin.current() === p.sheetId);
+    const moved = [];
+    for (const v of spare) {
+      const st = sets.get(v.set); if (!st || approved(st)) continue;
+      const unit = v.unit.map(id => pageOf.get(id));
+      if (unit.some(p => !p || p.roseCutAt || +p.laserDoneAt > 0 || p.processReady || p.setId !== st.setId || busy(p))) continue;
+      for (const p of unit) { p.leftSet = st.setId; p.draft = true; if (goldFamily(p.metal)) p.solidPick = false; }
+      moved.push({ st, unit });
+    }
+    if (!moved.length) return false;
+    const ctx = Object.assign({}, context || {}, { trimming: true });
+    try { await assembleNow(run, ctx); }                                   // (the set lets the spare unit go: tendSet, putSheet as drafts, the set's lists and labels made again)
+    finally { for (const { unit } of moved) for (const p of unit) if (!goldFamily(p.metal)) delete p.leftSet; }
+    run.membershipDirty = true;
+    await assembleNow(run, ctx);                                           // (the freed sheets form the next set, numbered after it)
+    try { await RunCtl.save(run); } catch (_) { /* the run's record is saved again with its next look */ }
+    for (const { st, unit } of moved) {
+      const names = unit.map(p => sheetNameOf(p)).join(", "), now = unit[0].setId ? (Sets.ofRun(run.runId).find(x => x.setId === unit[0].setId) || {}).name : null;
+      try { agent({ run: run.runId }, "ok", `${st.name || "A set"} held more sheets than it needs (a late order line pulled a group in): ${names} ${unit.length === 1 ? "was" : "were"} moved out${now ? ` into ${now}` : " and wait for the next set"} automatically`); } catch (_) { /* a note only */ }
+    }
+    return true;
   }
   /** One open set of the run, kept as the rules say: a sheet that no longer qualifies goes back out, the set's lists follow, a sheet the set takes now joins with its number and QR label. */
   async function tendSet(run, set, pages, choices, release, admits) {
@@ -6019,7 +6128,7 @@ const Gate = window.Gate = (() => {
     const spin=inc.querySelector('[data-solid="busy"]');if(spin){spin.hidden=!working;const t=spin.querySelector('[data-solid="busy-text"]');if(t&&t.textContent!==working)t.textContent=working;}
     // (the line read aloud by a screen reader; the line a person sees is [data-solid="say"], drawn only by a refused press)
     const sr=inc.querySelector('[data-solid="status"]'),lineUp=inc.querySelector('[data-solid="say"]');
-    if(!(lineUp&&!lineUp.hidden))sr.textContent=R.membershipError?'Selection not saved':working||sh.setWait||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';
+    if(!(lineUp&&!lineUp.hidden))sr.textContent=R.membershipError?'Selection not saved':working||sh.autoCutWait||sh.setWait||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';   // (autoCutWait: Decision 2, its automatic Cut Sheet waits)
     if(sh.el)sh.el.querySelector(".shHead").title=policy(sh,seq).reason;   // the same hover answer the Gold and Silver cards give
     const retry=inc.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
     retry.onclick=()=>changeMembership(m,picked(sh),sh).catch(()=>{});

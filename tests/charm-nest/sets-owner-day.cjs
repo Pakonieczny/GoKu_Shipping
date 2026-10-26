@@ -319,7 +319,12 @@ async function look(w, what, extra = {}) {
     assert.deepEqual(vs.filter(v => v.rule === 'notReady').map(v => v.sheets[0]).sort(), ['rA29', 'rB16']);
     // one agent-log warning for this list (and again only when the list changes)
     vm.runInContext('Gate.selfCheck(B.run)', w.c); const before = w.log().length; await w.assemble(); const warns = w.log().filter(e => e.kind === 'warn' && /Set check:/.test(e.text));
-    assert.equal(warns.length >= 1, true, 'the agent log carries a warning: ' + JSON.stringify(w.log())); assert(/surplus/.test(warns[0].text) && /notReady/.test(warns[0].text), warns[0].text);
+    // (Paul, 26 Oct 2026, Decision 1: "Remove automatically": the next look takes the spare groups out of the uncommitted Set 2 by itself; what is left to say is said once)
+    const after = w.violations();
+    assert(!after.some(v => v.rule === 'surplus'), 'the spare groups were taken out automatically: ' + after.map(v => v.rule).join());
+    const stayed = ['C', 'B', 'A', 'L'].filter(g => groups[g].some(id => w.by(id).setId === 'set-bad' && !w.by(id).draft));
+    assert.equal(stayed.length, 1, 'Set 2 keeps exactly the one group it needs, the others left it: ' + stayed.join());
+    assert.equal(warns.length >= 1, true, 'the agent log carries a warning: ' + JSON.stringify(w.log()));
     const n1 = w.log().filter(e => /Set check:/.test(e.text)).length; await w.assemble(); assert.equal(w.log().filter(e => /Set check:/.test(e.text)).length, n1, 'the same list is not written twice');
     assert.equal(set1.formedAt, T0 - 10);
   }

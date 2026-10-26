@@ -97,15 +97,15 @@ assert.strictEqual(f.wait[0].why, 'Set-1 has formed, so this sheet waits for the
 assert.strictEqual(R.nextSetWords('', ['GF']), 'The set has formed, so this sheet waits for the next set: it needs a completed GF sheet with it');
 f = R.form([gfDone('g1'), ssDone('s1')], [], true); assert.deepStrictEqual([f.where, f.join.length, f.wait.length], [null, 0, 0]);
 // partner words and the gate: a set that formed while a partner sheet cannot join yet is not ready for laser cutting, with that one line
-assert.strictEqual(R.partnerWords(['RG Draft 1']), 'orders shared with RG Draft 1: add that sheet to this set');
-assert.strictEqual(R.partnerWords(['RG Draft 1', 'GF Draft 4']), 'orders shared with RG Draft 1 and GF Draft 4: add those sheets to this set');
+assert.strictEqual(R.partnerWords(['RG Draft 1']), 'orders shared with RG Draft 1: it joins this set by itself (a green line is cut automatically) once it is ready');
+assert.strictEqual(R.partnerWords(['RG Draft 1', 'GF Draft 4']), 'orders shared with RG Draft 1 and GF Draft 4: they join this set by itself (a green line is cut automatically) once they are ready');
 const members = [gfDone('g1'), ssDone('s1')];
 let g = R.gate({ setId: 's', status: 'awaiting review' }, members);
 assert.deepStrictEqual([g.applies, g.ok], [true, true], 'valid and no partner outside: nothing in the way');
 g = R.gate({ setId: 's', status: 'awaiting review', cardinalWait: [{ label: 'RG Draft 1', id: 'rose-1' }] }, members);
 assert.deepStrictEqual([g.applies, g.ok, g.missing], [true, false, []]);
-assert.strictEqual(g.short, 'orders shared with RG Draft 1: add that sheet to this set');
-assert.strictEqual(g.line, 'Waiting: orders shared with RG Draft 1: add that sheet to this set, so that orders are not spread over two sets.');
+assert.strictEqual(g.short, 'orders shared with RG Draft 1: it joins this set by itself (a green line is cut automatically) once it is ready');
+assert.strictEqual(g.line, 'Waiting: orders shared with RG Draft 1: it joins this set by itself (a green line is cut automatically) once it is ready, so that orders are not spread over two sets.');
 g = R.gate({ setId: 's', status: 'awaiting review', cardinalWait: [{ label: 'RG Draft 1' }] }, [gfDone('g1'), sh('p', 'silver')]);
 assert.deepStrictEqual([g.ok, g.missing], [false, ['SS']], 'a set short of a completed SS sheet says that first');
 g = R.gate({ setId: 's', status: 'complete', committedAt: 5, cardinalWait: [{ label: 'RG Draft 1' }] }, members); assert.strictEqual(g.applies, false, 'a set committed before is never blocked afterwards');
@@ -146,13 +146,14 @@ gw = R.groupWait([gfDone('g1'), part('r', 'rose'), part('k', 'gold14k')]); asser
 // partner words and the gate: a partner that is not full yet cannot be added, it joins by itself once full
 assert.strictEqual(R.partnerWords(['GF Draft 3'], ['GF Draft 3']), 'orders shared with GF Draft 3, which is not full yet: it joins this set once it is full');
 assert.strictEqual(R.partnerWords(['GF Draft 3', 'SS Draft 4'], ['GF Draft 3', 'SS Draft 4']), 'orders shared with GF Draft 3 and SS Draft 4, which are not full yet: they join this set once they are full');
-assert.strictEqual(R.partnerWords(['RG Draft 1', 'GF Draft 3'], ['GF Draft 3']), 'orders shared with RG Draft 1 and GF Draft 3: add RG Draft 1 to this set; GF Draft 3 joins it once it is full');
+assert.strictEqual(R.partnerWords(['RG Draft 1', 'GF Draft 3'], ['GF Draft 3']), 'orders shared with RG Draft 1 and GF Draft 3: RG Draft 1 joins this set by itself once ready; GF Draft 3 joins it once it is full');
 g = R.gate({ setId: 's', status: 'awaiting review', cardinalWait: [{ label: 'GF Draft 3', id: 'p', partial: true }] }, members);
 assert.deepStrictEqual([g.applies, g.ok], [true, false]); assert.strictEqual(g.short, 'orders shared with GF Draft 3, which is not full yet: it joins this set once it is full');
 // a set made before the rule that holds a partial sheet is FLAGGED (derived, never blocking): its readiness is exactly what it was
 const oldSet = [gfDone('g1'), ssDone('s1'), sh('p', 'gold', { setId: 's', draft: false, sheetIndex: 3 })];
 g = R.gate({ setId: 's', status: 'awaiting review' }, oldSet);
-assert.deepStrictEqual([g.applies, g.ok], [true, true], 'flagged, not blocked'); assert.deepStrictEqual(g.partial, ['GF Sheet 3']);
+// (Paul, 26 Oct 2026, Decision 3: the set holds its place until the sheet is full again: it waits, said by name, and is not approved meanwhile; it is never rebuilt)
+assert.deepStrictEqual([g.applies, g.ok, g.holding], [true, false, true], 'it holds its place and waits'); assert.deepStrictEqual(g.partial, ['GF Sheet 3']); assert.match(g.line, /^Waiting for GF Sheet 3 to be full again/);
 g = R.gate({ setId: 's', status: 'complete', committedAt: 5 }, oldSet); assert.deepStrictEqual([g.applies, g.ok, g.partial], [false, true, ['GF Sheet 3']], 'a committed set is flagged as well and never blocked');
 assert.deepStrictEqual(R.gate({ setId: 's' }, members).partial, [], 'a set with only completed sheets has nothing to flag');
 assert.deepStrictEqual(R.gate({ setId: 's' }, [{ id: 'old', metal: 'gold' }, { id: 'old2', metal: 'silver' }]).partial, [], 'records with no completion mark are never flagged');

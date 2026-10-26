@@ -71,7 +71,7 @@
   const WORD = { RG: 'Rose Gold', '10K': '10K Gold', '14K': '14K Gold' };
   const GOLD_FAMILY = ['RG', '10K', '14K'];
   /** Rules this file never turns into a rebuild: R1 is the existing "Waiting for ..." line of a set short of a class, R0 is bookkeeping, R5 belongs to no set. */
-  const NOT_SHOWN = new Set(['invalid', 'membership', 'unformed']);
+  const NOT_SHOWN = new Set(['invalid', 'membership', 'unformed', 'partial']);   // ('partial', Paul 26 Oct 2026, Decision 3: a sheet of the set filling again is a wait the set holds its place for, said by SetRules.gate, never a break to Rebuild)
 
   /* ── reading the input ───────────────────────────────────────────────────────────────────────────────────────────────────────────────── */
   /** A sheet as a record in a set: the sheet's own fields say it (the card draws the same), not the set's list. */

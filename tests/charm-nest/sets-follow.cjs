@@ -5,7 +5,7 @@
 // chain that ties five of them to the Rose Gold sheet), with the page's own set rules (charm-nest-set-rules.js). No cloud, no browser: the harness answers the writes.
 //   1 Paul, 13 Oct: a PARTIAL sheet never joins a set. GF Draft 3 (65 %) shares an order with the group, so the picture forms NO set until GF Draft 3 is full: the completed sheets of its group
 //     wait with it, each with one plain line (nothing is split, nothing dissolved). When GF Draft 3 is full, Set 1 forms at once with the completed sheets (never an empty Set 1, never a hold for the Rose Gold sheet), back engraving is never read
-//   2 the Rose Gold sheet is named on every sheet it shares orders with ("orders shared with RG Draft 1: add that sheet to this set"), joins by no other route, and is not taken to Set 2
+//   2 the Rose Gold sheet is named on every sheet it shares orders with ("orders shared with RG Draft 1: it joins this set by itself (a green line is cut automatically) once it is ready"), joins by no other route, and is not taken to Set 2
 //   3 Set 1 is then closed: a later completed pair forms Set 2, a lone completed sheet waits, the next completed SS forms Set 3; a sheet that shares an order with Set 1 still joins Set 1
 //   4 the sandbox's empty Set-1 (made by the old logic) is the set that forms; partial sheets and a lone completed GF never make a set
 //   5 Approve for laser cutting: the set is grey with that one line until the partner is in it (the Library derives set.cardinalWait; charm-nest-readiness.js reads it)
@@ -166,10 +166,10 @@ const page = (w, k) => w.pages.find(p => p.sheetId === ID[k]);
   const full = (id, metal, o = {}) => ({ id, metal, setId: 'set-1', draft: false, releaseFull: true, placedCount: 5, ...o });
   const rows = [full(ID.GF1, 'gold'), full(ID.GF2, 'gold'), full(ID.SS1, 'silver')];
   const rules = RD.setRules(g, rows);
-  assert.deepEqual([rules.applies, rules.ok], [true, false]); assert.equal(rules.short, 'orders shared with RG Draft 1: add that sheet to this set');
+  assert.deepEqual([rules.applies, rules.ok], [true, false]); assert.equal(rules.short, 'orders shared with RG Draft 1: it joins this set by itself (a green line is cut automatically) once it is ready');
   assert.equal(RD.setGate({ ...g, sheetIds: rows.map(r => r.id) }, rows).ready, false, 'grey');
   const gateReason = RD.setGate({ ...g, sheetIds: rows.map(r => r.id) }, rows);
-  assert(gateReason.blockers.some(b => b.rule === 'setPrinciple' && /orders shared with RG Draft 1: add that sheet to this set/.test(b.text)), JSON.stringify(gateReason.blockers.map(b => b.text)));
+  assert(gateReason.blockers.some(b => b.rule === 'setPrinciple' && /orders shared with RG Draft 1: it joins this set by itself \(a green line is cut automatically\) once it is ready/.test(b.text)), JSON.stringify(gateReason.blockers.map(b => b.text)));
   // the partner is in the set: the line is gone (the rule has nothing more to say), and Approve then waits only for what it always waited for
   const joined = { ...g }; delete joined.cardinalWait; const ok = RD.setRules(joined, rows.concat([full(ID.RG1, 'rose', { releaseFull: false })]));
   assert.deepEqual([ok.applies, ok.ok], [true, true]);

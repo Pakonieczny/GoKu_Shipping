@@ -146,7 +146,7 @@ const own = (n, k = 1) => `${X(n)}_1_${k}`;                   // a piece of a si
   assert.match(w.page('gf-3').cardinalPull, /^Shares order 71000000\d\d with /, 'the old pull still keeps it (that is "not touched"); a person may still take it out (A5)');
   const members = w.pages.map(p => ({ id: p.sheetId, metal: p.metal, setId: 'set-1', draft: false, sheetIndex: p.sheetIndex, releaseFull: p.releaseFull, density: p.density, placedCount: 5 }));
   const flag = SR.gate({ setId: 'set-1', status: 'awaiting review' }, members);
-  assert.deepEqual([flag.applies, flag.ok, flag.partial], [true, true, ['GF Sheet 3']], 'flagged by name, never blocked');
+  assert.deepEqual([flag.applies, flag.ok, flag.partial, flag.holding], [true, false, ['GF Sheet 3'], true], 'the set holds its place: it waits for the sheet by name (Decision 3, 26 Oct 2026), never rebuilt');
   assert.deepEqual(RD.setRules({ setId: 'set-1', status: 'awaiting review' }, members).partial, ['GF Sheet 3'], 'the readiness read carries the flag too');
 
   /* A5 · a person takes the partial sheet out of that set (the Library drop on In progress -> the run's leaveSet marks it taken out and a draft): the cardinal rule no longer keeps it in */
