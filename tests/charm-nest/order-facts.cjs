@@ -281,7 +281,8 @@ ok('D2 the stylesheet adds no colour the page did not have: every literal colour
 });
 ok('D3 the page loads the module before the bridge and the build ships it; the bridge asks it for the facts, the Esc and the fresh window', () => {
   const html = read('charm-nest-1.html'), br = read('charm-nest-bridge.js');
-  assert(html.indexOf('charm-nest-order-facts.js') > 0 && html.indexOf('charm-nest-order-facts.js') < html.indexOf('charm-nest-bridge.js'), 'script order');
+  const tag = f => html.indexOf('<script src="' + f);   // the script tags themselves (the CSS comments name both files earlier in the page)
+  assert(tag('charm-nest-order-facts.js') > 0 && tag('charm-nest-order-facts.js') < tag('charm-nest-bridge.js'), 'script order');
   assert(read('scripts/build-public.cjs').includes('"charm-nest-order-facts.js"'), 'in the public manifest');
   assert(/OrderFacts\.paint\(host, f\)/.test(br) && /OrderFacts\.escape\(W\.dlg\)/.test(br) && /OrderFacts\.collapse\(/.test(br));
   assert.equal(/byId\("owMeta"\)\.innerHTML\s*=/.test(br), false, 'the grid is no longer written box by box');
