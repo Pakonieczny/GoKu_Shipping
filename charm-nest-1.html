@@ -2251,6 +2251,36 @@ details.masterHist>summary{white-space:nowrap}
 .skuTile .skuMore>summary::before{content:"▸ "}.skuTile .skuMore[open]>summary::before{content:"▾ "}.skuTile .skuMore[open]{max-height:180px;overflow:auto}
 .skuTile .skuHit{color:var(--ink);font-weight:700}
 .skuTile.blocked{border-color:var(--clay);background:var(--claySoft)}
+/* (Paul, 26 Oct 2026: "Fix the UI for the Charm cards that have an excessive amount of SKUs attached to them" and "update the design for the charms cards so that these
+   buttons are easily visible, tastefully positioned in one row with beautiful hover states".) A card is a column the width of its grid cell: every line (the name, each
+   SKU) ellipsizes inside it with the whole name in its title, "+N more SKUs" opens INSIDE the card into a short scrolled list, and the controls are one row that never
+   wraps, pinned to the card's foot so the cards of a row line up. The grid's cells (340 px at least) are wide enough for that row (up°, faces, size, .ai | .dxf, Etsy, Delete, with their padlocks). */
+#mGrid.skuGrid{grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px;align-items:stretch}
+#mGrid .skuTile{display:flex;flex-direction:column;gap:4px;min-width:0;overflow:hidden;padding:8px}
+#mGrid .skuTile>*{min-width:0;max-width:100%}
+#mGrid .skuTile .skuMore[open]{max-height:132px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin}
+#mGrid .skuTile .skuMore>div{line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#mGrid .skuTile .row.skuActs{margin-top:auto;display:flex;flex-wrap:nowrap;align-items:stretch;gap:4px;padding-top:7px;border-top:1px solid var(--line)}
+.skuActs>*{flex:0 0 auto;height:26px;box-sizing:border-box;margin:0}
+.skuActs input[data-up]{width:46px;border:1px solid var(--line);border-radius:7px;padding:0 5px;font:11px var(--mono);background:var(--card)}
+.skuActs select[data-faces]{flex:1 1 0;min-width:44px;max-width:112px;border:1px solid var(--line);border-radius:7px;padding:0 3px;font-size:11px;background:var(--card);text-overflow:ellipsis}
+.skuActs .btn.xs{display:inline-flex;align-items:center;padding:0 7px;font-size:11px;border-radius:7px}
+.skuActs .btn[data-del]{margin-left:auto}
+.skuActs .dlPair{display:inline-flex;align-items:stretch;border:1px solid var(--goldLine);border-radius:7px;overflow:hidden;background:var(--card)}
+.skuActs .dlPair>*{border:0;border-radius:0;background:transparent;color:var(--ink);font:600 11px var(--mono);padding:0 7px;cursor:pointer}
+.skuActs .dlPair>*+*{border-left:1px solid var(--goldLine)}
+.skuActs .dlPair select{font:600 10.5px var(--sans);padding:0 1px;max-width:46px}
+/* hover: a gold tint, the border warms, a lift of 1 px; 140 ms; none with reduced motion */
+.skuActs .btn.xs,.skuActs .dlPair,.skuActs .dlPair>button,.skuActs input,.skuActs select{transition:background-color .14s ease,border-color .14s ease,box-shadow .14s ease,transform .14s ease,color .14s ease}
+.skuActs .btn.xs:not(:disabled):hover,.skuActs input:hover,.skuActs select[data-faces]:hover{border-color:var(--gold2);background:var(--goldSoft);transform:translateY(-1px);box-shadow:0 2px 6px rgba(80,60,20,.12)}
+.skuActs .dlPair:hover{border-color:var(--gold2);box-shadow:0 2px 6px rgba(80,60,20,.12);transform:translateY(-1px)}
+.skuActs .dlPair>button:not(:disabled):hover{background:var(--goldSoft);color:#6b4d16}
+.skuActs .btn[data-del]:not(:disabled):hover{border-color:var(--clay);background:var(--claySoft);color:var(--clay)}
+.skuActs :is(button,input,select):focus-visible{outline:2px solid var(--gold);outline-offset:1px;position:relative;z-index:1}
+.skuActs .dlPair>:focus-visible{outline-offset:-2px}
+.skuActs button:disabled{opacity:.55;cursor:progress}
+@media (prefers-reduced-motion:reduce){.skuActs *,.skuActs .dlPair{transition:none!important;transform:none!important}}
+@media (max-width:520px){#mGrid.skuGrid{grid-template-columns:minmax(0,1fr)}}
 .skuTile .bad{color:#8a3a26;font-size:11px}
 .skuTile .row{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
 .leftovers{border:1px dashed var(--clay);background:var(--claySoft);border-radius:9px;padding:8px 10px;font-size:12px;color:#8a3a26;display:grid;gap:4px}
@@ -8498,7 +8528,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25-dc26-bk26-es26-ee26-ep26-sx26-sc26-ns26-pw26-gl1-gk1-r16h1-plc1-en1-vis1-dsg1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25-dc26-bk26-es26-ee26-ep26-sx26-sc26-ns26-pw26-gl1-gk1-r16h1-plc1-en1-vis1-dsg1-dxf1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
