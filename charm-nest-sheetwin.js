@@ -16,15 +16,20 @@
   const whoAmI = () => (window.CNEmployee && typeof CNEmployee.name === "function" && CNEmployee.name()) || (window.B && B.employee) || (() => { try { return localStorage.getItem("cn.employee") || ""; } catch (_) { return ""; } })();
   // the name that goes with each change, asked for in a small bar inside the window (never a browser pop-up over it);
   // once given, the change the person pressed carries on by itself
+  // (EMPNUM, Paul 26 Oct 2026: "anyone can switch from one user to another without putting in their password": with the Account panel's gate a typed name signs
+  //  nobody in; the change asks for the Employee Number through the small bar, CNEmployee.need, and carries on under the person it names)
+  const empGated = () => { try { return !!(window.CNAccount && CNAccount.gated && CNAccount.gated()); } catch (_) { return false; } };
   function needName(retry) {
     const who = whoAmI(); if (who) return who;
+    if (empGated()) { Promise.resolve(window.CNEmployee && CNEmployee.need ? CNEmployee.need("Kept with this change, and with your work today.") : "").then(n => { if (n && whoAmI() && retry) retry(); }, () => {}); return ""; }
     const bar = W.el.name; if (!bar) return "";
     bar.innerHTML = `<input type="text" maxlength="40" autocomplete="name" spellcheck="false" aria-label="Your name, kept with this change" placeholder="Your name, for the record"><button type="button" class="btn sage xs" data-nm="go">Continue</button><button type="button" class="swIcon" data-nm="x" title="Not now" aria-label="Not now">${ICON.close}</button>`;
     bar.hidden = false;
     const inp = bar.querySelector("input"); try { inp.value = (window.CNEmployee && CNEmployee.last && CNEmployee.last()) || ""; } catch (_) {}      // (the last name used on this computer is ready: Continue keeps it)
     const go = () => {
       const v = inp.value.trim(); if (!v) return inp.focus();
-      if (!whoAmI()) { if (window.B) B.employee = v; else try { localStorage.setItem("cn.employee", v); } catch (_) {} }   // (a sign-in only, through the one setter: the account chip and the sessions follow)
+      if (!whoAmI()) { if (window.B) B.employee = v; else try { localStorage.setItem("cn.employee", v); } catch (_) {} }
+      if (!whoAmI()) return;                     // (nobody was signed in by it: the change waits)   // (a sign-in only, through the one setter: the account chip and the sessions follow)
       hideName(); if (retry) retry();
     };
     inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); go(); } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); hideName(); } };
@@ -3536,12 +3541,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     function ask(node, c) {
       const rid = String(c.orderId); if (node.classList.contains("asking")) return;
       // (who restored it goes on the order's timeline: a screen with no name saved asks for it here, as a take-off does)
-      const bar = h("div", "cxAskBar", `<span class="cxAsk">Bring it back?</span>${whoAmI() ? "" : `<input class="swNote" type="text" maxlength="40" autocomplete="name" spellcheck="false" placeholder="Your name" aria-label="Your name, kept with the restore">`}<button class="btn sm" type="button" data-cx="yes" title="Restore order ${esc(rid)}: it returns with the next orders check if it is still open on Etsy">Restore</button><button class="btn ghost sm" type="button" data-cx="no">Keep</button>`);
+      const bar = h("div", "cxAskBar", `<span class="cxAsk">Bring it back?</span>${whoAmI() || empGated() ? "" : `<input class="swNote" type="text" maxlength="40" autocomplete="name" spellcheck="false" placeholder="Your name" aria-label="Your name, kept with the restore">`}<button class="btn sm" type="button" data-cx="yes" title="Restore order ${esc(rid)}: it returns with the next orders check if it is still open on Etsy">Restore</button><button class="btn ghost sm" type="button" data-cx="no">Keep</button>`);
       node.classList.add("asking"); node.appendChild(bar);
       animate(bar, [{ opacity: 0, transform: "translateX(10px)" }, { opacity: 1, transform: "none" }], 220);
       let t = 0;
       const back = () => { clearTimeout(t); document.removeEventListener("pointerdown", away, true); if (!node.classList.contains("asking")) return; node.classList.remove("asking"); bar.inert = true; for (const x of bar.querySelectorAll("[data-cx]")) x.removeAttribute("data-cx"); animate(bar, [{ opacity: 1 }, { opacity: 0, transform: "translateX(10px)" }], 160).then(() => bar.remove()); };
-      const away = e => { if (!node.contains(e.target)) back(); };
+      const away = e => { if (!node.contains(e.target) && !(e.target && e.target.closest && e.target.closest(".cnNameBar"))) back(); };   // (EMPNUM: a press in the Employee Number bar Restore opened is not a press away)
       document.addEventListener("pointerdown", away, true); t = setTimeout(back, 12000);
       bar.querySelector("[data-cx=no]").onclick = e => { e.stopPropagation(); back(); node.focus && node.focus(); };
       bar.onclick = e => e.stopPropagation();
@@ -3551,7 +3556,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       requestAnimationFrame(() => (inp || yes).focus());
       yes.onclick = e => {
         e.stopPropagation(); let who = whoAmI();
-        if (!who && inp) { who = inp.value.trim(); if (!who) { inp.focus(); return; } if (window.B) { B.employee = who; who = whoAmI() || who; } else try { localStorage.setItem("cn.employee", who); } catch (_) {} }   // (through the one setter: the tidied name)
+        if (!who && empGated()) { clearTimeout(t); Promise.resolve(window.CNEmployee && CNEmployee.need ? CNEmployee.need("Kept with the restore, and with your work today.") : "").then(n => { if (n && whoAmI() && yes.isConnected) yes.click(); }, () => {}); return; }   // (EMPNUM: the number, never a typed name)
+        if (!who && inp) { who = inp.value.trim(); if (!who) { inp.focus(); return; } if (window.B) { B.employee = who; who = whoAmI(); if (!who) return; } else try { localStorage.setItem("cn.employee", who); } catch (_) {} }   // (through the one setter: the tidied name)
         clearTimeout(t); document.removeEventListener("pointerdown", away, true); inp?.remove(); doRestore(node, c, yes, back, who);
       };
     }

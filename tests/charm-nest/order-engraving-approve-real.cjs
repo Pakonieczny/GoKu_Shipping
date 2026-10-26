@@ -13,7 +13,7 @@
 //   SHOTS=<dir> node tests/charm-nest/order-engraving-approve-real.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>, ONLY=<phase,phase>, SKIP_SANDBOX=1)
 const fs = require('fs'), path = require('path'), os = require('os');
 const root = path.join(__dirname, '../..');
-const { start } = require('./bridge-server.cjs');
+const { start, pinOf, signInAs } = require('./bridge-server.cjs');
 const { buildMaster } = require('./fixture-master.cjs');
 
 const day = Math.floor(Date.now() / 1000);
@@ -199,7 +199,8 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
         try { await A.ctx.setOffline(false); net.rules.length = 0; net.delayMs = 0; await page.setViewportSize({ width: 1500, height: 1000 }); } catch (_) {}
       }
     };
-    const asNamed = n => page.evaluate(n => { B.employee = n; try { localStorage.setItem('cn.employee', n); } catch (_) {} }, n);
+    // (EMPNUM, Paul 26 Oct 2026: a person is signed in by their Employee Number, never by a script-set name)
+    const asNamed = async n => { if ((await page.evaluate(() => CNEmployee.name())) !== n) await signInAs(page, srv, n); };
     const noName = () => page.evaluate(() => { B.employee = ''; try { localStorage.removeItem('cn.employee'); } catch (_) {} });
     const written = (key, ms = 90000) => page.waitForFunction(k => { const j = Engrave.items().get(k); return j && j.state === 'written' && !j.backSaving && !j.backPending; }, key, { timeout: ms }).then(() => true, () => false);
     const stood = (key, ms = 60000) => page.waitForFunction(k => { const j = Engrave.items().get(k); return j && ['approved', 'written'].includes(j.state) && !j.stamping && !j.approvalPreparing; }, key, { timeout: ms }).then(() => true, () => false);
@@ -266,7 +267,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       check(c.state === 'approve' && c.approve && !c.approve.disabled && c.approve.text === 'Approve' && c.sealCount === 0 && (await calls()).approve.length === before.calls.approve.length && !net.log.slice(before.n).some(engW(K.O2)), 'the name bar put away: no approval, no write, no seal, the button is as it was: ' + JSON.stringify([c.state, c.approve]));
       // again, with a name
       await page.click(OV + ' [data-e=approve]'); await page.waitForSelector('.cnNameBar', { timeout: 4000 });
-      await page.fill('.cnNameBar input', 'Test Operator');
+      await page.fill('.cnNameBar input', pinOf(srv.st, 'Test Operator'));   // (EMPNUM: the bar asks for the Employee Number)
       // (every state the button passes through is recorded, so a short wait is not missed)
       await page.evaluate(() => { window.__btn = []; const host = document.getElementById('owEng'); const snap = () => { const b = host.querySelector('.egApproveButton'); if (!b) return; const s = (b.textContent || '').trim() + '|' + (b.disabled ? 'off' : 'on') + '|' + (b.querySelector('.spin') ? 'spin' : '') + '|' + (b.getAttribute('aria-busy') || ''); if (window.__btn[window.__btn.length - 1] !== s) window.__btn.push(s); }; new MutationObserver(snap).observe(host, { subtree: true, childList: true, attributes: true, characterData: true }); snap(); });
       await page.click('.cnNameBar button[type=submit]');
@@ -750,7 +751,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
         const sp = S.page, sh = H(sp), pn = SBOX => (SBOX ? 'Sandbox_' : '') + 'Order_Timeline';
         const on = await sp.evaluate(() => CN.S.settings.sandbox === 'on' && !!document.body.innerText);
         check(on, 'the second page is in Sandbox mode');
-        await sp.evaluate(() => { B.employee = 'Sandbox Operator'; try { localStorage.setItem('cn.employee', 'Sandbox Operator'); } catch (_) {} });
+        await signInAs(sp, srv, 'Sandbox Operator');   // (EMPNUM: by the Employee Number)
         await sh.openWin(K.O12); await sh.waitState(OV, 'approve', 40000);
         const cardIn = await sh.read(OV);
         check(cardIn && cardIn.state === 'approve' && cardIn.words === 'LILY', 'the Sandbox page has its own card for the order, To approve: ' + JSON.stringify(cardIn && [cardIn.state, cardIn.words]));

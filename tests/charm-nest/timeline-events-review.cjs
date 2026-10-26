@@ -8,7 +8,7 @@
 //   node tests/charm-nest/timeline-events-review.cjs [playwright-core dir]
 const path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
-const { start } = require('./bridge-server.cjs');
+const { start, signInAs } = require('./bridge-server.cjs');
 
 const DAY = 86400, SHIP = Math.floor(Date.now() / 1000) + 5 * DAY;
 const order = (rid, lines) => ({ receiptId: String(rid), orderNumber: String(rid), createTs: SHIP - 8 * DAY, updateTs: SHIP - 8 * DAY + 60, shipBy: SHIP, buyer: { name: 'Buyer ' + String(rid).slice(-4) }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [], lines });
@@ -44,7 +44,9 @@ const DESIGN_DXF = DG(0, 'SECTION', 2, 'HEADER', 9, '$INSUNITS', 70, 4, 0, 'ENDS
     await page.waitForFunction(() => window.CN && window.Orders && window.Review && window.CustomSheet && window.Arrivals && window.OrderTimeline && window.CNTimeline && CN.S.cloud.ok === true, null, { timeout: 60000 });
 
     // 1 · the setup: the sorter writes as itself, and a name set anywhere is the one the next event carries
-    const cfg = await page.evaluate(() => { const a = OrderTimeline.config(); B.employee = 'Bea'; const b = OrderTimeline.config().by; B.employee = 'Test Operator'; return { a, b, scriptOrder: [...document.scripts].map(s => (s.getAttribute('src') || '').split('?')[0]).filter(s => /order-timeline|charm-nest-bridge/.test(s)) }; });
+    // (EMPNUM, Paul 26 Oct 2026: a person is switched to only with their Employee Number: Bea's, then Test Operator's again)
+    const cfg = await page.evaluate(() => ({ a: OrderTimeline.config(), scriptOrder: [...document.scripts].map(s => (s.getAttribute('src') || '').split('?')[0]).filter(s => /order-timeline|charm-nest-bridge/.test(s)) }));
+    await signInAs(page, srv, 'Bea'); cfg.b = await page.evaluate(() => OrderTimeline.config().by); await signInAs(page, srv, 'Test Operator');
     assert.deepEqual(cfg.scriptOrder, ['order-timeline.js', 'charm-nest-bridge.js'], 'the timeline is loaded before the bridge');
     assert.equal(cfg.a.mode, 'sorter'); assert.equal(cfg.a.sandbox, false); assert.equal(cfg.a.by, 'Test Operator'); assert.equal(cfg.a.passcode, '');
     assert.equal(cfg.b, 'Bea', 'the employee is kept current');

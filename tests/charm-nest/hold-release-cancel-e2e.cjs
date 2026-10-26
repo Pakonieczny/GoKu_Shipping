@@ -15,7 +15,7 @@ const fs = require('fs'), path = require('path'), assert = require('assert/stric
 const root = path.join(__dirname, '../..');
 const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
 let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { try { ({ chromium } = require('/opt/node22/lib/node_modules/playwright/node_modules/playwright-core')); } catch (__) { console.log('  - no playwright-core: the browser checks were not run'); process.exit(0); } }
-const { start } = require('./bridge-server.cjs');
+const { start, pinOf, signInAs } = require('./bridge-server.cjs');
 const SHOTS = process.env.SHOTS || '', ONLY = (process.env.ONLY || '').split(',').filter(Boolean), want = n => !ONLY.length || ONLY.includes(n);
 if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 
@@ -329,7 +329,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert.equal(await page.evaluate(() => (window.__steps[Object.keys(window.__steps)[0]] || []).length), 0, 'the engine has not run');
     await shot('a3-name-bar');
     await sampler();
-    await page.fill('.cnNameBar input', 'Paul'); await page.keyboard.press('Enter');
+    await page.fill('.cnNameBar input', pinOf(srv.st, 'Paul')); await page.keyboard.press('Enter');   // (EMPNUM: the bar asks for the Employee Number)
     // the film, in the Nest tab: four frames
     await page.waitForFunction(() => document.getElementById('hfxLayer') && CN.S.mode === 'nest', null, { timeout: 30000 });
     const grabs = [['Taking the pieces off', 'a4-film-1-lift'], ['Filling the empty spots', 'a4-film-2-fill-begin'], ['Placed on', 'a4-film-3-placed'], ['is on hold', 'a4-film-4-held']];
@@ -396,7 +396,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await page.evaluate(() => { document.getElementById('toasts') && (document.getElementById('toasts').innerHTML = ''); });
 
   /* the saved name from here on */
-  await page.evaluate(() => { B.employee = 'Paul'; try { localStorage.setItem('cn.employee', 'Paul'); } catch (_) {} });
+  if ((await page.evaluate(() => CNEmployee.name())) !== 'Paul') await signInAs(page, srv, 'Paul');   // (EMPNUM: signed in by the Employee Number, never a script-set name)
 
   /* ── what B, C and F share: one Hold pressed on a real button, followed to the end, and the checks of what it did ── */
   /** the numbers the consent popup promised, read from its words; and what the engine then did */

@@ -3,9 +3,17 @@
  *  Sign_Out process needs to be absolutely seamless, fast and easy to use ... so users feel welcome and it's really easy and
  *  fast to move between accounts").
  *
- *  The sorter has NO password and NO PIN (Paul: "Never a PIN"): the person is a NAME kept in this browser (B.employee, localStorage
- *  cn.employee), and "the Admin" is a name match answered by the server (charm-nest-role.js). This file is a calm face on that, not a
- *  security boundary, and it does not pretend to be one.
+ *  The person is a NAME kept in this browser (B.employee, localStorage cn.employee), and "the Admin" is a name match answered by the server
+ *  (charm-nest-role.js). Until 26 Oct 2026 any name could be typed or tapped (Paul, 15 Oct: "Never a PIN"). EMPNUM (Paul, 26 Oct 2026: "for some
+ *  reason anyone can switch from one user to another without putting in their password, which is a big safety concern"): a person signs in,
+ *  or is switched to, ONLY with their 6-digit Employee Number, the very login of every other station (firebaseOrders {pinLogin},
+ *  _stationPinLogin.js: the server answers with that person's name, rate limited; the roster never leaves it). The NAME comes from the
+ *  server, never from what is typed or tapped. The page's B.employee wrapper (charm-nest-1.html, configure({ gate: true })) lets a NEW person
+ *  through only with the one-shot pass this file gives after the server's yes (admit), or for the name another tab of this computer signed in
+ *  (follow); every other way of setting a name (the old name fields of the dialogs, a script) is refused and this panel asks for the number.
+ *  Signing out needs nothing. The number is never kept, logged or shown: it goes to the server once and the field is emptied. No answer from
+ *  the server (offline, an error) signs nobody in: the person already signed in stays signed in. What it is not: a server-side identity (the
+ *  records still carry the name), so a person with the browser's developer tools could still set one; it closes every way the screen offers.
  *
  *    · an identity chip in the top bar (always there): a coloured avatar with the initials, the first name and a small role pill
  *      ("Laser" | "Design" | "Admin" | "Choose role"), or an outlined "Sign in" button when nobody is signed in;
@@ -19,7 +27,10 @@
  *  sign-outs (midnight, idle, 5:00 pm) and the manual one run the very same body.
  *
  *    CNAccount.open() / close() / toggle() / isOpen()       the panel (opens at once, no request)
- *    CNAccount.signIn(name)                                 what a tile, a row or the field does; a number or markup is refused
+ *    CNAccount.signIn(name)                                 a name (a page without the gate only); a number or markup is refused
+ *    CNAccount.signInNumber(num, { why })  → Promise<{ ok, name } | { ok:false, error }>   EMPNUM: the server checks the number, then that person is signed in
+ *    CNAccount.checkNumber(num)            → Promise<{ ok, name } | { ok:false, error, tooMany?, unreachable? }>   the server's answer only, nothing set
+ *    CNAccount.gated() / admit(raw) / refuse(raw)           the page's B.employee wrapper: is the gate on, may this NEW person be set (a one-shot pass), say no
  *    CNAccount.signOut()                                    ends the station session now; the screen, the run and the windows stay as they are
  *    CNAccount.view()  CNAccount.recents()  CNAccount.forget(name)
  *    hooks (charm-nest-1.html's B.employee wrapper, charm-nest-bridge.js): before(prev, raw), after(prev, name), follow(storedName),
@@ -96,7 +107,8 @@
   const doc = root.document;
   const K_NAME = "cn.employee", K_LAST = "cn.lastEmployee", K_PEOPLE = "cn.people", K_ROLE = "cn.lastRole";
   const LOCK_MS = 350;                       // (a control that appears under the pointer takes no click for a moment: a double click never answers the next question)
-  const cfg = { clear: null, toast: null };
+  const cfg = { clear: null, toast: null, gate: false };
+  let picked = "", checkingNum = false;      // EMPNUM: the person tapped (only the label of the number field: the number decides who signs in), a check on its way
   let chip = null, panel = null, scrim = null, isOpen = false, lastMode = "", lockUntil = 0, signingIn = false, pendingGreet = "", adopting = 0, tickT = 0, errText = "", pulseT = 0, settleT = 0;
 
   const lsGet = k => { try { return root.localStorage.getItem(k) || ""; } catch (_) { return ""; } };
@@ -210,6 +222,7 @@
     ".cnAcTile,.cnAcPick{display:flex;align-items:center;gap:10px;min-width:0;min-height:56px;padding:8px 10px;border:1px solid var(--line,#e4ddd0);border-radius:12px;background:var(--card2,#faf7f1);color:var(--ink,#1c1a17);font:600 13.5px var(--sans,system-ui,sans-serif);text-align:left;cursor:pointer;transition:background-color .12s,border-color .12s}",
     ".cnAcTile:hover,.cnAcPick:hover{background:var(--paper2,#ebe5d9);border-color:var(--ink25,#c4bdb0)}",
     ".cnAcTn{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}",
+    ".cnAcTile[aria-pressed=true],.cnAcPick[aria-pressed=true]{background:var(--sageSoft,#e7eddf);border-color:var(--sage,#5f7a5b)}",   // (EMPNUM: whose Employee Number the field asks for)
     ".cnAcTile[aria-busy=true]{background:var(--sageSoft,#e7eddf);border-color:var(--sage,#5f7a5b)}",
     ".cnAcSpin{width:14px;height:14px;flex:0 0 14px;border:2px solid rgba(0,0,0,.14);border-top-color:var(--sage,#5f7a5b);border-radius:50%;animation:spin .7s linear infinite;display:inline-block}",
     ".cnAcList{display:flex;flex-direction:column;gap:6px}.cnAcRow{display:flex;align-items:center;gap:4px}.cnAcRow .cnAcPick{flex:1 1 auto;min-height:48px;padding:5px 10px}",
@@ -305,7 +318,7 @@
     if (!mount()) return false;
     if (isOpen) { render(); return true; }
     css();
-    isOpen = true; signingIn = false; errText = ""; lastMode = ""; lockUntil = 0;
+    isOpen = true; signingIn = false; errText = ""; picked = ""; lastMode = ""; lockUntil = 0;
     try { const m = doc.getElementById("moreMenu"); if (m && m.open) m.open = false; } catch (_) {}
     scrim = el("div", { class: "cnAcScrim" });
     panel = el("div", { class: "cnAcPanel", id: "cnAcctPanel", role: "dialog", "aria-modal": "false", "aria-label": "Account", tabindex: "-1" });
@@ -396,7 +409,29 @@
   }
   function pill(v) { return v.tag ? el("span", { class: "cnAcPill", "data-t": v.tag, text: v.tag }) : null; }
 
+  /** EMPNUM: the 6-digit Employee Number field (masked, digits only, never kept): the only way this panel signs a person in or switches to one */
+  function numberForm(label) {
+    const id = "cnAcIn" + Math.random().toString(36).slice(2, 6);
+    const err = el("div", { class: "cnAcErr", role: "alert", id: id + "e", hidden: !errText, text: errText });
+    const input = el("input", { class: "cnAcIn", id, type: "password", inputmode: "numeric", pattern: "[0-9]*", maxlength: "6", autocomplete: "off", spellcheck: "false", enterkeyhint: "go", placeholder: "6-digit Employee Number", "aria-describedby": id + "e", "aria-invalid": errText ? "true" : null, "data-fk": "in", "data-num": "1", disabled: checkingNum ? true : null });
+    input.addEventListener("input", () => { const d = input.value.replace(/\D/g, "").slice(0, 6); if (d !== input.value) input.value = d; errText = ""; err.hidden = true; input.removeAttribute("aria-invalid"); });
+    const go = el("button", { type: "submit", class: "btn sage cnAcGo", "aria-busy": checkingNum ? "true" : null, disabled: checkingNum ? true : null }, checkingNum ? el("i", { class: "cnAcSpin", "aria-hidden": "true" }) : null, checkingNum ? "Checking…" : "Continue");
+    const form = el("form", { class: "cnAcForm", novalidate: true, onsubmit: e => { e.preventDefault(); e.stopPropagation(); if (!locked() && !checkingNum) { const num = input.value; input.value = ""; signInNumber(num); } } },
+      el("label", { for: id, text: label }),
+      el("div", { class: "cnAcFRow" }, input, go),
+      err);
+    return form;
+  }
+  /** a tile or a row tapped: with the gate, it only names whose number is asked for (and puts the focus in the field) */
+  function pick(n) {
+    if (!cfg.gate) return signIn(n);
+    picked = keyOf(n) ? display(n) : ""; errText = ""; render();
+    const i = panel && panel.querySelector(".cnAcIn"); if (i) try { i.focus({ preventScroll: true }); } catch (_) {}
+    return true;
+  }
+  const numLabel = fallback => picked ? `${firstName(picked)}’s Employee Number` : fallback;
   function nameForm(label) {
+    if (cfg.gate) return numberForm(numLabel(label === "Your name" ? "Your Employee Number" : "Someone else · Employee Number"));
     const id = "cnAcIn" + Math.random().toString(36).slice(2, 6);
     const err = el("div", { class: "cnAcErr", role: "alert", id: id + "e", hidden: !errText, text: errText });
     const input = el("input", { class: "cnAcIn", id, type: "text", maxlength: String(NAME_MAX), autocomplete: "off", autocapitalize: "words", spellcheck: "false", enterkeyhint: "go", placeholder: "e.g. Tess Welder", "aria-describedby": id + "e", "aria-invalid": errText ? "true" : null, "data-fk": "in" });
@@ -408,14 +443,14 @@
     return form;
   }
   function personTile(n, busy) {
-    const b = el("button", { type: "button", class: "cnAcTile", "data-nav": "1", "data-fk": "p:" + keyOf(n), "aria-busy": busy ? "true" : null, "aria-label": `Sign in as ${display(n)}`, onclick: () => { if (!locked()) signIn(n); } },
+    const b = el("button", { type: "button", class: "cnAcTile", "data-nav": "1", "data-fk": "p:" + keyOf(n), "aria-busy": busy ? "true" : null, "aria-pressed": cfg.gate ? (keyOf(picked) === keyOf(n) ? "true" : "false") : null, "aria-label": `Sign in as ${display(n)}`, onclick: () => { if (!locked()) pick(n); } },
       avatar(n, "md"), el("span", { class: "cnAcTn", text: display(n) }), busy ? el("i", { class: "cnAcSpin", "aria-hidden": "true" }) : null);
     return b;
   }
   function buildWho(v) {
     const list = recents().slice(0, PEOPLE_MAX), busy = v.st === "checking" ? keyOf(v.name) : "";
     const kids = [el("h2", { class: "cnAcH", id: "cnAcTitle", tabindex: "-1", text: "Who’s working?" }),
-      el("p", { class: "cnAcSub", text: list.length ? "Tap your name to start." : "Type your name to start." })];
+      el("p", { class: "cnAcSub", text: cfg.gate ? (list.length ? "Tap your name, then enter your Employee Number." : "Enter your Employee Number to start.") : list.length ? "Tap your name to start." : "Type your name to start." })];
     if (list.length) kids.push(el("div", { class: "cnAcGrid", role: "group", "aria-label": "People on this computer" }, list.map(n => personTile(n, busy && keyOf(n) === busy))));
     if (busy) kids.push(el("div", { class: "cnAcStat", role: "status" }, el("i", { class: "cnAcSpin", "aria-hidden": "true" }), el("span", { text: `Signing in ${firstName(v.name)}…` })));
     kids.push(nameForm(list.length ? "Someone else" : "Your name"));
@@ -445,7 +480,7 @@
     kids.push(el("div", { class: "cnAcSec", text: "Switch person" }));
     if (others.length) kids.push(el("div", { class: "cnAcList", role: "group", "aria-label": "People on this computer" }, others.map(n =>
       el("div", { class: "cnAcRow" },
-        el("button", { type: "button", class: "cnAcPick", "data-nav": "1", "data-fk": "p:" + keyOf(n), "aria-label": `Switch to ${display(n)}`, onclick: () => { if (!locked()) signIn(n); } }, avatar(n, "md"), el("span", { class: "cnAcTn", text: display(n) })),
+        el("button", { type: "button", class: "cnAcPick", "data-nav": "1", "data-fk": "p:" + keyOf(n), "aria-pressed": cfg.gate ? (keyOf(picked) === keyOf(n) ? "true" : "false") : null, "aria-label": `Switch to ${display(n)}`, onclick: () => { if (!locked()) pick(n); } }, avatar(n, "md"), el("span", { class: "cnAcTn", text: display(n) })),
         el("button", { type: "button", class: "cnAcX", "data-fk": "x:" + keyOf(n), "aria-label": `Forget ${display(n)} on this computer`, title: "Forget this name here", text: "✕", onclick: () => { if (!locked()) forget(n); } })))));
     kids.push(nameForm("Someone else"));
     kids.push(el("button", { type: "button", class: "cnAcOut", "data-fk": "out", text: "Sign out", onclick: () => { if (!locked()) signOut(); } }));
@@ -493,11 +528,79 @@
       if (!n) { showErr("Please type your name (letters, not a number)."); return false; }
       const cur = nameNow();
       if (cur && keyOf(cur) === keyOf(n)) { if (view().ready) close({ focus: true }); return true; }
+      if (cfg.gate) return pick(n);                       // (EMPNUM: a name alone signs nobody in; the panel asks for that person's number)
       errText = ""; signingIn = true;
       if (root.B) root.B.employee = n;                    // (the one place a name is set: before() ends the old person's session, after() greets the new one)
       render();
       return true;
     } catch (e) { try { console.warn("[CNAccount] signIn:", e); } catch (_) {} return false; }
+  }
+  /* ═══ EMPNUM · the Employee Number (Paul, 26 Oct 2026: "anyone can switch from one user to another without putting in their password, which is a big
+     safety concern") ═══ The stations' own door: POST firebaseOrders { pinLogin } answers { ok:true, name } for a number on the roster, { ok:false } for one
+     that is not, { ok:false, tooMany:true } after too many tries (a minute's lockout, _stationPinLogin.js). Anything without `ok` (offline, a server
+     error) was not answered: nobody is signed in by it (never the old roster download of the station pages: it hands every number to the browser). */
+  const PIN_MS = 15000, PASS_MS = 30000;
+  const passes = new Map();                     // key → until: the NEW person the gate lets through, once (the server said yes, or another tab of this computer signed them in)
+  const grant = name => { const k = keyOf(name); if (k) passes.set(k, Date.now() + PASS_MS); };
+  async function checkNumber(raw) {
+    const num = String(raw == null ? "" : raw).replace(/\s+/g, "");
+    if (!/^\d{6}$/.test(num)) return { ok: false, error: "An Employee Number is 6 digits." };
+    let r = null;
+    try {
+      const ctl = typeof AbortController === "function" ? new AbortController() : null, t = ctl ? setTimeout(() => ctl.abort(), PIN_MS) : 0;
+      try {
+        const res = await root.fetch("/.netlify/functions/firebaseOrders", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", body: JSON.stringify({ pinLogin: num }), signal: ctl ? ctl.signal : undefined });
+        try { r = await res.json(); } catch (_) { r = null; }
+      } finally { if (t) clearTimeout(t); }
+    } catch (_) { r = null; }
+    if (!r || typeof r.ok !== "boolean") return { ok: false, unreachable: true, error: "Your Employee Number could not be checked right now. Try again in a moment." };
+    if (r.tooMany === true) return { ok: false, tooMany: true, error: "Too many tries. Wait a minute, then try again." };
+    const name = r.ok === true && typeof r.name === "string" ? normalize(r.name.replace(/\s+/g, " ").trim()) : "";
+    if (!name) return { ok: false, error: "That Employee Number is not on the list. Check the 6 digits and try again." };
+    return { ok: true, name };
+  }
+  /** the panel's field, the name bar (CNEmployee), any press that needs a person: the server checks the number, and the person it names is signed in
+      (the same person again: nothing changes). Never throws; the number is not kept. */
+  async function signInNumber(raw, o) {
+    o = o || {};
+    if (checkingNum) return { ok: false, error: "Checking…" };
+    checkingNum = true; errText = ""; if (isOpen) render();
+    let out;
+    try {
+      out = await checkNumber(raw);
+      if (out.ok) {
+        const cur = nameNow();
+        if (cur && keyOf(cur) === keyOf(out.name)) { picked = ""; if (isOpen && view().ready) close({ focus: true }); }
+        else { grant(out.name); signingIn = true; picked = ""; if (root.B) root.B.employee = out.name; passes.delete(keyOf(out.name)); }
+        if (!nameNow() || keyOf(nameNow()) !== keyOf(out.name)) out = { ok: false, error: "That person could not be signed in. Try again." };
+        else out = { ok: true, name: nameNow() };
+      }
+    } catch (e) { out = { ok: false, error: "Your Employee Number could not be checked right now. Try again in a moment." }; try { console.warn("[CNAccount] signInNumber:", e); } catch (_) {} }
+    finally { checkingNum = false; }
+    if (!out.ok) { signingIn = false; errText = out.error; }
+    if (isOpen) {
+      render();
+      // (a number refused: the field has the focus again for the next try, as a refused name had; it was put out of reach, disabled, while the server was asked)
+      if (!out.ok) { const i = panel && panel.querySelector(".cnAcIn"); if (i) try { i.focus({ preventScroll: true }); } catch (_) {} }
+    } else if (!out.ok && o.panel !== false) refresh();
+    return out;
+  }
+  const gated = () => !!cfg.gate;
+  /** the page's B.employee wrapper asks before it sets a NEW person (not the one signed in, not a sign-out): yes only with a fresh pass, used up here */
+  function admit(raw) {
+    if (!cfg.gate) return true;
+    const k = keyOf(normalize(raw)), until = passes.get(k);
+    if (!k) return true;                         // (nothing to sign in: the setter's own refusal of a number or of nothing stands)
+    passes.delete(k);
+    return !!(until && until >= Date.now());
+  }
+  /** ... and when it says no: nobody changes, and the panel asks for the Employee Number (one calm line; the name that was offered is never signed in) */
+  function refuse(raw) {
+    try { console.warn("[CNAccount] a name was offered without its Employee Number; nobody was signed in"); } catch (_) {}
+    const t = nameNow() ? "To switch person, enter their Employee Number." : "Sign in with your Employee Number.";
+    if (!isOpen) open();
+    errText = t; picked = ""; render();
+    return false;
   }
   /** ends the session now, clears name, role, Admin flag and held presses; the screen, the run and the windows stay. Nobody signed in: nothing happens. */
   function signOut(o) {
@@ -540,7 +643,7 @@
     try {
       const cur = nameNow(), next = stored ? normalize(stored) : "";
       if (!next) { if (cur) signOut({ remote: true }); }
-      else if (!cur || keyOf(next) !== keyOf(cur)) { if (root.B) root.B.employee = next; }
+      else if (!cur || keyOf(next) !== keyOf(cur)) { grant(next); if (root.B) root.B.employee = next; passes.delete(keyOf(next)); }   // (EMPNUM: the other tab let them through its own gate)
     } catch (_) {} finally { adopting--; }
     refresh();
   }
@@ -569,9 +672,9 @@
       if (isOpen) { if (signingIn && v.ready) close({ focus: true }); else render(); }
     } catch (e) { try { console.warn("[CNAccount] refresh:", e); } catch (_) {} }
   }
-  function configure(o) { if (o && typeof o === "object") { if (typeof o.clear === "function") cfg.clear = o.clear; if (typeof o.toast === "function") cfg.toast = o.toast; } }
+  function configure(o) { if (o && typeof o === "object") { if (typeof o.clear === "function") cfg.clear = o.clear; if (typeof o.toast === "function") cfg.toast = o.toast; if (o.gate === true) cfg.gate = true; } }   // (the gate, once on, stays on for the page)
 
-  root.CNAccount = { open, close, toggle, isOpen: () => isOpen, signIn, switchTo: signIn, signOut, forget, recents, view, refresh, configure, before, after, follow, takeRole, yieldTo, pulse, adopting: () => adopting > 0, timers: () => (tickT ? 1 : 0), helpers: H };
+  root.CNAccount = { open, close, toggle, isOpen: () => isOpen, signIn, switchTo: signIn, signInNumber, checkNumber, gated, admit, refuse, signOut, forget, recents, view, refresh, configure, before, after, follow, takeRole, yieldTo, pulse, adopting: () => adopting > 0, timers: () => (tickT ? 1 : 0), helpers: H };
 
   /* ── start ── */
   mount();

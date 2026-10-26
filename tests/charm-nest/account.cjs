@@ -1,10 +1,14 @@
 // ACCOUNT (Paul, 15 Oct 2026: "There is no way for a user to Log_Out and Sign_In, and it is not obvious who is currently signed in. Also remove the
 // 'Sign-ins' menu and option from the UI. The Sign_In and Sign_Out process needs to be absolutely seamless, fast and easy ... really easy and fast to
-// move between accounts"): the identity chip in the top bar, the Account panel (sign in by tile or name, "Laser or Design?" inside the panel, switch
-// person, sign out), the cross-tab follow, and the Sign-ins menu gone.
+// move between accounts"): the identity chip in the top bar, the Account panel (sign in, "Laser or Design?" inside the panel, switch person, sign out),
+// the cross-tab follow, and the Sign-ins menu gone.
+// EMPNUM (Paul, 26 Oct 2026: "for some reason anyone can switch from one user to another without putting in their password, which is a big safety
+// concern"): a person signs in, or is switched to, ONLY with their 6-digit Employee Number, checked by the server (firebaseOrders {pinLogin}); a tile or a
+// row only says whose number is asked, a typed or script-set name signs nobody in. Here every sign-in types the person's number (pinOf puts the name on
+// the fake server's roster); tests/charm-nest/account-employee-number.cjs is the gate itself (wrong numbers, too many tries, no answer).
 // Part 1 runs in node (the pure helpers). Part 2 runs the real sorter page (charm-nest-1.html with its bridge, charm-nest-role.js, station-session.js and
-// charm-nest-account.js) in headless Chromium against the local fake site (bridge-server.cjs); the stations' door (firebaseOrders: the Admin question and
-// the session writes) is this test's own recorder, so nothing leaves the machine and nothing live is written.
+// charm-nest-account.js) in headless Chromium against the local fake site (bridge-server.cjs, which also answers the Employee Number); the stations' door
+// (firebaseOrders: the Admin question and the session writes) is this test's own recorder, so nothing leaves the machine and nothing live is written.
 //   /tmp/cn-run.sh 240 tests/charm-nest/account.cjs        (SHOTS=dir keeps the screenshots, ACCT_ONLY=name,name runs some scenarios)
 'use strict';
 const path = require('path'), assert = require('assert/strict'), fs = require('fs');
@@ -12,7 +16,7 @@ const root = path.join(__dirname, '../..');
 const H = require(path.join(root, 'charm-nest-account.js'));
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
-const { start } = require('./bridge-server.cjs');
+const BS = require('./bridge-server.cjs'), { start, pinOf } = BS;
 const SHOTS = process.env.SHOTS || '';
 if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -112,11 +116,16 @@ const ends = (rec, id) => rec.sessions.filter(s => s.event === 'end' && (!id || 
 const chipClick = page => page.click('#cnAcctChip');
 const panelOpen = page => page.waitForSelector('#cnAcctPanel', { state: 'visible' });
 const settleUi = () => wait(420);       // (the panel's controls take no click for 350 ms after a new question appears: a double click never answers it)
-async function typeIn(page, name) { await page.fill('#cnAcctPanel .cnAcIn', name); await page.press('#cnAcctPanel .cnAcIn', 'Enter'); }
-/** signs a non-Admin in through the panel: name typed, "Laser or Design?" answered inside the panel */
-async function signInAs(page, name, role) {
+/** EMPNUM: types an Employee Number into the panel's field and presses Enter, as a person does */
+async function typeNum(page, num) { await page.fill('#cnAcctPanel .cnAcIn', num); await page.press('#cnAcctPanel .cnAcIn', 'Enter'); }
+/** ... the number of a person (put on the fake server's roster under that name: the page signs in the name the server answers, tidied as a typed one) */
+const numIn = (page, srv, name) => typeNum(page, pinOf(srv.st, name));
+/** the Employee Numbers of the roster that this browser keeps anywhere (localStorage, sessionStorage): none, ever (the number goes to the server once) */
+const kept = (page, srv) => page.evaluate(nums => { const all = []; for (const st of [localStorage, sessionStorage]) for (let i = 0; i < st.length; i++) { const k = st.key(i); all.push(k + '=' + st.getItem(k)); } return nums.filter(n => all.some(x => new RegExp('(^|\\D)' + n + '(\\D|$)').test(x))); }, Object.keys(srv.st.pins || BS.PINS));
+/** signs a non-Admin in through the panel: their Employee Number typed, "Laser or Design?" answered inside the panel */
+async function signInAs(page, srv, name, role) {
   if (!(await page.$('#cnAcctPanel'))) { await chipClick(page); await panelOpen(page); }
-  await typeIn(page, name);
+  await numIn(page, srv, name);
   await until(page, () => document.querySelector('#cnAcctPanel') && document.querySelector('#cnAcctPanel').dataset.mode === 'role', null, 'the role question for ' + name);
   await settleUi();
   await page.click(`#cnAcctPanel [data-role="${role}"]`);
@@ -149,7 +158,9 @@ SC.chip = async (br, srv, errors) => {
     assert.equal(s.chip.expanded, 'true'); assert.equal(s.panel.role, 'dialog'); assert.equal(s.panel.modal, 'false'); assert.equal(s.panel.mode, 'who'); assert.match(s.panel.text, /Who.s working\?/);
     assert.equal(ctx.rec.reqs, reqs0, 'opening the panel makes no request at all');
     // the field is where the focus is when nobody has signed in here before; Esc closes and the chip has the focus again
-    assert.equal(await page.evaluate(() => document.activeElement.className), 'cnAcIn', 'no recent people: the name field has the focus');
+    assert.equal(await page.evaluate(() => document.activeElement.className), 'cnAcIn', 'no recent people: the Employee Number field has the focus');
+    // EMPNUM (Paul, 26 Oct 2026): the field is the 6-digit Employee Number, masked, digits only; there is no name field any more
+    assert.deepEqual(await page.evaluate(() => { const i = document.querySelector('#cnAcctPanel .cnAcIn'); return [i.type, i.inputMode, i.maxLength, document.querySelector('#cnAcctPanel .cnAcForm label').textContent]; }), ['password', 'numeric', 6, 'Your Employee Number'], 'the field asks for the Employee Number (masked, 6 digits)');
     await page.keyboard.press('Escape');
     assert.equal(await page.$('#cnAcctPanel'), null); assert.equal(await page.evaluate(() => document.activeElement.id), 'cnAcctChip', 'Esc returns the focus to the chip'); assert.equal((await snap(page)).chip.expanded, 'false');
     // click outside closes, the chip has the focus (nothing else took it)
@@ -169,10 +180,10 @@ SC.chip = async (br, srv, errors) => {
     assert.equal(await page.evaluate(() => CNAccount.timers()), 0, 'no timer while the panel is closed');
     await chipClick(page); await panelOpen(page); assert.equal(await page.evaluate(() => CNAccount.timers()), 1, 'one timer while it is open');
     await page.keyboard.press('Escape'); assert.equal(await page.evaluate(() => CNAccount.timers()), 0, 'and none after');
-    say('chip: nobody → "Sign in" (outlined, icon, between Auto and Workspace); opens at once with no request; Esc / click outside / Tab; no hint, no pop-up; timer only while open');
+    say('chip: nobody → "Sign in" (outlined, icon, between Auto and Workspace); opens at once with no request; the Employee Number field (masked); Esc / click outside / Tab; no hint, no pop-up; timer only while open');
 
-    // the states: name with the role question open, Laser, Design, Admin
-    await chipClick(page); await panelOpen(page); await typeIn(page, 'tess  w');
+    // the states: name with the role question open, Laser, Design, Admin (the name is the one the server answers for the number, tidied: "tess  w" reads "Tess W.")
+    await chipClick(page); await panelOpen(page); await numIn(page, srv, 'tess  w');
     await until(page, () => CNRole.state() === 'ask', null, 'the role question');
     s = await snap(page);
     assert.equal(s.chip.st, 'ask'); assert.equal(s.chip.text, 'Tess Choose role'); assert.equal(s.chip.label, 'Signed in as Tess W., choosing Laser or Design. Open account menu'); assert.equal(s.panel.mode, 'role');
@@ -186,14 +197,14 @@ SC.chip = async (br, srv, errors) => {
     s = await snap(page); assert.equal(s.chip.text, 'Tess Design'); assert.equal(s.chip.label, 'Signed in as Tess W., Design. Open account menu');
     await page.evaluate(() => { B.employee = ''; }); await until(page, () => CNRole.state() === 'none', null, 'sign-out');
     s = await snap(page); assert.equal(s.chip.text, 'Sign in', 'cleared by any path: the chip follows');
-    await chipClick(page); await panelOpen(page); await typeIn(page, 'Paul');
+    await chipClick(page); await panelOpen(page); await numIn(page, srv, 'Paul');
     await until(page, () => CNRole.state() === 'admin' && !document.getElementById('cnAcctPanel'), null, 'the Admin');
     s = await snap(page); assert.equal(s.chip.text, 'Paul Admin'); assert.equal(s.chip.label, 'Signed in as Paul, Admin. Open account menu'); assert.equal(s.panel, null, 'the Admin is never asked: no role step');
     say('chip: name + "Choose role", Laser, Design (Workspace item still works), Admin, back to Sign in; labels say who is signed in');
   } finally { await ctx.context.close(); }
 };
 
-/* ── B · sign in by tile: the role question inside the panel, the welcome, the session ── */
+/* ── B · sign in (a tile, then the Employee Number): the role question inside the panel, the welcome, the session ── */
 SC.signin = async (br, srv, errors) => {
   const ctx = await newContext(br, srv); const { rec } = ctx; const page = await openPage(ctx, srv, errors); reset(rec);
   try {
@@ -202,8 +213,13 @@ SC.signin = async (br, srv, errors) => {
     let s = await snap(page);
     assert.equal(s.panel.mode, 'who'); const tiles = await page.$$eval('#cnAcctPanel .cnAcTile .cnAcTn', t => t.map(x => x.textContent.trim())); assert.deepEqual(tiles, ['Tess W.', 'Ray K.', 'Dana'], 'the people of this computer, newest first');
     assert.equal(await page.evaluate(() => document.activeElement.classList.contains('cnAcTile')), true, 'the first tile has the focus');
-    // one click on a tile: the same panel asks "Laser or Design?"; the name bar\'s own role bar does not also appear
-    await page.click('#cnAcctPanel .cnAcTile:nth-child(2)');
+    // EMPNUM (Paul, 26 Oct 2026): one click on a tile signs nobody in; it says whose Employee Number the field asks for and puts the focus in it
+    await page.click('#cnAcctPanel .cnAcTile:nth-child(2)'); await wait(100);
+    s = await snap(page);
+    assert.equal(s.name, '', 'a tapped tile signs nobody in'); assert.equal(s.session, null); assert.equal(s.panel.mode, 'who');
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('#cnAcctPanel .cnAcForm label').textContent, document.querySelector('#cnAcctPanel .cnAcTile:nth-child(2)').getAttribute('aria-pressed'), document.activeElement.className]), ['Ray’s Employee Number', 'true', 'cnAcIn'], 'the tile names whose number is asked; the field has the focus');
+    // his number: the same panel asks "Laser or Design?"; the name bar\'s own role bar does not also appear
+    await numIn(page, srv, 'Ray K.');
     await until(page, () => document.getElementById('cnAcctPanel') && document.getElementById('cnAcctPanel').dataset.mode === 'role', null, 'the role step');
     s = await snap(page);
     assert.match(s.panel.text, /Laser or Design\?/); assert.equal(s.bars.length, 0, 'no name bar (its role bar is not shown while the panel is open)'); assert.equal(s.name, 'Ray K.'); assert.equal(s.session, null, 'nobody is signed in for the stations until the role is answered');
@@ -227,12 +243,13 @@ SC.signin = async (br, srv, errors) => {
     assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('cn.lastRole'))), { 'ray k': 'design' });
     assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('cn.people'))), ['Ray K.', 'Tess W.', 'Dana'], 'the person who signed in moves to the front');
     assert.equal(await page.evaluate(() => /Ray|design|laser|admin|true/i.test(localStorage.getItem('cn.people')) && /laser|design|admin/i.test(localStorage.getItem('cn.people'))), false, 'cn.people holds names only: never a role or an Admin answer');
+    assert.deepEqual(await kept(page, srv), [], 'the Employee Number is kept nowhere in this browser');
     // reload: the same sign-in goes on; no welcome (it was not a sign-in), no question
     await page.reload({ waitUntil: 'load' }); await until(page, () => window.CNAccount && CNRole.ready(), null, 'the reload');
     await wait(500); s = await snap(page); assert.equal(s.chip.text, 'Ray Design'); assert.equal(s.panel, null);
     const after = await page.evaluate(() => [...document.querySelectorAll('#toasts .toast .m')].map(x => x.textContent));
     assert(!after.some(x => /^Good (morning|afternoon|evening)/.test(x)), 'no welcome after a reload (it was not a sign-in): ' + JSON.stringify(after));
-    say('sign in by tile: role step inside the panel (no name-bar role bar), last role highlighted and focused, never silent; welcome toast; session under the role; reload keeps it');
+    say('sign in: a tile only names whose Employee Number is asked; the number: role step inside the panel (no name-bar role bar), last role highlighted and focused, never silent; welcome toast; session under the role; number kept nowhere; reload keeps it');
   } finally { await ctx.context.close(); }
 };
 
@@ -243,10 +260,10 @@ SC.admin = async (br, srv, errors) => {
     await page.evaluate(() => localStorage.setItem('cn.people', JSON.stringify(['Paul', 'Tess W.'])));
     door.delay = 700;
     await chipClick(page); await panelOpen(page);
-    await page.click('#cnAcctPanel .cnAcTile:nth-child(1)');
+    await page.click('#cnAcctPanel .cnAcTile:nth-child(1)'); await numIn(page, srv, 'Paul');      // (EMPNUM: his tile, then his Employee Number)
     await until(page, () => document.querySelector('#cnAcctPanel .cnAcTile[aria-busy="true"] .cnAcSpin'), null, 'the spinner on the tile');
     assert.equal(await page.evaluate(() => document.querySelector('#cnAcctPanel .cnAcIn').disabled), false, 'typing is never blocked');
-    await page.fill('#cnAcctPanel .cnAcIn', 'abc'); assert.equal(await page.inputValue('#cnAcctPanel .cnAcIn'), 'abc', 'the field takes typing while the answer is on its way');
+    await page.fill('#cnAcctPanel .cnAcIn', '12'); assert.equal(await page.inputValue('#cnAcctPanel .cnAcIn'), '12', 'the field takes typing while the answer is on its way');
     await until(page, () => CNRole.state() === 'admin' && !document.getElementById('cnAcctPanel'), null, 'the Admin answer');
     let s = await snap(page);
     assert.equal(s.admin, true); assert.equal(s.role, ''); assert.equal(s.chip.text, 'Paul Admin'); assert.equal(s.bars.length, 0, 'no role step, no name bar'); assert.equal(s.session.station, 'sorter', 'the Admin signs in as the sorter');
@@ -263,7 +280,7 @@ SC.panel = async (br, srv, errors) => {
   const ctx = await newContext(br, srv); const { rec } = ctx; const page = await openPage(ctx, srv, errors); reset(rec);
   try {
     await page.evaluate(() => localStorage.setItem('cn.people', JSON.stringify(['Ray K.', 'Dana', 'Eve', 'Flo', 'Gus', 'Hal'])));
-    await signInAs(page, 'Tess W.', 'laser');
+    await signInAs(page, srv, 'Tess W.', 'laser');
     await chipClick(page); await panelOpen(page); await wait(250);
     let s = await snap(page);
     assert.equal(s.panel.mode, 'me'); assert.match(s.panel.text, /^TW Tess W\. Laser Signed in \d{1,2}:\d{2} (am|pm) · (under 1 min|\d+ min) Signs out by itself after 1 hour without input\./);
@@ -283,19 +300,24 @@ SC.panel = async (br, srv, errors) => {
     // forget a name here (✕): gone from the list, from the name bar's "Continue as" too when it is the last name
     await page.click('#cnAcctPanel [data-fk="x:ray k"]');
     assert.equal((await page.evaluate(() => JSON.parse(localStorage.getItem('cn.people')))).includes('Ray K.'), false, 'forgotten'); assert.equal(await page.$('#cnAcctPanel [data-fk="p:ray k"]'), null);
-    // switch person in one click: the old session ends "switched", the new one starts (non-Admin: asked Laser or Design first)
+    // switch person: a row only names whose Employee Number is asked (EMPNUM, Paul 26 Oct 2026: nobody is switched without it)
     await settleUi(); await wait(0);
-    await page.click('#cnAcctPanel .cnAcRow:nth-child(1) .cnAcPick');
+    const n1 = rec.sessions.length;
+    await page.click('#cnAcctPanel .cnAcRow:nth-child(1) .cnAcPick'); await wait(150);
+    s = await snap(page); assert.equal(s.name, 'Tess W.', 'a tapped row switches nobody'); assert.equal(s.panel.mode, 'me'); assert.equal(rec.sessions.length, n1, 'and ends no session');
+    assert.deepEqual(await page.evaluate(() => [document.querySelector('#cnAcctPanel .cnAcForm label').textContent, document.querySelector('#cnAcctPanel .cnAcRow:nth-child(1) .cnAcPick').getAttribute('aria-pressed'), document.activeElement.className]), ['Dana’s Employee Number', 'true', 'cnAcIn'], 'the row names whose number is asked; the field has the focus');
+    // her number switches in one step: the old session ends "switched", the new one starts (non-Admin: asked Laser or Design first)
+    await numIn(page, srv, 'Dana');
     await until(page, () => document.getElementById('cnAcctPanel') && document.getElementById('cnAcctPanel').dataset.mode === 'role', null, 'the role step of the new person');
     s = await snap(page); assert.equal(s.name, 'Dana'); assert.equal(s.role, '', 'the new person does not inherit the old role'); assert.equal(s.admin, false); assert.equal(s.session, null, 'and has no session until the question is answered');
     assert.deepEqual(sessions(rec), ['start:Tess W.:laser', 'end:Tess W.:laser:switched', 'start:Tess W.:design', 'end:Tess W.:design:switched'], 'the old session ended at the moment of the switch');
     await settleUi(); await page.click('#cnAcctPanel [data-role="laser"]'); await until(page, () => CNRole.role() === 'laser' && !document.getElementById('cnAcctPanel'), null, 'Dana is in');
     await wait(150); assert.equal(sessions(rec).slice(-1)[0], 'start:Dana:laser');
-    // the same person again: nothing happens
+    // the same person again (her own number): nothing happens
     const n0 = rec.sessions.length; await chipClick(page); await panelOpen(page);
-    await typeIn(page, 'dana'); await wait(300);
+    await numIn(page, srv, 'Dana'); await wait(300);
     assert.equal(rec.sessions.length, n0, 'switching to the same person is a no-op: no end, no start'); assert.equal(await page.$('#cnAcctPanel'), null, 'and the panel is put away');
-    say('panel: policy line (Laser 1 hour, Design 10 min), Working as, recents (5, current left out), touch targets ≥ 44, forget, switch in one click (old ends "switched", no inherited role), same person = no-op');
+    say('panel: policy line (Laser 1 hour, Design 10 min), Working as, recents (5, current left out), touch targets ≥ 44, forget, a row only names whose number is asked, switch by the Employee Number (old ends "switched", no inherited role), same person = no-op');
   } finally { await ctx.context.close(); }
 };
 
@@ -303,7 +325,7 @@ SC.panel = async (br, srv, errors) => {
 SC.signout = async (br, srv, errors) => {
   const ctx = await newContext(br, srv); const { rec } = ctx; const page = await openPage(ctx, srv, errors); reset(rec);
   try {
-    await signInAs(page, 'Tess W.', 'laser'); await wait(150);
+    await signInAs(page, srv, 'Tess W.', 'laser'); await wait(150);
     const id = (await snap(page)).session.id;
     // something the page was doing stays exactly as it is
     await page.evaluate(() => { window.__keep = { mode: CN.S.mode, rail: document.documentElement.dataset.rail }; });
@@ -322,38 +344,46 @@ SC.signout = async (br, srv, errors) => {
     const r = await page.evaluate(() => [CNAccount.signOut(), CNAccount.signOut()]); assert.deepEqual(r, [false, false]);
     await wait(200); assert.equal(ends(rec).length, 1, 'one end only');
     // a double click on Sign out does not sign the next tile in (the controls that appear take no click for a moment)
-    await page.keyboard.press('Escape'); await signInAs(page, 'Ray K.', 'design'); await wait(150);
+    await page.keyboard.press('Escape'); await signInAs(page, srv, 'Ray K.', 'design'); await wait(150);
     await chipClick(page); await panelOpen(page); await settleUi();
     const box = await page.locator('#cnAcctPanel .cnAcOut').boundingBox();
     await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2);
     await wait(500); s = await snap(page);
     assert.equal(s.st, 'none', 'a double click on Sign out signs out once and signs nobody in'); assert.equal(ends(rec).filter(e => e.person === 'Ray K.').length, 1);
     // held presses: with a role question open a press is kept; signing out drops it (it is never put under the next person)
-    await page.keyboard.press('Escape'); await page.evaluate(() => { B.employee = 'Held Person'; }); await until(page, () => CNRole.state() === 'ask', null, 'the question');
+    await page.keyboard.press('Escape'); await BS.signInAs(page, srv, 'Held Person'); await until(page, () => CNRole.state() === 'ask', null, 'the question');
     await page.evaluate(() => { CNAct('note', { detail: 'x' }); CNAct('note', { detail: 'y' }); }); assert.equal((await snap(page)).held, 2);
     assert.equal(await page.evaluate(() => CNAccount.signOut()), true); assert.equal((await snap(page)).held, 0, 'held presses dropped on sign-out'); assert.equal(sessions(rec).filter(x => /Held Person/.test(x)).length, 0, 'a person who never finished signing in has no session to end');
-    // a double click on a tile signs in once and asks the role question; the second click answers nothing (the Laser / Design buttons appear under the pointer)
-    await page.keyboard.press('Escape'); await page.evaluate(() => { localStorage.setItem('cn.people', JSON.stringify(['Dana', 'Eve'])); localStorage.removeItem('cn.lastEmployee'); }); await chipClick(page); await panelOpen(page); await settleUi();
+    // a double click on a tile signs nobody in (EMPNUM: it names whose number is asked, twice the same); her number asks the role question once, and a
+    // second Enter right after it answers nothing (her last role's button appears under the key with the focus: it takes no press for a moment)
+    await page.keyboard.press('Escape'); await page.evaluate(() => { localStorage.setItem('cn.people', JSON.stringify(['Dana', 'Eve'])); localStorage.removeItem('cn.lastEmployee'); localStorage.setItem('cn.lastRole', JSON.stringify({ dana: 'laser' })); }); await chipClick(page); await panelOpen(page); await settleUi();
     const tb = await page.locator('#cnAcctPanel .cnAcTile').first().boundingBox();
     await page.mouse.dblclick(tb.x + tb.width / 2, tb.y + tb.height / 2); await wait(250);
-    s = await snap(page); assert.equal(s.name, 'Dana'); assert.equal(s.st, 'ask', 'a double click on a tile answers no question: the role question stays open and no role is chosen'); assert.equal(s.role, ''); assert.equal(s.panel.mode, 'role');
+    s = await snap(page); assert.equal(s.name, '', 'a double click on a tile signs nobody in'); assert.equal(s.st, 'none'); assert.equal(s.panel.mode, 'who');
+    assert.equal(await page.evaluate(() => document.querySelector('#cnAcctPanel .cnAcForm label').textContent), 'Dana’s Employee Number');
+    await numIn(page, srv, 'Dana');
+    await until(page, () => document.getElementById('cnAcctPanel') && document.getElementById('cnAcctPanel').dataset.mode === 'role' && document.activeElement && document.activeElement.dataset.role === 'laser', null, 'Dana asked, her last role focused');
+    await page.keyboard.press('Enter'); await wait(150);
+    s = await snap(page); assert.equal(s.name, 'Dana'); assert.equal(s.st, 'ask', 'a second Enter answers no question: the role question stays open and no role is chosen'); assert.equal(s.role, ''); assert.equal(s.panel.mode, 'role');
     await page.evaluate(() => CNAccount.signOut()); await page.keyboard.press('Escape');
-    say('sign out: session ended "signOut" now, cn.employee/role/Admin/held presses cleared, screen left alone, Sign in panel opens, welcome-style toast, idempotent, double click safe');
+    say('sign out: session ended "signOut" now, cn.employee/role/Admin/held presses cleared, screen left alone, Sign in panel opens, welcome-style toast, idempotent, double click safe (a tile signs nobody in)');
   } finally { await ctx.context.close(); }
 };
 
-/* ── F · a press while signed out still asks as before; it goes on once a name is set from the panel ── */
+/* ── F · a press while signed out still asks (the Employee Number now); it goes on once a person is signed in from the panel ── */
 SC.press = async (br, srv, errors) => {
   const ctx = await newContext(br, srv); const { rec } = ctx; const page = await openPage(ctx, srv, errors); reset(rec);
   try {
     await page.evaluate(() => { window.__ran = 0; localStorage.setItem('cn.people', JSON.stringify(['Paul'])); });
-    // a press that needs a name: the name bar asks, as before
+    // a press that needs a name: the name bar asks, as before (EMPNUM: for the Employee Number, masked; no one-tap "Continue as <name>")
     await page.evaluate(() => { CNEmployee.ask(() => { window.__ran++; }); });
     await page.waitForSelector('.cnNameBar[data-kind="ask"]'); assert.equal(await page.evaluate(() => window.__ran), 0);
-    // the person opens the panel instead: the bar steps aside (out of sight, the press still waits); a tile is one tap
+    assert.deepEqual(await page.evaluate(() => { const b = document.querySelector('.cnNameBar[data-kind="ask"]'), c = b.querySelector('.cnNbCont'); return [b.dataset.num, b.querySelector('label b').textContent, b.querySelector('input').type, !!(c && !c.hidden)]; }), ['1', 'Your Employee Number', 'password', false], 'the bar asks for the Employee Number');
+    // the person opens the panel instead: the bar steps aside (out of sight, the press still waits); a tile, then the number
     await chipClick(page); await panelOpen(page);
-    let s = await snap(page); assert.deepEqual(s.bars, [{ kind: 'ask', hidden: true }], 'the name bar is out of sight while the panel is open (not two name fields)');
-    await page.click('#cnAcctPanel .cnAcTile'); await until(page, () => CNRole.state() === 'admin', null, 'Paul');
+    let s = await snap(page); assert.deepEqual(s.bars, [{ kind: 'ask', hidden: true }], 'the name bar is out of sight while the panel is open (not two number fields)');
+    await page.click('#cnAcctPanel .cnAcTile'); await wait(100); assert.equal(await page.evaluate(() => window.__ran), 0, 'a tile alone signs nobody in: the press still waits');
+    await numIn(page, srv, 'Paul'); await until(page, () => CNRole.state() === 'admin', null, 'Paul');
     await until(page, () => window.__ran === 1, null, 'the press that asked to go on');
     s = await snap(page); assert.equal(s.bars.length, 0, 'the name bar is gone'); assert.equal(await page.evaluate(() => window.__ran), 1, 'and the press ran once');
     // Esc on the panel with the bar waiting: the bar comes back
@@ -366,12 +396,14 @@ SC.press = async (br, srv, errors) => {
     await chipClick(page); await panelOpen(page);
     await page.evaluate(() => { CNEmployee.ask(() => { window.__ran++; }); }); await page.waitForSelector('.cnNameBar[data-kind="ask"]');
     assert.equal(await page.$('#cnAcctPanel'), null, 'a press that needs a name takes the field; the panel steps aside');
-    await page.fill('.cnNameBar input', 'Tess W'); await page.press('.cnNameBar input', 'Enter');
+    await page.fill('.cnNameBar input', pinOf(srv.st, 'Tess W')); await page.press('.cnNameBar input', 'Enter');
     await until(page, () => window.__ran === 2, null, 'the press after the bar');
+    assert.equal(await page.evaluate(() => CNEmployee.name()), 'Tess W.', 'under the person the number names');
     // a held press with nobody signed in: kept, the calm hint appears as before (only when the panel is closed)
     await page.evaluate(() => CNAccount.signOut()); await page.keyboard.press('Escape'); await page.evaluate(() => { CNAct.drop(); CNAct('note', { detail: 'z' }); });
     await page.waitForSelector('.cnNameBar[data-kind="hint"]'); assert.equal(await page.evaluate(() => CNAct.held()), 1);
-    say('a press while signed out: the name bar asks as before, parks while the panel is open, comes back with it closed, the press goes on once a name is set from the panel');
+    assert.equal(await page.evaluate(() => document.querySelector('.cnNameBar[data-kind="hint"]').dataset.num), '1', 'the hint asks for the Employee Number too');
+    say('a press while signed out: the name bar asks (the Employee Number), parks while the panel is open, comes back with it closed, the press goes on once a person is signed in from the panel');
   } finally { await ctx.context.close(); }
 };
 
@@ -379,15 +411,22 @@ SC.press = async (br, srv, errors) => {
 SC.fallback = async (br, srv, errors) => {
   const ctx = await newContext(br, srv); const { rec } = ctx; const page = await openPage(ctx, srv, errors); reset(rec);
   try {
-    await page.evaluate(() => { B.employee = 'Tess W'; });          // (a name set elsewhere, e.g. the name bar's field)
+    // EMPNUM (Paul, 26 Oct 2026): a name set by a script (or a dialog's old name field) signs nobody in; the panel opens and asks for the number
+    await page.evaluate(() => { B.employee = 'Tess W'; }); await wait(150);
+    let s = await snap(page); assert.equal(s.name, '', 'a script-set name is refused'); assert.equal(s.st, 'none'); assert.equal(s.session, null); assert.equal(s.panel && s.panel.mode, 'who', 'the panel asks instead');
+    assert.match(s.panel.text, /Sign in with your Employee Number\./); assert.equal(await page.evaluate(() => localStorage.getItem('cn.employee')), null, 'and nothing is kept');
+    await page.keyboard.press('Escape');
+    // a person signed in elsewhere: the name bar's field (EMPNUM: their Employee Number), with the panel closed
+    await page.evaluate(() => { CNEmployee.edit({}); }); await page.waitForSelector('.cnNameBar[data-kind="edit"] input');
+    await page.fill('.cnNameBar input', pinOf(srv.st, 'Tess W')); await page.press('.cnNameBar input', 'Enter');
     await page.waitForSelector('.cnNameBar[data-kind="role"]');
-    let s = await snap(page); assert.equal(s.chip.text, 'Tess Choose role'); assert.equal(s.panel, null);
+    s = await snap(page); assert.equal(s.chip.text, 'Tess Choose role'); assert.equal(s.panel, null);
     await chipClick(page); await panelOpen(page);
     s = await snap(page); assert.equal(s.panel.mode, 'role'); assert.deepEqual(s.bars, [{ kind: 'role', hidden: true }], 'the panel asks the question; the bar waits out of sight');
     await page.keyboard.press('Escape'); s = await snap(page); assert.deepEqual(s.bars, [{ kind: 'role', hidden: false }]);
     await page.click('.cnNameBar[data-kind="role"] [data-role="design"]'); await until(page, () => CNRole.role() === 'design', null, 'Design from the bar');
     s = await snap(page); assert.equal(s.chip.text, 'Tess Design'); assert.equal(s.bars.length, 0);
-    say('role question: asked in the panel when it is open, in the name bar when it is closed; the chip follows either');
+    say('a script-set name signs nobody in (the panel asks for the number); role question: asked in the panel when it is open, in the name bar when it is closed; the chip follows either');
   } finally { await ctx.context.close(); }
 };
 
@@ -395,7 +434,7 @@ SC.fallback = async (br, srv, errors) => {
 SC.tabs = async (br, srv, errors) => {
   const ctx = await newContext(br, srv); const { rec } = ctx; const p1 = await openPage(ctx, srv, errors, 'tab1: '); reset(rec);
   try {
-    await signInAs(p1, 'Tess W.', 'laser'); await wait(200);
+    await signInAs(p1, srv, 'Tess W.', 'laser'); await wait(200);
     const id = (await snap(p1)).session.id;
     const p2 = await openPage(ctx, srv, errors, 'tab2: ');
     await until(p2, () => CNEmployee.name() === 'Tess W.' && CNRole.role() === 'laser', null, 'the second tab to have the same person');
@@ -411,11 +450,11 @@ SC.tabs = async (br, srv, errors) => {
     assert.deepEqual(await p1.evaluate(() => window.__storage.filter(x => /^cn\.employee=/.test(x))), [], 'no echo back to the tab that signed out');
     await p1.keyboard.press('Escape');
     // sign in again (tab 1), then a switch in tab 1 reaches tab 2; the old session ends once ("switched")
-    await signInAs(p1, 'Ray K.', 'design'); await wait(2300);
+    await signInAs(p1, srv, 'Ray K.', 'design'); await wait(2300);
     await until(p2, () => CNEmployee.name() === 'Ray K.', null, 'tab 2 to adopt Ray');
     const rayId = (await snap(p1)).session.id; await p2.evaluate(() => { window.__storage.length = 0; }); await p1.evaluate(() => { window.__storage.length = 0; });
     await chipClick(p1); await panelOpen(p1); await wait(250); await settleUi();
-    await p1.click('#cnAcctPanel .cnAcRow:nth-child(1) .cnAcPick');      // Tess W.
+    await p1.click('#cnAcctPanel .cnAcRow:nth-child(1) .cnAcPick'); await numIn(p1, srv, 'Tess W.');     // Tess W.: her row, her Employee Number
     await until(p1, () => document.getElementById('cnAcctPanel') && document.getElementById('cnAcctPanel').dataset.mode === 'role', null, 'the question for Tess');
     await until(p2, () => CNEmployee.name() === 'Tess W.' && document.getElementById('cnAcctChip').dataset.st !== 'none', null, 'tab 2 to follow the switch');
     await wait(2300);
@@ -428,15 +467,16 @@ SC.tabs = async (br, srv, errors) => {
     await wait(2300);
     const all = rec.sessions.filter(s => s.event !== 'beat').map(s => s.event + ':' + s.person + (s.reason ? ':' + s.reason : '')).sort();
     assert.deepEqual(all, ['end:Ray K.:switched', 'end:Tess W.:signOut', 'start:Ray K.', 'start:Tess W.', 'start:Tess W.'], 'two tabs, one session per sign-in (Tess, Ray, Tess again), each ended once: ' + JSON.stringify(rec.sessions.map(s => [s.event, s.person, s.reason || '', s.id.slice(-9)])));
-    say('two tabs: a sign-out and a switch in one reach the other; no echo (no write loop), the shared session ends once; the other tab opens no panel');
+    assert.deepEqual(await kept(p2, srv), [], 'the other tab is told the name, never the number');
+    say('two tabs: a sign-out and a switch (by the Employee Number) in one reach the other; no echo (no write loop), the shared session ends once; the other tab opens no panel');
   } finally { await ctx.context.close(); }
 };
 
-/* ── I · offline: sign in and out work; the end is queued; the Admin lookup fails closed ── */
+/* ── I · offline: sign out works and the end is queued; sign in waits for the Employee Number's answer; the Admin lookup fails closed ── */
 SC.offline = async (br, srv, errors) => {
   const ctx = await newContext(br, srv); const { rec } = ctx; const page = await openPage(ctx, srv, errors); reset(rec);
   try {
-    await signInAs(page, 'Tess W.', 'laser'); await wait(200);
+    await signInAs(page, srv, 'Tess W.', 'laser'); await wait(200);
     const id = (await snap(page)).session.id;
     door.mode = 'down'; await ctx.context.setOffline(true); await page.evaluate(() => window.dispatchEvent(new Event('offline')));
     // sign out offline
@@ -444,18 +484,25 @@ SC.offline = async (br, srv, errors) => {
     await until(page, () => CNRole.state() === 'none', null, 'sign-out offline');
     assert.equal(await page.evaluate(() => localStorage.getItem('cn.employee')), null);
     await wait(300); assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('station_session_unsent') || '[]').filter(b => b.event === 'end' && b.reason === 'signOut').length), 1, 'the end of the session is queued by StationSession');
-    // sign in offline: the Admin lookup is not told ("not Admin"), the question is asked, the person is signed in
-    await typeIn(page, 'Paul');         // (even the Admin's name: offline fails closed)
-    await until(page, () => CNRole.state() === 'ask', null, 'the role question, offline'); assert.equal((await snap(page)).admin, false);
-    await settleUi(); await page.click('#cnAcctPanel [data-role="design"]'); await until(page, () => CNRole.role() === 'design', null, 'Design, offline');
+    // sign in offline (EMPNUM, Paul 26 Oct 2026): the number cannot be checked, so nobody is signed in; one calm line says why, no alarm
+    await numIn(page, srv, 'Paul');
+    await until(page, () => /could not be checked/.test((document.querySelector('#cnAcctPanel .cnAcErr') || {}).textContent || ''), null, 'the no-answer line, offline');
+    let s = await snap(page); assert.equal(s.name, '', 'no answer signs nobody in'); assert.equal(s.st, 'none'); assert.equal(s.panel.mode, 'who');
+    assert.equal(await page.evaluate(() => document.querySelector('#toasts .toast.bad')), null, 'no alarm toast');
+    // the network is back but the stations' door is not (the Admin question and the session writes fail): his number signs him in; the Admin
+    // lookup is not told ("not Admin"), so the question is asked (even the Admin's name: it fails closed)
+    await ctx.context.setOffline(false); await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    await numIn(page, srv, 'Paul');
+    await until(page, () => CNRole.state() === 'ask', null, 'the role question, the door down'); assert.equal((await snap(page)).admin, false);
+    await settleUi(); await page.click('#cnAcctPanel [data-role="design"]'); await until(page, () => CNRole.role() === 'design', null, 'Design, the door down');
     assert.equal((await snap(page)).chip.text, 'Paul Design');
-    // the network is back: the end goes out once, the Admin question is asked again by CNRole and Paul is the Admin
-    door.mode = 'ok'; await ctx.context.setOffline(false); await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    // the door is back: the end goes out once, the Admin question is asked again by CNRole and Paul is the Admin
+    door.mode = 'ok'; await page.evaluate(() => window.dispatchEvent(new Event('online')));
     await until(page, () => CNRole.state() === 'admin', null, 'the Admin answer after the network is back');
     await page.evaluate(() => StationSession.touch && StationSession.touch()); await wait(500);
     assert(ends(rec, id).length >= 1 && ends(rec, id).every(e => e.reason === 'signOut'), 'the queued end arrived: ' + JSON.stringify(rec.sessions.map(s => [s.event, s.reason])));
     assert.equal((await snap(page)).chip.text, 'Paul Admin');
-    say('offline: sign-out and sign-in work with no network (end queued, Admin lookup fails closed and the question is asked); the network back settles it');
+    say('offline: sign-out works with no network (end queued); the Employee Number unanswered signs nobody in (a calm line); the Admin lookup fails closed and the question is asked; the door back settles it');
   } finally { door.mode = 'ok'; await ctx.context.close(); }
 };
 
@@ -464,20 +511,21 @@ SC.race = async (br, srv, errors) => {
   const ctx = await newContext(br, srv); const { rec } = ctx; const page = await openPage(ctx, srv, errors); reset(rec);
   try {
     door.delays = { paul: 900 };
-    await chipClick(page); await panelOpen(page); await typeIn(page, 'Paul');           // Paul's answer is on its way (900 ms) ...
+    await chipClick(page); await panelOpen(page); await numIn(page, srv, 'Paul');        // Paul's Admin answer is on its way (900 ms) ...
     await until(page, () => CNRole.state() === 'checking', null, 'checking'); await wait(100);
-    await typeIn(page, 'Tess W');                                                          // ... and the person is switched before it arrives
+    await numIn(page, srv, 'Tess W');                                                      // ... and the person is switched (her Employee Number) before it arrives
     await wait(1400);
     let s = await snap(page);
     assert.equal(s.name, 'Tess W.'); assert.equal(s.admin, false, 'the old lookup\'s answer (Admin) did not apply to the new person'); assert.equal(s.st, 'ask'); assert.equal(s.panel.mode, 'role');
     assert.equal(sessions(rec).filter(x => /Paul/.test(x)).length, 0, 'Paul never got a session (his answer came too late): ' + JSON.stringify(sessions(rec)));
     // rapid A → B → C: only C stays
-    await page.evaluate(() => CNAccount.signOut()); await page.keyboard.press('Escape'); await signInAs(page, 'Ann A', 'laser'); await wait(150);
-    rec.sessions.length = 0;
-    await page.evaluate(() => { B.employee = 'Bea B'; B.employee = 'Cy C'; });
+    await page.evaluate(() => CNAccount.signOut()); await page.keyboard.press('Escape'); await signInAs(page, srv, 'Ann A', 'laser'); await wait(150);
+    rec.sessions.length = 0; door.delays = { 'bea b': 900 }; door.admins = ['paul', 'bea b'];      // (B's answer, "Admin", is still on its way when C's number is in)
+    await page.evaluate(([b, c]) => CNAccount.signInNumber(b).then(() => CNAccount.signInNumber(c)), [pinOf(srv.st, 'Bea B'), pinOf(srv.st, 'Cy C')]);
     await until(page, () => CNRole.state() === 'ask' && CNEmployee.name() === 'Cy C.', null, 'C asked');
-    await page.evaluate(() => CNRole.choose('design')); await wait(600);
+    await page.evaluate(() => CNRole.choose('design')); await wait(1000);
     assert.deepEqual(sessions(rec), ['end:Ann A.:laser:switched', 'start:Cy C.:design'], 'only C stays: A ended once, B never started, one session for C: ' + JSON.stringify(sessions(rec)));
+    assert.equal((await snap(page)).admin, false, 'B\'s late answer (Admin) never applies to C');
     assert.equal((await snap(page)).chip.text, 'Cy Design');
     say('a stale Admin lookup never applies to the new person; rapid A → B → C leaves one session, C\'s, with no orphan');
   } finally { await ctx.context.close(); }
@@ -488,12 +536,13 @@ SC.recents = async (br, srv, errors) => {
   const ctx = await newContext(br, srv); const { rec } = ctx; const page = await openPage(ctx, srv, errors); reset(rec);
   try {
     const people = () => page.evaluate(() => JSON.parse(localStorage.getItem('cn.people') || '[]'));
-    for (const n of ['Ann A', 'Bea B', 'Cy C', 'Dee D', 'Eve E', 'Flo F', 'Gus G']) { await page.evaluate(x => { B.employee = x; }, n); await wait(30); }
+    // (each person signed in by their Employee Number: BS.signInAs types it through CNAccount.signInNumber, the name is the server's, tidied)
+    for (const n of ['Ann A', 'Bea B', 'Cy C', 'Dee D', 'Eve E', 'Flo F', 'Gus G']) { await BS.signInAs(page, srv, n); await wait(30); }
     assert.deepEqual(await people(), ['Gus G.', 'Flo F.', 'Eve E.', 'Dee D.', 'Cy C.', 'Bea B.'], 'six at most, newest first (names as the name bar spells them)');
-    await page.evaluate(() => { B.employee = 'cy c'; }); await wait(30);
+    await BS.signInAs(page, srv, 'cy c'); await wait(30);
     assert.deepEqual(await people(), ['Cy C.', 'Gus G.', 'Flo F.', 'Eve E.', 'Dee D.', 'Bea B.'], 'the same person again moves up, never twice (case folded)');
-    await page.evaluate(() => { B.employee = 'Anna'; }); await wait(30);
-    assert.equal((await people())[0], 'Ana_M', 'one login, one name: "Anna" is Ana_M (ONE_LOGIN)'); await page.evaluate(() => { B.employee = 'Ana M'; }); await wait(30);
+    await BS.signInAs(page, srv, 'Anna'); await wait(30);
+    assert.equal((await people())[0], 'Ana_M', 'one login, one name: "Anna" is Ana_M (ONE_LOGIN)'); await BS.signInAs(page, srv, 'Ana M'); await wait(30);
     assert.equal((await people()).filter(n => n === 'Ana_M').length, 1, 'and only once');
     // the panel shows them: signed in → the others as rows (5), forget removes one
     await page.evaluate(() => CNRole.choose('laser')); await until(page, () => CNRole.role() === 'laser', null, 'a role for the last person');
@@ -505,17 +554,17 @@ SC.recents = async (br, srv, errors) => {
     // names only: nothing but strings, no role, no Admin answer, nothing else of a person
     assert((await people()).every(n => typeof n === 'string')); assert.equal(await page.evaluate(() => Object.keys(localStorage).filter(k => /^cn\.(people)$/.test(k) && /admin|laser|design/i.test(localStorage.getItem(k))).length), 0);
     await page.keyboard.press('Escape');
-    // the last name used here (cn.lastEmployee, kept from before the list existed) is the first tile when the list is empty; forgetting it forgets "Continue as"
+    // the last name used here (cn.lastEmployee, kept from before the list existed) is the first tile when the list is empty (EMPNUM: it names whose number is asked)
     await page.evaluate(() => { CNAccount.signOut(); localStorage.removeItem('cn.people'); localStorage.setItem('cn.lastEmployee', 'Old Timer'); }); await page.keyboard.press('Escape');
     await chipClick(page); await panelOpen(page);
-    assert.deepEqual(await page.$$eval('#cnAcctPanel .cnAcTile .cnAcTn', t => t.map(x => x.textContent.trim())), ['Old Timer'], 'Continue as <last name> is simply the first tile');
+    assert.deepEqual(await page.$$eval('#cnAcctPanel .cnAcTile .cnAcTn', t => t.map(x => x.textContent.trim())), ['Old Timer'], 'the last name used here is simply the first tile');
     say('people: names only, newest first, max 6, one person once (case, Anna = Ana_M), forget, the last name is the first tile');
   } finally { await ctx.context.close(); }
   // storage blocked or full: the list is just empty and everything works
   const ctx2 = await newContext(br, srv, { blocked: true }); const page2 = await openPage(ctx2, srv, errors); reset(ctx2.rec);
   try {
     await chipClick(page2); await panelOpen(page2); assert.equal((await page2.$$('#cnAcctPanel .cnAcTile')).length, 0, 'no list when storage is blocked');
-    await typeIn(page2, 'Tess W'); await until(page2, () => CNRole.state() === 'ask', null, 'the question with blocked storage'); await settleUi();
+    await numIn(page2, srv, 'Tess W'); await until(page2, () => CNRole.state() === 'ask', null, 'the question with blocked storage'); await settleUi();
     await page2.click('#cnAcctPanel [data-role="laser"]'); await until(page2, () => CNRole.role() === 'laser', null, 'Laser with blocked storage');
     assert.equal((await snap(page2)).chip.text, 'Tess Laser');
     await page2.evaluate(() => CNAccount.signOut()); await until(page2, () => CNRole.state() === 'none', null, 'sign-out with blocked storage');
@@ -524,31 +573,41 @@ SC.recents = async (br, srv, errors) => {
   } finally { await ctx2.context.close(); }
 };
 
-/* ── L · names: numbers, nothing, markup, a long paste ── */
+/* ── L · the Employee Number field (EMPNUM: it took the name field's place): names, nothing, markup, a wrong number; names are text ── */
 SC.names = async (br, srv, errors) => {
   const ctx = await newContext(br, srv); const { rec } = ctx; const page = await openPage(ctx, srv, errors); reset(rec);
   try {
     await chipClick(page); await panelOpen(page);
-    const tries = ['123456', '12 34 56', '', '   ', '!!!', '<img src=x onerror="window.__x=1">', '<b>Tess</b>', '😀'];
-    for (const t of tries) {
-      await page.fill('#cnAcctPanel .cnAcIn', t); await page.press('#cnAcctPanel .cnAcIn', 'Enter'); await wait(120);
+    // EMPNUM (Paul, 26 Oct 2026): a typed name signs nobody in. The field keeps digits only, so a name, nothing, "!!!", markup or an emoji is no number; a
+    // number that is not 6 digits, or not on the list, signs nobody in either. Each time one calm line in the panel says why (no toast, no element)
+    const tries = [['Tess Welder', /6 digits/], ['', /6 digits/], ['   ', /6 digits/], ['!!!', /6 digits/], ['<img src=x onerror="window.__x=1">', /6 digits/], ['<b>Tess</b>', /6 digits/], ['😀', /6 digits/], ['12345', /6 digits/], ['123456', /not on the list/], ['999999', /not on the list/]];
+    for (const [t, why] of tries) {
+      await page.fill('#cnAcctPanel .cnAcIn', '1'); await page.fill('#cnAcctPanel .cnAcIn', t);       // (typing first: the line of the try before is put away)
+      assert.equal(await page.evaluate(() => document.querySelector('#cnAcctPanel .cnAcErr').hidden), true, 'typing clears the message');
+      await page.press('#cnAcctPanel .cnAcIn', 'Enter');
+      await until(page, w => { const e = document.querySelector('#cnAcctPanel .cnAcErr'); return !!e && !e.hidden && new RegExp(w).test(e.textContent); }, why.source, 'the calm line for ' + JSON.stringify(t));
       const s = await snap(page);
-      assert.equal(s.name, '', 'refused: ' + JSON.stringify(t)); assert.equal(s.st, 'none'); assert.match(s.panel.text, /Please type your name \(letters, not a number\)\./, 'a calm message in the panel for ' + JSON.stringify(t));
-      assert.equal(await page.evaluate(() => document.querySelector('#cnAcctPanel .cnAcIn').getAttribute('aria-invalid')), 'true');
+      assert.equal(s.name, '', 'refused: ' + JSON.stringify(t)); assert.equal(s.st, 'none'); assert.equal(s.panel.mode, 'who');
+      assert.deepEqual(await page.evaluate(() => { const i = document.querySelector('#cnAcctPanel .cnAcIn'); return [i.getAttribute('aria-invalid'), i.value, document.activeElement === i]; }), ['true', '', true], 'marked, the field emptied (the number is not kept even there) and ready for the next try (it has the focus)');
     }
     assert.equal(sessions(rec).length, 0, 'no sign-in, no session'); assert.equal(await page.evaluate(() => window.__x), undefined, 'markup ran nothing'); assert.equal(await page.$('#cnAcctPanel img'), null, 'and made no element');
-    assert.equal(await page.evaluate(() => document.querySelector('#toasts .toast.bad')), null, 'no alarm toast for a refused name');
-    await page.fill('#cnAcctPanel .cnAcIn', 'x'); assert.equal(await page.evaluate(() => document.querySelector('#cnAcctPanel .cnAcErr').hidden), true, 'typing clears the message');
-    // 40 characters at most; digits runs of four or more are dropped as the name bar does (a number could be a PIN)
-    assert.equal(await page.evaluate(() => document.querySelector('#cnAcctPanel .cnAcIn').maxLength), 40);
-    await page.fill('#cnAcctPanel .cnAcIn', 'Tess'); await page.evaluate(() => { document.querySelector('#cnAcctPanel .cnAcIn').maxLength = 500; });
-    await page.fill('#cnAcctPanel .cnAcIn', 'Maximilian Alexander Bartholomew Cornelius Delacroix'); await page.press('#cnAcctPanel .cnAcIn', 'Enter');
-    await until(page, () => CNEmployee.name().length > 0, null, 'a long name'); const long = await page.evaluate(() => CNEmployee.name()); assert(long.length <= 40, 'cut to 40: ' + long);
+    assert.equal(await page.evaluate(() => document.querySelector('#toasts .toast.bad')), null, 'no alarm toast for a refused number');
+    // digits only, 6 at most, masked
+    await page.fill('#cnAcctPanel .cnAcIn', 'a1b2c3'); assert.equal(await page.inputValue('#cnAcctPanel .cnAcIn'), '123', 'digits only');
+    await page.fill('#cnAcctPanel .cnAcIn', '12345678'); assert.equal(await page.inputValue('#cnAcctPanel .cnAcIn'), '123456', '6 at most');
+    await page.fill('#cnAcctPanel .cnAcIn', ''); await page.locator('#cnAcctPanel .cnAcIn').pressSequentially('12 34 56'); assert.equal(await page.inputValue('#cnAcctPanel .cnAcIn'), '123456', 'spaces typed between the digits are dropped');
+    assert.deepEqual(await page.evaluate(() => { const i = document.querySelector('#cnAcctPanel .cnAcIn'); return [i.type, i.maxLength, i.autocomplete]; }), ['password', 6, 'off']);
+    // the right number: the person the server names; the number is shown, kept and sent nowhere else
+    const num = pinOf(srv.st, 'Tess Welder');
+    await typeNum(page, num); await until(page, () => CNRole.state() === 'ask', null, 'Tess Welder');
+    assert.equal(await page.evaluate(() => CNEmployee.name()), 'Tess Welder');
+    const has = x => new RegExp('(^|\\D)' + num + '(\\D|$)').test(x);
+    assert.deepEqual(await kept(page, srv), [], 'kept nowhere in this browser'); assert(!ctx.rec.requests.some(has), 'in no address'); assert(!has(await page.evaluate(() => document.body.innerText)), 'shown nowhere');
     await page.evaluate(() => CNAccount.signOut()); await page.keyboard.press('Escape');
-    // a name with markup characters pasted through the page's own setter is text everywhere it is shown
-    await page.evaluate(() => { B.employee = 'Tess <i>X</i>'; }); await wait(200);
+    // a name with markup characters (as the server spells it) is text everywhere it is shown
+    await BS.signInAs(page, srv, 'Tess <i>X</i>'); await wait(200); await chipClick(page); await panelOpen(page);
     assert.equal(await page.evaluate(() => document.querySelectorAll('#cnAcctChip i, #cnAcctPanel i').length), 0, 'no markup from a name');
-    say('names: a number, nothing, "!!!", markup and an emoji are refused with a calm message in the panel (no sign-in, no toast, no element); 40 characters at most; names are text');
+    say('the Employee Number field: a name, nothing, "!!!", markup, an emoji, a short or unknown number sign nobody in, with a calm line in the panel (no toast, no element); digits only, 6 at most, masked; the number kept, sent and shown nowhere else; names are text');
   } finally { await ctx.context.close(); }
 };
 
@@ -556,7 +615,7 @@ SC.names = async (br, srv, errors) => {
 SC.auto = async (br, srv, errors) => {
   const ctx = await newContext(br, srv); const { rec } = ctx; const page = await openPage(ctx, srv, errors); reset(rec);
   try {
-    await signInAs(page, 'Tess W.', 'laser'); await wait(200);
+    await signInAs(page, srv, 'Tess W.', 'laser'); await wait(200);
     const id = (await snap(page)).session.id;
     await chipClick(page); await panelOpen(page); await wait(250);
     // the day turned (the midnight sign-out): the page's own callback clears the sign-in
@@ -568,7 +627,7 @@ SC.auto = async (br, srv, errors) => {
     const toast = await page.evaluate(() => [...document.querySelectorAll('#toasts .toast .m')].map(x => x.textContent).join('|')); assert.match(toast, /Signed out at midnight/);
     say('automatic sign-out (midnight): the chip and an open panel go to signed-out at once, the page\'s own notice is shown');
     // no input for a while (a Design person: 10 minutes; a Laser person: 1 hour; the Admin: never): the page's own rule signs out, the chip says so at once, nothing opens by itself
-    await page.keyboard.press('Escape'); await signInAs(page, 'Ray K.', 'design'); await wait(150);
+    await page.keyboard.press('Escape'); await signInAs(page, srv, 'Ray K.', 'design'); await wait(150);
     const idleId = (await snap(page)).session.id;
     await page.evaluate(() => { const real = Date.now.bind(Date); window.__off = 0; Date.now = () => real() + window.__off; });
     const later = async min => { await page.evaluate(m => { window.__off += m * 60000; window.dispatchEvent(new Event('focus')); }, min); await wait(400); };
@@ -577,10 +636,10 @@ SC.auto = async (br, srv, errors) => {
     await until(page, () => CNRole.state() === 'none' && document.getElementById('cnAcctChip').dataset.st === 'none', null, 'the idle sign-out of a Design person');
     assert.equal(await page.$('#cnAcctPanel'), null, 'an automatic sign-out opens nothing'); assert.equal(ends(rec, idleId)[0].reason, 'idle');
     assert.match(await page.evaluate(() => [...document.querySelectorAll('#toasts .toast .m')].map(x => x.textContent).join('|')), /Signed out after 10 minutes without input/);
-    await signInAs(page, 'Lena L', 'laser'); await wait(150); const laserId = (await snap(page)).session.id;
+    await signInAs(page, srv, 'Lena L', 'laser'); await wait(150); const laserId = (await snap(page)).session.id;
     await later(30); await later(25); assert.equal((await snap(page)).chip.text, 'Lena Laser', 'a Laser person is still in after 55 quiet minutes');
     await later(10); await until(page, () => CNRole.state() === 'none', null, 'the idle sign-out of a Laser person after an hour'); assert.equal(ends(rec, laserId)[0].reason, 'idle');
-    door.admins = ['paul']; await chipClick(page); await panelOpen(page); await typeIn(page, 'Paul'); await until(page, () => CNRole.state() === 'admin', null, 'the Admin'); await later(120);
+    door.admins = ['paul']; await chipClick(page); await panelOpen(page); await numIn(page, srv, 'Paul'); await until(page, () => CNRole.state() === 'admin', null, 'the Admin'); await later(120);
     assert.equal((await snap(page)).chip.text, 'Paul Admin', 'the Admin gets no idle sign-out');
     say('automatic sign-outs: idle (Design 10 min, Laser 1 hour, never the Admin) paint the chip signed-out at once and open nothing');
   } finally { await ctx.context.close(); }
@@ -599,7 +658,7 @@ SC.pulse = async (br, srv, errors) => {
   try {
     await p2.waitForFunction(() => document.getElementById('cnAcctChip').classList.contains('cnAcPulse'), null, { timeout: 6000 });
     assert.equal(await p2.evaluate(() => getComputedStyle(document.getElementById('cnAcctChip')).animationName + '|' + getComputedStyle(document.getElementById('cnAcctChip'), '::after').animationName), 'none|none', 'no animation under reduced motion');
-    await signInAs(p2, 'Tess W.', 'laser');
+    await signInAs(p2, srv, 'Tess W.', 'laser');
     assert.equal(await p2.evaluate(() => document.getElementById('cnAcctChip').classList.contains('cnAcSettle')), false, 'no settle animation under reduced motion');
     await chipClick(p2); await panelOpen(p2);
     assert.equal(await p2.evaluate(() => getComputedStyle(document.getElementById('cnAcctPanel')).animationName), 'none', 'the panel does not animate');
@@ -641,7 +700,9 @@ SC.narrow = async (br, srv, errors) => {
     await chipClick(page); await panelOpen(page); await wait(450); o = await fits('signed out, panel');
     assert.equal(o.panel[3], 740, 'a bottom sheet under 560 px');
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'account-360-signed-out.png') });
-    await page.click('#cnAcctPanel .cnAcTile:nth-child(1)'); await until(page, () => CNRole.state() === 'ask', null, 'role'); await wait(450);
+    await page.click('#cnAcctPanel .cnAcTile:nth-child(1)'); await wait(150); await fits('signed out, a tile picked (her Employee Number asked)');
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'account-360-number.png') });
+    await numIn(page, srv, 'Tess W.'); await until(page, () => CNRole.state() === 'ask', null, 'role'); await wait(450);
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'account-360-role.png') });
     await page.click('#cnAcctPanel [data-role="laser"]'); await until(page, () => CNRole.role() === 'laser', null, 'laser');
     await wait(300); o = await fits('signed in, chip'); assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#cnAcctChip .cnAcName')).display), 'none', 'under 720 px only the avatar');
@@ -655,7 +716,7 @@ SC.narrow = async (br, srv, errors) => {
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'account-360-signed-out-2.png') });
     await page.setViewportSize({ width: 1440, height: 900 }); await wait(300);
     if (SHOTS) { await page.screenshot({ path: path.join(SHOTS, 'account-1440-signed-out.png') }); }
-    say('360 px: a bottom sheet, no horizontal scroll, avatar-only chip with a full label, touch targets ≥ 44 (screenshots when SHOTS is set)');
+    say('360 px: a bottom sheet, no horizontal scroll (the Employee Number field too), avatar-only chip with a full label, touch targets ≥ 44 (screenshots when SHOTS is set)');
   } finally { await ctx.context.close(); }
 };
 

@@ -18,7 +18,7 @@
 //   node tests/charm-nest/order-window-round3-e2e.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>, SHOTS=<dir> keeps screenshots)
 const fs = require('fs'), path = require('path'), zlib = require('zlib');
 const root = path.join(__dirname, '../..');
-const { start } = require('./bridge-server.cjs');
+const { start, pinOf } = require('./bridge-server.cjs');
 
 // ── real PNGs of known sizes for the fake image proxy ──
 const crcT = (() => { const t = new Int32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c; } return t; })();
@@ -282,7 +282,9 @@ async function main() {
       check((await approvals()).length === 0 && (await page.evaluate(() => __prompts)) === 0 && !(await page.$('.cnNameBar')) && (await card()).approve, 'with no name known, the name bar asks for it in the window; "Not now" approves nothing and the button stays');
       who = 'Zed Tester';
       await page.click(await sel('[data-e=approve]')); await page.waitForSelector('#orderWin .cnNameBar input', { timeout: 4000 });
-      await page.fill('#orderWin .cnNameBar input', 'Zed Tester'); await page.click('#orderWin .cnNameBar button[type=submit]');
+      // (EMPNUM, Paul 26 Oct 2026: the bar asks for the Employee Number, masked, never a typed name; the server names the person: Zed Tester)
+      check(await page.evaluate(() => { const b = document.querySelector('#orderWin .cnNameBar'); return b.dataset.num === '1' && b.querySelector('input').type === 'password' && /Employee Number/.test(b.querySelector('label b').textContent); }), 'the bar asks for the Employee Number (masked), not a name');
+      await page.fill('#orderWin .cnNameBar input', pinOf(srv.st, 'Zed Tester')); await page.click('#orderWin .cnNameBar button[type=submit]');
     } else {
       console.log('  – the name could not be cleared here: the ask-for-a-name step was not run');
       await page.click(await sel('[data-e=approve]'));

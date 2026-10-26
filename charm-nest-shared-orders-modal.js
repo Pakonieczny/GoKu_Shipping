@@ -590,7 +590,9 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     closeAsks(M);
     for (const old of card.querySelectorAll(':scope > .soAskSlot')) old.remove();
     card.dataset.state = 'ask';
-    const need = !who(), box = doc.createElement('div'); box.className = 'soAsk'; box.setAttribute('role', 'group'); box.setAttribute('aria-label', `Take order ${orderNo(o)} off its sheets`);
+    // (EMPNUM, Paul 26 Oct 2026: with the Account panel's gate a typed name signs nobody in: no name field here; Take off asks for the Employee Number through the small bar, CNEmployee.need)
+    const gate = (() => { try { return !!(W.CNAccount && CNAccount.gated && CNAccount.gated()); } catch (_) { return false; } })();
+    const need = !who() && !gate, box = doc.createElement('div'); box.className = 'soAsk'; box.setAttribute('role', 'group'); box.setAttribute('aria-label', `Take order ${orderNo(o)} off its sheets`);
     const name = `soWhat${++uid}`;
     box.innerHTML = `<p class="soAskQ">Take #${esc(orderNo(o))} off its sheets?</p>`
       + `<div class="soOpts" role="radiogroup" aria-label="What happens to the order"><label class="soOpt"><input type="radio" name="${name}" value="hold"><span>Put on hold</span></label><label class="soOpt"><input type="radio" name="${name}" value="cancel"><span>Cancel the order</span></label></div>`
@@ -612,7 +614,8 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
     box.querySelector('[data-keep]').onclick = () => closeAsk(M, card, true);
     yes.onclick = () => {
       const v = (box.querySelector('input:checked') || {}).value; if (!v || yes.disabled) return;
-      if (need && !who()) { const n = nameIn.value.trim(); try { if (W.B) B.employee = n; else localStorage.setItem('cn.employee', n); } catch (_) {} }   // (a sign-in only, through the one setter: the account chip and the sessions follow; Paul, 18 Oct 2026)
+      if (gate && !who()) { Promise.resolve(W.CNEmployee && CNEmployee.need ? CNEmployee.need('Kept with this change, and with your work today.') : '').then(n => { if (n && who()) takeOff(M, card, o, v); }, () => {}); return; }
+      if (need && !who()) { const n = nameIn.value.trim(); try { if (W.B) B.employee = n; else localStorage.setItem('cn.employee', n); } catch (_) {} if (W.B && !who()) return; }   // (a sign-in only, through the one setter: the account chip and the sessions follow; Paul, 18 Oct 2026)
       takeOff(M, card, o, v);
     };
     box.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target === nameIn) { e.preventDefault(); yes.click(); } });

@@ -2,10 +2,13 @@
 //  1 · a person's cancel of an order Etsy has since cancelled too (etsyStatus "Canceled") offered Restore: restoring it
 //      deleted the record the stations' cancelCheck reads, so an order dead on Etsy passed every station silently
 //  2 · Restore with no name saved on this screen went to the library as by "" ("operator"): who restored was lost
+//      (EMPNUM, Paul 26 Oct 2026: the person is asked for their Employee Number in the small bar, never a typed name)
 //  3 · a double-click on a cancelled Custom Orders card's Print QR label (or Complete Order) went ahead: the second
 //      click of the pair was taken as the deliberate second press, so nothing was asked
 //  4 · a line AutoCancel kept marked "gone" (its piece stayed on a cut or released sheet) stayed gone for good after a
 //      Restore: the arrivals' merge keeps a row it already has and the orders check skips gone rows
+//  5 · (EMPNUM) the Employee Number bar answered with a click on its Sign in button: the press outside the row put the
+//      Restore question away, so the restore never went on once the person was signed in
 // And held up (measured, no fix needed): Etsy's "Fully Refunded" keeps Restore; the restore flight is visible (the copy
 // moves between start, middle and end), smooth (rAF deltas, long tasks), animates only transform and opacity, and is not
 // cut off; the rows below close up with transforms; the rows of a newly shown pile fade and slide in.
@@ -14,7 +17,7 @@
 //   node tests/charm-nest/adv-cancelled-tab.cjs [playwright-core dir]
 const path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
-const { start } = require('./bridge-server.cjs');
+const { start, pinOf, signInAs } = require('./bridge-server.cjs');
 
 const NOW = Date.now(), H = 3600000;
 const REC = (orderId, by, ago, extra) => Object.assign({ orderId, by, why: 'test', at: NOW - ago * H, buyer: 'B ' + orderId, sheets: [], lines: [{ transactionId: '1', sku: 'SKU-' + orderId, title: 't', quantity: 1 }], source: by === 'Etsy' ? 'etsy' : 'sorter' }, extra || {});
@@ -93,15 +96,14 @@ async function main() {
     await check('2 · Restore with no name saved asks for it inline, and the library is told who restored', async () => {
       await page.click(rowSel(REFUND) + ' [data-cx=restore]');
       await page.waitForSelector(rowSel(REFUND) + ' .cxAskBar');
-      const name = await page.$(rowSel(REFUND) + ' .cxAskBar input');
-      if (name) {
-        // Restore pressed before a name is typed restores nothing
-        await page.click(rowSel(REFUND) + ' [data-cx=yes]');
-        await page.waitForTimeout(250);
-        assert.equal(restores.length, 0, 'nothing restored without a name');
-        await name.fill('Nora');
-      }
+      // (EMPNUM, Paul 26 Oct 2026: no name field in the question; Restore asks for the Employee Number in the small bar, and restores nothing before it)
+      assert.equal(await page.$(rowSel(REFUND) + ' .cxAskBar input'), null, 'no name field: a typed name signs nobody in');
       await page.click(rowSel(REFUND) + ' [data-cx=yes]');
+      await page.waitForSelector('.cnNameBar[data-kind="ask"] input');
+      assert.equal(await page.evaluate(() => document.querySelector('.cnNameBar[data-kind="ask"]').dataset.num), '1', 'the bar asks for the Employee Number');
+      await page.waitForTimeout(250);
+      assert.equal(restores.length, 0, 'nothing restored without a person');
+      await page.fill('.cnNameBar[data-kind="ask"] input', pinOf(srv.st, 'Nora')); await page.press('.cnNameBar[data-kind="ask"] input', 'Enter');
       for (const t0 = Date.now(); !restores.length; ) { if (Date.now() - t0 > 5000) throw new Error('no cancelRestore'); await page.waitForTimeout(50); }
       assert.equal(restores[0].by, 'Nora', 'cancelRestore carries who restored it: ' + JSON.stringify(restores[0]));
       assert.equal(await page.evaluate(() => localStorage.getItem('cn.employee')), 'Nora', 'the name is kept for the next change');
@@ -110,7 +112,7 @@ async function main() {
     });
 
     await check('the restore flight: visible, smooth, transform/opacity only, not cut off', async () => {
-      await page.evaluate(() => { B.employee = 'Nora'; try { localStorage.setItem('cn.employee', 'Nora'); } catch (_) {} });
+      await signInAs(page, srv, 'Nora');      // (already signed in by 2: nothing changes; EMPNUM: a person is signed in only with their Employee Number)
       await page.waitForSelector(rowSel(PERSON) + ' [data-cx=restore]');
       await page.click(rowSel(PERSON) + ' [data-cx=restore]');
       await page.waitForSelector(rowSel(PERSON) + ' [data-cx=yes]');
@@ -187,6 +189,23 @@ async function main() {
       assert.notEqual(got.a[0], 'gone', 'the line the cancel had marked gone is in play again: ' + JSON.stringify(got));
       assert.equal(got.a[1], null, 'with no cancel reason left on it: ' + JSON.stringify(got));
       assert.deepEqual(got.b, ['gone', 'shipped'], 'a line gone for another reason stays gone: ' + JSON.stringify(got));
+    });
+
+    await check('5 · (EMPNUM) the Employee Number bar answered with a click on Sign in: the restore goes on under that person', async () => {
+      const RID = '4200000100', n0 = restores.length;
+      // (the real server takes a moment to check a number: the question would have faded away by then)
+      const slow = async r => { let b = null; try { b = JSON.parse(r.request().postData() || 'null'); } catch (_) {} if (b && b.pinLogin !== undefined) await new Promise(t => setTimeout(t, 700)); return r.fallback(); };
+      await page.route(/\/\.netlify\/functions\/firebaseOrders/, slow);
+      await page.evaluate(() => { B.employee = ''; try { localStorage.removeItem('cn.employee'); } catch (_) {} });
+      await page.waitForSelector(rowSel(RID) + ' [data-cx=restore]');
+      await page.click(rowSel(RID) + ' [data-cx=restore]');
+      await page.click(rowSel(RID) + ' [data-cx=yes]');
+      await page.waitForSelector('.cnNameBar[data-kind="ask"] input');
+      await page.fill('.cnNameBar[data-kind="ask"] input', pinOf(srv.st, 'Tess Welder'));
+      await page.click('.cnNameBar[data-kind="ask"] button[type=submit]');      // (a click, not Enter: a press outside the row)
+      for (const t0 = Date.now(); restores.length === n0; ) { if (Date.now() - t0 > 5000) throw new Error('no cancelRestore after the number was given'); await page.waitForTimeout(50); }
+      assert.equal(restores[restores.length - 1].orderId, RID); assert.equal(restores[restores.length - 1].by, 'Tess Welder', 'under the person the number names');
+      await page.unroute(/\/\.netlify\/functions\/firebaseOrders/, slow);
     });
 
     assert.deepEqual(errors, [], 'no page errors');

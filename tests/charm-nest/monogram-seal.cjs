@@ -9,6 +9,7 @@
 //   4  another computer: the stamps are read from the order's timeline events (this computer's own kept stamps wiped): a seal at rest, no stamp comes down; the service API (sealsOf / sealHtml / stampsFromEvents) says the same
 //   5  a piece of a line of two: its own seal, its own event (data.slot "C2", poolId "<line>_2"); the other piece has none
 //   6  reduced motion: the seal is there at once, no stamp, the card still says Approved only after; a name bar put away (nobody signed in): nothing is approved, nothing stamped
+//      (EMPNUM, Paul 26 Oct 2026: the bar asks for the Employee Number, and the person signs in again with it)
 //   7  the order timeline draws the monogram stamp (a person's action, not the Engraved step); phone width (400): nothing runs past the screen
 //   node tests/charm-nest/monogram-seal.cjs [playwright-core dir]
 // What a pass does NOT prove: a live order on the live page, the live timeline, or another real computer; only that the page's own code presses, records and re-reads the seal on the offline fake.
@@ -25,7 +26,7 @@ const finish = () => { console.log(`\nmonogram-seal: ${nCheck - fails.length}/${
   try { require(path.join(pwDir, 'playwright-core')); } catch (_) { console.log('monogram-seal: no playwright-core, skipped'); return; }
   process.env.PW_DIR = pwDir;
   fs.mkdirSync(SHOTS, { recursive: true });
-  const R = require('./_engraveRealWorld.cjs'), Base = require('./_orderFactsWorld.cjs'), A = require('./_monogramAlphabets.cjs');
+  const R = require('./_engraveRealWorld.cjs'), Base = require('./_orderFactsWorld.cjs'), A = require('./_monogramAlphabets.cjs'), { signInAs } = require('./bridge-server.cjs');
   const V = (name, value) => ({ name, value });
   function orderOf(fx, now) {
     const at = (d, h, m) => { const t = new Date(now); t.setDate(t.getDate() + d); t.setHours(h, m, 0, 0); return Math.floor(t.getTime() / 1000); };
@@ -238,12 +239,12 @@ const finish = () => { console.log(`\nmonogram-seal: ${nCheck - fails.length}/${
     // (a fresh piece: C1 of the pair, nobody signed in)
     await openDetail(pieceKey(1)); await detailReady(pieceKey(1));
     await page.click('#egQueue .rvItem[data-mono] [data-mw-approve]');
-    const bar = await until(() => !!document.querySelector('.cnNameBar'), 'the name bar', null, 8000);
-    check(!!bar, 'nobody signed in: Approve opens the small name bar (never a browser box)');
+    const bar = await until(() => !!document.querySelector('.cnNameBar[data-num="1"]'), 'the name bar', null, 8000);
+    check(!!bar, 'nobody signed in: Approve opens the small name bar, asking for the Employee Number (never a browser box)');
     await page.evaluate(() => { const x = document.querySelector('.cnNameBar .cnNbX'); if (x) x.click(); }); await sleep(900);
     const none = await page.evaluate(() => { const m = document.querySelector('#egQueue .rvItem[data-mono] .mw'); return { state: m.dataset.state, seals: document.querySelectorAll('#egQueue .mwSeal .seal').length }; });
     check(none.state === 'ready' && none.seals === 0 && (await presses()).length === p0, 'the name bar put away: nothing is approved and nothing is stamped: ' + JSON.stringify(none));
-    await page.evaluate(() => { B.employee = window.__emp || 'Test Operator'; try { localStorage.setItem('cn.employee', B.employee); } catch (_) {} });
+    await signInAs(page, srv, await page.evaluate(() => window.__emp || 'Test Operator'));      // (EMPNUM, Paul 26 Oct 2026: signed in again with the Employee Number; a name set by a script signs nobody in)
     await page.click('#egQueue .rvItem[data-mono] [data-mw-approve]');
     check(await waitApproved(pieceKey(1), 'JQX', 'the approval after signing in'), 'signed in again: the same Approve now approves, stamped by the person');
     await openDetail(pieceKey(1)); await detailReady(pieceKey(1)); await sleep(500);

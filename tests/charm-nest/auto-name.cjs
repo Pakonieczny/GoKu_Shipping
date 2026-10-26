@@ -5,17 +5,19 @@
 // Nothing leaves the machine, no PIN is typed, no paid model and no Etsy call. EVERY page has a `dialog` listener: any browser pop-up fails the test.
 //   A · the Engraving work, on a whole Auto set (the real run, like order-engraving-approve-real.cjs)
 //       signed in (the Admin): Engrave these words and Approve engraving go straight through, under the name, no bar, no pop-up
-//       nobody signed in: the inline name bar (kind ask) opens with the last name ready and "Continue as <name>"; one tap, and Engrave these
-//       words / Approve engraving go on by themselves (no second press); Esc puts it away and the words typed stay as typed
-//       after an IDLE sign-out of a non-Admin (cause of the empty name: the name is cleared by the idle rule): the same, with "Continue as"
-//       CAUSE (reproduced): a typed name that is not the Admin's is cleared after 10 minutes without input; cn.lastEmployee keeps it for the chip
+//       nobody signed in: the inline bar (kind ask) opens asking for the Employee Number (EMPNUM, Paul 26 Oct 2026: masked, empty, no one-tap
+//       "Continue as <name>" any more); the number, and Engrave these words / Approve engraving go on by themselves (no second press) under the
+//       person the server names; Esc puts it away and the words typed stay as typed
+//       after an IDLE sign-out of a non-Admin (cause of the empty name: the name is cleared by the idle rule): the same, with the number
+//       CAUSE (reproduced): a name that is not the Admin's is cleared after 10 minutes without input; cn.lastEmployee keeps it for the panel's tile
 //   B · Review's Complete Order, Hold (pressed in the order window: a Review row has no Hold), Cancel Order and a message in the order window (the Review / Hold fixture of hold-ui.cjs)
-//       signed in: no field, no bar, no pop-up, the name is on the record; nobody signed in: the card's own field or the bar, the last name ready, the press goes on
-//   C · when the Sorter opens with nobody signed in the calm name hint is already there (not first at the first approval), with the chip
+//       signed in: no field, no bar, no pop-up, the name is on the record; nobody signed in: the number bar (never the card's own name field), the press goes on
+//   C · when the Sorter opens with nobody signed in the chip says so; the panel's tile of the last person only asks for that person's Employee Number
+//   (EMPNUM: a person is signed in only with their 6-digit Employee Number, checked by the server: the fake site's roster, bridge-server.cjs pinOf / signInAs)
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/auto-name.cjs      (ONLY=A,B,C)
 const fs = require('fs'), path = require('path'), os = require('os');
 const root = path.join(__dirname, '../..');
-const { start } = require('./bridge-server.cjs');
+const { start, pinOf, signInAs } = require('./bridge-server.cjs');
 const { buildMaster } = require('./fixture-master.cjs');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const only = (process.env.ONLY || '').split(',').filter(Boolean), want = n => !only.length || only.includes(n);
@@ -38,6 +40,9 @@ async function routeDoor(context, rec) {
     return r.fallback();
   });
 }
+// EMPNUM: the small bar asks for the Employee Number; answered with the number of `name` on the fake site's roster
+const answerBar = async (page, srv, name, sel = '.cnNameBar[data-kind="ask"] input') => { await page.fill(sel, pinOf(srv.st, name)); await page.press(sel, 'Enter'); };
+const numBar = b => !!b && b.num === '1' && b.type === 'password' && b.input === '' && b.chip === '';      // (masked, empty, no one-tap "Continue as <name>")
 const watchDialogs = (page, label) => page.on('dialog', d => { if (d.type() === 'beforeunload') { d.accept().catch(() => {}); return; } dialogsAll.push(label + ' ' + d.type() + ': ' + d.message().slice(0, 80)); d.dismiss().catch(() => {}); });
 const skewInit = () => { const real = Date.now.bind(Date); window.__skew = 0; Date.now = () => real() + (window.__skew || 0); };
 
@@ -100,8 +105,8 @@ async function partA(browser) {
     await page.waitForTimeout(500);
   }
   const jobOf = k => page.evaluate(k => { const j = Engrave.items().get(k); return j ? { state: j.state, by: j.approvedBy || (j.decision && j.decision.by) || '', text: j.text || '', seals: (j.engravingSeals || []).map(s => `${s.how}|${s.by}`) } : null; }, k);
-  const bar = () => page.evaluate(() => { const b = document.querySelector('.cnNameBar[data-kind="ask"], .cnNameBar[data-kind="edit"], .cnNameBar[data-kind="hint"]'); return b ? { kind: b.dataset.kind, chip: (b.querySelector('.cnNbCont:not([hidden])') || {}).textContent || '', input: b.querySelector('input') ? b.querySelector('input').value : null, inWin: !!b.closest('dialog') } : null; });
-  const asName = n => page.evaluate(n => { B.employee = n; }, n);
+  const bar = () => page.evaluate(() => { const b = document.querySelector('.cnNameBar[data-kind="ask"], .cnNameBar[data-kind="edit"], .cnNameBar[data-kind="hint"]'); return b ? { kind: b.dataset.kind, num: b.dataset.num, type: b.querySelector('input') ? b.querySelector('input').type : null, chip: (b.querySelector('.cnNbCont:not([hidden])') || {}).textContent || '', input: b.querySelector('input') ? b.querySelector('input').value : null, inWin: !!b.closest('dialog') } : null; });
+  const asName = n => signInAs(page, srv, n);      // (EMPNUM: the person's Employee Number, never a name set by a script)
   const signOutName = () => page.evaluate(() => { try { localStorage.removeItem('cn.employee'); } catch (_) {} B.employee = ''; });
   const focusJob = async (k, rid) => { await page.evaluate(({ k, rid }) => { CN.setMode('engrave'); Engrave.restoreView(Object.assign({}, Engrave.view(), { tab: 'place', focus: k, list: false, chosen: true, q: rid, openDone: null })); Engrave.render(); }, { k, rid }); };
   const useBtn = k => `#egQueue .rvItem[data-key="${k}"] [data-a=usewords]`;
@@ -131,27 +136,27 @@ async function partA(browser) {
     check(!(await bar()) && c1.by === ADMIN + '.' && c1.seals.length >= 1 && c1.seals.every(s => s.includes(ADMIN + '.')), 'Approve engraving: no bar, the seal names the person: ' + JSON.stringify(c1));
     check(await page.evaluate(() => localStorage.getItem('cn.lastEmployee')) === ADMIN + '.', 'the last name is kept for next time (cn.lastEmployee)');
 
-    console.log('· A2: nobody signed in: the inline bar, last name ready, Continue as <name>, the press goes on by itself');
+    console.log('· A2: nobody signed in: the inline bar asks for the Employee Number, the press goes on by itself');
     await signOutName();
     check(await page.evaluate(() => CNEmployee.name()) === '' && await page.evaluate(() => localStorage.getItem('cn.employee')) === null, 'no name saved');
     await pressUse(K.W2, R.W2, 'SARA');
     await page.waitForSelector('.cnNameBar[data-kind="ask"]', { timeout: 8000 });
     let b = await bar();
-    check(b && b.kind === 'ask' && b.chip === 'Continue as ' + ADMIN + '.' && b.input === ADMIN + '.', 'Engrave these words with no name: the inline bar (kind ask) opens with the last name ready and the chip: ' + JSON.stringify(b));
+    check(b && b.kind === 'ask' && numBar(b), 'Engrave these words with no name: the inline bar (kind ask) asks for the Employee Number (masked, empty, no "Continue as"): ' + JSON.stringify(b));
     check((await jobOf(K.W2)).state === 'words', 'nothing was decided before a name');
-    await page.click('.cnNameBar .cnNbCont');
+    await answerBar(page, srv, ADMIN);
     await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && j.state !== 'words'; }, K.W2, { timeout: 40000 });
-    check(!(await bar()) && (await jobOf(K.W2)).by === ADMIN + '.', 'one tap on Continue as: the decision went through by itself, no second press, under the name: ' + JSON.stringify(await jobOf(K.W2)));
+    check(!(await bar()) && (await jobOf(K.W2)).by === ADMIN + '.', 'the Employee Number: the decision went through by itself, no second press, under the name: ' + JSON.stringify(await jobOf(K.W2)));
     await signOutName();
     await focusJob(K.C2, R.C2); await page.waitForFunction(s => { const x = document.querySelector(s); return x && !x.disabled; }, apprBtn(K.C2), { timeout: 40000 });
     await page.click(apprBtn(K.C2));
     await page.waitForSelector('.cnNameBar', { timeout: 8000 }); b = await bar();
-    check(b && /^Continue as /.test(b.chip), 'Approve engraving with no name: the bar with Continue as: ' + JSON.stringify(b));
+    check(numBar(b), 'Approve engraving with no name: the bar asks for the Employee Number: ' + JSON.stringify(b));
     check(!['approved', 'written'].includes((await jobOf(K.C2)).state), 'not approved before a name');
-    await page.click('.cnNameBar .cnNbCont');
+    await answerBar(page, srv, ADMIN, '.cnNameBar input');
     await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && ['approved', 'written'].includes(j.state); }, K.C2, { timeout: 60000 });
     const c2 = await jobOf(K.C2);
-    check(c2.by === ADMIN + '.' && c2.seals.length >= 1 && c2.seals.every(s => s.includes(ADMIN + '.')), 'the approval went through by itself after one tap, the seal names the person: ' + JSON.stringify(c2));
+    check(c2.by === ADMIN + '.' && c2.seals.length >= 1 && c2.seals.every(s => s.includes(ADMIN + '.')), 'the approval went through by itself after the number, the seal names the person: ' + JSON.stringify(c2));
 
     console.log('· A3: Esc puts the bar away calmly: nothing decided, the words typed stay as typed');
     await signOutName();
@@ -163,7 +168,7 @@ async function partA(browser) {
     const kept = await page.evaluate(k => { const t = document.querySelector(`#egQueue .rvItem[data-key="${k}"] .engp .engpWords`); return t ? t.value : null; }, K.W3);
     check(kept === 'TYPED WORDS' && (await jobOf(K.W3)).state === 'words' && !(await page.evaluate(() => CNEmployee.name())), 'Esc: no decision, no name, the typed words are still in the box: ' + JSON.stringify([kept, await jobOf(K.W3)]));
 
-    console.log('· A4: CAUSE of the empty name: a non-Admin\'s name is cleared by the idle sign-out; the chip brings it back');
+    console.log('· A4: CAUSE of the empty name: a non-Admin\'s name is cleared by the idle sign-out; the Employee Number brings the person back');
     await asName(STAFF); await page.waitForSelector('.cnNameBar[data-kind="role"]', { timeout: 8000 });
     await page.click('.cnNameBar[data-kind="role"] [data-role="design"]');
     await page.waitForFunction(() => StationSession.current() && StationSession.current().person === 'Tess Welder', null, { timeout: 8000 });
@@ -171,15 +176,15 @@ async function partA(browser) {
     await page.evaluate(() => { window.__skew = 11 * 60 * 1000; });        // eleven minutes without input pass (the clock of the page)
     await page.waitForFunction(() => !CNEmployee.name(), null, { timeout: 30000 }).catch(() => {});
     check(await page.evaluate(() => CNEmployee.name()) === '' && await page.evaluate(() => localStorage.getItem('cn.employee')) === null, 'after 10 minutes without input the idle sign-out cleared the name (the cause: a name that is not the Admin\'s)');
-    check(await page.evaluate(() => localStorage.getItem('cn.lastEmployee')) === STAFF, 'cn.lastEmployee still has the name for the chip');
+    check(await page.evaluate(() => localStorage.getItem('cn.lastEmployee')) === STAFF, 'cn.lastEmployee still has the name (the Account panel\'s tile)');
     await focusJob(K.W3, R.W3); await page.waitForSelector(useBtn(K.W3), { timeout: 20000 });
     await page.fill(wordsBox(K.W3), 'UNA');
     await page.click(useBtn(K.W3)); await page.waitForSelector('.cnNameBar[data-kind="ask"]', { timeout: 8000 });
     b = await bar();
-    check(b && b.chip === 'Continue as ' + STAFF, 'after the idle sign-out the next press shows the inline bar with Continue as: ' + JSON.stringify(b));
-    await page.click('.cnNameBar .cnNbCont');
+    check(b && b.kind === 'ask' && numBar(b), 'after the idle sign-out the next press shows the inline bar asking for the Employee Number (no "Continue as"): ' + JSON.stringify(b));
+    await answerBar(page, srv, STAFF);
     await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && j.state !== 'words'; }, K.W3, { timeout: 40000 });
-    check((await jobOf(K.W3)).by === STAFF, 'one tap and the decision was made under the name: ' + JSON.stringify(await jobOf(K.W3)));
+    check((await jobOf(K.W3)).by === STAFF, 'the Employee Number and the decision was made under the name: ' + JSON.stringify(await jobOf(K.W3)));
     // the Admin is never cleared by the idle rule (only midnight does): same eleven minutes
     await signOutName(); await asName(ADMIN); await page.waitForTimeout(800);
     await page.evaluate(() => { window.__skew = 22 * 60 * 1000; }); await page.waitForTimeout(13000);
@@ -203,9 +208,9 @@ async function partA(browser) {
     await page.fill('#owInput', 'hello no name'); await page.waitForFunction(() => !document.getElementById('owSend').disabled, null, { timeout: 5000 });
     await page.click('#owSend'); await page.waitForSelector('#orderWin .cnNameBar', { timeout: 8000 });
     b = await bar();
-    check(b && b.inWin && /^Continue as /.test(b.chip) && sent('hello no name').length === 0, 'no name: the bar opens inside the order window (no pop-up on a pop-up) with Continue as; nothing sent yet: ' + JSON.stringify(b));
-    await page.click('.cnNameBar .cnNbCont'); await page.waitForTimeout(1800);
-    check(sent('hello no name').length >= 1 && JSON.stringify(sent('hello no name')).includes(ADMIN + '.'), 'one tap: the message was sent by itself under the name: ' + JSON.stringify(sent('hello no name').map(p => p.fn)));
+    check(b && b.inWin && numBar(b) && sent('hello no name').length === 0, 'no name: the bar opens inside the order window (no pop-up on a pop-up) asking for the Employee Number; nothing sent yet: ' + JSON.stringify(b));
+    await answerBar(page, srv, ADMIN, '#orderWin .cnNameBar input'); await page.waitForTimeout(1800);
+    check(sent('hello no name').length >= 1 && JSON.stringify(sent('hello no name')).includes(ADMIN + '.'), 'the Employee Number: the message was sent by itself under the name: ' + JSON.stringify(sent('hello no name').map(p => p.fn)));
     await page.evaluate(() => { const o = document.getElementById('orderWin'); if (o && o.open) document.getElementById('owClose').click(); });
   }
   await ctx.close(); try { await srv.close && srv.close(); } catch (_) {}
@@ -264,9 +269,9 @@ async function partB(browser) {
   const card = o => `#rvList .reviewListRow[data-row="${o.rid}_${o.solo}"]`;
   // (NOHOLDREV, Paul 17 Oct 2026: a Review row has no Hold; the order is held from its order window's piece row, the one orange Hold left)
   const holdBtn = async o => { const k = `${o.rid}_${o.solo}`; await page.evaluate(k => OrderWin.open(k), k); await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && document.querySelector('#owPcSum [data-hold-btn]'), k, { timeout: 20000 }); await page.click('#owPcSum [data-hold-btn]'); };
-  const bar = () => page.evaluate(() => { const b = document.querySelector('.cnNameBar'); return b ? { kind: b.dataset.kind, chip: (b.querySelector('.cnNbCont:not([hidden])') || {}).textContent || '', input: b.querySelector('input') ? b.querySelector('input').value : null, inWin: !!b.closest('dialog') } : null; });
+  const bar = () => page.evaluate(() => { const b = document.querySelector('.cnNameBar:not([data-kind="role"])'); return b ? { kind: b.dataset.kind, num: b.dataset.num, type: b.querySelector('input') ? b.querySelector('input').type : null, chip: (b.querySelector('.cnNbCont:not([hidden])') || {}).textContent || '', input: b.querySelector('input') ? b.querySelector('input').value : null, inWin: !!b.closest('dialog') } : null; });
   const named = (txt) => JSON.stringify(posts.filter(p => p.body).map(p => p.body)).includes(txt);
-  await page.evaluate(() => { B.employee = 'Paul K'; }); await page.waitForTimeout(700);
+  await signInAs(page, srv, ADMIN); await page.waitForTimeout(700);      // (EMPNUM: the Employee Number; already the person kept in this browser, so nothing changes)
   check(await page.evaluate(() => CNRole.admin()), 'B: ' + ADMIN + ' is the Admin (no Laser or Design question)');
   const [o1, o2, o3, o4, o5] = ONES;
 
@@ -291,46 +296,48 @@ async function partB(browser) {
   t = await T();
   check(!(await bar()) && t.cancels[0].rid === o2.rid && t.cancels[0].by === ADMIN + '.' && t.cancels[0].mode === 'cancel', 'the cancel went out under the name, no bar: ' + JSON.stringify(t.cancels));
 
-  console.log('· B4: nobody signed in: Complete Order (the card\'s own field with the last name ready), Hold and Cancel (the bar with Continue as), a message');
+  console.log('· B4: nobody signed in: Complete Order, Hold, Cancel and a message: the bar asks for the Employee Number (no card field, no Continue as)');
   await page.evaluate(() => { CN.setMode('review'); Review.render(); try { localStorage.removeItem('cn.employee'); } catch (_) {} B.employee = ''; });
   check(await page.evaluate(() => CNEmployee.name()) === '' && await page.evaluate(() => CNEmployee.last()) === ADMIN + '.', 'no name; the last name is ' + ADMIN + '.');
   await page.waitForSelector(card(o3), { timeout: 10000 });
   await page.click(`${card(o3)} [data-cu-release]`);
-  await page.waitForSelector('[data-cu-name]', { timeout: 8000 });
-  const field = await page.evaluate(() => document.querySelector('[data-cu-name]').value);
-  check(field === ADMIN + '.' && !(await bar()), 'Complete Order with no name: the card\'s own field, last name ready, no pop-up: ' + JSON.stringify(field));
-  await page.press('[data-cu-name]', 'Enter'); await page.waitForTimeout(1500);
-  check(!(await page.evaluate(() => document.querySelector('[data-cu-name]'))) && (await page.evaluate(() => CNEmployee.name())) === ADMIN + '.', 'Enter kept it: signed in again and the order was completed by itself');
+  // (EMPNUM, Paul 26 Oct 2026: the card's own name field is gone with the gate: a typed name signs nobody in; the small bar asks for the Employee Number)
+  await page.waitForSelector('.cnNameBar[data-kind="ask"]', { timeout: 8000 });
+  let b = await bar();
+  check(numBar(b) && !(await page.evaluate(() => document.querySelector('[data-cu-name]'))) && !(await page.evaluate(k => !!B.maps.customDone[k], `${o3.rid}_${o3.solo}`)), 'Complete Order with no name: the bar asks for the Employee Number, no name field on the card, nothing completed, no pop-up: ' + JSON.stringify(b));
+  await answerBar(page, srv, ADMIN); await page.waitForTimeout(1500);
+  check(!(await bar()) && (await page.evaluate(() => CNEmployee.name())) === ADMIN + '.' && (await page.evaluate(k => !!B.maps.customDone[k], `${o3.rid}_${o3.solo}`)), 'the Employee Number: signed in again and the order was completed by itself');
   await page.evaluate(() => { try { localStorage.removeItem('cn.employee'); } catch (_) {} B.employee = ''; });
   await idle(); await holdBtn(o4); await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
-  await page.click('dialog.holdDlg [data-k=go]'); await page.waitForSelector('.cnNameBar', { timeout: 8000 });
-  let b = await bar();
-  check(b && /^Continue as /.test(b.chip) && (await T()).runs.length === 1, 'Hold with no name: the inline bar with Continue as; nothing runs before it: ' + JSON.stringify(b));
-  await page.click('.cnNameBar .cnNbCont'); await page.waitForFunction(() => window.__t.runs.length >= 2, null, { timeout: 15000 });
-  t = await T();
-  check(t.runs[1].rid === o4.rid && t.runs[1].name === ADMIN + '.', 'one tap and the hold ran by itself under the name: ' + JSON.stringify(t.runs[1]));
-  await page.evaluate(() => { try { localStorage.removeItem('cn.employee'); } catch (_) {} B.employee = ''; CN.setMode('orders'); Orders.showPile('', ''); });
-  await idle(); await page.evaluate(r => { CancelUI.cancel(r); }, o4.rid); await page.waitForSelector('.cnNameBar', { timeout: 8000 });
+  await page.click('dialog.holdDlg [data-k=go]'); await page.waitForSelector('.cnNameBar:not([data-kind="role"]) input', { timeout: 8000 });
   b = await bar();
-  check(b && /^Continue as /.test(b.chip) && (await T()).cancels.length === 1, 'Cancel Order with no name: the inline bar with Continue as; nothing cancelled before it: ' + JSON.stringify(b));
-  await page.click('.cnNameBar .cnNbCont'); await page.waitForFunction(() => window.__t.cancels.length >= 2, null, { timeout: 15000 });
+  check(numBar(b) && (await T()).runs.length === 1, 'Hold with no name: the inline bar asks for the Employee Number; nothing runs before it: ' + JSON.stringify(b));
+  await answerBar(page, srv, ADMIN, '.cnNameBar:not([data-kind="role"]) input'); await page.waitForFunction(() => window.__t.runs.length >= 2, null, { timeout: 15000 });
   t = await T();
-  check(t.cancels[1].rid === o4.rid && t.cancels[1].by === ADMIN + '.', 'one tap and the cancel went out by itself under the name: ' + JSON.stringify(t.cancels[1]));
+  check(t.runs[1].rid === o4.rid && t.runs[1].name === ADMIN + '.', 'the Employee Number and the hold ran by itself under the name: ' + JSON.stringify(t.runs[1]));
+  await page.evaluate(() => { try { localStorage.removeItem('cn.employee'); } catch (_) {} B.employee = ''; CN.setMode('orders'); Orders.showPile('', ''); });
+  await idle(); await page.evaluate(r => { CancelUI.cancel(r); }, o4.rid); await page.waitForSelector('.cnNameBar:not([data-kind="role"]) input', { timeout: 8000 });
+  b = await bar();
+  check(numBar(b) && (await T()).cancels.length === 1, 'Cancel Order with no name: the inline bar asks for the Employee Number; nothing cancelled before it: ' + JSON.stringify(b));
+  await answerBar(page, srv, ADMIN, '.cnNameBar:not([data-kind="role"]) input'); await page.waitForFunction(() => window.__t.cancels.length >= 2, null, { timeout: 15000 });
+  t = await T();
+  check(t.cancels[1].rid === o4.rid && t.cancels[1].by === ADMIN + '.', 'the Employee Number and the cancel went out by itself under the name: ' + JSON.stringify(t.cancels[1]));
   // a message from the order window
   await page.evaluate(() => { try { localStorage.removeItem('cn.employee'); } catch (_) {} B.employee = ''; CN.setMode('review'); });
   await page.evaluate(k => OrderWin.open(k), `${o5.rid}_${o5.solo}`); await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k, `${o5.rid}_${o5.solo}`, { timeout: 15000 });
   await page.fill('#owInput', 'hello from the window'); await page.waitForFunction(() => !document.getElementById('owSend').disabled, null, { timeout: 5000 });
   await page.click('#owSend'); await page.waitForSelector('#orderWin .cnNameBar', { timeout: 8000 });
   b = await bar();
-  check(b && b.inWin && /^Continue as /.test(b.chip) && !named('hello from the window'), 'Message with no name: the bar opens inside the order window; nothing sent yet: ' + JSON.stringify(b));
-  await page.click('.cnNameBar .cnNbCont'); await page.waitForTimeout(1800);
-  check(named('hello from the window') && JSON.stringify(posts.filter(p => p.body && JSON.stringify(p.body).includes('hello from the window'))).includes('Paul K'), 'one tap and the message was sent by itself under the name');
+  check(b && b.inWin && numBar(b) && !named('hello from the window'), 'Message with no name: the bar opens inside the order window asking for the Employee Number; nothing sent yet: ' + JSON.stringify(b));
+  await answerBar(page, srv, ADMIN, '#orderWin .cnNameBar input'); await page.waitForTimeout(1800);
+  check(named('hello from the window') && JSON.stringify(posts.filter(p => p.body && JSON.stringify(p.body).includes('hello from the window'))).includes('Paul K'), 'the Employee Number and the message was sent by itself under the name');
   await context.close(); try { await srv.close && srv.close(); } catch (_) {}
 }
 
 // ═════════════════════════════ C · nobody is signed in when the Sorter opens: the identity chip says so ═════════════════════════════
 // (ACCOUNT, Paul, 15 Oct 2026: "it is not obvious who is currently signed in": the calm "Sign in with your name" name bar that used to appear by itself 1.8 s after the
-// page opened is replaced by the chip in the top bar, which pulses once; nothing pops up by itself. The press-triggered hint (parts A and B) is unchanged.)
+// page opened is replaced by the chip in the top bar, which pulses once; nothing pops up by itself. The press-triggered hint (parts A and B) is unchanged.
+// EMPNUM, Paul 26 Oct 2026: the tile only says whose Employee Number is asked for; the number signs the person in.)
 async function partC(browser) {
   const srv = await start({ receipts: [] }), rec = { events: [], sessions: [] };
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -346,8 +353,12 @@ async function partC(browser) {
   await page.click('#cnAcctChip'); await page.waitForSelector('#cnAcctPanel .cnAcTile');
   const tile = await page.evaluate(() => { const t = document.querySelector('#cnAcctPanel .cnAcTile .cnAcTn'); return t ? t.textContent.trim() : ''; });
   check(tile === 'Paul K.', 'C: the last name used on this computer is the first tile of the panel (it was "Continue as"): ' + tile);
-  await page.click('#cnAcctPanel .cnAcTile'); await page.waitForFunction(() => CNEmployee.name() === 'Paul K.', null, { timeout: 8000 }).catch(() => {});
-  check(await page.evaluate(() => CNEmployee.name()) === 'Paul K.' && !(await page.evaluate(() => document.querySelector('.cnNameBar[data-kind="hint"]'))), 'C: one tap signs the person in and no hint is left');
+  await page.click('#cnAcctPanel .cnAcTile'); await page.waitForTimeout(300);
+  const asked = await page.evaluate(() => { const i = document.querySelector('#cnAcctPanel .cnAcIn'), l = document.querySelector('#cnAcctPanel .cnAcForm label'); return { name: CNEmployee.name(), type: i && i.type, label: l && l.textContent }; });
+  check(asked.name === '' && asked.type === 'password' && asked.label === 'Paul’s Employee Number', 'C: a tap on the tile signs nobody in: it asks for that person\'s Employee Number: ' + JSON.stringify(asked));
+  await page.fill('#cnAcctPanel .cnAcIn', pinOf(srv.st, ADMIN)); await page.press('#cnAcctPanel .cnAcIn', 'Enter');
+  await page.waitForFunction(() => CNEmployee.name() === 'Paul K.', null, { timeout: 8000 }).catch(() => {});
+  check(await page.evaluate(() => CNEmployee.name()) === 'Paul K.' && !(await page.evaluate(() => document.querySelector('.cnNameBar[data-kind="hint"]'))), 'C: the Employee Number signs the person in and no hint is left');
   // a name set meanwhile by another tab takes the hint away and is this tab's name
   const page2 = await context.newPage(); await page2.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
   await context.close(); try { await srv.close && srv.close(); } catch (_) {}

@@ -3,8 +3,12 @@
 // charm-nest-role.js, the test server of tests/charm-nest/bridge-server.cjs for everything else, and the stations' door
 // (firebaseOrders) as the test's own recorder. The Admin question is AD2's read-only door (POST firebaseOrders { stationAdmin: name } ->
 // { ok:true, admin }), answered by the test with the shape plans/stations-round2/api.md documents (and made to fail, to hang, to be slow).
-// Nothing leaves the machine; no PIN is typed anywhere (a number typed as a name is refused, and is in no request).
-//   1 · a non-Admin who sets a name is asked "Laser or Design?" in the same small name bar (not a pop-up, not a modal), once; until it is
+// EMPNUM (Paul, 26 Oct 2026: "anyone can switch from one user to another without putting in their password, which is a big safety concern"): a person
+// is signed in only by their 6-digit Employee Number (the small name bar asks for it; the server, bridge-server.cjs's roster here, answers with the name),
+// never by a typed or script-set name. Every sign-in below types the person's number (pinOf puts the name on the fake roster); the number goes to that
+// login door only (firebaseOrders {pinLogin}): it is in no other request and kept nowhere, and a number set as a name is still refused.
+// Nothing leaves the machine.
+//   1 · a non-Admin who signs in is asked "Laser or Design?" in the same small name bar (not a pop-up, not a modal), once; until it is
 //       answered nobody is signed in for the stations (no session, no event) and what is pressed is kept, then recorded under the role
 //   2 · the Admin is never asked and signs in exactly as before: station `sorter`, no role, the laser marks at `laser`
 //   3 · the role is the session's station (`laser` | `design`, device charm-nest-1, field `role`) and is on every event, whatever the action
@@ -21,7 +25,7 @@ const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_mod
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
 const CHROME = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const SHOTS = process.env.SHOTS || '';
-const { start } = require('./bridge-server.cjs');
+const BS = require('./bridge-server.cjs'), { start, pinOf } = BS;
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const brief = e => [e.action, e.station, e.person, e.role || '', !!e.sandbox];
@@ -79,13 +83,16 @@ async function sorterPage(browser, srv, errors) {
 async function ready(page) {
   await page.waitForFunction(() => window.CN && window.Orders && window.CNAct && window.CNEmployee && window.StationActivity && window.StationSession && window.CNRole && CN.S.cloud.ok === true, null, { timeout: 60000 });
 }
-/** a name typed into the small name bar, as a person does (the first approval, label or decision asks for it) */
-async function typeName(page, name) {
+/** a person's Employee Number typed into the small name bar, as a person does (the first approval, label or decision asks for it; EMPNUM: the bar asks
+    for the number, and the server names the person: pinOf puts the name on the fake roster under a number of its own) */
+async function typeNumber(page, srv, name) {
   await page.evaluate(() => { CNEmployee.edit({}); });
   await page.waitForSelector('.cnNameBar[data-kind="edit"] input');
-  await page.fill('.cnNameBar input', name);
+  await page.fill('.cnNameBar input', pinOf(srv.st, name));
   await page.press('.cnNameBar input', 'Enter');
 }
+/** a person signed in by their Employee Number from elsewhere (the Account panel's field, CNAccount.signInNumber): a script-set name signs nobody in */
+const signIn = (page, srv, name) => BS.signInAs(page, srv, name);
 async function signOutNow(page) {
   await page.evaluate(() => { StationSession.signedOut('signOut'); try { localStorage.removeItem('cn.employee'); } catch (_) {} B.employee = ''; });
   await page.waitForFunction(() => !document.querySelector('.cnNameBar') && CNRole.state() === 'none');
@@ -135,7 +142,10 @@ async function doorRole() {
     await page.evaluate(() => CNAct('note', { detail: 'before the name' }));
     await page.waitForSelector('.cnNameBar[data-kind="hint"]');
     assert.strictEqual(await page.evaluate(() => CNAct.held()), 1);
-    await page.fill('.cnNameBar input', '  tess   WELDER '); await page.press('.cnNameBar input', 'Enter');
+    // EMPNUM (Paul, 26 Oct 2026): it asks for the Employee Number (masked), never a name, and offers no one-tap "Continue as <name>"
+    assert.deepStrictEqual(await page.evaluate(() => { const b = document.querySelector('.cnNameBar[data-kind="hint"]'), c = b.querySelector('.cnNbCont'); return [b.dataset.num, b.querySelector('label b').textContent, b.querySelector('input').type, b.querySelector('input').inputMode, !!(c && !c.hidden)]; }), ['1', 'Your Employee Number', 'password', 'numeric', false], 'the bar asks for the Employee Number');
+    // her number: the server names her ("  tess   WELDER " on its list), and the name is made one name as a typed one is
+    await page.fill('.cnNameBar input', pinOf(srv.st, '  tess   WELDER ')); await page.press('.cnNameBar input', 'Enter');
     // the name is set; the same bar now asks the one question
     await page.waitForSelector(roleBar);
     const q = await page.evaluate(() => {
@@ -192,6 +202,16 @@ async function doorRole() {
     await wait(500);
     assert.strictEqual((await page.$$('.cnNameBar')).length, 0, 'the same person is not asked again');
     assert.strictEqual(rec.sessions.filter(s => s.event === 'start').length, 1, 'and no second session');
+    // ... and her own number again changes nothing either (the same person: no question, no new session)
+    await signIn(page, srv, 'Tess Welder'); await wait(500);
+    assert.strictEqual((await page.$$('.cnNameBar')).length, 0, 'her number again asks nothing');
+    assert.strictEqual(rec.sessions.filter(s => s.event === 'start').length, 1, 'and starts no second session');
+    // a different name set by a script (an old name field) switches nobody: the Account panel asks for the Employee Number instead
+    await page.evaluate(() => { B.employee = 'Ray K'; }); await wait(300);
+    assert.strictEqual(await page.evaluate(() => B.employee), 'Tess Welder', 'a script-set name switches nobody');
+    assert.strictEqual(await page.evaluate(() => document.querySelector('#cnAcctPanel') && document.querySelector('#cnAcctPanel').innerText.includes('To switch person, enter their Employee Number.')), true, 'the Account panel asks for the number');
+    assert.strictEqual(rec.sessions.filter(s => s.event === 'end').length, 0, 'and no session ended');
+    await page.evaluate(() => CNAccount.close());
 
     /* ───────────── 4 · switching: in the Workspace menu, then in the name bar ───────────── */
     const firstId = s1[0].id;
@@ -263,7 +283,7 @@ async function doorRole() {
     assert.strictEqual(await page.evaluate(() => document.getElementById('btnRoleSwitch').hidden), true, 'the menu control is gone');
     await flush();
     assert(rec.sessions.some(s => s.event === 'end' && s.reason === 'midnight' && s.station === 'laser'), 'the session ended (midnight) under its role: ' + JSON.stringify(rec.sessions));
-    await typeName(page, 'tess welder');
+    await typeNumber(page, srv, 'tess welder');
     await page.waitForSelector(roleBar);
     assert.strictEqual(await page.evaluate(() => CNRole.state()), 'ask', 'the next sign-in asks again');
     assert.strictEqual(rec.adminAsked.filter(a => /Tess/.test(a.body)).length, 2, 'and is a new sign-in for the Admin question too');
@@ -272,7 +292,7 @@ async function doorRole() {
     // a named person who has not answered yet is signed out by the day turning as well (the name is not left for tomorrow's person)
     await page.evaluate(() => { StationSession.signedOut('signOut'); localStorage.removeItem('cn.employee'); B.employee = ''; });
     await page.waitForFunction(() => CNRole.state() === 'none');
-    await page.evaluate(() => { B.employee = 'pia pending'; });
+    await signIn(page, srv, 'pia pending');
     await page.waitForSelector(roleBar);
     assert.strictEqual(await page.evaluate(() => [StationSession.who(), StationSession.role(), CNRole.state()].join('|')), '||ask', 'named, not signed in');
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));                    // (the page notices the name: its sign-in day is kept)
@@ -280,7 +300,7 @@ async function doorRole() {
     await page.evaluate(() => { const day = '2026-01-01'; localStorage.setItem('station_signin_day', day); localStorage.setItem('station_signin_days', JSON.stringify({ 'Pia Pending': day })); window.dispatchEvent(new Event('focus')); });
     await page.waitForFunction(() => !localStorage.getItem('cn.employee') && !document.querySelector('.cnNameBar'));
     assert.strictEqual(await page.evaluate(() => [CNRole.state(), B.employee].join('|')), 'none|', 'the day turned: the name and the question are gone');
-    await typeName(page, 'tess welder');
+    await typeNumber(page, srv, 'tess welder');
     await page.waitForSelector(roleBar);
     await page.click(roleBar + ' [data-role="design"]');
     await page.waitForFunction(() => StationSession.role() === 'design');
@@ -291,7 +311,7 @@ async function doorRole() {
 
     /* ───────────── 2 · the Admin is never asked and signs in as before ───────────── */
     rec.sessions.length = 0; rec.events.length = 0;
-    await page.evaluate(() => { B.employee = 'paul'; });
+    await signIn(page, srv, 'paul');
     await page.waitForFunction(() => CNRole.state() === 'admin' && StationActivity.who());
     await wait(500);
     assert.strictEqual((await page.$$('.cnNameBar')).length, 0, 'the Admin is never asked');
@@ -324,7 +344,7 @@ async function doorRole() {
     await signOutNow(page);
     // a slow answer shows a small labelled spinner in the same bar, then the question (or nothing for the Admin)
     door.delay = 900;
-    await page.evaluate(() => { B.employee = 'dana designer'; });
+    await signIn(page, srv, 'dana designer');
     await page.waitForSelector('.cnNameBar[data-kind="wait"] .spin');
     assert.match(await page.textContent('.cnNameBar'), /Checking your sign-in/);
     assert.strictEqual(await page.evaluate(() => document.querySelectorAll('.cnNameBar').length), 1);
@@ -337,7 +357,7 @@ async function doorRole() {
     /* ───────────── 6 · an unknown answer is not Admin and is asked again when the network is back ───────────── */
     {
       door.mode = 'down';
-      await page.evaluate(() => { B.employee = 'paul'; });
+      await signIn(page, srv, 'paul');
       await page.waitForSelector(roleBar);
       await page.click(roleBar + ' [data-role="laser"]');
       await page.waitForFunction(() => StationSession.role() === 'laser');
@@ -352,13 +372,13 @@ async function doorRole() {
     }
     for (const mode of ['down', 'junk']) {
       door.mode = mode;
-      await page.evaluate(() => { B.employee = 'paul'; });
+      await signIn(page, srv, 'paul');
       await page.waitForSelector(roleBar);                       // (fail closed: the Admin who could not be told is asked, like everyone)
       assert.strictEqual(await page.evaluate(() => [CNRole.state(), CNRole.unknown(), StationSession.who()].join('|')), 'ask|true|', mode);
       await signOutNow(page);
     }
     door.mode = 'hang'; door.delay = 0;
-    await page.evaluate(() => { B.employee = 'paul'; });
+    await signIn(page, srv, 'paul');
     await page.waitForSelector(roleBar, { timeout: 15000 });   // (no answer in six seconds is no answer)
     assert.strictEqual(await page.evaluate(() => [CNRole.state(), CNRole.unknown()].join('|')), 'ask|true', 'hang');
     door.mode = 'ok';
@@ -373,7 +393,7 @@ async function doorRole() {
       await page.setViewportSize({ width: w, height: 800 });
       await wait(200);
       const baseW = await page.evaluate(() => document.documentElement.scrollWidth);      // (what the page itself is at this width, with no bar)
-      await page.evaluate(() => { B.employee = 'rae  roleless'; });
+      await signIn(page, srv, 'rae  roleless');
       await page.waitForSelector(roleBar);
       await wait(150);
       const m = await page.evaluate(() => {
@@ -401,8 +421,8 @@ async function doorRole() {
     await page.evaluate(() => {
       const d = document.createElement('dialog'); d.id = 'testWin'; d.innerHTML = '<p style="padding:20px">An open window <button id="inWin">press</button></p>'; document.body.appendChild(d); d.showModal();
       window.__inWin = 0; document.getElementById('inWin').onclick = () => { window.__inWin++; };
-      B.employee = 'wes windowed';
     });
+    await signIn(page, srv, 'wes windowed');
     await page.waitForSelector('#testWin ' + roleBar);
     assert.strictEqual(await page.evaluate(() => document.querySelectorAll('dialog').length >= 1 && document.querySelector('.cnNameBar').closest('dialog').id), 'testWin', 'inside the open window');
     await page.click('#inWin'); assert.strictEqual(await page.evaluate(() => window.__inWin), 1, 'the window still works with the question open');
@@ -411,7 +431,7 @@ async function doorRole() {
     assert.strictEqual(await page.evaluate(() => document.getElementById('testWin').open), true, 'the window stays open');
     // the window closes while the question is open: the question follows to the page
     await signOutNow(page);
-    await page.evaluate(() => { B.employee = 'wes windowed'; });
+    await signIn(page, srv, 'wes windowed');
     await page.waitForSelector('#testWin ' + roleBar);
     await page.evaluate(() => document.getElementById('testWin').close());
     await page.waitForFunction(() => { const f = document.querySelector('.cnNameBar'); return f && f.parentNode === document.body; });
@@ -420,7 +440,7 @@ async function doorRole() {
     await page.evaluate(() => document.getElementById('testWin').remove());
     // put away with the x: kept presses are not lost; the question does not nag, and comes back at a press after the pause
     await signOutNow(page);
-    await page.evaluate(() => { B.employee = 'quin quiet'; });
+    await signIn(page, srv, 'quin quiet');
     await page.waitForSelector(roleBar);
     await page.click(roleBar + ' .cnNbX');
     await page.waitForFunction(() => !document.querySelector('.cnNameBar'));
@@ -428,13 +448,13 @@ async function doorRole() {
     await wait(300);
     assert.strictEqual((await page.$$('.cnNameBar')).length, 0, 'a put-away question does not come straight back');
     assert.strictEqual(await page.evaluate(() => CNAct.held()), 1, 'the press is kept');
-    await page.evaluate(() => { B.employee = 'quin quiet'; });          // the name typed again: asked again
+    await page.evaluate(() => { B.employee = 'quin quiet'; });          // the same person set again (the gate lets the person signed in through): asked again
     await page.waitForSelector(roleBar);
     await page.click(roleBar + ' [data-role="design"]');
     await page.waitForFunction(() => CNAct.held() === 0);
     await flush();
     assert.deepStrictEqual(evs().slice(-1), [['note', 'design', 'Quin Quiet', 'design', false]], 'the press kept while the question was put away is recorded under the role: ' + JSON.stringify(evs().slice(-2)));
-    // the PIN: a number is no name (as before, typing one clears the name, and the role with it) and is in no request
+    // a number is no name (as before, a number set as the name clears the name, and the role with it) and is in no request
     await page.evaluate(pin => { B.employee = pin; }, PIN);
     await page.waitForFunction(() => CNRole.state() === 'none' && !localStorage.getItem('cn.role'));
     assert.strictEqual(await page.evaluate(() => B.employee), '', 'a number is refused');
@@ -443,7 +463,12 @@ async function doorRole() {
     await flush();
     const everything = rec.reqs.map(r => r.body).join('\n');
     assert(!everything.includes(PIN), 'no number in any request');
-    console.log('sorter role sign-in: asked once, Admin skipped, role on session and events, switch, reload, sign-out, no overflow at 280/390/700');
+    // EMPNUM: every Employee Number typed in this test went to the login door only: in no session, activity or live write, and kept nowhere in this browser
+    const nums = Object.keys(srv.st.pins || {}), has = (x, n) => new RegExp('(^|\\D)' + n + '(\\D|$)').test(x);
+    assert(nums.length >= 8, 'the numbers of this test: ' + nums.length);
+    assert.deepStrictEqual(nums.filter(n => has(everything + '\n' + rec.adminAsked.map(a => a.url + ' ' + a.body).join('\n'), n)), [], 'no Employee Number in any other request (nor in the Admin question)');
+    assert.deepStrictEqual(await page.evaluate(ns => { const all = []; for (const st of [localStorage, sessionStorage]) for (let i = 0; i < st.length; i++) { const k = st.key(i); all.push(k + '=' + st.getItem(k)); } return ns.filter(n => all.some(x => new RegExp('(^|\\D)' + n + '(\\D|$)').test(x))); }, nums), [], 'and none kept in this browser');
+    console.log('sorter role sign-in: signed in by the Employee Number only, asked once, Admin skipped, role on session and events, switch, reload, sign-out, no overflow at 280/390/700');
     await context.close();
   } finally { await browser.close(); srv.close(); }
 

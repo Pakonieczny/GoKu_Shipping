@@ -3,6 +3,8 @@
 // functions both pages call with an in-memory fake — Etsy included — so a whole run can happen without the internet.
 //   const { start } = require('./bridge-server.cjs'); const srv = await start(); … srv.close();
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto');
+/* EMPNUM: the default test roster of the Employee Number login (firebaseOrders {pinLogin}); a test may hand its own as st.pins */
+const PINS = { '111111': 'Paul K', '222222': 'Ana M', '333333': 'Tess Welder', '444444': 'Marco R.', '555555': 'Bea', '666666': 'Test Operator' };
 const refuseNestedArrays = require('./_noNestedArrays.cjs');   // (st.strictArrays = true: the fake refuses what Firestore refuses, an array inside an array)
 const root = path.join(__dirname, '../..');
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.ai': 'application/pdf', '.pdf': 'application/pdf', '.otf': 'font/otf', '.ttf': 'font/ttf' };
@@ -52,6 +54,13 @@ async function functions(st, name, req, res, base) {
   if (name === 'firebaseOrders' && req.method === 'GET' && q.cancelCheck) return json(res, 200, Object.assign({ success: true }, await timelineOp(st, 'cancelCheck', { orderIds: q.cancelCheck }, SB)));
   if (name === 'firebaseOrders') {
     if (req.method === 'POST') {
+      // the stations' Employee Number login (_stationPinLogin.js; the sorter's sign-in since EMPNUM, 26 Oct 2026): a test roster, st.pins (number -> name)
+      if (body.pinLogin !== undefined) {
+        if (!/^\d{6}$/.test(String(body.pinLogin))) return json(res, 400, { ok: false, error: 'an Employee Number is 6 digits' });
+        const roster = st.pins || PINS, nm = roster[String(body.pinLogin)];
+        st.pinTries = (st.pinTries || 0) + 1;
+        return json(res, 200, typeof nm === 'string' ? { ok: true, name: nm } : { ok: false, error: 'not on the list' });
+      }
       const RT = SB + 'Design_RealTime_Selected_Orders';
       if (Array.isArray(body.rtClaimIds)) { body.rtClaimIds.forEach(id => st.put(RT, id, { claimed: true, claimedBy: body.claimedBy || 'sorter', claimRun: body.claimRun || null, at: Date.now() })); return json(res, 200, { success: true, count: body.rtClaimIds.length }); }
       if (Array.isArray(body.rtUnclaimIds)) { body.rtUnclaimIds.forEach(id => st.put(RT, id, { claimed: false, claimedBy: null, at: Date.now() })); return json(res, 200, { success: true }); }
@@ -275,5 +284,18 @@ function defaultAgent(mode, o) {
   return { charms: [] };
 }
 const REPO_TEST = { password: 'test-' + crypto.randomBytes(8).toString('hex') };   // (the stand-in's operator `paul`: made fresh at every start, offline only, never a real login)
-module.exports = { start, makeState, Timestamp, fakeAdmin, REPO_TEST };
+/* EMPNUM (Paul, 26 Oct 2026): the sorter signs a person in only with their Employee Number (charm-nest-account.js signInNumber; a name set by a script switches
+   nobody). A test signs someone in the same way: the name goes on this fake server's roster (st.pins) under a number of its own, and the page enters it.
+     pinOf(st, name) -> the number                    signInAs(page, srv, name) -> the name the page signed in (throws when it did not) */
+let pinSeq = 700000;
+function pinOf(st, name) {
+  st.pins = st.pins || Object.assign({}, PINS);
+  for (const [k, v] of Object.entries(st.pins)) if (v === name) return k;
+  const k = String(++pinSeq); st.pins[k] = name; return k;
+}
+async function signInAs(page, srv, name) {
+  const num = pinOf(srv.st || srv, name);
+  return page.evaluate(n => CNAccount.signInNumber(n).then(r => { if (!r || !r.ok) throw new Error('not signed in: ' + (r && r.error)); return r.name; }), num);
+}
+module.exports = { start, makeState, Timestamp, fakeAdmin, REPO_TEST, PINS, pinOf, signInAs };
 if (require.main === module) start().then(s => console.log('sorter', s.sorterOrigin, 'station', s.stationOrigin));

@@ -7,7 +7,7 @@
 //   SHOTS=<dir> node tests/charm-nest/order-engraving-card.cjs [playwright-core dir]
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
-const { start } = require('./bridge-server.cjs');
+const { start, pinOf } = require('./bridge-server.cjs');
 
 const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 10, 17) / 1000);
 const R1 = '4170837249', R2 = '4175550002', R3 = '4175550003', SHEET = 'sheet-oe-1';
@@ -137,7 +137,9 @@ const WORDS = { [key(R1, 2)]: 'I\ndissent', [key(R1, 3)]: 'KMB //\nSMH', [key(R2
       await page.click('#orderWin .cnNameBar .cnNbX'); await page.waitForTimeout(250);
       check((await calls()).approve.length === 0 && (await page.evaluate(() => __prompts)) === 0 && !(await page.$('.cnNameBar')) && (await card(k.r)).approve, 'with no name, the name bar asks for it in the window and "Not now" approves nothing (the button stays)');
       await page.click(`${cardOf(k.r)} [data-e=approve]`); await page.waitForSelector('#orderWin .cnNameBar input', { timeout: 4000 });
-      await page.fill('#orderWin .cnNameBar input', 'Zed Tester'); await page.click('#orderWin .cnNameBar button[type=submit]');
+      // (EMPNUM, Paul 26 Oct 2026: the bar asks for the Employee Number, masked, never a typed name; the server names the person: Zed Tester)
+      check(await page.evaluate(() => { const b = document.querySelector('#orderWin .cnNameBar'); return b.dataset.num === '1' && b.querySelector('input').type === 'password' && /Employee Number/.test(b.querySelector('label b').textContent); }), 'the bar asks for the Employee Number (masked), not a name');
+      await page.fill('#orderWin .cnNameBar input', pinOf(srv.st, 'Zed Tester')); await page.click('#orderWin .cnNameBar button[type=submit]');
     } else { console.log('  – the name could not be cleared here: the ask-for-a-name path was not run'); await page.click(`${cardOf(k.r)} [data-e=approve]`); }
     await page.waitForFunction(() => __approve.length === 1, null, { timeout: 8000 });
     const during = await page.evaluate(k => { const b = document.querySelector(`#owEng .engCard[data-key="${k}"] .egApproveButton`); return { disabled: b.disabled, busy: b.getAttribute('aria-busy'), pending: !!document.querySelector(`#owEng .engCard[data-key="${k}"] .seal.pending, #owEng .engCard[data-key="${k}"] .egButtonSeal .seal`) }; }, k.r);

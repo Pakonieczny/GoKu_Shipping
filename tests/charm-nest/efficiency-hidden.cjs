@@ -12,6 +12,7 @@
 //   4 · the MASTER ADMIN: the entry shows (after the server's answer), opens the tab, the passcode is still asked; a deep link
 //       (#efficiency/stations) that arrives before the answer is kept and opened once it is Paul's; and with NO reload: another person signing in
 //       takes the screen away and stops its reads, signing out hides it, Paul back shows it again
+//   (EMPNUM, Paul 26 Oct 2026: a person is signed in, or switched to, only with their Employee Number; the sign-ins below go through it, signInAs)
 //   node tests/charm-nest/efficiency-hidden.cjs     (NODE_PATH=<jsdom>, PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
@@ -63,7 +64,7 @@ async function helper() {
   await helper();
   const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
   let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('  – no playwright-core: the browser checks were not run'); return; }
-  const { start } = require('./bridge-server.cjs');
+  const { start, signInAs } = require('./bridge-server.cjs');
   const srv = await start({ receipts: [] });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   const fx = F.make(), seen = { eff: [], aborted: 0, errs: [] };
@@ -159,7 +160,7 @@ async function helper() {
       const p2 = await open(ctx, sorter + '#efficiency'); await answered(p2); await sleep(600);
       const s = await noTab(p2, 'deep link employee'); assert.equal(s.hash, '#nest');
       // names that are not the Admin's, however close
-      for (const n of ['Paula K', 'Paul Kowalski', 'Pau K']) { await page.evaluate(n => { B.employee = n; }, n); await answered(page); await sleep(200); assert.equal(await page.evaluate(() => CharmNestMasterAdmin.is()), false, n); }
+      for (const n of ['Paula K', 'Paul Kowalski', 'Pau K']) { const got = await signInAs(page, srv, n); await answered(page); await sleep(200); assert.equal(await page.evaluate(() => CharmNestMasterAdmin.login()), got, n + ' is the one signed in'); assert.equal(await page.evaluate(() => CharmNestMasterAdmin.is()), false, n); }
       await ctx.close();
       console.log('  ✓ a normal employee: the same, with the Admin answer "no"; look-alike names are not the Admin');
     }
@@ -207,7 +208,7 @@ async function helper() {
       await page.waitForSelector(`${V} .efBody:not(.hidden) .efP`, { timeout: 15000 });
       // another person signs in, no reload: the screen goes, the reads stop
       const n0 = seen.eff.length; assert(n0 > 0);
-      await page.evaluate(() => { B.employee = 'Tess W.'; });
+      await signInAs(page, srv, 'Tess W.');
       await page.waitForFunction(() => CN.S.mode === 'nest' && document.getElementById('efficiencyView').classList.contains('hidden'), null, { timeout: 5000 });
       assert.equal(await page.evaluate(() => CharmNestMasterAdmin.is()), false);
       assert.equal(await page.evaluate(() => document.querySelector('#moreMenu .moreList button[data-mode="efficiency"]').hidden), true, 'the entry is gone from the menu');
@@ -218,7 +219,7 @@ async function helper() {
       // sign-out, then Paul back: shown again, no reload
       await page.evaluate(() => { B.employee = ''; }); await sleep(200);
       assert.equal(await page.evaluate(() => [CharmNestMasterAdmin.is(), document.querySelector('#moreMenu .moreList button[data-mode="efficiency"]').hidden].join('|')), 'false|true', 'signed out: hidden');
-      await page.evaluate(() => { B.employee = 'Paul K'; });
+      await signInAs(page, srv, 'Paul K');
       await page.waitForFunction(() => CharmNestMasterAdmin.is() === true && !document.querySelector('#moreMenu .moreList button[data-mode="efficiency"]').hidden, null, { timeout: 15000 });
       await page.click('#moreMenu > summary'); await page.click(ITEM);
       await page.waitForSelector(`${V}:not(.hidden)`, { timeout: 15000 });

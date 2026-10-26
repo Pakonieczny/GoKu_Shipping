@@ -456,6 +456,10 @@ const employeeName = () => B.employee || "";
    press can offer "Continue as <name>" in one tap. A name only: nothing that records a person reads it (employeeName is the one source). */
 const LAST_KEY = "cn.lastEmployee";
 const lastName = () => { try { return normName(localStorage.getItem(LAST_KEY) || ""); } catch (_) { return ""; } };
+/* EMPNUM (Paul, 26 Oct 2026: "anyone can switch from one user to another without putting in their password, which is a big safety concern"): with the Account
+   panel's gate on (charm-nest-account.js, charm-nest-1.html), a person is signed in only by their 6-digit Employee Number, checked by the server; a typed name
+   signs nobody in. The small name bar then asks for the number, and the dialogs that had a name field of their own ask through it (needEmployee). */
+const empGate = () => { try { const A = window.CNAccount; return !!(A && typeof A.gated === "function" && A.gated() && typeof A.signInNumber === "function"); } catch (_) { return false; } };
 /* A step that records a person (an approval, a label, a decision, a message) takes the signed-in name silently and never pops up a browser
    box (Paul, 6 Oct 2026). When nobody is signed in the small inline name bar opens (over the open window, if any) with the last name
    ready and a one-tap "Continue as <name>", and the press that asked goes on by itself the moment a name is saved (askEmployee returns ""
@@ -510,7 +514,7 @@ const NameBar = (() => {
   function paintChip(b) {
     try {
       const c = b && b.querySelector(".cnNbCont"); if (!c) return;
-      const last = employeeName() ? "" : lastName();
+      const last = employeeName() || (b.dataset && b.dataset.num) ? "" : lastName();      // (EMPNUM: no one-tap sign-in: the number decides who it is)
       c.hidden = !last; c.innerHTML = last ? `Continue as <b></b>` : ""; if (last) c.querySelector("b").textContent = last;
     } catch (_) {}
   }
@@ -535,18 +539,20 @@ const NameBar = (() => {
         if (!hint && !(o.kind !== "ask" && bar.dataset.kind === "ask")) bar.dataset.kind = o.kind === "ask" ? "ask" : "edit";
         bar.querySelector(".cnNbWhy").textContent = why; if (bar.parentNode !== host()) host().appendChild(bar);
         paintSwitch(bar); paintChip(bar);
-        if (!hint) { const i = bar.querySelector("input"); if (!i.value.trim() && !employeeName()) i.value = lastName(); i.focus(); i.select(); }
+        if (!hint) { const i = bar.querySelector("input"); if (!i.value.trim() && !employeeName() && !bar.dataset.num) i.value = lastName(); i.focus(); i.select(); }
         return pr;
       }
       pr = new Promise(res => { finish = res; });
       const id = "cnNb" + Math.random().toString(36).slice(2, 7);
       bar = document.createElement("form"); bar.className = "cnNameBar"; bar.dataset.kind = hint ? "hint" : o.kind === "ask" ? "ask" : "edit"; bar.setAttribute("role", "group"); bar.setAttribute("aria-label", "Your name"); bar.noValidate = true;
-      bar.innerHTML = `<label for="${id}"><b>Your name</b><span class="cnNbWhy" aria-live="polite"></span></label><input id="${id}" type="text" maxlength="40" autocomplete="name" spellcheck="false" placeholder="e.g. Tess Welder"><button type="submit" class="btn sage xs">Save</button><button type="button" class="cnNbX" title="Not now" aria-label="Not now">✕</button><button type="button" class="btn sage xs cnNbCont" hidden></button><span class="cnNbErr" role="alert" hidden></span><button type="button" class="cnNbSwitch" hidden></button>`;
+      const num = empGate();       // (EMPNUM: the Employee Number, masked and never kept, in place of a typed name)
+      bar.dataset.num = num ? "1" : "";
+      bar.innerHTML = `<label for="${id}"><b>${num ? "Your Employee Number" : "Your name"}</b><span class="cnNbWhy" aria-live="polite"></span></label>${num ? `<input id="${id}" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" spellcheck="false" placeholder="6 digits">` : `<input id="${id}" type="text" maxlength="40" autocomplete="name" spellcheck="false" placeholder="e.g. Tess Welder">`}<button type="submit" class="btn sage xs">${num ? "Sign in" : "Save"}</button><button type="button" class="cnNbX" title="Not now" aria-label="Not now">✕</button><button type="button" class="btn sage xs cnNbCont" hidden></button><span class="cnNbErr" role="alert" hidden></span><button type="button" class="cnNbSwitch" hidden></button>`;
       const input = bar.querySelector("input"), err = bar.querySelector(".cnNbErr");
       paintSwitch(bar); paintChip(bar);
       bar.querySelector(".cnNbSwitch").onclick = e => { e.preventDefault(); e.stopPropagation(); try { const R = window.CNRole, r = R && R.role(); if (r) R.switchTo(R.other(r)); } catch (_) {} paintSwitch(me); };
       bar.querySelector(".cnNbWhy").textContent = why;
-      input.value = hint ? "" : (employeeName() || lastName());       // (nobody named: the last name used on this computer is ready, Enter keeps it)
+      input.value = hint || num ? "" : (employeeName() || lastName());       // (nobody named: the last name used on this computer is ready, Enter keeps it; never a number)
       const me = bar;
       const take = n => {
         if (!employeeName()) B.employee = n;       // (only a sign-in: a person signed in meanwhile, in another tab or the Account panel, stays the person)
@@ -556,13 +562,27 @@ const NameBar = (() => {
       };
       bar.onsubmit = e => {
         e.preventDefault(); e.stopPropagation();
+        if (me.dataset.num) {
+          // (EMPNUM: the server checks the number and names the person, CNAccount.signInNumber; the field is emptied at once, the number is never kept)
+          const v = input.value.replace(/\D/g, ""); input.value = "";
+          if (!/^\d{6}$/.test(v)) { err.textContent = "An Employee Number is 6 digits."; err.hidden = false; input.focus(); return; }
+          if (me.getAttribute("aria-busy") === "true") return;
+          const go = me.querySelector('button[type="submit"]'); me.setAttribute("aria-busy", "true"); input.disabled = true; if (go) { go.disabled = true; go.textContent = "Checking…"; }
+          Promise.resolve(window.CNAccount.signInNumber(v, { panel: false })).then(r => {
+            if (r && r.ok) { take(r.name); return; }
+            if (bar !== me) return;
+            me.removeAttribute("aria-busy"); input.disabled = false; if (go) { go.disabled = false; go.textContent = "Sign in"; }
+            err.textContent = (r && r.error) || "Your Employee Number could not be checked right now. Try again in a moment."; err.hidden = false; input.focus();
+          }, () => { if (bar !== me) return; me.removeAttribute("aria-busy"); input.disabled = false; if (go) { go.disabled = false; go.textContent = "Sign in"; } err.textContent = "Your Employee Number could not be checked right now. Try again in a moment."; err.hidden = false; });
+          return;
+        }
         const n = normName(input.value);
         if (!n) { err.textContent = "Please type your name (letters, not a number)."; err.hidden = false; input.focus(); return; }
         take(n);
       };
-      bar.querySelector(".cnNbCont").onclick = e => { e.preventDefault(); e.stopPropagation(); const n = lastName(); if (n) take(n); };
+      bar.querySelector(".cnNbCont").onclick = e => { e.preventDefault(); e.stopPropagation(); if (me.dataset.num) return; const n = lastName(); if (n) take(n); };
       bar.querySelector(".cnNbX").onclick = e => { e.preventDefault(); close(""); };
-      input.oninput = () => { err.hidden = true; };
+      input.oninput = () => { err.hidden = true; if (me.dataset.num) { const d = input.value.replace(/\D/g, "").slice(0, 6); if (d !== input.value) input.value = d; } };
       // (the page's own keys never see what is typed here, and Esc puts only this field away, not the window under it)
       bar.onkeydown = e => { e.stopPropagation(); if (e.key === "Escape") { e.preventDefault(); close(""); } };
       bar.onclick = e => e.stopPropagation();
@@ -13153,10 +13173,16 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   function say(key, text) { if (text) busy.set(key, text); else busy.delete(key); redraw(); }
   /** A step that records a name: straight on when one is saved, else once it is typed in the card (withName). */
-  function withName(key, go) { const who = employeeName(); if (who) { go(who); return; } asking.set(key, go); redraw(); }
+  function withName(key, go) {
+    const who = employeeName(); if (who) { go(who); return; }
+    // (EMPNUM, Paul 26 Oct 2026: a typed name signs nobody in: the small bar asks for the Employee Number, and the step goes on under the person it names)
+    if (empGate()) { needEmployee("Kept with this decision, and with your work today.").then(n => { if (n && employeeName()) go(employeeName()); }); return; }
+    asking.set(key, go); redraw();
+  }
   function named(key, name) {
     const go = asking.get(key); name = normName(name); if (!go || !name) return false;
     if (!employeeName()) B.employee = name;      // (a sign-in only: a person signed in meanwhile stays the person, Paul 18 Oct 2026)
+    if (!employeeName()) return false;           // (EMPNUM: the gate said no, and the Account panel asks for the number: the step waits, it never goes on without a person)
     asking.delete(key); redraw(); go(employeeName());
     return true;
   }
@@ -14475,7 +14501,9 @@ const CustomSheet = window.CustomSheet = (() => {
       if (!D.it || busy.get(D.ck)) return;
       if (notReady(all()[D.ck])) { nudge(); return; }
       const who = d.querySelector("#cuWho input");
-      if (!employeeName()) { const v = normName(who.value); if (!v) { D.askName = true; paint(); who.focus(); lit(who, "cuNudge"); return; } B.employee = v; }
+      // (EMPNUM, Paul 26 Oct 2026: a typed name signs nobody in: the small bar asks for the Employee Number, and the send goes on under the person it names)
+      if (!employeeName() && empGate()) { const it0 = D.it; needEmployee("Kept with this send, and with your work today.").then(n => { if (n && employeeName() && D.it === it0) send(it0); }); return; }
+      if (!employeeName()) { const v = normName(who.value); if (!v) { D.askName = true; paint(); who.focus(); lit(who, "cuNudge"); return; } B.employee = v; if (!employeeName()) return; }
       send(D.it);
     };
     d.querySelector("#cuWho input").onkeydown = ev => { ev.stopPropagation(); if (ev.key === "Enter") { ev.preventDefault(); d.querySelector("[data-send]").click(); } };
@@ -14535,7 +14563,7 @@ const CustomSheet = window.CustomSheet = (() => {
     sb.title = busyNow ? busyNow : why ? (files.length ? why : "Its designs come first: drop the order's .ai or .dxf files here") : "Put every design on the next open sheet of its metal";
     const later = d.querySelector("[data-later]"), keep = files.length && !sent;
     later.textContent = keep ? "Send later" : "Close"; later.title = keep ? "Close the window: the designs stay on the order's card until you send them" : "Close the window";
-    d.querySelector("#cuWho").hidden = !(D.askName && !employeeName());
+    d.querySelector("#cuWho").hidden = !(D.askName && !employeeName() && !empGate());   // (EMPNUM: with the gate the number bar asks instead)
     d.querySelector("#cuAdd").hidden = locked;
     if (drag.hot === d) says(d); else addWords();
     paintKeep(calm);
@@ -15487,6 +15515,7 @@ const CustomSheet = window.CustomSheet = (() => {
       if (opts.fly) flown = shown.then(() => launch(opts.fly));
     } else { paint(); if (opts.fly) flown = launch(opts.fly); }
     if (opts.browse) d.querySelector("#cuFileIn").click();
+    else if (D.askName && empGate()) { const it0 = D.it; needEmployee("Kept with this send, and with your work today.").then(n => { if (n && employeeName() && D.it === it0) paint(); }); }
     else if (D.askName) d.querySelector("#cuWho input").focus();
     return flown || Promise.resolve();
   }

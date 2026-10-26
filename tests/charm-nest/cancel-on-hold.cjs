@@ -15,7 +15,7 @@
 // transform and opacity animating); the card leaves Review and Review's counts drop; the note says "Order N cancelled — it's in Orders › Cancelled"
 // with Undo and Show, and Show opens Orders on Cancelled at that order. The timeline keeps its earlier steps and adds the cancel. Undo puts the
 // order back on hold, its card back in Review (flying back out of the Orders tab). Reduced motion: no flight, the note still shows. No name saved:
-// the inline bar asks, never a pop-up. Nothing is left on screen.
+// the inline bar asks for the Employee Number (EMPNUM, Paul 26 Oct 2026: never a typed name), never a pop-up. Nothing is left on screen.
 // (SEALCANCEL, Paul 20 Oct 2026) The press stamps its Cancel Order with the ORDER CANCELLED seal (who and when, the Cancelled Orders ink) before the card
 // flies; the seal is kept on the order's Review document as cancel { at, by, how: "cancel", id }, as Release Hold keeps release; Undo marks it undone (it
 // no longer shows) and keeps the order's other seals; a failed cancel leaves no seal.
@@ -23,7 +23,7 @@ const fs = require('fs'), path = require('path'), assert = require('assert/stric
 const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
-const { start } = require('./bridge-server.cjs');
+const { start, pinOf } = require('./bridge-server.cjs');
 const SHOTS = process.env.SHOTS || '';
 
 const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 10, 17) / 1000);
@@ -332,7 +332,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await n.waitForFunction(() => !document.querySelector('.cnNameBar'));
     await n.waitForTimeout(300); assert.equal(calls('cancelPut', E).length, 0, 'put away: nothing happened'); assert.equal(await rvCards(n, E), 1);
     await press(n, E);
-    await n.waitForSelector('.cnNameBar input'); await n.fill('.cnNameBar input', 'Pat Smith'); await n.press('.cnNameBar input', 'Enter');
+    // (EMPNUM, Paul 26 Oct 2026: the bar asks for the person's 6-digit Employee Number, masked, and the server names them; a typed name signs nobody in)
+    await n.waitForSelector('.cnNameBar input');
+    assert.deepEqual(await n.evaluate(() => { const b = document.querySelector('.cnNameBar'), i = b.querySelector('input'); return { num: b.dataset.num, type: i.type, value: i.value, cont: !!(b.querySelector('.cnNbCont') && !b.querySelector('.cnNbCont').hidden) }; }), { num: '1', type: 'password', value: '', cont: false }, 'the bar asks for the Employee Number (masked, empty, no one-tap "Continue as")');
+    await n.fill('.cnNameBar input', pinOf(st, 'Pat Smith')); await n.press('.cnNameBar input', 'Enter');
     await gone(n, E);
     const put = calls('cancelPut', E); assert.equal(put.length, 1); assert.equal(put[0].body.by, 'Pat Smith');
     await n.close();

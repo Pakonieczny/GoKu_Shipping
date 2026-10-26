@@ -14,7 +14,7 @@
 //    sheets and fills), QR labels, sheets already cut, the wait in On hold, nothing deleted; "pieces", never "lines"; Continue and Not now
 //  - Not now, Esc and a press outside change nothing (no run, no film, no write); from the order window the window steps aside first (never a pop-up
 //    over a pop-up: at most one dialog open at any time) and comes back on the same order and tab
-//  - Continue asks the name the way Review does (the inline name bar when none is saved), runs the engine once, feeds every step to the film in order,
+//  - Continue asks the name the way Review does (the inline bar when none is saved: the Employee Number, EMPNUM 26 Oct 2026), runs the engine once, feeds every step to the film in order,
 //    finishes it and goes home; without a film it still runs and ends in Orders > On hold; a failed run says so plainly and never leaves the Nest tab
 //  - a plan that cannot be held shows its reason with Close only
 //  - Release Hold on a held order's Orders card is the Review card's own button and press (RHSAME, 20 Oct 2026: ReviewRelease.press, the seal orange, no film; no seal when it did not work)
@@ -22,7 +22,7 @@
 //   node tests/charm-nest/hold-ui.cjs   (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>, SHOTS=<dir>)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
-const { start } = require('./bridge-server.cjs');
+const { start, pinOf, signInAs } = require('./bridge-server.cjs');
 
 const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 10, 17) / 1000);
 const P = { rid: '4170837249', cable: '41708372491', gf: '41708372492', rg: '41708372493' };      // a custom piece in Review and two pieces on sheets
@@ -379,8 +379,10 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('.cnNameBar input'), null, { timeout: 10000 });
     assert.equal(await page.evaluate(() => window.__prompted || 0), 0, 'the inline name bar, never prompt()');
     assert.equal((await T()).runs.length, 0, 'nothing runs before the name is given');
+    // (EMPNUM, Paul 26 Oct 2026: the bar asks for the 6-digit Employee Number, masked, never a typed name; the server names the person)
+    assert.deepEqual(await page.evaluate(() => { const b = document.querySelector('.cnNameBar'), i = b.querySelector('input'); return { num: b.dataset.num, type: i.type, value: i.value }; }), { num: '1', type: 'password', value: '' }, 'the bar asks for the Employee Number');
     await shot('namebar-1440');
-    await page.fill('.cnNameBar input', 'Paul'); await page.keyboard.press('Enter');
+    await page.fill('.cnNameBar input', pinOf(srv.st, 'Paul')); await page.keyboard.press('Enter');
     await page.waitForFunction(() => window.__t.returns.length === 1, null, { timeout: 20000 });
     t = await T();
     assert.equal(t.runs.length, 1, 'the engine ran once'); assert.equal(t.runs[0].rid, P.rid); assert.equal(t.runs[0].name, 'Paul', 'under the name given');
@@ -446,7 +448,8 @@ async function main() {
     await seg('open');
 
     // ── 10 · a failed run says so plainly, keeps what was done and never leaves the person in the Nest tab ──
-    await page.evaluate(() => { for (const r of Orders.rows()) if (String(r.order.receiptId) === '4170837249') { r.hold = null; r.state = r.poolIds.length ? 'pooled' : 'pulled'; } window.__t.runs.length = 0; window.__t.returns.length = 0; window.__t.fx.length = 0; window.__t.runResult = { ok: false, error: 'the sheet could not be saved' }; window.OrderHoldFx.returnToOnHold = () => {}; B.employee = 'Test Operator'; CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
+    await page.evaluate(() => { for (const r of Orders.rows()) if (String(r.order.receiptId) === '4170837249') { r.hold = null; r.state = r.poolIds.length ? 'pooled' : 'pulled'; } window.__t.runs.length = 0; window.__t.returns.length = 0; window.__t.fx.length = 0; window.__t.runResult = { ok: false, error: 'the sheet could not be saved' }; window.OrderHoldFx.returnToOnHold = () => {}; CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
+    await signInAs(page, srv, 'Test Operator');      // (EMPNUM: another person signs in with their Employee Number; a name set by a script switches nobody)
     await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-cu-release]`), cable, { timeout: 15000 });
     await pressHold();
     await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });

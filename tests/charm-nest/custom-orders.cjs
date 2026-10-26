@@ -11,7 +11,7 @@
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
 const O = require(path.join(root, 'charm-nest-orders.js'));
-const { start } = require('./bridge-server.cjs');
+const { start, pinOf } = require('./bridge-server.cjs');
 
 const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 2, 17) / 1000);
 const order = (rid, lines, extra) => Object.assign({ receiptId: String(rid), orderNumber: String(rid), createTs: SHIP - 5 * DAY, updateTs: SHIP - 5 * DAY + 60, shipBy: SHIP, buyer: { name: 'Buyer ' + String(rid).slice(-4) }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [], lines }, extra || {});
@@ -334,18 +334,19 @@ async function browserChecks() {
     assert.equal(srv.st.doc('Charm_Custom_Orders', '4174476673_41744766731').state, 'open', 'the record is kept, open');
     assert(srv.st.doc('Charm_Custom_Orders', '4174476673_41744766731').stamps.length >= 1, 'with its seals');
     assert.equal(await page.evaluate(() => Review.count()), before, 'its decision is back');
-    // printed from Open with no name saved: the name is asked in the card (never a prompt over the page), then the card
+    // printed from Open with no name saved: the person is asked for inline (never a prompt over the page; since EMPNUM, Paul 26 Oct 2026, by the small bar's
+    // Employee Number, not a name typed in the card), then the card
     // says "Marked completed · Undo", and Undo takes the completion back
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
     await page.evaluate(() => { B.employee = ''; localStorage.removeItem('cn.employee'); window.prompt = () => { window.__prompted = true; return 'x'; }; });
     const huggies = '#rvList .reviewListRow[data-rid="4177425406"]', hKey = '4177425406_41774254061';
     await page.click(huggies + ' [data-cu-print]');
-    await page.waitForSelector(huggies + ' [data-cu-name]');
-    await page.fill(huggies + ' [data-cu-name]', 'Test Operator');
-    await page.click(huggies + ' [data-cu-name-ok]');
+    await page.waitForSelector('.cnNameBar[data-kind="ask"][data-num="1"] input');
+    assert.equal(await page.$(huggies + ' [data-cu-name]'), null, 'no name field in the card: a typed name signs nobody in');
+    await page.fill('.cnNameBar[data-kind="ask"] input', pinOf(srv.st, 'Test Operator')); await page.press('.cnNameBar[data-kind="ask"] input', 'Enter');
     await page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close()));
     await page.waitForFunction(k => B.maps.customDone[k] && [...document.querySelectorAll('.mNote .mNoteT')].some(n => /^Order 4177425406 moved to Resolved/.test(n.textContent)), hKey, { timeout: 30000 });
-    assert.equal(srv.st.doc('Charm_Custom_Orders', hKey).printedBy, 'Test Operator', 'the name typed in the card is recorded');
+    assert.equal(srv.st.doc('Charm_Custom_Orders', hKey).printedBy, 'Test Operator', 'the person whose Employee Number was entered is recorded');
     await page.click('.mNote .mNoteBtn:text("Undo")');
     await page.waitForFunction(k => !B.maps.customDone[k] && !document.querySelector('.cuStat, .btn.working'), hKey, { timeout: 30000 })
       .catch(async e => { throw new Error('undo: ' + await page.evaluate(k => JSON.stringify({ done: !!B.maps.customDone[k], stat: [...document.querySelectorAll('.cuStat, .btn.working')].map(n => n.outerHTML.slice(0, 200)), toasts: [...document.querySelectorAll('#toasts .toast')].map(n => n.textContent), notes: [...document.querySelectorAll('.mNote')].map(n => n.textContent) }), hKey)); });
