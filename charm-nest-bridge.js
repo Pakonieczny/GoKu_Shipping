@@ -3886,10 +3886,13 @@ const Master = window.Master = (() => {
     //  design for the charms cards so that these buttons are easily visible, tastefully positioned in one row with beautiful hover states. The .dxf should also be password
     //  gated.") The two downloads are one segmented pair, .ai | .dxf, both through the download password (downloadCharm); a charm kept in sizes puts its size picker at the
     //  front of the pair (S ▾ | .ai | .dxf) instead of one button per size per format, so the card's controls stay ONE row
+    // (26 Oct 2026, the smaller cards: the size picker is a setting, on the settings line beside up° and faces; the buttons row keeps .ai | .dxf, Etsy and Delete only)
+    const sizesOf = (e, sizes) => (e.aiUrl ? [] : sizes.filter(([, s]) => s && s.aiUrl).map(([k]) => k));
+    const dlSize = (e, sizes) => { const sz = sizesOf(e, sizes); return sz.length ? `<select data-dlsize aria-label="size to download" title="the size the .ai and .dxf buttons download">${sz.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join("")}</select>` : ""; };
     const dlPair = (e, sizes) => {
-      const sz = e.aiUrl ? [] : sizes.filter(([, s]) => s && s.aiUrl).map(([k]) => k);
+      const sz = sizesOf(e, sizes);
       if (!e.aiUrl && !sz.length) return "";
-      const pick = sz.length ? `<select data-dlsize aria-label="size to download" title="the size to download">${sz.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join("")}</select>` : "";
+      const pick = "";
       const btn = (fmt, what) => `<button type="button" data-dl="${esc(e.sku)}"${sz.length ? ` data-size="${esc(sz[0])}"` : ""} data-fmt="${fmt}" data-repo="download" title="download this charm's ${what} (asks for your password)">.${fmt}</button>`;
       // (the pair carries ONE padlock after .dxf, as every password control of the card does: data-repo on the group, painted by CharmNestRepoLock.mark)
       return `<span class="dlPair" role="group" data-repo="download" aria-label="download ${esc(e.sku)} (asks for your password)">${pick}${btn("ai", ".ai file")}${btn("dxf", ".dxf file, in millimetres")}</span>`;
@@ -3912,7 +3915,7 @@ const Master = window.Master = (() => {
         // (the card's foot: its two settings on one line, then its buttons on ONE row, so the card stays the width of the grid's compact cells)
         `<div class="row skuSet">` +
         `<input type="number" data-up="${keys}" data-repo="modify" value="${e.upAngle == null ? "" : Math.round(e.upAngle)}" placeholder="up°" title="the angle that points up on this charm (degrees)">` +
-        facesBox(e, keys) +
+        facesBox(e, keys) + dlSize(e, sizes) +
         (blocked ? `<button class="btn ghost xs" data-unblock="${keys}" data-repo="modify">unblock</button>` : "") +
         `</div><div class="row skuActs">` +
         dlPair(e, sizes) +
@@ -3946,7 +3949,7 @@ const Master = window.Master = (() => {
     // a charm's .ai file is handed out only with the download password: the server mints the link, the browser saves the bytes
     each("dl", b => b.onclick = () => downloadCharm(b.dataset.dl, b.dataset.size || "", b, b.dataset.fmt));
     // (a sized charm's picker sets the size both buttons of its pair download)
-    grid.querySelectorAll("[data-dlsize]").forEach(p => p.onchange = () => p.parentElement.querySelectorAll("[data-dl]").forEach(b => { b.dataset.size = p.value; }));
+    grid.querySelectorAll("[data-dlsize]").forEach(p => p.onchange = () => p.closest(".skuTile").querySelectorAll("[data-dl]").forEach(b => { b.dataset.size = p.value; }));
     // the Etsy chip (charm-nest-etsy-link.js, SWANSKU 12 Oct 2026): this charm's SKU on one existing Etsy listing, behind the repo password; a card with several SKUs offers each
     each("etsylink", (b, skus) => { if (window.CharmNestEtsyLink) CharmNestEtsyLink.mount(b, { skus, repoApi, toast, who: employeeName, skuTable: id => api("charmNestLibrary", { op: "listingSkus", listingIds: [id] }, { quiet: true }) }); });   // (skuTable: the SKUs now on that listing's products, from the stored table: no password; ETSYFAM 13 Oct)
   }

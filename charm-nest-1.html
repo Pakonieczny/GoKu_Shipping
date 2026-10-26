@@ -2256,27 +2256,31 @@ details.masterHist>summary{white-space:nowrap}
    SKU) ellipsizes inside it with the whole name in its title, "+N more SKUs" opens INSIDE the card into a short scrolled list, and the controls are one row that never
    wraps, pinned to the card's foot so the cards of a row line up: the two settings (up°, faces) on a line of their own, then the buttons (size, .ai | .dxf, Etsy, Delete, with
    their padlocks) on ONE row. The grid's cells stay compact (260 px at least: about three cards a row in the Library's width at 1280 px, as before). */
-#mGrid.skuGrid{grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;align-items:stretch}
-#mGrid .skuTile{display:flex;flex-direction:column;gap:4px;min-width:0;overflow:hidden;padding:8px}
+/* (Paul, 26 Oct 2026, on the 260 px cards: "These cards are much too large. Please shrink them down a bit." 196 px: about a fifth smaller, five a row where there were four; the
+   buttons tighten to stay one row) */
+#mGrid.skuGrid{grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:9px;align-items:stretch}
+#mGrid .skuTile{display:flex;flex-direction:column;gap:3px;min-width:0;overflow:hidden;padding:7px}
 #mGrid .skuTile>*{min-width:0;max-width:100%}
 #mGrid .skuTile .skuMore[open]{max-height:132px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin}
 #mGrid .skuTile .skuMore>div{line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #mGrid .skuTile .row.skuSet{margin-top:auto;display:flex;flex-wrap:nowrap;align-items:stretch;gap:4px;padding-top:7px;border-top:1px solid var(--line)}
-#mGrid .skuTile .row.skuActs{display:flex;flex-wrap:nowrap;align-items:stretch;gap:4px}
-.skuSet>*{flex:0 0 auto;height:26px;box-sizing:border-box;margin:0}
-.skuSet input[data-up]{width:52px;border:1px solid var(--line);border-radius:7px;padding:0 5px;font:11px var(--mono);background:var(--card)}
+#mGrid .skuTile .row.skuActs{display:flex;flex-wrap:nowrap;align-items:stretch;gap:3px}
+.skuSet>*{flex:0 0 auto;height:24px;box-sizing:border-box;margin:0}
+.skuSet input[data-up]{width:48px;border:1px solid var(--line);border-radius:7px;padding:0 5px;font:11px var(--mono);background:var(--card)}
+.skuSet select[data-dlsize]{flex:0 0 auto;width:46px;border:1px solid var(--goldLine);border-radius:7px;padding:0 3px;font:600 11px var(--sans);background:var(--card)}
 .skuSet select[data-faces]{flex:1 1 auto;min-width:0;border:1px solid var(--line);border-radius:7px;padding:0 4px;font-size:11px;background:var(--card);text-overflow:ellipsis}
 .skuSet .btn.xs{display:inline-flex;align-items:center;padding:0 7px;font-size:11px;border-radius:7px}
-.skuActs>*{flex:0 0 auto;height:26px;box-sizing:border-box;margin:0}
+.skuActs>*{flex:0 0 auto;height:24px;box-sizing:border-box;margin:0}
 .skuActs input[data-up]{width:46px;border:1px solid var(--line);border-radius:7px;padding:0 5px;font:11px var(--mono);background:var(--card)}
 .skuActs select[data-faces]{flex:1 1 0;min-width:44px;max-width:112px;border:1px solid var(--line);border-radius:7px;padding:0 3px;font-size:11px;background:var(--card);text-overflow:ellipsis}
-.skuActs .btn.xs{display:inline-flex;align-items:center;padding:0 7px;font-size:11px;border-radius:7px}
+.skuActs .btn.xs{display:inline-flex;align-items:center;padding:0 5px;font-size:10.5px;border-radius:7px}
+.skuActs .btn[data-repo]::after{width:7px;height:8px;margin-left:4px}   /* (a smaller padlock on the small card's buttons) */
 .skuActs .btn[data-del]{margin-left:auto}
 .skuActs .dlPair{display:inline-flex;align-items:stretch;border:1px solid var(--goldLine);border-radius:7px;overflow:hidden;background:var(--card)}
-.skuActs .dlPair>*{border:0;border-radius:0;background:transparent;color:var(--ink);font:600 11px var(--mono);padding:0 7px;cursor:pointer}
+.skuActs .dlPair>*{border:0;border-radius:0;background:transparent;color:var(--ink);font:600 10.5px var(--mono);padding:0 5px;cursor:pointer}
 .skuActs .dlPair>*+*{border-left:1px solid var(--goldLine)}
 .skuActs .dlPair select{font:600 10.5px var(--sans);padding:0 1px;max-width:46px}
-.skuActs .dlPair[data-repo]::after{content:"";flex:0 0 auto;align-self:center;width:9px;height:10px;margin:0 7px 0 1px;background:var(--ink);opacity:.45;-webkit-mask:var(--repoShut) center/contain no-repeat;mask:var(--repoShut) center/contain no-repeat}
+.skuActs .dlPair[data-repo]::after{content:"";flex:0 0 auto;align-self:center;width:7px;height:8px;margin:0 5px 0 0;background:var(--ink);opacity:.45;-webkit-mask:var(--repoShut) center/contain no-repeat;mask:var(--repoShut) center/contain no-repeat}
 .skuActs .dlPair[data-repo].repoOpen::after{-webkit-mask-image:var(--repoOpen);mask-image:var(--repoOpen);opacity:.35}
 /* hover: a gold tint, the border warms, a lift of 1 px; 140 ms; none with reduced motion */
 .skuActs .btn.xs,.skuActs .dlPair,.skuActs .dlPair>button,.skuSet .btn.xs,.skuSet input,.skuSet select{transition:background-color .14s ease,border-color .14s ease,box-shadow .14s ease,transform .14s ease,color .14s ease}
