@@ -28,9 +28,11 @@ const SCENES = [
   { rid: '3521300004', listing: 1999000111, name: 'Font', value: 'Cooper Black', font: 'source-sans-3', fontName: 'Source Sans 3', card: /Requested font: Cooper Black \(engraved in Source Sans 3\)/, shot: 'unknown-cooper' },
   { rid: '3521300005', listing: 1999000222, text: 'ANNA', note: 'Pristina', font: 'marck-script', fontName: 'Marck Script', card: /Pristina → Marck Script \(asked in the note\)/i, shot: 'note-pristina' }   // no drop-down: the buyer wrote "font: Pristina" in the note
 ];
-const receipts = SCENES.map(s => receipt(s.rid, [tx(s.rid, 1, s.listing, 'BR-TST-04', s.name ? [{ formatted_name: s.name, formatted_value: s.value }] : [], s.text)]));
+// (the note is the buyer's own message: the page reads a plain personalisation without Claude now, so the note must be in the order, not only in a stubbed answer)
+const receipts = SCENES.map(s => Object.assign(receipt(s.rid, [tx(s.rid, 1, s.listing, 'BR-TST-04', s.name ? [{ formatted_name: s.name, formatted_value: s.value }] : [], s.text)]), s.note ? { message_from_buyer: 'font: ' + s.note } : {}));
 const keyOf = s => s.rid + '_' + s.rid + '1';
-const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].content[0].text), m = /Personalisation field: (\[.*?\])/.exec(txt); let p = []; try { p = JSON.parse(m ? m[1] : '[]'); } catch (_) {} const req = { side: 'back', font: p[0] === 'ANNA' ? 'Pristina' : null, handwriting: false, image: false }; return { engrave: p.length > 0, text: p.join('\n'), source: 'personalization', sourceQuote: p[0] || '', requests: req, questions: [], confidence: 0.99 }; } };
+const agentResults = { engraveIntent: o => { const txt = o.messages.flatMap(m => [].concat(m.content)).map(c => (c && (c.text || (typeof c === 'string' ? c : ''))) || '').join('\n'),   // (the line's fields may sit in any text block of the ask)
+ m = /Personalisation field: (\[.*?\])/.exec(txt); let p = []; try { p = JSON.parse(m ? m[1] : '[]'); } catch (_) {} const req = { side: 'back', font: p[0] === 'ANNA' ? 'Pristina' : null, handwriting: false, image: false }; return { engrave: p.length > 0, text: p.join('\n'), source: 'personalization', sourceQuote: p[0] || '', requests: req, questions: [], confidence: 0.99 }; } };
 
 (async () => {
   const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
@@ -74,7 +76,8 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
       if (Date.now() - t0 > 300000) throw new Error('the run never reached the engraving review: ' + JSON.stringify([r, jobs]));
       await page.waitForTimeout(500);
     }
-    const info = await page.evaluate(keys => keys.map(k => { const j = Engrave.items().get(k); return j && { state: j.state, reason: j.reason, text: j.text, fontKey: j.fontKey, fontName: j.fontName, fontAsked: j.fontAsked, fallback: j.fontFallback || null, ok: !!(j.fit && j.fit.ok), weight: j.fit && j.fit.weight, capMm: j.fit && j.fit.capMm, cmds: j.fit && j.fit.cmds && j.fit.cmds.length, sig: j.fit && JSON.stringify(j.fit.cmds).length, specFont: j.row.spec.font && j.row.spec.font.id }; }), SCENES.map(keyOf));
+    // (a line whose words go on the FRONT (the 16" disc listing, front-default-listing) is the job <key>~front)
+    const info = await page.evaluate(keys => keys.map(k => { const j = Engrave.items().get(k) || Engrave.items().get(k + '~front'); return j && { state: j.state, reason: j.reason, text: j.text, fontKey: j.fontKey, fontName: j.fontName, fontAsked: j.fontAsked, fallback: j.fontFallback || null, ok: !!(j.fit && j.fit.ok), weight: j.fit && j.fit.weight, capMm: j.fit && j.fit.capMm, cmds: j.fit && j.fit.cmds && j.fit.cmds.length, sig: j.fit && JSON.stringify(j.fit.cmds).length, specFont: j.row.spec.font && j.row.spec.font.id }; }), SCENES.map(keyOf));
     SCENES.forEach((s, i) => {
       const j = info[i]; check(!!j, `${s.rid}: an engraving job exists`); if (!j) return;
       check(j.state === 'review' && j.ok, `${s.rid} (${s.value}): placed and waiting in the engraving review, not blocked (state ${j.state}${j.reason ? ': ' + j.reason : ''})`);
@@ -92,7 +95,7 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
 
     // the card of each piece says which font it is engraved in
     for (const s of SCENES) {
-      await page.evaluate(k => { CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', chosen: true, list: false, focus: k }); Engrave.render(); }, keyOf(s));
+      await page.evaluate(k => { if (!Engrave.items().has(k)) k += '~front'; CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', chosen: true, list: false, focus: k }); Engrave.render(); }, keyOf(s));
       await page.waitForSelector('#egQueue .rvItem[data-kind=placement] .engp .engpFont');
       // the card says which font the piece is engraved in: the options panel's font drop-down (the shop's word, the installed font as its title) for a font the line chose; one quiet line of what the buyer asked
       // for (the check list) when the font came from the note or is one the shop does not have. "From the order" and the words box are not drawn in the Engrave tab.

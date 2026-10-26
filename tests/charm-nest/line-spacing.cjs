@@ -7,9 +7,10 @@ for(let y=130;y<170;y++)for(let x=190;x<220;x++)mask.bits[y*mask.w+x]=0;
 const fitOpts=job=>({lineGap:job.lineGap??.216,maxHeightFrac:.4,minStrokeMm:0,minGapMm:0,tryRotated:false});
 const lines=['Fluffy &','Hammy'],old=G.layoutLines(lines,font,7,.18,0,[30,37.5]),fresh=G.layoutLines(lines,font,7,undefined,0,[30,37.5]);
 assert(Math.abs((fresh.totalH-2*fresh.capPt)/(old.totalH-2*old.capPt)-1.2)<1e-10,'default gap increases by 20%');
-let saved=0;const ctx={G,fontFor:()=>font,fitOpts,refresh(){},toast(){},Session:{schedule(){saved++;}}};vm.createContext(ctx);
+let saved=0;const ctx={approvedView:()=>false,G,fontFor:()=>font,fitOpts,refresh(){},toast(){},Session:{schedule(){saved++;}}};vm.createContext(ctx);
 vm.runInContext(source.slice(source.indexOf('  function refit(job, place)'),source.indexOf('  function nudge(')),ctx);
 vm.runInContext(source.slice(source.indexOf('  function rotateTo(job, angle)'),source.indexOf('  /** The box around')),ctx);
+vm.runInContext(source.slice(source.indexOf('  const placeEditable = job =>'),source.indexOf('\n',source.indexOf('  const startEdit = job =>'))).replace(/\bconst /g,'var '),ctx);   // (an edit reopens an approved job first: placeEditable / startEdit, Oct 2026; a job in review edits as it is)
 vm.runInContext(source.slice(source.indexOf('  function setLineSpacing('),source.indexOf('  async function resplit')),ctx);
 const job={state:'review',lineInput:lines,lineMode:'preserve',lines,mask,lineGap:.216,fit:G.reflowAt(lines,font,mask,fitOpts({}),{centre:[30,37.5],size:7},'preserve')};
 assert(ctx.setLineSpacing(job,150));assert.equal(job.lineGap,.27);assert.equal(job.fit.size,7);assert(G.verifyInk(job.fit.cmds,mask).ok);
@@ -27,7 +28,7 @@ wheel(false);wheel(false);wheel(true);assert.equal(frames.size,1,'rapid changes 
 const tick=[...frames.values()][0];frames.clear();tick();assert.equal(output.textContent,'161%');assert.equal(job.lineGap,.18*1.61);assert(job._spacingActive);
 wheel(false);const before=saved;card._flushSpacing();assert.equal(frames.size,0);assert.equal(timers.size,0);assert(Math.abs(job.lineGap-.18*1.66)<1e-12);assert.equal(saved,before+1);assert.equal(job._spacingActive,false);assert(G.verifyInk(job.fit.cmds,mask).ok);
 card._flushSpacing();assert.equal(saved,before+1,'no duplicate fit when nothing changed');
-assert(source.includes('b.onclick = () => { card._flushSpacing?.();'),'navigation flushes before replacing the card');
+assert(/card\._flushSpacing\?\.\(\);\s*if \(a === "approve"\)/.test(source),'navigation flushes before replacing the card');   // (the card's one button handler flushes before every action, Oct 2026)
 assert(source.includes('lineGap:saved.lineGap ?? .18')&&source.includes('lineGap:bk.lineGap ?? .18')&&source.includes('j.lineGap ??= .18'),'legacy saved placements retain their original gap');
 assert(source.includes('lineGap:fitOpts(job).lineGap'),'approval stores the chosen gap for reopening');
 console.log('Line spacing OK: +20% default, live wheel/slider coalescing, fine adjustment, flush, quarter turns, cut-outs and saved-placement compatibility');

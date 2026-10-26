@@ -23,7 +23,12 @@ const engravable = c => {
   assert(font.getPath(c, 0, 0, 20).commands.length >= 4, 'has an outline: ' + hex(c));
   assert(font.getAdvanceWidth(c, 20) > 0, 'has width: ' + hex(c));
 };
-const RGI = /^\p{RGI_Emoji}$/v, ink = k => JSON.stringify(seqs[k].filter(r => r[0] !== 3));
+// (the RGI set comes from the runtime's ICU: a Node older than the one that built the file (its header names the ICU) does not know the
+// newest emoji yet (Node 22 = ICU 77 / Unicode 16; the file is built with ICU 78, emoji 17.0), so a key the generator kept as fully
+// qualified passes when it is fully qualified in the map's emoji-test 17.0 data (in sequences, never unsupported, no bare FE0F-less form))
+const icuOf = v => String(v).split('.').map(Number), builtIcu = (/Built with ICU ([\d.]+)/.exec(fs.readFileSync(path.join(root, 'charm-nest-emoji-data.js'), 'utf8')) || [])[1] || '0';
+const oldIcu = (a => a[0] < icuOf(builtIcu)[0])(icuOf(process.versions.icu)), RGI0 = /^\p{RGI_Emoji}$/v;
+const RGI = { test: k => RGI0.test(k) || (oldIcu && k in map.sequences && !(map.unsupported || []).includes(k) && /\p{Extended_Pictographic}/u.test(k)) }, ink = k => JSON.stringify(seqs[k].filter(r => r[0] !== 3));
 
 // shape of the data
 assert.equal(typeof D.version, 'string'); assert(/^\d{4}-\d{2}-\d{2}$/.test(D.version));

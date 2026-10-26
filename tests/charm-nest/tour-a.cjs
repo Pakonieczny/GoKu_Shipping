@@ -123,12 +123,12 @@ function standIn() {
     console.log(`  1 · home after ${took} ms; modes ${JSON.stringify(r1.modes)}; NestFocus ${JSON.stringify(end1.calls)}`);
     const opened = end1.calls.filter(c => c[0] === 'open'), landed = end1.calls.filter(c => c[0] === 'land').map(c => c[1]);
     check(r1.modes.some(m => m[0] === 'nest') && end1.mode === 'review' && end1.chip && end1.scroll === scroll0, `a real tab switch to Nest and back home to Review · Custom Orders at the same scroll (${JSON.stringify({ mode: end1.mode, chip: end1.chip, scroll: [scroll0, end1.scroll] })})`);
-    if (NF) check(opened.length === 1 && JSON.stringify(opened[0][2]) === JSON.stringify(end1.poolIds) && (end1.sheetIds.includes(opened[0][1]) || opened[0][1] === 'gold') && /Sheet 1/.test(opened[0][3]), `its sheet opened once through NestFocus.open(sheetId, { poolIds, caption }) (${JSON.stringify(opened[0])})`);
+    if (NF) check(opened.length === 1 && JSON.stringify(opened[0][2]) === JSON.stringify(end1.poolIds) && (end1.sheetIds.includes(opened[0][1]) || opened[0][1] === 'gold') && /(Sheet|Draft) 1/.test(opened[0][3]), `its sheet opened once through NestFocus.open(sheetId, { poolIds, caption }) (${JSON.stringify(opened[0])})`);
     if (NF) check(landed.length === end1.poolIds.length && end1.poolIds.every(id => landed.includes(id)) && end1.calls.some(c => c[0] === 'close'), `each piece landed on it (land ${landed.length}/${end1.poolIds.length}) and the sheet eased back (close)`);
     check(end1.state === 'pooled' && end1.gold === 1 && !end1.dlg, `placed first, as before: pooled, 1 piece on Gold, the window closed (${end1.state}, ${end1.gold})`);
     check(r1.coin >= 20, `the coin is seen moving (${r1.coin} positions)`);
-    // (Paul, 29 Sep 01:30) a caption at each step, each standing long enough to be read
-    const said = r1.caps.map(c => c[0]), steps = [/^Order 4175423829/, /^To the Nest tab/, /^GF 14\/20 · Sheet 1/, /^(Placed|Queued) on Sheet 1/, /^Back to Review/];
+    // (Paul, 29 Sep 01:30) a caption at each step (a sheet outside every set is "Draft N", in a set "Sheet N": charm-nest-sheet-name.js), each standing long enough to be read
+    const said = r1.caps.map(c => c[0]), steps = [/^Order 4175423829/, /^To the Nest tab/, /^GF 14\/20 · (Sheet|Draft) 1/, /^(Placed|Queued) on (Sheet|Draft) 1/, /^Back to Review/];
     const stood = r1.caps.slice(0, -1).map((c, i) => r1.caps[i + 1][1] - c[1]);
     check(steps.every((re, i) => re.test(said[i] || '')) && said.length === steps.length, `each step said in its caption: ${JSON.stringify(said)}`);
     check(stood.every(ms => ms >= 1200), `each caption stood long enough to read, 1.2 s at least (${stood.join(', ')} ms)`);
