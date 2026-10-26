@@ -82,6 +82,25 @@
   let sess = null;                      // { t, e, p }: Settings' unlock while the menu is open, this tab's memory only (PERSON, 26 Oct 2026)
   /* PERSON: how long this tab uses a right password before asking again (capped by the server's own expiry) */
   const GRACE = { download: 60 * 1000, modify: 5 * 60 * 1000, upload: 15 * 60 * 1000, other: 60 * 1000 };
+  /* PERSON: Settings' own reloads (the sandbox switched on, the sandbox reset) carry its unlock across the reload in this tab only (sessionStorage), for the same person,
+     for the sandbox's Settings ops alone (its pull, its reset, a purge: SETTINGS_OPS), never a download or a change: the password just given is not asked again by the
+     Start that follows. Lock now, switching the sandbox off, a person change or closing the tab end it. A carry with no person on it is the test site's seed. */
+  const CKEY = "cn.repoCarry.v1";
+  function dropCarry() { try { const st = store(); if (st) st.removeItem(CKEY); } catch (_) { /* nothing kept */ } }
+  function pickCarry() {
+    try {
+      const st = store(), raw = st && st.getItem(CKEY); if (!raw) return;
+      const o = JSON.parse(raw);
+      if (o && typeof o.t === "string" && o.t && +o.e > Date.now() + MARGIN) sess = { t: o.t, e: +o.e, p: o.p, carry: true }; else dropCarry();
+    } catch (_) { dropCarry(); }
+  }
+  /** Keep Settings' unlock for the reload Settings itself starts (see above): true when there was one to keep. */
+  function carry() {
+    const s = loadSession(); if (!s) return false;
+    s.carry = true;
+    try { const st = store(); if (st) st.setItem(CKEY, JSON.stringify({ t: s.t, e: s.e, p: s.p })); } catch (_) { return false; }
+    return true;
+  }
   /** The person signed in to the Sorter now (the key every unlock is held under); "" when nobody is, or on a page without the sign-in. */
   const personKey = () => { try { const E = root.CNEmployee, n = E && typeof E.name === "function" ? E.name() : ""; return String(n || "").trim().toLowerCase().replace(/\s+/g, " "); } catch (_) { return ""; } };
   let lockedUntil = 0;                  // after a "locked" answer: no further try from this tab before this time (no more records)
@@ -100,7 +119,7 @@
   const shared = () => { try { return root.localStorage || null; } catch (_) { return null; } };
   /** Settings' unlock, held in this tab's memory while the menu is open (PERSON: never in localStorage; an ended one, or one given to another person, is dropped). */
   function loadSession() {
-    if (sess && (!(sess.e > Date.now() + MARGIN) || sess.p !== personKey())) sess = null;
+    if (sess && (!(sess.e > Date.now() + MARGIN) || (sess.p !== undefined && sess.p !== personKey()))) { if (sess.carry) dropCarry(); sess = null; }
     return sess;
   }
   function saveSession() { /* PERSON (26 Oct 2026): nothing is kept for the computer any more; see the header */ }
@@ -117,7 +136,7 @@
   }
   function find(need) {
     need = norm(need); load();
-    if (SESSION_NEEDS.has(need)) { const s = loadSession(); if (s) return { action: "session", token: s.t, expiresAt: s.e, once: false, session: true }; }
+    if (SESSION_NEEDS.has(need)) { const s = loadSession(); if (s && (!s.carry || need === "settings")) return { action: "session", token: s.t, expiresAt: s.e, once: false, session: true }; }   // (a carried unlock serves Settings' ops only)
     for (const a of COVERS[need] || []) { const x = mem[a]; if (x) return { action: a, token: x.t, expiresAt: +x.e, once: false }; }
     return null;
   }
@@ -130,11 +149,14 @@
   }
   /** PERSON: the signed-in person changed (another sign-in, a sign-out): every unlock of this tab ends now, and Settings' session on the server too. */
   function personChanged(before, after) {
-    const norm2 = s => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
-    if (norm2(before) === norm2(after)) return;
-    const s = sess; sess = null; load(); for (const k of Object.keys(mem)) if (mem[k] && mem[k].p !== undefined) delete mem[k]; save(); changed();
+    const norm2 = x => String(x || "").trim().toLowerCase().replace(/\s+/g, " "), now = norm2(after);
+    if (norm2(before) === now) return;
+    // (only what belongs to somebody else ends: the name a page restores when it opens is the same person again, and keeps the unlock it carried across Settings' reload)
+    const s = sess && sess.p !== undefined && sess.p !== now ? sess : null; if (s) { sess = null; dropCarry(); }
+    load(); for (const k of Object.keys(mem)) if (mem[k] && mem[k].p !== undefined && mem[k].p !== now) delete mem[k]; save(); changed();
     if (s && s.t) callOp("repoLock", { sessionToken: s.t }).catch(() => {});
   }
+
   function drop(info) {
     if (!info) return;
     if (info.session || info.action === "session") { loadSession(); if (sess && sess.t === info.token) { sess = null; saveSession(); } changed(); return; }
@@ -327,7 +349,7 @@ input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!imp
   function status() { const s = loadSession(); return { open: !!s, until: s ? s.e : 0 }; }
   /** Lock now: this computer forgets the session first (so the lock holds even when the server cannot be reached), then the server deletes it. */
   async function lockNow() {
-    const s = loadSession(); sess = null; saveSession(); mem = {}; save(); changed();
+    const s = loadSession(); sess = null; saveSession(); dropCarry(); mem = {}; save(); changed();
     if (!s) return { ok: true, server: true };
     const ans = await callOp("repoLock", { sessionToken: s.t });
     return { ok: true, server: !!ans && ans.ok === true };
@@ -374,9 +396,9 @@ input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!imp
     el.addEventListener("mousedown", block, true); el.addEventListener("keydown", block, true);
   }
 
-  load(); endLegacySession();   // (PERSON: no unlock is shared between tabs or kept across a reload any more, so no storage listener either)
+  load(); endLegacySession(); pickCarry();   // (PERSON: no unlock is shared between tabs or kept across a reload any more, so no storage listener either)
   if (doc) { try { if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", () => { css(); changed(); }); else { css(); changed(); } } catch (_) { /* no page */ } }
-  const api = { ensure, call, unlocked, find, forget, mark, gate, onChange, isRepoLocked, lockNow, status, verify, untilText, submitInline, personChanged, messages: SAY, cancelled: e => !!e && e.cancelled === true, configure: h => { hook = h || null; }, KEY, _held: () => { load(); return Object.keys(mem); } };
+  const api = { ensure, call, unlocked, find, forget, mark, gate, onChange, isRepoLocked, lockNow, status, verify, untilText, submitInline, personChanged, carry, messages: SAY, cancelled: e => !!e && e.cancelled === true, configure: h => { hook = h || null; }, KEY, _held: () => { load(); return Object.keys(mem); } };
   root.CharmNestRepoLock = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

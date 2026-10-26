@@ -8312,7 +8312,7 @@ function openSettingsNow() {
     const on = $("#stSbOn");
     if (on) { const isOn = sb.on(); on.textContent = isOn ? "Back to the real orders" : "Rehearse a run in the sandbox";
       on.onclick = () => {
-        if (sb.on()) { S.settings.sandbox = "off"; saveSettings(); toast("Sandbox off — reloading", "ok", 3000); setTimeout(() => location.reload(), 600); return; }
+        if (sb.on()) { S.settings.sandbox = "off"; saveSettings(); try { window.CharmNestRepoLock && CharmNestRepoLock.lockNow().catch(() => {}); } catch (_) {} toast("Sandbox off — reloading", "ok", 3000); setTimeout(() => location.reload(), 600); return; }   // (PERSON: back to production locked)
         on.disabled = true; on.textContent = "Switching on…";
         sb.enable().catch(e => { toast(`Sandbox: ${e.message}`, "bad", 9000); on.disabled = false; on.textContent = "Rehearse a run in the sandbox"; });
       }; } }
@@ -8511,7 +8511,7 @@ boot();
 <script src="charm-nest-master-admin.js?v=20261011-ma1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
 <!-- charm-nest-sandbox-families.js and charm-nest-sandbox-browser.js load when needed (Sandbox.loadScripts in charm-nest-bridge.js: a page in the sandbox, Settings opened, a reset) -->
-<script src="charm-nest-repo-lock.js?v=20261011-rpu1-as1-sv1-per1"></script>
+<script src="charm-nest-repo-lock.js?v=20261011-rpu1-as1-sv1-per2"></script>
 <!-- put a master charm's SKU on one existing Etsy listing (charm-nest-etsy-link.js, SWANSKU 12 Oct 2026): the Etsy chip on a master card of the Library, behind the repo password -->
 <script src="charm-nest-etsy-link.js?v=20261012-el1-cs1-fm1-bt1-dh1"></script>
 <!-- put ALL the queued SKUs on Etsy in one press (charm-nest-etsy-batch.js + charm-nest-etsy-queue.json, ETSYBATCH 13 Oct 2026): one more line in the Etsy chip's panel, one password entry, one request per listing -->

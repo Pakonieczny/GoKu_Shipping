@@ -18660,6 +18660,7 @@ const Sandbox = window.Sandbox = (() => {
     S.settings.sandbox = "on"; saveSettings();
     hold({ dirty: true }); setNext("start");
     toast(`Sandbox ON — reloading; it clears the previous sandbox, then pulls the ${want()} newest Etsy orders`, "ok", 5000);
+    try { if (window.CharmNestRepoLock && CharmNestRepoLock.carry) CharmNestRepoLock.carry(); } catch (_) {}   // (PERSON, 26 Oct 2026: the password given at Settings starts the pull after this reload, in this tab only)
     setTimeout(() => location.reload(), 700);
   }
   /** After a reload in the sandbox. A sandbox that is waiting (switched on just now, or cleaned) starts by itself when the page
@@ -18914,6 +18915,7 @@ const Sandbox = window.Sandbox = (() => {
       try { sessionStorage.setItem("cn.sandboxResetNote", JSON.stringify({ text, bad })); sessionStorage.removeItem("cn.sandboxAutoPull"); } catch (_) {}
       line(`${text} · reloading`, bad); toast(text, bad ? "bad" : "ok", 7000);
       if (btn) { const sp = document.createElement("span"); sp.className = "spin"; sp.setAttribute("aria-hidden", "true"); btn.replaceChildren(sp, document.createTextNode("Reloading…")); }
+      try { if (window.CharmNestRepoLock && CharmNestRepoLock.carry) CharmNestRepoLock.carry(); } catch (_) {}   // (PERSON, 26 Oct 2026: the Start after this reload needs no second password, in this tab only)
       reloading = true; setTimeout(() => location.reload(), 1500);
       return { ok: true, records, files, text };
     } catch (e) {

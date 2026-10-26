@@ -231,9 +231,12 @@ async function start(opts = {}) {
   /* The Charm Repo is locked for uploads, removals, changes and downloads (charm-nest-repo-lock.js): the page asks for a password and keeps
      the token it is given in sessionStorage. A test that is not about the lock must not wait for a person, so the sorter page is served
      with an unlock token already in its tab's sessionStorage (`other` serves every upload / change / download; a delete is never held).
-     The token is made new each run and is the fake server's (st.repoToken, srv.repoToken); { repoSeed: false } serves the page locked. */
+     The token is made new each run and is the fake server's (st.repoToken, srv.repoToken); { repoSeed: false } serves the page locked.
+     PERSON (26 Oct 2026): nothing is kept for the computer any more, so the Settings ops' unlock (the sandbox's pull, reset, a purge) is seeded as the tab's carried
+     unlock (cn.repoCarry.v1, as Settings carries it across its own reload), with no person on it: it serves those ops whoever signs in. Opening Settings still asks
+     (unlockSettings). */
   const repoToken = 'tt-' + crypto.randomBytes(12).toString('hex'); st.repoToken = repoToken;
-  const repoSeed = opts.repoSeed === false ? '' : `<script>try{var k='cn.repoLock.v1';if(!sessionStorage.getItem(k))sessionStorage.setItem(k,JSON.stringify({other:{t:${JSON.stringify(repoToken)},e:Date.now()+8*3600*1000}}))}catch(_){}try{var q='cn.repoSession.v1';if(!localStorage.getItem(q))localStorage.setItem(q,JSON.stringify({t:${JSON.stringify(repoToken)},e:Date.now()+8*3600*1000}))}catch(_){}</script>`;
+  const repoSeed = opts.repoSeed === false ? '' : `<script>try{var k='cn.repoLock.v1';if(!sessionStorage.getItem(k))sessionStorage.setItem(k,JSON.stringify({other:{t:${JSON.stringify(repoToken)},e:Date.now()+8*3600*1000}}))}catch(_){}try{var q='cn.repoCarry.v1';if(!sessionStorage.getItem(q))sessionStorage.setItem(q,JSON.stringify({t:${JSON.stringify(repoToken)},e:Date.now()+8*3600*1000}))}catch(_){}</script>`;
   const handler = (base) => async (req, res) => {
     try {
       if (req.method === 'OPTIONS') return json(res, 204, {});

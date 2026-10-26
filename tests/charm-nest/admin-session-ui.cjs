@@ -145,6 +145,21 @@ const sha = s => crypto.createHash('sha256').update(s).digest('hex');
   await new Promise(r => setTimeout(r, 500));
   ok(!(await page.evaluate(() => CharmNestRepoLock.unlocked('settings'))) && sessionDocs().length === 0, 'Lock now: Settings shut, the tab and the server both forgot it');
 
+  // 7b · Settings' own reload (the sandbox switched on or reset) carries its unlock in this tab, for the Settings ops alone; a sign-out ends it
+  await page.evaluate(() => { try { localStorage.setItem('cn.employee', 'Paul K'); } catch (_) {} });
+  await ready(page);
+  await openSettings(page);
+  await page.waitForSelector('dialog.repoDlg[open][data-repo-action=settings]');
+  await typeAndGo(page, REPO_TEST.password);
+  await page.waitForFunction(() => !document.querySelector('dialog.repoDlg') && !!document.querySelector('#dlgSettings[open]'), null, { timeout: 15000 });
+  ok(await page.evaluate(() => CharmNestRepoLock.carry()), 'Settings keeps its unlock for the reload it starts itself');
+  await ready(page);
+  ok(await page.evaluate(() => CharmNestRepoLock.unlocked('settings') && !CharmNestRepoLock.unlocked('download') && !CharmNestRepoLock.unlocked('modify') && !CharmNestRepoLock.unlocked('upload')), 'after that reload the sandbox\'s Settings ops are served; a download, a change or an upload is not');
+  ok(!(await page.evaluate(() => Object.keys(localStorage).some(k => /repo/i.test(k)))), 'and still nothing is kept for the computer');
+  await askOnce(page, 'opening Settings still asks for the password');
+  await page.evaluate(() => { B.employee = ''; });
+  ok(!(await page.evaluate(() => CharmNestRepoLock.unlocked('settings'))) && !(await page.evaluate(() => sessionStorage.getItem('cn.repoCarry.v1'))), 'a sign-out ends the carried unlock too');
+
   // 8 · nothing the page kept, logged or sent holds the password; the token is only where it should be
   const all = JSON.stringify([...st.docs.entries()]);
   ok(!all.includes(REPO_TEST.password) && !all.includes(WRONG), 'the in-memory Firestore holds neither password');
