@@ -16165,8 +16165,10 @@ const Review = window.Review = (() => {
       for (const rr of Orders.rows()) {
         if (!same(rr) || (rr.poolIds || []).length || rr.state === "committed" || (O.FINISHED_LINE && O.FINISHED_LINE.has(rr.state) && rr.state !== "noDesign")) continue;
         await repool(rr);
-        const k = "o:" + rr.key, rid = rr.order.receiptId, on = [...new Set((rr.poolIds || []).map(id => allSheets().find(sh => sh.charms.some(c => c.poolId === id))).filter(Boolean).map(rlName))];
-        try { flow.line(k, on.length ? `Order ${rid}: now ${sku}, on ${on.join(", ")}` : (rr.poolIds || []).length ? `Order ${rid}: now ${sku} (it goes onto a sheet with the run's next step)` : `Order ${rid}: reads ${sku}, but no piece was made`, on.length || (rr.poolIds || []).length ? "done" : "warn", on.length || (rr.poolIds || []).length ? "" : rr.reason || (rr.problems || []).map(p => p.kind).join(", ") || rr.state); } catch (_) { /* a word only */ }
+        // (placed = in the sheet's placements; a piece only given to a sheet is placed when that sheet is next arranged: said so, never "on" it)
+        const k = "o:" + rr.key, rid = rr.order.receiptId, ids = rr.poolIds || [], where = ids.map(id => { const sh = allSheets().find(z => z.charms.some(c => c.poolId === id)); if (!sh) return null; const c = sh.charms.find(z => z.poolId === id); return { name: rlName(sh), placed: !!(c && sh.placements.some(p => p.id === c.id)) }; }).filter(Boolean);
+        const placed = [...new Set(where.filter(w => w.placed).map(w => w.name))], given = [...new Set(where.filter(w => !w.placed).map(w => w.name))];
+        try { flow.line(k, placed.length ? `Order ${rid}: now ${sku}, placed on ${placed.join(", ")}` : given.length ? `Order ${rid}: now ${sku}, going onto ${given.join(", ")} (placed when it is next arranged)` : ids.length ? `Order ${rid}: now ${sku} (it goes onto a sheet with the run's next step)` : `Order ${rid}: reads ${sku}, but no piece was made`, ids.length ? "done" : "warn", ids.length ? "" : rr.reason || (rr.problems || []).map(p => p.kind).join(", ") || rr.state); } catch (_) { /* a word only */ }
       }
     };
     try {

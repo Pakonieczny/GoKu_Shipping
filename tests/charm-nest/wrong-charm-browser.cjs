@@ -3,13 +3,15 @@
 // order's piece (the order window's Vector design, the Orders card's) opens a picker (the Review card's similar charms + the master search); the pick, confirmed in one line, is the SAME saved
 // link a Review pick writes (CharmNestReviewLink.pick: Charm_Sku_Aliases/{listing}.bySku[the SKU as bought]), which beats the exact master match for THIS listing only, and LISTPICK re-makes
 // every open order of the listing. Real headless Chromium over the repo's fake site (bridge-server.cjs: the REAL charmNestLibrary handler on an in-memory Firestore; nothing leaves the machine).
-// The only stand-in is the nest (the solver), as in listing-pick-relink-browser.cjs.
-//   A 4193072538  Paul's order, on the open GF Sheet 1                 → "Wrong charm?" → MOON_3288 from the library search → swapped on GF Sheet 1
+// The only stand-ins are the nest (the solver), as in listing-pick-relink-browser.cjs, and the Etsy write (editSkuEtsy), as in edit-sku-live.cjs.
+// SKUCARD / EDITSKU (26 Oct 2026): the order window's "Wrong charm?" and its inline picker are gone; the SKU card's Suggest shows the similar charms as tiles and Change opens the Change SKU
+// window (Review.editSku: the same saved link and LISTPICK, plus the Etsy write for this listing only, plus every unmade line of the listing made up at once), its progress drawn in the window.
+//   A 4193072538  Paul's order, on the open GF Sheet 1                 → Change SKU → MOON_3288 pasted → swapped on GF Sheet 1
 //   C 4193072539  the same listing, on GF Sheet 1                       → switches too
-//   B 4193072540  the same listing, not pooled yet                      → reads MOON_3288, nothing written for it
+//   B 4193072540  the same listing, not pooled yet                      → reads MOON_3288, made up at once from it (Edit SKU)
 //   D 4193072541  the same listing, CUT on GF Sheet 2                   → flagged and held for a person, nothing physical changes
 //   X 4193079999  ANOTHER listing with the same SKU, on GF Sheet 1      → untouched
-//   then a reload (a fresh page over the same cloud): the listing reads MOON_3288, X still the pair; the Orders card's "Wrong charm?" opens the window with the picker
+//   then a reload (a fresh page over the same cloud): the listing reads MOON_3288, X still the pair; the Orders card's "Wrong charm?" opens the window with its suggestions
 //   node tests/charm-nest/wrong-charm-browser.cjs        (PW_DIR=<dir holding playwright-core>, CHROMIUM=<chrome>)
 'use strict';
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
@@ -132,56 +134,84 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
   const sheetsNow = page => page.evaluate(() => Object.fromEntries(CN.S.sheets.gold.pages.map(p => [p.sheetId || 'page' + p.page, { charms: p.charms.map(c => [c.poolId, c.sku || null]), placed: p.placements.map(pl => (p.charms.find(c => c.id === pl.id) || {}).poolId), status: p.status }])));
   const writesFor = (from, ids) => st.calls.slice(from).filter(c => c.name === 'charmNestLibrary' && /^(poolPut|poolUpdate|putSheet)$/.test(String(c.op)) && JSON.stringify(c.body).match(new RegExp(ids.join('|'))));
   const pieceWrites = (from, ids) => st.calls.slice(from).filter(c => c.name === 'charmNestLibrary' && /^(poolPut|poolUpdate)$/.test(String(c.op)) && JSON.stringify(c.body).match(new RegExp(ids.join('|'))));
-  const until = async (fn, ms, what) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t0 > ms) throw new Error('timed out: ' + what); await sleep(150); } };
+  const until = async (fn, ms, what) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t0 > ms) throw new Error('timed out: ' + (typeof what === 'function' ? await what() : what)); await sleep(150); } };
   const signIn = page => page.evaluate(() => { if (!B.employee) B.employee = 'Paul'; window.__asked = []; window.confirm = m => { window.__asked.push(m); return true; }; return B.employee; });
   const openWin = async (page, rid) => {
     await page.evaluate(rid => { const r = B.orders.rows.find(x => x.order.receiptId === rid); OrderWin.open(r.key); }, rid);
-    await until(() => page.evaluate(() => OrderWin.isOpen() && !!document.getElementById('owWrongCharm')), 15000, 'the order window');
+    await until(() => page.evaluate(() => OrderWin.isOpen() && !!(document.getElementById('owSkuCard') || {}).dataset.state), 15000, 'the order window with its SKU card');
   };
+  // (EDITSKU Etsy: the page's editSkuEtsy call is answered here as the server answers a done write, as in edit-sku-live.cjs; without it the real server would try the real Etsy)
+  const etsyStandIn = page => page.evaluate(() => { const real = window.api; window.__etsy = []; window.api = (fn, body, o) => body && body.op === 'editSkuEtsy' ? (window.__etsy.push(JSON.parse(JSON.stringify(body))), new Promise(r => setTimeout(() => r({ ok: true, state: 'linked', listingId: body.listingId, sku: body.sku, changed: 2, verified: true, beforePath: 'x/before.json' }), 300))) : real(fn, body, o); });
+  const dlgOpen = page => page.evaluate(() => document.getElementById('owSkuDlg').open);
   try {
     const one = await openPage('Paul');
     const read0 = await setup(one.page, { sheets: true, pieces: true });
     assert(read0.filter(r => [A, C, B_, D, X].includes(r[0])).every(r => r[1] === OLD && r[2] === 'transaction'), 'before the correction the five lines read as the exact master SKU: ' + JSON.stringify(read0));
     assert.equal(await signIn(one.page), 'Paul', 'Paul is signed in');
+    await etsyStandIn(one.page);
     const w0 = st.calls.length;
-    /* 1 · the button: on a matched line only */
+    /* 1 · the SKU card (SKUCARD, 26 Oct 2026: "Wrong charm?" of the order window is the card's Suggest and Change now): the SKU, its state, Copy / Suggest / Change */
     await openWin(one.page, A);
-    const btn = await one.page.evaluate(() => { const b = document.getElementById('owWrongCharm'); return { shown: !b.hidden && b.offsetParent !== null, text: b.textContent, title: b.title, picker: document.getElementById('owCharmFix').hidden }; });
-    assert.deepEqual([btn.shown, btn.text, btn.picker], [true, 'Wrong charm?', true], 'the order window shows "Wrong charm?" for the matched line, its picker shut: ' + JSON.stringify(btn));
-    assert(btn.title.includes(LID) && btn.title.includes(OLD), 'its title names the listing and the charm matched now: ' + btn.title);
-    // a line that still asks which charm it is is answered on its Review card: no button
+    const card = await one.page.evaluate(() => { const g = id => document.getElementById(id), vis = n => !!n && !n.hidden && n.offsetParent !== null; return { shown: vis(g('owSkuCard')), sku: g('owSku').textContent, state: g('owSkuCard').dataset.state, mark: g('owSkuState').title, btns: ['owCopy', 'owSuggest', 'owEditSku'].map(id => vis(g(id)) && !g(id).disabled), edit: g('owEditSku').title, suggest: g('owSuggest').title, n: g('owSuggestN').textContent, tray: g('owSkuTray').hidden, expanded: g('owSuggest').getAttribute('aria-expanded'), old: [!!g('owWrongCharm'), !!g('owCharmFix')] }; });
+    assert.deepEqual([card.shown, card.sku, card.state, card.btns, card.tray, card.expanded, card.old], [true, 'SKU: ' + OLD, 'ok', [true, true, true], true, 'false', [false, false]], 'the order window shows the SKU card for the matched line (its SKU, the "ok" mark, Copy / Suggest / Change), the suggestions shut, no "Wrong charm?" button or inline picker: ' + JSON.stringify(card));
+    assert(card.edit.includes(LID) && /repo matches/.test(card.mark), 'Change names the listing; the mark says a repo charm matches: ' + JSON.stringify([card.edit, card.mark]));
+    assert(/^\d+ similar charms? in the repo$/.test(card.suggest) && card.suggest.startsWith(card.n + ' '), 'Suggest says how many similar charms it has: ' + JSON.stringify([card.suggest, card.n]));
+    // a line that still asks which charm it is is answered on its Review card: the Orders card's "Wrong charm?" (Review.fixMount) is not offered for it
     const asks = await one.page.evaluate(() => { const r = B.orders.rows[0], sp = Object.assign({}, r.spec, { problems: [{ kind: 'unmatchedSku' }] }); return Review.fixOffer(Object.assign({}, r, { spec: sp })).ok; });
     assert.equal(asks, false, 'a line with an unmatched SKU question is not offered the correction');
-    pass('"Wrong charm?" stands beside the SKU under the Vector design of a matched line (never one that still asks)');
-    /* 2 · the picker: the Review card's similar charms and the library search */
-    await one.page.click('#owWrongCharm');
-    await until(() => one.page.evaluate(() => !document.getElementById('owCharmFix').hidden && !!document.querySelector('#owCharmFix [data-f=dsku]')), 5000, 'the picker');
-    const pk = await one.page.evaluate(() => { const h = document.getElementById('owCharmFix'); return { chips: [...h.querySelectorAll('[data-dsku]')].map(b => b.dataset.dsku), cur: [...h.querySelectorAll('[data-cur]')].map(b => b.dataset.cur), ask: h.querySelector('.sibAsk').textContent, note: h.querySelector('.dsFor:last-child').textContent, expanded: document.getElementById('owWrongCharm').getAttribute('aria-expanded'), list: h.querySelector('[data-f=dsku]').getAttribute('list') }; });
-    assert(pk.chips.includes(LIKE) && !pk.chips.includes(OLD), 'the similar charms of the Review card are offered (one tap each), the current one is not a tap: ' + JSON.stringify(pk));
-    assert.deepEqual([pk.cur, pk.expanded, pk.list], [[OLD], 'true', 'cnMasterSkus'], 'the charm matched now is marked; the search reads the master index: ' + JSON.stringify(pk));
-    assert(/Kept for listing 1819191541 and the SKU “TINY MOON & STARS 2” only/.test(pk.note) && /Etsy is not changed/.test(pk.note), 'the picker says what the pick reaches: ' + pk.note);
-    if (process.env.CN_SHOT) await one.page.locator('#orderWin .owPics').screenshot({ path: path.join(process.env.CN_SHOT, 'wrong-charm-picker.png') }).catch(() => {});   // (a look, only when asked: CN_SHOT=<dir>)
-    // Cancel puts it away, nothing written
-    await one.page.click('#owCharmFix [data-a=close]');
-    assert.equal(await one.page.evaluate(() => document.getElementById('owCharmFix').hidden), true, 'Cancel puts the picker away');
-    // a "no" to the confirming line writes nothing
-    await one.page.click('#owWrongCharm');
-    await one.page.evaluate(() => { window.confirm = m => { window.__asked.push(m); return false; }; });
-    await one.page.fill('#owCharmFix [data-f=dsku]', NEW);
-    await one.page.click('#owCharmFix [data-a=dsku]');
-    await until(() => one.page.evaluate(() => window.__asked.length === 1), 5000, 'the confirming line');
+    pass('the SKU card stands under the Vector design of a matched line: "SKU: TINY MOON & STARS 2", its mark, Copy / Suggest / Change (the Orders card\'s "Wrong charm?" never for a line that still asks)');
+    /* 2 · the suggestions (the Review card's similar charms, one tile each) and the Change SKU window (the repo search, what the change reaches); Cancel saves nothing */
+    await one.page.click('#owSuggest');
+    await until(() => one.page.evaluate(() => !document.getElementById('owSkuTray').hidden && !!document.querySelector('#owSkuTray [data-sku]')), 5000, 'the suggestions tray');
+    const tr = await one.page.evaluate(() => ({ tiles: [...document.querySelectorAll('#owSkuTray [data-sku]')].map(b => b.dataset.sku), n: document.getElementById('owSuggestN').textContent, expanded: document.getElementById('owSuggest').getAttribute('aria-expanded') }));
+    assert(tr.tiles.includes(LIKE) && !tr.tiles.includes(OLD), 'the similar charms of the Review card are offered (one tap each), the current one is not a tile: ' + JSON.stringify(tr));
+    assert.deepEqual([tr.expanded, tr.n], ['true', String(tr.tiles.length)], 'Suggest is pressed and counts its tiles: ' + JSON.stringify(tr));
+    if (process.env.CN_SHOT) await one.page.locator('#orderWin .owPics').screenshot({ path: path.join(process.env.CN_SHOT, 'wrong-charm-suggest.png') }).catch(() => {});   // (a look, only when asked: CN_SHOT=<dir>)
+    // Suggest again puts the tray away
+    await one.page.click('#owSuggest');
+    assert.deepEqual(await one.page.evaluate(() => [document.getElementById('owSkuTray').hidden, document.getElementById('owSuggest').getAttribute('aria-expanded')]), [true, 'false'], 'Suggest again puts the tray away');
+    // a tile opens the Change SKU window with that charm as the new SKU
+    await one.page.click('#owSuggest');
+    await one.page.click(`#owSkuTray [data-sku="${LIKE}"]`);
+    await until(() => dlgOpen(one.page), 5000, 'the Change SKU window, from a tile');
+    const dl = await one.page.evaluate(() => ({ from: document.getElementById('owSkuFrom').textContent, input: document.getElementById('owSkuInput').value, to: document.getElementById('owSkuTo').dataset.s, toName: document.getElementById('owSkuToName').textContent, save: !document.getElementById('owSkuSave').disabled, chips: [...document.querySelectorAll('#owSkuScope .seChip')].map(c => [c.textContent, c.title]) }));
+    assert.deepEqual([dl.from, dl.input, dl.to, dl.toName, dl.save], [OLD, LIKE, 'ok', LIKE, true], 'the tile is the new SKU: FROM the Etsy SKU → TO the tile, Save offered: ' + JSON.stringify(dl));
+    // (what the change reaches, as the old confirming line counted it: Etsy listing 1819191541 only, its 4 open orders (A, B, C, D; X is another listing), GF Sheet 1, D's cut piece kept)
+    assert.deepEqual(dl.chips.map(c => c[0]), [`Etsy ${LID}`, '4 orders', '1 sheet', '1 cut · kept'], 'the window says what the change reaches: ' + JSON.stringify(dl.chips));
+    assert(/only its products with the SKU “TINY MOON & STARS 2” take the new one; other listings are not changed/.test(dl.chips[0][1]) && /GF Sheet 1/.test(dl.chips[2][1]) && /GF Sheet 2/.test(dl.chips[3][1]), 'this listing and its SKU only; the sheet and the cut piece named: ' + JSON.stringify(dl.chips));
+    // the search reads the repo: the words typed narrow it; the charm matched now is marked and is not a tap
+    await one.page.fill('#owSkuInput', 'tiny moon');
+    await until(() => one.page.evaluate(OLD => !!document.querySelector(`#owSkuList [data-sku="${CSS.escape(OLD)}"]`), OLD), 5000, 'typing "tiny moon" lists the repo charms');
+    const hits = await one.page.evaluate(() => [...document.querySelectorAll('#owSkuList [data-sku]')].map(b => [b.dataset.sku, b.disabled]));
+    assert(hits.every(([k]) => /TINY/.test(k) && /MOON/.test(k)) && hits.some(([k, off]) => k === LIKE && !off) && hits.some(([k, off]) => k === OLD && off), 'only the repo SKUs with both words are listed; the charm matched now is marked, not a tap: ' + JSON.stringify(hits));
+    assert(await one.page.evaluate(() => document.getElementById('owSkuSave').disabled), 'words alone are no pick: Save waits for a tile or the exact SKU');
+    // Cancel closes the window, nothing written
+    await one.page.click('#owSkuCancel');
+    await until(async () => !(await dlgOpen(one.page)), 3000, 'Cancel closes the Change SKU window');
     await sleep(300);
-    assert.equal(st.calls.slice(w0).filter(c => c.op === 'aliasPut' || c.op === 'optionMapPut').length, 0, 'answered "no": nothing is saved');
+    assert.equal(st.calls.slice(w0).filter(c => c.op === 'aliasPut' || c.op === 'optionMapPut').length, 0, 'Cancel: nothing is saved');
+    assert.deepEqual(await one.page.evaluate(() => window.__etsy), [], 'Cancel: nothing is sent to Etsy');
     assert(!st.doc(ALIASES, LID), 'no link for the listing yet');
-    pass('the picker offers the Review card\'s similar charms and the master search; Cancel and a "no" save nothing');
-    /* 3 · the pick: confirmed in one line, the listing's saved link written, every open order of the listing re-made */
-    await one.page.evaluate(() => { window.__asked = []; window.confirm = m => { window.__asked.push(m); return true; }; });
-    await one.page.fill('#owCharmFix [data-f=dsku]', NEW);
-    await one.page.click('#owCharmFix [data-a=dsku]');
-    await until(() => one.page.evaluate(() => window.__asked.length === 1), 5000, 'the confirming line');
-    const asked = await one.page.evaluate(() => window.__asked[0]);
-    assert(asked.startsWith(`Use ${NEW} for every order of listing ${LID}? 4 open orders of it change (3 already made`), 'one confirming line with the count of the listing\'s open orders (A, B, C, D; X is another listing): ' + asked);
-    await until(() => one.page.evaluate(A => { const s = CN.S.sheets.gold.pages.find(p => p.sheetId === 'wc-gold-1'); const c = s.charms.find(x => x.poolId === A + '_5100000001_1'); return c && c.sku === 'MOON_3288' && s.placements.some(pl => pl.id === c.id) && CN.S.sheets.gold.pages.every(p => !['nesting', 'queued', 'ready'].includes(p.status)); }, A), 30000, 'A swapped on GF Sheet 1');
+    pass('Suggest shows the Review card\'s similar charms as tiles and puts them away; a tile opens the Change SKU window (what it reaches, the repo search, the current charm marked); Cancel saves nothing');
+    /* 3 · the pick: Change, the exact SKU pasted, Save (the yes: no confirming line); the listing's saved link written, Etsy written for this listing only, every open order of the listing re-made */
+    await until(() => one.page.evaluate(() => !document.getElementById('owEditSku').disabled), 8000, 'Change offered');
+    await one.page.click('#owEditSku');
+    await until(() => dlgOpen(one.page), 5000, 'the Change SKU window');
+    assert.equal(await one.page.evaluate(() => document.getElementById('owSkuInput').value), '', 'Change opens with nothing picked');
+    await one.page.fill('#owSkuInput', NEW);
+    await until(() => one.page.evaluate(() => !document.getElementById('owSkuSave').disabled && document.getElementById('owSkuTo').dataset.s === 'ok'), 5000, 'the pasted SKU is found in the repo: Save is offered');
+    await one.page.click('#owSkuSave');
+    await until(() => one.page.evaluate(() => !document.getElementById('owSkuProg').hidden && !!document.querySelector('#owSkuProg .rlFlow') && document.getElementById('owSkuForm').hidden), 8000, 'the window shows the progress of the change');
+    await until(() => one.page.evaluate(() => !!document.querySelector('#owSkuProg .rlFlow[data-done="1"]')), 30000, () => one.page.evaluate(() => 'the progress says the change is completed: ' + JSON.stringify([...document.querySelectorAll('#owSkuProg li')].map(li => [li.dataset.s, li.textContent]))));
+    const fl = await one.page.evaluate(() => { const el = document.querySelector('#owSkuProg .rlFlow'); return { title: el.querySelector('h3').textContent, step: el.querySelector('.rlStep').textContent, sum: el.querySelector('.rlSum').textContent, lines: [...el.querySelectorAll('li')].map(li => [li.dataset.s, li.querySelector('.rlT').textContent]), save: document.getElementById('owSkuSave').hidden, close: document.getElementById('owSkuCancel').textContent }; });
+    assert(/^Edit SKU · listing 1819191541: TINY MOON & STARS 2 → MOON_3288/.test(fl.title) && /^Completed at \d\d:\d\d · 100%$/.test(fl.step) && /^MOON_3288 for listing 1819191541 · Etsy updated$/.test(fl.sum) && !fl.lines.some(([s]) => s === 'failed'), 'the window\'s progress names the change, is completed and sums it up, nothing failed: ' + JSON.stringify(fl));
+    assert.deepEqual([fl.save, fl.close], [true, 'Close'], 'once completed: Save is gone, Close is offered');
+    await one.page.click('#owSkuCancel');
+    await until(async () => !(await dlgOpen(one.page)), 5000, 'Close closes the Change SKU window');
+    assert.equal(await one.page.evaluate(() => window.__asked.length), 0, 'no confirming line: Save in the window is the yes');
+    // (A's swap written as the sheet stands; GF Sheet 1 itself may stay "ready": B, made up at once by the SKU edit, waits there for the run's next nest, see below)
+    await until(() => one.page.evaluate(A => { const s = CN.S.sheets.gold.pages.find(p => p.sheetId === 'wc-gold-1'); const c = s.charms.find(x => x.poolId === A + '_5100000001_1'); return c && c.sku === 'MOON_3288' && s.placements.some(pl => pl.id === c.id) && CN.S.sheets.gold.pages.every(p => !['nesting', 'finishing', 'queued'].includes(p.status) && !p._inplaceWrite); }, A), 30000,
+      () => one.page.evaluate(() => 'A swapped on GF Sheet 1: ' + JSON.stringify({ rows: B.orders.rows.map(r => [r.order.receiptId, r.state, r.spec.designSku, r.poolIds, r.hold || null]), pool: [...B.pool.rows.values()].map(p => [p.poolId, p.sku, p.state, p.sheetId]), sheets: CN.S.sheets.gold.pages.map(p => [p.sheetId, p.status, p._inplaceWrite || null, p.charms.map(c => [c.poolId, c.sku, (c.orderInfo || {}).sku, p.placements.some(pl => pl.id === c.id)])]) })));
     await until(() => one.page.evaluate(C => { const s = Object.fromEntries(CN.S.sheets.gold.pages.map(p => [p.sheetId, p])); return Object.values(s).some(sh => sh.charms.some(c => c.poolId === C + '_5100000002_1' && c.sku === 'MOON_3288' && sh.placements.some(pl => pl.id === c.id))); }, C), 30000, 'C swapped');
     await sleep(600);
     const link = st.doc(ALIASES, LID);
@@ -189,7 +219,10 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     assert(!st.doc(ALIASES, OTHER), 'no link is written for the other listing');
     const puts = st.calls.slice(w0).filter(c => c.op === 'aliasPut');
     assert.deepEqual(puts.map(c => [c.body.listingId, c.body.fromSku, c.body.sku, c.body.by]), [[LID, OLD, NEW, 'Paul']], 'ONE aliasPut, keyed as the matcher keys it (listing + the SKU as bought): ' + JSON.stringify(puts.map(c => c.body)));
-    assert.equal(st.calls.slice(w0).filter(c => /etsy/i.test(String(c.name)) && !/get|read|list/i.test(String(c.op))).length, 0, 'Etsy is not changed');
+    const ets = await one.page.evaluate(() => window.__etsy);
+    assert.deepEqual(ets.map(b => [b.listingId, b.sku, b.onlySku, b.by]), [[LID, NEW, OLD, 'Paul']], 'ONE Etsy write, for this listing only (not X\'s), and only for its products with the SKU as bought: ' + JSON.stringify(ets));
+    assert.equal(st.calls.slice(w0).filter(c => c.op === 'editSkuEtsy' || (/etsy/i.test(String(c.name)) && !/get|read|list/i.test(String(c.op)))).length, 0, 'nothing reaches the real Etsy (the page\'s stand-in answered the write)');
+    assert(fl.lines.some(([s, t]) => s === 'done' && /^Etsy listing 1819191541 updated: “TINY MOON & STARS 2” → MOON_3288/.test(t)), 'the Etsy line: ' + JSON.stringify(fl.lines));
     const rows1 = await rowsNow(one.page), sh1 = await sheetsNow(one.page);
     for (const rid of [A, C, B_, D]) assert.equal(rows1[rid].sku, NEW, `${rid} reads ${NEW} now: ${JSON.stringify(rows1[rid])}`);
     for (const rid of [A, C, B_]) assert.equal(rows1[rid].src, 'alias', `${rid} is read by the saved link (it beats the exact SKU match)`);
@@ -198,21 +231,27 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     assert.deepEqual([rows1[A].pieces, rows1[C].pieces], [[NEW], [NEW]], 'A\'s and C\'s pieces are MOON_3288');
     assert(sh1['wc-gold-1'].placed.includes(idA) && sh1['wc-gold-1'].charms.some(([id, sku]) => id === idA && sku === NEW), 'A is swapped on its own sheet, GF Sheet 1: ' + JSON.stringify(sh1['wc-gold-1']));
     assert.equal(sh1['wc-gold-1'].charms.filter(([id]) => id === idA).length, 1, 'one piece of A on the sheet, never two');
-    pass('the pick is confirmed in one line, kept as the listing\'s saved link (listing + SKU), and wins over the exact SKU match: A swapped on GF Sheet 1, C switched, B reads it');
+    pass('the pick (Save in the Change SKU window) is kept as the listing\'s saved link (listing + SKU), wins over the exact SKU match, and is written to Etsy for this listing only: A swapped on GF Sheet 1, C switched, B reads it');
     assert(st.doc(POOL, idX).sku === OLD && sh1['wc-gold-1'].placed.includes(idX) && sh1['wc-gold-1'].charms.some(([id, sku]) => id === idX && sku === OLD), 'X stays on GF Sheet 1 as the pair');
     assert.equal(st.calls.slice(w0).filter(c => /^(poolPut|poolUpdate)$/.test(String(c.op)) && JSON.stringify(c.body).includes(idX)).length, 0, 'no piece record of X is written');
     assert(st.doc(POOL, idD).sku === OLD && rows1[D].state === 'held' && /The listing's charm is now MOON_3288 \(picked by Paul\), but this piece was cut/.test(rows1[D].hold || ''), 'D (cut) is held for a person, its piece untouched: ' + rows1[D].hold);
-    assert.equal(st.calls.slice(w0).filter(c => /^(poolPut|poolUpdate|putSheet)$/.test(String(c.op)) && JSON.stringify(c.body).includes(B_)).length, 0, 'nothing is written for B (not made yet)');
-    pass('another listing with the same SKU is untouched; the cut piece is held for a person; the order not made yet just reads the pick');
-    // the window: the picker is put away and the window reads the pick
-    const win = await one.page.evaluate(() => ({ picker: document.getElementById('owCharmFix').hidden, sku: document.getElementById('owSku').textContent, title: document.getElementById('owWrongCharm').title }));
-    assert(win.picker && win.sku === 'SKU: ' + NEW && win.title.includes(NEW), 'the picker is put away and the window reads MOON_3288: ' + JSON.stringify(win));
+    // (EDITSKU: Review.editSku also makes up AT ONCE every open line of the listing and SKU that has no piece yet (its makeUp, after fixCharm), so B is no longer only read: its piece is made from
+    //  MOON_3288, never the old design, and joins the open GF Sheet 1 for the run's next nest (this run is manual: no nest starts here); nothing placed there moves for it)
+    const idB = pid(B_, 9), bW = pieceWrites(w0, [idB]), recsOf = (o, out = []) => { if (o && typeof o === 'object') { if (o.poolId === idB && o.sku != null) out.push(o.sku); for (const v of Object.values(o)) recsOf(v, out); } return out; }, bSkus = bW.flatMap(c => recsOf(c.body));
+    assert(bSkus.length >= 1 && bSkus.every(k => k === NEW) && rows1[B_].pieces.length === 1 && rows1[B_].pieces[0] === NEW && st.doc(POOL, idB) && st.doc(POOL, idB).sku === NEW, 'B (not made before) is made up at once, from MOON_3288 only: ' + JSON.stringify({ row: rows1[B_], skus: bSkus, writes: bW.map(c => [c.op, c.body]), doc: st.doc(POOL, idB) }));
+    assert(fl.lines.some(([s, t]) => s === 'done' && new RegExp(`^Order ${B_}: now MOON_3288, going onto GF Sheet 1 \\(placed when it is next arranged\\)$`).test(t)), 'B has its line on the panel, saying its piece is not placed yet: ' + JSON.stringify(fl.lines));
+    assert(sh1['wc-gold-1'].charms.some(([id, sku]) => id === idB && sku === NEW) && !sh1['wc-gold-2'].charms.some(([id]) => id === idB), 'B\'s piece joins the open GF Sheet 1, never the cut GF Sheet 2: ' + JSON.stringify(sh1));
+    for (const id of [idA, idC, idX, pid(F(1), 4), pid(F(2), 5)]) assert(sh1['wc-gold-1'].placed.includes(id), `${id} is still placed on GF Sheet 1: ` + JSON.stringify(sh1['wc-gold-1']));
+    pass('another listing with the same SKU is untouched; the cut piece is held for a person; the order not made yet is made up at once from the pick (Edit SKU) and joins the open GF Sheet 1, nothing placed there moving');
+    // the window: the Change SKU window is put away and the SKU card reads the pick (cut as MOON_3288, linked from the Etsy SKU as bought)
+    const win = await one.page.evaluate(() => ({ dlg: document.getElementById('owSkuDlg').open, open: OrderWin.isOpen(), sku: document.getElementById('owSku').textContent, state: document.getElementById('owSkuCard').dataset.state, via: document.getElementById('owSkuVia').hidden ? null : document.getElementById('owSkuVia').textContent }));
+    assert(!win.dlg && win.open && win.sku === 'SKU: ' + NEW && win.state === 'linked' && String(win.via).includes(OLD), 'the Change SKU window is put away over the open order window, whose SKU card reads MOON_3288, linked from the Etsy SKU: ' + JSON.stringify(win));
     // the timeline: "Charm updated from listing pick by Paul"
     await until(async () => { await one.page.evaluate(() => { try { OrderTimeline.flush && OrderTimeline.flush(); } catch (_) {} }); return [A, C, B_, D].every(rid => st.list(TL).some(e => e._id.startsWith(rid + '~') && /^Charm updated from listing pick by Paul/.test(e.text || ''))); }, 20000, 'timeline events');
     assert.equal(st.list(TL).filter(e => e._id.startsWith(X + '~') && /listing pick/.test(e.text || '')).length, 0, 'X has no such event');
     pass('every order of the listing has "Charm updated from listing pick by Paul" on its timeline; the window reads the pick');
     await one.ctx.close();
-    /* 4 · a reload: the saved link is read again; the listing keeps MOON_3288, the other listing its exact match; the Orders card's "Wrong charm?" opens the window with the picker */
+    /* 4 · a reload: the saved link is read again; the listing keeps MOON_3288, the other listing its exact match; the Orders card's "Wrong charm?" opens the window with its suggestions (OrderWin.charmFix(true)) */
     const two = await openPage('Paul');
     await setup(two.page, { sheets: false, pieces: false });
     const rows2 = await rowsNow(two.page);
@@ -222,10 +261,11 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     await until(() => two.page.evaluate(A => { const r = B.orders.rows.find(x => x.order.receiptId === A); const n = document.querySelector(`[data-key="${CSS.escape(r.key)}"] .comparePair figcaption .cfOpen`); return !!n; }, A), 15000, 'the Orders card\'s Wrong charm?');
     const cardTitle = await two.page.evaluate(A => { const r = B.orders.rows.find(x => x.order.receiptId === A); const b = document.querySelector(`[data-key="${CSS.escape(r.key)}"] .cfOpen`); const t = b.title; b.click(); return t; }, A);
     assert(cardTitle.includes(NEW), 'the Orders card names the charm the listing reads now: ' + cardTitle);
-    await until(() => two.page.evaluate(() => OrderWin.isOpen() && !document.getElementById('owCharmFix').hidden && !!document.querySelector('#owCharmFix [data-f=dsku]')), 15000, 'the window opened with its picker');
-    const cur2 = await two.page.evaluate(() => [...document.querySelectorAll('#owCharmFix [data-cur]')].map(b => b.dataset.cur));
-    assert.deepEqual(cur2, [NEW], 'the picker marks MOON_3288 as the charm matched now');
-    pass('a reload keeps MOON_3288 for the listing (and only it); the Orders card\'s "Wrong charm?" opens the order window with the picker');
+    await until(() => two.page.evaluate(() => OrderWin.isOpen() && !!document.getElementById('owSkuCard').dataset.state && !document.getElementById('owSkuTray').hidden && !!document.querySelector('#owSkuTray [data-sku]')), 15000,
+      () => two.page.evaluate(() => 'the window opened with its suggestions: ' + JSON.stringify({ open: OrderWin.isOpen(), state: document.getElementById('owSkuCard').dataset.state, sku: document.getElementById('owSku').textContent, tray: document.getElementById('owSkuTray').hidden, n: document.getElementById('owSuggestN').textContent, suggest: [document.getElementById('owSuggest').disabled, document.getElementById('owSuggest').title] })));
+    const cur2 = await two.page.evaluate(() => ({ sku: document.getElementById('owSku').textContent, state: document.getElementById('owSkuCard').dataset.state, expanded: document.getElementById('owSuggest').getAttribute('aria-expanded'), tiles: [...document.querySelectorAll('#owSkuTray [data-sku]')].map(b => b.dataset.sku) }));
+    assert.deepEqual([cur2.sku, cur2.state, cur2.expanded, cur2.tiles.includes(NEW)], ['SKU: ' + NEW, 'linked', 'true', false], 'the SKU card reads MOON_3288 as the charm matched now (linked from the Etsy SKU), its suggestions open, MOON_3288 not a tile: ' + JSON.stringify(cur2));
+    pass('a reload keeps MOON_3288 for the listing (and only it); the Orders card\'s "Wrong charm?" opens the order window with its suggestions');
     assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
   } finally { await browser.close(); srv.close(); }
   console.log(`wrong-charm-browser: ${n} steps passed`);
