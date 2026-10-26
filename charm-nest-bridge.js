@@ -18002,7 +18002,8 @@ const Review = window.Review = (() => {
   }
   function reviewRow(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
-    const trav=rvTravel(row?.order?.receiptId || it.record?.receiptId || it.rid,false);   // (SEALTRAVEL: every card carries every seal of its order, Open (a held order's ORDER HELD) and Resolved alike)
+    const trav=rvTravel(row?.order?.receiptId || it.record?.receiptId || it.rid,false,it.kind==='customOrder'?['sheet']:null);   // (SEALTRAVEL: every card carries every seal of its order, Open (a held order's ORDER HELD) and Resolved alike)
+    // (Diagnostic, 26 Oct 2026: a Custom Orders card draws its SENT TO SHEET seals after its Send to Sheet / Sent to Sheet button (SEALSHEET, Paul 20 Oct); the strip drew the same seal a second time)
     const stamp=stampOf(it)+'|'+trav.sig;
     const cached=reviewRows.get(it.key);if(cached?.stamp===stamp){Orders.paintTableNotes?.(cached.node);return cached.node;}
     const cu=it.kind==='customOrder',rec=it.record || null,spc=row?.spec?.special || (rec?{label:rec.category || 'Custom order'}:null);
