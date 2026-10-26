@@ -126,6 +126,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       await page.waitForFunction(n => !!(window.CN && window.B) && B.orders.rows.length >= n && CN.S.mode === 'orders', NROWS, { timeout: 90000 }).catch(() => {});
       await page.evaluate(station => { const s = CN.S.settings; s.dsOrigin = station; s.engine = 'solver'; s.budgetS = 8; s.review = 'off'; s.naming = 'off'; s.notify = 'off'; s.sound = 'off'; s.autoCommit = 'on'; s.runMode = 'manual'; s.pullMode = 'all'; s.heartbeatS = 2; s.heartbeatMiss = 2; s.sandboxStream = 'off'; CN.saveSettings(); }, stationOrigin);
     }
+    if (sandbox) await page.waitForFunction(() => !!(window.CN && window.B && window.Engrave && window.RunCtl) && CN.S.settings.sandbox === 'on', null, { timeout: 60000 });   // (the switch reloads the page: its bridge is up again before anything reads B)
     await page.evaluate(() => CN.setMode('orders')); await page.evaluate(() => RunCtl.setMode('auto'));
     const t0 = Date.now();
     for (;;) {
@@ -145,16 +146,16 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
     // the card in a host: what it says, its buttons, its seals, and whether anything lies outside its own box
     read: sel => page.evaluate(sel => {
       const card = document.querySelector(sel); if (!card) return null;
-      const r = card.getBoundingClientRect(), q = s => card.querySelector(s), out = [];
+      const r = card.getBoundingClientRect(), q = s => card.querySelector(s), out = [];   // (the seal row is pressed across the card's top-right corner on purpose, 8 px past its edge: OWHEAD, Paul 16 Oct 2026)
       if (card.classList.contains('engCard')) {   // (the Engraving section's card: one dot, Front and Back, ONE Approve button, the failure line)
-        for (const n of card.querySelectorAll('*')) { if (n.closest('.seal, .sealTool, .sealRing') || !n.getClientRects().length) continue; const b = n.getBoundingClientRect(); if (b.width && b.height && (b.right > r.right + .5 || b.left < r.left - .5)) out.push(n.tagName.toLowerCase() + '.' + String(n.className).split(' ')[0]); }
+        for (const n of card.querySelectorAll('*')) { if (n.closest('.seal, .sealTool, .sealRing, .sealRow') || !n.getClientRects().length) continue; const b = n.getBoundingClientRect(); if (b.width && b.height && (b.right > r.right + .5 || b.left < r.left - .5)) out.push(n.tagName.toLowerCase() + '.' + String(n.className).split(' ')[0]); }
         const sl = [...card.querySelectorAll('.seal svg[data-seal-model]')].map(s => { try { const m = JSON.parse(s.getAttribute('data-seal-model')); return `${m.action}|${m.by}|${m.at}`; } catch (_) { return '?'; } });
         const ab = q('.egApproveButton'), fl = q('.engFail'), cue = q('.engTxt.engCue'), face = f => { const e = q(`.engFace[data-face=${f}] .engTxt`); return e ? e.title || '' : ''; };
         return { state: card.dataset.state, w: Math.round(r.width), out, scrollOver: card.scrollWidth - card.clientWidth, pill: (q('.engDot') || {}).getAttribute ? q('.engDot').getAttribute('aria-label') : '', why: '', sub: cue ? cue.textContent.trim() : '', words: face('back') || face('front'),
           approve: ab ? { text: ab.textContent.trim(), disabled: ab.disabled, live: !!q('[data-e=approve]'), spin: !!ab.querySelector('.spin'), busy: ab.getAttribute('aria-busy') } : null, offWhy: ab ? ab.title : '', fail: fl && !fl.hidden ? fl.textContent.trim() : '', failRole: fl ? fl.getAttribute('role') : null,
           open: '', seals: sl, sealCount: card.querySelectorAll('.seal').length, buttons: [...card.querySelectorAll('button:not(.engThumb):not(.egOpen)')].map(b => b.textContent.trim()), text: card.innerText.replace(/\s+/g, ' ') };
       }
-      for (const n of card.querySelectorAll('*')) { if (n.closest('.seal, .sealTool, .sealRing') || !n.getClientRects().length) continue; const b = n.getBoundingClientRect(); if (b.width && b.height && (b.right > r.right + .5 || b.left < r.left - .5)) out.push(n.tagName.toLowerCase() + '.' + String(n.className).split(' ')[0]); }
+      for (const n of card.querySelectorAll('*')) { if (n.closest('.seal, .sealTool, .sealRing, .sealRow') || !n.getClientRects().length) continue; const b = n.getBoundingClientRect(); if (b.width && b.height && (b.right > r.right + .5 || b.left < r.left - .5)) out.push(n.tagName.toLowerCase() + '.' + String(n.className).split(' ')[0]); }
       const seals = [...card.querySelectorAll('.seal svg[data-seal-model]')].map(s => { try { const m = JSON.parse(s.getAttribute('data-seal-model')); return `${m.action}|${m.by}|${m.at}`; } catch (_) { return '?'; } });
       const ab = q('.egApproveButton'), op = q('[data-e=engrave]');
       return { state: card.dataset.state, w: Math.round(r.width), out, scrollOver: card.scrollWidth - card.clientWidth, pill: (q('.egPill') || {}).textContent || '', why: (q('.egWhy b') || q('.top b') || {}).textContent || '', sub: ((q('.egSub') || {}).textContent || '').trim(), words: (q('.words') || {}).textContent || '',
