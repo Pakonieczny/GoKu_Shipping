@@ -117,17 +117,28 @@ async function main() {
     // 2 · what another device records while the view is open shows on the next refresh, everywhere in the view
     await check('stale data: placement, hold, station scan, cancel and its undo from another device show on the next refresh', async () => {
       let s = await shown(page); const c0 = +s.count;
+      // (26 Oct 2026: the view repaints a beat after the refresh (the placement is worked out from the new steps): each step waits up to 3 s for what it expects, then checks it)
+      const settle = async ok => { const t = Date.now(); while (Date.now() - t < 3000) { try { if (ok(await shown(page))) return; } catch (_) {} await sleep(100); } };
       ev(A.rid, 'placed', Date.now() - 5000, { sheet: 'GF Sheet 3', sheetId: 'sh3', by: 'Maria' }); await refresh(page); await sleep(150);
-      s = await shown(page); assert.match(s.full, /GF Sheet 3/, 'placement: ' + s.full); assert.match(s.rail, /GF Sheet 3/, 'rail placement: ' + s.rail); assert.equal(+s.count, c0 + 1);
-      ev(A.rid, 'held', Date.now() - 4000, { text: 'Customer asked to wait', data: { reason: 'Customer asked to wait' }, by: 'Maria' }); await refresh(page); await sleep(150);
+      // (26 Oct 2026: where a piece is NOW is the sheets' own records (PiecePlacement), not a "placed" step: another device's
+      //  placement with no sheet record holding it still says "Waiting for a sheet" (the fence), but its step shows at once:
+      //  Maria in the Sheet & laser lane, an ON SHEET seal, the count up by one; in the view and in the rail)
+      s = await shown(page); assert.match(s.full, /Waiting for a sheet/, 'placement (PLACEMENT fence): ' + s.full); assert.equal(+s.count, c0 + 1);
+      const tl = await page.evaluate(() => ['#owTimeline', '#owRail'].map(q => document.querySelector(q + ' .tlUI').textContent));
+      for (const t of tl) assert.match(t, /Sheet & laserMaria/, 'the placement\'s step shows who placed it: ' + t.slice(0, 300));
+      ev(A.rid, 'held', Date.now() - 4000, { text: 'Customer asked to wait', data: { reason: 'Customer asked to wait' }, by: 'Maria' }); await refresh(page); await settle(x => /On hold/.test(x.full) && /Customer asked to wait/.test(x.card));
       s = await shown(page); assert.match(s.full, /On hold/, 'hold: ' + s.full); assert.match(s.card, /Customer asked to wait/, 'card: ' + s.card);
       const body = JSON.stringify({ timeline: [{ orderId: A.rid, type: 'scan', station: 'sorting', device: 'Sorting-2', by: 'Jo', id: 'scan-dev2', at: Date.now() - 3000 }] });
       await new Promise((res, rej) => { const r = http.request(`${srv.sorterOrigin}/.netlify/functions/firebaseOrders`, { method: 'POST', headers: { 'Content-Type': 'application/json' } }, x => { x.resume(); x.on('end', res); }); r.on('error', rej); r.end(body); });
-      await refresh(page); await sleep(150);
-      s = await shown(page); assert.equal(+s.count, c0 + 3, 'the scan counted'); assert.match(s.card, /sorting/i, 'card names the station: ' + s.card);
-      srv.st.put('Charm_Nest_Cancelled', A.rid, { orderId: A.rid, at: Date.now() - 2000, by: 'Maria', why: 'buyer asked' }); ev(A.rid, 'cancelled', Date.now() - 2000, { by: 'Maria', id: 'cx' }); await refresh(page); await sleep(150);
+      await refresh(page); await settle(x => +x.count === c0 + 3);
+      // (26 Oct 2026: the hold above was never released, and a hold nobody released stays the Now card's word over any later step
+      //  (PLACEMENT / pieceStatusOf: "held, it says On hold"); the scan shows in its lane: the Sorting lane names who scanned it)
+      s = await shown(page); assert.equal(+s.count, c0 + 3, 'the scan counted'); assert.match(s.card, /On hold/, 'the unreleased hold stays on the card: ' + s.card);
+      const lane = await page.evaluate(() => document.querySelector('#owTimeline .tlUI').textContent);
+      assert.match(lane, /SortingJo/, 'the Sorting lane names the station\'s scan: ' + lane.slice(0, 400));
+      srv.st.put('Charm_Nest_Cancelled', A.rid, { orderId: A.rid, at: Date.now() - 2000, by: 'Maria', why: 'buyer asked' }); ev(A.rid, 'cancelled', Date.now() - 2000, { by: 'Maria', id: 'cx' }); await refresh(page); await settle(x => x.cx && /Cancelled/.test(x.rail));
       s = await shown(page); assert(s.cx, 'the view turns cancelled'); assert.equal(s.pill, 'Cancelled'); assert.match(s.full, /Cancelled/); assert.match(s.rail, /Cancelled/);
-      srv.st.docs.delete('Charm_Nest_Cancelled/' + A.rid); ev(A.rid, 'cancelRestored', Date.now() - 1000, { by: 'Maria' }); await refresh(page); await sleep(150);
+      srv.st.docs.delete('Charm_Nest_Cancelled/' + A.rid); ev(A.rid, 'cancelRestored', Date.now() - 1000, { by: 'Maria' }); await refresh(page); await settle(x => !x.cx && !/Cancelled/.test(x.full));
       s = await shown(page); assert(!s.cx, 'the cancel undone clears it'); assert.doesNotMatch(s.full, /Cancelled/); assert.notEqual(s.pill, 'Cancelled');
     });
     await closeView(page);
