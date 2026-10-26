@@ -83,22 +83,28 @@ const hash = k => crypto.createHash('sha256').update('repo-door-' + k).digest('h
   ok(asked('repoUnlock').length === before, 'the upload token covered the change (no second dialog)');
 
   await page.evaluate(() => { window.__dl = []; window.download = (b, name) => window.__dl.push(name); CharmNestAssets.bytes = async () => new Uint8Array([1, 2, 3]); });
+  // PERSON (Paul, 26 Oct 2026: downloading a charm file "should only be allowed with my password, same as accessing the Settings menu"): the upload's unlock does not
+  // cover a download; the download asks for the password itself, and its token serves only this tab and this person for a minute
   await page.locator('[data-dl]').first().click();
+  await page.waitForSelector('dialog.repoDlg[open][data-repo-action=download]', { timeout: 15000 });
+  ok(asked('masterDownload').length === 0, 'a download asks for the password first: nothing is fetched before it');
+  await typeAndGo(REPO_TEST.password);
   await page.waitForFunction(() => window.__dl.length === 1, null, { timeout: 15000 });
-  ok(!(await page.evaluate(() => !!document.querySelector('dialog.repoDlg'))) && asked('repoUnlock').length === before, 'a download needs no second password: the one unlock (a session, since Paul\'s 11 Oct words) covers it');
-  ok(asked('masterDownload').length === 1 && asked('masterDownload')[0].token && asked('masterDownload')[0].status === 200, 'the real masterDownload answered once, with the session token, and the file was saved');
+  ok(asked('repoUnlock').length === before + 1, 'one password for the download, given in its own dialog');
+  ok(asked('masterDownload').length === 1 && asked('masterDownload')[0].token && asked('masterDownload')[0].status === 200, 'the real masterDownload answered once, with the download token, and the file was saved');
 
   // a removal still asks its confirm sentence every time, but takes a single-use token from the session with no password
   const filesNow = await page.evaluate(() => B.master.files.length);
   await page.evaluate(() => { document.getElementById('mHist').open = true; const r = document.querySelector('#mFiles .masterFileRow'); r.closest('.masterDay').open = true; r.open = true; });
   await page.locator('[data-rm]').first().click();
   await page.waitForSelector('dialog.repoDlg[open][data-repo-action=delete]');
-  ok(await page.evaluate(() => document.querySelector('#repoField').hidden && /\S/.test(document.querySelector('#repoP').textContent)), 'a removal shows its confirm sentence and no password field');
-  await page.locator('dialog.repoDlg [data-k=go]').click();
+  // PERSON (Paul, 26 Oct 2026): no standing unlock is held any more, so a removal asks for the password every time, its confirm sentence in the same dialog
+  ok(await page.evaluate(() => !document.querySelector('#repoField').hidden && /\S/.test(document.querySelector('#repoP').textContent)), 'a removal shows its confirm sentence and asks for the password');
+  await typeAndGo(REPO_TEST.password);
   await page.waitForFunction(f => B.master.files.length === f - 1, filesNow, { timeout: 15000 });
   ok(asked('masterRemoveFile').length === 1 && asked('masterRemoveFile')[0].token && asked('masterRemoveFile')[0].status === 200, 'a removal: the real door took the single-use delete token and removed the file');
   const delUnlock = asked('repoUnlock').filter(c => c.action === 'delete');
-  ok(delUnlock.length === 1 && delUnlock[0].viaSession && !delUnlock[0].pw && delUnlock[0].status === 200, 'that token came from the session: no password was sent');
+  ok(delUnlock.length === 1 && !delUnlock[0].viaSession && delUnlock[0].status === 200, 'that token was bought with the password, not from a standing session');
   await page.evaluate(() => { document.getElementById('mHist').open = true; const r = document.querySelector('#mFiles .masterFileRow'); r.closest('.masterDay').open = true; r.open = true; });
   await page.locator('[data-rm]').first().click();
   await page.waitForSelector('dialog.repoDlg[open][data-repo-action=delete]');

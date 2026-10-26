@@ -483,10 +483,12 @@ async function prepress(list) {
   ok(WANT.slice(doneBefore).every(([id, key]) => W.E.L.get(id).stored.products.some(p => p.sku !== key) && !store.has('Charm_Custom_Saves/link-' + id)), 'the listings not reached have no record, no safety copy and their old SKUs');
   W.delayMs = 0;
   page = await openPage(ctx); await openChip(page);
-  ok((await page.evaluate(() => !!window.CharmNestRepoLock.find('modify'))), 'a new tab of this computer still holds the repo unlock (the lock\'s own session), so it will not ask again');
+  // PERSON (Paul, 26 Oct 2026: the password again, every time an unlock is not this tab's own): a new tab holds no unlock, so the resume asks once
+  ok(!(await page.evaluate(() => !!window.CharmNestRepoLock.find('modify'))), 'a new tab of this computer holds no repo unlock: nothing is shared between tabs any more');
   await press(page);
+  await page.waitForSelector('dialog.repoDlg[open]'); await typeAndGo(page, RIGHT);
   await finished(page); s = await state(page);
-  ok(s.dialogs === 0 && W.unlocks.length === 1, 'the resume asked for no password');
+  ok(s.dialogs === 0 && W.unlocks.length === 2, 'the resume asked for the password once, and nothing more');
   ok(s.rows.slice(0, doneBefore).every(r => r.cls === 'already') && s.rows.slice(doneBefore).every(r => r.cls === 'done') && s.say === `${NN} listings: ${NN - doneBefore} done, ${doneBefore} already there.`, 'pressing again resumed: the first ' + doneBefore + ' say "Already there", the other ' + (NN - doneBefore) + ' are done: ' + s.say);
   ok(W.E.puts.length === NN && new Set(W.E.puts.map(p => p.id)).size === NN && W.E.puts.every(p => p.safetyCopyFirst) && WANT.every(([id, key]) => check(W.E, id, key)), 'in all: ' + NN + ' PUTs, one per listing, never two, each after its safety copy; all ' + NN + ' carry their SKU');
   ok(W.E.calls.length <= BUDGET, 'Etsy requests over both presses: ' + W.E.calls.length + ' (at most ' + BUDGET + ')');

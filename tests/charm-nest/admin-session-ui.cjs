@@ -1,6 +1,6 @@
 // The Settings menu's lock, in the sorter page, against the REAL password door (netlify/functions/_charmNestRepoAuth.js) on the in-memory Firestore
 // (ADMINSESSION; plans/save-to-repo-1011/ADMINSESSION-settings.md). The page is served locked, the server is strict (st.repoStrict), the password is typed into the real
-// dialog. Proves: Settings opens locked and a typed name (Paul K) alone never opens it; a wrong password stays locked; the right one opens it and buys a standing
+// dialog. Proves (PERSON, Paul 26 Oct 2026): Settings opens locked and a typed name (Paul K) alone never opens it; a wrong password stays locked; the right one opens it for that one opening (its buttons need no second password, closing ends it here and on the server, every opening, a reload and a new tab ask again); a download asks and serves a minute; a sign-out ends it; Lock now; nothing stores the password. (Until 26 Oct: a standing
 // unlock kept in localStorage (survives a reload and a new tab) that the repo actions and the Settings buttons use with no second password; a stored session
 // the server ended closes the menu and asks again; the time running out and "Lock now" re-lock (server side too); nothing the page stores, logs or sends holds
 // the password. The only password is the stand-in operator's, made fresh in bridge-server.cjs (REPO_TEST); nothing real is read, written or printed.
@@ -50,6 +50,7 @@ const sha = s => crypto.createHash('sha256').update(s).digest('hex');
   const typeAndGo = async (p, pw) => { const f = p.locator('dialog.repoDlg[open] #repoPw'); await f.fill(pw); await f.press('Enter'); };
   const asked = op => calls.filter(c => c.op === op);
   const session = p => p.evaluate(() => { try { return JSON.parse(localStorage.getItem('cn.repoSession.v1') || 'null'); } catch (_) { return null; } });
+  const held = p => p.evaluate(() => { const f = CharmNestRepoLock.find('settings'); return f && f.session ? { t: f.token, e: f.expiresAt } : null; });   // (PERSON: the menu's unlock, held by this tab only)
   const sessionDocs = () => [...st.docs.keys()].filter(k => k.startsWith('CharmRepo_Tokens/') && (st.docs.get(k) || {}).action === 'session');
 
   const page = await ctx.newPage(); watch(page);
@@ -78,79 +79,71 @@ const sha = s => crypto.createHash('sha256').update(s).digest('hex');
   await typeAndGo(page, REPO_TEST.password);
   await page.waitForFunction(() => !document.querySelector('dialog.repoDlg') && !!document.querySelector('#dlgSettings[open]'), null, { timeout: 15000 });
   ok(await settingsOpen(page), 'the right password opens the Settings menu');
-  const s1 = await session(page);
-  ok(s1 && typeof s1.t === 'string' && s1.t.length > 60 && s1.e > Date.now() + 60000, 'a standing unlock is kept in this computer\'s localStorage with its end time');
+  // PERSON (Paul, 26 Oct 2026: "the Settings menu now opens without the need for a password. I did not ask for this and I need the password to be re-implemented"):
+  // the unlock is this tab's own, held while the menu is open; nothing is kept for the computer (no localStorage), so nobody who sits down next inherits it
+  const s1 = await held(page);
+  ok(s1 && typeof s1.t === 'string' && s1.t.length > 60 && !(await session(page)) && !(await page.evaluate(() => Object.keys(localStorage).some(k => /repo/i.test(k)))), 'the unlock is held by this tab only: nothing in localStorage');
   ok(sessionDocs().length === 1 && st.docs.has('CharmRepo_Tokens/' + sha(s1.t)), 'the server keeps only its sha256');
   const line = await page.evaluate(() => { const l = document.getElementById('stLockLine'); return { hidden: l.hidden, text: l.textContent.replace(/\s+/g, ' ').trim() }; });
-  ok(!line.hidden && /^Unlocked until \d{1,2}:\d{2} [ap]m · Lock now$/.test(line.text), 'the quiet line reads "' + line.text + '"');
+  ok(!line.hidden && line.text === 'Unlocked while Settings is open · Lock now', 'the quiet line reads "' + line.text + '"');
   ok((await page.evaluate(() => window.__attempts.map(a => a.reason).join())) === 'wrong,ok', 'the Alert was told about both tries (wrong, ok)');
   ok(st.list('CharmRepo_Alerts').length === 2, 'two Alerts in all: one per password try');
 
-  // 3 · the same unlock serves the repo and the Settings buttons, with no second password and no new Alert
-  await page.evaluate(() => document.getElementById('dlgSettings').close());
+  // 3 · while the menu is open its buttons use that unlock, with no second password and no new Alert
   const unlocksBefore = asked('repoUnlock').length, alertsBefore = st.list('CharmRepo_Alerts').length;
-  const dl = await page.evaluate(async () => { try { const r = await CharmNestRepoLock.call('download', { what: 'x' }, tok => CN.api('charmNestLibrary', { op: 'masterDownload', sku: 'AS-0', repoToken: tok })); return { ok: !!(r && r.ok), asked: !!document.querySelector('dialog.repoDlg') }; } catch (e) { return { err: e.message }; } });
-  ok(dl.ok && !dl.asked && asked('masterDownload').length === 1 && asked('masterDownload')[0].status === 200, 'a download uses the same unlock: no dialog, the real door answered 200');
-  const up = await page.evaluate(() => CharmNestRepoLock.unlocked('upload') && CharmNestRepoLock.unlocked('modify') && CharmNestRepoLock.unlocked('settings') && !CharmNestRepoLock.unlocked('delete'));
-  ok(up, 'the lock reports upload, change and Settings unlocked, and delete never');
   const sb = await page.evaluate(async () => { try { const r = await CN.api('charmNestLibrary', { op: 'sandboxReset', sandbox: true }); return { ok: r && r.ok !== false, asked: !!document.querySelector('dialog.repoDlg') }; } catch (e) { return { err: e.message }; } });
   ok(sb.ok && !sb.asked && asked('sandboxReset').length === 1 && asked('sandboxReset')[0].token && asked('sandboxReset')[0].status === 200, 'a Settings button op (sandboxReset) carries the unlock by itself and the real door lets it in');
   const pg = await page.evaluate(async () => { try { await CN.api('charmNestLibrary', { op: 'purgeHistory', code: 'not-the-code' }); return { ok: true }; } catch (e) { return { status: e.status, msg: e.message, repoLocked: !!(e.data && e.data.error === 'repo-locked') }; } });
   ok(pg.status === 403 && !pg.repoLocked && asked('purgeHistory')[0].token, 'purgeHistory passes the repo door and meets its own passcode rule, which still refuses (' + pg.status + ')');
   // (the Settings row of SANDBOXN, how many newest orders the sandbox pulls: a repo "modify" write, asked for exactly as the row asks for it)
-  const pl = await page.evaluate(async () => { try { const r = await CharmNestRepoLock.call('modify', { title: 'Change a sandbox setting', what: 'x', target: 'sandbox pulls 120 newest', go: 'Save' }, tok => CN.api('charmNestLibrary', { op: 'sandboxPullLimitSet', limit: 120, by: 'Paul', repoToken: tok }, { quiet: true })); return { ok: !!(r && r.ok), asked: !!document.querySelector('dialog.repoDlg') }; } catch (e) { return { err: e.message }; } });
+  const pl = await page.evaluate(async () => { try { const r = await CharmNestRepoLock.call('modify', { title: 'Change a sandbox setting', what: 'x', target: 'sandbox pulls 120 newest', go: 'Save' }, tok => CN.api('charmNestLibrary', { op: 'sandboxPullLimitSet', limit: 120, repoToken: tok })); return { ok: !!(r && r.ok !== false), asked: !!document.querySelector('dialog.repoDlg') }; } catch (e) { return { err: e.message }; } });
   ok(pl.ok && !pl.asked && asked('sandboxPullLimitSet').length === 1 && asked('sandboxPullLimitSet')[0].token && asked('sandboxPullLimitSet')[0].status === 200, 'the pull-number row (a repo "modify" write) uses the same unlock: no dialog, the real door answered 200');
   ok(asked('repoUnlock').length === unlocksBefore && st.list('CharmRepo_Alerts').length === alertsBefore, 'none of that asked the server for a password or raised an Alert');
 
-  // 4 · it survives a reload and a new tab of this computer
-  await ready(page);
-  await openSettings(page);
-  await page.waitForFunction(() => !!document.querySelector('#dlgSettings[open]'), null, { timeout: 15000 });
-  ok(!(await lockDlg(page)), 'after a reload Settings opens with no password');
-  const tab2 = await ctx.newPage(); watch(tab2); await ready(tab2);
-  await openSettings(tab2);
-  await tab2.waitForFunction(() => !!document.querySelector('#dlgSettings[open]'), null, { timeout: 15000 });
-  ok(!(await lockDlg(tab2)) && asked('repoUnlock').length === unlocksBefore, 'a new tab opens Settings with no password too');
-  ok(asked('repoSession').length >= 2 && asked('repoSession').every(c => c.status === 200), 'opening Settings asked the server once whether the session still stands (it does)');
-
-  // 5 · a session the server ended: the menu closes and asks again
-  await tab2.evaluate(() => document.getElementById('dlgSettings').close()); await tab2.close();
+  // 4 · closing the menu ends the unlock, here and on the server
   await page.evaluate(() => document.getElementById('dlgSettings').close());
-  for (const k of sessionDocs()) st.docs.delete(k);
+  await page.waitForFunction(() => !CharmNestRepoLock.find('settings') && !CharmNestRepoLock.unlocked('download') && !CharmNestRepoLock.unlocked('modify'), null, { timeout: 5000 });
+  await new Promise(r => setTimeout(r, 600));
+  ok(sessionDocs().length === 0 && asked('repoLock').length >= 1 && asked('repoLock').every(c => c.status === 200), 'closing the menu: the tab forgot the unlock and the server deleted it');
+  const old = await page.evaluate(async t => { try { await CN.api('charmNestLibrary', { op: 'sandboxReset', sandbox: true, repoToken: t }); return 'ran'; } catch (e) { return e.data && e.data.error === 'repo-locked' ? 'locked:' + e.data.why : 'other:' + e.message; } }, s1.t);
+  ok(old === 'locked:invalid', 'the old token opens nothing now, at the real door (' + old + ')');
+
+  // 5 · every opening asks again: at once, after a reload, in a new tab
+  const askOnce = async (p, what) => { await openSettings(p); await p.waitForSelector('dialog.repoDlg[open][data-repo-action=settings]', { timeout: 15000 }); ok(!(await settingsOpen(p)), what); await p.locator('dialog.repoDlg [data-k=cancel]').click(); await p.waitForFunction(() => !document.querySelector('dialog.repoDlg')); };
+  await askOnce(page, 'opened again right away, Settings asks for the password again');
+  await ready(page);
+  await askOnce(page, 'after a reload Settings asks for the password');
+  const tab2 = await ctx.newPage(); watch(tab2); await ready(tab2);
+  await askOnce(tab2, 'a new tab asks for the password too');
+  await tab2.close();
+  ok(asked('repoUnlock').length === unlocksBefore, 'and those cancelled asks sent nothing to the server');
+
+  // 6 · a download asks for the password; one password serves this tab for a minute; a sign-out ends it at once
+  const dlCall = () => page.evaluate(async () => { try { const r = await CharmNestRepoLock.call('download', { what: 'x' }, tok => CN.api('charmNestLibrary', { op: 'masterDownload', sku: 'AS-0', repoToken: tok })); return { ok: !!(r && r.ok) }; } catch (e) { return { err: e.message }; } });
+  const dl1 = dlCall();
+  await page.waitForSelector('dialog.repoDlg[open][data-repo-action=download]', { timeout: 15000 });
+  ok(asked('masterDownload').length === 0, 'a download asks for the password first: nothing was fetched before it');
+  await typeAndGo(page, REPO_TEST.password);
+  ok((await dl1).ok && asked('repoUnlock').length === unlocksBefore + 1 && asked('masterDownload').length === 1 && asked('masterDownload')[0].status === 200, 'with the password the real door answered the download');
+  ok(!asked('repoUnlock').slice(-1)[0].session, 'a download asks the server for no session, only its own short token');
+  const left = await page.evaluate(() => { const f = CharmNestRepoLock.find('download'); return f ? f.expiresAt - Date.now() : -1; });
+  ok(left > 0 && left <= 61000, 'that token serves this tab for a minute at most (' + Math.round(left / 1000) + ' s left)');
+  const dl2 = await dlCall();
+  ok(dl2.ok && !(await lockDlg(page)) && asked('repoUnlock').length === unlocksBefore + 1, 'a second download inside that minute asks nothing');
+  ok(!(await page.evaluate(() => CharmNestRepoLock.unlocked('upload') || CharmNestRepoLock.unlocked('settings'))), 'the download unlock opens nothing else');
+  await page.evaluate(() => { B.employee = ''; });
+  ok(!(await page.evaluate(() => CharmNestRepoLock.unlocked('download'))), 'a sign-out ends it at once (and another person signing in would too)');
+
+  // 7 · Lock now, from the open menu: shut at once, and the server forgets it
   await openSettings(page);
-  await page.waitForSelector('dialog.repoDlg[open][data-repo-action=settings]', { timeout: 15000 });
-  ok(!(await settingsOpen(page)) && !(await session(page)), 'a session the server no longer knows: the menu closes, the stored copy is dropped, the password is asked');
+  await page.waitForSelector('dialog.repoDlg[open][data-repo-action=settings]');
   await typeAndGo(page, REPO_TEST.password);
   await page.waitForFunction(() => !document.querySelector('dialog.repoDlg') && !!document.querySelector('#dlgSettings[open]'), null, { timeout: 15000 });
-  const s2 = await session(page); ok(s2 && s2.t !== s1.t, 'a new one is given');
-
-  // 6 · Lock now: this computer and the server both forget it; every door asks again
+  const s2 = await held(page); ok(s2 && s2.t !== s1.t, 'a new unlock is given for this opening');
   await page.click('#stLockNow');
   await page.waitForFunction(() => !document.querySelector('#dlgSettings[open]'), null, { timeout: 15000 });
-  ok(!(await session(page)) && !(await page.evaluate(() => CharmNestRepoLock.unlocked('settings'))), 'Lock now: Settings shut, the stored session is gone');
   await new Promise(r => setTimeout(r, 500));
-  ok(sessionDocs().length === 0 && asked('repoLock').length === 1 && asked('repoLock')[0].status === 200, 'and the server deleted it');
-  const old = await page.evaluate(async t => { try { await CN.api('charmNestLibrary', { op: 'sandboxReset', sandbox: true, repoToken: t }); return 'ran'; } catch (e) { return e.data && e.data.error === 'repo-locked' ? 'locked:' + e.data.why : 'other:' + e.message; } }, s2.t);
-  ok(old === 'locked:invalid', 'the old token opens nothing now, at the real door (' + old + ')');
-  const resets = asked('sandboxReset').length;
-  const blocked = page.evaluate(async () => { try { await CN.api('charmNestLibrary', { op: 'sandboxReset', sandbox: true }); return 'ran'; } catch (e) { return e.cancelled ? 'cancelled' : 'error:' + e.message; } });
-  await page.waitForSelector('dialog.repoDlg[open][data-repo-action=settings]', { timeout: 15000 });
-  await page.locator('dialog.repoDlg [data-k=cancel]').click();
-  ok((await blocked) === 'cancelled' && asked('sandboxReset').length === resets, 'a Settings button op after Lock now asks the password; cancelled, it never reaches the server');
-  await openSettings(page);
-  await page.waitForSelector('dialog.repoDlg[open][data-repo-action=settings]');
-  ok(!(await settingsOpen(page)), 'Settings asks again');
-
-  // 7 · the time running out re-locks (the client closes the menu by itself)
-  await typeAndGo(page, REPO_TEST.password);
-  await page.waitForFunction(() => !document.querySelector('dialog.repoDlg') && !!document.querySelector('#dlgSettings[open]'), null, { timeout: 15000 });
-  await page.evaluate(() => { const o = JSON.parse(localStorage.getItem('cn.repoSession.v1')); o.e = Date.now() + 7000; localStorage.setItem('cn.repoSession.v1', JSON.stringify(o)); window.dispatchEvent(new StorageEvent('storage', { key: 'cn.repoSession.v1' })); });
-  await page.waitForFunction(() => !document.querySelector('#dlgSettings[open]'), null, { timeout: 15000 });
-  ok(!(await page.evaluate(() => CharmNestRepoLock.unlocked('settings'))) && !(await session(page)), 'when the unlock runs out the menu closes by itself and the stored session is dropped');
-  await openSettings(page);
-  await page.waitForSelector('dialog.repoDlg[open][data-repo-action=settings]');
-  ok(!(await settingsOpen(page)), 'and Settings asks again');
-  await page.locator('dialog.repoDlg [data-k=cancel]').click();
+  ok(!(await page.evaluate(() => CharmNestRepoLock.unlocked('settings'))) && sessionDocs().length === 0, 'Lock now: Settings shut, the tab and the server both forgot it');
 
   // 8 · nothing the page kept, logged or sent holds the password; the token is only where it should be
   const all = JSON.stringify([...st.docs.entries()]);
