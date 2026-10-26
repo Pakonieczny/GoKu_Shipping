@@ -19,15 +19,17 @@
 //   L  the Stations board by hand: hover a station and a person, press a name, press an order, Back
 //   J  what an open console costs per hour with the shipped timings; a hidden page costs nothing
 //   H  1440 / 900 / 390 px (rail open and folded): no sideways scroll, the header bar fits
-//   node tests/charm-nest/efficiency-portal-e2e.cjs     (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>, SHOTS=<folder for screenshots>, ONLY=A,B ...)
+//   node tests/charm-nest/efficiency-portal-e2e.cjs     (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>, SHOTS=<folder for screenshots>, ONLY=A,B ... | all; default A,B,C,I,L,H)
 'use strict';
 const fs = require('fs'), path = require('path'), assert = require('assert/strict'), { spawn } = require('child_process');
 const root = path.join(__dirname, '../..');
 const S = require('./employee-profile-seed.cjs');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const PASS = 'portal-fake-pass-4417';             // invented for this file: the real passcode is never used, read or printed
-const SHOTS = process.env.SHOTS || '', ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
-const want = k => !ONLY.length || ONLY.includes(k);
+// (26 Oct 2026, the test run kept under 5 minutes: the default run is the core sections A, B, C, I, L, H, about 3 minutes; ONLY=all runs all twelve,
+//  about 7 minutes, J's read-cost measurement alone ~2.5; ONLY=D,E,... any of them)
+const SHOTS = process.env.SHOTS || '', ONLY = (process.env.ONLY || 'A,B,C,I,L,H').split(',').filter(Boolean);
+const want = k => ONLY.includes('all') || ONLY.includes(k);
 const results = [];
 
 /* ── the fake shop in its own process ── */
