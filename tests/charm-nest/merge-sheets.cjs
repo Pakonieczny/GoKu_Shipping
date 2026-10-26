@@ -300,6 +300,8 @@ const ids = pages => [...pages.flatMap(p => [...p.charms.map(c => c.id)])].sort(
       {
         const { ctx, page, errors, layout } = await open(false);
         await press(page, 'move');
+        // (the Options window closes with its own animation, OptionsStudio.close: a promise, the window is gone when it settles)
+        await page.waitForFunction(() => !document.querySelector('dialog.osDlg[open]'), null, { timeout: 3000 }).catch(() => {});
         const during = await page.evaluate(() => ({ open: !!document.querySelector('dialog.osDlg[open]'),
           stage: document.querySelector('.sheetCard[data-m="gold14k"] [data-r="stage"]').textContent }));
         assert.equal(during.open, false, 'the Options panel closes first: the sheet is in full view');
