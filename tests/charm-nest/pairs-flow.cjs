@@ -148,7 +148,7 @@ const ctxFor = (extra) => {
   c.log.length = 0; c.keepOrdersWhole(sh, byId([L, R, other]));
   assert.deepEqual(plain(sh.placements.map(p => p.id)), [other.id], 'the saved mate is lifted with its late piece: a pair is never left half on a sheet');
   assert.deepEqual(plain(sh.rejects).sort(), [L.id, R.id].sort());
-  assert(/saved piece\(s\) of 1 pair\/line/.test(c.log.at(-1).t), 'the log says why a saved piece came off: ' + c.log.at(-1).t);
+  assert(/saved piece\(s\) of 1 pair\/group/.test(c.log.at(-1).t), 'the log says why a saved piece came off: ' + c.log.at(-1).t);
   // (b2) a MATCHING pair is the same: Left and Right of one design carry sides now, and it moves whole just as a mismatched one
   { const ML = piece(8110, 1, 1, { side: 'L' }), MR = piece(8110, 1, 2, { side: 'R' });
     sh = { metal: 'gold', appendOnly: true, nestInitial: [placement(ML), placement(other)], placements: [placement(ML), placement(other)], rejects: [MR.id] };
@@ -192,7 +192,7 @@ const ctxFor = (extra) => {
   c.S.sheets.gold.pages.push(s1); next = c.overflowToNextSheet(s1);
   assert.deepEqual(plain(s1.movedOn.split), [{ group: '9100:1', where: 'Left on sheet 1, Right on sheet 2' }], 'recorded on the sheet\'s moved-on note');
   noNested(plain(s1.movedOn), 'movedOn');
-  assert(c.log.some(x => x.k === 'warn' && /Split pair\/line 9100:1/.test(x.t) && /Left on sheet 1, Right on sheet 2/.test(x.t)), 'warned in the log');
+  assert(c.log.some(x => x.k === 'warn' && /Split pair\/group 9100:1/.test(x.t) && /Left on sheet 1, Right on sheet 2/.test(x.t)), 'warned in the log');
   assert(c.toasts.some(t => t.k === 'bad' && /split across sheets/.test(t.t)), 'and in a toast');
   // in Auto the move is routine: the toast is not shown, the log and the card still say it
   c = mkPages(); s1 = { metal: 'gold', page: 1, charms: [keep, L, R], placements: [placement(keep), placement(L)], rejects: [R.id], status: 'complete', verification: { ok: true } };
@@ -205,10 +205,10 @@ const ctxFor = (extra) => {
   assert.equal(s2.charms.length, 2, 'nothing moved'); assert(stuck[0] && stuck[0].sheetPending);
   const two = [1, 2].map(i => piece(9350, 1, i)); c = mkPages(); c.RunCtl = c.window.RunCtl = { onSheetDone() {} };
   s2 = { metal: 'gold', page: 1, charms: two, placements: [], rejects: two.map(x => x.id) }; c.S.sheets.gold.pages.push(s2); c.overflowToNextSheet(s2);
-  assert(/a line of 2 pieces that must stay on one sheet/.test(s2.problem), 'two discs are a line, not a pair: ' + s2.problem);
+  assert(/a group of 2 pieces that must stay on one sheet/.test(s2.problem), 'two discs are a group, not a pair: ' + s2.problem);
   const D = [1, 2, 3].map(i => piece(9300, 1, i)); c = mkPages(); c.RunCtl = c.window.RunCtl = { onSheetDone() {} };
   s2 = { metal: 'gold', page: 1, charms: D, placements: [], rejects: D.map(x => x.id) }; c.S.sheets.gold.pages.push(s2); c.overflowToNextSheet(s2);
-  assert(/a line of 3 pieces that must stay on one sheet/.test(s2.problem), 'a disc necklace of three: ' + s2.problem);
+  assert(/a group of 3 pieces that must stay on one sheet/.test(s2.problem), 'a disc necklace of three: ' + s2.problem);
   c = mkPages(); c.RunCtl = c.window.RunCtl = { onSheetDone() {} }; s2 = { metal: 'gold', page: 1, charms: [{ id: 'x', order: 'x' }], placements: [], rejects: ['x'] }; c.S.sheets.gold.pages.push(s2); c.overflowToNextSheet(s2);
   assert.equal(s2.problem, 'The oldest order cannot fit on an empty sheet at these settings. Review its size or the fill ceiling before continuing.', 'a single charm: the words it always had');
   ok.push('overflowToNextSheet: a pair moves whole and quietly; a split is on the card, in the log and in a toast; an order that fits no empty sheet stops, naming the pair or the line');
@@ -276,7 +276,7 @@ const ctxFor = (extra) => {
   const s3 = mkPage(3), C = piece(4400, 1, 1, { side: 'L' }), D = piece(4400, 1, 2, { side: 'R' }); s3.charms.push(C); s3.closed = true;
   log.length = 0; c.attachPool({ key: 'q', order: { receiptId: '4400' }, spec: { designSku: 'MIS', material: 'gold', quantity: 2 }, state: 'pulled' }, { runId: 'run-1' }, { sp: { designSku: 'MIS', material: 'gold', quantity: 2 }, pools: [C, D].map(x => ({ poolId: x.poolId })), charms: [D] }, [], []);
   const landed = pages.find(p => p.charms.includes(D)); assert(landed && landed !== s3, 'a closed sheet takes no more');
-  assert(log.some(x => x.k === 'warn' && /Split pair\/line 4400:1/.test(x.t) && /Left on sheet 3, Right on sheet \d/.test(x.t)), 'the split is reported: ' + JSON.stringify(log));
+  assert(log.some(x => x.k === 'warn' && /Split pair\/group 4400:1/.test(x.t) && /Left on sheet 3, Right on sheet \d/.test(x.t)), 'the split is reported: ' + JSON.stringify(log));
   // a line with no piece anywhere is placed exactly as before (no extra look at the sheets)
   const E = piece(4500, 1, 1); log.length = 0;
   c.attachPool({ key: 'z', order: { receiptId: '4500' }, spec: { designSku: 'X', material: 'gold', quantity: 1 }, state: 'pulled' }, { runId: 'run-1' }, { sp: { designSku: 'X', material: 'gold', quantity: 1 }, pools: [{ poolId: E.poolId }], charms: [E] }, [], []);
