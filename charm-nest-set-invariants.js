@@ -151,7 +151,7 @@
        this check said ok. The same anchors as the page's assembly (charm-nest-shared-orders.js formation): they are attached to the groups they share an order with but never tie two sheets together.
          anchors          a sheet in a set committed / completed / replaced (SetRules.exempt), and a sheet outside every set that the laser cut or that is a Rose Gold / 10K / 14K sheet that cannot join yet
          unitAnchors(st)  those, and every sheet in ANOTHER set: the units a set's minimality (R7) is judged by */
-    const exemptSet = new Set(setList.filter(st => R.exempt(st.doc)).map(st => st.id));
+    const exemptSet = new Set(setList.filter(st => R.exempt(st.doc)).map(st => st.id)), approvedSet = new Set(setList.filter(st => st.doc && (st.doc.processReady || st.doc.laserSetPending)).map(st => st.id));
     // (Paul, 26 Oct 2026: a Rose Gold / 10K / 14K sheet never ties two GF / SS units together, cut or uncut: EVERY green-line sheet is an anchor. Before, a cut one (or one in a set) tied the GF / SS sheets
     //  it shared orders with, so an RG sheet filled before the intake rule chained GF Sheet 2 into Set 1 and this check called Set 1 right)
     const isGreen = id => { const r = recs.get(id); return !!r && GOLD_FAMILY.includes(R.metalClass(r)); };
@@ -162,9 +162,10 @@
     for (const g of groups) for (const id of g.ids) if (!groupOfId.has(id)) groupOfId.set(id, g);
     const unitGroups = st => formation(anchors.concat([...setOf].filter(([, sid]) => sid !== st.id).map(([id]) => id))).groups;
     // the ONE set of each green-line sheet (charm-nest-shared-orders.js greenHomes: its fixed set, the set it was matched to, the set it is in, else the earliest-formed set of its partners)
+    // (Paul, 26 Oct 2026: "the set it can't leave" is only that of a sheet the laser cut, of a set approved for laser cutting and of a committed set: a recorded green-line cut alone no longer pins a sheet)
     const rankOf = sid => { const st = setList.find(s => s.id === sid); return st ? [str(st.doc.day), st.seq] : ['~', Infinity]; };
     const homes = typeof S.greenHomes === 'function' ? S.greenHomes(norm, { green: n => isGreen(n.id), rank: rankOf, open: sid => !exemptSet.has(sid),
-      fixed: n => { const r = recs.get(n.id), sid = setOf.get(n.id); return r && sid && (isCut(r) || exemptSet.has(sid)) ? sid : null; }, matched: n => { const r = recs.get(n.id); return r && r.autoMatched ? str(r.autoMatched) : null; } }) : null;
+      fixed: n => { const r = recs.get(n.id), sid = setOf.get(n.id); return r && sid && (+r.laserDoneAt > 0 || exemptSet.has(sid) || approvedSet.has(sid)) ? sid : null; }, matched: n => { const r = recs.get(n.id); return r && r.autoMatched ? str(r.autoMatched) : null; } }) : null;
     return { R, S, opts: opts || {}, recs, setList, setOf, twice, norm, normById, groups, bridges, groupOfId, anchorSet, unitGroups, homes, isGreen, name: id => nameById.get(id) || id };
   }
 
@@ -219,9 +220,9 @@
       for (const u of units) {
         if (!u.sheets.length || !u.sheets.every(r => spare.has(r.id))) continue;
         const ids = u.sheets.slice().sort(byKind).map(r => r.id), names = ids.map(C.name), tied = [...new Set(ug.filter(g => g.ids.some(i => ids.includes(i))).flatMap(g => g.orders))].filter(oid => ids.filter(i => { const n = C.normById.get(i); return n && n.pieces.some(p => p.orderId === oid); }).length > 1);
-        // (Paul, 26 Oct 2026) the green-line sheets of the set whose partners in it are all in this unit are ITS green-line sheets: they leave with it. A CUT one stays (a recorded cut keeps a sheet in the set
-        //  it is in, R12) and it holds nothing: "never ties two GF/SS units together, whether cut or uncut", so the unit leaves without it and their order is a known split (the live Set 1's RG Sheet 2)
-        const own = C.homes ? live.filter(r => GOLD_FAMILY.includes(R.metalClass(r)) && !isCut(r) && !ids.includes(r.id) && (() => { const p = greenPartnersIn(r); return p.length > 0 && p.every(i => ids.includes(i)); })()).map(r => r.id) : [];
+        // (Paul, 26 Oct 2026) the green-line sheets of the set whose partners in it are all in this unit are ITS green-line sheets: they leave with it, CUT OR UNCUT ("the cut RG2 must leave Set 1 together
+        //  with GF2"; its cut, stock and remnant stay recorded, only its set changes). A sheet the laser cut, and the sheets of a set approved for laser cutting or committed, never move
+        const own = C.homes && !exempt && !(st.doc && (st.doc.processReady || st.doc.laserSetPending)) ? live.filter(r => GOLD_FAMILY.includes(R.metalClass(r)) && !(+r.laserDoneAt > 0) && !ids.includes(r.id) && (() => { const p = greenPartnersIn(r); return p.length > 0 && p.every(i => ids.includes(i)); })()).map(r => r.id) : [];
         const keeps = and(keep.flatMap(k => k.sheets).filter(r => !own.includes(r.id)).sort(byKind).map(r => C.name(r.id)));
         const withOwn = own.length ? `; ${and(own.map(C.name))}, which ${own.length === 1 ? 'shares' : 'share'} orders only with ${ids.length === 1 ? 'it' : 'them'}, ${own.length === 1 ? 'goes' : 'go'} with ${ids.length === 1 ? 'it' : 'them'}` : '';
         add('surplus', st, ids.concat(own), (ids.length === 1

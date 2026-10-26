@@ -4312,7 +4312,7 @@ async function sharedSheets(seedIds, { rounds = 4, cap = 500 } = {}) {
   }
   if (frontier.length && !more) more = true;       // (the last step found sheets whose own orders were not followed)
   const setIds = [...new Set([...docs.values()].filter(d => d.setId && !d.draft && d.solidIncluded !== false).map(d => String(d.setId)).filter(isId))], sets = new Map();
-  for (let i = 0; i < setIds.length; i += 100) for (const d of await db.getAll(...setIds.slice(i, i + 100).map(id => col(SETS).doc(id)), { fieldMask: ["setId", "seq", "day", "name", "status", "committedAt", "laserDoneAt"] })) if (d.exists) sets.set(d.id, d.data());
+  for (let i = 0; i < setIds.length; i += 100) for (const d of await db.getAll(...setIds.slice(i, i + 100).map(id => col(SETS).doc(id)), { fieldMask: ["setId", "seq", "day", "name", "status", "committedAt", "laserDoneAt", "processReady"] })) if (d.exists) sets.set(d.id, d.data());
   const sheets = [...docs.values()].map(d => SharedRule.sheetOf(d, { label: sheetLabel(d), fixed: SharedRule.fixedWhy(d, SharedRule.effectiveSet(d) ? sets.get(String(d.setId)) : null) })).filter(Boolean);
   return { sheets, more, docs: [...docs.values()], setDocs: [...sets].map(([id, s]) => ({ ...s, setId: id })) };
 }
@@ -4336,7 +4336,9 @@ async function splitOfSet(setId, memberIds) {
   // (Paul, 26 Oct 2026: an order a Rose Gold / 10K / 14K sheet shares with GF / SS sheets outside its ONE set is a known split, never a reason to refuse the set: the page's Gate.cardinalSplit reads the same)
   if (typeof SharedRule.greenHomes === "function") {
     const docOf = sid => setDocs.find(s => String(s.setId) === sid);
-    const homes = SharedRule.greenHomes(sheets, { rank: sid => { const d = docOf(sid); return d ? [String(d.day || ""), +d.seq || 0] : ["~", Infinity]; }, open: sid => { const d = docOf(sid); return !d || !SetRepair.exempt(d); } });
+    // (the set it cannot leave: the laser cut it, or its set is approved for laser cutting or committed; a recorded green-line cut alone pins nothing, Paul 26 Oct 2026)
+    const homes = SharedRule.greenHomes(sheets, { rank: sid => { const d = docOf(sid); return d ? [String(d.day || ""), +d.seq || 0] : ["~", Infinity]; }, open: sid => { const d = docOf(sid); return !d || !SetRepair.exempt(d); },
+      fixed: s => { if (!s.setId) return null; const d = docOf(String(s.setId)); return s.laserDone || (d && (SetRepair.exempt(d) || d.processReady || +d.laserDoneAt > 0)) ? String(s.setId) : null; } });
     items = SharedRule.realPartners(sheets, items, setId, homes);
   }
   const by = new Map(sheets.map(s => [s.id, s]));

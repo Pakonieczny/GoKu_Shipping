@@ -5255,7 +5255,8 @@ const Gate = window.Gate = (() => {
   const goldFamily = m => m === "rose" || solid(m);   // the metals with a green line that join a set by their own conditions (R12): Rose Gold, 10K, 14K
   const inSetNow = sh => !!sh.setId && !sh.draft;   // the sheet's real place: a set it is in (a draft is in none)
   const picked = (sh, choices = selected()) => typeof sh.solidPick === "boolean" ? sh.solidPick : sh.metal === "rose" ? inSetNow(sh) : choices[sh.metal] === true;
-  /** A recorded green-line cut keeps a sheet in the set it is in (charm-nest-shared-orders.js fixedWhy; SetEdit sheetCut): a 10K or 14K sheet the cardinal rule pulled in and that was then cut stays, though nobody ticked it. */
+  /** A recorded green-line cut keeps a sheet in the set it is in (charm-nest-shared-orders.js fixedWhy; SetEdit sheetCut): a 10K or 14K sheet the cardinal rule pulled in and that was then cut stays, though nobody ticked it.
+   *  (Paul, 26 Oct 2026: it is no longer "the set it can't leave": a cut sheet none of whose partners are in its set leaves it with them, by Decision 1's trim or greenAway, and joins the set they form) */
   const staysCut = sh => goldFamily(sh.metal) && !!sh.roseCutAt && inSetNow(sh);   // (R12: a recorded cut keeps a sheet in the set it is in. audit G4, 25 Oct 2026: it also read solidPick, which ticking ANOTHER sheet of the metal set to false on this one, and the cut sheet was drafted out of its set. Taking it out by hand drafts it first, so inSetNow is false there)
   // (the run still arranges a metal's sheets once one of them is in, as it did once the metal was: only the set is per sheet)
   const anyPicked = (m, choices = selected(), runId = B.run?.runId) => choices[m] === true || allSheets().some(p => p.metal === m && p.solidPick === true && (!runId || !p.runId || p.runId === runId));
@@ -5419,13 +5420,14 @@ const Gate = window.Gate = (() => {
     return V.sheets.filter(n => { const p = V.page.get(n.id); return !!p && ((withSets && inSetNow(p)) || !!n.fixed || goldFamily(p.metal)); }).map(n => n.id);
   }
   /** The ONE set of each green-line sheet of the run (charm-nest-shared-orders.js greenHomes: its fixed set, the set Gate.autoCut matched it to, the set it is in, else the earliest-formed set of its partners
-   *  that is still open): Map(coreId -> { home, sets, partners, orders, split }). */
+   *  that is still open): Map(coreId -> { home, sets, partners, orders, split }). Fixed: a sheet the laser cut, or in a set approved for laser cutting or committed. (Paul, 26 Oct 2026: "the set it can't
+   *  leave" is only theirs: a recorded green-line cut alone no longer pins a sheet to the set it is in, the cut RG Sheet 2 leaves Set 1 with GF Sheet 2 and joins the set GF Sheet 2 forms) */
   function greenHomesOf(V, run) {
     const core = V && V.SO && V.SO.core; if (!core || typeof core.greenHomes !== "function") return new Map();
     const all = Sets.ofRun(run.runId).filter(s => !/^superseded/.test(String(s.status || ""))), SRg = window.CharmNestSetRules;
     return core.greenHomes(V.sheets, { green: n => { const p = V.page.get(n.id); return !!p && goldFamily(p.metal); }, rank: sid => { const st = all.find(s => s.setId === sid); return st ? [String(st.day || ""), +st.seq || 0] : ["~", Infinity]; },
       open: sid => { const st = all.find(s => s.setId === sid); return !!st && !(SRg && SRg.exempt(st)); }, matched: n => { const p = V.page.get(n.id); return p && p.autoMatched ? String(p.autoMatched) : null; },
-      fixed: n => { const p = V.page.get(n.id); if (!p || !inSetNow(p)) return null; const st = all.find(s => s.setId === p.setId); return (p.roseCutAt || +p.laserDoneAt > 0 || (st && SRg && SRg.exempt(st))) ? String(p.setId) : null; } });
+      fixed: n => { const p = V.page.get(n.id); if (!p || !inSetNow(p)) return null; const st = all.find(s => s.setId === p.setId); return (+p.laserDoneAt > 0 || (st && ((SRg && SRg.exempt(st)) || st.processReady || st.laserSetPending || st.laserDoneAt))) ? String(p.setId) : null; } });
   }
   function formationOf(V, anchored, choices) {
     const SRp = window.CharmNestSetRules, core = V.SO.core;
@@ -5541,7 +5543,7 @@ const Gate = window.Gate = (() => {
       const mineOrders = [...new Set(mates.flatMap(i => h.orders[i] || []))].sort(), here = homeOf(p), tell = tellOf(V, [id].concat(mates));
       const split = h.split.length ? `${sheetNameOf(p)} belongs to ${setName(h.home)} only: ${ordersWords([...new Set(h.split.flatMap(x => x.orders))].sort())} it shares with ${named(h.split.map(x => x.sheet)).join(", ")} ${h.split.flatMap(x => x.orders).length === 1 ? "ships" : "ship"} in two parts (a ${labelOf(p.metal)} sheet is in one set)` : "";
       if (inSetNow(p)) {
-        if (here && h.home && h.home !== here.setId && !staysCut(p) && !(+p.laserDoneAt > 0) && !(here.processReady || here.laserSetPending || here.laserDoneAt)) { p.greenAway = `Its orders are with the sheets of ${setName(h.home)}: a ${labelOf(p.metal)} sheet is in one set, so it leaves ${here.name || "this set"}`; continue; }
+        if (here && h.home && h.home !== here.setId && !(+p.laserDoneAt > 0) && !(here.processReady || here.laserSetPending || here.laserDoneAt)) { p.greenAway = `Its orders are with the sheets of ${setName(h.home)}: a ${labelOf(p.metal)} sheet is in one set, so it leaves ${here.name || "this set"}`; continue; }
         if (here && mates.length && !basePolicy(p, here.seq, choices).include && !cannotJoin(p, ready)) p.cardinalPull = `Shares ${ordersWords(mineOrders, tell)} with ${named(mates).join(", ")}`;
       } else if (home) {
         const wants = basePolicy(p, home.seq, choices).include, gap = wants ? "" : cannotJoin(p, ready);
@@ -5823,7 +5825,9 @@ const Gate = window.Gate = (() => {
     for (const v of spare) {
       const st = sets.get(v.set); if (!st || approved(st)) continue;
       const unit = v.unit.map(id => pageOf.get(id));
-      if (unit.some(p => !p || p.roseCutAt || +p.laserDoneAt > 0 || p.processReady || p.setId !== st.setId || busy(p))) continue;
+      // (Paul, 26 Oct 2026: "the cut RG2 must leave Set 1 together with GF2": a green-line sheet of the unit leaves with it, cut or uncut; its cut, stock and remnant stay recorded, only its set
+      //  changes. A sheet the laser cut never moves)
+      if (unit.some(p => !p || +p.laserDoneAt > 0 || p.processReady || p.setId !== st.setId || busy(p))) continue;
       for (const p of unit) { p.leftSet = st.setId; p.draft = true; if (goldFamily(p.metal)) p.solidPick = false; }
       moved.push({ st, unit });
     }
@@ -11981,9 +11985,11 @@ const Sets = window.Sets = (() => {
     const SO = typeof window !== "undefined" ? window.SharedOrders : null; if (!SO || typeof SO.sheets !== "function" || !SO.core) return;
     let all; try { all = SO.sheets(); } catch (_) { return; }
     const by = new Map(all.map(x => [x.id, x]));
-    // (Paul, 26 Oct 2026) the ONE set of each green-line sheet, over every sheet the page holds: the set it cannot leave, the set it was matched to, the set it is in, else the earliest-formed set of its partners
+    // (Paul, 26 Oct 2026) the ONE set of each green-line sheet, over every sheet the page holds: the set it cannot leave, the set it was matched to, the set it is in, else the earliest-formed set of its partners.
+    //  The set it cannot leave: the laser cut it, or its set is approved for laser cutting or committed; a recorded green-line cut alone pins nothing (Gate.greenHomesOf, the checker, the server's splitOfSet)
     let homes = null;
-    try { const SRh = window.CharmNestSetRules, docs = list.filter(x => x.setId); homes = SO.core.greenHomes ? SO.core.greenHomes(all, { rank: sid => { const d = docs.find(x => String(x.setId) === sid); return d ? [String(d.day || ""), +d.seq || 0] : ["~", Infinity]; }, open: sid => { const d = docs.find(x => String(x.setId) === sid); return !d || !(SRh && SRh.exempt(d)); } }) : null; } catch (_) { homes = null; }
+    try { const SRh = window.CharmNestSetRules, docs = list.filter(x => x.setId), docOf = sid => docs.find(x => String(x.setId) === sid); homes = SO.core.greenHomes ? SO.core.greenHomes(all, { rank: sid => { const d = docOf(sid); return d ? [String(d.day || ""), +d.seq || 0] : ["~", Infinity]; }, open: sid => { const d = docOf(sid); return !d || !(SRh && SRh.exempt(d)); },
+      fixed: s => { if (!s.setId) return null; const d = docOf(String(s.setId)); return s.laserDone || (d && ((SRh && SRh.exempt(d)) || d.processReady || +d.laserDoneAt > 0)) ? String(s.setId) : null; } }) : null; } catch (_) { homes = null; }
     for (const g of list) {
       // (Paul, 15 Oct) a set built from sheets that share orders says which orders link which sheets, and which sheets no order ties to the rest: derived at every drawing, never saved
       if (g.setId && g.sheets.length > 1 && g.status !== "superseded") { let line = ""; try { line = linkLine(g, all, by, homes); } catch (_) { /* no line */ } if (line) g.cardinalLinks = line; else delete g.cardinalLinks; }

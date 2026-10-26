@@ -8,8 +8,9 @@
 //      into Set 1 once it was ticked or cut. It belongs to ONE set (its partners' earliest-formed set); its orders with the others are a known split, said plainly, never a violation, a hold or a pull.
 //      A set that already holds the surplus unit is corrected by the assembly itself: the unit leaves with its own green-line sheet (Decision 1's trim).
 //   3  UNPAIR · the five-sheet state as it is live (order 4200987085 ties GF Sheet 2 to SS Sheet 1 DIRECTLY, a GF + SS order): the assembly moves that order's SS piece off SS Sheet 1 to SS Sheet 2
-//      (the sheet window's own move, SheetWin.holdKit.move), then the trim takes GF Sheet 2 out. Set 1 = GF Sheet 1 + SS Sheet 1 (+ RG Sheet 2, whose cut is recorded in it: a cut sheet never moves, and
-//      it holds nothing, its order with GF Sheet 2 is a known split; an uncut one leaves with its GF sheet, part 2).
+//      (the sheet window's own move, SheetWin.holdKit.move), then the trim takes GF Sheet 2 out WITH the cut RG Sheet 2 ("the cut RG2 must leave Set 1 together with GF2": its cut, stock and remnant
+//      stay recorded, only its set changes; only a sheet the laser cut, an approved set and a committed set never move). Set 1 = GF Sheet 1 + SS Sheet 1, RG Sheet 1 the partner to add, then
+//      GF 1 + SS 1 + RG 1 once its cut is accepted; GF Sheet 2 and RG Sheet 2 wait outside for SS Sheet 2 and form Set 2 with it. Never two RG sheets in Set 1.
 //   4  AUTOCUT · the automatic Cut Sheet put RG Sheet 1 in the set first, the server refused the cut (an order waited for its own design), the include stayed: the include is undone on a refusal (the
 //      sheet waits outside, its card says why in the server's words) and it is cut and joins once the server accepts.
 //   5  RED LINE · a green-line sheet whose back engraving is open is what the set's Approve waits for: one plain waiting line, never "breaks your rules" with Rebuild.
@@ -157,6 +158,10 @@ function intakeWorld() {
     all[4].matched = 's2'; ok('the set the system matched it to wins while it holds a partner', SO.core.greenHomes(all, { rank: sid => ({ s1: 1, s2: 2 })[sid] }).get('rg').home === 's2'); delete all[4].matched;
     const items = SO.core.between(all, ['gf2', 'ss2'], 's2'), real = SO.core.realPartners(all, items, 's2', H);
     ok('realPartners: Set 2 does not wait for the RG sheet of Set 1', items.length === 1 && real.length === 0 && real.split.length === 1);
+    // (Paul, 26 Oct 2026) a recorded green-line cut alone pins nothing: a cut RG sheet in Set 1 whose only partner is in Set 2 belongs to Set 2; one the laser cut stays where it is
+    const cutRg = Object.assign(sh('rgc', 'rose', 's1', ['3_4_1']), { fixed: 'its Rose Gold cut is recorded' }), all2 = all.slice(0, 4).concat([cutRg]);
+    ok('greenHomes: a cut RG sheet with no partner in its set goes to its partners\' set (its cut does not pin it)', SO.core.greenHomes(all2, { rank: sid => ({ s1: 1, s2: 2 })[sid] }).get('rgc').home === 's2');
+    cutRg.laserDone = true; ok('greenHomes: a sheet the laser cut never moves', SO.core.greenHomes(all2, { rank: sid => ({ s1: 1, s2: 2 })[sid] }).get('rgc').home === 's1');
   }
 
   /* ═══ 3 · UNPAIR: the five-sheet state as it is live ═════════════════════════════════════════════════════════════════════════════════════════════ */
@@ -165,8 +170,9 @@ function intakeWorld() {
     const gf1 = w.full(w.page('gold', base)), ss1 = w.full(w.page('silver', base)), gf2 = w.full(w.page('gold', base));
     const rg1 = w.page('rose', Object.assign({ density: .32 }, base)), rg2 = w.page('rose', Object.assign({ density: .07 }, base)), ss2 = w.page('silver', Object.assign({ density: .3 }, base));
     w.put(gf1, `${A}_1_1`, '8100_1_1'); w.put(ss1, `${A}_2_1`, `${B}_2_1`, '8200_1_1'); w.put(rg1, `${A}_3_1`); w.put(gf2, `${B}_1_1`, `${C}_1_1`); w.put(rg2, `${C}_2_1`); w.put(ss2, '8300_1_1');
-    // (as the records are: RG 1 in Set 1 uncut, ticked by the automatic press whose cut the server refused; RG 2 in Set 1 with its cut recorded)
-    rg1.solidPick = true; rg2.solidPick = true; rg2.roseCutAt = 1792985938012; const set = formAll(w, [gf1, ss1, gf2, rg1, rg2]);
+    // (as the records are: RG 1 in Set 1 uncut, ticked by the automatic press whose cut the server refused; RG 2 in Set 1 with its cut recorded, matched to Set 1 by the automatic press)
+    const CUT2 = 1792985938012; rg1.solidPick = true; rg2.solidPick = true; rg2.roseCutAt = CUT2; const set = formAll(w, [gf1, ss1, gf2, rg1, rg2]); rg2.autoMatched = set.setId;
+    const rgsIn1 = () => w.members(set).filter(p => p.metal === 'rose').map(p => p.sheetId);
     const pre = I.check(w.input().sets, w.input().sheets, { skipExempt: true });
     ok('as it is live, GF 2 is tied to SS 1 DIRECTLY by order B (a GF + SS order): one unit by the cardinal rule, so no rule can call it spare', !pre.violations.some(v => v.rule === 'surplus'), I.explain(pre).join(' | '));
     ok('the plan: order B\'s SS piece leaves SS 1 for SS 2, the open SS sheet that keeps the pairing', (() => { const p = vm.runInContext('Gate.unpairPlan(B.run)', w.c); return p.length === 1 && p[0].from === ss1 && p[0].to === ss2 && p[0].orders[0] === B && p[0].second === gf2; })());
@@ -180,13 +186,28 @@ function intakeWorld() {
     await w.assemble(); await settle(w, 60);
     ok('the assembly moved order B\'s SS piece from SS 1 to SS 2 by itself, with the sheet window\'s move (automatic, nothing cut or approved in the way)', moves.length === 1 && moves[0].rid === B && moves[0].from === 'SS1' && moves[0].to === 'SS2' && moves[0].guard === '' && /automatic/.test(moves[0].who), JSON.stringify(moves));
     const m = w.members(set).map(p => p.sheetId).sort();
-    ok('then the trim took GF 2 out: Set 1 = GF 1 + SS 1 (+ RG 2, whose cut is recorded there: a cut sheet never moves)', m.join() === 'GF1,RG2,SS1', w.word());
+    ok('then the trim took GF 2 out WITH the cut RG 2: Set 1 = GF 1 + SS 1', m.join() === 'GF1,SS1', w.word());
+    ok('RG 2\'s cut is not undone: only its set changed', !w.inSet(rg2) && rg2.roseCutAt === CUT2 && !w.calls.includes('RG2'), w.word());
     ok('RG 1, uncut, is not left in the set: its automatic cut was refused (order 4199104309 waits for its own design) and its card says so', !w.inSet(rg1) && /order 4199104309: waiting for its own design/.test(rg1.autoCutWait || ''), rg1.autoCutWait);
     ok('GF 2 waits with SS 2 until SS 2 is full (they share order B now)', !w.inSet(gf2) && /not full yet/.test(gf2.cardinalHold || ''), gf2.cardinalHold);
+    ok('RG 2 waits with GF 2 for their set, never for Set 1', !w.inSet(rg2) && /shared with GF \w+ 2, which is in no set yet: it joins their set once it forms/.test(rg2.cardinalHold || '') && rg2.cardinalHome !== set.setId && !rg2.cardinalPull, JSON.stringify({ hold: rg2.cardinalHold, home: rg2.cardinalHome, pull: rg2.cardinalPull }));
     const r = w.selfCheck();
-    ok('RG 2 holds nothing: its order C with GF 2 is a known split, said plainly', (r.splits || []).some(x => x.sheet === 'RG2' && x.orders.includes(C) && /ships in two parts/.test(x.message)) && /ships in two parts/.test(gf2.cardinalNote || rg2.cardinalNote || ''), JSON.stringify(r.splits));
-    ok('the checker: no violation; Set 1 waits for RG 1 (its partner still to come), not approved meanwhile', r.ok && r.partners.some(p => p.sheet === 'RG1' && p.set === set.setId) && r.sets.find(x => x.id === set.setId).canApprove === false, (r.lines || []).join(' | '));
+    ok('the checker: no violation (a cut green-line sheet outside every set is none); Set 1 waits for RG 1 (its partner still to come), Approve grey meanwhile', r.ok && r.partners.some(p => p.sheet === 'RG1' && p.set === set.setId) && !r.partners.some(p => p.sheet === 'RG2' || p.sheet === 'GF2') && r.sets.find(x => x.id === set.setId).canApprove === false, (r.lines || []).join(' | '));
     ok('the move is done once: a later look plans nothing', vm.runInContext('Gate.unpairPlan(B.run)', w.c).length === 0);
+    await w.assemble(); await settle(w);
+    ok('a later look does not pull RG 2 back into Set 1', !w.inSet(rg2) && w.members(set).map(p => p.sheetId).sort().join() === 'GF1,SS1', w.word());
+    // the server accepts RG 1's cut: it joins Set 1, the one RG sheet there
+    w.refuse = null; rg1.jobId = 'j2'; vm.runInContext('Gate.autoCut(B.run)', w.c); await settle(w);
+    ok('once RG 1\'s cut is accepted: Set 1 = GF 1 + SS 1 + RG 1', w.members(set).map(p => p.sheetId).sort().join() === 'GF1,RG1,SS1' && !!rg1.roseCutAt, w.word());
+    ok('never two RG sheets in Set 1', rgsIn1().join() === 'RG1', rgsIn1().join());
+    ok('GF 2 and RG 2 still wait outside', !w.inSet(gf2) && !w.inSet(rg2), w.word());
+    // SS 2 is full: GF 2 + SS 2 form Set 2, and the cut RG 2 joins it (R12: a cut sheet in NO set may join one)
+    w.full(ss2); await w.assemble(); await settle(w);
+    const set2 = w.sets().find(x => x.setId !== set.setId);
+    ok('GF 2 + SS 2 form Set 2 and RG 2 joins it', set2 && w.members(set2).map(p => p.sheetId).sort().join() === 'GF2,RG2,SS2', w.word());
+    ok('its cut is the one recorded before (never cut again)', rg2.roseCutAt === CUT2 && !w.calls.includes('RG2'));
+    ok('Set 1 is untouched, and still never two RG sheets in it', w.members(set).map(p => p.sheetId).sort().join() === 'GF1,RG1,SS1' && rgsIn1().join() === 'RG1', w.word());
+    const r2 = w.selfCheck(); ok('the checker accepts both sets', r2.ok, (r2.lines || []).join(' | '));
     // never a set approved for laser cutting, committed, or a sheet that is cut
     const w2 = world(); const g1 = w2.full(w2.page('gold', base)), s1 = w2.full(w2.page('silver', base)), g2 = w2.full(w2.page('gold', base)), s2 = w2.page('silver', Object.assign({ density: .3 }, base));
     w2.put(g1, `${A}_1_1`); w2.put(s1, `${A}_2_1`, `${B}_2_1`); w2.put(g2, `${B}_1_1`); w2.put(s2, '8300_1_1'); vm.runInContext('var pagesOf = m => pages.filter(p => p.metal === m);', w2.c);
@@ -224,5 +245,5 @@ function intakeWorld() {
     ok('the Approve gate is grey with that line', gate.applies && !gate.ok && /Waiting for the back engraving approval of RG Sheet 1/.test(gate.line) && !gate.breaks, JSON.stringify(gate));
     ok('a remedy that is only a back engraving to approve never draws a Rebuild button', !/data-rebuild-set/.test(SRp.lineHtml({ setId: 's1', setBreaks: { line: 'x', rules: [], remedy: { kind: 'backs', say: 'Approve the back engraving of RG Sheet 1 (Engraving tab).' } } })));
   }
-  console.log('PASS: green-line one set: one GF + one SS sheet share an order at the intake, the overflow and greenFits; a green-line sheet ties no two units and belongs to one set (a set holding a surplus unit is corrected by itself); the live five-sheet set is repaired (order B\'s SS piece moved, GF 2 out, the cut RG 2 a known split); an automatic cut refused undoes its include; an open back engraving is a wait, never a red line');
+  console.log('PASS: green-line one set: one GF + one SS sheet share an order at the intake, the overflow and greenFits; a green-line sheet ties no two units and belongs to one set (a set holding a surplus unit is corrected by itself); the live five-sheet set is repaired (order B\'s SS piece moved, GF 2 out with the cut RG 2, which join Set 2 with SS 2; RG 1 joins Set 1 once cut, never two RG sheets in it); an automatic cut refused undoes its include; an open back engraving is a wait, never a red line');
 })().catch(e => { console.error(e); process.exit(1); });

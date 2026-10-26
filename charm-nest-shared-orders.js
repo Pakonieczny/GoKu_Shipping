@@ -62,7 +62,7 @@
     let pieces = keys.map(k => { const side = sides ? sideOk(sides[k]) : null, g = parseKey(k); return { key: k, orderId: orderOfKey(k), ...(g ? { groupKey: g.groupKey } : {}), ...(side ? { side } : {}) }; }).filter(p => p.orderId);
     // a record that lists orders and no pieces (an old one): one unknown piece per order and sheet
     if (!pieces.length) pieces = [...new Set((Array.isArray(rec.orders) ? rec.orders : []).map(String).filter(x => /^\d{1,30}$/.test(x)))].map(oid => ({ key: `${oid}~${id}`, orderId: oid, unknown: true }));
-    return { id, label: o.label || sheetLabelOf(rec), metal: rec.metal || '', setId: o.setId !== undefined ? o.setId : effectiveSet(rec), runId: rec.runId || null, fixed: o.fixed || '', pieces };
+    return { id, label: o.label || sheetLabelOf(rec), metal: rec.metal || '', setId: o.setId !== undefined ? o.setId : effectiveSet(rec), runId: rec.runId || null, fixed: o.fixed || '', ...(+rec.laserDoneAt > 0 ? { laserDone: true } : {}), pieces };
   }
 
   /* ── the rule over sheets ───────────────────────────────────────────────────────────────────────────────────── */
@@ -151,7 +151,8 @@
    *  with the Set of sheets containing the GF and/or SS sheet with which the RG sheet shares charms with. No other multi-charm orders should be allowed to intertwine the RG sheet with any other GF and SS
    *  sheets unless they belong to the same Set of Sheets." and, of a sheet that shares orders with two sets: "The system should pick a set automatically". The same for 10K and 14K (every metal with a green line).
    * So a green-line sheet never ties two Gold Filled / Sterling Silver units together, cut or uncut (formation: it is an anchor), and it belongs to exactly ONE set, its HOME:
-   *   1. the set it cannot leave (its cut is recorded in it, or that set was sent to the station: o.fixed);
+   *   1. the set it cannot leave (the laser cut it, or that set is approved for laser cutting or was sent to the station: o.fixed). A recorded green-line cut alone does NOT pin it: a cut sheet with
+   *      none of its partners in its set leaves it with them (Decision 1's trim) and joins the set they form (R12: "a cut sheet in NO set may join one"); its cut, stock and remnant stay as they are;
    *   2. the set the system matched it to (Gate.autoCut, o.matched) while that set holds one of its partners;
    *   3. the set it is in, while that set holds one of its partners (a set holds its place);
    *   4. else the earliest-formed set among its partners' sets that can still take a sheet (o.rank, o.open);
@@ -159,7 +160,7 @@
    * Its partners are the GF / SS sheets that share a multi-piece order with it. An order it shares with a partner OUTSIDE its home is a KNOWN SPLIT: said in a plain line, never a cardinal violation, never
    * a partner to wait for and never a reason to pull that partner's unit into its home (Paul's Set 1 of 26 Oct 2026 held GF Sheet 2 because an RG sheet filled before the intake rule chained it in).
    *   greenHomes(sheets, o) -> Map(greenSheetId -> { home, sets:[setId, earliest first], partners:[id], orders:{ partnerId:[orderId] }, split:[{ sheet, orders }] })
-   *   o: { green(sheet) -> bool (default: metal rose / gold10k / gold14k), fixed(sheet) -> setId|null (default: the set of a sheet whose `fixed` says why it cannot change set), matched(sheet) -> setId|null
+   *   o: { green(sheet) -> bool (default: metal rose / gold10k / gold14k), fixed(sheet) -> setId|null (default: the set of a sheet the laser cut), matched(sheet) -> setId|null
    *        (default: sheet.matched), rank(setId) -> [day, seq] or a number (earlier first; default: the order the sets are first seen in), open(setId) -> bool (default: every set) }
    *   realPartners(sheets, items, setId, homes, o) -> items of between() for that set with `thereIds` / `there` narrowed to the sheets the set must wait for: a green-line sheet only for its home, a GF / SS
    *        sheet only through an order it shares with a GF / SS sheet of the set (a tie through a green-line sheet alone is a known split); the items left with no sheet are dropped, `split` lists them. */
@@ -178,7 +179,7 @@
     }
     const seen = []; for (const s of sheets) if (s.setId && !seen.includes(String(s.setId))) seen.push(String(s.setId));
     const rank = o.rank || (sid => seen.indexOf(sid)), open = o.open || (() => true), cmp = byRank(rank);
-    const fixed = o.fixed || (s => (s.fixed && s.setId ? String(s.setId) : null)), matched = o.matched || (s => (s.matched ? String(s.matched) : null));
+    const fixed = o.fixed || (s => (s.laserDone && s.setId ? String(s.setId) : null)), matched = o.matched || (s => (s.matched ? String(s.matched) : null));
     for (const [id, h] of out) {
       const s = byId.get(id), own = s.setId ? String(s.setId) : null;
       h.sets = [...new Set(h.partners.map(c => byId.get(c).setId).filter(Boolean).map(String))].sort(cmp);
