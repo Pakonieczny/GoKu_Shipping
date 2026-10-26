@@ -45,6 +45,8 @@ const read = (over, aliases) => { const line = lineOf(over); return { line, spec
     const w = world([OLD, NEW, TWIN]), reviews = [], timeline = [];
     w.entries[TWIN].aiPath = w.entries[NEW].aiPath;   // (one drawing, two names, as the library keeps it)
     w.c.Review = { add: it => reviews.push(it) }; w.c.B.review = { items: reviews }; w.c.Sets = { ofRun: () => [] }; w.c.Gate = { modern: () => false };
+    // (INPLACE, Paul 20 Oct 2026: the Pool asks the bridge's replaceCutWhy which sheets may change: the real one, from the same source)
+    { const src = keyWorld.src, i = src.indexOf('function replaceCutWhy(sh, ids) {'), j = src.indexOf('window.replaceCutWhy = replaceCutWhy;', i); assert(i > 0 && j > i, 'replaceCutWhy is where the test expects it'); require('vm').runInContext(src.slice(i, j), w.c); }
     w.c.TL = { line: (row, type, o) => { timeline.push({ type, o }); return true; }, hash: s => String(s).length.toString(36) };
     return Object.assign(w, { reviews, timeline });
   };
@@ -64,14 +66,18 @@ const read = (over, aliases) => { const line = lineOf(over); return { line, spec
   // quantity 2: the card says 2 pieces
   { const w = worldOf(), row = rowOf({ quantity: 2 }, undefined, 2); pooledBefore(w, row); w.c.B.pool.rows.set('4197740562_5246703786_2', { poolId: '4197740562_5246703786_2', state: 'ready', sku: OLD, copy: 2, quantity: 2, charmHash: 'x' }); row.poolIds.push('4197740562_5246703786_2');
     w.Pool.pinPooled(row); eq(w.reviews.length, 1, 'quantity 2: one card'); ok(/as 2 pieces: the old CELESTIAL3-COMET comes off/.test(w.reviews[0].why), 'it says 2 pieces and names the old design once: ' + w.reviews[0].why); }
-  // never on a sheet that was released (full), recalled or cut: left as it was, said once in the log and once on the timeline
-  for (const [what, set] of [['released (full)', sh => { sh.releaseFull = true; }], ['recalled', sh => { sh.recalled = true; }], ['cut', sh => { sh.roseCutAt = 1; }]]) {
+  // never on a sheet the laser has cut, or one recalled from the library: left as it was, said once in the log and once on the timeline
+  // (INPLACE, Paul 20 Oct 2026: "Unless a sheet has been marked as fully completed and laser cut then that charm needs to come off that particular sheet": a full sheet changes, below)
+  for (const [what, set] of [['laser cut', sh => { sh.laserDoneAt = 1; }], ['recalled', sh => { sh.recalled = true; }], ['cut', sh => { sh.roseCutAt = 1; }]]) {
     const w = worldOf(), row = rowOf(), id = pooledBefore(w, row); w.pages.gold.charms.push({ poolId: id }); w.pages.gold.fileBase = 'SS Draft 1'; set(w.pages.gold);
     w.Pool.pinPooled(row); w.Pool.pinPooled(row);
     eq([row.changePending || false, row.repoolChanged || false, w.reviews.length], [false, false, 0], `a piece on a sheet ${what} is left as it was: no flag, no card`);
     eq(w.logs.filter(t => /a saved link makes this line CELESTIAL 3 - COMET, but its piece is on SS Draft 1, released or cut: left as it was/.test(t)).length, 1, 'the log says so once');
     eq(w.timeline.length, 1, 'and the order\'s timeline says so once'); ok(w.timeline[0].type === 'interpreted' && /^Saved link: now CELESTIAL 3 - COMET, but CELESTIAL3-COMET is on SS Draft 1, released or cut, so the sheet was left as it was$/.test(w.timeline[0].o.text) && w.timeline[0].o.once === true, 'in words: ' + w.timeline[0].o.text);
     eq(writes(w), 0, 'nothing is written to a sheet or a record'); }
+  // a full sheet not cut yet (INPLACE, Paul 20 Oct 2026): offered, like a draft
+  { const w = worldOf(), row = rowOf(), id = pooledBefore(w, row); w.pages.gold.charms.push({ poolId: id }); w.pages.gold.releaseFull = true; w.pages.gold.fileBase = 'SS Full 1';
+    w.Pool.pinPooled(row); eq([row.changePending, w.reviews.length], [true, 1], 'a piece on a full sheet not laser cut is offered the new reading'); }
   // a draft sheet that is open (not full, not in a set): offered
   { const w = worldOf(), row = rowOf(), id = pooledBefore(w, row); w.pages.gold.charms.push({ poolId: id }); w.pages.gold.draft = true; w.pages.gold.fileBase = 'SS Draft 2';
     w.Pool.pinPooled(row); eq([row.changePending, w.reviews.length], [true, 1], 'a piece on an open draft sheet is offered the new reading'); }
@@ -85,7 +91,7 @@ const read = (over, aliases) => { const line = lineOf(over); return { line, spec
   { const w = worldOf(), row = rowOf({ listingId: '999' }, {}); pooledBefore(w, row, TWIN); row.spec = Object.assign({}, row.spec, { designSku: NEW }); w.Pool.pinPooled(row); eq(w.reviews.length, 0, 'a line whose SKU was NOT read from a saved link (an exact master match, an option, an Etsy table) is never offered a change here'); }
   { const w = worldOf(), row = rowOf(); pooledBefore(w, row); row.spec.noDesign = true; w.Pool.pinPooled(row); eq(w.reviews.length, 0, 'a line that is not cut is not offered a change'); }
   { const w = worldOf(), row = rowOf(); pooledBefore(w, row); row.spec.problems = [{ kind: 'unmatchedSku' }]; w.Pool.pinPooled(row); eq(w.reviews.length, 0, 'a line with an open question is not offered a change'); }
-  pass('B · an order pooled as the old comet is offered the Order changed card on an open sheet (once, no writes); a released, recalled or cut sheet is left as it was and said so; every other case is quiet');
+  pass('B · an order pooled as the old comet is offered the Order changed card on an open or full sheet (once, no writes); a laser cut, recalled or cut sheet is left as it was and said so; every other case is quiet');
 
   console.log(`saved-link-repool: ${n} checks passed`);
 })().catch(e => { console.error(e); process.exit(1); });

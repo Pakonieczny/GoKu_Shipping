@@ -48,7 +48,7 @@ async function main() {
   w.METALS = [{ key: 'gold', label: 'GF', color: '#a90' }, { key: 'silver', label: 'SS', color: '#999' }];
   w.MM = 25.4 / 72; w.labelOf = metal => metal === 'gold' ? 'GF' : 'SS'; w.stockFor = () => ({ wPt: 500, hPt: 500 });
   w.allSheets = () => storedSheets; w.employeeName = () => 'Different current viewer'; w.askEmployee = w.employeeName;
-  w.Orders = { rows: () => rows, statePill: row => ['ok', row.state === 'written' ? '3/5 written' : '2/5 nested'] };
+  w.Orders = { rows: () => rows, heldNow: row => !!row.hold, statePill: row => ['ok', row.state === 'written' ? '3/5 written' : '2/5 nested'] };
   w.Pool = { charmOf: poolId => storedSheets.flatMap(sheet => sheet.charms).find(charm => charm.poolId === poolId), sheetOf: poolId => storedSheets.find(sheet => sheet.poolIds.includes(poolId)),
     onSheets: () => true, settle: () => { mutations.push('pool-settle'); } };
   w.CustomPrint = { statusHtml: () => '', stamp: () => '', undoing: () => false, freshOf: () => 0, failNote: () => '',

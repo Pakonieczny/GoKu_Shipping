@@ -41,9 +41,12 @@ function harness() {
     cutLinesOf: c => c.members,
     engGeoOf: () => null,
     tryDo: fn => fn(),
+    window: {},
   });
   vm.runInContext('const fileGeoms = new Map();\n' + between('  async function sourceGeom(s) {', '  function geometryReady(tok)'), context);
-  vm.runInContext(between('  function attachGeom(x, g, rec) {', '  /* ── the back of a sheet'), context);
+  // (attachGeom is async now: a pool piece's base comes through pieceBase, an earring's own body or one body of a design drawn twice, Paul 11 Oct 2026)
+  vm.runInContext(between('  async function pieceBase(g, x) {', '  async function sourceGeom(s) {'), context);
+  vm.runInContext(between('  async function attachGeom(x, g, rec) {', '  /* ── the back of a sheet'), context);
   vm.runInContext(between('  function backPiece(ctx, x, backs, k, o = {}) {', '  /** The engraving font'), context);
   h.context = context;
   h.read = s => context.sourceGeom(s);
@@ -72,7 +75,7 @@ async function main() {
     assert.strictEqual(geom.charms[0].members, h.shapes[0].members);
     assert.equal(geom.charms[0].widthPt, 42); assert.equal(geom.charms[0].heightPt, 30);
     const x = { id: 'saved-piece', sourceId: descriptor.id, index: 0, hash: 'custom-hash', name: '4174476673 · Custom · tag', p: { wPt: 42, hPt: 30, scale: 1 } };
-    h.context.attachGeom(x, geom, { metal: 'gold' });
+    await h.context.attachGeom(x, geom, { metal: 'gold' });
     assert.equal(x.c.id, 'saved-piece'); assert.equal(x.c.name, x.name); assert.equal(x.c.custom, true);
     const ctx = { paths: [], fills: [], strokes: [], beginPath() {}, fill() { this.fills.push(this.fillStyle); }, stroke() { this.strokes.push(this.strokeStyle); }, setLineDash() {} };
     h.context.backPiece(ctx, x, new Map(), 2);
@@ -88,7 +91,7 @@ async function main() {
     assert.equal(geom.base.custom, undefined); assert.equal(h.bytes.length, 0); assert.equal(h.parses.length, 0);
     assert.deepEqual(h.masterCalls, [['entry', 'GECKO'], ['charm', 'GECKO', 'Large']], 'ordinary master lookup and exact saved size remain unchanged');
     const x = { id: 'master-piece', name: 'GECKO', rid: '4176277010', poolId: '4176277010_line_1' };
-    h.context.attachGeom(x, geom, { metal: 'silver' }); assert.equal(x.c.id, x.id); assert.equal(x.c.order, x.rid); assert.equal(x.c.metal, 'silver');
+    await h.context.attachGeom(x, geom, { metal: 'silver' }); assert.equal(x.c.id, x.id); assert.equal(x.c.order, x.rid); assert.equal(x.c.metal, 'silver');
     await assert.rejects(harness().read({ id: 'master:missing', pool: true, sku: 'MISSING', path: 'master/missing.ai' }), /no longer in the master library/);
     cases++;
   }

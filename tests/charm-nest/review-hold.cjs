@@ -189,6 +189,8 @@ const A = '9100000001', B = '9100000002';
       w.entries['COMET_9427'].aiPath = w.entries[NEW].aiPath;   // (one drawing, two names, as the library keeps it)
       w.c.Review = { add: it => reviews.push(it) }; w.c.B.review = { items: reviews }; w.c.Sets = { ofRun: () => [] }; w.c.Gate = { modern: () => false };
       w.c.TL = { line: (row, type, o) => { timeline.push({ type, o }); return true; }, hash: x => String(x).length.toString(36) };
+      // (INPLACE, Paul 20 Oct 2026: the Pool asks the bridge's replaceCutWhy which sheets may change: the real one, from the same source)
+      { const src = keyWorld.src, i = src.indexOf('function replaceCutWhy(sh, ids) {'), j = src.indexOf('window.replaceCutWhy = replaceCutWhy;', i); assert(i > 0 && j > i, 'replaceCutWhy is where the test expects it'); require('vm').runInContext(src.slice(i, j), w.c); }
       w.c.window.CharmNestReviewHold = H; return Object.assign(w, { reviews, timeline, toasts, calls });
     };
     const rowOf = () => { const spec = O.interpretLine({ receiptId: rid, updateTs: 1 }, line, ctx({ [LID]: { v: 2, bySku: { [OLD]: NEW }, by: 'X' } })); spec.material = 'gold'; return Object.assign(lineRow(rid, '5246703786', spec.designSku, 1, {}), { spec, line: { transactionId: line.transactionId, listingId: LID, sku: line.sku, title: TITLE } }); };
@@ -200,7 +202,7 @@ const A = '9100000001', B = '9100000002';
     mark(rid);
     { const w = worldOf(), row = rowOf(), id = placed(w, row, true); w.Pool.pinPooled(row); w.Pool.pinPooled(row);
       assert.deepEqual([row.changePending || false, row.repoolChanged || false, w.reviews.length, row.poolIds], [false, false, 0, [id]], 'in Review on a sheet: no card, the piece stays');
-      assert.equal(logsOf(w), 1, 'said once in the log'); assert.equal(w.timeline.length, 1); assert.match(w.timeline[0].o.text, /^Saved link: a saved link makes this line CELESTIAL 3 - COMET, but its piece stays on its sheet because the order was sent to Review/);
+      assert.equal(logsOf(w), 1, 'said once in the log'); assert.equal(w.timeline.length, 1); assert.match(w.timeline[0].o.text, /^Saved link: a saved link makes this line CELESTIAL 3 - COMET, but its piece stays on its sheet because the order is held in Review/);
       assert.equal(w.pages.gold.charms.length, 1, 'the sheet is untouched'); assert.equal(w.calls.filter(c => /pool|sheet/i.test((c.body && c.body.op) || '')).length, 0, 'nothing written'); }
     // (c) in Review but its piece is not on a sheet yet: the card is offered as before (nothing to lift)
     { const w = worldOf(), row = rowOf(); placed(w, row, false); w.Pool.pinPooled(row); assert.equal(w.reviews.length, 1, 'no piece on a sheet: nothing to keep'); }
@@ -230,7 +232,7 @@ const A = '9100000001', B = '9100000002';
       require('vm').runInContext(src.slice(a, b) + '\nwindow.__repoolLine = repoolLine;', w.c);
       row.hold = null; await w.c.window.__repoolLine(row);
       assert.deepEqual([row.poolIds, row.repoolChanged, row.changePending, updates.length, w.pages.gold.charms.length], [[id], false, false, 0, 1], `${state}: the piece is not lifted, not superseded, not made up again`);
-      assert.equal(w.toasts.length, 1); assert.match(w.toasts[0], /^Kept on its sheet with its old drawing: the order was sent to Review$/); assert.equal(row.state !== 'pulled', true, 'it was not made up again (no re-pool)');
+      assert.equal(w.toasts.length, 1); assert.match(w.toasts[0], /^Kept on its sheet with its old drawing: the order is held in Review$/); assert.equal(row.state !== 'pulled', true, 'it was not made up again (no re-pool)');
     }
     // (f) a piece cut or released is never touched: the old held-by-hand path still answers it
     unmark(rid); doneHow.delete(rid);

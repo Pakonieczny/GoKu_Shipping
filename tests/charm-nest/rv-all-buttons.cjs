@@ -244,7 +244,7 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     await page.waitForTimeout(800);
     const pcRow = () => page.evaluate(() => {
       const row = document.querySelector('#owPcSum .owPcRow'), r = row.getBoundingClientRect();
-      return { text: row.textContent, btns: [...row.querySelectorAll('.pcAct button, .pcAct [role=button]')].map(b => b.textContent.trim()).filter(t => t && t !== 'Hold'),
+      return { text: row.textContent, btns: [...row.querySelectorAll('.pcAct button, .pcAct [role=button]')].map(b => b.textContent.trim()).filter(t => t && !/^Hold( Order)?$/.test(t)),   // (the order's own hold: HOLDORDER, Paul 20 Oct 2026, "Hold" is "Hold Order" everywhere)
         old: row.querySelectorAll('[data-cu-view-designs], [data-cu-open-sheet], [data-cu-history]').length,
         seals: [...row.querySelectorAll('.seal')].map(s => { const b = s.getBoundingClientRect(); return { w: s.offsetWidth, inside: b.left >= r.left - 2 && b.right <= r.right + 2 }; }),
         sideways: document.documentElement.scrollWidth > innerWidth + 1, tabs: ['sheet', 'timeline'].filter(v => document.querySelector(`#orderWin [data-ow-view="${v}"]`)) };

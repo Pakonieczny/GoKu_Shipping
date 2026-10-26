@@ -17829,7 +17829,8 @@ const Review = window.Review = (() => {
     if (mine) return `Sent to Sheet${said ? " · " + said : ""}`;
     if ((row.poolIds || []).length) return `${spc.label} · on its way to the laser${said ? " (" + said + ")" : ""}`;
     // (the line's own reason, the one that says why it is custom: an add-on listing, or the listing a person flagged, with the words they left: "pre-made piece, not laser cut")
-    if (sp.ownDesign) return `${spc.label} · ${spc.why || "no master design"} · Complete Order or print its QR label when it is ready, or drop its .ai / .dxf designs and Send to Sheet`;
+    // (RELORDER, Paul 20 Oct 2026: the card has no Complete Order now, its Release Hold stands where it stood: the words name the button that is there, 26 Oct 2026)
+    if (sp.ownDesign) return `${spc.label} · ${spc.why || "no master design"} · Release Hold or print its QR label when it is ready, or drop its .ai / .dxf designs and Send to Sheet`;
     if (sp.noDesign) return `${spc.label} · not laser cut${spc.notCut ? "" : " (no-design list)"} · print its QR label when it is ready`;
     return `${spc.label} · nothing to decide · cut with the next run`;
   }
