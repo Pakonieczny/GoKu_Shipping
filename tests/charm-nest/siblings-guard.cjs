@@ -27,9 +27,11 @@ const SKULL = '<path d="M46 80 Q84 50 122 80 Q124 108 106 110 L102 120 L66 120 L
     await context.addInitScript(s => { try { localStorage.setItem('cn.settings', JSON.stringify(s)); localStorage.setItem('cn.employee', 'Test Operator'); } catch (_) {} window.prompt = () => 'Test Operator'; }, { v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off' });
     const page = await context.newPage(); page.setDefaultTimeout(30000);
     const errors = []; page.on('pageerror', e => errors.push(e.message));
-    const etsy = []; page.on('request', q => { if (/etsy/i.test(q.url())) etsy.push(q.method() + ' ' + q.url()); });
+    const etsy = []; page.on('request', q => { if (/etsy/i.test(new URL(q.url()).hostname)) etsy.push(q.method() + ' ' + q.url()); });   // (an Etsy host: the page's own charm-nest-*etsy*.js scripts are not Etsy calls)
     await page.goto(`${sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.CN && window.Orders && window.Review && CN.S.cloud.ok === true, null, { timeout: 60000 });
+    // (the master library is read after the cloud is up: the guard reads its numbered siblings, so the lines are read only once the library holds them; under load it came later and the line was read without them)
+    await page.waitForFunction(() => window.Master && !!Master.entryFor('SCHRODINGER CAT 1') && !!Master.entryFor('SCHRODINGER CAT 2'), null, { timeout: 60000 });
     if (!(await page.evaluate(() => typeof CharmNestOrders.siblingsOf === 'function'))) { console.log('  - skipped: this page has no form guard (CharmNestOrders.siblingsOf)'); return; }
     const made = await page.evaluate(async () => {
       await Orders.loadMaps(true);
@@ -42,7 +44,7 @@ const SKULL = '<path d="M46 80 Q84 50 122 80 Q124 108 106 110 L102 120 L66 120 L
       const r = Orders.rows().find(x => x.order.receiptId === '4198409468');
       return { hold: !!(r.spec && r.spec.formHold), design: r.spec && r.spec.designSku, problems: r.problems.map(p => p.kind), sibs: (r.spec && r.spec.siblings || []).map(x => x.sku) };
     });
-    await check('the necklace line is HELD by the form guard (no huggie vector), asking the unknown-SKU question, with its two siblings', () => { assert.equal(made.hold, true); assert.equal(made.design, null); assert.deepEqual(made.problems, ['unmatchedSku']); assert.deepEqual(made.sibs, ['SCHRODINGER CAT 1', 'SCHRODINGER CAT 2']); });
+    await check('the necklace line is HELD by the form guard (no huggie vector), asking the unknown-SKU question, with its two siblings', () => { assert.equal(made.hold, true, JSON.stringify(made)); assert.equal(made.design, null); assert.deepEqual(made.problems, ['unmatchedSku']); assert.deepEqual(made.sibs, ['SCHRODINGER CAT 1', 'SCHRODINGER CAT 2']); });
     await page.waitForSelector('#rvList .reviewListRow');
     const nk = page.locator('#rvList .reviewListRow[data-rid="4198409468"]'), offer = nk.locator('.sibOffer');
     await check('its Review row offers "Use both" and the two designs, never the huggie', async () => { assert.equal(await offer.count(), 1); assert.deepEqual((await offer.locator('button').allInnerTexts()).map(s => s.trim()), ['Use both: SCHRODINGER CAT 1 + SCHRODINGER CAT 2', 'SCHRODINGER CAT 1', 'SCHRODINGER CAT 2']); });
@@ -54,7 +56,7 @@ const SKULL = '<path d="M46 80 Q84 50 122 80 Q124 108 106 110 L102 120 L66 120 L
     await page.waitForTimeout(600);
     await check('the tap saved the pair link for this listing and SKU, for good', () => { const al = st.doc('Charm_Sku_Aliases', '1190000001'); const p = al && al.pairBySku && al.pairBySku['SCHRODINGER CAT']; assert.ok(p, JSON.stringify(al)); assert.deepEqual([p.L, p.R], ['SCHRODINGER CAT 1', 'SCHRODINGER CAT 2']); });
     await check('the saved link wins over the guard: two pieces of one group (1 and 2), not held, no huggie', async () => { const a = await page.evaluate(() => { const r = Orders.rows().find(x => x.order.receiptId === '4198409468'); return { hold: !!(r.spec && r.spec.formHold), problems: r.problems.map(p => p.kind), set: r.spec.pair && r.spec.pair.set && r.spec.pair.set.designs, per: r.spec.pair && r.spec.pair.perUnit }; }); assert.deepEqual(a, { hold: false, problems: [], set: ['SCHRODINGER CAT 1', 'SCHRODINGER CAT 2'], per: 2 }); });
-    await check('the huggie listing was not linked and no confirm, error or Etsy call happened', async () => { assert.ok(!(st.doc('Charm_Sku_Aliases', '1190000003') || {}).pairBySku); assert.deepEqual(errors, []); assert.deepEqual(etsy, []); });
+    await check('the huggie listing was not linked and no confirm, error or Etsy call happened', async () => { assert.ok(!(st.doc('Charm_Sku_Aliases', '1190000003') || {}).pairBySku); assert.deepEqual(errors, [], JSON.stringify(errors)); assert.deepEqual(etsy, [], JSON.stringify(etsy)); });
     // another listing of the same SKU: still held until a person says (the link is per listing)
     const other = await page.evaluate(async () => { const order = { receiptId: '4198409999', orderNumber: '4198409999', createTs: 1789100000, updateTs: 1789100000, shipBy: 1790000000, buyer: { name: 'Test Buyer' }, buyerMessage: '', staffNote: '', messages: [], lines: [{ transactionId: '5300000099', listingId: '1190000077', sku: 'SCHRODINGER CAT', title: 'Schrodinger Cat Necklace', quantity: 1, variations: [{ name: 'Necklace Length in inches', value: '16"' }], metalKey: 'silver', metalLabel: 'Silver', personalization: [], buyerMessage: '' }] };
       const line = order.lines[0], key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); Orders.interpretAll(); return { hold: !!(row.spec && row.spec.formHold), problems: row.problems.map(p => p.kind) }; });

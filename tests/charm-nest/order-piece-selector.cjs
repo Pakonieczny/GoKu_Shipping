@@ -246,13 +246,12 @@ const K = [key(R3, 1), key(R3, 2), key(R3, 3)], KS = key(R1, 1);
 
     // ═══ 8 · the Hold buttons in the rows (the plain rows: pieces on sheets, in no Review card) are theirs too ═══
     await page.evaluate(() => { window.__plans = 0; window.OrderHold = { plan: () => { window.__plans++; return new Promise(() => {}); }, run: async () => ({ ok: false }), status: () => ({ running: false }) }; OrderWin.paint(); });
-    await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow [data-hold-btn]').length === 3, null, { timeout: 15000 });
-    check((await rowsOf()).length === 3 && await page.evaluate(() => [...document.querySelectorAll('#owPcSum .owPcRow')].every(r => r.querySelector('.pcAct [data-hold-btn]') && r.querySelector('.owPcName'))), 'with the engine in, each row has its orange Hold at the right end and its name button: the same list');
+    // (HOLDBTN, Paul 20 Oct 2026: "Remove the 'Hold' button everywhere in the app and replace it with the 'Send to Review'": each row's Hold is ReviewSend's Hold Order, .revSendBtn)
+    await page.waitForFunction(() => document.querySelectorAll('#owPcSum .owPcRow .revSendBtn').length === 3, null, { timeout: 15000 });
+    check((await rowsOf()).length === 3 && await page.evaluate(() => [...document.querySelectorAll('#owPcSum .owPcRow')].every(r => r.querySelector('.pcAct .revSendBtn') && r.querySelector('.owPcName'))), 'with the engine in, each row has its Hold Order at the right end and its name button: the same list');
     await press(K[2], 'click'); await page.waitForFunction(k => OrderWin.selectedPiece() === k, K[2], { timeout: 10000 }); await settled();
     check((await rowsOf()).filter(r => r.sel).map(r => r.key).join() === K[2], 'a press on the body of a row that has a Hold picks the piece');
-    await page.click(`${rowSel(K[0])} [data-hold-btn]`);
-    await page.waitForFunction(() => window.__plans === 1, null, { timeout: 8000 }); await page.waitForTimeout(250);
-    check((await detail()).sel === K[2] && (await rowsOf()).filter(r => r.sel).map(r => r.key).join() === K[2], 'with one piece picked, a press on another row\'s Hold does Hold (the plan is read once) and does not switch the pick');
+    // (the order's Hold Order reads "In Review" once it is marked and then opens the Review tab: its press is proven in hold-btn-review.cjs, not here)
     await page.keyboard.press('Escape').catch(() => {});
     await shot('with-hold-one-selected-1440');
     check(await page.evaluate(() => document.querySelectorAll('#owPcSum button button').length === 0), 'no button inside a button');

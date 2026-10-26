@@ -262,7 +262,7 @@ async function run(kind, browser) {
       check(!!c && (c.removals || []).filter(r => r.kind === 'sheet').length >= 1, `2 · its cancel record keeps the removal with its time (${JSON.stringify((c.removals || []).map(r => [r.where, r.outcome, r.at]))})`);
       { const z = await info(); check(!z.asked.length && z.dialogs <= 1, `2 · no question, and no pop-up on the sheet window (${JSON.stringify({ asked: z.asked, dialogs: z.dialogs })})`); }
       const shown = () => page.evaluate(() => ({ open: SheetWin.isOpen(), id: SheetWin.current(), pieces: (SheetWin._W.pieces || []).filter(x => !x.gone).map(x => x.poolId) }));
-      let w = await shown();
+      let w = await shown(); for (let t = Date.now() + 10000; w.open && !w.pieces.length && Date.now() < t; w = await shown()) await page.waitForTimeout(250);   // (the window reads its sheet again after the take-off: its pieces come back once read)
       check(w.open && w.id === sheetId && sorted(w.pieces) === sorted([...poolsOf(A, 1), ...poolsOf(X, 1)]), `2 · the window itself no longer shows the lion (${JSON.stringify(w.pieces)})`);
 
       /* 3 · the window stays open on a piece of the third design, and its order is cancelled elsewhere (a person's record, as the

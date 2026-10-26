@@ -396,8 +396,14 @@ async function main() {
     assert.equal(await page.evaluate(() => window.__dlg.max), 1, 'never two dialogs at once, all the way through');
 
     // ── 8 · held and cancelled orders have no button (and no Review row ever had one) ──
+    // (the hold took the person home to Review on its held orders (Review.showHeld: Open, the "heldOrder" chip on), so the list shows the held order only while Open counts all 4;
+    //  pressing Open shows everything it holds, and every row it counts is drawn)
     await page.evaluate(() => { CN.setMode('review'); Review.syncOrderItems(); Review.render(); });
+    assert.equal(await page.evaluate(() => Review.view().filter), 'heldOrder', 'home on the held orders');
+    await seg('open');
     await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"]`), solo, { timeout: 15000 });
+    assert.equal(await page.evaluate(() => Review.view().filter), null);
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#rvList .reviewListRow').length), await page.evaluate(() => Review.openCount()), 'every row Open counts is drawn');
     await page.evaluate(([h]) => { for (const r of Orders.rows()) if (String(r.order.receiptId) === h) { r.hold = 'Taken off SS Sheet 1, GF Sheet 2 by Paul: Add to next sheet'; r.state = 'held'; } Review.syncOrderItems(); Review.render(); }, [H.rid]);
     await page.waitForTimeout(300);
     await page.waitForFunction(h => !document.querySelector(`[data-hold-btn][data-rid="${h}"]`), H.rid, { timeout: 12000 });   // (a card leaving flies out first, as a copy of itself)

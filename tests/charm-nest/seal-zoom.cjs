@@ -190,7 +190,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     // the order window's piece row: its seals were 1px wide
     const bar = await page.evaluate(() => [...document.querySelectorAll('#owPcSum .sealRow .seal')].map(s => s.offsetWidth));
     check(bar.length === 1 && bar.every(w => w >= 18), 'the piece row\'s one seal (the others are on the Timeline: +N) has a real size again: ' + bar.join(', ') + ' px');
-    // 6a · the header strip: 24px seals in a 44px box that clips
+    // 6a · the header strip: 40px seals in the 72px rail (HDRHEAD, 16 Oct 2026)
     const stops = '#owRail .tlStop .tlSeal:not(.pending)', nStops = await page.evaluate(sel => document.querySelectorAll(sel).length, stops);
     const done = await page.evaluate(sel => [...document.querySelectorAll(sel)].map((s, i) => [i, s.closest('.tlStop').className]).filter(([, c]) => /\bd\b/.test(c)).map(([i]) => i), stops);
     assert(done.length >= 2, 'milestones are done in the strip');
@@ -199,7 +199,8 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
       await page.waitForFunction(([s, i]) => document.querySelectorAll(s)[i].dataset.sealZoom, [stops, i], { timeout: 4000 }); await X.settle();
       const z = await X.probe(stops, i);
       const pop = await page.evaluate(() => { const c = document.querySelector('.tlExp.on'); if (!c) return null; const r = c.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom }; });
-      check(near(z.k, await scaleOf(z.size, 72)) && z.k > 1.4 && z.size <= 30 && fits(z, 72) && z.inView && !z.clipped.length, `header strip seal ${i} (${z.size}px, in a box 44px tall): grown ×${z.k} to ${z.w.toFixed(0)}px, in the view, nothing clips it ${JSON.stringify(z.clipped)}`);
+      // (HDRHEAD, Paul 16 Oct 2026: the rail's stamps are 40 px (were 24) and "proportionately also increase the size of the zoom": the rail's own --seal-grow, ×1.65 = 66 px)
+      check(near(z.k, 1.65) && z.size <= 44 && fits(z, 72) && z.inView && !z.clipped.length, `header strip seal ${i} (${z.size}px, in a box 44px tall): grown ×${z.k} to ${z.w.toFixed(0)}px, in the view, nothing clips it ${JSON.stringify(z.clipped)}`);
       check(!pop || pop.t >= z.rect.b - 1 || pop.l >= z.rect.r - 1 || pop.r <= z.rect.l + 1, 'the step card (Engraved · done …) stays where it was and clear of the grown seal ' + JSON.stringify(pop));
       if (shots && i === done[Math.floor(done.length / 2)]) await page.screenshot({ path: path.join(shots, '2-header-strip-seal.png'), clip: { x: 0, y: 0, width: 1440, height: 330 } });
       await page.mouse.move(5, 880, { steps: 3 }); await X.gone();
@@ -238,7 +239,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
         const p = await X.point(sel, 0); await page.mouse.move(5, 880); await page.mouse.move(p.x, p.y, { steps: 4 });
         await page.waitForFunction(s => document.querySelector(s).dataset.sealZoom, sel, { timeout: 4000 }); await X.settle();
         const r = await page.evaluate(s => { const e = document.querySelector(s), k = +e.dataset.sealZoom, b = getComputedStyle(e, '::before'), sh = /([\d.]+)px\s*$/.exec(b.boxShadow); return { k, out: (-parseFloat(b.top) + parseFloat(b.borderTopWidth) + (sh ? +sh[1] : 0)) * k, size: Math.min(e.offsetWidth, e.offsetHeight), w: e.getBoundingClientRect().width }; }, sel);
-        check(r.out > 0 && r.out <= 7.5 && r.w + 2 * r.out <= 72 + 15, `the ringed stamp's ring and glow, grown ×${r.k}: ${r.out.toFixed(1)}px beyond the seal (a thin ring), the whole ${(r.w + 2 * r.out).toFixed(0)}px across`);
+        check(r.out > 0 && r.out <= 7.5 && r.w + 2 * r.out <= Math.max(72, r.w) + 15, `the ringed stamp's ring and glow, grown ×${r.k}: ${r.out.toFixed(1)}px beyond the seal (a thin ring), the whole ${(r.w + 2 * r.out).toFixed(0)}px across`);
         if (shots) await page.screenshot({ path: path.join(shots, '4b-timeline-selected-ring.png'), clip: { x: 0, y: 90, width: 760, height: 480 } });
         await page.mouse.move(5, 880, { steps: 3 }); await X.gone();
       } else check(false, 'a ringed stamp on the timeline after a header-strip step opened it');

@@ -100,7 +100,7 @@ async function boot(browser, srv, opts = {}) {
     const sq = { kind: 'path', subpaths: [[['m', [0, 0]], ['l', [20, 0]], ['l', [20, 48]], ['l', [0, 48]], ['h']]], stroke: true, strokeRGB: [0, 0, 0], lwPt: .25, bbox: [0, 0, 20, 48] };
     const ring = { kind: 'path', subpaths: [[['m', [6, 38]], ['l', [14, 38]], ['l', [14, 44]], ['l', [6, 44]], ['h']]], stroke: true, strokeRGB: [0, 0, 0], lwPt: .5, bbox: [6, 38, 14, 44] };
     const charm = { id: 'c', name: 'TAG', metal: 'gold', centerPt: [10, 24], widthPt: 20, heightPt: 48, areaPt2: 20 * 48, outline: sq, members: [sq, ring], bbox: [0, 0, 20, 48], thumb: '' };
-    const mine = new Set(pools), was = Pool.charmOf; Pool.charmOf = id => mine.has(id) ? Object.assign({ poolId: id }, charm) : was(id);
+    const mine = new Set(pools), was = Pool.charmOf, made = new Map(); Pool.charmOf = id => mine.has(id) ? made.get(id) || made.set(id, Object.assign({ poolId: id }, charm)).get(id) : was(id);   // (one charm object per pool id, as the page's own index keeps it: the preview's quick fit is keyed on the charm)
     // the back: the placement picture is a canvas of the size asked (a sharper one is asked when the zoom settles), the saved one a PNG
     const art = (text, px) => { const n = px || 300, c = document.createElement('canvas'); c.width = c.height = n; const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, n, n); x.strokeStyle = '#999'; x.lineWidth = n / 150; x.strokeRect(n * .06, n * .06, n * .88, n * .88); x.fillStyle = '#111'; x.font = (n / 7.5) + 'px sans-serif'; x.textAlign = 'center'; (text || '').split('\n').forEach((t, i) => x.fillText(t, n / 2, n * .44 + i * n * .16)); return c; };
     window.__renderBack = []; Engrave.renderBack = (job, px) => { window.__renderBack.push(px); return art(job.text, typeof px === 'number' ? px : 300); };
@@ -476,16 +476,18 @@ async function main() {
       await page.waitForFunction(() => { const m = document.querySelector('#owPhoto img'); return m && m.naturalWidth >= 1000; }, null, { timeout: 15000 }).catch(() => {});
       const p1 = await look(page, PH);
       check(p1.nat[0] === 2000 && /fullxfull/.test(decodeURIComponent(p1.src)) && p1.s > 1.9, `the photo, zoomed, is the largest size (${p1.nat[0]} px, ${decodeURIComponent(p1.src).match(/il_\w+/)}), kept at its zoom (${p1.s.toFixed(2)})`);
-      const asked = page.context_.asked.slice(askedBefore).filter(u => /il_fullxfull/.test(u));
-      check(asked.length === 1, 'the larger size was asked for once: ' + asked.length);
+      // (the photo of this piece was zoomed in 3 to 6 already: its largest size was asked for then and the browser keeps it; this zoom asks at most once more)
+      const asked = page.context_.asked.filter(u => /il_fullxfull/.test(u) && u.includes('/' + B.lids[0] + '/')), now = page.context_.asked.slice(askedBefore).filter(u => /il_fullxfull/.test(u)).length;
+      check(asked.length >= 1 && now <= 1, 'the larger size was asked for (' + asked.length + ' in the run), at most once for this zoom: ' + now);
       const apiCalls = srv.st.calls.filter(c => /etsy/i.test(c.name) && c.name !== 'etsyMailOrderLink');
       check(apiCalls.every(c => c.ts === undefined) || true, 'no Etsy lookup is made for the larger picture (image addresses only)');
       await unzoom(page); await page.waitForTimeout(700);
       const p2 = await look(page, PH); check(p2.s === 1 && p2.nat[0] === 570 && /570xN/.test(decodeURIComponent(p2.src)), `whole again: the small photo is back (${p2.nat[0]} px)`);
       // the largest size cannot be had: the zoom works on the thumbnail and nothing breaks
       await page.context_.route(/imageProxy.*il_fullxfull|imageProxy.*il_1588xN/, r => r.fulfill({ status: 502, body: 'no' }));
-      await page.mouse.click(p0.mid.x, p0.mid.y); await page.waitForTimeout(900);
-      const p3 = await look(page, PH); check(p3.s > 1.2 && p3.nat[0] === 570, 'a larger size that cannot be had leaves the thumbnail zoomed, nothing else changes');
+      await pickPiece(page, 1); await page.waitForTimeout(300);   // (a piece whose photo was never zoomed: its larger sizes are not in the browser yet)
+      { const q = await look(page, PH); await page.mouse.click(q.mid.x, q.mid.y); } await page.waitForTimeout(900);
+      const p3 = await look(page, PH); check(p3.s > 1.2 && p3.nat[0] === 570, 'a larger size that cannot be had leaves the thumbnail zoomed, nothing else changes: ' + JSON.stringify({ s: p3.s, nat: p3.nat, src: decodeURIComponent(p3.src).slice(-80) }));
       await unzoom(page);
     }
 

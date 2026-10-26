@@ -171,7 +171,8 @@ async function main() {
         controls: [...c.querySelectorAll(CONTROLS)].map(x => x.tagName + '.' + x.className), focusable: [...c.querySelectorAll('[tabindex]')].map(x => x.className),
         scrollW: c.scrollWidth, clientW: c.clientWidth, docW: document.documentElement.scrollWidth, innerW: innerWidth, text: c.textContent.replace(/\s+/g, ' ').trim() };
     }, CONTROLS);
-    const SEALS = { [PAUL.rid]: 'ON SHEET 12 OCT 2026 10:31 AM', [LONG.rid]: 'ON SHEET 12 OCT 2026 10:31 AM', [CANC.rid]: /^CANCELLED 12 OCT 2026 /, [HELD.rid]: /^ON HOLD 12 OCT 2026 /, [HAND.rid]: /^ORDER COMPLETE 12 OCT 2026 /, [WAIT.rid]: /^ORDER RECEIVED 12 OCT 2026 8:00 AM/, [ONS.rid]: /^ON SHEET 12 OCT 2026 /, [TWO.rid]: /^ON SHEET 12 OCT 2026 / };
+    // (HDRHEAD, Paul 16 Oct 2026, the NEEDS A DECISION banner: "remove this seal from the title, it's a duplicate": a card that says what holds the order up draws no seal; null = no seal)
+    const SEALS = { [PAUL.rid]: null, [LONG.rid]: null, [CANC.rid]: /^CANCELLED \d{1,2} [A-Z]{3} \d{4} /,   /* (cancelled half an hour before the run: today) */ [HELD.rid]: null,   /* (a hold nobody let go is a blocker too: said in words) */ [HAND.rid]: /^ORDER COMPLETE 12 OCT 2026 /, [WAIT.rid]: /^ORDER RECEIVED 12 OCT 2026 8:00 AM/, [ONS.rid]: /^ON SHEET 12 OCT 2026 /, [TWO.rid]: /^ON SHEET 12 OCT 2026 / };
     const problems = (o, m, w) => {
       const out = [], tag = `${o.rid} at ${w}`;
       if (m.hidden) return [`${tag}: the card is hidden`];
@@ -183,12 +184,12 @@ async function main() {
       if (Math.abs(m.h - TARGET) > 2) out.push(`${tag}: ${m.h.toFixed(2)} px is not 67% of ${OLD_PICTURE} (${TARGET.toFixed(2)}) within 2 px`);
       if (OLD_MAIN[w] && m.h > 0.7 * OLD_MAIN[w] + 0.001) out.push(`${tag}: ${m.h} px is not a third shorter than main's ${OLD_MAIN[w]}`);
       // 3 · the seal and the title came down together (50 to 44 px, 19 to 17 px) and are still there; the label stays
-      if (!(m.sealW >= 40 && m.sealW <= 46)) out.push(`${tag}: the seal is ${m.sealW} px wide (it was 50, it is 44)`);
+      if (SEALS[o.rid] !== null && !(m.sealW >= 40 && m.sealW <= 46)) out.push(`${tag}: the seal is ${m.sealW} px wide (it was 50, it is 44)`);
       if (m.tFont !== 17) out.push(`${tag}: the title is ${m.tFont} px (it was 19, it is 17)`);
       if (!m.k || !m.k.trim()) out.push(`${tag}: the label is gone`);
       const want = SEALS[o.rid];
       if (want) { const got = m.sealModels.join(' | '); if (typeof want === 'string' ? got !== want : !want.test(got)) out.push(`${tag}: the seal says "${got}", wanted ${want}`); }
-      if (m.sealModels.length !== 1) out.push(`${tag}: ${m.sealModels.length} seals on the card`);
+      if (m.sealModels.length !== (want === null ? 0 : 1)) out.push(`${tag}: ${m.sealModels.length} seals on the card`);
       if (m.seal && (m.seal.y < m.rect.y || m.seal.b > m.rect.b)) { /* (the seal is turned a little: its corners may lean out by a pixel or two, never more) */ if (m.seal.y < m.rect.y - 3 || m.seal.b > m.rect.b + 3) out.push(`${tag}: the seal leaves the card (${m.seal.y.toFixed(1)}..${m.seal.b.toFixed(1)} in ${m.rect.y.toFixed(1)}..${m.rect.b.toFixed(1)})`); }
       // 4 · the title runs the whole width: its box ends at the card's inner right edge and begins right after the seal: no column is kept for anything else
       const innerR = m.rect.r - m.border - m.padR;
@@ -304,8 +305,9 @@ async function main() {
     await openWin(PAUL, 'm');
     await page.click('.owTabsV [data-ow-view="timeline"]'); await page.waitForFunction(() => OrderWin.view() === 'timeline');
     await page.click('.owTabsV [data-ow-view="info"]'); await page.waitForFunction(() => OrderWin.view() === 'info'); await page.waitForTimeout(700);
+    await closeWin(); await openWin(ONS);   // (HDRHEAD: Paul's needs-a-decision card draws no seal; an order on its sheets does)
     await page.click('#owNowCard .tlNowSeal'); await page.waitForFunction(() => OrderWin.view() === 'timeline', null, { timeout: 10000 });
-    await page.evaluate(() => OrderWin.setView('info')); await page.waitForTimeout(700);
+    await closeWin(); await openWin(PAUL, 'm'); await page.waitForTimeout(700);
     const sheetTab = await page.evaluate(() => { const t = document.querySelector('.owTabsV [data-ow-view="sheet"]'); return { off: t.getAttribute('aria-disabled') === 'true', why: t.dataset.why || '' }; });
     assert.equal(sheetTab.off, true, 'Paul\'s order opened on the MASKS piece (no sheet): the Sheet tab is greyed with the reason the old button gave: ' + JSON.stringify(sheetTab)); assert(/not on a sheet yet/i.test(sheetTab.why), sheetTab.why);
     await closeWin();

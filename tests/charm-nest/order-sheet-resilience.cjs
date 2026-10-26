@@ -55,8 +55,9 @@ function harness() {
     paintOrder: () => {},
     soonPaint: G => { if (context.paintOrderBase(G)) context.paintOrder(G); },
     hitOrder: () => null, engGeoOf: () => null, engPointOf: () => ({}), sheetNoOf: rec => rec.sheetIndex || 1,
-    orderHalos: () => {},
+    orderHalos: () => {}, dropGeo: x => { x._engGeo = null; x._engGeoKey = null; x._engGeoF = null; x._engGeoFKey = null; },   // (as the module's own)
   });
+  vm.runInContext(between('  const FACES = () =>', '  /** The word for what a count counts'), context);   // (FACES, 11 Oct 2026: the face readers the sheet's code now calls)
   vm.runInContext(between('  function piecesOf(rec) {', '  const liveOf ='), context);
   vm.runInContext(between('  const orderRecs =', '  /* ── the back of a sheet'), context);
   vm.runInContext(between('  const sheetBacks =', '  /** The words of one piece'), context);

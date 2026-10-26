@@ -53,7 +53,7 @@ const WORDS = { [key(R1, 1)]: 'Test', [key(R2, 1)]: 'Test', [key(R3, 1)]: 'One',
     await page.evaluate(async ({ orders, SEALS, WORDS, R1, R2, R3, T0, MIN }) => {
       for (const o of orders) for (const line of o.lines) { const key = CharmNestOrders.lineKey(o, line); const row = { key, order: o, line, arrivedAt: T0, spec: null, problems: [], state: 'pooled', reason: null, claimedBy: null, poolIds: [key + '_1'], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); }
       for (const o of orders) for (const line of o.lines) B.master.entries.set(line.sku, { sku: line.sku, updatedAt: 1 });   // (known designs: the only question is the one the fixture raises)
-      Orders.interpretAll(); await Orders.loadMaps(true); Orders.interpretAll();
+      Orders.interpretAll(); await Orders.loadMaps(true); for (const o of orders) for (const line of o.lines) if (!Master.entryFor(line.sku)) B.master.entries.set(line.sku, { sku: line.sku, updatedAt: 1 }); Orders.interpretAll();   // (the maps' load reads the library again: the designs are known after it too)
       const art = text => { const c = document.createElement('canvas'); c.width = c.height = 300; const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, 300, 300); x.fillStyle = '#111'; x.font = '40px sans-serif'; x.textAlign = 'center'; text.split('\n').forEach((t, i) => x.fillText(t, 150, 150 + i * 44)); return c; };
       Engrave.renderBack = job => art(job.text || '');
       const day = Date.UTC(2026, 9, 16, 18, 0, 0);   // 2:00 PM in Toronto

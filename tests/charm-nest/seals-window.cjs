@@ -102,7 +102,8 @@ const keyOf = f => `${f.rid}_${f.rid}1`;
     check(s.btnShown.hold && ho.length === 1 && ho[0].beside && /revSendBtn/.test(ho[0].btn) && ho[0].btnShown, `2 ORDER HELD sits beside the window's own Hold Order button, once (${JSON.stringify(ho)})`);
     check(ho.length === 1 && ho[0].family === 'exceptions' && ho[0].text === 'ORDER HELD' && /Order held · by Hal Holder/.test(ho[0].title) && ho[0].w >= 24 && ho[0].w <= 48, `2 ... in its kind's design, who and when on hover, compact (${ho.map(d => d.family + ':' + d.text + ' ' + d.w + 'px').join(' ')})`);
     const unshown = s.known.map(i => i.kind).filter(k => k !== 'print' && k !== 'complete' && !s.btnShown[k]);
-    check(['release', 'sheet', 'cancel', 'engraveSent'].every(k => unshown.includes(k)) && unshown.every(k => !s.drawn.some(d => d.kind === k)), `2 the seals whose button the window does not show (${unshown.join(', ')}) are not drawn in it (drawn: ${s.drawn.map(d => d.kind).join(', ') || 'none'}; buttons shown: ${JSON.stringify(s.btnShown)})`);
+    // (the order is held (ORDER HELD), so its window shows a Release Hold button and the release seal rests beside it, checked above; the rest have no button here)
+    check(['sheet', 'cancel', 'engraveSent'].every(k => unshown.includes(k)) && (s.btnShown.release || unshown.includes('release')) && unshown.every(k => !s.drawn.some(d => d.kind === k)), `2 the seals whose button the window does not show (${unshown.join(', ')}) are not drawn in it (drawn: ${s.drawn.map(d => d.kind).join(', ') || 'none'}; buttons shown: ${JSON.stringify(s.btnShown)})`);
     // ═══ 4 · beside its button ═══
     await addCancelBtn(); await sleep(300);
     s = await winSeals();
