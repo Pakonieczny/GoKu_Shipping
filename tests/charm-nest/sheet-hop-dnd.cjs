@@ -5,7 +5,7 @@
 // Every part is the REAL one, in one real Chromium page over the local stand-in for the site (bridge-server.cjs: the real charmNestLibrary
 // handler on an in-memory Firestore; nothing leaves the machine): the sheet window, its collision grid (the solver's sheet grid), its moveIn,
 // Pool, the sets' Gate, and the sheet window's REAL Manual Control (window.CNManual, charm-nest-sheetwin.js: its header button, its claim, its
-// in-sheet drag, its fit test, its save). The only stand-in is the nest itself (as in hold-release-cancel-e2e.cjs): startNest places what is
+// in-sheet drag, its fit test, its save). The only stand-in is the nest itself: startNest places what is
 // pinned where it was pinned and saves the sheet the way the real nest saves it.
 //   node tests/charm-nest/sheet-hop-dnd.cjs      (PW_DIR=<dir holding playwright-core>, CHROMIUM=<chrome>, SHOTS=<dir>, REDUCED=1)
 // 1 the docks, once Manual Control is on: the previous and next 10K sheet, never a 14K or GF one; a GF sheet has no Manual Control
