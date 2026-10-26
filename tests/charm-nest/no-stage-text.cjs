@@ -43,8 +43,8 @@ async function main() {
     /* 2 · the Orders list, as cards and as rows */
     for (const view of ['cards', 'list']) {
       await page.evaluate(v => { Orders.view().view = v; CN.setMode('orders'); Orders.render(); }, view);
-      await page.waitForFunction(count => document.querySelectorAll('#ordItems [data-rid]').length >= count, STAGES.length, { timeout: 15000 });
-      const cards = await page.evaluate(() => [...document.querySelectorAll('#ordItems [data-rid]')].map(c => {
+      await page.waitForFunction(count => document.querySelectorAll('#ordItems [data-rid]:not(button)').length >= count, STAGES.length, { timeout: 15000 });
+      const cards = await page.evaluate(() => [...document.querySelectorAll('#ordItems [data-rid]:not(button)')].map(c => {
         const ra = c.querySelector('.rowActions'), facts = ra && ra.querySelector(':scope > .rowFacts'), fr = facts && facts.getBoundingClientRect(), ar = ra && ra.getBoundingClientRect();
         return { rid: c.dataset.rid, text: c.innerText.replace(/\s+/g, ' ').trim(), pills: [...c.querySelectorAll('.ost')].map(p => p.textContent.trim()), facts: facts ? facts.innerText.replace(/\s+/g, ' ').trim() : null, firstIsFacts: !!ra && ra.firstElementChild === facts, shown: !!fr && fr.width > 0 && fr.height > 0, topGap: fr && ar ? fr.top - ar.top : null };
       }));
