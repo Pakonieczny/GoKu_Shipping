@@ -37,6 +37,7 @@ const READ = () => {
   const cards = [...document.querySelectorAll('#owEng > .engCard')];
   const gcs = grid ? getComputedStyle(grid) : null;
   return {
+    seal: gcs ? { pad: parseFloat(gcs.paddingRight) || 0, back: Math.max(0, -parseFloat(gcs.marginRight) || 0) } : { pad: 0, back: 0 },   // (the grid's seal room: padding-right taken back by a negative margin-right, charm-nest-1.html)
     dpr: devicePixelRatio, vw: innerWidth, vh: innerHeight, sec: rect(sec), grid: rect(grid), sc: rect(sc), dl: rect(dl), tracks: gcs ? gcs.gridTemplateColumns.split(' ').length : 0, px: gcs ? gcs.getPropertyValue('--engPx').trim() : '',
     hscroll: { page: document.documentElement.scrollWidth - document.documentElement.clientWidth, grid: grid ? grid.scrollWidth - grid.clientWidth : 0, sec: sec ? sec.scrollWidth - sec.clientWidth : 0, main: sc ? sc.scrollWidth - sc.clientWidth : 0 },
     scrollable: sc ? sc.scrollHeight - sc.clientHeight : 0,
@@ -71,7 +72,7 @@ async function main() {
         check(m.cards.length === (n === 'discs' ? 3 : 1), `${id}: ${n === 'discs' ? 3 : 1} card(s) drawn`, m.cards.length);
         const edge = S < 548 ? 160 : edgeFor(S);
         check(m.tracks === colsFor(S) && m.px === edge + 'px', `${id}: the section is ${Math.round(S)}px wide: ${colsFor(S)} track(s) and a ${edge}px picture (the grid has ${m.tracks}, --engPx ${m.px})`, { tracks: m.tracks, px: m.px });
-        const track = (m.grid.w - 10 * (m.tracks - 1)) / m.tracks;
+        const track = (m.grid.w - m.seal.pad - 10 * (m.tracks - 1)) / m.tracks;   // (the tracks share the grid's content box: its seal room on the right is not a track's)
         for (const c of m.cards) {
           const cid = `${id}${n === 'discs' ? ' disc' : ''}`;
           check(c.faces.length === c.n && c.faces.every(f => f.thumb && near(f.thumb.w, edge) && near(f.thumb.h, edge)), `${cid}: every picture is ${edge}x${edge}px (${c.faces.map(f => f.thumb && f.thumb.w.toFixed(1) + 'x' + f.thumb.h.toFixed(1)).join(', ')})`);
@@ -94,7 +95,7 @@ async function main() {
         }
         const cs = m.cards, over = cs.some((a, i) => cs.some((b, j) => j > i && a.r.l < b.r.r - 0.6 && b.r.l < a.r.r - 0.6 && a.r.t < b.r.b - 0.6 && b.r.t < a.r.b - 0.6));
         check(!over, `${id}: no two cards overlap`);
-        check(m.hscroll.page <= 1 && m.hscroll.grid <= 1 && m.hscroll.sec <= 1 && m.hscroll.main <= 1, `${id}: nothing scrolls sideways`, m.hscroll);
+        check(m.hscroll.page <= 1 && m.hscroll.grid <= 1 && m.hscroll.sec <= m.seal.back + 1 && m.hscroll.main <= 1, `${id}: nothing scrolls sideways (the section's ${m.seal.back}px is the grid's seal room, it does not clip)`, m.hscroll);
         if (SHOTS && (n !== 'discs' || W === 1280)) await R.shot(w, `ENGBIG-${at}-${n}`);
       }
     }
@@ -105,7 +106,7 @@ async function main() {
     await page.evaluate(() => { document.getElementById('owEngSec').style.width = '330px'; }); await R.settle(page, 250);
     {
       const m = await page.evaluate(READ), c = m.cards[0], f = c && c.faces;
-      check(m.sec.w <= 331 && m.tracks === 1 && c && near(c.r.w, m.grid.w, 1.5), `330px section: one track, the card as wide as the section (${c && c.r.w.toFixed(1)}px)`, { tracks: m.tracks });
+      check(m.sec.w <= 331 && m.tracks === 1 && c && near(c.r.w, m.grid.w - m.seal.pad, 1.5), `330px section: one track, the card as wide as the section (${c && c.r.w.toFixed(1)}px)`, { tracks: m.tracks });
       check(f && f.length === 2 && f[0].thumb.b <= f[1].label.t + 1 && f.every(x => near(x.thumb.w, 160) && x.thumb.r <= c.r.r + 0.6), `330px section: front over back, both 160px, whole`, f && f.map(x => x.thumb));
       check(c && c.spill.length === 0 && c.btn && c.btn.r <= c.r.r + 0.6, `330px section: nothing clipped`, c && c.spill);
       if (SHOTS) await R.shot(w, 'ENGBIG-330px-both');
