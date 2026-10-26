@@ -416,8 +416,9 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
    run menu (audit, 25 Sep). While a header menu or a sheet's Options is open the toasts step aside. */
 body:has(.topbar details[open]) .toasts{opacity:0;visibility:hidden;transition:opacity .12s,visibility 0s .12s}
 /* Orders and the Library end their first row with controls (sort, Cards | List, the metal chips), and a notice there
-   covered them (audit, 25 Sep): on those two tabs notices start under that row. */
-body:has(#ordersView:not(.hidden)) .toasts,body:has(#libView:not(.hidden)) .toasts{top:calc(var(--chromeH,96px) + 56px)}
+   covered them (audit, 25 Sep): on those two tabs notices start under that row. The Design Station tab too (26 Oct 2026): its console's
+   first row is Take control · Open station · Connect Etsy, and "not signed in to Etsy — press Connect Etsy" sat on the very button it named. */
+body:has(#ordersView:not(.hidden)) .toasts,body:has(#libView:not(.hidden)) .toasts,body:has(#designView:not(.hidden)) .toasts{top:calc(var(--chromeH,96px) + 56px)}
 .toast{background:var(--velvet);color:#f4ecdc;border:1px solid var(--velvetLine);border-radius:11px;padding:10px 14px;box-shadow:0 10px 30px rgba(0,0,0,.24);max-width:380px;display:flex;gap:9px;align-items:flex-start;font-size:12.5px;animation:tin .18s ease;pointer-events:auto}
 @keyframes tin{from{opacity:0;transform:translateY(8px)}}
 .toast .d{width:8px;height:8px;border-radius:50%;background:var(--gold2);margin-top:4px;flex:0 0 auto}

@@ -1673,7 +1673,9 @@ const Orders = window.Orders = (() => {
       if (row.state === "gone" || (row.state === "committed" && row.spec)) continue;
       let inputs; try { inputs = inputsOf(row); } catch (_) { inputs = [row.order, row.line]; }   // (what a line is read from; a line that cannot even say that is read once, and again when its order or line is replaced)
       const was = readAs.get(row), prev = row.spec;
-      if (!was || was.spec !== row.spec || inputs.some((v, i) => !Object.is(v, was.inputs[i]))) { row.spec = readLine(row); readAs.set(row, { spec: row.spec, inputs }); readEvent(row); }
+      // (26 Oct 2026, Paul 24 Sep "an update costs what changed": the inputs are kept as they stand AFTER the reading, since one of them is the library's word on the design the line was
+      //  just read as; kept from before, a new line read as nothing there and was read a second time at the next update for no change)
+      if (!was || was.spec !== row.spec || inputs.some((v, i) => !Object.is(v, was.inputs[i]))) { row.spec = readLine(row); let now = inputs; try { now = inputsOf(row); } catch (_) { /* as read before */ } readAs.set(row, { spec: row.spec, inputs: now }); readEvent(row); }
       window.Pool?.pinPooled?.(row);   // (a line pooled before the pair and count rule keeps its pieces: Orders and the readers below count what was made)
       row.problems = row.spec.problems.slice(); if (row.spec.noDesign) row.state = row.state === "pulled" ? "noDesign" : row.state;
       // a line held for a question it no longer raises (its option was read again, the library gained its design: DISCREAD) is a line to make up again; its pieces, if any, are never touched
@@ -23522,8 +23524,9 @@ const Session = window.Session = (() => {
   /** When the next pass may start: a minute (EVERY) after the last one started, and never before the last has rested as long
       as it took (a second at least); after a failure, 15 s doubling to 5 min. */
   function due() {
-    const t = Math.max(lastStart + EVERY, lastEnd + Math.max(1000, lastMs));
-    return failures ? Math.max(t, lastEnd + Math.min(300000, 15000 * 2 ** (failures - 1))) : t;
+    const rest = lastEnd + Math.max(1000, lastMs), t = Math.max(lastStart + EVERY, rest);
+    // (26 Oct 2026: a failed save waits its own 15 s, 30 s … 5 min, never back to back; held to the minute as well (PERF), the 15 s and 30 s tries never came)
+    return failures ? Math.max(rest, lastEnd + Math.min(300000, 15000 * 2 ** (failures - 1))) : t;
   }
   function arm(delay) {
     if (frozen || !ready || timer || idleId || saving || rev === savedRev) return;

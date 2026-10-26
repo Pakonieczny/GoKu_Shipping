@@ -18,7 +18,7 @@ function fixture({pending=1, review=1, autoCommit='on', pages=[], sets, rows}={}
   rows ||= [{key:'order:1',order:{receiptId:'order'},state:'written',poolIds:['p']}];
   sets ||= [{setId:'pending',sheetIds:['a'],blocked:true},{setId:'ready',sheetIds:['b']}];
   const asyncCall=name=>async()=>{calls.push(name);};
-  const ctx={window:{},B:{run:r,maps:{}},S:{cloud:{ok:true},settings:{autoCommit}},O,Date,Promise,Map,Set,JSON,queueMicrotask,setTimeout,clearTimeout,setInterval,clearInterval,
+  const ctx={window:{},B:{run:r,maps:{}},S:{cloud:{ok:true},settings:{autoCommit}},O,Date,Promise,Map,Set,JSON,queueMicrotask,setTimeout,clearTimeout,setInterval:(...a)=>{const t=setInterval(...a);t.unref?.();return t;},clearInterval,
     allSheets:()=>pages,Orders:{rows:()=>rows,lineRecord:x=>[x.key,x],revalidate:async()=>{calls.push('revalidate');return{changed:[]};},unclaim:asyncCall('unclaim'),pull:async()=>rows},
     Pool:{sheetOf:()=>null,addAll:async()=>0},Engrave:{items:()=>jobs,pendingCount:()=>state.pending,classifyAll:asyncCall('classify'),fitAll:asyncCall('fit'),
       // the words are read and fitted beside the run: the step only starts that work (see Engrave.background)

@@ -162,6 +162,8 @@ const READ_OPS = new Set(['ping', 'lookupCharms', 'listCharms', 'listSheets', 'g
 const isRead = op => READ_OPS.has(op) || /^(get|list|find)[A-Z]/.test(String(op || ''));
 const isWrite = c => c.fn === 'charmNestLibrary' ? (c.op === 'laserStatus' ? c.recordSeals === true : !isRead(c.op)) : c.fn === 'firebaseOrders';
 const sealCheck = c => c.fn === 'charmNestLibrary' && c.op === 'laserStatus' && c.recordSeals === true;
+// (the Charm repo save keeper's own pass on a page load and every ten minutes, charm-nest-bridge.js keepPending / keepRepair: the page's, not the Library's looking)
+const keeperPass = c => c.fn === 'charmNestLibrary' && (c.op === 'customSavePending' || c.op === 'customSaveRepair');
 
 const dupIds = page => page.evaluate(() => { const m = {}; for (const e of document.querySelectorAll('[id]')) m[e.id] = (m[e.id] || 0) + 1; return Object.entries(m).filter(([, n]) => n > 1).map(([k, n]) => k + '×' + n); });
 const leftovers = page => page.evaluate(() => {
@@ -244,7 +246,8 @@ async function smallWorld(browser, shot) {
     await until(() => h.since('look').some(c => c.fn === 'charmNestLibrary' && c.op === 'laserStatus' && c.wantRevs), 15000, 'a live read').catch(() => {});
     const live = h.since('look').filter(c => c.fn === 'charmNestLibrary' && c.op === 'laserStatus');
     hard('the Library follows the cloud: a live read was made (the loop is running)', live.some(c => c.wantRevs), `${live.length} laserStatus calls, ${live.filter(c => c.wantRevs).length} live`);
-    hard('a live read never sends recordSeals:true', !h.calls.some(c => c.op === 'laserStatus' && (c.wantRevs || c.ifRevs) && c.recordSeals === true), JSON.stringify(h.calls.filter(c => c.op === 'laserStatus' && c.recordSeals === true)));
+    // (a live read asks wantRevs; the slow seal pass (recordSeals) sends the live read's ifRevs too since COST Oct 2026, charm-nest-bridge.js, and asks wantRev)
+    hard('a live read never sends recordSeals:true', !h.calls.some(c => c.op === 'laserStatus' && c.wantRevs && c.recordSeals === true), JSON.stringify(h.calls.filter(c => c.op === 'laserStatus' && c.recordSeals === true)));
     const wrote = h.since('look').filter(isWrite);
     hard('no write call while the Library is only looked at', wrote.filter(c => !sealCheck(c)).length === 0, wrote.map(c => c.fn + ':' + c.op).join(','));
     info('slow seal checks (laserStatus recordSeals:true) while looking', h.since('look').filter(sealCheck).length);
@@ -434,7 +437,8 @@ async function smallWorld(browser, shot) {
     const approve = await page.evaluate(() => [...document.querySelectorAll('#libBody [data-approve-btn]')].map(b => ({ id: (b.closest('[data-approve-for]') || {}).dataset && b.closest('[data-approve-for]').dataset.approveFor, disabled: b.disabled || b.getAttribute('aria-disabled') === 'true', text: b.textContent.trim() })));   // (a grey button is aria-disabled now: it keeps the keyboard)
     info('approve buttons', approve);
     h.mark('approve');
-    const target2 = approve.find(a => /sheet:gfB1/.test(a.id || '') && !a.disabled) || approve.find(a => !a.disabled);
+    // (since the audit of 25 Oct 2026 a set of one sheet needs a completed GF and SS sheet too, so every Approve here may be grey: a grey one is aria-disabled, still pressed, and still one request at most)
+    const target2 = approve.find(a => /sheet:gfB1/.test(a.id || '') && !a.disabled) || approve.find(a => !a.disabled) || approve[0];
     if (target2) {
       await page.evaluate(id => { const b = document.querySelector(`#libBody [data-approve-for="${id}"] [data-approve-btn]`); b && b.scrollIntoView({ block: 'center' }); }, target2.id);
       await page.waitForTimeout(300);
@@ -486,7 +490,7 @@ async function manyWorld(browser, baseline, shot) {
     await h.page.waitForTimeout(6500);
     const live = h.since('open').filter(c => c.op === 'laserStatus');
     hard('300 sheets: live reads carry recordSeals:false, never true', !live.some(c => (c.wantRevs || c.ifRevs) && c.recordSeals === true), live.length + ' laserStatus calls');
-    hard('300 sheets: no write call (beyond the slow seal check) while the Library is only looked at', h.since('open').filter(isWrite).filter(c => !sealCheck(c)).length === 0, h.since('open').filter(isWrite).map(c => c.fn + ':' + c.op).join(','));
+    hard('300 sheets: no write call (beyond the slow seal check) while the Library is only looked at', h.since('open').filter(isWrite).filter(c => !sealCheck(c) && !keeperPass(c)).length === 0, h.since('open').filter(isWrite).map(c => c.fn + ':' + c.op).join(','));
     info('300 sheets: calls while opening and looking (op x count)', h.since('open').reduce((o, c) => { const k = c.fn + ':' + c.op; o[k] = (o[k] || 0) + 1; return o; }, {}));
     await shot(h.page, 'B01-library-300');
     await sweep(h, 'B 300 sheets');

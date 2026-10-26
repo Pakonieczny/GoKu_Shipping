@@ -83,7 +83,9 @@ const db = {
   collection: c => query(c),
   batch() { const ops = []; return { set(ref, d, o) { ops.push(() => ref.set(d, o)); }, update(ref, d) { ops.push(() => ref.update(d)); }, delete(ref) { ops.push(() => ref.delete()); }, async commit() { for (const o of ops) await o(); } }; },
   async getAll(...refs) { const o = refs.length && typeof refs[refs.length - 1].get !== 'function' ? refs.pop() : null; return Promise.all(refs.map(r => r.get(o && o.fieldMask))); },
-  async runTransaction(fn) { txCount.n++; return fn({ get: r => r.get(), getAll: (...refs) => db.getAll(...refs), set: (r, d, o) => r.set(d, o), update: (r, d) => r.update(d), delete: r => r.delete() }); }
+  // (counted: a transaction on records; the Library revision's own (bumpRev on Charm_Nest_Rev, COST Oct 2026), one per write call, is not a transaction of the sheet)
+  async runTransaction(fn) { let rec = false; const see = r => { if (!/^Charm_Nest_Rev\//.test((r && r.path) || '')) rec = true; return r; };
+    try { return await fn({ get: r => see(r).get(), getAll: (...refs) => db.getAll(...refs.map(x => x && x.path ? see(x) : x)), set: (r, d, o) => see(r).set(d, o), update: (r, d) => see(r).update(d), delete: r => see(r).delete() }); } finally { if (rec) txCount.n++; } }
 };
 const txCount = { n: 0 };
 /* ── in-memory Storage (copy and move as GCS does them: metadata travels with the bytes) ── */

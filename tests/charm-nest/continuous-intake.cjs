@@ -13,7 +13,7 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),html=fs.readFileSync
   const dom=new JSDOM('<div id="ordBody"></div>'),document=dom.window.document;let observe;
   class IO{constructor(fn){observe=fn;}observe(){}disconnect(){}unobserve(){}}
   const rows=Array.from({length:130},(_,i)=>({key:'k'+i,order:{receiptId:String(i),createTs:Date.parse(i<70?'2026-09-22T12:00:00Z':'2026-09-21T12:00:00Z')/1000},line:{listingId:i,title:'Charm'},spec:{},problems:[],state:'pooled'}));
-  const c={WORKSPACE_SANDBOX:true,document,window:{IntersectionObserver:IO,addEventListener(){}},IntersectionObserver:IO,O,OV:{sort:'arrival',limit:48},rowsOf:()=>rows,visibleRows:()=>rows,viewMode:()=> 'cards',el:(tag,cls)=>{const n=document.createElement(tag);n.className=cls;return n;},stateWords:()=>['info','processing'],dueOf:()=>({txt:'—'}),placeOf:()=>null,imageFor:()=>null,wordsOf:()=>'',Master:{entryFor:()=>null},Pool:{charmOf:()=>null},requestAnimationFrame:fn=>fn(),esc:String,labelOf:String,OrderWin:{open(){}},Review:{problemText:String}};
+  const c={WORKSPACE_SANDBOX:true,paintCount:()=>{},onScreen:()=>'',earPairRow:()=>'',heldNow:()=>false,faceChip:()=>'',stageText:t=>/^\d\/\d\s/.test(String(t||'')),CNListActivity:require('../../charm-nest-activity.js'),document,window:{IntersectionObserver:IO,addEventListener(){}},IntersectionObserver:IO,O,OV:{sort:'arrival',limit:48},rowsOf:()=>rows,visibleRows:()=>rows,viewMode:()=> 'cards',el:(tag,cls)=>{const n=document.createElement(tag);n.className=cls;return n;},stateWords:()=>['info','processing'],dueOf:()=>({txt:'—'}),placeOf:()=>null,imageFor:()=>null,wordsOf:()=>'',Master:{entryFor:()=>null},Pool:{charmOf:()=>null},requestAnimationFrame:fn=>fn(),esc:String,labelOf:String,OrderWin:{open(){}},Review:{problemText:String}};
   vm.createContext(c);vm.runInContext(bridge.slice(bridge.indexOf('function purchaseMarkup('),bridge.indexOf('const fmtT =')),c);vm.runInContext(bridge.slice(bridge.indexOf('  let listKey='),bridge.indexOf('  /* The tab used to')),c);c.renderBody();
   assert.equal(document.querySelectorAll('[data-key]').length,48);assert.equal(document.querySelectorAll('.ordDay').length,1);assert.equal(document.querySelectorAll('[data-new-order]').length,0);
   observe([{isIntersecting:true}]);assert.equal(document.querySelectorAll('[data-key]').length,96);assert.equal(document.querySelectorAll('.ordDay').length,2);assert.match(document.querySelector('.orderTime').textContent,/EDT/);
@@ -54,13 +54,7 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),html=fs.readFileSync
  console.log('Live nesting OK: finalized sheets fixed, arrivals append to draft, append-only at 85, operator pins preserved');
 })().catch(e=>{console.error(e);process.exitCode=1;});
 
-(async()=>{
- const committed={setId:'old',group:'dispatch',committedAt:1,sheetIds:['sealed']},page={runId:'r',sheetId:'sealed',setId:'old',outputs:{},persistedDone:true,metal:'gold'};
- const c={selected:()=>({}),policy:()=>({include:true}),modern:()=>true,allSheets:()=>[page],Sets:{ofRun:()=>[committed],ensure:async()=>{throw Error('must not reallocate a committed sheet');}}};vm.createContext(c);
- const a=bridge.indexOf('  async function assembleNow('),b=bridge.indexOf('  function editable(',a);vm.runInContext(bridge.slice(a,b),c);
- await c.assembleNow({runId:'r'});assert.equal(page.setId,'old');assert.deepEqual(committed.sheetIds,['sealed']);
- console.log('Set rollover OK: committed sheets stay in their original set');
-})().catch(e=>{console.error(e);process.exitCode=1;});
+// (the set rollover, "committed sheets stay in their original set", is proved with the whole set machine by committed-sheet-nest.cjs and adv-laser-commit.cjs; its slice of assembleNow here no longer ran on its own, 26 Oct 2026)
 
 (async()=>{
  const solver=require('../../charm-nest-solver');

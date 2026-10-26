@@ -85,8 +85,11 @@ const READ_OP = /^(get|list|ping|lookup|history|check|masterList)|(Get|List|Chec
   };
   const nonzero = async p => (await p.evaluate(() => Sandbox.browserLeft())).filter(r => r.n).map(r => `${r.label}: ${r.n}`);
   const cleanAfter = async (p, why) => {
+    // (a page that boots after the reset reads the cancelled orders anew and keeps what it read, cn.cancelIds.v1 (charm-nest-sheetwin.js, COST Oct 2026): holding no id, it is
+    //  the new sandbox's, not a memory of the old one; one that still holds an id fails here)
+    const fresh = await p.evaluate(() => { try { return JSON.parse(localStorage.getItem('cn.cancelIds.v1:sandbox')).ids.length === 0 ? 1 : 0; } catch (_) { return 0; } });
     const left = await p.evaluate(() => Sandbox.browserLeft());
-    for (const r of left) if (r.n !== null) assert.strictEqual(r.n, 0, `${why}: nothing is left of "${r.label}": ${JSON.stringify(r)}`);
+    for (const r of left) if (r.n !== null) assert.strictEqual(r.key === 'localStorage:sandbox' ? r.n - fresh : r.n, 0, `${why}: nothing is left of "${r.label}": ${JSON.stringify(r)}`);
     const o = await p.evaluate(() => ({ held: Sandbox.held(), settled: Review.settled().length, designs: Object.keys(B.customDesigns).length, active: window.CNWipe.active, seed: S.settings.sandbox, ident: Sandbox.runId() }));
     assert.deepStrictEqual({ held: o.held, settled: o.settled, designs: o.designs, active: o.active, seed: o.seed, ident: o.ident }, { held: true, settled: 0, designs: 0, active: false, seed: 'on', ident: '' }, `${why}: the page came back clean, waiting for Start, still in the sandbox: ${JSON.stringify(o)}`);
   };

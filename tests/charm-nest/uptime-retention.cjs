@@ -38,6 +38,8 @@ function database(clock) {
 function sessionContext() {
   const clock = { now: 1_000_000 }, timers = new Map(), idb = database(clock), seen = { toasts: [], banners: 0, persist: 0 };
   const winEvents = {}, docEvents = {};
+  // (every handler of a kind is called, in the order added: Session listens to visibilitychange twice now, to save on hiding and to stand again on showing)
+  const on = (to, t, f) => { const prev = to[t]; to[t] = prev ? (...a) => { prev(...a); return f(...a); } : f; };
   let timerId = 0;
   const sheet = { metal: 'gold', active: 0, charms: [], placements: [], status: 'idle', cardEl: {} }; sheet.pages = [sheet];
   const env = {
@@ -45,15 +47,15 @@ function sessionContext() {
     setTimeout: (f, ms) => { const id = ++timerId; timers.set(id, { f, ms, due: clock.now + Math.max(0, ms || 0) }); return id; },
     clearTimeout: id => { timers.delete(id); },
     indexedDB: idb.indexedDB,
-    window: { addEventListener: (t, f) => { winEvents[t] = f; } },
-    document: { hidden: false, addEventListener: (t, f) => { docEvents[t] = f; } },
+    window: { addEventListener: (t, f) => { on(winEvents, t, f); } },
+    document: { hidden: false, addEventListener: (t, f) => { on(docEvents, t, f); } },
     navigator: { storage: { persisted: async () => false, persist: async () => { seen.persist++; return true; } } },
     WORKSPACE_SANDBOX: true, METALS: [{ key: 'gold' }],
     S: { settings: {}, cloud: { ok: false }, packingCatalog: {}, sources: [], poolSources: {}, unassigned: [], sheets: { gold: sheet }, mode: 'nest' },
     B: { run: null, carry: null, orders: { rows: [], byKey: new Map() }, pool: { rows: new Map() }, sets: new Map(), engrave: { items: new Map() }, review: { items: [] } },
     O: Object.assign({}, require('../../charm-nest-orders.js'), { stepIndex: s => ['pull', 'pool', 'nest', 'checkpoint', 'engrave'].indexOf(s) }),
     Orders: { view: () => ({}), render() {}, lineRecord: row => [row.key, { state: row.state, orderId: row.order.receiptId, fromRow: true }] },
-    Engrave: { render() {}, view: () => ({}), restoreView() {} }, Review: { render() {}, view: () => ({}), settled: () => [] },
+    Engrave: { render() {}, view: () => ({}), restoreView() {}, relinkAll: () => 0 }, Review: { render() {}, view: () => ({}), settled: () => [] },
     Gate: { state: () => ({}) }, Recall: { state: () => ({}) }, CustomRead:{later(){}}, LiveStrip: { rows: [] }, CN: { showPage() {} },
     Pool: { repairRecoveredGeometry: async () => 0 }, P: { parseSource: async () => ({}) }, RunCtl: { renderBanner() {} },
     api: async () => ({}), toast: msg => seen.toasts.push(msg), refreshAllCards() {}, renderRail() {}, updateTopSub() {}, setMode() {},
@@ -105,10 +107,11 @@ async function paceTest() {
   assert.equal(Session.failure(), null, 'the next good save clears the line'); assert.equal(seen.banners, banners + 2); assert.equal(stored(), 'unsaved');
   assert.equal(timers.size, 0, "the banner's own redraw is not a change to save");
   // a slow save rests as long as it took before the next one starts
-  idb.control.slowMs = 25000; sheet.status = 'slow'; Session.schedule(); clock.now += 10000; await t.fire(); idb.control.slowMs = 0;
+  idb.control.slowMs = 70000; sheet.status = 'slow'; Session.schedule(); clock.now += 60000; await t.fire();   // (a minute: the pace since PERF, Oct 2026)
+  idb.control.slowMs = 0;
   assert.equal(stored(), 'slow');
   sheet.status = 'after slow'; Session.schedule();
-  assert.equal(next().ms, 25000, 'never back to back');
+  assert.equal(next().ms, 70000, 'never back to back');   // (a save slower than the minute's pace: it rests as long as it took)
 }
 
 /* ── 2 · best-layout records ── */
