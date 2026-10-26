@@ -18,8 +18,12 @@ const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
+const { REPO_TEST, unlockSettings } = require('./bridge-server.cjs');
 const server = http.createServer((req, res) => {
   const u = decodeURIComponent(req.url.split('?')[0]);
+  // (PERSON, 26 Oct 2026: Settings asks the admin password at every opening. This static server has no functions; the one the password dialog asks,
+  //  charmNestLibrary {op:"repoUnlock"}, is answered here for the shared test password (bridge-server.cjs REPO_TEST), so the real dialog is answered as Paul answers it)
+  if (u === '/.netlify/functions/charmNestLibrary' && req.method === 'POST') { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { let j = {}; try { j = JSON.parse(b); } catch (_) {} const out = j.op === 'repoUnlock' ? (j.password === REPO_TEST.password || j.sessionToken ? { ok: true, token: 't' + Date.now(), expiresAt: Date.now() + 600000, session: j.session === true } : { ok: false, error: 'wrong' }) : j.op === 'repoLock' ? { ok: true } : { error: 'no functions in the test server' }; res.writeHead(out.error ? 404 : 200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(out)); }); return; }
   if (u.startsWith('/.netlify/functions/')) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end('{"error":"no functions in the test server"}'); }
   // (MOTION_FILE: another charm-nest-motion.js to measure, e.g. an older one)
   const f = u === '/charm-nest-motion.js' && process.env.MOTION_FILE ? process.env.MOTION_FILE : path.join(root, u === '/' ? 'charm-nest-1.html' : u);
@@ -87,7 +91,7 @@ const ROUNDS = ['button', 'Esc', 'button'];
     const flight = async (kind, act, ms) => { await page.evaluate(k => __rec.start(k), kind); await act(); await wait(ms); return page.evaluate(() => __rec.stop()); };
 
     const windows = [
-      { label: 'Settings', sel: '#dlgSettings', open: async () => { await page.click('#moreMenu > summary'); await wait(400); await page.click('#btnSettings'); }, close: () => page.click('#dlgSettings button[value=cancel]') },
+      { label: 'Settings', sel: '#dlgSettings', open: async () => { await page.click('#moreMenu > summary'); await wait(400); await page.click('#btnSettings'); await unlockSettings(page); }, close: () => page.click('#dlgSettings button[value=cancel]') },
       { label: 'Sets window', sel: '#histDlg', open: async () => { if (await page.isVisible('#btnEarlierSets')) await page.click('#btnEarlierSets'); else await viaOpener(() => RunHistory.show(''))(); }, close: () => page.click('#histDlg [data-close]') },
       { label: 'Report', sel: '#dlgReport', open: viaOpener(() => { document.getElementById('rpTitle').textContent = 'Gold · Sheet 1 · report'; openDlg(document.getElementById('dlgReport')); }), close: () => page.click('#rpClose') },
       { label: 'Split order question', sel: 'dialog.splitDlg', open: viaOpener(() => { const d = document.createElement('dialog'); d.className = 'splitDlg'; d.innerHTML = '<div class="dlg"><div class="dlgHead"><h3 id="splitT">An order is on two sheets</h3></div><div class="dlgBody"><p>Gold Sheet 1 shares an order with a sheet that is not in the current set.</p></div><div class="dlgFoot"><div class="left"><button type="button" class="btn ghost sm" data-k="cancel">Cancel</button></div><button type="button" class="btn ghost sm" data-k="one">Only Gold Sheet 1</button><button type="button" class="btn sage" data-k="all">Include both</button></div></div>'; document.body.appendChild(d); const done = () => { if (d.open) d.close(); d.remove(); }; d.querySelectorAll('[data-k]').forEach(b => b.onclick = done); d.addEventListener('cancel', e => { e.preventDefault(); done(); }); d.showModal(); d.querySelector('[data-k=all]').focus(); }), close: () => page.click('dialog.splitDlg [data-k=cancel]') },
@@ -151,7 +155,7 @@ const ROUNDS = ['button', 'Esc', 'button'];
       document.getElementById('btnSettings').click(); await new Promise(r => setTimeout(r, 60)); document.getElementById('btnSettings').click();
       await new Promise(r => setTimeout(r, 30));
       const out = { surfaces: document.querySelectorAll('.mdSurface').length, open: document.querySelectorAll('dialog[open]').length };
-      await new Promise(r => setTimeout(r, 1200)); out.left = document.querySelectorAll('.mdSurface').length; document.getElementById('dlgSettings').close();
+      await new Promise(r => setTimeout(r, 1200)); out.left = document.querySelectorAll('.mdSurface').length; out.asked = document.querySelectorAll('dialog.repoDlg[open]').length; const c = document.querySelector('dialog.repoDlg[open] [data-k=cancel]'); if (c) c.click(); else document.getElementById('dlgSettings').close();   // (PERSON: the one window is the password's)
       await new Promise(r => setTimeout(r, 900)); out.ghosts = document.querySelectorAll('.mdGhost').length; return out;
     });
     check(dbl.surfaces === 1 && dbl.open === 1 && dbl.left === 0 && dbl.ghosts === 0, `a double click on Settings opens one window, one flight (${JSON.stringify(dbl)})`);

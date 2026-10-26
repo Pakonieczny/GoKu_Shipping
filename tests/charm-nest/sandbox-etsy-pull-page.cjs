@@ -23,7 +23,7 @@ const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
 process.env.SHOP_ID = '987654'; process.env.CLIENT_ID = 'test-key'; process.env.CLIENT_SECRET = 'test-secret'; delete process.env.EDIT_PASSCODE;
-const { start } = require('./bridge-server.cjs');
+const { start, unlockSettings } = require('./bridge-server.cjs');
 const { buildMaster } = require('./fixture-master.cjs');
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -109,12 +109,12 @@ const PROD_COLLECTIONS = ['Charm_Custom_Orders', 'Charm_Pool', 'Charm_Nest_Sheet
   await page.evaluate(() => { localStorage.setItem('cn.team.drafts:sandbox', JSON.stringify({ 3300000001: { t: 'OLDRUN draft', at: Date.now() } })); localStorage.setItem('cn.team.drafts', JSON.stringify({ 4100000001: { t: 'production draft', at: Date.now() } })); });
   const prod0 = prodSnapshot(), prodKeys0 = await prodLocal();
   assert.strictEqual(await page.evaluate(() => !!document.getElementById('stSbSnap')), false, 'the old "Take a sandbox snapshot" button is gone');
-  const settingsText = await page.evaluate(() => { openSettings(); const t = document.getElementById('dlgSettings').innerText; closeDlg(document.getElementById('dlgSettings')); return t; });
+  await page.evaluate(() => { openSettings(); }); await unlockSettings(page); const settingsText = await page.evaluate(() => { const t = document.getElementById('dlgSettings').innerText; closeDlg(document.getElementById('dlgSettings')); return t; });
   assert(!/Take a sandbox snapshot|stored snapshot|snapshot taken on the Orders tab/i.test(settingsText) && /250 newest Etsy orders/.test(settingsText), 'Settings name the new source: ' + settingsText.match(/.{60}250 newest.{60}/)?.[0]);
 
   // ══ 1 · Sandbox switched ON from the real orders: clear the old, pull the 250 newest once, play them ══
   const mark1 = st.calls.length;
-  await page.evaluate(() => { openSettings(); document.getElementById('stSbOn').click(); });
+  await page.evaluate(() => { openSettings(); }); await unlockSettings(page); await page.evaluate(() => { document.getElementById('stSbOn').click(); });   // (PERSON, 26 Oct: Settings asks the admin password at every opening: the dialog is answered first)
   const seen = { bar: '', button: '', spin: false, toasts: new Set(), starting: '' };
   for (const t = Date.now(); Date.now() - t < 120000;) {
     const v = await ev(() => ({ pulling: window.Sandbox && Sandbox.pulling && Sandbox.pulling(), bar: (document.getElementById('cnpSlot') || {}).innerText || '', btn: (document.querySelector('[data-sb-start]') || {}).textContent || '', spin: !!document.querySelector('[data-sb-start] .spin'), line: (document.querySelector('.sbWait') || {}).textContent || '', toasts: [...document.querySelectorAll('#toasts .toast .m')].map(x => x.textContent) }));
@@ -162,7 +162,7 @@ const PROD_COLLECTIONS = ['Charm_Custom_Orders', 'Charm_Pool', 'Charm_Nest_Sheet
     const fresh = await page.evaluate(id => DesignLink.call('orders.detail', { receiptId: id, fresh: true }, { timeoutMs: 60000 }), shipped1[0]);
     assert(fresh.gone === false && fresh.isShipped === false && fresh.status === 'Paid' && fresh.order && fresh.order.lines.length >= 1, 'the station reads it fresh as an open order: ' + JSON.stringify({ gone: fresh.gone, isShipped: fresh.isShipped, status: fresh.status })); }
   assert.strictEqual(await page.evaluate(() => localStorage.getItem('cn.team.drafts:sandbox')), null, 'the browser\'s old sandbox draft is gone');
-  const line1 = await page.evaluate(() => { openSettings(); return new Promise(res => setTimeout(() => { const t = document.getElementById('stSbStatus').textContent; closeDlg(document.getElementById('dlgSettings')); res(t); }, 400)); });
+  await page.evaluate(() => { openSettings(); }); await unlockSettings(page); const line1 = await page.evaluate(() => { return new Promise(res => setTimeout(() => { const t = document.getElementById('stSbStatus').textContent; closeDlg(document.getElementById('dlgSettings')); res(t); }, 400)); });
   assert.match(line1, new RegExp(`^Order stream: 250 newest Etsy orders, pulled (just now|\\d+ \\w+, \\d\\d:\\d\\d) \\(${LEFT_OUT} cancelled or unpaid left out\\) with 3 Etsy calls · seed \\d+ · step \\d+ · \\d+ of ${OPEN_IDS.length} orders in · simulated .+ · 50x$`), 'Settings say where the orders come from: ' + line1);
   assert(!/\(\d+ open\)/.test(line1), 'no "(N open)": shipped orders play');
   { const fresh1 = await page.evaluate(() => Sandbox.streamText()); assert(/pulled (just now|\d+ \w+, \d\d:\d\d)/.test(fresh1), 'the line names when: ' + fresh1); }
@@ -179,7 +179,7 @@ const PROD_COLLECTIONS = ['Charm_Custom_Orders', 'Charm_Pool', 'Charm_Nest_Sheet
   assert(current().startId === before2.startId && stream().on && stream().tick >= before2.tick, 'the stored set plays on');
   assert.strictEqual(await page.evaluate(() => Sandbox.held()), false, 'the sandbox is not waiting');
   assert(lib('sandboxStream').length > before2.ensures, 'the stream was resumed (ensure) from the stored set');
-  const line2 = await page.evaluate(() => { openSettings(); return new Promise(res => setTimeout(() => { const t = document.getElementById('stSbStatus').textContent; closeDlg(document.getElementById('dlgSettings')); res(t); }, 1500)); });
+  await page.evaluate(() => { openSettings(); }); await unlockSettings(page); const line2 = await page.evaluate(() => { return new Promise(res => setTimeout(() => { const t = document.getElementById('stSbStatus').textContent; closeDlg(document.getElementById('dlgSettings')); res(t); }, 1500)); });
   assert.match(line2, /^Order stream: 250 newest Etsy orders, pulled .+ with 3 Etsy calls · seed \d+/, 'after a reload the line still names the pulled set: ' + line2);
   console.log('2 ok · reload:', line2.slice(0, 90));
 
@@ -216,7 +216,7 @@ const PROD_COLLECTIONS = ['Charm_Custom_Orders', 'Charm_Pool', 'Charm_Nest_Sheet
   const led4 = st.doc('Charm_Sandbox', 'pulls'); assert(led4.pulls === 7 && led4.calls === 21, 'the ledger only counts: ' + JSON.stringify({ pulls: led4.pulls, calls: led4.calls }));
   const ok4 = await page.evaluate(() => ({ held: Sandbox.held(), text: Sandbox.heldText(), body: document.body.innerText }));
   assert(ok4.held === false && !/used up|until tomorrow|of 20 today|pulls? left/.test(ok4.text + ' ' + ok4.body), 'nothing on the page says a limit was reached: ' + JSON.stringify(ok4.text));
-  const set4 = await page.evaluate(() => { openSettings(); return new Promise(res => setTimeout(() => { const t = document.getElementById('stSandbox').closest('.field').innerText + ' ‖ ' + document.getElementById('stSbPullNote').textContent + ' ‖ ' + document.getElementById('stSbPull').closest('.field').innerText; closeDlg(document.getElementById('dlgSettings')); res(t); }, 400)); });
+  await page.evaluate(() => { openSettings(); }); await unlockSettings(page); const set4 = await page.evaluate(() => { return new Promise(res => setTimeout(() => { const t = document.getElementById('stSandbox').closest('.field').innerText + ' ‖ ' + document.getElementById('stSbPullNote').textContent + ' ‖ ' + document.getElementById('stSbPull').closest('.field').innerText; closeDlg(document.getElementById('dlgSettings')); res(t); }, 400)); });
   assert(!/a day|per day|daily|used up|\bat most \d+ starts?\b/i.test(set4), 'Settings state no daily limit: ' + set4); assert(/about 3 Etsy calls;/.test(set4) && / ‖ About 3 Etsy calls per pull\. ‖ /.test(set4) && !/up to \d+ pulls?/.test(set4), 'only the cost of one pull is stated (the number box says exactly "About 3 Etsy calls per pull."): ' + set4);
   await sleep(3000);
   assert.strictEqual(pulls().length, n4.pulls + 1, 'no retry, no second pull'); assert.strictEqual(etsy.calls.length, n4.etsy + 3);
@@ -244,7 +244,7 @@ const PROD_COLLECTIONS = ['Charm_Custom_Orders', 'Charm_Pool', 'Charm_Nest_Sheet
   console.log('4 ok · no cap, Etsy down, recovery: Etsy calls in all', etsy.calls.length);
 
   // ══ 5 · back to the real orders: no sandbox record touched, nothing written ══
-  await page.evaluate(() => { openSettings(); document.getElementById('stSbOn').click(); });
+  await page.evaluate(() => { openSettings(); }); await unlockSettings(page); await page.evaluate(() => { document.getElementById('stSbOn').click(); });   // (PERSON, 26 Oct: Settings asks the admin password at every opening: the dialog is answered first)
   await until(() => window.CN && window.Sandbox && typeof WORKSPACE_SANDBOX !== 'undefined' && WORKSPACE_SANDBOX === false && CN.S.cloud.ok !== null, 60000, 'the real orders again'); const mark5b = st.calls.length; await sleep(2500);
   const writes5 = st.calls.slice(mark5b).filter(c => /^(sandboxReset|sandboxPullOrders|sandboxStream|sandboxPut|sandboxCancel)$/.test(c.op || ''));
   assert.deepStrictEqual(writes5.map(c => c.op), [], 'switching back wipes, pulls and steps nothing');

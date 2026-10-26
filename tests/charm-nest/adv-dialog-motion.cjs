@@ -12,8 +12,12 @@ const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
+const { REPO_TEST, unlockSettings } = require('./bridge-server.cjs');
 const server = http.createServer((req, res) => {
   const u = decodeURIComponent(req.url.split('?')[0]);
+  // (PERSON, 26 Oct 2026: Settings asks the admin password at every opening. This static server has no functions; the one the password dialog asks,
+  //  charmNestLibrary {op:"repoUnlock"}, is answered here for the shared test password (bridge-server.cjs REPO_TEST), so the real dialog is answered as Paul answers it)
+  if (u === '/.netlify/functions/charmNestLibrary' && req.method === 'POST') { let b = ''; req.on('data', c => { b += c; }); req.on('end', () => { let j = {}; try { j = JSON.parse(b); } catch (_) {} const out = j.op === 'repoUnlock' ? (j.password === REPO_TEST.password || j.sessionToken ? { ok: true, token: 't' + Date.now(), expiresAt: Date.now() + 600000, session: j.session === true } : { ok: false, error: 'wrong' }) : j.op === 'repoLock' ? { ok: true } : { error: 'no functions in the test server' }; res.writeHead(out.error ? 404 : 200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(out)); }); return; }
   if (u.startsWith('/.netlify/functions/')) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end('{"error":"no functions in the test server"}'); }
   const f = path.join(root, u === '/' ? 'charm-nest-1.html' : u);
   if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); return res.end(); }
@@ -150,8 +154,9 @@ const server = http.createServer((req, res) => {
 
     // 5b · the real windows: Settings (Save, its Close button, Esc) and the Sets window (Esc), each closing at once, one copy
     const settings = async how => {
-      await page.evaluate(() => { document.getElementById('btnSettings').click(); window.__ns = __ghosts.length; });
-      await wait(250);
+      await page.evaluate(() => { document.getElementById('btnSettings').click(); });
+      await unlockSettings(page); await wait(250);           // (the password first: its own window's flight is not counted as a copy of Settings)
+      await page.evaluate(() => { window.__ns = __ghosts.length; });
       const open = await page.evaluate(() => document.getElementById('dlgSettings').open);
       if (how === 'esc') await page.keyboard.press('Escape'); else await page.click(how === 'save' ? '#btnSaveSettings' : '#dlgSettings button[value=cancel]');
       await wait(250);

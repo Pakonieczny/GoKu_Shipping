@@ -22,7 +22,7 @@ const path = require('path'), assert = require('assert'), fs = require('fs');
 const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
-const { start } = require('./bridge-server.cjs');
+const { start, unlockSettings } = require('./bridge-server.cjs');
 const FAM = require(path.join(root, 'charm-nest-sandbox-families.js'));
 const CODE = process.env.CHARM_NEST_DELETE_CODE;
 const WRITES = /^(poolPut|poolUpdate|setAllocate|setUpdate|putSheet|deleteSheet|runPut|runArchive|backPut|backInvalidate|releasePut|arrivalRecord|customPut|customReopen|customDelete|customDecide|customSheetPut|cancelPut|cancelRestore|timelineAdd|sandboxStream|sandboxPut|sandboxCancel|sandboxPullOrders|putCharms|startAgent|startJob|aliasPut|optionMapPut|noDesignPut|noDesignDelete|roseRecordCut|laserDone|flowApply|purgeHistory|sandboxReset)$/;   // (the ops that write; every other op the page makes is a read)
@@ -95,7 +95,7 @@ async function main() {
     // ── Settings before: the line shows what the sandbox holds, and what is kept ──
     const line = (p, id) => p.evaluate(i => (document.querySelector(`#stBuildNote [data-i="${i}"]`) || {}).textContent || '', id);
     // (COST, Oct 2026: a production page reads the counts only when "Count the sandbox" is pressed; a page in the sandbox on opening)
-    const openSettings = async p => { await p.evaluate(() => { openSettings(); const b = !WORKSPACE_SANDBOX && document.querySelector('#stBuildNote [data-i="count"] button'); if (b) b.click(); }); await p.waitForFunction(() => /In the sandbox now: /.test((document.querySelector('#stBuildNote [data-i="now"]') || {}).textContent || '') && /Kept, never wiped/.test((document.querySelector('#stBuildNote [data-i="kept"]') || {}).textContent || ''), null, { timeout: 20000 }); };
+    const openSettings = async p => { await p.evaluate(() => { openSettings(); }); await unlockSettings(p); await p.evaluate(() => { const b = !WORKSPACE_SANDBOX && document.querySelector('#stBuildNote [data-i="count"] button'); if (b) b.click(); }); await p.waitForFunction(() => /In the sandbox now: /.test((document.querySelector('#stBuildNote [data-i="now"]') || {}).textContent || '') && /Kept, never wiped/.test((document.querySelector('#stBuildNote [data-i="kept"]') || {}).textContent || ''), null, { timeout: 20000 }); };
     await openSettings(page);
     const before = await line(page, 'now'), keptBefore = await line(page, 'kept');
     assert(/\b[1-9]\d* (sheets|pool rows|runs)\b/.test(before) && !/nothing —/.test(before), `${name}: before, the line lists what the sandbox holds: ${before.slice(0, 200)}`);
@@ -217,7 +217,7 @@ async function main() {
     await page.goto(`${sorterOrigin}/charm-nest-1.html`); await page.waitForFunction(() => window.CN && window.Sandbox, null, { timeout: 60000 });
     await page.evaluate(station => { const s = JSON.parse(localStorage.getItem('cn.settings') || '{}'); Object.assign(s, { sandbox: 'on', dsOrigin: station, pollOrders: 'off' }); localStorage.setItem('cn.settings', JSON.stringify(s)); localStorage.setItem('cn.sandboxHold', '{"at":1}'); }, stationOrigin);
     await page.reload(); await page.waitForFunction(() => window.CN && window.Sandbox && Session.ready() && CN.S.cloud.ok !== null, null, { timeout: 60000 });
-    const ask = async until => { for (let i = 0; i < 5; i++) { await page.evaluate(() => { openSettings(); return Sandbox.refresh(); }); if (await page.waitForFunction(until, null, { timeout: 3000, polling: 100 }).then(() => true, () => false)) break; }   // (a read still out from the page's load may land after ours: wait for the answer this step asked for)
+    const ask = async until => { for (let i = 0; i < 5; i++) { if (!(await page.evaluate(() => document.getElementById('dlgSettings').open))) { await page.evaluate(() => { openSettings(); }); await unlockSettings(page); } await page.evaluate(() => Sandbox.refresh()); if (await page.waitForFunction(until, null, { timeout: 3000, polling: 100 }).then(() => true, () => false)) break; }   // (a read still out from the page's load may land after ours: wait for the answer this step asked for)
       return page.evaluate(() => ({ now: Sandbox.nowText(), kept: Sandbox.keptText(), dom: [...document.querySelectorAll('#stBuildNote [data-i]')].map(n => n.dataset.i + ': ' + n.textContent) })); };
     const cap = 'Storage:charmnest/sandbox/';
     answer = { ok: true, snapshot: null, records: { Charm_Nest_Sheets: 12, Charm_Pool: 1500, [cap]: 1000, Charm_Nest_Sets: 0 }, recordsCapped: { [cap]: true }, kept: { charmRepo: 1234, efficiencyDays: 1000 } };

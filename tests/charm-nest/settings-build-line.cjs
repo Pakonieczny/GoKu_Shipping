@@ -17,7 +17,7 @@ const path = require('path'), assert = require('assert'), fs = require('fs');
 const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
-const { start } = require('./bridge-server.cjs');
+const { start, unlockSettings } = require('./bridge-server.cjs');
 const HTML = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
 assert(/charm-nest-bridge\.js\?v=[\w.-]+/.test(HTML), 'the page has the bridge script tag with a ?v= token');
 
@@ -55,7 +55,7 @@ async function main() {
     /** Opens Settings and waits for the build line to say what the check found (or, when it can not, to stay as it first reads). */
     async function look(settle) {
       const before = checks;
-      await page.evaluate(() => { const d = document.getElementById('dlgSettings'); if (d && d.open) closeDlg(d); openSettings(); });
+      await page.evaluate(() => { const d = document.getElementById('dlgSettings'); if (d && d.open) closeDlg(d); openSettings(); }); await unlockSettings(page);   // (PERSON, 26 Oct: Settings asks the admin password at every opening)
       await page.waitForFunction(re => new RegExp(re).test(document.querySelector('#stBuildNote [data-i="build"]').textContent), settle.source, { timeout: 15000 });
       await page.waitForTimeout(400);   // (a second answer, or a second check, would show now)
       return page.evaluate(() => { const n = document.querySelector('#stBuildNote [data-i="build"]'), host = document.getElementById('stBuildNote'), grey = getComputedStyle(host).color; return { text: n.textContent, color: getComputedStyle(n).color, inline: n.style.color, grey, build: Sandbox.build(), page: Sandbox.pageBuild(), lines: host.querySelectorAll('[data-i="build"]').length }; })

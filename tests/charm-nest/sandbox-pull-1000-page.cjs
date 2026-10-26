@@ -14,7 +14,7 @@ const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
 process.env.SHOP_ID = '987654'; process.env.CLIENT_ID = 'test-key'; process.env.CLIENT_SECRET = 'test-secret'; delete process.env.EDIT_PASSCODE;
-const { start } = require('./bridge-server.cjs');
+const { start, unlockSettings } = require('./bridge-server.cjs');
 const { buildMaster } = require('./fixture-master.cjs');
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -88,10 +88,10 @@ const bytesOf = SHOP.map(r => Buffer.byteLength(JSON.stringify(r)));
   await until(() => Sandbox.held() && !Sandbox.pulling(), 60000, 'the sandbox waits for Start');
 
   // ── Settings show the limits the server sent ──
-  const set0 = await page.evaluate(() => new Promise(res => { openSettings(); setTimeout(() => { const box = document.getElementById('stSbPull'), f = box.closest('.field'); const t = { max: box.max, min: box.min, step: box.step, value: box.value, note: document.getElementById('stSbPullNote').textContent, help: f.innerText }; closeDlg(document.getElementById('dlgSettings')); res(t); }, 1200); }));
+  await page.evaluate(() => { openSettings(); }); await unlockSettings(page); const set0 = await page.evaluate(() => new Promise(res => { setTimeout(() => { const box = document.getElementById('stSbPull'), f = box.closest('.field'); const t = { max: box.max, min: box.min, step: box.step, value: box.value, note: document.getElementById('stSbPullNote').textContent, help: f.innerText }; closeDlg(document.getElementById('dlgSettings')); res(t); }, 1200); }));
   assert(set0.max === '1000' && set0.min === '10' && set0.value === '1000' && /10 to 1000/.test(set0.help) && !/10 to 500|up to 500/.test(set0.help) && /About 10 Etsy calls per pull\./.test(set0.note), 'Settings show the number box with the server\'s limits: ' + JSON.stringify(set0));
   // typing in the box: the cost of each number, 1001 held to 1000 (the server holds it again), a stored 500 still plain, a non-number asked for again
-  const typed = await page.evaluate(() => new Promise(res => { openSettings(); setTimeout(() => {
+  await page.evaluate(() => { openSettings(); }); await unlockSettings(page); const typed = await page.evaluate(() => new Promise(res => { setTimeout(() => {
     const box = document.getElementById('stSbPull'), note = document.getElementById('stSbPullNote'), save = document.getElementById('stSbPullSave'), out = {};
     const type = v => { box.value = v; box.dispatchEvent(new Event('input', { bubbles: true })); return { note: note.textContent, save: !save.disabled }; };
     out.t500 = type('500'); out.t1000 = type('1000'); out.t1001 = type('1001'); out.t5000 = type('5000'); out.t9 = type('9'); out.junk = type('abc'); type('1000'); closeDlg(document.getElementById('dlgSettings')); res(out); }, 1200); }));
@@ -130,7 +130,7 @@ const bytesOf = SHOP.map(r => Buffer.byteLength(JSON.stringify(r)));
   assert(fresh.gone === false && fresh.isShipped === false && fresh.status === 'Paid' && fresh.order && fresh.order.lines.length >= 1, 'the station reads a shipped one fresh as an open order: ' + JSON.stringify({ gone: fresh.gone, isShipped: fresh.isShipped, status: fresh.status }));
   const line = await page.evaluate(() => Sandbox.streamText());
   assert(new RegExp(`^Orders: 1000 newest Etsy orders, pulled (just now|\\d+ \\w+, \\d\\d:\\d\\d) \\(${LEFT_OUT} cancelled or unpaid left out\\) with 10 Etsy calls, all at once$`).test(line) && !/\(\d+ open\)/.test(line), 'the status line: ' + line);
-  const set1 = await page.evaluate(() => new Promise(res => { openSettings(); setTimeout(() => { const t = document.getElementById('stSbStatus').textContent; closeDlg(document.getElementById('dlgSettings')); res(t); }, 500); }));
+  await page.evaluate(() => { openSettings(); }); await unlockSettings(page); const set1 = await page.evaluate(() => new Promise(res => { setTimeout(() => { const t = document.getElementById('stSbStatus').textContent; closeDlg(document.getElementById('dlgSettings')); res(t); }, 500); }));
   assert(/1000 newest Etsy orders, pulled .+ with 10 Etsy calls/.test(set1), 'Settings name the pulled set: ' + set1);
   assert.deepStrictEqual(errors.filter(e => !/firebase stub|HTTP 4\d\d|HTTP 50\d|status of (409|429|50\d)|Failed to load resource/.test(e)), [], 'no page errors');
   console.log(`sandbox pull 1000 page OK: ${ids.size} of 1000 pulled orders in the sorter (${SHIPPED_IDS.length} shipped ones as open, ${LEFT_OUT} cancelled or unpaid left out), 10 Etsy calls, ${rowsDone} ms Start to the last order (the pull answered at ${pullDone} ms), longest gap between frames ${gap.frame} ms, longest task ${gap.task} ms`);

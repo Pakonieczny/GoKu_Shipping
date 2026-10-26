@@ -10,7 +10,7 @@ const fs = require('fs'), path = require('path'), assert = require('assert'), os
 const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
-const { start } = require('./bridge-server.cjs');
+const { start, unlockSettings } = require('./bridge-server.cjs');
 const { buildMaster } = require('./fixture-master.cjs');
 
 const STEP = 600000, day = Math.floor(Date.now() / 1000);
@@ -160,7 +160,7 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   assert([...seen.toasts].some(t => /new orders? arrived/.test(t)), 'the new-order toast shows as in production: ' + [...seen.toasts].join(' | '));
   assert.match(seen.counter, /^Sandbox 50x · sim [A-Z][a-z]{2} \d{2}:\d{2} · Orders received · 24h \d+ · 1h \d+ · /, 'the counter shows the speed and simulated time');
   assert.match(seen.pill, /^Sandbox 50x · sim [A-Z][a-z]{2} \d{2}:\d{2}$/, 'the pill shows the speed and simulated time');
-  const form = await page.evaluate(() => { openSettings(); const v = { stream: $('#stSbStream').value, speed: $('#stSbSpeed').value, seed: $('#stSbSeed').placeholder, status: $('#stSbStatus').textContent }; closeDlg($('#dlgSettings')); return v; });
+  await page.evaluate(() => { openSettings(); }); await unlockSettings(page); const form = await page.evaluate(() => { const v = { stream: $('#stSbStream').value, speed: $('#stSbSpeed').value, seed: $('#stSbSeed').placeholder, status: $('#stSbStatus').textContent }; closeDlg($('#dlgSettings')); return v; });
   assert(form.stream === 'on' && +form.speed === 50 && form.seed.includes(String(s1.seed)) && new RegExp(`^Order stream: \\d+ newest Etsy orders, pulled .+ · seed \\d+ · step \\d+ · \\d+ of ${openIds.length} orders in · simulated .+ · 50x$`).test(form.status), 'Settings show the stream, its speed and its seed: ' + JSON.stringify(form));
   const clock = await page.evaluate(() => ({ sim: SimClock.now(), real: Date.now(), today: today(), simDay: CharmNestOrders.localDay(new Date(SimClock.now())) }));
   assert(clock.sim > clock.real + 20 * 60000 && clock.sim <= stream().simNow + STEP, 'the simulated clock runs ahead of the real one, never past the next step: ' + JSON.stringify(clock));
