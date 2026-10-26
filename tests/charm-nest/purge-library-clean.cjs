@@ -30,7 +30,8 @@ const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_mod
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
 const { start, unlockSettings } = require('./bridge-server.cjs');
 const CODE = process.env.CHARM_NEST_DELETE_CODE;
-const READ_OP = /^(get|list|ping|lookup|history|check|masterList)|(Get|List|Check|Status|Preview|Read|Url|Info|Files)$/;   // (the page's own rule, charm-nest-1.html, and the master file list a page reads as it opens: sandbox-wipe-computers.cjs)
+const READ_OP = /^(get|list|ping|lookup|history|check|masterList|repoLock$|repoUnlock$)|(Get|List|Check|Status|Preview|Read|Url|Info|Files)$/;   // (repoLock / repoUnlock: the Settings password's own session, PERSON 26 Oct 2026; never a Library record)
+//   // (the page's own rule, charm-nest-1.html, and the master file list a page reads as it opens: sandbox-wipe-computers.cjs)
 let n = 0; const ok = (c, m) => { assert(c, m); n++; console.log('  ok  ' + m); };
 const SLOW = 1200;   // ms: the cloud's time for each call of the wipe (see open())
 
