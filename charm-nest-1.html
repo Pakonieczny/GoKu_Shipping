@@ -599,7 +599,8 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
    very easily at a glance understand what's being changed from what to what"): one card under the Vector design. The SKU with its state (a green tick: a repo charm matches; a gold link: cut as
    another charm, named under it; an amber mark: no charm matches), three icon buttons (Copy, Suggest with its count, Change), and the suggested charms as picture tiles, one tap each. The Change
    window shows FROM (the listing photo and its Etsy SKU) → TO (the new charm's picture and SKU, live as it is pasted), what it changes as icon chips, then the progress in place. */
-.owSkuCard{display:grid;gap:9px;padding:10px;border:1px solid var(--line);border-radius:13px;background:var(--card);min-width:0;container-type:inline-size;transition:border-color .2s,background .2s}
+/* (26 Oct 2026: no colour transition on the SKU card: its state is set as the order view flies open, and a flight animates only transform and opacity (RHSAME, Paul 20 Oct)) */
+.owSkuCard{display:grid;gap:9px;padding:10px;border:1px solid var(--line);border-radius:13px;background:var(--card);min-width:0;container-type:inline-size}
 @container (max-width:300px){.skBtn>span{display:none}.skBtn{height:38px}.skBtn svg{width:18px;height:18px}.skTray{grid-template-columns:1fr}}
 .owSkuCard[data-state="none"]{border-color:#ead7ae;background:linear-gradient(180deg,#fffaf0,var(--card) 70%)}
 .owSkuCard svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
