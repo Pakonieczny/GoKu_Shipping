@@ -247,10 +247,11 @@ PT.use(Pair);
     ok(/3 pieces · 2 orders/.test(counts.pairPlain), 'a pair + a plain line: 3 pieces, 2 orders: ' + counts.pairPlain);
     ok(/5 pieces · 2 orders/.test(counts.twoPairsPlain), 'two pairs + a plain line: 5 pieces, 2 orders: ' + counts.twoPairsPlain);
     ok(/3 pieces · 2 orders/.test(counts.misPlain), 'a mismatched pair + a plain line: 3 pieces, 2 orders: ' + counts.misPlain);
-    ok(/2 pieces · 2 orders/.test(counts.plainPlain4) && /2 pieces · 2 orders/.test(counts.singlePlain), 'a plain line, a quantity-4 line and a single named ear count as the one line they always did: ' + [counts.plainPlain4, counts.singlePlain].join(' | '));
+    // (PIECES, Paul, 16 Oct 2026: "ALL multipiece orders must always show each individual piece": a quantity-4 line is its 4 pieces, as the Order window says; a single named ear is still one)
+    ok(/5 pieces · 2 orders/.test(counts.plainPlain4) && /2 pieces · 2 orders/.test(counts.singlePlain), 'a plain line + a quantity-4 line are 1 + 4 pieces; a single named ear counts as one: ' + [counts.plainPlain4, counts.singlePlain].join(' | '));
     // (DISCREAD 3: a counted line, "3 discs", is its 3 pieces wherever the app says how many, the count the pipeline cuts: it used to count as one line)
     ok(/4 pieces · 2 orders/.test(counts.discsPlain), 'a 3-disc necklace + a plain line: 3 + 1 pieces, 2 orders: ' + counts.discsPlain);
-    ok(/8 pieces · 4 orders/.test(counts.mixed), 'a mixed group adds them up: ' + counts.mixed);
+    ok(/11 pieces · 4 orders/.test(counts.mixed), 'a mixed group adds them up (2 + 4 + 1 + 4): ' + counts.mixed);
     ok(/6 pieces · 2 orders/.test(counts.pairs), 'two pair orders are 2 orders and 6 pieces, never "2 pieces": ' + counts.pairs);
     // a line of TWO separate designs (order 4171010675's shape: Left Tennis Ball, Right Tennis Racket): ONE row, the two designs side by side, each its own size, a Left and a Right chip
     const two = await page.evaluate(async I => {
@@ -271,6 +272,7 @@ PT.use(Pair);
     ok(/\|two:TENNIS RACKET \(HUGGIE\)$/.test(two.key) && !/\|two/.test(two.pieceKey), 'the line picture is keyed by both designs, a piece-level key is not: ' + two.key + ' / ' + two.pieceKey);
     // the Efficiency tile's vector fallback: the Right piece's picture is the Left turned over (the same rule), the Left and a plain tile are as drawn
     const tile = await page.evaluate(async () => {
+      if (!window.EfficiencyOrders) await cnLoadScript('charm-nest-efficiency-orders.js');   // (COST, Oct 2026: the console's scripts load only on the master admin's page, so the test loads the one it reads)
       const L = await EfficiencyOrders.vecThumb('PR_BOOT', 'L'), R = await EfficiencyOrders.vecThumb('PR_BOOT', 'R'), P0 = await EfficiencyOrders.vecThumb('PR_BOOT'), mir = PieceMedia.earMirror({ spec: { designSku: 'PR_BOOT' }, line: { sku: 'PR_BOOT' } }, 'R'), none = PieceMedia.earMirror({ spec: { designSku: 'NO SUCH' }, line: { sku: 'NO SUCH' } }, 'R');
       const px = async src => { const im = new Image(); im.src = src; await im.decode(); const c = document.createElement('canvas'); c.width = im.width; c.height = im.height; const g = c.getContext('2d'); g.drawImage(im, 0, 0); return { w: im.width, h: im.height, d: g.getImageData(0, 0, im.width, im.height).data }; };
       const a = await px(L), b = await px(R), p = await px(P0), ink = (o, x, y) => { const i = (y * o.w + x) * 4; return !(o.d[i] > 200 && o.d[i + 1] > 200 && o.d[i + 2] > 200); };

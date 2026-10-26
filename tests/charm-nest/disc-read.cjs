@@ -179,7 +179,8 @@ const realLine = (rid, metalKey, personalization) => {
   ok(split > 0 && paid > split, 'a counted line whose note is plain is read BEFORE the paid reader (no paid call for it)');
   ok(/if \(O\.questionGone && O\.questionGone\(row, prev\)\) \{ row\.state = "pulled"; row\.reason = null; delete row\.poolTry; \}/.test(b), 'interpretAll releases a line held for a question that is gone');
   ok(/O\.staleQuestionHold && O\.staleQuestionHold\(row\)/.test(b), "the order window's record row does too");
-  ok(/const qty = sibs\.reduce\(\(n, x\) => n \+ \(pairSides\(x\)\.length \|\| \(countedOf\(x\) \|\| \{\}\)\.total \|\|/.test(b) && /O\.countedFact\(r\)\} · <span class="due/.test(b) && /String\(sp\.quantity \|\| r\.line\.quantity \|\| 1\) \+ O\.countedFact\(r\)/.test(b), 'the order window header, its Quantity cell and the list row read the counted line');
+  // (HDRHEAD, Paul, 16 Oct 2026: "Remove this UI from the detailed Order modal": the header's "N pieces" line is gone; the Quantity cell and the list row still read the counted line)
+  ok(/O\.countedFact\(r\)\} · <span class="due/.test(b) && /const qn = sp\.quantity \|\| r\.line\.quantity \|\| 1;/.test(b) && /String\(qn\) \+ O\.countedFact\(r\)/.test(b), "the order window's Quantity cell and the list row read the counted line");
   const h = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
   for (const f of ['charm-nest-engrave-sides.js', 'charm-nest-orders.js', 'charm-nest-bridge.js']) ok(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-dr1(?:-[a-z0-9]+)*"').test(h), `${f}: the cache token carries -dr1 (other workers add theirs after it)`);
   for (const f of ['charm-nest-orders.js', 'charm-nest-order-pieces.js', 'charm-nest-order-hold.js', 'charm-nest-bridge.js']) ok(new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-dr2(?:-[a-z0-9]+)*"').test(h), `${f}: the cache token carries -dr2 (other workers add theirs after it)`); }
