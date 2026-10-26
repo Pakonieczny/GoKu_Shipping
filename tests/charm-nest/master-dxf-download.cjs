@@ -72,8 +72,10 @@ const RIGHT = 'r' + crypto.randomBytes(9).toString('hex');
 
     // ── 1 · the controls: up°, faces, .ai | .dxf, Etsy, Delete in ONE row, every download behind the password ──
     const row = await page.evaluate(sel => { const r = document.querySelector(sel + ' .skuActs'); const kids = [...r.children]; return { kinds: kids.map(k => k.matches('input[data-up]') ? 'up' : k.matches('select[data-faces]') ? 'faces' : k.matches('.dlPair') ? 'pair:' + [...k.children].map(c => c.textContent || c.tagName).join('|') : k.textContent.trim()), tops: [...new Set(kids.map(k => Math.round(k.getBoundingClientRect().top)))], dl: [...r.querySelectorAll('[data-dl]')].every(b => b.dataset.repo === 'download') }; }, tile('TST-PLAIN'));
-    ok(row.kinds.includes('up') && row.kinds.includes('pair:.ai|.dxf') && row.kinds.includes('Delete'), 'the card has up°, the .ai | .dxf pair and Delete: ' + row.kinds.join(', '));
-    ok(row.tops.length === 1, 'every control is on ONE row');
+    ok(row.kinds.includes('pair:.ai|.dxf') && row.kinds.includes('Delete') && !row.kinds.includes('up'), 'the buttons row holds the .ai | .dxf pair, Etsy and Delete: ' + row.kinds.join(', '));
+    ok(row.tops.length === 1, 'every button is on ONE row');
+    const set = await page.evaluate(sel => { const r = document.querySelector(sel + ' .skuSet'), a = document.querySelector(sel + ' .skuActs'); return r && a ? { kinds: [...r.children].map(k => k.matches('input[data-up]') ? 'up' : k.matches('select[data-faces]') ? 'faces' : k.textContent.trim()), above: r.getBoundingClientRect().bottom <= a.getBoundingClientRect().top + 1 } : null; }, tile('TST-PLAIN'));
+    ok(set && set.kinds[0] === 'up' && set.kinds.includes('faces') && set.above, 'the two settings (up°, faces) are their own line, just above the buttons');
     ok(row.dl, 'both downloads are password controls (data-repo=download, the padlock marks)');
 
     // ── 2 · .dxf with no token: the dialog, and nothing sent ──

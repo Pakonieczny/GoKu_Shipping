@@ -3891,7 +3891,8 @@ const Master = window.Master = (() => {
       if (!e.aiUrl && !sz.length) return "";
       const pick = sz.length ? `<select data-dlsize aria-label="size to download" title="the size to download">${sz.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join("")}</select>` : "";
       const btn = (fmt, what) => `<button type="button" data-dl="${esc(e.sku)}"${sz.length ? ` data-size="${esc(sz[0])}"` : ""} data-fmt="${fmt}" data-repo="download" title="download this charm's ${what} (asks for your password)">.${fmt}</button>`;
-      return `<span class="dlPair" role="group" aria-label="download ${esc(e.sku)}">${pick}${btn("ai", ".ai file")}${btn("dxf", ".dxf file, in millimetres")}</span>`;
+      // (the pair carries ONE padlock after .dxf, as every password control of the card does: data-repo on the group, painted by CharmNestRepoLock.mark)
+      return `<span class="dlPair" role="group" data-repo="download" aria-label="download ${esc(e.sku)} (asks for your password)">${pick}${btn("ai", ".ai file")}${btn("dxf", ".dxf file, in millimetres")}</span>`;
     };
     grid.innerHTML = shown.map(d => {
       const e0 = d.head, keys = esc(d.skus.join("|"));
@@ -3908,10 +3909,12 @@ const Master = window.Master = (() => {
         `<div class="meta">up ${e.upAngle == null ? "as drawn" : Math.round(e.upAngle) + "°"}${e.upSource === "long" ? " (long side flat)" : ""} · ${esc(e.labelSource || "text")}${e.hashSource === "server" ? " · server" : ""}</div>` +
         (blocked ? `<div class="bad">${esc(blocked)}</div>` : "") +
         (blocked && d.list.every(x => !x.blocked || O.blockKind(x) === "flip") ? `<div class="meta" title="BLOCKREL: the back-view check is about engraving a back; the outline to cut is fine, so orders of this SKU are cut and nested as usual. A back engraving on it asks in Review.">Cutting is not held by this: only a back engraving cannot be fitted.</div>` : "") +
-        `<div class="row skuActs">` +
+        // (the card's foot: its two settings on one line, then its buttons on ONE row, so the card stays the width of the grid's compact cells)
+        `<div class="row skuSet">` +
         `<input type="number" data-up="${keys}" data-repo="modify" value="${e.upAngle == null ? "" : Math.round(e.upAngle)}" placeholder="up°" title="the angle that points up on this charm (degrees)">` +
         facesBox(e, keys) +
         (blocked ? `<button class="btn ghost xs" data-unblock="${keys}" data-repo="modify">unblock</button>` : "") +
+        `</div><div class="row skuActs">` +
         dlPair(e, sizes) +
         (!WORKSPACE_SANDBOX && window.CharmNestEtsyLink ? `<button type="button" class="btn ghost xs" data-etsylink="${keys}" data-repo="modify" title="put this charm's SKU on an Etsy listing (asks for your password)">Etsy</button>` : "") +
         `<button type="button" class="btn ghost xs" data-del="${keys}" data-repo="delete" title="delete this charm${d.skus.length > 1 ? ` and its ${d.skus.length} SKUs` : ""} from the charm repo (asks for your password every time)">Delete</button>` +

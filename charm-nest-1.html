@@ -2254,13 +2254,19 @@ details.masterHist>summary{white-space:nowrap}
 /* (Paul, 26 Oct 2026: "Fix the UI for the Charm cards that have an excessive amount of SKUs attached to them" and "update the design for the charms cards so that these
    buttons are easily visible, tastefully positioned in one row with beautiful hover states".) A card is a column the width of its grid cell: every line (the name, each
    SKU) ellipsizes inside it with the whole name in its title, "+N more SKUs" opens INSIDE the card into a short scrolled list, and the controls are one row that never
-   wraps, pinned to the card's foot so the cards of a row line up. The grid's cells (340 px at least) are wide enough for that row (up°, faces, size, .ai | .dxf, Etsy, Delete, with their padlocks). */
-#mGrid.skuGrid{grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px;align-items:stretch}
+   wraps, pinned to the card's foot so the cards of a row line up: the two settings (up°, faces) on a line of their own, then the buttons (size, .ai | .dxf, Etsy, Delete, with
+   their padlocks) on ONE row. The grid's cells stay compact (260 px at least: about three cards a row in the Library's width at 1280 px, as before). */
+#mGrid.skuGrid{grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;align-items:stretch}
 #mGrid .skuTile{display:flex;flex-direction:column;gap:4px;min-width:0;overflow:hidden;padding:8px}
 #mGrid .skuTile>*{min-width:0;max-width:100%}
 #mGrid .skuTile .skuMore[open]{max-height:132px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin}
 #mGrid .skuTile .skuMore>div{line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#mGrid .skuTile .row.skuActs{margin-top:auto;display:flex;flex-wrap:nowrap;align-items:stretch;gap:4px;padding-top:7px;border-top:1px solid var(--line)}
+#mGrid .skuTile .row.skuSet{margin-top:auto;display:flex;flex-wrap:nowrap;align-items:stretch;gap:4px;padding-top:7px;border-top:1px solid var(--line)}
+#mGrid .skuTile .row.skuActs{display:flex;flex-wrap:nowrap;align-items:stretch;gap:4px}
+.skuSet>*{flex:0 0 auto;height:26px;box-sizing:border-box;margin:0}
+.skuSet input[data-up]{width:52px;border:1px solid var(--line);border-radius:7px;padding:0 5px;font:11px var(--mono);background:var(--card)}
+.skuSet select[data-faces]{flex:1 1 auto;min-width:0;border:1px solid var(--line);border-radius:7px;padding:0 4px;font-size:11px;background:var(--card);text-overflow:ellipsis}
+.skuSet .btn.xs{display:inline-flex;align-items:center;padding:0 7px;font-size:11px;border-radius:7px}
 .skuActs>*{flex:0 0 auto;height:26px;box-sizing:border-box;margin:0}
 .skuActs input[data-up]{width:46px;border:1px solid var(--line);border-radius:7px;padding:0 5px;font:11px var(--mono);background:var(--card)}
 .skuActs select[data-faces]{flex:1 1 0;min-width:44px;max-width:112px;border:1px solid var(--line);border-radius:7px;padding:0 3px;font-size:11px;background:var(--card);text-overflow:ellipsis}
@@ -2270,16 +2276,18 @@ details.masterHist>summary{white-space:nowrap}
 .skuActs .dlPair>*{border:0;border-radius:0;background:transparent;color:var(--ink);font:600 11px var(--mono);padding:0 7px;cursor:pointer}
 .skuActs .dlPair>*+*{border-left:1px solid var(--goldLine)}
 .skuActs .dlPair select{font:600 10.5px var(--sans);padding:0 1px;max-width:46px}
+.skuActs .dlPair[data-repo]::after{content:"";flex:0 0 auto;align-self:center;width:9px;height:10px;margin:0 7px 0 1px;background:var(--ink);opacity:.45;-webkit-mask:var(--repoShut) center/contain no-repeat;mask:var(--repoShut) center/contain no-repeat}
+.skuActs .dlPair[data-repo].repoOpen::after{-webkit-mask-image:var(--repoOpen);mask-image:var(--repoOpen);opacity:.35}
 /* hover: a gold tint, the border warms, a lift of 1 px; 140 ms; none with reduced motion */
-.skuActs .btn.xs,.skuActs .dlPair,.skuActs .dlPair>button,.skuActs input,.skuActs select{transition:background-color .14s ease,border-color .14s ease,box-shadow .14s ease,transform .14s ease,color .14s ease}
-.skuActs .btn.xs:not(:disabled):hover,.skuActs input:hover,.skuActs select[data-faces]:hover{border-color:var(--gold2);background:var(--goldSoft);transform:translateY(-1px);box-shadow:0 2px 6px rgba(80,60,20,.12)}
+.skuActs .btn.xs,.skuActs .dlPair,.skuActs .dlPair>button,.skuSet .btn.xs,.skuSet input,.skuSet select{transition:background-color .14s ease,border-color .14s ease,box-shadow .14s ease,transform .14s ease,color .14s ease}
+.skuActs .btn.xs:not(:disabled):hover,.skuSet .btn.xs:not(:disabled):hover,.skuSet input:hover,.skuSet select[data-faces]:hover{border-color:var(--gold2);background:var(--goldSoft);transform:translateY(-1px);box-shadow:0 2px 6px rgba(80,60,20,.12)}
 .skuActs .dlPair:hover{border-color:var(--gold2);box-shadow:0 2px 6px rgba(80,60,20,.12);transform:translateY(-1px)}
 .skuActs .dlPair>button:not(:disabled):hover{background:var(--goldSoft);color:#6b4d16}
 .skuActs .btn[data-del]:not(:disabled):hover{border-color:var(--clay);background:var(--claySoft);color:var(--clay)}
-.skuActs :is(button,input,select):focus-visible{outline:2px solid var(--gold);outline-offset:1px;position:relative;z-index:1}
+:is(.skuActs,.skuSet) :is(button,input,select):focus-visible{outline:2px solid var(--gold);outline-offset:1px;position:relative;z-index:1}
 .skuActs .dlPair>:focus-visible{outline-offset:-2px}
 .skuActs button:disabled{opacity:.55;cursor:progress}
-@media (prefers-reduced-motion:reduce){.skuActs *,.skuActs .dlPair{transition:none!important;transform:none!important}}
+@media (prefers-reduced-motion:reduce){.skuActs *,.skuSet *,.skuActs .dlPair{transition:none!important;transform:none!important}}
 @media (max-width:520px){#mGrid.skuGrid{grid-template-columns:minmax(0,1fr)}}
 .skuTile .bad{color:#8a3a26;font-size:11px}
 .skuTile .row{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
@@ -8491,7 +8499,7 @@ boot();
      personal login: the person is the name it keeps (cn.employee: the account chip's sign-in, or typed at the first approval, label
      or decision), the same name every seal it stamps, and the framed Design Station, carry. -->
 <script src="station-session.js?v=20261006-st3-acct1"></script>
-<script src="station-activity.js?v=20261009-ps1-as1-adv3-ew1-stx1"></script>
+<script src="station-activity.js?v=20261009-ps1-as1-adv3-ew1-stx1-ag1"></script>
 <!-- how long each cut sheet took the Laser person (charm-nest-laser-time.js; R7): the page's own count, sent with the completion; the server decides and stores it -->
 <script src="charm-nest-laser-time.js?v=20261007-fc2"></script>
 <script src="charm-nest-laser-act.js?v=20261006-sa5-ls2-gc1-sn1"></script>
