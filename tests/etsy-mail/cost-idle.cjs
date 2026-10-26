@@ -8,8 +8,8 @@
 // request is aborted. Time is Playwright's fake clock, so an hour takes seconds. Reads are counted the way Firestore
 // counts them (a document get is 1 read, a query is one read per document returned and at least 1); bytes are the
 // length of the answer. Scenarios: A = signed in, nothing open; B = one conversation open; C = tab hidden all hour.
-// It prints a table and always exits 0 (it measures, it does not judge); CHECK=1 turns the "after" expectations into
-// pass/fail.
+// It prints a table and checks the "after" expectations as pass/fail (26 Oct 2026: a cost guard that always exited 0
+// guarded nothing); CHECK=0 only measures (e.g. an older copy through INBOX_PAGE).
 "use strict";
 const http = require("http"), fs = require("fs"), path = require("path");
 const root = path.join(__dirname, "../..");
@@ -164,7 +164,7 @@ async function run(browser, label, { openThread, hidden, locked }) {
     out.D = await run(browser, "D. sign-in screen showing (after a 5 pm sign-out), tab shown", { openThread: false, hidden: false, locked: true });
   } finally { await browser.close(); server.close(); }
   console.log("\nSUMMARY " + JSON.stringify(out));
-  if (process.env.CHECK === "1") {
+  if (process.env.CHECK !== "0") {
     const fails = [];
     // a low count only means something if the person was still signed in the whole hour
     if (!out.A.signedInAtEnd) fails.push("A: the page signed itself out during the hour, so its low count proves nothing");
