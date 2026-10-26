@@ -108,7 +108,8 @@ function backend(env) {
   const mod = (name, fn) => fn;
   async function section(key, title, fn) {
     if (!want(key)) return;
-    try { await fn(); results.push([key + ' · ' + title, null]); console.log(`  ✓ ${key} · ${title}`); }
+    const t0 = Date.now();
+    try { await fn(); results.push([key + ' · ' + title, null]); console.log(`  ✓ ${key} · ${title} (${Math.round((Date.now() - t0) / 1000)} s)`); }
     catch (e) { results.push([key + ' · ' + title, e]); console.log(`  ✗ ${key} · ${title}\n    ${String(e && e.stack || e).split('\n').slice(0, 16).join('\n    ')}`); }
   }
   // helpers for reading the console
@@ -743,7 +744,7 @@ function backend(env) {
 
     /* ─────────────── L · the Stations board by hand: hover a station and a person, press a name, press an order, Back ─────────────── */
     await section('L', 'the Stations board: hover a station and a person, press a name to open the person page, press an order to open it, Back returns to the board', async () => {
-      const ctx = shared.ctx, page = await fresh();
+      const page = await fresh(), ctx = shared.ctx;   // (fresh() makes the shared tab first: L also runs alone)
       const L1 = await stationPage(ctx, 'assembly-3', 'Ivy Y.'); await scan(L1, R_L, 'by hand'); await page.bringToFront();
       await page.evaluate(() => Efficiency.go('stations')); await settled(page, '#efficiency/stations', 'efPgStations');
       const card = `${V} .es .esSt[data-key="assembly-3"] .esCard[data-rid="${R_L}"]`;
@@ -752,7 +753,8 @@ function backend(env) {
       await page.locator(`${V} .es .esSt[data-key="assembly-3"] .esStId`).hover(); await page.waitForSelector('.esTip[data-on]', { timeout: 8000 });
       let tip = (await page.locator('.esTip[data-on]').innerText()).replace(/\s+/g, ' '); assert(/Assembly/.test(tip), 'the station card names the station: ' + tip);
       // hover the person chip in the station header
-      const chip = `${V} .es .esSt[data-key="assembly-3"] .esPer[data-name="Ivy Y."]`; await page.waitForSelector(chip, { timeout: 20000 });
+      // (one name per person: the station's login "Ivy Y." is the alias table's Ivy, _activityKinds.js PEOPLE_ALIASES; the board, the chip and the person page say "Ivy")
+      const chip = `${V} .es .esSt[data-key="assembly-3"] .esPer[data-name="Ivy"]`; await page.waitForSelector(chip, { timeout: 20000 });
       await page.mouse.move(2, 2); await sleep(250); await page.locator(chip).hover(); await page.waitForSelector('.esTip[data-on]', { timeout: 8000 });
       tip = (await page.locator('.esTip[data-on]').innerText()).replace(/\s+/g, ' '); assert(/Ivy/.test(tip), 'the person card names the person: ' + tip);
       await shot(page, 'l1-board-hover-person-1440'); await page.mouse.move(2, 2);
@@ -764,7 +766,7 @@ function backend(env) {
       await page.keyboard.press('Escape'); await waitFor(page, () => !document.querySelector('#orderWin[open]'), null, 10000);
       assert.equal(await hash(page), '#efficiency/stations'); assert(await page.locator(card).count() === 1, 'the board still shows the order');
       // press the person's name on the card: their page opens, showing the order they are working on; Back returns to the board with the card in place
-      await page.locator(`${card} .esWho`).click(); await settled(page, '#efficiency/person/Ivy%20Y.', 'efPgPerson'); await ploaded(page);
+      await page.locator(`${card} .esWho`).click(); await settled(page, '#efficiency/person/Ivy', 'efPgPerson'); await ploaded(page);
       await waitFor(page, rid => !!document.querySelector(`#efficiencyView .efp .esCard[data-rid="${rid}"]`) || document.querySelector('#efficiencyView .efp .efpLive') && document.querySelector('#efficiencyView .efp').textContent.includes(rid), R_L, 25000).catch(async () => { throw new Error('the page of the person at the station shows the order in hand: ' + (await text(page, `${P} .efpWhere`)) + ' | ' + (await text(page, P)).slice(0, 300)); });
       await shot(page, 'l3-person-from-board-1440');
       await page.goBack(); await settled(page, '#efficiency/stations', 'efPgStations'); await page.waitForSelector(card, { timeout: 20000 }); assert.equal((await where(page)).efp, 0, 'the person page is taken away');
