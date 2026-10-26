@@ -96,7 +96,7 @@ const server = http.createServer((req, res) => {
     // ── desktop ──
     {
       const { page, ctx, errors } = await open("");
-      await page.waitForSelector(`[data-id="${TID}"]`);
+      await page.waitForSelector(`[data-id="${TID}"]`, { timeout: 30000 });   // 15 s missed it with three Chromium tests running
       const title0 = await page.title();
       await page.waitForTimeout(5600);   // the first read of the link status
       let c = await chip(page);
@@ -187,7 +187,7 @@ const server = http.createServer((req, res) => {
       // ── a conversation that could not be read ──
       mode.msgFail = true;
       await page.click('.em-rail-item[data-filter="x_all"]');
-      await page.waitForSelector(`[data-id="${TID}"]`);
+      await page.waitForSelector(`[data-id="${TID}"]`, { timeout: 30000 });   // 15 s missed it with three Chromium tests running
       await page.click(`[data-id="${TID}"]`);
       await until(page, () => /Can't reach the inbox/.test(document.getElementById("emThreadBox").textContent));
       t = await page.evaluate(() => document.getElementById("emThreadBox").textContent);
@@ -204,7 +204,7 @@ const server = http.createServer((req, res) => {
       const { page, ctx, errors } = await open("");
       mode.partial = true;
       await page.reload();
-      await page.waitForSelector(`[data-id="${TID}"]`);
+      await page.waitForSelector(`[data-id="${TID}"]`, { timeout: 30000 });   // 15 s missed it with three Chromium tests running
       await until(page, () => /part of this list could not be read/.test(document.getElementById("emListItems").textContent));
       check(true, "a partial load of Needs attention says so: " + (await page.evaluate(() => document.getElementById("emListItems").textContent)).trim().slice(0, 140));
       mode.partial = false;
