@@ -207,7 +207,7 @@ const RESUME = 'Waits for Resume';
       if (hold && /\/back\//.test(decodeURIComponent(route.request().url()))) { hold = false; held = route; sawPut(); return; }   // left unanswered: the reload cuts it short
       return route.continue().catch(() => {});
     });
-    const approvedAt = await page.evaluate(() => { const j = [...Engrave.items().values()].find(j => String(j.row.order.receiptId) === '3700000001'); Engrave.approve(j, 'Tester'); return new Promise(res => setTimeout(() => res(j.approvedAt), 50)); });
+    const approvedAt = await page.evaluate(() => { const j = [...Engrave.items().values()].find(j => String(j.row.order.receiptId) === '3700000001'); Engrave.approve(j, 'Tester'); return new Promise(res => { const t0 = Date.now(), look = () => (j.approvedAt || Date.now() - t0 > 10000 ? res(j.approvedAt) : setTimeout(look, 25)); look(); }); });   // (the approval stamps approvedAt a beat after the press now: read once it is there, 50 ms read null)
     await Promise.race([putSeen, new Promise((_, rej) => setTimeout(() => rej(new Error('the back file upload never started')), 60000))]);
     const mid = await page.evaluate(() => { const j = [...Engrave.items().values()].find(j => String(j.row.order.receiptId) === '3700000001'); return { state: j.state, backs: (j.backs || []).length, copies: j.copies.length }; });
     log('3 · reloading while the back file is being written:', JSON.stringify(mid));
