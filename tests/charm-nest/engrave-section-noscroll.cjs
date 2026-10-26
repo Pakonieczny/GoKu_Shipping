@@ -159,7 +159,8 @@ function measureInPage(cfg) {
   if (scroller) { const was = scroller.scrollTop; scroller.scrollTop = scroller.scrollHeight; out.reach = { scrolled: +scroller.scrollTop.toFixed(1), bottoms: cards.map(c => +c.getBoundingClientRect().bottom.toFixed(2)), overflowY: getComputedStyle(scroller).overflowY }; scroller.scrollTop = was; }
   // ── the sideways scroll: anything wider than the window, the scroll area, the section ──
   const de = document.documentElement;
-  out.hscroll = { page: de.scrollWidth - de.clientWidth, body: document.body.scrollWidth - de.clientWidth, dialog: dialog ? dialog.scrollWidth - dialog.clientWidth : 0, scroller: scroller ? scroller.scrollWidth - scroller.clientWidth : 0, section: section.scrollWidth - section.clientWidth, column: column ? column.scrollWidth - column.clientWidth : 0,
+  out.hscroll = { seal: (g => g ? Math.max(0, -parseFloat(getComputedStyle(g).marginRight) || 0) : 0)(document.getElementById('owEng')),   // (the grid's seal room: padding-right taken back by a negative margin; the column and the section do not clip it, nothing scrolls)
+    page: de.scrollWidth - de.clientWidth, body: document.body.scrollWidth - de.clientWidth, dialog: dialog ? dialog.scrollWidth - dialog.clientWidth : 0, scroller: scroller ? scroller.scrollWidth - scroller.clientWidth : 0, section: section.scrollWidth - section.clientWidth, column: column ? column.scrollWidth - column.clientWidth : 0,
     scrollerOverflowX: scroller ? getComputedStyle(scroller).overflowX : '' };
   out.wideOnes = [...section.querySelectorAll('*')].filter(e => vis(e) && e.getBoundingClientRect().right > Math.min(innerWidth, dl ? dl.right : innerWidth) + 1).slice(0, 4).map(e => nameOf(e) + ' right=' + Math.round(e.getBoundingClientRect().right));
   out.sectionText = (section.innerText || '').replace(/\s+/g, ' ').trim();
@@ -239,8 +240,8 @@ const judge = {
   e(m) {
     if (m.noSection) return noSec;
     const h = m.hscroll, s = m.section, over = m.cards.filter(c => c.r > s.r + 1 || c.l < s.l - 1).length;
-    const ok = h.page <= 0 && h.body <= 0 && h.dialog <= 1 && h.scroller <= 1 && h.section <= 1 && h.column <= 1 && over === 0 && !(m.wideOnes || []).length;
-    return { ok, say: `overflow-x px: page ${h.page}, dialog ${h.dialog}, scroll area ${h.scroller} (overflow-x ${h.scrollerOverflowX}), column ${h.column}, section ${h.section}; cards outside the section ${over}${(m.wideOnes || []).length ? '; past the window: ' + m.wideOnes.join(', ') : ''}` };
+    const ok = h.page <= 0 && h.body <= 0 && h.dialog <= 1 && h.scroller <= 1 && h.section <= h.seal + 1 && h.column <= h.seal + 1 && over === 0 && !(m.wideOnes || []).length;
+    return { ok, say: `overflow-x px: page ${h.page}, dialog ${h.dialog}, scroll area ${h.scroller} (overflow-x ${h.scrollerOverflowX}), column ${h.column}, section ${h.section} (seal room ${h.seal}); cards outside the section ${over}${(m.wideOnes || []).length ? '; past the window: ' + m.wideOnes.join(', ') : ''}` };
   },
   f(m6, x) {
     if (m6.noSection) return noSec;

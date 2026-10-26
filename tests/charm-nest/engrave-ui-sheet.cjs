@@ -176,7 +176,7 @@ const rec = (copy, face, text) => Object.assign({ poolId: P(copy), sheetId: 's1'
     assert.deepEqual(Array.from(faceChip(row('back'))), ['', '']); assert.deepEqual(Array.from(faceChip(row(null))), ['', ''], 'no reading at all: today\'s back');
     assert.deepEqual(Array.from(faceChip(row('back', { engravingOverride: { mode: 'both', by: 'Ana', at: 1, front: { text: 'W' } } }))), ['info', 'Front + back'], 'a person\'s word wins');
     assert.deepEqual(Array.from(faceChip({})), ['', '']);
-    assert.match(br, /fc\[1\] \? `<span class="ost \$\{fc\[0\]\} engFaces"/);
+    assert.match(br, /fc\[1\](?: && !v\.e)? \? `<span class="ost \$\{(?:v\.)?fc\[0\]\} engFaces"/);   // (the row's view model v carries the chip; a line with its seal row (v.e) says it there)
   });
   await t('search: the sentence names the face that waits; the disc count is by pieces; back-only reads as ever', () => {
     const s = src('charm-nest-search.js');

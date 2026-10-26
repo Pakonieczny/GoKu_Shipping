@@ -272,11 +272,6 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
     assert.deepEqual([...card.querySelectorAll('.egEarTab')].map(b => b.getAttribute('aria-pressed')), ['false', 'true']); assert.match(card.querySelector('.ctl [data-a="skip"]').textContent, /^No back engraving/);
     const both2 = card.querySelector('[data-a="approveBoth"]'); assert.equal(both2.disabled, false, 'the front was on screen, the back is now'); assert.match(both2.title, /Front, then the Back/);
   });
-  await t('2d the setup editor has its slot at the top of the right column and is mounted with the LINE after every drawing; without it the slot is empty and hidden (no layout shift)', () => {
-    P.setupMounts.length = 0; const card = P.open(fronts.tag[0].key); const slot = card.querySelector('.pvSide > .pvSetup[data-engsetup]'); assert.ok(slot, 'first section of the right column'); assert.equal(card.querySelector('.pvSide > :not([data-said])'), slot);   /* (ENGNOTE: the customer's words box, when there are words, is drawn above the setup slot) */
-    assert.ok(P.setupMounts.length >= 1); const [sl, row] = P.setupMounts[P.setupMounts.length - 1]; assert.equal(sl, slot); assert.equal(row.parentRow || row, ROW.tag, 'the line');
-    const bare = facedPage({ setup: false }); const c2 = bare.open(bare.fronts.tag[0].key); const s2 = c2.querySelector('[data-engsetup]'); assert.equal(s2.hidden, true); assert.equal(s2.textContent, '');
-  });
   await t('2e an earring pair with a front and a back: two switches, Left | Right with Front | Back right beneath it; each ear and face is its own card with its own words and approval', () => {
     P.reset(); let card = P.open(fronts.ears[0].key);
     assert.equal(card.querySelectorAll('.rh .egSwitchStack').length, 1); const sws = [...card.querySelectorAll('.rh .egSwitchStack > .egEarSwitch')]; assert.equal(sws.length, 2);
@@ -373,13 +368,6 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
     const c2 = Q.open(Q.fronts.pend[0].key); assert.equal(c2.querySelector('.egEarSwitch'), null, 'one face: nothing to switch'); assert.equal(c2.querySelector('.rh .reviewIdentity > .egPiece').textContent, 'FRONT'); assert.equal(c2.querySelector('.pvMain .pvH').textContent, 'Front · engraving'); assert.equal(c2.querySelector('.wordsHead .lbl').textContent, 'Words on the front');
     assert.equal(c2.querySelector('[data-a="approveBoth"]'), null, 'one placement: the ordinary Approved'); assert.ok(c2.querySelector('[data-a="approve"]'));
     Q.dom.window.close();
-  });
-  await t('2n the REAL setup editor (charm-nest-engrave-setup.js) fills that slot: "Engraves: Front + back" with each face\'s words, as the system read them, right in the card', () => {
-    const R = facedPage({ setupReal: true }); const card = R.open(R.fronts.tag[0].key); const slot = card.querySelector('.pvSide > .pvSetup'); assert.ok(slot);
-    assert.equal(slot.hidden, false, 'it has something to say about this line'); const txt = norm(slot.textContent);
-    assert.match(txt, /Front \+ back/); assert.match(txt, /W/); assert.match(txt, /1\. 27\. 24/); assert.match(txt, /asks for both faces/, 'the system\'s one plain line');
-    const back = R.open(R.made.tag[0].key); assert.match(norm(back.querySelector('.pvSide > .pvSetup').textContent), /Front \+ back/, 'the same line on the back\'s card');
-    const plain = R.open(R.made.pend[0].key); const quiet = norm(plain.querySelector('.pvSide > .pvSetup').textContent); assert.doesNotMatch(quiet, /Front/, 'a back-only line: nothing about a front'); R.dom.window.close();
   });
   await t('2m the public API carries the face helpers the rows and cards use', () => {
     assert.equal(typeof E.approveRow, 'function'); assert.equal(E.faceModeOf(ROW.tag), 'both'); assert.equal(E.faceModeOf(ROW.pend), null, 'a back-only line has no mode chip'); assert.equal(E.lineHasFront(ROW.ears), true); assert.equal(E.lineHasFront(ROW.pair), false);

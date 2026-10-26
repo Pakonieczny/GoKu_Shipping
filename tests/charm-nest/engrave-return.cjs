@@ -165,9 +165,9 @@ async function main() {
     p = await pill(); check(p.vis && p.cur.rid === B.rid, '6: Back keeps it too');
     await page.evaluate(() => { Engrave.restoreView({ list: true, chosen: true }); Engrave.render(); }); await sleep(500);
     await page.evaluate(k => { Engrave.restoreView({ list: false, chosen: true, focus: k }); Engrave.render(); }, q1); await sleep(500);
-    await page.evaluate(() => { Engrave.restoreView({ tab: 'done', chosen: true }); Engrave.render(); }); await sleep(500);   // (an old saved "Decided" view: it is the one list now)
+    await page.evaluate(() => { Engrave.restoreView({ tab: 'done', chosen: true }); Engrave.render(); }); await sleep(500);   // (an old saved "Decided" view: it is the one list's Approved chip now, APPTAB)
     const compat = await page.evaluate(() => ({ tab: Engrave.view().tab, list: Engrave.view().list, gone: document.querySelectorAll('#egDone, #egBacks, .egTab[data-tab="done"]').length }));
-    check(compat.tab === 'place' && compat.list === true && compat.gone === 0, '6: an old saved Decided view lands on the one list: ' + JSON.stringify(compat));
+    check(compat.tab === 'approved' && compat.list === true && compat.gone === 0, '6: an old saved Decided view lands on the Approved view of the one list (APPTAB): ' + JSON.stringify(compat));
     p = await pill(); check(p.vis && p.cur.rid === B.rid, '6: list / card switches (and an old saved Decided view) keep the origin');
     await reset();
     // the order A, the back of its piece

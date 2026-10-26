@@ -377,7 +377,7 @@ ok('geom: the front view', () => {
   const mem = (sub, extra) => Object.assign({ kind: 'path', layer: 'CUT', stroke: true, fill: false, strokeRGB: [0, 0, 0], fillRGB: [0, 0, 0], lwPt: 0.25, paintOp: 'S', closed: true, subpaths: [sub], bbox: bbOf(sub) }, extra || {});
   const charm = (body, holes, art) => { const o = mem(body), hs = holes.map(h => mem(h)), as = (art || []).map(a => mem(a, { layer: 'ENGRAVE', stroke: false, fill: true, fillRGB: [0, 0, 1] })); return { outline: o, members: [o, ...hs, ...as], bbox: o.bbox, widthPt: o.bbox[2] - o.bbox[0], heightPt: o.bbox[3] - o.bbox[1] }; };
   const holeAt = v => { const h = v.members[1].bbox, o = v.outline.bbox; return Math.atan2((h[1] + h[3]) / 2 - (o[1] + o[3]) / 2, (h[0] + h[2]) / 2 - (o[0] + o[2]) / 2) * 180 / Math.PI; };
-  const disc = charm(circ(30, 30, 25), [circ(12, 48, 3)]);
+  const disc = charm(circ(30, 30, 25), [circ(16, 44, 3)]);    // (the hole cut IN the disc's material: holeUpAngle ignores a cut line outside it)
   const fv = G.backView(disc, { res: 6, face: 'front' }), bv = G.backView(disc, { res: 6 });
   assert.equal(fv.face, 'front'); assert.equal('face' in bv, false); assert.deepEqual(fv.M, [1, 0, 0, 1, 0, 0]); assert.deepEqual(bv.M, [-1, 0, 0, 1, 2 * bv.cx, 0]);
   assert.ok(Math.abs(holeAt(fv) - 90) < 1e-6, 'the front view puts the hoop on top');

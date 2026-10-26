@@ -218,6 +218,8 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
     }, { key: JK });
     check(staging.lines.join(' ') === 'Name' && staging.fontId === idB, `J1 staged: "Name" in ${idB}`);
     await page.evaluate(() => { document.querySelector('#egQueue .pvSetup .engp [data-engp=save]').click(); });
+    // (ENGWHY: a Save that changes what the system chose asks a quick reason first, in the panel: one press of a quick button saves)
+    await page.waitForSelector('#egQueue .pvSetup .engpWhy .engpChip', { timeout: 5000 }).then(() => page.evaluate(() => document.querySelector('#egQueue .pvSetup .engpWhy .engpChip').click())).catch(() => {});
     await page.waitForFunction(({ key, id }) => { const j = Engrave.items().get(key); return j && j.state === 'review' && j.fit && j.fontKey === id && j.lines.join(' ') === 'Name'; }, { key: JK, id: idB }, { timeout: 150000 });
     await page.waitForSelector('#egQueue .backHost canvas', { timeout: 30000 });
     await page.waitForFunction(() => { const s = document.querySelector('#egQueue .pvSetup .engp [data-engp=save]'); return !s || s.disabled; }, null, { timeout: 30000 }).catch(() => {});

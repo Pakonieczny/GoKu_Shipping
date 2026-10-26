@@ -113,6 +113,8 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     // ═══ 6a · the OLD way (what the panel did before this change: the patch alone, no reason): the write count to match ═══
     await reset();
     const patchBack = { back: { text: '1. 28. 24', fontWord: null } };
+    // (the page's once-per-load repair of the saved custom charms (keepPending / keepRepair: customSavePending, customSaveRepair, Charm_Custom_Repair) is not this save's: it is let pass before the count)
+    { const t0 = Date.now(); while (Date.now() - t0 < 15000 && !srv.st.calls.some(c => c.op === 'customSaveRepair')) await page.waitForTimeout(100); await page.waitForTimeout(1000); }
     let a = snap();
     await page.evaluate(({ KEY, p }) => Engrave.saveSetup(B.orders.byKey.get(KEY), p), { KEY, p: patchBack });
     await settle(a);

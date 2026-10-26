@@ -31,7 +31,7 @@ const plain1 = r => typeof r === 'string' && !!r && !/\n/.test(r) && r.length <=
 function shapeOk(e, where) {
   for (const k of ['v', 'mode', 'source', 'front', 'back', 'textSource', 'needsPerson', 'confidence', 'why', 'option']) assert.ok(k in e, where + ': field ' + k);
   assert.equal(e.v, 1, where); assert.ok(['none', 'front', 'back', 'both'].includes(e.mode), where + ' mode ' + e.mode);
-  assert.ok(['option', 'title', 'note', 'default'].includes(e.source), where + ' source ' + e.source + ' (never "person": that is row.engravingOverride)');
+  assert.ok(['option', 'title', 'note', 'default', 'profile'].includes(e.source), where + ' source ' + e.source + ' (never "person": that is row.engravingOverride; "profile": a profiled line\'s pieces)');
   assert.ok(['labelled', 'single', 'unlabelled', 'none'].includes(e.textSource), where + ' textSource'); assert.equal(typeof e.needsPerson, 'boolean', where);
   assert.ok(typeof e.confidence === 'number' && e.confidence >= 0 && e.confidence <= 1, where + ' confidence'); assert.ok(plain1(e.why), where + ' why is one plain line: ' + e.why);
   assert.ok(e.option === null || (typeof e.option.name === 'string' && typeof e.option.value === 'string'), where + ' option');
@@ -359,9 +359,11 @@ await t('7a all offline order data: 755 lines x 2 (as stored, and with one plain
     const L = W.lines(variant); assert.equal(L.length, 755, variant + ' line count');
     for (const x of L) {
       const sp = O.interpretLine(x.order, x.line, W.ctx()), base = BASE.interpretLine(x.order, x.line, W.ctx()), { engraving, ...rest } = sp;
-      assert.equal(JSON.stringify(rest), JSON.stringify(base), `${variant} ${x.key}: the line reads as before`); assert.ok(!('engraving' in base));
+      const { engraving: be, ...br } = base; assert.equal(JSON.stringify(rest), JSON.stringify(br), `${variant} ${x.key}: the line reads as before`);
+      // (a PROFILED line (a BEADY bar or disc necklace, charm-nest-orders.js profileWords) has its faces reading from its piece profile, source "profile", with or without the intake hook: the hook then leaves it as it is)
+      assert.ok(!be || (be.source === 'profile' && JSON.stringify(be) === JSON.stringify(engraving)), `${variant} ${x.key}: only a piece profile reads the faces without the intake hook, and the hook keeps that reading`);
       noNested(sp, x.key);
-      if (engraving) { withEng.add(x.key); shapeOk(engraving, variant + ' ' + x.key); }
+      if (engraving) { if (!be) withEng.add(x.key); shapeOk(engraving, variant + ' ' + x.key); }   // (the readings the intake hook itself makes)
     }
   }
   assert.deepEqual([...withEng].sort(), ['font:12', 'font:14', 'snap:279', 'snap:330', 'snap:349'], 'exactly the lines with a front / back option gain a reading: Tag1 (front engrave) x2, Front&Back x2, Writing-FRONT; "Truck Front Charm" and the other 750 do not');

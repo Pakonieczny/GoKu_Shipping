@@ -223,7 +223,7 @@ async function main() {
 
     /* ── 5 · the same button in the older places ── */
     console.log('\n  5 · the same button everywhere');
-    await R.openOrderWindow(w, 'both');
+    await R.openOrderWindow(w, 'both'); await page.mouse.move(2, 2); await sleep(200);   // (the resting look: the mouse is not left over the card's button from the presses above)
     const same = await page.evaluate(async key => {
       const S = CNEngravingSeals, row = B.orders.byKey.get(key), job = Engrave.jobsOf(row)[0];
       const box = document.createElement('div'); box.id = 'btOld'; box.style.cssText = 'position:fixed;left:700px;top:330px;width:300px;z-index:2147483000;background:#fffefb'; box.className = 'owPanel';

@@ -50,7 +50,7 @@ const R = require('./_engraveRealWorld.cjs');
       Object.assign(j, { state: 'approved', approvedBy: 'Name One', approvedAt: Date.now() - 60e3, decision: { by: 'Name One', at: Date.now() - 60e3, text: j.text } });
       setMode('engrave'); Engrave.restoreView({ list: false, chosen: true, focus: j.key }); Engrave.render();
       const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'), b = c && c.querySelector('[data-said]');
-      const out = { open: !!c && c.dataset.key === j.key && c.dataset.state === 'approved', said: c ? c.querySelectorAll('[data-said]').length : -1, text: b ? b.innerText.replace(/\s+/g, ' ').trim() : '', canvas: !!(c && c.querySelector('.backHost canvas')), old: document.querySelectorAll('#egDone, #egBacks, .doneDetail, .decidedRow').length, state: j.state };
+      const out = { open: !!c && c.dataset.key === j.key && c.dataset.state === 'approved', said: c ? c.querySelectorAll('[data-said]').length : -1, text: b ? b.innerText.replace(/\s+/g, ' ').trim() : '', canvas: await (async () => { for (let t = 0; t < 50; t++) { if (document.querySelector('#egQueue .rvItem[data-kind=placement] .backHost canvas')) return true; await new Promise(r => setTimeout(r, 100)); } return false; })(),   /* (the real charm is drawn in a later frame, not in the render call itself) */ old: document.querySelectorAll('#egDone, #egBacks, .doneDetail, .decidedRow').length, state: j.state };
       Object.assign(j, was); Engrave.restoreView({ list: false, chosen: true, focus: j.key }); Engrave.render();
       return out;
     }, w.made.back.key);
