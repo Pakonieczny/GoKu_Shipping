@@ -5,11 +5,12 @@
 // hold the way the sheet window does it (SheetWin.takeOffOrder) and released with OrderHold.release. Nothing leaves the machine.
 //   gold    · the order goes back on the partial sheet with room, ahead of three incoming orders that wait on it; the steps come in
 //             order; nothing already on the sheet moves; the hold, the line's marks and the timeline say so; no QR yet (still filling)
-//   set     · the same sheet already in its set: its QR label is made again, with the order on it
+//   (set: never had a scenario of its own past step 1; the sheet in its set is the closed scenario's committed one)
 //   closed  · a cut sheet, a recalled one and one in a committed set are never filled: a new sheet is started (and the plan says so)
-//   rose    · a Rose Gold sheet takes the piece beside the ones already there: nothing moves, no green line is drawn
+//   (rose, removed 26 Oct 2026: SETFIX, Paul 17 Oct 2026, a Rose Gold sheet joins a set only by its own Cut Sheet press, which draws its green line; the uncut RG sheet in a set this
+//    scenario released onto no longer exists. A cut sheet is never filled: the closed scenario proves that, its cut Rose Gold sheet included)
 //   restart · the page reloaded in the middle of a release: the next load finishes it once (one placement, one timeline step)
-//   node tests/charm-nest/order-release-engine.cjs [gold|set|closed|rose|restart]   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
+//   node tests/charm-nest/order-release-engine.cjs [gold|closed|restart]   (run one at a time: each is about 2-4 min)   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
 const path = require('path'), fs = require('fs');
 const here = path.join(__dirname, '../..');
 const pwDir = process.env.PW_DIR || path.join(here, 'node_modules');
@@ -31,7 +32,7 @@ const sameAt = (a, b) => !!a && !!b && a.join() === b.join();
 
 const fails = [];
 async function run(kind, browser) {
-  const metal = kind === 'rose' ? 'rose' : 'gold';
+  const metal = 'gold';
   const srv = await start({ receipts: [] }), { st } = srv;
   const context = await browser.newContext({ viewport: { width: 1440, height: 950 } });
   const said = [], check = (ok, what) => { if (!ok) fails.push(`${kind}: ${what}`); console.log((ok ? '  ok   ' : '  FAIL ') + `${kind} · ${what}`); };
@@ -159,38 +160,6 @@ async function run(kind, browser) {
       await quiet('7');
     }
 
-    if (kind === 'rose') {
-      // the sheet in its set with its QR label (a Rose Gold sheet joins by its own tick; it is not cut: no green line)
-      await page.evaluate(async () => { await Gate.assemble(B.run); });
-      await page.waitForTimeout(1500);
-      await page.evaluate(async () => { await Gate.flush(B.run).catch(() => {}); await Gate.changeMembership('rose', true, CN.S.sheets.rose.pages.at(-1)).catch(() => {}); });   // (SETFIX, Paul 17 Oct 2026: Rose Gold joins a set a sheet at a time; the sheet is named)
-      await until(async () => { const z = await info(); return z && z.setId && !z.draft && z.labelOrders && z.labelOrders.length === 2 && z.saved; }, 30000, 'the sheet in its set with its label').catch(async e => { const z = await info(); throw new Error(e.message + ' ' + JSON.stringify(z && { setId: z.setId, draft: z.draft, labelOrders: z.labelOrders, saved: z.saved })); });
-      s = await info(); const setId = s.setId;
-      check(s.labelOrders.includes(S1) && s.labelOrders.includes(H) && !s.rosePlan && !s.roseProtected, `2 · the sheet is in its set with a QR label for both orders (${JSON.stringify(s.labelOrders)})`);
-      await hold(H); s = await info();
-      check(s.setId === setId && !s.draft && !s.charms.includes(poolOf(H)) && s.placed.length === 1, `2 · the order is on hold, off the sheet, which keeps its set (${JSON.stringify({ set: s.setId, charms: s.charms })})`);
-      const before = s.at[poolOf(S1)];
-      const plan = await page.evaluate(rid => OrderHold.releasePlan(rid).then(p => JSON.parse(JSON.stringify(p))), H);
-      check(plan.canRelease && plan.target && plan.target.label === 'RG Sheet 1' && plan.target.inSet && !plan.target.newSheet && plan.effects.some(t => /packed from the left\. No green line is drawn and nothing is moved/.test(t)) && plan.effects.some(t => /QR label of RG Sheet 1 is made again/.test(t)), `3 · the plan says it is packed from the left, no green line, and the label is made again (${plan.effects.join(' | ')})`);
-      const res = await release(H);
-      stepsOk(res, '4', WANT);
-      const q = res.steps.find(x => x.type === 'queued'), tg = res.steps.find(x => x.type === 'target'), pl = res.steps.find(x => x.type === 'placed'), qr = res.steps.find(x => x.type === 'qr');
-      check(res.r.ok && res.r.released && res.r.placed && tg.sheetId === sheetId && !tg.newSheet && pl.sheetId === sheetId && pl.poolIds.join() === poolOf(H), `4 · released and placed on the sheet that is in its set (${JSON.stringify([tg.sheetId, pl.sheetId])})`);
-      check(qr.sheetId === sheetId && qr.made === true && qr.orders === 2 && !qr.why, `4 · the QR label was made again, for both orders (${JSON.stringify(qr)})`);
-      s = await rest();
-      check(s.setId === setId && !s.draft && !s.keep && s.labelOrders.includes(H) && s.labelOrders.includes(S1), `5 · the sheet is back in its set with its label naming the order (${JSON.stringify({ set: s.setId, draft: s.draft, label: s.labelOrders, keep: s.keep })})`);
-      const rec = record(sheetId);
-      check(rec && (rec.label && rec.label.orders || []).map(String).includes(H) && rec.setId === setId && !rec.draft, `5 · the saved sheet record has the label and the set (${JSON.stringify(rec && [rec.setId, rec.draft, rec.label && rec.label.orders])})`);
-      check(sameAt(s.at[poolOf(S1)], before) && s.placed.includes(poolOf(H)) && s.placed.length === 2, `5 · the piece already there did not move (${JSON.stringify([s.at[poolOf(S1)], before])})`);
-      check(!s.rosePlan && !s.roseProtected && !s.roseCutAt, `5 · no green line was drawn and the sheet was not cut (${JSON.stringify([s.rosePlan, s.roseProtected, s.roseCutAt])})`);
-      check(Math.max(...Object.values(s.at).map(a => a[0])) < s.wPt / 4, `5 · both pieces sit in a block at the left of the sheet (${JSON.stringify(Object.values(s.at).map(a => a[0]))} of ${s.wPt})`);
-      const ev = await until(() => timeline(H, 'released')[0] && timeline(H, 'released'), 20000, 'the released event');
-      check(ev.length === 1 && ev[0].sheetId === sheetId && ev[0].setId === setId && /^Released from hold by Paul · placed on RG Sheet 1$/.test(ev[0].text), `6 · the timeline has the step, with the sheet and its set (${JSON.stringify(ev.map(e => [e.text, e.sheetId, e.setId]))})`);
-      const pr = st.doc(POOL, poolOf(H));
-      check(pr && pr.sheetId === sheetId && pr.state === 'written' && pr.frontAt === q.frontAt, `6 · the piece record is on the sheet and keeps its place in the queue (${JSON.stringify(pr && [pr.state, pr.sheetId, pr.frontAt])})`);
-      await quiet('6');
-    }
-
     if (kind === 'closed') {
       await hold(H); await hold(H2);
       s = await info();
@@ -289,7 +258,7 @@ async function run(kind, browser) {
 
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
-  try { for (const kind of process.argv[2] ? [process.argv[2]] : ['gold', 'set', 'closed', 'rose', 'restart']) await run(kind, browser); }
+  try { for (const kind of process.argv[2] ? [process.argv[2]] : ['gold', 'closed', 'restart']) await run(kind, browser); }
   finally { await browser.close(); }
   if (fails.length) { console.log(`\n${fails.length} failed`); process.exit(1); }
   console.log('\norder-release-engine OK');
