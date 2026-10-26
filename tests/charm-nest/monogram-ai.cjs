@@ -199,7 +199,7 @@ require.cache[require.resolve(clientPath)] = { id: clientPath, filename: clientP
   // ═══ 4 · the real page ═══
   async function pageTests() {
     const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
-    try { require(path.join(pwDir, 'playwright-core')); } catch (_) { console.log('monogram-ai: no playwright-core, the page part is skipped'); return; }
+    try { require(path.join(pwDir, 'playwright-core')); } catch (_) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('monogram-ai: no playwright-core, the page part is skipped'); return; }
     process.env.PW_DIR = pwDir;
     const Base = require('./_orderFactsWorld.cjs'), Alpha = require('./_monogramAlphabets.cjs');
     const V = (name, value) => ({ name, value }), TITLE = 'Monogram Necklace Personalized Jewelry Initials Pendant';
@@ -209,7 +209,7 @@ require.cache[require.resolve(clientPath)] = { id: clientPath, filename: clientP
       klm: { rid: '4200900001', sku: 'NEWMONO_1', listing: '888000001', title: 'Custom Monogram Pendant Necklace, 3 Initials', buyer: 'Name Three', placed: { day: 0, h: 9, m: 30 }, ship: 5, variations: [V('Metal choice', 'Rose Gold')], personalization: ['J.Q.X'], metalKey: 'rose' }
     };
     const w = await Base.world({ viewport: { width: 1440, height: 900 } });
-    if (!w) { console.log('monogram-ai: no playwright-core, the page part is skipped'); return; }
+    if (!w) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('monogram-ai: no playwright-core, the page part is skipped'); return; }
     const { page, srv } = w, st = srv.st;
     try {
       const set = await Alpha.make(); Alpha.seed(st, set);

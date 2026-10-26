@@ -8,7 +8,7 @@
 //
 //   node tests/charm-nest/placement-oracle.cjs              all scenarios, all surfaces, exit 1 on any surface that disagrees
 //   node tests/charm-nest/placement-oracle.cjs --list       print the disagreements and exit 0 (to record a baseline)
-//   --only hold,release   only those scenarios      --surfaces ow,list   only those surfaces      --dump   print every claim
+//   --only hold,release   only those scenarios      --surfaces ow,list   only those surfaces      --dump   print every claim   --group main (default) | pairs | ctl | all
 //   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules  (CHROMIUM=<chrome> to override)
 //
 // How it runs. Real sorter pages share ONE fake backend (bridge-server.cjs: the real charmNestLibrary handler over an in-memory Firestore):

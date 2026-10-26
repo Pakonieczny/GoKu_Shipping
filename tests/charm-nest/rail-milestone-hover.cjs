@@ -19,7 +19,7 @@ const root = path.join(__dirname, '../..');
 let chromium;
 const dirs = [process.argv[2], process.env.PW_DIR, '/opt/node22/lib/node_modules/playwright', path.join(root, 'node_modules/playwright'), path.join(root, 'node_modules/playwright-core')].filter(Boolean);
 for (const d of dirs) { for (const n of [d, path.join(d, 'playwright-core'), path.join(d, 'playwright')]) { try { ({ chromium } = require(n)); if (chromium) break; } catch (_) {} } if (chromium) break; }
-if (!chromium) { console.log('  - no playwright: the browser check was not run'); process.exit(0); }
+if (!chromium) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('  - no playwright: the browser check was not run'); process.exit(0); }
 const SHOTS = process.env.SHOTS || '';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const KEYS = ['pooled', 'otherSheetNotReady', 'noSku'];

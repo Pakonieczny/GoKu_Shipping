@@ -37,7 +37,7 @@ const mutant = { back: s => { const t = s.replace('<i class="tlSeal"></i><span>$
 
 async function main() {
   const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
-  let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('  – no playwright-core: the browser checks were not run'); return; }
+  let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('  – no playwright-core: the browser checks were not run'); return; }
   const shots = process.env.CN_SHOTS || null; if (shots) fs.mkdirSync(shots, { recursive: true });
   const srv = await start({ receipts: [] });
   const setLevels = levels => {
