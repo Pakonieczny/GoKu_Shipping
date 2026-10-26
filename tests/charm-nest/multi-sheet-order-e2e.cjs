@@ -9,7 +9,7 @@
 // ids: A order window, B sheet window, C Library, D lists and search, E timeline, G server, H OrderPieces, K SharedOrders and its window) from every side
 // (opened from each piece, from each sheet) and compares what each one says with the ground truth computed from the fixture.
 //
-//   node tests/charm-nest/multi-sheet-order-e2e.cjs            all surfaces, exit 1 on any wrong surface
+//   node tests/charm-nest/multi-sheet-order-e2e.cjs            all surfaces, the 'ok' variant (VARIANTS=all: every variant, ~20 min), exit 1 on any wrong surface
 //   node tests/charm-nest/multi-sheet-order-e2e.cjs --list     print the failing surfaces and exit 0 (to record a baseline)
 //   node tests/charm-nest/multi-sheet-order-e2e.cjs --only A3,B1   only those surface ids
 //   node tests/charm-nest/multi-sheet-order-e2e.cjs --dump     print every wrong screen, not the first three (--json <file> saves them all)
@@ -788,13 +788,16 @@ async function main() {
   const R = new Report();
   // the matrix: every way the app can know where a piece is, and every store lagging behind the others
   const matrix = args.quick ? [['ok', 'live'], ['ok', 'recall'], ['ok', 'out']] : [['ok', 'live'], ['ok', 'pool'], ['ok', 'rec'], ['ok', 'recall'], ['ok', 'out'], ['pool', 'live'], ['pool', 'recall'], ['pool', 'out'], ['sheet', 'live'], ['sheet', 'recall'], ['sheet', 'out'], ['set', 'live'], ['set', 'recall'], ['set', 'out'], ['state', 'live'], ['state', 'recall'], ['state', 'out'], ['stale', 'live'], ['stale', 'recall'], ['stale', 'out']];
-  const jobs = matrix.filter(([v, m]) => (!args.variants || args.variants.includes(v)) && (!args.modes || args.modes.includes(m)));
+  // (26 Oct 2026, Paul: "only relevant tests should be run" and no waiting for hours: the full 23-job matrix is about 20 minutes, so a plain run is the 'ok' variant (every surface, every mode,
+  //  about 4 minutes); VARIANTS=all, or --variants pool,sheet,..., runs the stores lagging behind each other too)
+  const variants = args.variants || (process.env.VARIANTS === 'all' ? null : process.env.VARIANTS ? process.env.VARIANTS.split(',') : ['ok']);
+  const jobs = matrix.filter(([v, m]) => (!variants || variants.includes(v)) && (!args.modes || args.modes.includes(m)));
   // the server's own answer, once per variant (no page)
   if (!args.only || [...args.only].some(x => x.startsWith('G'))) for (const v of [...new Set(jobs.map(j => j[0]))]) {
     const srv = await start({ receipts: [] }); seedServer(srv, v);
     try { const rep = new Report(); await serverProbes(srv, v, rep); R.rows.push(...rep.rows); } catch (e) { R.rows.push({ surface: 'RUN', ctx: `${v}/server`, side: 'server', ok: false, detail: e.stack || e.message }); } finally { srv.close(); }
   }
-  const t0 = Date.now(), CONC = +process.env.CONC || 2, SHARDS = +process.env.SHARDS || 2; let next = 0;
+  const t0 = Date.now(), CONC = +process.env.CONC || 3, SHARDS = +process.env.SHARDS || 2; let next = 0;
   await Promise.all(Array.from({ length: Math.min(CONC, jobs.length) }, async () => { while (next < jobs.length) { const [v, m] = jobs[next++]; const ms = await runOne(chromium, v, m, R, args, SHARDS); console.log(`  · ${v}/${m} ${(ms / 1000).toFixed(0)} s`); } }));
   if (args.json) require('fs').writeFileSync(args.json, JSON.stringify(R.rows.filter(r => !r.ok && !r.known), null, 1));
   const by = R.summary(args.only); let bad = 0;

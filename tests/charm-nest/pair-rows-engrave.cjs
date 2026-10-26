@@ -69,10 +69,12 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
     assert.equal(Rows.earOf(d1), null); assert.equal(Rows.earOf(pend), null); assert.equal(Rows.earOf(duckR), 'R');
     assert.equal(Rows.lineKeyOf(duckR), ROW.duck.key); assert.equal(Rows.lineKeyOf(pend), ROW.pend.key);
   });
-  await t('1b quantity 2 is ONE row (the Left job holds both left pieces), as the Orders list shows one row "Qty 2 · Left + Right"', () => {
-    const jl = job(ROW.pair2, 'L', 'review', ['Anna']), jr = job(ROW.pair2, 'R', 'review', ['Anna']);
-    assert.equal(jl.copies.length, 2); assert.equal(jr.copies.length, 2);
-    const rows = Rows.group([jl, jr], [jl, jr]); assert.equal(rows.length, 1); assert.equal(rows[0].pair, true);
+  // (PIECES, Paul, 16 Oct 2026: "ALL multipiece orders must always show each individual piece": an ear pair of quantity 2 is L R L.2 R.2, one job and one piece each; a row of this tab is one UNIT, pair 1 and pair 2)
+  await t('1b quantity 2 is TWO pair rows (pair 1: L R, pair 2: L.2 R.2), each job one piece (PIECES)', () => {
+    const js = ['L', 'R', 'L.2', 'R.2'].map(sl => job(ROW.pair2, sl, 'review', ['Anna']));
+    assert.deepEqual(js.map(j => j.copies.length), [1, 1, 1, 1], 'one piece per job: ' + JSON.stringify(js.map(j => j.copies)));
+    const rows = Rows.group(js, js); assert.equal(rows.length, 2); assert.ok(rows.every(r => r.pair), 'each unit is a pair');
+    assert.deepEqual(rows.map(r => r.jobs.map(j => j.slot)), [['L', 'R'], ['L.2', 'R.2']]);
   });
   await t('1c a search that finds one ear, or a tab holding one ear, still gives the line its other ear when it is in the same set; a line with one ear here is a one-ear row', () => {
     const jl = job(ROW.duck, 'L', 'review', ['Mom']), jr = job(ROW.duck, 'R', 'review', ['Mom']);
@@ -297,14 +299,15 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
     const showList = () => { E.restoreView({ tab: 'place', chosen: true, list: true, focus: null }); E.render(); };
 
     await t('2b the jobs under the rows are the per-piece jobs they were: the duck line has a Left job and a Right job, a necklace one for each disc, a single one', () => {
-      assert.deepEqual(Array.from(made.duck, j => j.slot), ['L', 'R']); assert.deepEqual(Array.from(made.pair2, j => j.copies.length), [2, 2]); assert.deepEqual(Array.from(made.disc, j => j.slot), ['D1', 'D2', 'D3']);
+      assert.deepEqual(Array.from(made.duck, j => j.slot), ['L', 'R']); assert.deepEqual(Array.from(made.pair2, j => j.slot), ['L', 'R', 'L.2', 'R.2']); assert.deepEqual(Array.from(made.pair2, j => j.copies.length), [1, 1, 1, 1]);   // (PIECES: one job per piece) assert.deepEqual(Array.from(made.disc, j => j.slot), ['D1', 'D2', 'D3']);
       assert.deepEqual(Array.from(made.pend, j => j.slot || null), [null]); assert.deepEqual(Array.from(made.old, j => j.slot || null), [null], 'an old line without sides is one job');
-      assert.equal(jobs.size, 2 + 2 + 2 + 3 + 1 + 1 + 1 + 1);
+      assert.deepEqual(Array.from(made.plain3, j => j.slot), ['C1', 'C2', 'C3'], 'a plain quantity-3 line is its 3 copies (PIECES)');
+      assert.equal(jobs.size, 2 + 4 + 2 + 3 + 1 + 1 + 3 + 1);
     });
     await t('2c Placements: ONE row for the duck line with both ears told on it, ONE row for the necklace with its three discs; a single, a plain quantity-3 line and an old pair are rows of their own', () => {
       showList();
       const rows = rowsOnPage();
-      assert.equal(rows.length, 8, '13 jobs (2+2+2+3+1+1+1+1) are 8 rows: three pair lines, the necklace, four plain ones');
+      assert.equal(rows.length, 9, '17 jobs (2+4+2+3+1+1+3+1) are 9 rows: the duck, pair 1 and pair 2 of the quantity-2 line, the mismatched pair, the necklace, four plain ones (the copies of the quantity-3 line are one row)');
       const duck = rows.filter(r => r.dataset.rid === ROW.duck.order.receiptId); assert.equal(duck.length, 1, 'the duck order is ONE row, not two');
       const d = duck[0]; assert.ok(d.classList.contains('earPairRow')); assert.equal(d.querySelectorAll('.comparePair').length, 1, 'one picture block for the line');
       assert.deepEqual([...d.querySelectorAll('.egEar')].map(e => e.querySelector('.egPiece').textContent), ['LEFT EAR', 'RIGHT EAR']);
