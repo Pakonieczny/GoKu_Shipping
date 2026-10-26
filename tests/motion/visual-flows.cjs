@@ -11,10 +11,11 @@
 // Flows: a pop-up window opening and closing (Motion.dialogOpen / dialogClose, Settings), the order window opening and closing (OrderWin),
 // a card flight to a tab (Motion.ghost / fly: Send to Sheet, the cancel flight to Orders > Cancelled, the Library's flights use it), the
 // tab switch Orders -> Nest, and the toasts (at most three, each dismissed, none left).
-//   node tests/motion/visual-flows.cjs      (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>, SHOTS=<dir>)
+//   node tests/motion/visual-flows.cjs      (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>, SHOTS=<dir>, NEST=1 adds a sheet filling while it nests, slow)
 const path = require('path'), fs = require('fs'), os = require('os'), assert = require('assert/strict'), { execFileSync } = require('child_process');
 const root = path.join(__dirname, '../..');
 const { start } = require('../charm-nest/bridge-server.cjs');
+const { build } = require('../charm-nest/fixture.cjs');
 const SHOTS = process.env.SHOTS || '';
 const QUIET = os.loadavg()[0] / Math.max(1, os.cpus().length) < 1.2;
 const BUDGET = 50;
@@ -215,6 +216,33 @@ const restOf = sel => { const el = document.querySelector(sel); if (!el) return 
       R.tab = await page.evaluate(leftovers);
       check(!R.tab.ghosts && !R.tab.running, `tab switch${tag}: at rest after, no copy left (${R.tab.ghosts} copies, ${R.tab.running} running)`);
       await page.evaluate(() => CN.setMode('orders')); await settle(page, 1200);
+
+      /* 6 · a sheet filling while it nests (the real nest, on a fixture .ai of 8 charms sent to Silver): it is drawn live, the page stays smooth
+         (no frame over the budget, no long task: the nest works off the page), and it ends complete with every charm placed and nothing in flight */
+      // (NEST=1 only: the real nest's preparation took over a minute in a 4-core container, over this test's 3 minutes)
+      if (!reduced && process.env.NEST === '1') {
+        const fx = path.join(os.tmpdir(), `vf-${process.pid}-charms.ai`); await build(fx, 8);
+        await page.evaluate(() => { CN.setMode('nest'); CN.S.settings.autoNest = 'off'; CN.S.settings.naming = 'off'; CN.S.settings.review = 'off'; });
+        await page.setInputFiles('#fileInput', fx);
+        await page.waitForFunction(() => CN.S.unassigned.length >= 6, null, { timeout: 60000 });
+        for (let i = 0; i < 6; i++) await page.evaluate(() => { const b = document.querySelector('#unList .unRow button[data-m="silver"]'); if (b) b.click(); });
+        await page.waitForFunction(() => { const sh = CN.S.sheets.silver.pages.at(-1); return sh && sh.charms.length >= 6; }, null, { timeout: 20000 });
+        const dir = SHOTS ? path.join(SHOTS, 'nest-fill') : ''; if (dir) fs.mkdirSync(dir, { recursive: true });
+        await page.evaluate(() => { window.__vStart(); CN.startNest(CN.S.sheets.silver.pages.at(-1)); });
+        const t0 = Date.now(); let i = 0;
+        while (Date.now() - t0 < 60000) {
+          if (dir && i < 40) await page.screenshot({ path: path.join(dir, `f${String(i++).padStart(3, '0')}.png`) }); else await page.waitForTimeout(100);
+          if (await page.evaluate(() => { const sh = CN.S.sheets.silver.pages.at(-1); return sh.status === 'complete' && !document.getAnimations().some(a => a.playState === 'running' && a.effect && Number.isFinite(a.effect.getComputedTiming().endTime)); })) break;
+        }
+        const nt = await page.evaluate(() => window.__vStop()), end = await page.evaluate(() => { const sh = CN.S.sheets.silver.pages.at(-1); return { status: sh.status, placed: (sh.placements || []).length, charms: sh.charms.length }; });
+        if (dir) { const files = fs.readdirSync(dir).filter(f => /^f\d+\.png$/.test(f)).sort(), pick = files.filter((_, k) => k % Math.max(1, Math.ceil(files.length / 12)) === 0); try { execFileSync('montage', [...pick.map(f => path.join(dir, f)), '-tile', '4x', '-geometry', '480x300+4+4', path.join(SHOTS, 'nest-fill-sheet.png')]); } catch (_) {} }
+        const line = `nest-fill: ${((Date.now() - t0) / 1000).toFixed(1)} s, ${end.placed}/${end.charms} placed, ${end.status}, ${nt.n} frames, worst ${nt.worst} ms${nt.long.length ? ' · long tasks ' + nt.long.join(',') : ''}${nt.loaf.length ? ' · long frames ' + nt.loaf.slice(0, 4).join(', ') : ''}`;
+        console.log('  · ' + line); seen.push(line);
+        check(end.status === 'complete' && end.placed === end.charms, `nest fill: the sheet ends complete with every charm placed (${end.placed}/${end.charms})`);
+        if (QUIET && !SHOTS) check(nt.worst <= BUDGET * 2 && !nt.long.some(ms => ms > 100), `nest fill: the page stays responsive while it nests (worst frame ${nt.worst} ms, long tasks ${nt.long.join(',') || 'none'})`);
+        try { fs.unlinkSync(fx); } catch (_) {}
+        await page.evaluate(() => CN.setMode('orders')); await settle(page, 900);
+      }
 
       /* 5 · toasts: four in a row show at most three; each dismissed; none left */
       await flow(env, 'toasts', { do: () => { for (let i = 1; i <= 4; i++) CN.toast('Visual check ' + i, i === 4 ? 'ok' : ''); }, undo: () => document.querySelectorAll('#toasts > *').forEach(n => n.remove()) }, 900, tag);
