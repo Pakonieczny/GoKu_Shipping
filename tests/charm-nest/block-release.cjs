@@ -325,9 +325,14 @@ const FLIP = 'flip check failed — the flipped back does not match the front; a
     eq(calls.resolved, [['4192000001', 'other']], 'a Send to Review mark is resolved ("other": released to the nesting queue)'); eq(calls.released, [['4192000001']], 'and a line of it that was on hold is released'); ok(calls.toasts.some(t => /left Review/.test(t[1])), 'and it says so');
     // a change
     await c.releaseToQueue(item('orderChanged', m1)); eq(calls.accepted, ['ord:orderChanged:m_1'], 'a changed order is accepted');
-    // greyed (RELEASE, Paul 19 Oct 2026: a Custom Orders card; it was a needsMaterial question): nothing happens but the reason
-    calls.toasts.length = 0; calls.answers.length = 0; const g = await c.releaseToQueue(item('customOrder', mkRow('c_2', '4193111747', { problems: [] })));
-    ok(g === false && calls.answers.length === 0 && calls.toasts.length === 1 && /made by hand/.test(calls.toasts[0][1]), 'pressing the greyed button says why and changes nothing');
+    // a Custom Orders card (RELORDER, Paul 20 Oct 2026: "Remove the 'Complete Order' button from the Review tab and replace it with the new 'Release Order' button"; it was greyed, RELEASE 19 Oct):
+    // its Release Hold is CustomPrint.complete, as Complete Order was; nothing of the queue's release runs
+    calls.toasts.length = 0; calls.answers.length = 0; const co = mkRow('c_2', '4193111747', { problems: [] }), done = [];
+    c.window.CustomPrint = c.CustomPrint = { complete: async it => { done.push(it.kind); return true; } };
+    const g = await c.releaseToQueue(item('customOrder', co));
+    ok(g === true && done.join() === 'customOrder' && calls.answers.length === 0 && calls.toasts.length === 0, 'a Custom Orders card is completed by CustomPrint.complete, nothing else: ' + JSON.stringify(calls.toasts));
+    delete c.window.CustomPrint; delete c.CustomPrint;
+    ok((await c.releaseToQueue(item('customOrder', co))) === false && calls.answers.length === 0, 'without CustomPrint nothing happens');
     // a question set aside (RELEASE): the press writes it on the line, says it, and releases (no engine here: the line is made up again, first)
     calls.toasts.length = 0; calls.answers.length = 0; calls.repooled.length = 0; delete c.window.OrderHold; const q1 = mkRow('q1_1', '4190000004', { state: 'held', problems: [{ kind: 'needsMapping', optionName: 'Style', optionValue: 'Box' }] }); rowsAll.push(q1);
     const qi = item('needsMapping', q1, { problem: q1.problems[0] }); c.__items = [qi];
