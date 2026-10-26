@@ -33,7 +33,7 @@ const lineOf = start => { const i = src.indexOf(start); assert.ok(i > 0, 'found:
 function helpers(o) {
   const ctx = Object.assign({ window: { CharmNestPair: Pair }, tryDo: f => { try { return f ? f() : null; } catch (_) { return null; } },
     sideOfPiece: x => x.side || null, discOfPiece: () => null, sideWord: s => (s === 'L' ? 'Left' : s === 'R' ? 'Right' : '') }, o || {});
-  vm.runInNewContext(['  const bodiesIn = ', '  const ringParts = ', '  const charmsIn = ', '  const charmsWord = ', '  const copyText = '].map(lineOf).join('\n') + '\n;this.H = { ringParts, charmsIn, charmsWord, copyText };', ctx);
+  vm.runInNewContext(['  const bodiesIn = ', '  const ringParts = ', '  const charmsIn = ', '  const charmsWord = ', '  const discWordOf = ', '  const companionOfPiece = ', '  const namedPiece = ', '  const copyText = '].map(lineOf).join('\n') + '\n;this.H = { ringParts, charmsIn, charmsWord, copyText };', ctx);
   return ctx.H;
 }
 

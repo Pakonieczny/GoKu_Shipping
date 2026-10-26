@@ -3,7 +3,7 @@ const source=fs.readFileSync(path.join(__dirname,'../../charm-nest-solver.js'),'
 const piece=(id,w,h,orderDate)=>({id,order:id,orderDate,w,h,scale:1,bits:new Uint8Array(w*h).fill(1),areaPt2:w*h});
 async function run(pair=false,cancel=false){
  let clock=0,accepted=false,stopChecks=0;
- const realm=vm.createContext({module:{exports:{}},performance:{now:()=>clock}});
+ const realm=vm.createContext({module:{exports:{}},require:p=>require(path.join(__dirname,'../..',p)),performance:{now:()=>clock}});
  vm.runInContext(source,realm);const S=realm.module.exports;
  const initialLayout=[{id:'left',cxPt:12,cyPt:11,angle:0},{id:'top',cxPt:27,cyPt:5,angle:0},{id:'loose',cxPt:27,cyPt:15,angle:0}];
  const pending=pair?[{...piece('pair-a',4,4,4),order:'pair'},{...piece('pair-b',4,4,4),order:'pair'}]:[piece('next',4,8,4)];

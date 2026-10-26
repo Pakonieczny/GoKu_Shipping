@@ -2,7 +2,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{Worker}=requir
 const workers=[];let tick;
 class Adapter{
  constructor(){this.w=new Worker(`
- const {parentPort}=require('node:worker_threads'),fs=require('node:fs'),vm=require('node:vm'),{createCanvas}=require('@napi-rs/canvas');
+ const {parentPort}=require('node:worker_threads'),fs=require('node:fs'),vm=require('node:vm'),{createCanvas}=(()=>{try{return require('@napi-rs/canvas');}catch(_){return require('canvas');}})();
  class Canvas{constructor(w,h){const cv=createCanvas(w,h);cv.convertToBlob=async()=>({_bytes:cv.toBuffer('image/png')});return cv;}}
  class Reader{readAsDataURL(b){this.result='data:image/png;base64,'+b._bytes.toString('base64');queueMicrotask(()=>this.onload());}}
  class SyncReader{readAsDataURL(b){return 'data:image/png;base64,'+b._bytes.toString('base64');}}
