@@ -65,8 +65,10 @@ function fixture() {
   w.colorOf = () => '#ccc'; w.pieceMeta = () => ''; w.pickPiece = () => {};
   w.pieceDotsHtml = () => '<span class="steps"></span>';   // (a row's six dots are the dots' own tests': piece-dot-hover, rail-five-steps)
   w.pdotHeld = () => null; w.pdotBack = () => {};   // (a dot that had the focus keeps it over a redraw: the dots' own tests)
+  w.selSideKey = () => null; w.selDiscKey = () => null;   // (no side or disc of a piece picked in this window)
   w.placeOfKey = () => null;   // (the placement truth is read from the open window's records, none here: the row says what the piece's own record says)
   w.eval(section('  function markPieces(', '  /** The presses on the "Its pieces" list'));   // (paintPieceSum marks the row picked in place, 5 Oct: the pieces list is the selector)
+  w.eval(section('  const pcScopeOf =', '  function paintPieceSum('));   // (a row of the list is made by pcItemOf now: the production code)
   w.eval(section('  function paintPieceSum(', '  /* ── Where it is now'));
   w.Orders = {
     loadMaps:async() => {},
@@ -236,7 +238,7 @@ async function main() {
           return result;
         };
       }
-      f.w.ckOf = it => String(it.key).replace(/^[a-z]+:/,''); f.w.linesOf = it => it.rows || [it.row]; f.w.openLines = () => []; f.w.notReady = () => '';
+      f.w.ckOf = it => String(it.key).replace(/^[a-z]+:/,''); f.w.linesOf = it => it.rows || [it.row]; f.w.openLines = () => []; f.w.notReady = () => ''; f.w.staleReading = () => 0;   // (no design restored as 'reading' here: KEEPSAVE's own tests)
       f.w.eval(section('  function cardOf(it) {', '  // the card\'s own designs only'));
       f.w.CustomSheet.cardOf = f.w.cardOf;
       f.w.CustomSheet.stamp = it => JSON.stringify(f.w.cardOf(it)?.files);
