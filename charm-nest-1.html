@@ -1529,6 +1529,9 @@ dialog.cmDlg .owHead [data-open-order]{display:inline-flex;align-items:center;ga
 /* (paint containment clips what overflows the box and holds position:fixed children: a row or set being used, hovered, focused, a menu or popover open in it, is painted whole; a sheet card is
    left out, its laser seal stands over its right edge, inside the set card's padding) */
 :is(#ordItems>.orderListRow,#ordItems>.ocard,#libBody .setCard):is(:hover,:focus-within,:has([open],[aria-expanded="true"],[popover],.dragging,[data-flying])){content-visibility:visible}
+/* (a narrow screen sizes the Library by its content: a set card held at its estimated size there shrank to a sliver and pushed its '!' off the screen, so on a phone it is painted whole;
+   tests/charm-nest/library-issues-browser.cjs, 390 px) */
+@media (max-width:760px){#libBody .setCard{content-visibility:visible}}
 .ordHead{display:flex;flex-direction:column;gap:8px;flex:0 0 auto}
 /* the chips wrap; the search and the view toggle keep the right-hand end whatever the width */
 .ordFilters{display:flex;gap:6px;align-items:center;flex-wrap:nowrap}
