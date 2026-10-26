@@ -47,7 +47,7 @@ const Q = '#egQueue .rvItem[data-kind=placement]';
   await fresh(async ({ page, facts, press, until }) => {
     const f0 = await facts();
     check('S0 the back card opens with a live Approve on a placement waiting for approval', f0.approve === 'live' && f0.card === BACK && f0.jobs[BACK] === 'review', JSON.stringify(f0));
-    await page.evaluate(({ Q }) => { const t = document.querySelector(Q + ' .engpWords'), set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; t.focus(); set.call(t, '漢字'); t.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'x' })); }, { Q });
+    await page.evaluate(({ Q }) => { const t = document.querySelector(Q + ' .engpWords'), set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; t.focus(); set.call(t, '\uE123\uE124');   /* (no font has these: private-use code points. 漢字 was used until the Noto fallback, ENGFONT, engraved it: the placement then rightly stayed in review) */ t.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'x' })); }, { Q });
     await R.settle(page, 400);
     await page.click(`${Q} [data-engp=save]`); await R.settle(page, 400);
     const chip = await page.$(`${Q} [data-engp=why]`); if (chip) await chip.click();
@@ -57,7 +57,8 @@ const Q = '#egQueue .rvItem[data-kind=placement]';
     check('S1 the Save left the back placement out of review (its words cannot be engraved)', !!left && f1.jobs[BACK] !== 'review', JSON.stringify(f1.jobs));
     check('S2 the card in front does not go on offering a live Approve for a placement that is not waiting for approval', !deadButton(f1), JSON.stringify(f1));
     const p1 = await press(); await R.settle(page, 800);
-    const f2 = await facts();
+    // (an approval writes its back file first: what it does is seen within a few seconds, not 800 ms)
+    const f2 = p1 === 'pressed' ? (await until(async () => { const f = await facts(); return f.toasts.length || JSON.stringify(f.jobs) !== JSON.stringify(f1.jobs) ? f : null; }, 6000)) || await facts() : await facts();
     check('S3 a press on what the card offers either finds no live button or does something the person can see', p1 !== 'pressed' || f2.toasts.length > 0 || JSON.stringify(f2.jobs) !== JSON.stringify(f1.jobs), JSON.stringify({ p1, f2 }));
   });
 
