@@ -16115,7 +16115,6 @@ const Review = window.Review = (() => {
       .then(r => {
         r = r || { ok: false, text: "no answer" };
         if (r.ok) say(r.already ? `Etsy listing ${L} has ${sku} already` : `Etsy listing ${L} updated: “${off.from}” → ${sku}${r.changed ? ` on ${r.changed} product${r.changed === 1 ? "" : "s"}` : ""}`, "done", `only this listing: other listings with the same SKU are not changed${r.beforePath ? "; the listing as it was is kept" : ""}`);
-        else if (r.reason === "sandbox") { r.skipped = true; say(`Etsy listing ${L}: not changed from the sandbox`, "skip"); }
         else say(`Etsy listing ${L} was NOT updated`, "failed", r.thrown ? `${r.text}: Etsy may or may not have changed; look at the listing before trying again` : (r.text || r.reason || "refused"));
         return r;
       });
