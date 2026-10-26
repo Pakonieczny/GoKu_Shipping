@@ -1518,8 +1518,11 @@ dialog.cmDlg .owHead [data-open-order]{display:inline-flex;align-items:center;ga
 #ordersView:not(.hidden){height:100%;min-height:0;gap:0}
 /* PERFSCALE (Paul, 26 Oct 2026: "the performance of the overall platform once it's being used at scale with tens of thousands of orders in live and historical"): a row or card off screen is not
    styled, laid out or painted (the browser keeps its last measured size, `auto`), so a list of hundreds of orders or sets scrolls and switches tab at the cost of what is on screen (tests/perf/sorter-scale.cjs) */
-#ordItems>.orderListRow,#ordItems>.ocard,#libBody .setCard,#libBody>.libCard,#libBody .libGrid>.libCard{content-visibility:auto;contain-intrinsic-size:auto 120px}
+#ordItems>.orderListRow,#ordItems>.ocard,#libBody .setCard{content-visibility:auto;contain-intrinsic-size:auto 120px}
 #libBody .setCard{contain-intrinsic-size:auto 320px}
+/* (paint containment clips what overflows the box and holds position:fixed children: a row or set being used, hovered, focused, a menu or popover open in it, is painted whole; a sheet card is
+   left out, its laser seal stands over its right edge, inside the set card's padding) */
+:is(#ordItems>.orderListRow,#ordItems>.ocard,#libBody .setCard):is(:hover,:focus-within,:has([open],[aria-expanded="true"],[popover],.dragging,[data-flying])){content-visibility:visible}
 .ordHead{display:flex;flex-direction:column;gap:8px;flex:0 0 auto}
 /* the chips wrap; the search and the view toggle keep the right-hand end whatever the width */
 .ordFilters{display:flex;gap:6px;align-items:center;flex-wrap:nowrap}
