@@ -174,11 +174,12 @@ function owner2({ tie = 'B', setId = 'set-2' } = {}) {
   const base = () => [gf('c1', 1), ss('c2', 1)];
   for (const [label, sh, ok, why] of [
     ['uncut Rose Gold', rose('r1'), false, /green line is not cut/], ['cut Rose Gold, backs not reported', rose('r1', { roseCutAt: 5 }), true],
-    ['Rose Gold, the Cut Sheet press approved', rose('r1', { cutApproved: true }), true], ['cut Rose Gold, backs not approved', rose('r1', { roseCutAt: 5, backsApproved: false }), false, /back engraving is not approved/],
+    ['Rose Gold, the Cut Sheet press approved', rose('r1', { cutApproved: true }), true], ['cut Rose Gold, backs not approved: the set\'s Approve waits for them, no rule is broken (Paul, 26 Oct 2026)', rose('r1', { roseCutAt: 5, backsApproved: false }), true],
     ['uncut 14K', k14('r1'), false, /green line is not cut/], ['14K cut and backs approved', k14('r1', { roseCutAt: 5, backsApproved: true }), true],
     ['10K, laser cut', k10('r1', { laserDoneAt: 9 }), true], ['10K uncut, backs not approved', k10('r1', { backsApproved: false }), false, /green line is not cut.*back engraving is not approved/],
     ['a full Rose Gold sheet takes the rest of the metal whole: no line', rose('r1', { roseFull: true, backsApproved: true }), true],
-    ['backs not approved by the readiness report', rose('r1', { roseCutAt: 5, laser: { stages: { approval: false }, approved: 0, required: 2 } }), false, /back engraving is not approved/],
+    ['cut, backs not approved by the readiness report: the set\'s Approve waits (Paul, 26 Oct 2026)', rose('r1', { roseCutAt: 5, laser: { stages: { approval: false }, approved: 0, required: 2 } }), true],
+    ['uncut, backs not approved by the readiness report', rose('r1', { laser: { stages: { approval: false }, approved: 0, required: 2 } }), false, /green line is not cut.*back engraving is not approved/],
     ['backs approved by the readiness report', rose('r1', { roseCutAt: 5, laser: { stages: { approval: true } } }), true]]) {
     const all = base().concat([sh]); r = I.check([S('x', all)], all);
     assert.equal(ofRule(r, 'notReady').length === 0, ok, label + ':\n  ' + show(r)); if (why) assert.match(ofRule(r, 'notReady')[0].message, why, label);

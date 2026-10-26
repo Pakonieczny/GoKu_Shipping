@@ -116,6 +116,9 @@
     const cls = SR().metalClass(rec), gaps = [];
     if (!GOLD_FAMILY.includes(cls)) return gaps;
     if (!(isCut(rec) || rec.cutApproved === true || rec.roseFull === true)) gaps.push('its green line is not cut (the Cut Sheet press is not approved either)');
+    // (Paul, 26 Oct 2026: a CUT sheet's back engraving is the set's approval to wait for (the Library holds Approve for laser cutting until every back is approved), not a rule the set breaks:
+    //  the automatic cut joins it to its set before its backs are approved, and it is not held twice)
+    if (isCut(rec)) return gaps;
     if (rec.backsApproved === false) gaps.push('its back engraving is not approved');
     else if (rec.backsApproved !== true) {
       const E = SE();

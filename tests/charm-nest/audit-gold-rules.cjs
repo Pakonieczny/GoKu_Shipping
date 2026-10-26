@@ -31,7 +31,8 @@ for (const tied of [true, false]) {
   verdict(`A ${tied ? 'tied' : 'loose'} RG: following the remedy's presses puts the set right (no dead end)`, !d, `still breaks after ${steps.join(' → ')}: "${d && d.line}" remedy ${JSON.stringify(d && d.remedy)}`);
   // and a cut sheet whose only gap is its back engraving is told to approve it, with no press that could only be refused
   const dB = SRp.diagnose([set], [gf, ss, Object.assign({}, rg, { roseCutAt: Date.now() })]).bySet['s-2'];
-  verdict(`A ${tied ? 'tied' : 'loose'} RG: a cut sheet whose back engraving is open is told to approve it, not to Rebuild`, !!dB && dB.remedy.kind === 'backs' && !dB.remedy.button, JSON.stringify(dB && dB.remedy));
+  // (Paul, 26 Oct 2026: a cut sheet's open back engraving is the set's approval to wait for, not a rule the set breaks: no red line, no Rebuild; Approve for laser cutting waits)
+  verdict(`A ${tied ? 'tied' : 'loose'} RG: a cut sheet whose back engraving is open breaks no rule (its set's Approve waits for it)`, !dB, JSON.stringify(dB && dB.remedy));
 }
 
 /* ── B · SETREPAIR plan, randomised: when it says ok, the state after is right, the plan is idempotent, it never moves a cut sheet, and it never touches another set ─────────── */

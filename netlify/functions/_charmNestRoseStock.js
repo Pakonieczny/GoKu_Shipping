@@ -329,7 +329,10 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       const engraving=decisionsOfRun?await decisionsOfRun(sheet.runId,runData,sheet.poolIds||[]):Readiness.decisions(Object.values(runData?.lines||{}));
       const checked={...sheet,engraving};
       if(productionReadiness)await productionReadiness([checked],{tx});
-      if(!Readiness.sheet(checked).ready)throw new Error('Complete every item in the sheet’s orders and its production checks before recording its cut');
+      // (Paul, 26 Oct 2026: the AUTOMATIC cut of a green-line sheet whose Gold Filled / Sterling Silver set is complete (Gate.autoCut, via 'auto') is not held for its back engraving:
+      //  the set's Approve for laser cutting holds it until the backs are approved, so the cut is not held twice. Every other check stands; a person's Cut Sheet press is as before)
+      const rd=Readiness.sheet(checked),auto=b.via==='auto',cutReady=auto?rd.included&&Object.entries(rd.stages).every(([k,v])=>v||k==='approval'||k==='backs'):rd.ready;
+      if(!cutReady)throw new Error('Complete every item in the sheet’s orders and its production checks before recording its cut');
       const plan=parse(sheet.rosePlanJson);Rose.validate(plan.profile,stock.wPt,stock.hPt);
       const at=Date.now(),revision=stock.revision+1;
       // which pieces of which order line this cut took (permanent, with the cut): a pair cut together, or a group of which only some pieces were cut

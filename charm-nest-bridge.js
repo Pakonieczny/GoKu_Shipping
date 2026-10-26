@@ -5302,7 +5302,7 @@ const Gate = window.Gate = (() => {
       stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: solid(sh.metal) ? Object.assign({}, choices, { [sh.metal]: picked(sh, choices) }) : sh.metal === "rose" ? Object.assign({}, choices, { rose: picked(sh, choices) ? true : undefined }) : choices });
     // (audit G1, 25 Oct 2026, R12 (b): a Rose Gold / 10K / 14K sheet joins a set only with its back engraving approved: its own tick (Include, Cut Sheet) answers (a) only, and it let a sheet in
     //  whose backs were still open. A sheet already in its set keeps its place, as before)
-    if (r && r.include && goldFamily(sh.metal) && !inSetNow(sh)) { const b = backsOf(sh); if (b && !b.ok) return Object.assign({}, r, { include: false, reason: `It joins a set once its back engraving is approved (${b.line})` }); }
+    if (r && r.include && goldFamily(sh.metal) && !inSetNow(sh) && !sh.autoMatched) { const b = backsOf(sh); if (b && !b.ok) return Object.assign({}, r, { include: false, reason: `It joins a set once its back engraving is approved (${b.line})` }); }
     return r;
   }
   async function upgrade(run) {
@@ -5361,6 +5361,7 @@ const Gate = window.Gate = (() => {
   /** Why a Rose Gold / 10K / 14K sheet cannot join a set by the order rule (the cardinal pull); "" when it can. The sheet's own tick is the person's yes and never asks this. */
   function goldGap(p) {
     if (!goldFamily(p.metal)) return "";
+    if ((p.roseCutAt || +p.laserDoneAt > 0) && p.autoMatched) return "";   // (Paul, 26 Oct 2026: a sheet cut automatically for its set joins it whatever its backs; the set's Approve waits for them)
     if (!(p.roseCutAt || +p.laserDoneAt > 0)) return p.metal === "rose" ? "a Rose Gold sheet joins a set only by its own Cut Sheet press" : `a ${labelOf(p.metal)} sheet joins a set only by its own Include or Cut Sheet press`;
     const b = backsOf(p); return b && !b.ok ? b.line : "";
   }
@@ -5702,7 +5703,7 @@ const Gate = window.Gate = (() => {
         const key = p.sheetId + "|" + st.setId + "|" + (p.jobId || "") + "|" + Object.keys(p.backPool || {}).length, last = autoCutTried.get(p.sheetId);
         if (last && last.key === key && Date.now() - last.at < 60000) continue;
         autoCutTried.set(p.sheetId, { key, at: Date.now() });
-        p._roseAction = true;
+        p._roseAction = true; p.autoMatched = st.setId;   // (its back engraving does not hold it from joining that set: basePolicy, goldGap; the set's Approve for laser cutting does)
         const by = (typeof stampWho === "function" && stampWho().by) || "Charm Nest (automatic)";
         RS.record(p, { by, via: "auto" }).then(() => {
           try { agent({ run: run.runId, metal: p.metal }, "ok", `${sheetNameOf(p)}: green line cut automatically; it is in ${st.name || "its set"} with the Gold Filled and Sterling Silver sheets it shares orders with`); } catch (_) {}

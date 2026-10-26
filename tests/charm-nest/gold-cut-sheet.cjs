@@ -139,5 +139,16 @@ const shape = (id, x, y, w, h) => ({ id, paths: [[[x, y], [x + w, y], [x + w, y 
   const guard = { placements: [{ id: 'a', cxPt: 1, cyPt: 1, angle: 0 }] };
   assert.throws(() => RoseStock.assertProtected(guard, [], 'gold14k'), /protected 14K Gold layout cannot be moved/);
   assert.throws(() => RoseStock.assertProtected(guard, []), /protected Rose Gold layout cannot be moved/);
+  // (Paul, 26 Oct 2026) the AUTOMATIC cut (Gate.autoCut, via 'auto') of a sheet whose set is complete is not held for its back engraving (the set's Approve is); a person's press still is
+  store.set('Charm_Nest_Runs/run-backs', { lines: { b: { poolIds: ['q1'], engrave: { needed: true, state: 'awaiting', approved: false } } } });
+  const backsCut = async (sheetId, via) => {
+    const shapes = [shape('q1', 10, 10, 20, 20)], claim = await api.roseClaim({ sheetId, metal: 'rose', wPt: 100, hPt: 50, fresh: true }), stockId = claim.stock.id, doc = { ...sheetDoc(sheetId, 'rose', shapes, 7), runId: 'run-backs' };
+    store.set('Charm_Nest_Sheets/' + sheetId, doc);
+    const p = await api.rosePlan({ sheetId, metal: 'rose', stockId, revision: claim.stock.revision, fingerprint: RoseStock.fingerprint(doc), shapesJson: JSON.stringify(shapes), allowanceMm: .2, cut: true });
+    return api.roseRecordCut({ sheetId, metal: 'rose', stockId, revision: claim.stock.revision, planHash: p.planHash, by: 'Charm Nest (automatic)', via, device: 'charm-nest-1' });
+  };
+  await assert.rejects(() => backsCut('rsheet-person', 'library'), /Complete every item/, 'a person\'s Cut Sheet press waits for the back engraving');
+  assert.equal(!!(await backsCut('rsheet-auto', 'auto')).cut, true, 'the automatic cut goes ahead with the back engraving still open');
+  assert(store.get('Charm_Nest_Sheets/rsheet-auto').roseCutAt > 0 && !store.get('Charm_Nest_Sheets/rsheet-person').roseCutAt, 'only the automatic one is cut');
   console.log('gold-cut-sheet: ok (one metal list, per-metal stock, onlyRemnant claims nothing, leftovers stay in their metal, cut + leftover record for 10K and 14K, readiness)');
 })().catch(e => { console.error(e); process.exit(1); });
