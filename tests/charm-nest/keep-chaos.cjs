@@ -8,7 +8,7 @@
 // written once after the repository), the page (one calm line that tells the truth, no spinner left, no unhandled error, no second dialog) and the NEXT order of the
 // same listing (a fresh page: it must pick the saved design by itself, the listing's other variation too).
 //   node tests/charm-nest/keep-chaos.cjs          (run through /tmp/cn-run.sh <seconds> ...; PW_DIR=<playwright dir>, CHROMIUM=<chrome>)
-//   ONLY=<regex on scenario names> · LIST=1 (names only) · SHARD=i/n · QUICK=1 (a representative subset) · TRIGGER=switch|send (default switch: the switch alone starts the
+//   default: a small sample (DEFAULT, ~11 scenarios) · FULL=1 (all of them) · ONLY=<regex on scenario names> · LIST=1 (names only) · SHARD=i/n · QUICK=1 (a representative subset) · TRIGGER=switch|send (default switch: the switch alone starts the
 //   save; send = the switch arms it and Send to Sheet starts it, the way main did before KEEPSAVE) · SHOTS_DIR=<dir> (a picture of each scenario's final state)
 //   OUT=<file.json> (the results) · MAXS=<seconds a save may take to finish, default 40>
 'use strict';
@@ -16,7 +16,8 @@ const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '../..');
 const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
 let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('skipped: no playwright-core (' + pwDir + ')'); process.exit(0); }
-const exe = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+// (CHROMIUM=<chrome>; without it, the browser installed under /opt/pw-browsers, whichever version it is)
+const exe = process.env.CHROMIUM || (() => { try { const b = '/opt/pw-browsers'; for (const d of fs.readdirSync(b).filter(n => /^chromium-\d+$/.test(n)).sort().reverse()) for (const c of ['chrome-linux64/chrome', 'chrome-linux/chrome']) if (fs.existsSync(path.join(b, d, c))) return path.join(b, d, c); } catch (_) {} return '/opt/pw-browsers/chromium/chrome-linux/chrome'; })();
 if (!fs.existsSync(exe)) { console.log('skipped: no browser at ' + exe); process.exit(0); }
 const { start, REPO_TEST } = require('./bridge-server.cjs');
 
@@ -180,7 +181,12 @@ async function ensureDesign(w, rid, name, page = w.page) {
     const has = await page.evaluate(rid => Object.values(CustomSheet.entries()).some(e => String(e.rid) === String(rid) && e.files.length), rid).catch(() => false);
     if (!has) { try { await dropFile(w, rid, name, { page }); } catch (e) { w.notes.push('drop: ' + String(e.message).split('\n')[0].slice(0, 60)); } }
     else if (!(await winOpen(page))) await openWindow(w, rid, page);
-    try { await fileReady(w, page, 1, 20000); return; } catch (_) { w.stuck = true; w.notes.push('the design stayed "reading" for 20 s'); await page.evaluate(() => { const b = document.querySelector('#cuDlg .cuFile [data-rm]'); if (b) b.click(); }).catch(() => {}); await sleep(500); }
+    // (KEEPSAVE P3/P7: a design restored as 'reading' that nothing reads any more ends in a plain word, "drop it again": the person removes it and drops it again; only a spinner for ever is stuck)
+    try { await page.waitForFunction(() => document.querySelector('#cuDlg[open] .cuFile.bad') || (document.querySelector('#cuDlg[open] .cuFile .cuThumb img') && !document.querySelector('#cuDlg .cuFile.reading')), null, { timeout: 20000 }); } catch (_) {}
+    try { await fileReady(w, page, 1, 500); return; } catch (_) {
+      const told = await page.evaluate(() => !!document.querySelector('#cuDlg[open] .cuFile.bad') && !document.querySelector('#cuDlg .cuFile.reading')).catch(() => false);
+      if (told) w.notes.push('the restored design said its plain word (drop it again): dropped again'); else { w.stuck = true; w.notes.push('the design stayed "reading" for 20 s'); }
+      await page.evaluate(() => { const b = document.querySelector('#cuDlg .cuFile [data-rm]'); if (b) b.click(); }).catch(() => {}); await sleep(500); }
   }
 }
 const fileReady = (w, page, count = 1, ms = 60000) => page.waitForFunction(c => document.querySelectorAll('#cuDlg[open] .cuFile .cuThumb img').length >= c && !document.querySelector('#cuDlg .cuFile.reading'), count, { timeout: ms });
@@ -227,7 +233,14 @@ async function hardReload(w, page = w.page) {
 /** after a reload: the person opens the app and looks at Review (nothing else: no window, no press). */
 async function reopenApp(w, page = w.page) {
   await page.waitForFunction(() => !window.__old && document.readyState === 'complete' && window.CN && window.Orders && window.Review && window.CustomSheet && CN.S.cloud.ok === true, null, { timeout: 60000 });
-  await seedOrders(page, w.orders); await page.click('#reviewView .egTab[data-k="customOrder"]'); await page.waitForSelector(card(w.orders[0].receiptId));
+  await seedOrders(page, w.orders);
+  // (a save that finished before the reload linked the listing: the order now reads as its saved design, a regular line, and asks nothing in Review: there is no card to open)
+  const tab = '#reviewView .egTab[data-k="customOrder"]';
+  if (!(await page.waitForSelector(tab, { timeout: 8000 }).then(() => true, () => false))) {
+    const linked = await page.evaluate(rid => Orders.rows().some(r => String(r.order.receiptId) === String(rid) && r.spec && !r.spec.special && r.spec.designSku && !(r.problems || []).length), w.orders[0].receiptId).catch(() => false);
+    if (linked) return;
+  }
+  await page.click(tab); await page.waitForSelector(card(w.orders[0].receiptId));
 }
 
 /* ═══════════════════════════ what the world looks like ═══════════════════════════ */
@@ -605,7 +618,11 @@ scen('the order is cancelled / completed while saving', ['P4'], async w => {
 async function main() {
   const names = SC.map(s => s.name);
   if (process.env.LIST === '1') { console.log(names.join('\n')); console.log(names.length + ' scenarios'); return; }
-  let list = SC.filter(s => !ONLY || ONLY.test(s.name));
+  // (26 Oct 2026, Paul: no waiting hours on tests: the default run is a small pass/fail sample, about 2½ minutes, of the matrix's kinds: the baselines, a reload during the
+  //  read, the hash and the commit, the server failing at the commit and at Etsy, Etsy refusing, the locked repository, two tabs; FULL=1, QUICK=1, SAMPLE=1, ONLY or SHARD run more)
+  const DEFAULT = /^(baseline: drop, switch ON|baseline: switch ON then OFF|reload @ (drop-read|drop-hash|commit|etsy)$|server (http500|lost) @ commit$|server timeout @ etsy$|Etsy refuses|repository locked at the switch|two tabs, same order)/;
+  const narrow = process.env.FULL !== '1' && !QUICK && !ONLY && !process.env.SHARD;
+  let list = SC.filter(s => (!ONLY || ONLY.test(s.name)) && (!narrow || DEFAULT.test(s.name)));
   if (process.env.SHARD) { const [i, n] = process.env.SHARD.split('/').map(Number); list = list.filter((_, k) => k % n === i); }
   const browser = await chromium.launch({ executablePath: exe, args: ['--no-sandbox'] });
   console.log(`keep-chaos: ${list.length} scenarios, trigger=${TRIGGER}, max ${MAXMS / 1000}s per save`);
