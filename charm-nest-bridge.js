@@ -10417,7 +10417,7 @@ const Engrave = window.Engrave = (() => {
     if (job.scriptFonts && job.scriptFonts.length) wants.push(`Set in ${job.scriptFonts.map(f => f.name).join(" and ")}${job.fontKey !== O.DEFAULT_FONT ? ` (${job.fontName} has no letters for ${job.scriptFonts.length > 1 ? "them" : "it"})` : ""}`);   // (WORLD, Paul 19 Oct 2026: a script the face cannot draw)
     if (requests.handwriting) wants.push("Requested handwriting");
     if (requests.image) wants.push("Requested an image");
-    const noteFont = job.fontFromNote && job.fontMapped && requests.font ? `${requests.font} → ${job.fontName} (asked in the note)` : "";
+    const noteWord = requests.font || (job.fontFromNote ? job.fontAsked : ""), noteFont = job.fontFromNote && job.fontMapped && noteWord ? `${noteWord} → ${job.fontName} (asked in the note)` : "";   // (26 Oct 2026: a note font read from the buyer's message without Claude (pieceFont via "message") has no requests.font: its word is the job's fontAsked)
     if (panelOn && noteFont) wants.push(noteFont);   // (the panel's font drop-down shows the line's font, not one the buyer asked for in the note: said once here, where the other asks are, since "From the order" is not drawn)
     // ENGNOTE (Paul, 12 Oct, round 2: "I see that you removed the customer note from this view. I didn't ask for you to remove that"): in the Engrave tab the customer's own words (personalisation, buyer message,
     // staff note, and the engraving choices among the listing's options) are ALWAYS drawn, as ONE box titled "What the customer wrote", at the top of the panel's column, so it is in view without scrolling (charm-nest-engrave-said.js; nothing when they wrote and chose

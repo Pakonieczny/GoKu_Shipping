@@ -192,7 +192,8 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shControls .shTabs.shMenuHost{flex:1 1 auto;min-width:var(--shm-min,80px);max-width:100%;overflow:visible;display:flex;align-items:center}   /* (its basis is the pill's own width, so the row wraps before the name is cut: "Sheet 1" whole; --shm-min: SheetMenu's own count of the least room that keeps the mark and chevron whole, which a line of its own can still be squeezed to) */
 .shControls .shGate{margin:0;padding:0;border:0;background:none;flex:0 0 auto}
 /* a Nest card's Front | Back · engraving: the order view's own switch (.owSeg), in the controls row, adding no height (a second line only when the row is too narrow) */
-.shControls .shFace{flex:0 0 auto;order:5;align-items:center;white-space:nowrap}.shControls .shFace[hidden]{display:none}
+.shControls .shFace{flex:0 0 auto;order:5;align-items:center;white-space:nowrap;margin-block:-1px}   /* (the Front | Back switch is 24 px, the pills beside it 22: centred in a line as high as theirs, it adds no height to the row (26 Oct 2026), as Cut Sheet does) */
+.shControls .shFace[hidden]{display:none}
 /* the back-engraving shelf's show/hide control (EngravingToggle): one quiet segment beside Front | Back, never a second row */
 .shControls .engTogHost{flex:0 0 auto;order:4;display:inline-flex;align-items:center}.shControls .engTogHost[hidden]{display:none}
 .shFace .spin{width:9px;height:9px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--ink45);border-radius:50%;animation:spin .7s linear infinite;margin:0 5px 0 4px;flex:0 0 auto}.shFace .spin[hidden]{display:none}

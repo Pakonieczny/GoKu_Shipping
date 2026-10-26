@@ -119,7 +119,7 @@ const TABLE = ['997905351', '606439317', '1844317367', '1009221671', '1844317391
   {
     const { ui } = service(L.without('MONOGRAM_MID_Q')), abc = ui.alphabets();
     let err = null; try { await ui.glyph('middle', 'Q', abc); } catch (e) { err = e; }
-    check(err && err.kind === 'missing' && /Middle alphabet has no “Q”/.test(err.message) && /MONOGRAM_MID_Q/.test(err.help) && /Monogram Mid lacks Q/.test(err.help), 'a letter missing from an alphabet is a plain error naming it: "' + (err && err.message) + '" / "' + (err && err.help) + '"');
+    check(err && err.kind === 'missing' && /Middle alphabet has no “Q”/.test(err.message) && /Monogram Mid has no Q yet\. Add it to the library/.test(err.help), 'a letter missing from an alphabet is a plain error naming it: "' + (err && err.message) + '" / "' + (err && err.help) + '"');
     check((await ui.glyph('left', 'Q', abc)).sku === 'MONOGRAM_LEFT_Q', 'the same letter of the other alphabets is still there');
   }
   {
