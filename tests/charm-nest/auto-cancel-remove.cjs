@@ -71,6 +71,12 @@ const GOLD = [[A, 1, 1], [A, 1, 2], [B, 2, 1], [C, 3, 1]], SILVER = [[D, 4, 1], 
         }, 300);
       };
       stub.__stub = true; window.startNest = stub; clearInterval(iv);
+      // (STUCKSHEET, Paul 25 Oct 2026: 3 s after a restore, a sheet whose save the reload cut short is written AS IT STANDS by writeAsPlaced, the
+      //  real PDF and finish pipeline: here it is the same stand-in, which keeps every placement and saves the sheet. Without it the owed write
+      //  never finished in this harness and held the page "busy", so the cancel job's own nest waited on it: an AutoCancel.poll() made before
+      //  those 3 s nested first, the page's 4 s timer read came after)
+      // (only for the reload of section 4, which sets __owedStub: every other write is the page's own)
+      if (localStorage.getItem('__owedStub') === '1') window.writeAsPlaced = sh => { if (!sh || ['nesting', 'finishing', 'queued'].includes(sh.status)) return Promise.resolve(false); sh._byHand = true; stub(sh); return Promise.resolve(true); };
     }, 0);
   });
   const page = await ctx.newPage(), errors = [], ok = [];
@@ -200,7 +206,7 @@ const GOLD = [[A, 1, 1], [A, 1, 2], [B, 2, 1], [C, 3, 1]], SILVER = [[D, 4, 1], 
     assert(mid && mid.sheets.length === 1 && mid.sheets[0].id === 'gold-open-1' && mid.runSaved, 'the job is written down, with its sheet: ' + JSON.stringify(mid));
     assert(st.doc(SHEETS, 'gold-open-1').charms.some(c => c.order === B), 'the saved sheet still lists it (its nest was cut short)');
     await page.evaluate(() => Session.flush(true));
-    await page.evaluate(() => localStorage.setItem('__nestMode', 'ok'));
+    await page.evaluate(() => { localStorage.setItem('__nestMode', 'ok'); localStorage.setItem('__owedStub', '1'); });
     await page.reload();
     await boot();
     await page.waitForFunction(B => !AutoCancel.state().jobs[B], B, { timeout: 30000 });
