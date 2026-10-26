@@ -127,7 +127,8 @@ async function main() {
       assert(x.rowScroll[0] <= x.rowScroll[1] + 1, `${tag}: the row does not scroll sideways (${x.rowScroll})`); assert(x.cardScroll[0] <= x.cardScroll[1] + 1, `${tag}: nor the card (${x.cardScroll})`);
       assert(x.headScroll[0] <= x.headScroll[1] + 1, `${tag}: nor the title line (${x.headScroll})`); assert(x.page <= 0, `${tag}: nor the page (${x.page})`);
       const part = w => x.parts.find(p => p.what === w), nm = part('pillName');
-      if (nm) assert.match(nm.text, /^Sheet \d+$/, `${tag}: the sheet pill says "Sheet N" whole, never "Sh…" (${nm.text})`);
+      // (a sheet in no set reads "Draft N", charm-nest-sheet-name.js short(): the pill is whole either way)
+      if (nm) assert.match(nm.text, /^(Sheet|Draft) \d+$/, `${tag}: the sheet pill says "Sheet N" or "Draft N" whole, never "Sh…" (${nm.text})`);
       if (part('back')) { assert.equal(part('back').text, 'Back · engraving', `${tag}: the whole "Back · engraving" label`); assert.equal(part('front').text, 'Front'); }
       if (o.cut) assert(part('cut'), `${tag}: Cut Sheet shows`);
       // a second row only when needed, and left aligned: the second row's first control starts where the first row's does

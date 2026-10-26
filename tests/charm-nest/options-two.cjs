@@ -254,7 +254,7 @@ if (fs.existsSync(IDX)) {
     eq(put.body.pools.map(p => [p.sku, p.side, p.mirror, p.bodyIndex]), [['PAIR-FACE-L', 'L', false, 0], ['PAIR-FACE-L', 'R', true, 0]], 'a matching pair: both from the one design, the Right the mirror, body 0 (unchanged)'); }
   pass('a missing second design holds the line; a matching pair is unchanged');
   /* ── 5 · the pictures: each ear of a pair of two designs is drawn from its own design ─────────────────────────────────────────────────────────────────── */
-  { const lm = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8'), x = lm.indexOf('  const pairRow = row => { try { const CP = window.CharmNestPair'), y = lm.indexOf('  /** A line\'s vector design drawn large on white'), z = lm.indexOf('  /** What makes two lines\' vector designs one picture'), z2 = lm.indexOf('  /** A line\'s vector design into one box');
+  { const lm = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8'), x = lm.indexOf('  const bodiesRow = row => '), y = lm.indexOf('  /** A line\'s vector design drawn large on white'), z = lm.indexOf('  const drawnPiece=row=>'), z2 = lm.indexOf('  /** A line\'s vector design into one box');
     assert(x > 0 && y > x && z > y && z2 > z, 'the picture code is where the test expects it');
     const w = world(['PAIR-FACE-L', 'PAIR-FACE-R']), drawn = [];
     const c2 = vm.createContext({ console, Object, String, Array, Promise, Map, Set, JSON, Number, window: { CharmNestPair: Pair }, P: {}, Engrave: {}, catalog: new Map(), Pool: { charmOf: () => null, masterFront: (e, size, px, ro) => { drawn.push([e.sku, 'front', !!(ro && ro.mirror)]); return 'img'; }, masterPreview: (e, size, big, ro) => { drawn.push([e.sku, 'preview', !!(ro && ro.mirror)]); return 'img'; } } });

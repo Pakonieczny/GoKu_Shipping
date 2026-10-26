@@ -90,10 +90,6 @@ Each finished sheet is saved in its own folder, `charmnest/sheets/<yyyy-mm-dd>/<
 
 Production uses two plates: **A · 100 × 50 mm** (default) and **B · 100 × 100 mm**; the stock selector offers only these plus the per-metal custom size. On import the sorter reads the work area from the file: a drawn plate frame if there is one, otherwise the artboard if it is plate-sized, otherwise the tight extent of the largest block of charms (charms within 20 pt of one another). The measurement is logged; the plate itself is always the operator's selection (A by default) and is never switched by a file. Charm sizes are always read from the file's own points, never scaled.
 
-## Fidelity check
-
-`node tests/charm-nest/fidelity.cjs <source.ai> <sheet.ai>…` compares every drawn path of the source with every drawn path of the written sheets: paint operator, stroke colour, fill colour, line width, closure, subpath and operator counts, and rotation-invariant geometry. A written set is faithful when the only extras are the sheets' own borders.
-
 ## Grouping on dense, already-nested sheets
 
 Three rules were added after a 75-piece nested sheet came back with charms merged and details scattered:

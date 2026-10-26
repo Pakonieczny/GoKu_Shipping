@@ -159,6 +159,8 @@ async function browser() {
   const entries = ['CELESTIAL3-COMET', 'CELESTIAL 3 - COMET'].map(s => Object.assign({}, lib.get(s), { thumbUrl: '/.netlify/functions/imageProxy?url=thumb-' + encodeURIComponent(s) }));
   async function scenario(o, ents, run) {
     const srv = await start({ receipts: [] });
+    // the server's master index holds the drawings the page offers: aliasPut refuses a link to a drawing it does not hold ("… is not in the master index")
+    for (const e of ents) srv.st.docs.set('Charm_Master_Index/' + e.sku, JSON.parse(JSON.stringify(e)));
     try {
       const context = await b.newContext({ viewport: { width: 1440, height: 950 } });
       const PHOTO = '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240"><rect width="240" height="240" fill="#c9a25a"/><circle cx="120" cy="120" r="34" fill="#4a7a3a"/></svg>';
