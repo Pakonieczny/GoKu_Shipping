@@ -30,7 +30,7 @@
 //   node tests/charm-nest/piece-row-review-buttons.cjs   (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>, SHOTS=<dir>)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
-const { start } = require('./bridge-server.cjs');
+const { start, pinOf } = require('./bridge-server.cjs');
 
 const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 10, 17) / 1000);
 const P = { rid: '4170837249', cable: '41708372491', gf: '41708372492', rg: '41708372493' };
@@ -108,7 +108,7 @@ async function main() {
     // each row of "Its pieces", as drawn
     const rows = () => page.evaluate(() => [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => {
       const a = r.querySelector('.pcAct'), st = r.querySelector('.st');
-      return { key: r.dataset.piece || (r.querySelector('[data-pc-act]') || { dataset: {} }).dataset.pcAct, solo: r.classList.contains('solo'), label: (r.closest('#owPcSum').querySelector('.fLabel') || {}).textContent, tag: r.tagName, act: r.classList.contains('hasAct') && !r.classList.contains('hasHold'), plain: r.classList.contains('hasHold'), hold: r.querySelectorAll('.holdBtn').length, btns: a ? [...a.querySelectorAll('button')].map(b => b.textContent.trim()).filter(t => t !== 'Hold') : [], seals: a ? a.querySelectorAll('.seal').length : 0, more: a && a.querySelector('[data-cu-more]') ? a.querySelector('[data-cu-more]').textContent.trim() : '',
+      return { key: r.dataset.piece || (r.querySelector('[data-pc-act]') || { dataset: {} }).dataset.pcAct, solo: r.classList.contains('solo'), label: (r.closest('#owPcSum').querySelector('.fLabel') || {}).textContent, tag: r.tagName, act: r.classList.contains('hasAct') && !r.classList.contains('hasHold'), plain: r.classList.contains('hasHold'), hold: r.querySelectorAll('.revSendBtn').length, btns: a ? [...a.querySelectorAll('button')].map(b => b.textContent.trim()).filter(t => !/^(Hold Order|In Review)$/.test(t)) : [], seals: a ? a.querySelectorAll('.seal').length : 0, more: a && a.querySelector('[data-cu-more]') ? a.querySelector('[data-cu-more]').textContent.trim() : '',
         st: st && !st.classList.contains('owPcSr') ? st.textContent.trim() : null, hidden: st && st.classList.contains('owPcSr') ? st.textContent.trim() : null, html: a ? a.innerHTML : '', stat: a ? (a.querySelector('.cuStat,.cuUndo,.cuWho') || { className: '' }).className : '' };
     }));
     const idle = () => page.evaluate(() => Seal.whenIdle());
@@ -193,8 +193,8 @@ async function main() {
         assert.equal(await reopenInWin(), 0, `${tag} ${w}: no Reopen button in the order window`);
         assert(await noBar(), `${tag} ${w}: no tan Custom Orders bar`);
         const dd = await dupes(); assert(Object.values(dd).every(n => n === 1) && !Object.keys(dd).some(k => /OUTSIDE/.test(k)), `${tag} ${w}: every button once, none outside a row: ${JSON.stringify(dd)}`);
-        // (a row showing what is happening, the Undo offered for a few seconds or the name asked is taller at 390: it wraps among itself; the orange Hold button, 5 Oct, is one more button in that wrap: 175)
-        assert(Math.max(...f.rows.map(r => r.h)) <= (f.rows.some(r => r.tall) ? 175 : w > 700 && !f.rows.some(r => r.at && r.at.under) ? 46 : 110), `${tag} ${w}: the rows do not grow ugly (${f.rows.map(r => r.h)}px)`);
+        // (a row showing what is happening, the Undo offered for a few seconds or the name asked is taller at 390: it wraps among itself; the orange Hold button, 5 Oct, is one more button in that wrap: 175; HOLDBTN, Paul 20 Oct 2026: it is "Hold Order" / "In Review" now, a few px wider than "Hold", so a narrow row of two buttons may reach 120)
+        assert(Math.max(...f.rows.map(r => r.h)) <= (f.rows.some(r => r.tall) ? 175 : w > 700 && !f.rows.some(r => r.at && r.at.under) ? 46 : 120), `${tag} ${w}: the rows do not grow ugly (${f.rows.map(r => r.h)}px)`);
         const calm = acted.filter(r => !r.tall && !r.at.under); if (w > 700 && calm.length) assert(Math.max(...calm.map(r => r.h)) <= 46 && !calm.some(r => r.at.nLines > 1), `${tag} ${w}: wide, the buttons are one line on the name's line`);
       }
       await page.setViewportSize({ width: 1440, height: 900 }); await page.waitForTimeout(400);
@@ -302,24 +302,17 @@ async function main() {
     assert.match(R[2].st, /^GF Sheet 1$/);
     assert(await noBar(), 'the piece shown is on a sheet: no Custom Orders bar, yet the Review pieces have their buttons');
     await shot("r8-2-1440-two-pieces");
-    // pressing Print QR label on BETA (RELHOLD: its hand completion) with no name known: the question is asked in BETA's row, and only there
+    // pressing Print QR label on BETA (RELHOLD: its hand completion) with no one signed in: the person is asked for inline (EMPNUM, Paul 26 Oct 2026: by the small bar's Employee Number,
+    // not a name typed in the row: "anyone can switch from one user to another without putting in their password"); nothing is written before the number
+    await page.evaluate(() => { B.employee = ''; try { localStorage.removeItem('cn.employee'); } catch (_) {} });
     await idle(); await page.click(`#owPcSum [data-piece="${beta}"] [data-cu-print]`);
-    await page.waitForFunction(k => document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-name]`), beta, { timeout: 10000 });
-    let asked = await page.evaluate(() => [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => [r.dataset.piece, !!r.querySelector('[data-cu-name]')]));
-    assert.deepEqual(asked.filter(x => x[1]).map(x => x[0]), [beta], 'asked in the row pressed, not in the other: ' + JSON.stringify(asked));
-    // (RELHOLD: asked through Print QR label, whose sticker question for a piece of a multi-piece order comes first and hands the focus back when it closes, so the field's focus is not asserted here; it is focused below)
-    assert.equal(rec(beta), undefined, 'nothing is written before the name');
+    await page.waitForSelector('.cnNameBar[data-kind="ask"][data-num="1"] input', { timeout: 10000 });
+    assert.equal(await page.$('#owPcSum [data-cu-name]'), null, 'no name field in any row: a typed name signs nobody in');
+    assert.equal(rec(beta), undefined, 'nothing is written before the number');
     await layout('name-asked', [[390, 844]]);
-    await page.evaluate(k => document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-name]`).focus(), beta);   // (the field is where it was, and typing goes on)
-    // (a redraw meanwhile keeps what is typed)
-    // (one identity, employeeName() = B.employee: with none signed in, the field holds the last name used on this computer, ready for Enter; another name replaces it)
-    assert.equal(await page.evaluate(k => document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-name]`).value, beta), 'Test Operator', 'the last name used is ready in the field');
-    await page.keyboard.press('Control+A'); await page.keyboard.press('Backspace');
-    await page.keyboard.type('Pat'); await page.evaluate(() => OrderWin.paint()); await page.waitForTimeout(300);
-    assert.equal(await page.evaluate(k => document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-name]`).value, beta), 'Pat');
-    await page.keyboard.press('Enter');
+    await page.fill('.cnNameBar[data-kind="ask"] input', pinOf(srv.st, 'Test Operator')); await page.press('.cnNameBar[data-kind="ask"] input', 'Enter');
     await page.waitForFunction(k => B.maps.customDone[k] && B.maps.customDone[k].prints === 1, beta, { timeout: 30000 });
-    assert(rec(beta).printedBy === 'Pat' && rec(beta).state === 'completed', JSON.stringify(rec(beta))); assert.equal(rec(alpha), undefined, 'ALPHA is untouched'); assert.equal(recStamps(beta).length, 1);
+    assert(rec(beta).printedBy === 'Test Operator' && rec(beta).state === 'completed', JSON.stringify(rec(beta))); assert.equal(rec(alpha), undefined, 'ALPHA is untouched'); assert.equal(recStamps(beta).length, 1);
     await page.waitForFunction(k => document.querySelector(`#owPcSum [data-piece="${k}"] [data-cu-done]`), beta, { timeout: 15000 });
     R = await rows(); assert(R.find(r => r.key === alpha).btns.join() === 'Print QR label,Release Hold', 'ALPHA still has its own open buttons: ' + JSON.stringify(R[0].btns));
     assert(R.find(r => r.key === beta).btns.includes('Completed') && !R.find(r => r.key === beta).btns.includes('Reopen'), 'BETA: Completed, and no Reopen in the order window');
@@ -352,7 +345,7 @@ async function main() {
     const betaNow = JSON.stringify(recStamps(beta));
     await idle(); await page.click(`#owPcSum [data-piece="${alpha}"] [data-cu-print]`);
     await page.waitForFunction(k => B.maps.customDone[k] && B.maps.customDone[k].prints === 1, alpha, { timeout: 30000 });
-    assert(rec(alpha).printedBy === 'Pat' && recStamps(alpha).length === 1, JSON.stringify(rec(alpha))); assert.equal(JSON.stringify(recStamps(beta)), betaNow, 'BETA unchanged');
+    assert(rec(alpha).printedBy === 'Test Operator' && recStamps(alpha).length === 1, JSON.stringify(rec(alpha))); assert.equal(JSON.stringify(recStamps(beta)), betaNow, 'BETA unchanged');
     await closeWin();
 
     // ── 7 · order 4171409060's shape (Paul, 5 Oct: "These buttons should be on the same line as the Longer Chain 5682"): BLUE 72587 on GF
@@ -363,11 +356,11 @@ async function main() {
     R = await rows();
     assert.deepEqual(R.map(r => r.key), [blue, longer], 'the two pieces');
     assert(!R[0].act && /^GF Sheet 1$/.test(R[0].st), 'BLUE keeps its status chip: ' + JSON.stringify(R[0]));
-    assert(R[1].act && !R[1].solo && R[1].tag === 'DIV', 'LONGER CHAIN has its card\'s buttons on its row'); assert.deepEqual(R[1].btns, ['Print QR label', 'Complete Order']);
+    assert(R[1].act && !R[1].solo && R[1].tag === 'DIV', 'LONGER CHAIN has its card\'s buttons on its row'); assert.deepEqual(R[1].btns, ['Print QR label', 'Release Hold']);
     const lname = await page.evaluate(k => document.querySelector(`#owPcSum [data-piece="${k}"] .nm`).textContent.trim(), longer);
     assert(/^LONGER CHAIN 5682/.test(lname), 'its name leads its row: ' + lname);
     assert(await noBar(), 'no tan bar under the pieces (4171409060: its two buttons were there twice)');
-    assert.deepEqual(await dupes(), { [`${longer} | Print QR label`]: 1, [`${longer} | Complete Order`]: 1 }, 'each button once');
+    assert.deepEqual(await dupes(), { [`${longer} | Print QR label`]: 1, [`${longer} | Release Hold`]: 1 }, 'each button once');
     await layout('t-open');
     await idle(); await page.click(`${actOf(longer)} [data-cu-release]`);
     await page.waitForFunction(k => B.maps.customDone[k], longer, { timeout: 20000 });
@@ -383,13 +376,13 @@ async function main() {
     await layout('t-printed');
     await closeWin();
 
-    // (RELHOLD: LONGER CHAIN 5682 and CHAIN ONLY 5601, "Charm: Chain only", are Custom Orders pieces: they keep Complete Order)
+    // (RELHOLD: LONGER CHAIN 5682 and CHAIN ONLY 5601, "Charm: Chain only", are Custom Orders pieces: they kept Complete Order until RELORDER, Paul 20 Oct 2026: "a Custom Orders piece too has Release Hold where Complete Order stood")
     // ── 8 · a single-piece chain-only order: its one piece has its own row (there is no bar to carry the buttons any more) ──
     const solo = kOf(S, 'solo');
     await openWin(solo, 1);
     R = await rows();
     assert(R[0].solo && R[0].act && R[0].label === 'Its piece', 'one row, its own: ' + JSON.stringify([R[0].solo, R[0].act, R[0].label]));
-    assert.deepEqual(R[0].btns, ['Print QR label', 'Complete Order']);
+    assert.deepEqual(R[0].btns, ['Print QR label', 'Release Hold']);
     assert(await noBar(), 'no bar in a single-piece order either');
     await layout('solo-open');
     await idle(); await page.click(`${actOf(solo)} [data-cu-release]`);
