@@ -49,8 +49,10 @@ const SHOTS = process.argv[2] || process.env.SHOTS || '';
     check(seen.earrings.cards.length === 0 && seen.earrings.host.hidden, `earrings: no card at all (the section is hidden): ${JSON.stringify(seen.earrings.host)}`);
     { const b = one(seen.back.cards), f = one(seen.front.cards), x = one(seen.both.cards);
       check(b && x && b.thumb.w === x.thumb.w && b.thumb.h === x.thumb.h, `a one-face card keeps the picture size of a two-face card: ${b && b.thumb.w}x${b && b.thumb.h} vs ${x && x.thumb.w}x${x && x.thumb.h}`);
-      check(b && x && b.card.h <= x.card.h && x.card.h <= 212, `a one-face card is never taller than a two-face card (${b && b.card.h} <= ${x && x.card.h} <= 212)`);
-      check(b && b.thumb.l - b.card.l <= 12 && b.txt.l >= b.thumb.r && b.lbl.l >= b.thumb.r, `a one-face card: the picture on the left, its title and words beside it (thumb.right ${b && b.thumb.r} <= words.left ${b && b.txt.l})`);
+      // (ENGBIG, Paul 13 Oct 2026: the pictures twice as large, and a one-face card one track wide with its label, picture and words one under the other (engrave-thumb-size.cjs): the side-by-side layout
+      //  and the 212px card of before are gone; a one-face card is still no taller than a two-face card, give or take its words' line)
+      check(b && x && b.card.h <= x.card.h + 4, `a one-face card is never taller than a two-face card (${b && b.card.h} <= ${x && x.card.h} + 4)`);
+      check(b && b.thumb.l - b.card.l <= 12 && b.lbl.t + b.lbl.h <= b.thumb.t + 1 && b.txt.t >= b.thumb.t + b.thumb.h - 1, `a one-face card: its title, the picture under it and its words under the picture (title bottom ${b && b.lbl.t + b.lbl.h} <= picture top ${b && b.thumb.t}, words top ${b && b.txt.t} >= picture bottom ${b && b.thumb.t + b.thumb.h})`);
       check(f && f.thumb.w === b.thumb.w, 'the front-only card has the same picture size'); }
     await R.openOrderWindow(w, 'back'); await shot('SMART-order-back');
     await R.openOrderWindow(w, 'front'); await shot('SMART-order-front');
