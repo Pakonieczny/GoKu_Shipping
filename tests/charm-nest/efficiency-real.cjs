@@ -44,7 +44,7 @@ function seed() {
   const at = (h, m) => Z('2026-10-02T04:00:00Z') + (h * 60 + m) * MIN;   // New York clock time today
   const people = [
     ['Giovanna', 'welding', { 8: 14, 9: 28, 10: 31, 11: 22, 13: 30, 14: 34, 15: 19 }, 37, 186, 392, 33, [7, 52], null],
-    ['Anna', 'assembly', { 8: 9, 9: 17, 10: 21, 11: 19, 13: 20, 14: 23, 15: 12 }, 29, 143, 361, 71, [8, 3], null],
+    ['Nora', 'assembly', { 8: 9, 9: 17, 10: 21, 11: 19, 13: 20, 14: 23, 15: 12 }, 29, 143, 361, 71, [8, 3], null],
     ['Michael', 'shipping', { 8: 11, 9: 15, 10: 18, 11: 14, 13: 9, 14: 16, 15: 8 }, 33, 131, 301, 52, [8, 0], null],
     ['Ivy', 'design', { 8: 5, 9: 7, 10: 9, 11: 6, 13: 8, 14: 4 }, 12, 64, 288, 44, [8, 15], [14, 15]]
   ];
@@ -70,24 +70,24 @@ seed();
   const j = o => JSON.parse(JSON.stringify(o));
   const r = await answer({ op: 'overview' }); assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300));
   const M = j(win.Efficiency.norm(r.body));
-  assert.equal(M.people.length, 5, 'four people and Paul under two spellings (Paul_K, Paul K) = five'); assert.deepEqual(M.people.map(p => p.name).sort(), ['Anna', 'Giovanna', 'Ivy', 'Michael', 'Paul K.'], 'one Paul K., nice name, no underscore');
+  assert.equal(M.people.length, 5, 'four people and Paul under two spellings (Paul_K, Paul K) = five'); assert.deepEqual(M.people.map(p => p.name).sort(), ['Giovanna', 'Ivy', 'Michael', 'Nora', 'Paul K.'], 'one Paul K., nice name, no underscore');
   const paul = M.people.find(p => p.name === 'Paul K.');
   assert.equal(paul.t.parts, 20); assert.equal(paul.t.signedInMin, 90, 'two spellings, 60 + 60 minutes with 30 overlapping'); assert.deepEqual(paul.stations.map(s => s.station).sort(), ['inbox', 'shipping']); assert.equal(paul.on, false);
   const gio = M.people.find(p => p.name === 'Giovanna');
   // stations round 2 (R2): the Welding station is not counted in order throughput: Giovanna's welding day (178 pieces and 37 orders in the seed) adds no pieces, orders or
-  // pieces-per-hour rate; her scans, her working time and her time signed in at Welding still count. Anna (Assembly) is the person whose pieces, orders and rate are read.
+  // pieces-per-hour rate; her scans, her working time and her time signed in at Welding still count. Nora (Assembly) is the person whose pieces, orders and rate are read.
   assert.equal(gio.on, true); assert.equal(gio.t.parts, 0); assert.equal(gio.t.scans, 186); assert.equal(gio.t.orders, 0); assert.equal(gio.source, 'events'); assert.equal(gio.t.rate, 0, 'no pieces per hour at Welding');
   assert(gio.t.secPerScan > 0 && gio.stations[0].station === 'welding' && gio.stations[0].minutes > 300 && gio.stations[0].parts === 0 && gio.stations[0].orders === 0, 'seconds per scan and station minutes stay, pieces and orders do not: ' + JSON.stringify(gio.stations));
-  const ana = M.people.find(p => p.name === 'Anna');
+  const ana = M.people.find(p => p.name === 'Nora');
   assert.equal(ana.t.parts, 121); assert.equal(ana.t.scans, 143); assert.equal(ana.t.orders, 29); assert.equal(ana.source, 'events');
   assert(ana.t.rate > 0 && ana.t.secPerScan > 0 && ana.stations[0].station === 'assembly' && ana.stations[0].minutes > 300, 'rate, seconds per scan, station minutes: ' + JSON.stringify(ana.t));
   assert.equal(M.people.find(p => p.name === 'Ivy').on, false); assert(M.people.find(p => p.name === 'Ivy').lastOut > 0, 'a lock-out');
   assert.equal(M.biz.parts, M.people.reduce((n, p) => n + p.t.parts, 0)); assert.equal(M.biz.on, 3); assert(M.biz.hours.some(v => v > 0));
   assert.equal(M.biz.trend.length, 14); assert(M.feed.length > 0 && M.feed.length <= 40); assert.equal(M.sources.events, true);
-  const per = (await answer({ op: 'person', name: 'Anna', days: 7 })).body, H = j(win.Efficiency.normHist(per));
-  assert.equal(H.days.length, 7); assert(H.worked >= 6 && H.parts > 0, 'a week of Anna: ' + JSON.stringify([H.worked, H.parts]));
+  const per = (await answer({ op: 'person', name: 'Nora', days: 7 })).body, H = j(win.Efficiency.normHist(per));
+  assert.equal(H.days.length, 7); assert(H.worked >= 6 && H.parts > 0, 'a week of Nora: ' + JSON.stringify([H.worked, H.parts]));
   const ord = (await answer({ op: 'orders', orderId: '3521000100' })).body, O = j(win.Efficiency.normOrder(ord));
-  assert.equal(O.orderId, '3521000100'); assert(O.steps.length >= 1 && O.steps[0].station === 'assembly' && O.steps[0].person === 'Anna' && O.steps[0].firstAt > 0 && O.steps[0].source === 'events', 'an order\'s step: ' + JSON.stringify(O.steps[0]));
+  assert.equal(O.orderId, '3521000100'); assert(O.steps.length >= 1 && O.steps[0].station === 'assembly' && O.steps[0].person === 'Nora' && O.steps[0].firstAt > 0 && O.steps[0].source === 'events', 'an order\'s step: ' + JSON.stringify(O.steps[0]));
   assert.equal(O.steps[0].waitMs, 0, 'the first step waited for nothing');
   console.log('  ✓ the real function\'s answer is taken whole: people, totals, rates, hours, trend, feed, one person\'s days');
 
@@ -115,8 +115,9 @@ seed();
     await page.click('#moreMenu > summary'); await page.click('#moreMenu button[data-mode="efficiency"]');
     await page.fill('#efficiencyView .efKey input', PASS); await page.press('#efficiencyView .efKey input', 'Enter');
     await page.waitForSelector('#efficiencyView .efBody:not(.hidden) .efP');
-    assert.equal(await page.locator('#efficiencyView .efP').count(), 5);
-    assert.deepEqual((await page.locator('#efficiencyView .efP .efName').allInnerTexts()).map(s => s.trim()).sort(), ['Anna', 'Giovanna', 'Ivy', 'Michael', 'Paul K.'], 'the screen draws one Paul K. (never Paul_K, never twice)');
+    // (the console asks with roster:true: the roster's others come as `absent`, greyed "Not signed in" cards beside the five who worked; here the built-in table's Ana M.)
+    assert.equal(await page.locator('#efficiencyView .efP:not(.absent)').count(), 5); assert.deepEqual((await page.locator('#efficiencyView .efP.absent .efName').allInnerTexts()).map(s => s.trim()), ['Ana M.'], 'the roster\'s absent person, greyed');
+    assert.deepEqual((await page.locator('#efficiencyView .efP:not(.absent) .efName').allInnerTexts()).map(s => s.trim()).sort(), ['Giovanna', 'Ivy', 'Michael', 'Nora', 'Paul K.'], 'the screen draws one Paul K. (never Paul_K, never twice)');
     assert.equal((await page.locator('#efficiencyView .efKpi[data-k="parts"] .efKV').innerText()).replace(/,/g, ''), String(M.biz.parts), 'the number on the screen is the function\'s');
     assert.equal(await page.locator('#efficiencyView .efKpi[data-k="on"] .efKV').innerText(), '3');
     await page.click('#efficiencyView .efP:nth-child(2) .efOrd'); await page.click('#efficiencyView .efP:nth-child(2) .efTabs button[data-t="days"]'); await page.waitForFunction(() => /days worked/.test((document.querySelector('#efficiencyView .efP:nth-child(2) .efSum') || {}).textContent || ''), null, { timeout: 8000 });
