@@ -2053,6 +2053,7 @@ function metalToBadge(label){
        details and as nothing (400) in its transactions, and the answer, an error, was read as if it were the order. The order's receipt is now read ONCE for both (they were two identical
        calls), only when this desk is connected to Etsy, through apiFetch (a token about to expire is refreshed first), and an error is said once, calmly, with what Etsy answered. */
     const etsyReceiptCache = new Map();   // order number -> { at, promise }
+    const etsyMissing = new Map();        // order number -> when Etsy said there is no such order (404)
     let etsyNoticeAt = 0;
     function etsyConnected(){ try { return !!(localStorage.getItem(TOKEN_KEYS.access) || localStorage.getItem(TOKEN_KEYS.refresh)); } catch (_) { return false; } }
     function etsyNotice(msg){ const now = Date.now(); if (now - etsyNoticeAt < 120000) return; etsyNoticeAt = now; try { M.toast({ html: msg, displayLength: 9000 }); } catch (_) {} }
@@ -2070,8 +2071,12 @@ function metalToBadge(label){
           const why = body && (body.error_description || body.error || body.message) || "";
           console.warn("Etsy did not give order " + key + " (" + resp.status + (why ? ": " + String(why).slice(0, 160) : "") + ")");
           if (resp.status === 401 || resp.status === 403) etsyNotice("Etsy would not give this order (" + resp.status + "). This computer's Etsy connection may be out of date: press Connect Etsy.");
+          // (26 Oct 2026, "they all need fixing": since ASMERR a 404 was a failed lookup, so an order Etsy says does not exist was counted as a welded order, "not checked". Etsy's
+          // "no such order" is kept for the weld's own checks (weldLookup: "missing", one reject, no seal); the fields are still never filled from it)
+          if (resp.status === 404 && /not.?found|could not find|no such|does not exist|invalid.{0,12}(receipt|order)/i.test(String(why))) etsyMissing.set(key, Date.now());
           return null;
         }
+        etsyMissing.delete(key);
         return body;
       })();
       etsyReceiptCache.set(key, { at: Date.now(), promise });
@@ -3838,7 +3843,7 @@ function metalToBadge(label){
           shipEl2.value = "";
           shipEl2.style.color = "";
         }
-        return failed ? null : data;
+        return failed ? (etsyMissing.has(String(orderNumber || "")) ? { error: "order not found" } : null) : data;   // (Etsy's "no such order" reaches weldLookup as "missing")
       })
       .catch(function(err){
         console.error("Error fetching Etsy order details:", err);
