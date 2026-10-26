@@ -23,7 +23,7 @@ const finish = () => { console.log(`\nmonogram-seal: ${nCheck - fails.length}/${
 
 (async () => {
   const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
-  try { require(path.join(pwDir, 'playwright-core')); } catch (_) { console.log('monogram-seal: no playwright-core, skipped'); return; }
+  try { require(path.join(pwDir, 'playwright-core')); } catch (_) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('monogram-seal: no playwright-core, skipped'); return; }
   process.env.PW_DIR = pwDir;
   fs.mkdirSync(SHOTS, { recursive: true });
   const R = require('./_engraveRealWorld.cjs'), Base = require('./_orderFactsWorld.cjs'), A = require('./_monogramAlphabets.cjs'), { signInAs } = require('./bridge-server.cjs');
@@ -43,7 +43,7 @@ const finish = () => { console.log(`\nmonogram-seal: ${nCheck - fails.length}/${
   Object.assign(R.EXPECT_JOBS, { mA: 0, mB: 0, mP: 0, mR: 0 });
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const w = await R.world({ viewport: { width: 1440, height: 900 }, reducedMotion: 'no-preference', shots: SHOTS });
-  if (!w) { console.log('monogram-seal: no playwright-core, skipped'); return; }
+  if (!w) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('monogram-seal: no playwright-core, skipped'); return; }
   const { page, srv } = w, st = srv.st;
   const shot = async name => { try { await page.evaluate(() => document.querySelectorAll('.cnNbX').forEach(b => { try { b.click(); } catch (_) {} })); await sleep(200); await page.screenshot({ path: path.join(SHOTS, name + '.png') }); } catch (e) { console.log('   (no screenshot ' + name + ')'); } };
   try {

@@ -12,9 +12,9 @@ const TITLE = "Schrödinger's Cat Necklace, Whimsical Cat Gift, Fun Jewelry Gift
 
 (async () => {
   const pwDir = process.env.PW_DIR || process.argv[2] || (fs.existsSync('/opt/node22/lib/node_modules/playwright/node_modules') ? '/opt/node22/lib/node_modules/playwright/node_modules' : path.join(root, 'node_modules'));
-  let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('  · schro-link browser part: no playwright-core, not run'); return; }
+  let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('  · schro-link browser part: no playwright-core, not run'); return; }
   const chromePath = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-  if (!fs.existsSync(chromePath)) { console.log('  · schro-link browser part: no chrome, not run'); return; }
+  if (!fs.existsSync(chromePath)) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('  · schro-link browser part: no chrome, not run'); return; }
   const { start } = require('./bridge-server.cjs');
   const srv = await start({ receipts: [] }), st = srv.st;
   const masters = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/schro-master-entries.json'), 'utf8')).entries;

@@ -37,7 +37,7 @@ const agentResults = { engraveIntent: o => { const txt = o.messages.flatMap(m =>
 (async () => {
   const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
   let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { try { ({ chromium } = require('/opt/node22/lib/node_modules/playwright/node_modules/playwright-core')); } catch (__) { console.log('  – no playwright-core: not run'); return; } }
-  const exe = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'; if (!fs.existsSync(exe)) { console.log('  – no Chromium: not run'); return; }
+  const exe = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'; if (!fs.existsSync(exe)) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('  – no Chromium: not run'); return; }
   const shots = process.env.SHOTS || ''; if (shots) fs.mkdirSync(shots, { recursive: true });
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cn-fontmap-')), masterPath = path.join(tmp, 'BRITES-master.ai');
   await buildMaster(masterPath, { count: 4, edge: false });

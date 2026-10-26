@@ -264,7 +264,7 @@ async function main(O) {
   const argv = process.argv.slice(2), flag = n => argv.includes('--' + n), opt = n => { const i = argv.indexOf('--' + n); return i >= 0 ? argv[i + 1] : ''; };
   const ONLY = opt('only') ? new Set(opt('only').split(',')) : null, SURF = opt('surfaces') ? new Set(opt('surfaces').split(',')) : null, DUMP = flag('dump'), LIST = flag('list'), WINDOW = +(opt('window') || 3000);
   const pwDir = process.env.PW_DIR || [path.join(root, 'node_modules'), '/opt/node22/lib/node_modules/playwright/node_modules'].find(d => fs.existsSync(path.join(d, 'playwright-core')));
-  let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('  - no playwright-core: the oracle was not run'); return; }
+  let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('  - no playwright-core: the oracle was not run'); return; }
   const exe = process.env.CHROMIUM || (fs.existsSync('/opt/pw-browsers/chromium-1194/chrome-linux/chrome') ? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' : undefined);
   const { sleep } = O, allViews = VIEWS.filter(v => !SURF || SURF.has(v.id)), scenarios = SCENARIOS.filter(s => (!ONLY || ONLY.has(s.id)) && (!flag('pairs') || s.pairs) && (!flag('no-pairs') || !s.pairs));   // (--pairs: only the pair scenarios; --no-pairs: none of them)
   const srv = await O.backend(); srv.O = O; const browser = await chromium.launch(Object.assign({ args: ['--no-sandbox'] }, exe ? { executablePath: exe } : {}));
