@@ -37,7 +37,7 @@ const until = async (fn, ms = 8000, every = 120) => { const t0 = Date.now(); for
 const CARD = rid => `:is(#reviewView [data-mkey="ord:rvm:${rid}"], #reviewView .rvItem[data-kind="reviewMark"][data-rid="${rid}"])`;
 // ── what the page shows, in one place (the DOM each owner published in INTERFACES.md) ──
 const PAGE = {
-  buttons: w => w.page.evaluate(() => [...document.querySelectorAll('#ordItems .revSendBtn')].map(b => { const r = b.getBoundingClientRect(), row = b.closest('.orderListRow') || b.closest('.hoverItem') || b.closest('[data-rid]'), rr = row && row.getBoundingClientRect(), facts = row && row.querySelector('.rowFacts'), f = facts && facts.getBoundingClientRect(); return { rid: b.dataset.rid, text: b.textContent.trim(), state: b.dataset.revState, disabled: b.disabled, cx: r.left + r.width / 2, cy: r.top + r.height / 2, rowL: rr && rr.left, rowR: rr && rr.right, rowT: rr && rr.top, rowB: rr && rr.bottom, factsBottom: f ? f.bottom : null, factsLeft: f ? f.left : null, btnLeft: r.left, btnRight: r.right, btnTop: r.top, visible: b.getClientRects().length > 0 }; })),
+  buttons: w => w.page.evaluate(() => [...document.querySelectorAll('#ordItems .revSendBtn')].map(b => { const r = b.getBoundingClientRect(), row = b.closest('.orderListRow') || b.closest('.hoverItem') || b.closest('[data-rid]'), rr = row && row.getBoundingClientRect(), facts = row && row.querySelector('.rowFacts'), f = facts && facts.getBoundingClientRect(); return { rid: b.dataset.rid, text: b.textContent.trim(), state: b.dataset.revState, disabled: b.disabled, cx: r.left + r.width / 2, cy: r.top + r.height / 2, rowL: rr && rr.left, rowR: rr && rr.right, rowT: rr && rr.top, rowB: rr && rr.bottom, factsBottom: f ? f.bottom : null, factsLeft: f ? f.left : null, factsRight: f ? f.right : null, btnLeft: r.left, btnRight: r.right, btnTop: r.top, visible: b.getClientRects().length > 0 }; })),
   rows: w => w.page.evaluate(() => Orders.rows().filter(r => r.state !== 'gone').map(r => String(r.order.receiptId))),
   msg: (w, rid) => w.page.evaluate(rid => { const n = document.querySelector(`#ordItems [data-rid="${rid}"] .revSendMsg`); return n ? n.textContent.trim() : ''; }, rid),
   reviewCard: (w, rid) => w.page.evaluate(({ rid, sel }) => { const c = document.querySelector(sel); return c ? { text: c.innerText.replace(/\s+/g, ' ').trim(), slots: [...c.querySelectorAll('.rvMarkSlot')].map(s => ({ row: s.dataset.row, html: s.innerHTML.length, text: s.innerText.replace(/\s+/g, ' ').trim(), picks: [...s.querySelectorAll('[data-dsku]')].map(b => b.dataset.dsku), current: [...s.querySelectorAll('[data-cur]')].map(b => b.dataset.cur), kids: s.children.length })), visible: c.getClientRects().length > 0, buttons: [...c.querySelectorAll('button')].map(b => b.textContent.trim()) } : null; }, { rid, sel: CARD(rid) }),
@@ -83,14 +83,16 @@ async function scenario(mode) {
       for (const b of btns) {
         ok(b.text === 'Hold Order' && b.state === 'idle' && b.visible && !b.disabled, `the button says "Hold Order", idle and enabled: ${J(b)}`);
         ok(b.cx > b.rowL + (b.rowR - b.rowL) * 0.8, `the button is on the right-hand side of its row (at Paul's window width): x ${Math.round(b.cx)} of ${Math.round(b.rowL)}..${Math.round(b.rowR)}`);
-        ok(b.factsBottom != null && b.btnTop >= b.factsBottom - 1 && Math.abs(b.btnLeft - b.factsLeft) <= 3, `the button sits right under "Qty . Ship by", same left edge (facts ${Math.round(b.factsLeft)}..${Math.round(b.factsBottom)}, button left ${Math.round(b.btnLeft)} top ${Math.round(b.btnTop)})`);
+        // (HOLDALIGN, Paul 25 Oct 2026: "These Hold buttons are not horizontally aligned.": every Hold Order ends at the same right edge, under the facts)
+        ok(b.factsBottom != null && b.btnTop >= b.factsBottom - 1 && b.btnRight >= b.factsRight - 1, `the button sits right under "Qty . Ship by", at the right edge (facts ..${Math.round(b.factsRight)} bottom ${Math.round(b.factsBottom)}, button right ${Math.round(b.btnRight)} top ${Math.round(b.btnTop)})`);
       }
+      ok(Math.max(...btns.map(b => b.btnRight)) - Math.min(...btns.map(b => b.btnRight)) <= 3, 'every Hold Order ends at the same right edge (HOLDALIGN): ' + J(btns.map(b => Math.round(b.btnRight))));
       ok(new Set(btns.map(b => b.rid)).size === btns.length, 'never two buttons for one order');
       // a narrower window (1440): the row folds its columns; the button follows "Qty . Ship by" and is never clipped or pushed off the screen
       await w.page.setViewportSize({ width: 1440, height: 900 }); await W.settle(w.page, 500);
       const narrow = await PAGE.buttons(w);
       ok(narrow.length === rows.length && narrow.every(b => b.visible && b.btnRight <= 1440 && b.btnLeft >= 0), 'at 1440 px every button is still on the screen: ' + J(narrow.map(b => [Math.round(b.btnLeft), Math.round(b.btnRight)])));
-      ok(narrow.every(b => b.factsBottom != null && Math.abs(b.btnLeft - b.factsLeft) <= 3 ? b.btnTop >= b.factsBottom - 1 : true), 'and it does not overlap "Qty . Ship by"');
+      ok(narrow.every(b => b.factsBottom != null && Math.abs(b.btnRight - b.factsRight) <= 3 ? b.btnTop >= b.factsBottom - 1 : true), 'and it does not overlap "Qty . Ship by"');
       ok(await w.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'no sideways scroll');
       await w.page.setViewportSize({ width: 1700, height: 900 }); await W.settle(w.page, 400);
       await snap('1-orders');

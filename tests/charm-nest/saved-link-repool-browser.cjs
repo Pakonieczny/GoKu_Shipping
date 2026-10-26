@@ -45,7 +45,11 @@ const TITLE = 'Comet Pendant Charm Necklace Dainty Space Jewelry Tiny Celestial 
     const rowState = rid => page.evaluate(rid => { const r = B.orders.rows.find(x => x.order.receiptId === rid), s = r.spec; return { designSku: s.designSku, source: s.skuSource, problems: s.problems.map(x => x.kind), pieces: s.pieceCount }; }, rid);
     /* 1 · before the link: the old comet (no loop), the entry the Etsy SKU names */
     const before = { A: await rowState(A), E: await rowState(E) };
-    ok(before.A.designSku === OLD && before.A.source === 'transaction' && before.E.designSku === OLD, 'before the link both lines read as the old comet ' + OLD + ': ' + JSON.stringify(before));
+    // (LOOKALIKE, 12 Oct 2026: the Etsy SKU names the loop-less CELESTIAL3-COMET exactly, but on a NECKLACE listing with a ringed lookalike the exact name no longer wins silently:
+    //  the line waits with one plain line naming both drawings, until a person picks, or a saved link answers it)
+    const asked = x => x.designSku === null && x.problems.join() === 'unmatchedSku';
+    const why = await page.evaluate(rid => B.orders.rows.find(x => x.order.receiptId === rid).spec.problems[0].reason, A);
+    ok(asked(before.A) && asked(before.E) && /CELESTIAL3-COMET \(no loop/.test(why) && /CELESTIAL 3 - COMET \(with ring/.test(why), 'before the link both necklace lines ask which comet, naming both drawings: ' + JSON.stringify(before) + ' ' + why);
     /* 2 · the order was already pooled as the old comet (what Paul's order is), with an engraving still to approve */
     const pooled = await page.evaluate(async rid => {
       const r = B.orders.rows.find(x => x.order.receiptId === rid), id = CharmNestOrders.poolId(r.order, r.line, 1);
@@ -64,7 +68,7 @@ const TITLE = 'Comet Pendant Charm Necklace Dainty Space Jewelry Tiny Celestial 
     await page.evaluate(async () => { await Orders.loadMaps(true); Orders.interpretAll(); Review.syncOrderItems(); Orders.render(); });
     const after = { A: await rowState(A), E: await rowState(E) };
     ok(after.A.designSku === NEW && after.A.source === 'alias' && after.A.problems.length === 0, 'now the line reads as the repo charm ' + NEW + ' from the saved link: ' + JSON.stringify(after.A));
-    ok(after.E.designSku === OLD, 'the same SKU on another listing is not changed: ' + JSON.stringify(after.E));
+    ok(JSON.stringify(after.E) === JSON.stringify(before.E), 'the same SKU on another listing is not changed: ' + JSON.stringify(after.E));
     /* 4 · the order window says the repo charm and draws it */
     await page.evaluate(rid => { OrderWin.open(B.orders.rows.find(r => r.order.receiptId === rid).key, { view: 'info' }); }, A);
     await page.waitForFunction(() => { const v = document.getElementById('owVector'); return v && v.querySelector('img') && v.getAttribute('aria-busy') !== 'true'; }, null, { timeout: 30000 });
