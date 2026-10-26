@@ -126,6 +126,11 @@ const until = async (fn, ms = 20000, what = '') => { ms *= SLOW; const t0 = Date
     st.docs.clear(); seed(st, srv.blobUrl, false, !!o.real);
     // (o.real: order 3700000010 has a second piece on dA02, so the real engine finds dA01 and dA02 sharing a multi-piece order)
     if (o.real) { const r = st.doc(SHEETS, 'dA02'); st.put(SHEETS, 'dA02', { poolIds: [...r.poolIds, '3700000010_2_1'], orders: [...r.orders, '3700000010'] }); }
+    // (o.real: the two sheets are released full, so the real rules judge the shared order; a 70% sheet with no completion mark is a partial sheet, and its drop is refused by R3 first)
+    if (o.real) for (const id of ['dA01', 'dA02']) st.put(SHEETS, id, { releaseFull: true });
+    // (and Set 1 holds a second completed GF sheet, dA03, sharing no order: without it the move is refused first because Set 1 would lose its only GF sheet; with it only the shared order holds dA01)
+    if (o.real) { const a = st.doc(SHEETS, 'dA01'), os = ['3700009901', '3700009902']; st.put(SHEETS, 'dA03', Object.assign({}, a, { id: 'dA03', sheetIndex: 3, fileBase: a.fileBase.replace(/Sheet-1$/, 'Sheet-3'), folder: 'gold_dA03', orders: os, poolIds: os.map(x => `${x}_1_1`), listings: os.map(() => '1718000'), names: os.join(' ') }));
+      const set = st.doc(SETS, 'set-t-1'); st.put(SETS, 'set-t-1', { sheetIds: [...set.sheetIds, 'dA03'], materials: [...set.materials, 'gold'] }); }
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 1500 } });
     await ctx.route(u => !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u.href), r => r.abort());   // (registered first: every later, more specific route wins over it)
     await ctx.route(/gstatic\.com\/firebasejs/, r => r.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }, body: /-compat\.js/.test(r.request().url()) ? '' : fbStub }));
