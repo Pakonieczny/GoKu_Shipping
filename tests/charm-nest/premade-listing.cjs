@@ -182,7 +182,8 @@ async function browser() {
     assert.equal(info.sku, 'DAINTY_1450', 'the SKU Etsy sold, as written on the card (it is not a match: no drawing is attached to it)');
     assert.equal(info.reason, `Custom necklace · ${WHY} · Complete Order or print its QR label when it is ready, or drop its .ai / .dxf designs and Send to Sheet`, 'ONE plain reason line: ' + info.reason);
     assert(!/add-on listing/.test(info.text) && !/not mapped/.test(info.text), 'no add-on wording, no question: ' + info.text.slice(0, 240));
-    assert.deepEqual(info.buttons, ['Print QR label', 'Complete Order', 'Send to Sheet', 'Drop .ai / .dxf designs here'], 'no Hold on a Review card (NOHOLDREV, Paul 17 Oct 2026)');
+    // (RELORDER, Paul 20 Oct 2026: "Remove the 'Complete Order' button from the Review tab and replace it with the new 'Release Order' button": Release Hold stands where Complete Order stood)
+    assert.deepEqual(info.buttons, ['Print QR label', 'Release Hold', 'Send to Sheet', 'Drop .ai / .dxf designs here'], 'no Hold on a Review card (NOHOLDREV, Paul 17 Oct 2026); Release Hold where Complete Order stood (RELORDER, 20 Oct)');
     assert.equal(info.send.aria, 'true', 'Send to Sheet is greyed until a design .ai is dropped'); assert.doesNotMatch(info.send.cls, /gold/);
     await page.waitForFunction(sel => { const n = document.querySelector(sel); return n.querySelector('[data-vector]').textContent.includes('No vector available') && n.querySelector('[data-listing] img'); }, cardSel, { timeout: 20000 });
     const pics = await page.evaluate(async sel => { const n = document.querySelector(sel), img = n.querySelector('[data-listing] img'); await img.decode().catch(() => {}); return { vector: n.querySelector('[data-vector]').textContent.trim(), vectorImg: !!n.querySelector('[data-vector] img'), drawn: window.__drawn, w: img.naturalWidth, cap: [...n.querySelectorAll('figcaption')].map(x => x.textContent.replace(/↺/g, '').trim()) }; }, cardSel);
@@ -214,7 +215,8 @@ async function browser() {
     assert.deepEqual(after.piece, [{ hand: true, problem: null, nested: false, loading: false }], 'the ring piece is resolved by hand: never "not on a sheet yet"');
     assert.notEqual(after.rep && after.rep.line, KEY18, 'readiness no longer names the ring: ' + JSON.stringify(after.rep));
     // Reopen (the completion taken back): the ring waits for a person again, and the order with it
-    await page.waitForFunction(() => /moved to Completed · completed by Test Operator with no label printed$/.test(document.querySelector('.mNote .mNoteT')?.textContent || ''), null, { timeout: 8000 });
+    // (the segment reads Resolved, RVRESOLVED, Paul 18 Oct 2026; the release's own words, RELORDER, 20 Oct)
+    await page.waitForFunction(() => /moved to Resolved · released by Test Operator · Release Hold, no label printed$/.test(document.querySelector('.mNote .mNoteT')?.textContent || ''), null, { timeout: 8000 });
     await page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close()));
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
     await page.waitForFunction(k => document.querySelector(`#rvList .reviewListRow[data-row="${k}"] [data-cu-reopen]`), KEY18);
@@ -222,7 +224,8 @@ async function browser() {
     await page.waitForFunction(k => !B.maps.customDone[k] && !document.querySelector('.cuStat, .btn.working'), KEY18, { timeout: 30000 });
     const back = await page.evaluate(k => { const r = B.orders.byKey.get(k); return { state: r.state, own: r.spec.ownDesign, noDesign: r.spec.noDesign, committable: CharmNestOrders.evaluateOrder(B.orders.rows.filter(x => x.order.receiptId === '4174384672')).committable, rep: CharmNestReadiness.orderReports(B.orders.rows, [])['4174384672'].line, poolRows: B.pool.rows.size }; }, KEY18);
     assert.deepEqual([back.state, back.own, back.noDesign, back.committable, back.rep, back.poolRows], ['pulled', true, false, false, KEY18, 0], 'reopened: a ring that waits again (the run holds it with its reason when it next looks), nothing pooled: ' + JSON.stringify(back));
-    assert.deepEqual([...new Set(ops)].sort(), ['customPut', 'customReopen'], 'the only writes the page made were customPut and customReopen: ' + [...new Set(ops)].join());
+    // (the save keeper's page-load passes, keepPending's customSavePending read and keepRepair's customSaveRepair, run on every load and are not this card's)
+    assert.deepEqual([...new Set(ops)].filter(op => !['customSavePending', 'customSaveRepair'].includes(op)).sort(), ['customPut', 'customReopen'],'the only writes the page made were customPut and customReopen: ' + [...new Set(ops)].join());
     assert.deepEqual(errors, [], 'no page errors');
     console.log('  ✓ Chromium: the ring is one Custom Orders card (reason line, Print QR label, Complete Order, Send to Sheet greyed), no drawing, the Etsy photo; the order window and Orders table; Complete Order writes customPut only');
   } finally { await b.close(); srv.close(); }
