@@ -1602,7 +1602,9 @@ const Orders = window.Orders = (() => {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
     const own = m.listingSkus && O.inventorySku(l, m.listingSkus[String(l.listingId)]);
     const link = a && a.pairBySku && O.bySkuOf(a.pairBySku, String(O.decodeEntities(l.sku) || "").trim().toUpperCase());   // (the pair of two designs a person saved for this listing and SKU, aliasPut pair)
-    return [o, +o.updateTs, o.staffNote, l, l.staffNote, row.materialOverride, row.sizeOverride, row.blockOverride ? JSON.stringify(row.blockOverride) : "", m.optionMaps, m.aliases, m.noDesign, m.customDone,
+    // (KITEPAIR, 26 Oct 2026: a reading pinned to the pieces a line was made as is redone when those pieces go, Paul 13 Oct: Hold then Release hold makes the line up again; since a line is
+    //  read once (e47c94c) nothing else brought that second reading)
+    return [o, +o.updateTs, o.staffNote, l, l.staffNote, (row.poolIds || []).join(","), row.materialOverride, row.sizeOverride, row.blockOverride ? JSON.stringify(row.blockOverride) : "", m.optionMaps, m.aliases, m.noDesign, m.customDone,
       m.customRead && m.customRead[row.key], m.customDecided && m.customDecided[row.key], libFacts(String(l.sku || "").trim().toUpperCase()), libFacts(a && a.sku ? String(a.sku).trim().toUpperCase() : ""),
       // the catalogue design of a charm-only variation SKU (MAPLE_8065-CO), and the design the line was last read as (an alias or an option's pick)
       libFacts(O.variationBase(l.sku)), libFacts(row.spec && row.spec.designSku),
