@@ -2016,6 +2016,16 @@ async function sandboxWipe(budgetMs) {
   for (const k of [...holders.keys()]) if (k.startsWith("Sandbox_")) holders.delete(k);
   const wipe = async q => { for (;;) { if (late()) return false; const s = await q.select().limit(300).get(); if (s.empty) return true; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); deleted += s.size; if (s.size < 300) return true; } };   // (deleting a document never deletes its subcollections: they go first)
   const more = () => ({ ok: true, more: true, deleted, files });
+  /* The sandbox's own documents in shared collections go FIRST (they went last): the stream and the snapshot of orders it played (the next sandbox
+     run pulls its own), but the pull budget ledger (keepDocs) stays, and the one named setting of config. The stream is the run's mark, the only thing
+     a second computer shares with this one (Sandbox.advance: its next step finds it gone, stops writing and reloads clean), and with the snapshot gone
+     no step can start another meanwhile. Gone last, a computer still playing the run kept saving its sets and sheets while the rest was deleted, and
+     what it saved after the last pass stood in the Library of the next run (Paul, 26 Oct 2026: "information contamination where I'm not sure which
+     set is old from a previous test-run and which is new current run"). */
+  for (const f of fam.filter(x => x.store === "doc")) {
+    const ids = f.docs ? f.docs.slice() : (await db.collection(f.collection).select().get()).docs.map(d => d.id).filter(n => !(f.keepDocs || []).includes(n));
+    for (const n of ids) { if (late()) return more(); const ref = db.collection(f.collection).doc(n); if ((await ref.get()).exists) { await ref.delete(); deleted++; } }
+  }
   // which collections still hold anything, asked all at once: a call that follows another goes straight to the work left
   const left = await Promise.all(names.map(f => db.collection("Sandbox_" + f.key).select().limit(1).get().then(s => !s.empty)));
   for (const [i, f] of names.entries()) {
@@ -2093,12 +2103,7 @@ async function sandboxWipe(budgetMs) {
       } while (pageToken);
     }
   } catch (e) { console.warn("[charmNestLibrary] sandbox files not deleted:", e.message); filesError = e.message; }
-  // the sandbox's own documents in shared collections, last: the stream starts over with the records it fed and the snapshot of orders it
-  // played goes (the next sandbox run pulls its own), but the pull budget ledger (keepDocs) stays; one named setting of config goes
-  for (const f of fam.filter(x => x.store === "doc")) {
-    const ids = f.docs ? f.docs.slice() : (await db.collection(f.collection).select().get()).docs.map(d => d.id).filter(n => !(f.keepDocs || []).includes(n));
-    for (const n of ids) { if (late()) return more(); const ref = db.collection(f.collection).doc(n); if ((await ref.get()).exists) { await ref.delete(); deleted++; } }
-  }
+  // (the sandbox's own documents in shared collections went first, above)
   return { ok: true, more: false, deleted, files, filesError };
 }
 async function op_sandboxReset() { return sandboxWipe(7000); }
@@ -2179,6 +2184,12 @@ async function op_purgeHistory(b) {
       if (live.length) return { error: `a run is still open (${live.map(r => r.runId).join(", ")}) — stop or abandon it first`, status: 409 };
     }
   }
+  /* check: the page asks first, and nothing is deleted or written (Paul, 26 Oct 2026: "When I purge all history while running in Sandbox mode, that must
+     also delete ALL records from the Library tab (Sets of Sheets) so that on the next run I do not get information contamination where I'm not sure which
+     set is old from a previous test-run and which is new current run"). The sandbox page and every other tab of its browser are put down BEFORE the
+     purge deletes anything (Sandbox.wipe, charm-nest-bridge.js): a page that kept running under the purge saved its sets and sheets straight back.
+     So a wrong passcode or an open run is answered here, before any page is put down, and the purge itself follows once they are. */
+  if (b.check === true) return { ok: true, check: true };
   const names = [RUNS, RUN_LINES, RUN_LIVE, SHEETS, SETS, POOL, BACK, COUNTERS, RELEASE, BRIDGE];
   const SUBS = { [BRIDGE]: ["log"] };
   const wipe = async q => { let n = 0; for (;;) { const s = await q.select().limit(300).get(); if (s.empty) break; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); n += s.size; if (s.size < 300) break; } return n; };
@@ -2189,6 +2200,14 @@ async function op_purgeHistory(b) {
     for (const sub of SUBS[name] || []) { const parents = await coll.select().get(); for (const d of parents.docs) await wipe(d.ref.collection(sub)); }
     docs[name] = await wipe(coll);
   }
+  /* (Paul, 26 Oct 2026) what the Library reads of production's runs goes with them, whichever page asked: this instance's memory of the runs that
+     held an order (holders), and, from a sandbox page (which moves only the sandbox's counters), production's own three, so an open production
+     Library, its Completed count and the order windows read the cloud again at once rather than answer "unchanged" over sets that are gone. (A
+     production page's purge moves them in the handler, as every op does; the plain +1 is what readers take as "not known": bumpRev, doneCounts. A call
+     that found no production record left, the next press of a purge that ran out of time, moves none.) */
+  holders.clear();
+  if (PREFIX && Object.values(docs).some(x => x > 0)) await Promise.all([db.collection(REV).doc(REV_DOC).set({ n: FV.increment(1), at: Date.now() }, { merge: true }), db.collection(REV_COLL).doc("done").set({ n: FV.increment(1), op: "purgeHistory", nAt: FV.serverTimestamp() }, { merge: true }),
+    db.collection(REV_COLL).doc("placement").set({ n: FV.increment(1), at: FV.serverTimestamp(), op: "purgeHistory" }, { merge: true })].map(p => p.catch(e => console.warn("[charmNestLibrary] production counter not raised after the purge:", (e && e.message) || e))));
   /* The sandbox goes completely, on the reset's clock (Paul, 3 Oct: the purge left the sandbox's custom orders, custom
      sheets, cancel records, timeline, arrivals, stations' copies, files… and they came back): the same wipe as "Reset the
      sandbox", the stream included. When its time is up it says so with a 503 the page shows as a failure ("press Purge
@@ -4755,9 +4774,9 @@ exports.handler = async (event) => {
   // ZODGO (13 Oct 2026): an op that writes a listing's Etsy inventory (listingEtsySkuWrite) is refused for a listing whose ZODIAC SIGN drop-down was sent or may have landed: one Firestore read after the password door, nothing sent; see _charmNestEtsyZodiac.js "THE FENCE"
   { const fenced = await require("./_charmNestEtsyZodiac").fenceFor(body.op, body); if (fenced) return json(200, fenced); }
   try {
-    const out = await fn(body), quiet = sbQuiet(body.op, out);
+    const out = await fn(body), checked = body.op === "purgeHistory" && !!out && out.check === true, quiet = checked || sbQuiet(body.op, out);   // (checked: the purge's question first, which deleted and wrote nothing: no counter moves for it)
     if (!quiet) await bumpPlacementGen(body.op);   // (after the op's writes have landed, before the answer: whoever sees the answer then reads the new gen)
-    if (DONE_TOUCH || DONE_BUMP_OPS.has(body.op)) await bumpDoneRev(body.op);
+    if (!checked && (DONE_TOUCH || DONE_BUMP_OPS.has(body.op))) await bumpDoneRev(body.op);
     // the Library's revision moves after a write it reads (see readRev: the readers' one-document question); after an error too, a write may have landed before it
     // (COST, Oct 2026: naming what the op wrote, when it says: revTouch; an op that wrote nothing the Library reads moves nothing)
     if (REV_OPS.has(body.op) && !quiet) await bumpRev(body[REV_TOUCHED] || null);
