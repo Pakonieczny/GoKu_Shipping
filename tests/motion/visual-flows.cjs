@@ -202,6 +202,13 @@ const restOf = sel => { const el = document.querySelector(sel); if (!el) return 
         if (QUIET) check(gp.t.worst <= BUDGET && !gp.t.long.length, `pending tile${tag}: smooth (worst ${gp.t.worst} ms)`);
       }
 
+      /* 3c · "In Review" pressed on an order of the Orders tab: the Review tab, the order's card there (the Review card flight's way in) */
+      await flow(env, 'review-open', { do: () => document.querySelector('#ordersView .revSendBtn').click(), undo: () => CN.setMode('orders') }, 2400, tag);
+      await settle(page, 400);
+      R.rv = Object.assign(await page.evaluate(() => ({ mode: CN.S.mode, card: [...document.querySelectorAll('.rvItem, #reviewView [data-mkey]')].filter(n => n.offsetParent).length })), { l: await page.evaluate(leftovers) });
+      check(R.rv.mode === 'review' && R.rv.card >= 1 && !R.rv.l.ghosts && !R.rv.l.running, `review${tag}: the press ends on the Review tab with the order's card shown, nothing in flight left (${JSON.stringify({ mode: R.rv.mode, cards: R.rv.card, ghosts: R.rv.l.ghosts, running: R.rv.l.running })})`);
+      await page.evaluate(() => CN.setMode('orders')); await settle(page, 900);
+
       /* 4 · tab switch Orders -> Nest -> Orders */
       await flow(env, 'tab-nest', { do: () => CN.setMode('nest'), undo: () => CN.setMode('orders') }, 1200, tag);
       await settle(page, 400);
