@@ -233,10 +233,11 @@ const read = (line, c) => O.interpretLine(order, line, c || ctx({ aliases: LINK 
     const w = world([D1, D2]), sets = [], one = [];
     const c2 = vm.createContext({ console, Object, String, Array, Promise, Map, Set, JSON, Number, window: { CharmNestPair: Pair }, P: {}, Engrave: {}, catalog: new Map(), Pool: { charmOf: () => null, masterSet: (es, size, px) => { sets.push(es.map(e => e.sku)); return 'set-image'; }, masterTwo: () => 'two-image', masterFront: (e) => { one.push(e.sku); return 'one-image'; }, masterPreview: (e) => { one.push(e.sku); return 'one-image'; }, sizeEntry: () => null } });
     c2.Master = { entryFor: sku => w.entries[sku] || null, fetchEntry: async () => null };
-    vm.runInContext(lm.slice(x, y) + '\n' + lm.slice(z, z2) + '\n;this.__v = { vector, vectorKey, setOf };', c2);
+    const dv = lm.indexOf('  const drawnPiece=row=>'); assert(dv > y && dv < z, 'the picture key\'s version readers (WRONGCHARM2: pieceSig, designVer) sit before vectorKey');
+    vm.runInContext(lm.slice(x, y) + '\n' + lm.slice(dv, z2) + '\n;this.__v = { vector, vectorKey, setOf };', c2);
     const V2 = c2.__v, row = fixtureLine(1);
     eq(V2.setOf(row), [D1, D2], 'setOf: the two designs'); const img = await V2.vector(row, 120); eq([img, sets], ['set-image', [[D1, D2]]], 'the line\'s picture is its two designs side by side');
-    ok(/\|set:ONE-PENDANT\+PAIR-STUD$/.test(V2.vectorKey(row)), 'its key names both designs: ' + V2.vectorKey(row)); ok(V2.vectorKey(row, { piece: true }) === 'sku:ONE-PENDANT|', 'one piece asked for on its own is its design as before');
+    ok(/\|set:ONE-PENDANT\+PAIR-STUD$/.test(V2.vectorKey(row)), 'its key names both designs: ' + V2.vectorKey(row)); ok(V2.vectorKey(row, { piece: true }) === 'sku:ONE-PENDANT||v:@', 'one piece asked for on its own is its design as before (WRONGCHARM2: with the library entry version, none here): ' + V2.vectorKey(row, { piece: true }));
     one.length = 0; sets.length = 0; await V2.vector(row, 120, { piece: true }); ok(!sets.length, 'a piece asked for alone is never the set picture');
     const plain = fixtureLine(1, sp => { delete sp.pair.set; }); eq(V2.setOf(plain), [], 'a line that is no set has no set picture'); ok(!/\|set:/.test(V2.vectorKey(plain)), 'and no set key');
     const gone = fixtureLine(1, sp => { sp.pair.legacy = true; }); eq(V2.setOf(gone), [], 'an old line (legacy) keeps its one picture');
@@ -259,12 +260,14 @@ const read = (line, c) => O.interpretLine(order, line, c || ctx({ aliases: LINK 
     ok(/\(it\.kind==='unmatchedSku'\|\|it\.kind==='blockedSku'\)\?similarOffer\(row,pk,group,it\)/.test(rr) && /class="sibOffer"/.test(rr) && /sibButtons\(sib\)/.test(rr) && /wireSib\(node,it,pk,sib/.test(rr) && /Master\.mountPictures\(node\)/.test(rr), 'the Review row (reviewRow) shows the question and the choices, wired, with their pictures');
     ok(/!cu&&!it\.done&&!it\.decided&&row&&\(it\.kind==='unmatchedSku'/.test(rr), 'the offer is for an open unmatched-SKU row only (never a custom, completed or sent one; REVSUGGEST: or a blocked SKU)');
     ok(/answerKeysOf\(it, sib\.rows\)/.test(helpers) && /answered\(\{ kind: it\.kind, rows: sib\.rows \}/.test(helpers) && /pickSimilar\(it, p, b\.dataset\.dsku, sib && \(b\.dataset\.sim && sib\.rowsFor \? sib\.rowsFor\(b\.dataset\.dsku\) : sib\.rows\)\)/.test(helpers) && /x === row \|\|/.test(src.slice(src.indexOf('function siblingOffer'), src.indexOf('const answerKeysOf'))), 'the tap covers only the lines of the card that are offered the same pair (a huggie or earring listing with the same SKU is never linked)');
-    ok(/siblingStamp\(it\)\]\);/.test(src), 'the row is drawn again when the offer or its pictures change (stampOf)');
+    ok(/siblingStamp\(it\),cancelRidOf\(it\)\]\);/.test(src), 'the row is drawn again when the offer or its pictures change (stampOf)');
     ok(/similarOffer\(r, p, group, it\)/.test(card) && /sibButtons\(sib\)/.test(card) && /wireSib\(c, it, p, sib/.test(card) && /it\.kind === "unmatchedSku" \|\| it\.kind === "blockedSku" \? similarOffer/.test(card), 'the decision card shares the same offer and save');
     // (NOHOLDREV, Paul 17 Oct 2026: no Hold on a Review row or card)
     ok(/data-a="alias"[^`]*Use this charm/.test(card) && /data-a="nodesign"/.test(card) && !/data-a="hold"/.test(card) && !/Hold order/.test(card), 'the card\'s own buttons are all still there, and none is Hold order');
-    ok(/CustomPrint\.keptButtonHtml\(x,'print'/.test(rr) && /CustomPrint\.keptButtonHtml\(x,'complete'/.test(rr) && /CustomSheet\.buttonsHtml\(x,true\)/.test(rr) && !/HoldUI|holdSlotFor|holdStamp/.test(rr), 'the row\'s own buttons (Print QR label, Complete Order, Send to Sheet) are drawn as before, with no Hold');
-    ok(!/prompt\(|confirm\(|openModal|modal|showModal|\.open\(/.test(helpers + rr.slice(rr.indexOf('const pk=it.problem'), rr.indexOf('const summary='))), 'no pop-up on a pop-up');
+    ok(/CustomPrint\.keptButtonHtml\(x,'print'/.test(rr) && /CustomPrint\.releaseButtonHtml\(x,'sm'\)/.test(rr) && /CustomSheet\.buttonsHtml\(x,true\)/.test(rr) && !/HoldUI|holdSlotFor|holdStamp/.test(rr), 'the row\'s own buttons (Print QR label, Release Hold where Complete Order stood: RELORDER, Paul 20 Oct 2026; Send to Sheet) are drawn as before, with no Hold');
+    const fx0 = helpers.indexOf('  /** "Wrong charm?" under the Vector design'), fx1 = fx0 < 0 ? -1 : helpers.indexOf('\n  }\n', helpers.indexOf('function fixMount', fx0));   // (WRONGCHARM: an Orders card's own door into the order window, not the offer's; it lies between the helpers read here)
+    const helpersOwn = fx0 < 0 ? helpers : helpers.slice(0, fx0) + helpers.slice(fx1 + 4);
+    ok(!/prompt\(|confirm\(|openModal|modal|showModal|\.open\(/.test(helpersOwn + rr.slice(rr.indexOf('const pk=it.problem'), rr.indexOf('const summary='))), 'no pop-up on a pop-up');
     pass('wiring: script tag, tokens, build list, the Review row\'s chip and buttons');
   }
   console.log(`siblings-suggest: ${n} checks passed`);
