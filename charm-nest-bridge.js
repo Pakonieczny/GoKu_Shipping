@@ -8262,11 +8262,12 @@ const Engrave = window.Engrave = (() => {
   let previewRecovery = false, previewRecoveryTimer = null, preparingJob = null;
   const isWorking = job => classifyTasks.has(job) || fitTasks.has(job) || preparingJob === job;
   const canFit = job => !!(job.copies?.length && charmFor(job)?.outline && (sheetFor(job, job.copies[0])?.fileBase || job.pre));   // (ENGPRE: a job made before its piece was pooled is fitted on the charm it will have: the fit needs the outline, never the sheet)
-  // (WORDSWAIT, 26 Oct 2026: a job in "words" waits for a person: ENGPRE, "anything else is a proposal for a person to confirm ('Words to confirm')". The preview
-  //  recovery used to call setReady on every "words" job that had lines, so a proposal went to its fit and to Approve by itself, its Words to confirm gone;
-  //  it now redraws only jobs already settled (ready / fitting). A person's own "Engrave these words" takes a job out of "words" itself)
+  // (AUTOWORDS, Paul 26 Oct 2026, on a back engraving left waiting at "Engrave these words": "For some reason many of the back engravings do not get auto applied.
+  //  All engravings must be added to each charm. The user should not need to press this 'Engrave these Words'". Every "words" job that holds words (a buyer's
+  //  proposal, ENGPRE's free words, a sibling's words) is fitted and goes on to Approve by itself, where a person still sees the words on the piece before
+  //  anything is cut; a job with no words, or with a character no font has (job.missing), still waits for a person. This undoes WORDSWAIT, same day.)
   const needsPreview = job => job.row.state !== "gone" && !isWorking(job) && job.lines?.length && !job.missing?.length &&
-    ["ready", "fitting"].includes(job.state) && canFit(job);
+    (job.state === "words" || (["ready", "fitting"].includes(job.state) && canFit(job)));
   const queuedJobs = jobs => jobs.filter(j => ["review", "words", "blocked", "classify", "ready", "fitting"].includes(j.state));
   async function prepareWaitingPreviews() {
     if (previewRecovery) return;
@@ -8282,6 +8283,7 @@ const Engrave = window.Engrave = (() => {
         preparingJob = job;
         job.questions = (job.questions || []).filter(q => !/not engravable|cannot (?:be |take )engrav|design.*engrav/i.test(q));
         try {
+          if (job.state === "words") await setReady(job, false);
           if (["ready", "fitting"].includes(job.state) && canFit(job)) await fitJob(job);
         } catch (e) {
           if (items() !== owner || owner.get(job.key) !== job || job.row !== row || row.state === "gone" || ["approved", "written", "skipped", "none"].includes(job.state) || job.approvalPreparing || job.stamping) continue;
