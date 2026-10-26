@@ -151,11 +151,8 @@ const pass = (name) => console.log('  ✓', name);
       const cw = gw.charms.find(c => c.sku === 'BR-TST-01'); P.integrateRings(cw);
       const sw = await P.parseSource(new Uint8Array(await P.buildSingleCharm(cw, pw)), 'single.ai');
       assert(!sw.segments.concat(sw.nested).some(s => s.kind === 'text'), 'the design file written after a worker grouping carries no label');
-      // the fault it replaces: copies from the worker never matched the page's labels, and every label stayed on its charm
-      const pb = await P.parseSource(new Uint8Array(master.bytes), 'master.ai');
-      const gb = structuredClone(P.groupCharms(structuredClone(plain(pb)), { minPt: 6 }));
-      P.labelCharms(pb, gb.charms, { gapPt: 6.4 * PT });
-      assert(gb.charms.some(c => c.members.some(m => m.kind === 'text')), 'control: without the hand-back the label stays on the charm');
+      // (the old control, "without the hand-back the label stays on the charm", is gone: since the masters reader of 25 Oct 2026 the grouping
+      //  itself never makes label text a member of a charm, so a copy from the worker has no label to keep; the checks above still prove the hand-back)
     }
     pass('labels after a worker grouping');
     /* ── extraction: the per-SKU .ai re-parsed equals the master's charm (member count, silhouette hash) ── */

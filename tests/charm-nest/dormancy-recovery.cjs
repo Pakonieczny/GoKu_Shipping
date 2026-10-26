@@ -37,7 +37,7 @@ async function vmChecks() {
   });
   await check('7 · a back file the cloud could not take keeps its approval', async () => {
     const timers = [], reviews = []; let settled = 0;
-    const c = { Promise, Map, Set, Object, Error, console, B: { run: null }, render() {}, refreshBacks() {}, agent() {}, Orders: { render() {} }, Session: { schedule() {} }, Review: { add: x => reviews.push(x) },
+    const c = { Promise, Map, Set, Object, Error, console, B: { run: null }, EG: { card: null, cardKey: null, opened: null }, render() {}, refreshBacks() {}, agent() {}, Orders: { render() {} }, Session: { schedule() {} }, Review: { add: x => reviews.push(x) },
       RunCtl: { backgroundSettled: () => { settled++; } }, unplacedPre: () => false, setTimeout: (f, ms) => timers.push(ms), resumeBacks() {}, writeBacks: async () => { throw new Error('Failed to fetch'); } };
     vm.createContext(c); vm.runInContext(part(bridge, '  async function saveBacks(job) {', '  /** A reload while an approval') + ';this.saveBacks=saveBacks;', c);
     const job = { key: 'k', state: 'approved', approvedAt: 1, approvedBy: 'Paul', backs: [], copies: ['p'], row: { order: { receiptId: 'o' }, engrave: { state: 'approved', approved: true } } };

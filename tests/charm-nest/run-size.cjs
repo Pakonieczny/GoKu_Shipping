@@ -94,7 +94,8 @@ const liveOf = rec => rec.liveLines ? Object.assign({}, ...rec.liveLines.ids.map
 
 /* ── the page's run controller, as in tests/charm-nest/process-completion.cjs, with the page's own line record ── */
 const source = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
-let controller = source.slice(source.indexOf('const RunCtl ='), source.indexOf('/* ═══ 24 · Review'));
+const ctlAt = source.indexOf('const RunCtl =');   // (to the next module of the page: CustomPrint and others now stand between RunCtl and Review)
+let controller = source.slice(ctlAt, ctlAt + 1 + source.slice(ctlAt + 1).search(/\n(const [A-Za-z]+ = window\.|\/\* ═══)/));
 controller = controller.slice(0, controller.indexOf('  function renderBanner()')) + '  function renderBanner() {}\n' + controller.slice(controller.search(/\n  return \{[^\n]*optionsChanged/) + 1);   // (the return list begins with the banner helpers now)
 const lineRecordSource = source.slice(source.indexOf('  const cap = (v, n)'), source.indexOf('  /** The other direction'));
 const workTextSource = source.slice(source.indexOf('  function workText(r)'), source.indexOf('  // the state of the work as a short hash'));
