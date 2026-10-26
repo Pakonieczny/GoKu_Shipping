@@ -198,7 +198,9 @@
   async function callOp(op, body) {
     const api = getApi();
     if (typeof api !== "function") return { ok: false, error: "unavailable" };
-    try { return await api("charmNestLibrary", Object.assign({ op }, body), { quiet: true }); }
+    // (wipe: the password door's own calls (unlock, lock, session) are no record: a sandbox reset under way, which refuses every write until the page reloads
+    //  (CNWipe), asks for the Settings unlock in the middle of it and must be able to ask the door. PERSON, 26 Oct 2026: with no standing session it asks there)
+    try { return await api("charmNestLibrary", Object.assign({ op }, body), { quiet: true, wipe: true }); }
     catch (e) { return answerOf(e) || { ok: false, error: "unavailable" }; }
   }
   const unlockCall = body => callOp("repoUnlock", body);
