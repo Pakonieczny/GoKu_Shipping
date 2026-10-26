@@ -885,7 +885,9 @@ const TL = window.CNTimeline = (() => {
     try {
       if (!e || !e.orderId || !e.type || !T()) return false;
       if (once) { const k = hash2(`${e.type}~${e.orderId}~${e.id}`); if (seenSet().has(k)) return false; mark(k); }
-      const ev = Object.assign({}, e, { at: +e.at > 1e12 ? +e.at : Date.now() });
+      // (the person is stamped when the event HAPPENS, not when the idle pump hands it over: a switch of person or a sign-out between the two
+      //  credited one person's work to the next one; tracking audit, 26 Oct 2026. An event that names its own `by` keeps it.)
+      const ev = Object.assign({}, e, { at: +e.at > 1e12 ? +e.at : Date.now() }, e.by == null ? { by: employeeName() } : {});
       if (now || openRid() === String(e.orderId)) { const t = T(); sync(); t.record(ev); try { if (typeof t.flush === "function") t.flush(); } catch (_) {} return true; }
       queue.push(ev);
       if (!pumping) { pumping = true; idle(pump); }
