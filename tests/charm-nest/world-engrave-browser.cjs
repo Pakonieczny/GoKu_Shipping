@@ -75,7 +75,7 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
       }
       const info = await page.evaluate(keys => keys.map(k => { const j = Engrave.items().get(k); if (!j) return null;
         let same = null; try {   /* the line gap is read back from the fit's own layout */ const f = j.fit, font = Engrave.fontForWeight(f.weight, j), gap = f.lines.length > 1 ? (f.layout.totalH - f.lines.length * f.layout.capPt) / (f.lines.length - 1) / f.size : .216, L = CharmNestGeom.layoutLines(f.lines, font, f.size, gap, f.angle || 0, f.centre); same = L.cmds.length === f.cmds.length && L.cmds.every((c, i) => c.type === f.cmds[i].type && ['x', 'y', 'x1', 'y1', 'x2', 'y2'].every(k => (c[k] === undefined) === (f.cmds[i][k] === undefined) && (c[k] === undefined || Math.abs(c[k] - f.cmds[i][k]) < 1e-6))); }   /* (to a millionth of a point: the line gap is read back from the layout) */ catch (e) { same = 'error: ' + e.message; }
-        return { state: j.state, reason: j.reason, text: j.text, lines: j.fit && j.fit.lines, fontKey: j.fontKey, fontName: j.fontName, scriptFonts: (j.scriptFonts || []).map(f => f.id), ok: !!(j.fit && j.fit.ok), cmds: j.fit && j.fit.cmds && j.fit.cmds.length, capMm: j.fit && j.fit.capMm, same }; }), scenes.map(keyOf));
+        return { state: j.state, reason: j.reason, text: j.text, lineInput: j.lineInput, lines: j.fit && j.fit.lines, fontKey: j.fontKey, fontName: j.fontName, scriptFonts: (j.scriptFonts || []).map(f => f.id), ok: !!(j.fit && j.fit.ok), cmds: j.fit && j.fit.cmds && j.fit.cmds.length, capMm: j.fit && j.fit.capMm, same }; }), scenes.map(keyOf));
       scenes.forEach((s, i) => { const j = info[i]; check(!!j, `${s.rid}: an engraving job exists`); if (j) check(j.state === 'review' && j.ok && j.cmds > 8, `${s.rid} (${s.text}): placed and waiting in the engraving review, not blocked (state ${j.state}${j.reason ? ': ' + j.reason : ''}, ${j.cmds} segments, cap ${(j.capMm || 0).toFixed(2)} mm)`); });
       const msgs = await page.evaluate(() => window.__wmsgs.slice());
       await after({ page, info, scenes, gets, msgs, sorterOrigin });
@@ -84,7 +84,9 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
 
   {
     await run('A · Latin, accents, a heart: no script asset is asked for', A, async ({ info, scenes, gets, msgs }) => {
-      scenes.forEach((s, i) => { check(info[i] && info[i].scriptFonts.length === 0 && info[i].text === s.text, `${s.rid}: words kept as typed, no script font (${JSON.stringify(info[i] && info[i].text)})`); });
+      // (ENGAUTO, charm-nest-engrave-card.js wordsOfJob: job.lines / job.text are the fit's layout, "Café ♡" / "2024" on two lines; job.lineInput keeps the words as
+      //  they were given, and that is what the card shows. The layout may only break the words where a space was: rejoined, they are the words. 26 Oct 2026)
+      scenes.forEach((s, i) => { const j = info[i]; check(j && j.scriptFonts.length === 0 && Array.isArray(j.lineInput) && j.lineInput.join('\n') === s.text && j.text.split('\n').join(' ') === s.text, `${s.rid}: words kept as typed, no script font (given ${JSON.stringify(j && j.lineInput)}, laid out ${JSON.stringify(j && j.text)})`); });
       check(gets.length === 0, 'the page requested no manifest, no engine file, no script font and no shaper script on demand (' + JSON.stringify(gets) + ')');
       check(!msgs.some(m => /^scripts/.test(m)), 'the background worker was sent no script font (' + msgs.join(' ') + ')');
     });
