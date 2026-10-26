@@ -251,6 +251,17 @@
     } catch (_) { return false; }
   }
 
+  /* the order in hand scanned again (Paul, 26 Oct 2026, "every user's activity tracked"): a page drops a phone scan of the order it already shows (no second load: at Shipping it
+     could repeat a label), so a person who scans it again after a quiet spell (10 minutes: the library lets the order go) was shown with nothing in hand. The order the page holds is
+     told again as a fresh scan, nothing reloaded; another order, or none, is false. */
+  function again(rid) {
+    try {
+      const r = digits(rid, 30);
+      if (!cur || cur.kind !== "order" || !r || cur.rid !== r) return false;
+      return tell(Object.assign({}, cur, { sync: false, keepTime: false }), true);
+    } catch (_) { return false; }
+  }
+
   function start(rid, transactions, o) {
     try {
       o = o || {};
@@ -299,5 +310,5 @@
       return r;
     } catch (_) { cur = null; return false; }
   }
-  window.StationLiveOrder = { start, batch, sheet, note, end, pieces, units, kind, tag, sides, ears, current: () => (cur ? { kind: cur.kind, rid: cur.rid, title: cur.title, scannedAt: cur.scannedAt } : null) };
+  window.StationLiveOrder = { start, again, batch, sheet, note, end, pieces, units, kind, tag, sides, ears, current: () => (cur ? { kind: cur.kind, rid: cur.rid, title: cur.title, scannedAt: cur.scannedAt } : null) };
 })();

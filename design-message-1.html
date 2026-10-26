@@ -3567,7 +3567,7 @@ function metalToBadge(label){
             if (data && data["Order Number"]){
               const orderNumber   = data["Order Number"];
               if (!scanQueue && !window.isEmployeeLoggedIn) return;   // (queue script missing: as before, nobody signed in = nothing to do)
-              if (orderNumber === lastScanProcessed) return;   // duplicate → ignore
+              if (orderNumber === lastScanProcessed) { try { window.StationLiveOrder && StationLiveOrder.again && StationLiveOrder.again(orderNumber); } catch (_) {} return; }   // duplicate → not loaded again; the order is back in hand on the board (Paul, 26 Oct 2026)
               lastScanProcessed = orderNumber;                 // remember newest hit
               if (scanQueue) scanQueue.offer(orderNumber);     // kept: loads now when signed in, else right after the next sign-in
               else processScannedOrder(orderNumber);
@@ -7258,7 +7258,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
 <script src="station-activity.js?v=20261009-ps1-as1-adv3-ew1-stx1"></script>
 <!-- The order in hand right now (opened here = working), for the console's live stations board (station-live-order.js). Optional: without it nothing changes. -->
 <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-ew1-szf1-szr1"></script>
-  <script src="station-live-order.js?v=20261009-ps1-as1-adv3-ew1-stx1"></script>
+  <script src="station-live-order.js?v=20261009-ps1-as1-adv3-ew1-stx1-ag1"></script>
 <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
 <script src="station-scan-queue.js?v=20261007-fr1"></script>
 <script>

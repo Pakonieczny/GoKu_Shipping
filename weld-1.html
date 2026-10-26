@@ -1101,7 +1101,7 @@
   <script src="station-session.js?v=20261006-st3-acct1"></script>
   <script src="station-activity.js?v=20261009-ps1-as1-adv3-ew1-stx1"></script>
   <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-ew1-szf1-szr1"></script>
-  <script src="station-live-order.js?v=20261009-ps1-as1-adv3-ew1-stx1"></script>
+  <script src="station-live-order.js?v=20261009-ps1-as1-adv3-ew1-stx1-ag1"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
   <script src="station-scan-queue.js?v=20261007-fr1"></script>
   <script>
@@ -4024,7 +4024,7 @@ function metalToBadge(label){
             if (data && data["Order Number"]){
               const orderNumber   = data["Order Number"];
               if (!scanQueue && !window.isEmployeeLoggedIn) return;   // (queue script missing: as before, nobody signed in = nothing to do)
-              if (orderNumber === lastScanProcessed) return;   // duplicate → ignore
+              if (orderNumber === lastScanProcessed) { try { window.StationLiveOrder && StationLiveOrder.again && StationLiveOrder.again(orderNumber); } catch (_) {} return; }   // duplicate → not loaded again; the order is back in hand on the board (Paul, 26 Oct 2026)
               lastScanProcessed = orderNumber;                 // remember newest hit
               if (scanQueue) scanQueue.offer(orderNumber, data);   // kept: loads now when signed in, else right after the next sign-in; the relay data carries the scan's real time and id (every scan is also one `matched` event, station-scan-queue.js)
               else processScannedOrder(orderNumber);

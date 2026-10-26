@@ -379,6 +379,9 @@ fs.mkdirSync(SHOTS, { recursive: true });
       await boardUntil('sorting', () => { const c = cardOf('sorting'); assert(c.cards.some(x => /Batch of 2 orders/.test(x.text) && x.text.includes(PEOPLE.sort)), 'no batch card for ' + PEOPLE.sort + ': ' + JSON.stringify(c.cards)); });
     });
     await check('B-BD3-design', 'design card: the order the phone put in hand at design-message, and the Sorter app\'s Design window', ['SA4', 'LD2'], async () => {
+      // (an order is the person's order in hand until 10 minutes of quiet, station-activity.js LIVE.hold: Rosa has been quiet since A while the other stations worked, so she
+      // scans her order again from the phone, as a designer at work does: the page does not load it again, and the board must show it back in her hands)
+      await scanned('design-scan.html', R.des1, S.pages.dmsg, R.des1); await A.flush(S.pages.dmsg);
       await boardUntil('design', () => { const c = cardOf('design'); assert(hasCard(c, R.des1) && c.cards.find(x => x.text.includes(R.des1)).text.includes(PEOPLE.designMsg), 'no card for ' + R.des1 + ' under ' + PEOPLE.designMsg + ': ' + JSON.stringify(c.cards)); assert(c.cards.some(x => /Design set 7/.test(x.text) && x.text.includes(PEOPLE.designApp)), 'no "Design set 7" card for ' + PEOPLE.designApp); });
     });
     await check('B-BD3-laser', 'laser card: the sheet in hand of the Laser person', ['SA5', 'LD2'], async () => {
