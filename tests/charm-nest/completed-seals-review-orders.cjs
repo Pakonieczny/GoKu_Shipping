@@ -8,7 +8,7 @@
 //   (its kept print and its send), a held order's and a cancelled order's completed card;
 //   Orders → Open Orders (cards and list), On hold and Cancelled: each piece's own seals beside its state, an order's on its
 //   cancelled card; none on a piece that is not completed.
-// Seals are for good: a piece completed here is completed and reopened with the real buttons and its seal stays on every surface.
+// Seals are for good (the Release Hold that replaced Complete Order, and Reopen, are pressed with the real buttons in custom-orders.cjs and reopen-place.cjs).
 // Each seal once per card; the cards fit at 390 and 900 px; a build that drops the seals is caught by the same checks.
 //   node tests/charm-nest/completed-seals-review-orders.cjs [playwright-core dir]   (CN_SHOTS=dir saves the screenshots)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
@@ -191,33 +191,9 @@ const ROWS = {
     assert.deepEqual(first, [], 'every Completed piece and order shows its seals:\n' + first.join('\n'));
     console.log('  ✓ Review → Completed (print + complete, complete only, older records, two lines of one SKU, one press, sent to the sheets, held, cancelled) and Orders (cards, list, a held order in Open Orders, Cancelled): each shows its own seals, once');
 
-    // 2 · Complete Order and Reopen with the real buttons: the seal is on every surface, and stays after the reopen
-    await page.evaluate(() => CN.setMode('review'));
-    await page.click('#reviewView .rvSeg [data-cseg="open"]');
-    await page.click('#reviewView .egTab[data-k="needResolution"]');
-    const ucard = `#rvList .reviewListRow[data-rid="${U}"]`, ukey = `${U}_41758924731`;
-    await page.click(ucard + ' [data-cu-complete]');
-    await page.waitForFunction(k => B.maps.customDone[k] && !document.querySelector('.cuStat, .btn.working'), ukey, { timeout: 30000 });
-    await settle();
-    const rec = srv.st.doc('Charm_Custom_Orders', ukey);
-    assert.ok(rec && rec.how === 'button' && rec.stamps.length === 1, 'completed on the server record: ' + JSON.stringify(rec));
-    await page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close && n.close()));
-    await page.click('#reviewView .rvSeg [data-cseg="done"]'); await settle();
-    const doneCards = (await sealsIn(`#rvList .reviewListRow[data-rid="${U}"]`)).filter(c => c.seals.length);
-    assert.equal(doneCards.length, 1, 'its Completed card, with a seal, once: ' + JSON.stringify(doneCards));
-    assert.deepEqual(faces(doneCards[0].seals), [['ORDER COMPLETE', 'Test Operator', 0]]);
-    const rowSeals = async () => { await page.evaluate(() => { CN.setMode('orders'); document.querySelector('#ordChips [data-pile=""]').click(); }); await page.waitForSelector(`#ordItems [data-key="${ukey}"]`); await settle(); return faces((await sealsIn(`#ordItems [data-key="${ukey}"]`))[0].seals); };
-    assert.deepEqual(await rowSeals(), [['ORDER COMPLETE', 'Test Operator', 0]], 'the Orders row shows it at once');
-    await page.evaluate(() => CN.setMode('review'));
-    await page.click('#reviewView .rvSeg [data-cseg="done"]');
-    await page.click(ucard + ' [data-cu-reopen]');
-    await page.waitForFunction(k => !B.maps.customDone[k] && B.maps.customKept[k], ukey, { timeout: 30000 }); await settle();
-    assert.equal(srv.st.doc('Charm_Custom_Orders', ukey).state, 'open'); assert.equal(srv.st.doc('Charm_Custom_Orders', ukey).stamps.length, 1, 'the record keeps its seal');
-    assert.deepEqual(await rowSeals(), [['ORDER COMPLETE', 'Test Operator', 0]], 'a reopened piece keeps its seal on the Orders row');
-    await page.evaluate(() => CN.setMode('review')); await page.click('#reviewView .rvSeg [data-cseg="open"]'); await settle();
-    const kept = await sealsIn(`#rvList .reviewListRow[data-rid="${U}"]`);
-    assert.deepEqual(faces(kept[0].seals), [['ORDER COMPLETE', 'Test Operator', 0]], 'and on the Open card, on the button that made it');
-    console.log('  ✓ Complete Order, then Reopen: the seal is on the Completed card and the Orders row, and stays on both after the reopen');
+    // 2 · (RELORDER, Paul 20 Oct 2026: "Remove the 'Complete Order' button from the Review tab and replace it with the new 'Release Order' button".) This card's piece
+    //     sits aside on another order's card, whose Release Hold releases the whole order; a Custom Orders card's own Release Hold, its seal and that the seal stays
+    //     after Reopen are proved by custom-orders.cjs and reopen-place.cjs, so the old Complete Order press is no longer replayed here.
 
     // 3 · 900 and 390 px: nothing leaves the page, every seal is inside it
     // (the dark rail folds below 900 px, as the page's own toggle does)
