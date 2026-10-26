@@ -142,7 +142,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     const selA = await rowSel(one.page, A), selD = await rowSel(one.page, D);
     await until(async () => (await shown(one.page, selA)) === picOld, 15000, async () => 'A\'s Orders row shows the old design (it shows ' + await which(one.page, selA, picOld, picNew) + ')');
     await one.page.evaluate(A => { const r = B.orders.rows.find(x => x.order.receiptId === A); OrderWin.open(r.key); }, A);
-    await until(async () => (await shown(one.page, '#owVector')) === picOld && await one.page.evaluate(() => !!document.getElementById('owWrongCharm')), 15000, 'the order window shows the old design');
+    await until(async () => (await shown(one.page, '#owVector')) === picOld && await one.page.evaluate(() => !!document.getElementById('owSkuCard')), 15000, 'the order window shows the old design');
     // the order window's Sheet tab: the plate drawn with A's piece as it is now
     const plateSku = page => page.evaluate(id => { const inf = OrderWin._sheet(); const x = inf && (inf.pieces || []).find(p => p.poolId === id); return x ? String((x.c && x.c.orderInfo && x.c.orderInfo.sku) || x.sku || '') : ''; }, idA);
     await one.page.evaluate(() => OrderWin.setView('sheet'));
@@ -162,7 +162,25 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
       await until(() => one.page.evaluate(() => !document.getElementById('owEditSku').disabled), 8000, 'Edit SKU is offered for ' + what);
       await one.page.click('#owEditSku');
       await until(() => one.page.evaluate(() => document.getElementById('owSkuDlg').open), 5000, 'the Edit SKU window');
-      await one.page.fill('#owSkuInput', sku);
+      if (process.env.SHOT && what === 'A') {
+        // (for a person to look at: very tall, very wide and square charm pictures, each must show whole in its box; the card and the window drawn with them)
+        await one.page.evaluate(() => { const svg = (w, h) => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="#ece7dc"/><rect x="3" y="3" width="${w - 6}" height="${h - 6}" rx="10" fill="none" stroke="#000" stroke-width="3"/><circle cx="${w / 2}" cy="14" r="6" fill="none" stroke="#000" stroke-width="3"/><path d="M8 ${h - 10} L${w - 8} ${h - 10}" stroke="#c00" stroke-width="5"/></svg>`);
+          const shape = k => /MOON_3288/.test(k) ? [60, 220] : /TINY/.test(k) ? [230, 60] : [140, 140]; Master.pictureTag = e => e ? `<img alt="" src="${svg(...shape(e.sku))}">` : ''; });
+        await one.page.evaluate(() => { const o = document.getElementById('owSkuDlg'); o.close(); }); await one.page.evaluate(() => { OrderWin.paint(); });
+        await sleep(1200); await one.page.mouse.move(5, 5); { const b = await one.page.locator('#owSkuCard').boundingBox(); await one.page.screenshot({ path: `${process.env.SHOT}-card.png`, clip: { x: Math.max(0, b.x - 12), y: Math.max(0, b.y - 300), width: b.width + 24, height: b.height + 312 } }); }
+        await one.page.click('#owEditSku'); await until(() => one.page.evaluate(() => document.getElementById('owSkuDlg').open), 5000, 'the window again');
+      }
+      if (what === 'A') {
+        // (SKUCARD: a word narrows the repo's SKUs as it is typed; the tile is the pick)
+        await one.page.fill('#owSkuInput', 'moon');
+        await until(() => one.page.evaluate(sku => !!document.querySelector(`#owSkuList [data-sku="${sku}"]`), sku), 5000, 'typing "moon" lists ' + sku);
+        const hits = await one.page.evaluate(() => [...document.querySelectorAll('#owSkuList [data-sku]')].map(b => b.dataset.sku));
+        assert(hits.every(h => /MOON/.test(h)) && !hits.includes('GFFILL_1'), 'only the repo SKUs with the word are listed: ' + JSON.stringify(hits));
+        assert(await one.page.evaluate(() => document.getElementById('owSkuSave').disabled), 'a word alone is no pick: Save waits for a tile');
+        if (process.env.SHOT) { await sleep(500); await one.page.locator('#owSkuDlg').screenshot({ path: `${process.env.SHOT}-search.png` }); }
+        await one.page.click(`#owSkuList [data-sku="${sku}"]`);
+        assert.equal(await one.page.evaluate(() => [document.getElementById('owSkuInput').value, document.getElementById('owSkuTo').dataset.s, document.getElementById('owSkuToName').textContent].join('|')), `${sku}|ok|${sku}`, 'the tile is the new SKU: FROM → TO shows it');
+      } else await one.page.fill('#owSkuInput', sku);
       if (process.env.SHOT) { await sleep(800); await one.page.locator('#owSkuDlg').screenshot({ path: `${process.env.SHOT}-${sku}-form.png` }); }
       await until(() => one.page.evaluate(() => !document.getElementById('owSkuSave').disabled), 5000, 'Save once the charm is found in the repo');
       await one.page.click('#owSkuSave');
@@ -177,7 +195,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     // (an SKU that is not in the repo is refused in the window itself: Save stays off)
     await until(() => one.page.evaluate(() => !document.getElementById('owEditSku').disabled), 8000, 'Edit SKU offered');
     await one.page.click('#owEditSku'); await one.page.fill('#owSkuInput', 'NOT-A-REPO-SKU');
-    assert(await one.page.evaluate(() => document.getElementById('owSkuSave').disabled && /not in the charm repo/.test(document.querySelector('#owSkuCheck .say').textContent) && !document.querySelector('#owSkuInput').hasAttribute('list') && !document.getElementById('owSkuPicks')), 'an SKU that is not in the repo cannot be saved; the window has no search (no suggestions list, no picks)');
+    await until(() => one.page.evaluate(() => document.getElementById('owSkuSave').disabled && /No charm in the repo matches/.test(document.querySelector('#owSkuCheck .say').textContent) && !document.querySelector('#owSkuList [data-sku]') && document.getElementById('owSkuField').dataset.s === 'bad'), 3000, 'an SKU that is not in the repo cannot be saved: no tile, a red mark, Save off');
     await one.page.click('#owSkuCancel'); await until(() => one.page.evaluate(() => !document.getElementById('owSkuDlg').open), 3000, 'Cancel closes it');
     await editSku(NEW, 'A');
     assert.equal(await one.page.evaluate(() => window.__asked.length), 0, 'no second question: Save in the window is the yes');

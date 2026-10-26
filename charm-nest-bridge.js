@@ -16105,6 +16105,20 @@ const Review = window.Review = (() => {
     const fix = fixOffer(row);
     return { ok: true, why: "", lid, from: from || "", cur: String(row.spec.designSku || "").toUpperCase(), viaLink: !!fix.ok };
   }
+  /** The lines one SKU edit covers: the open lines of the same listing with the same Etsy SKU. */
+  function editSkuSame(off) {
+    const lidOf = rr => String((rr.line && rr.line.listingId) || "").replace(/\D/g, ""), fromOf = rr => (window.CharmNestReviewLink && CharmNestReviewLink.fromOf ? CharmNestReviewLink.fromOf(rr.line, rr.spec) : String(rr.line.sku || "").toUpperCase());
+    return rr => lidOf(rr) === off.lid && (!off.from || fromOf(rr) === off.from);
+  }
+  /** SKUCARD: the charms Suggest offers (the Review card's own: its numbered designs and lookalikes, then the similar charms; the one it is cut as left out). → [{ sku, why }] */
+  function editSkuChoices(row) { try { return fixChoices(row).more.slice(0, 12); } catch (_) { return []; } }
+  /** SKUCARD: what an SKU edit of this line changes, for the window's chips: the open orders of the listing and SKU, the sheets their pieces are on, the pieces a cut keeps. */
+  function editSkuScope(row) {
+    const off = editSkuOffer(row); if (!off.ok) return null;
+    const rows = Orders.rows().filter(editSkuSame(off)), sheets = new Set(), cut = new Set();
+    for (const rr of rows) for (const id of rr.poolIds || []) { const sh = Pool.sheetOf(id) || allSheets().find(z => z.charms.some(c => c.poolId === id)); if (sh) ((sh.laserDoneAt || sh.roseCutAt) ? cut : sheets).add(rlName(sh)); }
+    return { lid: off.lid, from: off.from, orders: new Set(rows.map(rr => String(rr.order.receiptId))).size, sheets: [...sheets], cut: [...cut] };
+  }
   /** The Etsy half of an SKU edit, on the panel's "etsy" line: listing `off.lid` only, and only its products that carry the line's Etsy SKU take the new one (editSkuEtsy). → the answer */
   function editSkuEtsy(flow, off, sku, who) {
     const L = off.lid, say = (text, state, why) => { try { flow.line("etsy", text, state, why); } catch (_) { /* a word only */ } };
@@ -16128,8 +16142,7 @@ const Review = window.Review = (() => {
     if (O.entryBlock(e)) return no(`${sku} is blocked in the master, so it cannot be cut`);
     if (off.cur && (sku === off.cur || O.sameDesign(sku, off.cur, k => Master.entryFor(k)))) return no(`This line is ${off.cur} already`, "ok");
     const who = by(); if (!who) return no("Sign in first: the change is saved under your name");
-    const lidOf = rr => String((rr.line && rr.line.listingId) || "").replace(/\D/g, ""), fromOf = rr => (window.CharmNestReviewLink && CharmNestReviewLink.fromOf ? CharmNestReviewLink.fromOf(rr.line, rr.spec) : String(rr.line.sku || "").toUpperCase());
-    const same = rr => lidOf(rr) === off.lid && (!off.from || fromOf(rr) === off.from), rows = Orders.rows().filter(same);
+    const same = editSkuSame(off), rows = Orders.rows().filter(same);
     // (no sheet is held for an SKU edit: an order this line sent to Review is answered by it BEFORE the swap reads it (a Review hold would keep the old charm on its sheet), and a full sheet
     //  the old charm leaves stays full (PICKFULL is not applied: the new charm goes into the old spot when it fits, else onto the next sheet of its colour))
     try { const M = window.CharmNestReviewMark; if (M && M.isMarked && M.resolve) await Promise.all([...new Set(rows.map(x => String(x.order.receiptId)))].filter(rid => M.isMarked(rid)).map(rid => Promise.resolve(M.resolve(rid, { by: who, how: "pick", sku })).catch(() => {}))); } catch (_) { /* answered by the sweep as before */ }
@@ -18003,7 +18016,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -19154,9 +19167,14 @@ const OrderWin = window.OrderWin = (() => {
     wireZoom();
     // the buyer's message chip carries the Customer tab's own unread dot: it follows that dot (the mail module sets it as threads change)
     tryDo(() => { const dot = W.dlg.querySelector('[data-ow-tab="customer"] .owDot'); if (dot && window.MutationObserver) new MutationObserver(() => { const r = W.dlg.open && !W.closing && rowOf(W.key); if (r && !r.loading) paintFacts(r); }).observe(dot, { attributes: true, attributeFilter: ["hidden", "class"] }); });
-    byId("owWrongCharm").onclick = () => charmFix(false);   // (WRONGCHARM: the picker for the line shown, opened or put away)
+    byId("owSuggest").onclick = () => charmFix(false);   // (SKUCARD: the suggested charms, shown or put away; "Wrong charm?" of the Orders cards opens them)
     byId("owEditSku").onclick = () => openEditSku();   // (EDITSKU, Paul 26 Oct 2026)
-    byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && (O.setDesignsOf(r.spec) || []).join(" + ")) || (r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
+    // (Copy says it on the button itself: a tick and "Copied" for a moment)
+    byId("owCopy").onclick = async () => {
+      const b = byId("owCopy"), r = rowOf(W.key); const sku = r && ((r.spec && (O.setDesignsOf(r.spec) || []).join(" + ")) || (r.spec && r.spec.designSku) || r.line.sku); if (!sku) return;
+      try { await navigator.clipboard.writeText(sku); } catch (_) { toast("Copy did not work: select the SKU and copy it", "bad", 3000); return; }
+      const t = b.querySelector("span"); b.classList.add("done"); t.textContent = "Copied"; clearTimeout(b._done); b._done = setTimeout(() => { b.classList.remove("done"); t.textContent = "Copy"; }, 1600);
+    };
     // (no name chip in Team messages: a message carries the person of the account chip; nobody signed in, Send asks for the name inline; Paul, 18 Oct 2026)
     const input = byId("owInput");
     input.oninput = () => { grow(); TeamMail.setDraft(W.rid, input.value); };
@@ -19660,9 +19678,7 @@ const OrderWin = window.OrderWin = (() => {
     // photo alone, or "no image" while the photo was not ready)
     const vh = byId("owVector"); if (vh) { if (W.zoom) tryDo(() => W.zoom.vector.key(vectorKey(r))); tryDo(() => ListMedia.vectorInto(vh, r)); }
     // (the SKU alone, as the Copy button copies it: an earring pair says its Left and Right in its pieces and facts, not on this line: Paul, 12 Oct 2026)
-    byId("owSku").textContent = "SKU: " + ((O.setDesignsOf(sp) || []).join(" + ") || sp.designSku || r.line.sku || "—");   // (a necklace of saved charms names them all)
-    paintCharmFix(r);
-    { const eb = byId("owEditSku"); if (eb) { const eo = r.loading || !window.Review || !Review.editSkuOffer ? { ok: false, why: "the line is not read yet" } : tryDo(() => Review.editSkuOffer(r)) || { ok: false }; eb.disabled = !eo.ok; eb.title = eo.ok ? `Match Etsy SKU ${eo.from || "(none)"} of listing ${eo.lid} to a charm in the charm repo` : `Edit SKU: ${eo.why || "not for this line"}`; } }
+    paintSkuCard(r);   // (SKUCARD: the SKU, its state, Copy / Suggest / Change, the suggested charms)
     paintSetLens(r);
     paintEng(r);
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller
@@ -19699,70 +19715,150 @@ const OrderWin = window.OrderWin = (() => {
   /** WRONGCHARM (Paul, 18 Oct 2026, order 4193072538): "Wrong charm?" beside the SKU under the Vector design, for a line matched to a library charm (Review.fixOffer); its picker
    *  (Review.fixPicker) opens below it for THIS line and is put away when the window shows another line or the line can no longer be corrected. The picker is drawn once when it opens
    *  (a repaint never empties what is being typed into its search). */
-  /* EDITSKU (Paul, 26 Oct 2026): the Edit SKU window. "I actually don't need the search ... I only need to be able to replace the existing SKU and I can do the search from the charm repo":
-     the Etsy SKU as it is, ONE field for the new SKU exactly as the charm repo has it (checked as it is typed: in the repo, blocked, or this line's already), Save. Save is Review.editSku: the
-     Etsy listing (this one only), the listing's link or alias, every open order of the listing and SKU (the new charm in the old spot when it fits, else on the next sheet of its colour), every
-     view; and "a robust progress bar so that the user is aware of what is being changed and when the process is actually completed": the window turns into that progress (the panel is drawn in
-     it, one line per place changed, the bar, "Completed at hh:mm"). Close never stops the work; a closed window says it with a note once it is finished. */
-  function openEditSku() {
+  /* EDITSKU (Paul, 26 Oct 2026): the Change SKU window. FROM (the listing photo and its Etsy SKU) → TO (the new charm's picture and SKU); one field: "if I type in everything that has the word music
+     ... should be shown to me in a list and as I'm typing that list should get filtered down in real time": every word typed narrows the repo's SKUs (any order, part of a word is enough), shown
+     as picture tiles; a tap (or the exact SKU pasted) is the new SKU. Before Save, what it changes as icon chips (the Etsy listing, the open orders, the sheets, the cut pieces kept). Save is
+     Review.editSku, and the window turns into its progress (the bar, a line per place changed, "Completed at hh:mm"); Close never stops the work; a closed window toasts the end. */
+  function openEditSku(prefill) {
     const r = rowOf(W.key), d = byId("owSkuDlg"); if (!r || !d || !window.Review || !Review.editSkuOffer) return;
     if (d.dataset.busy === "1") { try { d.showModal(); } catch (_) { d.setAttribute("open", ""); } return; }   // (a change still being made: its progress is shown again)
-    const off = tryDo(() => Review.editSkuOffer(r)) || { ok: false, why: "" }; if (!off.ok) { toast(`Edit SKU: ${off.why}`, "bad", 6000); return; }
+    const off = tryDo(() => Review.editSkuOffer(r)) || { ok: false, why: "" }; if (!off.ok) { toast(`Change SKU: ${off.why}`, "bad", 6000); return; }
     const form = byId("owSkuForm"), prog = byId("owSkuProg"), input = byId("owSkuInput"), check = byId("owSkuCheck"), save = byId("owSkuSave"), cancel = byId("owSkuCancel");
-    form.hidden = false; prog.hidden = true; prog.innerHTML = ""; save.hidden = false; save.textContent = "Save"; cancel.textContent = "Cancel"; input.disabled = false;
-    byId("owSkuNow").innerHTML = `Etsy SKU now <b>${esc(off.from || "(none)")}</b> · listing ${esc(off.lid)} · ${off.cur ? `cut as <b>${esc(off.cur)}</b>` : "no charm in the repo matches it"}.`;
-    byId("owSkuNote").textContent = `Save changes it everywhere at once: Etsy listing ${off.lid} (${off.from ? `only its products with the SKU “${off.from}”` : "the line has no Etsy SKU, so Etsy is not changed"}; other listings are not changed), every open order of this listing with this SKU and its next orders, and the sheets: a charm already on a sheet is swapped in its place when the new one fits there, otherwise the new one goes on the next sheet of its colour. No sheet is held.`;
-    const say = (tone, html, pic) => { check.className = "seCheck" + (tone ? " " + tone : ""); check.querySelector(".say").innerHTML = html; check.querySelector(".pic").innerHTML = pic || ""; if (pic) tryDo(() => Master.mountPictures(check)); };
-    const show = () => {
-      const k = String(input.value || "").trim().toUpperCase(), e = k ? tryDo(() => Master.entryFor(k)) : null, inRepo = !!k && B.master.entries.has(k), blocked = inRepo && e && tryDo(() => O.entryBlock(e));
-      const same = inRepo && off.cur && (k === off.cur || tryDo(() => O.sameDesign(k, off.cur, x => Master.entryFor(x))));
-      if (!k) say("", "Paste or type the new SKU exactly as it is in the charm repo.");
-      else if (!inRepo) say("bad", `<b>${esc(k)}</b> is not in the charm repo: copy its SKU from the charm repo.`);
-      else if (blocked) say("bad", `<b>${esc(k)}</b> is blocked in the master, so it cannot be cut.`, tryDo(() => Master.pictureTag(e)));
-      else if (same) say("bad", `<b>${esc(k)}</b> is this line's charm already.`, tryDo(() => Master.pictureTag(e)));
-      else say("ok", `<b>${esc(k)}</b> is in the charm repo.`, tryDo(() => Master.pictureTag(e)));
-      save.disabled = !inRepo || !!blocked || !!same;
+    const field = byId("owSkuField"), fmark = byId("owSkuMark"), list = byId("owSkuList"), scope = byId("owSkuScope"), to = byId("owSkuTo"), toPic = byId("owSkuToPic"), toName = byId("owSkuToName");
+    const saveLbl = save.querySelector("span") || save;
+    form.hidden = false; prog.hidden = true; prog.innerHTML = ""; save.hidden = false; saveLbl.textContent = "Change SKU"; cancel.textContent = "Cancel"; input.disabled = false;
+    // FROM: the listing's photo (as the window shows it) and its Etsy SKU
+    const im = tryDo(() => byId("owPhoto").querySelector("img")), src = im && im.getAttribute("src");
+    byId("owSkuFromPic").innerHTML = src ? `<img class="photo" alt="" src="${esc(src)}">` : SKI.tag.replace("<svg ", '<svg class="q" ');
+    byId("owSkuFrom").textContent = off.from || "(no SKU)";
+    // what it changes, as chips (each says the rest when pointed at)
+    const sc = tryDo(() => Review.editSkuScope(r)) || { orders: 0, sheets: [], cut: [] }, chip = (ic, txt, tip, cls) => `<span class="seChip${cls ? " " + cls : ""}" title="${esc(tip)}">${ic}<span>${esc(txt)}</span></span>`;
+    scope.innerHTML = chip(SKI.tag, `Etsy ${off.lid}`, off.from ? `Etsy listing ${off.lid}: only its products with the SKU “${off.from}” take the new one; other listings are not changed` : "The line has no Etsy SKU: Etsy is not changed", off.from ? "" : "off")
+      + chip(SKI.box, `${sc.orders} order${sc.orders === 1 ? "" : "s"}`, `Every open order of listing ${off.lid} with this SKU, and its next orders`)
+      + (sc.sheets.length ? chip(SKI.sheet, `${sc.sheets.length} sheet${sc.sheets.length === 1 ? "" : "s"}`, `${sc.sheets.join(", ")}: the new charm goes in the old one's spot when it fits, else on the next sheet of its colour; no sheet is held`) : "")
+      + (sc.cut.length ? chip(SKI.cut, `${sc.cut.length} cut · kept`, `${sc.cut.join(", ")}: already cut, so its piece stays as it is`, "warn") : "");
+    // the repo's SKUs, read once for this window, each with the words it is found by
+    const idx = []; for (const [k, e] of B.master.entries) idx.push({ sku: k, n: skuNorm(k + " " + ((e && (e.title || e.name)) || "")), e });
+    const suggested = (W.skuCh && W.skuCh.list) || [];
+    let sel = null, timer = 0;
+    const verdict = k => { const e = tryDo(() => Master.entryFor(k)); if (!e || !B.master.entries.has(k)) return "missing"; if (tryDo(() => O.entryBlock(e))) return "blocked"; if (off.cur && (k === off.cur || tryDo(() => O.sameDesign(k, off.cur, x => Master.entryFor(x))))) return "same"; return "ok"; };
+    const say = (tone, html) => { check.className = "seCheck" + (tone ? " " + tone : ""); check.querySelector(".say").innerHTML = html; };
+    const paintTo = (k, s) => { to.dataset.s = s; toName.textContent = k || "—"; toPic.innerHTML = k ? skuPic(k) : SKI.q; if (k) tryDo(() => Master.mountPictures(toPic)); };
+    const mark = (k, html) => { const ws = skuNorm(input.value).split(" ").filter(Boolean); let h = esc(k); for (const w of ws.sort((x, y) => y.length - x.length)) h = h.replace(new RegExp(`(${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})(?![^<]*>)`, "i"), "<mark>$1</mark>"); return html ? h : k; };
+    const drawList = () => {
+      const raw = String(input.value || "").trim().toUpperCase(), words = skuNorm(raw).split(" ").filter(Boolean);
+      let hits;
+      if (!words.length) hits = suggested.map(c => idx.find(x => x.sku === c.sku)).filter(Boolean);   // (nothing typed: the suggested charms)
+      else hits = idx.filter(x => words.every(w => x.n.includes(w))).sort((a, b) => (a.sku === raw ? 0 : 1) - (b.sku === raw ? 0 : 1) || (a.n.startsWith(words[0]) ? 0 : 1) - (b.n.startsWith(words[0]) ? 0 : 1) || a.sku.length - b.sku.length || (a.sku < b.sku ? -1 : 1));
+      const MAX = 60, shown = hits.slice(0, MAX);
+      list.innerHTML = shown.map(x => { const v = verdict(x.sku); return `<button type="button" class="seHit" role="option" data-sku="${esc(x.sku)}" aria-selected="${x.sku === sel}"${v === "blocked" || v === "same" ? " disabled" : ""} title="${esc(v === "blocked" ? `${x.sku}: blocked in the master` : v === "same" ? `${x.sku}: this line's charm already` : x.sku)}"><span class="skPic">${skuPic(x.sku)}</span><span class="nm">${mark(x.sku, true)}</span></button>`; }).join("")
+        + (hits.length > MAX ? `<div class="seMore">${hits.length - MAX} more: type another word to narrow it</div>` : "");
+      tryDo(() => Master.mountPictures(list));
+      list.querySelectorAll("[data-sku]").forEach(t => { t.onclick = () => { input.value = t.dataset.sku; show(); tryDo(() => save.focus()); }; t.onkeydown = ev => keys(ev, t); t.onmouseenter = () => { if (!sel) paintTo(t.dataset.sku, "peek"); }; t.onmouseleave = () => { if (!sel) paintTo(null, "empty"); }; });
+      return { raw, words, n: hits.length };
     };
-    input.value = ""; input.oninput = show; show();
-    input.onkeydown = ev => { if (ev.key === "Enter") { ev.preventDefault(); if (!save.disabled) save.click(); } };
-    const back = () => { d.dataset.busy = ""; form.hidden = false; prog.hidden = true; prog.innerHTML = ""; input.disabled = false; save.hidden = false; save.textContent = "Save"; cancel.textContent = "Cancel"; show(); };
+    const keys = (ev, t) => {
+      const all = [...list.querySelectorAll("[data-sku]:not(:disabled)")], i = all.indexOf(t);
+      const go = j => { const n = all[Math.max(0, Math.min(all.length - 1, j))]; if (n) { n.focus(); if (!sel) paintTo(n.dataset.sku, "peek"); } };
+      if (ev.key === "ArrowRight" || ev.key === "ArrowDown") { ev.preventDefault(); go(i + 1); }
+      else if (ev.key === "ArrowLeft" || ev.key === "ArrowUp") { ev.preventDefault(); if (i <= 0) input.focus(); else go(i - 1); }
+    };
+    const show = () => {
+      const raw = String(input.value || "").trim().toUpperCase(), v = raw ? verdict(raw) : "";
+      sel = v === "ok" ? raw : null;
+      const got = drawList();
+      field.dataset.s = !raw ? "" : v === "ok" ? "ok" : (v === "blocked" || v === "same" || !got.n) ? "bad" : "";
+      fmark.innerHTML = field.dataset.s === "ok" ? SKI.check : field.dataset.s === "bad" ? SKI.cross : "";
+      if (!raw) say("", suggested.length ? "Suggested charms below. Type any word of a charm's SKU to search the repo, or paste the SKU." : "Type any word of a charm's SKU to search the repo, or paste the SKU.");
+      else if (v === "ok") say("ok", `<b>${esc(raw)}</b> · in the charm repo`);
+      else if (v === "blocked") say("bad", `<b>${esc(raw)}</b> is blocked in the master, so it cannot be cut`);
+      else if (v === "same") say("bad", `This line is <b>${esc(raw)}</b> already`);
+      else if (got.n) say("", `${got.n} charm${got.n === 1 ? "" : "s"} in the repo match${got.n === 1 ? "es" : ""}: tap one`);
+      else say("bad", `No charm in the repo matches “${esc(raw)}”`);
+      paintTo(sel || (v === "blocked" || v === "same" ? raw : null), sel ? "ok" : v === "blocked" || v === "same" ? "bad" : "empty");
+      save.disabled = !sel;
+    };
+    input.value = prefill ? String(prefill).toUpperCase() : ""; input.oninput = () => { clearTimeout(timer); timer = setTimeout(show, 70); }; show();
+    input.onkeydown = ev => {
+      if (ev.key === "ArrowDown") { const f = list.querySelector("[data-sku]:not(:disabled)"); if (f) { ev.preventDefault(); f.focus(); if (!sel) paintTo(f.dataset.sku, "peek"); } }
+      else if (ev.key === "Enter") { ev.preventDefault(); clearTimeout(timer); show(); if (!save.disabled) save.click(); else { const only = list.querySelectorAll("[data-sku]:not(:disabled)"); if (only.length === 1) only[0].click(); } }
+    };
+    const back = () => { d.dataset.busy = ""; form.hidden = false; prog.hidden = true; prog.innerHTML = ""; input.disabled = false; save.hidden = false; saveLbl.textContent = "Change SKU"; cancel.textContent = "Cancel"; show(); };
     save.onclick = async () => {
-      const k = String(input.value || "").trim().toUpperCase(); if (save.disabled || !k) return;
-      d.dataset.busy = "1"; save.disabled = true; save.textContent = "Updating…"; input.disabled = true; cancel.textContent = "Close";
+      const k = sel; if (save.disabled || !k) return;
+      d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Changing…"; input.disabled = true; cancel.textContent = "Close";
       form.hidden = true; prog.hidden = false; prog.innerHTML = "";
       let res = null; try { res = await Review.editSku(rowOf(W.key) || r, k, { host: prog }); } catch (e) { res = { ok: false, why: (e && e.message) || String(e) }; }
       if (!res || (!res.ok && !res.done)) { back(); if (res && res.why) say("bad", esc(res.why)); return; }   // (nothing was changed: the window is the form again, with the reason)
       if (W.dlg && W.dlg.open && rowOf(W.key)) tryDo(paint);
       const fin = await Promise.resolve(res.done).catch(() => null), e = fin && fin.etsy;
-      d.dataset.busy = ""; save.hidden = true; save.textContent = "Save"; cancel.textContent = "Close";
+      d.dataset.busy = ""; save.hidden = true; saveLbl.textContent = "Change SKU"; cancel.textContent = "Close";
       if (W.dlg && W.dlg.open && rowOf(W.key)) tryDo(paint);
-      if (!d.open) toast(`Edit SKU ${k}: ${res.ok ? "finished" : "not saved in the app"} · ${e && e.ok ? "Etsy updated" : e && e.skipped ? "Etsy not changed" : "Etsy NOT updated"}`, res.ok && (!e || e.ok || e.skipped) ? "ok" : "bad", 7000);
+      if (!d.open) toast(`Change SKU ${k}: ${res.ok ? "finished" : "not saved in the app"} · ${e && e.ok ? "Etsy updated" : e && e.skipped ? "Etsy not changed" : "Etsy NOT updated"}`, res.ok && (!e || e.ok || e.skipped) ? "ok" : "bad", 7000);
     };
     try { d.showModal(); } catch (_) { d.setAttribute("open", ""); }
-    setTimeout(() => { try { input.focus(); } catch (_) {} }, 0);
+    setTimeout(() => { try { (prefill && !save.disabled ? save : input).focus(); } catch (_) {} }, 0);
   }
-  function paintCharmFix(r) {
-    const b = byId("owWrongCharm"), host = byId("owCharmFix"); if (!b || !host) return;
-    const off = r && !r.loading && window.Review && Review.fixOffer ? tryDo(() => Review.fixOffer(r)) : null, ok = !!(off && off.ok);
-    b.hidden = !ok; if (ok) b.title = `Pick the right library charm for listing ${off.listingId} (matched to ${off.cur} now)`;
-    if (!ok || (W.cfKey && W.cfKey !== r.key)) shutCharmFix();
-    if (ok && W.cfWant === r.key) { W.cfWant = null; openCharmFix(r); }
+  /* SKUCARD (Paul, 26 Oct 2026: "rethink the UI for the SKU, Copy, Edit SKU, Charm Suggest buttons ... driven by visual cues and icons ... at a glance understand what's being changed from what
+     to what ... lots of feedback"). The SKU this line is cut as (the "SKU: " label is for the readers of the text; the eye sees the tag), its state as one mark, the Etsy SKU under it when it is
+     another, then Copy / Suggest (with its count) / Change, and the suggested charms as picture tiles: one tap opens the Change window with that charm as the new SKU. A line no charm matches
+     shows its suggestions at once. "Wrong charm?" (the Orders cards' link) opens them. */
+  const SKI = {
+    check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>', cross: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    link: '<svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
+    alert: '<svg viewBox="0 0 24 24"><path d="M12 4v9"/><path d="M12 18h.01"/></svg>',
+    tag: '<svg viewBox="0 0 24 24"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.4"/></svg>',
+    box: '<svg viewBox="0 0 24 24"><path d="M3 7.5l9-4.5 9 4.5v9l-9 4.5-9-4.5z"/><path d="M3 7.5l9 4.5 9-4.5M12 12v9"/></svg>',
+    sheet: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.2"/><circle cx="8.5" cy="9.5" r="1.8"/><circle cx="15" cy="10" r="2.2"/><circle cx="10" cy="15.5" r="1.9"/></svg>',
+    cut: '<svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5l12 7M8 15.5l12-7"/></svg>',
+    q: '<svg class="q" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6"/><path d="M12 17h.01"/></svg>',
+    via: '<svg viewBox="0 0 24 24"><path d="M6 4v8a4 4 0 0 0 4 4h9"/><path d="M15 12l4 4-4 4"/></svg>'
+  };
+  const skuNorm = t => String(t == null ? "" : t).toUpperCase().replace(/[_\-–—/.,:;()&+#'"*]+/g, " ").replace(/\s+/g, " ").trim();
+  const skuPic = sku => { const e = tryDo(() => Master.entryFor(sku)); return (e && tryDo(() => Master.pictureTag(e))) || SKI.q; };
+  function paintSkuCard(r) {
+    const card = byId("owSkuCard"); if (!card || !r) return;
+    const sp = r.spec || {}, designs = (O.setDesignsOf(sp) || []).filter(Boolean), design = designs.join(" + ") || sp.designSku || "";
+    const etsy = String((tryDo(() => O.decodeEntities(r.line.sku)) ?? r.line.sku) || "").trim();
+    const shown = design || etsy || "—";
+    byId("owSku").innerHTML = `<span class="skLbl">SKU: </span>${esc(shown)}`;
+    const inRepo = !!design && (designs.length ? designs : [design]).every(k => B.master.entries.has(String(k).toUpperCase()));
+    const st = r.loading ? "" : !inRepo ? "none" : etsy && skuNorm(etsy) !== skuNorm(design) ? "linked" : "ok";
+    card.dataset.state = st;
+    const mark = byId("owSkuState");
+    mark.innerHTML = st === "ok" ? SKI.check : st === "linked" ? SKI.link : st === "none" ? SKI.alert : "";
+    mark.title = st === "ok" ? "A charm in the repo matches this SKU" : st === "linked" ? "Cut as this repo charm; the Etsy SKU is shown under it" : st === "none" ? "No charm in the repo matches this SKU" : "";
+    mark.setAttribute("aria-label", mark.title || "");
+    const via = byId("owSkuVia"); via.hidden = st !== "linked";
+    if (st === "linked") via.innerHTML = `${SKI.via}<span>Etsy</span><b>${esc(etsy)}</b>`;
+    // the three buttons
+    const eo = r.loading || !window.Review || !Review.editSkuOffer ? { ok: false, why: "the line is not read yet" } : tryDo(() => Review.editSkuOffer(r)) || { ok: false };
+    const eb = byId("owEditSku"); eb.disabled = !eo.ok; eb.title = eo.ok ? `Change the SKU of listing ${eo.lid}: Etsy, the charm and the sheets together` : `Change SKU: ${eo.why || "not for this line"}`;
+    const sig = [r.key, design, etsy, B.master.entries.size, eo.ok].join("|");
+    if (!W.skuCh || W.skuCh.sig !== sig) W.skuCh = { sig, list: eo.ok && Review.editSkuChoices ? (tryDo(() => Review.editSkuChoices(r)) || []) : [] };
+    const choices = W.skuCh.list, sg = byId("owSuggest");
+    byId("owSuggestN").textContent = choices.length ? String(choices.length) : "";
+    sg.disabled = !eo.ok || !choices.length; sg.title = !eo.ok ? `Suggest: ${eo.why || "not for this line"}` : choices.length ? `${choices.length} similar charm${choices.length === 1 ? "" : "s"} in the repo` : "No similar charms found: use Change to search the repo";
+    // the tray: opened by Suggest, by "Wrong charm?", or at once for a line no charm matches
+    if (W.sgKey !== r.key && !r.loading) { W.sgKey = r.key; W.sgOpen = (st === "none" && choices.length > 0) || W.sgWant === r.key; W.sgWant = null; }
+    else if (W.sgWant === r.key) { W.sgOpen = true; W.sgWant = null; }
+    const open = !!(W.sgOpen && choices.length && !sg.disabled), tray = byId("owSkuTray");
+    sg.setAttribute("aria-expanded", open ? "true" : "false"); tray.hidden = !open;
+    if (open && tray.dataset.sig !== sig) {
+      tray.dataset.sig = sig;
+      tray.innerHTML = choices.map(c => `<button type="button" class="skTile" data-sku="${esc(c.sku)}" title="${esc(c.why ? `${c.sku} · ${c.why}` : c.sku)}: tap to make it the new SKU"><span class="skPic">${skuPic(c.sku)}</span><span class="nm">${esc(c.sku)}</span></button>`).join("");
+      tryDo(() => Master.mountPictures(tray));
+      tray.querySelectorAll("[data-sku]").forEach(t => { t.onclick = () => openEditSku(t.dataset.sku); });
+    }
+    if (!open) tray.dataset.sig = "";
   }
-  function shutCharmFix() { const b = byId("owWrongCharm"), host = byId("owCharmFix"); W.cfKey = null; if (host && !host.hidden) { host.hidden = true; host.innerHTML = ""; } if (b) b.setAttribute("aria-expanded", "false"); }
-  function openCharmFix(r) {
-    const b = byId("owWrongCharm"), host = byId("owCharmFix"); if (!b || !host || !r) return false;
-    W.cfKey = r.key; host.hidden = false; b.setAttribute("aria-expanded", "true");
-    const drawn = Review.fixPicker(host, r, { close: () => { shutCharmFix(); tryDo(() => b.focus()); }, done: () => { shutCharmFix(); if (W.dlg && W.dlg.open && !W.closing && rowOf(W.key)) tryDo(paint); } });
-    const f = host.querySelector("[data-f=dsku]"); if (drawn && f) tryDo(() => f.focus({ preventScroll: true }));
-    return drawn;
-  }
-  /** "Wrong charm?" pressed (or the Orders card's): the picker for the line shown, opened or put away; want=true opens it (the window may still be opening: then it opens at its paint). */
+  /** Suggest pressed (or the Orders card's "Wrong charm?", want=true): the suggested charms of the line shown, opened or put away (the window may still be opening: then at its paint). */
   function charmFix(want) {
     const r = W.dlg && W.dlg.open && W.key ? rowOf(W.key) : null;
-    if (!r) { if (want && W.key) W.cfWant = W.key; return false; }
-    if (W.cfKey === r.key && !want) { shutCharmFix(); return false; }
-    if (!tryDo(() => Review.fixOffer(r).ok)) { if (want) W.cfWant = r.key; return false; }
-    return openCharmFix(r);
+    if (!r || r.loading) { if (want && W.key) W.sgWant = W.key; return false; }
+    W.sgKey = r.key; W.sgOpen = want ? true : !W.sgOpen; paintSkuCard(r);
+    if (W.sgOpen) { const t = byId("owSkuTray"); tryDo(() => t.querySelector("[data-sku]").focus({ preventScroll: false })); }
+    return !!W.sgOpen;
   }
   /** Send to Sheet in the header, on every tab, while the order's own designs are ready and not sent: its Review card's
    *  button. The design lifts off it and the view steps out of the way for the flight, then comes back as it was (SendTour,
