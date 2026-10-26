@@ -1,6 +1,6 @@
 /* SETSIM, the INCREMENTAL scenario (SETFIX, Paul 17 Oct 2026: "Set 2 was formed incorrectly ... I want you to fix it once and for all").
  *
- * The simulations that complete every sheet together (setsim-days.cjs "end", the batch looks of setsim-sets.cjs) hid the bug: Set 2 of 17 Oct was made by sheets that ARRIVE one after the other. Rose Gold
+ * The simulations that complete every sheet together (a whole day judged at its end, the batch looks of setsim-sets.cjs) hid the bug: Set 2 of 17 Oct was made by sheets that ARRIVE one after the other. Rose Gold
  * sheets are verified BEFORE their partners complete (or after, or in between), the groups of sheets that share orders complete one group at a time or one sheet at a time, partial drafts that share
  * orders with one group (or with several) fill up late, and a gold-family sheet is cut at some moment of the day.
  *

@@ -138,7 +138,7 @@ const until = async (fn, ms = 20000, what = '') => { ms *= SLOW; const t0 = Date
     page.setDefaultTimeout(20000 * SLOW);
     page.on('pageerror', e => { errors.push('page: ' + e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 4).join(' | ')); });
     page.on('console', m => { if (m.type() === 'error' && !/firebase stub|Failed to load resource/.test(m.text())) errors.push('console: ' + m.text().slice(0, 300)); });
-    page.on('request', r => { if (r.method() === 'POST' && /charmNest|\.netlify\/functions/.test(r.url())) { try { const b = r.postDataJSON() || {}; if (b.op !== 'laserStatus' && (/apply|commit|hold|cancel(?!List)|rose|move|save|write|delete|purge|reset|remove|put|steps/i.test(b.op || '') || b.steps)) writes.push(b.op || 'post'); } catch (_) { /* not json */ } } });   // (the Library's own once-a-minute laserStatus check at opening is the page's, not the window's)
+    page.on('request', r => { if (r.method() === 'POST' && /charmNest|\.netlify\/functions/.test(r.url())) { try { const b = r.postDataJSON() || {}; if (!['laserStatus', 'customSavePending', 'customSaveRepair'].includes(b.op) && (/apply|commit|hold|cancel(?!List)|rose|move|save|write|delete|purge|reset|remove|put|steps/i.test(b.op || '') || b.steps)) writes.push(b.op || 'post'); } catch (_) { /* not json */ } } });   // (the Library's own once-a-minute laserStatus check at opening is the page's, not the window's; so are the page-load save keeper's customSavePending / customSaveRepair, charm-nest-bridge.js keepPending / keepRepair)
     await page.exposeFunction('__fixtureMove', (id, to) => moveSheet(st, id, to));
     if (!o.real) {
       await page.addInitScript(`(${fakeShared.toString()})(${JSON.stringify({ orders: ORDERS })})`);

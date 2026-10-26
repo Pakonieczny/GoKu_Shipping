@@ -88,7 +88,7 @@ In a set a sheet is "GF Sheet n", n its number in that set for its metal, from 1
 The checker reports `sets[].canApprove` (no violation and no partner to add) as the state-side half of this.
 
 **R16 · HARD: a multi-piece order (pairs, earrings, discs, several lines) is on ONE sheet of its colour, so same-colour sheets never chain.** Checker: `warnings[] orderSplit` (a nesting fault; never fails `ok`).
-> "... orders with multiple pieces or earrings with left and right charms should stay on a given sheet, so that sheets of the same colour do not create an endless chain of connections" (Paul, 15 Oct) `tests/charm-nest/setsim-days.cjs:3-4`
+> "... orders with multiple pieces or earrings with left and right charms should stay on a given sheet, so that sheets of the same colour do not create an endless chain of connections" (Paul, 15 Oct)
 > "keep orders of the same colour on one sheet ... the priority should be to maintain all of the pieces for each given order on that one sheet" (Paul, 13 Oct) `tests/charm-nest/setsim-lib.cjs:3-5`
 > "Orders are still being spread across sheets of the same colour where I explicitly forbid that from happening and I believe I told you many times that sheets of the same colour cannot have cross-pollination of charms from a multi-charm/earring orders ... near the end/completion of a given sheet colour, there should be no orders added that cannot physically fit on that given sheet. All multi-piece orders that do not fit on a given sheet (Near the end of that sheet) should be put onto the next avaliable sheet and only single piece/charm orders should be used to fill/complete a given sheet" (Paul, 26 Oct 2026)
 

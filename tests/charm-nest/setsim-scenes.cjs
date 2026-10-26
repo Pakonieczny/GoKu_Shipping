@@ -1,5 +1,5 @@
 /* SETSIM scenes: a handful of small, explicit situations from Paul's 13 Oct 2026 request, each run through the sorter's own feed / intake / keep-whole / overflow / gap-fill
- * code (the same slices setsim-run.cjs uses) around the real solver, on FAKE orders only (order ids made up here, no buyer, no Etsy, no Firestore, no paid call).
+ * code (the slices setsim-lib.cjs makes) around the real solver, on FAKE orders only (order ids made up here, no buyer, no Etsy, no Firestore, no paid call).
  *   node tests/charm-nest/setsim-scenes.cjs [--root DIR] [--only late,queue,queue2,pair,lines,chain] [--metal gold|silver|rose] [--sheet 60x40] [--step 60] [--measure] [--json F]
  * A scene is red (exit 1, the exact case printed) when an order's pieces end on two sheets, a piece is lost or waits to the end, or a multi-piece order
  * that cannot fit a nearly full sheet takes room that small single-charm orders could have filled.  --measure prints the same without failing.
