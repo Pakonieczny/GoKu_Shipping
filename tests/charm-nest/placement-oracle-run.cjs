@@ -89,7 +89,9 @@ const VIEWS = [
     open: async (p, c) => { await p.evaluate(() => document.querySelector('#modeSeg [data-mode="orders"]').click()); await p.waitForSelector('#ordItems [data-key]', { timeout: 10000 }).catch(() => {}); },
     close: async () => {}, read: (p, c) => p.evaluate(R.list, c.rid) },
   { id: 'lib', label: 'Library · sheet cards (charms, orders, what is left)', page: 'v',
-    open: async (p, c) => { await p.evaluate(() => document.querySelector('#modeSeg [data-mode="library"]').click()); await p.waitForSelector('#libBody .libCard[data-id]', { timeout: 15000 }).catch(() => {}); },
+    open: async (p, c) => { const t0 = await p.evaluate(() => Date.now()); await p.evaluate(() => document.querySelector('#modeSeg [data-mode="library"]').click());
+      // (the page is kept from one scenario to the next: the cards of the last one are still drawn, so wait for THIS opening's read of the cloud, S.library.loadedAt)
+      await p.waitForFunction(t => +S.library.loadedAt >= t, t0, { timeout: 15000 }).catch(() => {}); await p.waitForSelector('#libBody .libCard[data-id]', { timeout: 15000 }).catch(() => {}); },
     close: async () => {}, read: (p, c) => p.evaluate(R.lib, c.rid) },
   { id: 'sw', label: 'Sheet window · charms and orders on the sheet', page: 'v',
     open: async (p, c) => { await p.evaluate(id => { SheetWin.open(id); }, SHEET_FOR_SW); await p.waitForFunction(() => SheetWin.isOpen(), null, { timeout: 8000 }).catch(() => {}); await p.waitForTimeout(600); },
