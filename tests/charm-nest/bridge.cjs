@@ -225,10 +225,11 @@ const receipts = [
   let engChecked = false;                      // the placement-card checks below must actually have run
   let t0 = Date.now(), lastStep = '', lastJobs = '', lastDone = '';
   while (Date.now() - t0 < 600000) {
-    const r = await page.evaluate(() => B.run && { status: B.run.status, step: B.run.step, stoppedBy: B.run.stoppedBy, fix: B.run.fix, setId: B.run.setId });
+    const r = await page.evaluate(() => B.run && { status: B.run.status, step: B.run.step, stoppedBy: B.run.stoppedBy, fix: B.run.fix, setId: B.run.setId, done: !!B.run.processingComplete });
     if (r && (r.step !== lastStep || r.status === 'stopped')) { lastStep = r.step; console.log('  run', r.status, r.step, r.stoppedBy || ''); }
     if (!r) { await page.waitForTimeout(300); continue; }
-    if (r.status === 'complete') break;
+    // (a run whose held order is still pending ends its processing as "processed": open, new orders join it as they arrive, RunCtl; "complete" when nothing is pending)
+    if (r.status === 'complete' || (r.status === 'processed' && r.done)) break;
     if (r.status === 'stopped') { const ag = await page.evaluate(() => CN.AG.events.slice(-12).map(e => e.text)); throw new Error(`run stopped: ${r.stoppedBy} — ${r.fix}\n${ag.join('\n')}\n${errors.join('\n')}`); }
     if (r.status === 'review') {
       const jobs = await page.evaluate(() => [...Engrave.items().values()].map(j => ({ key: j.key, state: j.state, reason: j.reason, text: j.text, conf: j.confidence })));
@@ -858,7 +859,7 @@ const receipts = [
   }
   const run = await page.evaluate(() => Object.assign({}, B.run, { lines: Object.fromEntries(Object.entries(B.run.lines).map(([k, v]) => [k, v.state])) }));
   console.log('run', JSON.stringify({ status: run.status, step: run.step, committed: run.committed, refused: run.refused, holds: Object.keys(run.holds || {}), lines: run.lines, setId: run.setId, sheets: run.sheets }));
-  assert.strictEqual(run.status, 'complete', 'run completed');
+  assert(run.status === 'complete' || (run.status === 'processed' && run.processingComplete), 'run completed (processed: the held order keeps it open for new orders): ' + run.status);
   assert(approvals.some(a => a[0] === 'approve'), 'the engraving placement was approved by a person');
   assert.deepStrictEqual((run.committed || []).sort(), ['3521000001', '3521000002', '3521000003'], 'the three ready orders were committed');
   assert(Object.keys(run.holds || {}).includes('3521000004'), 'the unmatched SKU held its order');
