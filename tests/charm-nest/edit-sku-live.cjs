@@ -163,14 +163,21 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
       await one.page.click('#owEditSku');
       await until(() => one.page.evaluate(() => document.getElementById('owSkuDlg').open), 5000, 'the Edit SKU window');
       await one.page.fill('#owSkuInput', sku);
+      if (process.env.SHOT) { await sleep(800); await one.page.locator('#owSkuDlg').screenshot({ path: `${process.env.SHOT}-${sku}-form.png` }); }
       await until(() => one.page.evaluate(() => !document.getElementById('owSkuSave').disabled), 5000, 'Save once the charm is found in the repo');
       await one.page.click('#owSkuSave');
-      await until(() => one.page.evaluate(() => !document.getElementById('owSkuDlg').open), 20000, 'the Edit SKU window closes once saved');
+      // (the window turns into the progress of the change, and says when it is completed; Close puts it away)
+      await until(() => one.page.evaluate(() => !document.getElementById('owSkuProg').hidden && !!document.querySelector('#owSkuProg .rlFlow') && document.getElementById('owSkuForm').hidden), 8000, 'the window shows the progress of the change');
+      await until(() => one.page.evaluate(() => !!document.querySelector('#owSkuProg .rlFlow[data-done="1"]')), 30000, () => one.page.evaluate(() => 'the progress says the change is completed: ' + JSON.stringify([...document.querySelectorAll('.rlFlow')].map(el => [el.parentNode && (el.parentNode.id || el.parentNode.tagName), el.className, el.querySelectorAll('li').length, el.querySelector('.rlStep') && el.querySelector('.rlStep').textContent, el.outerHTML.slice(0, 300)])) + JSON.stringify([...document.querySelectorAll('#owSkuProg li')].map(li => [li.dataset.s, li.textContent]).concat([[document.querySelector('#owSkuProg .rlStep').textContent, document.querySelector('#owSkuProg .rlSum').textContent]]))));
+      assert(await one.page.evaluate(() => document.getElementById('owSkuSave').hidden && document.getElementById('owSkuCancel').textContent === 'Close'), 'once completed: Save is gone, Close is offered');
+      if (process.env.SHOT) await one.page.locator('#owSkuDlg').screenshot({ path: `${process.env.SHOT}-${sku}.png` });   // (a picture of the finished window, for a person to look at)
+      await one.page.click('#owSkuCancel');
+      await until(() => one.page.evaluate(() => !document.getElementById('owSkuDlg').open), 5000, 'Close closes the window');
     };
     // (an SKU that is not in the repo is refused in the window itself: Save stays off)
     await until(() => one.page.evaluate(() => !document.getElementById('owEditSku').disabled), 8000, 'Edit SKU offered');
     await one.page.click('#owEditSku'); await one.page.fill('#owSkuInput', 'NOT-A-REPO-SKU');
-    assert(await one.page.evaluate(() => document.getElementById('owSkuSave').disabled && /not in the charm repo/.test(document.querySelector('#owSkuPick .say').textContent)), 'an SKU that is not in the repo cannot be saved');
+    assert(await one.page.evaluate(() => document.getElementById('owSkuSave').disabled && /not in the charm repo/.test(document.querySelector('#owSkuCheck .say').textContent) && !document.querySelector('#owSkuInput').hasAttribute('list') && !document.getElementById('owSkuPicks')), 'an SKU that is not in the repo cannot be saved; the window has no search (no suggestions list, no picks)');
     await one.page.click('#owSkuCancel'); await until(() => one.page.evaluate(() => !document.getElementById('owSkuDlg').open), 3000, 'Cancel closes it');
     await editSku(NEW, 'A');
     assert.equal(await one.page.evaluate(() => window.__asked.length), 0, 'no second question: Save in the window is the yes');
@@ -215,7 +222,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     pass('D (cut) keeps its piece; its line says the piece is the old design and why; its picture is the piece it has, under a key of its own');
     /* the progress panel: one line per place updated, a full bar, a summary; it closes over an open window */
     await until(() => one.page.evaluate(() => !!document.querySelector('.rlFlow[data-done="1"]')), 15000, 'the progress panel finished');
-    const fl = await one.page.evaluate(() => { const el = document.querySelector('.rlFlow'); return { title: el.querySelector('h3').textContent, bar: el.querySelector('.rlBar').getAttribute('aria-valuenow'), sum: el.querySelector('.rlSum').textContent, lines: [...el.querySelectorAll('li')].map(li => [li.dataset.s, li.querySelector('.rlT').textContent]) }; });
+    const fl = await one.page.evaluate(() => { const el = document.querySelector('.rlFlow'); return { step: el.querySelector('.rlStep').textContent, inWin: !!el.closest('#owSkuDlg'), title: el.querySelector('h3').textContent, bar: el.querySelector('.rlBar').getAttribute('aria-valuenow'), sum: el.querySelector('.rlSum').textContent, lines: [...el.querySelectorAll('li')].map(li => [li.dataset.s, li.querySelector('.rlT').textContent]) }; });
     const has = (state, re) => fl.lines.some(([s, t]) => s === state && re.test(t));
     assert(/^Edit SKU · listing 1819191541: TINY MOON & STARS 2 → MOON_3288/.test(fl.title) && fl.bar === '100', 'the panel names the change and its bar is full: ' + JSON.stringify(fl));
     const ets = await one.page.evaluate(() => window.__etsy);
@@ -228,11 +235,8 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     assert(has('done', /^GF Sheet 1 files saved$/) && has('done', /^Thumbnails updated/), 'the sheet and the pictures have their lines: ' + JSON.stringify(fl.lines));
     assert(!fl.lines.some(([, t]) => /nested again/.test(t)), 'no "nested again" line: ' + JSON.stringify(fl.lines));
     assert(!fl.lines.some(([s]) => s === 'failed') && /^MOON_3288 for listing 1819191541 · Etsy updated$/.test(fl.sum), 'nothing failed; the summary: ' + fl.sum);
-    await one.page.evaluate(A => { const r = B.orders.rows.find(x => x.order.receiptId === A); OrderWin.open(r.key); }, A);
-    await until(() => one.page.evaluate(() => OrderWin.isOpen()), 8000, 'the order window again');
-    await one.page.click('.rlFlow [data-rl=close]', { timeout: 5000 });
-    assert.equal(await one.page.evaluate(() => document.querySelectorAll('.rlFlow').length), 0, 'the panel closes with its button, over the open order window');
-    pass('the progress panel says each place updated (Etsy listing 1819191541 only, the link, A\'s new piece placed in the old spot on GF Sheet 1, D kept and why, GF Sheet 1 files saved, the pictures, every view), fills, sums up and closes');
+    assert(fl.inWin && /^Completed at \d\d:\d\d · 100%$/.test(fl.step), 'the progress is in the Edit SKU window and says when it was completed: ' + JSON.stringify([fl.inWin, fl.step]));
+    pass('the progress panel says each place updated (Etsy listing 1819191541 only, the link, A\'s new piece placed in the old spot on GF Sheet 1, D kept and why, GF Sheet 1 files saved, the pictures, every view), fills, says "Completed at hh:mm · 100%" and sums up, in the Edit SKU window itself');
     /* E: an Etsy SKU no charm in the repo matches: Edit SKU saves the SKU's link and the line is made up and placed */
     await one.page.evaluate(E => { const r = B.orders.rows.find(x => x.order.receiptId === E); OrderWin.open(r.key); }, E);
     await until(() => one.page.evaluate(() => OrderWin.isOpen()), 8000, 'E\'s order window');

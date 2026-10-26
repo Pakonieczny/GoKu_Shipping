@@ -9,6 +9,8 @@
      f.line(id, text, state, why?)    state: "work" | "done" | "warn" | "failed" | "skip" | "would"; the same id updates its line
      f.finish(summary, tone?)         tone: "ok" | "warn" | "bad"; the bar fills
      f.close() · f.el · f.lines() → [{ id, text, state, why }] · f.finished()
+   o.host (EDITSKU, Paul 26 Oct 2026: "a robust progress bar so that the user is aware of what is being changed and when the process is actually completed"): the panel is drawn INSIDE that element
+   (the Edit SKU window) instead of floating; under the bar, "n of m steps done · p%" while it works and "Completed at hh:mm · 100%" once it is finished.
 
    UMD-free: window.CNRelinkFlow (the page only). No network, no clock but the panel's own. */
 (function (root) {
@@ -36,6 +38,11 @@
 .rlFlow .rlWhy{display:block;font-size:12px;opacity:.9}
 .rlFlow .rlEnd{display:flex;align-items:center;gap:8px;justify-content:space-between;border-top:1px solid var(--line,#ece6da);padding-top:8px}
 .rlFlow .rlSum{font-weight:600}
+.rlFlow .rlStep{margin:-2px 0 0;font-size:12px;color:var(--ink45,#7d766a)}
+.rlFlow[data-done="1"] .rlStep{color:#2e7d4f;font-weight:600}.rlFlow[data-tone="bad"] .rlStep{color:#b3261e}.rlFlow[data-tone="warn"] .rlStep{color:#7a5600}
+.rlFlow.rlInline{position:static;inset:auto;width:auto;max-height:none;padding:0;border:0;box-shadow:none;background:transparent}
+.rlFlow.rlInline ol{max-height:min(46vh,380px)}
+.rlFlow.rlInline [data-rl="close"]{display:none}
 .rlFlow .rlSum:empty::before{content:"Working… you can close this; it carries on.";font-weight:400;color:var(--ink45,#7d766a)}
 @keyframes rlSpin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.rlFlow li[data-s="work"] .rlI{animation:none}.rlFlow .rlBar i{transition:none}}`;
@@ -49,26 +56,30 @@
     const el = doc.createElement("section"), id = "rlFlow" + (++seq);
     el.className = "rlFlow"; el.id = id; el.setAttribute("role", "status"); el.setAttribute("aria-live", "polite"); el.setAttribute("aria-label", o.title || "Updating");
     if (o.sandbox) el.dataset.sandbox = "1";
-    el.innerHTML = `<h3></h3><p class="rlSub"></p><div class="rlBar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><ol></ol><div class="rlEnd"><span class="rlSum"></span><button type="button" class="btn ghost sm" data-rl="close">Close</button></div>`;
+    el.innerHTML = `<h3></h3><p class="rlSub"></p><div class="rlBar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div><p class="rlStep"></p><ol></ol><div class="rlEnd"><span class="rlSum"></span><button type="button" class="btn ghost sm" data-rl="close">Close</button></div>`;
     el.querySelector("h3").textContent = (o.sandbox ? "Rehearsal · " : "") + (o.title || "Updating");
     const sub = el.querySelector(".rlSub"); if (o.sub || o.sandbox) sub.textContent = o.sub || "Sandbox: what it would do. Nothing is written."; else sub.remove();
-    const list = el.querySelector("ol"), bar = el.querySelector(".rlBar"), fill = bar.querySelector("i"), sum = el.querySelector(".rlSum");
+    const list = el.querySelector("ol"), bar = el.querySelector(".rlBar"), fill = bar.querySelector("i"), sum = el.querySelector(".rlSum"), step = el.querySelector(".rlStep");
+    const inside = o.host && o.host.nodeType === 1 ? o.host : null;
     const lines = new Map(); let done = false;
-    const paintBar = () => { const all = [...lines.values()], n = all.length, f = all.filter(x => FINAL.has(x.state)).length, pct = done ? 100 : n ? Math.round(90 * f / n) : 5; fill.style.width = pct + "%"; bar.setAttribute("aria-valuenow", String(pct)); };
+    const paintBar = () => { const all = [...lines.values()], n = all.length, f = all.filter(x => FINAL.has(x.state)).length, pct = done ? 100 : n ? Math.round(90 * f / n) : 5; fill.style.width = pct + "%"; bar.setAttribute("aria-valuenow", String(pct));
+      const t = new Date(); step.textContent = done ? `${el.dataset.tone === "bad" ? "Finished with a problem" : "Completed"} at ${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")} · 100%` : `${f} of ${n} step${n === 1 ? "" : "s"} done · ${pct}%`; };
     // (a modal window, the order window or the designs window, makes everything outside it inert: the panel lives inside the topmost one while one is open, else in the top layer (a manual popover),
     //  so it is always seen and can be closed; it moves when a window opens or closes)
     let mo = null;
     const place = () => {
+      if (inside) return;   // (drawn inside its host: it stays there)
       if (!el.isConnected && !h.placed) return;
       const modal = [...doc.querySelectorAll("dialog[open]")].filter(d => { try { return d.matches(":modal"); } catch (_) { return false; } }), host = modal[modal.length - 1] || doc.body;
       if (el.parentNode !== host) { try { if (el.matches(":popover-open")) el.hidePopover(); } catch (_) { /* not a popover */ } host.appendChild(el); }
       if (host === doc.body) { try { if (el.hasAttribute("popover") && !el.matches(":popover-open")) el.showPopover(); else if (!el.hasAttribute("popover")) el.classList.add("rlOpen"); } catch (_) { el.classList.add("rlOpen"); } }
       else el.classList.add("rlOpen");
     };
-    try { mo = new MutationObserver(ms => { if (ms.some(m => m.target !== el && m.target.tagName === "DIALOG")) place(); }); mo.observe(doc.body, { attributes: true, attributeFilter: ["open"], subtree: true }); } catch (_) { mo = null; }
+    if (!inside) try { mo = new MutationObserver(ms => { if (ms.some(m => m.target !== el && m.target.tagName === "DIALOG")) place(); }); mo.observe(doc.body, { attributes: true, attributeFilter: ["open"], subtree: true }); } catch (_) { mo = null; }
     const close = () => { h.placed = false; if (mo) mo.disconnect(); try { if (el.matches(":popover-open")) el.hidePopover(); } catch (_) { /* not a popover */ } el.classList.remove("rlOpen"); el.remove(); };
     el.querySelector("[data-rl=close]").onclick = close;
-    if (typeof el.showPopover === "function") el.setAttribute("popover", "manual");
+    if (inside) el.classList.add("rlInline", "rlOpen");
+    else if (typeof el.showPopover === "function") el.setAttribute("popover", "manual");
     const h = { placed: true,
       el,
       line(lid, text, state, why) {
@@ -86,7 +97,7 @@
       lines: () => [...lines.values()].map(x => ({ id: x.id, text: x.text, state: x.state, why: x.why })),
       shown: () => el.isConnected
     };
-    doc.body.appendChild(el); place();
+    (inside || doc.body).appendChild(el); place(); paintBar();
     return h;
   }
   root.CNRelinkFlow = { open };
