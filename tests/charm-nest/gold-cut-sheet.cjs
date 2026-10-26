@@ -153,5 +153,19 @@ const shape = (id, x, y, w, h) => ({ id, paths: [[[x, y], [x + w, y], [x + w, y 
   // (Paul, 26 Oct 2026) an automatic cut that is refused says WHY, in the shop's words, for the sheet's card (Gate.autoCut: autoCutWait); every check but the backs stands
   await assert.rejects(() => backsCut('rsheet-auto-noqr', 'auto', { label: null }), /^Error: Not cut yet: its QR label is not made$/, 'the automatic cut names what it waits for');
   assert(!store.get('Charm_Nest_Sheets/rsheet-auto-noqr').roseCutAt, 'and nothing is cut');
+  // (Paul, 26 Oct 2026, later the same day: "adjust the logic for the 10K and 14 K gold sheets so that they don't get automatically approved and the green cut lines do not get automatically engaged")
+  // the automatic cut is Rose Gold's only: refused for a 10K / 14K sheet, ready or not, whatever metal the request names (the sheet's own metal decides); a person's press of the same ready sheet is cut
+  const karatCut = async (sheetId, metal, via, asked) => {
+    const shapes = [shape('p3', 10, 10, 20, 20)], claim = await api.roseClaim({ sheetId, metal, wPt: 100, hPt: 50, fresh: true }), stockId = claim.stock.id, doc = sheetDoc(sheetId, metal, shapes, 9);
+    store.set('Charm_Nest_Sheets/' + sheetId, doc);
+    const p = await api.rosePlan({ sheetId, metal, stockId, revision: claim.stock.revision, fingerprint: RoseStock.fingerprint(doc), shapesJson: JSON.stringify(shapes), allowanceMm: .2, cut: true });
+    return api.roseRecordCut({ sheetId, metal: asked || metal, stockId, revision: claim.stock.revision, planHash: p.planHash, by: via === 'auto' ? 'Charm Nest (automatic)' : 'Pat Lee', via, device: 'charm-nest-1' });
+  };
+  for (const metal of ['gold10k', 'gold14k']) {
+    await assert.rejects(() => karatCut('ksheet-auto-' + metal, metal, 'auto'), new RegExp(`^Error: Not cut: a ${Rose.cutWord(metal)} sheet is never cut automatically`), metal + ': the automatic cut is refused');
+    await assert.rejects(() => karatCut('ksheet-asks-' + metal, metal, 'auto', 'rose'), /never cut automatically/, metal + ': a request that names another metal is refused all the same');
+    assert(!store.get('Charm_Nest_Sheets/ksheet-auto-' + metal).roseCutAt && !store.get('Charm_Nest_Sheets/ksheet-asks-' + metal).roseCutAt, metal + ': nothing is cut');
+    assert.equal(!!(await karatCut('ksheet-person-' + metal, metal, 'library')).cut, true, metal + ': a person\'s press of the same ready sheet is cut');
+  }
   console.log('gold-cut-sheet: ok (one metal list, per-metal stock, onlyRemnant claims nothing, leftovers stay in their metal, cut + leftover record for 10K and 14K, readiness)');
 })().catch(e => { console.error(e); process.exit(1); });

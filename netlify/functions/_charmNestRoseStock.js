@@ -312,11 +312,17 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       return {planJson,planHash};
     });
   }
+  // (Paul, 26 Oct 2026: "adjust the logic for the 10K and 14 K gold sheets so that they don't get automatically approved and the green cut lines do not get automatically engaged". The automatic
+  //  Cut Sheet press (Gate.autoCut, via 'auto') is Rose Gold's only: a 10K / 14K sheet's cut is a person's press, with every check. Refused here too, whatever a page sends)
+  const AUTO_REFUSED=new Set(['gold10k','gold14k']);
+  const autoRefusal=metal=>'Not cut: a '+metalWord(metal)+' sheet is never cut automatically. It waits in its set for a person to approve it and cut its green line (Approve & cut green line)';
   async function roseRecordCut(b){
     if(!id(b.sheetId)||!id(b.stockId)||!b.planHash)throw new Error('Prepare the cut contour first');
+    if(b.via==='auto'&&AUTO_REFUSED.has(b.metal))throw new Error(autoRefusal(b.metal));
     const out=await db.runTransaction(async tx=>{
       const ref=stocks().doc(b.stockId),sr=sheets().doc(b.sheetId);
       const d=await tx.get(ref),sd=await tx.get(sr),stock=d.exists&&d.data(),sheet=sd.exists&&sd.data();
+      if(b.via==='auto'&&sheet&&AUTO_REFUSED.has(sheet.metal))throw new Error(autoRefusal(sheet.metal));   // (the sheet's own metal decides, not the request's)
       // a cut is kept under its sheet's id on the stock. A sheet that set an earlier cut on this very stock aside (it was moved onto the leftover that cut made, roseClaim) cuts again
       // under the revision it makes, so the old cut's record stays exactly as it was; a retry of the same press (the same request revision) finds the same document
       const again=!!(sheet&&Array.isArray(sheet.roseReseated)&&sheet.roseReseated.some(x=>x&&x.cut&&x.cut.stockId===b.stockId));

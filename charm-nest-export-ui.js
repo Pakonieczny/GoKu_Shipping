@@ -90,7 +90,8 @@
     body.querySelectorAll('.libCard[data-id]').forEach(card=>{if(!card.querySelector('[data-export-controls]'))card.querySelector('.h')?.insertAdjacentHTML('beforeend',sheetControls(card.dataset.id));});
     body.querySelectorAll('.setCard,.libSet').forEach(group=>{
       const head=group.querySelector('.sh,.fanHead');if(!head)return;
-      const ids=[...new Set([...group.querySelectorAll('.libCard[data-id]')].map(c=>c.dataset.id))];
+      // (Paul, 26 Oct 2026: a 10K / 14K sheet drawn greyed in a set, waiting for a person's approval and green cut line, is no sheet of the set: never in its download until it is cut)
+      const ids=[...new Set([...group.querySelectorAll('.libCard[data-id]')].filter(c=>!c.closest('[data-gold-pending]')).map(c=>c.dataset.id))];
       if(!head.querySelector('[data-export-set]'))head.insertAdjacentHTML('beforeend',`<span class="sheetExport"><button class="btn ghost xs" data-export-set="${esc(JSON.stringify(ids))}" data-format="ai">Download .ai</button><button class="btn ghost xs" data-export-set="${esc(JSON.stringify(ids))}" data-format="dxf">.dxf</button></span>`);
     });
     }refresh();

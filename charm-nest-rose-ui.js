@@ -191,6 +191,12 @@
   // records the cut. Its charms turn grey, and the next charms nest past the
   // line on the same physical sheet until it is full.
   async function record(sh,o={}){   // o.by: the person who pressed (charm-nest-flow-rose.js passes it); else the signed-in one
+    // (Paul, 26 Oct 2026: a 10K / 14K sheet is never cut automatically: its cut is a person's press. A page that still asks for one is refused before anything changes; the server refuses it too)
+    if(o.via==='auto'&&!isRose(sh))throw new Error(`Not cut: a ${word(sh)} sheet is never cut automatically. It waits in its set for a person to approve it and cut its green line`);
+    // (Paul, 26 Oct 2026: "the 10k and 14k sheets should stay greyed-out inside the Set of Sheets until a user approves and adds a Green Cut line") the include this press makes for a 10K / 14K sheet
+    // is taken back when its cut is not recorded (Gate.undoGoldJoin): the sheet waits greyed in its set again, never IN a set uncut, and its own tick is what it was
+    let joined=false;const was={inSet:inSet(sh),pick:sh.solidPick};
+    const undo=async e=>{if(joined&&!sh.roseCutAt&&window.Gate?.undoGoldJoin){try{await window.Gate.undoGoldJoin(sh,was);}catch(_){/* the sheet says why on its card */}}throw e;};
     // A held sheet joins the current set first (Paul, 25 Sep: "the Cut Sheet button is not working"): it was greyed
     // until the sheet was ticked in Options, with only a hover note to say so. A cut sheet stays in its set, and its
     // charms must be made, so pressing Cut Sheet is taken as including it.
@@ -200,16 +206,19 @@
       // (SETFIX, Paul 17 Oct 2026: Rose Gold joins by this sheet's own tick, a sheet at a time, never the whole metal; a 10K or 14K sheet by its own Include, which keeps the rule of orders that span two sheets)
       // A sheet of a COMMITTED set that lost its place on this page (moved onto a partial sheet and nested again: Paul, 7 Oct, "I could not cut the sheet after placing new pieces on
       // the partial sheet") is never added again: the set and the saved record kept it, so it takes its place back from them (Gate.rejoin). An Include cannot do it: the run leaves committed sheets alone.
-      try{if(!(G.rejoin&&await G.rejoin(sh))){if(isRose(sh))await G.changeMembership('rose',true,sh);else if(G.cutInclude)await G.cutInclude(sh);else await G.changeMembership(sh.metal,true,sh);}}finally{sh._roseStep=null;}
+      try{if(!(G.rejoin&&await G.rejoin(sh))){joined=!isRose(sh);if(isRose(sh))await G.changeMembership('rose',true,sh);else if(G.cutInclude)await G.cutInclude(sh);else await G.changeMembership(sh.metal,true,sh);}}catch(e){sh._roseStep=null;await undo(e);}finally{sh._roseStep=null;}
       // (the old line here was 'Not cut: '+the release rule's words, which for a sheet the person had ticked read "Not cut: Included by you": a reason that is no reason)
-      if(!inSet(sh)){const pol=G.policy?.(sh),why=pol&&!pol.include&&pol.reason?pol.reason:'';throw new Error('Not cut: this sheet is not in a set yet'+(why?` (${why})`:'')+'. Switch on In current set in Options, or reload the page, then press Cut Sheet again.');}
+      if(!inSet(sh)){const pol=G.policy?.(sh),why=pol&&!pol.include&&pol.reason?pol.reason:'';await undo(new Error('Not cut: this sheet is not in a set yet'+(why?` (${why})`:'')+'. Switch on In current set in Options, or reload the page, then press Cut Sheet again.'));}
       refresh(sh);
     }
-    if(!sh.rosePlanHash||(!sh.recalled&&sh.rosePlanKey!==fingerprint(sh)))await plan(sh,{cut:true});
-    // who cut it: the sorter's signed-in person (its own name, or the Design Station's sign-in); nobody is sent as ""
-    // and the server keeps 'operator' in the stock ledger only, the order's roseCut then says "not signed in"
-    let who='';try{who=String(o.by||window.CNEmployee?.name?.()||window.B?.employee||'').trim();}catch(_){who=String(o.by||window.B?.employee||'').trim();}
-    const r=await api('roseRecordCut',{sheetId:sh.sheetId,metal:sh.metal,stockId:sh.roseStock.id,revision:sh.roseRevision,planHash:sh.rosePlanHash,by:who,device:'charm-nest-1',via:o.via||(S.mode==='library'?'library':'nest')});   // via: which tab pressed it, saved on the leftover sheet this cut makes (_charmNestRemnants.js)
+    let r;
+    try{
+      if(!sh.rosePlanHash||(!sh.recalled&&sh.rosePlanKey!==fingerprint(sh)))await plan(sh,{cut:true});
+      // who cut it: the sorter's signed-in person (its own name, or the Design Station's sign-in); nobody is sent as ""
+      // and the server keeps 'operator' in the stock ledger only, the order's roseCut then says "not signed in"
+      let who='';try{who=String(o.by||window.CNEmployee?.name?.()||window.B?.employee||'').trim();}catch(_){who=String(o.by||window.B?.employee||'').trim();}
+      r=await api('roseRecordCut',{sheetId:sh.sheetId,metal:sh.metal,stockId:sh.roseStock.id,revision:sh.roseRevision,planHash:sh.rosePlanHash,by:who,device:'charm-nest-1',via:o.via||(S.mode==='library'?'library':'nest')});   // via: which tab pressed it, saved on the leftover sheet this cut makes (_charmNestRemnants.js)
+    }catch(e){await undo(e);}
     // (the cuts the stock already holds stay on the card: a sheet that was moved onto the leftover its own cut made cuts again, and both cuts are shown, each with its date;
     //  only a copy of THIS cut, a retry of the same press, is replaced)
     sh.roseCutAt=r.cut.at;sh.roseStock=r.stock;sh.roseHistory=[...decode([r.cut]),...(sh.roseHistory||[]).filter(c=>c.revision!==r.cut.revision)];

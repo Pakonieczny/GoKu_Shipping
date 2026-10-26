@@ -32,6 +32,8 @@
  *       'rebuild'  everything else: "Rebuild this set correctly", as before.
  *   Neither press is ever run by itself: the rebuild moves sheets between sets and the cut is permanent, so both stay the person's explicit act (a window, Cancel changes nothing).
  *   cutGold(set, opts?) (page) the "Cut ..." press · fix(set, opts?) (page) the remedy's first press, for the button under Approve for laser cutting.
+ *   cutPending(set, sheetId, opts?) (page) (Paul, 26 Oct 2026) the "Approve & cut green line" press of a 10K / 14K sheet that waits greyed in the set (set.goldPending): never cut or approved by itself,
+ *                  it joins the set by this press, the existing Cut Sheet press with its window · wirePending(card, set) its buttons on a drawn set card.
  *
  * (SETFIX B, Paul 17 Oct 2026: "a sheet someone drags into a formed set can make that set unapprovable".)
  *   joinCheck(set, joinIds, sheets, allSets, opts?) -> { ok, items:[violation], rules, label, detail, sheets:[id] }   pure
@@ -708,6 +710,57 @@ dialog.setRepairDlg{width:min(540px,94vw)}
       const reason = `${(e && e.message) || e}`; env.say(`${names} ${one ? 'was' : 'were'} not cut: ${reason}`); return { ok: false, error: reason };
     } finally { running.delete('cut:' + id); env.refresh(); }
   }
+  /** (Paul, 26 Oct 2026: "the 10k and 14k sheets should stay greyed-out inside the Set of Sheets until a user approves and adds a Green Cut line ... at which point that particular 10k/14k gold sheet would be
+   *  locked and the Set of Sheets where it resides would be released from that particular Hold".) The "Approve & cut green line" press of a 10K / 14K sheet waiting greyed in its set (st.goldPending, the
+   *  Library's goldPendingOf): a small window (it joins the set, its green dash line is drawn and dated, the cut is recorded with your name and is permanent, its layout locks; Cancel changes nothing), then
+   *  the existing Cut Sheet press (env.cut: LibraryFlow.cutLine, and the Cut Sheet button's own press for a full sheet that needs no line), with every check it has. The cut sheet is in the set (R12) and the
+   *  set's hold for it lifts. A press whose cut is not recorded leaves the sheet waiting greyed as before (RoseStock.record takes back the include it made). Never run by itself.
+   *  Resolves { ok, cut:[{id,cut}], words } or { ok:false, refused|cancelled|error }. */
+  async function cutPending(st, sheetId, o) {
+    const env = Object.assign({}, pageEnv({}), (o && o.env) || {}), id = str(sheetId), set = setWord(st || {});
+    const refuse = (key, reason) => { env.say(reason); return { ok: false, refused: { key, reason } }; };
+    const row = list(st && st.goldPending).find(r => idOf(r) === id);
+    if (!row) return refuse('none', `That sheet is not waiting in ${set} any more: the Library is drawn again`);
+    if (running.has('cut:' + id)) return { ok: false, refused: { key: 'busy', reason: 'This sheet is being cut right now' } };
+    const name = currentName(row), by = str(env.by()).trim();
+    if (!by) return refuse('who', 'Sign in first: the cut is recorded with your name');
+    if (!env.cloud()) return refuse('offline', 'The page is offline: reconnect, then press it again. Nothing was changed');
+    const pages = env.pages(), page = list(pages).find(p => p && p.sheetId === id && !p.recalled);
+    if (!page) return refuse('away', `${name} is not open on this page, so its green line cannot be cut from here. Open it on the Nest tab and press Cut Sheet there; it then joins ${set}`);
+    { const why = busyOf(page, env); if (why) return refuse('busy', `${name} is ${why}: try again when it is done. Nothing was changed`); }
+    const words = {
+      title: `Approve and cut ${name}?`, intro: `${name} shares orders with the sheets of ${set} and waits there, greyed, for your approval. This is its Cut Sheet press:`,
+      lines: [{ kind: 'set', text: `${name}: the green dash line is drawn and dated, and the cut is recorded with your name` }, { kind: 'set', text: `${name} joins ${set}, and ${set} no longer waits for it` }],
+      what: `A recorded cut is permanent: ${name}'s layout is locked from then on, so move its charms by hand first if anything should change.`, numbering: '',
+      nothing: 'Nothing is cut until you press Approve & cut.', confirm: 'Approve & cut', cancel: 'Cancel'
+    };
+    if (!(o && o.skipConfirm) && !(await env.confirmCut(words))) return { ok: false, cancelled: true };
+    running.add('cut:' + id);
+    try {
+      if (o && typeof o.onState === 'function') { try { o.onState('cutting', `Cutting ${name}: the green dash line is drawn, then the cut is recorded.`); } catch (_) { /* a line of text only */ } }
+      const done = await env.cut([id], by);
+      if (!done.every(d => d.cut)) { const reason = `The green line of ${name} is not cut yet: open it on the Nest tab and press Cut Sheet there`; env.say(reason); return { ok: false, error: reason, cut: done }; }
+      env.say(`${name} approved and cut: it is in ${set} now.`, 'ok');
+      return { ok: true, cut: done, words: `Approved and cut: ${name} is in ${set}.` };
+    } catch (e) {
+      const reason = `${(e && e.message) || e}`; env.say(`${name} was not cut: ${reason}`); return { ok: false, error: reason };
+    } finally { running.delete('cut:' + id); env.refresh(); }
+  }
+  /** Wires the "Approve & cut green line" press of every 10K / 14K sheet drawn greyed in a set card (the Library's goldPendingTile). */
+  function wirePending(card, st, o) {
+    if (!card || typeof card.querySelectorAll !== 'function') return;
+    for (const b of card.querySelectorAll('[data-gold-cut]')) {
+      b.onclick = async e => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        const box = b.closest('[data-gold-pending-note]'), say = box && box.querySelector('[data-gold-say]');
+        b.disabled = true; if (box) box.setAttribute('aria-busy', 'true');
+        try {
+          const r = await cutPending(st, b.dataset.goldCut, Object.assign({}, o || {}, { onState: (kind, text) => { if (say) { say.hidden = false; say.textContent = text; } } }));
+          if (say) { say.textContent = r.ok ? r.words || '' : r.cancelled ? '' : r.refused ? r.refused.reason : r.error || ''; say.hidden = !say.textContent; }
+        } finally { b.disabled = false; if (box) box.removeAttribute('aria-busy'); }
+      };
+    }
+  }
   /** (SETFIX A) The remedy's first press (the button under Approve for laser cutting): the Cut Sheet press, or the rebuild. */
   const fix = (st, o) => { const k = st && st.setBreaks && st.setBreaks.remedy && st.setBreaks.remedy.kind; if (k === 'backs') return Promise.resolve({ ok: false, error: st.setBreaks.remedy.say }); return k === 'cut' ? cutGold(st, o) : rebuild(st, o); };   // ('backs': nothing to press here, the Engraving tab approves it)
 
@@ -763,5 +816,5 @@ dialog.setRepairDlg{width:min(540px,94vw)}
 
   const exempt = d => { const R = SR(); return !!R && R.exempt(d); };
   return { diagnose, breaksOf, plan, rebuild, apply, lineHtml, wire, annotate, confirmDialog, busyOf, infoOf, clause, numberJoiners, inSetOf, rowsOf, setsOf, exempt, NOT_SHOWN: [...NOT_SHOWN],
-    remedyOf, joinCheck, cutGold, fix, REBUILD };
+    remedyOf, joinCheck, cutGold, cutPending, wirePending, fix, REBUILD };
 });

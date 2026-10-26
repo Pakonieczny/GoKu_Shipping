@@ -214,9 +214,13 @@
     if (tryDo(() => window.CharmNestReviewHold && CharmNestReviewHold.inReview(rid))) return `Order ${rid} is paused in Review`;
     if (actives(src).length <= u.pieces.length) return `${n} would be left empty: a sheet is never emptied by a move (Merge sheets, in its Options, moves everything)`;
     // the cardinal rule: a move never ties a sheet to one it shares no order with yet
+    // (Paul, 26 Oct 2026: "While the 14K or 10K sheet is waiting for user approval and green cut line, the users should be able to move charms (Manual toggle) in and out of that 10k/14k sheet without any
+    //  restrictions until the manual Green cut line is engaged". A 10K / 14K sheet waiting greyed in its set (Gate.goldWaitHome) gives and takes charms freely: a green-line sheet ties no two sheets together
+    //  and belongs to ONE set, an order it then shares with a sheet of another set is a known split said on the set. The physical checks (room, overlap, a pair never split, the source never emptied) stand)
+    const waits = sh => { try { return !!(window.Gate && typeof Gate.goldWaitHome === "function" && Gate.goldWaitHome(sh)); } catch (_) { return false; } };
     const ids = new Set(u.pieces.map(z => z.c.poolId)), others = holdersOf(rid, ids);
     const before = new Set([...others.keys(), src.sheetId]), after = new Set([...others.keys(), target.sheetId]);
-    if (after.size > 1 && [...after].some(id => !before.has(id))) {
+    if (after.size > 1 && [...after].some(id => !before.has(id)) && !waits(src) && !waits(target)) {
       const far = [...others].filter(([id]) => id !== src.sheetId && id !== target.sheetId).map(([, nm]) => nm);
       if (far.length) return `Order ${rid} also has pieces on ${far.join(", ")}: moving it to ${t} would tie ${t} to ${far.length === 1 ? "that sheet" : "those sheets"} (sheets that share an order go into one set). Bring the order together on one sheet first`;
     }

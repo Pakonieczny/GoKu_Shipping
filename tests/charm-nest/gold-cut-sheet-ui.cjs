@@ -14,12 +14,14 @@ async function run(metal, word, code) {
   const calls = [], bodies = [], toasts = [], WPT = 130, HPT = 70;   // the sheet's own size: NOT 100 x 50
   const sh = { metal, page: 1, el: w.document.getElementById('sheet'), sheetId: metal + '-test', runId: 'run-test', charms: [{ id: 'charm', outline, centerPt: [5, 5], members: [] }], placements: [{ id: 'charm', cxPt: 10, cyPt: 10, angle: 0, scale: 1 }], persistedDone: true, verification: { ok: true }, status: 'complete', dirty: false, draft: true, outputs: {} };
   let stock = { id: 'rgs-physical', metal, wPt: WPT, hPt: HPT, revision: 0, profileJson: null }, saved, leftover = null;
+  const refuse = { cut: false };   // (the server refuses the cut: Paul, 26 Oct 2026, the include the press made is taken back)
   w.CN = { S: { cloud: { ok: true }, settings: { stock: {} }, mode: 'nest' }, esc: s => String(s).replace(/</g, '&lt;'), stockFor: () => ({ wPt: WPT, hPt: HPT, wIn: WPT / 72, hIn: HPT / 72 }), uid: () => 'test', allSheets: () => [sh], pagesOf: () => [sh], drawPreview() { }, renderCard: p => { w.Gate.renderCard(p); w.RoseStock?.render(p); }, toast(m, k) { toasts.push([String(m), k]); }, sheetDirty: p => { p.dirty = true; }, flushManualIntake() { },
     api: async (name, b) => { calls.push(b.op); bodies.push(b);
       if (b.op === 'roseClaim') { if (b.onlyRemnant && !leftover) return { stock: null, protectedJson: null }; stock = leftover || stock; return { stock }; }
       if (b.op === 'roseGet') return { stock, cuts: [], more: false };
       if (b.op === 'roseRelease') return { ok: true };
       if (b.op === 'rosePlan') { saved = R.plan(JSON.parse(b.shapesJson), WPT, HPT, null, b.allowanceMm); return { planJson: JSON.stringify(saved), planHash: 'hash' }; }
+      if (b.op === 'roseRecordCut' && refuse.cut) throw new Error('Complete every item in the sheet’s orders and its production checks before recording its cut');
       if (b.op === 'roseRecordCut') return { stock: { ...stock, revision: 1, profileJson: JSON.stringify(saved.profile) }, cut: { sheetId: sh.sheetId, stockId: stock.id, revision: 1, at: 1760000000000, planJson: JSON.stringify(saved), planHash: 'hash', fileBase: code + ' sheet' } };
       return {}; } };
   w.sh = sh;
@@ -78,6 +80,20 @@ async function run(metal, word, code) {
   const lefty = { ...fresh, roseStock: { id: 'rgs-left', metal, revision: 2, profileJson: '{}' } }; calls.length = 0;
   assert.equal(await RS.letGo(lefty), false); assert.equal(calls.length, 0, 'a leftover the sheet was nested on stays reserved');
   const lined = { ...fresh, rosePlan: { lines: [[[0, 0], [1, 1]]] } }; assert.equal(await RS.letGo(lined), false, 'a planned sheet never lets go');
+  // (Paul, 26 Oct 2026: "adjust the logic for the 10K and 14 K gold sheets so that they don't get automatically approved and the green cut lines do not get automatically engaged") a press that asks
+  // for an automatic cut of a 10K / 14K sheet is refused before anything is asked of the server (the server refuses it too: gold-cut-sheet.cjs)
+  { const auto = { ...fresh, sheetId: metal + '-auto', roseStock: null }; calls.length = 0;
+    await assert.rejects(() => RS.record(auto, { via: 'auto' }), new RegExp(`^Error: Not cut: a ${word} sheet is never cut automatically`)); assert.equal(calls.length, 0, 'nothing asked of the server'); assert(!auto.roseCutAt && auto.draft); }
+  // (Paul, 26 Oct 2026: "the 10k and 14k sheets should stay greyed-out inside the Set of Sheets until a user approves and adds a Green Cut line") a press that included its sheet and whose cut the server
+  // then refused takes that include back (Gate.undoGoldJoin): the sheet waits greyed in its set again, its own tick as it was; a press that went through takes nothing back
+  { const pend = { ...fresh, sheetId: metal + '-pending', roseStock: null, roseHistory: [], solidPick: undefined }, undos = [];
+    w.Gate.cutInclude = async s => { s.draft = false; s.setId = 'set-test'; s.solidPick = true; };
+    w.Gate.undoGoldJoin = async (s, was) => { undos.push([s.sheetId, was.inSet, was.pick]); s.draft = true; s.setId = null; if (typeof was.pick === 'boolean') s.solidPick = was.pick; else delete s.solidPick; return true; };
+    refuse.cut = true;
+    await assert.rejects(() => RS.record(pend), /production checks/);
+    assert.deepEqual(undos, [[pend.sheetId, false, undefined]], 'the include is taken back'); assert(!pend.roseCutAt && pend.draft && !pend.setId && pend.solidPick === undefined, 'the sheet waits outside its set again, its own tick as it was');
+    refuse.cut = false; delete pend.rosePlanHash;
+    await RS.record(pend); assert(pend.roseCutAt && pend.setId === 'set-test' && undos.length === 1, 'the next press goes through: cut, in its set, nothing taken back'); }
   dom.window.close();
 }
 (async () => {

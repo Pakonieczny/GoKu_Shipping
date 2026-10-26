@@ -4395,7 +4395,9 @@ async function ruleBreaksFor(setIds) {
         const partners = ((diag.result && diag.result.partners) || []).filter(p => p.set === setId);
         if (partners.length) {
           const name = doc.name || (doc.seq ? "Set " + doc.seq : "This set"), names = [...new Set(partners.map(p => p.name))];
-          const words = partners.map(p => `${p.name}: ${(p.reasons || [])[0] || "add that sheet to this set"}`).join("; ");
+          // (Paul, 26 Oct 2026: a 10K / 14K sheet is never cut or approved by itself: the set waits for a person to approve it and cut its green line, said in the page's own words, SetRules.goldWaitWords)
+          const solidUncut = p => { const r = rows.find(x => x.id === p.sheet); return !!r && isSolid(r.metal) && !r.roseCutAt && !(num(r.laserDoneAt) > 0); };
+          const words = partners.map(p => `${p.name}: ${solidUncut(p) ? "approve it and cut its green line (Approve & cut green line, on the set's card in the Library)" : (p.reasons || [])[0] || "add that sheet to this set"}`).join("; ");
           out.set(setId, { setId, name, items: partners.map(p => ({ rule: "partner", ruleNo: 10, sheets: [p.sheet], names: [p.name], message: (p.reasons || []).join("; ") })), line: `${name} shares orders with a sheet that is not in it yet (${words})`, short: `waits for ${names.join(", ")}`, rules: [10], sheets: partners.map(p => p.sheet), names });
         }
       }

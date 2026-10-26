@@ -5550,6 +5550,8 @@ const Gate = window.Gate = (() => {
         p.cardinalHome = home.setId;
         if (!wants && !gap) p.cardinalPull = `Shares ${ordersWords(mineOrders, tell)} with ${named(mates).join(", ")} in ${setName(home.setId)}`;
         if (gap) for (const i of mates) for (const u of unitOf(i)) { const q = V.page.get(u); if (q && !goldFamily(q.metal) && q.setId === home.setId && !q.draft && !q.cardinalNote) q.cardinalNote = `${ordersWords(mineOrders, tell).replace(/^o/, "O")} shared with ${sheetNameOf(p)}: add that sheet to ${setName(home.setId)} (${gap})`; }
+        // (Paul, 26 Oct 2026: a 10K / 14K sheet is never cut or approved by itself: it waits greyed in its set, the Library's set card, for a person's press; its own card says so)
+        if (gap && solid(p.metal) && !p.roseCutAt && !(+p.laserDoneAt > 0)) p.cardinalNote = `Waits in ${setName(home.setId)} for your approval and its green cut line: press Approve & cut green line on ${setName(home.setId)} in the Library and it joins ${setName(home.setId)}. Until then its charms can be moved by hand`;
       } else if (h.partners.length) {
         // (its partners are in no set yet: it waits for THEIR set, never another one; a partner that is not full yet keeps it out with its group, as ever, R11)
         const SRg = window.CharmNestSetRules, part = h.partners.map(i => V.page.get(i)).filter(q => q && SRg && SRg.isPartial(q)), all = [...new Set(Object.values(h.orders).flat())].sort();
@@ -5750,7 +5752,8 @@ const Gate = window.Gate = (() => {
      Only a set that is not committed, not approved for laser cutting (or on its way), with no sheet of the unit cut, being nested, saved or edited by hand; every view follows at
      once (the cards, the Library, the run's record). A unit that cannot leave stays and is flagged as before. */
   /* (Paul, 26 Oct 2026, Decision 2: "once a Set of Sheets is complete then the given RG sheets with intertwined multi-charm orders must have a green cut line auto-cut and that cut portion of
-     the RG sheet must be placed as part of a given Set of Sheets which contains the GF, SS, and partial (Green Cut Line) RG sheets"; 10K and 14K the same.) A green-line sheet whose ONE set
+     the RG sheet must be placed as part of a given Set of Sheets which contains the GF, SS, and partial (Green Cut Line) RG sheets"; 10K and 14K the same, until Paul's later word the same day: Rose
+     Gold only, below.) A Rose Gold sheet whose ONE set
      (greenHomesOf: the Gold Filled / Sterling Silver sheets holding the other pieces of its orders; the intake keeps them to one GF and one SS sheet of one set, greenFits and PAIR) is complete
      and not committed gets the Cut Sheet press by itself (RoseStock.record: it joins that set, its green line is drawn and dated, the cut is recorded; the stock left over goes on for the next
      set). The cut is recorded only when the sheet is ready (nested, verified, saved and its files made, the server's roseRecordCut; not its back engraving), so until then it waits, said on its
@@ -5761,13 +5764,20 @@ const Gate = window.Gate = (() => {
      server refuses the cut, the include the press made is UNDONE (the sheet leaves the set again: R12, a green-line sheet is in a set cut). Its card says why, in the server's words (autoCutWait), the set names
      it as the partner still to come (R10: its Approve stays grey with a plain waiting line), and it is tried again at a later look once something on it changed (its nest, backs, files or
      label), else after ten minutes. */
+  /* (Paul, 26 Oct 2026, of a 14K Sheet 1 the automatic cut locked: "the system did a very poor job filling in the remainder of the 14K sheet with charms. I need you to adjust the logic for the 10K and 14 K
+     gold sheets so that they don't get automatically approved and the green cut lines do not get automatically engaged for the 10K or 14K Gold sheet when an order is shared with one of the other sheets
+     ... the 10k and 14k sheets should stay greyed-out inside the Set of Sheets until a user approves and adds a Green Cut line".) The automatic Cut Sheet press is for ROSE GOLD only. A 10K / 14K sheet
+     is never cut, approved or put in its set by itself, full or not: it waits greyed in its ONE set (the Library's set card, goldPendingOf), the set is held for it (its Approve for laser cutting stays
+     grey: "Waiting for 14K Sheet 1: approve it and cut its green line", never a rule break), its charms move freely by hand meanwhile, and it joins the set when a person presses its Cut Sheet
+     ("Approve & cut green line", SetRepair.cutPending). The server refuses an automatic cut of a 10K / 14K sheet as well (roseRecordCut, via 'auto'). */
+  const autoCuts = m => m === "rose";
   const autoCutTried = new Map();
   function autoCut(run) {
     try {
       const RS = window.RoseStock; if (!RS || typeof RS.record !== "function" || !run || !modern(run.runId) || !S.cloud.ok) return;
       const SRa = window.CharmNestSetRules, sets = Sets.ofRun(run.runId).filter(st => !st.committedAt), V = cardinalView(run), GH = V ? greenHomesOf(V, run) : new Map();
       const approved = st => !!(st.committedAt || st.processReady || st.laserSetPending || st.laserDoneAt);
-      for (const p of allSheets().filter(p => p.runId === run.runId && goldFamily(p.metal) && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled)) {
+      for (const p of allSheets().filter(p => p.runId === run.runId && goldFamily(p.metal) && autoCuts(p.metal) && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled)) {
         if (p._roseAction || p._rosePlanning || p._roseLoading || p._autoCutting || p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || !p.persistedDone || !p.verification?.ok || !p.placements.length || p._manualHold) continue;
         const h = V && GH.get(V.idOf.get(p)); if (!h || !h.home) continue;                       // (no partner in a set yet: its set is not complete)
         if (inSetNow(p) && p.setId !== h.home) continue;                                         // (in a set that is not its one set: it leaves it first, greenAway)
@@ -6077,11 +6087,39 @@ const Gate = window.Gate = (() => {
       const run = B.run;
       no(sh.recalled ? "a saved sheet · its set is fixed" : run && ["complete", "abandoned"].includes(run.status) ? "the run is finished" : committing(run) ? "the set is being committed" : "this sheet's set cannot change now");
     }
-    const rule = cardinalFor(sh, true);
-    if (rule.blocked) no(rule.blocked);
-    const split = rule.list.length > 1 ? rule.list.filter(p => p !== sh).map(p => ({ sheet: p })) : splitWith(sh, true);
-    if (split.length) no(`${sheetNameOf(sh)} shares ${sharedWhat(sh, split.map(x => x.sheet))} with ${split.map(x => sheetNameOf(x.sheet)).join(" and ")}, which ${split.length > 1 ? "are" : "is"} not in the set: use Include in Options to put them in together, then press Cut Sheet`);
+    // (Paul, 26 Oct 2026: "until a user approves and adds a Green Cut line for either/both of the 10k / 14k gold sheets in question") a 10K / 14K sheet that waits greyed in its ONE set (goldWaitHome: the
+    //  open set of the GF / SS sheets it shares orders with) joins THAT set by its own press, alone. A green-line sheet ties no two sheets together (ONE SET): another 10K / 14K or Rose Gold sheet of the
+    //  same GF / SS sheets, or an order it shares with a sheet of another set (a known split), is no reason to refuse it. Any other 10K / 14K sheet keeps the rule of orders that span two sheets
+    if (!goldWaitHome(sh)) {
+      const rule = cardinalFor(sh, true);
+      if (rule.blocked) no(rule.blocked);
+      const split = rule.list.length > 1 ? rule.list.filter(p => p !== sh).map(p => ({ sheet: p })) : splitWith(sh, true);
+      if (split.length) no(`${sheetNameOf(sh)} shares ${sharedWhat(sh, split.map(x => x.sheet))} with ${split.map(x => sheetNameOf(x.sheet)).join(" and ")}, which ${split.length > 1 ? "are" : "is"} not in the set: use Include in Options to put them in together, then press Cut Sheet`);
+    }
     await changeMembership(sh.metal, true, sh);
+  }
+  /** (Paul, 26 Oct 2026) The open set a 10K / 14K sheet waits greyed in: its ONE set (greenHomesOf) while it is uncut, in no set, and that set is one of the run's open sets that is not approved for laser
+   *  cutting; null otherwise. The Library draws it there (goldPendingOf), its charms move freely meanwhile (the sheet hop asks it: no "tie" refusal for it), and its own Cut Sheet press puts it there (cutInclude). */
+  function goldWaitHome(sh) {
+    try {
+      const run = B.run; if (!sh || !solid(sh.metal) || sh.roseCutAt || +sh.laserDoneAt > 0 || sh.recalled || inSetNow(sh) || !run || sh.runId !== run.runId || !modern(run.runId)) return null;
+      const V = cardinalView(run), h = V && greenHomesOf(V, run).get(V.idOf.get(sh)); if (!h || !h.home) return null;
+      const st = openSetsOf(run.runId).find(s => s.setId === h.home);
+      return st && !(st.processReady || st.laserSetPending || st.laserDoneAt) ? st : null;
+    } catch (_) { return null; }
+  }
+  /** (Paul, 26 Oct 2026: "the 10k and 14k sheets should stay greyed-out inside the Set of Sheets until a user approves and adds a Green Cut line") A 10K / 14K Cut Sheet press that included its sheet
+   *  (cutInclude) and then did not record the cut (the server refused it, the line could not be made) takes that include back, as the automatic press does for Rose Gold: the sheet waits greyed in its
+   *  set again (goldPendingOf; the set is held for it), never IN a set uncut, and its own tick is what it was before the press (`was.pick`). charm-nest-rose-ui.js RoseStock.record calls it. Resolves
+   *  true when the sheet is out of every set again. A cut sheet, one the laser cut, or one that was in a set before the press (`was.inSet`) is left as it is. */
+  async function undoGoldJoin(sh, was) {
+    if (!sh || !solid(sh.metal) || sh.roseCutAt || +sh.laserDoneAt > 0 || (was && was.inSet)) return false;
+    const run = B.run; if (!run || sh.runId !== run.runId || !modern(run.runId)) return false;
+    if (inSetNow(sh)) { sh.solidPick = false; try { await assemble(run); } catch (e) { console.warn("[Gate.undoGoldJoin]", e && e.message); } }
+    if (!inSetNow(sh)) { if (!was || typeof was.pick !== "boolean") delete sh.solidPick; else sh.solidPick = was.pick; }
+    run.membershipDirty = true; try { await RunCtl.save(run); } catch (_) { /* saved with the run's next look */ }
+    liveRefresh(sh);
+    return !inSetNow(sh);
   }
   /** A sheet of a COMMITTED set whose page copy lost its place in it (Paul, 7 Oct: a partial sheet was chosen for it and it was nested again; the page drafted it out of its
    *  set, "Filling" with no Set number, and the run never puts a sheet of a committed set back, so Cut Sheet was refused with "Not cut: Included by you"). The set's own record
@@ -7048,7 +7086,7 @@ const Gate = window.Gate = (() => {
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
   return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull || staysCut(sh) : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
-     violations, selfCheck: selfCheckResult, invariantInput, splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R, autoCut, trimSurplus, unpair, unpairPlan, unpairLine, greenHomes: run => { const V = cardinalView(run || B.run); return V ? greenHomesOf(V, run || B.run) : new Map(); } };
+     violations, selfCheck: selfCheckResult, invariantInput, splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, undoGoldJoin, goldWaitHome, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R, autoCut, trimSurplus, unpair, unpairPlan, unpairLine, greenHomes: run => { const V = cardinalView(run || B.run); return V ? greenHomesOf(V, run || B.run) : new Map(); } };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -10847,7 +10885,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
      later set) and on a sheet card of its own alike. Approve for laser cutting (round 12): one button for a set, at the bottom of its
      card; a sheet that is part of no set has its own under its rail (see Approve below). */
   function flowSlots(card){
-    const kind=card.dataset.laserCard,out=[],articles=kind==='sheet'?[card]:[...card.querySelectorAll('.librarySheet')];
+    const kind=card.dataset.laserCard,out=[],articles=kind==='sheet'?[card]:[...card.querySelectorAll('.librarySheet:not([data-gold-pending])')];   // (a 10K / 14K sheet waiting greyed in a set, goldPendingTile, is no sheet of it: no rail)
     for(const a of articles){
       const id=a.querySelector('.libCard')?.dataset.id || a.querySelector('[data-laser-sheet]')?.dataset.laserSheet || (kind==='sheet'?card._laserSheets?.[0]:'');
       if(id)out.push({host:a,kind:'sheet',id});
@@ -11246,7 +11284,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     // (on a set's card a sheet is part of the set unless its record says it left: a draft, or left out by its own Include switch; anywhere else its record's set says it)
     const part=p=>real?!(p.draft || p.solidIncluded===false):inSetNow(p);
     const add=(host,rec)=>{if(rec)items.push([host,rec.id,on && !part(projected(rec))?approveCase([rec]):null,rec.folder || rec.fileBase || '']);};
-    if(kind==='set')for(const art of card.querySelectorAll('.sheetsRow > .librarySheet'))add(art,records.get(art.querySelector(':scope > .libCard')?.dataset.id));
+    if(kind==='set')for(const art of card.querySelectorAll('.sheetsRow > .librarySheet:not([data-gold-pending])'))add(art,records.get(art.querySelector(':scope > .libCard')?.dataset.id));   // (Paul, 26 Oct 2026: a 10K / 14K sheet waiting greyed in the set has no Approve of its own: its press is Approve & cut green line)
     else if(kind==='sheet')add(card,records.get(card._laserSheets?.[0]));
     for(const [host,id,c,name] of items)syncBox(host,'sheet',id,c,name);
     if(kind!=='set')return;
@@ -11952,6 +11990,7 @@ const Sets = window.Sets = (() => {
       for (const id of sheet.orders || []) if (!group.orders?.[id]) (group.orders ||= {})[id]={};
     }
     partnersOf([...groups.values()]);
+    goldPendingOf(groups);      // (Paul, 26 Oct 2026: a 10K / 14K sheet that waits for its set is drawn in it, greyed, until a person approves it and cuts its green line)
     // (SETREPAIR, Paul 17 Oct 2026: "I want you to fix it once and for all.") a set that breaks the owner's rules says so on its card, with one button that rebuilds it correctly
     // (charm-nest-set-repair.js): read from EVERY sheet the Library holds (an order chain runs through sheets outside the set), derived at every drawing, never saved
     try { if (window.SetRepair) SetRepair.annotate([...groups.values()], (_cache && _cache.sheets) || sheets, sets); } catch (e) { console.warn("[SetRepair] annotate", e); }
@@ -11984,7 +12023,7 @@ const Sets = window.Sets = (() => {
   function partnersOf(list) {
     const SO = typeof window !== "undefined" ? window.SharedOrders : null; if (!SO || typeof SO.sheets !== "function" || !SO.core) return;
     let all; try { all = SO.sheets(); } catch (_) { return; }
-    const by = new Map(all.map(x => [x.id, x]));
+    const by = new Map(all.map(x => [x.id, x])), rowOf = new Map(list.flatMap(g => g.sheets || []).map(r => [r.id, r]));
     // (Paul, 26 Oct 2026) the ONE set of each green-line sheet, over every sheet the page holds: the set it cannot leave, the set it was matched to, the set it is in, else the earliest-formed set of its partners.
     //  The set it cannot leave: the laser cut it, or its set is approved for laser cutting or committed; a recorded green-line cut alone pins nothing (Gate.greenHomesOf, the checker, the server's splitOfSet)
     let homes = null;
@@ -11998,8 +12037,48 @@ const Sets = window.Sets = (() => {
       const free = [...new Set(items.flatMap(it => it.thereIds).filter(i => by.get(i) && !by.get(i).fixed))];
       // (Paul, 13 Oct: a partner that is not full yet cannot be added to the set; the line says it joins by itself once it is full)
       const SRp = window.CharmNestSetRules, pageOf = id => { try { return typeof allSheets === "function" ? allSheets().find(p => p.sheetId === id) : null; } catch (_) { return null; } };
-      if (free.length) g.cardinalWait = free.map(i => ({ label: by.get(i).label, id: i, ...(SRp && SRp.isPartial && SRp.isPartial(pageOf(i)) ? { partial: true } : {}) }));
+      // (Paul, 26 Oct 2026: a 10K / 14K partner is never cut or approved by itself: `manual`, it waits greyed in this set for a person to approve it and cut its green line, goldPendingOf)
+      if (free.length) g.cardinalWait = free.map(i => ({ label: by.get(i).label, id: i, ...(SRp && SRp.isPartial && SRp.isPartial(pageOf(i)) ? { partial: true } : {}), ...(goldManual(by.get(i), pageOf(i), rowOf.get(i)) ? { manual: true } : {}) }));
     }
+  }
+  /** (Paul, 26 Oct 2026) A 10K / 14K sheet whose green line is not cut: the partner a set waits for a PERSON's press for ("approve it and cut its green line"). Rose Gold is cut automatically (Gate.autoCut). */
+  const goldManual = (s, pg, row) => !!s && (s.metal === "gold10k" || s.metal === "gold14k") && !s.laserDone && !(pg && (pg.roseCutAt || +pg.laserDoneAt > 0)) && !(row && (row.roseCutAt || +row.laserDoneAt > 0));
+  /* (Paul, 26 Oct 2026: "a given 10 K or 14 K gold sheet should be added to a given Set of Sheets where it shares charms with from a given multi-charm order. However the 10k and 14k sheets should stay
+     greyed-out inside the Set of Sheets until a user approves and adds a Green Cut line for either/both of the 10k / 14k gold sheets in question.") The 10K / 14K sheets a set waits for (cardinalWait
+     `manual`: its ONE set, SharedOrders greenHomes) are drawn INSIDE that set's card, greyed, as `goldPending`: taken out of the "14K / 10K Solid" group, never one of the set's sheets (its membership,
+     downloads, QR labels and Approve for laser cutting are the set's own sheets only). Their line and their press, "Approve & cut green line" (SetRepair.cutPending: the Cut Sheet press, with every
+     check), are on the tile; the set's Approve stays grey with "Waiting for 14K Sheet 1: approve it and cut its green line" (SetRules.gate). Once the cut is recorded the sheet is in the set and drawn
+     as any sheet of it. Derived at every drawing, never saved. */
+  function goldPendingOf(groups) {
+    const at = new Map(); for (const [key, g] of groups) { delete g.goldPending; for (const r of g.sheets || []) if (!at.has(r.id)) at.set(r.id, { key, g, r }); }
+    for (const g of groups.values()) {
+      if (!g.setId || g.committedAt || /^complete|superseded/.test(String(g.status || ""))) continue;
+      for (const w of g.cardinalWait || []) {
+        const x = w && w.manual ? at.get(w.id) : null; if (!x || x.g === g || x.g.setId || x.r.archived) continue;      // (a sheet listed by another set is that set's)
+        x.g.sheets = x.g.sheets.filter(r => r !== x.r); (g.goldPending || (g.goldPending = [])).push(x.r); at.delete(w.id);
+      }
+    }
+    for (const [key, g] of [...groups]) if (!g.setId && !(g.sheets || []).length) groups.delete(key);
+    return groups;
+  }
+  /** A pending 10K / 14K sheet in its set's card: greyed, its plain line and its one press. Its card opens the sheet window as any card does (Manual Control moves its charms freely meanwhile);
+   *  no QR label row, no rail and no Approve of its own (syncApprove, flowSlots and the set's downloads leave [data-gold-pending] out). */
+  function goldPendingTile(st, r) {
+    const set = st.name || O.setLabel(st.seq), name = window.CharmNestSheetName ? window.CharmNestSheetName.name(r) : (r.folder || r.id), id = esc(r.id);
+    return `<article class="librarySheet goldPending" data-gold-pending="${id}" aria-label="${esc(name)}: waiting for your approval and its green cut line"><div class="libCard hoverItem" data-m="${esc(r.metal)}" data-id="${id}" title="${esc(`${name} is not in ${set} yet: it waits for your approval and its green cut line`)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(name)}</span></div>`}<div data-back-sheet="${id}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${id}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span data-sheet-count="${id}"><b>${r.placedCount}</b>/${r.charmCount}</span><span data-sheet-density="${id}"><b>${Math.round((r.density || 0) * 100)}%</b></span><span data-sheet-orders="${id}">${(r.orders || []).length} orders</span></div></div>`
+      + `<div class="goldPendingNote" data-gold-pending-note role="note"><span class="gpTag">Waiting for your approval</span><span class="gpLine">Not in ${esc(set)} yet: ${esc(name)} waits for you to approve it and cut its green line. Until then its charms can be moved by hand.</span><button type="button" class="btn sage sm" data-gold-cut="${id}">Approve &amp; cut green line</button><span class="gpSay" data-gold-say role="status" aria-live="polite" hidden></span></div></article>`;
+  }
+  function goldPendingStyle() {
+    if (document.getElementById("goldPendingCss")) return;
+    const s = document.createElement("style"); s.id = "goldPendingCss";
+    s.textContent = `.librarySheet.goldPending>.libCard{opacity:.5;filter:grayscale(1);transition:opacity .2s ease,filter .2s ease}
+.librarySheet.goldPending>.libCard:hover,.librarySheet.goldPending>.libCard:focus-within{opacity:.78;filter:grayscale(.6)}
+.goldPendingNote{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin-top:8px;padding:8px 10px;border:1px dashed var(--line2,#d8cfbf);border-radius:9px;background:var(--paper2,#f6f1e7);font:12px/1.4 var(--sans,system-ui,sans-serif);color:var(--ink70,#5b554c);max-width:100%;box-sizing:border-box}
+.goldPendingNote .gpTag{font-weight:650;color:var(--ink,#1c1a17)}
+.goldPendingNote .gpSay{color:var(--ink70,#5b554c)}
+.goldPendingNote[aria-busy=true] [data-gold-cut]{opacity:.6;pointer-events:none}
+@media (prefers-reduced-motion:reduce){.librarySheet.goldPending>.libCard{transition:none}}`;
+    document.head.appendChild(s);
   }
   let _cache = null, libraryRequest = 0;
   /** One set's card, its sheets side by side with their QR labels (the Library's Sets view, and a set opened in its
@@ -12007,13 +12086,14 @@ const Sets = window.Sets = (() => {
   function libraryCard(st, all, shown, {onUndo = null} = {}) {
     const card = el("div", "setCard"); card.dataset.laserCard="set";card._laserSet=st;card._laserSheets=all.map(r=>r.id);card._sheets=all;
     card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Sheets" : "Sheets"}</span></div>` : `<div class="sh"><span class="nm" data-set-title>${esc(O.setLabel(st.seq))}${st.day?" · "+esc(st.day):""}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
-          <div class="sheetsRow">${shown.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span data-sheet-count="${esc(r.id)}"><b>${r.placedCount}</b>/${r.charmCount}</span><span data-sheet-density="${esc(r.id)}"><b>${Math.round((r.density || 0) * 100)}%</b></span><span data-sheet-orders="${esc(r.id)}">${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r),'Sheet',r)}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
+          <div class="sheetsRow">${shown.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span data-sheet-count="${esc(r.id)}"><b>${r.placedCount}</b>/${r.charmCount}</span><span data-sheet-density="${esc(r.id)}"><b>${Math.round((r.density || 0) * 100)}%</b></span><span data-sheet-orders="${esc(r.id)}">${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r),'Sheet',r)}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}${(st.goldPending || []).map(r => goldPendingTile(st, r)).join("")}</div>
           ${st.cardinalLinks ? `<div class="noteBox" data-set-links>${esc(st.cardinalLinks.charAt(0).toUpperCase() + st.cardinalLinks.slice(1))}.</div>` : ""}
           ${window.SetRepair ? SetRepair.lineHtml(st) : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
           `;
     card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
     try { if (window.SetRepair) SetRepair.wire(card, st); } catch (e) { console.warn("[SetRepair] wire", e); }      // (SETREPAIR, Paul 17 Oct 2026: the one button of a set that breaks the owner's rules, "Rebuild this set correctly"; its red line is drawn above, under the sheets)
+    if ((st.goldPending || []).length) { goldPendingStyle(); try { if (window.SetRepair && SetRepair.wirePending) SetRepair.wirePending(card, st); } catch (e) { console.warn("[SetRepair] wirePending", e); } }   // (Paul, 26 Oct 2026: its "Approve & cut green line")
     // a QR label ([data-big]) opens in the zoom viewer, wherever it is shown (PhotoView, charm-nest-mail.js)
     // (a set a Library search found comes with only what this card shows, `partial`: its whole record is read before undoing)
     // Undo set (Paul, 27 Sep 20:09-20:24: nothing a click changes may just be drawn again in one go): the card lifts while
@@ -12101,8 +12181,8 @@ const Sets = window.Sets = (() => {
       // Current: a set the laser has cut, and a group each of whose sheets it has cut, are under Completed
       let sets = _cache.sets.filter(st => !done(st) && st.sheets.some(r => !done(r)));
       if (metal) sets = sets.filter(st => (st.materials || []).includes(metal));
-      if (focus) sets = sets.filter(st => st.sheets.some(r => focus.test(r)));
-      else if (q) sets = sets.filter(st => `${st.setId ? O.completedTitle(st) : st.name || ""} ${st.setId || ""} ${st.setId ? O.completionDay(st) : st.day || ""} ${st.runId || ""} ${Object.keys(st.orders || {}).join(" ")} ${(st.sheets || []).flatMap(r=>[r.fileBase,r.names,(r.listings || []).join(" "),...(r.backs || []).map(b=>b.text)]).join(" ")}`.toLowerCase().includes(q));
+      if (focus) sets = sets.filter(st => st.sheets.concat(st.goldPending || []).some(r => focus.test(r)));   // (a 10K / 14K sheet drawn greyed in a set is found with it)
+      else if (q) sets = sets.filter(st => `${st.setId ? O.completedTitle(st) : st.name || ""} ${st.setId || ""} ${st.setId ? O.completionDay(st) : st.day || ""} ${st.runId || ""} ${Object.keys(st.orders || {}).join(" ")} ${(st.sheets || []).concat(st.goldPending || []).flatMap(r=>[r.fileBase,r.names,(r.listings || []).join(" "),...(r.backs || []).map(b=>b.text)]).join(" ")}`.toLowerCase().includes(q));
       sets=CNListActivity.selectBlocks("library",sets);   // (actual sets before every group of loose sheets, each in last-activity order)
       if (!sets.length) { body.innerHTML = `<div class="libEmpty">${focus ? "" : q || metal ? "No sets match this filter." : "No sets yet."}</div>`; if (LD) LD.decorate(body); return; }
       LaserReview.sections(body);

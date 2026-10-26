@@ -108,6 +108,7 @@
  *   formAll(...)                                -> { last, sets, wait, valid, closed }  every set the free sheets make, one after the other (see ONE SET AT A TIME above)
  *   surplus(setSheets, shareGroups)             -> [sheet]  the sheets of a set that no order ties to its others and that it is still valid without (the Library says so on the set)
  *   partnerWords(labels)                        -> "orders shared with RG Draft 1: add that sheet to this set"
+ *   goldWaitWords(labels)                       -> "waiting for 14K Sheet 1: approve it and cut its green line" (Paul, 26 Oct 2026: a 10K / 14K partner, `manual` in cardinalWait, waits for a person's press)
  *   enforce(false)                              -> for an offline suite about something else whose fixture sets predate the principle: gate() then reads applies:false
  */
 (function (root, factory) { const api = factory(root); if (typeof module === 'object' && module.exports) module.exports = api; else root.CharmNestSetRules = api; })(typeof self !== 'undefined' ? self : this, function (root) {
@@ -222,6 +223,13 @@
     return add.length ? `orders shared with ${l.join(' and ')}: ${add.join(' and ')} ${add.length > 1 ? 'join' : 'joins'} this set by itself once ready; ${p.join(' and ')} ${p.length > 1 ? 'join' : 'joins'} it ${once}` : `orders shared with ${p.join(' and ')}, which ${p.length > 1 ? 'are' : 'is'} not full yet: ${p.length > 1 ? 'they join' : 'it joins'} this set ${once}`;
   };
 
+  /** (Paul, 26 Oct 2026: "the 10k and 14k sheets should stay greyed-out inside the Set of Sheets until a user approves and adds a Green Cut line") The line a set gives for the 10K / 14K sheets it waits
+   *  for: they are never cut or approved by themselves, so the set waits for a PERSON's press: "waiting for 14K Sheet 1: approve it and cut its green line". A hold, never a rule the set breaks. */
+  const goldWaitWords = labels => {
+    const l = list(labels).map(str).filter(Boolean), one = l.length === 1, names = l.length < 2 ? l.join('') : `${l.slice(0, -1).join(', ')} and ${l[l.length - 1]}`;
+    return l.length ? `waiting for ${names}: approve ${one ? 'it' : 'them'} and cut ${one ? 'its green line' : 'their green lines'}` : '';
+  };
+
   /** What a completed sheet that waits for the NEXT set is told when the newest set has formed already. */
   const nextSetWords = (setName, missing) => `${setName || 'The set'} has formed, so this sheet waits for the next set: ${waitWords(missing).replace(/^Waits for /, 'it needs ').replace(/: a set needs.*$/, '')} with it`;
 
@@ -310,7 +318,12 @@
     // (Paul, 12 Oct) a set formed with the sheets that could join while a partner that shares its orders cannot yet (Rose Gold before its Cut Sheet press, a sheet still being
     //  saved): the page says which sheets (set.cardinalWait: derived from the sheets each time, never saved). Orders are never spread over two sets when a set advances.
     const partners = list(set && set.cardinalWait).map(w => str(w && (w.label || w))).filter(Boolean), notFull = list(set && set.cardinalWait).filter(w => w && w.partial).map(w => str(w.label || w));
-    const partnerGate = have => { const w = partnerWords(partners, notFull); return { applies: true, ok: false, missing: [], reason: `This set has ${w}.`, short: w, line: `Waiting: ${w}, so that orders are not spread over two sets.`, have, partners, partial: flag }; };
+    // (Paul, 26 Oct 2026) a 10K / 14K partner (`manual`: it waits greyed in this set for a person to approve it and cut its green line) is a HOLD with its own plain line, never "joins by itself"
+    const manual = list(set && set.cardinalWait).filter(w => w && w.manual && !w.partial).map(w => str(w.label || w)).filter(Boolean), others = partners.filter(x => !manual.includes(x));
+    const partnerGate = have => {
+      if (manual.length) { const m = goldWaitWords(manual), w = others.length ? partnerWords(others, notFull) : '', short = [m, w].filter(Boolean).join('; '), line = short.charAt(0).toUpperCase() + short.slice(1) + '.';
+        return { applies: true, ok: false, missing: [], reason: line, short, line, have, partners, manual, partial: flag, holding: true }; }
+      const w = partnerWords(partners, notFull); return { applies: true, ok: false, missing: [], reason: `This set has ${w}.`, short: w, line: `Waiting: ${w}, so that orders are not spread over two sets.`, have, partners, partial: flag }; };
     if (!members.some(s => Object.prototype.hasOwnProperty.call(s, 'releaseFull'))) return partners.length ? partnerGate(none.have) : none;
     const v = validSet(members);
     // (Paul, 26 Oct 2026, Decision 3: "the Set of Sheets should hold its place until a sheet is full again". A partial sheet never joins a set, so one IN a set went back to filling
@@ -324,7 +337,7 @@
       line: `Waiting for ${need}: a set needs at least 1 completed GF sheet and 1 completed SS sheet before it can go to laser cutting.`, have: v.have, partial: flag };
   }
 
-  const api = { isCompleted, metalClass, validSet, wouldStayValid, whyNotCompleted, describe, settle, gate, exempt, enforce, waitWords, form, formAll, unitsOf, surplus, closed, partnerWords, nextSetWords, isPartial, recordPartial, partialLine, partialDetail, partialWhy, fillWords, groupWait, CLOSING, CODE };
+  const api = { isCompleted, metalClass, validSet, wouldStayValid, whyNotCompleted, describe, settle, gate, exempt, enforce, waitWords, form, formAll, unitsOf, surplus, closed, partnerWords, goldWaitWords, nextSetWords, isPartial, recordPartial, partialLine, partialDetail, partialWhy, fillWords, groupWait, CLOSING, CODE };
   Object.defineProperty(api, 'PARTIAL_BRIDGE', { enumerable: true, get: () => partialBridge, set: v => { if (v !== 'hold' && v !== 'spread') throw new Error("PARTIAL_BRIDGE is 'hold' or 'spread'"); partialBridge = v; } });
   return api;
 });
