@@ -125,7 +125,10 @@ function seedCloud(srv, spec) {
   const put = srv.raw.set, d = cloudDocs(spec);
   // (COST, Oct 2026: every write that can make a sheet or set current marks it `current: true`, and the Library's Current lists read only the
   //  marked ones once Charm_Nest_Rev/currentFlag exists; that marker outlives clearCloud, so a seed written straight into the store marks its records as putSheet would)
-  for (const s of d.sheets) put(SHEETS + '/' + s.id, Object.assign({ current: true }, s));
+  //  and each seed is NEWER than the last: a page keeps the newest copy of a sheet by updatedAt (the Library's live read, record()), so a seed with the fixed old
+  //  updatedAt of SHEET_DEF lost to the copy the last scenario left on the kept page, and its cards showed the last scenario's counts)
+  const seededAt = Date.now();
+  for (const s of d.sheets) put(SHEETS + '/' + s.id, Object.assign({ current: true }, s, { updatedAt: seededAt }));
   for (const p of d.pool) put(POOL + '/' + p.poolId, p);
   for (const s of d.sets) put(SETS + '/' + s.setId, Object.assign({ current: true }, s));
   put(RUNS + '/' + d.run.runId, d.run);
