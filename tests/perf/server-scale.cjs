@@ -23,16 +23,33 @@ const dayOf = t => new Date(t).toISOString().slice(0, 10);
 // ── the store: one collection's entries per query (st.collEntries), so the fake's own scan of 500k documents does not swamp the time
 const st = makeState();
 { const idx = new Map(), cOf = k => k.slice(0, k.lastIndexOf('/')), set = st.docs.set, del = st.docs.delete;
-  st.docs.set = (k, v) => { const c = cOf(k); (idx.get(c) || idx.set(c, new Map()).get(c)).set(k, v); return set(k, v); };
+  st.docs.set = (k, v) => { st.writes = (st.writes || 0) + 1; const c = cOf(k); (idx.get(c) || idx.set(c, new Map()).get(c)).set(k, v); return set(k, v); };
   st.docs.delete = k => { const m = idx.get(cOf(k)); if (m) m.delete(k); return del(k); };
   st.collEntries = c => (idx.get(c) || new Map()).entries(); }
 const admin = fakeAdmin(st, 'http://localhost');
 /* (the fake has startAfter only: startAt(x), inclusive, on one numeric orderBy is startAfter just past x the other way)
    a count() is billed as Firestore bills an aggregation, one read per 1,000 index entries (at least one), not one per document as the fake's get() */
 { const db = admin.firestore(), wrap = (q, dir) => new Proxy(q, { get(t, k) { const v = t[k]; if (k === 'startAt') return x => wrap(t.startAfter(typeof x === 'number' ? (dir === 'desc' ? x + 1e-6 : x - 1e-6) : x), dir); if (k === 'orderBy') return (f, d) => wrap(v.call(t, f, d), d || 'asc'); if (k === 'count') return () => ({ get: async () => { const res = await t.count().get(), n = res.data().count; st.reads = (st.reads || 0) - n + Math.max(1, Math.ceil(n / 1000)); return res; } }); if (['where', 'orderBy', 'limit', 'startAfter', 'select'].includes(k)) return (...a) => wrap(v.apply(t, a), dir); return typeof v === 'function' ? v.bind(t) : v; } }), coll = db.collection;
-  db.collection = c => wrap(coll(c)); }
+  db.collection = c => wrap(coll(c));
+  db.doc = p => { const i = p.lastIndexOf('/'); return db.collection(p.slice(0, i)).doc(p.slice(i + 1)); }; }   // (firebase-admin's db.doc(path), which the fake leaves out)
 const Module = require('module'), realLoad = Module._load;
-Module._load = function (req, ...rest) { if (req === 'firebase-admin' || /[\/]firebaseAdmin(\.js)?$/.test(req) || req === './firebaseAdmin') return admin; if (req === 'node-fetch') return async () => ({ ok: false, status: 599, json: async () => ({}), text: async () => '' }); return realLoad.call(this, req, ...rest); };
+/* a FAKE Etsy: the shop's 1,100 newest receipts are new (above the 30,000 mirrored), 4-6 KB each; it answers getShopReceipts by offset/limit, newest
+   first, in 300 ms a page, as the real one may (no network, no token: _etsyMailEtsy's token and the API meter are stubs) */
+const NEW_ORDERS = 1100, etsy = { calls: 0 }, ETSY_TEXT = 'Handmade personalized initial charm, stamped and polished in our studio. ';
+const newReceipt = i => { const id = 3500000000 + 40000 + i, t = Math.floor(Date.now() / 1000) - (NEW_ORDERS - i) * 120; return { receipt_id: id, receipt_type: 0, seller_user_id: 1, buyer_user_id: 900000 + i, name: 'Buyer ' + i, buyer_email: 'b' + i + '@x.test', status: i % 40 ? 'Paid' : 'Canceled', is_paid: true, is_shipped: false, is_canceled: !(i % 40), message_from_buyer: '', created_timestamp: t, updated_timestamp: t, create_timestamp: t, update_timestamp: t, grandtotal: { amount: 4200, divisor: 100, currency_code: 'USD' }, transactions: [0, 1].map(j => ({ transaction_id: id * 10 + j, title: ETSY_TEXT.repeat(4), description: ETSY_TEXT.repeat(10), listing_id: 1718000 + (i % 40), sku: 'SKU-' + (i % 40), quantity: 1, variations: [{ formatted_name: 'Letter', formatted_value: 'A' }], price: { amount: 2100, divisor: 100, currency_code: 'USD' }, created_timestamp: t })) }; };
+const NEWEST = Array.from({ length: NEW_ORDERS }, (_, i) => newReceipt(NEW_ORDERS - 1 - i));
+async function fakeEtsy(url, init) {
+  const u = new URL(String(url)); etsy.calls++;
+  const reply = (status, body) => ({ ok: status < 300, status, headers: { get: () => null }, json: async () => body, text: async () => JSON.stringify(body) });
+  if (/oauth\/token/.test(u.pathname)) return reply(200, { access_token: 'tok', refresh_token: 'ref', expires_in: 3600 });
+  await new Promise(ok => setTimeout(ok, 300));
+  const off = +u.searchParams.get('offset') || 0, lim = +u.searchParams.get('limit') || 25, since = +u.searchParams.get('min_last_modified') || 0;
+  const all = NEWEST.filter(x => x.updated_timestamp >= since);
+  return reply(200, { count: all.length, results: JSON.parse(JSON.stringify(all.slice(off, off + lim))) });
+}
+const meterToken = { failNet() {}, fromHttp() {}, ok() {} }, fakeMeter = { bump: () => meterToken, bumpSimple() {}, flushNow: async () => {}, wrapHandler: h => h };
+Module._load = function (req, ...rest) { if (req === 'firebase-admin' || /[\/]firebaseAdmin(\.js)?$/.test(req) || req === './firebaseAdmin') return admin; if (req === 'node-fetch') return fakeEtsy; if (/[\/]_etsyApiMeter(\.js)?$/.test(req)) return fakeMeter; if (/[\/]_etsyMailEtsy(\.js)?$/.test(req)) return { getValidEtsyAccessToken: async () => 'tok', etsyFetch: async (p, o) => (await fakeEtsy('https://api.etsy.com/v3/application' + p, o)).json() }; return realLoad.call(this, req, ...rest); };
+process.env.SHOP_ID = '987654'; process.env.CLIENT_ID = 'test-key'; process.env.CLIENT_SECRET = 'test-secret';
 process.env.EDIT_PASSCODE = PASS; process.env.CHARM_NEST_DELETE_CODE = '975311';
 global.fetch = async () => { throw new Error('no network in the perf test'); };
 const put = (c, id, d) => st.docs.set(c + '/' + id, d);
@@ -84,12 +101,12 @@ function seed() {
 const results = [];
 async function measure(name, budget, fn) {
   if (process.env.PERF_TRACE && name.includes(process.env.PERF_TRACE)) { let last = Date.now(); st.tick = w => { const t = Date.now(); console.log('   ', t - last, 'ms before', w); last = t; }; } else st.tick = null;
-  const r0 = st.reads || 0, t0 = Date.now(); let res, err = null;
+  const r0 = st.reads || 0, w0 = st.writes || 0, t0 = Date.now(); let res, err = null;
   try { res = await fn(); } catch (e) { err = e; }
-  const ms = Date.now() - t0, reads = (st.reads || 0) - r0, bytes = res && res.body != null ? Buffer.byteLength(String(res.body)) : res ? Buffer.byteLength(JSON.stringify(res)) : 0;
+  const ms = Date.now() - t0, reads = (st.reads || 0) - r0, writes = (st.writes || 0) - w0, bytes = res && res.body != null ? Buffer.byteLength(String(res.body)) : res ? Buffer.byteLength(JSON.stringify(res)) : 0;
   let body = null; try { body = res && res.body != null ? JSON.parse(res.body) : res; } catch (_) { body = null; }
-  const row = { name, ms, reads, bytes, status: res && res.statusCode, budget, err: err ? String(err.message || err).slice(0, 200) : body && body.error ? String(body.error).slice(0, 200) : '', body };
-  row.ok = !row.err && (row.status == null || row.status === 200) && ms <= budget.ms && reads <= budget.reads && bytes <= (budget.bytes || 1e6) && (!budget.paged || budget.paged(body));
+  const row = { name, ms, reads, writes, bytes, status: res && res.statusCode, budget, err: err ? String(err.message || err).slice(0, 200) : body && body.error ? String(body.error).slice(0, 200) : '', body };
+  row.ok = !row.err && (row.status == null || row.status === 200) && ms <= budget.ms && reads <= budget.reads && bytes <= (budget.bytes || 1e6) && (budget.writes == null || writes <= budget.writes) && (!budget.paged || budget.paged(body));
   results.push(row); return body;
 }
 
@@ -97,7 +114,7 @@ async function measure(name, budget, fn) {
   const seedMs = seed();
   console.log(`seeded ${st.docs.size} documents in ${seedMs} ms`);
   const Lib = require(path.join(fnDir, 'charmNestLibrary.js')), Orders = require(path.join(fnDir, 'firebaseOrders.js')), Eff = require(path.join(fnDir, 'employeeEfficiency.js'));
-  const stamp = require(path.join(root, 'tests/charm-nest/_repoToken.cjs')), lib = async b => Lib.handler({ httpMethod: 'POST', headers: { 'x-edit-passcode': PASS }, queryStringParameters: {}, body: JSON.stringify(/^(sandboxReset|purgeHistory)$/.test(b.op) ? await stamp('charmNestLibrary', b, admin.firestore()) : b) });
+  const stamp = require(path.join(root, 'tests/charm-nest/_repoToken.cjs')), lib = async b => Lib.handler({ httpMethod: 'POST', headers: { 'x-edit-passcode': PASS }, queryStringParameters: {}, body: JSON.stringify(/^(sandboxReset|purgeHistory|sandboxPullOrders)$/.test(b.op) ? await stamp('charmNestLibrary', b, admin.firestore()) : b) });
   const eff = b => Eff.handler({ httpMethod: 'POST', headers: { 'x-nf-client-connection-ip': '10.0.0.9' }, body: JSON.stringify(Object.assign({ key: PASS }, b)) });
   const door = (b, h) => Orders.handler({ httpMethod: 'POST', headers: Object.assign({ 'x-nf-client-connection-ip': '10.0.0.8', origin: 'https://goldenspike.app' }, h || {}), queryStringParameters: {}, body: JSON.stringify(b) });
   const doorGet = q => Orders.handler({ httpMethod: 'GET', headers: { 'x-nf-client-connection-ip': '10.0.0.8', origin: 'https://goldenspike.app' }, queryStringParameters: q, body: '' });
@@ -109,7 +126,9 @@ async function measure(name, budget, fn) {
   const mid = String(3500000000 + Math.floor(N_ORDERS / 2)), today = dayOf(Date.now());
 
   await measure('Library listSheets (Current)', I, () => lib({ op: 'listSheets', excludeDone: true }));
-  await measure('Library listSheets (all, first page)', I, () => lib({ op: 'listSheets', limit: 300 }));
+  // (a part of the sheet list keeps half the 1 MB budget as headroom, the rest follows its cursor: every sheet comes, none twice)
+  const ls = await measure('Library listSheets (all, first page)', { ...I, bytes: 600000, paged: b => !!b && Array.isArray(b.sheets) && !!b.next }, () => lib({ op: 'listSheets', limit: 300 }));
+  if (ls && ls.next) { const more = await measure('Library listSheets (all, next part)', { ...I, bytes: 600000 }, () => lib({ op: 'listSheets', cursor: ls.next })); const ids = ls.sheets.concat((more && more.sheets) || []).map(x => x.id); if (new Set(ids).size !== ids.length || ids.length !== 300 && !(more && more.next)) results.push({ name: 'listSheets parts: every sheet once', ok: false, err: ids.length + ' ids over two parts' }); }
   await measure('Library history (first page)', I, () => lib({ op: 'history' }));
   await measure('Library history (activity)', I, () => lib({ op: 'history', sort: 'activity' }));
   await measure('Library setList', I, () => lib({ op: 'setList' }));
@@ -134,10 +153,21 @@ async function measure(name, budget, fn) {
   await measure('Station admin door', { ms: 1000, reads: 20 }, () => door({ stationAdmin: 'Ana_M' }));
   // the long jobs: inside the function's 10 s, with a continuation (more: true) until done
   for (let i = 0, more = true; more && i < 30; i++) { const b = await measure('Library sandboxReset (wipe) call ' + (i + 1), { ms: 9500, reads: 60000 }, () => lib({ op: 'sandboxReset', sandbox: true })); more = !!(b && b.more); if (i === 29 && more) results.push({ name: 'sandboxReset never finished', ok: false, err: 'still more after 30 calls' }); }
+  /* the pulls of new orders at scale: the sandbox's pull of the 1,000 newest Etsy orders (Paul's number), and production's receipts mirror bringing
+     1,100 new receipts into the 30,000 already mirrored; the pull inside the 10 s of a function, the mirror inside the 30 s a scheduled function lives (it stops starting pages at its own RUN_BUDGET_MS) */
+  put('config', 'etsyOauth', { access_token: 'tok', refresh_token: 'ref', expires_at_ms: Date.now() + 3600000 });   // (a throwaway token in the fake store: the fake Etsy takes any)
+  put('config', 'charmNestSandboxPull', { v: 1, limit: 1000, by: 'Paul', at: Date.now() });
+  const pull = await measure('Sandbox pull of 1,000 new orders', { ms: 9500, reads: 200, writes: 200 }, () => lib({ op: 'sandboxPullOrders', sandbox: true, startId: 'perf-pull-000001', by: 'Paul K' }));
+  if (pull && !(pull.ok && pull.count === 1000)) results.push({ name: 'sandbox pull brought 1,000', ok: false, err: JSON.stringify(pull).slice(0, 200) });
+  put('EtsyMail_Config', 'receiptsMirrorState', { lastSyncTimestamp: Math.floor(Date.now() / 1000) - 3 * 86400, nextEligibleAtMs: 0 });
+  const Mirror = require(path.join(fnDir, 'etsyMailReceiptsMirrorCron.js'));
+  const mir = await measure('Production receipts mirror, 1,100 new over 30,000', { ms: 25000, reads: 1500, writes: 1500 }, () => Mirror.handler({}));
+  const mirrored = NEWEST.filter(x => st.doc('EtsyMail_Receipts', String(x.receipt_id))).length;
+  if (mirrored !== NEW_ORDERS) results.push({ name: 'mirror brought every new receipt', ok: false, err: mirrored + ' of ' + NEW_ORDERS + ' ' + JSON.stringify(mir).slice(0, 200) });
   await measure('Library purgeHistory (check)', { ms: 2000, reads: 60000 }, () => lib({ op: 'purgeHistory', code: '975311', check: true }));
 
-  console.log('\n' + ['operation', 'ms', 'reads', 'KB', 'ok', 'note'].join(' | '));
-  for (const r of results) console.log([r.name, r.ms, r.reads, r.bytes != null ? (r.bytes / 1024).toFixed(1) : '', r.ok ? 'PASS' : 'FAIL', r.err || (r.ok ? '' : `budget ${r.budget.ms} ms / ${r.budget.reads} reads`)].join(' | '));
+  console.log('\n' + ['operation', 'ms', 'reads', 'writes', 'KB', 'ok', 'note'].join(' | '));
+  for (const r of results) console.log([r.name, r.ms, r.reads, r.writes, r.bytes != null ? (r.bytes / 1024).toFixed(1) : '', r.ok ? 'PASS' : 'FAIL', r.err || (r.ok ? '' : `budget ${r.budget.ms} ms / ${r.budget.reads} reads`)].join(' | '));
   Module._load = realLoad;
   const bad = results.filter(r => !r.ok);
   if (process.env.PERF_TABLE !== '1') assert.strictEqual(bad.length, 0, 'over budget at scale: ' + bad.map(r => r.name).join(', '));
