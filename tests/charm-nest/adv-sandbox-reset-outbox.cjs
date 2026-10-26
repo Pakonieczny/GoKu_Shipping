@@ -24,6 +24,7 @@ function page(stream) {
   c.document = { hidden: false, visibilityState: "visible", addEventListener() {}, getElementById: () => null, documentElement: { classList: { toggle() {} } } };
   c.addEventListener = () => {};
   c.setTimeout = (f, ms) => { timers.push(f); return timers.length; }; c.clearTimeout = () => {};
+  c.setInterval = () => 0; c.clearInterval = () => {};   // (the wipe's heartbeat, cn.sandboxWiping: a mark other tabs read, never fired here)
   c.fetch = async (url, o) => { const b = JSON.parse(o.body); if (b.op === "timelineAdd") seq.push({ sent: b.events.map(e => e.id), sandbox: b.sandbox }); return { ok: true, status: 200, json: async () => ({ ok: true }) }; };
   vm.createContext(c);
   vm.runInContext(`
