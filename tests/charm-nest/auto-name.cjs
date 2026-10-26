@@ -53,8 +53,11 @@ const pers = text => ({ is_personalized: true, variations: [{ formatted_name: 'M
 const receipt = (rid, txs) => ({ receipt_id: rid, order_number: rid, name: 'Buyer ' + rid, country_iso: 'US', city: 'Austin', message_from_buyer: '', update_timestamp: day, create_timestamp: day - 3600, status: 'Paid', is_shipped: false, transactions: txs });
 // W1..W3: words that need a decision (signed in / nobody signed in / after an idle sign-out) · C1..C3: words to approve · M: the order window's message
 const R = { W1: '3522100001', W2: '3522100002', W3: '3522100003', C1: '3522100004', C2: '3522100005', C3: '3522100006', M: '3522100007' };
+// (ENGPRE, Paul 13 Oct 2026: a short personalisation that is all the buyer wrote is taken as the words, with no paid reading, and goes straight to its
+//  approval; so W1..W3 carry a buyer's message too, which makes their words a proposal for a person to settle: "Check the requested inscription")
+const asks = rid => Object.assign(receipt(rid, [tx(rid, 1, 'BR-TST-0' + rid.slice(-1), pers('WHICH ONE?'))]), { message_from_buyer: 'Two names in the box, please pick the right one' });
 const receipts = [
-  receipt(R.W1, [tx(R.W1, 1, 'BR-TST-01', pers('WHICH ONE?'))]), receipt(R.W2, [tx(R.W2, 1, 'BR-TST-02', pers('WHICH ONE?'))]), receipt(R.W3, [tx(R.W3, 1, 'BR-TST-03', pers('WHICH ONE?'))]),
+  asks(R.W1), asks(R.W2), asks(R.W3),
   receipt(R.C1, [tx(R.C1, 1, 'BR-TST-04', pers('CARLA'))]), receipt(R.C2, [tx(R.C2, 1, 'BR-TST-01', pers('DORA'))]), receipt(R.C3, [tx(R.C3, 1, 'BR-TST-02', pers('EDNA'))]),
   receipt(R.M, [tx(R.M, 1, 'BR-TST-03', pers('FAYE'))])
 ];
