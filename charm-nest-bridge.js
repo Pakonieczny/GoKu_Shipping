@@ -4772,7 +4772,7 @@ const Pool = window.Pool = (() => {
       //  that sheet is closed meanwhile the intake's own choice stands, and what does not fit there moves on to the next sheet, overflowToNextSheet)
       if (!ip && !matePages.length && row._relink && Array.isArray(row._relink.homes)) {
         // (PICKFULL, Paul 19 Oct 2026: a home sheet that was only FULL, still a draft waiting for its set, is not full any more once the old pieces came off: it takes the picked charm back into their room; the sorter marks it full again when it is)
-        for (const p of row._relink.homes) if (p && p.metal === metal && p.releaseFull && (p.draft || !p.setId) && Gate.modern(p.runId) && !(p.label && p.label.own) && pagesOf(p.metal).includes(p)) { p.releaseFull = false; if (p.keepRelease && p.keepRelease.full) p.keepRelease = null; }   // (and the hold Gate.keep put on it when its pieces came off: a draft has no set to keep)
+        for (const p of row._editSku ? [] : row._relink.homes) if (p && p.metal === metal && p.releaseFull && (p.draft || !p.setId) && Gate.modern(p.runId) && !(p.label && p.label.own) && pagesOf(p.metal).includes(p)) { p.releaseFull = false; if (p.keepRelease && p.keepRelease.full) p.keepRelease = null; }   // (and the hold Gate.keep put on it when its pieces came off: a draft has no set to keep)
         const home = row._relink.homes.find(p => p && p.metal === metal && pagesOf(metal).includes(p) && !shut(p) && (!run || !p.runId || p.runId === run.runId)); if (home) page = home;
       }
       if (!ip && lineCuts(metal) && !matePages.includes(page) && !greenFits(page, String(row.order.receiptId), run)) {   // (Decision 2: one GF and/or one SS partner sheet, in one set)
@@ -16085,6 +16085,64 @@ const Review = window.Review = (() => {
     Orders.interpretAll(); syncOrderItems(); Orders.render();
     return { ok: true, sku, key: r.key, via: r.via, ask, orders: aff.orders };
   }
+  /* EDITSKU (Paul, 26 Oct 2026): "the ability to Manually update a given Etsy listing SKU # to match with an existing SKU from our charm repo" (the order window's Edit SKU, beside Copy).
+     One press for any open line, matched or not: a line matched to a charm now is re-linked as "Wrong charm?" does (fixCharm: the listing's link, read back, then LISTPICK); a line with no
+     charm (an unknown SKU, "No vector available") gets the saved alias for its listing and its Etsy SKU (aliasPut, as Review's "Use this charm"), then every open order of that listing and SKU is
+     made up again with the charm (relinkNow / repool: INPLACE, the new charm in the old charm's spot when it fits, else on the next sheet of its colour; the sheet itself is written as it stands,
+     never held). Etsy is not changed. → { ok, why, sku, via } */
+  function editSkuOffer(row) {
+    if (!row || !row.line || !row.spec || row.loading) return { ok: false, why: "the line is not read yet" };
+    if (row.fromRecord) return { ok: false, why: "this order is read from the records, not the open orders" };
+    // (a line with no design, "No vector available", is what Edit SKU is for: it is made up again with the charm; a committed, skipped or gone line is not changed here)
+    if (row.state !== "noDesign" && O.FINISHED_LINE && O.FINISHED_LINE.has(row.state)) return { ok: false, why: row.state === "committed" ? "the line's set was committed at the Design Station" : "the line is skipped or gone" };
+    if (row.spec.ownDesign || row.spec.customDone) return { ok: false, why: "this line is made from its own artwork, not a library charm" };
+    const lid = String(row.line.listingId || "").replace(/\D/g, ""); if (!lid) return { ok: false, why: "this line has no Etsy listing number" };
+    const RL = window.CharmNestReviewLink, from = RL && RL.fromOf ? RL.fromOf(row.line, row.spec) : String(row.line.sku || "").trim().toUpperCase();
+    const fix = fixOffer(row);
+    return { ok: true, why: "", lid, from: from || "", cur: String(row.spec.designSku || "").toUpperCase(), viaLink: !!fix.ok };
+  }
+  async function editSku(row, sku) {
+    sku = String(sku || "").trim().toUpperCase();
+    const no = (why, tone) => { if (why) toast(why, tone || "bad", 7000); return { ok: false, why }; };
+    const off = editSkuOffer(row); if (!off.ok) return no(off.why);
+    if (!sku) return no("Pick a charm from the repo first");
+    const e = Master.entryFor(sku); if (!e || !B.master.entries.has(sku)) return no(`${sku} is not in the charm repo`);
+    if (O.entryBlock(e)) return no(`${sku} is blocked in the master, so it cannot be cut`);
+    if (off.cur && (sku === off.cur || O.sameDesign(sku, off.cur, k => Master.entryFor(k)))) return no(`This line is ${off.cur} already`, "ok");
+    const who = by(); if (!who) return no("Sign in first: the change is saved under your name");
+    const lidOf = rr => String((rr.line && rr.line.listingId) || "").replace(/\D/g, ""), fromOf = rr => (window.CharmNestReviewLink && CharmNestReviewLink.fromOf ? CharmNestReviewLink.fromOf(rr.line, rr.spec) : String(rr.line.sku || "").toUpperCase());
+    const same = rr => lidOf(rr) === off.lid && (!off.from || fromOf(rr) === off.from), rows = Orders.rows().filter(same);
+    // (no sheet is held for an SKU edit: an order this line sent to Review is answered by it BEFORE the swap reads it (a Review hold would keep the old charm on its sheet), and a full sheet
+    //  the old charm leaves stays full (PICKFULL is not applied: the new charm goes into the old spot when it fits, else onto the next sheet of its colour))
+    try { const M = window.CharmNestReviewMark; if (M && M.isMarked && M.resolve) await Promise.all([...new Set(rows.map(x => String(x.order.receiptId)))].filter(rid => M.isMarked(rid)).map(rid => Promise.resolve(M.resolve(rid, { by: who, how: "pick", sku })).catch(() => {}))); } catch (_) { /* answered by the sweep as before */ }
+    for (const rr of rows) rr._editSku = sku;
+    try {
+    // (a line of the listing and SKU with no pieces yet, an unknown SKU or one with no design, is made up with the charm at once: it is not waiting for the next intake)
+    const makeUp = async () => { for (const rr of Orders.rows()) if (same(rr) && !(rr.poolIds || []).length && rr.state !== "committed" && !(O.FINISHED_LINE && O.FINISHED_LINE.has(rr.state) && rr.state !== "noDesign")) await repool(rr); };
+    if (off.viaLink) { const r = await fixCharm(row, sku, { confirm: () => true }); if (r && r.ok) { await makeUp(); Orders.interpretAll(); syncOrderItems(); Orders.render(); liveSku(); } return Object.assign({ via: "link" }, r); }
+    try { savedLink(await api("charmNestLibrary", { op: "aliasPut", listingId: off.lid, sku, fromSku: off.from || undefined, by: who, title: String(row.line.title || "").slice(0, 200) || undefined })); }
+    catch (err) { return no(`Not saved: ${(err && err.message) || err}`); }
+    answered({ kind: "unmatchedSku", rows }, "decided", `Edit SKU: ${off.from || "no SKU"} → ${sku}`, { sku, from: off.from || null }, who);
+    await Orders.loadMaps(true);
+    toast(`${off.from || "This SKU"} → ${sku} saved for listing ${off.lid}`, "ok");
+    linkHolds(rows, sku); pickedMarks(rows, sku, who);
+    const relinked = (await relinkNow().catch(() => null)) || { keys: new Set() };
+    for (const rr of Orders.rows()) if (same(rr) && !relinked.keys.has(rr.key)) await repool(rr);
+    await makeUp();
+    Orders.interpretAll(); syncOrderItems(); Orders.render(); liveSku();
+    return { ok: true, sku, via: "alias", orders: [...new Set(rows.map(r => String(r.order.receiptId)))] };
+    } finally { for (const rr of rows) delete rr._editSku; }
+  }
+  /** The similar charms the Edit SKU window offers as one-tap picks (the Review card's own), and the repo's SKU list for its search. */
+  function editSkuChoices(row) { masterSkuList(); try { return fixChoices(row).more.slice(0, 8); } catch (_) { return []; } }
+  /** After an SKU edit: every view of this screen at once (the cards, the Library, the order window, the run banner); other screens follow through the library broadcast and their live read. */
+  function liveSku() {
+    const t = f => { try { f(); } catch (_) { /* a view that is not there */ } };
+    t(() => refreshAllCards()); t(() => window.Gate && Gate.refreshMembership && Gate.refreshMembership());
+    t(() => { if (window.LaserReview) { LaserReview.changed && LaserReview.changed(); LaserReview.nudge && LaserReview.nudge(); } });
+    t(() => { if (S.mode === "library") CN.loadLibrary().catch(() => {}); });
+    t(() => { if (OrderWin.isOpen()) OrderWin.paint(); }); t(() => RunCtl.poke());
+  }
   /** The picker, drawn into `host` for a line: the similar charms (one tap each), the master index search, Cancel. o.close() when it is put away, o.done(result) after a saved pick. */
   function fixPicker(host, row, o) {
     o = o || {}; if (!host) return false;
@@ -17899,7 +17957,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuChoices, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -19051,6 +19109,7 @@ const OrderWin = window.OrderWin = (() => {
     // the buyer's message chip carries the Customer tab's own unread dot: it follows that dot (the mail module sets it as threads change)
     tryDo(() => { const dot = W.dlg.querySelector('[data-ow-tab="customer"] .owDot'); if (dot && window.MutationObserver) new MutationObserver(() => { const r = W.dlg.open && !W.closing && rowOf(W.key); if (r && !r.loading) paintFacts(r); }).observe(dot, { attributes: true, attributeFilter: ["hidden", "class"] }); });
     byId("owWrongCharm").onclick = () => charmFix(false);   // (WRONGCHARM: the picker for the line shown, opened or put away)
+    byId("owEditSku").onclick = () => openEditSku();   // (EDITSKU, Paul 26 Oct 2026)
     byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && (O.setDesignsOf(r.spec) || []).join(" + ")) || (r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
     // (no name chip in Team messages: a message carries the person of the account chip; nobody signed in, Send asks for the name inline; Paul, 18 Oct 2026)
     const input = byId("owInput");
@@ -19557,6 +19616,7 @@ const OrderWin = window.OrderWin = (() => {
     // (the SKU alone, as the Copy button copies it: an earring pair says its Left and Right in its pieces and facts, not on this line: Paul, 12 Oct 2026)
     byId("owSku").textContent = "SKU: " + ((O.setDesignsOf(sp) || []).join(" + ") || sp.designSku || r.line.sku || "—");   // (a necklace of saved charms names them all)
     paintCharmFix(r);
+    { const eb = byId("owEditSku"); if (eb) { const eo = r.loading || !window.Review || !Review.editSkuOffer ? { ok: false, why: "the line is not read yet" } : tryDo(() => Review.editSkuOffer(r)) || { ok: false }; eb.disabled = !eo.ok; eb.title = eo.ok ? `Match Etsy SKU ${eo.from || "(none)"} of listing ${eo.lid} to a charm in the charm repo` : `Edit SKU: ${eo.why || "not for this line"}`; } }
     paintSetLens(r);
     paintEng(r);
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller
@@ -19593,6 +19653,41 @@ const OrderWin = window.OrderWin = (() => {
   /** WRONGCHARM (Paul, 18 Oct 2026, order 4193072538): "Wrong charm?" beside the SKU under the Vector design, for a line matched to a library charm (Review.fixOffer); its picker
    *  (Review.fixPicker) opens below it for THIS line and is put away when the window shows another line or the line can no longer be corrected. The picker is drawn once when it opens
    *  (a repaint never empties what is being typed into its search). */
+  /* EDITSKU (Paul, 26 Oct 2026): the Edit SKU window. The Etsy SKU as it is, a search of the charm repo (the shared SKU list) with the picked charm's own picture, the similar charms as one tap each,
+     and what Save changes. Save is Review.editSku: the listing's link or alias saved and read back, every open order of the listing and SKU made up again with the charm, in its old spot on its sheet
+     when it fits, else on the next sheet of its colour; every view follows at once. */
+  function openEditSku() {
+    const r = rowOf(W.key), d = byId("owSkuDlg"); if (!r || !d || !window.Review || !Review.editSkuOffer) return;
+    const off = tryDo(() => Review.editSkuOffer(r)) || { ok: false, why: "" }; if (!off.ok) { toast(`Edit SKU: ${off.why}`, "bad", 6000); return; }
+    const input = byId("owSkuInput"), pick = byId("owSkuPick"), picks = byId("owSkuPicks"), save = byId("owSkuSave");
+    byId("owSkuNow").innerHTML = `Etsy SKU <b>${esc(off.from || "(none)")}</b> · listing ${esc(off.lid)} · ${off.cur ? `matched to <b>${esc(off.cur)}</b> now` : "no charm in the repo matches it now"}.`;
+    byId("owSkuNote").textContent = `Every open order of listing ${off.lid} with this Etsy SKU takes the charm you pick, and so do its next orders. A charm already on a sheet is swapped in its place when the new one fits there, otherwise the new one goes on the next sheet of its colour; no sheet is held for it. Etsy itself is not changed.`;
+    const choices = tryDo(() => Review.editSkuChoices(r)) || [];
+    picks.innerHTML = choices.map(c => `<button type="button" class="btn ghost sm dsPick" data-sku="${esc(c.sku)}" title="${esc(c.why || c.sku)}">${tryDo(() => Master.pictureTag(Master.entryFor(c.sku))) || ""}${esc(c.sku)}</button>`).join("");
+    tryDo(() => Master.mountPictures(picks));
+    const show = () => {
+      const k = String(input.value || "").trim().toUpperCase(), e = k ? tryDo(() => Master.entryFor(k)) : null, inRepo = !!k && B.master.entries.has(k), blocked = inRepo && e && tryDo(() => O.entryBlock(e));
+      const same = inRepo && off.cur && (k === off.cur || tryDo(() => O.sameDesign(k, off.cur, x => Master.entryFor(x))));
+      pick.classList.toggle("bad", !!k && (!inRepo || !!blocked));
+      pick.querySelector(".pic").innerHTML = inRepo ? (tryDo(() => Master.pictureTag(e)) || "") : "";
+      pick.querySelector(".say").innerHTML = !k ? "Type or pick a charm SKU." : !inRepo ? `<b>${esc(k)}</b> is not in the charm repo.` : blocked ? `<b>${esc(k)}</b> is blocked in the master, so it cannot be cut.` : same ? `<b>${esc(k)}</b> is this line's charm already.` : `<b>${esc(k)}</b> · ${esc((e && (e.title || e.file || e.name)) || "in the charm repo")}`;
+      if (inRepo) tryDo(() => Master.mountPictures(pick));
+      save.disabled = !inRepo || !!blocked || !!same;
+    };
+    input.value = ""; input.oninput = show; show();
+    picks.querySelectorAll("[data-sku]").forEach(b => { b.onclick = () => { input.value = b.dataset.sku; show(); input.focus(); }; });
+    input.onkeydown = ev => { if (ev.key === "Enter") { ev.preventDefault(); if (!save.disabled) save.click(); } };
+    save.textContent = "Save";
+    save.onclick = async () => {
+      const k = String(input.value || "").trim().toUpperCase(); if (save.disabled || !k) return;
+      save.disabled = true; save.textContent = "Saving…";
+      let res = null; try { res = await Review.editSku(rowOf(W.key) || r, k); } catch (e) { toast(`Edit SKU: ${(e && e.message) || e}`, "bad", 7000); }
+      save.textContent = "Save";
+      if (res && res.ok) { try { d.close(); } catch (_) {} if (W.dlg && W.dlg.open && rowOf(W.key)) tryDo(paint); } else show();
+    };
+    try { d.showModal(); } catch (_) { d.setAttribute("open", ""); }
+    setTimeout(() => { try { input.focus(); } catch (_) {} }, 0);
+  }
   function paintCharmFix(r) {
     const b = byId("owWrongCharm"), host = byId("owCharmFix"); if (!b || !host) return;
     const off = r && !r.loading && window.Review && Review.fixOffer ? tryDo(() => Review.fixOffer(r)) : null, ok = !!(off && off.ok);
