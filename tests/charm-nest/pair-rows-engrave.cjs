@@ -319,8 +319,10 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       const asked = pairCalls.filter(r => r.key === ROW.duck.key); assert.equal(asked.length, 1); assert.equal(asked[0], made.duck[0].row.parentRow, 'the line row');
       const mounted = mountCalls.filter(([n]) => n === d); assert.equal(mounted.length, 1); assert.equal(mounted[0][1], made.duck[0].row.parentRow, 'mounted with the line row, so it draws Left + Right');
       // the mismatched pair and the quantity-2 pair are one row each; quantity 2 says each ear holds two pieces
-      const p2 = rows.find(r => r.dataset.rid === ROW.pair2.order.receiptId); assert.deepEqual([...p2.querySelectorAll('.egEar .egPiece')].map(n => n.textContent), ['LEFT EAR ×2', 'RIGHT EAR ×2']);
-      assert.deepEqual([...p2.querySelectorAll('.egEar .w')].map(n => n.textContent), ['Anna', 'Ben'], 'ears with different words show both');
+      // (PIECES, Paul 16 Oct 2026: the quantity-2 pair is TWO rows, pair 1 and pair 2, each ear one piece and told by its pair)
+      const p2s = rows.filter(r => r.dataset.rid === ROW.pair2.order.receiptId); assert.equal(p2s.length, 2, 'the quantity-2 pair is two rows: pair 1 and pair 2');
+      assert.deepEqual(p2s.map(p2 => [...p2.querySelectorAll('.egEar .egPiece')].map(n => n.textContent)), [['LEFT EAR · PAIR 1', 'RIGHT EAR · PAIR 1'], ['LEFT EAR · PAIR 2', 'RIGHT EAR · PAIR 2']]);
+      assert.deepEqual([...p2s[0].querySelectorAll('.egEar .w')].map(n => n.textContent), ['Anna', 'Ben'], 'ears with different words show both');
       assert.equal(rows.filter(r => r.dataset.rid === ROW.mis.order.receiptId).length, 1);
       // the necklace: ONE row, its three discs told on it (DISCCYCLE)
       const discs = rows.filter(r => r.dataset.rid === ROW.disc.order.receiptId); assert.equal(discs.length, 1, 'the necklace is ONE row, not three'); const nk = discs[0];
@@ -328,7 +330,10 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       assert.deepEqual([...nk.querySelectorAll('.egEar [data-stage]')].map(n => n.textContent), ['Placement to check', 'Placement to check', 'Placement to check']); assert.equal(nk.dataset.jobs, made.disc.map(j => j.key).join(' ')); assert.equal(nk.dataset.open, made.disc[0].key, 'a click opens Disc 1');
       assert.equal(nk.querySelectorAll('.comparePair').length, 1, 'one picture block for the line'); assert.ok(pairCalls.some(r => r === made.disc[0].row.parentRow), 'drawn from the line\'s row');
       // a single, a single earring, a plain quantity-3 line, an old pair: the row they had (one words line, one stage line, the job's own row handed to the picture)
-      for (const k of ['pend', 'ear1', 'plain3', 'old']) {
+      // (PIECES: the plain quantity-3 line is ONE row naming its three copies, as the necklace names its discs)
+      { const r = rows.filter(x => x.dataset.rid === ROW.plain3.order.receiptId); assert.equal(r.length, 1, 'plain3: one row');
+        assert.deepEqual([...r[0].querySelectorAll('.egEar .egPiece')].map(n => n.textContent), ['PIECE 1 of 3', 'PIECE 2 of 3', 'PIECE 3 of 3']); assert.equal(r[0].dataset.jobs, made.plain3.map(j => j.key).join(' ')); }
+      for (const k of ['pend', 'ear1', 'old']) {
         const r = rows.filter(x => x.dataset.rid === ROW[k].order.receiptId); assert.equal(r.length, 1, k); const row = r[0];
         assert.equal(row.querySelectorAll('.egEars,.egEar,.egPiece').length, 0, k + ': no ear block'); assert.equal(row.querySelectorAll('.w').length, 1); assert.equal(row.querySelectorAll('[data-stage]').length, 1);
         assert.equal(row.dataset.open, made[k][0].key); assert.equal(row.dataset.mkey, 'eg:' + made[k][0].key); assert.equal(row.querySelector('.w').textContent, 'Mom');
@@ -342,7 +347,7 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       const pend = rowsOnPage().find(r => r.dataset.rid === ROW.pend.order.receiptId); assert.equal(norm(pend), GOLD_PLACE);
       const was = made.pend[0].state; made.pend[0].state = 'approved'; made.pend[0].approvedBy = 'Paul'; made.pend[0].approvedAt = 1.7e12; made.pend[0].backs = [];
       showList();
-      assert.equal(rowsOnPage().length, 8, 'the approved piece did not leave the list: still 8 rows'); assert.equal(document.querySelectorAll('#egDone, #egBacks, .decidedRow, [data-a="reopen"]').length, 0, 'no Decided row, no Reopen');
+      assert.equal(rowsOnPage().length, 9, 'the approved piece did not leave the list: still 9 rows'); assert.equal(document.querySelectorAll('#egDone, #egBacks, .decidedRow, [data-a="reopen"]').length, 0, 'no Decided row, no Reopen');
       const ap = rowsOnPage().filter(r => r.dataset.rid === ROW.pend.order.receiptId); assert.equal(ap.length, 1); const row = ap[0];
       assert.ok(row.classList.contains('isDecided') && row.dataset.decided === '1', 'nothing left to decide: the calm row'); assert.equal(row.dataset.open, made.pend[0].key); assert.equal(row.dataset.mkey, 'eg:' + made.pend[0].key);
       assert.equal(row.querySelectorAll('.egEars,.egEar,.egPiece').length, 0, 'still no ear block'); assert.equal(row.querySelector('.w').textContent, 'Mom'); assert.equal(row.querySelector('[data-stage]').dataset.s, 'approved'); assert.equal(row.querySelector('[data-stage]').textContent, 'Approved');
@@ -350,19 +355,19 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       made.pend[0].state = was; delete made.pend[0].approvedAt; delete made.pend[0].approvedBy; showList();
       assert.equal(norm(rowsOnPage().find(r => r.dataset.rid === ROW.pend.order.receiptId)), GOLD_PLACE, 'and back to needing its approval it is byte for byte the row it was');
       // none of these carry the ear markup or the row's extra attributes
-      for (const k of ['pend', 'ear1', 'plain3', 'old']) for (const r of rowsOnPage().filter(x => x.dataset.rid === ROW[k].order.receiptId)) { assert.equal(r.hasAttribute('data-jobs'), false, k); assert.equal(r.querySelectorAll('.egEars,.egEar').length, 0, k); }
+      for (const k of ['pend', 'ear1', 'old']) for (const r of rowsOnPage().filter(x => x.dataset.rid === ROW[k].order.receiptId)) { assert.equal(r.hasAttribute('data-jobs'), false, k); assert.equal(r.querySelectorAll('.egEars,.egEar').length, 0, k); }
     });
-    await t('2d the one chip counts rows still to settle: Placements 8 (neither the ears nor the discs are counted twice), there is no Decided tab, and the rail says 8 to settle', () => {
+    await t('2d the one chip counts rows still to settle: Placements 9 (neither the ears, the discs nor the copies are counted twice), there is no Decided tab (the Approved tab lists what is approved), and the rail says 9 to settle', () => {
       showList();
-      assert.equal(document.querySelector('.egTab[data-tab="place"] b').textContent, '8'); assert.equal(document.querySelector('.egTab[data-tab="done"]'), null, 'no Decided tab'); assert.equal(document.querySelectorAll('#engraveView .egTab[data-tab]').length, 1, 'one chip');
-      assert.equal(E.pendingRows(), 8, 'rows still to settle'); assert.equal(E.pendingCount(), 13, 'jobs: what the run itself checks, unchanged');
+      assert.equal(document.querySelector('.egTab[data-tab="place"] b').textContent, '9'); assert.equal(document.querySelector('.egTab[data-tab="done"]'), null, 'no Decided tab'); assert.deepEqual([...document.querySelectorAll('#engraveView .egTab[data-tab]')].map(b => b.dataset.tab), ['place', 'approved'], 'Placements and Approved: the approved engravings, as they are in Placements');
+      assert.equal(E.pendingRows(), 9, 'rows still to settle'); assert.equal(E.pendingCount(), 17, 'jobs: what the run itself checks, unchanged');
       assert.equal(E.reviewedRows(), 0);
     });
     await t('2e a click on the duck row opens the editor on its Left ear: a Left | Right switch, the counter in rows, the line told once', () => {
       showList();
       const d = rowsOnPage().find(r => r.dataset.rid === ROW.duck.order.receiptId); d.click();
       const card = document.querySelector('#egQueue .rvItem'); assert.ok(card, 'the editor opened'); assert.equal(card.dataset.key, made.duck[0].key, 'on the Left');
-      const kind = card.querySelector('.rh .kind').textContent; assert.equal(kind, '1 of 8 · 0 done', 'the counter counts rows (8), not jobs (13)');
+      const kind = card.querySelector('.rh .kind').textContent; assert.equal(kind, '1 of 9 · 0 done', 'the counter counts rows (9), not jobs (17)');
       const sw = card.querySelector('.egEarSwitch'); assert.ok(sw, 'a Left | Right switch'); const tabs = [...sw.querySelectorAll('.egEarTab')];
       assert.deepEqual(tabs.map(b => b.querySelector('.egPiece').textContent), ['LEFT EAR', 'RIGHT EAR']); assert.deepEqual(tabs.map(b => b.getAttribute('aria-pressed')), ['true', 'false']);
       assert.deepEqual(tabs.map(b => b.querySelector('.egEarWords').textContent), ['Mom', 'Mom'], 'both ears\' words are on the switch');
@@ -372,7 +377,7 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       assert.equal(card.querySelector('[data-a="approveBoth"]'), null, 'same words: still no press that approves both ears (ENGAPPROVE): each ear has its own Approve');
       // the Right ear
       tabs[1].click(); const card2 = document.querySelector('#egQueue .rvItem'); assert.equal(card2.dataset.key, made.duck[1].key, 'the switch shows the Right ear\'s own card');
-      assert.deepEqual([...card2.querySelectorAll('.egEarTab')].map(b => b.getAttribute('aria-pressed')), ['false', 'true']); assert.equal(card2.querySelector('.rh .kind').textContent, '1 of 8 · 0 done', 'the other ear is not another step');
+      assert.deepEqual([...card2.querySelectorAll('.egEarTab')].map(b => b.getAttribute('aria-pressed')), ['false', 'true']); assert.equal(card2.querySelector('.rh .kind').textContent, '1 of 9 · 0 done', 'the other ear is not another step');
     });
     await t('2e2 there is NO "Approve both ears" press, on either ear and whatever has been on screen: each ear\'s card has its own Approve and nothing else approves (ENGAPPROVE)', () => {
       reset(); frames.length = 0; showList();
@@ -394,13 +399,15 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
     });
     await t('2f Back / Next move row by row: from either ear of the duck line to the next ROW; wrap at the ends; a single is a stop of its own', () => {
       showList();
-      const order = [...new Set([...jobs.values()].filter(j => ['review', 'words', 'blocked', 'classify', 'ready', 'fitting'].includes(j.state)).map(j => Rows.lineKeyOf(j) + (Rows.earOf(j) ? '' : '#' + j.key)))];   // the stops, in the order Back / Next walk
-      assert.equal(order.length, 10, 'the stops: each disc is one, so the necklace is three of them');
+        // (PIECES: a stop is an ear PAIR, pair 1 and pair 2 apart, or one disc, or one copy C1..C3)
+      const stopOf = j => Rows.lineKeyOf(j) + (Rows.earOf(j) ? '|' + Rows.unitKey(j.slot) : '#' + j.key);
+      const order = [...new Set([...jobs.values()].filter(j => ['review', 'words', 'blocked', 'classify', 'ready', 'fitting'].includes(j.state)).map(stopOf))];   // the stops, in the order Back / Next walk
+      assert.equal(order.length, 13, 'the stops: each disc and each copy is one, so the necklace and the quantity-3 line are three each; the quantity-2 pair is two');
       const open = k => { E.restoreView({ tab: 'place', chosen: true, list: false, focus: k }); E.render(); return document.querySelector('#egQueue .rvItem'); };
       const press = (card, a) => { card.querySelector(`[data-a="${a}"]`).click(); return document.querySelector('#egQueue .rvItem').dataset.key; };
       const walk = []; let card = open(made.duck[0].key); walk.push(card.dataset.key);
-      for (let i = 0; i < 9; i++) { const k = press(card, 'next'); walk.push(k); card = document.querySelector('#egQueue .rvItem'); }
-      assert.equal(walk.length, 10); assert.equal(new Set(walk.map(k => Rows.lineKeyOf(jobs.get(k)) + (Rows.earOf(jobs.get(k)) ? '' : '#' + k))).size, 10, 'ten Nexts from the first row visit ten different stops');
+      for (let i = 0; i < 12; i++) { const k = press(card, 'next'); walk.push(k); card = document.querySelector('#egQueue .rvItem'); }
+      assert.equal(walk.length, 13); assert.equal(new Set(walk.map(k => stopOf(jobs.get(k)))).size, 13, 'twelve Nexts from the first row visit thirteen different stops');
       assert.equal(walk.filter(k => Rows.lineKeyOf(jobs.get(k)) === ROW.duck.key).length, 1, 'the duck line is ONE stop: Next never goes to its second ear');
       assert.equal(press(card, 'next'), made.duck[0].key, 'one more Next wraps to the first row (on its Left)');
       // from the Right ear: Next goes to the next row, Back to the previous
@@ -417,18 +424,18 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       assert.ok(d.classList.contains('earPairRow') && d.classList.contains('isDecided') && d.dataset.decided === '1', 'the pair row, calm: nothing left to decide'); assert.deepEqual([...d.querySelectorAll('.egEar .egPiece')].map(n => n.textContent), ['LEFT EAR', 'RIGHT EAR']);
       assert.deepEqual([...d.querySelectorAll('.egEar [data-s]')].map(n => n.dataset.s + ':' + n.textContent), ['approved:Approved', 'approved:Approved'], 'each ear tells its own state');
       assert.equal(document.querySelectorAll('[data-a="reopen"], #egDone, #egBacks, .decidedRow').length, 0, 'no Reopen, no Decided row');
-      assert.equal(document.querySelector('.egTab[data-tab="place"] b').textContent, '7'); assert.equal(document.querySelector('.egTab[data-tab="done"]'), null);
+      assert.equal(document.querySelector('.egTab[data-tab="place"] b').textContent, '8'); assert.equal(document.querySelector('.egTab[data-tab="done"]'), null);
       assert.equal(d.querySelectorAll('.comparePair').length, 1, 'still the line\'s ONE picture block (Left + Right)');
       const order = rowsOnPage().map(r => r.dataset.rid + (r.classList.contains('isDecided') ? 'D' : 'P')); assert.equal(order.at(-1), ROW.duck.order.receiptId + 'D', 'rows with something to settle come first, the calm row after them: ' + order.join(' '));
       E.restoreView({ tab: 'place', chosen: true, list: false, focus: made.pend[0].key }); E.render();
-      assert.equal(document.querySelector('#egQueue .rvItem .kind').textContent, '2 of 8 · 1 done', '1 calm row + 7 rows still to settle');
-      // one ear of the quantity-2 pair approved: the line is still ONE row, the ear approved told Approved, the other still to settle
+      assert.equal(document.querySelector('#egQueue .rvItem .kind').textContent, '2 of 9 · 1 done', '1 calm row + 8 rows still to settle');
+      // one ear of pair 1 of the quantity-2 line approved: pair 1 is still ONE row (pair 2 its own, PIECES), the ear approved told Approved, the other still to settle
       made.pair2[0].state = 'approved'; made.pair2[0].approvedBy = 'Paul'; made.pair2[0].approvedAt = 1.7e12; made.pair2[0].backs = [];
       showList();
-      const p2 = rowsOnPage().filter(r => r.dataset.rid === ROW.pair2.order.receiptId); assert.equal(p2.length, 1); assert.ok(p2[0].classList.contains('earPairRow'), 'both ears stay told on the row');
+      const p2s = rowsOnPage().filter(r => r.dataset.rid === ROW.pair2.order.receiptId); assert.equal(p2s.length, 2); const p2 = p2s.filter(r => r.dataset.jobs.split(' ').includes(made.pair2[0].key)); assert.equal(p2.length, 1, 'pair 1 is one row'); assert.ok(p2[0].classList.contains('earPairRow'), 'both ears stay told on the row');
       assert.equal(p2[0].classList.contains('isDecided'), false, 'one ear is still to settle'); assert.equal(p2[0].dataset.open, made.pair2[1].key, 'a click opens the ear still to settle');
-      assert.deepEqual([...p2[0].querySelectorAll('.egEar')].map(e => e.querySelector('.egPiece').textContent + ':' + e.querySelector('[data-s]').dataset.s), ['LEFT EAR ×2:approved', 'RIGHT EAR ×2:words']);
-      assert.equal(document.querySelector('.egTab[data-tab="place"] b').textContent, '7'); assert.equal(E.reviewedRows(), 2, 'the line with an ear approved counts as reviewed, as it did');
+      assert.deepEqual([...p2[0].querySelectorAll('.egEar')].map(e => e.querySelector('.egPiece').textContent + ':' + e.querySelector('[data-s]').dataset.s), ['LEFT EAR · PAIR 1:approved', 'RIGHT EAR · PAIR 1:words']);
+      assert.equal(document.querySelector('.egTab[data-tab="place"] b').textContent, '8'); assert.equal(E.reviewedRows(), 2, 'the line with an ear approved counts as reviewed, as it did');
       made.pair2[0].state = 'words';
     });
     await t('2h after one ear is approved the editor stays on the line: it is never thrown to another order; the ear approved is drawn as approved (a calm tick), the other ear is one press away (the card\'s own Approve moving on to the next piece is held by engrave-approve-pieces)', () => {
@@ -456,14 +463,14 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
       const nk = rowsOnPage().find(r => r.dataset.rid === ROW.disc.order.receiptId);
       assert.deepEqual([...nk.querySelectorAll('.egEar [data-font]')].map(n => n.textContent), ['Typewriter', 'Source Sans 3', ''], 'the list says each disc\'s font by name');
       nk.click(); let card = document.querySelector('#egQueue .rvItem'); assert.equal(card.dataset.key, made.disc[0].key, 'a click on the row opens Disc 1');
-      assert.equal(card.querySelector('.rh .kind').textContent, '1 of 8 · 0 done', 'the counter counts the necklace as ONE order');
+      assert.equal(card.querySelector('.rh .kind').textContent, '1 of 9 · 0 done', 'the counter counts the necklace as ONE order');
       let tabs = [...card.querySelectorAll('.egEarSwitch .egEarTab')]; assert.equal(tabs.length, 3);
       assert.deepEqual(tabs.map(b => b.querySelector('.egPiece').textContent), ['DISC 1 of 3', 'DISC 2 of 3', 'DISC 3 of 3']); assert.deepEqual(tabs.map(b => b.getAttribute('aria-pressed')), ['true', 'false', 'false']);
       assert.deepEqual(tabs.map(b => b.querySelector('.egEarWords').textContent), ['A', 'B', 'C'], 'each disc\'s own words'); assert.deepEqual(tabs.map(b => (b.querySelector('.egEarFont') || {}).textContent), ['Typewriter', 'Source Sans 3', undefined], 'its own font, by name');
       assert.deepEqual(tabs.map(b => b.querySelector('.egEarStage').textContent), ['Placement to check', 'Placement to check', 'Placement to check']);
       assert.equal(card.querySelectorAll('[data-f="words"]').length, 1, 'one card at a time: each disc keeps its own words box, approval, seal and back file'); assert.equal(card.querySelector('[data-a="approveBoth"]'), null, 'the words differ: no "all discs" press');
       tabs[2].click(); card = document.querySelector('#egQueue .rvItem'); assert.equal(card.dataset.key, made.disc[2].key, 'the switch shows Disc 3\'s own card'); assert.equal(card.querySelector('[data-f="words"]').value, 'C');
-      assert.deepEqual([...card.querySelectorAll('.egEarTab')].map(b => b.getAttribute('aria-pressed')), ['false', 'false', 'true']); assert.equal(card.querySelector('.rh .kind').textContent, '1 of 8 · 0 done', 'a disc is not another step');
+      assert.deepEqual([...card.querySelectorAll('.egEarTab')].map(b => b.getAttribute('aria-pressed')), ['false', 'false', 'true']); assert.equal(card.querySelector('.rh .kind').textContent, '1 of 9 · 0 done', 'a disc is not another step');
       // Back / Next: through every disc of every order
       const press = (a) => { card.querySelector(`[data-a="${a}"]`).click(); card = document.querySelector('#egQueue .rvItem'); return card.dataset.key; };
       const open = k => { E.restoreView({ tab: 'place', chosen: true, list: false, focus: k }); E.render(); runFrames(); card = document.querySelector('#egQueue .rvItem'); return card; };
