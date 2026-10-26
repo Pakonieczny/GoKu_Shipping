@@ -180,6 +180,10 @@
     return post("charmNestLibrary", { op: "cancelCheck", orderIds: list, sandbox: cfg.sandbox });
   }
   window.addEventListener("online", () => schedule(200));
+  /* (26 Oct 2026, a lost step: each tab reads the outbox from its own copy of localStorage, and another tab's write reaches that copy a moment later, so a save
+     can be made over a stale read and write over what another tab had just queued; the save re-reads the disk, but cannot see a write not yet arrived. Each page
+     keeps what it queued until it is delivered: when another tab's write leaves one of this page's unsent events out, it is written back at once.) */
+  window.addEventListener("storage", e => { if (e.key !== OUTBOX && e.key !== null) return; const on = new Set(disk().map(keyOf)); if (box.some(ev => mine(ev) && !on.has(keyOf(ev)))) save(); });
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
   if (box.length) schedule(1500);
   window.OrderTimeline = {

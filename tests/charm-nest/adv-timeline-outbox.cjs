@@ -5,7 +5,7 @@
 //      leave them for the sorter: sent through the station's door they were dropped, and the outbox forgot them.
 //   2. A batch bigger than 64 KB goes (a keepalive request over that is refused by the browser, so the outbox retried the
 //      same batch forever and nothing after it was ever sent).
-//   3. Two sorter tabs: what one tab queued is not wiped from the outbox by the other tab's save.
+//   3. Two sorter tabs: what one tab queued is not wiped from the outbox by the other tab's save (not even a save made over a stale read).
 //   4. A send that gets no answer at all (a half-open connection, a laptop that slept mid-send) ends after its time limit and the same batch goes again:
 //      it held the outbox for good (nothing after it was sent until the browser itself gave up on the request).
 // No network beyond loopback.
@@ -96,8 +96,15 @@ const OUTBOX = 'orderTimeline.outbox.v1';
       await a.evaluate(() => OrderTimeline.record({ orderId: '4189000003', type: 'held', id: 'a1' }));
       await b.evaluate(() => OrderTimeline.record({ orderId: '4189000003', type: 'released', id: 'b1' }));
       await a.evaluate(() => OrderTimeline.record({ orderId: '4189000003', type: 'note', id: 'a2', text: 'n' }));
-      const stored = await a.evaluate(k => JSON.parse(localStorage.getItem(k) || '[]').map(e => e.id).sort(), OUTBOX);
+      const ids = p => p.evaluate(k => JSON.parse(localStorage.getItem(k) || '[]').map(e => e.id).sort(), OUTBOX);
+      // (each tab reads its own copy of localStorage and another tab's write reaches it a moment later: the outbox settles, within a moment, on all three)
+      let stored = []; await until(async () => (stored = await ids(a)).join() === 'a1,a2,b1', 3000, 'all three in the outbox').catch(() => {});
       assert.deepEqual(stored, ['a1', 'a2', 'b1'], 'tab B\'s event is still in the outbox after tab A saved');
+      // (26 Oct 2026, deterministic: tab A writes the outbox over a stale read that has not seen tab B's b1 yet, which a loaded machine does;
+      //  tab B, which still has b1 unsent, puts it back: it failed before order-timeline.js listened for the other tabs' writes)
+      await a.evaluate(k => localStorage.setItem(k, JSON.stringify(JSON.parse(localStorage.getItem(k) || '[]').filter(e => e.id !== 'b1'))), OUTBOX);
+      stored = []; await until(async () => (stored = await ids(a)).join() === 'a1,a2,b1', 3000, 'b1 put back').catch(() => {});
+      assert.deepEqual(stored, ['a1', 'a2', 'b1'], 'tab B puts back its unsent event when tab A writes over it from a stale read');
       await b.close();                                   // tab B goes before it could send
       down = false;
       await a.reload(); await a.evaluate(() => OrderTimeline.config({ mode: 'sorter', by: 'Ana' }));
