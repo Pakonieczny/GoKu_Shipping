@@ -144,8 +144,9 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back'), was = { state: j.state, by: j.approvedBy, at: j.approvedAt, decision: j.decision };
       Object.assign(j, { state: 'approved', approvedBy: 'Name One', approvedAt: Date.now() - 60e3, decision: { by: 'Name One', at: Date.now() - 60e3, text: j.text } });
       setMode('engrave'); Engrave.restoreView({ list: true, chosen: true, focus: null, q: '' }); Engrave.render();
-      const r = document.querySelector(`#egQueue .egPlacementList .placementRow[data-open="${j.key}"]`);
-      const out = { row: !!r, words: r && r.querySelector('.w') ? r.querySelector('.w').textContent.trim() : '', seals: r ? r.querySelectorAll('.egPlacementSeals .seal').length : 0, stage: r && r.querySelector('[data-s]') ? r.querySelector('[data-s]').textContent.trim() : '', old: document.querySelectorAll('#egDone, #egBacks, .decidedRow, .doneDetail').length };
+      // (a front + back line is ONE row whose ears tell each face: it opens the face still to settle, the approved back is one of its ears, data-jobs)
+      const r0 = [...document.querySelectorAll('#egQueue .egPlacementList .placementRow')].find(n => n.dataset.open === j.key || (n.dataset.jobs || '').split(' ').includes(j.key)), r = r0 && (r0.querySelector(`.egEar[data-ear="${j.key}"]`) || r0);
+      const out = { row: !!r0, words: r && r.querySelector('.w') ? r.querySelector('.w').textContent.trim() : '', seals: r ? r.querySelectorAll(r === r0 ? '.egPlacementSeals .seal' : '.egEarSeal .seal').length : 0, stage: r && r.querySelector('[data-s]') ? r.querySelector('[data-s]').textContent.trim() : '', old: document.querySelectorAll('#egDone, #egBacks, .decidedRow, .doneDetail').length };
       Object.assign(j, { state: was.state, approvedBy: was.by, approvedAt: was.at, decision: was.decision }); Engrave.render();
       return out;
     }, KEY);
