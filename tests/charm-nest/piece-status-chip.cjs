@@ -140,7 +140,7 @@ async function main() {
     // each row of "Its pieces", as drawn
     const rows = () => page.evaluate(() => [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => {
       const st = r.querySelector('.st'), c = r.querySelector('.pcSt'), cs = c && getComputedStyle(c), sp = c && c.querySelector('span'), sps = sp && getComputedStyle(sp);
-      return { key: r.dataset.piece || (r.querySelector('[data-pc-act]') || { dataset: {} }).dataset.pcAct, tag: r.tagName, hold: r.querySelectorAll('.holdBtn').length, hidden: st && st.classList.contains('owPcSr') ? st.textContent.trim() : null,
+      return { key: r.dataset.piece || (r.querySelector('[data-pc-act]') || { dataset: {} }).dataset.pcAct, tag: r.tagName, hold: r.querySelectorAll('.revSendBtn').length, hidden: st && st.classList.contains('owPcSr') ? st.textContent.trim() : null,
         chip: c && { tag: c.tagName, text: c.textContent.replace(/\s+/g, ' ').trim(), cls: (c.dataset.k || '') + ([...c.classList].includes('off') ? ' off' : ''), aria: c.getAttribute('aria-label'), check: !!c.querySelector('.pcCk'), tab: c.tabIndex,
           font: sps.fontFamily, size: sps.fontSize, weight: sps.fontWeight, color: sps.color, ellipsis: sps.textOverflow, over: getComputedStyle(c).textOverflow, clipped: c.scrollWidth > c.clientWidth + 1 || sp.scrollWidth > sp.clientWidth + 1,
           dot: getComputedStyle(c.querySelector('i')).backgroundColor, rowDot: getComputedStyle(r.querySelector('.dot')).backgroundColor, border: cs.borderTopStyle, radius: cs.borderTopLeftRadius, bg: cs.backgroundColor } };
@@ -161,7 +161,7 @@ async function main() {
     let R = await rows();
     const a1 = byKey(R, A, 'a1'), a2 = byKey(R, A, 'a2'), a3 = byKey(R, A, 'a3');
     assert.deepEqual([a1, a2, a3].map(r => r.chip.text), ['GF Sheet 1', 'RG Sheet 1', 'Waiting for a sheet'], JSON.stringify(R.map(r => r.chip)));
-    assert([a1, a2, a3].every(r => r.tag === 'DIV' && r.hold === 1), 'each row keeps its one orange Hold: ' + JSON.stringify(R.map(r => [r.tag, r.hold])));
+    assert([a1, a2, a3].every(r => r.tag === 'DIV' && r.hold === 1), 'each row keeps its one Hold Order button (HOLDBTN: where the orange Hold stood): ' + JSON.stringify(R.map(r => [r.tag, r.hold])));
     assert(a1.chip.tag === 'BUTTON' && a1.chip.aria === 'Open GF Sheet 1' && a1.chip.tab === 0 && !a1.chip.check, 'GF Sheet 1: a button, aria-label "Open GF Sheet 1", in the tab order, no check: ' + JSON.stringify(a1.chip));
     assert(a2.chip.tag === 'BUTTON' && a2.chip.aria === 'Open RG Sheet 1' && a2.chip.check, 'RG Sheet 1: a button with its small check (its set is sent to the laser): ' + JSON.stringify(a2.chip));
     assert(a3.chip.tag === 'SPAN' && a3.chip.cls.includes('wait') && a3.chip.cls.includes('off') && a3.chip.border === 'dashed' && a3.chip.aria === null, 'Waiting for a sheet: said, not pressed, hollow and dashed: ' + JSON.stringify(a3.chip));
@@ -208,7 +208,7 @@ async function main() {
         const g = await page.evaluate(() => {
           const sum = document.getElementById('owPcSum'), sr = sum.getBoundingClientRect(), out = { over: sum.scrollWidth - sum.clientWidth, w: sr.width, rows: [] };
           for (const r of sum.querySelectorAll('.owPcRow')) {
-            const c = r.querySelector('.pcSt'), rr = r.getBoundingClientRect(), cr = c.getBoundingClientRect(), nm = r.querySelector('.owPcName, .nm'), h = r.querySelector('.holdBtn'), d = r.querySelector('.steps');
+            const c = r.querySelector('.pcSt'), rr = r.getBoundingClientRect(), cr = c.getBoundingClientRect(), nm = r.querySelector('.owPcName, .nm'), h = r.querySelector('.revSendBtn'), d = r.querySelector('.steps');
             const box = n => { if (!n) return null; const b = n.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom }; };
             out.rows.push({ text: c.textContent.trim(), row: { l: rr.left, r: rr.right }, chip: { l: cr.left, r: cr.right, t: cr.top, b: cr.bottom }, nm: box(nm), hold: box(h), dots: box(d), clipped: c.scrollWidth > c.clientWidth + 1, h: cr.height });
           }
@@ -229,12 +229,13 @@ async function main() {
     await page.setViewportSize({ width: 1440, height: 900 }); await page.waitForTimeout(300);
     await closeWin();
 
-    // ── 3 · Bea Beta's order is on hold: no Hold button, plain rows, the chip inside the row's own button (no button in a button) ──
+    // ── 3 · Bea Beta's order is on hold: its Hold Order / In Review button (HOLDBTN), plain rows, the chip inside the row's own button (no button in a button) ──
     await openWin(B, 2);
     R = await rows();
     const b1 = byKey(R, B, 'b1'), b2 = byKey(R, B, 'b2');
     assert.deepEqual([b1, b2].map(r => r.chip && r.chip.text), ['On hold', 'On hold'], JSON.stringify(R.map(r => r.chip)));
-    assert([b1, b2].every(r => r.hold === 0 && r.chip.tag === 'SPAN'), 'rows with no Hold button (the order is held): the chip only says: ' + JSON.stringify(R.map(r => [r.tag, r.hold, r.chip.tag])));
+    // (HOLDBTN, Paul 20 Oct 2026: the Hold button became ReviewSend's "Hold Order" / "In Review", drawn for every order but a cancelled one, a held one too; the chip is still a plain SPAN, no button in a button)
+    assert([b1, b2].every(r => r.hold === 1 && r.chip.tag === 'SPAN'), 'a held order\'s rows have the one Hold Order / In Review button; the chip only says: ' + JSON.stringify(R.map(r => [r.tag, r.hold, r.chip.tag])));
     assert(b1.chip.cls.includes('hold') && /^rgb\(162, 89, 28\)$/.test(b1.chip.color), 'On hold takes the Hold button\'s orange: ' + b1.chip.color + ' ' + b1.chip.cls);
     assert(b1.chip.dot === 'rgb(162, 89, 28)', 'and its dot: ' + b1.chip.dot);
     for (const r of [b1, b2]) plain(r.chip, r.chip.text);
@@ -264,7 +265,7 @@ async function main() {
       R = await rows(); const held = keys.map(t => byKey(R, o, t));
       assert.deepEqual(held.map(r => r.chip && r.chip.text), ['On hold', 'On hold'], what + ': both pieces say On hold: ' + JSON.stringify(R.map(r => r.chip)));
       assert(held.every(r => r.chip.cls === 'hold' && r.chip.tag === 'SPAN' && r.chip.aria === null), what + ': said, not pressed (there is no sheet to open): ' + JSON.stringify(held.map(r => r.chip)));
-      assert.equal(R.every(r => r.hold === 0), plainRows, what + ': ' + (plainRows ? 'no Hold button of its own (the order is held)' : 'the Hold button is still there'));
+      assert(R.every(r => r.hold === 1), what + ': the Hold Order / In Review button is on every row, held or not (HOLDBTN, Paul 20 Oct 2026, where the orange Hold stood)');
       assert((await scopeOf()).every(p => !p.nested), what + ': the Sheet tab agrees: on no sheet ' + JSON.stringify(await scopeOf()));
       // (the card above no longer carries a Sheet button or a sheet chip per piece, Paul 12 Oct 2026: the Sheet tab, greyed above, and these rows say it)
       assert.equal(await page.evaluate(() => document.querySelectorAll('#owNowCard button, #owNowCard .owShChip, #owNowCard .shs, #owNowCard [data-go], #owNowCard [data-pc]').length), 0, what + ': the card above has no buttons and no sheet chips');

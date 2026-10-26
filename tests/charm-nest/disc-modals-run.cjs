@@ -95,12 +95,12 @@ module.exports = async function run({ page, check, probe, srv, D, E, S1, Q3, poo
   cs = await cards(OV);
   check(cs.length === 1 && !cs[0].switch && cs[0].words.replace(/\n/g, ' // ') === 'GOOD // LUCK', 'one card, no switch, no Back/Next on a single: ' + JSON.stringify([cs.length, cs[0] && cs[0].switch, cs[0] && cs[0].words]));
   await closeWin();
-  // a plain quantity-3 line (three of one charm): one card as ever, no disc switch
+  // a plain quantity-3 line (three of one charm): PIECES (Paul, 16 Oct 2026) cuts it into its 3 copies, C1..C3, one card each, still no disc switch
   await page.evaluate(k => OrderWin.open(k), keyOf(Q3));
   await page.waitForFunction(() => OrderWin.isOpen());
   check(await waitEngCard(qKeys[0], 'review') || await waitEngCard(qKeys[0], 'approve'), 'a plain quantity-3 line: its card');
   cs = await cards(OV);
-  check(cs.length === 1 && !cs[0].switch && cs[0].words === 'LOVE' && qKeys.length === 1, 'one card, no disc switch, no Back/Next on a plain quantity-3 line: ' + JSON.stringify([cs.length, cs[0] && cs[0].switch, cs[0] && cs[0].words, qKeys]));
+  check(cs.length === 3 && !cs.some(c => c.switch) && cs[0].words === 'LOVE' && qKeys.length === 3 && qKeys.every((k, i) => k.endsWith('#C' + (i + 1))), 'a card per copy (C1..C3), no disc switch on a plain quantity-3 line: ' + JSON.stringify([cs.length, cs[0] && cs[0].switch, cs[0] && cs[0].words, qKeys]));
   const qcell = await page.evaluate(() => { const m = [...document.querySelectorAll('#owMeta .m')].find(x => x.querySelector('i') && x.querySelector('i').textContent === 'Engraving'); return m ? m.querySelector('span').textContent.replace(/\s+/g, ' ').trim() : null; });
   check(!/Disc/.test(qcell || ''), 'its Engraving cell (if shown) says no disc: ' + qcell);
   await closeWin();
@@ -136,7 +136,7 @@ module.exports = async function run({ page, check, probe, srv, D, E, S1, Q3, poo
   check(!/piece/.test(sd.head) && sd.qty === '1 · 2 discs' && /^Its pieces/.test(sd.pieces) && /· 2 pieces/.test(sd.pieces), 'the 2-disc order: no count in the header, "Quantity 1 · 2 discs", "Its pieces" with "2 pieces": ' + JSON.stringify(sd));
   check(!/piece/.test(se.head) && se.qty === '1 · 3 discs' && /^Its pieces/.test(se.pieces) && /· 3 pieces/.test(se.pieces), 'the 3-disc order: no count in the header, "Quantity 1 · 3 discs", "Its pieces" with "3 pieces": ' + JSON.stringify(se));
   check(!/piece/.test(ss.head) && ss.qty === '1' && /^Its piece(?!s)/.test(ss.pieces) && !/pieces|×/.test(ss.pieces), 'a single charm keeps "Quantity 1", "Its piece": ' + JSON.stringify(ss));
-  check(!/piece/.test(sq.head) && sq.qty === '3' && /^Its piece(?!s)/.test(sq.pieces) && /· ×3/.test(sq.pieces), 'a plain quantity-3 line keeps "Quantity 3", "Its piece" with "×3": ' + JSON.stringify(sq));
+  check(!/piece/.test(sq.head) && sq.qty === '3' && /^Its pieces/.test(sq.pieces) && /· 3 pieces/.test(sq.pieces) && /Piece 1 of 3[\s\S]*Piece 3 of 3/.test(sq.pieces), 'a plain quantity-3 line keeps "Quantity 3"; "Its pieces" lists its 3 copies (PIECES): ' + JSON.stringify(sq));
   const facts = await page.evaluate(ks => ks.map(k => { const e = document.querySelector(`#ordItems [data-key="${k}"] .rowFacts`); return e ? e.textContent.replace(/\s+/g, ' ').trim().replace(/ · Ship by.*$/, '') : null; }), [keyOf(D), keyOf(E), keyOf(S1), keyOf(Q3)]);
   check(JSON.stringify(facts) === JSON.stringify(['Qty 1 · 2 discs', 'Qty 1 · 3 discs', 'Qty 1', 'Qty 3']), 'the order list rows: counted lines say their discs, a single and a plain quantity-3 line say what they said: ' + JSON.stringify(facts));
   check(errors.length === 0, 'no page errors: ' + errors.join(' | '));

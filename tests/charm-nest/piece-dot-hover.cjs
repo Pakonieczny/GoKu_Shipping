@@ -496,7 +496,8 @@ const O3 = { rid: '4170600003', t: ['41706000031', '41706000032', '41706000033',
 const Q2 = { rid: '4170600004', t: ['41706000041', '41706000042'] };                                 // TWIN_X (two copies: one on RG Sheet 1, one not placed) · SOLO_Y on RG Sheet 1
 const RG1 = 'sheet-pd-rg1', SS1 = 'sheet-pd-ss1';
 const pid = (o, i, c = 1) => `${o.rid}_${o.t[i]}_${c}`, lkey = (o, i) => `${o.rid}_${o.t[i]}`;
-const fline = (tid, sku, metalKey, metalLabel, qty = 1) => ({ transactionId: tid, listingId: '19010' + tid.slice(-5), sku, title: (sku || 'Charm') + ' earrings', quantity: qty, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: metalLabel }], metalKey, metalLabel, personalization: [], buyerMessage: '' });
+const fline = (tid, sku, metalKey, metalLabel, qty = 1) => ({ transactionId: tid, listingId: '19010' + tid.slice(-5), sku, title: (sku || 'Charm') + ' charm',   // (not "earrings": since the pair rule, Paul 9 Oct 2026, an earrings title is a Left + Right pair, and these are single charms)
+  quantity: qty, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: metalLabel }], metalKey, metalLabel, personalization: [], buyerMessage: '' });
 const forder = (o, buyer, lines) => ({ receiptId: o.rid, orderNumber: o.rid, createTs: SHIP - 7 * DAY, updateTs: SHIP - 7 * DAY + 60, shipBy: SHIP, buyer: { name: buyer }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [], lines });
 async function fullApp(browser, mutant = null) {   // (mutant: { from, to }: the page's order window script with one change; the run must then fail)
   const { start } = require('./bridge-server.cjs');

@@ -113,9 +113,10 @@ const SET7 = 'HUGGIE HOOPS-TENNIS SET 7', LID2 = '1744372162';   // (a listing w
     /* 6 · the order window: the pair picture, a Left row and a Right row */
     await page.evaluate(rid => { OrderWin.open(B.orders.rows.find(r => r.order.receiptId === rid).key, { view: 'info' }); }, A);
     await page.waitForFunction(() => { const v = document.getElementById('owVector'); return v && v.querySelector('img') && v.getAttribute('aria-busy') !== 'true'; }, null, { timeout: 30000 });
-    const win = await page.evaluate(async () => { const im = document.querySelector('#owVector img'); return { pic: await window.__ink(im.src), rows: [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => ({ side: r.dataset.side || '', text: r.textContent.replace(/\s+/g, ' ').trim().slice(0, 140) })) }; });
+    const win = await page.evaluate(async () => { const im = document.querySelector('#owVector img'); return { pic: await window.__ink(im.src), rows: [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => ({ side: r.dataset.side || '', pair: r.classList.contains('owPc-pair'), ears: [...r.querySelectorAll('.owPcPair .egPiece')].map(e => e.dataset.slot).join(), text: r.textContent.replace(/\s+/g, ' ').trim().slice(0, 140) })) }; });
     two(win.pic, 'the order window header');
-    ok(win.rows.filter(r => r.side).map(r => r.side).join() === 'L,R', 'its pieces list has the Left row and the Right row: ' + JSON.stringify(win.rows));
+    // (ONE ROW PER ORDER ITEM, Paul, 12 Oct 2026: "Each order should only take up one line and you need to amalgamate multi charm orders, including all earring orders": the pair is ONE row with a Left | Right marker)
+    ok(win.rows.length === 1 && win.rows[0].pair && win.rows[0].ears === 'L,R', 'its pieces list has ONE row for the pair, with its Left and its Right: ' + JSON.stringify(win.rows));
     await page.evaluate(() => OrderWin.close()); await page.waitForTimeout(200);
     if (shots) { await page.evaluate(() => { CN.setMode('orders'); Orders.render(); window.scrollTo(0, 0); }); await vectorsDrawn(page, '#ordItems [data-vector]'); await page.screenshot({ path: path.join(shots, 'TENNISLINK-orders-after.png') }); await page.evaluate(() => { CN.setMode('review'); Review.render(); }); await page.waitForTimeout(600); await page.screenshot({ path: path.join(shots, 'TENNISLINK-review-after.png') }); }
     await context.close();

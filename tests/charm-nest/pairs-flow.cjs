@@ -260,6 +260,7 @@ const ctxFor = (extra) => {
   const log = [];
   const c = ctxFor({ S, B: { pool: { rows: new Map() } }, update: async () => {}, charmOf: id => pages.flatMap(p => p.charms).find(x => x.poolId === id) || null, settle() {}, sheetDirty() {}, window: { Cancelled: { has: () => false }, CN: null, LiveNest: null },
     pagesOf: m => S.sheets[m].pages, addPage: m => mkPage(S.sheets[m].pages.length + 1), labelOf: m => m, holding: ids => { const out = new Set(); for (const id of ids) for (const p of pages) if (p.charms.some(x => x.poolId === id)) out.add(p); return out; },
+    lineCuts: m => m === 'rose', greenFits: () => true,   // (the rose partner-sheet rule of attachPool, as the bridge defines it; this gold world never cuts rose)
     Gate: null, agent: (a, k, t) => log.push({ k, t }), O: {} });
   c.LiveNest = c.window.LiveNest = { closed: p => !!p.closed, intakePage: (m, run, rid) => pages.find(p => p.charms.some(x => String(x.order) === String(rid)) && !p.closed) || pages.at(-1) };
   vm.runInContext(policy + ';' + code + ';this.attachPool = attachPool;', c);

@@ -6,17 +6,20 @@ const ta = { value: 'First line\nSecond line\nThird line', selectionStart: 12, s
   setSelectionRange(start, end) { calls.push([start, end]); } };
 const card = { isConnected: true, querySelector: q => q.includes('usewords') ? use : ta,
   querySelectorAll: () => [approveButton] };
-const job = { key: 'copy', editingBack: false, lineMode: '3', lines: ['Old words'], text: 'Old words', row: {} };
+const job = { key: 'copy', state: 'review', editingBack: false, lineMode: '3', lines: ['Old words'], text: 'Old words', row: {} };
 const context = vm.createContext({ card, job, wordsJob: false, document: { activeElement: ta }, EG: { card, cardKey: 'copy' },
   setTimeout: fn => { const id = timers.size + 1; timers.set(id, fn); return id; }, clearTimeout: id => timers.delete(id),
   toast: text => calls.push(text), render: () => {},
   fitJob: async j => { calls.push('fit'); j.fit = { ok: true }; j.verify = { geometry: { ok: true } }; j.lines = j.lineInput.slice(); },
+  // approve(job, by, button) runs approveOnce behind a duplicate-press lock: the job must be the card's own open job in review
+  items: () => new Map([[job.key, job]]), fitTasks: new Map(), startEdit: () => true, neverEngraves: () => false, needEmployee: async () => null,
   employeeName: () => null, askEmployee: () => null, refit: () => true, refresh: () => {}, Session: { schedule() {} } });
 const start = source.indexOf('    const ta = card.querySelector(\'[data-f="words"]\'), use =');
 const end = source.indexOf('    // the back preview', start);
 assert(start > 0 && end > start);
 vm.runInContext(source.slice(start, end), context);
-const a = source.indexOf('  async function approve(job, by)'), b = source.indexOf('  /* ── 7.6', a);
+const a = source.indexOf('  async function approve(job, by, button)'), b = source.indexOf('  /** An approval\'s back files are written', a);
+assert(a > 0 && b > a);
 vm.runInContext(source.slice(a, b), context);
 // new words are fitted through the one path that also keeps a moved placement where it was put
 const f = source.indexOf('  async function fitNewWords(job)'), g = source.indexOf('  function nudge(', f);
