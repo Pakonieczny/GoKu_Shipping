@@ -53,7 +53,8 @@ const st = { checks: [], posts: 0, refuse: false };
   // ── the outbox while the server refuses every event ──
   await page.waitForFunction(() => OrderTimeline.pending() === 0, null, { timeout: 8000 });
   st.refuse = true;
-  const pend = await page.evaluate(() => { for (let i = 0; i < 2600; i++) OrderTimeline.record({ orderId: '3920000000', type: 'note', text: 'n' + i, id: 'n' + i }); return { mem: OrderTimeline.pending(), kept: JSON.parse(localStorage.getItem('orderTimeline.outbox.v1')).length, last: JSON.parse(localStorage.getItem('orderTimeline.outbox.v1')).pop().id }; });
+  // (PERFSCALE, 26 Oct 2026: the events of one task are written to the disk once, at its end (a microtask): read the disk after it)
+  const pend = await page.evaluate(async () => { for (let i = 0; i < 2600; i++) OrderTimeline.record({ orderId: '3920000000', type: 'note', text: 'n' + i, id: 'n' + i }); await Promise.resolve(); return { mem: OrderTimeline.pending(), kept: JSON.parse(localStorage.getItem('orderTimeline.outbox.v1')).length, last: JSON.parse(localStorage.getItem('orderTimeline.outbox.v1')).pop().id }; });
   assert(pend.mem <= 2000, `the outbox in memory stays bounded: ${pend.mem}`);
   assert.strictEqual(pend.kept, 500, 'and 500 are kept across a reload, as before');
   assert.strictEqual(pend.last, 'n2599', 'the newest are the ones kept');
