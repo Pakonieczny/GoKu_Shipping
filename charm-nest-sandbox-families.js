@@ -107,6 +107,7 @@
     { key: "localStorage:cn.sandboxHold", label: "the sandbox's wait-for-Start mark", store: "browser", why: "the reset's own mark" },
     { key: "localStorage:cn.sandboxLastReset", label: "the last-reset note", store: "browser", why: "the reset's own mark" },
     { key: "localStorage:cn.sandboxPulling", label: "when a Start's pull went out (a second tab does not call the sandbox empty meanwhile)", store: "browser", why: "the reset's own mark" },
+    { key: "localStorage:cn.sandboxWiping", label: "a wipe under way in a tab of this browser (the other tabs, stood down before its first delete, reload once it is gone; Paul, 26 Oct 2026)", store: "browser", why: "the reset's own mark" },
     { key: "sessionStorage:cn.sandboxResetNote|cn.sandboxAutoPull|cn.sandboxPullNext", label: "what the page after the reload says or does", store: "browser", why: "carried across the reload; no records" },
     { key: "localStorage:cn.settings", label: "page settings and the sandbox switch (only the saved seed goes)", store: "browser", why: "settings" },
     { key: "localStorage:cn.listingSkus.v1|cn.listingPhotos.v1|cn.listingPhotoPause.v2", label: "shared Etsy listing caches", store: "browser", why: "shared Etsy listing cache" },

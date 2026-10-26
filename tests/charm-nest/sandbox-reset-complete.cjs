@@ -313,7 +313,10 @@ const resetAll = async () => { slow = 1500; let r = await post({ op: 'sandboxRes
   // …and what it never purged is untouched: its seals, custom orders and sheets, cancel records and their history, timeline, stations, messages
   const purged = n => GONE.some(g => n.startsWith(g + '/'));
   let keptDocs = 0;
-  for (const [k, v] of prodBefore) { if (purged(k) || k === 'Charm_Sandbox/stream') continue; keptDocs++; const now = store.get(k); assert(now !== undefined, "production's " + k + ' is never purged'); if (!shared(k)) assert.strictEqual(canon(now), v, "production's " + k + ' is unchanged'); }
+  // (Paul, 26 Oct 2026) production's run history went, so its three counters move, from a sandbox page too: an open production Library, its Completed count and the order windows read again at once
+  const REV = ['Charm_Nest_Rev/library', 'Charm_Nest_Rev/done', 'Charm_Nest_Rev/placement'];
+  for (const k of REV) assert(store.get(k) && store.get(k).n >= ((prodBefore.has(k) && JSON.parse(prodBefore.get(k)).n) || 0) + 1, "production's " + k + ' moved after the purge: ' + JSON.stringify(store.get(k)));
+  for (const [k, v] of prodBefore) { if (purged(k) || k === 'Charm_Sandbox/stream' || REV.includes(k)) continue; keptDocs++; const now = store.get(k); assert(now !== undefined, "production's " + k + ' is never purged'); if (!shared(k)) assert.strictEqual(canon(now), v, "production's " + k + ' is unchanged'); }
   assert(keptDocs > 1000 && store.get(`Charm_Custom_Orders/${A}_10010`).stamps.length === 2 && store.has('Charm_Nest_Cancelled/' + C), "production's seals and cancelled orders are permanent: " + keptDocs + ' documents kept');
   console.log(`purge: ${purges} call(s) removed the sandbox's ${sandboxBefore} records; production's seals, custom orders and cancel records intact (${keptDocs} documents kept)`);
   console.log('sandbox reset complete OK');

@@ -77,8 +77,8 @@ async function main() {
     await ctx.route(/qrcodejs/, r => r.fulfill({ status: 200, contentType: 'text/javascript', body: fs.readFileSync(path.join(root, 'lib/qrcode.min.js')) }));
     await ctx.addInitScript(({ sorter, code }) => { if (location.origin === sorter) localStorage.setItem('cn.employee', 'Tester'); const said = m => { try { const a = JSON.parse(sessionStorage.getItem('__dialogs') || '[]'); a.push(String(m)); sessionStorage.setItem('__dialogs', JSON.stringify(a)); } catch (_) {} };
       window.confirm = m => { said(m); return true; }; window.prompt = m => { said(m); return code; }; window.alert = () => {}; }, { sorter: sorterOrigin, code: passcode == null ? CODE : passcode });
-    // (purge503: the purge's own time runs out part way, 503 + more:true; the page carries on with the sandbox wipe, never "press again")
-    if (purge503) await ctx.route(/charmNestLibrary/, r => { const b = r.request().method() === 'POST' ? r.request().postDataJSON() : null; if (b && b.op === 'purgeHistory') return r.fulfill({ status: 503, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ error: 'The purge removed 3 sandbox record(s) and is not finished: press Purge again', more: true, docs: { Charm_Nest_Runs: 4, Sandbox_all: 3 } }) }); return r.continue(); });
+    // (purge503: the purge's own time runs out part way, 503 + more:true; the page carries on with the sandbox wipe, never "press again". The page's question first, check:true, is the real server's answer: it deletes nothing)
+    if (purge503) await ctx.route(/charmNestLibrary/, r => { const b = r.request().method() === 'POST' ? r.request().postDataJSON() : null; if (b && b.op === 'purgeHistory' && !b.check) return r.fulfill({ status: 503, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ error: 'The purge removed 3 sandbox record(s) and is not finished: press Purge again', more: true, docs: { Charm_Nest_Runs: 4, Sandbox_all: 3 } }) }); return r.continue(); });
     const page = await ctx.newPage();
     page.on('pageerror', e => errors.push(`${name}: ${e.message}`));
     const booted = p => p.waitForFunction(() => window.CN && window.Sandbox && window.Session && Session.ready() && CN.S.cloud.ok !== null, null, { timeout: 60000 });
@@ -156,8 +156,13 @@ async function main() {
     if (expect === 'purge') {
       // production's run history goes as it always did; nothing else of production changes
       const GONE = ['Charm_Nest_Runs', 'Charm_Nest_Run_Lines', 'Charm_Nest_Run_Live', 'Charm_Nest_Sheets', 'Charm_Nest_Sets', 'Charm_Pool', 'Charm_Pool_Back', 'Charm_Nest_Counters', 'Charm_Nest_Release', 'Design_Bridge'];
-      const expectKept = JSON.parse(prodBefore).filter(([k]) => !GONE.some(g => k.startsWith(g + '/'))), got = JSON.parse(prodAfter);
+      // (Paul, 26 Oct 2026) and production's three counters move, so an open production Library, its Completed count and the order windows read again at once (from a sandbox page
+      // the handler moves only the sandbox's): Charm_Nest_Rev/library, done and placement, a plain +1 each, are the only other change
+      const REV = ['Charm_Nest_Rev/library', 'Charm_Nest_Rev/done', 'Charm_Nest_Rev/placement'];
+      const expectKept = JSON.parse(prodBefore).filter(([k]) => !GONE.some(g => k.startsWith(g + '/')) && !REV.includes(k)), got = JSON.parse(prodAfter).filter(([k]) => !REV.includes(k));
       assert.strictEqual(canon(got), canon(expectKept), `${name}: after the purge production lost its run history and nothing else`);
+      const nBefore = k => (((JSON.parse(prodBefore).find(([x]) => x === k) || [])[1]) || {}).n || 0;
+      for (const k of REV) assert((st.docs.get(k) || {}).n >= nBefore(k) + 1, `${name}: production's ${k} moved after the purge: ${nBefore(k)} → ${JSON.stringify(st.docs.get(k))}`);
       for (const g of GONE) assert(!st.docs.has(g + '/prod-1'), `${name}: production's ${g} was purged as before`);
     } else assert.strictEqual(prodAfter, prodBefore, `${name}: every production and protected document is byte-identical`);
     for (const k of ['Charm_Master_Index/design-1', 'Efficiency_Daily/eff-5', 'Sandbox_Efficiency_Daily/seff-2', 'Station_Activity/act-1', 'config/editPasscode', 'Charm_Sandbox/pulls']) assert(st.docs.has(k), `${name}: ${k} stays`);
@@ -168,8 +173,12 @@ async function main() {
     const after = ops.slice(lastWipe + 1);
     assert(after.includes('sandboxStatus'), `${name}: the cloud was counted after the last delete: ${after}`);
     assert.deepStrictEqual(after.filter(o => WRITES.test(o)), [], `${name}: nothing was written after the final delete (the line is a read): ${after}`);
-    if (expect === 'purge') assert(ops.indexOf('purgeHistory') >= 0 && ops.indexOf('purgeHistory') < lastWipe, `${name}: the purge ran first, then the wipe`);
-    else assert(!ops.includes('purgeHistory'), `${name}: a Reset never purges production's run history`);
+    // (Paul, 26 Oct 2026) a purge asks its question first (check: the passcode and an open run, nothing deleted), then the purge itself is the wipe's first delete
+    const purges = calls.filter(c => c.op === 'purgeHistory' && !(c.body && c.body.check)).map(c => calls.indexOf(c)), asks = calls.filter(c => c.op === 'purgeHistory' && c.body && c.body.check).map(c => calls.indexOf(c));
+    const lastWipeCall = calls.map(c => c.op).lastIndexOf('sandboxReset');
+    if (button === '#stPurge') assert(asks.length === 1 && (!purges.length || asks[0] < purges[0]), `${name}: the purge asked its question once, first: ${ops}`);
+    if (expect === 'purge') assert(purges.length >= 1 && purges[0] < lastWipeCall && purges.every(i => i < lastWipeCall), `${name}: the purge ran first, then the wipe`);
+    else assert(!purges.length, `${name}: a Reset never purges production's run history`);
     const shape = ops.filter((o, i) => i === 0 || o !== ops[i - 1]).filter(o => /^(purgeHistory|sandboxReset|sandboxStatus)$/.test(o)).join(' > ');
 
     // ── Settings after: EVERY family at 0, the kept line, the last-reset line ──

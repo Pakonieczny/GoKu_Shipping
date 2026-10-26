@@ -97,6 +97,10 @@ async function session(sb) {
   // ── sheets: saved, cut, hold/release, back records, pdf, an empty one archived, one deleted and the sandbox's restore of it ──
   await L({ op: 'putSheet', sheet: { id: SHEET, metal: 'gold', metalLabel: 'GF 14/20', day: DAY, status: 'complete', charmCount: 3, placedCount: 3, density: 0.71, runId: RUN, setId: SET, orders: [A, B], poolIds: [`${A}_10010_1`], outputs: { preview: { url: 'https://saved.example/p.png', path: `charmnest/${sb ? 'sandbox/' : ''}sheets/${DAY}/${SHEET}/${SHEET}.png` } }, names: 'anna' } });
   await L({ op: 'putSheet', sheet: { id: SHEET2, metal: 'silver', metalLabel: 'SS', day: DAY, status: 'partial', charmCount: 2, placedCount: 0, runId: RUN2, setId: SET, orders: [C] } });
+  // Manual Control (Paul, 18 Oct 2026): a person's claim on a sheet is the sheet record's manualEdit (a write to the sheets family, kept alive and given back), driven here so the wipe is tested against it
+  await L({ op: 'manualClaim', id: SHEET, tab: 'tab-guard-1', by: 'paul' });
+  await L({ op: 'manualClaim', id: SHEET, tab: 'tab-guard-1', by: 'paul' });   // (kept alive)
+  await L({ op: 'manualClaim', id: SHEET, tab: 'tab-guard-1', release: true });
   await L({ op: 'flowApply', by: 'Paul', steps: [{ type: 'hold', sheetIds: [SHEET2], note: 'check the back' }] });
   await L({ op: 'flowApply', by: 'Paul', steps: [{ type: 'release', sheetIds: [SHEET2] }] });
   // a laser-ready set (every line, file and QR present: the same fixture server-stamps.cjs uses): cut a sheet, undo it, cut the set, seal a sheet
@@ -446,6 +450,13 @@ const sandboxDoc = (k, v) => { const o = own('firestore', k); if (!o || o.kind !
   const whole = canon([...store.entries()].sort(([a], [b]) => (a < b ? -1 : 1)));
   p = await post({ op: 'purgeHistory', code: process.env.CHARM_NEST_DELETE_CODE, sandbox: true });
   assert(p.status === 409 && /a run is still open/.test(p.body.error) && canon([...store.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) === whole, 'an open run is named first, nothing is purged: ' + JSON.stringify(p.body));
+  // (Paul, 26 Oct 2026) the page's question before it puts every tab down (check): the passcode and the open run are answered, and nothing is deleted or written, not even a counter
+  p = await post({ op: 'purgeHistory', code: 'wrong', check: true, sandbox: true });
+  assert(p.status === 403, 'the question refuses a wrong passcode');
+  for (const sb of [true, false]) {
+    p = await post(Object.assign({ op: 'purgeHistory', code: process.env.CHARM_NEST_DELETE_CODE, force: true, check: true }, sb ? { sandbox: true } : {}));
+    assert(p.status === 200 && p.body.ok === true && p.body.check === true && canon([...store.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) === whole, `the question (${sb ? 'sandbox' : 'production'} page) deletes and writes nothing: ` + JSON.stringify(p.body));
+  }
   Fk.setSlow(1500);
   p = await live({ op: 'purgeHistory', code: process.env.CHARM_NEST_DELETE_CODE, force: true, sandbox: true });
   assert(p.status === 503 && p.body.more === true && /press Purge again/.test(p.body.error), 'a purge that runs out of time is a failure the page shows: ' + JSON.stringify(p).slice(0, 200));
