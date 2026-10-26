@@ -47,6 +47,7 @@ function sessionContext() {
     setTimeout: (f, ms) => { const id = ++timerId; timers.set(id, { f, ms, due: clock.now + Math.max(0, ms || 0) }); return id; },
     clearTimeout: id => { timers.delete(id); },
     indexedDB: idb.indexedDB,
+    BroadcastChannel: undefined,   // (the sandbox epoch's channel to other tabs: none here; Node's real one held the process open after the last check)
     window: { addEventListener: (t, f) => { on(winEvents, t, f); } },
     document: { hidden: false, addEventListener: (t, f) => { on(docEvents, t, f); } },
     navigator: { storage: { persisted: async () => false, persist: async () => { seen.persist++; return true; } } },
@@ -177,7 +178,9 @@ function engraveContext() {
   const sh = { sheetId: 'sh1', fileBase: 'GF_1', folderPath: 'f', runId: 'r', metal: 'gold', backPool: [] };
   const jobs = new Map();
   const env = { window: {}, CNEngravingSeals:require('../../charm-nest-engraving-seals.js'),Session:{schedule(){}},retryBacksLater(){},B: { run: { runId: 'r' }, pool: { rows: new Map() } }, S: { cloud: { ok: true }, settings: {} },
-    F_: { ok: true }, G, EG: { cardKey: null }, items: () => jobs, isWorking: () => false, fontFor: w => ({ weight: w }), fitOpts: j => ({ lineGap: j.lineGap ?? 0.18 }), loadFonts: async () => {},
+    F_: { ok: true }, G, EG: { cardKey: null }, fontIdOf: () => 'default', fontSetOf: () => ({ ok: true }), loadFontSet: async () => {},   // (an engraving's own font set, since the per-order fonts: the default set, loaded)
+    faceOf: () => 'back', isFront: () => false, faceWord: () => 'back', fileViewOf: () => 'asSeenFromBack', pieceFields: () => ({}), jobsOf: row => [...jobs.values()].filter(j => j.row === row),   // (a line's jobs; a pair's ear or a disc's slot: none here; the faces of an engraving, since fronts: every job here is a back)
+     items: () => jobs, isWorking: () => false, fontFor: w => ({ weight: w }), fitOpts: j => ({ lineGap: j.lineGap ?? 0.18 }), loadFonts: async () => {},
     charmFor: () => charm, sourceOf: () => ({ parsed: {} }), sheetFor: () => sh, allSheets: () => [sh], PT: 72 / 25.4,
     renderBack: () => ({ toBlob: cb => cb(new Uint8Array(1)), _sizePt: { w: 1, h: 1 } }),
     P: { buildBackFile: async () => ({ bytes: new Uint8Array(2), reference: {}, wPt: 1, hPt: 1 }) },
