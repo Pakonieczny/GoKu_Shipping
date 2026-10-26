@@ -15,7 +15,7 @@
  *   node tests/charm-nest/nest-front.cjs [--long]    (--long: more seeds and orders)                                                       */
 'use strict';
 const assert = require('node:assert/strict');
-const L = require('./pocket-fill-lib.cjs'), { front } = require('./nest-front-bench.cjs');
+const L = require('./pocket-fill-lib.cjs'), { front } = require('./nest-front-lib.cjs');
 const long = process.argv.includes('--long');
 const stock = { wPt: L.PT(100), hPt: L.PT(50) }, ANGLES = Array.from({ length: 15 }, (_, i) => i * 24);   // the whole circle in 24° steps: the shape of the result, in seconds
 

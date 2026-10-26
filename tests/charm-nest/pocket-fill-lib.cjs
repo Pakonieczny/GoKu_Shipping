@@ -1,4 +1,4 @@
-/* Shared pieces of the pocket-fill suite and its benchmark (tests/charm-nest/pocket-fill.cjs, pocket-fill-bench.cjs).
+/* Shared pieces of the pocket-fill suite (tests/charm-nest/pocket-fill.cjs) and of nest-front.cjs / nest-front-lib.cjs.
  *
  * Paul, 7 Oct 2026: "The nesting process did not do a good job of filling this sheet before it moved onto the next sheet.
  * It needs to be more methodical to fit in the small charms into tight spaces."

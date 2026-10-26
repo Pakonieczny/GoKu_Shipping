@@ -62,6 +62,7 @@ function world(designs, rowsSeed) {
   c.window.Cleanups = null; c.window.Master = c.Master; c.window.B = c.B;
   vm.createContext(c);
   c.P.groupCharmsAsync = async () => ({ charms: [structuredClone(DESIGNS[c.__sku]())], orphans: [] });
+  { const r0 = src.indexOf('function replaceCutWhy('), r1 = src.indexOf('window.replaceCutWhy = replaceCutWhy;', r0); if (r0 > 0 && r1 > r0) vm.runInContext(src.slice(r0, r1), c); }   // (INPLACE, 20 Oct 2026: the pool asks which sheets were cut)
   vm.runInContext(src.slice(a, b), c);
   if (oneA > 0 && oneB > oneA) vm.runInContext(src.slice(oneA, oneB) + '\nwindow.__oneRow = oneRow; window.__pairRow = pairRow;', c);
   return { c, logs, calls, shown, pages, Pool: c.window.Pool, entries, oneRow: c.window.__oneRow, pairRow: c.window.__pairRow, use(sku) { c.__sku = sku; } };

@@ -298,7 +298,7 @@ ${extraStubs}
 /** Fill of a sheet as its card shows it (charms' share of the usable stock). */
 const fillOf = p => p.usablePt2 ? 1 - p.freePt2 / p.usablePt2 : (p.density || 0);
 
-/** How the front of a sheet lies (nest-front-bench.cjs): the standard deviation of the rows' reach (mm; 0 = straight) and the widest empty disc behind the front (mm). */
+/** How the front of a sheet lies (nest-front-lib.cjs): the standard deviation of the rows' reach (mm; 0 = straight) and the widest empty disc behind the front (mm). */
 function frontOf(S, stock, page) {
   const FW = Math.round(stock.wPt * 2), FH = Math.round(stock.hPt * 2), occ = new Uint8Array(FW * FH), far = new Int32Array(FH), byId = new Map(page.charms.map(c => [c.id, c])), MMC = MM / 2, band = 3;
   for (const p of page.placements) {
