@@ -190,13 +190,12 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   assert(rest, 'the Auto run took in several steps of arrivals and came to rest');
   assert(sawRunning && heldSeen.size > 0, 'the clock was held while the sorter worked');
   assert(advances.length >= 3 && advances.every(a => !a.held && a.status !== 'running' && !a.busy && !a.nesting), 'the stream only stepped while the sorter was free: ' + JSON.stringify(advances.filter(a => a.held || a.status === 'running' || a.busy || a.nesting)));
-  // (in Auto the stream keeps stepping while the sorter is free, so a count can land in the middle of an intake: four lines just arrived, still "pulled", arrivalBusy).
-  //  Count between intakes, with the stream held the way the hold below holds it (arrivalBusy, set once the intake in flight has ended), and its lines pooled and placed; released after)
-  await page.waitForFunction(() => { if (B.run.arrivalBusy) return false; B.run.arrivalBusy = true; return true; }, null, { timeout: 60000, polling: 100 });
-  await page.waitForFunction(() => B.orders.rows.length > 0 && B.orders.rows.every(r => r.poolIds.length) && allSheets().reduce((n, p) => n + p.placements.length, 0) >= B.orders.rows.length, null, { timeout: 60000 }).catch(() => {});
-  const taken = await page.evaluate(() => { const ids = new Set((B.run.orders || []).map(String)); return { rows: B.orders.rows.length, inRun: B.orders.rows.filter(r => ids.has(String(r.order.receiptId))).length, pooled: B.orders.rows.filter(r => r.poolIds.length).length, placed: allSheets().reduce((n, p) => n + p.placements.length, 0) }; });
+  // (in Auto the stream keeps stepping while the sorter is free, so a count can land in the middle of an intake: lines just arrived, still "pulled", arrivalBusy.
+  //  Holding the stream by arrivalBusy also held their pooling. The count is taken in one look, at a moment between intakes when every line is pooled and placed;
+  //  if no such moment comes in two minutes, the counts of the last look fail below)
+  const look = () => { const ids = new Set((B.run.orders || []).map(String)); return { rows: B.orders.rows.length, inRun: B.orders.rows.filter(r => ids.has(String(r.order.receiptId))).length, pooled: B.orders.rows.filter(r => r.poolIds.length).length, placed: allSheets().reduce((n, p) => n + p.placements.length, 0) }; };
+  const taken = await page.waitForFunction(look => { const f = new Function('return ' + look)(), t = f(); return !B.run.arrivalBusy && t.rows > 0 && t.pooled === t.rows && t.placed >= t.rows ? t : false; }, look.toString(), { timeout: 120000, polling: 100 }).then(h => h.jsonValue()).catch(() => page.evaluate(look));
   console.log('taken in', taken);
-  await page.evaluate(() => { B.run.arrivalBusy = false; });
   assert(taken.rows > 0 && taken.inRun === taken.rows && taken.pooled === taken.rows && taken.placed >= taken.rows, 'the run took every streamed order in and nested it: ' + JSON.stringify(taken));
   const streamedIds = s => new Set(Array.from({ length: s.tick }, (_, i) => expectStep(s, i + 1)).flat().map(r => String(r.receipt_id)));
   const autoIds = streamedIds(stream());
@@ -222,7 +221,10 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   const changed = [...st.docs.entries()].filter(([k, v]) => before.get(k) !== JSON.stringify(v)).map(([k]) => k);
   // Claude's job queue (Charm_Nest_Agent, charmnest/agent/) is shared scratch, not an order record, and predates the stream
   // Etsy's public listing photos are prepared into one cache every workspace shares, with the Etsy call meter beside it (op listingPhotos { prepare }: "Public image metadata is shared across workspaces"): shared by design, no order data
-  const outside = changed.filter(k => !k.startsWith('Sandbox_') && !k.startsWith('Charm_Sandbox/') && !k.startsWith('Charm_Nest_Agent/') && !k.startsWith('Etsy_Listing_Image_Cache/') && !k.startsWith('EtsyApi_Config/'));
+  // the admin password's own records (PERSON, Paul 26 Oct 2026: Start outside Settings asks the password): its attempt, the alert it raises and the alerts' revision,
+  // and a session it issued (as sandbox-wipe-button.cjs passwordOwn): the door's, not an order record
+  const passwordOwn = k => /^CharmRepo_(Alerts|AuthAttempts)\//.test(k) || k === 'CharmRepo_Rev/alerts' || (/^CharmRepo_Tokens\//.test(k) && (st.docs.get(k) || {}).by !== 'test');
+  const outside = changed.filter(k => !k.startsWith('Sandbox_') && !k.startsWith('Charm_Sandbox/') && !k.startsWith('Charm_Nest_Agent/') && !k.startsWith('Etsy_Listing_Image_Cache/') && !k.startsWith('EtsyApi_Config/') && !passwordOwn(k));
   assert.deepStrictEqual(outside, [], 'every record written is a sandbox record');
   for (const c of PROD) assert.strictEqual(st.list(c).length, prodBefore[c], `production collection untouched: ${c}`);
   const newBlobs = [...st.blobs.keys()].filter(k => !blobsBefore.has(k)), stray = newBlobs.filter(k => !k.startsWith('charmnest/sandbox/') && !k.startsWith('charmnest/agent/'));
