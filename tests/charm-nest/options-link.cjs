@@ -147,7 +147,7 @@ function withTable(tables) {
   const lib0 = new Map(lib); lib.delete('GREEKGODDESS_EARRING_2');
   try {
     const w = read(v, { listingSkus: tables }), q = open(w)[0];
-    assert(q, 'waits: ' + JSON.stringify(w.problems)); assert.match(q.why, /necklace design and this line is earrings/); assert.equal(w.inventoryHeld.sku, 'GREEKGODDESS_NECKLACE_4'); assert(!w.viaInventory);
+    assert(q, 'waits: ' + JSON.stringify(w.problems)); assert.match(q.why, /necklace design and this piece is earrings/); assert.equal(w.inventoryHeld.sku, 'GREEKGODDESS_NECKLACE_4'); assert(!w.viaInventory);
     assert.deepEqual(q.picks.map(p => p.sku), ['GREEKGODDESS_EARRING_4', 'GREEKGODDESS_NECKLACE_4']); assert(q.picks[1].conflict && !q.picks[0].conflict);
     assert.deepEqual(O.suggestCharms({ value: 'Vesta', line: lineOf(v), picks: q.picks, skus: lib.keys() }).map(x => x.sku), ['GREEKGODDESS_EARRING_4', 'GREEKGODDESS_NECKLACE_4']);
     const maps = { '1712164498': { 'goddess symbol': { vesta: { field: 'design', value: 'GREEKGODDESS_EARRING_4' } } } };

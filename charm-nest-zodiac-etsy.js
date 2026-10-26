@@ -134,7 +134,7 @@
     const fill = (ul, arr) => { ul.replaceChildren(...arr.map(t => el("li", "", t))); ul.hidden = !arr.length; };
     const mark = () => { try { if (lock() && lock().mark) lock().mark(host); } catch (_) { /* hint only */ } };
     const say1 = c => `listing ${c.id}${c.title ? ", “" + c.title.slice(0, 110) + (c.title.length > 110 ? "…" : "") + "”" : " (the sorter does not know its title)"}`;
-    const seen = c => `${plural(c.orders || c.lines || 0, "order line")} in this sorter carry${(c.orders || c.lines) === 1 ? "s" : ""} the SKU ${OLD_SKU}${!(c.orders || c.lines) ? " (from a saved link or the SKU list)" : ""}`;
+    const seen = c => `${plural(c.orders || c.lines || 0, "order piece")} in this sorter carry${(c.orders || c.lines) === 1 ? "s" : ""} the SKU ${OLD_SKU}${!(c.orders || c.lines) ? " (from a saved link or the SKU list)" : ""}`;
     const pick = id => { input.value = id; auto = ""; listingId = id; msg = null; if (rec && rec.listingId !== id) rec = null; paintFound(); paint(); };
     function paintFound() {
       const cur = listingIdOf(input.value);

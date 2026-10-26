@@ -146,7 +146,7 @@ pass('only the twelve exact names (whole words, any case) are signs; look-alikes
   const unk = clone(TABLE); for (const p of unk.products) if (p.pv.some(a => a[1] === leoV)) p.sku = 'Zodiac_Earrings-99';
   const r5 = waits(unk); ok(!r5.pair.mismatched && /Zodiac_Earrings-99|ZODIAC_EARRINGS-99/i.test(open(r5).find(p => p.optionValue === 'Leo').why) && /not in any master file/.test(open(r5).find(p => p.optionValue === 'Leo').why), 'a SKU no master file holds: waits, never a look-alike');
   const neck = clone(TABLE); for (const p of neck.products) if (p.pv.some(a => a[1] === leoV)) p.sku = 'ZODIAC_NECKLACE_CHARM-4';
-  const r6 = waits(neck); ok(!r6.pair.mismatched && /is a necklace design and this line is earrings/.test(open(r6).find(p => p.optionValue === 'Leo').why), 'a necklace design on an earrings line is never the Right ear');
+  const r6 = waits(neck); ok(!r6.pair.mismatched && /is a necklace design and this piece is earrings/.test(open(r6).find(p => p.optionValue === 'Leo').why), 'a necklace design on an earrings line is never the Right ear');
   const sameSku = clone(TABLE); for (const p of sameSku.products) if (p.pv.some(a => a[1] === leoV)) p.sku = 'Zodiac_Earrings-6';
   const r7 = waits(sameSku); ok(!r7.pair.mismatched && !!r7.problems.length, 'two signs on one SKU are not a pair of two designs (it waits)'); }
 { // a person's saved answer for Leo stays above the inventory; Libra answered by a person too

@@ -114,7 +114,7 @@ const LID = '1706155793', SIGN = 'Zodiac Sign';
 const mapOf = (...ps) => merge(...ps.map(([v, sku]) => answerFor(LID, SIGN, v, { field: 'design', value: sku })));
 { const sp = read('4175402612').spec;   // as it stands today: nothing is mapped for this listing
   eq(sp.problems.map(p => p.optionName + '=' + p.optionValue), ['Zodiac Sign=Libra', 'Zodiac Sign=Leo'], 'the line\'s own sign and the second sign (from "balance et lion") are each asked, as option values, once');
-  const leo = sp.problems.find(p => p.optionValue === 'Leo'); ok(/second symbol of a 2-symbols line: Leo/.test(leo.note) && /balance et lion/.test(leo.note) && /Libra/.test(leo.note), 'the question says where Leo came from: ' + leo.note);
+  const leo = sp.problems.find(p => p.optionValue === 'Leo'); ok(/second symbol of a 2-symbols piece: Leo/.test(leo.note) && /balance et lion/.test(leo.note) && /Libra/.test(leo.note), 'the question says where Leo came from: ' + leo.note);
   ok(!second(sp) && sp.pair.second && sp.pair.second.viaOption && !sp.pair.second.answered, 'no second "Two designs?" card: the question is the option value\'s'); ok(!sp.pair.mismatched && sp.pair.earring, 'still an earring pair, waiting'); eq([sp.pieceCount, sp.pair.sides.join('')], [4, 'LRLR'], 'quantity 2 is 4 pieces');
   ok(!sp.problems.some(p => p.kind === 'unmatchedSku'), 'the listing\'s own SKU "Zodiac REVAMP" is not asked about while an option is open (as before)'); }
 { // Libra and Leo each answered for this listing (what the Review card keeps): the pair

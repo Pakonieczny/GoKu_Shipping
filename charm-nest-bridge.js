@@ -1642,7 +1642,7 @@ const Orders = window.Orders = (() => {
       const bare = { transactionId: String(l.transactionId == null ? "" : l.transactionId), listingId: String(l.listingId == null ? "" : l.listingId), productId: "", sku, title: "", quantity: Number(l.quantity) || 1, metalKey: String(l.metalKey == null ? "" : l.metalKey), metalLabel: String(l.metalLabel == null ? "" : l.metalLabel), personalization: [], buyerMessage: "", variations: [] };
       const plain = Object.assign({}, o, { buyerMessage: "", staffNote: "", messages: [] });
       let sp; try { sp = O.interpretLine(plain, bare, ctx()); } catch (_) { try { sp = O.interpretLine(plain, Object.assign({}, bare, { sku: "" }), ctx()); } catch (__) { throw e; } }   // (a reader that fails on a line with nothing on it is a fault bigger than one line: as before)
-      const reason = `this line could not be read (${say}): it waits for a person, the other lines go on`;
+      const reason = `this piece could not be read (${say}): it waits for a person, the other pieces go on`;
       try { agent({ bridge: true }, "warn", `${o.receiptId} · ${sku || "no SKU"}: ${reason}`); } catch (_) {}
       if (sp.noDesign || sp.ownDesign) return sp;   // (a line completed by hand, chain only, on the no-design list or an add-on's is cut from nothing here: nothing waits on it)
       sp.problems = [{ kind: "unmatchedSku", reason, sku, listingId: bare.listingId, title: String(l.title == null ? "" : l.title).slice(0, 160), formHold: true, readFailed: true, lineForm: "unknown", designForm: "unknown", siblings: [] }].concat(sp.problems.filter(p => p.kind === "needsMaterial"));
@@ -2086,14 +2086,14 @@ const Orders = window.Orders = (() => {
       try {
         if (off.length && window.PairRemove) {
           const offSet0 = new Set(off), stay = [...ids].filter(id => !offSet0.has(id)).map(id => { const o = allSheets().find(p => (p.charms || []).some(x => x.poolId === id)); return o ? { id, where: sheetName(o) } : null; }).filter(Boolean);
-          if (stay.length) agent({ pool: true }, "warn", `${row.order.receiptId}: ${off.length === 1 ? "1 piece" : off.length + " pieces"} taken off, but ${stay.length === 1 ? "1 piece" : stay.length + " pieces"} of the same line stay on ${[...new Set(stay.map(x => x.where))].join(", ")} (cut or sent): set ${stay.length === 1 ? "it" : "them"} aside`);
+          if (stay.length) agent({ pool: true }, "warn", `${row.order.receiptId}: ${off.length === 1 ? "1 piece" : off.length + " pieces"} taken off, but ${stay.length === 1 ? "1 piece" : stay.length + " pieces"} of the same order stay on ${[...new Set(stay.map(x => x.where))].join(", ")} (cut or sent): set ${stay.length === 1 ? "it" : "them"} aside`);
         }
       } catch (_) { /* a log line only */ }
       if (!off.length) continue;
       const offSet = new Set(off); row.poolIds = row.poolIds.filter(id => !offSet.has(id));
       // (an order the order check found gone says so on its timeline too: the server stamps "removed" from removedBy/At)
       const patch = opt.patch || { removedBy: "System", removedReason: `no longer open on Etsy (${row.reason || "gone"})`, removedAt: Date.now() };
-      try { const res = await Pool.update(off, Object.assign({ state: "abandoned", sheetId: null, setId: null }, patch)); const more = ((res && res.extended) || []).filter(id => !offSet.has(id)); if (more.length) { for (const id of more) B.pool.rows.delete(id); row.poolIds = row.poolIds.filter(id => !more.includes(id)); agent({ pool: true }, "warn", `${row.order.receiptId}: the server took ${more.length === 1 ? "1 more piece" : more.length + " more pieces"} of the same line off its sheets too (a pair or group comes off whole); those sheet records are marked to be written again`); } } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); if (opt.strict) throw e; }
+      try { const res = await Pool.update(off, Object.assign({ state: "abandoned", sheetId: null, setId: null }, patch)); const more = ((res && res.extended) || []).filter(id => !offSet.has(id)); if (more.length) { for (const id of more) B.pool.rows.delete(id); row.poolIds = row.poolIds.filter(id => !more.includes(id)); agent({ pool: true }, "warn", `${row.order.receiptId}: the server took ${more.length === 1 ? "1 more piece" : more.length + " more pieces"} of the same order off its sheets too (a pair or group comes off whole); those sheet records are marked to be written again`); } } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); if (opt.strict) throw e; }
       for (const id of off) B.pool.rows.delete(id);
     }
     return out;
@@ -2431,7 +2431,7 @@ const Orders = window.Orders = (() => {
      a line that is engraved (or is a monogram) says it the way its Engrave list row does, from the Engrave tab's own reading (Engrave.listLine): the caption ("Words on the front and back", "The letters"), the "Front + back" chip
      beside the SKU, one line per piece and face (its chip, its words, its own state), and the seals cell at the right: one chip + seal per piece and face. The order's Release Hold seal stands first in that cell, as on an Engraving row.
      The separate approval strip ("1 of 2 approved" and its captioned seals) is no longer drawn on the Orders rows and cards: each seal is on its own piece's line. A line Engrave holds no job for keeps the seals its record has. */
-  const engLine = r => { try { return window.Engrave && Engrave.listLine ? Engrave.listLine(r) : null; } catch (e) { console.warn("Orders: the engraving of a line", e); return null; } };
+  const engLine = r => { try { return window.Engrave && Engrave.listLine ? Engrave.listLine(r) : null; } catch (e) { console.warn("Orders: the engraving of a piece", e); return null; } };
   const recordSealHtml = r => { try { const m = window.CNOrderSeals ? CNOrderSeals.of([r]) : null; return m ? m.units.filter(u => u.done && u.kind === "engrave").map(u => CNEngravingSeals.html({ seals: u.seals })).join("") : ""; } catch (_) { return ""; } };
   /** The identity cell of a line: its number (a single-line order's), its SKU (and mode chip), then the engraving's caption and lines, or the personalisation as always for a line with nothing to engrave. */
   function lineIdHtml(r, e, o) {
@@ -4085,7 +4085,7 @@ const Pool = window.Pool = (() => {
       if (!Pair.isMismatched(charm)) { src.soloWhy = `the library's record of ${src.sku} is not a two-body (Left + Right) design${charm && charm.pair ? "" : " (it carries no pair field: index the master file again)"}`; return null; }
       const bodies = Pair.bodiesOf(charm); if (bodies.length < 2) { src.soloWhy = `the drawing in the library's file gives ${bodies.length} body`; return null; }
       const tops = bodies.map(b => new Set(b.members.map(m => (m.parent != null ? m.parent : m.index)).filter(t => t != null)));
-      if (tops.some((t, i) => tops.some((u, j) => j > i && [...t].some(x => u.has(x))))) { src.soloWhy = "its bodies are drawn in one group of the library's file, so one cannot be written alone"; agent({ pool: true }, "warn", `${src.sku}: its bodies are drawn in one group of the master, so one cannot be written alone — a line of it keeps both bodies`); return null; }
+      if (tops.some((t, i) => tops.some((u, j) => j > i && [...t].some(x => u.has(x))))) { src.soloWhy = "its bodies are drawn in one group of the library's file, so one cannot be written alone"; agent({ pool: true }, "warn", `${src.sku}: its bodies are drawn in one group of the master, so one cannot be written alone — a piece of it keeps both bodies`); return null; }
       const made = bodies.map((b, i) => Object.assign({}, charm, { outline: b.outline, members: b.members.slice(), bbox: b.bbox.slice(), extras: (charm.extras || []).filter(x => b.members.includes(x)), topIndices: [...tops[i]], id: `${src.id}:s${i}`, oneBody: i }));
       for (const c of made) delete c.frontAt;
       await P.buildSilhouettes(src.parsed, made, +S.settings.silhouetteRes || 6);
@@ -4093,7 +4093,7 @@ const Pool = window.Pool = (() => {
       // (a design a person named as ONE body, charm-nest-pair.js 4d: the record's up angle is the other body's hole, 97 degrees for the wolf's moon; the named body keeps the up angle it is drawn with)
       const nm = Pair.onlyBodyOf && Pair.onlyBodyOf(charm.sku || src.sku); if (nm && made[nm.index] && Number.isFinite(nm.upAngle)) made[nm.index].upAngle = nm.upAngle;
       return (src.solo = made);
-    } catch (e) { src.solo = null; src.soloWhy = `one of its bodies could not be traced (${e.message})`; agent({ pool: true }, "warn", `${src.sku}: one of its bodies could not be cut alone (${e.message}) — a line of it keeps both bodies`); return null; }
+    } catch (e) { src.solo = null; src.soloWhy = `one of its bodies could not be traced (${e.message})`; agent({ pool: true }, "warn", `${src.sku}: one of its bodies could not be cut alone (${e.message}) — a piece of it keeps both bodies`); return null; }
     finally { src.soloChecked = true; }
   }
   /** The charm a piece with no side is cut from, when its stored record says it is ONE body of the design: `rec` is the pool row or the sheet record's charm, and its charm hash is that body's, not the
@@ -4337,7 +4337,7 @@ const Pool = window.Pool = (() => {
       if (fixed.length) {
         if (!setToldFixed.has(row.key)) {
           setToldFixed.add(row.key); const where = fixed.map(sh => sh.fileBase || sh.sheetId).join(", ");
-          agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · a saved link makes this line ${one ? want[0] : "a set of charms (" + want.join(" + ") + ")"}, but its piece is on ${where}, released or cut: left as it was`);
+          agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · a saved link makes this piece ${one ? want[0] : "a set of charms (" + want.join(" + ") + ")"}, but its piece is on ${where}, released or cut: left as it was`);
           // (one design: the order window already says "Read as <the linked design>" while the sheet still holds the old drawing; its timeline says so too, in words, once. Nothing is written to a sheet.)
           if (one) try { TL.line(row, "interpreted", { id: `${row.key}.relink.${TL.hash(want[0] + "|" + made.join(","))}`, once: true, text: `Saved link: now ${want[0]}, but ${[...new Set(made)].join(" + ") || "its piece"} is on ${where}, released or cut, so the sheet was left as it was`.slice(0, 200), data: { sku: want[0], was: made.slice(0, 6), sheets: fixed.map(sh => sh.sheetId).slice(0, 4) } }); } catch (_) {}
         }
@@ -4346,7 +4346,7 @@ const Pool = window.Pool = (() => {
       // REVHOLD: an order in Review keeps its piece on its sheet, so the card that would take it off to make it up again is not offered: the line is left as it was and the log says so once
       if (keepsPlace(row)) {
         if (!setToldFixed.has(row.key)) {
-          setToldFixed.add(row.key); const line = `a saved link makes this line ${one ? want[0] : "a set of charms (" + want.join(" + ") + ")"}, but its piece stays on its sheet because the order is held in Review: the sheet keeps ${[...new Set(made)].join(" + ") || "its piece"}`;
+          setToldFixed.add(row.key); const line = `a saved link makes this piece ${one ? want[0] : "a set of charms (" + want.join(" + ") + ")"}, but its piece stays on its sheet because the order is held in Review: the sheet keeps ${[...new Set(made)].join(" + ") || "its piece"}`;
           agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · ${line}`);
           try { TL.line(row, "interpreted", { id: `${row.key}.relink.kept.${TL.hash(want.join("+") + "|" + made.join(","))}`, once: true, text: ("Saved link: " + line).slice(0, 200), data: { sku: want[0], was: made.slice(0, 6) } }); } catch (_) {}
         }
@@ -4843,7 +4843,7 @@ const Pool = window.Pool = (() => {
       if (ip && ip.placed) { renderCard(page); continue; }
       if (ip) page._keepPlaced = true;   // (its append moves nothing already on it, not even to make room)
       // a line with pieces on a sheet that is closed (released full, cut) cannot join them: it is split, and said so (rule R3; the sets read it from the pool ids)
-      if (matePages.length && !matePages.includes(page) && typeof splitGroups === "function") for (const g of splitGroups(pagesOf(metal), new Set(list.map(groupOf).filter(Boolean))).slice(0, 3)) agent({ metal, pool: true }, "warn", `Split pair/line ${g.group} (its other pieces are on a closed sheet): ${splitWords(g, p => `sheet ${p.page}`)} — both sheets must go in one set`);
+      if (matePages.length && !matePages.includes(page) && typeof splitGroups === "function") for (const g of splitGroups(pagesOf(metal), new Set(list.map(groupOf).filter(Boolean))).slice(0, 3)) agent({ metal, pool: true }, "warn", `Split pair/group ${g.group} (its other pieces are on a closed sheet): ${splitWords(g, p => `sheet ${p.page}`)} — both sheets must go in one set`);
       if (row.releasing && window.Gate?.keep) { Gate.keep(page); if (page.keepRelease) page.keepRelease.rid = String(row.order.receiptId); }   // (an order released from hold, OrderHold.release: a sheet already in its set keeps its set while it takes the order, from this moment: the set assembly would drop it while it nests)
       if(page.placements.length){page.intakeAppend=true;page.appendOnly=true;page.dirty=true;if(!['nesting','finishing','queued'].includes(page.status))page.status='ready';renderCard(page);}else sheetDirty(page);
     }
@@ -8022,7 +8022,7 @@ const Engrave = window.Engrave = (() => {
     const unitSplit = pieceWordsOf(row, jobs);
     if (unitSplit) { await giveUnitWords(row, jobs, unitSplit); return job; }
     { const open = jobs.filter(j => ["classify", "reclassify"].includes(j.state)), copied = open.filter(j => j.copiedFrom && j.text);
-      if (copied.length && copied.length === open.length) { for (const j of copied) { delete j.seededFrom; toWords(j, "This piece was added to the line: confirm the words (copied from the piece before it)"); } return job; } }
+      if (copied.length && copied.length === open.length) { for (const j of copied) { delete j.seededFrom; toWords(j, "This piece was added to the order: confirm the words (copied from the piece before it)"); } return job; } }
     const discSplit = discWordsOf(row, jobs);
     if (discSplit) {
       for (const j of jobs) {
@@ -9890,7 +9890,7 @@ const Engrave = window.Engrave = (() => {
   /** The chip of a job in a row of a line that has a front: with its face; for any other line, the chip it always had. */
   const jobChipHtml = (job, faced) => (faced ? faceChipHtml(job) : earChipHtml(job));
   /** "Front + back" / "Front": the line's chip beside its SKU (nothing for a back-only line). */
-  const modeChipHtml = row => { const m = faceModeOf(row); return m ? `<span class="egPiece egMode" data-face="${m === "both" ? "both" : "front"}" title="${m === "both" ? "this line is engraved on both faces: the front and the back, each with its own words and approval" : "this line is engraved on the front"}">${m === "both" ? "Front + back" : "Front"}</span>` : ""; };
+  const modeChipHtml = row => { const m = faceModeOf(row); return m ? `<span class="egPiece egMode" data-face="${m === "both" ? "both" : "front"}" title="${m === "both" ? "this piece is engraved on both faces: the front and the back, each with its own words and approval" : "this piece is engraved on the front"}">${m === "both" ? "Front + back" : "Front"}</span>` : ""; };
   const pieceName = j => (SIDES() ? (SIDES().slotWord(j) || "") : "").toLowerCase();
   const facedGrp = grp => !!(grp && (grp.faces || grp.jobs.some(isFrontJob) || lineHasFront(grp.lead.row)));
   /** "front and back" | "front" | "back": the faces a set of jobs is engraved on. */
@@ -10183,7 +10183,7 @@ const Engrave = window.Engrave = (() => {
   function monoMount(host, m, card) {
     const U = MU(); if (!U || !U.mountLine) { host.innerHTML = `<div class="libEmpty">The monogram editor did not load. Reload the page.</div>`; return null; }
     let w = null; try { w = U.mountLine(host, { rid: String(lineOf(m.row).order.receiptId), lineKey: m.lineKey || m.key, slot: m.slot || undefined, row: m.row, mode: "detail", onApproved: () => monoApproved(m, card) }); } catch (e) { console.warn("Monogram widget", e); }
-    if (!w) host.innerHTML = `<div class="libEmpty">This line's letters could not be opened as a monogram.</div>`;
+    if (!w) host.innerHTML = `<div class="libEmpty">This piece's letters could not be opened as a monogram.</div>`;
     return w;
   }
   /** The widget approved the design: the card in front goes up into the count and the detail goes on to what is left of the order (guideNext, at the render). */
@@ -10363,7 +10363,7 @@ const Engrave = window.Engrave = (() => {
     const row = rowsIn([job], queueUniverse())[0], faced = !!row && hasFrontIn(row.jobs), jobs = !row ? [] : scope === "piece" ? row.jobs.filter(j => sameSlot(j, job)) : row.jobs;
     if (scope !== "piece" && piecesIn(jobs) >= 2) { toast("Approve each piece on its own: every piece needs its own Approve.", "bad"); return; }   // (ENGAPPROVE: never several pieces with one press; no button asks for it, this keeps a stale one from doing it)
     const gate = faced && UIFACES() ? UIFACES().approveAllGate(jobs, gateOpts())
-      : row && ROWS().multi(row) ? (row.discs ? ROWS().approveAll(row, gateOpts()) : ROWS().approveBoth(row, gateOpts())) : { ok: false, why: allDiscs([job]) ? "This order has one disc to approve." : "This line has one ear to approve." };
+      : row && ROWS().multi(row) ? (row.discs ? ROWS().approveAll(row, gateOpts()) : ROWS().approveBoth(row, gateOpts())) : { ok: false, why: allDiscs([job]) ? "This order has one disc to approve." : "This piece has one ear to approve." };
     if (!gate.ok) { toast(gate.why, "bad"); return; }
     const by = employeeName() || await needEmployee("Kept with these approvals and their seals."); if (!by) return;
     for (const j of jobs) {
@@ -10434,7 +10434,7 @@ const Engrave = window.Engrave = (() => {
     // HDRMETA (Paul, 18 Oct 2026, of the detail head "9 OF 9 · 9 DONE | ‹ Back | Next › | 4195215444  5X8.5 · charm  [Open order ↗]  THIN STROKES": "Remove 'Thin Strokes', 'charm', '5x8.5'
     // text from the UI."): the head keeps the counter, Back / Next, the order number, the piece / face tag, Open order and the SMALL chip; the size · kind · copies line under the number and the THIN STROKES chip are
     // never drawn (refit() and refresh() no longer put the chip back). job.fit.thin is still measured and still saved with the placement (rec.thin); only the words on screen are gone.
-    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a line's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? ` (an order's ${countedNouns(ears)} are one placement: Back and Next go through every ${countedNoun(ears)})` : " (an earring line's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span>${ears ? earSwitchHtml(job, ears, panelOn) : faced ? (panelOn ? "" : faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`)) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().pieceTag(job, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
+    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a piece's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? ` (an order's ${countedNouns(ears)} are one placement: Back and Next go through every ${countedNoun(ears)})` : " (an earring piece's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span>${ears ? earSwitchHtml(job, ears, panelOn) : faced ? (panelOn ? "" : faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`)) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().pieceTag(job, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain">${byCard ? "" : `<h4 class="pvH">${cap1(fw)} · engraving</h4>`}<div class="pvApproval">${appView || keptView ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton egApproved" data-a="approved" disabled aria-disabled="true" title="approved — change anything and press Approve again: it gets a new seal">Approved</button></span>${job.state === "written" ? `<span class="egWrittenNote hint">Saved to sheet · approving again replaces its file</span>` : ""}` : f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the ${fw} file">Approve</button></span>` : ""}${f && !wordsJob && ears && !appView ? approveBothHtml(ears, job) : ""}</div><div class="backHost"></div></div>
         <div class="ctl">${!f && !wordsJob && panelOn && job.reason ? `<span class="why" role="status">${esc(isFrontJob(job) ? String(job.reason).replace(/\bback area\b/, "front area") : job.reason)}</span>` : ""}${f && !wordsJob ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="egTurn" role="group" aria-label="Turn the whole charm and its engraving" title="Turn the whole charm and its engraving together, in degrees. Counter-clockwise is plus. 0 is where the system placed it."><button type="button" class="egTurnStep" data-a="turnStep" data-step="-1" title="Turn 1° clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree clockwise">↷</button><label class="egTurnField"><input type="number" data-a="turn" inputmode="numeric" min="-360" max="360" step="1" value="${turnOf(job)}" aria-label="Turn the whole charm and its engraving, in degrees"><span class="egTurnDeg" aria-hidden="true">°</span></label><button type="button" class="egTurnStep" data-a="turnStep" data-step="1" title="Turn 1° counter-clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree counter-clockwise">↶</button></span>` : ""}
@@ -16298,7 +16298,7 @@ const Review = window.Review = (() => {
   async function saveBoth(it, p, sib) {
     const L = sib.pair.L, R = sib.pair.R; if (!B.master.entries.has(L) || !B.master.entries.has(R)) { toast(`${B.master.entries.has(L) ? R : L} is not in the master index`, "bad"); return; }
     const who = by(); if (!who) return; const pairs = [...answerKeysOf(it, sib.rows).values()], lids = [...new Set(pairs.map(q => q.lid))];
-    if (pairs.some(q => !q.from || !/^\d+$/.test(q.lid))) { toast("This line has no listing number or SKU, so both charms cannot be kept for it", "bad", 7000); return; }
+    if (pairs.some(q => !q.from || !/^\d+$/.test(q.lid))) { toast("This piece has no listing number or SKU, so both charms cannot be kept for it", "bad", 7000); return; }
     for (const q of pairs) savedLink(await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, fromSku: q.from, pair: { L, R }, by: who, title: q.title }));
     answered({ kind: it.kind, rows: sib.rows }, "decided", `Use both: ${L} + ${R}`, { pair: { L, R }, from: p.sku || null }, who);
     await Orders.loadMaps(true); toast(`${p.sku || "This SKU"} → ${L} + ${R} remembered for ${lids.length > 1 ? lids.length + " listings" : "this listing"}`, "ok");
@@ -16415,12 +16415,12 @@ const Review = window.Review = (() => {
      the Etsy write (editSkuEtsy) starts with the link write, for THIS listing only and only its products that carry the line's Etsy SKU. One progress panel (relinkFlow, kept open) follows it all:
      Etsy, the link, each order and sheet, every view. → { ok, why, sku, via, done } (done: the panel's end, with the Etsy answer) */
   function editSkuOffer(row) {
-    if (!row || !row.line || !row.spec || row.loading) return { ok: false, why: "the line is not read yet" };
+    if (!row || !row.line || !row.spec || row.loading) return { ok: false, why: "the piece is not read yet" };
     if (row.fromRecord) return { ok: false, why: "this order is read from the records, not the open orders" };
     // (a line with no design, "No vector available", is what Edit SKU is for: it is made up again with the charm; a committed, skipped or gone line is not changed here)
-    if (row.state !== "noDesign" && O.FINISHED_LINE && O.FINISHED_LINE.has(row.state)) return { ok: false, why: row.state === "committed" ? "the line's set was committed at the Design Station" : "the line is skipped or gone" };
-    if (row.spec.ownDesign || row.spec.customDone) return { ok: false, why: "this line is made from its own artwork, not a library charm" };
-    const lid = String(row.line.listingId || "").replace(/\D/g, ""); if (!lid) return { ok: false, why: "this line has no Etsy listing number" };
+    if (row.state !== "noDesign" && O.FINISHED_LINE && O.FINISHED_LINE.has(row.state)) return { ok: false, why: row.state === "committed" ? "the piece's set was committed at the Design Station" : "the piece is skipped or gone" };
+    if (row.spec.ownDesign || row.spec.customDone) return { ok: false, why: "this piece is made from its own artwork, not a library charm" };
+    const lid = String(row.line.listingId || "").replace(/\D/g, ""); if (!lid) return { ok: false, why: "this piece has no Etsy listing number" };
     const RL = window.CharmNestReviewLink, from = RL && RL.fromOf ? RL.fromOf(row.line, row.spec) : String(row.line.sku || "").trim().toUpperCase();
     const fix = fixOffer(row);
     return { ok: true, why: "", lid, from: from || "", cur: String(row.spec.designSku || "").toUpperCase(), viaLink: !!fix.ok };
@@ -16442,7 +16442,7 @@ const Review = window.Review = (() => {
   /** The Etsy half of an SKU edit, on the panel's "etsy" line: listing `off.lid` only, and only its products that carry the line's Etsy SKU take the new one (editSkuEtsy). → the answer */
   function editSkuEtsy(flow, off, sku, who) {
     const L = off.lid, say = (text, state, why) => { try { flow.line("etsy", text, state, why); } catch (_) { /* a word only */ } };
-    if (!off.from) { say(`Etsy listing ${L}: the line has no Etsy SKU, so Etsy is not changed`, "skip"); return Promise.resolve({ ok: false, skipped: true }); }
+    if (!off.from) { say(`Etsy listing ${L}: the piece has no Etsy SKU, so Etsy is not changed`, "skip"); return Promise.resolve({ ok: false, skipped: true }); }
     say(`Etsy listing ${L}: changing the SKU “${off.from}” to ${sku} (this listing only)…`, "work");
     return api("charmNestLibrary", { op: "editSkuEtsy", listingId: L, sku, onlySku: off.from, by: who }, { label: "Updating the Etsy listing" })
       .catch(e => ({ ok: false, thrown: true, text: (e && e.message) || String(e) }))
@@ -16460,7 +16460,7 @@ const Review = window.Review = (() => {
     if (!sku) return no("Pick a charm from the repo first");
     const e = Master.entryFor(sku); if (!e || !B.master.entries.has(sku)) return no(`${sku} is not in the charm repo`);
     if (O.entryBlock(e)) return no(`${sku} is blocked in the master, so it cannot be cut`);
-    if (off.cur && (sku === off.cur || O.sameDesign(sku, off.cur, k => Master.entryFor(k)))) return no(`This line is ${off.cur} already`, "ok");
+    if (off.cur && (sku === off.cur || O.sameDesign(sku, off.cur, k => Master.entryFor(k)))) return no(`This piece is ${off.cur} already`, "ok");
     const who = by(); if (!who) return no("Sign in first: the change is saved under your name");
     const same = editSkuSame(off), rows = Orders.rows().filter(same);
     // (no sheet is held for an SKU edit: an order this line sent to Review is answered by it BEFORE the swap reads it (a Review hold would keep the old charm on its sheet), and a full sheet
@@ -16695,7 +16695,7 @@ const Review = window.Review = (() => {
     B.review.items = items().filter(x => x.key !== "chg:" + row.key);   // (the Order changed card this reading raised is answered by the pick)
     const ok = !row.hold && (row.state === "pooled" || row.state === "pulled" || (row.state === "committed" && !!inplace)) && !(row.problems || []).length;
     relinkSay(row, c, by, { text: homes.length ? inPlaceWords(inplace, homes) : "made up again", sheets: homes });
-    if (!ok) agent({ metal: row.spec && row.spec.material, pool: true }, "warn", `${row.order.receiptId} · listing pick ${c.to}: the old pieces came off, but the line was not made up again: ${row.reason || (row.problems || []).map(p => p.kind).join(", ") || row.state}`);
+    if (!ok) agent({ metal: row.spec && row.spec.material, pool: true }, "warn", `${row.order.receiptId} · listing pick ${c.to}: the old pieces came off, but the piece was not made up again: ${row.reason || (row.problems || []).map(p => p.kind).join(", ") || row.state}`);
     return { ok: true, made: ok, homes, inplace };
   }
   /** A line that keeps its pieces (cut, committed, released, a protected contour): told plainly, held for a person when this page holds that sheet. Nothing physical changes. */
@@ -16914,7 +16914,7 @@ const Review = window.Review = (() => {
     if (out.swapped.length || out.flagged.length || out.design.length) {
       remadeRepaint(touched.concat(out.swapped.flatMap(x => allSheets().filter(sh => (x.homes || []).includes(sh.fileBase || sheetName(sh)))), out.swapped.flatMap(x => ((x.inplace && x.inplace.writes) || []).map(n => allSheets().find(sh => (sh.fileBase || sheetName(sh)) === n)).filter(Boolean))));
       const n = new Set(out.swapped.concat(out.design).map(x => String(x.row.order.receiptId))).size, to = [...new Set(out.swapped.concat(out.design, out.flagged).map(x => x.c.to))].join(", ");
-      if (n) toast(`Listing pick ${to}: ${n} order${n === 1 ? "" : "s"} of the listing updated${out.swapped.length ? `, ${out.swapped.length} piece line${out.swapped.length === 1 ? "" : "s"} replaced (${out.swapped.filter(x => x.inplace && x.inplace.results.length && x.inplace.results.every(r => r.placed)).length} in the old spot, nothing else moved)` : ""}`, "ok", 6000);
+      if (n) toast(`Listing pick ${to}: ${n} order${n === 1 ? "" : "s"} of the listing updated${out.swapped.length ? `, ${out.swapped.length} piece${out.swapped.length === 1 ? "" : "s"} replaced (${out.swapped.filter(x => x.inplace && x.inplace.results.length && x.inplace.results.every(r => r.placed)).length} in the old spot, nothing else moved)` : ""}`, "ok", 6000);
       for (const f of out.flagged.slice(0, 3)) toast(`Order ${f.row.order.receiptId} was ${f.row.state === "committed" || (f.c.fixed || []).some(x => x.cut) ? "cut" : "released"} with the old charm ${f.c.from}: the listing now uses ${f.c.to}. It needs a person (Review)`, "bad", 10000);
       RunCtl.poke();
     }
@@ -16988,10 +16988,10 @@ const Review = window.Review = (() => {
       const run = B.run;
       if (!redrawReady()) { why = "retry: the page does not hold its run yet"; return false; }
       const ids = new Set(r.poolIds || []);
-      if (!L.pieces.some(p => ids.has(p.poolId))) { why = "the line no longer holds those pieces"; return false; }
+      if (!L.pieces.some(p => ids.has(p.poolId))) { why = "the order no longer holds those pieces"; return false; }
       if (relinkFixed(r).length) { why = "retry: a piece of it is laser cut now"; return false; }   // (INPLACE, Paul 20 Oct 2026: only a cut sheet keeps its piece; a committed set's sheet not cut yet changes)
       if (Pool.keepsPlace && Pool.keepsPlace(r)) { why = "retry: the order is in Review"; return false; }
-      if (r.hold) { why = "the line is held by a person"; return false; }
+      if (r.hold) { why = "the piece is held by a person"; return false; }
       const on = allSheets().filter(sh => sh.charms.some(x => ids.has(x.poolId)));
       // (a sheet being arranged or saved keeps its pieces until it is done: taken off in the middle, its layout came back with them)
       if (on.some(redrawBusy)) { why = "retry: a sheet is being arranged"; return false; }
@@ -17015,7 +17015,7 @@ const Review = window.Review = (() => {
     const made = !row.hold && (row.state === "pooled" || row.state === "pulled" || (row.state === "committed" && !!inplace)) && !(row.problems || []).length;
     TL.line(row, "interpreted", { id: redrawId(row, L), once: true, text: `Made again from the new drawing of ${redrawName(L)} (a newer master file in the library)${homes.length ? `: ${inPlaceWords(inplace, homes)}` : ""}`.slice(0, 200),
       data: { redraw: true, sku: L.sku, size: L.size || null, to: L.to, was: L.from || null, action: "swap", sheets: homes } });
-    agent({ metal: row.spec && row.spec.material, pool: true }, made ? "POOL" : "warn", `${row.order.receiptId} · ${redrawName(L)} draws another design now: ${made ? `made up again from it${homes.length ? ` (the old piece came off ${homes.join(", ")})` : ""}` : `the old pieces came off, but the line was not made up again: ${row.reason || (row.problems || []).map(p => p.kind).join(", ") || row.state}`}`);
+    agent({ metal: row.spec && row.spec.material, pool: true }, made ? "POOL" : "warn", `${row.order.receiptId} · ${redrawName(L)} draws another design now: ${made ? `made up again from it${homes.length ? ` (the old piece came off ${homes.join(", ")})` : ""}` : `the old pieces came off, but the piece was not made up again: ${row.reason || (row.problems || []).map(p => p.kind).join(", ") || row.state}`}`);
     return { ok: true, made, homes, inplace };
   }
   /** A line that keeps its piece (cut, in a committed set, released, a protected contour): told plainly (the log, the order's timeline, row.redrawNote). Nothing physical changes. */
@@ -17068,8 +17068,8 @@ const Review = window.Review = (() => {
       }
       if (row.hold) {
         redrawDone.add(done); row.redrawNote = { sku: L.sku, size: L.size || null, to: L.to, at: Date.now(), where: "", how: "held" };
-        agent({ metal: row.spec && row.spec.material, pool: true }, "warn", `${row.order.receiptId} · ${redrawName(L)} draws another design now, but the line is held by a person: its piece is the older drawing until it is made again`);
-        TL.line(row, "interpreted", { id: redrawId(row, L, "held"), once: true, text: `${redrawName(L)} draws another design now, but this line is on hold: its piece is the older drawing until it is made again`.slice(0, 200), data: { redraw: true, sku: L.sku, size: L.size || null, to: L.to, action: "held" } });
+        agent({ metal: row.spec && row.spec.material, pool: true }, "warn", `${row.order.receiptId} · ${redrawName(L)} draws another design now, but the piece is held by a person: its piece is the older drawing until it is made again`);
+        TL.line(row, "interpreted", { id: redrawId(row, L, "held"), once: true, text: `${redrawName(L)} draws another design now, but this piece is on hold: its piece is the older drawing until it is made again`.slice(0, 200), data: { redraw: true, sku: L.sku, size: L.size || null, to: L.to, action: "held" } });
         out.held.push(L); continue;
       }
       let r; try { r = await redrawSwap(row, L); } catch (err) { r = { ok: false, retry: true, why: (err && err.message) || String(err) }; }
@@ -17089,7 +17089,7 @@ const Review = window.Review = (() => {
     }
     if (out.swapped.length || out.flagged.length || out.held.length) {
       try { syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {}
-      if (out.swapped.length) toast(`New drawing in the library (${[...new Set(out.swapped.map(redrawName))].join(", ")}): ${out.swapped.length} order line${out.swapped.length === 1 ? "" : "s"} taken off and made up again from it`, "ok", 6000);
+      if (out.swapped.length) toast(`New drawing in the library (${[...new Set(out.swapped.map(redrawName))].join(", ")}): ${out.swapped.length} order piece${out.swapped.length === 1 ? "" : "s"} taken off and made up again from it`, "ok", 6000);
       for (const f of out.flagged.slice(0, 3)) toast(`Order ${f.row.order.receiptId}: its ${redrawName(f)} piece is ${f.row.redrawNote ? f.row.redrawNote.how : "cut"} with the OLDER drawing; the library now draws it from a newer master file`, "bad", 10000);
       RunCtl.poke();
     }
@@ -17134,8 +17134,8 @@ const Review = window.Review = (() => {
       if (row.hold) {
         if (!fresh) continue;   // (a person's hold made before the stamp existed: nothing says the drawing changed since)
         row.redrawNote = { sku, size: row.spec.size || null, to, at: Date.now(), where: "", how: "held" };
-        agent({ metal: row.spec.material, pool: true }, "warn", `${row.order.receiptId} · ${sku} has a new drawing in the library, but the line is on hold by a person: it stays held until it is released`);
-        TL.line(row, "interpreted", { id: `${row.key}.heldrecheck.held.${TL.hash(sku + "|" + to)}`, once: true, text: `${sku} has a new drawing in the library, but this line is on hold by a person: it stays held, and is made up from the new drawing when it is released`.slice(0, 200), data: { heldRecheck: true, sku, to, action: "held" } });
+        agent({ metal: row.spec.material, pool: true }, "warn", `${row.order.receiptId} · ${sku} has a new drawing in the library, but the piece is on hold by a person: it stays held until it is released`);
+        TL.line(row, "interpreted", { id: `${row.key}.heldrecheck.held.${TL.hash(sku + "|" + to)}`, once: true, text: `${sku} has a new drawing in the library, but this piece is on hold by a person: it stays held, and is made up from the new drawing when it is released`.slice(0, 200), data: { heldRecheck: true, sku, to, action: "held" } });
         out.noted.push(row); continue;
       }
       try { Pool.forgetDrawing(e, e); } catch (err) { console.warn("[heldrecheck] the old design was not forgotten:", err && err.message); }   // (any design held under the entry's paths that is not the drawing it has now)
@@ -17152,7 +17152,7 @@ const Review = window.Review = (() => {
     while (heldDone.size > REDRAW_MAX * 4) heldDone.delete(heldDone.values().next().value);
     if (out.rechecked.length || out.noted.length) {
       try { syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {}
-      const n = out.rechecked.filter(x => x.made).length; if (n) toast(`New drawing in the library: ${n} held order line${n === 1 ? "" : "s"} checked again and made up from it`, "ok", 6000);
+      const n = out.rechecked.filter(x => x.made).length; if (n) toast(`New drawing in the library: ${n} held order piece${n === 1 ? "" : "s"} checked again and made up from it`, "ok", 6000);
       RunCtl.poke();
     }
     return out;
@@ -17506,10 +17506,10 @@ const Review = window.Review = (() => {
       c.innerHTML = head("Two designs?", r.line.title, orderSub) +
         `<div class="ev">${evRow("Options", optQs(r.line) || "—")}${evRow("Note", esc(notes || "—"))}${evRow("Design", esc((sp && sp.designSku) || r.line.sku || "none"))}</div>` +
         `<div class="ask">Which design goes on the other ear?</div><div class="why">${esc(p.pairSecond.why || "")}</div>
-        <div class="fixes"><input list="cnMasterSkus" data-f="second" placeholder="the second design (a master SKU)"><button class="btn gold sm" data-a="second" title="the line's own design is the Left earring, this one the Right">Use it for the other ear</button><button class="btn ghost sm" data-a="same" title="one design, a Left and a Right (the Right is the mirror image)">The same on both ears</button></div>`;
+        <div class="fixes"><input list="cnMasterSkus" data-f="second" placeholder="the second design (a master SKU)"><button class="btn gold sm" data-a="second" title="the piece's own design is the Left earring, this one the Right">Use it for the other ear</button><button class="btn ghost sm" data-a="same" title="one design, a Left and a Right (the Right is the mirror image)">The same on both ears</button></div>`;
       bindNeeds(c, "second", "second");
       const keep = (field, value, words) => saving(c, async () => {
-        if (field === "design" && !p.listingId) { toast("This line has no listing number, so a second design cannot be kept for it: use “The same on both ears”, or Custom Orders", "bad", 7000); return; }
+        if (field === "design" && !p.listingId) { toast("This piece has no listing number, so a second design cannot be kept for it: use “The same on both ears”, or Custom Orders", "bad", 7000); return; }
         const who = by(); if (!who) return;
         { const saved = await api("charmNestLibrary", { op: "optionMapPut", listingId: p.listingId || "*", optionName: p.optionName, optionValue: p.optionValue, map: { field, value }, by: who }); if (field === "design") savedLink(saved); }   // (REVLINK: the second ear's charm is a pick, read back before it counts)
         answered(it, "decided", words, { option: p.optionName, value: p.optionValue, field, to: String(value || ""), listing: String(p.listingId || "*") }, who);
@@ -17546,7 +17546,7 @@ const Review = window.Review = (() => {
       const lids = [...new Set(group.map(x => String(x.line.listingId)))], g = +p.count.guess || 0;
       c.innerHTML = head("How many pieces?", `${O.shownText(p.optionName)}: ${O.shownText(p.optionValue)}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
         `<div class="ask">How many separate pieces does ONE of these make in all?</div><div class="why">${esc(p.count.why || "")}</div>
-        <div class="fixes pick">${[1, 2, 3, 4, 5, 6].map(n => `<button class="btn ${n === g ? "gold" : "ghost"} sm" data-n="${n}" title="${n === 1 ? "one piece: this option is not a number of pieces" : n + " separate pieces, each cut on its own and kept together as one order line"}">${n === 1 ? "Just 1" : n}</button>`).join("")}<input type="number" min="1" max="12" step="1" data-f="n" placeholder="other"><button class="btn gold sm" data-a="n">Use it</button></div>
+        <div class="fixes pick">${[1, 2, 3, 4, 5, 6].map(n => `<button class="btn ${n === g ? "gold" : "ghost"} sm" data-n="${n}" title="${n === 1 ? "one piece: this option is not a number of pieces" : n + " separate pieces, each cut on its own and kept together as one order piece"}">${n === 1 ? "Just 1" : n}</button>`).join("")}<input type="number" min="1" max="12" step="1" data-f="n" placeholder="other"><button class="btn gold sm" data-a="n">Use it</button></div>
         ${lids.length > 1 ? `<label class="scopeOne"><input type="checkbox" data-f="one"> only for listing ${esc(p.listingId)} — otherwise all ${lids.length} are answered together</label>` : ""}`;
       const oneOnly = () => { const b = c.querySelector("[data-f=one]"); return !!(b && b.checked); };
       const say = n => saving(c, async () => {
@@ -20077,7 +20077,7 @@ const OrderWin = window.OrderWin = (() => {
     byId("owSkuFrom").textContent = off.from || "(no SKU)";
     // what it changes, as chips (each says the rest when pointed at)
     const sc = tryDo(() => Review.editSkuScope(r)) || { orders: 0, sheets: [], cut: [] }, chip = (ic, txt, tip, cls) => `<span class="seChip${cls ? " " + cls : ""}" title="${esc(tip)}">${ic}<span>${esc(txt)}</span></span>`;
-    scope.innerHTML = chip(SKI.tag, `Etsy ${off.lid}`, off.from ? `Etsy listing ${off.lid}: only its products with the SKU “${off.from}” take the new one; other listings are not changed` : "The line has no Etsy SKU: Etsy is not changed", off.from ? "" : "off")
+    scope.innerHTML = chip(SKI.tag, `Etsy ${off.lid}`, off.from ? `Etsy listing ${off.lid}: only its products with the SKU “${off.from}” take the new one; other listings are not changed` : "The piece has no Etsy SKU: Etsy is not changed", off.from ? "" : "off")
       + chip(SKI.box, `${sc.orders} order${sc.orders === 1 ? "" : "s"}`, `Every open order of listing ${off.lid} with this SKU, and its next orders`)
       + (sc.sheets.length ? chip(SKI.sheet, `${sc.sheets.length} sheet${sc.sheets.length === 1 ? "" : "s"}`, `${sc.sheets.join(", ")}: the new charm goes in the old one's spot when it fits, else on the next sheet of its colour; no sheet is held`) : "")
       + (sc.cut.length ? chip(SKI.cut, `${sc.cut.length} cut · kept`, `${sc.cut.join(", ")}: already cut, so its piece stays as it is`, "warn") : "");
@@ -20095,7 +20095,7 @@ const OrderWin = window.OrderWin = (() => {
       if (!words.length) hits = suggested.map(c => idx.find(x => x.sku === c.sku)).filter(Boolean);   // (nothing typed: the suggested charms)
       else hits = idx.filter(x => words.every(w => x.n.includes(w))).sort((a, b) => (a.sku === raw ? 0 : 1) - (b.sku === raw ? 0 : 1) || (a.n.startsWith(words[0]) ? 0 : 1) - (b.n.startsWith(words[0]) ? 0 : 1) || a.sku.length - b.sku.length || (a.sku < b.sku ? -1 : 1));
       const MAX = 60, shown = hits.slice(0, MAX);
-      list.innerHTML = shown.map(x => { const v = verdict(x.sku); return `<button type="button" class="seHit" role="option" data-sku="${esc(x.sku)}" aria-selected="${x.sku === sel}"${v === "blocked" || v === "same" ? " disabled" : ""} title="${esc(v === "blocked" ? `${x.sku}: blocked in the master` : v === "same" ? `${x.sku}: this line's charm already` : x.sku)}"><span class="skPic">${skuPic(x.sku)}</span><span class="nm">${mark(x.sku, true)}</span></button>`; }).join("")
+      list.innerHTML = shown.map(x => { const v = verdict(x.sku); return `<button type="button" class="seHit" role="option" data-sku="${esc(x.sku)}" aria-selected="${x.sku === sel}"${v === "blocked" || v === "same" ? " disabled" : ""} title="${esc(v === "blocked" ? `${x.sku}: blocked in the master` : v === "same" ? `${x.sku}: this piece's charm already` : x.sku)}"><span class="skPic">${skuPic(x.sku)}</span><span class="nm">${mark(x.sku, true)}</span></button>`; }).join("")
         + (hits.length > MAX ? `<div class="seMore">${hits.length - MAX} more: type another word to narrow it</div>` : "");
       tryDo(() => Master.mountPictures(list));
       list.querySelectorAll("[data-sku]").forEach(t => { t.onclick = () => { input.value = t.dataset.sku; show(); tryDo(() => save.focus()); }; t.onkeydown = ev => keys(ev, t); t.onmouseenter = () => { if (!sel) paintTo(t.dataset.sku, "peek"); }; t.onmouseleave = () => { if (!sel) paintTo(null, "empty"); }; });
@@ -20116,7 +20116,7 @@ const OrderWin = window.OrderWin = (() => {
       if (!raw) say("", suggested.length ? "Suggested charms below. Type any word of a charm's SKU to search the repo, or paste the SKU." : "Type any word of a charm's SKU to search the repo, or paste the SKU.");
       else if (v === "ok") say("ok", `<b>${esc(raw)}</b> · in the charm repo`);
       else if (v === "blocked") say("bad", `<b>${esc(raw)}</b> is blocked in the master, so it cannot be cut`);
-      else if (v === "same") say("bad", `This line is <b>${esc(raw)}</b> already`);
+      else if (v === "same") say("bad", `This piece is <b>${esc(raw)}</b> already`);
       else if (got.n) say("", `${got.n} charm${got.n === 1 ? "" : "s"} in the repo match${got.n === 1 ? "es" : ""}: tap one`);
       else say("bad", `No charm in the repo matches “${esc(raw)}”`);
       paintTo(sel || (v === "blocked" || v === "same" ? raw : null), sel ? "ok" : v === "blocked" || v === "same" ? "bad" : "empty");
@@ -20176,13 +20176,13 @@ const OrderWin = window.OrderWin = (() => {
     const via = byId("owSkuVia"); via.hidden = st !== "linked";
     if (st === "linked") via.innerHTML = `${SKI.via}<span>Etsy</span><b>${esc(etsy)}</b>`;
     // the three buttons
-    const eo = r.loading || !window.Review || !Review.editSkuOffer ? { ok: false, why: "the line is not read yet" } : tryDo(() => Review.editSkuOffer(r)) || { ok: false };
-    const eb = byId("owEditSku"); eb.disabled = !eo.ok; eb.title = eo.ok ? `Change the SKU of listing ${eo.lid}: Etsy, the charm and the sheets together` : `Change SKU: ${eo.why || "not for this line"}`;
+    const eo = r.loading || !window.Review || !Review.editSkuOffer ? { ok: false, why: "the piece is not read yet" } : tryDo(() => Review.editSkuOffer(r)) || { ok: false };
+    const eb = byId("owEditSku"); eb.disabled = !eo.ok; eb.title = eo.ok ? `Change the SKU of listing ${eo.lid}: Etsy, the charm and the sheets together` : `Change SKU: ${eo.why || "not for this piece"}`;
     const sig = [r.key, design, etsy, B.master.entries.size, eo.ok].join("|");
     if (!W.skuCh || W.skuCh.sig !== sig) W.skuCh = { sig, list: eo.ok && Review.editSkuChoices ? (tryDo(() => Review.editSkuChoices(r)) || []) : [] };
     const choices = W.skuCh.list, sg = byId("owSuggest");
     byId("owSuggestN").textContent = choices.length ? String(choices.length) : "";
-    sg.disabled = !eo.ok || !choices.length; sg.title = !eo.ok ? `Suggest: ${eo.why || "not for this line"}` : choices.length ? `${choices.length} similar charm${choices.length === 1 ? "" : "s"} in the repo` : "No similar charms found: use Change to search the repo";
+    sg.disabled = !eo.ok || !choices.length; sg.title = !eo.ok ? `Suggest: ${eo.why || "not for this piece"}` : choices.length ? `${choices.length} similar charm${choices.length === 1 ? "" : "s"} in the repo` : "No similar charms found: use Change to search the repo";
     // the tray: opened by Suggest, by "Wrong charm?", or at once for a line no charm matches
     if (W.sgKey !== r.key && !r.loading) { W.sgKey = r.key; W.sgOpen = (st === "none" && choices.length > 0) || W.sgWant === r.key; W.sgWant = null; }
     else if (W.sgWant === r.key) { W.sgOpen = true; W.sgWant = null; }

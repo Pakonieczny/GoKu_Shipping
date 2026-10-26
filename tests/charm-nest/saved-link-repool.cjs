@@ -72,7 +72,7 @@ const read = (over, aliases) => { const line = lineOf(over); return { line, spec
     const w = worldOf(), row = rowOf(), id = pooledBefore(w, row); w.pages.gold.charms.push({ poolId: id }); w.pages.gold.fileBase = 'SS Draft 1'; set(w.pages.gold);
     w.Pool.pinPooled(row); w.Pool.pinPooled(row);
     eq([row.changePending || false, row.repoolChanged || false, w.reviews.length], [false, false, 0], `a piece on a sheet ${what} is left as it was: no flag, no card`);
-    eq(w.logs.filter(t => /a saved link makes this line CELESTIAL 3 - COMET, but its piece is on SS Draft 1, released or cut: left as it was/.test(t)).length, 1, 'the log says so once');
+    eq(w.logs.filter(t => /a saved link makes this piece CELESTIAL 3 - COMET, but its piece is on SS Draft 1, released or cut: left as it was/.test(t)).length, 1, 'the log says so once');
     eq(w.timeline.length, 1, 'and the order\'s timeline says so once'); ok(w.timeline[0].type === 'interpreted' && /^Saved link: now CELESTIAL 3 - COMET, but CELESTIAL3-COMET is on SS Draft 1, released or cut, so the sheet was left as it was$/.test(w.timeline[0].o.text) && w.timeline[0].o.once === true, 'in words: ' + w.timeline[0].o.text);
     eq(writes(w), 0, 'nothing is written to a sheet or a record'); }
   // a full sheet not cut yet (INPLACE, Paul 20 Oct 2026): offered, like a draft

@@ -32,7 +32,16 @@
     { "pattern": "\\bline (?:\\d+|\\u0001) is not a group code", "why": "a DXF file's own line number in a parse error" },
     { "pattern": "\\.efc-guide line\\{", "why": "the efficiency charts' CSS selector for the SVG <line> element of the hover guide (a drawing element, not text)" },
     { "pattern": "\\.efc-sw\\.line\\{", "why": "the efficiency charts' CSS class of the legend swatch drawn as a line (a chart-key shape, not text)" },
-    { "pattern": "share a line with the status|takes (?:the same )?two lines", "why": "a comment inside the sheet window's CSS: the title bar wraps onto two rows of text (a comment, never shown)" }
+    { "pattern": "share a line with the status|takes (?:the same )?two lines", "why": "a comment inside the sheet window's CSS: the title bar wraps onto two rows of text (a comment, never shown)" },
+    {"pattern": "\\bfirst in line\\b", "why": "first in the queue (released to the nesting queue), not an order's piece"},
+    {"pattern": "\\bThe two lines above\\b", "why": "two lines of text on the sandbox panel"},
+    {"pattern": "\\bcut in two lines\\b", "why": "pieces cut along two different green lines (cut contours)"},
+    {"pattern": "\\bno line is (?:to be )?added\\b|\\bwaiting for its line\\b|\\bThe line check\\b", "why": "the Rose Gold green cut line of a sheet"},
+    {"pattern": "\\bmean line\\b", "why": "the stroke width (mean line) of a letter"},
+    {"pattern": "\\bNext in line\\b", "why": "the next in a queue"},
+    {"pattern": "\\bwould make the line wrong\\b|\\bmatch that line\\b|\\bwhere the line was drawn\\b", "why": "the green cut line of a sheet"},
+    {"pattern": "is alone on a line", "why": "a line of the buyer's engraving words"},
+    {"pattern": "a blank line", "why": "an empty line in the buyer's words"}
   ],
   "literals": [
     { "file": "charm-nest-dxf.js", "exact": "LINE", "why": "the DXF entity name LINE (a file format keyword)" },
@@ -57,6 +66,25 @@
     { "file": "netlify/functions/_charmNestAgent.js", "startsWith": "Grade EVERY numbered charm", "why": "the instruction given to the AI (a prompt)" },
     { "file": "netlify/functions/_charmNestAgent.js", "startsWith": "You look at the rendered BACK", "why": "the instruction given to the AI (a prompt)" },
     { "file": "sorting.html", "startsWith": "You are classifying metal colour", "why": "the instruction given to the AI (a prompt)" },
-    { "file": "sorting.html", "startsWith": "You are classifying metal color", "why": "the instruction given to the AI (a prompt: 'cut lines' are colour thresholds)" }
+    { "file": "sorting.html", "startsWith": "You are classifying metal color", "why": "the instruction given to the AI (a prompt: 'cut lines' are colour thresholds)" },
+    {"file": "charm-nest-bridge.js", "exact": "lines", "why": "the job field name lines in the list of word fields copied between engraving records (WORDS_OF), code"},
+    {"file": "charm-nest-bridge.js", "exact": "line", "why": "the internal name of the order window's piece-line strip in the fade/fold lists, code"},
+    {"file": "charm-nest-bridge.js", "exact": "Stopped: see the red line", "why": "a red line of the update's own log, not an order's piece"},
+    {"file": "charm-nest-bridge.js", "exact": "[relink] lines not read:", "why": "a console.warn for developers, never shown on the page"},
+    {"file": "charm-nest-emoji-data.js", "exact": "dotted line face", "why": "the Unicode name of an emoji"},
+    {"file": "charm-nest-engrave-piece-words.js", "exact": "lines", "why": "an internal 'how' code (words read one per line of engraving text), not shown"},
+    {"file": "charm-nest-engrave-piece-words.js", "exact": "\u0001 lines for \u0001 pieces", "why": "lines of engraving text, one per piece"},
+    {"file": "charm-nest-engrave-sides.js", "exact": "lines", "why": "an internal 'how' code (words read one per line of engraving text), not shown"},
+    {"file": "charm-nest-mail.js", "exact": "in line.", "why": "'Nth in line': the queue position of an Etsy message"},
+    {"file": "charm-nest-order-group.js", "exact": "line:", "why": "an internal id prefix, not shown"},
+    {"file": "charm-nest-pdf.js", "exact": "dimension line", "why": "a drawing's dimension line"},
+    {"file": "charm-nest-sandbox-families.js", "exact": "run lines", "why": "label of the collection Charm_Nest_Run_Lines in the sandbox admin list"},
+    {"file": "charm-nest-sandbox-families.js", "exact": "sandbox line decisions", "why": "label of an internal sandbox store in the admin list"},
+    {"file": "charm-nest-sheetwin.js", "startsWith": "dialog.sheetWin{", "why": "a CSS string (line-height)"},
+    {"file": "netlify/functions/_charmNestAgent.js", "startsWith": "THIS LINE MAKES SEVERAL PIECES", "why": "AI prompt text, not shown to a person"},
+    {"file": "netlify/functions/_charmNestAgent.js", "startsWith": "Pieces of this line (slots, in order)", "why": "AI prompt text, not shown to a person"},
+    {"file": "charm-nest-orders.js", "exact": "MUSIC4 - SINGLE W/ DOUBLE LINE", "why": "a real Etsy SKU name (the design's own name), matched as data"},
+    {"file": "charm-nest-orders.js", "exact": "Two designs on this line", "why": "the stored key a person's answer about two designs is saved under (Charm option answers); renaming it would orphan saved answers"},
+    {"file": "charm-nest-orders.js", "exact": "line", "why": "an internal tag for what precedes a word (a new text line vs a list), never shown"}
   ]
 }

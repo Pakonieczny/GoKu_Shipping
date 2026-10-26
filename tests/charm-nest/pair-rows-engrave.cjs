@@ -227,7 +227,7 @@ const readyFit = () => ({ fit: { ok: true, size: 2, capMm: 1.8 }, verify: { geom
     assert.match(html, /aria-label="The discs of this order, one by one"/); assert.match(html, /^<span class="egEarSwitch egMany" /, 'a switch of discs may wrap on a narrow window');
     // two ears: the Left | Right switch of the editor, character for character (the old markup is rebuilt here from its own parts)
     const L = Object.assign(job(ROW.duck, 'L', 'review', ['Mom']), readyFit()), R = Object.assign(job(ROW.duck, 'R', 'review', ['Mom & "Dad"']), readyFit(), { copies: ['a', 'b'] });
-    const old = (job_, ears) => `<span class="egEarSwitch" role="group" aria-label="The left and the right ear of this line">${ears.map(j => {
+    const old = (job_, ears) => `<span class="egEarSwitch" role="group" aria-label="The left and the right ear of this piece">${ears.map(j => {
       const on = j === job_, words = Rows.wordsOf(j), stage = Rows.stageOf(j, false), ear = Sides.earOf(j.slot).toLowerCase(), esc = x => String(x == null ? '' : x).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
       const chip = `<span class="egPiece" data-slot="${esc(j.slot)}">${esc(Sides.tagOf(j.slot) + ((j.copies || []).length > 1 ? ' ×' + j.copies.length : ''))}</span>`;
       return `<button type="button" class="egEarTab" data-a="ear" data-ear="${esc(j.key)}" aria-pressed="${on}" title="${on ? 'Shown now' : 'Show'}: the ${esc(ear)} · ${esc(words || 'words not settled')} · ${esc(stage)}">${chip}<span class="egEarWords">${esc(words || '…')}</span><span class="egEarStage">${esc(stage)}</span></button>`;

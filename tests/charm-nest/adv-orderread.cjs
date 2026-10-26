@@ -114,7 +114,7 @@ const slice = (src, from, to) => { const a = src.indexOf(from), b = src.indexOf(
     const bad = c.readLine({ order: ord, line: ln({ variations: [null, { name: 'Metal Choice', value: 'Gold Filled' }], personalization: ['Mom'] }) });
     assert.equal(bad.designSku, null, 'no design on the row: ' + bad.designSku); assert.equal(bad.skuSource, null);
     assert.equal(bad.problems[0].kind, 'unmatchedSku'); assert.equal(bad.problems[0].formHold, true); assert.equal(bad.problems[0].readFailed, true);
-    assert.match(bad.problems[0].reason, /^this line could not be read \(.*\): it waits for a person, the other lines go on$/); assert.equal(bad.problems[0].sku, SKU);
+    assert.match(bad.problems[0].reason, /^this piece could not be read \(.*\): it waits for a person, the other pieces go on$/); assert.equal(bad.problems[0].sku, SKU);
     assert.equal(bad.formHold.reason, bad.problems[0].reason); assert.equal(bad.formHold.readFailed, true); assert.equal(bad.noDesign, false);
     assert.equal(bad.quantity, 3, 'the quantity is kept'); assert.equal(O.pieceCountOf(bad), 3, 'and counts as 3 pieces'); assert.equal(bad.material, 'gold', 'and so is the metal');
     assert(Array.isArray(bad.options) && bad.pair && Array.isArray(bad.pair.asks), 'the spec is whole: every reader of a spec finds what it looks for');

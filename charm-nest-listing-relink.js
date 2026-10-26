@@ -66,10 +66,10 @@
   const freshFor = (ov, p) => !!ov && !!p && ((!!ov.aiPath && String(p.aiPath || "") === String(ov.aiPath)) || (!!ov.hash && String(p.charmHash || "") === String(ov.hash)));
   function classifyOverride(e, h) {
     const row0 = e.row, ov = e.override, to = up(ov.sku), link = { sku: to, key: "override:" + to, via: "override" }, more = x => Object.assign({ to, link, override: ov }, x || {});
-    if (FINISHED.has(row0.state) || (h.cancelled && h.cancelled(row0))) return res("skip", "the line is finished, cancelled or gone");
+    if (FINISHED.has(row0.state) || (h.cancelled && h.cancelled(row0))) return res("skip", "the piece is finished, cancelled or gone");
     const sp = row0.spec;
-    if (sp.noDesign || sp.ownDesign || sp.customDone || up(sp.designSku) !== to) return res("skip", "the line does not read the SKU that was moved", more());
-    if ((sp.problems || []).length) return res("skip", "the line still asks a question", more());
+    if (sp.noDesign || sp.ownDesign || sp.customDone || up(sp.designSku) !== to) return res("skip", "the piece does not read the SKU that was moved", more());
+    if ((sp.problems || []).length) return res("skip", "the piece still asks a question", more());
     const own = up(h.ownPick ? h.ownPick(row0) : ""); if (own && own !== to) return res("skip", `a person picked ${own} for this order`, more());
     const ps = h.pieces ? h.pieces(row0) : null;
     if (ps == null) return res("skip", "its pieces are not read yet", more({ retry: true }));
@@ -79,31 +79,31 @@
     const fixed = (h.fixedOf ? h.fixedOf(row0) : []) || [];
     if (row0.state === "committed" || fixed.length) return res("flag", fixed.length ? fixed.map(f => `${f.why} on ${f.name}`).join(", ") : "its set is committed", more({ from, fixed, hold: row0.state !== "committed" && !row0.hold && fixed.some(f => f.local) }));
     if (h.keepsPlace && h.keepsPlace(row0)) return res("kept", "the order is in Review: its piece stays on its sheet until the Review is resolved", more({ from }));
-    if (row0.hold) return res("skip", "the line is held by a person", more({ from }));
+    if (row0.hold) return res("skip", "the piece is held by a person", more({ from }));
     return res("swap", "its pieces are cut from the old drawing and are on an open sheet or pooled", more({ from }));
   }
   /** One line, read NOW (the new maps, its new spec), against the link it was read by before. See the header. */
   function classify(e, h) {
     const row0 = e && e.row;
     if (e && e.override && row0 && row0.spec && row0.line) return classifyOverride(e, h);   // (KEEPOVERRIDE: a SKU moved to another design)
-    if (!row0 || !row0.spec || !row0.line) return res("skip", "the line is not read");
-    if (FINISHED.has(row0.state) || (h.cancelled && h.cancelled(row0))) return res("skip", "the line is finished, cancelled or gone");
+    if (!row0 || !row0.spec || !row0.line) return res("skip", "the piece is not read");
+    if (FINISHED.has(row0.state) || (h.cancelled && h.cancelled(row0))) return res("skip", "the piece is finished, cancelled or gone");
     // a line cut and committed is never read again by the page (Orders.interpretAll): it is read here, on the side, only to TELL a person; nothing of it is changed
     let row = row0; if (row0.state === "committed" && h.readNow) { let s = null; try { s = h.readNow(row0); } catch (_) { s = null; } if (s) row = Object.assign({}, row0, { spec: s }); }
     const sp = row.spec;
     let now = null; try { now = h.linkOf(row, h.maps); } catch (_) { now = null; }
-    if (!now || !now.sku) return res("skip", "no saved link reads this line");
+    if (!now || !now.sku) return res("skip", "no saved link reads this piece");
     const to = up(now.sku), link = { sku: to, key: now.key, via: now.via };
-    if (e.was && up(e.was.sku) === to) return res("skip", "the link this line is read by did not change", { to, link });
+    if (e.was && up(e.was.sku) === to) return res("skip", "the link this piece is read by did not change", { to, link });
     const sd = (a, b) => !!a && !!b && (up(a) === up(b) || (h.sameDesign ? !!h.sameDesign(a, b) : false));
     // the line must be READ by that link now (a person's per-line override, a pair, a set or a sign from the buyer's words is something else)
-    if (!BY_LINK.has(sp.skuSource) || !sd(sp.designSku, to) || sp.noDesign || sp.ownDesign || sp.customDone) return res("skip", "the line is not read by the saved link", { to, link });
-    if ((sp.problems || []).length) return res("skip", "the line still asks a question", { to, link });
+    if (!BY_LINK.has(sp.skuSource) || !sd(sp.designSku, to) || sp.noDesign || sp.ownDesign || sp.customDone) return res("skip", "the piece is not read by the saved link", { to, link });
+    if ((sp.problems || []).length) return res("skip", "the piece still asks a question", { to, link });
     // a person's own pick for this very order (its Review resolved by a DIFFERENT charm) wins over the listing's
     const own = up(h.ownPick ? h.ownPick(row0) : ""); if (own && !sd(own, to)) return res("skip", `a person picked ${own} for this order`, { to, link });
     const from = up(e.from), made = h.made ? h.made(row0) : [];
     if (made == null) return res("skip", "its pieces are not read yet", { to, link, from, retry: true });
-    if (!made.length) return from && !sd(from, to) ? res("design", "nothing is made yet: the line reads the new charm", { to, link, from }) : res("none", "the line already reads the picked charm", { to, link, from });
+    if (!made.length) return from && !sd(from, to) ? res("design", "nothing is made yet: the piece reads the new charm", { to, link, from }) : res("none", "the piece already reads the picked charm", { to, link, from });
     if (made.some(s => !s)) return res("skip", "a piece's record names no design", { to, link, from });
     const was = [...new Set(made.map(up))].join(" + ");
     if (made.every(s => sd(s, to))) return res("none", "its pieces already carry the picked charm", { to, link, from: from || was });
@@ -112,7 +112,7 @@
     //  whose sheet this page does not hold. Without a fixedOf a committed line is told, as before.)
     if ((row0.state === "committed" && !h.fixedOf) || fixed.length) return res("flag", fixed.length ? fixed.map(f => `${f.why} on ${f.name}`).join(", ") : "its set is committed", { to, link, from: was, fixed, hold: row0.state !== "committed" && !row0.hold && fixed.some(f => f.local) });
     if (h.keepsPlace && h.keepsPlace(row0)) return res("kept", "the order is in Review: its piece stays on its sheet until the Review is resolved", { to, link, from: was });
-    if (row0.hold) return res("skip", "the line is held by a person", { to, link, from: was });
+    if (row0.hold) return res("skip", "the piece is held by a person", { to, link, from: was });
     return res("swap", "its pieces are pooled or on an open sheet", { to, link, from: was });
   }
 

@@ -133,7 +133,7 @@
       const cutP = by("cut"), withP = by("together");
       const earOf = p => (p.side === "L" ? "left earring" : p.side === "R" ? "right earring" : "piece");
       const partOf = list => { const m = new Map(); for (const p of list) { const k = earOf(p) + "|" + (p.sheetLabel || "its sheet"); m.set(k, (m.get(k) || 0) + 1); } return joinAnd([...m].map(([k, n]) => { const [w, s] = k.split("|"); return `${n > 1 ? n + " " + (w === "piece" ? "pieces" : w + "s") : "the " + w} on ${s}`; })); };
-      if (withP.length && cutP.length) block(`Nothing can be taken off: ${partOf(cutP)} ${cutP.length === 1 ? "is" : "are"} already cut, and ${partOf(withP)} ${withP.length === 1 ? "is" : "are"} not cut but ${withP.length === 1 ? "stays" : "stay"} with ${cutP.length === 1 ? "it" : "them"}, so the ${stays.some(p => p.side) ? "pair" : "line"} is not split.`);
+      if (withP.length && cutP.length) block(`Nothing can be taken off: ${partOf(cutP)} ${cutP.length === 1 ? "is" : "are"} already cut, and ${partOf(withP)} ${withP.length === 1 ? "is" : "are"} not cut but ${withP.length === 1 ? "stays" : "stay"} with ${cutP.length === 1 ? "it" : "them"}, so the ${stays.some(p => p.side) ? "pair" : "group"} is not split.`);
       else block("Every piece of this order is already cut, so there is nothing to take off.");
     }
     // what fills the spots (an estimate here; the room search of the live page replaces it, see plan())

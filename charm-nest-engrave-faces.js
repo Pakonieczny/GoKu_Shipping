@@ -311,7 +311,7 @@
   function approveAllGate(jobs, o) {
     o = o || {};
     const list = (jobs || []).filter(Boolean);
-    if (list.length < 2) return { ok: false, why: 'This line has one placement to approve.' };
+    if (list.length < 2) return { ok: false, why: 'This piece has one placement to approve.' };
     const name = j => (slotLabel(slotOfJob(j)) ? slotLabel(slotOfJob(j)) + ' ' : '') + label(faceOf(j)).toLowerCase();
     if (!list.every(j => j.state === 'review' && j.fit && j.verify && j.verify.geometry && j.verify.geometry.ok)) return { ok: false, why: 'Every placement must be ready to check first.' };
     if (list.some(j => j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving || (o.busy && o.busy(j)))) return { ok: false, why: 'A placement is still being prepared or approved.' };
