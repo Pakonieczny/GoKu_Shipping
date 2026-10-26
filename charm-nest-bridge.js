@@ -23509,8 +23509,9 @@ const Session = window.Session = (() => {
   /** When the next pass may start: a minute (EVERY) after the last one started, and never before the last has rested as long
       as it took (a second at least); after a failure, 15 s doubling to 5 min. */
   function due() {
-    const t = Math.max(lastStart + EVERY, lastEnd + Math.max(1000, lastMs));
-    return failures ? Math.max(t, lastEnd + Math.min(300000, 15000 * 2 ** (failures - 1))) : t;
+    const rest = lastEnd + Math.max(1000, lastMs), t = Math.max(lastStart + EVERY, rest);
+    // (26 Oct 2026: a failed save waits its own 15 s, 30 s … 5 min, never back to back; held to the minute as well (PERF), the 15 s and 30 s tries never came)
+    return failures ? Math.max(rest, lastEnd + Math.min(300000, 15000 * 2 ** (failures - 1))) : t;
   }
   function arm(delay) {
     if (frozen || !ready || timer || idleId || saving || rev === savedRev) return;
