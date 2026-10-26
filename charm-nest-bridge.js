@@ -4308,7 +4308,11 @@ const Pool = window.Pool = (() => {
     if (row.repoolChanged || row.changePending) return;
     // (a row taken off its sheet on purpose, abandoned or superseded, is not a piece the line still has: a line taken off is made up new at the rule's count)
     const had = Math.max(0, ...(row.poolIds || []).map(id => { const r = B.pool.rows.get(id) || {}; return ["abandoned", "superseded"].includes(r.state) ? 0 : +r.quantity || 0; }));
-    if (had) O.pinPieces(sp, had);
+    // (KITEPAIR, Paul 13 Oct 2026: a line pinned to the pieces it was pooled with, all of them now taken off (Hold, then Release hold: no pool row left, or every one known abandoned or superseded),
+    //  is made up again at the rule's count: the pin is taken back here, as pinPieces does when the count agrees. 26 Oct 2026: a line is read once now (an update costs what changed), so no second
+    //  reading clears the pin any more. A pool row the page has not loaded yet keeps the pin: nothing is ever added to the pool on a guess)
+    const off = (row.poolIds || []).every(id => { const r = B.pool.rows.get(id); return !!r && ["abandoned", "superseded"].includes(r.state); });
+    if (had) O.pinPieces(sp, had); else if (sp.pieceRule && off) O.pinPieces(sp, sp.pieceRule);
   }
   /* SCHROLINK (Paul, 12 Oct 2026, order 4198409468): a person saved the listing's pair of designs (aliasPut pair), so the line now reads as a NECKLACE of TWO charms, but its pieces were made up before, from
      the SKU alone (one piece of another design). The pooled pieces are not what the line is read as, and nothing else would ever tell a person: this is the "Order changed" card the Review tab already has for a
