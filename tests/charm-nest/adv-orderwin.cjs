@@ -116,11 +116,15 @@ async function main() {
 
     // 3 · On hold: a line skipped before (the order window has no Skip switch any more: the stored skip stays as it was) opened there,
     //     then released from On hold (Release hold: Review.repool), leaves that list; Previous and Next stay
+    //     (26 Oct 2026: the On hold pile is gone from Orders (NOHOLDPILE, 20 Oct); its list is the Filters panel's
+    //     Needs action → Release Hold (RQFILTER, Paul 19 Oct: "show only the open 'Release Hold' ... Orders"), OV.act = 'hold')
     await page.evaluate(k => { const r = B.orders.byKey.get(k); r.state = 'skipped'; r.hold = r.reason = 'piece skipped by Test Operator'; }, b1);
     await page.evaluate(k => { const r = B.orders.byKey.get(k); r.state = 'skipped'; r.hold = r.reason = 'piece skipped by Test Operator'; }, a1);
-    await page.evaluate(() => { Orders.view().pile = 'hold'; Orders.render(); });
-    assert.deepEqual((await page.evaluate(() => Orders.visibleRows().map(r => r.key))).sort(), [a1, b1].sort(), 'On hold lists the two skipped lines');
+    await page.evaluate(() => { Orders.view().act = 'hold'; Orders.render(); });
+    assert.deepEqual((await page.evaluate(() => Orders.visibleRows().map(r => r.key))).sort(), [a1, a2, b1].sort(), 'Release Hold lists the two skipped lines, and a2: its unmatched-SKU Review card has a Release Hold to press (RQFILTER)');
     const first = await page.evaluate(() => Orders.visibleRows()[0].key);
+    // (26 Oct 2026: the window walks the list by order group (Orders.walkRows), so the line after it is read from that walk, before the release)
+    const walk = await page.evaluate(() => Orders.walkRows().map(r => r.key)), after = walk[walk.indexOf(first) + 1];
     await page.evaluate(k => OrderWin.open(k), first);
     await page.waitForFunction(k => OrderWin.key() === k, first);
     assert(await page.evaluate(k => !document.getElementById('owSkip') && B.orders.byKey.get(k).state === 'skipped', first), 'the window offers no Skip switch, and opening it leaves the stored skip alone');
@@ -130,8 +134,8 @@ async function main() {
     assert(nav.next && !nav.dis, 'Next stays once the line has left the On hold list: ' + JSON.stringify(nav));
     await page.click('#owNext');
     await page.waitForFunction(k => OrderWin.key() !== k, first);
-    assert.equal(await page.evaluate(() => OrderWin.key()), nav.list[0], 'Next goes on to the line that was after it');
-    await page.evaluate(() => { Orders.view().pile = null; Orders.render(); });
+    assert.equal(await page.evaluate(() => OrderWin.key()), after, 'Next goes on to the line that was after it: ' + walk.join(','));
+    await page.evaluate(() => { Orders.view().act = null; Orders.render(); });
 
     assert.deepEqual(errors, [], 'no page errors');
     assert(!mail.some(m => m.op === 'ask' && String(m.receiptId) !== C.rid), 'nothing went to another order');

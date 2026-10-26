@@ -7,7 +7,7 @@
 //  · an order still being read shows the Overview's skeleton blocks, inside the clip;
 //  · the screenshot of the clip is not blank: it holds text (dark pixels), counted in the page from the PNG.
 // Then the flight is let go and must land as it did (network data drawn only once it has landed: adv-orderview-smooth).
-// The mid-flight picture of the charm outside the pull is saved to SHOT (default plans/open-order/d-mid.png).
+// The mid-flight picture of the charm outside the pull is saved to SHOT when it is set.
 // BASE=<git ref> runs the same flights on that ref's charm-nest-bridge.js and charm-nest-1.html and expects them to fail.
 //   node tests/charm-nest/adv-orderview-flight.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>, BASE=<ref>)
 const path = require('path'), fs = require('fs'), assert = require('assert/strict'), { execFileSync } = require('child_process');
@@ -19,7 +19,7 @@ const A = { rid: '4176208841', tid: '41762088411', sku: 'TINY_TAG' };           
 const C = { rid: '4175000123', tid: '41750001231', sku: 'ASTER_FLOWER' };           // outside the pull (a charm on a sheet)
 const S = { rid: '4177000001', tid: '41770000011', sku: 'TINY_TAG' };               // in the pull, opened from its charm
 const RUN = 'run-adv-flight';
-const SHOT = process.env.SHOT || '/mnt/project-files/plans/open-order/d-mid.png';
+const SHOT = process.env.SHOT || '';   // saved only when SHOT is set (26 Oct: the old /mnt default is not in a test container)
 const line = (tid, sku) => ({ transactionId: tid, listingId: '18000' + tid.slice(-5), sku, title: sku.replace(/_/g, ' ') + ' necklace', quantity: 1, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: '14k Gold Filled' }], metalKey: 'gold', metalLabel: '14k Gold Filled', personalization: ['Initial: H'], buyerMessage: '' });
 const order = (rid, buyer, lines) => ({ receiptId: rid, orderNumber: rid, createTs: SHIP - 5 * DAY, updateTs: SHIP - 5 * DAY + 60, shipBy: SHIP, buyer: { name: buyer }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [], lines });
 
