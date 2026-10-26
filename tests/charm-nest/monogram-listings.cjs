@@ -18,7 +18,7 @@ FX.plain = { rid: '4201000091', sku: 'HEART_CHARM', listing: '888000004', title:
 
 (async () => {
   const w = await Base.world({ viewport: { width: 1440, height: 900 } });
-  if (!w) { console.log('monogram-listings: no playwright-core, skipped'); return; }
+  if (!w) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('monogram-listings: no playwright-core, skipped'); return; }
   const { page, srv } = w, st = srv.st, sleep = ms => new Promise(r => setTimeout(r, ms)); let n = 0; const fails = [];
   const check = (ok, msg) => { n++; if (!ok) fails.push(msg); console.log((ok ? '  ✓ ' : '  ✗ ') + msg); };
   try {

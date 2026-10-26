@@ -50,14 +50,14 @@ Object.assign(R.EXPECT_JOBS, { mono: 0, mixed: 1, odd: 0, review: 0, trouble: 0,
 
 (async () => {
   const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
-  try { require(path.join(pwDir, 'playwright-core')); } catch (_) { console.log('monogram-order-window: no playwright-core, skipped'); return; }
+  try { require(path.join(pwDir, 'playwright-core')); } catch (_) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('monogram-order-window: no playwright-core, skipped'); return; }
   process.env.PW_DIR = pwDir;
   fs.mkdirSync(SHOTS, { recursive: true });
   const fails = []; let nCheck = 0;
   const check = (ok, msg) => { nCheck++; if (!ok) fails.push(msg); console.log((ok ? '  ✓ ' : '  ✗ ') + msg); };
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const w = await R.world({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
-  if (!w) { console.log('monogram-order-window: no playwright-core, skipped'); return; }
+  if (!w) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('monogram-order-window: no playwright-core, skipped'); return; }
   const { page, srv } = w, st = srv.st;
   const shot = async name => { try { await page.screenshot({ path: path.join(SHOTS, name + '.png') }); } catch (e) { console.log('   (no screenshot ' + name + ')'); } };
   // the letter files can be held, so a build stays "building" long enough to be looked at

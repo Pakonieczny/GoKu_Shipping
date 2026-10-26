@@ -13,7 +13,7 @@ const BACK = { sheetId: SH, poolId: PA, order: '4173711092', sku: 'TINY_TAG', co
 
 (async () => {
   const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
-  let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('  – no playwright-core: the browser check was not run'); return; }
+  let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('  – no playwright-core: the browser check was not run'); return; }
   const srv = await start({ receipts: [] });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   try {

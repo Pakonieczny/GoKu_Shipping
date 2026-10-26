@@ -54,14 +54,14 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
 
 (async () => {
   const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
-  try { require(path.join(pwDir, 'playwright-core')); } catch (_) { console.log('monogram-ui: no playwright-core, skipped'); return; }
+  try { require(path.join(pwDir, 'playwright-core')); } catch (_) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('monogram-ui: no playwright-core, skipped'); return; }
   process.env.PW_DIR = pwDir;
   fs.mkdirSync(SHOTS, { recursive: true });
   const T0 = Date.now(), fails = []; let nCheck = 0;
   const check = (ok, msg) => { nCheck++; if (!ok) fails.push(msg); console.log((ok ? '  ✓ ' : '  ✗ ') + msg); };
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const w = await Base.world({ viewport: { width: 1440, height: 900 } });
-  if (!w) { console.log('monogram-ui: no playwright-core, skipped'); return; }
+  if (!w) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('monogram-ui: no playwright-core, skipped'); return; }
   const { page, srv } = w, st = srv.st;
   let blobHold = null, blobFail = null, blobSeen = [];
   await w.context.route(/Monogram_\w+_\w\.ai/i, async route => {

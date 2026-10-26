@@ -46,7 +46,7 @@ const check = (ok, msg) => { nCheck++; if (!ok) fails.push(msg); console.log((ok
 
 (async () => {
   const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
-  try { require(path.join(pwDir, 'playwright-core')); } catch (_) { console.log('monogram-engrave-tab: no playwright-core, the browser part is skipped'); finish(); return; }
+  try { require(path.join(pwDir, 'playwright-core')); } catch (_) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('monogram-engrave-tab: no playwright-core, the browser part is skipped'); finish(); return; }
   process.env.PW_DIR = pwDir;
   fs.mkdirSync(SHOTS, { recursive: true });
   const R = require('./_engraveRealWorld.cjs'), Base = require('./_orderFactsWorld.cjs'), A = require('./_monogramAlphabets.cjs');
@@ -67,7 +67,7 @@ const check = (ok, msg) => { nCheck++; if (!ok) fails.push(msg); console.log((ok
   R.ORDERS.mixedB = { rid: '4290000132', buyer: 'Name Four', placed: { day: 0, h: 9, m: 25 }, ship: 5, lines: [BAR, MONO2] }; R.EXPECT_JOBS.mixedB = 1;       // (the bar first, the monogram second)
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const w = await R.world({ viewport: { width: 1440, height: 900 }, shots: SHOTS });
-  if (!w) { console.log('monogram-engrave-tab: no playwright-core, the browser part is skipped'); finish(); return; }
+  if (!w) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('monogram-engrave-tab: no playwright-core, the browser part is skipped'); finish(); return; }
   const page = w.page, T0 = Date.now();
   let writes = 0; page.on('request', rq => { if (rq.method() !== 'GET' && rq.method() !== 'OPTIONS' && /127\.0\.0\.1|localhost/.test(rq.url()) && /claude|openai|anthropic|etsy/i.test(rq.url())) writes++; });
   const shot = async name => { try { await page.evaluate(() => document.querySelectorAll('.cnNbX').forEach(b => { try { b.click(); } catch (_) {} })); await sleep(250); await page.screenshot({ path: path.join(SHOTS, name + '.png') }); } catch (e) { console.log('   (no screenshot ' + name + ')'); } };

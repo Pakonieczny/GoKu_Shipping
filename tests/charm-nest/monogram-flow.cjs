@@ -31,7 +31,7 @@ const MONO_TITLE = 'Monogram Necklace Personalized Jewelry Initials Pendant';
 
 (async () => {
   const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
-  try { require(path.join(pwDir, 'playwright-core')); } catch (_) { console.log('monogram-flow: no playwright-core, skipped'); return; }
+  try { require(path.join(pwDir, 'playwright-core')); } catch (_) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('monogram-flow: no playwright-core, skipped'); return; }
   process.env.PW_DIR = pwDir; fs.mkdirSync(SHOTS, { recursive: true });
   const RW = require('./_engraveRealWorld.cjs'), Base = require('./_orderFactsWorld.cjs'), Alpha = require('./_monogramAlphabets.cjs');
   const M = require(path.join(root, 'charm-nest-monogram.js')), F = require(path.join(root, 'charm-nest-monogram-fit.js')), Real = require('./_monogramReal.cjs');
@@ -59,7 +59,7 @@ const MONO_TITLE = 'Monogram Necklace Personalized Jewelry Initials Pendant';
   const rid = n => O[n].rid;
 
   const w = await RW.world({ viewport: { width: 1440, height: 900 }, shots: SHOTS });
-  if (!w) { console.log('monogram-flow: no playwright-core, skipped'); return; }
+  if (!w) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('monogram-flow: no playwright-core, skipped'); return; }
   const { page, srv } = w, st = srv.st;
   const consoleErrors = [];
   page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource|net::ERR|favicon/i.test(m.text())) consoleErrors.push(m.text().slice(0, 200)); });

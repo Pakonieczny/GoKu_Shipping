@@ -113,7 +113,7 @@ const BAD = /BACK ENGRAVING|FRONT ENGRAVING|CUT PLAIN|engraveApproved|engravePla
 
 (async () => {
   const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
-  let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('monogram-seal-surfaces: no playwright-core, the browser part is skipped'); finish(); return; }
+  let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('monogram-seal-surfaces: no playwright-core, the browser part is skipped'); finish(); return; }
   fs.mkdirSync(SHOTS, { recursive: true });
   const { start } = require('./bridge-server.cjs');
 
