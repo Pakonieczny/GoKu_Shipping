@@ -249,7 +249,8 @@ async function start(opts = {}) {
       res.writeHead(200, headers); fs.createReadStream(f).pipe(res);
     } catch (e) { json(res, 500, { error: e.message }); }
   };
-  const listen = host => new Promise(r => { const s = http.createServer((req, res) => handler(`http://${host}:${s.address().port}`)(req, res)); s.listen(0, host, () => r(s)); });
+  // (the origin is read once, when the server starts: s.address() is null once it has closed, and a late request then threw "port of null")
+  const listen = host => new Promise(r => { let origin = ''; const s = http.createServer((req, res) => handler(origin)(req, res)); s.listen(0, host, () => { origin = `http://${host}:${s.address().port}`; r(s); }); });
   const sorter = await listen('127.0.0.1'); const station = await listen('localhost');
   servers.push(sorter, station);
   const sorterOrigin = `http://127.0.0.1:${sorter.address().port}`, stationOrigin = `http://localhost:${station.address().port}`;
