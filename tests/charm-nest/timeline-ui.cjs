@@ -324,9 +324,9 @@ function fixture({ MAIN, CX }) {
   await page.click('.tlMsg.err .tlRetry');
   await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length === 10, null, { timeout: 3000 });
   await page.evaluate(() => { window.__tl.destroy(); document.querySelector('.tlTestHost').remove(); });
-  // compact, as the order view's header holds it: a 44px strip, the rail alone; a stamp hands its event to onOpen
+  // compact, as the order view's header holds it: a 72px strip (HDRHEAD, Paul 16 Oct 2026: "Expand and enlarge the timeline and milestones UI": the header rail is 72 px high, its stamps 40 px; it was a 44px strip), the rail alone; a stamp hands its event to onOpen
   await page.evaluate(MAIN => {
-    const h = document.createElement('div'); h.className = 'tlTestHost'; h.style.cssText = 'position:fixed;left:200px;top:4px;width:760px;height:44px;z-index:2147480000;background:var(--card);overflow:hidden';
+    const h = document.createElement('div'); h.className = 'tlTestHost'; h.style.cssText = 'position:fixed;left:200px;top:4px;width:760px;height:72px;z-index:2147480000;background:var(--card);overflow:hidden';
     window.__el = document.createElement('div'); window.__el.style.height = '100%'; h.appendChild(window.__el); document.body.appendChild(h);
     window.__hostClick = null; h.addEventListener('click', e => { window.__hostClick = e.defaultPrevented; });
     window.__tl = OrderTimelineUI.mount(window.__el, { orderId: MAIN, compact: true, live: false, onOpen: ev => { window.__opened = ev; } });
@@ -336,12 +336,12 @@ function fixture({ MAIN, CX }) {
   await page.waitForFunction(() => window.__el.querySelectorAll('.tlStop.d').length === 7, null, { timeout: 3000 });
   r = await page.evaluate(() => { const q = s => window.__el.querySelector(s), b = q('.tlRail').getBoundingClientRect(), stops = [...window.__el.querySelectorAll('.tlStop')].map(n => n.getBoundingClientRect()); return { grid: getComputedStyle(q('.tlGrid')).display, now: getComputedStyle(q('.tlNow')).display, h: b.height, w: b.width, low: Math.max(...stops.map(s => s.bottom)), n: stops.length }; });
   assert.equal(r.grid, 'none'); assert.equal(r.now, 'none'); assert.equal(r.n, 8);
-  assert(r.h <= 44 && r.low <= 48 && r.w > 700, `the rail fits the 44px strip: ${JSON.stringify(r)}`);
+  assert(r.h <= 72 && r.low <= 76 && r.w > 700, `the rail fits the 72px strip: ${JSON.stringify(r)}`);
   await page.click('.tlStop[data-stage="laser"]');
   r = await page.evaluate(() => ({ opened: window.__opened, host: window.__hostClick }));
   assert.equal(r.opened && r.opened.id, `${MAIN}~roseCut~e20`); assert.equal(r.opened.orderId, MAIN); assert.equal(r.host, true, 'the host sees the click handled');
   await page.evaluate(() => { window.__tl.destroy(); document.querySelector('.tlTestHost').remove(); });
-  ok.push('an error shows "Couldn\'t load the timeline: HTTP 503" with Retry, which loads it; compact fits a 44px header strip (rail alone, its own wait line) and a stamp calls onOpen(event)');
+  ok.push('an error shows "Couldn\'t load the timeline: HTTP 503" with Retry, which loads it; compact fits a 72px header strip (rail alone, its own wait line) and a stamp calls onOpen(event)');
 
   // ── the order view's "Where it is now": the milestone it is at, what is holding it up in words, no row of seals ──
   r = await page.evaluate(({ MAIN, CX }) => {

@@ -53,8 +53,11 @@ const pers = text => ({ is_personalized: true, variations: [{ formatted_name: 'M
 const receipt = (rid, txs) => ({ receipt_id: rid, order_number: rid, name: 'Buyer ' + rid, country_iso: 'US', city: 'Austin', message_from_buyer: '', update_timestamp: day, create_timestamp: day - 3600, status: 'Paid', is_shipped: false, transactions: txs });
 // W1..W3: words that need a decision (signed in / nobody signed in / after an idle sign-out) · C1..C3: words to approve · M: the order window's message
 const R = { W1: '3522100001', W2: '3522100002', W3: '3522100003', C1: '3522100004', C2: '3522100005', C3: '3522100006', M: '3522100007' };
+// (ENGPRE, Paul 13 Oct 2026: a short personalisation that is all the buyer wrote is taken as the words, with no paid reading, and goes straight to its
+//  approval; so W1..W3 carry a buyer's message too, which makes their words a proposal for a person to settle: "Check the requested inscription")
+const asks = rid => Object.assign(receipt(rid, [tx(rid, 1, 'BR-TST-0' + rid.slice(-1), pers('WHICH ONE?'))]), { message_from_buyer: 'Two names in the box, please pick the right one' });
 const receipts = [
-  receipt(R.W1, [tx(R.W1, 1, 'BR-TST-01', pers('WHICH ONE?'))]), receipt(R.W2, [tx(R.W2, 1, 'BR-TST-02', pers('WHICH ONE?'))]), receipt(R.W3, [tx(R.W3, 1, 'BR-TST-03', pers('WHICH ONE?'))]),
+  asks(R.W1), asks(R.W2), asks(R.W3),
   receipt(R.C1, [tx(R.C1, 1, 'BR-TST-04', pers('CARLA'))]), receipt(R.C2, [tx(R.C2, 1, 'BR-TST-01', pers('DORA'))]), receipt(R.C3, [tx(R.C3, 1, 'BR-TST-02', pers('EDNA'))]),
   receipt(R.M, [tx(R.M, 1, 'BR-TST-03', pers('FAYE'))])
 ];
@@ -268,7 +271,14 @@ async function partB(browser) {
   const idle = async () => { await page.evaluate(() => Seal.whenIdle()); await page.waitForTimeout(800); };      // (the cards finish their motion first: a press in the middle of it is lost)
   const card = o => `#rvList .reviewListRow[data-row="${o.rid}_${o.solo}"]`;
   // (NOHOLDREV, Paul 17 Oct 2026: a Review row has no Hold; the order is held from its order window's piece row, the one orange Hold left)
-  const holdBtn = async o => { const k = `${o.rid}_${o.solo}`; await page.evaluate(k => OrderWin.open(k), k); await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && document.querySelector('#owPcSum [data-hold-btn]'), k, { timeout: 20000 }); await page.click('#owPcSum [data-hold-btn]'); };
+  // (HOLDBTN, Paul 20 Oct 2026: "Remove the 'Hold' button everywhere in the app and replace it with the 'Send to Review'": the piece row's button is ReviewSend's. These orders
+  //  already have their Review card (Complete Order), so the press opens that card: no name is needed to open it, no bar, nothing marked a second time)
+  const holdBtn = async o => { const k = `${o.rid}_${o.solo}`; await page.evaluate(k => OrderWin.open(k), k); await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && document.querySelector('#owPcSum .revSendBtn[data-rev-host]'), k, { timeout: 20000 });
+    const b0 = await page.evaluate(() => { const b = document.querySelector('#owPcSum .revSendBtn[data-rev-host]'); return { state: b.dataset.revState, hold: !!document.querySelector('#owPcSum [data-hold-btn]') }; });
+    check(b0.state === 'in' && !b0.hold, 'the piece row has Send to Review where Hold stood, and says the order is in Review already: ' + JSON.stringify(b0));
+    await page.click('#owPcSum .revSendBtn[data-rev-host]'); await page.waitForTimeout(800);
+    const h = await page.evaluate(r => ({ marked: !!(window.CharmNestReviewMark && CharmNestReviewMark.isMarked(r)), review: !document.getElementById('reviewView').classList.contains('hidden'), popup: !!document.querySelector('dialog.holdDlg[open]') }), o.rid);
+    await page.evaluate(() => { if (OrderWin.isOpen()) OrderWin.close(); }); await page.waitForFunction(() => !OrderWin.isOpen(), null, { timeout: 10000 }); return h; };
   const bar = () => page.evaluate(() => { const b = document.querySelector('.cnNameBar:not([data-kind="role"])'); return b ? { kind: b.dataset.kind, num: b.dataset.num, type: b.querySelector('input') ? b.querySelector('input').type : null, chip: (b.querySelector('.cnNbCont:not([hidden])') || {}).textContent || '', input: b.querySelector('input') ? b.querySelector('input').value : null, inWin: !!b.closest('dialog') } : null; });
   const named = (txt) => JSON.stringify(posts.filter(p => p.body).map(p => p.body)).includes(txt);
   await signInAs(page, srv, ADMIN); await page.waitForTimeout(700);      // (EMPNUM: the Employee Number; already the person kept in this browser, so nothing changes)
@@ -280,14 +290,11 @@ async function partB(browser) {
   check(!(await bar()) && !(await page.evaluate(() => document.querySelector('[data-cu-name]'))), 'no field, no bar');
   check(named('Paul K'), 'the completion was written under the name: ' + JSON.stringify(posts.filter(p => p.body && JSON.stringify(p.body).includes('Paul K')).map(p => p.fn).slice(0, 4)));
 
-  console.log('· B2: Hold (from the order window), signed in');
+  console.log('· B2: Send to Review (from the order window, where Hold stood), signed in');
   await idle();
   check(await page.evaluate(sel => !!document.querySelector(sel) && !document.querySelector(sel + ' [data-hold-btn]'), card(o2)), 'the Review row of the order has no Hold');
-  await holdBtn(o2);
-  await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
-  await page.click('dialog.holdDlg [data-k=go]'); await page.waitForFunction(() => window.__t.runs.length >= 1, null, { timeout: 15000 });
-  let t = await T();
-  check(!(await bar()) && t.runs[0].rid === o2.rid && t.runs[0].name === ADMIN + '.', 'the hold ran at once under the name, no bar: ' + JSON.stringify(t.runs));
+  let h = await holdBtn(o2), t = await T();
+  check(!(await bar()) && h.review && !h.marked && !t.runs.length && !h.popup, 'Send to Review opens its Review card at once: no bar, no pop-up, nothing marked again: ' + JSON.stringify(h));
 
   // (NOHOLDPILE, Paul 20 Oct 2026: the On hold pile and the Cancel Order button on its cards are gone: the cancel is CancelUI.cancel itself)
   console.log('· B3: Cancel Order, signed in (the held order)');
@@ -308,13 +315,8 @@ async function partB(browser) {
   await answerBar(page, srv, ADMIN); await page.waitForTimeout(1500);
   check(!(await bar()) && (await page.evaluate(() => CNEmployee.name())) === ADMIN + '.' && (await page.evaluate(k => !!B.maps.customDone[k], `${o3.rid}_${o3.solo}`)), 'the Employee Number: signed in again and the order was completed by itself');
   await page.evaluate(() => { try { localStorage.removeItem('cn.employee'); } catch (_) {} B.employee = ''; });
-  await idle(); await holdBtn(o4); await page.waitForFunction(() => document.querySelector('dialog.holdDlg[open]'), null, { timeout: 15000 });
-  await page.click('dialog.holdDlg [data-k=go]'); await page.waitForSelector('.cnNameBar:not([data-kind="role"]) input', { timeout: 8000 });
-  b = await bar();
-  check(numBar(b) && (await T()).runs.length === 1, 'Hold with no name: the inline bar asks for the Employee Number; nothing runs before it: ' + JSON.stringify(b));
-  await answerBar(page, srv, ADMIN, '.cnNameBar:not([data-kind="role"]) input'); await page.waitForFunction(() => window.__t.runs.length >= 2, null, { timeout: 15000 });
-  t = await T();
-  check(t.runs[1].rid === o4.rid && t.runs[1].name === ADMIN + '.', 'the Employee Number and the hold ran by itself under the name: ' + JSON.stringify(t.runs[1]));
+  await idle(); h = await holdBtn(o4);
+  check(!(await bar()) && h.review && !h.marked && !(await T()).runs.length, 'Send to Review with no name: opening a Review card asks for nobody (no bar), nothing is marked: ' + JSON.stringify(h));
   await page.evaluate(() => { try { localStorage.removeItem('cn.employee'); } catch (_) {} B.employee = ''; CN.setMode('orders'); Orders.showPile('', ''); });
   await idle(); await page.evaluate(r => { CancelUI.cancel(r); }, o4.rid); await page.waitForSelector('.cnNameBar:not([data-kind="role"]) input', { timeout: 8000 });
   b = await bar();

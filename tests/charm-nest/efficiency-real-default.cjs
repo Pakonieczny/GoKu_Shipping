@@ -46,7 +46,7 @@ const at = (h, m) => Date.parse('2026-10-02T04:00:00Z') + (h * 60 + m) * MIN;   
 const touch = (n, from, st) => Object.fromEntries(Array.from({ length: n }, (_, i) => [String(3521000000 + from + i), { [st]: true }]));
 function seed() {
   // the shop's real stations (no flag on any document) ...
-  [['Giovanna', 'welding', { 8: 40, 9: 50, 10: 60 }, 30, [7, 52]], ['Anna', 'assembly', { 8: 20, 9: 30, 10: 40 }, 20, [8, 3]]].forEach(([name, st, h, orders, inn], i) => {
+  [['Giovanna', 'welding', { 8: 40, 9: 50, 10: 60 }, 30, [7, 52]], ['Nora', 'assembly', { 8: 20, 9: 30, 10: 40 }, 20, [8, 3]]].forEach(([name, st, h, orders, inn], i) => {
     const parts = Object.values(h).reduce((a, b) => a + b, 0);
     data('Efficiency_Daily').set('2026-10-02__' + name, { day: '2026-10-02', person: name, v: 1, events: 40, firstAt: at(...inn), lastAt: at(15, 40), stations: { [st]: stat({ scans: parts, scanParts: parts, completes: 10, parts, orders, activeMs: 300 * MIN, idleMs: 30 * MIN, firstAt: at(...inn), lastAt: at(15, 40) }) }, hours: hrs(h, st), touched: touch(orders, i * 100, st) });
     data('Station_Sessions').set('s-' + name, { id: 's-' + name, person: name, station: st, device: st + '-1', computerId: 'pc-' + name, computerLabel: '', startAt: at(...inn), lastSeenAt: NOW - 2 * MIN, endAt: null, endReason: null, minutes: null });
@@ -61,7 +61,7 @@ seed();
   const names = r => r.body.people.map(p => p.name).sort();
   const real = await answer({ op: 'overview' }), sand = await answer({ op: 'overview', sandbox: true });
   assert.equal(real.status, 200, JSON.stringify(real.body).slice(0, 300)); assert.equal(sand.status, 200, JSON.stringify(sand.body).slice(0, 300));
-  assert.deepEqual(names(real), ['Anna', 'Giovanna'], 'no flag: the real crew, and not Paul of the Sandbox');
+  assert.deepEqual(names(real), ['Giovanna', 'Nora'], 'no flag: the real crew, and not Paul of the Sandbox');
   assert.deepEqual(names(sand), ['Paul'], 'sandbox:true: the Sandbox copies only');
   assert.equal(sand.body.business.totals.parts, 29); assert.equal(sand.body.business.totals.orders, 25); assert.equal(sand.body.business.totals.people, 1);
   assert.equal(real.body.business.totals.parts, 90, 'R2: the Welding station adds no pieces (Giovanna is seeded there); the crew total is the pieces of the throughput stations'); assert(real.body.business.totals.orders >= 20, 'the real orders (Assembly only): ' + real.body.business.totals.orders); assert.equal(real.body.business.totals.people, 2);

@@ -70,6 +70,7 @@ const F = require('./efficiency-orders-fixture.cjs');
       }
       return route.continue();
     });
+    await require('./master-admin-door.cjs').admin(ctx);   // (Efficiency.api sends nothing for anyone but the master admin, charm-nest-master-admin.js: the door's Admin list names "Tester")
     await ctx.addInitScript(k => {
       try { sessionStorage.setItem('cn.eff.key', k); localStorage.setItem('cn.employee', 'Tester'); } catch (_) {}
       window.__aborts = 0; const f = window.fetch; window.fetch = function (u, o) { if (String(u).includes('employeeEfficiency') && o && o.signal) o.signal.addEventListener('abort', () => { window.__aborts++; }); return f.apply(this, arguments); };

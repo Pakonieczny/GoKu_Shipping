@@ -19,15 +19,17 @@
 //   L  the Stations board by hand: hover a station and a person, press a name, press an order, Back
 //   J  what an open console costs per hour with the shipped timings; a hidden page costs nothing
 //   H  1440 / 900 / 390 px (rail open and folded): no sideways scroll, the header bar fits
-//   node tests/charm-nest/efficiency-portal-e2e.cjs     (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>, SHOTS=<folder for screenshots>, ONLY=A,B ...)
+//   node tests/charm-nest/efficiency-portal-e2e.cjs     (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>, SHOTS=<folder for screenshots>, ONLY=A,B ... | all; default A,B,C,I,L,H)
 'use strict';
 const fs = require('fs'), path = require('path'), assert = require('assert/strict'), { spawn } = require('child_process');
 const root = path.join(__dirname, '../..');
 const S = require('./employee-profile-seed.cjs');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const PASS = 'portal-fake-pass-4417';             // invented for this file: the real passcode is never used, read or printed
-const SHOTS = process.env.SHOTS || '', ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
-const want = k => !ONLY.length || ONLY.includes(k);
+// (26 Oct 2026, the test run kept under 5 minutes: the default run is the core sections A, B, C, I, L, H, about 3 minutes; ONLY=all runs all twelve,
+//  about 7 minutes, J's read-cost measurement alone ~2.5; ONLY=D,E,... any of them)
+const SHOTS = process.env.SHOTS || '', ONLY = (process.env.ONLY || 'A,B,C,I,L,H').split(',').filter(Boolean);
+const want = k => ONLY.includes('all') || ONLY.includes(k);
 const results = [];
 
 /* ── the fake shop in its own process ── */
@@ -108,7 +110,8 @@ function backend(env) {
   const mod = (name, fn) => fn;
   async function section(key, title, fn) {
     if (!want(key)) return;
-    try { await fn(); results.push([key + ' · ' + title, null]); console.log(`  ✓ ${key} · ${title}`); }
+    const t0 = Date.now();
+    try { await fn(); results.push([key + ' · ' + title, null]); console.log(`  ✓ ${key} · ${title} (${Math.round((Date.now() - t0) / 1000)} s)`); }
     catch (e) { results.push([key + ' · ' + title, e]); console.log(`  ✗ ${key} · ${title}\n    ${String(e && e.stack || e).split('\n').slice(0, 16).join('\n    ')}`); }
   }
   // helpers for reading the console
@@ -231,13 +234,13 @@ function backend(env) {
       await page.click(`${V} .efTabBtn[data-tab="stations"]`); await page.waitForSelector(`${V} .es .esSt`, { timeout: 20000 });
       assert.equal(await hash(page), '#efficiency/stations');
       const rows = await page.$$eval(`${V} .esSt`, rs => Object.fromEntries(rs.map(r => [r.dataset.key, { state: r.dataset.state, cards: [...r.querySelectorAll('.esCard')].map(c => c.dataset.rid) }])));
-      assert.deepEqual(rows.welding, { state: 'working', cards: [R.weld] }); assert.deepEqual(rows.assembly.cards, [R.asm]); assert.deepEqual(rows.shipping.cards, [R.ship]); assert.deepEqual(rows.design.cards, [R.design]);
+      assert.deepEqual(rows.welding, { state: 'working', cards: [R.weld] }); assert.deepEqual(rows['assembly-2'].cards, [R.asm]); assert.deepEqual(rows['shipping-1'].cards, [R.ship]);   // (numbered desks, Paul 7 Oct 2026: "four stations in the assembly and three in shipping": one row per desk) assert.deepEqual(rows.design.cards, [R.design]);
       assert(['sorting', 'laser', 'inbox'].every(k => rows[k] && rows[k].cards.length === 0), 'every other station is listed, with no order in hand: ' + JSON.stringify(Object.keys(rows)));
       assert(!rows.sorter && !rows.qr, 'the Sorter app and the QR Printer are devices of Sorting, not stations of their own: ' + JSON.stringify(Object.keys(rows)));
       // the board's own cards: every picture settles (none stays white), the QR decodes to the order, one picture per piece
       await waitFor(page, () => { const b = document.querySelectorAll('#efficiencyView .es .esCard [data-state="wait"]'); return !b.length && document.querySelectorAll('#efficiencyView .es .esCard .esQr img').length >= 4; }, null, 20000);
       for (const rid of Object.values(R)) assert.equal(await decodeQr(page, `${V} .es .esCard[data-rid="${rid}"] .esQr img`), rid, 'on the board too, the QR decodes to the order ' + rid);
-      assert.equal(await page.$$eval(`${V} .es .esSt[data-key="shipping"] .esPcTh img`, is => is.filter(i => i.complete && i.naturalWidth > 0).length), 4, 'the 4-piece order: four pictures, all loaded');
+      assert.equal(await page.$$eval(`${V} .es .esSt[data-key="shipping-1"] .esPcTh img`, is => is.filter(i => i.complete && i.naturalWidth > 0).length), 4, 'the 4-piece order: four pictures, all loaded');
       assert.equal(await page.$$eval(`${V} .es .esSt[data-key="welding"] .esPcTh`, is => is.length), 3, 'the 3-piece order: three tiles');
       await shot(page, 'b2-stations-board-1440');
       // a finished order moves the numbers (Overview KPI = the server's own, after the console's catch-up read). Stations round 2 (R2): the Welding station is not
@@ -547,18 +550,20 @@ function backend(env) {
       // the empty shop: its own process with nothing in it
       const E0 = await backend({ PORTAL_EMPTY: '1' });
       try {
-        const ctx = await context({ B: E0, employee: null }), page = await openSorter(ctx); await openConsole(page);   // (the sorter has no person of its own until one is typed)
+        const ctx = await context({ B: E0 }), page = await openSorter(ctx); await openConsole(page);   // (signed in as the master admin: Employee efficiency is his alone, Paul 11 Oct 2026; the empty shop is the station door's, not the sorter's)
         await page.waitForSelector(`${V} .efBody:not(.hidden)`, { timeout: 40000 });
         await waitFor(page, () => /^Live/.test(document.querySelector('#efficiencyView .efLiveT').textContent), null, 30000);
         const body = (await text(page, V));
-        assert(/No one is signed in right now|No one is signed in/.test(body), 'an honest "nobody is signed in": ' + body.slice(0, 300)); assert(/No one is working on an order right now/.test(body), 'and nobody has an order in hand');
+        assert.deepEqual(await siNames(page), ['Tester'], 'signed in now: the master admin at the sorter alone (nobody at any station): ' + body.slice(0, 300)); assert(/No one is working on an order right now/.test(body), 'and nobody has an order in hand');
         assert(!/NaN|undefined|Infinity|\[object/.test(body), 'no broken numbers on an empty shop: ' + body.slice(0, 200));
-        assert.equal(await kpi(page, 'on'), '0'); await shot(page, 'g1-empty-shop-overview-1440');
+        assert.equal(await kpi(page, 'on'), '1'); await shot(page, 'g1-empty-shop-overview-1440');
         await page.click(`${V} .efTabBtn[data-tab="stations"]`); await page.waitForSelector(`${V} .es .esSt`, { timeout: 20000 });
         const keys = await page.$$eval(`${V} .es .esSt`, rs => rs.map(r => [r.dataset.key, r.dataset.state]));
-        assert(keys.length >= 5 && keys.every(([, s]) => s === 'offline'), 'every station is listed, offline: ' + JSON.stringify(keys)); assert(!/NaN|undefined|Infinity/.test(await text(page, V)));
+        assert(keys.length >= 5 && keys.every(([k, s]) => /^sorting/.test(k) ? s !== 'working' : s === 'offline'), 'every station is listed, offline (Sorting: the admin, no order in hand): ' + JSON.stringify(keys)); assert(!/NaN|undefined|Infinity/.test(await text(page, V)));
         await shot(page, 'g2-empty-shop-stations-1440');
-        await page.click(`${V} .efTabBtn[data-tab="people"]`); await waitFor(page, () => /No one has signed in|Nobody signed in/.test(document.getElementById('efficiencyView').innerText), null, 20000);
+        await page.click(`${V} .efTabBtn[data-tab="people"]`); await waitFor(page, () => { const v = document.getElementById('efficiencyView'), rc = [...v.querySelectorAll('.efRoster .efRc')]; return rc.length ? rc.every(e => e.dataset.name === 'Tester' || /Not signed in today/.test(e.innerText)) : /No one has signed in|Nobody signed in/.test(v.innerText); }, null, 20000)   // (the roster lists the known crew, each "Not signed in today" with dashes; the admin is the one on now)
+          .catch(async () => { throw new Error('People on an empty shop: nobody but the admin signed in today: ' + (await text(page, V)).slice(0, 400)); });
+        assert(!/NaN|undefined|Infinity|\[object/.test(await text(page, V)), 'no broken numbers on the empty People tab');
         await page.evaluate(() => Efficiency.go('person', 'Nobody Here')); await page.waitForSelector(P, { timeout: 30000 }); await ensureRange(page, 'week');
         const pt = await text(page, P); assert(/No sign-ins or activity were found|nothing is logged|Nothing is logged/i.test(pt), 'a person nobody logged says so: ' + pt.slice(0, 300)); assert(!/NaN|undefined|Infinity|\[object/.test(pt), 'no broken numbers: ' + pt.slice(0, 200));
         await shot(page, 'g3-empty-shop-person-1440'); await ctx.close();
@@ -624,6 +629,12 @@ function backend(env) {
           assert.equal(await page.locator(`${V} .es .esSt[data-key="welding"] .esCnt [data-n="parts"]`).evaluate(e => e.parentNode.hidden), true, 'the board draws no pieces for Welding');
           assert.equal(await page.locator(`${V} .es .esSt[data-key="welding"] .esCnt [data-n="orders"]`).evaluate(e => e.parentNode.hidden), true, 'and no orders');
           continue;
+        }
+        if (s.station === 'assembly' || s.station === 'shipping') {   // numbered desks (Paul, 7 Oct 2026): the kind's day counts are its group caption above the desks ("Assembly · 24 pieces · 10 orders today")
+          const pl = (n, w) => `${n} ${n === 1 ? w : w + 's'}`;
+          await same(`${V} .es .esKind[data-group="${s.station}"] .esKindT`, `${pl(s.parts, 'piece')} · ${pl(s.orders, 'order')} today`, `the board's ${s.station} parts and orders`);
+          const l = lv.stations.find(x => x.key === s.station); assert.equal(l.counts.partsToday, s.parts, `${s.station}: the live door and the overview count the same parts`);
+          boardParts += s.parts; boardOrders += s.orders; continue;
         }
         await same(`${V} .es .esSt[data-key="${s.station}"] .esCnt [data-n="parts"]`, s.parts, `the board's ${s.station} parts`); await same(`${V} .es .esSt[data-key="${s.station}"] .esCnt [data-n="orders"]`, s.orders, `the board's ${s.station} orders`);
         const l = lv.stations.find(x => x.key === s.station); assert.equal(l.counts.partsToday, s.parts, `${s.station}: the live door and the overview count the same parts`);
@@ -735,16 +746,17 @@ function backend(env) {
 
     /* ─────────────── L · the Stations board by hand: hover a station and a person, press a name, press an order, Back ─────────────── */
     await section('L', 'the Stations board: hover a station and a person, press a name to open the person page, press an order to open it, Back returns to the board', async () => {
-      const ctx = shared.ctx, page = await fresh();
+      const page = await fresh(), ctx = shared.ctx;   // (fresh() makes the shared tab first: L also runs alone)
       const L1 = await stationPage(ctx, 'assembly-3', 'Ivy Y.'); await scan(L1, R_L, 'by hand'); await page.bringToFront();
       await page.evaluate(() => Efficiency.go('stations')); await settled(page, '#efficiency/stations', 'efPgStations');
-      const card = `${V} .es .esSt[data-key="assembly"] .esCard[data-rid="${R_L}"]`;
+      const card = `${V} .es .esSt[data-key="assembly-3"] .esCard[data-rid="${R_L}"]`;
       await page.waitForSelector(card, { timeout: 30000 }); await waitFor(page, sel => !document.querySelector(sel + ' [data-state="wait"]'), card, 20000).catch(() => {});
       // hover the station name: a card names the station and what is in it
-      await page.locator(`${V} .es .esSt[data-key="assembly"] .esStId`).hover(); await page.waitForSelector('.esTip[data-on]', { timeout: 8000 });
+      await page.locator(`${V} .es .esSt[data-key="assembly-3"] .esStId`).hover(); await page.waitForSelector('.esTip[data-on]', { timeout: 8000 });
       let tip = (await page.locator('.esTip[data-on]').innerText()).replace(/\s+/g, ' '); assert(/Assembly/.test(tip), 'the station card names the station: ' + tip);
       // hover the person chip in the station header
-      const chip = `${V} .es .esSt[data-key="assembly"] .esPer[data-name="Ivy Y."]`; await page.waitForSelector(chip, { timeout: 20000 });
+      // (one name per person: the station's login "Ivy Y." is the alias table's Ivy, _activityKinds.js PEOPLE_ALIASES; the board, the chip and the person page say "Ivy")
+      const chip = `${V} .es .esSt[data-key="assembly-3"] .esPer[data-name="Ivy"]`; await page.waitForSelector(chip, { timeout: 20000 });
       await page.mouse.move(2, 2); await sleep(250); await page.locator(chip).hover(); await page.waitForSelector('.esTip[data-on]', { timeout: 8000 });
       tip = (await page.locator('.esTip[data-on]').innerText()).replace(/\s+/g, ' '); assert(/Ivy/.test(tip), 'the person card names the person: ' + tip);
       await shot(page, 'l1-board-hover-person-1440'); await page.mouse.move(2, 2);
@@ -756,7 +768,7 @@ function backend(env) {
       await page.keyboard.press('Escape'); await waitFor(page, () => !document.querySelector('#orderWin[open]'), null, 10000);
       assert.equal(await hash(page), '#efficiency/stations'); assert(await page.locator(card).count() === 1, 'the board still shows the order');
       // press the person's name on the card: their page opens, showing the order they are working on; Back returns to the board with the card in place
-      await page.locator(`${card} .esWho`).click(); await settled(page, '#efficiency/person/Ivy%20Y.', 'efPgPerson'); await ploaded(page);
+      await page.locator(`${card} .esWho`).click(); await settled(page, '#efficiency/person/Ivy', 'efPgPerson'); await ploaded(page);
       await waitFor(page, rid => !!document.querySelector(`#efficiencyView .efp .esCard[data-rid="${rid}"]`) || document.querySelector('#efficiencyView .efp .efpLive') && document.querySelector('#efficiencyView .efp').textContent.includes(rid), R_L, 25000).catch(async () => { throw new Error('the page of the person at the station shows the order in hand: ' + (await text(page, `${P} .efpWhere`)) + ' | ' + (await text(page, P)).slice(0, 300)); });
       await shot(page, 'l3-person-from-board-1440');
       await page.goBack(); await settled(page, '#efficiency/stations', 'efPgStations'); await page.waitForSelector(card, { timeout: 20000 }); assert.equal((await where(page)).efp, 0, 'the person page is taken away');
