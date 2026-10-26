@@ -8,7 +8,7 @@ assert(at > 0 && end > at, 'nextSheetSeq is in the page');
 const sets = [{ setId: 'set-1', runId: 'run', seq: 1, day: '2026-10-07', committedAt: 1760000000000, sheetIds: ['rose-a'] }, { setId: 'set-2', runId: 'run', seq: 2, day: '2026-10-07', sheetIds: ['rose-b'] }];
 const ensured = [];
 const ctx = vm.createContext({
-  today: () => '2026-10-08', uid: () => 'u', pagesOf: () => [],
+  today: () => '2026-10-08', uid: () => 'u', pagesOf: () => [], S: { cloud: { ok: true } },   // (the cloud is up: offline numbering is owed, Paul 25 Oct 2026)
   Sets: { ofRun: id => sets.filter(s => s.runId === id), ensure: async (runKey) => { ensured.push(runKey); return { setId: 'set-9', seq: 9, day: '2026-10-08' }; } },
   window: {},
 });

@@ -6,7 +6,7 @@
  *   'sim'   a stand-in for the packer, so that a production-sized day (hundreds of orders, 40-50 orders to a sheet) runs in seconds on every seed: pieces of an order are seated
  *           whole-or-nothing, oldest first (singles first on a sheet that is filling its gaps), against the sheet's usable area and the fill ceiling, and the bigger a piece is
  *           the earlier the free space stops being one piece's pocket (POCKET below). It decides only WHAT FITS; every decision about WHERE an order goes is the page's own code.
- *   'real'  the shop's solver (charm-nest-solver.js, as setsim-run.cjs runs it): slow (a day takes an hour on a busy machine); used to confirm what the stand-in shows on a small day.
+ *   'real'  the shop's solver (charm-nest-solver.js): slow (a day takes an hour on a busy machine); used to confirm what the stand-in shows on a small day.
  * Offline and deterministic (seeded); no network, no Firestore, no Etsy, no paid call; every order is made up here.                                                              */
 'use strict';
 const path = require('node:path');

@@ -1,4 +1,4 @@
-/* SETSIM: the shared pieces of the sets-and-whole-orders simulation (tests/charm-nest/setsim-run.cjs, setsim.cjs).
+/* SETSIM: the shared pieces of the sets-and-whole-orders simulation (nospread.cjs, setsim-scenes.cjs, setsim-sets.cjs and their libraries).
  *
  * Paul, 13 Oct 2026: "A partial GF and SS sheet should never be part of a Set of sheets ... keep orders of the same colour on one sheet ... the priority
  * should be to maintain all of the pieces for each given order on that one sheet ... keep that [multi-piece order] in queue and then add it to the next sheet

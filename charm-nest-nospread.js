@@ -32,7 +32,7 @@
  *   order = orderOf({ pieces:[charm], more, placed }, area)  ->  { known, more, count, footprint, multi }
  *
  * THE SETTING. NOSPREAD.nearMargin: a Gold or Silver sheet is NEAR COMPLETION from (the 75 % of topupSettle's TOPUP.target) - nearMargin of its usable area filled, counting what is attached and waiting, and
- * always while it fills its gaps. 0.15 = from 60 % filled. Why 0.15 (tests/charm-nest/setsim-nospread.cjs, made-up days of 600 orders, a sheet of 45 orders, 3 seeds, 50 orders of 20 pieces among them):
+ * always while it fills its gaps. 0.15 = from 60 % filled. Why 0.15 (the NOSPREAD day simulation, tests/charm-nest/setsim-nospread-lib.cjs, made-up days of 600 orders, a sheet of 45 orders, 3 seeds, 50 orders of 20 pieces among them):
  * margin 0 (only the gap fill and the room check) leaves 4 of 710 multi-piece orders on two sheets, 0.05 to 0.15 leave 0 to 1, and a margin of 0.25 or more starts one more sheet at the end of the day and
  * lowers the day's mean fill for no gain; the fill of released sheets is 77 % to 78 % at every margin. Page override: S.settings.nospreadMargin; S.settings.nospread = "off" puts the page back to what it
  * did before this file.                                                                                                                                                                         */

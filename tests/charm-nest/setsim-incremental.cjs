@@ -1,6 +1,6 @@
 /* SETSIM, the INCREMENTAL scenario (SETFIX, Paul 17 Oct 2026: "Set 2 was formed incorrectly ... I want you to fix it once and for all").
  *
- * The simulations that complete every sheet together (setsim-days.cjs "end", the batch looks of setsim-sets.cjs) hid the bug: Set 2 of 17 Oct was made by sheets that ARRIVE one after the other. Rose Gold
+ * The simulations that complete every sheet together (a whole day judged at its end, the batch looks of setsim-sets.cjs) hid the bug: Set 2 of 17 Oct was made by sheets that ARRIVE one after the other. Rose Gold
  * sheets are verified BEFORE their partners complete (or after, or in between), the groups of sheets that share orders complete one group at a time or one sheet at a time, partial drafts that share
  * orders with one group (or with several) fill up late, and a gold-family sheet is cut at some moment of the day.
  *
@@ -14,7 +14,7 @@
  *       judged by I2 (valid, minimal, nothing left that could still form a set), not compared.
  *   I2  the owner's own checker finds nothing wrong in the run's sets (Gate.selfCheck: every R-number)
  *   I3  no Rose Gold / 10K / 14K sheet is in a set unless its green line is cut (nobody presses Include in this play)
- *   I4  a set never loses or swaps a sheet (sets only grow, by a sheet that shares an order with them)
+ *   I4  a set never loses or swaps a sheet (sets only grow, by a sheet that shares an order with them), except a spare unit the assembly takes out by itself (Decision 1, Paul 26 Oct 2026)
  * In 'spread' (SetRules.PARTIAL_BRIDGE) a partial sheet in the middle of a chain holds nothing: the sheets on either side form their own sets, and when it is full they are the flagged state "one group
  * in several sets" by design (a person takes the orders off): there I1 and the cardinal rule (R9) and minimality (R7) are not asked, everything else is (valid sets, no partial sheet in a set, no uncut gold sheet).
  * Exit 1 and the exact case (seed, setting, step, what) when one fails. Offline, deterministic; all orders are made up.      */
@@ -67,14 +67,16 @@ function makeDay(seed, bridge) {
 }
 
 async function incremental({ root, seed, bridge }) {
-  const world = setWorld(root), SR = world.SR, I = world.II;
+  // (Decision 1, Paul 26 Oct 2026, "Remove automatically": the assembly takes a spare unit out of a formed set by itself, Gate.trimSurplus, and says so in the agent's log: caught here for I4)
+  const trims = [], world = setWorld(root, 'const agent=(_c,_k,msg)=>{__trims.push(String(msg||""))};'), SR = world.SR, I = world.II; world.c.__trims = trims;
   if (!I || typeof world.selfCheck !== 'function') return { seed, bridge, steps: 0, skipped: 'this checkout has no set checker' };
   const was = SR.PARTIAL_BRIDGE; SR.PARTIAL_BRIDGE = bridge;
   const day = makeDay(seed, bridge), fails = []; let steps = 0; const memberOf = new Map();
   try {
     for (const p of day.initial) world.addPage(p);
     const judge = async (what) => {
-      await world.assemble(); steps++;
+      await world.assemble();   // (the trim says so once its own look is done, which can be steps later: a set that said it let a spare unit go may lose it; any other set may not)
+      steps++;
       const pg = world.gatePages(), inSet = p => !p.draft && !!p.setId, res = world.selfCheck(), input = world.checkerInput(), fail = m => { if (fails.length < 5) fails.push({ seed, bridge, step: steps, what, msg: m }); };
       if (!res) return fail('no verdict from the Gate\'s self-check');
       const spread = bridge === 'spread', relaxed = new Set(['cardinal', 'surplus', 'closedJoin', 'unformed']);
@@ -85,7 +87,7 @@ async function incremental({ root, seed, bridge }) {
       const solo = sets => part(I.check(sets.map((ids, i) => ({ id: 'x' + i, name: 'X' + i, sheetIds: ids })), input.sheets, { skipExempt: true, partialPartners: 'pending', unformed: false }).sets.filter(r => r.units.length === 1).map(r => r.sheets));
       if (!spread && JSON.stringify(solo([...have.values()])) !== JSON.stringify(solo(want))) fail('I1 a set one group makes by itself is not what the rules make of it: have ' + JSON.stringify(solo([...have.values()])) + ' want ' + JSON.stringify(solo(want)));
       for (const p of pg) if (inSet(p) && GOLD_FAMILY.includes(p.metal) && !p.roseCutAt && !p.laserDoneAt) fail(`I3 ${p.sheetId} is in a set without its green line cut`);
-      for (const [id, set] of memberOf) { const p = pg.find(x => x.sheetId === id); if (!p || !inSet(p) || p.setId !== set) fail(`I4 ${id} left ${set}`); }
+      for (const [id, set] of memberOf) { const p = pg.find(x => x.sheetId === id); if (!p || !inSet(p) || p.setId !== set) { const from = (world.sets().find(s => s.setId === set) || {}).name; if (!(from && trims.some(t => t.startsWith(from + ' held more sheets than it needs')))) fail(`I4 ${id} left ${set}`); } }
       for (const p of pg) if (inSet(p)) memberOf.set(p.sheetId, p.setId);
     };
     await judge('start');
