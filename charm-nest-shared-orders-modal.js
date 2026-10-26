@@ -889,12 +889,12 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
           const was = M.pressed; M.pressed = false; clearTimeout(M.pressT); if (e.preventDefault) e.preventDefault();
           if (!M.armed || M.closed) return;
           if (!was && !(e.isTrusted && e.detail === 0)) return;   // (a click nobody pressed; a trusted click with no pointer is a screen reader's activate)
-          M.answer = true; closeAsk(M);
+          M.answer = true; closeAskDlg(M);
         });
-        no.addEventListener('click', e => { if (e.preventDefault) e.preventDefault(); closeAsk(M); });
-        dlg.querySelector('[data-x]').addEventListener('click', () => closeAsk(M));
+        no.addEventListener('click', e => { if (e.preventDefault) e.preventDefault(); closeAskDlg(M); });
+        dlg.querySelector('[data-x]').addEventListener('click', () => closeAskDlg(M));
         dlg.addEventListener('pointerdown', e => { M.pressedInside = e.target !== dlg; }, true);
-        dlg.addEventListener('click', e => { if (e.target === dlg && !M.pressedInside) closeAsk(M); });
+        dlg.addEventListener('click', e => { if (e.target === dlg && !M.pressedInside) closeAskDlg(M); });
         dlg.addEventListener('keydown', e => {
           if (e.key !== 'Tab') return;
           const f = [...dlg.querySelectorAll('button:not([disabled])')].filter(el => el.getClientRects().length); if (!f.length) return;
@@ -916,7 +916,9 @@ dialog.soDlg:focus,dialog.soDlg:focus-visible{outline:none}
       } catch (e) { warn('ask', e); resolve(false); }
     });
   }
-  function closeAsk(M) { try { if (M.dlg.open) M.dlg.close(); else M.dlg.dispatchEvent(new Event('close')); } catch (_) { try { M.dlg.dispatchEvent(new Event('close')); } catch (_) {} } }
+  // (the yes/no window's own close: named apart from closeAsk(M, card, refocus) above, which it shadowed, so Esc on an open choice closed the whole window instead of
+  //  only the choice; Paul 26 Oct 2026: "They all need fixing")
+  function closeAskDlg(M) { try { if (M.dlg.open) M.dlg.close(); else M.dlg.dispatchEvent(new Event('close')); } catch (_) { try { M.dlg.dispatchEvent(new Event('close')); } catch (_) {} } }
 
   W.SharedOrdersModal = {
     open,
