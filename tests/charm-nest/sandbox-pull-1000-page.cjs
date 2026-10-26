@@ -14,7 +14,7 @@ const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
 process.env.SHOP_ID = '987654'; process.env.CLIENT_ID = 'test-key'; process.env.CLIENT_SECRET = 'test-secret'; delete process.env.EDIT_PASSCODE;
-const { start, unlockSettings } = require('./bridge-server.cjs');
+const { start, unlockSettings, answerSettingsAsks } = require('./bridge-server.cjs');
 const { buildMaster } = require('./fixture-master.cjs');
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -59,6 +59,7 @@ const bytesOf = SHOP.map(r => Buffer.byteLength(JSON.stringify(r)));
 
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   const ctx = await browser.newContext({ viewport: { width: 1500, height: 1000 } });
+  await answerSettingsAsks(ctx);   // (PERSON, 26 Oct 2026: Start and Reset outside the Settings menu ask the admin password too; the person running the sandbox answers)
   const fbStub = "const nope = () => { throw new Error('firebase stub'); }; export const initializeApp = nope, getApp = nope, getStorage = nope, ref = nope, uploadBytesResumable = nope, getDownloadURL = nope, getAuth = nope, signInAnonymously = nope;";
   await ctx.route(/gstatic\.com\/firebasejs/, r => r.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }, body: /-compat\.js/.test(r.request().url()) ? '' : fbStub }));
   await ctx.route(/qrcodejs/, r => r.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }, body: fs.readFileSync(path.join(root, 'lib/qrcode.min.js')) }));

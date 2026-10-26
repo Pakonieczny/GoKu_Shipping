@@ -308,10 +308,20 @@ async function signInAs(page, srv, name) {
    after its own click on Settings: → true when the menu opened. */
 async function unlockSettings(page, timeout = 10000) {
   const dlg = 'dialog.repoDlg[data-repo-action="settings"]';
-  if (!(await page.waitForSelector(dlg, { timeout }).then(() => true, () => false))) return false;
-  await page.fill(dlg + ' #repoPw', REPO_TEST.password);
-  await page.click(dlg + ' [data-k=go]');
+  const asked = page.waitForSelector(dlg, { timeout }).then(() => 'ask', () => ''), open = page.waitForSelector('#dlgSettings[open]', { timeout }).then(() => 'open', () => '');
+  if ((await Promise.race([asked, open])) === 'ask' && await page.$(dlg + '[open] #repoPw')) {   // (answered already by answerSettingsAsks: the menu just opens)
+    await page.fill(dlg + ' #repoPw', REPO_TEST.password).catch(() => {});
+    await page.click(dlg + ' [data-k=go]').catch(() => {});
+  }
   return page.waitForSelector('#dlgSettings[open]', { timeout }).then(() => true, () => false);
 }
-module.exports = { start, makeState, Timestamp, fakeAdmin, REPO_TEST, PINS, pinOf, signInAs, unlockSettings };
+/* PERSON: the sandbox's own Settings ops outside the menu (Start on the Orders tab, a Reset called by a test, the pull after it) ask for the password like the menu;
+   a test of those flows answers each ask as the person running the sandbox would, with the stand-in's password: on every page of the context, after every reload. */
+async function answerSettingsAsks(ctxOrPage) {
+  await ctxOrPage.addInitScript(pw => {
+    const go = () => { const d = document.querySelector('dialog.repoDlg[open][data-repo-action="settings"]'); if (!d || d.dataset.answered) return; const f = d.querySelector('#repoPw'), b = d.querySelector('[data-k=go]'); if (!f || !b) return; d.dataset.answered = '1'; f.value = pw; b.click(); };
+    try { new MutationObserver(go).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['open'] }); } catch (_) {}
+  }, REPO_TEST.password);
+}
+module.exports = { start, makeState, Timestamp, fakeAdmin, REPO_TEST, PINS, pinOf, signInAs, unlockSettings, answerSettingsAsks };
 if (require.main === module) start().then(s => console.log('sorter', s.sorterOrigin, 'station', s.stationOrigin));

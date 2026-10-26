@@ -55,7 +55,11 @@ function seed(st) {
 const isSandboxDoc = k => /^Sandbox_/.test(k) && !/^Sandbox_(Efficiency_Daily|Station_Activity|Station_Sessions|Station_Live|Laser_Sheet_Times)\//.test(k)
   || k.startsWith('EtsyMail_OrderLinks/olsb_') || k === 'Charm_Sandbox/stream' || k === 'Charm_Sandbox/current';
 const canon = v => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
-const productionSnap = st => canon([...st.docs.entries()].filter(([k]) => !isSandboxDoc(k)).sort(([a], [b]) => (a < b ? -1 : 1)));
+// (PERSON, 26 Oct 2026: Settings asks the admin password at every opening, and each try is recorded by the password door itself: its Alert, its attempt, the Alert
+//  list's revision and the session it gives, ended when the menu closes. Those are the person's own records, not the reset's: left out here; every other protected
+//  record, the seeded repo token included, must stay byte-identical)
+const passwordOwn = ([k, v]) => /^CharmRepo_(Alerts|AuthAttempts)\//.test(k) || k === 'CharmRepo_Rev/alerts' || (/^CharmRepo_Tokens\//.test(k) && v && v.by !== 'test');
+const productionSnap = st => canon([...st.docs.entries()].filter(([k, v]) => !isSandboxDoc(k) && !passwordOwn([k, v])).sort(([a], [b]) => (a < b ? -1 : 1)));
 const sandboxLeft = st => [...st.docs.keys()].filter(isSandboxDoc);
 const sandboxFilesLeft = st => [...st.blobs.keys()].filter(k => /^(charmnest\/sandbox\/|design-archive\/sandbox\/)/.test(k) && !k.startsWith('charmnest/sandbox/master/'));
 

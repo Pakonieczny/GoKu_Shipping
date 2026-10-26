@@ -106,7 +106,7 @@ const OLD = 'OLDREC';
   const ownKey = k => k.startsWith('Sandbox_') || k.startsWith('Charm_Sandbox/') || k.startsWith('EtsyMail_OrderLinks/olsb_');
   const sandboxDocs = () => [...st.docs.keys()].filter(ownKey);
   // (the passcode door's own records (_charmNestRepoAuth.js: the session token the unlock for Reset writes, its attempts) are the door's, not production's records)
-  const prodSnap = () => JSON.stringify([...st.docs.entries()].filter(([k]) => !ownKey(k) && !/^CharmRepo_(Tokens|AuthAttempts)\//.test(k)).sort(([a], [b]) => (a < b ? -1 : 1)));
+  const prodSnap = () => JSON.stringify([...st.docs.entries()].filter(([k]) => !ownKey(k) && !/^CharmRepo_(Tokens|AuthAttempts|Alerts)\//.test(k) && k !== 'CharmRepo_Rev/alerts').sort(([a], [b]) => (a < b ? -1 : 1)));   // (PERSON: the password's own records, written by each Settings opening, are not the reset's)
   const prodBlobs = () => JSON.stringify([...st.blobs.entries()].filter(([k]) => !/^charmnest\/sandbox\//.test(k)).map(([k, v]) => [k, v.buf.toString('base64')]).sort(([a], [b]) => (a < b ? -1 : 1)));
   const seeded = sandboxDocs().length;
   assert(seeded > 40, 'the sandbox holds many records: ' + seeded);
@@ -189,7 +189,8 @@ const OLD = 'OLDREC';
   await idbPutRaw(page, 'production', PROD_CHECKPOINT);
 
   /* ── before: every tab shows the old records (the control) ── */
-  const view = async (p, mode, id, prep) => p.evaluate(([mode, id, prep]) => { CN.setMode(mode); if (prep) eval(prep); return document.getElementById(id).innerText; }, [mode, id, prep || '']);
+  // (read once the tab has drawn, as a person sees it: rows kept off screen until a frame says they are on it (content-visibility, PERFSCALE) have no innerText the instant the tab switches)
+  const view = async (p, mode, id, prep) => p.evaluate(([mode, id, prep]) => { CN.setMode(mode); if (prep) eval(prep); return new Promise(res => requestAnimationFrame(() => requestAnimationFrame(() => res(document.getElementById(id).innerText)))); }, [mode, id, prep || '']);
   const tabs = async p => ({
     orders: await view(p, 'orders', 'ordersView'),
     reviewOpen: await view(p, 'review', 'reviewView', "{ const v = Review.view(); v.cseg = 'open'; v.filter = null; Review.render(); }"),
