@@ -189,11 +189,13 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   assert(rest, 'the Auto run took in several steps of arrivals and came to rest');
   assert(sawRunning && heldSeen.size > 0, 'the clock was held while the sorter worked');
   assert(advances.length >= 3 && advances.every(a => !a.held && a.status !== 'running' && !a.busy && !a.nesting), 'the stream only stepped while the sorter was free: ' + JSON.stringify(advances.filter(a => a.held || a.status === 'running' || a.busy || a.nesting)));
-  // (the run reads "at rest" the moment its last arrivals are taken in, and their pooling and placing follow a beat later: a read at that moment found 34 of 37 pooled.
-  //  Wait for every row to be pooled and placed (or a minute); a row that never is still fails below)
+  // (in Auto the stream keeps stepping while the sorter is free, so a count can land in the middle of an intake: four lines just arrived, still "pulled", arrivalBusy).
+  //  Count between intakes, with the stream held the way the hold below holds it (arrivalBusy, set once the intake in flight has ended), and its lines pooled and placed; released after)
+  await page.waitForFunction(() => { if (B.run.arrivalBusy) return false; B.run.arrivalBusy = true; return true; }, null, { timeout: 60000, polling: 100 });
   await page.waitForFunction(() => B.orders.rows.length > 0 && B.orders.rows.every(r => r.poolIds.length) && allSheets().reduce((n, p) => n + p.placements.length, 0) >= B.orders.rows.length, null, { timeout: 60000 }).catch(() => {});
   const taken = await page.evaluate(() => { const ids = new Set((B.run.orders || []).map(String)); return { rows: B.orders.rows.length, inRun: B.orders.rows.filter(r => ids.has(String(r.order.receiptId))).length, pooled: B.orders.rows.filter(r => r.poolIds.length).length, placed: allSheets().reduce((n, p) => n + p.placements.length, 0) }; });
   console.log('taken in', taken);
+  await page.evaluate(() => { B.run.arrivalBusy = false; });
   assert(taken.rows > 0 && taken.inRun === taken.rows && taken.pooled === taken.rows && taken.placed >= taken.rows, 'the run took every streamed order in and nested it: ' + JSON.stringify(taken));
   const streamedIds = s => new Set(Array.from({ length: s.tick }, (_, i) => expectStep(s, i + 1)).flat().map(r => String(r.receipt_id)));
   const autoIds = streamedIds(stream());
