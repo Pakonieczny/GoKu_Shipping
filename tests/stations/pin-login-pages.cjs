@@ -25,8 +25,8 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 const used = new Set();
 const fakePin = () => { for (;;) { const p = String(100000 + Math.floor(Math.random() * 900000)); if (!/^(\d)\1{5}$/.test(p) && !used.has(p)) { used.add(p); return p; } } };
 const seesPin = text => [...used].some(p => String(text).includes(p));
-const PIN = { Giovanna: fakePin(), Anna: fakePin(), Michael: fakePin(), Ivy: fakePin(), Spacey: fakePin() };
-const ROSTER = { [PIN.Giovanna]: 'Giovanna', [PIN.Anna]: 'Anna', [PIN.Michael]: 'Michael', [PIN.Ivy]: 'Ivy', [PIN.Spacey]: '  Anna   B.  ' };
+const PIN = { Giovanna: fakePin(), Nora: fakePin(), Michael: fakePin(), Ivy: fakePin(), Spacey: fakePin() };
+const ROSTER = { [PIN.Giovanna]: 'Giovanna', [PIN.Nora]: 'Nora', [PIN.Michael]: 'Michael', [PIN.Ivy]: 'Ivy', [PIN.Spacey]: '  Anna   B.  ' };
 
 /* ── the real firebaseOrders handler over a fake Firestore (a Map) ── */
 const docs = new Map([['Brites_Orders/Employee Numbers', ROSTER]]);
@@ -146,7 +146,7 @@ async function run(browser, dev, station, ip) {
 
   // 1 · the door says yes: welcomed, a session with the name, no roster read, the number only in { pinLogin }
   reset();
-  for (const name of ['Giovanna', 'Anna', 'Michael', 'Ivy']) {
+  for (const name of ['Giovanna', 'Nora', 'Michael', 'Ivy']) {
     const n0 = starts().length;
     const s = await attempt(PIN[name]);
     ok(s.toasts.includes('Welcome, ' + name + '!') && s.name === name, dev + ': ' + name + ' is welcomed by name');
@@ -163,7 +163,7 @@ async function run(browser, dev, station, ip) {
 
   // 2 · the door says no: final, the refusal text stays, no roster read even though the roster has the number
   reset(); mode.op = 'no';
-  let s = await attempt(PIN.Anna);
+  let s = await attempt(PIN.Nora);
   ok(/That Employee Number is not on the list\. Check the 6 digits and try again\./.test(s.toasts) && !s.name && s.boxOpen && s.raw === '', dev + ': a "no" shows the refusal, signs nobody in and clears the box');
   ok(count('map') === 0, dev + ': a "no" was not checked against the roster');
   reset(); mode.op = 'live';
@@ -172,7 +172,7 @@ async function run(browser, dev, station, ip) {
 
   // 3 · too many tries: shown, final
   reset(); mode.op = 'many';
-  s = await attempt(PIN.Anna);
+  s = await attempt(PIN.Nora);
   ok(s.toasts.includes('Too many tries, wait a minute') && !s.name && s.raw === '' && count('map') === 0, dev + ': "too many tries" is shown, nobody is signed in, the roster is not read');
 
   // 4 · the door cannot be reached: the old roster read, once, and the person still signs in
