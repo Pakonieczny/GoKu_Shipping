@@ -16,6 +16,7 @@
 //   6 · a second reload applies nothing again; a record without a cleanup, or one applied already, changes nothing.
 // Screenshots to SHOTS (default /mnt/project-files/plans/rg-cleanup).
 //   node tests/charm-nest/rg-cleanup-0929-page.cjs [one|both]   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
+//   With no mode: "one" only (under 5 min); RG_PAGE_ALL=1 runs both modes, "both" names the second alone.
 //   RG_PAGE_EMULATE=1: write the records the op leaves instead of running it (as after the op's removal)
 const path = require('path'), fs = require('fs');
 const here = path.join(__dirname, '../..');
@@ -30,6 +31,8 @@ const DXF = w => DG(0, 'SECTION', 2, 'HEADER', 9, '$INSUNITS', 70, 4, 0, 'ENDSEC
 const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 2, 17) / 1000);
 const order = (rid, n, qty = 1) => ({ receiptId: rid, orderNumber: rid, createTs: SHIP - n * DAY, updateTs: SHIP - n * DAY + 60, shipBy: SHIP, buyer: { name: 'Buyer ' + rid.slice(-4) }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [],
   lines: [{ transactionId: rid + '1', listingId: '18000' + rid.slice(-5), sku: 'CUSTOM-N-001-' + rid.slice(-6), title: 'Custom Name Necklace, Personalized Charm Necklace', quantity: qty, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: 'Rose Gold Filled' }], metalKey: 'rose', metalLabel: 'RG 14/20', personalization: [], buyerMessage: '' }] });
+// (R1 / R4 / R12, Paul 10-12 Oct 2026: a Rose Gold sheet never starts a set, it joins one that has formed with a completed GF and a completed SS sheet: the world builds that set first)
+const GfSs = require('./_gfSsSet.cjs');
 const A = '4175423829', L = '4176537942', LINE = `${L}_${L}1`, CID = 'rg-cleanup-2026-09-29';
 const NOTES = { one: 'Extra copy removed from RG 14/20 Sheet 1 (it was placed twice by mistake); line 2 removed (it was added without Cut Sheet)', both: 'Line 2 removed from RG 14/20 Sheet 1 (it was added without Cut Sheet)' };
 const sorted = a => JSON.stringify([...(a || [])].sort());
@@ -72,7 +75,8 @@ async function run(mode, browser) {
       for (const order of orders) for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); }
       Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('review'); Review.render();
       const day = new Date().toISOString().slice(0, 10); B.run = { runId: `run-${day}-rg`, day, setId: null, releasePolicy: 2, solidIncluded: {}, step: 'nest', status: 'running', mode: 'manual', startedAt: Date.now(), updatedAt: Date.now(), lines: {}, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [] };
-    }, [order(A, 5), order(L, 4, 2)]);
+    }, [order(A, 5), order(L, 4, 2), ...GfSs.orders(SHIP, DAY)]);
+    await GfSs.form(page);
     let sheetId = null;
     const rg = () => page.evaluate(id => {
       const sh = id ? CN.S.sheets.rose.pages.find(p => p.sheetId === id) : CN.S.sheets.rose.pages.at(-1); if (!sh) return null;
@@ -113,7 +117,7 @@ async function run(mode, browser) {
 
     // 1 · the sheet as Paul's was: line 1 around the first design, the lion twice, line 2 around both lions
     await send(A, 'a.dxf', 18);
-    await page.evaluate(() => Gate.changeMembership('rose', true));
+    await page.evaluate(() => Gate.changeMembership('rose', true, CN.S.sheets.rose.pages.at(-1)));
     await page.waitForTimeout(2000);
     await cutSheet();
     let s = await rg(); sheetId = s.sheetId;
@@ -122,7 +126,7 @@ async function run(mode, browser) {
     await send(L, 'lion.dxf', 24);
     await page.evaluate(async () => { const sh = CN.S.sheets.rose.pages.at(-1); sh._roseError = null; await Gate.assemble(B.run); CN.renderCard(sh); });
     await page.waitForTimeout(1500);
-    await page.evaluate(async () => { await Gate.flush(B.run).catch(() => {}); await Gate.changeMembership('rose', true).catch(() => {}); });
+    await page.evaluate(async () => { await Gate.flush(B.run).catch(() => {}); await Gate.changeMembership('rose', true, CN.S.sheets.rose.pages.at(-1)).catch(() => {}); });
     await page.waitForTimeout(2500);
     s = await rg();
     const lions = s.placed.filter(id => !line1.ids.includes(id));
@@ -238,7 +242,7 @@ async function run(mode, browser) {
 
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
-  try { for (const mode of process.argv[2] ? [process.argv[2]] : ['one', 'both']) await run(mode, browser); }
+  try { for (const mode of process.argv[2] ? [process.argv[2]] : process.env.RG_PAGE_ALL === '1' ? ['one', 'both'] : ['one']) await run(mode, browser); }
   finally { await browser.close(); }
   if (fails.length) { console.log(`\n${fails.length} failed`); process.exit(1); }
   console.log('\nrg-cleanup-0929-page OK: a stale page takes the cloud\'s cleanup on reload, saves, and Cut Sheet adds exactly one line');

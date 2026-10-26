@@ -19,7 +19,7 @@ const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
 const CHROME = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-const { start } = require('../charm-nest/bridge-server.cjs');
+const { start, signInAs } = require('../charm-nest/bridge-server.cjs');
 const { seed } = require('../charm-nest/laser-workflow.cjs');
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -33,7 +33,7 @@ const PASS = 'synthetic-pass-not-real', S = 'Charm_Nest_Sheets', DEV = 'charm-ne
   assert(/"charm-nest-laser-act\.js"/.test(build), 'scripts/build-public.cjs ships it');
   // a set committed into the framed Design Station (and its Undo) is recorded by the Sorter, in the same run of steps that does it
   const bridge = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
-  assert(/DesignLink\.call\("complete\.commit"[\s\S]{0,2500}humanAct\.set\(false, r\.completed, set\.name\)[\s\S]{0,300}committed: \$\{r\.completed\.length\} order\(s\) marked design-complete/.test(bridge), 'Sets.commit records the set after the station committed it');
+  assert(/DesignLink\.call\("complete\.commit"[\s\S]{0,4000}humanAct\.set\(false, (?:r\.)?completed, set\.name\)[\s\S]{0,300}committed: \$\{(?:r\.)?completed\.length\} order\(s\) marked design-complete/.test(bridge), 'Sets.commit records the set after the station committed it');
   assert(/DesignLink\.call\("complete\.undo"[\s\S]{0,900}humanAct\.set\(true, reopened, set\.name\)/.test(bridge), 'Sets.undo records the undo after the station reopened the orders');
 
   const srv = await start({ receipts: [] });
@@ -55,7 +55,8 @@ const PASS = 'synthetic-pass-not-real', S = 'Charm_Nest_Sheets', DEV = 'charm-ne
 
   /** LD1's real sign-in at the Sorter: a name, then "Laser or Design?" (the Admin, by the server's answer, is not asked and has no role) */
   const signIn = async (page, name, as) => {
-    await page.evaluate(([n, adm]) => { CNRole.setAdminLookup(async () => adm); B.employee = n; }, [name, as === 'admin']);
+    // (EMPNUM, Paul 26 Oct 2026: a person is signed in only with their Employee Number; a name set by a script switches nobody)
+    await page.evaluate(adm => { CNRole.setAdminLookup(async () => adm); }, as === 'admin'); await signInAs(page, srv, name);
     if (as !== 'admin') { await page.waitForFunction(() => CNRole.state() === 'ask'); await page.evaluate(r => CNRole.choose(r), as); }
     await page.waitForFunction(([n, r]) => { const w = StationActivity.who(); return !!w && w.person === n && (w.role || '') === r; }, [name, as === 'admin' ? '' : as]);
   };

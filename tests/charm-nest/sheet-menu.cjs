@@ -181,11 +181,11 @@ async function page() {
     const M = ['gold14k', 'gold', 'silver', 'gold10k', 'rose'];
     // 1 · the pill names the current sheet with the tab's mark
     let g = {}; for (const m of M) g[m] = await look(pg, m);
-    assert.equal(g.gold14k.pill, true); assert.equal(g.gold14k.btn, true); assert.equal(g.gold14k.name, 'Sheet 1'); assert.equal(g.gold14k.mark, '✓ 3', 'the tab\'s own mark: a check and the count'); assert.equal(g.gold14k.sheets, '3');
-    assert.equal(g.gold14k.expanded, 'false'); assert.match(g.gold14k.label, /^Sheet 1, complete, 3 placed\. Choose a sheet, 3 in this list$/);
-    assert.equal(g.silver.name, 'Sheet 1'); assert.equal(g.silver.mark, '✓ 12'); assert.equal(g.silver.sheets, '6'); assert.equal(g.gold10k.sheets, '14');
+    assert.equal(g.gold14k.pill, true); assert.equal(g.gold14k.btn, true); assert.equal(g.gold14k.name, 'Draft 1'); assert.equal(g.gold14k.mark, '✓ 3', 'the tab\'s own mark: a check and the count'); assert.equal(g.gold14k.sheets, '3');
+    assert.equal(g.gold14k.expanded, 'false'); assert.match(g.gold14k.label, /^Draft 1, complete, 3 placed\. Choose a sheet, 3 in this list$/);
+    assert.equal(g.silver.name, 'Draft 1'); assert.equal(g.silver.mark, '✓ 12'); assert.equal(g.silver.sheets, '6'); assert.equal(g.gold10k.sheets, '14');
     // a one-sheet card keeps what it showed: a plain chip with its mark, no menu, no chevron, nothing to press
-    assert.equal(g.gold.chip, true, 'one sheet: a chip'); assert.equal(g.gold.btn, false, 'not a button'); assert.equal(g.gold.name, 'Sheet 1'); assert.equal(g.gold.mark, '✓ 4'); assert.equal(g.gold.chevIn, null, 'no chevron');
+    assert.equal(g.gold.chip, true, 'one sheet: a chip'); assert.equal(g.gold.btn, false, 'not a button'); assert.equal(g.gold.name, 'Draft 1'); assert.equal(g.gold.mark, '✓ 4'); assert.equal(g.gold.chevIn, null, 'no chevron');
     assert(g.gold.wrapW <= before.gold.wrapW || before.gold.oldCount === 1, 'the chip takes no more room than the tab did');
     // the same facts the old tab showed, sheet by sheet (the tab text was "Sheet 1✓ 77"): the pill's name + mark are the tab's text
     for (const m of M) assert.equal(g[m].text, before[m].text.split(' | ')[0], `${m}: the pill says what the first tab said (${g[m].text} / ${before[m].text.split(' | ')[0]})`);
@@ -227,12 +227,12 @@ async function page() {
     await pg.click(pillSel('silver')); await settle(pg);
     let p = await panel(pg);
     assert(p, 'the menu opens'); assert.equal(p.role, 'menu'); assert.equal(p.label, 'Sheets of Sterling silver'); assert.equal(p.parent, 'BODY', 'a fixed layer on the page body'); assert.equal(p.position, 'fixed'); assert.equal(p.opacity, '1');
-    assert.deepEqual(p.rows.map(r => r.text), ['Sheet 1 ✓ 12', 'Sheet 2 ⚠ 9/11', 'Sheet 3 0', 'Sheet 4', 'Sheet 5 7', 'Sheet 6 ✓ 8'], 'every sheet of the card with the mark its tab had: ' + JSON.stringify(p.rows.map(r => r.text)));
+    assert.deepEqual(p.rows.map(r => r.text), ['Draft 1 ✓ 12', 'Draft 2 ⚠ 9/11', 'Draft 3 0', 'Draft 4', 'Draft 5 7', 'Draft 6 ✓ 8'], 'every sheet of the card with the mark its tab had: ' + JSON.stringify(p.rows.map(r => r.text)));
     assert(p.rows.every(r => r.role === 'menuitemradio' && r.inside), 'menuitemradio rows, inside the menu'); assert.deepEqual(p.rows.map(r => r.checked), ['true', 'false', 'false', 'false', 'false', 'false'], 'the current one is marked');
     assert.deepEqual(p.rows.map(r => r.state), ['complete', 'partial', 'waiting', 'nesting', 'waiting', 'complete']);
-    assert.match(p.rows[3].label, /^Sheet 4, nesting$/); assert.equal(await pg.evaluate(() => document.querySelectorAll('.shmPanel .shmSpin[aria-label="Nesting"]').length), 1, 'the nesting sheet has a labelled spinner');
-    assert.match(p.rows[1].label, /^Sheet 2, partial, 9 of 11 placed$/); assert.match(p.rows[2].label, /^Sheet 3, 0 pieces waiting$/); assert.doesNotMatch(JSON.stringify(p.rows), /\blines?\b/i, 'pieces, never lines');
-    assert.equal(p.focus, 'Sheet 1 ✓ 12', 'the keyboard is on the current sheet'); assert.equal(await pg.getAttribute(pillSel('silver'), 'aria-expanded'), 'true'); assert.equal(await pg.getAttribute(pillSel('silver'), 'aria-haspopup'), 'menu');
+    assert.match(p.rows[3].label, /^Draft 4, nesting$/); assert.equal(await pg.evaluate(() => document.querySelectorAll('.shmPanel .shmSpin[aria-label="Nesting"]').length), 1, 'the nesting sheet has a labelled spinner');
+    assert.match(p.rows[1].label, /^Draft 2, partial, 9 of 11 placed$/); assert.match(p.rows[2].label, /^Draft 3, 0 pieces waiting$/); assert.doesNotMatch(JSON.stringify(p.rows), /\blines?\b/i, 'pieces, never lines');
+    assert.equal(p.focus, 'Draft 1 ✓ 12', 'the keyboard is on the current sheet'); assert.equal(await pg.getAttribute(pillSel('silver'), 'aria-expanded'), 'true'); assert.equal(await pg.getAttribute(pillSel('silver'), 'aria-haspopup'), 'menu');
     assert.equal(p.docOverflow <= 0, true, 'no sideways scroll');
     assert(p.t >= p.barB + 4 && p.b <= p.vh - 4 && p.l >= 4 && p.r <= p.vw - 4, `inside the screen: ${JSON.stringify({ l: p.l, r: p.r, t: p.t, b: p.b, barB: p.barB })}`);
     const origin = await pg.evaluate(() => { const p = document.querySelector('.shmPanel'), b = document.querySelector('.sheetCard[data-m="silver"] .shMenu').getBoundingClientRect(), r = p.getBoundingClientRect(); return { dx: Math.abs(r.left - b.left), dy: r.top - b.bottom, ox: p.style.getPropertyValue('--ox') }; });
@@ -244,12 +244,12 @@ async function page() {
     await pg.click(`.shmPanel .shmRow[data-id] >> nth=4`); await gone(pg); await tick(250);
     const s4 = await snap(pg, 'silver'); assert.deepEqual(s4, oldSnaps.silver4, 'a pick = the old tab: the same card state'); assert.equal(s4.active, 4);
     assert.equal(await pg.evaluate(() => document.activeElement && document.activeElement.classList.contains('shmBtn')), true, 'focus is back on the pill');
-    let l = await look(pg, 'silver'); assert.equal(l.name, 'Sheet 5'); assert.equal(l.mark, '7'); assert.equal(l.expanded, 'false');
-    await pg.click(pillSel('silver')); await settle(pg); p = await panel(pg); assert.deepEqual(p.rows.map(r => r.checked), ['false', 'false', 'false', 'false', 'true', 'false'], 'the current one moved'); assert.equal(p.focus, 'Sheet 5 7');
+    let l = await look(pg, 'silver'); assert.equal(l.name, 'Draft 5'); assert.equal(l.mark, '7'); assert.equal(l.expanded, 'false');
+    await pg.click(pillSel('silver')); await settle(pg); p = await panel(pg); assert.deepEqual(p.rows.map(r => r.checked), ['false', 'false', 'false', 'false', 'true', 'false'], 'the current one moved'); assert.equal(p.focus, 'Draft 5 7');
     await pg.click(`.shmPanel .shmRow >> nth=0`); await gone(pg); await tick(250); assert.deepEqual(await snap(pg, 'silver'), oldSnaps.silver0, 'back to sheet 1: the old tab\'s card state');
     await pg.click(pillSel('gold14k')); await settle(pg); await pg.click(`.shmPanel .shmRow >> nth=1`); await gone(pg); await tick(250); assert.deepEqual(await snap(pg, 'gold14k'), oldSnaps.gold14k1, '14K sheet 2: the old tab\'s card state');
-    l = await look(pg, 'gold14k'); assert.equal(l.name, 'Sheet 2'); assert.equal(l.mark, '⚠ 2/4');
-    await pg.evaluate(() => showPage('gold14k', 0)); await tick(150); assert.equal((await look(pg, 'gold14k')).name, 'Sheet 1', 'showPage (what any other code calls) moves the pill');
+    l = await look(pg, 'gold14k'); assert.equal(l.name, 'Draft 2'); assert.equal(l.mark, '⚠ 2/4');
+    await pg.evaluate(() => showPage('gold14k', 0)); await tick(150); assert.equal((await look(pg, 'gold14k')).name, 'Draft 1', 'showPage (what any other code calls) moves the pill');
     // the fly / pulse target the tab used to be: the pill now
     assert.equal(await pg.evaluate(() => { const el = S.sheets.silver.cardEl; return sheetTabEl(el, S.sheets.silver.pages[2]) === el._sheetMenu.button; }), true, 'the flight to "the sheet they wait on" lands on the pill');
     console.log('  ✓ page: a pick leaves the card exactly as the old tab did (state, preview, controls, focus on the pill); showPage moves the pill');
@@ -272,13 +272,13 @@ async function page() {
     console.log('  ✓ page: Esc, a second press and a press outside close it (focus back on the pill for the first two); one menu at a time; the event reports each');
 
     // 6 · the keyboard
-    await pg.focus(pillSel('silver')); await pg.keyboard.press('Enter'); await settle(pg); p = await panel(pg); assert(p, 'Enter opens'); assert.equal(p.focus, 'Sheet 1 ✓ 12');
-    await pg.keyboard.press('ArrowDown'); assert.equal((await panel(pg)).focus, 'Sheet 2 ⚠ 9/11'); await pg.keyboard.press('End'); assert.equal((await panel(pg)).focus, 'Sheet 6 ✓ 8');
-    await pg.keyboard.press('ArrowDown'); assert.equal((await panel(pg)).focus, 'Sheet 1 ✓ 12', 'Down wraps'); await pg.keyboard.press('ArrowUp'); assert.equal((await panel(pg)).focus, 'Sheet 6 ✓ 8', 'Up wraps'); await pg.keyboard.press('Home'); assert.equal((await panel(pg)).focus, 'Sheet 1 ✓ 12');
+    await pg.focus(pillSel('silver')); await pg.keyboard.press('Enter'); await settle(pg); p = await panel(pg); assert(p, 'Enter opens'); assert.equal(p.focus, 'Draft 1 ✓ 12');
+    await pg.keyboard.press('ArrowDown'); assert.equal((await panel(pg)).focus, 'Draft 2 ⚠ 9/11'); await pg.keyboard.press('End'); assert.equal((await panel(pg)).focus, 'Draft 6 ✓ 8');
+    await pg.keyboard.press('ArrowDown'); assert.equal((await panel(pg)).focus, 'Draft 1 ✓ 12', 'Down wraps'); await pg.keyboard.press('ArrowUp'); assert.equal((await panel(pg)).focus, 'Draft 6 ✓ 8', 'Up wraps'); await pg.keyboard.press('Home'); assert.equal((await panel(pg)).focus, 'Draft 1 ✓ 12');
     await pg.keyboard.press('ArrowDown'); await pg.keyboard.press('ArrowDown'); await pg.keyboard.press('Enter'); await gone(pg); await tick(200);
-    assert.equal((await look(pg, 'silver')).name, 'Sheet 3', 'Enter picks'); assert.equal(await pg.evaluate(() => document.activeElement.classList.contains('shmBtn')), true);
-    await pg.keyboard.press('ArrowDown'); await settle(pg); assert.equal((await panel(pg)).focus, 'Sheet 3 0', 'Down on the pill opens it, on the current sheet');
-    await pg.keyboard.press('ArrowUp'); await pg.keyboard.press('Space'); await gone(pg); await tick(200); assert.equal((await look(pg, 'silver')).name, 'Sheet 2', 'Space picks');
+    assert.equal((await look(pg, 'silver')).name, 'Draft 3', 'Enter picks'); assert.equal(await pg.evaluate(() => document.activeElement.classList.contains('shmBtn')), true);
+    await pg.keyboard.press('ArrowDown'); await settle(pg); assert.equal((await panel(pg)).focus, 'Draft 3 0', 'Down on the pill opens it, on the current sheet');
+    await pg.keyboard.press('ArrowUp'); await pg.keyboard.press('Space'); await gone(pg); await tick(200); assert.equal((await look(pg, 'silver')).name, 'Draft 2', 'Space picks');
     await pg.keyboard.press('Space'); await settle(pg); assert(await panel(pg), 'Space opens'); await pg.keyboard.press('Tab'); await gone(pg); assert.equal(await pg.evaluate(() => !document.activeElement.classList.contains('shmRow') && document.activeElement !== document.body), true, 'Tab closes the menu and moves on');
     await pg.evaluate(() => showPage('silver', 0)); await tick(200);
     console.log('  ✓ page: keyboard: Enter / Space / Down open it on the current sheet; Up, Down (wrapping), Home, End move; Enter and Space pick; Tab closes');
@@ -298,7 +298,7 @@ async function page() {
     await pg.evaluate(() => { const c = document.querySelector('.sheetCard[data-m="gold10k"]'); c.scrollIntoView({ block: 'start' }); }); await tick(150);
     await pg.click(pillSel('gold10k')); await settle(pg); p = await panel(pg);
     assert(p.rows.length === 14 && p.scrolls && p.b <= p.vh - 4 && p.t >= p.barB + 4, `14 sheets on a short screen scroll inside the menu: ${JSON.stringify({ t: p.t, b: p.b, vh: p.vh, scrolls: p.scrolls, listH: p.listH })}`);
-    await pg.keyboard.press('End'); const endFocus = await panel(pg); assert.equal(endFocus.focus.startsWith('Sheet 14'), true, 'End reaches the last of fourteen'); assert.equal(await pg.evaluate(() => { const r = document.activeElement.getBoundingClientRect(), l = document.querySelector('.shmList').getBoundingClientRect(); return r.top >= l.top - 1 && r.bottom <= l.bottom + 1; }), true, 'and scrolls it into view');
+    await pg.keyboard.press('End'); const endFocus = await panel(pg); assert.equal(endFocus.focus.startsWith('Draft 14'), true, 'End reaches the last of fourteen'); assert.equal(await pg.evaluate(() => { const r = document.activeElement.getBoundingClientRect(), l = document.querySelector('.shmList').getBoundingClientRect(); return r.top >= l.top - 1 && r.bottom <= l.bottom + 1; }), true, 'and scrolls it into view');
     await pg.keyboard.press('Escape'); await gone(pg);
     assert.equal(p.up, false, 'with room below the pill it opens downward');
     // a card lower in the page, brought (by the page's own scroller) to 40px above the bottom of a short screen: no room below, so it opens upward
@@ -325,23 +325,23 @@ async function page() {
     await pg.evaluate(() => { renderCard(activePage('silver')); refreshAllCards(); renderTabs(activePage('silver')); tabMarks(activePage('silver')); });
     await tick(100);
     const same = await pg.evaluate(() => ({ panel: window.__panel === document.querySelector('.shmPanel') && window.__panel.isConnected, row: window.__row === document.querySelector('.shmRow'), btn: window.__btn === document.querySelector('.sheetCard[data-m="silver"] .shmBtn'), open: SheetMenu.isOpen('nest:silver'), focus: document.activeElement.innerText.trim().replace(/\s+/g, ' ') }));
-    assert.deepEqual(same, { panel: true, row: true, btn: true, open: true, focus: 'Sheet 3 0' }, 'a redraw of the card keeps the open menu, its rows, the focus and the very pill');
+    assert.deepEqual(same, { panel: true, row: true, btn: true, open: true, focus: 'Draft 3 0' }, 'a redraw of the card keeps the open menu, its rows, the focus and the very pill');
     // a mark changes while it is open: the row rewrites itself, nothing is rebuilt
     await pg.evaluate(() => { const p = S.sheets.silver.pages[2]; p.charms.push(...S.sheets.silver.pages[4].charms.slice(0, 3).map((c, i) => Object.assign({}, c, { id: 'live' + i, poolId: 'live' + i + '_1_1' }))); refreshAllCards(); });
-    await tick(100); p = await panel(pg); assert.equal(p.rows[2].text, 'Sheet 3 3', 'a mark that changed rewrites itself while open'); assert.equal(await pg.evaluate(() => window.__row === document.querySelector('.shmRow')), true, 'without rebuilding the rows');
+    await tick(100); p = await panel(pg); assert.equal(p.rows[2].text, 'Draft 3 3', 'a mark that changed rewrites itself while open'); assert.equal(await pg.evaluate(() => window.__row === document.querySelector('.shmRow')), true, 'without rebuilding the rows');
     await pg.evaluate(() => { const p = S.sheets.silver.pages[3]; p.status = 'complete'; p.placements = p.charms.map((c, i) => ({ id: c.id, cxPt: 20 + i * 10, cyPt: 20, angle: 0, wPt: 10, hPt: 10 })); tabMarks(activePage('silver')); });
-    await tick(100); p = await panel(pg); assert.equal(p.rows[3].text, 'Sheet 4 ✓ 6', 'the sheet that was nesting is done: its spinner became its mark'); assert.equal(p.rows[3].state, 'complete'); assert.equal(await pg.evaluate(() => document.querySelectorAll('.shmPanel .shmSpin').length), 0);
+    await tick(100); p = await panel(pg); assert.equal(p.rows[3].text, 'Draft 4 ✓ 6', 'the sheet that was nesting is done: its spinner became its mark'); assert.equal(p.rows[3].state, 'complete'); assert.equal(await pg.evaluate(() => document.querySelectorAll('.shmPanel .shmSpin').length), 0);
     // a sheet is added while open: it slides in at its place
     await pg.evaluate(() => { const pgx = addPage('silver'); pgx.charms = S.sheets.silver.pages[4].charms.slice(0, 2).map((c, i) => Object.assign({}, c, { id: 'add' + i, poolId: 'add' + i + '_1_1' })); pgx.status = 'ready'; refreshAllCards(); });
-    await tick(300); p = await panel(pg); assert.equal(p.rows.length, 7, 'a new sheet joins the open menu'); assert.equal(p.rows[6].text, 'Sheet 7 2'); assert.equal(await pg.evaluate(() => window.__panel === document.querySelector('.shmPanel')), true, 'the menu stayed open, in place');
+    await tick(300); p = await panel(pg); assert.equal(p.rows.length, 7, 'a new sheet joins the open menu'); assert.equal(p.rows[6].text, 'Draft 7 2'); assert.equal(await pg.evaluate(() => window.__panel === document.querySelector('.shmPanel')), true, 'the menu stayed open, in place');
     assert.equal((await look(pg, 'silver')).sheets, '7'); assert.equal(await isOpen(), true);
     // a sheet is removed while open (the focused one): it folds away, the focus moves to its neighbour, the rest stays
-    await pg.keyboard.press('End'); assert.equal((await panel(pg)).focus, 'Sheet 7 2');
+    await pg.keyboard.press('End'); assert.equal((await panel(pg)).focus, 'Draft 7 2');
     await pg.evaluate(() => { removePage(S.sheets.silver.pages[6]); refreshAllCards(); });
-    await pg.waitForFunction(() => !document.querySelector('.shmRow.gone'), null, { timeout: 5000 }); p = await panel(pg); assert.equal(p.rows.length, 6, 'a removed sheet leaves the open menu'); assert(p.focus && /^Sheet 6/.test(p.focus), `the focus moved to its neighbour (${p.focus})`);
+    await pg.waitForFunction(() => !document.querySelector('.shmRow.gone'), null, { timeout: 5000 }); p = await panel(pg); assert.equal(p.rows.length, 6, 'a removed sheet leaves the open menu'); assert(p.focus && /^Draft 6/.test(p.focus), `the focus moved to its neighbour (${p.focus})`);
     // removing the shown sheet: the card shows its neighbour; the menu follows (the current mark moves)
-    await pg.evaluate(() => { showPage('silver', 5); }); await tick(200); p = await panel(pg); assert.equal(p.rows[5].checked, 'true'); assert.equal((await look(pg, 'silver')).name, 'Sheet 6');
-    await pg.evaluate(() => { removePage(S.sheets.silver.pages[5]); }); await tick(450); p = await panel(pg); assert.equal(p.rows.length, 5); assert.equal(p.rows[4].checked, 'true', 'the current mark follows to the sheet now shown'); assert.equal((await look(pg, 'silver')).name, 'Sheet 5');
+    await pg.evaluate(() => { showPage('silver', 5); }); await tick(200); p = await panel(pg); assert.equal(p.rows[5].checked, 'true'); assert.equal((await look(pg, 'silver')).name, 'Draft 6');
+    await pg.evaluate(() => { removePage(S.sheets.silver.pages[5]); }); await tick(450); p = await panel(pg); assert.equal(p.rows.length, 5); assert.equal(p.rows[4].checked, 'true', 'the current mark follows to the sheet now shown'); assert.equal((await look(pg, 'silver')).name, 'Draft 5');
     // down to one sheet while open: the menu closes (nothing to choose) and the pill is a plain chip
     await pg.evaluate(() => { for (const x of S.sheets.silver.pages.slice(1).reverse()) removePage(x); refreshAllCards(); }); await tick(450);
     assert.equal(await isOpen(), false, 'with one sheet left the menu closes'); l = await look(pg, 'silver'); assert.equal(l.chip, true, 'and the pill is a chip'); assert.equal(l.btn, false);

@@ -87,7 +87,7 @@ function fakeDb() {
   const db = fakeDb();
   const out = await TL.add(db, { serverTimestamp: () => 0 }, evs, { source: 'station', stationOnly: true });
   assert.equal(out.ids.length, 4, 'all four events pass the stations\' door');
-  const stored = [...db.docs.values()];
+  const stored = [...db.docs.entries()].filter(([k]) => k.startsWith('Order_Timeline/')).map(([, d]) => d);   // (the order's revision counter, Order_Rev, is written beside them)
   assert(stored.every(d => d.station === 'design' && d.by === 'Maya R.' && d.device === 'design' && d.source === 'station'));
   const recorded = stored.map(d => Object.assign({}, d));
   const derived = [{ orderId: B, type: 'note', at: lp[0].at + 4000, by: 'Design', station: 'design', text: 'DESIGNED :)', data: { stamp: 'DESIGNED :)' }, milestone: true },
@@ -156,7 +156,7 @@ function fakeDb() {
       O: { sortingLabel: () => ({ userTypedOrderNum: '4100000009', items: [] }) }, esc: x => String(x),
       api: async (fn, body) => { api.push(body); return { record: { key: body.key, stamps: [] } }; },
       toast: (m, k) => msgs.push([m, k || '']), agent() {}, humanAct: () => true, piecesOfRows: rows => (rows || []).length,
-      SheetEvents: { order: e => events.push(e) }
+      SheetEvents: { order: e => events.push(e) }, WORKSPACE_SANDBOX: false     // (the page's own flag: the production Sorter)
     });
     vm.runInContext(cpCode, ctx);
     const row = { key: '4100000009_91', state: 'pulled', poolIds: [], order: { receiptId: '4100000009' }, line: { transactionId: '91', sku: 'CUS-1', title: 'Custom charm' }, spec: { special: { label: 'Custom order', kind: 'photo' } } };

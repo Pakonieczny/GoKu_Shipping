@@ -21,7 +21,7 @@ const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
 const CHROME = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-const { start } = require('../charm-nest/bridge-server.cjs');
+const { start, signInAs } = require('../charm-nest/bridge-server.cjs');
 
 const results = [];
 async function check(name, fn) { try { await fn(); results.push([name, null]); } catch (e) { results.push([name, e]); } }
@@ -209,17 +209,19 @@ async function main() {
       await page.waitForFunction(() => window.StationActivity.who(), null, { timeout: 10000 });
       await wait(300);
 
-      await check('weld: a typed scan shows the order at once, one piece for each stud line (not the necklace), the buyer, then "Welded"', async () => {
+      await check('weld: a typed scan shows the order at once, a Left and a Right piece for each stud pair (not the necklace), the buyer, then "Welded"', async () => {
         await open(O.MIXED);
         await until(() => works(O.MIXED).some(l => l.order.note === 'Welded'), 'the welded note');
         const first = works(O.MIXED)[0], last = works(O.MIXED).pop();
         for (const l of works(O.MIXED)) { assert.equal(l.person, WHO); assert.equal(l.station, 'welding'); assert.equal(l.device, 'weld-1'); assert(!l.sandbox); assert.equal(l._q, ''); }
         assert.equal(first.order.note, '', 'the scan is shown before the outcome is known');
-        assert.deepEqual(last.order.pieces.map(p => p.id), [O.MIXED + '_94201', O.MIXED + '_94203']);
-        assert.deepEqual(last.order.pieces.map(p => p.label), ['Pet Portrait Earrings', '2 x Tiny Initial Stud Earrings']);
-        assert.deepEqual(last.order.pieces.map(p => p.sku), ['PET-ST', 'INI-ST']);
-        assert.deepEqual(last.order.pieces.map(p => p.listingId), ['155510010', '155510030']);
-        assert.equal(last.order.customer, 'Test Buyer'); assert.equal(last.order.orderNumber, O.MIXED); assert.equal(last.order.pieceCount, 2);
+        // (pairs, Paul 9 and 10 Oct 2026: an earring pair is one LEFT and one RIGHT piece per unit of quantity, station-live-order.js; 1 + 2 pairs = 6 pieces)
+        assert.deepEqual(last.order.pieces.map(p => p.id), [O.MIXED + '_94201-1', O.MIXED + '_94201-2', O.MIXED + '_94203-1', O.MIXED + '_94203-2', O.MIXED + '_94203-3', O.MIXED + '_94203-4']);
+        assert.deepEqual(last.order.pieces.map(p => p.side), ['L', 'R', 'L', 'R', 'L', 'R']);
+        assert.deepEqual(last.order.pieces.map(p => p.label), ['Pet Portrait Earrings', 'Pet Portrait Earrings', 'Tiny Initial Stud Earrings', 'Tiny Initial Stud Earrings', 'Tiny Initial Stud Earrings', 'Tiny Initial Stud Earrings']);
+        assert.deepEqual(last.order.pieces.map(p => p.sku), ['PET-ST', 'PET-ST', 'INI-ST', 'INI-ST', 'INI-ST', 'INI-ST']);
+        assert.deepEqual(last.order.pieces.map(p => p.listingId), ['155510010', '155510010', '155510030', '155510030', '155510030', '155510030']);
+        assert.equal(last.order.customer, 'Test Buyer'); assert.equal(last.order.orderNumber, O.MIXED); assert.equal(last.order.pieceCount, 6);
         assert.equal(first.order.scannedAt, last.order.scannedAt, 'one scan time, however often it is told');
         assert(Math.abs(last.order.scannedAt - Date.now()) < 30000, 'the scan time is now');
         assert.deepEqual(workingNow(here()).map(([k, o]) => [k, o.rid]), [['welding__weld-1__' + WHO, O.MIXED]]);
@@ -374,7 +376,7 @@ async function main() {
           await page.evaluate(() => OrderWin.close());
           await page.waitForFunction(() => !OrderWin.isOpen(), null, { timeout: 15000 });
         });
-        await page.evaluate(() => { B.employee = 'tess welder'; });
+        await signInAs(page, srv, 'tess welder');
         await page.waitForFunction(() => StationActivity.who() && StationActivity.who().person === 'Tess Welder');
         const PERSON = 'Tess Welder';
 
@@ -436,7 +438,7 @@ async function main() {
         const s = await sorterPage(browser, srv, errors, true);
         const { page, lives } = s;
         await check('sorter sandbox: the live board write goes only to the Sandbox_ store and says so', async () => {
-          await page.evaluate(() => { B.employee = 'tess welder'; });
+          await signInAs(page, srv, 'tess welder');
           await page.waitForFunction(() => StationActivity.who() && StationActivity.who().person === 'Tess Welder' && StationSession.who().sandbox === true);
           await page.evaluate(rid => OrderWin.openOrder(rid), RID);
           await until(() => lives.some(l => l.event === 'work' && l.order.rid === RID), 'the sandbox order', 20000);

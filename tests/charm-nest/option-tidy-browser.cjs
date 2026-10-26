@@ -45,7 +45,8 @@ const details = async page => { if (await page.evaluate(() => document.querySele
     const bar = list.find(r => /Gold · Engraved/.test(r.text)), shown = bar || list.find(r => /Characters|GOLD/.test(r.text));
     ok('1a the list says "Metal: Gold · Engraved" and "Necklace Length: 16" & 18" · Font: Angelina": ' + JSON.stringify(shown), bar && JSON.stringify(bar.dts) === JSON.stringify(['Metal', 'Necklace Length']) && JSON.stringify(bar.dds) === JSON.stringify(['Gold · Engraved', '16" & 18" · Font: Angelina']));
     ok('1b the original is the hover of each choice', bar.titles[0] === 'Metal · #Characters?: GOLD·Set·ENGRAVED' && bar.titles[1] === 'Necklace Length·FONT: 16"&18"·Set·ANGELINA');
-    const zl = list.find(r => /Zodiac Sign/.test(r.text));
+    // (the list's rows read as ONE muted line with no labels, charm-nest-activity.css "what was bought": the labels are hidden there, so the row is found by its values; its dt/dd pairs are still checked word for word)
+    const zl = list.find(r => r.dds.includes('Pisces'));
     ok('5a an order that needs no tidying reads word for word in the list: ' + JSON.stringify(zl && zl.dts.map((d, i) => d + '=' + zl.dds[i])), zl && JSON.stringify(zl.dts) === JSON.stringify(['Zodiac Sign', 'Birth Flower', 'Font', 'Charm Type']) && JSON.stringify(zl.dds) === JSON.stringify(['Pisces', 'Morning Glory', 'Ace', 'Tag1 (front+back)']) && zl.titles.every((t, i) => i === 2 || !t));
 
     /* 2 · the order window's Details list and the Metal card */

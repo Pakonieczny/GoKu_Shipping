@@ -396,7 +396,8 @@ const st = {
     // product data for the two orders the scans open (Etsy emulation of the fake server)
     const line = (rid, n) => ({ transaction_id: Number(rid + '' + n) % 1e9, listing_id: 111222333, receipt_id: Number(rid), sku: 'A1', title: 'Charm', quantity: n, variations: [] });
     for (const rid of ['3521009001', '3521009002', '3521009003']) if (!etsy.receipts.some(r => r.order_number === rid)) etsy.receipts.push({ receipt_id: Number(rid), order_number: rid, name: 'Test Buyer', status: 'Paid', transactions: [line(rid, 2), Object.assign(line(rid, 1), { transaction_id: Number(rid) + 7, sku: 'B2' })] });
-    const { page, errors } = await open(file);
+    // (the page asks Etsy only when this computer is connected to Etsy, "Press Connect Etsy" otherwise: a connected computer, the fake server plays Etsy)
+    const { page, errors } = await open(file, { seed: () => { try { localStorage.setItem('access_token', 'test-etsy-token'); localStorage.setItem('token_expires_at', String(Math.floor(Date.now() / 1000) + 86400)); } catch (_) {} } });
     await until(() => page.evaluate(() => window.StationSession && StationSession.page() && window.StationActivity && window.StationLiveOrder && window.StationScanQueue), file + ' loaded');
     assert.deepStrictEqual(await page.evaluate(() => window.__initArgs), { station: 'design', device }, `${file}: the page signs in as station design, device ${device}`);
     const enter = (order, how) => page.evaluate(([o, h]) => { const i = document.getElementById('etsyOrderNumber'); i.value = o; const ev = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }); if (h) ev.stationHow = h; i.dispatchEvent(ev); }, [order, how]);

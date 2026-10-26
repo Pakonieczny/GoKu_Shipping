@@ -253,7 +253,8 @@ async function designPage(browser, file, device) {
 
 /* ── design-message.html and design-message-1.html ── */
 async function messagePage(browser, file, device) {
-  const { ctx, page } = await open(browser, file);
+  // (the page asks Etsy only when this computer is connected to Etsy, "Press Connect Etsy" otherwise: a connected computer, the fake server plays Etsy)
+  const { ctx, page } = await open(browser, file, () => { try { localStorage.setItem('access_token', 'test-etsy-token'); localStorage.setItem('token_expires_at', String(Math.floor(Date.now() / 1000) + 86400)); } catch (_) {} });
   await until(() => page.evaluate(() => window.StationSession && StationSession.page() && window.StationActivity), file + ' loaded');
   const enter = (order, how) => page.evaluate(([o, h]) => { const i = document.getElementById('etsyOrderNumber'); i.value = o; const ev = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }); if (h) ev.stationHow = h; i.dispatchEvent(ev); }, [order, how]);
 
@@ -343,7 +344,8 @@ async function inbox(browser) {
    (the leak this guards: StationSession.init was given no sandbox flag, so a sandbox page signed a real person in on the real board) */
 async function designSandbox(browser) {
   const from = sent.length;
-  const station = () => sent.slice(from).filter(s => /"(?:session|live|activity)":/.test(s));
+  // (the design-1 page closed just before may still have a last beat on its way: Nora's requests are that page's, not this one's)
+  const station = () => sent.slice(from).filter(s => /"(?:session|live|activity)":/.test(s) && !/"person":"Nora Night"/.test(s));
   let { ctx, page } = await open(browser, 'design-1.html', null, '?sandbox=1');
   await until(() => page.evaluate(() => window.StationSession && StationSession.page() && window.StationActivity && typeof selectRow === 'function'), 'design-1 sandbox loaded');
   assert.strictEqual(await page.evaluate(() => StationSession.page().sandbox), true, 'design-1?sandbox=1: the page knows it is a sandbox before anyone signs in');
@@ -379,7 +381,10 @@ async function designSandbox(browser) {
   await until(() => page.evaluate(() => window.StationSession && StationSession.page() && window.StationActivity && typeof selectRow === 'function'), 'design-1 real loaded');
   assert.strictEqual(await page.evaluate(() => StationSession.page().sandbox), false, 'design-1: a page opened without ?sandbox=1 is real');
   await signIn(); await pick();
-  const real = sent.slice(n2).filter(s => /"(?:session|live|activity)":/.test(s));
+  // (the sandbox tab closed just before may still have a last beat on its way: its computer's requests are not this page's)
+  const sbPc = reqs.map(s => (/"computer(?:Id)?":"(pc-[^"]+)"/.exec(s) || [])[1]).find(Boolean);
+  assert(sbPc, 'the sandbox page\'s computer is known');
+  const real = sent.slice(n2).filter(s => /"(?:session|live|activity)":/.test(s) && !s.includes('"' + sbPc + '"'));
   assert(real.length >= 2 && real.every(s => !/sandbox/.test(s)), 'a real design-1 never writes the sandbox: ' + real.filter(s => /sandbox/.test(s)).map(s => s.slice(0, 90)).join(' | '));
   await ctx.close();
   console.log('design-1 sandbox: session, live and activity go to the sandbox door (also after a reload); a fresh real page never does');

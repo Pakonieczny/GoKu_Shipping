@@ -31,7 +31,7 @@ const CHROME = process.env.CHROMIUM || (() => { try { const d = '/opt/pw-browser
 process.env.NO_CLOCK_WORKER = process.env.KEEP_CLOCK_WORKER ? '' : '1';      // (the test world refuses the Sorter's clock worker unless KEEP_CLOCK_WORKER=1: see world.cjs)
 const { World, sleep } = require('./all-stations/world.cjs');
 const { Apps } = require('./all-stations/apps.cjs');
-const { makeCast } = require('./all-stations/cast.cjs');
+const { makeCast, rosterOf } = require('./all-stations/cast.cjs');
 
 const MIN = 60000;
 const TOR = (h, m) => Date.parse('2026-10-07T00:00:00Z') + 4 * 3600e3 + (h * 60 + m) * MIN;        // Toronto wall time on the test day (EDT, UTC-4)
@@ -40,7 +40,10 @@ const say = s => process.stdout.write(s + '\n');
 const LENA = 'Lena G.';
 const pick = (process.env.ONLY || '').split(',').map(s => s.trim()).filter(Boolean);
 const signins = (process.env.SIGNIN || '16:20,10:20').split(',').map(s => s.trim()).filter(Boolean).map(s => s.split(':').map(Number));
-const WAYS = ['steps', 'jump1', 'jump5', 'jump10', 'jump20', 'lag200', 'lagGrows'].filter(w => !pick.length || pick.includes(w));
+// (26 Oct 2026, Paul: no long test runs: the default is the four jump ways at both times, about 2 minutes; the 60-second-step ways took over 2 minutes EACH
+//  (14 scenarios, half an hour): ONLY=all, or ONLY=steps,lag200,lagGrows, runs them)
+const ALL_WAYS = ['steps', 'jump1', 'jump5', 'jump10', 'jump20', 'lag200', 'lagGrows'];
+const WAYS = pick.includes('all') ? ALL_WAYS : pick.length ? ALL_WAYS.filter(w => pick.includes(w)) : ['jump1', 'jump5', 'jump10', 'jump20'];
 
 let browser;
 const failures = [];
@@ -48,7 +51,8 @@ const failures = [];
 async function scenario(way, at) {
   const label = way + ' @' + String(at[0]).padStart(2, '0') + ':' + String(at[1]).padStart(2, '0');
   const W = await World.start({ now: new Date(TOR(9, 0)).toISOString(), browser });
-  const A = Apps(W, makeCast());
+  const cast = makeCast(), A = Apps(W, cast);
+  await W.post('/__ctl/roster', rosterOf(cast));          // (EMPNUM, 26 Oct 2026: the Sorter app signs Lena in with her Employee Number)
   const out = { label, problems: [], sent: [], answers: [], server: [] };
   const bad = m => out.problems.push(m);
   try {
@@ -110,7 +114,7 @@ async function scenario(way, at) {
     const beats = out.sent.filter(x => x.id === second.id && x.ev === 'beat');
     const gaps = beats.map((b, i) => (b.sentAt - (i ? beats[i - 1].sentAt : signedAt)) / MIN);
     const last = checkpoints[checkpoints.length - 1];
-    const wantBeats = Math.floor(total / (5 * MIN)) - 1;
+    const wantBeats = Math.floor(total / (Math.max(5, jumpMin) * MIN)) - 1;      // (a jump of N > 5 minutes fires the beat timer once per jump: one beat per jump, as a lid opened after N minutes)
     if (beats.length < wantBeats) bad('the page sent ' + beats.length + ' beat(s) for the new session in 45 minutes, wanted at least ' + wantBeats);
     const biggest = Math.max(0, ...gaps);
     if (biggest > Math.max(6.2, jumpMin + 1.2)) bad('a gap of ' + biggest.toFixed(1) + ' minutes between beats of the new session (the page beats every 5)');

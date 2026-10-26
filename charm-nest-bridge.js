@@ -398,7 +398,7 @@ const ListMedia = (() => {
     if(host && host.dataset.monoKey){delete host.dataset.monoKey;host._monoMount=null;if(monoView)monoView.unobserve(host);}
     const sku=row?.spec?.designSku || row?.line?.sku || '';
     const both=matchPair(row),two=twoOf(row),one=oneRow(row),set=setOf(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again; one body once it is known to make one; the two designs of a set)
-    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline),designVer(sku),pieceSig(row)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[]).concat(two?['two',two,!!Master.entryFor(two),Master.entryFor(two)?.updatedAt || 0]:[]).concat(set.length?['set',set.join('+'),set.map(k=>Master.entryFor(k)?.updatedAt || 0).join('+')]:[]).concat(one>=0?['one',one]:[])),false,JSON.stringify([sku,row?.spec?.size,designVer(sku),pieceSig(row)].concat(both?['pair']:[]).concat(two?['two',two]:[]).concat(set.length?['set',set.join('+')]:[]).concat(one>=0?['one',one]:[])));
+    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline),designVer(sku),pieceSig(row)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[]).concat(two?['two',two,!!Master.entryFor(two),Master.entryFor(two)?.updatedAt || 0]:[]).concat(set.length?['set',set.join('+'),set.map(k=>Master.entryFor(k)?.updatedAt || 0).join('+')]:[]).concat(one>=0?['one',one]:[])),false,JSON.stringify([sku,row?.spec?.size,pieceSig(row)].concat(both?['pair']:[]).concat(two?['two',two]:[]).concat(set.length?['set',set.join('+')]:[]).concat(one>=0?['one',one]:[])));   // (the framing key carries no designVer (26 Oct 2026): before the catalog loads on a refresh designVer is '', so a key with it lost every vector's zoom on a refresh (tests/charm-nest/list-views.cjs); the picture's own key above still redraws a new design)
   }
   function mount(node,row) {
     clean();const lid=String(row?.line?.listingId || '');
@@ -885,7 +885,9 @@ const TL = window.CNTimeline = (() => {
     try {
       if (!e || !e.orderId || !e.type || !T()) return false;
       if (once) { const k = hash2(`${e.type}~${e.orderId}~${e.id}`); if (seenSet().has(k)) return false; mark(k); }
-      const ev = Object.assign({}, e, { at: +e.at > 1e12 ? +e.at : Date.now() });
+      // (the person is stamped when the event HAPPENS, not when the idle pump hands it over: a switch of person or a sign-out between the two
+      //  credited one person's work to the next one; tracking audit, 26 Oct 2026. An event that names its own `by` keeps it.)
+      const ev = Object.assign({}, e, { at: +e.at > 1e12 ? +e.at : Date.now() }, e.by == null ? { by: employeeName() } : {});
       if (now || openRid() === String(e.orderId)) { const t = T(); sync(); t.record(ev); try { if (typeof t.flush === "function") t.flush(); } catch (_) {} return true; }
       queue.push(ev);
       if (!pumping) { pumping = true; idle(pump); }
@@ -1671,7 +1673,9 @@ const Orders = window.Orders = (() => {
       if (row.state === "gone" || (row.state === "committed" && row.spec)) continue;
       let inputs; try { inputs = inputsOf(row); } catch (_) { inputs = [row.order, row.line]; }   // (what a line is read from; a line that cannot even say that is read once, and again when its order or line is replaced)
       const was = readAs.get(row), prev = row.spec;
-      if (!was || was.spec !== row.spec || inputs.some((v, i) => !Object.is(v, was.inputs[i]))) { row.spec = readLine(row); readAs.set(row, { spec: row.spec, inputs }); readEvent(row); }
+      // (26 Oct 2026, Paul 24 Sep "an update costs what changed": the inputs are kept as they stand AFTER the reading, since one of them is the library's word on the design the line was
+      //  just read as; kept from before, a new line read as nothing there and was read a second time at the next update for no change)
+      if (!was || was.spec !== row.spec || inputs.some((v, i) => !Object.is(v, was.inputs[i]))) { row.spec = readLine(row); let now = inputs; try { now = inputsOf(row); } catch (_) { /* as read before */ } readAs.set(row, { spec: row.spec, inputs: now }); readEvent(row); }
       window.Pool?.pinPooled?.(row);   // (a line pooled before the pair and count rule keeps its pieces: Orders and the readers below count what was made)
       row.problems = row.spec.problems.slice(); if (row.spec.noDesign) row.state = row.state === "pulled" ? "noDesign" : row.state;
       // a line held for a question it no longer raises (its option was read again, the library gained its design: DISCREAD) is a line to make up again; its pieces, if any, are never touched
@@ -5981,6 +5985,7 @@ const Gate = window.Gate = (() => {
     for (const sh of allSheets().filter(p => p.runId === run.runId && p.setId === set.setId && !holding(p) && !release(p, set.seq).include)) {
       const previous = {draft:sh.draft,setId:sh.setId,seq:sh.seq,sheetIndex:sh.sheetIndex,label:sh.label};
       if (window.CharmNestSheetName) set.sheetNos = CharmNestSheetName.raise(set.sheetNos, [sh]);   // (the number it had is retired for this set: nobody else is given it, charm-nest-sheet-name.js)
+      if (window.CharmNestSheetName && CharmNestSheetName.fileTag(sh)) sh.leftFileBase = sh.fileBase;   // (the set's file name it leaves with: a later save renames it working_, and claim reads this one to give its own old number back when it returns. Diagnostic, 26 Oct 2026)
       sh.draft = true; sh.setId = null; sh.seq = null; sh.sheetIndex = null; sh.label = null;
       try {
         await Pool.update(sh.charms.map(c => c.poolId).filter(Boolean), { setId:null, sheetId:null, state:"ready" });
@@ -6014,7 +6019,8 @@ const Gate = window.Gate = (() => {
       if (window.CharmNestSheetName) {
         const here = allSheets().filter(p => p !== sh && p.setId === set.setId && p.metal === sh.metal);
         set.sheetNos = CharmNestSheetName.raise(set.sheetNos, allSheets().filter(p => p !== sh && p.setId === set.setId));
-        sh.sheetIndex = CharmNestSheetName.claim(sh, here, set.sheetNos, n => CN.sheetFileBase(Object.assign({}, sh, { sheetIndex: n })));
+        sh.sheetIndex = CharmNestSheetName.claim(sh.leftFileBase && !CharmNestSheetName.fileTag(sh) ? Object.assign({}, sh, { fileBase: sh.leftFileBase }) : sh, here, set.sheetNos, n => CN.sheetFileBase(Object.assign({}, sh, { sheetIndex: n })));
+        delete sh.leftFileBase;
         set.sheetNos = CharmNestSheetName.raise(set.sheetNos, [sh]);
       } else sh.sheetIndex = 1 + Math.max(0, ...allSheets().filter(p => p !== sh && p.setId === set.setId && p.metal === sh.metal).map(p => +p.sheetIndex || 0));
       sh.fileBase = CN.sheetFileBase(sh);
@@ -10417,7 +10423,7 @@ const Engrave = window.Engrave = (() => {
     if (job.scriptFonts && job.scriptFonts.length) wants.push(`Set in ${job.scriptFonts.map(f => f.name).join(" and ")}${job.fontKey !== O.DEFAULT_FONT ? ` (${job.fontName} has no letters for ${job.scriptFonts.length > 1 ? "them" : "it"})` : ""}`);   // (WORLD, Paul 19 Oct 2026: a script the face cannot draw)
     if (requests.handwriting) wants.push("Requested handwriting");
     if (requests.image) wants.push("Requested an image");
-    const noteFont = job.fontFromNote && job.fontMapped && requests.font ? `${requests.font} → ${job.fontName} (asked in the note)` : "";
+    const noteWord = requests.font || (job.fontFromNote ? job.fontAsked : ""), noteFont = job.fontFromNote && job.fontMapped && noteWord ? `${noteWord} → ${job.fontName} (asked in the note)` : "";   // (26 Oct 2026: a note font read from the buyer's message without Claude (pieceFont via "message") has no requests.font: its word is the job's fontAsked)
     if (panelOn && noteFont) wants.push(noteFont);   // (the panel's font drop-down shows the line's font, not one the buyer asked for in the note: said once here, where the other asks are, since "From the order" is not drawn)
     // ENGNOTE (Paul, 12 Oct, round 2: "I see that you removed the customer note from this view. I didn't ask for you to remove that"): in the Engrave tab the customer's own words (personalisation, buyer message,
     // staff note, and the engraving choices among the listing's options) are ALWAYS drawn, as ONE box titled "What the customer wrote", at the top of the panel's column, so it is in view without scrolling (charm-nest-engrave-said.js; nothing when they wrote and chose
@@ -11502,8 +11508,10 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       /* A person's own write (here, or in another tab of this computer): a read already out may have been asked before it, and waits for its answer (seconds, on a
          big Library) before the one that follows it could even start. So a second read starts beside it now (never twice within 600 ms: a burst of writes is one
          read and the one 1.5 s after the last), and the later of the two answers wins (seq). It is the read the write asks for anyway, started sooner: no extra call. */
-      if(live.busy && Date.now()-live.nudged>=LIVE.gap){live.want=false;sameTurn();readLive(true).catch(e=>console.warn('Library live read',e));return;}
+      const fresh=live.fresh;live.fresh=false;   // (a write heard from another tab after the last read for a write left: see heard)
+      if(live.busy && (fresh || Date.now()-live.nudged>=LIVE.gap)){live.want=false;sameTurn();readLive(true).catch(e=>console.warn('Library live read',e));return;}
       live.want=true;
+      if(fresh && !live.busy){clearTimeout(live.timer);sameTurn();tick();return;}
     }
     if(live.busy){live.again=true;return;}
     const wait=(local?live.nudged:live.start)+LIVE.gap-Date.now();
@@ -11528,7 +11536,9 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
      origin may announce a write the same way (the Sorter, Design and Laser pages): { t:'write', op, at } on BroadcastChannel('cn-library'), or
      localStorage 'cn-library-write' = the time. No cloud call is made for it beyond the one read the nudge asks for. */
   const announce=op=>{const at=Date.now();live.heard=at;try{if(channel){channel.postMessage({t:'write',op:String(op || ''),at});return;}}catch(_){}try{localStorage.setItem('cn-library-write',String(at));}catch(_){}};   // (the storage write only where there is no BroadcastChannel: a synchronous storage write, on the page that has just pressed Complete, is time it has not got)
-  const heard=at=>{at=+at || Date.now();if(at===live.heard)return;live.heard=at;nudge();};
+  const heard=at=>{at=+at || Date.now();if(at===live.heard)return;live.heard=at;live.fresh=at>=(live.nudged||0);nudge();};
+  // (Paul, 26 Oct 2026, several computers at once in production: a write another tab made AFTER this page's last read for a write left cannot be in that read's
+  //  answer, so it is read now, never held by the 600 ms gap that groups a burst of writes; that wait was what made another tab's write show 1.2 s late)
   let channel=null;try{channel=typeof BroadcastChannel==='function'?new BroadcastChannel('cn-library'):null;if(channel)channel.onmessage=e=>{if(e && e.data && e.data.t==='write')heard(e.data.at);};}catch(_){channel=null;}
   window.addEventListener?.('storage',e=>{if(e && e.key==='cn-library-write')heard(e.newValue);});
   /** A write to the Library was made from this page (api()): announced to the other tabs of this computer, and read here now and 1.5 s after. */
@@ -17821,7 +17831,8 @@ const Review = window.Review = (() => {
     if (mine) return `Sent to Sheet${said ? " · " + said : ""}`;
     if ((row.poolIds || []).length) return `${spc.label} · on its way to the laser${said ? " (" + said + ")" : ""}`;
     // (the line's own reason, the one that says why it is custom: an add-on listing, or the listing a person flagged, with the words they left: "pre-made piece, not laser cut")
-    if (sp.ownDesign) return `${spc.label} · ${spc.why || "no master design"} · Complete Order or print its QR label when it is ready, or drop its .ai / .dxf designs and Send to Sheet`;
+    // (RELORDER, Paul 20 Oct 2026: the card has no Complete Order now, its Release Hold stands where it stood: the words name the button that is there, 26 Oct 2026)
+    if (sp.ownDesign) return `${spc.label} · ${spc.why || "no master design"} · Release Hold or print its QR label when it is ready, or drop its .ai / .dxf designs and Send to Sheet`;
     if (sp.noDesign) return `${spc.label} · not laser cut${spc.notCut ? "" : " (no-design list)"} · print its QR label when it is ready`;
     return `${spc.label} · nothing to decide · cut with the next run`;
   }
@@ -18000,7 +18011,8 @@ const Review = window.Review = (() => {
   }
   function reviewRow(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
-    const trav=rvTravel(row?.order?.receiptId || it.record?.receiptId || it.rid,false);   // (SEALTRAVEL: every card carries every seal of its order, Open (a held order's ORDER HELD) and Resolved alike)
+    const trav=rvTravel(row?.order?.receiptId || it.record?.receiptId || it.rid,false,it.kind==='customOrder'?['sheet']:null);   // (SEALTRAVEL: every card carries every seal of its order, Open (a held order's ORDER HELD) and Resolved alike)
+    // (Diagnostic, 26 Oct 2026: a Custom Orders card draws its SENT TO SHEET seals after its Send to Sheet / Sent to Sheet button (SEALSHEET, Paul 20 Oct); the strip drew the same seal a second time)
     const stamp=stampOf(it)+'|'+trav.sig;
     const cached=reviewRows.get(it.key);if(cached?.stamp===stamp){Orders.paintTableNotes?.(cached.node);return cached.node;}
     const cu=it.kind==='customOrder',rec=it.record || null,spc=row?.spec?.special || (rec?{label:rec.category || 'Custom order'}:null);
@@ -22199,10 +22211,15 @@ const OrderWin = window.OrderWin = (() => {
   function flightGone() { W.fly = null; H.q.clear(); cancelAnimationFrame(H.raf); H.raf = 0; if (W.dlg) { W.dlg.style.willChange = ""; W.dlg.style.transformOrigin = ""; } for (const res of H.wait.splice(0)) res(); }
   function growIn(from) {
     const d = W.dlg; stopMotion(); d.classList.remove("owBack"); d.classList.add("owGrow");
-    if (still()) { const a = d.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 110, easing: "ease" }); W.anims.push(a); flight(a); return; }
+    /* VISUAL (26 Oct 2026, Paul: "I don't see you actually visually testing the outcome of animations and transitions"): opened from
+       nothing to grow out of (a search, a link, a toast, reduced motion) the whole view faded in, its text drawn over the Orders list
+       for a few frames; now its surface comes first, plain and in its own colour, and the view shows on it once it is opaque */
+    const veiled = (ms, a) => { const t = el("i", "owTint"); t.style.background = getComputedStyle(d).backgroundColor || "var(--card)"; d.appendChild(t);
+      const v = t.animate([{ opacity: 1 }, { opacity: 1, offset: .45 }, { opacity: 0 }], { duration: ms * 2.2, easing: "ease", fill: "forwards" }); W.anims.push(v); v.finished.then(() => t.remove(), () => t.remove()); W.anims.push(a); flight(a); };
+    if (still()) { veiled(110, d.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 110, easing: "ease" })); return; }
     const r = rectOf(from);
     const run = (n, frames, o) => { if (!n) return null; const a = n.animate(frames, Object.assign({ easing: EASE, fill: "backwards" }, o)); W.anims.push(a); return a; };
-    if (!r) { flight(run(d, [{ opacity: 0, transform: "scale(.985)" }, { opacity: 1, transform: "none" }], { duration: 220 })); return; }
+    if (!r) { const a = d.animate([{ opacity: 0, transform: "scale(.985)" }, { opacity: 1, transform: "none" }], { duration: 220, easing: EASE, fill: "backwards" }); veiled(220, a); return; }
     // the view itself flies (Paul, 28 Sep: "a beautiful and seamless animation"; it flew as a blank cream box, its header,
     // tabs and view coming up only as it landed): drawn whole before it starts (the header, the rail's frame, the tabs,
     // the Overview or its skeleton: show, paint), laid over what was clicked at the scale that covers it, top left on
@@ -23507,8 +23524,9 @@ const Session = window.Session = (() => {
   /** When the next pass may start: a minute (EVERY) after the last one started, and never before the last has rested as long
       as it took (a second at least); after a failure, 15 s doubling to 5 min. */
   function due() {
-    const t = Math.max(lastStart + EVERY, lastEnd + Math.max(1000, lastMs));
-    return failures ? Math.max(t, lastEnd + Math.min(300000, 15000 * 2 ** (failures - 1))) : t;
+    const rest = lastEnd + Math.max(1000, lastMs), t = Math.max(lastStart + EVERY, rest);
+    // (26 Oct 2026: a failed save waits its own 15 s, 30 s … 5 min, never back to back; held to the minute as well (PERF), the 15 s and 30 s tries never came)
+    return failures ? Math.max(rest, lastEnd + Math.min(300000, 15000 * 2 ** (failures - 1))) : t;
   }
   function arm(delay) {
     if (frozen || !ready || timer || idleId || saving || rev === savedRev) return;

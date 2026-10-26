@@ -17,7 +17,7 @@ let receipt = null, reads = 0;
 const ctx = {
   Cursor: { glide() {} }, etsyMeter: { total: 0 }, allOpenReceipts: [], currentReceipts: [], etsyBraked: () => false,
   pullEtsyOrderDetails: async () => { reads++; return { receipt: Object.assign({}, receipt), transactions: [] }; },
-  decorateReceipt() {}, orderCache: {}, cachePut() {}, receiptStamp: () => 1, paintRow() {}, notesCache: new Map(), msgCache: new Map(),
+  decorateReceipt() {}, orderCache: {}, cachePut() {}, receiptStamp: () => 1, paintRow() {}, notesCache: new Map(), staffNoteTexts: new Map(), msgCache: new Map(),
   orderForBridge: async r => ({ receiptId: String(r.receipt_id) })
 };
 vm.createContext(ctx);

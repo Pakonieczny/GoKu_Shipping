@@ -151,7 +151,8 @@ const TITLE = "Schrödinger's Cat Necklace, Whimsical Cat Gift, Fun Jewelry Gift
     w.Pool.pinPooled(row); eq(w.reviews.length, 1, 'asked again it adds nothing');
     eq(w.calls.filter(c => c.body && /pool|sheet|alias/i.test(c.body.op || '')).length, 0, 'nothing is written by the offer (no pool, sheet or alias call)'); }
   // never on a sheet that was released or cut; left as it was, said once
-  for (const [what, set] of [['released to the laser', sh => { sh.releaseFull = true; }], ['recalled', sh => { sh.recalled = true; }], ['cut', sh => { sh.roseCutAt = 1; }]]) {
+  // (INPLACE, Paul 20 Oct 2026, as charm-nest-bridge.js says it: only a sheet the laser has CUT keeps its old piece; a full or released sheet not yet cut gives it up: so the laser-cut sheet, not the released one, is left as it was)
+  for (const [what, set] of [['cut by the laser', sh => { sh.laserDoneAt = 1; }], ['recalled', sh => { sh.recalled = true; }], ['cut', sh => { sh.roseCutAt = 1; }]]) {
     const w = worldOf(), row = rowOf({}, 1), id = pooledBefore(w, row); w.pages.gold.charms.push({ poolId: id }); w.pages.gold.fileBase = 'SS Draft 9'; set(w.pages.gold);
     w.Pool.pinPooled(row); w.Pool.pinPooled(row);
     eq([row.changePending || false, row.repoolChanged || false, w.reviews.length], [false, false, 0], `a piece on a sheet ${what} is left as it was: no flag, no card`);

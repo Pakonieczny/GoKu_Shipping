@@ -10,7 +10,7 @@ function deferred(){let resolve;const promise=new Promise(r=>{resolve=r;});retur
 function fixture({holdStamp=false,holdRead=false,offline=false}={}){
  const stamp=deferred(),read=deferred();
  const control={presses:0,checkpoints:[],checkpointFail:false,poolCalls:[],cloudCalls:[],cloud:new Map(),events:new Map(),lossSent:false,failPool:false,partialPool:false,holdStamp,holdRead,uploads:0,redraws:0,toasts:[],done:0};
- const c=vm.createContext({console,Promise,Date,Map,Set,WeakMap,Uint8Array,performance,setTimeout,clearTimeout,queueMicrotask,control,stampGate:stamp.promise,readGate:read.promise});
+ const c=vm.createContext({console,Promise,Date,Map,Set,WeakMap,Uint8Array,performance,setTimeout,clearTimeout,setInterval:()=>0,clearInterval:()=>{},queueMicrotask,control,stampGate:stamp.promise,readGate:read.promise});
  vm.runInContext(`
  const fakeNode=()=>({isConnected:true,style:{},setAttribute(){},remove(){this.isConnected=false;},querySelector(){return {getAnimations:()=>[]};},appendChild(){},getClientRects:()=>[{}]});
  const document={hidden:false,addEventListener(){},querySelector:()=>null,querySelectorAll:()=>[],getElementById:()=>null,createElement:fakeNode};

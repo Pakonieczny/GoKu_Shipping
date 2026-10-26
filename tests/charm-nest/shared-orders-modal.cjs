@@ -329,14 +329,14 @@ const until = async (fn, ms = 8000, what = '') => { ms *= SLOW; const t0 = Date.
     const { ctx, page, errors } = await boot(orders, { noName: true });
     assert(await openModal(page)); await settled(page);
     await choose(page, orders[0].id, 'hold');
-    assert.equal(await page.$$eval('.soName', a => a.length), 1, 'asks for a name when none is signed in');
-    assert.equal(await page.$eval('.soAsk [data-yes]', b => b.disabled), true, 'Take off waits for the name');
-    await page.fill('.soName', 'Paul K');
-    assert.equal(await page.$eval('.soAsk [data-yes]', b => b.disabled), false);
-    await page.press('.soName', 'Enter');
-    await until(async () => (await cards(page)).length === 2, 4000, 'the card leaves');
-    assert(/^Paul K\.?$/.test((await page.evaluate(() => __so.calls))[0].by), 'the change is kept under the name (as the app writes names): ' + (await page.evaluate(() => __so.calls))[0].by);
-    ok.push('5 · no one signed in: it asks for a name, Take off waits for it, the change is kept under it');
+    // (the page's account gate is on, CNAccount.configure({ gate: true }): a name comes only from the sign-in (Paul, 26 Oct 2026: signing in takes the Employee Number), never typed here)
+    assert.equal(await page.evaluate(() => CNAccount.gated()), true, 'the page\'s account gate is on');
+    assert.equal(await page.$$eval('.soName', a => a.length), 0, 'no typed name is asked for under the account gate');
+    assert.equal(await page.$eval('.soAsk [data-yes]', b => b.disabled), false, 'Take off does not wait for a typed name');
+    await page.click('.soAsk [data-yes]'); await page.waitForTimeout(800);
+    assert.equal((await cards(page)).length, 3, 'with no one signed in the order is not taken off: the sign-in is asked for first (CNEmployee.need)');
+    assert.equal(await page.evaluate(() => __so.calls.length), 0, 'nothing is sent without a signed-in person (every change is kept under who made it)');
+    ok.push('5 · no one signed in, the account gate on: no typed name; nothing is taken off until someone signs in');
     await ctx.close();
   }
   {

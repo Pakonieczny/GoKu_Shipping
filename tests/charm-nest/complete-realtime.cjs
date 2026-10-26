@@ -23,8 +23,13 @@ process.env.CHARM_NEST_DELETE_CODE = 'rt-' + Math.random().toString(36).slice(2,
 const O = require('./placement-oracle.cjs'), SHOP = require('./complete-realtime-shop.cjs');
 const argv = process.argv.slice(2), flag = n => argv.includes('--' + n), opt = (n, d) => { const i = argv.indexOf('--' + n); return i >= 0 ? argv[i + 1] : d; };
 const { sleep } = O;
-const NOPOLL = flag('nopoll'), LATENCY = +opt('latency', 120), ONLY = opt('only', process.env.RT_ONLY || ''), DUMP = flag('dump'), MOTION = !flag('reduced'), IDLE = +opt('idle', 24);
-const SAME = 1000, FAR = 3000;   // Paul's targets: the same computer within 1 s, another computer within about 3 s
+// (26 Oct 2026, a pass/fail test under 3 minutes: by default only the core cells, Complete Order seen by the pressing page, another tab and another computer on the
+//  Review tab, the one the Review feed follows every 2 s; RT_FULL=1 (or --only / --roles) runs the whole matrix, about 10 minutes)
+const FULL = !!process.env.RT_FULL;
+const NOPOLL = flag('nopoll'), LATENCY = +opt('latency', 120), ONLY = opt('only', process.env.RT_ONLY || (FULL ? '' : 'complete')), DUMP = flag('dump'), MOTION = !flag('reduced'), IDLE = +opt('idle', 24);
+// Paul's targets: the same computer within 1 s, another computer within about 3 s. On the same computer the stamp plays through first (Paul, 28 Sep: the seal is
+// visible, then the rest; print-after-seal.cjs: about 1.5 s), so there the target is the stamp and 300 ms after it
+const SAME = 1800, FAR = 3000;
 const PDFMAKE = `window.pdfMake = { createPdf(dd) { return { getBlob(cb) { cb(new Blob(['<!doctype html><title>label</title><script>window.print = () => { window.parent.parent.__printed = (window.parent.parent.__printed || 0) + 1; };<\\/script>'], { type: 'text/html' })); } }; } };`;
 const js = body => ({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin', 'Access-Control-Allow-Origin': '*' }, body });
 
@@ -204,7 +209,7 @@ async function main() {
   const t00 = Date.now(), log = (...a) => console.log(((Date.now() - t00) / 1000).toFixed(1).padStart(6) + 's', ...a);
   const runs = [];
   try {
-    const roles = (opt('roles', process.env.RT_ROLES || '') || Object.keys(ROLES).filter(r => r !== 'press').join(',')).split(',');
+    const roles = (opt('roles', process.env.RT_ROLES || (FULL ? '' : 'review')) || Object.keys(ROLES).filter(r => r !== 'press').join(',')).split(',');
     for (const action of ['complete', 'print']) {
       if (ONLY && ONLY !== action) continue;
       for (const role of roles) {

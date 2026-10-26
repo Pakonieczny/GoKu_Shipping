@@ -97,6 +97,8 @@ async function browser() {
   const o = { receiptId: '4100000555', orderNumber: '4100000555', createTs: SHIP - 5 * DAY, updateTs: SHIP - 5 * DAY + 60, shipBy: SHIP, buyer: { name: 'Test Buyer' }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [],
     lines: [Object.assign(line('Foxglove Charm Necklace', ''), { transactionId: '9100000555', expectedShipDate: SHIP })] };
   const srv = await start({ receipts: [] }), b = await chromium.launch({ executablePath: chromePath, args: ['--no-sandbox'] });
+  // (the server's aliasPut checks the SKU in the master index before it saves a link, charmNestLibrary.js: the same library, in the fake cloud too)
+  for (const e of ENTRIES) srv.st.put('Charm_Master_Index', e.sku.toUpperCase(), Object.assign({}, e, { sku: e.sku.toUpperCase(), thumbPath: null, conflict: null }));
   try {
     const context = await b.newContext({ viewport: { width: 1440, height: 950 } });
     const PHOTO = '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240"><rect width="240" height="240" fill="#c9a25a"/><circle cx="120" cy="120" r="34" fill="#4a7a3a"/></svg>';

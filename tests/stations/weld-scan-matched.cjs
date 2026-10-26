@@ -196,13 +196,13 @@ async function main() {
     const settle = async () => { await wait(150); await flush(); await wait(100); };
     const note = () => desk.evaluate(() => { const n = document.getElementById('stationScanQueueNote'); return n && n.style.display !== 'none' ? n.textContent : null; });
     const ran = () => desk.evaluate(() => window.__ran.slice());
-    const A = 'Ana M.', B = 'Bea K.', W = 'Wes T.';
+    const A = 'Cleo M.', B = 'Bea K.', W = 'Wes T.';
 
     /* ── 1 ── */
     await check('1 one person in Matching: credited, task matching, the real scan time; scanned work, never an order completion', async () => {
       await signIn(A, 'matching');
       await wait(1150);                                             // (input is stamped one a second at most)
-      const o = oid(1, 1), t0 = Date.now(), at = t0 - 500;            // (scanned half a second ago: Ana has been in for a second, so she was in when it was scanned)
+      const o = oid(1, 1), t0 = Date.now(), at = t0 - 500;            // (scanned half a second ago: Cleo has been in for a second, so she was in when it was scanned)
       const li0 = await desk.evaluate(() => StationSession.lastInput());
       await relay(payload(o, { at, sent: t0 }));
       await until(async () => { await flush(); return matchedOf(o).length >= 1; }, 'the matched event');
@@ -213,7 +213,7 @@ async function main() {
       assert.equal(ev[0].action, 'matched'); assert.equal(ev[0].orderId, o); assert.equal(ev[0].parts, 0); assert.equal(ev[0].orders, 0);
       assert.ok(!('unattributed' in ev[0]), 'credited: not unattributed');
       assert.ok(Math.abs(ev[0].at - at) < 250, `the real scan time, not the arrival time (${ev[0].at - at} ms off)`);
-      assert.match(ev[0].session, /^welding__weld-1__Ana_M\.__matching__/, 'the credited person\'s own session');
+      assert.match(ev[0].session, /^welding__weld-1__Cleo_M\.__matching__/, 'the credited person\'s own session');
       assert.match(ev[0].id, /^mt_weld-1_3501000001_/, 'the event id is made from the scan');
       const r = rollupOf(A);
       assert.ok(r, 'the person-day rollup exists');
@@ -227,15 +227,15 @@ async function main() {
 
     /* ── 2 ── */
     await check('2 two in Matching: the latest input wins; a welder signed in last is never credited; a sign-out hands it over', async () => {
-      await signIn(B, 'matching');                                  // Bea signed in after Ana
+      await signIn(B, 'matching');                                  // Bea signed in after Cleo
       const o1 = oid(2, 1), o2 = oid(2, 2), o3 = oid(2, 3), o4 = oid(2, 4);
       await relay(payload(o1));
       await until(async () => { await flush(); return matchedOf(o1).length >= 1; }, 'scan 1');
       assert.equal(matchedOf(o1)[0].person, B, 'the one who signed in last has the latest input');
-      await wait(30); await touchAs(A, 'matching');                 // Ana does something at the station
+      await wait(30); await touchAs(A, 'matching');                 // Cleo does something at the station
       await relay(payload(o2));
       await until(async () => { await flush(); return matchedOf(o2).length >= 1; }, 'scan 2');
-      assert.equal(matchedOf(o2)[0].person, A, 'latest input: Ana');
+      assert.equal(matchedOf(o2)[0].person, A, 'latest input: Cleo');
       await signIn(W, 'welding');                                   // a welder signs in last, and has the latest input of all
       await wait(30); await touchAs(W, 'welding');
       await relay(payload(o3));
@@ -245,10 +245,10 @@ async function main() {
       await signOut(A, 'matching');
       await relay(payload(o4));
       await until(async () => { await flush(); return matchedOf(o4).length >= 1; }, 'scan 4');
-      assert.equal(matchedOf(o4)[0].person, B, 'Ana signed out: Bea carries on');
+      assert.equal(matchedOf(o4)[0].person, B, 'Cleo signed out: Bea carries on');
       assert.match(matchedOf(o4)[0].session, /^welding__weld-1__Bea_K\.__matching__/);
       assert.equal(rollupOf(W), null, 'the welder has no rollup from scans');
-      assert.equal(rollupOf(B).stations.welding.matched, 2); assert.equal(rollupOf(A).stations.welding.matched, 3, 'Ana: the first scan and two more');
+      assert.equal(rollupOf(B).stations.welding.matched, 2); assert.equal(rollupOf(A).stations.welding.matched, 3, 'Cleo: the first scan and two more');
     });
 
     /* ── 3 ── */
@@ -288,7 +288,7 @@ async function main() {
       }
       assert.equal(await note(), null);
       assert.deepEqual((await ran()).filter(x => x.n === o1 || x.n === o2).map(x => x.m), [1, 1], 'the orders still load');
-      // the phone was offline: Ana was in Matching when the earring was scanned, signed out, Bea signed in, and then the phone sent the scan
+      // the phone was offline: Cleo was in Matching when the earring was scanned, signed out, Bea signed in, and then the phone sent the scan
       await signAllOut(); await signIn(A, 'matching'); await wait(900);
       const oL = oid(4, 5), scannedAt = Date.now();
       await wait(300); await signOut(A, 'matching'); await wait(300);
@@ -296,8 +296,8 @@ async function main() {
       await wait(300); await signIn(B, 'matching'); await wait(1100);
       await relay(payload(oL, { at: scannedAt, sent: Date.now() }));
       await until(async () => { await flush(); return matchedOf(oL).length >= 1; }, 'the late scan');
-      assert.equal(matchedOf(oL)[0].person, A, 'credited to Ana, who was in Matching when it was scanned; Bea was not yet');
-      assert.match(matchedOf(oL)[0].session, /^welding__weld-1__Ana_M\.__matching__/);
+      assert.equal(matchedOf(oL)[0].person, A, 'credited to Cleo, who was in Matching when it was scanned; Bea was not yet');
+      assert.match(matchedOf(oL)[0].session, /^welding__weld-1__Cleo_M\.__matching__/);
       assert.ok(!('unattributed' in matchedOf(oL)[0]));
       // a scan made in the gap between them (nobody in Matching) is unattributed, also when it arrives while Bea is in
       const oG = oid(4, 6);
@@ -487,7 +487,7 @@ async function main() {
         try {
           localStorage.setItem('access_token', 'test-token'); localStorage.setItem('refresh_token', 'ref'); localStorage.setItem('token_expires_at', String(Math.floor(Date.now() / 1000) + 86400));
           // a login left from before: the name and a made-up id (never a PIN); the page restores it as one person under Matching
-          localStorage.setItem('employee_id', 'fixture-login'); localStorage.setItem('employee_name', 'Ana M.');
+          localStorage.setItem('employee_id', 'fixture-login'); localStorage.setItem('employee_name', 'Cleo M.');
         } catch (_) {}
       });
       const page = await ctx.newPage(); watch(page, 'weld-1');
@@ -506,7 +506,7 @@ async function main() {
       await page.waitForTimeout(1500); await page.evaluate(() => window.StationActivity.flush()); await wait(200);
       for (const o of [o1, o2]) {
         assert.equal(matchedOf(o).length, 1, 'one matched per scan: ' + o);
-        assert.equal(matchedOf(o)[0].person, 'Ana M.'); assert.equal(matchedOf(o)[0].task, 'matching'); assert.equal(matchedOf(o)[0].device, 'weld-1');
+        assert.equal(matchedOf(o)[0].person, 'Cleo M.'); assert.equal(matchedOf(o)[0].task, 'matching'); assert.equal(matchedOf(o)[0].device, 'weld-1');
       }
       assert.ok(Math.abs(matchedOf(o1)[0].at - at) < 3000, 'the real scan time reaches the event');
       assert.equal(await page.evaluate(() => window.__sets.filter(s => s.path === 'Brites_Orders/weld-scan-1' && s.data && s.data['Order Number'] && s.data['Order Number'].__delete).length), 2, 'each scan is still cleared from the relay once');

@@ -1313,7 +1313,7 @@ async function browserPages() {
     }
     // the Sorter (charm-nest-1): the name it keeps is the sign-in; a Laser person is signed out after an hour, a Design person after 10 minutes, CN's own notice says why, the run is left alone
     {
-      const { start } = require('../charm-nest/bridge-server.cjs');
+      const { start, signInAs } = require('../charm-nest/bridge-server.cjs');
       const srv = await start({ receipts: [] });
       try {
         const rec = { sessions: [], errors: [] };
@@ -1339,7 +1339,7 @@ async function browserPages() {
         page.on('pageerror', e => rec.errors.push(e.message));
         await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
         await page.waitForFunction(() => window.CN && window.CNEmployee && window.StationSession && window.B && CN.S.cloud.ok === true, null, { timeout: 60000 });
-        await page.evaluate(() => { B.employee = 'Tess Welder'; });
+        await signInAs(page, srv, 'Tess Welder');   // (EMPNUM, Paul 26 Oct 2026: the sorter signs a person in only with their Employee Number; a script-set name switches nobody)
         await page.waitForFunction(() => window.CNRole && CNRole.state() === 'ask');                        // (not the Admin: asked Laser or Design once; nobody is signed in until it is answered)
         await page.evaluate(() => { CNRole.choose('laser'); });
         await page.waitForFunction(() => StationSession.current() && StationSession.current().person === 'Tess Welder' && StationSession.current().station === 'laser');
@@ -1359,7 +1359,7 @@ async function browserPages() {
         assert.strictEqual(st.name, null); assert.strictEqual(st.role, '', 'sorter: the role goes with the name'); assert.strictEqual(st.b, ''); assert.strictEqual(st.cur, null);
         assert(st.toasts.includes('Signed out after 1 hour without input.') && /asked again/.test(st.toasts), 'sorter: the Laser notice says one hour: ' + st.toasts);
         // DESIGN (the same app, the other role): the default, 10 minutes, the old wording
-        await page.evaluate(() => { B.employee = 'Dana Design'; });
+        await signInAs(page, srv, 'Dana Design');
         await page.waitForFunction(() => window.CNRole && CNRole.state() === 'ask');
         await page.evaluate(() => { CNRole.choose('design'); });
         await page.waitForFunction(() => StationSession.current() && StationSession.current().person === 'Dana Design' && StationSession.current().station === 'design');

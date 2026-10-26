@@ -136,14 +136,14 @@ const ms = v => (v && v.toMillis ? v.toMillis() : (typeof v === "number" ? v : n
    ANSWER_BYTES and was read within ANSWER_MS of the call (always at least one item, so every part moves the list on);
    `next` says where the rest starts, the page sends it back as `cursor` until there is none, and `truncated` says the
    answer was cut short. */
-const ANSWER_BYTES = 4000000, ANSWER_MS = 5000;
+const ANSWER_BYTES = 4000000, ANSWER_MS = 5000, LIST_SHEETS_BYTES = 500000;
 const bytesOf = v => Buffer.byteLength(JSON.stringify(v));
 /** What one part of an answer may still take: fits(item) counts the item in, or says it is for the next part; late()
     says the part has had its time (never before it holds an item). */
-function answerBudget(began = Date.now()) {
+function answerBudget(began = Date.now(), maxBytes = ANSWER_BYTES) {
   let used = 0, items = 0;
   return {
-    fits(item) { const n = bytesOf(item); if (items && used + n > ANSWER_BYTES) return false; used += n; items++; return true; },
+    fits(item) { const n = bytesOf(item); if (items && used + n > maxBytes) return false; used += n; items++; return true; },
     late: () => items > 0 && Date.now() - began > ANSWER_MS
   };
 }
@@ -1052,7 +1052,11 @@ async function op_listSheets(b) {
     rows.sort(([, x], [, y]) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0));
     if (slimOnly) rows = rows.map(([id]) => [id]);
   }
-  const { sheets, rest } = await sheetEntries(rows, answerBudget());
+  /* PERF (Paul, 26 Oct 2026: "the performance of the overall platform once it's being used at scale with tens of thousands of orders"): a part of
+     the sheet list is at most LIST_SHEETS_BYTES, half a megabyte, not ANSWER_BYTES: 300 sheets of a 30,000-order history answered ~0.9 MB in one
+     part. The rest comes with `next` as before (every page reading a run, a day or the Library follows it: `all: "sheets"`); one set's own
+     sheets (setId, read by the set editor and the rose flow without following `next`) keep the whole budget, a set being a few sheets. */
+  const { sheets, rest } = await sheetEntries(rows, answerBudget(Date.now(), b.setId ? ANSWER_BYTES : LIST_SHEETS_BYTES));
   return { sheets, next: rest.length ? { sheets: rest } : null, truncated: rest.length > 0 };
 }
 /* Manual Control (Paul, 18 Oct 2026): one person at a time moves, turns and resizes the charms of a 10K / 14K sheet by hand in the sheet window. The claim is the

@@ -55,10 +55,10 @@ const ok = (name, cond, extra) => { assert.ok(cond, name + (extra ? ' :: ' + ext
     // layout: the label, under Qty · Ship by, left aligned with it, a small normal button
     const lay = await page.evaluate(() => [...document.querySelectorAll('#ordItems > [data-rid]')].map(n => {
       const b = n.querySelector('.revSendBtn'), f = n.querySelector('.rowFacts'), br = b.getBoundingClientRect(), fr = f.getBoundingClientRect(), row = n.getBoundingClientRect(), grouped = n.classList.contains('ordGroup');
-      // (a row: under "Qty · Ship by", left aligned with it; an order of several lines: in the top of its card, after "Ship by", the order's one button)
-      return { text: b.textContent, place: grouped ? (n.querySelector('.ogHead').contains(b) && br.left >= fr.right - 1 && Math.abs((br.top + br.height / 2) - (fr.top + fr.height / 2)) < 30) : (br.top >= fr.bottom - 1 && Math.abs(br.left - fr.left) <= 1.5), h: br.height, w: br.width, inside: br.right <= row.right + 1 && br.left >= row.left - 1, type: b.type, cls: b.className };
+      // (a row: under "Qty · Ship by"; an order of several lines: in the top of its card, after "Ship by", the order's one button; HOLDALIGN, Paul 25 Oct 2026: "These Hold buttons are not horizontally aligned.": every one ends at the same right edge)
+      return { text: b.textContent, place: grouped ? (n.querySelector('.ogHead').contains(b) && br.left >= fr.right - 1 && Math.abs((br.top + br.height / 2) - (fr.top + fr.height / 2)) < 30) : (br.top >= fr.bottom - 1), right: br.right, h: br.height, w: br.width, inside: br.right <= row.right + 1 && br.left >= row.left - 1, type: b.type, cls: b.className };
     }));
-    ok('3 the label is "Hold Order", under "Qty · Ship by" (an order of several lines: beside its Ship by at the top of its card), small, inside the row', lay.length >= 3 && lay.every(l => l.text === 'Hold Order' && l.place && l.h > 18 && l.h < 44 && l.w < 260 && l.inside && l.type === 'button' && /ghost/.test(l.cls)), JSON.stringify(lay));
+    ok('3 the label is "Hold Order", under "Qty · Ship by" (an order of several lines: beside its Ship by at the top of its card), every one ending at the same right edge (HOLDALIGN), small, inside the row', lay.length >= 3 && lay.every(l => l.text === 'Hold Order' && l.place && Math.abs(l.right - lay[0].right) <= 1.5 && l.h > 18 && l.h < 44 && l.w < 260 && l.inside && l.type === 'button' && /ghost/.test(l.cls)), JSON.stringify(lay));
 
     // 4. press: busy state, one call, signed-in name, the order window stays shut
     const sel = rid => `#ordItems > [data-rid="${rid}"] .revSendBtn`;

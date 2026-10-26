@@ -89,7 +89,7 @@ const server = http.createServer((req, res) => {
     const url = `http://127.0.0.1:${server.address().port}/etsy-mail-1.html`;
     const open = async id => {
       await page.click(`[data-id="${id}"]`);
-      await page.waitForFunction(id => { const b = document.querySelector(`[data-id="${id}"]`); return b && b.classList.contains("active") && document.getElementById("emDraftText"); }, id, { timeout: 10000 }).catch(() => {});
+      await page.waitForFunction(id => { const b = document.querySelector(`[data-id="${id}"]`); return b && b.classList.contains("selected") && document.getElementById("emDraftText"); }, id, { timeout: 10000 });
       await page.waitForTimeout(700);
     };
     const box = () => page.inputValue("#emDraftText");

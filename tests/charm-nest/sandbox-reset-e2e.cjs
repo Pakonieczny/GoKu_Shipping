@@ -102,9 +102,11 @@ const OLD = 'OLDREC';
   st.blobs.set(snapPath, { buf: Buffer.from(JSON.stringify({ at: NOW, count: snapshot.length, receipts: snapshot })), generation: 1, meta: { contentType: 'application/json', metadata: {} } });
   st.put('Charm_Sandbox', 'current', { path: snapPath, count: snapshot.length, open: snapshot.length, at: NOW, pulledAt: NOW, takenBy: 'test', source: 'etsy-pull', startId: 'sbx-before-the-reset' });
   await seed(false); await seed(true);
-  const ownKey = k => k.startsWith('Sandbox_') || k === 'Charm_Sandbox/stream' || k.startsWith('EtsyMail_OrderLinks/olsb_');
+  // (Charm_Sandbox is the sandbox's own: /stream, /current (the pull's pointer, replaced at each Start since the 250-newest pull, Paul 10 Oct 2026) and /pulls (its Etsy budget))
+  const ownKey = k => k.startsWith('Sandbox_') || k.startsWith('Charm_Sandbox/') || k.startsWith('EtsyMail_OrderLinks/olsb_');
   const sandboxDocs = () => [...st.docs.keys()].filter(ownKey);
-  const prodSnap = () => JSON.stringify([...st.docs.entries()].filter(([k]) => !ownKey(k)).sort(([a], [b]) => (a < b ? -1 : 1)));
+  // (the passcode door's own records (_charmNestRepoAuth.js: the session token the unlock for Reset writes, its attempts) are the door's, not production's records)
+  const prodSnap = () => JSON.stringify([...st.docs.entries()].filter(([k]) => !ownKey(k) && !/^CharmRepo_(Tokens|AuthAttempts)\//.test(k)).sort(([a], [b]) => (a < b ? -1 : 1)));
   const prodBlobs = () => JSON.stringify([...st.blobs.entries()].filter(([k]) => !/^charmnest\/sandbox\//.test(k)).map(([k, v]) => [k, v.buf.toString('base64')]).sort(([a], [b]) => (a < b ? -1 : 1)));
   const seeded = sandboxDocs().length;
   assert(seeded > 40, 'the sandbox holds many records: ' + seeded);
@@ -198,7 +200,8 @@ const OLD = 'OLDREC';
   });
   // (the shop's real sign-ins, read from the fake server's Station_Sessions: the Sorter's Sign-ins window that showed them was removed on 15 Oct 2026, Paul: "remove the 'Sign-ins' menu and option from the UI")
   const signins = async () => st.list('Station_Sessions').map(d => `${d.person} · ${d.station} · ${d.endAt == null ? 'signed in' : 'ended'}`).join('\n');
-  const efficiency = async p => { await p.evaluate(() => CN.setMode('efficiency')); await p.waitForFunction(() => { const h = document.getElementById('efficiencyView'); return h && !h.querySelector('[data-lock]') && !/Reading employee activity/.test(h.innerText) && h.innerText.length > 40; }, null, { timeout: 20000 }).catch(() => {}); const t = await p.evaluate(() => document.getElementById('efficiencyView').innerText); return t; };
+  // (the console has its own Real | Sandbox switch now and never follows the sorter's mode (charm-nest-efficiency.js isSandbox): the sandbox's people are read on its Sandbox view)
+  const efficiency = async p => { await p.evaluate(() => CN.setMode('efficiency')); await p.evaluate(() => { const b = document.querySelector('#efficiencyView [data-view="sandbox"]'); if (b && !b.classList.contains('on') && b.getAttribute('aria-pressed') !== 'true') b.click(); }); await p.waitForTimeout(300); await p.waitForFunction(() => { const h = document.getElementById('efficiencyView'); return h && !h.querySelector('[data-lock]') && !/Reading employee activity/.test(h.innerText) && h.innerText.length > 40; }, null, { timeout: 20000 }).catch(() => {}); const t = await p.evaluate(() => document.getElementById('efficiencyView').innerText); return t; };
   const before = await tabs(page); before.signins = await signins(); before.efficiency = await efficiency(page);
   for (const [k, v] of Object.entries(before)) peek('BEFORE ' + k, v);
   const effAt = Date.now();
@@ -249,7 +252,11 @@ const OLD = 'OLDREC';
   if (PEEK) for (const k of quiet) console.log('  ', k, JSON.stringify(st.docs.get(k)).slice(0, 400));
   console.log('in the cloud, after the quiet window:', JSON.stringify(quiet.map(k => k.split('/')[0]).reduce((m, k) => (m[k] = (m[k] || 0) + 1, m), {})));
   assert.deepStrictEqual(surprise, [], 'the sandbox holds no record but the sign-in of whoever is working now: ' + surprise.join(', '));
-  for (const k of quiet) { const d = st.docs.get(k); const t = d.startAt || d.at || d.lastSeenAt; assert(!t || +t >= pressedAt - 1000, `no old sign-in or activity came back: ${k} ${JSON.stringify(d).slice(0, 160)}`); assert(!JSON.stringify(d).includes(OLD) && !/Sandy|Bench 2/.test(JSON.stringify(d)), `nothing of the old sign-ins: ${k}`); }
+  // (the sandbox's employee efficiency stays whole through a reset (charm-nest-sandbox-families.js PROTECTED, Paul 10 Oct 2026: "The only thing should remain is the employee
+  //  efficiency and the Charm repo"; sandbox-reset-complete.cjs proves the server keeps them): the old sign-in and its activity stay, and nothing else of before is here)
+  const KEPT = ['Sandbox_Station_Sessions/session-aaaa-0001', 'Sandbox_Station_Activity/activity-evt-0001', 'Sandbox_Station_Activity/activity-evt-0002'];
+  for (const k of KEPT) assert(quiet.includes(k), `the sandbox's employee efficiency stays: ${k}`);
+  for (const k of quiet.filter(k => !/^Sandbox_(Station_Sessions|Station_Activity|Efficiency_Daily)\//.test(k))) { const d = st.docs.get(k); const t = d.startAt || d.at || d.lastSeenAt; assert(!t || +t >= pressedAt - 1000, `no old sign-in or activity came back: ${k} ${JSON.stringify(d).slice(0, 160)}`); assert(!JSON.stringify(d).includes(OLD) && !/Sandy|Bench 2/.test(JSON.stringify(d)), `nothing of the old sign-ins: ${k}`); }
 
   /* ── tab by tab: nothing from before ── */
   const after = await tabs(page);
@@ -260,13 +267,15 @@ const OLD = 'OLDREC';
   after.efficiency = await efficiency(page);
   for (const [k, v] of Object.entries(after)) peek('AFTER ' + k, v);
   const OLDWORDS = new RegExp([A, B, D, 'CHAIN', 'TRICERATOPS', 'WRITTEN', 'POOLED', 'NESTED', 'QR LABEL', 'Sent to Sheet', 'ON THE SHEETS', 'GF_Sheet-1', 'GF Sheet 1', 'Sheet 1(?!\\d)', 'recalled', 'ANNA', 'Sandy', 'Bench 2', 'ENGRAVING · DECIDED', 'OLDREC'].join('|'), 'i');
-  after.efficiency += '';   // (here Paul is the person whose seals the sandbox's timeline held)
-  for (const [k, v] of Object.entries(after)) assert(!OLDWORDS.test(v) && !(k === 'efficiency' && /Paul/.test(v)), `after: the ${k} tab shows nothing from before — it shows "${(OLDWORDS.exec(v) || [])[0]}": ${v.slice(0, 300).replace(/\n+/g, ' | ')}`);
-  assert(/Sandbox is empty\. Press Start \(or turn Auto on\) to replay the \d+ \w{3} orders\./.test(after.orders) && /\nStart\b/.test(after.orders), 'the Orders tab says the sandbox is empty and offers Start: ' + after.orders.slice(-200));
+  // (Employee efficiency is the one thing a reset keeps (PROTECTED above): its Sandbox view still names the old sign-in, Sandy at Bench 2, and is read for that below, not for the old records)
+  const effAfter = after.efficiency; delete after.efficiency;
+  assert(/Sandy/.test(effAfter), "Employee efficiency still lists the sandbox's own people after the reset: " + effAfter.slice(0, 300));
+  for (const [k, v] of Object.entries(after)) assert(!OLDWORDS.test(v), `after: the ${k} tab shows nothing from before — it shows "${(OLDWORDS.exec(v) || [])[0]}": ${v.slice(0, 300).replace(/\n+/g, ' | ')}`);
+  assert(/Sandbox is empty\. Press Start \(or turn Auto on\) to pull the \d+ newest Etsy orders and play them\./.test(after.orders) && /\nStart\b/.test(after.orders), 'the Orders tab says the sandbox is empty and offers Start: ' + after.orders.slice(-200));
   assert(!/Nothing pulled yet/.test(after.orders), 'and not the old "Nothing pulled yet"');
   assert.strictEqual(await page.evaluate(() => [Review.settled().length, Object.keys(B.customDesigns).length, B.orders.rows.length, CN.allSheets().filter(p => p.charms.length).length, Engrave.items().size, Recall.on() ? 1 : 0].join()), '0,0,0,0,0,0', 'the page holds none of the old records in memory');
   assert(/Paul/.test(after.signins), "the shop's sessions still hold its real sign-in (a sandbox reset never touches production's): " + after.signins.slice(0, 300));
-  assert(/Tester/.test(after.efficiency), 'Employee efficiency lists the person working now (signed in after the reset): ' + after.efficiency.slice(0, 300));
+  assert(/Tester/.test(effAfter), 'Employee efficiency lists the person working now (signed in after the reset): ' + effAfter.slice(0, 300));
 
   /* ── Settings: the build, the last reset, what the sandbox holds now (inside the dialog; no pop-up on a pop-up) ── */
   await page.evaluate(() => openSettings());
@@ -278,9 +287,14 @@ const OLD = 'OLDREC';
   assert(st1.build === st1.page && /^2\d{7}-[\w-]+$/.test(st1.build), 'the build in the script is the ?v= of its tag: ' + JSON.stringify([st1.build, st1.page]));
   assert(st1.text.includes(`Page build ${st1.build}`), 'it names the page build');
   assert(/Last reset .+ — \d+ cloud record\(s\) and \d+ file\(s\) removed · this browser's saved copy cleared \(\d+ saved workspace part\(s\), \d+ stored key\(s\)\) · nothing left in the cloud/.test(st1.text), 'it says the time, the cloud records removed, the browser copy and that nothing is left: ' + st1.text);
-  const nowLine = st1.text.split('\n').pop();
-  assert(/^In the sandbox now: /.test(nowLine) && !/pool|sheets|sets|runs|arrivals|custom|counters/i.test(nowLine), 'and what the sandbox holds now, none of the old kinds: ' + nowLine);
-  assert(st1.adjacent && st1.within && st1.h < 160, 'it sits right under the two buttons, inside the dialog, and is a few calm lines: ' + JSON.stringify(st1));
+  // (the line under it now says what a wipe keeps, "Kept, never wiped: Charm repo … employee efficiency …": the sandbox's line is found by its words)
+  const nowLine = st1.text.split('\n').find(l => /^In the sandbox now: /.test(l)) || '';
+  assert(/^Kept, never wiped: /m.test(st1.text), 'and what a wipe keeps: ' + st1.text);
+  // (the line names every family with its count now, "nothing — 0 sheets, 0 sets, …": an old kind is one counted above zero)
+  const heldKinds = [...nowLine.matchAll(/(\d[\d,]*) ([^,.;\d]+)/g)].filter(m => +m[1].replace(/,/g, '') > 0).map(m => m[2].trim());
+  assert(/^In the sandbox now: /.test(nowLine) && !heldKinds.some(k => /pool|sheets|sets|runs|arrivals|custom|counters/i.test(k)), 'and what the sandbox holds now, none of the old kinds: ' + nowLine);
+  // (taller since the sandbox's line names EVERY family with its count, Paul 10 Oct: "show that each one is empty", and a kept line follows it: four short paragraphs)
+  assert(st1.adjacent && st1.within && st1.h < 320, 'it sits right under the two buttons, inside the dialog, and is a few calm lines: ' + JSON.stringify(st1));
   await page.evaluate(() => closeDlg(document.getElementById('dlgSettings')));
 
   /* ── saving Settings is not Start; a second tab of the browser is quiet too ── */
@@ -314,7 +328,9 @@ const OLD = 'OLDREC';
   await page.waitForFunction(() => !Sandbox.held() && Sandbox.stream(), null, { timeout: 20000 });
   await page.waitForFunction(ids => ids.every(id => B.orders.rows.some(r => String(r.order.receiptId) === id)), [A, B, C, D], { timeout: 60000 });
   const s1 = st.doc('Charm_Sandbox', 'stream');
-  assert(s1 && s1.seed === SEED && s1.startedAt >= startAt - 1000, 'a new stream, with the seed in Settings, begun at Start: ' + JSON.stringify(s1));
+  // (the reset wipes the saved stream seed with the rest, charm-nest-sandbox-families.js "saved stream seeds": the stream begun at Start is a new one with a seed of its own, not the old run's)
+  assert.strictEqual(await page.evaluate(() => +CN.S.settings.sandboxSeed || 0), 0, 'the old seed is gone from Settings');
+  assert(s1 && s1.seed > 0 && s1.seed !== SEED && s1.startedAt >= startAt - 1000, 'a new stream, with a new seed, begun at Start: ' + JSON.stringify(s1));
   assert(pullReqs.length === 1 && /^charmnest\/sandbox\/orders-pull\//.test(s1.snapshotPath), 'Start pulled the newest orders once (a fresh set, not the one before the reset): ' + pullReqs.length + ' ' + s1.snapshotPath);
   const replay = await rows(page);
   const replayed = new Set(replay.map(r => r.rid));

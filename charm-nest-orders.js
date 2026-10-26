@@ -4346,7 +4346,8 @@
         // FALSEHOLD (Paul, 19 Oct 2026, orders 4207131438 / 4204710975): an option made only of non-design kinds ("Font/ Chain Length: stylish • 19 inches", "Metal / Length", "Engraving Side: Front") is
         // never a design question (nonDesignOption): its length is the line's chain, its font word the line's font, the rest changes nothing. A count or a size that no rule above could read still asks
         // (how many pieces, or which size, is a real question, not a design one), and so does a value of a profile's own drop-down (PIECE_LISTINGS: pieceAsk says why in one plain line).
-        if (!mapped && !(pl && pl.option && !piecesFixed(pl) && pl.option.test(decodeEntities(String(name || ""))))) {
+        // (a font option still unmapped here is one FONT_RULES.unknownHolds holds on purpose: it keeps its one plain font line, it is not passed as non-design; 26 Oct 2026)
+        if (!mapped && !fr && !(pl && pl.option && !piecesFixed(pl) && pl.option.test(decodeEntities(String(name || ""))))) {
           const nd = nonDesignOption(name, value);
           if (nd && !nd.kinds.includes("count") && !nd.kinds.includes("size")) {
             mapped = nd.length ? { field: "chain", value: nd.length, source: "rule:non-design" } : { field: "ignore", value: null, source: "rule:non-design" };

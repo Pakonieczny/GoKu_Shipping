@@ -28,7 +28,7 @@ const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
 const CHROME = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-const { start } = require('../charm-nest/bridge-server.cjs');
+const { start, signInAs } = require('../charm-nest/bridge-server.cjs');
 
 /* ═══════════════ one in-memory Firestore (typed fields, queries, increments, merge, transactions) ═══════════════ */
 class Ts { constructor(m) { this.m = m; } toMillis() { return this.m; } toDate() { return new Date(this.m); } static fromMillis(m) { return new Ts(m); } }
@@ -503,13 +503,13 @@ const nyToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_
       const settle = () => page.waitForFunction(() => !document.querySelector('.cuStat, .btn.working, .cuSealHost, #motionLayer .mGhost, .sealTool, .seal.pending'), null, { timeout: 15000 });
       const flush = () => page.evaluate(() => StationActivity.flush());
       const dismiss = () => page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close()));
-      // the typed name is the person: Maya types her name here too (the same person works at sorting-1 and in the sorter)
+      // the signed-in name is the person: Maya signs in here too (her Employee Number) (the same person works at sorting-1 and in the sorter)
       assert.strictEqual(await page.evaluate(() => StationActivity.who()), null, 'the sorter: nobody until a name is set');
       // (LD1's "Laser or Design?" question, once it is on the page, is asked of everybody but the Admin: this person is the Admin, so the station stays the Sorter's)
       await page.evaluate(() => { if (window.CNRole && typeof CNRole.setAdminLookup === 'function') CNRole.setAdminLookup(async () => true); });
-      await page.evaluate(n => { B.employee = n; localStorage.setItem('cn.employee', n); }, PEOPLE.maya);
+      await signInAs(page, srv, PEOPLE.maya);   // (EMPNUM, Paul, 26 Oct 2026: the sorter signs a person in only with their Employee Number)
       const w = await page.evaluate(() => StationActivity.who());
-      assert.deepStrictEqual([w.person, w.station, w.device], [PEOPLE.maya, 'sorter', 'charm-nest-1'], 'the typed name signs in at the sorter');
+      assert.deepStrictEqual([w.person, w.station, w.device], [PEOPLE.maya, 'sorter', 'charm-nest-1'], 'the Employee Number signs her in at the sorter');
       const sSess = await until(async () => sessionsOf(PEOPLE.maya, 'charm-nest-1')[0], 'the sorter session');
       assert(sSess.station === 'sorter' && !sSess.employeeId, 'a session for the name, no PIN');
       // Print QR label: a print, and the order completed once
@@ -522,7 +522,7 @@ const nyToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_
       await until(async () => { const l = liveDoc('sorter', 'charm-nest-1', PEOPLE.maya); return l && l.state === 'working' && l.rid === RID; }, 'the sorter live order', 12000);
       const sl = liveDoc('sorter', 'charm-nest-1', PEOPLE.maya);
       assert(sl.pieces.length >= 1 && sl.pieces.every(p => p.listingId), 'the sorter: the live order has its pieces and their listing');
-      say('charm-nest-1.html (the Sorter): the typed name signs in at station sorter, Print QR label = print + order completed once, the open order is the live order');
+      say('charm-nest-1.html (the Sorter): the Employee Number signs in at station sorter, Print QR label = print + order completed once, the open order is the live order');
       // the sign-in ends by itself: the right plain words, the sheets and windows stay
       await page.evaluate(() => { const d = document.getElementById('orderWin'); if (d && d.open) d.close(); });
       const sayIt = async (reason, text) => {
@@ -536,13 +536,13 @@ const nyToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_
       await sayIt('idle', 'Signed out after 10 minutes without input.');
       await page.evaluate(() => window.dispatchEvent(new Event('focus')));
       await until(async () => sessionsOf(PEOPLE.maya, 'charm-nest-1').every(s => s.endAt != null), 'the sorter session ends');
-      await page.evaluate(n => { B.employee = n; }, PEOPLE.maya);
+      await signInAs(page, srv, PEOPLE.maya);
       await sayIt('closing', 'Signed out at 5:00 pm.');
-      await page.evaluate(n => { B.employee = n; }, PEOPLE.maya);
+      await signInAs(page, srv, PEOPLE.maya);
       await sayIt('midnight', 'Signed out at midnight.');
       say('charm-nest-1.html: signOut idle / closing / midnight: the right plain words, the name cleared, the page carries on');
       // Maya is back in the sorter for the portal numbers
-      await page.evaluate(n => { B.employee = n; }, PEOPLE.maya);
+      await signInAs(page, srv, PEOPLE.maya);
       await flush();
       await context.close();
     } finally { srv.close(); }

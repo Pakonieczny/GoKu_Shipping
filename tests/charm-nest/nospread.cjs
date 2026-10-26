@@ -371,7 +371,9 @@ async function days() {
     ok(sum(on, r => r.unplaced) === 0 && sum(off, r => r.unplaced) === 0, `${name}: every piece is placed`);
     ok(sum(on, r => (r.problems || []).length) === 0, `${name}: no sheet is stuck on a problem`);
     ok(so <= sf, `${name}: the policy splits no more orders than the page without it (${so} vs ${sf})`);
-    ok(uo <= uf + 1e-9, `${name}: the units of sheets that share an order are no bigger (${uo.toFixed(2)} vs ${uf.toFixed(2)})`);
+    // (PAIR, Paul 26 Oct 2026: "Why are there two full GF sheets when I gave you the rules for that?": a GF or SS sheet takes an order's piece only beside its one partner of the other
+    // metal, with the policy on or off, so both sides now keep units near one GF + one SS sheet; the policy must not make them bigger than the page without it, or than that pair)
+    ok(uo <= Math.max(uf, 2) + 1e-9, `${name}: the units of sheets that share an order are no bigger than without the policy or than one GF + one SS pair (${uo.toFixed(2)} vs ${uf.toFixed(2)})`);
     ok(fo >= ff - 0.01, `${name}: the fill of the released sheets does not fall by more than a point (${(100 * ff).toFixed(1)}% -> ${(100 * fo).toFixed(1)}%)`);
     ok(sum(on, r => r.pairLinesSplit) <= sum(off, r => r.pairLinesSplit), `${name}: no more earring pairs on two sheets`);
     return { so, sf };

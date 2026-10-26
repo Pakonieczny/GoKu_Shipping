@@ -15,7 +15,7 @@ const path = require('path'), assert = require('assert'), fs = require('fs');
 const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
-const { start } = require('../charm-nest/bridge-server.cjs');
+const { start, signInAs } = require('../charm-nest/bridge-server.cjs');
 
 const day = Math.floor(Date.now() / 1000);
 const receipt = (rid, i) => ({ receipt_id: rid, order_number: rid, name: 'Buyer ' + i, country_iso: 'US', status: 'Paid', is_paid: true, is_shipped: false, create_timestamp: day - 3600 * i, created_timestamp: day - 3600 * i, update_timestamp: day - 3600 * i, transactions: [{ transaction_id: rid * 10 + 1, receipt_id: rid, listing_id: 1718001, sku: 'BR-TST-01', title: 'charm', quantity: 1, expected_ship_date: day + 3 * 86400 }] });
@@ -65,7 +65,7 @@ const FRAME_OWN = 'Frame Fran';          // the name the station's own browser s
     console.log('1 · the frame\'s own stored name is never the sorter\'s person, and is signed out while nobody is signed in here');
 
     // 2 · signing in on the sorter signs the frame in under that person; what the frame records carries it
-    await page.evaluate(() => CNAccount.signIn('tess  WELDER'));
+    await signInAs(page, srv, 'tess  WELDER');   // (EMPNUM, Paul 26 Oct 2026: the sorter signs a person in only with their Employee Number; a script-set name switches nobody)
     await frame.waitForFunction(() => localStorage.getItem('employee_name') === 'Tess Welder', null, { timeout: 15000 });
     await frame.waitForFunction(() => (StationSession.current() || {}).person === 'Tess Welder', null, { timeout: 15000 });
     assert.deepStrictEqual(await fr(), { name: 'Tess Welder', driven: true, session: 'Tess Welder', who: 'Tess Welder' });
@@ -84,7 +84,7 @@ const FRAME_OWN = 'Frame Fran';          // the name the station's own browser s
     console.log('2 · signed in on the sorter: the frame\'s completedBy, timeline `by`, station session and activity carry that person');
 
     // 3 · switching person on the sorter switches the frame; a sign-out signs it out
-    await page.evaluate(() => CNAccount.signIn('Pat Packer'));
+    await signInAs(page, srv, 'Pat Packer');
     await frame.waitForFunction(() => localStorage.getItem('employee_name') === 'Pat Packer' && (StationSession.current() || {}).person === 'Pat Packer', null, { timeout: 15000 });
     assert.strictEqual(await frame.evaluate(() => buildArchiveRecord('4170000202', { receipt: {}, transactions: [] }).completedBy), 'Pat Packer', 'the switch reaches what the frame records');
     assert.strictEqual(await frame.evaluate(() => (StationActivity.who() || {}).person), 'Pat Packer');
@@ -101,7 +101,7 @@ const FRAME_OWN = 'Frame Fran';          // the name the station's own browser s
     assert(g.shown && !g.inputShown && /Charm Sorter/.test(g.text), 'the gate points to the sorter and has no field to type another person: ' + JSON.stringify(g));
     assert.strictEqual(await frame.evaluate(() => { const i = document.getElementById('dsNameInput'); i.value = 'Typed Person'; i.dispatchEvent(new Event('blur')); return localStorage.getItem('employee_name'); }), null, 'the gate\'s field never signs a different person in while the sorter drives');
     await page.waitForSelector('#cnAcctPanel', { timeout: 10000 });
-    await page.evaluate(() => CNAccount.signIn('dana  d'));
+    await signInAs(page, srv, 'dana  d');
     await frame.waitForFunction(() => localStorage.getItem('employee_name') === 'Dana D.', null, { timeout: 15000 });
     assert.strictEqual(await frame.evaluate(() => DsName.need('Print labels')), true, 'signed in on the sorter: the action goes through under that person');
     console.log('4 · driven by the sorter, the frame\'s gate points to the sorter; the sign-in there reaches the frame');

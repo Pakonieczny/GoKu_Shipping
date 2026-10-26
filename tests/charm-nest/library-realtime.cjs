@@ -289,7 +289,9 @@ const closeWin = async pg => { await pg.page.evaluate(() => { try { OrderWin.clo
     const polls = reqs[k].slice(i0[k]).filter(r => r.answer), cheap = polls.filter(r => r.answer.unchanged && r.answer.probed === 1);
     say(`  ${k}: ${polls.length} reads in 12 s, ${cheap.length} of them one-document`);
     if (polls.length < 3) { const now = Date.now(), d = await (k === 'A' ? A : B).page.evaluate(() => ({ live: LaserReview.liveState(), reads: window.__reads.slice(-6), long: window.__long.slice(-6), hidden: document.hidden })); say('   what the page was doing:', JSON.stringify({ ...d, reads: d.reads.map(r => [r[0] - now, r[1] == null ? null : r[1] - now, r[2]]), long: d.long.map(l => [l[0] - now, l[1]]) })); }
-    check(polls.length >= 3 && polls.length <= 6, `${k}: the loop reads about every 3 s while the page is used (3 to 6 reads in 12 s)`, String(polls.length));
+    // (the slow check that records seals asks too, recordSeals:true, about every 5 s at one document, its own checks above: the 3 s pace is the loop's own reads)
+    const loop = polls.filter(r => { try { return JSON.parse(r.body).recordSeals !== true; } catch (_) { return true; } });
+    check(loop.length >= 3 && loop.length <= 6, `${k}: the loop reads about every 3 s while the page is used (3 to 6 reads in 12 s)`, `${loop.length} (${polls.length} with the slow check)`);
     check(polls.length > 0 && cheap.length >= polls.length - 1, `${k}: every idle read but at most one is a one-document read`, `${cheap.length} of ${polls.length}`);
   }
 

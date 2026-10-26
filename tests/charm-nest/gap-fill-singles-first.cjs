@@ -92,7 +92,7 @@ const piece = (id, w, h, date = 0, order) => ({ id, w: w * K, h: h * K, scale: K
   /* ── 2 · the intake: a multi-piece order that cannot fit a gap-filling sheet goes to the next sheet; a single-charm order tries the gaps ── */
   {
     const c = { Set, Map, Math, JSON, Object, Array, String, Number, window: { CN: { topupRoom: ctx.topupRoom, topupTakes: ctx.topupTakes } }, Sets: { ofRun: () => [] } };
-    const pages = []; c.pagesOf = () => pages; c.addPage = () => { const p = { metal: 'gold', runId: 'run-1', charms: [], placements: [] }; pages.push(p); return p; };
+    const pages = []; c.pagesOf = () => pages; c.allSheets = () => pages; c.addPage = () => { const p = { metal: 'gold', runId: 'run-1', charms: [], placements: [] }; pages.push(p); return p; };
     c.O = { FAST_MATERIALS: new Set(['gold', 'silver']) }; c.CharmNestRose = { cuts: () => false };
     vm.createContext(c);
     const src = bridge, a = src.indexOf('const closed = p => !!p.roseCutAt'), b = src.indexOf('async function add(run) {', a);

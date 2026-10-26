@@ -140,6 +140,9 @@ const until = async (f, what) => { for (let n = 0; n < 600; n++) { if (f()) retu
 
     // ═══ 3. a gold sheet in a committed set, the 14K one: out and back in (a gold sheet is per sheet: its own pick follows) ═══
     await press(free); assert.equal(free.input.checked, false); assert.equal(sheet('k10-a').setId, null); assert.equal(free.p.solidPick, false, 'its own pick follows the truth'); assert.equal(free.p.leftSet, 'set-10');
+    // (audit S2, 25 Oct 2026, R12 (a): a 14K sheet joins a set only with its green line cut, full, or with the Cut Sheet yes: the uncut one is refused back in, with the Library's words)
+    await refuses(free, '14K Draft 1 cannot join a set before its green line is cut.', 'an uncut 14K sheet back into its committed set');
+    st.put(S, 'k10-a', { releaseFull: true }); free.p.releaseFull = true;   // (a full sheet takes no line: it goes back in by the switch)
     await press(free); assert.equal(free.input.checked, true); assert.equal(sheet('k10-a').setId, 'set-10'); assert.equal(permanent(), permanentBefore);
     // the sheet was marked Completed on another computer (this page's copy does not know): the Library's plan reads the records, so the press is refused with the reason
     st.put(S, 'k10-a', { laserDoneAt: now - 10, laserDoneBy: 'Cy' }); const beforeLate = JSON.stringify(sheet('k10-a'));

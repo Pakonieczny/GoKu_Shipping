@@ -1,4 +1,4 @@
-/* SETSIM: the shared pieces of the sets-and-whole-orders simulation (tests/charm-nest/setsim-run.cjs, setsim.cjs).
+/* SETSIM: the shared pieces of the sets-and-whole-orders simulation (nospread.cjs, setsim-scenes.cjs, setsim-sets.cjs and their libraries).
  *
  * Paul, 13 Oct 2026: "A partial GF and SS sheet should never be part of a Set of sheets ... keep orders of the same colour on one sheet ... the priority
  * should be to maintain all of the pieces for each given order on that one sheet ... keep that [multi-piece order] in queue and then add it to the next sheet
@@ -298,7 +298,7 @@ ${extraStubs}
 /** Fill of a sheet as its card shows it (charms' share of the usable stock). */
 const fillOf = p => p.usablePt2 ? 1 - p.freePt2 / p.usablePt2 : (p.density || 0);
 
-/** How the front of a sheet lies (nest-front-bench.cjs): the standard deviation of the rows' reach (mm; 0 = straight) and the widest empty disc behind the front (mm). */
+/** How the front of a sheet lies (nest-front-lib.cjs): the standard deviation of the rows' reach (mm; 0 = straight) and the widest empty disc behind the front (mm). */
 function frontOf(S, stock, page) {
   const FW = Math.round(stock.wPt * 2), FH = Math.round(stock.hPt * 2), occ = new Uint8Array(FW * FH), far = new Int32Array(FH), byId = new Map(page.charms.map(c => [c.id, c])), MMC = MM / 2, band = 3;
   for (const p of page.placements) {

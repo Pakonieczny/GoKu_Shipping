@@ -73,7 +73,8 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
 
     // ── 1 · Release hold on the earrings (Orders › Open Orders: NOHOLDPILE, no On hold pile) ──
     await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); Orders.render(); });
-    const relBtn = `#ordBody [data-key="${keyOf(EAR)}"] .relHold`;
+    // (an order of several lines is one card, ordGroup: its Release Hold is on the card, data-first its first line; a one-line order is its row, data-key)
+    const relBtn = `#ordBody [data-first="${keyOf(EAR)}"] .relHold, #ordBody [data-key="${keyOf(EAR)}"] .relHold`;
     await until(() => page.$(relBtn), 20000, 'the Release hold button of the earrings');
     await shot('01-on-hold');
     const t1 = Date.now();
@@ -101,14 +102,15 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
       return b ? { text: b.textContent.trim(), cls: b.className, how: b.dataset.rvRelease, disabled: b.getAttribute('aria-disabled'), title: b.title, aria: b.getAttribute('aria-label'), unblock: u ? { text: u.textContent.trim(), cls: u.className } : null, box: box(b), row: box(n), parent: b.parentElement.className, reason: (n.querySelector('.reviewReason') || {}).textContent || '', rowActions: [...n.querySelectorAll('.rowActions button')].map(x => x.textContent.trim()) } : { none: true, rowActions: [...n.querySelectorAll('.rowActions button')].map(x => x.textContent.trim()) };
     }, rowSel(fx));
     const cat = await look(CAT2);
-    check(cat && cat.text === 'Release Hold' && /\bgold\b/.test(cat.cls) && cat.how === 'override' && cat.disabled === null && /Cut SCHRODINGER CAT 2 although the master blocks it \(open outline\)/.test(cat.title), `2 · the blocked SKU has "Release Hold", primary, enabled, and the title says what it does (${JSON.stringify(cat && [cat.text, cat.cls, cat.disabled, cat.title])})`);
+    // (RHSAME, Paul 20 Oct 2026: every Release Hold is the one shared orange button, btn relHoldBtn, no longer the gold primary)
+    check(cat && cat.text === 'Release Hold' && /\brelHoldBtn\b/.test(cat.cls) && cat.how === 'override' && cat.disabled === null && /Cut SCHRODINGER CAT 2 although the master blocks it \(open outline\)/.test(cat.title), `2 · the blocked SKU has "Release Hold", primary, enabled, and the title says what it does (${JSON.stringify(cat && [cat.text, cat.cls, cat.disabled, cat.title])})`);
     check(cat && cat.unblock && cat.unblock.text === 'Unblock this SKU' && /\bghost\b/.test(cat.unblock.cls), `2 · "Unblock this SKU" is beside it, secondary (${JSON.stringify(cat && cat.unblock)})`);
     check(cat && cat.parent === 'rowActions' && cat.box.x >= cat.row.x && cat.box.x + cat.box.w <= cat.row.x + cat.row.w && cat.box.y >= cat.row.y && cat.box.y + cat.box.h <= cat.row.y + cat.row.h + 1, `2 · it sits inside the row's box, in the card's own column of buttons (${JSON.stringify(cat && [cat.parent, cat.box, cat.row])})`);
     check(cat && cat.rowActions.filter(t => t === 'Release Hold').length === 1 && !cat.rowActions.includes('Complete Order') && !cat.rowActions.includes('Release to nesting queue'), `2 · ONE Release Hold in that column, where Complete Order stood, and no "Release to nesting queue" (${JSON.stringify(cat && cat.rowActions)})`);
     check(await page.evaluate(() => ![...document.querySelectorAll('button')].some(b => /Release to nesting queue/i.test(b.textContent)) && !document.querySelector('.rvRel')), '2 · no "Release to nesting queue" button anywhere on the page, none under a reason');
     const unk = await look(UNKNOWN);
     // (RELEASE, Paul 19 Oct 2026: was "greyed, with the one plain reason"; the unknown SKU's question is set aside by the press, so the button is enabled and the old reason is a note)
-    check(unk && unk.text === 'Release Hold' && /\bgold\b/.test(unk.cls) && unk.how === 'anyway' && unk.disabled === null && /Releasing anyway: SKU NO_SUCH_DESIGN_77 has no design in any master file yet/.test(unk.title) && /nothing to place/.test(unk.title) && unk.aria.includes(unk.title.slice(0, 40)), `2 · the unknown SKU shows the same button, enabled, with the old reason as a note in its title and aria text (${JSON.stringify(unk && [unk.disabled, unk.title])})`);
+    check(unk && unk.text === 'Release Hold' && /\brelHoldBtn\b/.test(unk.cls) && unk.how === 'anyway' && unk.disabled === null && /Releasing anyway: SKU NO_SUCH_DESIGN_77 has no design in any master file yet/.test(unk.title) && /nothing to place/.test(unk.title) && unk.aria.includes(unk.title.slice(0, 40)), `2 · the unknown SKU shows the same button, enabled, with the old reason as a note in its title and aria text (${JSON.stringify(unk && [unk.disabled, unk.title])})`);
     await shot('02-review-rows');
     // (RELEASE, Paul 19 Oct 2026: the greyed press that said why and changed nothing is gone with the grey; pressing the unknown SKU's button releases it, tests/charm-nest/release-hold-button.cjs)
 
@@ -148,7 +150,7 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     check(marked && marked.ok, `4 · the order is sent to Review (${JSON.stringify(marked)})`);
     await until(() => page.$(rowSel(MARKED) + ' [data-rv-release]'), 20000, 'the button on the marked row');
     const mk = await look(MARKED);
-    check(mk && mk.how === 'mark' && /\bgold\b/.test(mk.cls) && mk.disabled === null && /Take this order out of Review/.test(mk.title), `4 · the marked order has the button, enabled (${JSON.stringify(mk && [mk.how, mk.title])})`);
+    check(mk && mk.how === 'mark' && /\brelHoldBtn\b/.test(mk.cls) && mk.disabled === null && /Take this order out of Review/.test(mk.title), `4 · the marked order has the button, enabled (${JSON.stringify(mk && [mk.how, mk.title])})`);
     await shot('04-review-mark');
     await page.click(rowSel(MARKED) + ' [data-rv-release]');
     await until(() => page.evaluate(rid => !CharmNestReviewMark.isMarked(rid), MARKED.rid), 30000, 'the mark to be resolved');

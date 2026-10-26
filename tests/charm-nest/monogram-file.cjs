@@ -171,9 +171,10 @@ const contourFacts = (font, ch) => {
       const rings = Geom.flatten(big.outline, 16).filter(r => r.length > 2); for (const m of P.cutLinesOf(big)) for (const r of Geom.flatten(m, 16)) if (r.length > 2) rings.push(r);
       return { letter, rings, sku };
     };
+    // (the middle is centerRatio 1.25 times the sides now, Paul's choice (charm-nest-monogram.js), no longer 1.5: a side's ink is never taller than 95 % of the centre's, so the middle is > 1.05 times as tall)
     for (const w of ['APV', 'OSR']) {
       const res = M.build({ left: await glyph('MONOGRAM_LEFT_' + w[0], w[0]), middle: await glyph('MONOGRAM_MID_' + w[1], w[1]), right: await glyph('MONOGRAM_RIGHT_' + w[2], w[2]) });
-      ok(res.ok && res.report.connected && res.report.holesKept >= 0.9 && res.report.centerScale > 1.2 && res.placed[1].bboxPt[3] - res.placed[1].bboxPt[1] > 1.3 * (res.placed[0].bboxPt[3] - res.placed[0].bboxPt[1]), `${w}: one connected piece, the counters kept, the middle letter bigger: ` + JSON.stringify(res.report));
+      ok(res.ok && res.report.connected && res.report.holesKept >= 0.9 && res.report.centerScale >= 1 && res.placed[1].bboxPt[3] - res.placed[1].bboxPt[1] > 1.05 * (res.placed[0].bboxPt[3] - res.placed[0].bboxPt[1]), `${w}: one connected piece, the counters kept, the middle letter bigger: ` + JSON.stringify(res.report));
     } }
 
   /* ── 4 · text that cannot be drawn stays text, said ── */

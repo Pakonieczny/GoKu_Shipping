@@ -5,7 +5,7 @@
 //       then SS takes the light from it (Paul, 29 Sep 01:30: no flash of every card between two sheets), "2 of 2"
 //       said, landed, closed; never two sheets spotlit at once; home to Review · Custom Orders at the same scroll;
 //   2 · one design × 3 on one sheet: one leg, the three land one after another, "+3";
-//   4 · a two-line order (two Etsy lines of one listing, one card), one line held: the placed legs play, then the held pieces wait and say why; home;
+//   4 · a two-line order (two Etsy lines of one listing, one card), one line held: the send stops, is saved for a retry and says why; no leg plays;
 //   6 · a click in the middle of leg 2: everything lands at once, NestFocus closes, nothing hidden or dimmed, home.
 // Screenshots to SHOTS (default /mnt/project-files/plans/tour/p2-*.png).
 //   node tests/charm-nest/tour-p2.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
@@ -82,7 +82,7 @@ const clean = () => ({ mode: CN.S.mode, chip: !!document.querySelector('#reviewV
       }
       await page.waitForTimeout(500);
     };
-    const send = async () => { await page.evaluate(() => { window.__NF.length = 0; window.__said.length = 0; window.__maxLit = 0; window.__t0 = performance.now(); document.querySelector('#cuDlg [data-send]').click(); }); await page.waitForFunction(() => SendTour.playing(), null, { timeout: 8000, polling: 'raf' }); };
+    const send = async () => { await page.evaluate(() => { window.__NF.length = 0; window.__said.length = 0; window.__maxLit = 0; window.__t0 = performance.now(); document.querySelector('#cuDlg [data-send]').click(); }); await page.waitForFunction(() => SendTour.playing(), null, { timeout: 8000, polling: 'raf' }); await page.evaluate(() => { window.__tTour = performance.now(); }); };
     const home = () => page.waitForFunction(() => !SendTour.playing(), null, { timeout: 25000 });
     const rowsOf = rid => page.evaluate(rid => B.orders.rows.filter(r => String(r.order.receiptId) === rid).map(r => ({ key: r.key, state: r.state, reason: r.reason, ids: (r.poolIds || []).slice(), sheets: (r.poolIds || []).map(id => { const p = allSheets().find(s => s.charms.some(c => c.poolId === id)); return p ? `${p.metal}:${p.page || 1}` : null; }) })), rid);
     const scrollOf = () => page.evaluate(() => document.querySelector('#reviewView .egPane.scroll')?.scrollTop ?? null);
@@ -99,15 +99,16 @@ const clean = () => ({ mode: CN.S.mode, chip: !!document.querySelector('#reviewV
     await page.waitForFunction(() => window.__NF.filter(c => c[0] === 'land').length >= 2, null, { timeout: 12000 });
     await page.waitForTimeout(250); await page.screenshot({ path: path.join(SHOTS, 'p2-2-leg2-landing.png') });
     await home();
-    const took1 = await page.evaluate(() => Math.round(performance.now() - __t0));
+    // (counted from the tour's start: before it, the SENT TO SHEET seal is stamped on the button (SEALSHEET, Paul 20 Oct 2026), about 2 s that are not the tour's)
+    const took1 = await page.evaluate(() => Math.round(performance.now() - __tTour));
     await page.waitForTimeout(300); await page.screenshot({ path: path.join(SHOTS, 'p2-3-home.png') });
     const e1 = await page.evaluate(clean), c1 = await page.evaluate(() => window.__NF.slice()), r1 = await rowsOf(R1), m1 = await page.evaluate(() => window.__maxLit), said1 = await page.evaluate(() => window.__said.slice());
     console.log(`  1 · ${took1} ms; NestFocus ${JSON.stringify(c1.map(c => c.slice(0, 4)))}; rows ${JSON.stringify(r1)}`);
     const opens1 = c1.filter(c => c[0] === 'open');
     check(r1[0].state === 'pooled' && JSON.stringify(r1[0].sheets) === '["gold:1","silver:1"]', `placed first: one piece on GF, one on SS (${JSON.stringify(r1[0].sheets)})`);
-    check(opens1.length === 2 && /^GF 14\/20 · Sheet 1/.test(opens1[0][3]) && /^SS · Sheet 1/.test(opens1[1][3]) && JSON.stringify(opens1[0][2]) === JSON.stringify([r1[0].ids[0]]) && JSON.stringify(opens1[1][2]) === JSON.stringify([r1[0].ids[1]]), `two legs, GF then SS, each with its own piece (${JSON.stringify(opens1.map(c => [c[1], c[2], c[3]]))})`);
+    check(opens1.length === 2 && /^GF 14\/20 · (Sheet|Draft) 1/.test(opens1[0][3]) && /^SS · (Sheet|Draft) 1/.test(opens1[1][3]) && JSON.stringify(opens1[0][2]) === JSON.stringify([r1[0].ids[0]]) && JSON.stringify(opens1[1][2]) === JSON.stringify([r1[0].ids[1]]), `two legs, GF then SS, each with its own piece (${JSON.stringify(opens1.map(c => [c[1], c[2], c[3]]))})`);
     check(oneAtATime(c1, m1) && JSON.stringify(c1.map(c => c[0])) === '["open","land","open","land","close"]', `one sheet at a time: opened, landed, the next takes the light, landed, closed (${c1.map(c => c[0]).join(' ')}; most lit at once ${m1})`);
-    check(said1.some(s => /^GF 14\/20 · Sheet 1 1 of 2/.test(s)) && said1.some(s => /^SS · Sheet 1 2 of 2/.test(s)) && said1.filter(s => /on Sheet 1 \+1/.test(s)).length === 2, `each sheet said, "1 of 2", "2 of 2", and what arrived on it (${JSON.stringify(said1)})`);
+    check(said1.some(s => /^GF 14\/20 · (Sheet|Draft) 1 1 of 2/.test(s)) && said1.some(s => /^SS · (Sheet|Draft) 1 2 of 2/.test(s)) && said1.filter(s => /on (Sheet|Draft) 1 \+1/.test(s)).length === 2, `each sheet said, "1 of 2", "2 of 2", and what arrived on it (${JSON.stringify(said1)})`);
     check(took1 < 13500, `two sheets in ${took1} ms`);
     nothingLeft(e1, '1'); check(e1.scroll === s1, `the same scroll (${s1} → ${e1.scroll})`);
 
@@ -118,7 +119,7 @@ const clean = () => ({ mode: CN.S.mode, chip: !!document.querySelector('#reviewV
     console.log(`  2 · NestFocus ${JSON.stringify(c2.map(c => c.slice(0, 4)))}; said ${JSON.stringify(said2)}`);
     const lands2 = c2.filter(c => c[0] === 'land');
     check(c2.filter(c => c[0] === 'open').length === 1 && lands2.length === 3 && r2[0].ids.every(id => lands2.some(l => l[1] === id)), `one leg, its three pieces landed one after another (${lands2.map(l => l[1]).join(', ')})`);
-    check(said2.some(s => /on Sheet 1 \+3\b/.test(s)), `"+3" said (${JSON.stringify(said2.filter(s => /\+/.test(s)))})`);
+    check(said2.some(s => /on (Sheet|Draft) 1 \+3\b/.test(s)), `"+3" said (${JSON.stringify(said2.filter(s => /\+/.test(s)))})`);
     nothingLeft(await page.evaluate(clean), '2');
 
     // ── 4 · a two-line order, one line held: the placed legs play, then the held pieces wait and say why ──
@@ -126,16 +127,19 @@ const clean = () => ({ mode: CN.S.mode, chip: !!document.querySelector('#reviewV
     await drop(R4, [{ metal: 'gold' }, { metal: 'silver' }]);
     const k42 = (await rowsOf(R4))[1].key;
     await page.evaluate(k => { const pa = Pool.poolAdd; window.__pa = pa; Pool.poolAdd = function (row) { if (row.key === k) return Promise.reject(new Error('its chain is out of stock')); return pa.apply(this, arguments); }; }, k42);
-    await send(); await home();
+    // (the send is durable now (sendIntent): a line that cannot join its sheet stops the send before any tour, it is saved for a retry with the reason said,
+    //  the placed line keeps its pieces and the button reads "Retry send"; no leg plays for a send that is not through)
+    await page.evaluate(() => { window.__NF.length = 0; window.__said.length = 0; document.querySelector('#cuDlg [data-send]').click(); });
+    await page.waitForFunction(rid => /saved for retry/.test(document.body.textContent) && B.orders.rows.some(r => String(r.order.receiptId) === rid && r.state === 'held'), R4, { timeout: 20000 });   // (the SENT TO SHEET stamp comes first, then the lines)
+    check(/Retry send/.test(await page.textContent('#cuDlg [data-send]')), 'its button reads Retry send');
     await page.evaluate(() => { Pool.poolAdd = window.__pa; });
-    const c4 = await page.evaluate(() => window.__NF.slice()), said4 = await page.evaluate(() => window.__said.slice()), r4 = await rowsOf(R4);
-    const note4 = await page.evaluate(() => [...document.querySelectorAll('.mNote')].map(n => n.textContent).join(' | '));
-    console.log(`  4 · NestFocus ${JSON.stringify(c4.map(c => c.slice(0, 4)))}; said ${JSON.stringify(said4)}; rows ${JSON.stringify(r4)}; note ${note4}`);
-    check(r4[0].state === 'pooled' && r4[1].state === 'held', `line 1 placed, line 2 held (${r4.map(r => r.state)})`);
-    const seq4 = c4.map(c => c[0] + (c[0] === 'waiting' ? ':' + c[1] : '')).join(' ');
+    const c4 = await page.evaluate(() => window.__NF.slice()), r4 = await rowsOf(R4);
+    const note4 = await page.evaluate(() => [...document.querySelectorAll('.toast, .mNote')].map(n => n.textContent).join(' | '));
+    console.log(`  4 · NestFocus ${JSON.stringify(c4.map(c => c.slice(0, 4)))}; rows ${JSON.stringify(r4)}; note ${note4}`);
+    check(r4[0].state === 'pooled' && r4[1].state === 'held' && /out of stock/.test(r4[1].reason || ''), `line 1 placed, line 2 held and says why (${r4.map(r => r.state + ':' + (r.reason || ''))})`);
     check(JSON.stringify(r4[0].sheets) === '["gold:1","silver:1"]', `line 1's copies placed, one on each metal (${JSON.stringify(r4[0].sheets)})`);
-    check(/^open land open land close waiting:gold waiting:silver$/.test(seq4), `the placed legs (GF, SS) play, then the held line's GF and SS pieces wait (${seq4})`);
-    check(said4.filter(s => /held/.test(s) && /out of stock/.test(s)).length === 2 && /held.*out of stock/.test(note4), `each says why it waits, and so does the note home (${JSON.stringify(said4.filter(s => /held/.test(s)))})`);
+    check(!c4.some(c => c[0] === 'open') && /saved for retry.*out of stock/.test(note4), `the send is saved for a retry, the reason said, and no leg plays (${c4.map(c => c[0]).join(' ')})`);
+    await page.click('#cuDlg [data-x]'); await page.waitForFunction(() => !document.querySelector('#cuDlg[open]'), null, { timeout: 5000 });
     nothingLeft(await page.evaluate(clean), '4');
 
     // ── 6 · a click in the middle of leg 2: everything lands at once, and home ──

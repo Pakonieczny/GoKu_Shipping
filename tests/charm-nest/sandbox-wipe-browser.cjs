@@ -155,7 +155,11 @@ const RID = '4173162973', OLD = 'OLDREC';
   // ── after: every store at zero, the real side as it was ──
   const after = await snapshot(page);
   const left = await page.evaluate(() => Sandbox.browserLeft());
-  for (const r of left) if (r.key !== 'station:browser') assert.strictEqual(r.n, 0, `after the reset nothing is left of "${r.label}": ${JSON.stringify(r)} · sandbox keys: ${JSON.stringify(Object.entries(after.ls).filter(([k]) => SB.test(k)).map(([k, v]) => [k, String(v).slice(0, 80)]))}`);
+  // (the page that boots after the reset reads the cancelled orders anew and keeps what it read (charm-nest-sheetwin.js, cn.cancelIds.v1, COST Oct 2026): written AFTER
+  //  the reset and holding no id, it is the new sandbox's, not a memory of the old one; one that still holds an id is left over and fails below)
+  const fresh = Object.entries(after.ls).filter(([k, v]) => k === 'cn.cancelIds.v1:sandbox' && (() => { try { return JSON.parse(v).ids.length === 0; } catch (_) { return false; } })()).map(([k]) => k);
+  for (const k of fresh) delete after.ls[k];
+  for (const r of left) if (r.key !== 'station:browser') assert.strictEqual(r.key === 'localStorage:sandbox' ? r.n - fresh.length : r.n, 0, `after the reset nothing is left of "${r.label}": ${JSON.stringify(r)} · sandbox keys: ${JSON.stringify(Object.entries(after.ls).filter(([k]) => SB.test(k)).map(([k, v]) => [k, String(v).slice(0, 80)]))}`);
   for (const k of Object.keys(after.ls)) assert(!(SB.test(k) && k !== 'cn.resetEpoch.sandbox'), `a sandbox-marked key survived the reset: ${k}`);
   assert(!/OLDREC|olsb_|q-old|m-sb|a-sb/.test(JSON.stringify(Object.entries(after.ls).filter(([k]) => k !== 'cn.settings'))), 'no record of the old run is left in localStorage');
   assert(after.ls['cn.resetEpoch.sandbox'], 'the epoch (the mark every tab reads) is there');
