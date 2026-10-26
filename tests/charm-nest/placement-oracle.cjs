@@ -123,9 +123,11 @@ function clearCloud(srv) { for (const k of [SHEETS, POOL, TL, CANC, CUSTOM, SETS
 function seedCloud(srv, spec) {
   clearCloud(srv);
   const put = srv.raw.set, d = cloudDocs(spec);
-  for (const s of d.sheets) put(SHEETS + '/' + s.id, s);
+  // (COST, Oct 2026: every write that can make a sheet or set current marks it `current: true`, and the Library's Current lists read only the
+  //  marked ones once Charm_Nest_Rev/currentFlag exists; that marker outlives clearCloud, so a seed written straight into the store marks its records as putSheet would)
+  for (const s of d.sheets) put(SHEETS + '/' + s.id, Object.assign({ current: true }, s));
   for (const p of d.pool) put(POOL + '/' + p.poolId, p);
-  for (const s of d.sets) put(SETS + '/' + s.setId, s);
+  for (const s of d.sets) put(SETS + '/' + s.setId, Object.assign({ current: true }, s));
   put(RUNS + '/' + d.run.runId, d.run);
 }
 
