@@ -33,6 +33,7 @@ function editor(job, toasts) {
   vm.runInContext(grab('  const fitOpts =', '  const items =') + '\nthis.fitOpts=fitOpts;', ctx);                                  // the real fitOpts, with the real Settings keys
   vm.runInContext(grab('  const capText =', '  function refit(') + '\nthis.capText=capText;', ctx);
   vm.runInContext(grab('  function refit(job, place)', '  /** New words on a placement'), ctx);
+  ctx.reopenForEdit = () => true; ctx.approvedView = () => false; vm.runInContext(grab('  const startEdit =', '\n') + grab('  const placeEditable =', '\n'), ctx);                                       // (NODECIDED: a hand change first reopens an approved piece; these jobs are in review)
   vm.runInContext(grab('  function resize(job, size)', '  function setLineSpacing('), ctx);
   vm.runInContext(grab('  function moveTo(job, centre)', '  /** Turn the text about its centre.'), ctx);
   vm.runInContext(grab('  function rotateTo(job, angle)', '  /** The box around the text'), ctx);

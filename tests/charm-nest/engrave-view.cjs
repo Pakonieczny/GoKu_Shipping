@@ -15,7 +15,7 @@ const c = vm.createContext({WORKSPACE_SANDBOX:true,localStorage:{getItem(){retur
   O:require('../../charm-nest-orders.js'), S:{settings:{},mode:'engrave'}, PT:72/25.4, MM:25.4/72, SOURCE_LABEL:{},
   Pool:{charmOf:()=>charm,previewCharmOf:()=>charm,sheetOf:()=>null}, P:{drawCharm(){throw Error('invalid saved path');}}, Review:{items:()=>[],count:()=>0,remove(){}}, Master:{entryFor:()=>null,fetchEntry:async()=>null},
   LiveStrip:{render(){}}, RunCtl:{poke(){}}, Orders:{render(){},rows:()=>[]},
-  setTimeout:fn=>(timers.push(fn),timers.length),clearTimeout(){},
+  setTimeout:fn=>(timers.push(fn),timers.length),clearTimeout(){},setInterval:()=>0,clearInterval(){},   // (the list's time ticker: never run in this sandbox)
   requestAnimationFrame:fn=>(frames.push(fn),frames.length),cancelAnimationFrame(){},
   el:(tag,cls,html='')=>{const e=document.createElement(tag);e.className=cls;e.innerHTML=html;return e;},
   esc:v=>String(v ?? '').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x])),

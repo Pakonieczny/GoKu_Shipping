@@ -24,7 +24,7 @@ function job(state = 'words') {
 }
 function engravingFixture() {
   let owner = new Map(), fonts = deferred(), worker = deferred(), calls = 0;
-  const context = vm.createContext({lineOf:r=>r,timelineApproved(){},items:()=>owner, loadFonts:()=>fonts.promise, F_:{ok:true,Regular:{}}, G:{glyphCoverage:()=>({ok:true})}, Review:{add(){},remove(){}}, Pool:{update:async()=>{}}, RunCtl:{poke(){}}, EG:{cardKey:null}, render(){}, agent(){}, Master:{entryFor:()=>({})}, charmFor:()=>charm, fitClient:()=>({run:()=>{calls++;return worker.promise;}}), fitInput:(j,c)=>({charm:c,lines:j.lines.slice()}), fitStamp:x=>JSON.stringify(x.lines)});
+  const context = vm.createContext({unplacedPre:()=>false,neverEngraves:()=>null,ensureJobFont:async()=>null,fontFor:()=>({}),virtualJob:()=>false,isFront:j=>j.face==='front',lineOf:r=>r,timelineApproved(){},items:()=>owner, loadFonts:()=>fonts.promise, F_:{ok:true,Regular:{}}, G:{glyphCoverage:()=>({ok:true})}, Review:{add(){},remove(){}}, Pool:{update:async()=>{}}, RunCtl:{poke(){}}, EG:{cardKey:null}, render(){}, agent(){}, Master:{entryFor:()=>({})}, charmFor:()=>charm, fitClient:()=>({run:()=>{calls++;return worker.promise;}}), fitInput:(j,c)=>({charm:c,lines:j.lines.slice()}), fitStamp:x=>JSON.stringify(x.lines)});
   const charm = {outline:{},members:[]};
   vm.runInContext(section('  async function setReady(', '  /** A person\'s decision'), context);
   vm.runInContext(section('  const fitTasks =', '  async function claudeRead('), context);
@@ -102,7 +102,7 @@ async function testRecoveryFailures() {
   }
   for (const changed of [true,false]) {
     const j = job('ready'), gate = deferred(), started = deferred(); let owner = new Map([[j.key,j]]), feedback = 0;
-    const context = vm.createContext({lineOf:r=>r,items:()=>owner,canFit:()=>true,isWorking:()=>false,Pool:{sheetOf:()=>({fileBase:'saved'})},fitJob:()=>{started.resolve();return gate.promise;},Review:{add(){feedback++;}},agent(){},render(){}});
+    const context = vm.createContext({unplacedPre:()=>false,lineOf:r=>r,items:()=>owner,canFit:()=>true,isWorking:()=>false,Pool:{sheetOf:()=>({fileBase:'saved'})},fitJob:()=>{started.resolve();return gate.promise;},Review:{add(){feedback++;}},agent(){},render(){}});
     vm.runInContext(section('  async function fitAll(', '  /* Reading the words'),context);
     const pending = context.fitAll(); await started.promise;
     if (changed) { j.state = 'approved'; j.row.engrave = {state:'approved',approved:true}; }
@@ -113,7 +113,7 @@ async function testRecoveryFailures() {
 }
 function approvalFixture(f) {
   const verified = []; let stamped = 0, saved = 0;
-  Object.assign(f.context, {Date,console,clearTimeout,employeeName:()=> 'Paul',askEmployee:()=> 'Paul',CNListActivity:{touch(){}},CNEngravingSeals:{...engravingSeals,press:async()=>{stamped++;}},Session:{schedule(){},flushNow:async()=>true},Review:{add(){},remove(){}},EG_TAB:()=>'',goes(){},toast(){},prepareApproval:async j=>{verified.push({fit:j.fit,view:j.view,text:j.text});return {fit:j.fit,view:j.view};},saveBacks:async j=>{saved++;j.state='written';j.row.engrave.state='written';}});
+  Object.assign(f.context, {Orders:{lineRecord:()=>null,render(){},rows:()=>[]},Date,console,clearTimeout,employeeName:()=> 'Paul',askEmployee:()=> 'Paul',CNListActivity:{touch(){}},CNEngravingSeals:{...engravingSeals,press:async()=>{stamped++;}},Session:{schedule(){},flushNow:async()=>true},Review:{add(){},remove(){}},EG_TAB:()=>'',goes(){},toast(){},prepareApproval:async j=>{verified.push({fit:j.fit,view:j.view,text:j.text});return {fit:j.fit,view:j.view};},saveBacks:async j=>{saved++;j.state='written';j.row.engrave.state='written';}});
   vm.runInContext(section('  // A verified decision is checkpointed', '  /** An approval\'s back files'),f.context);
   return {verified,get stamped(){return stamped;},get saved(){return saved;}};
 }
@@ -150,10 +150,10 @@ function cardFixture() {
   task.promise.then(()=>{if(j._approvalTask===task.promise)delete j._approvalTask;if(j._backTask===task.promise)delete j._backTask;});
   let skipped = 0;
   const EG = {card,cardKey:j.key,list:false};
-  const context = vm.createContext({window:dom.window,document:dom.window.document,card,job:j,EG,items:()=>jobs,setTimeout,Promise,Review:{remove(){}},render(){},goes(){},approve(){},centreText(){},rotateTo(){},queuedJobs:x=>x,matchesQ:()=>true,resplit(){},skip(){skipped++;},sendBack(){},nudge(){}});
+  const context = vm.createContext({leaveGuard:()=>false,window:dom.window,document:dom.window.document,card,job:j,EG,items:()=>jobs,setTimeout,Promise,Review:{remove(){}},render(){},goes(){},approve(){},centreText(){},rotateTo(){},queuedJobs:x=>x,matchesQ:()=>true,resplit(){},skip(){skipped++;},sendBack(){},nudge(){}});
   dom.window.Seal = {whenIdle:async()=>{}};
   vm.runInContext(section('    const approvalBusy =', '    const lineControl='),context);
-  vm.runInContext(section('    card.addEventListener("keydown", e => { if (e.target.tagName', '    // the next card takes focus'),context);
+  vm.runInContext(section('    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT" || e.repeat || e.target.closest?.(".pvMail")) return; const k', '    // the next card takes focus'),context);
   return {dom,card,j,jobs,task,EG,get skipped(){return skipped;}};
 }
 async function testCardClosing() {
