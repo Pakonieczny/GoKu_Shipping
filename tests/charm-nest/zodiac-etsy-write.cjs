@@ -362,7 +362,7 @@ async function main() {
     const broken = Mod.fenceWith({ collection: () => ({ doc: () => ({ get: async () => { throw new Error('database down'); } }) }) }), warn0 = console.warn; console.warn = () => {};
     const rd = await broken({ listingId: LID }); console.warn = warn0; eq([rd.ok, rd.reason, rd.calls], [false, 'fence-read', 0], 'a record that cannot be read refuses (fail closed): the op would have failed on the same database');
     // the library's handler asks fenceFor(op, body): only the named ops are asked, the rest pass without any read
-    eq(Mod.FENCED_OPS, ['listingEtsySkuWrite'], 'the fenced ops'); let reads = 0; const counting = async b => { reads++; return fence(b); };
+    eq(Mod.FENCED_OPS, ['listingEtsySkuWrite', 'editSkuEtsy'], 'the fenced ops (EDITSKU writes the same inventory)'); let reads = 0; const counting = async b => { reads++; return fence(b); };
     eq((await Mod.fenceFor('listingEtsySkuWrite', { listingId: LID, sku: 'X' }, counting)).reason, 'fenced', 'the SKU tool on a written zodiac listing: refused'); eq(reads, 1, 'with one read');
     eq(await Mod.fenceFor('listingEtsySkuWrite', { listingId: '1718000099', sku: 'X' }, counting), null, 'the SKU tool on another listing: passes'); eq(reads, 2);
     for (const op of ['customEtsySkuWrite', 'aliasPut', 'listingSkus', 'zodiacListingPrepare', 'poolList', undefined]) eq(await Mod.fenceFor(op, { listingId: LID }, counting), null, String(op) + ' is not a fenced op: passes without a read'); eq(reads, 2, 'no read for any op that is not named');

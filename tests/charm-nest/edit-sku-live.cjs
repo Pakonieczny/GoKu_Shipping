@@ -153,6 +153,8 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     /* the pick, in the order window */
     // (the cloud answers as it does in the shop, not at once: the piece read before the take-off takes a moment, and the window is painted meanwhile, as the page paints it on every change)
     await one.page.evaluate(() => { const real = window.api; window.api = (fn, body, o) => body && body.op === 'poolGet' ? new Promise(r => setTimeout(r, 400)).then(() => { try { OrderWin.paint(); } catch (_) {} return new Promise(r => setTimeout(r, 200)); }).then(() => real(fn, body, o)) : real(fn, body, o); });
+    // (EDITSKU Etsy: the page's editSkuEtsy call is answered here as the server answers a done write (tests/charm-nest/etsy-link.cjs drives the real one against a fake Etsy))
+    await one.page.evaluate(() => { const real = window.api; window.__etsy = []; window.api = (fn, body, o) => body && body.op === 'editSkuEtsy' ? (window.__etsy.push(JSON.parse(JSON.stringify(body))), new Promise(r => setTimeout(() => r({ ok: true, state: 'linked', listingId: body.listingId, sku: body.sku, changed: 2, verified: true, beforePath: 'x/before.json' }), 300))) : real(fn, body, o); });
     const w0 = st.calls.length, nests0 = await one.page.evaluate(() => (window.__nests || []).length), writes0 = await one.page.evaluate(() => (window.__writes || []).length), t0 = Date.now();
     const plate = page => page.evaluate(() => Object.fromEntries(CN.S.sheets.gold.pages.flatMap(p => p.placements.map(pl => { const c = p.charms.find(z => z.id === pl.id) || {}; return [c.poolId, [p.sheetId, +pl.cxPt, +pl.cyPt, +pl.angle || 0]]; }))));
     const plate0 = await plate(one.page);
@@ -215,18 +217,22 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     await until(() => one.page.evaluate(() => !!document.querySelector('.rlFlow[data-done="1"]')), 15000, 'the progress panel finished');
     const fl = await one.page.evaluate(() => { const el = document.querySelector('.rlFlow'); return { title: el.querySelector('h3').textContent, bar: el.querySelector('.rlBar').getAttribute('aria-valuenow'), sum: el.querySelector('.rlSum').textContent, lines: [...el.querySelectorAll('li')].map(li => [li.dataset.s, li.querySelector('.rlT').textContent]) }; });
     const has = (state, re) => fl.lines.some(([s, t]) => s === state && re.test(t));
-    assert(/Wrong charm\? · listing 1819191541 → MOON_3288/.test(fl.title) && fl.bar === '100', 'the panel names the change and its bar is full: ' + JSON.stringify(fl));
+    assert(/^Edit SKU · listing 1819191541: TINY MOON & STARS 2 → MOON_3288/.test(fl.title) && fl.bar === '100', 'the panel names the change and its bar is full: ' + JSON.stringify(fl));
+    const ets = await one.page.evaluate(() => window.__etsy);
+    assert.deepEqual(ets.map(b => [b.listingId, b.sku, b.onlySku]), [['1819191541', NEW, OLD]], 'ONE Etsy write, for this listing only, and only for its products with the line\'s Etsy SKU: ' + JSON.stringify(ets));
+    assert(has('done', /^Etsy listing 1819191541 updated: “TINY MOON & STARS 2” → MOON_3288 on 2 products/), 'the Etsy line: ' + JSON.stringify(fl.lines));
+    assert(has('done', /^Updated everywhere: Orders, Review, the order window/), 'the views line: ' + JSON.stringify(fl.lines));
     assert(has('done', /^Linked listing 1819191541 · SKU “TINY MOON & STARS 2” to MOON_3288/), 'the link line: ' + JSON.stringify(fl.lines));
     assert(has('done', new RegExp(`^Order ${A}: new piece placed in the old spot on GF Sheet 1.*made from MOON_3288`)), 'A\'s line names the sheet, the old spot and the new design: ' + JSON.stringify(fl.lines));
     assert(has('warn', new RegExp(`^Order ${D}: its piece stays TINY MOON & STARS 2 on GF Sheet 2.*cut`)), 'D\'s line says its piece stays, and why: ' + JSON.stringify(fl.lines));
     assert(has('done', /^GF Sheet 1 files saved$/) && has('done', /^Thumbnails updated/), 'the sheet and the pictures have their lines: ' + JSON.stringify(fl.lines));
     assert(!fl.lines.some(([, t]) => /nested again/.test(t)), 'no "nested again" line: ' + JSON.stringify(fl.lines));
-    assert(!fl.lines.some(([s]) => s === 'failed') && /1 order updated, 1 sheet saved \(none nested again\), 1 kept for a person/.test(fl.sum), 'nothing failed; the summary: ' + fl.sum);
+    assert(!fl.lines.some(([s]) => s === 'failed') && /^MOON_3288 for listing 1819191541 · Etsy updated$/.test(fl.sum), 'nothing failed; the summary: ' + fl.sum);
     await one.page.evaluate(A => { const r = B.orders.rows.find(x => x.order.receiptId === A); OrderWin.open(r.key); }, A);
     await until(() => one.page.evaluate(() => OrderWin.isOpen()), 8000, 'the order window again');
     await one.page.click('.rlFlow [data-rl=close]', { timeout: 5000 });
     assert.equal(await one.page.evaluate(() => document.querySelectorAll('.rlFlow').length), 0, 'the panel closes with its button, over the open order window');
-    pass('the progress panel says each place updated (the link, A\'s new piece placed in the old spot on GF Sheet 1, D kept and why, GF Sheet 1 files saved, the pictures), fills, sums up and closes');
+    pass('the progress panel says each place updated (Etsy listing 1819191541 only, the link, A\'s new piece placed in the old spot on GF Sheet 1, D kept and why, GF Sheet 1 files saved, the pictures, every view), fills, sums up and closes');
     /* E: an Etsy SKU no charm in the repo matches: Edit SKU saves the SKU's link and the line is made up and placed */
     await one.page.evaluate(E => { const r = B.orders.rows.find(x => x.order.receiptId === E); OrderWin.open(r.key); }, E);
     await until(() => one.page.evaluate(() => OrderWin.isOpen()), 8000, 'E\'s order window');
@@ -235,6 +241,10 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     await editSku('GFFILL_3', 'E (no charm matches its SKU)');
     await until(() => one.page.evaluate(E => { const r = B.orders.rows.find(x => x.order.receiptId === E); const id = r.poolIds[0]; return r.spec.designSku === 'GFFILL_3' && !!id && ['pooled', 'placed', 'written'].includes(r.state) && !r.hold; }, E), 25000,
       () => one.page.evaluate(E => { const r = B.orders.rows.find(x => x.order.receiptId === E); return 'E made up from GFFILL_3 and placed: ' + JSON.stringify({ state: r.state, hold: r.hold, reason: r.reason, problems: r.problems, sku: r.spec.designSku, src: r.spec.skuSource, mat: r.spec.material, ids: r.poolIds, on: r.poolIds.map(i => (Pool.sheetOf(i) || {}).sheetId), step: B.run && B.run.step, pe: r.poolError, pt: r.poolTry }); }, E));
+    await until(() => one.page.evaluate(() => !!document.querySelector('.rlFlow[data-done="1"]')), 15000, 'E\'s progress panel finished');
+    const fe = await one.page.evaluate(() => { const el = [...document.querySelectorAll('.rlFlow')].pop(); return { sum: el.querySelector('.rlSum').textContent, lines: [...el.querySelectorAll('li')].map(li => [li.dataset.s, li.querySelector('.rlT').textContent]) }; });
+    assert.deepEqual((await one.page.evaluate(() => window.__etsy)).slice(1).map(b => [b.listingId, b.sku, b.onlySku]), [[ELID, 'GFFILL_3', ESKU]], 'E: one Etsy write, its own listing only');
+    assert(fe.lines.some(([s, t]) => s === 'done' && /^Etsy listing 1700000299 updated/.test(t)) && fe.lines.some(([s, t]) => s === 'done' && /^Saved: listing 1700000299/.test(t)) && /Etsy updated$/.test(fe.sum), 'E\'s panel: ' + JSON.stringify(fe));
     const al = st.doc('Charm_Sku_Aliases', ELID);
     assert(al && al.bySku && al.bySku[ESKU] === 'GFFILL_3', 'the link of listing ' + ELID + ' · ' + ESKU + ' → GFFILL_3 is saved on the server: ' + JSON.stringify(al));
     const held = await one.page.evaluate(() => CN.S.sheets.gold.pages.filter(p => p.runHold || p._inplaceHold || p.problem || (p.laserHold && p.laserHold.at)).map(p => p.sheetId));

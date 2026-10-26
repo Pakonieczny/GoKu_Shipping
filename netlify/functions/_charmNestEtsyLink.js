@@ -84,6 +84,7 @@ const REASONS = {
   "sku-blocked": { text: "that master design is blocked until its conflict is settled", retry: false },
   "huggie-unknown": { text: "Huggie products carry the SKU and no earlier SKU is known for them, so they were left alone and nothing was changed", retry: false },
   "only-huggie": { text: "every product of the listing is a Huggie product, so none takes the SKU and nothing was changed", retry: false },
+  "from-sku-missing": { text: "no product of the listing carries that Etsy SKU now, so none takes the new SKU and nothing was changed", retry: false },
   "sku-shape": { text: o => "Etsy would not keep that SKU as it is" + (o.details && o.details[0] ? " (" + o.details[0] + ")" : ""), retry: false },
   "bad-request": { text: "the request is not complete: a listing (number or link) and a master SKU", retry: false },
   internal: { text: "the change was stopped by a safety check", retry: false }
@@ -179,6 +180,13 @@ function restoredGroups(restore) {
   for (const v of restore.values()) by.set(v, (by.get(v) || 0) + 1);
   return [...by.entries()].map(([sku, n]) => ({ sku, n })).sort((a, b) => b.n - a.n || (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0));
 }
+/** (EDITSKU, Paul 26 Oct 2026) The plan for an Edit SKU: only the products that carry the line's Etsy SKU (any case; or the new SKU already) take the new SKU, every other product of the listing keeps its own,
+ *  exactly as read (the rule's "left alone" set). Nothing is restored. */
+function onlyPlan(live, key, from) {
+  const f = String(from || "").trim().toUpperCase(), k = String(key || "").trim().toUpperCase();
+  const keyed = live.filter(p => { const t = skuText(p).trim().toUpperCase(); return t === f || t === k; });
+  return { huggie: new Set(live.filter(p => !keyed.includes(p))), keyed, restore: new Map(), left: [] };
+}
 const huggieInfoOf = plan => (plan.huggie.size ? { products: plan.huggie.size, keyed: plan.keyed.length, restored: restoredGroups(plan.restore), left: plan.left.length } : null);
 /** The body of the one PUT under the rule: buildPutBody's proven body for the products that take the key, the Huggie products that go back with their old SKU, everything else as read.
  *  → { body, invB, keySet, widen, target } (invB: the inventory with sku_on_property widened to every property when the planned SKUs need it) */
@@ -217,7 +225,7 @@ function make(deps) {
   const maxCalls = deps.maxCalls > 0 ? Math.min(deps.maxCalls, MAX_CALLS) : MAX_CALLS;   // (a test may only LOWER the cap)
 
   /* the record is read, checked and the run claimed in ONE transaction: a second press while a run is in flight is refused (a lease of 60 s) */
-  async function claim(ref, listingId, sku, by, leave) {
+  async function claim(ref, listingId, sku, by, leave, fresh) {
     const t = clock();
     return db.runTransaction(async tx => {
       const snap = await tx.get(ref), d = snap.exists ? snap.data() || {} : null;
@@ -227,6 +235,7 @@ function make(deps) {
         earlier = earlier.concat([{ sku: d.sku, state: prev.state, beforePath: prev.beforePath || null, at: prev.at || d.at || null }]).slice(-5);
         prev = { state: "pending" };
       }
+      if (prev.state === "linked" && fresh) prev = clean({ state: "pending", backups: prev.backups });   // (EDITSKU: another Etsy SKU of the listing may be the one changing now: the listing is read live)
       if (prev.state === "linked") {
         if (!leave || prev.leaveHuggie === true) return { linked: { prev } };
         // an earlier plain press put the key on EVERY product and left this record: a request that leaves the Huggie products alone is a new job on a listing that press finished (the listing is read live, not trusted from the record);
@@ -259,6 +268,8 @@ function make(deps) {
     const leave = body.leaveHuggie === true, oldSku = leave && typeof body.huggieOldSku === "string" ? body.huggieOldSku : "";   // (DOVEHUG: the optional rule; anything but true leaves the request exactly as it always was)
     if (oldSku) { const bad = oldSkuProblem(oldSku, sku); if (bad) return answer("sku-shape", { details: ["the Huggie products' old SKU: " + bad] }); }
     const by = String(body.by == null ? "" : body.by).replace(/[^\w .'-]/g, "").trim().slice(0, 80) || "operator";
+    // (EDITSKU: onlySku, the line's Etsy SKU: only the products carrying it take the new one; each request reads the listing live)
+    const only = typeof body.onlySku === "string" && body.onlySku.trim() && body.onlySku.length <= 64 ? body.onlySku.trim() : "";
     try {   // the master holds EXACTLY this SKU (the entry's own spelling), and it is not blocked
       const s = await db.collection(Master.INDEX).doc(sku).get(), e = s.exists ? s.data() || {} : null;
       if (!e || e.sku !== sku) return answer("sku-not-in-master");
@@ -266,11 +277,11 @@ function make(deps) {
     } catch (e) { console.error("[etsyLink] master read", listingId, e && e.message); return answer("internal", { details: [e && e.message] }); }
     const ref = db.collection(SAVES).doc(linkId(listingId));
     let got;
-    try { got = await claim(ref, listingId, sku, by, leave); } catch (e) { console.error("[etsyLink] claim", listingId, e && e.message); return answer("internal", { details: [e && e.message] }); }
+    try { got = await claim(ref, listingId, sku, by, leave, !!only); } catch (e) { console.error("[etsyLink] claim", listingId, e && e.message); return answer("internal", { details: [e && e.message] }); }
     if (got.refusal) return answer(got.refusal);
     if (got.blocked) return answer(got.blocked.reason, { details: got.blocked.details, beforePath: got.blocked.beforePath, skuMissing: got.blocked.skuMissing });
     if (got.linked) return linkedAnswer(listingId, sku, got.linked.prev);
-    const out = await run(ref, listingId, sku, got.prev, got.lease, leave ? { old: oldSku } : null);
+    const out = await run(ref, listingId, sku, got.prev, got.lease, only ? { only } : leave ? { old: oldSku } : null);
     if (out.calls && meter && typeof meter.flushNow === "function") { try { await meter.flushNow(); } catch (_) { /* the counters are best effort */ } }
     return out;
   }
@@ -347,11 +358,11 @@ function make(deps) {
       try { inv = await call(() => etsy.get("/listings/" + listingId + "/inventory", { legacy: false })); } catch (e) { return await stopOn(e); }
       const live = (Array.isArray(inv && inv.products) ? inv.products : []).filter(p => p && typeof p === "object" && !p.is_deleted);
       if (!live.length) return await stop("no-products");
-      const plan = rule ? await leavePlan(listingId, sku, live, rule, cur) : null;   // (the rule: DOVEHUG; null = every product takes the key, as always)
-      if (plan && !plan.keyed.length) return await stop("only-huggie");
+      const plan = rule && rule.only ? onlyPlan(live, sku, rule.only) : rule ? await leavePlan(listingId, sku, live, rule, cur) : null;   // (the rule: EDITSKU's only, or DOVEHUG; null = every product takes the key, as always)
+      if (plan && !plan.keyed.length) return await stop(rule.only ? "from-sku-missing" : "only-huggie");
       /* the rule on a listing with NO Huggie product at all (every product takes the key, as the earlier plain press did): a strict no-op, the plain press's own answer. One inventory read, no PUT, no safety copy;
          the record keeps what that press left (only the rule's mark is added, so the next press answers from it with no Etsy request). */
-      if (plan && !plan.huggie.size && prev.kept && live.every(p => decodeOnce(p.sku == null ? "" : p.sku).trim() === sku)) {
+      if (plan && !rule.only && !plan.huggie.size && prev.kept && live.every(p => decodeOnce(p.sku == null ? "" : p.sku).trim() === sku)) {
         const k = prev.kept, out = Object.assign(linkedAnswer(listingId, sku, k), { calls, already: true });
         try { await ref.update({ link: clean(Object.assign({}, k, { leaveHuggie: true })) }); }
         catch (e) { console.warn("[etsyLink] could not update the record for", listingId, e && e.message); out.recorded = false; }
@@ -369,14 +380,14 @@ function make(deps) {
           const bl = before && Array.isArray(before.products) ? before.products.filter(p => p && !p.is_deleted) : null;
           if (bl && bl.length) {
             let expected;
-            if (plan) { const bp = await leavePlan(listingId, sku, bl, rule, cur); expected = ruleBuild(before, bl, sku, bp).body; }   // (what the rule would have sent for that copy)
+            if (plan) { const bp = rule.only ? onlyPlan(bl, sku, rule.only) : await leavePlan(listingId, sku, bl, rule, cur); expected = ruleBuild(before, bl, sku, bp).body; }   // (what the rule would have sent for that copy)
             else expected = buildPutBody(before, bl, new Set(bl), sku);
             const cmp = compareInventories(expected, inv);
             if (!cmp.ok) return await stop("verify", { details: cmp.differences, beforePath: cur.beforePath });
             verified = true;
           }
         }
-        return await linked(listingId, sku, inv, live.length, calls, verified, settle, { already: !cur.beforePath || undefined, beforePath: cur.beforePath, replaced: cur.replaced, replacedMore: cur.replacedMore, ...(plan ? { leave: true, huggie: cur.huggie || huggieInfoOf(plan) } : {}) });
+        return await linked(listingId, sku, inv, live.length, calls, verified, settle, { already: !cur.beforePath || undefined, beforePath: cur.beforePath, replaced: cur.replaced, replacedMore: cur.replacedMore, ...(plan && !rule.only ? { leave: true, huggie: cur.huggie || huggieInfoOf(plan) } : {}), ...(plan && rule.only ? { only: plan.keyed.length } : {}) });
       }
       // an earlier try may have put: the listing must still be exactly as the before-copy was (Etsy did not apply it) before another PUT; anything else is for a person
       const canonNow = Canon.snapshotHash(inv);
@@ -420,7 +431,7 @@ function make(deps) {
       if (!looksLikeFreshInventory(echo, putBody.products.length)) return await stop("unverified", { beforePath });
       const cmp = compareInventories(putBody, echo);
       if (!cmp.ok) return await stop("verify", { details: cmp.differences, skuMissing: cmp.differences.some(x => /SKU/.test(x)), beforePath });
-      return await linked(listingId, sku, echo, live.length, calls, true, settle, { beforePath, replaced: cur.replaced, replacedMore: cur.replacedMore, ...(plan ? { leave: true, huggie: info } : {}) });
+      return await linked(listingId, sku, echo, live.length, calls, true, settle, { beforePath, replaced: cur.replaced, replacedMore: cur.replacedMore, ...(plan && !rule.only ? { leave: true, huggie: info } : {}), ...(plan && rule.only ? { only: plan.keyed.length } : {}) });
     } catch (e) {
       console.error("[etsyLink]", listingId, e && e.message);
       return await stop("internal", { state: putSent ? "unverified" : undefined, details: [e && e.message] });
@@ -437,6 +448,7 @@ function make(deps) {
     const out = { ok: true, state: "linked", calls, listingId, sku, productIds, products: n, verified };
     if (o.already) out.already = true;
     if (o.huggie) out.huggie = o.huggie;
+    if (o.only != null) out.changed = o.only;   // (EDITSKU: how many products carried the line's Etsy SKU and carry the new one now)
     if (o.beforePath) out.beforePath = o.beforePath;
     if (Array.isArray(o.replaced) && o.replaced.length) { out.replaced = o.replaced; if (+o.replacedMore > 0) out.replacedMore = +o.replacedMore; }
     if (!recorded) out.recorded = false;   // Etsy has the SKU; only the record could not be updated (a press makes one GET and writes it)

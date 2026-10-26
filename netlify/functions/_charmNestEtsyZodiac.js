@@ -820,7 +820,7 @@ function fenceWith(db) {
     return d && FENCE_STATES.has(d.state) ? answer("fenced", { state: d.state }) : null;
   };
 }
-const FENCED_OPS = ["listingEtsySkuWrite"];   // every charmNestLibrary op that takes {listingId} and writes that listing's Etsy inventory (the registry test names the files that write one)
+const FENCED_OPS = ["listingEtsySkuWrite", "editSkuEtsy"];   // every charmNestLibrary op that takes {listingId} and writes that listing's Etsy inventory (the registry test names the files that write one)
 /** null: let the op run; else the refusal to answer instead. Only the ops named in FENCED_OPS are asked. `fence` is for a test; the real one reads Firestore. */
 async function fenceFor(op, body, fence) {
   if (!FENCED_OPS.includes(op)) return null;

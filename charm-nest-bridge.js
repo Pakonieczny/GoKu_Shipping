@@ -16073,23 +16073,27 @@ const Review = window.Review = (() => {
     if (!(o.confirm || window.confirm)(ask)) return { ok: false, why: "not confirmed", ask };
     // (WRONGCHARM2, Paul 20 Oct 2026: the progress panel opens first and follows every sweep of the listing from the write on: relinkFlow)
     const scope = off.via === "option" && off.option ? `option “${off.option.name}: ${off.option.value}”` : off.from ? `SKU “${off.from}”` : "no SKU";
-    const flow = relinkFlow({ title: `Wrong charm? · listing ${off.listingId} → ${sku}`, sub: "Kept for this listing and its SKU only. Etsy is not changed.", listingId: off.listingId, fromSku: off.from, toSku: sku,
+    // (EDITSKU: Edit SKU gives its own title and words, keeps the panel open for its own end (o.keepOpen) and starts its Etsy write with the link write (o.onFlow))
+    const flow = relinkFlow({ title: o.title || `Wrong charm? · listing ${off.listingId} → ${sku}`, sub: o.sub || "Kept for this listing and its SKU only. Etsy is not changed.", listingId: off.listingId, fromSku: off.from, toSku: sku, keepOpen: !!o.keepOpen,
       pre: [{ id: "link", text: `Saving the link: listing ${off.listingId} · ${scope} → ${sku}…`, state: "work" }] });
+    if (o.onFlow) o.onFlow(flow);
     let r; try { r = await RL.pick(row, sku, { by: who }); } catch (e) { r = { ok: false, why: (e && e.message) || String(e) }; }   // (REVLINK: ONE write under the matcher's key, read back by the server, the maps read again; it throws when it is not saved)
-    if (!r || !r.ok) { flow.fail((r && r.why) || "the link was not saved", "link", `Not linked: listing ${off.listingId} · ${scope} → ${sku}`); return no((r && r.why) || "That charm could not be kept for this listing"); }
+    if (!r || !r.ok) { flow.fail((r && r.why) || "the link was not saved", "link", `Not linked: listing ${off.listingId} · ${scope} → ${sku}`); return Object.assign(no((r && r.why) || "That charm could not be kept for this listing"), { flow }); }
     flow.line("link", `Linked listing ${off.listingId} · ${scope} to ${sku} (was ${off.cur})`, "done");
     toast(`${off.from || off.cur} → ${sku} kept for listing ${off.listingId}`, "ok");
     linkHolds([row], sku);
-    await flow.run({}).first;   // (LISTPICK: every open order of the listing made up again with the pick, in place on its sheet when it fits; the panel follows it to the end)
+    const run = flow.run({}); await run.first;   // (LISTPICK: every open order of the listing made up again with the pick, in place on its sheet when it fits; the panel follows it to the end)
     for (const rr of Orders.rows()) if (String(rr.line.listingId).replace(/\D/g, "") === off.listingId && rr.state === "unmatched") await repool(rr);
     Orders.interpretAll(); syncOrderItems(); Orders.render();
-    return { ok: true, sku, key: r.key, via: r.via, ask, orders: aff.orders };
+    return { ok: true, sku, key: r.key, via: r.via, ask, orders: aff.orders, flow, all: run.all };
   }
   /* EDITSKU (Paul, 26 Oct 2026): "the ability to Manually update a given Etsy listing SKU # to match with an existing SKU from our charm repo" (the order window's Edit SKU, beside Copy).
      One press for any open line, matched or not: a line matched to a charm now is re-linked as "Wrong charm?" does (fixCharm: the listing's link, read back, then LISTPICK); a line with no
      charm (an unknown SKU, "No vector available") gets the saved alias for its listing and its Etsy SKU (aliasPut, as Review's "Use this charm"), then every open order of that listing and SKU is
      made up again with the charm (relinkNow / repool: INPLACE, the new charm in the old charm's spot when it fits, else on the next sheet of its colour; the sheet itself is written as it stands,
-     never held). Etsy is not changed. → { ok, why, sku, via } */
+     never held). "When a user updates the SKU the matching etsy listing must also be immediately auto updated in real-time" (no Charm Repo password), and "only that one particular listing":
+     the Etsy write (editSkuEtsy) starts with the link write, for THIS listing only and only its products that carry the line's Etsy SKU. One progress panel (relinkFlow, kept open) follows it all:
+     Etsy, the link, each order and sheet, every view. → { ok, why, sku, via, done } (done: the panel's end, with the Etsy answer) */
   function editSkuOffer(row) {
     if (!row || !row.line || !row.spec || row.loading) return { ok: false, why: "the line is not read yet" };
     if (row.fromRecord) return { ok: false, why: "this order is read from the records, not the open orders" };
@@ -16100,6 +16104,21 @@ const Review = window.Review = (() => {
     const RL = window.CharmNestReviewLink, from = RL && RL.fromOf ? RL.fromOf(row.line, row.spec) : String(row.line.sku || "").trim().toUpperCase();
     const fix = fixOffer(row);
     return { ok: true, why: "", lid, from: from || "", cur: String(row.spec.designSku || "").toUpperCase(), viaLink: !!fix.ok };
+  }
+  /** The Etsy half of an SKU edit, on the panel's "etsy" line: listing `off.lid` only, and only its products that carry the line's Etsy SKU take the new one (editSkuEtsy). → the answer */
+  function editSkuEtsy(flow, off, sku, who) {
+    const L = off.lid, say = (text, state, why) => { try { flow.line("etsy", text, state, why); } catch (_) { /* a word only */ } };
+    if (!off.from) { say(`Etsy listing ${L}: the line has no Etsy SKU, so Etsy is not changed`, "skip"); return Promise.resolve({ ok: false, skipped: true }); }
+    say(`Etsy listing ${L}: changing the SKU “${off.from}” to ${sku} (this listing only)…`, "work");
+    return api("charmNestLibrary", { op: "editSkuEtsy", listingId: L, sku, onlySku: off.from, by: who }, { label: "Updating the Etsy listing" })
+      .catch(e => ({ ok: false, thrown: true, text: (e && e.message) || String(e) }))
+      .then(r => {
+        r = r || { ok: false, text: "no answer" };
+        if (r.ok) say(r.already ? `Etsy listing ${L} has ${sku} already` : `Etsy listing ${L} updated: “${off.from}” → ${sku}${r.changed ? ` on ${r.changed} product${r.changed === 1 ? "" : "s"}` : ""}`, "done", `only this listing: other listings with the same SKU are not changed${r.beforePath ? "; the listing as it was is kept" : ""}`);
+        else if (r.reason === "sandbox") { r.skipped = true; say(`Etsy listing ${L}: not changed from the sandbox`, "skip"); }
+        else say(`Etsy listing ${L} was NOT updated`, "failed", r.thrown ? `${r.text}: Etsy may or may not have changed; look at the listing before trying again` : (r.text || r.reason || "refused"));
+        return r;
+      });
   }
   async function editSku(row, sku) {
     sku = String(sku || "").trim().toUpperCase();
@@ -16116,22 +16135,52 @@ const Review = window.Review = (() => {
     //  the old charm leaves stays full (PICKFULL is not applied: the new charm goes into the old spot when it fits, else onto the next sheet of its colour))
     try { const M = window.CharmNestReviewMark; if (M && M.isMarked && M.resolve) await Promise.all([...new Set(rows.map(x => String(x.order.receiptId)))].filter(rid => M.isMarked(rid)).map(rid => Promise.resolve(M.resolve(rid, { by: who, how: "pick", sku })).catch(() => {}))); } catch (_) { /* answered by the sweep as before */ }
     for (const rr of rows) rr._editSku = sku;
+    const title = `Edit SKU · listing ${off.lid}: ${off.from || "no SKU"} → ${sku}`, sub = `Listing ${off.lid} only: its Etsy listing, the charm it is cut as, every open order of it and its sheets, and every view. Other listings with the same SKU are not changed.`;
+    let etsy = null, done = null;
+    const etsyGo = flow => { etsy = editSkuEtsy(flow, off, sku, who); };
+    // (the panel's end: the sheets saved, every view updated, then the Etsy answer; the lines keep their marks until then, so a sweep that waited for a busy sheet is still an SKU edit)
+    const end = async (flow, all, linked) => {
+      await Promise.resolve(all).catch(() => null);
+      if (linked) { liveSku(); try { flow.line("views", "Updated everywhere: Orders, Review, the order window, the sheets, Library, Engrave and the run banner (other screens at once)", "done"); } catch (_) { /* a word only */ } }
+      const er = await Promise.resolve(etsy).catch(() => null), ls = flow.panel ? flow.panel.lines() : [];
+      const ew = er && er.ok ? "Etsy updated" : er && er.skipped ? "Etsy not changed" : "Etsy NOT updated";
+      try { if (flow.panel) flow.panel.finish(linked ? `${sku} for listing ${off.lid} · ${ew}` : `Not saved in the app · ${ew}`, ls.some(x => x.state === "failed") ? "bad" : ls.some(x => x.state === "warn") ? "warn" : "ok"); } catch (_) { /* a word only */ }
+      return { etsy: er };
+    };
+    const later = (flow, all, linked) => (done = end(flow, all, linked).finally(() => { for (const rr of rows) delete rr._editSku; }));
+    // (a line of the listing and SKU with no pieces yet, an unknown SKU or one with no design, is made up with the charm at once: it is not waiting for the next intake; each one's place is on the panel)
+    const makeUp = async flow => {
+      for (const rr of Orders.rows()) {
+        if (!same(rr) || (rr.poolIds || []).length || rr.state === "committed" || (O.FINISHED_LINE && O.FINISHED_LINE.has(rr.state) && rr.state !== "noDesign")) continue;
+        await repool(rr);
+        const k = "o:" + rr.key, rid = rr.order.receiptId, on = [...new Set((rr.poolIds || []).map(id => allSheets().find(sh => sh.charms.some(c => c.poolId === id))).filter(Boolean).map(rlName))];
+        try { flow.line(k, on.length ? `Order ${rid}: now ${sku}, on ${on.join(", ")}` : (rr.poolIds || []).length ? `Order ${rid}: now ${sku} (it goes onto a sheet with the run's next step)` : `Order ${rid}: reads ${sku}, but no piece was made`, on.length || (rr.poolIds || []).length ? "done" : "warn", on.length || (rr.poolIds || []).length ? "" : rr.reason || (rr.problems || []).map(p => p.kind).join(", ") || rr.state); } catch (_) { /* a word only */ }
+      }
+    };
     try {
-    // (a line of the listing and SKU with no pieces yet, an unknown SKU or one with no design, is made up with the charm at once: it is not waiting for the next intake)
-    const makeUp = async () => { for (const rr of Orders.rows()) if (same(rr) && !(rr.poolIds || []).length && rr.state !== "committed" && !(O.FINISHED_LINE && O.FINISHED_LINE.has(rr.state) && rr.state !== "noDesign")) await repool(rr); };
-    if (off.viaLink) { const r = await fixCharm(row, sku, { confirm: () => true }); if (r && r.ok) { await makeUp(); Orders.interpretAll(); syncOrderItems(); Orders.render(); liveSku(); } return Object.assign({ via: "link" }, r); }
-    try { savedLink(await api("charmNestLibrary", { op: "aliasPut", listingId: off.lid, sku, fromSku: off.from || undefined, by: who, title: String(row.line.title || "").slice(0, 200) || undefined })); }
-    catch (err) { return no(`Not saved: ${(err && err.message) || err}`); }
-    answered({ kind: "unmatchedSku", rows }, "decided", `Edit SKU: ${off.from || "no SKU"} → ${sku}`, { sku, from: off.from || null }, who);
-    await Orders.loadMaps(true);
-    toast(`${off.from || "This SKU"} → ${sku} saved for listing ${off.lid}`, "ok");
-    linkHolds(rows, sku); pickedMarks(rows, sku, who);
-    const relinked = (await relinkNow().catch(() => null)) || { keys: new Set() };
-    for (const rr of Orders.rows()) if (same(rr) && !relinked.keys.has(rr.key)) await repool(rr);
-    await makeUp();
-    Orders.interpretAll(); syncOrderItems(); Orders.render(); liveSku();
-    return { ok: true, sku, via: "alias", orders: [...new Set(rows.map(r => String(r.order.receiptId)))] };
-    } finally { for (const rr of rows) delete rr._editSku; }
+      if (off.viaLink) {
+        const r = await fixCharm(row, sku, { confirm: () => true, title, sub, keepOpen: true, onFlow: etsyGo });
+        if (!r || !r.ok) { if (r && r.flow) later(r.flow, null, false); return Object.assign({ via: "link", done }, r); }
+        await makeUp(r.flow); Orders.interpretAll(); syncOrderItems(); Orders.render(); liveSku();
+        later(r.flow, r.all, true);
+        return Object.assign({ via: "link" }, r, { done });
+      }
+      const flow = relinkFlow({ title, sub, listingId: off.lid, fromSku: off.from, toSku: sku, keepOpen: true, pre: [{ id: "link", text: `Saving the charm: listing ${off.lid} · SKU “${off.from || "none"}” → ${sku}…`, state: "work" }] });
+      etsyGo(flow);
+      try { savedLink(await api("charmNestLibrary", { op: "aliasPut", listingId: off.lid, sku, fromSku: off.from || undefined, by: who, title: String(row.line.title || "").slice(0, 200) || undefined })); }
+      catch (err) { const why = (err && err.message) || String(err); flow.fail(why, "link", `Not saved: listing ${off.lid} · SKU “${off.from || "none"}” → ${sku}`); later(flow, null, false); return Object.assign(no(`Not saved: ${why}`), { done }); }
+      flow.line("link", `Saved: listing ${off.lid} · SKU “${off.from || "none"}” is cut as ${sku}`, "done");
+      answered({ kind: "unmatchedSku", rows }, "decided", `Edit SKU: ${off.from || "no SKU"} → ${sku}`, { sku, from: off.from || null }, who);
+      await Orders.loadMaps(true);
+      toast(`${off.from || "This SKU"} → ${sku} saved for listing ${off.lid}`, "ok");
+      linkHolds(rows, sku); pickedMarks(rows, sku, who);
+      const relinked = (await relinkNow().catch(() => null)) || { keys: new Set() };   // (the orders on a sheet: swapped in place, each on the panel through its sweep)
+      for (const rr of Orders.rows()) if (same(rr) && !relinked.keys.has(rr.key)) await repool(rr);
+      await makeUp(flow);
+      Orders.interpretAll(); syncOrderItems(); Orders.render(); liveSku();
+      later(flow, flow.run({}).all, true);   // (the sheets those pieces left or joined, followed until saved; then the thumbnails)
+      return { ok: true, sku, via: "alias", orders: [...new Set(rows.map(r => String(r.order.receiptId)))], done };
+    } finally { if (!done) for (const rr of rows) delete rr._editSku; }
   }
   /** The similar charms the Edit SKU window offers as one-tap picks (the Review card's own), and the repo's SKU list for its search. */
   function editSkuChoices(row) { masterSkuList(); try { return fixChoices(row).more.slice(0, 8); } catch (_) { return []; } }
@@ -19655,13 +19704,13 @@ const OrderWin = window.OrderWin = (() => {
    *  (a repaint never empties what is being typed into its search). */
   /* EDITSKU (Paul, 26 Oct 2026): the Edit SKU window. The Etsy SKU as it is, a search of the charm repo (the shared SKU list) with the picked charm's own picture, the similar charms as one tap each,
      and what Save changes. Save is Review.editSku: the listing's link or alias saved and read back, every open order of the listing and SKU made up again with the charm, in its old spot on its sheet
-     when it fits, else on the next sheet of its colour; every view follows at once. */
+     when it fits, else on the next sheet of its colour; the Etsy listing (this one only) at the same time; every view follows at once, a progress panel showing each change. */
   function openEditSku() {
     const r = rowOf(W.key), d = byId("owSkuDlg"); if (!r || !d || !window.Review || !Review.editSkuOffer) return;
     const off = tryDo(() => Review.editSkuOffer(r)) || { ok: false, why: "" }; if (!off.ok) { toast(`Edit SKU: ${off.why}`, "bad", 6000); return; }
     const input = byId("owSkuInput"), pick = byId("owSkuPick"), picks = byId("owSkuPicks"), save = byId("owSkuSave");
     byId("owSkuNow").innerHTML = `Etsy SKU <b>${esc(off.from || "(none)")}</b> · listing ${esc(off.lid)} · ${off.cur ? `matched to <b>${esc(off.cur)}</b> now` : "no charm in the repo matches it now"}.`;
-    byId("owSkuNote").textContent = `Every open order of listing ${off.lid} with this Etsy SKU takes the charm you pick, and so do its next orders. A charm already on a sheet is swapped in its place when the new one fits there, otherwise the new one goes on the next sheet of its colour; no sheet is held for it. Etsy itself is not changed.`;
+    byId("owSkuNote").textContent = `Every open order of listing ${off.lid} with this Etsy SKU takes the charm you pick, and so do its next orders. A charm already on a sheet is swapped in its place when the new one fits there, otherwise the new one goes on the next sheet of its colour; no sheet is held for it. Etsy listing ${off.lid} is updated at the same time${off.from ? `: only its products with the SKU “${off.from}” take the new one` : " (the line has no Etsy SKU, so Etsy is not changed)"}; other listings with the same SKU are not changed. A panel shows each change as it is made.`;
     const choices = tryDo(() => Review.editSkuChoices(r)) || [];
     picks.innerHTML = choices.map(c => `<button type="button" class="btn ghost sm dsPick" data-sku="${esc(c.sku)}" title="${esc(c.why || c.sku)}">${tryDo(() => Master.pictureTag(Master.entryFor(c.sku))) || ""}${esc(c.sku)}</button>`).join("");
     tryDo(() => Master.mountPictures(picks));

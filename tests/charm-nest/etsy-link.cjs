@@ -214,6 +214,25 @@ test('the self-check stops a body that differs in anything else: nothing is sent
   const W2 = world({ sim: { shape: g => { g.products[2].offerings = []; } } }); const r2 = await W2.run(); assert.strictEqual(r2.reason, 'internal'); assert.strictEqual(W2.S.puts.length, 0);
 });
 
+
+/* ═══ EDITSKU (Paul, 26 Oct 2026): the order window's Edit SKU writes ONE listing, and only the products that carry the line's Etsy SKU ═══ */
+test('Edit SKU (onlySku): only the products of THIS listing that carry the line\'s Etsy SKU take the new one, the rest keep theirs; another SKU of it later is read live; an SKU it does not carry changes nothing', async () => {
+  const W = world({ inventory: byMetal() }), r = await W.run({ listingId: LID, sku: SKU, onlySku: 'swan_ss', by: 'Paul' });
+  assert.strictEqual(r.ok, true, JSON.stringify(r)); assert.strictEqual(r.state, 'linked'); assert.strictEqual(W.S.puts.length, 1, 'exactly one PUT');
+  const skus = stripIds(W.S.stored).products.map(p => p.sku);
+  assert.deepStrictEqual(skus.filter(x => x === SKU).length, 3, 'the 3 SS products take it'); assert.deepStrictEqual(skus.filter(x => x === 'SWAN_GF').length, 3); assert.deepStrictEqual(skus.filter(x => x === 'SWAN_14K').length, 3, 'GF and 14K keep their own');
+  assert(W.S.calls.every(c => c.path.startsWith('/listings/' + LID)), 'only this listing is read and written: ' + W.S.calls.map(c => c.path).join(', '));
+  assert(blobs.has(r.beforePath), 'the listing as it was is kept');
+  assert.strictEqual(r.changed, 3, 'the answer says how many products changed');
+  // a later Edit SKU of the same listing's GF line: the record says linked, but the listing is read again and only the GF products change
+  const g = await W.run({ listingId: LID, sku: SKU, onlySku: 'SWAN_GF', by: 'Paul' }); assert.strictEqual(g.ok, true, JSON.stringify(g)); assert.strictEqual(W.S.puts.length, 2);
+  assert.deepStrictEqual(stripIds(W.S.stored).products.map(p => p.sku).filter(x => x === 'SWAN_14K').length, 3, '14K still kept'); assert.strictEqual(stripIds(W.S.stored).products.filter(p => p.sku === SKU).length, 6);
+  // the same edit again (an older order of the listing still has the old SKU): nothing left to change, no PUT
+  const a = await W.run({ listingId: LID, sku: SKU, onlySku: 'SWAN_GF', by: 'Paul' }); assert.strictEqual(a.ok, true, JSON.stringify(a)); assert.strictEqual(W.S.puts.length, 2, 'no PUT');
+  // an Etsy SKU the listing does not carry: nothing is written
+  const F = world({ inventory: byMetal() }), n = await F.run({ listingId: LID, sku: SKU, onlySku: 'NOT_ON_IT', by: 'Paul' }); assert.strictEqual(n.ok, false); assert.strictEqual(n.reason, 'from-sku-missing', JSON.stringify(n)); assert.strictEqual(F.S.puts.length, 0, 'no PUT');
+});
+
 /* ═══ 2 · what is on the listing today ═══ */
 test('products that carry SEVERAL different SKUs are REPLACED (Paul, 13 Oct): every product takes the SKU, only the sku field moves, the answer names what was replaced, the before-copy keeps the old SKUs, 2 calls', async () => {
   const W = world({ inventory: byMetal() }), r = await W.run();
