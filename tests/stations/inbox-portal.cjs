@@ -75,6 +75,8 @@ const round1 = v => Math.round(v * 10) / 10;
       return route.continue();
     });
     await require('../charm-nest/master-admin-door.cjs').admin(ctx);   // the Employee efficiency screen is the master admin's alone (charm-nest-master-admin.js): the sorter's Admin list, here, names "Tester" and "Paul K"
+    // the master admin's sorter also reads the Repo password-attempt Alert (charm-nest-repo-alerts.js; tested in tests/charm-nest/repo-alerts.cjs): the fake Admin list's answer is "none yet", not the real server's 403 for a name it does not list
+    await ctx.route(u => /\/\.netlify\/functions\/charmNestLibrary/.test(u.pathname), route => { let b = null; try { b = JSON.parse(route.request().postData() || 'null'); } catch (_) {} return b && b.op === 'repoAlerts' ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, alerts: [], more: false, total: 0 }) }) : route.fallback(); });
     await ctx.addInitScript(k => { try { localStorage.setItem('cn.employee', 'Tester'); sessionStorage.setItem('cn.eff.key', k); } catch (_) {} window.confirm = () => true; window.alert = () => {}; window.__prompted = 0; window.prompt = () => { window.__prompted++; return null; }; }, IX.KEY);
   };
   // (the browser's own notice for the answers this test forces on purpose: the 400 of a service without the op, the 503 of a failed read)

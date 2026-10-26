@@ -288,7 +288,7 @@ const liveBrief = (rec, device) => rec.lives.filter(l => l.event !== 'beat' && l
 
   /* ───────────── 2 · the sorter ───────────── */
   {
-    const { start } = require('../charm-nest/bridge-server.cjs');
+    const { start, signInAs } = require('../charm-nest/bridge-server.cjs');
     const srv = await start({ receipts: [] });
     const rec = recorder();
     let refuseReopen = false;                          // the server refuses a customReopen while this is on
@@ -341,10 +341,10 @@ const liveBrief = (rec, device) => rec.lives.filter(l => l.event !== 'beat' && l
       assert.strictEqual(await page.evaluate(() => CNAct('note', { detail: 'x' })), false, 'no name yet: nothing recorded');
       assert.strictEqual(await page.evaluate(() => StationActivity.pending()), 0, 'and nothing is queued under nobody (the press is kept, and offered a name: tests/stations/sorter-identity.cjs)');
       assert.strictEqual(await page.evaluate(() => StationActivity.who()), null);
-      // the typed name is the person (as the sorter's own prompts set it: B.employee + cn.employee)
-      await page.evaluate(() => { B.employee = 'Tess Sorter'; localStorage.setItem('cn.employee', 'Tess Sorter'); });
+      // the signed-in name is the person (EMPNUM, Paul, 26 Oct 2026: the sorter signs a person in only with their Employee Number)
+      await signInAs(page, srv, 'Tess Sorter');
       const who = await page.evaluate(() => StationActivity.who());
-      assert.deepStrictEqual([who && who.person, who && who.station, who && who.device], ['Tess Sorter', 'sorter', 'charm-nest-1'], 'the typed name is the person, at the sorter');
+      assert.deepStrictEqual([who && who.person, who && who.station, who && who.device], ['Tess Sorter', 'sorter', 'charm-nest-1'], 'the signed-in name is the person, at the sorter');
       assert.strictEqual(await page.evaluate(() => CNAct('note', { detail: 'hello' })), true); await flush();
       assert.deepStrictEqual(rec.ev('note').map(e => e.detail), ['x', 'hello'], 'the press made before the name was typed is recorded under it, then the next one');
       rec.events.length = 0;
@@ -360,16 +360,16 @@ const liveBrief = (rec, device) => rec.lives.filter(l => l.event !== 'beat' && l
       await page.waitForFunction(k => B.maps.customDone[k] && B.maps.customDone[k].prints === 2, KEY); await settle(); await dismiss(); await flush();
       assert.strictEqual(rec.ev('print').length, 2, 'a second print is recorded');
       assert.strictEqual(rec.ev('complete').length, 1, 'the order is not completed twice');
-      // 3 · Reopen is a note; Complete Order is the order completed again
+      // 3 · Reopen is a note; Release Hold (the Custom Orders card's button in place of the old Complete Order) is the order completed again
       await page.click(card + ' [data-cu-reopen]');
       await page.waitForFunction(k => !B.maps.customDone[k], KEY);
       await settle(); await dismiss(); await flush();
       assert.deepStrictEqual(rec.ev('note').filter(e => /reopened/.test(e.detail)).map(brief), [['note', RID, 0, 0, 'Tess Sorter', 'sorter', 'charm-nest-1']], 'Reopen is a note');
-      await page.click('#reviewView .rvSeg [data-cseg="open"]'); await page.waitForSelector(card + ' [data-cu-complete]');
-      await page.click(card + ' [data-cu-complete]');
+      await page.click('#reviewView .rvSeg [data-cseg="open"]'); await page.waitForSelector(card + ' [data-rel-hold]');
+      await page.click(card + ' [data-rel-hold]');
       await page.waitForFunction(k => B.maps.customDone[k], KEY); await settle(); await flush();
       const completes = rec.ev('complete');
-      assert.deepStrictEqual(completes.map(brief), [['complete', RID, 2, 1, 'Tess Sorter', 'sorter', 'charm-nest-1'], ['complete', RID, 2, 1, 'Tess Sorter', 'sorter', 'charm-nest-1']], 'Complete Order is the order completed again');
+      assert.deepStrictEqual(completes.map(brief), [['complete', RID, 2, 1, 'Tess Sorter', 'sorter', 'charm-nest-1'], ['complete', RID, 2, 1, 'Tess Sorter', 'sorter', 'charm-nest-1']], 'Release Hold is the order completed again');
       assert(/Complete Order/.test(completes[1].detail));
       // 4 · the Undo the order window offers for 12 s after a completion is an undo (what was produced is taken back)
       await page.evaluate(k => OrderWin.open(k), KEY);
@@ -379,8 +379,8 @@ const liveBrief = (rec, device) => rec.lives.filter(l => l.event !== 'beat' && l
       assert.deepStrictEqual(rec.ev('undo').map(brief), [['undo', RID, 2, 1, 'Tess Sorter', 'sorter', 'charm-nest-1']], 'Undo is an undo');
       // 5 · an Undo the server refuses is one error, and not an undo (nothing was taken back); the completion stands
       await page.evaluate(() => { const d = document.getElementById('orderWin'); if (d && d.open) d.close(); });   // (the order window of step 4 is still open)
-      await page.click('#reviewView .rvSeg [data-cseg="open"]'); await page.waitForSelector(card + ' [data-cu-complete]');
-      await page.click(card + ' [data-cu-complete]');
+      await page.click('#reviewView .rvSeg [data-cseg="open"]'); await page.waitForSelector(card + ' [data-rel-hold]');
+      await page.click(card + ' [data-rel-hold]');
       await page.waitForFunction(k => B.maps.customDone[k], KEY); await settle(); await dismiss(); await flush();
       const undos0 = rec.ev('undo').length;
       refuseReopen = true;
@@ -392,7 +392,7 @@ const liveBrief = (rec, device) => rec.lives.filter(l => l.event !== 'beat' && l
       assert.deepStrictEqual(rec.ev('error').filter(e => /Undo not completed/.test(e.detail)).map(brief), [['error', RID, 0, 0, 'Tess Sorter', 'sorter', 'charm-nest-1']], 'a refused Undo is one error');
       assert.strictEqual(rec.ev('undo').length, undos0, 'and not an undo');
       assert(await page.evaluate(k => !!B.maps.customDone[k], KEY), 'the completion stands');
-      console.log('sorter: Print QR label → print + complete once; print again → print only; Reopen → note; Complete Order → complete; Undo → undo; a refused Undo → error');
+      console.log('sorter: Print QR label → print + complete once; print again → print only; Reopen → note; Release Hold → complete; Undo → undo; a refused Undo → error');
 
       const all = rec.raw.join('\n');
       assert(!/"employeeId":"\d{4,}"/.test(all), 'no PIN-like id in any request');

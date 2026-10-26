@@ -945,7 +945,7 @@
       const r = await call({ op: "overview", day: st.day || undefined, days: st.days, trend: st.days === 1 ? false : undefined, after: delta || undefined, roster: true, ifRev }, null, st.ctl && st.ctl.signal);
       if (gen !== st.gen) return;
       st.fails = 0; st.err = ""; st.errShort = "";
-      if (r && r.unchanged && ifRev && st.data) { st.at = Date.now(); st.resuming = false; } else accept(r, false);
+      if (r && r.unchanged && ifRev && st.data) { st.at = Date.now(); st.resuming = false; try { deskFix(st.M); } catch (_) {} } else accept(r, false);   // (26 Oct 2026: an `unchanged` answer still goes on with the next day in view that lacks its desk numbers; it stopped after the first day)
     } catch (e) {
       if (gen !== st.gen || (e && e.name === "AbortError")) return;
       if (e.auth || e.locked) { authFail(e); return; }
