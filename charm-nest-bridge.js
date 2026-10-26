@@ -3554,7 +3554,7 @@ const Master = window.Master = (() => {
         const E = window.CharmNestExport;
         if (!E || !E.dxf) throw new Error("the DXF writer is not loaded on this page");
         const out = E.productionDxf ? await E.productionDxf(bytes) : await (async () => { const parsed = await CharmNestPDF.parseSource(bytes, base + ".ai"); return E.dxf(E.productionPaths(parsed), E.layerNames(parsed)); })();
-        if (!out || !out.entityCount) throw new Error("the .ai file holds no line the .dxf could carry");
+        if (!out || !out.entityCount) throw new Error("the .ai file holds no outline or engraving the .dxf could carry");
         download(new TextEncoder().encode(out.text), base + ".dxf", "application/dxf");
       } else download(bytes, r.name || base + ".ai", "application/illustrator");
       toast(`${sku}${size ? " · " + size : ""} ${ext} saved`, "ok");
