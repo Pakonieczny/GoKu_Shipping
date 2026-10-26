@@ -73,7 +73,7 @@ const eq = (msg, a, b) => { assert.deepEqual(a, b, msg); n++; };
     const info = () => page.evaluate(() => { const el = document.getElementById('host'), t = el.querySelector('.engpvText'), w = el.querySelector('.engpvWait'), pv = el.querySelector('.engpv'), cs = t && getComputedStyle(t);
       return { text: t && t.textContent, fam: cs && cs.fontFamily, vis: cs && cs.visibility, waitShown: !!w && !w.hidden, waitText: w ? w.textContent.trim() : '', fail: !!(w && w.hasAttribute('data-fail')), slot: !!el.querySelector('.engpvSlot:not([hidden])'),
         font: pv && pv.dataset.font, state: pv && pv.dataset.state, size: pv && pv.dataset.size, style: t && t.getAttribute('style'), fs: cs && parseFloat(cs.fontSize), h: t && t.getBoundingClientRect().height,
-        drawT: getComputedStyle(el.querySelector('.engpvDraw')).transform, loaded: [...document.fonts].filter(f => f.status === 'loaded').map(f => f.family) }; });
+        drawT: getComputedStyle(el.querySelector('.engpvDraw')).transform, loaded: [...document.fonts].filter(f => f.status === 'loaded').map(f => f.family.replace(/["']/g, '')) }; });   // (this Chromium reports a FontFace family with its quotes)
 
     // B1 · font A, then font B: the family changes in the same tick, document.fonts says loaded once each is ready
     await page.evaluate(() => { window.__draws = 0; CharmNestEngravePreview.render(document.getElementById('host'), { text: 'Name One', fontWord: 'Stylish', face: 'back', drawing: window.__d = host => { window.__draws++; host.innerHTML = '<svg viewBox="0 0 24 30" width="24" height="30"><path d="M6 0H24V30H6V28H0V18H6Z" fill="#eee" stroke="#000"/></svg>'; } }); });

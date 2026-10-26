@@ -21,8 +21,9 @@ const check = (ok, msg, extra) => { if (ok) { pass++; console.log('  ✓ ' + msg
 const V = (name, value) => ({ name, value });
 // made-up held orders (Name One / Date One)
 const HELD = {
-  // (the live order was held by an unanswered option question: "Engraving Side: Back" is not mapped for this made-up listing, so the line carries a needsMapping problem and makePool would refuse it)
-  back: { rid: '4290000201', sku: 'COMET_9427', listing: '1890000201', title: 'Comet Necklace, Celestial Charm Necklace in 14k Gold Fill', buyer: 'Name Nine', placed: { day: 0, h: 9, m: 10 }, ship: 5, variations: [V('Metal choice', 'Gold'), V('Engraving Side', 'Back')], personalization: ['Typewriter font\n\nName One\nDate One'] },
+  // (the live order was held by an unanswered option question, so the line carries a needsMapping problem and makePool would refuse it. "Engraving Side: Back" is read as the faces option now (it is the
+  // engraving's own choice, not a question), so the question is an option this made-up listing does not map: "Bail Style: Mystery Loop")
+  back: { rid: '4290000201', sku: 'COMET_9427', listing: '1890000201', title: 'Comet Necklace, Celestial Charm Necklace in 14k Gold Fill', buyer: 'Name Nine', placed: { day: 0, h: 9, m: 10 }, ship: 5, variations: [V('Metal choice', 'Gold'), V('Engraving Side', 'Back'), V('Bail Style', 'Mystery Loop')], personalization: ['Typewriter font\n\nName One\nDate One'] },
   discs: { rid: '4290000202', sku: 'COMET_9427', listing: '1890000105', title: 'Initial Disc Necklace, Personalized Letter Discs', buyer: 'Name Ten', placed: { day: 0, h: 9, m: 50 }, ship: 5, variations: [V('Metal choice', 'Gold'), V('Number of Discs', '3 Discs')], personalization: ['Tag 1: A, Tag 2: B, Tag 3: C'] },
   earrings: { rid: '4290000203', sku: 'COMET_9427', listing: '1890000106', title: 'Comet Stud Earrings, Celestial Earrings in 14k Gold Fill', buyer: 'Name Eleven', placed: { day: 0, h: 10, m: 0 }, ship: 5, variations: [V('Metal choice', 'Gold'), V('Style', 'Stud earrings')], personalization: [] },
   // (a buyer message beside the personalisation: the words are for a person to confirm, never settled by the free reading)
