@@ -566,13 +566,13 @@
     async function sealApproval(c, done, by, at) {
       const stamp = stampOf({ at, by, letters: done.letters, n: c.n, of: c.of });
       cardSeals(c); c.seals = mergeStamps(c.seals, [stamp]); keepSeals(c);
-      recordSeal(c, done, stamp);
+      // (MONOSEAL step 4, 26 Oct 2026: the timeline event is written once the ink is down, never while the stamp is still coming down; a press that fails still writes it)
       const S = SEALS();
       if (S && c.views.size) {
         c.sealNew = stamp.id; c.stamping = true; for (const v of c.views) if (v.r && v.r.seals) v.r.seals._sig = null;
         paint(c);
-        try { await pressSeal(c, stamp); } finally { c.stamping = false; c.sealNew = ""; for (const v of c.views) if (v.r && v.r.seals) v.r.seals._sig = null; }
-      }
+        try { await pressSeal(c, stamp); } finally { c.stamping = false; c.sealNew = ""; for (const v of c.views) if (v.r && v.r.seals) v.r.seals._sig = null; recordSeal(c, done, stamp); }
+      } else recordSeal(c, done, stamp);
       return stamp;
     }
     /** The permanent record: one timeline event for the press (id: the line, the piece and the time, so a retry is the same event), small data: the letters, the piece, its pool id, the file. */

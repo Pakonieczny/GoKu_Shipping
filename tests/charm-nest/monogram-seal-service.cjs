@@ -28,8 +28,8 @@ const tick = async (n = 30) => { for (let i = 0; i < n; i++) await Promise.resol
   section('A · the face');
   {
     const F = Seal.FAMILY, names = Object.keys(F);
-    check(names.length === 9 && names[8] === 'monogram' && F.monogram.name === 'Monogram' && /^M8 104V60A52 52/.test(F.monogram.d), 'nine families, the ninth is the monogram arch: ' + names.join(','));
-    check(new Set(names.map(k => F[k].d)).size === 9 && new Set(names.map(k => F[k].ink)).size === 9, 'its outline and its ink differ from the other eight (' + F.monogram.ink + ')');
+    check(names.length >= 9 && names[8] === 'monogram' && F.monogram.name === 'Monogram' && /^M8 104V60A52 52/.test(F.monogram.d), 'the ninth family is the monogram arch (the sheet and release families came after it): ' + names.join(','));
+    check(names.filter(k => k !== 'monogram').every(k => F[k].d !== F.monogram.d && F[k].ink !== F.monogram.ink), 'its outline and its ink differ from every other family (' + F.monogram.ink + ')');
     const ctx = createCanvas(120, 120).getContext('2d'), failures = []; let texts = 0;
     for (const letters of [undefined, 'APV', 'WMW', 'IJI', 'QGO']) for (const hour of [2, 10, 23]) {
       const holder = doc.createElement('div'); holder.innerHTML = Seal.face({ family: 'monogram', action: 'MONOGRAM', icon: 'monogram', letters, at: AT + hour * 3600000, by: 'Original Person' });
