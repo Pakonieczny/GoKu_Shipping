@@ -11,7 +11,7 @@ const path = require('path');
 const root = path.join(__dirname, '../..');
 const { start } = require('../charm-nest/bridge-server.cjs');
 const F = require('./scale-fixture.cjs');
-const FULL = process.env.SCALE === 'full', OPEN = FULL ? 3000 : 800, HIST = FULL ? 30000 : 6000, INTAKE = 500, REPEAT = FULL ? 30 : 12;
+const FULL = process.env.SCALE === 'full', OPEN = FULL ? 3000 : 800, HIST = FULL ? 30000 : 6000, INTAKE = 500, REPEAT = FULL ? 8 : 12;   // (full: fewer rounds, each costs ~4x: the phase finishes inside the run)
 const BUDGET = { first: 4000, tab: 300, win: 300, key: 100, frame: 50, intake: 3000, heapGrowthMB: 8 };
 
 async function main() {
