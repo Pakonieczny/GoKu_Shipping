@@ -31,6 +31,7 @@ for (let k = 0; k < SETS; k++) { const mine = Array.from({ length: PER }, (_, i)
   const ready = async () => { await page.waitForFunction(() => window.CN && window.CN.S && window.RunCtl && window.DesignLink && CN.S.cloud.ok !== null, null, { timeout: 60000 }); await page.evaluate(({ station }) => { const s = CN.S.settings; s.dsOrigin = station; s.review = 'off'; s.naming = 'off'; s.notify = 'off'; s.sound = 'off'; }, { station: br.srv.stationOrigin }); };
   try {
     await page.route(/charmNestLibrary/, lib);
+    await page.route(/^https:\/\/example\.com\//, r => r.abort('failed'));   // the fixture's preview/QR images: never fetched off the internet (a real fetch there is refused by CORS)
     await page.evaluate(() => CN.setMode('library'));
     await page.waitForFunction(() => document.querySelectorAll('#libBody .setCard').length === 2, null, { timeout: 60000 });
     ok(await cards() === 2 && !(await note()), 'the Library opens on its two sets');
