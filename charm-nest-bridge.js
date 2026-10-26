@@ -3681,7 +3681,7 @@ const Master = window.Master = (() => {
   function missingSkus() {
     const out = new Map();
     for (const r of Orders.rows()) {
-      if (r.state === "gone" || r.spec.noDesign) continue;
+      if (r.state === "gone" || (r.spec && r.spec.noDesign)) continue;   // (26 Oct 2026: a row read before its spec is set threw "reading 'noDesign'" mid-draw)
       const p = (r.problems || []).find(x => x.kind === "unmatchedSku" && x.sku);
       if (!p) continue;
       if (!out.has(p.sku)) out.set(p.sku, { sku: p.sku, lines: 0, orders: new Set(), title: r.line.title });
