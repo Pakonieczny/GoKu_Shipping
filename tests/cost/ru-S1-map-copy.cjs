@@ -137,7 +137,7 @@ async function partB() {
 (async () => {
   const bridge = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8'), html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
   ok(/MC\.readMap\(key\)/.test(bridge) && /MC\.saveMap\(key, \{ sig: c\.sig, n: c\.n, r: c\.r \}\)/.test(bridge) && /!WORKSPACE_SANDBOX && MC && typeof MC\.readMap/.test(bridge), 'readMap starts from the copy kept on the computer, in production only');
-  ok(/charm-nest-master-cache\.js\?v=[^"]*-mp1"/.test(html) && /charm-nest-bridge\.js\?v=[^"]*-mp1"/.test(html), 'the page addresses of the two files carry the new token');
+  ok(/charm-nest-master-cache\.js\?v=[^"]*-mp1[-"]/.test(html) && /charm-nest-bridge\.js\?v=[^"]*-mp1[-"]/.test(html), 'the page addresses of the two files carry the new token (later releases append their own after it)');
   const MC = require('../../charm-nest-master-cache.js');
   ok((await MC.readMap('al')) === null && (await MC.saveMap('al', { sig: 'a', n: [1], r: { aliases: { x: {} }, sig: 'a' } })) === false && (await MC.forgetMap('al')) === false, 'with no IndexedDB (Node) readMap, saveMap and forgetMap answer nothing and throw nothing');
   await partA();
