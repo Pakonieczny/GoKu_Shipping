@@ -557,7 +557,10 @@
     const spots = new Map((f.spots || []).map(s => [s.poolId, s]));
     const flights = leg.poolIds.map(id => {
       const s = spots.get(id), c = charmOf(id), r0 = s && s.rect && s.rect.width ? s.rect : null;
-      const placed = !!r0 && s.placed !== false && !queued, r = r0 || (queued && qr ? { left: qr.left + 4, top: qr.top + 2, width: Math.min(34, qr.height - 4), height: Math.min(34, qr.height - 4) } : null);
+      /* VISUAL (26 Oct 2026, Paul: "I don't see you actually visually testing the outcome of animations and transitions"): a queued piece came down on the
+         sheet's spot (r0) or a box sized from the queue's height (about 0 while the pieces are held out of it), about 330 px from where its thumbnail is then
+         drawn; it now comes down on the queue's first thumbnail slot (.shQueue: 4 px in, thumbnails 30 px) */
+      const placed = !!r0 && s.placed !== false && !queued, qbox = queued && !placed && qr ? { left: qr.left, top: qr.top + 4, width: 30, height: 30 } : null, r = qbox || r0;
       const k = placed && c ? pxPerPt(c, s, r) : 0;
       let el = k ? pieceCanvas(c, k) : null;
       if (!el) { const q = queued && card && s && s.charmId != null ? [...card.querySelectorAll('[data-r="queue"] img[data-cid]')].find(im => im.dataset.cid === String(s.charmId)) : null, src = (q && q.src) || leg.designUrl || o.designUrl || t.pic;
@@ -602,8 +605,12 @@
     t.flying.delete(fly);
     // (the piece is set down: its sheet may nest it now, and draws it in its queue as the landing pops it: NestHold)
     mark("land"); tryDo(() => t.nest && t.nest.release([fl.id])); const landing = t.within(tryDo(() => f.land(fl.id)), 1200);
+    // (VISUAL, 26 Oct 2026: a queued piece's thumbnail is drawn as it lands, and the card's lines above the queue with it: the piece glides onto it, then fades there)
+    let onto = 0;
+    if (!fl.placed && fl.s && fl.s.charmId != null) tryDo(() => { const card = f.card || nestCard(f.metal), im = card && [...card.querySelectorAll('[data-r="queue"] img[data-cid]')].find(x => x.dataset.cid === String(fl.s.charmId)), q = rectOf(im), b = box.getBoundingClientRect();
+      if (q) { const dx = q.left + q.width / 2 - (b.left + b.width / 2), dy = q.top + q.height / 2 - (b.top + b.height / 2); if (Math.hypot(dx, dy) > 1 && Math.hypot(dx, dy) < 120) { onto = 140; t.anim(box, [{ transform: "translate(0px,0px)" }, { transform: `translate(${dx.toFixed(1)}px,${dy.toFixed(1)}px)` }], { duration: onto, easing: "ease-out", fill: "forwards", composite: "add" }); fly.r = q; } } });
     if (f.here || !fl.placed) ring(t, fly.r);
-    after.push(t.anim(box, [{ opacity: 1 }, { opacity: 0 }], { duration: fl.placed ? 240 : 300, easing: "ease" }).then(() => { box.remove(); t.nodes.delete(box); }), landing);
+    after.push(t.anim(box, [{ opacity: 1 }, { opacity: 0 }], { duration: fl.placed ? 240 : 300, delay: onto, easing: "ease" }).then(() => { box.remove(); t.nodes.delete(box); }), landing);
   }
   /** The window resized while pieces come down: each still flying bends, from where it is, onto where its place stands
    *  now (and its size there), in the time it had left; no jump, and it lands on its place. */
