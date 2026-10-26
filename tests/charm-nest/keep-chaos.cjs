@@ -465,10 +465,14 @@ for (const [iname, I] of Object.entries(INT)) {
         const rr = await expectSaved(w); if (w.stuck) rr.f.unshift('after the reload the design stayed "reading" for ever (no error, no way on but removing it)'); return rr;
       }
       await dropFile(w, RID1, FILE_A);
+      // (a break while the window is still opening, its first read of the listing, 'open', comes BEFORE the switch: no save was asked for, so nothing is resumed by itself;
+      //  after a reload the person opens the order's designs again and switches it on, and the save must then complete)
+      let early = false; await sleep(300);
+      if (w.inject.fired && I.page) { early = true; await I.recover(w); await sleep(800); await ensureDesign(w, RID1, FILE_A); w.notes.push('broken while the window opened, before the switch: opened again by the person'); }
       await switchOn(w);
       const t0 = Date.now(); while (!w.inject.fired && Date.now() - t0 < 12000) { await sleep(200); }
       if (!w.inject.fired) { w.notes.push('step not reached'); }
-      if (w.inject.fired) await I.recover(w);
+      if (w.inject.fired && !early) await I.recover(w);
       if (I.whole) {   // switch off / file removed / double click: all-or-nothing, then the person turns it ON again and it completes
         await quiesce(w, { calm: 3500, max: 25000 });
         const whole = checkWhole(w); const pg = await checkPage(w, { ui: null }); const f = [...whole.f, ...pg.f];
