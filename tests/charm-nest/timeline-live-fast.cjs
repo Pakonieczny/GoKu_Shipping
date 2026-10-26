@@ -106,7 +106,8 @@ async function main() {
     const t0 = Date.now(); while (!(await railDone('sorted')) && Date.now() - t0 < 8000) await sleep(25);
     const ms = Date.now() - t0; console.log(`      a scan written on another computer → the open view: ${ms} ms`);
     assert(ms < 3300, 'shown within 3.3 s: ' + ms + ' ms');
-    assert.match(await page.evaluate(() => document.getElementById('owNowCard').textContent), /sort/i, 'the Overview card says it too');
+    // (HDRHEAD, Paul 16 Oct 2026: this order waits on a decision, so its Overview card draws no seal, only the words; the state it is at is the card's data-now, kept for what reads where the order is)
+    assert.match(await page.evaluate(() => document.getElementById('owNowCard').dataset.now), /sort/i, 'the Overview card says it too');
   });
 
   // 3 · the cadence: one read at a time, every 2.5 s, none once closed

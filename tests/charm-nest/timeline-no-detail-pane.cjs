@@ -126,7 +126,7 @@ const paneProblems = () => {
     ok.push('a click grows the seal in place at once (one grown seal, no card, no copy, no tooltip), changes no word of the tab, opens no pop-up and selects nothing; a dashed seal the same; Escape puts it back; ← → walk nothing');
 
     /* ── 3 · what used to open the pane lands on the chart: a ring on that seal ── */
-    // the header rail's step (its seal on the chart), the next step (its dashed seal), the Overview card's seal and the Timeline tab (the old "Open timeline" button)
+    // the header rail's step (its seal on the chart), the next step (its dashed seal) and the Timeline tab (the Overview card of an order needing a decision has no seal, HDRHEAD) (the old "Open timeline" button)
     await page.evaluate(() => OrderWin.setView('info')); await page.waitForTimeout(700);
     await page.click('#owRail .tlStop.d[data-stage="laser"]');
     await page.waitForFunction(() => OrderWin.view() === 'timeline' && document.querySelector('#owTimeline .tlSt.sel'), null, { timeout: 10000 }); await page.waitForTimeout(700);
@@ -142,17 +142,14 @@ const paneProblems = () => {
     assert.deepEqual(await ringed(page), ['ghost:' + nextStep], 'the next step opens the Timeline with its dashed seal ringed');
     assert.deepEqual(await page.evaluate(paneProblems), [], 'no pane for a step to come (it used to pin "All that … needs")');
     await page.evaluate(() => OrderWin.setView('info')); await page.waitForTimeout(700);
-    await page.click('#owNowCard .tlNowSeal');
-    await page.waitForFunction(() => OrderWin.view() === 'timeline', null, { timeout: 10000 }); await page.waitForTimeout(700);
-    assert.deepEqual(await ringed(page), ['ghost:' + nextStep], 'the Overview card\'s seal opens the Timeline on its next step');
-    assert.deepEqual(await page.evaluate(paneProblems), []);
-    await page.evaluate(() => OrderWin.setView('info')); await page.waitForTimeout(700);
+    // (HDRHEAD, Paul 16 Oct 2026, the NEEDS A DECISION banner: "remove this seal from the title, it's a duplicate": this order waits on its Unknown SKU, so the Overview card says that in words and draws no seal to press)
+    assert.deepEqual(await page.evaluate(() => { const c = document.querySelector('#owNowCard'); return { k: c.querySelector('.k').textContent, seals: c.querySelectorAll('.tlNowSeal').length }; }), { k: 'Needs a decision', seals: 0 }, 'the Overview card of an order that needs a decision draws no seal (HDRHEAD)');
     // ("Open timeline" was a button on the Overview card; the card has no buttons since 12 Oct 2026, the Timeline tab opens the same chart)
     assert.equal(await page.evaluate(() => document.querySelectorAll('#owNowCard button, #owNowCard [data-go]').length), 0, 'the Overview card has no "Open timeline" button any more');
     await page.click('.owTabsV [data-ow-view="timeline"]');
     await page.waitForFunction(() => OrderWin.view() === 'timeline', null, { timeout: 10000 }); await page.waitForTimeout(500);
     assert.deepEqual(await page.evaluate(paneProblems), [], 'the Timeline tab opens the chart, no pane');
-    ok.push(`a rail step, the next step (${nextStep}, its dashed seal), the Overview card's seal and the Timeline tab all land on the chart; the first two ring that seal (thin solid ring, its lane lit), none draws a pane`);
+    ok.push(`a rail step, the next step (${nextStep}, its dashed seal) and the Timeline tab all land on the chart; the first two ring that seal (thin solid ring, its lane lit), none draws a pane; the decision banner draws no seal`);
 
     /* ── 4 · OrderWin.openOrder(rid, { highlight }): the seal is ringed, the chart is all there is ── */
     await close(page);

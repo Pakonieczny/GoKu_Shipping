@@ -106,6 +106,15 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     const tRel = Date.now();
     await page.click(uRel);
     await page.waitForFunction(rid => !CharmNestReviewMark.isMarked(rid) && !document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"] [data-rel-hold][data-rv-release="mark"]`), U, { timeout: 30000 }); await idle(); await stamped(); await calm();
+    // (RELNOSEAL, Paul 20 Oct 2026: "if the release hold did not work, then the seal should not be made because that's deceiving": the mark is resolved, but the order still waits on its
+    // Unknown SKU, so no seal yet; its Unknown SKU card's Release Hold ("Releasing anyway") is the press that releases it, and that press makes the seal)
+    await sleep(1500);
+    assert.equal(srv.st.list('Order_Timeline').filter(x => x.orderId === U && x.type === 'released').length, 0, 'the mark resolved, the Unknown SKU still waiting: no released step and no seal (RELNOSEAL)');
+    await page.click('#reviewView .egTab[data-k="needResolution"]');
+    const uAny = `#rvList .reviewListRow[data-rid="${U}"] [data-rel-hold]:not([aria-disabled])`;
+    await page.waitForSelector(uAny, { state: 'visible' });
+    await page.click(uAny);
+    await page.waitForFunction(rid => !document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"] [data-rel-hold]`), U, { timeout: 30000 }); await idle(); await stamped(); await calm();
     const relEv = async () => { for (let i = 0; i < 60; i++) { const e = srv.st.list('Order_Timeline').find(x => x.orderId === U && x.type === 'released' && x.data && x.data.seal === 'releaseHold'); if (e) return e; await sleep(250); } return null; };
     const uStep = await relEv();
     assert(uStep && uStep.by === 'Test Operator' && +uStep.data.sealAt >= tRel - 1000 && /Release Hold \(Review\)/.test(uStep.text), 'the "released" step carries the RELEASE HOLD seal, who and when: ' + JSON.stringify(uStep));
