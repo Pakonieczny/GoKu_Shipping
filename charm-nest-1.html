@@ -408,6 +408,9 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .toast .c{border:0;background:transparent;color:inherit;opacity:.55;cursor:pointer;font-size:13px;line-height:1;padding:0 0 0 4px}
 .toast .c:hover{opacity:1}
 .toast{cursor:pointer}
+/* VISUAL (26 Oct 2026): a notice still lay over the order card's "In Review" button on the Orders tab for its 3.6 s and took the click
+   meant for it. Now a click on a notice's text goes through to what is under it; only its own buttons (✕, Undo, Show …) take a click. */
+.toasts .toast{pointer-events:none;cursor:default}.toasts .toast :is(button,a,[role=button],input,select,label){pointer-events:auto}
 /* an open menu is never under a toast: "2 new orders arrived" covered Design Station and Master files in Workspace, and the
    run menu (audit, 25 Sep). While a header menu or a sheet's Options is open the toasts step aside. */
 body:has(.topbar details[open]) .toasts{opacity:0;visibility:hidden;transition:opacity .12s,visibility 0s .12s}

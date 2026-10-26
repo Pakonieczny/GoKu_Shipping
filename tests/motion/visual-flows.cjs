@@ -185,7 +185,14 @@ const restOf = sel => { const el = document.querySelector(sel); if (!el) return 
       await flow(env, 'toasts', { do: () => { for (let i = 1; i <= 4; i++) CN.toast('Visual check ' + i, i === 4 ? 'ok' : ''); }, undo: () => document.querySelectorAll('#toasts > *').forEach(n => n.remove()) }, 900, tag);
       R.toasts = await page.evaluate(() => [...document.querySelectorAll('#toasts > *')].filter(n => n.style.opacity !== '0').length);
       check(R.toasts <= 3, `toasts${tag}: at most three showing (${R.toasts})`);
-      await page.evaluate(() => document.querySelectorAll('#toasts > *').forEach(n => n.click()));
+      // a notice never takes a click meant for what is under it (it lay over the order card's "In Review" button): a real click on its text
+      // reaches the page beneath (stopped there: the test does not press it); its ✕ still dismisses it
+      const under = await page.evaluate(() => { const m = document.querySelector('#toasts .toast:last-child .m').getBoundingClientRect(), x = m.left + m.width / 2, y = m.top + m.height / 2, e = document.elementFromPoint(x, y);
+        window.__hit = null; addEventListener('click', ev => { ev.stopPropagation(); ev.preventDefault(); window.__hit = ev.target.closest('#toasts') ? 'toast' : (ev.target.tagName + '.' + ev.target.className).slice(0, 40); }, { capture: true, once: true }); return { x, y, inToast: !!(e && e.closest('#toasts')) }; });
+      await page.mouse.click(under.x, under.y);
+      const hit = await page.evaluate(() => window.__hit);
+      check(!under.inToast && hit && hit !== 'toast', `toasts${tag}: a click on a notice's text goes through to the page under it (${hit})`);
+      for (let i = 0; i < 4 && await page.$('#toasts .toast .c'); i++) { await page.click('#toasts .toast .c'); await page.waitForTimeout(260); }
       await settle(page, 700);
       R.toastEnd = await page.evaluate(leftovers);
       check(R.toastEnd.toasts === 0 && !R.toastEnd.running, `toasts${tag}: dismissed, none left (${R.toastEnd.toasts})`);
