@@ -90,6 +90,7 @@
   box = disk();
   const mine = ev => (ev.mode ? ev.mode === cfg.mode : cfg.mode !== "station" || STATION_TYPES.has(ev.type));
   // (another page's events stay on the disk alone, for that page: this one neither sends them nor writes them back)
+  let saving = false;   // (a write of the outbox is due at the end of this task: record)
   const save = () => { try { box = box.filter(mine); const have = new Set(box.map(keyOf)); localStorage.setItem(OUTBOX, JSON.stringify(bound(disk().filter(e => !sent.has(keyOf(e)) && !have.has(keyOf(e))).concat(box), 500))); } catch (_) {} };
   const digits = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
   const base = () => (location.protocol === "file:" ? "https://goldenspike.app" : "") + "/.netlify/functions/";
@@ -145,7 +146,10 @@
       box.push(ev); if (box.length > KEEP) box = bound(box, KEEP);   // (a server refusing for days: memory stays bounded)
       // (a send already due sooner is not put off: events a scanner records less than a second apart were never sent
       //  while it kept on, and past KEEP the oldest were dropped)
-      save(); if (!timer || due > Date.now() + 900) schedule(900);
+      // (PERFSCALE, Paul 26 Oct 2026: "the performance of the overall platform once it's being used at scale": every event re-read, filtered and re-wrote the whole 500-event outbox on the disk, so a burst of
+      //  N events, a pull or a list drawing, cost N full rewrites (≈ 580 ms of one Library scroll at 6,000 historical orders, tests/perf/sorter-scale.cjs). The events of one task are written ONCE, at its end
+      //  (a microtask: still before the page can be closed or hidden, so nothing recorded is lost)
+      if (typeof queueMicrotask !== "function") save(); else if (!saving) { saving = true; queueMicrotask(() => { saving = false; save(); }); } if (!timer || due > Date.now() + 900) schedule(900);
       for (const fn of listeners) { try { fn(ev); } catch (_) {} }
       return ev;
     } catch (_) { return null; }
