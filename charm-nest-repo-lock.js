@@ -31,6 +31,18 @@
  *  confirm sentence, but takes a single-use token from the session with no password. Action "settings" opens the Settings menu; "modify" / "upload" / "download"
  *  are covered by the same session.
  *
+ *  PERSON (Paul, 26 Oct 2026: "the Settings menu now opens without the need for a password. I did not ask for this and I need the password to be re-implemented
+ *  ... users are allowed to download .ai charm files from the main charm repo, this should only be allowed with my password, same as accessing the Settings menu"):
+ *  the standing session above outlived the person who unlocked it (it was kept for the whole computer until 5:00 pm), so whoever sat down next opened Settings and
+ *  downloaded freely. Now, the newest rule winning over 11 Oct's:
+ *    · Settings asks for the password EVERY time it is opened. Its unlock (the server's session token, which the Settings buttons need) is held in this tab's memory
+ *      only while the menu is open; closing the menu ends it here and on the server (lockNow, from charm-nest-1.html).
+ *    · A download asks for the password; one right password serves this tab for GRACE.download (a minute: a charm's .ai and .dxf, or a few charms, take one
+ *      password), then it asks again. A change or an upload keeps the server's own few minutes (GRACE).
+ *    · Every unlock belongs to the person signed in when it was given (CNEmployee): another person signing in, or a sign-out, ends them all at once
+ *      (personChanged, called by the B.employee setter), and a held unlock is never used under another name.
+ *    · Nothing is kept in localStorage any more: a reload or another tab asks again. A standing session left by an older page is ended on the server at load.
+ *
  *  `action` is one of upload, delete, download, modify, history, other (the server's words, plans/repo-protect-1011/REPOAUTH-api.md).
  *  `ask` = { what, target, go, title, message, note }: what the dialog says, the short target recorded with the attempt, the
  *  button word, an optional title, an optional confirm sentence (a delete says it here: no second pop-up) and one plain note.
@@ -66,8 +78,12 @@
   };
 
   let hook = null;                      // tests: { api }
-  let mem = {};                         // action → { t, e }: the tokens held (a single-use one is never put here)
-  let sess = null;                      // { t, e }: the standing session of this computer (localStorage, shared by its tabs); the token as the server gave it
+  let mem = {};                         // action → { t, e, p }: the tokens held (a single-use one is never put here); p = the person they belong to
+  let sess = null;                      // { t, e, p }: Settings' unlock while the menu is open, this tab's memory only (PERSON, 26 Oct 2026)
+  /* PERSON: how long this tab uses a right password before asking again (capped by the server's own expiry) */
+  const GRACE = { download: 60 * 1000, modify: 5 * 60 * 1000, upload: 15 * 60 * 1000, other: 60 * 1000 };
+  /** The person signed in to the Sorter now (the key every unlock is held under); "" when nobody is, or on a page without the sign-in. */
+  const personKey = () => { try { const E = root.CNEmployee, n = E && typeof E.name === "function" ? E.name() : ""; return String(n || "").trim().toLowerCase().replace(/\s+/g, " "); } catch (_) { return ""; } };
   let lockedUntil = 0;                  // after a "locked" answer: no further try from this tab before this time (no more records)
   let queue = Promise.resolve();
   const listeners = new Set();
@@ -82,19 +98,22 @@
   }
   function save() { try { const s = store(); if (s) s.setItem(KEY, JSON.stringify(mem)); } catch (_) { /* the tab still holds it in memory */ } }
   const shared = () => { try { return root.localStorage || null; } catch (_) { return null; } };
-  /** The standing session, read from localStorage (an ended one is dropped). Without storage the tab keeps what it holds in memory. */
+  /** Settings' unlock, held in this tab's memory while the menu is open (PERSON: never in localStorage; an ended one, or one given to another person, is dropped). */
   function loadSession() {
-    const st = shared();
-    if (st) {
-      let o = null; try { const raw = st.getItem(SKEY); if (raw) o = JSON.parse(raw); } catch (_) { o = null; }
-      sess = o && typeof o.t === "string" && o.t && +o.e > Date.now() + MARGIN ? { t: o.t, e: +o.e } : null;
-    } else if (sess && !(sess.e > Date.now() + MARGIN)) sess = null;
+    if (sess && (!(sess.e > Date.now() + MARGIN) || sess.p !== personKey())) sess = null;
     return sess;
   }
-  function saveSession() { try { const st = shared(); if (!st) return; if (sess) st.setItem(SKEY, JSON.stringify({ t: sess.t, e: sess.e })); else st.removeItem(SKEY); } catch (_) { /* memory only */ } }
+  function saveSession() { /* PERSON (26 Oct 2026): nothing is kept for the computer any more; see the header */ }
+  /** PERSON: a standing session an older page left in localStorage stops working for this computer at once, and is ended on the server soon after the page is up. */
+  function endLegacySession() {
+    let old = null;
+    try { const st = shared(), raw = st && st.getItem(SKEY); if (raw) { st.removeItem(SKEY); const o = JSON.parse(raw); if (o && typeof o.t === "string" && o.t) old = o.t; } } catch (_) { old = null; }
+    if (old && root.setTimeout) root.setTimeout(() => { callOp("repoLock", { sessionToken: old }).catch(() => {}); }, 4000);
+  }
   function prune() {
-    const now = Date.now();
-    for (const k of Object.keys(mem)) { const x = mem[k]; if (!ACTIONS.includes(k) || ONCE.has(k) || !x || typeof x.t !== "string" || !x.t || !(+x.e > now + MARGIN)) delete mem[k]; }
+    const now = Date.now(), p = personKey();
+    // (a token is used only by the person it was given to; one with no person on it is older than this rule, an older page of this tab, and keeps its own few minutes)
+    for (const k of Object.keys(mem)) { const x = mem[k]; if (!ACTIONS.includes(k) || ONCE.has(k) || !x || typeof x.t !== "string" || !x.t || !(+x.e > now + MARGIN) || (x.p !== undefined && x.p !== p)) delete mem[k]; }
   }
   function find(need) {
     need = norm(need); load();
@@ -103,9 +122,18 @@
     return null;
   }
   function remember(info) {
-    if (info.session) { sess = { t: info.token, e: info.expiresAt }; saveSession(); changed(); return; }
+    const p = personKey();
+    if (info.session) { sess = { t: info.token, e: info.expiresAt, p }; changed(); return; }
     if (info.once || ONCE.has(info.action)) return;
-    mem[info.action] = { t: info.token, e: info.expiresAt }; save(); changed();
+    const cap = GRACE[info.action], e = cap ? Math.min(+info.expiresAt || Infinity, Date.now() + cap) : info.expiresAt;
+    mem[info.action] = { t: info.token, e, p }; save(); changed();
+  }
+  /** PERSON: the signed-in person changed (another sign-in, a sign-out): every unlock of this tab ends now, and Settings' session on the server too. */
+  function personChanged(before, after) {
+    const norm2 = s => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+    if (norm2(before) === norm2(after)) return;
+    const s = sess; sess = null; load(); for (const k of Object.keys(mem)) if (mem[k] && mem[k].p !== undefined) delete mem[k]; save(); changed();
+    if (s && s.t) callOp("repoLock", { sessionToken: s.t }).catch(() => {});
   }
   function drop(info) {
     if (!info) return;
@@ -162,7 +190,9 @@
     a = a || {};
     if (Date.now() < lockedUntil) return { ok: false, reason: "locked", retryAfterSec: Math.max(1, Math.ceil((lockedUntil - Date.now()) / 1000)) };
     if (!pw) return { ok: false, reason: "empty" };
-    let ans; try { ans = await unlockCall({ password: pw, action, target: String(a.target || "").slice(0, 80), by: who(), tab: tabId(), ...(ONCE.has(action) ? {} : { session: true }), ...(a.overwrite ? { overwrite: true } : {}) }); } finally { pw = ""; }
+    // (PERSON, 26 Oct 2026: only Settings asks the server for a session, the token its own buttons need while the menu is open; a download, a change or an upload
+    //  takes that action's own short token, so no long unlock exists anywhere for somebody else to find)
+    let ans; try { ans = await unlockCall({ password: pw, action, target: String(a.target || "").slice(0, 80), by: who(), tab: tabId(), ...(action === "settings" ? { session: true } : {}), ...(a.overwrite ? { overwrite: true } : {}) }); } finally { pw = ""; }
     const ok = !!ans && ans.ok === true && typeof ans.token === "string" && ans.token.length > 0;
     const reason = ok ? "ok" : ans && (ans.error === "wrong" || ans.error === "locked") ? ans.error : "unavailable";
     try { root.dispatchEvent(new root.CustomEvent("repo-auth-attempt", { detail: { action, ok, reason } })); } catch (_) { /* the Alert is optional */ }
@@ -257,7 +287,8 @@ input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!imp
 
   /* ── the way in ── */
   async function ensureNow(action, ask) {
-    if (!ONCE.has(action)) { const f = find(action); if (f) return f; }
+    // (ask.fresh: the password is asked even when an unlock is held: Settings, every time it is opened, PERSON 26 Oct 2026)
+    if (!ONCE.has(action) && !(ask && ask.fresh)) { const f = find(action); if (f) return f; }
     return openDialog(action, ask, ONCE.has(action) && !!loadSession());
   }
   /** A token for `action`, from the ones held or from the dialog; null when the person cancels. Asks one at a time: a second caller waits and then finds the token the first one got. */
@@ -343,11 +374,9 @@ input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!imp
     el.addEventListener("mousedown", block, true); el.addEventListener("keydown", block, true);
   }
 
-  load(); loadSession();
-  /* another tab of this computer unlocked or locked: the padlocks and the Settings line here follow at once */
-  try { if (root.addEventListener) root.addEventListener("storage", e => { try { if (e.key === SKEY || e.key === null) { loadSession(); changed(); } } catch (_) { /* never breaks the page */ } }); } catch (_) { /* no events */ }
+  load(); endLegacySession();   // (PERSON: no unlock is shared between tabs or kept across a reload any more, so no storage listener either)
   if (doc) { try { if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", () => { css(); changed(); }); else { css(); changed(); } } catch (_) { /* no page */ } }
-  const api = { ensure, call, unlocked, find, forget, mark, gate, onChange, isRepoLocked, lockNow, status, verify, untilText, submitInline, messages: SAY, cancelled: e => !!e && e.cancelled === true, configure: h => { hook = h || null; }, KEY, _held: () => { load(); return Object.keys(mem); } };
+  const api = { ensure, call, unlocked, find, forget, mark, gate, onChange, isRepoLocked, lockNow, status, verify, untilText, submitInline, personChanged, messages: SAY, cancelled: e => !!e && e.cancelled === true, configure: h => { hook = h || null; }, KEY, _held: () => { load(); return Object.keys(mem); } };
   root.CharmNestRepoLock = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -8191,23 +8191,19 @@ let settingsAsk = null, settingsWatch = false;
 function paintSettingsLock() {
   const L = window.CharmNestRepoLock, line = $("#stLockLine"), txt = $("#stLockText"); if (!line || !txt) return;
   const st = L && L.status ? L.status() : { open: false };
-  line.hidden = !st.open; txt.textContent = st.open ? "Unlocked until " + L.untilText(st.until) : "";
+  line.hidden = !st.open; txt.textContent = st.open ? "Unlocked while Settings is open" : "";   // (PERSON, 26 Oct 2026: closing the menu locks it)
 }
 function askSettings() {
   const L = window.CharmNestRepoLock;
   if (!L) { toast("The Settings lock did not load: reload the page", "bad", 7000); return Promise.resolve(false); }   // (fails closed)
-  return settingsAsk ||= L.ensure("settings", { what: "The Settings menu is locked. Enter your login password to open it.", target: "settings" })
+  return settingsAsk ||= L.ensure("settings", { what: "The Settings menu is locked. Enter your admin password to open it.", target: "settings", fresh: true })
     .then(info => { if (info) openSettingsNow(); return !!info; }, () => false)
     .finally(() => { settingsAsk = null; });
 }
-function openSettings() {
-  const L = window.CharmNestRepoLock;
-  if (!(L && L.unlocked("settings"))) return askSettings();
-  openSettingsNow();
-  // one quiet look at the server: a session it ended (a changed password, a Lock now elsewhere) closes the menu and asks again; no answer changes nothing
-  if (L.verify) L.verify().then(ok => { if (ok === false) askSettings(); }, () => {});
-  return Promise.resolve(true);
-}
+/* PERSON (Paul, 26 Oct 2026: "the Settings menu now opens without the need for a password. I did not ask for this and I need the password to be re-implemented
+   and the password is to be my admin password for the account"): every opening asks for it (the Master Admin login the server checks, _charmNestRepoAuth.js),
+   whoever is signed in and whatever was unlocked before; its unlock lasts while the menu is open and ends when it closes (the dialog's close, below). */
+function openSettings() { return askSettings(); }
 function openSettingsNow() {
   const L = window.CharmNestRepoLock;
   if (L && L.onChange && !settingsWatch) {
@@ -8383,6 +8379,8 @@ async function boot() {
     METALS.forEach(m => clearMetal(m.key)); S.sources = []; S.unassigned = []; renderRail(); updateTopSub(); play(); };
   $("#stCompareGPU").onclick = compareGPUSpeed;
   $("#dlgSettings").addEventListener("close", () => { cancelGPUComparison(); document.documentElement.dataset.rail = S.settings.rail; });   // a density tried and not saved goes back
+  // (PERSON, 26 Oct 2026: the menu's unlock ends with the menu, here and on the server: the next opening, by anybody, asks for the password again)
+  $("#dlgSettings").addEventListener("close", () => { try { const L = window.CharmNestRepoLock; if (L && L.lockNow) L.lockNow().catch(() => {}); } catch (_) {} });
   $("#btnSettings").onclick = () => { $("#moreMenu").open = false; openSettings(); }; $("#btnSaveSettings").onclick = e => { e.preventDefault(); readSettings(); closeDlg($("#dlgSettings")); };
   // Enter in a field pressed the form's first button, Close, and dropped what was typed: the form now stays open for Save
   $("#dlgSettings").addEventListener("keydown", e => { if (e.key === "Enter" && e.target.tagName === "INPUT") e.preventDefault(); });
@@ -8475,7 +8473,7 @@ boot();
 <script src="charm-nest-master-admin.js?v=20261011-ma1"></script>
 <script src="charm-nest-emoji-picker.js?v=20261006-em2-tone"></script>
 <!-- charm-nest-sandbox-families.js and charm-nest-sandbox-browser.js load when needed (Sandbox.loadScripts in charm-nest-bridge.js: a page in the sandbox, Settings opened, a reset) -->
-<script src="charm-nest-repo-lock.js?v=20261011-rpu1-as1-sv1"></script>
+<script src="charm-nest-repo-lock.js?v=20261011-rpu1-as1-sv1-per1"></script>
 <!-- put a master charm's SKU on one existing Etsy listing (charm-nest-etsy-link.js, SWANSKU 12 Oct 2026): the Etsy chip on a master card of the Library, behind the repo password -->
 <script src="charm-nest-etsy-link.js?v=20261012-el1-cs1-fm1-bt1-dh1"></script>
 <!-- put ALL the queued SKUs on Etsy in one press (charm-nest-etsy-batch.js + charm-nest-etsy-queue.json, ETSYBATCH 13 Oct 2026): one more line in the Etsy chip's panel, one password entry, one request per listing -->
@@ -8560,6 +8558,7 @@ try {
         d.set.call(window.B, v);
         try { const n = String(d.get.call(window.B) || "").trim(); if (n && !/^\d+$/.test(n)) { if (roleOn()) CNRole.nameSet(n, { adopt: !!(window.CNAccount && CNAccount.adopting && CNAccount.adopting()) }); else StationSession.signedIn({ name: n, id: null }); } else if (!n && roleOn()) CNRole.nameSet(""); } catch (_) {}
         try { window.CNAccount && CNAccount.after(prev, nameNow()); } catch (_) {}     // (the identity chip and the Account panel follow the name)
+        try { const L = window.CharmNestRepoLock; if (L && L.personChanged) L.personChanged(prev, nameNow()); } catch (_) {}   // (PERSON, 26 Oct 2026: another person, or nobody, holds no unlock of the last one's)
       } });
   // ONE place asks the server whether a name is the Admin: StationSession's own (once per sign-in, kept for it). The role step needs the answer
   // before it shows its question and the session asks it again when it starts, so without this a non-Admin's sign-in was two requests to the door.

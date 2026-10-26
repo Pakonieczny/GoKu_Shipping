@@ -300,5 +300,15 @@ async function signInAs(page, srv, name) {
   const num = pinOf(srv.st || srv, name);
   return page.evaluate(n => CNAccount.signInNumber(n).then(r => { if (!r || !r.ok) throw new Error('not signed in: ' + (r && r.error)); return r.name; }), num);
 }
-module.exports = { start, makeState, Timestamp, fakeAdmin, REPO_TEST, PINS, pinOf, signInAs };
+/* PERSON (Paul, 26 Oct 2026: "the Settings menu now opens without the need for a password ... I need the password to be re-implemented"): Settings asks for the
+   admin password EVERY time it is opened (charm-nest-repo-lock.js). A test that opens it answers the real dialog with the stand-in operator's password (REPO_TEST),
+   after its own click on Settings: → true when the menu opened. */
+async function unlockSettings(page, timeout = 10000) {
+  const dlg = 'dialog.repoDlg[data-repo-action="settings"]';
+  if (!(await page.waitForSelector(dlg, { timeout }).then(() => true, () => false))) return false;
+  await page.fill(dlg + ' #repoPw', REPO_TEST.password);
+  await page.click(dlg + ' [data-k=go]');
+  return page.waitForSelector('#dlgSettings[open]', { timeout }).then(() => true, () => false);
+}
+module.exports = { start, makeState, Timestamp, fakeAdmin, REPO_TEST, PINS, pinOf, signInAs, unlockSettings };
 if (require.main === module) start().then(s => console.log('sorter', s.sorterOrigin, 'station', s.stationOrigin));
