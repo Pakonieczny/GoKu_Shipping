@@ -3538,16 +3538,27 @@ const Master = window.Master = (() => {
       job.lab.unlabelled = unlabelled; render(); throw e;
     }
   }
-  /** One charm's .ai file, for a person to keep: the download password first (a download token), then the server's link, then the bytes are saved as <SKU>.ai. */
-  async function downloadCharm(sku, size, btn) {
+  /** One charm's .ai file, for a person to keep: the download password first (a download token), then the server's link, then the bytes are saved as <SKU>.ai.
+   *  fmt "dxf" (Paul, 26 Oct 2026: "add an option to download the .dxf file format version of every charm in the repo just like we already have for the .ai files
+   *  ... The .dxf should also be password gated"): the SAME gated call fetches the charm's .ai (masterDownload, one unlock covers both), and the page turns it into
+   *  <SKU>.dxf / <SKU>-<size>.dxf exactly as the sheet window's "Download .dxf" turns a sheet (charm-nest-export.js productionPaths + dxf: cut lines and engraving on
+   *  their own layers, in millimetres). It is never built from the public preview or outline: no token, no .ai bytes, no .dxf. */
+  async function downloadCharm(sku, size, btn, fmt) {
+    const dxf = fmt === "dxf", ext = dxf ? ".dxf" : ".ai", base = `${sku}${size ? "-" + size : ""}`;
     if (btn) btn.disabled = true;
     try {
-      const r = await repoApi("download", { what: `Downloading ${sku}${size ? " · " + size : ""} (.ai) from the charm repo.`, target: sku + (size ? " " + size : ""), go: "Download" }, { op: "masterDownload", sku, ...(size ? { size } : {}) }, { label: `Preparing ${sku}.ai` });
+      const r = await repoApi("download", { what: `Downloading ${sku}${size ? " · " + size : ""} (${ext}) from the charm repo.`, target: sku + (size ? " " + size : ""), go: "Download" }, { op: "masterDownload", sku, ...(size ? { size } : {}) }, { label: `Preparing ${base}${ext}` });
       if (!r || !r.url) throw new Error((r && r.error) || "the server sent no file link");
       const bytes = await CharmNestAssets.bytes(r.url);
-      download(bytes, r.name || `${sku}${size ? "-" + size : ""}.ai`, "application/illustrator");
-      toast(`${sku}${size ? " · " + size : ""} saved`, "ok");
-    } catch (e) { if (!(e && e.cancelled)) toast(`${sku} was not downloaded — ${e.message}`, "bad", 7000); }
+      if (dxf) {
+        const E = window.CharmNestExport;
+        if (!E || !E.dxf) throw new Error("the DXF writer is not loaded on this page");
+        const out = E.productionDxf ? await E.productionDxf(bytes) : await (async () => { const parsed = await CharmNestPDF.parseSource(bytes, base + ".ai"); return E.dxf(E.productionPaths(parsed), E.layerNames(parsed)); })();
+        if (!out || !out.entityCount) throw new Error("the .ai file holds no line the .dxf could carry");
+        download(new TextEncoder().encode(out.text), base + ".dxf", "application/dxf");
+      } else download(bytes, r.name || base + ".ai", "application/illustrator");
+      toast(`${sku}${size ? " · " + size : ""} ${ext} saved`, "ok");
+    } catch (e) { if (!(e && e.cancelled)) toast(`${sku} ${ext} was not downloaded — ${e.message}`, "bad", 7000); }
     finally { if (btn) btn.disabled = false; }
   }
   /** The same patch on every SKU of one charm, with a single redraw. */
@@ -3858,7 +3869,7 @@ const Master = window.Master = (() => {
     const facesBox = (e, keys) => {
       const Pr = window.CharmNestPair, fc = Pr && Pr.facingControl ? Pr.facingControl(e, e.sym ? "" : heldSym(e)) : null;
       if (!fc || !fc.show) return "";
-      const box = (value, options, extra) => `<select data-faces="${keys}" data-repo="modify"${extra || ""} title="${esc(fc.hint)}" style="border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px;max-width:112px">` + options.map(([v, t]) => `<option value="${v}"${v === value ? " selected" : ""}>${esc(t)}</option>`).join("") + `</select>`;
+      const box = (value, options, extra) => `<select data-faces="${keys}" data-repo="modify"${extra || ""} title="${esc(fc.hint)}">` + options.map(([v, t]) => `<option value="${v}"${v === value ? " selected" : ""}>${esc(t)}</option>`).join("") + `</select>`;
       return fc.bodies ? fc.bodies.map(bd => box(bd.value, bd.options, ` data-body="${bd.index}"`)).join("") : box(fc.value, fc.options);
     };
     // (Paul, 25 Oct 2026: "compact these SKUs in the UI so they don't look like these runes. Ensure everything is still searchable": a Viking rune is sold under 31
@@ -3870,6 +3881,17 @@ const Master = window.Master = (() => {
       const hit = q ? extra.filter(s => s.includes(q)) : [], lead = (hit.length ? hit : extra).slice(0, 2), rest = extra.filter(s => !lead.includes(s));
       return `<div class="meta">${lead.map(s => `<div${hit.includes(s) ? ' class="skuHit"' : ""}>${esc(s)}</div>`).join("")}</div>`
         + `<details class="meta skuMore"><summary>+${rest.length} more SKU${rest.length === 1 ? "" : "s"}</summary>${rest.map(s => `<div>${esc(s)}</div>`).join("")}</details>`;
+    };
+    // (Paul, 26 Oct 2026: "add an option to download the .dxf file format version of every charm in the repo just like we already have for the .ai files. Please update the
+    //  design for the charms cards so that these buttons are easily visible, tastefully positioned in one row with beautiful hover states. The .dxf should also be password
+    //  gated.") The two downloads are one segmented pair, .ai | .dxf, both through the download password (downloadCharm); a charm kept in sizes puts its size picker at the
+    //  front of the pair (S ▾ | .ai | .dxf) instead of one button per size per format, so the card's controls stay ONE row
+    const dlPair = (e, sizes) => {
+      const sz = e.aiUrl ? [] : sizes.filter(([, s]) => s && s.aiUrl).map(([k]) => k);
+      if (!e.aiUrl && !sz.length) return "";
+      const pick = sz.length ? `<select data-dlsize aria-label="size to download" title="the size to download">${sz.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join("")}</select>` : "";
+      const btn = (fmt, what) => `<button type="button" data-dl="${esc(e.sku)}"${sz.length ? ` data-size="${esc(sz[0])}"` : ""} data-fmt="${fmt}" data-repo="download" title="download this charm's ${what} (asks for your password)">.${fmt}</button>`;
+      return `<span class="dlPair" role="group" aria-label="download ${esc(e.sku)}">${pick}${btn("ai", ".ai file")}${btn("dxf", ".dxf file, in millimetres")}</span>`;
     };
     grid.innerHTML = shown.map(d => {
       const e0 = d.head, keys = esc(d.skus.join("|"));
@@ -3886,12 +3908,11 @@ const Master = window.Master = (() => {
         `<div class="meta">up ${e.upAngle == null ? "as drawn" : Math.round(e.upAngle) + "°"}${e.upSource === "long" ? " (long side flat)" : ""} · ${esc(e.labelSource || "text")}${e.hashSource === "server" ? " · server" : ""}</div>` +
         (blocked ? `<div class="bad">${esc(blocked)}</div>` : "") +
         (blocked && d.list.every(x => !x.blocked || O.blockKind(x) === "flip") ? `<div class="meta" title="BLOCKREL: the back-view check is about engraving a back; the outline to cut is fine, so orders of this SKU are cut and nested as usual. A back engraving on it asks in Review.">Cutting is not held by this: only a back engraving cannot be fitted.</div>` : "") +
-        `<div class="row">` +
-        `<input type="number" data-up="${keys}" data-repo="modify" value="${e.upAngle == null ? "" : Math.round(e.upAngle)}" placeholder="up°" style="width:52px;border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px">` +
+        `<div class="row skuActs">` +
+        `<input type="number" data-up="${keys}" data-repo="modify" value="${e.upAngle == null ? "" : Math.round(e.upAngle)}" placeholder="up°" title="the angle that points up on this charm (degrees)">` +
         facesBox(e, keys) +
         (blocked ? `<button class="btn ghost xs" data-unblock="${keys}" data-repo="modify">unblock</button>` : "") +
-        (e.aiUrl ? `<button type="button" class="btn ghost xs" data-dl="${esc(e.sku)}" data-repo="download" title="download this charm's .ai file (asks for your password)">.ai</button>`
-                 : sizes.filter(([, s]) => s && s.aiUrl).map(([k]) => `<button type="button" class="btn ghost xs" data-dl="${esc(e.sku)}" data-size="${esc(k)}" data-repo="download" title="download this charm's .ai file (asks for your password)">${esc(k)}.ai</button>`).join("")) +
+        dlPair(e, sizes) +
         (!WORKSPACE_SANDBOX && window.CharmNestEtsyLink ? `<button type="button" class="btn ghost xs" data-etsylink="${keys}" data-repo="modify" title="put this charm's SKU on an Etsy listing (asks for your password)">Etsy</button>` : "") +
         `<button type="button" class="btn ghost xs" data-del="${keys}" data-repo="delete" title="delete this charm${d.skus.length > 1 ? ` and its ${d.skus.length} SKUs` : ""} from the charm repo (asks for your password every time)">Delete</button>` +
         `</div></div>`;
@@ -3920,7 +3941,9 @@ const Master = window.Master = (() => {
       patchMany(skus, patch).then(() => { was = v2; sel.disabled = false; facingLive(skus, patch); toast(`${skus.join(", ")}: ${say} (operator) — applies to orders made up from now on`, "ok"); }, e => { sel.disabled = false; sel.value = was; notSaved(e, skus, "facing"); }); }; });
     each("unblock", (b, skus) => b.onclick = () => { b.disabled = true; patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok"), e => { b.disabled = false; if (e && e.cancelled) toast(`${skus.join(", ")} not unblocked — the repo stayed locked`, "", 4000); else toast(`${skus.join(", ")} not unblocked — ${e.message}`, "bad", 7000); }); });
     // a charm's .ai file is handed out only with the download password: the server mints the link, the browser saves the bytes
-    each("dl", b => b.onclick = () => downloadCharm(b.dataset.dl, b.dataset.size || "", b));
+    each("dl", b => b.onclick = () => downloadCharm(b.dataset.dl, b.dataset.size || "", b, b.dataset.fmt));
+    // (a sized charm's picker sets the size both buttons of its pair download)
+    grid.querySelectorAll("[data-dlsize]").forEach(p => p.onchange = () => p.parentElement.querySelectorAll("[data-dl]").forEach(b => { b.dataset.size = p.value; }));
     // the Etsy chip (charm-nest-etsy-link.js, SWANSKU 12 Oct 2026): this charm's SKU on one existing Etsy listing, behind the repo password; a card with several SKUs offers each
     each("etsylink", (b, skus) => { if (window.CharmNestEtsyLink) CharmNestEtsyLink.mount(b, { skus, repoApi, toast, who: employeeName, skuTable: id => api("charmNestLibrary", { op: "listingSkus", listingIds: [id] }, { quiet: true }) }); });   // (skuTable: the SKUs now on that listing's products, from the stored table: no password; ETSYFAM 13 Oct)
   }
