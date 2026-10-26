@@ -1,6 +1,6 @@
 // Reads, bytes and writes per CALL of the generic doors the open pages knock on (Firebase cost emergency, FC14), measured with tests/cost/meter.cjs
 // on an in-memory Firestore seeded the way production is shaped, and projected per open page per hour from the idle call rates that
-// tests/cost/fc14-idle-pages.cjs measures in a real browser.
+// a browser measured (the measurement runner fc14-idle-pages.cjs was removed 26 Oct 2026).
 //
 //   node tests/cost/fc14-doors.cjs          prints the table; exits 1 when a budget below is exceeded
 //
