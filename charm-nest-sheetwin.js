@@ -2818,7 +2818,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       r.poolIds = r.poolIds.filter(id => !extra.includes(id));
       const jb = Engrave.items().get(r.key); if (jb) jb.copies = (jb.copies || []).filter(id => !extra.includes(id));
     }
-    agent({ pool: true }, "warn", `${rid || "an order"}: the server took ${extra.length === 1 ? "1 more piece" : extra.length + " more pieces"} of the same line off its sheets too (a pair or group comes off whole); those sheet records are marked to be written again`);
+    agent({ pool: true }, "warn", `${rid || "an order"}: the server took ${extra.length === 1 ? "1 more piece" : extra.length + " more pieces"} of the same order off its sheets too (a pair or group comes off whole); those sheet records are marked to be written again`);
     return extra;
   }
   function offPlan(x, whole, only, mode) {
@@ -3178,7 +3178,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       }
       // every group the pieces belonged to is looked at once more: a piece of it still on a sheet that the plan did not say stays (a sheet
       // that changed while this ran) would leave a pair alone there. It is said plainly, never in silence.
-      let aloneNote = serverMore.length ? `The server took ${serverMore.length === 1 ? "1 more piece" : serverMore.length + " more pieces"} of the same line off too.` : "";
+      let aloneNote = serverMore.length ? `The server took ${serverMore.length === 1 ? "1 more piece" : serverMore.length + " more pieces"} of the same order off too.` : "";
       if (keptSay.length) aloneNote = (aloneNote ? aloneNote + " " : "") + keptSay.map(t => t[0].toUpperCase() + t.slice(1)).join(". ") + ".";
       if (window.PairRemove) {
         try {

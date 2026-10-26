@@ -4503,7 +4503,7 @@ function autoNest(metal) {
 }
 function assignCharm(charm, metal) {
   const owner=allSheets().find(p=>p.charms.includes(charm));
-  if(owner){if(owner.metal===metal)return;{const g=typeof groupOf==='function'?groupOf(charm):null;if(g&&allSheets().some(p=>p.charms.some(c=>c!==charm&&!c.excluded&&groupOf(c)===g))){toast('This piece belongs to a pair (or a line of pieces) that stays together on one metal and one sheet. Change the order\'s metal in Orders instead.','bad');return;}}if(manualSheetClosed(owner)||['nesting','finishing','queued'].includes(owner.status)){toast('Finish the current sheet operation before moving this charm.','bad');return;}if(owner.placements.some(p=>p.id===charm.id)){toast('This charm is already on a saved sheet. Its placement must stay with that sheet.','bad');return;}owner.charms=owner.charms.filter(c=>c!==charm);charm.pinned=null;delete charm.arrivalPin;if(owner.placements.length){owner.appendOnly=true;owner.dirty=true;owner.status='ready';renderCard(owner);}else sheetDirty(owner);}
+  if(owner){if(owner.metal===metal)return;{const g=typeof groupOf==='function'?groupOf(charm):null;if(g&&allSheets().some(p=>p.charms.some(c=>c!==charm&&!c.excluded&&groupOf(c)===g))){toast('This piece belongs to a pair (or a group of pieces) that stays together on one metal and one sheet. Change the order\'s metal in Orders instead.','bad');return;}}if(manualSheetClosed(owner)||['nesting','finishing','queued'].includes(owner.status)){toast('Finish the current sheet operation before moving this charm.','bad');return;}if(owner.placements.some(p=>p.id===charm.id)){toast('This charm is already on a saved sheet. Its placement must stay with that sheet.','bad');return;}owner.charms=owner.charms.filter(c=>c!==charm);charm.pinned=null;delete charm.arrivalPin;if(owner.placements.length){owner.appendOnly=true;owner.dirty=true;owner.status='ready';renderCard(owner);}else sheetDirty(owner);}
   S.unassigned=S.unassigned.filter(c=>c!==charm);charm.pendingMetal=metal;charm.arrivedAt ||= Date.now();charm.orderDate ||= charm.arrivedAt/1000;
   flushManualIntake(metal);renderRail();updateTopSub();window.Session?.schedule();
 }
@@ -4945,7 +4945,7 @@ function keepOrdersWhole(sh, byId, pocket) {
   // a saved piece lifted off is no longer a saved placement of this sheet: the check that follows holds the saved layout in place (buildJob lockedPlacements) and would
   // flag the sheet for a "moved" piece that was taken off on purpose
   if (sh.nestInitial && lifted.some(p => sh.nestInitial.some(q => q.id === p.id))) sh.nestInitial = sh.nestInitial.filter(q => !lifted.some(p => p.id === q.id));
-  agent({ metal: sh.metal }, "nest", `Orders kept whole and oldest first: ${lifted.length} placed piece(s) of ${new Set(lifted.map(p => orderOf(p.id))).size} order(s) lifted off — the order moves to the next sheet as one${mates.length ? `; ${mates.length} saved piece(s) of ${new Set(mates.map(p => gid(byId.get(p.id)))).size} pair/line(s) whose other piece did not fit come with it, so none is left half on this sheet` : ""}${wholeMates.length ? `; ${wholeMates.length} saved piece(s) of ${new Set(wholeMates.map(p => String(orderOf(p.id)))).size} order(s) whose other piece did not fit come with it, so the order stays on one sheet` : ""}`);
+  agent({ metal: sh.metal }, "nest", `Orders kept whole and oldest first: ${lifted.length} placed piece(s) of ${new Set(lifted.map(p => orderOf(p.id))).size} order(s) lifted off — the order moves to the next sheet as one${mates.length ? `; ${mates.length} saved piece(s) of ${new Set(mates.map(p => gid(byId.get(p.id)))).size} pair/group(s) whose other piece did not fit come with it, so none is left half on this sheet` : ""}${wholeMates.length ? `; ${wholeMates.length} saved piece(s) of ${new Set(wholeMates.map(p => String(orderOf(p.id)))).size} order(s) whose other piece did not fit come with it, so the order stays on one sheet` : ""}`);
   homeward(sh);
 }
 /* R16 HARD (Paul, 26 Oct 2026: "sheets of the same colour cannot have cross-pollination of charms from a multi-charm/earring orders ... All multi-piece orders that do not fit on a given sheet (Near the
@@ -5032,7 +5032,7 @@ function overflowToNextSheet(sh, announce = true) {
     // (nothing is split here, Paul's standing rule; a pair or a line of pieces among them is named, so the stop says why it is stuck)
     const lines = new Map(); for (const c of moving) { const g = gid(c); if (g) { if (!lines.has(g)) lines.set(g, []); lines.get(g).push(c); } }
     const big = [...lines.values()].sort((a, b) => b.length - a.length)[0] || [];
-    const what = big.length < 2 ? "" : typeof isPairLine === "function" && isPairLine(big) ? "a pair" : `a line of ${big.length} pieces`;
+    const what = big.length < 2 ? "" : typeof isPairLine === "function" && isPairLine(big) ? "a pair" : `a group of ${big.length} pieces`;
     sh.problem = `The oldest order cannot fit on an empty sheet at these settings.${what ? ` It holds ${what} that must stay on one sheet, so it is not split.` : ""} Review its size or the fill ceiling before continuing.`;
     renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(new Error(sh.problem), {sheetPending:true})); return null;
   }
@@ -5075,8 +5075,8 @@ function overflowToNextSheet(sh, announce = true) {
   const lineKeys = new Set(moving.filter(c => !c.chunk).map(gid).filter(Boolean)), split = lineKeys.size && typeof splitGroups === "function" ? splitGroups(prim.pages, lineKeys) : [];
   if (split.length) {
     sh.movedOn.split = split.map(g => ({ group: g.group, where: splitWords(g, p => `sheet ${p.page}`) }));
-    for (const g of split.slice(0, 5)) agent({ metal: sh.metal }, "warn", `Split pair/line ${g.group} (it could not stay whole): ${splitWords(g, p => `sheet ${p.page}`)} — both sheets must go in one set`);
-    if (announce) toast(`${labelOf(sh.metal)}: ${split.length === 1 ? "a pair/line is" : split.length + " pairs/lines are"} split across sheets — ${splitWords(split[0], p => `sheet ${p.page}`)}`, "bad", 7000);
+    for (const g of split.slice(0, 5)) agent({ metal: sh.metal }, "warn", `Split pair/group ${g.group} (it could not stay whole): ${splitWords(g, p => `sheet ${p.page}`)} — both sheets must go in one set`);
+    if (announce) toast(`${labelOf(sh.metal)}: ${split.length === 1 ? "a pair/group is" : split.length + " pairs/groups are"} split across sheets — ${splitWords(split[0], p => `sheet ${p.page}`)}`, "bad", 7000);
   }
   // an ORDER (any lines, not only a pair) that still has pieces on another sheet of this metal after the move: said in the log, with the reason it could not stay whole
   { const apart = typeof orderSplits === "function" ? orderSplits(prim.pages, new Set(moving.map(c => String(c.order || c.id)))) : [];
@@ -8635,7 +8635,7 @@ try {
           <figure><div class="owVector" id="owVector" data-zp aria-label="Charm vector design"></div><div class="owSetLens" id="owSetLens" hidden></div><figcaption>Vector design</figcaption></figure>
           <!-- SKUCARD (Paul, 26 Oct 2026): the SKU, its state, Copy / Suggest / Change, and the suggested charms (charm-nest-bridge.js OrderWin paintSkuCard; "Wrong charm?" is Suggest now) -->
           <div class="owSkuCard" id="owSkuCard" role="group" aria-label="SKU">
-            <div class="skHead"><span class="skIcon" title="The SKU this line is cut as" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.4"/></svg></span><b class="skText" id="owSku"><span class="skLbl">SKU: </span>—</b><span class="skState" id="owSkuState" role="img"></span></div>
+            <div class="skHead"><span class="skIcon" title="The SKU this piece is cut as" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.4"/></svg></span><b class="skText" id="owSku"><span class="skLbl">SKU: </span>—</b><span class="skState" id="owSkuState" role="img"></span></div>
             <div class="skVia" id="owSkuVia" hidden></div>
             <div class="skActs">
               <button class="skBtn" id="owCopy" type="button" title="Copy the SKU" aria-label="Copy the SKU"><svg class="i1" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2.2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg><svg class="i2" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Copy</span></button>

@@ -51,12 +51,12 @@
   function planOf(row, sku) {
     const line = row && row.line, spec = row && row.spec;
     sku = up(sku);
-    if (!line || !sku) return { ok: false, why: "no line or no charm to link" };
+    if (!line || !sku) return { ok: false, why: "no piece or no charm to link" };
     const listingId = lid(line);
-    if (!listingId) return { ok: false, why: "this line has no listing number, so a link cannot be kept for its listing" };
-    if (spec && spec.noDesign && !spec.ownDesign) return { ok: false, why: "this line is not cut (no design), so there is no charm to link" };
+    if (!listingId) return { ok: false, why: "this piece has no listing number, so a link cannot be kept for its listing" };
+    if (spec && spec.noDesign && !spec.ownDesign) return { ok: false, why: "this piece is not cut (no design), so there is no charm to link" };
     // a pair of two designs is read from the pair's own link or the words that name both: one charm is not its answer
-    if (spec && spec.skuSource === "pair") return { ok: false, why: "this line is two designs; link the pair from the Unmatched SKU card (Use both)" };
+    if (spec && spec.skuSource === "pair") return { ok: false, why: "this piece is two designs; link the pair from the Unmatched SKU card (Use both)" };
     const opt = optionOf(spec);
     if (opt) return { ok: true, via: "option", key: `${listingId}|${opt.name}=${opt.value}`, body: { op: "optionMapPut", listingId, optionName: opt.name, optionValue: opt.value, map: { field: "design", value: sku } }, option: opt,
       why: `the charm comes from the option “${opt.name}: ${opt.value}”, so the link is kept on that option value for this listing` };
@@ -67,7 +67,7 @@
     const O = Orders(), product = from && spec && spec.viaInventory && O && typeof O.linkViaKeys === "function" ? O.linkViaKeys(line) : [];
     return { ok: true, via: "alias", key: `${listingId}|${from || (huggie ? "(huggie)" : "(listing)")}`,
       body: Object.assign({ op: "aliasPut", listingId, sku, title: String(line.title || "").slice(0, 200) }, from ? { fromSku: from } : {}, huggie ? { huggie: true } : {}, product.length ? { via: product } : {}),
-      why: from ? `kept for this listing and the SKU “${from}”` : "kept for this listing (the line has no SKU)" };
+      why: from ? `kept for this listing and the SKU “${from}”` : "kept for this listing (the piece has no SKU)" };
   }
 
   /** A new order of the same listing, read with the maps as they are now. `ctx` is the page's reading context (Orders.ctx()), or a test's.
@@ -84,7 +84,7 @@
       const same = got === sku || (members.length === 1 && up(members[0]) === sku) || (typeof O.sameDesign === "function" && !!got && typeof c.masterEntry === "function" && O.sameDesign(got, sku, k => c.masterEntry(k)));
       const asks = (sp.problems || []).filter(p => p.kind === "unmatchedSku" || p.kind === "needsMapping").map(p => p.kind);
       return { ok: same && !asks.length, designOk: same, designSku: sp.designSku || null, skuSource: sp.skuSource || null, problems: (sp.problems || []).map(p => p.kind),
-        why: same && !asks.length ? "" : same ? "the next order would still ask a question about this line" : `a new order of this listing would still read as ${sp.designSku || "no charm"} (${sp.skuSource || "no source"})` };
+        why: same && !asks.length ? "" : same ? "the next order would still ask a question about this piece" : `a new order of this listing would still read as ${sp.designSku || "no charm"} (${sp.skuSource || "no source"})` };
     };
     try {
       const c = typeof ctx === "function" ? ctx() : ctx, out = read(c);

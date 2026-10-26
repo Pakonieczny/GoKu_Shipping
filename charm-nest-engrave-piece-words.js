@@ -206,7 +206,7 @@
     const nums = marks.map(m => m.k), uniq = [...new Set(nums)].sort((a, b) => a - b);
     const kind = marks[0].kind;
     if (kind === 's' ? !(n === 2 && marks.length === 2 && uniq.length === 2) : (marks.length !== n || uniq.length !== n || nums.some(k => k < 1 || k > n))) {
-      return { why: kind === 's' ? `Left / Right labels, the line has ${n} pieces` : `the numbers in the text (${uniq.slice(0, 6).join(', ')}${uniq.length > 6 ? ', ..' : ''}) do not fit the ${n} pieces` };
+      return { why: kind === 's' ? `Left / Right labels, the order has ${n} pieces` : `the numbers in the text (${uniq.slice(0, 6).join(', ')}${uniq.length > 6 ? ', ..' : ''}) do not fit the ${n} pieces` };
     }
     const lead = text.slice(0, marks[0].at).trim();
     if (lead && !(lead0 || LEAD).test(lead)) return { why: 'other words come before the numbered ones' };

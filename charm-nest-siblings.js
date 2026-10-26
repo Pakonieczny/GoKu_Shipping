@@ -53,15 +53,15 @@
     const o = O(), words = wordsOf(line), fam = o && o.lineFamily ? o.lineFamily(line || {}) : "", form = String(spec && spec.form || "").toLowerCase();
     let det = ""; try { det = o && o.purchaseDetails ? String(o.purchaseDetails(line || {}, spec || {}).type || "") : ""; } catch (_) { det = ""; }
     const lf = String(spec && spec.lineForm || "").toLowerCase();   // (the form guard's reading of the line: huggie | earring | necklace | unknown; it is not worked out again here)
-    if (lf === "huggie" || lf === "earring") return { ok: false, family: "earring", why: "an earring line has its own Left and Right answers" };
+    if (lf === "huggie" || lf === "earring") return { ok: false, family: "earring", why: "an earring piece has its own Left and Right answers" };
     if (lf === "necklace" && !/^charm only/i.test(det)) return { ok: true, family: "necklace", says: TWO_CHARMS.test(words), why: "a necklace" };
     const earrings = /earring|hoop|huggie|stud/i.test(det) || form === "earrings" || form === "huggie" || form === "earring-single" || fam === "earring" || (HUGGIE_WORDS.test(words) && fam !== "necklace" && det !== "Necklace");
-    if (earrings) return { ok: false, family: "earring", why: "an earring line has its own Left and Right answers" };
+    if (earrings) return { ok: false, family: "earring", why: "an earring piece has its own Left and Right answers" };
     const says = TWO_CHARMS.test(words), chain = (Array.isArray(line && line.variations) ? line.variations : []).some(v => v && CHAIN_OPTION.test(String(v.name != null ? v.name : v.formatted_name || "")) && String(v.value != null ? v.value : v.formatted_value || "").trim());   // (a Necklace Length option is a necklace: the buyer chose a chain)
     if (chain && !/^charm only/i.test(det)) return { ok: true, family: "necklace", says, why: "a necklace (it has a chain length)" };
     if (det === "Necklace" || (!/^charm only/i.test(det) && (form === "necklace" || fam === "necklace"))) return { ok: true, family: "necklace", says, why: "a necklace" };
     const other = /bracelet/i.test(det) || form === "bracelet" || fam === "bracelet" ? "bracelet" : /anklet/i.test(det) || form === "anklet" || fam === "anklet" ? "anklet" : "";
-    return { ok: false, family: other || fam || "", why: other ? "a " + other + " is not a necklace" : "a line that is not known to be a necklace" };
+    return { ok: false, family: other || fam || "", why: other ? "a " + other + " is not a necklace" : "a piece that is not known to be a necklace" };
   }
 
   /** The numbered designs of `base` found in a list of master SKUs: [{ sku, n }] in number order, one per number. A "(HUGGIE)" design (unless `o.huggie`), a design of another family

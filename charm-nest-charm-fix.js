@@ -38,17 +38,17 @@
   /** Whether the charm a line is matched to can be corrected for its listing here. */
   function offerOf(row, h) {
     h = h || {}; const RL = RLof(h);
-    if (!row || !row.line || !row.spec || row.loading) return no("the line is not read yet");
+    if (!row || !row.line || !row.spec || row.loading) return no("the piece is not read yet");
     if (row.fromRecord) return no("this order is read from the records, not the open orders");
-    if (FINISHED.has(row.state)) return no("the line is finished, skipped or gone");
+    if (FINISHED.has(row.state)) return no("the piece is finished, skipped or gone");
     if (h.cancelled && h.cancelled(row)) return no("the order is cancelled");
     const sp = row.spec;
-    if (sp.noDesign && !sp.ownDesign) return no("this line is not cut (no design)");
-    if (sp.ownDesign || sp.customDone) return no("this line is made from its own artwork, not a library charm");
-    if ((sp.problems || []).some(p => p && ASKS.has(p.kind))) return no("this line still asks which charm it is: its Review card answers that");
-    const cur = up(sp.designSku); if (!cur) return no("no charm is matched to this line yet");
+    if (sp.noDesign && !sp.ownDesign) return no("this piece is not cut (no design)");
+    if (sp.ownDesign || sp.customDone) return no("this piece is made from its own artwork, not a library charm");
+    if ((sp.problems || []).some(p => p && ASKS.has(p.kind))) return no("this piece still asks which charm it is: its Review card answers that");
+    const cur = up(sp.designSku); if (!cur) return no("no charm is matched to this piece yet");
     let set = []; try { set = (h.O && h.O.setDesignsOf ? h.O.setDesignsOf(sp) : null) || []; } catch (_) { set = []; }
-    if (set.length > 1) return no("this line is a set of several charms");
+    if (set.length > 1) return no("this piece is a set of several charms");
     if (!RL || !RL.planOf) return no("the saved links did not load");
     const plan = RL.planOf(row, cur); if (!plan.ok) return no(plan.why);
     return { ok: true, why: "", listingId: lidOf(row.line), cur, from: RL.fromOf ? RL.fromOf(row.line, sp) : "", key: plan.key, via: plan.via, option: plan.option || null };

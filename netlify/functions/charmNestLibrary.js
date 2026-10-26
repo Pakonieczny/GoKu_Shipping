@@ -3445,7 +3445,7 @@ async function op_aliasGet(b = {}) {
    Only this listing and this SKU read it (charm-nest-orders.js pairMembers); both designs must be in the master index now, so a link never names a design that is not there. */
 async function putPairAlias(b, lid, from) {
   const p = b.pair && typeof b.pair === "object" ? b.pair : {}, L = String(p.L || "").trim().toUpperCase(), R = String(p.R || "").trim().toUpperCase();
-  if (!lid || !from) return { error: "a pair of designs is kept for one listing and the SKU its lines carry: listingId and fromSku required" };
+  if (!lid || !from) return { error: "a pair of designs is kept for one listing and the SKU its pieces carry: listingId and fromSku required" };
   if (!Master.isSku(L) || !Master.isSku(R) || L === R) return { error: "pair.L and pair.R are two different master SKUs" };
   for (const k of [L, R]) { const s = await db.collection(Master.INDEX).doc(k).get(); if (!s.exists || !(s.data() || {}).sku) return { error: `${k} is not in the master index` }; }
   const doc = { listingId: lid, by: str(b.by || "operator", 80), title: str(b.title, 200), updatedAt: FV.serverTimestamp(), pairBySku: { [from]: { L, R, by: str(b.by || "operator", 80), at: Date.now() } } };
@@ -4751,7 +4751,7 @@ OPS.listingEtsySkuWrite = require("./_charmNestEtsyLink").ops.listingEtsySkuWrit
    field, Etsy's echo compared; never twice, never an undo), scoped to the products that carry the line's Etsy SKU (onlySku), every other product as read. No password: a signed-in person's edit of one
    line's SKU to a charm that is in the repo. The zodiac fence holds for it too. "Etsy must also be written from the sand box!" (Paul, 26 Oct 2026): the sandbox's Edit SKU writes the real
    listing too (the sandbox's orders are the shop's own listings), so the sandbox mark is not passed on; the write and its record are the shop's, never Sandbox_ ones. */
-OPS.editSkuEtsy = body => { const b = Object.assign({}, body && typeof body === "object" ? body : {}); delete b.sandbox; if (typeof b.onlySku !== "string" || !b.onlySku.trim()) return Promise.resolve({ ok: false, state: "failed", reason: "bad-request", text: "the line's Etsy SKU is needed", retry: false }); return OPS.listingEtsySkuWrite(b); }; NO_GEN_BUMP.add("editSkuEtsy");   // (only the listing named: one listing's inventory is read and written, never another listing with the same SKU)
+OPS.editSkuEtsy = body => { const b = Object.assign({}, body && typeof body === "object" ? body : {}); delete b.sandbox; if (typeof b.onlySku !== "string" || !b.onlySku.trim()) return Promise.resolve({ ok: false, state: "failed", reason: "bad-request", text: "the piece's Etsy SKU is needed", retry: false }); return OPS.listingEtsySkuWrite(b); }; NO_GEN_BUMP.add("editSkuEtsy");   // (only the listing named: one listing's inventory is read and written, never another listing with the same SKU)
 Object.assign(OPS, require("./_charmNestEtsyZodiac").ops); ["zodiacListingPrepare", "zodiacListingWrite", "zodiacListingReconcile", "zodiacListingStatus"].forEach(op => NO_GEN_BUMP.add(op));   // ZODWRITE (12 Oct 2026), DORMANT: the Etsy ZODIAC SIGN drop-down write (plans/zodiac-1012/ZODWRITE-findings.md). Prepare / write / reconcile are behind the repo password door (_charmNestRepoAuth.js LIBRARY, need "modify"), write also needs the typed words; the status only reads. Never in the sandbox; none raises the placement counter
 
 exports.ops = OPS;   // the connections check runs the same queries the app runs

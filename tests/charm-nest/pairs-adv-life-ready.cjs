@@ -21,7 +21,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
     let r = await status(); assert.equal(mine(r).ready, true, JSON.stringify(mine(r))); assert.equal(r.sheets.find(s => s.id === 'ready-sheet').laser.ready, true, 'the sheet is ready for the laser: nothing waits for a piece the line never had'); n++; ok('a line with no groupSize (pooled before the rule) is read as it always was');
     // 2 · the half-written group: the line says its pieces are a group of 2 and lists only the Left
     run.lines[key] = line({ groupSize: 2, sides: ['L', 'R'] });
-    r = await status(); assert.equal(mine(r).ready, false, JSON.stringify(mine(r))); assert.equal(mine(r).key, 'pooled'); assert.match(mine(r).why, /^the right earring is missing: only 1 of this line's 2 pieces were made/);
+    r = await status(); assert.equal(mine(r).ready, false, JSON.stringify(mine(r))); assert.equal(mine(r).key, 'pooled'); assert.match(mine(r).why, /^the right earring is missing: only 1 of this order's 2 pieces were made/);
     assert.equal(r.sheets.find(s => s.id === 'ready-sheet').laser.ready, false, 'the sheet is not ready for the laser');
     let c = await complete(); assert.equal(c.status, 409); assert.match(c.error, /^Not ready for Laser cutting: order 3700000101 — the right earring is missing/); assert(!st.doc(S, 'ready-sheet').laserDoneAt, 'not marked cut'); say(c.error); n++; ok('finding 6: the sheet holding the Left waits for the Right whose piece record was never written; the refusal names the right earring');
     // 3 · the Right exists on another sheet that is not ready: the refusal names the ear and the sheet it is on

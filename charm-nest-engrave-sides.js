@@ -371,7 +371,7 @@
     for (let m; (m = re.exec(text));) { const k = numOfWord(m[2] || m[3] || m[4]); marks.push({ k, at: m.index + m[1].length, end: m.index + m[0].length }); if (m[0].length === 0) re.lastIndex++; }
     if (marks.length) {
       const nums = marks.map(x => x.k);
-      if (marks.length !== n || new Set(nums).size !== n || nums.some(k => k < 1 || k > n)) return fail(`the note numbers ${[...new Set(nums)].sort((a, b) => a - b).join(', ')}, the line has ${n} discs`);
+      if (marks.length !== n || new Set(nums).size !== n || nums.some(k => k < 1 || k > n)) return fail(`the note numbers ${[...new Set(nums)].sort((a, b) => a - b).join(', ')}, the order has ${n} discs`);
       const lead = text.slice(0, marks[0].at); if (clean(lead) && !LEAD.test(clean(lead))) return fail('other words come before the numbered ones');
       const words = new Array(n).fill('');
       marks.forEach((x, i) => { words[x.k - 1] = trimWord(text.slice(x.end, i + 1 < marks.length ? marks[i + 1].at : text.length)); });

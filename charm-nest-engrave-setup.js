@@ -282,7 +282,7 @@
     const F = Faces(), list = (jobs || []).filter(Boolean), out = { remove: [], plain: [], reopen: [], add: [], none: [], lines: [], blocked: '' };
     if (!next) return out;
     const decidedWas = j => DECIDED.includes(j.state) && j.state !== 'none';
-    if (line && CUT.includes(line.state) && list.some(j => faceOfJob(j) && !next.faces.includes(faceOfJob(j)) && decidedWas(j))) out.blocked = 'This line is already cut: an engraving that is decided on it can no longer be changed here.';
+    if (line && CUT.includes(line.state) && list.some(j => faceOfJob(j) && !next.faces.includes(faceOfJob(j)) && decidedWas(j))) out.blocked = 'This piece is already cut: an engraving that is decided on it can no longer be changed here.';
     if (!next.faces.length) {
       for (const j of list) (decidedWas(j) ? (j.state === 'skipped' ? [] : out.plain) : j.state === 'none' ? [] : out.none).push(j);
     } else {
@@ -315,7 +315,7 @@
   async function apply(line, patch, env) {
     const F = Faces();
     const res = { ok: false, removed: [], plain: [], none: [], reopened: [], seeded: [], added: [], pending: false };
-    if (!line || !line.spec) { res.message = 'This line is not loaded.'; return res; }
+    if (!line || !line.spec) { res.message = 'This piece is not loaded.'; return res; }
     if (line.state === 'gone') { res.message = 'This order has left the pull, so its engraving is not changed here.'; return res; }
     // NO EARRING IS EVER ENGRAVED (charm-nest-orders.js section 3d): a person's pick for an earring is dropped quietly (nothing is stored, no job is made, nothing asks)
     if (F.neverOf && F.neverOf(line)) { res.ok = true; res.never = true; return res; }
@@ -456,7 +456,7 @@
   const fontText = f => (f.word && f.name && f.word.toLowerCase() !== f.name.toLowerCase() ? `${f.word} → ${f.name}` : f.word || f.name || '') + (f.via === 'message' ? (f.sub ? ' (nearest we have, from the message)' : ' (from the message)') : '');
   function fontSelect(vm, face, value, disabled) {
     const list = fontChoices(), have = list.some(c => c.word === value), lf = vm.lineFont;
-    const first = `The line’s font${fontText(lf) ? ` (${esc(fontText(lf))})` : ''}`;
+    const first = `The piece’s font${fontText(lf) ? ` (${esc(fontText(lf))})` : ''}`;
     return `<select data-su="font" data-face="${face}" aria-label="${cap1(face)} font"${disabled ? ' disabled' : ''}><option value="">${first}</option>${list.map(c => `<option value="${esc(c.word)}"${c.word === value ? ' selected' : ''}>${esc(c.word)}${c.name ? ' → ' + esc(c.name) : ''}</option>`).join('')}${value && !have ? `<option value="${esc(value)}" selected>${esc(value)}</option>` : ''}</select>`;
   }
   function viewHtml(vm, d, o) {
@@ -484,7 +484,7 @@
     const lines = cons && !d.confirm ? cons.lines.filter(l => !/already (approved|approved and saved)/.test(l)) : [];
     const warn = cons && cons.blocked ? `<div class="egSuErr" role="alert">${esc(cons.blocked)}</div>` : '';
     const why = vm.why || vm.from ? `<div class="egSuWhy">${esc(vm.edited ? vm.reading ? 'The system read: ' + vm.reading : '' : vm.why)}${!vm.edited && vm.from ? ` <small>${vm.why ? '· ' : ''}${esc(vm.from)}</small>` : ''}</div>` : '';
-    return `<div class="egSuTop"><span class="egSuLbl">Engraves</span><span class="egEarSwitch egMany" role="group" aria-label="What this line engraves">${tabs}</span>${statusHtml(d)}</div><div class="egSuEdit">${prompt}${faces}</div>${why}${lines.length ? `<div class="egSuNote">${lines.map(t => `<span>${esc(t)}</span>`).join('')}</div>` : ''}${warn}${confirmHtml(d)}<div class="egSuActs"><button type="button" class="btn gold xs" data-su="save"${dirty && !d.busy && !(cons && cons.blocked) ? '' : ' disabled'}>Save</button><button type="button" class="btn ghost xs" data-su="cancel"${dis}>Cancel</button></div>`;
+    return `<div class="egSuTop"><span class="egSuLbl">Engraves</span><span class="egEarSwitch egMany" role="group" aria-label="What this piece engraves">${tabs}</span>${statusHtml(d)}</div><div class="egSuEdit">${prompt}${faces}</div>${why}${lines.length ? `<div class="egSuNote">${lines.map(t => `<span>${esc(t)}</span>`).join('')}</div>` : ''}${warn}${confirmHtml(d)}<div class="egSuActs"><button type="button" class="btn gold xs" data-su="save"${dirty && !d.busy && !(cons && cons.blocked) ? '' : ' disabled'}>Save</button><button type="button" class="btn ghost xs" data-su="cancel"${dis}>Cancel</button></div>`;
   }
   /** The control as a string (the line's `row`). opts: { compact, open, vm, draft } */
   function html(row, opts) {
@@ -492,7 +492,7 @@
     const vm = opts.vm || read(row, opts); if (!vm) return '';
     const d = opts.draft || draftOf(vm);
     if (opts.open != null && !d.touchedOpen) d.open = !!opts.open;
-    return `<div class="egSetup${opts.compact ? ' egSuCompact' : ''}" data-setup data-key="${esc(vm.key)}" data-engraves="${esc(vm.mode)}" data-edited="${vm.edited ? 1 : 0}" data-open="${d.open && !vm.cut ? 1 : 0}" role="group" aria-label="What this line engraves">${d.open && !vm.cut ? editHtml(vm, d) : viewHtml(vm, d, opts)}</div>`;
+    return `<div class="egSetup${opts.compact ? ' egSuCompact' : ''}" data-setup data-key="${esc(vm.key)}" data-engraves="${esc(vm.mode)}" data-edited="${vm.edited ? 1 : 0}" data-open="${d.open && !vm.cut ? 1 : 0}" role="group" aria-label="What this piece engraves">${d.open && !vm.cut ? editHtml(vm, d) : viewHtml(vm, d, opts)}</div>`;
   }
 
   /* ── wiring ─────────────────────────────────────────────────────────────────── */

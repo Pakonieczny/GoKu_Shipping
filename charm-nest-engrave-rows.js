@@ -193,7 +193,7 @@
   function approveBoth(row, o) {
     o = o || {};
     if (row && row.faces) return facesGate(row, o);
-    if (!row || !row.pair) return { ok: false, why: 'This line has one ear to approve.' };
+    if (!row || !row.pair) return { ok: false, why: 'This piece has one ear to approve.' };
     const [l, r] = row.jobs;
     if (!row.jobs.every(j => j.state === 'review' && j.fit && j.verify && j.verify.geometry && j.verify.geometry.ok)) return { ok: false, why: 'Both ears must have a placement to check first.' };
     if (row.jobs.some(j => settling(j) || (o.busy && o.busy(j)))) return { ok: false, why: 'An ear is still being prepared or approved.' };
@@ -214,6 +214,6 @@
     return { ok: true, why: '' };
   }
   /** The one press of a row, whatever it holds: a row with a front job, a pair of ears or the discs of a counted line. */
-  const approveRow = (row, o) => (row && row.faces ? facesGate(row, o || {}) : row && row.pair ? approveBoth(row, o) : row && row.discs ? approveAll(row, o) : { ok: false, why: 'This line has one placement to approve.' });
+  const approveRow = (row, o) => (row && row.faces ? facesGate(row, o || {}) : row && row.pair ? approveBoth(row, o) : row && row.discs ? approveAll(row, o) : { ok: false, why: 'This piece has one placement to approve.' });
   return { faceOf, approveRow, earOf, discOf, pieceOf, lineKeyOf, infoOf, countedOf, unitKey, group, rowOf, multi, kindOf, step, neighbour, openLead, counts, wordsOf, sameWords, sameWordsAll, stageOf, approveBoth, approveAll };
 });

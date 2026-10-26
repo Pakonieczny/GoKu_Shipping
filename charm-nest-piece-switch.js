@@ -126,7 +126,7 @@
    *  For two ears this is, character for character, the Left | Right switch of the Engrave editor. */
   function flatHtml(pieces, key, o) {
     o = o || {}; const ps = pieces || [], kind = kindOf(ps);
-    const aria = kind === 'ears' ? 'The left and the right ear of this line' : kind === 'discs' ? (ps.length && ps.every(p => p.kind === 'copy') ? 'The pieces of this line, one by one' : 'The discs of this order, one by one') : 'The pieces of this line, one by one';
+    const aria = kind === 'ears' ? 'The left and the right ear of this piece' : kind === 'discs' ? (ps.length && ps.every(p => p.kind === 'copy') ? 'The pieces of this order, one by one' : 'The discs of this order, one by one') : 'The pieces of this order, one by one';
     return `<span class="egEarSwitch${kind === 'ears' ? '' : ' egMany'}" role="group" aria-label="${aria}">${ps.map(p => {
       const on = p.key === key, ft = o.fonts ? fontText(p.font) : '', fn = o.fonts ? fontNote(p.font) : '';
       const what = kind === 'ears' ? 'the ' + p.name.toLowerCase() : p.name.toLowerCase();

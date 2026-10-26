@@ -200,7 +200,7 @@ const R = n => F.rid(n), T = n => F.tx(n);
       const pieces = Readiness.pieces(lines, sheets)[rid]; assert.deepEqual(pieces.map(p => p.poolId), [L, Rr], 'the order reads ' + JSON.stringify(pieces.map(p => p.poolId)));
       const rep = Readiness.orderReports(lines, sheets)[rid]; assert.equal(rep.ready, false, JSON.stringify(rep));
       const mine = Readiness.forSheet(rep, 'a', null); assert.equal(mine.ready, false, JSON.stringify(mine));
-      const b = mine.blocks[0]; assert.equal(b.poolId, Rr); assert.equal(b.side, 'R'); assert(/^the right earring is missing/.test(b.why) && /1 of this line's 2/.test(b.why), b.why);
+      const b = mine.blocks[0]; assert.equal(b.poolId, Rr); assert.equal(b.side, 'R'); assert(/^the right earring is missing/.test(b.why) && /1 of this order's 2/.test(b.why), b.why);
       const rec = { id: 'a', orderReadiness: { [rid]: mine }, setId: null, orders: [rid], poolIds: [L] };
       const text = Readiness.blockText(Readiness.orderBlockers(rec)[0]); assert(/right earring/.test(text), text);
       console.log('      text: ' + text);

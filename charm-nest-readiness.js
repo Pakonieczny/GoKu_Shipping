@@ -235,7 +235,7 @@
           let block=null;
           if(hold)block={key:'held',why:hold};
           else if(rv && !hand && !(on.length && on.every(x=>+x.laserDoneAt>0)))block={key:'held',review:true,...swapOf(rv),why:rv};   // (a piece on a sheet already cut cannot be held)
-          else if(!on.length)block=problem?{key:problem.key,why:problem.why}:made && listed.size && !listed.has(pid)?{key:'pooled',missing:true,why:`${whoOf(l,pid,`${made}`)} is missing: only ${listed.size} of this line's ${made} pieces were made, so it is on no sheet`}:{key:'pooled',why:'A piece is not on a saved sheet yet'};
+          else if(!on.length)block=problem?{key:problem.key,why:problem.why}:made && listed.size && !listed.has(pid)?{key:'pooled',missing:true,why:`${whoOf(l,pid,`${made}`)} is missing: only ${listed.size} of this order's ${made} pieces were made, so it is on no sheet`}:{key:'pooled',why:'A piece is not on a saved sheet yet'};
           // one piece listed by two saved sheets would be cut twice: the order waits until a person takes it off one of them (the sheets are the ones already read: no read of its own)
           else if(on.length>1)block={key:'doubled',why:`${whoOf(l,pid,'this order')} is listed on both ${on.map(sheetLabel).join(' and ')}, so it would be cut twice`};
           else if(!on.some(s=>+s.laserDoneAt>0 || phys.get(s).ok)){
