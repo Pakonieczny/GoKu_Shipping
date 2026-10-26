@@ -39,7 +39,9 @@
     {"pattern": "\\bno line is (?:to be )?added\\b|\\bwaiting for its line\\b|\\bThe line check\\b", "why": "the Rose Gold green cut line of a sheet"},
     {"pattern": "\\bmean line\\b", "why": "the stroke width (mean line) of a letter"},
     {"pattern": "\\bNext in line\\b", "why": "the next in a queue"},
-    {"pattern": "\\bwould make the line wrong\\b|\\bmatch that line\\b|\\bwhere the line was drawn\\b", "why": "the green cut line of a sheet"}
+    {"pattern": "\\bwould make the line wrong\\b|\\bmatch that line\\b|\\bwhere the line was drawn\\b", "why": "the green cut line of a sheet"},
+    {"pattern": "is alone on a line", "why": "a line of the buyer's engraving words"},
+    {"pattern": "a blank line", "why": "an empty line in the buyer's words"}
   ],
   "literals": [
     { "file": "charm-nest-dxf.js", "exact": "LINE", "why": "the DXF entity name LINE (a file format keyword)" },
@@ -80,6 +82,9 @@
     {"file": "charm-nest-sandbox-families.js", "exact": "sandbox line decisions", "why": "label of an internal sandbox store in the admin list"},
     {"file": "charm-nest-sheetwin.js", "startsWith": "dialog.sheetWin{", "why": "a CSS string (line-height)"},
     {"file": "netlify/functions/_charmNestAgent.js", "startsWith": "THIS LINE MAKES SEVERAL PIECES", "why": "AI prompt text, not shown to a person"},
-    {"file": "netlify/functions/_charmNestAgent.js", "startsWith": "Pieces of this line (slots, in order)", "why": "AI prompt text, not shown to a person"}
+    {"file": "netlify/functions/_charmNestAgent.js", "startsWith": "Pieces of this line (slots, in order)", "why": "AI prompt text, not shown to a person"},
+    {"file": "charm-nest-orders.js", "exact": "MUSIC4 - SINGLE W/ DOUBLE LINE", "why": "a real Etsy SKU name (the design's own name), matched as data"},
+    {"file": "charm-nest-orders.js", "exact": "Two designs on this line", "why": "the stored key a person's answer about two designs is saved under (Charm option answers); renaming it would orphan saved answers"},
+    {"file": "charm-nest-orders.js", "exact": "line", "why": "an internal tag for what precedes a word (a new text line vs a list), never shown"}
   ]
 }

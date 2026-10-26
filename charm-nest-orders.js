@@ -1358,7 +1358,7 @@
     const own = masterSku(inv.sku, masterEntry, masterLoose), fam = lineFamily(line), conflict = !!own && skuFamilyConflict(own, line);
     if (own && !conflict) add(own, "Etsy's own SKU for this option");
     else for (const t of familyTwins(inv.sku, fam, masterEntry, masterLoose)) add(t, `the ${fam} version of Etsy's SKU ${upSku(inv.sku)} (same number)`);
-    if (own && conflict) add(own, `Etsy's own SKU for this option, but it is a ${skuFamily(own)} design and this line is ${fam === "earring" ? "earrings" : fam}`, { conflict: true });
+    if (own && conflict) add(own, `Etsy's own SKU for this option, but it is a ${skuFamily(own)} design and this piece is ${fam === "earring" ? "earrings" : fam}`, { conflict: true });
     return out;
   }
   /** One plain line on why the listing inventory did not settle an option (nothing when it did). table: what the page holds for the
@@ -1377,7 +1377,7 @@
     }
     const own = masterEntry ? masterSku(inv.sku, masterEntry, masterLoose) : "";
     if (!own) return `Etsy's SKU for this option, ${upSku(inv.sku)}, is not in any master file`;
-    if (skuFamilyConflict(own, line)) { const f = lineFamily(line); return `Etsy's SKU for this option, ${own}, is a ${skuFamily(own)} design and this line is ${f === "earring" ? "earrings" : f}`; }
+    if (skuFamilyConflict(own, line)) { const f = lineFamily(line); return `Etsy's SKU for this option, ${own}, is a ${skuFamily(own)} design and this piece is ${f === "earring" ? "earrings" : f}`; }
     return `Etsy's SKU ${own} is shared by several choices of this option`;
   }
   /** The charms a person is offered for an option that picks the charm, best first (Review › Options › "The charm itself…"):
@@ -1715,7 +1715,7 @@
       if (said) { out.state = "answered"; if (/^(?:front|both|back)$/.test(String(said.engrave || ""))) out.mode = said.engrave; }   // (a saved answer may say the engraving too: engrave "front" | "both")
       else if (!sh) { out.state = "missing"; out.why = `Tag${t.tag} is not one of the listing's four tag shapes (1 to 4), so no master design is known for it`; }
       else if (!me) out.state = "unchecked";
-      else if (!me(sh.sku)) { out.state = "missing"; out.why = `the master has no design for the Tag${t.tag} shape (${sh.shape}, ${sh.sku}): add it to the master and this line reads on its own`; }
+      else if (!me(sh.sku)) { out.state = "missing"; out.why = `the master has no design for the Tag${t.tag} shape (${sh.shape}, ${sh.sku}): add it to the master and this piece reads on its own`; }
       else {
         // never two shapes on one drawing: a tag whose master design is the very same drawing (the same charm hash) as a LOWER tag's is a copy, not its own shape (the master's TINY INITIAL TAG 4 is a copy of TAG 1)
         const mine = me(sh.sku), h = String(mine && mine.charmHash || ""), twin = h ? [1, 2, 3, 4].find(u => u < t.tag && TAG_SHAPES[u] && String((me(TAG_SHAPES[u].sku) || {}).charmHash || "") === h) : 0;
@@ -1994,7 +1994,7 @@
      measured, or an entry that says `pair.alike`); the bridge asks again with the traced design when it makes the piece and calls solo() below when the geometry says one body. */
   const pairModule = () => { try { const g = typeof self !== "undefined" ? self : typeof globalThis !== "undefined" ? globalThis : null; if (g && g.CharmNestPair) return g.CharmNestPair; if (typeof require === "function") return require("./charm-nest-pair.js"); } catch (_) { /* the page without the module: the old words */ } return null; };
   const alikeKnown = o => { try { const M = pairModule(); return !!(M && typeof M.alikeDesign === "function" && M.alikeDesign(Object.assign({ sku: o && o.sku }, (o && o.entry) || {})) === true); } catch (_) { return false; } };
-  const ONE_WORDS = (index, count, why) => `the design draws ${count || 2} bodies (${why || "a left and a right charm"}) but the line is not an earring pair: made as ONE charm, the ${index === 1 ? "right" : "left"} body only, no Left or Right, nothing duplicated or mirrored`;
+  const ONE_WORDS = (index, count, why) => `the design draws ${count || 2} bodies (${why || "a left and a right charm"}) but the piece is not an earring pair: made as ONE charm, the ${index === 1 ? "right" : "left"} body only, no Left or Right, nothing duplicated or mirrored`;
   /** A design a person named as ONE body (CharmNestPair.onlyBodyOf, the WOLF: Paul, 13 Oct 2026), by the master entry alone: { index, words, ... } or null. */
   const namedOne = o => { try { const M = pairModule(); return M && typeof M.onlyBodyOf === "function" ? M.onlyBodyOf(Object.assign({ sku: o && o.sku }, (o && o.entry) || {})) : null; } catch (_) { return null; } };
   const MIS_WORD = /\bmis-?match(?:ed)?\b/i;
@@ -2064,9 +2064,9 @@
     // 0 · an option that ADDS a piece ("Add a second charm: Yes +$12", "2 extra charms", "Add another disc"), or says "Disc 2 of 3": the number in it is not what the
     //     line makes in all (the base piece is not in it, or the whole count is the second number). A person says.
     const both = (nm + " " + val).replace(/\bextra[\s-]*(?:small|large|big|long|short|thin|wide|tiny|light|heavy|thick|dainty|sm|lg|xl)\b/gi, " ");
-    if (ADD_WORD.test(both) && PIECE_WORD.test(both) && !/\badd[\s-]*ons?\b/i.test(both) && !NO_ANSWER.test(val)) return { n: 0, cls: "", rule: "count:add", certain: false, ask: true, why: `“${clip(nm, 40)}: ${clip(val, 40)}” adds a piece: how many pieces does the line make in all?`, unit: "", text: val };
+    if (ADD_WORD.test(both) && PIECE_WORD.test(both) && !/\badd[\s-]*ons?\b/i.test(both) && !NO_ANSWER.test(val)) return { n: 0, cls: "", rule: "count:add", certain: false, ask: true, why: `“${clip(nm, 40)}: ${clip(val, 40)}” adds a piece: how many pieces does the order make in all?`, unit: "", text: val };
     const ord = /\b(\d{1,2})\s+of\s+(\d{1,2})\b/i.exec(both);
-    if (ord && PIECE_WORD.test(both)) return { n: +ord[2], cls: "", rule: "count:ordinal", certain: false, ask: true, why: `“${clip(nm, 40)}: ${clip(val, 40)}” says ${ord[1]} of ${ord[2]}: is the line ${ord[2]} pieces in all?`, unit: "", text: val };
+    if (ord && PIECE_WORD.test(both)) return { n: +ord[2], cls: "", rule: "count:ordinal", certain: false, ask: true, why: `“${clip(nm, 40)}: ${clip(val, 40)}” says ${ord[1]} of ${ord[2]}: is the order ${ord[2]} pieces in all?`, unit: "", text: val };
     if (!hits.length && !lens.length && (cue || (nameCls && nameCls !== "length" && !NOT_COUNT_NAME.test(nm) && BARE_COUNT.test(val.replace(SAFE_NUM, " "))))) {
       // 2 · the NAME asks "how many" / "number of" and the value is a bare number or a number word ("Number of Discs: 3", "How many charms?: Two")
       const nums = [...new Set((val.replace(SAFE_NUM, " ").replace(/[x×]\s*(?=\d)/gi, " ").match(new RegExp("\\b" + NUMRE + "\\b", "gi")) || []).map(numOf).filter(Boolean))];
@@ -2300,10 +2300,10 @@
       return { names: good[0].names, found: good[0].r.found, why: `the SKU and the title name different designs (${good[1].r.found.join(" + ")} and ${good[0].r.found.join(" + ")}): name the right second design, or say it is the same on both ears` };
     // one source is exact, the other names a design that is one of the master's but not the same: the line contradicts itself, nothing is chosen between them
     if (good.length === 1 && tries.length === 2) { const o = tries.find(t => !t.r.ok), a = good[0].r.found, b = o.r.found || []; const hit = b.map((f, i) => f && a[i] && f !== a[i] ? f : "").filter(Boolean);
-      if (hit.length) return { names: good[0].names, found: a, why: `the ${o.from === "skus" ? "SKU" : "title"} names ${hit.map(h => `“${h}”`).join(" and ")} but the ${good[0].from === "skus" ? "SKU" : "title"} names ${a.join(" + ")}: the line says two different designs that do not agree. Name the right second design, or say it is the same on both ears` }; }
+      if (hit.length) return { names: good[0].names, found: a, why: `the ${o.from === "skus" ? "SKU" : "title"} names ${hit.map(h => `“${h}”`).join(" and ")} but the ${good[0].from === "skus" ? "SKU" : "title"} names ${a.join(" + ")}: the order says two different designs that do not agree. Name the right second design, or say it is the same on both ears` }; }
     if (good.length) { const g = good[good.length - 1]; return { members: [{ side: "L", sku: g.r.found[0] }, { side: "R", sku: g.r.found[1] }], source: g.from, names: g.names, found: g.r.found }; }
     const t = tries[0], lack = t.names.map((n, i) => t.r.found[i] ? "" : `“${clip(n, 30)}”`).filter(Boolean), have = t.names.map((n, i) => t.r.found[i] ? `“${clip(n, 30)}” is ${t.r.found[i]}` : "").filter(Boolean);
-    return { names: t.names, found: t.r.found, why: `the line says two different designs (${said || "its words"}) and names ${t.names.map(n => `“${clip(n, 30)}”`).join(" and ")}, but ${have.length ? have.join(", ") + " and " : ""}no single master design reads as ${lack.length === 2 ? "either" : lack[0]}: name the missing design, or say it is the same on both ears` };
+    return { names: t.names, found: t.r.found, why: `the order says two different designs (${said || "its words"}) and names ${t.names.map(n => `“${clip(n, 30)}”`).join(" and ")}, but ${have.length ? have.join(", ") + " and " : ""}no single master design reads as ${lack.length === 2 ? "either" : lack[0]}: name the missing design, or say it is the same on both ears` };
   }
 
   /* ── a Zodiac line that says 2 symbols (Paul, 10 Oct 2026: "Silver • 2 symbols", Zodiac Sign Libra, note "balance et lion") ────────────────────────────
@@ -2372,7 +2372,7 @@
     if (live.some(p => !has(p, vid) && upSku(p.sku) === skus[0])) return { why: `Etsy's SKU ${skus[0]} is shared by other values of “${optionName}”, so it does not say ${sign}` };
     const own = me ? masterSku(skus[0], me, loose) : skus[0];
     if (!own) return { why: `Etsy's SKU for ${sign}, ${skus[0]}, is not in any master file` };
-    if (skuFamilyConflict(own, line)) { const f = lineFamily(line); return { why: `Etsy's SKU for ${sign}, ${own}, is a ${skuFamily(own)} design and this line is ${f === "earring" ? "earrings" : f}` }; }
+    if (skuFamilyConflict(own, line)) { const f = lineFamily(line); return { why: `Etsy's SKU for ${sign}, ${own}, is a ${skuFamily(own)} design and this piece is ${f === "earring" ? "earrings" : f}` }; }
     return { sku: own, etsy: skus[0] };
   }
 
@@ -2570,7 +2570,7 @@
   const symbolMember = (prof, name, me, loose) => { const i = prof.names.indexOf(name); return i < 0 || !me ? "" : masterSku(prof.base + i + (prof.suffix || ""), me, loose) || ""; };
   /** Does the master hold any member of the row's family? (none: the row stands aside and the line is read as before) */
   const symbolFamilyIn = (prof, me, loose) => !!me && prof.names.some((_, i) => !!masterSku(prof.base + i + (prof.suffix || ""), me, loose));
-  const SYMBOL_FROM = Object.assign({ sku: "the line's SKU" }, SIGN_FROM);
+  const SYMBOL_FROM = Object.assign({ sku: "the piece's SKU" }, SIGN_FROM);
   const capFirst = s => String(s || "").charAt(0).toUpperCase() + String(s || "").slice(1);
   /** What a line of a SYMBOL_LISTINGS row reads as. o: { me, loose, sku (the SKU read so far), sameSaid (a person said "the same on both ears" for the line) }.
    *  → null (the master holds nothing of the family) | { profile, noun, family, symbols: [{ name, from, word, text, side?, sku }], textOnly, variation?, optionSku, pick?, pair?: [{ side, sku }], hold?: { kind, reason, missing? }, note } */
@@ -2596,7 +2596,7 @@
     const textOnly = box.length > 0 && words.some(x => x.from === "box") && box.every(t => runeText(visible(t)).split(/[^a-z]+/).filter(Boolean).every(w => SYMBOL_FILLER.has(w) || prof.read(w, false).length > 0));
     const out = { profile: prof.id, noun: prof.noun, family: prof.base, textOnly, symbols: [], optionSku: "" };
     if (variation) out.variation = variation;
-    const names = l => joinSigns(l.map(x => x.name)), said = x => x.from === "sku" ? "the line's SKU" : `the “${clip(x.optionName, 30)}” drop-down`;
+    const names = l => joinSigns(l.map(x => x.name)), said = x => x.from === "sku" ? "the piece's SKU" : `the “${clip(x.optionName, 30)}” drop-down`;
     let chosen = null, why = "";
     if (opt.length > 1) why = `${prof.ask} The “${clip(opt[0].optionName, 30)}” drop-down names ${names(opt)}`;
     else if (opt.length === 1) {
@@ -2843,7 +2843,7 @@
     const i = ent.names.indexOf(chosen.name), member = i < 0 ? "" : masterSku(ent.base + i, me, loose) || "", sku = member && !charmOnlyCross(row, form, member, me, loose) ? member : "";
     const dd = opts.find(x => x.name === chosen.name);   // (the drop-down that names the chosen symbol is answered by its member, whatever else named it)
     if (dd) { out.variation = dd.variation; out.optionSku = sku; }
-    const from = chosen.from === "sku" ? "the line's SKU" : chosen.from === "option" ? `the “${clip(chosen.optionName, 30)}” option` : SYMBOL_FROM[chosen.from] || chosen.from;
+    const from = chosen.from === "sku" ? "the piece's SKU" : chosen.from === "option" ? `the “${clip(chosen.optionName, 30)}” option` : SYMBOL_FROM[chosen.from] || chosen.from;
     out.symbols = [Object.assign({ name: chosen.name, from: chosen.from, word: chosen.word, text: chosen.text }, chosen.optionName ? { optionName: chosen.optionName } : {}, { sku })];
     if (!sku) {
       const held = ent.names.filter((_, j) => !!masterSku(ent.base + j, me, loose));
@@ -2914,19 +2914,19 @@
       if (sl) {
         rep.signs = sl.signs.map(x => x.sign);
         const first = sl.signs[0] || {}, note = noteSays(sl.noteText);
-        if (!sl.signs.length) rep.why = `the line says two different designs (${sig.signals[0] || "an option"}) but no sign is named: ${note}. Write the two symbols in the order's note, name the two designs, or say it is the same on both ears`;
+        if (!sl.signs.length) rep.why = `the order says two different designs (${sig.signals[0] || "an option"}) but no sign is named: ${note}. Write the two symbols in the order's note, name the two designs, or say it is the same on both ears`;
         else if (sl.signs.length === 1) {
           // the note names the SAME sign as the drop-down (or only repeats it): both ears are that sign, nothing to ask (a Left and a Right, the Right the mirror of the Left)
           if (first.from === "option" && sl.said.length && sl.said.every(x => x === first.sign)) rep.same = { sign: first.sign, text: sl.noteText, why: `the buyer's note repeats ${first.sign}: the same sign on both ears` };
-          else rep.why = `the line says two different designs (${sig.signals[0] || "an option"}) but names one (${first.sign}): ${note}. Write the second symbol in the order's note, name the second design, or say it is the same on both ears`;
-        } else if (sl.signs.length > 2) rep.why = `the line says two different designs but names ${sl.signs.length} signs (${sl.signs.map(x => x.sign).join(", ")}): ${note}. Name the right two, or say it is the same on both ears`;
+          else rep.why = `the order says two different designs (${sig.signals[0] || "an option"}) but names one (${first.sign}): ${note}. Write the second symbol in the order's note, name the second design, or say it is the same on both ears`;
+        } else if (sl.signs.length > 2) rep.why = `the order says two different designs but names ${sl.signs.length} signs (${sl.signs.map(x => x.sign).join(", ")}): ${note}. Name the right two, or say it is the same on both ears`;
         else {
           rep.lack = rep.lack || {};
           const designs = sl.signs.map(x => { const virt = x.from === "option" ? x.variation : { name: sl.optionName, value: x.sign, propertyId: sl.propertyId }; return { x, sku: has(o.designOf(virt, x.from === "option") || "") }; });
           if (designs.every(d => d.sku) && designs[0].sku !== designs[1].sku) return Object.assign({ members: [{ side: "L", sku: designs[0].sku }, { side: "R", sku: designs[1].sku }], source: "signs", signs: rep.signs, note: sl.noteText }, sl.byNote ? { byNote: true, optionName: sl.optionName, optionValue: sl.optionValue } : {});
-          rep.asks = designs.filter(d => !d.sku && d.x.from === "note").map(d => ({ name: sl.optionName, value: d.x.sign, lack: (rep.lack[d.x.sign] || {}).why || "", needNames: !!(rep.lack[d.x.sign] || {}).needNames, why: `second symbol of a 2-symbols line: ${d.x.sign}, from the buyer's words “${clip(d.x.text, 40)}”; the line's own symbol is ${first.sign}` }));
-          if (designs.every(d => d.sku) && designs[0].sku === designs[1].sku) rep.why = `the line says two different designs (${sl.signs.map(x => x.sign).join(" and ")}) but both signs are the same charm (${designs[0].sku}): ${note}. Name the second design, or say it is the same on both ears`;
-          else if (!rep.asks.length) rep.why = `the line says two different designs (${sl.signs.map(x => x.sign).join(" and ")}): “${designs.filter(d => !d.sku).map(d => d.x.sign).join(", ")}” has no charm chosen on this listing yet (${note})`;
+          rep.asks = designs.filter(d => !d.sku && d.x.from === "note").map(d => ({ name: sl.optionName, value: d.x.sign, lack: (rep.lack[d.x.sign] || {}).why || "", needNames: !!(rep.lack[d.x.sign] || {}).needNames, why: `second symbol of a 2-symbols piece: ${d.x.sign}, from the buyer's words “${clip(d.x.text, 40)}”; the piece's own symbol is ${first.sign}` }));
+          if (designs.every(d => d.sku) && designs[0].sku === designs[1].sku) rep.why = `the order says two different designs (${sl.signs.map(x => x.sign).join(" and ")}) but both signs are the same charm (${designs[0].sku}): ${note}. Name the second design, or say it is the same on both ears`;
+          else if (!rep.asks.length) rep.why = `the order says two different designs (${sl.signs.map(x => x.sign).join(" and ")}): “${designs.filter(d => !d.sku).map(d => d.x.sign).join(", ")}” has no charm chosen on this listing yet (${note})`;
           else rep.needNames = rep.asks.some(a => a.needNames);
         }
       }
@@ -2979,14 +2979,14 @@
       const viaOption = !!(rep.asks && rep.asks.length);
       // (the buyer's note names the same sign as the drop-down, or repeats it: both ears are that sign, a person is not asked)
       info.second = same ? { answered: "same" } : rep.same ? { answered: "same", by: "note", sign: rep.same.sign, why: rep.same.why }
-        : { answered: "", why: viaOption ? rep.asks[0].why : rep.why || `the line says two different designs (${sig.signals[0] || "its words"}) but names one: name the second, or say it is the same on both ears`, viaOption, needNames: !!rep.needNames };
+        : { answered: "", why: viaOption ? rep.asks[0].why : rep.why || `the order says two different designs (${sig.signals[0] || "its words"}) but names one: name the second, or say it is the same on both ears`, viaOption, needNames: !!rep.needNames };
     }
     if (cr.n > 1 || cr.answered) info.count = { n: cr.n, answered: cr.answered, rule: (cr.opts.find(c => c.certain && c.n === cr.n) || {}).rule || "", from: (cr.opts.find(c => c.certain && c.n === cr.n) || {}).name || "" };
     // the questions: what the options cannot settle by themselves
     for (const a of cr.asks) if (!(a.rule === "count:note-only" && (info.earring || info.single))) info.asks.push(a);   // (a note on an earring line is no count of pieces)
     if (!cr.answered) {
       const piece = cr.opts.find(c => c.certain && c.n > 1 && c.cls === "piece");
-      if (info.earring && piece && !info.asks.length) info.asks.push({ name: piece.name, value: piece.value, guess: 0, why: `an earring line names ${piece.n} ${piece.unit}: is that ${piece.n} pieces on each earring?`, rule: "count:earring" });
+      if (info.earring && piece && !info.asks.length) info.asks.push({ name: piece.name, value: piece.value, guess: 0, why: `an earring order names ${piece.n} ${piece.unit}: is that ${piece.n} pieces on each earring?`, rule: "count:earring" });
       const des = cr.opts.find(c => c.cls === "design" && c.n > 1 && !c.answered);
       if (des && !info.earring && !info.asks.length) info.asks.push({ name: des.name, value: des.value, guess: des.n, why: `“${clip(des.name, 40)}: ${clip(des.value, 40)}” names ${des.n} ${des.unit}: does each make a piece?`, rule: "count:designs" });
     }
@@ -3012,19 +3012,19 @@
     // what a person should see, plainly
     if (info.asks.some(a => a.rule === "ear:words")) info.notes.push("it waits until a person says whether this is a pair of earrings (" + askWords.why + ")");
     else if (earForm) info.notes.push("a person said this listing is " + (earForm === "huggie" ? "huggie hoops" : "a pair of earrings"));
-    if (info.single && !info.sideSaid) info.notes.push("single earring: the line does not say left or right");
+    if (info.single && !info.sideSaid) info.notes.push("single earring: the order does not say left or right");
     else if (info.single && info.sideBy === "note" && +line.quantity > 1) info.notes.push(`${Math.round(+line.quantity)} single earrings and the buyer's note names one ear: which of them is which ear is not guessed`);
-    if (info.second) info.notes.push(info.second.answered === "same" ? (info.second.by === "note" ? `the line says two different designs: ${info.second.why}` : "the line says two different designs: a person said the same design on both ears") : info.second.viaOption ? `waits for the second symbol's charm: ${info.second.why}` : "the line says two different designs but names one: it waits until a person names the second design or says it is the same on both ears");
-    else if (sig.says && !info.mismatched) info.notes.push("the line says two different designs but is not an earring pair: nothing is changed");
+    if (info.second) info.notes.push(info.second.answered === "same" ? (info.second.by === "note" ? `the order says two different designs: ${info.second.why}` : "the order says two different designs: a person said the same design on both ears") : info.second.viaOption ? `waits for the second symbol's charm: ${info.second.why}` : "the order says two different designs but names one: it waits until a person names the second design or says it is the same on both ears");
+    else if (sig.says && !info.mismatched) info.notes.push("the order says two different designs but is not an earring pair: nothing is changed");
     if (info.mismatched && info.source === "alias") info.notes.push("the Left and the Right are the two designs a person saved for this listing and SKU");
-    if (info.set && info.set.source === "rule") info.notes.push(`a set of ${info.set.designs.length} designs (${info.set.rule}): ${info.set.designs.map((d, i) => `${info.set.roles[i] ? info.set.roles[i] + " " : ""}${d}`).join(" and ")}, one of each for every set bought: two pieces of one order line, no Left or Right, nothing mirrored${info.set.lengths.length === 2 ? `; the pair of necklaces is ${info.set.lengths.join(" and ")}` : ""}`);
-    else if (info.set) info.notes.push(`two designs a person saved for this listing and SKU, ${info.set.designs.join(" and ")}: two pieces of one order line, no Left or Right, nothing mirrored`);
+    if (info.set && info.set.source === "rule") info.notes.push(`a set of ${info.set.designs.length} designs (${info.set.rule}): ${info.set.designs.map((d, i) => `${info.set.roles[i] ? info.set.roles[i] + " " : ""}${d}`).join(" and ")}, one of each for every set bought: two pieces of one order, no Left or Right, nothing mirrored${info.set.lengths.length === 2 ? `; the pair of necklaces is ${info.set.lengths.join(" and ")}` : ""}`);
+    else if (info.set) info.notes.push(`two designs a person saved for this listing and SKU, ${info.set.designs.join(" and ")}: two pieces of one order, no Left or Right, nothing mirrored`);
     // (the same outline twice, two keys or two mittens, on a line that is not an earring pair: ONE charm. A single earring that names no ear is such a line too.)
     // (a design a person named as ONE body, the wolf of WOLF.ai, is the same, with its own words: the master draws a wolf and a moon, the necklace charm is the wolf)
     if ((info.twoBodies || (info.single && info.mismatched && !info.sideSaid)) && alikeKnown(o)) { const nm = namedOne(o); info.oneBody = nm ? { index: nm.index, count: 2, rule: "a person's word" } : { index: 0, count: 2, rule: "the left body" }; }
     if (info.oneBody) { const nm = info.oneBody.rule === "a person's word" ? namedOne(o) : null; info.notes.push(ONE_WORDS(info.oneBody.index, info.oneBody.count, nm ? nm.words : "the same outline twice")); }
-    else if (info.twoBodies) info.notes.push("the design draws two bodies (a left and a right charm) but the line is not an earring pair: made as one piece with both bodies, no Left or Right, nothing mirrored");
-    else if (info.twoNamed) info.notes.push("the line names two designs but is not an earring pair: made as one piece of the first design, no Left or Right");
+    else if (info.twoBodies) info.notes.push("the design draws two bodies (a left and a right charm) but the piece is not an earring pair: made as one piece with both bodies, no Left or Right, nothing mirrored");
+    else if (info.twoNamed) info.notes.push("the order names two designs but is not an earring pair: made as one piece of the first design, no Left or Right");
     if (cr.note && !cr.answered && !(cr.certain && cr.n === cr.note.n) && !info.asks.length && !info.earring) info.notes.push(`the buyer's note says “${clip(cr.note.text, 30)}” but no option gives that count: made as ${info.perUnit}`);
     return info;
   }
@@ -3259,7 +3259,7 @@
     if (!found.length) return null;
     if (found.length === 1) return found[0];
     const ok = found.filter(f => f.ok);
-    return ok.length === found.length && ok.every(f => f.n === ok[0].n && f.metal === ok[0].metal && f.mode === ok[0].mode) ? ok[0] : Object.assign({}, found[0], { ok: false, why: `two options of this line name a number of ${pl.noun}s: a person says which is right` });
+    return ok.length === found.length && ok.every(f => f.n === ok[0].n && f.metal === ok[0].metal && f.mode === ok[0].mode) ? ok[0] : Object.assign({}, found[0], { ok: false, why: `two options of this piece name a number of ${pl.noun}s: a person says which is right` });
   }
   /** The engraving slots of a profiled line, piece by piece in the order the pool makes them: per pieces on each of `units` necklaces. D1..Dn (D1.2 .. for the second necklace), C1..Cn for a single bar bought more than once, none for one piece. */
   function pieceSlots(per, units, extra) {
@@ -3300,7 +3300,7 @@
     // (BROKENHEART: ONE word written once for each piece, "BFF BFF" for the two halves, is one word per piece, in order)
     if (fixed && r && !r.split && !r.said && pers.length === 1) { const ws = pers[0].split(/\s+/).filter(Boolean); if (ws.length === n && n >= 2 && ws.every(w => w === ws[0]) && /[\p{L}\p{N}]/u.test(ws[0])) r = { words: ws, split: true, how: "list", found: n, said: false, same: true, none: false, why: "" }; }
     const words = {};
-    if (!counted) { if (!cand) return { profile, engraving: null }; kind = "texts"; why = `how many ${nouns} this line has is not settled yet (the drop-down was not read): a person says what goes on each ${noun}`; }
+    if (!counted) { if (!cand) return { profile, engraving: null }; kind = "texts"; why = `how many ${nouns} this piece has is not settled yet (the drop-down was not read): a person says what goes on each ${noun}`; }
     else if (!pers.length) { if (!cand) return { profile, engraving: null }; kind = "texts"; why = `the words are only in a note, not in the personalisation box: a person says exactly what goes on ${n === 1 ? `the ${noun}` : `the ${n} ${nouns}`}`; }
     else if (!r) { kind = "texts"; why = `the personalisation could not be read here: a person says what goes on each ${noun}`; }
     else if (r.none) { kind = "nowords"; why = `the personalisation says there is nothing to engrave, but this listing is engraved on ${n === 1 ? `its ${noun}` : `every ${noun}`}: a person says what goes on ${n === 1 ? `the ${noun}` : `the ${n} ${nouns}`}`; }
@@ -3471,7 +3471,7 @@
     if (!one) {
       const pr = spec.pair; if (!pr.oneBody) return spec;
       delete pr.oneBody; pr.notes = (Array.isArray(pr.notes) ? pr.notes : []).filter(n => !/made as ONE charm, the (?:left|right) body only/.test(String(n)));
-      if (pr.twoBodies) pr.notes.push("the design draws two bodies (a left and a right charm) but the line is not an earring pair: made as one piece with both bodies, no Left or Right, nothing mirrored");
+      if (pr.twoBodies) pr.notes.push("the design draws two bodies (a left and a right charm) but the piece is not an earring pair: made as one piece with both bodies, no Left or Right, nothing mirrored");
       return spec;
     }
     if (!Number.isInteger(one.index)) return spec;
@@ -4457,7 +4457,7 @@
        person (the thinner bar on the shorter chain is the default and stays only the suggestion: spec.pair.set.layout, setPiecesOf's layoutOpen). One answer per order line, "ignore" = the default stands. */
     if (!quiet && spec.pair.set && spec.pair.set.source === "rule") {
       const set = spec.pair.set;
-      if (me) for (const d of set.designs.slice(1)) if (!masterSku(d, me, loose)) problems.push({ kind: "unmatchedSku", reason: `the set rule for this listing (${set.rule}) names ${d}, but it is not in any master file: the line waits (it is never made as one piece of ${set.designs[0]})`, sku: d, listingId: String(line.listingId || ""), title: line.title || "", setRule: set.rule });
+      if (me) for (const d of set.designs.slice(1)) if (!masterSku(d, me, loose)) problems.push({ kind: "unmatchedSku", reason: `the set rule for this listing (${set.rule}) names ${d}, but it is not in any master file: the piece waits (it is never made as one piece of ${set.designs[0]})`, sku: d, listingId: String(line.listingId || ""), title: line.title || "", setRule: set.rule });
       const asked = setLayoutAskOf([].concat(spec.personalization || [], spec.buyerMessage || [], spec.staffNote || [], (spec.messages || []).map(m => m && m.text)));
       if (asked.length) {
         const lid = secondId || String(lineKey(order, line)), said = optionLookup(ctx.optionMaps, line.listingId, SET_LAYOUT_OPT, lid);
@@ -4485,7 +4485,7 @@
        a necklace fall back, in silence, to one piece of the SKU's own design (that was the mistake: the huggie skull cat for a necklace of two cats). On a line that is not a single earring it waits for a
        person, with the reason (an earring line that says two different designs keeps its own question, asked above). It ends by itself when both designs are in the master again. */
     if (!quiet && report.link && report.link.miss.length && !members && !spec.pair.single && !spec.pair.second)
-      problems.push({ kind: "unmatchedSku", reason: `a person saved this listing and SKU as two charms, ${report.link.L} and ${report.link.R}, but ${report.link.miss.join(" and ")} ${report.link.miss.length > 1 ? "are" : "is"} not in any master file: the line waits (it is never made as one piece of ${sku || "its SKU"}); put the design back in the master or save the link again`, sku: sku || upSku(line.sku), listingId: String(line.listingId || ""), title: line.title || "", savedPair: true });
+      problems.push({ kind: "unmatchedSku", reason: `a person saved this listing and SKU as two charms, ${report.link.L} and ${report.link.R}, but ${report.link.miss.join(" and ")} ${report.link.miss.length > 1 ? "are" : "is"} not in any master file: the piece waits (it is never made as one piece of ${sku || "its SKU"}); put the design back in the master or save the link again`, sku: sku || upSku(line.sku), listingId: String(line.listingId || ""), title: line.title || "", savedPair: true });
     // a count the options cannot settle waits for a person: one plain question per option, like an unmatched SKU
     if (!quiet) for (const a of spec.pair.asks) if (!problems.some(p => p.kind === "needsMapping" && p.optionName === a.name && p.optionValue === a.value && (p.count || p.earWords))) problems.push(Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: a.name, optionValue: a.value, title: line.title || "" }, a.rule === "ear:words" ? { earWords: { why: a.why } } : { count: { guess: a.guess || 0, why: a.why, rule: a.rule } }));
     // a person said this listing's words are a pair of earrings: the form it is (what an answered option does too)

@@ -69,7 +69,7 @@ pass('the twelve runes by SKU, drop-down and box are RUNE_NECKLACE_CHARM-0 … -
 { const sp = read(rune({ sku: 'VIKING RUNES_URUZ', type: NECK }), null, { receiptId: '4203879769' });
   eq([sp.designSku, sp.skuSource, kinds(sp), sp.pieceCount, sp.lineForm, sp.materialKey], ['RUNE_NECKLACE_CHARM-1', 'profile', [], 1, 'necklace', 'gold'], 'order 4203879769: RUNE_NECKLACE_CHARM-1, one gold-filled necklace piece');
   ok(!sp.problems.some(p => /not in any master file|no SKU/.test(p.reason || '')), 'never "Unknown SKU" / "No vector available"');
-  eq(sp.pair.notes.filter(x => /^Rune/.test(x)), ['Rune: Uruz (RUNE_NECKLACE_CHARM-1), from the line\'s SKU'], 'the order\'s reading says the rune and its charm once');
+  eq(sp.pair.notes.filter(x => /^Rune/.test(x)), ['Rune: Uruz (RUNE_NECKLACE_CHARM-1), from the piece\'s SKU'], 'the order\'s reading says the rune and its charm once');
   eq(sp.listingProfile.was, { sku: 'VIKING RUNES_URUZ', source: 'transaction' }, 'and keeps the reading it replaced (the unknown SKU)');
   const before = read(rune({ sku: 'VIKING RUNES_URUZ', type: NECK, listingId: '1700000123' }));
   ok(before.designSku === 'VIKING RUNES_URUZ' && before.problems.some(p => /not in any master file/.test(p.reason || '')), 'the same SKU on another listing reads as before (the profile is the listing\'s)'); }
@@ -86,7 +86,7 @@ NAMES.forEach((name, i) => {
 });
 { const sp = read(rune({ sku: 'VIKING RUNES_URUZ', type: HUG }));
   eq([sp.designSku, sp.pieceCount, sp.pair.sides, sp.pair.earring], ['RUNE_HUGGIE_CHARM-1', 2, ['L', 'R'], true], 'the Uruz huggie set: RUNE_HUGGIE_CHARM-1 on the Left and on the Right');
-  eq(sp.pair.notes.filter(x => /^Rune/.test(x)), ['Rune: Uruz (RUNE_HUGGIE_CHARM-1, both ears), from the line\'s SKU'], 'said once'); }
+  eq(sp.pair.notes.filter(x => /^Rune/.test(x)), ['Rune: Uruz (RUNE_HUGGIE_CHARM-1, both ears), from the piece\'s SKU'], 'said once'); }
 pass('the Huggie option: RUNE_HUGGIE_CHARM-0 … -11 on both ears');
 
 /* ── 4 · the form decides, never the other form's drawing ── */
