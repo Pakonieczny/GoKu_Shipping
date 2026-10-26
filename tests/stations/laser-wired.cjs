@@ -329,14 +329,14 @@ const PASS = 'synthetic-pass-not-real', S = 'Charm_Nest_Sheets', DEV = 'charm-ne
       assert.strictEqual(await page.evaluate(() => CNAct.held()), 1, 'kept, not lost, not blocked');
       await none();
       await page.waitForSelector('.cnNameBar');
-      // the name typed, then "Laser or Design?" (LD1): the press waits for the role as well, then is recorded under both
-      await page.evaluate(() => { CNRole.setAdminLookup(async () => false); B.employee = 'mia  cutter'; });
+      // the Employee Number entered (EMPNUM, Paul 26 Oct 2026: the name is the server's), then "Laser or Design?" (LD1): the press waits for the role as well, then is recorded under both
+      await page.evaluate(() => { CNRole.setAdminLookup(async () => false); }); await signInAs(page, srv, 'Mia Cutter');
       await page.waitForFunction(() => CNRole.state() === 'ask');
       assert.strictEqual(await page.evaluate(() => CNAct.held()), 1, 'still kept while the role is asked');
       await none();
       await page.evaluate(() => CNRole.choose('laser'));
       const ev = (await fresh(2)).sort(byOrder);
-      assert.deepStrictEqual(ev.map(e => brief(e).concat(e.role)), [['complete', 'laser', 'Mia Cutter', '3700000301', 'held-sheet', 2, 0, 'laser'], ['complete', 'laser', 'Mia Cutter', '3700000302', 'held-sheet', 1, 0, 'laser']], 'under the typed name and the role, an event for each order: ' + JSON.stringify(ev.map(brief)));
+      assert.deepStrictEqual(ev.map(e => brief(e).concat(e.role)), [['complete', 'laser', 'Mia Cutter', '3700000301', 'held-sheet', 2, 0, 'laser'], ['complete', 'laser', 'Mia Cutter', '3700000302', 'held-sheet', 1, 0, 'laser']], 'under the signed-in name and the role, an event for each order: ' + JSON.stringify(ev.map(brief)));
       assert.strictEqual(await page.evaluate(() => CNAct.held()), 0);
       assert.deepStrictEqual(await page.evaluate(() => window.__prompts), [], 'no browser pop-up');
       await context.close();

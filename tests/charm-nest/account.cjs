@@ -636,6 +636,9 @@ SC.auto = async (br, srv, errors) => {
     await until(page, () => CNRole.state() === 'none' && document.getElementById('cnAcctChip').dataset.st === 'none', null, 'the idle sign-out of a Design person');
     assert.equal(await page.$('#cnAcctPanel'), null, 'an automatic sign-out opens nothing'); assert.equal(ends(rec, idleId)[0].reason, 'idle');
     assert.match(await page.evaluate(() => [...document.querySelectorAll('#toasts .toast .m')].map(x => x.textContent).join('|')), /Signed out after 10 minutes without input/);
+    // (a Laser person's limit is 1 hour, and 30 minutes from 17:00 New York: the page's clock moves forward to the next 11:00 there when 55 quiet minutes
+    //  from now would reach 17:00, or it is night, so this check does not depend on the time of day it runs; nobody is signed in while it moves. Audit, 26 Oct 2026)
+    await page.evaluate(() => { const p = {}; for (const x of new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(Date.now()))) p[x.type] = +x.value || 0; const m = p.hour * 60 + p.minute; if (m < 360 || m > 15 * 60) window.__off += ((24 * 60 + 11 * 60 - m) % (24 * 60)) * 60000; window.dispatchEvent(new Event('focus')); }); await wait(400);
     await signInAs(page, srv, 'Lena L', 'laser'); await wait(150); const laserId = (await snap(page)).session.id;
     await later(30); await later(25); assert.equal((await snap(page)).chip.text, 'Lena Laser', 'a Laser person is still in after 55 quiet minutes');
     await later(10); await until(page, () => CNRole.state() === 'none', null, 'the idle sign-out of a Laser person after an hour'); assert.equal(ends(rec, laserId)[0].reason, 'idle');

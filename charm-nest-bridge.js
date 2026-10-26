@@ -3681,7 +3681,7 @@ const Master = window.Master = (() => {
   function missingSkus() {
     const out = new Map();
     for (const r of Orders.rows()) {
-      if (r.state === "gone" || r.spec.noDesign) continue;
+      if (r.state === "gone" || (r.spec && r.spec.noDesign)) continue;   // (26 Oct 2026: a row read before its spec is set threw "reading 'noDesign'" mid-draw)
       const p = (r.problems || []).find(x => x.kind === "unmatchedSku" && x.sku);
       if (!p) continue;
       if (!out.has(p.sku)) out.set(p.sku, { sku: p.sku, lines: 0, orders: new Set(), title: r.line.title });
@@ -4308,7 +4308,11 @@ const Pool = window.Pool = (() => {
     if (row.repoolChanged || row.changePending) return;
     // (a row taken off its sheet on purpose, abandoned or superseded, is not a piece the line still has: a line taken off is made up new at the rule's count)
     const had = Math.max(0, ...(row.poolIds || []).map(id => { const r = B.pool.rows.get(id) || {}; return ["abandoned", "superseded"].includes(r.state) ? 0 : +r.quantity || 0; }));
-    if (had) O.pinPieces(sp, had);
+    // (KITEPAIR, Paul 13 Oct 2026: a line pinned to the pieces it was pooled with, all of them now taken off (Hold, then Release hold: no pool row left, or every one known abandoned or superseded),
+    //  is made up again at the rule's count: the pin is taken back here, as pinPieces does when the count agrees. 26 Oct 2026: a line is read once now (an update costs what changed), so no second
+    //  reading clears the pin any more. A pool row the page has not loaded yet keeps the pin: nothing is ever added to the pool on a guess)
+    const off = (row.poolIds || []).every(id => { const r = B.pool.rows.get(id); return !!r && ["abandoned", "superseded"].includes(r.state); });
+    if (had) O.pinPieces(sp, had); else if (sp.pieceRule && off) O.pinPieces(sp, sp.pieceRule);
   }
   /* SCHROLINK (Paul, 12 Oct 2026, order 4198409468): a person saved the listing's pair of designs (aliasPut pair), so the line now reads as a NECKLACE of TWO charms, but its pieces were made up before, from
      the SKU alone (one piece of another design). The pooled pieces are not what the line is read as, and nothing else would ever tell a person: this is the "Order changed" card the Review tab already has for a
@@ -8229,8 +8233,11 @@ const Engrave = window.Engrave = (() => {
   let previewRecovery = false, previewRecoveryTimer = null, preparingJob = null;
   const isWorking = job => classifyTasks.has(job) || fitTasks.has(job) || preparingJob === job;
   const canFit = job => !!(job.copies?.length && charmFor(job)?.outline && (sheetFor(job, job.copies[0])?.fileBase || job.pre));   // (ENGPRE: a job made before its piece was pooled is fitted on the charm it will have: the fit needs the outline, never the sheet)
+  // (WORDSWAIT, 26 Oct 2026: a job in "words" waits for a person: ENGPRE, "anything else is a proposal for a person to confirm ('Words to confirm')". The preview
+  //  recovery used to call setReady on every "words" job that had lines, so a proposal went to its fit and to Approve by itself, its Words to confirm gone;
+  //  it now redraws only jobs already settled (ready / fitting). A person's own "Engrave these words" takes a job out of "words" itself)
   const needsPreview = job => job.row.state !== "gone" && !isWorking(job) && job.lines?.length && !job.missing?.length &&
-    (job.state === "words" || (["ready", "fitting"].includes(job.state) && canFit(job)));
+    ["ready", "fitting"].includes(job.state) && canFit(job);
   const queuedJobs = jobs => jobs.filter(j => ["review", "words", "blocked", "classify", "ready", "fitting"].includes(j.state));
   async function prepareWaitingPreviews() {
     if (previewRecovery) return;
@@ -8246,7 +8253,6 @@ const Engrave = window.Engrave = (() => {
         preparingJob = job;
         job.questions = (job.questions || []).filter(q => !/not engravable|cannot (?:be |take )engrav|design.*engrav/i.test(q));
         try {
-          if (job.state === "words") await setReady(job, false);
           if (["ready", "fitting"].includes(job.state) && canFit(job)) await fitJob(job);
         } catch (e) {
           if (items() !== owner || owner.get(job.key) !== job || job.row !== row || row.state === "gone" || ["approved", "written", "skipped", "none"].includes(job.state) || job.approvalPreparing || job.stamping) continue;

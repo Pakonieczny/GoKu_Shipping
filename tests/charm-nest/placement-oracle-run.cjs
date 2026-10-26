@@ -89,7 +89,9 @@ const VIEWS = [
     open: async (p, c) => { await p.evaluate(() => document.querySelector('#modeSeg [data-mode="orders"]').click()); await p.waitForSelector('#ordItems [data-key]', { timeout: 10000 }).catch(() => {}); },
     close: async () => {}, read: (p, c) => p.evaluate(R.list, c.rid) },
   { id: 'lib', label: 'Library · sheet cards (charms, orders, what is left)', page: 'v',
-    open: async (p, c) => { await p.evaluate(() => document.querySelector('#modeSeg [data-mode="library"]').click()); await p.waitForSelector('#libBody .libCard[data-id]', { timeout: 15000 }).catch(() => {}); },
+    open: async (p, c) => { const t0 = await p.evaluate(() => Date.now()); await p.evaluate(() => document.querySelector('#modeSeg [data-mode="library"]').click());
+      // (the page is kept from one scenario to the next: the cards of the last one are still drawn, so wait for THIS opening's read of the cloud, S.library.loadedAt)
+      await p.waitForFunction(t => +S.library.loadedAt >= t, t0, { timeout: 15000 }).catch(() => {}); await p.waitForSelector('#libBody .libCard[data-id]', { timeout: 15000 }).catch(() => {}); },
     close: async () => {}, read: (p, c) => p.evaluate(R.lib, c.rid) },
   { id: 'sw', label: 'Sheet window · charms and orders on the sheet', page: 'v',
     open: async (p, c) => { await p.evaluate(id => { SheetWin.open(id); }, SHEET_FOR_SW); await p.waitForFunction(() => SheetWin.isOpen(), null, { timeout: 8000 }).catch(() => {}); await p.waitForTimeout(600); },
@@ -262,9 +264,11 @@ SCENARIOS.push(...CONTROLS);
 /* ═══════════════════════════ the runner ═══════════════════════════ */
 async function main(O) {
   const argv = process.argv.slice(2), flag = n => argv.includes('--' + n), opt = n => { const i = argv.indexOf('--' + n); return i >= 0 ? argv[i + 1] : ''; };
-  // (groups, 26 Oct 2026: the whole oracle takes over 7 minutes; a plain run is the MAIN group (the single-line scenarios), --group pairs | ctl | all
+  // (groups, 26 Oct 2026: the whole oracle takes over 7 minutes; a plain run is main-a (the first single-line scenarios), --group main-b (hand-print … cloud-only-deleted) | main-c (add, hand-button) | main (all three) | pairs | ctl | all
   //  runs the paired / negative-control ones or everything; --only names scenarios, as before)
-  const GROUP = opt('group') || 'main', inGroup = id => GROUP === 'all' || (GROUP === 'ctl' ? /^ctl-/.test(id) : GROUP === 'pairs' ? /^(pair|mis|discs|single|letters)-/.test(id) : !/^(ctl|pair|mis|discs|single|letters)-/.test(id));
+  const GROUP = opt('group') || 'main-a', MAIN_B = new Set(['hand-print', 'hand-reopen', 'split', 'split-remove', 'deleted', 'hold-waiting', 'setundo', 'hold-closed', 'cloud-only', 'cloud-only-deleted']), MAIN_C = new Set(['add', 'hand-button']);   // (main-a / main-b / main-c: each under 300 s)
+  const isMain = id => !/^(ctl|pair|mis|discs|single|letters)-/.test(id);
+  const inGroup = id => GROUP === 'all' || (GROUP === 'ctl' ? /^ctl-/.test(id) : GROUP === 'pairs' ? /^(pair|mis|discs|single|letters)-/.test(id) : GROUP === 'main' ? isMain(id) : GROUP === 'main-b' ? isMain(id) && MAIN_B.has(id) : GROUP === 'main-c' ? isMain(id) && MAIN_C.has(id) : isMain(id) && !MAIN_B.has(id) && !MAIN_C.has(id));
   const ONLY = opt('only') ? new Set(opt('only').split(',')) : { has: inGroup }, SURF = opt('surfaces') ? new Set(opt('surfaces').split(',')) : null, DUMP = flag('dump'), LIST = flag('list'), WINDOW = +(opt('window') || 3000);
   const pwDir = process.env.PW_DIR || [path.join(root, 'node_modules'), '/opt/node22/lib/node_modules/playwright/node_modules'].find(d => fs.existsSync(path.join(d, 'playwright-core')));
   let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { (process.env.SKIP_BROWSER === '1' ? console.log : m => { console.error('FAIL: ' + m + ' (no browser here: set PW_DIR and CHROMIUM, or SKIP_BROWSER=1 to skip it on purpose)'); process.exit(1); })('  - no playwright-core: the oracle was not run'); return; }
