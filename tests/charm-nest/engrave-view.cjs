@@ -88,7 +88,7 @@ assert.equal(document.querySelectorAll('.placementRow [data-a="reopen"], .decide
   const classified={...row,key:'classify',spec:{designSku:'TEST',engraveCandidate:true,personalization:[]}};
   const reading=E.classify(classified);
   assert(!document.querySelector('[data-eg-working]').hidden,'actual classifier request is counted');
-  await Promise.resolve();finish({engrave:false,text:'',confidence:1,questions:[]});await reading;
+  for(let i=0;i<50&&!finish;i++)await new Promise(r=>setImmediate(r));/* (the reading asks its question after a few awaits of its own) */finish({engrave:false,text:'',confidence:1,questions:[]});await reading;
   assert(document.querySelector('[data-eg-working]').hidden,'classifier completion clears spinner');
   console.log('Working indicator OK: active tasks only, completion/failure refresh in place, missing geometry waits without spinning');
   E.restoreView({tab:'place',chosen:true,list:true});E.render();
