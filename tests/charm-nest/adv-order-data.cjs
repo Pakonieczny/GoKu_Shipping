@@ -68,7 +68,9 @@ async function main() {
   // the lanes are drawn once the first seal lands, or once the view says this order has no milestone yet
   const fullReady = page => page.waitForFunction(() => document.querySelector('#owTimeline .tlUI .tlSt[data-key], #owTimeline .tlUI .tlEmpty'));
   const closeView = async page => { await page.evaluate(() => OrderWin.close()); await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 3000 }); };
-  const refresh = page => page.evaluate(() => OrderWin._feed().refresh({ force: true }));
+  // (26 Oct 2026: a failed check closes the view; the checks that read its feed open order A again first, so one failure does not fail the next ones)
+  const viewA = async page => { if (!(await page.evaluate(() => OrderWin.isOpen() && !!OrderWin._feed()))) { await page.evaluate(k => OrderWin.open(k, { view: 'timeline' }), keyOf(A)); await fullReady(page); await railReady(page); } };
+  const refresh = async page => { await viewA(page); return page.evaluate(() => OrderWin._feed().refresh({ force: true })); };
   const results = [];
   const stepsOf = (page, rid) => page.evaluate(rid => OrderTimeline.get(rid).then(j => String(j.events.length)), rid);
   let cur = null;
@@ -99,11 +101,13 @@ async function main() {
       console.log('      masterGet for its SKU (no Library entry), over both opens:', mg);
       assert(mg <= 1, 'a missing Library entry is remembered: masterGet ' + mg + ' times for ' + A.sku);
       console.log('      timelineGet per open (Overview then Timeline tab, back and forth; opened on Timeline):', perOpen.join(', '));
-      assert(perOpen[0] >= 1 && perOpen[0] <= 3, 'timelineGet calls of the first open (1 + the two for what the page records): ' + perOpen[0]);
+      // (26 Oct 2026: on a loaded machine the two steps this page records arrive in separate turns and each takes its own read at once,
+      //  so the first open is 1 + up to 2 at once + the one 1.5 s later: at most 4, still never one per mount nor per tab return)
+      assert(perOpen[0] >= 1 && perOpen[0] <= 4, 'timelineGet calls of the first open (1 + the two for what the page records): ' + perOpen[0] + ' at ms ' + ctl.gets.filter(g => g.rid === A.rid && g.t >= t1).map(g => g.t - t1).join(','));
       assert.equal(perOpen[1], 1, 'timelineGet calls of the second open');
     });
     await check('a refresh dedupes: three at once from the view, the rail and the Timeline are one read', async () => {
-      const t0 = Date.now();
+      await viewA(page); const t0 = Date.now();
       await page.evaluate(() => { const f = OrderWin._feed(); return Promise.all([f.refresh({ force: true }), f.refresh({ force: true }), f.refresh()]); });
       await sleep(200); assert.equal(gets(A.rid, t0), 1);
     });
@@ -116,7 +120,7 @@ async function main() {
 
     // 2 · what another device records while the view is open shows on the next refresh, everywhere in the view
     await check('stale data: placement, hold, station scan, cancel and its undo from another device show on the next refresh', async () => {
-      let s = await shown(page); const c0 = +s.count;
+      await viewA(page); let s = await shown(page); const c0 = +s.count;
       // (26 Oct 2026: the view repaints a beat after the refresh (the placement is worked out from the new steps): each step waits up to 3 s for what it expects, then checks it)
       const settle = async ok => { const t = Date.now(); while (Date.now() - t < 3000) { try { if (ok(await shown(page))) return; } catch (_) {} await sleep(100); } };
       ev(A.rid, 'placed', Date.now() - 5000, { sheet: 'GF Sheet 3', sheetId: 'sh3', by: 'Maria' }); await refresh(page); await sleep(150);
