@@ -4,7 +4,7 @@
 // Every number is read off tests/cost/meter.cjs against the REAL netlify/functions code on an in-memory Firestore seeded the way production is shaped.
 // The station pages themselves hold almost no Firestore client traffic (one single-document relay listener per desk, one chat listener per OPEN order,
 // the design pages' limit(1) message probes); everything else goes through the firebaseOrders door, which this test meters op by op. It then projects
-// the whole shop from the idle call rates fc14-idle-pages.cjs measures in a browser and prints the share of the project's overnight baseline
+// the whole shop from the idle call rates measured in a browser and prints the share of the project's overnight baseline
 // (about 145,000 reads an hour, Firebase console, 18 Oct 2026) and of its 24 hour total (4.9 million reads, 77,000 writes) that the stations can account for.
 //
 //   node tests/cost/ru-S3-station-ops.cjs        prints the table; exits 1 when a budget below is exceeded

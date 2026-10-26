@@ -83,13 +83,17 @@ class Element {
     return this._text;
   }
   set textContent(v) { this.children.forEach(c => (c.parentNode = null)); this.children = []; this._text = String(v); }
+  /* Markup with no text in it (the check box's static SVG tick) is kept as an opaque
+     blob; markup that carries text would hide it from these assertions, so it still throws. */
   set innerHTML(v) {
-    if (String(v) !== '') throw new Error('Harness only supports innerHTML = ""');
+    const html = String(v);
+    if (html.replace(/<[^>]*>/g, '').trim() !== '') throw new Error('Harness only supports innerHTML = "" or text-free markup');
     this.children.forEach(c => (c.parentNode = null));
     this.children = [];
     this._text = '';
+    this._markup = html;
   }
-  get innerHTML() { return this.children.length || this._text ? '<…>' : ''; }
+  get innerHTML() { return this.children.length || this._text || this._markup ? '<…>' : ''; }
   appendChild(child) {
     if (child && child.isFragment) {
       for (const c of [...child.children]) { c.parentNode = this; this.children.push(c); }

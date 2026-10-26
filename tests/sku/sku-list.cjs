@@ -253,7 +253,8 @@ test('No tokens at all → prompt, and zero network traffic', async reg => {
   const app = createApp({ fetchImpl: async () => { throw new Error('must not fetch'); } }); reg.push(app);
   await app.domReady();
   assert.match(app.notice(), /Connect Etsy/i);
-  assert.equal(app.fetchCalls.length, 0);
+  // The shared checkmarks are read once at boot from our own /skuChecked (no Etsy call); nothing else may go out.
+  assert.deepEqual(app.fetchCalls.map(c => c.url.replace(/^.*\/\.netlify\/functions/, '')), ['/skuChecked'], 'no Etsy or proxy call without tokens');
 });
 
 /* ── 3 · Catalog sync + API budget ────────────────────────────────────── */
@@ -914,7 +915,7 @@ test('Images are taken at full size, and cached 570px URLs are upgraded', async 
   ]) assert.equal(upgradeImageUrl(untouched), untouched, 'left alone: ' + untouched);
 });
 
-test('An upgraded image that 404s falls back to the stored URL, once', async reg => {
+test('An upgraded image that 404s falls back to the stored URL, then imageProxy, once each', async reg => {
   const stored = 'https://i.etsystatic.com/1/r/il/a/2/il_570xN.2_x.jpg';
   const rows = [listing(1, { images: [{ rank: 1, url_570xN: stored }] })];
   const shop = fakeShop(rows, { serveFullShape: true });
@@ -924,11 +925,15 @@ test('An upgraded image that 404s falls back to the stored URL, once', async reg
   assert.ok(img.src.includes('il_fullxfull.'), 'tries full size first');
   await img.dispatch('error');
   assert.equal(img.src, stored, 'falls back');
+  // The page runs under COEP require-corp, so the last try is the same-origin imageProxy (SKU_List_V1.html, thumbnail tries).
   await img.dispatch('error');
-  assert.equal(img.src, stored, 'and does not loop');
+  const proxied = '/.netlify/functions/imageProxy?url=' + encodeURIComponent(stored);
+  assert.equal(img.src, proxied, 'then the same picture through imageProxy');
+  await img.dispatch('error');
+  assert.equal(img.src, proxied, 'and does not loop');
 });
 
-test('The pills and Generate sit on one row', async reg => {
+test('The check box, the pills and Generate sit on one row', async reg => {
   const shop = fakeShop([listing(100001, { title: 'Gold Charm', shop_section_id: 11 })], { sections: SECTIONS });
   const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
   await app.domReady();
@@ -936,7 +941,7 @@ test('The pills and Generate sit on one row', async reg => {
   const rows = card.querySelectorAll('.row');
   assert.equal(rows.length, 1, 'one row, not a stack of them');
   const kinds = rows[0].children.map(c => c.className.split(' ')[0]);
-  assert.deepEqual(kinds, ['pill', 'btn'], 'section and Generate, on the one line');
+  assert.deepEqual(kinds, ['checkbox', 'pill', 'btn'], 'checked box, section and Generate, on the one line');
   assert.ok(rows[0].querySelector('.grow'), 'Generate is pushed to the end');
 });
 
