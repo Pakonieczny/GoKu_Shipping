@@ -1787,8 +1787,12 @@ async function op_poolUpdate(b) {
    (cancelFates). Never fails the op. */
 async function noteCancelRemovals(ids, p, before, b) {
   try {
+    // (Paul, 26 Oct 2026, production readiness: a cancelled draft's removal was noted twice, "GF Sheet 1" from the piece's file name here and "GF Draft 1" from the sheet
+    //  window's fate: the sheet is named from its own record when there is one (charm-nest-sheet-name.js, the name every surface reads), so both say it the same way, once)
+    const named = new Map();
+    const nameOf = async e => { if (!e.sheetId) return e.sheet; if (!named.has(e.sheetId)) named.set(e.sheetId, await col(SHEETS).doc(e.sheetId).get().then(s => s.exists ? sheetLabel(s.data()) : "", () => "")); return named.get(e.sheetId) || e.sheet; };
     for (const e of poolEvents(ids, p, before, b).filter(e => e.type === "removed").slice(0, 20)) {
-      const where = str(e.sheet, 100);
+      const where = str(await nameOf(e), 100);
       await OrderCancel.noteRemovals(db, e.orderId, [where ? { id: `sheet~${where}`, at: e.at, where, kind: "sheet", outcome: "removed", by: e.by, lineKey: e.lineKey, text: `taken off ${where}` }
         : { id: `pool~${e.at}`, at: e.at, where: "the pool", kind: "pool", outcome: "removed", by: e.by, lineKey: e.lineKey, text: "taken out of the pool" }], { prefix: PREFIX });
     }
