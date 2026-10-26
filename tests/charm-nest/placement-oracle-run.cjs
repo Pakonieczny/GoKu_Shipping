@@ -30,7 +30,7 @@ const R = {   // browser-side readers (they run in the page)
   },
   list: rid => {
     const T = e => e ? e.textContent.replace(/\s+/g, ' ').trim() : '', qa = s => [...document.querySelectorAll(s)], out = [];
-    const rows = qa('#ordItems [data-key]').filter(n => n.dataset.rid === rid);
+    const rows = qa('#ordItems [data-key]').filter(n => (n.dataset.rid || String(n.dataset.key).split('_')[0]) === rid);   // (a list row carries its line's key "<order>_<transaction>", no data-rid, since the list view, Oct 2026)
     for (const r of rows) { const n = +String(r.dataset.key).split('_')[1] - 5000000000; out.push({ s: 'list.pill', n, text: T(r.querySelector('.ost')), required: 'held,cancelled,done' });   /* (the card's pill no longer prints the numbered stage "2/5 nested" for a piece on a sheet, Paul 12 Oct 2026: a piece on a sheet is said by the where-line below, a held, cancelled or finished one still by its pill; what a pill does say is still judged against the cloud) */ const where = r.querySelector('.rowExcerpt.dim'); if (where) out.push({ s: 'list.where', n, text: T(where) }); }
     if (!rows.length) out.push({ s: 'list.rows', gone: true });
     return out;
