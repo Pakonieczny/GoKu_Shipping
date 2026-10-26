@@ -5,6 +5,7 @@
 // laser readiness and set completion still find every line — a recalled set and laser readiness reading only the archive
 // parts that hold what they ask about, and readiness only their decisions. No network, no real services.
 //   node tests/charm-nest/run-size.cjs
+process.env.CHARM_NEST_PARTS_KEEP = '0';   // (the reads of the archive are what this test counts: a cold instance's, without a warm instance's memory of the parts it read, partKeep)
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const O = require('../../charm-nest-orders.js'), Readiness = require('../../charm-nest-readiness.js');
 const root = path.join(__dirname, '../..'), fnDir = path.join(root, 'netlify/functions');
@@ -94,7 +95,7 @@ const liveOf = rec => rec.liveLines ? Object.assign({}, ...rec.liveLines.ids.map
 
 /* ── the page's run controller, as in tests/charm-nest/process-completion.cjs, with the page's own line record ── */
 const source = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
-let controller = source.slice(source.indexOf('const RunCtl ='), source.indexOf('/* ═══ 24 · Review'));
+let controller = source.slice(source.indexOf('const RunCtl ='), source.indexOf('/* ═══ ', source.indexOf('const RunCtl =')));   // (to the next section: the Custom Orders sections 23a-23c now follow RunCtl)
 controller = controller.slice(0, controller.indexOf('  function renderBanner()')) + '  function renderBanner() {}\n' + controller.slice(controller.search(/\n  return \{[^\n]*optionsChanged/) + 1);   // (the return list begins with the banner helpers now)
 const lineRecordSource = source.slice(source.indexOf('  const cap = (v, n)'), source.indexOf('  /** The other direction'));
 const workTextSource = source.slice(source.indexOf('  function workText(r)'), source.indexOf('  // the state of the work as a short hash'));
@@ -126,7 +127,7 @@ function controllerFor({ rows = [], sandbox = false } = {}) {
     LiveNest: { finish: async () => {} }, Sets: { ofRun: () => [], unrecorded: () => false, releaseIssue: () => null, save: async () => {}, finalize: async () => {}, byRun: () => new Map(), keyOf: () => '' },
     api, Session: { schedule() {} }, LiveStrip: { render() {} }, Arrivals: { start() {}, processPending: async () => {} },
     agent: (scope, kind, text) => { st.logs.push({ kind, text }); }, toast: text => st.toasts.push(text), notifyPerson() {}, ding() {}, CN: { renderCard() {} }, sheetName: s => s.metal,
-    startNest() {}, sheetDirty() {}, METALS: [] };
+    startNest() {}, sheetDirty() {}, METALS: [], document: { addEventListener() {}, removeEventListener() {} } };   // (the controller listens for the print buttons' clicks on the page)
   vm.createContext(ctx); vm.runInContext(lineRecordSource, ctx); vm.runInContext(controller, ctx); vm.runInContext(workTextSource, ctx);
   return { ctx, ctl: ctx.window.RunCtl, st };
 }
@@ -277,9 +278,10 @@ function syncRow(row) {
   assert.equal(laser.laser.ready, true, 'a sheet of archived lines is ready for the laser: its decisions come from the archive');
   assert.deepEqual([laser.engraving[pools[0]].state, laser.engraving[pools[1]].state], ['written', 'none'], 'the engraved copy reads as written, the plain one as plain');
   read = partReads.slice(mark);
-  assert(!read.some(x => x.fields.includes('json')), 'readiness reads decisions, never the lines');
+  /* (readiness is worked out from the archived LINES of the asked orders now, productionReadiness → archivedLines({orders}), with the evidence of other runs; decisionsOfRun
+      serves Rose Gold stock alone. The COST rule stands: only the parts that hold the asked orders are read, and a warm instance serves a part it read from memory, partKeep) */
   console.log(`laser readiness of a sheet of archived orders reads ${readKB(read)} of the archive`);
-  assert.deepEqual([...new Set(read.filter(x => x.fields.includes('decisions')).map(x => x.id))].sort(), holding(doneKeys).sort(), 'of the parts that hold the copies asked about, and no other');
+  { const held = new Set(holding(doneKeys)), ids = [...new Set(read.map(x => x.id))]; assert(ids.every(id => held.has(id)), 'of the parts that hold the copies asked about, and no other: ' + ids); }
   // a newer part wins over an older one for the same line, a changed decision and a copy the line no longer has alike
   const archiveOf = async lines => { const r2 = await post({ op: 'runArchive', runId, parts: [{ json: JSON.stringify(lines) }] }); assert.equal(r2.status, 200, JSON.stringify(r2.body)); };
   const doneLines = Object.fromEntries(doneKeys.map(k => [k, everyLine[k]]));
@@ -288,7 +290,9 @@ function syncRow(row) {
   assert.equal(res.body.sheets[0].engraving[pools[0]].state, 'review', 'a line archived again reads as its newest part says');
   await archiveOf({ [doneKeys[1]]: { ...doneLines[doneKeys[1]], poolIds: [] } });
   res = await post({ op: 'laserStatus', sheetIds: ['sheet-arch-1'] });
-  assert.deepEqual([res.body.sheets[0].engraving[pools[1]].state, res.body.sheets[0].laser.ready], ['unknown', false], 'a copy its newest line no longer has is not taken from an older part');
+  // (productionReadiness: "a line that lost its pool ids is read by the ids the pool gives its copies (<line key>_<n>)": the newest part, with no pool ids, still
+  //  owns this copy by its own name, so it reads as the newest part's plain decision, not as undecided)
+  assert.deepEqual([res.body.sheets[0].engraving[pools[1]].state, res.body.sheets[0].laser.ready], ['none', true], 'a line archived again without its pool ids still owns its copies by name');
   await archiveOf(doneLines);
   res = await post({ op: 'laserStatus', sheetIds: ['sheet-arch-1'] });
   assert.equal(res.body.sheets[0].laser.ready, true, 'and the lines as they were read as ready again');
@@ -300,7 +304,7 @@ function syncRow(row) {
   mark = partReads.length;
   res = await post({ op: 'laserStatus', sheetIds: ['sheet-arch-1'] });
   assert.deepEqual([res.body.sheets[0].engraving[pools[0]].state, res.body.sheets[0].engraving[pools[1]].state, res.body.sheets[0].laser.ready], ['written', 'none', true], 'a part decided under an older policy is decided again from its lines');
-  assert.deepEqual(partReads.slice(mark).filter(x => x.fields.includes('json')).map(x => x.id), [newest[0].split('/')[1]], 'reading the lines of that part only');
+  { const ids = partReads.slice(mark).map(x => x.id); assert(ids.length && ids.every(id => (store.get('Charm_Nest_Run_Lines/' + id).keys || []).some(k => doneKeys.includes(k))), 'reading the lines of the parts that hold the asked orders only: ' + ids); }   // (readiness reads the lines, never stored decisions, now: productionReadiness)
   store.set(newest[0], stored);
   // hundreds of copies: a query per 30 of them, and each part that holds one read once, for its decisions
   const many = shut.flatMap(o => o.lines.map(l => `${o.receiptId}_${l.transactionId}_1`)).slice(0, 700), expect = Readiness.decisions(Object.values(everyLine));
