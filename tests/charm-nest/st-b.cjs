@@ -103,24 +103,29 @@ const T = Date.now() - 3600e3;
   /* ── Library "Mark completed" (the laser operator's check): every order on each sheet gets laserDone, with who,
         the laser station, the page (device) and the view it was pressed in ── */
   const SET = 'set-2026-09-29-1', R1 = '4180000001', R2 = '4180000002', R3 = '4180000003', R4 = '4180000004';
+  // (26 Oct 2026: laserDone now completes only from the Laser cutting section (stage 'laser') and only a sheet that passes the
+  //  Laser gate, so each gold sheet here is a ready one: verified, its pieces placed and their lines written, its QR label)
+  const gold = (id, d) => { const orders = d.orders || [...new Set((d.poolIds || []).filter(x => /^\d+_/.test(x)).map(x => x.split('_')[0]))], pids = d.poolIds || orders.map(o => o + '_9000_1'), run = 'run-' + id;
+    store.set('Charm_Nest_Runs/' + run, { lines: Object.fromEntries(pids.map((x, i) => [x, { orderId: x.split('_')[0], state: 'written', quantity: 1, poolIds: [x], engraveCandidate: false, spec: { engraveCandidate: false } }])) });
+    store.set('Charm_Nest_Sheets/' + id, Object.assign({ verification: { ok: true }, status: 'complete', dirty: false, saving: false, draft: false, runId: run, poolIds: pids, outputs: { ai: { url: 'saved.ai' }, preview: { url: 'saved.png' } }, label: { files: [{ path: 'qr', url: 'qr.png', payload: orders[0] || 'x', orders }] } }, d, { placements: pids.map((x, i) => ({ id: x, cxPt: 20 + 30 * i, cyPt: 20, angle: 0, scale: 1 })) })); };
   store.set(`Charm_Nest_Sets/${SET}`, { setId: SET, seq: 1, sheetIds: ['sh-1', 'sh-2', 'sh-3'] });
-  store.set('Charm_Nest_Sheets/sh-1', { id: 'sh-1', metal: 'gold', setId: SET, sheetIndex: 1, fileBase: 'GF_Sep.29.26_Set-1_Sheet-1', orders: [R1, R2], placements: [] });
-  store.set('Charm_Nest_Sheets/sh-2', { id: 'sh-2', metal: 'gold', setId: SET, sheetIndex: 2, fileBase: 'GF_Sep.29.26_Set-1_Sheet-2', orders: [R3], placements: [] });
+  gold('sh-1', { id: 'sh-1', metal: 'gold', setId: SET, sheetIndex: 1, fileBase: 'GF_Sep.29.26_Set-1_Sheet-1', orders: [R1, R2], placements: [] });
+  gold('sh-2', { id: 'sh-2', metal: 'gold', setId: SET, sheetIndex: 2, fileBase: 'GF_Sep.29.26_Set-1_Sheet-2', orders: [R3], placements: [] });
   // a sheet saved without its orders list: its pieces' pool ids still name the order
-  store.set('Charm_Nest_Sheets/sh-3', { id: 'sh-3', metal: 'gold', setId: SET, sheetIndex: 3, fileBase: 'GF_Sep.29.26_Set-1_Sheet-3', poolIds: [R4 + '_9001_1', R4 + '_9002_1', 'pool-x'], placements: [] });
+  gold('sh-3', { id: 'sh-3', metal: 'gold', setId: SET, sheetIndex: 3, fileBase: 'GF_Sep.29.26_Set-1_Sheet-3', poolIds: [R4 + '_9001_1', R4 + '_9002_1'], placements: [] });
 
-  const cut = await ok({ op: 'laserDone', kind: 'sheet', id: 'sh-1', by: 'Marco R.', device: 'charm-nest-1', via: 'Sheet window' });
+  const cut = await ok({ op: 'laserDone', kind: 'sheet', id: 'sh-1', by: 'Marco R.', stage: 'laser', device: 'charm-nest-1', via: 'Sheet window' });
   for (const r of [R1, R2]) {
     const e = one(r, 'laserDone');
     assert(e.by === 'Marco R.' && e.station === 'laser' && e.device === 'charm-nest-1' && e.milestone === true && e.sheetId === 'sh-1' && e.sheet === 'GF Sheet 1' && e.setId === SET && e.at === cut.at, JSON.stringify(e));
     assert(e.data.signedIn === true && e.data.marked === 'sheet' && e.data.via === 'Sheet window', JSON.stringify(e.data));
   }
   assert.strictEqual(of(R3).length, 0, 'an order on another sheet is not marked');
-  await ok({ op: 'laserDone', kind: 'sheet', id: 'sh-1', by: 'Marco R.', device: 'charm-nest-1', via: 'Library' });
+  await ok({ op: 'laserDone', kind: 'sheet', id: 'sh-1', by: 'Marco R.', stage: 'laser', device: 'charm-nest-1', via: 'Library' });
   assert.strictEqual(of(R1, 'laserDone').length, 1, 'marked again (a retry, a second click): one seal');
 
   // the whole set: its other sheets' orders, one event each, the one already marked keeps its own
-  const setCut = await ok({ op: 'laserDone', kind: 'set', id: SET, by: 'Lina', device: 'charm-nest-1', via: 'Library' });
+  const setCut = await ok({ op: 'laserDone', kind: 'set', id: SET, by: 'Lina', stage: 'laser', device: 'charm-nest-1', via: 'Library' });
   const e3 = one(R3, 'laserDone'), e4 = one(R4, 'laserDone');
   assert(e3.by === 'Lina' && e3.data.marked === 'set' && e3.data.via === 'Library' && e3.at === setCut.at && e3.sheet === 'GF Sheet 2', JSON.stringify(e3));
   assert(e4.by === 'Lina' && e4.sheetId === 'sh-3' && e4.device === 'charm-nest-1', 'the order is found in the pool ids: ' + JSON.stringify(e4));
@@ -133,7 +138,7 @@ const T = Date.now() - 3600e3;
   const undone = one(R3, 'note');
   assert(undone.device === 'charmnest1' && undone.data.via === 'Libraryb' && undone.data.laserDoneBy === 'Lina' && /laser cut undone/.test(undone.text) && undone.milestone === false, JSON.stringify(undone));
   // an older page sends neither device nor via: recorded as before, with no empty via
-  await ok({ op: 'laserDone', kind: 'sheet', id: 'sh-2', by: 'Old Page' });
+  await ok({ op: 'laserDone', kind: 'sheet', id: 'sh-2', by: 'Old Page', stage: 'laser' });
   const again = of(R3, 'laserDone').find(e => e.by === 'Old Page');
   assert(again && again.device === '' && !('via' in again.data) && again.data.signedIn === true, JSON.stringify(again));
 
@@ -142,7 +147,7 @@ const T = Date.now() - 3600e3;
   const shape = (id, x, y, w, h) => ({ id, paths: [[[x, y], [x + w, y], [x + w, y + h], [x, y + h]]] });
   const roseCase = async (n, by, orders) => {
     const R = '41800001' + n + '0', sid = 'sheet-rose-' + n, run = 'run-rose-' + n, pid = R + '_700' + n + '_1';
-    store.set('Charm_Nest_Runs/' + run, { lines: { a: { poolIds: [pid], spec: { engraveCandidate: false } } } });
+    store.set('Charm_Nest_Runs/' + run, { lines: { [pid]: { orderId: R, state: 'written', quantity: 1, poolIds: [pid], engraveCandidate: false, spec: { engraveCandidate: false } } } });   // (26 Oct 2026: a written line, so the order itself is complete for the cut)
     const rose = { id: sid, metal: 'rose', sheetIndex: n, fileBase: `RG_Sep.29.26_Set-1_Sheet-${n}`, verification: { ok: true }, status: 'complete', dirty: false, saving: false, draft: false, setId: SET, runId: run, poolIds: [pid], placedCount: 1,
       placements: [{ id: pid, cxPt: 20, cyPt: 20, angle: 0, scale: 1 }], outputs: { ai: { url: 'saved.ai' }, preview: { url: 'saved.png' } }, label: { files: [{ path: 'qr', url: 'qr.png', payload: 'x', orders: [R] }] } };
     if (orders) rose.orders = [R];
@@ -150,7 +155,7 @@ const T = Date.now() - 3600e3;
     const claim = await ok({ op: 'roseClaim', sheetId: sid, wPt: 100, hPt: 50 });
     store.set('Charm_Nest_Sheets/' + sid, rose);
     const plan = await ok({ op: 'rosePlan', sheetId: sid, stockId: claim.stock.id, revision: 0, fingerprint: create.fingerprint(rose), shapesJson: JSON.stringify([shape(pid, 2, 2, 10, 30)]), allowanceMm: 0.2, cut: true });
-    assert(Readiness.sheet({ ...store.get('Charm_Nest_Sheets/' + sid), engraving: Readiness.decisions(Object.values(store.get('Charm_Nest_Runs/' + run).lines)) }).ready, 'the fixture passes the production checks');
+    assert(Readiness.sheet({ ...store.get('Charm_Nest_Sheets/' + sid), engraving: Readiness.decisions(Object.values(store.get('Charm_Nest_Runs/' + run).lines)) }, { physicalOnly: true }).ready, 'the fixture passes the production checks (its orders are the server\'s own reading)');
     const args = { op: 'roseRecordCut', sheetId: sid, stockId: claim.stock.id, revision: 0, planHash: plan.planHash, by, device: 'charm-nest-1' };
     const rc = await ok(args); await ok(args);
     assert.strictEqual(of(R, 'roseCut').length, 1, 'the cut recorded again is one event');
@@ -168,7 +173,7 @@ const T = Date.now() - 3600e3;
   const fs = require('fs'), root = path.join(__dirname, '../..');
   const lib = fs.readFileSync(path.join(root, 'charm-nest-library.js'), 'utf8'), rose = fs.readFileSync(path.join(root, 'charm-nest-rose-ui.js'), 'utf8');
   const win = fs.readFileSync(path.join(root, 'charm-nest-sheetwin.js'), 'utf8'), html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
-  assert(/op: 'laserDone', kind, id, done, by: by \|\| undefined, device: 'charm-nest-1', via \}/.test(lib), 'the Library says where it was marked');
+  assert(/op:'laserDone',kind,id,done,by:by \|\| undefined,stage:done\?'laser':undefined,device:'charm-nest-1',via\}/.test(lib), 'the Library says where it was marked');
   assert(/LibraryDone\.mark\("sheet", id, done, \{ via: "Sheet window" \}\)/.test(win), 'the sheet window says it was there');
   assert(!/\|\|'operator'/.test(rose) && /CNEmployee\?\.name\?\.\(\)/.test(rose) && /device:'charm-nest-1'/.test(rose), 'the Rose cut sends the signed-in name or nothing');
   for (const f of ['charm-nest-library.js', 'charm-nest-rose-ui.js', 'charm-nest-sheetwin.js']) assert(new RegExp(f.replace(/\./g, '\\.') + '\\?v=\\d{8}-').test(html), f + ' version bumped');
