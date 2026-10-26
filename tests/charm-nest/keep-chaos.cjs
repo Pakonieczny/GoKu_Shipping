@@ -453,7 +453,9 @@ for (const [iname, I] of Object.entries(INT)) {
     if (QUICK && !['upload', 'commit'].includes(step) && iname !== 'reload') continue;
     if (SAMPLE && !(step === 'commit' || (iname === 'reload' && ['drop-read', 'upload'].includes(step)))) continue;
     const sc = scen(`${iname} @ ${step}`, ['P1', 'P4'], null);
-    sc.world = { orders: I.orders2 ? [order(RID1), order(RID2, '1800004822', 'OTHER LEAF', 'Custom Charm Two')] : undefined, locked: iname === 'token-expiry' ? false : undefined };
+    // (the cloud chooses a SKU, 'sku', only for a listing with no usable SKU of its own: one with an Etsy SKU reuses it and never reaches the step, so these worlds' listing has none)
+    const noSku = step === 'sku';
+    sc.world = { orders: I.orders2 ? [order(RID1, LISTING, noSku ? '' : SKU_RAW), order(RID2, '1800004822', 'OTHER LEAF', 'Custom Charm Two')] : noSku ? [order(RID1, LISTING, '')] : undefined, locked: iname === 'token-expiry' ? false : undefined };
     sc.fn = async w => {
       w.inject = { step, damage: I.damage, nth: step === 'upload' ? 2 : 1 };
       if (/^drop-/.test(step)) {   // during the reading of the file, before the switch exists: the person looks again (the design is on the card, or drops it again), then saves
@@ -469,6 +471,10 @@ for (const [iname, I] of Object.entries(INT)) {
       //  after a reload the person opens the order's designs again and switches it on, and the save must then complete)
       let early = false; await sleep(300);
       if (w.inject.fired && I.page) { early = true; await I.recover(w); await sleep(800); await ensureDesign(w, RID1, FILE_A); w.notes.push('broken while the window opened, before the switch: opened again by the person'); }
+      // (a second design dropped while the window opened (second-file, same-file-twice): two designs, and saving works for one at a time: no switch, the line says why and
+      //  nothing is saved, as 'the same file dropped twice (before the switch)' holds)
+      if (early || w.inject.fired) { await switchReady(w.page, 8000).catch(() => {});
+        if (!(await switchVisible(w.page))) { const ui = await uiText(w), f = [...checkNothing(w).f]; if (!/one design|one at a time|same/i.test(ui.strip + ui.card)) f.push('the switch never came and no line says why: "' + (ui.strip + ui.card).slice(0, 120) + '"'); return { f, line: ui.strip }; } }
       await switchOn(w);
       const t0 = Date.now(); while (!w.inject.fired && Date.now() - t0 < 12000) { await sleep(200); }
       if (!w.inject.fired) { w.notes.push('step not reached'); }
@@ -489,7 +495,7 @@ for (const [iname, I] of Object.entries(INT)) {
         if (!w.inject.fired && NET_STEPS.includes(step)) f.push('the save never reached "' + step + '" (it never started)');
         return { f, line: pg.line };
       }
-      return expectSaved(w);
+      return expectSaved(w, step === 'sku' ? { assoc: false, noOtherAliases: false, aliasOptional: true } : {});
     };
   }
 }
