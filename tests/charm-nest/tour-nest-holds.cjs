@@ -125,7 +125,8 @@ function instrument() {
       check(pooled && rel(pooled) < L, `the pool record is written at once, before the landing (poolPut at ${pooled && Math.round(rel(pooled))} ms, landing at ${L} ms)`);
       check(!r.starts.some(x => x[0] < L), `no nest starts before the landing beat (starts ${JSON.stringify(r.starts.map(x => x.slice(0, 3)))}, landing ${L})`);
       const h0 = r.line.find(l => l[1]);
-      check(h0 && h0[0] < 400 && !r.line.some(l => l[0] > h0[0] && l[0] < L && !l[1]), `held from the press (${h0 && h0[0]} ms) until the landing`);
+      // (the SENT TO SHEET seal is stamped on the button first (SEALSHEET, Paul 20 Oct 2026, about 2 s): the hold starts as the stamp lifts, before any piece is pooled)
+      check(h0 && pooled && h0[0] <= rel(pooled) && !r.starts.some(x => x[0] < h0[0]) && !r.line.some(l => l[0] > h0[0] && l[0] < L && !l[1]), `held from the press (${h0 && h0[0]} ms, before the pool record at ${pooled && Math.round(rel(pooled))} ms) until the landing`);
       check(!r.line.some(l => l[0] < L && (l[2] === 'nest' || /Nesting/.test(l[4]) || ['nesting', 'queued', 'finishing'].includes(l[5]))),
         `the run says nothing of nesting and no sheet is nesting, queued or finishing while it is held: ${JSON.stringify(r.line.filter(l => l[0] < L).map(l => [l[0], l[1], l[2], l[3], l[4], l[5]]))}`);
       check(!calls.some(c => c.op === 'putSheet' && rel(c) < L), `no sheet is written before the landing beat (${JSON.stringify(calls.filter(c => c.op === 'putSheet').map(c => Math.round(rel(c))))})`);
@@ -139,7 +140,7 @@ function instrument() {
       check(r.line.some(l => l[0] >= L && (l[2] === 'nest' || /Nesting/.test(l[4]))), `the run's banner turns to Nesting once it has (${JSON.stringify(banner(r).filter(b => b[0] >= L).slice(0, 3))})`);
       check(await s.page.evaluate(() => !NestHold.active()), 'nothing is held once the tour is home');
       const said1 = await s.page.evaluate(() => window.__said.slice());
-      check(said1.some(x => /^Placed on Sheet 1/.test(x) && /nesting now/.test(x)) && !said1.some(x => /press Nest/.test(x)), `Auto: it is said placed and nesting now, not queued for Nest (${JSON.stringify(said1.filter(x => /Sheet 1/.test(x)))})`);
+      check(said1.some(x => /^Placed on (Sheet|Draft) 1/.test(x) && /nesting now/.test(x)) && !said1.some(x => /press Nest/.test(x)), `Auto: it is said placed and nesting now, not queued for Nest (${JSON.stringify(said1.filter(x => /Sheet 1/.test(x)))})`);
       await placed(s.page, 'gold', 1);
       console.log(`     the piece was placed ${Math.round(Date.now() - t0 - L)} ms after the landing (the worker's own time on this machine)`);
       check(await s.page.evaluate(id => { const sh = Pool.sheetOf(id); return !!sh && sh.placements.length === 1; }, ids[0]), 'the piece is placed on its Gold sheet');
@@ -225,7 +226,7 @@ function instrument() {
       const r = await s.readAll(), L = at(r, 'land')[0], said8 = await s.page.evaluate(() => window.__said.slice());
       console.log(`  8 · landing ${L}; nest starts ${JSON.stringify(r.starts)}; said ${JSON.stringify(said8)}`);
       check(!r.starts.length && !r.line.some(l => ['nesting', 'queued'].includes(l[5])), 'Manual: no nest starts, before the landing or after it; the piece waits in the card');
-      check(said8.some(x => /^Queued on Sheet 1/.test(x) && /press Nest/.test(x)), `Manual: it is said queued, "press Nest" (${JSON.stringify(said8.filter(x => /Sheet 1/.test(x)))})`);
+      check(said8.some(x => /^Queued on (Sheet|Draft) 1/.test(x) && /press Nest/.test(x)), `Manual: it is said queued, "press Nest" (${JSON.stringify(said8.filter(x => /(Sheet|Draft) 1/.test(x)))})`);
       const card = rebuilt(r, 'gold').filter(c => c[0] >= L);
       if (process.env.DEBUG) console.log('     card after landing', JSON.stringify(card), 'base', JSON.stringify(r.base.gold));
       check(card.length >= 1 && card.at(-1)[2].split('|')[2] === '1' && card.at(-1)[2].split('|')[5] === 'false' && await s.page.evaluate(() => !NestHold.active() && CN.S.sheets.gold.pages[0].status === 'ready' && CN.S.sheets.gold.pages[0].charms.length === 1), `Manual: the card shows the queued piece from the landing on, and nothing is held (${card.length} card changes after it)`);

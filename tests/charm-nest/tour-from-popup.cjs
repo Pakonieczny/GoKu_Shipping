@@ -89,7 +89,7 @@ const STATE = () => {
       B.run = { runId: `run-${day}-popup`, day, setId: null, releasePolicy: 2, solidIncluded: {}, step: 'nest', status: 'running', mode: 'manual', startedAt: Date.now(), updatedAt: Date.now(), lines: {}, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [] };
     }, ORDERS);
     const card = rid => `#rvList .reviewListRow[data-rid="${rid}"]`;
-    const tab = k => page.click(`#reviewView .egTab[data-k="${k}"]`);
+    const tab = k => page.click(`#reviewView .egTab[data-k="${k === 'unmatchedSku' ? 'needResolution' : k}"]`);   // (Unknown SKU is under the one chip Need Resolution: Paul, 18 Oct 2026)
     // a design dropped on the order's card, put on Gold in the designs window
     const design = async (rid, name) => {
       await page.waitForSelector(card(rid));
@@ -118,7 +118,8 @@ const STATE = () => {
     await tab('customOrder');
 
     // ── 1-3 · the order window's Send to Sheet on each of its tabs ──
-    for (const [view, rid] of Object.entries(OW)) {
+    for (const [scene, rid] of Object.entries(OW)) {
+      let view = scene;
       await page.evaluate(sel => document.querySelector(sel).scrollIntoView({ block: 'center' }), card(rid));
       await page.waitForTimeout(250);
       const RV = () => page.evaluate(() => { const e = document.querySelector('#reviewView .egPane.scroll'); return e ? [Math.round(e.scrollTop), Math.round(e.scrollHeight - e.clientHeight)] : [null, null]; });
@@ -126,6 +127,8 @@ const STATE = () => {
       await page.click(`${card(rid)} .purchaseSummary`);
       await page.waitForFunction(() => OrderWin.isOpen());
       await page.waitForTimeout(900);
+      // (the Sheet tab is greyed, not opened, while the order is on no sheet (paintSheetTab): an order still to send has none, so its Esc scene is pressed on the Overview, and the tab is checked greyed)
+      if (view === 'sheet' && await page.evaluate(() => { const t = document.querySelector('#orderWin .owTabsV [data-ow-view="sheet"]'); return !!t && t.getAttribute('aria-disabled') === 'true'; })) { check(true, 'sheet: the Sheet tab is greyed while the order is on no sheet'); view = 'info'; }
       if (view !== 'info') { await page.click(`#orderWin [data-ow-view="${view}"]`); await page.waitForTimeout(900); }
       // text typed where it can be (the Team message box); a scroll in the view
       const typed = `kept for ${rid}`;
@@ -140,20 +143,20 @@ const STATE = () => {
       await page.evaluate(() => __on(true));
       const t0 = Date.now();
       await page.click('#owSendSheet');
-      const shots = view === 'info' ? [['1-pressed', 60], ['2-stepping-aside', 260], ['3-lifted', 700]] : [];
+      const shots = scene === 'info' ? [['1-pressed', 60], ['2-stepping-aside', 260], ['3-lifted', 700]] : [];
       for (const [n, ms] of shots) { await page.waitForTimeout(Math.max(0, ms - (Date.now() - t0))); await page.screenshot({ path: path.join(SHOTS, `${n}.png`) }); }
       await page.waitForFunction(() => CN.S.mode === 'nest', null, { timeout: 12000, polling: 'raf' });
       let how = 'played through';
-      if (view === 'info') {
+      if (scene === 'info') {
         await page.waitForFunction(() => document.querySelector('#tourLayer .tourPiece'), null, { timeout: 8000, polling: 'raf' }).catch(() => {});
         await page.waitForTimeout(250); await page.screenshot({ path: path.join(SHOTS, '4-landing.png') });
         await page.waitForFunction(() => performance.getEntriesByName('tour:back').length > (window.__backs || 0), null, { timeout: 15000, polling: 'raf' });
         await page.waitForTimeout(230); await page.screenshot({ path: path.join(SHOTS, '5-coming-back.png') });
-      } else if (view === 'timeline') { await page.waitForTimeout(500); await page.mouse.click(720, 520); how = 'skipped by a click'; }
+      } else if (scene === 'timeline') { await page.waitForTimeout(500); await page.mouse.click(720, 520); how = 'skipped by a click'; }
       else { await page.waitForTimeout(500); await page.keyboard.press('Escape'); how = 'skipped by Esc'; }
       await done();
       await page.evaluate(() => { window.__backs = performance.getEntriesByName('tour:back').length; });
-      if (view === 'info') await page.screenshot({ path: path.join(SHOTS, '6-back-as-it-was.png') });
+      if (scene === 'info') await page.screenshot({ path: path.join(SHOTS, '6-back-as-it-was.png') });
       const w = await page.evaluate(() => __off()), s1 = await page.evaluate(STATE), sent = await sentOf(rid);
       const rv1 = await RV();
       // the cards above it stay where they are: the scroll moves only by however much shorter the sent card left the
