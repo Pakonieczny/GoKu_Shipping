@@ -470,14 +470,14 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
       const n0 = net.log.length; let c0 = await calls();
       await watchCard(WIN);
       await page.click(WIN + ' [data-e=approve]');
-      const bar = await page.waitForSelector('input[aria-label^="Your name"]', { timeout: 6000 }).then(() => true, () => false);
+      const bar = await page.waitForSelector('.cnNameBar input', { timeout: 6000 })   /* (EMPNUM, 26 Oct 2026: the one name bar asks for the Employee Number) */.then(() => true, () => false);
       const dbg = await page.evaluate(() => ({ employee: B.employee, ls: (() => { try { return localStorage.getItem('cn.employee'); } catch (_) { return null; } })(), name: CNEmployee.name(), btn: (document.querySelector('[data-r2=eng] .egApproveButton') || {}).outerHTML, nm: !!document.querySelector('[data-nm]'), cnBar: !!document.querySelector('.cnNameBar') }));
       const wrote = net.log.slice(n0).filter(engW(K.O5)).map(x => x.fn + ':' + x.op);
       check(bar && A.dialogs.length === 0 && (await calls()).approve.length === c0.approve.length && !wrote.length, 'no name saved: the Sheet window\'s own bar asks (no browser pop-up), and nothing is approved or written until it is answered: ' + JSON.stringify([bar, A.dialogs, (await calls()).approve.length - c0.approve.length, wrote, dbg]));
       await shot(page, 'real-sheetwin-name', '[data-r2=eng]');
       // the checkpoint on this computer fails (no room): the window's card says so in plain words where the button is, gives the button back, seals and writes nothing
       await page.evaluate(() => { window.__idbFail = true; if (!window.__idbPatched) { window.__idbPatched = true; const p = IDBObjectStore.prototype.put; IDBObjectStore.prototype.put = function () { if (window.__idbFail) throw new DOMException('no room left', 'QuotaExceededError'); return p.apply(this, arguments); }; } });
-      await page.fill('input[aria-label^="Your name"]', 'Sheet Operator'); await page.click('button[data-nm=go]');
+      await page.fill('.cnNameBar input', pinOf(srv.st, 'Sheet Operator')); await page.click('.cnNameBar button[type=submit]');
       await page.waitForFunction(() => document.querySelector('[data-r2=eng] .egFail'), null, { timeout: 40000 }).catch(() => {});
       await page.waitForTimeout(500);
       const cf = await h.read(WIN), jf = await h.job(K.O5);
