@@ -11502,8 +11502,10 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       /* A person's own write (here, or in another tab of this computer): a read already out may have been asked before it, and waits for its answer (seconds, on a
          big Library) before the one that follows it could even start. So a second read starts beside it now (never twice within 600 ms: a burst of writes is one
          read and the one 1.5 s after the last), and the later of the two answers wins (seq). It is the read the write asks for anyway, started sooner: no extra call. */
-      if(live.busy && Date.now()-live.nudged>=LIVE.gap){live.want=false;sameTurn();readLive(true).catch(e=>console.warn('Library live read',e));return;}
+      const fresh=live.fresh;live.fresh=false;   // (a write heard from another tab after the last read for a write left: see heard)
+      if(live.busy && (fresh || Date.now()-live.nudged>=LIVE.gap)){live.want=false;sameTurn();readLive(true).catch(e=>console.warn('Library live read',e));return;}
       live.want=true;
+      if(fresh && !live.busy){clearTimeout(live.timer);sameTurn();tick();return;}
     }
     if(live.busy){live.again=true;return;}
     const wait=(local?live.nudged:live.start)+LIVE.gap-Date.now();
@@ -11528,7 +11530,9 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
      origin may announce a write the same way (the Sorter, Design and Laser pages): { t:'write', op, at } on BroadcastChannel('cn-library'), or
      localStorage 'cn-library-write' = the time. No cloud call is made for it beyond the one read the nudge asks for. */
   const announce=op=>{const at=Date.now();live.heard=at;try{if(channel){channel.postMessage({t:'write',op:String(op || ''),at});return;}}catch(_){}try{localStorage.setItem('cn-library-write',String(at));}catch(_){}};   // (the storage write only where there is no BroadcastChannel: a synchronous storage write, on the page that has just pressed Complete, is time it has not got)
-  const heard=at=>{at=+at || Date.now();if(at===live.heard)return;live.heard=at;nudge();};
+  const heard=at=>{at=+at || Date.now();if(at===live.heard)return;live.heard=at;live.fresh=at>=(live.nudged||0);nudge();};
+  // (Paul, 26 Oct 2026, several computers at once in production: a write another tab made AFTER this page's last read for a write left cannot be in that read's
+  //  answer, so it is read now, never held by the 600 ms gap that groups a burst of writes; that wait was what made another tab's write show 1.2 s late)
   let channel=null;try{channel=typeof BroadcastChannel==='function'?new BroadcastChannel('cn-library'):null;if(channel)channel.onmessage=e=>{if(e && e.data && e.data.t==='write')heard(e.data.at);};}catch(_){channel=null;}
   window.addEventListener?.('storage',e=>{if(e && e.key==='cn-library-write')heard(e.newValue);});
   /** A write to the Library was made from this page (api()): announced to the other tabs of this computer, and read here now and 1.5 s after. */

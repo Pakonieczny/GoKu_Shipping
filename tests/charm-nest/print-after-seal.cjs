@@ -58,7 +58,8 @@ const ORDERS = [
         const s = [...document.querySelectorAll('.cuSealHost .seal.seal-print')].pop(), b = document.querySelector('.sealedPrint[data-cu-print]');
         if (!s) return { seal: false };
         const r = s.getBoundingClientRect(), cs = getComputedStyle(s), br = b && b.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-        return { seal: true, opacity: +cs.opacity, wet: s.classList.contains('wet'), tools: document.querySelectorAll('.sealTool').length, running: s.getAnimations().length + [...document.querySelectorAll('.sealTool')].reduce((n, t) => n + t.getAnimations().filter(a => a.playState === 'running').length, 0),
+        // (a finished seal animation kept with fill: forwards is at rest, not moving: only running ones count, on the seal as on the tool)
+        return { seal: true, opacity: +cs.opacity, wet: s.classList.contains('wet'), tools: document.querySelectorAll('.sealTool').length, running: s.getAnimations().filter(a => a.playState === 'running').length + [...document.querySelectorAll('.sealTool')].reduce((n, t) => n + t.getAnimations().filter(a => a.playState === 'running').length, 0),
           onButton: !!br && cx >= br.left && cx <= br.right && cy >= br.top - 2 && cy <= br.bottom + 2 };
       };
     }, ORDERS);

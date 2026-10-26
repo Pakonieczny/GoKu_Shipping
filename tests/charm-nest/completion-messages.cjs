@@ -20,7 +20,10 @@ const db = {collection, runTransaction(fn) {
   queue = task.catch(() => {}); return task;
 }};
 const admin = {firestore: Object.assign(() => db, {FieldValue: {serverTimestamp: () => ++timestamp}})};
-const backend = {exports: {}, require: name => {assert.equal(name, './firebaseAdmin'); return admin;}, console};
+// the Team's message also touches the order's timeline revision (_orderTimeline touchNow, Oct 2026): recorded, not run against the fake store
+const touched = [];
+const timeline = {touchNow: async (_db, _fv, ids) => { touched.push(...ids); }};
+const backend = {exports: {}, require: name => name === './_orderTimeline' ? timeline : (assert.equal(name, './firebaseAdmin'), admin), console};
 vm.runInNewContext(fs.readFileSync(path.join(root, 'netlify/functions/firebaseOrders.js'), 'utf8'), backend);
 const post = (body, sandbox = false) => backend.exports.handler({httpMethod: 'POST', body: JSON.stringify(body), queryStringParameters: sandbox ? {sandbox: '1'} : {}});
 const messages = rid => [...store.entries()].filter(([key]) => key.startsWith('Brites_Orders/' + rid + '/messages/'));
@@ -87,14 +90,15 @@ vm.runInContext(slice(html, 'async function markBritesDesigned(', '/**\n * Load 
   };
   qr();
   const gate = vm.createContext({O, Gate:{modern:()=>true, policy:(s,seq)=>O.sheetRelease({material:s.metal, verified:s.verification.ok, placed:s.placements.length, full:s.releaseFull, dirty:s.dirty}, {seq, selected})},
-    window:{CharmNestReadiness:require('../../charm-nest-readiness.js')},allSheets:()=>sheets,sheetsOf:()=>sheets, Orders:{rows:()=>rows}, Engrave:{items:()=>jobs}, labelOf:x=>x});
-  vm.runInContext(slice(bridge, '  function labelsReady(', '  async function onSheetSaved(') + '\n' + slice(bridge, '  function validateRelease(', '  async function finalize('), gate);
+    window:{CharmNestReadiness:require('../../charm-nest-readiness.js')}, faceOf:x=>require('../../charm-nest-engrave-faces.js').faceOf(x),allSheets:()=>sheets,sheetsOf:()=>sheets, Orders:{rows:()=>rows}, Engrave:{items:()=>jobs}, labelOf:x=>x});
+  vm.runInContext(slice(bridge, '  function pairNotes(', '  async function onSheetSaved(') + '\n' + slice(bridge, '  function validateRelease(', '  async function finalize('), gate);
   const valid = () => gate.validateRelease(set);
   valid();
   for (const metal of ['gold','silver']) {
     sh.metal=metal; qr(); sh.releaseFull=false; assert.throws(valid); sh.releaseFull=true; valid();
   }
-  sh.metal='rose'; qr(); set.seq=1; assert.throws(valid); set.seq=2; valid();
+  // (SETFIX, Paul 17 Oct 2026: Rose Gold is in a set only by its own Cut Sheet press, never by the set's number)
+  sh.metal='rose'; qr(); set.seq=2; assert.throws(valid); selected.rose=true; valid(); delete selected.rose;
   for (const metal of ['gold10k','gold14k']) {
     sh.metal=metal; qr(); assert.throws(valid); selected[metal]=true; valid();
   }
