@@ -23,7 +23,10 @@ const Pair = require(path.join(root, 'charm-nest-pair.js'));
 // ── the pristine modules, for "quantity 1 is byte for byte what it was" ─────────────────────────────────────────────────────────────────────────────
 function baseDir() {
   const dir = path.join(os.tmpdir(), 'cn-pieces-base-' + N.BASE_COMMIT);
-  if (!fs.existsSync(path.join(dir, 'charm-nest-engrave-sides.js'))) { fs.mkdirSync(dir, { recursive: true }); execSync(`git archive ${N.BASE_COMMIT} -- ':(glob)charm-nest-*.js' | tar -x -C ${dir}`, { cwd: root, shell: '/bin/bash' }); }
+  if (!fs.existsSync(path.join(dir, 'charm-nest-engrave-sides.js'))) {
+    // (a shallow clone, as Netlify's and the cloud sessions' are, lacks the base commit: fetch that one commit, by its full id, before reading it)
+    try { execSync(`git cat-file -e ${N.BASE_COMMIT}^{commit}`, { cwd: root, stdio: 'ignore' }); } catch (_) { execSync('git fetch -q --depth=1 origin 80e5518826ecd405f627cfbb9ef429f086601ed6', { cwd: root, stdio: 'inherit' }); }
+    fs.mkdirSync(dir, { recursive: true }); execSync(`git archive ${N.BASE_COMMIT} -- ':(glob)charm-nest-*.js' | tar -x -C ${dir}`, { cwd: root, shell: '/bin/bash' }); }
   return dir;
 }
 const BASE = baseDir();
