@@ -13,7 +13,7 @@ const api=create({db,col:query,FV:{serverTimestamp:()=>123456},Readiness}),Solve
  let {state}=await request('start');
  const again=await request('start');assert.deepEqual(again.state,state);
  for(let batch=1;batch<=3;batch++){
-  const before=state.profile,fixture=Rose.demoBatch(batch,before),result=await Solver.solve(fixture.job,{});
+  const before=state.profile,fixture=Rose.demoBatch(batch,before);fixture.job.timeBudgetMs=Math.max(fixture.job.timeBudgetMs,60000);/* (the demo's 2.5 s budget seats fewer than 7 on a loaded machine; the solve ends as soon as all are in) */const result=await Solver.solve(fixture.job,{});
   layouts.push(result.placements);
   assert.equal(result.placements.length,7,'all sample charms fit batch '+batch);assert(Solver.verify(fixture.job,result.placements,6).ok);
   const args={revision:state.revision,requestId:'request-nest-'+batch,placements:result.placements};

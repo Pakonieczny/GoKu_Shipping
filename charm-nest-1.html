@@ -6424,6 +6424,7 @@ async function nextSheetSeq(sh) {
     // keeps its place: the run never puts a sheet of a committed set back (Gate.assemble leaves them out) and the cloud keeps the place anyway (putSheet), so drafting it here left
     // the card reading "Filling" with no Set number and Cut Sheet refused with "Not cut: Included by you". Its set, number, day and file name stay; the save makes its QR label again.
     if (sh.setId && !sh.draft && Gate.committedSheet && Gate.committedSheet(sh)) return sh.seq || null;
+    if (window.CharmNestSheetName && CharmNestSheetName.fileTag(sh)) sh.leftFileBase = sh.fileBase;   // (its set's file name: a sheet coming back to the set it left takes its own old number back, charm-nest-sheet-name.js claim. Diagnostic, 26 Oct 2026)
     sh.draft = true; sh.setId = null; sh.setDay = today(); sh.sheetIndex = null; delete sh.numberOwed; return null;
   }
   const runKey = sh.runId || (sh.runId = "manual-" + uid());

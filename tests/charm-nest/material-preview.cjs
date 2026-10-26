@@ -2,12 +2,12 @@ const assert=require('node:assert/strict'),fs=require('fs'),vm=require('vm');glo
 const members=JSON.parse(fs.readFileSync(__dirname+'/fixtures/middle_5903-paths.json'));
 const source=fs.readFileSync('charm-nest-bridge.js','utf8');let parses=0,traces=0;
 const B={pool:{sources:new Map()}},S={settings:{},poolSources:{}};
-const context={B,S,performance,Map,Set,agent(){},sizeEntry:e=>e,Master:{keepOutOf:()=>[]},CharmNestAssets:{bytes:async()=>new Uint8Array([1])},P:{...P,
+const context={B,S,window:{},performance,Map,Set,agent(){},sizeEntry:e=>e,Master:{keepOutOf:()=>[],entryFor:()=>null},CharmNestAssets:{bytes:async()=>new Uint8Array([1])},P:{...P,
  parseSource:async()=>{parses++;return {segments:structuredClone(members),nested:[],pageW:80,pageH:80};},
  thumbnail:async c=>{assert.equal(c.outline.layer,'CUT');assert.equal(P.cutLinesOf(c).length,1);assert.equal(c.ringGeometryVersion,3);return 'assembled-black-preview';},
  buildSilhouettes:async(_,cs)=>{traces++;for(const c of cs)c.thumb='current-sheet-preview';}
 }};
-vm.createContext(context);vm.runInContext(source.slice(source.indexOf('  const masterLoads='),source.indexOf('  /** Upgrade cached geometry')),context);
+vm.createContext(context);vm.runInContext(/^  const FIT_PATH = .*$/m.exec(source)[0],context);vm.runInContext(source.slice(source.indexOf('  const masterLoads='),source.indexOf('  /** Upgrade cached geometry')),context);
 (async()=>{
  const entry={sku:'HAND',aiPath:'hand.ai',aiUrl:'https://fixture/hand.ai'};
  const [a,b]=await Promise.all([context.masterPreview(entry),context.masterPreview(entry)]);

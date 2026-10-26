@@ -5,7 +5,7 @@
 //   CHROMIUM=/opt/pw-browsers/chromium node tests/charm-nest/overlap-autofix.cjs
 const http = require('http'), fs = require('fs'), path = require('path'), assert = require('assert');
 const root = path.join(__dirname, '../..');
-const { chromium } = require(path.join(root, 'node_modules', 'playwright-core'));
+const { chromium } = require(path.join(process.env.PW_DIR || path.join(root, 'node_modules'), 'playwright-core'));
 const { build } = require('./fixture.cjs');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.ai': 'application/pdf', '.pdf': 'application/pdf' };
 
