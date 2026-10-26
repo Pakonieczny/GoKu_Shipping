@@ -193,10 +193,11 @@ function Apps(W, cast) {
     await page.waitForFunction(() => window.CN && window.Orders && window.CNAct && window.CNEmployee && window.StationActivity && window.StationSession && window.CNRole && document.readyState === 'complete', null, { timeout: 90000 });
     return page;
   };
+  // (EMPNUM, Paul 26 Oct 2026: the name bar asks for the person's Employee Number; the server's roster names them)
   A.sorterName = async function (page, name) {
     await page.evaluate(() => { CNEmployee.edit({}); });
     await page.waitForSelector('.cnNameBar[data-kind="edit"] input', { timeout: 15000 });
-    await page.fill('.cnNameBar input', name); await page.press('.cnNameBar input', 'Enter');
+    await page.fill('.cnNameBar input', pinOf(name)); await page.press('.cnNameBar input', 'Enter');
   };
   /** a non-Admin: the name, then the one question in the same bar */
   A.sorterRole = async function (page, name, role) {

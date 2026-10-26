@@ -247,7 +247,7 @@ const sum = (a, f) => a.reduce((n, x) => n + f(x), 0);
   const MO = J(Eff.norm(olderA)); eq([MO.everyone.length, MO.biz.unattributed, MO.biz.stations.assembly === undefined], [2, null, true]);
   // without `roster: true` the answer is exactly the shape it was (other readers and tests pin it): no absent list, no breakdown, no unattributed figure; the names are merged all the same
   dropCaches(); const plain = await ask({ op: 'overview', day: DAY, days: 1, trend: false });
-  eq(Object.keys(plain).sort(), ['business', 'cursor', 'day', 'days', 'delta', 'feed', 'notes', 'now', 'ok', 'people', 'sources'], 'the plain answer\'s keys'); eq(Object.keys(plain.business).sort(), ['perHour', 'stations', 'totals', 'trend']);
+  eq(Object.keys(plain).sort(), ['business', 'cursor', 'day', 'days', 'delta', 'feed', 'notes', 'now', 'ok', 'people', 'rev', 'sources'], 'the plain answer\'s keys (rev: COST, Oct 2026, every overview answer carries its revision)'); eq(Object.keys(plain.business).sort(), ['perHour', 'stations', 'totals', 'trend']);
   assert(plain.business.stations.every(s => !('byPerson' in s) && !('shared' in s) && !('unattributed' in s)), 'plain rows carry no breakdown');
   eq(plain.people.map(p => p.name).sort(), ['Ana M.', 'Giovanna'], 'the plain answer has the one Anna too'); eq(plain.business.stations.find(s => s.station === 'welding').matched, 1, 'and the figures it always had');
   say('4 unattributed: every station row = people + "No one signed in at the desk" - shared; the cards say it; an older answer reads as before');
