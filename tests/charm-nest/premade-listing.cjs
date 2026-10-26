@@ -180,7 +180,7 @@ async function browser() {
       buttons: [...n.querySelectorAll('.rowActions button')].map(x => x.textContent.trim()), send: (() => { const s = n.querySelector('[data-cu-send]'); return s ? { aria: s.getAttribute('aria-disabled'), cls: s.className } : null; })() }; }, cardSel);
     assert.match(info.cls, /cuRow/); assert.match(info.cls, /cuInfo/, 'a card that asks nothing'); assert.equal(info.queue, 'Custom order'); assert.equal(info.label, 'Custom necklace');
     assert.equal(info.sku, 'DAINTY_1450', 'the SKU Etsy sold, as written on the card (it is not a match: no drawing is attached to it)');
-    assert.equal(info.reason, `Custom necklace · ${WHY} · Complete Order or print its QR label when it is ready, or drop its .ai / .dxf designs and Send to Sheet`, 'ONE plain reason line: ' + info.reason);
+    assert.equal(info.reason, `Custom necklace · ${WHY} · Release Hold or print its QR label when it is ready, or drop its .ai / .dxf designs and Send to Sheet`, 'ONE plain reason line: ' + info.reason);
     assert(!/add-on listing/.test(info.text) && !/not mapped/.test(info.text), 'no add-on wording, no question: ' + info.text.slice(0, 240));
     assert.deepEqual(info.buttons, ['Print QR label', 'Complete Order', 'Send to Sheet', 'Drop .ai / .dxf designs here'], 'no Hold on a Review card (NOHOLDREV, Paul 17 Oct 2026)');
     assert.equal(info.send.aria, 'true', 'Send to Sheet is greyed until a design .ai is dropped'); assert.doesNotMatch(info.send.cls, /gold/);
