@@ -63,7 +63,9 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
   const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
   let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { try { ({ chromium } = require('/opt/node22/lib/node_modules/playwright/node_modules/playwright-core')); } catch (__) { console.log('  – no playwright-core: not run'); return; } }
   const shots = process.env.SHOTS || ''; if (shots) fs.mkdirSync(shots, { recursive: true });
-  const only = (process.env.ONLY || '').split(',').filter(Boolean), want = n => !only.length || only.includes(n);
+  // (one run with every phase takes more than the 300 s a test may: the default run is the card's phases; the rest run in order-engraving-approve-real-2.cjs (stale, fail, widths) and -3.cjs (confirmed, reload, sandbox); ONLY=all runs every phase)
+  const DEFAULT = ['disabled', 'approve', 'panel', 'seals', 'multi', 'sheetwin', 'sheettab'];
+  const only = process.env.ONLY === 'all' ? [] : process.env.ONLY ? process.env.ONLY.split(',').filter(Boolean) : DEFAULT, want = n => !only.length || only.includes(n);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cn-eapr-')), masterPath = path.join(tmp, 'BRITES-master.ai');
   await buildMaster(masterPath, { count: 4, edge: false });
   const srv = await start({ receipts, agentResults });
