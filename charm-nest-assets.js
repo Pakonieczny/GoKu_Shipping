@@ -78,10 +78,10 @@
     })().catch(e=>{if(imageTasks.get(img)===state)imageTasks.delete(img);throw e;});
     return state.promise;
   }
-  async function sheetImage(img,id,source){
+  async function sheetImage(img,id,source,known){
     try{if(!source)throw Error('Missing preview');await loadImage(img,source);return;}catch(error){
       if(!id)throw error;
-      const {sheet}=await CN.api('charmNestLibrary',{op:'getSheet',id},{label:'Restoring sheet preview'});
+      const {sheet}=known?{sheet:known}:await CN.api('charmNestLibrary',{op:'getSheet',id},{label:'Restoring sheet preview'});   // (PERFSCALE: the record recover has just read is not read a second time)
       if(!sheet)throw error;
       try{if(!sheet.outputs?.preview?.url)throw error;await loadImage(img,sheet.outputs.preview.url);return;}catch{}
       await CN.ensurePdfJs();
@@ -92,8 +92,15 @@
   }
   function mount(){
     const recovering=new WeakSet();
-    async function recover(img){
-      if(recovering.has(img))return;recovering.add(img);
+    /* PERFSCALE (Paul, 26 Oct 2026: "the performance of the overall platform once it's being used at scale with tens of thousands of orders in live and historical"): every card drawn without a picture (a Library
+       of hundreds of sets, each redraw) read its sheet record twice, on screen or not, and again on the next redraw: 8,740 reads of one session (tests/perf/sorter-scale.cjs). A picture is restored when it
+       comes near the screen, from ONE read, and a sheet that has no picture to give is not asked again for a minute (a click on the picture still retries at once). */
+    const noPicture=new Map(),NO_PICTURE_MS=60000;
+    async function recover(img,force){
+      if(recovering.has(img))return;
+      const sid=img.dataset.sheetPreview||img.dataset.labelSheet;
+      if(!force && sid && Date.now()-(noPicture.get(sid)||0)<NO_PICTURE_MS){img.dataset.assetFailed='1';img.classList.add('assetFailed');img.alt='Preview unavailable — click to retry';return;}
+      recovering.add(img);
       img.dataset.assetLoading='1';
       try{
         try{await loadImage(img,img.dataset.assetSource||img.getAttribute('src'));}
@@ -109,23 +116,25 @@
             if(f.payload && window.Sets){img.src=(await Sets.renderLabelPng(f.payload,f.label)).dataUrl;await img.decode();}
             else await loadImage(img,f.url);
           }else{
-            await sheetImage(img,id,sheet.outputs?.preview?.url);
+            await sheetImage(img,id,sheet.outputs?.preview?.url,sheet);
           }
         }
-        delete img.dataset.assetFailed;img.classList.remove('assetFailed');
-      }catch{img.dataset.assetFailed='1';img.classList.add('assetFailed');img.alt='Preview unavailable — click to retry';}
+        delete img.dataset.assetFailed;img.classList.remove('assetFailed');if(sid)noPicture.delete(sid);
+      }catch{if(sid)noPicture.set(sid,Date.now());img.dataset.assetFailed='1';img.classList.add('assetFailed');img.alt='Preview unavailable — click to retry';}
       finally{delete img.dataset.assetLoading;recovering.delete(img);}
     }
     document.addEventListener('error',e=>{
       const img=e.target;if(img.tagName!=='IMG'||img.closest('.backThumb')||(!img.src.includes(endpoint)&&!img.dataset.sheetPreview&&!img.dataset.labelSheet))return;
       e.stopImmediatePropagation();if(!img.dataset.assetSource)img.dataset.assetSource=img.getAttribute('src');void recover(img);
     },true);
-    document.addEventListener('click',e=>{const img=e.target.closest?.('img[data-asset-failed]');if(img){e.preventDefault();e.stopImmediatePropagation();void recover(img);}},true);
+    document.addEventListener('click',e=>{const img=e.target.closest?.('img[data-asset-failed]');if(img){e.preventDefault();e.stopImmediatePropagation();void recover(img,true);}},true);
     const retry=()=>document.querySelectorAll('img[data-asset-failed]').forEach(img=>recover(img));
     window.addEventListener('online',retry);document.addEventListener('visibilitychange',()=>{if(!document.hidden)retry();});
     // Handle failures that occurred before this listener and records awaiting their preview URL.
     let queued=false;
-    const scan=()=>{queued=false;document.querySelectorAll('img[data-sheet-preview],img[data-label-sheet]').forEach(img=>{if(!img.dataset.assetFailed && !img.dataset.assetLoading && (!img.getAttribute('src') || (img.complete&&!img.naturalWidth)))void recover(img);});};
+    // (PERFSCALE: a picture to restore waits until it is near the screen; without IntersectionObserver it is restored at once, as before)
+    const near=typeof IntersectionObserver==='function'?new IntersectionObserver(es=>{for(const e of es)if(e.isIntersecting){near.unobserve(e.target);if(e.target.isConnected)void recover(e.target);}},{rootMargin:'600px'}):null;
+    const scan=()=>{queued=false;document.querySelectorAll('img[data-sheet-preview],img[data-label-sheet]').forEach(img=>{if(!img.dataset.assetFailed && !img.dataset.assetLoading && (!img.getAttribute('src') || (img.complete&&!img.naturalWidth))){if(near)near.observe(img);else void recover(img);}});};
     new MutationObserver(()=>{if(!queued){queued=true;requestAnimationFrame(scan);}}).observe(document.body,{childList:true,subtree:true});scan();
   }
   if(typeof document!=='undefined'){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',mount,{once:true});else mount();}

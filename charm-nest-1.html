@@ -1516,6 +1516,10 @@ dialog.cmDlg .owHead [data-open-order]{display:inline-flex;align-items:center;ga
 
 /* ── orders: one card per line, or the same line as a row ── */
 #ordersView:not(.hidden){height:100%;min-height:0;gap:0}
+/* PERFSCALE (Paul, 26 Oct 2026: "the performance of the overall platform once it's being used at scale with tens of thousands of orders in live and historical"): a row or card off screen is not
+   styled, laid out or painted (the browser keeps its last measured size, `auto`), so a list of hundreds of orders or sets scrolls and switches tab at the cost of what is on screen (tests/perf/sorter-scale.cjs) */
+#ordItems>.orderListRow,#ordItems>.ocard,#libBody .setCard,#libBody>.libCard,#libBody .libGrid>.libCard{content-visibility:auto;contain-intrinsic-size:auto 120px}
+#libBody .setCard{contain-intrinsic-size:auto 320px}
 .ordHead{display:flex;flex-direction:column;gap:8px;flex:0 0 auto}
 /* the chips wrap; the search and the view toggle keep the right-hand end whatever the width */
 .ordFilters{display:flex;gap:6px;align-items:center;flex-wrap:nowrap}
@@ -3814,7 +3818,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pair-thumb.js?v=20261009-pt3-mi2-rlp1-rlp3-lm1-mw1"></script>
 <script src="charm-nest-pool-pieces.js?v=20261009-pp1-adv2-cg1"></script>
 <script src="charm-nest-engrave-fit.js?v=20261019-wd1"></script>
-<script src="charm-nest-assets.js?v=20261007-imgcache"></script>
+<script src="charm-nest-assets.js?v=20261007-imgcache-perf1"></script>
 <script src="charm-nest-thumbs.js?v=20261009-th1-pb1"></script>
 <script src="charm-nest-master-cache.js?v=20261009-mc1-cost18-mp1"></script>
 <script src="charm-nest-engrave-faces.js?v=20261011-fb1-fb2-sd1-nb1-el1-pc1"></script>
@@ -8441,7 +8445,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="order-timeline.js?v=20261007-fc4-advoff1-ms1-cost18"></script>
+<script src="order-timeline.js?v=20261007-fc4-advoff1-ms1-cost18-perf1"></script>
 <!-- How long each person is signed in here, and what they did (station-session.js, station-activity.js). The sorter has no
      personal login: the person is the name it keeps (cn.employee: the account chip's sign-in, or typed at the first approval, label
      or decision), the same name every seal it stamps, and the framed Design Station, carry. -->

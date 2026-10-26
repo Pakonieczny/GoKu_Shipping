@@ -23,8 +23,8 @@ async function main() {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome', args: ['--no-sandbox', '--enable-precise-memory-info', '--js-flags=--expose-gc'] });
   const rows = [], fails = [], errors = [];
   const rec = (name, value, budget, unit = 'ms', extra = '') => { const ok = budget == null || value <= budget; rows.push({ name, value, budget, unit, extra, ok }); if (!ok) fails.push(`${name}: ${Math.round(value)} ${unit} > ${budget} ${unit}`); console.log(`  ${ok ? '✓' : '✗'} ${name.padEnd(46)} ${String(Math.round(value)).padStart(7)} ${unit}${budget != null ? '  (budget ' + budget + ')' : ''}${extra ? '  · ' + extra : ''}`); };
-  let bytes = 0, reqs = 0;
-  const cost = () => { const r = reqs, b = bytes; return () => `${reqs - r} req, ${Math.round((bytes - b) / 1024)} KB`; };
+  let bytes = 0, reqs = 0; const urls = [];
+  const cost = () => { const r = reqs, b = bytes, u = urls.length; return () => { if (process.env.PROFILE && urls.length - u > 20) { const n = new Map(); for (const x of urls.slice(u)) n.set(x, (n.get(x) || 0) + 1); console.log('    requests: ' + [...n].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, v]) => k + ' ×' + v).join(' | ')); } return `${reqs - r} req, ${Math.round((bytes - b) / 1024)} KB`; }; };
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     await context.route(u => !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u.href), r => /fonts\.g/.test(r.request().url()) ? r.fulfill({ status: 200, contentType: 'text/css', body: '' }) : r.abort());
@@ -32,10 +32,12 @@ async function main() {
       // (the page's own long tasks, from the first script on)
       window.__long = []; try { new PerformanceObserver(l => { for (const e of l.getEntries()) window.__long.push(e.duration); }).observe({ type: 'longtask', buffered: true }); } catch (_) {} },
       { v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on' });
+    // PROFILE=1: where each per-sheet read (getSheet) comes from, counted by its caller
+    if (process.env.PROFILE) await context.addInitScript(() => { const f = window.fetch; window.__gs = {}; window.fetch = function (u, o) { try { if (o && /"op":"getSheet"/.test(o.body)) { const k = new Error().stack.split('\n').slice(2, 6).map(x => x.trim().replace(/\?v=[^:]*/, '').replace(/https?:\/\/[^/]+\//, '')).join(' < '); window.__gs[k] = (window.__gs[k] || 0) + 1; } } catch (_) {} return f.apply(this, arguments); }; });
     const page = await context.newPage();
     page.setDefaultTimeout(60000);
     page.on('pageerror', e => errors.push(e.message));
-    page.on('requestfinished', async q => { reqs++; try { const s = await q.sizes(); bytes += s.responseBodySize + s.responseHeadersSize; } catch (_) {} });
+    page.on('requestfinished', async q => { reqs++; if (process.env.PROFILE) urls.push(q.url().replace(/^https?:\/\/[^/]+/, '').replace(/\?.*$/, '') + (q.postData() ? ' ' + (/"op":"(\w+)"/.exec(q.postData()) || [])[1] : '')); try { const s = await q.sizes(); bytes += s.responseBodySize + s.responseHeadersSize; } catch (_) {} });
     const cdp = await context.newCDPSession(page);
     const heap = async () => { await cdp.send('HeapProfiler.collectGarbage'); await cdp.send('HeapProfiler.collectGarbage'); return (await cdp.send('Runtime.getHeapUsage')).usedSize / 1048576; };
     // the time from an action to the frame that shows it: the action's own work plus the style, layout and paint it causes
@@ -115,6 +117,7 @@ async function main() {
     const h2 = await heap();
     rec('heap after GC, start', h0, null, 'MB');
     rec(`heap growth over ${REPEAT} rounds (after warm-up)`, h2 - h1, BUDGET.heapGrowthMB, 'MB', `${h1.toFixed(1)} → ${h2.toFixed(1)} MB`);
+    if (process.env.PROFILE) console.log('    getSheet callers:', JSON.stringify(Object.entries(await page.evaluate(() => window.__gs)).sort((a, b) => b[1] - a[1]).slice(0, 6), null, 1));
     const longest = await page.evaluate(() => Math.max(0, ...window.__long));
     rec('longest task over the session', longest, null, 'ms');
     rec('requests over the session', reqs, null, 'req', `${Math.round(bytes / 1048576)} MB`);
