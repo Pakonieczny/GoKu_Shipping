@@ -316,7 +316,14 @@ fs.mkdirSync(SHOTS, { recursive: true });
 
   /* ═════════════════════════════ PHASE B · the portal ═════════════════════════════ */
   let portal;
-  const cardOf = key => { const c = (S.board || []).find(s => s.key === key); assert(c, 'the board has no ' + key + ' card (it has ' + (S.board || []).map(s => s.key).join(', ') + ')'); return c; };
+  // (Assembly and Shipping are one board card per desk, assembly-1..4 and shipping-1..3: the station is those cards together, its people, orders in hand and counts added up)
+  const deskSum = (key, list) => {
+    const n = (c, re) => { const m = re.exec(c.counts || ''); return m ? +m[1] : 0; };
+    const parts = list.reduce((a, c) => a + n(c, /(\d+)\s*pieces?/i), 0), orders = list.reduce((a, c) => a + n(c, /(\d+)\s*orders?/i), 0);
+    return { key, name: list[0].name, desks: list, people: list.flatMap(c => c.people), cards: list.flatMap(c => c.cards), text: list.map(c => c.text).join(' '), counts: `${parts} pieces ${orders} orders`,
+      state: list.some(c => c.state === 'working') ? 'working' : list.every(c => c.state === 'offline') ? 'offline' : (list.find(c => c.state !== 'offline') || list[0]).state };
+  };
+  const cardOf = key => { let c = (S.board || []).find(s => s.key === key); if (!c) { const desks = (S.board || []).filter(s => (s.key || '').startsWith(key + '-')); if (desks.length) c = deskSum(key, desks); } assert(c, 'the board has no ' + key + ' card (it has ' + (S.board || []).map(s => s.key).join(', ') + ')'); return c; };
   const names = c => c.people.map(p => p.name).sort();
   // the board needs a few seconds after the work: poll until it says what the shop's own records say (the readers cache for a moment, by design).
   // (while S.quiet is set nobody touches a station page: waiting must not count as input at any desk)
@@ -478,7 +485,9 @@ fs.mkdirSync(SHOTS, { recursive: true });
         const sum = ov.people.reduce((a, p) => { const o = p.stations.find(x => x.station === st); return o ? [a[0] + o.parts, a[1] + o.orders] : a; }, [0, 0]);
         const b = ov.business.stations.find(x => x.station === st); assert(b, 'business has no ' + st);
         eq([b.parts], [sum[0]], st + ': station pieces vs the people\'s');
-        const row = rows.find(r => r.key === st); assert(row, 'the Overview card has no ' + st + ' row'); eq([row.parts, row.orders], [b.parts, b.orders], st + ': the Overview card row vs the reader');
+        // (a numbered station, Assembly and Shipping, is a caption with one row per desk, assembly-1..4, and a row of its own only for work no desk was recorded for: the rows add up to the station)
+        const mine = rows.filter(r => r.key === st || (r.key || '').startsWith(st + '-')); assert(mine.length, 'the Overview card has no ' + st + ' row');
+        const row = { parts: mine.reduce((n, r) => n + (r.parts || 0), 0), orders: mine.reduce((n, r) => n + (r.orders || 0), 0) }; eq([row.parts, row.orders], [b.parts, b.orders], st + ': the Overview card rows vs the reader');
         const card = cardOf(st); const m = /(\d+)\s*pieces?\s*(\d+)\s*orders?/i.exec(card.counts); assert(m, st + ' card counts: "' + card.counts + '"'); eq([+m[1], +m[2]], [b.parts, b.orders], st + ': the board card vs the Overview');
       }
     });
