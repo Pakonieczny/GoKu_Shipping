@@ -2908,7 +2908,7 @@
       await new Promise(r => setTimeout(r, 0));
       return { X0, Y0, bw, bh, core };
     }
-    let overlapPx = 0, outsidePx = 0; const pairs = new Set(), empty = [], detail = {};
+    let overlapPx = 0, outsidePx = 0; const pairs = new Set(), empty = [], detail = {}, byName = new Map();
     for (let li = 0; li < charmLayers.length; li++) {
       const key = keyOf(charmLayers[li].name);
       let area = key ? cache.get(key) : null;
@@ -2916,6 +2916,7 @@
       else { area = await covered(li); if (key) cache.set(key, area); }
       if (key) used.add(key);
       if (area.empty) { empty.push(charmLayers[li].name); if (spec.onProgress) spec.onProgress(li + 1, charmLayers.length); continue; }
+      byName.set(charmLayers[li].name, area);
       const { X0, Y0, bw, bh, core } = area;
       for (let y = 0, b = 0; y < bh; y++) for (let x = 0; x < bw; x++, b++) {
         if (!core[b]) continue;
@@ -2929,7 +2930,11 @@
     if (cache) for (const k of [...cache.keys()]) if (!used.has(k)) cache.delete(k);   // only this sheet's current charms are kept
     try { doc.destroy(); } catch (_) { /* ignore */ }
     const overlapDetail = Object.fromEntries(Object.entries(detail).map(([k, d]) => [k, { px: d.px, boxPt: [d.x0, d.y0, d.x1, d.y1].map(v => +(v / res).toFixed(1)) }]));
-    return { ok: overlapPx === 0 && outsidePx === 0 && empty.length === 0, overlapPx, outsidePx, emptyLayers: empty, overlappingPairs: [...pairs], overlapDetail, layers: charmLayers.length, rendered: charmLayers.length - reused, res, erodePx };
+    const out = { ok: overlapPx === 0 && outsidePx === 0 && empty.length === 0, overlapPx, outsidePx, emptyLayers: empty, overlappingPairs: [...pairs], overlapDetail, layers: charmLayers.length, rendered: charmLayers.length - reused, res, erodePx };
+    // (OVERLAPFIX, 25 Oct 2026) what each charm covers, by layer name, and the page in pixels: the overlap fixer (charm-nest-overlap-fix.js) plans its nudge on exactly these pixels.
+    // Not enumerable: the verification saved with a sheet stays small.
+    Object.defineProperty(out, 'areas', { value: byName, enumerable: false }); Object.defineProperty(out, 'page', { value: { W, H, inset }, enumerable: false });
+    return out;
   }
 
   /* ═══ 6c · hoops welded into the cut line ════════════════════════════════════════════════════════════════

@@ -8,7 +8,7 @@
  *       {type:"verify", jobId, job, placements, res}
  *  out: {type:"stage"|"placed"|"reject"|"trial"|"best"|"done"|"verified"|"error", jobId, …}
  */
-importScripts("charm-nest-rose.js?v=20261007-edges-gc1-sh29", "charm-nest-solver.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1");
+importScripts("charm-nest-rose.js?v=20261007-edges-gc1-sh29", "charm-nest-solver.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1-ovf1");
 
 let current = null;   // { jobId, job, stop }
 
@@ -37,7 +37,7 @@ self.onmessage = async (e) => {
   }
   if (m.type === "verify") {
     try {
-      const v = CharmNestSolver.verify(m.job, m.placements, m.res || 6);
+      const v = CharmNestSolver.verify(m.job, m.placements, m.res || 6, undefined, m.masks ? { masks: true } : undefined);   // (masks: the overlap fix, OVERLAPFIX 25 Oct 2026)
       self.postMessage({ type: "verified", jobId: m.jobId, result: v });
     } catch (err) { self.postMessage({ type: "error", jobId: m.jobId, message: String(err && err.message || err) }); }
     return;

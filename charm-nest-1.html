@@ -3541,7 +3541,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .owPcRow .pcAct .owCuMore{flex:0 0 auto;border:0;background:transparent;color:var(--ink45);font:700 10.5px var(--sans);padding:3px 5px;margin-left:-4px;border-radius:6px;cursor:pointer;white-space:nowrap}
 .owPcRow .pcAct .owCuMore:hover,.owPcRow .pcAct .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
 </style>
-<link rel="preload" href="charm-nest-stamp-walnut.png" as="image">
+<link rel="prefetch" href="charm-nest-stamp-walnut.png" as="image">   <!-- (prefetch, 25 Oct 2026: the seal wood is used only once a Library seal shows; a preload warned "not used within a few seconds" on every Nest session) -->
 <link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small-en3-pe1-re1-wd1-dc1-dm1-eu1-pc1-egr1-mseal1-fb1-ms2-wal1-sx1-cs1-ol1-ra1-ru1-mh1">
 </head>
 <body>
@@ -3752,10 +3752,11 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-rose.js?v=20261007-edges-gc1-gf1-sh29"></script>
 <script src="charm-nest-partial.js?v=20261007-ps4-fit75-pp1-cg1"></script>
-<script src="charm-nest-solver.js?v=20261009-unjam1-pair2-ln1-cg1-nestfront-nq1"></script>
+<script src="charm-nest-solver.js?v=20261009-unjam1-pair2-ln1-cg1-nestfront-nq1-ovf1"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
-<script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1-ml1-m2-m3-szf1-mfile1-mc1-bd1"></script>
+<script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1-ml1-m2-m3-szf1-mfile1-mc1-bd1-ovf1"></script>
+<script src="charm-nest-overlap-fix.js?v=20261025-ovf1"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2-hdr1-ms1-cost18-rh1-hp2-ro1-sc1-ss1"></script>
 <script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1-hdr1-pl1-ms1-pk1-cost18-rh1-ho1-ss1"></script>
@@ -5358,7 +5359,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1");
+    const w = new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1-ovf1");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     // (a worker file that could not be fetched, the network being away, reports an error with no words: it is named, so the sheet is not taken for one that was told nothing and the run knows to try again)
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message || "the sheet search could not start: its file could not be loaded (is the network down?)" }, idx);
@@ -5389,7 +5390,7 @@ function buildJob(sh) {
   const items = nestItems(sh), careful = carefulNest(sh);
   return {
     sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, ...(sh.roseStock?.profileJson ? {remnant:JSON.parse(sh.roseStock.profileJson)} : {}) },
-    clearancePt: +S.settings.clearancePt || 0, angles: careful && angleSet().length < CAREFUL_ANGLES.length ? CAREFUL_ANGLES : angleSet(), fineRes: 2, coarseRes: 0.5,
+    clearancePt: +S.settings.clearancePt || 0, writeScale: 1 /* (25 Oct 2026: nesting at the written size, CHARM_SCALE, made the append turns of a big file place 11 of 14 pieces on an 11 % sheet; off until that is fixed. The overlap the shrink can cause is cleared by fixOverlaps) */, angles: careful && angleSet().length < CAREFUL_ANGLES.length ? CAREFUL_ANGLES : angleSet(), fineRes: 2, coarseRes: 0.5,
     timeBudgetMs: sh.intakeBudgetMs || (+S.settings.budgetS || 180) * 1000, fullBudget: sh.intakePhase !== "fill", stallMs: 60 * 1000, maxTrials: sh.intakePhase === "fill" ? 2000 : 1000000, seed: sh.runSeed || +S.settings.seed || 1,
     // charms already on the sheet stay exactly where they are
     protectedRose:sh.roseProtected||null,lockedPlacements:sh.appendOnly?sh.nestInitial||sh.placements:careful&&sh.nestInitial?.length?sh.nestInitial:null,
@@ -6084,32 +6085,32 @@ async function finishNest(sh, { result, error }) {
     agent({ metal: sh.metal }, "ok", `Optimized: ${sh.placements.length} charms shrunk ${shrinkPct}% about their centres (positions and angles unchanged)`);
     // 1 · write the sheet
     sh.stage = "Writing .ai…"; sh.progressKind = "finish"; sh.progress = [1, 5]; renderProgress(sh);
-    const sources = new Map(); for (const p of sh.placements) { const c = byId.get(p.id); if (c && !sources.has(c.sourceId)) sources.set(c.sourceId, sourceOf(c.sourceId).parsed); }
-    const specBase = { sheet: { wPt: st.wPt, hPt: st.hPt, strokeRGB: [1, 0, 0], strokePt: 0.5 }, placements: sh.placements.map(p => ({ charm: byId.get(p.id), angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, scale: p.scale || 1 })), sources, title: `${labelOf(sh.metal)} sheet ${sh.sheetId}`, meta: { sheetId: sh.sheetId, metal: sh.metal, seed: result.params.seed, clearancePt: result.params.clearancePt, charmScale: CHARM_SCALE } };
-    const aiBytes = await CharmNestPDF.buildSheet(specBase);
+    const specBase = sheetSpec(sh, byId, st, result);
+    let aiBytes = await CharmNestPDF.buildSheet(specBase);
     sh.placements.forEach((p, i) => { p.layerName = specBase.placements[i].layerName; p.name = byId.get(p.id)?.name; });
     // 2 · verify — geometry (worker) and render (pdf.js), independently of the solver. The geometry check runs in the
     // sheet's worker while this page writes the proof and renders the file, instead of after them.
     // (a check that gives no answer in 5 minutes flags the sheet the same way, and its worker is let go)
-    const geomDone = new Promise(res => {
-      const waitS = +S.settings.verifyWaitS || 300;
-      const wait = setTimeout(() => { if (sh._geomVerify !== settle) return; for (const w of sh.workers || []) w.terminate(); sh.workers = []; sh.worker = null; settle(geomFlag("no answer in " + waitS + " s")); }, waitS * 1000);
-      const settle = r => { clearTimeout(wait); if (sh._geomVerify === settle) sh._geomVerify = null; res(r); };
-      sh._geomVerify = settle; ensureWorker(sh).postMessage({ type: "verify", jobId: sh.jobId, job: buildJob(sh), placements: sh.placements, res: +S.settings.verifyRes || 6 });
-    });
+    const geomDone = geomCheck(sh);
     sh.progress = [2, 5]; sh.stage = "Writing labelled proof…"; renderProgress(sh);
-    const labelledBytes = await CharmNestPDF.buildSheet(Object.assign({}, specBase, { labelled: true, placements: specBase.placements.map(p => Object.assign({}, p)) }));
+    let labelledBytes = await CharmNestPDF.buildSheet(Object.assign({}, specBase, { labelled: true, placements: specBase.placements.map(p => Object.assign({}, p)) }));
     sh.stage = "Verifying · re-rendering each charm alone…"; sh.progress = [3, 5]; renderProgress(sh);
     let render = null;
     // each charm's layer is rendered once while it stays as it is (layerSig); what it covers is kept with the sheet
     const layerSigs = new Map(specBase.placements.map(p => [p.layerName, p.layerSig])), areas = sh._renderAreas || (sh._renderAreas = new Map());
-    try { await ensurePdfJs(); render = await CharmNestPDF.verifyRendered(aiBytes, { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, res: +S.settings.verifyRes || 6, erodePt: (+S.settings.clearancePt || 0) < 0 ? Math.round(-S.settings.clearancePt / 2 * 2) / 2 : 0, layerSigs, cache: areas, onProgress: (d, t) => { sh.stage = `Verifying · charm ${d}/${t} re-rendered from the output file`; renderProgress(sh); } }); }
+    try { await ensurePdfJs(); render = await renderCheck(sh, aiBytes, specBase, st, layerSigs, areas); }
     catch (e) {
       // the check's own file could not be fetched (the network is away): the sheet is not written up as flagged, it is tried again with the run (RunCtl.onSheetDone)
       if (/dynamically imported module|Importing a module script failed|Failed to fetch|Load failed/i.test(e && e.message || "")) throw new Error("the sheet check could not start: its file could not be loaded (is the network down?)");
       render = { ok: false, error: e.message }; areas.clear(); log(sh, "render verify failed: " + e.message);
     }
-    const geom = await geomDone;
+    let geom = await geomDone;
+    // (OVERLAPFIX, Paul 25 Oct 2026: "minor overlap between some charms … cannot hold the sheet and the sheet must be auto fixed by the system": a small overlap the
+    //  re-render finds is put right here, the smallest nudge first, the smallest shrink only if no nudge clears it, and the file is written and verified again)
+    if (render && !(render.ok && geom.ok) && (render.overlapPx > 0 || geom.overlapPx > 0) && !render.outsidePx && !(render.emptyLayers || []).length && !render.error && !geom.error && !geom.outsidePx && !geom.removedPx && !geom.protectedMoved) {
+      const fx = await fixOverlaps(sh, { byId, st, result, render, geom, areas });
+      if (fx) ({ aiBytes, labelledBytes, render, geom } = fx);
+    }
     sh.verification = { geom, render, ok: geom.ok && !!(render && render.ok), minGapPt: geom.minGapPt, minEdgePt: geom.minEdgePt };
     // (MCFREE, Paul 20 Oct 2026: charms a person placed by hand where they overlap, or run past the sheet's margin (Manual Control's own check, CNManual.conflicts), flag the
     //  sheet as its verifier does, whatever the pixels say: it joins no set, gets no green line and goes to no laser until they are moved clear)
@@ -6166,6 +6167,91 @@ async function finishNest(sh, { result, error }) {
     if (window.RunCtl) RunCtl.onSheetDone(sh, e);
   }
   pumpNestQueue();
+}
+/** The geometry check of a sheet's placements, in its worker (a check that gives no answer in 5 minutes flags the sheet the same way, and its worker is let go). */
+function geomCheck(sh, masks) {
+  return new Promise(res => {
+    const waitS = +S.settings.verifyWaitS || 300;
+    const wait = setTimeout(() => { if (sh._geomVerify !== settle) return; for (const w of sh.workers || []) w.terminate(); sh.workers = []; sh.worker = null; settle(geomFlag("no answer in " + waitS + " s")); }, waitS * 1000);
+    const settle = r => { clearTimeout(wait); if (sh._geomVerify === settle) sh._geomVerify = null; res(r); };
+    sh._geomVerify = settle; ensureWorker(sh).postMessage({ type: "verify", jobId: sh.jobId, job: buildJob(sh), placements: sh.placements, res: +S.settings.verifyRes || 6, ...(masks ? { masks: true } : {}) });
+  });
+}
+/** The written file re-rendered layer by layer (each charm's layer is rendered once while it stays as it is: layerSig; what it covers is kept with the sheet). */
+function renderCheck(sh, aiBytes, specBase, st, layerSigs, areas) {
+  return CharmNestPDF.verifyRendered(aiBytes, { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, res: +S.settings.verifyRes || 6, erodePt: (+S.settings.clearancePt || 0) < 0 ? Math.round(-S.settings.clearancePt / 2 * 2) / 2 : 0, layerSigs, cache: areas, onProgress: (d, t) => { sh.stage = `Verifying · charm ${d}/${t} re-rendered from the output file`; renderProgress(sh); } });
+}
+/* OVERLAPFIX (Paul, 25 Oct 2026): "minor overlap between some charms on a sheet … cannot hold the sheet and the sheet must be auto fixed by the system by shrinking a given charm that is
+   overlapping by the smallest possible amount and moving it over just slightly enough that the offending overlap gets resolved … The primary approach should be that a tiny readjustment
+   of the position should resolve the tiny overlap, but if that is not possible, then shrinking the charm by the smallest needed amount."
+   The re-render's own pixels (what each charm covers, verifyRendered `areas`) are what the plan reads (charm-nest-overlap-fix.js): for each overlapping pair the charm to touch (never a
+   locked one or a protected Rose Gold one; the newer and smaller first) gets the nearest whole-pixel nudge that clears every
+   other charm and the margin; only when none within 3 pt does, the smallest shrink about its own centre, with its nearest nudge. A whole-pixel nudge renders exactly as the shifted pixels,
+   so the plan is the result; the file is written and BOTH checks run again, at most three rounds. Anything still flagged after that is flagged as before. */
+async function fixOverlaps(sh, o) {
+  const F = window.CharmNestOverlapFix; if (!F || typeof F.plan !== "function" || sh.roseCutAt) return null;
+  const { byId, st, result } = o, res = (o.render && o.render.res) || +S.settings.verifyRes || 6;
+  // (never a protected Rose Gold placement: its stock is cut around it. A placement the search holds still (lockedPlacements: the saved layout, nestInitial) may take the nudge; its saved pose
+  //  takes it too, so the geometry check and every later turn hold it where the fix put it)
+  const job = buildJob(sh), locked = new Set((job.protectedRose?.placements || []).map(p => p.id)), saved = new Map((sh.nestInitial || []).map(p => [p.id, p]));
+  const kept = new Set((sh.nestInitial || []).map(p => p.id));   // (charms already on the sheet: touched only after the newer ones; INPLACE's "never moved to make room" is about room, not a sub-point nudge that clears an overlap)
+  const overlapOnly = (r, g) => !!r && !!g && !(r.ok && g.ok) && !r.error && !g.error && !r.outsidePx && !(r.emptyLayers || []).length && !g.outsidePx && !g.removedPx && !g.protectedMoved && (r.overlapPx > 0 || g.overlapPx > 0);
+  let render = o.render, geom = o.geom, aiBytes = null, labelledBytes = null, round = 0;
+  const done = new Map(), before = new Map(sh.placements.map(p => [p.id, { cxPt: p.cxPt, cyPt: p.cyPt, scale: p.scale || 1 }]));
+  for (; round < 3 && overlapOnly(render, geom) && render.areas && render.page; round++) {
+    // what each charm takes up for BOTH checks: the re-rendered ink (render.areas) united with the outline the geometry check reads (its masks), page pixels at res, y down
+    const gm = await geomCheck(sh, true), gmById = new Map((gm.masks || []).map(m => [m.id, m]));
+    const byLayer = new Map(sh.placements.map(p => [p.layerName, p])), areas = new Map(), centers = new Map(), movable = new Set(), prefer = new Map();
+    for (const p of sh.placements) {
+      if (!p.layerName) continue;
+      const a = render.areas.get(p.layerName), g = gmById.get(p.id), u = unionArea(a, g); if (!u) continue;
+      areas.set(p.layerName, u);
+      centers.set(p.layerName, { x: p.cxPt * res, y: p.cyPt * res });
+      if (!locked.has(p.id)) movable.add(p.layerName);
+      prefer.set(p.layerName, kept.has(p.id) ? 1 : 0);
+    }
+    let plan; try { plan = F.plan({ W: render.page.W, H: render.page.H, inset: render.page.inset, res, areas, centers, movable, prefer }); } catch (e) { log(sh, "overlap fix could not plan: " + e.message); break; }
+    if (!plan || !plan.fixes || !plan.fixes.length) { log(sh, "overlap fix: no nudge or shrink within the limits clears it" + (plan && plan.why ? ` (${plan.why})` : "")); break; }
+    for (const f of plan.fixes) {
+      const p = byLayer.get(f.name); if (!p) continue;
+      if (f.scale && f.scale < 1) { p.scale = +((p.scale || 1) * f.scale).toFixed(5); p.fixScale = +((p.fixScale || 1) * f.scale).toFixed(5); }   // (fixScale: the fix's own shrink, which the geometry check reads too)
+      p.cxPt += (f.dx || 0) / res; p.cyPt += (f.dy || 0) / res;
+      const k = saved.get(p.id); if (k && k !== p) Object.assign(k, { cxPt: p.cxPt, cyPt: p.cyPt, scale: p.scale, ...(p.fixScale ? { fixScale: p.fixScale } : {}) });
+      done.set(p.id, p);
+    }
+    // the file again, and both checks again (only the charms that moved are rendered again: layerSig)
+    sh.stage = `Fixing ${plan.fixes.length === 1 ? "a small overlap" : plan.fixes.length + " small overlaps"} · checking again…`; renderProgress(sh);
+    const specBase = sheetSpec(sh, byId, st, result);
+    aiBytes = await CharmNestPDF.buildSheet(specBase);
+    sh.placements.forEach((p, i) => { p.layerName = specBase.placements[i].layerName; });
+    const geomDone = geomCheck(sh);
+    labelledBytes = await CharmNestPDF.buildSheet(Object.assign({}, specBase, { labelled: true, placements: specBase.placements.map(p => Object.assign({}, p)) }));
+    try { render = await renderCheck(sh, aiBytes, specBase, st, new Map(specBase.placements.map(p => [p.layerName, p.layerSig])), o.areas); } catch (e) { render = { ok: false, error: e.message }; }
+    geom = await geomDone;
+  }
+  if (!done.size) return null;
+  const moved = [...done.values()].map(p => { const b = before.get(p.id) || {}, d = Math.hypot(p.cxPt - b.cxPt, p.cyPt - b.cyPt), k = (p.scale || 1) / (b.scale || 1); return { id: p.id, name: p.name || (byId.get(p.id) || {}).name || p.id, movedPt: +d.toFixed(2), shrinkPct: +((1 - k) * 100).toFixed(2) }; });
+  sh.overlapFix = { at: Date.now(), rounds: round, ok: !!(render && render.ok && geom.ok), charms: moved };
+  const words = moved.map(m => `${m.name} ${m.shrinkPct > 0 ? `${m.shrinkPct}% smaller and ` : ""}moved ${m.movedPt} pt`).join("; ");
+  log(sh, `overlap fixed automatically: ${words}${sh.overlapFix.ok ? "" : " (the check still flags the sheet)"}`);
+  agent({ metal: sh.metal }, sh.overlapFix.ok ? "ok" : "warn", sh.overlapFix.ok ? `Small overlap fixed automatically: ${words}` : `Small overlap: ${words}, but the check still flags the sheet`);
+  return { aiBytes, labelledBytes, render, geom };
+}
+/** One footprint from the render's area ({X0, Y0, bw, bh, core}) and the geometry check's mask ({x0, y0, w, h, bits}), page pixels; either may be missing. */
+function unionArea(a, g) {
+  if (a && a.empty) a = null;
+  if (!a && !g) return null;
+  const X0 = Math.min(a ? a.X0 : Infinity, g ? g.x0 : Infinity), Y0 = Math.min(a ? a.Y0 : Infinity, g ? g.y0 : Infinity);
+  const X1 = Math.max(a ? a.X0 + a.bw : -Infinity, g ? g.x0 + g.w : -Infinity), Y1 = Math.max(a ? a.Y0 + a.bh : -Infinity, g ? g.y0 + g.h : -Infinity);
+  const bw = X1 - X0, bh = Y1 - Y0, core = new Uint8Array(bw * bh);
+  if (a) for (let y = 0; y < a.bh; y++) for (let x = 0; x < a.bw; x++) if (a.core[y * a.bw + x]) core[(a.Y0 - Y0 + y) * bw + (a.X0 - X0 + x)] = 1;
+  if (g) for (let y = 0; y < g.h; y++) for (let x = 0; x < g.w; x++) if (g.bits[y * g.w + x]) core[(g.y0 - Y0 + y) * bw + (g.x0 - X0 + x)] = 1;
+  return { X0, Y0, bw, bh, core };
+}
+/** The written sheet's spec from its placements (as finishNest writes it). */
+function sheetSpec(sh, byId, st, result) {
+  const sources = new Map(); for (const p of sh.placements) { const c = byId.get(p.id); if (c && !sources.has(c.sourceId)) sources.set(c.sourceId, sourceOf(c.sourceId).parsed); }
+  return { sheet: { wPt: st.wPt, hPt: st.hPt, strokeRGB: [1, 0, 0], strokePt: 0.5 }, placements: sh.placements.map(p => ({ charm: byId.get(p.id), angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, scale: p.scale || 1 })), sources, title: `${labelOf(sh.metal)} sheet ${sh.sheetId}`, meta: { sheetId: sh.sheetId, metal: sh.metal, seed: result.params.seed, clearancePt: result.params.clearancePt, charmScale: CHARM_SCALE } };
 }
 /* Paul, 24 Sep: "nothing may accumulate". A sheet saved to the cloud keeps the links, and the bytes behind them leave this
    page and its checkpoint: the .ai and the labelled proof (a download reads the saved sheet, ProductionExports) and the
@@ -8084,7 +8170,7 @@ function compareGPUSpeed() {
   const sh=allSheets().filter(sh=>activeCharms(sh).length).sort((a,b)=>activeCharms(b).length-activeCharms(a).length)[0];
   const job=sh?buildJob(sh):null,id=uid();
   let worker;
-  try{worker=new Worker('charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
+  try{worker=new Worker('charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1-ovf1');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
   gpuComparison=worker;button.textContent="Cancel comparison";output.textContent="Checking GPU availability…";
   const finish=text=>{if(gpuComparison!==worker)return;output.textContent=text;button.textContent="Compare speed";worker.terminate();gpuComparison=null;};
   worker.onmessage=({data:m})=>{
@@ -8230,7 +8316,7 @@ async function boot() {
   window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, flushManualIntake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
     activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log,
     RESUME_STAGE, heldForResume, resumeQueueChanged, dropResumeQueue, topupRoom, topupTakes, nospreadChunk, settleTopups,
-    solverWorker: () => new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
+    solverWorker: () => new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1-ovf1") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
   window.CharmNestOperations?.subscribe(()=>flushManualIntake());
 }
 boot();

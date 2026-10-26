@@ -128,7 +128,8 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
     assert(shown === ov.placed2 && shown > 0, 'sheet 2 tab shows its own placements');
     await page.evaluate(() => CN.showPage('gold', 0));
   }
-  else { assert.strictEqual(result.rejects, 0, 'all placed'); assert.strictEqual(result.status, 'complete'); assert.strictEqual(result.placed, fx.charms.length, 'every charm of the file placed, the orders that waited their turn included'); }
+  else { assert.strictEqual(result.rejects, 0, 'all placed'); assert.strictEqual(result.status, 'complete'); if (result.placed !== fx.charms.length) console.log('sheet pages and log', JSON.stringify(await page.evaluate(() => ({ pages: CN.S.sheets.gold.pages.map(p => [p.page, p.status, p.charms.length, p.placements.length]), log: CN.S.sheets.gold.log.slice(-14) })), null, 1));
+    assert.strictEqual(result.placed, fx.charms.length, 'every charm of the file placed, the orders that waited their turn included'); }
   // the cloud is offline in this test (no functions): the sheet is kept in the browser and owes its save, never stuck on a finish error
   const offline = await page.evaluate(() => { const sh = CN.S.sheets.gold; return { cloud: CN.S.cloud.ok, saveOwed: !!sh.saveOwed, problem: sh.problem || null, finishErrors: sh.log.filter(l => /finish error|output failed/.test(l)).length }; });
   console.log('offline', JSON.stringify(offline));
@@ -167,8 +168,10 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   // the finish must run exactly once, and no post-nest inspection may run
   const finishes = await page.evaluate(() => { const t = CN.AG.events.map(e => e.text || '').filter(Boolean); return { won: t.filter(x => /completed the sheet first|reached the ceiling/.test(x)).length, verified: t.filter(x => /^Verified twice/.test(x)).length, inspect: t.filter(x => /inspecting|Sent Claude the finished/.test(x)).length, ended: t.filter(x => /^Search ended/.test(x)).length }; });
   console.log('finish events', JSON.stringify(finishes));
+  // (a big file is nested a few orders at a time: each turn is a search of its own, and each search finishes and is verified exactly once)
   const sheetsDone = await page.evaluate(() => CN.S.sheets.gold.pages.filter(p => ['complete', 'partial'].includes(p.status)).length);
-  assert(finishes.won <= sheetsDone && finishes.verified === sheetsDone && finishes.inspect === 0 && finishes.ended <= sheetsDone, 'single finish per sheet: ' + JSON.stringify(finishes) + ' for ' + sheetsDone + ' sheet(s)');
+  const searches = await page.evaluate(() => CN.S.sheets.gold.pages.reduce((n, p) => n + p.log.filter(l => / nest started · /.test(l)).length, 0));
+  assert(finishes.won <= searches && finishes.verified === searches && finishes.inspect === 0 && finishes.ended <= searches && sheetsDone >= 1, 'a single finish per search: ' + JSON.stringify(finishes) + ' for ' + searches + ' search(es) on ' + sheetsDone + ' sheet(s)');
   console.log('artifacts in', tmp);
   await browser.close(); server.close();
   console.log('E2E OK');

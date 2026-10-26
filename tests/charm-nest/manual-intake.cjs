@@ -84,7 +84,7 @@ assert.equal(O.intakePlan({count:40,density:.5,optimized:true,area:99,capacity:1
 {
  const counts={build:0,verify:0,persist:0,put:[],overflow:0,done:0};
  const fx={
-  S:{settings:{maxFill:.8,clearancePt:0,runMode:'auto'},mode:'nest'},window:{B:{run:{runId:'run-1',status:'processed'}}},performance,Map,Set,JSON,Math,Promise,Object,Error,
+  S:{settings:{maxFill:.8,clearancePt:0,runMode:'auto'},mode:'nest',cloud:{ok:true}},window:{B:{run:{runId:'run-1',status:'processed'}}},performance,Map,Set,JSON,Math,Promise,Object,Error,
   document:{hidden:false},Notification:undefined,
   activeCharms:p=>p.charms.filter(x=>!x.excluded),agent(){},agentUpdate(){},log(){},renderCard(){},renderProgress(){},drawPreview(){},computeSaturation(){},toast(){},ding(){},$$:()=>[],
   stockFor:()=>({wPt:100,hPt:50}),labelOf:m=>m,sheetName:()=>'Gold sheet 1',endedText:e=>e,sheetT0:()=>0,fmt:{pct:v=>Math.round(v*100)+'%',s:v=>v+'ms',mm:v=>v+'mm'},

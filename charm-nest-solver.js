@@ -168,6 +168,40 @@
   }
   function areaOf(bits) { let n = 0; for (let i = 0; i < bits.length; i++) n += bits[i]; return n; }
 
+  /* ── the writer's shrink (job.writeScale), 25 Oct 2026 ─────────────────────
+     The page writes every placed charm shrunk about its own centre (CHARM_SCALE 0.971: finishNest → buildSheet), after the
+     nest and its checks. For two charms A, B shrunk by s about their centres cA, cB that is the same as moving B by
+     (1/s − 1)(cB − cA) against A unshrunk: away from A when A's centre lies behind A's own edge (most charms), but INTO A when
+     B sits within A's reach — in the gap of a two-part charm (a merged fragment: the e2e's heart + circle is 247 pt wide with
+     its centre in the empty gap) or deep in a concavity — up to 3 % of the centre distance, ~3 pt there, against the ~1 pt of
+     stroke the nest lets two outlines share. The nest and verify() passed and the render check of the written file flagged
+     the pair (e2e: 42 px, TEST-GF-sheet-01 ↔ TEST-GF-sheet-10). With job.writeScale the solver nests each piece as its
+     silhouette united with its own shrunk copy (same bitmap, same centre, so every placement reads as before): two such
+     masks apart means the written, shrunk charms are apart as well as the full-size ones, whatever the neighbour's centre.
+     A charm its centre sees whole (a disc, tag, star, heart) holds its shrunk copy already: its mask does not change.
+     verify() checks the charms at the size written. No writeScale (or 1): nothing changes anywhere.              */
+  function writeScaleOf(job) { const s = +(job && job.writeScale); return s > 0 && s < 1 ? s : 1; }
+  /** bits ∪ (bits shrunk by s about the bitmap's centre, the centre every rotation and placement uses), sampled 2×2 per pixel. */
+  function shrinkUnion(bits, w, h, s) {
+    const out = bits.slice(), cx = w / 2, cy = h / 2, k = 1 / s, sub = [0.25, 0.75];
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (out[y * w + x]) continue;
+      let hit = 0;
+      for (const oy of sub) { for (const ox of sub) {
+        const sx = cx + (x + ox - cx) * k, sy = cy + (y + oy - cy) * k, ix = sx | 0, iy = sy | 0;
+        if (sx >= 0 && sy >= 0 && ix < w && iy < h && bits[iy * w + ix]) { hit = 1; break; }
+      } if (hit) break; }
+      if (hit) out[y * w + x] = 1;
+    }
+    return out;
+  }
+  /** The job with each piece's bits replaced by shrinkUnion once (marked, so the append's inner solve does not grow it again). */
+  function withWriteShrink(job) {
+    const s = writeScaleOf(job);
+    if (s === 1 || !Array.isArray(job.pieces)) return job;
+    return { ...job, pieces: job.pieces.map(p => !p || !p.bits || p.writeShrunk === s ? p : { ...p, bits: shrinkUnion(p.bits, p.w, p.h, s), writeShrunk: s }) };
+  }
+
   /* ── packed masks: 32 pre-shifted copies ───────────────────────────────── */
   function packShifted(bits, w, h) {
     const words = ((w + 31) >> 5) + 1;                 // +1 so a shift never overflows
@@ -528,6 +562,7 @@
   }
   async function solve(job, cb) {
     job = linkGroups(job);   // (the pieces of one pair or set share one order, whatever the page named it)
+    job = withWriteShrink(job);   // (25 Oct 2026: legal also once the writer shrinks each charm about its centre — see shrinkUnion)
     if(job.protectedRose||job.lockedPlacements?.length)return solveAppend(job,cb||{});
     cb = cb || {};
     const t0 = now();
@@ -2770,7 +2805,7 @@
      and the minimum gaps. The browser additionally re-renders the written
      PDF (see charm-nest-pdf.js); this is the geometric half that both the
      browser and the Node fallback share.                                   */
-  function verify(job, placements, res, erodeOverride) {
+  function verify(job, placements, res, erodeOverride, opts) {
     res = res || 6;
     const erodePx = erodeOverride != null ? erodeOverride : erosionPx(job.clearancePt, res, job.fineRes || 2);
     const FW = Math.round(job.sheet.wPt * res), FH = Math.round(job.sheet.hPt * res);
@@ -2786,7 +2821,9 @@
     const masks = [];
     placements.forEach((pl, i) => {
       const p = byId.get(pl.id); if (!p) return;
-      const r = resample(p.bits, p.w, p.h, p.scale, res);
+      // (25 Oct 2026: at the size written — job.writeScale, the shrink about the centre the page applies after the nest; see shrinkUnion.
+      //  Not pl.scale: that also holds a Manual Control size, which the job's piece already carries)
+      const r = resample(p.bits, p.w, p.h, p.scale / writeScaleOf(job) / (pl.fixScale > 0 && pl.fixScale < 1 ? pl.fixScale : 1), res);   // (and the overlap fix's own shrink, pl.fixScale: OVERLAPFIX 25 Oct 2026)
       const rot0 = rotateBitmap(r.bits, r.w, r.h, pl.angle);
       const remnant=locked.has(pl.id)?job.sheet.remnant:job.protectedRose?.profile||job.sheet.remnant;
       if(remnant){
@@ -2816,7 +2853,9 @@
       overlapPx, outsidePx, removedPx, protectedMoved, res,
       overlappingPairs: [...pairs].map(s => s.split(":").map(n => placements[+n].id)),
       minGapPt: masks.length > 1 ? +minGapPt.toFixed(3) : null,
-      minEdgePt: masks.length ? +minEdgePt.toFixed(3) : null
+      minEdgePt: masks.length ? +minEdgePt.toFixed(3) : null,
+      // (OVERLAPFIX, 25 Oct 2026: each charm's checked outline in page pixels, on request: the page's overlap fix plans its nudge so that this check passes too)
+      ...(opts && opts.masks ? { masks: masks.map(m => ({ id: m.id, x0: m.x0, y0: m.y0, w: m.w, h: m.h, bits: m.bits })) } : {})
     };
   }
 
@@ -2958,6 +2997,6 @@
     const overlap = off ? null : grid.overlap(v.fine.pm, x0, y0, 1e9);
     return { ok: false, x: x0, y: y0, off, overlapPt2: overlap == null ? null : overlap / (res * res) };
   }
-  const solverAPI = { sliverCells, SLIVER_MM, FIT_WEIGHTS, AROUND_MM, search, solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine, PROBES, SMALL_PROBES, probeVariants, smallProbeVariants, bitsFromBase64, pairFields, linkGroups, pairingOf, laidOutline, MATE_CAP_MM };
+  const solverAPI = { sliverCells, SLIVER_MM, FIT_WEIGHTS, AROUND_MM, search, solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, withWriteShrink, shrinkUnion, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine, PROBES, SMALL_PROBES, probeVariants, smallProbeVariants, bitsFromBase64, pairFields, linkGroups, pairingOf, laidOutline, MATE_CAP_MM };
   return solverAPI;
 });
