@@ -174,6 +174,34 @@ const restOf = sel => { const el = document.querySelector(sel); if (!el) return 
         if (QUIET) check(fl.t.worst <= BUDGET && !fl.t.long.length, `flight${tag}: smooth`);
       }
 
+      /* 3b · the 10K / 14K sheet waiting greyed in its set, cut: the Library is drawn again with it as a sheet of the set (SetRepair's refresh, VISUAL 26 Oct 2026);
+         the very path it takes (LibraryDone.glide around the redraw, then its colour back): it goes from where it stood greyed to its place in the set's row
+         without a jump, and ends there, in full colour */
+      const gp = await page.evaluate(async reduced => {
+        CN.setMode('library'); await new Promise(r => setTimeout(r, 400));
+        const body = document.getElementById('libBody'); if (!body || !window.LibraryDone || !LibraryDone.glide) return { skip: 'no Library body or glide' };
+        const tile = (id, grey) => `<article class="librarySheet${grey ? ' goldPending' : ''}"${grey ? ` data-gold-pending="${id}"` : ''}><div class="libCard" data-id="${id}" style="width:150px;height:110px;background:#e9d9a8${grey ? ';opacity:.5;filter:grayscale(1)' : ''}">${id}</div></article>`;
+        const card = rows => `<div class="setCard"><div class="sh">Set 1</div><div class="sheetsRow" style="display:flex;gap:10px">${rows}</div></div>`;
+        const keep = body.innerHTML; body.innerHTML = card(tile('gf-1') + tile('ss-1') + tile('k14-1', true));
+        const from = body.querySelector('[data-id="k14-1"]').getBoundingClientRect();
+        const seen = []; let on = true; const s = () => { if (!on) return; const c = body.querySelector('.librarySheet:not(.goldPending) > [data-id="k14-1"]'); if (c) { const r = c.getBoundingClientRect(); seen.push([r.left, +getComputedStyle(c).opacity]); } requestAnimationFrame(s); };
+        window.__vStart();
+        await LibraryDone.glide(body, async () => { body.innerHTML = card(tile('k14-1') + tile('gf-1') + tile('ss-1')); });
+        const c = body.querySelector('.librarySheet:not(.goldPending) > [data-id="k14-1"]');
+        if (c && !Motion.reduced()) c.animate([{ opacity: .5 }, { opacity: 1 }], { duration: Motion.T.slide, easing: 'ease' });
+        requestAnimationFrame(s); await new Promise(r => setTimeout(r, 1100)); on = false; const t = window.__vStop();
+        const to = c.getBoundingClientRect(), op = +getComputedStyle(c).opacity; let jump = 0; for (let i = 1; i < seen.length; i++) jump = Math.max(jump, Math.abs(seen[i][0] - seen[i - 1][0]));
+        body.innerHTML = keep; CN.setMode('orders'); await new Promise(r => setTimeout(r, 300));
+        return { t, n: seen.length, start: seen.length ? Math.abs(seen[0][0] - from.left) : 1e9, travel: Math.abs(to.left - from.left), end: seen.length ? Math.abs(seen[seen.length - 1][0] - to.left) : 1e9, jump, op, firstOp: seen.length ? seen[0][1] : 1 };
+      }, reduced);
+      if (gp.skip) console.log('  – pending tile: ' + gp.skip);
+      else {
+        console.log(`  · pending tile cut${tag}: ${gp.n} frames, starts ${gp.start.toFixed(1)} px from its grey place, travels ${gp.travel.toFixed(0)} px, biggest step ${gp.jump.toFixed(1)} px, ends ${gp.end.toFixed(1)} px from its place at opacity ${gp.op}`);
+        check(gp.end <= 1 && gp.op === 1, `pending tile${tag}: ends in its place in the set's row, in full colour`);
+        if (!reduced) check(gp.start <= 1 && gp.jump < gp.travel / 3 && gp.firstOp < .7, `pending tile${tag}: goes from its grey place without a jump, its colour coming back (first opacity ${gp.firstOp.toFixed(2)})`);
+        if (QUIET) check(gp.t.worst <= BUDGET && !gp.t.long.length, `pending tile${tag}: smooth (worst ${gp.t.worst} ms)`);
+      }
+
       /* 4 · tab switch Orders -> Nest -> Orders */
       await flow(env, 'tab-nest', { do: () => CN.setMode('nest'), undo: () => CN.setMode('orders') }, 1200, tag);
       await settle(page, 400);
