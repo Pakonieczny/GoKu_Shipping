@@ -155,7 +155,7 @@ body{margin:0;padding:12px;font:13px system-ui;background:#faf8f3}.field{display
     const { ctx, page, log, asks } = await open(W, { B });
     ok(await page.inputValue('#zeListing') === LID, 'ONE listing carries the SKU in the page\'s orders: its number is filled into the box');
     const said = await text(page, row);
-    ok(said.includes('Found it from the orders this page holds: listing ' + LID) && said.includes('Huggie Hoop Earrings with Astrological Charm') && /2 order lines in this sorter carry the SKU HUGGIE HOOPS-ZODIAC/.test(said), 'and it says so in plain words, with the title and the number: ' + said.slice(0, 260));
+    ok(said.includes('Found it from the orders this page holds: listing ' + LID) && said.includes('Huggie Hoop Earrings with Astrological Charm') && /2 order pieces in this sorter carry the SKU HUGGIE HOOPS-ZODIAC/.test(said), 'and it says so in plain words, with the title and the number: ' + said.slice(0, 260));
     ok(/Press Check the listing/.test(await text(page, row + ' .zeHead')), 'the row says what to press');
     ok(log.length === 0 && asks.length === 0 && W.S.calls.length === 0, 'filling it in made no cloud call at all, asked for no password, touched no Etsy');
     ok(await page.getByRole('button', { name: 'Check the listing' }).isEnabled(), 'Check the listing is lit');
