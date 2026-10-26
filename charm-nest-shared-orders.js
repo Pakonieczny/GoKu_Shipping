@@ -146,6 +146,59 @@
     return { groups: [...comp.values()].filter(c => c.ids.length > 1 || c.ends.size || c.anchors.size).map(c => ({ ids: c.ids.concat([...c.ends], [...c.anchors]), orders: [...c.orders].sort(), ends: [...c.ends], anchors: [...c.anchors] })), bridges };
   }
 
+  /* ── A GREEN-LINE SHEET IS IN ONE SET (Paul, 26 Oct 2026) ──────────────────────────────────────────────────────────────────────────────────────
+   * "A Rose Gold sheet should be only allowed to mix pieces and charms from a given multi-charm order with 1 Gold Filled sheet and/or 1 Sterling Silver sheet ... a given Rose Gold sheet must be matched
+   *  with the Set of sheets containing the GF and/or SS sheet with which the RG sheet shares charms with. No other multi-charm orders should be allowed to intertwine the RG sheet with any other GF and SS
+   *  sheets unless they belong to the same Set of Sheets." and, of a sheet that shares orders with two sets: "The system should pick a set automatically". The same for 10K and 14K (every metal with a green line).
+   * So a green-line sheet never ties two Gold Filled / Sterling Silver units together, cut or uncut (formation: it is an anchor), and it belongs to exactly ONE set, its HOME:
+   *   1. the set it cannot leave (its cut is recorded in it, or that set was sent to the station: o.fixed);
+   *   2. the set the system matched it to (Gate.autoCut, o.matched) while that set holds one of its partners;
+   *   3. the set it is in, while that set holds one of its partners (a set holds its place);
+   *   4. else the earliest-formed set among its partners' sets that can still take a sheet (o.rank, o.open);
+   *   5. else the set it is in (a person's own Include: a sheet with no partner in any set), else none yet.
+   * Its partners are the GF / SS sheets that share a multi-piece order with it. An order it shares with a partner OUTSIDE its home is a KNOWN SPLIT: said in a plain line, never a cardinal violation, never
+   * a partner to wait for and never a reason to pull that partner's unit into its home (Paul's Set 1 of 26 Oct 2026 held GF Sheet 2 because an RG sheet filled before the intake rule chained it in).
+   *   greenHomes(sheets, o) -> Map(greenSheetId -> { home, sets:[setId, earliest first], partners:[id], orders:{ partnerId:[orderId] }, split:[{ sheet, orders }] })
+   *   o: { green(sheet) -> bool (default: metal rose / gold10k / gold14k), fixed(sheet) -> setId|null (default: the set of a sheet whose `fixed` says why it cannot change set), matched(sheet) -> setId|null
+   *        (default: sheet.matched), rank(setId) -> [day, seq] or a number (earlier first; default: the order the sets are first seen in), open(setId) -> bool (default: every set) }
+   *   realPartners(sheets, items, setId, homes, o) -> items of between() for that set with `thereIds` / `there` narrowed to the sheets the set must wait for: a green-line sheet only for its home, a GF / SS
+   *        sheet only through an order it shares with a GF / SS sheet of the set (a tie through a green-line sheet alone is a known split); the items left with no sheet are dropped, `split` lists them. */
+  const GREEN_METALS = new Set(['rose', 'gold10k', 'gold14k']);
+  const isGreen = s => !!s && (GREEN_METALS.has(s.metal) || /^(RG|10K|14K)$/i.test(String(s.metal || '')));
+  const rankKey = r => Array.isArray(r) ? r : [r == null ? '' : r];
+  const byRank = rank => (a, b) => { const x = rankKey(rank(a)), y = rankKey(rank(b)); for (let i = 0; i < Math.max(x.length, y.length); i++) { const p = x[i] == null ? '' : x[i], q = y[i] == null ? '' : y[i]; if (p === q) continue; if (typeof p === 'number' && typeof q === 'number') return p - q; return String(p) < String(q) ? -1 : 1; } return 0; };
+  function greenHomes(sheets, o = {}) {
+    const green = o.green || isGreen, by = index(sheets), byId = new Map(sheets.map(s => [s.id, s])), out = new Map();
+    for (const s of sheets) if (green(s)) out.set(s.id, { home: null, sets: [], partners: [], orders: {}, split: [] });
+    if (!out.size) return out;
+    for (const [oid, m] of by) {
+      if (!spans(m)) continue;
+      const ids = [...m.keys()], gs = ids.filter(i => out.has(i)), cores = ids.filter(i => !out.has(i));
+      for (const g of gs) for (const c of cores) { const h = out.get(g); (h.orders[c] || (h.orders[c] = [])).push(oid); if (!h.partners.includes(c)) h.partners.push(c); }
+    }
+    const seen = []; for (const s of sheets) if (s.setId && !seen.includes(String(s.setId))) seen.push(String(s.setId));
+    const rank = o.rank || (sid => seen.indexOf(sid)), open = o.open || (() => true), cmp = byRank(rank);
+    const fixed = o.fixed || (s => (s.fixed && s.setId ? String(s.setId) : null)), matched = o.matched || (s => (s.matched ? String(s.matched) : null));
+    for (const [id, h] of out) {
+      const s = byId.get(id), own = s.setId ? String(s.setId) : null;
+      h.sets = [...new Set(h.partners.map(c => byId.get(c).setId).filter(Boolean).map(String))].sort(cmp);
+      const fx = fixed(s), mt = matched(s);
+      h.home = fx || (mt && h.sets.includes(mt) ? mt : null) || (own && h.sets.includes(own) ? own : null) || h.sets.find(open) || own || null;
+      h.split = h.home ? h.partners.filter(c => String(byId.get(c).setId || '') !== h.home).map(c => ({ sheet: c, orders: h.orders[c].slice().sort() })) : [];
+    }
+    return out;
+  }
+  function realPartners(sheets, items, setId, homes, o = {}) {
+    const green = o.green || isGreen, byId = new Map(sheets.map(s => [s.id, s])), sid = String(setId), out = [];
+    for (const it of items || []) {
+      const here = (it.hereIds || []).filter(i => byId.has(i)), coreHere = here.some(i => !green(byId.get(i)));
+      const keep = (it.thereIds || []).filter(t => { const s = byId.get(t); if (!s) return true; if (green(s)) { const h = homes && homes.get(t); return !h || h.home === sid; } return coreHere; });
+      if (!keep.length) { (out.split || (out.split = [])).push(it); continue; }
+      out.push(keep.length === (it.thereIds || []).length ? it : Object.assign({}, it, { thereIds: keep, there: keep.map(t => (byId.get(t) || {}).label || t) }));
+    }
+    return out;
+  }
+
   /**
    * The multi-piece orders that would be split if the sheets `moving` (ids; they travel together) end up in set `dest`
    * (a set id, 'new' for a set not made yet, or null for no set) while every other sheet stays where it is. An order is
@@ -270,7 +323,7 @@
     if (one && items[0].words) return `Order ${items[0].orderId} ${items[0].words}: sheets that share a multi-piece order stay in the same set.`;
     return `${one ? 'Order ' + items[0].orderId + ' has pieces' : items.length + ' orders have pieces'} on ${there.join(', ')}${here ? ' and on ' + here : ''}: sheets that share a multi-piece order stay in the same set.`;
   }
-  const core = { orderOfKey, parseKey, describe, sheetOf, sheetLabelOf, effectiveSet, fixedWhy, index, spans, groups, groupOf, formation, between, composition, sentence, committedSet, CODE };
+  const core = { orderOfKey, parseKey, describe, sheetOf, sheetLabelOf, effectiveSet, fixedWhy, index, spans, groups, groupOf, formation, between, composition, sentence, committedSet, greenHomes, realPartners, isGreen, CODE };
 
   /* ── the page's side ────────────────────────────────────────────────────────────────────────────────────────── */
   const hooks = {
@@ -305,6 +358,7 @@
     if (!s) return null;
     const set = s.setId ? setDoc(s.setId, sh.runId) : null;
     s.fixed = fixedWhy(rec, set) || (saved && saved.fixed) || '';
+    if (sh.autoMatched) s.matched = String(sh.autoMatched);   // (Paul, 26 Oct 2026: the one set the system matched a green-line sheet to, Gate.autoCut: greenHomes)
     if (!keys.length && saved) s.pieces = saved.pieces;       // (a page that has not placed anything yet: the saved record's pieces stand)
     return s;
   }

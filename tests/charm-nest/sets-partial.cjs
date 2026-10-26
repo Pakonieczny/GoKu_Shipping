@@ -171,7 +171,9 @@ const own = (n, k = 1) => `${X(n)}_1_${k}`;                   // a piece of a si
   assert.deepEqual(w.ids(sets[0]), ['gf-a', 'ss-a'], 'the independent completed pair forms the set');
   assert.equal(w.page('k-1').draft, true, 'the 14K sheet waits with its partial order mate'); assert.match(w.page('k-1').cardinalHold, /shared with GF Draft 2, which is not full yet/);
   w.page('gf-p').releaseFull = true; await w.assemble();
-  assert.equal(w.page('gf-p').draft, true, 'a lone completed GF waits for the next set (closed Set 1)'); assert(!w.page('k-1').cardinalHold, 'the 14K sheet is not held any more once the group is complete');
+  // (Paul, 26 Oct 2026: a 14K sheet belongs to the ONE set of the GF / SS sheet it shares orders with: it waits for that sheet's set, never joins another)
+  assert.equal(w.page('gf-p').draft, true, 'a lone completed GF waits for the next set (closed Set 1)'); assert.match(w.page('k-1').cardinalHold || '', /shared with GF Draft 2, which is in no set yet: it joins their set once it forms/, 'the 14K sheet waits for its partner\'s set, not for a partial sheet any more');
+  assert.equal(w.page('k-1').draft, true, 'and it is not put into Set 1, which holds none of its partners');
 
   /* B · the Library plan (pure: LibraryFlow.core.planMove over the records) ─────────────────────────────────────────────────────────────────────── */
   const rc = (id, metal, o = {}) => ({ id, runId: 'run-1', metal, metalLabel: CODE[metal], day: '2026-10-13', status: 'complete', draft: true, releaseFull: false, setId: null, sheetIndex: null, page: 3, poolIds: [`${id}_o_1`], placedCount: 5, charmCount: 5, density: .36,

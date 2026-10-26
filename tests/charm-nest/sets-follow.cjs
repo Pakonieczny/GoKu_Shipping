@@ -93,7 +93,9 @@ const page = (w, k) => w.pages.find(p => p.sheetId === ID[k]);
   const quiet = w.writes(); await w.assemble(); assert.equal(w.writes(), quiet, 'looked at again: nothing moves, nothing is written'); assert.equal(w.allocations(), 1);
   // the partner is named on every sheet of the set that shares orders with it, in Paul's words, and the work is not held for it
   for (const k of ['GF1', 'GF2', 'SS1']) assert(/^Orders? [\d, ]+(and more)? shared with RG Draft 1: add that sheet to (this set|Set-1) \(a Rose Gold sheet joins a set only by its own Cut Sheet press\)$/.test(page(w, k).cardinalNote), k + ': ' + page(w, k).cardinalNote);
-  assert(!page(w, 'RG1').cardinalNote && !page(w, 'RG1').cardinalPull, 'the Rose Gold sheet is never pulled in by itself (its own Cut Sheet press does that)');
+  assert(!page(w, 'RG1').cardinalPull, 'the Rose Gold sheet is never pulled in by itself (its own Cut Sheet press does that)');
+  // (Paul, 26 Oct 2026: it belongs to Set 1 only; the order it shares with the partial GF Draft 3 is a known split, said plainly on it)
+  assert(/belongs to Set-1 only: .* ships in two parts/.test(page(w, 'RG1').cardinalNote || ''), 'RG1: ' + page(w, 'RG1').cardinalNote);
   // GF Draft 3 reaches its fill: it shares an order only with the uncut Rose Gold sheet, so it is a sheet of its own: Set 1 has formed, it waits for an SS sheet of its own
   page(w, 'GF3').releaseFull = true;
   await w.assemble(); sets = w.sets();
@@ -107,7 +109,8 @@ const page = (w, k) => w.pages.find(p => p.sheetId === ID[k]);
   assert.deepEqual(w.ids(sets[0]), idsOf('GF1', 'GF2', 'SS1'), 'Set 1 is as it was: not emptied, not renamed, nothing added or taken out');
   assert.equal(page(w, 'RG1').draft, true, 'the Rose Gold sheet is not put into a set by itself');
   assert(/shared with RG Draft 1: add that sheet to Set-1/.test(page(w, 'GF1').cardinalNote), page(w, 'GF1').cardinalNote);
-  assert(/shared with RG Draft 1: add that sheet to Set-2/.test(page(w, 'GF3').cardinalNote), 'the Rose Gold sheet is named on Set 2 as well (it shares an order with GF 3): ' + page(w, 'GF3').cardinalNote);
+  // (Paul, 26 Oct 2026: "The system should pick a set automatically": the Rose Gold sheet belongs to Set 1, the earliest set of its partners; Set 2 does not wait for it, its order with GF 3 is a known split)
+  assert(/also on RG Draft 1, which belongs to Set-1: .* ships in two parts/.test(page(w, 'GF3').cardinalNote), 'GF 3 says the order it shares with the Rose Gold sheet of Set 1 is split: ' + page(w, 'GF3').cardinalNote);
   // a lone completed GF after that waits outside every set, with one plain line; it makes no Set 3
   assert.equal(w.pages.find(p => p.sheetId === 'gf4x').setWait, 'Set-2 has formed, so this sheet waits for the next set: it needs a completed SS sheet with it');
   w.add(extra('gold', 5, 'gf5xx', true)); await w.assemble();

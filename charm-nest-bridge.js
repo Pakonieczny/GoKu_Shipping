@@ -4618,21 +4618,23 @@ const Pool = window.Pool = (() => {
      green-line sheet that keeps the rule, a new one when none does. Its set is then the one set of its partners (Gate: its green line is cut automatically once that set is complete). */
   const lineCuts = m => m === "rose" || (typeof CharmNestRose !== "undefined" && typeof CharmNestRose.cuts === "function" && CharmNestRose.cuts(m));
   const orderOfCharm = c => String(c && c.order != null ? c.order : "").split("/")[0];
-  function partnerSheets(orderIds, run) {
+  function partnerSheets(orderIds, run, skip) {
     const ids = new Set([...orderIds].map(String).filter(Boolean)), out = { gold: new Set(), silver: new Set() };
     if (!ids.size) return out;
     for (const p of allSheets()) {
       if (!out[p.metal] || (run && p.runId && p.runId !== run.runId)) continue;
-      if (p.charms.some(c => ids.has(orderOfCharm(c)))) out[p.metal].add(p);
+      if (p.charms.some(c => !(skip && skip.has(c)) && ids.has(orderOfCharm(c)))) out[p.metal].add(p);
     }
     return out;
   }
-  function greenFits(page, orderId, run) {
-    const add = partnerSheets([orderId], run); if (!add.gold.size && !add.silver.size) return true;      // (an order with no GF / SS piece ties the sheet to nothing)
-    const mine = partnerSheets(page.charms.map(orderOfCharm), run);
+  /** greenFits(page, orderId | [orderId], run, {skip}): may this green-line sheet take pieces of these orders (skip: pieces on their way elsewhere, not counted). */
+  function greenFits(page, orderId, run, o) {
+    const skip = (o && o.skip) || null, add = partnerSheets([].concat(orderId), run, skip); if (!add.gold.size && !add.silver.size) return true;      // (an order with no GF / SS piece ties the sheet to nothing)
+    const mine = partnerSheets(page.charms.filter(c => !(skip && skip.has(c))).map(orderOfCharm), run, skip);
     const gf = new Set([...mine.gold, ...add.gold]), ss = new Set([...mine.silver, ...add.silver]);
     if (gf.size > 1 || ss.size > 1) return false;
-    if (gf.size && ss.size) { const setOf = p => (p.setId && !p.draft ? p.setId : null), a = setOf([...gf][0]), b = setOf([...ss][0]); if (a !== b) return false; }   // (both partners in one set, or neither in a set yet)
+    // (both partners in one set; or neither in a set yet and each the other's one partner, PAIR: they share an order, so they are one unit and one set. Two drafts that share nothing could end in two sets)
+    if (gf.size && ss.size) { const setOf = p => (p.setId && !p.draft ? p.setId : null), g = [...gf][0], s = [...ss][0], a = setOf(g), b = setOf(s); if (a !== b) return false; if (!a) { const og = new Set(g.charms.map(orderOfCharm).filter(Boolean)); if (!s.charms.some(c => og.has(orderOfCharm(c)))) return false; } }
     return true;
   }
   /* ═══ INPLACE · a replaced piece goes into the spot its old piece left, or that spot stays empty (Paul, 20 Oct 2026) ═══════════════════════════════════════════════════════════════════
@@ -4702,7 +4704,9 @@ const Pool = window.Pool = (() => {
     const LN = window.LiveNest, closed = p => { const h = p._inplaceHold; delete p._inplaceHold; try { return !!(LN && LN.closed(p)); } finally { if (h) p._inplaceHold = h; } };
     const room = p => (!window.CN?.topupRoom || window.CN.topupRoom(p) > 0) && (!window.CN?.topupTakes || window.CN.topupTakes(p, list, info));
     const mine = p => !closed(p) && (!run || !p.runId || p.runId === run.runId) && !(Gate.modern(p.runId) && p.setId && !p.draft) && !p.laserDoneAt && !p.roseCutAt && !p.recalled;
-    for (const p of pagesOf(metal).slice().reverse()) if (p.charms.length && mine(p) && room(p)) return p;
+    // (PAIR and Decision 2, Paul 26 Oct 2026: a sheet that keeps one GF + one SS sheet per order: LiveNest.lineFits, as the intake asks it)
+    const oids = [...new Set(list.map(orderOfCharm).filter(Boolean))], fits = p => !LN || typeof LN.lineFits !== "function" || LN.lineFits(p, oids, run);
+    for (const p of pagesOf(metal).slice().reverse()) if (p.charms.length && mine(p) && fits(p) && room(p)) return p;
     return pagesOf(metal).slice().reverse().find(p => !p.charms.length && mine(p)) || addPage(metal);
   }
   /** A replaced line's new pieces of one metal (see the block above). → null when the line left no spot of that metal; else { page, placed } (placed: they are ON the page, in old spots). */
@@ -4780,6 +4784,15 @@ const Pool = window.Pool = (() => {
         page = alt || addPage(metal);
         try { agent({ metal, pool: true }, "nest", `Order ${row.order.receiptId}: its ${labelOf(metal)} piece goes on ${alt ? "another" : "a new"} ${labelOf(metal)} sheet, so that each ${labelOf(metal)} sheet shares orders with one Gold Filled and one Sterling Silver sheet of one set`); } catch (_) { /* a note only */ }
       }
+      // (PAIR, Paul 26 Oct 2026: the mirror for Gold Filled and Sterling Silver: a sheet whose one partner of the other metal is this order's, or that has none yet. LiveNest.intakePage asks it already;
+      //  this is for the sheets chosen around it (a line's home sheet, LISTPICK). An order with pieces of this colour on the sheet already keeps them there: all of an order on one sheet of its colour, R16)
+      { const rid = String(row.order.receiptId), LN = window.LiveNest;
+        if (!ip && (metal === "gold" || metal === "silver") && LN && typeof LN.pairFits === "function" && !matePages.includes(page) && !page.charms.some(c => orderOfCharm(c) === rid) && !LN.pairFits(page, [rid], run)) {
+          const was = page, room = p => (!window.CN?.topupRoom || window.CN.topupRoom(p) > 0) && (!window.CN?.topupTakes || window.CN.topupTakes(p, list, info));
+          const alt = pagesOf(metal).find(p => p !== was && p.charms.length && !shut(p) && (!run || !p.runId || p.runId === run.runId) && LN.pairFits(p, [rid], run) && room(p));
+          page = alt || addPage(metal);
+          try { agent({ metal, pool: true }, "nest", `Order ${rid}: its ${labelOf(metal)} piece goes on ${alt ? "another" : "a new"} ${labelOf(metal)} sheet, so that one Gold Filled sheet and one Sterling Silver sheet share it`); } catch (_) { /* a note only */ }
+        } }
       if(!ip && ((run && page.runId && page.runId!==run.runId) || shut(page)))page=addPage(metal);
       if (!(ip && ip.placed)) { S.sheets[metal].active=pagesOf(metal).indexOf(page);if(!page.el)window.CN?.showPage(metal,S.sheets[metal].active); }   // the card shows the page its buttons act on
       if (run) page.runId = run.runId;
@@ -5032,7 +5045,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(ListMedia.oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig };
+  return { pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig, greenFits, partnerSheets };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -5292,6 +5305,7 @@ const Gate = window.Gate = (() => {
     if (sh.setWait && r.include) return Object.assign({}, r, { include: false, reason: sh.setWait });   // (a set needs a completed GF and a completed SS sheet: Gate.assembleNow, SetRules.settle)
     if (sh.cardinalHold && r.include) return Object.assign({}, r, { include: false, reason: sh.cardinalHold });
     if (sh.cardinalPull && !r.include) return Object.assign({}, r, { include: true, reason: sh.cardinalPull });
+    if (sh.greenAway && r.include && inSetNow(sh)) return Object.assign({}, r, { include: false, reason: sh.greenAway });   // (Paul, 26 Oct 2026: a green-line sheet belongs to its ONE set, greenHomes: cardinalApply)
     return r;
   }
   function basePolicy(sh, seq, choices = selected()) {
@@ -5302,7 +5316,8 @@ const Gate = window.Gate = (() => {
       stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: solid(sh.metal) ? Object.assign({}, choices, { [sh.metal]: picked(sh, choices) }) : sh.metal === "rose" ? Object.assign({}, choices, { rose: picked(sh, choices) ? true : undefined }) : choices });
     // (audit G1, 25 Oct 2026, R12 (b): a Rose Gold / 10K / 14K sheet joins a set only with its back engraving approved: its own tick (Include, Cut Sheet) answers (a) only, and it let a sheet in
     //  whose backs were still open. A sheet already in its set keeps its place, as before)
-    if (r && r.include && goldFamily(sh.metal) && !inSetNow(sh) && !sh.autoMatched) { const b = backsOf(sh); if (b && !b.ok) return Object.assign({}, r, { include: false, reason: `It joins a set once its back engraving is approved (${b.line})` }); }
+    // (Paul, 26 Oct 2026: only the automatic Cut Sheet press, while it runs (Gate.autoCut: _autoCutting), is not held for the backs: "we shouldn't double hold things"; it is undone when the cut is refused)
+    if (r && r.include && goldFamily(sh.metal) && !inSetNow(sh) && !sh._autoCutting) { const b = backsOf(sh); if (b && !b.ok) return Object.assign({}, r, { include: false, reason: `It joins a set once its back engraving is approved (${b.line})` }); }
     return r;
   }
   async function upgrade(run) {
@@ -5398,8 +5413,19 @@ const Gate = window.Gate = (() => {
   /** SETFIX (Paul, 19 Oct 2026): the sheets that cannot go into the set being formed now, whatever it is, and so never tie two other sheets together (charm-nest-shared-orders.js formation `anchors`):
    *  a sheet whose layout is fixed (cut by the laser, or in a set sent to the station), a Rose Gold / 10K / 14K sheet outside every set that cannot join yet (no green line cut and no tick of its
    *  own, or its back engraving not approved: goldGap) and, `withSets`, every sheet already in a set (open or committed). */
+  // (Paul, 26 Oct 2026: a Rose Gold / 10K / 14K sheet never ties two GF / SS units together, cut or uncut, in a set or not: every green-line sheet is an anchor. A cut one used to tie as any sheet does, so a
+  //  sheet filled before the intake rule, with orders of GF Sheet 1 and GF Sheet 2, chained GF Sheet 2 into Set 1 once it was cut or ticked. Its own place is its ONE set: greenHomesOf)
   function anchorsOf(V, choices = selected(), withSets = true) {
-    return V.sheets.filter(n => { const p = V.page.get(n.id); return !!p && ((withSets && inSetNow(p)) || !!n.fixed || (!inSetNow(p) && goldFamily(p.metal) && !picked(p, choices) && !!goldGap(p))); }).map(n => n.id);
+    return V.sheets.filter(n => { const p = V.page.get(n.id); return !!p && ((withSets && inSetNow(p)) || !!n.fixed || goldFamily(p.metal)); }).map(n => n.id);
+  }
+  /** The ONE set of each green-line sheet of the run (charm-nest-shared-orders.js greenHomes: its fixed set, the set Gate.autoCut matched it to, the set it is in, else the earliest-formed set of its partners
+   *  that is still open): Map(coreId -> { home, sets, partners, orders, split }). */
+  function greenHomesOf(V, run) {
+    const core = V && V.SO && V.SO.core; if (!core || typeof core.greenHomes !== "function") return new Map();
+    const all = Sets.ofRun(run.runId).filter(s => !/^superseded/.test(String(s.status || ""))), SRg = window.CharmNestSetRules;
+    return core.greenHomes(V.sheets, { green: n => { const p = V.page.get(n.id); return !!p && goldFamily(p.metal); }, rank: sid => { const st = all.find(s => s.setId === sid); return st ? [String(st.day || ""), +st.seq || 0] : ["~", Infinity]; },
+      open: sid => { const st = all.find(s => s.setId === sid); return !!st && !(SRg && SRg.exempt(st)); }, matched: n => { const p = V.page.get(n.id); return p && p.autoMatched ? String(p.autoMatched) : null; },
+      fixed: n => { const p = V.page.get(n.id); if (!p || !inSetNow(p)) return null; const st = all.find(s => s.setId === p.setId); return (p.roseCutAt || +p.laserDoneAt > 0 || (st && SRg && SRg.exempt(st))) ? String(p.setId) : null; } });
   }
   function formationOf(V, anchored, choices) {
     const SRp = window.CharmNestSetRules, core = V.SO.core;
@@ -5433,7 +5459,9 @@ const Gate = window.Gate = (() => {
       // (SETFIX) a sheet whose green line is cut and that is in one of the run's OPEN sets is fixed in that set, but it does not stop its group from joining the set: the set is still being made, so the
       //  group's other sheets (a second Rose Gold sheet cut later, a partner that was still being saved) belong in it all the same. Only a sheet cut by the laser, or in a set sent to the station, does.
       const openCut = p => !!p && !!p.roseCutAt && !(+p.laserDoneAt > 0) && !!homeOf(p);
-      let members = g.ids.map(id => V.page.get(id)).filter(Boolean); const orders = g.orders, fixed = g.ids.filter(id => V.norm.get(id).fixed && !openCut(V.page.get(id))), tell = tellOf(V, g.ids);
+      // (Paul, 26 Oct 2026: the group's Rose Gold / 10K / 14K sheets are attached to it but are no part of it: each is in its ONE set, marked below; they never make a home, a hold or a pull for the GF / SS sheets)
+      let members = g.ids.map(id => V.page.get(id)).filter(p => p && !goldFamily(p.metal)); const orders = g.orders, fixed = g.ids.filter(id => V.page.get(id) && !goldFamily(V.page.get(id).metal) && V.norm.get(id).fixed && !openCut(V.page.get(id))), tell = tellOf(V, g.ids);
+      if (!members.length) continue;
       if (fixed.length) {
         // a sheet of the group is cut, or in a set already sent to the station: the others can never be in its set. Nothing is held back
         // for it (the work goes on); each sheet that is not fixed says so, with the exact reason.
@@ -5492,7 +5520,42 @@ const Gate = window.Gate = (() => {
     for (const p of runPages) for (const k of MARKS) delete p[k];
     const out = pass(FA, true);
     for (const [p, was] of kept) MARKS.forEach((k, i) => { if (was[i] === undefined) delete p[k]; else p[k] = was[i]; });
+    greenMarks(run, V, runPages, open, homeOf, ready, choices);
     return out;
+  }
+  /* (Paul, 26 Oct 2026) "a given Rose Gold sheet must be matched with the Set of sheets containing the GF and/or SS sheet with which the RG sheet shares charms with. No other multi-charm orders should be
+     allowed to intertwine the RG sheet with any other GF and SS sheets unless they belong to the same Set of Sheets"; of a sheet with orders of two sets: "The system should pick a set automatically". Each green-line
+     sheet is in its ONE set (greenHomesOf). Outside every set it is reserved for it (cardinalHome): it joins it by its own press or by the automatic cut (autoCut), is pulled in when nothing stops it, and the GF /
+     SS sheets of that set that share its orders name it as the partner still to come. In a set that is not its one set, and free to move, it leaves (greenAway). Its orders with GF / SS sheets outside that set
+     are a known split: one plain line, never a hold, a pull or a reason for another unit to join. */
+  function greenMarks(run, V, runPages, open, homeOf, ready, choices) {
+    const GH = greenHomesOf(V, run), all = Sets.ofRun(run.runId), setName = sid => { const st = all.find(s => s.setId === sid); return st ? st.name || `Set ${st.seq}` : "its set"; };
+    const MARKS = ["cardinalPull", "cardinalHold", "cardinalNote", "cardinalHome"], named = ids => ids.map(i => V.page.get(i)).filter(Boolean).map(sheetNameOf);
+    // (the GF / SS unit a partner sheet is in: every sheet of it names the green-line sheet still to come, as the group's sheets always did)
+    const FS = formationOf(V, "set", choices), unitOf = i => { const g = FS.groups.find(x => x.ids.includes(i) && !x.anchors.includes(i) && !x.ends.includes(i)); return g ? g.ids.filter(x => !g.anchors.includes(x) && !g.ends.includes(x)) : [i]; };
+    for (const p of runPages.filter(p => goldFamily(p.metal))) {
+      delete p.greenAway;
+      const id = V.idOf.get(p), h = id && GH.get(id); if (!h) continue;
+      for (const k of MARKS) delete p[k];
+      const home = h.home ? open.find(s => s.setId === h.home) || null : null, mates = h.partners.filter(i => { const q = V.page.get(i); return q && h.home && q.setId === h.home && !q.draft; });
+      const mineOrders = [...new Set(mates.flatMap(i => h.orders[i] || []))].sort(), here = homeOf(p), tell = tellOf(V, [id].concat(mates));
+      const split = h.split.length ? `${sheetNameOf(p)} belongs to ${setName(h.home)} only: ${ordersWords([...new Set(h.split.flatMap(x => x.orders))].sort())} it shares with ${named(h.split.map(x => x.sheet)).join(", ")} ${h.split.flatMap(x => x.orders).length === 1 ? "ships" : "ship"} in two parts (a ${labelOf(p.metal)} sheet is in one set)` : "";
+      if (inSetNow(p)) {
+        if (here && h.home && h.home !== here.setId && !staysCut(p) && !(+p.laserDoneAt > 0) && !(here.processReady || here.laserSetPending || here.laserDoneAt)) { p.greenAway = `Its orders are with the sheets of ${setName(h.home)}: a ${labelOf(p.metal)} sheet is in one set, so it leaves ${here.name || "this set"}`; continue; }
+        if (here && mates.length && !basePolicy(p, here.seq, choices).include && !cannotJoin(p, ready)) p.cardinalPull = `Shares ${ordersWords(mineOrders, tell)} with ${named(mates).join(", ")}`;
+      } else if (home) {
+        const wants = basePolicy(p, home.seq, choices).include, gap = wants ? "" : cannotJoin(p, ready);
+        p.cardinalHome = home.setId;
+        if (!wants && !gap) p.cardinalPull = `Shares ${ordersWords(mineOrders, tell)} with ${named(mates).join(", ")} in ${setName(home.setId)}`;
+        if (gap) for (const i of mates) for (const u of unitOf(i)) { const q = V.page.get(u); if (q && !goldFamily(q.metal) && q.setId === home.setId && !q.draft && !q.cardinalNote) q.cardinalNote = `${ordersWords(mineOrders, tell).replace(/^o/, "O")} shared with ${sheetNameOf(p)}: add that sheet to ${setName(home.setId)} (${gap})`; }
+      } else if (h.partners.length) {
+        // (its partners are in no set yet: it waits for THEIR set, never another one; a partner that is not full yet keeps it out with its group, as ever, R11)
+        const SRg = window.CharmNestSetRules, part = h.partners.map(i => V.page.get(i)).filter(q => q && SRg && SRg.isPartial(q)), all = [...new Set(Object.values(h.orders).flat())].sort();
+        p.cardinalHold = part.length ? `Waits: ${ordersWords(all, tell)} shared with ${part.map(sheetNameOf).join(" and ")}, which ${part.length > 1 ? "are" : "is"} not full yet, so they stay out of a set together`
+          : `Waits: ${ordersWords(all, tell)} shared with ${named(h.partners).join(", ")}, which ${h.partners.length === 1 ? "is" : "are"} in no set yet: it joins their set once it forms`;
+      }
+      if (split) { if (!p.cardinalNote) p.cardinalNote = split; for (const x of h.split) { const q = V.page.get(x.sheet); if (q && !q.cardinalNote) q.cardinalNote = `${ordersWords(x.orders).replace(/^o/, "O")} also on ${sheetNameOf(p)}, which belongs to ${setName(h.home)}: a ${labelOf(p.metal)} sheet is in one set, so ${x.orders.length === 1 ? "that order ships" : "those orders ship"} in two parts`; } }
+    }
   }
   /** What the rule says of one sheet changing set on its own (a tick of Include): { list: the solid sheets that change with it,
    *  blocked: the plain reason it cannot ("" when it can), orders }. */
@@ -5516,8 +5579,10 @@ const Gate = window.Gate = (() => {
   /** The multi-piece orders of a set's sheets that also have pieces on a sheet of its run outside it that could still join it. */
   function cardinalSplit(set) {
     const V = B.run && B.run.runId === set.runId ? cardinalView(B.run) : null; if (!V) return [];
-    const ids = V.sheets.filter(n => n.setId === set.setId).map(n => n.id);
-    return V.SO.core.between(V.sheets, ids, set.setId).filter(it => it.thereIds.some(i => !V.norm.get(i).fixed));
+    const ids = V.sheets.filter(n => n.setId === set.setId).map(n => n.id), items = V.SO.core.between(V.sheets, ids, set.setId);
+    // (Paul, 26 Oct 2026: an order a green-line sheet shares with GF / SS sheets outside its ONE set is a known split, never a reason to hold the set: SharedOrders realPartners)
+    const real = typeof V.SO.core.realPartners === "function" ? V.SO.core.realPartners(V.sheets, items, set.setId, greenHomesOf(V, B.run), { green: n => { const p = V.page.get(n.id); return !!p && goldFamily(p.metal); } }) : items;
+    return real.filter(it => it.thereIds.some(i => !V.norm.get(i).fixed));
   }
   let assemblyQueue = Promise.resolve(), completionClock = 0, joinClock = 0;
   /** One strictly increasing millisecond tick per look at a set (joinedAt on the sheets that join it, formedAt on the set when it first holds a valid minimum: charm-nest-set-invariants.js rule R6 reads them). */
@@ -5552,13 +5617,13 @@ const Gate = window.Gate = (() => {
       const gold = goldFamily(p.metal), b = gold ? backsOf(p) : null;   // (audit G1b: the backs of every gold-family sheet, ticked or cut)
       recs.push({ id: n.id, metal: p.metal, runId: p.runId, page: p.page, sheetIndex: p.sheetIndex, draft: !!p.draft, setId: p.setId || null, releaseFull: !!p.releaseFull, laserDoneAt: p.laserDoneAt, roseCutAt: p.roseCutAt,
         density: p.density, placedCount: (p.placements || []).length, releasedAt: p.releasedAt, joinedAt: p.joinedAt, ...(p.joinedBy ? { joinedBy: p.joinedBy } : {}), pieces: n.pieces,
-        ...(gold ? { cutApproved: p.solidPick === true, ...(b ? { backsApproved: !!b.ok } : {}) } : {}) });
+        ...(gold ? { cutApproved: p.solidPick === true, ...(b ? { backsApproved: !!b.ok } : {}), ...(p.autoMatched ? { autoMatched: String(p.autoMatched) } : {}) } : {}) });
     }
     const ids = new Set(recs.map(r => r.id)), sets = [];
     for (const set of Sets.ofRun(run.runId)) {
       if (/^superseded/.test(String(set.status || ""))) continue;
       const mine = allSheets().filter(p => p.runId === run.runId && p.setId === set.setId && !p.draft && !p.recalled).map(keyOf);
-      sets.push({ id: set.setId, name: set.name || `Set ${set.seq}`, seq: set.seq, formedAt: set.formedAt, committedAt: set.committedAt, status: set.status, laserDoneAt: set.laserDoneAt,
+      sets.push({ id: set.setId, name: set.name || `Set ${set.seq}`, seq: set.seq, day: set.day, formedAt: set.formedAt, committedAt: set.committedAt, status: set.status, laserDoneAt: set.laserDoneAt,
         sheetIds: [...new Set(mine.concat(set.committedAt ? (set.sheetIds || []).filter(i => ids.has(i)) : []))] });
     }
     return { sets, sheets: recs, opts: { skipExempt: true, partialPartners: "pending", waiting } };
@@ -5672,7 +5737,8 @@ const Gate = window.Gate = (() => {
     }
     for (const p of pages) delete p.handSet;      // (a drop is read by one assembly)
     run.heldSheets = pages.filter(p => p.draft).length;
-    if (!(context && context.trimming)) { await trimSurplus(run, context); Promise.resolve().then(() => autoCut(run)); }   // (autoCut: after this look, never inside it: its Cut Sheet press runs an assembly of its own)
+    // (autoCut and unpair: after this look, never inside it: the Cut Sheet press and the sheet window's move run an assembly of their own)
+    if (!(context && context.trimming)) { await trimSurplus(run, context); Promise.resolve().then(() => { autoCut(run); unpair(run).catch(e => console.warn("[Gate.unpair]", e && e.message)); }); }
     refreshAllCards();
     if (S.mode === "library") CN.loadLibrary().catch(e=>toast("Library refresh: "+e.message,"bad"));
   }
@@ -5682,34 +5748,55 @@ const Gate = window.Gate = (() => {
      Only a set that is not committed, not approved for laser cutting (or on its way), with no sheet of the unit cut, being nested, saved or edited by hand; every view follows at
      once (the cards, the Library, the run's record). A unit that cannot leave stays and is flagged as before. */
   /* (Paul, 26 Oct 2026, Decision 2: "once a Set of Sheets is complete then the given RG sheets with intertwined multi-charm orders must have a green cut line auto-cut and that cut portion of
-     the RG sheet must be placed as part of a given Set of Sheets which contains the GF, SS, and partial (Green Cut Line) RG sheets"; 10K and 14K the same.) A green-line sheet outside every
-     set whose Gold Filled / Sterling Silver partners (the sheets holding the other pieces of its orders; the intake keeps them to one GF and one SS sheet of one set, greenFits) are all in
-     ONE set that is complete and not committed gets the Cut Sheet press by itself (RoseStock.record: it joins that set, its green line is drawn and dated, the cut is recorded; the stock
-     left over goes on for the next set). The cut is recorded only when the sheet is ready (nested, verified, saved, its back engraving approved and its files made: the server's
-     roseRecordCut), so until then it waits, said on its card, and it is tried again at the next look (at most once a minute while nothing changed). Every view follows at once. */
+     the RG sheet must be placed as part of a given Set of Sheets which contains the GF, SS, and partial (Green Cut Line) RG sheets"; 10K and 14K the same.) A green-line sheet whose ONE set
+     (greenHomesOf: the Gold Filled / Sterling Silver sheets holding the other pieces of its orders; the intake keeps them to one GF and one SS sheet of one set, greenFits and PAIR) is complete
+     and not committed gets the Cut Sheet press by itself (RoseStock.record: it joins that set, its green line is drawn and dated, the cut is recorded; the stock left over goes on for the next
+     set). The cut is recorded only when the sheet is ready (nested, verified, saved and its files made, the server's roseRecordCut; not its back engraving), so until then it waits, said on its
+     card, and it is tried again at a later look. Every view follows at once. */
+  /* (Paul, 26 Oct 2026, the live Set 1: RG Sheet 1 was IN Set 1 uncut. The press put it in the set first, then the server refused the cut (an order of it still waited for its own design), the include
+     stayed, and only sheets outside a set were tried again: the set showed the red line "RG Sheet 1 has no approved back engraving yet" with Rebuild.) Now: the sheet's ONE set is greenHomesOf's (the set it
+     was matched to, else the earliest-formed set of its partners), complete and not approved; its orders with sheets elsewhere are a known split; an uncut sheet already in that set is tried too; and when the
+     server refuses the cut, the include the press made is UNDONE (the sheet leaves the set again: R12, a green-line sheet is in a set cut). Its card says why, in the server's words (autoCutWait), the set names
+     it as the partner still to come (R10: its Approve stays grey with a plain waiting line), and it is tried again at a later look once something on it changed (its nest, backs, files or
+     label), else after ten minutes. */
   const autoCutTried = new Map();
   function autoCut(run) {
     try {
       const RS = window.RoseStock; if (!RS || typeof RS.record !== "function" || !run || !modern(run.runId) || !S.cloud.ok) return;
-      const SRa = window.CharmNestSetRules, sets = Sets.ofRun(run.runId).filter(st => !st.committedAt);
-      const orderOf = c => String(c && c.order != null ? c.order : "").split("/")[0];
-      for (const p of allSheets().filter(p => p.runId === run.runId && goldFamily(p.metal) && !inSetNow(p) && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled)) {
-        if (p._roseAction || p._rosePlanning || p._roseLoading || p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || !p.persistedDone || !p.verification?.ok || !p.placements.length || p._manualHold) continue;
-        const mine = new Set(p.charms.filter(c => p.placements.some(x => x.id === c.id)).map(orderOf).filter(Boolean)); if (!mine.size) continue;
-        const partners = allSheets().filter(q => q !== p && q.runId === run.runId && (q.metal === "gold" || q.metal === "silver") && q.charms.some(c => mine.has(orderOf(c))));
-        if (!partners.length || partners.some(q => !inSetNow(q))) continue;                     // (a partner not in a set yet: its set is not complete)
-        const homes = [...new Set(partners.map(q => q.setId))]; if (homes.length !== 1) continue;  // (partners in two sets: the intake keeps this from happening; said by the cardinal rule)
-        const st = sets.find(x => x.setId === homes[0]); if (!st || !SRa || !SRa.closed(membersOfSet(st))) continue;
-        const key = p.sheetId + "|" + st.setId + "|" + (p.jobId || "") + "|" + Object.keys(p.backPool || {}).length, last = autoCutTried.get(p.sheetId);
-        if (last && last.key === key && Date.now() - last.at < 60000) continue;
-        autoCutTried.set(p.sheetId, { key, at: Date.now() });
-        p._roseAction = true; p.autoMatched = st.setId;   // (its back engraving does not hold it from joining that set: basePolicy, goldGap; the set's Approve for laser cutting does)
+      const SRa = window.CharmNestSetRules, sets = Sets.ofRun(run.runId).filter(st => !st.committedAt), V = cardinalView(run), GH = V ? greenHomesOf(V, run) : new Map();
+      const approved = st => !!(st.committedAt || st.processReady || st.laserSetPending || st.laserDoneAt);
+      for (const p of allSheets().filter(p => p.runId === run.runId && goldFamily(p.metal) && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled)) {
+        if (p._roseAction || p._rosePlanning || p._roseLoading || p._autoCutting || p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || !p.persistedDone || !p.verification?.ok || !p.placements.length || p._manualHold) continue;
+        const h = V && GH.get(V.idOf.get(p)); if (!h || !h.home) continue;                       // (no partner in a set yet: its set is not complete)
+        if (inSetNow(p) && p.setId !== h.home) continue;                                         // (in a set that is not its one set: it leaves it first, greenAway)
+        if (!h.partners.some(i => { const q = V.page.get(i); return q && q.setId === h.home && !q.draft && SRa && SRa.isCompleted(q); })) continue;
+        const st = sets.find(x => x.setId === h.home); if (!st || approved(st) || !SRa || !SRa.closed(membersOfSet(st))) continue;
+        const key = p.sheetId + "|" + st.setId + "|" + (p.jobId || "") + "|" + Object.keys(p.backPool || {}).length + "|" + Object.keys(p.outputs || {}).sort().join(",") + "|" + (p.label ? 1 : 0), last = autoCutTried.get(p.sheetId);
+        if (last && last.key === key && Date.now() - last.at < (last.refused ? 600000 : 60000)) continue;     // (refused and nothing changed on the sheet: again in ten minutes, not at every look: each try puts it in and takes it out)
+        const tried = { key, at: Date.now() }; autoCutTried.set(p.sheetId, tried);
+        const was = { inSet: inSetNow(p), pick: p.solidPick };
+        p._roseAction = true; p._autoCutting = true; p.autoMatched = st.setId;   // (its back engraving does not hold its join while the press runs: basePolicy; the set's Approve for laser cutting holds the set)
         const by = (typeof stampWho === "function" && stampWho().by) || "Charm Nest (automatic)";
-        RS.record(p, { by, via: "auto" }).then(() => {
+        const go = async () => {
+          try { await RS.record(p, { by, via: "auto" }); }
+          catch (e) {
+            const why = String(e && e.message || e).replace(/^Not cut(?: yet)?: /, ""); tried.refused = true;
+            p.autoCutWait = `Its green line is cut automatically, and it joins ${st.name || "its set"}, once it is ready: ${why}`;
+            // (the include is undone: the sheet leaves the set again, an uncut green-line sheet waits outside, R12. The same for one an earlier press left in its set uncut (the live Set 1's RG Sheet 1).
+            //  Its tick is not given back: a tick would put it in uncut again at the next look; the next automatic press includes it and cuts it in one go)
+            if (inSetNow(p) && !p.roseCutAt) {
+              p._roseAction = false; delete p._autoCutting; p.solidPick = false;
+              try { await assemble(run); } catch (e2) { console.warn("[Gate.autoCut] undo", e2 && e2.message); }
+              if (!inSetNow(p) && was.pick !== false) delete p.solidPick;
+              run.membershipDirty = true; try { await RunCtl.save(run); } catch (_) { /* saved with the run's next look */ }
+            }
+            try { agent({ run: run.runId, metal: p.metal }, "warn", `${sheetNameOf(p)}: its green line was not cut automatically yet (${why}); it waits outside ${st.name || "its set"} and is tried again`); } catch (_) {}
+            return;
+          }
           try { agent({ run: run.runId, metal: p.metal }, "ok", `${sheetNameOf(p)}: green line cut automatically; it is in ${st.name || "its set"} with the Gold Filled and Sterling Silver sheets it shares orders with`); } catch (_) {}
           delete p.autoCutWait;
-        }, e => { p.autoCutWait = `Its green line is cut automatically, and it joins ${st.name || "its set"}, once it is ready: ${String(e && e.message || e).replace(/^Not cut: /, "")}`; })
-          .finally(() => { p._roseAction = false; liveRefresh(p); });
+        };
+        go().finally(() => { p._roseAction = false; delete p._autoCutting; liveRefresh(p); });
       }
     } catch (e) { try { console.warn("[Gate.autoCut]", e); } catch (_) {} }
   }
@@ -5749,10 +5836,87 @@ const Gate = window.Gate = (() => {
     try { await RunCtl.save(run); } catch (_) { /* the run's record is saved again with its next look */ }
     for (const { st, unit } of moved) {
       const names = unit.map(p => sheetNameOf(p)).join(", "), now = unit[0].setId ? (Sets.ofRun(run.runId).find(x => x.setId === unit[0].setId) || {}).name : null;
-      try { agent({ run: run.runId }, "ok", `${st.name || "A set"} held more sheets than it needs (a late order line pulled a group in): ${names} ${unit.length === 1 ? "was" : "were"} moved out${now ? ` into ${now}` : " and wait for the next set"} automatically`); } catch (_) { /* a note only */ }
+      try { agent({ run: run.runId }, "ok", `${st.name || "A set"} held more sheets than it needs (a group of sheets it does not need was in it): ${names} ${unit.length === 1 ? "was" : "were"} moved out${now ? ` into ${now}` : " and wait for the next set"} automatically`); } catch (_) { /* a note only */ }
     }
     return true;
   }
+  /* ═══ UNPAIR · a set made before PAIR puts itself right (Paul, 26 Oct 2026: "Why are there two full GF sheets when I gave you the rules for that?") ═══════════════════════════════════════════════
+     A set that holds two Gold Filled (or two Sterling Silver) sheets because ONE order of the other metal ties the second to the set's pair (his Set 1: order 4200987085, its GF piece on GF Sheet 2, its SS piece
+     on SS Sheet 1) is put right by the assembly itself, the way PAIR keeps it from happening: that order's piece on the pair's sheet (SS Sheet 1) is moved to the second sheet's own partner of that metal (the open
+     SS sheet it shares orders with, else one that has no partner yet, else a new one), with the sheet window's own move (SheetWin.holdKit.move: the sheet it leaves written as it stands, every other charm
+     pinned where it is; labels made again; the saved sheets and piece records read back). The second sheet then shares no order with the set and is spare (R7): Decision 1's trim takes it out with its own
+     green-line sheets, and it forms its own set with its partner.
+     Only a set that is not committed, approved for laser cutting or on its way, a sheet that is not cut, being nested, saved or edited, and an order that ties nothing else; one move at a time, never while a
+     person's change runs in the sheet window; tried again at a later look while it cannot (at most once a minute). What it does, or waits for, is one plain line on the set (Gate.unpairLine). */
+  const unpairTried = new Map(), unpairSay = new Map(); let unpairRunning = false;
+  /** The moves that would put the run's sets right: [{ set, from, to|null (a new sheet), metal, orders, second, pieces:[charm] }] (pure: nothing is changed). */
+  function unpairPlan(run) {
+    const out = [], approvedSet = st => !!(st.committedAt || st.processReady || st.laserSetPending || st.laserDoneAt), SRu = window.CharmNestSetRules;
+    const placedOrders = p => { const on = new Set((p.placements || []).map(x => x.id)); return new Set((p.charms || []).filter(c => on.has(c.id)).map(c => String(c.order != null ? c.order : "").split("/")[0]).filter(Boolean)); };
+    const early = (a, b) => (+a.joinedAt || 0) - (+b.joinedAt || 0) || (+a.releasedAt || 0) - (+b.releasedAt || 0) || (+a.page || 0) - (+b.page || 0);
+    const fixedSheet = p => !!(p.roseCutAt || +p.laserDoneAt > 0 || p.recalled || p.processReady || p._manualHold || p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone) || !p.sheetId);
+    for (const st of openSetsOf(run.runId)) {
+      if (approvedSet(st)) continue;
+      const members = membersOfSet(st).filter(p => (p.metal === "gold" || p.metal === "silver") && SRu && SRu.isCompleted(p)), gfs = members.filter(p => p.metal === "gold").sort(early), sss = members.filter(p => p.metal === "silver").sort(early);
+      if (gfs.length < 2 && sss.length < 2) continue;
+      const os = new Map(members.map(p => [p, placedOrders(p)])), common = (a, b) => [...os.get(a)].filter(o => os.get(b).has(o));
+      // the set's own pair: its earliest GF sheet and earliest SS sheet that share an order
+      let pair = null; for (const g of gfs) { for (const s of sss) if (common(g, s).length) { pair = [g, s]; break; } if (pair) break; }
+      if (!pair) continue;
+      for (const [second, mate, keep] of [...gfs.filter(g => g !== pair[0]).map(g => [g, pair[1], pair[0]]), ...sss.filter(s => s !== pair[1]).map(s => [s, pair[0], pair[1]])]) {
+        // (only a sheet tied to the set by orders it shares with the pair's sheet of the other metal and nothing else: an order of its own colour on the pair's sheet (R16) or a tie to another sheet of the set is no pairing fault)
+        const orders = common(second, mate); if (!orders.length || common(second, keep).length || members.some(m => m !== second && m !== mate && m !== keep && common(second, m).length)) continue;
+        if (fixedSheet(mate)) continue;
+        // (one move per order, the sheet window's unit) where it goes: the second sheet's own partner of that metal (an open sheet outside every set that shares orders with it), else an open sheet that keeps
+        //  the pairing, else a new one
+        for (const o of orders) {
+          const pieces = mate.charms.filter(c => String(c.order != null ? c.order : "").split("/")[0] === o); if (!pieces.length) continue;
+          const LN = window.LiveNest, skip = new Set(pieces), fits = p => !LN || typeof LN.pairFits !== "function" || LN.pairFits(p, [o], run, { skip });
+          const free = p => p !== mate && p.runId === run.runId && p.metal === mate.metal && !(p.setId && !p.draft) && !(LN && LN.closed && LN.closed(p)) && !fixedSheetBusy(p) && fits(p);
+          const own = pagesOf(mate.metal).find(p => free(p) && [...placedOrders(p)].some(q => os.get(second).has(q)));
+          out.push({ set: st, from: mate, to: own || pagesOf(mate.metal).find(p => free(p) && (p.charms || []).length) || null, metal: mate.metal, orders: [o], second, pieces });
+        }
+      }
+    }
+    return out;
+  }
+  const fixedSheetBusy = p => !!(p.recalled || p.roseCutAt || +p.laserDoneAt > 0 || p._manualHold || ["nesting", "finishing", "queued"].includes(p.status) || (p.persisted && !p.persistedDone));
+  /** The plain line a set shows while UNPAIR works on it, or waits: "" when nothing is to be done. */
+  const unpairLine = setId => unpairSay.get(String(setId)) || "";
+  async function unpair(run) {
+    if (unpairRunning || !run || !modern(run.runId) || !S.cloud.ok) return false;
+    const SW = window.SheetWin, kit = SW && SW.holdKit; if (!kit || typeof kit.move !== "function") return false;
+    let plans; try { plans = unpairPlan(run); } catch (e) { console.warn("[Gate.unpair]", e); return false; }
+    for (const k of [...unpairSay.keys()]) if (!plans.some(x => x.set.setId === k)) unpairSay.delete(k);
+    if (!plans.length) return false;
+    unpairRunning = true; let did = false;
+    try {
+      for (const x of plans) {
+        const name = p => sheetNameOf(p), setName = x.set.name || `Set ${x.set.seq}`, word = x.metal === "gold" ? "GF" : "SS";
+        const what = `${x.orders.length === 1 ? "Order " + x.orders[0] + " ties" : "Orders " + x.orders.join(", ") + " tie"} ${name(x.second)} into ${setName}: ${x.orders.length === 1 ? "its" : "their"} ${word} piece${x.pieces.length === 1 ? "" : "s"} on ${name(x.from)}`;
+        const key = x.set.setId + "|" + x.from.sheetId + "|" + x.orders.join(",") + "|" + (x.from.jobId || ""), last = unpairTried.get(key);
+        if (last && Date.now() - last.at < 60000) continue;
+        if ((kit.busy && kit.busy()) || committingRun(run)) { unpairSay.set(x.set.setId, `${what} ${x.pieces.length === 1 ? "moves" : "move"} to ${x.to ? name(x.to) : "a new " + word + " sheet"} as soon as the change running in the sheet window is done`); continue; }
+        unpairTried.set(key, { at: Date.now() });
+        const to = x.to || addPage(x.metal); if (!to.runId) to.runId = run.runId;
+        unpairSay.set(x.set.setId, `${what} ${x.pieces.length === 1 ? "is" : "are"} being moved to ${name(to)} (one GF sheet and one SS sheet share an order), then ${name(x.second)} leaves ${setName}`);
+        liveRefresh(x.from);
+        const guard = sh => sh.roseCutAt || +sh.laserDoneAt > 0 || sh.recalled ? "it is cut" : Sets.ofRun(sh.runId).some(s => (s.committedAt || s.processReady || s.laserSetPending || s.laserDoneAt) && (s.sheetIds || []).includes(sh.sheetId)) ? "its set is approved or sent" : sh._manualHold ? "it is being changed by hand" : "";
+        try {
+          const ok = await kit.move({ rid: x.orders[0], pieces: x.pieces.map(c => ({ c, src: x.from, placed: (x.from.placements || []).some(q => q.id === c.id) })) }, to, "Charm Nest (automatic)", { guard });
+          if (!ok) { unpairSay.set(x.set.setId, `${what} ${x.pieces.length === 1 ? "moves" : "move"} to ${name(to)} as soon as the change running in the sheet window is done`); continue; }
+          did = true; unpairSay.delete(x.set.setId);
+          try { agent({ run: run.runId, metal: x.metal }, "ok", `${what} moved to ${name(to)} automatically (one GF sheet and one SS sheet share an order); ${name(x.second)} leaves ${setName}`); } catch (_) {}
+        } catch (e) {
+          unpairSay.set(x.set.setId, `${what} could not be moved to ${name(to)} yet (${String(e && e.message || e)}): it is tried again`);
+          try { agent({ run: run.runId, metal: x.metal }, "warn", `${what}: not moved yet (${String(e && e.message || e)}); tried again at a later look`); } catch (_) {}
+        }
+      }
+    } finally { unpairRunning = false; }
+    if (did) { try { await assemble(run); } catch (e) { console.warn("[Gate.unpair] assemble", e && e.message); } liveRefresh(null); }
+    return did;
+  }
+  const committingRun = run => !!window.CharmNestOperations?.running?.("commit:" + run.runId);
   /** One open set of the run, kept as the rules say: a sheet that no longer qualifies goes back out, the set's lists follow, a sheet the set takes now joins with its number and QR label. */
   async function tendSet(run, set, pages, choices, release, admits) {
     const SRt = window.CharmNestSetRules, before = joinTick(), at = joinTick();
@@ -6880,7 +7044,7 @@ const Gate = window.Gate = (() => {
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
   return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull || staysCut(sh) : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
-     violations, selfCheck: selfCheckResult, invariantInput, splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
+     violations, selfCheck: selfCheckResult, invariantInput, splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R, autoCut, trimSurplus, unpair, unpairPlan, unpairLine, greenHomes: run => { const V = cardinalView(run || B.run); return V ? greenHomesOf(V, run || B.run) : new Map(); } };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -11794,9 +11958,11 @@ const Sets = window.Sets = (() => {
    *  until they are in it (charm-nest-set-rules.js gate, read by CharmNestReadiness). Derived from the sheets at every drawing, never saved. */
   /** The one line a set gives for how its sheets are tied (Paul, 15 Oct 2026: "how is it that this one set has 4 GF and 2 SS sheets"): "orders 123, 456 link GF Sheet 1, SS Sheet 1 and GF Sheet 2",
    *  and, for an open set that holds more than the minimum, the sheets it is valid without because no order ties them to the others. "" when nothing links two of its sheets and nothing is spare. */
-  function linkLine(g, all, by) {
+  function linkLine(g, all, by, homes) {
     const SO = window.SharedOrders, SRp = window.CharmNestSetRules, mine = new Set(g.sheets.map(r => r.id)), inSet = all.filter(x => mine.has(x.id));
-    const groups = SO.core.groups(inSet), nm = ids => ids.map(i => (by.get(i) || {}).label || i), and = l => l.length < 2 ? l.join("") : `${l.slice(0, -1).join(", ")} and ${l[l.length - 1]}`;
+    // (Paul, 26 Oct 2026: a Rose Gold / 10K / 14K sheet ties no two GF / SS units together: it is attached to the units it shares orders with, never a link between them: SharedOrders formation `anchors`)
+    const greenIds = inSet.filter(x => SO.core.isGreen && SO.core.isGreen(x)).map(x => x.id);
+    const groups = SO.core.formation && greenIds.length ? SO.core.formation(inSet, [], "hold", greenIds).groups : SO.core.groups(inSet), nm = ids => ids.map(i => (by.get(i) || {}).label || i), and = l => l.length < 2 ? l.join("") : `${l.slice(0, -1).join(", ")} and ${l[l.length - 1]}`;
     const ow = os => os.length === 1 ? `order ${os[0]}` : `orders ${os.slice(0, 3).join(", ")}${os.length > 3 ? " and more" : ""}`;
     const parts = groups.slice(0, 3).map(x => `${ow(x.orders)} ${x.orders.length === 1 ? "links" : "link"} ${and(nm(x.ids))}`);
     if (groups.length > 3) parts.push(`${groups.length - 3} more group${groups.length - 3 === 1 ? "" : "s"} of sheets`);
@@ -11805,17 +11971,24 @@ const Sets = window.Sets = (() => {
     const lines = [];
     if (parts.length) lines.push(`${parts.join("; ")}: sheets that share an order stay in one set`);
     if (spare.length) lines.push(`${and(nm(spare.map(r => r.id)))} ${spare.length === 1 ? "shares" : "share"} no order with the other sheets, and the set is valid without ${spare.length === 1 ? "it" : "them"}`);
+    // (Paul, 26 Oct 2026) what a green-line sheet of this set shares with GF / SS sheets outside it: a known split, said plainly; it holds nothing
+    if (homes) for (const id of greenIds) { const h = homes.get(id); if (!h || h.home !== String(g.setId) || !h.split.length) continue; const os = [...new Set(h.split.flatMap(x => x.orders))].sort(); lines.push(`${nm([id])[0]} is in this set only: ${ow(os)} it shares with ${and(nm(h.split.map(x => x.sheet)))} ${os.length === 1 ? "ships" : "ship"} in two parts`); }
+    // (PAIR, Paul 26 Oct 2026: an order that ties a second GF / SS sheet to this set is moved by the assembly itself, Gate.unpair: what it does or waits for)
+    try { const u = window.Gate && Gate.unpairLine ? Gate.unpairLine(g.setId) : ""; if (u) lines.push(u); } catch (_) { /* no line */ }
     return lines.join(". ");
   }
   function partnersOf(list) {
     const SO = typeof window !== "undefined" ? window.SharedOrders : null; if (!SO || typeof SO.sheets !== "function" || !SO.core) return;
     let all; try { all = SO.sheets(); } catch (_) { return; }
     const by = new Map(all.map(x => [x.id, x]));
+    // (Paul, 26 Oct 2026) the ONE set of each green-line sheet, over every sheet the page holds: the set it cannot leave, the set it was matched to, the set it is in, else the earliest-formed set of its partners
+    let homes = null;
+    try { const SRh = window.CharmNestSetRules, docs = list.filter(x => x.setId); homes = SO.core.greenHomes ? SO.core.greenHomes(all, { rank: sid => { const d = docs.find(x => String(x.setId) === sid); return d ? [String(d.day || ""), +d.seq || 0] : ["~", Infinity]; }, open: sid => { const d = docs.find(x => String(x.setId) === sid); return !d || !(SRh && SRh.exempt(d)); } }) : null; } catch (_) { homes = null; }
     for (const g of list) {
       // (Paul, 15 Oct) a set built from sheets that share orders says which orders link which sheets, and which sheets no order ties to the rest: derived at every drawing, never saved
-      if (g.setId && g.sheets.length > 1 && g.status !== "superseded") { let line = ""; try { line = linkLine(g, all, by); } catch (_) { /* no line */ } if (line) g.cardinalLinks = line; else delete g.cardinalLinks; }
+      if (g.setId && g.sheets.length > 1 && g.status !== "superseded") { let line = ""; try { line = linkLine(g, all, by, homes); } catch (_) { /* no line */ } if (line) g.cardinalLinks = line; else delete g.cardinalLinks; }
       if (!g.setId || g.committedAt || /^complete|superseded/.test(String(g.status || "")) || !g.sheets.length) continue;
-      let items; try { items = SO.core.between(all, g.sheets.map(r => r.id), g.setId); } catch (_) { continue; }
+      let items; try { items = SO.core.between(all, g.sheets.map(r => r.id), g.setId); if (homes && SO.core.realPartners) items = SO.core.realPartners(all, items, g.setId, homes); } catch (_) { continue; }   // (a known green-line split is no partner to wait for)
       const free = [...new Set(items.flatMap(it => it.thereIds).filter(i => by.get(i) && !by.get(i).fixed))];
       // (Paul, 13 Oct: a partner that is not full yet cannot be added to the set; the line says it joins by itself once it is full)
       const SRp = window.CharmNestSetRules, pageOf = id => { try { return typeof allSheets === "function" ? allSheets().find(p => p.sheetId === id) : null; } catch (_) { return null; } };
@@ -23807,6 +23980,74 @@ const LiveNest = window.LiveNest = (() => {
   // the page's own marks first; the sets of its run are looked at only when none says so
   const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!p.cardinalPull || !!window.Gate?.holding?.(p) || !!p.laserDoneAt || !!p._manualHold /* (a person is moving its charms by hand in the sheet window, Manual Control: nothing arrives on it meanwhile) */ || !!p._inplaceHold /* (INPLACE: a replaced piece is being put back into its old spot on it) */ || (!((p.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(p.metal)))&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
     Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId));
+  /* ═══ PAIR · one Gold Filled sheet and one Sterling Silver sheet share orders (Paul, 26 Oct 2026: "Why are there two full GF sheets when I gave you the rules for that?") ═══════════════════════════
+     His Set 1 held GF Sheet 1, GF Sheet 2 and SS Sheet 1. The cause (sandbox run of 25-26 Oct): GF Sheet 1 closed and GF Sheet 2 opened; SS Sheet 1 was filling its gaps and took the Sterling Silver piece of
+     order 4200987085, whose Gold Filled piece had gone to GF Sheet 2. The intake sent each piece to the earliest open sheet of its metal, one metal at a time, and nothing looked at where the order's
+     other-metal pieces were (greenFits covers Rose Gold / 10K / 14K only): SS Sheet 1 shared orders with GF Sheet 1 AND GF Sheet 2, the cardinal rule (R9) made the three one unit, and one set.
+     The mirror of greenFits: a Gold Filled or Sterling Silver sheet takes a piece of an order whose other GF / SS pieces are on, or will go to, its ONE partner of the other metal, or it has no partner of that
+     metal yet. So a GF sheet shares orders with one SS sheet and an SS sheet with one GF sheet: a set is 1 GF + 1 SS (R7), and greenFits' "both only in one set" follows. Every path that puts a GF / SS piece on a
+     sheet asks it: the intake (intakePage below, Pool.attachPool), the gap fill (it is the intake's choice), the overflow to the next sheet (overflowToNextSheet) and INPLACE's next sheet of its colour
+     (inPlaceTarget). A single-metal order is never affected.
+       pairFits(page, orderIds, run, {skip})   may this GF / SS sheet take pieces of these orders (skip: pieces on their way elsewhere, not counted)
+       lineFits(page, orderIds, run, {skip})   the same for any metal: pairFits for GF / SS, greenFits (Pool) for Rose Gold / 10K / 14K
+       follow(orderIds, run, {except})        after pieces of these orders moved on (overflow): their pieces of the other metals (not `except`, the metal that moved) that are not placed yet go to a sheet that keeps the rule */
+  const PAIR_OF = { gold: "silver", silver: "gold" };
+  const pairOrder = c => String(c && c.order != null ? c.order : "").split("/")[0];
+  /** The run's sheets of metal `m` holding a piece of one of the orders `ids` (a Set). */
+  function sheetsHolding(m, ids, run, skip) {
+    const out = new Set(); if (!ids.size) return out;
+    for (const p of allSheets()) { if (p.metal !== m || p.recalled || (run && p.runId && p.runId !== run.runId)) continue; if ((p.charms || []).some(c => !(skip && skip.has(c)) && ids.has(pairOrder(c)))) out.add(p); }
+    return out;
+  }
+  const ordersHeld = (p, skip) => new Set((p.charms || []).filter(c => !(skip && skip.has(c))).map(pairOrder).filter(Boolean));
+  /** Lines of these orders of metal `m` that are not on any sheet yet (the order rows; a world without them knows of none): they come later, to the sheet's partner. */
+  function linesToCome(ids, m) {
+    try {
+      if (typeof Orders === "undefined" || !Orders || typeof Orders.rows !== "function") return false;
+      const on = new Set(allSheets().flatMap(p => (p.charms || []).map(c => c.poolId)).filter(Boolean));
+      return Orders.rows().some(r => r && r.order && ids.has(String(r.order.receiptId)) && r.spec && r.spec.material === m && !["gone", "noDesign", "skipped", "committed", "abandoned"].includes(r.state) && !(r.poolIds || []).some(id => on.has(id)));
+    } catch (_) { return false; }
+  }
+  function pairFits(page, orderIds, run, o = {}) {
+    const other = page && PAIR_OF[page.metal]; if (!other) return true;
+    const ids = new Set([].concat(orderIds == null ? [] : orderIds).map(String).filter(Boolean)); if (!ids.size) return true;
+    const skip = o.skip || null, mine = sheetsHolding(other, ordersHeld(page, skip), run, skip), theirs = sheetsHolding(other, ids, run, skip);
+    if (new Set([...mine, ...theirs]).size > 1) return false;          // (a second partner of the other metal)
+    // (will go to: the order's lines of the other metal not on a sheet yet go to this sheet's one partner; when that partner takes nothing any more, they could not, so this sheet does not take the order)
+    if (mine.size === 1 && !theirs.size && closed([...mine][0]) && linesToCome(ids, other)) return false;
+    return true;
+  }
+  function lineFits(page, orderIds, run, o = {}) {
+    if (!page) return true;
+    if (PAIR_OF[page.metal]) return pairFits(page, orderIds, run, o);
+    const G = (typeof window !== "undefined" && window.Pool && typeof window.Pool.greenFits === "function") ? window.Pool.greenFits : (typeof greenFits === "function" ? greenFits : null);
+    return G ? G(page, orderIds, run, o) : true;
+  }
+  /** After pieces of these orders moved to another sheet (overflowToNextSheet): a sheet of another metal whose pieces of them are not placed yet, and that no longer keeps the rule with them, passes them
+   *  on to a sheet of its metal that does (the earliest open one with room, else a new one), which nests them. A placed piece stays: the assembly's repair (Gate.unpair) or, for a green-line sheet, its one set
+   *  (greenHomes) takes care of it. → [{ from, to, pieces }] */
+  function follow(orderIds, run, o = {}) {
+    const ids = new Set([].concat(orderIds || []).map(String).filter(Boolean)), moved = []; if (!ids.size) return moved;
+    const busyNow = p => ["nesting", "finishing", "queued"].includes(p.status) || !!p._operationStarting || !!(p.persisted && !p.persistedDone) || !!p._manualHold || !!p._inplaceHold;
+    for (const q of allSheets().filter(p => p.metal !== o.except && (!run || !p.runId || p.runId === run.runId) && !p.recalled && !p.roseCutAt && !p.laserDoneAt && !p.roseProtected && !p.rosePlan && !busyNow(p))) {
+      const placed = new Set((q.placements || []).map(x => x.id));
+      for (const oid of ids) {
+        const loose = (q.charms || []).filter(c => pairOrder(c) === oid && !placed.has(c.id) && !c.excluded); if (!loose.length) continue;
+        if (lineFits(q, [oid], run, { skip: new Set(loose) })) continue;
+        const skip = new Set(loose), roomy = p => (!window.CN?.topupRoom || window.CN.topupRoom(p) > 0) && (!window.CN?.topupTakes || window.CN.topupTakes(p, loose, { pieces: loose, expected: loose.length, placed: 0 }));
+        let to = pagesOf(q.metal).find(p => p !== q && (p.charms || []).length && (!run || !p.runId || p.runId === run.runId) && !closed(p) && !busyNow(p) && lineFits(p, [oid], run, { skip }) && roomy(p));
+        if (!to) to = addPage(q.metal);
+        q.charms = q.charms.filter(c => !skip.has(c)); q.rejects = (q.rejects || []).filter(id => !loose.some(c => c.id === id)); if (Array.isArray(q.feedWait)) q.feedWait = q.feedWait.filter(id => !loose.some(c => c.id === id));
+        for (const c of loose) { if (c.arrivalPin) { c.pinned = null; delete c.arrivalPin; } to.charms.push(c); }
+        if (run && !to.runId) to.runId = run.runId;
+        to.appendOnly = to.intakeAppend = (to.placements || []).length > 0; to.dirty = true; if (!["nesting", "finishing", "queued"].includes(to.status)) to.status = "ready";
+        moved.push({ from: q, to, pieces: loose.map(c => c.poolId || c.id) });
+        try { agent({ metal: q.metal }, "nest", `Order ${oid}: its ${labelOf(q.metal)} piece${loose.length === 1 ? "" : "s"} moved from ${q.page ? "sheet " + q.page : "a sheet"} to ${to.page ? "sheet " + to.page : "a new sheet"} with the order's other pieces, so that one Gold Filled sheet and one Sterling Silver sheet share it`); } catch (_) { /* a note only */ }
+        try { startNest(to); } catch (_) { /* the run starts it */ }
+      }
+    }
+    return moved;
+  }
   /* Gold and Silver arrivals go to the run's earliest open sheet first (the pool puts them on the same one). An order
      that misses its gaps moves on to the next sheet, and the earlier sheet stays first in line: once a newer page existed
      it used to be passed over for good, short of full, so it was never released and its orders, the oldest, never cut.
@@ -23826,8 +24067,11 @@ const LiveNest = window.LiveNest = (() => {
     // (NOSPREAD, Paul 17 Oct 2026: asked with the WHOLE order -- `order`: its pieces in hand, the number it will have in all, those already on a sheet -- so that a multi-piece or earring order
     // goes onto a sheet near completion only if all its pieces fit, and otherwise to the next sheet in line, a new one when none takes it whole; an order bigger than a sheet starts a fresh one)
     const room = p => (!window.CN?.topupRoom || window.CN.topupRoom(p) > 0) && (!pieces || !window.CN?.topupTakes || window.CN.topupTakes(p, pieces, order));
-    const pick = pages.find(p => p !== newest && open(p) && room(p)) || newest;
-    return pick === newest && open(newest) && !room(newest) ? addPage(m) : pick;
+    // (PAIR, Paul 26 Oct 2026: and only a sheet whose one partner of the other metal is this order's, or that has none yet: pairFits. Asked first: a sheet that does not pair is not a sheet the order
+    //  "passed at the door" for want of room, nospreadPassed)
+    const pairs = p => orderId == null || pairFits(p, [orderId], run);
+    const pick = pages.find(p => p !== newest && open(p) && pairs(p) && room(p)) || newest;
+    return pick === newest && open(newest) && (!pairs(newest) || !room(newest)) ? addPage(m) : pick;
   }
   async function add(run) {
     const prepare=async()=>{
@@ -23943,7 +24187,7 @@ const LiveNest = window.LiveNest = (() => {
     for (const set of Sets.ofRun(run.runId)) if (!set.committedAt || set.savedCommit !== set.committedAt) await Sets.save(set);
     delete run.intakeRecovery; Session.schedule();
   }
-  return { add, finish, prepareSheet, closed, intakePage };
+  return { add, finish, prepareSheet, closed, intakePage, pairFits, lineFits, follow };
 })();
 
 /* Compact, read-only set previews never replace the active bench. */

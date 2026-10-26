@@ -332,7 +332,19 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       // (Paul, 26 Oct 2026: the AUTOMATIC cut of a green-line sheet whose Gold Filled / Sterling Silver set is complete (Gate.autoCut, via 'auto') is not held for its back engraving:
       //  the set's Approve for laser cutting holds it until the backs are approved, so the cut is not held twice. Every other check stands; a person's Cut Sheet press is as before)
       const rd=Readiness.sheet(checked),auto=b.via==='auto',cutReady=auto?rd.included&&Object.entries(rd.stages).every(([k,v])=>v||k==='approval'||k==='backs'):rd.ready;
-      if(!cutReady)throw new Error('Complete every item in the sheet’s orders and its production checks before recording its cut');
+      if(!cutReady){
+        // (Paul, 26 Oct 2026: the automatic cut says WHY it waits, in the shop's words, for the sheet's card: "order 4199104309: waiting for its own design"; a person's press keeps its one line)
+        if(auto){
+          const STAGE={layout:'its layout is not saved and verified',front:'its sheet files are not made',qr:'its QR label is not made',orders:'an order on it waits'};
+          let why=Object.entries(rd.stages).filter(([k,v])=>!v&&k!=='approval'&&k!=='backs').map(([k])=>STAGE[k]||k);
+          try{ if(!rd.stages.orders&&Readiness.orderIds&&Readiness.forSheet){ const sid=b.sheetId,os=Readiness.orderIds(checked).filter(id=>{const f=Readiness.forSheet(checked.orderReadiness&&checked.orderReadiness[id],sid,Readiness.setOf?Readiness.setOf(checked):null);return !(f&&f.ready===true);}).slice(0,3);
+            const said=os.map(id=>{const f=Readiness.forSheet(checked.orderReadiness&&checked.orderReadiness[id],sid,Readiness.setOf?Readiness.setOf(checked):null);const w=f&&(Readiness.blockText?Readiness.blockText(f):f.why);return `order ${id}${w?': '+w:''}`;});
+            if(said.length)why=why.filter(x=>x!==STAGE.orders).concat(said); } }catch(_){ /* the stage words stand */ }
+          if(!rd.included)why.unshift('it is not in a set');
+          throw new Error('Not cut yet: '+(why.join('; ')||'its production checks are not done'));
+        }
+        throw new Error('Complete every item in the sheet’s orders and its production checks before recording its cut');
+      }
       const plan=parse(sheet.rosePlanJson);Rose.validate(plan.profile,stock.wPt,stock.hPt);
       const at=Date.now(),revision=stock.revision+1;
       // which pieces of which order line this cut took (permanent, with the cut): a pair cut together, or a group of which only some pieces were cut

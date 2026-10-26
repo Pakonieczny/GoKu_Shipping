@@ -6519,6 +6519,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // the pieces off, headless, one change at a time (as the shared-orders window's Take off does)
       takeOff: (plan, who, note) => takeOff(plan, { then: "hold", note: note || "", headless: true }, who),
       freed: sheetId => (FREED.get(sheetId) || []).length,
+      // (PAIR, Paul 26 Oct 2026: the set's own repair, Gate.unpair) an order's pieces moved off the sheets that hold them onto `target`, headless, the move this window makes (moveIn: each sheet they leave
+      //  written as it stands, every other charm pinned where it is; the target nests them; labels made again; both saved sheets and the piece records read back). k = { rid, pieces:[{ c, src, placed }] };
+      //  o.guard(sheet) -> why it may not give or take them now ('' to go). → true, or false when another change is running; throws with the reason when it stopped (the pieces are put back)
+      move: (k, target, who, o = {}) => { const kk = Object.assign({ srcs: new Set(k.pieces.map(z => z.src)) }, k); return moveIn(kk, kk.pieces.map(z => ({ c: z.c, src: z.src, cxPt: 0, cyPt: 0, angle: 0 })), target, who, { headless: true, free: true, guard: o.guard }); },
     };
   })();
   window.SheetWin = { remakeLabel, joinSet, joinInfo, takeOffOrder, holdKit, refreshRecord, heldOf, open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, pieceBase, _W: W };

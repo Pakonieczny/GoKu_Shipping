@@ -68,14 +68,17 @@ function owner2({ tie = 'B', setId = 'set-2' } = {}) {
   assert.equal(r.ok, false, 'the 14-sheet Set 2 is refused');
   assert.equal(f.sets[0].sheetIds.length, 14, 'the owner\'s Set 2 holds 14 sheets');
   assert.deepEqual(r.sets[0].names.slice().sort(), ['GF Sheet 1', 'GF Sheet 2', 'GF Sheet 3', 'GF Sheet 4', 'GF Sheet 5', 'GF Sheet 6', 'GF Sheet 7', 'GF Sheet 8', 'RG Sheet 16', 'RG Sheet 29', 'SS Sheet 1', 'SS Sheet 2', 'SS Sheet 3', 'SS Sheet 4']);
-  // (b) the surplus units: GF 8 alone, group A, group B. Group C (the earliest unit that holds a completed GF and a completed SS sheet) is what Set 2 may be.
+  // (b) the surplus units: GF 8 alone, and every unit of A and B. Group C (the earliest unit that holds a completed GF and a completed SS sheet) is what Set 2 may be.
+  // (Paul, 26 Oct 2026: a Rose Gold sheet ties nothing, cut or uncut: RG 16 no longer glues GF 5 to GF 4, RG 29 no longer glues GF 7 + SS 4 to GF 6 + SS 3)
   const sur = ofRule(r, 'surplus');
-  assert.equal(sur.length, 3, 'three units are more than the set needs:\n  ' + show(r));
+  assert.equal(sur.length, 5, 'five units are more than the set needs:\n  ' + show(r));
   const byFirst = k => sur.find(v => v.sheets.includes(k));
-  assert.deepEqual(byFirst('gf8').sheets, ['gf8']); assert.equal(byFirst('gf8').message, 'GF Sheet 8 shares no order with the others and Set 2 is valid without it (GF Sheet 1, GF Sheet 2 and SS Sheet 1 are enough)', 'the owner\'s own example sentence');
-  assert.deepEqual(byFirst('gf4').sheets.slice().sort(), ['gf3', 'gf4', 'gf5', 'rg16', 'ss2'], 'unit B: GF 3, GF 4, GF 5, SS 2 and the Rose Gold sheet 16 they are tied to');
-  assert.deepEqual(byFirst('gf7').sheets.slice().sort(), ['gf6', 'gf7', 'rg29', 'ss3', 'ss4'], 'unit A: SS 3, SS 4, GF 6, GF 7 and Rose Gold sheet 29');
-  assert.deepEqual(byFirst('gf4').orders, ['4200000500', '4200000501', '4200000502', '4200000503'], 'the unit says which orders tie it'); assert.deepEqual(byFirst('gf8').keeps.slice().sort(), ['gf1', 'gf2', 'ss1'], 'what is enough: group C');
+  assert.deepEqual(byFirst('gf8').sheets, ['gf8']); assert.equal(byFirst('gf8').message, 'GF Sheet 8 shares no order with the others and Set 2 is valid without it (GF Sheet 1, GF Sheet 2, SS Sheet 1, RG Sheet 16 and RG Sheet 29 are enough)', 'the owner\'s own example sentence');
+  assert.deepEqual(byFirst('gf4').sheets.slice().sort(), ['gf3', 'gf4', 'ss2'], 'unit B: GF 3, GF 4 and SS 2 (RG 16 ties GF 5 to them no more)');
+  assert.deepEqual(byFirst('gf5').sheets, ['gf5'], 'GF 5 alone');
+  assert.deepEqual(byFirst('gf7').sheets.slice().sort(), ['gf7', 'ss4'], 'unit A splits: SS 4 + GF 7'); assert.deepEqual(byFirst('gf6').sheets.slice().sort(), ['gf6', 'ss3'], 'and GF 6 + SS 3');
+  assert(!sur.some(v => v.sheets.includes('rg16') || v.sheets.includes('rg29')), 'a Rose Gold sheet that shares orders with two units goes with neither');
+  assert.deepEqual(byFirst('gf4').orders, ['4200000502', '4200000503'], 'the unit says which orders tie it'); assert.deepEqual(byFirst('gf8').keeps.slice().sort(), ['gf1', 'gf2', 'rg16', 'rg29', 'ss1'], 'what is enough: group C (the Rose Gold sheets are no unit of their own)');
   assert(!sur.some(v => v.sheets.includes('gf1') || v.sheets.includes('ss1') || v.sheets.includes('gf2')), 'group C is never called spare');
   // (d) the two uncut Rose Gold sheets
   const nr = ofRule(r, 'notReady');
@@ -83,7 +86,7 @@ function owner2({ tie = 'B', setId = 'set-2' } = {}) {
   assert(nr.every(v => /green line is not cut/.test(v.message) && /Set 2/.test(v.message)));
   // (f) A, B and the loose GF 8 joined after the set had formed (it formed when SS 1 joined GF 1); GF 2 came with its group (the cardinal rule), the Rose Gold sheets join by their own press
   const late = ofRule(r, 'closedJoin');
-  assert.deepEqual(late.map(v => v.sheets.slice().sort()).sort((a, b) => a[0] < b[0] ? -1 : 1), [['gf3', 'gf4', 'gf5', 'ss2'], ['gf6', 'gf7', 'ss3', 'ss4'], ['gf8']].sort((a, b) => a[0] < b[0] ? -1 : 1), 'what joined a closed set:\n  ' + show(r));
+  assert.deepEqual(late.map(v => v.sheets.slice().sort()).sort((a, b) => a[0] < b[0] ? -1 : 1), [['gf3', 'gf4', 'ss2'], ['gf5'], ['gf6', 'ss3'], ['gf7', 'ss4'], ['gf8']].sort((a, b) => a[0] < b[0] ? -1 : 1), 'what joined a closed set:\n  ' + show(r));
   assert.equal(r.sets[0].formedAt, 1001);
   // R11: GF Draft 10 shares an order with unit B and is not full: the group should not be in a set at all
   const pp = ofRule(r, 'partialPartner'); assert.equal(pp.length, 1); assert.equal(pp[0].partial, 'gf-draft-10'); assert.deepEqual(r.partners.map(p => [p.sheet, p.kind]), [['gf-draft-10', 'partial']]);
@@ -111,11 +114,13 @@ function owner2({ tie = 'B', setId = 'set-2' } = {}) {
   assert.deepEqual(e0.sets.map(s => [s.name, sorted(s.sheetIds)]), [['Set 2', C], ['Set 3', Bm], ['Set 4', A1], ['Set 5', A2]],
     'no partial tie: Set 2 = group C (GF 1, GF 2, SS 1), Set 3 = GF 3, GF 4, SS 2, Set 4 = GF 6 + SS 3, Set 5 = GF 7 + SS 4; GF 5 and the loose GF 8 wait');
   assert.deepEqual(e0.waiting.filter(w => w.id === 'gf8' || w.id === 'gf5').map(w => [w.id, w.why]).sort(), [['gf5', 'The set has formed, so this sheet waits for the next set: it needs a completed SS sheet with it'], ['gf8', 'The set has formed, so this sheet waits for the next set: it needs a completed SS sheet with it']]);
-  assert.deepEqual(e0.partners.map(p => [p.setName, p.sheet, p.kind]).sort(), [['Set 3', 'rg16', 'notReady'], ['Set 4', 'rg29', 'notReady'], ['Set 5', 'rg29', 'notReady']].sort(), 'the Rose Gold sheets are partners to add, in the set of each sheet they share an order with');
+  // (Paul, 26 Oct 2026: a Rose Gold sheet is the partner of its ONE set: RG 16's (GF 5 is in no set), and RG 29's earliest-formed partner set, Set 4; its order with GF 7 of Set 5 is a known split)
+  assert.deepEqual(e0.partners.map(p => [p.setName, p.sheet, p.kind]).sort(), [['Set 3', 'rg16', 'notReady'], ['Set 4', 'rg29', 'notReady']].sort(), 'the Rose Gold sheets are partners to add, each of its one set');
   const r0 = I.check(e0.sets, f0.sheets);
   assert.equal(r0.ok, true, 'the correct formation is accepted:\n  ' + show(r0));
-  assert(r0.sets.every(s => !s.canApprove || s.id === 'set-2'), 'a set with a partner to add cannot be approved for laser cutting; the one with none can');
-  assert.deepEqual(r0.sets.map(s => s.canApprove), [true, false, false, false]);
+  assert(r0.sets.every(s => !s.canApprove || s.id === 'set-2' || s.id === 'set-5'), 'a set with a partner to add cannot be approved for laser cutting; the ones with none can');
+  assert.deepEqual(r0.sets.map(s => s.canApprove), [true, false, false, true]);
+  assert.deepEqual(r0.splits.map(x => [x.sheet, x.homeName, x.with.slice().sort()]).sort(), [['rg16', 'Set 3', ['gf5']], ['rg29', 'Set 4', ['gf7']]], 'what each Rose Gold sheet shares outside its one set is said as a known split');
   assert.deepEqual(r0.sets.map(s => s.units.length), [1, 1, 1, 1], 'each set is exactly one unit');
   // the same formation by hand, with the joinedAt times of an assembly that formed them in turn: still accepted (nothing joined late)
   const hand = owner2({ tie: null }); const times = { gf1: 10, ss1: 11, gf2: 12, gf3: 20, gf4: 21, ss2: 23, gf6: 30, ss3: 32, gf7: 40, ss4: 41 }; hand.sheets.forEach(s => { s.joinedAt = times[s.id]; });
@@ -124,9 +129,9 @@ function owner2({ tie = 'B', setId = 'set-2' } = {}) {
   const rh = I.check(handSets, hand.sheets); assert.equal(rh.ok, true, 'the hand-made correct formation is accepted:\n  ' + show(rh));
   // ... and the sets are exactly what the checker says one big set should have been: merging any two of them is refused
   for (const [a, b] of [[0, 1], [0, 2], [1, 2], [2, 3]]) { const merged = [{ id: 'm', name: 'Set 2', sheetIds: handSets[a].sheetIds.concat(handSets[b].sheetIds) }], rm = I.check(merged, hand.sheets); assert.equal(ofRule(rm, 'surplus').length, 1, 'two valid units in one set: one is spare'); }
-  // RG 16 is cut (and its backs approved): it can join now, so it ties again: GF 5 belongs with GF 4 (and RG 16 with them)
+  // RG 16 is cut (and its backs approved): it joins its one set, Set 3 (GF 4's); it still ties nothing, so GF 5 waits for an SS sheet of its own (Paul, 26 Oct 2026: never ties two units, cut or uncut)
   const cut = owner2({ tie: null }); cut.rg16.roseCutAt = 5; cut.rg16.backsApproved = true;
-  assert.deepEqual(I.expected(cut.sheets, { firstSeq: 2 }).sets.map(s => sorted(s.sheetIds)), [C, ['gf3', 'gf4', 'gf5', 'rg16', 'ss2'], A1, A2], 'a cut Rose Gold sheet ties the sheets it shares orders with, as every sheet that can join');
+  assert.deepEqual(I.expected(cut.sheets, { firstSeq: 2 }).sets.map(s => sorted(s.sheetIds)), [C, ['gf3', 'gf4', 'rg16', 'ss2'], A1, A2], 'a cut Rose Gold sheet goes into its one set and ties nothing');
 
   // the partial GF Draft 10 ties to a unit: that whole unit waits (with the draft) until the draft is full; the other units form as before
   const held = { A: [['Set 2', C], ['Set 3', Bm], ['Set 4', A2]], B: [['Set 2', C], ['Set 3', A1], ['Set 4', A2]], C: [['Set 2', Bm], ['Set 3', A1], ['Set 4', A2]] };
@@ -176,15 +181,20 @@ function owner2({ tie = 'B', setId = 'set-2' } = {}) {
     ['uncut Rose Gold', rose('r1'), false, /green line is not cut/], ['cut Rose Gold, backs not reported', rose('r1', { roseCutAt: 5 }), true],
     ['Rose Gold, the Cut Sheet press approved', rose('r1', { cutApproved: true }), true], ['cut Rose Gold, backs not approved: the set\'s Approve waits for them, no rule is broken (Paul, 26 Oct 2026)', rose('r1', { roseCutAt: 5, backsApproved: false }), true],
     ['uncut 14K', k14('r1'), false, /green line is not cut/], ['14K cut and backs approved', k14('r1', { roseCutAt: 5, backsApproved: true }), true],
-    ['10K, laser cut', k10('r1', { laserDoneAt: 9 }), true], ['10K uncut, backs not approved', k10('r1', { backsApproved: false }), false, /green line is not cut.*back engraving is not approved/],
+    ['10K, laser cut', k10('r1', { laserDoneAt: 9 }), true], ['10K uncut, backs not approved: the green line is the rule, the backs a wait (Paul, 26 Oct 2026)', k10('r1', { backsApproved: false }), false, /green line is not cut/],
+    ['Rose Gold, the Cut Sheet press approved, backs not approved: a plain wait, no rule broken (Paul, 26 Oct 2026)', rose('r1', { cutApproved: true, backsApproved: false }), true],
     ['a full Rose Gold sheet takes the rest of the metal whole: no line', rose('r1', { roseFull: true, backsApproved: true }), true],
     ['cut, backs not approved by the readiness report: the set\'s Approve waits (Paul, 26 Oct 2026)', rose('r1', { roseCutAt: 5, laser: { stages: { approval: false }, approved: 0, required: 2 } }), true],
-    ['uncut, backs not approved by the readiness report', rose('r1', { laser: { stages: { approval: false }, approved: 0, required: 2 } }), false, /green line is not cut.*back engraving is not approved/],
+    ['uncut, backs not approved by the readiness report', rose('r1', { laser: { stages: { approval: false }, approved: 0, required: 2 } }), false, /green line is not cut/],
     ['backs approved by the readiness report', rose('r1', { roseCutAt: 5, laser: { stages: { approval: true } } }), true]]) {
     const all = base().concat([sh]); r = I.check([S('x', all)], all);
     assert.equal(ofRule(r, 'notReady').length === 0, ok, label + ':\n  ' + show(r)); if (why) assert.match(ofRule(r, 'notReady')[0].message, why, label);
     assert.equal(ofRule(r, 'surplus').length, 0, label + ': a gold-family sheet is a person\'s choice, never "spare"');
+    if (why) assert.doesNotMatch(ofRule(r, 'notReady')[0].message, /back engraving is not approved/, label + ': an open back engraving is never the rule a set in breaks');
   }
+  // (Paul, 26 Oct 2026: "we shouldn't double hold things") a green-line sheet in a set whose back engraving is open: the set's Approve waits, with one plain line; no violation, no Rebuild
+  { const all = base().concat([rose('r1', { cutApproved: true, backsApproved: false })]); r = I.check([S('x', all)], all);
+    assert.equal(r.ok, true, show(r)); assert.deepEqual(r.waits.map(w => [w.sheet, w.kind, w.line]), [['r1', 'backs', 'waiting for the back engraving approval of RG Sheet 7']]); assert.equal(r.sets[0].canApprove, false, 'its Approve stays grey'); }
   // (e) the cardinal rule: one order, two sets
   const p = gf('p1', 1), q = ss('q1', 1), p2 = gf('p2', 2), q2 = ss('q2', 2); link(p, q2, 4400000001);
   r = I.check([S('one', [p, q]), S('two', [p2, q2])], [p, q, p2, q2]); const card = ofRule(r, 'cardinal');

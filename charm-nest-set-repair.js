@@ -488,7 +488,9 @@ dialog.setRepairDlg{width:min(540px,94vw)}
     const b = st && st.setBreaks; if (!b || !b.line) return '';
     // (SETFIX A) the set says exactly what to press, and the press is right here: "Cut RG Sheet 16" for a sheet whose green line is not cut, and "Rebuild this set correctly"
     const r = b.remedy, cut = r && r.kind === 'cut' ? `<button type="button" class="btn sm" data-cut-set="${esc(st.setId)}">${esc(r.button)}</button>` : '';
-    return `<div class="setBreak" data-set-break="${esc(st.setId)}" role="note"><span class="setBreakLine" data-set-break-line title="${esc((b.rules || []).join(' · ') + ' · docs/charm-nest/set-rules.md')}">${esc(b.line)}</span>${cut}<button type="button" class="btn sm" data-rebuild-set="${esc(st.setId)}">${REBUILD}</button>${r && r.say ? `<span class="setBreakTodo" data-set-break-todo>${esc(r.say)}</span>` : ''}<span class="setBreakSay" data-set-break-say hidden></span></div>`;
+    // (Paul, 26 Oct 2026: a back engraving to approve is no rebuild: no Rebuild button for it, ever; the press is in the Engraving tab, said in the line)
+    const rebuild = r && r.kind === 'backs' ? '' : `<button type="button" class="btn sm" data-rebuild-set="${esc(st.setId)}">${REBUILD}</button>`;
+    return `<div class="setBreak" data-set-break="${esc(st.setId)}" role="note"><span class="setBreakLine" data-set-break-line title="${esc((b.rules || []).join(' · ') + ' · docs/charm-nest/set-rules.md')}">${esc(b.line)}</span>${cut}${rebuild}${r && r.say ? `<span class="setBreakTodo" data-set-break-todo>${esc(r.say)}</span>` : ''}<span class="setBreakSay" data-set-break-say hidden></span></div>`;
   }
 
   /** The page's own state the repair reads and drives. A test passes its own `env`. */
@@ -744,6 +746,11 @@ dialog.setRepairDlg{width:min(540px,94vw)}
     const diag = diagnose(list(setDocs), rows, { viaGate: via, ...(o || {}) });
     for (const g of list(groups)) {
       if (!g || !g.setId) continue;
+      // (Paul, 26 Oct 2026: "we shouldn't double hold things") what the set's Approve for laser cutting waits for that is no rule it breaks: a green-line sheet's back engraving still to approve. One plain
+      //  waiting line (CharmNestReadiness reads set.setWaits: Approve stays grey), never the red line or Rebuild. Derived at every drawing, never saved
+      const ws = ((diag && diag.result && diag.result.waits) || []).filter(w => w.set === g.setId);
+      if (ws.length) { const who = ws.map(w => w.name), l = `waiting for the back engraving approval of ${who.length < 2 ? who.join('') : who.slice(0, -1).join(', ') + ' and ' + who[who.length - 1]}`; g.setWaits = { line: l.charAt(0).toUpperCase() + l.slice(1), short: l, items: ws.map(w => Object.assign({}, w)) }; }
+      else delete g.setWaits;
       const b = breaksOf(diag, g.setId);
       if (b) {
         g.setBreaks = b;

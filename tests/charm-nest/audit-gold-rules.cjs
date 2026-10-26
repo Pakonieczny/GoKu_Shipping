@@ -16,8 +16,9 @@ for (const tied of [true, false]) {
   link(gf, ss, '7100000001'); if (tied) link(gf, rg, '7100000002');
   const set = { setId: 's-2', seq: 2, runId: RUN, day: '2026-10-25', sheetIds: ['a-gf', 'a-ss', 'a-rg'], status: 'open' };
   const d0 = SRp.diagnose([set], [gf, ss, rg]).bySet['s-2'];
-  assert(d0, 'the set breaks R12 (uncut, backs not approved)'); assert.equal(d0.remedy.kind, 'cut'); assert.equal(d0.remedy.then, 'backs', 'the remedy: Cut, and approve the back engraving (a Rebuild can never move a cut sheet)');
-  assert(/back engraving/.test(d0.remedy.say), 'the remedy names the back engraving: ' + d0.remedy.say);
+  // (Paul, 26 Oct 2026: "we shouldn't double hold things": a green-line sheet's open back engraving is what its set's Approve waits for, never a rule the set breaks: the remedy is the Cut alone)
+  assert(d0, 'the set breaks R12 (uncut)'); assert.equal(d0.remedy.kind, 'cut'); assert.equal(d0.remedy.then, undefined, 'the remedy: Cut (the back engraving is a wait, not a break)');
+  assert(!/back engraving/.test(d0.line), 'the red line never names the back engraving: ' + d0.line);
   // the person follows every press the remedy names, one after the other, until the set follows the rules (or the remedy repeats itself: a dead end)
   let cur = rg, d = d0, steps = [], seen = new Set();
   while (d && steps.length < 4) {

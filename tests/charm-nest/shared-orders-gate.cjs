@@ -99,7 +99,10 @@ const base = () => silver(9, ['9999_1_1'], { releaseFull: true });
   await Gate.changeMembership('gold14k', true, rule.list); assert.deepEqual(inSet(), ['14K1', '14K2', '14K3', 'GF8', 'SS9']); assert.equal(saved.get('gold14k-1').solidIncluded, true);
   rule = Gate.cardinalFor(c, false); assert.deepEqual(rule.list.map(p => p.page).sort(), [1, 2, 3], 'taking one out takes the chain out'); await Gate.changeMembership('gold14k', false, rule.list); assert.deepEqual(inSet(), ['GF8', 'SS9']);
   // a full gold sheet that shares an order is in the set on its own: the 14K sheet cannot be taken out from under it
-  await Gate.changeMembership('gold14k', true, [a, b, c]); const gf = gold(1, ['7001_2_1'], { releaseFull: true }); pages.push(gf); await Gate.assemble(run); assert.deepEqual(inSet(), ['14K1', '14K2', '14K3', 'GF1', 'GF8', 'SS9'], 'the gold sheet arrives after the chain is in: it joins the set its mate is in, though that set has formed');
+  // (Paul, 26 Oct 2026: a 10K / 14K / Rose Gold sheet never ties a GF / SS sheet to a set: "not a reason to pull that other unit in". The full GF sheet that shares an order only with the 14K sheet
+  //  waits for its own SS sheet; the order is a known split, said plainly)
+  await Gate.changeMembership('gold14k', true, [a, b, c]); const gf = gold(1, ['7001_2_1'], { releaseFull: true }); pages.push(gf); await Gate.assemble(run); assert.deepEqual(inSet(), ['14K1', '14K2', '14K3', 'GF8', 'SS9'], 'the gold sheet arrives after the chain is in: the 14K sheet does not pull it into the formed set');
+  assert(/ships in two parts|ship in two parts/.test(gf.cardinalNote || '') || /needs a completed SS sheet/.test(gf.setWait || ''), 'it says why: ' + gf.cardinalNote + ' / ' + gf.setWait);
   rule = Gate.cardinalFor(a, false); assert.equal(rule.blocked, '14K Sheet 1 stays with GF Sheet 1: they share an order.', rule.blocked); assert(!/reason|stay in the same set|take the order off/.test(rule.blocked), 'names only: no reasons, no instruction');
   // a pulled solid sheet is in the set without its own tick: the record says null (never "ticked"), the library row says it is in
   reset([gold(1, ['8001_1_1'], { releaseFull: true }), sheet('gold14k', 1, ['8001_1_2'], { roseCutAt: 1760000000000 }), base()]);
@@ -117,8 +120,10 @@ const base = () => silver(9, ['9999_1_1'], { releaseFull: true });
   assert(/^Waits: order 9001 \(its left and right earrings\) shared with GF Sheet 2, which is not full yet, so they stay out of a set together$/.test(pl.cardinalHold), pl.cardinalHold);
   pr.releaseFull = true; await Gate.assemble(run); assert.deepEqual(inSet(), ['GF1', 'GF2', 'SS9'], 'the sheet with the right earring is full: both sheets come in together');
   // a 14K sheet (its line cut) with the right earring is pulled in with the one that holds the left: the reason says it is a pair
-  const ql = sideOn(gold(1, ['9201_1_1', '9202_1_1'], { releaseFull: true }), 0, 'L'), qr = sideOn(sheet('gold14k', 2, ['9201_1_2'], { roseCutAt: 1760000000000 }), 0, 'R');
-  reset([ql, qr, base()]); Gate.cardinalApply(run, pages, []);
+  // (Paul, 26 Oct 2026: a green-line sheet goes into its ONE set, the set of the GF / SS sheet it shares the order with, once that set exists)
+  const ql = sideOn(gold(1, ['9201_1_1', '9202_1_1'], { releaseFull: true }), 0, 'L'), qr = sideOn(sheet('gold14k', 2, ['9201_1_2']), 0, 'R');
+  reset([ql, qr, base()]); await Gate.assemble(run); assert.deepEqual(inSet(), ['GF1', 'SS9'], 'uncut: it waits outside the set of its order mate');
+  qr.roseCutAt = 1760000000000; Gate.cardinalApply(run, pages, Gate.openSets(run.runId));
   assert(/Shares order 9201 \(its left and right earrings\) with GF Sheet 1/.test(Gate.policy(qr, 1).reason), Gate.policy(qr, 1).reason);
   await Gate.assemble(run); assert.deepEqual(inSet(), ['14K2', 'GF1', 'SS9']);
   // the right earring's sheet is still being nested: the full sheet is not held out for it, the set forms and names it

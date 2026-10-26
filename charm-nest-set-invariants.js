@@ -111,14 +111,16 @@
     return `${R.metalClass(rec) || 'A'} ${setId ? 'Sheet' : 'Draft'} ${(setId ? rec.sheetIndex : 0) || rec.page || 1}`;
   }
 
-  /** The gaps of a Rose Gold / 10K / 14K sheet that is in a set (or about to be): [] when none. R12: (a) its green line is cut, or the person said yes to the Cut Sheet press, and (b) its back engraving is approved. */
-  function goldGaps(rec) {
+  /** The gaps of a Rose Gold / 10K / 14K sheet that is in a set (or about to be): [] when none. R12: (a) its green line is cut, or the person said yes to the Cut Sheet press, and (b) its back engraving is approved.
+   *  o.inSet: the sheet IS in a set: only (a) is a gap; its open back engraving is what the set's Approve for laser cutting waits for (waitsOf), never a rule the set breaks. */
+  function goldGaps(rec, o) {
     const cls = SR().metalClass(rec), gaps = [];
     if (!GOLD_FAMILY.includes(cls)) return gaps;
     if (!(isCut(rec) || rec.cutApproved === true || rec.roseFull === true)) gaps.push('its green line is not cut (the Cut Sheet press is not approved either)');
     // (Paul, 26 Oct 2026: a CUT sheet's back engraving is the set's approval to wait for (the Library holds Approve for laser cutting until every back is approved), not a rule the set breaks:
-    //  the automatic cut joins it to its set before its backs are approved, and it is not held twice)
-    if (isCut(rec)) return gaps;
+    //  the automatic cut joins it to its set before its backs are approved, and it is not held twice. The same for any green-line sheet IN a set: "we shouldn't double hold things", so the set's
+    //  Approve stays grey with a plain waiting line, never the red "breaks your rules" line with Rebuild, which no rebuild could ever put right)
+    if (isCut(rec) || (o && o.inSet)) return gaps;
     if (rec.backsApproved === false) gaps.push('its back engraving is not approved');
     else if (rec.backsApproved !== true) {
       const E = SE();
@@ -150,18 +152,25 @@
          anchors          a sheet in a set committed / completed / replaced (SetRules.exempt), and a sheet outside every set that the laser cut or that is a Rose Gold / 10K / 14K sheet that cannot join yet
          unitAnchors(st)  those, and every sheet in ANOTHER set: the units a set's minimality (R7) is judged by */
     const exemptSet = new Set(setList.filter(st => R.exempt(st.doc)).map(st => st.id));
-    const anchors = [...recs.values()].filter(r => !r.archived && (setOf.has(r.id) ? exemptSet.has(setOf.get(r.id)) : (+r.laserDoneAt > 0 || (GOLD_FAMILY.includes(R.metalClass(r)) && goldGaps(r).length > 0)))).map(r => r.id);
+    // (Paul, 26 Oct 2026: a Rose Gold / 10K / 14K sheet never ties two GF / SS units together, cut or uncut: EVERY green-line sheet is an anchor. Before, a cut one (or one in a set) tied the GF / SS sheets
+    //  it shared orders with, so an RG sheet filled before the intake rule chained GF Sheet 2 into Set 1 and this check called Set 1 right)
+    const isGreen = id => { const r = recs.get(id); return !!r && GOLD_FAMILY.includes(R.metalClass(r)); };
+    const anchors = [...recs.values()].filter(r => !r.archived && (GOLD_FAMILY.includes(R.metalClass(r)) || (setOf.has(r.id) ? exemptSet.has(setOf.get(r.id)) : +r.laserDoneAt > 0))).map(r => r.id);
     const formation = anc => typeof S.formation === 'function' ? S.formation(norm, ends, R.PARTIAL_BRIDGE, anc) : { groups: S.groups(norm), bridges: [] };
     const F = formation(anchors);
     const groups = F.groups, bridges = F.bridges, groupOfId = new Map(), normById = new Map(norm.map(n => [n.id, n])), anchorSet = new Set(anchors);
     for (const g of groups) for (const id of g.ids) if (!groupOfId.has(id)) groupOfId.set(id, g);
     const unitGroups = st => formation(anchors.concat([...setOf].filter(([, sid]) => sid !== st.id).map(([id]) => id))).groups;
-    return { R, S, opts: opts || {}, recs, setList, setOf, twice, norm, normById, groups, bridges, groupOfId, anchorSet, unitGroups, name: id => nameById.get(id) || id };
+    // the ONE set of each green-line sheet (charm-nest-shared-orders.js greenHomes: its fixed set, the set it was matched to, the set it is in, else the earliest-formed set of its partners)
+    const rankOf = sid => { const st = setList.find(s => s.id === sid); return st ? [str(st.doc.day), st.seq] : ['~', Infinity]; };
+    const homes = typeof S.greenHomes === 'function' ? S.greenHomes(norm, { green: n => isGreen(n.id), rank: rankOf, open: sid => !exemptSet.has(sid),
+      fixed: n => { const r = recs.get(n.id), sid = setOf.get(n.id); return r && sid && (isCut(r) || exemptSet.has(sid)) ? sid : null; }, matched: n => { const r = recs.get(n.id); return r && r.autoMatched ? str(r.autoMatched) : null; } }) : null;
+    return { R, S, opts: opts || {}, recs, setList, setOf, twice, norm, normById, groups, bridges, groupOfId, anchorSet, unitGroups, homes, isGreen, name: id => nameById.get(id) || id };
   }
 
   function evaluate(setsIn, sheetsIn, opts) {
     const C = context(setsIn, sheetsIn, opts), { R, S, recs, setList, setOf, groups, bridges, groupOfId } = C, o = C.opts;
-    const violations = [], partners = [], warnings = [], notes = [], summary = [], seen = new Set();
+    const violations = [], partners = [], warnings = [], notes = [], summary = [], seen = new Set(), splits = [], waits = [];
     const add = (rule, st, sheets, message, extra) => {
       const id = `${rule}:${st ? st.id : '-'}:${sheets.join('+')}`; if (seen.has(id)) return; seen.add(id);
       violations.push(Object.assign({ rule, ruleNo: RULE_NO[rule], ...(LETTER[rule] ? { letter: LETTER[rule] } : {}), id, set: st ? st.id : null, setName: st ? st.name : '', sheets, names: sheets.map(C.name), message }, extra || {}));
@@ -194,9 +203,12 @@
       for (const r of live) if (R.isPartial(r)) add('partial', st, [r.id], `${C.name(r.id)} is in ${st.name} but is not full yet${R.fillWords(r)}: a partial sheet never joins a set`);
 
       // ── (d) R12: a Rose Gold / 10K / 14K sheet in the set without its green line cut (or approved) or its back engraving approved ──
+      const greenPartnersIn = r => ((C.homes && C.homes.get(r.id)) || { partners: [] }).partners.filter(p => st.ids.includes(p));
       for (const r of live) {
-        const gaps = goldGaps(r); if (!gaps.length) continue;
-        const tied = [...new Set(live.filter(m => m !== r && (groupOfId.get(r.id) || { ids: [] }).ids.includes(m.id)).map(m => m.id))], partnerOf = tied.map(C.name);
+        // (Paul, 26 Oct 2026: its back engraving open is what the set's Approve for laser cutting waits for, a plain waiting line: never a rule it breaks)
+        if (GOLD_FAMILY.includes(R.metalClass(r)) && goldGaps(r).some(x => /back engraving/.test(x)) && !goldGaps(r, { inSet: true }).length) waits.push({ set: st.id, setName: st.name, sheet: r.id, name: C.name(r.id), kind: 'backs', line: `waiting for the back engraving approval of ${C.name(r.id)}` });
+        const gaps = goldGaps(r, { inSet: true }); if (!gaps.length) continue;
+        const tied = C.homes ? greenPartnersIn(r) : [...new Set(live.filter(m => m !== r && (groupOfId.get(r.id) || { ids: [] }).ids.includes(m.id)).map(m => m.id))], partnerOf = tied.map(C.name);
         add('notReady', st, [r.id], `${C.name(r.id)} is in ${st.name} but ${and(gaps)}: a ${WORD[R.metalClass(r)]} sheet joins a set only once its green line is cut (or the Cut Sheet press is approved) and its back engraving is approved. It belongs outside the set, named as a partner to add${partnerOf.length ? ` (it shares orders with ${and(partnerOf)})` : ''}`, { reasons: gaps, tied });   // (tied: the sheets of the set it shares orders with; charm-nest-set-repair.js remedyOf reads it)
       }
 
@@ -207,20 +219,27 @@
       for (const u of units) {
         if (!u.sheets.length || !u.sheets.every(r => spare.has(r.id))) continue;
         const ids = u.sheets.slice().sort(byKind).map(r => r.id), names = ids.map(C.name), tied = [...new Set(ug.filter(g => g.ids.some(i => ids.includes(i))).flatMap(g => g.orders))].filter(oid => ids.filter(i => { const n = C.normById.get(i); return n && n.pieces.some(p => p.orderId === oid); }).length > 1);
-        const keeps = and(keep.flatMap(k => k.sheets).sort(byKind).map(r => C.name(r.id)));
-        add('surplus', st, ids, ids.length === 1
+        // (Paul, 26 Oct 2026) the green-line sheets of the set whose partners in it are all in this unit are ITS green-line sheets: they leave with it. A CUT one stays (a recorded cut keeps a sheet in the set
+        //  it is in, R12) and it holds nothing: "never ties two GF/SS units together, whether cut or uncut", so the unit leaves without it and their order is a known split (the live Set 1's RG Sheet 2)
+        const own = C.homes ? live.filter(r => GOLD_FAMILY.includes(R.metalClass(r)) && !isCut(r) && !ids.includes(r.id) && (() => { const p = greenPartnersIn(r); return p.length > 0 && p.every(i => ids.includes(i)); })()).map(r => r.id) : [];
+        const keeps = and(keep.flatMap(k => k.sheets).filter(r => !own.includes(r.id)).sort(byKind).map(r => C.name(r.id)));
+        const withOwn = own.length ? `; ${and(own.map(C.name))}, which ${own.length === 1 ? 'shares' : 'share'} orders only with ${ids.length === 1 ? 'it' : 'them'}, ${own.length === 1 ? 'goes' : 'go'} with ${ids.length === 1 ? 'it' : 'them'}` : '';
+        add('surplus', st, ids.concat(own), (ids.length === 1
           ? `${names[0]} shares no order with the others and ${st.name} is valid without it${keeps ? ` (${keeps} are enough)` : ''}`
-          : `${and(names)} are tied to each other by ${orderWords(tied)} but share no order with the rest of ${st.name}, and ${st.name} is valid without them${keeps ? ` (${keeps} are enough)` : ''}`,
-        { unit: ids, orders: tied, keeps: keep.flatMap(k => k.sheets.map(r => r.id)) });
+          : `${and(names)} are tied to each other by ${orderWords(tied)} but share no order with the rest of ${st.name}, and ${st.name} is valid without them${keeps ? ` (${keeps} are enough)` : ''}`) + withOwn,
+        { unit: ids.concat(own), orders: tied, keeps: keep.flatMap(k => k.sheets.map(r => r.id)).filter(i => !own.includes(i)) });
       }
 
       // ── (e) R9 / R10 / R11: the sheets outside this set that share an order with it ──
       const inside = new Set(st.ids), pend = o.partialPartners === 'pending' || legacy.has(st.id);
       for (const g of groups.filter(g => g.ids.some(i => inside.has(i)))) {
-        const mine = g.ids.filter(i => inside.has(i)), outside = g.ids.filter(i => !inside.has(i) && !setOf.has(i));
+        const mine = g.ids.filter(i => inside.has(i)), outside = g.ids.filter(i => !inside.has(i) && !setOf.has(i)), mineCore = mine.filter(i => !C.isGreen(i));
         for (const id of outside) {
           const r = recs.get(id); if (!r || r.archived || +r.laserDoneAt > 0 || waitingIds.has(id)) continue;      // (SETFIX 19 Oct 2026: a sheet the laser cut moves to no set: the order is split for good, like an order mate in a committed set)
           const cls = R.metalClass(r), n = C.normById.get(id), because = g.orders.filter(oid => n && n.pieces.some(p => p.orderId === oid)), withNames = mine.map(C.name);
+          // (Paul, 26 Oct 2026: a GF / SS sheet tied to this set only through a green-line sheet is no partner of it, a green-line sheet is the partner of its ONE set only: a known split, `splits`)
+          if ((cls === 'GF' || cls === 'SS') && C.homes && !mineCore.length) continue;
+          if (GOLD_FAMILY.includes(cls) && C.homes && ((C.homes.get(id) || {}).home || null) !== st.id) continue;
           if (cls === 'GF' || cls === 'SS') {
             if (R.isPartial(r)) {
               if (!partners.some(x => x.set === st.id && x.sheet === id && x.kind === 'partial')) { partners.push({ set: st.id, setName: st.name, sheet: id, name: C.name(id), kind: 'partial', because, with: withNames, reasons: [`it is not full yet${R.fillWords(r)}: it joins ${st.name} once it is full`] }); row.partners++; }
@@ -266,11 +285,11 @@
     // ── (e) R9: a group spread over two sets ──
     // (SETFIX, Paul 19 Oct 2026: read per ORDER: an order whose pieces are on sheets of two sets. A group whose sets are tied only through a sheet outside every set has no such order: that sheet is
     //  the fault, and it is named as the completed sheet that is in no set ('cardinal' above), never as "orders on sheets of different sets", which those orders are not)
-    const idxR9 = S.index(C.norm);
+    const idxR9 = S.index(C.norm), core = i => !C.homes || !C.isGreen(i);      // (Paul, 26 Oct 2026: a green-line sheet's pieces in its one set while its partners are in another is a known split, `splits`, never this)
     for (const g of groups) {
-      const crossing = g.orders.filter(oid => { const m = idxR9.get(oid); return !!m && new Set([...m.keys()].map(i => setOf.get(i)).filter(Boolean)).size > 1; });
+      const crossing = g.orders.filter(oid => { const m = idxR9.get(oid); return !!m && new Set([...m.keys()].filter(core).map(i => setOf.get(i)).filter(Boolean)).size > 1; });
       if (!crossing.length) continue;
-      const on = [...new Set(crossing.flatMap(oid => [...idxR9.get(oid).keys()]))].filter(i => setOf.has(i)), sets = [...new Set(on.map(i => setOf.get(i)))];
+      const on = [...new Set(crossing.flatMap(oid => [...idxR9.get(oid).keys()]))].filter(i => setOf.has(i) && core(i)), sets = [...new Set(on.map(i => setOf.get(i)))];
       const st = setList.find(s => s.id === sets[0]), by = sets.map(sid => `${(setList.find(s => s.id === sid) || {}).name || sid}: ${and(on.filter(i => setOf.get(i) === sid).map(C.name))}`);
       if (o.skipExempt && setList.filter(s => sets.includes(s.id)).some(s => R.exempt(s.doc))) continue;      // (a mate in a set sent to the station, completed or replaced is fixed: the open set is not at fault, the work goes on)
       add('cardinal', st, on, `${cap(orderWords(crossing))} ${crossing.length === 1 ? 'has' : 'have'} pieces on sheets of different sets (${by.join('; ')}): sheets that share a multi-piece order must always be in the same set`, { sets, orders: crossing });
@@ -298,8 +317,16 @@
       for (const [cls, ids] of byCls) if (ids.length > 1) warnings.push({ rule: 'orderSplit', ruleNo: RULE_NO.orderSplit, id: `orderSplit:${oid}:${cls}`, set: setOf.get(ids[0]) || null, sheets: ids, names: ids.map(C.name), message: `Order ${oid} has pieces on ${and(ids.map(C.name))}: a multi-piece order stays on ONE sheet of its colour, otherwise same-colour sheets chain into one unit` });
     }
 
-    for (const row of summary) row.canApprove = !violations.some(x => x.set === row.id) && !partners.some(p => p.set === row.id);
-    return { ok: violations.length === 0, violations, partners, warnings, sets: summary, notes };
+    // ── (Paul, 26 Oct 2026) the orders a green-line sheet shares with GF / SS sheets outside its ONE set: a known split, said in a plain line, never a violation, a partner or a pull ──
+    if (C.homes) for (const [id, h] of C.homes) {
+      const r = recs.get(id); if (!r || r.archived || !h.home || !h.split.length) continue;
+      const st = setList.find(s => s.id === h.home), homeName = st ? st.name : 'its set', where = setOf.get(id) === h.home ? `is in ${homeName}` : `belongs to ${homeName}`;
+      const os = [...new Set(h.split.flatMap(x => x.orders))].sort(), mates = h.split.map(x => x.sheet), word = WORD[R.metalClass(r)] || 'green-line';
+      splits.push({ rule: 'greenSplit', sheet: id, name: C.name(id), home: h.home, homeName, orders: os, with: mates, withNames: mates.map(C.name),
+        message: `${C.name(id)} ${where} only (a ${word} sheet belongs to one set): ${orderWords(os)} it shares with ${and(mates.map(C.name))} ${os.length === 1 ? 'ships' : 'ship'} in two parts` });
+    }
+    for (const row of summary) row.canApprove = !violations.some(x => x.set === row.id) && !partners.some(p => p.set === row.id) && !waits.some(w => w.set === row.id);
+    return { ok: violations.length === 0, violations, partners, warnings, sets: summary, notes, splits, waits };
   }
 
   /** The formation the rules make from these sheets, every one taken as free (membership, draft and setId are not read):
@@ -315,7 +342,10 @@
     const sets = f.sets.map((l, k) => ({ id: `set-${first + k}`, name: `Set ${first + k}`, sheetIds: l.map(r => r.id).sort((a, b) => { const x = C.recs.get(a), y = C.recs.get(b); return (R.metalClass(x) === R.metalClass(y) ? 0 : R.metalClass(x) === 'GF' ? -1 : 1) || ((+x.page || +x.sheetIndex || 0) - (+y.page || +y.sheetIndex || 0)); }) }));
     // a Rose Gold / 10K / 14K sheet whose green line is cut (or approved) and whose back engraving is approved goes with the unit it shares an order with (R9 + R12); every other one is a partner to add
     const homeOf = new Map(); sets.forEach(s => s.sheetIds.forEach(id => homeOf.set(id, s)));
-    for (const g of C.groups) {
+    // (Paul, 26 Oct 2026: into its ONE set, greenHomes over the sets made here: the set it was matched to, else the earliest-formed of its partners' sets; its orders with the others are a known split)
+    const GH = typeof C.S.greenHomes === 'function' ? C.S.greenHomes(C.norm.map(n => Object.assign({}, n, { setId: homeOf.has(n.id) ? homeOf.get(n.id).id : null })), { green: n => C.isGreen(n.id), rank: sid => sets.findIndex(s => s.id === sid), matched: n => { const r = C.recs.get(n.id); return r && r.autoMatched ? str(r.autoMatched) : null; }, fixed: () => null }) : null;
+    if (GH) for (const [id, h] of GH) { const r = C.recs.get(id), s = h.home && sets.find(x => x.id === h.home); if (r && !r.archived && s && !homeOf.has(id) && !goldGaps(r).length) { s.sheetIds.push(id); homeOf.set(id, s); } }
+    else for (const g of C.groups) {
       const homes = [...new Set(g.ids.map(i => homeOf.get(i)).filter(Boolean))]; if (homes.length !== 1) continue;
       for (const id of g.ids) { const r = C.recs.get(id); if (r && !r.archived && !homeOf.has(id) && GOLD_FAMILY.includes(R.metalClass(r)) && !goldGaps(r).length) { homes[0].sheetIds.push(id); homeOf.set(id, homes[0]); } }
     }
@@ -337,6 +367,8 @@
     for (const v of result.violations) out.push(`[${v.ruleNo}${v.letter ? ' (' + v.letter + ')' : ''} ${v.rule}] ${v.message}`);
     for (const p of result.partners) out.push(p.kind === 'bridge' ? `[R11 bridge] ${p.name} (${p.reasons.join('; ')}) shares ${orderWords(p.because)} with ${and(p.with)} in ${p.setName}` : `[R10 partner] ${p.setName}: add ${p.name} (${p.reasons.join('; ')}), it shares ${orderWords(p.because)} with ${and(p.with)}`);
     for (const w of result.warnings) out.push(`[${w.ruleNo} ${w.rule}] ${w.message}`);
+    for (const w of result.waits || []) out.push(`[wait] ${w.setName}: ${w.line}`);
+    for (const s of result.splits || []) out.push(`[split] ${s.message}`);
     return out;
   }
 

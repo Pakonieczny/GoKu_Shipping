@@ -60,10 +60,11 @@ const S = (id, list, o = {}) => ({ id, name: id, seq: +id.replace(/\D/g, '') || 
   const big = [S('set-2', [a1, b1, a2, b2])], all = [a1, b1, a2, b2, rg];
   r = I.check(big, all); assert.deepEqual(ofRule(r, 'surplus').map(v => sorted(v.sheets)), [['a2', 'b2']], 'tied only through the uncut Rose Gold sheet: spare\n  ' + show(r));
   assert.deepEqual(r.partners.map(p => [p.sheet, p.kind]), [['rg', 'notReady']], 'the Rose Gold sheet is the partner to add');
+  // (Paul, 26 Oct 2026: a green-line sheet never ties two GF / SS units together, cut or uncut: it belongs to its ONE set, here set-2, where both its partners are)
   rg.roseCutAt = 7; rg.backsApproved = true; r = I.check(big, all);
-  assert.equal(ofRule(r, 'surplus').length, 0, 'a cut Rose Gold sheet ties the sheets it shares orders with: one unit'); assert(ofRule(r, 'cardinal').length >= 1, 'and it belongs in the set (R9)');
-  // 10K uncut outside: ties nothing; 14K ticked (the person's yes at Include / Cut Sheet): ties
-  for (const [metal, o, tied] of [['gold10k', {}, false], ['gold14k', { cutApproved: true, backsApproved: true }, true]]) {
+  assert.deepEqual(ofRule(r, 'surplus').map(v => sorted(v.sheets)), [['a2', 'b2']], 'a cut Rose Gold sheet ties nothing either: GF 2 + SS 2 are still spare'); assert(ofRule(r, 'cardinal').length >= 1, 'and it belongs in its one set (R9)');
+  // 10K uncut outside, 14K ticked (the person's yes at Include / Cut Sheet): neither ties anything
+  for (const [metal, o, tied] of [['gold10k', {}, false], ['gold14k', { cutApproved: true, backsApproved: true }, false]]) {
     const x1 = sheet('x1', 'gold', 1), y1 = sheet('y1', 'silver', 1), x2 = sheet('x2', 'gold', 2), y2 = sheet('y2', 'silver', 2), k = sheet('k', metal, 3, { releaseFull: false, draft: true, ...o });
     link(x1, y1, 4630000001); link(x2, y2, 4630000002); link(x1, k, 4630000003); link(x2, k, 4630000004);
     const rr = I.check([S('set-2', [x1, y1, x2, y2])], [x1, y1, x2, y2, k]); assert.equal(ofRule(rr, 'surplus').length === 0, tied, metal + (tied ? ' ticked ties' : ' uncut ties nothing'));
@@ -150,7 +151,9 @@ const tie = (a, b) => { const o = String(++ordNo); put(a, o, 1); put(b, o, 2); }
     for (let k = 2; k <= 7; k++) { const g = lone(page('GF' + k, 'gold', k)), s = lone(page('SS' + k, 'silver', k)); tie(g, s); tie(k % 2 ? s : g, rg); w.add(g, s); await w.assemble(); }
     assert.deepEqual(w.sets().map(s => s.ids.length), [2, 2, 2, 2, 2, 2, 2], 'seven sets of two (the app made Set 2 of twelve): ' + JSON.stringify(w.sets().map(s => s.ids)));
     assert(!rg.setId, 'the uncut Rose Gold sheet is in no set'); const r = w.check(); assert.equal(r.ok, true, r.lines.join('\n'));
-    assert.equal(r.partners.filter(p => p.sheet === 'RG9').length, 6, 'it is named as the partner to add of each set it shares an order with');
+    // (Paul, 26 Oct 2026: "The system should pick a set automatically": it is the partner of its ONE set, the earliest-formed of its partners' sets; what it shares with the others is a known split)
+    assert.equal(r.partners.filter(p => p.sheet === 'RG9').length, 1, 'it is named as the partner to add of its one set');
+    assert.equal((r.splits.find(x => x.sheet === 'RG9') || { with: [] }).with.length, 5, 'its orders with the five other sets are a known split, said plainly');
   }
   // 4c · past midnight: the day's counter starts again at 1; the run's sets are read by day, then number, so the next sets follow the newest one (the app put every later unit into the new day's Set 1)
   {

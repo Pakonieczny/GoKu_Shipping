@@ -27,7 +27,10 @@
    * plan all answer the same. A set committed, completed or replaced is never blocked (SetRules.exempt); a set with no `setBreaks` reads exactly as it always did. */
   /* (SETFIX A, Paul 17 Oct 2026: a set blocked at approval is never a dead end) the grey reason says exactly what to press (`setBreaks.remedy`, charm-nest-set-repair.js: "Cut RG Sheet 16" or
    * "Rebuild this set correctly"), and `remedy` is handed on so the button under Approve for laser cutting can offer that press. */
-  const withBreaks=(R,st,g)=>{const b=st && st.setBreaks;if(!b || !Array.isArray(b.items) || !b.items.length || !R || (R.exempt && R.exempt(st)))return g;const m=b.remedy && b.remedy.short?b.remedy:null,line=(b.line || 'This set breaks your rules.')+(m && m.say?'. '+m.say.replace(/\.$/,''):'');return {...g,applies:true,ok:false,short:(b.short || 'breaks your rules')+(m?' · '+m.short:''),line,reason:line,breaks:b.items,...(m?{remedy:m}:{})};};
+  /* (Paul, 26 Oct 2026: "we shouldn't double hold things") a set whose green-line sheet's back engraving is still to approve WAITS for it (set.setWaits, charm-nest-set-repair.js annotate: derived at every
+   * drawing, never saved): one plain waiting line, "Waiting for the back engraving approval of RG Sheet 1", Approve grey; never the red line or Rebuild. A break, or a more basic wait of the set, says first. */
+  const withWaits=(R,st,g)=>{const w=st && st.setWaits;if(!w || !w.line || !g.ok || !R || (R.exempt && R.exempt(st)))return g;return {...g,applies:true,ok:false,short:w.short || w.line,line:w.line+'.',reason:w.line+'.',waits:w.items || [],holding:true};};
+  const withBreaks=(R,st,g)=>{const b=st && st.setBreaks;if(!b || !Array.isArray(b.items) || !b.items.length || !R || (R.exempt && R.exempt(st)))return withWaits(R,st,g);const m=b.remedy && b.remedy.short?b.remedy:null,line=(b.line || 'This set breaks your rules.')+(m && m.say?'. '+m.say.replace(/\.$/,''):'');return {...g,applies:true,ok:false,short:(b.short || 'breaks your rules')+(m?' · '+m.short:''),line,reason:line,breaks:b.items,...(m?{remedy:m}:{})};};
   const setRules=(st,sheets)=>{let R=(typeof self!=='undefined'?self:globalThis).CharmNestSetRules;if(!R&&typeof require==='function'){try{R=require('./charm-nest-set-rules');}catch(_){R=null;}}return R&&R.gate?withBreaks(R,st,R.gate(st,sheets)):noRules;};
   const ruleModule=()=>{let R=(typeof self!=='undefined'?self:globalThis).CharmNestSetRules;if(!R&&typeof require==='function'){try{R=require('./charm-nest-set-rules');}catch(_){R=null;}}return R;};
   /* Paul, 13 Oct: the ONE plain line a sheet in no set gives for why it is not in one. A partial GF or SS sheet (not fully nested) never joins a set; a sheet the page holds out of a set says why
@@ -720,7 +723,7 @@
     }
     // the principle (Paul, 10 Oct): an uncommitted set without a completed GF sheet and a completed SS sheet is not ready, and is told first
     const rules=setRules(st,live);
-    if(rules.applies && !rules.ok){const b={sheetId:'',sheetLabel:setName(st),step:'nesting',stepLabel:stepName('nesting'),why:rules.short,counter:null,rule:rules.breaks?'setBreaks':'setPrinciple'};b.text=`${b.sheetLabel} · ${b.why}`;blockers.unshift(b);}
+    if(rules.applies && !rules.ok){const b={sheetId:'',sheetLabel:setName(st),step:'nesting',stepLabel:stepName('nesting'),why:rules.short,counter:null,rule:rules.breaks?'setBreaks':rules.waits?'setWait':'setPrinciple'};b.text=`${b.sheetLabel} · ${b.why}`;blockers.unshift(b);}
     const reason=blockers.length?blockers[0].text+(blockers.length>1?`, and ${blockers.length-1} more`:''):'';
     return {ready:order.length>0 && !blockers.length,blockers,reason,rules,sheets:out,toApprove:out.filter(x=>!x.missing && x.state!=='past').map(x=>x.sheetId),single:order.length<2,setLabel:setName(st)};
   }

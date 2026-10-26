@@ -102,10 +102,13 @@
     const has = id => Object.prototype.hasOwnProperty.call(moves, id), seen = new Map();
     for (const r of recs) if (r && idOf(r) && !r.archived && !seen.has(idOf(r))) seen.set(idOf(r), r);
     const sheets = [...seen.values()].map(r => S.sheetOf(r, { label: wordOf(r), setId: has(idOf(r)) ? moves[idOf(r)] : inSetOf(r) })).filter(Boolean);
-    const label = new Map(sheets.map(s => [s.id, s.label])), out = new Map();
+    const label = new Map(sheets.map(s => [s.id, s.label])), out = new Map(), byId = new Map(sheets.map(s => [s.id, s]));
+    // (Paul, 26 Oct 2026: a Rose Gold / 10K / 14K sheet is in ONE set and ties no two sets: an order whose pieces on one side of the move are all on green-line sheets is a known split, never a refusal)
+    const green = id => !!S.isGreen && S.isGreen(byId.get(id));
     for (const dest of [...new Set(Object.values(moves))]) {
       const ids = Object.keys(moves).filter(id => moves[id] === dest);
       for (const it of S.between(sheets, ids, dest, meta ? { meta } : {})) {
+        if (S.isGreen && (it.hereIds.every(green) || it.thereIds.every(green))) continue;
         const o = out.get(it.orderId) || { orderId: it.orderId, here: [], there: [], hereIds: [], thereIds: [] };
         for (const id of it.hereIds) if (!o.hereIds.includes(id)) { o.hereIds.push(id); o.here.push(label.get(id)); }
         for (const id of it.thereIds) if (!o.thereIds.includes(id)) { o.thereIds.push(id); o.there.push(label.get(id)); }

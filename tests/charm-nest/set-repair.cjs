@@ -54,7 +54,8 @@ const idsIn = (p, k) => sorted(p.sets[k].sheetIds);
   const d = SRp.diagnose(f.sets, f.sheets), info = d.bySet['set-2'];
   assert(info, 'Set 2 is called wrong');
   assert.equal(d.bySet['set-1'], undefined, 'Set 1 (committed, and right) is never judged');
-  assert.equal(info.line, 'Set 2 breaks your rules: it is bigger than the minimum (GF Sheet 3, GF Sheet 4, GF Sheet 5, GF Sheet 6 and 7 more are not needed for it to be valid); Rose Gold sheets RG Sheet 16 and RG Sheet 29 are not cut yet (no green line)',
+  // (Paul, 26 Oct 2026: a Rose Gold sheet ties no units together, cut or uncut: RG 16 and RG 29 are in no spare unit; nine GF / SS sheets are not needed)
+  assert.equal(info.line, 'Set 2 breaks your rules: it is bigger than the minimum (GF Sheet 3, GF Sheet 4, GF Sheet 5, GF Sheet 6 and 5 more are not needed for it to be valid); Rose Gold sheets RG Sheet 16 and RG Sheet 29 are not cut yet (no green line)',
     'ONE plain line naming the rules and the sheets');
   assert.equal(info.short, 'breaks your rules: bigger than the minimum; RG Sheet 16 and RG Sheet 29 not cut yet');
   assert.deepEqual(sorted(info.rules), ['R12', 'R7']);
@@ -74,7 +75,7 @@ const idsIn = (p, k) => sorted(p.sets[k].sheetIds);
   assert.deepEqual(p.sets.map(s => s.setId), ['set-2', null, null, null], 'only the first keeps the set record; the others are allocated through the existing numbering path when made');
   assert.deepEqual(p.sets.map(s => !!s.predicted), [false, true, true, true]);
   assert.deepEqual(sorted(p.waiting.map(w => w.id)), ['gf5', 'gf8', 'rg16', 'rg29']);
-  assert.deepEqual(p.partners.map(x => [x.set, x.sheet]).sort(), [['Set 3', 'rg16'], ['Set 4', 'rg29'], ['Set 5', 'rg29']]);
+  assert.deepEqual(p.partners.map(x => [x.set, x.sheet]).sort(), [['Set 3', 'rg16'], ['Set 4', 'rg29']], 'each Rose Gold sheet is the partner of its ONE set (RG 29: the earlier of Set 4 and Set 5)');
   assert.equal(p.after.ok, true); assert.equal(p.after.violations, 0);
   assert.match(p.signature, /^\["trim","set-2"/);
   // it was verified BEFORE applying: lay the plan on the state and ask the checker, with the rest of the shop around it

@@ -67,7 +67,8 @@ const done = [];
       w.full(w.put(w.page('gold'), `${o1}_8_1`, `${o2}_1_1`)); w.full(w.put(w.page('silver'), `${o2}_2_1`));
     }
     await w.assemble(); const sc = ok(w, '7'); assert.deepEqual([...w.sets().map(s => w.members(s).length)], [2, 2, 2, 2, 2], '7: one set per unit: ' + w.word());
-    assert.equal(sc.partners.filter(x => x.sheet === 'RG1').length, 2, '7: the uncut RG is the partner to add of both of its units'); done.push('anchors: committed Set 1, uncut RG');
+    // (Paul, 26 Oct 2026: a green-line sheet is in ONE set: the earliest-formed of its units' sets; its order with the other unit is a known split, said plainly, never a hold)
+    assert.equal(sc.partners.filter(x => x.sheet === 'RG1').length, 1, '7: the uncut RG is the partner to add of its one set'); assert(sc.splits.some(x => x.sheet === 'RG1'), '7: and its order with the other unit is a known split'); done.push('anchors: committed Set 1, uncut RG');
   }
   /* 8 · R3 by a person's drop: a partial sheet dropped on a formed set does not go in (handSet) */
   { const w = L.world();

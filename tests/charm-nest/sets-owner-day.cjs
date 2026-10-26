@@ -324,7 +324,9 @@ async function look(w, what, extra = {}) {
     assert(!after.some(v => v.rule === 'surplus'), 'the spare groups were taken out automatically: ' + after.map(v => v.rule).join());
     const stayed = ['C', 'B', 'A', 'L'].filter(g => groups[g].some(id => w.by(id).setId === 'set-bad' && !w.by(id).draft));
     assert.equal(stayed.length, 1, 'Set 2 keeps exactly the one group it needs, the others left it: ' + stayed.join());
-    assert.equal(warns.length >= 1, true, 'the agent log carries a warning: ' + JSON.stringify(w.log()));
+    // (Paul, 26 Oct 2026: a spare group leaves with its own green-line sheets, the uncut Rose Gold sheets whose partners are all in it: then nothing is left to warn about; what is left is said once)
+    if (after.length) assert.equal(warns.length >= 1, true, 'the agent log carries a warning: ' + JSON.stringify(w.log()));
+    else assert(['rB16', 'rA29'].every(id => !(w.by(id).setId === 'set-bad' && !w.by(id).draft)) && w.log().some(e => /held more sheets than it needs/.test(e.text)), 'the uncut Rose Gold sheets left with their groups: ' + JSON.stringify(w.log()));
     const n1 = w.log().filter(e => /Set check:/.test(e.text)).length; await w.assemble(); assert.equal(w.log().filter(e => /Set check:/.test(e.text)).length, n1, 'the same list is not written twice');
     assert.equal(set1.formedAt, T0 - 10);
   }
