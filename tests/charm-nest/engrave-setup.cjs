@@ -105,7 +105,7 @@ const job = (face, state, lines, extra = {}) => Object.assign({ key: F.jobKey(LK
     type(front(), 'W'); ok('save off again when the words are as they were', slot.querySelector('[data-su=save]').disabled);
     type(front(), 'W.');
     const sel = slot.querySelector('select[data-face=back]');
-    ok('first font option is the line\'s font', /The line.s font \(Ace → Jost\)/.test(sel.options[0].text));
+    ok('first font option is the piece\'s font ("line" -> "piece", Paul 5 Oct 2026)', /The piece.s font \(Ace → Jost\)/.test(sel.options[0].text));
     ok('the shop\'s fonts are offered', ['Stylish', 'Pristina', 'Angelina', 'Typewriter', 'Comic', 'Vibur', 'Ace', 'Britannic Bold'].every(w => [...sel.options].some(o => o.value === w)));
     sel.value = 'Vibur'; fire(sel, 'change');
     slot.querySelector('[data-su=save]').click(); await tick();
