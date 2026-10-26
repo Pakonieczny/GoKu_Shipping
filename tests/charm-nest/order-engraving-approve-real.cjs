@@ -13,7 +13,7 @@
 //   SHOTS=<dir> node tests/charm-nest/order-engraving-approve-real.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>, ONLY=<phase,phase>, SKIP_SANDBOX=1)
 const fs = require('fs'), path = require('path'), os = require('os');
 const root = path.join(__dirname, '../..');
-const { start, pinOf, signInAs } = require('./bridge-server.cjs');
+const { start, pinOf, signInAs, unlockSettings } = require('./bridge-server.cjs');
 const { buildMaster } = require('./fixture-master.cjs');
 
 const day = Math.floor(Date.now() / 1000);
@@ -120,7 +120,7 @@ const engW = key => x => { const s = JSON.stringify(x.body || {}), pool = poolOf
     await page.evaluate(() => CN.setMode('design')); await page.evaluate(() => DesignLink.ensure());
     if (sandbox) {
       // one press does the chain: snapshot of the open orders, switch on, reload, pull from the copy
-      await page.evaluate(() => CN.setMode('orders')); await page.evaluate(() => openSettings()); await page.click('#stSbOn');
+      await page.evaluate(() => CN.setMode('orders')); await page.evaluate(() => { openSettings(); }); await unlockSettings(page);   // (PERSON, 26 Oct: Settings asks the admin password at every opening) await page.click('#stSbOn');
       await page.waitForFunction(() => !!(window.CN && window.B) && CN.S.settings.sandbox === 'on' && B.orders.rows.length > 0, null, { timeout: 120000 });
       await page.waitForFunction(() => window.CN && window.Sandbox && CN.S.cloud.ok !== null && CN.S.settings.sandbox === 'on');
       await page.waitForFunction(n => !!(window.CN && window.B) && B.orders.rows.length >= n && CN.S.mode === 'orders', NROWS, { timeout: 90000 }).catch(() => {});

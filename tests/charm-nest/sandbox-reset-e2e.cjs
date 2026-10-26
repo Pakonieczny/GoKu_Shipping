@@ -24,7 +24,7 @@ const path = require('path'), assert = require('assert'), fs = require('fs');
 const root = path.join(__dirname, '../..'), fnDir = path.join(root, 'netlify/functions');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
-const { start } = require('./bridge-server.cjs');
+const { start, unlockSettings } = require('./bridge-server.cjs');
 const PEEK = !!process.env.PEEK;
 
 /* ── the orders the sandbox plays under their real numbers (the 17 Sep snapshot) ── */
@@ -221,7 +221,7 @@ const OLD = 'OLDREC';
   const stationLsBefore = await fr.evaluate(() => Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])));
 
   /* ── the press: Settings, the real button (the page's own confirm answers yes) ── */
-  await page.evaluate(() => openSettings());
+  await page.evaluate(() => { openSettings(); }); await unlockSettings(page);   // (PERSON, 26 Oct: Settings asks the admin password at every opening)
   await page.waitForFunction(() => /Page build/.test(document.getElementById('stBuildNote').innerText), null, { timeout: 15000 });
   const note0 = await page.evaluate(() => document.getElementById('stBuildNote').innerText);
   assert(/Page build 2\d{7}-[\w-]+/.test(note0) && /No reset or purge has been made from this browser yet/.test(note0), 'Settings says the page build and that no reset was made yet: ' + note0);
@@ -278,7 +278,7 @@ const OLD = 'OLDREC';
   assert(/Tester/.test(effAfter), 'Employee efficiency lists the person working now (signed in after the reset): ' + effAfter.slice(0, 300));
 
   /* ── Settings: the build, the last reset, what the sandbox holds now (inside the dialog; no pop-up on a pop-up) ── */
-  await page.evaluate(() => openSettings());
+  await page.evaluate(() => { openSettings(); }); await unlockSettings(page);   // (PERSON, 26 Oct: Settings asks the admin password at every opening)
   await page.waitForFunction(() => /Last reset/.test(document.getElementById('stBuildNote').innerText) && /In the sandbox now/.test(document.getElementById('stBuildNote').innerText), null, { timeout: 15000 });
   const st1 = await page.evaluate(() => { const n = document.getElementById('stBuildNote'), d = document.getElementById('dlgSettings'), field = e => e.closest('.field'); n.scrollIntoView({ block: 'center' }); const r = n.getBoundingClientRect(); return { text: n.innerText, inside: d.contains(n), open: document.querySelectorAll('dialog[open]').length, dlgOpen: d.open, build: Sandbox.build(), page: Sandbox.pageBuild(), adjacent: field(document.getElementById('stSandboxReset')).nextElementSibling === field(document.getElementById('stPurge')) && field(document.getElementById('stPurge')).nextElementSibling === field(n), within: r.top >= 0 && r.bottom <= innerHeight, h: Math.round(r.height) }; });
   console.log('settings note:\n' + st1.text);
@@ -299,7 +299,7 @@ const OLD = 'OLDREC';
 
   /* ── saving Settings is not Start; a second tab of the browser is quiet too ── */
   const callsMark = st.calls.length;
-  await page.evaluate(() => openSettings()); await page.click('#btnSaveSettings'); await pause(1500);
+  await page.evaluate(() => { openSettings(); }); await unlockSettings(page);   // (PERSON, 26 Oct: Settings asks the admin password at every opening) await page.click('#btnSaveSettings'); await pause(1500);
   assert.strictEqual(await page.evaluate(() => Sandbox.held() && !Sandbox.stream()), true, 'saving Settings does not start the sandbox');
   const tab2 = await open(); await booted(tab2); await pause(3000);
   assert.strictEqual(await tab2.evaluate(() => Sandbox.held() && !Sandbox.stream() && !B.orders.rows.length), true, 'a second tab of this browser waits too');

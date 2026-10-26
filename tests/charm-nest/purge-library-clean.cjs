@@ -28,7 +28,7 @@ const path = require('path'), assert = require('assert'), fs = require('fs');
 const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
-const { start } = require('./bridge-server.cjs');
+const { start, unlockSettings } = require('./bridge-server.cjs');
 const CODE = process.env.CHARM_NEST_DELETE_CODE;
 const READ_OP = /^(get|list|ping|lookup|history|check|masterList)|(Get|List|Check|Status|Preview|Read|Url|Info|Files)$/;   // (the page's own rule, charm-nest-1.html, and the master file list a page reads as it opens: sandbox-wipe-computers.cjs)
 let n = 0; const ok = (c, m) => { assert(c, m); n++; console.log('  ok  ' + m); };
@@ -144,7 +144,7 @@ async function scenario(browser, button) {
   ok(true, 'tab B is saving its set and sheet back every 150 ms (the control: a live writer)');
 
   /* ═══ 3 · the button in tab A ═══ */
-  await A.evaluate(() => openSettings());
+  await A.evaluate(() => { openSettings(); }); await unlockSettings(A);   // (PERSON, 26 Oct: Settings asks the admin password at every opening)
   await A.waitForFunction(b => document.getElementById('dlgSettings').open && document.querySelector(b), button, { timeout: 20000 });
   if (purge) {
     const help = await A.evaluate(() => document.getElementById('stPurge').closest('.field').innerText + ' | ' + document.getElementById('stPurge').title);
