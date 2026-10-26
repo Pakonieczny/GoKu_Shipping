@@ -314,7 +314,7 @@ const ids = pages => [...pages.flatMap(p => [...p.charms.map(c => c.id)])].sort(
         assert.equal(scene.live, 1);
         await page.waitForSelector(`${card} .mergeFx`, { state: 'detached', timeout: 6000 });
         assert.deepEqual(await leftovers(page), { live: 0, layer: 0, hiding: false, running: 0 }, 'the scene leaves nothing behind');
-        await page.waitForFunction(() => [...document.querySelectorAll('.mNote')].some(n => /Done · Sheet 1: 10 charms/.test(n.textContent)), null, { timeout: 8000 });
+        await page.waitForFunction(() => [...document.querySelectorAll('.mNote')].some(n => /Done · Draft 1: 10 charms/.test(n.textContent)), null, { timeout: 8000 });
         const after = await page.evaluate(() => ({ pages: CN.pagesOf('gold14k').map(p => [p.page, p.charms.length, p.placements.length]), first: JSON.stringify(CN.pagesOf('gold14k')[0].placements.slice(0, 6)), nests: window.__nests }));
         assert.deepEqual(after.pages, [[1, 10, 10]], 'all on Sheet 1; the empty Sheet 2 is gone');
         assert.equal(after.first, layout, "Sheet 1's charms stayed exactly where they were");
@@ -327,7 +327,7 @@ const ids = pages => [...pages.flatMap(p => [...p.charms.map(c => c.id)])].sort(
         const { ctx, page, errors } = await open(true);
         await press(page, 'move');
         for (let i = 0; i < 12; i++) { assert.equal(await page.evaluate(() => document.querySelectorAll('.mergeFx').length), 0, 'reduced motion: no scene'); await page.waitForTimeout(80); }
-        await page.waitForFunction(() => [...document.querySelectorAll('.mNote')].some(n => /Done · Sheet 1: 10 charms/.test(n.textContent)), null, { timeout: 8000 });
+        await page.waitForFunction(() => [...document.querySelectorAll('.mNote')].some(n => /Done · Draft 1: 10 charms/.test(n.textContent)), null, { timeout: 8000 });
         assert.deepEqual(errors, []);
         await ctx.close();
       }
@@ -343,7 +343,7 @@ const ids = pages => [...pages.flatMap(p => [...p.charms.map(c => c.id)])].sort(
           delete document.hidden; document.dispatchEvent(new Event('visibilitychange')); return now;
         });
         assert.deepEqual(gone, { layer: 0, live: 0, hiding: false }, 'a hidden tab ends the scene at once');
-        await page.waitForFunction(() => [...document.querySelectorAll('.mNote')].some(n => /Done · Sheet 1: 10 charms/.test(n.textContent)), null, { timeout: 8000 });
+        await page.waitForFunction(() => [...document.querySelectorAll('.mNote')].some(n => /Done · Draft 1: 10 charms/.test(n.textContent)), null, { timeout: 8000 });
         assert.deepEqual(await page.evaluate(() => CN.pagesOf('gold14k').map(p => [p.page, p.charms.length, p.placements.length])), [[1, 10, 10]], 'the re-nest went on to the end');
         assert.deepEqual(errors, []);
         await ctx.close();

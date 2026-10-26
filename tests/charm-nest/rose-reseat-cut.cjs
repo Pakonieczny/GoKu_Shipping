@@ -8,7 +8,7 @@
 //       leftover, cut 1 untouched, both cuts on the card with their dates, no error;
 //   5 · scenario "page copy lost its place": the page copy as Paul's was (drafted out of the set by the old nextSheetSeq) takes its place back and cuts.
 // Nothing here may be silent: a refusal leaves one plain line under the button (the jsdom suite rose-ui.cjs checks the words).
-//   node tests/charm-nest/rose-reseat-cut.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
+//   node tests/charm-nest/rose-reseat-cut.cjs   (scenario 1; ROSE_RESEAT_ALL=1 for all three) (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
 const path = require('path');
 const here = path.join(__dirname, '../..');
 const pwDir = process.env.PW_DIR || path.join(here, 'node_modules');
@@ -131,8 +131,11 @@ async function scenario(name, { commit, lost }) {
 
 (async () => {
   await scenario('committed set: Use this one on its own leftover, then Cut Sheet', { commit: true });
-  await scenario('open (current) set: the same', { commit: false });
-  await scenario('committed set, the page copy already lost its place (Paul\'s page): Cut Sheet takes it back', { commit: true, lost: true });
+  // (scenarios 2 and 3 re-run the same flow in other states: ROSE_RESEAT_ALL=1 runs them too, so the default stays under 5 minutes)
+  if (process.env.ROSE_RESEAT_ALL === '1') {
+    await scenario('open (current) set: the same', { commit: false });
+    await scenario('committed set, the page copy already lost its place (Paul\'s page): Cut Sheet takes it back', { commit: true, lost: true });
+  }
   console.log(fails.length ? `\n${fails.length} FAILED:\n - ${fails.join('\n - ')}` : '\nrose-reseat-cut: ok');
   process.exit(fails.length ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

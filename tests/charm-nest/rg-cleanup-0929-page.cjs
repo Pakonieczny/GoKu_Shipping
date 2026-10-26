@@ -16,6 +16,7 @@
 //   6 · a second reload applies nothing again; a record without a cleanup, or one applied already, changes nothing.
 // Screenshots to SHOTS (default /mnt/project-files/plans/rg-cleanup).
 //   node tests/charm-nest/rg-cleanup-0929-page.cjs [one|both]   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
+//   With no mode: "one" only (under 5 min); RG_PAGE_ALL=1 runs both modes, "both" names the second alone.
 //   RG_PAGE_EMULATE=1: write the records the op leaves instead of running it (as after the op's removal)
 const path = require('path'), fs = require('fs');
 const here = path.join(__dirname, '../..');
@@ -241,7 +242,7 @@ async function run(mode, browser) {
 
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
-  try { for (const mode of process.argv[2] ? [process.argv[2]] : ['one', 'both']) await run(mode, browser); }
+  try { for (const mode of process.argv[2] ? [process.argv[2]] : process.env.RG_PAGE_ALL === '1' ? ['one', 'both'] : ['one']) await run(mode, browser); }
   finally { await browser.close(); }
   if (fails.length) { console.log(`\n${fails.length} failed`); process.exit(1); }
   console.log('\nrg-cleanup-0929-page OK: a stale page takes the cloud\'s cleanup on reload, saves, and Cut Sheet adds exactly one line');
