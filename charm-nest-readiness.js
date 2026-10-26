@@ -120,7 +120,9 @@
     const unique=[...new Map((sheets || []).map(x=>[x.id || x.sheetId,x])).values()],reports=unique.map(sheet);
     const expected=s.sheetIds || unique.map(x=>x.id || x.sheetId),complete=expected.length>0 && expected.length===unique.length && expected.every(id=>unique.some(x=>(x.id || x.sheetId)===id));
     const stages=Object.fromEntries(['layout','front','approval','backs','qr','orders'].map(k=>[k,complete && reports.every(r=>r.stages[k])]));
-    const rules=setRules(s,unique);
+    // (R15, Paul 5 Oct: "Only individual sheets that are not already part of a set are allowed to have their own" approval: the Library's group of loose sheets, no setId, is no set, so the set's
+    //  GF + SS rule (R1 / R2) is not asked of it; each sheet's own readiness decides. Diagnostic, 26 Oct 2026: an approved loose GF sheet stayed In progress)
+    const rules=s && s.setId ? setRules(s,unique) : noRules;
     const faces=reports.some(r=>r.faces) ? Object.fromEntries(['required','approved','waiting','saved'].map(k=>[k,reports.reduce((n,r)=>n+engCounts(r)[k],0)])) : null;
     return {...Object.fromEntries(['total','required','approved','waiting','saved','plain','saving'].map(k=>[k,reports.reduce((n,r)=>n+r[k],0)])),stages,included:complete && reports.every(r=>r.included),ready:complete && reports.every(r=>r.ready) && rules.ok,rules,sheets:unique.length,...(faces?{faces}:{})};
   }
