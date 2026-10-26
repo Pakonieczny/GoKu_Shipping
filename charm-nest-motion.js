@@ -1335,7 +1335,12 @@
   let warmed = null, warming = false;
   function warm() {
     if (warming) return; warming = true;
-    const go = () => {
+    const go = (dl) => {
+      /* VISUAL (26 Oct 2026, Paul: "I don't see you actually visually testing the outcome of animations and transitions"): the idle
+         callback also runs in the idle slice between two frames of a motion, and this 60-70 ms of work then made a 65-75 ms frame in the
+         middle of the Settings window's grow (the warm-up armed at page load landed on the first window opened a second or two later):
+         while anything is moving it waits for the motion to end (tests/motion/visual-flows.cjs) */
+      try { if ((!dl || !dl.didTimeout) && doc.getAnimations && doc.getAnimations().some(a => a.playState === "running" && a.effect && Number.isFinite(a.effect.getComputedTiming().endTime))) { setTimeout(() => root.requestIdleCallback ? root.requestIdleCallback(go, { timeout: 4000 }) : go(), 120); return; } } catch (_) {}
       warming = false;
       try {
         const sh = pageSheet(); if (!sh || sh === warmed) return; warmed = sh;
