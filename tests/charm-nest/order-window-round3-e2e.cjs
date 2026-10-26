@@ -304,9 +304,10 @@ async function main() {
     await page.waitForTimeout(500);
     check((await approvals()).length === 1 && !(await card()).btn && (await card()).seals.length === 1 && (await sealCount(k.r)) === 1, 'an approved card has no button to press twice, and a redraw adds nothing: one approval, one seal on the card and in the job');
     // the order's timeline (read from the fake record by the page's own feed) shows the approval; so does the Sheet tab
+    // (the full Timeline marks each event data-sv="type|at"; data-tl-face is only the compact head card's seal, charm-nest-timeline-ui.js)
     await page.click('.owTabsV [data-ow-view="timeline"]');
-    const tl = await page.waitForFunction(() => document.querySelectorAll('#orderWin [data-tl-face*="engraveApproved"]').length > 0, null, { timeout: 15000 }).then(() => true, () => false);
-    check(tl, 'the Timeline tab shows the approval (an Engraved step from the order\'s own record): ' + (tl ? '' : JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('#orderWin [data-tl-face]')].map(e => JSON.parse(e.dataset.tlFace).type)))));
+    const tl = await page.waitForFunction(() => document.querySelectorAll('#orderWin .owTimeline [data-sv^="engraveApproved|"]').length > 0, null, { timeout: 15000 }).then(() => true, () => false);
+    check(tl, 'the Timeline tab shows the approval (an Engraved step from the order\'s own record): ' + (tl ? '' : JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('#orderWin .owTimeline [data-sv]')].map(e => e.dataset.sv.split('|')[0])))));
     await page.click('.owTabsV [data-ow-view="sheet"]');
     await page.waitForFunction(() => document.querySelector('#owSheetPanel [data-engraving-panel] .swEng[data-state=approved]'), null, { timeout: 20000 }).catch(() => {});
     const sheetSeals = await page.evaluate(() => ({ state: (document.querySelector('#owSheetPanel [data-engraving-panel] .swEng') || {}).dataset?.state || '', n: document.querySelectorAll('#owSheetPanel [data-engraving-panel] .egButtonSeal .seal svg[data-seal-model]').length, words: (document.querySelector('#owSheetPanel [data-engraving-panel] .words') || {}).textContent || '' }));
