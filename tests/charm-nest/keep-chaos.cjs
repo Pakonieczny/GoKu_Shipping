@@ -353,7 +353,8 @@ async function checkPage(w, ex) {
   if (ui.dialogs.length) f.push('a dialog is open: ' + ui.dialogs.join(','));
   if (ui.spinners) f.push('a spinner is still turning in the final state (' + ui.spinners + ' at ' + (ui.spinWhere || []).join(' ; ').slice(0, 140) + '): "' + line.slice(0, 100) + '"');
   if (ex.ui === 'linked') { if (!/Linked/i.test(line)) f.push('the card/window does not say it is linked: "' + line.slice(0, 160) + '"'); }
-  else if (ex.ui === 'nothing') { if (/Linked|Saved to the repository|Saving/i.test(line)) f.push('the page claims a save that did not happen: "' + line.slice(0, 400) + '"'); }
+  else if (ex.ui === 'nothing') { if (/Linked|Saved to the repository|Saving/i.test(line.replace(/Nothing was saved to the repository/gi, '')))   // (the OFF switch's own true words, "Switched off. Nothing was saved to the repository.", claim nothing)
+    f.push('the page claims a save that did not happen: "' + line.slice(0, 400) + '"'); }
   else if (ex.ui === 'waiting-password') { if (!/password/i.test(line)) f.push('the page does not say it waits for the password: "' + line.slice(0, 160) + '"'); }
   else if (ex.ui === 'waiting-connection') { if (!/connection|offline|online/i.test(line)) f.push('the page does not say it waits for the connection: "' + line.slice(0, 160) + '"'); }
   return { f, line };
