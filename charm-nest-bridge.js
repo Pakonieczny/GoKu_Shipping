@@ -22203,10 +22203,15 @@ const OrderWin = window.OrderWin = (() => {
   function flightGone() { W.fly = null; H.q.clear(); cancelAnimationFrame(H.raf); H.raf = 0; if (W.dlg) { W.dlg.style.willChange = ""; W.dlg.style.transformOrigin = ""; } for (const res of H.wait.splice(0)) res(); }
   function growIn(from) {
     const d = W.dlg; stopMotion(); d.classList.remove("owBack"); d.classList.add("owGrow");
-    if (still()) { const a = d.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 110, easing: "ease" }); W.anims.push(a); flight(a); return; }
+    /* VISUAL (26 Oct 2026, Paul: "I don't see you actually visually testing the outcome of animations and transitions"): opened from
+       nothing to grow out of (a search, a link, a toast, reduced motion) the whole view faded in, its text drawn over the Orders list
+       for a few frames; now its surface comes first, plain and in its own colour, and the view shows on it once it is opaque */
+    const veiled = (ms, a) => { const t = el("i", "owTint"); t.style.background = getComputedStyle(d).backgroundColor || "var(--card)"; d.appendChild(t);
+      const v = t.animate([{ opacity: 1 }, { opacity: 1, offset: .45 }, { opacity: 0 }], { duration: ms * 2.2, easing: "ease", fill: "forwards" }); W.anims.push(v); v.finished.then(() => t.remove(), () => t.remove()); W.anims.push(a); flight(a); };
+    if (still()) { veiled(110, d.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 110, easing: "ease" })); return; }
     const r = rectOf(from);
     const run = (n, frames, o) => { if (!n) return null; const a = n.animate(frames, Object.assign({ easing: EASE, fill: "backwards" }, o)); W.anims.push(a); return a; };
-    if (!r) { flight(run(d, [{ opacity: 0, transform: "scale(.985)" }, { opacity: 1, transform: "none" }], { duration: 220 })); return; }
+    if (!r) { const a = d.animate([{ opacity: 0, transform: "scale(.985)" }, { opacity: 1, transform: "none" }], { duration: 220, easing: EASE, fill: "backwards" }); veiled(220, a); return; }
     // the view itself flies (Paul, 28 Sep: "a beautiful and seamless animation"; it flew as a blank cream box, its header,
     // tabs and view coming up only as it landed): drawn whole before it starts (the header, the rail's frame, the tabs,
     // the Overview or its skeleton: show, paint), laid over what was clicked at the scale that covers it, top left on

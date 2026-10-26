@@ -510,7 +510,15 @@ dialog.setRepairDlg{width:min(540px,94vw)}
       api: (body, o2) => C.api('charmNestLibrary', body, o2 || {}),
       assemble: run => G.assemble(run),
       save: run => (RC && RC.save ? RC.save(run) : Promise.resolve()),
-      refresh: () => { try { if (G && G.refreshMembership) G.refreshMembership(); } catch (_) { /* the next drawing follows */ } try { if (C && C.loadLibrary) Promise.resolve(C.loadLibrary()).catch(() => {}); } catch (_) { /* as above */ } },
+      /* VISUAL (26 Oct 2026, Paul: "I don't see you actually visually testing the outcome of animations and transitions"): `id`, a 10K / 14K sheet just cut out of
+         its grey wait: the Library was drawn again in one go and its tile jumped from grey to colour in another place; now the Library's own glide carries it from where
+         it stood greyed and its colour comes back over the same time, opacity only (reduced motion: drawn at once) */
+      refresh: id => { try { if (G && G.refreshMembership) G.refreshMembership(); } catch (_) { /* the next drawing follows */ }
+        try { if (!(C && C.loadLibrary)) return; const body = root.document && root.document.getElementById('libBody'), LD = root.LibraryDone;
+          if (!id || !body || !LD || !LD.glide || !body.querySelector('[data-gold-pending]')) { Promise.resolve(C.loadLibrary()).catch(() => {}); return; }
+          Promise.resolve(LD.glide(body, () => C.loadLibrary())).then(() => { const c = [...body.querySelectorAll('.sheetsRow > .librarySheet:not(.goldPending) > .libCard[data-id]')].find(n => n.dataset.id === String(id));
+            if (c && root.Motion && !root.Motion.reduced()) c.animate([{ opacity: .5 }, { opacity: 1 }], { duration: (root.Motion.T && root.Motion.T.slide) || 760, easing: 'ease' }); }).catch(() => {});
+        } catch (_) { /* as above */ } },
       say: (text, kind) => { if (C && C.toast) C.toast(text, kind || 'bad', 7000); },
       by: () => (root.CNEmployee && root.CNEmployee.name ? root.CNEmployee.name() : ''),
       confirm: p => confirmDialog(p),
@@ -744,7 +752,7 @@ dialog.setRepairDlg{width:min(540px,94vw)}
       return { ok: true, cut: done, words: `Approved and cut: ${name} is in ${set}.` };
     } catch (e) {
       const reason = `${(e && e.message) || e}`; env.say(`${name} was not cut: ${reason}`); return { ok: false, error: reason };
-    } finally { running.delete('cut:' + id); env.refresh(); }
+    } finally { running.delete('cut:' + id); env.refresh(id); }
   }
   /** Wires the "Approve & cut green line" press of every 10K / 14K sheet drawn greyed in a set card (the Library's goldPendingTile). */
   function wirePending(card, st, o) {
