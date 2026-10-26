@@ -107,7 +107,7 @@ async function main() {
       // a vector design for every piece: one pooled charm (a tag with a ring), drawn by the page's own ListMedia
       const sq = { kind: 'path', subpaths: [[['m', [0, 0]], ['l', [20, 0]], ['l', [20, 48]], ['l', [0, 48]], ['h']]], stroke: true, strokeRGB: [0, 0, 0], lwPt: .25, bbox: [0, 0, 20, 48] };
       const charm = { id: 'c', name: 'TAG', metal: 'gold', centerPt: [10, 24], widthPt: 20, heightPt: 48, areaPt2: 20 * 48, outline: sq, members: [sq], bbox: [0, 0, 20, 48], thumb: '' };
-      const mine = new Set(pools), was = Pool.charmOf; Pool.charmOf = id => mine.has(id) ? Object.assign({ poolId: id }, charm) : was(id);
+      const mine = new Set(pools), was = Pool.charmOf, made = new Map(); Pool.charmOf = id => mine.has(id) ? made.get(id) || made.set(id, Object.assign({ poolId: id }, charm)).get(id) : was(id);   // (one charm object per pool id, as the page's own index keeps it: the preview's quick fit is keyed on the charm)
       const art = text => { const c = document.createElement('canvas'); c.width = c.height = 300; const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, 300, 300); x.fillStyle = '#111'; x.font = '40px sans-serif'; x.textAlign = 'center'; (text || '').split('\n').forEach((t, i) => x.fillText(t, 150, 130 + i * 48)); return c; };
       Engrave.renderBack = job => art(job.text);
       const fit = () => ({ size: 10, capMm: 2, centre: [0, 0], angle: 0, weight: 'Regular' });
@@ -220,7 +220,7 @@ async function main() {
       check(both.every(g => g && g.s === 1) && (await winState()).open, `piece ${n}: Esc put both back whole and the window stayed open`);
     };
     await pick(k.c); await waitNoCard();
-    c = await card(); check(c.hidden && !c.state && c.n === 2 && !c.labels.some(l => /CABLE CHAIN/i.test(l)) && c.lid === B.lids[0], 'the chain (piece 1) has no back engraving: no card of its own (the other two pieces still show theirs), its own listing photo: ' + JSON.stringify(c.labels));
+    c = await card(); check(c.hidden && !c.state && c.n === 2 && !c.labels.some(l => /CABLE CHAIN/i.test(l)) && c.lid === B.lids[0], 'the chain (piece 1) has no back engraving: no card of its own (the other two pieces still show theirs), its own listing photo: ' + JSON.stringify(c.labels) + ' ' + JSON.stringify({ hidden: c.hidden, state: c.state, n: c.n, lid: c.lid, want: B.lids[0] }));
     await picsReady(); await viewOf(B.lids[0], 1);
     await pick(k.g); await waitCard('approved'); await picsReady();
     c = await card(); check(c.state === 'approved' && c.words === 'I\ndissent' && !c.btn && !c.approve && c.back && c.seals.length === 1 && c.seals[0] === 'BACK ENGRAVING|Giovanna' && c.lid === B.lids[1], 'the GF middle (piece 2): its own approved card, no button, Giovanna\'s one BACK ENGRAVING seal in its place: ' + JSON.stringify([c.state, c.words, c.seals]));
@@ -306,7 +306,7 @@ async function main() {
     // the order's timeline (read from the fake record by the page's own feed) shows the approval; so does the Sheet tab
     await page.click('.owTabsV [data-ow-view="timeline"]');
     const tl = await page.waitForFunction(() => document.querySelectorAll('#orderWin [data-tl-face*="engraveApproved"]').length > 0, null, { timeout: 15000 }).then(() => true, () => false);
-    check(tl, 'the Timeline tab shows the approval (an Engraved step from the order\'s own record)');
+    check(tl, 'the Timeline tab shows the approval (an Engraved step from the order\'s own record): ' + (tl ? '' : JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('#orderWin [data-tl-face]')].map(e => JSON.parse(e.dataset.tlFace).type)))));
     await page.click('.owTabsV [data-ow-view="sheet"]');
     await page.waitForFunction(() => document.querySelector('#owSheetPanel [data-engraving-panel] .swEng[data-state=approved]'), null, { timeout: 20000 }).catch(() => {});
     const sheetSeals = await page.evaluate(() => ({ state: (document.querySelector('#owSheetPanel [data-engraving-panel] .swEng') || {}).dataset?.state || '', n: document.querySelectorAll('#owSheetPanel [data-engraving-panel] .egButtonSeal .seal svg[data-seal-model]').length, words: (document.querySelector('#owSheetPanel [data-engraving-panel] .words') || {}).textContent || '' }));

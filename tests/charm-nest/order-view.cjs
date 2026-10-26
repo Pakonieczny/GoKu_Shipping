@@ -122,8 +122,8 @@ async function main() {
       const card = document.createElement('div'); card.id = 'liftedCard'; Object.assign(card.style, { position: 'fixed', left: '520px', top: '160px', width: '400px', height: '84px', background: '#fff' }); document.body.appendChild(card);
       OrderWin.openOrder(rid, { highlight: true, from: card, q: rid, row: null });
       const l = document.getElementById('owLoading'), d = document.getElementById('orderWin');
-      return { open: OrderWin.isOpen(), loading: !l.hidden && l.textContent, title: document.getElementById('owTitle').textContent, grew: d.getAnimations().some(a => a.effect.getKeyframes().some(k => k.clipPath && /inset\(160px/.test(k.clipPath))) }; }, C.rid);
-    assert(early.grew, 'it grows out of the card it was opened from');
+      return { open: OrderWin.isOpen(), loading: !l.hidden && l.textContent, title: document.getElementById('owTitle').textContent, grew: d.getAnimations().some(a => { const k0 = a.effect.getKeyframes()[0] || {}; return /translate\(520px, 160px\) scale\(/.test(k0.transform || '') && /^inset\(/.test(k0.clipPath || ''); }), kf: d.getAnimations().map(a => (a.effect.getKeyframes()[0] || {}).transform || '') }; }, C.rid);   // (the view flies from the card: laid over it top left on top left, scaled and clipped to it, growIn)
+    assert(early.grew, 'it grows out of the card it was opened from: ' + JSON.stringify(early.kf));
     await page.evaluate(() => document.getElementById('liftedCard').remove());
     assert(early.open, 'it opens at once'); assert.match(early.loading || '', /Looking up order 4175000123/); assert.equal(early.title, `Order ${C.rid}`);
     await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe/.test(document.getElementById('owMeta').textContent), null, { timeout: 15000 });
