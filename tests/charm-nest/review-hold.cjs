@@ -200,7 +200,7 @@ const A = '9100000001', B = '9100000002';
     mark(rid);
     { const w = worldOf(), row = rowOf(), id = placed(w, row, true); w.Pool.pinPooled(row); w.Pool.pinPooled(row);
       assert.deepEqual([row.changePending || false, row.repoolChanged || false, w.reviews.length, row.poolIds], [false, false, 0, [id]], 'in Review on a sheet: no card, the piece stays');
-      assert.equal(logsOf(w), 1, 'said once in the log'); assert.equal(w.timeline.length, 1); assert.match(w.timeline[0].o.text, /^Saved link: a saved link makes this line CELESTIAL 3 - COMET, but its piece stays on its sheet because the order was sent to Review/);
+      assert.equal(logsOf(w), 1, 'said once in the log'); assert.equal(w.timeline.length, 1); assert.match(w.timeline[0].o.text, /^Saved link: a saved link makes this piece CELESTIAL 3 - COMET, but its piece stays on its sheet because the order was sent to Review/);
       assert.equal(w.pages.gold.charms.length, 1, 'the sheet is untouched'); assert.equal(w.calls.filter(c => /pool|sheet/i.test((c.body && c.body.op) || '')).length, 0, 'nothing written'); }
     // (c) in Review but its piece is not on a sheet yet: the card is offered as before (nothing to lift)
     { const w = worldOf(), row = rowOf(); placed(w, row, false); w.Pool.pinPooled(row); assert.equal(w.reviews.length, 1, 'no piece on a sheet: nothing to keep'); }
