@@ -42,7 +42,8 @@ function recordNF() {
   window.__said = [];
   new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1 && /tourPlus|tourCap|nfCap/.test(n.className)) setTimeout(() => window.__said.push(n.textContent), 0); }).observe(document.body, { childList: true, subtree: true });
 }
-const clean = () => ({ mode: CN.S.mode, chip: !!document.querySelector('#reviewView .egTab[data-k="customOrder"].on'), scroll: document.querySelector('#reviewView .egPane.scroll')?.scrollTop ?? null,
+// (home: Custom Orders still chosen, or Open is empty: with nothing waiting the bar draws no kind chips at all, "Nothing waits for a decision")
+const clean = () => ({ mode: CN.S.mode, chip: !!document.querySelector('#reviewView .egTab[data-k="customOrder"].on') || !document.querySelector('#reviewView .egTab'),  scroll: document.querySelector('#reviewView .egPane.scroll')?.scrollTop ?? null,
   left: document.querySelectorAll('#tourLayer > *').length, lit: document.querySelectorAll('.sheetCard.nfFocus, .nfCap, .nfGlow, .nfPiece, .nfRing').length,
   dim: ['nfDim', 'nfOn'].filter(c => document.getElementById('sheets').classList.contains(c)), hidden: allSheets().filter(p => p._tourHide && p._tourHide.size).length,
   nfOpen: NestFocus.isOpen(), views: [...document.querySelectorAll('#sheets, #reviewView')].map(v => v.getAnimations().filter(a => a.playState !== 'finished').length).reduce((a, b) => a + b, 0) });
