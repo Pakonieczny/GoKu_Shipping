@@ -196,7 +196,18 @@ class MetalSim {
   }
   /** One simulated update: the metal's parts of the orders that arrived come in, and every sheet that took pieces is searched until nothing is left to place. */
   async step(parts, tick) {
-    this.tick = tick; this.sim.ctl.tick = tick; const ctx = this.sim.ctx, run = { runId: 'run-1' }, t0 = Date.now();
+    const ctx = this.sim.ctx, t0 = Date.now();
+    this.intake(parts, tick);
+    // (the sheet the intake chose first was empty at the start of a stream: the page nests the sheet the batch landed on)
+    while (this.work.length) { const sh = this.work.shift(); await this.nest(sh); }
+    // (NOSPREAD, Paul 17 Oct 2026: the page's tick, settleTopups, brings a sheet that turned a whole order away to one more nest, once; a page without the policy has no such function)
+    for (let k = 0; k < 3 && typeof ctx.nospreadSettle === 'function'; k++) { ctx.nospreadSettle(); if (!this.work.length) break; while (this.work.length) { const sh = this.work.shift(); await this.nest(sh); } }
+    this.ms += Date.now() - t0;
+  }
+  /** The intake of one update (attachPool, as the page has it): each line of the parts goes onto the sheet the page picks, and that sheet waits to be nested (work). Nothing is nested here: step() nests,
+      and a driver that plays the live timing (tests/charm-nest/nospread-hard.cjs: the next update arrives while a search is out) calls it on its own. */
+  intake(parts, tick) {
+    this.tick = tick; this.sim.ctl.tick = tick; const ctx = this.sim.ctx, run = { runId: 'run-1' };
     if (!this.pages.length) this.pages.push(this.newPage());
     // (NOSPREAD, Paul 17 Oct 2026: an order with a line still to come is put on its sheet after the others of the update, as the bridge's addRows does)
     const behind = part => !!(part.order && part.order.expected > part.order.pieces.length + (part.order.placed || 0) && typeof ctx.nospread === 'function' && ctx.nospread());
@@ -205,16 +216,15 @@ class MetalSim {
       const info = part.order || { pieces: part.pieces, expected: part.expected || part.pieces.length };
       if (typeof ctx.nospreadChunk === 'function' && !info.pieces.some(c => c.chunk)) ctx.nospreadChunk(this.metal, info.pieces, info);   // (an order bigger than a sheet is cut into units that each fit one: attachPool does the same)
       let page = ctx.intakePage(this.metal, run, part.id, line.pieces, info);
-      if (!page || ctx.closed(page)) page = this.addPage();      // (attachPool: a closed sheet is never joined)
+      // (R16 HARD, Paul 26 Oct 2026: as attachPool keeps it, the order's own sheet of this colour although it was released, LiveNest.orderHome, kept released while it nests them, reopenHome)
+      const back = typeof ctx.orderHome === 'function' ? ctx.orderHome(this.metal, run, part.id, { skip: line.pieces }) : null;
+      if (back) page = back;
+      if (!page || (ctx.closed(page) && page !== back)) page = this.addPage();      // (attachPool: a closed sheet is never joined, but for the order's own)
+      if (back && page === back && typeof ctx.reopenHome === 'function') ctx.reopenHome(page, part.id);
       for (const c of line.pieces) page.charms.push(Object.assign({}, c, { pinned: null }));
       page.appendOnly = page.placements.length > 0; page.intakeAppend = page.appendOnly;
       this.startNest(page);
     }
-    // (the sheet the intake chose first was empty at the start of a stream: the page nests the sheet the batch landed on)
-    while (this.work.length) { const sh = this.work.shift(); await this.nest(sh); }
-    // (NOSPREAD, Paul 17 Oct 2026: the page's tick, settleTopups, brings a sheet that turned a whole order away to one more nest, once; a page without the policy has no such function)
-    for (let k = 0; k < 3 && typeof ctx.nospreadSettle === 'function'; k++) { ctx.nospreadSettle(); if (!this.work.length) break; while (this.work.length) { const sh = this.work.shift(); await this.nest(sh); } }
-    this.ms += Date.now() - t0;
   }
 }
 

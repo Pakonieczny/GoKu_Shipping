@@ -8,6 +8,15 @@
  *    and instead add them to the next sheet in-line. This will greatly reduce the cross pollination of orders between sheets of the same colour. There could be a circumstance where
  *    a given order is so big that it fills several sheets and the system must be smart enough and robust enough to deal with such a scenario."
  *
+ * THE HARD RULE (R16, Paul 26 Oct 2026: "sheets of the same colour cannot have cross-pollination of charms from a multi-charm/earring orders ... All multi-piece orders that do not fit on a given sheet
+ * (Near the end of that sheet) should be put onto the next avaliable sheet and only single piece/charm orders should be used to fill/complete a given sheet"; docs/charm-nest/set-rules.md R16). "When
+ * practicable" is no longer the reading: a multi-piece order of Gold Filled or Sterling Silver ends on ONE sheet of its colour, but for an order bigger than one sheet (the units below, on consecutive
+ * sheets by design) and a split of necessity (its first pieces on a sheet that is cut, approved for laser cutting, sent or held by a person, said in the log). This file still decides only where an order
+ * may GO; the page holds the rest of the guarantee: the solver seats an order all or nothing and a partial seat is lifted whole with its saved pieces and the pieces that came while it was searched
+ * (charm-nest-1.html keepOrdersWhole); every later piece of an order goes to the order's own sheet, open or released full and not cut, approved or sent, which keeps the order whole or passes it on whole
+ * (charm-nest-bridge.js LiveNest.orderHome / reopensHome / reopenHome: the intake, Pool.attachPool, INPLACE's next sheet, PAIR's follow, UNPAIR); and a net at every nest brings a piece that still finds
+ * itself apart from its order back to it before the sheet is written or released into a set (charm-nest-1.html homeward). Tests: tests/charm-nest/nospread-hard.cjs.
+ *
  * What this file is. The POLICY, pure (no DOM, no network, no page state): numbers in, a decision out. The page asks it two questions and keeps every other rule it has
  * (charm-nest-1.html: topupTakes, feedTurn, feedOn, keepOrdersWhole, overflowToNextSheet, sheetFull; charm-nest-bridge.js: LiveNest.intakePage, Pool.attachPool):
  *   1. admits(sheet, order)     may this order go onto this sheet?  (B: a sheet near completion takes a multi-piece order only if ALL its pieces fit; A: outside the transition

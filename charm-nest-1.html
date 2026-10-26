@@ -4929,13 +4929,70 @@ function keepOrdersWhole(sh, byId, pocket) {
   // Rose Gold piece or one a person pinned; the same exceptions as for a pair's mates.
   const wholeMates = orderMatesOf(sh, byId, bad, orderOf, locked, fixed, lifted);
   lifted.push(...wholeMates);
-  if (!lifted.length) return;
+  // (R16 HARD, Paul 26 Oct 2026: a piece of an order that moves on, which came onto this sheet while it was searched (a later line of the order: neither seated nor turned away by this search), goes
+  //  with it, never left behind to be passed on alone later)
+  const unitOf = c => String(typeof orderKey === "function" ? orderKey(c) : c.order || c.id), going = new Set([...sh.rejects.map(orderOf), ...lifted.map(p => orderOf(p.id))].map(String));
+  const seatedNow = new Set(sh.placements.map(p => p.id)), waitTurn = new Set(sh.feedWait || []), turned = new Set(sh.rejects);
+  const behind = going.size ? (sh.charms || []).filter(c => !c.excluded && !seatedNow.has(c.id) && !turned.has(c.id) && !waitTurn.has(c.id) && going.has(unitOf(c))).map(c => c.id) : [];
+  if (behind.length) sh.rejects.push(...behind);
+  // (R16 HARD, Paul 26 Oct 2026: and an order whose pieces of this colour are apart, here and on its other sheet, is brought together before this sheet is written or released: homeward)
+  if (!lifted.length) { homeward(sh); return; }
   sh.placements = sh.placements.filter(p => !lifted.includes(p));
   sh.rejects.push(...lifted.map(p => p.id));
   // a saved piece lifted off is no longer a saved placement of this sheet: the check that follows holds the saved layout in place (buildJob lockedPlacements) and would
   // flag the sheet for a "moved" piece that was taken off on purpose
   if (sh.nestInitial && lifted.some(p => sh.nestInitial.some(q => q.id === p.id))) sh.nestInitial = sh.nestInitial.filter(q => !lifted.some(p => p.id === q.id));
   agent({ metal: sh.metal }, "nest", `Orders kept whole and oldest first: ${lifted.length} placed piece(s) of ${new Set(lifted.map(p => orderOf(p.id))).size} order(s) lifted off — the order moves to the next sheet as one${mates.length ? `; ${mates.length} saved piece(s) of ${new Set(mates.map(p => gid(byId.get(p.id)))).size} pair/line(s) whose other piece did not fit come with it, so none is left half on this sheet` : ""}${wholeMates.length ? `; ${wholeMates.length} saved piece(s) of ${new Set(wholeMates.map(p => String(orderOf(p.id)))).size} order(s) whose other piece did not fit come with it, so the order stays on one sheet` : ""}`);
+  homeward(sh);
+}
+/* R16 HARD (Paul, 26 Oct 2026: "sheets of the same colour cannot have cross-pollination of charms from a multi-charm/earring orders ... All multi-piece orders that do not fit on a given sheet (Near the
+   end of that sheet) should be put onto the next avaliable sheet and only single piece/charm orders should be used to fill/complete a given sheet"). The net under every path that puts a piece on a Gold
+   Filled or Sterling Silver sheet (the intake, a late line, the overflow, the gap fill, INPLACE's next sheet, PAIR's follow and repair), run at every nest before the sheet is written, so before it can be
+   released into a set: an order with pieces on this sheet and pieces SEATED on ONE other sheet of its colour in the run is apart. It is brought together, whole, on one of the two:
+     · its pieces here go to the other sheet when that sheet can still take them (open, or released full and not cut, approved for laser cutting or sent: LiveNest.reopensHome; kept released while it
+       nests them, reopenHome), and its nest keeps the order whole there or passes the WHOLE order on (keepOrdersWhole, overflowToNextSheet) while single-piece orders fill the room;
+     · when this sheet holds nothing but that order, the other sheet's pieces come here instead (this sheet nests them next): an empty sheet is never written for a stray piece.
+   Never a piece a person pinned. An order bigger than one sheet (its units, chunk, fill consecutive sheets by design), and an order whose other sheet is cut, approved, sent or held, or that is seated on
+   several other sheets already, stays: a split of necessity, said once in the sheet's log. The pieces leave as rejected ones do (never counted as a miss of this sheet: they are not its rejects).
+   S.settings.nospread = "off" leaves it out with the rest of NOSPREAD. → [{ order, from, to, pieces }] */
+function homeward(sh) {
+  if (!sh || !["gold", "silver"].includes(sh.metal) || sh._mergeNext || typeof nospread !== "function" || !nospread()) return [];
+  const LN = window.LiveNest, pick = n => LN && typeof LN[n] === "function" ? LN[n] : null;
+  const reopens = pick("reopensHome") || (typeof reopensHome === "function" ? reopensHome : null), reopen = pick("reopenHome") || (typeof reopenHome === "function" ? reopenHome : null), isClosed = pick("closed") || (typeof closed === "function" ? closed : null);
+  if (!reopens || !reopen || !isClosed) return [];
+  const run = sh.runId ? { runId: sh.runId } : null, oidOf = c => String(c && c.order != null ? c.order : "").split("/")[0];
+  const others = ((S.sheets[sh.metal] || {}).pages || []).filter(p => p !== sh && p.metal === sh.metal && !p.recalled && (!sh.runId || !p.runId || p.runId === sh.runId));
+  const live = p => (p.charms || []).filter(c => !c.excluded);
+  const byOrder = new Map(); for (const c of live(sh)) { const k = oidOf(c); if (!k) continue; if (!byOrder.has(k)) byOrder.set(k, []); byOrder.get(k).push(c); }
+  const byHand = c => !!(c && c.pinned && !c.arrivalPin), out = [], said = sh._r16Said || (sh._r16Said = new Set());
+  // (the other sheet, giving or taking, keeps its release and its set while it is nested again, reopenHome; this sheet is being written now, and nests what it takes next)
+  const take = (from, pieces, to, oid) => {
+    const ids = new Set(pieces.map(c => c.id)), other = from === sh ? to : from;
+    from.charms = from.charms.filter(c => !ids.has(c.id)); from.placements = (from.placements || []).filter(p => !ids.has(p.id)); from.rejects = (from.rejects || []).filter(id => !ids.has(id));
+    if (Array.isArray(from.feedWait)) from.feedWait = from.feedWait.filter(id => !ids.has(id));
+    if (from.nestInitial) from.nestInitial = from.nestInitial.filter(q => !ids.has(q.id));
+    reopen(other, oid);
+    for (const c of pieces) { if (c.arrivalPin) { c.pinned = null; delete c.arrivalPin; } c.metal = to.metal; if (!to.charms.includes(c)) to.charms.push(c); }
+    if (sh.runId && !other.runId) other.runId = sh.runId;
+    other.appendOnly = other.intakeAppend = (other.placements || []).length > 0; other.dirty = true; if (!["nesting", "finishing", "queued"].includes(other.status)) other.status = "ready";
+    if (to === sh) sh.dirty = true;
+    out.push({ order: oid, from, to, pieces: pieces.map(c => c.poolId || c.id) });
+    agent({ metal: sh.metal }, "nest", `Order ${oid}: ${pieces.length} piece${pieces.length === 1 ? "" : "s"} moved from ${from === sh ? "this sheet" : "sheet " + from.page} to ${to === sh ? "this sheet" : "sheet " + to.page}, where the rest of the order is, so that the order is on one ${labelOf(sh.metal)} sheet (Paul, 26 Oct 2026: no order on two sheets of one colour)`);
+    try { startNest(other); } catch (_) { /* the run starts it */ }
+    if (to === sh) try { startNest(sh); } catch (_) { /* nested again once this nest is through: it is dirty */ }
+  };
+  for (const [oid, pieces] of byOrder) {
+    if (pieces.some(c => c.chunk)) continue;                                                         // (an order bigger than one sheet: its units fill consecutive sheets by design)
+    const seatedOn = p => { const on = new Set((p.placements || []).map(q => q.id)); return (p.charms || []).filter(c => !c.excluded && oidOf(c) === oid && on.has(c.id)); };
+    const apart = others.filter(p => seatedOn(p).length); if (!apart.length) continue;
+    const to = apart.length === 1 ? apart[0] : null, theirs = to ? (to.charms || []).filter(c => !c.excluded && oidOf(c) === oid) : [], can = to && (!isClosed(to) || reopens(to, run, oid));
+    const lone = !live(sh).some(c => oidOf(c) !== oid), toLone = !!to && !(to.charms || []).some(c => !c.excluded && oidOf(c) !== oid);
+    if (lone && toLone) continue;                                                                    // (the order alone fills both sheets: bigger than one sheet in all but name)
+    if (can && lone && !theirs.some(byHand) && !theirs.some(c => c.chunk)) { take(to, theirs, sh, oid); continue; }
+    if (can && !pieces.some(byHand)) { take(sh, pieces, to, oid); continue; }
+    if (!said.has(oid)) { said.add(oid); agent({ metal: sh.metal }, "warn", `Split order ${oid} (a split of necessity: ${pieces.some(byHand) ? "a piece of it here was placed by hand" : to ? `sheet ${to.page} cannot take more (cut, approved for laser cutting, sent or held)` : `it is already on ${apart.length} other sheets`}): ${pieces.length} piece(s) on sheet ${sh.page}, ${apart.map(p => `${seatedOn(p).length} on sheet ${p.page}`).join(", ")} — the sheets must go in one set`); }
+  }
+  return out;
 }
 /** The saved pieces keepOrdersWhole lifts with an order one of whose pieces did not fit (see there): placements of `sh` that are locked, not lifted yet, not protected, not
     pinned by a person, of an order in `bad`, when that whole order fits one empty sheet (its area, grown by half the clearance, under ORDER_ROOM of the sheet's
@@ -5077,6 +5134,8 @@ function topupSettle(sh, result, full) {
   const live = S.settings.runMode === "auto" && !!sh.runId && window.B?.run?.runId === sh.runId && !["complete", "abandoned"].includes(window.B.run.status);
   if (!t) {
     // (NOSPREAD: an order turned away at the door of a sheet at the release fill, nospreadPassed, is the miss that no reject records: in the one nest nospreadSettle asks for, sheetFull judges the sheet as if it had been rejected there)
+    // (R16 HARD, Paul 26 Oct 2026: a sheet kept released while it nests its own order's later piece, Gate.keep / reopenHome, stays released: it starts no gap fill)
+    if (sh.keepRelease?.full) return full;
     if (!full || atCeiling || reached || noRoom || (!sh.rejects.length && !sh._nsMiss) || !live) {
       // a sheet released below the 75% target with no gap fill says why, on its card and in its log (Paul, 9 Oct: "the silver sheet
       // did not finish being filled and then the system decided to start a new sheet")
@@ -8413,7 +8472,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25-dc26-bk26-es26-ee26-ep26-sx26-sc26-ns26-pw26-gl1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25-dc26-bk26-es26-ee26-ep26-sx26-sc26-ns26-pw26-gl1-r16h1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
