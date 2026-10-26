@@ -1,12 +1,23 @@
 // SEALWIN (Paul 20 Oct 2026: "All of these seals must be visible in all places where a given button is relevant or information about a given button's status is relevant to the user. This includes the
-// Detailed Order view modal."): the order window shows every seal the order has collected, beside its button when that button is shown in the window, else in the compact Seals row (#owSealRow).
-//   what is proved (the REAL page over the offline fake site; every name is made up; the cancel and sheet seals are seeded as records in the release seal record's shape, on the order's Review document)
-//     1  node: the painter is in the window's paint and listens for the seal events; the row is in the page; the cache token is bumped (-sw1)
-//     2  an order with print + release + cancel + sheet seals and a Hold Order mark (ORDER HELD): the window shows all five in the Seals row, oldest first, each in its kind's ink, who and when on hover
-//     3  a kind nobody listed (a seeded "engraveSent" record with its own label) is drawn too, with a neutral ink and its stored label
-//     4  a seal whose button is shown in the window sits beside that button, not in the row
-//     5  LIVE: a seal added while the window is open appears without a reload (the seal event, and a plain repaint), and its Undo takes it away
-//     6  a cancelled order's window (all its lines gone, opened by its receipt id as Orders › Cancelled does) shows its seals
+// Detailed Order view modal."): the order window showed every seal the order had collected, beside its button when that button was shown in the window, else in a compact Seals row (#owSealRow).
+// Paul, 26 Oct 2026: "Remove this extra duplicate and unneeded 'Sent to Sheet' button + Seal and the second 'Seals' menu completely from the UI of the Detailed Order modal." The Seals row is GONE
+// (charm-nest-1.html has no #owSealRow and no CSS for it; charm-nest-bridge.js paintWinSeals draws no row). A seal whose button IS shown in the window still sits beside that button; a seal whose button is
+// NOT shown is not drawn in the window at all (it stays on the Orders / Review cards and in the Timeline tab).
+//   what is proved now (the REAL page over the offline fake site; every name is made up; the cancel and sheet seals are seeded as records in the release seal record's shape, on the order's Review document)
+//     1  node: the painter is in the window's paint and listens for the seal events; NO Seals row in the page (no #owSealRow element, no .owSealRow CSS) and paintWinSeals does not touch one;
+//        the bridge's cache token is the current one (-ns26)
+//     2  an order with print + release + cancel + sheet seals, a Hold Order mark (ORDER HELD) and a kind nobody listed (a seeded "engraveSent" record with its own label): the order still has every one
+//        (OrderWin.seals(), the window's reader of the seals the cards share), but the window has no Seals row, no "Seals" header, and draws no seal away from a shown button of its kind: ORDER HELD
+//        sits beside the window's own Hold Order button (.revSendBtn) in its kind's design, compact, who and when on hover; the seals whose button the window does not show (here release, sheet, cancel
+//        and the unlisted kind) are not drawn in it at all
+//     3  (dropped: it proved an unlisted kind was drawn in the Seals row with a neutral ink. An unlisted kind has no button, so it is never drawn in the window now; 2 checks the reader still lists it with
+//        its stored label and that the window does not draw it)
+//     4  a seal whose button is shown in the window sits beside that button (the test's own Cancel Order button, #testCancelBtn), in its kind's design, compact, who and when on hover, once; when the button
+//        goes, the seal leaves the window with it (no row takes it)
+//     5  LIVE, beside a shown button (the same injected Cancel Order button): a seal stamped while the window is open appears beside it without a reload (the seal event), its Undo takes it away live,
+//        it appears again on a plain repaint, and a cancel marked undone is not shown; never a Seals row
+//     6  a cancelled order's window (all its lines gone, opened by its receipt id as Orders › Cancelled does): no Seals row; the reader still has its cancel and print seals; its cancel seal sits beside a
+//        shown Cancel Order button
 //   PW_DIR=<playwright node_modules> node tests/charm-nest/seals-window.cjs [PW_DIR]
 'use strict';
 const fs = require('fs'), path = require('path');
@@ -24,8 +35,12 @@ const keyOf = f => `${f.rid}_${f.rid}1`;
 
 {
   const bridge = read('charm-nest-bridge.js'), html = read('charm-nest-1.html');
+  const fn = (src, start, end) => { const i = src.indexOf(start), j = src.indexOf(end, i + start.length); return i >= 0 && j > i ? src.slice(i, j) : ''; };
+  const painter = fn(bridge, 'function paintWinSeals()', '/** Paint the window from the row it is showing. */');
   check(/tryDo\(paintWinSeals\)/.test(bridge) && /"cn-review-mark", "cn-order-seal"/.test(bridge) && /function winSealsOf\(/.test(bridge), 'source: paint() draws the seals; the window listens for the seal events');
-  check(/id="owSealRow"/.test(html) && /charm-nest-bridge\.js\?v=[^"]*-sw1[-"]/.test(html), 'source: the Seals row is in the page; the cache token is bumped (-sw1)');
+  check(!/owSealRow|ow-seal-row/.test(html), 'source: no Seals row in the page (Paul, 26 Oct 2026): no #owSealRow element, no .owSealRow CSS');
+  check(!!painter && /data-ow-btn-seals/.test(painter) && !/owSealRow|owSealRowHd/.test(painter), 'source: paintWinSeals still draws a seal beside its button and no longer touches a Seals row');
+  check(/charm-nest-bridge\.js\?v=[^"]*-ns26[-"]/.test(html), 'source: the bridge\'s cache token is the current one (-ns26)');
 }
 
 (async () => {
@@ -55,53 +70,82 @@ const keyOf = f => `${f.rid}_${f.rid}1`;
 
     const closeWin = async () => { await page.evaluate(() => { const o = document.getElementById('orderWin'); if (o && o.open) document.getElementById('owClose').click(); }); await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 8000 }).catch(() => {}); await sleep(250); };
     const settle = async () => { await page.waitForSelector('#owMeta [data-owf-chip="order"]', { timeout: 20000 }); await sleep(900); };
-    const rowSeals = () => page.evaluate(() => {
-      const row = document.getElementById('owSealRow'), vis = !!row && !row.hidden && row.getBoundingClientRect().height > 10;
-      return { vis, items: [...document.querySelectorAll('#owSealRow [data-ow-win-seal], #owSealRow .owWinSeal')].map(n => { const svg = n.querySelector('svg'), r = n.getBoundingClientRect(); return { kind: n.dataset.sealKind, at: +n.dataset.sealAt, title: n.title, family: svg && svg.dataset.sealFamily, text: svg ? (() => { try { return JSON.parse(svg.dataset.sealModel).action || ''; } catch (_) { return ''; } })() : '', w: Math.round(r.width) }; }) };
+    /** what the window draws of the order's seals now: whether any Seals row or "Seals" header is left, every drawn seal (beside a shown button or not), and what the reader still knows */
+    const winSeals = () => page.evaluate(() => {
+      const dlg = document.getElementById('orderWin');
+      const shown = b => !!b && b.isConnected && !b.hidden && !b.closest('[hidden]') && getComputedStyle(b).display !== 'none' && b.getBoundingClientRect().width > 0;
+      const header = [...dlg.querySelectorAll('*')].some(n => !n.children.length && n.textContent.trim() === 'Seals' && !n.closest('[data-view="timeline"]'));
+      const drawn = [...dlg.querySelectorAll('.owWinSeal, [data-testid="ow-win-seal"]')].map(n => {
+        const g = n.closest('[data-ow-btn-seals]'), b = g && g.previousElementSibling, svg = n.querySelector('svg'), r = n.getBoundingClientRect();
+        return { kind: n.dataset.sealKind, at: +n.dataset.sealAt, title: n.title, family: svg && svg.dataset.sealFamily, text: svg ? (() => { try { return JSON.parse(svg.dataset.sealModel).action || ''; } catch (_) { return ''; } })() : '',
+          w: Math.round(r.width), beside: !!g, btn: b ? (b.id || b.className) : '', btnShown: shown(b) };
+      });
+      // (the buttons of the kinds that are drawn beside one, as SEAL_KINDS names them; print and complete rest their seals on a piece's row, cuControls, and an unlisted kind has no button)
+      const BTN = { release: '[data-rel-hold],[data-cu-release]', cancel: '.cnCancelBtn,[data-cancel-order]', sheet: '#owSendSheet,[data-cu-sheet-send]', hold: '.revSendBtn' };
+      const btnShown = Object.fromEntries(Object.entries(BTN).map(([k, sel]) => [k, [...dlg.querySelectorAll(sel)].some(b => !b.closest('[data-ow-btn-seals]') && shown(b))]));
+      return { row: !!document.getElementById('owSealRow') || !!document.querySelector('.owSealRow, .owSealRowHd, [data-testid="ow-seal-row"]'), header, drawn, btnShown,
+        known: (OrderWin.seals() || []).map(s => ({ kind: s.kind, by: s.by, label: s.label })) };
     });
+    const addCancelBtn = () => page.evaluate(() => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn ghost xs cnCancelBtn'; b.id = 'testCancelBtn'; b.textContent = 'Cancel Order'; document.querySelector('#orderWin .owRight').prepend(b); OrderWin.paint(); });
+    const dropCancelBtn = () => page.evaluate(() => { const b = document.getElementById('testCancelBtn'); if (b) b.remove(); OrderWin.paint(); });
+    const besideCancel = () => page.evaluate(() => [...document.querySelectorAll('#testCancelBtn + [data-ow-btn-seals] [data-seal-kind]')].map(n => ({ kind: n.dataset.sealKind, title: n.title })));
 
-    // ═══ 2 · all four ═══
+    // ═══ 2 · every kind on the order, none drawn away from its button, no Seals row ═══
     await page.evaluate(k => OrderWin.open(k), keyOf(ALL)); await settle();
-    let s = await rowSeals();
-    const kinds = s.items.map(i => i.kind);
-    check(s.vis && ['print', 'release', 'sheet', 'cancel', 'hold'].every(k => kinds.includes(k)), `2 the Seals row shows print, release, sheet, cancel and ORDER HELD (the Hold Order mark) (${kinds.join(', ')})`);
-    check(s.items.every((x, i, a) => !i || a[i - 1].at <= x.at), '2 oldest to newest');
-    const by = k => s.items.find(i => i.kind === k) || {};
-    check(by('release').family === 'release' && by('cancel').family === 'cancelled' && /ORDER CANCELLED/.test(by('cancel').text) && /SENT TO SHEET/.test(by('sheet').text) && by('hold').family === 'exceptions' && by('hold').text === 'ORDER HELD', `2 each in its kind's design (${s.items.map(i => i.kind + ':' + i.family).join(' ')})`);
-    check(/Cass Canceller/.test(by('cancel').title) && /Sam Sheeter/.test(by('sheet').title) && /Cy Releaser/.test(by('release').title) && /Pat Printer/.test(by('print').title) && /Hal Holder/.test(by('hold').title), '2 who and when on hover (title)');
-    check(s.items.every(i => i.w >= 24 && i.w <= 48), `2 compact (${s.items.map(i => i.w).join(',')} px)`);
-    // ═══ 3 · an unlisted kind ═══
-    check(by('engraveSent').family === 'prepared' && /SENT TO ENGRAVER/.test(by('engraveSent').text) && /Sent to engraver · by Una Known/.test(by('engraveSent').title), '3 an unlisted kind: neutral ink, its stored label');
+    let s = await winSeals();
+    const kinds = s.known.map(i => i.kind);
+    check(['print', 'release', 'sheet', 'cancel', 'hold', 'engraveSent'].every(k => kinds.includes(k)), `2 the order still has print, release, sheet, cancel, ORDER HELD and the unlisted kind (OrderWin.seals(): ${kinds.join(', ')})`);
+    check((s.known.find(i => i.kind === 'engraveSent') || {}).label === 'Sent to engraver', '2 ... the unlisted kind with its stored label');
+    check(!s.row && !s.header, `2 no Seals row: no #owSealRow in the page, no "Seals" header in the window (row=${s.row} header=${s.header})`);
+    check(s.drawn.every(d => d.beside && d.btnShown), `2 no seal is drawn in the window away from a shown button of its kind (${JSON.stringify(s.drawn)})`);
+    const ho = s.drawn.filter(d => d.kind === 'hold');
+    check(s.btnShown.hold && ho.length === 1 && ho[0].beside && /revSendBtn/.test(ho[0].btn) && ho[0].btnShown, `2 ORDER HELD sits beside the window's own Hold Order button, once (${JSON.stringify(ho)})`);
+    check(ho.length === 1 && ho[0].family === 'exceptions' && ho[0].text === 'ORDER HELD' && /Order held · by Hal Holder/.test(ho[0].title) && ho[0].w >= 24 && ho[0].w <= 48, `2 ... in its kind's design, who and when on hover, compact (${ho.map(d => d.family + ':' + d.text + ' ' + d.w + 'px').join(' ')})`);
+    const unshown = s.known.map(i => i.kind).filter(k => k !== 'print' && k !== 'complete' && !s.btnShown[k]);
+    check(['release', 'sheet', 'cancel', 'engraveSent'].every(k => unshown.includes(k)) && unshown.every(k => !s.drawn.some(d => d.kind === k)), `2 the seals whose button the window does not show (${unshown.join(', ')}) are not drawn in it (drawn: ${s.drawn.map(d => d.kind).join(', ') || 'none'}; buttons shown: ${JSON.stringify(s.btnShown)})`);
     // ═══ 4 · beside its button ═══
-    await page.evaluate(() => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn ghost xs cnCancelBtn'; b.id = 'testCancelBtn'; b.textContent = 'Cancel Order'; document.querySelector('#orderWin .owRight').prepend(b); OrderWin.paint(); });
-    await sleep(300);
-    const side = await page.evaluate(() => ({ beside: !!document.querySelector('#testCancelBtn + [data-ow-btn-seals] [data-seal-kind="cancel"]'), inRow: !!document.querySelector('#owSealRow [data-seal-kind="cancel"]') }));
-    check(side.beside && !side.inRow, `4 a seal whose button is shown sits beside it (${JSON.stringify(side)})`);
-    await page.evaluate(() => { document.getElementById('testCancelBtn').remove(); OrderWin.paint(); });
+    await addCancelBtn(); await sleep(300);
+    s = await winSeals();
+    const cx = s.drawn.filter(d => d.kind === 'cancel');
+    check(cx.length === 1 && cx[0].beside && cx[0].btn === 'testCancelBtn' && cx[0].btnShown, `4 a seal whose button is shown sits beside it, once (${JSON.stringify(cx)})`);
+    check(cx.length === 1 && cx[0].family === 'cancelled' && /ORDER CANCELLED/.test(cx[0].text), `4 ... in its kind's design (${cx.map(d => d.family + ':' + d.text).join(' ')})`);
+    check(cx.length === 1 && /Order cancelled/.test(cx[0].title) && /by Cass Canceller/.test(cx[0].title), `4 ... who and when on hover (title: ${cx.map(d => d.title).join(' | ')})`);
+    check(cx.length === 1 && cx[0].w >= 24 && cx[0].w <= 48, `4 ... compact (${cx.map(d => d.w).join(',')} px)`);
+    check(!s.row && !s.header, '4 still no Seals row');
+    await dropCancelBtn(); await sleep(300);
+    s = await winSeals();
+    check(!s.drawn.some(d => d.kind === 'cancel') && !s.row && s.drawn.every(d => d.beside && d.btnShown), `4 when its button goes, the seal leaves the window with it (no row takes it) (still drawn: ${s.drawn.map(d => d.kind + ' beside ' + d.btn).join(', ') || 'none'})`);
     await closeWin();
 
-    // ═══ 5 · live ═══
+    // ═══ 5 · live, beside a shown button ═══
     await page.evaluate(k => OrderWin.open(k), keyOf(LIVE)); await settle();
-    s = await rowSeals(); check(!s.vis && !s.items.length, '5 an order with no seal: no Seals row');
+    await addCancelBtn(); await sleep(300);
+    s = await winSeals(); check(!s.row && !s.drawn.length && !(await besideCancel()).length, '5 an order with no seal: nothing beside its button, no Seals row');
     const put = (rid, field, v) => page.evaluate(({ rid, field, v }) => { const k = rid + '_review', was = B.maps.reviewMarks[k] || { key: k, kind: 'reviewMark', category: 'Review', receiptId: rid }, rec = Object.assign({}, was); if (v) rec[field] = v; else delete rec[field]; B.maps.reviewMarks = Object.assign({}, B.maps.reviewMarks, { [k]: rec }); }, { rid, field, v });
-    await put(LIVE.rid, 'sheet', { at: T, by: 'Live Sheeter', how: 'sheet', id: 'sheet:' + LIVE.rid + ':' + T });
+    await put(LIVE.rid, 'cancel', { at: T, by: 'Live Canceller', how: 'cancel', id: 'cancel:' + LIVE.rid + ':' + T });
     await page.evaluate(rid => document.dispatchEvent(new CustomEvent('cn-order-seal', { detail: { rid } })), LIVE.rid); await sleep(200);
-    s = await rowSeals(); check(s.vis && s.items.some(i => i.kind === 'sheet' && /Live Sheeter/.test(i.title)), '5 a seal stamped while the window is open appears at once (the seal event)');
-    await put(LIVE.rid, 'cancel', { at: T + 1000, by: 'Live Canceller', how: 'cancel', id: 'cancel:' + LIVE.rid });
-    await page.evaluate(() => OrderWin.paint()); await sleep(300);
-    s = await rowSeals(); check(s.items.some(i => i.kind === 'cancel'), '5 ... and on a plain repaint (what every stamp already calls)');
-    await put(LIVE.rid, 'sheet', null);
+    let bc = await besideCancel(); check(bc.length === 1 && bc[0].kind === 'cancel' && /Live Canceller/.test(bc[0].title), `5 a seal stamped while the window is open appears beside its button at once (the seal event) (${JSON.stringify(bc)})`);
+    await put(LIVE.rid, 'cancel', null);
     await page.evaluate(rid => document.dispatchEvent(new CustomEvent('cn-review-mark', { detail: { rid, kind: 'synced' } })), LIVE.rid); await sleep(200);
-    s = await rowSeals(); check(!s.items.some(i => i.kind === 'sheet') && s.items.some(i => i.kind === 'cancel'), '5 Undo takes the seal away live');
-    await put(LIVE.rid, 'cancel', { at: T + 1000, by: 'Live Canceller', how: 'cancel', id: 'cancel:' + LIVE.rid, undoneAt: T + 2000, undoneBy: 'Live Canceller' });
+    bc = await besideCancel(); check(!bc.length, `5 Undo takes the seal away live (${JSON.stringify(bc)})`);
+    await put(LIVE.rid, 'cancel', { at: T + 1000, by: 'Live Recanceller', how: 'cancel', id: 'cancel:' + LIVE.rid + ':' + (T + 1000) });
     await page.evaluate(() => OrderWin.paint()); await sleep(300);
-    s = await rowSeals(); check(!s.items.some(i => i.kind === 'cancel'), '5 a cancel marked undone (cancel.undoneAt, the Undo of Cancel Order) is not shown');
+    bc = await besideCancel(); check(bc.length === 1 && /Live Recanceller/.test(bc[0].title), `5 ... and appears again on a plain repaint (what every stamp already calls) (${JSON.stringify(bc)})`);
+    await put(LIVE.rid, 'cancel', { at: T + 1000, by: 'Live Recanceller', how: 'cancel', id: 'cancel:' + LIVE.rid + ':' + (T + 1000), undoneAt: T + 2000, undoneBy: 'Live Recanceller' });
+    await page.evaluate(() => OrderWin.paint()); await sleep(300);
+    bc = await besideCancel(); check(!bc.length, '5 a cancel marked undone (cancel.undoneAt, the Undo of Cancel Order) is not shown');
+    s = await winSeals(); check(!s.row && !s.header, '5 never a Seals row');
+    await dropCancelBtn();
     await closeWin();
 
     // ═══ 6 · a cancelled order ═══
     await page.evaluate(rid => OrderWin.openOrder(rid), GONE.rid); await settle();
-    s = await rowSeals();
-    check(s.vis && s.items.some(i => i.kind === 'cancel') && s.items.some(i => i.kind === 'print'), `6 a cancelled order's window shows its seals (${s.items.map(i => i.kind).join(', ')})`);
+    s = await winSeals();
+    check(!s.row && !s.header, '6 a cancelled order\'s window has no Seals row');
+    check(s.known.some(i => i.kind === 'cancel') && s.known.some(i => i.kind === 'print'), `6 ... the reader still has its seals (${s.known.map(i => i.kind).join(', ')})`);
+    await addCancelBtn(); await sleep(300);
+    bc = await besideCancel(); check(bc.length === 1 && bc[0].kind === 'cancel' && /Cass Canceller/.test(bc[0].title), `6 ... its cancel seal sits beside a shown Cancel Order button (${JSON.stringify(bc)})`);
+    await dropCancelBtn();
     await closeWin();
     const errs = W.errors.filter(e => !/ResizeObserver/.test(e));
     check(errs.length === 0, `no page error (${errs.slice(0, 3).join(' | ')})`);

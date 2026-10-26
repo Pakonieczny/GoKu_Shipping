@@ -1,7 +1,13 @@
 // SEALSHEET (Paul, 20 Oct 2026: "every action button stamps and leaves a custom seal beside it, persisted on the order so the seal travels with it everywhere until its conclusion"):
 // Send to Sheet stamps its SENT TO SHEET seal (its own teal family) on the button it was pressed on; once the send is through the seal is kept on the order's Review document,
 // sheet { at, by, how: "sheet", id } (the same pattern as Release Hold's release and Cancel Order's cancel); it rests beside the button (Send to Sheet in its done state on the
-// Review card, and in the order window's header), and it is all still there after a reload. A failed send keeps no seal.
+// Review card), and it is all still there after a reload. A failed send keeps no seal.
+// Paul, 26 Oct 2026: "Remove this extra duplicate and unneeded 'Sent to Sheet' button + Seal and the second 'Seals' menu completely from the UI of the Detailed Order modal." The order window's
+// header no longer keeps Send to Sheet's place after the send (#owSheetSent, the "Sent to Sheet" done-state button with its seal, is gone; charm-nest-bridge.js paintSent only removes a leftover one),
+// and the window has no Seals row (#owSealRow). What this test proves now about the order window: for the sent order, before and after a reload, its header has no #owSheetSent, no "Sent to Sheet"
+// button and no SENT TO SHEET seal, Send to Sheet itself is not shown, there is no Seals row, and the seal is drawn nowhere in the window outside its Timeline tab, while the window still knows the
+// order's sheet seal (OrderWin.seals()). The seal itself is proved where it stays: on the order's Review document, in CharmNestReviewMark.sealsOf, and beside "Sent to Sheet" on the Review card
+// (it is also in the Timeline, not checked here).
 // The sorter in headless Chromium over the fake site (bridge-server.cjs: the real charmNestLibrary over an in-memory Firestore; nothing leaves the loopback).
 //   node tests/charm-nest/seal-sheet.cjs [playwright node_modules]   (PW_DIR, CHROMIUM)
 const path = require('path'), assert = require('assert/strict');
@@ -71,7 +77,7 @@ const ORDERS = [order(RID), order(FAIL)], Seal_PREPARED = '#65737f';
     const sent = await page.evaluate(rid => { const row = Orders.rows().find(x => String(x.order.receiptId) === rid); return CustomSheet.sentOf(row).sent || CustomSheet.decisionOf(row); }, RID);
     ok(+cloud.sheet.at === +sent.at && cloud.sheet.id === sent.id, 'the seal is the send\'s own: the same time and id as its decision');
     ok(await page.evaluate(rid => CharmNestReviewMark.sealsOf(rid).some(s => s.how === 'sheet'), RID), 'CharmNestReviewMark.sealsOf lists it with the order\'s other seals, by kind');
-    ok(await page.evaluate(rid => (window.__told || []).includes(rid), RID), 'the seal written fires "cn-order-seal" {rid}, so an open order window draws it at once');
+    ok(await page.evaluate(rid => (window.__told || []).includes(rid), RID), 'the seal written fires "cn-order-seal" {rid}, so an open order window repaints its seals at once');
     const beside = async () => page.evaluate(rid => {
       CN.setMode('review'); const seg = document.querySelector('#reviewView .rvSeg [data-cseg="done"]'); if (seg) seg.click(); Review.render();
       const n = document.querySelector(`#rvList .reviewListRow[data-rid="${rid}"]`), b = n && n.querySelector('[data-cu-sent]'), row = b && b.nextElementSibling, s = row && row.matches('.sealRow') && row.querySelector('.seal.seal-sheet'), svg = s && s.querySelector('svg');
@@ -80,9 +86,23 @@ const ORDERS = [order(RID), order(FAIL)], Seal_PREPARED = '#65737f';
     let b = await beside();
     ok(b.card && b.btn && b.label === 'Sent to Sheet' && /sealedSheet/.test(b.cls), 'the Review card keeps Send to Sheet in its done state, "Sent to Sheet", in its seal\'s teal: ' + JSON.stringify(b));
     ok(b.seal && b.family === 'sheet' && /SENT TO SHEET/.test(b.words) && b.ink === b.want && b.ink !== Seal_PREPARED && new RegExp('Sent to sheet by ' + WHO).test(b.aria), 'its SENT TO SHEET seal rests right after it, in its own ink, with who and when: ' + JSON.stringify(b));
-    const ow = async () => { await page.evaluate(rid => { const row = Orders.rows().find(x => String(x.order.receiptId) === rid); OrderWin.open(row.key); }, RID); await page.waitForTimeout(1200); return page.evaluate(() => { const n = document.querySelector('#owSheetSent:not([hidden])'); return { on: !!n, btn: n ? (n.querySelector('[data-cu-sent]') || {}).textContent : '', seal: !!(n && n.querySelector('.seal.seal-sheet')) }; }); };
+    // the order window (Paul, 26 Oct 2026): no "Sent to Sheet" button + seal in its header, no Seals row; the seal is still the order's (the window's own reader has it)
+    const ow = async () => {
+      const key = await page.evaluate(rid => { const row = Orders.rows().find(x => String(x.order.receiptId) === rid); OrderWin.open(row.key); return row.key; }, RID);
+      await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && !!document.querySelector('#orderWin .owHead #owPos'), key, { timeout: 20000 });
+      await page.waitForTimeout(1200);
+      return page.evaluate(() => {
+        const head = document.querySelector('#orderWin .owHead'), send = document.getElementById('owSendSheet');
+        const outside = sel => [...document.getElementById('orderWin').querySelectorAll(sel)].filter(n => !n.closest('[data-view="timeline"]')).length;   // (anywhere in the window but its Timeline tab)
+        return { open: OrderWin.isOpen(), sheetSent: !!document.getElementById('owSheetSent'), headBtn: !!head.querySelector('[data-cu-sent], .cuSentState'), headSeal: !!head.querySelector('.seal.seal-sheet, [data-seal-kind="sheet"], svg[data-seal-family="sheet"]'),
+          sendShown: !!send && !send.hidden && !send.closest('[hidden]'), row: !!document.getElementById('owSealRow') || !!document.querySelector('.owSealRow, .owSealRowHd, [data-testid="ow-seal-row"]'),
+          known: (OrderWin.seals() || []).some(s => s.kind === 'sheet'), elsewhere: { sentBtns: outside('[data-cu-sent]'), sheetSeals: outside('.seal.seal-sheet, [data-seal-kind="sheet"]') } };
+      });
+    };
+    const none = w => w.open && !w.sheetSent && !w.headBtn && !w.headSeal && !w.sendShown && !w.row;
     let w = await ow();
-    ok(w.on && w.btn === 'Sent to Sheet' && w.seal, 'the order window\'s header keeps Send to Sheet\'s place: "Sent to Sheet" with its seal beside it: ' + JSON.stringify(w));
+    ok(none(w), 'the order window\'s header has no "Sent to Sheet" button and no SENT TO SHEET seal (no #owSheetSent; Send to Sheet itself is not shown for a sent order), and the window has no Seals row: ' + JSON.stringify(w));
+    ok(w.known && !w.elsewhere.sentBtns && !w.elsewhere.sheetSeals, 'the window still knows the order\'s sheet seal (OrderWin.seals()) but draws it nowhere outside its Timeline tab (it stays on the Review card): ' + JSON.stringify(w.elsewhere));
     await page.evaluate(() => { try { OrderWin.close(); } catch (_) {} });
 
     // ── 3 · a reload: the seal comes back from the cloud ──
@@ -94,7 +114,7 @@ const ORDERS = [order(RID), order(FAIL)], Seal_PREPARED = '#65737f';
     b = await beside();
     ok(b.btn && b.seal && b.family === 'sheet', 'after a reload the Review card still shows the seal beside Sent to Sheet: ' + JSON.stringify(b));
     w = await ow();
-    ok(w.on && w.seal, 'after a reload the order window still shows it: ' + JSON.stringify(w));
+    ok(none(w) && w.known && !w.elsewhere.sentBtns && !w.elsewhere.sheetSeals, 'after a reload the order window\'s header still has no "Sent to Sheet" button or seal and no Seals row; the window still knows the seal and draws it nowhere outside its Timeline tab: ' + JSON.stringify(w));
     assert.deepEqual(errors, [], 'no page errors');
   } finally { await context.close(); await browser.close(); await srv.close(); }
   console.log(`seal-sheet OK (${passed} checks)`);
