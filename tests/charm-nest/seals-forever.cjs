@@ -59,7 +59,7 @@ const ORDERS = [order(RID, [line(41767447521, 'CHAIN_8941', 'CHAIN REPLACEMENT',
     // the card's seals: each with the button just before its row, its time, its turn, and whether it waits to be pressed
     const seals = () => page.evaluate(sel => [...document.querySelectorAll(sel + ' .sealRow .seal')].map(s => {
       const r = s.closest('.sealRow'); let b = r.previousElementSibling; while (b && b.classList.contains('sealRow')) b = b.previousElementSibling;
-      return { how: s.classList.contains('seal-button') ? 'button' : 'print', at: +s.dataset.at, rot: s.style.getPropertyValue('--rot'), btn: b && b.matches('[data-cu-release]') ? 'complete' : b && b.matches('[data-seal-btn]') ? 'print' : null, pending: s.classList.contains('pending'), face: (m => [m.action, m.n])(JSON.parse(s.querySelector('svg').dataset.sealModel)) };
+      return { how: s.classList.contains('seal-button') ? 'button' : s.classList.contains('seal-releaseHold') ? 'releaseHold' : 'print', at: +s.dataset.at, rot: s.style.getPropertyValue('--rot'), btn: b && b.matches('[data-cu-release]') ? 'complete' : b && b.matches('[data-seal-btn]') ? 'print' : null, pending: s.classList.contains('pending'), face: (m => [m.action, m.n])(JSON.parse(s.querySelector('svg').dataset.sealModel)) };
     }), card);
     const rec = () => srv.st.doc('Charm_Custom_Orders', KEY);
     const stamped = () => page.evaluate(() => __stamped);
@@ -91,7 +91,7 @@ const ORDERS = [order(RID, [line(41767447521, 'CHAIN_8941', 'CHAIN REPLACEMENT',
     await page.click(card + ' [data-cu-release]');
     await page.waitForFunction(k => B.maps.customDone[k] && !B.maps.customKept[k], KEY); await settle();
     await seg('done');
-    assert.deepEqual((await seals()).map(s => s.how), ['print', 'button']);
+    assert.deepEqual((await seals()).map(s => s.how), ['print', 'releaseHold']);
     await page.click(card + ' [data-cu-reopen]');
     await page.waitForFunction(k => !B.maps.customDone[k] && B.maps.customKept[k], KEY); await settle();
     r = rec(); assert.deepEqual([r.state, r.stamps.map(x => x.how).join()], ['open', 'print,button']);
@@ -129,8 +129,8 @@ const ORDERS = [order(RID, [line(41767447521, 'CHAIN_8941', 'CHAIN REPLACEMENT',
     r = rec(); assert.deepEqual([r.state, r.prints, r.stamps.map(x => x.how).join()], ['completed', 2, 'print,button,print']);
     await seg('done');
     const all = await seals();
-    assert.deepEqual(all.map(s => s.face), [['QR LABEL PRINTED', 1], ['ORDER COMPLETE', 0], ['QR LABEL PRINTED', 2]], 'every seal: ' + JSON.stringify(all));
-    assert.deepEqual(all.slice(0, 2).map(s => [s.how, s.at, s.rot]), kept, 'the old ones unchanged');
+    assert.deepEqual(all.map(s => s.face), [['QR LABEL PRINTED', 1], ['RELEASE HOLD', 0], ['QR LABEL PRINTED', 2]], 'every seal (RELHOLD, Paul 18 Oct 2026: the Completed seal is now drawn as RELEASE HOLD on the Review card): ' + JSON.stringify(all));
+    assert.deepEqual(all.slice(0, 2).map(s => [s.at, s.rot]), kept.map(k => k.slice(1)), 'the old ones unchanged (same time, same turn; the Completed segment draws the Complete seal as RELEASE HOLD, RELHOLD 18 Oct 2026)');
     assert.equal(new Set(all.map(s => s.at)).size, 3, 'no seal doubled');
     // the timeline: one event per seal, and the reopen notes
     const tl = srv.st.list('Order_Timeline').filter(e => e.orderId === RID);
