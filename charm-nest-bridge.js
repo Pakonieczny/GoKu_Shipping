@@ -19630,13 +19630,15 @@ const OrderWin = window.OrderWin = (() => {
   }
   const shownIn = (host, sel) => { if (!host || !sel) return null; return [...host.querySelectorAll(sel)].find(b => b.isConnected && !b.hidden && !b.closest("[hidden]") && !b.closest("[data-ow-btn-seals]") && getComputedStyle(b).display !== "none") || null; };
   /** Paint the window's seals: beside their buttons, the rest in the Seals row. Cheap (nothing is redrawn while nothing changed). */
+  /* (Paul, 26 Oct 2026: "Remove ... the second 'Seals' menu completely from the UI of the Detailed Order modal": the compact Seals row is gone; a seal whose button is not shown in the window is
+     not drawn in it (it stays on the Orders and Review cards and in the Timeline tab); a seal whose button is shown still sits beside that button) */
   function paintWinSeals() {
-    const host = byId("owSealRow"); if (!host || !W.dlg) return;
-    const list = W.rid ? winSealsOf(W.rid) : [], rest = [], beside = new Map();   // (the first paint of an opening window comes before the dialog is open)
+    if (!W.dlg) return;
+    const list = W.rid ? winSealsOf(W.rid) : [], beside = new Map();   // (the first paint of an opening window comes before the dialog is open)
     for (const s of list) {
       const K = SEAL_KINDS[s.kind], btn = K ? shownIn(W.dlg, K.btn) : null;
       if (btn && K.rowDrawn) continue;   // (its button's row already rests it there)
-      if (btn) { if (!beside.has(btn)) beside.set(btn, []); beside.get(btn).push(s); } else rest.push(s);
+      if (btn) { if (!beside.has(btn)) beside.set(btn, []); beside.get(btn).push(s); }
     }
     // beside a button: one small group right after it (a repaint of the row takes it away with the button; drawn again here)
     const keep = new Set();
@@ -19648,13 +19650,6 @@ const OrderWin = window.OrderWin = (() => {
       keep.add(g);
     }
     for (const g of W.dlg.querySelectorAll("[data-ow-btn-seals]")) if (!keep.has(g)) g.remove();
-    const sig = JSON.stringify(rest.map(s => [s.kind, s.at, s.by, s.label]));
-    if (host.dataset.sig !== sig) {
-      host.dataset.sig = sig;
-      host.innerHTML = rest.length ? `<span class="owSealRowHd">Seals</span><span class="owSealRowList">${rest.map(winSealHtml).join("")}</span>` : "";
-      host.setAttribute("aria-label", rest.length ? `Seals of this order: ${rest.map(winSealWords).join(", ")}` : "Seals of this order");
-    }
-    host.hidden = !rest.length;
   }
   /** Paint the window from the row it is showing. */
   function paint() {
@@ -19886,17 +19881,10 @@ const OrderWin = window.OrderWin = (() => {
       }
     };
   }
-  /* SEALSHEET (Paul, 20 Oct 2026): the order sent to its sheet keeps Send to Sheet's place in the header, in its done state ("Sent to Sheet", the seal's teal) with its SENT TO SHEET seal beside it,
-     small, from the order's seal record (CustomSheet.sheetStamps: the Review document's sheet seal, else the send's own decision). Nothing for an order never sent; drawn again only when it changed. */
-  function paintSent(r, it) {
-    let n = byId("owSheetSent");
-    const html = r && window.CustomSheet && CustomSheet.sheetSealsHtml && !(byId("owSendSheet") || {})._busy ? tryDo(() => CustomSheet.sheetSealsHtml(it || { rows: [r], row: r }, 30)) || "" : "";
-    if (!html) { if (n) { n.hidden = true; n.dataset.sig = ""; } return; }
-    if (!n) { const at = byId("owPos"); if (!at) return; n = el("span", "owSheetSent"); n.id = "owSheetSent"; at.before(n); }
-    n.hidden = false; if (n.dataset.sig === html) return;
-    n.dataset.sig = html; n.innerHTML = CustomSheet.sentButtonHtml("xs") + html;
-    try { const row = n.querySelector(".sealRow"); if (row && window.Seal && Seal.fit) Seal.fit(row); } catch (_) {}
-  }
+  /* SEALSHEET (Paul, 20 Oct 2026) kept Send to Sheet's place in the header after the send, as a "Sent to Sheet" button with its seal. Paul, 26 Oct 2026: "Remove this extra duplicate and unneeded
+     'Sent to Sheet' button + Seal ... completely from the UI of the Detailed Order modal": nothing is drawn there now (a window left from an older page loses it). The seal stays on the Review card
+     and in the Timeline. */
+  function paintSent() { const n = byId("owSheetSent"); if (n) n.remove(); }
   /** A piece's controls at the right end of its row under "Its pieces" (Paul, 5 Oct; the Custom Orders bar that repeated them
    *  is gone, round 8). What the card is (cuState), its buttons and seals (cuControls) and what a press does (wireCu) are the
    *  Review card's own: CustomPrint's print and complete with their busy states, the name asked and the Undo, and the seals as
