@@ -13,7 +13,7 @@ const source = fs.readFileSync('charm-nest-bridge.js', 'utf8');
 const slice = (from, to) => { const a = source.indexOf(from), b = source.indexOf(to, a); assert(a >= 0 && b > a, 'slice ' + from); return source.slice(a, b); };
 // (a build without the frame queue draws at once, which is what part 4 catches, rather than failing to slice)
 const frameSrc = source.includes('const CNFrame = window.CNFrame') ? slice('const CNFrame = window.CNFrame', '/* ═══ 17 · DesignLink') : '';
-const ordersSrc = slice('const Orders = window.Orders = (() => {', '/* ═══ 19 · Master');
+const ordersSrc = slice('const Orders = window.Orders = (() => {', 'const PageVersion = (() => {');   // (to PageVersion, which follows Orders now and starts its own timers)
 const base = () => ({ JSON, Map, Set, WeakMap, Promise, Math, Object, Array, String, Number, Error, Intl, Date, console });
 const frames = [];
 const frame = () => { for (const f of frames.splice(0)) f(16); };
@@ -77,9 +77,9 @@ async function interpretTest() {
   const mk = (id, state, sku, metalKey, variations = []) => ({ key: id + '_t' + id, state, order: { receiptId: id, updateTs: 1, staffNote: '' }, line: { transactionId: 't' + id, listingId: 'L' + id, sku, metalKey, title: sku, quantity: 1, variations }, spec: null, problems: [], poolIds: [] });
   const r1 = mk('1', 'pulled', 'OK', 'silver', [{ name: 'Style', value: 'Dainty' }]), r2 = mk('2', 'pooled', 'SIZED', ''), r3 = mk('3', 'committed', 'DONE', 'gold'), r4 = mk('4', 'gone', 'OK', 'gold');
   const ctx = { window: {}, B: { orders: { rows: [r1, r2, r3, r4], byKey: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 } },
-    S: { cloud: { ok: true }, settings: {} }, O: Ocount, Master: { entryFor: sku => entries.get(sku) || null }, Review: { syncOrderItems() {} },
+    S: { cloud: { ok: true }, settings: {} }, O: Ocount, Master: { entryFor: sku => entries.get(sku) || null, likeFor: () => [], sharedFor: () => null }, Review: { syncOrderItems() {} },
     api: async (fn, body) => body.op === 'optionMapGet' ? { maps: served.maps } : body.op === 'aliasGet' ? { aliases: served.aliases } : { list: served.list },
-    document: { getElementById: () => null }, agent() {}, ...base() };
+    document: { getElementById: () => null }, agent() {}, setTimeout, clearTimeout, ...base() };
   vm.createContext(ctx);
   vm.runInContext(ordersSrc, ctx);
   const Orders = ctx.window.Orders;
@@ -152,7 +152,7 @@ function frameTest() {
   const node = name => ({ parentElement: { open: true }, querySelectorAll: () => [], set innerHTML(v) { drawn[name]++; }, set textContent(v) { if (name === 'tab') drawn.tab++; } });
   const els = { railRecentBody: node('strip'), ladder: node('ladder'), tabReviewN: node('review'), tabEngraveN: node('engrave') };
   const ctx = { window: {}, document: { getElementById: id => els[id] || null }, requestAnimationFrame: f => frames.push(f), setTimeout,
-    B: { run: null, master: { entries: new Map() }, orders: { rows: [] } }, S: { settings: {} }, O, Review: { count: () => 0 }, Engrave: { pendingCount: () => 0, reviewedCount: () => 0 },
+    B: { run: null, master: { entries: new Map() }, orders: { rows: [] } }, S: { settings: {} }, O, Review: { count: () => 0 }, Engrave: { pendingCount: () => 0, reviewedCount: () => 0, pendingRows: () => [] },
     Orders: { rows: () => [] }, Master: { missingCount: () => 0 }, Sets: {}, allSheets: () => [], setMode() {}, fmtT: t => String(t), esc: v => String(v), ...base() };
   vm.createContext(ctx);
   vm.runInContext(frameSrc + slice('const LiveStrip = window.LiveStrip = (() => {', 'const DesignLink = window.DesignLink'), ctx);

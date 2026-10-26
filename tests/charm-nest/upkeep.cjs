@@ -35,7 +35,7 @@ function world() {
   const lineRecord = row => [row.key, { state: row.state, orderId: row.order.receiptId, poolIds: row.poolIds }];
   const Orders = { rows: () => B.orders.rows, lineRecord, render() {} };
   const working = new Set();
-  const Engrave = { items: () => B.engrave.items, isWorking: j => working.has(j), view: () => ({ focus: null }), render() {} };
+  const Engrave = { items: () => B.engrave.items, isWorking: j => working.has(j), view: () => ({ focus: null }), render() {}, dropLine: row => { let n = 0; for (const [k, j] of [...B.engrave.items]) if (j.row === row || k === row.key) { B.engrave.items.delete(k); n++; } return n; } };
   let win = null;
   const OrderWin = { isOpen: () => !!win, key: () => win };
   const saved = [], logged = [];
