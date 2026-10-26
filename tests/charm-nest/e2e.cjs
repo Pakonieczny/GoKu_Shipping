@@ -13,7 +13,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   const fixture = path.join(tmp, 'TEST-GF-sheet.ai');
   let fx;
   if (process.env.CN_FILE) { fs.copyFileSync(process.env.CN_FILE, fixture); fx = { charms: new Array(+process.env.CN_EXPECT || 21) }; }   // real artwork: expect CN_EXPECT charms
-  else fx = await build(fixture, +process.env.CN_COUNT || 18);
+  else fx = await build(fixture, +process.env.CN_COUNT || 10);   // (10: three turns of three orders and one more, offline each turn nests the sheet again; 18 took over five minutes, CN_COUNT=18 still runs it)
   const server = http.createServer((req, res) => {
     const u = decodeURIComponent(req.url.split('?')[0]);
     if (u.startsWith('/.netlify/functions/')) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end('{"error":"no functions in the test server"}'); }
