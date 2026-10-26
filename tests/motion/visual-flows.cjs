@@ -142,6 +142,15 @@ const restOf = sel => { const el = document.querySelector(sel); if (!el) return 
       R.owEnd = await page.evaluate(leftovers);
       check(!R.owEnd.open.length && !R.owEnd.ghosts && !R.owEnd.running, `order window${tag}: closes and leaves nothing (${JSON.stringify(R.owEnd)})`);
 
+      /* 2b · opened from nothing to grow out of, the order window's text is never drawn over the list beneath: per frame, while the window is
+         not yet opaque, what of its content shows (its opacity, less the plain surface laid over it) stays under 10 % */
+      const seep = await page.evaluate(async k => {
+        const d = document.getElementById('orderWin'); let worst = 0, n = 0, on = true;
+        const s = () => { if (!on) return; const op = +getComputedStyle(d).opacity; if (d.open && op < .95) { const veil = Math.max(0, ...[...d.querySelectorAll('.owTint')].map(t => +getComputedStyle(t).opacity)); worst = Math.max(worst, op * (1 - veil)); n++; } requestAnimationFrame(s); };
+        OrderWin.open(k); s(); await new Promise(r => setTimeout(r, 700)); on = false; OrderWin.close(true); await new Promise(r => setTimeout(r, 300)); return { worst, n };
+      }, KEY);
+      check(seep.worst < .1, `order window${tag}: its content is not seen through it over the list while it fades in (at most ${(seep.worst * 100).toFixed(0)} % over ${seep.n} frames)`);
+
       /* 3 · a card's flight to a tab (Send to Sheet, the cancel flight, the Library's flights: Motion.ghost + Motion.fly) */
       const fl = await page.evaluate(async () => {
         const src = document.querySelector('#ordersView .ocard, #ordersView [data-mkey], .ocard, .card') || document.querySelector('header button, .tabs button');
