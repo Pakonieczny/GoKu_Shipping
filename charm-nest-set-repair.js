@@ -214,7 +214,7 @@
     for (const s of judged) {
       // (a page that has Gate.violations(run) for the run's own sets: its words win; any other set is read here)
       const own = gate && gate.some(v => v.set === s.id) ? gate.filter(v => v.set === s.id) : result.violations.filter(v => v.set === s.id || list(v.sets).includes(s.id));
-      const vs = own.filter(v => !NOT_SHOWN.has(v.rule));
+      const vs = own.filter(v => !NOT_SHOWN.has(v.rule) || (o.joining && v.rule === 'partial'));   // (a partial sheet DROPPED into a formed set is still refused, R3: Decision 3's wait is for a sheet of the set filling again, Paul 26 Oct 2026)
       if (!vs.length) continue;
       const info = infoOf(s, vs, rowOf); out.push(info); bySet[s.id] = info;
     }
@@ -246,7 +246,7 @@
       else if (x.solidIncluded === false) x.solidIncluded = null;
       return x;
     });
-    const was = diagnose(docs, rows, { includeStarted: true }).bySet[setId], now = diagnose(docs, after, { includeStarted: true }).bySet[setId];
+    const was = diagnose(docs, rows, { includeStarted: true, joining: true }).bySet[setId], now = diagnose(docs, after, { includeStarted: true, joining: true }).bySet[setId];
     if (!now) return pass();
     // a violation the set already had is not this move's doing; one that only names the joining sheets as well as those it had is the same fault (a unit that grows)
     const key = v => `${v.rule}:${v.sheets.filter(i => !join.has(i)).slice().sort().join('+')}`, had = new Set(((was && was.items) || []).map(key));
