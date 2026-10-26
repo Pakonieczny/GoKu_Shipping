@@ -5981,6 +5981,7 @@ const Gate = window.Gate = (() => {
     for (const sh of allSheets().filter(p => p.runId === run.runId && p.setId === set.setId && !holding(p) && !release(p, set.seq).include)) {
       const previous = {draft:sh.draft,setId:sh.setId,seq:sh.seq,sheetIndex:sh.sheetIndex,label:sh.label};
       if (window.CharmNestSheetName) set.sheetNos = CharmNestSheetName.raise(set.sheetNos, [sh]);   // (the number it had is retired for this set: nobody else is given it, charm-nest-sheet-name.js)
+      if (window.CharmNestSheetName && CharmNestSheetName.fileTag(sh)) sh.leftFileBase = sh.fileBase;   // (the set's file name it leaves with: a later save renames it working_, and claim reads this one to give its own old number back when it returns. Diagnostic, 26 Oct 2026)
       sh.draft = true; sh.setId = null; sh.seq = null; sh.sheetIndex = null; sh.label = null;
       try {
         await Pool.update(sh.charms.map(c => c.poolId).filter(Boolean), { setId:null, sheetId:null, state:"ready" });
@@ -6014,7 +6015,8 @@ const Gate = window.Gate = (() => {
       if (window.CharmNestSheetName) {
         const here = allSheets().filter(p => p !== sh && p.setId === set.setId && p.metal === sh.metal);
         set.sheetNos = CharmNestSheetName.raise(set.sheetNos, allSheets().filter(p => p !== sh && p.setId === set.setId));
-        sh.sheetIndex = CharmNestSheetName.claim(sh, here, set.sheetNos, n => CN.sheetFileBase(Object.assign({}, sh, { sheetIndex: n })));
+        sh.sheetIndex = CharmNestSheetName.claim(sh.leftFileBase && !CharmNestSheetName.fileTag(sh) ? Object.assign({}, sh, { fileBase: sh.leftFileBase }) : sh, here, set.sheetNos, n => CN.sheetFileBase(Object.assign({}, sh, { sheetIndex: n })));
+        delete sh.leftFileBase;
         set.sheetNos = CharmNestSheetName.raise(set.sheetNos, [sh]);
       } else sh.sheetIndex = 1 + Math.max(0, ...allSheets().filter(p => p !== sh && p.setId === set.setId && p.metal === sh.metal).map(p => +p.sheetIndex || 0));
       sh.fileBase = CN.sheetFileBase(sh);
