@@ -220,7 +220,7 @@ async function main() {
       check(both.every(g => g && g.s === 1) && (await winState()).open, `piece ${n}: Esc put both back whole and the window stayed open`);
     };
     await pick(k.c); await waitNoCard();
-    c = await card(); check(c.hidden && !c.state && c.n === 2 && !c.labels.some(l => /CABLE CHAIN/i.test(l)) && c.lid === B.lids[0], 'the chain (piece 1) has no back engraving: no card of its own (the other two pieces still show theirs), its own listing photo: ' + JSON.stringify(c.labels) + ' ' + JSON.stringify({ hidden: c.hidden, state: c.state, n: c.n, lid: c.lid, want: B.lids[0] }));
+    c = await card(); check(c.hidden && !c.state && c.n === 0 && !c.labels.some(l => /CABLE CHAIN/i.test(l)) && c.lid === B.lids[0], 'the chain (piece 1) has no back engraving: no card (ENGSEL/ENGAPPROVE, Paul 13 Oct 2026: the section shows only the piece picked), its own listing photo: ' + JSON.stringify(c.labels) + ' ' + JSON.stringify({ hidden: c.hidden, state: c.state, n: c.n, lid: c.lid, want: B.lids[0] }));
     await picsReady(); await viewOf(B.lids[0], 1);
     await pick(k.g); await waitCard('approved'); await picsReady();
     c = await card(); check(c.state === 'approved' && c.words === 'I\ndissent' && !c.btn && !c.approve && c.back && c.seals.length === 1 && c.seals[0] === 'BACK ENGRAVING|Giovanna' && c.lid === B.lids[1], 'the GF middle (piece 2): its own approved card, no button, Giovanna\'s one BACK ENGRAVING seal in its place: ' + JSON.stringify([c.state, c.words, c.seals]));
