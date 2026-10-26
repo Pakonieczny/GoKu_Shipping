@@ -5,8 +5,9 @@
 //   1 · station: a laser check, "back to Laser cutting" (Library) and Cut Sheet (Rose Gold) are recorded at station `laser`;
 //       approvals, labels, sends to a sheet and decisions (every other call) at `sorter`; one after the other, neither
 //       leaks into the other (the page's sign-in is put back as it was).
-//   2 · person: nobody named records nothing at first, but the press is not blocked and is not lost: a small labelled name
-//       field offers itself (no browser pop-up), and what was pressed is recorded under the name once it is typed; the name
+//   2 · person: nobody named records nothing at first, but the press is not blocked and is not lost: a small labelled field offers
+//       itself (no browser pop-up), and what was pressed is recorded under the person once they sign in. EMPNUM (Paul, 26 Oct 2026):
+//       the field asks for the 6-digit Employee Number and the server names the person (pinOf / signInAs: the fake roster); the name
 //       is trimmed, spaces collapsed, Title Case ("  tess   WELDER " = "Tess Welder", "marco r" = "Marco R.", "McDonald" kept); a number is never a name.
 //   3 · nothing automatic is a person's work: an interpretation, a Review sync, a checkpoint and a card refresh log nothing,
 //       and a name's arrival with nothing pressed records nothing; held presses are dropped on demand (the midnight sign-out).
@@ -19,7 +20,7 @@ const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
 const CHROME = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-const { start } = require('../charm-nest/bridge-server.cjs');
+const { start, pinOf, signInAs } = require('../charm-nest/bridge-server.cjs');
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const brief = e => [e.action, e.station, e.person, e.device, e.parts, e.orders, !!e.sandbox];
@@ -85,6 +86,7 @@ async function sorterPage(browser, srv, errors, { sandbox = false } = {}) {
       const { context, page, rec, flush } = await sorterPage(browser, srv, errors);
       const nameBar = '.cnNameBar';
       const evs = () => rec.events.map(brief);
+      const signIn = name => signInAs(page, srv, name);       // (EMPNUM, 26 Oct 2026: a person is signed in by their Employee Number; a script-set name switches nobody)
 
       // nobody is named: the helper has nobody to put the work under
       assert.strictEqual(await page.evaluate(() => StationActivity.who()), null);
@@ -99,7 +101,7 @@ async function sorterPage(browser, srv, errors, { sandbox = false } = {}) {
       assert.strictEqual(await page.evaluate(() => StationActivity.pending()), 0, 'nothing is recorded under nobody');
       await page.waitForSelector(nameBar);
       const hint = await page.evaluate(() => { const b = document.querySelector('.cnNameBar'), i = b.querySelector('input'), l = b.querySelector('label'); return { kind: b.dataset.kind, labelFor: l.getAttribute('for') === i.id, label: l.textContent, focused: document.activeElement === i, ph: i.placeholder, modal: !!document.querySelector('dialog:modal') }; });
-      assert.strictEqual(hint.kind, 'hint'); assert(hint.labelFor && /Your name/.test(hint.label) && /counted under it/.test(hint.label), 'a labelled field that says why: ' + hint.label);
+      assert.strictEqual(hint.kind, 'hint'); assert(hint.labelFor && /Your Employee Number/.test(hint.label) && /counted under it/.test(hint.label), 'a labelled field that says why: ' + hint.label);
       assert.strictEqual(hint.focused, false, 'a hint takes no focus (it never interrupts typing elsewhere)');
       assert.strictEqual(hint.modal, false, 'and is not a modal');
       assert.deepStrictEqual(await page.evaluate(() => window.__prompts), [], 'no browser pop-up');
@@ -109,8 +111,8 @@ async function sorterPage(browser, srv, errors, { sandbox = false } = {}) {
       assert.strictEqual((await page.$$(nameBar)).length, 1, 'one field, however many presses');
       assert.strictEqual(await page.evaluate(() => { try { return typeof CNAct('bogus', {}) } catch (e) { return 'threw'; } }), 'boolean', 'a bad action never throws');
 
-      // a name typed into the field: trimmed, spaces collapsed, Title Case; kept in this browser; signs the person in
-      await page.fill(nameBar + ' input', '  tess   WELDER ');
+      // her Employee Number typed into the field: the server names her ("  tess   WELDER " on its list): trimmed, spaces collapsed, Title Case; kept in this browser; signs her in
+      await page.fill(nameBar + ' input', pinOf(srv.st, '  tess   WELDER '));
       await page.press(nameBar + ' input', 'Enter');
       await page.waitForFunction(() => !document.querySelector('.cnNameBar') && StationActivity.who() && StationActivity.who().person === 'Tess Welder');
       assert.strictEqual(await page.evaluate(() => B.employee), 'Tess Welder');
@@ -168,21 +170,18 @@ async function sorterPage(browser, srv, errors, { sandbox = false } = {}) {
       rec.events.length = 0;
 
       // 2 · one person, one name
-      const names = await page.evaluate(() => {
-        const out = {};
-        for (const raw of ['tess welder', 'TESS   WELDER', '  Tess\tWelder  ', "o'BRIEN", 'mary-ann  SMITH', 'giovanna c.', 'McDonald pat', 'marco r', 'dana  D', 'Tess 000000', 'zoë  müller']) { B.employee = raw; out[raw] = [B.employee, CNEmployee.normalize(raw)]; }
-        return out;
-      });
-      assert.deepStrictEqual(Object.values(names).map(v => v[0]), ['Tess Welder', 'Tess Welder', 'Tess Welder', "O'Brien", 'Mary-Ann Smith', 'Giovanna C.', 'McDonald Pat', 'Marco R.', 'Dana D.', 'Tess', 'Zoë Müller']);
+      const RAWS = ['tess welder', 'TESS   WELDER', '  Tess\tWelder  ', "o'BRIEN", 'mary-ann  SMITH', 'giovanna c.', 'McDonald pat', 'marco r', 'dana  D', 'Tess 000000', 'zoë  müller'], names = {};
+      for (const raw of RAWS) names[raw] = [await signIn(raw).then(() => page.evaluate(() => B.employee)), await page.evaluate(raw => CNEmployee.normalize(raw), raw)];   // (the name the server gives, as the page keeps it)
       assert.deepStrictEqual(Object.values(names).map(v => v[0]), Object.values(names).map(v => v[1]), 'the setter and normalize() agree');
       assert.strictEqual(await page.evaluate(() => localStorage.getItem('cn.employee')), 'Zoë Müller', 'what is kept is the normalised name');
       // the same person, typed three ways, is one session name and one event person
-      await page.evaluate(() => { B.employee = 'tess welder'; });
+      await signIn('tess welder');
       await page.evaluate(() => { CNAct('note', { detail: 'a' }); B.employee = 'TESS WELDER'; CNAct('note', { detail: 'b' }); });
       await flush();
       assert.deepStrictEqual([...new Set(rec.events.map(e => e.person))], ['Tess Welder'], 'one person is one name');
       rec.events.length = 0;
       // a number is never a name: not kept, not a sign-in, not sent anywhere
+      await page.evaluate(() => { B.employee = ''; });
       await page.evaluate(pin => { B.employee = pin; }, PIN);
       assert.strictEqual(await page.evaluate(() => B.employee), '', 'a number is refused');
       assert.strictEqual(await page.evaluate(() => localStorage.getItem('cn.employee')), null, 'and not kept');
@@ -190,7 +189,7 @@ async function sorterPage(browser, srv, errors, { sandbox = false } = {}) {
       assert.strictEqual(await page.evaluate(pin => CNEmployee.normalize(' ' + pin + ' '), PIN), '');
       // ONE signed-in person (Paul, 18 Oct 2026): with someone signed in the name field never opens (no second way to type another person):
       // the Account panel does, and the person stays
-      await page.evaluate(() => { B.employee = 'Tess Welder'; });
+      await signIn('Tess Welder');
       assert.strictEqual(await page.evaluate(() => CNEmployee.edit({})), 'Tess Welder', 'signed in: the press goes on under the person signed in');
       await page.waitForSelector('#cnAcctPanel');
       assert.strictEqual((await page.$$(nameBar)).length, 0, 'signed in: no name field opens');
@@ -200,11 +199,12 @@ async function sorterPage(browser, srv, errors, { sandbox = false } = {}) {
       await page.evaluate(() => { B.employee = ''; });
       await page.evaluate(() => { CNEmployee.edit({}); });
       await page.waitForSelector(nameBar + '[data-kind="edit"]');
-      assert.strictEqual(await page.evaluate(() => document.activeElement === document.querySelector('.cnNameBar input')), true, 'asked for by a press: it takes focus');
-      assert.strictEqual(await page.inputValue(nameBar + ' input'), 'Tess Welder', 'it has the last name used on this computer ready');
+      await page.waitForFunction(() => document.activeElement === document.querySelector('.cnNameBar input'), null, { timeout: 5000 });   // asked for by a press: it takes focus
+      // (EMPNUM: it asks for the Employee Number, masked and empty: no one-tap last name)
+      assert.deepStrictEqual(await page.evaluate(() => { const i = document.querySelector('.cnNameBar input'); return [i.type, i.value]; }), ['password', ''], 'it asks for the number, empty and masked');
       await page.fill(nameBar + ' input', PIN); await page.press(nameBar + ' input', 'Enter');
-      await page.waitForFunction(() => { const e = document.querySelector('.cnNameBar .cnNbErr'); return e && !e.hidden && /number/.test(e.textContent); });
-      assert.strictEqual(await page.evaluate(() => B.employee), '', 'a number signs nobody in');
+      await page.waitForFunction(() => { const e = document.querySelector('.cnNameBar .cnNbErr'); return e && !e.hidden && e.textContent.trim(); });
+      assert.strictEqual(await page.evaluate(() => B.employee), '', 'a number that is not on the list signs nobody in');
       await page.press(nameBar + ' input', 'Escape');
       await page.waitForFunction(() => !document.querySelector('.cnNameBar'));
       assert.strictEqual(await page.evaluate(() => B.employee), '', 'Esc puts the field away and changes nothing');
@@ -218,7 +218,7 @@ async function sorterPage(browser, srv, errors, { sandbox = false } = {}) {
       await page.evaluate(() => { CN.setMode('review'); Review.render(); });
       await page.waitForSelector('#reviewView .ordBar #rvOrderFind');
       assert.strictEqual(await page.$('#rvName'), null, 'no name button in Review (nobody signed in)');
-      await page.evaluate(() => { B.employee = 'pat  PACKER'; Review.render(); });
+      await signIn('pat  PACKER'); await page.evaluate(() => Review.render());
       await wait(400);
       const bar = await page.evaluate(() => ({ rv: !!document.getElementById('rvName'), text: document.querySelector('#reviewView .ordBar').textContent }));
       assert(!bar.rv && !/Pat/.test(bar.text), 'no name pill in the Review toolbar with Pat signed in: ' + bar.text);
@@ -226,7 +226,7 @@ async function sorterPage(browser, srv, errors, { sandbox = false } = {}) {
       assert.deepStrictEqual(await page.evaluate(() => window.__prompts), [], 'no browser pop-up');
 
       // 3 · nothing automatic is a person's work
-      await page.evaluate(() => { B.employee = 'Tess Welder'; });
+      await signIn('Tess Welder');
       await flush(); rec.events.length = 0;
       const RID = '4176576272', SHIP = Math.floor(Date.UTC(2026, 9, 2, 17) / 1000), DAY = 86400;
       await page.evaluate(async ({ RID, SHIP, DAY }) => {
@@ -252,7 +252,7 @@ async function sorterPage(browser, srv, errors, { sandbox = false } = {}) {
       await page.evaluate(() => { CNEmployee.ask(() => {}); });
       await page.waitForSelector('dialog#orderWin .cnNameBar[data-kind="ask"]');
       assert.strictEqual(await page.evaluate(() => document.querySelector('.cnNameBar').parentNode.id), 'orderWin', 'inside the open window');
-      await page.fill('.cnNameBar input', 'Nia  nameless'); await page.press('.cnNameBar input', 'Enter');
+      await page.fill('.cnNameBar input', pinOf(srv.st, 'Nia  nameless')); await page.press('.cnNameBar input', 'Enter');
       await page.waitForFunction(() => !document.querySelector('.cnNameBar') && B.employee === 'Nia Nameless' && CNAccount.view().name === 'Nia Nameless');
       assert.strictEqual(await page.evaluate(() => /Nia/.test(document.querySelector('dialog#orderWin').textContent)), false, 'the window does not show the name a second time');
       assert.strictEqual(await page.evaluate(() => document.querySelector('dialog#orderWin').open), true, 'the window is still open (Enter put only the field away)');
@@ -268,21 +268,21 @@ async function sorterPage(browser, srv, errors, { sandbox = false } = {}) {
       await wait(300);
       assert.strictEqual((await page.$$(nameBar)).length, 0, 'a put-away hint does not come straight back');
       assert.strictEqual(await page.evaluate(() => CNAct.held()), 2, 'but both presses are kept');
-      await page.evaluate(() => { B.employee = 'quinn QUIET'; });
+      await signIn('quinn QUIET');
       await page.waitForFunction(() => CNAct.held() === 0);
       await flush();
       assert.deepStrictEqual(rec.events.map(e => [e.detail, e.person, e.station]), [['quiet 1', 'Quinn Quiet', 'sorter'], ['quiet 2', 'Quinn Quiet', 'sorter']], 'recorded under the name once it comes');
       rec.events.length = 0;
       // a name arriving with nothing pressed records nothing; held presses can be dropped (the midnight sign-out) and are then never recorded
       await page.evaluate(() => { B.employee = ''; });
-      await page.evaluate(() => { CNAct('note', { detail: 'yesterday' }); CNAct.drop(); B.employee = 'Sam Shift'; });
+      await page.evaluate(() => { CNAct('note', { detail: 'yesterday' }); CNAct.drop(); }); await signIn('Sam Shift');
       await page.waitForFunction(() => StationActivity.who() && StationActivity.who().person === 'Sam Shift');
       await flush();
       assert.deepStrictEqual(rec.events, [], 'a dropped press is never put under the next name');
       assert.strictEqual(await page.evaluate(() => CNAct.held()), 0);
       // an old held press (older than 20 minutes) is not put under a later name either
       await page.evaluate(() => { B.employee = ''; });
-      await page.evaluate(() => { const real = Date.now; Date.now = () => real() - 21 * 60 * 1000; try { CNAct('note', { detail: 'stale' }); } finally { Date.now = real; } B.employee = 'Sam Shift'; });
+      await page.evaluate(() => { const real = Date.now; Date.now = () => real() - 21 * 60 * 1000; try { CNAct('note', { detail: 'stale' }); } finally { Date.now = real; } }); await signIn('Sam Shift');
       await page.waitForFunction(() => StationActivity.who() && StationActivity.who().person === 'Sam Shift');
       await flush();
       assert.deepStrictEqual(rec.events, [], 'a press from more than 20 minutes ago is not put under a later name');
@@ -295,7 +295,7 @@ async function sorterPage(browser, srv, errors, { sandbox = false } = {}) {
       const { context, page, rec, flush } = await sorterPage(browser, srv, errors, { sandbox: true });
       assert.strictEqual(await page.evaluate(() => CN.S.settings.sandbox), 'on', 'the sandbox is on');
       assert.strictEqual(await page.evaluate(() => StationSession.page().sandbox), true, 'the sign-in is told it is a sandbox');
-      await page.evaluate(() => { B.employee = 'sam SANDBOX'; });
+      await signInAs(page, srv, 'sam SANDBOX');
       await page.waitForFunction(() => StationActivity.who() && StationActivity.who().person === 'Sam Sandbox');
       await page.evaluate(() => {
         CNAct('complete', { orderId: '4176576272', parts: 2, orders: 1, detail: 'Complete Order' });

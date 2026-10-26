@@ -359,7 +359,7 @@ const sum = (list, f) => list.reduce((n, x) => n + f(x), 0);
       // (a) the answer the real reader gave for the whole shop
       go('12:30');
       let h = await board(shop.b);
-      assert.deepStrictEqual([...h.w.document.querySelectorAll('.esSt')].map(r => r.dataset.key), ['sorting', 'welding', 'assembly', 'shipping', 'design', 'laser', 'inbox'], 'the board lists the stations, Laser and Design apart');
+      assert.deepStrictEqual([...h.w.document.querySelectorAll('.esSt')].map(r => r.dataset.key), ['sorting', 'welding', 'assembly-1', 'assembly-2', 'assembly-3', 'assembly-4', 'shipping-1', 'shipping-2', 'shipping-3', 'design', 'laser', 'inbox'], 'the board lists the stations, Laser and Design apart (Assembly and Shipping one card per desk)');
       const laser = h.row('laser'), design = h.row('design'), sorting = h.row('sorting');
       assert.strictEqual(text(laser.querySelector('.esStName')), 'Laser'); assert.strictEqual(text(design.querySelector('.esStName')), 'Design');
       assert.deepStrictEqual([...laser.querySelectorAll('.esRoster .esRo')].map(text), ['Fay T. · Sorter app (Laser) · since 8:15 AM'], 'the Laser card lists Fay with her page and her start (no input time yet: the answer carries none)');

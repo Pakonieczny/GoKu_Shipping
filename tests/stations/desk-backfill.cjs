@@ -362,6 +362,8 @@ const J = o => JSON.parse(JSON.stringify(o));
       const dom = new JSDOM('<!doctype html><html><body><div class="lib" id="efficiencyView"></div></body></html>', { url: 'http://localhost/', pretendToBeVisual: true, runScripts: 'outside-only' });
       const w = dom.window, ops = [];
       w.Date.now = () => NOW;
+      w.CharmNestMasterAdmin = { is: () => true, login: () => 'Paul' };   // (the console is the master admin's only: the master admin is signed in)
+      w.document.hasFocus = () => true;   // (a page out of focus refreshes every 10 s or slower, COST: this one is in front of the person)
       w.sessionStorage.setItem('cn.eff.key', PASS); if (days) w.sessionStorage.setItem('cn.eff.days', String(days));
       w.fetch = async (u, o) => { const b = JSON.parse(o.body); ops.push(b.op + (b.op === 'deskBackfill' ? ':' + b.day : '')); const r = await eff._t.handle({ httpMethod: 'POST', headers: { 'x-nf-client-connection-ip': '198.51.100.' + (++ipN % 200) }, body: o.body }, fakeDb); return { ok: r.statusCode === 200, status: r.statusCode, text: async () => r.body }; };
       for (const f of ['charm-nest-efficiency-charts.js', 'charm-nest-efficiency-stations.js', 'charm-nest-efficiency.js']) w.eval(fs.readFileSync(path.join(root, f), 'utf8'));

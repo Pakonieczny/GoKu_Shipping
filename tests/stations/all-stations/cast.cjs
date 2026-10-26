@@ -20,7 +20,8 @@ const PEOPLE = {
   inbox: 'Ines I.',       // the Inbox operator (user name "ines")
   multi: 'Nico M.'        // one person at three stations in a day (Assembly, then Design in the Sorter app, then Sorting)
 };
-const PIN_PEOPLE = ['matcher', 'welder', 'asm', 'asmSmoke', 'ship', 'shipSmoke', 'sort', 'sortSmoke', 'designMsg', 'designMsg2', 'multi'];
+// (EMPNUM, Paul 26 Oct 2026: the Sorter app signs a person in only with their Employee Number too: its people have one)
+const PIN_PEOPLE = ['admin', 'matcher', 'welder', 'asm', 'asmSmoke', 'ship', 'shipSmoke', 'sort', 'sortSmoke', 'designMsg', 'designMsg2', 'designApp', 'laserApp', 'multi'];
 
 function makeCast() {
   const pins = {}, used = new Set();

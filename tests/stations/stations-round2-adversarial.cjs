@@ -327,10 +327,13 @@ function openTab(pc, o = {}) {
   };
   tab.who = () => (o.multi ? JSON.parse(pc.ls('fx_people') || '[]') : (pc.ls('employee_id') && pc.ls('employee_name') ? [{ name: pc.ls('employee_name') }] : []));
   /* a person's input event: AD1 counts ONLY events a person made (event.isTrusted); jsdom marks every script-dispatched event untrusted, so the flag is set on the event's own implementation object. o.trusted === false: an event a script dispatched (not input). */
+  const jsdomUtils = () => { for (const f of ['lib/generated/idl/utils.js', 'lib/jsdom/living/generated/utils.js']) { try { return require(path.join(path.dirname(require.resolve('jsdom/package.json')), f)); } catch (_) {} } return null; };
   tab.input = (type = 'pointerdown', o = {}) => {
     const E = /^key/.test(type) ? w.KeyboardEvent : /^(mouse|click|pointer|wheel)/.test(type) ? w.MouseEvent : w.Event, ev = new E(type, { bubbles: true, cancelable: true });
     if (o.trusted !== false) {          // (dispatchEvent() resets isTrusted to false, so the event goes in through the target's internal _dispatch, as the browser itself would hand one over)
       try {
+        const U = jsdomUtils();          // (jsdom 30 keeps the implementation behind its own implForWrapper, not a Symbol(impl) on the wrapper)
+        if (U) { const ei = U.implForWrapper(ev), bi = U.implForWrapper(w.document.body); if (ei && bi && bi._dispatch) { ei.isTrusted = true; bi._dispatch(ei); return; } }
         const impl = x => Object.getOwnPropertySymbols(x).find(s => String(s) === 'Symbol(impl)'), es = impl(ev), bs = impl(w.document.body);
         if (es && bs) { ev[es].isTrusted = true; w.document.body[bs]._dispatch(ev[es]); return; }
       } catch (_) {}

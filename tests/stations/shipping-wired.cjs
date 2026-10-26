@@ -97,9 +97,9 @@ const PINS = []; NAMES.forEach(() => PINS.push(fakePin(PINS)));
 const URL_A = 'https://firebasestorage.googleapis.com/v0/b/shop/o/thumbs%2Fcharm-a-L.png?alt=media&token=ta';
 const URL_PHOTO = 'https://i.etsystatic.com/111/r/il/abc/1/il_570xN.1_xyz.jpg';
 const ORDERS = {   // what the faked Etsy answers for each order
-  '1111111111': { transactions: [{ quantity: 2, sku: 'CHARM-A', listing_id: 4455667788, title: 'Stud earrings, gold' }, { quantity: 1, sku: 'CHARM-B', listing_id: 5566778899, title: 'Charm, silver' }] },   // 3 pieces, two skus
+  '1111111111': { transactions: [{ quantity: 2, sku: 'CHARM-A', listing_id: 4455667788, title: 'Charm pendant, gold' }, { quantity: 1, sku: 'CHARM-B', listing_id: 5566778899, title: 'Charm, silver' }] },   // 3 pieces, two skus (no earring line: a stud pair is a Left and a Right per unit, Paul 9-10 Oct 2026, proven in ea-weld.cjs)
   '2222222222': { transactions: [{ quantity: 1, sku: 'SKU-ONE', listing_id: 5566778899, title: 'Charm, silver' }] },
-  '3333333333': { transactions: [{ quantity: 2, sku: 'CHARM-A', listing_id: 4455667788, title: 'Stud earrings, gold', variations: [{ formatted_name: 'Size', formatted_value: 'Large' }] }] },   // 2 pieces, a size
+  '3333333333': { transactions: [{ quantity: 2, sku: 'CHARM-A', listing_id: 4455667788, title: 'Charm pendant, gold', variations: [{ formatted_name: 'Size', formatted_value: 'Large' }] }] },   // 2 pieces, a size
   '4444444444': { transactions: [{ quantity: 1, sku: 'SKU-ONE', listing_id: 5566778899, title: 'Charm, silver' }] }
 };
 function resetBackend(n) {

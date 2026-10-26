@@ -44,15 +44,15 @@ function partA() {
   const C = ctx.LaserSheetTime;
   let n = 0;
   for (const lg of [0, at - 90 * MIN, at - 10 * MIN, at - 1 * MIN, at + 5e3]) for (const pv of [0, at - 95 * MIN, at - 30 * MIN, at - 10 * MIN, at - 2e3, at + 7e3, lg]) { assert.deepEqual(j(C.computeStart(at, lg, pv)), j(LT.computeStart(at, lg, pv)), `grid ${lg} ${pv}`); n++; }
-  for (const nm of ['Ana M.', "  O'Brien  ", 'Zoë  García', 'Michael_V', 'MARCO   r', 'Paul 482915', 'Tess-Welder', '12 34 56']) assert.equal(C.keyOf(nm), LT.personKey(nm), 'the same person key: ' + nm);
+  for (const nm of ['Bea M.', "  O'Brien  ", 'Zoë  García', 'Michael_V', 'MARCO   r', 'Paul 482915', 'Tess-Welder', '12 34 56']) assert.equal(C.keyOf(nm), LT.personKey(nm), 'the same person key: ' + nm);
   assert.equal(LT.personKey('Michael_V'), LT.personKey('Michael V.'), 'punctuation does not make a second person');
   assert.equal(LT.personKey('Paul 482915'), 'paul', 'a number is never part of a name (a PIN slipped in is dropped)');
   ok(`the page's copy of the rule gives the server's answer on ${n} cases, and its person key is the server's`);
 
   // which sign-in covers a completion
-  const ses = (o) => Object.assign({ id: 's-' + Math.random().toString(36).slice(2, 8) + 'xyz', person: 'Ana M.', station: 'laser', startAt: at - 20 * MIN, lastSeenAt: at - 1 * MIN, endAt: null }, o), key = LT.personKey('Ana M.');
+  const ses = (o) => Object.assign({ id: 's-' + Math.random().toString(36).slice(2, 8) + 'xyz', person: 'Bea M.', station: 'laser', startAt: at - 20 * MIN, lastSeenAt: at - 1 * MIN, endAt: null }, o), key = LT.personKey('Bea M.');
   assert.equal(LT.pickSession([ses({ id: 'one-laser-1' })], key, at).id, 'one-laser-1');
-  assert.equal(LT.pickSession([ses({ person: 'ana m' })], key, at).startAt, at - 20 * MIN, 'another spelling of the name is the same person');
+  assert.equal(LT.pickSession([ses({ person: 'bea m' })], key, at).startAt, at - 20 * MIN, 'another spelling of the name is the same person');
   assert.equal(LT.pickSession([ses({ station: 'sorting' })], key, at), null, 'a sign-in at another station is not a Laser sign-in');
   assert.equal(LT.pickSession([ses({ station: 'sorter', role: 'laser' })], key, at).startAt, at - 20 * MIN, 'a Sorter-app sign-in with the Laser role is one');
   assert.equal(LT.pickSession([ses({ person: 'Ben R.' })], key, at), null, 'another person');
@@ -176,13 +176,13 @@ async function partB() {
   const portal = async (b, key = PASS) => { const r = await eff.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(Object.assign({}, b, key == null ? {} : { key })) }); return { status: r.statusCode, body: JSON.parse(r.body) }; };
 
   try {
-    /* a person at the laser: first sheet after sign-in */
-    await signIn('ana-laser-0001', 'Ana M.');
+    /* a person at the laser: first sheet after sign-in ("Bea M.": "Ana M." is now recorded as "Ana_M" at write time, Paul 9 Oct 2026; ana-alias.cjs proves that) */
+    await signIn('ana-laser-0001', 'Bea M.');
     for (const id of ['sh-a1', 'sh-a2', 'sh-a3', 'sh-a4', 'sh-a5', 'sh-a6']) mkSheet(id, { pieces: 3, orders: 2 });
-    await adv(11 * MIN); await beat('ana-laser-0001', 'Ana M.');
-    const r1 = await press('sh-a1', 'Ana M.');
+    await adv(11 * MIN); await beat('ana-laser-0001', 'Bea M.');
+    const r1 = await press('sh-a1', 'Bea M.');
     const a1 = only('sh-a1');
-    eq(a1, { kind: 'laserSheetDone', v: 1, person: 'Ana M.', personKey: 'ana m', seconds: 660, actionSeconds: 660, together: 1, startedFrom: 'login', source: 'server', verified: true, disagree: false, pieces: 3, orders: 2, prevAt: null, device: 'charm-nest-1', via: 'Laser cutting', at: r1.at, day: '2026-10-06', id: `sh-a1__${r1.at}` });
+    eq(a1, { kind: 'laserSheetDone', v: 1, person: 'Bea M.', personKey: 'bea m', seconds: 660, actionSeconds: 660, together: 1, startedFrom: 'login', source: 'server', verified: true, disagree: false, pieces: 3, orders: 2, prevAt: null, device: 'charm-nest-1', via: 'Laser cutting', at: r1.at, day: '2026-10-06', id: `sh-a1__${r1.at}` });
     assert.equal(a1.session, 'ana-laser-0001'); assert.equal(a1.startAt, B0); assert.equal(a1.loginAt, B0); assert(/^GF|Sheet|a1/i.test(a1.sheet) || a1.sheet, 'the sheet\'s own label is kept: ' + a1.sheet);
     assert.deepEqual(j(r1.laserTime), { at: r1.at, sheets: [{ sheetId: 'sh-a1', seconds: 660, startedFrom: 'login', source: 'server', disagree: false }] }, 'the press answers with the sheet\'s time');
     ok('first sheet after sign-in: 11 min from the sign-in, stored once on its own record with pieces, orders, who, where');
@@ -191,30 +191,30 @@ async function partB() {
     assert(tl.length >= 1 && tl.every(e => e.data && e.data.sheetSeconds === 660 && e.data.startedFrom === 'login'), 'the order timeline event has sheetSeconds and startedFrom: ' + JSON.stringify(tl[0]));
 
     /* continuous sign-in: the next sheet counts from the previous one */
-    await adv(7 * MIN); await beat('ana-laser-0001', 'Ana M.');
-    const r2 = await press('sh-a2', 'Ana M.');
+    await adv(7 * MIN); await beat('ana-laser-0001', 'Bea M.');
+    const r2 = await press('sh-a2', 'Bea M.');
     eq(only('sh-a2'), { seconds: 420, startedFrom: 'previousSheet', prevAt: r1.at, prevSheetId: 'sh-a1', loginAt: B0, verified: true });
     ok('continuous sign-in: the second sheet counts 7 min from the first, not from the sign-in');
 
     /* two people at the laser: each has their own clock */
     await signIn('ben-laser-0002', 'Ben R.');
     mkSheet('sh-b1', { pieces: 1 }); for (const id of ['sh-b2', 'sh-b3', 'sh-b4']) mkSheet(id);
-    await adv(9 * MIN); await beat('ana-laser-0001', 'Ana M.'); await beat('ben-laser-0002', 'Ben R.');
+    await adv(9 * MIN); await beat('ana-laser-0001', 'Bea M.'); await beat('ben-laser-0002', 'Ben R.');
     const rb1 = await press('sh-b1', 'Ben R.');
     eq(only('sh-b1'), { seconds: 540, startedFrom: 'login', prevAt: null, session: 'ben-laser-0002' });
-    await adv(3 * MIN); await beat('ana-laser-0001', 'Ana M.');
-    const r3 = await press('sh-a3', 'Ana M.');
+    await adv(3 * MIN); await beat('ana-laser-0001', 'Bea M.');
+    const r3 = await press('sh-a3', 'Bea M.');
     eq(only('sh-a3'), { seconds: 720, startedFrom: 'previousSheet', prevAt: r2.at, prevSheetId: 'sh-a2' });       // 9 + 3 minutes after Ana's own a2, not Ben's b1
     ok('two Laser people: Ben\'s first sheet is 9 min from HIS sign-in; Ana\'s next is 12 min from HER previous sheet, not from Ben\'s');
 
     /* a sign-out between sheets: the new sign-in restarts the clock */
-    await signOut('ana-laser-0001', 'Ana M.');
-    await adv(30 * MIN); await signIn('ana-laser-0003', 'Ana M.');
-    await adv(5 * MIN); await beat('ana-laser-0003', 'Ana M.');
-    const r4 = await press('sh-a4', 'Ana M.');
+    await signOut('ana-laser-0001', 'Bea M.');
+    await adv(30 * MIN); await signIn('ana-laser-0003', 'Bea M.');
+    await adv(5 * MIN); await beat('ana-laser-0003', 'Bea M.');
+    const r4 = await press('sh-a4', 'Bea M.');
     eq(only('sh-a4'), { seconds: 300, startedFrom: 'login', prevAt: null, session: 'ana-laser-0003' });
-    await adv(4 * MIN); await beat('ana-laser-0003', 'Ana M.');
-    const r5 = await press('sh-a5', 'Ana M.');
+    await adv(4 * MIN); await beat('ana-laser-0003', 'Bea M.');
+    const r5 = await press('sh-a5', 'Bea M.');
     eq(only('sh-a5'), { seconds: 240, startedFrom: 'previousSheet', prevAt: r4.at, prevSheetId: 'sh-a4' });
     ok('a sign-out and a new sign-in between sheets restarts the clock: 5 min from the new sign-in (not 35 from the old sheet), then 4 min from that sheet');
 
@@ -226,8 +226,8 @@ async function partB() {
     await signIn('cy-sorting-0004', 'Cy D.', { station: 'sorting', device: 'sorting-1' });
     await adv(5 * MIN); await press('sh-c1', 'Cy D.');
     eq(only('sh-c1'), { seconds: null, startedFrom: 'unknown', source: 'none' });
-    await adv(3 * MIN); await beat('ana-laser-0003', 'Ana M.');
-    const rA6 = await press('sh-a6', 'Ana M.');
+    await adv(3 * MIN); await beat('ana-laser-0003', 'Bea M.');
+    const rA6 = await press('sh-a6', 'Bea M.');
     eq(only('sh-a6'), { seconds: 120 + 5 * 60 + 3 * 60, startedFrom: 'previousSheet', prevAt: r5.at, prevSheetId: 'sh-a5' });
     ok('a completion with no Laser sign-in (Admin with no session, a sign-in at another station) is stored as unknown, never invented, and Ana\'s clock ignores it');
 
@@ -288,16 +288,16 @@ async function partB() {
 
     /* a retry never changes a record; a record is written once */
     const count = st.list(LTC).length, a2Before = j(only('sh-a2'));
-    await press('sh-a2', 'Ana M.');
+    await press('sh-a2', 'Bea M.');
     assert.equal(st.list(LTC).length, count, 'pressing an already completed sheet writes nothing'); assert.deepEqual(j(only('sh-a2')), a2Before);
-    const again = await LT.recordDone(st.db, st.admin.firestore.FieldValue, '', { by: 'Ana M.', at: rA6.at, device: 'x', via: 'y', client: null, marks: [{ sheetId: 'sh-a6', sheet: 'other', pieces: 99, orders: 9 }] });
+    const again = await LT.recordDone(st.db, st.admin.firestore.FieldValue, '', { by: 'Bea M.', at: rA6.at, device: 'x', via: 'y', client: null, marks: [{ sheetId: 'sh-a6', sheet: 'other', pieces: 99, orders: 9 }] });
     assert.equal(again.sheets.length, 1); assert.equal(st.list(LTC).length, count, 'the same sheet at the same moment is not written twice'); assert.equal(only('sh-a6').pieces, 3, 'and the first record is not overwritten');
     ok('a retry writes nothing and no record is overwritten');
 
     /* a set marked completed in one press: the sheets share the time equally, once */
     st.put(S, 'pending-sheet', { verification: { ok: true } });
-    await adv(10 * MIN); await beat('ana-laser-0003', 'Ana M.');
-    const rs = await press('set-fixture', 'Ana M.', { kind: 'set' });
+    await adv(10 * MIN); await beat('ana-laser-0003', 'Bea M.');
+    const rs = await press('set-fixture', 'Bea M.', { kind: 'set' });
     const rr = only('ready-sheet'), pp = only('pending-sheet');
     assert.deepEqual([rr.together, pp.together, rr.seconds, pp.seconds, rr.actionSeconds], [2, 2, rr.actionSeconds / 2, rr.actionSeconds / 2, rr.actionSeconds]);
     eq(rr, { startedFrom: 'previousSheet', prevSheetId: 'sh-a6', at: rs.at }); assert.equal(rr.actionSeconds, (rs.at - only('sh-a6').at) / 1000, 'the whole press counts from Ana\'s previous sheet (a6)'); assert.equal(rr.seconds, rr.actionSeconds / 2, 'each sheet has half');
@@ -305,13 +305,13 @@ async function partB() {
     ok('a set marked completed in one press: its two remaining sheets share the 10 minutes equally (together: 2), the one already done has no new record');
 
     /* the previous sheet comes from the stored records: a "reload" or another computer gives the same answer */
-    const last = await lib({ op: 'laserSheetLast', by: 'Ana M.' });
+    const last = await lib({ op: 'laserSheetLast', by: 'Bea M.' });
     assert.equal(last.status, 200); eq(last.body.last, { at: rs.at, startedFrom: 'previousSheet', seconds: rr.seconds }); assert.equal(last.body.now, T);
-    assert.equal((await lib({ op: 'laserSheetLast', by: 'ANA m' })).body.last.at, rs.at, 'another spelling of the name is the same person');
+    assert.equal((await lib({ op: 'laserSheetLast', by: 'BEA m' })).body.last.at, rs.at, 'another spelling of the name is the same person');
     assert.equal((await lib({ op: 'laserSheetLast', by: 'Nobody Q.' })).body.last, null);
     assert.match((await lib({ op: 'laserSheetLast' })).body.error || '', /whose clock/i);
-    await adv(2 * MIN); await beat('ana-laser-0003', 'Ana M.'); mkSheet('sh-a7');
-    await press('sh-a7', 'Ana M.'); eq(only('sh-a7'), { seconds: 120, startedFrom: 'previousSheet', prevAt: rs.at });
+    await adv(2 * MIN); await beat('ana-laser-0003', 'Bea M.'); mkSheet('sh-a7');
+    await press('sh-a7', 'Bea M.'); eq(only('sh-a7'), { seconds: 120, startedFrom: 'previousSheet', prevAt: rs.at });
     ok('the previous completion is read from the stored records (laserSheetLast; the next sheet counts from it with nothing held in memory)');
 
     /* the sandbox is its own: its sessions, its records */
@@ -320,19 +320,19 @@ async function partB() {
     await adv(6 * MIN); await press('sh-s1', 'Sandy B.', { sandbox: true });
     const sb = st.list('Sandbox_' + LTC).filter(d => d.sheetId === 'sh-s1'); assert.equal(sb.length, 1); eq(sb[0], { seconds: 360, startedFrom: 'login', source: 'server' });
     assert.equal(st.list(LTC).length, n0, 'nothing in the real collection'); assert.equal(st.list(LTC).filter(d => d.sheetId === 'sh-s1').length, 0);
-    await adv(1 * MIN); await press('sh-s2', 'Ana M.', { sandbox: true });                  // Ana is signed in on the REAL side only
+    await adv(1 * MIN); await press('sh-s2', 'Bea M.', { sandbox: true });                  // Ana is signed in on the REAL side only
     eq(st.list('Sandbox_' + LTC).find(d => d.sheetId === 'sh-s2'), { seconds: null, startedFrom: 'unknown' });
     ok('the sandbox keeps its own records and reads only its own sessions: a real sign-in does not time a sandbox sheet');
 
     /* ── the portal ── */
-    st.put('config', 'employeeAliases', { 'Ana M.': ['Ana Maria'] });
-    mkSheet('sh-am1'); await adv(3 * MIN); await press('sh-am1', 'Ana Maria');             // another spelling with no Laser sign-in of its own
+    st.put('config', 'employeeAliases', { 'Bea M.': ['Bea Maria'] });
+    mkSheet('sh-am1'); await adv(3 * MIN); await press('sh-am1', 'Bea Maria');             // another spelling with no Laser sign-in of its own
     await adv(61 * 1000);
     const today = LT.nyDay(T);
-    assert.equal((await portal({ op: 'laserSheets', name: 'Ana M.', range: 'week', day: today }, null)).status, 401, 'no passcode: no answer');
-    assert.equal((await portal({ op: 'laserSheets', name: 'Ana M.', range: 'week', day: today }, 'wrong')).status, 401);
+    assert.equal((await portal({ op: 'laserSheets', name: 'Bea M.', range: 'week', day: today }, null)).status, 401, 'no passcode: no answer');
+    assert.equal((await portal({ op: 'laserSheets', name: 'Bea M.', range: 'week', day: today }, 'wrong')).status, 401);
     assert.equal((await portal({ op: 'laserSheets', name: '', range: 'week' })).status, 400);
-    const P = await portal({ op: 'laserSheets', name: 'Ana M.', range: 'week', day: today });
+    const P = await portal({ op: 'laserSheets', name: 'Bea M.', range: 'week', day: today });
     assert.equal(P.status, 200, JSON.stringify(P.body).slice(0, 200));
     const A = P.body, ana = ['sh-a1', 'sh-a2', 'sh-a3', 'sh-a4', 'sh-a5', 'sh-a6', 'sh-a7', 'ready-sheet', 'pending-sheet', 'sh-am1'];
     assert.deepEqual(A.sheets.map(r => r.sheetId).sort(), ana.slice().sort(), 'Ana\'s sheets, in every spelling the alias list merges');
@@ -341,18 +341,18 @@ async function partB() {
     const a6s = A.sheets.find(r => r.sheetId === 'sh-a6').seconds; timed[5] = a6s; assert.equal(a6s, 600);
     const avg = Math.round(timed.reduce((n, x) => n + x, 0) / timed.length);
     assert.deepEqual([A.totals.sheets, A.totals.timed, A.totals.unknown, A.totals.avgSec, A.totals.fastestSec, A.totals.slowestSec], [10, 9, 1, avg, Math.min(...timed), Math.max(...timed)], 'average, fastest and slowest of the timed sheets only');
-    assert.equal(A.totals.pieces, 3 * 6 + 2 + 1 + 1 + 2, 'pieces (a1 to a6: 3 each, a7: 2, the two set sheets: 1 each, am1: 2)'); assert(A.spellings.includes('Ana M.') && A.spellings.includes('Ana Maria'));
+    assert.equal(A.totals.pieces, 3 * 6 + 2 + 1 + 1 + 2, 'pieces (a1 to a6: 3 each, a7: 2, the two set sheets: 1 each, am1: 2)'); assert(A.spellings.includes('Bea M.') && A.spellings.includes('Bea Maria'));
     assert.equal(A.sheets.find(r => r.sheetId === 'sh-am1').seconds, null, 'a sheet with no time is listed with null');
     assert(A.notes.some(x => /no Laser sign-in/.test(x)), 'and the page is told why it is not in the average: ' + A.notes.join(' | '));
-    assert(!A.sheets.some(r => ['sh-b1', 'sh-p1'].includes(r.sheetId) && r.person === 'Paul' && A.name === 'Ana M.'), 'nobody else\'s sheets');
+    assert(!A.sheets.some(r => ['sh-b1', 'sh-p1'].includes(r.sheetId) && r.person === 'Paul' && A.name === 'Bea M.'), 'nobody else\'s sheets');
     assert.equal(A.series.length, 1); eq(A.series[0], { day: today, sheets: 10, timed: 9, avgSec: avg, fastestSec: Math.min(...timed), slowestSec: Math.max(...timed) });
     ok('the portal list: this person only (aliases merged), newest first, average / fastest / slowest leave out the sheet with no time, and say why');
     const Ben = (await portal({ op: 'laserSheets', name: 'Ben R.', range: 'day', day: today })).body;
     assert.deepEqual(Ben.sheets.map(r => r.sheetId).sort(), ['sh-b1', 'sh-b2', 'sh-b3', 'sh-b4'], 'Ben\'s b1 appears once: the undone completion is left out'); assert.equal(Ben.sheets.filter(r => r.sheetId === 'sh-b1').length, 1);
     assert.equal(Ben.sheets.find(r => r.sheetId === 'sh-b1').at, rb1b.at);
-    const old = (await portal({ op: 'laserSheets', name: 'Ana M.', range: { from: '2026-09-01', to: '2026-09-30' } })).body;
+    const old = (await portal({ op: 'laserSheets', name: 'Bea M.', range: { from: '2026-09-01', to: '2026-09-30' } })).body;
     assert.deepEqual([old.found, old.sheets.length, old.totals.avgSec, old.series.length], [false, 0, null, 0], 'a window with none: found false, no average (not 0)');
-    assert.equal((await portal({ op: 'laserSheets', name: 'Ana M.', range: 'day', day: LT.addDays(today, -1) })).body.found, false, 'yesterday has none');
+    assert.equal((await portal({ op: 'laserSheets', name: 'Bea M.', range: 'day', day: LT.addDays(today, -1) })).body.found, false, 'yesterday has none');
     ok('another person, an undone sheet left out, a window with no sheet says nothing (found false, null, not zero)');
 
     const L = (await portal({ op: 'live' })).body, laser = (L.stations || []).find(x => x.key === 'laser');
@@ -360,7 +360,7 @@ async function partB() {
     const standingToday = LT.standing(st.list(LTC)).filter(d => d.day === today), tm = LT.summarize(standingToday.map(d => ({ seconds: d.seconds, pieces: d.pieces, orders: d.orders })));
     assert.deepEqual([laser.laserSheet.today.sheets, laser.laserSheet.today.timed, laser.laserSheet.today.avgSec], [tm.sheets, tm.timed, tm.avgSec], 'today\'s count and average over every Laser person');
     const newest = standingToday.sort((a, b) => b.at - a.at)[0];
-    assert.deepEqual([laser.laserSheet.last.sheetId, laser.laserSheet.last.at, laser.laserSheet.last.person, laser.laserSheet.last.seconds], [newest.sheetId, newest.at, 'Ana M.', newest.seconds]);
+    assert.deepEqual([laser.laserSheet.last.sheetId, laser.laserSheet.last.at, laser.laserSheet.last.person, laser.laserSheet.last.seconds], [newest.sheetId, newest.at, 'Bea M.', newest.seconds]);
     assert.equal(laser.laserSheet.day, today); assert(!JSON.stringify(L).includes(PASS), 'no passcode in an answer');
     ok('op live: the Laser station carries today\'s sheets, average and the last sheet (all Laser people, standing completions only)');
     st.__ls1 = { today, rb1b };
@@ -377,24 +377,24 @@ async function partC() {
   };
   const flush = () => sleep(8);
   let T = 1.8e12, lastAnswer = null, calls = 0, clientOff = 0;
-  const T0 = T, who = { person: 'Ana M.', startAt: T, session: 'sess-ana-0001' };
+  const T0 = T, who = { person: 'Bea M.', startAt: T, session: 'sess-ana-0001' };
   let role = 'laser';
   const { L, store } = load();
   L.configure({ who: () => who, role: () => role, now: () => T + clientOff, call: async b => { calls++; assert.equal(b.op, 'laserSheetLast'); return { ok: true, now: T, last: lastAnswer }; } });
 
-  role = ''; assert.deepEqual(j(L.measure('Ana M.')), { v: 1, role: '', seconds: null, startedFrom: 'unknown' }, 'no role: no time');
-  role = 'admin'; assert.equal(L.measure('Ana M.').seconds, null, 'Admin: no time');
-  role = 'design'; assert.equal(L.measure('Ana M.').role, '', 'a Design sign-in: no time'); role = 'laser';
+  role = ''; assert.deepEqual(j(L.measure('Bea M.')), { v: 1, role: '', seconds: null, startedFrom: 'unknown' }, 'no role: no time');
+  role = 'admin'; assert.equal(L.measure('Bea M.').seconds, null, 'Admin: no time');
+  role = 'design'; assert.equal(L.measure('Bea M.').role, '', 'a Design sign-in: no time'); role = 'laser';
   assert.equal(L.measure('Somebody Else').seconds, null, 'a name that is not the signed-in person: no time');
-  who.startAt = 0; assert.equal(L.measure('Ana M.').seconds, null, 'no sign-in time: no time'); who.startAt = T;
+  who.startAt = 0; assert.equal(L.measure('Bea M.').seconds, null, 'no sign-in time: no time'); who.startAt = T;
   ok('the page sends no time for no role, Admin, Design, another name, or no sign-in');
 
-  await L.prepare('Ana M.');                                       // the server has no sheet of hers yet
-  T += 11 * MIN; let m = L.measure('Ana M.');
+  await L.prepare('Bea M.');                                       // the server has no sheet of hers yet
+  T += 11 * MIN; let m = L.measure('Bea M.');
   assert.deepEqual([m.role, m.seconds, m.startedFrom, m.loginAgo, m.prevAgo, m.prevKnown, m.session], ['laser', 660, 'login', 660e3, null, true, 'sess-ana-0001'], 'first sheet after sign-in: from the sign-in');
-  L.noted({ laserTime: { sheets: [{ sheetId: 'sh-a1' }] } }, m, 'Ana M.');
-  T += 7 * MIN; m = L.measure('Ana M.');
-  assert.deepEqual([m.seconds, m.startedFrom, m.prevAgo], [420, 'previousSheet', 420e3], 'continuous sign-in: from the previous sheet'); L.noted({ laserTime: { sheets: [{ sheetId: 'sh-a2' }] } }, m, 'Ana M.');
+  L.noted({ laserTime: { sheets: [{ sheetId: 'sh-a1' }] } }, m, 'Bea M.');
+  T += 7 * MIN; m = L.measure('Bea M.');
+  assert.deepEqual([m.seconds, m.startedFrom, m.prevAgo], [420, 'previousSheet', 420e3], 'continuous sign-in: from the previous sheet'); L.noted({ laserTime: { sheets: [{ sheetId: 'sh-a2' }] } }, m, 'Bea M.');
   await flush();
   ok('first sheet after sign-in counts from it (660 s); the next counts from the previous sheet (420 s)');
 
@@ -402,37 +402,37 @@ async function partC() {
   const ben = { person: 'Ben R.', startAt: T - 9 * MIN, session: 'sess-ben-0002' }; Object.assign(who, ben);
   lastAnswer = null; await L.prepare('Ben R.'); m = L.measure('Ben R.');
   assert.deepEqual([m.seconds, m.startedFrom, m.prevAgo], [540, 'login', null], 'Ben\'s first sheet is from HIS sign-in, not Ana\'s sheet');
-  Object.assign(who, { person: 'Ana M.', startAt: T0, session: 'sess-ana-0001' });
-  T += 3 * MIN; m = L.measure('Ana M.'); assert.deepEqual([m.seconds, m.startedFrom], [3 * 60, 'previousSheet'], 'and Ana\'s next is still from her own previous sheet');
+  Object.assign(who, { person: 'Bea M.', startAt: T0, session: 'sess-ana-0001' });
+  T += 3 * MIN; m = L.measure('Bea M.'); assert.deepEqual([m.seconds, m.startedFrom], [3 * 60, 'previousSheet'], 'and Ana\'s next is still from her own previous sheet');
   ok('two people: each has their own clock');
 
   // a sign-out between sheets restarts the clock
   who.startAt = T + 30 * MIN; who.session = 'sess-ana-0003'; T += 35 * MIN;
-  m = L.measure('Ana M.'); assert.deepEqual([m.seconds, m.startedFrom, m.prevAgo], [300, 'login', null], 'a new sign-in after the previous sheet: from the new sign-in');
+  m = L.measure('Bea M.'); assert.deepEqual([m.seconds, m.startedFrom, m.prevAgo], [300, 'login', null], 'a new sign-in after the previous sheet: from the new sign-in');
   ok('a sign-out and a new sign-in restart the clock');
 
   // reload mid-way: nothing is in memory, the server says when the previous sheet was
   L.reset(); lastAnswer = { at: T - 3 * MIN, sheetId: 'sh-a4', sheet: 'x', seconds: 300, startedFrom: 'login' };
-  const c0 = calls; await L.prepare('Ana M.'); assert.equal(calls, c0 + 1);
-  m = L.measure('Ana M.'); assert.deepEqual([m.seconds, m.startedFrom, m.prevAgo, m.prevKnown], [180, 'previousSheet', 180e3, true], 'after a reload: the previous sheet is the one the server names');
+  const c0 = calls; await L.prepare('Bea M.'); assert.equal(calls, c0 + 1);
+  m = L.measure('Bea M.'); assert.deepEqual([m.seconds, m.startedFrom, m.prevAgo, m.prevKnown], [180, 'previousSheet', 180e3, true], 'after a reload: the previous sheet is the one the server names');
   L.reset(); lastAnswer = { at: who.startAt - 20 * MIN, sheetId: 'old', sheet: 'x', seconds: 1, startedFrom: 'login' };
-  await L.prepare('Ana M.'); m = L.measure('Ana M.'); assert.deepEqual([m.startedFrom, m.prevKnown], ['login', true], 'a sheet from before the sign-in is not the start');
-  L.reset(); m = L.measure('Ana M.'); assert.equal(m.prevKnown, false, 'a page that has not been able to ask says it does not know the previous sheet');
+  await L.prepare('Bea M.'); m = L.measure('Bea M.'); assert.deepEqual([m.startedFrom, m.prevKnown], ['login', true], 'a sheet from before the sign-in is not the start');
+  L.reset(); m = L.measure('Bea M.'); assert.equal(m.prevKnown, false, 'a page that has not been able to ask says it does not know the previous sheet');
   ok('reload mid-way: the previous sheet is read from the server (another computer\'s sheet counts), one from before the sign-in does not, and an unread page says it does not know');
 
   // a clock that is an hour fast or slow
   for (const off of [HOUR, -HOUR, 5 * MIN]) {
     clientOff = off; who.startAt = T - 20 * MIN + off; L.reset(); lastAnswer = { at: T - 4 * MIN, sheetId: 'a9', sheet: 'x', seconds: 1, startedFrom: 'login' };     // (the sign-in is stamped by this computer's own clock)
-    await L.prepare('Ana M.'); m = L.measure('Ana M.');
+    await L.prepare('Bea M.'); m = L.measure('Bea M.');
     assert.equal(m.startedFrom, 'previousSheet'); assert(Math.abs(m.prevAgo - 4 * MIN) <= 20 && m.loginAgo === 20 * MIN && m.seconds === 240, `the ages survive a clock that is ${off / MIN} min off: ${JSON.stringify(m)}`);
   }
   clientOff = 0; who.startAt = T0;
   ok('a computer whose clock is an hour off (either way) still sends the right ages');
 
   // an answer for another person does not move this person's clock; forget() drops the memory of a taken-back sheet
-  L.reset(); lastAnswer = null; await L.prepare('Ana M.'); L.noted({ laserTime: { sheets: [{ sheetId: 'zz' }] } }, L.measure('Ana M.'), 'Ana M.');
-  assert(L.remembered('Ana M.') && L.remembered('Ana M.').from === 'press'); L.forget('Ana M.'); assert.equal(L.remembered('Ana M.'), null, 'a taken-back completion is forgotten');
-  assert.equal(L.measure('Ana M.').prevKnown, false);
+  L.reset(); lastAnswer = null; await L.prepare('Bea M.'); L.noted({ laserTime: { sheets: [{ sheetId: 'zz' }] } }, L.measure('Bea M.'), 'Bea M.');
+  assert(L.remembered('Bea M.') && L.remembered('Bea M.').from === 'press'); L.forget('Bea M.'); assert.equal(L.remembered('Bea M.'), null, 'a taken-back completion is forgotten');
+  assert.equal(L.measure('Bea M.').prevKnown, false);
   ok('a completion taken back is forgotten (and read again)');
   assert(store.size >= 0);
 }

@@ -39,7 +39,7 @@ const PASS = 'assembly-wired-fake-pass-5521';        // invented here: the real 
 const rnd6 = () => { let p; do p = String(100000 + Math.floor(Math.random() * 900000)); while (/^(\d)\1{5}$/.test(p) || /012345|123456|234567|345678|456789/.test(p)); return p; };
 
 /* ── the people (made up) and their numbers (made up per run) ── */
-const PEOPLE = { 1: ['Marco R.', 'Lena K.'], 2: ['Tess W.', 'Omar B.'], 3: ['Ivy Y.', 'Dana P.'], 4: ['Ana M.', 'Kofi A.'] };
+const PEOPLE = { 1: ['Marco R.', 'Lena K.'], 2: ['Tess W.', 'Omar B.'], 3: ['Iris Y.', 'Dana P.'], 4: ['Nia M.', 'Kofi A.'] };   // (invented names: never one of the people the alias table folds, "Ivy Y." -> "Ivy", "Ana M." -> "Ana_M", _activityKinds.js PEOPLE_ALIASES)
 const PINS = {}; for (const n of [1, 2, 3, 4]) PINS[n] = [rnd6(), rnd6()];
 const BEAT = { name: 'Beat T.', pin: rnd6() };                                  // for the beat check on its own page
 const allPins = () => [].concat(...Object.values(PINS), BEAT.pin);
