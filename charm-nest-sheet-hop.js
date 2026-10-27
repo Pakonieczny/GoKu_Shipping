@@ -639,12 +639,6 @@
     // the hand let go: the copy waits over the dock while the room is looked for
     H.busy = d; d.unit = u; fxLoop();
     if (L) L.el.classList.add("think");
-    // (GOLDEDIT, Paul 27 Oct 2026: a green line drawn on either sheet, or its cut recorded, is given up first (the window's goldOpen, here and on the server), so the move is saved and the line
-    //  drawn again for the new layout after it; the room is then looked for on the sheet as its metal was before a recorded cut. Refused only by the laser's mark, nothing changed)
-    if (K.goldOpen) {   // (nothing drawn or recorded on either: nothing is asked of the cloud)
-      let gw = ""; try { gw = await K.goldOpen([src, target]); } catch (e) { gw = (e && e.message) || "its green line could not be set aside"; }
-      if (gw) { if (L) L.el.classList.remove("think"); return refuse(`Not moved: ${String(gw).replace(/\.$/, "")}.`, `${u.pieces && u.pieces.length > 1 ? `The ${u.pieces.length} pieces` : "The charm"} stayed on ${sName}. Nothing was changed.`); }
-    }
     let spots = null, last = performance.now();
     const breathe = async () => { if (performance.now() - last > 12) { await wait(0); last = performance.now(); } };
     try { spots = await findRoom(target, u, pt, breathe, dk.G && dk.G.key === dockSig(target) ? dk.G : null); } catch (e) { console.warn("sheet hop: room", e); spots = null; }
@@ -653,6 +647,12 @@
     //  they were let go, red where they overlap (MCFREE), for the person to resize and move clear; the sheet joins no set until they are)
     let free = false;
     if (!spots && K.moveNow) { spots = asDropped(target, u, pt); free = spots.length > 0; }
+    // (GOLDEDIT, Paul 27 Oct 2026: the move lands: a green line drawn on either sheet, or its cut recorded, is given up now (the window's goldOpen, here and on the server), so the move is saved
+    //  and the line drawn again for the new layout after it (the room was looked for on the sheet as its metal was before a recorded cut: the window's preCut). Refused only by the laser's mark)
+    if (spots && spots.length && K.goldOpen) {   // (nothing drawn or recorded on either: nothing is asked of the cloud)
+      let gw = ""; try { gw = await K.goldOpen([src, target]); } catch (e) { gw = (e && e.message) || "its green line could not be set aside"; }
+      if (gw) return refuse(`Not moved: ${String(gw).replace(/\.$/, "")}.`, `${u.pieces && u.pieces.length > 1 ? `The ${u.pieces.length} pieces` : "The charm"} stayed on ${sName}. Nothing was changed.`);
+    }
     if (!spots || !spots.length) {
       const title = u.pieces.length === 1 ? `Not enough space on ${tName} — the charm stayed on ${sName}` : `Not enough space on ${tName} — the ${u.pieces.length} pieces of order ${u.rid} stayed on ${sName}`;
       return refuse(title, u.pieces.length === 1 ? "The charm could not be moved to that sheet. Nothing was changed." : "An order's pieces on a sheet move together. Nothing was changed.");

@@ -7,8 +7,8 @@
 // The only stand-in is the nest itself (as in sheet-hop-dnd.cjs): what is pinned is placed where it was pinned and the sheet saved, checked.
 //   a  a FULL 14K sheet approved into its set with no line (its contour: a full plan, no lines): no "green dash line drawn" refusal; a charm hops onto it and off it; Manual Control works there;
 //      it stays in its set, its contour given up (made again by its card)
-//   b  a 14K sheet whose green line cut was RECORDED: Manual Control starts (the cut set aside: the stock is the sheet's again, its leftover no longer offered, the card asks for Cut Sheet again);
-//      a charm moved by hand is saved and the green line drawn again for the charms as they now stand
+//   b  a 14K sheet whose green line cut was RECORDED: Manual Control on and off with nothing moved leaves the cut, its line and its stock exactly as they were (roseReopen never called); a charm
+//      moved by hand and saved sets the cut aside (the stock is the sheet's again, its leftover no longer offered, the card asks for Cut Sheet again), and the green line is drawn again
 //   c  a 14K sheet with its green line drawn, in a set approved for laser cutting: a charm hops onto it; both sheets' lines drawn again, files written, the set's card and the sheet's say the set
 //      changed after it was approved for laser cutting
 //   d  a 14K sheet cut on the laser (the sheet's mark, or its set's): Manual Control and the hop refuse, "has been cut on the laser: its charms can no longer change", nothing written; the server
@@ -306,17 +306,25 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       await openSheet('k14-3');
       const b0 = await mcBtn();
       assert(b0 && !b0.hidden && b0.disabled === 'false', 'Manual Control is offered on a sheet whose green line cut was recorded: ' + JSON.stringify(b0));
-      await manual(true);
-      await until(() => !rec('k14-3').roseCutAt, 15000, 'the recorded cut set aside');
-      await until(() => page.evaluate(() => !CNManual._MC.claiming), 10000, 'Manual Control started');
+      // (on and off with nothing moved: the recorded cut, its line and its stock stay exactly as they were, and nothing is asked of the cloud for them)
+      const keep3 = JSON.stringify([rec('k14-3').roseCutAt, rec('k14-3').rosePlanJson, rec('k14-3').roseCutRevision, st.doc(STOCK, 'stk-k14-3'), (st.doc(REM, 'stk-k14-3-1') || {}).status]);
+      const reopens = () => st.calls.filter(c => c.name === 'charmNestLibrary' && c.op === 'roseReopen').length, ro0 = reopens();
+      await manual(true); await until(() => page.evaluate(() => !CNManual._MC.claiming), 10000, 'Manual Control started');
+      await manual(false); await idle();
+      assert.equal(JSON.stringify([rec('k14-3').roseCutAt, rec('k14-3').rosePlanJson, rec('k14-3').roseCutRevision, st.doc(STOCK, 'stk-k14-3'), (st.doc(REM, 'stk-k14-3-1') || {}).status]), keep3, 'on and off with nothing moved: the cut, its line, its stock and its leftover as they were');
+      assert.equal(reopens(), ro0, 'roseReopen was never called');
+      assert.equal(await page.evaluate(() => CN.allSheets().find(p => p.sheetId === 'k14-3').roseCutAt), CUT_AT, 'the page still holds the recorded cut');
+      await manual(true); await until(() => page.evaluate(() => !CNManual._MC.claiming), 10000, 'Manual Control started again');
+      assert.equal(rec('k14-3').roseCutAt, CUT_AT, 'starting Manual Control sets nothing aside');
+      const m = idOf(R(41), 41), e = await mcMove(m, cell(4, 1));
+      assert(e && Math.hypot(e.cxPt - cell(4, 1).x, e.cyPt - cell(4, 1).y) < 1.5, 'moved by hand, checked against the metal as it was before the cut: ' + JSON.stringify(e));
+      await manual(false); await idle();
+      assert(reopens() > ro0, 'the save of the move set the cut aside (roseReopen)');
       const r3 = rec('k14-3'), stock = st.doc(STOCK, 'stk-k14-3') || {}, left = st.doc(REM, 'stk-k14-3-1') || {};
-      assert(r3.roseReopened && r3.roseReopened.cut && !r3.rosePlanJson && !r3.roseCutRevision, 'the sheet record: cut set aside, line given up: ' + JSON.stringify(r3.roseReopened));
+      assert(r3.roseReopened && r3.roseReopened.cut && !r3.roseCutAt && !r3.roseCutRevision, 'the sheet record: cut set aside (its line, given up, is drawn again below): ' + JSON.stringify(r3.roseReopened));
       assert(stock.owner === 'k14-3' && stock.profileJson == null && stock.revision === 1 && stock.available === false, 'the physical sheet is the sheet\'s again, as it was before the cut: ' + JSON.stringify(stock));
       assert(left.status === 'discarded' && /changed after its green line was recorded/.test(left.reason || ''), 'its leftover is no longer offered: ' + JSON.stringify(left));
       assert((r3.roseReseated || []).some(x => x && x.reopen && x.cut && x.cut.stockId === 'stk-k14-3'), 'the next Cut Sheet records under its own revision (roseReseated)');
-      const m = idOf(R(41), 41), e = await mcMove(m, cell(4, 1));
-      assert(e && Math.hypot(e.cxPt - cell(4, 1).x, e.cyPt - cell(4, 1).y) < 1.5, 'moved by hand: ' + JSON.stringify(e));
-      await manual(false); await idle();
       const at = recAt('k14-3', m);
       assert(at && Math.hypot(at.x - cell(4, 1).x, at.y - cell(4, 1).y) < .01, 'saved where it was put: ' + JSON.stringify(at));
       await until(() => { const p = planOf('k14-3'); return p && p.lines.length > 0; }, 60000, 'the green line drawn again');
@@ -326,7 +334,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       assert(!rec('k14-3').roseCutAt, 'the cut is not recorded again by itself (a person\'s Cut Sheet press)');
       const card = await page.evaluate(() => { const sh = CN.allSheets().find(p => p.sheetId === 'k14-3'); showPage(sh.metal, CN.S.sheets[sh.metal].pages.indexOf(sh)); CN.renderCard(sh); const n = sh.el && sh.el.querySelector('[data-rose-reopened]'); return n ? n.textContent : ''; });
       assert(/changed after its green line was approved.*press Cut Sheet to approve its green line again/.test(card), 'its card asks for Cut Sheet again: ' + card);
-      pass('b · a recorded green line cut is no lock: Manual Control sets it aside (stock the sheet\'s again, leftover discarded), a charm moved by hand is saved, the green line drawn again for the new layout, the card asks for Cut Sheet again');
+      pass('b · a recorded green line cut is no lock: Manual Control on and off with nothing moved leaves it exactly as it was (no roseReopen); a charm moved by hand and saved sets it aside (stock the sheet\'s again, leftover discarded), is saved, the green line drawn again for the new layout, the card asks for Cut Sheet again');
     } catch (e) { fail('b · recorded green line cut', e); }
     await closePops();
 
