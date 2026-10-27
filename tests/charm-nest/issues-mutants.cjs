@@ -68,7 +68,9 @@ function refIssues(sheet, ctx, mut = {}) {
       else if (mut.archived ? on.some(s => !ready(s)) : on.every(s => !ready(s))) {
         // round 7: a not-ready sheet of the SAME set is the set's wait, not the order's (mutant sameSetWaits: the old rule, which listed it)
         const me = O.effSet(sheet);
-        if (mut.sameSetWaits || !(me && on.every(s => O.effSet(s) === me))) why = 'otherSheetNotReady';
+        // (KNOWN SPLIT, Paul 26-27 Oct 2026: X in a set, the piece's sheets all in OTHER sets, X or one of them a Rose Gold / 10K / 14K sheet: no issue of the order)
+        const green = s => !!s && ['rose', 'gold10k', 'gold14k'].includes(s.metal), known = !!me && (green(sheet) || on.some(green)) && on.every(s => O.effSet(s) && O.effSet(s) !== me);
+        if (mut.sameSetWaits || (!(me && on.every(s => O.effSet(s) === me)) && !known)) why = 'otherSheetNotReady';
       }
       const split = why === 'otherSheetNotReady' && !!O.effSet(sheet) && !(p.l.hold || p.l.changePending) && on.some(s => O.effSet(s) && O.effSet(s) !== O.effSet(sheet));
       // round 8: its not-ready sheet is in no set while this one is in one (the mutant noSetSilent says nothing of it; noSetForSplit calls any other set's sheet "no set")

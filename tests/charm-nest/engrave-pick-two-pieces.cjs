@@ -3,7 +3,7 @@
 //   "I chose the gold and the silver, but the engraving card did not adapt."
 // ENGSEL made the section follow the pick; but the two cards were IDENTICAL (the same design name "NEURON 370...", the same words, the same picture), and the card's leading dot was the STATE dot (amber for "to
 // approve", which reads as "gold" beside the Its pieces list's metal-coloured dots), so a pick of the silver piece looked unchanged. Expected now: a card of an order of several lines names its piece the way the
-// Its pieces list does (the metal's dot, and "SS" / "GF" after the name, which never gives way when the name is cut), the header says "Showing <name> · SS" when two pieces share a name, a pick shows exactly that
+// Its pieces list does (the metal's dot, and "SS" / "GF" BEFORE the name, so a long name's "…" never hides it: Paul, 27 Oct 2026), the header says "Showing <name> · SS" when two pieces share a name, a pick shows exactly that
 // piece's card (same design, own words, own Approve), "Show all" shows both cards telling apart at a glance, and an Approve approves only its own piece. A single-line order's card is exactly what it was.
 //
 // Offline only: the REAL page over the repo's fake site with the real drawings (_engraveRealWorld.cjs). Fake buyer names ("Name One") only; no Etsy, no paid call, no live write.
@@ -77,7 +77,7 @@ const openOn = async (page, key, opts) => {
 
     // ── the order of the pictures, every piece shown ──
     let s = await openOn(page, kGF);
-    note(s.rows.length === 2 && s.rows.every(r => /COMET 9427 · (SS|GF)/.test(r.text)), 'Its pieces lists the two lines by name and metal', s.rows.map(r => r.text).join(' | '));
+    note(s.rows.length === 2 && s.rows.every(r => /^(SS|GF) COMET 9427/.test(r.text)), 'Its pieces lists the two lines by name and metal', s.rows.map(r => r.text).join(' | '));
     note(s.selected === null && s.cards.length === 2 && new Set(s.cards.map(c => c.line)).size === 2, 'nothing picked: two cards, one for each line', s.cards.length + ' cards');
     const cardSS = s.cards.find(c => c.line === kSS) || {}, cardGF = s.cards.find(c => c.line === kGF) || {};
     note(cardSS.title === 'COMET 9427 · SS' && cardGF.title === 'COMET 9427 · GF', 'the two cards tell themselves apart at a glance: "COMET 9427 · SS" and "COMET 9427 · GF"', cardSS.title + ' | ' + cardGF.title);

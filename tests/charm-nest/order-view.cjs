@@ -190,7 +190,7 @@ async function main() {
       sheet: document.querySelector('#owRail [data-stage="sheet"]').className, laser: [document.querySelector('#owRail [data-stage="laser"]').className, document.querySelectorAll('#owRail .tlCnt').length],
       rows: [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => r.className + ' | ' + r.textContent) }));
     assert.equal(v7.title, `Order ${D2.rid}`, 'no "line 1 of 2" in the header');
-    assert.equal(v7.sw.length, 2); assert.match(v7.sw[0], /^SHEEP 3 · GF/); assert.match(v7.sw[1], /^COW 1 · GF/); assert.equal(v7.state, 'Showing all 2 pieces', 'all pieces first'); assert.equal(v7.sel, null); assert.equal(v7.chipRow, false, 'no chip row');
+    assert.equal(v7.sw.length, 2); assert.match(v7.sw[0], /^GF SHEEP 3/); assert.match(v7.sw[1], /^GF COW 1/); assert.equal(v7.state, 'Showing all 2 pieces', 'all pieces first'); assert.equal(v7.sel, null); assert.equal(v7.chipRow, false, 'no chip row');
     assert.match(v7.sheet, /\bd\b/, 'both pieces are on a sheet: done'); assert.doesNotMatch(v7.laser[0], /\bd\b/, 'one piece is not cut yet: the order is where its slowest piece is'); assert.equal(v7.laser[1], 0, 'no "1 of 2" pill on the rail (Paul, 12 Oct 2026)');
     assert.equal(v7.rows.length, 2, 'each piece on a row under where it is now'); assert.match(v7.rows[1], /slow/, 'the slowest piece in gold');
     if (shots) await page.screenshot({ path: path.join(shots, 'order-view-pieces-all.png') });

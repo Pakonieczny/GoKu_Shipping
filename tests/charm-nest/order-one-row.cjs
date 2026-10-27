@@ -109,7 +109,7 @@ async function partB() {
     let R = await read();
     assert.equal(R.length, 2, 'two rows for three pieces: ' + JSON.stringify(R.map(r => r.name)));
     const [neck, pair] = R;
-    assert.equal(neck.multi, false); assert.equal(pair.multi, true); assert.equal(pair.kind, 'pair'); assert.equal(pair.nameCount, 1, 'the name once: ' + pair.name); assert.match(pair.name, /^MASKS HAPPY\/SAD/);
+    assert.equal(neck.multi, false); assert.equal(pair.multi, true); assert.equal(pair.kind, 'pair'); assert.equal(pair.nameCount, 1, 'the name once: ' + pair.name); assert.match(pair.name, /^GF MASKS HAPPY\/SAD/);   // (the metal first: a long name's "…" never hides it, Paul 27 Oct 2026)
     assert.deepEqual(pair.marker.map(m => m.tag), ['Left', 'Right'], 'a Left | Right marker, the Engrave tab\'s own switch'); assert.equal(pair.marker.every(m => m.on === 'false'), true);
     assert.equal(pair.dots, 6); assert.equal(pair.chips, 1, 'ONE status'); assert.equal(pair.status.length, 1); assert.match(pair.status[0], /In review/);
     assert.equal(await page.evaluate(() => document.querySelectorAll('#owPcSum > .owPcRow[data-side], #owPcSum > .owPcRow .owPcSide').length), 0, 'no row of its own for Left or for Right, no LEFT tag on a row');

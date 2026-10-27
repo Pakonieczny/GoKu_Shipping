@@ -110,7 +110,7 @@ async function main() {
     await settle();
     let u = await ui();
     assert.equal(u.view, 'info'); assert.equal(u.piece, null, 'all pieces');
-    assert.deepEqual(u.pills.map(p => p.t.split(' ')[0]), ['CUTE', 'HEALTH1'], JSON.stringify(u.pills)); assert(u.pills.every(p => !p.on), 'all pieces: no row marked');
+    assert.deepEqual(u.pills.map(p => p.t.replace(/^(GF|SS|RG|10K|14K) /, '').split(' ')[0]), ['CUTE', 'HEALTH1'], JSON.stringify(u.pills)); assert(u.pills.every(p => /^GF /.test(p.t)), 'each row says its metal first'); assert(u.pills.every(p => !p.on), 'all pieces: no row marked');
     // the head card holds no Sheet button and no chip; the Sheet tab answers for the piece on show (CUTE): greyed, inert, its reason in plain words (the button's own)
     assert.equal(u.card, 0, 'the head card has no button and no sheet chip');
     assert(u.tab.off && u.tab.cls && /^Not on a sheet yet: its SKU is not in any master file$/.test(u.tab.why) && u.tab.count === '', 'the Sheet tab is greyed with its reason and counts nothing: ' + JSON.stringify(u.tab));
