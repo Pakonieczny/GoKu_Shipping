@@ -28,7 +28,9 @@ const R = { O1: '3521100001', O2: '3521100002', O3: '3521100003', O4: '352110000
 const receipts = [
   receipt(R.O1, [tx(R.O1, 1, 'BR-TST-01', pers('ANNA')), tx(R.O1, 2, 'BR-TST-02', pers('BELLA')), tx(R.O1, 3, 'BR-TST-03')]),
   receipt(R.O2, [tx(R.O2, 1, 'BR-TST-04', pers('CARLA'))]),
-  receipt(R.O3, [tx(R.O3, 1, 'BR-TST-01', pers('WHICH ONE?'))]),
+  // (O3 must wait for a person: since ENGPRE (13 Oct) words alone go straight to approval, and AUTOWORDS (26 Oct) sends on every job that holds words a font can
+  //  draw; a letter no engraving font has (ส) is what still waits at "Words to confirm")
+  receipt(R.O3, [tx(R.O3, 1, 'BR-TST-01', pers('WHICH ONE? ส'))]),
   receipt(R.O4, [tx(R.O4, 1, 'BR-TST-04', pers('CARLA'))]),
   receipt(R.O5, [tx(R.O5, 1, 'BR-TST-03', pers('EVA'))]),
   receipt(R.O6, [tx(R.O6, 1, 'BR-TST-04', pers('FIONA'))]),

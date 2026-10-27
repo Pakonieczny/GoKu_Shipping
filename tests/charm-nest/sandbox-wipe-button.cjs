@@ -188,6 +188,8 @@ async function main() {
     // ── Settings after: EVERY family at 0, the kept line, the last-reset line ──
     await openSettings(page);
     await page.waitForFunction(() => /\(this browser\)/.test((document.querySelector('#stBuildNote [data-i="now"]') || {}).textContent || ''), null, { timeout: 20000 });   // (the browser's own counts follow the cloud's: IndexedDB and the cache answer a moment later)
+    // (and on a busy machine the browser's first count can still hold a key the reset's reload removes a moment later: the line is judged once it settles)
+    await page.waitForFunction(() => /^In the sandbox now: nothing — /.test(((document.querySelector('#stBuildNote [data-i="now"]') || {}).textContent || '').trim()), null, { timeout: 15000 }).catch(() => {});
     const now = await line(page, 'now'), kept = await line(page, 'kept'), last = await line(page, 'last');
     const fams = FAM.server();
     assert(/^In the sandbox now: nothing — /.test(now), `${name}: the line says the sandbox holds nothing: ${now.slice(0, 160)}`);
