@@ -94,16 +94,21 @@ const keyOf = f => `${f.rid}_${f.rid}1`;
     await page.evaluate(k => OrderWin.open(k), keyOf(ALL)); await settle();
     let s = await winSeals();
     const kinds = s.known.map(i => i.kind);
-    check(['print', 'release', 'sheet', 'cancel', 'hold', 'engraveSent'].every(k => kinds.includes(k)), `2 the order still has print, release, sheet, cancel, ORDER HELD and the unlisted kind (OrderWin.seals(): ${kinds.join(', ')})`);
+    // (RELEASED, Paul 27 Oct 2026: "updating the Hold Order seal to a Released Order Seal": this order was held (Hal Holder) and then released (Cy Releaser), so its ORDER HELD is what the release ended: it is
+    //  no longer a seal of its own, the ORDER RELEASED seal carries it (held))
+    check(['print', 'release', 'sheet', 'cancel', 'engraveSent'].every(k => kinds.includes(k)) && !kinds.includes('hold'), `2 the order still has print, release, sheet, cancel and the unlisted kind; its ORDER HELD, ended by the later release, is not a seal of its own (OrderWin.seals(): ${kinds.join(', ')})`);
+    const relRec = await page.evaluate(() => (CNSealTravel.of(OrderWin.rid()) || []).find(x => x.kind === 'release') || null);   // (the one reader the window and the cards share)
+    check(relRec && relRec.held && relRec.held.by === 'Hal Holder', '2 ... the ORDER RELEASED seal knows the hold it ended: ' + JSON.stringify(relRec && relRec.held));
     check((s.known.find(i => i.kind === 'engraveSent') || {}).label === 'Sent to engraver', '2 ... the unlisted kind with its stored label');
     check(!s.row && !s.header, `2 no Seals row: no #owSealRow in the page, no "Seals" header in the window (row=${s.row} header=${s.header})`);
     check(s.drawn.every(d => d.beside && d.btnShown), `2 no seal is drawn in the window away from a shown button of its kind (${JSON.stringify(s.drawn)})`);
-    const ho = s.drawn.filter(d => d.kind === 'hold');
-    check(s.btnShown.hold && ho.length === 1 && ho[0].beside && /revSendBtn/.test(ho[0].btn) && ho[0].btnShown, `2 ORDER HELD sits beside the window's own Hold Order button, once (${JSON.stringify(ho)})`);
-    check(ho.length === 1 && ho[0].family === 'exceptions' && ho[0].text === 'ORDER HELD' && /Order held · by Hal Holder/.test(ho[0].title) && ho[0].w >= 24 && ho[0].w <= 48, `2 ... in its kind's design, who and when on hover, compact (${ho.map(d => d.family + ':' + d.text + ' ' + d.w + 'px').join(' ')})`);
-    const unshown = s.known.map(i => i.kind).filter(k => k !== 'print' && k !== 'complete' && !s.btnShown[k]);
+    // (RELSTAMP / RELEASED, 27 Oct 2026: the ORDER RELEASED seal sits beside the window's own Hold Order button, the button that takes Release Hold's place once the order is released; no ORDER HELD is drawn)
+    const ho = s.drawn.filter(d => d.kind === 'release');
+    check(s.btnShown.hold && ho.length === 1 && ho[0].beside && /revSendBtn/.test(ho[0].btn) && ho[0].btnShown && !s.drawn.some(d => d.kind === 'hold'), `2 ORDER RELEASED sits beside the window's own Hold Order button, once, and no ORDER HELD is drawn (${JSON.stringify(s.drawn)})`);
+    check(ho.length === 1 && ho[0].family === 'release' && ho[0].text === 'ORDER RELEASED' && /Order released · by Cy Releaser/.test(ho[0].title) && ho[0].w >= 24 && ho[0].w <= 48, `2 ... in its kind's design, who and when on hover, compact (${ho.map(d => d.family + ':' + d.text + ' ' + d.w + 'px ' + d.title).join(' ')})`);
+    const unshown = s.known.map(i => i.kind).filter(k => k !== 'print' && k !== 'complete' && k !== 'release' && !s.btnShown[k]);   // (release: beside Hold Order, above)
     // (the order is held (ORDER HELD), so its window shows a Release Hold button and the release seal rests beside it, checked above; the rest have no button here)
-    check(['sheet', 'cancel', 'engraveSent'].every(k => unshown.includes(k)) && (s.btnShown.release || unshown.includes('release')) && unshown.every(k => !s.drawn.some(d => d.kind === k)), `2 the seals whose button the window does not show (${unshown.join(', ')}) are not drawn in it (drawn: ${s.drawn.map(d => d.kind).join(', ') || 'none'}; buttons shown: ${JSON.stringify(s.btnShown)})`);
+    check(['sheet', 'cancel', 'engraveSent'].every(k => unshown.includes(k)) && unshown.every(k => !s.drawn.some(d => d.kind === k)), `2 the seals whose button the window does not show (${unshown.join(', ')}) are not drawn in it (drawn: ${s.drawn.map(d => d.kind).join(', ') || 'none'}; buttons shown: ${JSON.stringify(s.btnShown)})`);
     // ═══ 4 · beside its button ═══
     await addCancelBtn(); await sleep(300);
     s = await winSeals();

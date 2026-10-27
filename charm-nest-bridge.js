@@ -20075,7 +20075,8 @@ const OrderWin = window.OrderWin = (() => {
     const list = W.rid ? winSealsOf(W.rid) : [], beside = new Map();   // (the first paint of an opening window comes before the dialog is open)
     const rs = W.relStamp && W.relStamp.until > Date.now() && W.relStamp.rid === ridDigits(W.rid) ? W.relStamp : null;
     for (const s of list) {
-      const K = SEAL_KINDS[s.kind], btn = K ? shownIn(W.dlg, K.btn) || (K.alt ? shownIn(W.dlg, K.alt) : null) : null;
+      // (an order whose piece row says Completed carries that seal on its own button: no second, released seal beside Hold Order on that row)
+      const K = SEAL_KINDS[s.kind], btn = K ? shownIn(W.dlg, K.btn) || (K.alt && !W.dlg.querySelector("[data-cu-done]") ? shownIn(W.dlg, K.alt) : null) : null;
       if (btn && K.rowDrawn) continue;   // (its button's row already rests it there)
       if (btn) { if (!beside.has(btn)) beside.set(btn, []); beside.get(btn).push(s); }
     }

@@ -157,8 +157,9 @@ const LONGNAME = 'Bartholomew-Maximilian Featherstonehaugh-Wolfeschlegelsteinhau
       const dlg = document.getElementById('orderWin'), dr = dlg.getBoundingClientRect();
       const shown = b => !!b && b.isConnected && !b.hidden && !b.closest('[hidden]') && getComputedStyle(b).display !== 'none' && b.getBoundingClientRect().width > 0;
       const seals = [...dlg.querySelectorAll('[data-seal-kind="release"]')].map(n => { const g = n.closest('[data-ow-btn-seals]'), b = g && g.previousElementSibling, r = n.getBoundingClientRect();
-        return { beside: !!g, btn: b ? (b.id || b.className) : '', btnRel: !!b && b.matches(sel), btnShown: shown(b), title: n.title, w: Math.round(r.width), inside: r.left >= dr.left - 1 && r.right <= dr.right + 1 }; });   // (inside the window's width: at 390 px the piece row may be below the fold, the window scrolls down)
-      return { row: !!document.getElementById('owSealRow') || !!document.querySelector('.owSealRow, .owSealRowHd, [data-testid="ow-seal-row"]'), btns: [...dlg.querySelectorAll(sel)].filter(b => !b.closest('[data-ow-btn-seals]') && shown(b)).length,
+        // (RELSTAMP / RELEASED, 27 Oct 2026: once released, the seal stays beside the Hold Order button that takes Release Hold's place in the piece row: that button counts as the release's own)
+        return { beside: !!g, btn: b ? (b.id || b.className) : '', btnRel: !!b && (b.matches(sel) || b.matches('.revSendBtn')), btnShown: shown(b), title: n.title, w: Math.round(r.width), inside: r.left >= dr.left - 1 && r.right <= dr.right + 1 }; });   // (inside the window's width: at 390 px the piece row may be below the fold, the window scrolls down)
+      return { row: !!document.getElementById('owSealRow') || !!document.querySelector('.owSealRow, .owSealRowHd, [data-testid="ow-seal-row"]'), btns: [...dlg.querySelectorAll(sel + ',.revSendBtn')].filter(b => !b.closest('[data-ow-btn-seals]') && shown(b)).length,
         seals, sideways: dlg.scrollWidth > dlg.clientWidth + 1 };
     }, RELBTN);
     const atRest = async (label, want) => {

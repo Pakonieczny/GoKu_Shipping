@@ -146,6 +146,8 @@ async function scenes(root, label, browser) {
       out.cuRemove = { label: 'Custom window · design removed', props: propsOf(rm, inDlg), whole: judge(rm), foot: glide(rm.seen.foot), keep: glide(rm.seen.keep), gone: (rm.seen.goneOpacity || []).map(x => x[1]).filter(x => x != null), end: rm.end, dlgBottom: glide(rm.seen.dlgBottom) };
       out.cuAdd = { label: 'Custom window · design added', props: propsOf(ad, inDlg), whole: judge(ad), foot: glide(ad.seen.foot), end: ad.end };
       // 3 · the seal's stamp pressed on a button
+      // (RELSTAMP, 27 Oct 2026: a stamp under an open window is not played, as a person could not see it: the Custom designs window is put away first)
+      await page.evaluate(() => { for (const d of document.querySelectorAll('dialog[open]')) d.close(); }); await page.waitForTimeout(900);
       const st = await page.evaluate(async () => {
         const host = document.createElement('div'); host.style.cssText = 'position:fixed;left:420px;top:260px;width:520px;height:240px;background:#fff;border:1px solid #ddd;border-radius:12px;z-index:70';
         host.innerHTML = '<button class="btn gold sm" style="position:absolute;left:180px;top:100px">Print QR label</button>'; document.body.appendChild(host);
