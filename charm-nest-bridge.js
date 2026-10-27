@@ -9429,10 +9429,12 @@ const Engrave = window.Engrave = (() => {
     const master = new Set(AE.memberIds(AE.baseOf(charm))), now = new Set(AE.memberIds(charm)), was = new Map((given || []).map(i => [String(i.id), i]));
     const touched = new Set(Object.keys((diff && diff.changed) || {})), mark = it => { if (!it) return; touched.add(String(it.id)); (it.children || []).forEach(mark); }; ((diff && diff.added) || []).forEach(mark);
     const leaves = [];
-    const walk = (list, P, gid) => {
+    const walk = (list, P, gid, hid) => {
       for (const it of list || []) {
         if (!it) continue;
-        if (it.kind === "group") { walk(it.children, Mx.mul(P, isM(it.matrix) ? it.matrix : Mx.I), gid || String(it.id)); continue; }
+        const off = !!(hid || it.hidden);   // (hidden in the editor, or in a hidden group: not engraved, so the laser does what the person sees; a cut line hidden is still the piece's outline)
+        if (it.kind === "group") { walk(it.children, Mx.mul(P, isM(it.matrix) ? it.matrix : Mx.I), gid || String(it.id), off); continue; }
+        if (off && it.role !== "cut") continue;
         const leaf = Object.assign({}, it, { id: String(it.id) });
         if (it.kind !== "text") { const own = isM(it.matrix) ? it.matrix : Mx.isI(P) ? null : AE.itemMatrix(it, Mx.bboxOf(it.subpaths || [])); if (own) leaf.matrix = Mx.mul(P, own); }
         if (gid) leaf.group = gid;

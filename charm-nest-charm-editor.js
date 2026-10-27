@@ -71,6 +71,8 @@
   const ROLE_NAME = { cut: 'Cut line', line: 'Line engrave', hatch: 'Hatch engrave', art: 'Artwork' };
   const ROLE_SAYS = { cut: 'the laser cuts through', line: 'engraved along the line', hatch: 'engraved as a fill', art: "the charm's own drawing" };
   const ROLE_SHORT = { cut: 'Cut', line: 'Line', hatch: 'Hatch', art: 'Art' };
+  // (a hidden part is not engraved: what the person sees is what the laser does. A cut line hidden stays cut: the outline is the piece itself)
+  const eyeSays = it => it.role === 'cut' ? (it.hidden ? 'Show' : 'Hide on screen (the laser still cuts it)') : it.hidden ? 'Show: engraved again' : 'Hide: not engraved';
   const fin = v => typeof v === 'number' && Number.isFinite(v);
   const num = (v, d) => (fin(v) ? v : d);
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -1486,7 +1488,7 @@
             : `<i class="ce-sw ce-sw--${esc(it.role)}${it.kind === 'text' ? ' is-text' : ''}${it.kind === 'path' && it.role === 'art' && !paintFill(it) ? ' is-outline' : ''}" aria-hidden="true">${it.kind === 'text' ? 'T' : ''}</i>`)
           + `<span class="ce-layer__name" title="${esc(rowName(it))} · ${esc(ROLE_NAME[it.role] || '')}">${esc(rowName(it))}</span>`
           + (it.source === 'added' ? '<i class="ce-layer__new" title="Added here"></i>' : '')
-          + `<button class="ce-layer__b${it.hidden ? '' : ' is-quiet'}" type="button" data-lact="eye" aria-label="${it.hidden ? 'Show' : 'Hide'}" title="${it.hidden ? 'Show' : 'Hide'}">${it.hidden ? IC.eyeOff : IC.eyeOn}</button>`
+          + `<button class="ce-layer__b${it.hidden ? '' : ' is-quiet'}" type="button" data-lact="eye" aria-label="${it.hidden ? 'Show' : 'Hide'}" title="${eyeSays(it)}">${it.hidden ? IC.eyeOff : IC.eyeOn}</button>`
           + `<button class="ce-layer__b${it.locked ? '' : ' is-quiet'}" type="button" data-lact="lock" aria-label="${it.locked ? 'Unlock' : 'Lock'}" title="${it.locked ? 'Unlock' : 'Lock'}">${it.locked ? IC.lockOn : IC.lockOff}</button>`
           + '</div>';
         if (isG && opn) for (let i = it.children.length - 1; i >= 0; i--) row(it.children[i], depth + 1);

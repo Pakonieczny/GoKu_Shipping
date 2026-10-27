@@ -322,7 +322,23 @@ async function partB(kit) {
     check('B20 a word put off the metal is refused in the work area\'s note, in the module\'s words, and nothing of that edit is saved: not the front, not the back\'s valid addition',
       n3.bad && /^Not saved/.test(n3.text) && /X: it falls outside the piece's outline/.test(n3.text) && !n3.open && artPuts() === puts2 && st.doc('Charm_Pool_Art', PID + '~front').at === rec2At && !st.doc('Charm_Pool_Art', PID),
       JSON.stringify({ n3, puts: artPuts() - puts2 }));
-    check('B21 no page error', w.errors.length === 0, JSON.stringify(w.errors).slice(0, 400));
+    /* ── a part hidden with the eye is not engraved (what the person sees is what the laser does) ── */
+    await R.openEngraveDetail(w, 'cal', { face: 'front' }); await R.settle(page, 900);
+    await page.click(Q + ' .backHost .egCharmEdit');
+    await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page);
+    const line = await page.evaluate(() => { const it = CharmEditor.current.items().find(i => i.role === 'line' && i.source === 'master'); return it ? String(it.id) : null; });
+    const eyeOf = id => page.evaluate(id => { const b = document.querySelector(`.ce-root .ce-layer[data-id="${id}"] [data-lact="eye"]`); return b ? b.title : ''; }, id), eye0 = await eyeOf(line);
+    await page.click(`.ce-root .ce-layer[data-id="${line}"] [data-lact="eye"]`); await settleP(page);
+    const eye = await page.evaluate(id => { const b = document.querySelector(`.ce-root .ce-layer[data-id="${id}"] [data-lact="eye"]`); return b ? b.title : ''; }, line);
+    const rec3At = st.doc('Charm_Pool_Art', PID + '~front').at;
+    await page.click('.ce-root [data-act="save"]');
+    for (let t0 = Date.now(); Date.now() - t0 < 60000 && st.doc('Charm_Pool_Art', PID + '~front').at === rec3At; ) await new Promise(r => setTimeout(r, 200));
+    await R.settle(page, 800);
+    const rec3 = st.doc('Charm_Pool_Art', PID + '~front');
+    check('B21 a grid line hidden with the eye ("Hide: not engraved") is saved as removed: the laser does what the person sees; the earlier edits stay',
+      !!line && eye0 === 'Hide: not engraved' && eye === 'Show: engraved again' && rec3.at !== rec3At && rec3.removed.includes(line) && letters.every(l => rec3.removed.includes(l)) && rec3.added.length === rec2.added.length,
+      JSON.stringify({ line, eye0, eye, removed: rec3.removed, added: rec3.added.length }));
+    check('B22 no page error', w.errors.length === 0, JSON.stringify(w.errors).slice(0, 400));
     console.log('screenshots in ' + shots + ' (' + [entryShot, workShot].map(p => path.basename(p)).join(', ') + ', …)');
   } finally { await w.close(); }
 }
