@@ -1602,7 +1602,7 @@ const Orders = window.Orders = (() => {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
     const own = m.listingSkus && O.inventorySku(l, m.listingSkus[String(l.listingId)]);
     const link = a && a.pairBySku && O.bySkuOf(a.pairBySku, String(O.decodeEntities(l.sku) || "").trim().toUpperCase());   // (the pair of two designs a person saved for this listing and SKU, aliasPut pair)
-    return [o, +o.updateTs, o.staffNote, l, l.staffNote, row.materialOverride, row.sizeOverride, row.blockOverride ? JSON.stringify(row.blockOverride) : "", m.optionMaps, m.aliases, m.noDesign, m.customDone,
+    return [o, +o.updateTs, o.staffNote, l, l.staffNote, row.materialOverride, row.sizeOverride, row.blockOverride ? JSON.stringify(row.blockOverride) : "", row.skuOverride ? JSON.stringify(row.skuOverride) : "", m.optionMaps, m.aliases, m.noDesign, m.customDone,
       m.customRead && m.customRead[row.key], m.customDecided && m.customDecided[row.key], libFacts(String(l.sku || "").trim().toUpperCase()), libFacts(a && a.sku ? String(a.sku).trim().toUpperCase() : ""),
       // the catalogue design of a charm-only variation SKU (MAPLE_8065-CO), and the design the line was last read as (an alias or an option's pick)
       libFacts(O.variationBase(l.sku)), libFacts(row.spec && row.spec.designSku),
@@ -1636,7 +1636,7 @@ const Orders = window.Orders = (() => {
      Such a line is read again without its SKU, options and words (what the reader can always read), and then waits for a person with ONE plain line, like a line the form guard holds: no design on the row, nothing pooled,
      the others go on. A line the reader reads is read exactly as before. */
   function readLine(row) {
-    try { const c = ctx(); if (row.blockOverride) c.blockOverride = row.blockOverride; return O.interpretLine(row.order, row.line, c); }
+    try { const c = ctx(); if (row.blockOverride) c.blockOverride = row.blockOverride; if (row.skuOverride) c.skuOverride = row.skuOverride; return O.interpretLine(row.order, row.line, c); }   // (ONESKU: a person's charm for this line alone)
     catch (e) {
       const l = (row.line && typeof row.line === "object" ? row.line : {}), o = row.order || {}, say = String((e && e.message) || e).slice(0, 140), sku = String(l.sku == null ? "" : l.sku).trim().toUpperCase().slice(0, 80);
       const bare = { transactionId: String(l.transactionId == null ? "" : l.transactionId), listingId: String(l.listingId == null ? "" : l.listingId), productId: "", sku, title: "", quantity: Number(l.quantity) || 1, metalKey: String(l.metalKey == null ? "" : l.metalKey), metalLabel: String(l.metalLabel == null ? "" : l.metalLabel), personalization: [], buyerMessage: "", variations: [] };
@@ -1917,7 +1917,7 @@ const Orders = window.Orders = (() => {
       ...(row.groupSize > 1 ? { groupSize: row.groupSize } : {}), ...(row.spec && row.spec.pair && Array.isArray(row.spec.pair.sides) && row.spec.pair.sides.some(x => x === "L" || x === "R") ? { sides: row.spec.pair.sides.slice(0, 400).map(x => x === "L" || x === "R" ? x : "") } : {}),
       ...(hand ? { handDone: { at: +cd.completedAt || 0, by: cap(cd.completedBy, 80), how: cd.how === "button" ? "button" : "print" } } : {}),
       activityAt:row.activityAt || 0, changePending:!!row.changePending,repoolChanged:!!row.repoolChanged,arrivedAt: row.arrivedAt || 0, createTs: o.createTs || 0, materialOverride: row.materialOverride || null, sizeOverride: row.sizeOverride || null, ...(row.engravingOverride ? { engravingOverride: row.engravingOverride } : {}), problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
-      ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), ...(row.releasing ? { releasing: { at: +row.releasing.at || 0, by: cap(row.releasing.by, 80), stage: String(row.releasing.stage || "").slice(0, 20) } } : {}), ...(row.blockOverride && typeof row.blockOverride === "object" && row.blockOverride.sku ? { blockOverride: { sku: cap(row.blockOverride.sku, 80), by: cap(row.blockOverride.by, 80), at: +row.blockOverride.at || 0, ...(Array.isArray(row.blockOverride.skus) && row.blockOverride.skus.length ? { skus: row.blockOverride.skus.slice(0, 20).map(x => cap(x, 80)) } : {}) } } : {}), ...(row.releaseHold && +row.releaseHold.at > 0 ? { releaseHold: { at: +row.releaseHold.at, by: cap(row.releaseHold.by, 80), id: cap(row.releaseHold.id, 120) } } : {}), ...(row.releaseAnyway && +row.releaseAnyway.at > 0 ? { releaseAnyway: { at: +row.releaseAnyway.at, by: cap(row.releaseAnyway.by, 80), kinds: (row.releaseAnyway.kinds || []).slice(0, 8).map(x => cap(x, 24)) } } : {}),   // (RELEASE, Paul 19 Oct 2026: the questions a Release Hold set aside for this line; RELHOLD: the Review card's Release Hold press, who and when; BLOCKREL: a person's "Release to nesting queue" on a blocked SKU; released from hold: ahead of the orders coming in; a release not finished yet, taken up again by the next page, OrderHold)
+      ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), ...(row.releasing ? { releasing: { at: +row.releasing.at || 0, by: cap(row.releasing.by, 80), stage: String(row.releasing.stage || "").slice(0, 20) } } : {}), ...(row.skuOverride && typeof row.skuOverride === "object" && row.skuOverride.sku ? { skuOverride: { sku: cap(row.skuOverride.sku, 80), by: cap(row.skuOverride.by, 80), at: +row.skuOverride.at || 0, was: cap(row.skuOverride.was, 80) } } : {}), ...(row.blockOverride && typeof row.blockOverride === "object" && row.blockOverride.sku ? { blockOverride: { sku: cap(row.blockOverride.sku, 80), by: cap(row.blockOverride.by, 80), at: +row.blockOverride.at || 0, ...(Array.isArray(row.blockOverride.skus) && row.blockOverride.skus.length ? { skus: row.blockOverride.skus.slice(0, 20).map(x => cap(x, 80)) } : {}) } } : {}), ...(row.releaseHold && +row.releaseHold.at > 0 ? { releaseHold: { at: +row.releaseHold.at, by: cap(row.releaseHold.by, 80), id: cap(row.releaseHold.id, 120) } } : {}), ...(row.releaseAnyway && +row.releaseAnyway.at > 0 ? { releaseAnyway: { at: +row.releaseAnyway.at, by: cap(row.releaseAnyway.by, 80), kinds: (row.releaseAnyway.kinds || []).slice(0, 8).map(x => cap(x, 24)) } } : {}),   // (RELEASE, Paul 19 Oct 2026: the questions a Release Hold set aside for this line; RELHOLD: the Review card's Release Hold press, who and when; BLOCKREL: a person's "Release to nesting queue" on a blocked SKU; released from hold: ahead of the orders coming in; a release not finished yet, taken up again by the next page, OrderHold)
       snap: { title: cap(l.title, 160), listingId: cap(l.listingId, 24), metalKey: cap(l.metalKey, 24), metalLabel: cap(l.metalLabel, 40),
         orderNumber: cap(o.orderNumber, 24), buyer: cap(o.buyer && o.buyer.name, 60), shipBy: +o.shipBy || 0, isGift: !!o.isGift,
         vars: (l.variations || []).map(v => String(v.name ?? v.formatted_name ?? "") + "\u241f" + String(v.value ?? v.formatted_value ?? "")),
@@ -1938,7 +1938,7 @@ const Orders = window.Orders = (() => {
     O.cleanLine(line);   // (a line recorded while Etsy's text still carried entities is read decoded; the record is not rewritten)
     order.lines = [line];
     return { key, order, line, activityAt:+l.activityAt || 0, changePending:!!l.changePending,repoolChanged:!!l.repoolChanged, arrivedAt: +l.arrivedAt || 0, sizeOverride: l.sizeOverride || null, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
-      poolIds: l.poolIds || [], ...(+l.groupSize > 1 ? { groupSize: +l.groupSize } : {}), engrave: l.engrave || null, metal: l.material || null, materialOverride: l.materialOverride || l.material || null, ...(l.engravingOverride && typeof l.engravingOverride === "object" ? { engravingOverride: l.engravingOverride } : {}), fromRecord: true, ...(+l.frontAt > 0 ? { frontAt: +l.frontAt } : {}), ...(l.releasing && +l.releasing.at > 0 ? { releasing: l.releasing } : {}), ...(l.blockOverride && typeof l.blockOverride === "object" && l.blockOverride.sku ? { blockOverride: l.blockOverride } : {}), ...(l.releaseHold && +l.releaseHold.at > 0 ? { releaseHold: l.releaseHold } : {}), ...(l.releaseAnyway && +l.releaseAnyway.at > 0 && Array.isArray(l.releaseAnyway.kinds) ? { releaseAnyway: l.releaseAnyway } : {}) };
+      poolIds: l.poolIds || [], ...(+l.groupSize > 1 ? { groupSize: +l.groupSize } : {}), engrave: l.engrave || null, metal: l.material || null, materialOverride: l.materialOverride || l.material || null, ...(l.engravingOverride && typeof l.engravingOverride === "object" ? { engravingOverride: l.engravingOverride } : {}), ...(l.skuOverride && typeof l.skuOverride === "object" && l.skuOverride.sku ? { skuOverride: l.skuOverride } : {}), fromRecord: true, ...(+l.frontAt > 0 ? { frontAt: +l.frontAt } : {}), ...(l.releasing && +l.releasing.at > 0 ? { releasing: l.releasing } : {}), ...(l.blockOverride && typeof l.blockOverride === "object" && l.blockOverride.sku ? { blockOverride: l.blockOverride } : {}), ...(l.releaseHold && +l.releaseHold.at > 0 ? { releaseHold: l.releaseHold } : {}), ...(l.releaseAnyway && +l.releaseAnyway.at > 0 && Array.isArray(l.releaseAnyway.kinds) ? { releaseAnyway: l.releaseAnyway } : {}) };
   }
   /* The claim is a courtesy — a gold dot on the station's rows saying the sorter has these — never a lock. So it goes
      in batches of a hundred, each with its own time, and a batch the station does not answer is retried once and then
@@ -3920,7 +3920,8 @@ const Master = window.Master = (() => {
         `</div><div class="row skuActs">` +
         dlPair(e, sizes) +
         (!WORKSPACE_SANDBOX && window.CharmNestEtsyLink ? `<button type="button" class="btn ghost xs" data-etsylink="${keys}" data-repo="modify" title="put this charm's SKU on an Etsy listing (asks for your password)">Etsy</button>` : "") +
-        `<button type="button" class="btn ghost xs" data-del="${keys}" data-repo="delete" title="delete this charm${d.skus.length > 1 ? ` and its ${d.skus.length} SKUs` : ""} from the charm repo (asks for your password every time)">Delete</button>` +
+        // (CARDS17, Paul 27 Oct 2026: on the smaller card Delete is a bin with its padlock; the word is kept for screen readers and its title says what it does)
+        `<button type="button" class="btn ghost xs skDel" data-del="${keys}" data-repo="delete" aria-label="Delete" title="Delete this charm${d.skus.length > 1 ? ` and its ${d.skus.length} SKUs` : ""} from the charm repo (asks for your password every time)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9.5 7V4.6h5V7M6.8 7l.9 12.4h8.6L17.2 7M10.2 10.6v5.6M13.8 10.6v5.6"/></svg><span class="skDelTx">Delete</span></button>` +
         `</div></div>`;
     }).join("") + (rows.length > shown.length ? `<div class="libEmpty">${rows.length - shown.length} more — press &ldquo;Show all&rdquo;, or narrow the search</div>` : "");
     mountMasterPreviews(grid);
@@ -4911,7 +4912,7 @@ const Pool = window.Pool = (() => {
   const RETRY_MS = 5 * 60000;
   function trySig(row) {
     const sp = row.spec || {}, e = sp.designSku ? Master.entryFor(sp.designSku) : null, st = sp.material ? stockFor(sp.material) : null;
-    return JSON.stringify([+row.order.updateTs || 0, sp.designSku || "", sp.size || "", sp.material || "", sp.quantity || 0, !!sp.noDesign, (sp.problems || []).map(p => p.kind), row.materialOverride || "", row.sizeOverride || "", row.blockOverride ? JSON.stringify(row.blockOverride) : "",
+    return JSON.stringify([+row.order.updateTs || 0, sp.designSku || "", sp.size || "", sp.material || "", sp.quantity || 0, !!sp.noDesign, (sp.problems || []).map(p => p.kind), row.materialOverride || "", row.sizeOverride || "", row.blockOverride ? JSON.stringify(row.blockOverride) : "", row.skuOverride ? JSON.stringify(row.skuOverride) : "",
       e ? [e.masterHash || "", e.updatedAt || 0, e.blocked || "", Object.keys(e.sizes || {}).sort().join(","), sizeEntry(e, sp.size)?.aiPath || ""] : B.master.entries.size,
       st ? [Math.round(st.wPt), Math.round(st.hPt)] : 0, +S.settings.insetPt || 0, +S.settings.maxFill || 0]);
   }
@@ -5139,7 +5140,8 @@ const Carry = window.Carry = (() => {
       if (row && row.engravingOverride && !fresh.engravingOverride) fresh.engravingOverride = row.engravingOverride;   // (a person's engraving setup is never lost to a fresh pull, even of a changed order: CONTRACT 3)
       if (row && row.releaseHold && !fresh.releaseHold) fresh.releaseHold = row.releaseHold;   // (RELHOLD: who released it with Release Hold, and when, stays with the order)
       if (row && row.releaseAnyway && !fresh.releaseAnyway) fresh.releaseAnyway = row.releaseAnyway;   // (RELEASE, Paul 19 Oct 2026: a person's Release Hold on a line that still asked something stays with the line, even of a changed order)
-      if (row && row.blockOverride && !fresh.blockOverride) fresh.blockOverride = row.blockOverride;   // (BLOCKREL: a person's "cut it although the master blocks it" is for that SKU only, so a changed order keeps it; it does nothing if the SKU changed)
+      if (row && row.blockOverride && !fresh.blockOverride) fresh.blockOverride = row.blockOverride;
+      if (row && row.skuOverride && !fresh.skuOverride) fresh.skuOverride = row.skuOverride;   // (ONESKU: "Just this order" stays with the order, even a changed one)   // (BLOCKREL: a person's "cut it although the master blocks it" is for that SKU only, so a changed order keeps it; it does nothing if the SKU changed)
       if (!row || +row.order.updateTs !== +fresh.order.updateTs || JSON.stringify(row.line) !== JSON.stringify(fresh.line)) continue;
       row.order = fresh.order;
       // A previously released line remains written: mixed orders must never cut that line twice.
@@ -12765,7 +12767,7 @@ const RunCtl = window.RunCtl = (() => {
       for (const row of Orders.rows()) {
         const old = savedLines[row.key];
         if (!old || +old.updateTs !== +row.order.updateTs) continue;
-        for (const key of ["state", "poolIds", "reason", "hold", "wait", "engrave", "materialOverride", "sizeOverride", "blockOverride", "releaseHold", "releaseAnyway", "engravingOverride", "changePending", "repoolChanged"]) if (old[key] != null) row[key] = old[key];
+        for (const key of ["state", "poolIds", "reason", "hold", "wait", "engrave", "materialOverride", "sizeOverride", "blockOverride", "skuOverride", "releaseHold", "releaseAnyway", "engravingOverride", "changePending", "repoolChanged"]) if (old[key] != null) row[key] = old[key];
       }
       Orders.interpretAll();
       await restoreRunSheets(rec);
@@ -16492,13 +16494,17 @@ const Review = window.Review = (() => {
   }
   async function editSku(row, sku, opt) {
     sku = String(sku || "").trim().toUpperCase(); const host = (opt && opt.host) || null;   // (host: the Edit SKU window's progress area: the panel is drawn there)
-    const no = (why, tone) => { if (why) toast(why, tone || "bad", 7000); return { ok: false, why }; };
+    // (ONESKU: a change for the listing replaces this line's own "Just this order" charm: the line is read as the listing says before the change is weighed, and keeps its own charm when nothing is changed)
+    const onceWas = row && row.skuOverride; if (onceWas) { delete row.skuOverride; delete row.poolTry; try { Orders.interpretAll(); } catch (_) { /* read at the next pass */ } }
+    let started = false;
+    const no = (why, tone) => { if (onceWas && !started && !row.skuOverride) { row.skuOverride = onceWas; try { Orders.interpretAll(); } catch (_) { /* read at the next pass */ } } if (why) toast(why, tone || "bad", 7000); return { ok: false, why }; };
     const off = editSkuOffer(row); if (!off.ok) return no(off.why);
     if (!sku) return no("Pick a charm from the repo first");
     const e = Master.entryFor(sku); if (!e || !B.master.entries.has(sku)) return no(`${sku} is not in the charm repo`);
     if (O.entryBlock(e)) return no(`${sku} is blocked in the master, so it cannot be cut`);
     if (off.cur && (sku === off.cur || O.sameDesign(sku, off.cur, k => Master.entryFor(k)))) return no(`This piece is ${off.cur} already`, "ok");
     const who = by(); if (!who) return no("Sign in first: the change is saved under your name");
+    started = true;
     const same = editSkuSame(off), rows = Orders.rows().filter(same);
     // (no sheet is held for an SKU edit: an order this line sent to Review is answered by it BEFORE the swap reads it (a Review hold would keep the old charm on its sheet), and a full sheet
     //  the old charm leaves stays full (PICKFULL is not applied: the new charm goes into the old spot when it fits, else onto the next sheet of its colour))
@@ -16552,6 +16558,36 @@ const Review = window.Review = (() => {
       later(flow, flow.run({}).all, true);   // (the sheets those pieces left or joined, followed until saved; then the thumbnails)
       return { ok: true, sku, via: "alias", orders: [...new Set(rows.map(r => String(r.order.receiptId)))], done };
     } finally { if (!done) for (const rr of rows) delete rr._editSku; }
+  }
+  /* ONESKU (Paul, 27 Oct 2026): "Just this order" in the Change SKU window: "a no consequence, temporary one time changed to the matching of the SKU and charm because there are instances where
+     sometimes a user needs to change something just once without incurring a permanent effect ... the chosen matching SKU and charm are only used this one time and all subsequent times a user
+     purchases that given listing it will revert back to the original SKU". The charm is kept on THIS line only (row.skuOverride = { sku, by, at, was }, in the run's lines like blockOverride;
+     charm-nest-orders.js reads it before any rule): no saved link or alias, no Etsy write, no other order of the listing. The line is made up again with it (its piece swapped in its spot on an
+     open sheet, INPLACE; a piece already cut is kept and the line held for a person, as for any change). A later Change SKU for the listing replaces it (editSku). → { ok, why, sku, via } */
+  async function editSkuOnce(row, sku) {
+    sku = String(sku || "").trim().toUpperCase();
+    const no = (why, tone) => { if (why) toast(why, tone || "bad", 7000); return { ok: false, why }; };
+    const off = editSkuOffer(row); if (!off.ok) return no(off.why);
+    if (!sku) return no("Pick a charm from the repo first");
+    const e = Master.entryFor(sku); if (!e || !B.master.entries.has(sku)) return no(`${sku} is not in the charm repo`);
+    if (O.entryBlock(e)) return no(`${sku} is blocked in the master, so it cannot be cut`);
+    if (off.cur && (sku === off.cur || O.sameDesign(sku, off.cur, k => Master.entryFor(k)))) return no(`This piece is ${off.cur} already`, "ok");
+    const who = by(); if (!who) return no("Sign in first: the change is saved under your name");
+    const rid = String(row.order.receiptId), was = off.cur || off.from || "", at = Date.now();
+    // (an order this line sent to Review is answered by the choice first: REVHOLD would keep the old charm on its sheet)
+    try { const M = window.CharmNestReviewMark; if (M && M.isMarked && M.resolve && M.isMarked(rid)) await Promise.resolve(M.resolve(rid, { by: who, how: "pick", sku })).catch(() => {}); } catch (_) { /* the line is made up below either way */ }
+    const asked = [...new Set((row.problems || []).map(p => p.kind))], say = `Just this order: ${was || "no SKU"} → ${sku} (the listing and Etsy are not changed)`;
+    row.skuOverride = { sku, by: who, at, was };
+    for (const k of asked) answered({ kind: k, rows: [row] }, "decided", say, { sku, once: true, from: off.from || null }, who);
+    if (!asked.length) try { TL.line(row, "decided", { id: `${row.key}.once.${at}`, at, by: who, text: `Decided by ${who} · ${say}`.slice(0, 200), data: { sku, once: true, was: was || null } }); } catch (_) { /* the line record keeps it */ }
+    delete row.poolTry;
+    if ((row.poolIds || []).length) row.repoolChanged = true;   // (its pieces are another drawing: they come off, the new one goes into the old spot when it fits)
+    try { await repool(row); }
+    catch (err) { agent({ pool: true }, "warn", `${rid}: ${sku} kept for this order, but its piece was not made up again yet (${(err && err.message) || err}); the run makes it up`); }
+    await saveLinesNow();
+    agent({ pool: true }, "POOL", `${rid} · ${was || "no SKU"} → ${sku} for this order only (${who}); listing ${off.lid}, its link and Etsy are not changed`);
+    syncOrderItems(); Orders.render(); liveSku();
+    return { ok: true, sku, via: "once", rid };
   }
   /** After an SKU edit: every view of this screen at once (the cards, the Library, the order window, the run banner); other screens follow through the library broadcast and their live read. */
   function liveSku() {
@@ -18377,7 +18413,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -20109,7 +20145,9 @@ const OrderWin = window.OrderWin = (() => {
     const form = byId("owSkuForm"), prog = byId("owSkuProg"), input = byId("owSkuInput"), check = byId("owSkuCheck"), save = byId("owSkuSave"), cancel = byId("owSkuCancel");
     const field = byId("owSkuField"), fmark = byId("owSkuMark"), list = byId("owSkuList"), scope = byId("owSkuScope"), to = byId("owSkuTo"), toPic = byId("owSkuToPic"), toName = byId("owSkuToName");
     const saveLbl = save.querySelector("span") || save;
-    form.hidden = false; prog.hidden = true; prog.innerHTML = ""; save.hidden = false; saveLbl.textContent = "Change SKU"; cancel.textContent = "Cancel"; input.disabled = false;
+    const once = byId("owSkuOnce"), onceRow = byId("owSkuOnceRow"), onceP = byId("owSkuOnceP");
+    let one = false;   // (ONESKU: "Just this order" is off whenever the window opens)
+    form.hidden = false; prog.hidden = true; prog.innerHTML = ""; save.hidden = false; saveLbl.textContent = "Change SKU"; cancel.textContent = "Cancel"; input.disabled = false; once.disabled = false;
     // FROM: the listing's photo (as the window shows it) and its Etsy SKU
     const im = tryDo(() => byId("owPhoto").querySelector("img")), src = im && im.getAttribute("src");
     byId("owSkuFromPic").innerHTML = src ? `<img class="photo" alt="" src="${esc(src)}">` : SKI.tag.replace("<svg ", '<svg class="q" ');
@@ -20120,6 +20158,19 @@ const OrderWin = window.OrderWin = (() => {
       + chip(SKI.box, `${sc.orders} order${sc.orders === 1 ? "" : "s"}`, `Every open order of listing ${off.lid} with this SKU, and its next orders`)
       + (sc.sheets.length ? chip(SKI.sheet, `${sc.sheets.length} sheet${sc.sheets.length === 1 ? "" : "s"}`, `${sc.sheets.join(", ")}: the new charm goes in the old one's spot when it fits, else on the next sheet of its colour; no sheet is held`) : "")
       + (sc.cut.length ? chip(SKI.cut, `${sc.cut.length} cut · kept`, `${sc.cut.join(", ")}: already cut, so its piece stays as it is`, "warn") : "");
+    // ONESKU: with "Just this order" on, the chips say what it changes instead: this order, and nothing on Etsy or the listing
+    const rid = String(r.order.receiptId), keepSku = off.from || off.cur || "", allChips = scope.innerHTML;
+    const oneChips = chip(SKI.box, `Order ${rid} only`, `Only this order is cut as the new charm`) + chip(SKI.tag, "Etsy not changed", `Etsy listing ${off.lid} keeps ${keepSku ? `the SKU “${keepSku}”` : "its SKU"}`, "off");
+    const paintOnce = () => {
+      once.setAttribute("aria-checked", String(one)); onceRow.dataset.on = one ? "1" : "";
+      onceP.hidden = !one; onceP.innerHTML = one ? `Only this order gets the new charm. The listing, Etsy and future orders keep ${keepSku ? `<b>${esc(keepSku)}</b>` : "their SKU"}.` : "";
+      scope.innerHTML = one ? oneChips : allChips;
+      if (d.dataset.busy !== "1") saveLbl.textContent = one ? "Use for this order" : "Change SKU";
+    };
+    const flip = () => { if (once.disabled) return; one = !one; paintOnce(); };
+    once.onclick = e => { e.stopPropagation(); flip(); };
+    onceRow.onclick = e => { if (!e.target.closest("#owSkuOnce")) { flip(); try { once.focus(); } catch (_) {} } };
+    paintOnce();
     // the repo's SKUs, read once for this window, each with the words it is found by
     const idx = []; for (const [k, e] of B.master.entries) idx.push({ sku: k, n: skuNorm(k + " " + ((e && (e.title || e.name)) || "")), e });
     const suggested = (W.skuCh && W.skuCh.list) || [];
@@ -20166,10 +20217,20 @@ const OrderWin = window.OrderWin = (() => {
       if (ev.key === "ArrowDown") { const f = list.querySelector("[data-sku]:not(:disabled)"); if (f) { ev.preventDefault(); f.focus(); if (!sel) paintTo(f.dataset.sku, "peek"); } }
       else if (ev.key === "Enter") { ev.preventDefault(); clearTimeout(timer); show(); if (!save.disabled) save.click(); else { const only = list.querySelectorAll("[data-sku]:not(:disabled)"); if (only.length === 1) only[0].click(); } }
     };
-    const back = () => { d.dataset.busy = ""; form.hidden = false; prog.hidden = true; prog.innerHTML = ""; input.disabled = false; save.hidden = false; saveLbl.textContent = "Change SKU"; cancel.textContent = "Cancel"; show(); };
+    const back = () => { d.dataset.busy = ""; form.hidden = false; prog.hidden = true; prog.innerHTML = ""; input.disabled = false; once.disabled = false; save.hidden = false; cancel.textContent = "Cancel"; paintOnce(); show(); };
     save.onclick = async () => {
       const k = sel; if (save.disabled || !k) return;
-      d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Changing…"; input.disabled = true; cancel.textContent = "Close";
+      if (one) {   // (ONESKU: this order only; the window closes when it is done, nothing else to follow)
+        d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Changing…"; input.disabled = true; once.disabled = true;
+        let res = null; try { res = await Review.editSkuOnce(rowOf(W.key) || r, k); } catch (e) { res = { ok: false, why: (e && e.message) || String(e) }; }
+        d.dataset.busy = "";
+        if (!res || !res.ok) { back(); if (res && res.why) say("bad", esc(res.why)); return; }
+        try { d.close(); } catch (_) { d.removeAttribute("open"); }
+        if (W.dlg && W.dlg.open && rowOf(W.key)) tryDo(paint);
+        toast(`Order ${rid}: ${k} for this order only · the listing and Etsy are not changed`, "ok", 7000);
+        return;
+      }
+      d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Changing…"; input.disabled = true; once.disabled = true; cancel.textContent = "Close";
       form.hidden = true; prog.hidden = false; prog.innerHTML = "";
       let res = null; try { res = await Review.editSku(rowOf(W.key) || r, k, { host: prog }); } catch (e) { res = { ok: false, why: (e && e.message) || String(e) }; }
       if (!res || (!res.ok && !res.done)) { back(); if (res && res.why) say("bad", esc(res.why)); return; }   // (nothing was changed: the window is the form again, with the reason)

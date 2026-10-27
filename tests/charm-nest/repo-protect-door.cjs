@@ -79,6 +79,7 @@ const hash = k => crypto.createHash('sha256').update('repo-door-' + k).digest('h
   const before = asked('repoUnlock').length;
   await page.locator('input[data-up]').first().click();
   await page.evaluate(() => { const i = document.querySelector('input[data-up]'); i.value = '33'; i.dispatchEvent(new Event('change', { bubbles: true })); });
+  for (const t0 = Date.now(); !asked('masterPatch').length && Date.now() - t0 < 10000;) await page.waitForTimeout(100);   // (the save goes out a moment after the change, not within it)
   ok(asked('masterPatch').length >= 1 && asked('masterPatch').every(c => c.token && c.status === 200), 'a change: masterPatch went with the token and the real door accepted it, with no new password (' + asked('repoUnlock').length + ' unlocks, ' + before + ' before)');
   ok(asked('repoUnlock').length === before, 'the upload token covered the change (no second dialog)');
 

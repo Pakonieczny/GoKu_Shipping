@@ -4068,6 +4068,12 @@
     ctx = ctx || {};
     const problems = [];
     const me = ctx.masterEntry, loose = ctx.masterLoose, txSku = upSku(line.sku);   // (txSku: the SKU as the transaction carries it, before any inventory SKU stands in for it)
+    // ONESKU (Paul, 27 Oct 2026: the Change SKU window's "Just this order", "a no consequence, temporary one time change to the matching of the SKU and charm"): a person's charm for THIS line alone
+    // (ctx.skuOverride = { sku, by, at, was }, kept on the line like blockOverride). It is the line's SKU before anything else reads it, and no rule reads it again (the listing's table and links, an
+    // option's or a profile's charm, a letter, a pair, a number, a symbol, a zodiac sign, the form and look-alike guards). Nothing else changes: the listing, its link and Etsy keep what they say, and
+    // the next order of the listing reads as it always did. A charm no longer in the repo is not used (the line reads as Etsy has it).
+    const once = ctx.skuOverride && ctx.skuOverride.sku && me && me(upSku(ctx.skuOverride.sku)) ? upSku(ctx.skuOverride.sku) : "";
+    if (once) line = Object.assign({}, line, { sku: once });
     // 0 · the SKU Etsy keeps for the product bought, in the listing's inventory table (when the page holds one): it stands in
     // for a transaction SKU that is missing or names no design, and for one that is the listing's own (held by products that
     // differ in their options) while the product has a SKU of its own. Never for a SKU that names a design and is no one
@@ -4079,7 +4085,7 @@
     const rawTable = ctx.listingSkus && ctx.listingSkus[String(line.listingId)], staleTable = staleShared(rawTable, line, me, loose);
     const table = staleTable ? undefined : rawTable, listing = inventorySku(line, table);
     let viaInventory = null, heldFamily = null;
-    if (listing && listing.sku) {
+    if (!once && listing && listing.sku) {
       const tx = upSku(line.sku), names = s => !!s && (isNoDesign(s, ctx.noDesign) || !!masterSku(s, me, loose) || !!spelling(variationBase(s), me, loose));
       // wide: the transaction came with the listing's own SKU (several products that differ in their options hold it), not the product's
       const wide = listing.by !== "listing" && !!tx && listingWide(table, tx);
@@ -4102,7 +4108,7 @@
     }
     // REVLINK (13 Oct 2026): the table gave this line nothing (it is not loaded, or names no product of the line) but a person's pick was saved for this very product (byVia): the line is read under the SKU
     // that pick is kept under, as the table would have given it; no Etsy call (linkedSku above)
-    if (!viaInventory && !heldFamily && !(listing && listing.sku)) {
+    if (!once && !viaInventory && !heldFamily && !(listing && listing.sku)) {
       const a1 = ctx.aliases && ctx.aliases[String(line.listingId)], y1 = a1 ? linkedSku(line, a1) : "";
       if (y1 && y1 !== upSku(line.sku)) { viaInventory = { tx: upSku(line.sku), sku: y1, by: "link" }; line = Object.assign({}, line, { sku: y1 }); }
     }
@@ -4110,6 +4116,7 @@
     const set = huggieSet(line), bought = set ? huggieSku(line.sku, me) : upSku(line.sku);
     let { sku, source: skuSource } = resolveSku(set ? Object.assign({}, line, { sku: bought }) : line, ctx.aliases, me, ctx.noDesign, loose);
     if (set) { const pinHuggie = pinnedHuggieSet(bought, me, loose); if (pinHuggie) { sku = pinHuggie; skuSource = "alias"; } }   // (HUGGIEPIN: a pinned huggie set is read as its library design, as a person's own answer)
+    if (once) { sku = once; skuSource = "once"; }   // (ONESKU: the person's charm for this line; "once" is in none of the automatic sets, FORM_AUTO / LOOK_AUTO / ZODIAC_AUTO)
     if (viaInventory && skuSource !== "alias" && skuSource !== "generic") skuSource = "inventory";   // (CHAMMAP: a placeholder SKU Etsy's table gives the product is as generic as one on the transaction)
     // HUGGIEGUARD (stage A): what the line IS, and a person's saved answer for this listing and SKU. resolveSku trusts an exact master SKU before any saved answer, so when the exact design's form clashes
     // with the line (below) the saved answer is read here: another design wins (source "alias"), the same design is the person's word that it is right (formSaid: never held again)
@@ -4134,17 +4141,17 @@
     const tagOpt = tagOptionRead(line, ctx.optionMaps, me);
     const tagOwn = !!tagOpt && (tied(tagOpt.variation) || (!!sku && !!me && !!me(sku) && ["transaction", "spelling", "variation"].includes(skuSource) && (!!skuIndexFamily(sku, me) || seenVerdict(ctx.seen, line.listingId, tagOpt.name, tagOpt.value, txSku) === "follows")));
     const tagPick = tagOpt && !tagOwn && tagOpt.state === "found" ? { sku: tagOpt.sku, name: tagOpt.name, value: tagOpt.value, variation: tagOpt.variation } : null;
-    const tagMiss = tagOpt && !tagOwn && tagOpt.state === "missing" ? tagOpt : null;
-    const picked = optionDesign(line, ctx.optionMaps) || tagPick, viaPick = !!picked && !tied(picked.variation);
+    const tagMiss = !once && tagOpt && !tagOwn && tagOpt.state === "missing" ? tagOpt : null;
+    const picked = once ? null : optionDesign(line, ctx.optionMaps) || tagPick, viaPick = !!picked && !tied(picked.variation);
     if (viaPick) { sku = picked.sku; skuSource = "option"; }
     // MOONSTARS (Paul, 19 Oct 2026, section 3c3): a listing whose profile names its design (PIECE_LISTINGS `design`: "TINY MOON & STARS 2" for listing 1095123288) is made from that design whatever SKU the transaction, Etsy's
     // inventory or a pick of the Etsy SKU says (MOON_3288 is a drawing of the moon alone): as a person's answer, so no automatic guard takes it back. A person's pick of ANOTHER design stands.
     let viaProfile = null;
-    { const pd = pieceListing(line, txSku, bought), want = pd ? profileDesignOf(line, pd, sku, skuSource, me, loose) : ""; if (want) { viaProfile = { profile: pd.id, design: want, etsy: txSku || upSku(line.sku), was: sku || "", wasSource: skuSource || "" }; sku = want; skuSource = "alias"; } }
+    { const pd = once ? null : pieceListing(line, txSku, bought), want = pd ? profileDesignOf(line, pd, sku, skuSource, me, loose) : ""; if (want) { viaProfile = { profile: pd.id, design: want, etsy: txSku || upSku(line.sku), was: sku || "", wasSource: skuSource || "" }; sku = want; skuSource = "alias"; } }
     // KEYLETTER: an option whose value is ONE letter finds its design by the letter's place in the master's 26-letter family (letterRead); when the one letter option of the line is not answered
     // by a person or tied by a table, it is read here: another family member is the design (base / named / said), a clash or a missing design is one plain line (below, in the loop)
     const letters = new Map(); let viaLetter = null;
-    if (!viaPick && !viaProfile && !huggieSet(line)) {   // (MOONSTARS: a profiled design is never read again from a letter)
+    if (!once && !viaPick && !viaProfile && !huggieSet(line)) {   // (MOONSTARS: a profiled design is never read again from a letter)
       for (const v of line.variations || []) {
         const nm = lvName(v), val = lvValue(v).trim();
         if (!nm || !val || isMetalVariation(nm, val) || isPersonalisation(nm) || isSizeOption(nm, val) || isChainOption(nm) || isFormOption(nm) || isEarFormOption(nm) || isFontOption(nm) || isPriceOption(nm) || tied(v) || optionLookup(ctx.optionMaps, line.listingId, nm, val)) continue;
@@ -4176,7 +4183,7 @@
       (report.lack = report.lack || {})[ss[0]] = { why: r.why, needNames: !!r.needNames };
       return "";
     };
-    let members = pairMembers(line, { me, loose, optionMaps: ctx.optionMaps, aliases: ctx.aliases, sku, lineId: secondId, report, designOf });
+    let members = once ? null : pairMembers(line, { me, loose, optionMaps: ctx.optionMaps, aliases: ctx.aliases, sku, lineId: secondId, report, designOf });
     if (members && PIECE_RULES.mismatchedMakesTwo && !viaProfile) { sku = members.members[0].sku; skuSource = "pair"; }
     const listed = isNoDesign(sku, ctx.noDesign) || (!sku && isNoDesign(set ? line.title + " (HUGGIE)" : line.title, ctx.noDesign));
     // a special purchase (custom, rework, chain only, add-on…): chain only is never cut, and a special line a person
@@ -4199,7 +4206,7 @@
     let symbol = null;
     try {
       const said2 = secondId ? optionLookup(ctx.optionMaps, line.listingId, SECOND_OPT, secondId) : null;
-      if (symProf && !quiet && !set && !viaPick && !viaLetter && !members && me && skuSource !== "alias" && !(symProf.zodiac && lineSignals(line).says))
+      if (!once && symProf && !quiet && !set && !viaPick && !viaLetter && !members && me && skuSource !== "alias" && !(symProf.zodiac && lineSignals(line).says))
         symbol = symbolRead(line, order, symProf, { me, loose, sku, sameSaid: !!(said2 && said2.field === "ignore") });
     } catch (_) { symbol = null; }
     // NUMBERS (section 3c''): a line of a NUMBER_LISTINGS row (listing 1871838409, or a Necklace_Charm-N SKU) takes the member of the family its FORM picks (the necklace charm NECKLACE_CHARM-N, or the huggie
@@ -4207,7 +4214,7 @@
     // a charm, a saved pair or second design, a link under the line's own member SKU) stands; an automatic match, a listing-wide answer and any link to the generic COMIC NUMBER drawings are replaced.
     let numberHit = null;
     try {
-      if (!symbol && !quiet && !viaPick && !viaLetter && !viaProfile && !members && me) {
+      if (!once && !symbol && !quiet && !viaPick && !viaLetter && !viaProfile && !members && me) {
         const nrow = numberListing(line, [txSku, viaInventory && viaInventory.etsy, bought]);
         const raw0 = set ? bought : upSku(line.sku), said3 = secondId ? optionLookup(ctx.optionMaps, line.listingId, SECOND_OPT, secondId) : null;
         if (nrow && (skuSource !== "alias" || !numberAliasStands(nrow, line, raw0, sku, ctx.aliases))) {
@@ -4222,7 +4229,7 @@
     // answer for this line (an option mapped to a charm, a saved pair or second design, a link under the line's own product SKU) stands; an automatic match and a listing-wide saved answer are replaced.
     let charmOnlyHit = null;
     try {
-      const crow = !symbol && !quiet && !viaPick && !viaLetter && !viaProfile && me ? charmOnlyListing(line) : null;
+      const crow = !once && !symbol && !quiet && !viaPick && !viaLetter && !viaProfile && me ? charmOnlyListing(line) : null;
       if (crow && !(members && !["skus", "title", "signs"].includes(members.source))) {
         if (skuSource !== "alias" || !charmOnlyAliasStands(crow, line, set ? bought : upSku(line.sku), sku, ctx.aliases)) {
           charmOnlyHit = charmOnlyRead(line, order, crow, { me, loose, lf, skus: [txSku, viaInventory && viaInventory.etsy, upSku(line.sku)] });
@@ -4234,7 +4241,7 @@
     else if (symbol && symbol.pick) { sku = symbol.pick; skuSource = "profile"; }
     let zodiac = null;
     try {
-      if (!symbol && !quiet && !set && !viaPick && !viaLetter && !members && me && sku && ZODIAC_AUTO.has(skuSource)) zodiac = zodiacRead(line, order, sku, lf, masterForm(sku, guardCtx), ctx);
+      if (!once && !symbol && !quiet && !set && !viaPick && !viaLetter && !members && me && sku && ZODIAC_AUTO.has(skuSource)) zodiac = zodiacRead(line, order, sku, lf, masterForm(sku, guardCtx), ctx);
     } catch (_) { zodiac = null; }
     if (zodiac && zodiac.pick) { sku = zodiac.pick.sku; skuSource = "zodiac"; }
     // HUGGIEGUARD (stage B): an automatic match never crosses forms (see section 3b). A person's answer (source alias / option / a saved pair) and a line that is not cut are never held.
@@ -4267,6 +4274,7 @@
     if (done) spec.customDone = done;
     spec.boughtSku = bought; if (set) spec.huggieSet = true;
     if (viaProfile) spec.viaProfile = viaProfile;   // (MOONSTARS: the design the listing's profile names, and the SKU Etsy gave)
+    if (once) spec.once = { sku: once, etsy: txSku, by: String(ctx.skuOverride.by || "").slice(0, 80), at: +ctx.skuOverride.at || 0, was: upSku(ctx.skuOverride.was || "") };   // (ONESKU: what the line was, who chose, when)
     if (viaInventory) spec.viaInventory = viaInventory;   // the transaction's SKU and the listing inventory's SKU for the product bought, when that one was used
     if (viaLetter) spec.viaLetter = { letter: viaLetter.letter, sku: viaLetter.sku, how: viaLetter.how, name: viaLetter.name, value: viaLetter.value, from: txSku };   // KEYLETTER: the letter option's design is that letter's member of its family
     if (heldFamily) spec.inventoryHeld = heldFamily;      // the inventory's SKU for the product bought is another family's design than the line: not used, a person decides
@@ -4362,6 +4370,8 @@
       if (fh && !spec.font) spec.font = fontSpecOf(fh, fh.listing ? "rule:font-listing" : "rule:font-in-length");
       // KEYLETTER: the design the letter's place in its family gives (a member other than the line's own SKU, which letterRead found above)
       if (!mapped && viaLetter && letters.get(v) === viaLetter) mapped = { field: "design", value: sku, source: "rule:letter-" + viaLetter.how };
+      // ONESKU: the person chose this line's charm: an option nothing above could read is answered by that choice (a font, or a count asked above, is still its own question)
+      if (!mapped && once && !fr) mapped = { field: "design", value: sku, source: "once" };
       spec.options.push({ name, value, mapped });
       // (an unmapped font option is asked about the FONT: the question and its answer carry the font alone, the length and alignment are read apart)
       if (!mapped) { if (!quiet) problems.push(fr ? { kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: fr.asked, title: line.title || "", font: { asked: fr.asked, chain: fr.chain, align: fr.align, raw: value, pick: fr.pick, why: fontWhy(fr) } } : Object.assign({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }, tagMiss && v === tagMiss.variation ? { why: tagMiss.why } : Object.assign({}, optionHelp(), sharedWhy(name, value), letterAsk(v), pieceAsk(name, value)))); continue; }   // (TAGSKU: a tag shape with no master design says which one, in one plain line, not Etsy's table)
@@ -4501,7 +4511,7 @@
       if (tagMiss) { spec.designSku = null; spec.skuSource = null; spec.sources.sku = null; }   // (the shape has no design: no vector of a look-alike on the row)
     }
     // a line that says two different designs but names one waits: the second design, or "the same on both ears" (one plain question, like an unmatched SKU)
-    if (!quiet && spec.pair.second && !spec.pair.second.answered && !spec.pair.second.viaOption && secondId) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: SECOND_OPT, optionValue: secondId, title: line.title || "", pair: { second: true }, pairSecond: { why: spec.pair.second.why } });
+    if (!quiet && !once && spec.pair.second && !spec.pair.second.answered && !spec.pair.second.viaOption && secondId) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: SECOND_OPT, optionValue: secondId, title: line.title || "", pair: { second: true }, pairSecond: { why: spec.pair.second.why } });
     // ZODNOBACK (section 3d): NO EARRING IS EVER ENGRAVED. The form guard's verdict (lf: the line's form, df: its design's) decides, once, here; every later reader asks spec.engraveNever. The buyer's words stay in
     // spec.personalization (a zodiac sign typed in the box is the buyer's choice of sign, never words for the back) and are never a question.
     let never = null; try { never = earringNeverBackEngraves({ lineForm: lf, designForm: df, form: spec.form, pair: spec.pair, line }); } catch (_) { never = null; }
