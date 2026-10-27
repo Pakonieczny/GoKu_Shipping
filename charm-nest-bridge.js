@@ -7567,6 +7567,24 @@ const Engrave = window.Engrave = (() => {
   const unplacedPre = job => !!(job && job.pre && (job.copies || []).length && !job.copies.some(id => Pool.sheetOf(id)));
   /** ENGPRE: such a job whose piece is not even pooled yet (its `copies` are the pool ids it WILL get): it has no pool row, so nothing for it is written to the pool. */
   const virtualJob = job => unplacedPre(job) && !job.copies.some(id => B.pool.rows.has(id));
+  /* EDITOR WORDS (Paul, 27 Oct 2026: "If the user adds text or fonts or makes any changes to a charm using the built-in editor, then the system should not force the user to also add text on top of
+     already added text from within the Charm Editor"). A face the charm editor ADDED parts to (charm-nest-art-edit.js: a front's additions are the piece's members, `artAdded`; a back's are its
+     `artBack`) is engraved by those parts, so it may be approved with no words at all. THE one test every rule that asks for words reads (the Approve, the words step, the panel's face switch);
+     a face with no art edit keeps every rule it had. `face`: the other face of the same piece. */
+  const faceHasEditorArt = (job, face) => { try { const ch = job && (job.copies || []).length ? charmFor(job) : null; if (!ch) return false; return (face || faceOf(job)) === "front" ? Array.isArray(ch.members) && ch.members.some(m => m && m.artAdded) : Array.isArray(ch.artBack) && ch.artBack.length > 0; } catch (_) { return false; } };
+  /** The words a face job carries, as lines (none: []). */
+  const engravedWords = job => ((job && (job.lineInput && job.lineInput.length ? job.lineInput : job.lines)) || []).map(s => String(s == null ? "" : s).trim()).filter(Boolean);
+  /** EDITOR WORDS: the words of a face are only the order's offer, never a person's: none, a proposal still waiting for a person (the words step), or the buyer's whole note put in as it came (what a
+   *  mode switch fills in) when the intake could not read it as an inscription. On a face the editor drew, an offer is not engraved by itself: the words box offers it, the person decides. A note
+   *  read as a plain inscription ("Emma") is the words, never an offer. */
+  const wordsOffered = job => {
+    const w = engravedWords(job); if (!w.length) return true;
+    if (job.state === "words" && !(job.decision && job.decision.text)) return true;
+    const flat = t => String(t || "").replace(/\s+/g, " ").trim().toLowerCase(), sp = (job.row && (job.row.spec || (job.row.parentRow && job.row.parentRow.spec))) || {}, rd = sp.engraving;
+    if (!rd || typeof rd !== "object" || !rd.needsPerson) return false;
+    const raw = flat(rd.raw || (sp.personalization || []).join(" "));
+    return !!raw && flat(w.join(" ")) === raw;
+  };
   const sheetFor = (job, poolId) => job.editingBack ? (allSheets().find(p=>p.sheetId === job.editSheet.sheetId && p.charms.some(c=>c.poolId === poolId)) || job.editSheet) : Pool.sheetOf(poolId);
   let openingBack = null, openingBackId = null;
   /** The face ("front" | "back") of a saved record or a job; anything that does not say it is the front is the back (this block stands alone: charm-nest-engrave-faces.js is the one place that reads a face). */
@@ -7987,7 +8005,7 @@ const Engrave = window.Engrave = (() => {
       const t = String(job.text || "").trim(), d = job.decision || {}, at = (how === "skipped" ? job.decidedAt : d.at) || Date.now();
       const dsc = discSay(job), of = dsc ? ` · ${dsc}` : "", fw = facedJob(job) ? (isFront(job) ? "Front " : "Back ") : "";   // (a line with a front names the face; every other line reads as it did)
       const why = how !== "skipped" && d.why ? ` (${String(d.why).slice(0, 80)})` : "";   // (ENGWHY: the person's reason for an override rides in this existing line; no extra write)
-      const text = how === "none" ? `No ${fw ? fw.toLowerCase() + "engraving" : "engraving"}${of} — decided by ${by}${why}` : how === "skipped" ? `${fw ? fw + "engraving" : "Engraving"} skipped${of} by ${by} — cut plain` : `${fw ? fw + "engraving" : "Engraving"} ${d.note === "edited" ? "edited" : "confirmed"}${of} by ${by}${why}: “${t.replace(/\n/g, " / ")}”`;
+      const text = how === "none" ? `No ${fw ? fw.toLowerCase() + "engraving" : "engraving"}${of} — decided by ${by}${why}` : how === "skipped" ? `${fw ? fw + "engraving" : "Engraving"} skipped${of} by ${by} — cut plain` : `${fw ? fw + "engraving" : "Engraving"} ${d.note === "edited" ? "edited" : "confirmed"}${of} by ${by}${why}${!t && d.artOnly ? ": no words, the charm editor's own art" : `: “${t.replace(/\n/g, " / ")}”`}`;   // (EDITOR WORDS: a face emptied of words on purpose says so)
       TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null, ...(d.why && how !== "skipped" ? { why: String(d.why).slice(0, 80) } : {}), ...(isFront(job) ? { face: "front" } : {}) } });
     } catch (_) {}
   }
@@ -8318,6 +8336,7 @@ const Engrave = window.Engrave = (() => {
   }
   function setNone(job, why) { job.state = "none"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: false, state: "none", reason: why, approved: true }; Review.remove("eng:" + job.key); RunCtl.poke(); return job; }
   function toWords(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, neverWhy(job.row));   // (NO EARRING IS EVER ENGRAVED: nothing ever asks for words on an earring)
+    if (typeof faceHasEditorArt === "function" && faceHasEditorArt(job) && !(job.decision && job.decision.text) && artOnlyPlacement(job)) { RunCtl.poke(); return job; }   // (EDITOR WORDS: a face the charm editor drew never waits for words: what the order offers stays an offer, the face waits for Approve)
     job.state = "words"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: why }; Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why }); RunCtl.poke(); return job; }
   async function setReady(job, wake = true) {
     const owner = items(), state = job.state, row = job.row, preparing = !!job.approvalPreparing;
@@ -8520,6 +8539,34 @@ const Engrave = window.Engrave = (() => {
   }
   const fitStamp = ({charm, ...options}) => JSON.stringify(options);
   const fitTasks = new WeakMap();
+  /* EDITOR WORDS (27 Oct 2026): the placement of a face whose engraving is the charm editor's parts and no words. Its view and mask are the ones a fit makes (fitInput's own options, made here: with
+     nothing to fit, no worker), its fit holds no letters (`artOnly`, set in the middle of the metal) and its check has no ink to check. So the face waits for Approve as any placement does, and the
+     approval writes its file and record as for words: a front's file carries no words (its parts are in the sheet's own drawing), a back's carries the artBack. → true when placed. */
+  function artOnlyPlacement(job) {
+    const charm = job && (job.copies || []).length ? charmFor(job) : null; if (!charm || !charm.outline) return false;
+    let input, view, mask;
+    try { input = fitInput(job, charm, Master.entryFor(job.row.spec.designSku) || {}); view = G.backView(charm, input.viewOptions); mask = G.engraveMask(view, input.maskOptions); }
+    catch (e) { console.warn("Engraving: the edited face could not be read", e); return false; }
+    Object.assign(job, { view, mask, lines: [], lineInput: [], text: "", wantSize: null, nudged: false, claude: null, reason: null, missing: null, fitAt: Date.now(), materialVersion: 2 });
+    if (job.turnUp == null && Number.isFinite(view.upAngle)) job.upSystem = view.upAngle;
+    if (!input.viewOptions?.holeOnly) job.orientVersion = G.ORIENT;
+    job.fit = { ok: true, artOnly: true, lines: [], glyphs: [], cmds: [], centre: maskCentroid(mask), angle: 0, size: 0, fittedMax: 0, capMm: 0, weight: "Regular", small: false, thin: false, metrics: null, rect: null };
+    job.verify = { geometry: { ok: true, outside: 0, total: 0, artOnly: true }, at: Date.now() };
+    delete job.writtenFit; delete job._backPreview;
+    job.state = "review"; job.row.engrave = { ...(job.row.engrave || {}), needed: true, state: "review", text: "", approved: false };
+    Review.remove("eng:" + job.key); if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job });
+    if (EG.cardKey === job.key) { EG.card = null; EG.cardKey = null; }
+    return true;
+  }
+  /** EDITOR WORDS: a person emptied the words of a face the charm editor drew (the panel's Save, the Review card's Approve): no words there, said with their name; the face is approved as the editor drew it. */
+  function clearWords(job, by, why) {
+    if (!job || !faceHasEditorArt(job) || job.stamping || job.backSaving) return false;
+    const was = job.text;
+    job.decision = { by, at: Date.now(), text: "", note: "edited", artOnly: true, ...(why ? { why } : {}) };
+    if (!artOnlyPlacement(job)) return false;
+    if (by) wordsEvent(job, by, was, "words");
+    return true;
+  }
   function fitJob(job) {
     if (fitTasks.has(job)) return fitTasks.get(job);
     const task = Promise.resolve().then(() => fitJobOnce(job)).finally(() => { fitTasks.delete(job); render(); });
@@ -8532,6 +8579,7 @@ const Engrave = window.Engrave = (() => {
     await loadFonts();
     if (items() !== currentItems || currentItems.get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== state || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
     if (EG.cardKey === job.key) { EG.card = null; EG.cardKey = null; }
+    if (typeof faceHasEditorArt === "function" && !engravedWords(job).length && faceHasEditorArt(job) && artOnlyPlacement(job)) { render(); return job; }   // (EDITOR WORDS: no words on a face the charm editor drew: its parts are the engraving, nothing to fit)
     job.reason = null; job.verify = null; job.fit = null; delete job.writtenFit;
     job.lineInput ||= job.lines.slice();
     job.lines = job.lineInput.slice();
@@ -8719,7 +8767,23 @@ const Engrave = window.Engrave = (() => {
     if (refit(job, keep)) { Session.schedule(); refresh(job); return true; }
     job.nudged = false; toast("The new words do not fit where they had been moved, so they were placed again", "", 6000); return false;
   }
-  function nudge(job, dxMm, dyMm) { if (!job.fit || !startEdit(job)) return; const c = [job.fit.centre[0] + dxMm * PT, job.fit.centre[1] + dyMm * PT]; if (!refit(job, { centre: c, angle: job.fit.angle })) toast("No room there", "bad"); else Session.schedule(); refresh(job); }   // an arrow key raises no input/pointerup to checkpoint on
+  /* MOVEKEYS (Paul, 27 Oct 2026: "when I try to move the text using my arrow keys and shift button for some reason it switches to adjusting the size of the text"): a nudge is a move. It used to fit
+     the words again at the new centre (refit), and where they had no room at their size the fit made them smaller to squeeze them in, so an arrow press beside the art or an edge shrank them. The
+     words keep their size, lines and turn now: the very letters are shifted, as far as the metal they may use allows (to 0.005 mm), and nothing changes (not even an approved piece's state) where
+     there is no room at all. A placement with no words (EDITOR WORDS) has nothing to move. */
+  function nudge(job, dxMm, dyMm) {
+    const f0 = job.fit; if (!f0 || f0.artOnly || !job.mask || !(dxMm || dyMm)) return;
+    const shift = (cmds, dx, dy) => cmds.map(k => { if (k.type === "Z") return { type: "Z" }; const o = Object.assign({}, k, { x: k.x + dx, y: k.y + dy }); if (k.x1 != null) { o.x1 = k.x1 + dx; o.y1 = k.y1 + dy; } if (k.x2 != null) { o.x2 = k.x2 + dx; o.y2 = k.y2 + dy; } return o; });
+    const far = Math.hypot(dxMm, dyMm), fits = t => G.verifyInk(shift(f0.cmds, dxMm * PT * t, dyMm * PT * t), job.mask).ok;
+    let t = 1;
+    if (!fits(1)) { let lo = 0, hi = 1; for (let i = 0, n = Math.min(24, Math.max(4, Math.ceil(Math.log2(far / 0.005)))); i < n; i++) { const mid = (lo + hi) / 2; if (fits(mid)) lo = mid; else hi = mid; } t = lo; }
+    if (t * far < 0.001) { toast("No room there", "bad"); return; }
+    if (!startEdit(job)) return;
+    const dx = dxMm * PT * t, dy = dyMm * PT * t, glyphs = f0.glyphs.map(g => Object.assign({}, g, { cmds: shift(g.cmds, dx, dy) })), cmds = shift(f0.cmds, dx, dy), centre = [f0.centre[0] + dx, f0.centre[1] + dy];
+    const layout = f0.layout ? Object.assign({}, f0.layout, { centre, glyphs, cmds }, f0.layout.bbox ? { bbox: [f0.layout.bbox[0] + dx, f0.layout.bbox[1] + dy, f0.layout.bbox[2] + dx, f0.layout.bbox[3] + dy] } : {}) : f0.layout;
+    job.fit = Object.assign({}, f0, { centre, glyphs, cmds, layout }); job.verify = { geometry: G.verifyInk(cmds, job.mask), at: Date.now() }; job.nudged = true; job.claude = null;
+    Session.schedule(); refresh(job);   // an arrow key raises no input/pointerup to checkpoint on
+  }
   /** The middle of the area the text may use: the centre of gravity of the solid pixels, not of the bounding box, so a
       cat's head with ears puts the name where the metal actually is. */
   function maskCentroid(m) {
@@ -8729,9 +8793,9 @@ const Engrave = window.Engrave = (() => {
     return [m.ox + (sx / n + 0.5) / m.res, m.oy + (sy / n + 0.5) / m.res];
   }
   function centreText(job) { if (!job.fit) return; if (!moveTo(job, maskCentroid(job.mask))) toast("The text does not fit in the middle — left where it was", "bad"); }
-  function moveTo(job, centre) { if (!job.fit || !startEdit(job)) return false; const ok = refit(job, { centre, angle: job.fit.angle }); if (ok) refresh(job); return ok; }
+  function moveTo(job, centre) { if (!job.fit || job.fit.artOnly || !startEdit(job)) return false; const ok = refit(job, { centre, angle: job.fit.angle }); if (ok) refresh(job); return ok; }
   /** Turn the text about its centre. Within three degrees of straight or upright it snaps there. */
-  function rotateTo(job, angle) { if (!job.fit || !startEdit(job)) return false; angle = ((angle % 360) + 360) % 360; for (const snap of [0, 90, 180, 270, 360]) if (Math.abs(angle - snap) < 3) angle = snap % 360; const ok = refit(job, { centre: job.fit.centre, angle }); if (!ok) toast("The text does not fit at that angle", "bad"); else Session.schedule(); refresh(job); return ok; }
+  function rotateTo(job, angle) { if (!job.fit || job.fit.artOnly || !startEdit(job)) return false; angle = ((angle % 360) + 360) % 360; for (const snap of [0, 90, 180, 270, 360]) if (Math.abs(angle - snap) < 3) angle = snap % 360; const ok = refit(job, { centre: job.fit.centre, angle }); if (!ok) toast("The text does not fit at that angle", "bad"); else Session.schedule(); refresh(job); return ok; }
   /* ROTBAR (Paul, 13 Oct 2026): "Sometimes the system makes mistakes in how the rotational placement of the charm is decided. The user needs the ability to quickly and in real-time update the rotation of the
      entire charm including the engraving text contained within the charm." The charm's orientation in the work area is the view's up angle (charm-nest-geom.js backView: mirror for a back, then turn by 90 - up),
      decided by the system (upAngleOf: hanging hole up, a long charm flat). A person's turn REPLACES that angle for this one face job: job.turnUp = the up angle they chose, job.upSystem = what the system chose
@@ -8760,6 +8824,7 @@ const Engrave = window.Engrave = (() => {
   function turnTo(job, deg) {
     const no = why => ({ ok: false, why, turn: turnOf(job) });
     if (!job || !job.fit || !job.view || !job.mask) return no("not placed");
+    if (job.fit.artOnly) return no("no words to turn");   // (EDITOR WORDS: a face engraved by the charm editor's parts alone)
     if (!placeEditable(job) || job.approvalPreparing || job.stamping || job.backSaving) return no("locked");
     deg = Math.round(+deg); if (!Number.isFinite(deg)) return no("not a number");
     deg = wrap180(deg);
@@ -8804,7 +8869,7 @@ const Engrave = window.Engrave = (() => {
     return { cx: centre[0], cy: centre[1], lx0: x0, ly0: y0, lx1: x1, ly1: y1, angle: angleDeg || 0 };
   }
   function resize(job, size) {
-    if(!job.fit || !Number.isFinite(size) || !startEdit(job))return;
+    if(!job.fit || job.fit.artOnly || !Number.isFinite(size) || !startEdit(job))return;
     size=Math.min(fitOpts(job,true).maxHeightFrac*(job.mask.hPt || job.mask.h/job.mask.res),Math.max(.01,size));
     if(!refit(job,{centre:job.fit.centre,angle:job.fit.angle,size})){toast("No room at that size","bad");return;}
     // asked for more than the metal allows: the words stand at the largest that verifies, and the person is told so
@@ -8812,7 +8877,7 @@ const Engrave = window.Engrave = (() => {
     reRead(job);refresh(job);
   }
   function setLineSpacing(job, percent, measure = true) {
-    if(!job.fit || !Number.isFinite(percent) || job.backSaving || job.approvalPreparing || !startEdit(job))return false;
+    if(!job.fit || job.fit.artOnly || !Number.isFinite(percent) || job.backSaving || job.approvalPreparing || !startEdit(job))return false;
     const previous=job.lineGap;
     job.lineGap=.18*Math.max(0,Math.min(300,percent))/100;
     if(!refit(job,{centre:job.fit.centre,angle:job.fit.angle,measure})) {job.lineGap=previous;return false;}
@@ -8827,7 +8892,9 @@ const Engrave = window.Engrave = (() => {
     job.state = "skipped"; job.decidedAt=Date.now(); job.decidedBy=by; CNListActivity.touch(job.row,job.decidedAt); job.approvedBy = null; job.row.engrave = { ...job.row.engrave, needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; CNEngravingSeals.add(job,"engravePlain",by,job.decidedAt); wordsEvent(job, by, job.text, "skipped"); try { humanAct("note", { orderId: String(job.row.order.receiptId), line: String(job.row.line.transactionId || ""), detail: (isFront(job) ? "front " : "") + "engraving skipped (cut plain)" }); } catch (_) {} job.row.flag = `${isFront(job) ? "front " : ""}engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
     const saved = virtualJob(job) ? null : Pool.update(job.copies, isFront(job) ? { engraveFront: false, engraveFrontSkippedBy: by } : { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;   // (a skipped FRONT leaves the piece's back flags alone)
     if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
-  function sendBack(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, neverWhy(job.row)); CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job); job.state = "words"; job.reason = why || `sent back from the placement review — a decision on the ${facedJob(job) ? faceWord(job) + " " : ""}words is needed`; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); Orders.render(); }
+  function sendBack(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, neverWhy(job.row)); CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job);
+    if (typeof faceHasEditorArt === "function" && !engravedWords(job).length && faceHasEditorArt(job) && artOnlyPlacement(job)) { render(); Orders.render(); return; }   // (EDITOR WORDS: a face the charm editor drew, with no words, goes back to its Approve, never to a words step it has nothing for)
+    job.state = "words"; job.reason = why || `sent back from the placement review — a decision on the ${facedJob(job) ? faceWord(job) + " " : ""}words is needed`; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); Orders.render(); }
   /* ── NODECIDED (Paul, 16 Oct 2026: "Get rid of this Decided view. Instead just open the existing detailed Engraving modal without needing to 'Re-Open' the order. The user should be free to update/modify any already Approved
      engraving order and simply need to press the 'Approve' button again after the second change. This would then produce a second brand new seal.") ──
      There is no Decided tab and no Reopen step. A piece that is approved (or saved to its sheet, or cut plain) opens in the same detailed card as any other piece; looking at it changes nothing. The FIRST change a person makes to it
@@ -8920,6 +8987,7 @@ const Engrave = window.Engrave = (() => {
       now: () => Date.now(), store: setupStore, jobsOf: line => jobsOf(line), ensureJobs: line => { raiseCandidate(line); const had = jobsOf(line), out = ensureJobs(line); for (const j of had) if (items().get(j.key) !== j) dropped.push(j.key); return out; },
       slots: line => { const S = SIDES(); if (!S) return [null]; try { return S.plan(sidesCtx, line, jobsOf(line)).slots || [null]; } catch (_) { return [null]; } },
       remove: removeJob, skip: (job, by) => skip(job, by), reopen: reopenJob, reopenForEdit: job => reopenForEdit(job), seed: seedWords,
+      artOnly: job => faceHasEditorArt(job), clearWords: (job, by, why) => clearWords(job, by, why),   // (EDITOR WORDS: emptied words on a face the charm editor drew)
       setNone: (job, why, by, reason) => { const was = job.text; setNone(job, why); if (by) { job.decision = { by, at: Date.now(), none: true, ...(reason ? { why: reason } : {}) }; wordsEvent(job, by, was, "none"); } },
       changed: (line, res) => { try { if (res && Array.isArray(res.removed)) for (const k of dropped) if (!res.removed.includes(k)) res.removed.push(k); } catch (_) {} try { const S = SIDES(); if (S && line._engraveLinked) S.linkParent(sidesCtx, line, jobsOf(line)); } catch (_) {} try { Orders.render(); } catch (_) {} try { render(); } catch (_) {} try { Review.render(); } catch (_) {} try { if (window.OrderWin && OrderWin.isOpen && OrderWin.isOpen()) OrderWin.nudge(); } catch (_) {} try { RunCtl.poke(); } catch (_) {} }
     };
@@ -8991,7 +9059,7 @@ const Engrave = window.Engrave = (() => {
         const front = isFront(job);   // (a FRONT engraving's event has its own id, "<poolId>~front-<at>", and says so: the same key the server's backPut writes, so each face keeps its one seal)
         TL.rec({ orderId: rid, type: "engraveApproved", id: `${poolId}${front ? "~front" : ""}-${at}`, at, by, station: "sorter", device: "charm-nest-1", lineKey: String(poolId).replace(/_\d+$/, ""), transactionId: String(row.line?.transactionId || String(poolId).split("_")[1] || ""),
           ...(sh?.sheetId ? { sheetId: sh.sheetId, sheet: SheetEvents.label(sh), setId: sh.setId && !sh.draft ? sh.setId : "" } : {}),
-          text: (front ? "Front: " : "") + (words ? `“${words}”` : "") + (job.slot ? `${words ? " · " : ""}${SIDES().slotWord(job)}` : ""), data: { text: text.slice(0, 400), poolId, copy, sku: String(row.spec?.designSku || "").slice(0, 60), signedIn: true, ...(front ? { face: "front" } : {}), ...(job.slot ? { slot: job.slot, ...(job.row.side ? { side: job.row.side } : {}) } : {}) } }, true, true);
+          text: (front ? "Front: " : "") + (words ? `“${words}”` : job.fit && job.fit.artOnly ? "the charm editor's art, no words" : "") + (job.slot ? `${words || (job.fit && job.fit.artOnly) ? " · " : ""}${SIDES().slotWord(job)}` : ""), data: { text: text.slice(0, 400), poolId, copy, sku: String(row.spec?.designSku || "").slice(0, 60), signedIn: true, ...(front ? { face: "front" } : {}), ...(job.slot ? { slot: job.slot, ...(job.row.side ? { side: job.row.side } : {}) } : {}) } }, true, true);
       }
     } catch (e) { console.warn("[Engrave] timeline", e); }
   }
@@ -9049,9 +9117,11 @@ const Engrave = window.Engrave = (() => {
     if(EG.cardKey===job.key) {
       clearTimeout(EG.card?._wordsTimer);
       const text=EG.card?.querySelector('[data-f="words"]')?.value.trim();
-      if(text === "") { toast("Type the words first", "bad"); return; }
+      const bare=text === "" && typeof faceHasEditorArt === "function" && faceHasEditorArt(job);   // (EDITOR WORDS: an empty words box on a face the charm editor drew is that face's engraving, not a missing one)
+      if(text === "" && !bare) { toast("Type the words first", "bad"); return; }
       if(text != null) delete EG.drafts?.[job.key];
-      if(text != null && text!==(job.lineInput || job.lines).join("\n")) {
+      if(bare) { if(!(job.fit && job.fit.artOnly)) { by = by || employeeName() || await needEmployee("Kept with this approval and its seal."); if (!by) return; if(!clearWords(job, by)) { toast("Not approved: this face's drawing could not be read", "bad"); return; } } }
+      else if(text != null && text!==(job.lineInput || job.lines).join("\n")) {
         job.text=text;job.lineInput=text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
         // placed somewhere new, the words are shown before anyone approves them
         job.lines=job.lineInput.slice();if(!(await fitNewWords(job)))return;
@@ -9084,7 +9154,7 @@ const Engrave = window.Engrave = (() => {
     job.approvalPreparing=false;
     if(typeof Session!=="undefined"){Session.schedule();await Session.flushNow?.();}
     if (EG.opened === job.key) EG.opened = null;   // (NODECIDED: the card of a piece just approved moves on to the next piece; the approved piece is in the list, its seals on its row)
-    for(const show of [()=>goes(job,{to:EG_TAB("approved")}),()=>Review.remove("eng:"+job.key),()=>agent({engrave:true},"ENGRAVE",`${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""})`),render,()=>Orders.render()])try{show();}catch(e){console.warn("Engraving approval view",e);}
+    for(const show of [()=>goes(job,{to:EG_TAB("approved")}),()=>Review.remove("eng:"+job.key),()=>agent({engrave:true},"ENGRAVE",`${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.artOnly ? "the charm editor's parts, no words" : `${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""}`})`),render,()=>Orders.render()])try{show();}catch(e){console.warn("Engraving approval view",e);}
     await saveBacks(job);
     } finally {
       job.approvalPreparing=false;
@@ -9522,7 +9592,7 @@ const Engrave = window.Engrave = (() => {
   }
   /** The "Edit charm" pill on the work area `host` of `job` (its canvas `bc`), and the last save's note under it. Null when the piece cannot be opened here. */
   function charmEditButton(host, bc, job) {
-    if (!host || !bc || !charmEditTarget(job)) return null;
+    if (!host || !charmEditTarget(job)) return null;   // (EDITOR WORDS, 27 Oct 2026: a face still waiting for words has no drawing (bc) yet; the pill is in its empty work area too, so the art can be drawn first and no words are needed to reach the editor)
     charmEditCss();
     const b = document.createElement("button"); b.type = "button"; b.className = "egCharmEdit";   // (no data-a: the card's own buttons are wired by that, and this is no card action)
     b.title = "Edit this charm's own artwork, front and back, layer by layer: the words as outlines, zoom to any detail · saved for this piece only";
@@ -9530,7 +9600,8 @@ const Engrave = window.Engrave = (() => {
     b.addEventListener("click", e => { e.stopPropagation(); b.setAttribute("aria-busy", "true"); openCharmEditor(job).catch(err => charmEditSay(job, `Not saved · ${err && err.message || err}`, true)).finally(() => { if (b.isConnected) b.removeAttribute("aria-busy"); }); });
     host.appendChild(b);
     // beside the grid's label in the drawing's own top-left corner, after "Show front" when a back has it; under them when the drawing is too narrow
-    if (bc.offsetWidth && bc.width) {
+    if (!bc) { b.style.left = "8px"; b.style.top = "8px"; }
+    else if (bc.offsetWidth && bc.width) {
       const s = bc.offsetWidth / bc.width, g = bc._gridLabel || gridLabelBox(bc.getContext("2d"), bc.width), peek = host.querySelector(".egFrontPeek");
       let left = peek ? peek.offsetLeft + peek.offsetWidth + 6 : bc.offsetLeft + (g.x + g.w + 8) * s, top = peek ? peek.offsetTop : bc.offsetTop + Math.max(2, (g.y + g.h / 2) * s - b.offsetHeight / 2);
       if (left + b.offsetWidth > bc.offsetLeft + bc.offsetWidth - 4) { left = bc.offsetLeft + g.x * s; top = (peek ? peek.offsetTop + peek.offsetHeight : bc.offsetTop + (g.y + g.h) * s) + 4; }
@@ -9544,11 +9615,12 @@ const Engrave = window.Engrave = (() => {
   function charmEditNoteOn(host, job) {
     if (!host) return;
     const old = host.querySelector(".egArtNote"); if (old) old.remove();
-    const note = job && ART_NOTES.get(job.key), bc = host.querySelector("canvas"); if (!note || !bc || !host.querySelector(".egCharmEdit")) return;
+    const note = job && ART_NOTES.get(job.key), bc = host.querySelector("canvas"), pill = host.querySelector(".egCharmEdit"); if (!note || !pill) return;
     charmEditCss();
     const n = document.createElement("div"); n.className = "egArtNote" + (note.bad ? " bad" : ""); n.setAttribute("role", "status"); n.title = "Click to put this note away"; n.textContent = note.text;
     n.addEventListener("click", e => { e.stopPropagation(); if (ART_NOTES.get(job.key) === note) ART_NOTES.delete(job.key); n.remove(); });
     host.appendChild(n);
+    if (!bc) { n.style.left = "8px"; n.style.top = Math.round(pill.offsetTop + pill.offsetHeight + 6) + "px"; return; }   // (EDITOR WORDS: an empty work area: under the pill)
     if (!bc.offsetWidth) return;
     n.style.maxWidth = Math.max(220, bc.offsetWidth) + "px";
     const below = bc.offsetTop + bc.offsetHeight + 6, room = below + n.offsetHeight <= host.clientHeight - 2;
@@ -9696,7 +9768,8 @@ const Engrave = window.Engrave = (() => {
     const pj = jobsOfPiece(poolId), jobs = [pj.front, pj.back].filter(Boolean);
     const said = [...new Set(jobs.map(j => j.reason).filter(r => /changed since the words were approved/.test(String(r || ""))))];
     const faces = [...new Set(done)];
-    charmEditSay(job, `${faces.length > 1 ? "Front and back" : faces[0] === "front" ? "Front" : "Back"} artwork saved for this piece${said.length ? ` · ${said.join(" · ")}` : ""}`, false);
+    const bare = jobs.filter(j => j.fit && j.fit.artOnly && j.state === "review" && faces.includes(faceOf(j))).map(j => faceOf(j));   // (EDITOR WORDS: a face its parts engrave on their own: said so, never asked for words)
+    charmEditSay(job, `${faces.length > 1 ? "Front and back" : faces[0] === "front" ? "Front" : "Back"} artwork saved for this piece${said.length ? ` · ${said.join(" · ")}` : ""}${bare.length ? ` · No words needed on the ${bare.join(" or ")}: approve it as drawn` : ""}`, false);
     const refit = jobs.filter(j => !j.view && !j.fit && j.state === "ready");
     await Promise.all(refit.map(j => fitJob(j).catch(e => console.warn("charm edit: fit", e))));
     // a face that was not fitted again keeps its words and its mask (they stand on the cut line, which a piece on a sheet keeps), but the art it shows of the other side ("Show front") is the new one
@@ -9846,7 +9919,7 @@ const Engrave = window.Engrave = (() => {
         if (!verified.ok) throw Object.assign(new Error(`the written ${faceWord(job)} file did not re-verify (${verified.why})`),{engravingInvalid:true});
         let ai = null, pngUp = null;
         if (S.cloud.ok && sh.folderPath) { ai = await uploadBytes(`${sh.folderPath}/${faceWord(job)}/${name}.ai`, built.bytes, "application/illustrator", `Saving ${faceWord(job)} ${copy}`); pngUp = await uploadBytes(`${sh.folderPath}/${faceWord(job)}/${name}.png`, pngBlob, "image/png"); }
-        rec = { lineGap:fitOpts(job).lineGap, lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, materialVersion:2, upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, ...pieceFields(job), text: job.text, lines: job.lines, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), ...(job.fontAsked ? { fontAsked: job.fontAsked } : {}), weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, engravingSeals:CNEngravingSeals.keep(job), nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: fileViewOf(job), reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
+        rec = { lineGap:fitOpts(job).lineGap, lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, materialVersion:2, ...(fit.artOnly ? { artOnly:true } : {}), upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, ...pieceFields(job), text: job.text, lines: job.lines, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), ...(job.fontAsked ? { fontAsked: job.fontAsked } : {}), weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, engravingSeals:CNEngravingSeals.keep(job), nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: fileViewOf(job), reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
         if(!rec.outputs.ai?.url || !rec.outputs.png?.url)throw new Error("Reconnect to save the approved back files");
         // Keep the exact uploaded payload before sending it. A lost reply must replay
         // these same file tokens, not upload again and look like a different edit.
@@ -9915,7 +9988,7 @@ const Engrave = window.Engrave = (() => {
     let n = 0;
     for (const job of items().values()) {
       if (job.state !== "written" || job.editingBack || job.backSaving || job.approvalPreparing || job._writingBacks > 0 || isWorking(job) || EG.cardKey === job.key) continue;
-      if (!job.fit || !job.view || !job.mask || !job.approvedAt || job._shelveTried === job.approvedAt || !(job.copies || []).length) continue;
+      if (!job.fit || !job.view || !job.mask || !job.approvedAt || job._shelveTried === job.approvedAt || !(job.copies || []).length || job.fit.artOnly) continue;   // (EDITOR WORDS: a placement with no letters holds nothing worth letting go, and words laid out again could not stand for it)
       if (!job.copies.every(id => (job.backs || []).some(b => b.poolId === id && b.approvedAt === job.approvedAt && b.outputs?.ai?.url && b.outputs?.png?.url))) continue;
       const fit = job.fit, lines = (fit.lines || job.lines).slice(), lineGap = fitOpts(job).lineGap;
       let same = false;
@@ -9991,6 +10064,8 @@ const Engrave = window.Engrave = (() => {
         if(op==='h')return {type:'Z'};
         throw new Error("Unsupported engraving path in the back file");
       })));
+      // EDITOR WORDS (27 Oct 2026): a face approved with no words (its engraving is the charm editor's parts) is right when its file carries no words at all
+      if(job.fit && job.fit.artOnly)return {ok:diff<=.01 && !textPaths.length,why:diff>.01?`cut geometry differs by ${(diff*100).toFixed(2)}%`:textPaths.length?'words in a file that carries none':null,pixelDiff:diff,textPaths:false,artOnly:true};
       const ink=textOk && G.verifyInk(textCmds,G.engraveMask({mask:W},{marginMm:job.mask?.marginMm || 0}));
       return {ok:diff<=.01 && textOk && ink.ok,why:diff>.01?`cut geometry differs by ${(diff*100).toFixed(2)}%`:!textOk?'no engraving paths in the file':!ink.ok?'engraving intersects a cut-out or cut-edge clearance':null,pixelDiff:diff,textPaths:textOk,ink};
     } catch (e) { return { ok: false, why: e.message }; }
@@ -10995,7 +11070,7 @@ const Engrave = window.Engrave = (() => {
     card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a piece's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? ` (an order's ${countedNouns(ears)} are one placement: Back and Next go through every ${countedNoun(ears)})` : " (an earring piece's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span>${ears ? earSwitchHtml(job, ears, panelOn) : faced ? (panelOn ? "" : faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`)) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().pieceTag(job, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain">${byCard ? "" : `<h4 class="pvH">${cap1(fw)} · engraving</h4>`}<div class="pvApproval">${appView || keptView ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton egApproved" data-a="approved" disabled aria-disabled="true" title="approved — change anything and press Approve again: it gets a new seal">Approved</button></span>${job.state === "written" ? `<span class="egWrittenNote hint">Saved to sheet · approving again replaces its file</span>` : ""}` : f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the ${fw} file">Approve</button></span>` : ""}${f && !wordsJob && ears && !appView ? approveBothHtml(ears, job) : ""}</div><div class="backHost"></div></div>
-        <div class="ctl">${!f && !wordsJob && panelOn && job.reason ? `<span class="why" role="status">${esc(isFrontJob(job) ? String(job.reason).replace(/\bback area\b/, "front area") : job.reason)}</span>` : ""}${f && !wordsJob ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="egTurn" role="group" aria-label="Turn the whole charm and its engraving" title="Turn the whole charm and its engraving together, in degrees. Counter-clockwise is plus. 0 is where the system placed it."><button type="button" class="egTurnStep" data-a="turnStep" data-step="-1" title="Turn 1° clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree clockwise">↷</button><label class="egTurnField"><input type="number" data-a="turn" inputmode="numeric" min="-360" max="360" step="1" value="${turnOf(job)}" aria-label="Turn the whole charm and its engraving, in degrees"><span class="egTurnDeg" aria-hidden="true">°</span></label><button type="button" class="egTurnStep" data-a="turnStep" data-step="1" title="Turn 1° counter-clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree counter-clockwise">↶</button></span>` : ""}
+        <div class="ctl">${!f && !wordsJob && panelOn && job.reason ? `<span class="why" role="status">${esc(isFrontJob(job) ? String(job.reason).replace(/\bback area\b/, "front area") : job.reason)}</span>` : ""}${f && !wordsJob && f.artOnly ? `<span class="egArtOnly" role="status" style="font-size:11.5px;color:var(--ink70,#5b554c)">No words: the charm editor's parts are this ${fw}'s engraving</span>` : ""}${f && !wordsJob && !f.artOnly ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="egTurn" role="group" aria-label="Turn the whole charm and its engraving" title="Turn the whole charm and its engraving together, in degrees. Counter-clockwise is plus. 0 is where the system placed it."><button type="button" class="egTurnStep" data-a="turnStep" data-step="-1" title="Turn 1° clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree clockwise">↷</button><label class="egTurnField"><input type="number" data-a="turn" inputmode="numeric" min="-360" max="360" step="1" value="${turnOf(job)}" aria-label="Turn the whole charm and its engraving, in degrees"><span class="egTurnDeg" aria-hidden="true">°</span></label><button type="button" class="egTurnStep" data-a="turnStep" data-step="1" title="Turn 1° counter-clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree counter-clockwise">↶</button></span>` : ""}
           <span class="rest"><button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its ${fw}">${faced ? `No<span class="egFw"> ${fw}</span> engraving` : "No engraving"} <b class="k">S</b></button></span></div>
         <div class="pvSide">
           ${said}<section class="pvSec pvSetup" data-engsetup hidden></section>
@@ -11053,7 +11128,8 @@ const Engrave = window.Engrave = (() => {
         const rb = bh.querySelector("[data-rebuild]"); if (rb) rb.onclick = () => { rb.disabled = true; rb.textContent = "Rebuilding the sheet…"; rebuildRecalled(job).then(() => render()).catch(e => { rb.disabled = false; rb.textContent = "Rebuild its sheet to change it"; toast(`Could not rebuild the sheet: ${e.message}`, "bad", 7000); }); };
       }
       // an approved / saved piece whose placement cannot be drawn here is never an empty box: its saved picture is the preview, the panel's controls change it (the first change opens it for approval again)
-      else if (["approved", "written"].includes(job.state)) { const n = bh.querySelector(".noBack"); const pic = document.createElement("div"); pic.className = "egSavedPic"; pic.style.cssText = "display:flex;flex-direction:column;align-items:center;gap:8px;min-height:0;max-height:100%"; if (savedBackPicture(pic, job)) { if (n) pic.appendChild(n); bh.replaceChildren(pic); } } }   // (no words box here: the reason the words box's line used to give is said once, in the empty picture)
+      else if (["approved", "written"].includes(job.state)) { const n = bh.querySelector(".noBack"); const pic = document.createElement("div"); pic.className = "egSavedPic"; pic.style.cssText = "display:flex;flex-direction:column;align-items:center;gap:8px;min-height:0;max-height:100%"; if (savedBackPicture(pic, job)) { if (n) pic.appendChild(n); bh.replaceChildren(pic); } }   // (no words box here: the reason the words box's line used to give is said once, in the empty picture)
+      else if (job.state === "words") { try { charmEditButton(bh, null, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); } } }   // (EDITOR WORDS, 27 Oct 2026: a face waiting for words can be drawn in the charm editor first; its parts then engrave it, no words needed)
     const ta = card.querySelector('[data-f="words"]'), use = card.querySelector('[data-a="usewords"]');
     // (the Engrave tab draws no words box: "Engrave these words" settles what the panel's own box holds for this face, the Lines drop-down refits the words the job has)
     const wordsNow = () => { const w = !ta && wordsJob ? card.querySelector(".engp .engpWords") : null; return ta ? ta.value : w && w.dataset.face === fw && w.value.trim() ? w.value : (job.lineInput || job.lines || []).join("\n"); };
@@ -11137,7 +11213,8 @@ const Engrave = window.Engrave = (() => {
       const local = e => { const rect = bc.getBoundingClientRect(); return [(e.clientX - rect.left) * bc.width / rect.width, (e.clientY - rect.top) * bc.height / rect.height]; };
       bc.addEventListener("pointermove", e => { if (drag || !bc._box) return; const p = local(e); const b = bc._box; bc.style.cursor = near(p, b.rotate, 9) ? "alias" : b.corners.some(c => near(p, c, 8)) ? "nwse-resize" : "grab"; });
       bc.addEventListener("pointerdown", e => {
-        if (!job.fit || !placeEditable(job) || job.approvalPreparing || job.stamping || job.backSaving) return; bc.setPointerCapture(e.pointerId); e.preventDefault();
+        try { if (document.activeElement !== bc) bc.focus({ preventScroll: true }); } catch (_) { /* the card's keys still reach it */ }   // (MOVEKEYS: the words pressed are what the arrows move: the drawing takes the focus from whatever control had it, which the press below no longer moves)
+        if (!job.fit || job.fit.artOnly || !placeEditable(job) || job.approvalPreparing || job.stamping || job.backSaving) return; bc.setPointerCapture(e.pointerId); e.preventDefault();
         const p = local(e), b = bc._box;
         const mode = b && near(p, b.rotate, 10) ? "rotate" : (b && b.corners.some(c => near(p, c, 9))) || e.shiftKey ? "resize" : "move";
         const c0 = job.fit.centre.slice(); const cpx = b ? b.centrePx : bc._map.tx(c0[0], c0[1]);
@@ -11203,7 +11280,7 @@ const Engrave = window.Engrave = (() => {
       const full = [side(bw + strip), px0[1]], wide = !!strip && takesStrip(renderBack(job, [64, 64], { editable: true, hatch: false, include: framed })._sizePt, px0, full, r.height, below);
       const px = wide ? full : px0;
       pm.classList.toggle("egWide", wide);
-      const bc = renderBack(job, px, { grid: true, editable: true, include: framed, draft: panelOn }); framed = bc._map.bb; bc.title = "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys nudge 0.25 mm, with shift they turn 1° · cut-outs and holes stay clear"; backHost.appendChild(bc); wire(bc); markShown(job); syncBoth(); if (panelOn) draftNote(card, DRAFTS.get(job.key));
+      const bc = renderBack(job, px, { grid: true, editable: true, include: framed, draft: panelOn }); framed = bc._map.bb; bc.tabIndex = -1; bc.style.outline = "none"; bc.title = job.fit && job.fit.artOnly ? `no words: the charm editor's parts are this ${fw}'s engraving` : "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys move them 0.05 mm, 1 mm with Shift · cut-outs and holes stay clear"; backHost.appendChild(bc); wire(bc); markShown(job); syncBoth(); if (panelOn) draftNote(card, DRAFTS.get(job.key));
       frontPeekToggle(backHost, bc);   // FRONTART: a BACK whose design has art on its front gets the quiet "Show front" switch beside the grid's label (a front draws its art always)
       try { charmEditButton(backHost, bc, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }   // CHARM EDIT: the quiet "Edit charm" pill after them (and the last save's note under it): the piece's own artwork in the charm editor (never at the drawing's cost)
       bc._reframe = () => { if (raf || disposed || bc.classList.contains("drag")) return; mounted = [0, 0]; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); };
@@ -11354,7 +11431,27 @@ const Engrave = window.Engrave = (() => {
       await applyWords();
     };
     void capOut;
-    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT" || e.repeat || e.target.closest?.(".pvMail")) return; const k = e.key.toLowerCase(); if (k === "escape") { e.preventDefault(); e.stopPropagation(); cardAction("close"); return; } if (approvalBusy() || items().get(job.key) !== job || ["approved", "written"].includes(job.state)) return; if (["a","s","arrowleft","arrowright","arrowup","arrowdown"].includes(k)) card._flushSpacing?.(); if (k === "a") { e.preventDefault(); cardAction("approve"); } else if (k === "s") { e.preventDefault(); cardAction("skip"); } else if (e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); rotateTo(job, (job.fit ? job.fit.angle || 0 : 0) + (e.key === "ArrowLeft" ? 1 : -1)); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
+    /* MOVEKEYS (Paul, 27 Oct 2026: "there's also an issue when I try to move the text using my arrow keys and shift button for some reason it switches to adjusting the size of the text when I click
+       shift and arrow buttons or just the arrow buttons, which is not what I wanted"). The arrows MOVE the words: 0.05 mm a press, 1 mm with Shift (the charm editor's and Manual Control's steps; this
+       area moved 0.25 mm and Shift + left / right turned the words 1°), never their size (nudge keeps it), and a held arrow keeps moving. They are the words' keys whenever the words are what is being
+       worked on: the drawing takes the focus when it is pressed, and a control of the bottom row reached with the mouse (the Lines drop-down, the Line spacing slider) gives its arrows to the words
+       instead of changing its own value, and the size with it, under them. A control reached with Tab keeps its arrows (it was focused by the keyboard, not the pointer); a field being typed in always does. */
+    const MOVE_MM = 0.05, MOVE_BIG_MM = 1;
+    const wordsKey = e => {
+      if (!/^Arrow(Left|Right|Up|Down)$/.test(e.key) || e.altKey || e.ctrlKey || e.metaKey) return false;
+      const t = e.target; if (!t || !t.matches) return true;
+      if (t.matches("select, input[type=range]")) return !!(t.closest(".ctl") && t._byPointer);
+      return !t.matches("input, textarea, [contenteditable], [contenteditable] *") && !t.closest(".pvMail");
+    };
+    card.addEventListener("pointerdown", e => { const t = e.target && e.target.closest && e.target.closest(".ctl select, .ctl input[type=range]"); if (t && !t._byPointer) { t._byPointer = true; t.addEventListener("blur", () => { t._byPointer = false; }, { once: true }); } }, true);
+    card.addEventListener("keydown", e => {
+      if (wordsKey(e)) {
+        const ctl = e.target && e.target.matches && e.target.matches("select, input[type=range]");
+        if (approvalBusy() || items().get(job.key) !== job || ["approved", "written"].includes(job.state)) { if (ctl) e.preventDefault(); return; }   // (looking at an approved piece is safe: the arrows do not reopen it)
+        e.preventDefault(); if (!e.repeat) card._flushSpacing?.();
+        const st = e.shiftKey ? MOVE_BIG_MM : MOVE_MM; nudge(job, e.key === "ArrowLeft" ? -st : e.key === "ArrowRight" ? st : 0, e.key === "ArrowUp" ? st : e.key === "ArrowDown" ? -st : 0); return;
+      }
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT" || e.repeat || e.target.closest?.(".pvMail")) return; const k = e.key.toLowerCase(); if (k === "escape") { e.preventDefault(); e.stopPropagation(); cardAction("close"); return; } if (approvalBusy() || items().get(job.key) !== job || ["approved", "written"].includes(job.state)) return; if (["a","s"].includes(k)) card._flushSpacing?.(); if (k === "a") { e.preventDefault(); cardAction("approve"); } else if (k === "s") { e.preventDefault(); cardAction("skip"); } });
     // the next card takes focus only when the person was already working in this pane, so a held key cannot run the queue.
     // It never takes focus from a field someone is typing in: the card's single-key shortcuts (A approve, S no engraving,
     // arrows nudge) would otherwise receive the rest of what they type.
@@ -11383,6 +11480,20 @@ const Engrave = window.Engrave = (() => {
     let n = 0;
     for (const j of [...items().values()]) {
       if (!j || j.editingBack || !(j.copies || []).includes(poolId) || faceOf(j) !== face) continue;
+      // EDITOR WORDS (27 Oct 2026): the face now carries parts the editor added and its words are only the order's offer (none, a proposal, the buyer's whole note): they are not fitted around the
+      // new drawing as if a person had asked for them. The face is placed as the editor drew it and waits for Approve; a person who wants words as well types them (they are fitted as ever).
+      const settled = ["skipped", "none"].includes(j.state) || decidedBusy(j);
+      if (!settled && faceHasEditorArt(j) && wordsOffered(j)) {
+        if (["approved", "written"].includes(j.state) || j.approvedAt) { revokeBacks(j); Object.assign(j, { approvedBy: null, approvedAt: null }); }
+        if (j.decision && j.decision.text) j.decision = null;   // (a person's Save of the buyer's whole note, as the mode switch filled it in: an offer they took over, not words they wrote)
+        if (artOnlyPlacement(j)) { n++; continue; }
+      }
+      // (the edit took every added part off a face that had no words: it asks for its words again)
+      if (!settled && j.fit && j.fit.artOnly && !faceHasEditorArt(j)) {
+        if (["approved", "written"].includes(j.state) || j.approvedAt) revokeBacks(j);
+        Object.assign(j, { view: null, mask: null, fit: null, verify: null, writtenFit: null, approvedBy: null, approvedAt: null });
+        toWords(j, `Say what to engrave on the ${face}`); n++; continue;
+      }
       if (["approved", "written"].includes(j.state) || j.approvedAt) {
         revokeBacks(j);
         Object.assign(j, { state: "ready", view: null, mask: null, fit: null, writtenFit: null, verify: null, approvedBy: null, approvedAt: null, reason: said });
@@ -11398,7 +11509,7 @@ const Engrave = window.Engrave = (() => {
     if (n) { try { Session.schedule(); render(); } catch (_) { /* drawn with the next render */ } }
     return n;
   }
-  return { listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
    list of pieces, the Pieces counts and a monogram line's pieces (the same slots and piece keys: "<line>" for one piece, "<line>#C<u>" for several) read THIS. Added beside the Engrave object, not inside its return. */

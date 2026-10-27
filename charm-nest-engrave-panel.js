@@ -94,9 +94,13 @@
     }
     return d;
   }
+  /** EDITOR WORDS (Paul, 27 Oct 2026: "the system should not force the user to also add text on top of already added text from within the Charm Editor"): is this face of the piece engraved by
+   *  parts the charm editor added? (CharmNestEngraveSetup.editorArtOn: the page's one test) */
+  const artOn = (vm, face) => { const S = Setup(); return !!(face && S && S.editorArtOn && tryDo(() => S.editorArtOn(vm, face), false)); };
   /** The words a face starts with when its mode is switched on and nothing was typed: the line's own, else the buyer's labelled words, else (one face and no labels) the other face's. Never a guess between two faces. */
   function seedText(vm, face, mode) {
     const S = Setup(), here = vm.rows.find(r => r.face === face); if (here && here.text) return here.text;
+    if (artOn(vm, face)) return '';   // (EDITOR WORDS: a face the charm editor drew is engraved already: the buyer's words stay an offer, never filled in)
     const lab = S.labelled(vm.raw); if (lab[face]) return lab[face].join('\n');
     if (mode !== 'both' && !lab.any) {
       const other = vm.rows.find(r => r.face !== face && r.text), rd = vm.setup && vm.setup[face === 'front' ? 'back' : 'front'];
@@ -265,7 +269,7 @@
     const font = `<select class="engpFont" data-engp="font" data-face="${face}" aria-label="${cap1(face)} font"${locked || d.busy ? ' disabled' : ''}>${fontOptions(vm, x.font)}</select>`;
     const job = faceJobOf(vm, face, slot), P = Pos();
     const can = !job || locked ? false : P && P.canMove ? tryDo(() => P.canMove(job), false) : !!(job.fit && job.state === 'review');
-    const off = locked || (job && !can && job.state && job.state !== 'review' && job.state !== 'approved' && job.state !== 'written') ? 'Approved: nothing moves' : !can ? NOFIT : '';   // (NODECIDED: an approved piece's position buttons work: the first press reopens it for Approve)
+    const off = job && job.fit && job.fit.artOnly ? 'No words to move' : locked || (job && !can && job.state && job.state !== 'review' && job.state !== 'approved' && job.state !== 'written') ? 'Approved: nothing moves' : !can ? NOFIT : '';   // (EDITOR WORDS: a face engraved by the charm editor's parts alone has no words to move)   // (NODECIDED: an approved piece's position buttons work: the first press reopens it for Approve)
     const stuck = (job && d.noRoom && d.noRoom[job.key]) || {};
     const pos = P ? `<div class="engpPos"><span class="engpLbl">Position</span><span class="engpRow" role="group" aria-label="${cap1(face)} position">${POS_BUTTONS.map(([k, t]) => posButton(k, t, d.busy ? NOFIT : off || (stuck[k] ? NOROOM : ''))).join('')}</span></div>` : '';
     const lock = cur && cur.decided ? `<div class="engpLock" role="status">${cur.lockState === 'skipped' ? 'Cut plain' : cur.lockState === 'written' ? 'Saved to sheet' : 'Approved'}${cur.lockBy ? ' by ' + esc(cur.lockBy) : ''}</div>` : per ? `<div class="engpLock" role="status">Differs per piece</div>` : '';
@@ -285,7 +289,10 @@
     const modes = modesFor(vm.line), dis = d.busy ? ' disabled' : '';
     const seg = `<div class="engpMode" role="radiogroup" aria-label="Engraving">${modes.map(([m, t]) => `<button type="button" role="radio" class="engpSeg" data-engp="mode" data-mode="${m}" aria-checked="${d.mode === m}"${dis}>${t}</button>`).join('')}</div>`;
     const sw = ctx.faceSwitch && on.length > 1 ? `<div class="engpMode engpFaceSw" role="radiogroup" aria-label="Face">${on.map(f => `<button type="button" role="radio" class="engpSeg" data-engp="face" data-face="${f}" aria-checked="${f === face}"${dis}>${cap1(f)}</button>`).join('')}</div>` : '';
-    const ask = vm.needsPerson && d.mode === vm.mode ? `<div class="engpAsk" role="status">${esc(vm.prompt)}</div>${vm.raw ? `<div class="engpRaw" aria-label="The buyer's own words">${esc(vm.raw)}</div>` : ''}` : '';
+    // (EDITOR WORDS: a face the charm editor drew is never asked for words: one calm line says they are optional while its box is empty)
+    const art = artOn(vm, face), typed = !!(face && d.faces[face] && linesOf(d.faces[face].text).length);
+    const ask = art ? (typed ? '' : `<div class="engpOffer" role="status">No words needed: the charm editor's parts are the ${esc(face)}'s engraving. Type words only to add them.</div>`)
+      : vm.needsPerson && d.mode === vm.mode ? `<div class="engpAsk" role="status">${esc(vm.prompt)}</div>${vm.raw ? `<div class="engpRaw" aria-label="The buyer's own words">${esc(vm.raw)}</div>` : ''}` : '';
     const patch = S.patchOf(vm, d), dirty = hasPatch(patch), staged = dirty || d.posTouched;
     const cons = dirty ? S.consequences(vm.line, vm.jobs, nextSetupOf(vm, patch), vm.setup) : null;
     const warn = cons && cons.blocked ? `<div class="engpErr" role="alert">${esc(cons.blocked)}</div>` : '';
@@ -324,6 +331,7 @@
 .engpPb:disabled{opacity:.4;cursor:default}
 .engpLock{font-size:11.5px;color:var(--ink45,#938c80)}
 .engpAsk{font-size:12px;font-weight:600;color:var(--clay,#b0563f)}
+.engpOffer{font-size:12px;line-height:1.4;color:var(--ink70,#5b554c)}
 .engpRaw{padding:5px 8px;border-radius:8px;background:var(--card2,#faf7f1);border:1px solid var(--line,#e4ddd0);font:600 12.5px var(--serif,Georgia,serif);white-space:pre-line;overflow-wrap:anywhere}
 .engpErr{font-size:11.5px;color:var(--clay,#b0563f)}
 .engpConfirm{display:grid;gap:4px;font-size:11.5px;color:var(--clay,#b0563f)}
