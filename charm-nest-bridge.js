@@ -17496,7 +17496,8 @@ const Review = window.Review = (() => {
       if (host.dataset.saving) return;
       host.dataset.saving = "1"; const was = b.innerHTML; b.setAttribute("aria-disabled", "true"); b.setAttribute("aria-busy", "true"); b.innerHTML = '<span class="spin"></span>Releasing…';
       const onOrders = !!(node && node.closest && node.closest("#ordBody")), rid = String(it.rid || (rowsOf(it)[0] && rowsOf(it)[0].order.receiptId) || "");
-      releaseToQueue(it).then(ok => { if (ok && onOrders && rid) stampOrderSeal(rid); }).catch(err => toast("Could not release it: " + ((err && err.message) || err), "bad", 8000)).finally(() => { delete host.dataset.saving; if (b.isConnected) { b.removeAttribute("aria-busy"); b.innerHTML = was; rest(); } });
+      const inWin = !!b.closest("#orderWin"); if (inWin && rid && window.OrderWin && OrderWin.expectRelease) OrderWin.expectRelease(rid, Date.now());   // (RELSTAMP: pressed in the order window, it is stamped there)
+      releaseToQueue(it).then(ok => { if (ok && onOrders && rid) stampOrderSeal(rid); if (!ok && inWin && window.OrderWin && OrderWin.expectRelease) OrderWin.expectRelease(null); }).catch(err => toast("Could not release it: " + ((err && err.message) || err), "bad", 8000)).finally(() => { delete host.dataset.saving; if (b.isConnected) { b.removeAttribute("aria-busy"); b.innerHTML = was; rest(); } });
     };
     return { b, on, r };
   }
@@ -19980,7 +19981,7 @@ const OrderWin = window.OrderWin = (() => {
   const SEAL_KINDS = {
     print:    { label: "QR label printed", how: "print", btn: "[data-cu-print]", rowDrawn: true },
     complete: { label: "Order complete", how: "button", btn: "[data-cu-done],[data-cu-complete]", rowDrawn: true },
-    release:  { label: "Release Hold", how: "releaseHold", btn: "[data-rel-hold],[data-cu-release]" },
+    release:  { label: "Release Hold", how: "releaseHold", btn: "[data-rel-hold],[data-cu-release]", alt: ".revSendBtn" },   // (RELSTAMP, below: once released, beside the Hold Order button that takes its place)
     cancel:   { label: "Order cancelled", how: "cancel", family: "cancelled", action: "ORDER CANCELLED", btn: ".cnCancelBtn,[data-cancel-order]" },
     sheet:    { label: "Sent to sheet", how: "sheet", btn: "#owSendSheet,[data-cu-sheet-send]" },
     hold:     { label: "Order held", how: "holdOrder", family: "exceptions", action: "ORDER HELD", icon: "exceptions", btn: ".revSendBtn" }   // (HOLDORDER: the Hold Order press, was Send to Review; its seal is drawn from the mark, not a seal record)
@@ -20056,11 +20057,20 @@ const OrderWin = window.OrderWin = (() => {
   /** Paint the window's seals: beside their buttons, the rest in the Seals row. Cheap (nothing is redrawn while nothing changed). */
   /* (Paul, 26 Oct 2026: "Remove ... the second 'Seals' menu completely from the UI of the Detailed Order modal": the compact Seals row is gone; a seal whose button is not shown in the window is
      not drawn in it (it stays on the Orders and Review cards and in the Timeline tab); a seal whose button is shown still sits beside that button) */
+  /* RELSTAMP (Paul, 27 Oct 2026: "When I released the hold on this particular order or any order from the detailed order modal I did not see the stamp or the seal. I only heard the noise for the stamp,
+     but there was no visual stamp or seal showing or visible in the detailed order modal"): the press's stamp came down on the Review card behind the window (heard, never seen), and the window drew the
+     RELEASE HOLD seal only beside a Release Hold button, which the release itself takes away. Now the seal stays in the window beside the Hold Order button that stands in the piece row in its place,
+     and a Release Hold pressed IN the window is stamped there, in sight (W.relStamp: the press's order, seal and time; its seal is drawn pending and the wooden stamp comes down on it, once).
+     (HOLDSTAMP, Paul 27 Oct 2026: "I also did not see the stamp and seal animation when pressing the 'Hold Order' button. The Seal appeared but with no stamp animation": the Hold Order press in the
+      window is stamped the same way, on its ORDER HELD seal beside the button, kind "hold") */
+  function expectStamp(rid, kind, since) { W.relStamp = rid ? { rid: ridDigits(rid), kind: kind || "release", since: +since || Date.now(), until: Date.now() + 120000 } : null; }
+  const expectRelease = (rid, since) => expectStamp(rid, "release", since);
   function paintWinSeals() {
     if (!W.dlg) return;
     const list = W.rid ? winSealsOf(W.rid) : [], beside = new Map();   // (the first paint of an opening window comes before the dialog is open)
+    const rs = W.relStamp && W.relStamp.until > Date.now() && W.relStamp.rid === ridDigits(W.rid) ? W.relStamp : null;
     for (const s of list) {
-      const K = SEAL_KINDS[s.kind], btn = K ? shownIn(W.dlg, K.btn) : null;
+      const K = SEAL_KINDS[s.kind], btn = K ? shownIn(W.dlg, K.btn) || (K.alt ? shownIn(W.dlg, K.alt) : null) : null;
       if (btn && K.rowDrawn) continue;   // (its button's row already rests it there)
       if (btn) { if (!beside.has(btn)) beside.set(btn, []); beside.get(btn).push(s); }
     }
@@ -20071,6 +20081,11 @@ const OrderWin = window.OrderWin = (() => {
       let g = btn.nextElementSibling && btn.nextElementSibling.matches("[data-ow-btn-seals]") ? btn.nextElementSibling : null;
       if (!g) { g = document.createElement("span"); g.className = "owBtnSeals"; g.setAttribute("data-ow-btn-seals", ""); btn.after(g); }
       if (g.dataset.sig !== sig) { g.dataset.sig = sig; g.innerHTML = ss.map(winSealHtml).join(""); }
+      // (RELSTAMP: the seal of a Release Hold pressed in this window waits unseen, then the stamp comes down on it here, once)
+      if (rs && window.Seal && Seal.press) for (const n of g.querySelectorAll(`[data-seal-kind="${rs.kind}"]`)) {
+        const at = +n.dataset.sealAt || 0, f = n.querySelector(".seal"); if (!f || at < rs.since - 1000 || (W.relStamped || (W.relStamped = new Set())).has(at)) continue;
+        W.relStamped.add(at); W.relStamp = null; f.classList.add("pending"); tryDo(() => Seal.press(f));
+      }
       keep.add(g);
     }
     for (const g of W.dlg.querySelectorAll("[data-ow-btn-seals]")) if (!keep.has(g)) g.remove();
@@ -22604,7 +22619,7 @@ const OrderWin = window.OrderWin = (() => {
     // the order number of the open view, and "something was just done here": its timeline reads now and again 1.5 s later
     // where the person is in this view (read-only; the way back from the Engraving tab, charm-nest-engrave-return.js, puts them here again): the line, the tab, the piece and side chosen, the sheet and charm of the Sheet tab
     where: () => { const sh = SV.list && SV.list[SV.at]; return { rid: W.rid, key: W.key, view: W.view, piece: (W.pieces || []).length > 1 ? W.piece || null : null, side: (W.side && narrowSide()) ? W.side : null, disc: W.disc || null, face: W.face, sheetId: sh && sh.id || "", sheetAt: SV.list ? SV.at : null, focus: SV.focus || "" }; },
-    rid: () => W.rid, seals: () => winSealsOf(W.rid), nudge: () => { try { if (W.dlg && W.dlg.open && !W.closing && W.feed && W.feed.nudge) W.feed.nudge(); } catch (_) {} } };
+    rid: () => W.rid, seals: () => winSealsOf(W.rid), expectRelease, expectStamp, nudge: () => { try { if (W.dlg && W.dlg.open && !W.closing && W.feed && W.feed.nudge) W.feed.nudge(); } catch (_) {} } };
 })();
 
 /* ═══ 24c · RunHistory — every run that ever ran, and the way back into one ═══════════════════════════════════════════

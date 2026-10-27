@@ -53,7 +53,18 @@
     ".btn.ghost.revSendBtn.revIn{color:var(--ink);background:var(--paper2)}",
     ".btn.ghost.revSendBtn.revIn:hover:not(:disabled){background:var(--card2)}",
     ".revSendBtn .spin{margin-right:6px}",
-    ".revSendMsg{display:block;max-width:36ch;margin:0;font:12px/1.4 var(--sans);color:var(--ink70)}"
+    ".revSendMsg{display:block;max-width:36ch;margin:0;font:12px/1.4 var(--sans);color:var(--ink70)}",
+    // (HOLDPROG, Paul 27 Oct 2026: "no progress bar, nothing to let us know what was happening and when it would've finish and actually did it complete successfully": a thin bar and the step
+    //  it is on, with the seconds, under the button; it ends in one plain line that says it is done (a tick) or what went wrong)
+    ".revSendProg{display:grid;gap:4px;min-width:180px;max-width:40ch;margin:4px 0 0;font:12px/1.35 var(--sans);color:var(--ink70)}",
+    ".revSendProg .rpBar{position:relative;height:5px;border-radius:3px;background:var(--paper2,#ece7dc);overflow:hidden}",
+    ".revSendProg .rpBar>i{position:absolute;inset:0;transform-origin:0 50%;transform:scaleX(var(--p,0));background:var(--holdOrder,#ea580c);border-radius:3px;transition:transform .35s cubic-bezier(.2,.8,.2,1)}",
+    ".revSendProg:not([data-end]) .rpBar>i::after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);transform:translateX(-100%);animation:rpShine 1.2s linear infinite}",
+    "@keyframes rpShine{to{transform:translateX(100%)}}",
+    ".revSendProg[data-end=ok] .rpBar>i{background:var(--sage,#5f7a5b)}.revSendProg[data-end=bad] .rpBar>i{background:var(--clay,#b5523b)}",
+    ".revSendProg .rpTx{display:flex;gap:6px;align-items:baseline;min-width:0}.revSendProg .rpTx b{font-weight:600;color:var(--ink)}.revSendProg .rpTx small{margin-left:auto;font:11px var(--mono);color:var(--ink45);white-space:nowrap}",
+    ".revSendProg[data-end=ok] .rpTx b::before{content:'\\2713  ';color:var(--sage,#5f7a5b)}",
+    "@media (prefers-reduced-motion:reduce){.revSendProg .rpBar>i{transition:none}.revSendProg .rpBar>i::after{animation:none}}"
   ].join("");
   function css() {
     try { if (doc.getElementById("cnReviewSendCss")) return; const s = doc.createElement("style"); s.id = "cnReviewSendCss"; s.textContent = CSS; doc.head.appendChild(s); } catch (_) {}
@@ -91,7 +102,7 @@
       return false;
     },
     // (HOLDBTN, Paul 20 Oct 2026: the old Hold's path, HoldUI.takeOff: its pieces on sheets not yet cut come off them; null when that path is not on the page)
-    takeOff(rid, by) { const H = root.HoldUI; return H && typeof H.takeOff === "function" ? Promise.resolve().then(() => H.takeOff(rid, { name: by })).catch(e => ({ ok: false, off: 0, error: (e && e.message) || String(e) })) : Promise.resolve(null); },
+    takeOff(rid, by, onStep) { const H = root.HoldUI; return H && typeof H.takeOff === "function" ? Promise.resolve().then(() => H.takeOff(rid, { name: by, onStep })).catch(e => ({ ok: false, off: 0, error: (e && e.message) || String(e) })) : Promise.resolve(null); },
     onChange(fn) { try { const m = MARK(); if (m && typeof m.onChange === "function") return { api: m, off: m.onChange(fn) }; } catch (_) {} return null; },
     // REVHOLD: why this order cannot be held (a piece already released, a sheet already cut or Completed), "" when it can
     cannotHold(rid) {
@@ -153,6 +164,53 @@
     if (line.textContent !== m.text) line.textContent = m.text;
   }
 
+  /* ── HOLDPROG: the progress of a hold under its button (the bar, the step it is on, the seconds) ── */
+  const progs = new Map();   // rid → { p (0..1), text, t0, end: "" | "ok" | "bad", endAt }
+  let progTick = 0;
+  const secsOf = g => Math.max(0, Math.round(((g.endAt || Date.now()) - g.t0) / 1000));
+  function prog(rid, patch) {
+    rid = String(rid);
+    const g = Object.assign(progs.get(rid) || { p: 0, text: "", t0: Date.now(), end: "" }, patch || {});
+    if (patch && patch.end) g.endAt = Date.now();
+    progs.set(rid, g);
+    for (const n of cardsOf(rid)) drawProg(n, rid);
+    if ([...progs.values()].some(x => !x.end)) { if (!progTick) progTick = setInterval(() => { for (const [r] of progs) for (const n of cardsOf(r)) drawProg(n, r); if (![...progs.values()].some(x => !x.end)) { clearInterval(progTick); progTick = 0; } }, 1000); }
+    if (g.end) setTimeout(() => { if (progs.get(rid) === g) { progs.delete(rid); for (const n of cardsOf(rid)) drawProg(n, rid); } }, MSG_MS);
+  }
+  function drawProg(n, rid) {
+    const b = n.querySelector(".revSendBtn"); if (!b) return;
+    let el = n.querySelector(".revSendProg"); const g = progs.get(String(rid));
+    if (!g) { if (el) el.remove(); return; }
+    if (!el) { el = doc.createElement("span"); el.className = "revSendProg"; el.setAttribute("role", "progressbar"); el.setAttribute("aria-valuemin", "0"); el.setAttribute("aria-valuemax", "100"); el.innerHTML = '<span class="rpBar"><i></i></span><span class="rpTx"><b></b><small></small></span>'; (n.querySelector(".revSendMsg") || b).after(el); }
+    const pct = Math.round(Math.max(0, Math.min(1, g.end === "ok" ? 1 : g.p)) * 100);
+    el.style.setProperty("--p", String(pct / 100)); el.setAttribute("aria-valuenow", String(pct)); el.setAttribute("aria-valuetext", g.text);
+    if (g.end) el.dataset.end = g.end; else delete el.dataset.end;
+    const tb = el.querySelector(".rpTx b"), ts = el.querySelector(".rpTx small"), secs = `${secsOf(g)} s`;
+    if (tb.textContent !== g.text) tb.textContent = g.text; if (ts.textContent !== secs) ts.textContent = secs;
+  }
+  /** The engine's steps (OrderHold.run) as the bar and its words: each sheet is its share; on a sheet, taking the pieces off is the most of it, then the free space is filled, then its label. */
+  function progFeed(rid) {
+    const sheets = [], names = new Map(), part = new Map(); let fills = 0;
+    const word = id => names.get(id) || "the sheet";
+    const at = () => sheets.length ? sheets.reduce((a, id) => a + (part.get(id) || 0), 0) / sheets.length : 0;
+    const go = (id, p, text) => { if (id != null) part.set(id, Math.max(part.get(id) || 0, p)); prog(rid, { p: 0.15 + 0.85 * at(), text }); };
+    return s => {
+      if (!s || typeof s !== "object") return;
+      const id = s.sheetId != null ? s.sheetId : s.toSheetId;
+      if (s.type === "start") { for (const x of s.sheets || []) if (!sheets.includes(x)) sheets.push(x); go(null, 0, sheets.length ? `Taking its pieces off ${sheets.length > 1 ? sheets.length + " sheets" : "the sheet"}…` : "Holding it…"); }
+      else if (s.type === "wait") go(null, 0, `Waiting: ${s.why}…`);
+      else if (s.type === "sheetBegin") { if (s.label) names.set(id, s.label); if (!sheets.includes(id)) sheets.push(id); go(id, 0.05, `Taking it off ${word(id)}…`); }
+      else if (s.type === "removed") go(id, 0.45, `Taken off ${word(id)}`);
+      else if (s.type === "fillBegin") go(id, 0.5, `Filling the free space on ${word(id)}…`);
+      else if (s.type === "fillPlaced") { fills++; go(id, Math.min(0.85, (part.get(id) || 0.5) + 0.12), `Filling ${word(id)}: order ${s.rid} moved in`); }
+      else if (s.type === "fillSkipped") go(id, 0.85, `${word(id)}: the free space stays free`);
+      else if (s.type === "qr") go(id, 0.9, `New QR label for ${word(id)}…`);
+      else if (s.type === "sheetDone") go(id, 1, `${word(id)} done`);
+      else if (s.type === "held") go(null, 1, "Saving…");
+      progFeed.fills = fills;
+    };
+  }
+
   /* ── the button ── */
   function paint(b, rid, row) {
     const busy = busyRids.has(String(rid)), inRev = !busy && api.inReview(rid, row), state = busy ? "busy" : inRev ? "in" : "idle";
@@ -209,7 +267,7 @@
       }
       b.dataset.rid = rid;
       paint(b, rid, row);
-      drawMsg(node, rid);
+      drawMsg(node, rid); drawProg(node, rid);
     } catch (e) { console.warn("hold order button", e); }
   }
   /** (HOLDORDER, Paul 20 Oct 2026) The ONE maker of the Hold Order button: the Orders rows use it, and so can any other place that shows Hold Order. Painted for what is true now. */
@@ -220,7 +278,12 @@
     const b = doc.createElement("button"); b.type = "button"; b.className = "btn ghost sm revSendBtn"; b.dataset.rid = rid;
     if (opts.host) b.dataset.revHost = String(opts.host);
     const how = opts.offSheets ? { offSheets: true } : undefined;
-    b.onclick = e => { e.stopPropagation(); e.preventDefault(); press(rid, row || null, how).catch(err => console.warn("hold order", err)); };
+    b.onclick = e => {
+      e.stopPropagation(); e.preventDefault();
+      // (HOLDSTAMP, Paul 27 Oct 2026: pressed in the order window, its ORDER HELD seal is stamped there, in sight, once the order is held)
+      try { if (b.closest("#orderWin") && !busyRids.has(rid) && !api.inReview(rid, row || null) && root.OrderWin && OrderWin.expectStamp) OrderWin.expectStamp(rid, "hold", Date.now()); } catch (_) {}
+      press(rid, row || null, how).catch(err => console.warn("hold order", err));
+    };
     paint(b, rid, row || null);
     return b;
   }
@@ -246,7 +309,7 @@
       if (!api.ready()) { s.remove(); continue; }
       const b = button(s.dataset.rid, null, { offSheets: s.dataset.off === "1", host: "orderWindow" });
       s.replaceWith(b);
-      if (b.parentElement) drawMsg(b.parentElement, b.dataset.rid);
+      if (b.parentElement) { drawMsg(b.parentElement, b.dataset.rid); drawProg(b.parentElement, b.dataset.rid); }   // (HOLDPROG: a window painted again mid-hold keeps its bar)
     }
   }
   try {
@@ -276,23 +339,36 @@
     if (!who) return { ok: false, error: "name" };
     if (busyRids.has(rid)) return { ok: false, error: "busy" };
     busyRids.add(rid); sync();
+    const offing = !!(opts && opts.offSheets);
+    if (offing) prog(rid, { p: 0.05, text: "Holding the order…", t0: Date.now(), end: "" });
     let res;
     try { res = await api.mark(rid, who); }
     catch (e) { res = { ok: false, error: (e && e.message) || String(e) }; }
-    if (res === false || (res && res.ok === false)) { busyRids.delete(rid); sync(); say(rid, plainError(res)); return res || { ok: false, error: "failed" }; }
-    // (HOLDBTN, Paul 20 Oct 2026: a button where Hold stood also takes the order's pieces off sheets not yet cut, through the old Hold's engine; the button keeps its spinner meanwhile)
+    if (res === false || (res && res.ok === false)) { busyRids.delete(rid); sync(); if (offing) prog(rid, { end: "bad", text: "Not held" }); say(rid, plainError(res)); return res || { ok: false, error: "failed" }; }
+    // (HOLDBTN, Paul 20 Oct 2026: a button where Hold stood also takes the order's pieces off sheets not yet cut, through the old Hold's engine.)
+    // (HOLDPROG, Paul 27 Oct 2026: "it took over a minute to complete ... and there was no feedback to the user": the order IS held once it is marked, so the button says so at once ("In Review",
+    //  its seal stamped); the sheets are put right under it with the bar and the step it is on, and the last line says it is done, or what went wrong, and how long it took)
     let off = null;
-    if (opts && opts.offSheets) { sync(); off = await api.takeOff(rid, who); }
+    // (HOLDSTAMP: the order window is painted at once, so its ORDER HELD seal is stamped at the press, not when the sheets are done)
+    try { if (root.OrderWin && typeof OrderWin.isOpen === "function" && OrderWin.isOpen()) OrderWin.paint(); } catch (_) {}
+    if (offing) {
+      prog(rid, { p: 0.15, text: "Order held. Taking its pieces off the sheet…" });
+      busyRids.delete(rid); sync();
+      off = await api.takeOff(rid, who, progFeed(rid));
+    }
     busyRids.delete(rid);
     sync();
     if (off && off.off > 0) {
       const names = (off.names || []).filter(Boolean), list = names.length < 2 ? names.join("") : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
+      prog(rid, { end: "ok", text: "Done" });
       say(rid, `Order held. Taken off ${list || "its sheet"}; it waits in Review.`);
       return { ok: true, sheet: "", off: off.off, names };
     }
     const sheet = whereOf(rid, row), many = sheet.includes(" + ");
     const offWhy = off && off.ok === false && (off.why || off.error) ? ` (${String(off.why || off.error).replace(/[.\s]+$/, "")})` : "";
+    if (offing) prog(rid, offWhy ? { end: "bad", text: "Held, but its pieces stay on the sheet" } : { end: "ok", text: "Done" });
     if (sheet) say(rid, `Order held. Stays on ${sheet}${offWhy}. ${many ? "Those sheets are" : "That sheet is"} held until this is resolved in Review.`);
+    else if (offing) say(rid, "Order held; it waits in Review.");
     return { ok: true, sheet, off: off ? off.off || 0 : undefined };
   }
 

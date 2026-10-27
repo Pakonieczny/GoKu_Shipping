@@ -432,7 +432,7 @@
       const names = uniq(on.map(p => str(p.sheetLabel)));
       if (plan.canHold === false) return { ok: false, off: 0, names, blocked: true, why: str(plan.blockedWhy) };
       flows.set(rid, { phase: 'run' });
-      const res = await H.run(rid, { name: str(o.name) || savedName() });
+      const res = await H.run(rid, Object.assign({ name: str(o.name) || savedName() }, typeof o.onStep === 'function' ? { onStep: o.onStep } : {}));   // (HOLDPROG, 27 Oct 2026: the Hold Order button shows each step as it lands)
       refreshViews();
       if (!res || res.ok === false || res.error) return { ok: false, off: 0, names, error: msgOf(res && res.error) };
       return { ok: true, off: on.length, names };

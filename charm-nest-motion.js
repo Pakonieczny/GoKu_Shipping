@@ -23,6 +23,9 @@
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const resolve = to => { try { const e = typeof to === "function" ? to() : typeof to === "string" ? doc.querySelector(to) : to; return e && e.isConnected ? e : null; } catch (_) { return null; } };
   const visible = e => { if (!e || !e.isConnected) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; };
+  /** (RELSTAMP, Paul 27 Oct 2026: "I only heard the noise for the stamp, but there was no visual stamp or seal") Under an open modal window that it is not in: out of sight whatever its box says (the
+   *  window sits above the whole page), so a stamp there is not played, and not heard: its seal just shows, as one out of sight does. */
+  const underModal = e => { try { const open = [...doc.querySelectorAll("dialog[open]")].filter(d => d.matches(":modal")); return open.length > 0 && !open.some(d => d.contains(e)); } catch (_) { return false; } };
   /** The layer copies fly on: the page's own, or, for something inside an open window (a modal dialog sits above the
    *  whole page), one inside that window. near: the element the motion starts from or its list. */
   function layer(near) {
@@ -631,7 +634,7 @@
     /** Every seal waiting to be pressed, pressed where it shows (one out of sight just shows). */
     function pressPending() {
       for (const s of doc.querySelectorAll(".seal.pending")) {
-        if (!visible(s) || reduced()) { s.classList.remove("pending"); continue; }
+        if (!visible(s) || reduced() || underModal(s)) { s.classList.remove("pending"); continue; }
         press(s);
       }
     }
@@ -712,9 +715,9 @@
       await wait(Math.max(0,remaining-(root.performance.now()-restart)));
     }
     async function pressOnce(seal) {
-      if(reduced() || !visible(seal)){seal.classList.remove('pending');return;}
+      if(reduced() || !visible(seal) || underModal(seal)){seal.classList.remove('pending');return;}
       await incomingMotion(seal);
-      if(!seal.isConnected || !visible(seal))return;
+      if(!seal.isConnected || !visible(seal) || underModal(seal)){seal.classList.remove('pending');return;}
       const g=geometry(seal), size=g.width, kind=Object.keys(INK).find(k=>seal.classList.contains('seal-'+k)) || 'print';
       const rot=parseFloat(getComputedStyle(seal).getPropertyValue('--rot')) || 0;
       const t=doc.createElement('span');t.className='sealTool';t.innerHTML=tool(kind,seal);
@@ -846,7 +849,7 @@
       Object.assign(t.style,{left:cx-size/2+'px',top:cy-size/2+'px',width:size+'px',height:size+'px'});
       host.appendChild(seal);host.appendChild(t);
       const rot=rotOf(st),paint=()=>btn.classList.add(kind==='sheet'?'sealedSheet':kind==='button' || kind==='releaseHold'?'sealedDone':kind==='cancel'?'sealedCancel':'sealedPrint');   // (RELHOLD: the Release Hold button takes the green of its seal, as Complete Order did) (SEALSHEET, Paul 20 Oct 2026: Send to Sheet takes the teal of its seal)
-      if(reduced() || spec.still){seal.style.opacity='';t.remove();paint();return;}
+      if(reduced() || spec.still || underModal(host)){seal.style.opacity='';t.remove();paint();return;}   // (RELSTAMP: a card under an open window is stamped unseen and unheard)
       const down=t.animate([
         {transform:`translate(34px,-46px) rotate(${rot-16}deg) scale(1.7)`,opacity:0},
         {opacity:1,offset:.22},

@@ -366,8 +366,13 @@
       };
       const sizeOf = sh => { try { const s = typeof stockFor === "function" ? stockFor(sh.metal, sh) : null; return s ? { wPt: s.wPt, hPt: s.hPt } : null; } catch (_) { return null; } };
       const idle = async () => {   // a change of the window's, or new orders going on, finishes first (a real wait, polled; never a pause for show)
-        const until = Date.now() + 90000;
-        for (;;) { if (!K.busy() && !(W.B.run && B.run.arrivalBusy)) return true; if (Date.now() > until) return false; await sleep(200); }
+        const until = Date.now() + 90000, t1 = Date.now(); let told = false;
+        for (;;) {
+          if (!K.busy() && !(W.B.run && B.run.arrivalBusy)) return true; if (Date.now() > until) return false;
+          // (HOLDPROG, Paul 27 Oct 2026: "it took over a minute to complete ... there was no feedback": a wait of more than a moment says what it waits for, once)
+          if (!told && Date.now() - t1 > 600) { told = true; emit({ type: "wait", why: K.busy() ? String(K.flow() || "another change") : "new orders are being added to the sheets" }); }
+          await sleep(200);
+        }
       };
       // one sheet after its pieces are off: its freed room is filled, its QR label is made again, and it is read back
       const finish = async (sh, removed, spots) => {
