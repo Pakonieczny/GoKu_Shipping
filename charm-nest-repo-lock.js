@@ -271,7 +271,9 @@ input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!imp
       if (via) { field.hidden = true; d.dataset.repoVia = "session"; }
       const say = (text, kind) => { msg.className = "repoMsg" + (kind === "bad" ? " bad" : ""); msg.textContent = ""; if (kind === "spin") { const s = doc.createElement("span"); s.className = "repoSpin"; msg.appendChild(s); msg.appendChild(doc.createTextNode(text)); } else msg.textContent = text; };
       const wait = on => { busy = on; input.disabled = on; go.disabled = on || Date.now() < lockedUntil; cancel.disabled = on; };
-      const finish = info => { if (done) return; done = true; clearTimeout(hold); input.value = ""; try { if (d.open) d.close(); } catch (_) { d.removeAttribute("open"); } d.remove(); resolve(info); };
+      // (a right password for Settings hands over to the Settings window, which grows out of what opened it: this window leaves without its own flight back,
+      //  so two windows never fly at once against each other)
+      const finish = info => { if (done) return; done = true; clearTimeout(hold); input.value = ""; if (info && action === "settings") d.setAttribute("data-no-grow", ""); try { if (d.open) d.close(); } catch (_) { d.removeAttribute("open"); } d.remove(); resolve(info); };
       const lockLine = () => { say(SAY.locked, "bad"); go.disabled = true; clearTimeout(hold); hold = setTimeout(() => { if (!done && !busy) { go.disabled = false; say(""); } }, Math.max(0, lockedUntil - Date.now()) + 50); };
       /* a delete with a standing session: the confirm sentence is the dialog; no password, no attempt record (the server notes who deleted what) */
       async function submitSession() {
