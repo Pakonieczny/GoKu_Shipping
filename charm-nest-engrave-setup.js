@@ -51,6 +51,13 @@
     return ls.join('\n');
   };
   const faceOfJob = j => { const F = Faces(); return F ? F.faceOf(j) : 'back'; };
+  /** EDITOR WORDS (Paul, 27 Oct 2026): is this face of the piece engraved by parts the charm editor added (the page's Engrave.faceHasEditorArt, asked of the piece's job of that face, else any of its jobs)? false where the page cannot say. */
+  function editorArtOn(vm, face) {
+    const E = root && root.Engrave, jobs = ((vm && (vm.pieceJobs || vm.jobs)) || []).filter(Boolean);
+    if (!E || typeof E.faceHasEditorArt !== 'function' || !jobs.length) return false;
+    const j = jobs.find(x => faceOfJob(x) === face) || jobs[0];
+    try { return !!E.faceHasEditorArt(j, face); } catch (_) { return false; }
+  }
 
   /* ── the buyer's words ─────────────────────────────────────────────────────── */
   /** The words of each face found by its label: "front - W" / "back - 1. 27. 24", "Front: A, Back: B" (also on one line). { front: [lines]|null, back: [lines]|null, any }. Never guesses: no label, no words. */
@@ -228,7 +235,8 @@
       const mine = pieceJobs.filter(j => faceOfJob(j) === face), wordsList = mine.map(wordsOfJob).filter(Boolean), distinct = [...new Set(wordsList)];
       const perPiece = !slot && distinct.length > 1, w = setup[face];
       const locked = mine.find(j => DECIDED.includes(j.state) && j.state !== 'none') || null;
-      let lines = perPiece ? [] : distinct.length ? distinct[0].split('\n') : (w ? w.lines.slice() : []);
+      const bare = mine.length > 0 && mine.every(j => j.fit && j.fit.artOnly);   // (EDITOR WORDS: a face engraved by the charm editor's parts alone shows no words, not the order's offer it did not take)
+      let lines = perPiece || bare ? [] : distinct.length ? distinct[0].split('\n') : (w ? w.lines.slice() : []);
       // (the words the system or the person gave, not the fit's own line split and capitals: the panel opens on exactly the choice, and a font-only save never sends the cut's layout as "words")
       if (!perPiece && !locked && distinct.length && w && w.lines && w.lines.length) { const fid = fontIdOf(line, face, w.fontWord, slot); if (runOf(lines, fid) === runOf(w.lines, fid)) lines = w.lines.slice(); }
       const by = locked ? str(locked.approvedBy || locked.decidedBy || (locked.decision && locked.decision.by)) : '';
@@ -357,8 +365,16 @@
         if (DECIDED.includes(j.state) && !wasDecided) continue;
         const at = slotOfJob(j);
         if (only && at !== only) continue;   // (a piece's own edit re-seeds that piece's jobs only: disc 2 never reaches disc 1)
-        const seed = F.seedFor(setup, face, at); if (!seed) continue;
         const touched = !!(patch && patch[face] !== undefined);
+        const seed = F.seedFor(setup, face, at);
+        // EDITOR WORDS (Paul, 27 Oct 2026: "the system should not force the user to also add text on top of already added text from within the Charm Editor"): a person who empties the words of a face
+        // the charm editor drew means NO words there (env.clearWords: the face is approved as the editor drew it); without that art an empty box changes nothing, as before
+        if (!seed && touched && env.artOnly && env.clearWords && env.artOnly(j) && wordsOfJob(j)) {
+          if (wasDecided && !(env.reopenForEdit && env.reopenForEdit(j))) { res.kept = (res.kept || []).concat(j.key); continue; }
+          if (await env.clearWords(j, by, whyText)) res.seeded.push(j.key);
+          continue;
+        }
+        if (!seed) continue;
         if (wasDecided && !touched) continue;
         // a face the person did not touch keeps its job when the words are the same words however the fit laid them out ("NAME" / "ONE" in capitals is "Name One");
         // a face the person edited re-seeds when the words, or the font picked for this face, differ from the job's
@@ -425,6 +441,7 @@
    *  no labels at all) the words of the face it replaces. Never a guess between two faces. */
   function seedText(vm, face, mode) {
     const here = vm.rows.find(r => r.face === face); if (here && here.text) return here.text;
+    if (editorArtOn(vm, face)) return '';   // (EDITOR WORDS: a face the charm editor drew is engraved already; the buyer's words stay an offer, never filled in for the person)
     const lab = labelled(vm.raw); if (lab[face]) return lab[face].join('\n');
     if (mode !== 'both' && !lab.any) {
       const other = vm.rows.find(r => r.face !== face && r.text), rd = vm.setup && vm.setup[face === 'front' ? 'back' : 'front'];
@@ -608,5 +625,5 @@
   /** A short signature of what the control would show (hosts that cache their card draw it again when it changes). */
   const sig = (row, o) => { const vm = read(row, o); return vm ? vm.sig : ''; };
 
-  return { mount, html, bind, read, wants, sig, setupFor, buildOverride, consequences, apply, labelled, patchOf, fontChoices, derivedReading, autoChoice, diffFromAuto, fontIdOf, DRAFTS, NOTES, MODE_TABS };
+  return { mount, html, bind, read, wants, sig, setupFor, buildOverride, consequences, apply, labelled, patchOf, fontChoices, derivedReading, autoChoice, diffFromAuto, fontIdOf, editorArtOn, DRAFTS, NOTES, MODE_TABS };
 });
