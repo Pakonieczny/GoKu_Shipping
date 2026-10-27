@@ -52,20 +52,24 @@ const tx = (rid, i, sku, extra = {}) => Object.assign({ transaction_id: Number(`
 const pers = text => ({ is_personalized: true, variations: [{ formatted_name: 'Metal', formatted_value: 'Sterling Silver' }, { formatted_name: 'Personalization', formatted_value: text }] });
 const receipt = (rid, txs) => ({ receipt_id: rid, order_number: rid, name: 'Buyer ' + rid, country_iso: 'US', city: 'Austin', message_from_buyer: '', update_timestamp: day, create_timestamp: day - 3600, status: 'Paid', is_shipped: false, transactions: txs });
 // W1..W3: words that need a decision (signed in / nobody signed in / after an idle sign-out) · C1..C3: words to approve · M: the order window's message
-const R = { W1: '3522100001', W2: '3522100002', W3: '3522100003', C1: '3522100004', C2: '3522100005', C3: '3522100006', M: '3522100007' };
+// P: Paul's order 4202674150 (26 Oct 2026): a buyer's words with a message beside them, a proposal: it goes to Approve by itself (AUTOWORDS), nobody presses "Engrave these words"
+const R = { W1: '3522100001', W2: '3522100002', W3: '3522100003', C1: '3522100004', C2: '3522100005', C3: '3522100006', M: '3522100007', P: '3522100008' };
 // (ENGPRE, Paul 13 Oct 2026: a short personalisation that is all the buyer wrote is taken as the words, with no paid reading, and goes straight to its
 //  approval; so W1..W3 carry a buyer's message too, which makes their words a proposal for a person to settle: "Check the requested inscription")
-const asks = rid => Object.assign(receipt(rid, [tx(rid, 1, 'BR-TST-0' + rid.slice(-1), pers('WHICH ONE?'))]), { message_from_buyer: 'Two names in the box, please pick the right one' });
+// (AUTOWORDS, Paul 26 Oct 2026: "The user should not need to press this 'Engrave these Words'": a job that holds words goes on to Approve by itself; only a job
+//  with no words, or with a character no engraving font has, still waits for a person. So W1..W3's words carry a Thai letter (ส) no engraving font draws.)
+const asks = rid => Object.assign(receipt(rid, [tx(rid, 1, 'BR-TST-0' + rid.slice(-1), pers('WHICH ONE? ส'))]), { message_from_buyer: 'Two names in the box, please pick the right one' });
 const receipts = [
   asks(R.W1), asks(R.W2), asks(R.W3),
   receipt(R.C1, [tx(R.C1, 1, 'BR-TST-04', pers('CARLA'))]), receipt(R.C2, [tx(R.C2, 1, 'BR-TST-01', pers('DORA'))]), receipt(R.C3, [tx(R.C3, 1, 'BR-TST-02', pers('EDNA'))]),
-  receipt(R.M, [tx(R.M, 1, 'BR-TST-03', pers('FAYE'))])
+  receipt(R.M, [tx(R.M, 1, 'BR-TST-03', pers('FAYE'))]),
+  Object.assign(receipt(R.P, [tx(R.P, 1, 'BR-TST-04', pers('Eleyni'))]), { message_from_buyer: 'Can you make it look nice on the back please' })
 ];
 const K = Object.fromEntries(Object.entries(R).map(([n, rid]) => [n, rid + '_' + rid + '1']));
 const agentResults = { engraveIntent: o => {
   const txt = String(o.messages[0].content[0].text), m = /Personalisation field: (\[.*?\])/.exec(txt); let p = []; try { p = JSON.parse(m ? m[1] : '[]'); } catch (_) {}
   const req = { side: 'back', font: null, handwriting: false, image: false };
-  if (p.some(x => /WHICH ONE/.test(x))) return { engrave: false, text: '', source: 'none', sourceQuote: '', requests: req, questions: ['Which of the two names is wanted?'], confidence: 0.3 };
+  if (p.some(x => /WHICH ONE|Eleyni/.test(x))) return { engrave: false, text: '', source: 'none', sourceQuote: '', requests: req, questions: ['Which of the two names is wanted?'], confidence: 0.3 };
   const e = p.length > 0; return { engrave: e, text: p.join('\n'), source: e ? 'personalization' : 'none', sourceQuote: p[0] || '', requests: req, questions: [], confidence: e ? 0.97 : 0.95 };
 } };
 
@@ -123,7 +127,9 @@ async function partA(browser) {
     await page.click(useBtn(k));
   };
   const states = await page.evaluate(() => Object.fromEntries([...Engrave.items().values()].map(j => [j.key, j.state])));
-  check(['W1', 'W2', 'W3'].every(n => states[K[n]] === 'words') && ['C1', 'C2', 'C3', 'M'].every(n => states[K[n]] === 'review'), 'the real run reached the engraving review (3 words to decide, 4 to approve): ' + JSON.stringify(Object.fromEntries(Object.entries(states).map(([k, v]) => [k.slice(-4), v]))));
+  check(['W1', 'W2', 'W3'].every(n => states[K[n]] === 'words') && ['C1', 'C2', 'C3', 'M', 'P'].every(n => states[K[n]] === 'review'), 'the real run reached the engraving review (3 words to decide, 5 to approve): ' + JSON.stringify(Object.fromEntries(Object.entries(states).map(([k, v]) => [k.slice(-4), v]))));
+  const p = await page.evaluate(k => { const j = Engrave.items().get(k); return j && { state: j.state, text: j.text, by: j.decision ? j.decision.by : '' }; }, K.P);
+  check(p && p.state === 'review' && p.text === 'Eleyni' && !p.by, 'AUTOWORDS: a buyer\'s words with a message (a proposal) went on to Approve by themselves, nobody pressed "Engrave these words": ' + JSON.stringify(p));
 
   if (want('A')) {
     console.log('· A1: signed in (the Admin): Engrave these words, Approve engraving, no bar, no pop-up');
@@ -166,6 +172,8 @@ async function partA(browser) {
     await focusJob(K.W3, R.W3); await page.waitForSelector(useBtn(K.W3), { timeout: 20000 });
     await page.fill(wordsBox(K.W3), 'TYPED WORDS');
     await page.click(useBtn(K.W3)); await page.waitForSelector('.cnNameBar[data-kind="ask"]', { timeout: 8000 });
+    // (the bar takes the keys a frame after it is drawn, as a person sees it: Esc pressed in the same instant went to the button under it)
+    await page.waitForFunction(() => { const b = document.querySelector('.cnNameBar[data-kind="ask"]'); return !!b && b.contains(document.activeElement); }, null, { timeout: 4000 });
     await page.keyboard.press('Escape'); await page.waitForFunction(() => !document.querySelector('.cnNameBar'), null, { timeout: 4000 });
     await page.waitForTimeout(500);
     const kept = await page.evaluate(k => { const t = document.querySelector(`#egQueue .rvItem[data-key="${k}"] .engp .engpWords`); return t ? t.value : null; }, K.W3);
