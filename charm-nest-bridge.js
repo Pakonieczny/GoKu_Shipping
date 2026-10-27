@@ -4485,6 +4485,10 @@ const Pool = window.Pool = (() => {
     /* A mismatched pair named by TWO master designs (Paul, 10 Oct 2026: a SKU or title that names a Tennis Ball and a Tennis Racket, Left and Right options, a 2-symbols line's two signs;
        spec.pair.members): the Left ear is cut from the first design and the Right ear from the second, each facing its own side. Without this the second design was never cut and the
        line fell to the one glued piece of the first. A line whose second design cannot be had is held, never made as the first alone. */
+    // A line pooled before the pair and count rule keeps the pieces it has (its pool rows' own quantity; never added to silently): spec.pieceCount is pinned to
+    // them and spec.pair.legacy says so, so piecesFor below gives it no side and no plan. (27 Oct 2026: before the pair's and the set's designs are read: a line whose pieces were
+    //  all taken off is unpinned here (KITEPAIR), and a set read while it was still pinned came out as N pieces of the first design)
+    pinPooled(row);
     const two = memberSkus(sp); let ear2 = null;
     if (two && two.L === sp.designSku) {
       const entry2 = Master.entryFor(two.R) || await Master.fetchEntry(two.R); if (entry2) read.push(entry2);
@@ -4520,9 +4524,6 @@ const Pool = window.Pool = (() => {
        outline. What a line makes is charm-nest-pair.js piecesFor's word. A line an older run made before pieces had a side (and a piece of it is still
        on a sheet) stays as it was until it is taken off. Every other line makes `quantity` pieces from the one charm (or the count the intake set),
        exactly as before. */
-    // A line pooled before the pair and count rule keeps the pieces it has (its pool rows' own quantity; never added to silently): spec.pieceCount is pinned to
-    // them and spec.pair.legacy says so, so piecesFor below gives it no side and no plan.
-    pinPooled(row);
     if (sp.pieceNote) agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: ${sp.pieceNote}`);
     const Pair = window.CharmNestPair, wanted = Pair && Pair.piecesFor && PoolPieces && !gluedLine(row) ? Pair.piecesFor(pairLine(row), base) : null;
     // (a plan is the pieces of an earring pair, or ONE piece with its side: a single earring whose line names its ear is cut as that ear, the Right the mirror image by the same facing rule; a single that names no ear has no side and is cut as drawn)

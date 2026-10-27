@@ -215,9 +215,11 @@ const read = (line, c) => O.interpretLine(order, line, c || ctx({ aliases: LINK 
     await w.Pool.poolAdd(row, null);
     ok(!w.calls.some(x => x.body && x.body.op === 'poolPut') && w.pages.silver.charms.length === 0, 'nothing is written or put on a sheet'); ok(row.state === 'unmatched' && row.problems.some(p => p.kind === 'unmatchedSku' && p.sku === D2), 'it asks about the missing design: ' + row.state);
   }
-  { // an old line (pooled before) keeps its one piece: pinPieces marks it legacy and the set is not applied
+  { // an old line pinned to the one piece it was pooled with, that piece taken off (no pool row left): made up again at the set (KITEPAIR, Paul 13 Oct 2026: "a line taken off is made up new
+    // at the rule's count"), the first design and then the second; never two pieces of the first design (27 Oct 2026: the set was read while the line was still pinned)
     const w = world([D1, D2]), row = fixtureLine(1); O.pinPieces(row.spec, 1); ok(row.spec.pair.legacy, 'pinned to the one piece it had');
-    await w.Pool.poolAdd(row, null); const put = w.calls.find(x => x.body.op === 'poolPut'); eq(put.body.pools.map(p => p.sku), [D1], 'an old line is exactly what it was: one piece of the first design');
+    await w.Pool.poolAdd(row, null); const put = w.calls.find(x => x.body.op === 'poolPut'); eq(put.body.pools.map(p => p.sku), [D1, D2], 'its piece taken off, the line is made up again as the set: the first design, then the second');
+    ok(!row.spec.pair.legacy, 'and the pin is taken back');
   }
   { // a line that is not a set is unchanged: a plain necklace of one design, and an earring pair of two saved designs
     const w = world([D1]), line = necklace({ transactionId: '5300000778' }), sp = O.interpretLine(order, Object.assign({}, line, { sku: D1 }), ctx({}, [D1]));
