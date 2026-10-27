@@ -170,6 +170,16 @@ const root = path.join(__dirname, '../..');
       await page.keyboard.press('Shift+ArrowDown'); q = await pose(cB); assert(Math.abs(q.cyPt - (p0.cyPt + MM)) < 1e-6, 'Shift + ↓ moves it 1 mm: ' + (q.cyPt - p0.cyPt));
       await page.keyboard.press('ArrowLeft'); await page.keyboard.press('Shift+ArrowUp'); q = await pose(cB);
       assert(Math.abs(q.cxPt - p0.cxPt) < 1e-6 && Math.abs(q.cyPt - p0.cyPt) < 1e-6 && q.size === p0.size && q.angle === p0.angle, 'and back exactly: ' + JSON.stringify([q, p0]));
+      // NUDGEFAST (Paul, 27 Oct 2026: "extremely delayed, up to 5 sec from key press to effect on the screen"): a held arrow, 30 presses sent as fast as a key repeats, moves the charm at
+      // once on each press; the check and the colours follow once, after the keys rest
+      const burst = await page.evaluate(() => { const el = document.activeElement || document.body, t0 = performance.now(); for (let i = 0; i < 30; i++) el.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', code: 'ArrowRight', bubbles: true, cancelable: true })); return { ms: performance.now() - t0, pending: !!CNManual._MC.keyRun }; });
+      q = await pose(cB); assert(Math.abs(q.cxPt - (p0.cxPt + 30 * 0.05 * MM)) < 1e-6, '30 presses move it 1.5 mm at once: ' + (q.cxPt - p0.cxPt) / MM + ' mm');
+      assert(burst.ms < 250 && burst.pending, `30 presses take ${burst.ms.toFixed(0)} ms in all (each moves and draws, no check yet): ` + JSON.stringify(burst));
+      await page.waitForTimeout(400);
+      assert.equal(await page.evaluate(() => CNManual._MC.keyRun), null, 'the check ran once the keys rested');
+      for (let i = 0; i < 30; i++) await page.keyboard.press('ArrowLeft');
+      await page.waitForTimeout(400); q = await pose(cB); assert(Math.abs(q.cxPt - p0.cxPt) < 1e-6, 'and back: ' + (q.cxPt - p0.cxPt));
+      console.log(`ok   2c+ NUDGEFAST: 30 arrow presses in ${burst.ms.toFixed(0)} ms, checked once at rest`);
       poseB.cxPt = q.cxPt; poseB.cyPt = q.cyPt;
       console.log(`ok   2c the size chip beside B ("${c.text}", outside its frame), gone for a charm at 100 % and back for B, ↺ to 100 % and + to 105 % again; → 0.05 mm, Shift 1 mm, exact`);
     }

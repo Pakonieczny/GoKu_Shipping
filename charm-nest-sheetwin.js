@@ -5491,6 +5491,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** The UI lets go of Manual Control (what was moved is handed back to the caller). */
   function mcStop() {
     cancelAnimationFrame(MC.spring); MC.spring = 0; MC.springBad = false; clearInterval(MC.beat); clearTimeout(MC.msgT);
+    if (MC.keyRun) { clearTimeout(MC.keyRun.t); MC.keyRun = null; }   // (NUDGEFAST: turned off with a run of arrows unchecked: the sheet's own check reads the placements as they are saved)
     MC.on = false; MC.sel = null; MC.lift = null; MC.drag = null; MC.valid = null; MC.G = null; MC.grids.clear(); MC.msg = "";
     MC.bad = new Set(); MC.badWhy = new Map(); if (W.el.plateBox) W.el.plateBox.style.cursor = ""; tryDo(mcToolPaint); tryDo(mcWarn);   // (MCFREE)
     if (W.el.plate) { W.el.plate.classList.remove("manual", "mcDrag"); W.el.fx.style.cursor = ""; }
@@ -5625,6 +5626,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function mcDown(e) {
     if (e.button > 0) return;
     e.preventDefault();
+    if (MC.keyRun) mcNudgeRest(MC.keyRun.x);   // (NUDGEFAST: a run of arrows still to check is checked before the hand takes anything)
     if (MC.wait) return;   // (MOVEINSTANT 2: the sheet's own moves are still being saved in the background: it takes a hand once they are)
     if (MC.spring || !W.geom) return;
     const pt = mcPx(e);
@@ -5716,8 +5718,30 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     e.preventDefault();
     const q = Object.assign({}, mcDraftOf(x));
     if (mv) { q.cxPt = Math.max(0, Math.min(W.st ? W.st.wPt : Infinity, q.cxPt + mv[0])); q.cyPt = Math.max(0, Math.min(W.st ? W.st.hPt : Infinity, q.cyPt + mv[1])); } else if (turn) q.angle = normDeg(Math.abs(turn) === MC_TURN ? Math.round((q.angle + turn) / MC_TURN) * MC_TURN : q.angle + turn); else q.size = clampSize(q.size + grow);
-    mcApply(x, q, mv ? false : undefined);   // (NUDGE: an arrow says nothing: its colour, sage or red, and the stage's "N charms overlap" say it; a held key would stack toasts)
+    if (mv) mcNudge(x, q); else mcApply(x, q);   // (NUDGE: an arrow says nothing: its colour, sage or red, and the stage's "N charms overlap" say it; a held key would stack toasts)
     return true;
+  }
+  /* (NUDGEFAST, Paul 27 Oct 2026: "When I attempt to use the arrow key to move a charm it is extremely delayed, up to 5 sec from key press to effect on the screen".) Every press ran THE check of the charm
+     and of every charm round where it left and where it went, each a copy of the sheet's grid and a pixel check; a held key queued seconds of them. An arrow now moves the charm at once: kept as
+     put and drawn there with no check; the check and the colours of it and of its neighbours follow once, MC_KEY_REST ms after the last press of a run. Nothing is refused on the way: a nudge is
+     always taken, red where it overlaps (MCFREE). */
+  const MC_KEY_REST = 140;
+  function mcNudge(x, q) {
+    if (!x.c || !x.c.bits || !x.c.w) return mcApply(x, q, false);   // (a drawing not loaded here is checked, and refused, as before)
+    if (MC.keyRun && MC.keyRun.x !== x) mcNudgeRest(MC.keyRun.x);   // (another charm's run of arrows: its check first)
+    const run = MC.keyRun && MC.keyRun.x === x ? MC.keyRun : (MC.keyRun = { x, from: mcDraftOf(x), t: 0 });
+    const p = { cxPt: +q.cxPt, cyPt: +q.cyPt, angle: normDeg(q.angle), size: clampSize(q.size == null ? 1 : q.size) };   // (exact, as THE check keeps a pose that passes: a 0.05 mm step is one)
+    if (mcChanged(MC.from.get(x.id), p)) MC.edits.set(x.id, p); else MC.edits.delete(x.id);
+    MC.valid = p; mcShow(x, p); paintFx();
+    clearTimeout(run.t); run.t = setTimeout(() => mcNudgeRest(x), MC_KEY_REST);
+  }
+  function mcNudgeRest(x) {
+    const run = MC.keyRun; if (!run || run.x !== x) return;
+    clearTimeout(run.t); MC.keyRun = null;
+    if (!MC.on || x.gone) return;
+    const q = mcDraftOf(x);
+    tryDo(() => mcRecolour([x.id].concat(mcNearIds(MC.sh, x.c, run.from, MC.edits), mcNearIds(MC.sh, x.c, q, MC.edits))));
+    paintFx(); mcRender();
   }
   /** A step of the charm in hand to pose q (a nudge, a turn, a size, ↺): THE check, then taken (MCFREE: where it overlaps, taken and shown red); `said`: the words when it fits,
    *  false for no words at all (a nudge). */
