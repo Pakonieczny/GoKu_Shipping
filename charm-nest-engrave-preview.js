@@ -182,6 +182,19 @@
     if (m.has(key)) return m.get(key);
     const v = make(); if (v) m.set(key, v); return v;
   }
+  /* CHARM EDIT · BACK (27 Oct 2026): the parts a person added to a piece's BACK in the charm editor (charm-nest-art-edit.js: the charm's artBack, in its own points as seen from the front) are engraved by
+     the back's own file (charm-nest-pdf.js buildBackFile: turned over with the cut, M then R), so the Back box draws them as the Front box draws the design's art: in the frame of the face (view.M then
+     view.R, or the charm's own turn), in the laser's colours (CharmNestPDF.drawCharm: a hatched part blue, a line in its pen). A back with nothing added is drawn exactly as before. */
+  const backAddsOf = charm => (charm && Array.isArray(charm.artBack) && charm.artBack.some(isArt) ? charm.artBack : null);   // (the charm's own list: a frame is kept per list)
+  /** The frame of a back view with the parts added to the back (`adds`, the charm's artBack) in it: the view's own frame and box, its art those parts turned as the view turns the charm. One per view and list. */
+  function frameOfViewWith(view, adds) {
+    const F = frameOfView(view); if (!F || !adds || F.face !== 'back') return F;
+    return memo(adds, 'v' + ident(view), () => {
+      const G = GEO(); if (!G || !G.transformSeg) return F;
+      const art = adds.filter(isArt).map(d => { try { const a = view.M ? G.transformSeg(d, view.M) : d; return view.R ? G.transformSeg(a, view.R) : a; } catch (_) { return null; } }).filter(Boolean);
+      return { kind: 'view', face: 'back', box: F.box, outline: F.outline, cut: F.cut, art };
+    });
+  }
   /** The frame of a job's view (a back view: the charm turned over and turned; a front view: as it is, turned): the cut geometry as the work area draws it, and for the FRONT the design's art in the same frame. */
   function frameOfView(view) {
     if (!view || !Array.isArray(view.members) || !view.members.length) return null;
@@ -209,7 +222,7 @@
       const cx = (ob[0] + ob[2]) / 2, cy = (ob[1] + ob[3]) / 2, M = face === 'front' ? null : G.mirrorX(cx), R = G.rotateAbout(cx, cy, 90 - upA);
       const T = s => G.transformSeg(M ? G.transformSeg(s, M) : s, R);
       const tcut = cut.map(T), box = unionBox(tcut); if (!box) return null;
-      const art = face === 'front' ? charm.members.filter(m => !cut.includes(m) && isArt(m)).map(T) : [];
+      const art = face === 'front' ? charm.members.filter(m => !cut.includes(m) && isArt(m)).map(T) : (backAddsOf(charm) || []).filter(isArt).map(T);   // (the back: what a person added to it, CHARM EDIT · BACK)
       return { kind: 'charm', face, box, outline: tcut[cut.indexOf(outline)], cut: tcut, art };
     });
   }
@@ -257,7 +270,7 @@
   /** The frame to draw for `o` ({ job, row, slot, face }): the job's view when it has one, else the piece's pool charm. null when neither exists. */
   function frameFor(o) {
     o = o || {}; const job = o.job, face = job ? faceOfJob(job) : o.face === 'front' ? 'front' : 'back';
-    if (job && job.view) { const f = frameOfView(job.view); if (f) return f; }
+    if (job && job.view) { const f = face === 'back' ? frameOfViewWith(job.view, backAddsOf(charmFor(o))) : frameOfView(job.view); if (f) return f; }
     const charm = charmAny(o); if (!charm) return null;
     const w = job && job.writtenFit, up = w && fin(+w.upAngle) ? +w.upAngle : (face === 'front' ? null : operatorUp(o.row || (job && job.row)));
     return frameOfCharm(charm, face, up);
@@ -345,7 +358,8 @@
         try {
           const M = root && root.Master, entry = (a.row && a.row.spec && M && M.entryFor ? M.entryFor(a.row.spec.designSku) : null) || {};
           const view = G.backView(a.charm, G.viewOptionsFor({ charmUp: a.charm.upAngle, entry, ...(a.face === 'front' ? { face: 'front' } : {}) }));
-          const mask = G.engraveMask(view, { marginMm: +s.engraveMarginMm || 0.8, keepOut: (a.face === 'front' ? a.charm.frontKeepOut : a.charm.backKeepOut) || [] });
+          const adds = a.face === 'front' ? null : backAddsOf(a.charm);   // (CHARM EDIT · BACK: the words keep off what a person added to the back, as the bridge makes every mask of a back: fitInput)
+          const mask = G.engraveMask(view, Object.assign({ marginMm: +s.engraveMarginMm || 0.8, keepOut: (a.face === 'front' ? a.charm.frontKeepOut : a.charm.backKeepOut) || [] }, adds ? { avoid: adds } : {}));
           per[a.face] = { view, mask };
         } catch (e) { return fail('view: ' + str(e && e.message)); }
       }

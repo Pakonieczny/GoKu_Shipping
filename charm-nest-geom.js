@@ -560,7 +560,23 @@
   }
 
   const FRAME_SHARE = 0.85, FRAME_LINE_PT = 0.3;   // (engraveMask: a closed line round at least this share of the body is a frame; half the width of the band kept clear along it, pt)
-  /** The eroded back mask: margin off every cut edge and cut-out, keep-out layers subtracted. */
+  /* CHARM EDIT · BACK (27 Oct 2026): what a person added to a piece's BACK in the charm editor (charm-nest-art-edit.js: the charm's artBack, handed to engraveMask as opts.avoid by charm-nest-bridge.js fitInput and the other makers of a back's mask, in the charm's own
+     points as the keep-outs are) is engraved with the words by the back's own file, so the words keep off it as a front's words keep off the design's art: a closed or filled part keeps its whole
+     inside clear, a closed line round almost the whole body (a frame) only its own line, and an open line a band along itself as wide as its pen. Each outline is cleared on its own (the keep-outs
+     are filled even-odd all at once: two added parts that overlap, or a letter's counter, would open a gap there). `placed`: the parts in the view's frame. A back with nothing added never comes here. */
+  function keepBackArtClear(m, placed) {
+    const out = cloneMask(m), total = area(m);
+    const band = (pg, closed, half) => { for (let i = 0; i + (closed ? 0 : 1) < pg.length; i++) { const a = pg[i], b = pg[(i + 1) % pg.length], dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy); if (!(len > 1e-9)) continue; const nx = -dy / len * half, ny = dx / len * half; rasterPolys([[[a[0] + nx, a[1] + ny], [b[0] + nx, b[1] + ny], [b[0] - nx, b[1] - ny], [a[0] - nx, a[1] - ny]]], out, out, 0); } };
+    for (const k of placed) {
+      if (!k || !Array.isArray(k.subpaths) || !k.subpaths.length || !(k.fill || k.stroke)) continue;
+      const half = Math.max(FRAME_LINE_PT, (+k.lwPt || 0) / 2), polys = flatten(k, 12);
+      if (!k.fill && !k.closed) { for (const pg of polys) band(pg, false, half); continue; }
+      if (!k.fill && total) { const inside = rasterPolys(polys, m); let both = 0; for (let i = 0; i < inside.bits.length; i++) both += inside.bits[i] & m.bits[i]; if (both >= FRAME_SHARE * total) { for (const pg of polys) band(pg, true, half); continue; } }
+      for (const pg of polys) { rasterPolys([pg], out, out, 0); if (k.stroke) band(pg, true, half); }
+    }
+    return out;
+  }
+  /** The eroded back mask: margin off every cut edge and cut-out, keep-out layers subtracted (and on a back, opts.avoid: the parts a person added to it, kept clear: keepBackArtClear). */
   function engraveMask(view, opts) {
     opts = Object.assign({ marginMm: 0.8, keepOut: [] }, opts || {});
     let m = view.mask;
@@ -590,7 +606,7 @@
           m = out;
         }
       }
-    }
+    } else if (opts.avoid && opts.avoid.length) m = keepBackArtClear(m, opts.avoid.map(k => transformSeg(transformSeg(k, view.M), view.R)));
     const rPx = opts.marginMm * PT_PER_MM * m.res;
     m = erode(m, rPx);
     m.marginMm = opts.marginMm; m.wPt = m.w / m.res; m.hPt = m.h / m.res;
