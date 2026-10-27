@@ -3981,6 +3981,13 @@ function replaceCutWhy(sh, ids) {
   return "";
 }
 window.replaceCutWhy = replaceCutWhy;
+/** DUPID (27 Oct 2026): each placement of a SAVED sheet record with the charm it stands for, [{ p, c }] (CharmNestPoolPieces.placedCharms: of two pieces of an older sheet that share one id, the one the
+ *  record's own poolIds names, else the last, as the record was written). */
+function placedOfRecord(d) {
+  const PP = window.CharmNestPoolPieces;
+  if (PP && typeof PP.placedCharms === "function") return PP.placedCharms(d);
+  return ((d && d.placements) || []).map(p => ({ p, c: ((d && d.charms) || []).find(c => c.id === p.id) || null }));
+}
 
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
 const Pool = window.Pool = (() => {
@@ -4559,7 +4566,11 @@ const Pool = window.Pool = (() => {
       // (an ear piece of a line that is not a group, a single earring that names its ear: a group of ONE, however many are bought; discs, letters, charms of a counted necklace: group fields, no ear)
       const mine = pp ? PoolPieces.fieldsOf(grouped ? pp : Object.assign({}, pp, { groupSize: 1 })) : loose ? PoolPieces.cleanGroupFields({ poolId, groupSize: count }) : null;
       const ear = setDs && !pp ? setDs[(copy - 1) % setDs.length] : earOf(pp), cut = ear.src;   // (the ear's own design: the line's one design for every piece but the Right of a pair of two designs; a set of two designs: piece 1 the first design, piece 2 the second, alternating)
-      const charm = pp ? cloneCharm(baseFor(cut, ear2 ? Object.assign({}, pp, { bodyIndex: 0 }) : pp), `${cut.id}:${poolId}`) : setDs ? cloneCharm(cut.charms[0], `${cut.id}:${poolId}`) : byBody ? cloneCharm(byBody.charms[copy - 1], `${src.id}:${poolId}`) : one ? cloneCharm(cutBase, `${src.id}:${poolId}`) : copy === 1 && !base.poolId ? base : cloneCharm(base, `${src.id}:${poolId}`);
+      const charm = pp ? cloneCharm(baseFor(cut, ear2 ? Object.assign({}, pp, { bodyIndex: 0 }) : pp), `${cut.id}:${poolId}`) : setDs ? cloneCharm(cut.charms[0], `${cut.id}:${poolId}`) : byBody ? cloneCharm(byBody.charms[copy - 1], `${src.id}:${poolId}`) : one ? cloneCharm(cutBase, `${src.id}:${poolId}`) : cloneCharm(base, `${src.id}:${poolId}`);
+      /* (DUPID, Paul 27 Oct 2026, order 4208640203: "the system does not recognize their presence on the sheet". The first copy of a line used to BE the master's own charm, id "<design>:0", while
+          nothing marked it taken (base.poolId); a design read again (a reload, a redraw, upkeep) has a fresh master charm, so the next line of it took "<design>:0" too, and the two pieces of two
+          orders on one sheet were one placement: the nest placed the id once, the page gave the spot to one piece, the files and the record to the other. Every piece is a copy named by its pool
+          id, as every other copy always was; what was made before is mended by Pool's index, CharmNestPoolPieces.uniqueIds) */
       charm.name = `${row.order.receiptId} · ${ear.sku}${count > 1 ? ` · ${copy}/${count}` : ""}`;
       charm.order = row.order.receiptId; charm.orderDate = +row.order.createTs || 0; charm.arrivedAt = row.arrivedAt || 0; charm.orderInfo = { receiptId: row.order.receiptId, transactionId: row.line.transactionId, sku: ear.sku, copy, quantity: count, form: sp.form, size: sp.size };
       charm.poolId = poolId; charm.metal = sp.material; charm.lineKey = row.key; charm.pinned = null; charm.excluded = false; if (+row.frontAt > 0) charm.frontAt = +row.frontAt; else delete charm.frontAt;
@@ -5075,6 +5086,7 @@ const Pool = window.Pool = (() => {
     const sheets = allSheets(), f = idx && idx.pages;
     if (f && f.length === sheets.length * 5 && sheets.every((sh, i) => f[i * 5] === sh && f[i * 5 + 1] === sh.charms && f[i * 5 + 2] === sh.charms.length && f[i * 5 + 3] === sh.placements && f[i * 5 + 4] === sh.placements.length)) return idx;
     const charm = new Map(), sheet = new Map(), where = new Map(), pages = [];
+    healIds(sheets);   // (DUPID: two pieces under one id are told apart before anything is read of where they are)
     for (const sh of sheets) {
       const byId = new Map();
       for (const c of sh.charms) { if (!charm.has(c.poolId)) charm.set(c.poolId, c); if (!byId.has(c.id)) byId.set(c.id, c); const w = where.get(c.poolId); if (!w) where.set(c.poolId, [sh]); else if (w.at(-1) !== sh) w.push(sh); }
@@ -5082,6 +5094,35 @@ const Pool = window.Pool = (() => {
       pages.push(sh, sh.charms, sh.charms.length, sh.placements, sh.placements.length);
     }
     return idx = { pages, charm, sheet, where };
+  }
+  /* DUPID (Paul, 27 Oct 2026, order 4208640203: "I can't have this problem in production"): a sheet made before every piece had an id of its own may hold two pieces of two orders under ONE id
+     ("<design>:0"), placed once. The piece the sheet's files and record were written for keeps the id (the last of them, as finishNest and onSheetSaved read the charms by id); the other gets its
+     own id and, having no placement, is what it always was: a piece of the sheet still to place (the order check, the order window and the sheet all say so now).
+     Asked by index() each time it is made again (renaming only), after a restore and by a nest before it starts (uniqueIds): → the number of charms renamed. */
+  const idsOwed = new WeakSet();   // (sheets whose charms were told apart and whose waiting piece is not yet put to a nest: uniqueIds settles them)
+  function healIds(sheets) {
+    const fix = PoolPieces && typeof PoolPieces.uniqueIds === "function" ? PoolPieces.uniqueIds : null; if (!fix) return 0;
+    let n = 0;
+    for (const sh of sheets || []) {
+      let got = []; try { got = fix(sh); } catch (_) { got = []; }
+      if (!got.length) continue; n += got.length; idsOwed.add(sh);
+      try { agent({ metal: sh.metal }, "warn", `${sh.fileBase || labelOf(sh.metal)}: ${got.map(x => `${x.charm.order || x.charm.poolId} · ${x.charm.sku || x.charm.name || "piece"}`).join(", ")} shared ${got.length === 1 ? "its id" : "their ids"} with another piece and ${got.length === 1 ? "was" : "were"} never placed: told apart, ${got.length === 1 ? "it waits" : "they wait"} to be placed on this sheet`); } catch (_) { /* a word only */ }
+    }
+    return n;
+  }
+  /** healIds for these sheets (every sheet when none are named), the index made again when any charm was renamed. opts.settle (a restore): a sheet told apart that the laser has not cut and that
+   *  is not busy keeps every placed charm where it is and takes its waiting piece at its next nest (Orders.keepRest: append only, as a sheet a piece came off of; the run's Resume or the sheet's
+   *  Nest does it, and a piece with no room moves on to the next sheet as any piece does). */
+  function uniqueIds(sheets, opts) {
+    const list = sheets || allSheets(), n = healIds(list); if (n) idx = null;
+    if (opts && opts.settle) for (const sh of list) {
+      if (!idsOwed.has(sh)) continue;
+      if (["nesting", "finishing", "queued"].includes(sh.status) || sh.laserDoneAt || sh.roseCutAt || (typeof replaceCutWhy === "function" && replaceCutWhy(sh))) continue;
+      idsOwed.delete(sh);
+      const placed = new Set((sh.placements || []).map(p => p.id));
+      if ((sh.charms || []).some(c => !c.excluded && !placed.has(c.id))) { try { Orders.keepRest(sh); } catch (e) { console.warn("[dupid] sheet not marked for its waiting piece:", e && e.message); } }
+    }
+    return n;
   }
   const charmOf = poolId => index().charm.get(poolId) || null;
   const sheetOf = poolId => index().sheet.get(poolId) || null;
@@ -5128,7 +5169,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(ListMedia.oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig, greenFits, partnerSheets };
+  return { pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig, greenFits, partnerSheets };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -13201,8 +13242,9 @@ const RunCtl = window.RunCtl = (() => {
       }
       if((d.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(d.metal))) && d.roseStockId && window.RoseStock)await RoseStock.restore(pg,d);
       // the pieces: each placement's pool charm from the master copy, pinned at its cut position
-      for (const p of d.placements || []) {
-        const rc = (d.charms || []).find(c => c.id === p.id); if (!rc || !rc.poolId) continue;
+      // (DUPID, Paul 27 Oct 2026: a placement's charm is the one the record's own poolIds names when two pieces of a sheet made before share its id; the first of them used to be put back in a spot the record gives the other)
+      for (const { p, c: rc } of placedOfRecord(d)) {
+        if (!rc || !rc.poolId) continue;
         if (!Orders.rows().some(row => row.poolIds.includes(rc.poolId))) continue;
         const pool = B.pool.rows.get(rc.poolId) || (await api("charmNestLibrary", { op: "poolGet", poolIds: [rc.poolId] })).pools[rc.poolId]; if (!pool) continue; B.pool.rows.set(rc.poolId, pool);
         const entry = Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry) continue;
@@ -23811,8 +23853,8 @@ const Recall = window.Recall = (() => {
     const bar = window.CNProgress ? CNProgress.start(`Rebuilding ${rec.fileBase || rec.id}`) : null;
     try {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: rec.id })).sheet; if (!d) throw new Error("the sheet record is gone");
-      for (const p of d.placements || []) {
-        const rc = (d.charms || []).find(c => c.id === p.id); if (!rc || !rc.poolId) continue;
+      for (const { p, c: rc } of placedOfRecord(d)) {   // (DUPID: the charm the record's poolIds names, as the restore above)
+        if (!rc || !rc.poolId) continue;
         const pool = B.pool.rows.get(rc.poolId) || ((await api("charmNestLibrary", { op: "poolGet", poolIds: [rc.poolId] })).pools || {})[rc.poolId]; if (!pool) continue; B.pool.rows.set(rc.poolId, pool);
         const entry = Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry) continue;
         const src = await Pool.masterCharm(entry, pool.size);
@@ -24196,6 +24238,9 @@ const Session = window.Session = (() => {
         }
         prim.active = Math.min(group.active || 0, prim.pages.length - 1); CN.showPage(group.metal, prim.active);
       }
+      // (DUPID, Paul 27 Oct 2026: a sheet saved here before every piece had an id of its own may hold two pieces under one id: told apart before anything reads where its pieces are, and the piece
+      //  that was never placed waits on its sheet for the sheet's next nest, append only)
+      try { Pool.uniqueIds(null, { settle: true }); } catch (e) { console.warn("restore: piece ids", e && e.message); }
       const refit = [];   // (ENGENT: undecided jobs saved with Etsy's entities in their words, read decoded below and fitted again from the real characters)
       B.engrave.items = new Map((d.jobs || []).filter(j => j.editingBack && j.editRow || B.orders.byKey.has(j.rowKey || j.key)).map(j => {
         j.lineGap ??= .18; j.row = j.editingBack ? j.editRow : B.orders.byKey.get(j.rowKey || j.key); if (j.state === "fitting") j.state = "ready";

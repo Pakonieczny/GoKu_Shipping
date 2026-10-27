@@ -144,5 +144,39 @@
     return typeof live === "function" ? mine.some(r => live(r)) : mine.some(r => !!r.sheetId);
   }
 
-  return { FIELDS, MAX_PIECES, parsePoolId, groupKeyOf, cleanFields, cleanGroupFields, fieldsOf, sheetCharmFields, metaOf, groupsOf, legacyGlued };
+  /* ── ONE ID, ONE PIECE (DUPID, Paul 27 Oct 2026, order 4208640203: "this order is correctly added to the sheet for both pieces. However, the system does not recognize their presence
+     on the sheet ... these pieces on the sheet are not recognized as being part of the same order") ──
+     A sheet's placement names its charm by the charm's id. The first line of a design used to take the master's OWN charm ("<design>:0") instead of a copy named by its pool id, and after
+     a reload (the design read again, the old pieces still holding that id) the next line of the design took the new master charm, "<design>:0" again: two pieces of two orders under ONE
+     id on one sheet. The nest placed that id once (75 of 76), the page's index gave the spot to the first of the two, the sheet's files and its record (poolIds) to the last: the order
+     window said "SS Sheet 1" for a piece the order check rightly said was on no sheet, and the sheet showed another order's piece in its spot. Every piece is a copy named by its pool
+     id now (charm-nest-bridge.js makePool); these two read and mend what was made before. */
+  const byIdOf = list => { const by = new Map(); for (const c of list || []) if (c && c.id != null) { const k = String(c.id); (by.get(k) || by.set(k, []).get(k)).push(c); } return by; };
+  /** The charm the placement of an id stands for, of the charms `xs` that carry it: the one `listed` (a set of pool ids: the sheet record's poolIds) names, else the LAST (the sheet's files
+   *  and its list were written from a map of the charms by id, where the last one wins). */
+  const ownerOf = (xs, listed) => (xs.length < 2 ? xs[0] || null : (listed && listed.size && xs.slice().reverse().find(c => c.poolId != null && listed.has(String(c.poolId)))) || xs[xs.length - 1]);
+  /** Each placement of a SAVED sheet record with the charm it stands for: [{ p, c }] (c null when the record holds no charm of that id). */
+  function placedCharms(rec) {
+    const by = byIdOf(rec && rec.charms), listed = rec && Array.isArray(rec.poolIds) ? new Set(rec.poolIds.map(String)) : null;
+    return (rec && Array.isArray(rec.placements) ? rec.placements : []).filter(Boolean).map(p => ({ p, c: ownerOf(by.get(String(p.id)) || [], listed) }));
+  }
+  /** Gives each charm of ONE sheet ({ charms, placements }: the page's sheet) that shares its id with a charm of ANOTHER piece an id of its own, `${sourceId}:${poolId}` (the id every piece
+   *  is made with now). The one its placement was written for keeps the id (ownerOf; `listed`: the pool ids the sheet's record lists, when known); the others have no placement, so the sheet
+   *  holds them as pieces still to place, which is what they are: the nest never placed them. Placements are not touched. → [{ charm, was }], the charms renamed (none, almost always). */
+  function uniqueIds(sheet, listed) {
+    const charms = sheet && Array.isArray(sheet.charms) ? sheet.charms : null; if (!charms || charms.length < 2) return [];
+    const by = byIdOf(charms), out = [], lst = listed ? new Set([...listed].map(String)) : null, used = new Map([...by].map(([k, xs]) => [k, String(xs[0].poolId == null ? "" : xs[0].poolId)]));
+    for (const [id, xs] of by) {
+      const keep = ownerOf(xs, lst), pid = String(keep && keep.poolId != null ? keep.poolId : "");
+      for (const c of xs) {
+        const mine = String(c.poolId == null ? "" : c.poolId); if (c === keep || !mine || mine === pid) continue;   // (one piece listed twice, or a charm of no piece, is no clash of two pieces)
+        const base = `${c.sourceId || id.replace(/:[^:]*$/, "")}:${mine}`; let next = base;
+        for (let n = 2; used.has(next) && used.get(next) !== mine; n++) next = `${base}~${n}`;
+        used.set(next, mine); c.id = next; out.push({ charm: c, was: id });
+      }
+    }
+    return out;
+  }
+
+  return { FIELDS, MAX_PIECES, parsePoolId, groupKeyOf, cleanFields, cleanGroupFields, fieldsOf, sheetCharmFields, metaOf, groupsOf, legacyGlued, placedCharms, uniqueIds };
 });

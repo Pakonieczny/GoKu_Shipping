@@ -1394,8 +1394,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // made on another computer, written to the list at once; the page that made it rewrites the drawing a moment later): it is not drawn, listed or counted. A record with no list
     // (an old one) and a list that is empty with nothing taken off say nothing, and every placement stands.
     const listed = Array.isArray(rec.poolIds) && (rec.poolIds.length || rec.dirty === true) ? new Set(rec.poolIds.map(String)) : null;
+    // (DUPID, Paul 27 Oct 2026, order 4208640203: of two pieces of an older sheet that share one id, the placement is the one the record's poolIds names, as the order check reads it)
+    const PP = window.CharmNestPoolPieces, of = PP && typeof PP.placedCharms === "function" ? new Map(PP.placedCharms(rec).map(x => [x.p, x.c])) : null;
     for (const p of rec.placements || []) {
-      const c = saved.get(p.id) || {};
+      const c = (of && of.get(p)) || saved.get(p.id) || {};
       const name = c.name || p.name || "", poolId = c.poolId || null;
       if (listed && poolId && !listed.has(String(poolId))) continue;
       const rid = String(c.order || "").split("/")[0] || (poolId ? poolId.split("_")[0] : "");
