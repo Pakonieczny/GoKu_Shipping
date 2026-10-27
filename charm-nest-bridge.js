@@ -5383,6 +5383,13 @@ const Gate = window.Gate = (() => {
   /** A recorded green-line cut keeps a sheet in the set it is in (charm-nest-shared-orders.js fixedWhy; SetEdit sheetCut): a 10K or 14K sheet the cardinal rule pulled in and that was then cut stays, though nobody ticked it.
    *  (Paul, 26 Oct 2026: it is no longer "the set it can't leave": a cut sheet none of whose partners are in its set leaves it with them, by Decision 1's trim or greenAway, and joins the set they form) */
   const staysCut = sh => goldFamily(sh.metal) && !!sh.roseCutAt && inSetNow(sh);   // (R12: a recorded cut keeps a sheet in the set it is in. audit G4, 25 Oct 2026: it also read solidPick, which ticking ANOTHER sheet of the metal set to false on this one, and the cut sheet was drafted out of its set. Taking it out by hand drafts it first, so inSetNow is false there)
+  /** (Paul, 27 Oct 2026, of 14K Sheet 1 approved into Set 1: "To me it looks like the 14K sheet is correctly added, and has all the pieces but for some reason, this is erroring out") A 10K / 14K sheet a
+   *  person put in its set by their own yes (its Approve, its Include, its Cut Sheet press: solidPick, saved as solidIncluded true) stays there as a recorded cut does. Written again (an artwork edit, Manual
+   *  Control, a piece replaced) it keeps its set, its number and its files' name (nextSheetSeq: keepsPlace); a look at its set never takes it out for being written. Before, the write drafted it on this page
+   *  first, and when the cloud refused the write (the saved full-sheet contour guards its layout) the page held it out of its set while its record kept it in: "Set 1 breaks your rules: 14K Sheet 1 ...
+   *  is not in it". Only a person takes it out (Include off, Take out, Rebuild: each turns its tick off first), or its partners leaving (greenAway, the trim). */
+  const staysJoined = sh => solid(sh.metal) && sh.solidPick === true && inSetNow(sh) && !sh.leftSet;
+  const staysInSet = sh => staysCut(sh) || staysJoined(sh);
   // (the run still arranges a metal's sheets once one of them is in, as it did once the metal was: only the set is per sheet)
   const anyPicked = (m, choices = selected(), runId = B.run?.runId) => choices[m] === true || allSheets().some(p => p.metal === m && p.solidPick === true && (!runId || !p.runId || p.runId === runId));
   const nestable = (sh, run) => !modern(run?.runId) || !solid(sh.metal) || anyPicked(sh.metal, run?.solidIncluded || selected(), run?.runId) || sh.isolated;
@@ -5438,6 +5445,7 @@ const Gate = window.Gate = (() => {
     // a sheet a person took out of its committed set (the In current set switch, or the Library) stays out of every other set until it is put back: the run never pulls it in by itself
     if (sh.leftSet && !inSetNow(sh)) return { include: false, reason: "Taken out of its set" };
     if (sh.roseCutAt && staysCut(sh)) return { include: true, reason: "Cut · stays in its set" };
+    if (staysJoined(sh)) return { include: true, reason: "Approved · stays in its set" };   // (Paul, 27 Oct 2026: a 10K / 14K sheet a person approved into its set stays there while it is written again, as a cut one does)
     const r = O_.sheetRelease({ material: sh.metal, verified: !!sh.verification?.ok, placed: sh.placements.length,
       stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: solid(sh.metal) ? Object.assign({}, choices, { [sh.metal]: picked(sh, choices) }) : sh.metal === "rose" ? Object.assign({}, choices, { rose: picked(sh, choices) ? true : undefined }) : choices });
     // (Paul, 27 Oct 2026: a Rose Gold / 10K / 14K sheet joins a set by its approval like any sheet; its set's Approve waits for its back engravings, never its joining: SetEdit.engravingGap retired)
@@ -5645,7 +5653,9 @@ const Gate = window.Gate = (() => {
       for (const k of MARKS) delete p[k];
       const home = h.home ? open.find(s => s.setId === h.home) || null : null, mates = h.partners.filter(i => { const q = V.page.get(i); return q && h.home && q.setId === h.home && !q.draft; });
       const mineOrders = [...new Set(mates.flatMap(i => h.orders[i] || []))].sort(), here = homeOf(p), tell = tellOf(V, [id].concat(mates));
-      const split = h.split.length ? `${sheetNameOf(p)} belongs to ${setName(h.home)} only: ${ordersWords([...new Set(h.split.flatMap(x => x.orders))].sort())} it shares with ${named(h.split.map(x => x.sheet)).join(", ")} ${h.split.flatMap(x => x.orders).length === 1 ? "ships" : "ship"} in two parts (a ${labelOf(p.metal)} sheet is in one set)` : "";
+      // (Paul, 27 Oct 2026: "it shares with GF Sheet 1 and GF Sheet 1 ship in two parts": each sheet with its set, and with its own orders: SharedOrders splitWords)
+      const splitSet = i => { const q = V.page.get(i); return q && q.setId && !q.draft ? setName(q.setId) : ""; }, splitDay = i => { const q = V.page.get(i), st = q && all.find(s => s.setId === q.setId); try { return st && st.day ? new Date(st.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""; } catch (_) { return (st && st.day) || ""; } };
+      const split = h.split.length ? `${sheetNameOf(p)} belongs to ${setName(h.home)} only: ${V.SO.core.splitWords ? V.SO.core.splitWords(h.split, { name: i => named([i])[0] || i, set: splitSet, day: splitDay }) : `${ordersWords([...new Set(h.split.flatMap(x => x.orders))].sort())} it shares with ${named(h.split.map(x => x.sheet)).join(", ")} ${h.split.flatMap(x => x.orders).length === 1 ? "ships" : "ship"} in two parts`} (a ${labelOf(p.metal)} sheet is in one set)` : "";
       if (inSetNow(p)) {
         if (here && h.home && h.home !== here.setId && !(+p.laserDoneAt > 0) && !(here.processReady || here.laserSetPending || here.laserDoneAt)) { p.greenAway = `Its orders are with the sheets of ${setName(h.home)}: a ${labelOf(p.metal)} sheet is in one set, so it leaves ${here.name || "this set"}`; continue; }
         if (here && mates.length && !basePolicy(p, here.seq, choices).include && !cannotJoin(p, ready)) p.cardinalPull = `Shares ${ordersWords(mineOrders, tell)} with ${named(mates).join(", ")}`;
@@ -6131,14 +6141,17 @@ const Gate = window.Gate = (() => {
   function projectLibraryRecords(rows) {
     window.Cleanups?.seen(rows);   // a sheet here whose record carries a cleanup this page has not applied gets it
     const run = B.run; if (!run || !modern(run.runId) || ["complete","abandoned"].includes(run.status)) return rows;
-    const set = Sets.ofRun(run.runId).find(s=>s.group==='dispatch');
-    const own=new Set(Sets.ofRun(run.runId).map(s=>s.setId)), done=new Set(Sets.ofRun(run.runId).filter(s=>s.committedAt).map(s=>s.setId));
+    const sets = Sets.ofRun(run.runId);
+    const own=new Set(sets.map(s=>s.setId)), done=new Set(sets.filter(s=>s.committedAt).map(s=>s.setId));
     return rows.map(row=>{
       if(row.runId!==run.runId || !solid(row.metal)) return row;
       // a sheet in a committed set (or in a set this run does not hold), and a sheet a set edit held back, is as the cloud says: added to and taken out of a committed set from the Library (Paul, 7 Oct)
       if((row.setId && !row.draft && row.solidIncluded!==false && (!own.has(row.setId) || done.has(row.setId))) || (row.laserHold && +row.laserHold.at>0))return row;
       const live=allSheets().find(p=>p.sheetId===row.id), included=live ? picked(live) || !!live.cardinalPull || staysCut(live) : !!selected()[row.metal] && row.solidIncluded!==false;
-      return {...row,solidIncluded:included,...(!included ? {draft:true,setId:null,setSeq:null,sheetIndex:null,label:null} : set && live && policy(live,set.seq).include ? {draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:live.sheetIndex || row.sheetIndex} : {})};
+      // (Paul, 27 Oct 2026: a run holds several open sets: an included sheet is drawn in the set it is in on this page, never in the run's first set, where a 10K sheet of Set 2 was drawn; one this page
+      //  has not put in a set yet is drawn as its record says)
+      const home=live && inSetNow(live) ? sets.find(s=>s.setId===live.setId) || null : null;
+      return {...row,solidIncluded:included,...(!included ? {draft:true,setId:null,setSeq:null,sheetIndex:null,label:null} : home && policy(live,home.seq).include ? {draft:false,setId:home.setId,setSeq:home.seq,sheetIndex:live.sheetIndex || row.sheetIndex} : {})};
     });
   }
   function refreshMembership() {
@@ -6246,6 +6259,62 @@ const Gate = window.Gate = (() => {
     sh.fileBase = CN.sheetFileBase(sh);
     Session.schedule(); refreshAllCards();
     return true;
+  }
+  /* (Paul, 27 Oct 2026, the false "Set 1 breaks your rules: 14K Sheet 1 shares an order with a sheet of this set but is not in it": "To me it looks like the 14K sheet is correctly added") The red line
+     reads THIS page's copy of the run's sheets (Gate.violations); the Library's cards draw the saved records. A sheet the cloud holds in an open set of this run while this page holds it in no set (its
+     approval made on another computer or tab, a checkpoint from before it, a write of this page that did not go through) made the line false, and the next look at that set (tendSet) would have saved
+     the page's older list of sheets over the cloud's. Such a sheet takes its place back on this page from its record, as Gate.rejoin does for a committed set: only this page's copy changes, nothing is
+     written. `rows`: the records the Library just read; each sheet that disagrees is read again on its own, inside the run's own turn (the resources of a look at the sets and of a sheet's save), so no
+     change of this page can come in between; a sheet being written, nested, held in its window or taken out here, or a run with a change still owed, is left as it is. Resolves how many it put back. */
+  const followTried = new Map();
+  const followOpen = run => new Map(openSetsOf(run.runId).map(s => [String(s.setId), s]));
+  const followHeld = (run, r) => !!r && !r.archived && r.runId === run.runId && !!r.setId && !r.draft && r.solidIncluded !== false;
+  /** (owed: a sheet whose save a reload cut short, written again at once: it is marked changed until that write, Session.restore) */
+  const followable = (run, p, owed) => !!p && !p.recalled && p.runId === run.runId && !inSetNow(p) && !p.leftSet && !!p.sheetId && (owed || (!p.dirty && !!p.persistedDone)) && !["nesting", "finishing", "queued"].includes(p.status) && !holding(p) && !p._manualHold && !p._incBusy && !p._rosePlanning && !p._roseAction && !p._roseStep;
+  function followOne(run, p, rec, owed) {
+    const st = followHeld(run, rec) ? followOpen(run).get(String(rec.setId)) : null; if (!st || !followable(run, p, owed)) return false;
+    Object.assign(p, { draft: false, setId: st.setId, seq: +rec.setSeq || st.seq, setDay: st.day || p.setDay, group: st.group || p.group || "dispatch", sheetIndex: +rec.sheetIndex || null });
+    p.fileBase = rec.fileBase || CN.sheetFileBase(p); if (rec.label) p.label = rec.label;
+    if (goldFamily(p.metal) && rec.solidIncluded === true) p.solidPick = true;   // (its own yes, saved with it: it stays in its set, staysJoined)
+    if (!(st.sheetIds || (st.sheetIds = [])).includes(p.sheetId)) st.sheetIds.push(p.sheetId);
+    if (!(st.materials || (st.materials = [])).includes(p.metal)) st.materials.push(p.metal);
+    try { agent({ run: run.runId, metal: p.metal }, "cloud", `${sheetNameOf(p)}: this page held it in no set while its saved record has it in ${st.name || "Set " + st.seq}; its place is taken back from the record (nothing written)`); } catch (_) { /* a note only */ }
+    return true;
+  }
+  const followTurn = (run, work) => { const ops = window.CharmNestOperations; return ops ? ops.run({ key: "follow:" + run.runId, label: "Reading set membership", resources: ["production:" + run.runId], priority: 5 }, work) : work(); };
+  async function followRecords(rows) {
+    const run = B.run;
+    if (!run || !modern(run.runId) || ["complete", "abandoned"].includes(run.status) || !S.cloud.ok || committing(run)) return 0;
+    const now = Date.now(), want = (rows || []).filter(r => followHeld(run, r) && followOpen(run).has(String(r.setId)) && followable(run, allSheets().find(p => p.sheetId === r.id && !p.recalled)) && !(now - (followTried.get(r.id) || 0) < 60000));
+    if (!want.length) return 0;
+    for (const r of want) followTried.set(r.id, now);
+    const work = async () => {
+      if (R.membershipPending || run.membershipDirty) return 0;
+      let n = 0;
+      for (const r of want) {
+        const p = allSheets().find(q => q.sheetId === r.id && !q.recalled); if (!followable(run, p)) continue;
+        let rec = null; try { rec = ((await api("charmNestLibrary", { op: "getSheet", id: r.id }, { quiet: true })) || {}).sheet || null; } catch (_) { continue; }
+        if (followOne(run, p, rec)) { followTried.delete(r.id); n++; }
+      }
+      if (n) { Session.schedule(); refreshAllCards(); }
+      return n;
+    };
+    try { return await followTurn(run, work); }
+    catch (e) { console.warn("[Gate.followRecords]", e && e.message); return 0; }
+  }
+  /** (Paul, 27 Oct 2026) One sheet whose save a reload cut short (Session.restore writes it again as it stands): a page that had drafted it for a write the cloud refused kept it so in its checkpoint, and
+   *  the write after the reload would have saved it out of the set its record still holds. Its place is taken back from its record first, so the write keeps it there (keepsPlace). Resolves true when it did. */
+  async function followSheet(sh) {
+    const run = B.run;
+    if (!sh || !run || !modern(run.runId) || ["complete", "abandoned"].includes(run.status) || !S.cloud.ok || committing(run) || !followable(run, sh, true)) return false;
+    try {
+      return await followTurn(run, async () => {
+        if (!followable(run, sh, true)) return false;
+        const rec = ((await api("charmNestLibrary", { op: "getSheet", id: sh.sheetId }, { quiet: true })) || {}).sheet || null;
+        const ok = followOne(run, sh, rec, true); if (ok) { Session.schedule(); refreshAllCards(); }
+        return ok;
+      });
+    } catch (e) { console.warn("[Gate.followSheet]", e && e.message); return false; }
   }
   /* ── The "In current set" switch (Paul, 7 Oct 2026: "This toggle is not operational") ──────────────────────────────────────
      The switch was a checkbox that was DISABLED for every sheet of a committed set (and for a cut, a saved or a finished one), and a disabled
@@ -7197,6 +7266,7 @@ const Gate = window.Gate = (() => {
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
   return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) || !!sh.cardinalPull || staysCut(sh) : anyPicked(m),   // (a solid sheet the cardinal rule pulled in is in the set)
+     staysInSet, keepsPlace: sh => !!sh && !!sh.setId && !sh.draft && (committedSheet(sh) || staysInSet(sh)), followRecords, followSheet,   // (Paul, 27 Oct 2026: a sheet written again keeps its set when it may not leave it: nextSheetSeq)
      violations, selfCheck: selfCheckResult, invariantInput, splitWith, cardinalFor, cardinalApply, cardinalSplit, openSets: openSetsOf, openSetOf: collectingOf, newestOpenOf, closedSet, changeMembership, cutInclude, undoGoldJoin, goldWaitHome, rejoin, committedSheet, fixedSet, leftSetOf, leaveSet, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R, autoCut, trimSurplus, unpair, unpairPlan, unpairLine, greenHomes: run => { const V = cardinalView(run || B.run); return V ? greenHomesOf(V, run || B.run) : new Map(); } };
 })();
 
@@ -12517,7 +12587,7 @@ const Sets = window.Sets = (() => {
    *  until they are in it (charm-nest-set-rules.js gate, read by CharmNestReadiness). Derived from the sheets at every drawing, never saved. */
   /** The one line a set gives for how its sheets are tied (Paul, 15 Oct 2026: "how is it that this one set has 4 GF and 2 SS sheets"): "orders 123, 456 link GF Sheet 1, SS Sheet 1 and GF Sheet 2",
    *  and, for an open set that holds more than the minimum, the sheets it is valid without because no order ties them to the others. "" when nothing links two of its sheets and nothing is spare. */
-  function linkLine(g, all, by, homes) {
+  function linkLine(g, all, by, homes, docOf) {
     const SO = window.SharedOrders, SRp = window.CharmNestSetRules, mine = new Set(g.sheets.map(r => r.id)), inSet = all.filter(x => mine.has(x.id));
     // (Paul, 26 Oct 2026: a Rose Gold / 10K / 14K sheet ties no two GF / SS units together: it is attached to the units it shares orders with, never a link between them: SharedOrders formation `anchors`)
     const greenIds = inSet.filter(x => SO.core.isGreen && SO.core.isGreen(x)).map(x => x.id);
@@ -12531,7 +12601,10 @@ const Sets = window.Sets = (() => {
     if (parts.length) lines.push(`${parts.join("; ")}: sheets that share an order stay in one set`);
     if (spare.length) lines.push(`${and(nm(spare.map(r => r.id)))} ${spare.length === 1 ? "shares" : "share"} no order with the other sheets, and the set is valid without ${spare.length === 1 ? "it" : "them"}`);
     // (Paul, 26 Oct 2026) what a green-line sheet of this set shares with GF / SS sheets outside it: a known split, said plainly; it holds nothing
-    if (homes) for (const id of greenIds) { const h = homes.get(id); if (!h || h.home !== String(g.setId) || !h.split.length) continue; const os = [...new Set(h.split.flatMap(x => x.orders))].sort(); lines.push(`${nm([id])[0]} is in this set only: ${ow(os)} it shares with ${and(nm(h.split.map(x => x.sheet)))} ${os.length === 1 ? "ships" : "ship"} in two parts`); }
+    // (Paul, 27 Oct 2026: "it shares with GF Sheet 1 and GF Sheet 1 ship in two parts" named two sheets of two sets alike: each is said with its set, and with its orders: SharedOrders splitWords)
+    const setOfSheet = i => { const sid = (by.get(i) || {}).setId, d = sid && docOf ? docOf(String(sid)) : null; return d ? (+d.seq ? `Set ${+d.seq}` : d.name || "") : ""; };
+    const dayOfSheet = i => { const sid = (by.get(i) || {}).setId, d = sid && docOf ? docOf(String(sid)) : null; try { return d && d.day ? new Date(d.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""; } catch (_) { return (d && d.day) || ""; } };
+    if (homes) for (const id of greenIds) { const h = homes.get(id); if (!h || h.home !== String(g.setId) || !h.split.length) continue; const os = [...new Set(h.split.flatMap(x => x.orders))].sort(); lines.push(`${nm([id])[0]} is in this set only: ${SO.core.splitWords ? SO.core.splitWords(h.split, { name: i => nm([i])[0], set: setOfSheet, day: dayOfSheet }) : `${ow(os)} it shares with ${and(nm(h.split.map(x => x.sheet)))} ${os.length === 1 ? "ships" : "ship"} in two parts`}`); }
     // (PAIR, Paul 26 Oct 2026: an order that ties a second GF / SS sheet to this set is moved by the assembly itself, Gate.unpair: what it does or waits for)
     try { const u = window.Gate && Gate.unpairLine ? Gate.unpairLine(g.setId) : ""; if (u) lines.push(u); } catch (_) { /* no line */ }
     return lines.join(". ");
@@ -12543,11 +12616,12 @@ const Sets = window.Sets = (() => {
     // (Paul, 26 Oct 2026) the ONE set of each green-line sheet, over every sheet the page holds: the set it cannot leave, the set it was matched to, the set it is in, else the earliest-formed set of its partners.
     //  The set it cannot leave: the laser cut it, or its set is approved for laser cutting or committed; a recorded green-line cut alone pins nothing (Gate.greenHomesOf, the checker, the server's splitOfSet)
     let homes = null;
-    try { const SRh = window.CharmNestSetRules, docs = list.filter(x => x.setId), docOf = sid => docs.find(x => String(x.setId) === sid); homes = SO.core.greenHomes ? SO.core.greenHomes(all, { rank: sid => { const d = docOf(sid); return d ? [String(d.day || ""), +d.seq || 0] : ["~", Infinity]; }, open: sid => { const d = docOf(sid); return !d || !(SRh && SRh.exempt(d)); },
+    const docs = list.filter(x => x.setId), docOf = sid => docs.find(x => String(x.setId) === sid);
+    try { const SRh = window.CharmNestSetRules; homes = SO.core.greenHomes ? SO.core.greenHomes(all, { rank: sid => { const d = docOf(sid); return d ? [String(d.day || ""), +d.seq || 0] : ["~", Infinity]; }, open: sid => { const d = docOf(sid); return !d || !(SRh && SRh.exempt(d)); },
       fixed: s => { if (!s.setId) return null; const d = docOf(String(s.setId)); return s.laserDone || (d && ((SRh && SRh.exempt(d)) || d.processReady || +d.laserDoneAt > 0)) ? String(s.setId) : null; } }) : null; } catch (_) { homes = null; }
     for (const g of list) {
       // (Paul, 15 Oct) a set built from sheets that share orders says which orders link which sheets, and which sheets no order ties to the rest: derived at every drawing, never saved
-      if (g.setId && g.sheets.length > 1 && g.status !== "superseded") { let line = ""; try { line = linkLine(g, all, by, homes); } catch (_) { /* no line */ } if (line) g.cardinalLinks = line; else delete g.cardinalLinks; }
+      if (g.setId && g.sheets.length > 1 && g.status !== "superseded") { let line = ""; try { line = linkLine(g, all, by, homes, docOf); } catch (_) { /* no line */ } if (line) g.cardinalLinks = line; else delete g.cardinalLinks; }
       if (!g.setId || g.committedAt || /^complete|superseded/.test(String(g.status || "")) || !g.sheets.length) continue;
       let items; try { items = SO.core.between(all, g.sheets.map(r => r.id), g.setId); if (homes && SO.core.realPartners) items = SO.core.realPartners(all, items, g.setId, homes); } catch (_) { continue; }   // (a known green-line split is no partner to wait for)
       const free = [...new Set(items.flatMap(it => it.thereIds).filter(i => by.get(i) && !by.get(i).fixed))];
@@ -12687,6 +12761,8 @@ const Sets = window.Sets = (() => {
         // the Library's records (S.library.rows) are what the sheet window, the order search and the cards' backs read a
         // sheet by: Sets, the view the Library opens on (Paul, 29 Sep), keeps them too, every metal as it reads them
         S.library.rows = Gate.projectLibraryRecords(records.slice()); S.library.loadedAt = Date.now(); S.library.loadedFor = "all";
+        // (Paul, 27 Oct 2026) a sheet these records hold in an open set of the open run while this page holds it in none takes its place back on this page (Gate.followRecords), and the cards are drawn again
+        Promise.resolve(Gate.followRecords(records)).then(n => { if (n) Gate.refreshMembership(); }).catch(() => {});
       }
       if (S.library.kind !== "sets" || (LD && LD.tab() === "done")) return;
       _cache.sheets=Gate.projectLibraryRecords(_cache.rawSheets || _cache.sheets);
@@ -24273,7 +24349,7 @@ const Session = window.Session = (() => {
       Orders.render(); Engrave.render(); Review.render(); RunCtl.renderBanner(); refreshAllCards(); renderRail(); updateTopSub();
       // (STUCKSHEET, Paul 25 Oct 2026) a sheet whose save the refresh cut short is written again AS IT STANDS (writeAsPlaced: no search, no charm moved), even while the
       // run is stopped: a 10K / 14K sheet no set has picked is nested by no run loop, so before this it stayed unsaved, with no picture and no Manual Control, for good
-      setTimeout(() => { for (const p of allSheets()) if (p._writeOwed) { delete p._writeOwed; if (p.dirty && !["nesting", "finishing", "queued"].includes(p.status) && typeof window.writeAsPlaced === "function") { p._byHand = true; Promise.resolve(window.writeAsPlaced(p)).catch(e => console.warn("restore: owed write", e)); } } }, 3000);
+      setTimeout(() => { for (const p of allSheets()) if (p._writeOwed) { delete p._writeOwed; if (p.dirty && !["nesting", "finishing", "queued"].includes(p.status) && typeof window.writeAsPlaced === "function") { p._byHand = true; Promise.resolve(window.Gate && Gate.followSheet ? Gate.followSheet(p) : false).catch(() => false).then(() => window.writeAsPlaced(p)).catch(e => console.warn("restore: owed write", e)); } } }, 3000);   // (Paul, 27 Oct 2026: its place taken from its record first, Gate.followSheet)
       // (ART EDIT, Paul 27 Oct 2026: a piece whose own artwork was edited keeps its edit in the checkpoint; one edited on another computer since, or taken back to the master there, is
       //  made again from its record, and only those pieces' records are read: charm-nest-art-edit.js sync)
       if (typeof CharmNestArtEdit !== "undefined") Promise.resolve().then(() => CharmNestArtEdit.sync()).catch(e => console.warn("restore: artwork edits", e));

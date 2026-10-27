@@ -2538,7 +2538,7 @@ async function op_setUpdate(b) {
   revTouch(b, ["t:" + id]);   // COST (Oct 2026): it writes this set record alone
   const ref=col(SETS).doc(id);
   await db.runTransaction(async tx=>{
-    const old=await tx.get(ref),patch=keepEditedSheets(old.exists?old.data():null,withoutCleared(old.exists?old.data():null,b.patch || {})),next={...(old.exists?old.data():{}),...patch};
+    const old=await tx.get(ref),patch=await keepListed(tx,id,old.exists?old.data():null,keepEditedSheets(old.exists?old.data():null,withoutCleared(old.exists?old.data():null,b.patch || {}))),next={...(old.exists?old.data():{}),...patch};
     // the numbers a set has given out (`sheetNos`, the highest of each metal) only go up: a page holding an older copy cannot lower them (charm-nest-sheet-name.js)
     if(Object.prototype.hasOwnProperty.call(patch,'sheetNos')){patch.sheetNos=SheetName.mergeNos(old.exists?old.data().sheetNos:null,patch.sheetNos);next.sheetNos=patch.sheetNos;}
     // (Paul, 7 Oct) a committed set whose sheets were added or taken out (its `setEdit`) may hold a sheet that is not ready yet: the set then waits
@@ -2578,6 +2578,37 @@ async function op_setUpdate(b) {
     if(old.exists)tx.update(ref,doc);else tx.set(ref,doc);
   });
   return { ok: true };
+}
+/* (Paul, 27 Oct 2026, the false "Set 1 breaks your rules: 14K Sheet 1 shares an order with a sheet of this set but is not in it") A sheet's own record says which set it is in (the Library draws a
+   set's sheets from them, SetEdit.inSetOf); the set's record keeps a list beside it. A page that saves an older list (a second screen that did not see the sheet join, a workspace from before it, a
+   page whose own write of the sheet was refused) took the sheet off the set's list, labels and order lines while the sheet's record kept it in the set. A sheet the saved list leaves out stays
+   listed, with its labels and its pieces in the order lines, while its own record says it is in this set; a sheet that really leaves is saved out of the set first (the page's assembly writes its
+   draft before the set, tendSet; the Library's set edit writes both itself), so it goes as before. Only the sheets the save leaves out are read. */
+async function keepListed(tx, setId, old, patch) {
+  if (!old || !patch || !Array.isArray(patch.sheetIds) || !Array.isArray(old.sheetIds)) return patch;
+  const now = new Set(patch.sheetIds.map(String)), out = [...new Set(old.sheetIds.map(String))].filter(i => !now.has(i) && isId(i));
+  if (!out.length) return patch;
+  const docs = await txGetAll(tx, out.map(i => col(SHEETS).doc(i)), ["setId", "draft", "solidIncluded", "archived", "metal"]);
+  const keep = docs.filter(d => d.exists && !d.data().archived && SetEdit.inSetOf(d.data()) === setId);
+  if (!keep.length) return patch;
+  const ids = new Set(keep.map(d => d.id)), next = Object.assign({}, patch, { sheetIds: patch.sheetIds.concat([...ids]) });
+  if (Array.isArray(patch.materials)) next.materials = [...new Set(patch.materials.concat(keep.map(d => d.data().metal).filter(Boolean)))];
+  if (Array.isArray(patch.labelFiles)) next.labelFiles = patch.labelFiles.concat((Array.isArray(old.labelFiles) ? old.labelFiles : []).filter(f => f && ids.has(String(f.sheetId)) && !patch.labelFiles.some(g => g && g.path === f.path)));
+  if (patch.orders && typeof patch.orders === "object" && old.orders && typeof old.orders === "object") {
+    const orders = Object.assign({}, patch.orders);
+    for (const [rid, o] of Object.entries(old.orders)) {
+      const was = (o && Array.isArray(o.lines) ? o.lines : []).map(l => [l, (Array.isArray(l && l.copies) ? l.copies : []).filter(c => c && ids.has(String(c.sheetId)))]).filter(([, cs]) => cs.length);
+      if (!was.length) continue;
+      const mine = orders[rid] = Object.assign({ held: (o && o.held) || null }, orders[rid] || {}), lines = mine.lines = (Array.isArray(mine.lines) ? mine.lines : []).slice();
+      for (const [l, cs] of was) {
+        const i = lines.findIndex(x => x && String(x.transactionId) === String(l.transactionId)), line = i >= 0 ? Object.assign({}, lines[i], { copies: (lines[i].copies || []).slice() }) : Object.assign({}, l, { copies: [] });
+        for (const c of cs) if (!line.copies.some(x => x && x.poolId === c.poolId)) line.copies.push(c);
+        if (i >= 0) lines[i] = line; else lines.push(line);
+      }
+    }
+    next.orders = orders;
+  }
+  return next;
 }
 /* Copies a cleanup took off a set's sheet on purpose (the set's `cleanup`, rg-cleanup-2026-09-29) stay off the set when a
    page that still lists them saves its orders. Nothing else in the patch changes. */
