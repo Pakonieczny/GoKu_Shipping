@@ -18,7 +18,8 @@
                                     ids on every computer and every reload; a drawing made again (a new master file) gives others, so an old edit is never put on a new drawing.
      frame(view)                  → the editor's frame (points, y DOWN, in the face's view: job.view, the frame renderBack draws, view.M then view.R) and back: toItem / toSource.
      itemsOf(charm, view, face)   → the parts as the editor shows them (ids, roles, paths in the view frame).
-     encode(changes, ctx)         → the record to save, from the editor's { removed, changed, added } (items in the view frame, with tx ty sx sy rot about the item's own box centre).
+     encode(changes, ctx)         → the record to save, from the editor's { removed, changed, added } (items in the view frame, with tx ty sx sy rot about the item's own box centre, or the
+                                    `matrix` charm-nest-charm-editor.js states for a path or a group; a text's outlines as that editor places them in the face, see leavesOf).
      decode(record, charm, view)  → the editor's changes again, from a saved record.
      load / save / clear / piece / sync   the cloud (artGet / artList / artPut) and the page (the host the bridge sets: setHost).
 
@@ -340,7 +341,10 @@
   }
 
   /* ── the editor's changes → the record ── */
-  /** The leaves of an item (a path or text, or a group of them): { id, role, kind, subpaths (item frame, as drawn), M (its matrix, the group's after its own), paint fields }. */
+  /** The leaves of an item (a path or text, or a group of them): { id, role, kind, subpaths (item frame, as drawn), M (its matrix, the group's after its own), paint fields }.
+   *  (CHARM EDIT, 27 Oct 2026: what charm-nest-charm-editor.js hands back is read as it says it is. A path or a group states its own `matrix` (geometry -> parent), made about the TIGHT box of its
+   *  curves: that one is used, not one made again here about the box of its control points, which differs on any curve that is turned or scaled. A text's `subpaths` are its outlines ALREADY placed
+   *  in the face, its groups' turns included: nothing is put on them again. An item that states no matrix (decode's, a caller's own) is placed by its tx ty sx sy rot as before.) */
   function leavesOf(item, own, parentM, parentRole, out, prefix) {
     out = out || [];
     if (!item || typeof item !== "object") return out;
@@ -348,13 +352,14 @@
       // the group turns and scales about the box of its children as each child places itself
       const kids = item.children.map((ch, k) => ({ ch, id: ch && ch.id != null ? String(ch.id) : (item.id != null ? item.id : prefix || "g") + "." + k }));
       let bb = null;
-      for (const { ch } of kids) { if (!ch || !okSubs(ch.subpaths)) continue; const m = itemMatrix(ch, bboxOf(ptsOf(ch.subpaths))); const b = bboxOf(ptsOf(mapSubs(ch.subpaths, p => ap(m, +p[0], +p[1])))); if (b) bb = bb ? [Math.min(bb[0], b[0]), Math.min(bb[1], b[1]), Math.max(bb[2], b[2]), Math.max(bb[3], b[3])] : b; }
-      const G = mul(itemMatrix(item, bb), parentM || ID);
+      if (!isMat(item.matrix)) for (const { ch } of kids) { if (!ch || !okSubs(ch.subpaths)) continue; const m = itemMatrix(ch, bboxOf(ptsOf(ch.subpaths))); const b = bboxOf(ptsOf(mapSubs(ch.subpaths, p => ap(m, +p[0], +p[1])))); if (b) bb = bb ? [Math.min(bb[0], b[0]), Math.min(bb[1], b[1]), Math.max(bb[2], b[2]), Math.max(bb[3], b[3])] : b; }
+      const G = mul(isMat(item.matrix) ? item.matrix : itemMatrix(item, bb), parentM || ID);
       for (const { ch, id } of kids) leavesOf(Object.assign({}, ch, { id, group: item.group || item.id }), null, G, ROLES.has(item.role) ? item.role : parentRole, out, id);
       return out;
     }
-    const subs = okSubs(item.subpaths) ? item.subpaths : own ? own() : null;
-    out.push({ id: item.id != null ? String(item.id) : prefix || "", role: ROLES.has(item.role) ? item.role : parentRole || null, kind: item.kind === "text" ? "text" : "path", subpaths: subs, M: subs ? mul(itemMatrix(item, bboxOf(ptsOf(subs))), parentM || ID) : null,
+    const subs = okSubs(item.subpaths) ? item.subpaths : own ? own() : null, placed = item.kind === "text" && okSubs(item.subpaths);
+    out.push({ id: item.id != null ? String(item.id) : prefix || "", role: ROLES.has(item.role) ? item.role : parentRole || null, kind: item.kind === "text" ? "text" : "path",
+      subpaths: subs, M: !subs ? null : placed ? ID : mul(isMat(item.matrix) ? item.matrix : itemMatrix(item, bboxOf(ptsOf(subs))), parentM || ID),
       stroke: item.stroke, fill: item.fill, lwPt: item.lwPt, even: item.even, text: item.text, group: item.group });
     return out;
   }
