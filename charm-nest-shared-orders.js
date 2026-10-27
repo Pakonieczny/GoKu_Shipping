@@ -189,6 +189,20 @@
     }
     return out;
   }
+  /** (Paul, 27 Oct 2026, the note under Set-1: "orders 4206987902, 4210212342 it shares with GF Sheet 1 and GF Sheet 1 ship in two parts", two different sheets of two sets with one name) The orders
+   *  a green-line sheet shares with sheets outside its ONE set (a greenHomes `split`), said per sheet and each sheet with its set: "order 4206987902, shared with GF Sheet 1 of Set 4, and order 4210212342,
+   *  shared with GF Sheet 1 of Set 3, ship in two parts". o.name(id) the sheet's name, o.set(id) the word of its set ('' when it is in none: its name alone), o.day(id) its set's day, said only to tell
+   *  two sets of one word apart ("Set 3 (Oct 28)"). */
+  function splitWords(split, o = {}) {
+    const rows = (split || []).filter(x => x && x.sheet && (x.orders || []).length), name = o.name || (id => id), setOf = o.set || (() => ''), dayOf = o.day || (() => '');
+    if (!rows.length) return '';
+    const words = rows.map(x => ({ x, set: String(setOf(x.sheet) || ''), day: String(dayOf(x.sheet) || '') }));
+    const twice = w => w.set && words.some(v => v !== w && v.set === w.set && v.day !== w.day);
+    const ow = os => os.length === 1 ? `order ${os[0]}` : `orders ${os.slice(0, 3).join(', ')}${os.length > 3 ? ' and more' : ''}`;
+    const parts = words.map(w => `${ow([...new Set(w.x.orders)].sort())}, shared with ${name(w.x.sheet)}${w.set ? ` of ${w.set}${twice(w) && w.day ? ` (${w.day})` : ''}` : ''}`);
+    const many = rows.length > 1 || [...new Set(rows[0].orders)].length > 1;
+    return `${parts.length < 2 ? parts[0] : parts.slice(0, -1).join(', ') + ', and ' + parts[parts.length - 1]}, ${many ? 'ship' : 'ships'} in two parts`;
+  }
   function realPartners(sheets, items, setId, homes, o = {}) {
     const green = o.green || isGreen, byId = new Map(sheets.map(s => [s.id, s])), sid = String(setId), out = [];
     for (const it of items || []) {
@@ -324,7 +338,7 @@
     if (one && items[0].words) return `Order ${items[0].orderId} ${items[0].words}: sheets that share a multi-piece order stay in the same set.`;
     return `${one ? 'Order ' + items[0].orderId + ' has pieces' : items.length + ' orders have pieces'} on ${there.join(', ')}${here ? ' and on ' + here : ''}: sheets that share a multi-piece order stay in the same set.`;
   }
-  const core = { orderOfKey, parseKey, describe, sheetOf, sheetLabelOf, effectiveSet, fixedWhy, index, spans, groups, groupOf, formation, between, composition, sentence, committedSet, greenHomes, realPartners, isGreen, CODE };
+  const core = { orderOfKey, parseKey, describe, sheetOf, sheetLabelOf, effectiveSet, fixedWhy, index, spans, groups, groupOf, formation, between, composition, sentence, committedSet, greenHomes, splitWords, realPartners, isGreen, CODE };
 
   /* ── the page's side ────────────────────────────────────────────────────────────────────────────────────────── */
   const hooks = {

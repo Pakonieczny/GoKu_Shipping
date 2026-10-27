@@ -15,13 +15,17 @@ function stagesOf(guard){
   if(!guard)return [];
   return guard.stages||(guard.lines?.length?[{n:1,at:null,ids:(guard.shapes||guard.placements||[]).map(p=>p.id),lines:[0,guard.lines.length]}]:[]);
 }
+// (Paul, 27 Oct 2026, 14K Sheet 1 of Set 1: a piece's own artwork edited in the charm editor gives the piece a hash of its own, its master's with "~ae…" after it (charm-nest-art-edit.js SUFFIX).
+//  Its place and its cut line stay exactly as they were (artPut refuses a cut-line change on a piece already on a sheet), so the protected layout is the same layout: the write of the sheet's files
+//  that the edit owes was refused here, the record kept "filesOwed" for good and the page held the sheet out of its set)
+const masterHash=h=>h==null?h:String(h).replace(/~ae[0-9a-z]+$/,'');
 function assertProtected(guard,placements,metal){
   if(!guard)return;
   const word=Rose.cutWord(metal||'rose');
   if(!Array.isArray(placements))throw new Error('The protected '+word+' layout cannot be moved or removed');
   for(const p of guard.placements){
     const rows=placements.filter(x=>x?.id===p.id),q=rows[0];
-    if(rows.length!==1||['cxPt','cyPt','angle'].some(k=>!Number.isFinite(q[k])||Math.abs(q[k]-p[k])>.001)||Math.abs((q.scale||1)-(p.scale||1))>.00001||(p.hash!=null&&q.hash!==p.hash))throw new Error('The protected '+word+' layout cannot be moved or removed');
+    if(rows.length!==1||['cxPt','cyPt','angle'].some(k=>!Number.isFinite(q[k])||Math.abs(q[k]-p[k])>.001)||Math.abs((q.scale||1)-(p.scale||1))>.00001||(p.hash!=null&&masterHash(q.hash)!==masterHash(p.hash)))throw new Error('The protected '+word+' layout cannot be moved or removed');
   }
 }
 /* Pairs and groups (PAIRPARTIAL, Paul 9 Oct: "every piece of an order line is tracked at every step"). A group = one order line, receipt:transaction (the pool id is
