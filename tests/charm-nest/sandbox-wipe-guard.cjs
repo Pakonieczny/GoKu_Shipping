@@ -120,6 +120,10 @@ async function session(sb) {
   await L({ op: 'laserDoneList' }); await L({ op: 'laserStatus' }); await L({ op: 'laserSheetLast', by: 'Cara' });
   await L({ op: 'backPut', back: { poolId: `${A}_10010_1`, sheetId: SHEET, setId: SET, order: A, transactionId: '10010', sku: 'BR-1', copy: 1, text: 'Love you, Mom', approvedAt: NOW - 5000, approvedBy: 'Eve' } });
   await L({ op: 'backInvalidate', poolIds: [`${A}_10010_1`] });
+  // ART EDIT (Paul, 27 Oct 2026): one piece's own artwork, kept beside it (Charm_Pool_Art), with its pool row's stamp and its sheet's filesOwed: driven so the wipe is tested against what it writes
+  await L({ op: 'artPut', poolId: `${A}_10010_1`, face: 'front', by: 'Eve', art: { baseKey: 'guard1', removed: ['0-guard'], added: [{ id: 'date1', kind: 'text', role: 'hatch', d: 'M1 1L3 1L3 3Z', fill: [0, 0, 1] }] } });
+  await L({ op: 'artGet', poolId: `${A}_10010_1`, face: 'front' });
+  await L({ op: 'artList', keys: [`${A}_10010_1~front`] });
   await L({ op: 'runPut', run: { runId: RUN2, status: 'running', step: 'nesting', day: DAY, lines: {} } });   // (an open run: only a sheet of an open run can be repacked)
   await L({ op: 'archiveEmptySheet', id: SHEET2, runId: RUN2 });
   await L({ op: 'sheetPdf', ids: [SHEET, 'no-such-sheet'] });

@@ -2657,11 +2657,16 @@
       let bytes = stripEmptyBlocks(isolate(src.content, src.parsed.segments, keep, hatch));
       // a charm the size rule scaled (fitCharmSize): the source artwork is copied under its matrix; its members are already in the scaled place, so what is redrawn below is not
       if (c.sizeXform) { const f6 = v => String(Math.round(v * 1e6) / 1e6), enc = new TextEncoder(), pre = enc.encode(`q ${c.sizeXform.map(f6).join(" ")} cm\n`), post = enc.encode("\nQ"), all = new Uint8Array(pre.length + bytes.length + post.length); all.set(pre, 0); all.set(bytes, pre.length); all.set(post, pre.length + bytes.length); bytes = all; }
+      // ART EDIT (Paul, 27 Oct 2026): a piece whose own artwork a person changed (charm-nest-art-edit.js apply) carries its parts marked `artRedraw`: the group of the master they were
+      // drawn in is already out of the copied bytes (dropIndices above), and they are written here from their geometry, each in its master layer (artOps). Every other piece takes
+      // the line it always took, byte for byte.
+      const artLayers = (c.members || []).some(m => m && m.artRedraw) ? artLayerKeys(out, src) : null;
       // members the source never held (a welded outline, a ring's hole) are written after the copied bytes, in the same space
-      { const extra = syntheticOps(c.members || [], n => layerKeyOf(src, n)); if (extra) { const add = new TextEncoder().encode("\n" + extra); const joined = new Uint8Array(bytes.length + add.length); joined.set(bytes, 0); joined.set(add, bytes.length); bytes = joined; } }
+      { const extra = artLayers ? syntheticOps(c.members.filter(m => !(m && m.artRedraw)), n => layerKeyOf(src, n)) + artOps(c.members, artLayers.keyOf) : syntheticOps(c.members || [], n => layerKeyOf(src, n)); if (extra) { const add = new TextEncoder().encode("\n" + extra); const joined = new Uint8Array(bytes.length + add.length); joined.set(bytes, 0); joined.set(add, bytes.length); bytes = joined; } }
       const pad = c.strokePt / 2 + 1;
       const bb = [c.bbox[0] - pad, c.bbox[1] - pad, c.bbox[2] + pad, c.bbox[3] + pad];
-      const trimmed = trimResources(out, out.context.lookup(src.resRef), bytes, 0) || src.resRef;
+      let trimmed = trimResources(out, out.context.lookup(src.resRef), bytes, 0) || src.resRef;
+      if (artLayers) trimmed = artLayers.into(trimmed);
       const xobj = out.context.flateStream(bytes, { Type: "XObject", Subtype: "Form", BBox: bb, Matrix: [1, 0, 0, 1, 0, 0], Resources: trimmed });
       const xref = out.context.register(xobj);
       const key = page.node.newXObject("Charm" + i, xref);
@@ -2813,6 +2818,24 @@
         else if (k.type === "Z") { page.pushOperators(closePath()); cur = first; }
       }
       page.pushOperators(PDFOperator.of(PDFOperatorNames.FillNonZero)); glyphCount++;
+    }
+    // ART EDIT (Paul, 27 Oct 2026): what a person added to this piece's BACK (charm-nest-art-edit.js, the charm's artBack, handed in as spec.artBack: in the charm's own points as
+    // seen from the front) is engraved with the words, turned over with the cut reference (the same T · R · M). A file without it is written exactly as before.
+    const artBack = !isFront && Array.isArray(spec.artBack) ? spec.artBack.filter(s => s && Array.isArray(s.subpaths) && s.subpaths.length && (s.fill || s.stroke)) : [];
+    if (artBack.length) {
+      page.pushOperators(popGraphicsState(), pushGraphicsState());
+      if (frontView) page.pushOperators(cm(Mp));
+      page.pushOperators(cm(T), cm(R), cm(M), setFillingRgbColor(0, 0, 0), setStrokingRgbColor(0, 0, 0));
+      for (const s of artBack) {
+        if (s.stroke && !s.fill) page.pushOperators(setLineWidth(s.lwPt || 0.25));
+        for (const sub of s.subpaths) for (const o of sub) {
+          if (o[0] === "m") page.pushOperators(moveTo(o[1][0], o[1][1]));
+          else if (o[0] === "l") page.pushOperators(lineTo(o[1][0], o[1][1]));
+          else if (o[0] === "c") page.pushOperators(appendBezierCurve(o[1][0], o[1][1], o[2][0], o[2][1], o[3][0], o[3][1]));
+          else if (o[0] === "h") page.pushOperators(closePath());
+        }
+        page.pushOperators(s.fill ? PDFOperator.of(String(s.paintOp || "").endsWith("*") ? PDFOperatorNames.FillEvenOdd : PDFOperatorNames.FillNonZero) : stroke());
+      }
     }
     page.pushOperators(popGraphicsState(), endMarkedContent());
     const order = out.context.obj(ocgRefs), on = out.context.obj(ocgRefs);
@@ -3271,6 +3294,67 @@
     }
     return out;
   }
+  /* ── ART EDIT (Paul, 27 Oct 2026: "full control similar to Adobe Illustrator over each individual layer on any charm ... e.g. add a date inside a given calendar day square and update
+     the month name located on top of the calendar charm"). One piece's own change to its master artwork is put over the master by charm-nest-art-edit.js (apply): its parts that are
+     drawn again carry `artRedraw` (removed parts are gone from its members, changed ones carry their new geometry, new ones are added), and the group of the master they were drawn in
+     is out of the copied bytes (dropIndices). buildSheet writes those parts here, after the copied bytes, in the charm's own points as the master's parts are:
+       · a part the hatching rule reads as hatching (hatchBlue) is a BLUE fill, exactly as hatchCopies writes a black fill of the master (black line art: the area its line covers);
+       · every other part is painted as it is drawn (a red line engraving, a black cut hairline);
+       · each in its master layer (CUT, ENGRAVE, HATCH ...), found by name and named from this piece's own Resources (artLayerKeys), so the .ai and the DXF name it as the master does. ── */
+  /** The layer keys an edited piece's form names for its redrawn parts. The master's layers are found by name in the source's resources (its page, or the forms it draws) and only READ:
+   *  the keys go into this piece's own copy of its Resources (`into`), never into the shared ones, so no other piece's file changes. A layer the master does not have is not made: the
+   *  part then stays on the piece's own layer. */
+  function artLayerKeys(out, src) {
+    const { PDFName, PDFDict } = L(), used = new Map(), byName = new Map();
+    const nameOf = v => { const g = out.context.lookup(v), nm = g && g.get ? out.context.lookup(g.get(PDFName.of("Name"))) : null; return nm && nm.decodeText ? nm.decodeText() : null; };
+    const find = name => {
+      const seen = new Set();
+      const look = (res, depth) => {
+        if (!(res instanceof PDFDict) || depth > 3) return null;
+        const pd = out.context.lookup(res.get(PDFName.of("Properties")));
+        if (pd instanceof PDFDict) for (const [, v] of pd.entries()) if (nameOf(v) === name) return v;
+        const xo = out.context.lookup(res.get(PDFName.of("XObject")));
+        if (xo instanceof PDFDict) for (const [, v] of xo.entries()) { const k = String(v); if (seen.has(k)) continue; seen.add(k); const f = out.context.lookup(v), hit = f && f.dict ? look(out.context.lookup(f.dict.get(PDFName.of("Resources"))), depth + 1) : null; if (hit) return hit; }
+        return null;
+      };
+      try { return look(out.context.lookup(src.resRef), 0); } catch (_) { return null; }
+    };
+    const keyOf = name => {
+      if (!name) return null; name = String(name);
+      if (!byName.has(name)) { const ref = find(name); if (ref) { const k = "aeL" + used.size; used.set(k, ref); byName.set(name, "/" + k); } else byName.set(name, null); }
+      return byName.get(name);
+    };
+    const into = resRef => {
+      if (!used.size) return resRef;
+      const rd = out.context.lookup(resRef), own = out.context.obj({});
+      if (rd instanceof PDFDict) for (const [k, v] of rd.entries()) own.set(k, v);
+      const p0 = out.context.lookup(own.get(PDFName.of("Properties"))), props = out.context.obj({});
+      if (p0 instanceof PDFDict) for (const [k, v] of p0.entries()) props.set(k, v);
+      for (const [k, ref] of used) props.set(PDFName.of(k), ref);
+      own.set(PDFName.of("Properties"), props);
+      return out.context.register(own);
+    };
+    return { keyOf, into };
+  }
+  /** Content-stream operators for the parts of an edited piece that are drawn again (`artRedraw`), in the source's own coordinates. */
+  function artOps(members, keyOf) {
+    const f = v => (Math.round(v * 1000) / 1000).toString(); let out = "";
+    const path = subs => { let t = ""; for (const sp of subs) for (const o of sp) { if (o[0] === "m" || o[0] === "l") t += `${f(o[1][0])} ${f(o[1][1])} ${o[0]} `; else if (o[0] === "c") t += `${f(o[1][0])} ${f(o[1][1])} ${f(o[2][0])} ${f(o[2][1])} ${f(o[3][0])} ${f(o[3][1])} c `; else if (o[0] === "h") t += "h "; } return t; };
+    for (const m of members || []) {
+      if (!m || !m.artRedraw || m.kind !== "path" || !Array.isArray(m.subpaths) || !(m.stroke || m.fill)) continue;
+      const lk = keyOf ? keyOf(m.layer) : null;
+      if (lk) out += `/OC ${lk} BDC `;
+      if (m.hatchBlue) {
+        const strip = !!m.hatchStrip, line = !!m.hatchLine && m.stroke && !m.fill;
+        out += "q 0 0 1 rg " + path(line ? lineAreaOf(m) : m.subpaths) + (strip || line || String(m.paintOp || "f").endsWith("*") ? "f*" : "f") + " Q";
+      } else {
+        const s = m.strokeRGB || [0, 0, 0], fl = m.fillRGB || [0, 0, 0], even = String(m.paintOp || "").endsWith("*");
+        out += `q ${f(s[0])} ${f(s[1])} ${f(s[2])} RG ${f(fl[0])} ${f(fl[1])} ${f(fl[2])} rg ${f(m.lwPt || 0.25)} w ` + path(m.subpaths) + (m.fill ? (m.stroke ? "B" : "f") + (even ? "*" : "") : "S") + " Q";
+      }
+      out += (lk ? " EMC" : "") + "\n";
+    }
+    return out;
+  }
   root.CharmNestPDF = { scaleSource, closeNearlyClosed, markerReason, isDimensionLine, integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, isCutSilhouetteFill, cutLineOf, drawSegments, pathToCanvas,
     takeSampleText, sampleTextOf, parseSkuLabel, READER_VERSION, LETTERS_READER_VERSION, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
   // the hoop finder, for the tests and the audit (kept off the long list above so a merge there never touches it)
@@ -3279,6 +3363,8 @@
   root.CharmNestPDF.liftTextDesigns = liftTextDesigns; root.CharmNestPDF.liveTextNotes = liveTextNotes; root.CharmNestPDF.LIVE_TEXT_MIN_PT = LIVE_TEXT_MIN_PT;
   // words written on a design with its own SKU (labelCharms `onDesign`), in the words every route says them with (kept off the long list for the same reason)
   root.CharmNestPDF.onDesignNote = onDesignNote;
+  // one piece's own artwork, drawn again (ART EDIT; kept off the long list for the same reason)
+  root.CharmNestPDF.artOps = artOps; root.CharmNestPDF.artLayerKeys = artLayerKeys;
   // the standard charm size every indexer applies before a ring is welded (kept off the long list for the same reason)
   root.CharmNestPDF.fitCharmSize = fitCharmSize; root.CharmNestPDF.sizeRuleNote = sizeRuleNote; root.CharmNestPDF.SIZE_RULE = SIZE_RULE;
   // the loose-ink-outside-the-piece rule (section 5a″; kept off the long list for the same reason)

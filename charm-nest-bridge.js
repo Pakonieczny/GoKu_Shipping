@@ -4134,7 +4134,7 @@ const Pool = window.Pool = (() => {
   /** The charm a piece with no side is cut from, when its stored record says it is ONE body of the design: `rec` is the pool row or the sheet record's charm, and its charm hash is that body's, not the
    *  folded charm's. null when it is not (an old record, a line that keeps both bodies, an earring pair): the design's one charm, whole, as before. */
   async function soloBase(src, rec) {
-    const h = rec ? String(rec.charmHash || rec.hash || "") : ""; if (!h || h === String(src.charms[0].hash || "")) return null;
+    const h = rec ? String(rec.charmHash || rec.hash || "").replace(/~ae[0-9a-z]+$/, "") : ""; if (!h || h === String(src.charms[0].hash || "")) return null;   // (ART EDIT: a piece whose own artwork was edited has "~ae…" after the hash it was cut from, charm-nest-art-edit.js)
     const bodies = await soloBodies(src); return bodies && bodies.find(c => String(c.hash) === h) || null;
   }
   /** The factor that makes the drawing in these bytes exactly `wantMm` across: the index's sizes carry a margin and a jump ring, so the file itself is measured (its outline's narrow side is the disc's diameter). `guess` (the factor the
@@ -4564,7 +4564,8 @@ const Pool = window.Pool = (() => {
       charm.poolId = poolId; charm.metal = sp.material; charm.lineKey = row.key; charm.pinned = null; charm.excluded = false; if (+row.frontAt > 0) charm.frontAt = +row.frontAt; else delete charm.frontAt;
       if (mine) Object.assign(charm, mine);   // side, mirror, bodyIndex, groupKey, groupSize: only a piece of an earring pair carries them (a counted necklace's pieces: groupKey and groupSize)
       pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: row.order.receiptId, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: ear.sku, material: sp.material, size: sp.size || null, form: sp.form || null, chain: sp.chain || null, copy, quantity: count, charmHash: charm.hash, masterHash: ear.entry.masterHash || null, aiPath: sizeEntry(ear.entry, sp.size).aiPath, engrave: !!(row.engrave && row.engrave.needed) && !(byBody && byBody.blank[copy - 1]), state: "ready", lineKey: row.key, updateTs: row.order.updateTs, ...(mine || {}) });
-      charms.push(charm);
+      // (ART EDIT, Paul 27 Oct 2026: a line pooled again keeps the pool ids it had; a piece whose own artwork was edited, its pool row says so, is made with that edit: charm-nest-art-edit.js piece)
+      charms.push(typeof CharmNestArtEdit !== "undefined" ? await CharmNestArtEdit.piece(charm, poolId, B.pool.rows.get(poolId)) : charm);
     }
     return { sp, pools, charms };
   }
@@ -7431,7 +7432,8 @@ const Engrave = window.Engrave = (() => {
         const src=await Pool.masterCharm({sku:saved.sku,aiPath:source.path || source.url,aiUrl:source.url,upAngle:saved.upAngle},null);
         const piece=CharmNestPoolPieces.cleanFields(savedCharm).side ? savedCharm : null, base=await Pool.ensureBase(src,piece,savedCharm?.hash?savedCharm:(B.pool.rows.get(poolId) || saved)).catch(()=>null);   // (a piece of a mismatched pair is its own body)
         if(!base) throw new Error("This piece's own body is no longer in its design. Rebuild this sheet before editing its back.");
-        charm=Pool.cloneCharm(base,poolId); charm.poolId=poolId; if(piece) Object.assign(charm,CharmNestPoolPieces.fieldsOf(piece));
+        charm=Pool.cloneCharm(base,poolId); if(typeof CharmNestArtEdit!=="undefined")charm=await CharmNestArtEdit.piece(charm,poolId,B.pool.rows.get(poolId) || null);   // (ART EDIT: its own artwork edit, as its sheet was cut with it)
+        charm.poolId=poolId; if(piece) Object.assign(charm,CharmNestPoolPieces.fieldsOf(piece));
         if(savedCharm?.bbox && charm.bbox.some((v,i)=>Math.abs(v-savedCharm.bbox[i])>.5)) throw new Error("The saved source geometry has changed. Rebuild this sheet before editing its back.");
       }
       charm=pieceCharmOf(poolId,charm,{ side:saved.side, slot:saved.slot, mirror:saved.mirror, bodyIndex:saved.bodyIndex });   // a Right ear's back is edited on the mirrored geometry it was cut and written on
@@ -9317,7 +9319,10 @@ const Engrave = window.Engrave = (() => {
     if(!current())return;
     const geom=entry && Pool.sizeEntry(entry,job.row.spec.size);
     if(!entry || !geom?.aiPath){host.textContent="Preview unavailable";return;}
-    try { const src=await Pool.masterCharm(entry,job.row.spec.size),rec=(job.copies || job.row.poolIds || []).map(id=>B.pool.rows.get(id)).find(Boolean),base=await Pool.ensureBase(src,null,rec).catch(()=>src.charms[0]);if(current())paint(base); }   // (a piece cut as ONE body of its design is that body: its pool row's charm hash says so)
+    try { const src=await Pool.masterCharm(entry,job.row.spec.size),rec=(job.copies || job.row.poolIds || []).map(id=>B.pool.rows.get(id)).find(Boolean),base=await Pool.ensureBase(src,null,rec).catch(()=>src.charms[0]);
+      // (ART EDIT: the piece's own artwork edit over its master, when its pool row names one: charm-nest-art-edit.js; the shared master is never drawn into)
+      const own=rec && rec.poolId && typeof CharmNestArtEdit!=="undefined" ? await CharmNestArtEdit.piece(base,rec.poolId,rec).catch(()=>base) : base;
+      if(current())paint(own); }   // (a piece cut as ONE body of its design is that body: its pool row's charm hash says so)
     catch(_){if(current())host.textContent="Preview unavailable";}
 
   }
@@ -9426,7 +9431,7 @@ const Engrave = window.Engrave = (() => {
         const name = `${sh.fileBase}_${faceWord(job)}_${poolId}_${approval}`;
         let rec=job.stagedBacks.find(b=>b.poolId===poolId && b.approvedAt===approval && b.sheetId===sh.sheetId && b.outputs?.ai?.url && b.outputs?.png?.url);
         if(!rec){
-        const built = await P.buildBackFile({ charm: charm0, mirrored: !!charm0.mirrored, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, ...(isFront(job) ? { face: "front" } : {}), view: fileViewOf(job), title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · ${faceWord(job)}`, meta: { poolId, ...(isFront(job) ? { face: "front" } : {}), order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap:fitOpts(job).lineGap, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
+        const built = await P.buildBackFile({ charm: charm0, mirrored: !!charm0.mirrored, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, ...(isFront(job) ? { face: "front" } : {}), ...(!isFront(job) && Array.isArray(charm0.artBack) && charm0.artBack.length ? { artBack: charm0.artBack } : {}), view: fileViewOf(job), title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · ${faceWord(job)}`, meta: { poolId, ...(isFront(job) ? { face: "front" } : {}), order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: job.fontName || "Source Sans 3", fontKey: fontIdOf(job), weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap:fitOpts(job).lineGap, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
         const verified = await verifyBackFile(built.bytes, job);                 // 7.4 · flip integrity re-run on the written, re-parsed file
         if (!verified.ok) throw Object.assign(new Error(`the written ${faceWord(job)} file did not re-verify (${verified.why})`),{engravingInvalid:true});
         let ai = null, pngUp = null;
@@ -10951,7 +10956,33 @@ const Engrave = window.Engrave = (() => {
     if (w.focus) w.opened = w.focus;
     return Object.assign(EG, w, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) });
   }
-  return { listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  /* ART EDIT (Paul, 27 Oct 2026): a person changed the artwork of ONE face of a piece (charm-nest-art-edit.js save). The words on that face were fitted around the old drawing (the
+     front's mask keeps them off the master's own art), so they are fitted again on the new one: a face already approved is approved again, in the plain words restoreWritten says when
+     a charm's face changed under its words ("This charm's front changed since the words were approved — fit the words again"). Its approved file is withdrawn (revokeBacks: that face's
+     record only; the piece's other face keeps its own) and the face goes back to be fitted and wait for Approve. A face not decided yet is fitted again too. The words, the font and a
+     person's turn stay. → how many faces were sent back. */
+  function artChanged(poolId, face, why) {
+    face = face === "front" ? "front" : "back";
+    const said = why || `This charm's ${face} changed since the words were approved — fit the words again`;
+    let n = 0;
+    for (const j of [...items().values()]) {
+      if (!j || j.editingBack || !(j.copies || []).includes(poolId) || faceOf(j) !== face) continue;
+      if (["approved", "written"].includes(j.state) || j.approvedAt) {
+        revokeBacks(j);
+        Object.assign(j, { state: "ready", view: null, mask: null, fit: null, writtenFit: null, verify: null, approvedBy: null, approvedAt: null, reason: said });
+        if (j.row && j.row.engrave) Object.assign(j.row.engrave, { state: "ready", approved: false, reason: said });
+        n++;
+      } else if (j.view || j.mask || j.fit) {
+        Object.assign(j, { view: null, mask: null, fit: null, verify: null });
+        if (["review", "blocked", "fitting"].includes(j.state)) { j.state = "ready"; if (j.row && j.row.engrave) j.row.engrave.state = "ready"; }
+        n++;
+      } else continue;
+      try { Review.remove("eng:" + j.key); } catch (_) { /* nothing to take down */ }
+    }
+    if (n) { try { Session.schedule(); render(); } catch (_) { /* drawn with the next render */ } }
+    return n;
+  }
+  return { listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
    list of pieces, the Pieces counts and a monogram line's pieces (the same slots and piece keys: "<line>" for one piece, "<line>#C<u>" for several) read THIS. Added beside the Engrave object, not inside its return. */
@@ -12926,7 +12957,7 @@ const RunCtl = window.RunCtl = (() => {
         // a piece of a mismatched pair is cut from its own body, never from both (the pool row says which; the sheet's record says so too)
         const piece = CharmNestPoolPieces.cleanFields(pool).side ? pool : CharmNestPoolPieces.cleanFields(rc).side ? rc : null, base = await Pool.ensureBase(src, piece, rc.hash ? rc : pool).catch(() => null);
         if (!base) { agent({ metal: d.metal }, "warn", `${pool.orderId} · ${pool.sku}: its ${piece.side === "L" ? "left" : "right"} body is no longer in the design — that piece is not put back`); continue; }
-        const charm = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); charm.name = rc.name; charm.order = pool.orderId; charm.orderDate = pool.orderDate || 0; charm.arrivedAt = pool.arrivedAt || 0; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (piece) Object.assign(charm, CharmNestPoolPieces.fieldsOf(piece));
+        const charm = typeof CharmNestArtEdit !== "undefined" ? await CharmNestArtEdit.piece(Pool.cloneCharm(base, `${src.id}:${rc.poolId}`), rc.poolId, pool) : Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); /* (ART EDIT: the piece's own artwork edit, when its pool row names one: charm-nest-art-edit.js) */ charm.name = rc.name; charm.order = pool.orderId; charm.orderDate = pool.orderDate || 0; charm.arrivedAt = pool.arrivedAt || 0; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (piece) Object.assign(charm, CharmNestPoolPieces.fieldsOf(piece));
         // (Manual Control: a piece a person moved, turned or resized by hand keeps that, its pin and its size, from its record)
         const man = window.CNManual && CNManual.fromRecord ? CNManual.fromRecord(rc) : null; if (man) { charm.manual = man; if (man.size) charm.pinned.size = man.size; }
         if (!pg.charms.some(c => c.poolId === rc.poolId)) pg.charms.push(charm);
@@ -18856,7 +18887,7 @@ const Sandbox = window.Sandbox = (() => {
   /* COST (Oct 2026): the registry and the engine are no longer tags of the page (a blocking script in its head for every
      production page): they load here, at once on a page in the sandbox, when Settings opens, and before anything that
      clears or counts the browser's side (wipe, browserLeft, wipeBrowser). The tokens are the ones the tags had. */
-  const SBX_FILES = ["charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1-spl1-sv1-advsb1-krep1-kt1-cost18-plc1", "charm-nest-sandbox-browser.js?v=20261010-wb1"];
+  const SBX_FILES = ["charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1-spl1-sv1-advsb1-krep1-kt1-cost18-plc1-ae1", "charm-nest-sandbox-browser.js?v=20261010-wb1"];
   let sbxTask = null, hooked = false;
   function loadScripts() {
     const done = () => { if (!hooked && BX()) { hooked = true; try { BX().setHooks(memoryHooks); } catch (_) {} } return !!(BX() && window.CharmNestSandboxFamilies); };
@@ -23535,7 +23566,7 @@ const Recall = window.Recall = (() => {
         // a piece of a mismatched pair is cut from its own body, never from both (the pool row says which; the sheet's record says so too)
         const piece = CharmNestPoolPieces.cleanFields(pool).side ? pool : CharmNestPoolPieces.cleanFields(rc).side ? rc : null, base = await Pool.ensureBase(src, piece, rc.hash ? rc : pool).catch(() => null);
         if (!base) { agent({ metal: d.metal }, "warn", `${pool.orderId} · ${pool.sku}: its ${piece.side === "L" ? "left" : "right"} body is no longer in the design — that piece is not put back`); continue; }
-        const charm = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); charm.name = rc.name; charm.order = pool.orderId; charm.orderDate = pool.orderDate || 0; charm.arrivedAt = pool.arrivedAt || 0; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (piece) Object.assign(charm, CharmNestPoolPieces.fieldsOf(piece));
+        const charm = typeof CharmNestArtEdit !== "undefined" ? await CharmNestArtEdit.piece(Pool.cloneCharm(base, `${src.id}:${rc.poolId}`), rc.poolId, pool) : Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); /* (ART EDIT: the piece's own artwork edit, when its pool row names one: charm-nest-art-edit.js) */ charm.name = rc.name; charm.order = pool.orderId; charm.orderDate = pool.orderDate || 0; charm.arrivedAt = pool.arrivedAt || 0; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (piece) Object.assign(charm, CharmNestPoolPieces.fieldsOf(piece));
         // (Manual Control: a piece a person moved, turned or resized by hand keeps that, its pin and its size, from its record)
         const man = window.CNManual && CNManual.fromRecord ? CNManual.fromRecord(rc) : null; if (man) { charm.manual = man; if (man.size) charm.pinned.size = man.size; }
         pg.charms.push(charm);
@@ -23945,6 +23976,9 @@ const Session = window.Session = (() => {
       // (STUCKSHEET, Paul 25 Oct 2026) a sheet whose save the refresh cut short is written again AS IT STANDS (writeAsPlaced: no search, no charm moved), even while the
       // run is stopped: a 10K / 14K sheet no set has picked is nested by no run loop, so before this it stayed unsaved, with no picture and no Manual Control, for good
       setTimeout(() => { for (const p of allSheets()) if (p._writeOwed) { delete p._writeOwed; if (p.dirty && !["nesting", "finishing", "queued"].includes(p.status) && typeof window.writeAsPlaced === "function") { p._byHand = true; Promise.resolve(window.writeAsPlaced(p)).catch(e => console.warn("restore: owed write", e)); } } }, 3000);
+      // (ART EDIT, Paul 27 Oct 2026: a piece whose own artwork was edited keeps its edit in the checkpoint; one edited on another computer since, or taken back to the master there, is
+      //  made again from its record, and only those pieces' records are read: charm-nest-art-edit.js sync)
+      if (typeof CharmNestArtEdit !== "undefined") Promise.resolve().then(() => CharmNestArtEdit.sync()).catch(e => console.warn("restore: artwork edits", e));
       setMode(d.mode || "nest");
       sweepBest(cutShort);
       toast("Workspace restored — sheets, orders and decisions kept", "ok", 4000);
@@ -24920,6 +24954,49 @@ const Upkeep = window.Upkeep = (() => {
 })();
 
 /* ═══ 25 · boot ═══════════════════════════════════════════════════════════ */
+/* ── ART EDIT (Paul, 27 Oct 2026): "The user needs full control similar to Adobe Illustrator over each individual layer on any charm ... e.g. add a date inside a given calendar day square
+   and update the month name located on top of the calendar charm." charm-nest-art-edit.js keeps ONE piece's own change to its master artwork and puts it over the master; this page lends it
+   its ways (setHost): the cloud (api), who is signed in, the piece's pool row and charm, where it is, and what a saved edit changes here:
+     swap     the sheets hold the piece's new charm (a new list of charms, so Pool's index of where each piece is is made again; the shared master is never written into)
+     changed  the face's engraving is fitted again and approved again (Engrave.artChanged), and the sheet that holds the piece writes its files again, as it stands
+              (writeAsPlaced: no search, every charm where it is); the cloud's record of the sheet said filesOwed when the edit was saved, and is told when they are written
+     note     a piece whose edit could not be put on it (its master was drawn again since) is said on the log
+   The hooks where a piece is made from the master again (a recall: restoreRunSheets and Recall.rebuild, a back opened from a saved sheet, a line pooled again, the placement's picture, a
+   checkpoint) call CharmNestArtEdit.piece / sync themselves. ── */
+if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
+  api: (fn, body, opts) => api(fn, body, opts),
+  who: () => { try { return employeeName() || ""; } catch (_) { return ""; } },
+  rowOf: poolId => B.pool.rows.get(poolId) || null,
+  charmOf: poolId => Pool.charmOf(poolId) || null,
+  placed: poolId => !!Pool.sheetOf(poolId),
+  parsedOf: c => { const s = c && sourceOf(c.sourceId); return (s && s.parsed) || null; },
+  liveCharms: () => allSheets().flatMap(sh => sh.charms || []),
+  flag: (poolId, face, at) => { const r = B.pool.rows.get(poolId); if (r) r.artEdit = Object.assign({}, r.artEdit && typeof r.artEdit === "object" ? r.artEdit : {}, { [face]: at || null }); Session.schedule(); },
+  swap: (poolId, next, prev, rec, face) => {
+    const AE = window.CharmNestArtEdit; let n = 0;
+    for (const sh of allSheets()) {
+      const i = (sh.charms || []).findIndex(c => c && c.poolId === poolId); if (i < 0) continue;
+      const live = sh.charms[i];
+      // (the charm the edit was made on is this sheet's own, or the same edit is put over this sheet's own copy of the piece: its id and place stay)
+      let mine = next;
+      if (live !== prev && live !== next && face) { mine = AE.apply(live, rec || null, face); AE.ready(mine, (sourceOf(live.sourceId) || {}).parsed || null).catch(() => {}); }
+      const list = sh.charms.slice(); list[i] = mine; sh.charms = list; n++;
+    }
+    if (n) Session.schedule();
+    return n;
+  },
+  changed: async (poolId, face, info) => {
+    let n = 0; try { n = Engrave.artChanged(poolId, face); if (info && info.cut) n += Engrave.artChanged(poolId, face === "front" ? "back" : "front", `This charm's cut line changed since the words were approved — fit the words again`); } catch (e) { console.warn("artwork edit: engraving", e); }   // (a cut line is both faces' edge)
+    const sh = Pool.sheetOf(poolId), rec = info && info.record;
+    agent({ pool: true, ...(sh ? { metal: sh.metal } : {}) }, "info", `${poolId}: its own ${face} artwork ${rec ? `edited${rec.by ? " by " + rec.by : ""}` : "taken back to the master drawing"}${info && info.sync ? " (on another computer)" : ""}${n ? `; its ${face} engraving is fitted again and waits for Approve` : ""}${sh && sh.outputs ? `; ${sh.fileBase || "its sheet"} writes its files again` : ""}`);
+    if (!sh || sh.roseCutAt || sh.laserDoneAt) return;
+    sh.dirty = true;
+    if (!sh.outputs || typeof window.writeAsPlaced !== "function") return;   // (a sheet not written yet writes the edit with its first files)
+    const ok = await Promise.resolve(window.writeAsPlaced(sh)).catch(e => { console.warn("artwork edit: sheet write", e); return false; });
+    if (ok && sh.sheetId) api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, filesOwed: null } }, { quiet: true }).catch(() => {});   // (its record no longer owes its files)
+  },
+  note: (poolId, face, n) => agent({ pool: true }, "warn", `${poolId}: its own ${face} artwork edit was not put on the piece${n && n.by ? ` (made by ${n.by})` : ""}: ${(n && (n.why || (n.refused[0] && n.refused[0].why))) || "it could not be read"}`)
+});
 async function bootBridge() {
   // The Design Station guards unload in three places; the sorter guarded it nowhere. A reload mid-run loses every
   // engraving approval not yet written to a back file and every review decision made that shift.
