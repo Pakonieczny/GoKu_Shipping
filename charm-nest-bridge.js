@@ -9112,14 +9112,30 @@ const Engrave = window.Engrave = (() => {
     }
     const base = document.createElement("canvas"); base.width = cv.width; base.height = cv.height;   // grid + mask tint, drawn once
     base.getContext("2d").drawImage(cv, 0, 0);
-    for (const m of view.members) { ctx.beginPath(); P.pathToCanvas(ctx, m, tx); ctx.strokeStyle = "#000"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.stroke(); }
+    /* FRONTART (Paul, 27 Oct 2026: "In the Engraving Modal the User sometimes needs to be able to see the engraving on the front of a given charm"). Only the editor's work area (editable) draws the
+       design's own art: on a FRONT it is always there, muted, over the grid and the tint and under the cut line and the words; on a BACK it is there only while "Show front" is on, fainter still, seen
+       through the charm (the back view's own turn-over), so a person can check the back's words against what is on the other side. The pictures written with a piece (the approval .png, the look, the
+       Approved card) are not editable and never draw it. Display only: job.view, job.mask and job.fit are read, never changed. */
+    const art = editable ? frontArtOf(view) : [], onFront = view.face === "front";
+    cv._frontArt = art; cv._frontFace = onFront; cv._showFront = !!art.length && !onFront && frontPeek();
+    if (art.length && onFront) frontArtOn(ctx, art, tx, k, cv.width, cv.height, FRONT_ART_ALPHA.front);
+    if (grid && art.length && !onFront) cv._gridLabel = gridLabelBox(ctx, cv.width);   // (where "Show front" sits: just after the grid's own label)
+    const cutLines = g => { for (const m of view.members) { g.beginPath(); P.pathToCanvas(g, m, tx); g.strokeStyle = "#000"; g.lineWidth = Math.max(1, 0.5 * k); g.stroke(); } };
+    cutLines(ctx);
     if (false && fit) { ctx.fillStyle = "#111"; for (const g of fit.glyphs) { ctx.beginPath(); let cur = null; for (const c of g.cmds) { if (c.type === "M") { const p = tx(c.x, c.y); ctx.moveTo(p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "L") { const p = tx(c.x, c.y); ctx.lineTo(p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "C") { const a = tx(c.x1, c.y1), b = tx(c.x2, c.y2), p = tx(c.x, c.y); ctx.bezierCurveTo(a[0], a[1], b[0], b[1], p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "Q") { const a = tx(c.x1, c.y1), p = tx(c.x, c.y); ctx.quadraticCurveTo(a[0], a[1], p[0], p[1]); cur = [c.x, c.y]; } else ctx.closePath(); } ctx.fill("nonzero"); } }
     const outline = document.createElement("canvas"); outline.width = cv.width; outline.height = cv.height;   // …and the charm itself
     outline.getContext("2d").drawImage(cv, 0, 0);
+    // a BACK with "Show front" on: the same static layers with the front's art between the tint and the cut line, drawn the first time it is asked for and kept while this canvas lives
+    let peek = null;
+    const under = () => {
+      if (!cv._showFront || onFront || !art.length) return outline;
+      if (!peek) { peek = document.createElement("canvas"); peek.width = cv.width; peek.height = cv.height; const g = peek.getContext("2d"); g.drawImage(base, 0, 0); frontArtOn(g, art, tx, k, cv.width, cv.height, FRONT_ART_ALPHA.back); cutLines(g); }
+      return peek;
+    };
     /** Repaint: the static layers, then the text — the fitted one, or a provisional one while a hand is moving it. */
     const glyphsOf = g => { ctx.fillStyle = "#111"; for (const gl of g) { ctx.beginPath(); for (const c of gl.cmds) { if (c.type === "M") { const p = tx(c.x, c.y); ctx.moveTo(p[0], p[1]); } else if (c.type === "L") { const p = tx(c.x, c.y); ctx.lineTo(p[0], p[1]); } else if (c.type === "C") { const a = tx(c.x1, c.y1), b2 = tx(c.x2, c.y2), d2 = tx(c.x, c.y); ctx.bezierCurveTo(a[0], a[1], b2[0], b2[1], d2[0], d2[1]); } else if (c.type === "Q") { const a = tx(c.x1, c.y1), d2 = tx(c.x, c.y); ctx.quadraticCurveTo(a[0], a[1], d2[0], d2[1]); } else if (c.type === "Z") ctx.closePath(); } ctx.fill("nonzero"); } };
     cv._paint = (prov) => {
-      ctx.clearRect(0, 0, cv.width, cv.height); ctx.drawImage(outline, 0, 0);
+      ctx.clearRect(0, 0, cv.width, cv.height); ctx.drawImage(under(), 0, 0);
       const dr = cv._draft ? draftPaint(job) : null, src = dr || job.fit;   // (the work area of a card with the panel: the staged words in the staged font, in place of the committed fit, until Save / Cancel; see 7.5b)
       const gl = prov && prov.glyphs ? prov.glyphs : (src ? src.glyphs : []);
       const centre = prov && prov.centre ? prov.centre : (src ? src.centre : null);
@@ -9182,6 +9198,104 @@ const Engrave = window.Engrave = (() => {
     const pts = [[box.lx0 - m, box.ly0 - m], [box.lx1 + m, box.ly0 - m], [box.lx1 + m, box.ly1 + m], [box.lx0 - m, box.ly1 + m]].map(world);
     const top = world([(box.lx0 + box.lx1) / 2, box.ly1 + m]); pts.push([top[0] - sa * 2 * PT, top[1] + ca * 2 * PT]);
     return [Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1])), Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))];
+  }
+  /* ── FRONTART · the design's own art in the work area (Paul, 27 Oct 2026: "In the Engraving Modal the User sometimes needs to be able to see the engraving on the front of a given charm") ──
+     A calendar's front is a grid of days and the month's letters, engraved by the design itself, and the words go round them. The Front / Back boxes of the card drew that art (charm-nest-engrave-preview.js
+     frameOfView: job.view.dropped, turned by view.M, then view.R, and rasterised once at 768 px at most), but the big work area drew only the cut line, so a person placing words on a front could not see
+     what they were placing them beside. The work area now draws the same paths in the same frame (the very transform frameOfView uses, so a path sits where the box shows it), as vectors at the work
+     area's own scale: it is drawn again at every size the area takes, never a small picture stretched. What is drawn is what engraves, in the laser's colours, muted so the words stay the thing to
+     look at: a line engraving in red, a hatched area in blue, a white fill knocked out of the art under it. A black line left on the CUT layer and the keep-out layers are not art and are not drawn. */
+  const FRONT_ART = new WeakMap();   // view -> its art, turned into the view's frame once
+  const FRONT_ART_ALPHA = { front: 0.5, back: 0.2 };   // (the FRONT's own art, muted; the front seen through the BACK while "Show front" is on, fainter)
+  const FRONT_INK = { line: "rgb(214,48,40)", hatch: "rgb(30,80,220)" };
+  const artHatchBlue = c => !!c && c.length >= 3 && c[2] >= 0.5 && c[2] - Math.max(c[0], c[1]) >= 0.4;   // (charm-nest-geom.js hatchBlue)
+  const artGrey = c => !c || Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]) <= 0.15;
+  const artPaper = c => !!c && Math.min(c[0], c[1], c[2]) >= 0.92;
+  /** What one path of the design's art engraves: { fill: "hatch"|"paper"|null, stroke: "line"|"hatch"|null, rule } (the master drawings' rules: charm-nest-pdf.js drawCharm, charm-nest-geom.js pathRole). */
+  function frontArtInk(s) {
+    const none = { fill: null, stroke: null, rule: "nonzero" };
+    if (!s || s.kind !== "path" || /keep-?out/i.test(String(s.layer || ""))) return none;
+    const rule = String(s.paintOp || "").endsWith("*") ? "evenodd" : "nonzero";
+    if (s.hatchStrip && s.hatchBlue && s.stroke && !s.fill) return { fill: "hatch", stroke: null, rule: "evenodd" };   // (thin strips outlined in red are the hatched strips themselves)
+    const fill = s.fill ? (artPaper(s.fillRGB) ? "paper" : "hatch") : null;
+    let stroke = null;
+    if (s.stroke) {
+      if ((s.hatchLine && s.hatchBlue) || artHatchBlue(s.strokeRGB)) stroke = "hatch";
+      else if (!artGrey(s.strokeRGB) || (G.pathRole && G.pathRole(s) === "artwork")) stroke = "line";   // (the red pen, any coloured pen, or a line on an engraving layer)
+    }
+    return { fill, stroke, rule };
+  }
+  /** The art of a view (job.view.dropped) in the view's own frame, as charm-nest-engrave-preview.js frameOfView turns it: view.M, then view.R. Only what engraves (frontArtInk). Kept per view. */
+  function frontArtOf(view) {
+    if (!view || !Array.isArray(view.dropped) || !view.dropped.length) return [];
+    let art = FRONT_ART.get(view);
+    if (!art) {
+      art = view.dropped.filter(d => { const ink = frontArtInk(d); return !!(ink.fill || ink.stroke); })
+        .map(d => { try { const a = view.M ? G.transformSeg(d, view.M) : d; return view.R ? G.transformSeg(a, view.R) : a; } catch (_) { return null; } }).filter(Boolean);
+      FRONT_ART.set(view, art);
+    }
+    return art;
+  }
+  /** Draws the art onto ctx through tx (pt -> canvas px, k px per pt): every path as a vector on a layer the size of the canvas, at full colour, then the layer laid on at `alpha`, so lines that cross
+   *  (a calendar's day grid) do not darken where they meet and the grid and the tint still show through a hatched area. */
+  function frontArtOn(ctx, art, tx, k, w, h, alpha) {
+    const lay = document.createElement("canvas"); lay.width = w; lay.height = h; const g = lay.getContext("2d");
+    g.lineJoin = "round"; g.lineCap = "round";
+    for (const s of art) {
+      const ink = frontArtInk(s); if (!ink.fill && !ink.stroke) continue;
+      g.beginPath(); P.pathToCanvas(g, s, tx);
+      if (ink.fill === "paper") { g.save(); g.globalCompositeOperation = "destination-out"; g.fillStyle = "#000"; g.fill(ink.rule); g.restore(); }
+      else if (ink.fill) { g.fillStyle = FRONT_INK.hatch; g.fill(ink.rule); }
+      if (ink.stroke) { g.strokeStyle = FRONT_INK[ink.stroke]; g.lineWidth = Math.max(0.6, (s.lwPt || 0.5) * k); g.stroke(); }
+    }
+    ctx.save(); ctx.globalAlpha = alpha; ctx.drawImage(lay, 0, 0); ctx.restore();
+  }
+  /** Where renderBack wrote "1 mm grid" (canvas px): { x, y, w, h }. */
+  function gridLabelBox(ctx, width) {
+    const size = Math.round(Math.max(10, Math.min(15, width / 55)));   // (as renderBack sizes it)
+    let w = 0; try { ctx.save(); ctx.font = `${size}px sans-serif`; const m = ctx.measureText("1 mm grid"); w = m && m.width || 0; ctx.restore(); } catch (_) { w = 0; }
+    return { x: 6, y: 6, w: w || size * 4.6, h: size };
+  }
+  /* "Show front" on a BACK: the front's art seen through the charm, very faintly, to check the back's words against it. One small switch beside the grid's label, only on a back whose design has art
+     (the window is busy enough). The choice holds for this browser tab (sessionStorage; a tab that cannot keep it holds it in memory) and never travels with a job, a record or a file. */
+  const FRONT_PEEK_KEY = "cn.engraveShowFront";
+  let frontPeekHeld = false;
+  function frontPeek(on) {
+    if (on != null) { frontPeekHeld = !!on; try { window.sessionStorage.setItem(FRONT_PEEK_KEY, frontPeekHeld ? "1" : "0"); } catch (_) { /* this tab only */ } return frontPeekHeld; }
+    try { const v = window.sessionStorage.getItem(FRONT_PEEK_KEY); if (v === "1" || v === "0") return v === "1"; } catch (_) { /* this tab only */ }
+    return frontPeekHeld;
+  }
+  function frontPeekCss() {
+    if (document.getElementById("egFrontPeekCss")) return;
+    const s = document.createElement("style"); s.id = "egFrontPeekCss";
+    s.textContent = ".backHost{position:relative}.egFrontPeek{position:absolute;left:0;top:0;display:inline-flex;align-items:center;gap:4px;padding:1px 7px 1px 4px;border-radius:999px;background:rgba(255,255,255,.88);border:1px solid var(--line,#e4ddd0);font:11px/1.3 var(--sans,system-ui);color:var(--ink70,#5b554c);cursor:pointer;user-select:none;white-space:nowrap;z-index:1}.egFrontPeek input{margin:0;width:12px;height:12px;accent-color:#5a6f8a;cursor:pointer}.egFrontPeek.on{color:var(--ink,#2a2724);border-color:#b7c3d3}";
+    (document.head || document.documentElement).appendChild(s);
+  }
+  /** The "Show front" switch for the work area's canvas `bc` in `host` (.backHost), or null when the drawing is a front or its design has no art. */
+  function frontPeekToggle(host, bc) {
+    if (!host || !bc || bc._frontFace || !Array.isArray(bc._frontArt) || !bc._frontArt.length || typeof bc._paint !== "function") return null;
+    frontPeekCss();
+    const lab = document.createElement("label"); lab.className = "egFrontPeek"; lab.title = "Show the front's art faintly behind the back, to check the words line up with it";
+    lab.innerHTML = '<input type="checkbox"> Show front';   // (no data-a: the card's own buttons are wired by that, and this is no card action)
+    const box = lab.querySelector("input"); box.checked = !!bc._showFront; lab.classList.toggle("on", box.checked);
+    // a click gives the focus back where it was (the card's keys, A to approve and the arrows, keep working); a person who reached the switch with Tab keeps it there
+    let was = null;
+    lab.addEventListener("pointerdown", () => { was = document.activeElement || null; });
+    lab.addEventListener("mousedown", e => e.preventDefault());
+    box.addEventListener("change", () => {
+      bc._showFront = frontPeek(box.checked); lab.classList.toggle("on", bc._showFront); bc._paint();
+      const back = was; was = null;
+      if (back && document.activeElement === box) { try { if (back !== document.body && back.isConnected && back.focus) back.focus({ preventScroll: true }); else box.blur(); } catch (_) { /* the focus stays */ } }
+    });
+    host.appendChild(lab);
+    // beside the grid's label, in the drawing's own top-left corner (the canvas sits in the middle of the work area); under it when the drawing is too narrow for both
+    if (bc.offsetWidth && bc.width) {
+      const s = bc.offsetWidth / bc.width, g = bc._gridLabel || { x: 6, y: 6, w: 50, h: 11 };
+      let left = bc.offsetLeft + (g.x + g.w + 8) * s, top = bc.offsetTop + Math.max(2, (g.y + g.h / 2) * s - lab.offsetHeight / 2);
+      if (left + lab.offsetWidth > bc.offsetLeft + bc.offsetWidth - 4) { left = bc.offsetLeft + g.x * s; top = bc.offsetTop + (g.y + g.h + 4) * s; }
+      lab.style.left = Math.round(left) + "px"; lab.style.top = Math.round(top) + "px";
+    }
+    return lab;
   }
   function renderFront(charm, px, opts) {
     if (!charm?.outline || !Array.isArray(charm.bbox) || charm.bbox.length !== 4 || !charm.bbox.every(Number.isFinite))
@@ -10670,6 +10784,7 @@ const Engrave = window.Engrave = (() => {
       const px = wide ? full : px0;
       pm.classList.toggle("egWide", wide);
       const bc = renderBack(job, px, { grid: true, editable: true, include: framed, draft: panelOn }); framed = bc._map.bb; bc.title = "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys nudge 0.25 mm, with shift they turn 1° · cut-outs and holes stay clear"; backHost.appendChild(bc); wire(bc); markShown(job); syncBoth(); if (panelOn) draftNote(card, DRAFTS.get(job.key));
+      frontPeekToggle(backHost, bc);   // FRONTART: a BACK whose design has art on its front gets the quiet "Show front" switch beside the grid's label (a front draws its art always)
       bc._reframe = () => { if (raf || disposed || bc.classList.contains("drag")) return; mounted = [0, 0]; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); };
       } catch (error) {
         card._previewFailed = true;
