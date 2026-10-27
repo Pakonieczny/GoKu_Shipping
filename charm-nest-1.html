@@ -6358,7 +6358,7 @@ async function finishNest(sh, { result, error }) {
     if(sh.intakePhase!=='fill' && result.endedBy!=='stopped' && sh.verification.ok){sh.intakeOptimized=true;sh.intakeOptimizedCount=items.length;}
     delete sh.intakeForceFinal;
     sh.intakeFinalized = sh.intakePhase === "final" && result.endedBy !== "stopped" && sh.verification.ok && sh.placements.length > 0;
-    const placeWas = placeOf(sh);   // (Paul, 27 Oct 2026: its set as its record holds it, given back when the cloud refuses this write: placeBack)
+    const placeWas = typeof placeOf === "function" ? placeOf(sh) : null;   // (typeof: a test that runs finishNest on its own has no placeOf)   // (Paul, 27 Oct 2026: its set as its record holds it, given back when the cloud refuses this write: placeBack)
     sh.seq = await nextSheetSeq(sh); sh.fileBase = sheetFileBase(sh);
     // kept once saved, so a later try that places nothing reuses what was written (see above)
     const written = ["gold", "silver"].includes(sh.metal) && sh.verification.ok ? { key: layoutKey(sh, byId), fileBase: sh.fileBase, outputs: sh.outputs, verification: sh.verification } : null, writtenJob = sh.jobId;
@@ -6384,7 +6384,7 @@ async function finishNest(sh, { result, error }) {
       sh.saveOwed = true; log(sh, "cloud offline: kept in this browser, saved when the cloud is back");
       if (sh.resumeWait && sh.rejects.length) resumeLater(sh); feedOn(sh); flushManualIntake(sh.metal);
     } else
-    sh.persisted = persistSheet(sh, activeCharms(sh)).then(() => { delete sh.saveOwed; if (sh.jobId === writtenJob) sh._written = written; sh.persistedDone = true; if (sh.jobId === writtenJob) { releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId); } if (sh.resumeWait && sh.jobId === writtenJob && sh.rejects.length) resumeLater(sh); if (sh.jobId === writtenJob) feedOn(sh); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { if (e && e.recordKept && sh.jobId === writtenJob) placeBack(sh, placeWas); sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); });
+    sh.persisted = persistSheet(sh, activeCharms(sh)).then(() => { delete sh.saveOwed; if (sh.jobId === writtenJob) sh._written = written; sh.persistedDone = true; if (sh.jobId === writtenJob) { releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId); } if (sh.resumeWait && sh.jobId === writtenJob && sh.rejects.length) resumeLater(sh); if (sh.jobId === writtenJob) feedOn(sh); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { if (e && e.recordKept && sh.jobId === writtenJob) (placeWas && placeBack(sh, placeWas)); sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); });
     // 6 · whatever did not fit under the ceiling goes to the next sheet of this metal, which nests on its own
     if (sh.rejects.length && sh.endedBy !== "stopped" && (sh.nestFlow !== "learned" || sh.verification.ok && ["cap", "plateau"].includes(sh.endedBy))) overflowToNextSheet(sh, false);
   } catch (e) {
