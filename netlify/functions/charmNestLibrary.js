@@ -68,7 +68,7 @@ const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(R
    picks the charm) is written to the SHARED store in the sandbox too, read back, and never reaches Reset or Purge. The sandbox and production
    read the same links. An answer the sandbox kept before that (its own copy) is still read, the later write of the two standing for a key. ── */
 let PREFIX = "";
-const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Remnants", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
+const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Remnants", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Pool_Art", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
 const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
 const FV = admin.firestore.FieldValue;
 
@@ -2376,6 +2376,125 @@ async function op_backList(b) {
   const snap = await q.limit(2000).get();
   return { backs: snap.docs.map(d => { const r = d.data(); r.updatedAt = ms(r.updatedAt); return r; }) };
 }
+/* ── ART EDIT (Paul, 27 Oct 2026): "The user needs full control similar to Adobe Illustrator over each individual layer on any charm ... select and fully manipulate (size, position,
+   rotation, deletion, copy, paste, add/remove text) each layer of engravings and cut lines, outlines ... e.g. add a date inside a given calendar day square and update the month name
+   located on top of the calendar charm." The master drawing (charmnest/master/<SKU>.ai) is shared by every order of its SKU and is never changed for one order: what a person changes
+   on ONE piece is kept here, beside it, as that piece's own record, and the page draws the piece and writes its laser files from the master with this record put over it
+   (charm-nest-art-edit.js apply; charm-nest-pdf.js buildSheet redraws only that piece).
+     Charm_Pool_Art/{recKey}   recKey = the piece's pool id for its BACK, "<poolId>~front" for its FRONT (charm-nest-engrave-faces.js recKey, as Charm_Pool_Back)
+       { poolId, face, v: 1, baseKey (the master drawing the member ids were read from), removed [memberId], cutIds [memberId: the master cut lines among those removed or changed],
+         changed { memberId: item }, added [item], cut (a cut line is touched), cutKey, by, at, sku, orderId, sheetId, prev { at, by }, edits (how many saves), updatedAt }
+       item = { id, kind "path" | "text" (text arrives as outlines), role "cut" | "line" | "hatch" | "art", d (the path in the charm's own points, y up: M x y, L x y, C x1 y1 x2 y2 x y, Z),
+                stroke [r,g,b] | null, fill [r,g,b] | null (or keep: true, a changed part keeps its own paint), lwPt, even (even-odd fill), text (the words, for people), group }
+   The geometry is a string, never an array of arrays (Firestore refuses an array inside an array). Every number, the vocabulary of the path, the roles and the size are checked
+   here; a record that does not pass is refused whole, nothing is written.
+   Who and when: `by` (a signed-in person, required as for an approval) and `at` (this server's clock). The piece's pool row says it has an edit (artEdit { front | back: at }), so a page
+   that makes the piece again from the master (a reload, a recall, a checkpoint) reads a record only for a piece that has one: the pool rows are read anyway, nothing is read for the rest
+   (Paul is careful of the Firestore bill).
+   A piece already on a saved sheet: its sheet record owes its files again (filesOwed, the word the sheet window's move uses), and a CUT LINE of it is not changed (a cut line is the shape the
+   nest packed: a new shape needs the piece taken off and nested again). A sheet already cut by the laser is never changed. ── */
+const ART = "Charm_Pool_Art";
+const ART_FACES = new Set(["front", "back"]), ART_ROLES = new Set(["cut", "line", "hatch", "art"]), ART_KINDS = new Set(["path", "text"]);
+const ART_MEMBER = /^\d{1,5}-[0-9a-z]{1,13}$/, ART_ITEM = /^[A-Za-z0-9_.:-]{1,64}$/, ART_KEY = /^[0-9a-z]{1,13}$/;
+const ART_MAX = { bytes: 600000, removed: 2000, changed: 2000, added: 400, ops: 60000, d: 200000, coord: 20000, lwPt: 20, text: 200, list: 200 };
+/** The number of path operators in `d` (M x y · L x y · C x1 y1 x2 y2 x y · Z), or 0 when it is not a path this app writes: another letter, a number out of range, a path that does not start with M. */
+function artPathOps(d) {
+  if (typeof d !== "string" || !d || d.length > ART_MAX.d) return 0;
+  const tok = d.match(/[MLCZ]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|\S/g) || [], need = { M: 2, L: 2, C: 6, Z: 0 };
+  let i = 0, ops = 0, started = false;
+  while (i < tok.length) {
+    const c = tok[i++]; if (!Object.prototype.hasOwnProperty.call(need, c)) return 0;
+    if (c === "M") started = true; else if (!started) return 0;
+    for (let k = 0; k < need[c]; k++) { const v = Number(tok[i++]); if (!Number.isFinite(v) || Math.abs(v) > ART_MAX.coord) return 0; }
+    ops++;
+  }
+  return started ? ops : 0;
+}
+/** A colour as [r, g, b] in 0..1, null for none, undefined when it is not a colour. */
+const artRgb = v => v == null || v === false ? null : Array.isArray(v) && v.length === 3 && v.every(x => typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= 1) ? v.map(x => Math.round(x * 1000) / 1000) : undefined;
+function artItem(x, keyId) {
+  const no = why => ({ error: `${keyId || (x && x.id) || "an item"}: ${why}` });
+  if (!x || typeof x !== "object" || Array.isArray(x)) return no("not an item");
+  const id = keyId || str(x.id, 64); if (!ART_ITEM.test(id)) return no("its id is not a short name");
+  const role = String(x.role || ""); if (!ART_ROLES.has(role)) return no("its role must be cut, line, hatch or art");
+  const kind = x.kind == null ? "path" : String(x.kind); if (!ART_KINDS.has(kind)) return no("its kind must be path or text (text as outlines)");
+  const ops = artPathOps(x.d); if (!ops) return no(`its path is not M / L / C / Z with numbers within ±${ART_MAX.coord} pt`);
+  const out = { id, kind, role, d: x.d };
+  if (keyId && x.keep === true) out.keep = true;
+  else { const stroke = artRgb(x.stroke), fill = artRgb(x.fill); if (stroke === undefined || fill === undefined) return no("a colour is [r, g, b] from 0 to 1"); if (!stroke && !fill) return no("it is neither stroked nor filled"); out.stroke = stroke; out.fill = fill; }
+  if (x.lwPt != null) { const lw = Number(x.lwPt); if (!Number.isFinite(lw) || lw < 0 || lw > ART_MAX.lwPt) return no(`its line width is 0 to ${ART_MAX.lwPt} pt`); out.lwPt = Math.round(lw * 1000) / 1000; }
+  if (x.even === true) out.even = true;
+  if (x.text != null) out.text = str(x.text, ART_MAX.text);
+  if (x.group != null) { const g = str(x.group, 64); if (!ART_ITEM.test(g)) return no("its group is not a short name"); out.group = g; }
+  return { item: out, ops };
+}
+/** The record a page sent, checked whole: { art, cutKey } or { error }. */
+function cleanArt(a) {
+  if (!a || typeof a !== "object" || Array.isArray(a)) return { error: "the artwork edit is missing" };
+  const size = bytesOf(a); if (size > ART_MAX.bytes) return { error: `the artwork edit is ${Math.ceil(size / 1000)} KB; one piece's edit is at most ${ART_MAX.bytes / 1000} KB` };
+  const baseKey = str(a.baseKey, 13); if (!ART_KEY.test(baseKey)) return { error: "the artwork edit does not say which master drawing it was made on (baseKey)" };
+  const ids = v => (Array.isArray(v) ? v : []).map(x => String(x));
+  const removed = [...new Set(ids(a.removed))]; if (removed.length > ART_MAX.removed || removed.some(x => !ART_MEMBER.test(x))) return { error: `removed: at most ${ART_MAX.removed} part ids of the master drawing` };
+  const ch = a.changed && typeof a.changed === "object" && !Array.isArray(a.changed) ? a.changed : {}, keys = Object.keys(ch);
+  if (keys.length > ART_MAX.changed || keys.some(k => !ART_MEMBER.test(k))) return { error: `changed: at most ${ART_MAX.changed} part ids of the master drawing` };
+  if (keys.some(k => removed.includes(k))) return { error: "a part is both removed and changed" };
+  let ops = 0; const changed = {};
+  for (const k of keys) { const r = artItem(ch[k], k); if (r.error) return { error: "changed " + r.error }; changed[k] = r.item; ops += r.ops; }
+  const list = Array.isArray(a.added) ? a.added : []; if (list.length > ART_MAX.added) return { error: `added: at most ${ART_MAX.added} new parts on one piece` };
+  const added = [], seen = new Set();
+  for (const x of list) { const r = artItem(x); if (r.error) return { error: "added " + r.error }; if (seen.has(r.item.id)) return { error: `added ${r.item.id}: the id is used twice` }; seen.add(r.item.id); added.push(r.item); ops += r.ops; }
+  if (ops > ART_MAX.ops) return { error: `the artwork edit has ${ops} path operators; one piece's edit is at most ${ART_MAX.ops}` };
+  const cutIds = [...new Set(ids(a.cutIds))]; if (cutIds.some(x => !removed.includes(x) && !Object.prototype.hasOwnProperty.call(changed, x))) return { error: "cutIds names a part that is neither removed nor changed" };
+  const cutItems = keys.filter(k => changed[k].role === "cut").map(k => [k, changed[k].d]).concat(added.filter(x => x.role === "cut").map(x => [x.id, x.d]));
+  const cut = cutIds.length > 0 || cutItems.length > 0;
+  const cutKey = cut ? require("crypto").createHash("sha256").update(JSON.stringify([cutIds.slice().sort(), cutItems.sort((p, q) => (p[0] < q[0] ? -1 : p[0] > q[0] ? 1 : 0))])).digest("hex").slice(0, 16) : "";
+  return { art: { v: 1, baseKey, removed, cutIds, changed, added, cut }, cutKey };
+}
+const artOut = r => { if (!r) return null; const o = Object.assign({}, r); o.updatedAt = ms(o.updatedAt); return o; };
+async function op_artPut(b) {
+  const poolId = str(b.poolId, 80); if (!isPoolId(poolId)) return { error: "bad pool id", status: 400 };
+  const face = String(b.face || ""); if (!ART_FACES.has(face)) return { error: "face must be front or back", status: 400 };
+  const by = str(b.by, 80).trim(); if (!by) return { error: "an artwork edit needs the name of the signed-in person who made it", status: 400 };
+  const clear = b.clear === true; let art = null, cutKey = "";
+  if (!clear) {
+    const c = cleanArt(b.art); if (c.error) return { error: c.error, status: 400 }; art = c.art; cutKey = c.cutKey;
+    if (face === "back" && (art.removed.length || Object.keys(art.changed).length || art.cut)) return { error: "the back shows only the cut lines: on the back, parts are added; the drawing is changed on the front", status: 400 };
+  }
+  const key = Faces.recKey(poolId, face), ref = col(ART).doc(key), poolRef = col(POOL).doc(poolId);
+  return db.runTransaction(async tx => {
+    const snap = await tx.get(ref), pool = await tx.get(poolRef);
+    if (!pool.exists) return { error: "this piece is not in the pool (an artwork edit is kept for a pooled piece)", status: 404 };
+    const row = pool.data() || {}, old = snap.exists ? snap.data() : null, now = Date.now();
+    if (b.expectedAt != null && b.expectedAt !== "" && num(b.expectedAt) !== num(old && old.at)) return { error: "This piece's artwork was edited elsewhere. Reopen it before saving your changes.", status: 409, conflict: true, art: artOut(old) };
+    const sid = row.sheetId && !Placement.TAKE_OFF_STATES.has(row.state) ? str(row.sheetId, 80) : "", sheetRef = sid && isId(sid) ? col(SHEETS).doc(sid) : null;
+    const sheet = sheetRef ? await tx.get(sheetRef).then(s => (s.exists ? s.data() : null)) : null, onSheet = !!sheet && !sheet.archived && Array.isArray(sheet.poolIds) && sheet.poolIds.map(String).includes(poolId);
+    if (onSheet && (sheet.laserDoneAt || sheet.roseCutAt)) return { error: `${sheetLabel(sheet) || "Its sheet"} was already cut by the laser: this piece's artwork is no longer changed`, status: 409 };
+    // a cut line is the shape the sheet was nested with: on a piece on a sheet it stays as it was saved (the same cut edit sent again is no change)
+    const wasCut = (old && old.cutKey) || "", nowCut = clear ? "" : cutKey;
+    if (onSheet && nowCut !== wasCut) return { error: `A cut line is the shape ${sheetLabel(sheet) || "its sheet"} was nested with: it is not changed on a piece already on a sheet. Engraving can be changed; to change the cut, take the piece off its sheet and let it be nested again.`, status: 409, cutRefused: true };
+    if (clear) { if (old) tx.delete(ref); }
+    else tx.set(ref, Object.assign({ poolId, face, sku: str(row.sku, 60) || null, orderId: str(row.orderId || poolId.split("_")[0], 30), sheetId: onSheet ? sid : null }, art, { cutKey, by, at: now, edits: num(old && old.edits) + 1, updatedAt: FV.serverTimestamp() }, old ? { prev: { at: num(old.at), by: str(old.by, 80) } } : {}));
+    // (the whole map is written: a merge keeps the pool row's other fields, and the other face's stamp is carried over by hand)
+    tx.set(poolRef, { artEdit: Object.assign({}, row.artEdit && typeof row.artEdit === "object" ? row.artEdit : {}, { [face]: clear ? null : now }), updatedAt: FV.serverTimestamp() }, { merge: true });
+    if (onSheet) tx.set(sheetRef, { filesOwed: now, updatedAt: FV.serverTimestamp() }, { merge: true });
+    return { ok: true, key, art: clear ? null : Object.assign({ poolId, face }, art, { cutKey, by, at: now }), sheetId: onSheet ? sid : null, filesOwed: onSheet ? now : null };
+  });
+}
+async function op_artGet(b) {
+  const poolId = str(b.poolId, 80); if (!isPoolId(poolId)) return { error: "bad pool id", status: 400 };
+  const face = String(b.face || ""); if (!ART_FACES.has(face)) return { error: "face must be front or back", status: 400 };
+  const s = await col(ART).doc(Faces.recKey(poolId, face)).get();
+  return { art: s.exists ? artOut(s.data()) : null };
+}
+/** The records of several pieces in one read: `keys` (recKeys), or `poolIds` with `faces` (both when not said). Only the documents asked for are read. */
+async function op_artList(b) {
+  const faces = (Array.isArray(b.faces) && b.faces.length ? b.faces : ["front", "back"]).map(String).filter(f => ART_FACES.has(f));
+  const keys = [...new Set(Array.isArray(b.keys) ? b.keys.map(String).filter(k => isPoolId(Faces.parseRecKey(k).poolId)) : (Array.isArray(b.poolIds) ? b.poolIds : []).map(String).filter(isPoolId).flatMap(id => faces.map(f => Faces.recKey(id, f))))];
+  if (keys.length > ART_MAX.list) return { error: `at most ${ART_MAX.list} records in one read`, status: 400 };
+  const arts = {};
+  for (let i = 0; i < keys.length; i += 100) (await db.getAll(...keys.slice(i, i + 100).map(k => col(ART).doc(k)))).forEach((s, j) => { if (s.exists) arts[keys[i + j]] = artOut(s.data()); });
+  return { arts };
+}
 // ── sets: the number is allocated in a transaction, per date, across every material ──
 async function op_setAllocate(b) {
   const day = str(b.day, 10); if (!isDay(day)) return { error: "bad day" };
@@ -4184,6 +4303,9 @@ const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneL
   cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
   listingSkus: op_listingSkus, aliasGet: op_aliasGet, aliasPut: op_aliasPut, listingKindPut: op_listingKindPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
   customSheetGet: op_customSheetGet, customSheetPut: op_customSheetPut, customGet: op_customGet, customPut: op_customPut, reviewMarkPut: op_reviewMarkPut, reviewMarkOpen: op_reviewMarkOpen, customReopen: op_customReopen, customDelete: op_customReopen };
+/* ART EDIT (Paul, 27 Oct 2026): one piece's own artwork, kept beside it (op_artPut above). artPut writes the piece's record, its pool row's artEdit stamp and its sheet's filesOwed;
+   artGet and artList only read the documents named (they move no counter). */
+Object.assign(OPS, { artPut: op_artPut, artGet: op_artGet, artList: op_artList }); NO_GEN_BUMP.add("artGet"); NO_GEN_BUMP.add("artList");
 
 /* ── sign-in time (Paul, 28 Sep 23:53; plans/sign-in-sessions.md part L): sessionsList {since, until, limit} is the
    sorter's read of Station_Sessions, one document per sign-in, which the stations write through firebaseOrders
