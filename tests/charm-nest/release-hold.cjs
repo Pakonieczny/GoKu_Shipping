@@ -101,8 +101,8 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     await page.evaluate(() => { CN.setMode('orders'); Orders.showPile('', ''); Orders.render(); });
     const s3 = await until(async () => { const s = await sealOnCard(page, MARKED.rid); return s && !s.none && s; }, 20000, 'the seal on the Orders card');
     const when = await page.evaluate(at => new Date(at).toLocaleString('en-US', { timeZone: 'America/Toronto', month: 'short', day: 'numeric', year: 'numeric' }), r2.mine.at);
-    check(s3.family === 'release' && /RELEASE/.test(s3.text) && /HOLD/.test(s3.text) && s3.w >= 46 && /seal-releaseHold/.test(s3.kind), `3 · the Orders card shows the RELEASE HOLD seal, large (${JSON.stringify(s3)})`);
-    check(/Release Hold/.test(s3.words) && s3.by === 'by Test Operator' && s3.words.includes(when) && /\d{1,2}:\d{2}\s?[AP]M/.test(s3.words) && s3.at === r2.mine.at && /Hold released to the nesting queue by Test Operator/.test(s3.aria), `3 · with "Release Hold", who, the date and the time (${s3.words})`);
+    check(s3.family === 'release' && /ORDER/.test(s3.text) && /RELEASED/.test(s3.text) && s3.w >= 46 && /seal-releaseHold/.test(s3.kind), `3 · the Orders card shows the RELEASE HOLD seal, large (${JSON.stringify(s3)})`);
+    check(/Order released/.test(s3.words) && s3.by === 'by Test Operator' && s3.words.includes(when) && /\d{1,2}:\d{2}\s?[AP]M/.test(s3.words) && s3.at === r2.mine.at && /back to the nesting queue by Test Operator/.test(s3.aria), `3 · with "Release Hold", who, the date and the time (${s3.words})`);
     const none = await sealOnCard(page, UNKNOWN.rid);
     check(none && none.none === 'seal', `3 · an order never released has none (${JSON.stringify(none)})`);
     await shot('03-orders');
@@ -126,7 +126,7 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
 
     // ── 5 · the seal itself, and the old Complete Order seal ──
     const f5 = await page.evaluate(() => { const at = Date.UTC(2026, 9, 18, 19, 14); const m = Seal.modelOf({ how: 'releaseHold', at, by: 'X' }), o = Seal.modelOf({ how: 'button', at, by: 'X' }); return { m, o, fam: !!Seal.FAMILY.release, title: Seal.titleOf({ how: 'releaseHold', at, by: 'X' }), old: Seal.titleOf({ how: 'button', at, by: 'X' }), oldHtml: /seal-button/.test(Seal.html({ how: 'button', at, by: 'X' })) }; });
-    check(f5.fam && f5.m.family === 'release' && f5.m.action === 'RELEASE HOLD' && f5.m.icon === 'release' && /^Hold released to the nesting queue by X/.test(f5.title), `5 · the RELEASE HOLD seal (${JSON.stringify(f5.m)})`);
+    check(f5.fam && f5.m.family === 'release' && f5.m.action === 'ORDER RELEASED' && f5.m.icon === 'release' && /^Hold released to the nesting queue by X/.test(f5.title), `5 · the RELEASE HOLD seal (${JSON.stringify(f5.m)})`);
     check(f5.o.family === 'fulfilment' && f5.o.action === 'ORDER COMPLETE' && /Complete Order button/.test(f5.old) && f5.oldHtml, `5 · an old Complete Order seal is drawn as it always was (${JSON.stringify(f5.o)})`);
 
     const errs = W.errors.filter(e => !/ResizeObserver/.test(e));

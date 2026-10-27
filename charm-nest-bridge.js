@@ -2412,11 +2412,16 @@ const Orders = window.Orders = (() => {
     try { if (RR && RR.orderButton) { const b = RR.orderButton(rid, node); b.classList.add("relHold"); rh.replaceWith(b); return; } } catch (e) { console.warn("Release Hold", e); }
     rh.onclick = e => { e.stopPropagation(); toast("Release Hold is not ready on this page yet: reload the page and try again.", "bad", 6000); };
   }
-  /** The seal on the Orders card, large (72 px), with its words beside it: "Release Hold", by whom, the date and the time (Toronto time, as on the seal). "" when the order was never released with it. */
+  /** The seal on the Orders card, large (72 px), with its words beside it: "Order released", by whom, the date and the time (Toronto time, as on the seal), and when it had been held. "" when the order was never released with it.
+   *  (RELEASED, Paul 27 Oct 2026: "updating the Hold Order seal to a Released Order Seal ... so users know that a particular order was put on Hold in the past and then Released": the seal reads ORDER RELEASED and its words
+   *   say the hold it ended: st.held, else the order's Hold Order mark (CharmNestReviewMark.info, kept once resolved) when it came before the release) */
   function releaseSealHtml(st) {
     if (!st || !window.Seal) return "";
     const by = st.by || "someone", when = relWhen(st.at);
-    return `<span class="relSeal" data-testid="release-seal" data-rel-seal="${+st.at}" title="${esc(`Hold released to the nesting queue by ${by} · ${when}`)}">${Seal.html(st, Seal.BASE_SIZE, "relSealFace")}<span class="relSealWords"><b>Release Hold</b><span class="relSealBy">by ${esc(by)}</span><span class="relSealAt">${esc(when)}</span></span></span>`;
+    let held = st.held && +st.held.at > 0 ? st.held : null;
+    if (!held) try { const rid = (/^releaseHold:(\d+):/.exec(String(st.id || "")) || [])[1], M = window.CharmNestReviewMark, i = rid && M && M.info ? M.info(rid) : null; if (i && +i.at > 0 && +i.at <= +st.at + 1000) held = { at: +i.at, by: String(i.by || "") }; } catch (_) { held = null; }
+    const heldLine = held ? `<span class="relSealHeld">held${held.by ? " by " + esc(held.by) : ""} · ${esc(relWhen(held.at))}</span>` : "";
+    return `<span class="relSeal" data-testid="release-seal" data-rel-seal="${+st.at}"${held ? ` data-held-at="${+held.at}"` : ""} title="${esc(`Order released${held ? ` (held${held.by ? " by " + held.by : ""} · ${relWhen(held.at)})` : ""}: back to the nesting queue by ${by} · ${when}`)}">${Seal.html(st, Seal.BASE_SIZE, "relSealFace")}<span class="relSealWords"><b>Order released</b><span class="relSealBy">by ${esc(by)}</span><span class="relSealAt">${esc(when)}</span>${heldLine}</span></span>`;
   }
   const relSig = st => st ? st.at + ":" + st.by : "";
   /* CARDSEAL (Paul, 19 Oct 2026: "I'm also not seeing the Approved Engraving/Monograms Seals in each order card in the Orders tab"): the approved engraving (each piece and face) and monogram (each piece) seals of an order's lines,
@@ -19981,7 +19986,7 @@ const OrderWin = window.OrderWin = (() => {
   const SEAL_KINDS = {
     print:    { label: "QR label printed", how: "print", btn: "[data-cu-print]", rowDrawn: true },
     complete: { label: "Order complete", how: "button", btn: "[data-cu-done],[data-cu-complete]", rowDrawn: true },
-    release:  { label: "Release Hold", how: "releaseHold", btn: "[data-rel-hold],[data-cu-release]", alt: ".revSendBtn" },   // (RELSTAMP, below: once released, beside the Hold Order button that takes its place)
+    release:  { label: "Order released", how: "releaseHold", btn: "[data-rel-hold],[data-cu-release]", alt: ".revSendBtn" },   // (RELEASED, Paul 27 Oct 2026: the seal of a release reads ORDER RELEASED)   // (RELSTAMP, below: once released, beside the Hold Order button that takes its place)
     cancel:   { label: "Order cancelled", how: "cancel", family: "cancelled", action: "ORDER CANCELLED", btn: ".cnCancelBtn,[data-cancel-order]" },
     sheet:    { label: "Sent to sheet", how: "sheet", btn: "#owSendSheet,[data-cu-sheet-send]" },
     hold:     { label: "Order held", how: "holdOrder", family: "exceptions", action: "ORDER HELD", icon: "exceptions", btn: ".revSendBtn" }   // (HOLDORDER: the Hold Order press, was Send to Review; its seal is drawn from the mark, not a seal record)
@@ -21128,6 +21133,10 @@ const OrderWin = window.OrderWin = (() => {
       const kinds = new Set([].concat(x.spec.problems, x.problems || []).map(p => p && p.kind));
       if (x.materialOverride) kinds.delete("needsMaterial");
       if (x.sizeOverride) kinds.delete("missingSize");
+      // (RELEASED, Paul 27 Oct 2026, order 4209714573: "I already released this order but for some reason it did not get fully released": the window still said NEEDS A DECISION for a question the Release Hold had set
+      //  aside (row.releaseAnyway.kinds, which every other reader leaves out, interpretAll); a block a person released is not asked either)
+      if (x.releaseAnyway && Array.isArray(x.releaseAnyway.kinds)) for (const k of x.releaseAnyway.kinds) kinds.delete(k);
+      if (x.blockOverride) kinds.delete("blockedSku");
       return kinds.has(kind);
     } };
   }

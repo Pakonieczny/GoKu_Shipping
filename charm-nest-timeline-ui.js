@@ -713,7 +713,7 @@
     if (e.type === "monogramApproved") { const L = String((e.data && e.data.letters) || "").toUpperCase(); if (/^[A-Z]{3}$/.test(L)) m.letters = L; }
     // (RELHOLD, Paul 18 Oct 2026: a hold released with the Review card's Release Hold button says so in its data, seal "releaseHold": its step in the lane is the RELEASE HOLD seal the card was
     //  stamped with, the release family; a hold released anywhere else (Orders › On hold, the sheet window) is drawn as it always was)
-    if (e.type === "released" && e.data && e.data.seal === "releaseHold") Object.assign(m, { family: "release", action: "RELEASE HOLD", icon: "release", path: undefined });
+    if (e.type === "released" && e.data && e.data.seal === "releaseHold") Object.assign(m, { family: "release", action: "ORDER RELEASED", icon: "release", path: undefined });   // (RELEASED, Paul 27 Oct 2026: the seal reads ORDER RELEASED)
     // (HOLDORDER, Paul 20 Oct 2026: the Hold Order press's seal says what it did, ORDER HELD, in the family of a hold)
     if (holdOrderNote(e)) Object.assign(m, { family: "exceptions", action: "ORDER HELD", icon: "exceptions", path: undefined });
     return m;

@@ -6,6 +6,7 @@
 //   1  at once: a bar and the step it is on under the button, with the seconds; the order is held (marked) and the button is free ("In Review") while the sheets are still being put right
 //   2  the ORDER HELD seal is stamped IN the window, at the press: the wooden stamp comes down on it, inside the open window, in sight
 //   3  each step moves the bar and says where it is (taking it off the sheet, filling the free space, the QR label); it ends in a tick, "Done", and how long it took
+//   6  RELEASED: once released, no ORDER HELD seal anywhere: the window and the Orders card show ORDER RELEASED, with the hold it ended ("held by … · when")
 //   5  RELSTAMP: the window's own Release Hold, pressed: the RELEASE HOLD stamp comes down in the window, in sight (it came down on the Review card behind the window: heard, never seen)
 //   PW_DIR=<playwright-core's node_modules> node tests/charm-nest/hold-order-progress.cjs   (CHROMIUM=<chrome>)
 'use strict';
@@ -92,6 +93,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(800);
     const rel = await page.evaluate(n0 => { const g = [...document.querySelectorAll('#orderWin [data-ow-btn-seals] [data-seal-kind="release"]')].filter(e => e.getBoundingClientRect().width > 4); return { stamps: window.__stamps.slice(n0.s), tools: window.__tools.slice(n0.t), seals: g.length }; }, n0);
     ok('5 Release Hold pressed in the window: the RELEASE HOLD stamp comes down IN the window, in sight, and the seal stays there', rel.stamps.some(s => s.kind === 'release' && s.inWin) && rel.tools.some(t => t.inWin && t.w > 20) && rel.seals >= 1, JSON.stringify(rel));
+    // 6 · RELEASED (Paul, 27 Oct 2026: "Once an order is released, it must be released everywhere and All hold Seals and UI must be updated in real-time to the Release Stamp/Seal ... so users know that a
+    //     particular order was put on Hold in the past and then Released"): no ORDER HELD seal anywhere; the window and the Orders card show ORDER RELEASED, with the hold it ended
+    const after = await page.evaluate(rid => { const T = CNSealTravel.of(rid), rel = T.find(r => r.kind === 'release') || {}; return { kinds: T.map(r => r.kind), held: rel.held || null, winHold: [...document.querySelectorAll('#orderWin [data-seal-kind="hold"]')].length, winRel: [...document.querySelectorAll('#orderWin [data-seal-kind="release"]')].length, face: (document.querySelector('#orderWin [data-seal-kind="release"] svg') || {}).textContent || '' }; }, rid);
+    ok('6a released: the order\'s seals have no ORDER HELD any more; ORDER RELEASED stands in its place and knows the hold it ended', !after.kinds.includes('hold') && after.kinds.includes('release') && after.held && after.held.by === 'Test Operator', JSON.stringify(after));
+    ok('6b the order window shows the ORDER RELEASED seal and no ORDER HELD seal', after.winHold === 0 && after.winRel >= 1 && /ORDER/.test(after.face) && /RELEASED/.test(after.face), JSON.stringify(after));
+    await page.evaluate(() => { if (OrderWin.isOpen()) OrderWin.close(); }); await sleep(500);
+    await page.evaluate(() => { CN.setMode('orders'); Orders.render(); });
+    await page.waitForFunction(r => !!document.querySelector(`#ordItems [data-rid="${r}"] .relSeal`), rid, { timeout: 15000 });
+    const card = await page.evaluate(r => { const n = document.querySelector(`#ordItems [data-rid="${r}"]`), s = n.querySelector('.relSeal'); return { words: s.querySelector('.relSealWords').innerText.replace(/\s+/g, ' ').trim(), face: (s.querySelector('svg') || {}).textContent || '', held: n.querySelectorAll('[data-seal-kind="hold"]').length }; }, rid);
+    ok('6c the Orders card: ORDER RELEASED, by whom and when, and "held by …" under it; no ORDER HELD seal on the card', /^Order released by Test Operator .+ held by Test Operator · /.test(card.words) && /RELEASED/.test(card.face) && card.held === 0, JSON.stringify(card));
     ok('4 no script error on the page throughout', w.errors.length === 0, (w.errors || []).join(' | '));
   } finally { await w.close(); }
   console.log(`hold-order-progress: ${results.length} checks passed`);

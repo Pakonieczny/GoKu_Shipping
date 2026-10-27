@@ -26,7 +26,8 @@
   const KINDS = {
     print:    { label: "QR Label Printed", ink: "#65737f", family: "prepared",   icon: "qr",        action: "QR LABEL PRINTED" },
     complete: { label: "Order Complete",   ink: "#77518a", family: "fulfilment", icon: "complete",  action: "ORDER COMPLETE" },
-    release:  { label: "Release Hold",     ink: "#a2591c", family: "release",    icon: "release",   action: "RELEASE HOLD" },
+    // (RELEASED, Paul 27 Oct 2026: "updating the Hold Order seal to a Released Order Seal": the seal of a release reads ORDER RELEASED; the button keeps its name, Release Hold)
+    release:  { label: "Order Released",   ink: "#a2591c", family: "release",    icon: "release",   action: "ORDER RELEASED" },
     cancel:   { label: "Order Cancelled",  ink: "#982f48", family: "cancelled",  icon: "cancelled", action: "ORDER CANCELLED" },
     sheet:    { label: "Sent to Sheet",    ink: "#65737f", family: "prepared",   icon: "prepared",  action: "SENT TO SHEET" },
     // (HOLDORDER / SEALTRAVEL, Paul 20 Oct 2026: the Hold Order press (was Send to Review): ORDER HELD, in the family of a hold, as the timeline draws it (charm-nest-timeline-ui.js holdOrderNote))
@@ -102,7 +103,17 @@
     // each seal once (the same kind within 10 s, by the same person; a print by its number), oldest first
     const once = [];
     for (const r of out.sort((a, b) => a.at - b.at)) if (!once.some(o => o.kind === r.kind && Math.abs(o.at - r.at) < 10000 && (r.kind === "hold" || String(o.by) === String(r.by)) && (o.n || 0) === (r.n || 0))) once.push(r);
-    return once;
+    // RELEASED (Paul, 27 Oct 2026: "Once an order is released, it must be released everywhere and All hold Seals and UI must be updated in real-time to the Release Stamp/Seal. The Hold order Seal must be
+    // visibly updated in real-time so users know that a particular order was put on Hold in the past and then Released"): an ORDER HELD seal with a release after it is what that release ended. It is
+    // not drawn on its own any more: the ORDER RELEASED seal stands in its place and says when it was held and by whom (rel.held). A hold put on again after the release is the newer one and shows.
+    const rels = once.filter(r => r.kind === "release");
+    if (!rels.length) return once;
+    const out2 = [];
+    for (const r of once) {
+      if (r.kind === "hold") { const rel = rels.find(x => x.at >= r.at - 1000); if (rel) { if (!rel.held || rel.held.at < r.at) rel.held = { at: r.at, by: r.by }; continue; } }
+      out2.push(r);
+    }
+    return out2;
   }
 
   const whenOf = t => new Date(+t).toLocaleString("en-US", { timeZone: "America/Toronto", month: "short", day: "numeric", year: "numeric" }) + " · " + new Date(+t).toLocaleTimeString("en-US", { timeZone: "America/Toronto", hour: "numeric", minute: "2-digit" });
@@ -122,7 +133,7 @@
   /** One worded seal (the Release Hold seal's layout): the face, the kind's label, who and when, in the kind's ink. */
   function worded(r, size) {
     const O = root.Orders;
-    if (r.kind === "release" && O && O.releaseSealHtml && !size) return O.releaseSealHtml({ how: "releaseHold", at: r.at, by: r.by, id: r.id });   // (the existing look, exactly)
+    if (r.kind === "release" && O && O.releaseSealHtml && !size) return O.releaseSealHtml({ how: "releaseHold", at: r.at, by: r.by, id: r.id, held: r.held || null });   // (the existing look, exactly; RELEASED: and when it was held)
     const ink = inkOf(r), label = labelOf(r), by = r.by || "someone", when = whenOf(r.at);
     return `<span class="sealTravelSeal" data-testid="travel-seal" data-seal-kind="${esc(r.kind)}" data-seal-at="${+r.at}" style="--stInk:${ink};border-color:${ink}61;background:${ink}12${size ? `;--seal-fit:${+size}px` : ""}" title="${esc(`${label} by ${by} · ${when}`)}">${faceOf(r, size)}<span class="stWords"><b>${esc(label)}</b><span class="stBy">by ${esc(by)}</span><span class="stAt">${esc(when)}</span></span></span>`;
   }

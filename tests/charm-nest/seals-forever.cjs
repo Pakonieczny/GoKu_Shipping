@@ -129,7 +129,7 @@ const ORDERS = [order(RID, [line(41767447521, 'CHAIN_8941', 'CHAIN REPLACEMENT',
     r = rec(); assert.deepEqual([r.state, r.prints, r.stamps.map(x => x.how).join()], ['completed', 2, 'print,button,print']);
     await seg('done');
     const all = await seals();
-    assert.deepEqual(all.map(s => s.face), [['QR LABEL PRINTED', 1], ['RELEASE HOLD', 0], ['QR LABEL PRINTED', 2]], 'every seal (RELHOLD, Paul 18 Oct 2026: the Completed seal is now drawn as RELEASE HOLD on the Review card): ' + JSON.stringify(all));
+    assert.deepEqual(all.map(s => s.face), [['QR LABEL PRINTED', 1], ['ORDER RELEASED', 0], ['QR LABEL PRINTED', 2]], 'every seal (RELHOLD, Paul 18 Oct 2026: the Completed seal is now drawn as RELEASE HOLD on the Review card): ' + JSON.stringify(all));
     assert.deepEqual(all.slice(0, 2).map(s => [s.at, s.rot]), kept.map(k => k.slice(1)), 'the old ones unchanged (same time, same turn; the Completed segment draws the Complete seal as RELEASE HOLD, RELHOLD 18 Oct 2026)');
     assert.equal(new Set(all.map(s => s.at)).size, 3, 'no seal doubled');
     // the timeline: one event per seal, and the reopen notes

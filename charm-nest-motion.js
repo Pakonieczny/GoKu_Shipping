@@ -325,7 +325,7 @@
       // (RELHOLD: the Completed rosette made over: twelve small scallops round a medallion, one at the top over the padlock, so it is never taken for the eight-lobed Fulfilment rosette or the plain Received circle)
       // (SEALSHEET, Paul 20 Oct 2026: "SENT TO SHEET" is a seal of its own, in its own muted teal ink: a sheet with its top right corner folded over, so it is never taken for the Prepared square)
       sheet:{name:'Sent to Sheet',ink:'#2f7a6c',d:'M14 6H90L114 30V106Q114 114 106 114H14Q6 114 6 106V14Q6 6 14 6Z'},
-      release:{name:'Release Hold',ink:'#a2591c',d:'M72.68 12.67A13.2 13.2 0 0 1 94.65 25.35A13.2 13.2 0 0 1 107.33 47.32A13.2 13.2 0 0 1 107.33 72.68A13.2 13.2 0 0 1 94.65 94.65A13.2 13.2 0 0 1 72.68 107.33A13.2 13.2 0 0 1 47.32 107.33A13.2 13.2 0 0 1 25.35 94.65A13.2 13.2 0 0 1 12.67 72.68A13.2 13.2 0 0 1 12.67 47.32A13.2 13.2 0 0 1 25.35 25.35A13.2 13.2 0 0 1 47.32 12.67A13.2 13.2 0 0 1 72.68 12.67Z'}
+      release:{name:'Order Released',ink:'#a2591c',d:'M72.68 12.67A13.2 13.2 0 0 1 94.65 25.35A13.2 13.2 0 0 1 107.33 47.32A13.2 13.2 0 0 1 107.33 72.68A13.2 13.2 0 0 1 94.65 94.65A13.2 13.2 0 0 1 72.68 107.33A13.2 13.2 0 0 1 47.32 107.33A13.2 13.2 0 0 1 25.35 94.65A13.2 13.2 0 0 1 12.67 72.68A13.2 13.2 0 0 1 12.67 47.32A13.2 13.2 0 0 1 25.35 25.35A13.2 13.2 0 0 1 47.32 12.67A13.2 13.2 0 0 1 72.68 12.67Z'}
     };
     const SYMBOL = {
       received:'<path d="M8 2h9l4 4v11H8zM17 2v5h4M11 9h7M11 12h7M3 15h5l2 4h8l2-4h4v8H3zM14 14v4m-2-2 2 2 2-2"/>',
@@ -357,7 +357,7 @@
       if (!model.date && +model.at > 0) model.date = dateOf(model.at);
       if (!model.time && +model.at > 0) model.time = timeOf(model.at);
       const f=FAMILY[model.family] || FAMILY.received, ink=opts.ghost?'#92968f':f.ink;
-      const action=String(model.action || f.name).toUpperCase(), words=action.split(/\s+/), lines=action==='FRONT CUT PLAIN'?['FRONT','CUT PLAIN']:(['BACK ENGRAVING','FRONT ENGRAVING','ORDER RECEIVED','ORDER COMPLETE','RELEASE HOLD'].includes(action) || action.length>14) && words.length>1?[words.slice(0,Math.ceil(words.length/2)).join(' '),words.slice(Math.ceil(words.length/2)).join(' ')]:[action];
+      const action=String(model.action || f.name).toUpperCase(), words=action.split(/\s+/), lines=action==='FRONT CUT PLAIN'?['FRONT','CUT PLAIN']:(['BACK ENGRAVING','FRONT ENGRAVING','ORDER RECEIVED','ORDER COMPLETE','RELEASE HOLD','ORDER RELEASED'].includes(action) || action.length>14) && words.length>1?[words.slice(0,Math.ceil(words.length/2)).join(' '),words.slice(Math.ceil(words.length/2)).join(' ')]:[action];
       const serifFree='system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif';
       const txt=(value,y,size,weight=700,color=ink)=>`<text x="60" y="${y}" text-anchor="middle" fill="${color}" stroke="none" font-family="${serifFree}" font-size="${size}" font-weight="${weight}" letter-spacing="0">${esc(value)}</text>`;
       // Explicit typographic widths keep every glyph inside the actual family silhouette,
@@ -484,7 +484,7 @@
     function modelOf(st) {
       if (st.model) return Object.assign({}, st.model);
       if (st.family) return Object.assign({}, st);
-      const action = st.how === 'sheet' ? 'SENT TO SHEET' : st.how === 'button' ? 'ORDER COMPLETE' : st.how === 'laserReady' ? 'LASER READY' : st.how === 'laserDone' ? 'LASER CUT' : st.how === 'engraveApproved' ? (frontOf(st) ? 'FRONT ENGRAVING' : 'BACK ENGRAVING') : st.how === 'engravePlain' ? (frontOf(st) ? 'FRONT CUT PLAIN' : 'CUT PLAIN') : st.how === 'monogramApproved' ? 'MONOGRAM' : st.how === 'releaseHold' ? 'RELEASE HOLD' : st.how === 'cancel' ? 'ORDER CANCELLED' : 'QR LABEL PRINTED';
+      const action = st.how === 'sheet' ? 'SENT TO SHEET' : st.how === 'button' ? 'ORDER COMPLETE' : st.how === 'laserReady' ? 'LASER READY' : st.how === 'laserDone' ? 'LASER CUT' : st.how === 'engraveApproved' ? (frontOf(st) ? 'FRONT ENGRAVING' : 'BACK ENGRAVING') : st.how === 'engravePlain' ? (frontOf(st) ? 'FRONT CUT PLAIN' : 'CUT PLAIN') : st.how === 'monogramApproved' ? 'MONOGRAM' : st.how === 'releaseHold' ? 'ORDER RELEASED' : st.how === 'cancel' ? 'ORDER CANCELLED' : 'QR LABEL PRINTED';
       const icon = st.how === 'cancel' ? 'cancelled' : st.how === 'releaseHold' ? 'release' : st.how === 'monogramApproved' ? 'monogram' : st.how === 'sheet' ? 'sheet' : st.how === 'button' ? 'complete' : st.how === 'laserReady' ? 'laserReady' : st.how === 'laserDone' ? 'laser' : st.how === 'engravePlain' ? 'plain' : st.how === 'engraveApproved' ? 'engraving' : 'qr';
       const m = { family:familyOf(st), action, icon, at:+st.at || 0, by:String(st.by || ''), scope:st.scope || '', n:st.n || 0 };
       if (monogramOf(st)) { const L = String(st.letters || '').toUpperCase(); if (/^[A-Z]{3}$/.test(L)) m.letters = L; if (+st.of > 1) m.of = +st.of; }   // (MONOSEAL: the three letters of THIS monogram, and the piece of a line of several)
