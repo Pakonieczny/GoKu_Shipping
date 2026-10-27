@@ -246,7 +246,7 @@
     if ((root.navigator && navigator.onLine === false) || /failed to fetch|network|load failed|timed out|timeout|offline/i.test(msg)) return "Could not reach the server, so nothing was cancelled. The order is still on hold; try again when you are back online.";
     return `Not cancelled: ${msg || "something went wrong"}. The order is still on hold; try again.`;
   };
-  async function cancel(rid) {
+  async function cancel(rid, opts) {
     rid = String(rid);
     css();   // (the chip's ring and ticking count; NOHOLDPILE: was put in by the On hold card's button)
     if (flights.has(rid)) return { ok: false, error: "busy" };
@@ -256,11 +256,16 @@
     // (an order that Hold or Release hold is moving right now is left alone until that has finished)
     try { const o = root.OrderHold && OrderHold.status && OrderHold.status(rid); if (o && o.running === true) { say(rid, "This order is being moved right now. Try again when it has finished."); return { ok: false, error: "moving" }; } } catch (_) {}
     // the person's name: the small inline bar, once, when this computer has none (put away: nothing happens)
+    // (SIGNIN, Paul 27 Oct 2026: "There was no feedback to the user as to why things were not working": the bar opens under the button and says it is to cancel this order; put away,
+    //  the line under the button says why nothing was cancelled. CNEmployee.needSignIn, the one helper of every press that needs a person)
     let who = nameNow();
     if (!who) {
-      if (asking.has(rid)) { try { CNEmployee.edit({ why: "Kept with the cancel on the order's timeline." }); } catch (_) {} return { ok: false, error: "name" }; }
+      const E = root.CNEmployee, near = opts && opts.near, ask = () => E && typeof E.needSignIn === "function"
+        ? E.needSignIn("cancel this order", null, { near, say: t => say(rid, t), note: "Not cancelled: nobody is signed in. Sign in to cancel this order." })
+        : E && E.edit ? E.edit({ why: "Kept with the cancel on the order's timeline." }) : "";
+      if (asking.has(rid)) { try { ask(); } catch (_) {} return { ok: false, error: "name" }; }
       asking.add(rid);
-      try { who = root.CNEmployee && CNEmployee.edit ? String(await CNEmployee.edit({ why: "Kept with the cancel on the order's timeline." }) || "").trim() : ""; } catch (_) { who = ""; }
+      try { who = String(await ask() || "").trim(); } catch (_) { who = ""; }
       asking.delete(rid);
       if (!who) return { ok: false, error: "name" };
     }
@@ -345,7 +350,7 @@
       const b = doc.createElement("button"); b.type = "button"; b.className = "btn ghost sm cnCancelBtn"; b.textContent = LABEL;
       b.setAttribute("aria-label", `Cancel order ${rid}`);
       b.title = "Cancel this order. It moves to Orders \u203a Cancelled, where its record is kept and can be restored.";
-      b.onclick = e => { e.stopPropagation(); e.preventDefault(); cancel(rid).catch(err => console.warn("cancel order", err)); };
+      b.onclick = e => { e.stopPropagation(); e.preventDefault(); cancel(rid, { near: b }).catch(err => console.warn("cancel order", err)); };   // (SIGNIN: near, the button a sign-in is asked under)
       if (rel) rel.after(b); else acts.appendChild(b);
       node.dataset.rid = node.dataset.rid || rid;
       if (flights.has(rid)) paintBusy(rid);
