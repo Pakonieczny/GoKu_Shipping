@@ -6,6 +6,9 @@
      B  the calendar through the sheet: the month name gone, the new month and the date in their square, blue hatching, the cut outline kept; the parsed sheet groups it as one charm again
      C  export and DXF: the composed production .ai carries the additions on the piece (where the sheet put it), and the DXF carries them as HATCH entities on the master's layer
      D  the back: a part added to the BACK is engraved in the back file's ENGRAVE layer, turned over with the cut; a back file without one is byte for byte as before
+     E  weight and line width (27 Oct 2026): words the charm editor made at three weights and a day square's line thinned with its Stroke: the record keeps each weight with its outlines
+        and the line's width, the piece opened again says them (itemsOf, decode), a weight changed there grows only by the difference, and the sheet's file engraves exactly those
+        outlines (more ink at +0.05 mm, less at -0.03 mm) and writes that line at 0.142 pt while the other squares keep their own
    node tests/charm-nest/art-edit-output.cjs */
 'use strict';
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
@@ -134,5 +137,51 @@ const dxfCount = (txt, type) => (txt.match(new RegExp('\\r\\n0\\r\\n' + type + '
     const ob = cb.outline.bbox, rel = x => (x - ob[0]) / (ob[2] - ob[0]), relY = y => (y - ob[1]) / (ob[3] - ob[1]);
     near((eng[0].bbox[0] + eng[0].bbox[2]) / 2, ref[0] + (1 - rel(dx)) * (ref[2] - ref[0]), 0.3, 'D across: mirrored'); near((eng[0].bbox[1] + eng[0].bbox[3]) / 2, ref[1] + relY(dy) * (ref[3] - ref[1]), 0.3, 'D up and down: as drawn');
   }
-  console.log(`PASS ${n} checks: ART EDIT output — the edited piece drawn again from its own members (removed, added, in the master's layers), every other piece byte for byte; the calendar's month and date; export and DXF carry the additions; the back's addition in the back file`);
+  /* ── E · weight and line width (Paul, 27 Oct 2026: "the thickness of the Red engrave line is too thick, I need the ability to control the thickness of fonts ... I need fine font
+     thickness control over each font"): what the charm editor hands back at a weight and a width is what the record keeps and what the sheet's file engraves ── */
+  {
+    const CE = require(path.join(ROOT, 'charm-nest-charm-editor.js')), CM = CE.model, geo = CM.createGeo(null);
+    ok(CM.canWeigh(), 'E the editor finds Clipper in node as the page has it (vendor/clipper-6.4.2.js)');
+    const base = CM.prepIn(AE.itemsOf(cb, view, 'front'), ['cut']), out0 = CM.exportItems(base, geo);
+    const sqIds = [cal.day(1, 0), cal.day(1, 2), cal.day(1, 4)].map(i => cids[i]), thinId = cids[cal.day(3, 1)];
+    const boxOf = id => geo.box(base.find(i => i.id === id));
+    // the same "8" at three weights, each in a day square; one square's red line thinned to 0.05 mm with the editor's own Stroke
+    const weights = [0, 0.05, -0.03];
+    const words = weights.map((w, k) => { const b = boxOf(sqIds[k]); return CM.weighItem({ id: 'eight' + k, kind: 'text', role: 'hatch', source: 'added', text: '8', fontKey: 'sans', sizePt: 6, align: 'left', tx: b[0] + 2.4, ty: b[3] - 2.6, sx: 1, sy: 1, rot: 0 }, w, geo); });
+    const thin = Object.assign({}, base.find(i => i.id === thinId), { lwPt: +(0.05 * 72 / 25.4).toFixed(9) });
+    const after = base.map(i => (i.id === thinId ? thin : i)).concat(words), out1 = CM.exportItems(after, geo), diff = CM.diffFace(out0, out1);
+    eq([diff.added.map(a => a.id), Object.keys(diff.changed)], [['eight0', 'eight1', 'eight2'], [thinId]], 'E the editor hands back the three words added and the thinned line changed, nothing else');
+    const drawn = diff.added.map(a => a.subpaths), inks = drawn.map(sp => CM.inkArea(sp));
+    ok(inks[2] < inks[0] && inks[0] < inks[1], 'E the words\' outlines are more ink at +0.05 mm and less at -0.03 mm than the font\'s own (' + inks.map(v => v.toFixed(2)).join(' / ') + ' pt²)');
+    ok(diff.added[1].weightMm === 0.05 && diff.added[2].weightMm === -0.03 && diff.added[0].weightMm === undefined, 'E each says its weight (none at the font\'s own)');
+    const wrec = Object.assign({ at: FIXED, by: 'Ana_M' }, AE.encode(diff, { charm: cb, view, face: 'front', placed: true }));
+    ok(wrec.added.map(e => e.weightMm).join() === ',0.05,-0.03' && wrec.added.every(e => e.role === 'hatch' && e.fill.join() === '0,0,1'), 'E the record keeps each weight with its outlines, hatched blue: ' + JSON.stringify(wrec.added.map(e => e.weightMm)));
+    near(wrec.changed[thinId].lwPt, 0.142, 1e-9, 'E the record keeps the line\'s width as the editor set it (0.05 mm = 0.142 pt)');
+    const toSrcBox = sp => { const pts = []; for (const s of sp) for (const o of s) for (const p of o.slice(1)) pts.push(cfr.toSource(p)); return [Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1])), Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))]; };
+    wrec.added.forEach((e, k) => { const got = toSrcBox(toItem(cfr, AE.fromD(e.d))), want = toSrcBox(drawn[k]); got.forEach((v, i) => near(v, want[i], 0.002, `E the record's outlines of the ${weights[k]} mm "8" are the editor's (${i})`)); });
+    // the round trip: the piece made with the record, its parts as the editor opens them again, decode
+    const wed = AE.apply(Object.assign({}, cb, { id: 'cal-3', poolId: '4170000003_1003_1' }), wrec, 'front');
+    const reopened = AE.itemsOf(wed, view, 'front'), r1 = reopened.find(i => i.id === 'eight1'), r2 = reopened.find(i => i.id === 'eight2');
+    ok(wed.members.find(m => m.artMemberId === 'eight1').artWeightMm === 0.05 && r1.weightMm === 0.05 && r2.weightMm === -0.03 && !('weightMm' in reopened.find(i => i.id === 'eight0')), 'E opened again, the words say their weight (the piece\'s parts carry it)');
+    ok(AE.decode(wrec, wed, view).added.map(a => a.weightMm).join() === ',0.05,-0.03', 'E decode gives it back too');
+    near(reopened.find(i => i.id === thinId).lwPt, 0.142, 1e-9, 'E and the thinned line its width');
+    { // a weight changed on words opened again grows their saved outlines by the difference only: 0.05 → 0.08 mm is 0.015 mm more on every edge
+      const it = CM.prepIn([r1])[0], b0 = geo.box(it), more = CM.weighItem(it, 0.08, geo), b1 = geo.box(more), d = 0.015 * 72 / 25.4;
+      ok(more.weightMm === 0.08 && b1[0] < b0[0] - d * 0.9 && b1[0] > b0[0] - d * 2.1 && b1[3] > b0[3] + d * 0.9 && b1[3] < b0[3] + d * 2.1, 'E words opened again at 0.05 mm and set to 0.08 mm grow by the 0.03 mm between: ' + JSON.stringify([b0, b1].map(b => b.map(v => +v.toFixed(3)))));
+      const same = CM.weighItem(it, 0.05, geo); ok(same === it, 'E and set to the weight they have, nothing changes');
+    }
+    reseed(); const wpl = [{ charm: wed, angle: 0, cxPt: 60, cyPt: 60, scale: 1 }];
+    const wBytes = await P.buildSheet({ sheet: SHEET, placements: wpl, sources: new Map([['s', cal.parsed]]), title: 'weight' });
+    const wq = await P.parseSource(wBytes, 'weight-sheet.ai'), wform = wq.segments.filter(s => s.kind === 'xobj')[0], wk = kids(wform);
+    const e = wpl[0].cxPt - cb.centerPt[0], f = SHEET.hPt - wpl[0].cyPt - cb.centerPt[1], onSheet = b => [b[0] + e, b[1] + f, b[2] + e, b[3] + f];
+    const fills = wk.filter(k => k.fill && k.fillRGB.join() === '0,0,1');
+    drawn.forEach((sp, k) => { const want = onSheet(toSrcBox(sp)), hit = fills.find(k2 => k2.bbox.every((v, i) => Math.abs(v - want[i]) < 0.003)); ok(!!hit, `E the sheet's file engraves the ${weights[k]} mm "8" with the editor's outlines (its box to 0.003 pt): ${JSON.stringify(want.map(v => +v.toFixed(3)))}`); });
+    const wide = drawn.map(sp => { const b = toSrcBox(sp); return Math.hypot(b[2] - b[0], b[3] - b[1]); });
+    ok(wide[2] < wide[0] && wide[0] < wide[1], 'E in the file too, -0.03 mm < the font\'s own < +0.05 mm');
+    const reds = wk.filter(k => k.stroke && !k.fill && k.strokeRGB[0] > 0.5 && k.strokeRGB[2] < 0.5), thinned = reds.filter(k => Math.abs(k.lwPt - 0.142) < 1e-6), rest = reds.filter(k => Math.abs(k.lwPt - 0.3) < 1e-6);
+    ok(reds.length === 20 && thinned.length === 1 && rest.length === 19, 'E the file writes the thinned day square at 0.142 pt (0.05 mm) and the other 19 at their own 0.3 pt: ' + JSON.stringify(reds.map(k => +k.lwPt.toFixed(3))));
+    { const tb = toSrcBox(thin.subpaths.map(sp => sp)), want = onSheet(tb); ok(thinned[0].bbox.every((v, i) => Math.abs(v - want[i]) < 0.003), 'E …at the square that was thinned'); }
+  }
+
+  console.log(`PASS ${n} checks: ART EDIT output — the edited piece drawn again from its own members (removed, added, in the master's layers), every other piece byte for byte; the calendar's month and date; export and DXF carry the additions; the back's addition in the back file; the weight's outlines and the line's width as the editor set them`);
 })().catch(e => { console.error(e); process.exit(1); });

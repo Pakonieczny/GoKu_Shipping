@@ -23,6 +23,10 @@
  *   Item     { id, kind:'path'|'text'|'group', role:'cut'|'line'|'hatch'|'art', source:'master'|'engrave'|'added', name, hidden, locked,
  *              subpaths:[[op,...],...], stroke, fill, lwPt,              (path; ops ["m",[x,y]] ["l",[x,y]] ["c",p1,p2,p3] ["h"])
  *              text, fontKey, sizePt, align, lineGap,                    (text)
+ *              weightMm, lwPt                                            (27 Oct 2026: a filled text's or hatched part's WEIGHT, mm thicker (+) or thinner (−) than drawn: a text's
+ *                                                                         outlines are made at it from its words; a path's geometry already has it in it, so a path that carries it
+ *                                                                         is a weighted drawing (words saved and opened again). lwPt: a line's width, pt; none = the laser's 0.25 pt.
+ *                                                                         A weight is made with the page's Clipper (window.ClipperLib); without it the Weight field is not offered)
  *              children:[Item],                                          (group)
  *              tx, ty, sx, sy, rot }                                     (every kind: a transform on top of the geometry)
  *     The transform is  T(c + t) · R(rot) · S(sx, sy) · T(-c)  where c is the centre of the TIGHT bounding box of the item's own geometry (Bézier extrema included;
@@ -195,6 +199,65 @@
   }
   const lineSP = (x0, y0, x1, y1) => [[['m', [x0, y0]], ['l', [x1, y1]]]];
 
+  /* ═══ 2b · weight: a filled shape grown or thinned (Paul, 27 Oct 2026: "I need the ability to control the thickness of fonts as the current 'pt' control does not correctly
+     control the boldness of the text. I need fine font thickness control over each font") ═══
+     A polygon offset of the shape itself, so it works the same for every font (most of the shop's fonts have one weight file, the scripts among them, and none has a lighter one):
+     the outlines cut into chords never more than 0.01 pt off the curve, made ONE clean shape (non-zero, as the laser fills them; even-odd when the part says so), then every edge
+     moved out by d (in, for a negative d) with mitred corners, by Clipper (vendor/clipper-6.4.2.js, the page's own; charm-nest-monogram.js grows its letters with it). These are the
+     outlines the laser gets: nothing is drawn one way and cut another. A weight of nothing is the drawing itself, curves and all. */
+  const clipperLib = () => (root && root.ClipperLib) || (typeof require === 'function' ? (() => { try { return require('./vendor/clipper-6.4.2.js'); } catch (e) { return null; } })() : null);
+  const canWeigh = () => !!clipperLib();
+  const WSC = 1e4, FLAT_PT = 0.01;   // (Clipper works in integers: a ten-thousandth of a point; a chord strays at most 0.01 pt, 3.5 µm, from its curve)
+  function ringsOf(sps) {
+    const out = [];
+    const P = p => ({ X: Math.round(p[0] * WSC), Y: Math.round(p[1] * WSC) });
+    for (const sub of sps || []) {
+      let ring = [], cur = null;
+      const end = () => { if (ring.length >= 3) out.push(ring); ring = []; };
+      for (const op of sub || []) {
+        const k = op && op[0];
+        if (k === 'm') { end(); ring.push(P(op[1])); cur = op[1]; }
+        else if (k === 'l') { ring.push(P(op[1])); cur = op[1]; }
+        else if (k === 'c') {
+          const a = cur || op[1], p1 = op[1], p2 = op[2], p3 = op[3];
+          // (n chords keep a cubic within 3/4 · max|second difference| / n² of itself)
+          const dd = Math.max(Math.hypot(a[0] - 2 * p1[0] + p2[0], a[1] - 2 * p1[1] + p2[1]), Math.hypot(p1[0] - 2 * p2[0] + p3[0], p1[1] - 2 * p2[1] + p3[1]));
+          const n = clamp(Math.ceil(Math.sqrt(0.75 * dd / FLAT_PT)), 1, 64);
+          for (let i = 1; i <= n; i++) { const t = i / n; ring.push(P([bez(a[0], p1[0], p2[0], p3[0], t), bez(a[1], p1[1], p2[1], p3[1], t)])); }
+          cur = p3;
+        }
+      }
+      end();
+    }
+    return out;
+  }
+  /** Subpaths (pt) as a filled shape grown by d pt (thinned for a negative d); the same subpaths when d is nothing or the page has no Clipper. */
+  function weighSubpaths(sps, d, evenOdd) {
+    const C = clipperLib();
+    if (!C || !fin(d) || Math.abs(d) < 1e-6 || !sps || !sps.length) return sps;
+    const rings = ringsOf(sps); if (!rings.length) return sps;
+    const ft = evenOdd ? C.PolyFillType.pftEvenOdd : C.PolyFillType.pftNonZero;
+    const cl = new C.Clipper(), shape = new C.Paths();
+    cl.AddPaths(rings, C.PolyType.ptSubject, true);
+    if (!cl.Execute(C.ClipType.ctUnion, shape, ft, ft)) return sps;
+    const co = new C.ClipperOffset(2, 0.25 * FLAT_PT * WSC), grown = new C.Paths();
+    co.AddPaths(shape, C.JoinType.jtMiter, C.EndType.etClosedPolygon);
+    co.Execute(grown, d * WSC);
+    const out = [];
+    for (const ring of C.Clipper.CleanPolygons(grown, 0.002 * WSC)) {
+      if (ring.length < 3 || Math.abs(C.Clipper.Area(ring)) < 1e-6 * WSC * WSC) continue;
+      out.push(ring.map((q, i) => [i ? 'l' : 'm', [q.X / WSC, q.Y / WSC]]).concat([['h']]));
+    }
+    return out;
+  }
+  /** The inked area of filled subpaths, pt² (non-zero): for tests that a heavier weight is more ink. */
+  function inkArea(sps) {
+    const C = clipperLib(); if (!C) return NaN;
+    const cl = new C.Clipper(), shape = new C.Paths();
+    cl.AddPaths(ringsOf(sps), C.PolyType.ptSubject, true); cl.Execute(C.ClipType.ctUnion, shape, C.PolyFillType.pftNonZero, C.PolyFillType.pftNonZero);
+    return shape.reduce((a, r) => a + C.Clipper.Area(r), 0) / (WSC * WSC);
+  }
+
   /* ═══ 3 · the stand-in font: single strokes on a 4 × 6 grid, outlined as square-capped bars (nonzero fill unions them) ═══ */
   const GLYPHS = {
     A: '0,6 0,2 2,0 4,2 4,6|0,3.6 4,3.6', B: '0,3 3,3 4,4 4,5 3,6 0,6 0,0 3,0 4,1 4,2 3,3', C: '4,1 3,0 1,0 0,1 0,5 1,6 3,6 4,5', D: '0,0 0,6 3,6 4,5 4,1 3,0 0,0',
@@ -256,6 +319,15 @@
 
   /* ═══ 4 · items: geometry, transforms ═══ */
   const T0 = it => !num(it.tx, 0) && !num(it.ty, 0) && num(it.sx, 1) === 1 && num(it.sy, 1) === 1 && !num(it.rot, 0);
+  /* WEIGHT AND LINE WIDTH (27 Oct 2026). weightMm: how much thicker (thinner, below 0) every stroke of a filled shape is than its own drawing, in mm on the charm: a text's outlines
+     are made from its words at that weight every time; a path's geometry already HAS its weight in it (a text saved and opened again comes back as its outlines with the weight it was
+     saved with), so a new weight grows it by the difference. lwPt: a line's width; a line that names none is drawn at the width the laser file gives it (LW_LASER_PT). */
+  const WT_MIN_MM = -0.3, WT_MAX_MM = 0.6, WT_STEP_MM = 0.01;
+  const LW_LASER_PT = 0.25, LW_MIN_MM = 0.01, LW_MAX_MM = 2;   // (0.25 pt: what charm-nest-art-edit.js paintOf and charm-nest-pdf.js artOps write for a line that names no width)
+  const weightOf = it => { const w = num(it && it.weightMm, 0); return Math.abs(w) < 1e-9 ? 0 : r9(clamp(w, WT_MIN_MM, WT_MAX_MM)); };
+  const lwOf = it => { const v = it && it.lwPt != null && it.lwPt !== '' ? +it.lwPt : NaN; return fin(v) && v >= 0 ? v : LW_LASER_PT; };
+  /** Can this part take a weight: a filled text, a hatched path, or filled words saved as their outlines (a path that keeps its words). A line engraving takes a width instead. */
+  const weighable = it => !!it && (it.kind === 'text' || (it.kind === 'path' && (it.role === 'hatch' || (it.text != null && String(it.text) !== '')))) && paintFill(it);
   const EMPTY = Object.freeze([]);
   /** The geometry provider: raw outlines of a leaf (a path's own subpaths, a text's outlines from the font engine, cached by its words, font, size, align and line
    *  gap), the raw box of any item and its transform matrix. Every pure function below takes one, so the font engine is a parameter and not a global. */
@@ -264,12 +336,15 @@
     const tcache = new Map(), pcache = new WeakMap();
     function textGeom(it) {
       const words = it.text == null ? '' : String(it.text);
-      const key = [words, it.fontKey == null ? '' : it.fontKey, num(it.sizePt, 10), it.align || 'left', it.lineGap == null ? '' : it.lineGap].join('\u0001');
+      const wt = weightOf(it);
+      const key = [words, it.fontKey == null ? '' : it.fontKey, num(it.sizePt, 10), it.align || 'left', it.lineGap == null ? '' : it.lineGap, wt].join('\u0001');
       let g = tcache.get(key);
       if (g) { tcache.delete(key); tcache.set(key, g); return g; }
       let r = null;
       if (words.trim()) { try { r = engine(words, it.fontKey, num(it.sizePt, 10), { align: it.align || 'left', lineGap: it.lineGap }); } catch (e) { r = null; } }
-      const subpaths = r && Array.isArray(r.subpaths) ? r.subpaths : [];
+      let subpaths = r && Array.isArray(r.subpaths) ? r.subpaths : [];
+      // (the weight: the font's own drawing grown or thinned by half of it on every edge, so a stroke of the letters is that much thicker; the engine always draws the font's own)
+      if (wt && subpaths.length) subpaths = weighSubpaths(subpaths, wt * PT / 2, false);
       // the words' own box is the tight box of their outlines, as a path's is (an engine's bbox may be a layout box, with the ascent and the side bearings in it, and
       // the handles, the pivot and X / Y / W / H must all be about the same box); the engine's is used only when there is no ink
       const b = bboxOf(subpaths) || (r && Array.isArray(r.bbox) && r.bbox.length === 4 && r.bbox.every(fin) && r.bbox[2] >= r.bbox[0] && r.bbox[3] >= r.bbox[1] ? r.bbox.slice() : null);
@@ -371,6 +446,19 @@
     const p0 = ap(W0, 0, 0), p1 = ap(W1, 0, 0);
     n.tx = r9(num(n.tx, 0) + p0[0] - p1[0]); n.ty = r9(num(n.ty, 0) + p0[1] - p1[1]);
     return n;
+  }
+  /** A part at a new weight (mm), drawn where it was: a text makes its outlines at that weight from its words; a path's own geometry (which already has its weight in it) is
+   *  grown by the difference, in its own frame and so divided by its own scale, and placed so nothing else of it moves. Weight 0 is the part's own drawing (the field goes). */
+  function weighItem(it, wMm, geo) {
+    if (!weighable(it)) return it;
+    const w1 = clamp(r9(+wMm || 0), WT_MIN_MM, WT_MAX_MM), w0 = weightOf(it);
+    if (Math.abs(w1 - w0) < 1e-9) return it;
+    const bare = n => { if (!n.weightMm) delete n.weightMm; return n; };
+    if (it.kind === 'text') return bare(retext(it, { weightMm: w1 }, geo));
+    const s = Math.sqrt(Math.abs(num(it.sx, 1) * num(it.sy, 1))) || 1;
+    const sp = weighSubpaths(geo.raw(it).subpaths, (w1 - w0) * PT / 2 / s, !!(it.evenOdd || it.even || it.fillRule === 'evenodd'));
+    if (sp === geo.raw(it).subpaths) return it;
+    return bare(retext(it, { subpaths: sp, weightMm: w1 }, geo));
   }
 
   /* ═══ 5 · the tree (immutable: every edit makes new arrays and objects where it changes, so a snapshot is a reference) ═══ */
@@ -535,7 +623,7 @@
   }
   function hitLeaf(it, W, x, y, tol, geo) {
     const P = polysOf(it, W, geo);
-    const lw = paintStroke(it) ? num(it.lwPt, 0.5) / 2 : 0, pad = tol + lw;
+    const lw = paintStroke(it) ? lwOf(it) / 2 : 0, pad = tol + lw;
     if (!P.box || x < P.box[0] - pad || x > P.box[2] + pad || y < P.box[1] - pad || y > P.box[3] + pad) return false;
     const fill = it.kind === 'text' || paintFill(it);
     let wind = 0, best = Infinity;
@@ -707,7 +795,8 @@
 
   const model = { MM, PT, I, mul, ap, inv, tr, rotM, scM, about, isI, bboxOf, union, transformSubpaths, flatten, dOf, rectSP, ellipseSP, lineSP,
     createGeo, decompose, composeInto, pushDown, retext, foldTextScale, walk, indexTree, replaceIn, removeIds, pruneEmpty, topmost, normaliseAncestors, copyItems, pasteItems, reid,
-    groupItems, ungroupItem, arrange, hitTest, touching, History, prepIn, exportItems, diffFace, changeCount, outlinesOf, newId, paintFill, paintStroke };
+    groupItems, ungroupItem, arrange, hitTest, touching, History, prepIn, exportItems, diffFace, changeCount, outlinesOf, newId, paintFill, paintStroke,
+    weighSubpaths, weighItem, weighable, weightOf, lwOf, inkArea, canWeigh, LW_LASER_PT, WT_MIN_MM, WT_MAX_MM };
 
   /* ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
      9 · THE WORKSPACE
@@ -733,6 +822,9 @@
     ungroup: SV('<path d="M3 7V3h4"/><path d="M17 21h4v-4"/><rect x="3" y="9.5" width="7" height="7"/><rect x="14" y="4.5" width="7" height="7"/>'),
     del: SV('<path d="M4 6.5h16"/><path d="M9 6.5V4h6v2.5"/><path d="M6.5 6.5 7.5 20h9l1-13.5"/>'),
     layers: SV('<path d="m12 3 8 4-8 4-8-4Z"/><path d="m4 12 8 4 8-4"/><path d="m4 17 8 4 8-4"/>'),
+    // (weight: a shape and the same shape grown round it, Illustrator's "offset path"; stroke: lines of three widths, its "stroke weight")
+    weight: SV('<rect x="8" y="8" width="8" height="8" rx=".6"/><rect x="4" y="4" width="16" height="16" rx="3.2" stroke-dasharray="2.2 2.2"/>'),
+    stroke: SV('<path d="M4 6.5h16" stroke-width="1"/><path d="M4 12h16" stroke-width="2"/><path d="M4 17.8h16" stroke-width="3.2"/>', ' stroke-linecap="butt"'),
     link: SV('<path d="M9.5 14.5 14.5 9.5"/><path d="M11 6.6 12.6 5a3.6 3.6 0 0 1 5.1 5.1L16 11.7"/><path d="M13 17.4 11.4 19a3.6 3.6 0 0 1-5.1-5.1L8 12.3"/>'),
     eyeOn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6Z"/><circle cx="12" cy="12" r="2.4"/></svg>',
     eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 6.3A9.6 9.6 0 0 1 12 6c5 0 9 4.5 9 6a11 11 0 0 1-2.6 3.4"/><path d="M6.2 8.6A11 11 0 0 0 3 12c0 1.5 4 6 9 6a9.5 9.5 0 0 0 3.5-.7"/></svg>',
@@ -754,7 +846,6 @@
     rect: 'Drag a box · Shift for a square · Alt from the centre', ellipse: 'Drag an oval · Shift for a circle · Alt from the centre',
     line: 'Drag a line · Shift keeps it to 45°', hand: 'Drag to move around · or hold Space with any tool'
   };
-  const WEIGHTS = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2];
 
   const CSS = `
 .ce-root{
@@ -790,6 +881,8 @@
 .ce-close{ font-size:20px; font-weight:400; border-color:transparent; color:var(--muted); }
 .ce-head .ce-seg{ flex:none; }
 .ce-short{ display:none; }
+/* (27 Oct 2026: a bar that would wrap on a desk, words with a long font name and their weight, says the role in one word, Hatch, Line, and the menu says the rest) */
+.ce-props.is-tight .ce-long{ display:none; } .ce-props.is-tight .ce-short{ display:inline; }
 /* ── the rail (C 5049-5111) ── */
 .ce-rail{ grid-area:2/1/5/2; align-self:stretch; display:flex; flex-direction:column; width:52px; padding:5px 4px; border:1px solid var(--hair); background:#fff; overflow:visible; min-height:0; }
 .ce-tools{ display:flex; flex-direction:column; gap:1px; }
@@ -815,15 +908,14 @@
 .ce-prop:disabled{ opacity:.32; cursor:default; }
 .ce-caret{ width:0; height:0; margin-left:2px; flex:none; border-left:3.5px solid transparent; border-right:3.5px solid transparent; border-top:4px solid currentColor; opacity:.75; }
 .ce-fontA{ font-size:12px; font-weight:700; letter-spacing:0; text-transform:none; }
-.ce-fontname{ max-width:110px; overflow:hidden; text-overflow:ellipsis; letter-spacing:.08em; }
-.ce-wline{ width:14px; height:2px; background:var(--ink); display:inline-block; flex:none; }
+.ce-fontname{ max-width:96px; overflow:hidden; text-overflow:ellipsis; letter-spacing:.08em; }
 /* position and size, then the angle behind a shaded gutter: one box on a desktop (C 3707-3716), two boxes that wrap on their own on a phone */
 .ce-sizes{ display:inline-flex; align-items:stretch; flex:0 0 auto; border:1px solid var(--hair); background:#fff; height:30px; }
 .ce-size{ display:inline-flex; align-items:center; flex:0 0 auto; background:#fff; height:100%; }
 .ce-size__f{ display:inline-flex; align-items:center; gap:6px; padding:0 8px; height:100%; cursor:text; border-left:1px solid var(--hair); }
 .ce-size__f:first-child,.ce-size__sep + .ce-size__f,.ce-size__link + .ce-size__f{ border-left:0; }
 .ce-size__f > span{ font-size:12px; font-weight:800; letter-spacing:.06em; color:var(--ink); opacity:.62; }
-.ce-size input{ width:46px; border:0; padding:0; background:none; outline:none; height:auto; font-family:inherit; font-size:11px; font-weight:600; color:var(--ink); text-align:right; -moz-appearance:textfield; }
+.ce-size input{ width:40px; border:0; padding:0; background:none; outline:none; height:auto; font-family:inherit; font-size:11px; font-weight:600; color:var(--ink); text-align:right; -moz-appearance:textfield; }
 .ce-size input:disabled{ color:var(--muted); opacity:.55; }
 .ce-size__f:focus-within{ background:var(--band); }
 .ce-size__f:focus-within > span{ opacity:1; }
@@ -838,9 +930,14 @@
 .ce-size__f--rot input{ width:38px; }
 .ce-size__u--deg{ font-size:13px; letter-spacing:0; padding:0 8px 0 1px; }
 .ce-num{ display:inline-flex; align-items:center; gap:4px; height:30px; padding:0 8px; border:1px solid var(--hair); background:#fff; flex:0 0 auto; }
-.ce-num input{ width:38px; border:0; padding:0; outline:none; background:none; font-family:inherit; font-size:11px; font-weight:600; color:var(--ink); text-align:right; height:auto; }
+.ce-num input{ width:34px; border:0; padding:0; outline:none; background:none; font-family:inherit; font-size:11px; font-weight:600; color:var(--ink); text-align:right; height:auto; }
 .ce-num i{ font-style:normal; font-size:10px; font-weight:800; letter-spacing:.1em; color:var(--muted); }
 .ce-num:focus-within{ background:var(--band); }
+.ce-num__b{ flex:none; width:20px; height:24px; margin:0 0 0 -4px; padding:0; border:0; background:none; cursor:pointer; color:var(--muted); display:inline-flex; align-items:center; justify-content:center; }
+.ce-num__b svg{ width:15px; height:15px; }
+.ce-num__b:hover{ background:var(--hov); color:var(--ink); }
+.ce-num__b.is-on{ color:var(--gold); }
+.ce-num--thick{ padding:0 7px; gap:3px; } .ce-num--thick input{ width:34px; }
 .ce-seg{ display:inline-flex; flex:0 0 auto; border:1px solid var(--hair); height:30px; }
 .ce-seg button{ border:0; background:#fff; padding:0 11px; cursor:pointer; font-size:9.5px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); }
 .ce-seg button + button{ border-left:1px solid var(--hair); }
@@ -896,7 +993,7 @@
 .ce-paper{ position:absolute; background:#fff; pointer-events:none; box-shadow:0 0 0 1px var(--hair), 0 6px 26px rgba(28,29,29,.10); }
 .ce-art,.ce-ui{ position:absolute; left:0; top:0; width:100%; height:100%; overflow:hidden; display:block; }
 .ce-ui{ pointer-events:none; }
-.ce-art .ce-p{ vector-effect:non-scaling-stroke; fill:none; stroke:none; stroke-width:max(calc(var(--lw, .5) * var(--k, 1) * 1px), 1px); stroke-linejoin:round; stroke-linecap:round; }
+.ce-art .ce-p{ vector-effect:non-scaling-stroke; fill:none; stroke:none; stroke-width:max(calc(var(--lw, .25) * var(--k, 1) * 1px), var(--hair, 1px)); stroke-linejoin:round; stroke-linecap:round; }
 .ce-art .ce-p.is-fill.ce-p--cut{ fill:var(--c-cut); } .ce-art .ce-p.is-stroke.ce-p--cut{ stroke:var(--c-cut); }
 .ce-art .ce-p.is-fill.ce-p--line{ fill:var(--c-line); } .ce-art .ce-p.is-stroke.ce-p--line{ stroke:var(--c-line); }
 .ce-art .ce-p.is-fill.ce-p--hatch{ fill:var(--c-hatch); } .ce-art .ce-p.is-stroke.ce-p--hatch{ stroke:var(--c-hatch); }
@@ -1062,7 +1159,7 @@
     const S = {
       faces: {}, face: null, sel: [], tool: 'select', shape: 'rect', k: 1, ox: 0, oy: 0, fitted: false,
       hist: new History(120), clip: null, pasteN: 0, grid: true, snapGrid: false, smart: true, link: true,
-      textFont: fonts[0].key, textSize: 8, textRole: 'hatch', shapeRole: 'line', lw: 0.5,
+      textFont: fonts[0].key, textSize: 8, textWeight: 0, textRole: 'hatch', shapeRole: 'line', lw: LW_LASER_PT, run: null,
       editing: null, g: null, space: false, hover: null, open: new Set(), dock: true, nudgeAt: 0, ask: null
     };
     for (const f of ['front', 'back']) {
@@ -1089,7 +1186,6 @@
     rootEl.className = 'ce-root';
     const title = opts.title == null ? 'Charm editor' : String(opts.title), subtitle = opts.subtitle == null ? '' : String(opts.subtitle);
     const roleItems = ROLES.map(r => `<button class="ce-item" type="button" data-role="${r}" role="menuitemradio"><i class="ce-sw ce-sw--${r}"></i>${ROLE_NAME[r]}<em>${ROLE_SAYS[r]}</em></button>`).join('');
-    const weightItems = WEIGHTS.map(w => `<button class="ce-item" type="button" data-lw="${w}" role="menuitemradio"><i class="ce-wline" style="height:${Math.max(1, Math.round(w * 2))}px;width:30px"></i>${w} pt<em>${trim(w * MM, 3)} mm</em></button>`).join('');
     const fontItems = fonts.map(f => `<button class="ce-item" type="button" data-font="${esc(f.key)}" role="menuitemradio">${esc(f.name)}</button>`).join('');
     rootEl.innerHTML = `
 <div class="ce-win" tabindex="-1" role="dialog" aria-modal="true" aria-label="${esc(title)}">
@@ -1161,14 +1257,12 @@
       <div class="ce-menu" role="menu" hidden><div class="ce-menu__head">Font</div>${fontItems}</div>
     </div>
     <label class="ce-num" data-when="text" title="Text size, points" hidden><input data-f="pt" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Text size, points"><i>pt</i></label>
+    <label class="ce-num ce-num--thick" data-when="weight" title="Weight: how much thicker (+) or thinner (−) every stroke of the letters is than the font draws them, in mm · ↑ ↓ 0.01 mm, Shift 0.05 mm" hidden><button class="ce-num__b" type="button" data-act="wt0" title="Weight · back to the font's own weight" aria-label="Back to the font's own weight">${IC.weight}</button><input data-f="wt" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Weight, mm thicker or thinner than the font draws it"><i>mm</i></label>
     <div class="ce-drop" data-drop="role" data-when="role" hidden>
       <button class="ce-prop ce-drop__b" type="button" title="What the laser does with it"><i class="ce-sw" data-rolesw></i><span data-rolename></span><i class="ce-caret"></i></button>
       <div class="ce-menu" role="menu" hidden><div class="ce-menu__head">What the laser does</div>${roleItems}</div>
     </div>
-    <div class="ce-drop" data-drop="weight" data-when="stroke" hidden>
-      <button class="ce-prop ce-drop__b" type="button" title="Line weight"><i class="ce-wline"></i><span data-lwread></span><i class="ce-caret"></i></button>
-      <div class="ce-menu" role="menu" hidden><div class="ce-menu__head">Line weight</div>${weightItems}</div>
-    </div>
+    <label class="ce-num ce-num--thick" data-when="stroke" title="Line width on the charm, in mm, as the laser file writes it · ↑ ↓ 0.01 mm, Shift 0.05 mm" hidden><button class="ce-num__b" type="button" data-act="lw0" title="Line width · back to the width it came with" aria-label="Back to the width it came with">${IC.stroke}</button><input data-f="lw" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Line width, mm"><i>mm</i></label>
   </div>
   <div class="ce-wrap">
     <span class="ce-rule ce-rule__corner" aria-hidden="true">mm</span>
@@ -1299,6 +1393,8 @@
       const f = frame(), vx = f.x0 - S.ox / S.k, vy = f.y0 - S.oy / S.k, vw = b.w / S.k, vh = b.h / S.k;
       art.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`);
       art.style.setProperty('--k', String(S.k));
+      // (a line is drawn at its true width at every zoom, lwPt × px per pt; only a line thinner than one pixel of the screen is held at that pixel, so it stays in sight)
+      art.style.setProperty('--hair', (1 / Math.max(1, +root.devicePixelRatio || 1)) + 'px');
       Object.assign(paper.style, { left: S.ox + 'px', top: S.oy + 'px', width: f.wPt * S.k + 'px', height: f.hPt * S.k + 'px' });
       drawGrid(vx, vy, vw, vh);
       queueRulers(); renderUI();
@@ -1392,7 +1488,7 @@
               el.setAttribute('d', dOf(g.subpaths) || 'M0 0');
               el.setAttribute('class', `ce-p ce-p--${it.role}${paintFill(it) ? ' is-fill' : ''}${paintStroke(it) ? ' is-stroke' : ''}${it.evenOdd || it.fillRule === 'evenodd' ? ' is-evenodd' : ''}`);
               el.setAttribute('vector-effect', 'non-scaling-stroke');
-              el.style.setProperty('--lw', String(num(it.lwPt, 0.5)));
+              el.style.setProperty('--lw', String(lwOf(it)));
             } else el.setAttribute('class', 'ce-g');
             el.__it = it;
           }
@@ -1513,6 +1609,9 @@
 
     /* ── the property bar ── */
     const fmtMm = v => (Math.abs(v) < 0.0005 ? '0.00' : v.toFixed(2));
+    const fmtWt = v => (Math.abs(v) < 0.0005 ? '0.00' : (v > 0 ? '+' : '') + (Math.abs(v * 100 - Math.round(v * 100)) < 1e-6 ? v.toFixed(2) : trim(v, 3)));   // (+0.03 · 0.00 · -0.02)
+    const fmtLw = pt => { const mm = pt * MM; return mm < 0.0005 ? '0' : trim(mm, 3); };                                                                         // (0.25 pt reads 0.088)
+    const numIn = v => parseFloat(String(v == null ? '' : v).replace(',', '.').replace(/−/g, '-'));
     function sizeRead() {
       const info = selInfo(); if (!info) return null;
       const f = frame();
@@ -1551,20 +1650,44 @@
         $('[data-rolename]').innerHTML = role === 'mixed' ? 'Mixed' : `<span class="ce-long">${ROLE_NAME[role]}</span><span class="ce-short">${ROLE_SHORT[role]}</span>`;
         $$('[data-role]').forEach(b => b.classList.toggle('is-on', b.dataset.role === role));
       }
-      const strokes = leaves.filter(l => l.kind === 'path' && paintStroke(l));
-      const showW = strokes.length > 0 || ((S.tool === 'rect' || S.tool === 'ellipse' || S.tool === 'line') && !S.sel.length);
+      // the thickness of what is selected, each where it means something: a filled text or hatched part has a WEIGHT (its strokes thicker or thinner than drawn), a line a WIDTH
+      const newText = S.tool === 'text' && !S.sel.length, lineText = S.textRole === 'line' || S.textRole === 'cut';
+      const weighs = leaves.filter(weighable);
+      const showWt = canWeigh() && (weighs.length > 0 || (newText && !lineText));
+      $('[data-when="weight"]').hidden = !showWt;
+      if (showWt) {
+        const wt = field('wt'), w = weighs.length ? weightOf(weighs[0]) : S.textWeight, same = weighs.every(l => Math.abs(weightOf(l) - w) < 1e-9);
+        if (doc.activeElement !== wt) wt.value = same ? fmtWt(w) : '';
+        wt.placeholder = same ? '' : 'Mixed';
+        $('[data-act="wt0"]').classList.toggle('is-on', !same || Math.abs(w) > 1e-9);
+      }
+      const strokes = leaves.filter(paintStroke);
+      const showW = strokes.length > 0 || ((S.tool === 'rect' || S.tool === 'ellipse' || S.tool === 'line') && !S.sel.length) || (newText && lineText);
       $('[data-when="stroke"]').hidden = !showW;
       if (showW) {
-        const lw = strokes.length ? num(strokes[0].lwPt, 0.5) : S.lw, same = strokes.every(l => Math.abs(num(l.lwPt, 0.5) - lw) < 1e-9);
-        $('[data-lwread]').textContent = same ? trim(lw, 2) + ' pt' : 'Mixed';
-        $$('[data-lw]').forEach(b => b.classList.toggle('is-on', same && Math.abs(+b.dataset.lw - lw) < 1e-9));
+        const lf = field('lw'), lw = strokes.length ? lwOf(strokes[0]) : S.lw, same = strokes.every(l => Math.abs(lwOf(l) - lw) < 1e-9);
+        if (doc.activeElement !== lf) lf.value = same ? fmtLw(lw) : '';
+        lf.placeholder = same ? '' : 'Mixed';
       }
       $$('[data-face]').forEach(b => b.classList.toggle('is-on', b.dataset.face === S.face));
       $('[data-act="link"]').classList.toggle('is-on', S.link); $('[data-act="link"]').setAttribute('aria-pressed', String(S.link));
       $$('[data-opt]').forEach(b => { const on = !!S[b.dataset.opt]; b.classList.toggle('is-on', on); b.setAttribute('aria-checked', String(on)); });
       $('[data-act="dock"]').classList.toggle('is-on', S.dock);
       // (a phone has no height to spare for a bar describing nothing: it folds away, as the studio's size box does with nothing selected)
-      $('.ce-props').classList.toggle('is-empty', !s && !showText && !showRole && !showW);
+      $('.ce-props').classList.toggle('is-empty', !s && !showText && !showRole && !showW && !showWt);
+      fitBar();
+    }
+    /** ONE ROW ON A DESK (27 Oct 2026): when what the bar now shows would wrap it (a long font name, the weight beside the size), the role says itself in one word. Measured only
+     *  when the bar's contents change, never on every frame of a drag. */
+    let barSig = '';
+    function fitBar() {
+      const bar = $('.ce-props'), vw = doc.documentElement.clientWidth || root.innerWidth || 0;
+      const sig = [...bar.children].map(e => (e.hidden ? 0 : 1)).join('') + '|' + $('[data-fontname]').textContent + '|' + $('[data-rolename]').textContent + '|' + vw + '|' + (S.dock ? 1 : 0);
+      if (sig === barSig) return; barSig = sig;
+      bar.classList.remove('is-tight');
+      if (vw <= 640) return;   // (a phone's bar wraps by design)
+      const shown = [...bar.children].filter(e => !e.hidden && e.offsetHeight > 0);
+      if (shown.length > 1 && shown.some(e => e.offsetTop > shown[0].offsetTop + 4)) bar.classList.add('is-tight');
     }
     function syncHist() { $('[data-act="undo"]').disabled = !S.hist.canUndo; $('[data-act="redo"]').disabled = !S.hist.canRedo; }
     function setTool(t) {
@@ -1651,11 +1774,50 @@
       });
       if (S.tool === 'text') S.textRole = role;
     }
-    function setWeight(lw) {
-      if (!(lw > 0)) return;
-      S.lw = lw;
-      if (!S.sel.length) { syncProps(); return; }
-      patchLeaves(it => (it.kind === 'path' && paintStroke(it) ? Object.assign({}, it, { lwPt: lw }) : null));
+    /** The leaves under the selection patched by fn, from where a RUN began: arrow taps on a field held or tapped in a run are ONE step of history (as the nudges are), and each tap is
+     *  made from the drawing as it was when the run began, so a path's weight is grown once by the run's whole amount, never tap upon tap. */
+    function patchRun(key, run, fn) {
+      const now = Date.now(), r = S.run, tag = key + '|' + S.face + '|' + S.sel.join('|');
+      const live = !!(run && r && r.tag === tag && r.items === items() && now - r.at < 1500);
+      const from = live ? r.base : items(), ixm = indexTree(from, geo), map = new Map();
+      const rec = it => {
+        if (it.kind === 'group') { const ch = (it.children || []).map(rec); return ch.every((c, i) => c === it.children[i]) ? it : Object.assign({}, it, { children: ch }); }
+        if (it.locked) return it;
+        return fn(it) || it;
+      };
+      for (const id of S.sel) { const e = ixm.get(id); if (!e) continue; const n = rec(e.it); if (n !== e.it) map.set(id, n); }
+      const next = map.size ? replaceIn(from, map) : from;
+      if (next === items()) { syncProps(); return; }
+      if (!live) pushUndo();
+      setItems(next); ixFor = null;
+      S.run = run ? { tag, base: from, items: next, at: now } : null;
+      refresh();
+    }
+    /** WEIGHT (27 Oct 2026): the selection's filled words and hatched parts this much thicker (+) or thinner (−) than drawn, mm; with nothing selected, the weight of the next words. */
+    function setWeightMm(w, run) {
+      if (!fin(w)) { syncProps(); return; }
+      w = clamp(Math.round(w * 1000) / 1000, WT_MIN_MM, WT_MAX_MM);
+      if (!S.sel.length) { S.textWeight = w; syncProps(); return; }
+      patchRun('wt', run, it => (weighable(it) ? weighItem(it, w, geo) : null));
+    }
+    /** LINE WIDTH (27 Oct 2026): every line of the selection (a text engraved as a line too) this wide on the charm, mm; with nothing selected, the width of the next line drawn. */
+    function setStrokeMm(mm, run) {
+      if (!fin(mm)) { syncProps(); return; }
+      const lw = r9(clamp(Math.round(mm * 1000) / 1000, LW_MIN_MM, LW_MAX_MM) * PT);
+      if (!S.sel.length) { S.lw = lw; syncProps(); return; }
+      patchRun('lw', run, it => (paintStroke(it) && Math.abs(lwOf(it) - lw) > 1e-9 ? Object.assign({}, it, { lwPt: lw }) : null));
+    }
+    /** Each line back to the width it came into the editor with (a line that came with none, or a new one: the laser's own). */
+    function resetStroke() {
+      if (!S.sel.length) { S.lw = LW_LASER_PT; syncProps(); return; }
+      const was = indexTree(face().base, geo);
+      patchRun('lw0', false, it => {
+        if (!paintStroke(it)) return null;
+        const b = was.get(it.id), lw = b && b.it.lwPt != null ? b.it.lwPt : undefined;
+        if (lw === it.lwPt) return null;
+        const n = Object.assign({}, it); if (lw === undefined) delete n.lwPt; else n.lwPt = lw;
+        return n;
+      });
     }
     function setFont(key) {
       S.textFont = key;
@@ -1816,6 +1978,8 @@
     function createText(x, y) {
       const before = snapshot();
       const it = { id: newId(), kind: 'text', role: S.textRole, source: 'added', name: 'Text', _autoName: true, hidden: false, locked: false, text: '', fontKey: S.textFont, sizePt: S.textSize, align: 'left', tx: r9(x), ty: r9(y), sx: 1, sy: 1, rot: 0 };
+      if (S.textWeight && canWeigh()) it.weightMm = S.textWeight;
+      if ((S.textRole === 'line' || S.textRole === 'cut') && Math.abs(S.lw - LW_LASER_PT) > 1e-9) it.lwPt = S.lw;
       setItems(items().concat(it)); S.sel = [it.id]; ixFor = null;
       refresh();
       openEditor(it.id, true, before);
@@ -2352,12 +2516,14 @@
       if (k === 'Escape') { e.preventDefault(); el.__revert = true; el.blur(); return; }
       if (k === 'ArrowUp' || k === 'ArrowDown') {
         e.preventDefault();
-        const up = k === 'ArrowUp' ? 1 : -1, cur = parseFloat(String(el.value).replace(',', '.'));
-        const step = f === 'r' ? (e.shiftKey ? 15 : 1) : f === 'pt' ? (e.shiftKey ? 2 : 0.5) : (e.shiftKey ? 1 : 0.1);
-        const base = fin(cur) ? cur : 0; let v = base + up * step;
+        const up = k === 'ArrowUp' ? 1 : -1;
+        const thick = f === 'wt' || f === 'lw';
+        const step = f === 'r' ? (e.shiftKey ? 15 : 1) : f === 'pt' ? (e.shiftKey ? 2 : 0.5) : thick ? (e.shiftKey ? 0.05 : WT_STEP_MM) : (e.shiftKey ? 1 : 0.1);
+        const base = fin(numIn(el.value)) ? numIn(el.value) : f === 'wt' ? 0 : f === 'lw' ? LW_LASER_PT * MM : 0; let v = Math.round((base + up * step) * 1000) / 1000;
         if (f === 'w' || f === 'h' || f === 'pt') v = Math.max(step, v);
-        el.value = trim(v, 3);
-        if (f === 'pt') setTextSize(v); else commitField(f, v);
+        if (f === 'wt') v = clamp(v, WT_MIN_MM, WT_MAX_MM); if (f === 'lw') v = clamp(v, LW_MIN_MM, LW_MAX_MM);
+        el.value = f === 'wt' ? fmtWt(v) : trim(v, 3);
+        if (f === 'pt') setTextSize(v); else if (f === 'wt') setWeightMm(v, true); else if (f === 'lw') setStrokeMm(v, true); else commitField(f, v);
         el.__v0 = el.value;
       }
     }
@@ -2432,6 +2598,7 @@
         const a = act.dataset.act;
         if (a === 'undo') undo(); else if (a === 'redo') redo(); else if (a === 'cancel') requestClose(); else if (a === 'save') save();
         else if (a === 'link') { S.link = !S.link; syncProps(); }
+        else if (a === 'wt0') setWeightMm(0); else if (a === 'lw0') resetStroke();
         else if (a === 'dock') { S.dock = !S.dock; try { if (root.localStorage && (root.innerWidth || 1000) > 900) root.localStorage.setItem('ce.dock', S.dock ? '1' : '0'); } catch (er) { /* fine */ } layoutDock(); }
         else if (a === 'forward' || a === 'backward') arrangeSel(a); else if (a === 'group') groupSel(); else if (a === 'ungroup') ungroupSel(); else if (a === 'delete') deleteSel();
         return;
@@ -2441,11 +2608,10 @@
       const op = t.closest('[data-opt]'); if (op) { S[op.dataset.opt] = !S[op.dataset.opt]; syncProps(); applyView(); return; }
       const cm = t.closest('[data-cmd]'); if (cm) { closeMenus(); if (cm.dataset.cmd === 'unlockAll') setAll('locked', false); else if (cm.dataset.cmd === 'showAll') setAll('hidden', false); return; }
       const rl = t.closest('[data-role]'); if (rl) { closeMenus(); setRole(rl.dataset.role); return; }
-      const lw = t.closest('[data-lw]'); if (lw) { closeMenus(); setWeight(+lw.dataset.lw); return; }
       const fo = t.closest('[data-font]'); if (fo) { closeMenus(); const f = fonts.find(x => String(x.key) === fo.dataset.font); if (f) setFont(f.key); return; }
       const c = t.closest('[data-ctx]'); if (c) { if (!c.classList.contains('is-off')) ctxAct(c.dataset.ctx); return; }
     });
-    for (const f of ['x', 'y', 'w', 'h', 'r', 'pt']) {
+    for (const f of ['x', 'y', 'w', 'h', 'r', 'pt', 'wt', 'lw']) {
       const el = field(f);
       // the number is selected the moment the field is entered (J 16648), so typing replaces it; the click's own mouseup must not collapse that selection to a
       // caret, and a select-all put off to a later frame would land in the middle of whatever is being typed
@@ -2453,9 +2619,10 @@
       el.addEventListener('mouseup', e => { if (el.__fresh) { el.__fresh = false; e.preventDefault(); } });
       el.addEventListener('input', () => { el.__fresh = false; });
       el.addEventListener('blur', () => {
+        S.run = null;   // (a run of arrow taps ends when the field is left: the next visit is a step of its own)
         if (el.__revert) { el.__revert = false; syncProps(); return; }
         if (el.value === el.__v0) return;
-        if (f === 'pt') setTextSize(parseFloat(String(el.value).replace(',', '.'))); else commitField(f, el.value);
+        if (f === 'pt') setTextSize(numIn(el.value)); else if (f === 'wt') setWeightMm(numIn(el.value)); else if (f === 'lw') setStrokeMm(numIn(el.value)); else commitField(f, el.value);
       });
     }
     stage.addEventListener('pointerdown', onDown);

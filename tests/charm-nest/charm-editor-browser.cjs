@@ -14,6 +14,11 @@
 // 3 at phone width (390 × 844): nothing overlaps, nothing is cut off, the Layers fold over the room and back
 // 4 the app's own font engine is the one used when it is given, and lockRoles is honoured
 // 5 the layout at 1280 × 720 with a text selected (the busiest bar): nothing overlaps, the room keeps most of the width
+// 6 weight and line width (Paul, 27 Oct 2026: "the thickness of the Red engrave line is too thick, I need the ability to control the thickness of fonts as the current 'pt' control does
+//   not correctly control the boldness of the text. I need fine font thickness control over each font"): the Weight field beside the size (one row), typed and stepped by 0.01 mm with
+//   the arrows (a run is one undo step), outlines growing with every step and drawn where they were, thinner than the font, its icon back to the font's own; Line engrave takes a
+//   Stroke width instead, a group of lines thinned together; the next words armed with a weight; and a line drawn at its TRUE width at every zoom (lwPt × px per pt, counted in the
+//   screen's own pixels), with only a hairline floor
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
 const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
@@ -162,6 +167,7 @@ function layoutIssues() {
       const rows = () => H(page, () => { const t = [...document.querySelector('.ce-props').children].filter(e => e.getBoundingClientRect().height > 0).map(e => Math.round(e.getBoundingClientRect().top)); return new Set(t).size; });
       const corner = () => H(page, () => { const f = window.CharmEditor.current.frame(); return window.CharmEditor.current.clientOf(f.x0, f.y0); });
       const r0 = await rows(), k0 = await corner();
+      assert.equal(r0, 1, 'the bar is one row with the words selected (font, size, weight, role)');
       await page.keyboard.press('Escape'); await page.keyboard.press('v'); await settle(page); await settle(page);
       const r1 = await rows(), k1 = await corner();
       assert.ok(near(k1.x, k0.x, 0.5) && near(k1.y, k0.y, 0.5), `the charm stayed put (${r0} -> ${r1} rows): ${JSON.stringify([k0, k1])}`);
@@ -586,6 +592,169 @@ function layoutIssues() {
       await page.keyboard.press('Escape');
       await page.locator('.ce-root [data-drop="more"] .ce-drop__b').click(); await settle(page);
       shots.push(await shot(page, 'desk-13-more.png'));
+      assert.deepEqual(page.__errs, []);
+    });
+    await page.context().close();
+  }
+
+  /* ════ 6 · weight and line width (Paul, 27 Oct 2026) ════ */
+  {
+    const page = await newPage(1280, 720);
+    await openIt(page, { startFace: 'back' });
+    const PT = 72 / 25.4;
+    const one = id => H(page, id => { let f = null; const walk = l => l.forEach(i => { if (i.id === id) f = i; if (i.children) walk(i.children); }); walk(window.CharmEditor.current.items()); return f; }, id);
+    const inkOf = id => H(page, id => { const r = window.CharmEditor.current.result(); let f = null; const walk = l => l.forEach(i => { if (i.id === id) f = i; if (i.children) walk(i.children); }); walk(r.faces.back.items); return window.CharmEditor.model.inkArea(f.subpaths); }, id);
+    const val = f => page.locator(`.ce-root [data-f="${f}"]`).inputValue();
+    const shown = w => H(page, w => !document.querySelector(`.ce-root [data-when="${w}"]`).hidden, w);
+    const rows = () => H(page, () => new Set([...document.querySelector('.ce-props').children].filter(e => e.getBoundingClientRect().height > 0).map(e => Math.round(e.getBoundingClientRect().top))).size);
+    const undoN = async () => (await cur(page, 'C.history()')).undo;
+    const centre = b => [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+    let b0 = null, ink0 = 0;
+    await step('6.1 words selected: a Weight field (its icon, 0.00 mm, the font\'s own) beside the size; the bar is ONE row at 1280 × 720 and nothing overlaps; no Stroke for filled words', async () => {
+      const b = await box(page, 'b-words');
+      await clickAt(page, await ptClient(page, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2));
+      assert.deepEqual(await cur(page, 'C.selection()'), ['b-words']);
+      assert.ok(await shown('weight') && !(await shown('stroke')), 'Weight shown, Stroke not');
+      assert.equal(await val('wt'), '0.00');
+      assert.ok(await H(page, () => !!document.querySelector('.ce-root [data-act="wt0"] svg') && /mm/.test(document.querySelector('.ce-root [data-when="weight"]').textContent)), 'an icon and mm');
+      assert.equal(await rows(), 1);
+      assert.deepEqual(await H(page, layoutIssues), []);
+      b0 = await box(page, 'b-words'); ink0 = await inkOf('b-words');
+      shots.push(await shot(page, 'weight-1-bar.png'));
+    });
+    await step('6.2 typing +0.05: every stroke of the words 0.05 mm thicker (weightMm, more ink, each edge out), drawn where they were, ONE undo step; the result carries the weight and those outlines', async () => {
+      const u0 = await undoN();
+      await typeField(page, 'wt', '0.05');
+      const it = await one('b-words'), b = await box(page, 'b-words'), ink = await inkOf('b-words');
+      assert.equal(it.weightMm, 0.05); assert.equal(await val('wt'), '+0.05');
+      assert.ok(ink > ink0 * 1.05, 'more ink: ' + ink0 + ' -> ' + ink);
+      assert.ok(b[0] < b0[0] - 0.02 * PT && b[2] > b0[2] + 0.02 * PT && b[1] < b0[1] - 0.02 * PT && b[3] > b0[3] + 0.02 * PT, 'each edge out by 0.025 mm or more: ' + JSON.stringify([b0, b]));
+      assert.ok(near(centre(b)[0], centre(b0)[0], 0.01 * PT) && near(centre(b)[1], centre(b0)[1], 0.01 * PT), 'where they were');
+      assert.equal(await undoN(), u0 + 1);
+      const r = await cur(page, 'C.result()'), o = r.faces.back.items.find(i => i.id === 'b-words');
+      assert.ok(o.weightMm === 0.05 && Object.keys(r.changes.back.changed).join() === 'b-words' && o.bbox.every((v, i) => near(v, b[i], 1e-6)), 'the result: the weight, and the outlines as drawn');
+      assert.deepEqual(await cur(page, 'C.selection()'), ['b-words'], 'still selected');
+      shots.push(await shot(page, 'weight-2-plus005.png'));
+    });
+    await step('6.3 the arrow keys step it by 0.01 mm: ↑ ↑ ↑ then ↓ is +0.07, the outlines grow with every tap and shrink with the ↓, and the run is ONE undo step', async () => {
+      const u0 = await undoN(), inks = [await inkOf('b-words')];
+      await page.locator('.ce-root [data-f="wt"]').click();
+      for (const k of ['ArrowUp', 'ArrowUp', 'ArrowUp', 'ArrowDown']) { await page.keyboard.press(k); await settle(page); inks.push(await inkOf('b-words')); }
+      await page.keyboard.press('Enter'); await settle(page);
+      assert.equal((await one('b-words')).weightMm, 0.07); assert.equal(await val('wt'), '+0.07');
+      assert.ok(inks[0] < inks[1] && inks[1] < inks[2] && inks[2] < inks[3] && inks[4] < inks[3] && near(inks[4], inks[2], 1e-6), 'monotonic with the weight: ' + inks.map(v => v.toFixed(3)).join(' '));
+      assert.equal(await undoN(), u0 + 1, 'four taps, one step');
+      await page.locator('.ce-root [data-f="wt"]').click(); await page.keyboard.press('Shift+ArrowDown'); await page.keyboard.press('Enter'); await settle(page);
+      assert.equal((await one('b-words')).weightMm, 0.02, 'Shift steps 0.05 mm');
+    });
+    await step('6.4 thinner than the font: -0.03 mm is less ink than the font\'s own; the icon puts the font\'s own weight back, and then there is nothing to save', async () => {
+      await typeField(page, 'wt', '-0.03');
+      const it = await one('b-words'), ink = await inkOf('b-words'), b = await box(page, 'b-words');
+      assert.ok(it.weightMm === -0.03 && ink < ink0 * 0.95 && b[2] - b[0] < b0[2] - b0[0], 'thinner: ' + ink0 + ' -> ' + ink);
+      assert.equal(await val('wt'), '-0.03');
+      assert.ok(await H(page, () => document.querySelector('.ce-root [data-act="wt0"]').classList.contains('is-on')), 'the icon says the weight is not the font\'s own');
+      shots.push(await shot(page, 'weight-3-minus003.png'));
+      await page.locator('.ce-root [data-act="wt0"]').click(); await settle(page);
+      const back = await one('b-words');
+      assert.ok(!('weightMm' in back) && await val('wt') === '0.00' && near(await inkOf('b-words'), ink0, 1e-9), 'the font\'s own again');
+      assert.equal(Object.keys((await cur(page, 'C.result()')).changes.back.changed).length, 0, 'no change left');
+    });
+    await step('6.5 undo and redo walk the weights back and forth (-0.03, +0.02, +0.07, +0.05, the font\'s own)', async () => {
+      const ws = [];
+      for (let i = 0; i < 5; i++) { await page.keyboard.press('Control+z'); await settle(page); const it = await one('b-words'); ws.push(it.weightMm == null ? 0 : it.weightMm); }
+      assert.deepEqual(ws, [-0.03, 0.02, 0.07, 0.05, 0]);
+      await page.keyboard.press('Control+Shift+z'); await settle(page);
+      assert.equal((await one('b-words')).weightMm, 0.05);
+      assert.equal(await val('wt'), '+0.05', 'the field follows');
+    });
+    await step('6.6 Line engrave: the words take a Stroke width instead of a weight (0.088 mm: the 0.25 pt the laser file writes), drawn at exactly that; 0.03 mm thins them and the result says it', async () => {
+      await page.locator('.ce-root [data-drop="role"] .ce-drop__b').click(); await page.locator('.ce-root [data-role="line"]').click(); await settle(page);
+      assert.ok(await shown('stroke') && !(await shown('weight')), 'Stroke shown, Weight not');
+      assert.equal(await val('lw'), '0.088');
+      assert.equal(await rows(), 1, 'still one row');
+      await page.evaluate(() => window.CharmEditor.current.setZoom(1000)); await settle(page);
+      const w = () => H(page, () => parseFloat(getComputedStyle(document.querySelector('.ce-items path[data-id="b-words"]')).strokeWidth));
+      assert.ok(near(await w(), 0.25 * 10 * 96 / 72, 1e-3), 'at 1000 %: 0.25 pt × 13.33 px = ' + await w());
+      await typeField(page, 'lw', '0.03');
+      const it = await one('b-words');
+      assert.ok(near(it.lwPt, 0.03 * PT, 1e-6) && near(await w(), 0.03 * PT * 10 * 96 / 72, 1e-3), 'thinned: ' + it.lwPt + ' pt, ' + await w() + ' px');
+      const o = (await cur(page, 'C.result()')).faces.back.items.find(i => i.id === 'b-words');
+      assert.ok(near(o.lwPt, 0.03 * PT, 1e-6) && o.role === 'line');
+      await page.evaluate(() => window.CharmEditor.current.setZoom(100)); await settle(page);
+      assert.ok(near(await w(), 1, 1e-6), 'at 100 % a line this thin is held at one screen pixel (the hairline floor), no more: ' + await w());
+      await page.keyboard.press('Control+0'); await settle(page);
+      shots.push(await shot(page, 'weight-4-line-stroke.png'));
+    });
+    await step('6.7 the stars (a group of red lines) read their 0.088 mm; ↓ ↓ ↓ ↓ thins both to 0.048 mm in ONE undo step; the icon gives each its own width back', async () => {
+      await page.keyboard.press('Escape');
+      const b = await box(page, 'b-star-1');
+      await clickAt(page, await ptClient(page, (b[0] + b[2]) / 2, b[1] + 0.02));
+      const sel = await cur(page, 'C.selection()');
+      assert.ok(sel.length === 1 && (await one(sel[0])).kind === 'group', 'the group: ' + sel);
+      assert.equal(await val('lw'), '0.088');
+      const u0 = await undoN();
+      await page.locator('.ce-root [data-f="lw"]').click();
+      for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('Enter'); await settle(page);
+      const g = await one(sel[0]);
+      assert.ok(g.children.every(c => near(c.lwPt, 0.048 * PT, 1e-6)) && await undoN() === u0 + 1, JSON.stringify(g.children.map(c => c.lwPt)));
+      await page.locator('.ce-root [data-act="lw0"]').click(); await settle(page);
+      assert.ok((await one(sel[0])).children.every(c => c.lwPt === 0.25), 'their own 0.25 pt again');
+    });
+    await step('6.8 the Text tool with nothing selected arms the weight of the next words: +0.03, then a click and "HI" are made at +0.03', async () => {
+      await page.keyboard.press('Escape'); await page.keyboard.press('t'); await settle(page);
+      assert.ok(await shown('weight'), 'the Weight field is there before the words');
+      await typeField(page, 'wt', '0.03');
+      const f = await H(page, () => window.CharmEditor.current.frame());
+      await clickAt(page, await ptClient(page, f.x0 + 4 * PT, f.y0 + 26 * PT));
+      await page.keyboard.type('HI'); await page.keyboard.press('Enter'); await settle(page);
+      const hi = await findText(page, 'HI');
+      assert.ok(hi && hi.weightMm === 0.03, JSON.stringify(hi));
+      assert.equal(await val('wt'), '+0.03');
+      assert.deepEqual(page.__errs, []);
+    });
+    await page.context().close();
+  }
+  /* a line at its true width at every zoom, counted in the screen's own pixels */
+  {
+    const page = await newPage(1280, 720);
+    await openIt(page);
+    const PT = 72 / 25.4;
+    // the dark pixels across a day square's left line, on one row of the screen (the square's grey ink on white), partial pixels counted by their darkness: the grid off, nothing
+    // selected (no selection box over the line), and only 0.12 mm either side of it (the next square's line is 0.32 mm away)
+    const across = async id => {
+      await page.mouse.move(4, 360); await settle(page);   // (the hand off the room: no hover outline over the line)
+      const b = await box(page, id), p = await ptClient(page, b[0], (b[1] + b[3]) / 2), k = await cur(page, 'C.zoom()') / 100 * 96 / 72, hw = Math.max(3, Math.floor(0.12 * PT * k));
+      const buf = await page.screenshot({ clip: { x: Math.round(p.x) - hw, y: Math.round(p.y) + 3, width: 2 * hw, height: 1 } });
+      return H(page, async b64 => {
+        const img = new Image(); img.src = 'data:image/png;base64,' + b64; await img.decode();
+        const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+        const d = g.getImageData(0, 0, img.width, 1).data; let n = 0;
+        for (let i = 0; i < d.length; i += 4) { const l = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]; n += Math.max(0, Math.min(1, (235 - l) / (235 - 84))); }
+        return n;
+      }, buf.toString('base64'));
+    };
+    await step('6.9 a line is drawn at its TRUE width at every zoom: a day square\'s 0.3 pt line is 8 px across at 2000 %, 4 px at 1000 %; thinned to 0.03 mm it is 2.3 px at 2000 %; at 100 % only a hairline', async () => {
+      await H(page, () => document.querySelector('.ce-root [data-opt="grid"]').click()); await settle(page);   // (the More menu's "Millimetre grid", off)
+      await clickAt(page, await edgeOf(page, 'day-2-3'));
+      await page.keyboard.press('Control+2'); await settle(page);
+      const zoomTo = async z => { await page.evaluate(z => window.CharmEditor.current.setZoom(z), z); await settle(page); };
+      await page.keyboard.press('Escape'); await settle(page);
+      await zoomTo(2000); const at2000 = await across('day-2-3');
+      await zoomTo(1000); const at1000 = await across('day-2-3');
+      assert.ok(near(at2000, 0.3 * 20 * 96 / 72, 1) && near(at1000, 0.3 * 10 * 96 / 72, 1), 'dark pixels across: ' + at2000.toFixed(2) + ' at 2000 %, ' + at1000.toFixed(2) + ' at 1000 % (true: 8, 4)');
+      await zoomTo(2000);
+      await clickAt(page, await edgeOf(page, 'day-2-3', 0.2));
+      assert.deepEqual(await cur(page, 'C.selection()'), ['day-2-3']);
+      assert.equal(await page.locator('.ce-root [data-f="lw"]').inputValue(), '0.106', 'the Stroke field reads it: 0.3 pt = 0.106 mm');
+      await typeField(page, 'lw', '0.03');
+      await page.keyboard.press('Escape'); await settle(page);
+      const thin = await across('day-2-3');
+      shots.push(await shot(page, 'weight-5-thin-line-2000.png'));
+      assert.ok(near(thin, 0.03 * PT * 20 * 96 / 72, 1), 'thinned: ' + thin.toFixed(2) + ' px (true: ' + (0.03 * PT * 20 * 96 / 72).toFixed(2) + ')');
+      await zoomTo(100);
+      const w = await H(page, () => parseFloat(getComputedStyle(document.querySelector('.ce-items path[data-id="day-2-3"]')).strokeWidth));
+      assert.ok(near(w, 1, 1e-6), 'at 100 % the hairline floor: ' + w);
       assert.deepEqual(page.__errs, []);
     });
     await page.context().close();
