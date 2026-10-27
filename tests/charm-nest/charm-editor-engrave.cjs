@@ -12,6 +12,9 @@
 //      area's front art draws them, the card's Front thumbnail is drawn again, the approved front is withdrawn in Engrave.artChanged's words, the back keeps its words and its "Show front" shows
 //      the new front, and CharmNestPDF.buildSheet writes the new outlines as blue hatching on that piece while the other calendar's drawing is byte for byte what it was. Cancel writes nothing;
 //      the editor opens again on the saved edit, and a second edit keeps the first; a part off the metal is refused in the work area's note, and nothing of that edit (front or back) is saved
+//      (27 Oct 2026, Paul: "the thickness of the Red engrave line is too thick, I need ... fine font thickness control over each font") the 25 made 0.04 mm bolder with the Weight field
+//      and one day square's red line thinned to 0.05 mm with the Stroke field (drawn at exactly that width): the record keeps the weight with the outlines AT it and the line's width,
+//      the sheet's file engraves those very outlines and writes that width, and the editor opened again reads both back
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/charm-editor-engrave.cjs      (CE_ONLY=A or B; SHOTS=<dir> for the screenshots)
 'use strict';
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
@@ -117,7 +120,7 @@ async function partB(kit) {
           let s = ''; const u = new Uint8Array(bytes); for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s);
         },
         /** each piece's form of a written sheet, parsed back: its fills [["r,g,b", bbox]] and its line engravings (red strokes) [bbox] */
-        async parts(b64) { const p = await CharmNestPDF.parseSource(Uint8Array.from(atob(b64), x => x.charCodeAt(0)), 'sheet.ai'); return p.segments.filter(s => s.kind === 'xobj').map(f => ({ fills: f.children.filter(k => k.kind === 'path' && k.fill).map(k => [k.fillRGB.join(), k.bbox]), lines: f.children.filter(k => k.kind === 'path' && k.stroke && !k.fill && k.strokeRGB[0] > 0.5 && k.strokeRGB[2] < 0.5).map(k => k.bbox) })); }
+        async parts(b64) { const p = await CharmNestPDF.parseSource(Uint8Array.from(atob(b64), x => x.charCodeAt(0)), 'sheet.ai'); return p.segments.filter(s => s.kind === 'xobj').map(f => ({ fills: f.children.filter(k => k.kind === 'path' && k.fill).map(k => [k.fillRGB.join(), k.bbox]), lines: f.children.filter(k => k.kind === 'path' && k.stroke && !k.fill && k.strokeRGB[0] > 0.5 && k.strokeRGB[2] < 0.5).map(k => k.bbox), lws: f.children.filter(k => k.kind === 'path' && k.stroke && !k.fill && k.strokeRGB[0] > 0.5 && k.strokeRGB[2] < 0.5).map(k => k.lwPt) })); }
       };
     });
 
@@ -207,11 +210,41 @@ async function partB(kit) {
     check(`B7 the wheel zooms into a day square (${Math.round(zoom)}%, still SVG paths, no picture), "25" is set at 5 pt and moved into the square with ${taps.length} arrow taps (Shift 1 mm, 0.05 mm)`,
       zoom > 2000 && svg.imgs === 0 && svg.paths > 20 && t25.sizePt === 5 && b25[0] > sq[0] && b25[1] > sq[1] && b25[2] < sq[2] && b25[3] < sq[3] && Math.abs(mm((b25[0] + b25[2]) / 2 - (sq[0] + sq[2]) / 2)) < 0.03 && taps.length > 3,
       JSON.stringify({ zoom, b25, sq, svg }));
+    /* ── WEIGHT AND LINE WIDTH (Paul, 27 Oct 2026: "the thickness of the Red engrave line is too thick, I need the ability to control the thickness of fonts ... I need fine font
+       thickness control over each font"): the 25 made 0.04 mm bolder with the Weight field, one day square's red line thinned to 0.05 mm with the Stroke field ── */
+    const inkOf = id => page.evaluate(id => { const it = CharmEditor.current.result().faces.front.items.find(i => i.id === id); return CharmEditor.model.inkArea(it.subpaths); }, id);
+    await page.keyboard.press('Escape'); await page.keyboard.press('v'); await settleP(page);
+    { const b = await C(page, id => CharmEditor.current.box(id), t25.id), p = await clientOf(page, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2); await page.mouse.click(p.x, p.y); await settleP(page); }
+    const bar = await page.evaluate(() => { const w = document.querySelector('.ce-root [data-when="weight"]'), kids = [...document.querySelector('.ce-props').children].filter(e => e.getBoundingClientRect().height > 0); return { sel: CharmEditor.current.selection(), shown: !w.hidden, value: w.querySelector('input').value, rows: new Set(kids.map(e => Math.round(e.getBoundingClientRect().top))).size }; });
+    const ink25 = await inkOf(t25.id);
+    await typeField(page, 'wt', '0.04');
+    t25 = await findText(page, '25');
+    const ink25w = await inkOf(t25.id);
+    await R.shot(w, 'CE-4b-25-weight');
+    check(`B7b the 25 in Ace takes the Weight field (on the one-row bar beside its size: ${bar.rows} row) and +0.04 mm makes it bolder (${ink25.toFixed(2)} → ${ink25w.toFixed(2)} pt² of ink)`,
+      bar.sel.join() === t25.id && bar.shown && bar.value === '0.00' && bar.rows === 1 && t25.weightMm === 0.04 && ink25w > ink25 * 1.05, JSON.stringify({ bar, ink25, ink25w, w: t25.weightMm }));
+    // where the record must put the 25's outlines: the editor's own, taken back to the charm's points through the face's view (as the art edit does)
+    const want25 = await page.evaluate(id => { const it = CharmEditor.current.result().faces.front.items.find(i => i.id === id), j = __ce.job(), fr = CharmNestArtEdit.frame(j.view); let b = null; for (const sp of it.subpaths) for (const o of sp) for (const p of o.slice(1)) { const q = fr.toSource(p); b = b ? [Math.min(b[0], q[0]), Math.min(b[1], q[1]), Math.max(b[2], q[0]), Math.max(b[3], q[1])] : [q[0], q[1], q[0], q[1]]; } return b; }, t25.id);
     const res = await page.evaluate(() => CharmEditor.current.result());
     const fc = res.changes.front;
     check('B8 what the editor hands back: the three letters removed, SEPTEMBER and 25 added (as outlines), nothing else changed, the back untouched',
       fc.removed.slice().sort().join() === letters.slice().sort().join() && fc.added.map(a => a.text).sort().join() === '25,SEPTEMBER' && !Object.keys(fc.changed).length && fc.added.every(a => a.subpaths.length > 1) && res.changes.back.added.length === 0,
       JSON.stringify({ removed: fc.removed, added: fc.added.map(a => a.text), changed: Object.keys(fc.changed) }));
+
+    const sqLine = squares[0];   // (the top-left square: its top and left lines are its own, the others it shares with a neighbour drawn over them)
+    await page.keyboard.press('Escape'); await page.keyboard.press('Control+0'); await settleP(page);
+    { const p = await clientOf(page, sqLine.b[0], (sqLine.b[1] + sqLine.b[3]) / 2); await page.mouse.click(p.x, p.y); await settleP(page); }
+    const lw0 = await page.evaluate(() => document.querySelector('.ce-root [data-f="lw"]').value), lwSel = await page.evaluate(() => CharmEditor.current.selection());
+    await typeField(page, 'lw', '0.05');
+    await page.keyboard.press('Control+2'); await settleP(page);   // (zoomed to the square: the thin line next to its neighbours' own)
+    await page.keyboard.press('Escape'); await page.mouse.move(4, 360); await settleP(page);
+    const lwNow = await page.evaluate(id => CharmEditor.current.items().find(i => i.id === id).lwPt, sqLine.id);
+    const drawnW = await page.evaluate(([id, z]) => [parseFloat(getComputedStyle(document.querySelector(`.ce-items path[data-id="${id}"]`)).strokeWidth), CharmEditor.current.zoom()], [sqLine.id, 0]);
+    await R.shot(w, 'CE-4c-grid-line-thinned');
+    const fc2 = (await page.evaluate(() => CharmEditor.current.result())).changes.front;
+    check(`B8b a day square's red line reads ${lw0} mm in the Stroke field (its own 0.3 pt) and is thinned to 0.05 mm, drawn at exactly that (${drawnW[0].toFixed(2)} px at ${Math.round(drawnW[1])} %); it is now the one part changed`,
+      lwSel.join() === sqLine.id && lw0 === '0.106' && Math.abs(lwNow - 0.05 * PT) < 1e-6 && Math.abs(drawnW[0] - lwNow * drawnW[1] / 100 * 96 / 72) < 1e-3 && drawnW[1] > 1000 && Object.keys(fc2.changed).join() === sqLine.id,
+      JSON.stringify({ lw0, lwNow, lwSel, drawnW, changed: Object.keys(fc2.changed) }));
 
     /* ── Save ── */
     const puts0 = artPuts();
@@ -220,12 +253,19 @@ async function partB(kit) {
     // the face is fitted again around its new drawing: wait for it (and the card drawn again)
     await page.waitForFunction(id => { const f = [...Engrave.items().values()].find(x => x.face === 'front' && (x.copies || []).includes(id)); return f && f.view && !['ready', 'fitting'].includes(f.state); }, PID, { timeout: 120000 }).catch(() => {});
     await R.openEngraveDetail(w, 'cal', { face: 'front' }); await R.settle(page, 1200);
+    // (27 Oct 2026: the wait above can pass on the face's state from BEFORE the save, and the card is then drawn again under the next read: it fails so on main too, 2 runs in 3. Wait for its drawing)
+    await page.waitForFunction(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement] .backHost canvas'); return !!(c && c._frontArt); }, null, { timeout: 60000 }).catch(() => {});
     const rec = st.doc('Charm_Pool_Art', PID + '~front');
     const addedIds = [sep0.id, t25.id];
     check('B9 the cloud keeps the edit for this piece: who, the three letters removed, SEPTEMBER and 25 added as blue-hatched outlines in the piece\'s own points, one save',
       rec && rec.by === 'Test Operator' && rec.removed.slice().sort().join() === letters.slice().sort().join() && rec.added.map(a => a.id).sort().join() === addedIds.slice().sort().join() &&
       rec.added.every(a => a.role === 'hatch' && a.fill && a.fill.join() === '0,0,1' && /^M/.test(a.d)) && rec.added.find(a => a.id === sep0.id).text === 'SEPTEMBER' && artPuts() === puts0 + 1 && !st.doc('Charm_Pool_Art', PID),
       JSON.stringify(rec && { by: rec.by, removed: rec.removed, added: rec.added.map(a => [a.id, a.role, a.text, a.fill]) }));
+    const e25 = rec && rec.added.find(a => a.id === t25.id), got25 = e25 && (() => { const pts = []; for (const sp of kit.AE.fromD(e25.d)) for (const o of sp) for (const p of o.slice(1)) pts.push(p); return [Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1])), Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))]; })();
+    const thinRec = rec && rec.changed && rec.changed[sqLine.id];
+    check('B9b …the 25 is kept with its weight (+0.04 mm) and the outlines AT that weight (the editor\'s, in the piece\'s own points, to 0.002 pt); the thinned day square is kept as a change with its width, 0.142 pt (0.05 mm)',
+      !!e25 && e25.weightMm === 0.04 && got25.every((v, i) => Math.abs(v - want25[i]) < 0.002) && !!thinRec && thinRec.lwPt === 0.142 && thinRec.role === 'line' && thinRec.stroke && thinRec.stroke.join() === '1,0,0' && Object.keys(rec.changed).length === 1,
+      JSON.stringify({ w: e25 && e25.weightMm, got25, want25, thin: thinRec && { lw: thinRec.lwPt, role: thinRec.role, stroke: thinRec.stroke }, changed: rec && Object.keys(rec.changed || {}) }));
     const after = await page.evaluate(([id, id2, added, gone]) => {
       const ch = Pool.charmOf(id), j = __ce.job(), cv = __ce.cv();
       const art = cv._frontArt.map(s => s.original || s), artIds = art.map(m => m && m.artMemberId);
@@ -262,6 +302,15 @@ async function partB(kit) {
       blue(p0[0].fills).length === 3 && nb.length === 2 && p1[0].fills.every(f => f[0] === '0,0,1') && !!wide && !!small && inSq.length === 1 && p1[0].lines.length === 20 &&
       !p0[0].fills.some(f => nb.some(g => JSON.stringify(g[1]) === JSON.stringify(f[1]))) && JSON.stringify(p1[1]) === JSON.stringify(p0[1]),
       JSON.stringify({ before: blue(p0[0].fills).length, after: nb.map(f => f[1].map(v => +v.toFixed(1))), squares: p1[0].lines.length, inSq: inSq && inSq.length }));
+    { // (27 Oct 2026) the file engraves what the editor drew: the 25's outlines at their weight, the thinned square at its width (the sheet sets the charm's middle at 50, 130 - 60, unturned)
+      const where = await page.evaluate(([id, sq]) => { const ch = Pool.charmOf(id), m = ch.members.find(x => x.artMemberId === sq); return { c: ch.centerPt, sq: m && m.bbox, lw: m && m.lwPt }; }, [PID, sqLine.id]);
+      const on = b => [b[0] + 50 - where.c[0], b[1] + 130 - 60 - where.c[1], b[2] + 50 - where.c[0], b[3] + 130 - 60 - where.c[1]];
+      const thinAt = p1[0].lws.map((v, i) => (Math.abs(v - 0.142) < 1e-6 ? i : -1)).filter(i => i >= 0), at25 = on(want25);
+      check('B16b …at the weight and the width the editor showed: the 25\'s blue hatching is exactly its outlines at +0.04 mm (box to 0.003 pt), and the thinned square is written at 0.142 pt where it is, the other 19 at their own 0.3 pt (all 20 were 0.3 before)',
+        !!small && small[1].every((v, i) => Math.abs(v - at25[i]) < 0.003) && thinAt.length === 1 && p1[0].lines[thinAt[0]].every((v, i) => Math.abs(v - on(where.sq)[i]) < 0.003) && Math.abs(where.lw - 0.142) < 1e-9 &&
+        p1[0].lws.filter(v => Math.abs(v - 0.3) < 1e-6).length === 19 && p0[0].lws.every(v => Math.abs(v - 0.3) < 1e-6),
+        JSON.stringify({ small: small && small[1], at25, thinAt, lws: p1[0].lws.map(v => +v.toFixed(3)), lws0: p0[0].lws.map(v => +v.toFixed(3)) }));
+    }
 
     /* ── Cancel writes nothing ── */
     const recAt = rec.at, puts1 = artPuts();
@@ -270,6 +319,16 @@ async function partB(kit) {
     const re = await page.evaluate(([gone]) => { const its = CharmEditor.current.items(); return { names: its.map(i => i.name || ''), sources: its.filter(i => i.source === 'added').map(i => i.name), gone: gone.every(g => !its.some(i => i.id === g)), n: its.length }; }, [letters]);
     await R.shot(w, 'CE-6-reopened');
     check('B17 the editor opens again on the saved edit: SEPTEMBER and 25 are layers of their own (added here), MAY is not there', re.sources.includes('SEPTEMBER') && re.sources.includes('25') && re.gone && re.n === 23, JSON.stringify(re));
+    { // (27 Oct 2026) opened again, the 25 says its weight and the square its width: picked from their rows, the bar reads them
+      const pick = async id => { await page.locator(`.ce-root .ce-layer[data-id="${id}"] .ce-layer__name`).scrollIntoViewIfNeeded(); await page.locator(`.ce-root .ce-layer[data-id="${id}"] .ce-layer__name`).click(); await settleP(page); };
+      await pick(t25.id);
+      const r25 = await page.evaluate(id => ({ it: CharmEditor.current.items().find(i => i.id === id), wt: document.querySelector('.ce-root [data-f="wt"]').value, shown: !document.querySelector('.ce-root [data-when="weight"]').hidden }), t25.id);
+      await pick(sqLine.id);
+      const rsq = await page.evaluate(id => ({ it: CharmEditor.current.items().find(i => i.id === id), lw: document.querySelector('.ce-root [data-f="lw"]').value }), sqLine.id);
+      await page.keyboard.press('Escape'); await settleP(page);
+      check('B17b …the 25 comes back as its outlines saying their weight, +0.04 mm in the Weight field (a new weight grows them by the difference), and the thinned square says 0.05 mm in the Stroke field',
+        r25.it && r25.it.weightMm === 0.04 && r25.shown && r25.wt === '+0.04' && rsq.it && Math.abs(rsq.it.lwPt - 0.142) < 1e-9 && rsq.lw === '0.05', JSON.stringify({ r25, rsq: { lw: rsq.lw, lwPt: rsq.it && rsq.it.lwPt } }));
+    }
     await page.keyboard.press('v');
     const sepId = await page.evaluate(() => CharmEditor.current.items().find(i => i.name === 'SEPTEMBER').id);
     await page.evaluate(id => { const b = CharmEditor.current.box(id), p = CharmEditor.current.clientOf((b[0] + b[2]) / 2, (b[1] + b[3]) / 2); window.__p = p; }, sepId);

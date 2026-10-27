@@ -21,6 +21,9 @@
      encode(changes, ctx)         → the record to save, from the editor's { removed, changed, added } (items in the view frame, with tx ty sx sy rot about the item's own box centre, or the
                                     `matrix` charm-nest-charm-editor.js states for a path or a group; a text's outlines as that editor places them in the face, see leavesOf).
      decode(record, charm, view)  → the editor's changes again, from a saved record.
+     (27 Oct 2026, Paul: "I need fine font thickness control over each font") a part's weightMm (the weight its outlines were made at: mm thicker or thinner than the font draws them) is
+     kept with its record entry, its segment (artWeightMm) and its item again (itemsOf, decode), so words opened again say their weight; the outlines in `d` already have it. A line's lwPt is
+     written as the editor drew it (paintOf; charm-nest-pdf.js artOps writes it).
      load / save / clear / piece / sync   the cloud (artGet / artList / artPut) and the page (the host the bridge sets: setHost).
 
    Roles (what the laser does with a part; the laser knows its pens by colour, charm-nest-geom.js pathRole):
@@ -239,6 +242,7 @@
     seg.layer = member ? (member.layer != null ? member.layer : null) : layerFor(role, base);
     if (e.text) seg.artText = String(e.text).slice(0, 200);
     if (e.group) seg.artGroup = String(e.group);
+    if (Number.isFinite(+e.weightMm) && +e.weightMm) seg.artWeightMm = +e.weightMm;
     return seg;
   }
   const emptyRec = rec => !rec || (!(rec.removed || []).length && !Object.keys(rec.changed || {}).length && !(rec.added || []).length);
@@ -360,10 +364,13 @@
     const subs = okSubs(item.subpaths) ? item.subpaths : own ? own() : null, placed = item.kind === "text" && okSubs(item.subpaths);
     out.push({ id: item.id != null ? String(item.id) : prefix || "", role: ROLES.has(item.role) ? item.role : parentRole || null, kind: item.kind === "text" ? "text" : "path",
       subpaths: subs, M: !subs ? null : placed ? ID : mul(isMat(item.matrix) ? item.matrix : itemMatrix(item, bboxOf(ptsOf(subs))), parentM || ID),
-      stroke: item.stroke, fill: item.fill, lwPt: item.lwPt, even: item.even, text: item.text, group: item.group });
+      stroke: item.stroke, fill: item.fill, lwPt: item.lwPt, even: item.even, text: item.text, group: item.group, weightMm: item.weightMm });
     return out;
   }
   const toSource = (leaf, fr) => (leaf.subpaths ? mapSubs(leaf.subpaths, p => fr.toSource(ap(leaf.M, +p[0], +p[1]))) : null);
+  /** WEIGHT (27 Oct 2026, Paul: "I need fine font thickness control over each font"): the weight the outlines were made at (mm thicker or thinner than the font draws them), kept with
+   *  them so the words opened again say it and a new weight grows them by the difference. The outlines in `d` already have it: nothing here or in the laser file applies it again. */
+  const weightRec = leaf => { const w = +leaf.weightMm; return Number.isFinite(w) && Math.abs(w) >= 0.0005 && Math.abs(w) <= 5 ? { weightMm: Math.round(w * 1000) / 1000 } : {}; };
   const paintRec = p => Object.assign({ stroke: p.stroke ? p.stroke.map(v => Math.round(v * 1000) / 1000) : null, fill: p.fill ? p.fill.map(v => Math.round(v * 1000) / 1000) : null }, p.lwPt ? { lwPt: Math.round(p.lwPt * 1000) / 1000 } : {}, p.even ? { even: true } : {});
   /** The record to save for one face of one piece, from the editor's changes. Throws { refused: [{ id, why }] } when any part cannot be kept as asked: nothing is half saved.
    *  ctx = { charm (the piece's charm on the page, edited or not), view (the face's view the editor drew: job.view), face, placed (the piece is on a sheet) } */
@@ -396,7 +403,7 @@
       if (role !== "cut" && !onMetal(subs, polys)) { no(id, WHY.offMetal); continue; }
       if (role === "cut" || was === "cut") rec.cutIds.push(id);
       const keep = role === was && leaf.stroke === undefined && leaf.fill === undefined && (leaf.lwPt == null) && (leaf.even == null);
-      const e = Object.assign({ kind: "path", role, d: toD(subs) }, keep ? { keep: true } : paintRec(paintOf(role, leaf, m)));
+      const e = Object.assign({ kind: "path", role, d: toD(subs) }, keep ? { keep: true } : paintRec(paintOf(role, leaf, m)), weightRec(leaf));
       if (leaf.text != null && leaf.text !== "") e.text = String(leaf.text).slice(0, 200);
       rec.changed[id] = e;
     }
@@ -408,7 +415,7 @@
       if (!subs || !okSubs(subs)) { no(id, WHY.path); continue; }
       if (face === "back" && role === "cut") { no(id, WHY.back); continue; }
       if (role !== "cut" && !onMetal(subs, polys)) { no(id, WHY.offMetal); continue; }
-      const e = Object.assign({ id, kind: leaf.kind, role, d: toD(subs) }, paintRec(paintOf(role, leaf, null)));
+      const e = Object.assign({ id, kind: leaf.kind, role, d: toD(subs) }, paintRec(paintOf(role, leaf, null)), weightRec(leaf));
       if (leaf.text != null && leaf.text !== "") e.text = String(leaf.text).slice(0, 200);
       if (leaf.group != null) e.group = String(leaf.group).slice(0, 64);
       rec.added.push(e);
@@ -423,7 +430,7 @@
     const fr = frame(view), out = { removed: [], changed: {}, added: [] };
     if (!rec) return out;
     const item = e => Object.assign({ id: e.id, kind: e.kind || "path", role: e.role, subpaths: mapSubs(fromD(e.d) || [], fr.toItem), tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 },
-      e.keep ? {} : { stroke: e.stroke || null, fill: e.fill || null }, e.lwPt ? { lwPt: e.lwPt } : {}, e.even ? { even: true } : {}, e.text ? { text: e.text } : {}, e.group ? { group: e.group } : {});
+      e.keep ? {} : { stroke: e.stroke || null, fill: e.fill || null }, e.lwPt ? { lwPt: e.lwPt } : {}, e.even ? { even: true } : {}, e.text ? { text: e.text } : {}, e.group ? { group: e.group } : {}, weightRec(e));
     out.removed = (rec.removed || []).slice();
     for (const [id, e] of Object.entries(rec.changed || {})) out.changed[id] = item(Object.assign({}, e, { id }));
     out.added = (rec.added || []).map(item);
@@ -436,7 +443,7 @@
     const fr = frame(view), ids = memberIds(charm), list = [];
     const one = (m, id, origin) => ({ id, origin, changed: !!m.artChanged, kind: m.kind === "text" ? "text" : "path", role: roleOf(m, charm), subpaths: isPath(m) ? mapSubs(m.subpaths, fr.toItem) : [],
       stroke: m.stroke ? (m.strokeRGB || BLACK).slice(0, 3) : null, fill: m.fill ? (m.hatchBlue ? BLUE : (m.fillRGB || BLACK).slice(0, 3)) : null, lwPt: m.lwPt || null, even: String(m.paintOp || "").endsWith("*"),
-      editable: isPath(m) && !(face === "back"), layer: m.layer || null, tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, ...(m.artText ? { text: m.artText } : {}), ...(m.artGroup ? { group: m.artGroup } : {}) });
+      editable: isPath(m) && !(face === "back"), layer: m.layer || null, tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, ...(m.artText ? { text: m.artText } : {}), ...(m.artGroup ? { group: m.artGroup } : {}), ...(m.artWeightMm ? { weightMm: m.artWeightMm } : {}) });
     charm.members.forEach((m, i) => { if (!m) return; if (face === "back" && roleOf(m, charm) !== "cut") return; list.push(one(m, ids[i], m.artAdded ? "added" : "master")); });
     if (face === "back") for (const m of charm.artBack || []) list.push(Object.assign(one(m, m.artMemberId, "added"), { editable: true }));
     return list;

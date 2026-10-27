@@ -32,7 +32,7 @@ const nested = v => Array.isArray(v) ? v.some(x => Array.isArray(x) || nested(x)
     const ID = '4170000001_10010_1', ID2 = '4170000002_10020_1', SHEET = 'gold-art-1';
     st.put('Charm_Pool', ID, { poolId: ID, orderId: '4170000001', sku: 'CALENDAR', state: 'pooled', sheetId: null, artEdit: { back: 111 } });
     st.put('Charm_Pool', ID2, { poolId: ID2, orderId: '4170000002', sku: 'CALENDAR', state: 'pooled', sheetId: null });
-    const art = (extra) => Object.assign({ baseKey: 'k1a2b3', removed: ['1-abc', '2-def'], changed: { '5-xyz': { kind: 'path', role: 'line', d: 'M10 10L20 10', keep: true } }, added: [{ id: 'jun0', kind: 'text', role: 'art', text: 'J', d: 'M1 1L3 1L3 3C3 4 2 4 1 3Z', stroke: null, fill: [0, 0, 1] }] }, extra || {});
+    const art = (extra) => Object.assign({ baseKey: 'k1a2b3', removed: ['1-abc', '2-def'], changed: { '5-xyz': { kind: 'path', role: 'line', d: 'M10 10L20 10', keep: true } }, added: [{ id: 'jun0', kind: 'text', role: 'art', text: 'J', d: 'M1 1L3 1L3 3C3 4 2 4 1 3Z', stroke: null, fill: [0, 0, 1], weightMm: 0.0254 }] }, extra || {});
     const put = (b, extra) => call(Object.assign({ op: 'artPut', poolId: ID, face: 'front', by: 'Ana_M', art: art(b) }, extra || {}));
     const docs = () => st.list('Charm_Pool_Art').length + st.list('Sandbox_Charm_Pool_Art').length;
 
@@ -54,6 +54,8 @@ const nested = v => Array.isArray(v) ? v.some(x => Array.isArray(x) || nested(x)
     await bad({ art: art({ added: [{ id: 'a', role: 'art', d: 'M1 1L2 2' }] }) }, /neither stroked nor filled/, 'no paint');
     await bad({ art: art({ added: [{ id: 'a', role: 'line', d: 'M1 1L2 2', stroke: [1, 0, 0], lwPt: 50 }] }) }, /line width/, 'a line 50 pt wide');
     await bad({ art: art({ added: [{ id: 'a', role: 'art', d: 'M1 1L2 2', fill: [0, 0, 1] }, { id: 'a', role: 'art', d: 'M1 1L2 2', fill: [0, 0, 1] }] }) }, /used twice/, 'an id twice');
+    await bad({ art: art({ added: [{ id: 'a', kind: 'text', role: 'hatch', d: 'M1 1L2 2L2 1Z', fill: [0, 0, 1], weightMm: 9 }] }) }, /weight is -5 to 5 mm/, 'words 9 mm heavier (27 Oct 2026: a weight is a few hundredths of a mm)');
+    await bad({ art: art({ added: [{ id: 'a', kind: 'text', role: 'hatch', d: 'M1 1L2 2L2 1Z', fill: [0, 0, 1], weightMm: 'bold' }] }) }, /weight/, 'a weight that is a word');
     await bad({ art: art({ added: [{ id: 'has space', role: 'art', d: 'M1 1L2 2', fill: [0, 0, 1] }] }) }, /short name/, 'an id that is no short name');
     await bad({ art: art({ added: [{ id: 'k', role: 'art', d: 'M1 1L2 2', keep: true }] }) }, /neither stroked nor filled/, 'keep on a NEW part (only a changed part keeps its paint)');
     await bad({ art: art({ cutIds: ['9-zzz'] }) }, /cutIds/, 'a cut id that is neither removed nor changed');
@@ -74,6 +76,7 @@ const nested = v => Array.isArray(v) ? v.some(x => Array.isArray(x) || nested(x)
     ok(doc && doc.poolId === ID && doc.face === 'front' && doc.by === 'Ana_M' && doc.at === r.body.art.at && doc.edits === 1 && doc.sku === 'CALENDAR' && doc.orderId === '4170000001' && doc.sheetId === null && !doc.prev, 'B the record: the piece, the face, who and when, the count');
     eq(doc.removed, ['1-abc', '2-def'], 'B its removals'); eq(Object.keys(doc.changed), ['5-xyz'], 'B its change'); ok(doc.changed['5-xyz'].keep === true && doc.added[0].fill.join() === '0,0,1' && doc.added[0].text === 'J', 'B paint as sent');
     ok(!nested(doc), 'B no array inside an array (the fake refuses them as Firestore does: strictArrays)');
+    ok(doc.added[0].weightMm === 0.025 && !('weightMm' in doc.changed['5-xyz']), 'B the weight words were made at is kept with them, to the micron (27 Oct 2026)');
     eq(st.doc('Charm_Pool', ID).artEdit, { back: 111, front: doc.at }, 'B the pool row says the front has an edit, the back\'s stamp kept');
     r = await call({ op: 'artGet', poolId: ID, face: 'front' }); ok(r.status === 200 && r.body.art && r.body.art.at === doc.at && r.body.art.removed.length === 2, 'B artGet reads it back');
     r = await call({ op: 'artGet', poolId: ID, face: 'back' }); ok(r.status === 200 && r.body.art === null, 'B the back has none');

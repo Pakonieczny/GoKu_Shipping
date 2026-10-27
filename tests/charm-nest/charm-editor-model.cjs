@@ -13,6 +13,8 @@
  *  H  group and ungroup keep the stacking and the drawing; arrange moves within each parent
  *  I  in and out: the caller's objects are never touched, the editor's own locks are not changes, text leaves as outlines in face space, the diff names what changed
  *  J  the stand-in font: centred / right alignment, linear in size, several lines
+ *  K  weight and line width (27 Oct 2026): words' outlines grow with the weight step by step (0.01 mm), stay where they were, keep it at any size and leave the editor AT it; weight 0 is
+ *     the font's own curves; a path that already has a weight (words opened again) grows by the difference, its own scale divided out; a line's width is its lwPt, none the laser's 0.25 pt
  */
 'use strict';
 const assert = require('node:assert/strict'), path = require('node:path');
@@ -250,4 +252,39 @@ const worldPts = (sps, W) => { const out = []; for (const sp of sps) for (const 
   ok(l.bbox[3] > 0 && l.bbox[3] < 1 && l.bbox[1] <= -7 - hw && l.bbox[1] >= -7 - hw * 1.5, 'J5 the anchor is the baseline: capitals stand on it (cap height 0.7 em)');
 }
 
-console.log('PASS ' + n + ' checks: charm editor model: matrices and tight boxes; transforms exact on the leaves (slants redrawn); groups pass their transform down; mirrored stays mirrored; words keep their anchor and fold an even stretch into their size; hit tests and the marquee; 75-step history; clipboard in face space; group / ungroup / arrange; in and out (no mutation, own locks are not changes, text as outlines, the diff)');
+/* ── K · weight and line width (Paul, 27 Oct 2026: "I need fine font thickness control over each font"; "the thickness of the Red engrave line is too thick") ── */
+{
+  ok(M.canWeigh(), 'K0 Clipper is found (vendor/clipper-6.4.2.js), as the page loads it before the editor');
+  const words = { id: 'nov', kind: 'text', role: 'hatch', source: 'added', text: 'NOVEMBER', fontKey: 'sans', sizePt: 4.24, align: 'left', tx: 20, ty: 30 };
+  const steps = [-0.1, -0.05, -0.02, -0.01, 0, 0.01, 0.02, 0.05, 0.1, 0.2];
+  const at = steps.map(w => M.weighItem(words, w, geo)), inks = at.map(t => M.inkArea(geo.raw(t).subpaths)), widths = at.map(t => { const b = geo.drawn(t); return b[2] - b[0]; });
+  ok(inks.every((v, i) => !i || v > inks[i - 1]) && widths.every((v, i) => !i || v > widths[i - 1]), 'K1 the outlines grow with the weight, step by step from -0.10 to +0.20 mm, even by 0.01 mm: more ink and wider each time (' + inks.map(v => v.toFixed(2)).join(' < ') + ' pt²)');
+  const own = geo.raw(words), w0 = at[steps.indexOf(0)];
+  ok(w0 === words && geo.raw(w0).subpaths === own.subpaths, 'K2 weight 0 is the font\'s own drawing, curves and all (not a polygon of it)');
+  const plus = at[steps.indexOf(0.05)], bo = geo.drawn(words), bp = geo.drawn(plus), half = 0.05 / 2 * PT;
+  ok(plus.weightMm === 0.05 && bp[1] < bo[1] - half * 0.95 && bp[3] > bo[3] + half * 0.95 && bp[3] < bo[3] + half * 2.1, 'K3 +0.05 mm: every stroke 0.05 mm thicker, so each edge 0.025 mm out (top and bottom: ' + [(bo[1] - bp[1]) / PT, (bp[3] - bo[3]) / PT].map(v => v.toFixed(4)).join(', ') + ' mm)');
+  const cc = b => [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+  ok(near(cc(bp)[0], cc(bo)[0], 0.01 * PT) && near(cc(bp)[1], cc(bo)[1], 0.01 * PT) && near(M.ap(geo.matrix(plus), 0, 0)[0], 20, 1e-9), 'K4 the words stay where they were (their anchor and their middle)');
+  const bigger = M.retext(plus, { sizePt: 8.48 }, geo);
+  ok(bigger.weightMm === 0.05 && near((geo.drawn(bigger)[3] - geo.drawn(bigger)[1]) - 2 * (bo[3] - bo[1]), 2 * half, half), 'K5 the weight is independent of the size: twice the size keeps 0.05 mm (the strokes do not double with it)');
+  const out = M.exportItems([plus], geo)[0];
+  ok(out.weightMm === 0.05 && nearBox(M.bboxOf(out.subpaths), geo.drawn(plus), 1e-9) && near(M.inkArea(out.subpaths), inks[steps.indexOf(0.05)], 1e-6), 'K6 the result carries the weight and the outlines AT it (the ones the editor draws, for the laser)');
+  const d = M.diffFace(M.exportItems([words], geo), M.exportItems([plus], geo)), back = M.diffFace(M.exportItems([words], geo), M.exportItems([M.weighItem(plus, 0, geo)], geo));
+  ok(Object.keys(d.changed).join() === 'nov' && !Object.keys(back.changed).length && !('weightMm' in M.weighItem(plus, 0, geo)), 'K7 a weight is a change; back to the font\'s own weight is none');
+  ok(M.weighItem(words, 9, geo).weightMm === M.WT_MAX_MM && M.weighItem(words, -9, geo).weightMm === M.WT_MIN_MM, 'K8 held between ' + M.WT_MIN_MM + ' and +' + M.WT_MAX_MM + ' mm');
+  const lineWords = Object.assign({}, words, { role: 'line' });
+  ok(!M.weighable(lineWords) && M.weighItem(lineWords, 0.05, geo) === lineWords && M.weighable(words), 'K9 words engraved as a line take a width, not a weight');
+  // a path: its geometry already has its weight in it (words saved as outlines and opened again); a new weight grows it by the difference, in its own frame, where it was
+  const saved = { id: 'sv', kind: 'path', role: 'hatch', source: 'added', text: 'NOVEMBER', weightMm: 0.05, fill: true, subpaths: out.subpaths };
+  const more = M.weighItem(saved, 0.08, geo), direct = M.exportItems([M.weighItem(words, 0.08, geo)], geo)[0];
+  ok(more.weightMm === 0.08 && nearBox(geo.drawn(more), M.bboxOf(direct.subpaths), 0.004) && near(M.inkArea(geo.raw(more).subpaths), M.inkArea(direct.subpaths), 0.02), 'K10 words opened again at +0.05 and set to +0.08 mm are the words made at +0.08 (box to 0.004 pt, ink to 0.02 pt²)');
+  const scaled = Object.assign({}, saved, { sx: 2, sy: 2 }), sMore = M.weighItem(scaled, 0.08, geo), sb0 = geo.drawn(scaled), sb1 = geo.drawn(sMore), grow = 0.015 * PT;
+  ok(near(sb0[1] - sb1[1], grow, grow * 0.6) && near(cc(sb1)[0], cc(sb0)[0], 0.01 * PT), 'K11 …and a path drawn at twice its size still grows by the mm asked on the charm (its own scale divided out): ' + ((sb0[1] - sb1[1]) / PT).toFixed(4) + ' mm');
+  ok(M.weighItem(rectItem('line', 0, 0, 5, 5, { role: 'line' }), 0.05, geo).weightMm === undefined, 'K12 a line drawing takes no weight');
+  // line width: true to lwPt, and a line that names none is the laser's own 0.25 pt (it was drawn at 0.5 pt, twice what the laser writes)
+  ok(M.lwOf({}) === 0.25 && M.LW_LASER_PT === 0.25 && M.lwOf({ lwPt: 0.142 }) === 0.142 && M.lwOf({ lwPt: 0 }) === 0, 'K13 a line\'s width: its own lwPt; none is the laser\'s 0.25 pt; 0 is a hairline');
+  const thick = rectItem('t', 0, 0, 20, 20, { role: 'line', lwPt: 2 }), thin = rectItem('t', 0, 0, 20, 20, { role: 'line', lwPt: 0.1 });
+  ok(M.hitTest([thick], 20.9, 10, 0.1, geo) && !M.hitTest([thin], 20.9, 10, 0.1, geo), 'K14 a line is hit across its own width (2 pt reaches 0.9 pt out, 0.1 pt does not)');
+}
+
+console.log('PASS ' + n + ' checks: charm editor model: matrices and tight boxes; transforms exact on the leaves (slants redrawn); groups pass their transform down; mirrored stays mirrored; words keep their anchor and fold an even stretch into their size; hit tests and the marquee; 75-step history; clipboard in face space; group / ungroup / arrange; in and out (no mutation, own locks are not changes, text as outlines, the diff); weight (outlines grow step by step with it, independent of the size, a saved weight grown by the difference) and line width');

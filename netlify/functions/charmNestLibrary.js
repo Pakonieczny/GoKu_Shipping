@@ -2385,7 +2385,8 @@ async function op_backList(b) {
        { poolId, face, v: 1, baseKey (the master drawing the member ids were read from), removed [memberId], cutIds [memberId: the master cut lines among those removed or changed],
          changed { memberId: item }, added [item], cut (a cut line is touched), cutKey, by, at, sku, orderId, sheetId, prev { at, by }, edits (how many saves), updatedAt }
        item = { id, kind "path" | "text" (text arrives as outlines), role "cut" | "line" | "hatch" | "art", d (the path in the charm's own points, y up: M x y, L x y, C x1 y1 x2 y2 x y, Z),
-                stroke [r,g,b] | null, fill [r,g,b] | null (or keep: true, a changed part keeps its own paint), lwPt, even (even-odd fill), text (the words, for people), group }
+                stroke [r,g,b] | null, fill [r,g,b] | null (or keep: true, a changed part keeps its own paint), lwPt, even (even-odd fill), text (the words, for people), group,
+                weightMm (27 Oct 2026: the weight the outlines in d were made at, mm thicker or thinner than drawn; d already has it, it is kept so the words opened again say it) }
    The geometry is a string, never an array of arrays (Firestore refuses an array inside an array). Every number, the vocabulary of the path, the roles and the size are checked
    here; a record that does not pass is refused whole, nothing is written.
    Who and when: `by` (a signed-in person, required as for an approval) and `at` (this server's clock). The piece's pool row says it has an edit (artEdit { front | back: at }), so a page
@@ -2396,7 +2397,7 @@ async function op_backList(b) {
 const ART = "Charm_Pool_Art";
 const ART_FACES = new Set(["front", "back"]), ART_ROLES = new Set(["cut", "line", "hatch", "art"]), ART_KINDS = new Set(["path", "text"]);
 const ART_MEMBER = /^\d{1,5}-[0-9a-z]{1,13}$/, ART_ITEM = /^[A-Za-z0-9_.:-]{1,64}$/, ART_KEY = /^[0-9a-z]{1,13}$/;
-const ART_MAX = { bytes: 600000, removed: 2000, changed: 2000, added: 400, ops: 60000, d: 200000, coord: 20000, lwPt: 20, text: 200, list: 200 };
+const ART_MAX = { bytes: 600000, removed: 2000, changed: 2000, added: 400, ops: 60000, d: 200000, coord: 20000, lwPt: 20, weightMm: 5, text: 200, list: 200 };
 /** The number of path operators in `d` (M x y · L x y · C x1 y1 x2 y2 x y · Z), or 0 when it is not a path this app writes: another letter, a number out of range, a path that does not start with M. */
 function artPathOps(d) {
   if (typeof d !== "string" || !d || d.length > ART_MAX.d) return 0;
@@ -2424,6 +2425,7 @@ function artItem(x, keyId) {
   else { const stroke = artRgb(x.stroke), fill = artRgb(x.fill); if (stroke === undefined || fill === undefined) return no("a colour is [r, g, b] from 0 to 1"); if (!stroke && !fill) return no("it is neither stroked nor filled"); out.stroke = stroke; out.fill = fill; }
   if (x.lwPt != null) { const lw = Number(x.lwPt); if (!Number.isFinite(lw) || lw < 0 || lw > ART_MAX.lwPt) return no(`its line width is 0 to ${ART_MAX.lwPt} pt`); out.lwPt = Math.round(lw * 1000) / 1000; }
   if (x.even === true) out.even = true;
+  if (x.weightMm != null) { const w = Number(x.weightMm); if (!Number.isFinite(w) || Math.abs(w) > ART_MAX.weightMm) return no(`its weight is -${ART_MAX.weightMm} to ${ART_MAX.weightMm} mm`); if (Math.round(w * 1000)) out.weightMm = Math.round(w * 1000) / 1000; }
   if (x.text != null) out.text = str(x.text, ART_MAX.text);
   if (x.group != null) { const g = str(x.group, 64); if (!ART_ITEM.test(g)) return no("its group is not a short name"); out.group = g; }
   return { item: out, ops };
