@@ -173,9 +173,10 @@ for (const [why, x, y, want] of [['mate is a draft (in no set)', SA, { ...SB, ow
   n++;
 }
 // 22c an order over three sheets: the not-ready mate of the same set is the set's wait, the one in another set is the real issue (only that piece is listed)
+// (27 Oct 2026: C is a GF sheet. A Rose Gold one in another set is a known split by design, no issue at all: green-split-orders)
 {
-  const C2 = sheet('C', 'rose', 'unverified', 'set-2', 1);
-  const s = shop([SA, { ...SB, own: 'unverified' }, C2], [order(1, line({ copies: [copy('A')] }), line({ metal: 'silver', copies: [copy('B')] }), line({ metal: 'rose', copies: [copy('C')] }))]);
+  const C2 = sheet('C', 'gold', 'unverified', 'set-2', 2);
+  const s = shop([SA, { ...SB, own: 'unverified' }, C2], [order(1, line({ copies: [copy('A')] }), line({ metal: 'silver', copies: [copy('B')] }), line({ copies: [copy('C')] }))]);
   const tr = truth(s), e = tr.sheets.A.orders[1];
   assert.deepEqual(issueOrders(tr, 'A'), ['1']); assert.deepEqual(e.offenders.map(o => o.sheets.map(z => z.id)), [['C']], 'only the piece on the other set is listed');
   assert.deepEqual(issueOrders(tr, 'B'), ['1'], 'B sees C, in another set, the same way'); assert.deepEqual(tr.sheets.B.orders[1].offenders.map(o => o.sheets.map(z => z.id)), [['C']]);
@@ -225,10 +226,11 @@ t('same set, both ready', two(SA, SB), { A: [], B: [] });
       assert.deepEqual(keys(tr, 'GF'), [none.rgPiece], `${press}, RG Sheet 1 ${own}, in no set: GF waits only for the MIDDLE RG piece`);
       const o = tr.sheets.GF.orders[ORDER].offenders[0]; assert.equal(o.noSet, true, 'a sheet in no set says so'); assert.equal(o.split, undefined); assert.equal(o.sheets[0].label, 'RG Sheet 1');
       assert.deepEqual(issues(none.s, 'RG'), [], 'RG Sheet 1 itself: GF is ready, so nothing of the order waits for it');
-      // in the SAME set the wait is the set's, never the order's; in ANOTHER set it is a split (still the real piece on the real sheet)
+      // in the SAME set the wait is the set's, never the order's; in ANOTHER set a Rose Gold sheet is a known split by design (27 Oct 2026: a green-line sheet is in ONE set and ties
+      // no two, each side is cut with its own set; green-split-orders): no issue of the order either
       const same = mk(presses, sheet('RG', 'rose', own, 'set-1')); assert.deepEqual(issues(same.s, 'GF'), [], `${press}, RG Sheet 1 ${own}, same set: not an order issue`);
       const other = mk(presses, sheet('RG', 'rose', own, 'set-2')), tr2 = truth(other.s);
-      assert.deepEqual(keys(tr2, 'GF'), [other.rgPiece], `${press}, RG Sheet 1 ${own}, another set: the same one piece`); assert.equal(tr2.sheets.GF.orders[ORDER].offenders[0].split, true); assert.equal(tr2.sheets.GF.orders[ORDER].offenders[0].noSet, undefined);
+      assert.deepEqual(keys(tr2, 'GF'), [], `${press}, RG Sheet 1 ${own}, another set: a known split, no issue`);
       n++;
     }
     // RG Sheet 1 ready: nothing holds GF; the pressed chain contributes nothing, whichever button was pressed

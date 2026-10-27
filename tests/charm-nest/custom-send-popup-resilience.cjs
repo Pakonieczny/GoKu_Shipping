@@ -63,6 +63,7 @@ function fixture() {
   w.OrderTimelineUI = {STAGES:['arrived'], summary:(events, pieces) => ({each:pieces.map(p => ({p, D:{step:0, stages:[{}], hand:false, cancelled:false, W:null}, steps:[]})), rail:[], step:0})};
   w.piecesOf = rows => rows.map(x => ({key:x.key, name:'Piece', metal:null, form:'', qty:1, line:{}}));
   w.colorOf = () => '#ccc'; w.pieceMeta = () => ''; w.pickPiece = () => {};
+  w.pieceMetalTag = () => ''; w.pieceRest = () => '';   // (the row's metal first, 27 Oct: piece-row-metal's own tests)
   w.pieceDotsHtml = () => '<span class="steps"></span>';   // (a row's six dots are the dots' own tests': piece-dot-hover, rail-five-steps)
   w.pdotHeld = () => null; w.pdotBack = () => {};   // (a dot that had the focus keeps it over a redraw: the dots' own tests)
   w.selSideKey = () => null; w.selDiscKey = () => null;   // (no side or disc of a piece picked in this window)
