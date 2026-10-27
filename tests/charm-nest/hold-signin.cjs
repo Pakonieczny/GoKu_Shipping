@@ -30,7 +30,7 @@ const NUM = '666666';   // (the fake roster's Test Operator: bridge-server.cjs P
   const under = (b, btn) => !!(b && btn && b.box.top >= btn.bottom - 2 && b.box.top - btn.bottom < 40 && b.box.left < btn.right && b.box.right > btn.left);
   const signIn = async () => { await page.fill('.cnNameBar[data-kind="ask"] input', NUM); await page.press('.cnNameBar[data-kind="ask"] input', 'Enter'); };
   try {
-    await W.addOrders(w, ['sheeted', 'mate']);
+    await W.addOrders(w, ['sheeted', 'mate', 'alone']);   // ('alone': the second order of 8)
     const sh = await W.seedSheet(w, { id: 'sh-hsi1', orders: ['sheeted', 'mate'] });
     const rid = W.ORDERS.sheeted.rid, mate = W.ORDERS.mate.rid;
     ok('0 the page signs people in with their Employee Number (the gate is on) and Test Operator is signed in to start', await page.evaluate(() => CNAccount.gated() && CNEmployee.name() === 'Test Operator'));
@@ -137,6 +137,29 @@ const NUM = '666666';   // (the fake roster's Test Operator: bridge-server.cjs P
       ok('6b put away: the window\'s own line says why, and nothing is changed', /^Not changed: nobody is signed in\. Sign in to change this SKU\.$/.test(line6.say) && line6.busy === '' && line6.sku === 'COMET_9427' && !st.calls.slice(m0).some(c => /sku|alias|editSku/i.test(String(c.op || '')) && !/Get$|^get/.test(String(c.op || ''))), JSON.stringify(line6));
       await page.evaluate(() => { const d = document.getElementById('owSkuDlg'); if (d.open) d.close(); });
     }
+    // 8 · RELWIRE (found with 5): hold order A in its window, close it, hold order B in its own, open A again: A's Release Hold is wired (it had no press at all: the row was drawn while
+    //     the window was still opening, and every later drawing was the same, so it was never wired) and pressed, it releases A
+    await page.evaluate(() => { const d = document.getElementById('owSkuDlg'); if (d && d.open) d.close(); if (OrderWin.isOpen()) OrderWin.close(); }); await sleep(500);
+    if (!(await page.evaluate(() => CNEmployee.name()))) { await page.evaluate(n => CNAccount.signInNumber(n, { panel: false }), NUM); await page.waitForFunction(() => CNEmployee.name() === 'Test Operator'); }
+    const holdIn = async (name, r) => {
+      await page.evaluate(k => OrderWin.open(k), W.keyOf(name));
+      const s8 = `#owPcSum .revSendBtn[data-rev-host][data-rid="${r}"]`;
+      await page.waitForFunction(s => { const b = document.querySelector(s); return b && b.textContent.trim() === 'Hold Order'; }, s8, { timeout: 20000 });
+      await page.click(s8);
+      await page.waitForFunction(r => CharmNestReviewMark.isMarked(r) && !ReviewSend.busy(r) && !HoldUI.busy(r), r, { timeout: 30000 });
+      await sleep(1500);
+      await page.evaluate(() => OrderWin.isOpen() && OrderWin.close()); await sleep(500);
+    };
+    const alone = W.ORDERS.alone.rid;
+    await holdIn('sheeted', rid);
+    await holdIn('alone', alone);
+    await page.evaluate(k => OrderWin.open(k), W.keyOf('sheeted'));
+    await page.waitForFunction(s => { const b = document.querySelector(s); return b && b.getBoundingClientRect().width > 0; }, rel, { timeout: 15000 });
+    await page.waitForFunction(s => !!document.querySelector(s).onclick, rel, { timeout: 8000 }).catch(() => {});
+    const wired8 = await page.evaluate(s => !!document.querySelector(s).onclick, rel);
+    m0 = st.calls.length;
+    if (wired8) { await page.click(rel); for (const t0 = Date.now(); Date.now() - t0 < 20000 && !writes(m0, rid).some(x => /^reviewMarkPut:release/.test(x));) await sleep(200); }
+    ok('8 hold A, close, hold B, open A again: A\'s Release Hold has its press, and pressed it releases A', wired8 && writes(m0, rid).includes('reviewMarkPut:release by Test Operator'), JSON.stringify({ wired8, w: writes(m0, rid) }));
     ok('7 no script error on the page throughout', w.errors.length === 0, (w.errors || []).join(' | '));
   } finally { await w.close(); }
   console.log(`hold-signin: ${results.length} checks passed`);

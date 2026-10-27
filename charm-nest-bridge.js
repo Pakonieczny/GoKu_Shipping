@@ -21410,7 +21410,9 @@ const OrderWin = window.OrderWin = (() => {
         `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${ctl.html}</span>${stSr}${steps}${tools}</div>`;
     }).join("");
     box.hidden = false; box.dataset.rid = rid; box.classList.toggle("hasTools", hasTools);
-    if (box._h === html) { markPieces(); return; }
+    // (RELWIRE, 27 Oct 2026: the rows drawn as before are kept, and a row whose buttons were drawn while its piece could not be wired yet (the window still opening) is wired now: its Release
+    //  Hold had no press at all once the window was opened again on an order after another one, "hold A, hold B, open A again", and the drawing never changed after)
+    if (box._h === html) { box.querySelectorAll("[data-pc-act]:not([data-pc-wired])").forEach(h => wirePcAct(h, [])); markPieces(); return; }
     // (a name being typed in a row's question is carried over a redraw, the field and where its cursor was)
     const typed = [...box.querySelectorAll("[data-cu-name]")].map(i => ({ key: i.closest("[data-pc-act]")?.dataset.pcAct, v: i.value, on: document.activeElement === i, a: i.selectionStart, b: i.selectionEnd })).filter(t => t.key);
     const held = pdotHeld(box);
@@ -21499,6 +21501,7 @@ const OrderWin = window.OrderWin = (() => {
     const key = h.dataset.pcAct, here = () => { const w = W.dlg && W.dlg.open ? rowOf(W.key) : null; return w ? String(w.order.receiptId) : ""; };
     const now = () => { const r = rowOf(key), at = here(); return r && at && String(r.order.receiptId) === at ? tryDo(() => pieceItem(key)) : null; }, it = now();
     if (!it) return;
+    h.dataset.pcWired = "1";   // (RELWIRE: wired; a row drawn again as it was is wired again only when it was not)
     // (another piece picked, where there is more than one; the one piece of a single-piece order is already the one shown)
     const toPiece = k => { if ((W.pieces || []).length > 1) pickPiece(k); };
     // (a piece sent to its sheet has nothing to press here but its Hold: NOROWBTNS, see pieceCtl)
