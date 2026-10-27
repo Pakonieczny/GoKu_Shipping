@@ -273,9 +273,9 @@ module.exports = function ({ db, col, FV, sheetLabel, setLabel, revDoc, configRe
     /* superseded: the leftover a sheet's own recorded cut made, while that sheet is moved to another partial sheet and the cut is set aside (roseClaim, a re-seat of a sheet
        that is cut but not Completed). Its metal is not free metal any more: an 'available' record becomes 'discarded' with the reason, who and when (marked, so a person can
        still put it back from its card). Held or used ones are never touched. Nothing is removed. */
-    superseded(tx, rem, { sheetId, sheetName, by, at }) {
+    superseded(tx, rem, { sheetId, sheetName, by, at, reason }) {   // (reason: why, when it is not a re-seat: roseReopen, Paul 27 Oct 2026, a 10K / 14K sheet changed by hand after its cut was recorded)
       if (!rem || !rem.exists || rem.data.status !== 'available') return null;
-      const who = person(by), patch = { status: 'discarded', statusAt: at, statusBy: who, marked: true, reason: SUPERSEDED_REASON, supersededAt: at, supersededBy: who, supersededSheetId: sheetId, supersededSheetName: String(sheetName || sheetId).slice(0, 80), ...NOT_HELD };
+      const who = person(by), patch = { status: 'discarded', statusAt: at, statusBy: who, marked: true, reason: reason ? String(reason).slice(0, 160) : SUPERSEDED_REASON, supersededAt: at, supersededBy: who, supersededSheetId: sheetId, supersededSheetName: String(sheetName || sheetId).slice(0, 80), ...NOT_HELD };
       tx.update(rem.ref, patch); bump(tx);
       return patch;
     },

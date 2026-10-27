@@ -15,7 +15,8 @@
 //      approve it and cut its green line" (never "joins by itself"); no red line and no Rebuild; the server refuses to approve the set, in the same words.
 //   3  THE LIBRARY draws it greyed INSIDE its set's card (goldPending), out of the "14K / 10K Solid" group, never one of the set's sheets (not in its download, no Approve or rail of its own), with its
 //      press "Approve & cut green line" (SetRepair.cutPending: the window first, Cancel changes nothing, the Cut Sheet press after the yes).
-//   4  MANUAL MOVES are free while it waits: the sheet hop gives and takes its charms with no "tie" refusal (the physical checks stand), Manual Control is open on it; after the cut both lock it.
+//   4  MANUAL MOVES are free while it waits: the sheet hop gives and takes its charms with no "tie" refusal (the physical checks stand), Manual Control is open on it; after the cut too (GOLDEDIT,
+//      Paul 27 Oct 2026): only the laser's mark locks it.
 //   3c A FULL SHEET (Paul, 27 Oct 2026): "Approve" only, no green line, no recorded cut: it joins its set by the approval (SetRepair.cutPending -> approveFull, env.join: Gate.cutInclude).
 //   5  THE PERSON'S PRESS: it joins its set ("either/both": a second 10K sheet waiting in the same set does not stop it), the cut keeps it there, the set's hold for it lifts and the Library draws it as any
 //      sheet of the set. A press whose cut is not recorded takes its include back (Gate.undoGoldJoin): the sheet waits greyed again.
@@ -213,8 +214,13 @@ const setRow = (w, set) => w.selfCheck().sets.find(s => s.id === set.setId);
     const mc = vm.createContext({ console, W: {}, HOP: { writing: new Set() }, busy: () => false, sentToStation: () => false, SV: () => ({ makeSheetGrid: 1, prepareVariant: 1, verify: 1 }), MC_OWED: 'owed', mcFlagOnly: () => false, Sets: { ofRun: () => [] }, window: { Sets: { ofRun: () => [] } }, allSheets: () => w.pages, Date });
     vm.runInContext(sw.slice(a, b) + '\nthis.mcBlock = mcBlock;', mc);
     ok('Manual Control is open on the waiting 14K sheet', mc.mcBlock(k14, null, { api: true }) === '', mc.mcBlock(k14, null, { api: true }));
+    // (GOLDEDIT, Paul 27 Oct 2026: "the users should be able to add and remove charms from 10 K and 14 K gold sheets even after the green cut line has been approved ... until such time a sheet
+    //  has been cut on a laser and marked as cut by the user": the 26 Oct lock after the cut is retired; the laser's mark is the one lock; gold-editable.cjs runs it end to end)
     k14.roseCutAt = Date.now();
-    ok('once its green line is cut, its layout is locked (Manual Control and the hop)', /green line has been cut: its layout can no longer change/.test(mc.mcBlock(k14, null, { api: true })) && (!t.hop || /green line cut/.test(t.hop.sheetRefusal(k14))), mc.mcBlock(k14, null, { api: true }));
+    ok('once its green line cut is recorded, its charms still move (Manual Control and the hop): only the laser locks it', mc.mcBlock(k14, null, { api: true }) === '' && (!t.hop || t.hop.sheetRefusal(k14) === ''), mc.mcBlock(k14, null, { api: true }) + ' / ' + (t.hop ? t.hop.sheetRefusal(k14) : ''));
+    k14.laserDoneAt = Date.now();
+    ok('once the laser cut it, it is locked, in those words (Manual Control and the hop)', /has been cut on the laser: its charms can no longer change/.test(mc.mcBlock(k14, null, { api: true })) && (!t.hop || /has been cut on the laser: its charms can no longer change/.test(t.hop.sheetRefusal(k14))), mc.mcBlock(k14, null, { api: true }));
+    delete k14.laserDoneAt;
   }
 
   /* ── 5 · the person's press: in its set, the hold lifts; a refused cut takes the include back ── */

@@ -12564,11 +12564,20 @@ const Sets = window.Sets = (() => {
   let _cache = null, libraryRequest = 0;
   /** One set's card, its sheets side by side with their QR labels (the Library's Sets view, and a set opened in its
       Completed list): `shown` are the sheets drawn, `all` every sheet of the set (its laser readiness reads them all). */
+  /** GOLDEDIT (Paul, 27 Oct 2026): a sheet of this set changed after the set was released (approved for laser cutting, sent to the station, its labels made): its record's releasedChange (Review's
+   *  inPlaceRefile; the sheet's own card says it too), said on the set's card until the laser cuts it, so nobody cuts from files made before the change. "" when none did. */
+  function releasedChangeHtml(st, all) {
+    const marks = (all || []).filter(r => r && r.releasedChange && (!r.releasedChange.setId || r.releasedChange.setId === st.setId) && !(+r.laserDoneAt > 0) && !(+st.laserDoneAt > 0));
+    if (!marks.length) return "";
+    const last = marks.slice().sort((a, b) => (+b.releasedChange.at || 0) - (+a.releasedChange.at || 0))[0].releasedChange;
+    return `<div class="noteBox" data-set-changed role="note" style="border-color:var(--clay,#b0563f);color:#8a3a26">⚠ ${esc(last.word || `${st.name || "This set"} changed after it was released — re-send its files`)}${marks.length > 1 ? ` (and ${marks.length - 1} more sheet${marks.length === 2 ? "" : "s"})` : ""}</div>`;
+  }
   function libraryCard(st, all, shown, {onUndo = null} = {}) {
     const card = el("div", "setCard"); card.dataset.laserCard="set";card._laserSet=st;card._laserSheets=all.map(r=>r.id);card._sheets=all;
     card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Sheets" : "Sheets"}</span></div>` : `<div class="sh"><span class="nm" data-set-title>${esc(O.setLabel(st.seq))}${st.day?" · "+esc(st.day):""}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
           <div class="sheetsRow">${shown.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span data-sheet-count="${esc(r.id)}"><b>${r.placedCount}</b>/${r.charmCount}</span><span data-sheet-density="${esc(r.id)}"><b>${Math.round((r.density || 0) * 100)}%</b></span><span data-sheet-orders="${esc(r.id)}">${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r),'Sheet',r)}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}${(st.goldPending || []).map(r => goldPendingTile(st, r)).join("")}</div>
           ${st.cardinalLinks ? `<div class="noteBox" data-set-links>${esc(st.cardinalLinks.charAt(0).toUpperCase() + st.cardinalLinks.slice(1))}.</div>` : ""}
+          ${releasedChangeHtml(st, all)}
           ${window.SetRepair ? SetRepair.lineHtml(st) : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
           `;
@@ -16540,14 +16549,15 @@ const Review = window.Review = (() => {
      files". A committed set: the sheet's QR label for its orders now (the sheet's save made it; made here when it is not current) and the set's labels PDF, manifest and set.json, written again
      (Sets.finalize; the set stays committed). A set formed but not committed went back to "nesting" with the sheet's save, and its own assembly writes its files again. A set not released yet
      says nothing. Never throws. → the result kept on sh._setChange, or null */
-  async function inPlaceRefile(sh, row, wrote) {
+  async function inPlaceRefile(sh, row, wrote, o) {   // (o.word: GOLDEDIT, Paul 27 Oct 2026, what changed when it is not a replaced piece: a string, or set -> string)
     if (!sh || !sh.sheetId || !sh.runId) return null;
     const set = Sets.ofRun(sh.runId).find(s => (s.sheetIds || []).includes(sh.sheetId)) || (sh.setId ? Sets.ofRun(sh.runId).find(s => s.setId === sh.setId) : null);
     if (!set) return null;
-    const released = !!(set.committedAt || set.processReady || sh.processReady || set.laserSetPending || set.status === "labelled" || (set.labels && set.labels.pdf));
+    const released = !!(set.committedAt || set.processReady || sh.processReady || set.laserSetPending || sh.laserSetPending || set.status === "labelled" || (set.labels && set.labels.pdf));   // (sh.laserSetPending: the sheet's record says its set is approved for laser cutting)
     if (!released) return null;
     const at = Date.now(), name = sh.fileBase || sheetName(sh), rid = String((row && row.order && row.order.receiptId) || "");
-    const word = `${set.name} changed after it was released — re-send its files`;
+    const said = o && o.word ? (typeof o.word === "function" ? o.word(set) : o.word) : "";
+    const word = said ? String(said).slice(0, 240) : `${set.name} changed after it was released — re-send its files`;
     const res = { setId: set.setId, set: set.name, sheet: name, sheetId: sh.sheetId, committed: !!set.committedAt, at, ok: false, why: "", word };
     const was = sh.releasedChange && sh.releasedChange.setId === set.setId ? sh.releasedChange : null;
     sh.releasedChange = { setId: set.setId, set: set.name, at, by: employeeName() || null, orders: [...new Set(((was && was.orders) || []).concat(rid ? [rid] : []))].slice(0, 50), word };
@@ -18804,7 +18814,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */

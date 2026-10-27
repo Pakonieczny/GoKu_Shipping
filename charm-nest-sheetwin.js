@@ -4608,6 +4608,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // 4 · labels, then read back: on this sheet, off the others
       await remakeLabels(all, labels, paint);
       letGo(all);
+      if (o.hop) for (const sh of all) await goldAfter(sh, "were moved between sheets by hand");   // (GOLDEDIT: a 10K / 14K sheet's green line drawn again, a released set's card says it changed)
       const ok = await verifySaved([{ sh: target, name: tName, on: ids }, ...saves.map(r => ({ sh: r.sh, name: r.name, off: ids }))], ids, p => p.sheetId === target.sheetId && p.state !== "abandoned" && p.state !== "superseded", check, paint);
       if (ok) await Pool.update([...ids], { moveVerifiedAt: Date.now() }).catch(() => {});
       journal(rid, null);
@@ -4803,6 +4804,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (j.check) { const stale = await j.check(); if (stale) throw new Error(stale); }
       let rb; [ra, rb] = await Promise.all([sheetRec(src.sheetId), sheetRec(target.sheetId)]);
       if (!ra || !rb) throw new Error("one of the two sheets is no longer in the Library");
+      // (GOLDEDIT, Paul 27 Oct 2026: a 10K / 14K sheet whose record holds a green line or a recorded cut this page had not given up (another computer drew it meanwhile) gives it up now, before
+      //  anything is written: refused only by the laser's mark, and then nothing is written)
+      { const gw = await goldOpen([src, target], { recs: new Map([[src, ra], [target, rb]]) }); if (gw) throw new Error(gw); }
       // each record rewritten from its saved self: only these pieces change sheets (the files stay as they are until the sheets are written as they stand)
       const moved = (ra.charms || []).filter(c => cids.has(c.id)), mPl = new Map((ra.placements || []).filter(p => cids.has(p.id)).map(p => [p.id, p])), backs = (ra.backPool || []).filter(b => ids.has(b.poolId));
       const aCharms = (ra.charms || []).filter(c => !cids.has(c.id)), aPl = (ra.placements || []).filter(p => !cids.has(p.id));
@@ -4858,6 +4862,41 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (u.mc && MC.on && MC.sh === src) for (const [id, from, edit] of u.mc) { if (from) MC.from.set(id, from); if (edit) { MC.edits.set(id, edit); const x = W.byId.get(id); if (x && W.id === src.sheetId) mcShow(x, edit); } }
     if (W.dlg && W.dlg.open && W.id === src.sheetId) { tryDo(paintBase); tryDo(paintFx); }
   }
+  /* GOLDEDIT (Paul, 27 Oct 2026: "the users should be able to add and remove charms from 10 K and 14 K gold sheets even after the green cut line has been approved and even after the entire sheet
+     has been approved ... until such time a sheet has been cut on a laser and marked as cut by the user"). Before a 10K / 14K sheet's charms change by hand, what was drawn or recorded for its layout
+     as it stood is given up (RoseStock.reopen: its contour and green lines, a recorded cut set aside, on the server first), so the change can be saved (the server keeps a lined or cut layout as it is
+     otherwise) and the line drawn again for the new layout after it. o.recs: Map sheet -> its record as just read (the cloud may hold a line this page has not loaded); o.cutOnly: only a recorded cut
+     (Manual Control turned on: its check needs the sheet's metal as it was before that cut; a drawn line waits for the save). → "" when they may change now, else why not (nothing changed). */
+  async function goldOpen(list, o = {}) {
+    for (const sh of [...new Set(list)].filter(Boolean)) {
+      if (!MANUAL_METALS.includes(sh.metal)) continue;
+      if (sh.roseRedraw) sh.roseRedraw.written = false;   // (a line still owed waits for this change's write too: goldAfter)
+      sh._goldWrite = Date.now();   // (and its card makes no contour until then: one made between the move and its write is of a layout the cloud does not hold yet)
+      const rec = (o.recs && o.recs.get(sh)) || null, name = sheetWord(sh.sheetId, sh.fileBase, sh);
+      if (laserCut(sh, rec)) return `${name} has been cut on the laser: its charms can no longer change`;
+      const cut = !!(sh.roseCutAt || (rec && rec.roseCutAt)), lined = cut || !!(sh.rosePlan || sh.roseProtected || sh.rosePlanHash || (rec && (rec.rosePlanJson || rec.roseProtectedJson || rec.rosePlanHash)));
+      if (!(o.cutOnly ? cut : lined)) continue;
+      if (!window.RoseStock || typeof RoseStock.reopen !== "function") return `${name}'s green line cannot be set aside in this page; reload it`;
+      try { await RoseStock.reopen(sh, { by: whoAmI() || undefined, force: true }); } catch (e) { return String((e && e.message) || e || "it could not be changed").replace(/\.$/, ""); }
+    }
+    return "";
+  }
+  /** GOLDEDIT: after a 10K / 14K sheet's charms changed by hand and the sheet was written: the green line it had is drawn again for the charms as they now stand (RoseStock.redraw; with charms
+   *  left overlapping, once they are moved clear, by its card), and a set already released (approved for laser cutting, sent to the station, its labels made) has its files written again and
+   *  says on its card and the sheet's what changed (Review.inPlaceRefile: releasedChange), so the laser never cuts from files made before the change. Never throws. */
+  async function goldAfter(sh, what) {
+    if (!sh || !MANUAL_METALS.includes(sh.metal) || !allSheets().includes(sh)) return;
+    delete sh._goldWrite; sh._roseError = null;   // (its card may make its contour again now: a refusal met before the write is not this layout's)
+    if (laserCut(sh)) return;
+    try { if (sh.roseRedraw && window.RoseStock && typeof RoseStock.redraw === "function") await RoseStock.redraw(sh); } catch (e) { console.warn("sheet window: green line drawn again", e); }
+    try {
+      if (window.Review && typeof Review.inPlaceRefile === "function") {
+        const name = sheetWord(sh.sheetId, sh.fileBase, sh);
+        await Review.inPlaceRefile(sh, null, true, { word: set => `${set.name} changed after it was ${set.committedAt ? "sent to the laser station" : set.processReady || set.laserSetPending || sh.processReady || sh.laserSetPending ? "approved for laser cutting" : "released"}: ${name}'s charms ${what || "were changed by hand"} — its files are written again` });
+      }
+    } catch (e) { console.warn("sheet window: released set changed", e); }
+    tryDo(() => window.CN && CN.renderCard && CN.renderCard(sh));
+  }
   /** The sheets the charms moved between, written as they stand (every charm kept where it is: no search moves one), with their QR labels. owner: the
    *  sheet whose Manual Control claim is given back after. It runs when Manual Control is turned off, never during a move.
    *  MOVEINSTANT (Paul 20 Oct 2026): always in the background, the small chip by the plate saying "Saving…" then "Saved" (it used to hold the window behind a
@@ -4869,6 +4908,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     for (const sh of list) HOP.writing.add(sh);   // (no move and no Manual Control on these sheets until they are written: mcBlock, moveNow)
     const names = list.map(sh => sheetWord(sh.sheetId, sh.fileBase, sh)).join(" and ");
     let bad = "";
+    const wrote = [];   // (GOLDEDIT: the 10K / 14K sheets written, made right after: goldAfter)
     try {
       for (const until = Date.now() + 300000; W.flow && Date.now() < until;) await pause(300);
       HOP.writes = (HOP.writes || 0) + 1; hopChip("saving", "Saving…");
@@ -4879,12 +4919,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
           // everything on it stays where it is: only its files, its check and its record are made again (appendOnly: the nest keeps every charm it has)
           if (sh.placements.length) { sh.appendOnly = sh.intakeAppend = true; sh.dirty = true; if (!busy(sh)) sh.status = "ready"; }
           holdRelease([sh]);
-          if (await rewritePage(sh, st, paint, { manual: true })) await putRec({ id: sh.sheetId, filesOwed: null }).catch(() => {});   // (its record no longer owes its files: filesOwed, set by a move)
+          if (await rewritePage(sh, st, paint, { manual: true })) { wrote.push(sh); await putRec({ id: sh.sheetId, filesOwed: null }).catch(() => {}); }   // (its record no longer owes its files: filesOwed, set by a move)
           else if (st.state === "bad") bad = bad || st.detail || "it could not be written";
         } catch (e) { st.state = "bad"; st.detail = e.message; bad = bad || e.message; }
         letGo([sh]);
       }
       await remakeLabels(list, labels, paint).catch(e => { labels.state = "bad"; labels.detail = e.message; bad = bad || `the QR label${list.length === 1 ? "" : "s"} could not be made again (${e.message})`; });
+      for (const sh of wrote) await goldAfter(sh, "were moved between sheets by hand");
       if (owner) await mcRelease(owner.sheetId);
     } finally {
       for (const sh of list) HOP.writing.delete(sh);
@@ -5062,10 +5103,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      gap fill or making-room ever lifts it; c.manual = { by, at, size? }: who, when and its size, saved on the record's charm), the sheet written again as it stands
      (the nest holds every charm where it is, verifies the sheet and writes its .ai, proof and preview again), its QR label made again, and read back. The orders'
      timelines get a "moved" step and the sheet's log a line, under the person signed in. Anything that fails puts the charms back where they were.
-     Not available (the button says why): a sheet of another metal (it is not shown), one cut on the laser or whose green line was cut, one that already has its green
-     line (a moved charm would no longer match it: the safer choice is to leave a lined sheet as it is; the line is only ever drawn again by a person's Cut Sheet press),
-     one in a set approved for laser cutting or committed, one being nested, saved or written again, one whose run is not open in this sorter, one another screen holds.
-     A charm inside an earlier saved green line (roseProtected) stays where it is.
+     Not available (the button says why): a sheet of another metal (it is not shown), one cut on the laser (the Library's mark on the sheet or its set: GOLDEDIT, Paul
+     27 Oct 2026, "until such time that it has been marked as completed in the laser cutting process", its ONE lock), one being nested, saved or written again, one whose
+     run is not open in this sorter, one another screen holds. Its green line drawn or its cut recorded, the sheet approved and in a set, the set approved for laser cutting,
+     sent to the station or committed: none of these locks it any more. A recorded cut is set aside when Manual Control starts (goldOpen; the card asks for Cut Sheet again),
+     a drawn line when the save starts; after the save the line is drawn again for the new layout and a released set's card says it changed (goldAfter).
 
      window.CNManual: the interface the code that moves charms between sheets uses (and the tests):
        CNManual.isOn(sheet)                     -> boolean            Manual Control is on for this sheet (a live sheet of this sorter, or its sheet id)
@@ -5106,6 +5148,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const mcChanged = (a, b) => !a || !b || Math.abs(a.cxPt - b.cxPt) > 1e-3 || Math.abs(a.cyPt - b.cyPt) > 1e-3 || Math.abs(normDeg(a.angle) - normDeg(b.angle)) > 1e-3 || Math.abs((a.size || 1) - (b.size || 1)) > 1e-4;
   const mcLive = () => (W.id ? allSheets().find(p => p.sheetId === W.id) || null : null);
   const mcApproved = sh => { const sets = (window.Sets && Sets.ofRun && Sets.ofRun(sh.runId)) || []; return !!(+sh.laserDoneAt > 0 || sh.laserSetPending || sh.processReady || sets.some(s => (s.sheetIds || []).includes(sh.sheetId) && (s.committedAt || s.processReady || +s.laserDoneAt > 0 || s.laserSetPending))); };
+  /* GOLDEDIT (Paul, 27 Oct 2026: "I already requested that the users should be able to add and remove charms from 10 K and 14 K gold sheets even after the green cut line has been approved and even
+     after the entire sheet has been approved. This must be allowed to happen until such time a sheet has been cut on a laser and marked as cut by the user at which point a sheet is locked and could
+     never be changed"). A 10K / 14K sheet's ONE lock: the laser cut it, the Library's mark on the sheet or on its set (laserDoneAt). Its green line drawn or recorded (Cut Sheet), the sheet full and
+     approved, in a set, its set approved for laser cutting or sent to the station: none of them locks it any more. What a change touches is made right after it (goldAfter: the green line drawn
+     again, the files and QR label written, a released set's card says it changed). rec: its record as read (W.rec), when there is one. */
+  const laserCut = (sh, rec) => { if ((sh && +sh.laserDoneAt > 0) || (rec && +rec.laserDoneAt > 0)) return true; try { const id = (sh && sh.sheetId) || (rec && rec.id), sets = (window.Sets && Sets.ofRun && Sets.ofRun((sh && sh.runId) || (rec && rec.runId))) || []; return !!id && sets.some(s => +s.laserDoneAt > 0 && (s.sheetIds || []).includes(id)); } catch (_) { return false; } };
+  const LASER_CUT_WORDS = "This sheet has been cut on the laser: its charms can no longer change.";
   const fmtDeg = a => `${Math.round(normDeg(a) * 10) / 10}°`;
 
   /** Why this sheet's charms cannot be moved by hand now ("" = they can), the plainest reason first. rec: its record as read (W.rec). o.saving: the save's own
@@ -5113,14 +5162,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function mcBlock(sh, rec, o = {}) {
     const metal = (sh && sh.metal) || (rec && rec.metal) || "";
     if (!MANUAL_METALS.includes(metal)) return "Manual Control is for 10K and 14K solid gold sheets only.";
-    if ((rec && +rec.laserDoneAt > 0) || (sh && +sh.laserDoneAt > 0)) return "This sheet has been cut on the laser: its layout can no longer change.";
-    if ((rec && rec.roseCutAt) || (sh && sh.roseCutAt)) return "This sheet's green line has been cut: its layout can no longer change.";
+    // (GOLDEDIT, Paul 27 Oct 2026: the laser's mark is the ONE lock; a recorded green line cut is set aside when Manual Control starts, mcToggle -> goldOpen)
+    if (laserCut(sh, rec)) return LASER_CUT_WORDS;
     const lock = rec && rec.manualEdit;
     if (!o.saving && lock && lock.tab && lock.tab !== MC_TAB && Date.now() - (+lock.at || 0) < MC_STALE) return `${lock.by || "Someone"} is moving this sheet's charms by hand on another screen. One person at a time: try again once they are done.`;
     if (!sh) return "This sheet's run is not open in this sorter. Its charms can be moved by hand where its run is open.";
     if (sh.recalled) return "This sheet was brought back from the Library: rebuild it first, then its charms can be moved by hand.";
-    if (mcApproved(sh) || sentToStation(sh) || (rec && (rec.processReady || rec.laserSetPending))) return "This sheet's set is approved for laser cutting: its layout can no longer change.";
-    if (sh.rosePlanHash || (rec && rec.rosePlanHash)) return "This sheet already has its green cut line. A charm moved by hand would no longer match that line, so its layout stays as it is.";
+    // (GOLDEDIT: its set approved for laser cutting, sent to the station or committed, and its green line, are no locks: the line is drawn again after the change, the set's card says it changed)
     if (!o.saving && (busy(sh) || sh._operationStarting || sh._learnedStarting || sh._rosePlanning || sh._roseLoading || sh._roseAction)) return "The sheet is being nested or saved right now. Try again once it has saved.";
     // (MCFREE, Paul 20 Oct 2026: a sheet the run holds only because its check flagged it, such as a charm placed by hand where it overlaps, can be taken again to move it clear)
     if (!o.saving && sh.problem && !mcFlagOnly(sh)) return `The sheet has a problem to settle first: ${sh.problem}`;
@@ -5134,7 +5182,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** Why this one charm stays where it is ("" = it may move). */
   function mcLocked(sh, c) {
     if (!c || !c.bits || !c.w) return "This charm's drawing is not loaded here, so it cannot be checked and stays where it is.";
-    if (sh && sh.roseProtected && (sh.roseProtected.placements || []).some(p => p.id === c.id)) return "This charm is inside a saved green line: it stays where the line was drawn.";
+    // (GOLDEDIT: on a 10K / 14K sheet a charm inside a green line moves too: the line follows the charms and is drawn again, goldAfter. Another metal's saved line keeps its charms, as before)
+    if (sh && !MANUAL_METALS.includes(sh.metal) && sh.roseProtected && (sh.roseProtected.placements || []).some(p => p.id === c.id)) return "This charm is inside a saved green line: it stays where the line was drawn.";
     return "";
   }
 
@@ -5147,6 +5196,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!m.has(k)) { if (m.size > 300) m.clear(); m.set(k, SV().prepareVariant(pieceOf(c, size), angle, clr, 2)); }
     return m.get(k);
   }
+  /** (GOLDEDIT) A saved green line that keeps its charms and the metal it takes (roseProtected): another metal's. A 10K / 14K sheet's line is no cut (the laser's is: the stock's own outline,
+   *  buildJob's remnant, stays), its charms move and the line follows them. */
+  const mcGuard = sh => !!(sh && sh.roseProtected && !MANUAL_METALS.includes(sh.metal));
   /** Where a charm of the sheet stands: its pose moved in Manual Control (poses), else its placement and the size it has. */
   function mcPoseOf(sh, id, poses) {
     if (poses && poses.has(id)) return poses.get(id);
@@ -5155,13 +5207,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** The sheet as the nest sees it, every placed charm but `exceptId` stamped where it stands (kept for the same layout: the cross-sheet drag asks often). */
   function mcGrid(sh, exceptId, poses) {
-    const clr = mcClr(), prof = sh.roseProtected && sh.roseProtected.profile;
-    const sig = JSON.stringify([sh.sheetId || sh.page, exceptId, clr, MC_INSET, prof ? 1 : 0, sh.roseStock && sh.roseStock.revision, sh.placements.map(p => { const q = mcPoseOf(sh, p.id, poses); return q ? [p.id, q.cxPt, q.cyPt, q.angle, q.size] : p.id; }), sh.charms.length]);
+    const clr = mcClr(), prof = mcGuard(sh) && sh.roseProtected.profile;
+    const sig = JSON.stringify([sh.sheetId || sh.page, exceptId, clr, MC_INSET, prof ? 1 : 0, sh.roseStock && sh.roseStock.revision, sh.roseStock && sh.roseStock.profileJson ? String(sh.roseStock.profileJson).length : 0, (sh.roseStock && sh.roseStock.owner) || "", sh.placements.map(p => { const q = mcPoseOf(sh, p.id, poses); return q ? [p.id, q.cxPt, q.cyPt, q.angle, q.size] : p.id; }), sh.charms.length]);
     const hit = MC.grids.get(sig); if (hit) return hit;
     const job = buildJob(sh), sheet = Object.assign({}, job.sheet, { insetPt: MC_INSET });
     if (prof) sheet.remnant = prof;   // (a charm outside an earlier green line stays out of what that line takes, as the nest keeps it: verify's own rule)
     const Sv = SV(), edge = Sv.makeSheetGrid(sheet, mcClr(), 2), grid = Object.assign(edge.clone(), { fineRes: 2 }), others = [], byId = new Map(sh.charms.map(c => [c.id, c]));
-    const guarded = new Set(((sh.roseProtected && sh.roseProtected.placements) || []).map(p => p.id));
+    const guarded = new Set(((mcGuard(sh) && sh.roseProtected.placements) || []).map(p => p.id));
     for (const p of sh.placements) {
       if (p.id === exceptId) continue;
       const c = byId.get(p.id), q = mcPoseOf(sh, p.id, poses); if (!c || !q || !c.bits || !c.w) continue;
@@ -5251,7 +5303,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** The empty sheet as the nest sees it: its edge, inset and any metal cut away (kept for the same sheet). */
   const MCE = new Map();
   function mcEdgeOf(sh) {
-    const job = buildJob(sh), sheet = Object.assign({}, job.sheet, { insetPt: MC_INSET }), prof = sh.roseProtected && sh.roseProtected.profile;
+    const job = buildJob(sh), sheet = Object.assign({}, job.sheet, { insetPt: MC_INSET }), prof = mcGuard(sh) && sh.roseProtected.profile;
     if (prof) sheet.remnant = prof;
     const sig = JSON.stringify([sh.sheetId || sh.page, sh.metal, mcClr(), sheet.wPt, sheet.hPt, sheet.insetPt, prof ? 1 : 0, sh.roseStock && sh.roseStock.revision]);
     let E = MCE.get(sig); if (E) return E;
@@ -5269,7 +5321,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** THE check's grid for one charm, with only its neighbours stamped (what it can meet), on the empty sheet's edge. */
   function mcLocalGrid(sh, id, q, poses, E) {
     const grid = Object.assign(E.edge.clone(), { fineRes: 2 }), others = [], byId = new Map(sh.charms.map(c => [c.id, c]));
-    const guarded = new Set(((sh.roseProtected && sh.roseProtected.placements) || []).map(p => p.id));
+    const guarded = new Set(((mcGuard(sh) && sh.roseProtected.placements) || []).map(p => p.id));
     for (const oid of mcNearIds(sh, byId.get(id), q, poses)) {
       const c = byId.get(oid), o = mcPoseOf(sh, oid, poses); if (!c || !o || !c.bits || !c.w) continue;
       const v = mcVariant(c, o.angle, o.size, E.clearancePt); if (!v) continue;
@@ -5472,7 +5524,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     MC.claiming = true; mcButton();
     let r = null; try { r = await mcClaim(sh.sheetId); } catch (e) { r = { error: e.message }; }
     MC.claiming = false;
-    if (!r || r.error || !r.ok) { mcButton(); return mcSay(r && r.held ? `${r.held.by || "Someone"} is moving this sheet's charms by hand on another screen. One person at a time: try again once they are done.` : `Manual Control could not start: ${(r && r.error) || "the cloud did not answer"}.`, "bad"); }
+    if (!r || r.error || !r.ok) { mcButton(); return mcSay(r && r.held ? `${r.held.by || "Someone"} is moving this sheet's charms by hand on another screen. One person at a time: try again once they are done.` : r && r.refused === "cut" ? LASER_CUT_WORDS : `Manual Control could not start: ${(r && r.error) || "the cloud did not answer"}.`, "bad"); }
+    // (GOLDEDIT, Paul 27 Oct 2026: a recorded green line cut is no lock: it is set aside now, the sheet's metal as it was before that cut is what its charms are checked against, and its
+    //  card asks for the cut to be approved again once they are where they go. A drawn line waits for the save: nothing moved, nothing given up)
+    if (sh.roseCutAt || (W.rec && W.rec.roseCutAt)) {
+      MC.claiming = true; mcButton(); mcSay(`Setting aside the approved green line of ${sheetWord(sh.sheetId, sh.fileBase, sh)} so its charms can move…`, "");
+      const gw = await goldOpen([sh], { cutOnly: true, recs: new Map([[sh, W.rec]]) });
+      MC.claiming = false;
+      if (gw) { mcRelease(sh.sheetId); mcButton(); return mcSay(`${gw}.`, "bad"); }
+      if (W.rec) { delete W.rec.roseCutAt; W.rec.roseReopened = sh.roseReopened || null; }
+      mcSay("Its green line approval is set aside while its charms move: press Cut Sheet on its card to approve the line again once they are where they go.", "");
+    }
     const again = mcBlock(sh, W.rec);
     if (W.id !== sh.sheetId || !W.dlg.open || again) { mcRelease(sh.sheetId); mcButton(); if (again) mcSay(again, "bad"); return; }
     stopHand(true); if (W.add) closeAdd();
@@ -5577,6 +5639,19 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         mcSay(r && r.held ? `${r.held.by || "Someone"} is moving this sheet's charms by hand on another screen, so Manual Control ended here; what you moved is saved.` : `Manual Control could not carry on to this sheet (${(r && r.error) || "the cloud did not answer"}); what you moved is saved.`, "bad");
         if (!MC.owed.has(to)) delete to._manualHold;
         mcOff({ bg: true }); return;
+      }
+      // (GOLDEDIT, Paul 27 Oct 2026: a recorded green line cut on the sheet carried to is set aside now, as when Manual Control starts on it: mcToggle)
+      if (MANUAL_METALS.includes(to.metal) && to.roseCutAt) {
+        MC.claiming = true; mcButton();
+        goldOpen([to], { cutOnly: true }).then(gw => {
+          if (tok !== MC.tok || !MC.on || MC.id !== id) return;
+          MC.claiming = false; MC.grids.clear();
+          if (gw) { mcSay(`${gw}. Manual Control ended here; what you moved is saved.`, "bad"); if (!MC.owed.has(to)) delete to._manualHold; mcOff({ bg: true }); return; }
+          if (W.id === id && W.rec) { delete W.rec.roseCutAt; W.rec.roseReopened = to.roseReopened || null; }
+          mcSay("Its green line approval is set aside while its charms move: press Cut Sheet on its card to approve the line again once they are where they go.", "");
+          mcButton(); mcNotify();
+        });
+        return;
       }
       mcButton(); mcNotify();
     });
@@ -5796,6 +5871,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const rec = ((await api("charmNestLibrary", { op: "getSheet", id: sh.sheetId }, { quiet: true, timeoutMs: 12000 })) || {}).sheet;
       if (!rec) throw new Error("the sheet is no longer in the Library");
       const why = mcBlock(sh, rec, { saving: true }); if (why) throw new Error(why.replace(/\.$/, ""));
+      // (GOLDEDIT: its green line drawn or recorded is given up first, here and on the server, so the new layout is saved; it is drawn again after, goldAfter)
+      { const gw = await goldOpen([sh], { recs: new Map([[sh, rec]]) }); if (gw) throw new Error(gw); }
       for (const [id, q] of edits) {
         const c = sh.charms.find(z => z.id === id), p = sh.placements.find(z => z.id === id);
         if (!c || !p) throw new Error("a charm moved by hand left the sheet meanwhile");
@@ -5824,6 +5901,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // 3 · its QR label for the sheet as it now stands, then the record read back
       await remakeLabels([sh], labels, paint);
       letGo([sh]);
+      await goldAfter(sh, "were moved by hand");   // (GOLDEDIT: its green line drawn again, a released set's card says it changed)
       read.state = "now"; paint();
       let back = null; try { back = ((await api("charmNestLibrary", { op: "getSheet", id: sh.sheetId }, { quiet: true, timeoutMs: 12000 })) || {}).sheet; } catch (_) {}
       const miss = back ? ids.filter(id => { const p = (back.placements || []).find(z => z.id === id), q = edits.get(id); return !p || Math.abs(+p.cxPt - q.cxPt) > .01 || Math.abs(+p.cyPt - q.cyPt) > .01 || Math.abs(normDeg(p.angle) - q.angle) > .01; }) : ids;
@@ -6631,6 +6709,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (MANUALHOP: the move made at once on the live sheets, its save in the background; hopState() for the tests)
     moveNow: (k, spots, target, who, o) => moveNow(k, spots, target, who, o || {}), hopState: () => ({ pending: HOP.pending, saving: HOP.pending > 0, owed: MC.on ? [...MC.owed].map(sh => sh.sheetId) : [], writing: HOP.writing.size }),   // (writing: MOVEINSTANT, the sheets written as they stand in the background)
     word: sh => sheetWord(sh.sheetId, sh.fileBase, sh), ridOf, rowsOfOrder, busy, sheetWorking, sentToStation, flow: () => (W.flow ? W.flow.title : ""),
+    laserCut: sh => laserCut(sh), goldOpen: (list, o) => goldOpen(list, o || {}),   // (GOLDEDIT, Paul 27 Oct 2026: a 10K / 14K sheet's one lock, and its line given up before a move)
     cancelled: rid => { try { return Cancelled.has(String(rid)); } catch (_) { return false; } }, back: () => backFace(),
     // (with Manual Control on, the charm in hand is its selection, not the piece view's, and a charm it moved is drawn where it was put, not saved yet)
     selected: () => (MC.on ? MC.sel : W.sel) || null, manualPose: id => (MC.on && MC.id === W.id && MC.edits.get(id)) || null

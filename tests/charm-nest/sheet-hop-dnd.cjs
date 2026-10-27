@@ -13,7 +13,8 @@
 //   nothing written), it flies, it is moved (pinned near where it was let go), records consistent, a "moved" step on the order's timeline by the person
 // 3 drop on a full sheet (Paul, 27 Oct 2026): moved all the same, pinned where it was let go, red where it overlaps, a note says so; and back to the sheet it came from
 // 4 a two-piece order moves whole
-// 5 guards: an order on a third sheet (tie), another computer meanwhile, a green line, a sheet nesting, in a set, cut; a dim dock says why
+// 5 guards: an order on a third sheet (tie), another computer meanwhile, a sheet nesting, laser cut; a dim dock says why. A green line (drawn or its cut recorded) and a set refuse
+//   nothing any more (GOLDEDIT, Paul 27 Oct 2026: only the laser's mark locks a 10K / 14K sheet; gold-editable.cjs runs those moves end to end)
 // 6 another metal: a 14K sheet's docks are 14K sheets
 // 7 the keyboard way (Alt + Shift + arrow) on the charm in Manual Control's hand
 // 8 without window.CNManual on the page: the hop's own small switch is the flag, the window's grid the verifier
@@ -373,8 +374,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         out.ok = SheetHop.sheetRefusal(t);
         return out;
       });
-      assert(/green line cut/.test(why.cut), why.cut); assert(/being nested or saved/.test(why.busy), why.busy); assert(/in a set|keeps its charms/.test(why.set), why.set);
-      assert(/cut by the laser/.test(why.laser), why.laser); assert(/green dash line/.test(why.line), why.line); assert.equal(why.ok, '');
+      // (GOLDEDIT, Paul 27 Oct 2026: a recorded green line cut, a set and a drawn line refuse nothing any more; the laser's mark does, in these words)
+      assert.equal(why.cut, '', 'a recorded green line cut is no refusal: ' + why.cut); assert(/being nested or saved/.test(why.busy), why.busy); assert.equal(why.set, '', 'a set is no refusal: ' + why.set);
+      assert(/has been cut on the laser: its charms can no longer change/.test(why.laser), why.laser); assert.equal(why.line, '', 'a green line is no refusal: ' + why.line); assert.equal(why.ok, '');
       // a sheet nesting right now, through the hand: refused, nothing written
       await page.evaluate(() => { CN.allSheets().find(p => p.sheetId === 'k10-3').status = 'queued'; });
       const q = idOf(Q, 2), w1 = writes();
@@ -383,15 +385,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       await page.evaluate(() => { CN.allSheets().find(p => p.sheetId === 'k10-3').status = 'complete'; });
       await settled(); await closePops();
       assert.equal(writes(), w1);
-      // the green line, through the hand, from 10K Draft 3 to 10K Draft 4
+      // the laser's mark, through the hand, from 10K Draft 3 to 10K Draft 4 (marked laser cut on its record and here)
       // (MOVEINSTANT, Paul 20 Oct 2026: opening 10K Draft 3 keeps Manual Control on, now there; the sheets charms were dragged between are written as they stand once it is turned off)
-      await openSheet('k10-3'); await until(() => page.evaluate(() => !SheetWin.hopKit.W.flow && !SheetWin.hopKit.hopState().writing), 60000, 'nothing being written'); await manual(true); const w2 = writes();
-      const p = idOf(P, 1);
+      await openSheet('k10-3'); await until(() => page.evaluate(() => !SheetWin.hopKit.W.flow && !SheetWin.hopKit.hopState().writing), 60000, 'nothing being written'); await manual(true);
+      const doneAt = Date.now(); st.put(SHEETS, 'k10-4', Object.assign({}, rec('k10-4'), { laserDoneAt: doneAt })); await page.evaluate(at => { CN.allSheets().find(p => p.sheetId === 'k10-4').laserDoneAt = at; }, doneAt);
+      const w2 = writes(), p = idOf(P, 1);
       await carry(p, 'next', null);
-      await until(popText, 10000, 'the pop-up'); assert(/10K (Sheet|Draft) 4 has its green line cut/.test(await popText()), await popText());   // (a cut sheet keeps the number its file carries: charm-nest-sheet-name.js)
+      await until(popText, 10000, 'the pop-up'); assert(/10K (Sheet|Draft) 4 has been cut on the laser: its charms can no longer change/.test(await popText()), await popText());   // (a cut sheet keeps the number its file carries: charm-nest-sheet-name.js)
       await settled(); await closePops();
-      assert.equal(writes(), w2, 'nothing written for the green line');
-      pass('5 · refused with a plain sentence, the charm flies back, nothing written: an order on a third sheet (dim dock says why), another computer held it meanwhile, nesting, green line cut or drawn, in a set, laser cut');
+      assert.equal(writes(), w2, 'nothing written for the laser cut sheet');
+      const back4 = Object.assign({}, rec('k10-4')); delete back4.laserDoneAt; st.put(SHEETS, 'k10-4', back4); await page.evaluate(() => { delete CN.allSheets().find(p => p.sheetId === 'k10-4').laserDoneAt; });
+      pass('5 · refused with a plain sentence, the charm flies back, nothing written: an order on a third sheet (dim dock says why), another computer held it meanwhile, nesting, laser cut ("has been cut on the laser: its charms can no longer change"); a green line (cut or drawn) and a set refuse nothing');
     } catch (e) { fail('5 · guards', e); }
     await closePops();
 

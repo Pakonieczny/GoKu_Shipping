@@ -361,7 +361,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       // GC3: the leftover sheet this cut makes (its exact outline, real size, who, when) is saved in THIS transaction: a cut never exists without it.
       // It reads (the stock's previous leftover) before it writes, so it comes before the first write below. Rose Gold, 10K and 14K all end here.
       if(recordRemnant)await recordRemnant(tx,{stock:{...next,id:ref.id},cut,sheet,plan,metal:sheet.metal,device:b.device,via:b.via,summary:taken.groups.length?taken.summary:null});
-      tx.set(er,cut);tx.set(ref,next);tx.update(sr,{roseCutAt:at,roseCutRevision:revision,updatedAt:FV.serverTimestamp()});
+      tx.set(er,cut);tx.set(ref,next);tx.update(sr,{roseCutAt:at,roseCutRevision:revision,roseReopened:null,updatedAt:FV.serverTimestamp()});   // (roseReopened: a cut set aside by a change by hand is recorded again: the card's note goes)
       return {ok:true,cut:{...cut,createdAt:null},stock:{...next,updatedAt:null},cutSheet:sheet};
     });
     // every order on the sheet gets the cut on its timeline (charmNestLibrary's stamp never throws); the revision is its id
@@ -457,7 +457,73 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
     delete out.orders;
     return out;
   }
-  return {roseGet,roseList,roseClaim,roseRelease,rosePlan,roseRecordCut,roseTakeOff,roseDemo};
+  /* REOPEN (Paul, 27 Oct 2026: "the users should be able to add and remove charms from 10 K and 14 K gold sheets even after the green cut line has been approved and even after the entire
+     sheet has been approved. This must be allowed to happen until such time a sheet has been cut on a laser and marked as cut by the user at which point a sheet is locked and could never be
+     changed"). A 10K / 14K sheet whose charms are about to change by hand (the sheet window's Manual Control, the sheet hop) first gives up what was drawn or recorded for its layout as it stood:
+     its contour and green lines (a plan, the lines a nest kept: the line follows the charms, and the page draws it again for the new layout) and a recorded cut (the Cut Sheet press, the line's
+     approval: Cut Sheet records it again). Nothing physical is undone: the metal is cut only when the laser marks the sheet or its set Completed (laserDoneAt), and that alone refuses.
+     A recorded cut is set aside as a re-seat sets one aside (roseClaim): the stock it was recorded on is the sheet's again with the outline it had before that cut (the earlier cut's on that
+     stock; none for its first), the leftover that cut made is no longer offered ('discarded' with why, who and when: remnantSync.superseded), the cut's own record and the history stay. Its
+     metal must still be free: a leftover another sheet holds or was cut from is that sheet's outline now, so that alone also refuses, in words. The sheet's note `roseReseated` gets the
+     entry roseRecordCut reads, so the next press records a new cut under its own revision. {sheetId, by} → {ok, changed, lines, cut: {at, revision, stockId, leftover, how} | null, stock | null} */
+  const REOPEN_METALS=new Set(['gold10k','gold14k']);
+  async function roseReopen(b){
+    if(!id(b.sheetId))throw new Error('Choose a 10K or 14K Gold sheet');
+    const by=String(b.by||'').slice(0,80),at=Date.now();
+    const out=await db.runTransaction(async tx=>{
+      const sr=sheets().doc(b.sheetId),sd=await tx.get(sr);
+      if(!sd.exists)return {ok:true,changed:false,missing:true};
+      const sheet=sd.data(),name=String((sheetLabel&&sheetLabel(sheet))||sheet.fileBase||'This sheet').slice(0,80);
+      if(!REOPEN_METALS.has(sheet.metal))throw new Error('Only a 10K or 14K Gold sheet changes after its green line');
+      const lasered=`${name} has been cut on the laser: its charms can no longer change`;
+      if(+sheet.laserDoneAt>0)throw new Error(lasered);
+      const set=id(sheet.setId)?await tx.get(col('Charm_Nest_Sets').doc(sheet.setId)):null;
+      if(set&&set.exists&&+set.data().laserDoneAt>0)throw new Error(lasered);
+      const wasCut=!!sheet.roseCutAt;
+      const linesOf=j=>{try{const g=parse(j);return g&&Array.isArray(g.lines)?g.lines.length:0;}catch(_){return 0;}},lines=Math.max(linesOf(sheet.rosePlanJson),linesOf(sheet.roseProtectedJson));
+      if(!wasCut&&!sheet.rosePlanJson&&!sheet.roseProtectedJson&&!sheet.rosePlanHash)return {ok:true,changed:false,lines:0,cut:null,stock:null};
+      // (reads first: the stock the cut was recorded on, the leftover it made, the earlier cut's outline)
+      let cut=null,stockOut=null,ref=null,rem=null,prior=null;
+      if(wasCut){
+        cut={at:+sheet.roseCutAt||null,revision:sheet.roseCutRevision!=null&&Number.isFinite(+sheet.roseCutRevision)?+sheet.roseCutRevision:null,stockId:id(sheet.roseStockId)?sheet.roseStockId:null,leftover:null,how:'none'};
+        if(cut.stockId){
+          ref=stocks().doc(cut.stockId);const d=await tx.get(ref),stock=d.exists?d.data():null;
+          if(stock&&cut.revision==null&&stock.lastCutSheetId===b.sheetId)cut.revision=+stock.revision;   // (a cut saved before the revision was kept on the sheet: the stock says whose last cut it was)
+          if(stock&&cut.revision>=1){
+            if(+stock.revision!==cut.revision)throw new Error(`The leftover sheet ${name}'s green line made has been cut from since, by another sheet: its metal is that sheet's now, so ${name}'s charms stay as they are`);
+            if(stock.owner&&stock.owner!==b.sheetId)throw new Error(`The leftover sheet ${name}'s green line made is in use by another sheet: give it back first, then ${name}'s charms can change`);
+            rem=remnantSync?await remnantSync.read(tx,ref.id,cut.revision,null,false):null;
+            const r=rem&&rem.exists?rem.data:null;
+            if(r&&r.status==='inUse'&&r.inUseBySheetId&&r.inUseBySheetId!==b.sheetId)throw new Error(`The leftover sheet ${name}'s green line made is in use by ${r.inUseBySheetName||'another sheet'}: give it back first, then ${name}'s charms can change`);
+            if(r&&r.status==='used'&&r.usedBySheetId&&r.usedBySheetId!==b.sheetId)throw new Error(`The leftover sheet ${name}'s green line made was used by ${r.usedBySheetName||'another sheet'}: its metal is that sheet's now, so ${name}'s charms stay as they are`);
+            if(cut.revision>1){
+              const q=await tx.get(ref.collection('cuts').where('revision','==',cut.revision-1).limit(1)),c=q.docs[0]?q.docs[0].data():null,p=c?parse(c.planJson):null;
+              if(!p||!p.profile)throw new Error(`The outline ${name}'s physical sheet had before its green line was recorded could not be read: its charms stay as they are`);
+              prior=JSON.stringify(p.profile);
+            }
+            cut.leftover=`${ref.id}-${cut.revision}`;cut.how=r?(r.status==='available'?'discarded':'kept'):'none';
+            stockOut={...stock,profileJson:prior,owner:b.sheetId,available:false,updatedAt:null};
+          }else ref=null;
+        }
+      }
+      // writes
+      if(ref&&stockOut){
+        tx.update(ref,{profileJson:prior,owner:b.sheetId,available:false,reopenedAt:at,reopenedBy:by,updatedAt:FV.serverTimestamp()});
+        if(rem&&remnantSync&&remnantSync.superseded)remnantSync.superseded(tx,rem,{sheetId:b.sheetId,sheetName:name,by,at,reason:`Its sheet (${name}) changed after its green line was recorded`});
+      }
+      const reseated=cut&&cut.stockId?[...(Array.isArray(sheet.roseReseated)?sheet.roseReseated:[]).slice(-9),{at,by,fromStockId:cut.stockId,toStockId:cut.stockId,plan:!!sheet.rosePlanJson,kept:!!sheet.roseProtectedJson,reopen:true,cut}]:null;
+      tx.update(sr,{rosePlanJson:null,rosePlanHash:null,roseFingerprint:null,roseProtectedJson:null,...(wasCut?{roseCutAt:null,roseCutRevision:null}:{}),...(stockOut?{roseRevision:+stockOut.revision}:{}),...(reseated?{roseReseated:reseated}:{}),roseReopened:{at,by,lines,cut:!!wasCut,...(cut&&cut.at?{cutAt:cut.at}:{})},updatedAt:FV.serverTimestamp()});
+      return {ok:true,changed:true,lines,cut,stock:stockOut,sheet:{id:b.sheetId,label:name,setId:sheet.setId||'',orders:Array.isArray(sheet.orders)?sheet.orders.map(String):[]}};
+    });
+    // (a recorded cut set aside: on the timeline of each order on the sheet, kept for good; charmNestLibrary's stamp never throws)
+    if(out.changed&&out.cut&&stamp){
+      await stamp(()=>[...new Set(out.sheet.orders)].slice(0,300).map(orderId=>({orderId,type:'note',at,by:by||'',station:'sorter',sheetId:out.sheet.id,sheet:out.sheet.label,setId:out.sheet.setId,
+        text:`${out.sheet.label}: its charms changed after its green line was recorded, so the line is approved again by Cut Sheet`,data:{roseReopen:true,cutAt:out.cut.at,revision:out.cut.revision},id:`roseReopen-${out.sheet.id}-${at}`})),'rose reopen');
+    }
+    delete out.sheet;
+    return out;
+  }
+  return {roseGet,roseList,roseClaim,roseRelease,rosePlan,roseRecordCut,roseTakeOff,roseDemo,roseReopen};
 };
 module.exports.fingerprint=fingerprint;
 
