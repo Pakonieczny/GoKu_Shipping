@@ -180,13 +180,14 @@ await t('5 readiness says "no engraving, nothing to approve" for the earring and
   const win = { document: { getElementById: () => null, createElement: () => ({}), head: { appendChild() {} } } }; win.window = win; vm.createContext(win);
   vm.runInContext(fs.readFileSync(path.join(root, 'charm-nest-timeline-ui.js'), 'utf8'), win);
   assert.equal(win.OrderTimelineUI.engraveOf(ear), false, 'the Engraved step is not part of an earring\'s timeline'); assert.notEqual(win.OrderTimelineUI.engraveOf(neck), false);
-  // a laser sheet of rose gold (the metals with a green line need the back engravings approved before they join a set)
+  // a laser sheet of rose gold
   const sheet = (ids, engraving) => ({ id: 'sh', sheetId: 'sh', metal: 'rose', poolIds: ids, placedCount: ids.length, engraving });
   const earSheet = Readiness.sheet(sheet(['e1', 'e2'], { e1: d.e1, e2: d.e2 })), neckSheet = Readiness.sheet(sheet(['n1'], { n1: d.n1 }));
   assert.equal(earSheet.stages.approval, true, 'an earrings sheet has nothing to approve'); assert.equal(neckSheet.stages.approval, false);
   const cuts = () => true;
   assert.equal(SetEdit.engravingGap({ id: 'sh', metal: 'rose', laser: earSheet }, { cuts }), null, 'no gate for the earrings');
-  const gap = SetEdit.engravingGap({ id: 'sh', metal: 'rose', laser: neckSheet }, { cuts }); assert.ok(gap && gap.key === 'backsNotApproved', 'the necklace\'s gate is as it was');
+  // (Paul, 27 Oct 2026: a green-line sheet joins its set by its approval and the set waits for its engravings: no join gate for the necklace either; its sheet still waits at its approval stage)
+  assert.equal(SetEdit.engravingGap({ id: 'sh', metal: 'rose', laser: neckSheet }, { cuts }), null, 'no join gate for the necklace (the set waits for it)');
 });
 
 /* ═══ 6 · the Engrave tab (bridge) ═══ */

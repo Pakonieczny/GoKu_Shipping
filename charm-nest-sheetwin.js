@@ -4744,7 +4744,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     for (const s of spots) {
       const pose = { cxPt: s.cxPt, cyPt: s.cyPt, angle: normDeg(s.angle), size: sizeOf(s.c) };
       const res = mcLocked(target, s.c) ? { ok: false, reason: mcLocked(target, s.c) } : mcCheck(mcGrid(target, s.c.id, null), s.c, pose, 0, true);
-      if (!res.ok) return { ok: false, why: `the room changed (${String(res.reason || "it no longer fits there").replace(/\.$/, "")}); try again` };
+      // (o.free, Paul 27 Oct 2026: "The user must never be rejected from moving charms between sheets of the same colour even though they don't fit": the sheet hop found no free room and puts
+      //  the pieces where they were let go; an overlap or the margin is taken, red, as Manual Control's own drop takes it (MCFREE). What cannot be checked at all is still refused)
+      if (!res.ok && !(o.free && mcFree(res))) return { ok: false, why: `the room changed (${String(res.reason || "it no longer fits there").replace(/\.$/, "")}); try again` };
       const v = mcVariant(s.c, pose.angle, pose.size, clr); if (!v) return { ok: false, why: "its outline is not known here" };
       vs.push(v);
     }

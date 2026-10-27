@@ -16,6 +16,7 @@
 //   3  THE LIBRARY draws it greyed INSIDE its set's card (goldPending), out of the "14K / 10K Solid" group, never one of the set's sheets (not in its download, no Approve or rail of its own), with its
 //      press "Approve & cut green line" (SetRepair.cutPending: the window first, Cancel changes nothing, the Cut Sheet press after the yes).
 //   4  MANUAL MOVES are free while it waits: the sheet hop gives and takes its charms with no "tie" refusal (the physical checks stand), Manual Control is open on it; after the cut both lock it.
+//   3c A FULL SHEET (Paul, 27 Oct 2026): "Approve" only, no green line, no recorded cut: it joins its set by the approval (SetRepair.cutPending -> approveFull, env.join: Gate.cutInclude).
 //   5  THE PERSON'S PRESS: it joins its set ("either/both": a second 10K sheet waiting in the same set does not stop it), the cut keeps it there, the set's hold for it lifts and the Library draws it as any
 //      sheet of the set. A press whose cut is not recorded takes its include back (Gate.undoGoldJoin): the sheet waits greyed again.
 //   node tests/charm-nest/gold-karat-manual-cut.cjs
@@ -153,6 +154,34 @@ const setRow = (w, set) => w.selfCheck().sets.find(s => s.id === set.setId);
     }
   }
 
+  /* ── 3c · a FULL sheet (Paul, 27 Oct 2026: "This 14K gold sheet is fully completed and does not require a Green Cut line. All it requires is the Users approval to be added to the Set of Sheets.
+         Only partially completed 10K / 14K Gold sheets need to have a Green Cut line"): its tile and its press say "Approve" only; no line is drawn, no cut is recorded ── */
+  {
+    const rows = libRows(false), k14 = rows.find(r => r.id === 'k14-1'); Object.assign(k14, { releaseFull: true, density: .76 });
+    const { lc, groups } = groupsOf(rows), g = groups.find(x => x.setId === 'set-1'), n14 = SN.name(k14), n10 = SN.name(rows.find(r => r.id === 'k10-1'));
+    ok('the set waits for the full sheet\'s approval only (cardinalWait full), the partly filled one for its green line too', (g.cardinalWait || []).some(x => x.id === 'k14-1' && x.manual && x.full) && (g.cardinalWait || []).some(x => x.id === 'k10-1' && x.manual && !x.full), JSON.stringify(g.cardinalWait));
+    const gate = RD.setGate(g, rows.filter(r => r.setId === 'set-1'));
+    ok('its Approve for laser cutting says so', !gate.ready && gate.reason.includes(`approve them, and cut the green line of ${n10}`) && gate.reason.includes(n14), gate.reason);
+    ok('the words for one full sheet', SR.goldWaitWords([n14], [n14]) === `waiting for ${n14}: approve it`, SR.goldWaitWords([n14], [n14]));
+    const html = vm.runInContext('goldPendingTile', lc)(g, k14);
+    ok('its tile: "Approve" only, and why no green line', /<button type="button" class="btn sage sm" data-gold-cut="k14-1" data-gold-full="1">Approve<\/button>/.test(html) && html.includes(`Not in Set-1 yet: ${n14} is full, so it needs no green line. Approve it to add it to Set-1.`) && !/cut its green line|Approve &amp; cut/.test(html), html);
+    const page = { sheetId: 'k14-1', metal: 'gold14k', draft: true, setId: null }, said = [], asked = [], joins = [], cuts = [];
+    const st = { setId: 'set-1', seq: 1, name: 'Set-1', goldPending: [k14] };
+    const env = (yes, o = {}) => Object.assign({ by: () => 'Pat Lee', cloud: () => true, pages: () => [page], holding: () => false, say: (t, k) => said.push([t, k || 'bad']), refresh: () => {}, confirmCut: async words => { asked.push(words); return yes; },
+      full: pg => pg === page, join: async pg => { joins.push(pg.sheetId); page.setId = 'set-1'; page.draft = false; return true; }, cut: async ids => { cuts.push(ids); return ids.map(id => ({ id, cut: true })); } }, o);
+    let r = await SRp.cutPending(st, 'k14-1', { env: env(false) });
+    const w0 = asked[0];
+    ok('Cancel in its window changes nothing', r.cancelled === true && !joins.length && !cuts.length && !page.setId, JSON.stringify(r));
+    ok('the window asks for the approval only: no green line, no cut', w0.title === 'Approve 14K Draft 1?' && w0.confirm === 'Approve' && w0.lines.some(l => /joins Set 1, and Set 1 no longer waits for it/.test(l.text)) && w0.lines.some(l => /No green line is drawn and no cut is recorded/.test(l.text)) && !/green dash line is drawn|permanent/.test(JSON.stringify(w0)) && /back engravings/.test(w0.what), JSON.stringify(w0));
+    r = await SRp.cutPending(st, 'k14-1', { env: env(true) });
+    ok('after the yes it joins its set: nothing is cut or recorded', r.ok === true && r.joined === true && joins.join() === 'k14-1' && !cuts.length && !page.roseCutAt && page.setId === 'set-1' && r.words === 'Approved: 14K Draft 1 is in Set 1.' && said.some(([t, k]) => k === 'ok' && /14K Draft 1 approved: it is in Set 1 now/.test(t)), JSON.stringify({ r, joins, cuts, said }));
+    Object.assign(page, { setId: null, draft: true });
+    r = await SRp.cutPending(st, 'k14-1', { env: env(true, { join: async () => { throw new Error('it is not in a set yet (the run is finished)'); } }) });
+    ok('a join that did not happen says why, plainly', r.ok === false && r.error === 'it is not in a set yet (the run is finished)' && said.some(([t]) => /14K Draft 1 was not approved: it is not in a set yet/.test(t)), JSON.stringify(r));
+    r = await SRp.cutPending(st, 'k14-1', { env: env(true, { full: () => false }) });
+    ok('a sheet that is not full keeps "Approve & cut" and its Cut Sheet press', r.ok === true && cuts.length === 1 && asked[asked.length - 1].confirm === 'Approve & cut', JSON.stringify(r));
+  }
+
   /* ── 4 · manual moves while it waits ── */
   {
     const t = karatWorld(), { w, gf, k14 } = t;
@@ -210,6 +239,18 @@ const setRow = (w, set) => w.selfCheck().sets.find(s => s.id === set.setId);
     ok('"both": the 10K sheet\'s own press puts it in too; the hold lifts: nothing left to wait for, nothing broken', w.inSet(k10) && k10.setId === set.setId && res.violations.length === 0 && !res.partners.some(p => p.set === set.setId) && setRow(w, set).canApprove === true, JSON.stringify({ word: w.word(), partners: res.partners, v: res.violations }));
     vm.runInContext('Gate.autoCut(B.run)', w.c); await settle(); await w.assemble(); await settle();
     ok('and nothing automatic moves them afterwards', w.inSet(k14) && w.inSet(k10) && k14.setId === set.setId && k10.setId === set.setId, w.word());
+  }
+
+  /* ── 5b · a FULL 14K sheet approved (Paul, 27 Oct 2026): its own include, the press's join alone, no cut; it stays, the hold lifts, no rule broken ── */
+  {
+    const t = karatWorld({ full: true }), { w, gf, k14 } = t;
+    await w.assemble(); await settle();
+    const set = w.sets().find(s => s.setId === gf.setId);
+    ok('a full 14K sheet waits greyed in Set 1', !w.inSet(k14) && (t.G('goldWaitHome')(k14) || {}).setId === set.setId, w.word());
+    await t.G('cutInclude')(k14); await w.assemble(); await settle();
+    vm.runInContext('Gate.autoCut(B.run)', w.c); await settle(); await w.assemble(); await settle();
+    const res = w.selfCheck();
+    ok('approved with no cut: a sheet of Set 1 that stays there, the hold lifts, nothing broken', w.inSet(k14) && k14.setId === set.setId && !k14.roseCutAt && res.violations.length === 0 && !res.partners.some(p => p.sheet === k14.sheetId) && setRow(w, set).canApprove === true, JSON.stringify({ word: w.word(), partners: res.partners, v: res.violations }));
   }
 
   /* ── 2b · the server: the set's approval is refused while it waits, in the page's words (bridge-server.cjs: the real charmNestLibrary handler, in memory) ── */

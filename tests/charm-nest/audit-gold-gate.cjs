@@ -68,21 +68,20 @@ const Sets={onSheetSaved:async(sh,_c,_u,o)=>{const set=o&&o.setOverride;if(!set.
       const au = page('au1', metal, 3, ['5302_1_2', '5304_1_1'], { releaseFull: false, density: .5, solidPick: true });      // ticked: its own yes (R12 a); backs not approved (R12 b)
       w.add(gf, ss, au); await w.assemble();
       assert(w.inSet(gf) && w.inSet(ss) && gf.setId === ss.setId, 'Set 1 formed from GF 1 + SS 1');
-      const gaps = I.goldGaps(Object.assign({}, w.input().sheets.find(s => s.id === 'au1'), { laser: RD.sheet({ metal }) }));
-      verdict(`G1 ${tag}: a ticked ${tag} sheet whose back engraving is not approved does not join a set (R12 b)`, !w.inSet(au),
-        `${tag} au1 joined ${au.setId} with solidPick=true, roseCutAt=${au.roseCutAt || null}; checker gaps for it: [${gaps.join('; ')}]`);
-      // the live self-check (Gate.selfCheck / Gate.violations) reads a gold sheet's backs only when it is CUT: it sees nothing
+      // (Paul, 27 Oct 2026: "10 K and 14 K gold sheets should be approved to be part of a set just like any other sheet and then hold a given set of sheets until the engraving is done": its
+      //  own yes puts it in its partner's set; its open backs are the set's to wait for, never a rule broken)
+      verdict(`G1 ${tag}: a ticked ${tag} sheet whose back engraving is not approved joins its partner's set (Paul, 27 Oct 2026)`, w.inSet(au) && au.setId === gf.setId, `${tag} au1 is in ${au.setId || 'no set'}`);
       const v = w.violations(), lib = w.libraryCheck();
-      if (w.inSet(au)) verdict(`G1b ${tag}: the live self-check reports the R12 (b) break the Library / server check reports`, v.some(x => x.ruleNo === 'R12'),
-        `Gate.violations: [${v.map(x => x.ruleNo).join(', ')}]; the same state with the readiness report (Library / approveGate): [${lib.violations.map(x => x.ruleNo).join(', ')}]`);
+      verdict(`G1b ${tag}: no rule is broken by it (the set waits for its backs)`, !v.some(x => x.ruleNo === 'R12') && !lib.violations.some(x => x.ruleNo === 'R12'),
+        `Gate.violations: [${v.map(x => x.ruleNo).join(', ')}]; Library: [${lib.violations.map(x => x.ruleNo).join(', ')}]`);
     }
-    // ── G2 (control) · NOT ticked, green line cut, back engraving not approved: the cardinal rule must not pull it (goldGap reads the backs) ──
+    // ── G2 · NOT ticked, green line cut, back engraving not approved: the cardinal rule pulls it into its partner's set (its backs are no reason it stays out) ──
     {
       const w = world();
       const gf = page('gf1', 'gold', 1, ['5401_1_1', '5402_1_1']), ss = page('ss1', 'silver', 2, ['5401_1_2', '5403_1_1']);
       const au = page('au1', metal, 3, ['5402_1_2', '5404_1_1'], { releaseFull: false, density: .5, roseCutAt: Date.now() });
       w.add(gf, ss, au); await w.assemble();
-      verdict(`G2 ${tag}: a cut, unticked ${tag} sheet with unapproved backs is not pulled in by the cardinal rule (R12 b)`, !w.inSet(au), `${tag} joined ${au.setId}`);
+      verdict(`G2 ${tag}: a cut, unticked ${tag} sheet with unapproved backs is pulled into its partner's set`, w.inSet(au) && au.setId === gf.setId, `${tag} is in ${au.setId || 'no set'}`);
     }
     // ── G2b (sanity of the stand-in) · the same sheet once its back engraving IS approved: now the cardinal rule pulls it into its partner's set ──
     {

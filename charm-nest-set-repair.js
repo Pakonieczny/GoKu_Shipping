@@ -33,6 +33,7 @@
  *   Neither press is ever run by itself: the rebuild moves sheets between sets and the cut is permanent, so both stay the person's explicit act (a window, Cancel changes nothing).
  *   cutGold(set, opts?) (page) the "Cut ..." press · fix(set, opts?) (page) the remedy's first press, for the button under Approve for laser cutting.
  *   cutPending(set, sheetId, opts?) (page) (Paul, 26 Oct 2026) the "Approve & cut green line" press of a 10K / 14K sheet that waits greyed in the set (set.goldPending): never cut or approved by itself,
+ *                  (a FULL one, Paul 27 Oct 2026: "Approve" only, it joins with no green line and no recorded cut: approveFull)
  *                  it joins the set by this press, the existing Cut Sheet press with its window · wirePending(card, set) its buttons on a drawn set card.
  *
  * (SETFIX B, Paul 17 Oct 2026: "a sheet someone drags into a formed set can make that set unapprovable".)
@@ -533,6 +534,19 @@ dialog.setRepairDlg{width:min(540px,94vw)}
         for (const id of ids) { const pg = pageOf(id); if (pg && !pg.roseCutAt && RS && typeof RS.record === 'function') await RS.record(pg, { by }); }
         return ids.map(id => ({ id, cut: !!(pageOf(id) || {}).roseCutAt }));
       },
+      // (Paul, 27 Oct 2026) a 10K / 14K sheet whose layout leaves no room for another charm (RoseStock.full, the test its own Cut Sheet button reads): no green line, its approval is all it needs
+      full: pg => { const RS = root.RoseStock; try { return !!(pg && RS && typeof RS.full === 'function' && RS.full(pg)); } catch (_) { return false; } },
+      // its approval: the sheet's own Include into its ONE set (Gate.cutInclude, the step the Cut Sheet press takes first), nothing drawn, no cut recorded. An include that did not put it in a set is
+      // taken back (Gate.undoGoldJoin): it waits greyed as before. Throws the plain reason; called only after the person's yes in the window
+      join: async pg => {
+        const G = root.Gate, inSet = () => !!pg.setId && !pg.draft, was = { inSet: inSet(), pick: pg.solidPick };
+        if (!G || typeof G.cutInclude !== 'function') throw new Error('Sets are not loaded yet: try again in a moment');
+        try { await G.cutInclude(pg); } catch (e) { throw new Error(String((e && e.message) || e).replace(/^Not cut: /, '')); }
+        if (inSet()) return true;
+        const pol = typeof G.policy === 'function' ? G.policy(pg) : null, why = pol && !pol.include && pol.reason ? pol.reason : '';
+        if (typeof G.undoGoldJoin === 'function') { try { await G.undoGoldJoin(pg, was); } catch (_) { /* it says why on its card */ } }
+        throw new Error(`it is not in a set yet${why ? ` (${why})` : ''}`);
+      },
       note: () => {}
     };
   }
@@ -736,6 +750,9 @@ dialog.setRepairDlg{width:min(540px,94vw)}
     const pages = env.pages(), page = list(pages).find(p => p && p.sheetId === id && !p.recalled);
     if (!page) return refuse('away', `${name} is not open on this page, so its green line cannot be cut from here. Open it on the Nest tab and press Cut Sheet there; it then joins ${set}`);
     { const why = busyOf(page, env); if (why) return refuse('busy', `${name} is ${why}: try again when it is done. Nothing was changed`); }
+    // (Paul, 27 Oct 2026: "Only partially completed 10K / 14K Gold sheets need to have a Green Cut line. Completed 10K / 14K Gold Sheets only need an user approval") a full sheet is approved into the set:
+    // no line is drawn, no cut is recorded; its set then waits for its back engravings as for every sheet's
+    if (typeof env.full === 'function' && env.full(page)) return approveFull(st, env, page, { id, name, set, by }, o);
     const words = {
       title: `Approve and cut ${name}?`, intro: `${name} shares orders with the sheets of ${set} and waits there, greyed, for your approval. This is its Cut Sheet press:`,
       lines: [{ kind: 'set', text: `${name}: the green dash line is drawn and dated, and the cut is recorded with your name` }, { kind: 'set', text: `${name} joins ${set}, and ${set} no longer waits for it` }],
@@ -754,7 +771,27 @@ dialog.setRepairDlg{width:min(540px,94vw)}
       const reason = `${(e && e.message) || e}`; env.say(`${name} was not cut: ${reason}`); return { ok: false, error: reason };
     } finally { running.delete('cut:' + id); env.refresh(id); }
   }
-  /** Wires the "Approve & cut green line" press of every 10K / 14K sheet drawn greyed in a set card (the Library's goldPendingTile). */
+  /** cutPending's press for a FULL 10K / 14K sheet: a small window (it joins the set; it is full, so no green line is drawn and no cut is recorded; Cancel changes nothing), then its approval (env.join). */
+  async function approveFull(st, env, page, x, o) {
+    const { id, name, set } = x;
+    const words = {
+      title: `Approve ${name}?`, intro: `${name} shares orders with the sheets of ${set} and waits there, greyed, for your approval. It is full, so there is nothing to cut away:`,
+      lines: [{ kind: 'set', text: `${name} joins ${set}, and ${set} no longer waits for it` }, { kind: 'set', text: `No green line is drawn and no cut is recorded` }],
+      what: `${set} is approved for laser cutting once the back engravings of its sheets are approved, ${name}'s too.`, numbering: '',
+      nothing: 'Nothing changes until you press Approve.', confirm: 'Approve', cancel: 'Cancel'
+    };
+    if (!(o && o.skipConfirm) && !(await env.confirmCut(words))) return { ok: false, cancelled: true };
+    running.add('cut:' + id);
+    try {
+      if (o && typeof o.onState === 'function') { try { o.onState('joining', `Adding ${name} to ${set}…`); } catch (_) { /* a line of text only */ } }
+      await env.join(page);
+      env.say(`${name} approved: it is in ${set} now.`, 'ok');
+      return { ok: true, joined: true, cut: [], words: `Approved: ${name} is in ${set}.` };
+    } catch (e) {
+      const reason = `${(e && e.message) || e}`; env.say(`${name} was not approved: ${reason}`); return { ok: false, error: reason };
+    } finally { running.delete('cut:' + id); env.refresh(id); }
+  }
+  /** Wires the "Approve & cut green line" press of every 10K / 14K sheet drawn greyed in a set card (the Library's goldPendingTile), and the "Approve" of a full one. */
   function wirePending(card, st, o) {
     if (!card || typeof card.querySelectorAll !== 'function') return;
     for (const b of card.querySelectorAll('[data-gold-cut]')) {

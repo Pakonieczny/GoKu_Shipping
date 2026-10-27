@@ -19,8 +19,9 @@
        MANUALHOP (Paul, 19 Oct 2026): with the sheet window's moveNow on the page (always, beside its Manual Control) the move is made at once on
        the live sheets and saved in the background (records, piece records, read-back; "Saving..." -> "Saved" by the plate); the two sheets'
        files are written as they stand when Manual Control is turned off (hopNow below);
-     · not found: the charm flies back to its spot and a small pop-up says "Not enough space on 10K Draft 3 — the charm stayed on
-       10K Draft 2". Nothing is written.
+     · not found (Paul, 27 Oct 2026: "The user must never be rejected from moving charms between sheets of the same colour even though they don't fit"): the
+       pieces are moved all the same, where they were let go (asDropped), red where they overlap (MCFREE), and a note says they do not fit there yet: the
+       person resizes or moves them clear (the sheet joins no set until then). Only without the window's moveNow is it the old "Not enough space" pop-up.
    Guards (refused with a plain sentence, the charm flies back, nothing is written): another metal is never offered (10K to 10K, 14K to
    14K only); neither sheet may be nesting, finishing, queued or saving, cut by the laser, carrying a green line (cut, or drawn and not
    cut: a move would make the line wrong, the same rule as Merge sheets), in a set (committed, sent or open: a sheet in a set keeps its
@@ -271,6 +272,20 @@
     // every pose confirmed by the one fit test, against the sheet as it stands (CNManual's verifier when it is here)
     for (const s of spots) { const f = fitOne(target, s.c, { cxPt: s.cxPt, cyPt: s.cyPt, angle: s.angle }, G); if (!f.ok) return null; await breathe(); }
     return spots;
+  }
+
+  /** (Paul, 27 Oct 2026: "Even if a charm does not fit onto a sheet, the user should not be prevented from adding that charm to a given sheet, and then they are free to resize it and reposition
+   *  it to make it fit.") Where the pieces go when the sheet has no free room for them: at the point they were let go (the sheet's middle without one), each at its own angle, the order's next
+   *  pieces beside the first; their middles kept on the sheet, as Manual Control's drag keeps them (MCFREE). The window's move takes them there red where they overlap (moveNow, o.free). */
+  function asDropped(target, u, pt) {
+    const st = typeof stockFor === "function" ? tryDo(() => stockFor(target.metal, target)) : null, w = (st && +st.wPt) || 283, h = (st && +st.hPt) || 142;
+    const keep = (v, hi) => Math.min(hi - 1, Math.max(1, v));
+    let x = pt && Number.isFinite(+pt.x) ? +pt.x : w / 2; const y = pt && Number.isFinite(+pt.y) ? +pt.y : h / 2;
+    return u.pieces.map((z, i) => {
+      const span = Math.max(+(z.c.widthPt) || 0, +(z.c.heightPt) || 0) || 20;
+      if (i) x += span * 0.9;
+      return { c: z.c, src: z.src, placed: z.placed, cxPt: keep(x, w), cyPt: keep(y, h), angle: norm(z.p ? z.p.angle : 0), how: "asPut" };
+    });
   }
 
   /* ── drawing ── */
@@ -622,11 +637,15 @@
     const breathe = async () => { if (performance.now() - last > 12) { await wait(0); last = performance.now(); } };
     try { spots = await findRoom(target, u, pt, breathe, dk.G && dk.G.key === dockSig(target) ? dk.G : null); } catch (e) { console.warn("sheet hop: room", e); spots = null; }
     if (L) L.el.classList.remove("think");
-    if (!spots) {
+    // (Paul, 27 Oct 2026: "The user must never be rejected from moving charms between sheets of the same colour even though they don't fit": no free room is no refusal. The pieces land where
+    //  they were let go, red where they overlap (MCFREE), for the person to resize and move clear; the sheet joins no set until they are)
+    let free = false;
+    if (!spots && K.moveNow) { spots = asDropped(target, u, pt); free = spots.length > 0; }
+    if (!spots || !spots.length) {
       const title = u.pieces.length === 1 ? `Not enough space on ${tName} — the charm stayed on ${sName}` : `Not enough space on ${tName} — the ${u.pieces.length} pieces of order ${u.rid} stayed on ${sName}`;
       return refuse(title, u.pieces.length === 1 ? "The charm could not be moved to that sheet. Nothing was changed." : "An order's pieces on a sheet move together. Nothing was changed.");
     }
-    if (K.moveNow) return hopNow(d, dk, u, spots, who, from, L, refuse);
+    if (K.moveNow) return hopNow(d, dk, u, spots, who, from, L, refuse, free);
     // found: it flies into its spot, its order's other pieces after it from where they lie; the view keeps them drawn there while the sheets save.
     // Meanwhile (not after: the flight never waits on the network) the cloud is asked whether another computer changed these pieces or sheets
     const checking = cloudCheck(u, src, target);
@@ -669,14 +688,14 @@
      sheets at once (the guards first: a refusal flies the charm back and says why, nothing changed), the hand is free in the same frame, and the copies finish
      a short flight into the open view while the save runs in the background (the cloud check included; a save that fails puts the pieces back and says so). */
   const FLY_NOW = 420;
-  function hopNow(d, dk, u, spots, who, from, L, refuse) {
+  function hopNow(d, dk, u, spots, who, from, L, refuse, free) {
     const K = kit(), src = d.pg, target = dk.sh, sName = word(src);
     const k = { rid: u.rid, pieces: u.pieces.map(z => ({ c: z.c, src, placed: z.placed })), srcs: new Set([src]) };
     // where each copy flies, read before the sheets change (the open view keeps its scale), and where the order's other pieces lie on this plate
     const tos = spots.map(s => dockAtPose(dk, s));
     const lying = spots.map(s => { const z = u.pieces.find(q => q.c === s.c); return z && z.p && K.W.id === d.sheetId ? { z, a: plateAt(K, z.p) } : null; });
     const failed = why => { const dk2 = H.docks[dk.side]; popup(dk2 && dk2.sh === target ? dk2.el : K.W.el.plateBox, `Not moved: ${String(why || "it could not be saved").replace(/\.$/, "")}.`, `${u.pieces.length === 1 ? "The charm went" : "Its pieces went"} back to ${sName}.`); if (!H.drag && !H.busy) { setOpen(false); refresh(true); } };   // (MOVEINSTANT 2: the open view folds away, as after any move: left open it would take the next press on the plate)
-    let r; try { r = K.moveNow(k, spots.map(s => ({ c: s.c, src, placed: s.placed, cxPt: s.cxPt, cyPt: s.cyPt, angle: s.angle })), target, who, { guard: sheetRefusal, check: () => cloudCheck(u, src, target), failed }); }
+    let r; try { r = K.moveNow(k, spots.map(s => ({ c: s.c, src, placed: s.placed, cxPt: s.cxPt, cyPt: s.cyPt, angle: s.angle })), target, who, { guard: sheetRefusal, check: () => cloudCheck(u, src, target), failed, free: !!free }); }
     catch (e) { console.warn("sheet hop: move", e); r = { ok: false, why: e.message || "it could not be moved" }; }
     if (!r || !r.ok) return refuse(`Not moved: ${String((r && r.why) || "it could not be moved").replace(/\.$/, "")}.`, `${u.pieces.length === 1 ? "The charm" : "Its pieces"} stayed on ${sName}. Nothing was changed.`);
     // on B now: the hand is free, the dock answers, the copies land
@@ -690,8 +709,8 @@
     Promise.all(flights).then(() => { if (!H.drag && !H.busy) { setOpen(false); refresh(true); } });
     // (MOVEINSTANT 2, Paul 20 Oct 2026: and folds away in any case once the flight is over, so a dock never stays open over the plate, taking the next charm pressed there)
     setTimeout(() => { if (!H.drag && !H.busy && H.docks[dk.side] && H.docks[dk.side].el.classList.contains("open")) { setOpen(false); refresh(true); } }, FLY_NOW + 600);
-    const anchor = (H.docks[dk.side] && H.docks[dk.side].el) || K.W.el.plateBox;
-    K.note(anchor, { text: `Order ${u.rid}: ${u.pieces.length === 1 ? "the charm" : u.pieces.length + " pieces"} moved to ${word(target)}`, tone: "ok", actions: [{ label: "Show it", fn: () => K.switchSheet(target.sheetId, { select: spots[0].c.poolId }) }] });
+    const anchor = (H.docks[dk.side] && H.docks[dk.side].el) || K.W.el.plateBox, one = u.pieces.length === 1;
+    K.note(anchor, { text: free ? `Order ${u.rid}: ${one ? "the charm" : u.pieces.length + " pieces"} moved to ${word(target)}. ${one ? "It does" : "They do"} not fit there yet: red until you resize or move ${one ? "it" : "them"} clear.` : `Order ${u.rid}: ${one ? "the charm" : u.pieces.length + " pieces"} moved to ${word(target)}`, tone: free ? "warn" : "ok", ...(free ? { ms: 12000 } : {}), actions: [{ label: "Show it", fn: () => K.switchSheet(target.sheetId, { select: spots[0].c.poolId }) }] });
     return true;
   }
   /** The two saved records and the pieces' records, read now: "" when they still say what this screen holds, else what changed. */

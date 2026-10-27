@@ -129,9 +129,9 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     assert.deepEqual(s2.processSeals, [{ how: 'approved', by: 'Ann', at: s2.processSeals[0].at }]); assert.equal(s2.committedAt, set('set-2').committedAt);
     // refused: a completed sheet, a Rose Gold sheet, a completed set, an open set
     await refused('add: completed sheet', [['d-cut', 'set-2']], /GF Sheet 1 is completed/);
-    // (a Rose Gold sheet is no longer refused for being Rose Gold, Paul 12 Oct: this one waits for its back engraving to be approved, which is the only thing said)
-    r = await refused('add: Rose Gold sheet, back not approved', [['d-rose', 'set-2']], /^RG Draft 1: back engraving not approved yet \(0 of 1 approved\)\. A 10K, 14K or Rose Gold sheet joins a set once its back engraving is approved\.$/);
-    assert.equal(r.reasons.length, 1); assert.equal(r.reasons[0].key, 'backsNotApproved');
+    // (a Rose Gold sheet is no longer refused for being Rose Gold, Paul 12 Oct; nor for its back engraving, Paul 27 Oct 2026: the set waits for that. This one has no cut green line, which is the only thing said)
+    r = await refused('add: Rose Gold sheet, no cut line', [['d-rose', 'set-2']], /^RG Draft 1 cannot join a set before its green line is cut\./);
+    assert.equal(r.reasons.length, 1); assert.equal(r.reasons[0].key, 'notCut');
     await refused('add: completed set', [['d-free', 'set-3']], /Set 3 is completed.*takes no more sheets/);
     await refused('add: open set', [['d-free', 'set-8']], /Set 8 is still being made by its run/);
     await refused('add: unknown set', [['d-free', 'set-404']], /could not be found/);
@@ -212,8 +212,8 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     const v = SE.verifyMoves({ moves: [{ id: 'x', to: null }], recs: { x: { id: 'x', metal: 'gold', setId: 'set-1', draft: false, laserDoneAt: 5 } }, sets: { 'set-1': { doc: { setId: 'set-1', seq: 1, committedAt: 1 }, members: [{ id: 'x' }, { id: 'y' }] } } });
     assert.equal(v.ok, false); assert.equal(v.reasons[0].key, 'sheetCompleted'); assert.equal(SE.sayWhy(v), 'GF Sheet 1 is completed. It keeps its cut record and set until it is moved back to Laser cutting.');
     // ═══ K. SETGOLD (Paul, 12 Oct): a 10K, 14K or Rose Gold sheet joins a set (here a committed one in Laser cutting) provided its green line is cut (or the person presses Cut Sheet) and its back engraving is approved ═══
-    await refused('K: 14K sheet, line cut, back not approved', [['k-14k-bad', 'set-9']], /^14K Sheet 1: back engraving not approved yet \(0 of 1 approved\)\. A 10K, 14K or Rose Gold sheet joins a set once its back engraving is approved\.$/);
-    await refused('K: Rose Gold, back not approved', [['k-rose-bad', 'set-9']], /RG Draft 1: back engraving not approved yet \(0 of 1 approved\)/);
+    // (Paul, 27 Oct 2026: a back engraving not approved is no refusal any more: the set waits for it. An uncut Rose Gold sheet is still asked for its green line)
+    await refused('K: Rose Gold, no cut line', [['k-rose-bad', 'set-9']], /RG Draft 1 cannot join a set before its green line is cut/);
     await refused('K: a cut sheet that is in a set stays in it', [['rg-1', 'set-9']], /RG Sheet 1 was already cut/);
     await refused('K: a completed sheet still takes no move', [['d-cut', 'set-9']], /is completed/);
     const kPerm = permanent();

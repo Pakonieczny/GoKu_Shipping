@@ -80,12 +80,10 @@ const base = () => silver(9, ['9999_1_1'], { releaseFull: true });
   // its green line is cut: the order brings it into the set of the sheet it shares the order with (R12 (a)), nothing else does
   r5.roseCutAt = 1760000000000; await Gate.assemble(run); assert.deepEqual(inSet(), ['GF1', 'RG1', 'SS9'], 'cut: it joins the set of its order mate'); assert.equal(r6.draft, true, 'an unrelated Rose Gold sheet stays out'); assert(!g5.cardinalNote);
   assert.strictEqual(saved.get('rose-1').solidIncluded, null, 'in by the rule, not by its own tick');
-  // its back engraving is not approved (the readiness report says so): it stays outside and is named, even with its line cut
+  // its back engraving is not approved (the readiness report says so): it is pulled all the same (Paul, 27 Oct 2026: the set waits for its engravings, never its joining)
   r5.draft = true; r5.setId = null; r5.seq = null; sets[0].sheetIds = sets[0].sheetIds.filter(i => i !== 'rose-1');
   ctx.window.CharmNestReadiness = { decisions: () => ({}), sheet: () => ({ stages: { approval: false }, faces: null }), orderReports: () => ({}) };
-  ctx.window.SetEdit = { engravingGap: rec => (rec.laser && rec.laser.stages.approval === false ? { key: 'backsNotApproved', label: 'RG Sheet 1: back engraving not approved yet (0 of 2 approved)' } : null) };
-  await Gate.assemble(run); assert.deepEqual(inSet(), ['GF1', 'SS9'], 'cut, but its back engraving is not approved: it is not pulled');
-  assert(/^Order 5001 shared with RG Sheet 1: add that sheet to Set 1 \(its back engraving not approved yet \(0 of 2 approved\)\)$/.test(g5.cardinalNote), g5.cardinalNote);
+  await Gate.assemble(run); assert.deepEqual(inSet(), ['GF1', 'RG1', 'SS9'], 'cut, its back engraving not approved: it joins the set of its order mate all the same');
   delete ctx.window.CharmNestReadiness; delete ctx.window.SetEdit;
   // ── 6. a mate in a committed set: named with the exact reason, nothing is held back for it ──
   const g6 = gold(1, ['6001_1_1'], { releaseFull: true }), c6 = gold(2, ['6001_1_2'], { setId: 'set-c', draft: false, seq: 2, releaseFull: true, sheetId: 'gold-c' });

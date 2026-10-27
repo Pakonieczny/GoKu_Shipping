@@ -65,20 +65,11 @@
     if (isDone(rec)) return { key: 'sheetCompleted', label: `${w} is completed`, detail: 'It keeps its cut record and set until it is moved back to Laser cutting.' };
     return null;
   }
-  /** Paul, 12 Oct: a 10K, 14K or Rose Gold sheet joins a set once its back engraving is approved. The one plain line when it is not (null when it is, when the sheet is not of
-   *  such a metal, when it is in a set already, when it is only being put back where it was taken out of, and when nothing says: `rec.laser` is the readiness report of the
-   *  Library's live read, a record without it is never refused here). `o.cuts`: the metals test of the caller (default: charm-nest-rose.js cuts). */
-  function engravingGap(rec, o) {
-    if (!rec || inSetOf(rec)) return null;
-    const C = CUTS(), isCut = o && typeof o.cuts === 'function' ? o.cuts : (C && typeof C.cuts === 'function' ? C.cuts : m => m === 'rose');
-    if (!isCut(rec.metal)) return null;
-    const hold = rec.laserHold;
-    if (hold && +hold.at > 0 && /^Taken out of /.test(str(hold.note))) return null;      // (a sheet a person took out comes back as it is)
-    const L = rec.laser && typeof rec.laser === 'object' && rec.laser.stages ? rec.laser : null;
-    if (!L || L.stages.approval !== false) return null;
-    const E = L.faces || L, fr = !!L.faces, w = wordOf(rec), what = fr ? 'engravings' : 'back engraving', n = +E.approved || 0, of = +E.required || 0;
-    return { key: 'backsNotApproved', label: `${w}: ${what} not approved yet${of ? ` (${n} of ${of} approved)` : ''}`, detail: 'A 10K, 14K or Rose Gold sheet joins a set once its back engraving is approved.', extra: { sheetId: idOf(rec) } };
-  }
+  /** RETIRED (Paul, 27 Oct 2026: "10 K and 14 K gold sheets should be approved to be part of a set just like any other sheet and then hold a given set of sheets until the engraving is done
+   *  completed just like all the other sheets"). The 12 Oct rule (a 10K, 14K or Rose Gold sheet joined a set only once its back engraving was approved) made a circle: the sheet waited for its
+   *  engravings to join, and its set could not wait for engravings of a sheet that was not in it. A green-line sheet now joins by its approval like any sheet, and its set's Approve for laser
+   *  cutting waits for its back engravings as it does for every sheet's (Readiness). Always null; kept so the page, the flow and the server keep one name for it. */
+  function engravingGap() { return null; }
   /** Paul, 13 Oct: a partial GF or SS sheet never joins a set. The one plain line ({key:'sheetPartial', label, detail}), or null: for a sheet that is Completed, a metal that is not GF/SS, a record with no completion mark. */
   function partialGap(rec) {
     const R = RULES();
@@ -152,8 +143,6 @@
       if (from === to) { delete moves[id]; continue; }
       const w = wordOf(r), c = cutReason(r, { joining: !from });
       if (c) { add(c.key, c.label, c.detail, { sheetId: id }); continue; }
-      // (Paul, 12 Oct) a sheet with a green line joins a set once its back engraving is approved: `inp.engravings` (the server's readiness read) or the record's own report says
-      if (to && !from) { const g = inp.engravings && Object.prototype.hasOwnProperty.call(inp.engravings, id) ? inp.engravings[id] : engravingGap(r); if (g) { add(g.key, g.label, g.detail, { sheetId: id }); continue; } }
       // (audit S2, 25 Oct 2026, R12 (a)) a sheet with a green line joins a set only with the line cut, or with the person's yes to the Cut Sheet press (the move's `cut`, the press follows the move),
       // or when it is full (it takes the rest of the metal whole and gets no line). Without one the server took it, and the set then broke R12
       if (to) { const C = CUTS(), isCut = C && typeof C.cuts === 'function' ? C.cuts : m => m === 'rose';

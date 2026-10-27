@@ -11,7 +11,7 @@
 // 1 the docks, once Manual Control is on: the previous and next 10K sheet, never a 14K or GF one; a GF sheet has no Manual Control
 // 2 drag a single charm to the next sheet where there is room: Manual Control's in-sheet drag is handed over at the dock (it springs back,
 //   nothing written), it flies, it is moved (pinned near where it was let go), records consistent, a "moved" step on the order's timeline by the person
-// 3 drop on a full sheet: the pop-up says so, the charm stays where it was drawn, nothing is written
+// 3 drop on a full sheet (Paul, 27 Oct 2026): moved all the same, pinned where it was let go, red where it overlaps, a note says so; and back to the sheet it came from
 // 4 a two-piece order moves whole
 // 5 guards: an order on a third sheet (tie), another computer meanwhile, a green line, a sheet nesting, in a set, cut; a dim dock says why
 // 6 another metal: a 14K sheet's docks are 14K sheets
@@ -88,6 +88,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         }, 150);
       };
       stub.__stub = true; window.startNest = stub; clearInterval(iv);
+      // a sheet left with charms that overlap (a charm hopped onto a full sheet, Paul 27 Oct 2026) is written as placed, as the real writeAsPlaced does: every charm where it is, saved,
+      // its own check flagged (the test world has no traced sources to make its files from)
+      window.writeAsPlaced = async sh => {
+        const on = sh.charms.filter(c => sh.placements.some(p => p.id === c.id));
+        await api('charmNestLibrary', { op: 'putSheet', sheet: { id: sh.sheetId, metal: sh.metal, charms: on.map(c => ({ id: c.id, poolId: c.poolId, order: c.order })), placements: sh.placements.map(p => Object.assign({}, p)), poolIds: on.map(c => c.poolId) } }, { quiet: true });
+        sh.status = 'complete'; sh.dirty = false; sh.persistedDone = true; sh.verification = { ok: false }; sh.problem = 'Verification flagged: charms overlap';
+        try { CN.renderCard(sh); } catch (_) {}
+        return true;
+      };
     }, 0);
   });
   const page = await ctx.newPage(), errors = [];
@@ -192,6 +201,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await sleep(80); await page.mouse.up(); await sleep(400);
     return page.evaluate(id => { const M = CNManual._MC, x = SheetWin.hopKit.W.byPool.get(id); return x ? M.edits.get(x.id) || null : null; }, poolId);
   }
+  /** a charm that went onto 10K Draft 1 (where it overlaps others) taken back to its spot on 10K Draft 2 by the hop itself (a press on an overlapping spot may pick the charm drawn over it) */
+  const hopBack = async (q, home) => {
+    await openSheet('k10-1'); await until(() => page.evaluate(() => !SheetWin.hopKit.W.flow && !SheetWin.hopKit.hopState().writing), 60000, 'nothing being written');
+    try { await manual(true); } catch (e) { throw new Error(e.message + ' :: ' + JSON.stringify(await mcBtn())); }
+    const ok = await page.evaluate(([id, pt]) => { const pg = CN.allSheets().find(p => p.sheetId === 'k10-1'), c = pg.charms.find(z => z.poolId === id); return SheetHop.hopPiece(pg, c, 'next', pt); }, [q, home]);
+    assert.equal(ok, true, 'the hop back ran'); await settled(); await closePops();
+  };
   const shownAt = poolId => page.evaluate(id => { const x = SheetWin.hopKit.W.byPool.get(id); return x ? { x: x.p.cxPt, y: x.p.cyPt } : null; }, poolId);
   const recAt = (sheetId, poolId) => { const r = rec(sheetId), c = (r.charms || []).find(z => z.poolId === poolId), p = c && (r.placements || []).find(z => z.id === c.id); return p ? { x: p.cxPt, y: p.cyPt, manual: c.manual || null } : null; };
   const settled = () => until(() => page.evaluate(() => { const s = SheetHop.state(); const K = SheetWin.hopKit, W = K.W; return !s.busy && !s.dragging && !W.flow && !W.hop && !document.querySelector('.shpLift') && !(K.hopState && K.hopState().pending); }), 60000, 'the move settles');   // (MANUALHOP: and its save in the background)
@@ -280,23 +296,33 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     } catch (e) { fail('2 · move to the next sheet', e); if (process.env.DEBUG) console.log(errors, await page.evaluate(() => ({ errs: window.__errs, st: SheetHop.state(), hop: SheetWin.hopKit.W.hop, flow: SheetWin.hopKit.W.flow && SheetWin.hopKit.W.flow.title, notes: [...document.querySelectorAll('.mNote')].map(n => n.textContent), open: SheetWin.isOpen(), local: SheetHop._H.local, closes: window.__closes, clicks: window.__clicks })), st.list('Order_Timeline').slice(-5)); }
     await closePops();
 
-    /* 3 · a full sheet */
+    /* 3 · a full sheet: moved all the same, red there, and back to the sheet it came from (Paul, 27 Oct 2026: "The user must never be rejected from moving charms between sheets of the
+       same colour even though they don't fit" and "this charm came from that sheet, so it should be able to be returned to the same sheet that came from") */
     try {
-      const q = idOf(Q, 2), w0 = writes(), q0 = await shownAt(q);
+      const q = idOf(Q, 2), q0 = await shownAt(q), drop = cell(2, 1);
       // (a busy computer: the click that follows the drop comes 700 ms late; it must still not reach the dialog, which reads a click on itself as a click on its backdrop and closes)
-      await carry(q, 'prev', cell(2, 1), { atDrop: () => page.evaluate(() => addEventListener('mouseup', function slow() { removeEventListener('mouseup', slow, true); const t = performance.now(); while (performance.now() - t < 700); }, true)) });
-      await until(popText, 15000, 'the pop-up');
-      const t = await popText(); await shot('3-full');
-      assert(t.includes('Not enough space on 10K Draft 1 — the charm stayed on 10K Draft 2'), t);
-      await settled();
-      const lv = await live();
-      assert(lv['k10-2'].all.includes(q) && !lv['k10-1'].all.includes(q), 'the charm stayed');
-      assert.equal(writes(), w0, 'nothing was written');
-      const q1 = await shownAt(q);
-      assert(q1 && Math.hypot(q1.x - q0.x, q1.y - q0.y) < .01, "it is drawn where it was (Manual Control's drag sprang back): " + JSON.stringify([q0, q1]));
-      assert.equal(await page.evaluate(id => CNManual._MC.edits.has(SheetWin.hopKit.W.byPool.get(id).id), q), false, 'and Manual Control kept nothing for it');
+      await carry(q, 'prev', drop, { atDrop: () => page.evaluate(() => addEventListener('mouseup', function slow() { removeEventListener('mouseup', slow, true); const t = performance.now(); while (performance.now() - t < 700); }, true)) });
+      await settled(); await shot('3-full');
+      assert.equal(await popText(), '', 'no "Not enough space" pop-up');
+      let lv = await live();
+      assert(lv['k10-1'].all.includes(q) && !lv['k10-2'].all.includes(q), 'it is on the full 10K Draft 1 all the same');
+      const there = lv['k10-1'].placed.find(z => z.id === q);
+      assert(there && there.pinned && Math.hypot(there.x - drop.x, there.y - drop.y) < 2, 'where it was let go, pinned: ' + JSON.stringify(there));
+      assert(await page.evaluate(() => [...document.querySelectorAll('.mNote')].some(n => /moved to 10K Draft 1\. It does not fit there yet: red until you resize or move it clear/.test(n.textContent))), 'a note says it does not fit there yet');
+      assert.equal(pool(q).sheetId, 'k10-1', 'its piece record says 10K Draft 1');
       assert.equal(await page.evaluate(() => SheetWin.isOpen()), true, 'the window stays open (the click after the drop is not a click on its backdrop)');
-      pass('3 · a full sheet: "Not enough space on 10K Draft 1 — the charm stayed on 10K Draft 2", the charm flies back, nothing written');
+      await closePops();
+      await openSheet('k10-1'); await manual(true);
+      const red = await page.evaluate(id => { const sh = CN.allSheets().find(p => p.sheetId === 'k10-1'), c = sh.charms.find(z => z.poolId === id); return { n: CNManual.conflicts(sh).n, mine: !!(c && CNManual._MC.bad && CNManual._MC.bad.has(c.id)) }; }, q);
+      assert(red.n > 0 && red.mine, 'on 10K Draft 1 it overlaps, red: ' + JSON.stringify(red));
+      await shot('3-red');
+      await carry(q, 'next', q0); await settled(); await closePops();
+      lv = await live();
+      assert(lv['k10-2'].all.includes(q) && !lv['k10-1'].all.includes(q), 'back on 10K Draft 2, the sheet it came from');
+      assert.equal(pool(q).sheetId, 'k10-2', 'its piece record says 10K Draft 2 again');
+      await openSheet('k10-2'); await manual(true);
+      await oneEach('after it went there and back');
+      pass('3 · a full sheet takes the charm all the same (no "Not enough space" refusal): it lands pinned where it was let go, red where it overlaps, a note says it does not fit there yet; it goes back to the sheet it came from');
     } catch (e) { fail('3 · full sheet', e); }
     await closePops();
 
@@ -384,35 +410,48 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       // a press (no move) on the charm puts it in Manual Control's hand: that is the selected charm (the piece view's selection is not used while it is on)
       const a = await onPlate(q); await page.mouse.click(a.x, a.y); await sleep(200);
       assert.equal(await page.evaluate(() => CNManual._MC.sel && CNManual._MC.sel.poolId), q, "in Manual Control's hand");
+      const q0 = await shownAt(q);
       await page.keyboard.press('Alt+Shift+ArrowLeft');
-      await until(popText, 15000, 'the pop-up'); assert(/Not enough space on 10K Draft 1/.test(await popText()), await popText());
-      await settled(); await closePops();
-      const lv = await live(); assert(lv['k10-2'].all.includes(q));
-      assert.equal(writes(), w0, 'nothing written');
-      assert.equal(await page.evaluate(id => CNManual._MC.edits.has(SheetWin.hopKit.W.byPool.get(id).id), q), false, "Manual Control's own arrow keys did not move it (Alt is the hop's)");
-      pass("7 · Alt + Shift + ← takes the charm in Manual Control's hand the same way (and the same pop-up); nothing written");
+      await settled();
+      assert.equal(await popText(), '', 'no "Not enough space" pop-up (Paul, 27 Oct 2026)');
+      let lv = await live(); assert(lv['k10-1'].all.includes(q) && !lv['k10-2'].all.includes(q), 'taken to 10K Draft 1 all the same');
+      const there = lv['k10-1'].placed.find(z => z.id === q); assert(there && Math.hypot(there.x - q0.x, there.y - q0.y) < 2, 'where it stood: ' + JSON.stringify([there, q0]));
+      assert(writes() > w0, 'the move is saved');
+      await closePops(); await hopBack(q, q0);
+      lv = await live(); assert(lv['k10-2'].all.includes(q) && !lv['k10-1'].all.includes(q), 'and back');
+      await openSheet('k10-2'); await manual(true);
+      pass("7 · Alt + Shift + ← takes the charm in Manual Control's hand the same way (onto the full sheet too, where it stands); it goes back the same way");
     } catch (e) { fail('7 · keyboard', e); }
 
+    let q8 = null;
     /* 8 · without window.CNManual on the page (the hop's own stand-in, kept for a page without Manual Control): its small switch is the flag, the window's grid the verifier */
     try {
-      await manual(false);
+      await manual(false); await until(() => page.evaluate(() => !SheetWin.hopKit.W.flow && !SheetWin.hopKit.hopState().writing), 60000, 'nothing being written');
       await page.evaluate(() => { window.__cnm = window.CNManual; delete window.CNManual; });
       await until(() => page.$('.shpSwitch'), 4000, 'the stand-in switch shows');
       assert.equal(await page.$('.shpDock'), null, 'no dock until it is switched on');
       await page.click('.shpSwitch');
       await until(() => page.evaluate(() => document.querySelectorAll('.shpDock').length === 2), 4000, 'docks with the switch on');
       const q = idOf(Q, 2), w0 = writes();
+      const q0 = await shownAt(q);
       await carry(q, 'prev', cell(2, 1));
-      await until(popText, 15000, 'the pop-up'); assert((await popText()).includes('Not enough space on 10K Draft 1 — the charm stayed on 10K Draft 2'), await popText());
-      await settled(); await closePops();
-      assert.equal(writes(), w0, 'nothing written');
+      await settled();
+      assert.equal(await popText(), '', 'no "Not enough space" pop-up');
+      assert((await live())['k10-1'].all.includes(q), 'it went onto the full 10K Draft 1 all the same');
+      assert(writes() > w0, 'the move is saved');
+      await closePops();
       await page.click('.shpSwitch');
       await until(() => page.evaluate(() => !document.querySelector('.shpDock')), 3000, 'docks go with the switch off');
-      pass('8 · without window.CNManual: the stand-in switch is the flag, the window grid the verifier (the same pop-up, nothing written)');
-    } catch (e) { fail('8 · stand-in switch', e); }
+      q8 = { q, q0 };
+      pass('8 · without window.CNManual: the stand-in switch is the flag, the window grid the verifier (a full sheet takes the charm all the same)');
+    } catch (e) { fail('8 · stand-in switch', e); if (process.env.DEBUG) console.log(await page.evaluate(() => ({ st: SheetHop.state(), cur: SheetWin.current(), docks: [...document.querySelectorAll('.shpDock')].map(d => [d.dataset.side, d.dataset.state, d.className, d.textContent.slice(0, 120)]) }))); }
     await page.evaluate(() => { if (window.__cnm) { window.CNManual = window.__cnm; delete window.__cnm; } SheetHop._H.local = false; });
     await until(() => page.evaluate(() => !document.querySelector('.shpSwitch')), 4000, 'the switch goes once CNManual is back').catch(e => fail('8 · stand-in switch goes', e));
     await closePops();
+    if (q8) try {   // (the charm of 8 goes back to 10K Draft 2, with Manual Control, for the checks that follow)
+      await hopBack(q8.q, q8.q0);
+      assert((await live())['k10-2'].all.includes(q8.q), 'the charm of 8 is back on 10K Draft 2');
+    } catch (e) { fail('8 · back to 10K Draft 2', e); }
 
     /* 9 · with charms moved by hand and not saved yet */
     let eS41 = null;

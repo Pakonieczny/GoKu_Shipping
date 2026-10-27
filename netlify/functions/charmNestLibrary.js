@@ -4519,19 +4519,9 @@ async function pieceMeta(tx, items) {
   for (const d of await txGetAll(tx, ids.map(id => col(POOL).doc(id)), ["side", "form", "sku", "bodyIndex"])) if (d.exists) { const x = d.data(); map.set(d.id, { side: x.side === "L" || x.side === "R" ? x.side : null, form: x.form || "", sku: x.sku || "", bodyIndex: x.bodyIndex != null && Number.isFinite(+x.bodyIndex) ? +x.bodyIndex : null }); }
   return map.size ? (k => map.get(String(k)) || null) : null;
 }
-/** Paul, 12 Oct 2026: a 10K, 14K or Rose Gold sheet joins a set once its BACK ENGRAVING is approved (SetEdit.engravingGap, the one rule the page's plan reads too). Read from the same
- *  readiness report the Library's live read gives (sheetEntries), before the transaction, and only for a sheet of such a metal that is in no set and is being put in one: any other move
- *  costs nothing. { sheetId: the plain refusal | null } for the sheets it looked at. */
-async function joinEngravings(moves) {
-  const ids = moves.filter(m => m.to).map(m => m.id), out = {};
-  if (!ids.length) return out;
-  const docs = await db.getAll(...ids.map(id => col(SHEETS).doc(id)), { fieldMask: ["metal", "setId", "draft", "solidIncluded", "archived", "laserHold"] });
-  const want = docs.filter(d => { const x = d.exists ? d.data() : null; return x && !x.archived && CutLine.cuts(x.metal) && !SetEdit.inSetOf(x); }).map(d => d.id);
-  if (!want.length) return out;
-  const { sheets } = await sheetEntries(want.map(id => [id]), answerBudget());
-  for (const e of sheets) out[e.id] = SetEdit.engravingGap(e);
-  return out;
-}
+/** RETIRED (Paul, 27 Oct 2026): a 10K, 14K or Rose Gold sheet joins a set by its approval like any sheet, and its set waits for its back engravings (SetEdit.engravingGap is always null).
+ *  Nothing is read for it any more; the plan's `engravings` stays empty. */
+async function joinEngravings() { return {}; }
 async function applySetMembers(step, by, device, via) {
   const moves = [], seen = new Set();
   for (const m of (Array.isArray(step.moves) ? step.moves : []).slice(0, 12)) {

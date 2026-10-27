@@ -5397,10 +5397,7 @@ const Gate = window.Gate = (() => {
     if (sh.roseCutAt && staysCut(sh)) return { include: true, reason: "Cut · stays in its set" };
     const r = O_.sheetRelease({ material: sh.metal, verified: !!sh.verification?.ok, placed: sh.placements.length,
       stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: solid(sh.metal) ? Object.assign({}, choices, { [sh.metal]: picked(sh, choices) }) : sh.metal === "rose" ? Object.assign({}, choices, { rose: picked(sh, choices) ? true : undefined }) : choices });
-    // (audit G1, 25 Oct 2026, R12 (b): a Rose Gold / 10K / 14K sheet joins a set only with its back engraving approved: its own tick (Include, Cut Sheet) answers (a) only, and it let a sheet in
-    //  whose backs were still open. A sheet already in its set keeps its place, as before)
-    // (Paul, 26 Oct 2026: only the automatic Cut Sheet press, while it runs (Gate.autoCut: _autoCutting), is not held for the backs: "we shouldn't double hold things"; it is undone when the cut is refused)
-    if (r && r.include && goldFamily(sh.metal) && !inSetNow(sh) && !sh._autoCutting) { const b = backsOf(sh); if (b && !b.ok) return Object.assign({}, r, { include: false, reason: `It joins a set once its back engraving is approved (${b.line})` }); }
+    // (Paul, 27 Oct 2026: a Rose Gold / 10K / 14K sheet joins a set by its approval like any sheet; its set's Approve waits for its back engravings, never its joining: SetEdit.engravingGap retired)
     return r;
   }
   async function upgrade(run) {
@@ -5439,29 +5436,12 @@ const Gate = window.Gate = (() => {
     for (const p of allSheets().filter(p => p.runId === run.runId)) { const n = SO.fromPage(p); if (n) { sheets.push(n); page.set(n.id, p); idOf.set(p, n.id); } }
     return { SO, sheets, page, idOf, norm: new Map(sheets.map(n => [n.id, n])) };
   }
-  /* R12 (Paul, 12 Oct; docs/charm-nest/set-rules.md): a Rose Gold, 10K or 14K sheet joins a set only with exactly two conditions: (a) its green line is cut (or the person says yes at the Cut Sheet
-     press / Include, which is the sheet's own tick, solidPick) and (b) its back engraving is approved. (b) is SetEdit.engravingGap over the sheet's readiness report, the one rule the Library's drop
-     and the server read; where nothing says (no report on this page) a sheet is never refused for it, as everywhere else. One readiness read per assembly (backsMemo). */
-  let backsMemo = null;
-  function backsOf(p) {
-    try {
-      const RD = window.CharmNestReadiness, SE = window.SetEdit;
-      if (!RD || !SE || typeof RD.sheet !== "function" || typeof RD.decisions !== "function" || typeof SE.engravingGap !== "function") return null;
-      if (!backsMemo) {
-        const dec = RD.decisions(Orders.rows()), physical = allSheets().map(pg => ({ ...pg, roseStockId: pg.roseStock?.id, id: pg.sheetId, poolIds: (pg.placements || []).map(x => (pg.charms.find(c => c.id === x.id) || {}).poolId).filter(Boolean), placedCount: pg.placements.length, outputs: pg.cloud || {}, engraving: dec }));
-        backsMemo = { physical, orderReadiness: typeof RD.orderReports === "function" ? RD.orderReports(Orders.rows(), physical) : {} };
-      }
-      const row = backsMemo.physical.find(x => x.id === p.sheetId); if (!row) return null;
-      const g = SE.engravingGap({ id: p.sheetId, metal: p.metal, laser: RD.sheet({ ...row, orderReadiness: backsMemo.orderReadiness }) }, {});
-      return g ? { ok: false, line: String(g.label || "its back engraving is not approved").replace(/^[^:]*: /, "its ") } : { ok: true };
-    } catch (_) { return null; }
-  }
   /** Why a Rose Gold / 10K / 14K sheet cannot join a set by the order rule (the cardinal pull); "" when it can. The sheet's own tick is the person's yes and never asks this. */
   function goldGap(p) {
     if (!goldFamily(p.metal)) return "";
     if ((p.roseCutAt || +p.laserDoneAt > 0) && p.autoMatched) return "";   // (Paul, 26 Oct 2026: a sheet cut automatically for its set joins it whatever its backs; the set's Approve waits for them)
     if (!(p.roseCutAt || +p.laserDoneAt > 0)) return p.metal === "rose" ? "a Rose Gold sheet joins a set only by its own Cut Sheet press" : `a ${labelOf(p.metal)} sheet joins a set only by its own Include or Cut Sheet press`;
-    const b = backsOf(p); return b && !b.ok ? b.line : "";
+    return "";   // (Paul, 27 Oct 2026: its back engravings are its set's to wait for, never a reason it stays out)
   }
   /** Why a sheet cannot join a set now, in plain words ("" when it can). `ready` = the run's sheets with saved files. */
   // (MCFREE, Paul 20 Oct 2026: a charm may be placed by hand where it overlaps another, shown red; the charms of a sheet that overlap (Manual Control's own check, and the
@@ -5521,7 +5501,6 @@ const Gate = window.Gate = (() => {
   }
   function cardinalApply(run, pages, sets, choices = selected()) {
     for (const p of allSheets().filter(p => p.runId === run.runId)) { delete p.cardinalPull; delete p.cardinalHold; delete p.cardinalNote; delete p.cardinalHome; }
-    backsMemo = null;
     const V = cardinalView(run); if (!V) return [];
     const open = (Array.isArray(sets) ? sets : sets ? [sets] : []).filter(Boolean), last = open[open.length - 1] || null, collecting = last && !closedSet(last) ? last : null;
     const ready = new Set(pages), homeOf = p => (p.setId && !p.draft && open.find(s => s.setId === p.setId)) || null;
@@ -5633,7 +5612,9 @@ const Gate = window.Gate = (() => {
         if (!wants && !gap) p.cardinalPull = `Shares ${ordersWords(mineOrders, tell)} with ${named(mates).join(", ")} in ${setName(home.setId)}`;
         if (gap) for (const i of mates) for (const u of unitOf(i)) { const q = V.page.get(u); if (q && !goldFamily(q.metal) && q.setId === home.setId && !q.draft && !q.cardinalNote) q.cardinalNote = `${ordersWords(mineOrders, tell).replace(/^o/, "O")} shared with ${sheetNameOf(p)}: add that sheet to ${setName(home.setId)} (${gap})`; }
         // (Paul, 26 Oct 2026: a 10K / 14K sheet is never cut or approved by itself: it waits greyed in its set, the Library's set card, for a person's press; its own card says so)
-        if (gap && solid(p.metal) && !p.roseCutAt && !(+p.laserDoneAt > 0)) p.cardinalNote = `Waits in ${setName(home.setId)} for your approval and its green cut line: press Approve & cut green line on ${setName(home.setId)} in the Library and it joins ${setName(home.setId)}. Until then its charms can be moved by hand`;
+        // (Paul, 27 Oct 2026: a FULL one needs the approval only: no green line, nothing to cut away: RoseStock.full, the test its own Cut Sheet button reads)
+        const tryFull = q => { try { return !!(window.RoseStock && typeof RoseStock.full === "function" && RoseStock.full(q)); } catch (_) { return false; } };
+        if (gap && solid(p.metal) && !p.roseCutAt && !(+p.laserDoneAt > 0)) p.cardinalNote = tryFull(p) ? `Waits in ${setName(home.setId)} for your approval: it is full, so it needs no green line. Press Approve on ${setName(home.setId)} in the Library and it joins ${setName(home.setId)}. Until then its charms can be moved by hand` : `Waits in ${setName(home.setId)} for your approval and its green cut line: press Approve & cut green line on ${setName(home.setId)} in the Library and it joins ${setName(home.setId)}. Until then its charms can be moved by hand`;
       } else if (h.partners.length) {
         // (its partners are in no set yet: it waits for THEIR set, never another one; a partner that is not full yet keeps it out with its group, as ever, R11)
         const SRg = window.CharmNestSetRules, part = h.partners.map(i => V.page.get(i)).filter(q => q && SRg && SRg.isPartial(q)), all = [...new Set(Object.values(h.orders).flat())].sort();
@@ -5691,7 +5672,6 @@ const Gate = window.Gate = (() => {
   /** The run's sets and sheets as the checker reads them, and the options; null when it cannot be read (no checker or no shared-orders page side loaded). */
   function invariantInput(run) {
     const SO = SOrd(), SRp = window.CharmNestSetRules; if (!SO || !SRp || !run) return null;
-    backsMemo = null;
     const keyOf = p => p.sheetId || `${p.runId || "run"}:${p.metal}:${p.page || 1}`;
     const recs = [], waiting = [];
     for (const p of allSheets().filter(p => p.runId === run.runId && !p.recalled)) {
@@ -5700,10 +5680,10 @@ const Gate = window.Gate = (() => {
       // be in a set (opts.waiting). SETFIX (Paul, 19 Oct 2026): it is still read, because it ties the sheets it shares orders with exactly as it does in the assembly (left out, the checker split a unit
       // the assembly had rightly kept whole and called its sheets spare)
       if (!inSetNow(p) && SRp.isCompleted(p) && !goldFamily(p.metal) && (p.leftSet || !p.outputs || !p.persistedDone || basePolicy(p, 0).reason === "Nest and verify first")) waiting.push(n.id);
-      const gold = goldFamily(p.metal), b = gold ? backsOf(p) : null;   // (audit G1b: the backs of every gold-family sheet, ticked or cut)
+      const gold = goldFamily(p.metal);
       recs.push({ id: n.id, metal: p.metal, runId: p.runId, page: p.page, sheetIndex: p.sheetIndex, draft: !!p.draft, setId: p.setId || null, releaseFull: !!p.releaseFull, laserDoneAt: p.laserDoneAt, roseCutAt: p.roseCutAt,
         density: p.density, placedCount: (p.placements || []).length, releasedAt: p.releasedAt, joinedAt: p.joinedAt, ...(p.joinedBy ? { joinedBy: p.joinedBy } : {}), pieces: n.pieces,
-        ...(gold ? { cutApproved: p.solidPick === true, ...(b ? { backsApproved: !!b.ok } : {}), ...(p.autoMatched ? { autoMatched: String(p.autoMatched) } : {}) } : {}) });
+        ...(gold ? { cutApproved: p.solidPick === true, ...(p.autoMatched ? { autoMatched: String(p.autoMatched) } : {}) } : {}) });
     }
     const ids = new Set(recs.map(r => r.id)), sets = [];
     for (const set of Sets.ofRun(run.runId)) {
@@ -12134,10 +12114,14 @@ const Sets = window.Sets = (() => {
       // (Paul, 13 Oct: a partner that is not full yet cannot be added to the set; the line says it joins by itself once it is full)
       const SRp = window.CharmNestSetRules, pageOf = id => { try { return typeof allSheets === "function" ? allSheets().find(p => p.sheetId === id) : null; } catch (_) { return null; } };
       // (Paul, 26 Oct 2026: a 10K / 14K partner is never cut or approved by itself: `manual`, it waits greyed in this set for a person to approve it and cut its green line, goldPendingOf)
-      if (free.length) g.cardinalWait = free.map(i => ({ label: by.get(i).label, id: i, ...(SRp && SRp.isPartial && SRp.isPartial(pageOf(i)) ? { partial: true } : {}), ...(goldManual(by.get(i), pageOf(i), rowOf.get(i)) ? { manual: true } : {}) }));
+      if (free.length) g.cardinalWait = free.map(i => ({ label: by.get(i).label, id: i, ...(SRp && SRp.isPartial && SRp.isPartial(pageOf(i)) ? { partial: true } : {}), ...(goldManual(by.get(i), pageOf(i), rowOf.get(i)) ? { manual: true, ...(goldFull(pageOf(i), rowOf.get(i)) ? { full: true } : {}) } : {}) }));
     }
   }
   /** (Paul, 26 Oct 2026) A 10K / 14K sheet whose green line is not cut: the partner a set waits for a PERSON's press for ("approve it and cut its green line"). Rose Gold is cut automatically (Gate.autoCut). */
+  /** (Paul, 27 Oct 2026: "Completed 10K / 14K Gold Sheets only need an user approval and no Green Cut line is needed because the sheet is completed so there is nothing to cut away") A waiting 10K / 14K
+   *  sheet whose layout leaves no room for another charm (RoseStock.full, the test its own Cut Sheet button reads: a full sheet has none): its approval is all it needs. The Library row's own full mark
+   *  where the sheet is not open on this page. */
+  const goldFull = (pg, row) => { try { if (pg && window.RoseStock && typeof RoseStock.full === "function") return !!RoseStock.full(pg); } catch (_) { /* the row says */ } return !!(row && row.releaseFull); };
   const goldManual = (s, pg, row) => !!s && (s.metal === "gold10k" || s.metal === "gold14k") && !s.laserDone && !(pg && (pg.roseCutAt || +pg.laserDoneAt > 0)) && !(row && (row.roseCutAt || +row.laserDoneAt > 0));
   /* (Paul, 26 Oct 2026: "a given 10 K or 14 K gold sheet should be added to a given Set of Sheets where it shares charms with from a given multi-charm order. However the 10k and 14k sheets should stay
      greyed-out inside the Set of Sheets until a user approves and adds a Green Cut line for either/both of the 10k / 14k gold sheets in question.") The 10K / 14K sheets a set waits for (cardinalWait
@@ -12161,8 +12145,10 @@ const Sets = window.Sets = (() => {
    *  no QR label row, no rail and no Approve of its own (syncApprove, flowSlots and the set's downloads leave [data-gold-pending] out). */
   function goldPendingTile(st, r) {
     const set = st.name || O.setLabel(st.seq), name = window.CharmNestSheetName ? window.CharmNestSheetName.name(r) : (r.folder || r.id), id = esc(r.id);
-    return `<article class="librarySheet goldPending" data-gold-pending="${id}" aria-label="${esc(name)}: waiting for your approval and its green cut line"><div class="libCard hoverItem" data-m="${esc(r.metal)}" data-id="${id}" title="${esc(`${name} is not in ${set} yet: it waits for your approval and its green cut line`)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(name)}</span></div>`}<div data-back-sheet="${id}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${id}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span data-sheet-count="${id}"><b>${r.placedCount}</b>/${r.charmCount}</span><span data-sheet-density="${id}"><b>${Math.round((r.density || 0) * 100)}%</b></span><span data-sheet-orders="${id}">${(r.orders || []).length} orders</span></div></div>`
-      + `<div class="goldPendingNote" data-gold-pending-note role="note"><span class="gpTag">Waiting for your approval</span><span class="gpLine">Not in ${esc(set)} yet: ${esc(name)} waits for you to approve it and cut its green line. Until then its charms can be moved by hand.</span><button type="button" class="btn sage sm" data-gold-cut="${id}">Approve &amp; cut green line</button><span class="gpSay" data-gold-say role="status" aria-live="polite" hidden></span></div></article>`;
+    let pg = null; try { pg = allSheets().find(p => p.sheetId === r.id && !p.recalled) || null; } catch (_) { pg = null; }
+    const full = goldFull(pg, r), wants = full ? "your approval (it is full: no green line)" : "your approval and its green cut line";
+    return `<article class="librarySheet goldPending" data-gold-pending="${id}"${full ? ' data-gold-full="1"' : ""} aria-label="${esc(name)}: waiting for ${esc(wants)}"><div class="libCard hoverItem" data-m="${esc(r.metal)}" data-id="${id}" title="${esc(`${name} is not in ${set} yet: it waits for ${wants}`)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(name)}</span></div>`}<div data-back-sheet="${id}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${id}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span data-sheet-count="${id}"><b>${r.placedCount}</b>/${r.charmCount}</span><span data-sheet-density="${id}"><b>${Math.round((r.density || 0) * 100)}%</b></span><span data-sheet-orders="${id}">${(r.orders || []).length} orders</span></div></div>`
+      + `<div class="goldPendingNote" data-gold-pending-note role="note"><span class="gpTag">Waiting for your approval</span><span class="gpLine">${full ? `Not in ${esc(set)} yet: ${esc(name)} is full, so it needs no green line. Approve it to add it to ${esc(set)}.` : `Not in ${esc(set)} yet: ${esc(name)} waits for you to approve it and cut its green line. Until then its charms can be moved by hand.`}</span><button type="button" class="btn sage sm" data-gold-cut="${id}"${full ? ' data-gold-full="1"' : ""}>${full ? "Approve" : "Approve &amp; cut green line"}</button><span class="gpSay" data-gold-say role="status" aria-live="polite" hidden></span></div></article>`;
   }
   function goldPendingStyle() {
     if (document.getElementById("goldPendingCss")) return;

@@ -108,7 +108,8 @@
  *   formAll(...)                                -> { last, sets, wait, valid, closed }  every set the free sheets make, one after the other (see ONE SET AT A TIME above)
  *   surplus(setSheets, shareGroups)             -> [sheet]  the sheets of a set that no order ties to its others and that it is still valid without (the Library says so on the set)
  *   partnerWords(labels)                        -> "orders shared with RG Draft 1: add that sheet to this set"
- *   goldWaitWords(labels)                       -> "waiting for 14K Sheet 1: approve it and cut its green line" (Paul, 26 Oct 2026: a 10K / 14K partner, `manual` in cardinalWait, waits for a person's press)
+ *   goldWaitWords(labels, full?)                -> "waiting for 14K Sheet 1: approve it and cut its green line" (Paul, 26 Oct 2026: a 10K / 14K partner, `manual` in cardinalWait, waits for a person's press;
+ *                                                  a full one, `full` in cardinalWait, for the approval only: "waiting for 14K Sheet 1: approve it", Paul 27 Oct 2026)
  *   enforce(false)                              -> for an offline suite about something else whose fixture sets predate the principle: gate() then reads applies:false
  */
 (function (root, factory) { const api = factory(root); if (typeof module === 'object' && module.exports) module.exports = api; else root.CharmNestSetRules = api; })(typeof self !== 'undefined' ? self : this, function (root) {
@@ -225,9 +226,15 @@
 
   /** (Paul, 26 Oct 2026: "the 10k and 14k sheets should stay greyed-out inside the Set of Sheets until a user approves and adds a Green Cut line") The line a set gives for the 10K / 14K sheets it waits
    *  for: they are never cut or approved by themselves, so the set waits for a PERSON's press: "waiting for 14K Sheet 1: approve it and cut its green line". A hold, never a rule the set breaks. */
-  const goldWaitWords = labels => {
-    const l = list(labels).map(str).filter(Boolean), one = l.length === 1, names = l.length < 2 ? l.join('') : `${l.slice(0, -1).join(', ')} and ${l[l.length - 1]}`;
-    return l.length ? `waiting for ${names}: approve ${one ? 'it' : 'them'} and cut ${one ? 'its green line' : 'their green lines'}` : '';
+  // (Paul, 27 Oct 2026: "Completed 10K / 14K Gold Sheets only need an user approval and no Green Cut line is needed because the sheet is completed so there is nothing to cut away": `full`, the labels of
+  //  the full ones, are asked for the approval only: "waiting for 14K Sheet 1: approve it")
+  const goldWaitWords = (labels, full) => {
+    const l = list(labels).map(str).filter(Boolean), one = l.length === 1, and = a => a.length < 2 ? a.join('') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`, names = and(l);
+    if (!l.length) return '';
+    const whole = new Set(list(full).map(str)), cut = l.filter(x => !whole.has(x));
+    if (!cut.length) return `waiting for ${names}: approve ${one ? 'it' : 'them'}`;
+    if (cut.length === l.length) return `waiting for ${names}: approve ${one ? 'it' : 'them'} and cut ${one ? 'its green line' : 'their green lines'}`;
+    return `waiting for ${names}: approve them, and cut the green ${cut.length === 1 ? 'line' : 'lines'} of ${and(cut)}`;
   };
 
   /** What a completed sheet that waits for the NEXT set is told when the newest set has formed already. */
@@ -320,8 +327,9 @@
     const partners = list(set && set.cardinalWait).map(w => str(w && (w.label || w))).filter(Boolean), notFull = list(set && set.cardinalWait).filter(w => w && w.partial).map(w => str(w.label || w));
     // (Paul, 26 Oct 2026) a 10K / 14K partner (`manual`: it waits greyed in this set for a person to approve it and cut its green line) is a HOLD with its own plain line, never "joins by itself"
     const manual = list(set && set.cardinalWait).filter(w => w && w.manual && !w.partial).map(w => str(w.label || w)).filter(Boolean), others = partners.filter(x => !manual.includes(x));
+    const manualFull = list(set && set.cardinalWait).filter(w => w && w.manual && w.full).map(w => str(w.label || w));
     const partnerGate = have => {
-      if (manual.length) { const m = goldWaitWords(manual), w = others.length ? partnerWords(others, notFull) : '', short = [m, w].filter(Boolean).join('; '), line = short.charAt(0).toUpperCase() + short.slice(1) + '.';
+      if (manual.length) { const m = goldWaitWords(manual, manualFull), w = others.length ? partnerWords(others, notFull) : '', short = [m, w].filter(Boolean).join('; '), line = short.charAt(0).toUpperCase() + short.slice(1) + '.';
         return { applies: true, ok: false, missing: [], reason: line, short, line, have, partners, manual, partial: flag, holding: true }; }
       const w = partnerWords(partners, notFull); return { applies: true, ok: false, missing: [], reason: `This set has ${w}.`, short: w, line: `Waiting: ${w}, so that orders are not spread over two sets.`, have, partners, partial: flag }; };
     if (!members.some(s => Object.prototype.hasOwnProperty.call(s, 'releaseFull'))) return partners.length ? partnerGate(none.have) : none;

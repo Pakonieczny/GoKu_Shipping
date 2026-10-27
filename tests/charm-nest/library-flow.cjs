@@ -301,18 +301,19 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     assert.equal(recsJ['j-rose-bad'].laser.stages.approval, false); assert.equal(recsJ['j-rose'].laser.stages.approval, true);
     LF.configure({ areaOf: () => 'progress', sets: () => [{ setId: 'set-2', seq: 2, status: 'complete', committedAt: 1 }, { setId: 'set-3', seq: 3 }], setOf: () => null, rec: id => recsJ[id] || null });
     let zj = LF.explainTargets({ kind: 'sheet', id: 'j-rose-bad' });
-    for (const z of zj.filter(x => x.set || x.newSet)) { assert.equal(z.ok, false, JSON.stringify(z)); assert.equal(z.reason, 'RG Draft 1: back engraving not approved yet (0 of 1 approved)', 'one plain line at the place'); }
-    assert(zj.find(x => x.area === 'laser').reason !== 'RG Draft 1: back engraving not approved yet (0 of 1 approved)', 'the other places say what they always said');
+    // (Paul, 27 Oct 2026: the back engraving is the set's to wait for, never a reason a sheet cannot join it: the 12 Oct rule is retired)
+    for (const z of zj) assert(!/back engraving not approved/.test(z.reason || ''), 'no place refuses it for its back engraving: ' + JSON.stringify(z));
+    assert.equal(zj.find(x => x.set === 'set-2').ok, true, 'its backs open, it may still join Set 2');
     zj = LF.explainTargets({ kind: 'sheet', id: 'j-rose' }); assert.equal(zj.find(x => x.set === 'set-2').ok, true); assert.equal(zj.find(x => x.set === 'set-2').reason, '');
     assert.equal(LF.explainTargets({ kind: 'sheet', id: 'j-14k-cut' }).find(x => x.set === 'set-2').ok, true, 'a 14K sheet whose line is cut and whose back is approved');
-    assert.equal(LF.explainTargets({ kind: 'sheet', id: 'j-14k-bad' }).find(x => x.set === 'set-2').ok, false);
+    assert.equal(LF.explainTargets({ kind: 'sheet', id: 'j-14k-bad' }).find(x => x.set === 'set-2').ok, true, 'a 14K sheet whose back is not approved joins too (Paul, 27 Oct 2026)');
     assert.equal(LF.explainTargets({ kind: 'sheet', id: 'j-gf' }).find(x => x.set === 'set-2').ok, true, 'a GF sheet is not asked for backs');
-    // (b) refused: ONE plain line, no yes asked, nothing written
+    // (b) RETIRED (Paul, 27 Oct 2026): its open back engraving is no refusal: the plan asks only for the Cut Sheet yes, as for any uncut sheet; a plan writes nothing
     const dbJ = () => JSON.stringify(st.list(S).map(d => [d._id, d.setId || null, d.draft, d.roseCutAt || null, d.rosePlanHash || null])), snapJ = dbJ(), callsJ = st.calls.length;
     p = await LF.plan({ kind: 'sheet', id: 'j-rose-bad', to: { set: 'set-2' } });
-    assert.equal(p.ok, false); assert.equal(p.needs.length, 1, JSON.stringify(p.needs)); assert.equal(p.needs[0].key, 'backsNotApproved'); assert.equal(p.needs[0].label, 'RG Draft 1: back engraving not approved yet (0 of 1 approved)'); assert.deepEqual(p.confirm, []); assert.deepEqual(p.steps, []);
-    r = await LF.commit(p, { by: 'Paul', confirmed: ['roseLine', 'roseSet', 'together'] }); assert.equal(r.ok, false); assert(/back engraving not approved yet/.test(r.error));
-    p = await LF.plan({ kind: 'sheet', id: 'j-14k-bad', to: { set: 'set-2' } }); assert.equal(p.needs.length, 1); assert.equal(p.needs[0].label, '14K Sheet 1: back engraving not approved yet (0 of 1 approved)');
+    assert.equal(p.ok, true, JSON.stringify(p.needs)); assert(!p.needs.some(x => x.key === 'backsNotApproved')); assert.deepEqual(p.confirm.map(c => c.key), ['setWaits', 'roseLine']);
+    assert(/^Set 2 will wait for RG Draft 1$/.test(p.confirm[0].label) && /back engraving/.test(p.confirm[0].detail), 'the set says it will wait for its back engraving: ' + JSON.stringify(p.confirm[0]));
+    p = await LF.plan({ kind: 'sheet', id: 'j-14k-bad', to: { set: 'set-2' } }); assert(!p.needs.some(x => x.key === 'backsNotApproved'), JSON.stringify(p.needs));
     assert.equal(dbJ(), snapJ, 'nothing was written'); assert(!jlog.length, 'nothing was calculated or drawn'); assert.equal(st.calls.filter((c, i) => i >= callsJ && /flowApply/.test(c.op)).length, 0);
     // (a) a Rose Gold sheet with no line joins a COMMITTED set: Rose Gold is not refused for being Rose Gold; the one yes is the Cut Sheet press, which follows the membership
     p = await LF.plan({ kind: 'sheet', id: 'j-rose', to: { set: 'set-2' } });
@@ -340,7 +341,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     for (const [id, pc] of [['j-mrose', orderJ + '_2_1'], ['j-mbad', orderJ + '_3_1']]) { st.put(S, id, { poolIds: [pc], orders: [orderJ] }); lines[orderJ + '_' + pc.split('_')[1]] = { orderId: orderJ, state: 'written', quantity: 1, poolIds: [pc], ...(id === 'j-mbad' ? { engrave: { needed: true, state: 'review', approved: false } } : { engraveCandidate: false }) }; }
     st.put(RUN, 'run-x', { runId: 'run-x', status: 'complete', lines });
     p = await LF.plan({ kind: 'sheet', id: 'j-m10k', to: { set: 'set-2' } });
-    assert.equal(p.ok, false); assert(p.needs.some(x => x.key === 'backsNotApproved' && /^RG Draft 1: back engraving not approved yet/.test(x.label)), 'the partner\'s back is named: ' + JSON.stringify(p.needs));
+    assert(!p.needs.some(x => x.key === 'backsNotApproved'), 'a partner\'s open back is no refusal (Paul, 27 Oct 2026): ' + JSON.stringify(p.needs));
     st.put(S, 'j-mbad', { poolIds: [], orders: [] }); delete lines[orderJ + '_3']; st.put(RUN, 'run-x', { runId: 'run-x', status: 'complete', lines });    // (the unapproved partner is out of the picture)
     p = await LF.plan({ kind: 'sheet', id: 'j-m10k', to: { set: 'set-2' } });
     assert.equal(p.ok, true, JSON.stringify(p.needs)); assert(p.confirm.some(c => c.key === 'together' && /RG Draft 1 joins Set 2 with/.test(c.label)), JSON.stringify(p.confirm)); const cl = p.confirm.find(c => c.key === 'roseLine'); assert(cl && cl.sheetIds.length === 2, JSON.stringify(p.confirm));
@@ -361,11 +362,11 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     r = await LF.commit(p, { by: 'Paul', confirmed: ['together'] }); assert.equal(r.ok, false); assert(!jlog.length, 'no line without its yes');
     r = await LF.commit(p, { by: 'Paul', confirmed: ['roseLine', 'roseSet', 'together'] }); assert.equal(r.ok, true, JSON.stringify(r));
     assert.deepEqual(jlog, ['calculate:j-o-gold:recordCut=false:in=-', 'roseJoin:j-o-rose:line=true', 'include:j-o-gold'], jlog.join());
-    // the same drag with the partner\'s back not approved: the one line names the partner, nothing is drawn
+    // the same drag with the partner\'s back not approved: no refusal for it any more (Paul, 27 Oct 2026; planned only)
     mk('j-o-gold2', { metal: 'gold10k', draft: true, runId: 'run-live', roseStockId: 'stock-k3', liveLines: true }, '3899000020'); mk('j-o-bad', { metal: 'rose', draft: true, runId: 'run-live', roseStockId: 'stock-k4', needsBack: true, liveLines: true }, '3899000021');
     st.put(S, 'j-o-bad', { poolIds: ['3899000020_2_1'], orders: ['3899000020'] }); liveLines['3899000020_2'] = { orderId: '3899000020', state: 'written', quantity: 1, poolIds: ['3899000020_2_1'], engrave: { needed: true, state: 'review', approved: false } }; st.put(RUN, 'run-live', { runId: 'run-live', status: 'review', lines: liveLines });
     LF.configure({ live: id => id === 'j-o-gold2' ? open() : id === 'j-o-bad' ? open({ rose: { full: false } }) : null }); jlog.length = 0;
-    p = await LF.plan({ kind: 'sheet', id: 'j-o-gold2', to: { set: 'set-3' } }); assert.equal(p.ok, false); assert.equal(p.needs[0].key, 'backsNotApproved'); assert(/^RG Draft 1: back engraving not approved yet/.test(p.needs[0].label), p.needs[0].label); r = await LF.commit(p, { by: 'Paul', confirmed: ['roseLine', 'roseSet', 'together'] }); assert.equal(r.ok, false); assert(!jlog.length, 'a refused plan draws nothing and joins nothing');
+    p = await LF.plan({ kind: 'sheet', id: 'j-o-gold2', to: { set: 'set-3' } }); assert(!p.needs.some(x => x.key === 'backsNotApproved'), 'the partner\'s open back is no refusal (Paul, 27 Oct 2026): ' + JSON.stringify(p.needs));
     // a Rose Gold sheet moved with a partner that is not Rose Gold: the Rose sheet is pressed, the partner joins right after it
     mk('j-o-rose3', { metal: 'rose', draft: true, runId: 'run-live', roseStockId: 'stock-k5', liveLines: true }, '3899000030'); mk('j-o-gf', { metal: 'gold', draft: true, runId: 'run-live', liveLines: true }, '3899000031');
     st.put(S, 'j-o-gf', { poolIds: ['3899000030_2_1'], orders: ['3899000030'] }); liveLines['3899000030_2'] = { orderId: '3899000030', state: 'written', quantity: 1, poolIds: ['3899000030_2_1'], engraveCandidate: false }; st.put(RUN, 'run-live', { runId: 'run-live', status: 'review', lines: liveLines });

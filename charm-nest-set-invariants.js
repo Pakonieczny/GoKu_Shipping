@@ -111,8 +111,8 @@
     return `${R.metalClass(rec) || 'A'} ${setId ? 'Sheet' : 'Draft'} ${(setId ? rec.sheetIndex : 0) || rec.page || 1}`;
   }
 
-  /** The gaps of a Rose Gold / 10K / 14K sheet that is in a set (or about to be): [] when none. R12: (a) its green line is cut, or the person said yes to the Cut Sheet press, and (b) its back engraving is approved.
-   *  o.inSet: the sheet IS in a set: only (a) is a gap; its open back engraving is what the set's Approve for laser cutting waits for (waitsOf), never a rule the set breaks. */
+  /** The gaps of a Rose Gold / 10K / 14K sheet that is in a set (or about to be): [] when none. R12: its green line is cut, or the person approved it (the Cut Sheet press, its Approve, a full sheet).
+   *  Its open back engraving is what the set's Approve for laser cutting waits for (waitsOf), never a rule the set breaks (Paul, 27 Oct 2026). `o` is kept for the callers. */
   function goldGaps(rec, o) {
     const cls = SR().metalClass(rec), gaps = [];
     if (!GOLD_FAMILY.includes(cls)) return gaps;
@@ -120,17 +120,15 @@
     // (Paul, 26 Oct 2026: a CUT sheet's back engraving is the set's approval to wait for (the Library holds Approve for laser cutting until every back is approved), not a rule the set breaks:
     //  the automatic cut joins it to its set before its backs are approved, and it is not held twice. The same for any green-line sheet IN a set: "we shouldn't double hold things", so the set's
     //  Approve stays grey with a plain waiting line, never the red "breaks your rules" line with Rebuild, which no rebuild could ever put right)
-    if (isCut(rec) || (o && o.inSet)) return gaps;
-    if (rec.backsApproved === false) gaps.push('its back engraving is not approved');
-    else if (rec.backsApproved !== true) {
-      const E = SE();
-      if (E && typeof E.engravingGap === 'function') {
-        const K = CUTS(), cuts = m => K && typeof K.cuts === 'function' ? K.cuts(m) : GOLD_FAMILY.includes(SR().metalClass({ metal: m }));
-        let g = null; try { g = E.engravingGap(Object.assign({}, rec, { setId: null, draft: true, laserHold: null }), { cuts }); } catch (_) { g = null; }
-        if (g) gaps.push(`its back engraving is not approved${g.label ? ` (${g.label.replace(/^[^:]*: /, '')})` : ''}`);
-      }
-    }
+    // (Paul, 27 Oct 2026: its back engraving is never a reason it is out of a set: it joins by its approval like any sheet and its set's Approve waits for the engravings, backsOpen)
     return gaps;
+  }
+  /** Whether a Rose Gold / 10K / 14K sheet's back engraving is still open: what its set's Approve for laser cutting waits for (the waits below), never a gap. Its record's own mark, else its readiness report. */
+  function backsOpen(rec) {
+    if (rec.backsApproved === false) return true;
+    if (rec.backsApproved === true) return false;
+    const L = rec.laser && typeof rec.laser === 'object' && rec.laser.stages ? rec.laser : null;
+    return !!(L && L.stages.approval === false);
   }
 
   /* ── the whole read ───────────────────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -207,7 +205,7 @@
       const greenPartnersIn = r => ((C.homes && C.homes.get(r.id)) || { partners: [] }).partners.filter(p => st.ids.includes(p));
       for (const r of live) {
         // (Paul, 26 Oct 2026: its back engraving open is what the set's Approve for laser cutting waits for, a plain waiting line: never a rule it breaks)
-        if (GOLD_FAMILY.includes(R.metalClass(r)) && goldGaps(r).some(x => /back engraving/.test(x)) && !goldGaps(r, { inSet: true }).length) waits.push({ set: st.id, setName: st.name, sheet: r.id, name: C.name(r.id), kind: 'backs', line: `waiting for the back engraving approval of ${C.name(r.id)}` });
+        if (GOLD_FAMILY.includes(R.metalClass(r)) && backsOpen(r) && !goldGaps(r, { inSet: true }).length) waits.push({ set: st.id, setName: st.name, sheet: r.id, name: C.name(r.id), kind: 'backs', line: `waiting for the back engraving approval of ${C.name(r.id)}` });
         const gaps = goldGaps(r, { inSet: true }); if (!gaps.length) continue;
         const tied = C.homes ? greenPartnersIn(r) : [...new Set(live.filter(m => m !== r && (groupOfId.get(r.id) || { ids: [] }).ids.includes(m.id)).map(m => m.id))], partnerOf = tied.map(C.name);
         add('notReady', st, [r.id], `${C.name(r.id)} is in ${st.name} but ${and(gaps)}: a ${WORD[R.metalClass(r)]} sheet joins a set only once its green line is cut (or the Cut Sheet press is approved) and its back engraving is approved. It belongs outside the set, named as a partner to add${partnerOf.length ? ` (it shares orders with ${and(partnerOf)})` : ''}`, { reasons: gaps, tied });   // (tied: the sheets of the set it shares orders with; charm-nest-set-repair.js remedyOf reads it)
