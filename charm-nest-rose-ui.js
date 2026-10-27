@@ -362,10 +362,17 @@
   function timeline(sh,history){
     const st=C.stockFor(sh.metal,sh),marks=[];
     const add=(kind,n,at,x,about)=>{if(Number.isFinite(x))marks.push({kind,n,at,x,about});};
+    // (Paul, 27 Oct 2026: "I believe there should only be 2 distinct green cut lines. For some reason, the system is showing 4". A Cut Sheet press draws its line and records its cut at once, so a
+    //  cut recorded within two minutes of its last line is that line: ONE mark per line, "Cut" and its time, numbered along the sheet's whole history (each cut's own plan counts from 1). A cut
+    //  recorded later, after lines drawn earlier, keeps its own mark)
+    let before=0;
     for(const c of history){
       const plan=c.plan;if(!plan)continue;
-      const view={lines:plan.lines||[],stages:plan.stages||[]};
-      for(const s of view.stages)add('cutLine',s.n,s.at,anchor(view,s,plan.profile?.axis),`Green line ${s.n} · ${count(s.ids)} · cut ${c.revision}`);
+      const view={lines:plan.lines||[],stages:plan.stages||[]},last=Math.max(0,...view.stages.map(s=>+new Date(s.at)||0)),at=+new Date(c.at)||0;
+      const one=view.stages.length>0&&last>0&&at>0&&Math.abs(at-last)<=120000;
+      view.stages.forEach((s,i)=>add(one?'cut':'cutLine',before+i+1,one?c.at:s.at,anchor(view,s,plan.profile?.axis),`Green line ${before+i+1} · ${count(s.ids)} · cut ${c.revision}`));
+      before+=view.stages.length;
+      if(one)continue;
       const pts=plan.shapes?.[0]?.paths?.[0];
       add('cut',c.revision,c.at,pts?.length?pts.reduce((n,p)=>n+p[0],0)/pts.length:null,`Cut ${c.revision} · ${count(plan.shapes)}`);
     }
