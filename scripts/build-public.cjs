@@ -110,6 +110,8 @@ const assets = [
   "charm-nest-overlap-fix.js",
   "charm-nest-seal-travel.js",
   "charm-nest-relink-flow.js",
+  "charm-nest-art-edit.js",
+  "charm-nest-charm-editor.js",
   "charm-nest-dxf.js",
   "charm-nest-motion.js",
   "charm-nest-stamp-walnut.png",
