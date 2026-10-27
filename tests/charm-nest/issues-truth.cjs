@@ -357,7 +357,9 @@ assert.equal(R.sheet(fixed).ready,true);assert.equal(R.laserSheet(fixed).ready,t
         if(heldNow){keys.add('held');continue;}
         if(c.place==='X')continue;
         if(c.place===null){keys.add(({noSku:'noSku',unmatched:'unmatched',noDesign2:'noDesign'})[l.kind] || 'pooled');continue;}
-        if(!ready[c.place] && inSet[c.place]!==inSet.X)keys.add('otherSheetNotReady');   // (a not-ready sheet of X's own set is the set's wait)
+        // (a not-ready sheet of X's own set is the set's wait; Z is Rose Gold: in ANOTHER set while X is in one, it is a known split, Paul 26-27 Oct 2026, no issue)
+        const knownSplit=!!inSet.X && !!inSet[c.place] && inSet[c.place]!==inSet.X && c.place==='Z';
+        if(!ready[c.place] && inSet[c.place]!==inSet.X && !knownSplit)keys.add('otherSheetNotReady');
       }
       if(keys.size)expected[o.id]=PREC.find(k=>keys.has(k));
     }

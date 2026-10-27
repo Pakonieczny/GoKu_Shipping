@@ -269,7 +269,9 @@ const rgSpec = (h, own, setId) => paul(h, {}, { sheets: [{ id: GF, metal: 'gold'
 // `recorded` is the set id the sheet's record carries; `setId` the set it is really in (none, for a draft or an excluded sheet)
 const rgCombos = function* () { for (const own of Object.keys(RG_OWN)) for (const [setName, recorded] of RG_SETS) { const setId = RG_OWN[own] === null ? null : recorded; for (const [pressName, h] of RG_CHAIN) yield { own, setName, recorded, setId, pressName, h, tag: `RG Sheet 1 ${own}, ${RG_OWN[own] === null ? `recorded ${setName}, joined none` : setName}, chain ${pressName}`, released: !!h && h.state !== 'open', same: setId === SET }; } };
 /** What GF Sheet 1 must be held back by, in piece ids: the chain only while it is not released, the MIDDLE RG piece unless RG Sheet 1 is in GF's own set (the set's wait). */
-const rgWant = c => (c.released ? [] : [`${CHAIN}_1`]).concat(c.same ? [] : [`${MID_RG}_1`]);
+// (KNOWN SPLIT, Paul 26-27 Oct 2026: a Rose Gold sheet is in ONE set and ties no two: RG Sheet 1 in ANOTHER set is no wait of GF Sheet 1's order; only one in NO set still is)
+const rgWant = c => (c.released ? [] : [`${CHAIN}_1`]).concat(c.same || c.setId !== null ? [] : [`${MID_RG}_1`]);
+const rgOnly = (c, want) => want.length === 1 && want[0] === `${MID_RG}_1`;
 // (charm-nest-sheet-name.js) a draft or a sheet left out of the set is "RG Draft 1": it has no number in any set; a sheet that is numbered keeps "RG Sheet 1"
 const rgName = c => (RG_OWN[c.own] === null ? 'RG Draft 1' : 'RG Sheet 1');
 /** The words and flags of the one honest wait (a released chain, RG Sheet 1 not in GF's set): said of the real piece and the real sheet, never of the chain. */
@@ -303,7 +305,7 @@ function rgPageChecks() {
       eq(l.length, want.length ? 1 : 0, `${tag}: GF Sheet 1 lists ${want.length ? 'the order once' : 'no order'}`);
       if (want.length) eq(l[0].pieces.map(p => p.poolId).sort(), want.slice().sort(), `${tag}: exactly these pieces`);
     }
-    if (want.length === 1 && !c.same) { rgWords(c, list[0], tag); rgWords(c, answered[0], tag + ' (server answer)'); }
+    if (rgOnly(c, want)) { rgWords(c, list[0], tag); rgWords(c, answered[0], tag + ' (server answer)'); }
     if (want.length === 2) {   // an unreleased chain AND the RG piece: each as what it is, the chain first (it is the order's head)
       eq(list[0].pieces.map(p => [p.poolId, p.kind]), [[`${CHAIN}_1`, 'noSku'], [`${MID_RG}_1`, 'otherSheetNotReady']], `${tag}: the chain holds as a piece with no SKU, the RG piece as a wait`);
       eq(!!list[0].pieces[1].noSet, c.setId === null, `${tag}: only the RG piece is told as no set`);
@@ -313,7 +315,7 @@ function rgPageChecks() {
     eq(step.state === 'done', !want.length, `${tag}: GF's Order check step ${want.length ? 'is not' : 'is'} done (${step.state}: ${step.detail})`);
     eq(R.laserSheet(pre.find(s => s.id === GF)).ready, !want.length, `${tag}: GF's laserSheet`);
     if (want.length) { eq(step.state, 'blocked', `${tag}: the step is blocked by a real wait`); eq(step.items.filter(i => i.kind === 'order').map(i => i.id), [ORDER], `${tag}: it lists the order`); eq(step.items.find(i => i.kind === 'order').why, list[0].why, `${tag}: with the issue's own words`); }
-    if (want.length === 1 && !c.same && c.setId === null) ok(step.items.some(i => i.kind === 'sheet' && i.id === RG && (RG_OWN[c.own] ? /^Holds 1 order of this sheet back: it is in no set, and / : /^Holds 1 order of this sheet back: it is not in a set yet$/).test(i.why)), `${tag}: the checklist says the sheet has no set: ${JSON.stringify(step.items)}`);
+    if (rgOnly(c, want) && c.setId === null) ok(step.items.some(i => i.kind === 'sheet' && i.id === RG && (RG_OWN[c.own] ? /^Holds 1 order of this sheet back: it is in no set, and / : /^Holds 1 order of this sheet back: it is not in a set yet$/).test(i.why)), `${tag}: the checklist says the sheet has no set: ${JSON.stringify(step.items)}`);
     // RG Sheet 1's own panel: the chain (unreleased) holds it; GF Sheet 1 is ready, so nothing else does
     eq(R.issues(rg, { rows, allSheets: sheets }).filter(i => i.step === 'orders' && i.orderId).map(i => i.pieces.map(p => p.poolId)), c.released ? [] : [[`${CHAIN}_1`]], `${tag}: RG Sheet 1's own panel`);
     n++;
@@ -334,7 +336,7 @@ async function rgServerChecks(srv) {
       eq(rd.pieceCount, c.released ? 2 : 3, `${tag}: the server counts the pieces the same way`);
       const l = R.issues(gf, {}).filter(i => i.step === 'orders' && i.orderId);
       eq(l.length, 1, `${tag}: the Library's '!' list from the server's answer`);
-      if (want.length === 1 && !c.same) rgWords(c, l[0], tag + ' (from the server)');
+      if (rgOnly(c, want)) rgWords(c, l[0], tag + ' (from the server)');
     }
     eq(gf.laser.ready, !want.length, `${tag}: the server's laser.ready for GF Sheet 1`);
     // RG Sheet 1's own answer: held back by the chain only (never by GF Sheet 1, which is ready)
@@ -499,10 +501,10 @@ async function rgMembershipChecks(srv) {
     eq(R.laserSheet(rgRec).ready, ready, `${name}: and is ${ready ? '' : 'not '}laser-ready itself`);
     n++;
   }
-  // 4. another set (the real split) still waits, and says so
+  // 4. another set: a Rose Gold sheet is in ONE set and ties no two (KNOWN SPLIT, Paul 26-27 Oct 2026): GF Sheet 1's order does not wait for RG Sheet 1 of Set 2
   seed(srv.st, S.materialize(imgSpec(hand('button', 'completed', 'stale', ['button']), 'noQr', 'set-2')), false);
   const split = words(await post({ op: 'laserStatus', sheetIds: [GF, SS] }));
-  ok(split.l.length === 1 && split.l[0].split === true && !split.l[0].noSet, `an order split between Set 1 and Set 2 stays an issue, told as the split: ${split.l[0] && split.l[0].why}`);
+  ok(split.l.length === 0 && split.rd.ready === true, `an order split between Set 1 and a Rose Gold sheet of Set 2 is a known split, no issue: ${JSON.stringify(split.rd).slice(0, 140)}`);
   return n + 1;
 }
 

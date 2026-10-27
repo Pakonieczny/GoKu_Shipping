@@ -220,11 +220,12 @@ async function roundEight() {
   const out = [], seen = { panels: 0, noSet: 0, split: 0, same: 0 };
   const PRESS = [['print only', ['print']], ['Complete Order only', ['button']], ['both buttons', ['print', 'button']]];
   for (const own of ['held', 'noQr', 'unverified']) for (const [pname, presses] of PRESS) {
-    for (const [name, setId, chip] of [['in no set', null, 'Waits on RG Sheet 1, in no set'], ['in another set', 'set-2', 'Split from RG Sheet 1'], ['in the same set', 'set-1', null]]) {
+    // (in another set: a Rose Gold sheet is in ONE set and ties no two, a KNOWN SPLIT, Paul 26-27 Oct 2026: no '!' for it, as in the same set)
+    for (const [name, setId, chip] of [['in no set', null, 'Waits on RG Sheet 1, in no set'], ['in another set', 'set-2', null], ['in the same set', 'set-1', null]]) {
       const tag = `round 8: RG Sheet 1 ${own}, ${name}, chain ${pname}`, r = await panelOf(paulRound8Shop({ own, setId, presses }), 'gf-sheet-1');
       const say = (type, detail) => out.push({ type, sheet: 'gf-sheet-1', detail: `${tag}: ${detail}` });
       if (r.net) say('networkCall', `${r.net} calls`);
-      if (chip === null) { if (r.steps.length) say('round8SameSetBang', `a '!' on ${r.steps.join(',')} for a wait inside GF's own set`); seen.same++; continue; }
+      if (chip === null) { if (r.steps.length) say('round8SameSetBang', `a '!' on ${r.steps.join(',')} for a wait that is no order issue (GF's own set, or a known split)`); seen[setId === 'set-2' ? 'split' : 'same']++; continue; }
       seen.panels++; seen[setId === null ? 'noSet' : 'split']++;
       if (!r.steps.includes('orders')) { say('round8NoBang', `no '!' on Order check (steps ${r.steps.join(',')})`); continue; }
       if (r.rows.length !== 1 || r.rows[0].order !== '4170837249' || r.rows[0].key !== 'otherSheetNotReady') say('round8Rows', `the panel lists ${JSON.stringify(r.rows)}`);

@@ -25,7 +25,8 @@ const S='Charm_Nest_Sheets',SET='Charm_Nest_Sets',RUN='Charm_Nest_Runs';
     assert.deepEqual(st.doc(S,'ready-sheet').processSeals,blue,'a newly discovered blocker never erases an earlier seal');
     run.lines[key]={orderId:order,state:'written',quantity:1,poolIds:[pool],engraveCandidate:false};
     r=await status();assert.match(r.sheets.find(s=>s.id==='ready-sheet').orderReadiness[order].why,/not on a saved sheet/);
-    const second={...ready,id:'rose-other',setId:'other-set',metal:'rose',poolIds:[pool,other+'_1_1'],orders:[order,other],placedCount:2,draft:true,verification:{ok:true},label:{files:[{path:'rose-qr.png',url:'https://example.test/qr',payload:order,orders:[order,other]}]}};
+    // (an SS sheet: a Rose Gold / 10K / 14K sheet in another set is a known split, Paul 26-27 Oct 2026, and no longer holds the order)
+    const second={...ready,id:'rose-other',setId:'other-set',metal:'silver',poolIds:[pool,other+'_1_1'],orders:[order,other],placedCount:2,draft:true,verification:{ok:true},label:{files:[{path:'rose-qr.png',url:'https://example.test/qr',payload:order,orders:[order,other]}]}};
     st.put(S,'rose-other',second);st.put(SET,'other-set',{setId:'other-set',sheetIds:['rose-other']});
     // Another order sharing that sheet has an archived plain piece; its evidence must also hydrate.
     const archived={[other+'_1']:{orderId:other,state:'committed',quantity:1,poolIds:[other+'_1_1'],engraveCandidate:false}};

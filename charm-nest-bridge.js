@@ -20438,6 +20438,10 @@ const OrderWin = window.OrderWin = (() => {
      and OrderWin.selectedPiece() are the same thing for other code. */
   const pieceName = x => { const set = O.setDesignsOf(x && x.spec);   // (a necklace of saved charms is named by all of them: SCHRODINGER CAT 1 + SCHRODINGER CAT 2)
     return String(set ? set.join(" + ") : (x.spec && x.spec.designSku) || x.line.sku || x.line.title || "Piece").replace(/_+/g, " ").replace(/\s+/g, " ").trim().slice(0, set ? 80 : 32); };
+  /* (Paul, 27 Oct 2026, order 4206987902: a 14K pair and a GF pair read as one order "on two sheets of the same colour": the row's "· 14K" was cut off behind a long name's "…". The metal is said FIRST,
+     before the name, so it is never the part a narrow row hides: pieceMetalTag; the words after the name are the rest, pieceRest) */
+  const pieceMetalTag = p => { const m = CODE[p.metal] || (p.metal ? labelOf(p.metal) : ""); return m ? `<span class="mt">${esc(m)}</span> ` : ""; };
+  const pieceRest = p => pieceMeta(Object.assign({}, p, { metal: null }));
   const pieceMeta = p => [CODE[p.metal] || (p.metal ? labelOf(p.metal) : ""), p.form].filter(Boolean).join(" · ") + (p.qty > 1 ? (p.counted ? ` · ${p.qty} pieces` : ` · ×${p.qty}`) : "");   // (a counted line, "2 Disc", says "2 pieces": ×2 reads as two copies of one charm)
   /** The Left and the Right of a MISMATCHED pair line (OrderPieces entries that carry a side), [] for every other line: a single, a matching pair, discs, an old glued record. */
   function pairSides(x) {
@@ -20894,7 +20898,8 @@ const OrderWin = window.OrderWin = (() => {
         const p = x.p, pair = it.kind === "pair", key = p.key, ctl = ctls.get(key), hold = holds.get(key), drawer = `owPcD${n}`;
         const units = pair ? Math.max(1, it.subs[0].qty || 1) : 1;
         const meta = pair ? pieceMeta(Object.assign({}, p, { qty: 1, counted: false })) + (units > 1 ? (pieceMeta(Object.assign({}, p, { qty: 1, counted: false })) ? " · " : "") + units + " pairs" : "") : pieceMeta(p);
-        const nm = `<b>${esc(p.name)}</b>${meta ? " · " + esc(meta) : ""}${ctl && ctl.label ? ` · <span class="kind" title="${esc(ctl.why)}">${esc(ctl.label)}</span>` : ""}`;
+        const rest = pair ? pieceRest(Object.assign({}, p, { qty: 1, counted: false })) + (units > 1 ? (pieceRest(Object.assign({}, p, { qty: 1, counted: false })) ? " · " : "") + units + " pairs" : "") : pieceRest(p);
+        const nm = `${pieceMetalTag(p)}<b>${esc(p.name)}</b>${rest ? " · " + esc(rest) : ""}${ctl && ctl.label ? ` · <span class="kind" title="${esc(ctl.why)}">${esc(ctl.label)}</span>` : ""}`;
         const aria = p.name + (meta ? " · " + meta : "") + (pair ? " · Left and Right" : "");
         let st, steps;
         if (pair) {
@@ -20917,7 +20922,7 @@ const OrderWin = window.OrderWin = (() => {
           st + act + steps + chev + `</div>` +
           `<div class="owPcDrawer" id="${drawer}" data-for="${esc(key)}" role="group" aria-label="${esc("Each piece of " + p.name)}" hidden><div class="owPcDrawerIn">${it.subs.map(q => pcSubHtml(it, q, rid, p.name)).join("")}</div></div>`;
       }
-      const nm = `<b>${esc(x.p.name)}</b> · ${esc(pieceMeta(x.p))}`;
+      const nm = `${pieceMetalTag(x.p)}<b>${esc(x.p.name)}</b>${pieceRest(x.p) ? " · " + esc(pieceRest(x.p)) : ""}`;
       const steps = pieceDotsHtml(x, rid);   // (the dots: a card for each, see pieceDotsHtml)
       // a piece that is in the Review tab has that card's own buttons (and seals) here, in place of its words: a press is a press
       // there; a piece in no card keeps its words
@@ -20936,8 +20941,8 @@ const OrderWin = window.OrderWin = (() => {
       }
       if (!ctl) return `<div class="owPcRow${slow ? " slow" : ""}" data-piece="${esc(x.p.key)}" role="group" aria-label="${esc(x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : ""))}">${dot}<button type="button" class="nm owPcName" title="Show only this piece">${nm}</button>${st}${steps}${tools}</div>`;
       // (what the card is, said beside the name: the kind of custom order it is, which the bar used to say)
-      const meta = [pieceMeta(x.p) ? esc(pieceMeta(x.p)) : "", ctl.label ? `<span class="kind" title="${esc(ctl.why)}">${esc(ctl.label)}</span>` : ""].filter(Boolean).join(" · ");
-      const name = `<b>${esc(x.p.name)}</b>${meta ? " · " + meta : ""}`, aria = x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : "") + (ctl.label ? " · " + ctl.label : "");
+      const meta = [pieceRest(x.p) ? esc(pieceRest(x.p)) : "", ctl.label ? `<span class="kind" title="${esc(ctl.why)}">${esc(ctl.label)}</span>` : ""].filter(Boolean).join(" · ");
+      const name = `${pieceMetalTag(x.p)}<b>${esc(x.p.name)}</b>${meta ? " · " + meta : ""}`, aria = x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : "") + (ctl.label ? " · " + ctl.label : "");
       return `<div class="owPcRow hasAct${slow ? " slow" : ""}${all ? "" : " solo"}"${all ? ` data-piece="${esc(x.p.key)}"` : ""} role="group" aria-label="${esc(aria)}">${dot}` +
         (all ? `<button type="button" class="nm owPcName" title="Show only this piece">${name}</button>` : `<span class="nm owPcName">${name}</span>`) +
         `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${ctl.html}</span>${stSr}${steps}${tools}</div>`;

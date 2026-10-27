@@ -275,12 +275,12 @@
   const ownSetWait=(b,mySet)=>!!mySet && b.key==='otherSheetNotReady' && Object.prototype.hasOwnProperty.call(b,'setId') && (Array.isArray(b.setIds)?b.setIds:[b.setId]).every(x=>x===mySet);
   /* KNOWN SPLIT (Paul, 26 Oct 2026: "a Rose Gold / 10K / 14K sheet is in ONE set and ties no two sets", and 27 Oct 2026, of a 14K sheet held back by "Pair split from GF Sheet 1" for two orders
    * whose 14K pieces were on it: "I cannot have false positives"). An order with pieces on a green-line sheet (Rose Gold, 10K, 14K) and on a sheet of another metal is split across sets by design:
-   * each side is cut with its own set and the order meets again at sorting. So for a sheet IN a set, a piece on a not-ready sheet of another set (or of none) is no issue of its order when either
+   * each side is cut with its own set and the order meets again at sorting. So for a sheet IN a set, a piece on a not-ready sheet of ANOTHER set is no issue of its order when either
    * sheet is a green-line one: the asking sheet's metal (`myMetal`), the block's own mark (`green`), or, for a report made before that mark, its sheet's name ("14K Sheet 1"). A split between a GF
-   * and an SS sheet stays the real issue it is (the cardinal rule). */
+   * and an SS sheet stays the real issue it is (the cardinal rule), and a piece on a sheet in NO set keeps its wait ("in no set": where it goes is not decided yet). */
   const GREEN_NAME=/^(RG|10K|14K)\s/;
   const knownSplit=(b,mySet,myMetal)=>!!mySet && b.key==='otherSheetNotReady' && Object.prototype.hasOwnProperty.call(b,'setId') && (GREEN.has(String(myMetal || '')) || b.green===true || GREEN_NAME.test(String(b.sheetLabel || '')))
-    && (Array.isArray(b.setIds)?b.setIds:[b.setId]).every(x=>x!==mySet);
+    && (Array.isArray(b.setIds)?b.setIds:[b.setId]).every(x=>!!x && x!==mySet);
   function forSheet(r,sid,mySet,myMetal){
     if(!r || r.ready===true || !Array.isArray(r.blocks) || !sid)return r;
     if(Array.isArray(r.onSheets) && !r.onSheets.includes(sid))return {ready:true};

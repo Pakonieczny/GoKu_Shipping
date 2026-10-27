@@ -191,8 +191,8 @@ const must = (list, what) => { if (list.length) { console.error(`FAIL: ${what}\n
   assert(P.mateChecks(waits.R, paulShop()).some(d => d.type === 'setWaitListed'), 'the property harness catches the wait put back too');
   assert(sameSetChecks(waits.R, S.materialize(paulSpec({ unapproved: 0 })), false).length === 0, '(and the mutant says nothing once SS Sheet 1 is ready: it is the wait that is caught, not the shop)');
   const server = fs.readFileSync(path.join(ROOT, 'netlify/functions/charmNestLibrary.js'), 'utf8');
-  assert(server.includes('Readiness.forSheet(orders[id],s.id || s.sheetId,Readiness.setOf(s))'), 'the server twin (productionReadiness) reads each sheet\'s orders with that sheet\'s own set');
-  assert(SRC.includes('forSheet(s.orderReadiness?.[id],sid,setOf(s))') && SRC.includes('forSheet(reps[id],sid,mine)') && SRC.includes('forSheet(s.orderReadiness[id],sid,setOf(s))'), 'the page reads every sheet with its own set in all three places (stage, readFrom, orderBlockers)');
+  assert(server.includes('Readiness.forSheet(orders[id],s.id || s.sheetId,Readiness.setOf(s),s.metal)'), 'the server twin (productionReadiness) reads each sheet\'s orders with that sheet\'s own set');
+  assert(SRC.includes('forSheet(s.orderReadiness?.[id],sid,setOf(s),s.metal)') && SRC.includes('forSheet(reps[id],sid,mine,s.metal)') && SRC.includes('forSheet(s.orderReadiness[id],sid,setOf(s),s.metal)'), 'the page reads every sheet with its own set (and its metal, for a known green-line split) in all three places (stage, readFrom, orderBlockers)');
   // nothing of the quiet wait is left in the shipped sources: no entry, no row, no clock, no mark
   assert(!/waitsOnSheet/.test(SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')), 'readiness makes no waitsOnSheet entry');
   assert(!/data-issues-quiet|flowWait|CLOCK|waitOn\b/.test(BRIDGE) && !/lisWait|waitRowHtml|m\.waits|data-issues-quiet|lisCount\.quiet/.test(ISSUES), 'no quiet clock, wait row or wait header is left in the bridge or the panel');

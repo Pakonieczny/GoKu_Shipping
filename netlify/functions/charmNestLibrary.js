@@ -451,7 +451,7 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
   const orders=Readiness.orderReports([...lines.values()],[...evidence.values()],review?{review}:undefined);
   // each sheet's own reading of its orders: an order waits only for its OTHER pieces (Readiness.forSheet), never for a piece on this very sheet, and (round 7)
   // never for a not-ready sheet of the sheet's OWN set: a set advances as one, that wait is the set's (Readiness.setGate), not the order's. An order split across sets still waits.
-  for(const s of records)s.orderReadiness=Object.fromEntries(Readiness.orderIds(s).map(id=>[id,(!unverified.has(id) && Readiness.forSheet(orders[id],s.id || s.sheetId,Readiness.setOf(s))) || {ready:false,why:'Order readiness has not been verified'}]));
+  for(const s of records)s.orderReadiness=Object.fromEntries(Readiness.orderIds(s).map(id=>[id,(!unverified.has(id) && Readiness.forSheet(orders[id],s.id || s.sheetId,Readiness.setOf(s),s.metal)) || {ready:false,why:'Order readiness has not been verified'}]));
   return records;
 }
 

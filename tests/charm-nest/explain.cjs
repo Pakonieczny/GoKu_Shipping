@@ -73,9 +73,9 @@ const both=sheet('s4d');both.label={files:[]};both.orderReadiness['1000']={ready
 e=R.explain(both);assert.equal(e.step,'orders');assert.match(step(e,'orders').detail,/^QR label not made yet\. 1 of 3 orders waits for other pieces/);assert.match(e.nextText,/^QR label not made yet, and /);
 
 // 5. Paul's sheet: every back saved and a QR label, but an order has another line on another sheet that is not ready
-const a=sheet('gf1',{n:3,index:1}),b=sheet('rg1',{n:2,metal:'rose',index:1,setId:'set2'});
+const a=sheet('gf1',{n:3,index:1}),b=sheet('rg1',{n:2,metal:'silver',index:1,setId:'set2'});   // (an SS sheet: a Rose Gold / 10K / 14K sheet in another set is a known split, Paul 26-27 Oct 2026)
 a.orders.push('2000');a.poolIds.push('2000_x_1');a.placedCount=4;a.backPool.push(back('2000_x_1','gf1'));a.label.files[0].orders=a.orders.slice();delete a.orderReadiness;
-b.metalLabel='Rose Gold';b.poolIds=['2000_y_1','3000_z_1'];b.orders=['2000','3000'];b.backPool=[];b.engraving={'2000_y_1':{needed:true,state:'review',approved:false},'3000_z_1':{needed:false,state:'none',approved:true}};b.label.files[0].orders=['2000','3000'];b.placedCount=2;delete b.orderReadiness;
+b.metalLabel='Sterling Silver';b.poolIds=['2000_y_1','3000_z_1'];b.orders=['2000','3000'];b.backPool=[];b.engraving={'2000_y_1':{needed:true,state:'review',approved:false},'3000_z_1':{needed:false,state:'none',approved:true}};b.label.files[0].orders=['2000','3000'];b.placedCount=2;delete b.orderReadiness;
 const lines=[
   ...a.poolIds.map(p=>({key:p.replace(/_1$/,''),orderId:p.split('_')[0],state:'written',poolIds:[p]})),
   {key:'2000_y',orderId:'2000',state:'written',poolIds:['2000_y_1']},
@@ -90,8 +90,8 @@ assert.equal(R.sheet(a).stages.orders,false);assert.deepEqual([R.sheet(a).saved,
 assert.equal(e.ready,false);assert.equal(e.step,'orders');assert.deepEqual(states(e),{nesting:'done',engraving:'done',orders:'blocked',laser:'waiting',completed:'waiting'});
 const oi=step(e,'orders').items;
 assert.deepEqual(oi.map(i=>[i.kind,i.id]),[['order','2000'],['sheet','rg1']],'the order and the sheet that holds it');
-assert.match(oi[0].label,/Order 2000 \(Grace Hopper\)/);assert.match(oi[0].why,/other piece is on RG Sheet 1/);assert.match(oi[0].why,/engraving needs approval/);
-assert.match(oi[1].label,/RG Sheet 1/);assert.match(e.nextText,/Order 2000 \(Grace Hopper\) waits for another piece/);
+assert.match(oi[0].label,/Order 2000 \(Grace Hopper\)/);assert.match(oi[0].why,/other piece is on SS Sheet 1/);assert.match(oi[0].why,/engraving needs approval/);
+assert.match(oi[1].label,/SS Sheet 1/);assert.match(e.nextText,/Order 2000 \(Grace Hopper\) waits for another piece/);
 assert.match(step(e,'orders').detail,/1 of 4 orders wait/);
 // orders not read at all is a wait that says so, not 67 identical lines
 const unread=clone(a);delete unread.orderReadiness;e=R.explain(unread);assert.equal(e.step,'orders');assert.equal(step(e,'orders').items.length,1);assert.match(step(e,'orders').detail,/not been checked yet/);
@@ -114,7 +114,7 @@ assert.match(rep2['2000'].why,/not in a set yet/);
 }
 
 // 5c. (Paul, round 7: "it's on both sheets and both sheets are in the same set") the very order of 5, with its two pieces on sheets of the SAME set: the order is fine.
-// A set advances as one, so RG Sheet 1 not being ready is the SET's wait (said once, under the Approve button, in no sheet's list), never a wait of the order; the same order split between two sets still is one.
+// A set advances as one, so SS Sheet 1 not being ready is the SET's wait (said once, under the Approve button, in no sheet's list), never a wait of the order; the same order split between two sets still is one.
 {
   const same=clone(b);same.setId='set1';
   const sets1={setId:'set1',seq:1,name:'Set 1',sheetIds:['gf1','rg1']},repsS=R.orderReports(lines,[a,same]);
@@ -125,9 +125,9 @@ assert.match(rep2['2000'].why,/not in a set yet/);
   assert.equal(states(e).orders,'done');assert.equal(step(e,'orders').items.length,0,'no order is listed as waiting');assert.match(step(e,'orders').detail,/All 4 orders/);
   assert.equal(e.step,'laser');assert.equal(e.ready,false,'the set is cut together, so the sheet still waits for its mate');assert.equal(step(e,'laser').items[0].id,'rg1');
   const same1=R.issues(ga,{rows:names,set:sets1,sheets:[ga,same]});
-  assert.deepEqual(same1,[],'GF Sheet 1\'s list is empty (round 8: "only related items to that particular sheet"): no order issue, and the set\'s wait for RG Sheet 1 is not an entry of it');
-  assert.match(R.setGate(sets1,[ga,same]).reason,/^RG Sheet 1 · back engravings \d+ of \d+$/,'the set\'s wait is said once, by the gate (the reason under the grey Approve button)');
-  // the same shop with RG Sheet 1 in ANOTHER set: the order is split between two sets, a real issue worded as the split it is
+  assert.deepEqual(same1,[],'GF Sheet 1\'s list is empty (round 8: "only related items to that particular sheet"): no order issue, and the set\'s wait for SS Sheet 1 is not an entry of it');
+  assert.match(R.setGate(sets1,[ga,same]).reason,/^SS Sheet 1 · back engravings \d+ of \d+$/,'the set\'s wait is said once, by the gate (the reason under the grey Approve button)');
+  // the same shop with SS Sheet 1 in ANOTHER set: the order is split between two sets, a real issue worded as the split it is
   const apart=clone(b);apart.setId='set2';apart.setSeq=2;const repsX=R.orderReports(lines,[a,apart]);
   const gx=clone(a);gx.setSeq=1;gx.orderReadiness=Object.fromEntries(R.orderIds(gx).map(o=>[o,R.forSheet(repsX[o],'gf1',R.setOf(gx))]));
   assert.equal(R.sheet(gx).stages.orders,false);

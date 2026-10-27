@@ -45,7 +45,9 @@
  *                                 sheet of the same set that is not ready is the SET's wait, never an issue of the order. An order whose
  *                                 other piece sits on a not-ready sheet of ANOTHER set is split between two sets (the cardinal rule): it
  *                                 stays a real issue, flagged `split`. Round 8: when that sheet is in NO set at all while X is in one, the wait stays the one
- *                                 honest issue, flagged `noSet`: a real piece on a real sheet that has no set, never the piece completed by hand.)
+ *                                 honest issue, flagged `noSet`: a real piece on a real sheet that has no set, never the piece completed by hand.
+ *                                 KNOWN SPLIT, Paul 26-27 Oct 2026: when X or the other sheet is a Rose Gold / 10K / 14K one and both are in sets, different
+ *                                 ones, it is no issue: a green-line sheet is in ONE set and ties no two, each side is cut with its own set.)
  *          Single-piece orders and orders whose live pieces are all on X are NEVER an order issue for X through where pieces are,
  *          and X's own readiness (unapproved engraving, no QR label, unverified layout...) never makes an order an issue for X.
  *          ONE exception, agreed with Issues-truth (3ff5b790): a HELD piece (hold text, changePending) is a person's / Etsy's explicit stop
@@ -68,6 +70,7 @@
 'use strict';
 
 const CODE = { gold: 'GF', silver: 'SS', rose: 'RG', gold10k: '10K', gold14k: '14K' };
+const GREEN_METALS = new Set(['rose', 'gold10k', 'gold14k']);   // the metals with a green line: a sheet of one is in ONE set and ties no two (known split)
 const url = x => (typeof x === 'string' ? x : (x && x.url) || '');
 const num = v => (+v > 0 ? +v : 0);
 const lineOf = pid => { const s = String(pid), i = s.lastIndexOf('_'); return i > 0 ? s.slice(0, i) : s; };
@@ -220,7 +223,10 @@ function truthOf(shop, policy = {}) {
           // a not-ready sheet of X's OWN set is the set's wait, not the order's; one in another set (or in no set) is a real split / wait
           const mine = effSet(s), same = !policy.sameSetIsIssue && !!mine && p.sheets.every(id => effSet(byId.get(id)) === mine);   // (policy.sameSetIsIssue: the OLD rule, for the coverage count and the mutant)
           // (`split`: an order split between two sets. A held piece is listed as held, whatever sheet it sits on, so it is not listed as a split)
-          if (!same) {
+          // (KNOWN SPLIT, Paul 26-27 Oct 2026: a Rose Gold / 10K / 14K sheet is in ONE set and ties no two: X in a set, the piece's sheets all in OTHER sets, and X or one of them a
+          //  green-line sheet: each side is cut with its own set, no issue of the order. A sheet in no set keeps its wait, a GF / SS split across sets stays real)
+          const green = q => !!q && GREEN_METALS.has(q.metal), known = !!mine && (green(s) || p.sheets.some(id => green(byId.get(id)))) && p.sheets.every(id => effSet(byId.get(id)) && effSet(byId.get(id)) !== mine);
+          if (!same && !known) {
             reasons.add('otherSheetNotReady'); split = !!mine && !(l.hold || l.changePending) && p.sheets.some(id => effSet(byId.get(id)) && effSet(byId.get(id)) !== mine);
             // (`noSet`, round 8: the piece's not-ready sheet is in NO set at all while X is in one: the one honest wait, said with its real sheet and that it has no set)
             noSet = !!mine && !split && !(l.hold || l.changePending) && p.sheets.every(id => !effSet(byId.get(id)));
