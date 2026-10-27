@@ -22822,7 +22822,7 @@ const RunHistory = window.RunHistory = (() => {
   function dayHead(day, count) {
     const what = n(count, "set");
     if (!day) return `<h3 class="hDay">No date<i>${what}</i></h3>`;
-    const d = dateOf(day), age = Math.round((Date.parse(today() + "T12:00:00") - d.getTime()) / DAY_MS);
+    const d = dateOf(day), now = CNListActivity.day(SimClock.now()) || today(), age = Math.round((Date.parse(now + "T12:00:00") - d.getTime()) / DAY_MS);   // (the shop's day, as the sets are grouped: not this browser's)
     const title = age === 0 ? "Today" : age === 1 ? "Yesterday" : d.toLocaleDateString(undefined, { weekday: "long" });
     const date = d.toLocaleDateString(undefined, Object.assign({ month: "short", day: "numeric" }, d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}));
     return `<h3 class="hDay">${esc(title)}<span>${esc(date)}</span><i>${what}</i></h3>`;

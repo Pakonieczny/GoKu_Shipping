@@ -52,6 +52,9 @@
 .ordBar:not(#ordBar):has(.cnListTools),.libBar:has(>.cnListTools),.masterHead:has(>.cnListTools),.hBar:has(>.cnListTools){flex-shrink:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}
 .ordBar:not(#ordBar):has(.cnListTools)>*,.masterHead:has(>.cnListTools)>*,.hBar:has(>.cnListTools)>*{flex-shrink:0;white-space:nowrap}
 .egBar>.egSearchGroup{flex:0 1 220px}
+/* the Engrave bar wraps like the Orders bar instead of scrolling sideways: at 900 px beside the rail its sort button ran off the edge ("Ne…"); the date and
+   sort tools take a second line when the first has no room (they fit on one line from about 1000 px) */
+#engraveView .ordBar.egBar:has(>.cnListTools){flex-wrap:wrap;overflow-x:visible;row-gap:6px}
 .egBar>.egSearchGroup>.egFind{position:relative;display:flex;flex:1 1 auto;align-items:center;min-width:0}
 .egBar>.egSearchGroup .ordSearch{width:100%;max-width:none;box-sizing:border-box}
 /* the Engrave box's × (Paul, 18 Oct 2026: "Add a 'X' inside the search bar"): the Orders bar's .ordFindX (below), inside the round box at its right, only while it holds text */

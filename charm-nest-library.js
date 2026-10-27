@@ -967,7 +967,9 @@
       + who(r) + `<button type="button" class="ldBack" data-ld-back="sheet:${esc(r.id)}" title="Return to Laser cutting">Reopen</button>${ICON.chev}`+processHtml(r,'sheet:'+r.id,true)+'</div></div>';
   }
   function dayHead(day, kind) {
-    const t = realDay(Date.now()), y = realDay(Date.now() - 86400000), d = new Date(day + 'T12:00:00');
+    // (Today / Yesterday by the shop's day, the one the rows are grouped by (CNListActivity.day, America/Toronto): by this browser's own clock, a set
+    //  finished at 8 pm in Toronto was filed under "Yesterday" anywhere east of it, from midnight there until midnight in Toronto)
+    const A = window.CNListActivity, t = A ? A.day(Date.now()) : realDay(Date.now()), y = A ? A.day(Date.parse(t + 'T12:00:00Z') - 86400000) : realDay(Date.now() - 86400000), d = new Date(day + 'T12:00:00');
     const year = d.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {};
     const date = d.toLocaleDateString(undefined, Object.assign({ month: 'short', day: 'numeric' }, year));
     const title = day === t ? 'Today' : day === y ? 'Yesterday' : d.toLocaleDateString(undefined, { weekday: 'long' });
