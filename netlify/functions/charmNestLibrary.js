@@ -178,7 +178,7 @@ function slim(d) {
 /* The fields of a sheet record that its list entry (slim) and its laser readiness (Readiness.sheet) read, and the lists
    filter on. A list reads only these: the rest of a record (its charms with their outlines, its placements) is most of
    its up to 900 KB, and a list of 500 sheets used to read all of it to send none of it. */
-const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit"];
+const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit", "releasedChange"];   // (releasedChange: a set changed after it was released or approved for laser cutting, said on its Library card, Paul 27 Oct 2026)
 /** What the Library's live read (op_laserStatus) reads of a sheet: SLIM_SHEET, and the sheet's own number (readiness labels a sheet that is in no set by it). */
 const LASER_SHEET = SLIM_SHEET.filter(f => f !== "sources").concat(["seq", "sourcesLite"]);
 /** What decides whether a sheet is on the Library's Current list (op_listSheets with excludeDone): archived, completed, its set (filingRecords), the filters and the order. */
@@ -622,7 +622,7 @@ async function laserUnchanged(sheetIds, setIds, revs) {
    same way (ifRev of its own last pass, for the same cards), because a pass that finds nothing new reads and writes nothing. ── */
 const REV = "Charm_Nest_Rev", REV_DOC = "library";   // (beside the placement counter, Charm_Nest_Rev/placement; the sandbox's own two are in Sandbox_Order_Rev, see SB_REV_COLL)
 // (the sandbox-only ops are not here: they write Sandbox_ records only, whatever the request says, so not even a sandbox request without its flag moves the production counter)
-const REV_OPS = new Set(["backPut", "backInvalidate", "setAllocate", "setUpdate", "runPut", "runArchive", "laserDone", "putSheet", "deleteSheet", "restoreSheet", "archiveEmptySheet", "roseRecordCut", "roseTakeOff", "roseClaim", "roseRelease", "partialClaim", "partialRelease", "flowApply", "customDecide", "customPut", "customReopen", "customDelete", "customSheetPut", "cancelPut", "cancelRestore", "noDesignPut", "noDesignDelete", "sheetPdf", "cancelSweep", "purgeHistory", "manualClaim"]);
+const REV_OPS = new Set(["backPut", "backInvalidate", "setAllocate", "setUpdate", "runPut", "runArchive", "laserDone", "putSheet", "deleteSheet", "restoreSheet", "archiveEmptySheet", "roseRecordCut", "roseTakeOff", "roseReopen", "roseClaim", "roseRelease", "partialClaim", "partialRelease", "flowApply", "customDecide", "customPut", "customReopen", "customDelete", "customSheetPut", "cancelPut", "cancelRestore", "noDesignPut", "noDesignDelete", "sheetPdf", "cancelSweep", "purgeHistory", "manualClaim"]);
 /* COST (Oct 2026): WHAT moved, beside THAT something moved. The revision moved for every write in REV_OPS, and a nesting run writes runPut every few
    seconds: every Library on screen then probed every document of its answer (one read each, ~59 for a screen of cards) at each beat, for a write to some
    other run. The revision document now also keeps which documents the recent writes touched: changed {'s:<sheet>' | 't:<set>' | 'r:<run>' | 'c:<custom
@@ -1072,11 +1072,13 @@ async function op_manualClaim(b) {
   const ref = col(SHEETS).doc(b.id);
   return db.runTransaction(async tx => {
     // (COST, Oct 2026: the claim is kept alive every 30 s; it reads the three fields it decides on, not the sheet record whole, which can be hundreds of KB)
-    const [snap] = await txGetAll(tx, [ref], ["manualEdit", "laserDoneAt", "roseCutAt"]); if (!snap.exists) return { error: "This sheet is no longer in the Library.", status: 404 };
+    const [snap] = await txGetAll(tx, [ref], ["manualEdit", "laserDoneAt", "roseCutAt", "metal"]); if (!snap.exists) return { error: "This sheet is no longer in the Library.", status: 404 };
     const d = snap.data(), cur = d.manualEdit && typeof d.manualEdit === "object" && d.manualEdit.tab ? d.manualEdit : null, now = Date.now();
     if (b.release === true) { if (cur && cur.tab === tab) tx.set(ref, { manualEdit: null }, { merge: true }); return { ok: true, held: null }; }
     if (cur && cur.tab !== tab && now - num(cur.at) < MANUAL_STALE_MS) return { ok: false, held: { by: str(cur.by, 80), at: num(cur.at) } };
-    if (num(d.laserDoneAt) > 0 || d.roseCutAt) return { ok: false, held: null, refused: "cut" };
+    // (Paul, 27 Oct 2026: a 10K / 14K sheet changes "until such time a sheet has been cut on a laser and marked as cut": its recorded green line cut is no lock, the page sets it aside
+    //  first (roseReopen); the laser's mark alone refuses. Another metal's recorded cut still refuses, as before)
+    if (num(d.laserDoneAt) > 0 || (d.roseCutAt && !["gold10k", "gold14k"].includes(d.metal))) return { ok: false, held: null, refused: "cut" };
     const held = { by, tab, at: now };
     tx.set(ref, { manualEdit: held }, { merge: true });
     return { ok: true, held };

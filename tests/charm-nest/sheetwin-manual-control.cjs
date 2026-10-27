@@ -5,7 +5,8 @@
 // In a real Chromium over the fake site (bridge-server.cjs: the real charmNestLibrary handlers over an in-memory store; nothing live). The 10K sheet is made
 // through the page itself (a PDF of five 20 pt squares dropped on 10K Gold, nested, written, verified and saved by the real nest), then laid out at known spots by
 // the nest (pins), so every pose below is exact:
-//   1  the switch: shown on a 10K / 14K sheet only (not on a Gold-filled sheet), and says why it cannot start (cut, lined, approved, being written, run not here)
+//   1  the switch: shown on a 10K / 14K sheet only (not on a Gold-filled sheet), and says why it cannot start (cut on the laser, being written, run not here); a green line, a recorded cut
+//      and a set approved for laser cutting no longer stop it (GOLDEDIT, Paul 27 Oct 2026)
 //   2  on: the sheet is claimed (manualEdit on its record) and held; press-drag moves a charm, the round handle turns it in 15° steps (Shift: by the degree),
 //      a corner resizes it within 80-120 %
 //   2b MCFREE (Paul, 20 Oct 2026: "Make it so these control vertices are always visible, even if they have to stick out beyond the bounds of the charm sheet"): a charm
@@ -99,10 +100,10 @@ const root = path.join(__dirname, '../..');
       return g.why;
     };
     const why = [];
-    why.push(await guard({ rosePlanHash: 'plan-1' }, /already has its green cut line/, 'the sheet has its green line'));
-    why.push(await guard({ laserDoneAt: Date.now() }, /cut on the laser/, 'the sheet was cut'));
-    why.push(await guard({ roseCutAt: Date.now() }, /green line has been cut/, 'its line was cut'));
-    why.push(await guard({ processReady: true }, /approved for laser cutting/, 'its set is approved'));
+    // (GOLDEDIT, Paul 27 Oct 2026: "until such time a sheet has been cut on a laser and marked as cut by the user": the laser's mark is a 10K / 14K sheet's one lock; its green line, its recorded
+    //  cut and its set approved for laser cutting no longer stop Manual Control: gold-editable.cjs runs those end to end)
+    why.push(await guard({ laserDoneAt: Date.now() }, /has been cut on the laser: its charms can no longer change/, 'the sheet was cut on the laser'));
+    assert.deepEqual(await page.evaluate(() => { const sh = CN.S.sheets.gold10k.pages.at(-1), out = []; for (const set of [{ rosePlanHash: 'plan-1' }, { roseCutAt: Date.now() }, { processReady: true }, { laserSetPending: true }]) { const was = {}; for (const [k, v] of Object.entries(set)) { was[k] = sh[k]; sh[k] = v; } out.push(CNManual.available(sh).reason); for (const [k, v] of Object.entries(was)) { if (v === undefined) delete sh[k]; else sh[k] = v; } } return out; }), ['', '', '', ''], 'a green line, a recorded cut, a set approved for laser cutting: Manual Control is open');
     why.push(await guard({ status: 'nesting' }, /being nested or saved/, 'it is being nested'));
     why.push(await guard({ status: 'queued' }, /being nested or saved/, 'it is queued to nest'));
     why.push(await guard({ status: 'finishing' }, /being nested or saved/, 'it is finishing'));

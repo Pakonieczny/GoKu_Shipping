@@ -23,10 +23,15 @@
        pieces are moved all the same, where they were let go (asDropped), red where they overlap (MCFREE), and a note says they do not fit there yet: the
        person resizes or moves them clear (the sheet joins no set until then). Only without the window's moveNow is it the old "Not enough space" pop-up.
    Guards (refused with a plain sentence, the charm flies back, nothing is written): another metal is never offered (10K to 10K, 14K to
-   14K only); neither sheet may be nesting, finishing, queued or saving, cut by the laser, carrying a green line (cut, or drawn and not
-   cut: a move would make the line wrong, the same rule as Merge sheets), in a set (committed, sent or open: a sheet in a set keeps its
-   charms), taken back from the Library, or of a run that is finishing or committing; the source is never emptied (Merge sheets is
-   for that); the order must not be on hold, cancelled or in Review.
+   14K only); neither sheet may be nesting, finishing, queued or saving, cut on the laser, taken back from the Library, or of a run that is
+   finishing or committing; the source is never emptied (Merge sheets is for that); the order must not be on hold, cancelled or in Review.
+   GOLDEDIT (Paul, 27 Oct 2026: "I should be able to manually control this sheet and adjust the charms and add and remove charms from any 10 K
+   and 14 K gold sheet until such time that it has been marked as completed in the laser cutting process"): the laser's mark is the ONE lock.
+   A green line (drawn, or its cut recorded by Cut Sheet), the sheet full and approved, in a set, its set approved for laser cutting or sent
+   to the station: none refuses a move any more. Before the move the sheets give up their line (the window's goldOpen: RoseStock.reopen, a
+   recorded cut set aside with its leftover); after it they are written, their line drawn again for the charms as they stand, their QR
+   labels made, and a released set's card says it changed (the window's goldAfter). (Paul's first screenshot: "14K Draft 1 has its green dash
+   line drawn" was said of a FULL sheet approved with no line at all: its contour (rosePlan, full, no lines) was read as a line.)
    Orders with several pieces (the owner's set rules, docs/charm-nest/set-rules.md R9 and R16): the unit that moves is every piece of the
    charm's order on this sheet, so an order never spreads over two sheets by a drag, and a pair is never split. Where the other sheet
    already holds that order, only the charm's own line (its pair) goes, which brings the order together. A move that would tie a sheet
@@ -169,19 +174,20 @@
     return { prev: i > 0 ? list[i - 1] : null, next: i >= 0 && i < list.length - 1 ? list[i + 1] : null };
   }
   const word = sh => { const K = kit(); return sh ? (K ? K.word(sh) : window.CharmNestSheetName ? CharmNestSheetName.name(sh) : `Sheet ${sh.page}`) : ""; };
-  const setWord = sh => { try { const s = window.Sets && Sets.ofRun(sh.runId).find(x => x.setId === sh.setId); return s && s.name ? s.name.replace(/^Set-/, "Set ") : "a set"; } catch (_) { return "a set"; } };
-  /** Why a sheet may not give or take a charm now ("" to go). */
+  /** The laser's mark on a sheet or on its set: a 10K / 14K sheet's ONE lock (GOLDEDIT). The window's own reading when it has one. */
+  function laserCut(sh) {
+    const K = kit(); if (K && typeof K.laserCut === "function") return !!tryDo(() => K.laserCut(sh));
+    return +sh.laserDoneAt > 0 || !!tryDo(() => window.Sets && Sets.ofRun(sh.runId).some(s => +s.laserDoneAt > 0 && (s.sheetIds || []).includes(sh.sheetId)));
+  }
+  /** Why a sheet may not give or take a charm now ("" to go). GOLDEDIT (Paul, 27 Oct 2026): the laser's mark is the ONE lock; a green line drawn or recorded, a set (open, approved
+   *  for laser cutting, sent to the station or committed) refuse nothing any more (the old "green dash line drawn" refusal read a full sheet's contour, which has no line, as a line).
+   *  What is left is the sheet held here, not busy, its run open. */
   function sheetRefusal(sh) {
     const K = kit(), n = word(sh);
     if (!sh || !sh.sheetId || !pages().includes(sh)) return `${n || "That sheet"} is not held by this sorter now`;
     if (!METALS_HOP.includes(sh.metal)) return `${n} is not a 10K or 14K sheet`;
-    if (+sh.laserDoneAt > 0) return `${n} has been cut by the laser`;
-    if (sh.roseCutAt) return `${n} has its green line cut: its charms stay where they are`;
-    if (sh.rosePlan || sh.roseProtected) return `${n} has its green dash line drawn: moving a charm would make the line wrong`;
+    if (laserCut(sh)) return `${n} has been cut on the laser: its charms can no longer change`;
     if (sh.recalled) return `${n} was taken back from the Library: it keeps its charms`;
-    if (K && K.sentToStation(sh)) return `${n} is in a set sent to laser cutting`;
-    if (window.Gate && tryDo(() => (Gate.committedSheet && Gate.committedSheet(sh)) || (Gate.fixedSet && Gate.fixedSet(sh)))) return `${n} is in a committed set`;
-    if (sh.setId && !sh.draft) return `${n} is in ${setWord(sh)}: a sheet in a set keeps its charms where they are`;
     if (K && K.sheetWorking(sh)) return `${n} is being nested or saved right now; try again once it has saved`;
     const run = window.B && B.run;
     if (run && sh.runId === run.runId && ["complete", "abandoned"].includes(run.status)) return `The run of ${n} is finished`;
@@ -641,6 +647,12 @@
     //  they were let go, red where they overlap (MCFREE), for the person to resize and move clear; the sheet joins no set until they are)
     let free = false;
     if (!spots && K.moveNow) { spots = asDropped(target, u, pt); free = spots.length > 0; }
+    // (GOLDEDIT, Paul 27 Oct 2026: the move lands: a green line drawn on either sheet, or its cut recorded, is given up now (the window's goldOpen, here and on the server), so the move is saved
+    //  and the line drawn again for the new layout after it (the room was looked for on the sheet as its metal was before a recorded cut: the window's preCut). Refused only by the laser's mark)
+    if (spots && spots.length && K.goldOpen) {   // (nothing drawn or recorded on either: nothing is asked of the cloud)
+      let gw = ""; try { gw = await K.goldOpen([src, target]); } catch (e) { gw = (e && e.message) || "its green line could not be set aside"; }
+      if (gw) return refuse(`Not moved: ${String(gw).replace(/\.$/, "")}.`, `${u.pieces && u.pieces.length > 1 ? `The ${u.pieces.length} pieces` : "The charm"} stayed on ${sName}. Nothing was changed.`);
+    }
     if (!spots || !spots.length) {
       const title = u.pieces.length === 1 ? `Not enough space on ${tName} — the charm stayed on ${sName}` : `Not enough space on ${tName} — the ${u.pieces.length} pieces of order ${u.rid} stayed on ${sName}`;
       return refuse(title, u.pieces.length === 1 ? "The charm could not be moved to that sheet. Nothing was changed." : "An order's pieces on a sheet move together. Nothing was changed.");
@@ -727,7 +739,8 @@
       const sa = listed(a), sb = listed(b);
       if (!(a && a.sheet) || !(b && b.sheet)) return "One of the two sheets is no longer in the Library";
       if (a.sheet.archived || b.sheet.archived) return "One of the two sheets was removed meanwhile";
-      if (+a.sheet.laserDoneAt > 0 || +b.sheet.laserDoneAt > 0 || a.sheet.roseCutAt || b.sheet.roseCutAt) return "One of the two sheets was cut on another computer meanwhile";
+      // (GOLDEDIT: a green line or its recorded cut is no refusal: the window's save gives it up first, as the record has it; the laser's mark is)
+      if (+a.sheet.laserDoneAt > 0 || +b.sheet.laserDoneAt > 0) return "One of the two sheets was cut on the laser on another computer meanwhile";
       if (ids.some(id => sb.has(id))) return `${word(target)} already lists this piece (another computer moved it there): the sheet is read again`;
       // (a piece the run placed but has not saved yet is on no record: only a record that lists other pieces and not this one says it was taken off)
       if (sa.size && ids.some(id => !sa.has(id))) return `This piece was taken off ${word(src)} on another computer meanwhile`;

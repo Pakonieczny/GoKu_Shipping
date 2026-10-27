@@ -33,6 +33,7 @@
   async function restore(sh,rec){
     const result=await api('roseGet',{stockId:rec.roseStockId,metal:sh.metal});
     sh.roseStock=result.stock;sh.roseHistory=decode(result.cuts);sh.roseMore=result.more;sh.roseCutAt=rec.roseCutAt||null;sh.roseRevision=rec.roseRevision;sh.rosePlan=parse(rec.rosePlanJson);sh.rosePlanHash=rec.rosePlanHash;sh.roseProtected=parse(rec.roseProtectedJson);sh._roseLoaded=true;
+    sh.roseReopened=!rec.roseCutAt&&rec.roseReopened&&rec.roseReopened.cut?rec.roseReopened:null;   // (a recorded cut set aside by a change by hand, not recorded again yet: said on the card, reopen below)
   }
   function protect(sh){
     if(!hasLine(sh)||sh.roseCutAt)return;
@@ -165,6 +166,49 @@
     delete sh.roseStock;delete sh.roseRevision;delete sh.roseChoice;delete sh.rosePlanHash;delete sh.rosePlanKey;sh.roseHistory=[];sh._roseLoaded=false;sh._roseFullKey=null;
     window.Session?.schedule();refresh(sh);return true;
   }
+  /* REOPEN (Paul, 27 Oct 2026: "the users should be able to add and remove charms from 10 K and 14 K gold sheets even after the green cut line has been approved and even after the entire
+     sheet has been approved. This must be allowed to happen until such time a sheet has been cut on a laser and marked as cut by the user"). Before a 10K / 14K sheet's charms change by hand
+     (Manual Control's save, the sheet hop), what was drawn or recorded for its layout as it stood is given up, on the server first (roseReopen: its contour and green lines, a recorded cut set
+     aside with its leftover; refused only for a sheet the laser cut, or whose leftover another sheet holds), then here. What it gave up is owed (sh.roseRedraw): a green line that was drawn is
+     drawn again for the new layout once the sheet is written (redraw: the line follows the charms), and a recorded cut is approved again by the sheet's own Cut Sheet press, said on its card
+     (sh.roseReopened) until it is. A full sheet's contour (no line) is made again by render, as for any sheet in its set. Nothing to give up: resolves at once and asks nothing.
+     Resolves {changed, line, cut}; rejects with the server's words (nothing changed then). */
+  const REOPENS=['gold10k','gold14k'];
+  const linesIn=x=>x&&Array.isArray(x.lines)?x.lines.length:0;
+  async function reopen(sh,o={}){
+    if(!sh||!REOPENS.includes(sh.metal)||+sh.laserDoneAt>0)return {changed:false};
+    if(!(sh.rosePlan||sh.roseProtected||sh.rosePlanHash||sh.roseCutAt||o.force))return {changed:false};
+    let who='';try{who=String(o.by||window.CNEmployee?.name?.()||window.B?.employee||'').trim();}catch(_){who=String(o.by||'').trim();}
+    let r=null;
+    if(sh.sheetId){
+      if(!S.cloud.ok)throw new Error(`Reconnect to change the charms of this ${word(sh)} sheet`);
+      r=await C.api('charmNestLibrary',{op:'roseReopen',sheetId:sh.sheetId,by:who||undefined},{quiet:true});
+      if(r&&r.error)throw new Error(r.error);
+    }
+    const line=Math.max(linesIn(sh.rosePlan),linesIn(sh.roseProtected),+(r&&r.lines)||0)>0,cut=!!sh.roseCutAt||!!(r&&r.cut),at=Date.now();
+    delete sh.rosePlan;delete sh.rosePlanHash;delete sh.rosePlanKey;delete sh.roseProtected;sh._roseFullKey=null;sh._roseError=null;
+    if(cut){
+      const was=sh.roseCutAt||(r&&r.cut&&r.cut.at)||null;delete sh.roseCutAt;
+      if(r&&r.stock){sh.roseStock=r.stock;sh.roseRevision=r.stock.revision;}
+      sh._roseLoaded=false;sh.roseReopened={at,by:who,cut:true,cutAt:was};
+      if(inSet(sh)&&typeof sh.solidPick!=='boolean')sh.solidPick=true;   // (it stays in the set its approved cut put it in: its own tick says so now)
+    }
+    if(line||cut)sh.roseRedraw={at,by:who,line,cut};
+    window.Session?.schedule();refresh(sh);
+    return {changed:true,line,cut};
+  }
+  // The green line owed after a change by hand (reopen), drawn again once the sheet is written, saved and verified (charms placed by hand where they overlap: once they are moved clear).
+  // Only a line that was drawn is drawn again; its press is the person's own earlier one (the line follows the charms). The sheet window marks it `written` once its files are written
+  // after the change (never between a move and its write: a line drawn then would be protected by the write's nest instead of followed); render draws it from then on when it could
+  // not be drawn at once. → true drawn, false failed (said under the card), null not yet / nothing owed.
+  async function redraw(sh){
+    const w=sh&&sh.roseRedraw;if(!w||!hasLine(sh)||sh.roseCutAt||+sh.laserDoneAt>0)return null;
+    w.written=true;
+    if(!w.line){delete sh.roseRedraw;return null;}
+    if(sh._rosePlanning||!sh.persistedDone||!sh.verification?.ok||sh.dirty||!sh.placements.length||['nesting','finishing','queued'].includes(sh.status))return null;
+    try{await plan(sh,{cut:true});delete sh.roseRedraw;return true;}
+    catch(e){sh._roseError=`The green line could not be drawn again for the charms as they now stand: ${e.message}`;refresh(sh);return false;}
+  }
   // Only a Cut Sheet press adds a green line (Paul, 29 Sep: Send to Sheet drew line 2 by itself). The contour is also
   // made again when a sheet joins a set, is saved, is nested or its allowance changes: that may redraw the lines it has
   // or take a full sheet whole, never add one. Charms past the last line stay uncut until the next press.
@@ -222,6 +266,7 @@
     // (the cuts the stock already holds stay on the card: a sheet that was moved onto the leftover its own cut made cuts again, and both cuts are shown, each with its date;
     //  only a copy of THIS cut, a retry of the same press, is replaced)
     sh.roseCutAt=r.cut.at;sh.roseStock=r.stock;sh.roseHistory=[...decode([r.cut]),...(sh.roseHistory||[]).filter(c=>c.revision!==r.cut.revision)];
+    delete sh.roseReopened;delete sh.roseRedraw;   // (a cut set aside by a change by hand is recorded again: the card's note goes, nothing is owed)
     refresh(sh);C.toast(`Sheet cut · the next ${word(sh)} charms nest past this green line`,'ok');
     // a pair (or any order) with a piece on another sheet: said plainly once the cut is recorded (the cut and its record are permanent, nothing is blocked)
     try{const n=window.PartialNest&&window.PartialNest.cutNote&&window.PartialNest.cutNote(sh);if(n)C.toast(n,'',9000);}catch(_){}
@@ -259,7 +304,9 @@
     if(!slot){slot=document.createElement('div');slot.className='roseCut';const row=sh.el.querySelector('.shControls');if(row)row.insertBefore(slot,row.querySelector('.shGate')||row.querySelector('.engTogHost'));else host.before(slot);}
     slot.hidden=!cuttable;
     slot.innerHTML=cuttable?`<button class="btn ghost xs" data-rose="cut" ${busy?'disabled':''}>Cut Sheet</button>`:'';
-    host.innerHTML=`${busy?`<div class="help" role="status"><i class="spin"></i> ${busyWord}</div>`:''}${sh._roseError?`<p class="roseError" role="alert">${esc(sh._roseError)}</p>`:''}${marks}`;
+    // (Paul, 27 Oct 2026: a 10K / 14K sheet's recorded green line cut set aside because its charms changed by hand, reopen: said here until its Cut Sheet press records it again)
+    const reopened=sh.roseReopened&&sh.roseReopened.cut&&!sh.roseCutAt&&!(+sh.laserDoneAt>0)?`<p class="roseError" role="note" data-rose-reopened>Its charms changed after its green line was approved${sh.roseReopened.cutAt&&when(+sh.roseReopened.cutAt)?` (${esc(when(+sh.roseReopened.cutAt))})`:''}: ${sh.roseRedraw&&sh.roseRedraw.line?'the line is drawn again for the charms as they now stand, then ':''}press Cut Sheet to approve its green line again.</p>`:'';
+    host.innerHTML=`${busy?`<div class="help" role="status"><i class="spin"></i> ${busyWord}</div>`:''}${sh._roseError?`<p class="roseError" role="alert">${esc(sh._roseError)}</p>`:''}${reopened}${marks}`;
     host.classList.toggle('roseEmpty',!host.innerHTML);
     // a failure is shown once, where it happened (the alert under the button); a pop-up used to repeat it
     const invoke=fn=>async()=>{if(sh._roseAction)return;sh._roseAction=true;sh._roseError=null;refresh(sh);try{await fn();}catch(e){sh._roseError=(e&&e.message)||String(e||'')||'Cut Sheet could not finish. Try again.';}finally{sh._roseAction=false;refresh(sh);C.flushManualIntake?.(sh.metal);}};   // (a refusal always leaves its one line under the button)
@@ -289,7 +336,8 @@
       options.querySelector('[data-rose-stock-choice]').hidden=!!(stockId||sh.recalled);
     }
     if(stockId&&!sh._roseLoaded&&!sh._roseLoading){observed.set(host,sh);if(observer)observer.observe(host);}
-    if(ready&&included&&!busy&&!sh._roseError&&sh.rosePlanKey!==fingerprint(sh))queueMicrotask(()=>plan(sh).catch(()=>{}));
+    if(ready&&!busy&&!sh._roseError&&sh.roseRedraw&&sh.roseRedraw.line&&sh.roseRedraw.written)queueMicrotask(()=>redraw(sh));   // (a line owed after a change by hand, reopen: drawn again once the sheet is written, `written`: the sheet window's goldAfter)
+    else if(ready&&included&&!busy&&!sh._roseError&&sh.rosePlanKey!==fingerprint(sh)&&!(sh._goldWrite&&Date.now()-sh._goldWrite<300000))queueMicrotask(()=>plan(sh).catch(()=>{}));   // (_goldWrite: a 10K / 14K sheet changed by hand, not written yet: the sheet window's goldOpen / goldAfter)
     const wait=waiting(sh);if(wait!==(sh._roseWait||0)){sh._roseWait=wait;window.RunCtl?.renderBanner?.();}   // the run's pill names it
   }
   // Lines saved before dates were kept show as one undated line, as the server reads them.
@@ -409,7 +457,7 @@
       if(!sh.roseCutAt&&sh.rosePlan&&!sh.dirty){const view=shown(sh.rosePlan,sh);stroke(ctx,view.lines,k,'#008974',Math.max(2.5,.2*k),true);numberLines(ctx,view,k);}
     }ctx.restore();
   }
-  window.RoseStock=window.CutLine={protect,prepare,nestClaim,claimLate,letGo,takeOff,seatOn,approved,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut,addsLine,unlined,full:sheetFull};   // addsLine/unlined: read-only questions for LibraryFlowRose.check
+  window.RoseStock=window.CutLine={protect,prepare,nestClaim,claimLate,letGo,takeOff,seatOn,approved,plan,reopen,redraw,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut,addsLine,unlined,full:sheetFull};   // addsLine/unlined: read-only questions for LibraryFlowRose.check
   C.allSheets().forEach(render);
 })();
 
