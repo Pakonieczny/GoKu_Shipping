@@ -467,20 +467,52 @@ const empGate = () => { try { const A = window.CNAccount; return !!(A && typeof 
    is saved; without it the very button that was pressed (a click still being handled) is pressed again. Put the bar away (Esc, ✕) and
    nothing happens: nothing typed or chosen is lost. */
 const pressedButton = () => { try { const ev = window.event, t = ev && ev.type === "click" && ev.target && ev.target.closest ? ev.target.closest('button,[role="button"],input[type="button"],input[type="submit"]') : null; return t && !t.closest(".cnNameBar") ? t : null; } catch (_) { return null; } };
-function askEmployee(again) {
+function askEmployee(again, o) {
   const cur = employeeName();
   if (cur) return cur;
   let go = typeof again === "function" ? again : null;
-  if (!go) { const btn = pressedButton(); if (btn) go = () => { if (btn.isConnected && !btn.disabled && employeeName()) btn.click(); }; }
-  NameBar.open({ kind: "ask", why: "Kept with this approval or decision, and with your work today." });
+  const btn = pressedButton();
+  if (!go) { if (btn) go = () => { if (btn.isConnected && !btn.disabled && employeeName()) btn.click(); }; }
+  // (SIGNIN, 27 Oct 2026: asked and told through the one helper: the bar under the button pressed, and a note when it is put away; o.action: what the press does, in a few words)
+  needSignIn(o && o.action, null, Object.assign({ near: btn, why: o && o.action ? "" : "Kept with this approval or decision, and with your work today." }, o));
   NameBar.resume(go);
   return "";
 }
 /** The same for a step that can wait: resolves with the name once it is saved, or "" when the bar is put away. */
-function needEmployee(why) {
+function needEmployee(why, o) {
   const cur = employeeName();
   if (cur) return Promise.resolve(cur);
-  return Promise.resolve(NameBar.open({ kind: "ask", why: why || "Kept with this approval or decision, and with your work today." })).then(n => String(n || "").trim() || employeeName(), () => "");
+  return needSignIn(o && o.action, null, Object.assign({ why: o && o.action ? "" : why || "Kept with this approval or decision, and with your work today." }, o));   // (SIGNIN, 27 Oct 2026: the one helper below)
+}
+/* SIGNIN (Paul, 27 Oct 2026, order 4202871419: "I was not signed in and this is why it was not allowing me to put it on hold. The issue is that it did not prompt me for the password
+   to proceed. There was no feedback to the user as to why things were not working."): THE one way a press that needs a signed-in person asks for one, and says why when it does nothing.
+   Someone signed in: run(name) at once, inside the press. Nobody: the sign-in bar (the Employee Number, checked by the server and never kept) opens right under the button pressed, in
+   its window, and says what it is for ("Sign in to hold this order"); once it signs a person in, the press goes on by itself under that person (run(name)). Put away (✕, Esc): nothing is
+   done, and one plain note under the button says why. Nothing is ever done without a person; what is gated is the caller's, unchanged.
+     action  what the press does, in a few words ("hold this order"); none: the bar keeps o.why
+     run     (name) => what the press does; none: the promise is the name, "" when put away (as needEmployee's)
+     o       { near: the button (else the one being clicked), why: the bar's line, note: the words when put away, say(text): the press's own line for them (else a note under the button) }
+   → run's own value when someone is signed in; otherwise a promise of it (undefined, or "" without run, when put away). */
+function needSignIn(action, run, o) {
+  o = o || {};
+  const go = typeof run === "function" ? run : null, cur = employeeName();
+  if (cur) return go ? go(cur) : Promise.resolve(cur);
+  const what = String(action || "").trim(), near = o.near && o.near.isConnected ? o.near : pressedButton();
+  const asked = NameBar.open({ kind: "ask", why: o.why || (what ? `Sign in to ${what}. It goes on as soon as you are signed in.` : "Kept with this approval or decision, and with your work today."), near });
+  return Promise.resolve(asked).then(n => String(n || "").trim() || employeeName(), () => "").then(n => {
+    if (n) return go ? go(n) : n;
+    signInNote(o.note || `Not done: nobody is signed in. Sign in ${what ? "to " + what : "first"}.`, near, o.say);
+    return go ? undefined : "";
+  });
+}
+/** (SIGNIN) The note of a press put away unsigned: the press's own line (say), else a note under its button, in its window (a toast would sit under an open window, unseen). */
+function signInNote(text, near, say) {
+  try { if (typeof say === "function") { say(text); return; } } catch (_) { /* a note instead */ }
+  try {
+    const M = window.Motion, win = NameBar.host(), at = near && near.isConnected && near.getClientRects().length ? near : win !== document.body ? win.querySelector("h3,h2,[role=heading]") : null;
+    if (M && typeof M.note === "function" && at) { const n = M.note(at, { text, ms: 7000 }); const d = at.closest("dialog[open]"); if (n && d) d.appendChild(n); if (n) return; }
+  } catch (_) { /* a toast instead */ }
+  try { toast(text, "", 7000); } catch (_) {}
 }
 /* The small name field: inline, never a browser pop-up and never modal, so it can sit over an open window (the order window,
    the sheet window) without being a pop-up on a pop-up. It is the sign-in for when NOBODY is signed in: what appears, calmly, when
@@ -507,6 +539,23 @@ const NameBar = (() => {
   const css = () => { if (document.getElementById("cnNameBarCss")) return; const s = document.createElement("style"); s.id = "cnNameBarCss"; s.textContent = CSS; document.head.appendChild(s); };
   // inside the window that is open (a modal window makes the rest of the page unreachable), else on the page
   const host = () => { try { const open = [...document.querySelectorAll("dialog[open]")].filter(d => { try { return d.matches(":modal"); } catch (_) { return true; } }); return open[open.length - 1] || document.body; } catch (_) { return document.body; } };
+  /* SIGNIN (Paul, 27 Oct 2026: "it did not prompt me for the password to proceed"): asked by a press, the bar opens in the window of the button pressed (the last window in the page's
+     order is not always the one on top), right under that button, where the eye is; it stood in the window's top corner, far from the button. No button: its usual corner. */
+  const hostOf = at => { try { const d = at && at.closest ? at.closest("dialog[open]") : null; return d || host(); } catch (_) { return host(); } };
+  function placeNear(b, at) {
+    try {
+      b.style.top = ""; b.style.right = "";
+      const r = at && at.isConnected ? at.getBoundingClientRect() : null; if (!r || !(r.width > 0 && r.height > 0)) return;
+      const vw = document.documentElement.clientWidth || innerWidth, vh = innerHeight, w = b.offsetWidth, h = b.offsetHeight;
+      let top = r.bottom + 8; if (top + h > vh - 8) top = Math.max(8, r.top - h - 8);
+      const right = Math.max(8, Math.min(vw - w - 8, vw - r.right));
+      b.style.top = Math.round(top) + "px"; b.style.right = Math.round(right) + "px";
+      // (a window drawn with a transform holds a fixed box to itself: put right by what it moved)
+      const got = b.getBoundingClientRect(), dy = got.top - top, dx = (vw - got.right) - right;
+      if (Math.abs(dy) > 1) b.style.top = Math.round(top - dy) + "px";
+      if (Math.abs(dx) > 1) b.style.right = Math.round(right - dx) + "px";
+    } catch (_) { /* its usual corner */ }
+  }
   function close(name) { const b = bar, f = finish; bar = null; finish = null; pr = null; if (!name) resumeFn = null; if (b && !name && b.dataset.kind === "hint") quietUntil = Date.now() + 90000; try { if (b) b.remove(); } catch (_) {} if (f) f(name || ""); }
   /** the press that asked goes on once a name is saved (a moment later: the bar is gone and the sign-in has settled) */
   function runResume() { const g = resumeFn; resumeFn = null; if (g) setTimeout(() => { try { g(); } catch (e) { console.error(e); } }, 60); }
@@ -537,7 +586,8 @@ const NameBar = (() => {
       if (bar) {
         if (hint && bar.dataset.kind !== "hint") return pr;       // (someone is already typing a name: nothing to add)
         if (!hint && !(o.kind !== "ask" && bar.dataset.kind === "ask")) bar.dataset.kind = o.kind === "ask" ? "ask" : "edit";
-        bar.querySelector(".cnNbWhy").textContent = why; if (bar.parentNode !== host()) host().appendChild(bar);
+        bar.querySelector(".cnNbWhy").textContent = why; { const into = !hint && o.near ? hostOf(o.near) : host(); if (bar.parentNode !== into) into.appendChild(bar); }
+        if (!hint) placeNear(bar, o.near);      // (SIGNIN: under the button of this press, or back in its corner)
         paintSwitch(bar); paintChip(bar);
         if (!hint) { const i = bar.querySelector("input"); if (!i.value.trim() && !employeeName() && !bar.dataset.num) i.value = lastName(); i.focus(); i.select(); }
         return pr;
@@ -586,7 +636,8 @@ const NameBar = (() => {
       // (the page's own keys never see what is typed here, and Esc puts only this field away, not the window under it)
       bar.onkeydown = e => { e.stopPropagation(); if (e.key === "Escape") { e.preventDefault(); close(""); } };
       bar.onclick = e => e.stopPropagation();
-      host().appendChild(bar);
+      (!hint && o.near ? hostOf(o.near) : host()).appendChild(bar);
+      if (!hint) placeNear(bar, o.near);      // (SIGNIN: right under the button pressed)
       if (!hint) requestAnimationFrame(() => { if (bar === me) { input.focus(); input.select(); } });
       return pr;
     } catch (_) { return Promise.resolve(""); }
@@ -648,9 +699,9 @@ const NameBar = (() => {
   }
   /** The Account panel is open over this bar: the bar waits out of sight (the press that asked is still waiting, and goes on when a name is set), and comes back when the panel is put away. */
   const park = on => { try { for (const b of [bar, rbar]) if (b) b.style.display = on ? "none" : ""; } catch (_) {} };
-  return { open, close: () => close(""), settled, park, resume: g => { resumeFn = typeof g === "function" ? g : null; }, isOpen: () => !!(bar && bar.isConnected), role: roleBar, roleOpen: () => !!(rbar && rbar.isConnected) };
+  return { open, close: () => close(""), settled, park, resume: g => { resumeFn = typeof g === "function" ? g : null; }, isOpen: () => !!(bar && bar.isConnected), role: roleBar, roleOpen: () => !!(rbar && rbar.isConnected), host };   // (SIGNIN: host, the window a note goes in)
 })();
-window.CNEmployee = { name: employeeName, ask: askEmployee, need: needEmployee, last: lastName, normalize: normName, edit: NameBar.open, roleBar: NameBar.role, park: NameBar.park };   // (the Library's Completed marks record who, charm-nest-library.js; ask/need never pop up: the inline name bar, then the press goes on)
+window.CNEmployee = { name: employeeName, ask: askEmployee, need: needEmployee, needSignIn, last: lastName, normalize: normName, edit: NameBar.open, roleBar: NameBar.role, park: NameBar.park };   // (the Library's Completed marks record who, charm-nest-library.js; ask/need never pop up: the inline name bar, then the press goes on)
 /* What a person did here, for the Employee efficiency console (station-activity.js, loaded before this file; the person is
    the name above, as charm-nest-1.html hands it to StationSession). Called only where a person pressed something that
    finished or undid work (print, complete, undo, engraving approved, sent to a sheet, laser/cut marked) and when a held-back
@@ -9007,7 +9058,8 @@ const Engrave = window.Engrave = (() => {
       }
     }
     if (job.backSaving) return;
-    by = by || employeeName() || await needEmployee("Kept with this approval and its seal."); if (!by) return;
+    by = by || employeeName() || await needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: button });   // (SIGNIN, 27 Oct 2026: asked under Approve; put away, a note says why)
+    if (!by) return;
     // says which step is missing (it read "Nothing verified to approve" whatever the reason)
     if (!job.fit || !job.verify || !job.verify.geometry.ok) { toast(!job.fit ? "Not approved: the words are not placed on the charm yet" : !job.verify ? "Not approved: the placement is still being checked" : "Not approved: the placement failed its check · move or resize the words first", "bad"); return; }
     const approvedAt=Date.now();let prepared;
@@ -9606,7 +9658,7 @@ const Engrave = window.Engrave = (() => {
   async function openCharmEditorOnce(job) {
     const AE = window.CharmNestArtEdit, CE = window.CharmEditor;
     if (!charmEditTarget(job)) return null;
-    const by = employeeName() || await needEmployee("Kept with this charm's artwork edit."); if (!by) return null;
+    const by = employeeName() || await needEmployee("Kept with this charm's artwork edit.", { action: "edit this charm's artwork" }); if (!by) return null;   // (SIGNIN, 27 Oct 2026: put away, a note says why)
     try { await AE.sync(); } catch (e) { console.warn("charm edit: artwork edits", e); }   // (an edit saved on another computer since is on the piece before it is opened)
     const t = charmEditTarget(job); if (!t) return null;
     if (t.poolIds.some(id => { const pj = jobsOfPiece(id); return [pj.front, pj.back].some(j => j && decidedBusy(j)); })) { toast("This piece's approval is still being saved · Edit charm in a moment", "", 4000); return null; }
@@ -10871,7 +10923,7 @@ const Engrave = window.Engrave = (() => {
     const gate = faced && UIFACES() ? UIFACES().approveAllGate(jobs, gateOpts())
       : row && ROWS().multi(row) ? (row.discs ? ROWS().approveAll(row, gateOpts()) : ROWS().approveBoth(row, gateOpts())) : { ok: false, why: allDiscs([job]) ? "This order has one disc to approve." : "This piece has one ear to approve." };
     if (!gate.ok) { toast(gate.why, "bad"); return; }
-    const by = employeeName() || await needEmployee("Kept with these approvals and their seals."); if (!by) return;
+    const by = employeeName() || await needEmployee("Kept with these approvals and their seals.", { action: "approve these engravings", near: button }); if (!by) return;   // (SIGNIN, 27 Oct 2026)
     for (const j of jobs) {
       if (j.state !== "review") continue;
       await approve(j, by, j === job ? button : undefined);
@@ -13730,10 +13782,11 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   function say(key, text) { if (text) busy.set(key, text); else busy.delete(key); redraw(); }
   /** A step that records a name: straight on when one is saved, else once it is typed in the card (withName). */
-  function withName(key, go) {
+  function withName(key, go, action) {
     const who = employeeName(); if (who) { go(who); return; }
     // (EMPNUM, Paul 26 Oct 2026: a typed name signs nobody in: the small bar asks for the Employee Number, and the step goes on under the person it names)
-    if (empGate()) { needEmployee("Kept with this decision, and with your work today.").then(n => { if (n && employeeName()) go(employeeName()); }); return; }
+    // (SIGNIN, Paul 27 Oct 2026: asked under the button pressed, saying what for; put away, a note says why nothing was done: needSignIn, the one helper)
+    if (empGate()) { needSignIn(action || "do this", n => { if (employeeName()) go(employeeName()); }); return; }
     asking.set(key, go); redraw();
   }
   function named(key, name) {
@@ -13899,12 +13952,12 @@ const CustomPrint = window.CustomPrint = (() => {
     const key = it.key; if (busy.has(key) || asking.has(key) || stamping.has(key) || noting.has(key)) return;
     const go = anyway(it, "print"); if (go === false) return;
     const pc = pieceInfo(it);
-    if (!pc) { withName(key, who => printAs(it, who, go)); return; }
+    if (!pc) { withName(key, who => printAs(it, who, go), "print this QR label"); return; }
     // by hand, for one piece of a bigger order: what the sticker is for is asked first (Cancel prints nothing and changes nothing)
     noting.add(key);
     window.QrPieceLabel.ask({ rid: pc.rid, note: pc.prior || pc.name }).then(note => {
       noting.delete(key);
-      if (note) { pieceNotes.set(key, note); withName(key, who => printAs(it, who, go, note)); }
+      if (note) { pieceNotes.set(key, note); withName(key, who => printAs(it, who, go, note), "print this QR label"); }
     }, () => { noting.delete(key); });
   }
   /** The card's Print QR label button on screen: the one just pressed, else the first one showing for this card. */
@@ -14003,7 +14056,7 @@ const CustomPrint = window.CustomPrint = (() => {
   function complete(it) {
     const key = it.key; if (busy.has(key) || asking.has(key)) return Promise.resolve(false);
     const go = anyway(it, "complete"); if (go === false) return Promise.resolve(false);
-    let ran = null; withName(key, who => { ran = completeAs(it, who, go); });
+    let ran = null; withName(key, who => { ran = completeAs(it, who, go); }, it && it.kind === "customOrder" ? "release this order" : "complete this order");
     return ran || Promise.resolve(false);
   }
   /* where Complete Order, Reopen or Undo was pressed, for its point on the order's timeline (Paul, 29 Sep 02:08): the
@@ -14151,7 +14204,7 @@ const CustomPrint = window.CustomPrint = (() => {
   function reopen(it) {
     const rows = linesOf(it); if (!rows.length || busy.has(it.key) || asking.has(it.key)) return;
     const from = pressedIn(it);
-    withName(it.key, who => { for (const r of rows) undos.delete(r.key); comesBack(rows, `Order ${rows[0].order.receiptId} moved back to Open`); takeBack(it.key, rows, who, "reopen", from); });
+    withName(it.key, who => { for (const r of rows) undos.delete(r.key); comesBack(rows, `Order ${rows[0].order.receiptId} moved back to Open`); takeBack(it.key, rows, who, "reopen", from); }, "reopen this order");
   }
   /** Each line's record reopened, never deleted: its seals stay on it for good and show on the Open card's buttons (Paul,
    *  29 Sep 00:35); only its state changes, with who and when in its history and on the order's timeline. The page
@@ -15059,7 +15112,7 @@ const CustomSheet = window.CustomSheet = (() => {
       if (notReady(all()[D.ck])) { nudge(); return; }
       const who = d.querySelector("#cuWho input");
       // (EMPNUM, Paul 26 Oct 2026: a typed name signs nobody in: the small bar asks for the Employee Number, and the send goes on under the person it names)
-      if (!employeeName() && empGate()) { const it0 = D.it; needEmployee("Kept with this send, and with your work today.").then(n => { if (n && employeeName() && D.it === it0) send(it0); }); return; }
+      if (!employeeName() && empGate()) { const it0 = D.it; needSignIn("send these designs to a sheet", () => { if (employeeName() && D.it === it0) send(it0); }, { near: d.querySelector("[data-send]"), note: "Not sent: nobody is signed in. Sign in to send these designs to a sheet." }); return; }   // (SIGNIN, 27 Oct 2026: asked under Send to Sheet; put away, a note says why)
       if (!employeeName()) { const v = normName(who.value); if (!v) { D.askName = true; paint(); who.focus(); lit(who, "cuNudge"); return; } B.employee = v; if (!employeeName()) return; }
       send(D.it);
     };
@@ -18002,10 +18055,16 @@ const Review = window.Review = (() => {
       if (b.getAttribute("aria-disabled") === "true") { toast(on ? "One moment: it is being released." : r.why, "", 6000); return; }
       const host = node || b.parentElement || b;
       if (host.dataset.saving) return;
-      host.dataset.saving = "1"; const was = b.innerHTML; b.setAttribute("aria-disabled", "true"); b.setAttribute("aria-busy", "true"); b.innerHTML = '<span class="spin"></span>Releasing…';
       const onOrders = !!(node && node.closest && node.closest("#ordBody")), rid = String(it.rid || (rowsOf(it)[0] && rowsOf(it)[0].order.receiptId) || "");
-      const inWin = !!b.closest("#orderWin"); if (inWin && rid && window.OrderWin && OrderWin.expectRelease) OrderWin.expectRelease(rid, Date.now());   // (RELSTAMP: pressed in the order window, it is stamped there)
-      releaseToQueue(it).then(ok => { if (ok && onOrders && rid) stampOrderSeal(rid); if (!ok && inWin && window.OrderWin && OrderWin.expectRelease) OrderWin.expectRelease(null); }).catch(err => toast("Could not release it: " + ((err && err.message) || err), "bad", 8000)).finally(() => { delete host.dataset.saving; if (b.isConnected) { b.removeAttribute("aria-busy"); b.innerHTML = was; rest(); } });
+      const inWin = !!b.closest("#orderWin");   // (read at the press: a sign-in first may outlast this very button, the window being drawn again meanwhile)
+      const go = () => {
+        if (host.dataset.saving) return;
+        host.dataset.saving = "1"; const was = b.innerHTML; b.setAttribute("aria-disabled", "true"); b.setAttribute("aria-busy", "true"); b.innerHTML = '<span class="spin"></span>Releasing…';
+        if (inWin && rid && window.OrderWin && OrderWin.expectRelease) OrderWin.expectRelease(rid, Date.now());   // (RELSTAMP: pressed in the order window, it is stamped there)
+        releaseToQueue(it).then(ok => { if (ok && onOrders && rid) stampOrderSeal(rid); if (!ok && inWin && window.OrderWin && OrderWin.expectRelease) OrderWin.expectRelease(null); }).catch(err => toast("Could not release it: " + ((err && err.message) || err), "bad", 8000)).finally(() => { delete host.dataset.saving; if (b.isConnected) { b.removeAttribute("aria-busy"); b.innerHTML = was; rest(); } });
+      };
+      // (SIGNIN, Paul 27 Oct 2026: nobody signed in, the sign-in is asked under this button, before it says "Releasing…", and the release goes on once signed in; put away, a note says why)
+      needSignIn("release this hold", go, { near: b, note: "Not released: nobody is signed in. Sign in to release this hold." });
     };
     return { b, on, r };
   }
@@ -19925,7 +19984,7 @@ const TeamCard = window.TeamCard = (() => {
   }
   function send(C) {
     const text = C.input.value.trim(); if (!text) return;
-    const who = employeeName() || askEmployee(() => send(C)); if (!who) return;
+    const who = employeeName() || askEmployee(() => send(C), { action: "send this message" }); if (!who) return;   // (SIGNIN, 27 Oct 2026: put away, a note says why; the words stay typed)
     // the words go into the outbox before the box empties: from here a reload or a lost connection only delays them
     TeamMail.queue(C.rid, text, who);
     C.input.value = ""; TeamMail.setDraft(C.rid, ""); grow(C);
@@ -20241,7 +20300,7 @@ const OrderWin = window.OrderWin = (() => {
   }
   async function send() {
     const r = rowOf(W.key); if (!r) return;
-    const who = me() || askEmployee(send); if (!who) return;
+    const who = me() || askEmployee(send, { action: "send this message", near: byId("owSend") }); if (!who) return;   // (SIGNIN, 27 Oct 2026: asked under Send; put away, a note says why; the words stay typed)
     const rid = String(r.order.receiptId), input = byId("owInput");
     const text = input.value.trim(), files = W.tray.slice();
     if (!text && !files.length) return;
@@ -20744,6 +20803,8 @@ const OrderWin = window.OrderWin = (() => {
     const back = () => { d.dataset.busy = ""; form.hidden = false; prog.hidden = true; prog.innerHTML = ""; input.disabled = false; once.disabled = false; save.hidden = false; cancel.textContent = "Cancel"; paintOnce(); show(); };
     save.onclick = async () => {
       const k = sel; if (save.disabled || !k) return;
+      // (SIGNIN, Paul 27 Oct 2026: nobody signed in, the sign-in is asked under Save and the change goes on once signed in; put away, the window's own line says why: needSignIn, the one helper)
+      if (!employeeName()) { needSignIn(one ? "use this charm for this order" : "change this SKU", () => { if (d.open && d.dataset.busy !== "1" && !save.disabled && employeeName()) save.click(); }, { near: save, say: t => say("bad", esc(t)), note: "Not changed: nobody is signed in. Sign in to change this SKU." }); return; }
       if (one) {   // (ONESKU: this order only; the window closes when it is done, nothing else to follow)
         d.dataset.busy = "1"; save.disabled = true; saveLbl.textContent = "Changing…"; input.disabled = true; once.disabled = true;
         let res = null; try { res = await Review.editSkuOnce(rowOf(W.key) || r, k); } catch (e) { res = { ok: false, why: (e && e.message) || String(e) }; }
@@ -20839,7 +20900,9 @@ const OrderWin = window.OrderWin = (() => {
     if (!b) { const at = byId("owPos"); if (!at) return; b = el("button", "btn gold xs", "Send to Sheet"); b.type = "button"; b.id = "owSendSheet"; b.title = "Put every design on the next open sheet of its metal"; at.before(b); }
     b.hidden = false; b._it = it; b.disabled = false; if (b.textContent !== "Send to Sheet") b.textContent = "Send to Sheet";
     b.onclick = async () => {
-      if (b._busy || !(employeeName() || askEmployee())) return;
+      if (b._busy) return;
+      // (SIGNIN, Paul 27 Oct 2026: nobody signed in, the sign-in is asked under this button and the send goes on once signed in; put away, a note says why: needSignIn, the one helper)
+      if (!employeeName()) { needSignIn("send these designs to a sheet", () => { if (b.isConnected && !b.hidden && !b._busy && employeeName()) b.click(); }, { near: b, note: "Not sent: nobody is signed in. Sign in to send these designs to a sheet." }); return; }
       const sentKey = W.key;
       b._busy = true; b.disabled = true; b.innerHTML = '<span class="spin"></span>Sending…';
       // (what the send says when it cannot go is a toast, under this window: said here, beside the button, instead)
@@ -21465,7 +21528,9 @@ const OrderWin = window.OrderWin = (() => {
         `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${ctl.html}</span>${stSr}${steps}${tools}</div>`;
     }).join("");
     box.hidden = false; box.dataset.rid = rid; box.classList.toggle("hasTools", hasTools);
-    if (box._h === html) { markPieces(); return; }
+    // (RELWIRE, 27 Oct 2026: the rows drawn as before are kept, and a row whose buttons were drawn while its piece could not be wired yet (the window still opening) is wired now: its Release
+    //  Hold had no press at all once the window was opened again on an order after another one, "hold A, hold B, open A again", and the drawing never changed after)
+    if (box._h === html) { box.querySelectorAll("[data-pc-act]:not([data-pc-wired])").forEach(h => wirePcAct(h, [])); markPieces(); return; }
     // (a name being typed in a row's question is carried over a redraw, the field and where its cursor was)
     const typed = [...box.querySelectorAll("[data-cu-name]")].map(i => ({ key: i.closest("[data-pc-act]")?.dataset.pcAct, v: i.value, on: document.activeElement === i, a: i.selectionStart, b: i.selectionEnd })).filter(t => t.key);
     const held = pdotHeld(box);
@@ -21554,6 +21619,7 @@ const OrderWin = window.OrderWin = (() => {
     const key = h.dataset.pcAct, here = () => { const w = W.dlg && W.dlg.open ? rowOf(W.key) : null; return w ? String(w.order.receiptId) : ""; };
     const now = () => { const r = rowOf(key), at = here(); return r && at && String(r.order.receiptId) === at ? tryDo(() => pieceItem(key)) : null; }, it = now();
     if (!it) return;
+    h.dataset.pcWired = "1";   // (RELWIRE: wired; a row drawn again as it was is wired again only when it was not)
     // (another piece picked, where there is more than one; the one piece of a single-piece order is already the one shown)
     const toPiece = k => { if ((W.pieces || []).length > 1) pickPiece(k); };
     // (a piece sent to its sheet has nothing to press here but its Hold: NOROWBTNS, see pieceCtl)

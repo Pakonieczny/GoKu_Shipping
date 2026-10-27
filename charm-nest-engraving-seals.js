@@ -61,7 +61,9 @@
     const E=root?.CNEmployee;let n='';
     try{n=String((E && E.name && E.name()) || '').trim();}catch(_){}
     if(n)return n;
-    try{return Promise.resolve(E && E.edit?E.edit({why:why || 'Kept with this approval and its seal.'}):E && E.ask?E.ask():'').then(v=>String(v || '').trim(),()=>'');}catch(_){return Promise.resolve('');}
+    // (SIGNIN, Paul 27 Oct 2026: "There was no feedback to the user as to why things were not working": asked through the one helper, CNEmployee.needSignIn: the bar under the
+    //  button pressed says it is to approve this engraving, and put away, a note there says why nothing was approved)
+    try{return Promise.resolve(E && E.needSignIn?E.needSignIn('approve this engraving',null,{}):E && E.edit?E.edit({why:why || 'Kept with this approval and its seal.'}):E && E.ask?E.ask():'').then(v=>String(v || '').trim(),()=>'');}catch(_){return Promise.resolve('');}
   }
   /** The wait of an approval, said on its button: it cannot be pressed again, and a small spinner says what is being done. */
   function busyLabel(btn){if(!btn || !btn.isConnected)return;btn.disabled=true;btn.setAttribute('aria-busy','true');btn.innerHTML='<span class="spin"></span>Approving…';}

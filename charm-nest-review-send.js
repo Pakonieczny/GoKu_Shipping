@@ -282,7 +282,7 @@
       e.stopPropagation(); e.preventDefault();
       // (HOLDSTAMP, Paul 27 Oct 2026: pressed in the order window, its ORDER HELD seal is stamped there, in sight, once the order is held)
       try { if (b.closest("#orderWin") && !busyRids.has(rid) && !api.inReview(rid, row || null) && root.OrderWin && OrderWin.expectStamp) OrderWin.expectStamp(rid, "hold", Date.now()); } catch (_) {}
-      press(rid, row || null, how).catch(err => console.warn("hold order", err));
+      press(rid, row || null, Object.assign({ near: b }, how)).catch(err => console.warn("hold order", err));   // (SIGNIN: near, the button a sign-in is asked under)
     };
     paint(b, rid, row || null);
     return b;
@@ -335,7 +335,15 @@
     say(rid, "");
     // a piece already released, or a sheet already cut or Completed, cannot be held: one line, nothing is marked
     const why = api.cannotHold(rid); if (why) { say(rid, why); return { ok: false, error: "cannot hold", why }; }
-    const who = nameNow() || (root.CNEmployee && CNEmployee.need ? String(await CNEmployee.need() || "").trim() : "");
+    // SIGNIN (Paul, 27 Oct 2026, order 4202871419: "I was not signed in and this is why it was not allowing me to put it on hold. The issue is that it did not prompt me for the password to
+    // proceed. There was no feedback to the user as to why things were not working."): nobody signed in, the sign-in bar opens under this button and says it is to hold this order; once
+    // signed in the hold goes on by itself; put away, the line under the button says why nothing was held (CNEmployee.needSignIn, the one helper of every press that needs a person)
+    let who = nameNow();
+    if (!who) {
+      const E = root.CNEmployee;
+      who = E && typeof E.needSignIn === "function" ? String(await E.needSignIn("hold this order", null, { near: opts && opts.near, say: t => say(rid, t), note: "Not held: nobody is signed in. Sign in to hold this order." }) || "").trim()
+        : E && E.need ? String(await E.need() || "").trim() : "";
+    }
     if (!who) return { ok: false, error: "name" };
     if (busyRids.has(rid)) return { ok: false, error: "busy" };
     busyRids.add(rid); sync();
