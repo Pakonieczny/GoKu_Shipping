@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Charm editor harness</title>
+<!-- A page with nothing on it but the charm editor (charm-nest-charm-editor.js) and one calendar charm, for tests/charm-nest/charm-editor-browser.cjs.
+     The fixture is drawn the way a master reads in: the cut outline and the bail hole (cut, black), the month's name as six separate letter paths (art), a 7 × 5 grid
+     of day squares (art, each its own path), a small red heart (line engraving) and a blue heart (hatch engraving); the back has its outline, a text item
+     ("FOREVER", hatch) and a group of two stars. The frame is offset (x0 100 pt, y0 50 pt) the way a charm's view sits inside its master's coordinates.
+     No textToPaths is given, so the editor uses its own stand-in font. -->
+<style>
+  body{ margin:0; font:14px -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; color:#222; background:#f4f2ee; }
+  .under{ padding:28px 36px; }
+  .under h1{ font:500 26px Georgia,serif; margin:0 0 8px; }
+  .under p{ color:#6d6a66; max-width:640px; line-height:1.6; }
+  .under button{ font:inherit; padding:8px 14px; }
+</style>
+</head>
+<body>
+<div class="under">
+  <h1>Engraving · CALENDAR 86188</h1>
+  <p>The page under the editor. The editor opens over it as a full-window layer; nothing on this page should react to a key pressed inside the editor.</p>
+  <button type="button" id="openBtn">Open the charm editor</button>
+  <p id="pageKeys">page keys: 0</p>
+</div>
+<script src="../../../charm-nest-charm-editor.js"></script>
+<script>
+(function () {
+  'use strict';
+  const PT = 72 / 25.4, X0 = 100, Y0 = 50, W = 24, H = 30;
+  const P = (x, y) => [+(X0 + x * PT).toFixed(4), +(Y0 + y * PT).toFixed(4)];
+  const K = 0.5522847498;
+  function roundRect(x0, y0, x1, y1, r) {
+    const k = r * K;
+    return [[['m', P(x0 + r, y0)], ['l', P(x1 - r, y0)], ['c', P(x1 - r + k, y0), P(x1, y0 + r - k), P(x1, y0 + r)], ['l', P(x1, y1 - r)],
+      ['c', P(x1, y1 - r + k), P(x1 - r + k, y1), P(x1 - r, y1)], ['l', P(x0 + r, y1)], ['c', P(x0 + r - k, y1), P(x0, y1 - r + k), P(x0, y1 - r)],
+      ['l', P(x0, y0 + r)], ['c', P(x0, y0 + r - k), P(x0 + r - k, y0), P(x0 + r, y0)], ['h']]];
+  }
+  function circle(cx, cy, r) {
+    const k = r * K;
+    return [[['m', P(cx + r, cy)], ['c', P(cx + r, cy + k), P(cx + k, cy + r), P(cx, cy + r)], ['c', P(cx - k, cy + r), P(cx - r, cy + k), P(cx - r, cy)],
+      ['c', P(cx - r, cy - k), P(cx - k, cy - r), P(cx, cy - r)], ['c', P(cx + k, cy - r), P(cx + r, cy - k), P(cx + r, cy)], ['h']]];
+  }
+  const rect = (x0, y0, x1, y1) => [[['m', P(x0, y0)], ['l', P(x1, y0)], ['l', P(x1, y1)], ['l', P(x0, y1)], ['h']]];
+  function heart(cx, cy, s) {   // s: half width, mm
+    const q = (x, y) => P(cx + x * s, cy + y * s);
+    return [[['m', q(0, 0.9)], ['c', q(-0.6, 0.45), q(-1, 0.05), q(-1, -0.35)], ['c', q(-1, -0.8), q(-0.55, -1), q(-0.3, -1)], ['c', q(-0.12, -1), q(0, -0.85), q(0, -0.65)],
+      ['c', q(0, -0.85), q(0.12, -1), q(0.3, -1)], ['c', q(0.55, -1), q(1, -0.8), q(1, -0.35)], ['c', q(1, 0.05), q(0.6, 0.45), q(0, 0.9)], ['h']]];
+  }
+  function star(cx, cy, r) {
+    const pts = []; for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * 0.45 : r; pts.push(P(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr)); }
+    return [[['m', pts[0]]].concat(pts.slice(1).map(p => ['l', p]), [['h']])];
+  }
+  const B = (sp, f) => sp.map(sub => sub.map(op => op.map(v => (Array.isArray(v) ? f(v) : v))));
+
+  // the month's name: six letter paths from the stand-in font, laid out as a master would have them (one path per letter)
+  const MONTH = 'AUGUST', capMm = 2.4, size = capMm / 0.7 * PT, u = size * 0.7 / 6, adv = 5.2 * u, width = (MONTH.length - 1) * adv + 4 * u;
+  const startX = X0 + 12 * PT - width / 2, baseY = Y0 + 8 * PT;
+  const letters = Array.from(MONTH).map((ch, i) => {
+    const g = CharmEditor.builtinTextToPaths(ch, 'sans', size, { align: 'left' });
+    return { id: 'm-letter-' + i, kind: 'path', role: 'art', source: 'master', name: 'Letter ' + ch, stroke: false, fill: true, lwPt: 0,
+      subpaths: B(g.subpaths, v => [+(v[0] + startX + i * adv).toFixed(4), +(v[1] + baseY).toFixed(4)]) };
+  });
+  const squares = [];
+  const gx0 = 2.5, gx1 = 21.5, gy0 = 10.5, gy1 = 26.5, cw = (gx1 - gx0) / 7, rh = (gy1 - gy0) / 5, inset = 0.16;
+  for (let r = 0; r < 5; r++) for (let c = 0; c < 7; c++) {
+    squares.push({ id: `day-${r}-${c}`, kind: 'path', role: 'art', source: 'master', name: `Day square ${r * 7 + c + 1}`, stroke: true, fill: false, lwPt: 0.3,
+      subpaths: rect(gx0 + c * cw + inset, gy0 + r * rh + inset, gx0 + (c + 1) * cw - inset, gy0 + (r + 1) * rh - inset) });
+  }
+  const front = {
+    face: 'front', unitPt: true, frame: { x0: X0, y0: Y0, wPt: W * PT, hPt: H * PT },
+    items: [
+      { id: 'cut-outline', kind: 'path', role: 'cut', source: 'master', name: 'Cut outline', stroke: true, fill: false, lwPt: 0.5, subpaths: roundRect(1, 1, 23, 29, 2.5) },
+      { id: 'cut-hole', kind: 'path', role: 'cut', source: 'master', name: 'Bail hole', stroke: true, fill: false, lwPt: 0.5, subpaths: circle(12, 3.3, 1.05) },
+      ...letters,
+      ...squares,
+      { id: 'heart-line', kind: 'path', role: 'line', source: 'master', name: 'Heart outline', stroke: true, fill: false, lwPt: 0.25, subpaths: heart(gx0 + 6.5 * cw, gy0 + 4.5 * rh, 0.9) },
+      { id: 'heart-fill', kind: 'path', role: 'hatch', source: 'master', name: 'Filled heart', stroke: false, fill: true, lwPt: 0, subpaths: heart(19.6, 4.6, 0.9) }
+    ]
+  };
+  const back = {
+    face: 'back', unitPt: true, frame: { x0: X0, y0: Y0, wPt: W * PT, hPt: H * PT },
+    items: [
+      { id: 'b-cut-outline', kind: 'path', role: 'cut', source: 'master', name: 'Cut outline', stroke: true, fill: false, lwPt: 0.5, subpaths: roundRect(1, 1, 23, 29, 2.5) },
+      { id: 'b-cut-hole', kind: 'path', role: 'cut', source: 'master', name: 'Bail hole', stroke: true, fill: false, lwPt: 0.5, subpaths: circle(12, 3.3, 1.05) },
+      { id: 'b-words', kind: 'text', role: 'hatch', source: 'engrave', name: 'FOREVER', text: 'FOREVER', fontKey: 'sans', sizePt: 10, align: 'center', tx: +(X0 + 12 * PT).toFixed(4), ty: +(Y0 + 16.5 * PT).toFixed(4), sx: 1, sy: 1, rot: 0 },
+      { id: 'b-stars', kind: 'group', role: 'line', source: 'master', name: 'Stars', children: [
+        { id: 'b-star-1', kind: 'path', role: 'line', source: 'master', name: 'Star left', stroke: true, fill: false, lwPt: 0.25, subpaths: star(7, 22, 1.4) },
+        { id: 'b-star-2', kind: 'path', role: 'line', source: 'master', name: 'Star right', stroke: true, fill: false, lwPt: 0.25, subpaths: star(17, 22, 1.4) }
+      ] }
+    ]
+  };
+  const fonts = [{ key: 'sans', name: 'Nunito Sans' }, { key: 'serif', name: 'Cormorant' }, { key: 'bold', name: 'Sans Bold' }];
+  window.fixture = { front, back, fonts, PT, X0, Y0, grid: { gx0, gx1, gy0, gy1, cw, rh, inset }, month: { startX, baseY, width, size } };
+  window.openEditor = function (extra) {
+    window.__result = undefined; window.__closed = false;
+    const faces = JSON.parse(JSON.stringify({ front, back }));
+    return CharmEditor.open(Object.assign({ title: 'Calendar 86188', subtitle: 'SS · order 4213955608 · piece 2 of 3', faces, fonts, startFace: 'front' }, extra || {}))
+      .then(r => { window.__result = r; window.__closed = true; return r; });
+  };
+  let pageKeys = 0;
+  document.addEventListener('keydown', () => { pageKeys++; document.getElementById('pageKeys').textContent = 'page keys: ' + pageKeys; window.__pageKeys = pageKeys; });
+  window.__pageKeys = 0;
+  document.getElementById('openBtn').addEventListener('click', () => window.openEditor());
+})();
+</script>
+</body>
+</html>
