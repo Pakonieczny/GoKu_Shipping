@@ -123,6 +123,12 @@
     const k = sFrom / sTo;
     const W = Math.max(1, Math.ceil(w / k)), H = Math.max(1, Math.ceil(h / k));
     const out = new Uint8Array(W * H);
+    // (27 Oct 2026: enlarging reads each pixel from its source, so the mask stays solid. Spreading the source pixels instead left a hole every few
+    //  pixels, and verify()'s erosion for a negative clearance then emptied the whole charm: an enlarged charm, or one drawn at under `res` px/pt, overlapped nothing)
+    if (k < 1) {
+      for (let y = 0; y < H; y++) { const sy = Math.min(h - 1, (y * k) | 0) * w; for (let x = 0; x < W; x++) if (bits[sy + Math.min(w - 1, (x * k) | 0)]) out[y * W + x] = 1; }
+      return { bits: out, w: W, h: H };
+    }
     for (let y = 0; y < h; y++) {
       const ty = Math.min(H - 1, (y / k) | 0);
       for (let x = 0; x < w; x++) if (bits[y * w + x]) out[ty * W + Math.min(W - 1, (x / k) | 0)] = 1;

@@ -5613,7 +5613,7 @@ function buildJob(sh) {
     clearancePt: +S.settings.clearancePt || 0, writeScale: 1 /* (25 Oct 2026: nesting at the written size, CHARM_SCALE, made the append turns of a big file place 11 of 14 pieces on an 11 % sheet; off until that is fixed. The overlap the shrink can cause is cleared by fixOverlaps) */, angles: careful && angleSet().length < CAREFUL_ANGLES.length ? CAREFUL_ANGLES : angleSet(), fineRes: 2, coarseRes: 0.5,
     timeBudgetMs: sh.intakeBudgetMs || (+S.settings.budgetS || 180) * 1000, fullBudget: sh.intakePhase !== "fill", stallMs: 60 * 1000, maxTrials: sh.intakePhase === "fill" ? 2000 : 1000000, seed: sh.runSeed || +S.settings.seed || 1,
     // charms already on the sheet stay exactly where they are
-    protectedRose:sh.roseProtected||null,lockedPlacements:withHandLocks(sh,items,sh.appendOnly?sh.nestInitial||sh.placements:careful&&sh.nestInitial?.length?sh.nestInitial:null),
+    protectedRose:sh.roseProtected||null,lockedPlacements:(typeof withHandLocks==="function"?withHandLocks:(sh,items,base)=>base)(sh,items,sh.appendOnly?sh.nestInitial||sh.placements:careful&&sh.nestInitial?.length?sh.nestInitial:null),   // (a test that slices buildJob out alone has no withHandLocks)
     // a Gold or Silver sheet also reports whether one of the shop's smallest charms could still go in (see topupSettle)
     careful, roomCheck: careful && ["gold", "silver"].includes(sh.metal),
     // an order turned away from a sheet with room left lifts the few newest charms near the bottleneck and seats them again beside it ("making room"; Rose Gold never, see the solver's unjam)
@@ -6399,7 +6399,7 @@ function geomCheck(sh, masks) {
 }
 /** The written file re-rendered layer by layer (each charm's layer is rendered once while it stays as it is: layerSig; what it covers is kept with the sheet). */
 function renderCheck(sh, aiBytes, specBase, st, layerSigs, areas) {
-  return CharmNestPDF.verifyRendered(aiBytes, { wPt: st.wPt, hPt: st.hPt, insetPt: handPlacedSheet(sh) ? 0 : +S.settings.insetPt || 0, res: +S.settings.verifyRes || 6, erodePt: (+S.settings.clearancePt || 0) < 0 ? Math.round(-S.settings.clearancePt / 2 * 2) / 2 : 0, layerSigs, cache: areas, onProgress: (d, t) => { sh.stage = `Verifying · charm ${d}/${t} re-rendered from the output file`; renderProgress(sh); } });
+  return CharmNestPDF.verifyRendered(aiBytes, { wPt: st.wPt, hPt: st.hPt, insetPt: typeof handPlacedSheet === "function" && handPlacedSheet(sh) ? 0 : +S.settings.insetPt || 0, res: +S.settings.verifyRes || 6, erodePt: (+S.settings.clearancePt || 0) < 0 ? Math.round(-S.settings.clearancePt / 2 * 2) / 2 : 0, layerSigs, cache: areas, onProgress: (d, t) => { sh.stage = `Verifying · charm ${d}/${t} re-rendered from the output file`; renderProgress(sh); } });
 }
 /* OVERLAPFIX (Paul, 25 Oct 2026): "minor overlap between some charms on a sheet … cannot hold the sheet and the sheet must be auto fixed by the system by shrinking a given charm that is
    overlapping by the smallest possible amount and moving it over just slightly enough that the offending overlap gets resolved … The primary approach should be that a tiny readjustment
