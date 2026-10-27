@@ -3695,6 +3695,10 @@
       else if (prev === "text" && prep && ["end", "newline", "list", "and", "slash"].includes(sep)) kind = "D";
       if (kind === "D") len = 0;
       else if (!kind && prev === "text" && !prep && sep === "space") kind = "X";   // "front A back B": the second face word follows the first one's words
+      // (DASHFACE, Paul 27 Oct 2026, order 4208640203, "Front - CMG    Back - 3.22.19": the back label after the front's words with a dash, as "front - A back B" with a space or "back: B" with a colon
+      //  already were: read as the back's words, the date, not as more words of the front ("only the front is written"). The same one-other-face rule below decides it; a face word joined
+      //  to the words before it ("Mary-Back - 1999") stays part of them)
+      else if (!kind && prev === "text" && !prep && sep === "dash" && /[ \t]$/.test(before)) kind = "X";
       if (kind) labels.push({ face, kind, start, end: end + len, own }); else strays.push(face);
     }
     // a face word that follows words with a space only is a label when it is the one other face word of the text ("front A back B", "front: A back B"); else it is part of the words
