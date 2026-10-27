@@ -2757,7 +2757,8 @@
          own SKU when that SKU is ONE product of the listing (a rune's "VIKING RUNES_URUZ": `ownSku`). A person's pick for one order in Review is kept by the Review layer (charm-nest-listing-relink.js) as before.
          The row REPLACES every automatic match (the transaction's SKU, a spelling, Etsy's inventory SKU) AND a listing-wide saved answer (the listing's design `sku`, its huggie answer `huggie`, a link under a
          SKU every product of the listing shares, a product link to such a SKU): a listing-wide answer gives every buyer ONE charm whatever form or symbol they chose, and that is what made order 4202871419
-         "CARDS 2 - (4 CARDS)" (and would make every Huggie set a necklace drawing, or every rune Uruz). */
+         "CARDS 2 - (4 CARDS)" (and would make every Huggie set a necklace drawing, or every rune Uruz).
+         (SKUPROFILE, 27 Oct 2026: on a row of FIXED entries, the cards, a person's link for the line's SKU, or a design they moved the listing's Etsy SKU to, stands for the line's form: charmOnlyAliasStands.) */
   const CHARM_ONLY_RUNES_FUTHARK = Object.freeze(RUNE_NAMES.concat(RUNES_ABSENT));   // Fehu 0 … Jera 11, Eihwaz 12 … Othala 23: the standard Elder Futhark order (RUNES_ABSENT is listed in it)
   /* The necklace runes' base, in ONE place. The library writes them RUNE_NECKLACE_CHARM-0 … -23 (the real master read, tests/charm-nest/options-link-data.json). A member is found by masterSku: the master's exact
      spelling, else the one master SKU with the same loose key, so a library that writes RUNE_NECKLACE_CHARM_1 or Rune_Necklace_Charm-1 is found as well; a different NAME (not only punctuation) is changed here. */
@@ -2786,12 +2787,29 @@
     if (row.necklace.sku && row.necklace.sku.some(n => masterSku(n, me, loose) === sku)) return true;
     return row.huggie.sku ? f !== "huggie" : f === "necklace";
   };
-  /** May a design from a person's SAVED link (resolveSku source "alias") stand over the row? Only a link saved under the line's own SKU when that SKU is one product of the listing (row.ownSku). raw: the SKU the
-   *  link was looked up under (a huggie set's "X (HUGGIE)"). A listing-wide answer, a huggie-set answer, a link under a SKU the listing's products share never does. */
-  function charmOnlyAliasStands(row, line, raw, sku, aliases) {
+  /* SKUPROFILE (Paul, 27 Oct 2026, listing 1801964100: "For some reason the system refuses to update some listings on etsy"). Change SKU "CARDS 2 - (4 CARDS)" → "CARDS2- 4 CARDS" was refused ("Not saved: a
+     new order of this listing would still read as CARDS 1 - (2 CARDS) (profile)"): the cards row's ownSku is never true, so NO link a person saved for the listing could stand over the row, and the save's own
+     check (charm-nest-review-link.js proof) rightly would not call it saved. A pick for a listing is kept "forever" (REVLINK, Paul 12 Oct 2026) and Change SKU is Paul's word for what an Etsy SKU is cut as
+     (EDITSKU, 26 Oct 2026), so on a row of FIXED entries the person's word wins for the line's form:
+       · a link saved under the line's own SKU (bySku: the SKU of the product bought) to a design of the line's form stands; of another form it does not (charmOnlyCross: a link under a SKU both forms share
+         reaches its own form only, never a necklace drawing on a Huggie set);
+       · Change SKU also puts the new SKU on Etsy, so the NEXT orders carry it: a line whose own SKU is a design a person linked the listing to FROM another SKU (X → Y, X not Y) is read as it, for its form.
+     Still replaced as on 19 Oct: every automatic match, a listing-wide answer (sku / huggie), a link of a SKU to itself (the name, no choice). A family row (the runes) is unchanged (ownSku). */
+  /** May a design from a person's SAVED link (resolveSku source "alias") stand over the row? A link saved under the line's own SKU when that SKU is one product of the listing (row.ownSku), or, on a row of fixed
+   *  entries, of the line's form (SKUPROFILE). raw: the SKU the link was looked up under (a huggie set's "X (HUGGIE)"); form: the line's ("necklace" | "huggie"). A listing-wide or huggie-set answer never does. */
+  function charmOnlyAliasStands(row, line, raw, sku, aliases, form, me, loose) {
     const a = aliases && aliases[String(line && line.listingId)], k = upSku(raw), bare = k.replace(/\s*\(\s*HUGGIES?\s*\)\s*$/, "");
-    if (!sku || !a || !a.bySku || !k || !row.ownSku(bare)) return false;
-    return upSku(bySkuOf(a.bySku, k) || "") === upSku(sku);
+    if (!sku || !a || !a.bySku || !k || upSku(bySkuOf(a.bySku, k) || "") !== upSku(sku)) return false;
+    if (row.ownSku(bare)) return true;
+    return !!(row[form] && row[form].sku) && !charmOnlyCross(row, form, masterSku(sku, me, loose) || upSku(sku), me, loose);
+  }
+  const CHARM_ONLY_OWN_SKU = new Set(["transaction", "spelling", "variation", "typo", "named", "inventory"]);   // (SKUPROFILE: the sources that read the line's own SKU)
+  /** SKUPROFILE: is the line's own SKU a design a person linked this listing to from ANOTHER SKU (bySku X → Y, X not Y: what Change SKU saves, and Y is then on Etsy)? Only on a row of fixed entries, for the line's form. */
+  function charmOnlyChosen(row, line, sku, aliases, form, me, loose) {
+    const a = aliases && aliases[String(line && line.listingId)], y = upSku(sku), map = a && a.bySku && typeof a.bySku === "object" ? a.bySku : null;
+    if (!y || !map || !(row[form] && row[form].sku)) return false;
+    // (X → X, or X → another name of X's own drawing, is no choice; "CARDS 2 - (4 CARDS)" and "CARDS2- 4 CARDS" share a loose key but are two drawings, so the drawing decides, never the spelling)
+    return Object.keys(map).some(x => { const v = upSku(map[x]); return !!v && (masterSku(v, me, loose) || v) === y && !sameDesign(masterSku(x, me, loose) || x, y, me); }) && !charmOnlyCross(row, form, y, me, loose);
   }
   const CHARM_ONLY_NEVER_WHY = "The rune is the buyer's choice of charm, not words to engrave (the buyer chose no engraving)";
   /** What a line of a CHARM_ONLY_LISTINGS row reads as, in symbolRead's shape (so the reading, the option answer, the hold and the facts are told as HUGSYM's): → { profile, noun, family, form, symbols, textOnly,
@@ -4231,7 +4249,10 @@
     try {
       const crow = !once && !symbol && !quiet && !viaPick && !viaLetter && !viaProfile && me ? charmOnlyListing(line) : null;
       if (crow && !(members && !["skus", "title", "signs"].includes(members.source))) {
-        if (skuSource !== "alias" || !charmOnlyAliasStands(crow, line, set ? bought : upSku(line.sku), sku, ctx.aliases)) {
+        // (SKUPROFILE, 27 Oct 2026: a person's link for the line's SKU, or the design they moved the listing's Etsy SKU to, stands for the line's form; section 3c''')
+        const cform = charmOnlyHuggie(line, lf) ? "huggie" : "necklace";
+        const stands = skuSource === "alias" ? charmOnlyAliasStands(crow, line, set ? bought : upSku(line.sku), sku, ctx.aliases, cform, me, loose) : CHARM_ONLY_OWN_SKU.has(skuSource) && charmOnlyChosen(crow, line, sku, ctx.aliases, cform, me, loose);
+        if (!stands) {
           charmOnlyHit = charmOnlyRead(line, order, crow, { me, loose, lf, skus: [txSku, viaInventory && viaInventory.etsy, upSku(line.sku)] });
           if (charmOnlyHit) { charmOnlyHit.was = { sku: sku || "", source: skuSource || "" }; symbol = charmOnlyHit; members = null; }
         }
