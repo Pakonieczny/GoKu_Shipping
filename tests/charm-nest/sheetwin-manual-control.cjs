@@ -147,6 +147,33 @@ const root = path.join(__dirname, '../..');
     console.log(`ok   2  on: claimed and held; B moved to (${poseB.cxPt}, ${poseB.cyPt}), a quarter turn snapped to 90°, Shift turned it to ${turned}°, a corner sized it 110 % → 120 % (the most) → ${Math.round(sizeB * 100)} %`);
     if (process.env.SHOT_DIR) await page.screenshot({ path: path.join(process.env.SHOT_DIR, 'manual-on.png') });
 
+    /* ── 2c · SIZECHIP and NUDGE (Paul, 27 Oct 2026): the size against the original beside the charm in hand, ↺ back to 100 %; the arrows 0.05 mm, Shift 1 mm ── */
+    {
+      const chip = () => page.evaluate(() => { const n = document.querySelector('.sheetWin [data-r=mcSize]'); if (!n || n.hidden || !n.offsetParent) return null; const r = n.getBoundingClientRect(), t = CNManual._tool(), fr = t.raw.corners, xs = fr.map(p => p[0]), ys = fr.map(p => p[1]);
+        return { text: n.querySelector('[data-mcsz=v]').textContent, reset: !n.querySelector('[data-mcsz=reset]').hidden, title: n.title, r: [r.left, r.top, r.right, r.bottom], frame: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] }; });
+      let c = await chip();
+      assert(c && c.text === '+5%' && c.reset && /105% of its original size/.test(c.title), 'B in hand at 105 %: the chip says +5% with its ↺: ' + JSON.stringify(c));
+      assert(c.r[0] >= c.frame[2] + 4 || c.r[2] <= c.frame[0] - 4, 'beside the frame, never over the charm: ' + JSON.stringify(c));
+      // another charm taken (at 100 %: no chip), then B again: the chip is back
+      const aP = S0.at[cA]; await page.mouse.click(...await at(aP[0], aP[1])); await page.waitForTimeout(150);
+      assert.equal(await page.evaluate(() => CNManual._MC.sel && CNManual._MC.sel.id), cA, 'A in hand'); assert.equal(await chip(), null, 'A is at its original size: no chip');
+      const bP = await pose(cB); await page.mouse.click(...await at(bP.cxPt, bP.cyPt)); await page.waitForTimeout(150);
+      assert.equal(await page.evaluate(() => CNManual._MC.sel && CNManual._MC.sel.id), cB, 'B in hand again'); c = await chip(); assert(c && c.text === '+5%', 'the chip is there again for B: ' + JSON.stringify(c));
+      // ↺: back to 100 %, the chip goes; + five times: 105 % again (with the arrows below, the keys reach the charm after a press on it: the plate has the focus)
+      await page.click('.sheetWin [data-r=mcSize] [data-mcsz=reset]'); await page.waitForTimeout(150);
+      q = await pose(cB); assert.equal(q.size, 1, '↺ puts B back to its original size: ' + q.size); assert.equal(await chip(), null, 'and the chip goes');
+      for (let i = 0; i < 5; i++) await page.keyboard.press('Equal');
+      q = await pose(cB); assert(Math.abs(q.size - 1.05) < 1e-9, '+ five times: 105 % again: ' + q.size); c = await chip(); assert(c && c.text === '+5%', 'and the chip: ' + JSON.stringify(c));
+      // the arrows: 0.05 mm, Shift 1 mm, exactly (never moved to a grid cell)
+      const MM = 72 / 25.4, p0 = await pose(cB);
+      await page.keyboard.press('ArrowRight'); q = await pose(cB); assert(Math.abs(q.cxPt - (p0.cxPt + 0.05 * MM)) < 1e-6 && q.cyPt === p0.cyPt, '→ moves it 0.05 mm: ' + (q.cxPt - p0.cxPt));
+      await page.keyboard.press('Shift+ArrowDown'); q = await pose(cB); assert(Math.abs(q.cyPt - (p0.cyPt + MM)) < 1e-6, 'Shift + ↓ moves it 1 mm: ' + (q.cyPt - p0.cyPt));
+      await page.keyboard.press('ArrowLeft'); await page.keyboard.press('Shift+ArrowUp'); q = await pose(cB);
+      assert(Math.abs(q.cxPt - p0.cxPt) < 1e-6 && Math.abs(q.cyPt - p0.cyPt) < 1e-6 && q.size === p0.size && q.angle === p0.angle, 'and back exactly: ' + JSON.stringify([q, p0]));
+      poseB.cxPt = q.cxPt; poseB.cyPt = q.cyPt;
+      console.log(`ok   2c the size chip beside B ("${c.text}", outside its frame), gone for a charm at 100 % and back for B, ↺ to 100 % and + to 105 % again; → 0.05 mm, Shift 1 mm, exact`);
+    }
+
     /* ── 2b · MCFREE: the handles at the sheet's top-right corner, always there to take ── */
     const cE = S0.charms[4], e0 = await pose(cE);
     const toolNow = () => page.evaluate(() => CNManual._tool());
@@ -215,6 +242,9 @@ const root = path.join(__dirname, '../..');
     f = await fit(cC, aAt[0] + 17, aAt[1], 0); assert.equal(f.ok, false); assert.equal(f.why, 'overlap'); assert.match(f.reason, /overlap/);
     f = await fit(cC, aAt[0], aAt[1] + 20, 0); assert.equal(f.ok, true, 'C right under A: ' + f.reason);
     f = await fit(cC, 2, 40, 0); assert.equal(f.ok, false); assert.equal(f.why, 'edge', 'off the sheet: ' + f.why);
+    // (ZEROGAP, Paul 27 Oct 2026: no margin from the sheet's edge: right against it fits, a hair past it does not)
+    f = await fit(cC, 10.6, aAt[1], 0); assert.equal(f.ok, true, 'C right against the sheet\'s left edge (no margin): ' + f.reason); assert(Math.abs(f.pose.cxPt - 10.6) < 1e-9, 'exactly where asked: ' + f.pose.cxPt);
+    f = await fit(cC, 9.5, aAt[1], 0); assert.equal(f.ok, false, 'a hair past the edge'); assert.equal(f.why, 'edge', 'past the edge: ' + f.why);
     f = await page.evaluate(([sid, id]) => CNManual.fits(sid, id, { cxPt: 150, cyPt: 150, angle: 0, size: 1.3 }), [S0.id, cC]); assert.equal(f.why, 'size');
     // the same through the tool: C dragged to touch A's right edge stays there
     await drag(await at(40, 95), await at(aAt[0] + 20, aAt[1]), { steps: 14 });

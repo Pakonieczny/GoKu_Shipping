@@ -88,7 +88,7 @@ let fittedCapMm;
   assert.equal(toasts.length, 1); assert.match(toasts[0].m, /as large as these words fit on this charm/); assert.match(toasts[0].m, new RegExp(f.capMm.toFixed(2)));
   assert.equal(j.wantSize, f.size, 'the request is not kept: a later move does not spring to an impossible size');
   fittedCapMm = f.capMm;
-  const text = ctx.capText(f); assert.match(text, /^3\.\d\d mm · largest that fits$/, 'the readout says why it stops: ' + text);
+  const text = ctx.capText(f); assert.match(text, /^3\.\d\d mm$/, 'the readout is the size alone (Paul, 27 Oct 2026: "Remove the text Largest that fits"); the toast says why it stops: ' + text);
   ctx.resize(j, 0.8 * f.size); assert(!j.fit.atLimit && j.fit.size < f.size && ctx.capText(j.fit) === j.fit.capMm.toFixed(2) + ' mm', 'smaller again: the note goes');
 }
 
@@ -101,7 +101,7 @@ let fittedCapMm;
   assert.equal(toasts.length, 0); assert.doesNotMatch(out.readout, /largest/);
   out = pull(10);                                                           // ten times as far: past the charm
   assert(G.verifyInk(out.shown.glyphs.flatMap(g => g.cmds), mask).ok, 'the preview never leaves the metal');
-  assert.match(out.readout, /largest that fits/, 'the readout beside the controls says it while dragging: ' + out.readout);
+  assert.match(out.readout, /^\d+\.\d\d mm$/, 'the readout beside the controls is the size alone while dragging: ' + out.readout); assert.doesNotMatch(out.readout, /largest/);
   assert(Math.abs(j.fit.capMm - fittedCapMm) < 0.05, 'released at the largest: ' + j.fit.capMm.toFixed(2) + ' mm'); assert.equal(toasts.length, 1);
   assert(j.fit.size < 10 * 2 * oldSize);
 }

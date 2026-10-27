@@ -411,6 +411,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swMcWarn::before{content:"";flex:0 0 9px;width:9px;height:9px;border-radius:50%;background:var(--clay,#b0563f)}
 .swMcWarn small{font-weight:500;color:var(--ink70)}
 .swMcWarn[hidden]{display:none}
+/* (SIZECHIP, Paul 27 Oct 2026: "a persistent percentage of increase or reduction in size and a quick return to original size button near the Charm ... it cannot obstruct the view of the
+   charm"): beside the frame of the charm in hand, outside it, while its size is not its original one */
+.swMcSize{position:absolute;z-index:7;display:inline-flex;align-items:center;gap:1px;height:22px;padding:0 2px 0 7px;border:1px solid rgba(38,110,190,.5);border-radius:11px;background:rgba(255,254,251,.95);box-shadow:0 1px 3px rgba(31,25,18,.14);font:650 11px/1 var(--mono,ui-monospace,monospace);color:#1f5f9e;white-space:nowrap;pointer-events:auto;user-select:none}
+.swMcSize[hidden]{display:none}
+.swMcSize .r{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;margin-left:3px;padding:0;border:0;border-radius:50%;background:transparent;color:inherit;font:600 13px/1 system-ui,sans-serif;cursor:pointer}
+.swMcSize .r:hover,.swMcSize .r:focus-visible{background:rgba(38,110,190,.14);outline:none}
+.swMcSize .r[hidden]{display:none}
+.swPlate canvas.swFx:focus{outline:none}
 /* motion (Paul, 27 Sep 20:09-20:24): the row about to leave is lit where it stands; a spot on the plate glows where a
    row lands (under the drawn charms); a flying candidate row keeps its panel's layout, as a card */
 .swOrd.going{background:var(--goldSoft)}.swOrd.going.cancel{background:var(--claySoft)}
@@ -464,7 +472,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       </header>
       <div class="swBody">
         <section class="swStage" data-r="stage">
-          <div class="swPlateBox" data-r="plateBox"><div class="swPlate" data-r="plate"><canvas class="swRule" data-r="rule"></canvas><img class="swPv" data-r="pv" alt="" crossorigin="anonymous"><canvas class="swBase" data-r="base"></canvas><canvas class="swFx" data-r="fx"></canvas><div class="swTip" data-r="tip"></div></div><canvas class="swMcTool" data-r="mcTool" aria-hidden="true"></canvas><div class="swMcWarn" data-r="mcWarn" role="status" aria-live="polite" hidden></div>
+          <div class="swPlateBox" data-r="plateBox"><div class="swPlate" data-r="plate"><canvas class="swRule" data-r="rule"></canvas><img class="swPv" data-r="pv" alt="" crossorigin="anonymous"><canvas class="swBase" data-r="base"></canvas><canvas class="swFx" data-r="fx"></canvas><div class="swTip" data-r="tip"></div></div><canvas class="swMcTool" data-r="mcTool" aria-hidden="true"></canvas><div class="swMcWarn" data-r="mcWarn" role="status" aria-live="polite" hidden></div><div class="swMcSize" data-r="mcSize" hidden><span class="v" data-mcsz="v"></span><button type="button" class="r" data-mcsz="reset" title="Back to its original size (100%)" aria-label="Back to its original size, 100%">↺</button></div>
             <div class="swHand" data-r="hand" hidden></div><div class="swHand swMc" data-r="mcBar" role="status" hidden></div><div class="swVeil" data-r="veil" hidden><span class="owSpin"></span><span data-r="veilText">Opening the sheet…</span></div></div>
           <footer class="swStrip" data-r="strip"></footer>
         </section>
@@ -5040,15 +5048,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      an arrival to it, the window's fill and moves leave it alone). A press on a charm takes it into the tool the engraving words have (charm-nest-bridge.js, the
      back preview's box): drag it to move it, drag the round handle above it to turn it (15° steps; Shift: by the degree), drag a corner to resize it (80 % to
      120 % of its design size, in 1 % steps, its shape kept: a resize changes the piece that is cut, so it stays within a fifth of what the buyer ordered). The
-     arrow keys nudge it half a point (Shift: 2 pt), [ ] turn it 15° ({ } by 1°), + and − size it by 1 %, Esc lets it go. Every pose is put to the ONE check
-     below as it moves: sage where it is clear, clay where it is not; let go where it may, it snaps into the grid cell the nest itself would seat it in (within
-     1 pt of where it was let go when it is moved). (MCFREE, Paul 20 Oct 2026: let go where it overlaps another charm or runs past the margin, it is no longer
+     arrow keys nudge it 0.05 mm (Shift: 1 mm: NUDGE, 27 Oct 2026), [ ] turn it 15° ({ } by 1°), + and − size it by 1 %, Esc lets it go. Every pose is put to the ONE
+     check below as it moves: sage where it is clear, clay where it is not; let go where it may, it stays exactly where it was put (ZEROGAP, 27 Oct 2026); a hair over its
+     neighbour, it goes to the nearest legal spot within 1 pt. Beside the frame, a small chip says its size against its original one ("+12%") with ↺ for 100% (SIZECHIP). (MCFREE, Paul 20 Oct 2026: let go where it overlaps another charm or runs past the margin, it is no longer
      sent back: it stays where it was put, red, with the charms it meets, until it is moved clear; see "free placement" below. The tool's handles are drawn on
      their own layer over the stage, never clipped by the plate.)
-     The check (mcCheck) is the nest's own: its collision grid (CharmNestSolver.makeSheetGrid / prepareVariant, fineRes 2, the run's clearance S.settings.clearancePt,
-     the sheet's inset and any metal already cut away, the other charms stamped from their real outlines at their own poses and sizes), then the independent verifier
-     (CharmNestSolver.verify at 6 px/pt) over the charm and its neighbours. Two outlines may touch, never cross: with the shop's clearance a charm may sit right against
-     its neighbour as long as their cut lines do not overlap (the same rule every nested charm meets).
+     The check (mcCheck) is the nest's collision grid (CharmNestSolver.makeSheetGrid / prepareVariant, fineRes 2) with NO clearance and NO inset (ZEROGAP, Paul 27 Oct
+     2026: "unless the actual pixels are overlapping on the cut lines for a given charm then it must be allowed"), any metal already cut away and the other charms stamped
+     from their real outlines at their own poses and sizes; then the independent verifier (CharmNestSolver.verify at 6 px/pt) over the charm and its neighbours, which
+     decides at the exact pose where the half-point grid says no. Two cut outlines may touch, never share a pixel; none may pass the sheet's edge.
      Off (the button again, closing the window, or opening another sheet): what moved is saved (mcSave): the sheet's guards again as the cloud has it, every moved
      charm checked once more against the others where they now stand, then each one pinned where it was put by the person (c.pinned without arrivalPin: no later nest,
      gap fill or making-room ever lifts it; c.manual = { by, at, size? }: who, when and its size, saved on the record's charm), the sheet written again as it stands
@@ -5076,6 +5084,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      Control is on (the hop) is dropped from what the save writes, and the hop's own writes of the held sheet pass its hold (rewritePage).
        CNManual.fromRecord(charm)               -> { by, at, size? } | null   a saved charm's manual mark, as the page's restore of a sheet reads it ── */
   const MANUAL_METALS = ["gold10k", "gold14k"], MC_MIN = 0.8, MC_MAX = 1.2, MC_TURN = 15, MC_SNAP_PT = 1, MC_STALE = 90000, MC_BEAT = 30000;
+  /* ZEROGAP (Paul, 27 Oct 2026: "The tolerance should be 0, meaning that as long as the outline of a given charm does not overlap with any other charm around it that should be acceptable.
+     Same goes for the edge of the sheet ... unless the actual pixels are overlapping on the cut lines for a given charm then it must be allowed"). A charm placed by hand keeps no clearance from
+     its neighbours and no margin from the sheet's edge: the check's grid has none (mcClr(), MC_INSET), and where that half-point grid says no, the verifier decides at the exact pose, pixel by
+     pixel (6 px/pt: two cut outlines on one pixel, or one past the sheet's edge or into metal cut away). The pose is kept as put, never moved to a grid cell (mcCheck). No gap is ever
+     asked for: the clearance is 0, or the shop's own allowance where it lets two cut lines touch (a negative clearance, -0.5 pt by default), so a charm placed by hand passes exactly when
+     the sheet's own verifier passes it (the same verify, the same allowance). The nest's inset is for the charms it places itself; a saved sheet keeps every hand-placed charm where it is
+     (its placements are locked). */
+  const mcClr = () => Math.min(0, +S.settings.clearancePt || 0), MC_INSET = 0;
+  /* NUDGE (Paul, 27 Oct 2026: "very fine positional adjustment movements using the 4 keyboard arrow keys ... and Shift + any of the 4 arrow keys would make large positional charm adjustment"):
+     an arrow moves the charm in hand 0.05 mm, Shift + an arrow 1 mm */
+  const MM_PT = 72 / 25.4, MC_NUDGE = 0.05 * MM_PT, MC_NUDGE_BIG = 1 * MM_PT;
   // this tab (a claim names the screen that holds it; a reload of the same tab is the same screen)
   const MC_TAB = (() => { const mk = () => "t" + Math.random().toString(36).slice(2, 12); try { let t = sessionStorage.getItem("cn.sheetwin.tab"); if (!/^[\w-]{4,40}$/.test(t || "")) { t = mk(); sessionStorage.setItem("cn.sheetwin.tab", t); } return t; } catch (_) { return mk(); } })();
   const MC = { on: false, sh: null, id: null, who: "", sel: null, lift: null, drag: null, edits: new Map(), from: new Map(), G: null, valid: null, msg: "", tone: "", msgT: 0, beat: 0, spring: 0, springBad: false, claiming: false, subs: new Set(), grids: new Map(), owed: new Set() };   // (owed: the sheets charms were moved between while it was on, MANUALHOP)
@@ -5136,22 +5155,22 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** The sheet as the nest sees it, every placed charm but `exceptId` stamped where it stands (kept for the same layout: the cross-sheet drag asks often). */
   function mcGrid(sh, exceptId, poses) {
-    const clr = +S.settings.clearancePt || 0, prof = sh.roseProtected && sh.roseProtected.profile;
-    const sig = JSON.stringify([sh.sheetId || sh.page, exceptId, clr, +S.settings.insetPt || 0, prof ? 1 : 0, sh.roseStock && sh.roseStock.revision, sh.placements.map(p => { const q = mcPoseOf(sh, p.id, poses); return q ? [p.id, q.cxPt, q.cyPt, q.angle, q.size] : p.id; }), sh.charms.length]);
+    const clr = mcClr(), prof = sh.roseProtected && sh.roseProtected.profile;
+    const sig = JSON.stringify([sh.sheetId || sh.page, exceptId, clr, MC_INSET, prof ? 1 : 0, sh.roseStock && sh.roseStock.revision, sh.placements.map(p => { const q = mcPoseOf(sh, p.id, poses); return q ? [p.id, q.cxPt, q.cyPt, q.angle, q.size] : p.id; }), sh.charms.length]);
     const hit = MC.grids.get(sig); if (hit) return hit;
-    const job = buildJob(sh), sheet = Object.assign({}, job.sheet);
+    const job = buildJob(sh), sheet = Object.assign({}, job.sheet, { insetPt: MC_INSET });
     if (prof) sheet.remnant = prof;   // (a charm outside an earlier green line stays out of what that line takes, as the nest keeps it: verify's own rule)
-    const Sv = SV(), edge = Sv.makeSheetGrid(sheet, job.clearancePt, 2), grid = Object.assign(edge.clone(), { fineRes: 2 }), others = [], byId = new Map(sh.charms.map(c => [c.id, c]));
+    const Sv = SV(), edge = Sv.makeSheetGrid(sheet, mcClr(), 2), grid = Object.assign(edge.clone(), { fineRes: 2 }), others = [], byId = new Map(sh.charms.map(c => [c.id, c]));
     const guarded = new Set(((sh.roseProtected && sh.roseProtected.placements) || []).map(p => p.id));
     for (const p of sh.placements) {
       if (p.id === exceptId) continue;
       const c = byId.get(p.id), q = mcPoseOf(sh, p.id, poses); if (!c || !q || !c.bits || !c.w) continue;
-      const v = mcVariant(c, q.angle, q.size, job.clearancePt); if (!v) continue;
+      const v = mcVariant(c, q.angle, q.size, mcClr()); if (!v) continue;
       grid.stamp(v.fine.bits, v.fine.w, v.fine.h, Math.round(q.cxPt * 2 - v.solid.cx), Math.round(q.cyPt * 2 - v.solid.cy));
       others.push({ id: p.id, c, q, guarded: guarded.has(p.id) });
     }
     if (grid.buildSAT) grid.buildSAT();
-    const G = { grid, edge, sheet, clearancePt: job.clearancePt, others, except: exceptId };
+    const G = { grid, edge, sheet, clearancePt: mcClr(), others, except: exceptId };
     MC.grids.set(sig, G); if (MC.grids.size > 6) MC.grids.delete(MC.grids.keys().next().value);
     return G;
   }
@@ -5166,28 +5185,54 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const rad = (cc, s) => Math.hypot(+cc.widthPt || 20, +cc.heightPt || 20) / 2 * s + 2;
     const r0 = rad(c, at.size), list = [{ id: c.id, c, q: at }].concat(G.others.filter(o => !o.guarded && Math.hypot(o.q.cxPt - at.cxPt, o.q.cyPt - at.cyPt) < r0 + rad(o.c, o.q.size)));
     try {
-      const job = { sheet: Object.assign({ wPt: G.sheet.wPt, hPt: G.sheet.hPt }, G.sheet.remnant ? { remnant: G.sheet.remnant } : {}), clearancePt: G.clearancePt, fineRes: 2, pieces: list.map(o => Object.assign({ id: o.id }, pieceOf(o.c, o.q.size))) };
-      const r = SV().verify(job, list.map(o => ({ id: o.id, cxPt: o.q.cxPt, cyPt: o.q.cyPt, angle: o.q.angle })), 6);
+      // (ZEROGAP: checked on the part of the sheet these charms can reach, whole points from its corner, so every pixel falls where it would on the whole sheet: a pixel outside that
+      //  part is outside the sheet. A sheet with metal cut away is checked whole, its cut line being drawn in the sheet's own frame)
+      let ox = 0, oy = 0, wPt = G.sheet.wPt, hPt = G.sheet.hPt;
+      if (!G.sheet.remnant) {
+        const box = list.reduce((b, o) => { const r = rad(o.c, o.q.size); return [Math.min(b[0], o.q.cxPt - r), Math.min(b[1], o.q.cyPt - r), Math.max(b[2], o.q.cxPt + r), Math.max(b[3], o.q.cyPt + r)]; }, [Infinity, Infinity, -Infinity, -Infinity]);
+        ox = Math.max(0, Math.floor(box[0])); oy = Math.max(0, Math.floor(box[1]));
+        wPt = Math.min(G.sheet.wPt, Math.ceil(box[2])) - ox; hPt = Math.min(G.sheet.hPt, Math.ceil(box[3])) - oy;
+        if (!(wPt > 0 && hPt > 0)) { ox = 0; oy = 0; wPt = G.sheet.wPt; hPt = G.sheet.hPt; }
+      }
+      const job = { sheet: Object.assign({ wPt, hPt }, G.sheet.remnant ? { remnant: G.sheet.remnant } : {}), clearancePt: G.clearancePt, fineRes: 2, pieces: list.map(o => Object.assign({ id: o.id }, pieceOf(o.c, o.q.size))) };
+      const r = SV().verify(job, list.map(o => ({ id: o.id, cxPt: o.q.cxPt - ox, cyPt: o.q.cyPt - oy, angle: o.q.angle })), 6);
+      // (the edge is read from the charm's own outline, whole: the shop's allowance lets two cut lines touch, never one run past the sheet's edge or into metal cut away)
+      if (G.clearancePt < 0) {
+        const e = SV().verify(Object.assign({}, job, { clearancePt: 0, pieces: [job.pieces[0]] }), [{ id: c.id, cxPt: at.cxPt - ox, cyPt: at.cyPt - oy, angle: at.angle }], 6);
+        r.outsidePx = e.outsidePx; r.removedPx = e.removedPx; r.ok = !r.overlapPx && !e.outsidePx && !e.removedPx && !r.protectedMoved;
+      }
       if (r.ok) return { ok: true };
-      return { ok: false, reason: r.outsidePx ? "No room there: it would run past the sheet's edge." : r.removedPx ? "No room there: it would go into metal already cut away." : `No room there: it would overlap ${(() => { const o = list.find(z => z.id !== c.id && (r.overlappingPairs || []).some(pr => pr.includes(z.id) && pr.includes(c.id))); const rid = o && ridOfC(o.c); return rid ? `order ${rid}'s charm` : "another charm"; })()}.` };
+      return { ok: false, edge: !!(r.outsidePx || r.removedPx), reason: r.outsidePx ? "No room there: it would run past the sheet's edge." : r.removedPx ? "No room there: it would go into metal already cut away." : `No room there: it would overlap ${(() => { const o = list.find(z => z.id !== c.id && (r.overlappingPairs || []).some(pr => pr.includes(z.id) && pr.includes(c.id))); const rid = o && ridOfC(o.c); return rid ? `order ${rid}'s charm` : "another charm"; })()}.` };
     } catch (e) { console.warn("sheet window: manual verify", e); return { ok: false, reason: "The layout check could not be made here (" + e.message + ")." }; }
   }
-  /** THE check of one pose: the grid (as the nest seats a charm), then the verifier (full: on letting go and on saving). */
+  /** THE check of one pose: the grid (no clearance, no margin: ZEROGAP), then the verifier (full: on letting go, a nudge, the colours and saving), which decides at the EXACT pose
+   *  where the half-point grid says no. A pose that passes is kept as put (never moved to a grid cell, so a 0.05 mm nudge is one); only when it does not pass and `snapPt` asks is the
+   *  nearest legal spot within that many points looked for (a charm let go a hair over its neighbour). `full === "exact"`: the verifier at the exact pose only when the grid says no
+   *  (the drag asks it so, at most every 90 ms). */
   function mcCheck(G, c, pose, snapPt, full) {
     if (!c || !c.bits || !c.w) return { ok: false, why: "drawing", reason: "This charm's drawing is not loaded here, so it cannot be checked." };
     const angle = normDeg(pose.angle), size = clampSize(pose.size == null ? 1 : pose.size);
     const v = mcVariant(c, angle, size, G.clearancePt); if (!v) return { ok: false, why: "drawing", reason: "This charm's outline could not be measured." };
     const x0 = Math.round(pose.cxPt * 2 - v.solid.cx), y0 = Math.round(pose.cyPt * 2 - v.solid.cy);
     if (![x0, y0].every(Number.isFinite)) return { ok: false, why: "pose", reason: "That position is not on the sheet." };
-    let x = x0, y = y0, ok = G.grid.fits(v.fine.pm, x, y);
-    if (!ok && snapPt > 0) { const r = SV().tryPlace(G.grid, v, pose.cxPt, pose.cyPt, snapPt); if (r.ok && Number.isFinite(r.x) && Number.isFinite(r.y)) { x = r.x; y = r.y; ok = true; } }
-    const at = { cxPt: (x + v.solid.cx) / 2, cyPt: (y + v.solid.cy) / 2, angle, size };
-    if (!ok) {
-      if (!G.edge.fits(v.fine.pm, x0, y0)) return { ok: false, why: "edge", reason: G.sheet.remnant ? "No room there: it would run past the sheet's edge or into metal already cut away." : "No room there: it would run past the sheet's edge.", pose: at, v };
-      return { ok: false, why: "overlap", reason: `No room there: it would overlap ${mcNear(G, at)}.`, pose: at, v };
+    const exact = { cxPt: +pose.cxPt, cyPt: +pose.cyPt, angle, size };
+    let vr = null;
+    if (G.grid.fits(v.fine.pm, x0, y0)) {
+      if (full && full !== "exact") { vr = mcVerify(G, c, exact); if (!vr.ok) return { ok: false, why: vr.edge ? "edge" : "verify", reason: vr.reason, pose: exact, v }; }
+      return { ok: true, why: "", reason: "", pose: exact, v };
     }
-    if (full) { const vr = mcVerify(G, c, at); if (!vr.ok) return { ok: false, why: "verify", reason: vr.reason, pose: at, v }; }
-    return { ok: true, why: "", reason: "", pose: at, v };
+    // (the grid is half a point and conservative: the pixels decide)
+    if (full) { vr = mcVerify(G, c, exact); if (vr.ok) return { ok: true, why: "", reason: "", pose: exact, v, exact: true }; }
+    if (snapPt > 0) {
+      const r = SV().tryPlace(G.grid, v, pose.cxPt, pose.cyPt, snapPt);
+      if (r.ok && Number.isFinite(r.x) && Number.isFinite(r.y)) {
+        const at = { cxPt: (r.x + v.solid.cx) / 2, cyPt: (r.y + v.solid.cy) / 2, angle, size };
+        if (!full || full === "exact" || mcVerify(G, c, at).ok) return { ok: true, why: "", reason: "", pose: at, v, snapped: true };
+      }
+    }
+    if (vr && !vr.ok) return { ok: false, why: vr.edge ? "edge" : "overlap", reason: vr.reason, pose: exact, v };
+    if (!G.edge.fits(v.fine.pm, x0, y0)) return { ok: false, why: "edge", reason: G.sheet.remnant ? "No room there: it would run past the sheet's edge or into metal already cut away." : "No room there: it would run past the sheet's edge.", pose: exact, v };
+    return { ok: false, why: "overlap", reason: `No room there: it would overlap ${mcNear(G, exact)}.`, pose: exact, v };
   }
 
   /* ── free placement (MCFREE, Paul 20 Oct 2026: "You should NOT prevent the user from placing a charm anywhere on a sheet, even if it conflicts/overlaps with another existing
@@ -5206,11 +5251,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** The empty sheet as the nest sees it: its edge, inset and any metal cut away (kept for the same sheet). */
   const MCE = new Map();
   function mcEdgeOf(sh) {
-    const job = buildJob(sh), sheet = Object.assign({}, job.sheet), prof = sh.roseProtected && sh.roseProtected.profile;
+    const job = buildJob(sh), sheet = Object.assign({}, job.sheet, { insetPt: MC_INSET }), prof = sh.roseProtected && sh.roseProtected.profile;
     if (prof) sheet.remnant = prof;
-    const sig = JSON.stringify([sh.sheetId || sh.page, sh.metal, job.clearancePt, sheet.wPt, sheet.hPt, sheet.insetPt, prof ? 1 : 0, sh.roseStock && sh.roseStock.revision]);
+    const sig = JSON.stringify([sh.sheetId || sh.page, sh.metal, mcClr(), sheet.wPt, sheet.hPt, sheet.insetPt, prof ? 1 : 0, sh.roseStock && sh.roseStock.revision]);
     let E = MCE.get(sig); if (E) return E;
-    E = { edge: SV().makeSheetGrid(sheet, job.clearancePt, 2), sheet, clearancePt: job.clearancePt };
+    E = { edge: SV().makeSheetGrid(sheet, mcClr(), 2), sheet, clearancePt: mcClr() };   // (ZEROGAP)
     MCE.set(sig, E); if (MCE.size > 8) MCE.delete(MCE.keys().next().value);
     return E;
   }
@@ -5261,7 +5306,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const MCC = new WeakMap();
   function mcSheetClash(sh) {
     if (!sh || !MANUAL_METALS.includes(sh.metal) || !Array.isArray(sh.placements) || !sh.placements.length) return [];
-    const sig = JSON.stringify([+S.settings.clearancePt || 0, +S.settings.insetPt || 0, sh.placements.map(p => [p.id, +p.cxPt, +p.cyPt, +p.angle, +p.scale || 1]), sh.charms.map(c => [c.id, sizeOf(c), !!c.bits])]);
+    const sig = JSON.stringify([mcClr(), MC_INSET, sh.placements.map(p => [p.id, +p.cxPt, +p.cyPt, +p.angle, +p.scale || 1]), sh.charms.map(c => [c.id, sizeOf(c), !!c.bits])]);
     const hit = MCC.get(sh); if (hit && hit.sig === sig) return hit.ids;
     const res = mcClashes(sh, null, null), ids = [...res].filter(([, w]) => w).map(([id]) => id);
     MCC.set(sh, { sig, ids, why: new Map([...res].filter(([, w]) => w)) });
@@ -5311,9 +5356,40 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return { centre, frame, corners, stem, knob, raw: { corners: frame, knob: knob0 }, vis };
   }
   const mcBadNow = () => { const dr = MC.drag; return dr && dr.moved && dr.res ? !dr.res.ok : !!MC.springBad || !!(MC.sel && MC.bad && MC.bad.has(MC.sel.id)); };
+  /** SIZECHIP (Paul, 27 Oct 2026): the size of the charm in hand against its original one ("+12%", "−8%"), and ↺ to put it back to 100%, beside its frame on the side with room,
+   *  level with its middle, never over it; while a corner is dragged it follows the drag. Shown whenever that charm is not at 100%: it is read from the size the charm carries (what
+   *  Manual Control holds now, else its saved size), so it is there again when the charm is taken again, and nothing more is written anywhere. */
+  function mcSizePaint(t) {
+    const n = W.el && W.el.mcSize; if (!n) return;
+    const x = MC.sel, dr = MC.drag, q = t && x ? (dr && dr.moved && dr.show) || mcDraftOf(x) : null, size = q ? +q.size || 1 : 1;
+    if (!q || (Math.abs(size - 1) < 0.005 && !(dr && dr.moved && dr.mode === "size"))) { if (!n.hidden) n.hidden = true; return; }
+    const pct = Math.round((size - 1) * 100), txt = pct === 0 ? "100%" : (pct > 0 ? "+" : "\u2212") + Math.abs(pct) + "%", v = n.querySelector("[data-mcsz=v]"), r = n.querySelector("[data-mcsz=reset]");
+    if (v.textContent !== txt) v.textContent = txt;
+    const title = `${Math.round(size * 100)}% of its original size`; if (n.title !== title) n.title = title;
+    if (r.hidden !== (pct === 0)) r.hidden = pct === 0;
+    if (!r._wired) { r._wired = true; r.onpointerdown = e => e.stopPropagation(); r.onclick = e => { e.stopPropagation(); mcOriginalSize(); }; }
+    if (n.hidden) n.hidden = false;
+    const host = n.offsetParent || n.parentElement; if (!host) return;
+    const hr = host.getBoundingClientRect(), w = n.offsetWidth, h = n.offsetHeight, xs = t.frame.map(p => p[0]), vis = t.vis;
+    let left = Math.max(...xs) + 10, top = t.centre[1] - h / 2;
+    if (left + w > vis.right - 4) left = Math.min(...xs) - 10 - w;
+    left = Math.max(vis.left + 4, Math.min(vis.right - w - 4, left)); top = Math.max(vis.top + 4, Math.min(vis.bottom - h - 4, top));
+    const L = Math.round(left - hr.left) + "px", T = Math.round(top - hr.top) + "px";
+    if (n.style.left !== L) n.style.left = L; if (n.style.top !== T) n.style.top = T;
+  }
+  /** ↺ on the size chip: the charm in hand at its original size (100%), through the same check as a resize (MCFREE: where that overlaps, it is taken and shown red). */
+  function mcOriginalSize() {
+    const x = MC.sel; if (!MC.on || !x || MC.drag || MC.spring || MC.wait) return;
+    mcApply(x, Object.assign({}, mcDraftOf(x), { size: 1 }), "Back to its original size (100%)");
+    // (the chip goes once it is 100 %, and the focus with it: the plate takes it back, so the arrows and + − keep reaching the charm in hand)
+    mcFocus();
+  }
+  /** The plate takes the keyboard focus (a canvas takes it only with a tabindex: its tabIndex reads -1 without one, and focus() then does nothing). */
+  function mcFocus() { try { const f = W.el.fx; if (!f) return; if (!f.hasAttribute("tabindex")) f.setAttribute("tabindex", "-1"); if (document.activeElement !== f) f.focus({ preventScroll: true }); } catch (_) {} }
   function mcToolPaint() {
     const cv = W.el && W.el.mcTool, box = W.el && W.el.plateBox; if (!cv || !box) return;
     const t = mcTool();
+    tryDo(() => mcSizePaint(t));   // (SIZECHIP)
     if (!t) { if (cv.width) { cv.width = 0; cv.height = 0; } return; }
     const o = cv.getBoundingClientRect(), dpr = W.dpr || devicePixelRatio || 1, w = Math.round(o.width * dpr), h = Math.round(o.height * dpr);
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
@@ -5560,6 +5636,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (hit !== x) mcSelect(hit);
       x = hit; mode = "move";
     }
+    // (NUDGE: the press keeps the page's focus where it was (preventDefault), so the arrow keys could go nowhere: the plate takes the focus, and the window's keys reach the charm in hand)
+    mcFocus();
     const b = mcBox(x);
     MC.drag = { pid: e.pointerId, mode, x, q0: mcDraftOf(x), pt0: pt, c: [b.X, b.Y], r0: Math.max(4 * W.dpr, Math.hypot(pt[0] - b.X, pt[1] - b.Y)), a0: Math.atan2(pt[1] - b.Y, pt[0] - b.X), raw: null, res: null, show: null, moved: false };
     try { W.el.fx.setPointerCapture(e.pointerId); } catch (_) {}
@@ -5573,7 +5651,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (d.mode === "move") { q.cxPt = Math.max(0, Math.min(W.st.wPt, d.q0.cxPt + (pt[0] - d.pt0[0]) / k)); q.cyPt = Math.max(0, Math.min(W.st.hPt, d.q0.cyPt + (pt[1] - d.pt0[1]) / k)); }
     else if (d.mode === "turn") { const a = d.q0.angle + (Math.atan2(pt[1] - d.c[1], pt[0] - d.c[0]) - d.a0) * 180 / Math.PI; q.angle = normDeg(e.shiftKey ? Math.round(a) : Math.round(a / MC_TURN) * MC_TURN); }
     else q.size = clampSize(d.q0.size * Math.hypot(pt[0] - d.c[0], pt[1] - d.c[1]) / d.r0);
-    d.raw = q; d.res = mcCheck(MC.G, d.x.c, q, d.mode === "move" ? MC_SNAP_PT : 0, false);
+    // (ZEROGAP: the grid first; where it says no, the pixels at the exact pose, at most every 90 ms; a hair over and still no, the nearest legal spot within a point, as before)
+    d.raw = q; d.res = mcCheck(MC.G, d.x.c, q, 0, false);
+    if (!d.res.ok) { const now = performance.now(), ask = !(now - (d.exactAt || 0) < 90); if (ask) d.exactAt = now; d.res = mcCheck(MC.G, d.x.c, q, d.mode === "move" ? MC_SNAP_PT : 0, ask ? "exact" : false); }
     d.show = d.res.ok ? d.res.pose : q;
     mcShow(d.x, d.show); paintFx(); mcReadout(d.show);
   }
@@ -5587,15 +5667,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     else mcSpring(d.x, d.show || d.raw, MC.valid, res.reason);
   }
   function mcCancel() { const d = MC.drag; MC.drag = null; if (W.el.plate) W.el.plate.classList.remove("mcDrag"); if (d) { try { if (d.pid != null && W.el.fx.hasPointerCapture(d.pid)) W.el.fx.releasePointerCapture(d.pid); } catch (_) {} } if (d && MC.valid) mcSpring(d.x, d.show || d.raw || MC.valid, MC.valid, ""); return !!d; }
-  function mcCommit(x, q, v, clash) {
+  function mcCommit(x, q, v, clash, said) {
     const was = MC.valid;
     if (mcChanged(MC.from.get(x.id), q)) MC.edits.set(x.id, q); else MC.edits.delete(x.id);
     MC.valid = q; mcShow(x, q); if (v) { x.p.wPt = v.solid.w / 2; x.p.hPt = v.solid.h / 2; }
     // (MCFREE, Paul 20 Oct 2026: "Green when clear, red when conflicting/overlapping": the charm and those round where it left and where it went take their colour again)
     tryDo(() => mcRecolour([x.id].concat(mcNearIds(MC.sh, x.c, was, MC.edits), mcNearIds(MC.sh, x.c, q, MC.edits))));
     paintFx();
+    if (said === false) return;
     if (clash || (MC.bad && MC.bad.has(x.id))) return mcSay(`Placed where you put it, but ${mcClashWords(clash || (MC.badWhy && MC.badWhy.get(x.id)) || "")}: it stays red until it is moved clear.`, "bad");
-    mcSay(MC.from.get(x.id) && !mcChanged(MC.from.get(x.id), q) ? "Back where it was" : "Placed: it fits there", "ok");
+    mcSay(said || (MC.from.get(x.id) && !mcChanged(MC.from.get(x.id), q) ? "Back where it was" : "Placed: it fits there"), "ok");
   }
   /** Let go where it may not stay: it glides back to where it last stood (at once with reduced motion), and the bar says why. */
   function mcSpring(x, from, to, reason) {
@@ -5623,21 +5704,26 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     tryDo(() => mcRecolour([x.id].concat(mcNearIds(MC.sh, x.c, was, MC.edits), mcNearIds(MC.sh, x.c, q, MC.edits))));
     if (MC.bad && MC.bad.has(x.id)) mcSay(`Back where it was, but ${mcClashWords((MC.badWhy && MC.badWhy.get(x.id)) || "")}: it stays red until it is moved clear.`, "bad"); else mcSay("Back where it was", "ok");
   }
-  /** A key with a charm in hand: the arrows nudge it (0.5 pt, Shift 2 pt), [ ] turn it 15° ({ } 1°), + − size it 1 %; a step it may not take is refused. */
+  /** A key with a charm in hand: the arrows nudge it (0.05 mm, Shift 1 mm: NUDGE), [ ] turn it 15° ({ } 1°), + − size it 1 %; a step it may not take is refused. */
   function mcKey(e) {
     if (MC.wait) return false;   // (MOVEINSTANT 2: as mcDown)
     // (NOMCBAR: with the bar gone, Ctrl/⌘ + Z is its "Put back": the charm in hand goes back where it stood when Manual Control was turned on)
     if (MC.sel && !MC.drag && !MC.spring && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && String(e.key).toLowerCase() === "z") { e.preventDefault(); mcPutBack(); return true; }
     const x = MC.sel; if (!x || MC.drag || MC.spring || e.altKey || e.ctrlKey || e.metaKey) return false;   // (Alt + Shift + ← / → is the sheet hop's: the charm onto the next sheet)
-    const st = e.shiftKey ? 2 : .5, mv = { ArrowLeft: [-st, 0], ArrowRight: [st, 0], ArrowUp: [0, -st], ArrowDown: [0, st] }[e.key];
+    const st = e.shiftKey ? MC_NUDGE_BIG : MC_NUDGE, mv = { ArrowLeft: [-st, 0], ArrowRight: [st, 0], ArrowUp: [0, -st], ArrowDown: [0, st] }[e.key];   // (NUDGE: 0.05 mm, Shift 1 mm)
     const turn = { "[": -MC_TURN, "]": MC_TURN, "{": -1, "}": 1 }[e.key], grow = { "+": .01, "=": .01, "-": -.01, "_": -.01 }[e.key];
     if (!mv && !turn && !grow) return false;
     e.preventDefault();
     const q = Object.assign({}, mcDraftOf(x));
     if (mv) { q.cxPt = Math.max(0, Math.min(W.st ? W.st.wPt : Infinity, q.cxPt + mv[0])); q.cyPt = Math.max(0, Math.min(W.st ? W.st.hPt : Infinity, q.cyPt + mv[1])); } else if (turn) q.angle = normDeg(Math.abs(turn) === MC_TURN ? Math.round((q.angle + turn) / MC_TURN) * MC_TURN : q.angle + turn); else q.size = clampSize(q.size + grow);
-    const res = mcCheck(MC.G, x.c, q, 0, true);
-    if (res.ok) { mcCommit(x, res.pose, res.v); mcRender(); } else if (mcFree(res)) { mcCommit(x, mcAsPut(q), res.v, res.reason); mcRender(); } else mcSay(res.reason, "bad");   // (MCFREE: taken, red)
+    mcApply(x, q, mv ? false : undefined);   // (NUDGE: an arrow says nothing: its colour, sage or red, and the stage's "N charms overlap" say it; a held key would stack toasts)
     return true;
+  }
+  /** A step of the charm in hand to pose q (a nudge, a turn, a size, ↺): THE check, then taken (MCFREE: where it overlaps, taken and shown red); `said`: the words when it fits,
+   *  false for no words at all (a nudge). */
+  function mcApply(x, q, said) {
+    const res = mcCheck(MC.G, x.c, q, 0, true);
+    if (res.ok) { mcCommit(x, res.pose, res.v, "", said); mcRender(); } else if (mcFree(res)) { mcCommit(x, mcAsPut(q), res.v, res.reason, said === false ? false : undefined); mcRender(); } else mcSay(res.reason, "bad");   // (MCFREE: taken, red)
   }
   function paintManual(ctx) {
     if (!MC.on || !W.geom) return;

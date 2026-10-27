@@ -8528,7 +8528,7 @@ const Engrave = window.Engrave = (() => {
      wrapping before reducing the requested size, and restore it when room
      returns. The original words remain separate from generated line breaks. */
   /** The cap-height readout beside the controls: the number, and when the room (not the request) set it, the reason it stops. */
-  const capText = f => f.capMm.toFixed(2) + " mm" + (f.atLimit ? " · largest that fits" : "");
+  const capText = f => f.capMm.toFixed(2) + " mm";   // (Paul, 27 Oct 2026: "Remove the text 'Largest that fits'": the size alone)
   function refit(job, place) {
     const font=fontFor(job.fit.weight,job),want=place.size ?? job.wantSize ?? job.fit.size;
     const f=G.reflowAt(job.lineInput || job.lines,font,job.mask,{...fitOpts(job,true),measure:place.measure},{...place,size:want},job.lineMode || 'auto');
