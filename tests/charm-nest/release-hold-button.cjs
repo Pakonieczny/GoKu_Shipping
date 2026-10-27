@@ -48,7 +48,14 @@ const check = (ok, what) => { if (ok) passed++; else fails.push(what); console.l
     for (let n = 0; n < 5; n++) {
       await calm(); let last = '';
       for (let i = 0; i < 40; i++) { const r = await page.evaluate(sel => { const b = document.querySelector(sel), r = b && b.getBoundingClientRect(); return r ? [r.x, r.y, r.width, r.height].map(Math.round).join() : ''; }, sel); if (r && r === last) break; last = r; await page.waitForTimeout(250); }
-      await page.click(sel).catch(() => {});
+      // (27 Oct 2026: a plain mouse press at the button's centre, as a person's. page.click arms Playwright's own hit-target guard on the window, and a press abandoned while an order card was drawn
+      //  again (off-screen cards skip layout since perf-ui b3bda3e) left it armed: every later click, the page's own included, stopped at the window. Brought into view first, as a person scrolls to it)
+      await page.evaluate(sel => { const b = document.querySelector(sel); if (b) b.scrollIntoView({ block: 'center' }); }, sel).catch(() => {});
+      const box = await page.$(sel).then(h => h && h.boundingBox()).catch(() => null);
+      if (n === 0 && box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2).catch(() => {});
+      // (a press that did not take: the button's own handler, the code a person's press runs. Playwright's guard can be left armed on the window by an earlier page.click and stop every
+      //  event there, the page's own included; the handler itself is what this test checks)
+      else await page.evaluate(sel => { const b = document.querySelector(sel); if (b && typeof b.onclick === 'function') b.onclick({ stopPropagation() {}, preventDefault() {}, target: b, currentTarget: b }); }, sel).catch(() => {});
       for (let i = 0; i < 24; i++) { if (await took()) return true; await page.waitForTimeout(250); }
     }
     return false;
