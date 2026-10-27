@@ -229,9 +229,13 @@ const receipts = [
     if (r && (r.step !== lastStep || r.status === 'stopped')) { lastStep = r.step; console.log('  run', r.status, r.step, r.stoppedBy || ''); }
     if (!r) { await page.waitForTimeout(300); continue; }
     // (a run whose held order is still pending ends its processing as "processed": open, new orders join it as they arrive, RunCtl; "complete" when nothing is pending)
-    if (r.status === 'complete' || (r.status === 'processed' && r.done)) break;
+    // (a run no longer waits in "review" for an engraving: its sheets complete and the engraving waits in the Engraving tab for a person, "awaiting a person".
+    //  This test is that person: it goes on until every engraving is decided)
+    const eng = await page.evaluate(() => [...Engrave.items().values()].map(j => j.state));
+    const engOpen = eng.some(st => ['review', 'words', 'blocked'].includes(st)), engBusy = eng.some(st => ['ready', 'fitting', 'classify', 'reclassify'].includes(st));
+    if ((r.status === 'complete' || (r.status === 'processed' && r.done)) && !engOpen && !engBusy) break;
     if (r.status === 'stopped') { const ag = await page.evaluate(() => CN.AG.events.slice(-12).map(e => e.text)); throw new Error(`run stopped: ${r.stoppedBy} — ${r.fix}\n${ag.join('\n')}\n${errors.join('\n')}`); }
-    if (r.status === 'review') {
+    if (r.status === 'review' || (engOpen && ['processed', 'complete'].includes(r.status))) {
       const jobs = await page.evaluate(() => [...Engrave.items().values()].map(j => ({ key: j.key, state: j.state, reason: j.reason, text: j.text, conf: j.confidence })));
       const jk = JSON.stringify(jobs); if (jk !== lastJobs) { lastJobs = jk; console.log('  engrave jobs', jk); console.log('  agent', JSON.stringify(await page.evaluate(() => CN.AG.events.filter(e => /engrav|ENGRAVE|Claude|font|Myriad/i.test(e.text || '')).slice(-8).map(e => e.text)))); }
       if (jobs.some(j => j.state === 'blocked')) throw new Error('engraving blocked: ' + jk);
@@ -351,7 +355,11 @@ const receipts = [
         assert.strictEqual(flow.afterEngrave.tab, 'engrave', 'Engraving (N) opens the Engraving tab');
         assert.strictEqual(flow.afterEngrave.mode, flow.before.mode, 'and does not change Auto/Manual either');
       }
-      assert(flow.bench.every(b => b.off), 'the bench buttons cannot take the cards out from under a run: ' + JSON.stringify(flow.bench));
+      // (guardBench: a run at work (running, review, paused) holds all three; one between arrivals (processed, where it now waits on an engraving) still owns
+      //  its sheets, so Clear queues cannot empty them)
+      const runNow = await page.evaluate(() => B.run && B.run.status);
+      if (['running', 'review', 'paused'].includes(runNow)) assert(flow.bench.every(b => b.off), 'the bench buttons cannot take the cards out from under a run: ' + JSON.stringify(flow.bench));
+      else assert(flow.bench.find(b => b.id === 'btnClearAll').off, `a run between arrivals (${runNow}) still owns its sheets: Clear queues cannot empty them: ` + JSON.stringify(flow.bench));
       await page.evaluate(() => CN.setMode('engrave'));
       // the step that needs a person is a button that goes there
       const jumped = await page.evaluate(() => {
@@ -390,12 +398,13 @@ const receipts = [
         return { sets, days, foot, found, none: noneText, stillVisible };
       });
       console.log('history', JSON.stringify(hist));
-      assert(hist.sets.length >= 2, 'the history lists the sets on record, one per kin group: ' + JSON.stringify(hist.sets));
+      // (one set holds a run's gold and silver sheets now, "one GF + one SS sheet per order"; it is numbered once it is committed, and until then it says it is waiting)
+      assert(hist.sets.length >= 1 && /GF/.test(hist.sets[0].text) && /SS/.test(hist.sets[0].text), 'the history lists the set on record, its gold and its silver sheets together: ' + JSON.stringify(hist.sets));
       // the sets of the run on the cards right now say so instead of offering Open
-      assert(hist.sets.every(x => /Set \d/.test(x.text) && /sheet/.test(x.text) && (x.acts.includes('open') || /on the cards/.test(x.text)) && x.thumb), 'each set is named, sized, pictured and can be opened: ' + JSON.stringify(hist.sets[0]));
+      assert(hist.sets.every(x => (/Set \d/.test(x.text) || /waiting to be filled/.test(x.text)) && /sheet/.test(x.text) && (x.acts.includes('open') || /on the cards/.test(x.text)) && x.thumb), 'each set is named (or says it is still waiting), sized, pictured and can be opened: ' + JSON.stringify(hist.sets[0]));
       assert(hist.days.length >= 1, 'filed under its day: ' + JSON.stringify(hist.days));
       assert(/searched \d+ runs and \d+ sheets/.test(hist.foot), 'it says how far it looked: ' + hist.foot);
-      assert(hist.found.length === 1 && /Set 1/.test(hist.found[0]), 'searching by order number leaves only the set that carried it: ' + JSON.stringify(hist.found));
+      assert(hist.found.length === 1 && (/Set 1/.test(hist.found[0]) || /waiting to be filled/.test(hist.found[0])), 'searching by order number leaves only the set that carried it: ' + JSON.stringify(hist.found));
       assert(/nothing matches/.test(hist.none), 'and a search with no answer says so: ' + hist.none);
       assert(!hist.stillVisible, 'and closing it puts it away');
       /* The three things this round changed that no test had ever run: the one-click option mapping, the engraving
@@ -443,8 +452,7 @@ const receipts = [
         Engrave.items().clear(); Engrave.render();
         const tb = document.querySelector('.egTab[data-tab=place]'); if (tb) tb.click();   // the pane his screenshot was on
         const q = document.getElementById('egQueue');
-        const out = { text: (q.textContent || '').replace(/\s+/g, ' ').trim(), buttons: [...q.querySelectorAll('[data-go]')].map(b => b.dataset.go),
-          runChip: (document.getElementById('egRun') || {}).textContent || null };
+        const out = { text: (q.textContent || '').replace(/\s+/g, ' ').trim(), buttons: [...q.querySelectorAll('[data-go]')].map(b => b.dataset.go) };
         for (const [k, v] of keep) Engrave.items().set(k, v);
         Engrave.render();
         return out;
@@ -452,7 +460,7 @@ const receipts = [
       console.log('engrave empty', JSON.stringify(egEmpty));
       assert(egEmpty.text && !/^no placement to review$/.test(egEmpty.text), 'an empty queue says why it is empty: ' + egEmpty.text);
       assert(egEmpty.buttons.length >= 1, 'and offers the way out: ' + JSON.stringify(egEmpty.buttons));
-      assert(/Set|run/i.test(egEmpty.runChip || ''), 'and the tab says whose queue it is: ' + egEmpty.runChip);
+      // (the Engraving tab's run chip, #egRun, is gone: one queue holds every set's engraving, and each card names its order)
 
 
       await page.evaluate(() => { CN.setMode('review'); Review.render(); });
@@ -1190,13 +1198,13 @@ const receipts = [
     const q = document.getElementById('egQ'); q.value = 'no-such-words'; q.dispatchEvent(new Event('input')); await new Promise(r => setTimeout(r, 200));
     const narrowed = document.querySelectorAll('#egQueue .egPlacementList .placementRow').length;
     const q2 = document.getElementById('egQ'); q2.value = ''; q2.dispatchEvent(new Event('input'));
-    return { jobs: Engrave.items().size, rows, reopen, oldView, narrowed, chip: (document.getElementById('egRun') || {}).textContent };
+    return { jobs: Engrave.items().size, rows, reopen, oldView, narrowed, };
   });
   console.log('recalled engraving', JSON.stringify(eng));
   assert(eng.jobs >= 1 && eng.rows.some(r => /ANNA/.test(r) && /Saved to sheet/.test(r)), 'the written back is a row of the one list, "Saved to sheet", with its words: ' + JSON.stringify(eng.rows));
   assert(!eng.reopen && eng.oldView === 0, 'and there is no Reopen and no Decided view: it is opened as a card and changed there');
   assert.strictEqual(eng.narrowed, 0, 'the search narrows the list');
-  assert(/Set 1/.test(eng.chip), 'and the tab says whose engraving it is: ' + eng.chip);
+  // (no run chip on the Engraving tab any more, #egRun: the queue is every set's)
 
   const tabs = await page.evaluate(() => ({ top: [...document.querySelectorAll('#modeSeg > button')].map(b => b.dataset.mode), more: [...document.querySelectorAll('#moreMenu button[data-mode]')].map(b => b.dataset.mode), charms: !!document.querySelector('[data-mode=charms]') }));
   assert.deepStrictEqual(tabs.top, ['nest', 'orders', 'engrave', 'review'], "the day's four screens, in the day's order: " + tabs.top);
