@@ -343,8 +343,8 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
         if(auto){
           const STAGE={layout:'its layout is not saved and verified',front:'its sheet files are not made',qr:'its QR label is not made',orders:'an order on it waits'};
           let why=Object.entries(rd.stages).filter(([k,v])=>!v&&k!=='approval'&&k!=='backs').map(([k])=>STAGE[k]||k);
-          try{ if(!rd.stages.orders&&Readiness.orderIds&&Readiness.forSheet){ const sid=b.sheetId,os=Readiness.orderIds(checked).filter(id=>{const f=Readiness.forSheet(checked.orderReadiness&&checked.orderReadiness[id],sid,Readiness.setOf?Readiness.setOf(checked):null);return !(f&&f.ready===true);}).slice(0,3);
-            const said=os.map(id=>{const f=Readiness.forSheet(checked.orderReadiness&&checked.orderReadiness[id],sid,Readiness.setOf?Readiness.setOf(checked):null);const w=f&&(Readiness.blockText?Readiness.blockText(f):f.why);return `order ${id}${w?': '+w:''}`;});
+          try{ if(!rd.stages.orders&&Readiness.orderIds&&Readiness.forSheet){ const sid=b.sheetId,os=Readiness.orderIds(checked).filter(id=>{const f=Readiness.forSheet(checked.orderReadiness&&checked.orderReadiness[id],sid,Readiness.setOf?Readiness.setOf(checked):null,checked.metal);return !(f&&f.ready===true);}).slice(0,3);
+            const said=os.map(id=>{const f=Readiness.forSheet(checked.orderReadiness&&checked.orderReadiness[id],sid,Readiness.setOf?Readiness.setOf(checked):null,checked.metal);const w=f&&(Readiness.blockText?Readiness.blockText(f):f.why);return `order ${id}${w?': '+w:''}`;});
             if(said.length)why=why.filter(x=>x!==STAGE.orders).concat(said); } }catch(_){ /* the stage words stand */ }
           if(!rd.included)why.unshift('it is not in a set');
           throw new Error('Not cut yet: '+(why.join('; ')||'its production checks are not done'));

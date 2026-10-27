@@ -3,6 +3,7 @@
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CharmNestReadiness=api;})(typeof self!=='undefined'?self:this,function(){
   'use strict';
   const idsOf=s=>[...new Set((s.poolIds || []).filter(Boolean))];
+  const GREEN=new Set(['rose','gold10k','gold14k']);   // the metals with a green line (charm-nest-rose.js cuts): a sheet of one is in ONE set and ties no two (knownSplit)
   /* A sheet of a metal that has a green line (Rose Gold, 10K, 14K: charm-nest-rose.js cuts(), the one list) that holds a physical sheet but has no
    * calculated line yet waits for it. Looked up when asked, so the page's script order does not matter; a page without that module asks for nothing.
    * The test is charm-nest-rose.js holdsLine, the one the Library flow asks too (GF1): readiness and a move can never read a record differently. */
@@ -106,7 +107,7 @@
       backs:total>0 && saved===required,
       qr:labels.length>0 && labels.every(f=>f.path && f.url && f.payload) && orders.every(id=>covered.has(String(id))),
       // an order waits for its OTHER pieces only: whatever sits on this sheet is this sheet's own readiness, shown by its own steps
-      orders:options.physicalOnly===true || orderIds(s).every(id=>forSheet(s.orderReadiness?.[id],sid,setOf(s))?.ready===true)
+      orders:options.physicalOnly===true || orderIds(s).every(id=>forSheet(s.orderReadiness?.[id],sid,setOf(s),s.metal)?.ready===true)
     };
     // a person's hold (Library move back to In progress, LibraryFlow) keeps every approval and seal but takes it out of Laser cutting
     const included=!s.draft && s.solidIncluded!==false && !s.archived && !held(s);
@@ -243,7 +244,7 @@
           else if(!on.some(s=>+s.laserDoneAt>0 || phys.get(s).ok)){
             const s=on.find(x=>!phys.get(x).ok) || on[0],stage=phys.get(s).stage,fr=stage==='backs' && !!sheet(s).faces;   // (fr: that sheet's engraving has a front, so its words say "engraving", not "back engraving")
             // (the sets its holders are in: forSheet drops this wait for a sheet of the very same set, where it is the set's wait, not the order's)
-            block={key:'otherSheetNotReady',stage,...(fr?{fr:true}:{}),why:`${s.metalLabel || s.metal || 'Sheet'}: ${fr?'engraving files are not saved':STAGE_WORDS[stage] || (stage==='held'?'held back from Laser cutting':stage==='included'?'not in a set yet':'not ready for laser cutting')}`,setId:phys.get(s).set,setLabel:phys.get(s).setLabel,setIds:on.map(x=>phys.get(x).set)};
+            block={key:'otherSheetNotReady',stage,...(fr?{fr:true}:{}),...(GREEN.has(String(s.metal || ''))?{green:true}:{}),why:`${s.metalLabel || s.metal || 'Sheet'}: ${fr?'engraving files are not saved':STAGE_WORDS[stage] || (stage==='held'?'held back from Laser cutting':stage==='included'?'not in a set yet':'not ready for laser cutting')}`,setId:phys.get(s).set,setLabel:phys.get(s).setLabel,setIds:on.map(x=>phys.get(x).set)};
           }
           const at=on.length?on[0]:null;
           if(block)block.side=sideOfCopy(l,pid);
@@ -261,22 +262,30 @@
   function orderReports(rows,sheets,opts){
     const out={};
     for(const [id,o] of readOrders(rows,sheets,opts)){
-      const blocks=o.pieces.filter(p=>p.block).map(p=>({key:p.block.key,index:p.index,label:p.label,poolId:p.poolId,lineKey:p.lineKey,sheetId:p.sheetId,sheetLabel:p.sheetLabel,...(p.block.side?{side:p.block.side}:{}),...(p.block.missing?{missing:true}:{}),...(p.block.review?{review:true}:{}),...(p.block.swap?{swap:true}:{}),...(p.sheetIds.length>1?{sheetIds:p.sheetIds}:{}),why:p.block.why,...(p.block.stage?{stage:p.block.stage}:{}),...(p.block.key==='otherSheetNotReady'?{setId:p.block.setId,setLabel:p.block.setLabel,...(p.sheetIds.length>1?{setIds:p.block.setIds}:{})}:{})}));
+      const blocks=o.pieces.filter(p=>p.block).map(p=>({key:p.block.key,index:p.index,label:p.label,poolId:p.poolId,lineKey:p.lineKey,sheetId:p.sheetId,sheetLabel:p.sheetLabel,...(p.block.side?{side:p.block.side}:{}),...(p.block.missing?{missing:true}:{}),...(p.block.review?{review:true}:{}),...(p.block.swap?{swap:true}:{}),...(p.sheetIds.length>1?{sheetIds:p.sheetIds}:{}),why:p.block.why,...(p.block.stage?{stage:p.block.stage}:{}),...(p.block.key==='otherSheetNotReady'?{setId:p.block.setId,setLabel:p.block.setLabel,...(p.block.green?{green:true}:{}),...(p.sheetIds.length>1?{setIds:p.block.setIds}:{})}:{})}));
       out[id]=blocks.length?{ready:false,...head(blocks),blocks,onSheets:[...new Set(o.pieces.flatMap(p=>p.sheetIds))],pieceCount:o.pieces.length,customer:o.customer,listingId:o.listingId}:{ready:true};
     }
     return out;
   }
-  /** forSheet(report, sheetId, setId): an order's report as one sheet reads it. The pieces on that sheet are not its order check (that sheet's own steps show
+  /** forSheet(report, sheetId, setId, metal?): an order's report as one sheet reads it (`metal`: the asking sheet's, for a known green-line split, knownSplit). The pieces on that sheet are not its order check (that sheet's own steps show
    *  them), neither is a piece on a not-ready sheet of the SAME set (setOf(sheet): the set's wait, not the order's), and an order it holds nothing of is not its order. {ready:true} when nothing else holds the order back. Reports without blocks (an older record,
    *  or the server's "not verified") are read as they are. */
   // a wait for a piece on a sheet that is not ready, where every sheet holding that piece is in the asking sheet's OWN set: the set's wait
   // (setGate says it once, where the Approve buttons are), not a problem of the order. Reports from before the set was recorded keep their wait.
   const ownSetWait=(b,mySet)=>!!mySet && b.key==='otherSheetNotReady' && Object.prototype.hasOwnProperty.call(b,'setId') && (Array.isArray(b.setIds)?b.setIds:[b.setId]).every(x=>x===mySet);
-  function forSheet(r,sid,mySet){
+  /* KNOWN SPLIT (Paul, 26 Oct 2026: "a Rose Gold / 10K / 14K sheet is in ONE set and ties no two sets", and 27 Oct 2026, of a 14K sheet held back by "Pair split from GF Sheet 1" for two orders
+   * whose 14K pieces were on it: "I cannot have false positives"). An order with pieces on a green-line sheet (Rose Gold, 10K, 14K) and on a sheet of another metal is split across sets by design:
+   * each side is cut with its own set and the order meets again at sorting. So for a sheet IN a set, a piece on a not-ready sheet of another set (or of none) is no issue of its order when either
+   * sheet is a green-line one: the asking sheet's metal (`myMetal`), the block's own mark (`green`), or, for a report made before that mark, its sheet's name ("14K Sheet 1"). A split between a GF
+   * and an SS sheet stays the real issue it is (the cardinal rule). */
+  const GREEN_NAME=/^(RG|10K|14K)\s/;
+  const knownSplit=(b,mySet,myMetal)=>!!mySet && b.key==='otherSheetNotReady' && Object.prototype.hasOwnProperty.call(b,'setId') && (GREEN.has(String(myMetal || '')) || b.green===true || GREEN_NAME.test(String(b.sheetLabel || '')))
+    && (Array.isArray(b.setIds)?b.setIds:[b.setId]).every(x=>x!==mySet);
+  function forSheet(r,sid,mySet,myMetal){
     if(!r || r.ready===true || !Array.isArray(r.blocks) || !sid)return r;
     if(Array.isArray(r.onSheets) && !r.onSheets.includes(sid))return {ready:true};
     // (a held piece stops the sheet wherever it sits: a person's hold or an Etsy change waiting for review is no inference about where pieces are)
-    const mine=r.blocks.filter(b=>b.key==='held' || b.key==='doubled' || (b.sheetId!==sid && !(b.sheetIds && b.sheetIds.includes(sid)) && !ownSetWait(b,mySet)));
+    const mine=r.blocks.filter(b=>b.key==='held' || b.key==='doubled' || (b.sheetId!==sid && !(b.sheetIds && b.sheetIds.includes(sid)) && !ownSetWait(b,mySet) && !knownSplit(b,mySet,myMetal)));
     if(!mine.length)return {ready:true};
     if(mine.length===r.blocks.length)return r;
     return {ready:false,...head(mine),blocks:mine,onSheets:r.onSheets,pieceCount:r.pieceCount,customer:r.customer,listingId:r.listingId};
@@ -297,7 +306,7 @@
     if(!s || s.archived || +s.laserDoneAt>0 || completedBefore(s))return [];
     const sid=s.id || s.sheetId,mine=setOf(s),out=[];
     for(const id of orderIds(s)){
-      const r=forSheet(s.orderReadiness?.[id],sid,mine),b=r && r.ready!==true && Array.isArray(r.blocks)?r.blocks.find(x=>x.review):null;
+      const r=forSheet(s.orderReadiness?.[id],sid,mine,s.metal),b=r && r.ready!==true && Array.isArray(r.blocks)?r.blocks.find(x=>x.review):null;
       if(b)out.push({id,why:b.why,...(b.swap?{swap:true}:{})});
     }
     return out;
@@ -310,7 +319,7 @@
   }
   const orderBlockers=s=>{
     const sid=s.id || s.sheetId;
-    return orderIds(s).map(id=>[id,s.orderReadiness?.[id]?forSheet(s.orderReadiness[id],sid,setOf(s)):{ready:false,why:'Order readiness has not been verified'}]).filter(([,r])=>r.ready!==true).map(([id,r])=>({id,...r}));
+    return orderIds(s).map(id=>[id,s.orderReadiness?.[id]?forSheet(s.orderReadiness[id],sid,setOf(s),s.metal):{ready:false,why:'Order readiness has not been verified'}]).filter(([,r])=>r.ready!==true).map(([id,r])=>({id,...r}));
   };
   /** blockText(blocker): the words a refusal says for one order that holds a sheet back (orderBlockers' entry). It is the order's own reason, and when the piece
    *  that waits is one ear of a pair it says WHICH ear and where ("the right earring is on GF Sheet 2 (gold: engraving needs approval)"). A line that does not
@@ -625,7 +634,7 @@
   const readings=new WeakMap();
   const reportsOf=ctx=>{let r=readings.get(ctx.allSheets);if(!r || r.rows!==ctx.rows){r={rows:ctx.rows,reps:orderReports(ctx.rows,ctx.allSheets)};readings.set(ctx.allSheets,r);}return r.reps;};
   // a sheet as it reads its own orders from those reports
-  const readFrom=(s,reps)=>{const sid=s.id || s.sheetId,mine=setOf(s);return {...s,orderReadiness:Object.fromEntries(orderIds(s).map(id=>[id,forSheet(reps[id],sid,mine) || {ready:false,why:'Order readiness has not been verified'}]))};};
+  const readFrom=(s,reps)=>{const sid=s.id || s.sheetId,mine=setOf(s);return {...s,orderReadiness:Object.fromEntries(orderIds(s).map(id=>[id,forSheet(reps[id],sid,mine,s.metal) || {ready:false,why:'Order readiness has not been verified'}]))};};
   function sheetIssues(s,ctx,steps){
     const sid=s.id || s.sheetId,want=k=>steps.includes(k),out=[],label=sheetLabel(s),reps=ctx.rows && ctx.allSheets?reportsOf(ctx):null;
     // pieces read from the page's rows and every live sheet, instead of the record's own answer
