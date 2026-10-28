@@ -10060,7 +10060,7 @@ const Engrave = window.Engrave = (() => {
     nb.disabled = !cdFn(M, "newDesign"); nb.title = nb.disabled ? wait : "A new charm of your own design, from a blank outline, in the Charm Editor";
     ob.disabled = !cdFn(M, "openPicker"); ob.title = ob.disabled ? wait : "Search every charm in the master library and open one in the Charm Editor, with full control";
     // (the tab is drawn again at every fit and approval: the list is asked again when the library says it changed, else at most every 2 s)
-    if (cdSig !== null && performance.now() - cdAt < 2000) return;
+    if (cdSig && performance.now() - cdAt < 2000) return;   // (no library yet, or an empty one: asked again at once, it costs nothing)
     cdAt = performance.now();
     let got = null; const L = window.CharmNestCeLibrary, D = window.CharmNestDesigns;
     try { got = cdFn(L, "recent") ? L.recent(4) : cdFn(D, "search") ? D.search("") : null; } catch (_) { got = null; }
