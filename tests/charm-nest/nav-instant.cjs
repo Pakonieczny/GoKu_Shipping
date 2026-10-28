@@ -16,6 +16,7 @@ const OPEN = 800, HIST = 6000;
 const TARGET = { tabP95: 100, tabCalls: 0, winOpenP50: 150, winTabP95: 100, winStepP95: 100, engStepP95: 100, sheetWinP95: 150 };
 const BUDGET = { tabP95: 450, tabCalls: 3, libCalls: 3, libKB: 100, winOpenP50: 500, winTabP95: 400, winStepP95: 700, engStepP95: 300, sheetWinP95: 400 };
 const NOBUDGET = !!process.env.NOBUDGET;
+const CHROME = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome';
 const pwDir = process.env.PW_DIR || [path.join(root, 'node_modules'), '/opt/node-tools/node_modules', '/opt/node22/lib/node_modules/playwright/node_modules'].find(d => fs.existsSync(path.join(d, 'playwright-core')));
 
 const q = (a, p) => { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.max(0, Math.ceil(p * s.length) - 1))]; };
@@ -47,7 +48,7 @@ async function world(opts) {
   let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { return null; }
   const srv = await start({ receipts: [] });
   F.seedHistory(srv.st, { orders: HIST, current: 80 });
-  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome', args: ['--no-sandbox'] });
+  const browser = await chromium.launch({ executablePath: CHROME, args: ['--no-sandbox'] });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await context.route(u => !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u.href), r => /fonts\.g/.test(r.request().url()) ? r.fulfill({ status: 200, contentType: 'text/css', body: '' }) : r.abort());
   await context.addInitScript(s => { try { if (!sessionStorage.getItem('__seeded')) { localStorage.setItem('cn.settings', JSON.stringify(s)); localStorage.setItem('cn.employee', 'Test Operator'); sessionStorage.setItem('__seeded', '1'); } } catch (_) {} window.prompt = () => 'Test Operator'; },
@@ -179,21 +180,28 @@ async function scale() {
 
 async function engraving() {
   if (!process.env.PW_DIR && pwDir) process.env.PW_DIR = pwDir;   // (the engraving world finds playwright-core where this file found it)
+  if (!process.env.CHROMIUM) process.env.CHROMIUM = CHROME;          // (and the browser this file runs: its own default is an older build)
+  const say = m => { if (process.env.TRACE) console.log('    · ' + m); };
   const R = require('./_engraveRealWorld.cjs');
+  say('starting the engraving world');
   const w = await R.world({ viewport: { width: 1440, height: 900 } }); if (!w) { console.log('  – the engraving world did not start'); return; }
+  say('world up');
   const page = w.page;
   try {
     await page.evaluate(probes);
+    say('building the engraving orders');
     const made = await R.build(w);
+    say('built');
     const jobs = Object.values(made).flatMap(m => m.jobs.map(j => j.key));
     console.log(`  engraving world: ${jobs.length} placements · load ${os.loadavg().map(x => x.toFixed(2)).join(' ')}`);
     const openAt = k => new Function(`CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: ${JSON.stringify(k)} }); Engrave.render();`);
     await measure(page, 'Engraving: open a placement', 4, new Function('i', `const k = ${JSON.stringify(jobs)}[i % ${jobs.length}]; CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: k }); Engrave.render();`), { settle: 600, before: () => page.evaluate(() => CN.setMode('orders')).then(() => page.waitForTimeout(300)) });
-    // Next / Back: the following placement in the queue, as a click on it does (20 presses, through every placement and back)
-    const step = d => new Function('i', `const items = [...document.querySelectorAll('#egQueue .rvItem[data-kind=placement]')]; const at = Math.max(0, items.findIndex(n => n.classList.contains('on') || n.getAttribute('aria-current') === 'true' || n.classList.contains('sel'))); const n = items[(at + ${d} + items.length) % items.length]; (n.querySelector('button, [data-open], .rvMain') || n).click();`);
+    // Next / Back: the card's own ‹ Back and Next › (the placement before or after it in the queue), as a person presses them: 20 presses, through every placement and round
+    const step = d => new Function('i', `const b = document.querySelector('#engraveView .rh [data-a="${d > 0 ? 'next' : 'prev'}"]'); if (b) b.click();`);
     await page.evaluate(openAt(jobs[0])); await page.waitForTimeout(800);
-    const nItems = await page.evaluate(() => document.querySelectorAll('#egQueue .rvItem[data-kind=placement]').length);
-    console.log(`  engraving queue: ${nItems} rows`);
+    const focusOf = () => page.evaluate(() => (Engrave.view() || {}).focus || null);
+    const f0 = await focusOf(); await page.evaluate(step(1)); await page.waitForTimeout(400); const f1 = await focusOf();
+    console.log(`  engraving Next moves the card: ${f0 !== f1 ? 'yes' : 'NO'} (${f0} → ${f1})`); if (f0 === f1) fails.push('Engraving Next did not move to another placement');
     await measure(page, 'Engraving Next', 20, step(1), { settle: 250, budget: { p95: BUDGET.engStepP95 } });
     await measure(page, 'Engraving Back', 20, step(-1), { settle: 250, budget: { p95: BUDGET.engStepP95 } });
     await measure(page, 'Engraving Approve', 1, () => { const b = document.querySelector('#engraveView .egApproveButton[data-a="approve"], #engraveView [data-e="approve"]:not([disabled])'); if (b) b.click(); }, { settle: 1500 });
@@ -202,7 +210,7 @@ async function engraving() {
 }
 
 async function main() {
-  await scale();
+  if (!process.env.ONLY_ENGRAVE) await scale();
   if (!process.env.SKIP_ENGRAVE) await engraving().catch(e => { console.log('  engraving world failed:', e.message); fails.push('engraving world: ' + e.message); });
   if (process.env.JSON) fs.writeFileSync(process.env.JSON, JSON.stringify(rows, null, 1));
   if (fails.length) { console.log('\n  OVER BUDGET:\n   · ' + fails.join('\n   · ')); process.exitCode = 1; } else console.log('\n  every budget held');
