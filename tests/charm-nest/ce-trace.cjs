@@ -6,8 +6,8 @@
 // IoU = |both| / |either|, per band (what is engraved at that grey) and per nested mask M_k (that grey or darker).
 // 1 circles in four greys (an illustration): IoU per band and per mask > 0.97; the bands share their borders (supersampled 4 × 4: the pairwise overlap is ~0 and
 //   their areas add up to M_(N-1)'s within 0.5 %); a lone disc in a few Béziers; greys 0, .25, .5, .75; suggestLevels 4
-// 2 block letters (line art, 1 level): IoU > 0.97, the square corners kept as corners, suggestLevels 1
-// 3 a gradient at 4 levels: four strips, a handful of nodes each, the Otsu cuts at even steps
+// 2 block letters (line art, 1 level): IoU > 0.97, the square corners kept as corners, suggestLevels 1; the same enlarged 3 × (black only's default)
+// 3 a gradient at 4 levels: four strips, a handful of nodes each, cut by tone at (k + ½) / N (Otsu, asked for, at even steps)
 // 4 a 1-megapixel photo at 4 levels: the time (target under 1.5 s), IoU per mask and per band, nodes; suggestLevels 5
 // 5 despeckle in mm² on the charm; smooth 0 = a polygon, smooth 1 = no corners; 6 grey(): black is the base, invert, transparent = white; posterise() is quick
 // 7 trace() without a Worker: on this thread in slices under 50 ms, progress to 1, the same result as traceSync, cancel() stops it
@@ -179,15 +179,19 @@ function wellFormed(res) {
     assert.ok(over / sum < 0.0025 && widest <= 0.5, 'bands overlap: ' + over + ' samples, ' + widest + ' px');
     assert.ok(Math.abs(sum / allN - 1) < 0.005, 'bands add up to M_3 within 0.5 %: ' + sum / allN);
     // a lone disc (r 90, grey .8) in few Béziers
-    const lone = T.traceSync(picture(240, 240, (x, y) => (inDisc(x, y, 120, 120, 90) ? 0.8 : 1)), { levels: 1 });
-    say(`  a lone disc r 90: ${lone.layers[0].nodes} nodes (${ops(lone).c} Béziers, ${ops(lone).l} lines)`);
+    // (LINEART, 28 Oct 2026: black only is traced enlarged 3 × by default; at its own pixels (upscale: false) it is the few curves it always was, enlarged its
+    // edge keeps to the circle three to four times closer for a few more)
+    const disc = picture(240, 240, (x, y) => (inDisc(x, y, 120, 120, 90) ? 0.8 : 1)), lone = T.traceSync(disc, { levels: 1, upscale: false }), big = T.traceSync(disc, { levels: 1 });
+    const radial = r => { let mx = 0; for (const sub of r.layers[0].subpaths) for (const p of flatten(sub, 1)) mx = Math.max(mx, Math.abs(Math.hypot(p[0] - 120, p[1] - 120) - 90)); return mx; };
+    say(`  a lone disc r 90: ${lone.layers[0].nodes} nodes (${ops(lone).c} Béziers, ${ops(lone).l} lines), off the circle by ${radial(lone).toFixed(3)} px at most; enlarged ${big.work.width / 240} ×: ${big.layers[0].nodes} nodes, ${radial(big).toFixed(3)} px`);
     assert.ok(lone.layers[0].nodes <= 12 && ops(lone).l === 0, 'a disc in a few curves');
+    assert.ok(big.layers[0].nodes <= 40 && ops(big).l === 0 && radial(big) < 0.25 && radial(big) < radial(lone) / 2, 'enlarged: truer, still a few curves');
   });
 
   /* ════ 2 · block letters ════ */
   await step('block letters at 1 level: IoU > 0.97, square corners kept, suggestLevels 1', () => {
     const img = picture(1200, 300, letters);
-    const res = T.traceSync(img, { levels: 1, keepLabels: true });
+    const res = T.traceSync(img, { levels: 1, keepLabels: true, upscale: false });
     wellFormed(res);
     const q = quality(res, res.work.labels), c = ops(res);
     say(`letters 1200×300: ${f3(res.ms.total)} ms, IoU ${f3(q.band[0])}, ${res.layers[0].subpaths.length} subpaths, ${res.nodes} nodes (${c.l} lines, ${c.c} Béziers)`);
@@ -198,10 +202,15 @@ function wellFormed(res) {
     assert.ok(nearCorner, 'a node within 0.8 px of the H corner');
     assert.ok(c.l >= 40, 'corners kept: ' + c.l + ' line ends');
     assert.equal(res.layers[0].subpaths.length, borders(res.work.labels, res.work.width, res.work.height), 'one subpath per border: every shape and every counter');
+    // enlarged (the default for black only): the same shapes, the H's corner still a corner, the outline against the letters' own labels within 0.97
+    const up = T.traceSync(img, { levels: 1 }), m = raster(up.layers[0].subpaths, 1200, 300), q2 = iou(m, maskOf(res.work.labels, l => l === 0));
+    const nearUp = up.layers[0].subpaths.some(s => s.some(o => o[0] !== 'h' && Math.hypot(o[o.length - 1][0] - 250, o[o.length - 1][1] - 60) < 0.5));
+    say(`  enlarged ${up.work.width / 1200} ×: ${up.layers[0].subpaths.length} subpaths, ${up.nodes} nodes, IoU against the letters ${f3(q2)}, the H corner a node: ${nearUp}`);
+    assert.ok(q2 > 0.97 && nearUp && up.layers[0].subpaths.length === res.layers[0].subpaths.length, 'enlarged letters');
   });
 
   /* ════ 3 · gradient ════ */
-  await step('a gradient at 4 levels: four strips, few nodes, Otsu cuts at even steps', () => {
+  await step('a gradient at 4 levels: four strips, few nodes; a photo-like ramp cut by TONE at (k + ½) / N, Otsu (asked) at even steps', () => {
     const img = picture(1024, 256, x => x / 1024, 1);
     const res = T.traceSync(img, { levels: 4, keepLabels: true });
     const q = quality(res, res.work.labels);
@@ -209,7 +218,8 @@ function wellFormed(res) {
     assert.equal(res.layers.length, 4);
     for (const L of res.layers) assert.ok(L.nodes <= 8, 'a strip in few nodes: ' + L.nodes);
     for (const v of q.band) assert.ok(v > 0.99);
-    res.thresholds.forEach((t, k) => assert.ok(Math.abs(t - (k + 1) / 5) < 0.02, 'even cut ' + t));
+    res.thresholds.forEach((t, k) => assert.ok(Math.abs(t - (k + 0.5) / 4) < 0.002, 'tone cut ' + t));
+    T.traceSync(img, { levels: 4, thresholds: 'otsu' }).thresholds.forEach((t, k) => assert.ok(Math.abs(t - (k + 1) / 5) < 0.02, 'even Otsu cut ' + t));
   });
 
   /* ════ 4 · a photo, 1 megapixel ════ */
