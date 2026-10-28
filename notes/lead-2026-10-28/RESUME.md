@@ -1,4 +1,4 @@
-# LEAD RESUME NOTES — read this first after the usage-limit reset (written 28 Oct 2026 ~03:15 UTC)
+# LEAD RESUME NOTES — read this first after a reset / compaction (resumed 06:32 UTC 28 Oct after the usage limit)
 
 Paul is asleep. He wants ALL work continued overnight, every agent checked every 3 minutes, everything tested (properly, not
 excessively) and pushed to main. Standing rules: push to main after testing without asking; never force-push main; never edit
@@ -30,7 +30,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - int/live-check.cjs: 7 pages load clean. Live verify = sha256 of each changed served file vs `git show origin/main:<f>`, then live-check.
 - If agents hang holding slots (load ~0, waits > 5 min): find holders: for f in slot1 slot2 slot3: ino=$(stat -c %i $SP/locks/$f); grep ":$ino " /proc/locks → pid → ps --ppid. Kill the idle test, tell its agent.
 
-## Live on main: 722e4a7 (refit: card never blank, refit 7-10x faster; pushed 03:45 UTC, all 8 tests passed; live verify b2tiugo1x) — before it d58eea9 verified live
+## Live on main: daee8c7 = 4da1e2c (batch 2: vimport + text, 12 tests pass, pushed 06:33, live verify bny0sgane) + guard fix (sandbox-wipe-guard drives roseReopen; guard OK). Before: 722e4a7 refit (verified live 03:5x), d58eea9.
 - 89f2819 Manual Control instant · b2608ff navigation rounds 2+3, Charm Editor Save fix (Saving at once, sheet files in background),
   bar necklaces FRONT by default (BARFRONT) · 077f21c Approve never silent / never stuck · d58eea9 Design & Engrave batch 1: editor
   extension points + live readouts + Ctrl/Alt centre resize + smart guides (feedback), Blend/Warp/Distort (warp), image trace (trace).
@@ -81,8 +81,11 @@ board-live-extra.json with the new agent ids.
 - Phase 5 push (option a) needs a Firestore security rule in the console + a vendored Firestore SDK file.
 
 ## Handed back, waiting to merge into claude/de-integration
+- fix-approve-held (af959c47001f89f4c) handed back 06:34: could NOT reproduce offline; fix = approve() never fails silently (approveThrew shows the error on the card + activity log; stale approvalIntent says why). Branch claude/fix-approve-held a4119ea (contains 4da1e2c). Its reruns write $SP/heldfix/runsA|runsB/summary.txt (ALLDONE at end). Ship when green; then ask Paul to press Approve on 4212020155 again and read the card's line. It did NOT refuse Approve on held orders (ENGPRE rule, 13 Oct) — needs Paul's OK to change.
+- All 17 other agents resumed 06:32 with SendMessage (same ids as the table).
 - de-text (ae828a5d729f6efa1) DONE: branch claude/de-text (af6f42b + merge 32078d4), new file charm-nest-ce-text.js (approved), test ce-text.cjs 10/10. Merge with resolve-union.py, then test the batch.
 - de-custompool (a4d3307fda8a88af0) DONE: claude/de-custompool 36f1f7d (contains de-designs a7009a1 + main). New file charm-nest-custom-pool.js (approved), server op customPiecePut, test custom-piece-pool.cjs 6/6. Ship WITH designs (+ sendsheet must settle the order's custom line). It reports sandbox-wipe-guard fails on origin/main too: op roseReopen is unclassified in the sandbox families file → small fix for the lead (classify roseReopen).
+- de-emplog (aae0c82c2db2e93d9) DONE: claude/de-emplog d1ebeb9 (merged main). New files charm-nest-design-log.js, charm-nest-efficiency-custom.js, netlify/functions/_designLog.js (approved), test design-log.cjs + 12 efficiency browser tests pass. Ship with sendsheet+custompool (sendsheet must NOT record its own designSent; use CNDesignLog.causeOf for D7). Left: person page doesn't show design counts yet.
 - de-extras (a5f64f2a38f32df82) finishing its last test runs (7 commits on claude/de-extras).
 
 ## Batch 2 in test (03:48 UTC): claude/de-integration 4da1e2c = main 722e4a7 + vimport + text. Test run b1b22dnd5 → logs $SP/int/b2/*.log (node: charm-editor-model art-edit-model public-assets; browser: ce-import ce-text ce-feedback emoji-picker charm-editor-browser charm-editor-engrave charm-editor-back art-edit-page engrave-editor-words). All pass → push HEAD:main (if it contains origin/main), verify live (new files charm-nest-ce-import.js? + charm-nest-ce-text.js), board.
@@ -97,6 +100,6 @@ board-live-extra.json with the new agent ids.
    after it. Phase 5 push option (a) needs Paul to add a Firestore security rule in the console + a vendored Firestore SDK file: ask him.
 4. Keep Paul informed in short messages; he reads the board.
 
-## Scheduled resume messages (send_later, one-shot). The usage limit resets at 2:31 am Toronto = 06:31 UTC, 28 Oct 2026.
+## Scheduled resume messages: ALL DELETED at 06:33 (work resumed). Old list for reference: The usage limit resets at 2:31 am Toronto = 06:31 UTC, 28 Oct 2026.
 06:33 trig_01S4EwRYu7UdCm7koKNqYLvA (main) · 06:50 trig_01CQebUb74FYfm9bW1vZmmSK (backup) · 07:30 trig_013sPayqPjKBmoHEd7DobThs ·
 08:30 trig_01X1G9rAxWwbSQXPZhdr3fD5 · 09:30 trig_018Vyc472WYCC6N2WXYxmy9y (backups). Once you are working again, delete the remaining ones (delete_trigger).
