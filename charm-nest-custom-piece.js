@@ -364,7 +364,7 @@
       '.cpCands .cpChip{font-weight:500}.cpCands .cpChip em{font-style:normal;color:var(--ink45);margin-left:4px}.cpCands .cpChip.on em{color:rgba(255,255,255,.7)}',
       '.cpSpin{display:inline-block;width:11px;height:11px;border:2px solid rgba(0,0,0,.14);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;vertical-align:-1px;margin-right:6px}',
       '.cpGoes{display:flex;align-items:center;gap:7px;margin-top:10px;font:12.5px var(--sans);color:var(--ink70);min-height:20px}.cpGoes svg{width:15px;height:15px;color:var(--gold);flex:none}.cpGoes b{color:var(--ink)}.cpGoes .new{color:#6a4a93}',
-      '.cpDlg .cuMetals{justify-content:flex-start}',
+      '.cpDlg .cuMetals{justify-content:flex-start}.cpDlg .cuM.on{box-shadow:0 0 0 1.5px var(--mc) inset,0 0 0 3px color-mix(in srgb,var(--mc) 28%,transparent);font-weight:700}',
       '.cpWho{font:12px var(--sans);color:var(--ink70);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cpWho b{color:var(--ink);font-weight:600}',
       '.cpWhy{font:600 11.5px var(--sans);color:#8a6420;text-align:right}.cpWhy.bad{color:#a4432c}.cpWhy.cpNudge{animation:cpShake .45s ease-in-out}',
       '.cpDlg .dlgFoot .btn{min-height:34px}',
