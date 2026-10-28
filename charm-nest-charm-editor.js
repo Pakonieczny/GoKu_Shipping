@@ -3721,7 +3721,11 @@
       setZoom: pct => zoomTo(pct),
       editing: () => (S.editing ? S.editing.id : null),
       ctx: ectx,
-      refreshText: () => refreshText()   // (CE TEXT, 28 Oct 2026: a font the words need has arrived; the texts are drawn again from their words, nothing else changes)
+      refreshText: () => refreshText(),   // (CE TEXT, 28 Oct 2026: a font the words need has arrived; the texts are drawn again from their words, nothing else changes)
+      // (28 Oct 2026, the design library, charm-nest-ce-library.js: it asks "keep your changes?" itself, closes this session as chosen (kept: exactly as Save; left: as
+      //  Cancel, nothing asked again) and opens the editor on another design with the same fonts, font engine and locks)
+      opts,
+      end: keep => { if (S.ask) return; if (keep) save(); else { if (S.editing) closeEditor(true); abandon(); finish(null); } }
     };
   }
 
