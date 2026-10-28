@@ -145,6 +145,9 @@ async function session(sb) {
   store.set(`${P}Charm_Nest_Sheets/${rose2.id}`, rose2);
   await L({ op: 'roseTakeOff', sheetId: rose2.id, ids: ['pool-7'], by: 'Kim' });
   await L({ op: 'roseRelease', stockId: claim2.stock.id, sheetId: rose2.id, by: 'Kim' });
+  const g14 = { id: 'sheet-gold14k-guard', metal: 'gold14k', sheetIndex: 1, fileBase: '14K_Oct.09.26_Set-1_Sheet-1', status: 'complete', runId: 'run-rose', placedCount: 1, orders: [D], rosePlanJson: JSON.stringify({ lines: [[0, 0, 1, 1]] }), rosePlanHash: 'guard-plan' };
+  store.set(`${P}Charm_Nest_Sheets/${g14.id}`, g14);
+  await L({ op: 'roseReopen', sheetId: g14.id, by: 'Kim' });   // (a 14K sheet changed by hand after its green line: what was drawn for it is given up)
   await L({ op: 'partialPolicySet', metal: 'rose', mode: 'new', by: 'Kim' });
   const remId = `${claim.stock.id}-1`;
   await L({ op: 'remnantMark', id: remId, status: 'discarded', by: 'Kim' }); await L({ op: 'remnantMark', id: remId, status: 'available', by: 'Kim' });
