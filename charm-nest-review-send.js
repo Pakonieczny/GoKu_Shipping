@@ -76,7 +76,8 @@
   const api = {
     ready() { const m = MARK(); return !!(m && typeof m.mark === "function" && typeof m.isMarked === "function"); },
     marked(rid) { try { return !!MARK().isMarked(rid); } catch (_) { return false; } },
-    mark(rid, by) { return Promise.resolve().then(() => MARK().mark(rid, { by })); },
+    // (OUTBOX, Paul 28 Oct 2026: the mark is kept on this computer and sent from its outbox: the press goes on at once; a refusal the cloud sends back later is said under this button)
+    mark(rid, by) { return Promise.resolve().then(() => MARK().mark(rid, { by, onRefused: text => { say(rid, `Not held: ${String(text).replace(/^Hold Order was not kept: /, "")}`); sync(); } })); },
     // an order a person did not mark can be in Review all the same (the system put it there): the Review tab's own list says so (a person's mark is isMarked's: the mark API owns when it is open or resolved)
     // (SENDREVIEW, Paul 20 Oct 2026: "This button should be directly linked and communicate with the orders that are already in the Review tab": asked of Review's Open itself, Review.openOrders, the
     //  lists its count is made of; it asked Review.items() alone, the decisions, and a custom order waiting on its own designs or Complete Order is a card of Open that is no decision, so its

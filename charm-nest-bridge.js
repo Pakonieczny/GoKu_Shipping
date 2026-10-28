@@ -6489,13 +6489,14 @@ const Gate = window.Gate = (() => {
   }
   /** (Paul, 27 Oct 2026) One sheet whose save a reload cut short (Session.restore writes it again as it stands): a page that had drafted it for a write the cloud refused kept it so in its checkpoint, and
    *  the write after the reload would have saved it out of the set its record still holds. Its place is taken back from its record first, so the write keeps it there (keepsPlace). Resolves true when it did. */
-  async function followSheet(sh) {
+  async function followSheet(sh, held) {
     const run = B.run;
     if (!sh || !run || !modern(run.runId) || ["complete", "abandoned"].includes(run.status) || !S.cloud.ok || committing(run) || !followable(run, sh, true)) return false;
     try {
       return await followTurn(run, async () => {
         if (!followable(run, sh, true)) return false;
-        const rec = ((await api("charmNestLibrary", { op: "getSheet", id: sh.sheetId }, { quiet: true })) || {}).sheet || null;
+        // (OUTBOX, 28 Oct 2026: held, the record the caller holds as the cloud last answered it (Manual Control's file job, right after its patch was answered): no read)
+        const rec = held && held.id === sh.sheetId ? held : ((await api("charmNestLibrary", { op: "getSheet", id: sh.sheetId }, { quiet: true })) || {}).sheet || null;
         const ok = followOne(run, sh, rec, true); if (ok) { Session.schedule(); refreshAllCards(); }
         return ok;
       });
@@ -14574,6 +14575,46 @@ const CustomPrint = window.CustomPrint = (() => {
     return st.length ? Seal.row({ stamps: st, prints: +rec.prints || 0 }) : "";
   }
   /** Records just written: a completed one is read as completed, and no longer as reopened. */
+  /* OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"; plan: phase 3, Complete Order): with this computer's outbox (charm-nest-store.js), each line's customPut is kept
+     there at the press and sent from it with its mutation id (a completion appends a seal: sent twice it would stamp twice; the mid makes the second a replay), and the record the cloud
+     would write is stamped here at once, as op_customPut stamps it (completed, who, how, the seal appended), marked pending. completeKept → { answers(it, rows, then) }: the cloud's
+     records replace the ones stamped here as they come; a refusal (in the cloud's own words) takes the card back to Open, says why on the card and in a toast. */
+  const OUTBOXED = () => !!(window.CharmNestStore && typeof CharmNestStore.mutate === "function");
+  function predictDone(t, who, how, label, cur) {
+    const now = Date.now(), button = how === "button", doc = Object.assign({}, cur || {}, { key: t.key, receiptId: t.receiptId, transactionId: t.transactionId, sku: t.sku, title: t.title, category: t.category, kind: t.kind, state: "completed", updatedAtMs: now, pending: true });
+    if (!cur || cur.state !== "completed" || !cur.completedAt) Object.assign(doc, { completedAt: now, completedBy: who, how: button ? "button" : "print" });
+    if (!button) { Object.assign(doc, { lastPrintedAt: now, lastPrintedBy: who, prints: ((cur && +cur.prints) || 0) + 1 }); if (!cur || !cur.printedAt) Object.assign(doc, { printedAt: now, printedBy: who }); }
+    doc.hasLabel = !!(label || (cur && (cur.label || cur.hasLabel))); delete doc.label;
+    const prev = cur && Array.isArray(cur.stamps) ? cur.stamps : (window.Seal && cur ? Seal.list(cur) : []);
+    doc.stamps = prev.concat({ how: button ? "button" : "print", at: now, by: who }).slice(-2000);
+    return doc;
+  }
+  function completeKept(it, targets, who, how, label, from, saved) {
+    const hs = [];
+    for (const t of targets) {
+      const cur = (B.maps.customDone || {})[t.key] || (B.maps.customKept || {})[t.key] || null;
+      const h = CharmNestStore.mutate({ entity: "c:" + t.key, op: "customPut", args: Object.assign({ by: who, label }, how === "button" ? { how: "button", from } : {}, t), label: `${how === "button" ? "Release Hold" : "QR label"} on order ${t.receiptId}`, by: who });
+      if (!h.k) continue;
+      saved[t.key] = predictDone(t, who, how, label, cur); hs.push([t.key, h, cur]); wrote([t.key]);
+    }
+    return {
+      answers(it2, rows2, then) {
+        let left = hs.length; const fin = () => { if (--left <= 0 && typeof then === "function") tryDo(then); };
+        for (const [k, h, cur] of hs) h.done.then(ans => { if (ans && ans.record) { keepDone({ [k]: ans.record }); wrote([k]); settle(); } fin(); }, e => { doneRefused(it2, rows2, k, cur, e); fin(); });
+      }
+    };
+  }
+  function doneRefused(it, rows, k, cur, e) {
+    const why = String((e && e.message) || e || "the cloud said no").replace(/[.\s]+$/, ""), rid = rows[0] && rows[0].order ? rows[0].order.receiptId : "";
+    const next = Object.assign({}, B.maps.customDone); delete next[k]; B.maps.customDone = next;
+    if (cur && cur.state !== "completed") B.maps.customKept = Object.assign({}, B.maps.customKept, { [k]: cur });
+    for (const r of rows) undos.delete(r.key);
+    failed(it.key, why, null, "complete");
+    try { comesBack(rows, `Order ${rid} was not released: ${why}`); } catch (_) {}
+    settle(); redraw();
+    humanAct("error", { orderId: String(rid), detail: "Release Hold refused by the cloud" });
+    toast(`Order ${rid} was not released: ${why}. It is back in Open.`, "bad", 10000);
+  }
   function keepDone(saved) {
     const keys = Object.keys(saved); if (!keys.length) return;
     B.maps.customDone = Object.assign({}, B.maps.customDone, saved);
@@ -14693,8 +14734,10 @@ const CustomPrint = window.CustomPrint = (() => {
       // a line the run put on a sheet all the same is cut on the laser: it is not marked completed as well
       const cut = it.done ? new Set() : new Set(rows.filter(r => (r.poolIds || []).length).map(r => r.key));
       say(key, "Marking it completed…");
-      const saved = {}; let putErr = null; const mine = targets.map(t => t.key); grab(mine);
-      try { for (const t of targets) { if (cut.has(t.key)) continue; try { const r = await api("charmNestLibrary", Object.assign({ op: "customPut", by: who, label }, t), { quiet: true }); if (r && r.record) { saved[t.key] = r.record; wrote([t.key]); } } catch (e) { putErr = e; } } }
+      const saved = {}; let putErr = null, kept = null; const mine = targets.map(t => t.key); grab(mine);
+      // (OUTBOX: the print's completion kept in this computer's outbox and its record stamped here at once; the cloud's answer replaces it: completeKept)
+      if (OUTBOXED()) { kept = completeKept(it, targets.filter(t => !cut.has(t.key)), who, "print", label, "", saved); drop(mine); }
+      else try { for (const t of targets) { if (cut.has(t.key)) continue; try { const r = await api("charmNestLibrary", Object.assign({ op: "customPut", by: who, label }, t), { quiet: true }); if (r && r.record) { saved[t.key] = r.record; wrote([t.key]); } } catch (e) { putErr = e; } } }
       finally { drop(mine); }
       const done = Object.keys(saved);
       keepDone(saved);
@@ -14708,7 +14751,8 @@ const CustomPrint = window.CustomPrint = (() => {
       if (putErr) humanAct("error", { orderId: String(targets[0].receiptId || ""), detail: "label printed but not marked completed" });
       if (done.length && it.onDone) { try { it.onDone(who, "print"); } catch (_) {} }   // a Review card's question: answered, by who
       if (done.length && cancelled) printedAnyway(cancelled, who, "print", done.length);
-      settle(); say(key, null); unlay(); pressSoon(); if (done.length) tlFresh();   // (the open order window reads its timeline now, as after Complete Order)
+      settle(); say(key, null); unlay(); pressSoon(); if (done.length && !kept) tlFresh();   // (the open order window reads its timeline now, as after Complete Order)
+      if (kept) kept.answers(it, rows.length ? rows : [{ key: targets[0].key, order: { receiptId: targets[0].receiptId } }], () => { if (done.length) tlFresh(); });
       agent({ bridge: true }, putErr ? "warn" : "DS", `${targets[0].receiptId}: sorting-station QR label printed by ${who}${putErr ? ` — not marked completed (${putErr.message})` : cut.size ? ` — ${cut.size} piece(s) went on a sheet meanwhile, not marked` : " · Review → Resolved"}`);
       if (putErr) toast(`The QR label was printed but ${done.length ? "not every piece was" : "the order was not"} marked completed: ${putErr.message} — press Print again to retry`, "bad", 9000);
       else if (cut.size) toast(`${targets[0].receiptId}: ${cut.size === targets.length ? "its piece" : cut.size + " of its pieces"} went on a sheet while the label printed — cut on the laser, not marked completed`, "bad", 9000);
@@ -14753,8 +14797,11 @@ const CustomPrint = window.CustomPrint = (() => {
     const mine = rows.map(r => r.key); grab(mine);
     queue = queue.then(async () => {
       let label = null; try { label = O.sortingLabel(rows[0].order, rows[0].line); } catch (_) { label = null; }
-      const saved = {}; let putErr = null, cut = 0;
-      for (const r of rows) {
+      const saved = {}; let putErr = null, cut = 0, kept = null;
+      // OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"): each line's completion is kept in this computer's outbox now and its record stamped here at once (the seal, the
+      // card's flight to Resolved); the cloud's answer replaces it, a refusal takes the card back to Open and says why on it (completedBy: the answers, behind the press)
+      if (OUTBOXED()) kept = completeKept(it, rows.filter(r => { if ((r.poolIds || []).length) { cut++; return false; } return true; }).map(r => targetOf(r, it.record, it)), who, "button", label, from, saved);
+      else for (const r of rows) {
         if ((r.poolIds || []).length) { cut++; continue; }                     // the run put it on a sheet meanwhile
         try { const res = await api("charmNestLibrary", Object.assign({ op: "customPut", how: "button", by: who, label, from }, targetOf(r, it.record, it)), { quiet: true }); if (res && res.record) { saved[r.key] = res.record; wrote([r.key]); } } catch (e) { putErr = e; }
       }
@@ -14770,7 +14817,8 @@ const CustomPrint = window.CustomPrint = (() => {
       if (putErr) humanAct("error", { orderId: String(rid), detail: done.length ? "not every piece was completed" : "order not completed" });
       if (done.length && it.onDone) { try { it.onDone(who, "button"); } catch (_) {} }
       if (done.length && cancelled) printedAnyway(cancelled, who, "complete", done.length);
-      settle(); say(key, null); pressSoon(); if (done.length) tlFresh();
+      settle(); say(key, null); pressSoon(); if (done.length && !kept) tlFresh();
+      if (kept) kept.answers(it, rows, () => { if (done.length) tlFresh(); });   // (OUTBOX: the cloud's records replace the ones stamped here; a refusal takes the card back to Open)
       agent({ bridge: true }, putErr ? "warn" : "DS", `${rid}: custom order completed by ${who} (no label printed)${putErr ? ` — not every piece was saved (${putErr.message})` : " · Review → Resolved"}`);
       if (putErr) toast(`${rid}: ${done.length ? "not every piece was" : "the order was not"} released: ${putErr.message} — press Release Hold to try again`, "bad", 9000);
       else if (cut) toast(`${rid}: ${cut} of its pieces went on a sheet meanwhile — cut on the laser, not completed`, "bad", 8000);
@@ -14949,13 +14997,13 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   const freshOf = mk => fresh.get(mk) || 0;
   /** A label that was not printed says so on its card for a while, beside its buttons (the toast says why). */
-  function failed(key, why, st) {
+  function failed(key, why, st, act) {
     const was = fails.get(key); if (was) clearTimeout(was.timer);
-    // (one that keeps a seal stays until it is printed: the seal and who pressed are never dropped)
-    const f = { why, st: st || null, timer: st ? 0 : setTimeout(() => { if (fails.get(key) === f) { fails.delete(key); redraw(); } }, 10000) };
+    // (one that keeps a seal stays until it is printed: the seal and who pressed are never dropped; OUTBOX: a release the cloud refused says why for 20 s)
+    const f = { why, st: st || null, act: act || "print", timer: st ? 0 : setTimeout(() => { if (fails.get(key) === f) { fails.delete(key); redraw(); } }, act === "complete" ? 20000 : 10000) };
     fails.set(key, f);
   }
-  const failNote = it => { const f = fails.get(it.key); return !f || f.retrying ? "" : f.st ? `<span class="cuFail calm" role="status" title="${esc(f.why)}">Not printed: the print didn't open</span>` : `<span class="cuFail" role="alert" title="${esc(f.why)}">Not printed</span>`; };
+  const failNote = it => { const f = fails.get(it.key); return !f || f.retrying ? "" : f.act === "complete" ? `<span class="cuFail" role="alert" title="${esc(f.why)}">Not released: ${esc(f.why)}</span>` : f.st ? `<span class="cuFail calm" role="status" title="${esc(f.why)}">Not printed: the print didn't open</span>` : `<span class="cuFail" role="alert" title="${esc(f.why)}">Not printed</span>`; };
   /** The card's Undo and name field; returns the name field when there is one (to focus it). */
   function wire(host, it) {
     const ub = host.querySelector("[data-cu-undo]"); if (ub) ub.onclick = e => { e.stopPropagation(); undo(it); };
@@ -19998,7 +20046,7 @@ const Sandbox = window.Sandbox = (() => {
   /* COST (Oct 2026): the registry and the engine are no longer tags of the page (a blocking script in its head for every
      production page): they load here, at once on a page in the sandbox, when Settings opens, and before anything that
      clears or counts the browser's side (wipe, browserLeft, wipeBrowser). The tokens are the ones the tags had. */
-  const SBX_FILES = ["charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1-spl1-sv1-advsb1-krep1-kt1-cost18-plc1-ae1-ls1-dsg1-dl1", "charm-nest-sandbox-browser.js?v=20261010-wb1"];
+  const SBX_FILES = ["charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1-spl1-sv1-advsb1-krep1-kt1-cost18-plc1-ae1-ls1-dsg1-dl1-ob1", "charm-nest-sandbox-browser.js?v=20261010-wb1"];
   let sbxTask = null, hooked = false;
   function loadScripts() {
     const done = () => { if (!hooked && BX()) { hooked = true; try { BX().setHooks(memoryHooks); } catch (_) {} } return !!(BX() && window.CharmNestSandboxFamilies); };

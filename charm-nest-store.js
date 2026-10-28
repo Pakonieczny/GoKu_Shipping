@@ -326,6 +326,7 @@
     if (kind === 'sheetFull') { lru(mem[kind], id, LIMITS.memFull); onDisk.add(id); }
     enqueue(kind, id, { k: id, rev: rv, saved: now, rec }, now);
     tell({ kind, id, rec, from: 'here' });
+    if ((kind === 'sheets' || kind === 'sheetFull') && acked.size && acked.has('s:' + id)) lostIn('s:' + id, rec);   // (OUTBOX: a press of this computer another person's later change overwrote: told)
     return true;
   }
   /** Fields the page learned of a record (a seal, a step, a live answer's readiness): merged into the record kept, its revision unchanged. */
