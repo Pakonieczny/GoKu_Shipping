@@ -110,7 +110,8 @@ const USABLE = () => window.CN && window.Orders && window.Review && CN.S.cloud.o
     return row;
   }
   const ours = page => page.evaluate(async () => ({ regs: (await navigator.serviceWorker.getRegistrations()).filter(r => /charm-nest-sw\.js/.test((r.active || r.waiting || r.installing || {}).scriptURL || '')).length, caches: (await caches.keys()).filter(k => /^cn-(static|pics|sw-meta)-/.test(k)) }));
-  const until = async (page, fn, arg, ms = 20000) => { try { await page.waitForFunction(fn, arg, { timeout: ms, polling: 200 }); return true; } catch (_) { return false; } };
+  // (polled from here: the predicates are async, each read of the caches a promise)
+  const until = async (page, fn, arg, ms = 20000) => { for (const t0 = Date.now(); Date.now() - t0 < ms; await page.waitForTimeout(200)) { try { if (await page.evaluate(fn, arg)) return true; } catch (_) {} } return false; };
   const goneWorker = (page, ms) => until(page, async () => (await navigator.serviceWorker.getRegistrations()).every(r => !/charm-nest-sw\.js/.test((r.active || r.waiting || r.installing || {}).scriptURL || '')) && (await caches.keys()).every(k => !/^cn-(static|pics|sw-meta)-/.test(k)), null, ms);
   try {
     console.log(`  load ${os.loadavg().map(x => x.toFixed(2)).join(' ')} · Chromium ${browser.version()}`);
