@@ -1348,7 +1348,7 @@ const POOL = "Charm_Pool", BACK = "Charm_Pool_Back", SETS = "Charm_Nest_Sets", C
 // the learned maps: shared and read by both sides, but a sandbox answer is written to Sandbox_<name> only (see the top of this file)
 const SANDBOX_MAPS = [ALIASES, NODESIGN, OPTMAP];
 const isDay = d => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ""));
-const isPoolId = s => /^\d{5,20}_\d{5,20}_\d{1,3}$/.test(String(s || ""));
+const isPoolId = s => /^(?:\d{5,20}|CUSTOM-\d{8}-\d{1,6})_\d{5,20}_\d{1,3}$/.test(String(s || ""));   // (CUSTOMPOOL, 28 Oct 2026: a piece that belongs to no order is named CUSTOM-<yyyymmdd>-<n>, op_customPiecePut)
 /* The fields of a pool row that the writes below look at before they change it (what a row says of its run, its state, its sheet and its
    take-off marks; and what the order's timeline names of the sheet a piece leaves): read with only these, never the whole row. */
 const POOL_PUT_FIELDS = ["runId", "state", "sheetId", "setId", "sheetName", "updatedAt", "repooledAt", "heldAt", "removedAt", "heldBy", "removedBy", "side", "groupSize", "quantity"];
@@ -1819,6 +1819,45 @@ async function op_poolGet(b) {
   const ids = (b.poolIds || []).filter(isPoolId).slice(0, 300); const out = {};
   for (let i = 0; i < ids.length; i += 30) { const snaps = await db.getAll(...ids.slice(i, i + 30).map(id => col(POOL).doc(id))); for (const s of snaps) if (s.exists) { const r = s.data(); r.updatedAt = ms(r.updatedAt); if (r[Placement.REPOOLED]) r[Placement.REPOOLED] = ms(r[Placement.REPOOLED]) || 1; out[s.id] = r; } }
   return { pools: out };
+}
+/* CUSTOMPOOL (Paul, 28 Oct 2026: "sometimes the user just needs to add a charm onto a sheet and that custom order can be named by the user so the user can easily identify that
+   extra piece that was added, and not linked to an official order"; "You need to ensure the sanctity of the designed charm. It's exact dimensions and user designed features, and
+   that has to be linked to that specific Custom order"; items 27 and 28, the lead's D4 and D6). A design of the design library sent to a sheet becomes its pool rows here, one per
+   piece: {piece: {designId, version, designHash, geomHash, customName, metal, quantity, orderId?, widthMm, heightMm, aiPath, charmHash, runId?, setId?, day?, fixes?}, requestId, by}
+   → {ok, customId, orderId, orderless, serial, poolIds, pools, again?}.
+   Every send is numbered CUSTOM-<yyyymmdd>-<n> (the day's own counter, Charm_Nest_Counters/custom-<yyyymmdd>); a piece that belongs to no order takes that number as its order
+   id, so it is named everywhere by it and by the person's name for it. Its pool ids are <order>_<yyyymmdd><nnnn>_<copy>: an order's piece keeps the order's number in front, as every
+   pool id does, and never takes the id of one of the order's own lines. The same requestId (a retry, a reply lost on the way) is given the same number and the same rows. */
+const CUSTOM_PIECE_METALS = new Set(["gold", "silver", "rose", "gold10k", "gold14k"]);
+async function op_customPiecePut(b) {
+  const p = b && b.piece && typeof b.piece === "object" && !Array.isArray(b.piece) ? b.piece : null; if (!p) return { error: "no piece", status: 400 };
+  const by = str(b.by || p.by, 80).trim(), req = str(b.requestId, 80), metal = str(p.metal, 12), qty = Math.floor(+p.quantity);
+  if (!by) return { error: "who sent the piece is needed (by)", status: 400 };
+  if (!isId(req)) return { error: "bad request id", status: 400 };
+  if (!CUSTOM_PIECE_METALS.has(metal)) return { error: "bad metal", status: 400 };
+  if (!(qty >= 1 && qty <= 99)) return { error: "a custom piece is sent 1 to 99 at a time", status: 400 };
+  const designId = str(p.designId, 120), geomHash = str(p.geomHash, 64), name = str(p.customName, 80).trim(), rid = p.orderId == null || p.orderId === "" ? "" : str(p.orderId, 30);
+  if (!designId || !/^[\w-]{6,64}$/.test(geomHash)) return { error: "the design and the hash of its geometry are needed", status: 400 };
+  if (rid && !/^\d{5,20}$/.test(rid)) return { error: "bad order id", status: 400 };
+  if (!rid && !name) return { error: "a piece that belongs to no order needs a name", status: 400 };
+  // (the day of the page that sent it, as a set's day is; a day more than a day away from the server's is not taken)
+  const near = d => isDay(d) && Math.abs(Date.parse(d + "T12:00:00Z") - Date.now()) < 36 * 3600e3, day = near(p.day) ? p.day : OrderRules.localDay(new Date()), ymd = day.replace(/-/g, "");
+  const n2 = v => (Number.isFinite(+v) ? Math.round(+v * 1000) / 1000 : null), fx = p.fixes && typeof p.fixes === "object" && !Array.isArray(p.fixes) ? p.fixes : null;
+  const piece = { designId, version: Math.max(0, Math.floor(+p.version) || 0), designHash: str(p.designHash, 80) || null, geomHash, widthMm: n2(p.widthMm), heightMm: n2(p.heightMm), name: name || null, by,
+    ...(fx ? { fixes: { orderId: str(fx.orderId, 30) || null, poolId: str(fx.poolId, 80) || null, causedBy: str(fx.causedBy, 80) || null } } : {}) };
+  return db.runTransaction(async tx => {
+    const cref = col(COUNTERS).doc("custom-" + ymd), cs = await tx.get(cref), c = cs.exists ? cs.data() : {}, reqs = c.reqs && typeof c.reqs === "object" ? c.reqs : {};
+    const had = Math.floor(+reqs[req]) || 0, n = had || (num(c.n) || 0) + 1, customId = `CUSTOM-${ymd}-${n}`, serial = ymd + String(n).padStart(4, "0"), orderId = rid || customId;
+    const poolIds = Array.from({ length: qty }, (_, i) => `${orderId}_${serial}_${i + 1}`);
+    if (had) { const got = await txGetAll(tx, poolIds.map(id => col(POOL).doc(id))); if (got.every(s => s.exists)) return { ok: true, again: true, customId, orderId, orderless: !rid, serial, poolIds, pools: got.map(s => msRow(s.data())) }; }
+    const keep = Object.entries(reqs).slice(-400).concat([[req, n]]);   // (a retry within the day finds its number; the map stays small)
+    tx.set(cref, { day, n: Math.max(n, num(c.n) || 0), reqs: Object.fromEntries(keep), updatedAt: FV.serverTimestamp() }, { merge: true });
+    const at = Date.now(), pools = poolIds.map((poolId, i) => ({ poolId, orderId, transactionId: serial, lineKey: `${orderId}_${serial}`, copy: i + 1, quantity: qty, sku: "CUSTOM", material: metal, size: null, form: null, chain: null,
+      runId: str(p.runId, 80) || null, setId: str(p.setId, 80) || null, sheetId: null, charmHash: str(p.charmHash, 120) || null, masterHash: null, aiPath: str(p.aiPath, 300) || null, engrave: false, state: "ready",
+      custom: true, customId, customName: name || null, orderless: !rid, customPiece: piece, orderDate: at, arrivedAt: at, by }));
+    for (const r of pools) tx.set(col(POOL).doc(r.poolId), Object.assign({}, r, { createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() }));
+    return { ok: true, customId, orderId, orderless: !rid, serial, poolIds, pools };
+  });
 }
 /* Where each piece of an order is, from the records that can say so (Paul, 5 Oct: a Silver piece on SS Sheet 1 read "not on a
    sheet yet" from its order's Gold Filled sheet). The pool row's sheetId is only a hint (a re-nest, a restart or an older run
@@ -4338,6 +4377,7 @@ const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneL
   cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
   listingSkus: op_listingSkus, aliasGet: op_aliasGet, aliasPut: op_aliasPut, listingKindPut: op_listingKindPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
   customSheetGet: op_customSheetGet, customSheetPut: op_customSheetPut, customGet: op_customGet, customPut: op_customPut, reviewMarkPut: op_reviewMarkPut, reviewMarkOpen: op_reviewMarkOpen, customReopen: op_customReopen, customDelete: op_customReopen };
+OPS.customPiecePut = op_customPiecePut;   // CUSTOMPOOL (Paul, 28 Oct 2026): a design sent to a sheet becomes its pool rows; an orderless piece is numbered CUSTOM-<yyyymmdd>-<n>
 /* ART EDIT (Paul, 27 Oct 2026): one piece's own artwork, kept beside it (op_artPut above). artPut writes the piece's record, its pool row's artEdit stamp and its sheet's filesOwed;
    artGet and artList only read the documents named (they move no counter). */
 Object.assign(OPS, { artPut: op_artPut, artGet: op_artGet, artList: op_artList }); NO_GEN_BUMP.add("artGet"); NO_GEN_BUMP.add("artList");

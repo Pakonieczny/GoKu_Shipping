@@ -124,6 +124,9 @@ async function session(sb) {
   await L({ op: 'artPut', poolId: `${A}_10010_1`, face: 'front', by: 'Eve', art: { baseKey: 'guard1', removed: ['0-guard'], added: [{ id: 'date1', kind: 'text', role: 'hatch', d: 'M1 1L3 1L3 3Z', fill: [0, 0, 1] }] } });
   await L({ op: 'artGet', poolId: `${A}_10010_1`, face: 'front' });
   await L({ op: 'artList', keys: [`${A}_10010_1~front`] });
+  // CUSTOMPOOL (Paul, 28 Oct 2026): a design sent to a sheet, a piece of an order and a piece of no order (numbered CUSTOM-<yyyymmdd>-<n> on the day's counter): its pool rows and the counter
+  await L({ op: 'customPiecePut', requestId: 'guard-cp-1', by: 'Eve', piece: { designId: 'design-guard-1', version: 2, geomHash: 'g1-guardhash0001-3', customName: 'Spare heart', metal: 'silver', quantity: 2, orderId: null, day: DAY, widthMm: 12, heightMm: 10 } });
+  await L({ op: 'customPiecePut', requestId: 'guard-cp-2', by: 'Eve', piece: { designId: 'design-guard-1', version: 2, geomHash: 'g1-guardhash0001-3', customName: 'Fix', metal: 'gold', quantity: 1, orderId: C, day: DAY, fixes: { orderId: C, poolId: `${C}_30030_1`, causedBy: 'Ann' } } });
   await L({ op: 'runPut', run: { runId: RUN2, status: 'running', step: 'nesting', day: DAY, lines: {} } });   // (an open run: only a sheet of an open run can be repacked)
   await L({ op: 'archiveEmptySheet', id: SHEET2, runId: RUN2 });
   await L({ op: 'sheetPdf', ids: [SHEET, 'no-such-sheet'] });
