@@ -1086,8 +1086,8 @@
   --c-guide:#19a6c6; --c-guide-hot:#0e7f99;
   /* THE ILLUSTRATOR THEME (see the header's THEME TOKENS): Medium Dark, Illustrator's own default */
   --ai-frame:#3f3f3f; --ai-panel:#535353; --ai-panel-hi:#4a4a4a; --ai-pasteboard:#4a4a4a; --ai-border:#383838; --ai-input:#454545; --ai-input-border:#6b6b6b;
-  --ai-text:#efefef; --ai-text-dim:#c4c4c4; --ai-text-disabled:#8d8d8d; --ai-hover:#5e5e5e; --ai-accent:#2680eb; --ai-accent-text:#fff;
-  --ai-menu:#535353; --ai-menu-hover:#2680eb; --ai-menu-border:#2f2f2f; --ai-sep:#6a6a6a; --ai-tool-on:#3a3a3a; --ai-ruler:#4f4f4f; --ai-ruler-ink:#d9d9d9; --ai-ruler-tick:#9a9a9a;
+  --ai-text:#efefef; --ai-text-dim:#c4c4c4; --ai-text-disabled:#8d8d8d; --ai-hover:#5e5e5e; --ai-accent:#378ef0; --ai-accent-text:#fff;
+  --ai-menu:#3d3d3d; --ai-menu-hover:#378ef0; --ai-menu-border:#2f2f2f; --ai-sep:#6a6a6a; --ai-tool-on:#3a3a3a; --ai-ruler:#4f4f4f; --ai-ruler-ink:#d9d9d9; --ai-ruler-tick:#9a9a9a;
   --ai-btn:#6a6a6a; --ai-shadow:0 6px 18px rgba(0,0,0,.45); --ai-sel:#4f80ff; --ai-smart:#e535e5;
   --ai-font:'CE Source Sans 3','Source Sans 3','Source Sans Pro','Adobe Clean',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; --ai-fs:12px; --ai-row:24px;
   position:fixed; inset:0; z-index:2147482500; background:rgba(20,20,20,.5);
@@ -1096,7 +1096,7 @@
 /* (the workspace's own regions take the theme's text colour; a panel or dialog of an extension file keeps the ink it was drawn for) */
 .ce-appbar,.ce-props,.ce-doctabs,.ce-rail,.ce-foot,.ce-wrap .ce-rule{ color:var(--ai-text); }
 .ce-root[data-ui="dark"]{ --ai-frame:#1f1f1f; --ai-panel:#323232; --ai-panel-hi:#2b2b2b; --ai-pasteboard:#262626; --ai-border:#1a1a1a; --ai-input:#1e1e1e; --ai-input-border:#4a4a4a;
-  --ai-text:#e3e3e3; --ai-text-dim:#a9a9a9; --ai-text-disabled:#6c6c6c; --ai-hover:#404040; --ai-menu:#323232; --ai-menu-border:#121212; --ai-sep:#4a4a4a; --ai-tool-on:#1a1a1a;
+  --ai-text:#e3e3e3; --ai-text-dim:#a9a9a9; --ai-text-disabled:#6c6c6c; --ai-hover:#404040; --ai-menu:#2b2b2b; --ai-menu-border:#121212; --ai-sep:#4a4a4a; --ai-tool-on:#1a1a1a;
   --ai-ruler:#2d2d2d; --ai-ruler-ink:#c8c8c8; --ai-ruler-tick:#777; --ai-btn:#4a4a4a; }
 .ce-root[data-ui="mlight"]{ --ai-frame:#a6a6a6; --ai-panel:#b8b8b8; --ai-panel-hi:#adadad; --ai-pasteboard:#a3a3a3; --ai-border:#8e8e8e; --ai-input:#d5d5d5; --ai-input-border:#8a8a8a;
   --ai-text:#1b1b1b; --ai-text-dim:#3d3d3d; --ai-text-disabled:#767676; --ai-hover:#c9c9c9; --ai-accent:#1473e6; --ai-menu:#c6c6c6; --ai-menu-hover:#1473e6; --ai-menu-border:#8a8a8a;
