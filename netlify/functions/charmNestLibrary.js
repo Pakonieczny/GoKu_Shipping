@@ -689,8 +689,8 @@ const REV_FORM = /^[\w.\-]{1,40}$/;
      listSheets / setList { ifRev, wantRev, since }   ifRev: the Library's revision (laserStatus' rev; wantRev asks for it): nothing the Library reads was
                                    written since → { unchanged: true, rev } for one read. since (the `upTo` of the page's last answer of the same list): the
                                    rows are chosen and ordered as before and all named in `ids`, but only those written after since are sent whole (a sheet:
-                                   its record, its set or its run; a set: its record); upTo is the newest update time the answer saw. A row gone from `ids`
-                                   is gone from the list (deleted, cut, archived).
+                                   its record, its set or its run; a set: its record), each with its revision in `revs`; upTo is the newest update time the
+                                   answer saw. A row gone from `ids` is gone from the list (deleted, cut, archived). since '0.0' sends every row.
      getMany { keys, ifRevs, full }   several records in one call ('s:' sheets, whole as getSheet with full, else their list entries; 't:' sets; 'r:' runs;
                                    'c:' custom orders): only those whose revision is not the ifRevs' one, under recs { key: { rev, rec } }, and gone (the keys
                                    with no record).
@@ -710,7 +710,8 @@ async function localAsk(b, cursor) {
 }
 /** LOCAL: a listed sheet's revision is the newest of its record's, its set's (filingRecords' _setRev) and its run's update times, so its row is sent
     again when any of them moved since. One read of one field per run. */
-async function foldRevs(records, seen) {
+async function foldRevs(records, seen, own) {
+  for (const r of records) if (r && seen.has(r.id)) own.set(r.id, seen.get(r.id));   // (each record's own revision, as getSheet and laserStatus name it: what the page keeps a row under)
   const runIds = [...new Set(records.map(r => r && r.runId).filter(isId))], runs = new Map();
   for (let i = 0; i < runIds.length; i += 100) for (const s of await db.getAll(...runIds.slice(i, i + 100).map(id => col(RUNS).doc(id)), { fieldMask: ["updatedAt"] })) runs.set(s.id, revOf(s));
   for (const r of records) if (r) seen.set(r.id, [r._setRev, runs.get(r.runId)].reduce(revMax, seen.get(r.id) || "0"));
@@ -1063,7 +1064,7 @@ async function op_putSheet(b) {
 async function op_listSheets(b) {
   const cursor = !!(b.cursor && Array.isArray(b.cursor.sheets)), ask = await localAsk(b, cursor);
   if (ask.unchanged) return { sheets: [], next: null, truncated: false, unchanged: true, rev: ask.rev, checkedAt: Date.now() };
-  const seen = ask.since ? new Map() : null;   // (LOCAL: id → the newest update time of what its entry is made of: its record, its set, its run)
+  const seen = ask.since ? new Map() : null, own = new Map();   // (LOCAL: id → the newest update time of what its entry is made of: its record, its set, its run; own: the record's)
   let rows;
   if (cursor) rows = b.cursor.sheets.filter(isId).slice(0, 500).map(id => [id]);
   else if (b.excludeDone && !b.runId && !b.setId && !b.from && !b.to && await currentFlagReady()) {
@@ -1075,7 +1076,7 @@ async function op_listSheets(b) {
     rows = flagged.filter(d => !d.archived && !Readiness.filed(d)).sort((x, y) => String(y.day || "").localeCompare(String(x.day || ""))).slice(0, limit).map(d => [d.id, d]);
     if (b.metal && /^(gold|silver|rose|gold10k|gold14k)$/.test(b.metal)) rows = rows.filter(([, d]) => d.metal === b.metal);
     rows = rows.sort(([, x], [, y]) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0));
-    if (seen) await foldRevs(rows.map(([, d]) => d), seen);
+    if (seen) await foldRevs(rows.map(([, d]) => d), seen, own);
     rows = rows.map(([id]) => [id]);
   } else {
     const limit = Math.min(500, Math.max(1, num(b.limit) || 300));
@@ -1095,7 +1096,7 @@ async function op_listSheets(b) {
     if (b.setId) rows = rows.filter(([, d]) => d.setId === b.setId);
     if (b.runId) rows = rows.filter(([, d]) => d.runId === b.runId);
     rows.sort(([, x], [, y]) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0));
-    if (seen) await foldRevs(rows.map(([, d]) => d), seen);
+    if (seen) await foldRevs(rows.map(([, d]) => d), seen, own);
     if (slimOnly) rows = rows.map(([id]) => [id]);
   }
   // LOCAL: every row is named, in order; only those written after since are read for their entries and sent
@@ -1106,7 +1107,7 @@ async function op_listSheets(b) {
      part. The rest comes with `next` as before (every page reading a run, a day or the Library follows it: `all: "sheets"`); one set's own
      sheets (setId, read by the set editor and the rose flow without following `next`) keep the whole budget, a set being a few sheets. */
   const { sheets, rest } = await sheetEntries(rows, answerBudget(Date.now(), b.setId ? ANSWER_BYTES : LIST_SHEETS_BYTES));
-  return { sheets, next: rest.length ? { sheets: rest } : null, truncated: rest.length > 0, ...(ids ? { ids, upTo } : {}), ...(ask.rev !== null ? { rev: ask.rev } : {}) };
+  return { sheets, next: rest.length ? { sheets: rest } : null, truncated: rest.length > 0, ...(ids ? { ids, upTo, revs: Object.fromEntries(sheets.map(x => [x.id, own.get(x.id) || "0"])) } : {}), ...(ask.rev !== null ? { rev: ask.rev } : {}) };
 }
 /* Manual Control (Paul, 18 Oct 2026): one person at a time moves, turns and resizes the charms of a 10K / 14K sheet by hand in the sheet window. The claim is the
    sheet record's manualEdit { by, tab, at }: taken in a transaction when nobody else holds it (a claim not kept alive for MANUAL_STALE_MS is a closed tab's
@@ -2774,7 +2775,7 @@ async function op_setList(b) {
   let n = 0; while (n < rows.length && budget.fits(rows[n][1])) n++;
   const part = b.includeSheets && n === rows.length ? await sheetEntries(sheetIds.map(id => [id]), budget) : { sheets: [], rest: sheetIds };
   const next = n < rows.length || part.rest.length ? { sets: rows.slice(n).map(([id]) => id), sheets: part.rest } : null;
-  return {sets:rows.slice(0, n).map(([,r])=>r), ...(b.includeSheets ? {sheets:part.sheets} : {}), next, truncated: !!next, ...(ids ? { ids, upTo: [...seen.values()].reduce(revMax, ask.since) } : {}), ...(ask.rev !== null ? { rev: ask.rev } : {})};
+  return {sets:rows.slice(0, n).map(([,r])=>r), ...(b.includeSheets ? {sheets:part.sheets} : {}), next, truncated: !!next, ...(ids ? { ids, upTo: [...seen.values()].reduce(revMax, ask.since), revs: Object.fromEntries(rows.slice(0, n).map(([id]) => [id, seen.get(id) || "0"])) } : {}), ...(ask.rev !== null ? { rev: ask.rev } : {})};
 }
 // ── release: when each slow material last went out, and the days a person opened one early (shop-wide, not per browser) ──
 async function op_releaseGet() { const s = await col(RELEASE).doc("current").get(); const d = s.exists ? s.data() : {}; return { lastReleased: d.lastReleased || {}, released: d.released || {}, updatedAt: ms(d.updatedAt) }; }

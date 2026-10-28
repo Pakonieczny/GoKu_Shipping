@@ -53,6 +53,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
     st.put(S, 'pending-sheet', { verification: { ok: false } });
     let d = await call(Object.assign({ since: first.upTo }, ask));
     assert.deepEqual(d.sheets.map(s => s.id), ['pending-sheet'], 'a sheet written since: that row alone'); assert.equal(d.ids.length, 4);
+    assert.equal(d.revs['pending-sheet'], (await call({ op: 'getSheet', id: 'pending-sheet' })).rev, 'a row sent carries its record\'s own revision, as getSheet names it');
     let since = d.upTo;
     st.put(SET, 'set-fixture', { status: 'again' });
     d = await call(Object.assign({ since }, ask));
