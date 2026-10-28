@@ -37,7 +37,18 @@
   const ACTIVE = 4000, RECENT = 15000, IDLE = 60000, ACTIVE_FOR = 120000, RECENT_FOR = 600000;
   let lastInput = Date.now();
   const cadence = () => { const quiet = Date.now() - lastInput, focused = safe(() => doc.hasFocus(), true); return quiet < ACTIVE_FOR && focused ? ACTIVE : quiet < RECENT_FOR ? RECENT : IDLE; };
-  const st = { timer: 0, second: 0, busy: false, again: false, fails: 0, start: 0, end: 0, ticks: 0, last: '', lastOk: 0, sig: '', cancelSig: '', cx: new Map(), dead: false };
+  const st = { timer: 0, second: 0, busy: false, again: false, fails: 0, start: 0, end: 0, ticks: 0, last: '', lastOk: 0, sig: '', cancelSig: '', cx: new Map(), dead: false, full: true, fullAt: 0, fullStart: 0, stale: new Set(), staleBefore: 0, cancelNext: false, light: 0 };
+  /* FEED (Paul, 28 Oct 2026: "every press and every window to feel like a native app, and fewer cloud calls"): while this computer's changes feed answers
+     (charm-nest-sync-worker.js, one question for every tab), the orders on screen are no longer read again every few seconds. The feed names what moved:
+     an order's pool rows (p:), its cancel (x:: the cancelled ids are read again), a sheet that holds one of its pieces (s:). An order on screen that moved
+     is read at once; one off screen is read when it comes back on screen; an order never read is read as soon as it is on screen (the loop's look, which
+     asks the cloud nothing when there is nothing to read); every ten minutes everything on screen is read anyway (NET). A person's own change still reads
+     at once (nudge). Without the feed (an older cloud, a browser without it) the loop reads as before. */
+  const NET = 600000;
+  let sync = null;
+  const synced = () => !!(sync && sync.live());
+  const learnedOf = r => safe(() => root.OrderPieces._learned.get(r), null);
+  const ordersOfSheet = sid => { const out = []; safe(() => { for (const [r, e] of root.OrderPieces._learned) if (e && Array.isArray(e.sheets) && e.sheets.some(x => x && (x.id || x.sheetId) === sid)) out.push(r); }); return out; };
   const watchers = new Map();   // token -> { ids: () => Iterable, at }
   const safe = (f, d) => { try { const v = f(); return v === undefined ? d : v; } catch (_) { return d; } };
   const ridOf = x => String(x == null ? '' : x).replace(/\D/g, '');
@@ -131,15 +142,27 @@
     if (!live()) return;
     const rids = watched();
     st.start = Date.now();
-    if (!rids.length) { st.end = st.start; return schedule(); }
+    if (!rids.length && !st.cancelNext) { st.end = st.start; return schedule(); }
     if (st.busy) { st.again = true; return; }
-    st.busy = true; st.ticks++;
     const OP = root.OrderPieces, C = root.Cancelled;
+    // FEED: a look, not a read, while the feed answers: only the orders on screen that are not current (never read, named by the feed, older than its last reset)
+    const full = st.full || !synced() || Date.now() - st.fullAt >= NET;
+    let read = rids, cancel = full;
+    if (!full) {
+      read = rids.filter(r => { const e = learnedOf(r); return !(e && e.ok) || st.stale.has(r) || (+e.at || 0) < st.staleBefore; });
+      cancel = st.cancelNext;
+      if (!read.length && !cancel) { st.light++; st.end = Date.now(); adoptHolds(rids); return schedule(); }
+    }
+    st.full = false; st.cancelNext = false;
+    for (const r of read) st.stale.delete(r);
+    if (full) { st.fullStart = st.start; }
+    st.busy = true; st.ticks++;
     try {
       const jobs = [];
-      if (OP && OP.load) jobs.push(OP.load(rids, { force: true }));
-      if (C && C.load) jobs.push(Promise.resolve(C.load(true)).catch(() => null));
+      if (OP && OP.load && read.length) jobs.push(OP.load(read, { force: true }));
+      if (C && C.load && cancel) jobs.push(Promise.resolve(C.load(true)).catch(() => null));
       await Promise.all(jobs);
+      if (full) st.fullAt = Date.now();
       st.fails = 0; st.lastOk = Date.now(); st.last = rids.join(',');
       // NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): told only when an order read before changed its cancelled state. The signature was one
       // digit per order on screen, so a tab showing other orders ("000" → "0000") told every listener something changed at each switch, and the Orders list, Review and the order window
@@ -157,21 +180,46 @@
   /** A person's own change (or news of one): read now, and again 1.5 s later; never twice within GAP. */
   function nudge() {
     if (!live()) return false;
+    st.full = true;
     arm(Math.max(0, st.start + GAP - Date.now()));
-    clearTimeout(st.second); st.second = setTimeout(() => { st.second = 0; if (!st.busy) arm(0); else st.again = true; }, SECOND);
+    clearTimeout(st.second); st.second = setTimeout(() => { st.second = 0; st.full = true; if (!st.busy) arm(0); else st.again = true; }, SECOND);
     return true;
   }
   // a tab change shows other orders: read for them now (the feed finds them by what is drawn, a moment after the tab has drawn)
-  doc.addEventListener('click', ev => { const t = ev.target; if (t && t.closest && t.closest('#modeSeg')) setTimeout(nudge, 350); }, true);
+  doc.addEventListener('click', ev => { const t = ev.target; if (t && t.closest && t.closest('#modeSeg')) setTimeout(() => (synced() ? arm(0) : nudge()), 350); }, true);   // (FEED: with the feed answering, a look: the orders read before are current, the others are read)
   for (const ev of ['pointerdown', 'keydown', 'wheel', 'focus']) (ev === 'focus' ? root : doc).addEventListener(ev, () => { const was = cadence(); lastInput = Date.now(); if (was > ACTIVE && st.timer && !st.busy) arm(Math.max(0, Math.max(st.start + ACTIVE, st.end + GAP) - Date.now())); }, { capture: true, passive: true });   // (back from idle: read now, not at the end of a 60 s wait. COST (Oct 2026): never sooner than ACTIVE after the last read: a window without the focus stays at the slow pace while the wheel scrolls it, so every wheel event pulled the read forward to "now", a full read of the changed rows about once a second)
-  doc.addEventListener('visibilitychange', () => { if (doc.hidden) { clearTimeout(st.timer); clearTimeout(st.second); st.timer = st.second = 0; } else { st.fails = 0; arm(0); } });
-  root.addEventListener && root.addEventListener('online', () => { st.fails = 0; arm(0); });
+  doc.addEventListener('visibilitychange', () => { if (doc.hidden) { clearTimeout(st.timer); clearTimeout(st.second); st.timer = st.second = 0; } else { st.fails = 0; if (!synced()) st.full = true; arm(0); } });   // (FEED: shown again, the feed says what moved while it was hidden: a look reads only that)
+  root.addEventListener && root.addEventListener('online', () => { st.fails = 0; st.full = true; arm(0); });
   // anything the page learns of the sheets (a load made for a window, the Library's list) is adopted into the rows too
   // (PERF, Oct 2026: for the orders on screen and the rows the cloud had on hold, not all ~800 rows read twice at every bump)
   const hook = () => { const OP = root.OrderPieces; if (!OP || !OP.subscribe || hook.done) return; hook.done = true; let queued = false; OP.subscribe(() => { if (queued) return; queued = true; Promise.resolve().then(() => { queued = false; adoptHolds(watched(), { seen: true }); safe(() => { if (root.CN && root.CN.S && root.CN.S.mode === 'library' && root.LaserReview && root.LaserReview.nudge) root.LaserReview.nudge(); }); }); }); };   // (a piece that moved on the cloud: the Library's own read of the sheets follows at once, not at its next beat; a quiet cloud bumps nothing)
-  const start = () => { hook(); schedule(); };
+  /* FEED: what the changes feed names. An order on screen is read at once (one read for all of them); one off screen is marked and read when it is shown again. */
+  // (an order read after the leader asked holds what it named: a person's own change, read at once by nudge, is not read a third time)
+  const mark = (r, at) => { const e = learnedOf(r); if (!(e && e.ok && (+e.at || 0) > (+at || 0))) st.stale.add(r); };
+  function feedRead(why, keys, at) {
+    if (why !== 'keys' && why !== 'dirty') { st.staleBefore = Date.now(); st.cancelNext = true; st.full = true; }
+    else {
+      const all = keys.some(k => k === 'p:*' || k === 's:*');
+      if (all) st.staleBefore = Date.now();
+      for (const k of keys) {
+        if (k[0] === 'x') st.cancelNext = true;
+        else if (k[0] === 'p' && k !== 'p:*') mark(k.slice(2), at);
+        else if (k[0] === 's' && k !== 's:*') for (const r of ordersOfSheet(k.slice(2))) mark(r, at);
+      }
+      while (st.stale.size > 4000) st.stale.delete(st.stale.values().next().value);
+    }
+    if (st.busy) st.again = true; else arm(Math.max(0, st.end + GAP - Date.now()));
+  }
+  const follow = () => {
+    if (sync || !root.CNSync || typeof root.CNSync.follow !== 'function') return;
+    sync = root.CNSync.follow({ name: 'placement', kinds: 'psx',
+      active: () => live(),
+      wants: k => k[0] === 'x' || (k[0] === 'p' ? !!learnedOf(k.slice(2)) : ordersOfSheet(k.slice(2)).length > 0),
+      read: feedRead });
+  };
+  const start = () => { hook(); follow(); schedule(); };
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', () => setTimeout(start, 0)); else setTimeout(start, 0);
   // (the page's mode and the windows change what is on screen: a look every few seconds is enough to start the loop when there was nothing to read)
   setInterval(() => { hook(); if (!st.timer && !st.busy) schedule(); safe(() => root.ReviewLive && root.ReviewLive.ensure && root.ReviewLive.ensure()); }, EVERY);   // (the custom records feed, for the search box or the order window opened over a tab that does not follow them)
-  root.PlacementFeed = { watch, nudge, watched, adoptHolds, state: () => ({ busy: st.busy, fails: st.fails, ticks: st.ticks, last: st.last, every: cadence(), orders: watched().length, lastOk: st.lastOk }), _tick: tick };
+  root.PlacementFeed = { watch, nudge, watched, adoptHolds, state: () => ({ busy: st.busy, fails: st.fails, ticks: st.ticks, last: st.last, every: cadence(), orders: watched().length, lastOk: st.lastOk, synced: synced(), looks: st.light, stale: st.stale.size }), _tick: tick };
 })(typeof self !== 'undefined' ? self : this);

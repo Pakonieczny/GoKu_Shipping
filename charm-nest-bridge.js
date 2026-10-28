@@ -12380,6 +12380,13 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
          list read again (once the person's own work on it, a Moving bar or a drag, is done). */
   const LIVE={every:3000,quiet:15000,idle:60000,used:120000,idleAfter:600000,gap:600,max:30000,old:20000,second:1500,settle:1000,reloadEvery:10000,goneEvery:2500,goneSettle:50,goneMax:3,goneWindow:60000,verifyMs:60000,wasteMax:3,calm:20,sealVerify:10};   // (a sheet found GONE from the cloud has the list read again sooner: its card must not stay)
   const liveOn=()=>S.mode==='library' && !document.hidden && !!S.cloud.ok;
+  /* FEED (Paul, 28 Oct 2026: "every press and every window to feel like a native app, and fewer cloud calls"): while this computer's changes feed answers (charm-nest-sync-worker.js,
+     one question for every tab), the beat asks the cloud nothing for cards it has read: the feed names the sheets, sets, runs and hand-completed records written, and the cards made
+     of one of them are read at once (the same read by revision as before). The beat still looks every few seconds, for a card come into view that was never read (read then), and
+     every ten minutes everything in view is read anyway (NET, a verify). The minute's seal check runs in one tab of the computer, and not at all while nothing it reads moved (its
+     answer would be `unchanged`). Without the feed the beat reads as before. */
+  const NET=600000;let sync=null;
+  const synced=()=>!!(sync && sync.live());
   /* COST (Oct 2026): the beat follows the person. Every 3 s while somebody is using this page (a pointer, a key, a wheel in the last 2 minutes, and the
      window focused), 15 s otherwise, 60 s once nobody has touched it for 10 minutes; a touch or a focus after a lull reads at the 3 s beat from the last read
      (at once when that is past). A person's own change still reads at once (nudge), and another tab's by its message (heard). A shown Library at 3 s all
@@ -12498,6 +12505,8 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
        window drawing, that was a third of a second and more before the request could leave (an IntersectionObserver now keeps them, a new card is still measured once). A read
        for a person's own write asks for the cards the loop's last read asked for (the person is working on a card that is in view; the loop's next read looks again). */
     const {ids,setIds}=(local && live.view && live.view.ids.length && Date.now()-live.viewAt<10000)?live.view:(live.view=shown(),live.viewAt=Date.now(),live.view);
+    const feedWant=live.feedWant;live.feedWant=false;
+    if(!local && !feedWant && synced() && live.revs && ids.every(id=>records.has(id) && Object.prototype.hasOwnProperty.call(live.revs,'s:'+id)) && setIds.every(id=>Object.prototype.hasOwnProperty.call(live.revs,'t:'+id)) && Date.now()-live.verifiedAt<NET){live.looks=(live.looks || 0)+1;live.end=Date.now();scheduleNext();return;}   // (FEED: every card in view read, nothing named since: a look, no call)
     live.start=Date.now();
     if(!ids.length){live.end=live.start;scheduleNext();return;}
     live.flight++;live.busy=true;live.checking=live.checking || !!local;if(local)live.nudged=live.start;
@@ -12561,6 +12570,13 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     if(polling)return;
     if(S.mode!=='library' || document.hidden || !S.cloud.ok || Date.now()-lastPoll<(force?5000:60000))return;
     const {ids,setIds}=shown();if(!ids.length)return;
+    if(!force && synced()){
+      const k0=ids.slice().sort().join(',')+'|'+setIds.slice().sort().join(',');
+      // (FEED: its last pass was for these cards and nothing they are made of moved since: the cloud would answer `unchanged`; the tenth pass runs whatever the feed says)
+      if(live.sealRev && live.sealKey===k0 && live.sealN+1<LIVE.sealVerify && window.CNSync.quietSince(lastPoll,'strc')){live.sealN++;lastPoll=Date.now();return;}
+      // (one tab of this computer runs it for the same cards: two tabs showing the Library record the same seals once)
+      if(!poll.inOnce){let h=0;for(const ch of k0)h=(h*31+ch.charCodeAt(0))|0;poll.inOnce=true;try{await window.CNSync.once('seal:'+(h>>>0).toString(36),55000,()=>poll(false,false));}finally{poll.inOnce=false;}lastPoll=Math.max(lastPoll,Date.now()-55000);return;}
+    }
     polling=true;lastPoll=Date.now();checkingNow=force;
     const seq=++live.seq;
     /* The slow check records seals, which it writes only when something changed: when the cloud's revision is the one its last pass for these same cards
@@ -12597,11 +12613,19 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   }
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden){for(const k of ['timer','second','reloadTimer']){clearTimeout(live[k]);live[k]=0;}}   // (nothing is read while the tab is hidden)
-    else{readSoon(false);poll(true);resumeReload();}   // (the cards' read first: the slow check no longer holds it back)
+    else{if(synced() && live.revs)ensureLive();else readSoon(false);poll(true);resumeReload();}   // (the cards' read first: the slow check no longer holds it back. FEED: with the feed answering, what moved while hidden was named: the subscription reads it)
   });
   window.addEventListener?.('online',()=>{live.fails=0;readSoon(false);resumeReload();});
   /** What the live read is doing (the test reads it): reads in flight, failures in a row, whether the cloud knows ifRevs. */
-  const liveState=()=>({busy:live.busy,fails:live.fails,legacy:live.legacy,armed:!!live.timer,revs:live.revs?Object.keys(live.revs).length:0,rev:live.rev,sealRev:live.sealRev,skipRev:live.skipRev,reload:live.reload,pace:live.pace});
+  const liveState=()=>({busy:live.busy,fails:live.fails,legacy:live.legacy,armed:!!live.timer,revs:live.revs?Object.keys(live.revs).length:0,rev:live.rev,sealRev:live.sealRev,skipRev:live.skipRev,reload:live.reload,pace:live.pace,synced:synced(),looks:live.looks || 0});
+  // FEED: the cards made of what the changes feed names are read now (a read by revision, as the beat's); the net and a reset read them with verify
+  const feedFollow=()=>{
+    if(sync || !window.CNSync || typeof window.CNSync.follow!=='function')return;
+    sync=window.CNSync.follow({name:'library',kinds:'strc',active:liveOn,since:()=>live.start,
+      wants:k=>!live.revs || Object.prototype.hasOwnProperty.call(live.revs,k),
+      read:why=>{if(!liveOn())return;if(why==='verify' || why==='reset')live.verifiedAt=0;live.feedWant=true;readSoon(false);}});
+  };
+  feedFollow();
   /** The orders of the sheet cards on screen (the placement feed reads where their pieces are, so the Library's lists and chips follow a hold or a take-off made elsewhere). */
   const shownOrders=()=>{try{if(!liveOn())return [];return [...new Set(shown().ids.flatMap(id=>(records.get(id)?.orders || []).map(String)))].filter(x=>/^\d{4,20}$/.test(x)).slice(0,24);}catch(_){return [];}};
   /** A sheet's cloud record read elsewhere (the sheet window's own follow): taken in as the live read would, the Library's list row too; rec null: the sheet is gone (id given). */

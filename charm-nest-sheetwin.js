@@ -5163,8 +5163,20 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /* COST (Oct 2026): the beat follows the person, as the Library's does: every 2 s while somebody uses the page (a touch in the last 2 minutes, the window
      focused), about 15 s otherwise, about 60 s once nobody has touched it (and the sheet has not moved) for 10 minutes. A window left open on a screen was
      1,800 reads an hour; it is 240, then 60. A touch is back at 2 s at the next beat; a placement read that moved a piece of its orders still asks at once. */
+  /* FEED (Paul, 28 Oct 2026: "every press and every window to feel like a native app, and fewer cloud calls"): while this computer's changes feed answers
+     (charm-nest-sync-worker.js), the window asks nothing every 2 s: the feed names this sheet (s:) and its set (t:) when they are written, and the window
+     asks its one small question then (and when a placement read moved a piece of its orders, as before); every ten minutes it asks anyway. */
+  let followSync = null;
+  const followSynced = () => !!(followSync && followSync.live());
+  const followFeed = () => {
+    if (followSync || !window.CNSync || typeof window.CNSync.follow !== "function") return;
+    followSync = window.CNSync.follow({ name: "sheetwin", kinds: "st", active: () => !!(W.dlg && W.dlg.open && W.rec && W.id) && !document.hidden, since: () => FOLLOW.at,
+      wants: k => k === "s:" + W.id || (!!W.rec && !!W.rec.setId && k === "t:" + W.rec.setId),
+      read: () => { clearTimeout(followHook.t); followHook.t = setTimeout(() => follow(true), 0); } });
+  };
   const followGap = () => {
     const now = Date.now();
+    if (followSynced() && FOLLOW.id === W.id) return 600000;
     if (now - FOLLOW.touch < 120000 && (typeof document.hasFocus !== "function" || document.hasFocus())) return 0;
     return now - Math.max(FOLLOW.touch, FOLLOW.moved) < 600000 ? 13500 : 59500;   // (the beat is 2 s: these read at about 14 s and 60 s)
   };
@@ -5202,7 +5214,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   // what the window shows is on the placement feed's screen (the cancelled marks, the pieces' other sheets)
   const feedWatch = () => { try { if (window.PlacementFeed && !feedWatch.on) { feedWatch.on = true; PlacementFeed.watch("sheetwin", () => (W.dlg && W.dlg.open ? [...W.orders.keys()].filter(k => /^\d+$/.test(k)) : [])); } } catch (_) {} };
   // (each is hooked once, as soon as what it hooks into is on the page; then its look every 2 s stops)
-  const hooking = setInterval(() => { followHook(); feedWatch(); if (followHook.on && feedWatch.on) clearInterval(hooking); }, 2000);
+  const hooking = setInterval(() => { followHook(); feedWatch(); followFeed(); if (followHook.on && feedWatch.on && followSync) clearInterval(hooking); }, 2000);
 
   function veil(text) { const E = W.el; if (!text) { E.veil.hidden = true; return; } E.veilText.textContent = text; E.veil.hidden = false; }
 

@@ -635,7 +635,27 @@ const REV_OPS = new Set(["backPut", "backInvalidate", "setAllocate", "setUpdate"
    answer was made of (its ifRevs' keys) was touched since: none, and the answer is { unchanged } for two reads. A write that does not say what it
    touched (revTouch: the ops that do) is '*'; a '*' since the reader's count, a reader older than floor, or a count that moved without its list (mapN:
    an older instance's plain +1, or a list that could not be written) sends the reader to the documents themselves, as before. */
-const REV_CAP = 200, REV_TOUCHED = Symbol("revTouched");
+const REV_CAP = 1000, REV_TOUCHED = Symbol("revTouched");   // (FEED, 28 Oct 2026: 200 → 1,000 names, about 40 KB: the changes feed below names pool rows, cancels, timelines, designs and the learned maps too)
+/* FEED (Paul, 28 Oct 2026: "every press and every window to feel like a native app, and fewer cloud calls"; plan: the local-first design, phase 2, one
+   changes feed per computer). The same list now names what the page's other surfaces are made of, so ONE question, op changes below, tells a computer
+   everything that moved since its last answer and each surface reads only what concerns it (charm-nest-sync-worker.js):
+     p:<order>   its pool rows, or where its pieces are (poolPut, poolUpdate, putSheet: the orders of the sheet saved)
+     x:<order>   its cancel record (cancelPut, cancelRestore, sandboxCancel, cancelFates; cancelSweep is x:*)
+     o:<order>   its timeline (timelineAdd, and every event an op records: stamp)
+     m:index     the master designs' index (the master ops)
+     a:aliases · a:options · a:nodesign   the learned maps
+   '<kind>:*' says "some of this kind, not known which" (an op that may move placements and names no order is p:*, as the placement counter moves for it);
+   '*' stays "not known at all". The Library's readers ask about their own kinds only (revQuiet, localAsk): a pool row moving costs them one read more, never
+   a full answer. One bumpRev per op, with every name it touched. */
+const FEED_KEY = /^(?:[strcpxoma]:(?:[\w\-]{4,80}|\*)|\*)$/;
+let FEED_TOUCHED = new Set();   // (names touched by code that has no request body at hand, stamp's events: emptied at every request, as DONE_TOUCH)
+const feedTouch = keys => { for (const k of keys || []) if (FEED_KEY.test(String(k))) FEED_TOUCHED.add(String(k)); };
+/** The orders of pool ids ("rid_tid_copy") and receipt ids, named p:<order> (at most 300; more is p:*). */
+function feedOrders(b, lists, kind) {
+  const ids = new Set();
+  for (const l of lists) for (const x of Array.isArray(l) ? l : []) { const m = /^(\d{4,30})(?:_|$)/.exec(String(x == null ? "" : x)); if (m) ids.add(m[1]); }
+  revTouch(b, ids.size > 300 ? [(kind || "p") + ":*"] : [...ids].map(id => (kind || "p") + ":" + id));
+}
 const revName = s => (s && s.exists ? `${revOf(s)}-${num((s.data() || {}).n)}` : "0");
 /* COST (Oct 2026): the sandbox keeps the same two counters (this revision and the placement gen below) in Sandbox_Order_Rev, a family its reset wipes (charm-nest-sandbox-families.js),
    under names no order id can have. Without them every beat of a sandbox page read one document per card of its Library (~60) and every tick of its placement feed all the pieces and
@@ -655,18 +675,28 @@ function revQuiet(doc, since, keys) {
   const m = /-(\d+)$/.exec(String(since || "")), n = m ? +m[1] : 0;
   if (!doc || !(n > 0) || n > num(doc.n) || num(doc.mapN) !== num(doc.n) || n < num(doc.floor) || !doc.changed || typeof doc.changed !== "object") return false;
   if (num(doc.changed["*"]) > n) return false;
-  for (const k of keys) if (num(doc.changed[k]) > n) return false;
+  for (const k of keys) if (num(doc.changed[k]) > n || num(doc.changed[String(k)[0] + ":*"]) > n) return false;   // (FEED: 'c:*', some custom record, is any of them)
+  return true;
+}
+/** FEED: true when nothing of these kinds (and nothing unknown) was written after the revision `since`: a list the Library reads, whose rows are not
+    known before it is read, asks it this way (localAsk). */
+function revQuietKinds(doc, since, kinds) {
+  if (!revQuiet(doc, since, [])) return false;
+  const m = /-(\d+)$/.exec(String(since || "")), n = m ? +m[1] : 0;
+  for (const [k, v] of Object.entries(doc.changed)) if (num(v) > n && kinds.includes(k[0])) return false;
   return true;
 }
 /** An op says which documents the Library reads it wrote (keys as laserStatus' revs name them; none: it wrote none). An op in REV_OPS that says nothing is '*'. */
-function revTouch(b, keys) { if (!b || typeof b !== "object") return; const t = b[REV_TOUCHED] || (b[REV_TOUCHED] = new Set()); for (const k of keys || []) t.add(REV_KEY.test(String(k)) ? k : "*"); }   // (a key no reader's revs can name is "not known")
+function revTouch(b, keys) { if (!b || typeof b !== "object") return; const t = b[REV_TOUCHED] || (b[REV_TOUCHED] = new Set()); for (const k of keys || []) t.add(FEED_KEY.test(String(k)) ? String(k) : "*"); }   // (a key no reader's revs can name is "not known")
 /** Something the Library reads was written: move the revision, and note what (keys; null: not known, '*'; an empty list moves nothing). One read and one
     write (a transaction: the list is the count's); a failure falls back to the plain +1, which readers take as "not known" (mapN), and their probe of the documents is the net. */
-async function bumpRev(keys) {
+const feedStats = { bumps: 0, retried: 0, fallbacks: 0, lost: 0 };   // (FEED: the contention test reads them, tests/perf/server-scale.cjs)
+async function bumpRev(keys, tries) {
   const list = keys == null ? ["*"] : [...keys];
   if (!list.length) return;
   const ref = revRef();
   try {
+    feedStats.bumps += tries ? 0 : 1;
     await db.runTransaction(async tx => {
       const s = await tx.get(ref), d = s.exists ? s.data() || {} : {}, was = num(d.n), kept = num(d.mapN) === was && !!d.changed && typeof d.changed === "object";
       const n = was + 1, changed = kept ? Object.assign({}, d.changed) : {};
@@ -677,8 +707,12 @@ async function bumpRev(keys) {
       tx.set(ref, { n, mapN: n, floor, changed, at: Date.now() });
     });
   } catch (e) {
+    // (FEED: the document is everybody's now, a few writes a second in a busy shop: a transaction that lost to another (contention) is tried once more after a
+    //  short, random wait before it falls back to the plain +1, which costs every reader a reset)
+    if (!tries && /contention|ABORTED|aborted/i.test(String(e && (e.message || e.code)))) { feedStats.retried++; await new Promise(r => setTimeout(r, 40 + Math.random() * 160)); return bumpRev(keys, 1); }
+    feedStats.fallbacks++;
     console.warn("[charmNestLibrary] revision list not written:", e && e.message);
-    try { await ref.set({ n: FV.increment(1), at: Date.now() }, { merge: true }); } catch (e2) { console.warn("[charmNestLibrary] revision not written:", e2 && e2.message); }
+    try { await ref.set({ n: FV.increment(1), at: Date.now() }, { merge: true }); } catch (e2) { feedStats.lost++; console.warn("[charmNestLibrary] revision not written:", e2 && e2.message); }
   }
 }
 const REV_FORM = /^[\w.\-]{1,40}$/;
@@ -707,8 +741,14 @@ async function localAsk(b, cursor) {
   const ifRev = !cursor && typeof b.ifRev === "string" && REV_FORM.test(b.ifRev) ? b.ifRev : null;
   const since = !cursor && b.verify !== true && typeof b.since === "string" && SINCE_FORM.test(b.since) ? b.since : null;
   const rev = !cursor && (ifRev !== null || b.wantRev === true) ? await readRev() : null;
+  if (rev !== null && ifRev !== null && rev !== ifRev && b.verify !== true) {
+    // FEED (28 Oct 2026): the revision moves for pool rows, cancels and timelines too; when only those moved, the list is as the page holds it (one read more)
+    const list = await readRevList();
+    if (list && list.rev && revQuietKinds(list.doc, ifRev, LIST_KINDS)) return { rev: list.rev, since, unchanged: true };
+  }
   return { rev, since, unchanged: rev !== null && ifRev !== null && rev === ifRev && b.verify !== true };
 }
+const LIST_KINDS = ["s", "t", "r", "c"];   // (what the Library's lists are made of: sheets, sets, runs, custom orders completed by hand)
 /** LOCAL: a listed sheet's revision is the newest of its record's, its set's (filingRecords' _setRev) and its run's update times, so its row is sent
     again when any of them moved since. One read of one field per run. */
 async function foldRevs(records, seen, own) {
@@ -972,6 +1012,7 @@ async function op_putSheet(b) {
   const ref = col(SHEETS).doc(s.id);
   const refused = await db.runTransaction(async tx => {
     const ex = await tx.get(ref), old = ex.exists ? ex.data() : {};
+    feedOrders(b, [old.poolIds, old.orders, s.poolIds, s.orders]);   // (FEED: where their pieces are moved with this save, a new sheet's too)
     // an order line goes on a sheet once (Paul, 29 Sep: a design went on its sheet twice): a record that would place one
     // piece twice is refused, in words; one saved so before this check saves as it was, to be put right by hand
     const twice = ids => { const seen = new Set(), dup = new Set(); for (const id of Array.isArray(ids) ? ids : []) if (id) { if (seen.has(id)) dup.add(id); seen.add(id); } return dup; };
@@ -1183,6 +1224,39 @@ async function op_getMany(b) {
     else rows.forEach(([k, rev, d]) => { recs[k] = { rev, rec: customRow(d, true) }; });
   }
   return { recs, gone, same: keys.length - want.length - gone.filter(k => !want.includes(k)).length, checkedAt: Date.now() };
+}
+/* ── FEED (Paul, 28 Oct 2026: "every press and every window to feel like a native app, and fewer cloud calls"; plan: phase 2, one changes feed per computer).
+   ONE question for everything the page shows: what moved since the count `since`, the Library's revision count (bumpRev, the list of names above FEED_KEY).
+   A computer asks it from one tab (charm-nest-sync-worker.js, the leader of its world) every 3 s while somebody works there, 15 s, 60 s; its tabs hear
+   the answer and each surface reads only what it shows that moved: no surface keeps a timer of its own.
+     changes { since, cg, watch } → { n, keys | reset, cg, orders, at }
+       since   the count of the last answer (none: the count now, nothing else: the first ask)
+       keys    the names written after since (FEED_KEY); reset: the page asked from before the list's memory (floor), from a count the list was not
+               written with (mapN), or from a count larger than now (a sandbox reset began it again): every surface asks its own question again, once
+       cg      the cancel counter (Charm_Nest_Rev/cancel, production): every writer of a cancel record raises it, the receipts mirror too, so a cg that moved
+               is x:* whatever wrote it
+       watch   { 'o:<order>': rev } the open order windows' Order_Rev (raised by every writer of a timeline, the stations' and the Team's too): orders
+               gives each one's rev now, and a moved one is o:<order>
+   Cost: one read, one more for the cancel counter, one per watched order (at most WATCH_MAX). Reads only; the sandbox reads its own (revRef, PREFIX). ── */
+const WATCH_MAX = 12, KEYS_MAX = 1200;
+async function op_changes(b) {
+  const since = b.since == null || b.since === "" || !Number.isFinite(Number(b.since)) ? null : Math.floor(Number(b.since));
+  const watch = [...new Set((b.watch && typeof b.watch === "object" ? Object.keys(b.watch) : []).map(k => orderIdOf(String(k).replace(/^o:/, ""))).filter(Boolean))].slice(0, WATCH_MAX);
+  const refs = [revRef()].concat(PREFIX ? [] : [db.collection(OrderCancel.REV_COL).doc(OrderCancel.REV_DOC)], watch.map(id => db.collection(PREFIX + Timeline.REV_COL).doc(id)));
+  const snaps = await db.getAll(...refs), d = snaps[0].exists ? snaps[0].data() || {} : {}, n = num(d.n);
+  const out = { n, at: Date.now() };
+  if (since !== null && since !== n) {
+    const kept = num(d.mapN) === n && !!d.changed && typeof d.changed === "object";
+    if (since > n || !kept || since < num(d.floor)) out.reset = true;
+    else out.keys = Object.keys(d.changed).filter(k => num(d.changed[k]) > since).slice(0, KEYS_MAX);
+  }
+  if (!PREFIX) { const c = snaps[1], cg = c && c.exists ? num((c.data() || {}).n) : 0; out.cg = cg; if (b.cg != null && Number(b.cg) !== cg && !out.reset) (out.keys || (out.keys = [])).push("x:*"); }
+  if (watch.length) {
+    out.orders = {};
+    watch.forEach((id, i) => { const r = revOf(snaps[i + (PREFIX ? 1 : 2)]), had = b.watch["o:" + id] != null ? b.watch["o:" + id] : b.watch[id]; out.orders[id] = r; if (typeof had === "string" && had && had !== r && !out.reset) (out.keys || (out.keys = [])).push("o:" + id); });
+  }
+  if (out.keys) out.keys = [...new Set(out.keys)];
+  return out;
 }
 /** Same-origin recovery of a saved PNG; never accepts an arbitrary caller URL. */
 async function op_backPreview(b) {
@@ -1635,6 +1709,7 @@ async function stamp(events, what) {
     const made = typeof events === "function" ? events() : events, list = (Array.isArray(made) ? made : [made]).filter(Boolean);
     if (!list.length) return 0;
     const TL = require("./_orderTimeline");
+    { const ids = [...new Set(list.map(e => e && orderIdOf(e.orderId)).filter(Boolean))]; feedTouch(ids.length > 300 ? ["o:*"] : ids.map(id => "o:" + id)); }   // (FEED: the order windows of these orders hear of it)
     for (let i = 0; i < list.length; i += 100) await TL.add(db, FV, list.slice(i, i + 100), { prefix: PREFIX, source: "sorter" });
     return list.length;
   } catch (e) { console.warn(`[charmNestLibrary] timeline not recorded (${what}):`, (e && e.message) || e); return 0; }
@@ -1718,6 +1793,7 @@ async function op_poolPut(b) {
      Timeout" page came back as the reason the orders were held (25 Sep). A row sent twice is written once, merged. */
   const byId = new Map(); for (const p of rows) byId.set(p.poolId, Object.assign(byId.get(p.poolId) || {}, p));
   const list = [...byId.values()];
+  feedOrders(b, [list.map(p => p.poolId)]);   // (FEED: the orders of the rows written)
   // the four fields of a piece of a mismatched pair are all there and valid, or none are stored (a plain piece never has them)
   // (groupKey alone is what the pool id says, as Placement.cleanPiece writes it; the other three come with it or not at all)
   for (const p of list) { const keep = pieceFieldsOf(p), gk = Object.prototype.hasOwnProperty.call(p, "groupKey") ? Placement.groupOfPool(p.poolId) : ""; for (const k of PoolPieces.FIELDS) delete p[k]; Object.assign(p, keep); if (gk && !keep.groupKey) p.groupKey = gk; }
@@ -1829,6 +1905,7 @@ async function poolTakeOff(ids, patch, told) {
 }
 async function op_poolUpdate(b) {
   const ids = (Array.isArray(b.poolIds) ? b.poolIds : [b.poolId]).filter(isPoolId).slice(0, 400); if (!ids.length) return { error: "bad pool id" };
+  feedOrders(b, [ids]);   // (FEED: the orders of the rows named; a take-off names the sheets it edited too, below)
   // a change the order's timeline records (poolEvents) reads the rows first: the sheet a charm leaves, its set, and
   // whether the row already says so (a retry)
   let p = b.patch && typeof b.patch === "object" ? b.patch : {};
@@ -1840,6 +1917,7 @@ async function op_poolUpdate(b) {
   // a take-off (hold, cancel, an order gone from Etsy) is one commit across the pieces' rows AND the sheets that list them
   if (Placement.isTakeOff(p)) {
     const done = await poolTakeOff(ids, p, told), keptSet = new Set(done.kept), all = ids.concat(done.extended).filter(id => !keptSet.has(id));
+    feedOrders(b, [done.extended]); revTouch(b, (done.edited || []).map(x => "s:" + (x && typeof x === "object" ? x.id || x.sheetId : x)).filter(k => FEED_KEY.test(k)));
     if (told) await stamp(() => poolEvents(all, p, done.before, b), "pool");
     if (told && /^cancel/i.test(String(p.removedReason || ""))) await noteCancelRemovals(all, p, done.before, b);
     // extended: the other pieces of the same lines that came off with the ones named (a line comes off whole); absent when there were none
@@ -2005,6 +2083,7 @@ const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces
   "sandboxCancel", "sandboxPut", "sandboxPullOrders", "sandboxPullLimitSet", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
 ["customSaveGet", "customSaveCommit", "customSavePending", "customSaveIntent"].forEach(op => NO_GEN_BUMP.add(op));   // (the save writes a master entry, an alias and its own record: nothing a placement answer is made from)
 NO_GEN_BUMP.add("getMany");   // (LOCAL: several records read in one call, see LOCAL_READS; read only)
+["changes", "getChanges"].forEach(op => NO_GEN_BUMP.add(op));   // (FEED: what moved since a count, see op_changes; read only. getChanges is the name the page sends: a read by every read rule the page and its checks know, get…)
 NO_GEN_BUMP.add("manualClaim");   // (Manual Control's claim writes the sheet record's manualEdit alone: nothing a placement answer is made from)
 ["customPut", "customReopen", "customDelete", "customDecide", "customSheetPut", "reviewMarkPut"].forEach(op => NO_GEN_BUMP.add(op));   // (COST, Oct 2026: a Complete Order, a QR print, a Review mark, a decision and a custom design sent to a sheet write Charm_Custom_Orders / Charm_Custom_Sheet / Charm_Nest_CustomRead and the order's timeline, never a pool row or a sheet; a placement answer is made from those two alone, and the page that pressed learns of its own press without a read. Each press used to send every watching tab to a full read of the orders on screen)
 async function placementGen() {
@@ -4208,6 +4287,7 @@ async function op_reviewMarkPut(b) {
   const rid = String(b.rid != null ? b.rid : b.receiptId == null ? "" : b.receiptId).replace(/\D/g, "").slice(0, 30); if (!rid) return { error: "rid (the order's receipt id) required" };
   const action = b.action === "resolve" ? "resolve" : b.action === "mark" ? "mark" : b.action === "release" ? "release" : b.action === "cancel" ? "cancel" : b.action === "uncancel" ? "uncancel" : b.action === "sheet" ? "sheet" : ""; if (!action) return { error: "action must be mark, resolve, release, cancel, uncancel or sheet" };
   const key = rid + "_review", ref = col(CUSTOM).doc(key), now = Date.now(), who = str(b.by || "operator", 80);
+  revTouch(b, ["c:" + key]);   // (FEED: the Review feed's records: this one)
   const snap = await ref.get(), cur = snap.exists ? snap.data() : null, rv = cur && cur.review && typeof cur.review === "object" ? cur.review : null, open = !!rv && rv.state === "open";
   if (action === "release") {   // (RELHOLD: who released the order from Review with Release Hold, and when; the mark, if any, is left as it is)
     const was = cur && cur.release && typeof cur.release === "object" ? cur.release : null, id = str(b.id || "", 120);
@@ -4323,6 +4403,7 @@ const orderIdOf = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30
    there is never lost: see _orderCancel.js (a person's stays over a later Etsy detection, which only adds etsyStatus). */
 async function op_cancelPut(b) {
   const id = orderIdOf(b.orderId); if (!id) return { error: "orderId required" };
+  feedTouch(["x:" + id]);   // (FEED: its cancel record; the Library's revision moves for it as before, '*')
   const r = b.record && typeof b.record === "object" ? b.record : {}, who = str(b.by || "operator", 80);
   // at: the moment the person pressed Cancel (the page's clock, within the last day), else now (Paul, 29 Sep 00:26)
   const pressed = num(b.at), now = Date.now(), at = pressed > now - 864e5 && pressed <= now + 6e4 ? Math.min(Math.round(pressed), now) : now;
@@ -4392,6 +4473,7 @@ async function op_cancelSweep(b) {
    (the sandbox plays real orders under their real numbers), else from `record`. Never writes production. */
 async function op_sandboxCancel(b) {
   const id = orderIdOf(b.orderId); if (!id) return { error: "orderId required" };
+  feedTouch(["x:" + id]);   // (FEED: the sandbox keeps no cancel counter: this name is how its pages hear of it)
   const snap = await db.collection(OrderCancel.RECEIPTS).doc(id).get().catch(() => null);
   const status = str(b.etsyStatus, 40) || "Canceled", now = Date.now();
   const rec = snap && snap.exists ? Object.assign(OrderCancel.fromReceipt(Object.assign({}, snap.data(), { receipt_id: id, status })), { at: now, etsyAt: now })
@@ -4403,6 +4485,7 @@ async function op_sandboxCancel(b) {
    sorter's AutoCancel and its sheet window write it on the record (the Cancelled tab reads it); see _orderCancel.noteFates. */
 // (removals: [{ id, at, where, kind, outcome, by, text, lineKey, station }], see _orderCancel.noteRemovals; by: who)
 async function op_cancelFates(b) {
+  { const id = orderIdOf(b.orderId); if (id) revTouch(b, ["x:" + id]); }
   const out = await OrderCancel.noteFates(db, b.orderId, b.fates, { prefix: PREFIX, by: str(b.by, 80), removals: Array.isArray(b.removals) ? b.removals : [] });
   if (out && out.ok && !out.missing) await cancelSteps(b);
   return out;
@@ -4431,7 +4514,7 @@ async function cancelSteps(b) {
 }
 /* ── the order timeline (_orderTimeline.js): the sorter's own events, and the whole timeline of one order ── */
 const Timeline = require("./_orderTimeline");
-async function op_timelineAdd(b) { return Timeline.add(db, FV, b.events, { prefix: PREFIX, source: "sorter" }); }
+async function op_timelineAdd(b) { feedOrders(b, [(Array.isArray(b.events) ? b.events : [b.events]).map(e => e && orderIdOf(e.orderId))], "o"); return Timeline.add(db, FV, b.events, { prefix: PREFIX, source: "sorter" }); }   // (FEED: o:<order>, the order windows' name)
 async function op_timelineGet(b) { return Timeline.get(db, b.orderId, { prefix: PREFIX, sandboxed: SANDBOXED, derive: b.derive !== false, ifRev: typeof b.ifRev === "string" && Timeline.REV_TOKEN.test(b.ifRev) ? b.ifRev : "", wantRev: b.wantRev === true, verify: b.verify === true, netMs: +b.netMs || 0 }); }   // recorded + derived from the records already kept (COST, Oct 2026: verify / netMs, the Order_Rev shortcut: see _orderTimeline get)
 // (full: each whole record, its lines, fates and removals, for an order read long after it left the pull)
 async function op_cancelCheck(b) { return Timeline.cancelCheck(db, b.orderIds || b.orderId, { prefix: PREFIX, full: b.full === true }); }
@@ -4442,6 +4525,7 @@ async function op_cancelCheck(b) { return Timeline.cancelCheck(db, b.orderIds ||
 const CANCEL_HISTORY = "Charm_Nest_Cancelled_History";
 async function op_cancelRestore(b) {
   const id = orderIdOf(b.orderId); if (!id) return { error: "orderId required" };
+  feedTouch(["x:" + id, "o:" + id]);
   const ref = col(CANCELLED).doc(id);
   let rec = null; try { const s = await ref.get(); rec = s.exists ? s.data() : null; } catch (e) { console.warn("[charmNestLibrary] cancel record not read for the timeline:", e.message || e); }
   if (rec) await stamp(() => { const c = cancelCopy(rec); return { orderId: id, type: "cancelRestored", by: str(b.by, 80) || "operator", station: "sorter", sheet: str((c.sheets || []).join(", "), 80),
@@ -4468,7 +4552,7 @@ function cancelCopy(r) {
   if (!fits()) for (const k of Object.keys(x)) if (!["orderId", "by", "why", "at", "source", "etsyStatus", "etsyAt"].includes(k)) delete x[k];
   return x;
 }
-const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, manualClaim: op_manualClaim, listSheets: op_listSheets, getSheet: op_getSheet, getMany: op_getMany, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
+const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, manualClaim: op_manualClaim, listSheets: op_listSheets, getSheet: op_getSheet, getMany: op_getMany, changes: op_changes, getChanges: op_changes, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, masterRemoveSkus: op_masterRemoveSkus, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxPullOrders: op_sandboxPullOrders, sandboxPullLimitSet: op_sandboxPullLimitSet, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
@@ -5158,7 +5242,20 @@ OPS.listingEtsySkuWrite = require("./_charmNestEtsyLink").ops.listingEtsySkuWrit
 OPS.editSkuEtsy = body => { const b = Object.assign({}, body && typeof body === "object" ? body : {}); delete b.sandbox; if (typeof b.onlySku !== "string" || !b.onlySku.trim()) return Promise.resolve({ ok: false, state: "failed", reason: "bad-request", text: "the piece's Etsy SKU is needed", retry: false }); return OPS.listingEtsySkuWrite(b); }; NO_GEN_BUMP.add("editSkuEtsy");   // (only the listing named: one listing's inventory is read and written, never another listing with the same SKU)
 Object.assign(OPS, require("./_charmNestEtsyZodiac").ops); ["zodiacListingPrepare", "zodiacListingWrite", "zodiacListingReconcile", "zodiacListingStatus"].forEach(op => NO_GEN_BUMP.add(op));   // ZODWRITE (12 Oct 2026), DORMANT: the Etsy ZODIAC SIGN drop-down write (plans/zodiac-1012/ZODWRITE-findings.md). Prepare / write / reconcile are behind the repo password door (_charmNestRepoAuth.js LIBRARY, need "modify"), write also needs the typed words; the status only reads. Never in the sandbox; none raises the placement counter
 
+/** FEED: the names an op's one bumpRev carries. An op of REV_OPS that named nothing is '*' (as before); one that may move a placement (the placement counter
+    moves for it) and named no order is p:*, so no placement is ever missed. An empty list moves nothing. failed: the op threw (what it named may be part of it). */
+const FEED_OP_NAMES = { aliasPut: ["a:aliases"], optionMapPut: ["a:options"], noDesignPut: ["a:nodesign"], noDesignDelete: ["a:nodesign"], cancelSweep: ["x:*"],
+  masterPutIndex: ["m:index"], masterPatch: ["m:index"], masterPutFile: ["m:index"], masterRemoveSkus: ["m:index"], masterRemoveSku: ["m:index"], masterRemoveFile: ["m:index"], customSaveCommit: ["m:index", "a:aliases"] };
+function feedKeys(body, failed) {
+  const op = body.op, named = body[REV_TOUCHED], keys = new Set(FEED_TOUCHED);
+  for (const k of FEED_OP_NAMES[op] || []) keys.add(k);
+  if (REV_OPS.has(op) && (failed || !named)) keys.add("*");
+  for (const k of named || []) keys.add(k);
+  if (!NO_GEN_BUMP.has(op) && ![...keys].some(k => k === "*" || k[0] === "p")) keys.add("p:*");
+  return [...keys];
+}
 exports.ops = OPS;   // the connections check runs the same queries the app runs
+exports.feedStats = feedStats;   // (FEED: bumpRev's counts, for the contention test)
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: require("./_charmNestAuth").CORS, body: "" };
   const body = event.httpMethod === "GET" ? Object.assign({}, event.queryStringParameters || {}) : parseBody(event);
@@ -5166,7 +5263,7 @@ exports.handler = async (event) => {
   // (Paul, 9 Oct 2026: Anna and Ana_M are one person. Whoever the sorter says is on duty, a new record keeps the one login name, Ana_M: _activityKinds.js loginName; no read, nothing stored is changed)
   if (typeof body.by === "string") { try { body.by = require("./_activityKinds").loginName(body.by); } catch (_) {} }
   PREFIX = body.sandbox === true || body.sandbox === 1 || body.sandbox === "1" ? "Sandbox_" : "";
-  DONE_TOUCH = false;
+  DONE_TOUCH = false; FEED_TOUCHED = new Set();
   // the Charm Repo's password door (_charmNestRepoAuth.js; plans/repo-protect-1011): its own ops (unlock, the Alert, the download link), then the
   // token every upload / delete / modify of the repository needs. This is the HTTP door only: code that calls OPS in-process is not asked.
   const RepoAuth = require("./_charmNestRepoAuth");
@@ -5183,13 +5280,14 @@ exports.handler = async (event) => {
     if (!checked && (DONE_TOUCH || DONE_BUMP_OPS.has(body.op))) await bumpDoneRev(body.op);
     // the Library's revision moves after a write it reads (see readRev: the readers' one-document question); after an error too, a write may have landed before it
     // (COST, Oct 2026: naming what the op wrote, when it says: revTouch; an op that wrote nothing the Library reads moves nothing)
-    if (REV_OPS.has(body.op) && !quiet) await bumpRev(body[REV_TOUCHED] || null);
+    // (FEED, 28 Oct 2026: and what the changes feed names, one bumpRev per op with all of it: feedKeys)
+    if (!quiet) await bumpRev(feedKeys(body, false));
     return json(out && out.error ? (out.status || 400) : 200, out);
   } catch (e) {
     await bumpPlacementGen(body.op);   // (a failed op may have written some of what it meant to)
     if (DONE_TOUCH || DONE_BUMP_OPS.has(body.op)) await bumpDoneRev(body.op);
     console.error("[charmNestLibrary]", body.op, e);
-    if (REV_OPS.has(body.op)) await bumpRev();
+    await bumpRev(feedKeys(body, true));
     return json(500, { error: e.message || String(e) });
   }
 };

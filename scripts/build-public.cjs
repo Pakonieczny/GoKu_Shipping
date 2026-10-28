@@ -153,6 +153,7 @@ const assets = [
   "charm-nest-thumbs.js",
   "charm-nest-master-cache.js",
   "charm-nest-store.js",
+  "charm-nest-sync-worker.js",
   "charm-nest-repo-lock.js",
   "charm-nest-etsy-link.js",
   "charm-nest-etsy-batch.js",

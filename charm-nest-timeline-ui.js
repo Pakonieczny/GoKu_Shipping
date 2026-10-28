@@ -1529,7 +1529,22 @@
     const fullEvery = () => { const v = +(root.OrderTimelineUI && root.OrderTimelineUI.fullEveryMs); return v >= 250 ? v : FULL_EVERY; };   // (fullEveryMs: tests only)
     /** How many polls apart the next read is (COST, Oct 2026): 1 while the person uses the window (touched or moved in ACTIVE_MS, focused), POLL_QUIET's worth otherwise, POLL_IDLE's after IDLE_MS. */
     const IDLE_K = POLL_IDLE / POLL_OPEN;
-    const pace = () => { const idle = Date.now() - Math.max(lastTouch, F.moved); if (idle >= IDLE_MS) return IDLE_K; return idle < ACTIVE_MS && focused() ? 1 : POLL_QUIET / POLL_OPEN; };
+    /* FEED (Paul, 28 Oct 2026: "every press and every window to feel like a native app, and fewer cloud calls"): while this computer's changes feed answers
+       (charm-nest-sync-worker.js), the window asks nothing every few seconds. The feed names this order's timeline (o:, and its Order_Rev, which every
+       writer raises: a station's scan, a Team message, a cancel), its pieces (p:), its cancel (x:) and its custom records (c:); the window asks its question
+       once when it does (with the full digest: what moved may be a record Order_Rev is not raised for), and every FULL_EVERY anyway. Without the feed it polls
+       as before. */
+    let sync = null, unwatch = null;
+    const synced = () => !!(sync && sync.live());
+    const pace = () => { if (synced()) return Math.max(IDLE_K, fullEvery() / POLL_OPEN); const idle = Date.now() - Math.max(lastTouch, F.moved); if (idle >= IDLE_MS) return IDLE_K; return idle < ACTIVE_MS && focused() ? 1 : POLL_QUIET / POLL_OPEN; };
+    const feedOn = () => {
+      const C = root.CNSync; if (sync || !id || !C || typeof C.follow !== "function") return;
+      sync = C.follow({ name: "timeline:" + id, kinds: "opxc", active: () => !F.dead && subs.size > 0 && seen(), since: () => F.began,
+        wants: k => (k[0] === "c" ? k.slice(2).split("_")[0] : k.slice(2)) === id,
+        read: () => { if (F.dead || !subs.size) return; F.moved = Date.now(); F.verifyNext = true; if (F.loading) { F.dirty = true; return; } arm(Math.max(0, F.began + gap - Date.now())); } });
+      unwatch = C.watchOrder ? C.watchOrder(id) : null;
+    };
+    const feedOff = () => { try { if (sync) sync.stop(); } catch (_) {} try { if (typeof unwatch === "function") unwatch(); } catch (_) {} sync = null; unwatch = null; };
     const core = r => String(r || "").split(".").slice(0, 2).join(".");   // (the server's digest and Order_Rev, without the time the digest was taken)
     const emit = kind => { for (const fn of [...subs]) { try { fn(kind, F); } catch (err) { warn("feed", err); } } };
     const seen = () => doc.visibilityState !== "hidden";
@@ -1619,10 +1634,11 @@
     let plSig = null, plWait = false, unOP = null;
     const placeNow = () => { try { const PP = root.PiecePlacement, o = PP && typeof PP.of === "function" ? PP.of(id) : null; return o ? { sig: String(o.sig || ""), wait: o.state === "loading" } : { sig: "", wait: false }; } catch (_) { return { sig: "", wait: false }; } };
     const hookOP = () => { try { const OP = root.OrderPieces; if (unOP || !OP || typeof OP.subscribe !== "function") return; const p0 = placeNow(); plSig = p0.sig; plWait = p0.wait; unOP = OP.subscribe(() => { const p = placeNow(), was = plWait; plWait = p.wait; if (p.sig !== plSig) { plSig = p.sig; if (!was) F.poke(); } }); } catch (_) {} };
-    F.subscribe = fn => { subs.add(fn); hookOP(); feeds.add(F); if (!pollT && !F.loading) arm(); return () => { subs.delete(fn); if (!subs.size) { clearTimeout(pollT); pollT = 0; clearTimeout(againT); againT = 0; feeds.delete(F); try { if (typeof unOP === "function") unOP(); } catch (_) {} unOP = null; } }; };
+    F.subscribe = fn => { subs.add(fn); hookOP(); feedOn(); feeds.add(F); if (!pollT && !F.loading) arm(); return () => { subs.delete(fn); if (!subs.size) { clearTimeout(pollT); pollT = 0; clearTimeout(againT); againT = 0; feeds.delete(F); feedOff(); try { if (typeof unOP === "function") unOP(); } catch (_) {} unOP = null; } }; };
     const onVis = () => {
       if (F.dead || !subs.size) return;
       if (!seen()) { clearTimeout(pollT); pollT = 0; return; }
+      if (synced() && !F.dirty) { if (!F.loading && !pollT) arm(); return; }   // (FEED: what moved while hidden was named: the subscription asks for it)
       if (!F.loading && (F.dirty || Date.now() - F.tried >= pollMs)) { if (F.dirty) F.fullNext = true; F.dirty = false; F.refresh({ force: true, quiet: true, probe: true }); } else if (!F.loading && !pollT) arm();   // (the tab shown again asks the cheap question: whatever moved while it was hidden moved the digest)
     };
     const onNet = () => { F.fails = 0; want(); };   // (the network is back: the poll waits no longer)
@@ -1642,7 +1658,7 @@
     doc.addEventListener("visibilitychange", onVis); root.addEventListener("online", onNet);
     try { if (root.OrderTimeline && typeof root.OrderTimeline.onRecord === "function") unrec = root.OrderTimeline.onRecord(onRec); } catch (_) {}
     F.destroy = () => {
-      if (F.dead) return; F.dead = true; clearTimeout(pollT); pollT = 0; clearTimeout(againT); againT = 0; subs.clear(); local.clear(); wakers.delete(wake); feeds.delete(F); try { if (typeof unOP === "function") unOP(); } catch (_) {} unOP = null;
+      if (F.dead) return; F.dead = true; clearTimeout(pollT); pollT = 0; clearTimeout(againT); againT = 0; subs.clear(); local.clear(); wakers.delete(wake); feeds.delete(F); feedOff(); try { if (typeof unOP === "function") unOP(); } catch (_) {} unOP = null;
       doc.removeEventListener("visibilitychange", onVis); root.removeEventListener("online", onNet);
       try { if (typeof unrec === "function") unrec(); } catch (_) {}
       unrec = null;

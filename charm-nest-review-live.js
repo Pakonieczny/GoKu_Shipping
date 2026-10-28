@@ -51,8 +51,16 @@
   const live = () => !st.dead && watching() && cloudOk();
   const TABS = new Set(["nest", "engrave"]);
   const focused = () => { try { return typeof doc.hasFocus !== "function" || doc.hasFocus(); } catch (_) { return true; } };
+  /* FEED (Paul, 28 Oct 2026: "every press and every window to feel like a native app, and fewer cloud calls"): while this computer's changes feed answers
+     (charm-nest-sync-worker.js, one question for every tab), this loop no longer reads every 2 to 60 s: the feed names every custom record written (c:<key>,
+     customPut, customReopen, reviewMarkPut) and this reads once when it does; on screen or not, a record named while nothing here watched is read when a
+     tab that follows is shown. Every ten minutes it reads anyway (NET). Without the feed it reads as before. */
+  const NET = 600000;
+  let sync = null;
+  const synced = () => !!(sync && sync.live());
   /** How long between two reads now (COST, Oct 2026: see SLOW). */
   function pace() {
+    if (synced()) return NET;
     const quiet = Date.now() - st.input;
     if (quiet > IDLE_AFTER) return IDLE;
     return onReview() && quiet <= WORKING && focused() ? EVERY : SLOW;
@@ -240,12 +248,14 @@
     st.quietNext = true;   // (what changed while another tab was on screen is not replayed)
     // NAV (28 Oct 2026, Paul: "keep the API calls to the bare minimum"): a tab that follows, shown while the last read is still within the loop's own beat (orders → review → library in a
     // few seconds), keeps that beat: the next read comes when it was due, not at once on every switch
-    if (FOLLOW.has(mode)) { if (doc.hidden) return; if (st.busy) st.again = true; else if (!st.fails && st.lastOk && Date.now() - st.lastOk < pace()) schedule(); else arm(0); return; }
+    if (FOLLOW.has(mode)) { if (doc.hidden) return; if (synced() && st.lastOk && !st.fails) { if (!(sync.resume())) schedule(); return; } if (st.busy) st.again = true; else if (!st.fails && st.lastOk && Date.now() - st.lastOk < pace()) schedule(); else arm(0); return; }   // (FEED: what moved meanwhile was named: read only if something was)
+    if (synced() && st.lastOk) return;   // (FEED: the records are current: nothing moved that was not read)
     if (TABS.has(mode) && !doc.hidden && Date.now() - Math.max(st.lastAny, st.end) > OTHER_TAB) { st.lastAny = Date.now(); if (st.busy) st.again = true; else poll({ quiet: true }).catch(() => {}); }
   }
   doc.addEventListener("visibilitychange", () => {
     if (doc.hidden) { clearTimeout(st.timer); st.timer = 0; clearTimeout(st.second); st.second = 0; return; }   // (nothing is read while the tab is hidden)
     st.quietNext = true;
+    if (synced() && st.lastOk) { schedule(); return; }   // (FEED: the feed resumes this read if something was named while the tab was hidden)
     if (live()) { if (st.busy) st.again = true; else arm(0); }
   });
   const back = () => { st.fails = 0; st.quietNext = true; if (live() && !st.busy) arm(500); };
@@ -254,5 +264,12 @@
   /** Start the loop when a surface that needs it has come on screen since it last stopped (the search box or the order window opened over a tab that does not follow); the placement feed asks every few seconds. */
   const ensure = () => { if (!st.dead && !st.timer && !st.busy && live()) schedule(); };
   channel();   // (listening for the other tabs of this computer from the start)
-  root.ReviewLive = { nudge, announce, heard, shown, poll, ensure, state: () => ({ polls: st.polls, applied: st.applied, loud: st.loud, heard: st.heard, fails: st.fails, cursor: st.cursor, lastOk: st.lastOk, busy: st.busy, armed: !!st.timer, dead: st.dead, error: st.error, every: st.every, pace: pace() }) };
+  // FEED: a custom record named by the changes feed is read now (one read for any number of them); quiet unless the Review tab is on screen, as a poll is
+  const follow = () => {
+    if (sync || !root.CNSync || typeof root.CNSync.follow !== "function") return;
+    sync = root.CNSync.follow({ name: "review", kinds: "c", active: () => !st.dead && watching() && cloudOk(), since: () => st.start,
+      read: why => { if (st.dead || !cloudOk()) return; if (why === "reset" || why === "dirty") st.quietNext = true; if (st.busy) st.again = true; else arm(Math.max(0, st.end + GAP - Date.now())); } });
+  };
+  follow(); if (!sync) setTimeout(follow, 0);
+  root.ReviewLive = { nudge, announce, heard, shown, poll, ensure, state: () => ({ synced: synced(), polls: st.polls, applied: st.applied, loud: st.loud, heard: st.heard, fails: st.fails, cursor: st.cursor, lastOk: st.lastOk, busy: st.busy, armed: !!st.timer, dead: st.dead, error: st.error, every: st.every, pace: pace() }) };
 })(typeof window !== "undefined" ? window : globalThis);

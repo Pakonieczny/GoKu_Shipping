@@ -3888,7 +3888,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-overlap-fix.js?v=20261025-ovf1"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom-vi1"></script>
 <script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2-hdr1-ms1-cost18-rh1-hp2-ro1-sc1-ss1-vis1-rs1-rel1-sg1-apx1"></script>
-<script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1-hdr1-pl1-ms1-pk1-cost18-rh1-ho1-ss1-rel1-sg1-nv3"></script>
+<script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1-hdr1-pl1-ms1-pk1-cost18-rh1-ho1-ss1-rel1-sg1-nv3-sy1"></script>
 <script src="charm-nest-geom.js?v=20261009-flat-col-fb1-fb2-fr1-rb1-m3-wd1-cb1-rf1"></script>
 <script src="charm-nest-monogram.js?v=20261015-mono1-monoui1-mx4-mh2"></script>
 <script src="charm-nest-monogram-fit.js?v=20261016-mx4-mh2"></script>
@@ -3902,6 +3902,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-thumbs.js?v=20261009-th1-pb1"></script>
 <script src="charm-nest-master-cache.js?v=20261009-mc1-cost18-mp1"></script>
 <script src="charm-nest-store.js?v=20261028-ls1"></script><!-- charm-nest-store.js: the records kept on this computer, one database per world, reads keyed by revision (LOCAL, Paul 28 Oct 2026) -->
+<script src="charm-nest-sync-worker.js?v=20261028-sy1"></script><!-- charm-nest-sync-worker.js: one changes feed per computer and world, asked by one tab, heard by all (FEED, Paul 28 Oct 2026) -->
 <script src="charm-nest-engrave-faces.js?v=20261011-fb1-fb2-sd1-nb1-el1-pc1"></script>
 <script src="charm-nest-engrave-position.js?v=20261012-ep1-rb1-nd1"></script>
 <script src="charm-nest-engrave-sides.js?v=20261009-pe1-nk1-dr1-ko1-fb1-fb2-el1-sb1-pc1-br1-ms1-bh1"></script>
@@ -4070,6 +4071,10 @@ const WORKSPACE_SANDBOX = S.settings.sandbox === "on";
    (charm-nest-store.js), the database of this page's world, opened now so the Library and the sheet windows are drawn from it before the cloud answers. It refuses
    a write for the other world, while the sandbox is being reset, or from a tab another tab's reset made stale. */
 try { if (window.CharmNestStore) CharmNestStore.init({ world: WORKSPACE_SANDBOX ? "sandbox" : "production", worldNow: () => (S.settings.sandbox === "on" ? "sandbox" : "production"), writable: () => !(window.CNWipe && CNWipe.active) && !(WORKSPACE_SANDBOX && window.Session && Session.stale && Session.stale()) }); } catch (e) { console.warn("local store", e); }
+/* FEED (Paul, 28 Oct 2026: "every press and every window to feel like a native app, and fewer cloud calls"): ONE changes feed for this computer and this page's world
+   (charm-nest-sync-worker.js): one tab asks what moved, every tab hears it, and the Library, the placement feed, the Review feed, the order window and the sheet window
+   read only what they show that moved, where each kept a timer of its own. Asked only while the cloud answers. */
+try { if (window.CNSync) CNSync.start({ world: WORKSPACE_SANDBOX ? "sandbox" : "production", api: (fn, body, opts) => api(fn, body, opts), enabled: () => S.cloud.ok === true && !(window.CNWipe && CNWipe.active) }); } catch (e) { console.warn("changes feed", e); }
 /* The sandbox order stream plays the shop's day faster than real time: each check the sorter makes moves its clock ten
    simulated minutes, and between checks it runs at the chosen speed, never past the next check. The day (set numbers,
    folders, run dates) and the due dates follow it; nesting searches keep their real seconds. Anywhere else, and
@@ -8064,14 +8069,14 @@ async function loadLibrary(context) {
   if (S.library.kind === "sets" && window.Sets) return Sets.renderLibrary(body);
   try {
     // LOCAL: asked by revision (listSheets ifRev / since): nothing moved is one small read, a change sends only the rows written since
-    const ask = { op: "listSheets", metal: S.library.metal === "all" ? null : S.library.metal, limit: 300, excludeDone: true }, L = St ? St.ask(listName) : null;
+    const ask = { op: "listSheets", metal: S.library.metal === "all" ? null : S.library.metal, limit: 300, excludeDone: true }, L = St ? St.ask(listName) : null, askedAt = Date.now();
     let r = await api("charmNestLibrary", Object.assign({}, ask, L), { label: "Loading library", all: "sheets" });
     let rows = St ? St.take(listName, "sheets", r, "sheets", x => x.id) : null;
     if (St && !rows && L && L.since !== "0.0") { r = await api("charmNestLibrary", Object.assign({}, ask, { wantRev: true, since: "0.0" }), { label: "Loading library", all: "sheets" }); rows = St.take(listName, "sheets", r, "sheets", x => x.id); }
     if (loadId !== libraryLoadId || S.library.kind === "sets") return;
-    if (r.unchanged && kept && body.querySelector('[data-laser-card="sheet"]')) { S.library.loadedAt = Date.now(); return; }   // (what is on screen is what the cloud holds)
+    if (r.unchanged && kept && body.querySelector('[data-laser-card="sheet"]')) { S.library.loadedAt = Date.now(); S.library.askedAt = askedAt; return; }   // (what is on screen is what the cloud holds)
     rows = rows || r.sheets || [];
-    S.library.rows = window.Gate?.projectLibraryRecords(rows.slice()) || rows.slice(); S.library.loadedAt = Date.now(); S.library.loadedFor = S.library.metal; renderLibrary();
+    S.library.rows = window.Gate?.projectLibraryRecords(rows.slice()) || rows.slice(); S.library.loadedAt = Date.now(); S.library.askedAt = askedAt; S.library.loadedFor = S.library.metal; renderLibrary();
   } catch (e) { if (loadId === libraryLoadId) { if (kept) stale(e.message); else body.innerHTML = `<div class="libEmpty">Could not load: ${esc(e.message)}</div>`; } }
 }
 function libraryStale(why) {
@@ -8089,12 +8094,15 @@ function showLibrary() {
   const shown = S.library.kind !== "sets" && S.library.rows?.length && S.library.loadedFor === S.library.metal;
   if (shown && !$('#libBody [data-laser-card="sheet"]')) renderLibrary();
   if (shown || S.library.kind === "sets" && $("#libBody .setCard")) libraryReturn(S.library.place);   // (sets shown stay, read again behind)
-  if (shown && Date.now() - (S.library.loadedAt || 0) < 60000) return;
+  // FEED (Paul, 28 Oct 2026: "fewer cloud calls"): while this computer's changes feed answers and has named no sheet, set, run or hand-completed record since the list was
+  // asked (charm-nest-sync-worker.js quietSince), the list on screen is what the cloud holds, however long ago it was read: shown as it is, with no call
+  const feedQuiet = t => !!(t && window.CNSync && CNSync.quietSince(t, "strc") && (S.library.wroteAt || 0) < t);
+  if (shown && (Date.now() - (S.library.loadedAt || 0) < 60000 || feedQuiet(S.library.askedAt))) { if (feedQuiet(S.library.askedAt)) try { window.LaserReview?.follow?.(); } catch (_) {} return; }
   // NAV (28 Oct 2026, Paul: "Every sheet that opens must be instantaneous … keep the API calls to the bare minimum"): the Sets view read under a minute ago, with no Library write made
   // here or heard from another tab since it was asked, is shown as it is, with no call; its live read (LaserReview: one small read by revision) starts again and brings the cards in
   // view up to date. LOCAL (the same day): anything older, or written since, is no longer read whole again (8 calls, 2.5 MB at 6,000 orders) but asked by revision (setList /
   // listSheets ifRev: one small read each when nothing moved, only the rows written since when something did; nothing is drawn again unless they answer a change).
-  if (S.library.kind === "sets" && $("#libBody .setCard") && Date.now() - (S.library.setsAskedAt || 0) < 60000 && (S.library.wroteAt || 0) < S.library.setsAskedAt) { try { window.LaserReview?.follow?.(); } catch (_) {} return; }
+  if (S.library.kind === "sets" && $("#libBody .setCard") && (Date.now() - (S.library.setsAskedAt || 0) < 60000 || feedQuiet(S.library.setsAskedAt)) && (S.library.wroteAt || 0) < S.library.setsAskedAt) { try { window.LaserReview?.follow?.(); } catch (_) {} return; }
   loadLibrary().catch(() => {});
 }
 function libraryPlace() {
@@ -8676,8 +8684,8 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25-dc26-bk26-es26-ee26-ep26-sx26-sc26-ns26-pw26-gl1-gk1-r16h1-plc1-en1-vis1-dsg1-dxf1-aw1-once1-c17-rs1-rel1-rel2-ga1-mt1-lf1-fra1-ae1-ce1-cb1-kps1-oos1-gss1-hsi1-edw1-ged1-sp1-nv1-rf1-apx1-nv2-nv3-nv4-nv5-cet1-ls1-hr1-cp1-dl1-rw2"></script>
-<script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25-dc26-bk26-es26-ee26-ep26-sx26-sc26-ns26-pw26-gl1-gk1-r16h1-plc1-en1-vis1-dsg1-dxf1-aw1-once1-c17-rs1-rel1-rel2-ga1-mt1-lf1-fra1-ae1-ce1-cb1-kps1-oos1-gss1-hsi1-edw1-ged1-sp1-nv1-rf1-apx1-nv2-nv3-nv4-nv5-cet1-ls1-hr1-cp1-dl1-rw2-sy1"></script>
+<script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1-sy1"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1-rl1-ns2-rh1-oh1-hb1-hp1"></script>
@@ -8751,7 +8759,7 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-mseal1-fb1-ms3-cost18-strip1-id1-2b1-mc1-hp2-br1-ms1-bh1-nb1-mv1-wc5-rp1-oh1-sc1-st1-mc9-mi9b-sh29-gl1-en2-fr1-zg1-oos1-nf1-ged1-sp1-mi1-ls1-cp1"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-mseal1-fb1-ms3-cost18-strip1-id1-2b1-mc1-hp2-br1-ms1-bh1-nb1-mv1-wc5-rp1-oh1-sc1-st1-mc9-mi9b-sh29-gl1-en2-fr1-zg1-oos1-nf1-ged1-sp1-mi1-ls1-cp1-sy1"></script>
 <!-- 10K / 14K: a charm dragged onto the next or previous sheet of its metal, in the sheet window's Manual Control (SheetHop; Paul, 18 Oct 2026) -->
 <script src="charm-nest-sheet-hop.js?v=20261018-hop1-hp2-mv1-mc9-mi9b-gk1-fr1-ged1"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
@@ -8793,7 +8801,7 @@ try {
 <script src="charm-nest-review-send.js?v=20261012-rvb3-sr1-ho1-hor1-hb1-hp1-hsi1"></script>
 <script src="charm-nest-shared-orders-modal.js?v=20261005-so5-gc2-ps1-id1-en1-ca1"></script>
 <!-- the cadence of where-is-each-piece: every surface that says "on a sheet / not on a sheet / on hold" follows the cloud within seconds (PlacementFeed) -->
-<script src="charm-nest-placement-feed.js?v=20261005-pf4-cost1-cost18-ru2-nv2"></script>
+<script src="charm-nest-placement-feed.js?v=20261005-pf4-cost1-cost18-ru2-nv2-sy1"></script>
 <script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3-pow1-sk1-sn1-dm1-eu3-pv1"></script>
 <!-- the persistent Alert for password attempts on the Charm Repo Library: the master admin's login only, a pill at the right end of the top bar until he closes it (CharmNestRepoAlerts) -->
 <script src="charm-nest-repo-alerts.js?v=20261011-ra1"></script>
