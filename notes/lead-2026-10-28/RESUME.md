@@ -30,7 +30,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - int/live-check.cjs: 7 pages load clean. Live verify = sha256 of each changed served file vs `git show origin/main:<f>`, then live-check.
 - If agents hang holding slots (load ~0, waits > 5 min): find holders: for f in slot1 slot2 slot3: ino=$(stat -c %i $SP/locks/$f); grep ":$ino " /proc/locks → pid → ps --ppid. Kill the idle test, tell its agent.
 
-## Live on main (all verified live): d58eea9
+## Live on main: 722e4a7 (refit: card never blank, refit 7-10x faster; pushed 03:45 UTC, all 8 tests passed; live verify b2tiugo1x) — before it d58eea9 verified live
 - 89f2819 Manual Control instant · b2608ff navigation rounds 2+3, Charm Editor Save fix (Saving at once, sheet files in background),
   bar necklaces FRONT by default (BARFRONT) · 077f21c Approve never silent / never stuck · d58eea9 Design & Engrave batch 1: editor
   extension points + live readouts + Ctrl/Alt centre resize + smart guides (feedback), Blend/Warp/Distort (warp), image trace (trace).
@@ -82,9 +82,10 @@ board-live-extra.json with the new agent ids.
 
 ## Handed back, waiting to merge into claude/de-integration
 - de-text (ae828a5d729f6efa1) DONE: branch claude/de-text (af6f42b + merge 32078d4), new file charm-nest-ce-text.js (approved), test ce-text.cjs 10/10. Merge with resolve-union.py, then test the batch.
+- de-custompool (a4d3307fda8a88af0) DONE: claude/de-custompool 36f1f7d (contains de-designs a7009a1 + main). New file charm-nest-custom-pool.js (approved), server op customPiecePut, test custom-piece-pool.cjs 6/6. Ship WITH designs (+ sendsheet must settle the order's custom line). It reports sandbox-wipe-guard fails on origin/main too: op roseReopen is unclassified in the sandbox families file → small fix for the lead (classify roseReopen).
 - de-extras (a5f64f2a38f32df82) finishing its last test runs (7 commits on claude/de-extras).
 
-## Ship in progress at 03:36 UTC (03:39: engrave-worker, charm-edit-refit, charm-editor-engrave all PASS; rest still running)
+## Shipped 03:45 UTC
 - refit 722e4a7 (contains main d58eea9): worktree $SP/wt-refitship, tests running (bs0ceqa3m: engrave-worker, charm-edit-refit, charm-editor-engrave, engrave-editor-words, engrave-front-art, engrave-approve-never-silent, charm-editor-back, engrave-preview). If all pass: push HEAD:main (if it still contains origin/main), verify live, board.
 
 ## Next for the lead, in order
