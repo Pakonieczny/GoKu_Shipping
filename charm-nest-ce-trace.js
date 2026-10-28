@@ -770,7 +770,7 @@
         else if (c === 1) { sub.push(['l', [r3(L.xy[j]), r3(L.xy[j + 1])]]); j += 2; }
         else if (c === 2) { sub.push(['c', [r3(L.xy[j]), r3(L.xy[j + 1])], [r3(L.xy[j + 2]), r3(L.xy[j + 3])], [r3(L.xy[j + 4]), r3(L.xy[j + 5])]]); j += 6; }
         else sub.push(['h']);
-        if (++since >= 4096) { done += since; since = 0; yield p0 + (p1 - p0) * done / total; }
+        if (++since >= 1024) { done += since; since = 0; yield p0 + (p1 - p0) * done / total; }
       }
       done += since;
       L.subpaths = subpaths; delete L.cmd; delete L.xy;
