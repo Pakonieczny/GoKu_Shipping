@@ -1,0 +1,768 @@
+I've finished the research, the measurements and the design, but `report.md` was not written: the harness refused the file write ("Subagents should return findings as text, not write report files"). The full report is below, ready to save to `/tmp/claude-0/-home-user/41f0c21f-5485-5cfe-8e7d-8dab8957f410/scratchpad/local-first/report.md`. Nothing in the repo was changed.
+
+**Main findings**
+- **Calls today.** Measured on the real page over the repo's fixture server (real `charmNestLibrary.js` handlers), one open tab with a person active makes:
+  - 48 calls/min on Orders, 64 on Review, 42 on Library;
+  - plus about 31 `laserStatus` reads a minute with a sheet window open, and about 18 `timelineGet` with an order window open.
+  - The cause is up to five separate "anything new?" timers in every tab. `cn-poll.js` already has leader election, but the sorter does not use it.
+- **Writes multiply reads.** One `putSheet` in the Library set off 7 extra reads on the writing tab within 4 s, because `api()` starts follow-up reads after each write.
+- **Where people wait.**
+  - Every sheet window waits for a full `getSheet`, including Storage link lookups of up to 1.5 s.
+  - Manual Control's save is 7 calls in a row.
+  - A reload makes about 150 static requests (mostly 304 checks in production) and re-downloads and re-parses every master design a line needs.
+  - The Library list (about 1.3 MB) is read in full again whenever it is more than 60 s old.
+- **Already there to build on.** The server's revision document (`Charm_Nest_Rev/library`, with its counter and `changed` map) is in effect an ordered change log; it becomes the delta feed's cursor, as Linear's sync id does. There are also signature-checked IndexedDB copies (master list, learned maps, thumbnails), a workspace checkpoint, and a timeline outbox with idempotent ids.
+- **Design, in phases.**
+  1. A local record store with reads keyed by revision: instant sheets, lists and reload.
+  2. One changes feed per computer, run by a leader tab, replacing the five per-tab timers.
+  3. An IndexedDB outbox: changes shown at once, many moves merged into one write, server ops that ignore repeats and check the expected revision.
+  4. A content-addressed blob store plus a service worker.
+  5. Optional push.
+  6. Retiring the workspace snapshot.
+- **Estimated effect.** In an illustrative production hour, about 12,000 calls today fall to about 3,000–3,500 after Phase 2, and about 1,000 with push.
+- **Paul must approve or decide:**
+  - three new served files;
+  - the push channel (a read-only Firestore listener on a counter, a long-poll function, or neither);
+  - how long history stays on each computer;
+  - the policy when two people change the same field.
+
+Files are in `/tmp/claude-0/-home-user/41f0c21f-5485-5cfe-8e7d-8dab8957f410/scratchpad/local-first/`:
+- `count-calls.cjs` — the counting script
+- `count-out.txt`, `calls.txt` — its results
+- `perf-profile.txt` — the `sorter-scale.cjs PROFILE=1` run
+
+====================================================================
+# Charm Nest: a local-first data layer
+
+Design report, 28 Oct 2026. It answers Paul's request of the same day: "as responsive as Photoshop … leverage local storage … keep the API calls to the bare minimum."
+
+This is research and design only; no file in the repository was changed. The call counts come from the real page (`charm-nest-1.html`) running over the repository's fixture server (`tests/charm-nest/bridge-server.cjs`), with the real `charmNestLibrary.js` handlers on an in-memory Firestore. They were measured with `tests/perf/sorter-scale.cjs` (PROFILE=1) and a counting script kept outside the repo (`count-calls.cjs`).
+
+---
+
+## 1 · Executive summary (for Paul)
+
+**What will feel different**
+
+1. **Nothing you press waits for the cloud.**
+   - A drag, a keystroke, a Hold, an approval or a Manual Control move is drawn in the same frame and written to this computer's disk at once.
+   - The cloud is told in the background.
+   - If the cloud refuses (another person changed the same thing, or a set rule says no), you get a plain message and the screen goes back.
+   - Today most presses wait for the cloud's answer before the screen changes.
+2. **Every sheet, list, order and window opens from this computer first.**
+   - A sheet seen on this computer in the last two weeks opens in under a tenth of a second, even after a reload or with the internet down.
+   - The cloud is asked one tiny question: "has this changed since revision X?" Only a sheet that really changed is downloaded again.
+   - Today every sheet window shows "Reading the sheet…" until the cloud answers, which is a full read plus Storage link lookups every time.
+3. **A reload is no longer a fresh start.**
+   - The Library, the open orders, the master designs (already turned into vectors and bitmaps), the thumbnails and the page's own code are kept on this computer.
+   - A reload paints at once and then fetches only what changed while the page was closed.
+   - Today a reload makes about 150 requests for the page's own files, downloads and re-parses every master design a line needs, and reads the Library lists again in full.
+4. **One computer asks the cloud once, however many tabs are open.**
+   - Today each tab runs up to five separate "anything new?" timers: the Library live read, the placement feed, the Review feed, the order-window timeline and the sheet-window follow.
+   - These become one changes feed per computer, shared by all its tabs.
+5. **History is searchable on this computer.**
+   - A compact index of past sets, sheets and orders (a few MB) is kept here and kept current by the changes feed.
+   - History search becomes local and instant. The cloud is asked only beyond the local horizon.
+
+**What it costs**
+
+- **Five phases plus a final clean-up, each shippable on its own**, biggest win first (section 6):
+  1. Instant sheets, lists and reload from a local store.
+  2. One changes feed per computer. This is the big drop in calls.
+  3. An outbox, so every press is instant and no work is ever lost.
+  4. Files and code kept locally (a blob store and a service worker).
+  5. Optional push, so there is no polling at all.
+  6. Retire the workspace snapshot.
+- **Server changes are small and additive:**
+  - an `ifRev` "unchanged" answer on `getSheet` and on the list ops;
+  - one new `changes` op, built on the revision document the server already keeps (`Charm_Nest_Rev/library` and its `changed` map);
+  - a mutation id and an expected revision on write ops.
+- **No risk to existing data.** No data migration and nothing deleted. Every phase falls back to today's behaviour when browser storage is unavailable.
+- **New served files need your OK.** Each must be added to `scripts/build-public.cjs`:
+  - `charm-nest-store.js` (Phase 1)
+  - `charm-nest-sync-worker.js` (Phase 2)
+  - `charm-nest-sw.js`, the service worker (Phase 4)
+
+**Calls, now and after (measured on the real page; "active" means a person is touching the page)**
+
+| | Now | After Phase 2 | After Phase 5 (push) |
+|---|---|---|---|
+| Orders tab, active | 48 calls/min **per tab** (≈2,900/h) | ≤20/min **per computer**, all tabs together | ≈0 while nothing changes |
+| Review tab, active | 64/min per tab (≈3,800/h) | ≤20/min per computer | ≈0 |
+| Library tab, active | 42/min per tab (≈2,500/h) | ≤20/min per computer | ≈0 |
+| Sheet window open | +31 `laserStatus` reads/min | +0 (it follows the shared feed) | 0 |
+| One write in the Library | 1 write + 7 reads within 4 s | 1 write, 0 follow-up reads | same |
+| A computer left idle with 3 tabs | ≈540/h | ≤60/h | ≈0 |
+| A change on one computer seen on another | 2–4 s | ≤3 s while active | ≤1 s |
+
+An illustrative busy hour has 4 computers and 5 tabs. It costs about 12,000 calls today. That falls to about 3,000–3,500 after Phase 2 and about 1,000 after Phase 5. The working is in section 5.11.
+
+**What you must decide**
+
+1. **Approve the new served files** listed above. The service worker is the only long-lived one, and it has a kill switch.
+2. **The push channel for Phase 5.** Today's rule is that the browser never talks to Firestore. The choices are:
+   - **(a)** Let the browser listen, read-only, to two tiny Firestore "revision" counters, through a vendored SDK and a security rule that exposes only those two documents. This gives real push and zero polling.
+   - **(b)** A long-poll Netlify function that waits up to about 20 s for a change. It is billed for function time instead of repeated calls.
+   - **(c)** Neither, and stay on Phase 2's shared poll.
+3. **Local horizons.** Proposed: 120 days of set and sheet index rows, 14 days of full sheet records and timelines, 45 days of pictures, 30 days of master designs. Do customer words (engraving text, gift notes) stay on shop computers that long? Some already do today, in the workspace checkpoint.
+4. **Same-field conflicts.** Proposed: the later change wins and the person whose change lost is told. The alternative is to refuse both. Locks, set rules and laser state stay server-enforced either way.
+5. **Browser.** Shop computers on Chrome, with the site allowed to keep its data? This decides whether Storage Buckets and Background Sync can be used.
+
+---
+
+## 2 · Audit of the current data flow
+
+### 2.1 The single entry point for cloud calls
+
+Every cloud call goes through `api(fn, body, opts)` in `charm-nest-1.html` (≈line 4162; `apiAll` pages through `next`). What it does:
+
+- **Tags and guards.** It tags sandbox calls (`payload.sandbox`) and refuses writes during a sandbox wipe or when the tab is stale (`Session.stale`).
+- **Timeouts.** 60 s, or 300 s for file and list ops.
+- **Errors.** It marks 5xx, 408, 429, network failures and non-JSON answers as `transient`. It never retries itself; callers do.
+- **It fans every write out into extra reads:**
+  - `TL_WRITE` → the open order window reads its timeline now and again 1.5 s later.
+  - `LIBRARY_WRITE` → `LaserReview.written`: a `laserStatus` read now and 1.5 s later, plus `BroadcastChannel('cn-library')` so every other tab of this computer reads too.
+  - `PLACEMENT_WRITE` → `PlacementFeed.nudge`: `getOrderPieces` + `cancelList`, now and 1.5 s later.
+  - `custom*` writes → `ReviewLive.announce` and `nudge`.
+
+The page references about 140 distinct ops. The busiest by number of call sites:
+
+- `getSheet` (28), `putSheet` (18)
+- `poolGet` (9), `listSheets` (9), `setGet` (8), `optionMapPut` (7), `reviewMarkPut` (6)
+- `runGet`, `poolList`, `laserStatus`, `customGet`, `cancelList` (5 each)
+
+Other functions called: `charmNestOutput` (Storage URLs and uploads), `charmNestAsset` (Storage bytes from the same origin), `firebaseOrders`, `authGate`. Etsy is reached through the Design Station iframe (postMessage), not Firebase.
+
+### 2.2 Timers per open, visible tab
+
+| Feed (file) | Op | Active¹ | Quiet | Idle >10 min | While |
+|---|---|---|---|---|---|
+| Library live read (`charm-nest-bridge.js` `LaserReview`: `const live=` ≈11535, `LIVE` ≈12132, `readLive`) | `laserStatus` with `ifRevs`/`ifRev` | 3 s | 15 s | 60 s | Library tab shown |
+| Library seal check (`poll`/`armSeal`) | `laserStatus recordSeals:true` | 60 s | 60 s | 60 s | Library tab shown |
+| Placement feed (`charm-nest-placement-feed.js`) | `getOrderPieces` + `cancelList` | 4 s | 15 s | 60 s | any `[data-rid]` on screen |
+| Review feed (`charm-nest-review-live.js`) | `customGet {since}` | 2 s on Review | 10 s on Orders, Library, overlays | 60 s | Review / Orders / Library / overlay |
+| Order window timeline (`charm-nest-timeline-ui.js`) | `timelineGet {ifRev}` | 3.5 s | 15 s | 60 s | order window open |
+| Sheet window follow (`charm-nest-sheetwin.js` `follow` ≈5040) | `laserStatus` (one sheet) | 2 s | ≈14 s | ≈60 s | sheet window open |
+| Manual Control heartbeat (`MC_BEAT`) | `manualClaim` | 30 s | | | Manual Control on |
+| Team mail (`TeamMail.load`, bridge ≈20177 / ≈23151) | thread read | 30 s card / 20 s window | | | a Team tab shown |
+| Upkeep, keep-repair, partials, account | various | 1–15 min | | | always |
+
+¹ Active means pointer, key or wheel input in the last 2 minutes and the window focused. Hidden tabs read nothing.
+
+An answer that has not changed is already cheap on the server: 1–2 Firestore reads. This comes from `readRev`/`readRevList`/`laserUnchanged`/`bumpRev` (≈585–680), `Order_Rev`, and the placement gen. Even so:
+
+- **every poll is still a Netlify invocation and a network round trip;**
+- every surface and every tab polls on its own. `cn-poll.js` (Web Locks leader election, ETag/304) is served, but the sorter does not use it;
+- a *changed* answer re-reads whole lists:
+  - a changed placement tick costs about 100–176 Firestore reads (comments in `charm-nest-placement-feed.js`);
+  - a changed Library tick costs about 59.
+
+### 2.3 Measured calls
+
+**`tests/perf/sorter-scale.cjs`** (PROFILE=1; 800 open orders, 6,000 historical; fresh browser):
+
+| Action | Time | Requests | Bytes / notes |
+|---|---|---|---|
+| First usable screen | 1,659 ms | 151, of which ≈150 static | 14.8 MB |
+| Tab → Library, first visit | 45 ms | 11 | 1.48 MB: set and sheet lists read in full |
+| Tab → Library, second visit | 95 ms | 8 | 1.30 MB: read in full again |
+| Tab → Nest | 617 ms (over 300 budget) | 4 | 286 KB |
+| Tab → Orders | 317 ms (over budget) | 5 | |
+| Order window open, new order | 331 ms (over budget) | 6 | |
+| Orders scroll, longest frame | 343 ms (budget 50) | 58 | `masterGet` ×33, `listingPhotos` ×12, `timelineAdd` ×9 |
+| Library scroll, longest frame | 592 ms (budget 50) | 11 | 1.26 MB |
+| Whole session, ≈6 min | longest task 1,122 ms | 710 | 50 MB |
+
+The tab and frame times are rendering work, which the two other agents are fixing. This design removes the network waits and the call volume.
+
+**`count-calls.cjs`** (300 open orders, 3,000 historical; the mouse moves every 5 s, so every feed runs at its active pace):
+
+| 60 s with a person active | Calls | Breakdown |
+|---|---|---|
+| Boot (load + 10 s) | 15 functions + 150 static | `ping`, `customGet`, `aliasGet`, `noDesignGet`, `optionMapGet`, `masterList`, `masterListFiles`, `runList`, `customSheetGet`, `customSaveRepair`, `customSavePending`, `cancelList` ×2, `authGate`, `firebaseOrders` |
+| 300 orders interpreted (3 s) | 21 | `timelineAdd` ×20 (outbox batches of ≤50) |
+| Orders tab | **48** | `getOrderPieces` ×17, `cancelList` ×17, `customGet` ×7, `masterGet` ×4, `listingPhotos` ×2 |
+| Review tab | **64** | `customGet` ×31, `cancelList` ×14, `getOrderPieces` ×13, `masterGet` ×4, `listingPhotos` ×2 |
+| Library tab | **42** | `laserStatus` ×22, `customGet` ×7, `getSheet` ×4², `cancelList` ×4, `getOrderPieces` ×4, `laserDoneList` ×1 |
+| Engrave tab | 1 | `cancelList` |
+| Nest tab | 1 | `customGet` |
+| One `putSheet` in the Library (+4 s) | **8** | the write + `laserStatus` ×3, `getOrderPieces` ×2, `cancelList` ×2 |
+| Order window open (on Orders) | 61 | `timelineGet` ×18, `getOrderPieces` ×16, `cancelList` ×16, `customGet` ×6, `firebaseOrders` ×4 |
+| Sheet window open (on Orders) | 69 | `laserStatus` ×31, `getOrderPieces` ×15, `cancelList` ×15, `customGet` ×6, `getSheet`, `setGet` |
+| Reload (+10 s) | 18 functions + 150 static | as boot, + `listingPhotos` ×3, `sandboxStatus` (production: ≈150 conditional requests, mostly 304) |
+
+² `getSheet` from `charm-nest-assets.js` `recover`: a card whose preview failed reads the whole sheet record to find another link.
+
+### 2.4 What is cached today
+
+| Where | What | Checked by | Lifetime |
+|---|---|---|---|
+| IndexedDB `charm-nest-workspace` (`Session`, bridge ≈24176) | the whole workspace as one structured-clone snapshot (source bytes, geometry, pages, orders, pool, decisions, log), plus best-layout records while a sheet nests | scope `production`/`sandbox` + sandbox reset epoch | ≤1 a minute on idle, and at once on pagehide/hidden. **Deep copy on the main thread, hundreds of ms at ≈800 orders.** |
+| IndexedDB `cn-master-list` (`charm-nest-master-cache.js`) | the whole master index (≈6,960 docs, 3.2 MB) + file records | the server's `ifFilesSig` / index signature. Never shown unchecked. The key names the code version. | 30 days, 48 MB cap |
+| IndexedDB `cn-map-copy` (same file) | aliases, option maps, no-design rows | server `ifSig`/`since` | 7 days |
+| IndexedDB `cn-thumbs` (`charm-nest-thumbs.js`) | drawn design pictures and stored PNGs | path + hash + stamp + drawing-code version | LRU 9,000 / 120 MB / 45 days; 1,200 in memory |
+| IndexedDB `cn.keep.v1` (bridge `KeepBytes`) | built custom-design bytes | file hash | until saved |
+| localStorage | `orderTimeline.outbox.v1` (≤500 events, idempotent ids, batched, backoff to 120 s, `keepalive`); `cn.team.outbox`/`drafts`; keeper save intents; settings; employee; reset epochs; `cn-library-write` ping (≈150 references) | | until sent |
+| Memory | `orderRecs` (sheetwin ≈6057: 60 s, 12 entries); `B.pool.sources` (parsed master designs, idle ones dropped by Upkeep); `LaserReview` records; `S.library.rows` (60 s, then read in full); `CharmNestAssets` in-flight de-dupe | time | page |
+| HTTP cache | `charmNestAsset?…&v=` pictures: `private, max-age=86400`, ETag = Storage generation. `.ai` bytes fetched `no-store` in 2 MB ranges. `charm-nest-*.js`: `no-cache, must-revalidate`, so every reload revalidates ≈147 `?v=` scripts. | | |
+| Not used | **no service worker, no Cache Storage, no OPFS.** `navigator.storage.persist()` *is* requested. | | |
+| Cross-tab | `BroadcastChannel('cn-library')`, ReviewLive announce, epoch channel, storage events. Web Locks only in the keeper. | | |
+
+### 2.5 How writes are made
+
+- **Direct and awaited.** Nearly every write is `await api(...)` inside the press handler: `putSheet`, `poolPut`/`poolUpdate`, `setAllocate`, `laserDone`, `flowApply`, `custom*`, `cancel*`, `back*`.
+- **Manual Control.**
+  - Turning it on waits for a `manualClaim` round trip. The drags themselves are local (`mcDraftOf`).
+  - Turning it off runs `mcSave` (sheetwin ≈5846), seven steps in a row:
+    1. `getSheet` to re-check;
+    2. reopen the green line;
+    3. rebuild and upload the `.ai`, with `putSheet` (`rewritePage`);
+    4. remake and upload the label;
+    5. `getSheet` to read it back;
+    6. `putSheet` with the manual mark;
+    7. release the claim.
+- **Outboxes exist for three kinds of write only:** timeline events, Team messages, and custom-design saves (keeper + Web Locks).
+- **Retries.** They live in each caller. `cloudProbe` retries at 5 s, 15 s, 30 s, then every 60 s; `saveOwedSheets` runs when the cloud comes back.
+- **Concurrency.** There is no generic expected-revision check.
+  - `putSheet` is a merge write in a transaction. It returns 409 for specific semantic conflicts: a piece placed twice, a piece a cleanup removed, a piece held or cancelled, a mirrored earring, set rules R12.
+  - It drops server-owned fields: laser marks, stamps, holds, rose stock.
+  - Locks: `manualClaim` (30 s heartbeat, lapses after 90 s), the repo password door, the wipe flag.
+
+### 2.6 Biggest sources
+
+**Calls**
+1. Five independent pollers × tabs × computers. One active tab costs 42–64 calls/min. A second tab doubles it. A sheet or order window adds 18–31/min.
+2. Write fan-out: 7 extra reads per Library write on the writing tab, plus about 2 per other tab of the same computer.
+3. Full list re-reads: `listSheets`/`setList` (1.3 MB) whenever the Library is older than 60 s; a "gone" sheet re-reads the list (up to 3 a minute).
+4. Orders scroll: `masterGet` and `listingPhotos` per band of rows.
+5. Boot: 15–18 function calls (fine), but about 150 static requests.
+
+**Latency (as felt)**
+1. Sheet window open waits for `getSheet`. On the server that is a full read, plus `refreshLinks` (Storage metadata per file, up to 1.5 s), plus readiness.
+2. Manual Control on and off: a claim round trip, then the 7-step save.
+3. Reload: about 150 script requests; master designs re-downloaded and re-parsed (`parseSource` → `groupCharms` → `buildSilhouettes` → `splitBodies`) unless the checkpoint holds them; the Library re-listed.
+4. Every press that awaits a write: approve, Hold, Complete Order, label.
+5. A Library opened after 60 s: shown from memory, then a full re-list that redraws cards.
+
+---
+
+## 3 · State of the art (research)
+
+**Ink & Switch, *Local-first software* (2019).** [inkandswitch.com/local-first](https://inkandswitch.com/local-first/)
+- Seven ideals; the first is "No spinners".
+- The primary copy of the data is local.
+- For us: the UI reads only local state.
+
+**Linear's sync engine.** [linear.app/now/rebuilding-delta-sync-read-path](https://linear.app/now/rebuilding-delta-sync-read-path) · [reverse-linear-sync-engine](https://github.com/Aslam97/reverse-linear-sync-engine) · [performance.dev](https://performance.dev/what-makes-linear-feel-instant)
+- The workspace is replicated into IndexedDB. Every change is a sync action with an ordered id.
+- "The client sends a checkpoint containing the ID of the last change it applied", and delta sync returns only the actions after it.
+- A client too far behind bootstraps again. Reverse-engineering notes: edits update memory at once, and IndexedDB after the server confirms.
+- For us: `Charm_Nest_Rev/library.n` and its `changed` map already form an ordered change log. It becomes our sync id: the client asks `changes {since:n}`, and below `floor` it re-syncs.
+
+**Replicache / Zero.** [doc.replicache.dev/concepts/how-it-works](https://doc.replicache.dev/concepts/how-it-works) · [zero.rocicorp.dev/docs/when-to-use](https://zero.rocicorp.dev/docs/when-to-use)
+- Changes are kept as pending mutations with sequential ids. The server re-runs them, and its result is canonical.
+- A pull returns a patch, a cookie and `lastMutationID`.
+- Rebase: apply the patch, replay the pending mutations, reveal the result atomically.
+- A poke is a contentless "pull now" hint. Zero adds query-driven partial sync.
+- For us: the outbox with mutation ids, rebase on every server change, the revision document as the poke, and partial sync (records on screen plus a slim history index).
+
+**Figma.** [figma.com/blog/how-figmas-multiplayer-technology-works](https://www.figma.com/blog/how-figmas-multiplayer-technology-works/)
+- The server is the authority. The later write wins per property per object.
+- The client shows its own values the server has not acknowledged yet, and discards conflicting server values for those properties until they are.
+- Offline: download a fresh copy and reapply local edits. Ids are generated on the client. No full CRDTs, because a central server makes them unnecessary.
+- For us: Manual Control poses are per-charm properties. A pending pose is never overwritten by an older answer. Sheet patches merge field by field. Mutation ids come from the client.
+
+**ElectricSQL.** [electric-sql.com/docs/api/http](https://electric-sql.com/docs/api/http)
+- HTTP sync with an offset and a handle. `live=true` long-polls until there is new data.
+- Cache headers and ETag let a CDN collapse identical requests.
+- For us: Phase 5 option (b), a long-poll `changes`, and 304-style "unchanged" answers.
+
+**RxDB.** [rxdb.info/replication](https://rxdb.info/replication.md) · [rxdb.info/articles/indexeddb/indexeddb-sync](https://rxdb.info/articles/indexeddb/indexeddb-sync.html)
+- With several tabs, leader election picks exactly one to replicate; BroadcastChannel spreads the changes.
+- Catch-up works from a checkpoint, then from events.
+- For us: one leader per computer runs the feed and the outbox; the other tabs follow.
+
+**CRDTs (Yjs, Automerge).** [automerge.org/blog/automerge-2](https://automerge.org/blog/automerge-2/) · [docs.yjs.dev](https://docs.yjs.dev/api/internals)
+- They converge without a server.
+- For us: **not needed.** We have a central authority, locks and server-only invariants (set rules, laser state, rose stock).
+
+**Firestore web SDK cache.** [firebase persistentcachesettings](https://firebase.google.com/docs/reference/js/firestore.persistentcachesettings) · [cloud.google.com/firestore/pricing](https://cloud.google.com/firestore/pricing)
+- `persistentLocalCache` with a multi-tab manager; `cacheSizeBytes` defaults to 100 MB as an LRU threshold.
+- A listener is billed one read per added or changed document.
+- For us: not for the data path. Our functions shape the answers (readiness, slim fields, `Sandbox_` prefixes, password doors). The only fit is a read-only listener on two revision counters (Phase 5a).
+
+**IndexedDB speed.** [Nolan Lawson](https://nolanlawson.com/2021/08/22/speeding-up-indexeddb-reads-and-writes/) · [Chrome relaxed durability](https://developer.chrome.com/blog/indexeddb-durability-mode-now-defaults-to-relaxed)
+- Batch reads with `getAll`/`getAllKeys`/`getAllRecords`.
+- Relaxed durability is about 16× faster for many small writes. Chrome 121 made it the default; `strict` can be asked per transaction.
+- For us: normalised stores read with `getAll` by index; `strict` only for the outbox and drafts.
+
+**Quotas and eviction.** [MDN storage quotas](https://developer.mozilla.org/en-US/docs/Web/API/Storage_API/Storage_quotas_and_eviction_criteria)
+- Chromium: up to 60% of the disk per origin.
+- Under pressure, eviction is LRU by origin and all-or-nothing, and it skips origins granted `persist()`.
+- Safari wipes script-written data after 7 days without interaction (with tracking prevention on).
+- For us: keep `persist()`; budget with `estimate()`; caches are disposable, unsent work is not; use Chrome in the shop.
+
+**Storage Buckets (Chromium 122+).** [developer.chrome.com/docs/web-platform/storage-buckets](https://developer.chrome.com/docs/web-platform/storage-buckets)
+- Several buckets per origin, each evicted on its own, with `persisted` and `durability` per bucket. IndexedDB only so far.
+- For us (optional): the outbox and drafts in a persisted, strict bucket; caches in a default bucket.
+
+**OPFS.** [MDN OPFS](https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system) · [web.dev/opfs](https://web.dev/opfs)
+- A private file system per origin, with synchronous access handles available only in workers.
+- For us (optional, later): multi-MB sheet outputs written from the worker.
+
+**Service worker and Cache Storage.** [Workbox runtime caching](https://developer.chrome.com/docs/workbox/caching-resources-during-runtime) · [web.dev](https://web.dev/runtime-caching-with-workbox)
+- Cache-first for versioned assets. Stale-while-revalidate always revalidates. Expiry is handled by plugins.
+- For us: `?v=` scripts and pictures cache-first, removing about 150 requests per reload; HTML and functions never cached.
+
+**Web Locks and BroadcastChannel.** [MDN Web Locks](https://developer.mozilla.org/docs/Web/API/Web_Locks_API) · [W3C](https://www.w3.org/TR/web-locks/)
+- One named lock makes one tab the leader. When that tab closes, the lock passes to the next one waiting.
+- For us: lock `cn-sync:<world>` for the feed, `cn-outbox:<world>` for sending; reuse `cn-poll.js`'s election.
+
+**Background Sync.** [MDN](https://developer.mozilla.org/en-US/docs/Web/API/Background_Synchronization_API)
+- Chromium only.
+- For us: a bonus at most, never needed for correctness.
+
+**Scheduling.** [scheduler.yield()](https://developer.chrome.com/blog/use-scheduler-yield)
+- `yield` splits long tasks; work only leaves the main thread in workers.
+- For us: parsing and IndexedDB work go in the sync worker; redraws are batched once per frame.
+
+---
+
+## 4 · Principles
+
+1. **Read local, always.** Surfaces draw from memory, then IndexedDB. The network is never between a click and the paint. A record never seen on this computer shows a skeleton for one round trip, once.
+2. **Freshness by revision, not by time.** A record is re-read only when the feed says its key moved. The "older than 60 s, re-list everything" rule ends.
+3. **Write local first, then send.** The mutation goes into the IndexedDB outbox (strict durability) and onto the in-memory view in the same event turn. The server's answer is canonical.
+4. **The server stays authoritative** for anything with a rule, a lock or money behind it (5.10). Locally it is only predicted and marked pending.
+5. **One feed and one writer per computer.** A Web Locks leader per world; the other tabs follow over BroadcastChannel.
+6. **Everything local is disposable except unsent work.**
+7. **Worlds never mix.** Separate databases per world. Only content-addressed bytes are shared.
+
+---
+
+## 5 · Design
+
+### 5.1 Architecture
+
+```
+each tab:  surfaces ──read (sync)──► charm-nest-store.js (memory view = server base ⊕ pending mutations)
+                    ──write──► Store.mutate() ──► outbox (IndexedDB, strict) + redraw now
+           charm-nest-store.js ◄─postMessage─► charm-nest-sync-worker.js
+                                               · owns IndexedDB cn-local.<world>
+                                               · if it holds lock 'cn-sync:<world>' (leader):
+                                                   changes{since} / getMany / outbox drain ──► Netlify functions
+                                               · JSON parse and IndexedDB writes off the main thread
+other tabs ◄── BroadcastChannel 'cn-store:<world>' {mutate | ack | fail | changed}
+shared:    IndexedDB cn-blobs (content-addressed master bytes, parsed vectors and bitmaps, pictures)
+           Cache Storage cn-static-v1 (service worker: ?v= scripts, ?v= pictures)
+```
+
+### 5.2 Stores
+
+**`cn-local.production` / `cn-local.sandbox`**
+
+| Store | Key | Indexes | Contents | Kept | Cap |
+|---|---|---|---|---|---|
+| `meta` | name | | schema, world, `clientId`, sandbox epoch, feed cursor `{n, floor}`, per-list `since` | always | |
+| `sheets` | `id` | `setId`, `runId`, `day`, `metal`, `orders`*, `skus`*, `updatedAt` | slim row (`LASER_SHEET`/`SLIM_SHEET` fields, ≈4 KB) + `rev` (server updateTime) | 120 days by `day` | ≈2,500 rows ≈10 MB |
+| `sheetFull` | `id` | `usedAt` | the full `getSheet` answer + `rev` | 14 days since use | LRU 300 / 150 MB |
+| `sets` | `setId` | `day`, `runId`, `current` | set records + `rev` | 120 days | small |
+| `runs` | `runId` | `status` | run records + `rev` | open + 30 days | small |
+| `pool` | `poolId` | `orderId`, `sheetId`, `state` | pool rows of shown or open orders | open + 14 days | ≈10k |
+| `orders` | `receiptId` | `state`, `createTs` | pulled order rows with `updateTs` | shipped + 14 days | |
+| `custom` | `rid` | `updatedAtMs` | custom-order records | 60 days | |
+| `cancelled` | `orderId` | `at` | cancel records | 120 days | |
+| `timeline` | `orderId` | `usedAt` | last `timelineGet` + rev | 14 days since use | LRU 300 |
+| `outbox` | `seq` (auto) | `entity`, `state` | pending mutations | **until acknowledged, then deleted** | never evicted; banner if >200 or >10 min old |
+| `drafts` | `kind:id` | | Manual Control poses, words being typed, Team drafts, set edits | **deleted when committed or discarded** | never evicted |
+
+\* multiEntry index (one entry per array element).
+
+`cn-master-list` and `cn-map-copy` stay as they are. Once the feed reports their signature keys, they can paint first and check afterwards.
+
+**`cn-blobs`** (shared; content-addressed and immutable)
+
+| Store | Key | Contents | Cap |
+|---|---|---|---|
+| `bytes` | `storagePath@generation` (the `charmNestAsset` ETag) or `sha256:<hash>` | master `.ai`, source uploads, sheet outputs; staged uploads tagged `staged` | LRU 400 MB |
+| `parsed` | `charmHash\|parserRev` (the `?v=` of `charm-nest-pdf.js`/`charm-nest-geom.js`, like `DRAW_REV`) | grouped vectors, outline, members, bodies, silhouette bits (ArrayBuffer), keep-outs | LRU 2,000 / 300 MB |
+| `pics` | (existing `cn-thumbs`) | thumbnails | 9,000 / 120 MB / 45 days |
+
+**Session-only** (memory and sessionStorage): selected tab, scroll, open windows, hover, selection.
+
+**Deleted right after use:**
+- outbox entries, once acknowledged;
+- drafts, once committed;
+- staged bytes, once the upload is confirmed;
+- best-layout records, once the sheet is saved (already done);
+- all of `cn-local.sandbox`, on a sandbox reset.
+
+**Quota.**
+- At start, read `navigator.storage.estimate()`. Above 70% of quota, trim the caches to 60%: blobs first, then `sheetFull`, then `timeline`.
+- On `QuotaExceededError`:
+  - a cache write evicts, retries once, then skips;
+  - an outbox write frees cache space first. If it still fails, the mutation is kept in memory with a small localStorage journal, and a red banner reads "This computer is out of space — work is not being saved locally".
+- Keep `persist()` and show `persisted()` in the cloud tooltip.
+- Where Storage Buckets exist, put the outbox and drafts in a `{persisted:true, durability:'strict'}` bucket.
+
+### 5.3 Reads: memory → IndexedDB → network, keyed by revision
+
+- `Store.get(kind, id)` answers synchronously from memory.
+- `Store.subscribe(kind, id|filter, fn)` calls `fn` now with the local copy, then again on every change.
+- `Store.need(kind, id, {full})` fetches once if the record is missing or stale.
+- **At start**, the worker reads with `getAll` by index, in one or two transactions: the current day window of `sheets`, `sets` where `current`, open `orders`, and the last 14 days of `custom`. It posts them in one message, and the Library and Orders paint before any network call. Then it asks `changes {since: meta.cursor.n}`.
+
+**Server additions (additive):**
+- **`getSheet {id, ifRev}`.** First a read with `fieldMask:['updatedAt']`. If `revOf(snap) === ifRev`, answer `{unchanged:true, rev}`: 1 read, no `refreshLinks`, no readiness. Otherwise answer as today, plus `rev`.
+- **`getMany {keys:['s:…','t:…','r:…','c:…'], ifRevs}`.** Up to 300 keys, `db.getAll` per collection (slim fields for `s:`). Returns only the changed records plus `gone:[keys]`.
+- **`listSheets` / `setList` with `since`.** Add `where('updatedAt','>=', since − 15 s)`, using the automatic single-field index. The 15 s overlap absorbs clock skew between instances; `charm-nest-review-live.js` already does this.
+- **Links** are refreshed only when a download fails (`charm-nest-assets.js` `recover`), not on every `getSheet`.
+
+**History search.**
+- The Sets dialog and order search query the multiEntry indexes `sheets.orders` and `sheets.skus`, and `sets.day`.
+- `findSheets` is called only for dates before the oldest local `day`, with the words "searching older records in the cloud…".
+
+### 5.4 The changes feed
+
+**Server op `changes {since, verify?}`**, built on `bumpRev`'s document. `Charm_Nest_Rev/library` holds `{n, mapN, floor, changed:{key:n}}`; the sandbox copy is `Sandbox_Order_Rev/_library`.
+
+**1. Widen what it records**
+- **New key kinds** for what the page caches:
+  - `p:<orderId>` for pool rows (`poolPut`/`poolUpdate`/`poolTakeOff`);
+  - `x:<orderId>` for cancels;
+  - `o:<orderId>` for timelines;
+  - `m:index` when the master index signature moves;
+  - `a:aliases`, `a:options`, `a:nodesign` for the learned maps.
+- **Keys named by each op** through `revTouch`.
+- **`REV_CAP`** raised from 200 to 1,000 (≈40 KB).
+- **Contention.** Firestore's soft limit is about one sustained write per second per document.
+  - Call `bumpRev` once per op with all its keys, never once per pool row.
+  - If the rate stays above about 1/s, shard the document by kind.
+
+**2. Answers**
+- `since === n` → `{n}` (1 read).
+- `floor ≤ since < n` → `{n, keys:[k where changed[k] > since]}` (1 read).
+- `since < floor`, or `mapN !== n` → `{n, reset:true}`. The client re-checks what it holds (`getMany` with `ifRevs`, `listSheets {since}`) and continues from `n`.
+
+**3. Safety net**
+- Every 10 minutes the leader sends `verify:true`. The server then probes the update times of the records on screen (`laserUnchanged`-style, as `verifyMs` does today) and re-reads one random visible record in full. That costs about 6 reads an hour.
+
+**Client loop (`charm-nest-sync-worker.js`, leader only)**
+- **Pace.** Today's `pace()`: 3 s while someone touched *any* tab of this computer in the last 2 minutes, 15 s otherwise, 60 s after 10 minutes.
+  - It stops when every tab is hidden.
+  - It reads at once on `online` and when a tab becomes visible.
+  - A write's acknowledgement carries `n`, so no extra read follows.
+- **A changed answer** becomes one `getMany` for the changed keys this computer holds or shows. Other keys are only marked stale. The results go into IndexedDB in one transaction and out as a `{changed}` broadcast; tabs redraw only what changed, reusing `LaserReview.applyStatus`'s signature diff.
+- **Pollers removed:**
+  - the Library live read;
+  - the placement-feed timer (`adoptHolds` stays, as a subscriber);
+  - ReviewLive;
+  - the timeline feed;
+  - the sheetwin `follow`.
+- **The seal check** (`recordSeals:true`) runs only on the leader, once a minute, while some tab shows the Library.
+- **Ordering.** `n` is read before the documents, as `readRev` already guarantees. A write that lands during a fetch therefore moves `n`, and the next poll catches it. The worst case is one extra read; data is never stale for more than one cycle.
+
+### 5.5 Push (Phase 5, owner's choice)
+
+**(a) Firestore listener.**
+- Vendor the SDK, since COEP `require-corp` rules out a CDN.
+- Security rule: only the revision documents are readable. They hold just `{n, at}`, mirrored in the same transaction; the key list stays behind the function.
+- The leader calls `onSnapshot`. Cost: 1 read per change per listening computer, 0 when idle.
+
+**(b) Long-poll `changesWait {since}`.**
+- In the function, an admin-SDK `onSnapshot` resolves on the first change or after about 20 s.
+- Netlify's synchronous limit is 10–60 s depending on the plan, and its documentation disagrees with itself, so configure it and test it ([docs](https://docs.netlify.com/build/functions/configuration/), [support guide](https://answers.netlify.com/t/support-guide-why-is-my-function-taking-long-or-timing-out/71689/1)).
+- Cost: about 180 invocations per idle computer-hour, billed for their waiting time.
+
+**(c) Neither.** Phase 2's poll already costs ≤60 calls per idle computer-hour.
+
+### 5.6 Writes
+
+**Mutation format** (in `outbox`):
+
+```js
+{ seq, mid: `${clientId}-${counter}`, world, kind: 'sheetPatch', entity: 's:<id>',
+  op: 'putSheet', args: { sheet: { id, …patch } }, fields: ['placements.<pid>.pose'],
+  baseRev, createdAt, by, state: 'pending'|'sending'|'failed', tries, nextAt, error }
+```
+
+**`Store.mutate()`**, in the event turn of the press:
+1. Apply the change to memory (server base plus pending changes) and redraw.
+2. Write the mutation to IndexedDB with `durability:'strict'`.
+3. Notify the worker and broadcast to the other tabs.
+
+On a reload, pending mutations are re-applied on top of the server base, so the work looks exactly as it was left.
+
+**Coalescing**
+- Same `entity` and same `fields`, not yet `sending`: the new mutation replaces the old.
+- Same entity, both pending: they merge into one patch.
+- Manual Control:
+  - each drag end writes the `drafts` entry `mc:<sheetId>`, debounced 150 ms;
+  - turning it off, or 2 s without a move, produces **one** `sheetLayoutPatch {id, baseRev, poses}`;
+  - the file rebuild, upload and label are a separate background **file job** that retries by itself. The layout is never lost if an upload fails.
+
+**Sending**
+- The leader holds `navigator.locks.request('cn-outbox:'+world)` and drains in `seq` order, up to 20 per call where the op allows.
+- `keepalive` on `pagehide` for bodies under 60 KB.
+- Backoff: 1, 2, 4 … 60 s with ±20% jitter. It resets on `online`, on visibility and on any success.
+
+**Server (additive)**
+- **`mid`.** In the op's transaction, read and write `Charm_Nest_Mutations/<mid>` (TTL 7 days). A repeated `mid` returns the stored result and writes nothing. Ops that are already idempotent (`timelineAdd` ids, `setAllocate`) can skip this.
+- **`ifRev`.** If the document moved since `ifRev`:
+  - non-overlapping fields → apply and answer `{ok, rev, rebased:true}`;
+  - overlapping fields → 409 `{conflict, current, fields}`;
+  - today's semantic 409s stay exactly as they are.
+- **Answers carry `{rev, n, rec}`.** The client replaces its base, drops the mutation and rebases what is still pending. The fan-out in `api()` (`OrderWin.nudge`, `LaserReview.written`, `PlacementFeed.nudge`, `ReviewLive.nudge`) is then removed.
+
+**On 409**
+- Disjoint fields → automatic rebase.
+- Same field → the later write wins (the proposed policy) and the person is told, e.g. "Ana moved this charm 20 s ago — your position was kept".
+- A rule, lock or cut → roll back and show the server's own words.
+
+**Never losing work**
+- The outbox and drafts are written before the press returns.
+- Flush on `pagehide` and `visibilitychange:hidden`.
+- A mutation is deleted only after its acknowledgement is committed.
+- Test: kill the page between send and ack, reload, and the mutation is resent; `mid` makes the resend a no-op.
+
+**Per-entity rules**
+
+| Entity | Local | Server | Conflict |
+|---|---|---|---|
+| Manual Control poses | per-charm, later write wins; a pending pose wins on screen | `manualClaim` must be held; cut sheets refused | claim lost: "X took this sheet"; the draft is kept |
+| Sheet label / releaseFull / topup | field patch | `ifRev` | automatic rebase |
+| Pool row (hold, take-off, release) | predicted "holding…" | transaction as today | refusal → rollback |
+| Approvals, Complete Order, QR print (`custom*`, `reviewMarkPut`) | stamp at once with a pending tick | as today | rollback, stamp removed |
+| Set membership (`flowApply`, `setUpdate`) | predicted card position | rules R1–R12 | refused → the card flies back with the reason |
+| Laser done, seals, rose cut | **not optimistic beyond a button spinner** | server only | |
+
+### 5.7 Files
+
+**Master designs**
+- `readMasterCharm` (bridge ≈4217) asks `cn-blobs.parsed` for `charmHash|parserRev` first.
+- A hit skips download, `parseSource`, `groupCharms`, `buildSilhouettes` and `splitBodies`.
+- A miss downloads the file (kept in `bytes` as `path@generation`), parses it in `charm-nest-compute-worker.js` (`parse`, `group`, `silhouettes` already live there) and stores the result.
+- A re-pointed SKU (REDRAW) carries a new `charmHash`, so the old entry is never used again.
+
+**Sheet outputs**
+- Pictures are already versioned (`?v=<previewAt>`) and are served cache-first.
+- `.ai`, PDF and label files are cached by `path@generation`.
+
+**Service worker (`charm-nest-sw.js`, scope `/`)**
+- No precache.
+- Cache-first for same-origin `GET` with `?v=`: about 147 scripts, `vendor/*`, and `charmNestAsset …&v=` pictures.
+- Network-only for HTML and every function call.
+- One `cn-static-v1` cache, pruning older `?v=` versions of each path.
+- The HTML is `no-store` and names each script by version, so a stale worker can never run old code with new HTML.
+- Kill switch: `/charm-nest-sw-off.json`, or a flag in `ping`, makes it unregister itself.
+- `netlify.toml` gets `no-cache` for `/charm-nest-sw.js`.
+- COEP is satisfied, since everything is same-origin.
+
+**OPFS** (later): only if IndexedDB Blob writes of multi-MB outputs show up in profiles.
+
+### 5.8 Compute off the main thread
+
+**Already in workers:** nesting (`charm-nest-worker.js`), and parse, group, silhouettes, thumbnail, sheet, single, back, DXF and rose (`charm-nest-compute-worker.js` via `charm-nest-background.js`).
+
+**Next:**
+1. Store I/O and JSON parsing move to the sync worker. Today `readBody` and `JSON.parse` handle 1.3 MB Library answers on the main thread.
+2. Manual Control's `mcCheck`/`mcGrid` move to the compute worker, with the occupancy bits transferred once, but only if the Manual Control agent's profiles show them in long tasks.
+3. Phase 6 retires `Session.capture()`, today's deep copy of hundreds of ms. The store already holds every record, so the checkpoint shrinks to `meta.workspace` plus live nesting state written per sheet.
+4. The rebuild after Manual Control (`rewritePage` → `buildSheet` in the worker) becomes the leader's background file job.
+
+### 5.9 Sandbox and production
+
+- **Separate databases** `cn-local.production` and `cn-local.sandbox`. The store refuses any record or mutation whose `world` does not match, and `api()`'s `payload.sandbox` tag stays.
+- **Sandbox reset.** `Sandbox.wipe` bumps the epoch (as today) and deletes `cn-local.sandbox`.
+  - Register `indexedDB:cn-local.sandbox` in `charm-nest-sandbox-families.js`, so `charm-nest-sandbox-browser.js` deletes it in every tab.
+  - A tab that sees the epoch change stands down and reloads (`Session.stand`); its worker closes the database on `onversionchange`.
+- **The sandbox feed** reads `Sandbox_Order_Rev/_library` (`SB_REV_COLL`, already separate).
+- **`cn-blobs` is shared** because its keys name bytes, never records.
+
+### 5.10 Server-authoritative, always
+
+- Set rules and membership (`joinRulesFor`, R12, `SetEdit.committedSet`) and set numbering (`setAllocate`).
+- Locks: `manualClaim`, the repo password door (`_charmNestRepoAuth.js`), the wipe flag.
+- Laser state: `laserDone`, seals and readiness (`recordProcessReadiness`), step stamps, `laserHold` and flow history.
+- Rose stock and protected cut layouts (`_charmNestRoseStock.js`).
+- Cancel state and every Etsy write (`editSkuEtsy`, `customEtsySkuWrite`, the zodiac fence).
+- Piece uniqueness: on one sheet only; held or cancelled pieces never put back.
+
+### 5.11 Calls per hour, now and after
+
+**Per tab.** Active is measured. Quiet and idle are scaled from each feed's own constants.
+
+| Tab | Active /h | Quiet /h | Idle /h |
+|---|---|---|---|
+| Orders | 2,880 | ≈900 | ≈180 |
+| Review | 3,840 | ≈780 | ≈180 |
+| Library | 2,520 | ≈780 | ≈210 |
+| Engrave / Nest | ≈60 | ≈60 | ≈60 |
+| + order window open | +≈800 (`timelineGet` alone ≈1,080) | +≈240 | +≈60 |
+| + sheet window open | +≈1,300 (`laserStatus` alone ≈1,860) | +≈260 | +≈60 |
+
+**Illustrative production hour.** Assumes about 600 writes in the shop, at about 5 follow-up reads each.
+
+| Computer | Its hour | Now | After Phase 2 | After Phase 5 |
+|---|---|---|---|---|
+| A (Paul, 1 tab) | Orders 30 min, Review 15, Library 15, active; windows ≈20 min | ≈3,400 | ≈960 polls + ≈200 fetches | ≈200 |
+| B (laser) | Library 20 min active, 40 quiet | ≈1,360 | ≈560 + ≈200 | ≈200 |
+| C (engraving) | Engrave 30 min, Review 30 min active | ≈1,950 | ≈720 + ≈200 | ≈200 |
+| D (2 idle tabs) | | ≈360 | ≤60 | ≈0 |
+| Writes | | 600 + ≈3,000 follow-up reads | ≈400 coalesced, no follow-ups | ≈400 |
+| Seal check, Team mail, upkeep | | ≈500 | ≈100 | ≈100 |
+| **Total** | | **≈12,000** (it doubles if each person keeps a second tab open) | **≈3,000–3,500** | **≈1,000** |
+
+**Firestore reads.**
+- An unchanged poll costs 1–2 reads, both now and after.
+- A changed answer today re-reads about 59 documents (Library), 100–176 (placement) or 300+ (lists).
+- After, a change costs only the documents that changed, usually 1–5 through `getMany`.
+- Full list reads fall from roughly one per Library visit per minute to one per computer per day, or after a `reset`.
+
+---
+
+## 6 · Phased plan
+
+Every phase ships on its own, falls back to today's path without IndexedDB, and is gated by `tests/perf/sorter-scale.cjs` plus `count-calls.cjs` promoted to `tests/perf/calls-per-hour.cjs`.
+
+### Phase 0 — now (the two agents at work)
+
+- **Manual Control write-behind.** Store the draft as `{kind:'mc', sheetId, baseRev, poses}` behind one small `LocalDrafts.put/get/drop`, so Phase 3 can move it into `cn-local.drafts` unchanged.
+- **Navigation stale-while-revalidate.** Key the cache by **id + rev** (the `updatedAt`/`revs` that `getSheet` and `laserStatus` already return), not by time alone, so Phase 1 can swap the Map for the store.
+
+### Phase 1 — local record store and revision-keyed reads (the biggest felt win)
+
+**Changes**
+- New `charm-nest-store.js`: the API, the `cn-local.<world>` and `cn-blobs` schema, the `getAll` boot, LRU/TTL, quota handling.
+- `charm-nest-sheetwin.js`:
+  - `open()` (≈1139) paints from `sheetFull` and then asks `getSheet {ifRev}`;
+  - `orderRecs` (≈6057) is replaced by the store;
+  - `follow` sends `ifRev`.
+- `charm-nest-1.html`:
+  - `loadLibrary` (≈8005) paints from the store, then `listSheets {since}`;
+  - `api()` de-duplicates identical reads in flight.
+- `charm-nest-bridge.js`:
+  - `LaserReview.record`/`patch` write through to the store;
+  - `readMasterCharm` (≈4217) uses `cn-blobs.parsed`.
+- Server: `getSheet {ifRev}`, `listSheets`/`setList {since}`, `getMany`.
+
+**Owner:** OK for the new served file (`scripts/build-public.cjs` and a `<script>` tag). Register the sandbox database in `charm-nest-sandbox-families.js`.
+
+**Gates**
+- Reopening a sheet seen in the last 14 days, including after a reload, shows the full plate and orders in **under 100 ms**, with no veil. Playwright, functions delayed 2 s with `context.route`.
+- An unchanged `getSheet` answers under 1 KB at 1 Firestore read (an `adv-cost.cjs`-style count).
+- A warm reload paints the Library cards **within 500 ms** of the scripts running.
+- Library revisit: 1.3 MB → under 20 KB when nothing changed.
+- 0 master downloads and 0 parses after a reload for designs used in the last 30 days.
+- Everything still works with `window.indexedDB` removed.
+
+### Phase 2 — one changes feed per computer
+
+**Changes**
+- New `charm-nest-sync-worker.js`: Web Locks leader (reusing `cn-poll.js`), the feed loop with `pace()`, `getMany`, IndexedDB writes, broadcasts.
+- The timers become subscribers:
+  - `charm-nest-placement-feed.js` `tick`;
+  - `charm-nest-review-live.js`;
+  - `charm-nest-timeline-ui.js` (the window subscribes to `o:<orderId>`);
+  - `LaserReview.readLive` (keeping `applyStatus`);
+  - sheetwin `follow`.
+- The seal check runs on the leader only.
+- Server: `changes {since}`; `revTouch` for `p:`, `x:`, `o:`, `m:`, `a:` keys; `REV_CAP` 1,000; one `bumpRev` per op.
+- Contention test in `tests/perf/server-scale.cjs`: 5 writes/s for 60 s with no failed `bumpRev`.
+
+**Owner:** OK for the new worker file.
+
+**Gates**
+- ≤20 polls per active minute per **computer**, any number of tabs, plus change fetches.
+- 3 idle tabs: ≤60 calls/h (today ≈540).
+- A Hold on computer A shows on computer B in ≤3 s while B is active (two browser contexts on the fixture server).
+- Orders per active minute 48 → ≤20; Review 64 → ≤20.
+
+### Phase 3 — outbox, optimistic writes, `mid` + `ifRev`
+
+**Changes**
+- `Store.mutate` and the worker's drain.
+- Move `order-timeline.js`'s outbox and TeamMail's onto it, keeping their wire formats.
+- Convert presses one at a time:
+  1. Manual Control: `mcSave` becomes `sheetLayoutPatch` + file job. `mcToggle` lets the first drag happen at once while the claim is taken in the background, rolling back if it is refused.
+  2. Hold and Release (`charm-nest-order-hold.js`, `charm-nest-order-release.js`).
+  3. Approvals and Complete Order (`custom*`, `reviewMarkPut`).
+  4. Labels and `releaseFull` (sheetwin ≈2237–2272).
+  5. `flowApply`.
+- Remove `api()`'s read fan-out.
+- Server: `mid` + `Charm_Nest_Mutations` (TTL 7 days); `ifRev` with a field-overlap check; answers carry `{rev, n, rec}`.
+
+**Gates**
+- Every converted press paints in the same frame: under 16 ms from event to paint, with functions delayed 3 s.
+- **Zero lost writes:** close the page mid-request, and also `context.setOffline(true)`; reload; the outbox drains exactly once (a `mid` test).
+- A Manual Control session costs 1 patch + 1 file job (today 6–7 calls plus uploads and heartbeats).
+- Follow-up reads per write: 7 → 0.
+
+### Phase 4 — files and boot (service worker, blobs)
+
+**Changes:** new `charm-nest-sw.js` with a kill switch, registered from `charm-nest-1.html`; a `netlify.toml` header for it.
+
+**Owner:** OK for the service worker.
+
+**Gates**
+- Static requests on a warm reload: ≈150 → ≤3.
+- A warm first usable screen in under 800 ms.
+- Pictures are downloaded once.
+- With the network cut, the page loads, shows the Library and orders, and queues writes.
+
+### Phase 5 — push (choice a, b or c in 5.5)
+
+**Gates:** idle calls ≈0 with (a), or ≤180 long-polls an hour with (b); another computer's change appears in ≤1 s.
+
+### Phase 6 — retire the snapshot checkpoint
+
+**Gate:** no main-thread task over 50 ms caused by saving to disk.
+
+---
+
+## 7 · Risks
+
+| Risk | Handling |
+|---|---|
+| **Stale data with several computers** (a laser person acting on an old view) | Reads keyed by revision; a feed at most one cycle behind; a 10-minute `verify`. Everything physical (laser done, release, cut, hold) is checked on the server at write time, so an old view can *show* old state but never *commit* it. |
+| **A missed change** (console edit, old function instance) | `verify` probes plus one random full re-read per sweep; `reset` below `floor`; a "Reload from cloud" in Settings that drops `cn-local.<world>`. |
+| **Locks** | `manualClaim` stays on the server with its heartbeat. A lost claim keeps the draft and names who holds the sheet. The outbox orders one computer's writes; the server orders writes across computers. |
+| **Revision document contention** | One `bumpRev` per op; shard if writes stay above about 1/s; a contention test. |
+| **Quota loss or eviction** | Caches rebuild from the cloud. Unsent work is small and sent within seconds; `persist()` and a persisted bucket protect it; a test checks the banner. |
+| **Schema changes** | A version per database. `onupgradeneeded` may rebuild caches but must migrate `outbox` and `drafts`. `onblocked` asks the person to close the other tabs; older tabs reload on `versionchange`. Records carry the code revision that wrote them. |
+| **Sandbox and production mixing** | Separate databases, a world check on every write, the epoch, the reset deletes the database, blobs content-addressed only. Test: a sandbox reset leaves production's store untouched. |
+| **The service worker serving old code** | No precache; only `?v=` URLs cached; HTML network-only; kill switch; foreign caches deleted on activate. |
+| **Customer data on disk** | Horizons set by the owner; origin-private storage; sign-out offers "forget this computer's copy". |
+| **First sync on a new computer** | Skeletons only for records never seen. Open orders and current sets load first, history on idle (as Linear streams its bootstrap). |
+| **Optimistic UI showing something the server then refuses** | Optimism only where refusals are rare and reversible; a pending tick until the acknowledgement; laser done and release not optimistic. |
+| **Two systems during migration** | A flag per surface (`S.settings.localFirst.<surface>`); old pollers stay until their surface is converted; `tests/charm-nest` runs both paths. |
+
+---
+
+## 8 · Open points for the owner
+
+1. OK to add `charm-nest-store.js`, `charm-nest-sync-worker.js` and `charm-nest-sw.js` to `scripts/build-public.cjs`, plus the `netlify.toml` header for the service worker?
+2. The push channel: (a), (b) or (c)?
+3. Local horizons, and whether customer words may stay on shop computers that long.
+4. Same-field conflicts: the later write wins and the other person is told, or both are refused?
+5. Chrome with "keep site data" on the shop computers?
+
+## Sources
+
+- https://inkandswitch.com/local-first/
+- https://linear.app/now/rebuilding-delta-sync-read-path · https://github.com/Aslam97/reverse-linear-sync-engine · https://performance.dev/what-makes-linear-feel-instant
+- https://doc.replicache.dev/concepts/how-it-works · https://doc.replicache.dev/reference/server-pull · https://zero.rocicorp.dev/docs/when-to-use
+- https://www.figma.com/blog/how-figmas-multiplayer-technology-works/
+- https://electric-sql.com/docs/api/http
+- https://rxdb.info/replication.md · https://rxdb.info/articles/indexeddb/indexeddb-sync.html
+- https://automerge.org/blog/automerge-2/ · https://docs.yjs.dev/api/internals
+- https://firebase.google.com/docs/reference/js/firestore.persistentcachesettings · https://cloud.google.com/firestore/pricing
+- https://nolanlawson.com/2021/08/22/speeding-up-indexeddb-reads-and-writes/ · https://developer.chrome.com/blog/indexeddb-durability-mode-now-defaults-to-relaxed
+- https://developer.mozilla.org/en-US/docs/Web/API/Storage_API/Storage_quotas_and_eviction_criteria
+- https://developer.chrome.com/docs/web-platform/storage-buckets
+- https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system · https://web.dev/opfs
+- https://developer.chrome.com/docs/workbox/caching-resources-during-runtime · https://web.dev/runtime-caching-with-workbox
+- https://developer.mozilla.org/docs/Web/API/Web_Locks_API · https://www.w3.org/TR/web-locks/
+- https://developer.mozilla.org/en-US/docs/Web/API/Background_Synchronization_API
+- https://developer.chrome.com/blog/use-scheduler-yield
+- https://docs.netlify.com/build/functions/configuration/ · https://answers.netlify.com/t/support-guide-why-is-my-function-taking-long-or-timing-out/71689/1
