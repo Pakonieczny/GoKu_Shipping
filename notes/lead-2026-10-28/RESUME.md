@@ -18,7 +18,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - Live board (dashboard artifact): https://claude.ai/artifact/RdLASAbUtTQMqU1Mb6ExLG. Rows in $SP/board/agents.json.
   Refresh: `python3 -I $SP/board-live.py` → Artifact publish {url, file_path: $SP/board/agents.json, asset:true} → ArtifactData update
   url, collection "datasets", doc_id "agents", if_version <current>, data {source:{format:"json",kind:"file",name:"agents.json",url:"<blob url>"},
-  updated:{at,by:"Claude"}}. Last version written: 91 (next write if_version 91; if refused, the error names the current version).
+  updated:{at,by:"Claude"}}. Last version written: 126 (next write if_version 126; if refused, the error names the current version).
 - Plan doc for Paul (local-first): https://claude.ai/artifact/GykrjmCTLTbcohMCKBrkyZ (decisions recorded).
 
 ## Scripts ($SP)
@@ -138,3 +138,10 @@ board-live-extra.json with the new agent ids.
 ## Scheduled resume messages: ALL DELETED at 06:33 (work resumed). Old list for reference: The usage limit resets at 2:31 am Toronto = 06:31 UTC, 28 Oct 2026.
 06:33 trig_01S4EwRYu7UdCm7koKNqYLvA (main) · 06:50 trig_01CQebUb74FYfm9bW1vZmmSK (backup) · 07:30 trig_013sPayqPjKBmoHEd7DobThs ·
 08:30 trig_01X1G9rAxWwbSQXPZhdr3fD5 · 09:30 trig_018Vyc472WYCC6N2WXYxmy9y (backups). Once you are working again, delete the remaining ones (delete_trigger).
+
+## 28 Oct ~16:00 UTC — Phase 5 SHIPPED (main 6d06219) and checked live
+- Live files match main; 7 pages load with no errors. Read-only Sandbox smoke test ($SP/smoke/p5-live.cjs): from goldenspike.app the real Firestore listener connects in ~12 s, Settings says "Live updates: push", 1 snapshot, only Listen/channel requests to Firestore (HTTP 200), no write op sent (my route guard blocks every non-read function call). So the API-key referrer restriction / App Check do NOT block it in Sandbox.
+- Not yet seen live: an actual change on one computer appearing on another through the counter (needs a Hold/Release press from Paul's side; Real world untested live because the app is in Sandbox mode).
+- No agents running. Board row local-push-p5 = done (board version 126).
+- Open for Paul: Real-mode TTL for Charm_Nest_Mutations once a Real-mode press creates it; press Approve on order 4212020155 and read the line under the button; held-order approval + Release Hold button colour confirmations.
+- Phase 6 (retire snapshot checkpoint) is in the plan but NOT requested.
