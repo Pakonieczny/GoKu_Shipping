@@ -418,7 +418,10 @@ body:has(.topbar details[open]) .toasts{opacity:0;visibility:hidden;transition:o
 /* Orders and the Library end their first row with controls (sort, Cards | List, the metal chips), and a notice there
    covered them (audit, 25 Sep): on those two tabs notices start under that row. The Design Station tab too (26 Oct 2026): its console's
    first row is Take control · Open station · Connect Etsy, and "not signed in to Etsy — press Connect Etsy" sat on the very button it named. */
-body:has(#ordersView:not(.hidden)) .toasts,body:has(#libView:not(.hidden)) .toasts,body:has(#designView:not(.hidden)) .toasts{top:calc(var(--chromeH,96px) + 56px)}
+/* NAV (28 Oct 2026, Paul: "every interaction ... must be as responsive as Photoshop"): said by a class setMode puts on the toasts box (.underRow), not by
+   body:has(#ordersView:not(.hidden)): that rule made every element added anywhere on the page restyle the whole page (2,000+ elements, ~10-30 ms a time,
+   three or four times per order window opened) */
+.toasts.underRow{top:calc(var(--chromeH,96px) + 56px)}
 .toast{background:var(--velvet);color:#f4ecdc;border:1px solid var(--velvetLine);border-radius:11px;padding:10px 14px;box-shadow:0 10px 30px rgba(0,0,0,.24);max-width:380px;display:flex;gap:9px;align-items:flex-start;font-size:12.5px;animation:tin .18s ease;pointer-events:auto}
 @keyframes tin{from{opacity:0;transform:translateY(8px)}}
 .toast .d{width:8px;height:8px;border-radius:50%;background:var(--gold2);margin-top:4px;flex:0 0 auto}
@@ -8267,6 +8270,7 @@ function setMode(mode) {
   // on a narrow window the tab strip scrolls: the tab you are on is always brought into view
   $("#sheets").classList.toggle("hidden", mode !== "nest"); if (mode === "nest") requestAnimationFrame(() => METALS.forEach(m => drawPreview(activePage(m.key)))); $("#libView").classList.toggle("hidden", mode !== "library"); $("#charmsView").classList.toggle("hidden", mode !== "charms");
   for (const [m, id] of [["orders", "ordersView"], ["design", "designView"], ["master", "masterView"], ["efficiency", "efficiencyView"], ["engrave", "engraveView"], ["review", "reviewView"]]) $("#" + id).classList.toggle("hidden", mode !== m);
+  { const t = $("#toasts"); if (t) t.classList.toggle("underRow", mode === "orders" || mode === "library" || mode === "design"); }   // (notices start under the first row of these tabs: .toasts.underRow)
   if (mode === "library") showLibrary(); if (mode === "charms") loadCharms();
   // The rail is the nesting station's own bench — files in, sheets out. On every other tab it was 344 px (a quarter of a
   // 1500 px screen) of controls that do not apply there, taking two columns off the order grid. It folds away unless a

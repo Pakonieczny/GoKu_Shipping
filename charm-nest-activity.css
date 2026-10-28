@@ -49,12 +49,14 @@
 @media(max-width:760px),(pointer:coarse){.cnBtn{height:32px;padding:0 11px}.cnSplit .cnDir{width:32px;padding:0}.cnMenu>button{min-height:44px;font-size:14px}.cnCap{padding:8px 12px 4px}}
 @media(prefers-reduced-motion:reduce){.cnPop.cnIn,.cnPop.cnSheet.cnIn,.cnScrim{animation:none}.cnBtn,.cnChev{transition:none}}
 /* the other tabs' bars keep their own row (it scrolls sideways when a window is too narrow for it); the Orders bar is #ordBar and wraps (below) */
-.ordBar:not(#ordBar):has(.cnListTools),.libBar:has(>.cnListTools),.masterHead:has(>.cnListTools),.hBar:has(>.cnListTools){flex-shrink:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}
-.ordBar:not(#ordBar):has(.cnListTools)>*,.masterHead:has(>.cnListTools)>*,.hBar:has(>.cnListTools)>*{flex-shrink:0;white-space:nowrap}
+/* (NAV, 28 Oct 2026, Paul: "as responsive as Photoshop": a bar holding the tools is marked by mount (.cnToolsIn: the bar's own box; .cnToolsDeep: the .ordBar it is in), not found with :has():
+   .ordBar:has(.cnListTools)>* made every element added anywhere restyle the whole page, ~14 ms each time; the same boxes, the same weights) */
+.ordBar.cnToolsDeep:not(#ordBar),.libBar.cnToolsIn,.masterHead.cnToolsIn,.hBar.cnToolsIn{flex-shrink:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}
+.ordBar.cnToolsDeep:not(#ordBar)>*,.masterHead.cnToolsIn>*,.hBar.cnToolsIn>*{flex-shrink:0;white-space:nowrap}
 .egBar>.egSearchGroup{flex:0 1 220px}
 /* the Engrave bar wraps like the Orders bar instead of scrolling sideways: at 900 px beside the rail its sort button ran off the edge ("Ne…"); the date and
    sort tools take a second line when the first has no room (they fit on one line from about 1000 px) */
-#engraveView .ordBar.egBar:has(>.cnListTools){flex-wrap:wrap;overflow-x:visible;row-gap:6px}
+#engraveView .ordBar.egBar.cnToolsIn{flex-wrap:wrap;overflow-x:visible;row-gap:6px}
 .egBar>.egSearchGroup>.egFind{position:relative;display:flex;flex:1 1 auto;align-items:center;min-width:0}
 .egBar>.egSearchGroup .ordSearch{width:100%;max-width:none;box-sizing:border-box}
 /* the Engrave box's × (Paul, 18 Oct 2026: "Add a 'X' inside the search bar"): the Orders bar's .ordFindX (below), inside the round box at its right, only while it holds text */
@@ -62,7 +64,7 @@
 .egBar .egFind>.ordFindX{position:absolute;top:50%;right:3px;width:20px;height:20px;margin-top:-10px;border-radius:999px}
 .egBar .egFind>.ordFindX:focus-visible{outline-offset:0}
 @media(max-width:760px),(pointer:coarse){.egFind>.ordFindX::before{content:"";position:absolute;inset:-8px}}   /* a finger's reach, the box keeps its size */
-.hBar:has(>.cnListTools){gap:8px}
+.hBar.cnToolsIn{gap:8px}
 /* ── the Orders tab's bar: ONE slim row (the pile tabs and the count at the left; search, Filters, date, sort and view at the right), two rows where the window is narrower, three on a phone ── */
 #ordBar.ordCompact{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;overflow:visible;padding:0 0 8px}
 #ordBar.ordCompact>*{flex-shrink:1;white-space:normal}
