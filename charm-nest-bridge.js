@@ -21455,6 +21455,19 @@ const OrderWin = window.OrderWin = (() => {
       window is stamped the same way, on its ORDER HELD seal beside the button, kind "hold") */
   function expectStamp(rid, kind, since) { W.relStamp = rid ? { rid: ridDigits(rid), kind: kind || "release", since: +since || Date.now(), until: Date.now() + 120000 } : null; }
   const expectRelease = (rid, since) => expectStamp(rid, "release", since);
+  /* (HOLDSTAYS, 28 Oct 2026: a release that moves nothing ends at once, and the window is painted again two or three times in the next moments: the seal pressed at the first paint was gone
+     before its stamp came down, so the stamp was heard and never seen.) The stamp comes down once the paints have settled, on the seal the window shows then. */
+  function stampSoon(kind, since) {
+    const key = kind + ":" + since; (W.relWaiting || (W.relWaiting = new Map())).set(key, { kind, since });
+    setTimeout(() => {
+      W.relWaiting.delete(key);
+      // (the seal's time can move between paints, the press's own moment first and the saved one after: the newest seal of its kind since the press is the one)
+      const ns = W.dlg ? [...W.dlg.querySelectorAll(`[data-ow-btn-seals] [data-seal-kind="${kind}"]`)].filter(x => (+x.dataset.sealAt || 0) >= since - 1000) : [];
+      const n = ns.sort((x, y) => (+y.dataset.sealAt || 0) - (+x.dataset.sealAt || 0))[0], f = n && n.querySelector(".seal");
+      if (!f) return;
+      f.classList.add("pending"); tryDo(() => Seal.press(f));
+    }, 280);
+  }
   function paintWinSeals() {
     if (!W.dlg) return;
     const list = W.rid ? winSealsOf(W.rid) : [], beside = new Map();   // (the first paint of an opening window comes before the dialog is open)
@@ -21475,8 +21488,10 @@ const OrderWin = window.OrderWin = (() => {
       // (RELSTAMP: the seal of a Release Hold pressed in this window waits unseen, then the stamp comes down on it here, once)
       if (rs && window.Seal && Seal.press) for (const n of g.querySelectorAll(`[data-seal-kind="${rs.kind}"]`)) {
         const at = +n.dataset.sealAt || 0, f = n.querySelector(".seal"); if (!f || at < rs.since - 1000 || (W.relStamped || (W.relStamped = new Set())).has(at)) continue;
-        W.relStamped.add(at); W.relStamp = null; f.classList.add("pending"); tryDo(() => Seal.press(f));
+        W.relStamped.add(at); W.relStamp = null; stampSoon(rs.kind, rs.since);
       }
+      // (a seal waiting for its stamp stays unseen through every repaint until the stamp comes down)
+      if (W.relWaiting && W.relWaiting.size) for (const w of W.relWaiting.values()) for (const n of g.querySelectorAll(`[data-seal-kind="${w.kind}"]`)) { const f = n.querySelector(".seal"); if (f && (+n.dataset.sealAt || 0) >= w.since - 1000) f.classList.add("pending"); }
       keep.add(g);
     }
     for (const g of W.dlg.querySelectorAll("[data-ow-btn-seals]")) if (!keep.has(g)) g.remove();
@@ -25248,6 +25263,8 @@ const Session = window.Session = (() => {
         src.persisting = null; src.t0 = performance.now();
       }
       await Pool.repairRecoveredGeometry(d);
+      // (PENS, Paul 28 Oct 2026: a custom design's piece saved before PENS carries the reader's blue-hatching stamps on its traced image's black level: it is drawn and written in its design's own pens again)
+      try { const CP = window.CharmNestCustomPool; if (CP && CP.inkAsMade) for (const c of [...(d.sources || []), ...Object.values(d.poolSources || {})].flatMap(x => x.charms || []).concat((d.sheets || []).flatMap(g => g.pages || []).flatMap(p => p.charms || []))) if (CP.isFrozen(c) || (c && c.custom && /^cdes:/.test(String(c.sourceId || "")))) CP.inkAsMade(c); } catch (e) { console.warn("[custom piece] pens", e); }
       S.packingCatalog = d.packingCatalog || {};
       S.sources = d.sources || []; S.poolSources = d.poolSources || {}; S.unassigned = d.unassigned || [];
       B.carry = d.carry;

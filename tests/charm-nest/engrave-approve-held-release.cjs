@@ -6,8 +6,7 @@
 //   A  Hold Order, then Release Hold from the Review card, then the Engraving card adjusted and approved: approved at the place the words were moved to, its back file written, the timeline's seal;
 //      the cloud's pool row still carries the hold's marks (history) and nothing reads it as held (OrderPieces, the row, the card)
 //   B  an approval that THROWS (anything inside it, here the seal's record) is never a silent press: the card says what went wrong, Approve is live again, no half-made approval is left, the next press approves
-//   C  an order STILL on hold: its Engraving card (ENGPRE, Paul 13 Oct 2026: "a charm does not have to be placed on that sheet for it to be approved/updated") approves without a sheet and says nothing wrong;
-//      its back file waits for a sheet (none is written while it is held)
+//   C  an order held with Hold Order (HOLDSTAYS, 28 Oct 2026: its piece stays on its sheet): its Engraving card approves there and says nothing wrong; the order stays held
 // Offline only: the REAL page over the repo's fake site with real drawings (_engraveRealWorld.cjs). Made-up names only; no Etsy, no paid call, no live write.
 //   /tmp/.../int/slot.sh timeout 600 node tests/charm-nest/engrave-approve-held-release.cjs      Exit code 1 while any check is red.
 'use strict';
@@ -40,7 +39,9 @@ const Q = '#egQueue .rvItem[data-kind=placement]';
     }
     return { c0, j: await jobOf(rid) };
   }
-  const holdOrder = rid => page.evaluate(async rid => { const row = Orders.rows().find(r => r.order.receiptId === rid); const r = await ReviewSend.press(rid, row, { offSheets: true }); return JSON.parse(JSON.stringify(r)); }, rid);
+  const holdOrder = rid => page.evaluate(async rid => { const row = Orders.rows().find(r => r.order.receiptId === rid); const r = await ReviewSend.press(rid, row); return JSON.parse(JSON.stringify(r)); }, rid);
+  // (HOLDSTAYS, 28 Oct 2026: Hold Order no longer takes a piece off its sheet. An order held BEFORE that, its piece taken off by the old Hold's engine, is still in the shop's data: made here the way it was made then)
+  const legacyHold = rid => page.evaluate(async rid => { const row = Orders.rows().find(r => r.order.receiptId === rid); const r = await ReviewSend.press(rid, row); const off = await HoldUI.takeOff(rid, { name: B.employee || 'Test Operator' }); return JSON.parse(JSON.stringify(Object.assign({}, r, { off: off && off.off }))); }, rid);
   const releaseHold = rid => page.evaluate(async rid => { try { Review.syncOrderItems(); } catch (_) {} const it = ReviewRelease.itemOf(rid); const how = ReviewRelease.of(it); const ok = await ReviewRelease.press(it); return { ok, kind: it.kind, how: how && how.how }; }, rid);
   try {
     await R.build(w, ['back', 'front', 'both']);
@@ -49,9 +50,9 @@ const Q = '#egQueue .rvItem[data-kind=placement]';
     const A = R.ORDERS.back.rid, BOTH = R.ORDERS.both.rid, C = R.ORDERS.front.rid;
 
     // ── A · Hold Order, Release Hold, then the card adjusted and approved ──
-    const h = await holdOrder(A); await R.settle(page, 600);
+    const h = await legacyHold(A); await R.settle(page, 600);
     const a1 = await rowOf(A), aj1 = await jobOf(A), held = cloud('Charm_Pool', p => p.poolId && p.poolId.startsWith(A + '_'));
-    check('A1 Hold Order: the order is on hold, its piece off the sheet, its engraving job gone with it; the cloud\'s pool row carries the hold\'s marks', h.ok && a1.hold && !a1.poolIds.length && !aj1 && held.some(p => p.state === 'abandoned' && p.heldBy && +p.heldAt > 0), JSON.stringify({ h, a1, aj1, held: held.map(p => ({ state: p.state, heldBy: p.heldBy, heldAt: !!p.heldAt })) }));
+    check('A1 an order held by the old Hold: the order is on hold, its piece off the sheet, its engraving job gone with it; the cloud\'s pool row carries the hold\'s marks', h.ok && a1.hold && !a1.poolIds.length && !aj1 && held.some(p => p.state === 'abandoned' && p.heldBy && +p.heldAt > 0), JSON.stringify({ h, a1, aj1, held: held.map(p => ({ state: p.state, heldBy: p.heldBy, heldAt: !!p.heldAt })) }));
     const t0 = Date.now(), rel = await releaseHold(A);
     const a2 = await until(async () => { const j = await jobOf(A); return j && j.state === 'review' ? j : null; }, 120000);
     const row2 = await rowOf(A), live = cloud('Charm_Pool', p => p.poolId && p.poolId.startsWith(A + '_'));
@@ -83,17 +84,17 @@ const Q = '#egQueue .rvItem[data-kind=placement]';
     const b3 = await until(async () => { const j = await jobOf(BOTH); return j && /approved|written/.test(j.state) ? j : null; }, 30000);
     check('B3 the next press approves it', p3 === 'pressed' && !!b3, JSON.stringify({ p3, b3, bj }));
 
-    // ── C · an order still on hold: its card approves without a sheet (ENGPRE), its back file waits ──
+    // ── C · an order held with Hold Order (HOLDSTAYS): its piece stays on its sheet with its engraving job; its card approves, and the order stays held ──
     const hc = await holdOrder(C); await R.settle(page, 600);
     const made = await page.evaluate(async rid => { const row = Orders.rows().find(r => r.order.receiptId === rid); try { await Engrave.early(row); } catch (e) { return String(e && e.message || e); } return 'ok'; }, C);
     const c1 = await until(async () => { const j = await jobOf(C); return j && j.state === 'review' ? j : null; }, 60000);
     const rc = await rowOf(C);
-    check('C1 an order still on hold: its engraving is made without a sheet (ENGPRE) and waits for approval', hc.ok && !!rc.hold && made === 'ok' && !!c1 && c1.pre && c1.sheet.every(x => !x), JSON.stringify({ hc, rc, made, c1 }));
+    check('C1 an order held with Hold Order: its piece stays on its sheet, its engraving waits for approval there', hc.ok && rc.marked && !rc.hold && rc.poolIds.length === 1 && made === 'ok' && !!c1 && c1.sheet.every(Boolean), JSON.stringify({ hc, rc, made, c1 }));
     const kc = await open(C);
     const p4 = await press();
     const c2 = await until(async () => { const j = await jobOf(C); return j && /approved|written/.test(j.state) ? j : null; }, 30000);
-    const cw = await card(kc), still = await rowOf(C), cb = cloud('Charm_Pool_Back', b => b.poolId && b.poolId.startsWith(C + '_') && !b.invalidated);
-    check('C2 its Approve approves it with nothing wrong said; the order stays on hold and no back file is written while it has no sheet', p4 === 'pressed' && !!c2 && c2.state === 'approved' && !/Not approved/.test(cw.why) && !!still.hold && !still.poolIds.length && cb.length === 0, JSON.stringify({ p4, c2, cw, still, backs: cb.length }));
+    const cw = await card(kc), still = await rowOf(C);
+    check('C2 its Approve approves it with nothing wrong said; the order stays held (in Review) and its piece on its sheet', p4 === 'pressed' && !!c2 && /approved|written/.test(c2.state) && !/Not approved/.test(cw.why) && still.marked && still.poolIds.length === 1, JSON.stringify({ p4, c2, cw, still }));
   } catch (e) { check('run', false, String(e && e.stack || e).split('\n').slice(0, 3).join(' | ')); }
   check('no page error', w.errors.length === 0, w.errors.slice(0, 2).join(' | '));
   await w.close();

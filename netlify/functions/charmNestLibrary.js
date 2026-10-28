@@ -349,6 +349,8 @@ async function openReviews(rids,tx=null){
   }catch(e){console.warn('[charmNestLibrary] the orders in Review could not be read (the page still holds them):',e && e.message);}
   return out;
 }
+/* CUSTOMPOOL: the pool ids op_customPiecePut gives (its serial is the day it was sent and a 4-digit count), and what this instance has read of them (custom or not never changes for a pool row) */
+const CUSTOM_POOL_ID=/^(?:\d{5,20}|CUSTOM-\d{8}-\d{1,6})_20\d{6}\d{4}_\d{1,3}$/,CUSTOM_PIECES=new Set(),PLAIN_PIECES=new Set();
 async function productionReadiness(records,{tx=null,revs=null}={}) {
   const get=ref=>tx?tx.get(ref):ref.get(),runs=new Map(),lines=new Map(),wanted=new Set(records.flatMap(Readiness.orderIds)),unverified=new Set();
   for(const id of [...new Set(records.map(s=>s.runId).filter(isId))]){
@@ -449,7 +451,20 @@ async function productionReadiness(records,{tx=null,revs=null}={}) {
     }
   }
   const decisions=Readiness.decisions([...lines.values()]);
-  for(const s of evidence.values())s.engraving=Object.fromEntries(Readiness.idsOf(s).map(id=>[id,decisions[id] || {needed:true,state:'unknown',approved:false}]));
+  /* CUSTOMPOOL (Paul, 28 Oct 2026: a custom charm on GF Draft 10 read "The words need a decision · Nothing read yet" and its sheet "1 to approve"): a design sent to a sheet from the Charm Editor
+     (op_customPiecePut) is no line of any run, so no line decided its engraving and it read as "unknown", holding its sheet back for good. Its engraving IS its design, drawn into its own file; its
+     pool row says so (custom, engrave false). Only the pieces no line decides that are named as a custom piece is (op_customPiecePut: <order or CUSTOM-yyyymmdd-n>_<yyyymmdd><nnnn>_<copy>) are read,
+     once each per instance: what a pool row says of being custom never changes. A read that fails leaves them unknown, as before. */
+  const customAsk=[...new Set([...evidence.values()].flatMap(Readiness.idsOf))].filter(id=>!decisions[id] && CUSTOM_POOL_ID.test(id) && !CUSTOM_PIECES.has(id) && !PLAIN_PIECES.has(id)).slice(0,300);
+  if(customAsk.length){
+    try{
+      for(let i=0;i<customAsk.length;i+=100){
+        const refs=customAsk.slice(i,i+100).map(id=>col(POOL).doc(id)),mask={fieldMask:['custom','engrave']};
+        for(const d of await (tx?tx.getAll(...refs,mask):db.getAll(...refs,mask)))if(d.exists)((d.get('custom')===true && d.get('engrave')!==true)?CUSTOM_PIECES:PLAIN_PIECES).add(d.id);
+      }
+    }catch(e){console.warn('[charmNestLibrary] the custom pieces of these sheets could not be read:',e && e.message);}
+  }
+  for(const s of evidence.values())s.engraving=Object.fromEntries(Readiness.idsOf(s).map(id=>[id,decisions[id] || (CUSTOM_PIECES.has(id)?{needed:false,state:'none',approved:true}:{needed:true,state:'unknown',approved:false})]));
   /* An order a person sent to Review holds the sheet it sits on until it is resolved there. The page holds the sheet at once (charm-nest-review-hold.js); the server holds it too where it WRITES
      (a transaction: the laser seal, completing a set, the cut), so an older page or a second computer can never get past it. openReviews() above says which are open. */
   let review=null;

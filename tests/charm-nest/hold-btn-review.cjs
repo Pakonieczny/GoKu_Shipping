@@ -3,7 +3,8 @@
 // The REAL sorter page over the fake site (_reviewSendWorld.cjs: the real charmNest* handlers over an in-memory Firestore), two orders on one saved sheet not yet cut:
 //   1  no button says exactly "Hold" on the Orders tab, the Review tab, the order window or the sheet window
 //   2  the order window's piece row has ReviewSend's own button where Hold stood (the same class, words and state as the Orders row's)
-//   3  pressing it marks the order (it is in Review) and takes its piece off the uncut sheet, through the old Hold's engine (HoldUI.takeOff -> OrderHold)
+//   3  pressing it marks the order (it is in Review) and nothing else (HOLDSTAYS, 28 Oct 2026): its piece stays on the uncut sheet, which is held with its set until the order is released
+//   4  a second order on the same sheet held the same way: the sheet is held by both
 //   PW_DIR=<playwright-core's node_modules> node tests/charm-nest/hold-btn-review.cjs   (CHROMIUM=<chrome>)
 'use strict';
 const assert = require('assert');
@@ -42,38 +43,34 @@ const ok = (name, cond, extra) => { assert.ok(cond, name + (extra ? ' :: ' + ext
     const b0 = await page.evaluate(s => { const b = document.querySelector(s); return { text: b.textContent.trim(), cls: b.className, rid: b.dataset.rid }; }, rb);
     ok('2 the piece row has the Send to Review button where Hold stood: the same class and words as the Orders row', b0.text === label && /\bbtn ghost sm revSendBtn\b/.test(b0.cls) && b0.rid === rid, JSON.stringify(b0));
 
-    // 3 · the press, with a stand-in for the old Hold's engine (OrderHold: this world seeds the sheet in the cloud only, and the real engine takes a piece off a sheet only
-    //     the sorter holds open; 3c below shows the real one's answer then): the order is marked by the REAL mark API, then HoldUI.takeOff runs the engine's plan and run
-    await page.evaluate(({ label, pid }) => {
+    // 3 · the press (HOLDSTAYS, Paul 28 Oct 2026: "The 'Hold' button should NOT remove a given charm off a sheet ... It just puts the sheet and the set of sheets on hold"): the order is
+    //     marked by the REAL mark API and nothing else: the old Hold's engine (OrderHold.plan / run, through HoldUI.takeOff) is never asked, the piece stays on its sheet, and the sheet is held
+    await page.evaluate(() => {
       const T = window.__eng = { plans: [], runs: [], real: window.OrderHold };
-      window.OrderHold = Object.assign({}, T.real, {
-        plan: async (r, o) => { T.plans.push({ r, src: o && o.source, marked: CharmNestReviewMark.isMarked(r) }); return { rid: r, canHold: true, pieces: [{ poolId: pid, state: 'onSheet', sheetLabel: label }], sheets: [], fills: [], stays: [] }; },
-        run: async (r, o) => { T.runs.push({ r, name: o && o.name }); for (const row of Orders.rows()) if (String(row.order.receiptId) === r) { row.poolIds = []; row.state = 'held'; row.hold = row.reason = 'Taken off ' + label; } return { ok: true, held: true, steps: [] }; }
-      });
-    }, { label: sh.name, pid });
+      window.OrderHold = Object.assign({}, T.real, { plan: async r => { T.plans.push(r); return T.real.plan(r); }, run: async (r, o) => { T.runs.push(r); return T.real.run(r, o); } });
+    });
     await page.click(rb);
-    await page.waitForFunction(r => CharmNestReviewMark.isMarked(r) && !ReviewSend.busy(r) && window.__eng.runs.length === 1, rid, { timeout: 30000 });
+    await page.waitForFunction(r => CharmNestReviewMark.isMarked(r) && !ReviewSend.busy(r), rid, { timeout: 30000 });
+    await page.waitForFunction(() => /Stays on/.test([...document.querySelectorAll('.revSendMsg')].map(n => n.textContent).join(' ')), null, { timeout: 8000 }).catch(() => {});
     const eng = await page.evaluate(() => JSON.parse(JSON.stringify({ plans: window.__eng.plans, runs: window.__eng.runs })));
     ok('3a the press marks the order: it is in Review', await page.evaluate(r => CharmNestReviewMark.isMarked(r) && Review.openOrders().has(r), rid));
-    ok('3b and, once marked, takes its piece off the uncut sheet through the old Hold\'s engine (its plan, then ONE run, under the signed-in name)',
-      eng.plans.length === 1 && eng.plans[0].marked && eng.runs.length === 1 && eng.runs[0].r === rid && eng.runs[0].name === 'Test Operator', JSON.stringify(eng));
-    await page.waitForFunction(() => /Taken off/.test([...document.querySelectorAll('.revSendMsg')].map(n => n.textContent).join(' ')), null, { timeout: 8000 }).catch(() => {});
+    ok('3b nothing is taken off: the old Hold\'s engine is never asked (no plan, no run)', eng.plans.length === 0 && eng.runs.length === 0, JSON.stringify(eng));
     const msg = await page.evaluate(() => [...document.querySelectorAll('.revSendMsg')].map(n => n.textContent).join(' | '));
-    ok('3c the line under the button says so', msg.includes('Taken off ' + sh.name), msg);
+    const held = await page.evaluate(id => CharmNestReviewHold.isHeld(id), sh.id), pool = w.srv.st.doc('Charm_Pool', pid);
+    const row = await page.evaluate(r => Orders.rows().filter(x => String(x.order.receiptId) === r).map(x => ({ hold: x.hold || null, pools: (x.poolIds || []).length })), rid);
+    ok('3c the piece stays on its sheet (its pool row, its line), the sheet is held by the Review, and the line under the button says so',
+      held && pool && pool.sheetId === sh.id && row.every(x => !x.hold && x.pools > 0) && msg.includes('Stays on ' + sh.name), JSON.stringify({ held, sheetId: pool && pool.sheetId, row, msg }));
 
-    // 4 · the REAL engine, for the other order on the sheet: it refuses a sheet this sorter does not hold open, so the piece stays and the line says why; the order is in Review,
-    //     so the sheet is held (REVHOLD) and can never be cut while it is
+    // 4 · the other order on the sheet, held the same way: the sheet stays held while either is in Review
     await page.evaluate(() => { window.OrderHold = window.__eng.real; });
     const mate = W.ORDERS.mate.rid;
     await page.evaluate(() => OrderWin.isOpen() && OrderWin.close()); await W.settle(page, 400);
     await page.evaluate(k => OrderWin.open(k), W.keyOf('mate'));
     await page.waitForFunction(r => document.querySelector(`#owPcSum .revSendBtn[data-rev-host][data-rid="${r}"]`), mate, { timeout: 20000 });
     await page.click(`#owPcSum .revSendBtn[data-rev-host][data-rid="${mate}"]`);
-    await page.waitForFunction(r => CharmNestReviewMark.isMarked(r) && !ReviewSend.busy(r) && !HoldUI.busy(r), mate, { timeout: 30000 });
-    await page.waitForFunction(() => /Stays on/.test([...document.querySelectorAll('.revSendMsg')].map(n => n.textContent).join(' ')), null, { timeout: 8000 }).catch(() => {});
-    const msg2 = await page.evaluate(() => [...document.querySelectorAll('.revSendMsg')].map(n => n.textContent).join(' | '));
-    const held = await page.evaluate(id => CharmNestReviewHold.isHeld(id), sh.id), pool2 = w.srv.st.doc('Charm_Pool', W.poolIdOf('mate'));
-    ok('4 the real engine, with the sheet not open in this sorter: the piece stays, the line says why, and the sheet is held by the Review', held && pool2 && pool2.sheetId === sh.id && /Stays on/.test(msg2) && /not open in this sorter/.test(msg2), JSON.stringify({ held, msg2 }));
+    await page.waitForFunction(r => CharmNestReviewMark.isMarked(r) && !ReviewSend.busy(r), mate, { timeout: 30000 });
+    const pool2 = w.srv.st.doc('Charm_Pool', W.poolIdOf('mate')), held2 = await page.evaluate(id => CharmNestReviewHold.heldBy(id).map(h => h.rid), sh.id);
+    ok('4 the second order held too: its piece stays, and the sheet is held by both orders', pool2 && pool2.sheetId === sh.id && held2.includes(rid) && held2.includes(mate), JSON.stringify({ held2, sheetId: pool2 && pool2.sheetId }));
     ok('5 no script error on the page throughout', w.errors.length === 0, (w.errors || []).join(' | '));
   } finally { await w.close(); }
   console.log(`hold-btn-review: ${results.length} checks passed`);
