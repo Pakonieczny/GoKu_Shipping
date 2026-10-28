@@ -19,7 +19,7 @@
  *              engraving past the cut line or into the jump-ring hole, letters smaller than the engraver makes (the Settings' engraveMinCapMm, 1.6 mm). A short list with
  *              Show (it selects the part and zooms to the spot); Save says "N to check" and never waits for it.
  *   5 VIEW     ⌘Y OUTLINE VIEW: every part a hairline in its role's colour, no fills (doubled cut lines and stray points show).
- *   6 KEYS     L the ellipse, \ the line (in the editor's own key map), ⌘7 / ⌥⌘7, ⌘Y. Alt-drag copies (the editor's select tool).
+ *   6 KEYS     \ the line (Illustrator's, in the editor's own key map: M and L stay the marquee and the line, the editor's tests press them), ⌘7 / ⌥⌘7, ⌘Y; Alt-drag copies.
  *
  * Nothing here saves or writes: what it changes goes through the ctx (one undo step each) and leaves the editor in its result. Every action is logged for the employee
  * (CNDesignLog: shapePreset, textOnPath, clipToCharm, designCheck ...). Loads in the page (window.CharmNestCeExtras) and in node (module.exports: the geometry, for tests). */

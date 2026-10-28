@@ -190,10 +190,10 @@ check('N5 the check of a 1500-point outline and 12 words runs in short steps (CP
   const work = [];
   await page.evaluate(() => { window.openEditor(); }); await page.waitForSelector('.ce-root .ce-items path'); await settle(); await settle();
 
-  await step('B1 the Shapes flyout: the editor\'s rectangle, ellipse, line, polygon, then rounded rectangle, star, heart, ring, jump ring; L arms the ellipse, \\ the line', async () => {
+  await step('B1 the Shapes flyout: the editor\'s rectangle, ellipse, line, polygon, then rounded rectangle, star, heart, ring, jump ring; \\ arms the line (Illustrator\'s key)', async () => {
     const t = await H(() => [...document.querySelectorAll('[data-drop="shapes"] .ce-menu [data-tool]')].map(b => b.dataset.tool));
     assert.deepEqual(t, ['rect', 'ellipse', 'line', 'polygon', 'shape-rrect', 'shape-star', 'shape-heart', 'shape-ring', 'shape-bail']);
-    await key('l'); assert.equal(await cur('C.tool()'), 'ellipse'); await key('\\'); assert.equal(await cur('C.tool()'), 'line'); await key('v');
+    await key('\\'); assert.equal(await cur('C.tool()'), 'line'); await key('v');
   });
   await step('B2 a star dragged with Shift: one item, one undo step, regular (its own proportions), the size chip and the bar\'s W / H follow the drag; a move is under a frame of work', async () => {
     await H(() => window.CharmEditor.current.ctx.setTool('shape-star')); await settle();

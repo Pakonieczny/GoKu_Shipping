@@ -1369,12 +1369,12 @@
       <button class="ce-tool" type="button" data-tool="marquee" data-tip="marquee" aria-label="Marquee (M)">${IC.marquee}</button>
       <button class="ce-tool" type="button" data-tool="text" data-tip="text" aria-label="Text (T)">${IC.text}</button>
       <div class="ce-drop" data-drop="shapes">
-        <button class="ce-tool ce-drop__b" type="button" data-tool="rect" data-shapes data-tip="shapes" aria-label="Shapes: rectangle (R), ellipse (L), line (\\)">${IC.rect}</button>
+        <button class="ce-tool ce-drop__b" type="button" data-tool="rect" data-shapes data-tip="shapes" aria-label="Shapes: rectangle (R), ellipse (E), line (L)">${IC.rect}</button>
         <div class="ce-menu" role="menu" hidden>
           <div class="ce-menu__head">Shapes</div>
           <button class="ce-item" type="button" data-tool="rect" role="menuitem">${IC.rect}Rectangle<em>R</em></button>
-          <button class="ce-item" type="button" data-tool="ellipse" role="menuitem">${IC.ellipse}Ellipse<em>L</em></button>
-          <button class="ce-item" type="button" data-tool="line" role="menuitem">${IC.line}Line<em>\\</em></button>
+          <button class="ce-item" type="button" data-tool="ellipse" role="menuitem">${IC.ellipse}Ellipse<em>E</em></button>
+          <button class="ce-item" type="button" data-tool="line" role="menuitem">${IC.line}Line<em>L</em></button>
           <button class="ce-item" type="button" data-tool="polygon" role="menuitem">${IC.polygon}Polygon<em>↑ ↓ sides</em></button>
           ${xShapesHtml}
         </div>
@@ -2831,8 +2831,8 @@
       if (k === 'Enter') { const es = selEntries(); if (es.length === 1 && es[0].it.kind === 'text') { e.preventDefault(); openEditor(es[0].it.id); } return; }
       if (k === 'Escape') { e.preventDefault(); if (S.g) { abandon(); return; } if (S.sel.length) { setSel([]); return; } if (S.tool !== 'select') { setTool('select'); return; } requestClose(); return; }
       if (e.altKey) { xKeyRun(e); return; }
-      // (28 Oct 2026: Illustrator's L is the ellipse and \ the line; M stays the marquee, which the editor's own tests press for it, and R and E keep their shapes)
-      const map = { v: 'select', m: 'marquee', t: 'text', r: 'rect', e: 'ellipse', l: 'ellipse', '\\': 'line', h: 'hand' };
+      // (28 Oct 2026: \ is Illustrator's line too; M and L keep the marquee and the line, which the editor's tests and the live-feedback test press for them)
+      const map = { v: 'select', m: 'marquee', t: 'text', r: 'rect', e: 'ellipse', l: 'line', '\\': 'line', h: 'hand' };
       if (map[kl]) { e.preventDefault(); setTool(map[kl]); return; }
       if (k === '!' || (e.shiftKey && e.code === 'Digit1')) { e.preventDefault(); fit(); return; }
       if (k === '@' || (e.shiftKey && e.code === 'Digit2')) { e.preventDefault(); zoomToBox(selBox()); return; }
