@@ -15318,6 +15318,7 @@ const CustomSheet = window.CustomSheet = (() => {
   function wire(node, it) {
     const c = cardOf(it); if (!c) return;
     node._cuIt = it; node._cuCk = c.ck; cardNodes.set(c.ck, node);
+    try { if (window.CharmNestCustomPiece) CharmNestCustomPiece.wire(node, it); } catch (err) { console.warn("Open in Charm Designer", err); }   // (DESIGN & ENGRAVE, Paul 28 Oct 2026: "custom orders that need a custom charm design now must all be able to be opened in the charm design designer": its button, and the design attached to the order: charm-nest-custom-piece.js)
     node.querySelectorAll("[data-cu-designs]").forEach(b => b.onclick = ev => { ev.stopPropagation(); open(it, { browse: !c.files.length, from: node }); });
     node.querySelectorAll("[data-cu-keep-retry]").forEach(b => b.onclick = ev => { ev.stopPropagation(); if (b.dataset.cuKeepRetry === "repo") KeepUI.askPwFocus(); keepRetryFromCard(c.ck, it, node, b.dataset.cuKeepRetry); });
     node.querySelectorAll("[data-cu-mono]").forEach(b => b.onclick = ev => { ev.stopPropagation(); if (window.Engrave && Engrave.openMonogram) Engrave.openMonogram(linesOf(it)[0].key); });
@@ -21087,6 +21088,7 @@ const OrderWin = window.OrderWin = (() => {
     // from this UI and all detailed order modals"): the Back engraving card under the pictures says what the engraving waits
     // for and has its own way into Engraving. (#owFix stays in the page, empty: nothing draws in it.)
     paintSend(r);
+    tryDo(() => window.CharmNestCustomPiece && CharmNestCustomPiece.orderWin(r, byId("owPos")));   // (DESIGN & ENGRAVE, Paul 28 Oct 2026: a custom order opens in the Charm Designer from its order window too: charm-nest-custom-piece.js)
     paintNow(r);
     paintWho();
     tryDo(paintWinSeals);   // (SEALWIN, Paul 20 Oct 2026: every seal of the order, beside its button or in the Seals row)
