@@ -228,7 +228,7 @@ console.log(`ce-ops node: ${n} checks passed`);
       await page.keyboard.press('Escape'); await settle();
     });
     let united = null;
-    await step('W2 two rectangles drawn with the mouse, both selected, Unite from the Pathfinder flyout on the property bar: ONE shape of 42 mm², one undo step, ⌘Z gives both back', async () => {
+    await step('W2 two overlapping rectangles drawn with the mouse, both selected, Unite from the Pathfinder flyout on the property bar: ONE shape, their union\'s area (0.1 %), one undo step, ⌘Z gives both back', async () => {
       await page.keyboard.press('r');
       const a = await client(5, 12), b = await client(11, 16), c2 = await client(8, 14), d2 = await client(14, 18);
       await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 6 }); await page.mouse.up(); await settle();
@@ -238,6 +238,10 @@ console.log(`ce-ops node: ${n} checks passed`);
       const r2 = (await C(c => c.selection()))[0];
       await page.keyboard.down('Shift'); const e1 = await client(5, 13); await page.mouse.click(e1.x, e1.y); await page.keyboard.up('Shift'); await settle();
       assert.deepEqual((await C(c => c.selection())).sort(), [r1, r2].sort());
+      // (the two as drawn: the editor snaps a shape being drawn to the grid and the guides, so the hand's 6 × 4 mm may land a little off; the answer must be THEIR union)
+      const bx = await C((c, ids) => ids.map(id => { const e = c.entry(id); return c.geo.drawn(e.it, e.P).map(v => v * 25.4 / 72); }), [r1, r2]);
+      const ov = Math.max(0, Math.min(bx[0][2], bx[1][2]) - Math.max(bx[0][0], bx[1][0])) * Math.max(0, Math.min(bx[0][3], bx[1][3]) - Math.max(bx[0][1], bx[1][1]));
+      const want = bx.reduce((a, b) => a + (b[2] - b[0]) * (b[3] - b[1]), 0) - ov;
       const n0 = (await C(c => c.items().length)), h0 = await hist();
       await page.click('.ce-root .ce-xbar [data-xcmd="ops.pfBar"]'); await settle();
       assert.ok(await page.isVisible('.ce-root .cops-fly [data-ops="pf:unite"]'), 'the flyout opened');
@@ -245,8 +249,8 @@ console.log(`ce-ops node: ${n} checks passed`);
       const ms = await page.evaluate(() => { const t = performance.now(); document.querySelector('.ce-root .cops-fly [data-ops="pf:unite"]').click(); return performance.now() - t; }); await settle();
       const sel = await C(c => c.selection()); united = sel[0];
       assert.equal(await C(c => c.items().length), n0 - 1); assert.equal(await hist(), h0 + 1);
-      const ar = await areaMm(united); assert.ok(Math.abs(ar - 42) < 0.042, 'area ' + ar);
-      console.log(`  ..   Unite on the page: ${ar.toFixed(4)} mm² (42), ${ms.toFixed(1)} ms of the page's thread`);
+      const ar = await areaMm(united); assert.ok(ov > 0 && Math.abs(ar - want) < want * 0.001, `area ${ar} against ${want}`);
+      console.log(`  ..   Unite on the page: ${ar.toFixed(4)} mm² (the two drawn: ${want.toFixed(4)}), ${ms.toFixed(1)} ms of the page's thread`);
       assert.ok(ms < 50, 'Unite took ' + ms.toFixed(1) + ' ms of the page');
       await page.keyboard.press('Control+z'); await settle();
       assert.equal(await C(c => c.items().length), n0);
