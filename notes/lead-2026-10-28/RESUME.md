@@ -30,7 +30,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - int/live-check.cjs: 7 pages load clean. Live verify = sha256 of each changed served file vs `git show origin/main:<f>`, then live-check.
 - If agents hang holding slots (load ~0, waits > 5 min): find holders: for f in slot1 slot2 slot3: ino=$(stat -c %i $SP/locks/$f); grep ":$ino " /proc/locks → pid → ps --ppid. Kill the idle test, tell its agent.
 
-## Live on main: 745ee60 = batch 5 (masters, ops, extras, sendsheet; 27 tests pass; live verify bmo7lcrpc) on top of 03d6b9c batch 4 (verified live), 4003913 build fix, 5c417f9 batch 3.
+## Live on main: 323cf50 = batch 6 (refit with Paul's 1% rule, hold spot count fix, employee page design counts, SERVICE WORKER charm-nest-sw.js + netlify.toml header; live verify running) on top of ad2b701 Phase 1 (verified live), 745ee60 batch 5, 03d6b9c batch 4.
 - 89f2819 Manual Control instant · b2608ff navigation rounds 2+3, Charm Editor Save fix (Saving at once, sheet files in background),
   bar necklaces FRONT by default (BARFRONT) · 077f21c Approve never silent / never stuck · d58eea9 Design & Engrave batch 1: editor
   extension points + live readouts + Ctrl/Alt centre resize + smart guides (feedback), Blend/Warp/Distort (warp), image trace (trace).
@@ -82,13 +82,18 @@ board-live-extra.json with the new agent ids.
 - Phase 5 push (option a) needs a Firestore security rule in the console + a vendored Firestore SDK file.
 
 
-## Phase 1 ship (07:40): $SP/wt-guardfix ad2b701 = local-store + main 745ee60, build OK; nav-instant failure was load (passes on main and Phase 1 side by side). Checks ba4tgvpwr → $SP/int/p1/g-*.log. Pass → push HEAD:main, verify live.
-## Batch 6 in test (07:41): claude/de-integration 104c887 = main 745ee60 + refit 24406dc + emplog 0cb9e34 + hold fix c74301f + service worker 3064100. Run b6ebtfpf1 → $SP/int/b6/*.log. After Phase 1 lands: merge main, rerun local-store/local-first/service-worker/nav-instant, push, verify live.
+## Batch 7 next: library dca16a8 + library-2 (when back) + tab 7d14e6b + masters-2 d547987 + designs-2 7c72de3 + bar-front-2 a94a2d6 + nav-4 7565096 (+ eff-inbox-chart, seals-2 when back).
 - a41a92d9950823b21 now on claude/eff-inbox-chart: 'Sent per day' chart is a black block when empty.
 - Phase 2 agent ac1971b04ea413b37 started 07:03 on claude/local-sync (wt-sync) from claude/local-store.
 - designs follow-up (af114bb2ccb5f706c resumed): claude/de-designs-2 = accept stroke/fill true in clean(); test world Master.load race.
 
 ## Handed back, waiting to merge into claude/de-integration
+- nav-4 (a2ce3dc0daa28facb) DONE 08:03: claude/nav-instant-4 7565096 (5 :has() rules → classes; order window open p50 196→51 ms, Next 180→26, Library chip 330→37). BATCH 7. Round 5 sent (claude/nav-instant-5: Orders/Review first visit <100 ms; merge-sheets failing on main).
+- masters-2 (acbce20e63df93ae2) DONE 08:00: claude/de-masters-2 d547987 (contains main + de-tab). ce-masters 20/20, de-tab 14/14. BATCH 7.
+- bar-front-2 (aa6569d65415c6c37) DONE 07:55: claude/bar-front-2 a94a2d6 (decided bar lines say what they engrave; engrave-ui-faces fixed 27/0). BATCH 7.
+- de-tab (a28303212b071279b) DONE 07:52: claude/de-tab 7d14e6b (tab renamed Design & Engrave, Charm Designer bar, Open in Charm Editor for any piece, editor Back). de-tab 14/14. BATCH 7. Follow-ups sent: masters-2 (pass o.back, openDesign(id,version,o)), library-2 (acc9d6120b4748ee1: recent/openDesign/onChange on claude/de-library-2).
+- de-designs-2 (af114bb2ccb5f706c) DONE 07:48: claude/de-designs-2 7c72de3 (shape paint true accepted; test world Master.load race; text-on-path/shape/clipOf kept). designs-server 102. BATCH 7.
+- de-library (acc9d6120b4748ee1) DONE 07:43: claude/de-library dca16a8, ce-library 17/17. BATCH 7 (with de-tab). Follow-up sent to masters (acbce20e63df93ae2 → claude/de-masters-2): skip the Saved card when the session moved on.
 - local-sw P4 (a7883fa11af818737) DONE 07:24: claude/local-sw 3064100. New charm-nest-sw.js (approved), netlify.toml header block (approved), service-worker.cjs 25 checks. TOKEN DISCIPLINE now matters (changed file without ?v= bump stays cached). Ship with batch 6 after Phase 1.
 - de-refit (a7764b20331f1122f) DONE 07:20 with PAUL'S RULE: claude/de-refit 24406dc. Keeps placement (same → size only → centre ≤1% → afresh with a note); SEPTEMBER stays 5.33 pt level. charm-edit-refit 13/13. SHIP after batch 4 + Phase 1 (tests: charm-edit-refit, charm-editor-engrave, engrave-editor-words, engrave-preview, engrave-front-art, charm-editor-back, engrave-worker).
 - de-extras (a5f64f2a38f32df82) DONE 07:14: claude/de-extras 58ff4da, ce-extras 21. ⌘Y is now Outline view (redo only ⇧⌘Z; charm-editor-browser.cjs line changed). Text-on-path fields need the designs follow-up (sent). BATCH 5.
