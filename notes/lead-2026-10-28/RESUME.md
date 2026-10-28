@@ -78,12 +78,14 @@ finish the scope <scope>, test (slot.sh with time limit inside), push, hand back
 board-live-extra.json with the new agent ids.
 
 ## Open questions for Paul (ask when he is back)
+- Firestore console: turn on TTL for collections Charm_Nest_Mutations and Sandbox_Charm_Nest_Mutations, field `expireAt` (Phase 3's write ledger; without it the 7-day records are never deleted).
 - ANSWERED by Paul 03:39 UTC: "The refit if necessary, must be in the exact same place with a variance of one percent from where I actually placed it. The rotation needs to be also within one percent accurate to where I placed it." → RULE: a refit after a Charm Editor save keeps his placement: centre within 1% of the charm's size of where he placed it, angle within 1% of his angle (a level word stays level). Only the size may shrink if needed. Sent to the refit agent (a7764b20331f1122f) as a follow-up; if it is gone, re-spawn refit with this rule.
 - Phase 5 push (option a) needs a Firestore security rule in the console + a vendored Firestore SDK file.
 
 
 ## (earlier) Phase 2 handed back 08:50 (claude/local-sync c07cea4; calls/min 1 tab Orders 36→20, 2 tabs 77→24, tab+windows 86→33; other computer's change in 1–2 s). Sent back for: bumpRev best-effort + revision split by kind (Firestore ~1 write/s per doc), own writes broadcast at once to sibling tabs (library-realtime ≤0.5 s), complete-realtime (fails on main too). Ship after.
 - Phase 3 agent ae248b1326745d816 started 08:52 on claude/local-outbox (wt-outbox) from claude/local-sync.
+## Phase 3 handed back 09:58: claude/local-outbox b13e35b (contains main 0eee2c3). Outbox in IndexedDB, mid ledger (_charmNestMutations.js, classified), MC 1 claim + 1 patch + 1 file job, Hold/Release marks + Complete Order + customDecide + labels' release mark via outbox; flowApply + engines stay awaited (server rules). Lead check run in $SP/wt-guardfix → $SP/int/p3/*.log (incl. sandbox-reset-e2e, monogram-seal, cx-b which it did not run). PAUL: turn on Firestore TTL for Charm_Nest_Mutations + Sandbox_Charm_Nest_Mutations, field expireAt.
 ## Remaining: Phase 2 sync worker (ac1971b04ea413b37, claude/local-sync) (nav-6 shipped 09:05). Then Phase 3 (outbox, optimistic writes), then Phase 5 needs Paul (Firestore rule + vendored SDK).
 - a41a92d9950823b21 now on claude/eff-inbox-chart: 'Sent per day' chart is a black block when empty.
 - Phase 2 agent ac1971b04ea413b37 started 07:03 on claude/local-sync (wt-sync) from claude/local-store.
