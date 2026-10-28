@@ -6,7 +6,8 @@
 //      before (sha-256 of the whole fit, recorded with the search as it was, 4c453be), and the time one fit takes is printed (CPU ms of this process, the least of 5: the work, not the wait)
 //   B  the real sorter page over the repo's fake site (_engraveRealWorld.cjs: offline, made-up names): the calendar ordered "front - September / back - 12:11 p.m.", both faces approved, a "21"
 //      written into a day square in the charm editor, Save. Every frame from the press until the new fit is drawn has a drawing in the work area: the drawing it had, dimmed, with "Fitting…" and
-//      no handles, already showing the 21; then the new placement in one frame. The 21 is drawn at full strength, the master's art stays muted. The fit's time in the page's worker is printed.
+//      no handles, already showing the 21 (the card's Front / Back pictures keep the held placement too: no placement is searched on the page's own thread); then the new placement in one frame.
+//      The 21 is drawn at full strength, the master's art stays muted. The fit's time in the page's worker is printed.
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/charm-edit-refit.cjs      (REFIT_ONLY=A or B; SHOTS=<dir> for the screenshots)
 'use strict';
 const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto');
@@ -93,6 +94,8 @@ async function partB() {
       const wp = Worker.prototype.postMessage;
       Worker.prototype.postMessage = function (m) { if (m && m.type === 'fit') { L.fits.push({ sent: now(), id: m.id }); if (!this.__refit) { this.__refit = 1; this.addEventListener('message', e => { const f = L.fits.find(x => x.id === (e.data && e.data.id)); if (f && !f.back) f.back = now(); }); } } return wp.apply(this, arguments); };
       try { new PerformanceObserver(l => { for (const e of l.getEntries()) L.long.push([e.startTime, e.duration]); }).observe({ entryTypes: ['longtask'] }); } catch (_) { /* not measured */ }
+      // a placement searched on the page's own thread (the card's pictures used to place the words themselves while the face had no fit: 0.4 s): counted
+      L.searches = 0; const G = window.CharmNestGeom; for (const k of ['largestRectangles', 'fitText', 'refitAt']) { const f = G[k]; G[k] = function () { if (!L.stop) L.searches++; return f.apply(this, arguments); }; }
       const probe = document.createElement('div'); probe.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none'; document.body.appendChild(probe);
       new ResizeObserver(() => {
         const card = document.querySelector('#egQueue .rvItem[data-kind=placement]'), host = card && card.querySelector('.backHost'), cv = host && host.querySelector('canvas'), j = card && Engrave.items().get(card.dataset.key);
@@ -138,6 +141,7 @@ async function partB() {
     check(`B4 the 21 is drawn at full strength (${ink.inBlue} px of the hatch blue itself in its box), the master's art muted (${ink.halfRed} px of its red grid and ${ink.halfBlue} of its blue at half strength; ${ink.fullRed} red and ${ink.outBlue} blue px at full strength elsewhere)`,
       ink.mine === 1 && ink.text === '21' && ink.inBlue >= 12 && ink.outBlue === 0 && ink.fullRed === 0 && ink.halfRed > 0 && !ink.held && ink.opacity === '1', JSON.stringify(ink));
     check(`B5 the page's worker fits "SEPTEMBER" around the new art in ${fitMs} ms (2.7 s before; target ~300 ms) and the new drawing is on screen ${drawnMs} ms after the press`, fitMs > 0 && fitMs < 1500, JSON.stringify({ fits: L.fits }));
+    check(`B6 meanwhile nothing is placed on the page's own thread: the card's Front / Back pictures draw the held placement (${L.searches} searches; the longest task ${Math.round(longest)} ms)`, L.searches === 0, JSON.stringify({ searches: L.searches, long: L.long.filter(x => x[0] >= L.t0).map(x => Math.round(x[1])) }));
     console.log('   page errors:', JSON.stringify(w.errors || []).slice(0, 600));
   } finally { await w.close(); }
 }

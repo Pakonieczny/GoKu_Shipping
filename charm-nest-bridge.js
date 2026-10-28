@@ -11635,14 +11635,18 @@ const Engrave = window.Engrave = (() => {
   function heldDrawing(job) {
     const h = job && HELD.get(job); if (!h) return null;
     if (job.fitAt && job.fitAt > h.at) { HELD.delete(job); return null; }
+    let ch = null; try { ch = charmFor(job); } catch (_) { ch = null; }
+    if (h.stand && h.charm === ch) return h.stand;   // (one stand-in for each charm the piece has had since: the pictures made of it are kept by its view)
     let view = h.view;
     try {
-      const ch = charmFor(job), ob = ch && ch.outline && ch.outline.bbox;
+      const ob = ch && ch.outline && ch.outline.bbox;
       if (ob && Math.abs((ob[0] + ob[2]) / 2 - view.cx) < 1e-6 && Math.abs((ob[1] + ob[3]) / 2 - view.cy) < 1e-6 && !(ch.artEdit && ch.artEdit.front && ch.artEdit.front.cut))
         view = Object.assign({}, view, { dropped: ch.members.filter(m => m !== ch.outline && !G.isCutLine(m)) });   // (backView's own split: what is not the cut is the art)
     } catch (_) { view = h.view; }
-    return Object.assign(Object.create(job), { view, mask: h.mask, fit: h.fit });
+    h.charm = ch; h.bc = null; h.stand = Object.assign(Object.create(job), { view, mask: h.mask, fit: h.fit });
+    return h.stand;
   }
+  window.CNEngraveHeld = heldDrawing;   // (the card's Front / Back pictures draw it too while the face is fitted again: charm-nest-engrave-preview.js heldOf)
   /** The held drawing already made for `job` at this size (the card is drawn again as the face goes from waiting to being fitted: the same picture is moved over, not drawn twice), or null. */
   const heldCanvas = (job, px) => { const h = HELD.get(job), bc = h && h.bc; return bc && bc._heldPx === px.join("x") ? bc : null; };
   /** The held drawing `bc` on the work area `host` of `job`: still, dimmed, "Fitting…" in its top-right corner; the Edit charm pill and the save's note as on any drawing. */
