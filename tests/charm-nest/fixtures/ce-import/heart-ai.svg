@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generator: Adobe Illustrator 27.0.0, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" [
+	<!ENTITY ns_svg "http://www.w3.org/2000/svg">
+	<!ENTITY ns_xlink "http://www.w3.org/1999/xlink">
+]>
+<svg version="1.1" id="Layer_1" xmlns="&ns_svg;" xmlns:xlink="&ns_xlink;" x="0px" y="0px" width="56.693px" height="56.693px" viewBox="0 0 56.693 56.693" xml:space="preserve">
+<!-- ce-import fixture: Illustrator's SVG export of a 20 mm disc (its px are points: 56.693 px = 20 mm). Paints as classes, a petal drawn once in defs and used twice
+     (once turned 90 degrees by a matrix), a red bar. -->
+<style type="text/css">
+	.st0{fill:none;stroke:#000000;stroke-width:0.25;stroke-miterlimit:10;}
+	.st1{fill:#FF0000;}
+	.st2{fill:none;stroke:#E30613;stroke-width:0.5;stroke-miterlimit:10;}
+</style>
+<defs>
+	<path id="petal" d="M0,0C2-4,6-4,8,0C6,4,2,4,0,0z"/>
+</defs>
+<g id="CUT_LINE">
+	<circle class="st0" cx="28.346" cy="28.346" r="28.346"/>
+</g>
+<g id="Engrave">
+	<use xlink:href="#petal" class="st2" transform="matrix(1 0 0 1 20 28.346)"/>
+	<use xlink:href="#petal" class="st2" transform="matrix(0 1 -1 0 28.346 20)"/>
+	<rect x="24" y="40" class="st1" width="8.5" height="4"/>
+</g>
+</svg>
