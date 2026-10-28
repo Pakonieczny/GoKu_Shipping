@@ -30,13 +30,13 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - int/live-check.cjs: 7 pages load clean. Live verify = sha256 of each changed served file vs `git show origin/main:<f>`, then live-check.
 - If agents hang holding slots (load ~0, waits > 5 min): find holders: for f in slot1 slot2 slot3: ino=$(stat -c %i $SP/locks/$f); grep ":$ino " /proc/locks → pid → ps --ppid. Kill the idle test, tell its agent.
 
-## Live on main: 323cf50 = batch 6 (refit with Paul's 1% rule, hold spot count fix, employee page design counts, SERVICE WORKER charm-nest-sw.js + netlify.toml header; live verify running) on top of ad2b701 Phase 1 (verified live), 745ee60 batch 5, 03d6b9c batch 4.
+## Live on main: 14ca7b2 = batch 7 (Design & Engrave tab, library panel, masters-2, designs-2, bar-front-2, nav round 4) + ce-masters token bump; live verify running. Before: 323cf50 batch 6 (verified live incl. service worker: warm reload 160 from worker / 16 network), ad2b701 Phase 1.
 - 89f2819 Manual Control instant · b2608ff navigation rounds 2+3, Charm Editor Save fix (Saving at once, sheet files in background),
   bar necklaces FRONT by default (BARFRONT) · 077f21c Approve never silent / never stuck · d58eea9 Design & Engrave batch 1: editor
   extension points + live readouts + Ctrl/Alt centre resize + smart guides (feedback), Blend/Warp/Distort (warp), image trace (trace).
 
 ## Integration branch for Design & Engrave: claude/de-integration (worktree $SP/wt-de-int), head 5d240fc = d58eea9 + vimport.
-BEFORE EVERY PUSH TO MAIN: (1) `python3 -I $SP/tokcheck.py . HEAD origin/main <merged branch refs>` — no ?v= suffix part of a merged branch may be missing (rf1→rf2 on engrave-preview/worker was deliberate); the SERVICE WORKER is live, so a lost token = an old file served. resolve-union.py now merges every token on a line (it used to merge only the first). (2) `node scripts/build-netlify.cjs` must exit 0 (a new netlify/functions file must be classified in scripts/netlify-function-entries.json; batch 3 did not deploy for 15 min because _designLog.js was not; fixed in 4003913).
+BEFORE EVERY PUSH TO MAIN: (0) `python3 -I $SP/tokbump.py . origin/main HEAD` — every changed served file needs a new ?v= token (service worker); (1) `python3 -I $SP/tokcheck.py . HEAD origin/main <merged branch refs>` — no ?v= suffix part of a merged branch may be missing (rf1→rf2 on engrave-preview/worker was deliberate); the SERVICE WORKER is live, so a lost token = an old file served. resolve-union.py now merges every token on a line (it used to merge only the first). (2) `node scripts/build-netlify.cjs` must exit 0 (a new netlify/functions file must be classified in scripts/netlify-function-entries.json; batch 3 did not deploy for 15 min because _designLog.js was not; fixed in 4003913).
 Procedure per finished workstream: `git fetch origin <branch> && git merge --no-commit --no-ff FETCH_HEAD`; conflicts →
 `python3 -I $SP/resolve-union.py <files>`; commit with the attribution lines; when a few have landed, test on the priority lane:
 node: charm-editor-model art-edit-model public-assets (+ the workstreams' node tests); browser (SLOT_PRIO=1 slot.sh): the workstreams'
@@ -82,7 +82,7 @@ board-live-extra.json with the new agent ids.
 - Phase 5 push (option a) needs a Firestore security rule in the console + a vendored Firestore SDK file.
 
 
-## Batch 7 in test (08:15): claude/de-integration fa33106 = main 323cf50 + designs-2 + bar-front-2 + nav-4 + masters-2 (with de-tab; bridge save code: de-tab's version + refit's keepLost note, hand-merged) + library-2. Build OK. Run → $SP/int/b7/*.log (14 node + 23 browser). Pass → push, verify live. Remaining after: eff-inbox-chart DONE (claude/eff-inbox-chart afa688d: the Custom pieces tab reused the charts' style id → person-page charts drawn black after visiting the tab; MAIN IS AFFECTED, ship in batch 8) + seals-2 DONE (claude/fix-seals-2 e1fdeb9: sheet window release = green ORDER RELEASED; 5 failing tests fixed, one real regression: Resolved custom card's Sent-to-Sheet seal) → BATCH 8, eff-inbox-chart, nav-5, Phase 2.
+## Next: batch 8 = fix-seals-2 e1fdeb9 + eff-inbox-chart afa688d (main's person-page charts go black after the Custom pieces tab). Then nav-5 and Phase 2 when they hand back.
 - a41a92d9950823b21 now on claude/eff-inbox-chart: 'Sent per day' chart is a black block when empty.
 - Phase 2 agent ac1971b04ea413b37 started 07:03 on claude/local-sync (wt-sync) from claude/local-store.
 - designs follow-up (af114bb2ccb5f706c resumed): claude/de-designs-2 = accept stroke/fill true in clean(); test world Master.load race.
