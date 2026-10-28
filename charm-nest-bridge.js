@@ -9940,7 +9940,8 @@ const Engrave = window.Engrave = (() => {
       for (const it of list || []) {
         if (!it) continue;
         const off = !!(hid || it.hidden);   // (hidden in the editor, or in a hidden group: not engraved, so the laser does what the person sees; a cut line hidden is still the piece's outline)
-        if (it.kind === "group") { walk(it.children, Mx.mul(P, isM(it.matrix) ? it.matrix : Mx.I), gid || String(it.id), off); continue; }
+        // (REOPEN, Paul 28 Oct 2026: a group that names itself (`group`: a traced image's, charm-nest-ce-image.js, its picture's id, settings and anchor) gives its leaves that name)
+        if (it.kind === "group") { walk(it.children, Mx.mul(P, isM(it.matrix) ? it.matrix : Mx.I), gid || String(typeof it.group === "string" && it.group ? it.group : it.id).slice(0, 64), off); continue; }
         if (off && it.role !== "cut") continue;
         const leaf = Object.assign({}, it, { id: String(it.id) });
         if (it.kind !== "text") { const own = isM(it.matrix) ? it.matrix : Mx.isI(P) ? null : AE.itemMatrix(it, Mx.bboxOf(it.subpaths || [])); if (own) leaf.matrix = Mx.mul(P, own); }

@@ -482,7 +482,15 @@
     if (anchor.idx.some(i => i >= pts.length)) return null;
     const A = affine3(anchor.uv, anchor.idx.map(i => M.ap(Wm, pts[i][0], pts[i][1]))); if (!A) return null;
     const w = Math.hypot(A[0], A[1]), h = Math.hypot(A[2], A[3]); if (!(w > 1e-6 && h > 1e-6)) return null;
-    return { box: [0, 0, w, h], W: M.mul(A, [1 / w, 0, 0, 1 / h, 0, 0]) };   // (mul(m, n): n first, then m)
+    let W = M.mul(A, [1 / w, 0, 0, 1 / h, 0, 0]);   // (mul(m, n): n first, then m)
+    // a turn (and a mirror) read off points kept to a ten-thousandth is a turn: made exact, so the new parts take it as a move and a turn (composeInto), not a
+    // reshaped path, and the picture's centre stays where it is
+    const c = Math.hypot(W[0], W[1]), d = Math.hypot(W[2], W[3]), dot = (W[0] * W[2] + W[1] * W[3]) / (c * d);
+    if (Math.abs(c - 1) < 0.02 && Math.abs(d - 1) < 0.02 && Math.abs(dot) < 0.02) {
+      const r = Math.atan2(W[1], W[0]), m = W[0] * W[3] - W[1] * W[2] < 0 ? -1 : 1, R = [Math.cos(r), Math.sin(r), -m * Math.sin(r), m * Math.cos(r)], ctr = M.ap(W, w / 2, h / 2);
+      W = [R[0], R[1], R[2], R[3], ctr[0] - (R[0] * w / 2 + R[2] * h / 2), ctr[1] - (R[1] * w / 2 + R[3] * h / 2)];
+    }
+    return { box: [0, 0, w, h], W };
   }
   /** THE TRACED SET the selection is in (or the one it holds): the selected part itself, then its groups (nearest first), then what a selected group holds.
    *  A group that keeps its `trace` (made on this page); a group that keeps only its `group` name (a design opened again); or the grey parts that share a `group`
@@ -1167,15 +1175,14 @@
   async function retrace(ctx) {
     const set = traceSet(ctx); if (!set) return null;
     const M = ctx.model, geo = ctx.geo;
-    // where the picture is now: its three anchor points read off the parts as they are (any move, scale, turn or save since), else the group's placing box and its
-    // first part's map (a group's transform is pushed into its parts on every edit), else the box of the parts as drawn (a set saved before 28 Oct 2026)
-    let W = M.I, box = null;
-    const pb = placedBy(ctx, set.anchor, set.parts);
-    if (pb) { box = pb.box; W = pb.W; }
-    else if (set.kind === 'group' && set.box) {
+    // where the picture is now: a group made on this page by its placing box and its first part's map (a group's transform is pushed into its parts on every
+    // edit); one saved and opened again by its three anchor points read off the parts as they are (any move, scale, turn since); else (a set saved before
+    // 28 Oct 2026) the box of its parts as drawn
+    let W = M.I, box = null, pb = null;
+    if (set.kind === 'group' && set.box) {
       const e = ctx.entry(set.id), lf = (set.it.children || []).find(c => c.kind === 'path'), lfE = lf && ctx.entry(lf.id);
       box = set.box; W = lfE ? M.mul(lfE.P, geo.matrix(lf)) : M.mul(e.P, geo.matrix(set.it));
-    }
+    } else if ((pb = placedBy(ctx, set.anchor, set.parts))) { box = pb.box; W = pb.W; }
     if (!box) {
       let b = null; for (const e of set.parts || []) { const d = geo.drawn(e.it, e.P); if (d) b = b ? [Math.min(b[0], d[0]), Math.min(b[1], d[1]), Math.max(b[2], d[2]), Math.max(b[3], d[3])] : d.slice(); }
       box = b; W = M.I;
