@@ -18,7 +18,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - Live board (dashboard artifact): https://claude.ai/artifact/RdLASAbUtTQMqU1Mb6ExLG. Rows in $SP/board/agents.json.
   Refresh: `python3 -I $SP/board-live.py` → Artifact publish {url, file_path: $SP/board/agents.json, asset:true} → ArtifactData update
   url, collection "datasets", doc_id "agents", if_version <current>, data {source:{format:"json",kind:"file",name:"agents.json",url:"<blob url>"},
-  updated:{at,by:"Claude"}}. Last version written: 80 (next write if_version 80; if refused, the error names the current version).
+  updated:{at,by:"Claude"}}. Last version written: 83 (next write if_version 83; if refused, the error names the current version).
 - Plan doc for Paul (local-first): https://claude.ai/artifact/GykrjmCTLTbcohMCKBrkyZ (decisions recorded).
 
 ## Scripts ($SP)
@@ -62,7 +62,7 @@ other), pen, ops, rulers, image (needs trace, merged), text, extras, tab, refit.
 | de-emplog | aae0c82c2db2e93d9 | claude/de-emplog / wt-de-emplog | items 34-37 employee tracking |
 | de-refit | a7764b20331f1122f | claude/de-refit / wt-de-refit | card never blank while refitting |
 | de-extras | a5f64f2a38f32df82 | claude/de-extras / wt-de-extras | shapes, text on path, clip, laser check, Ctrl+Y |
-| fix-seals | a2200fb3aa0ebf322 | claude/fix-seals / wt-fix-seals | seals: only Order Held + Order Released (green) |
+| fix-seals | a2200fb3aa0ebf322 | claude/fix-seals / wt-fix-seals | seals: only Order Held + Order Released (green); THEN Release button always shown in the order window for held orders (Paul 03:20 UTC, order 4202871419: most held orders show no Release) |
 | perf-nav-4 | a2ce3dc0daa28facb | claude/nav-instant-4 / wt-nav4 | navigation round 4 targets |
 | bar-waiting | aa6569d65415c6c37 | claude/bar-front-waiting / wt-bar-waiting | waiting bar orders switch to front |
 | local-sw-p4 | a7883fa11af818737 | claude/local-sw / wt-sw | Phase 4 service worker |
