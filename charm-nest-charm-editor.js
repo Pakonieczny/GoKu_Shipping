@@ -89,6 +89,18 @@
  *     setZoom(pct, about)  about: { x, y } client px (default the middle of the work area)
  *     geo                  the geometry provider (geo.raw(it), geo.box(it), geo.matrix(it), geo.drawn(it, P)); model: CharmEditor.model; entry(id) -> { it, P, parent }
  *     say(text, ms)        a short line over the work area;  redraw()  the selection furniture and overlays again;  setTool(id);  root, stage  the elements
+ *     snap(x, y, ev) -> [x, y]   the point on the smart guides (and the grid when it snaps; Alt held in ev pauses them), the agreeing guides drawn
+ *     live({ box: [x0, y0, x1, y1] pt, text?, angle? } | null)   the size chip beside the box (default "W × H mm") and the bar's X / Y / W / H / angle, for a tool's own
+ *                          drag (LIVE FEEDBACK below); both are cleared when the tool's gesture ends
+ *
+ * LIVE FEEDBACK (28 Oct 2026; Paul: "I'm not seeing a real time read out of the size in the work area of the actually selected object and in the X and Y in the menu ... resize
+ * every object from its center-point ... by holding the control key"). A size chip beside the selection while a shape is drawn (W × H; a line's length and angle; a polygon's
+ * sides), resized (W × H in the part's own axes), moved (X, Y) or turned (the angle), and for a moment after an arrow-key nudge (where it is, how far the run went); the bar's
+ * X / Y / W / H / angle follow every frame of all of these. Ctrl (or Alt, or ⌘) on a handle resizes about the centre, Shift keeps the proportions, the two combine, and a
+ * modifier pressed or let go mid-drag counts at once (D1). Smart guides snap to the other parts' edges and middles and to the charm's frame, outline and middle, with the gap
+ * to the part a guide agrees with measured on it and even spacing in a row (the studio's mkAlignSpacing); a part being drawn snaps too; the Snap switch in the foot (⌘U)
+ * turns them off. Hover lights the part under the cursor or under a Layers row; the cursors say the action (move, resize arrows turned with the part, a turn cursor on the
+ * turn handle and just outside the corners). The Polygon joins the Shapes menu (↑ ↓ while dragging: sides).
  *
  * WHAT CAME FROM THE STUDIO (Brites Custom Studio, sections/brites-custom-studio.liquid "S" and assets/brites-custom-studio.js "J", brites-custom-studio.css "C",
  * brites-design-language.css "DL"): the design tokens (DL 19-27, C 6529-6536), the rail and its tiles, corner wedge, hold/right-click flyouts, hover cards and
@@ -235,6 +247,14 @@
       ['c', [cx - rx, cy - ky], [cx - kx, cy - ry], [cx, cy - ry]], ['c', [cx + kx, cy - ry], [cx + rx, cy - ky], [cx + rx, cy]], ['h']]];
   }
   const lineSP = (x0, y0, x1, y1) => [[['m', [x0, y0]], ['l', [x1, y1]]]];
+  /* a regular polygon of n sides standing on a flat side (Illustrator's Polygon tool), stretched to fill the box a = [x0, y0, x1, y1]; polygonRatio(n): its own width / height */
+  const polyUnit = n => { const pts = []; for (let i = 0; i < n; i++) { const t = (90 + 180 / n + i * 360 / n) * Math.PI / 180; pts.push([Math.cos(t), Math.sin(t)]); } return pts; };
+  const polygonRatio = n => { const b = bboxOf([polyUnit(n).map((p, i) => [i ? 'l' : 'm', p])]); return (b[2] - b[0]) / (b[3] - b[1]); };
+  function polygonSP(a, n) {
+    const pts = polyUnit(n), ub = bboxOf([pts.map((p, i) => [i ? 'l' : 'm', p])]);
+    const X = v => a[0] + (v - ub[0]) / (ub[2] - ub[0]) * (a[2] - a[0]), Y = v => a[1] + (v - ub[1]) / (ub[3] - ub[1]) * (a[3] - a[1]);
+    return [pts.map((p, i) => [i ? 'l' : 'm', [X(p[0]), Y(p[1])]]).concat([['h']])];
+  }
 
   /* ═══ 2b · weight: a filled shape grown or thinned (Paul, 27 Oct 2026: "I need the ability to control the thickness of fonts as the current 'pt' control does not correctly
      control the boldness of the text. I need fine font thickness control over each font") ═══
@@ -834,6 +854,7 @@
     createGeo, decompose, composeInto, pushDown, retext, foldTextScale, walk, indexTree, replaceIn, removeIds, pruneEmpty, topmost, normaliseAncestors, copyItems, pasteItems, reid,
     groupItems, ungroupItem, arrange, hitTest, touching, History, prepIn, exportItems, diffFace, changeCount, outlinesOf, newId, paintFill, paintStroke,
     weighSubpaths, weighItem, weighable, weightOf, lwOf, inkArea, canWeigh, LW_LASER_PT, WT_MIN_MM, WT_MAX_MM };
+  Object.assign(model, { polygonSP, polygonRatio });
 
   /* ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
      9 · THE WORKSPACE
@@ -872,21 +893,28 @@
     import: SV('<path d="M12 3.5v11"/><path d="m7.5 10 4.5 4.5 4.5-4.5"/><path d="M4 15.5v4h16v-4"/>'),
     object: SV('<rect x="4" y="4" width="7" height="7" rx=".6"/><rect x="13" y="13" width="7" height="7" rx=".6"/><path d="M15 4.5h4.5V9"/><path d="M9 19.5H4.5V15"/>'),
     panel: SV('<rect x="3.5" y="4.5" width="17" height="15" rx="1"/><path d="M14.5 4.5v15"/><path d="M16.5 8.5h2"/><path d="M16.5 11.5h2"/>'),
-    tool: SV('<circle cx="12" cy="12" r="7.5"/><path d="M12 8.5v7"/><path d="M8.5 12h7"/>')
+    tool: SV('<circle cx="12" cy="12" r="7.5"/><path d="M12 8.5v7"/><path d="M8.5 12h7"/>'),
+    // (28 Oct 2026, live feedback: the Polygon in the Shapes menu; the magnet of the snapping switch)
+    polygon: SV('<path d="M12 3.5 20 9.3 17 19h-10L4 9.3Z"/>'),
+    magnet: SV('<path d="M5.5 4v7.5a6.5 6.5 0 0 0 13 0V4h-4v7.5a2.5 2.5 0 0 1-5 0V4Z"/><path d="M5.5 8h4"/><path d="M14.5 8h4"/>')
   };
+  /* the cursor of a turn: a round arrow, white under black so it reads on the charm and on the room (28 Oct 2026: "cursors that say the action") */
+  const ROT_CUR = 'url("data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round">'
+    + ['white" stroke-width="4', 'black" stroke-width="1.6'].map(k => `<path d="M7.2 16.6A6.6 6.6 0 1 1 17.6 15" stroke="${k}"/><path d="m4.2 14.4 3 2.6 2.7-3" stroke="${k}"/>`).join('') + '</svg>') + '") 12 12, grab';
+  const RESIZE_CUR = ['ew-resize', 'nwse-resize', 'ns-resize', 'nesw-resize'];
   /* name · what it does in four words or fewer · the key that arms it (the studio's MK_TIPS, J 18882) */
   const TIPS = {
     select: ['Select', 'Move, resize, rotate', 'V'], marquee: ['Marquee', 'Select what a box touches', 'M'], text: ['Text', 'Click to place words', 'T'],
-    shapes: ['Shapes', 'Rectangle, ellipse, line', 'R'], hand: ['Hand', 'Move around the charm', 'H'], more: ['More', 'Grid, guides, zoom', ''],
+    shapes: ['Shapes', 'Rectangle, ellipse, line, polygon', 'R'], hand: ['Hand', 'Move around the charm', 'H'], more: ['More', 'Grid, guides, zoom', ''],
     undo: ['Undo', 'Take the last thing back', '⌘Z'], redo: ['Redo', 'Put it back', '⇧⌘Z']
   };
   /* the instruction for the tool in hand, in the foot (the studio's MK_HINTS, J 9260) */
   const HINTS = {
-    select: 'Click to select · Shift-click adds · drag on empty space to sweep · Alt-click reaches inside a group · double-click words to edit',
+    select: 'Click to select · Shift-click adds · drag on empty space to sweep · Ctrl-drag a handle: from the centre · Alt-click reaches inside a group · double-click words to edit',
     marquee: 'Drag a box · everything it touches is selected · Shift adds',
     text: 'Click where the words start, then type · click a text to edit it',
-    rect: 'Drag a box · Shift for a square · Alt from the centre', ellipse: 'Drag an oval · Shift for a circle · Alt from the centre',
-    line: 'Drag a line · Shift keeps it to 45°', hand: 'Drag to move around · or hold Space with any tool'
+    rect: 'Drag a box · Shift for a square · Ctrl or Alt from the centre', ellipse: 'Drag an oval · Shift for a circle · Ctrl or Alt from the centre',
+    line: 'Drag a line · Shift keeps it to 45° · Ctrl or Alt from the middle', polygon: 'Drag a polygon · ↑ ↓ while dragging: more or fewer sides · Shift keeps it regular · Ctrl or Alt from the centre', hand: 'Drag to move around · or hold Space with any tool'
   };
 
   const CSS = `
@@ -1145,6 +1173,17 @@
 .ce-xbar{ display:inline-flex; gap:3px; flex:0 0 auto; }
 .ce-xbar .ce-prop{ padding:0 7px; letter-spacing:.08em; }
 .ce-xbar .ce-prop svg{ width:16px; height:16px; }
+.ce-stage[data-tool="polygon"]{ cursor:crosshair; }
+.ce-stage[data-tool="select"].is-over{ cursor:move; }
+.ce-ui .u-h[data-h="rot"],.ce-ui .u-rz{ cursor:${ROT_CUR}; }
+.ce-ui .u-rz{ fill:transparent; stroke:none; pointer-events:all; }
+.ce-stage.is-busy,.ce-stage.is-busy *{ cursor:var(--gcur,default) !important; }
+.ce-ui .u-bdg text{ fill:#fff; font:600 9.5px var(--sans); letter-spacing:.06em; } .ce-ui .u-bdg--ink rect{ fill:var(--ink); } .ce-ui .u-bdg--gap rect{ fill:#e0483c; } .ce-ui .u-gd--gap{ stroke:#e0483c; }
+.ce-snapb{ gap:6px; padding:0 9px; }
+.ce-snapb svg{ width:15px; height:15px; color:var(--muted); }
+.ce-snapb.is-on{ border-color:var(--ink); background:var(--band); }
+.ce-snapb.is-on svg{ color:var(--gold); }
+@media (max-width:640px){ .ce-snapb span{ display:none; } }
 .ce-stage[data-xtool]{ cursor:var(--xcur,crosshair); } .ce-stage[data-xtool].is-space{ cursor:grab; } .ce-stage[data-xtool].is-panning{ cursor:grabbing; }
 .ce-stage.is-drop::after{ content:""; position:absolute; inset:8px; border:2px dashed var(--gold); background:rgba(165,138,82,.07); pointer-events:none; }
 .ce-say{ position:absolute; left:50%; bottom:14px; z-index:7; transform:translate(-50%,4px); max-width:calc(100% - 28px); padding:7px 13px; background:var(--ink); color:#fff; font-size:11.5px; line-height:1.4;
@@ -1203,7 +1242,7 @@
   }
 
   /** The extensions as one opening of the workspace sees them (the header's EXTENSION POINTS): checked, the first of an id kept, the editor's own tool ids left to it. */
-  const BUILTIN_TOOLS = ['select', 'marquee', 'text', 'rect', 'ellipse', 'line', 'hand'];
+  const BUILTIN_TOOLS = ['select', 'marquee', 'text', 'rect', 'ellipse', 'line', 'hand', 'polygon'];
   function extensions() {
     const arr = v => (Array.isArray(v) ? v.filter(x => x && typeof x === 'object' && x.id != null && String(x.id) !== '') : []);
     const uniq = list => { const seen = new Set(); return list.filter(x => { const k = String(x.id); if (seen.has(k)) return false; seen.add(k); return true; }); };
@@ -1244,6 +1283,8 @@
       textFont: fonts[0].key, textSize: 8, textWeight: 0, textRole: 'hatch', shapeRole: 'line', lw: LW_LASER_PT, run: null,
       editing: null, g: null, space: false, hover: null, open: new Set(), dock: true, nudgeAt: 0, ask: null
     };
+    S.sides = 6; S.flash = null; S.xLive = null;
+    try { const o = JSON.parse((root.localStorage && root.localStorage.getItem('ce.opts')) || 'null'); if (o) for (const k of ['grid', 'snapGrid', 'smart']) if (typeof o[k] === 'boolean') S[k] = o[k]; } catch (e) { /* storage blocked or empty: the defaults */ }
     for (const f of ['front', 'back']) {
       const fd = opts.faces && opts.faces[f]; if (!fd || typeof fd !== 'object') continue;
       const items = prepIn(fd.items, lockRoles);
@@ -1323,6 +1364,7 @@
           <button class="ce-item" type="button" data-tool="rect" role="menuitem">${IC.rect}Rectangle<em>R</em></button>
           <button class="ce-item" type="button" data-tool="ellipse" role="menuitem">${IC.ellipse}Ellipse<em>E</em></button>
           <button class="ce-item" type="button" data-tool="line" role="menuitem">${IC.line}Line<em>L</em></button>
+          <button class="ce-item" type="button" data-tool="polygon" role="menuitem">${IC.polygon}Polygon<em>↑ ↓ sides</em></button>
           ${xShapesHtml}
         </div>
       </div>
@@ -1342,7 +1384,7 @@
           <div class="ce-menu__head">Layers</div>
           <button class="ce-item" type="button" data-cmd="unlockAll" role="menuitem">Unlock everything</button>
           <button class="ce-item" type="button" data-cmd="showAll" role="menuitem">Show everything</button>
-          <div class="ce-menu__note">Hold <b>Space</b> and drag to move around. <b>Alt</b>-click reaches inside a group. Arrows nudge 0.05 mm, <b>Shift</b> 1 mm.</div>
+          <div class="ce-menu__note">Hold <b>Space</b> and drag to move around. <b>Alt</b>-click reaches inside a group. Arrows nudge 0.05 mm, <b>Shift</b> 1 mm. <b>Ctrl</b> (or Alt) on a handle resizes from the centre, <b>Shift</b> keeps the proportions.</div>
         </div>
       </div>
     </div>
@@ -1409,6 +1451,7 @@
         <button class="ce-item" type="button" data-zoom="4000" role="menuitem">4000%</button>
       </div>
     </div>
+    <button class="ce-prop ce-snapb" type="button" data-opt="smart" title="Smart guides: snap to the other parts and the charm, with the distances shown (⌘U) · Alt pauses them while you drag">${IC.magnet}<span>Snap</span></button>
     <span class="ce-hint" data-hint></span>
     <div class="ce-actions">
       <button class="ce-btn ce-btn--ghost" type="button" data-act="cancel">Cancel</button>
@@ -1460,7 +1503,7 @@
     function setSel(ids) {
       const ixm = ix();
       S.sel = topmost(ids.filter(id => ixm.has(id)), ixm);
-      renderUI(); paintLayerSel(true); syncProps();
+      S.flash = null; renderUI(); paintLayerSel(true); syncProps();
       xChanged();
     }
 
@@ -1668,12 +1711,18 @@
           let ux = top[0] - mid[0], uy = top[1] - mid[1]; const ul = Math.hypot(ux, uy) || 1; ux /= ul; uy /= ul;
           if (ul < 1) { ux = 0; uy = -1; }
           const rp = [top[0] + ux * 22, top[1] + uy * 22];
+          // (28 Oct 2026, cursors that say the action: just outside a corner the part turns, as in Illustrator; each resize arrow points the way its handle pulls, turned with the part)
+          for (const c of sc) { const vx = c[0] - mid[0], vy = c[1] - mid[1], L = Math.hypot(vx, vy) || 1; h += `<circle class="u-rz" data-rz="1" cx="${(c[0] + vx / L * 13).toFixed(1)}" cy="${(c[1] + vy / L * 13).toFixed(1)}" r="9"/>`; }
+          // (a corner pulls on the diagonal whatever the box's proportions, an edge square to it; both turned and mirrored with the box as drawn)
+          const ex = [sc[1][0] - sc[0][0], sc[1][1] - sc[0][1]], ey = [sc[3][0] - sc[0][0], sc[3][1] - sc[0][1]], le = Math.hypot(ex[0], ex[1]) || 1, lf = Math.hypot(ey[0], ey[1]) || 1;
+          const curOf = (fx, fy) => { const dx = (fx - 0.5) * ex[0] / le + (fy - 0.5) * ey[0] / lf, dy = (fx - 0.5) * ex[1] / le + (fy - 0.5) * ey[1] / lf; return Math.hypot(dx, dy) < 1e-6 ? '' : RESIZE_CUR[((Math.round(Math.atan2(dy, dx) * 180 / Math.PI / 45) % 4) + 4) % 4]; };
           h += `<line class="u-stem" x1="${top[0].toFixed(1)}" y1="${top[1].toFixed(1)}" x2="${rp[0].toFixed(1)}" y2="${rp[1].toFixed(1)}"/>`;
           h += `<circle class="u-h" data-h="rot" cx="${rp[0].toFixed(1)}" cy="${rp[1].toFixed(1)}" r="5"/>`;
           for (const [name, fx, fy] of HANDLES) {
             if (!edges && name.length === 1) continue;
             const p = at(fx, fy);
-            h += `<rect class="u-h" data-h="${name}" x="${(p[0] - 4.5).toFixed(1)}" y="${(p[1] - 4.5).toFixed(1)}" width="9" height="9"/>`;
+            const cur = curOf(fx, fy);
+            h += `<rect class="u-h" data-h="${name}"${cur ? ` data-cur="${cur}" style="cursor:${cur}"` : ''} x="${(p[0] - 4.5).toFixed(1)}" y="${(p[1] - 4.5).toFixed(1)}" width="9" height="9"/>`;
           }
         }
       }
@@ -1685,6 +1734,8 @@
       if (g && g.kind === 'draw' && g.live && g.draft) h += `<path class="u-draft" d="${dOf(g.draft)}" transform="matrix(${V().join(' ')})" vector-effect="non-scaling-stroke"/>`;
       if (g && g.guides) h += g.guides;
       if (g && g.readout) h += g.readout;
+      if (!g && S.flash) h += readoutSvg(selBox(), S.flash);
+      if (S.xLive) h += (S.xLive.guides || '') + (S.xLive.box ? readoutSvg(S.xLive.box, S.xLive.text) : '');
       { const xt = xTool(S.tool); if (xt && typeof xt.overlay === 'function') { try { h += xt.overlay(ectx) || ''; } catch (er) { xErr(xt.id + '.overlay', er); } } }
       ui.innerHTML = h;
     }
@@ -1752,7 +1803,7 @@
       }
       const leaves = selLeaves().filter(l => !l.locked);
       const texts = leaves.filter(l => l.kind === 'text');
-      const creating = S.tool === 'text' || S.tool === 'rect' || S.tool === 'ellipse' || S.tool === 'line';
+      const creating = S.tool === 'text' || S.tool === 'rect' || S.tool === 'ellipse' || S.tool === 'line' || S.tool === 'polygon';
       const showText = texts.length > 0 || (S.tool === 'text' && !S.sel.length);
       $$('[data-when="text"]').forEach(el => { el.hidden = !showText; });
       if (showText) {
@@ -1783,7 +1834,7 @@
         $('[data-act="wt0"]').classList.toggle('is-on', !same || Math.abs(w) > 1e-9);
       }
       const strokes = leaves.filter(paintStroke);
-      const showW = strokes.length > 0 || ((S.tool === 'rect' || S.tool === 'ellipse' || S.tool === 'line') && !S.sel.length) || (newText && lineText);
+      const showW = strokes.length > 0 || ((S.tool === 'rect' || S.tool === 'ellipse' || S.tool === 'line' || S.tool === 'polygon') && !S.sel.length) || (newText && lineText);
       $('[data-when="stroke"]').hidden = !showW;
       if (showW) {
         const lf = field('lw'), lw = strokes.length ? lwOf(strokes[0]) : S.lw, same = strokes.every(l => Math.abs(lwOf(l) - lw) < 1e-9);
@@ -1813,16 +1864,16 @@
     }
     function syncHist() { $('[data-act="undo"]').disabled = !S.hist.canUndo; $('[data-act="redo"]').disabled = !S.hist.canRedo; }
     function setTool(t) {
-      if (!['select', 'marquee', 'text', 'rect', 'ellipse', 'line', 'hand'].includes(t) && !xTool(t)) return;
+      if (!['select', 'marquee', 'text', 'rect', 'ellipse', 'line', 'hand', 'polygon'].includes(t) && !xTool(t)) return;
       if (S.editing) closeEditor();
       const was = S.tool; xCommit();
       S.tool = t;
-      if (t === 'rect' || t === 'ellipse' || t === 'line') {
+      if (t === 'rect' || t === 'ellipse' || t === 'line' || t === 'polygon') {
         S.shape = t;
         const b = $('[data-shapes]'); b.dataset.tool = t; b.innerHTML = IC[t];
       }
       xFlyButton(t);
-      $$('.ce-tool').forEach(b => b.classList.toggle('is-on', b.dataset.tool === t || (b.hasAttribute('data-shapes') && (t === 'rect' || t === 'ellipse' || t === 'line'))));
+      $$('.ce-tool').forEach(b => b.classList.toggle('is-on', b.dataset.tool === t || (b.hasAttribute('data-shapes') && (t === 'rect' || t === 'ellipse' || t === 'line' || t === 'polygon'))));
       stage.dataset.tool = t;
       xArm(was, t);
       $('[data-hint]').textContent = HINTS[t] || (xTool(t) ? String(xTool(t).hint || xTool(t).title || '') : '');
@@ -1870,6 +1921,17 @@
       next = replaceIn(next, new Map(ids.map(id => [id, pushDown(ixm.get(id).it, M, geo)])));
       setItems(next); S.nudgeAt = now; S.nudgeSel = ids.join('|');
       refresh();
+      flashNudge(run, dx, dy);
+    }
+    /** THE NUDGE SHOWN (28 Oct 2026): where the selection now is and how far this run of arrow taps has moved it, beside it for a moment. */
+    let flashT = 0;
+    function flashNudge(run, dx, dy) {
+      S.nudgeD = run && S.nudgeD ? [S.nudgeD[0] + dx, S.nudgeD[1] + dy] : [dx, dy];
+      const r = sizeRead(); if (!r) return;
+      const d = S.nudgeD.map(v => (v < -1e-9 ? '−' : '+') + fmtMm(Math.abs(v) * MM));
+      S.flash = `X ${fmtMm(r.x)}  Y ${fmtMm(r.y)} mm · ${d[0]}, ${d[1]}`;
+      clearTimeout(flashT); flashT = setTimeout(() => { S.flash = null; if (!S.g) renderUI(); }, 1200);
+      renderUI();
     }
     function transformSel(M, opts2) {
       const ids = S.sel.slice(); if (!ids.length) return;
@@ -2115,18 +2177,23 @@
 
     /* ── smart guides (the studio's align engine, J 16670-16957: the charm's edges and middle and the nearest sixty other things, agreement within 7 screen px, Alt
        pauses it, every agreeing line drawn and not only the winner) ── */
-    function alignTargets(bb0) {
-      const f = frame(), out = { x: [], y: [] };
+    function alignTargets(bb0, all) {
+      const f = frame(), out = { x: [], y: [], boxes: [] };
       out.x.push({ v: f.x0, kind: 'frame' }, { v: f.x0 + f.wPt / 2, kind: 'mid' }, { v: f.x0 + f.wPt, kind: 'frame' });
       out.y.push({ v: f.y0, kind: 'frame' }, { v: f.y0 + f.hPt / 2, kind: 'mid' }, { v: f.y0 + f.hPt, kind: 'frame' });
       const ixm = ix(), skip = new Set();
-      for (const id of S.sel) { const e = ixm.get(id); if (!e) continue; skip.add(id); e.anc.forEach(a => skip.add(a)); walk([e.it], it => skip.add(it.id)); }
+      if (!all) for (const id of S.sel) { const e = ixm.get(id); if (!e) continue; skip.add(id); e.anc.forEach(a => skip.add(a)); walk([e.it], it => skip.add(it.id)); }
+      // THE CHARM'S OUTLINE (28 Oct 2026): its biggest cut line, edges and middle, as the frame's own (the frame is the view; the outline is the piece)
+      { let ob = null, oa = 0; for (const it of items()) { if (it.role !== 'cut' || it.hidden || skip.has(it.id)) continue; const b = geo.drawn(it, I); const a = b ? (b[2] - b[0]) * (b[3] - b[1]) : 0; if (a > oa) { oa = a; ob = b; } }
+        const off = (v, list) => list.every(t => Math.abs(t.v - v) > 1e-6);
+        if (ob) { for (const [v, k] of [[ob[0], 'frame'], [(ob[0] + ob[2]) / 2, 'mid'], [ob[2], 'frame']]) if (off(v, out.x)) out.x.push({ v, kind: k }); for (const [v, k] of [[ob[1], 'frame'], [(ob[1] + ob[3]) / 2, 'mid'], [ob[3], 'frame']]) if (off(v, out.y)) out.y.push({ v, kind: k }); } }
       const cand = [], c0 = centreOf(bb0);
       const consider = (it, P) => { if (it.hidden || skip.has(it.id)) return; const b = geo.drawn(it, P); if (!b) return; const c = centreOf(b); cand.push({ b, d: Math.abs(c[0] - c0[0]) + Math.abs(c[1] - c0[1]) }); };
       for (const it of items()) consider(it, I);
       for (const id of S.sel) { const e = ixm.get(id); if (e && e.parent) for (const sib of e.parent.children) consider(sib, e.P); }
       cand.sort((a, b) => a.d - b.d);
       for (const { b } of cand.slice(0, 60)) {
+        out.boxes.push(b);
         out.x.push({ v: b[0], kind: 'edge', b }, { v: (b[0] + b[2]) / 2, kind: 'edge', b }, { v: b[2], kind: 'edge', b });
         out.y.push({ v: b[1], kind: 'edge', b }, { v: (b[1] + b[3]) / 2, kind: 'edge', b }, { v: b[3], kind: 'edge', b });
       }
@@ -2154,6 +2221,66 @@
       if (bx) { res.dx = bx.d; res.gx = bx.hits; } if (by) { res.dy = by.d; res.gy = by.hits; }
       return res;
     }
+    /* ── LIVE FEEDBACK (28 Oct 2026; Paul: "I'm not seeing a real time read out of the size in the work area of the actually selected object and in the X and Y in the menu
+       ... especially all the feedback"): the five fields follow every frame of a draw, drag, resize and turn; the gap to the part a guide agrees with is measured on it,
+       and a part dropped between two others in a row snaps to even spacing with both gaps shown (the studio's mkAlignSpacing, J 16773) ── */
+    let fieldEls = null;
+    function liveFields(r) {
+      if (!fieldEls) fieldEls = ['x', 'y', 'w', 'h', 'r'].map(k => [k, field(k)]);
+      for (const [k, el] of fieldEls) { el.disabled = !r; el.value = !r ? '' : k === 'r' ? (r.r == null ? '' : trim(r.r, 1)) : fmtMm(r[k]); }
+    }
+    const badgeSvg = (sx, sy, text, cls) => { const w = text.length * 5.6 + 10; return `<g class="u-bdg ${cls}"><rect x="${(sx - w / 2).toFixed(1)}" y="${(sy - 8).toFixed(1)}" width="${w.toFixed(1)}" height="15"/><text x="${(sx - w / 2 + 5).toFixed(1)}" y="${(sy + 3).toFixed(1)}">${esc(text)}</text></g>`; };
+    /** The gap between the selection and each part a guide lines it up with, measured along the guide (two at most on each axis; none where they overlap). */
+    function gapsSvg(bb, hits) {
+      let h = ''; const seen = new Set();
+      const one = (vert, g) => {
+        const o = g.b; if (!o || seen.has(o) || seen.size >= 4) return;
+        let a0, a1;
+        if (vert) { if (o[1] >= bb[3]) { a0 = bb[3]; a1 = o[1]; } else if (o[3] <= bb[1]) { a0 = o[3]; a1 = bb[1]; } else return; }
+        else if (o[0] >= bb[2]) { a0 = bb[2]; a1 = o[0]; } else if (o[2] <= bb[0]) { a0 = o[2]; a1 = bb[0]; } else return;
+        if ((a1 - a0) * S.k < 16) return;
+        seen.add(o);
+        const p = vert ? toStage(g.v, (a0 + a1) / 2) : toStage((a0 + a1) / 2, g.v);
+        h += badgeSvg(p[0], p[1], fmtMm((a1 - a0) * MM), 'u-bdg--ink');
+      };
+      for (const g of hits.gx || []) one(true, g);
+      for (const g of hits.gy || []) one(false, g);
+      return h;
+    }
+    /** Even spacing in a row (horiz) or a column: the nearest part before and after the box that share its row, and the shift that makes the two gaps equal. */
+    function spacing(bb, boxes, tol, horiz) {
+      const A = horiz ? 0 : 1, B = 1 - A, lo = bb[A], hi = bb[A + 2], c0 = bb[B], c1 = bb[B + 2];
+      let before = null, after = null;
+      for (const b of boxes || []) {
+        const over = Math.min(c1, b[B + 2]) - Math.max(c0, b[B]);
+        if (over < Math.min(c1 - c0, b[B + 2] - b[B]) * 0.4) continue;   // (in the same row means in the same row, J 16783)
+        if (b[A + 2] <= lo && (!before || b[A + 2] > before[A + 2])) before = b;
+        if (b[A] >= hi && (!after || b[A] < after[A])) after = b;
+      }
+      if (!before || !after) return null;
+      const gapA = lo - before[A + 2], gapB = after[A] - hi;
+      if (gapA < 0 || gapB < 0 || Math.abs(gapA - gapB) > tol * 2) return null;
+      return { delta: (gapA + gapB) / 2 - gapA, before, after, horiz };
+    }
+    function spacingSvg(bb, sps) {
+      let h = '';
+      for (const sp of sps) {
+        const A = sp.horiz ? 0 : 1, B = 1 - A, mid = (bb[B] + bb[B + 2]) / 2;
+        for (const [a0, a1] of [[sp.before[A + 2], bb[A]], [bb[A + 2], sp.after[A]]]) {
+          if (a1 - a0 < 1e-6) continue;
+          const p = sp.horiz ? toStage(a0, mid) : toStage(mid, a0), q = sp.horiz ? toStage(a1, mid) : toStage(mid, a1);
+          h += `<line class="u-gd u-gd--gap" x1="${p[0].toFixed(1)}" y1="${p[1].toFixed(1)}" x2="${q[0].toFixed(1)}" y2="${q[1].toFixed(1)}"/>`;
+          h += badgeSvg((p[0] + q[0]) / 2 + (sp.horiz ? 0 : 22), (p[1] + q[1]) / 2 - (sp.horiz ? 11 : 0), fmtMm((a1 - a0) * MM), 'u-bdg--gap');
+        }
+      }
+      return h;
+    }
+    /** A point snapped to the smart guides and the grid (Alt pauses them), with the guides that agree with it: for drawing, and for the extensions (ctx.snap). */
+    function snapPt(x, y, T, e) {
+      if ((e && e.altKey) || !(S.smart || S.snapGrid)) return { x, y, guides: '' };
+      const hits = solve([x, y, x, y], T, 7 / S.k, ['lo'], ['lo']);
+      return { x: x + hits.dx, y: y + hits.dy, guides: guidesSvg([x + hits.dx, y + hits.dy, x + hits.dx, y + hits.dy], hits) };
+    }
     function guidesSvg(bb, hits) {
       let h = ''; const seen = new Set();
       const line = (vert, at, from, to, kind) => {
@@ -2166,12 +2293,13 @@
       for (const g of hits.gy || []) { if (g.kind === 'grid') continue; const o = g.b; line(false, g.v, o ? Math.min(bb[0], o[0]) - pad : f.x0, o ? Math.max(bb[2], o[2]) + pad : f.x0 + f.wPt, g.kind); }
       return h;
     }
-    function readoutSvg(bb, text) {
+    function readoutSvg(bb, text, cls) {
       if (!bb) return '';
       const a = toStage(bb[0], bb[1]), b = toStage(bb[2], bb[3]), s = sb();
       const w = text.length * 5.9 + 12, x = clamp((a[0] + b[0]) / 2 - w / 2, 4, s.w - w - 4);
-      let y = b[1] + 12; if (y + 18 > s.h) y = a[1] - 30;
-      return `<g class="u-dim"><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="16"/><text x="${(x + 6).toFixed(1)}" y="${(y + 11.5).toFixed(1)}">${esc(text)}</text></g>`;
+      // (the studio's mkAlignReadout: OUTSIDE the selection, so it never covers what is being placed, clear of the handles; above it, past the turn handle, when there is no room below)
+      let y = b[1] + 14; if (y + 18 > s.h) y = a[1] - 50; y = clamp(y, 4, Math.max(4, s.h - 20));
+      return `<g class="u-dim u-chip${cls ? ' ' + cls : ''}"><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="16"/><text x="${(x + 6).toFixed(1)}" y="${(y + 11.5).toFixed(1)}">${esc(text)}</text></g>`;
     }
 
     /* ── gestures on the room ── */
@@ -2188,7 +2316,7 @@
     function applyM(g, M, foldText) {
       const map = new Map();
       for (const [id, it] of g.base) { let n = pushDown(it, M, geo); if (foldText) n = foldAll(n); map.set(id, n); }
-      setItems(replaceIn(g.items0, map)); ixFor = null; render(); syncProps();
+      setItems(replaceIn(g.items0, map)); ixFor = null; render(); liveFields(sizeRead());
     }
     function onDown(e) {
       if (S.ask) return;
@@ -2207,9 +2335,9 @@
       const [x, y] = fromClient(e.clientX, e.clientY);
       if (e.button === 1 || S.space || S.tool === 'hand') { e.preventDefault(); S.g = { kind: 'pan', cx0: e.clientX, cy0: e.clientY, ox0: S.ox, oy0: S.oy, live: true }; stage.classList.add('is-panning'); return; }
       { const xt = xTool(S.tool); if (xt) { e.preventDefault(); S.g = { kind: 'tool', t: xt, live: true, cx0: e.clientX, cy0: e.clientY }; xCall(xt, 'onDown', e); return; } }
-      const h = e.target.closest && e.target.closest('[data-h]');
+      const h = e.target.closest && e.target.closest('[data-h],[data-rz]');
       // (a handle that is pressed and never dragged was a click on whatever is under it: on a small square the handles cover the neighbours' edges)
-      if (S.tool === 'select' && h && S.sel.length) { e.preventDefault(); S.g = { kind: h.dataset.h === 'rot' ? 'rotate' : 'resize', h: h.dataset.h, x0: x, y0: y, cx0: e.clientX, cy0: e.clientY, live: false, click: { additive: e.shiftKey || e.metaKey || e.ctrlKey, deep: e.altKey } }; return; }
+      if (S.tool === 'select' && h && S.sel.length) { e.preventDefault(); S.g = { kind: h.dataset.h === 'rot' || h.dataset.rz ? 'rotate' : 'resize', h: h.dataset.h || 'rot', cur: h.dataset.cur, x0: x, y0: y, cx0: e.clientX, cy0: e.clientY, live: false, click: { additive: e.shiftKey || e.metaKey || e.ctrlKey, deep: e.altKey } }; return; }
       if (S.tool === 'select') {
         const additive = e.shiftKey || e.metaKey || e.ctrlKey;
         const hit = hitAt(x, y, { deep: e.altKey });
@@ -2226,13 +2354,19 @@
         if (t) { setSel([t.id]); openEditor(t.id); } else createText(x, y);
         return;
       }
-      if (S.tool === 'rect' || S.tool === 'ellipse' || S.tool === 'line') { S.g = { kind: 'draw', tool: S.tool, x0: x, y0: y, x, y, cx0: e.clientX, cy0: e.clientY, live: false }; }
+      if (S.tool === 'rect' || S.tool === 'ellipse' || S.tool === 'line' || S.tool === 'polygon') {
+        // (28 Oct 2026: a shape starts on the guide it is near, as Illustrator's smart guides make it; the selection is a target too)
+        const T = alignTargets([x, y, x, y], true), s0 = snapPt(x, y, T, e);
+        S.g = { kind: 'draw', tool: S.tool, x0: s0.x, y0: s0.y, x, y, cx0: e.clientX, cy0: e.clientY, live: false, T };
+      }
     }
     function abandon() {
       const g = S.g; if (!g) return;
-      if (g.kind === 'tool') { S.g = null; xCommit(); renderUI(); return; }
+      if (g.kind === 'tool') { S.g = null; S.xLive = null; xCommit(); renderUI(); return; }
+      stage.classList.remove('is-busy');
       if (g.live && g.items0 && g.kind !== 'pan' && g.kind !== 'pinch') { const s = S.hist.back.pop(); setItems(s && s.face === S.face ? s.items : g.items0); syncHist(); ixFor = null; render(); renderLayers(); syncProps(); }
       S.g = null; stage.classList.remove('is-panning'); renderUI();
+      if (g.kind === 'draw') syncProps();   // (the fields showed the shape being drawn)
     }
     function onMove(e) {
       cursor = { x: e.clientX, y: e.clientY }; queueRulers();
@@ -2260,61 +2394,86 @@
         S.sel = topmost(ids, ix()); renderUI(); paintLayerSel(); syncProps(); return;
       }
       if (g.kind === 'draw') {
-        if (!g.live && !far) return; g.live = true;
-        let x0 = g.x0, y0 = g.y0, x1 = x, y1 = y;
-        if (g.tool === 'line') { if (e.shiftKey) { const a = Math.round(Math.atan2(y1 - y0, x1 - x0) / (Math.PI / 4)) * (Math.PI / 4), L = Math.hypot(x1 - x0, y1 - y0); x1 = x0 + Math.cos(a) * L; y1 = y0 + Math.sin(a) * L; } g.draft = lineSP(x0, y0, x1, y1); }
-        else {
+        if (!g.live && !far) return; g.live = true; busy('crosshair'); g.ev = evOf(e);
+        // THE SIZE AS IT IS DRAWN (28 Oct 2026): the chip beside the shape and the X / Y / W / H fields follow every frame; the corner snaps to the guides; Ctrl or Alt
+        // draws from the centre (D1), Shift a square, a circle, a regular polygon or a line at 45°
+        const sp = snapPt(x, y, g.T, e), centred = e.altKey || e.ctrlKey || e.metaKey;
+        let x0 = g.x0, y0 = g.y0, x1 = sp.x, y1 = sp.y, text;
+        if (g.tool === 'line') {
+          if (e.shiftKey) { const a = Math.round(Math.atan2(y1 - y0, x1 - x0) / (Math.PI / 4)) * (Math.PI / 4), L = Math.hypot(x1 - x0, y1 - y0); x1 = x0 + Math.cos(a) * L; y1 = y0 + Math.sin(a) * L; }
+          if (centred) { x0 = 2 * g.x0 - x1; y0 = 2 * g.y0 - y1; }
+          g.draft = lineSP(x0, y0, x1, y1);
+          text = `${fmtMm(Math.hypot(x1 - x0, y1 - y0) * MM)} mm · ${trim(wrap180(Math.atan2(y1 - y0, x1 - x0) * 180 / Math.PI), 1)}°`;
+        } else {
           let w = x1 - x0, h = y1 - y0;
-          if (e.shiftKey) { const s = Math.max(Math.abs(w), Math.abs(h)); w = Math.sign(w || 1) * s; h = Math.sign(h || 1) * s; }
-          if (e.altKey) { x0 = g.x0 - w; y0 = g.y0 - h; x1 = g.x0 + w; y1 = g.y0 + h; } else { x1 = x0 + w; y1 = y0 + h; }
+          const sides = clamp(Math.round(S.sides) || 6, 3, 24);
+          if (e.shiftKey) {
+            if (g.tool === 'polygon') { const r = polygonRatio(sides), k = Math.max(Math.abs(w) / r, Math.abs(h)); w = Math.sign(w || 1) * k * r; h = Math.sign(h || 1) * k; }
+            else { const k = Math.max(Math.abs(w), Math.abs(h)); w = Math.sign(w || 1) * k; h = Math.sign(h || 1) * k; }
+          }
+          if (centred) { x0 = g.x0 - w; y0 = g.y0 - h; x1 = g.x0 + w; y1 = g.y0 + h; } else { x1 = x0 + w; y1 = y0 + h; }
           const a = [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)];
-          g.draft = g.tool === 'rect' ? rectSP(a[0], a[1], a[2], a[3]) : ellipseSP((a[0] + a[2]) / 2, (a[1] + a[3]) / 2, (a[2] - a[0]) / 2, (a[3] - a[1]) / 2);
+          g.draft = g.tool === 'rect' ? rectSP(a[0], a[1], a[2], a[3]) : g.tool === 'polygon' ? polygonSP(a, sides) : ellipseSP((a[0] + a[2]) / 2, (a[1] + a[3]) / 2, (a[2] - a[0]) / 2, (a[3] - a[1]) / 2);
+          text = `${fmtMm((a[2] - a[0]) * MM)} × ${fmtMm((a[3] - a[1]) * MM)} mm` + (g.tool === 'polygon' ? ` · ${sides} sides` : '');
         }
+        const db = bboxOf(g.draft), f = frame();
+        g.guides = sp.guides; g.readout = readoutSvg(db, text);
+        if (db) liveFields({ x: (db[0] - f.x0) * MM, y: (db[1] - f.y0) * MM, w: (db[2] - db[0]) * MM, h: (db[3] - db[1]) * MM, r: 0 });
         renderUI(); return;
       }
-      if (!g.live) { if (!far) return; begin(g); g.info0 = selInfo(); g.T = g.kind === 'move' && g.info0 ? alignTargets(g.info0.single ? geo.drawn(g.info0.e.it, g.info0.e.P) : g.info0.b) : null; }
+      if (!g.live) { if (!far) return; begin(g); g.info0 = selInfo(); g.T = g.kind === 'move' && g.info0 ? alignTargets(g.info0.single ? geo.drawn(g.info0.e.it, g.info0.e.P) : g.info0.b) : null; busy(g.kind === 'move' ? 'move' : g.kind === 'rotate' ? ROT_CUR : g.cur || 'crosshair'); }
+      g.ev = evOf(e);
       const info = g.info0; if (!info) return;
       const tol = 7 / S.k, snapOn = !e.altKey;
       const f = frame();
       if (g.kind === 'move') {
         let dx = x - g.x0, dy = y - g.y0;
         const bb0 = info.single ? geo.drawn(info.e.it, info.e.P) : info.b;
-        let hits = { gx: [], gy: [] };
+        let hits = { gx: [], gy: [] }; const sps = [];
         if (snapOn && (S.smart || S.snapGrid)) { hits = solve([bb0[0] + dx, bb0[1] + dy, bb0[2] + dx, bb0[3] + dy], g.T, tol); dx += hits.dx; dy += hits.dy; }
+        if (snapOn && S.smart && g.T) for (const horiz of [true, false]) {
+          const sp = spacing([bb0[0] + dx, bb0[1] + dy, bb0[2] + dx, bb0[3] + dy], g.T.boxes, tol, horiz); if (!sp) continue;
+          if (!(horiz ? hits.gx : hits.gy).length) { if (horiz) dx += sp.delta; else dy += sp.delta; }
+          sps.push(sp);
+        }
         applyM(g, tr(dx, dy));
         const bb = [bb0[0] + dx, bb0[1] + dy, bb0[2] + dx, bb0[3] + dy];
-        g.guides = guidesSvg(bb, hits);
+        g.guides = guidesSvg(bb, hits) + gapsSvg(bb, hits) + spacingSvg(bb, sps);
         g.readout = readoutSvg(bb, `X ${fmtMm((bb[0] - f.x0) * MM)}  Y ${fmtMm((bb[1] - f.y0) * MM)} mm`);
       } else if (g.kind === 'resize') {
         const hx = /w/.test(g.h) ? -1 : /e/.test(g.h) ? 1 : 0, hy = /n/.test(g.h) ? -1 : /s/.test(g.h) ? 1 : 0;
-        const centred = e.altKey;
+        const centred = e.altKey || e.ctrlKey || e.metaKey;   // (Paul, 28 Oct 2026: "resize every object from its center-point ... by holding the control key while dragging"; Alt too, as in Illustrator: D1)
         // one unturned, unmirrored item is a square box like a selection of several: the same arithmetic, and its edges snap
         const square = info.single && Math.abs(info.W[1]) < 1e-12 && Math.abs(info.W[2]) < 1e-12 && info.W[0] > 0 && info.W[3] > 0;
         if (info.single && !square) {
           // in the item's own axes: the opposite handle stays put (Alt: the centre does)
-          const rb = info.rb, Wi = inv(info.W) || I, q = ap(Wi, x, y), cx = (rb[0] + rb[2]) / 2, cy = (rb[1] + rb[3]) / 2;
+          const rb = info.rb, Wi = inv(info.W) || I, q = ap(Wi, x, y), q0 = ap(Wi, g.x0, g.y0), cx = (rb[0] + rb[2]) / 2, cy = (rb[1] + rb[3]) / 2;
           const ax = centred ? cx : hx < 0 ? rb[2] : rb[0], ay = centred ? cy : hy < 0 ? rb[3] : rb[1];
           const ex = hx < 0 ? rb[0] : rb[2], ey = hy < 0 ? rb[1] : rb[3];
-          let kx = hx ? (q[0] - ax) / ((ex - ax) || 1e-9) : 1, ky = hy ? (q[1] - ay) / ((ey - ay) || 1e-9) : 1;
+          // (the edge moves by as much as the hand does: a handle caught off its middle does not jump to the pointer, 28 Oct 2026)
+          let kx = hx ? (ex + q[0] - q0[0] - ax) / ((ex - ax) || 1e-9) : 1, ky = hy ? (ey + q[1] - q0[1] - ay) / ((ey - ay) || 1e-9) : 1;
           if (e.shiftKey) { const k = !hx ? ky : !hy ? kx : (Math.abs(kx - 1) > Math.abs(ky - 1) ? kx : ky); kx = k; ky = k; }
           kx = Math.sign(kx || 1) * Math.max(0.01, Math.abs(kx)); ky = Math.sign(ky || 1) * Math.max(0.01, Math.abs(ky));
-          applyM(g, mul(info.W, mul(about(scM(kx, ky), ax, ay), Wi)));
+          applyM(g, mul(info.W, mul(about(scM(kx, ky), ax, ay), Wi))); g.hits = null;
         } else {
           const b = info.single ? polyBox(info.corners) : info.b, cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2;
           const ax = centred ? cx : hx < 0 ? b[2] : b[0], ay = centred ? cy : hy < 0 ? b[3] : b[1];
           let ex = hx < 0 ? b[0] : b[2], ey = hy < 0 ? b[1] : b[3];
-          let px = x, py = y;
-          if (snapOn && !centred && !e.shiftKey && (S.smart || S.snapGrid)) {
+          let px = ex + (x - g.x0), py = ey + (y - g.y0);   // (the edge moves by as much as the hand does)
+          g.hits = null;
+          if (snapOn && !(e.shiftKey && hx && hy) && (S.smart || S.snapGrid)) {
             g.T = g.T || alignTargets(b);
-            const hits = solve([hx ? px : b[0], hy ? py : b[1], hx ? px : b[2], hy ? py : b[3]], g.T, tol, hx ? ['lo'] : [], hy ? ['lo'] : []);
-            px += hits.dx; py += hits.dy; g.guides = guidesSvg(b, hits);
-          } else g.guides = '';
+            g.hits = solve([hx ? px : b[0], hy ? py : b[1], hx ? px : b[2], hy ? py : b[3]], g.T, tol, hx ? ['lo'] : [], hy ? ['lo'] : []);
+            px += g.hits.dx; py += g.hits.dy;
+          }
           let kx = hx ? (px - ax) / ((ex - ax) || 1e-9) : 1, ky = hy ? (py - ay) / ((ey - ay) || 1e-9) : 1;
           if (e.shiftKey) { const k = !hx ? ky : !hy ? kx : (Math.abs(kx - 1) > Math.abs(ky - 1) ? kx : ky); kx = k; ky = k; }
           kx = Math.sign(kx || 1) * Math.max(0.01, Math.abs(kx)); ky = Math.sign(ky || 1) * Math.max(0.01, Math.abs(ky));
           applyM(g, about(scM(kx, ky), ax, ay));
         }
-        const nb = selBox(); g.readout = nb ? readoutSvg(nb, `${fmtMm((nb[2] - nb[0]) * MM)} × ${fmtMm((nb[3] - nb[1]) * MM)} mm`) : '';
+        const nb = selBox(), sr = sizeRead();
+        g.guides = g.hits && nb ? guidesSvg(nb, g.hits) + gapsSvg(nb, g.hits) : '';
+        g.readout = nb && sr ? readoutSvg(nb, `${fmtMm(sr.w)} × ${fmtMm(sr.h)} mm`) : '';
       } else if (g.kind === 'rotate') {
         const c = info.single ? ap(info.W, ...centreOf(info.rb)) : centreOf(info.b);
         let d = (Math.atan2(y - c[1], x - c[0]) - Math.atan2(g.y0 - c[1], g.x0 - c[0])) * 180 / Math.PI;
@@ -2331,15 +2490,16 @@
       try { stage.releasePointerCapture(e.pointerId); } catch (er) { /* not captured */ }
       const g = S.g; if (!g) return;
       S.g = null; stage.classList.remove('is-panning');
-      if (g.kind === 'tool') { xCall(g.t, 'onUp', e); xCommit(); renderUI(); return; }
+      stage.classList.remove('is-busy');
+      if (g.kind === 'tool') { xCall(g.t, 'onUp', e); S.xLive = null; xCommit(); renderUI(); return; }
       if (g.kind === 'draw' && g.live && g.draft) {
         const b = bboxOf(g.draft), small = !b || Math.max(b[2] - b[0], b[3] - b[1]) * S.k < 3;
         if (!small) {
-          const it = { id: newId(), kind: 'path', role: S.shapeRole, source: 'added', name: { rect: 'Rectangle', ellipse: 'Ellipse', line: 'Line' }[g.tool], hidden: false, locked: false,
+          const it = { id: newId(), kind: 'path', role: S.shapeRole, source: 'added', name: { rect: 'Rectangle', ellipse: 'Ellipse', line: 'Line', polygon: 'Polygon' }[g.tool], hidden: false, locked: false,
             subpaths: g.draft.map(sub => sub.map(op => op.map(v => (Array.isArray(v) ? [r9(v[0]), r9(v[1])] : v)))), stroke: S.shapeRole !== 'hatch', fill: S.shapeRole === 'hatch', lwPt: S.lw, tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 };
           commit(items().concat(it), [it.id]); setTool('select');
         }
-        renderUI(); return;
+        renderUI(); syncProps(); return;
       }
       if (g.kind === 'marquee' && !g.live) { renderUI(); return; }
       if (!g.live && g.click) {
@@ -2361,11 +2521,12 @@
       hoverRaf = requestAnimationFrame(() => {
         hoverRaf = 0; const ev = hoverEv; if (!ev || S.g) return;
         let id = null;
-        if ((S.tool === 'select' || S.tool === 'text') && !S.space && !(ev.target.closest && ev.target.closest('[data-h]'))) {
+        if ((S.tool === 'select' || S.tool === 'text') && !S.space && !(ev.target.closest && ev.target.closest('[data-h],[data-rz]'))) {
           const [x, y] = fromClient(ev.clientX, ev.clientY);
           const h = hitAt(x, y, S.tool === 'text' ? { deep: true, filter: it => it.kind === 'text' } : { deep: ev.altKey });
           id = h ? h.id : null;
         }
+        stage.classList.toggle('is-over', !!id && S.tool === 'select');
         if (id !== S.hover) { S.hover = id; renderUI(); }
       });
     }
@@ -2525,6 +2686,9 @@
         if (!d.live) { rowClick(d.id, e); return; }
         if (d.target) moveLayer(d.id, d.target.id, d.target.above);
       };
+      // (28 Oct 2026: a row under the pointer lights its part on the charm, as the charm's own hover does)
+      layersEl.addEventListener('pointerover', e => { if (drag || S.g) return; const r = e.target.closest('.ce-layer'), id = r ? r.dataset.id : null; if (id !== S.hover) { S.hover = id; renderUI(); } });
+      layersEl.addEventListener('pointerleave', () => { if (S.hover && !S.g) { S.hover = null; renderUI(); } });
       layersEl.addEventListener('pointerup', end); layersEl.addEventListener('pointercancel', () => { drag = null; renderLayers(true); });
       layersEl.addEventListener('click', e => {
         const b = e.target.closest('[data-lact]'); if (!b) return;
@@ -2593,6 +2757,8 @@
       if (!rootEl.isConnected) return;
       e.stopPropagation();
       const t = e.target, meta = e.metaKey || e.ctrlKey, k = e.key;
+      if (S.g && S.g.live && S.g.ev && /^(Shift|Control|Alt|Meta)$/.test(k)) { e.preventDefault(); remodify(e); return; }
+      if (S.g && S.g.live && S.g.kind === 'draw' && S.g.tool === 'polygon' && (k === 'ArrowUp' || k === 'ArrowDown')) { e.preventDefault(); S.sides = clamp((Math.round(S.sides) || 6) + (k === 'ArrowUp' ? 1 : -1), 3, 24); remodify(e); return; }
       if (S.ask) { if (k === 'Escape') { e.preventDefault(); S.ask.done(false); } return; }
       if (S.editing && t === S.editing.ta) {
         if (k === 'Escape' || (k === 'Enter' && !e.shiftKey)) { e.preventDefault(); closeEditor(); }
@@ -2621,6 +2787,7 @@
         if (k === '=' || k === '+' || e.code === 'NumpadAdd') { e.preventDefault(); zoomCmd('in'); return; }
         if (k === '-' || k === '_' || e.code === 'NumpadSubtract') { e.preventDefault(); zoomCmd('out'); return; }
         if (kl === 's') { e.preventDefault(); save(); return; }
+        if (kl === 'u') { e.preventDefault(); S.smart = !S.smart; saveOpts(); syncProps(); say(S.smart ? 'Smart guides on: parts snap to each other and to the charm' : 'Smart guides off', 1600); return; }
         xKeyRun(e);
         return;
       }
@@ -2645,7 +2812,14 @@
       if (!rootEl.isConnected) return;
       e.stopPropagation();
       if (e.key === ' ' || e.code === 'Space') { S.space = false; stage.classList.remove('is-space'); }
+      if (S.g && S.g.live && S.g.ev && /^(Shift|Control|Alt|Meta)$/.test(e.key)) remodify(e);
     }
+    /** The drag in hand made again where the pointer is, with the keys as they now are: Ctrl, Alt or Shift pressed or let go counts at once, not at the next movement. */
+    function remodify(ke) { const g = S.g; if (!g || !g.ev) return; onMove(Object.assign({}, g.ev, { shiftKey: ke.shiftKey, altKey: ke.altKey, ctrlKey: ke.ctrlKey, metaKey: ke.metaKey, target: stage })); }
+    const evOf = e => ({ clientX: e.clientX, clientY: e.clientY, pointerType: e.pointerType, pointerId: e.pointerId });
+    /** The cursor of the gesture in hand, over everything, until the hand lifts. */
+    function busy(c) { stage.style.setProperty('--gcur', c); stage.classList.add('is-busy'); }
+    function saveOpts() { try { if (root.localStorage) root.localStorage.setItem('ce.opts', JSON.stringify({ grid: S.grid, snapGrid: S.snapGrid, smart: S.smart })); } catch (e) { /* fine */ } }
     function fieldKey(e) {
       const el = e.target, f = el.dataset && el.dataset.f; if (!f) return;
       const k = e.key;
@@ -2784,14 +2958,29 @@
       pointOf: (cx, cy) => fromClient(cx, cy), stageOf: (x, y) => toStage(x, y), view: () => V(),
       setZoom: (pct, about) => { if (!fin(+pct)) return; const b = sb(); if (about && fin(about.x) && fin(about.y)) zoomAtStage(+pct / 100 * PX100, about.x - b.l, about.y - b.t); else zoomTo(+pct); },
       geo, model, entry: id => { const e = entry(String(id)); return e ? { it: e.it, P: e.P, parent: e.parent } : null; },
-      say: (text, ms) => say(text, ms), redraw: () => { renderUI(); if (!(S.g && S.g.live)) xBar(); }, setTool: id => setTool(String(id)), root: rootEl, stage
+      say: (text, ms) => say(text, ms), redraw: () => { renderUI(); if (!(S.g && S.g.live)) xBar(); }, setTool: id => setTool(String(id)), root: rootEl, stage,
+      /* (28 Oct 2026, live feedback for an extension's own gestures) snap(x, y, ev) -> [x, y]: the point on the smart guides (Alt in ev pauses them), the guides drawn with the
+         live read-out; live({ box: [x0, y0, x1, y1] pt, text?, angle? } | null): the size chip beside the box (default "W × H mm") and the X / Y / W / H fields; both end with the gesture */
+      snap: (x, y, ev) => {
+        const f = frame(), far = !xSnap.T || xSnap.items !== items() || Math.hypot(x - xSnap.x, y - xSnap.y) > Math.max(f.wPt, f.hPt) / 4;
+        if (far) xSnap = { T: alignTargets([x, y, x, y], true), items: items(), x, y };
+        const r = snapPt(x, y, xSnap.T, ev); S.xLive = Object.assign({}, S.xLive, { guides: r.guides }); return [r.x, r.y];
+      },
+      live: o => {
+        if (!o || !Array.isArray(o.box)) { S.xLive = null; renderUI(); return; }
+        const b = o.box, f = frame(), w = (b[2] - b[0]) * MM, hh = (b[3] - b[1]) * MM;
+        S.xLive = Object.assign({}, S.xLive, { box: b, text: o.text != null ? String(o.text) : `${fmtMm(w)} × ${fmtMm(hh)} mm` });
+        liveFields({ x: (b[0] - f.x0) * MM, y: (b[1] - f.y0) * MM, w, h: hh, r: fin(o.angle) ? o.angle : 0 }); renderUI();
+      }
     };
+    let xSnap = {};
     // tools
     const xTip = id => { const t = xTool(id); return t ? [String(t.title || t.id), String(t.tip || t.hint || ''), xKeyOf(t)] : null; };
     function xArm(was, now) {
       if (was === now) return;
       const a = xTool(was), b = xTool(now);
       if (a) xCall(a, 'onDisarm');
+      S.xLive = null;
       if (b) { stage.dataset.xtool = String(b.id); stage.style.setProperty('--xcur', b.cursor ? String(b.cursor) : 'crosshair'); xCall(b, 'onArm'); } else delete stage.dataset.xtool;
     }
     /** A flyout's rail button shows the tool of it last picked (the Shapes button does this for its own three). */
@@ -2952,7 +3141,7 @@
       }
       const fc = t.closest('[data-face]'); if (fc && !fc.disabled) { switchFace(fc.dataset.face); return; }
       const z = t.closest('[data-zoom]'); if (z) { closeMenus(); zoomCmd(z.dataset.zoom); return; }
-      const op = t.closest('[data-opt]'); if (op) { S[op.dataset.opt] = !S[op.dataset.opt]; syncProps(); applyView(); return; }
+      const op = t.closest('[data-opt]'); if (op) { S[op.dataset.opt] = !S[op.dataset.opt]; saveOpts(); syncProps(); applyView(); return; }
       const cm = t.closest('[data-cmd]'); if (cm) { closeMenus(); if (cm.dataset.cmd === 'unlockAll') setAll('locked', false); else if (cm.dataset.cmd === 'showAll') setAll('hidden', false); return; }
       const rl = t.closest('[data-role]'); if (rl) { closeMenus(); setRole(rl.dataset.role); return; }
       const fo = t.closest('[data-font]'); if (fo) { closeMenus(); const f = fonts.find(x => String(x.key) === fo.dataset.font); if (f) setFont(f.key); return; }
