@@ -149,7 +149,7 @@ function registerExtensions() {
     });
     await step('0.3 flyouts: a "shapes" tool joins the Shapes menu; tools naming the same flyout share one rail button whose icon follows the one picked', async () => {
       const r = await page.evaluate(() => ({ shapes: [...document.querySelectorAll('[data-drop="shapes"] .ce-menu [data-tool]')].map(b => b.dataset.tool), pen: [...document.querySelectorAll('[data-drop="x-Pen"] .ce-menu [data-tool]')].map(b => b.dataset.tool) }));
-      assert.deepEqual(r.shapes, ['rect', 'ellipse', 'line', 'polygon', 'xstar']); assert.deepEqual(r.pen, ['xpen', 'xpen2']);
+      assert.deepEqual(r.shapes, ['rect', 'ellipse', 'polygon', 'xstar']);   // (Illustrator workspace: the Line Segment is a tool of its own, as in Illustrator) assert.deepEqual(r.pen, ['xpen', 'xpen2']);
       await page.evaluate(() => CharmEditor.current.ctx.setTool('xpen2')); await settle(page);
       const b = await page.evaluate(() => { const btn = document.querySelector('[data-drop="x-Pen"] .ce-drop__b'); return { tool: btn.dataset.tool, on: btn.classList.contains('is-on') }; });
       assert.deepEqual(b, { tool: 'xpen2', on: true });

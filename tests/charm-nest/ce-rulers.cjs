@@ -51,7 +51,7 @@ const rulerPx = (page, which, along, across) => page.evaluate(([w, a, c]) => {
   const x = w === 'x' ? a : c, y = w === 'x' ? c : a;
   return Array.from(cv.getContext('2d').getImageData(Math.floor(x * dpr), Math.floor(y * dpr), 1, 1).data);
 }, [which, along, across]);
-const isGold = px => px[3] > 200 && near(px[0], 184, 30) && near(px[1], 147, 30) && near(px[2], 90, 35);
+const isGold = px => px[3] > 200 && near(px[0], 38, 30) && near(px[1], 128, 30) && near(px[2], 235, 35);   // (Illustrator workspace: the marks in the accent blue, #2680eb, where they were gold)
 /** The ticks along the top ruler's inner edge: their positions (ruler px) and the median gap. */
 const tickGap = page => page.evaluate(() => {
   const cv = document.querySelector('.ce-rule--x'), w = cv.width, h = cv.height, dpr = w / cv.clientWidth;
@@ -245,7 +245,8 @@ const tickGap = page => page.evaluate(() => {
     const pt = await page.evaluate(([x, y]) => window.CharmEditor.current.clientOf(x, y), [hb[0], (hb[1] + hb[3]) / 2]);
     await page.mouse.dblclick(pt.x + 0.5, pt.y); await settle(page);
     const a = await clientOf(page, hb[0], hb[1]), c = await clientOf(page, hb[2], hb[3]);
-    assert.ok(near(Math.max((c.x - a.x) / stageR.w, (c.y - a.y) / stageR.h), 0.8, 0.02), 'the heart fills 80 %: ' + ((c.x - a.x) / stageR.w).toFixed(3) + ' ' + ((c.y - a.y) / stageR.h).toFixed(3));
+    // (Illustrator workspace: the work area is larger, and 80 % of it is past 6400 % for this small heart: the zoom stops at its top, as Illustrator's does)
+    assert.ok(near(Math.max((c.x - a.x) / stageR.w, (c.y - a.y) / stageR.h), 0.8, 0.02) || (await C(page)).zoom >= 6399.9, 'the heart fills 80 %: ' + ((c.x - a.x) / stageR.w).toFixed(3) + ' ' + ((c.y - a.y) / stageR.h).toFixed(3));
     const z1 = (await C(page)).zoom;
     await page.keyboard.press('v'); await page.keyboard.press('Control+0'); await settle(page);
     await clickAt(page, await edge('day-0-6', 0.5)); await page.keyboard.press('Control+2'); await settle(page);

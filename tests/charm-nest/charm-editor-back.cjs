@@ -311,7 +311,7 @@ async function partB(kit) {
     await R.shot(w, 'CB-5-editor-reopened-back');
     check('B15 the editor opens again on the back with HI a layer of its own: added here, not locked (it can be moved, changed or deleted), named by its words; the cut line still locked',
       re.face === 'back' && re.added.length === after.ids.length && re.added.some(a => a.name === 'HI') && re.added.every(a => !a.locked && a.role === 'hatch') && re.cut.length === 1 && re.cut[0] === true, JSON.stringify(re));
-    await page.click('.ce-root .ce-foot [data-act="cancel"]'); await settleP(page);
+    await page.click('.ce-root .ce-actions [data-act="cancel"]'); await settleP(page);
     if (await page.evaluate(() => !!document.querySelector('.ce-ask'))) { await page.click('.ce-ask [data-ask="yes"]'); await settleP(page); }
 
     /* ── a calendar with nothing added: its back drawn and masked as before ── */

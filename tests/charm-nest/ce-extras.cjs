@@ -195,7 +195,7 @@ check('N5 the check of a 1500-point outline and 12 words runs in short steps (CP
 
   await step('B1 the Shapes flyout: the editor\'s rectangle, ellipse, line, polygon, then rounded rectangle, star, heart, ring, jump ring; \\ arms the line (Illustrator\'s key)', async () => {
     const t = await H(() => [...document.querySelectorAll('[data-drop="shapes"] .ce-menu [data-tool]')].map(b => b.dataset.tool));
-    assert.deepEqual(t, ['rect', 'ellipse', 'line', 'polygon', 'shape-rrect', 'shape-star', 'shape-heart', 'shape-ring', 'shape-bail']);
+    assert.deepEqual(t, ['rect', 'shape-rrect', 'ellipse', 'polygon', 'shape-star', 'shape-heart', 'shape-ring', 'shape-bail']);   // (Illustrator workspace: Illustrator's Rectangle flyout order; the Line Segment a tool of its own)
     await key('\\'); assert.equal(await cur('C.tool()'), 'line'); await key('v');
   });
   await step('B2 a star dragged with Shift: one item, one undo step, regular (its own proportions), the size chip and the bar\'s W / H follow the drag; a move is under a frame of work', async () => {
@@ -332,6 +332,8 @@ check('N5 the check of a 1500-point outline and 12 words runs in short steps (CP
   });
   await step('B10 Alt-drag moves a copy and the original stays (one step); an Alt-click with no drag still reaches inside a group', async () => {
     await key('Escape'); await key('Control+0');
+    // (Illustrator workspace: the work area is larger, so ⌘0 fits the charm bigger and the small heart's box grows edge handles, one of them on its bottom tip; at 350 % it is as before)
+    await H(() => window.CharmEditor.current.setZoom(350)); await settle();
     const b0 = await boxOf('heart-line'), n0 = (await cur('C.items()')).length, h0 = (await cur('C.history()')).undo;
     const q = await H(() => window.CharmEditor.current.ctx.entry('heart-line').it.subpaths[0][0][1]), p = await ptClient(q[0], q[1]), hl = true;
     await page.mouse.click(p.x, p.y); await settle();

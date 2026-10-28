@@ -484,7 +484,7 @@ function layoutIssues() {
     });
     await step('2.12 Cancel with changes asks first: Keep editing keeps them; Esc with nothing selected asks again; Discard resolves null', async () => {
       await page.keyboard.press('Escape');
-      await page.locator('.ce-root .ce-foot [data-act="cancel"]').click(); await settle(page);
+      await page.locator('.ce-root .ce-actions [data-act="cancel"]').click(); await settle(page);
       assert.ok(await H(page, () => !!document.querySelector('.ce-ask')), 'asked');
       shots.push(await shot(page, 'desk-10-ask.png'));
       await page.locator('.ce-ask [data-ask="no"]').click(); await settle(page);

@@ -360,7 +360,7 @@ async function partB(kit) {
     const sp0 = await page.evaluate(() => window.__p);
     await page.mouse.click(sp0.x, sp0.y); await settleP(page);
     await page.keyboard.press('Delete'); await settleP(page);
-    await page.click('.ce-root .ce-foot [data-act="cancel"]'); await settleP(page);
+    await page.click('.ce-root .ce-actions [data-act="cancel"]'); await settleP(page);
     const asked = await page.evaluate(() => !!document.querySelector('.ce-ask'));
     await page.click('.ce-ask [data-ask="yes"]'); await settleP(page); await R.settle(page, 500);
     const c1 = await page.evaluate(id => ({ open: !!document.querySelector('.ce-root'), hash: Pool.charmOf(id).hash }), PID);
