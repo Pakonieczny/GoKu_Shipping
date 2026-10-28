@@ -78,9 +78,9 @@ const BAD = /BACK ENGRAVING|FRONT ENGRAVING|CUT PLAIN|engraveApproved|engravePla
   check(noSvc.pieces(L2).length === 1 && noSvc.pieces(L2)[0].key === '900_2' && noSvc.pieceFor(L2, '900_2_2').slot === null, 'node: without the widget service a line is one piece (its line key)');
   // the panel
   const pa = S.panel(S.pieceFor(L1, '900_1_1'));
-  check(/class="fLabel">Monogram</.test(pa) && /data-state="approved"/.test(pa) && /The monogram is approved/.test(pa) && /Approved by Ana/.test(pa) && /data-standin/.test(pa) && /data-e="monogram"/.test(pa) && /View in Engraving/.test(pa) && /<div class="words">J Q X</.test(pa) && !BAD.test(pa) && !/No back engraving/i.test(pa) && !/Approve engraving|egApproveButton/.test(pa), 'node: the panel of an approved piece: title, "Approved by Ana", the letters, its seal, View in Engraving, no Approve button');
+  check(/class="fLabel">Monogram</.test(pa) && /data-state="approved"/.test(pa) && /The monogram is approved/.test(pa) && /Approved by Ana/.test(pa) && /data-standin/.test(pa) && /data-e="monogram"/.test(pa) && /View in Design &(?:amp;)? Engrave/.test(pa) && /<div class="words">J Q X</.test(pa) && !BAD.test(pa) && !/No back engraving/i.test(pa) && !/Approve engraving|egApproveButton/.test(pa), 'node: the panel of an approved piece: title, "Approved by Ana", the letters, its seal, View in Engraving, no Approve button');
   const pw = S.panel(S.pieceFor(L2, '900_2_2'));
-  check(/data-state="approve"/.test(pw) && /Monogram waits for approval in Engraving/.test(pw) && /View in Engraving/.test(pw) && !/data-standin/.test(pw) && !/Approved by/.test(pw) && /Piece 2 of 2/.test(pw) && !BAD.test(pw), 'node: the panel of a piece not approved: "Monogram waits for approval in Engraving", the same button, no seal, its piece named');
+  check(/data-state="approve"/.test(pw) && /Monogram waits for approval in Design &(?:amp;)? Engrave/.test(pw) && /View in Design &(?:amp;)? Engrave/.test(pw) && !/data-standin/.test(pw) && !/Approved by/.test(pw) && /Piece 2 of 2/.test(pw) && !BAD.test(pw), 'node: the panel of a piece not approved: "Monogram waits for approval in Engraving", the same button, no seal, its piece named');
   check(/Piece 1 of 2/.test(S.panel(p0)) && /Approved by Ben/.test(S.panel(p0)) && !/Approved by Ben/.test(pw), 'node: each piece of a line of two has its own panel');
   check(/class="egSealLine"><div class="egWhy">.*<\/div><span class="monoSeals"/.test(pa) && !/egHistory/.test(pa), 'node: an approved piece\'s seal stands beside "Approved by X" (egSealLine), not in a history block');
   const changed = world(stand({ status: () => ({ state: 'ready', label: 'Ready to approve', letters: 'JQX', approved: false }) })), pc = changed.panel(changed.pieceFor(L1, '900_1_1'));
@@ -327,7 +327,7 @@ const BAD = /BACK ENGRAVING|FRONT ENGRAVING|CUT PLAIN|engraveApproved|engravePla
     await page.waitForFunction(() => OrderWin.view() === 'sheet' && OrderWin._sheet() && document.querySelector('#owSheetPanel .owPieces'), null, { timeout: 25000 });
     check(await waitPanel(TAB, 'monoCard'), 'S3 Sheet tab, the approved monogram: the Monogram panel (not "No back engraving")');
     let c = await panelOf(TAB);
-    check(c.mono && c.state === 'approved' && c.label === 'Monogram' && /Approved/.test(c.pill) && /Approved by Ana Test/.test(c.text) && c.words === 'A P V' && c.standIn === 1 && c.seals === 1 && c.inside && c.button && /View in Engraving/.test(c.button.text) && !c.approve && !/No back engraving/i.test(c.text) && !BAD.test(c.html) && !BAD.test(c.models), 'S3 Sheet tab: title, "Approved by Ana Test", the letters, its seal, View in Engraving, no Approve button, no BACK ENGRAVING: ' + JSON.stringify({ text: c.text.slice(0, 140), seals: c.seals }));
+    check(c.mono && c.state === 'approved' && c.label === 'Monogram' && /Approved/.test(c.pill) && /Approved by Ana Test/.test(c.text) && c.words === 'A P V' && c.standIn === 1 && c.seals === 1 && c.inside && c.button && /View in Design &(?:amp;)? Engrave/.test(c.button.text) && !c.approve && !/No back engraving/i.test(c.text) && !BAD.test(c.html) && !BAD.test(c.models), 'S3 Sheet tab: title, "Approved by Ana Test", the letters, its seal, View in Engraving, no Approve button, no BACK ENGRAVING: ' + JSON.stringify({ text: c.text.slice(0, 140), seals: c.seals }));
     await page.screenshot({ path: path.join(SHOTS, 'S3-sheet-tab-M1.png') });
     await page.click(TAB + ' [data-e=monogram]'); await page.waitForFunction(() => window.__mlinks.length >= 1, null, { timeout: 8000 }).catch(() => {});
     const l1 = await page.evaluate(() => __mlinks[__mlinks.length - 1]);
@@ -339,7 +339,7 @@ const BAD = /BACK ENGRAVING|FRONT ENGRAVING|CUT PLAIN|engraveApproved|engravePla
     await page.waitForFunction(() => OrderWin.view() === 'sheet' && OrderWin._sheet() && document.querySelector('#owSheetPanel .owPieces'), null, { timeout: 25000 });
     check(await waitPanel(TAB, 'monoCard'), 'S3 Sheet tab, the unapproved monogram: the Monogram panel');
     c = await panelOf(TAB);
-    check(c.mono && c.state === 'approve' && /Monogram waits for approval in Engraving/.test(c.text) && c.seals === 0 && c.button && /View in Engraving/.test(c.button.text) && !c.approve && !/Approved by/.test(c.text) && !/No back engraving/i.test(c.text) && !BAD.test(c.html), 'S3 Sheet tab: "Monogram waits for approval in Engraving", the same button, no seal: ' + JSON.stringify({ text: c.text.slice(0, 120), seals: c.seals }));
+    check(c.mono && c.state === 'approve' && /Monogram waits for approval in Design &(?:amp;)? Engrave/.test(c.text) && c.seals === 0 && c.button && /View in Design &(?:amp;)? Engrave/.test(c.button.text) && !c.approve && !/Approved by/.test(c.text) && !/No back engraving/i.test(c.text) && !BAD.test(c.html), 'S3 Sheet tab: "Monogram waits for approval in Engraving", the same button, no seal: ' + JSON.stringify({ text: c.text.slice(0, 120), seals: c.seals }));
     await closeWin();
     await page.evaluate(k => OrderWin.open(k, { view: 'sheet' }), keyOf(M3, 0));
     await page.waitForFunction(() => OrderWin.view() === 'sheet' && OrderWin._sheet() && document.querySelector('#owSheetPanel .owPieces'), null, { timeout: 25000 });
@@ -379,7 +379,7 @@ const BAD = /BACK ENGRAVING|FRONT ENGRAVING|CUT PLAIN|engraveApproved|engravePla
     await openWin(pool(M2, 0));
     check(await waitPanel(WIN, 'monoCard'), 'S3 Sheet window, the unapproved monogram: the Monogram panel');
     c = await panelOf(WIN);
-    check(c.mono && c.state === 'approve' && /Monogram waits for approval in Engraving/.test(c.text) && c.seals === 0 && c.button && !c.approve && !BAD.test(c.html), 'S3 Sheet window: waits for approval, the same button, no seal');
+    check(c.mono && c.state === 'approve' && /Monogram waits for approval in Design &(?:amp;)? Engrave/.test(c.text) && c.seals === 0 && c.button && !c.approve && !BAD.test(c.html), 'S3 Sheet window: waits for approval, the same button, no seal');
     // MSSTALE (review, 17 Oct 2026): the window stays open and the monogram becomes approved elsewhere: the 1.5 s poll draws the panel again (a monogram has no job, so engOf alone could not tell)
     await openWin(pool(M2, 0)); await waitPanel(WIN, 'monoCard');
     const stBefore = await panelOf(WIN);

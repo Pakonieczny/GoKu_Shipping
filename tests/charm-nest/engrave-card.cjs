@@ -80,7 +80,7 @@ let n = 0; const ok = m => console.log('  ✓ ' + m);
   for (const [state, want, dot] of [['review', 1, 'approve'], ['words', 0, 'words'], ['fitting', 0, 'busy'], ['approved', 0, 'approved']]) {
     const C = mk(state, state === 'words' ? '' : 'Name One'), p = C.piecesOf([row], {})[0], h = C.html(p);
     assert.equal(count(h, /data-e="approve"/g), want, `${state}: Approve ${want ? 'present' : 'absent'}`); assert.equal(p.state, dot); assert.match(h, new RegExp(`class="engDot" data-s="${dot}"`));
-    if (state === 'words') assert.ok(h.includes('Words to confirm')); if (state === 'fitting') assert.ok(h.includes('Preparing')); if (state === 'approved') assert.ok(!h.includes('>Approved<') && !/<button/.test(h.replace(/<button[^>]*engThumb[^>]*>[^<]*<\/button>/g, '').replace(/<button[^>]*egOpen[^>]*>.*?<\/button>/g, '')), 'approved: no button but the Engraving button (View in Engraving)'); if (state === 'approved') assert.ok(/egOpen[^>]*>View in Engraving /.test(h), 'an approved card says View in Engraving');
+    if (state === 'words') assert.ok(h.includes('Words to confirm')); if (state === 'fitting') assert.ok(h.includes('Preparing')); if (state === 'approved') assert.ok(!h.includes('>Approved<') && !/<button/.test(h.replace(/<button[^>]*engThumb[^>]*>[^<]*<\/button>/g, '').replace(/<button[^>]*egOpen[^>]*>.*?<\/button>/g, '')), 'approved: no button but the Engraving button (View in Design & Engrave)'); if (state === 'approved') assert.ok(/egOpen[^>]*>View in Design & Engrave /.test(h), 'an approved card says View in Design & Engrave');
     noDeleted(h, state);
   }
   ok('Approve only when a face waits for approval; words to confirm / preparing / approved have none'); n++;
@@ -101,7 +101,7 @@ let n = 0; const ok = m => console.log('  ✓ ' + m);
 // 8 ── the Engraving button (ENGBUTTON, Paul round 2b): the old `btn ghost sm egOpen`, one per order-window card, none in the Engrave detail's card, its wording by state, off with a reason
 {
   const row = line('K7'), mk = (state, text) => world({ K7: [job(row, 'K7', state, text)] }).CharmNestEngraveCard, one = h => (h.match(/<button[^>]*egOpen[^>]*>.*?<\/button>/g) || []);
-  for (const [state, cls, word] of [['review', 'ghost', 'Fix in Engraving'], ['words', 'gold', 'Fix in Engraving'], ['fitting', 'ghost', 'Fix in Engraving'], ['approved', 'ghost', 'View in Engraving']]) {
+  for (const [state, cls, word] of [['review', 'ghost', 'Fix in Design & Engrave'], ['words', 'gold', 'Fix in Design & Engrave'], ['fitting', 'ghost', 'Fix in Design & Engrave'], ['approved', 'ghost', 'View in Design & Engrave']]) {
     const C = mk(state, state === 'words' ? '' : 'Name One'), p = C.piecesOf([row], {})[0], h = C.html(p), b = one(h);
     assert.equal(b.length, 1, `${state}: exactly one Engraving button`); assert.match(b[0], new RegExp(`^<button type="button" class="btn ${cls} sm egOpen" data-e="engrave"`)); assert.ok(b[0].includes(`>${word} <span aria-hidden="true">→</span></button>`), `${state}: "${word} →"`);
     assert.ok(!/aria-disabled/.test(b[0]), `${state}: the button is on`);
