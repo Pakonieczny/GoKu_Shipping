@@ -112,6 +112,7 @@ const assets = [
   "charm-nest-relink-flow.js",
   "charm-nest-art-edit.js",
   "charm-nest-charm-editor.js",
+  "charm-nest-ce-ops.js",
   "charm-nest-dxf.js",
   "charm-nest-motion.js",
   "charm-nest-stamp-walnut.png",

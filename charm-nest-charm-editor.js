@@ -68,6 +68,9 @@
  *                          listed by group in the head's Object menu and, when enabled, in the right-click menu; bar: true with an icon puts a button on the property
  *                          bar while enabled; menu: false keeps it to its key. key: 'Mod+Shift+O', 'Alt+P', 'P' (Mod is ⌘ on a Mac, Ctrl elsewhere; the editor's own
  *                          keys win).
+ *                          context: false keeps it out of the right-click menu (the Object menu still lists it)
+ *   CharmEditor.beforeDuplicate(ctx, ev) -> true   ⌘D asks it first and duplicates only when it did not use the key (charm-nest-ce-ops.js: Transform Again after a
+ *                          transform with a copy, the lead's keymap of 28 Oct 2026)
  *   CharmEditor.importers  [{ id, accept: ['.png', 'image/', ...], title, run(ctx, file, info) -> Promise }]
  *                          one Import entry for all of them: the head's Import button (a file picker of every accepted type), a file dropped on the work area
  *                          (info.at = [x, y] pt where it fell) and a file pasted (⌘V with a file or image on the system clipboard; the editor's own copy wins
@@ -2610,7 +2613,7 @@
         if (kl === 'c') { if (!X.importers.length) e.preventDefault(); if (copySel()) xCopied(); return; }
         if (kl === 'x') { if (!X.importers.length) e.preventDefault(); const c0 = S.clip; cutSel(); if (S.clip !== c0) xCopied(); return; }
         if (kl === 'v') { if (X.importers.length) { xPasteSoon(e.shiftKey); return; } e.preventDefault(); paste(e.shiftKey); return; }
-        if (kl === 'd') { e.preventDefault(); duplicate(); return; }
+        if (kl === 'd') { e.preventDefault(); if (typeof api.beforeDuplicate === 'function' && api.beforeDuplicate(ectx, e) === true) return; duplicate(); return; }
         if (kl === 'g') { e.preventDefault(); if (e.shiftKey) ungroupSel(); else groupSel(); return; }
         if (k === ']' || k === '}' || e.code === 'BracketRight') { e.preventDefault(); arrangeSel(e.shiftKey ? 'front' : 'forward'); return; }
         if (k === '[' || k === '{' || e.code === 'BracketLeft') { e.preventDefault(); arrangeSel(e.shiftKey ? 'back' : 'backward'); return; }
@@ -2827,7 +2830,7 @@
     function xMenuHtml(onlyOn) {
       const groups = new Map();
       for (const c of X.commands) {
-        if (c.c.menu === false) continue;
+        if (c.c.menu === false || (onlyOn && c.c.context === false)) continue;
         const on = xEnabled(c); if (onlyOn && !on) continue;
         const gn = c.c.group ? String(c.c.group) : 'More'; if (!groups.has(gn)) groups.set(gn, []); groups.get(gn).push({ c, on });
       }
