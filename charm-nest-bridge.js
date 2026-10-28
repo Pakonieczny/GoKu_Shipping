@@ -9658,6 +9658,7 @@ const Engrave = window.Engrave = (() => {
   }
   /** The engraving fonts the editor offers, as the engraving's own drop-down names them (the shop's words: "Ace", "Stylish" ...), the piece's own font first; each one loaded. */
   async function charmEditFonts(job) {
+    if (window.CharmNestCeText) return window.CharmNestCeText.fonts(job);   // (CE TEXT, 28 Oct 2026: every engraving font, the shop's words first: charm-nest-ce-text.js)
     const ids = [...new Set([job && job.fontKey, ...(O.FONT_WORDS || []).map(g => g.id), O.DEFAULT_FONT].filter(Boolean))];
     await Promise.all(ids.map(id => Promise.resolve().then(() => loadFontSet(id)).catch(() => null)));
     const word = id => { const g = (O.FONT_WORDS || []).find(x => x.id === id); return (g && g.words && g.words[0]) || (O.fontById(id) || {}).name || id; };
@@ -9667,6 +9668,7 @@ const Engrave = window.Engrave = (() => {
    *  The faces the words are fitted in: the Semibold for a small capital, capitals for a font with no lowercase, and a letter the face cannot draw is left out, as the fit would refuse it. Every
    *  curve is a cubic (a TrueType quadratic raised exactly). Lines are a capital and the fit's own gap apart unless the editor gives a gap (a factor of the size). */
   function charmEditText(text, fontKey, sizePt, o) {
+    if (window.CharmNestCeText) return window.CharmNestCeText.textToPaths(text, fontKey, sizePt, o);   // (CE TEXT, 28 Oct 2026: every script, right to left, emoji as outlines, fonts loaded on demand: charm-nest-ce-text.js)
     o = o || {};
     const set = fontSetOf(fontKey) || (F_.Regular ? F_ : null); if (!set || !set.Regular) return { subpaths: [], bbox: null };
     const size = +sizePt > 0 ? +sizePt : 10, font = (size * G.capPerEm(set.Regular) * MM < CHARM_EDIT_SEMI_MM && set.Semibold) || set.Regular, id = set === F_ ? O.DEFAULT_FONT : set.id;

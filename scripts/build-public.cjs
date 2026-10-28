@@ -204,6 +204,7 @@ const assets = [
   "charm-nest-text.js",
   "charm-nest-emoji-picker.js",
   "charm-nest-emoji-data.js",
+  "charm-nest-ce-text.js",
   "vendor/fonts/emoji-sequences.json",
   "vendor/fonts/NotoEmoji-OFL.txt",
   "vendor/fonts/MarckScript-OFL.txt",

@@ -415,7 +415,7 @@
       if (b || it.kind !== 'text') return b;
       const q = quadOf(g.bbox, W); return q ? polyBox(q) : null;
     }
-    return { raw, box, matrix, drawn, engine };
+    return { raw, box, matrix, drawn, engine, forget: () => tcache.clear() };   // (forget: CE TEXT, 28 Oct 2026: a font the words need arrived, every text is made again from its words)
   }
   const quadOf = (b, W) => (b ? [ap(W, b[0], b[1]), ap(W, b[2], b[1]), ap(W, b[2], b[3]), ap(W, b[0], b[3])] : null);
   const polyBox = q => { let b = null; for (const p of q) b = union(b, [p[0], p[1], p[0], p[1]]); return b; };
@@ -2111,6 +2111,27 @@
       refresh();
       openEditor(it.id, true, before);
     }
+    /** (CE TEXT, 28 Oct 2026: Paul, "Users also need to be able to add any emoji and any language that we already support as part of the back engraving") a font the words need came
+     *  after they were typed (a script font, the emoji outlines, charm-nest-ce-text.js loads them on demand): every text on both faces is drawn again from its words, its anchor where
+     *  it was on the charm, as retext keeps it. Not a step of history: the person changed nothing. */
+    function refreshText() {
+      const was = new Map();
+      for (const f of Object.values(S.faces)) walk(f.items, it => { if (it.kind === 'text') was.set(it.id, geo.matrix(it)); });
+      geo.forget();
+      if (!was.size) return 0;
+      for (const f of Object.values(S.faces)) {
+        const map = new Map();
+        walk(f.items, it => {
+          const m0 = was.get(it.id); if (!m0 || it.kind !== 'text') return;
+          const m1 = geo.matrix(it), dx = m0[4] - m1[4], dy = m0[5] - m1[5];
+          if (Math.abs(dx) > 1e-9 || Math.abs(dy) > 1e-9) map.set(it.id, Object.assign({}, it, { tx: r9(num(it.tx, 0) + dx), ty: r9(num(it.ty, 0) + dy) }));
+        });
+        if (map.size) f.items = replaceIn(f.items, map);
+      }
+      for (const id of was.keys()) { const el = els.get(id); if (el) el.__it = null; }   // (the same item, new outlines: its path is drawn again)
+      ixFor = null; refresh(); placeEditor();
+      return was.size;
+    }
 
     /* ── smart guides (the studio's align engine, J 16670-16957: the charm's edges and middle and the nearest sixty other things, agreement within 7 screen px, Alt
        pauses it, every agreeing line drawn and not only the winner) ── */
@@ -2588,8 +2609,11 @@
     /* ── keyboard: ONE listener, on the window, in the capture phase, so the page under the editor never sees a key while it is open (the Engraving card's own A,
        S and arrows must not fire behind it), and every key the editor uses is handled here ── */
     const isField = t => t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable);
+    // (CE TEXT, 28 Oct 2026: a key pressed in a popover over the editor that is not the editor's own, the emoji picker of the words box, is that popover's: its arrows, Enter and Esc)
+    const notOurs = e => { const t = e.target; return !!(t && t.nodeType === 1 && t !== doc.body && t !== doc.documentElement && !rootEl.contains(t)); };
     function onKey(e) {
       if (!rootEl.isConnected) return;
+      if (notOurs(e)) return;
       e.stopPropagation();
       const t = e.target, meta = e.metaKey || e.ctrlKey, k = e.key;
       if (S.ask) { if (k === 'Escape') { e.preventDefault(); S.ask.done(false); } return; }
@@ -2642,6 +2666,7 @@
     }
     function onKeyUp(e) {
       if (!rootEl.isConnected) return;
+      if (notOurs(e)) return;
       e.stopPropagation();
       if (e.key === ' ' || e.code === 'Space') { S.space = false; stage.classList.remove('is-space'); }
     }
@@ -2925,7 +2950,7 @@
     rootEl.addEventListener('pointerdown', e => {
       if (!e.target.closest('.ce-menu') && !e.target.closest('.ce-drop__b')) closeMenus();
       // (J 13078: the click away is what closes the words, not a blur)
-      if (S.editing && !e.target.closest('.ce-editor') && !e.target.closest('.ce-ctx')) closeEditor();
+      if (S.editing && !e.target.closest('.ce-editor') && !e.target.closest('.ce-ctx') && !e.target.closest('[data-ce-keeps-words]')) closeEditor();   // (CE TEXT: the words box's own Emoji button keeps it open)
       // on a narrow screen the Layers are a drawer over the room: a press anywhere else folds it away
       if (S.dock && getComputedStyle(dock).position === 'absolute' && !e.target.closest('.ce-dock') && !e.target.closest('[data-act="dock"]') && !e.target.closest('.ce-menu') && !S.ask) { S.dock = false; layoutDock(); }
       if (xPanelOn && !e.target.closest('.ce-xpanel') && !e.target.closest('[data-xpanel]') && !e.target.closest('.ce-menu') && !S.ask && getComputedStyle($('.ce-xpanel')).position === 'absolute') xPanel(null);
@@ -3035,7 +3060,8 @@
       history: () => ({ undo: S.hist.back.length, redo: S.hist.fwd.length }),
       setZoom: pct => zoomTo(pct),
       editing: () => (S.editing ? S.editing.id : null),
-      ctx: ectx
+      ctx: ectx,
+      refreshText: () => refreshText()   // (CE TEXT, 28 Oct 2026: a font the words need has arrived; the texts are drawn again from their words, nothing else changes)
     };
   }
 
