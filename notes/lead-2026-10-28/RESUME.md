@@ -30,7 +30,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - int/live-check.cjs: 7 pages load clean. Live verify = sha256 of each changed served file vs `git show origin/main:<f>`, then live-check.
 - If agents hang holding slots (load ~0, waits > 5 min): find holders: for f in slot1 slot2 slot3: ino=$(stat -c %i $SP/locks/$f); grep ":$ino " /proc/locks → pid → ps --ppid. Kill the idle test, tell its agent.
 
-## Live on main: 14ca7b2 = batch 7 (Design & Engrave tab, library panel, masters-2, designs-2, bar-front-2, nav round 4) + ce-masters token bump; live verify running. Before: 323cf50 batch 6 (verified live incl. service worker: warm reload 160 from worker / 16 network), ad2b701 Phase 1.
+## Live on main: b7c15cf = batch 8 (sheet window release green ORDER RELEASED, 5 tests fixed incl. Resolved card's Sent-to-Sheet seal; person-page chart CSS id clash fixed; live verify bln74tymk) on top of 14ca7b2 batch 7 (verified live).
 - 89f2819 Manual Control instant · b2608ff navigation rounds 2+3, Charm Editor Save fix (Saving at once, sheet files in background),
   bar necklaces FRONT by default (BARFRONT) · 077f21c Approve never silent / never stuck · d58eea9 Design & Engrave batch 1: editor
   extension points + live readouts + Ctrl/Alt centre resize + smart guides (feedback), Blend/Warp/Distort (warp), image trace (trace).
@@ -82,7 +82,7 @@ board-live-extra.json with the new agent ids.
 - Phase 5 push (option a) needs a Firestore security rule in the console + a vendored Firestore SDK file.
 
 
-## Next: batch 8 = fix-seals-2 e1fdeb9 + eff-inbox-chart afa688d (main's person-page charts go black after the Custom pieces tab). Then nav-5 and Phase 2 when they hand back.
+## Batch 9 in test: claude/de-integration 8626631 = main b7c15cf + nav-instant-5 0ce6367 (first visits Orders 90 ms / Review 61 ms; merge-sheets regression fixed). Run b3b80k8vz → $SP/int/b9/*.log. Then: Phase 2 (sync worker) when it hands back; nav-6 (piece-row-review-buttons at 390 px).
 - a41a92d9950823b21 now on claude/eff-inbox-chart: 'Sent per day' chart is a black block when empty.
 - Phase 2 agent ac1971b04ea413b37 started 07:03 on claude/local-sync (wt-sync) from claude/local-store.
 - designs follow-up (af114bb2ccb5f706c resumed): claude/de-designs-2 = accept stroke/fill true in clean(); test world Master.load race.
