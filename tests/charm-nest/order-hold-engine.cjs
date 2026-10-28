@@ -232,17 +232,22 @@ const fixture = spec => {
     const stepsInOrder = steps => { for (let i = 1; i < steps.length; i++) assert(steps[i].at >= steps[i - 1].at && steps[i].t >= steps[i - 1].t, 'every step has `at` and `t`, and they only grow'); assert(steps.every(s => s.at > 1e12 && s.t >= 0), 'at is epoch ms'); };
 
     /* scenario 1 · a 4-piece order on GF Sheet 2 and SS Sheet 1: its two gold pieces' spots are filled by the orders waiting (oldest first),
-       its two silver spots (nothing silver waits) by orders from the newer, incomplete SS Sheet 2 */
+       its two silver spots (nothing silver waits) by orders from the newer, incomplete SS Sheet 2.
+       (Paul, 5 Oct 2026: "the empty spaces must be filled in with the next order inline". The room search packs each order at the tightest legal
+       spot, so the room GF Sheet 2's two pieces leave on this loosely laid sheet takes THREE waiting orders, pushed up to the sheet's top edge; the
+       fourth, newest, has no room and stays waiting. Two orders until 27 Oct 2026: this fixture's 1 px/pt charms were enlarged with holes for the
+       grid's 2 px/pt, and the shop's -0.5 pt allowance eroded them to nothing (fd42973 "an enlarged bitmap stays solid"), so each freed spot only
+       ever took the first order that landed in it) */
     const H = '4170000100';
     const S1 = {
       sheets: [
         { id: 'gold-2', metal: 'gold', page: 2, items: [[H, 1, 1, 0, 0], [H, 1, 2, 1, 0], ['4170000201', 7, 1, 2, 0], ['4170000202', 8, 1, 3, 0]] },
         { id: 'silver-1', metal: 'silver', page: 1, items: [[H, 2, 1, 0, 0], [H, 2, 2, 1, 0], ['4170000203', 9, 1, 2, 0]] },
-        { id: 'gold-3', metal: 'gold', page: 3, items: [['4170000301', 5, 1, 0, 0, false], ['4170000302', 6, 1, 1, 0, false], ['4170000303', 4, 1, 2, 0, false]] },
+        { id: 'gold-3', metal: 'gold', page: 3, items: [['4170000301', 5, 1, 0, 0, false], ['4170000302', 6, 1, 1, 0, false], ['4170000303', 4, 1, 2, 0, false], ['4170000304', 3, 1, 3, 0, false]] },
         { id: 'silver-2', metal: 'silver', page: 2, items: [['4170000401', 11, 1, 0, 0], ['4170000402', 12, 1, 1, 0], ['4170000403', 13, 1, 2, 0]] },
       ],
       orders: { [H]: O(9000, [1, 2, 'gold'], [2, 2, 'silver']), '4170000201': O(8000, [7, 1, 'gold']), '4170000202': O(8100, [8, 1, 'gold']), '4170000203': O(8200, [9, 1, 'silver']),
-        '4170000301': O(7000, [5, 1, 'gold']), '4170000302': O(7500, [6, 1, 'gold']), '4170000303': O(6000, [4, 1, 'gold']),
+        '4170000301': O(7000, [5, 1, 'gold']), '4170000302': O(7500, [6, 1, 'gold']), '4170000303': O(6000, [4, 1, 'gold']), '4170000304': O(5000, [3, 1, 'gold']),
         '4170000401': O(5000, [11, 1, 'silver']), '4170000402': O(5500, [12, 1, 'silver']), '4170000403': O(4000, [13, 1, 'silver']) },
     };
     await setup(S1);
@@ -254,9 +259,9 @@ const fixture = spec => {
     assert.deepStrictEqual(plan.sheets.map(s => [s.sheetId, s.label, s.removes, s.qrRemade, s.metal]), [['gold-2', 'GF Sheet 2', 2, true, 'gold'], ['silver-1', 'SS Sheet 1', 2, true, 'silver']], 'two sheets come off');
     assert.strictEqual(plan.estimate, false, 'the room was really searched, not estimated');
     const pg = plan.fills.filter(f => f.sheetId === 'gold-2'), ps = plan.fills.filter(f => f.sheetId === 'silver-1');
-    assert(pg.length === 1 && pg[0].source === 'waiting' && pg[0].orders === 2 && pg[0].spots === 2, 'GF Sheet 2: two waiting orders: ' + JSON.stringify(pg));
+    assert(pg.length === 1 && pg[0].source === 'waiting' && pg[0].orders === 3 && pg[0].spots === 2 && pg[0].rids.join() === '4170000302,4170000301,4170000303', 'GF Sheet 2: three waiting orders, oldest first, in its two freed spots (each spot counted once): ' + JSON.stringify(pg));
     assert(ps.length === 1 && ps[0].source === 'newerSheet' && ps[0].fromSheetId === 'silver-2' && ps[0].fromSheetLabel === 'SS Sheet 2' && ps[0].orders === 2 && ps[0].spots === 2, 'SS Sheet 1: two orders from the newer SS Sheet 2: ' + JSON.stringify(ps));
-    assert(plan.effects.some(t => /4 pieces of this order come off GF Sheet 2 and SS Sheet 1/.test(t)) && plan.effects.some(t => /2 waiting orders and 2 orders from SS Sheet 2 fill the 4 empty spots/.test(t)), 'the consent sentences: ' + plan.effects.join(' | '));
+    assert(plan.effects.some(t => /4 pieces of this order come off GF Sheet 2 and SS Sheet 1/.test(t)) && plan.effects.some(t => /3 waiting orders and 2 orders from SS Sheet 2 fill the 4 empty spots/.test(t)), 'the consent sentences: ' + plan.effects.join(' | '));
     assert.deepStrictEqual(await rowsOf(H), [{ state: 'pooled', hold: undefined, pieces: 2 }, { state: 'pooled', hold: undefined, pieces: 2 }].map(r => Object.assign(r, { hold: r.hold })), 'planning changes nothing');
     assert.strictEqual(st.list(TL).length, 0, 'planning writes nothing');
     assert(!(await page.evaluate(() => (window.__nests || []).length)), 'planning nests nothing');
@@ -273,16 +278,16 @@ const fixture = spec => {
     assert.deepStrictEqual(lift.poolIds.sort(), [pid(H, 1, 1), pid(H, 1, 2)].sort(), 'lift names the pieces') ; assert(lift.rects.length === 2 && lift.rects.every(r => r.w > 0 && r.h > 0 && typeof r.x === 'number' && typeof r.y === 'number') && lift.sheet.wPt > 100 && lift.label === 'GF Sheet 2', 'lift carries each piece\'s rectangle in sheet points and the sheet\'s size: ' + JSON.stringify(lift));
     assert(res.steps.filter(s => s.type === 'removed').every(s => s.removed === 2), 'removed says how many');
     const fromGold = res.steps.filter(s => s.type === 'fillFrom' && s.toSheetId === 'gold-2'), fromSilver = res.steps.filter(s => s.type === 'fillFrom' && s.toSheetId === 'silver-1');
-    assert.deepStrictEqual(fromGold.map(s => [s.rid, s.source, s.fromSheetId]), [['4170000302', 'waiting', 'gold-3'], ['4170000301', 'waiting', 'gold-3']], 'the oldest waiting orders fill first: ' + JSON.stringify(fromGold));
+    assert.deepStrictEqual(fromGold.map(s => [s.rid, s.source, s.fromSheetId]), [['4170000302', 'waiting', 'gold-3'], ['4170000301', 'waiting', 'gold-3'], ['4170000303', 'waiting', 'gold-3']], 'the oldest waiting orders fill first: ' + JSON.stringify(fromGold));
     assert.deepStrictEqual(fromSilver.map(s => [s.rid, s.source, s.fromSheetId]), [['4170000402', 'newerSheet', 'silver-2'], ['4170000401', 'newerSheet', 'silver-2']], 'with none waiting, the oldest orders of the newer SS Sheet 2 fill: ' + JSON.stringify(fromSilver));
     assert(fromGold.every(s => s.poolIds.length === 1), 'fillFrom names the incoming pieces');
-    assert.deepStrictEqual(res.steps.filter(s => s.type === 'fillPlaced' && s.sheetId === 'gold-2').map(s => s.rid), ['4170000302', '4170000301'], 'fillPlaced follows each');
+    assert.deepStrictEqual(res.steps.filter(s => s.type === 'fillPlaced' && s.sheetId === 'gold-2').map(s => s.rid), ['4170000302', '4170000301', '4170000303'], 'fillPlaced follows each');
     const sd = res.steps.filter(s => s.type === 'sheetDone');
-    assert(sd.length === 2 && sd.every(s => s.charmCount === 4 || s.charmCount === 3) && sd.every(s => typeof s.density === 'number'), 'sheetDone says the charm count and density: ' + JSON.stringify(sd));
+    assert(sd.length === 2 && sd.every(s => s.charmCount === (s.sheetId === 'gold-2' ? 5 : 3)) && sd.every(s => typeof s.density === 'number'), 'sheetDone says the charm count and density: ' + JSON.stringify(sd));
     let sh = await onSheets();
     const sorted = a => a.slice().sort();
-    assert.deepStrictEqual(sorted(sh['gold-2']), sorted(['4170000201_5000000007_1', '4170000202_5000000008_1', '4170000302_5000000006_1', '4170000301_5000000005_1']), 'GF Sheet 2: its other orders and the two that moved in; none of the held order');
-    assert.deepStrictEqual(sh['gold-3'], ['4170000303_5000000004_1'], 'the newest waiting order stays waiting on GF Sheet 3');
+    assert.deepStrictEqual(sorted(sh['gold-2']), sorted(['4170000201_5000000007_1', '4170000202_5000000008_1', '4170000302_5000000006_1', '4170000301_5000000005_1', '4170000303_5000000004_1']), 'GF Sheet 2: its other orders and the three that moved in; none of the held order');
+    assert.deepStrictEqual(sh['gold-3'], ['4170000304_5000000003_1'], 'the newest waiting order stays waiting on GF Sheet 3');
     assert.deepStrictEqual(sorted(sh['silver-1']), sorted(['4170000203_5000000009_1', '4170000402_5000000012_1', '4170000401_5000000011_1']), 'SS Sheet 1 likewise');
     assert.deepStrictEqual(sh['silver-2'], ['4170000403_5000000013_1'], 'SS Sheet 2 keeps its newest order');
     for (const id of idsH) { const p = poolDoc(id); assert(p.state === 'abandoned' && !p.sheetId && p.heldBy === 'Paul' && p.heldAt && !p.removedAt, 'a held piece: abandoned, off its sheet, held by Paul, no removal: ' + JSON.stringify(p)); }
@@ -296,7 +301,7 @@ const fixture = spec => {
     await noLoss(allIds(S1), 'scenario 1');
     // the page's own list: the order is under On hold
     assert(await page.evaluate(rid => Orders.rows().some(r => String(r.order.receiptId) === rid && r.hold && r.state === 'held'), H), 'the order is under On hold');
-    ok.push('4 pieces on GF Sheet 2 and SS Sheet 1: all off, GF Sheet 2 refilled by the two oldest waiting orders, SS Sheet 1 (none waiting) by two orders of the newer SS Sheet 2, steps in the contract\'s order, held with one reason, one timeline step per sheet, nothing lost');
+    ok.push('4 pieces on GF Sheet 2 and SS Sheet 1: all off, GF Sheet 2 refilled by the three oldest waiting orders (the newest waits), SS Sheet 1 (none waiting) by two orders of the newer SS Sheet 2, steps in the contract\'s order, held with one reason, one timeline step per sheet, nothing lost');
 
     // the order is on hold now: Hold is not offered again
     plan = await planOf(H);
