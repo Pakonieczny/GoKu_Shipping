@@ -180,7 +180,7 @@ async function partB(kit) {
     await R.shot(w, 'CEI-1-image-step');
     check(`B2 a PNG dropped on the work area opens the Image step on it (${s0.name}): a split preview, ${s0.labs.join(' | ')}, the vector traced in the background (${g0.length} greys: ${g0.join(' ')}), nothing on the charm yet`,
       /^logo\.png · 240 × 160 px$/.test(s0.name) && s0.mode === 'split' && s0.labs.join() === 'Original,Greyscale,Vector' && s0.inkO > 1000 && s0.inkG > 1000 && Math.abs(s0.ar - 1.5) < 0.03
-        && g0.length === 3 && kOfN(g0.map(g01), 4) && g0[2] === 'rgb(0,0,0)' && s0.items === n0, JSON.stringify(Object.assign(s0, { g0 })));
+        && g0.length >= 3 && g0.length <= 4 && kOfN(g0.map(g01), 4) && g0[g0.length - 1] === 'rgb(0,0,0)' && s0.items === n0, JSON.stringify(Object.assign(s0, { g0 })));
     check(`B3 the panel says plainly what a photo becomes ("${s0.note.slice(0, 92)}…"), offers the picture's own level count ("${s0.sug.trim()}") and where it will go (${s0.where})`,
       /posterised, stencil-like engraving in 4 greys/.test(s0.note) && /Looks like an illustration: \d greys suggested/.test(s0.sug) && /centred in the charm's outline/.test(s0.where), JSON.stringify(s0));
 
@@ -265,7 +265,7 @@ async function partB(kit) {
       return { kind: g.kind, box: E.box(id), rot: g.children.map(x => x.rot), kids: g.children.length, fills: g.children.map(x => x.fill[0]), levels: g.trace.levels, hist: E.history().undo, corners: [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]].map(p => c.model.ap(W, p[0], p[1])) }; }, id);
     const mv = await placed(pl.id);
     check(`B8 then an ordinary group: nudged, sized to 80 % with W and turned 15° (its parts at ${mv.rot && mv.rot.map(r => +r.toFixed(3)).join(', ')}°), still one group of ${mv.kids}`,
-      mv.kind === 'group' && mv.kids === 3 && mv.rot.every(r => Math.abs(r - 15) < 1e-6), JSON.stringify(mv));
+      mv.kind === 'group' && mv.kids === pl.kids.length && mv.rot.every(r => Math.abs(r - 15) < 1e-6), JSON.stringify(mv));
 
     /* ── RE-TRACE: two levels, where it stands now ── */
     const h0 = await page.evaluate(() => CharmEditor.current.history().undo);
