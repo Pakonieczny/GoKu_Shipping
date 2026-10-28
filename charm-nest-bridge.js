@@ -9779,6 +9779,7 @@ const Engrave = window.Engrave = (() => {
       catch (e) { for (const r of (e && e.refused) || [{ id: "", why: (e && e.message) || String(e) }]) refused.push(`${w.face === "back" ? "Back · " : ""}${r.id ? charmEditPart(res.faces, r.id) + ": " : ""}${r.why}`); }
     }
     if (refused.length) { const u = [...new Set(refused)]; charmEditSay(job, `Not saved · ${u.slice(0, 3).join(" · ")}${u.length > 3 ? ` · and ${u.length - 3} more` : ""}`, true); return null; }
+    charmEditSay(job, `Saving the ${todo.length > 1 ? "front and back" : todo[0].face} artwork…`, false);   // (Paul, 28 Oct 2026: said the moment Save is pressed; the drawing follows as soon as the cloud has it)
     const done = [], records = {};
     try {
       for (const w of todo) for (const pid of t.poolIds) { const info = await AE.save(pid, w.face, w.changes, { charm: Pool.charmOf(pid) || charm, view: views[w.face], by, placed: !!Pool.sheetOf(pid) }); if (pid === poolId) records[w.face] = info && info.record; done.push(w.face); }
@@ -25552,6 +25553,22 @@ const Upkeep = window.Upkeep = (() => {
      note     a piece whose edit could not be put on it (its master was drawn again since) is said on the log
    The hooks where a piece is made from the master again (a recall: restoreRunSheets and Recall.rebuild, a back opened from a saved sheet, a line pooled again, the placement's picture, a
    checkpoint) call CharmNestArtEdit.piece / sync themselves. ── */
+/** A sheet's files written again after an artwork edit, in the background: one write at a time per sheet, and once more when another edit came in during it (two copies of a piece saved
+ *  together, a second save). → Promise<boolean> (true: written and saved; its record no longer owes its files). */
+const ART_SHEET_WRITES = new WeakMap();
+function artSheetWrite(sh) {
+  const cur = ART_SHEET_WRITES.get(sh); if (cur) { cur.again = true; return cur.run; }
+  const st = { again: false };
+  st.run = (async () => {
+    let ok = false;
+    do { st.again = false; ok = await Promise.resolve(window.writeAsPlaced(sh)).catch(e => { console.warn("artwork edit: sheet write", e); return false; }); } while (st.again && !sh.roseCutAt && !sh.laserDoneAt && allSheets().includes(sh));
+    if (ok && sh.sheetId) api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, filesOwed: null } }, { quiet: true }).catch(() => {});   // (its record no longer owes its files)
+    return ok;
+  })().finally(() => ART_SHEET_WRITES.delete(sh));
+  ART_SHEET_WRITES.set(sh, st);
+  return st.run;
+}
+window.artSheetWrite = artSheetWrite;   // (tests wait for it)
 if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
   api: (fn, body, opts) => api(fn, body, opts),
   who: () => { try { return employeeName() || ""; } catch (_) { return ""; } },
@@ -25581,8 +25598,10 @@ if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
     if (!sh || sh.roseCutAt || sh.laserDoneAt) return;
     sh.dirty = true;
     if (!sh.outputs || typeof window.writeAsPlaced !== "function") return;   // (a sheet not written yet writes the edit with its first files)
-    const ok = await Promise.resolve(window.writeAsPlaced(sh)).catch(e => { console.warn("artwork edit: sheet write", e); return false; });
-    if (ok && sh.sheetId) api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, filesOwed: null } }, { quiet: true }).catch(() => {});   // (its record no longer owes its files)
+    // (Paul, 28 Oct 2026: "my changes made in the Charm Editor were not saved and did not show up in the UI after pressing the Save button ... Everything must be immediate and responsive")
+    // the sheet's files are written again on their own, its card saying so as for any write: the save, the engraving card and the editor never wait for them (a whole sheet written again took
+    // 10–30 s, and longer while the sheet was busy, and the card showed the old drawing all that time)
+    artSheetWrite(sh);
   },
   note: (poolId, face, n) => agent({ pool: true }, "warn", `${poolId}: its own ${face} artwork edit was not put on the piece${n && n.by ? ` (made by ${n.by})` : ""}: ${(n && (n.why || (n.refused[0] && n.refused[0].why))) || "it could not be read"}`)
 });
