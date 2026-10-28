@@ -1,0 +1,298 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    /* ───────── Brites chat + order docs ───────── */
+    match /Brites_Orders/{order} {
+      /* parent document (metadata) → read-only for now
+         ⚠️ `if true` means anyone on the internet with your project id can read
+         every order document — no sign-in, no app. If these carry names,
+         addresses, emails or totals, that is a live exposure rather than a
+         testing shortcut. Left exactly as you had it, EXCEPT the one document
+         below.
+
+         CHANGED: the stations' Employee Numbers list (every employee's 6-digit
+         number next to their name) is no longer readable from a browser. It is
+         the document Brites_Orders/"Employee Numbers". The stations now check a
+         number through the server (firebaseOrders `pinLogin`, Admin SDK, which
+         ignores these rules), and no page reads this document with the client
+         SDK, so nothing else changes. Every other document in this collection
+         (orders, the *-scan-N relay documents, ScannedSortingOrder) stays
+         readable exactly as before. */
+      allow read: if order != 'Employee Numbers';
+      /* live-chat sub-collection */
+      match /messages/{msg} {
+        /* ⚠️ Your own comment flags this as testing-only. As written, any
+           anonymous caller can read every customer conversation AND write into
+           it, including impersonating your side of the chat. Of the two open
+           rules in this file this is the one to close first. Unchanged. */
+        allow read, write: if true;   // ⚠️ open while testing (unchanged)
+      }
+    }
+    /* ───────── Realtime selection locks ─────────
+       Also carries the Charm Sorter's claims (claimed / claimedBy / claimRun),
+       which are written by the firebaseOrders function through the Admin SDK;
+       the browser grant below is unchanged. */
+    match /Design_RealTime_Selected_Orders/{docId} {
+      allow read: if true;                           // anyone can see locks
+      allow write, delete: if request.auth != null;  // requires signed-in client (anon OK)
+    }
+    /* ───────── Listing-Generator-1 realtime jobs + images ─────────
+       Written by the Netlify functions through the Admin SDK, which bypasses
+       rules — so `allow write: if false` correctly blocks browsers without
+       affecting the backend. This pair is exactly right as-is. */
+    match /ListingGenerator1Jobs/{jobId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+    match /ListingGenerator1Images/{docId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+    /* ───────── Listing Generator statistics + shared queues ─────────
+       FYI: nothing in the browser touches these today — reads and writes come
+       from geminiImageProxy via the Admin SDK, which ignores rules. Keeping the
+       grants is right; they are already correct for the day this moves
+       client-side. */
+    match /ListingGen_Stats/{doc} {
+      allow read, write: if request.auth != null;   // anon-signed-in generator terminals
+    }
+    match /ListingGen_Config/{doc} {
+      allow read, write: if request.auth != null;   // shared Etsy Shop Listings queues
+    }
+    /* ───────── Review panel decisions ─────────
+       One document per set, id = the set folder name. Holds the approve /
+       needs-review / reject status, the listing description, an optional title
+       override, the image order, excluded slots and per-slot framing. Same
+       trust model as above: any anon-signed-in generator terminal, because
+       every terminal must see the same decisions. */
+    match /ListingGen_Review/{setName} {
+      allow read, write: if request.auth != null;   // anon-signed-in generator terminals
+    }
+    /* ───────── Real-time counter fabric ─────────
+       ONE document: ListingGen_Realtime/counters_v1.
+       It holds a map of watched Storage folder → current count, plus the id of
+       the terminal that last wrote it and a timestamp. Every terminal keeps an
+       onSnapshot listener on it, so when one terminal approves a set, deletes a
+       charm or finishes a generation, every other terminal's counters move
+       within a second — with no polling and no Storage reads on the receiving
+       side, because the numbers themselves are in the document.
+       Cost: one document write per change (debounced to at most one per 500ms
+       per terminal) and one document read per listening terminal per change. At
+       any realistic number of terminals this is far below the free tier.
+       Size: a few hundred bytes. It is a fixed set of folder paths and
+       integers, not a log — it does not grow over time.
+       Trust model: identical to the four collections above. Writes are
+       idempotent count reports, and a wrong value self-corrects on the next
+       reconcile, so this document is not security-sensitive. */
+    match /ListingGen_Realtime/{docId} {
+      allow read, write: if request.auth != null;   // anon-signed-in generator terminals
+    }
+    /* ═════════ CUSTOM CHARM STUDIO ═════════
+       The customer-facing studio at britesjewelry.com/pages/custom-studio.
+       Trust model is the opposite of every block above: those serve YOUR
+       terminals, where any signed-in caller is trusted. These serve the public,
+       where a signed-in caller is a stranger — so every rule is scoped to the
+       caller's OWN uid, and anything that costs money is server-written only.
+       Note none of this can weaken what you already have: Firestore rules are
+       OR-ed, so an added match can only ever GRANT access, never revoke it.
+       Nothing above changes behaviour. */
+    /* One design session per customer. The client writes the session itself —
+       that is what makes saving a side effect of using the page rather than a
+       button — but only its own, and it cannot hand a session to someone else:
+       `update` requires the uid to stay put. */
+    match /customSessions/{sid} {
+      allow read, delete: if request.auth != null
+                          && resource.data.uid == request.auth.uid;
+      allow create: if request.auth != null
+                    && request.resource.data.uid == request.auth.uid;
+      allow update: if request.auth != null
+                    && resource.data.uid == request.auth.uid
+                    && request.resource.data.uid == resource.data.uid;
+      /* The generated designs. Written ONLY by the Admin SDK, because a
+         version doc is the receipt for a spent credit — if a browser could
+         mint one, the wallet would be decorative. The client reads them to
+         drive the staged progress bar. */
+      match /versions/{n} {
+        allow read: if request.auth != null &&
+          get(/databases/$(database)/documents/customSessions/$(sid)).data.uid == request.auth.uid;
+        allow write: if false;                       // server (Admin SDK) only
+      }
+    }
+    /* The wallet IS the quota. The browser reads it to paint the credit meter
+       and never writes it: britesAuth provisions and grants, and the studio
+       kinds on geminiImageProxy debit and refund — all through the Admin SDK,
+       which ignores these rules. */
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;                         // profile + wallet are server-written
+      match /walletLedger/{txnId} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow write: if false;
+      }
+      match /designs/{designId} {
+        allow read: if request.auth != null && request.auth.uid == uid;
+        allow write: if false;
+      }
+    }
+    /* Limits and prices, read once at boot so they can be tuned without a
+       deploy. Signed-in only rather than world-readable: the studio signs every
+       visitor in anonymously before it reads this, so `if true` would buy
+       nothing and expose the pricing model to anyone holding the project id. */
+    match /config/customStudio {
+      allow read: if request.auth != null;
+      allow write: if false;                         // edit in the console
+    }
+    /* Server-only, and genuinely sensitive:
+         Verifications  hashed one-time codes and the uid each upgrades
+         RateLimits     per-address / per-IP / per-uid counters
+         Grants         purchase idempotency claims keyed on the Shopify order
+       A browser must never read or write any of them. The Admin SDK bypasses
+       rules, so `if false` closes the door without closing the feature. */
+    match /Brites_Studio_Verifications/{doc} { allow read, write: if false; }
+    match /Brites_Studio_RateLimits/{doc}    { allow read, write: if false; }
+    match /Brites_Studio_Grants/{doc}        { allow read, write: if false; }
+    /* the in-app-browser handoff: a hashed, single-use code and a uid. Written
+       and spent by britesAuth only — a browser that could read this collection
+       still could not replay anything, but it has no reason to see it. */
+    match /Brites_Studio_Handoffs/{doc}      { allow read, write: if false; }
+    /* ═════════ INVESTOR_AI ═════════
+       Paper-trading research system. Every collection it owns is prefixed
+       InvestorAI_ and the server reaches them through the Admin SDK, which
+       bypasses these rules — so denying the browser closes the client-SDK
+       door without closing any feature.
+       Same argument as your Custom Charm Studio note above: rules are OR-ed,
+       so these added matches can only ever GRANT, never revoke. Every one of
+       them grants nothing. Nothing above changes behaviour.
+       Enumerated rather than InvestorAI_{rest=**} because a path segment
+       cannot mix a literal prefix with a recursive capture. Keep in step with
+       COL in netlify/functions/_investorAdmin.js. */
+    match /InvestorAI_Audit/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Calibration/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Candidates/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Claims/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Control/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Costs/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Decisions/{document=**} { allow read, write: if false; }
+    match /InvestorAI_DocumentVersions/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Documents/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Events/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Intelligence/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Invariants/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Jobs/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Ledger/{document=**} { allow read, write: if false; }
+    match /InvestorAI_MarketDaily/{document=**} { allow read, write: if false; }
+    match /InvestorAI_MarketFiles/{document=**} { allow read, write: if false; }
+    match /InvestorAI_MarketLatest/{document=**} { allow read, write: if false; }
+    match /InvestorAI_PaperAccounts/{document=**} { allow read, write: if false; }
+    match /InvestorAI_PaperFills/{document=**} { allow read, write: if false; }
+    match /InvestorAI_PaperOrders/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Positions/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Runs/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Sessions/{document=**} { allow read, write: if false; }
+    match /InvestorAI_ShadowAccounts/{document=**} { allow read, write: if false; }
+    match /InvestorAI_ShadowClosed/{document=**} { allow read, write: if false; }
+    match /InvestorAI_ShadowDays/{document=**} { allow read, write: if false; }
+    match /InvestorAI_ShadowObservations/{document=**} { allow read, write: if false; }
+    match /InvestorAI_ShadowOpen/{document=**} { allow read, write: if false; }
+    match /InvestorAI_SourceRegistry/{document=**} { allow read, write: if false; }
+    match /InvestorAI_SourceState/{document=**} { allow read, write: if false; }
+    match /InvestorAI_StrategyVersions/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Trades/{document=**} { allow read, write: if false; }
+    match /InvestorAI_Universe/{document=**} { allow read, write: if false; }
+
+    /* ═════════ CHARM SORTER ⇄ DESIGN STATION ═════════  ◀── ADDED
+       The Brites Charm Sorter (brites-charm-sorter.goldenspike.app), Design
+       Station 1 and the bridge between them. Every collection here is written
+       by the Netlify functions (charmNestLibrary, charmNestOutput, the
+       charmNest, charmEngrave and charmMaster background workers,
+       firebaseOrders, designArchive) through the Admin SDK, which bypasses
+       these rules — so denying the browser closes the client-SDK door without
+       closing any feature. Neither page reads or writes these with the client
+       SDK: the station's own direct writes stay on Brites_Orders/messages and
+       Design_RealTime_Selected_Orders, both covered above, and the sorter's
+       claims on the latter go through firebaseOrders.
+       Same argument as the blocks above: rules are OR-ed, so these added
+       matches can only ever GRANT, never revoke, and every one of them grants
+       nothing. Nothing above changes behaviour.
+       "Design_Completed Orders" (with a space) is server-written too; a match
+       path cannot carry a literal space, so it stays under the catch-all.
+       Keep in step with the collection names in
+       netlify/functions/charmNestLibrary.js, _charmNestMaster.js,
+       firebaseOrders.js and designArchive.js. */
+    /* nesting station: sheet records, calibration, solver and model jobs */
+    match /Charm_Nest_Library/{document=**}     { allow read, write: if false; }
+    match /Charm_Nest_Sheets/{document=**}      { allow read, write: if false; }
+    match /Charm_Nest_Calibration/{document=**} { allow read, write: if false; }
+    match /Charm_Nest_Jobs/{document=**}        { allow read, write: if false; }
+    match /Charm_Nest_Agent/{document=**}       { allow read, write: if false; }
+    /* master files: one entry per SKU, one record per indexed master .ai */
+    match /Charm_Master_Index/{document=**}     { allow read, write: if false; }
+    match /Charm_Master_Files/{document=**}     { allow read, write: if false; }
+    /* the pool (one row per order line and copy), the engraved backs */
+    match /Charm_Pool/{document=**}             { allow read, write: if false; }
+    match /Charm_Pool_Back/{document=**}        { allow read, write: if false; }
+    /* sets numbered per date in a transaction, the counters, the runs */
+    match /Charm_Nest_Sets/{document=**}        { allow read, write: if false; }
+    match /Charm_Nest_Counters/{document=**}    { allow read, write: if false; }
+    match /Charm_Nest_Runs/{document=**}        { allow read, write: if false; }
+    /* operator maps: SKU aliases per listing, the no-design list, option maps */
+    match /Charm_Sku_Aliases/{document=**}      { allow read, write: if false; }
+    match /Charm_Sku_NoDesign/{document=**}     { allow read, write: if false; }
+    match /Charm_Option_Map/{document=**}       { allow read, write: if false; }
+    /* the bridge log: one document per sorter session plus its log rows */
+    match /Design_Bridge/{document=**}          { allow read, write: if false; }
+    /* Design Station archive and chat messages, server-written before the
+       bridge too; listed so the intent is explicit rather than left to the
+       catch-all. */
+    match /Design_Order_Archive/{document=**}   { allow read, write: if false; }
+    match /Brites_Messages/{document=**}        { allow read, write: if false; }
+
+    /* ═════════ EMPLOYEE EFFICIENCY ═════════  ◀── ADDED
+       Station sign-ins, every station's activity log and the daily efficiency
+       totals per person. All three are written by firebaseOrders and read by
+       employeeEfficiency (manager passcode) through the Admin SDK, which
+       bypasses these rules, and no page touches them with the client SDK.
+       They were already closed to browsers by default (nothing grants them);
+       these matches only say so out loud. Rules are OR-ed, so they can only
+       ever GRANT, never revoke, and they grant nothing. Nothing above changes
+       behaviour. */
+    match /Station_Sessions/{document=**}       { allow read, write: if false; }
+    match /Station_Activity/{document=**}       { allow read, write: if false; }
+    match /Efficiency_Daily/{document=**}       { allow read, write: if false; }
+
+    /* ═════════ OCT 2026 ADDITIONS ═════════  ◀── ADDED
+       Server-only (Admin SDK), closed to browsers. Rules are OR-ed, so these
+       grant nothing; they only document intent, like the blocks above.
+       The Charm_Nest_Rev / Order_Rev feed documents list which orders and
+       pieces changed, so they stay closed; the push below uses a separate
+       counter. */
+    match /Charm_Designs/{document=**}                { allow read, write: if false; }
+    match /Charm_Pool_Art/{document=**}               { allow read, write: if false; }
+    match /Charm_Nest_Mutations/{document=**}         { allow read, write: if false; }
+    match /Sandbox_Charm_Nest_Mutations/{document=**} { allow read, write: if false; }
+    match /Design_Log/{document=**}                   { allow read, write: if false; }
+    match /Charm_Nest_Rev/{document=**}               { allow read, write: if false; }
+    match /Order_Rev/{document=**}                    { allow read, write: if false; }
+
+    /* PHASE 5 LIVE PUSH: the browser may LISTEN to one tiny counter per world
+       (a number and a time, no order data) and may never write it. Nothing
+       reads or writes these yet; they are used once Phase 5 is built. */
+    match /Charm_Nest_Push/{docId} {
+      allow read: if docId == 'counter';
+      allow write: if false;
+    }
+    match /Sandbox_Charm_Nest_Push/{docId} {
+      allow read: if docId == 'counter';
+      allow write: if false;
+    }
+
+    /* ───────── everything else ─────────
+       FYI: this block is a no-op — fine to keep, just don't count on it.
+       Firestore denies anything no rule allows, and `if false` cannot revoke
+       access granted by a more specific match (rules are OR-ed, never AND-ed).
+       It documents intent rather than enforcing it. */
+    match /{document=**} {
+      allow read, write: if false;   // block all unknown paths
+    }
+  }
+}

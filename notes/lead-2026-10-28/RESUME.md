@@ -78,7 +78,8 @@ finish the scope <scope>, test (slot.sh with time limit inside), push, hand back
 board-live-extra.json with the new agent ids.
 
 ## Open questions for Paul (ask when he is back)
-- Firestore console: turn on TTL for collections Charm_Nest_Mutations and Sandbox_Charm_Nest_Mutations, field `expireAt` (Phase 3's write ledger; without it the 7-day records are never deleted).
+- TTL (Phase 3's write ledger, field `expireAt`, Google Cloud console → Firestore → Time to live): Sandbox_Charm_Nest_Mutations DONE by Paul 28 Oct (the app is in Sandbox mode); Charm_Nest_Mutations still to do once someone presses Hold/Release/Complete Order in Real mode (the collection does not exist until then; Paul knows).
+- Firestore rules: full updated file given to Paul in chat (copy in $SP/firestore.rules): adds explicit denies for tonight's collections + read-only Phase 5 counters Charm_Nest_Push/counter and Sandbox_Charm_Nest_Push/counter. Waiting for Paul to publish it, then build Phase 5 (vendored Firestore SDK, leader onSnapshot on the counter, server mirrors {n, at} into Charm_Nest_Push/counter).
 - ANSWERED by Paul 03:39 UTC: "The refit if necessary, must be in the exact same place with a variance of one percent from where I actually placed it. The rotation needs to be also within one percent accurate to where I placed it." → RULE: a refit after a Charm Editor save keeps his placement: centre within 1% of the charm's size of where he placed it, angle within 1% of his angle (a level word stays level). Only the size may shrink if needed. Sent to the refit agent (a7764b20331f1122f) as a follow-up; if it is gone, re-spawn refit with this rule.
 - Phase 5 push (option a) needs a Firestore security rule in the console + a vendored Firestore SDK file.
 
