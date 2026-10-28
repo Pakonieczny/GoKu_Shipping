@@ -3657,13 +3657,14 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
    card's Release Hold press on the Orders card (charm-nest-bridge.js, Orders.releaseSealHtml), 72 px (half again the regular 50), with its words beside it: Release Hold, by whom, the date and the time.
    Whole on its own line of the card's actions when it is narrow; the seal zooms like every other (Seal.zoom). */
 /* RELORANGE (Paul, 19 Oct 2026: "Shrink the size of the entire 'Release Hold' UI by 33%. Change the colour of the 'Release Hold' Seal and UI to be orange"): two thirds of its old size (the seal 72 -> 48 px, its padding, gaps and words with it), in the Hold button's orange (--holdOrange, #a2591c) */
-.relSeal{--relOrange:var(--holdOrange,#a2591c);display:inline-flex;align-items:center;gap:7px;flex:0 1 auto;max-width:100%;min-width:0;margin:3px 0;padding:4px 8px 4px 4px;border:1px solid rgba(162,89,28,.38);border-radius:9px;background:rgba(162,89,28,.07);color:var(--relOrange);--seal-fit:48px;box-sizing:border-box}
+/* SEALGREEN (Paul, 28 Oct 2026: "change the colour of the 'Order Released' seal to be green so that it better represents a green light to go ahead"): the seal (charm-nest-motion.js FAMILY.release) and its words, border and wash are the app's green, #19663f (the sealedDone green); the Release Hold BUTTON keeps the Hold orange, --relHold */
+.relSeal{--relInk:#19663f;display:inline-flex;align-items:center;gap:7px;flex:0 1 auto;max-width:100%;min-width:0;margin:3px 0;padding:4px 8px 4px 4px;border:1px solid rgba(25,102,63,.38);border-radius:9px;background:rgba(25,102,63,.07);color:var(--relInk);--seal-fit:48px;box-sizing:border-box}
 .relSeal>.seal{flex:0 0 48px;width:48px;height:48px;opacity:1}
 .relSealWords{display:flex;flex-direction:column;gap:0;min-width:0;line-height:1.25;font:8px var(--sans)}
-.relSealWords b{font-size:9.5px;font-weight:800;letter-spacing:.02em;color:var(--relOrange,#a2591c);overflow-wrap:anywhere}
+.relSealWords b{font-size:9.5px;font-weight:800;letter-spacing:.02em;color:var(--relInk,#19663f);overflow-wrap:anywhere}
 .relSealWords .relSealBy{font-weight:600;color:var(--ink,#222);overflow-wrap:anywhere}
 .relSealWords .relSealAt{color:var(--ink70,#555)}
-.relSealWords .relSealHeld{margin-top:2px;padding-top:2px;border-top:1px dashed color-mix(in srgb,var(--relOrange,#a2591c) 35%,transparent);color:var(--ink45,#888);overflow-wrap:anywhere}   /* (RELEASED, Paul 27 Oct 2026: the hold it ended) */
+.relSealWords .relSealHeld{margin-top:2px;padding-top:2px;border-top:1px dashed color-mix(in srgb,var(--relInk,#19663f) 35%,transparent);color:var(--ink45,#888);overflow-wrap:anywhere}   /* (RELEASED, Paul 27 Oct 2026: the hold it ended) */
 /* (RELSEAL, Paul 19 Oct 2026: "the seal would be visible in the list of view of each order card and both the Engraving and Orders Tabs as part of each relevant Order card"): the date and the time wrap, and so does "Release Hold" when the card is narrower than the words (they were nowrap, and a narrow card or list column cut them off at its edge);
    the seals row of an Orders card or list row (charm-nest-bridge.js cardSealHtml): the Release Hold seal first, the approval strip (charm-nest-activity.css .ordSeals) beside it while there is room and under it when there is not; in an Engraving row it is the first of the seals cell. */
 .ordSealsRow{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px 10px;margin:8px 0 2px;min-width:0;max-width:100%;flex:1 0 100%}
@@ -3888,11 +3889,11 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-solver.js?v=20261009-unjam1-pair2-ln1-cg1-nestfront-nq1-ovf1-mi1"></script>
 <script src="vendor/clipper-6.4.2.js?v=20261028-sw1"></script>
 <script src="charm-nest-vector.js?v=20261028-sw1"></script>
-<script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1-ml1-m2-m3-szf1-mfile1-mc1-bd1-ovf1-ae1"></script>
+<script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1-ml1-m2-m3-szf1-mfile1-mc1-bd1-ovf1-ae1-im1"></script>
 <script src="charm-nest-overlap-fix.js?v=20261025-ovf1"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom-vi1"></script>
-<script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2-hdr1-ms1-cost18-rh1-hp2-ro1-sc1-ss1-vis1-rs1-rel1-apx1-sw1"></script>
-<script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1-hdr1-pl1-ms1-pk1-cost18-rh1-ho1-ss1-rel1-nv3"></script>
+<script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2-hdr1-ms1-cost18-rh1-hp2-ro1-sc1-ss1-vis1-rs1-rel1-sg1-apx1-sw1"></script>
+<script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1-hdr1-pl1-ms1-pk1-cost18-rh1-ho1-ss1-rel1-sg1-nv3"></script>
 <script src="charm-nest-geom.js?v=20261009-flat-col-fb1-fb2-fr1-rb1-m3-wd1-cb1-rf1"></script>
 <script src="charm-nest-monogram.js?v=20261015-mono1-monoui1-mx4-mh2"></script>
 <script src="charm-nest-monogram-fit.js?v=20261016-mx4-mh2"></script>
@@ -3906,6 +3907,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-thumbs.js?v=20261009-th1-pb1"></script>
 <script src="charm-nest-master-cache.js?v=20261009-mc1-cost18-mp1"></script>
 <script src="charm-nest-engrave-faces.js?v=20261011-fb1-fb2-sd1-nb1-el1-pc1"></script>
+<script src="charm-nest-engrave-bar-front.js?v=20261028-bfw1"></script>
 <script src="charm-nest-engrave-position.js?v=20261012-ep1-rb1-nd1"></script>
 <script src="charm-nest-engrave-sides.js?v=20261009-pe1-nk1-dr1-ko1-fb1-fb2-el1-sb1-pc1-br1-ms1-bh1"></script>
 <script src="charm-nest-engrave-rows.js?v=20261010-re1-dc1-fb1-pv1"></script>
@@ -3923,20 +3925,23 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-monogram-seals.js?v=20261017-mseal1"></script>
 <script src="charm-nest-order-seals.js?v=20261019-cs1"></script>
 <!-- (SEALTRAVEL, Paul 20 Oct 2026: every seal an order has collected, drawn by kind, wherever the order ends up) -->
-<script src="charm-nest-seal-travel.js?v=20261020-st1-rel1"></script>
+<script src="charm-nest-seal-travel.js?v=20261020-st1-rel1-sg1"></script>
 <script src="charm-nest-sheet-name.js?v=20261010-sn1"></script>
 <script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2-sf2-sn1-fb1-eu3-hg1-rh1-rh3-rh4-sp1-cost18-gl1-lg1-gs1"></script>
 <script src="charm-nest-export.js?v=20261009-cutfill-plb1-bf1-ba1-ef1"></script>
-<script src="charm-nest-art-edit.js?v=20261027-ae1-ce1-wt1"></script><!-- charm-nest-art-edit.js: ONE piece's own change to its master artwork, kept beside it and put over the master wherever the piece is made (ART EDIT, Paul 27 Oct 2026) -->
-<script src="charm-nest-charm-editor.js?v=20261027-ce1-wt1-fb1-fb2-cet1"></script><!-- charm-nest-charm-editor.js: the charm editor, a watered-down Illustrator over the page for ONE piece's front and back, layer by layer; the Engraving window's "Edit charm" opens it and saves through the art edit above (CHARM EDIT, Paul 27 Oct 2026) -->
+<script src="charm-nest-art-edit.js?v=20261027-ae1-ce1-wt1-im1"></script><!-- charm-nest-art-edit.js: ONE piece's own change to its master artwork, kept beside it and put over the master wherever the piece is made (ART EDIT, Paul 27 Oct 2026) -->
+<script src="charm-nest-designs.js?v=20261028-dsg1"></script><!-- charm-nest-designs.js: the design library, every version of every charm saved in the Charm Editor, searchable at once on this computer (DESIGNS, Paul 28 Oct 2026) -->
+<script src="charm-nest-charm-editor.js?v=20261027-ce1-wt1-fb1-fb2-cet1-im1-ru1-pen1"></script><!-- charm-nest-charm-editor.js: the charm editor, a watered-down Illustrator over the page for ONE piece's front and back, layer by layer; the Engraving window's "Edit charm" opens it and saves through the art edit above (CHARM EDIT, Paul 27 Oct 2026) -->
+<script src="charm-nest-ce-paths.js?v=20261028-pen1"></script><!-- charm-nest-ce-paths.js: the Pen, Direct Selection, the anchor tools, Scissors, Join, Close, Simplify, Smooth and the Pencil in the charm editor ("deforming lines", Design & Engrave, Paul 28 Oct 2026) -->
 <script src="charm-nest-ce-import.js?v=20261028-vi1"></script><!-- charm-nest-ce-import.js: an .ai, .pdf, .svg or .dxf brought into the Charm Editor at its exact size, roles picked before it is placed or opened as a new design (Design & Engrave item 23, Paul 28 Oct 2026) -->
 <script src="charm-nest-ce-trace.js?v=20261028-tr1"></script><!-- charm-nest-ce-trace.js: an image traced to smooth filled vector paths, greyscale with black as the base, N grey bands that share their borders; runs in its own Worker made from this file (IMAGE TRACE, Paul 28 Oct 2026) -->
 <script src="charm-nest-ce-warp.js?v=20261028-cw1"></script><!-- charm-nest-ce-warp.js: BLENDS AND WARPS in the charm editor: the Blend tool (W), Warp (fifteen styles), Free and Perspective Distort, curves kept to 0.01 mm (Design & Engrave, Paul 28 Oct 2026: "blinds and deforming lines") -->
+<script src="charm-nest-ce-image.js?v=20261028-im1"></script><!-- charm-nest-ce-image.js: an image on a charm, the Charm Editor's importer for PNG / JPG / WebP: the Image step (turn, crop, background, tone, the trace's levels) and ONE group of grey-level paths placed in the charm's outline (Design & Engrave, Paul 28 Oct 2026) -->
 <script src="charm-nest-text.js?v=20261019-wd1-rf1"></script>
 <!-- (WORLD, Paul 19 Oct 2026) the shaping engine (HarfBuzz joins Arabic, sets Indic conjuncts; bidi orders right to left). Nothing is started or fetched until a line has a letter of a script that needs a script font: vendor/hb.wasm and vendor/fonts/scripts/* load then (charm-nest-bridge.js ensureScriptFonts) -->
 <script src="charm-nest-shape.js?v=20261019-wd1"></script>
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
-<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1-bf1-sd1-sl1-pm1-zs1-dm1-nb1-ch1-ns1-lk1-nr1-au1-rlk2-rs1-en1-kp1-wo1-sb1-od1-nk2-rvd1-add1-szf1-szr1-mono1-monoui1-mono7-pin1-meg1-setfix1-hp1-rv1-br1-hsym1-bh1-num1-bl1-so1-fh1-co1-fd1-once1-skp1-oos1-bf1"></script>
+<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1-bf1-sd1-sl1-pm1-zs1-dm1-nb1-ch1-ns1-lk1-nr1-au1-rlk2-rs1-en1-kp1-wo1-sb1-od1-nk2-rvd1-add1-szf1-szr1-mono1-monoui1-mono7-pin1-meg1-setfix1-hp1-rv1-br1-hsym1-bh1-num1-bl1-so1-fh1-co1-fd1-once1-skp1-oos1-bf1-bfw1"></script>
 <script src="charm-nest-engrave-said.js?v=20261012-nt1-en1-od1"></script>
 <script src="charm-nest-engrave-read.js?v=20261013-sbc1"></script>
 <script src="charm-nest-engrave-piece-words.js?v=20261016-pw1-br1-ms1-bh1"></script>
@@ -5583,7 +5588,7 @@ function log(sh, msg) { sh.log.push(`${new Date().toLocaleTimeString()} ${msg}`)
 const CHARM_SCALE = 0.971;
 /** The size a person gave a piece by hand in the sheet window (Manual Control, 10K / 14K; Paul, 18 Oct 2026): 1 = its design size, bounded 0.8 to 1.2;
     the piece is nested, checked and written at that size (buildJob, finishNest). */
-function manualSize(c) { const v = c && c.manual ? +c.manual.size : 0; return v >= 0.8 && v <= 1.2 ? v : 1; }
+function manualSize(c) { const v = c && c.manual && !c.frozen ? +c.manual.size : 0; return v >= 0.8 && v <= 1.2 ? v : 1; }   // (CUSTOMPOOL, 28 Oct 2026: a custom design sent at its exact size has no other: c.frozen)
 /** What a sheet's written files depend on: each placed charm, where and how it lies, and its artwork and name. */
 const layoutKey = (sh, byId) => JSON.stringify([sh.sheetId, (sh.placements || []).map(p => { const c = byId.get(p.id); return [String(p.id), +(+p.cxPt).toFixed(3), +(+p.cyPt).toFixed(3), p.angle, p.scale || 1, c ? c.hash : null, c ? c.name : null]; }).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)]);
 /** One charm at a time on every sheet (Paul, 24 Sep): Gold, Silver, Rose Gold past its green line, a sheet's first
@@ -5599,7 +5604,7 @@ function handLocks(sh, items) {
   const Sv = typeof CharmNestSolver !== "undefined" ? CharmNestSolver : null, out = [];
   for (const c of items || []) {
     const pin = c && c.manual && c.pinned && !c.arrivalPin ? c.pinned : null; if (!pin || ![pin.cxPt, pin.cyPt].every(Number.isFinite)) continue;
-    const size = manualSize(c), angle = ((+pin.angle || 0) % 360 + 360) % 360, scale = size !== 1 ? +(CHARM_SCALE * size).toFixed(5) : CHARM_SCALE;
+    const size = manualSize(c), angle = ((+pin.angle || 0) % 360 + 360) % 360, scale = c.frozen ? 1 : size !== 1 ? +(CHARM_SCALE * size).toFixed(5) : CHARM_SCALE;   // (CUSTOMPOOL: a custom design sent at its exact size is held at 100 %)
     let wPt = (+c.widthPt || 20) * size, hPt = (+c.heightPt || 20) * size;
     try { const v = Sv && c.bits && Sv.prepareVariant({ bits: c.bits, w: c.w, h: c.h, scale: size === 1 ? c.scale : c.scale / size }, angle, 0, 2); if (v) { wPt = v.solid.w / 2; hPt = v.solid.h / 2; } } catch (_) { /* its own size stands */ }
     out.push({ id: c.id, angle, cxPt: +pin.cxPt, cyPt: +pin.cyPt, xPt: +pin.cxPt - wPt / 2, yPt: +pin.cyPt - hPt / 2, wPt, hPt, contact: 0, scale });
@@ -6287,6 +6292,7 @@ async function finishNest(sh, { result, error }) {
     const optT0 = performance.now(), kept = new Map(((sh.appendOnly ? sh.nestInitial : sh.roseProtected?.placements) || []).map(p => [p.id, p.scale]));
     // (a piece resized by hand, Manual Control, is written at its own size: the same shrink of its new size)
     for (const p of sh.placements) p.scale = kept.get(p.id) || (manualSize(byId.get(p.id)) !== 1 ? +(CHARM_SCALE * manualSize(byId.get(p.id))).toFixed(5) : CHARM_SCALE);
+    if (window.CharmNestCustomPool) CharmNestCustomPool.holdSize(sh.placements, byId, sh);   // (CUSTOMPOOL, Paul 28 Oct 2026: "the sanctity of the designed charm. It's exact dimensions": a custom design sent to the sheet is written at 100 %, never shrunk)
     sh.progress = [sh.placements.length, sh.placements.length]; renderProgress(sh); drawPreview(sh);
     sh.optimized = { count: sh.placements.length, scale: CHARM_SCALE, ms: Math.round(performance.now() - optT0) };
     // Nothing new went in (a Gold or Silver sheet filling its gaps, whose new orders all found no room): the layout is
@@ -6359,6 +6365,9 @@ async function finishNest(sh, { result, error }) {
         ? "Verified twice: geometry at " + geom.res + " px/pt and the written file re-rendered layer by layer — no overlap beyond the allowed " + allow + ", nothing outside the sheet"
         : "Verification flagged: " + (geom.error ? "geometry check did not run: " + geom.error : geom.overlapPx ? geom.overlapPx + " px overlap (" + pairs + ")" : "") + renderMsg + (sh.verification.handOverlap ? ` · ${sh.verification.handOverlap} charms placed by hand overlap or run past the sheet's margin (Manual Control)` : ""));
     }
+    // (CUSTOMPOOL, Paul 28 Oct 2026: "You need to ensure the sanctity of the designed charm": the file of a sheet holding a custom design sent at its exact size is read back first; a piece
+    //  written at another size or with other parts than its design's hash stops the save, loudly: charm-nest-custom-pool.js checkWritten)
+    { const cp = window.CharmNestCustomPool ? await CharmNestCustomPool.checkWritten(sh, aiBytes, specBase) : null; if (cp && !cp.ok) { sh.problem = cp.why; log(sh, cp.why); throw new Error(cp.why); } }
     // 3 · report
     const report = buildReport(sh, result, items);
     sh.outputs = { ai: aiBytes, labelled: labelledBytes, report, previewPng: await previewPng(sh) };
@@ -6444,7 +6453,7 @@ async function fixOverlaps(sh, o) {
       const a = render.areas.get(p.layerName), g = gmById.get(p.id), u = unionArea(a, g); if (!u) continue;
       areas.set(p.layerName, u);
       centers.set(p.layerName, { x: p.cxPt * res, y: p.cyPt * res });
-      if (!locked.has(p.id)) movable.add(p.layerName);
+      if (!locked.has(p.id) && !(window.CharmNestCustomPool && CharmNestCustomPool.isFrozen(byId.get(p.id)))) movable.add(p.layerName);   // (CUSTOMPOOL: a custom design sent at its exact size is never shrunk; the other charm of the pair moves)
       prefer.set(p.layerName, kept.has(p.id) ? 1 : 0);
     }
     let plan; try { plan = F.plan({ W: render.page.W, H: render.page.H, inset: render.page.inset, res, areas, centers, movable, prefer }); } catch (e) { log(sh, "overlap fix could not plan: " + e.message); break; }
@@ -6642,7 +6651,7 @@ async function persistSheet(sh, items, context) {
     orders: [...new Set(sh.placements.map(p => { const c = byId.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))],
     ...(listings => listings ? { listings } : {})(listingsOf(sh.placements.map(p => byId.get(p.id)))),
     poolIds: sh.placements.map(p => byId.get(p.id) && byId.get(p.id).poolId).filter(Boolean), backPool: sh.backPool || [], backOutputs: sh.backOutputs || null, label: sh.label || null,
-    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, custom: !!c.custom, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open, ...(typeof pairDescriptor === "function" ? pairDescriptor(c) : {}), ...(c.manual ? { manual: c.manual } : {}), ...(shapes.get(c.id) || {}) })),
+    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, custom: !!c.custom, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open, ...(typeof pairDescriptor === "function" ? pairDescriptor(c) : {}), ...(c.manual ? { manual: c.manual } : {}), ...(c.frozen ? { frozen: c.frozen } : {}), ...(shapes.get(c.id) || {}) })),
     placements: sh.outputs.report.placements, rejects: sh.outputs.report.rejects,
     names: items.map(c => c.name).filter(Boolean).join(" ")
   });
@@ -8243,8 +8252,9 @@ let effWanted = 0, effWantedHash = "";
    page loads them now, once the server has said it is his (or his tab is asked for). They mount themselves on #efficiencyView
    when they arrive (charm-nest-efficiency.js), the tab already shown included; another person signing in later is put away by
    the console's own watch, as before. The tokens are the ones the tags had, in the tags' order. */
-const EFF_FILES = ["charm-nest-efficiency-charts.js?v=20261006-efc4-pb1", "charm-nest-efficiency-stations.js?v=20261006-es11-fx1-sb1-dk1-ps1-rlp2-cost18", "charm-nest-efficiency.js?v=20261006-ef17-fx1-sb1-dk1-wh1-ma1-cost18",
-  "charm-nest-efficiency-orders.js?v=20261006-eo6-in2-rlp2-cost18", "charm-nest-efficiency-laser.js?v=20261006-int2-cost18", "charm-nest-efficiency-person.js?v=20261006-ep14-ad4-cost18"];
+const EFF_FILES = ["charm-nest-efficiency-charts.js?v=20261006-efc4-pb1", "charm-nest-efficiency-stations.js?v=20261006-es11-fx1-sb1-dk1-ps1-rlp2-cost18", "charm-nest-efficiency.js?v=20261006-ef17-fx1-sb1-dk1-wh1-ma1-cost18-dl1",
+  "charm-nest-efficiency-orders.js?v=20261006-eo6-in2-rlp2-cost18", "charm-nest-efficiency-laser.js?v=20261006-int2-cost18", "charm-nest-efficiency-person.js?v=20261006-ep14-ad4-cost18",
+  "charm-nest-efficiency-custom.js?v=20261028-dl1"];   // (Design & Engrave, Paul 28 Oct 2026: the Custom pieces tab, op custom)
 let effLoading = null;
 const loadEfficiency = () => effLoading ||= cnLoadScript(...EFF_FILES).catch(e => { effLoading = null; console.warn("Employee efficiency", e); toast("Employee efficiency did not load: " + e.message, "bad", 6000); return false; });
 window.addEventListener("charmnest:master-admin", () => {
@@ -8600,6 +8610,8 @@ boot();
      or decision), the same name every seal it stamps, and the framed Design Station, carry. -->
 <script src="station-session.js?v=20261006-st3-acct1"></script>
 <script src="station-activity.js?v=20261009-ps1-as1-adv3-ew1-stx1-ag1"></script>
+<!-- DESIGN LOG (Design & Engrave, Paul 28 Oct 2026: "all of this must be tracked by employee"): CNDesignLog.event(kind, data), the one call every design step makes; it hands each burst to station-activity.js (CNAct), the order timeline and, for custom pieces, Design_Log (charm-nest-design-log.js) -->
+<script src="charm-nest-design-log.js?v=20261028-dl1"></script>
 <!-- how long each cut sheet took the Laser person (charm-nest-laser-time.js; R7): the page's own count, sent with the completion; the server decides and stores it -->
 <script src="charm-nest-laser-time.js?v=20261007-fc2"></script>
 <script src="charm-nest-laser-act.js?v=20261006-sa5-ls2-gc1-sn1"></script>
@@ -8635,11 +8647,13 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25-dc26-bk26-es26-ee26-ep26-sx26-sc26-ns26-pw26-gl1-gk1-r16h1-plc1-en1-vis1-dsg1-dxf1-aw1-once1-c17-rs1-rel1-rel2-ga1-mt1-lf1-fra1-ae1-ce1-cb1-kps1-oos1-gss1-hsi1-edw1-ged1-sp1-nv1-apx1-nv2-nv3-nv4-nv5-hr1-rf1-cet1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25-dc26-bk26-es26-ee26-ep26-sx26-sc26-ns26-pw26-gl1-gk1-r16h1-plc1-en1-vis1-dsg1-dxf1-aw1-once1-c17-rs1-rel1-rel2-ga1-mt1-lf1-fra1-ae1-ce1-cb1-kps1-oos1-gss1-hsi1-edw1-ged1-sp1-nv1-apx1-nv2-nv3-nv4-nv5-hr1-rf1-cet1-cp1-dl1-rw2-im1-bfw1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
 <script src="charm-nest-hold-ui.js?v=20261005-hold3-pf1-rl1-ns2-rh1-oh1-hb1-hp1"></script>
+<!-- CUSTOMPOOL (Paul, 28 Oct 2026, items 27 and 28): a design sent to a sheet becomes a real piece, its size frozen (Pool.addCustomPiece, the nest's and Manual Control's rules, the written file checked against its hash); a piece of no order is named CUSTOM-<yyyymmdd>-<n> -->
+<script src="charm-nest-custom-pool.js?v=20261028-cp1"></script>
 <script>
 try {
   const nameNow = () => { try { const n = String((window.CNEmployee && CNEmployee.name()) || "").trim(); return /^\d+$/.test(n) ? "" : n; } catch (_) { return ""; } };
@@ -8708,7 +8722,7 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-mseal1-fb1-ms3-cost18-strip1-id1-2b1-mc1-hp2-br1-ms1-bh1-nb1-mv1-wc5-rp1-oh1-sc1-st1-mc9-mi9b-sh29-gl1-en2-fr1-zg1-oos1-nf1-ged1-sp1-mi1"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-mseal1-fb1-ms3-cost18-strip1-id1-2b1-mc1-hp2-br1-ms1-bh1-nb1-mv1-wc5-rp1-oh1-sc1-st1-mc9-mi9b-sh29-gl1-en2-fr1-zg1-oos1-nf1-ged1-sp1-mi1-cp1"></script>
 <!-- 10K / 14K: a charm dragged onto the next or previous sheet of its metal, in the sheet window's Manual Control (SheetHop; Paul, 18 Oct 2026) -->
 <script src="charm-nest-sheet-hop.js?v=20261018-hop1-hp2-mv1-mc9-mi9b-gk1-fr1-ged1"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->

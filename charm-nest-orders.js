@@ -5011,5 +5011,6 @@
     SYMBOL_LISTINGS, symbolListing, symbolRead, symbolMember, runesInText, RUNE_NAMES, RUNES_ABSENT, LISTING_DESIGNS, listingDesign,
     NUMBER_LISTINGS, numberListing, numberRead, numberMemberOf, digitsInText, NUMBER_NEVER_WHY,
     CHARM_ONLY_LISTINGS, CHARM_ONLY_RUNE_NECKLACE_BASE, charmOnlyListing, charmOnlyRead, vikingRuneOfSku, CHARM_ONLY_NEVER_WHY,
+    barNecklace,   // (BARFRONT: the bar rule's own test of a line, for a restored line still on its back: charm-nest-engrave-bar-front.js)
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });
