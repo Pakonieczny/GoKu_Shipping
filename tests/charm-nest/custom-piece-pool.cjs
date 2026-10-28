@@ -117,9 +117,10 @@ const root = path.join(__dirname, '../..');
     const bad = await page.evaluate(async id => {
       const sh = CN.S.sheets.silver.pages.at(-1), c = sh.charms.find(x => x.poolId === id), was = c.frozen.geomHash;
       c.frozen = Object.assign({}, c.frozen, { geomHash: 'g1-0000000000000000000000000000-4' });
-      const ok = await window.writeAsPlaced(sh), problem = sh.problem, status = sh.status;
+      // (a Gold or Silver sheet whose layout is as last written keeps its files and writes nothing: finishNest's own rule. Its files are written again here)
+      sh._written = null; const ok = await window.writeAsPlaced(sh), problem = sh.problem, status = sh.status;
       c.frozen = Object.assign({}, c.frozen, { geomHash: was });
-      const ok2 = await window.writeAsPlaced(sh);
+      sh._written = null; const ok2 = await window.writeAsPlaced(sh);
       return { ok, problem, status, ok2, problem2: sh.problem };
     }, ids1[0]);
     assert.equal(bad.ok, false, 'not saved'); assert.match(bad.problem || '', /^Not saved: a custom piece is not written exactly as it was designed — "Spare heart"'s parts in the file are not its design's/, 'the sheet says why: ' + bad.problem);
@@ -155,8 +156,8 @@ const root = path.join(__dirname, '../..');
     await until(() => page.evaluate(() => !CNManual._MC.on), 5000, 'Manual Control off');
     const done = await until(() => page.evaluate(() => { const w = SheetWin._W.work; return w && w.state !== 'working' && !SheetWin._W.flow ? { state: w.state, title: w.title } : null; }), 180000, 'the save to end');
     assert.equal(done.state, 'done', 'saved: ' + JSON.stringify(done));
-    const after = await page.evaluate(() => { const sh = CN.S.sheets.gold10k.pages.at(-1), c = sh.charms[0], p = sh.placements[0]; return { scale: p.scale, cxPt: p.cxPt, manual: c.manual || null, ok: sh.verification && sh.verification.ok, problem: sh.problem || null }; });
-    assert.equal(after.scale, 1, 'saved at 100 %'); assert(Math.abs(after.cxPt - (tk.p.cxPt + MMp)) < 1e-6, 'where it was moved'); assert(after.manual && after.manual.by === 'Tester' && after.manual.size == null, 'its manual mark has no size: ' + JSON.stringify(after.manual)); assert.equal(after.ok, true); assert.equal(after.problem, null);
+    const after = await page.evaluate(() => { const sh = CN.S.sheets.gold10k.pages.at(-1), c = sh.charms[0], p = sh.placements[0]; return { scale: p.scale, cxPt: p.cxPt, manual: c.manual || null, ok: sh.verification && sh.verification.ok, ver: JSON.stringify(sh.verification || null).slice(0, 600), log: (sh.log || []).slice(-6), problem: sh.problem || null }; });
+    assert.equal(after.scale, 1, 'saved at 100 %'); assert(Math.abs(after.cxPt - (tk.p.cxPt + MMp)) < 1e-6, 'where it was moved'); assert(after.manual && after.manual.by === 'Tester' && after.manual.size == null, 'its manual mark has no size: ' + JSON.stringify(after.manual)); assert.equal(after.ok, true, 'verified: ' + after.ver + ' ' + JSON.stringify(after.log)); assert.equal(after.problem, null);
     fc = await fileCheck('gold10k', ids3[0]); assert.equal(fc.written, fc.want, 'its file still its hash after Manual Control'); assert(Math.abs(fc.scale - 1) < 1e-6);
     console.log('ok   5  10K: Manual Control refused the resize (API, + key, corner) and said why, moved it 1 mm; saved at 100 %, the file still its hash');
     await page.evaluate(() => SheetWin.close && SheetWin.close());
