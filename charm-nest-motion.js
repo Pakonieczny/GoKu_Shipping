@@ -808,7 +808,7 @@
       if (o.max > 0 && st.length > o.max) st = st.slice(-o.max);
       return row({ stamps: st, prints: total }, { size: +o.size || 22, pending: o.pending });
     }
-    const WOOD_URL=(()=>{try{return new URL('charm-nest-stamp-walnut.png',doc.currentScript?.src || doc.baseURI).href;}catch(_){return 'charm-nest-stamp-walnut.png';}})();
+    const WOOD_URL=(()=>{try{return new URL('charm-nest-stamp-walnut.png?v=20261025-sw1',doc.currentScript?.src || doc.baseURI).href;}catch(_){return 'charm-nest-stamp-walnut.png?v=20261025-sw1';}})();
     /** The rubber die and walnut head share the exact outline of the ink they leave. */
     function tool(kind, source) {
       if(typeof source==='string'){const holder=doc.createElement('span');holder.innerHTML=source;source=holder;}
