@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80">
+  <!-- ce-import fixture: no physical units (CSS px, 96 to the inch), nested transforms, a white background (left out), an even-odd fill, a polyline, a line,
+       a hidden path. The drawing spans 80 x 64 px = 60 x 48 pt. -->
+  <rect width="120" height="80" fill="#fff"/>
+  <g transform="translate(10 10) scale(2)">
+    <ellipse cx="20" cy="15" rx="20" ry="15" fill="none" stroke="#000" stroke-width="0.5"/>
+    <path d="M10 10 h20 v10 h-20 z M14 13 h12 v4 h-12 z" fill="#1a5fc4" fill-rule="evenodd"/>
+    <polyline points="0,30 5,32 10,30" stroke="red" fill="none"/>
+    <line x1="35" y1="0" x2="40" y2="5" stroke="#00f"/>
+    <path d="M0 0 L5 5" stroke="black" style="display:none"/>
+  </g>
+</svg>
