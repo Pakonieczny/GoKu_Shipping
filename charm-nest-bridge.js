@@ -2568,7 +2568,7 @@ const Orders = window.Orders = (() => {
   /* NAV round 5 (28 Oct 2026, Paul: "move between Tabs, Lists and Modals ... at near real-time speed"): the list's first drawing (nothing in it yet: the tab's first visit) draws the
      rows a screen holds (FIRST_ROWS) and the rest of its page (to 48) at the next idle moment, where all 48 were built before the tab could show (~110 ms at 800 orders); only for the tab
      being shown (a drawing asked for any other reason draws its page whole, as before) */
-  const FIRST_ROWS = 8;   // (a row is ~200 px: 4 on a 900 px screen, 7 on a 1440 px one)
+  const FIRST_ROWS = (host, cards) => cards ? 12 : Math.max(3, Math.ceil((host.clientHeight || 800) / 190) + 1);   // (a list row is ~200 px: 4 in the 800 px list of a 900 px screen, so 6; read after the list's scroll place, so nothing is laid out for it)
   let fillAsked = 0, filling = false, showing = false;   // (showing: the drawing is the tab's being shown, shown)
   function walkRows() {
     const rows = rowsOf(), sig = JSON.stringify([rows.length, OV.pile, OV.q, OV.metal, OV.form, OV.eng, OV.act, OV.sort, OV.desc, CNListActivity.key("orders")]);
@@ -2618,7 +2618,7 @@ const Orders = window.Orders = (() => {
     // (ONE ORDER, ONE ROW, 13 Oct 2026: the lines of one order stand together where its first line stood; a group of one is a row as it always was)
     const groups=groupsOf(rows);groupTotal=groups.length;
     shown=groups.slice(0,OV.limit || 48);
-    if (showing && !filling && list.childElementCount === 0 && shown.length > FIRST_ROWS) { shown = shown.slice(0, FIRST_ROWS); if (!fillAsked) fillAsked = idleSoon(() => { fillAsked = 0; filling = true; try { renderBody(); } finally { filling = false; } }); }   // (round 5: the first screen now, the rest at idle)
+    if (showing && !filling && list.childElementCount === 0 && shown.length > FIRST_ROWS(host, cards)) { shown = shown.slice(0, FIRST_ROWS(host, cards)); if (!fillAsked) fillAsked = idleSoon(() => { fillAsked = 0; filling = true; try { renderBody(); } finally { filling = false; } }); }   // (round 5: the first screen now, the rest at idle)
     // a heading counts its day's orders in the list: counted only where headings are drawn, for the days on screen
     const dayCounts=new Map();
     if(OV.sort==='arrival'){for(const g of shown)dayCounts.set(dayOf(g.rows[0]).key,new Set());for(const row of rows){const ids=dayCounts.get(dayOf(row).key);if(ids)ids.add(row.order.receiptId);}}
