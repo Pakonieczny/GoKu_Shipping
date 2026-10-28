@@ -109,6 +109,7 @@ const assets = [
   "charm-nest-pdf.js",
   "charm-nest-overlap-fix.js",
   "charm-nest-custom-pool.js",
+  "charm-nest-custom-orders.js",
   "charm-nest-seal-travel.js",
   "charm-nest-relink-flow.js",
   "charm-nest-art-edit.js",
