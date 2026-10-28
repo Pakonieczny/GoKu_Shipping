@@ -224,10 +224,13 @@
         if (left < 400) { exact = false; fills.push(...P.fills.filter(f => f.sheetId === s.sheetId)); continue; }
         const r = await K.room(sh, { without, skip: [rid, ...taken.filter(t => t.metal === s.metal).map(t => t.rid)], avoid: sheets.filter(id => id !== s.sheetId), budgetMs: left });
         const spots = info.spots != null ? info.spots : s.removes;
-        const bySource = new Map();
+        // (each freed spot is counted once for its sheet: packed at the tightest legal spot, the room two pieces leave can take a third order, and
+        //  "3 waiting orders fill the 2 empty spots" is what happens; adding up each order's spots said "the 3 empty spots" of a sheet that freed 2)
+        const bySource = new Map(), counted = new Set();
         for (const it of r.list) {
           taken.push({ rid: it.k.rid, metal: s.metal });
-          const from = it.source === "newerSheet" ? [...it.k.srcs][0] : null, key = it.source + "|" + (from ? from.sheetId : ""), n = new Set(it.spots.map(x => x.bi)).size || it.spots.length;
+          const fresh = [...new Set(it.spots.map(x => x.bi))].filter(b => !counted.has(b)); fresh.forEach(b => counted.add(b));
+          const from = it.source === "newerSheet" ? [...it.k.srcs][0] : null, key = it.source + "|" + (from ? from.sheetId : ""), n = fresh.length;
           const f = bySource.get(key) || { sheetId: s.sheetId, sheetLabel: s.label, spots: 0, source: it.source, fromSheetId: from ? from.sheetId || null : null, fromSheetLabel: from ? K.word(from) : "", orders: 0, rids: [] };
           f.spots += n; f.orders++; f.rids.push(String(it.k.rid)); bySource.set(key, f);
         }

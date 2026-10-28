@@ -8,7 +8,11 @@
 <meta name="theme-color" content="#221f1b">
 <!-- first, so every timer and frame the page sets keeps full speed while the tab is out of view -->
 <script src="charm-nest-clock.js?v=20260924-recover"></script>
-<link rel="stylesheet" href="brites-progress.css">
+<!-- the service worker's switch (charm-nest-sw.js: the page's code and pictures kept on this computer, by version; Paul, 28 Oct 2026: "This must work like a native
+     application"). This page is never cached, so CN_SW = "off" here unregisters the worker and deletes its caches on every computer at its next load, without
+     needing any other file; ?sw=off / ?sw=on in the address does the same for one computer (kept as localStorage cn.sw) -->
+<script>window.CN_SW="on";(function(){try{var q=/[?&]sw=(on|off)\b/.exec(location.search);if(q)localStorage.setItem("cn.sw",q[1]);}catch(_){}try{if(window.CN_SW!=="off"&&localStorage.getItem("cn.sw")!=="off")return;}catch(_){if(window.CN_SW!=="off")return;}try{var n=navigator.serviceWorker;n&&n.getRegistrations().then(function(rs){rs.forEach(function(r){var w=r.active||r.waiting||r.installing;if(w&&/\/charm-nest-sw\.js(\?|$)/.test(w.scriptURL)){if(r.active)r.active.postMessage({op:"stop"});r.unregister();}});});window.caches&&caches.keys().then(function(ks){ks.forEach(function(k){if(/^cn-(static|pics|sw-meta)-/.test(k))caches.delete(k);});});}catch(_){}})();</script>
+<link rel="stylesheet" href="brites-progress.css?v=20261028-sw1">
 <style>
 /* ═══ BRITES DESIGN SYSTEM — tokens copied verbatim from design-1.html ═══ */
 :root{
@@ -418,7 +422,10 @@ body:has(.topbar details[open]) .toasts{opacity:0;visibility:hidden;transition:o
 /* Orders and the Library end their first row with controls (sort, Cards | List, the metal chips), and a notice there
    covered them (audit, 25 Sep): on those two tabs notices start under that row. The Design Station tab too (26 Oct 2026): its console's
    first row is Take control · Open station · Connect Etsy, and "not signed in to Etsy — press Connect Etsy" sat on the very button it named. */
-body:has(#ordersView:not(.hidden)) .toasts,body:has(#libView:not(.hidden)) .toasts,body:has(#designView:not(.hidden)) .toasts{top:calc(var(--chromeH,96px) + 56px)}
+/* NAV (28 Oct 2026, Paul: "every interaction ... must be as responsive as Photoshop"): said by a class setMode puts on the toasts box (.underRow), not by
+   body:has(#ordersView:not(.hidden)): that rule made every element added anywhere on the page restyle the whole page (2,000+ elements, ~10-30 ms a time,
+   three or four times per order window opened) */
+.toasts.underRow{top:calc(var(--chromeH,96px) + 56px)}
 .toast{background:var(--velvet);color:#f4ecdc;border:1px solid var(--velvetLine);border-radius:11px;padding:10px 14px;box-shadow:0 10px 30px rgba(0,0,0,.24);max-width:380px;display:flex;gap:9px;align-items:flex-start;font-size:12.5px;animation:tin .18s ease;pointer-events:auto}
 @keyframes tin{from{opacity:0;transform:translateY(8px)}}
 .toast .d{width:8px;height:8px;border-radius:50%;background:var(--gold2);margin-top:4px;flex:0 0 auto}
@@ -495,6 +502,10 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .owPics{display:grid;gap:10px;align-content:start;min-width:0}
 .owPics figure{margin:0;display:grid;gap:5px;min-width:0}
 .owPics figcaption{text-align:center;font:500 9.5px/1.3 var(--sans);color:var(--ink45);letter-spacing:.02em}
+/* ITEM 30 (Paul, 28 Oct 2026: "in the charm editor users will be able to edit orders that may not have a requirement for back engraving"): the piece shown, in the Charm Editor (charm-nest-bridge.js paintCharmEdit) */
+.owPics .owCharmEdit{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;padding:9px 10px;font-size:13px;box-shadow:0 3px 10px rgba(169,130,63,.26)}
+.owPics .owCharmEdit svg{width:17px;height:17px;flex:none}.owPics .owCharmEdit:hover:not(:disabled){background:#94703a;border-color:#94703a;color:#fff;opacity:1}.owPics .owCharmEdit[aria-busy="true"]{opacity:.65;cursor:progress}
+.owPics .owCharmEditNote{font:11px/1.35 var(--sans);color:var(--ink70);text-align:center}.owPics .owCharmEditNote.bad{color:#8a3a26}.owPics .owCharmEditNote[hidden]{display:none}
 /* ── the Engraving section of the Overview (Paul, 12 Oct 2026; CONTRACT.md B): directly under the chip strip, ruled off by a thin line, "Engraving" small at its top-left, one card per piece SIDE BY SIDE,
    at least THREE to a row. #owEng.engGrid is the grid; OrderEngraving.mount draws one cell (a direct child) per piece; the section is hidden with it, so an order with nothing to engrave shows
    no title and no line. The centre column (between the picture column and the chat) is ~386px wide in a 1024px window, ~642px at 1280, ~718px at 1356 (Paul's), ~774px at 1440, ~1198px at 1920.
@@ -1690,7 +1701,7 @@ dialog.osDlg:focus,dialog.osDlg:focus-visible{outline:none}
 .osLead{margin:6px 0 0;font-size:13px;line-height:1.55;color:var(--ink70);max-width:64ch;text-wrap:pretty}
 .osSheet{gap:22px}
 .osSettings{display:grid;gap:12px}
-.osSettings:not(:has(.osSheetGrid>:not([hidden]))){display:none}
+.osSettings.osNone{display:none}   /* (NAV round 4, 28 Oct 2026: the Settings card with nothing shown in it is said by a class its painters keep (paintMerge, the rose options), not found with :not(:has()): that rule cost every restyle of the page a few ms) */
 .osGroupLabel{margin:0 0 0 4px;font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;font-weight:600;color:var(--ink45)}
 .osSheetGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px;align-items:start}
 .solidOptions .osSettings .osSheetGrid>.sheetOptionSection,.solidOptions .osSettings .osSheetGrid>.roseStockOptions{padding:18px 20px;border:1px solid var(--line);border-radius:14px;background:var(--card);box-shadow:var(--sh);display:grid;gap:12px;align-content:start}
@@ -2220,7 +2231,7 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
   .topTools>#ordersChip+#setPickerSlot{margin-left:0}
   .topbar .runBanner{margin-left:auto}
   .cnpSlot:has(>.cnp.tight){margin-right:-6px}
-  .topbar:has(>.runBanner:not(.hidden)) .topTools>:is(#setPickerSlot,#ordersChip){margin-left:0}
+  .topbar.rbOn.rbOn .topTools>:is(#setPickerSlot,#ordersChip){margin-left:0}   /* (.rbOn: the run banner shows, set where it is drawn; the class twice weighs what :has(>.runBanner:not(.hidden)) weighed, NAV round 4) */
   /* the pill can sit anywhere along that row: its menu keeps to the right edge, on screen, as the set menu does */
   .runMenuBody{position:fixed;top:auto;right:10px;margin-top:6px}
 }
@@ -2716,13 +2727,16 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .topbar .modeSeg button{padding:8px 10px;border-radius:6px;font-size:12px;gap:5px}
 .topbar .modeSeg button .cnt{margin-left:0;font-size:10px;padding:1px 4px}
 .topbar .modeSeg .full{display:none}.topbar .modeSeg .tight{display:inline}
+/* DESIGN & ENGRAVE (Paul, 28 Oct 2026: "I would suggest we rename the tab "Design & Engrave""): the tab says its whole name wherever the bar has room for it, "Design" where it has not
+   (its mode and its link stay "engrave": #engrave) */
+@container workspace (min-width:1080px){.topbar .modeSeg [data-mode="engrave"] .full{display:inline}.topbar .modeSeg [data-mode="engrave"] .tight{display:none}}
 @container workspace (max-width:1100px){.topbar .modeSeg button{padding-inline:8px}}
 /* the sandbox pill drops its speed and the word "sim" where the bar is narrow ("Sandbox · Fri 07:30"): at 1280 px it took
    the room of the last tab */
 @container workspace (max-width:1000px){.topbar .sandboxPill .sbSpeed,.topbar .sandboxPill .sbSim{display:none}}
 /* and while the run's pill is showing, up to 1100 px, it leaves out its clock as well ("Sandbox"; the clock stays in its
    tooltip): at 1280 and 1352 px the two pills together took the room of the last tab */
-@container workspace (max-width:1100px){.topbar:has(>.runBanner:not(.hidden)) .sandboxPill .sbTime{display:none}}
+@container workspace (max-width:1100px){.topbar.rbOn.rbOn .sandboxPill .sbTime{display:none}}
 .topTools{display:flex;align-items:center;gap:6px;flex:0 0 auto}
 .topbar .runMode{padding:7px 9px;border-color:transparent;font-size:11.5px;border-radius:6px}
 .topbar .sandboxPill{font:700 9px var(--mono);padding:4px 6px;letter-spacing:0;border-radius:4px;white-space:nowrap}
@@ -3670,8 +3684,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .owPcRow .pcAct .owCuMore{flex:0 0 auto;border:0;background:transparent;color:var(--ink45);font:700 10.5px var(--sans);padding:3px 5px;margin-left:-4px;border-radius:6px;cursor:pointer;white-space:nowrap}
 .owPcRow .pcAct .owCuMore:hover,.owPcRow .pcAct .owCuMore:focus-visible{color:var(--ink);background:var(--card2)}
 </style>
-<link rel="prefetch" href="charm-nest-stamp-walnut.png" as="image">   <!-- (prefetch, 25 Oct 2026: the seal wood is used only once a Library seal shows; a preload warned "not used within a few seconds" on every Nest session) -->
-<link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small-en3-pe1-re1-wd1-dc1-dm1-eu1-pc1-egr1-mseal1-fb1-ms2-wal1-sx1-cs1-ol1-ra1-ru1-mh1-egw1">
+<link rel="prefetch" href="charm-nest-stamp-walnut.png?v=20261025-sw1" as="image">   <!-- (prefetch, 25 Oct 2026: the seal wood is used only once a Library seal shows; a preload warned "not used within a few seconds" on every Nest session) -->
+<link rel="stylesheet" href="charm-nest-activity.css?v=20261003-seal-small-en3-pe1-re1-wd1-dc1-dm1-eu1-pc1-egr1-mseal1-fb1-ms2-wal1-sx1-cs1-ol1-ra1-ru1-mh1-egw1-nv6">
 </head>
 <body>
 <div class="app" id="app">
@@ -3701,7 +3715,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
   <main class="main">
     <div class="topbar">
       <button class="navBtn" id="btnRail" title="Toggle queue" aria-label="Toggle queue">☰</button>
-      <div class="modeNav" id="modeNav"><button class="modeArrow l" id="modeArrowL" aria-label="Scroll tabs left" tabindex="-1">&lsaquo;</button><div class="modeSeg" id="modeSeg"><button class="on" data-mode="nest">Nest</button><button data-mode="orders">Orders<i class="cnt" id="tabOrdersN"></i></button><button data-mode="engrave"><span class="full">Engraving</span><span class="tight">Engrave</span><i class="cnt" id="tabEngraveN"></i></button><button data-mode="review">Review<i class="cnt" id="tabReviewN"></i></button><button data-mode="library">Library</button></div>
+      <div class="modeNav" id="modeNav"><button class="modeArrow l" id="modeArrowL" aria-label="Scroll tabs left" tabindex="-1">&lsaquo;</button><div class="modeSeg" id="modeSeg"><button class="on" data-mode="nest">Nest</button><button data-mode="orders">Orders<i class="cnt" id="tabOrdersN"></i></button><button data-mode="engrave" title="Design &amp; Engrave: the Charm Designer and every piece's engraving"><span class="full">Design &amp; Engrave</span><span class="tight">Design</span><i class="cnt" id="tabEngraveN"></i></button><button data-mode="review">Review<i class="cnt" id="tabReviewN"></i></button><button data-mode="library">Library</button></div>
         <button class="modeArrow r" id="modeArrowR" aria-label="Scroll tabs right" tabindex="-1">&rsaquo;</button></div>
       <div class="cnpSlot" id="cnpSlot"></div>
       <div class="runBanner hidden" id="runBanner"></div>
@@ -3825,6 +3839,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
       <div class="field" style="grid-column:1 / -1"><label>Build · last reset</label><div class="help" id="stBuildNote" role="status" aria-live="polite"></div><div class="help">Reset sandbox records, Reset the sandbox… and Purge all run history… all end in the same complete wipe, so none leaves anything of the sandbox behind. The sandbox is then empty and waiting: it plays again when you press Start on the Orders tab (or turn Auto on). The two lines above say what the sandbox holds now (every kind, at 0 when empty) and what is kept.</div></div>
       <div class="field"><label>Etsy calls per hour (cap)</label><input id="stEtsyCap" type="number" min="50" max="5000" step="50"><div class="help">Every Etsy call the sorter causes at the station is metered. A run stops before a pull or re-validation that would pass this cap. A pull costs one list page per 100 open orders plus one detail read per order Etsy changed; a re-validation costs one list sweep (reused when under 90 s old).</div></div>
       <div class="field" id="stZodiacEtsy" style="grid-column:1 / -1"></div>   <!-- ZODWRITE: dormant row, filled by charm-nest-zodiac-etsy.js (Etsy ZODIAC SIGN drop-down, behind the repo password) -->
+      <div class="field" id="stLocalCopy" style="grid-column:1 / -1"></div>   <!-- dormant row, filled by charm-nest-sw.js: what this computer keeps of the page, and Reload from cloud -->
     </div>
     <div class="section">Master files and engraving</div>
     <div class="fieldRow3">
@@ -3872,24 +3887,24 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
   <button class="btn gold" type="submit">Sign in</button>
 </form></div>
 
-<script src="vendor/jszip-3.10.1.min.js"></script>
-<script src="vendor/pdf-lib-1.17.1.min.js"></script>
-<script src="vendor/opentype-1.3.4.min.js"></script>
-<script src="lib/qrcode.min.js"></script>
+<script src="vendor/jszip-3.10.1.min.js?v=20261028-sw1"></script>
+<script src="vendor/pdf-lib-1.17.1.min.js?v=20261028-sw1"></script>
+<script src="vendor/opentype-1.3.4.min.js?v=20261028-sw1"></script>
+<script src="lib/qrcode.min.js?v=20261028-sw1"></script>
 <script src="brites-progress.js?v=20261018-cost18"></script>
 <script src="charm-nest-progress.js?v=20260924-topline-cost18"></script>
-<script src="charm-nest-operations.js"></script>
+<script src="charm-nest-operations.js?v=20261028-sw1"></script>
 <script src="charm-nest-rose.js?v=20261007-edges-gc1-gf1-sh29"></script>
 <script src="charm-nest-partial.js?v=20261007-ps4-fit75-pp1-cg1"></script>
 <script src="charm-nest-solver.js?v=20261009-unjam1-pair2-ln1-cg1-nestfront-nq1-ovf1-mi1"></script>
-<script src="vendor/clipper-6.4.2.js"></script>
-<script src="charm-nest-vector.js?v=20261028-ops1"></script>
+<script src="vendor/clipper-6.4.2.js?v=20261028-sw1"></script>
+<script src="charm-nest-vector.js?v=20261028-ops1-sw1"></script>
 <script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1-ml1-m2-m3-szf1-mfile1-mc1-bd1-ovf1-ae1-im1"></script>
 <script src="charm-nest-overlap-fix.js?v=20261025-ovf1"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom-vi1"></script>
-<script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2-hdr1-ms1-cost18-rh1-hp2-ro1-sc1-ss1-vis1-rs1-rel1-sg1-apx1"></script>
-<script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1-hdr1-pl1-ms1-pk1-cost18-rh1-ho1-ss1-rel1-sg1-nv3-sy1"></script>
-<script src="charm-nest-geom.js?v=20261009-flat-col-fb1-fb2-fr1-rb1-m3-wd1-cb1-rf1"></script>
+<script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2-hdr1-ms1-cost18-rh1-hp2-ro1-sc1-ss1-vis1-rs1-rel1-sg1-apx1-sw1"></script>
+<script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1-hdr1-pl1-ms1-pk1-cost18-rh1-ho1-ss1-rel1-sg1-nv3-sy1-nv6"></script>
+<script src="charm-nest-geom.js?v=20261009-flat-col-fb1-fb2-fr1-rb1-m3-wd1-cb1-rf1-rf2"></script>
 <script src="charm-nest-monogram.js?v=20261015-mono1-monoui1-mx4-mh2"></script>
 <script src="charm-nest-monogram-fit.js?v=20261016-mx4-mh2"></script>
 <!-- charm-nest-monogram-edits.js (0.8 MB) loads the first time a monogram is made (charm-nest-bridge.js MonoUI: ready) -->
@@ -3897,15 +3912,15 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pair.js?v=20261009-pr1-mi3-mi4-mi5-mi6-mi7-pm8-pm9-cg1-nk1-lm1-ko1-wo1-m2-m3-mc1-bd1"></script>
 <script src="charm-nest-pair-thumb.js?v=20261009-pt3-mi2-rlp1-rlp3-lm1-mw1"></script>
 <script src="charm-nest-pool-pieces.js?v=20261009-pp1-adv2-cg1-oos1"></script>
-<script src="charm-nest-engrave-fit.js?v=20261019-wd1"></script>
+<script src="charm-nest-engrave-fit.js?v=20261019-wd1-rf1"></script>
 <script src="charm-nest-assets.js?v=20261007-imgcache-perf1-nv2"></script>
 <script src="charm-nest-thumbs.js?v=20261009-th1-pb1"></script>
 <script src="charm-nest-master-cache.js?v=20261009-mc1-cost18-mp1"></script>
-<script src="charm-nest-ce-masters.js?v=20261028-cem1"></script><!-- charm-nest-ce-masters.js: a charm DESIGNED in the Charm Editor, opened from the charm library or started from nothing, saved as a design version (DESIGN & ENGRAVE, Paul 28 Oct 2026) -->
+<script src="charm-nest-ce-masters.js?v=20261028-cem1-cem2"></script><!-- charm-nest-ce-masters.js: a charm DESIGNED in the Charm Editor, opened from the charm library or started from nothing, saved as a design version (DESIGN & ENGRAVE, Paul 28 Oct 2026) -->
 <script src="charm-nest-store.js?v=20261028-ls1"></script><!-- charm-nest-store.js: the records kept on this computer, one database per world, reads keyed by revision (LOCAL, Paul 28 Oct 2026) -->
 <script src="charm-nest-sync-worker.js?v=20261028-sy1"></script><!-- charm-nest-sync-worker.js: one changes feed per computer and world, asked by one tab, heard by all (FEED, Paul 28 Oct 2026) -->
 <script src="charm-nest-engrave-faces.js?v=20261011-fb1-fb2-sd1-nb1-el1-pc1"></script>
-<script src="charm-nest-engrave-bar-front.js?v=20261028-bfw1"></script>
+<script src="charm-nest-engrave-bar-front.js?v=20261028-bfw1-bfw2"></script>
 <script src="charm-nest-engrave-position.js?v=20261012-ep1-rb1-nd1"></script>
 <script src="charm-nest-engrave-sides.js?v=20261009-pe1-nk1-dr1-ko1-fb1-fb2-el1-sb1-pc1-br1-ms1-bh1"></script>
 <script src="charm-nest-engrave-rows.js?v=20261010-re1-dc1-fb1-pv1"></script>
@@ -3914,13 +3929,13 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-backs.js?v=20261005-engtog1-pe1-fb1-eu3-pv1"></script>
 <script src="charm-nest-engraving-toggle.js?v=20261005-engtog1-eu3"></script>
 <script src="charm-nest-sheet-menu.js?v=20261005-shm1"></script>
-<script src="charm-nest-activity.js?v=20261001-compact-controls-lo1-fb1-ms3-cost18"></script>
+<script src="charm-nest-activity.js?v=20261001-compact-controls-lo1-fb1-ms3-cost18-nv6"></script>
 <script src="charm-nest-zoompan.js?v=20261005-zp1"></script>
 <script src="charm-nest-engrave-setup.js?v=20261011-su1-bf1-nb1-ud1-pv1-el1-au1-au2-au3-wy1-od1-sb2-pc1-nd1-br1-edw1"></script>
 <script src="charm-nest-engrave-panel.js?v=20261012-ep1-ep2-hl1-hl2-sm1-r2wk1-wy1-r2th1-fr1-rb1-ag1-nd1-edw1-apx1"></script>
 <script src="charm-nest-engrave-why.js?v=20261012-wy1-pc1"></script>
-<script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1-fnt1-dm1-vf1-fb1-ui2-sd1-el1-wy1-pl1-wal1-br1-hsi1"></script>
-<script src="charm-nest-monogram-seals.js?v=20261017-mseal1"></script>
+<script src="charm-nest-engraving-seals.js?v=20261003-seal-small-zp1-en3-pe1-fnt1-dm1-vf1-fb1-ui2-sd1-el1-wy1-pl1-wal1-br1-hsi1-tab1"></script>
+<script src="charm-nest-monogram-seals.js?v=20261017-mseal1-tab1"></script>
 <script src="charm-nest-order-seals.js?v=20261019-cs1"></script>
 <!-- (SEALTRAVEL, Paul 20 Oct 2026: every seal an order has collected, drawn by kind, wherever the order ends up) -->
 <script src="charm-nest-seal-travel.js?v=20261020-st1-rel1-sg1"></script>
@@ -3928,8 +3943,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2-sf2-sn1-fb1-eu3-hg1-rh1-rh3-rh4-sp1-cost18-gl1-lg1-gs1"></script>
 <script src="charm-nest-export.js?v=20261009-cutfill-plb1-bf1-ba1-ef1"></script>
 <script src="charm-nest-art-edit.js?v=20261027-ae1-ce1-wt1-im1"></script><!-- charm-nest-art-edit.js: ONE piece's own change to its master artwork, kept beside it and put over the master wherever the piece is made (ART EDIT, Paul 27 Oct 2026) -->
-<script src="charm-nest-designs.js?v=20261028-dsg1"></script><!-- charm-nest-designs.js: the design library, every version of every charm saved in the Charm Editor, searchable at once on this computer (DESIGNS, Paul 28 Oct 2026) -->
-<script src="charm-nest-charm-editor.js?v=20261027-ce1-wt1-fb1-fb2-cet1-im1-ru1-pen1-ops1-cx1"></script><!-- charm-nest-charm-editor.js: the charm editor, a watered-down Illustrator over the page for ONE piece's front and back, layer by layer; the Engraving window's "Edit charm" opens it and saves through the art edit above (CHARM EDIT, Paul 27 Oct 2026) -->
+<script src="charm-nest-designs.js?v=20261028-dsg1-dsg2"></script><!-- charm-nest-designs.js: the design library, every version of every charm saved in the Charm Editor, searchable at once on this computer (DESIGNS, Paul 28 Oct 2026) -->
+<script src="charm-nest-charm-editor.js?v=20261027-ce1-wt1-fb1-fb2-cet1-im1-ru1-pen1-ops1-cx1-tab1-lib1"></script><!-- charm-nest-charm-editor.js: the charm editor, a watered-down Illustrator over the page for ONE piece's front and back, layer by layer; the Engraving window's "Edit charm" opens it and saves through the art edit above (CHARM EDIT, Paul 27 Oct 2026) -->
 <script src="charm-nest-ce-paths.js?v=20261028-pen1"></script><!-- charm-nest-ce-paths.js: the Pen, Direct Selection, the anchor tools, Scissors, Join, Close, Simplify, Smooth and the Pencil in the charm editor ("deforming lines", Design & Engrave, Paul 28 Oct 2026) -->
 <script src="charm-nest-ce-import.js?v=20261028-vi1"></script><!-- charm-nest-ce-import.js: an .ai, .pdf, .svg or .dxf brought into the Charm Editor at its exact size, roles picked before it is placed or opened as a new design (Design & Engrave item 23, Paul 28 Oct 2026) -->
 <script src="charm-nest-ce-trace.js?v=20261028-tr1"></script><!-- charm-nest-ce-trace.js: an image traced to smooth filled vector paths, greyscale with black as the base, N grey bands that share their borders; runs in its own Worker made from this file (IMAGE TRACE, Paul 28 Oct 2026) -->
@@ -3940,27 +3955,28 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-text.js?v=20261019-wd1-rf1"></script>
 <!-- (WORLD, Paul 19 Oct 2026) the shaping engine (HarfBuzz joins Arabic, sets Indic conjuncts; bidi orders right to left). Nothing is started or fetched until a line has a letter of a script that needs a script font: vendor/hb.wasm and vendor/fonts/scripts/* load then (charm-nest-bridge.js ensureScriptFonts) -->
 <script src="charm-nest-shape.js?v=20261019-wd1"></script>
+<script src="charm-nest-ce-library.js?v=20261028-lib1-lib2"></script><!-- charm-nest-ce-library.js: the Charm Editor's right-hand library (Designs, Charm library, Recent): search as you type, filters, a virtual list, open a design, drag it onto the charm, its versions (DESIGN & ENGRAVE, Paul 28 Oct 2026) -->
 <script src="charm-nest-emoji-data.js?v=20261006-em1"></script>
-<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1-bf1-sd1-sl1-pm1-zs1-dm1-nb1-ch1-ns1-lk1-nr1-au1-rlk2-rs1-en1-kp1-wo1-sb1-od1-nk2-rvd1-add1-szf1-szr1-mono1-monoui1-mono7-pin1-meg1-setfix1-hp1-rv1-br1-hsym1-bh1-num1-bl1-so1-fh1-co1-fd1-once1-skp1-oos1-bf1-bfw1"></script>
+<script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-pi3-ol2-ot1-fnt1-nk1-sk1-ew1-dr1-tl1-zt2-ac1-vf1-dr2-fw1-fw2-as1-ms1-kl1-ko1-ts1-it1-ef1-bw1-sg1-hg1-bf1-sd1-sl1-pm1-zs1-dm1-nb1-ch1-ns1-lk1-nr1-au1-rlk2-rs1-en1-kp1-wo1-sb1-od1-nk2-rvd1-add1-szf1-szr1-mono1-monoui1-mono7-pin1-meg1-setfix1-hp1-rv1-br1-hsym1-bh1-num1-bl1-so1-fh1-co1-fd1-once1-skp1-oos1-bf1-tab1-bfw1"></script>
 <script src="charm-nest-engrave-said.js?v=20261012-nt1-en1-od1"></script>
 <script src="charm-nest-engrave-read.js?v=20261013-sbc1"></script>
 <script src="charm-nest-engrave-piece-words.js?v=20261016-pw1-br1-ms1-bh1"></script>
-<script src="charm-nest-engrave-preview.js?v=20261012-pv1-r2th1-th2-bg1-sb2-cb1-rf1"></script>
+<script src="charm-nest-engrave-preview.js?v=20261012-pv1-r2th1-th2-bg1-sb2-cb1-rf2"></script>
 <script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1-dm1-ko1-pv1"></script>
 <script src="qr-piece-label.js?v=20261014-ql1-noord1"></script><!-- qr-piece-label.js: the sticker of ONE piece of a multi-piece order, printed by hand: its note, fitted (Paul, 14 Oct 2026) -->
 <script src="charm-nest-order-pieces.js?v=20261007-fc3-gen-po2-adv2-cg1-sn1-dr2-sl1-rv1-cost1-cost18-ru1-nv1"></script>
 <script src="charm-nest-order-rows.js?v=20261012-or1-rh1-br1-ms1-hb1-nv2"></script>
 <script src="charm-nest-order-group.js?v=20261013-on1"></script>
 <script src="charm-nest-piece-placement.js?v=20261005-pp1-pf2-psw2-cg1-cost18"></script>
-<script src="charm-nest-engrave-card.js?v=20261012-ec1-sm1-r2th1-bt1-bg1-pn1-pk1-sb1-hdr1-pc1-pv1-br1-ms1"></script>
-<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1-dm1-su1-ui2-egm1-el1-ec1-mg1-crash1-sel1-op1-pn1-tx1-pk1-ap2-sb1-ow1-pv1-pcm1-nd1-ms1-ws1-ma1"></script>
+<script src="charm-nest-engrave-card.js?v=20261012-ec1-sm1-r2th1-bt1-bg1-pn1-pk1-sb1-hdr1-pc1-pv1-br1-ms1-tab1"></script>
+<script src="charm-nest-order-engraving.js?v=20261005-oe2-zp1-nofix1-en3-pe1-dm1-su1-ui2-egm1-el1-ec1-mg1-crash1-sel1-op1-pn1-tx1-pk1-ap2-sb1-ow1-pv1-pcm1-nd1-ms1-ws1-ma1-tab1"></script>
 <script src="charm-nest-engrave-guide.js?v=20261013-ap2-meg1-pcm1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2-sn1-setfix1-sets9-gl1-gss1-nv2"></script>
 <script src="charm-nest-nospread.js?v=20261017-ns1"></script><!-- charm-nest-nospread.js: keep the pieces of a multi-piece or earring order on one sheet of its colour; a sheet near completion takes such an order only if all of it fits (NOSPREAD, Paul 17 Oct 2026) -->
 <script src="charm-nest-set-rules.js?v=20261010-sf2-sp1-setr1-setfix1-sets9-sa25-dc26-gk1-ga1"></script>
 <script src="charm-nest-set-edit.js?v=20261007-ls2a-ps1-plb1-cg1-ld1-sn1-dm1-sp1-sa25-gl1-ga1"></script>
 <script src="charm-nest-set-invariants.js?v=20261017-setrepair1-setfix1-rv1-cost18-sets9-bk26-gl1-ga1"></script><!-- the owner's set rules as one checker (docs/charm-nest/set-rules.md) -->
-<script src="charm-nest-set-repair.js?v=20261017-setrepair1-rv1-cost18-sa25-dc26-gl1-gk1-vis1-ga1"></script><!-- the explicit one-press repair of a set that breaks them (SETREPAIR, Paul 17 Oct 2026) -->
+<script src="charm-nest-set-repair.js?v=20261017-setrepair1-rv1-cost18-sa25-dc26-gl1-gk1-vis1-ga1-tab1"></script><!-- the explicit one-press repair of a set that breaks them (SETREPAIR, Paul 17 Oct 2026) -->
 <script src="charm-nest-background.js?v=20260930-stamp-barrier-os1-hz1-bx2-hoops-col-rv71-pt1-pt2-plb2-pt3-bc2-pe2-mi1-bf1-mi3-bf2-mi4-bf3-mi5-as1-mi6-bf4-mi7-pm8-pm9-bb1-rlp1-rlp3-ba1-sx1-ba2-lv1-lm1-fb1-ef1-fb2-ml1-mfile1-mw1-bh2-bd1-ae1"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
@@ -8296,7 +8312,7 @@ let effWanted = 0, effWantedHash = "";
    when they arrive (charm-nest-efficiency.js), the tab already shown included; another person signing in later is put away by
    the console's own watch, as before. The tokens are the ones the tags had, in the tags' order. */
 const EFF_FILES = ["charm-nest-efficiency-charts.js?v=20261006-efc4-pb1", "charm-nest-efficiency-stations.js?v=20261006-es11-fx1-sb1-dk1-ps1-rlp2-cost18", "charm-nest-efficiency.js?v=20261006-ef17-fx1-sb1-dk1-wh1-ma1-cost18-dl1",
-  "charm-nest-efficiency-orders.js?v=20261006-eo6-in2-rlp2-cost18", "charm-nest-efficiency-laser.js?v=20261006-int2-cost18", "charm-nest-efficiency-person.js?v=20261006-ep14-ad4-cost18",
+  "charm-nest-efficiency-orders.js?v=20261006-eo6-in2-rlp2-cost18", "charm-nest-efficiency-laser.js?v=20261006-int2-cost18", "charm-nest-efficiency-person.js?v=20261006-ep14-ad4-cost18-dl2",
   "charm-nest-efficiency-custom.js?v=20261028-dl1"];   // (Design & Engrave, Paul 28 Oct 2026: the Custom pieces tab, op custom)
 let effLoading = null;
 const loadEfficiency = () => effLoading ||= cnLoadScript(...EFF_FILES).catch(e => { effLoading = null; console.warn("Employee efficiency", e); toast("Employee efficiency did not load: " + e.message, "bad", 6000); return false; });
@@ -8328,6 +8344,7 @@ function setMode(mode) {
   // on a narrow window the tab strip scrolls: the tab you are on is always brought into view
   $("#sheets").classList.toggle("hidden", mode !== "nest"); if (mode === "nest") requestAnimationFrame(() => METALS.forEach(m => drawPreview(activePage(m.key)))); $("#libView").classList.toggle("hidden", mode !== "library"); $("#charmsView").classList.toggle("hidden", mode !== "charms");
   for (const [m, id] of [["orders", "ordersView"], ["design", "designView"], ["master", "masterView"], ["efficiency", "efficiencyView"], ["engrave", "engraveView"], ["review", "reviewView"]]) $("#" + id).classList.toggle("hidden", mode !== m);
+  { const t = $("#toasts"); if (t) t.classList.toggle("underRow", mode === "orders" || mode === "library" || mode === "design"); }   // (notices start under the first row of these tabs: .toasts.underRow)
   if (mode === "library") showLibrary(); if (mode === "charms") loadCharms();
   // The rail is the nesting station's own bench — files in, sheets out. On every other tab it was 344 px (a quarter of a
   // 1500 px screen) of controls that do not apply there, taking two columns off the order grid. It folds away unless a
@@ -8601,7 +8618,7 @@ async function boot() {
   { const m = (location.hash || "").slice(1).split("/")[0]; if (m && tabNamed(m)) setMode(m); }
   $$("#libKind button").forEach(b => b.onclick = () => { $$("#libKind button").forEach(x => x.classList.toggle("on", x === b)); S.library.kind = b.dataset.k; loadLibrary(); });
   $("#rpClose").onclick = () => closeDlg($("#dlgReport")); $("#lsClose").onclick = () => closeDlg($("#dlgSheet"));
-  $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; if (window.LibraryDone && LibraryDone.tab() === "done") LibraryDone.show(); else if (S.library.kind === "sets" && window.Sets) Sets.renderLibrary($("#libBody"), { reuse: true }); else loadLibrary(); });
+  $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; if (window.LibraryDone && LibraryDone.tab() === "done") LibraryDone.show(); else if (S.library.kind === "sets" && window.Sets) Sets.renderLibrary($("#libBody"), { reuse: true, filter: true }); else loadLibrary(); });   // (filter: the same sets, another metal: Sets.renderLibrary shows the cards it has, NAV round 4)
   // (a search in either tab is debounced, and a number is looked up as an order and as a listing: charm-nest-library.js)
   $("#libSearch").oninput = () => (window.LibraryDone ? LibraryDone.input() : S.library.kind === "sets" ? Sets.renderLibrary($("#libBody"), { reuse: true }) : renderLibrary());
   // the two search boxes on adjacent tabs must behave the same: type and it searches, and the native × clears it.
@@ -8690,7 +8707,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25-dc26-bk26-es26-ee26-ep26-sx26-sc26-ns26-pw26-gl1-gk1-r16h1-plc1-en1-vis1-dsg1-dxf1-aw1-once1-c17-rs1-rel1-rel2-ga1-mt1-lf1-fra1-ae1-ce1-cb1-kps1-oos1-gss1-hsi1-edw1-ged1-sp1-nv1-rf1-apx1-nv2-nv3-nv4-nv5-cet1-ls1-hr1-cp1-dl1-rw2-sy1-im1-bfw1-cem1-sndsh1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25-dc26-bk26-es26-ee26-ep26-sx26-sc26-ns26-pw26-gl1-gk1-r16h1-plc1-en1-vis1-dsg1-dxf1-aw1-once1-c17-rs1-rel1-rel2-ga1-mt1-lf1-fra1-ae1-ce1-cb1-kps1-oos1-gss1-hsi1-edw1-ged1-sp1-nv1-rf1-apx1-nv2-nv3-nv4-nv5-cet1-ls1-hr1-cp1-dl1-rw2-sy1-im1-bfw1-cem1-sndsh1-rf2-bfw2-nv6-tab1-tab2"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1-sy1"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
@@ -8767,28 +8784,28 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-mseal1-fb1-ms3-cost18-strip1-id1-2b1-mc1-hp2-br1-ms1-bh1-nb1-mv1-wc5-rp1-oh1-sc1-st1-mc9-mi9b-sh29-gl1-en2-fr1-zg1-oos1-nf1-ged1-sp1-mi1-ls1-cp1-sy1"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-mseal1-fb1-ms3-cost18-strip1-id1-2b1-mc1-hp2-br1-ms1-bh1-nb1-mv1-wc5-rp1-oh1-sc1-st1-mc9-mi9b-sh29-gl1-en2-fr1-zg1-oos1-nf1-ged1-sp1-mi1-ls1-cp1-sy1-tab1"></script>
 <!-- 10K / 14K: a charm dragged onto the next or previous sheet of its metal, in the sheet window's Manual Control (SheetHop; Paul, 18 Oct 2026) -->
 <script src="charm-nest-sheet-hop.js?v=20261018-hop1-hp2-mv1-mc9-mi9b-gk1-fr1-ged1"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
-<script src="charm-nest-order-hold.js?v=20261005-oh5-pf2-gc1-pr1-al1-cg1-dr2-id1-hp1"></script>
+<script src="charm-nest-order-hold.js?v=20261005-oh5-pf2-gc1-pr1-al1-cg1-dr2-id1-hp1-sp1"></script>
 <!-- the one way into the engraving of one order's piece (the order window, the Sheet tab and the Sheet window call it; each keeps its own way without it) -->
-<script src="charm-nest-engrave-link.js?v=20261005-el2-fb2-ui2-crash1-an1-pn1-nd1"></script>
-<script src="charm-nest-engrave-return.js?v=20261012-bk1-nd1"></script>
+<script src="charm-nest-engrave-link.js?v=20261005-el2-fb2-ui2-crash1-an1-pn1-nd1-tab1"></script>
+<script src="charm-nest-engrave-return.js?v=20261012-bk1-nd1-tab1"></script>
 <script src="charm-nest-tour.js?v=20260929-m11-sn1-vis1"></script>
 <script src="charm-nest-order-release.js?v=20261005-rel5-pf1-pairflow2-pr1-cg1-sn1-rh1-rl1"></script>
 <!-- the cinematic Hold and Release: the order seen moving sheet to sheet (OrderHoldFx.playHold, playRelease, returnToOnHold), driven by the engine's own steps -->
 <script src="charm-nest-hold-fx.js?v=20261005-hfx3-fx1-oh1"></script>
 <!-- the send animation, the very same file the inbox runs (SendFlight): a sent customer message flies from its box into the thread -->
 <script src="send-flight.js?v=20261010-sf1"></script>
-<script src="charm-nest-mail.js?v=20261005-pv-seal-zp1-mr2-mq2-sf1-sm1-md1-ml1-ma1-cost18-wal1-ru2-nv3"></script>
-<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1-pf1-pp1-pn1-sn1-nestfront-setfix1-gk1-rl1-ged1"></script>
+<script src="charm-nest-mail.js?v=20261005-pv-seal-zp1-mr2-mq2-sf1-sm1-md1-ml1-ma1-cost18-wal1-ru2-nv3-nv6"></script>
+<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1-pf1-pp1-pn1-sn1-nestfront-setfix1-gk1-rl1-ged1-nv6"></script>
 <script src="charm-nest-partial-data.js?v=20261007-opt1-sheets"></script>
 <script src="charm-nest-partial-nest.js?v=20261007-ps2c-fit75-pso1-psc1-pp1-cg1"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1-gf1-pp1-sn1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done-plb2-ef1-gk1"></script>
-<script src="charm-nest-library.js?v=20261007-cutseal1-nm1-psw2-lo1-sn1-tz1"></script>
-<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5-ls1-ls2-gc2-gf1-ps1-sf2-lf1-sn1-eu3-rh1-rh2-sp1-setfix1-cost18-sa25"></script>
+<script src="charm-nest-library.js?v=20261007-cutseal1-nm1-psw2-lo1-sn1-tz1-nv6"></script>
+<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5-ls1-ls2-gc2-gf1-ps1-sf2-lf1-sn1-eu3-rh1-rh2-sp1-setfix1-cost18-sa25-tab1"></script>
 <script src="charm-nest-library-approval-ui.js?v=20261005-so2"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-library-dnd.js?v=20261005-so2-mm1-ls1-ls2-gc2-gf1-lf1"></script>
@@ -8810,9 +8827,10 @@ try {
 <script src="charm-nest-shared-orders-modal.js?v=20261005-so5-gc2-ps1-id1-en1-ca1"></script>
 <!-- the cadence of where-is-each-piece: every surface that says "on a sheet / not on a sheet / on hold" follows the cloud within seconds (PlacementFeed) -->
 <script src="charm-nest-placement-feed.js?v=20261005-pf4-cost1-cost18-ru2-nv2-sy1"></script>
-<script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3-pow1-sk1-sn1-dm1-eu3-pv1"></script>
+<script src="charm-nest-search.js?v=20260929-m5-osc1-sealsh1-pf3-pow1-sk1-sn1-dm1-eu3-pv1-nv6"></script>
 <!-- the persistent Alert for password attempts on the Charm Repo Library: the master admin's login only, a pill at the right end of the top bar until he closes it (CharmNestRepoAlerts) -->
 <script src="charm-nest-repo-alerts.js?v=20261011-ra1"></script>
+<script src="charm-nest-sw.js?v=20261028-sw1"></script>   <!-- the service worker (Phase 4 of the local-first plan): started once the page is up and idle, never in the way of the boot -->
 <!-- the Employee efficiency console (charm-nest-efficiency*.js) loads on the master admin's page only: loadEfficiency, above -->
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin owFull" aria-labelledby="owTitle" data-no-grow>

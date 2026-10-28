@@ -58,13 +58,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const srv = await start({ receipts: [] });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   // both fakes keep the console's clock: Friday 2 Oct 2026, 3:42 PM New York
-  const pf = F.make({ now: Date.UTC(2026, 9, 2, 19, 42) }), ix = IX.make({ pf, now: Date.UTC(2026, 9, 2, 19, 42) }), ef = EF.make(), seen = { urls: [], aborted: 0 }, SHOTS = process.env.SHOTS || '';
+  const pf = F.make({ now: Date.UTC(2026, 9, 2, 19, 42) }), ix = IX.make({ pf, now: Date.UTC(2026, 9, 2, 19, 42) }), ef = EF.make(), seen = { urls: [], aborted: 0, custom: [] }, SHOTS = process.env.SHOTS || '';
   const wire = async ctx => {
     await ctx.route(() => true, async route => {
       const u = new URL(route.request().url()); seen.urls.push(u.href);
       if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') { seen.aborted++; return route.abort(); }
       if (u.pathname.endsWith('/employeeEfficiency')) {
         let b = {}; try { b = JSON.parse(route.request().postData() || '{}'); } catch (_) {}
+        // op custom by name (the Custom pieces section, Design & Engrave): these invented people sent no custom piece and no mistake is put down to them
+        if (b.op === 'custom') { seen.custom.push(b); return route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ ok: true, now: Date.now(), name: b.name, range: b.range, pieces: [], mistakes: [], people: [{ name: b.name, sent: 0, pieces: 0, orderless: 0, fixes: 0, caused: 0, changed: 0 }], totals: { sent: 0, pieces: 0, orderless: 0, fixes: 0, caused: 0, people: 0 }, notes: [] }) }); }
         const mine = ['person', 'personOrders', 'personInbox', 'live', 'laserSheets'].includes(b.op), r = mine ? (b.op === 'live' || b.op === 'laserSheets' ? pf.answer(b) : ix.answer(b)) : ef.answer(b, route.request().headers());
         const d = mine ? pf.delayFor(b) : 0; if (d) await sleep(d);
         return route.fulfill({ status: r.status, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(r.json) });
@@ -119,6 +121,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await page.waitForFunction(sel => document.querySelector(sel).dataset.s === 'live', `${P} .efpLive`); assert(/^Live/.test(await page.locator(`${P} .efpLiveT`).innerText()), 'the quiet live light');
     assert.equal((await page.locator(`${P} .efpBack`).innerText()).trim(), 'Employee efficiency'); assert.equal(await page.locator(`${P} .efpSeg button.on`).innerText(), 'Week', 'Week first');
     const first = person()[0]; assert(first.compare === true && first.range === 'week' && first.name === 'Ana M.', 'asks for the window with its comparison');
+    assert.deepEqual(seen.custom.map(c => [c.name, c.range, c.day]), [['Ana M.', 'week', today]], 'her custom pieces: asked once, by name, for the same window');
+    assert.equal(await page.locator(`${P} .efpDl`).isVisible(), false, 'no design work and no mistake: the Custom pieces section stays out of the way');
     console.log('  ✓ opens as a page: labelled spinner, header (initials, where signed in and since, station chips), live light, Back, Week first');
 
     /* ── 3 · every range ── */

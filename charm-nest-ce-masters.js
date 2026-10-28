@@ -24,7 +24,8 @@
  *   openDesign(d, o) a saved design opened again (CharmNestDesigns.get's design, or its id and o.version: read with get(…, { open: true }), which tells the log): its Save makes the
  *                     next version of the same design.
  *   openNew(d, o)  a design made elsewhere and not saved yet (the vector import's "Open as a new design": source { kind: 'import', file, type }) opened as a new design.
- *   o.orderId / o.customName on any of them ride with the design (a custom order's design: charm-nest-custom-piece.js).
+ *   On any of them: o.orderId / o.customName ride with the design (a custom order's design: charm-nest-custom-piece.js); o.back ({ label, title, run }) is the editor's way
+ *   back (CharmEditor opts.back: the Design & Engrave tab's "Back to Design & Engrave"); o.from (a word, "designerBar") goes with the open to the log.
  *
  * The open is the design-mode path: the fonts and their outlines from charm-nest-ce-text.js (CharmNestCeText.prepare: every engraving font, the script fonts a saved design's words need),
  * else from the bridge's design-mode open (window.CharmEditDesign, charm-nest-bridge.js: the engraving fonts as a piece's open has them), lockRoles none; a page with neither opens the
@@ -472,13 +473,20 @@
   }
 
   let session = null;      // the design in the editor now, or on its way there: { token, start }
+  /* (28 Oct 2026, the design library's "Keep and open": it ends this module's session as its Save does and asks for the next design in the same moment. An open asked for counts
+     at once (`pending`, before anything is read; it hands over to edit(), which counts the sessions, `opened`), so the session that was left keeps its changes WITHOUT its card over
+     the design that opens; a card still up is put away by the next open. An open that gives up (no one signed in, nothing to read) stops counting.) */
+  let opened = 0, pending = 0, liveCard = null;
+  /** `fn` (an open) counted as pending until it has handed over to edit() or given up. */
+  async function counted(fn) { pending++; try { return await fn(() => { pending--; fn = null; }); } finally { if (fn) pending--; } }
   /** THE DESIGN-MODE OPEN: the editor on `start` ({ name, title, subtitle, faces, source, id?, version?, orderId?, customName?, log }), its Save made a version, then what is next.
    *  The fonts and their outlines are the bridge's (window.CharmEditDesign: the engraving fonts, as a piece's open has them); nothing is locked. An editor already open is closed first
    *  (its own Cancel, which asks about changes); "Keep editing" there, or a later open while the fonts load, and this one gives way (null). */
   async function edit(start, by) {
     const E = root && root.CharmEditor;
     if (!E || typeof E.open !== 'function') { note('The charm editor did not load: reload the page', true); return null; }
-    const token = {}; session = { token, start };
+    const token = {}, my = ++opened; session = { token, start };
+    if (liveCard && liveCard.token !== token) liveCard.drop();
     const mine = () => !!session && session.token === token, drop = () => { if (mine()) session = null; };
     if (!(await closeEditor())) { drop(); note(''); return null; }   // (the person kept the charm they were editing)
     // the fonts: the text module's (charm-nest-ce-text.js prepare: every engraving font, and the script fonts the words already in the faces need, loaded first), else the bridge's
@@ -489,35 +497,38 @@
     if (!mine() || E.current) { drop(); return null; }   // (another design was asked for meanwhile, or an editor opened under us)
     note('');
     const opts = Object.assign({ title: start.title || start.name, subtitle: start.subtitle || '', faces: start.faces, startFace: 'front', lockRoles: [] },
-      Array.isArray(fonts) && fonts.length ? { fonts } : {}, textToPaths ? { textToPaths } : {});
+      Array.isArray(fonts) && fonts.length ? { fonts } : {}, textToPaths ? { textToPaths } : {}, start.back ? { back: Object.assign({}, start.back) } : {});   // (the way back: the editor's head, CharmEditor opts.back)
     let shown;
     try { shown = E.open(opts); }
     catch (e) { drop(); note(`The charm editor could not open · ${(e && e.message) || e}`, true); return null; }
-    if (start.log !== false) log('designOpen', Object.assign({ name: start.name, by }, start.log || {}, start.id ? { designId: start.id, version: start.version } : {}, start.orderId ? { orderId: start.orderId } : {}));
+    if (start.log !== false) log('designOpen', Object.assign({ name: start.name, by }, start.log || {}, start.id ? { designId: start.id, version: start.version } : {}, start.orderId ? { orderId: start.orderId } : {}, start.from ? { from: start.from } : {}));
     let res;
     try { res = await shown; } catch (e) { drop(); note(`The charm editor could not open · ${(e && e.message) || e}`, true); return null; }
     if (!res) { drop(); return null; }   // (Cancel, the ×, Esc: nothing is saved; a master or a design picked in the library panel closes it this way too)
-    try { return await saved(start, res, by, token); }
+    try { return await saved(start, res, by, () => opened !== my || pending > 0 || !mine()); }
     finally { drop(); }
   }
-  /** The editor's result saved as a version of the design (none when nothing changed since the version it was opened on), then the card: Send to sheet, Keep editing, Done. */
-  async function saved(start, res, by, token) {
+  /** The editor's result saved as a version of the design (none when nothing changed since the version it was opened on), then the card: Send to sheet, Keep editing, Done.
+   *  `moved()`: another design was asked for since this one opened (the design library's "Keep and open"): kept the same, with no card; a failure is said in the page's note. */
+  async function saved(start, res, by, moved) {
     const M = model(), design = designOf(res, start, by, M), D = root.CharmNestDesigns;
-    const card = cardOpen();
+    const quiet = moved(), card = quiet ? null : cardOpen();
+    const fail = why => { if (card && !moved()) card.fail(why); else { if (card) card.drop(); note(`“${design.name}” was not kept · ${why}`, true); } };
     let got = null;
     if (start.id && start.version && !changed(res, M)) got = { id: start.id, version: start.version, same: true };
-    else if (!D || typeof D.put !== 'function') { card.fail('The design library did not load on this page, so the design could not be kept.'); }
+    else if (!D || typeof D.put !== 'function') fail('The design library did not load on this page, so the design could not be kept.');
     else {
-      card.saving(design);
+      if (card) card.saving(design);
       try { got = await D.put(design); if (!got || !got.id) throw new Error('the design library did not say it was kept'); }
-      catch (e) { card.fail((e && e.message) || String(e)); got = null; }
+      catch (e) { fail((e && e.message) || String(e)); got = null; }
     }
+    if (got && design.source && design.source.kind === 'master' && design.source.sku) remember(design.source.sku);
+    if (!card || moved()) { if (card) card.drop(); return got ? { designId: got.id, version: got.version } : null; }   // (the next design is open, or on its way)
     if (!got) {
       const again = await card.choice();
       if (again !== 'again') return null;
       return edit(Object.assign({}, start, { faces: facesAgain(design) }), by);
     }
-    if (design.source && design.source.kind === 'master' && design.source.sku) remember(design.source.sku);
     card.done(design, got);
     const next = await card.choice();
     if (next === 'again') return edit(Object.assign({}, start, { id: got.id, version: got.version, faces: facesAgain(design), subtitle: subtitleFor(Object.assign({}, start, { id: got.id, version: got.version })) }), by);
@@ -529,6 +540,13 @@
   }
   /** The faces a design opens with again: its front as saved, its back with the guide made afresh from that front. */
   const facesAgain = d => ({ front: d.faces.front, back: backFace(d.faces.front, d.faces.back ? d.faces.back.items : [], model()) });
+  /** What rides with a design from the call that opened it: its order or name, the editor's way back (CharmEditor opts.back { label, title, run }: the Design & Engrave tab's
+   *  "Back to Design & Engrave"), and where the person came from, for the log (a word: "designerBar"). */
+  function rides(o) {
+    o = o || {};
+    const b = o.back && typeof o.back === 'object' && o.back.label ? { label: String(o.back.label), ...(o.back.title ? { title: String(o.back.title) } : {}), ...(typeof o.back.run === 'function' ? { run: o.back.run } : {}) } : null;
+    return { ...(o.orderId ? { orderId: String(o.orderId) } : {}), ...(o.customName ? { customName: String(o.customName) } : {}), ...(b ? { back: b } : {}), ...(typeof o.from === 'string' && o.from ? { from: o.from.slice(0, 40) } : {}) };
+  }
   function subtitleFor(st) {
     const bits = [];
     if (st.id) bits.push(`Design · version ${st.version || 1}`); else bits.push('A new design');
@@ -548,7 +566,14 @@
     doc.body.appendChild(wrap);
     const card = wrap.querySelector('.cem-card'), h = card.querySelector('h3'), bar = card.querySelector('.cem-card__b');
     let pick = null, picked = null;
-    const choose = v => { if (picked) return; picked = v; wrap.remove(); root.removeEventListener('keydown', onKey, true); try { if (prev && prev.focus && prev.isConnected) prev.focus({ preventScroll: true }); } catch (_) { /* fine */ } if (pick) pick(v); };
+    const choose = v => {
+      if (picked) return; picked = v; wrap.remove(); root.removeEventListener('keydown', onKey, true);
+      if (liveCard === me) liveCard = null;
+      if (v !== 'gone') { try { if (prev && prev.focus && prev.isConnected) prev.focus({ preventScroll: true }); } catch (_) { /* fine */ } }   // (put away for the next design: its editor keeps the keys)
+      if (pick) pick(v);
+    };
+    const me = { token: session && session.token, drop: () => choose('gone') };
+    liveCard = me;
     const onKey = e => { if (!wrap.isConnected) return; if (e.key === 'Escape' && bar.children.length) { e.preventDefault(); e.stopPropagation(); choose(bar.querySelector('[data-c="discard"]') ? 'discard' : 'done'); } };
     root.addEventListener('keydown', onKey, true);
     wrap.addEventListener('click', e => { const b = e.target.closest('[data-c]'); if (b && !b.disabled) choose(b.dataset.c); });
@@ -565,7 +590,8 @@
         buttons([['done', 'cem-btn--ghost', 'Done'], ['again', 'cem-btn--ink', 'Keep editing'],
           ['send', 'cem-btn--gold', 'Send to sheet', !canSend, d.noCut ? 'A design goes on a sheet once it has its outline (a Cut line)' : !canSend ? 'Send to sheet comes with the custom piece window, which is not on this page yet' : 'Choose the metal and the order (or a name), and it goes on the next sheet of that metal']]);
       },
-      choice() { return picked ? Promise.resolve(picked) : new Promise(r => { pick = r; }); }
+      choice() { return picked ? Promise.resolve(picked) : new Promise(r => { pick = r; }); },
+      drop: me.drop
     };
   }
 
@@ -583,7 +609,7 @@
     if (!front.items.length) throw new Error('its drawing has no part the editor can hold');
     const skipped = front.skipped; delete front.skipped;
     const st = { name: entry.sku, title: entry.sku, source: Object.assign({ kind: 'master', sku: entry.sku }, sz ? { size: sz } : {}), faces: { front, back: backFace(front, [], M) },
-      log: { source: 'master', sku: entry.sku, size: sz, layers: front.items.length }, ...(o && o.orderId ? { orderId: String(o.orderId) } : {}), ...(o && o.customName ? { customName: String(o.customName) } : {}) };
+      log: { source: 'master', sku: entry.sku, size: sz, layers: front.items.length }, ...rides(o) };
     st.subtitle = subtitleFor(st) + (skipped ? ` · ${skipped} part${skipped === 1 ? ' is' : 's are'} live text or a picture in the master and not here` : '');
     return st;
   }
@@ -594,15 +620,16 @@
     if (opening && opening.key === key) return opening.p;
     const me = { key, p: null }, done = () => { if (opening === me) opening = null; };
     opening = me;
-    me.p = (async () => {
+    me.p = counted(async handed => {
       const by = await who('open a charm from the library as a new design'); if (!by) { done(); return null; }
       note(`Opening ${key}…`);
       let st;
       try { st = await masterStart(key, o.size, o); }
       catch (e) { done(); note(`${key} could not be opened · ${(e && e.message) || e}`, true); if (o.throws) throw e; return null; }
       done();
-      return edit(st, by);
-    })();
+      const p = edit(st, by); handed();
+      return p;
+    });
     return me.p;
   }
 
@@ -610,13 +637,16 @@
   function newStart(spec, o) {
     const s = startSpec(spec), front = startFace(s), name = s.name || defaultName(s);
     const st = { name, title: name, source: { kind: 'new', shape: s.shape }, faces: { front, back: backFace(front, [], model()) },
-      log: { source: 'new', shape: s.shape, widthMm: s.wMm, heightMm: s.hMm, holeMm: s.hole ? s.holeMm : 0 }, ...(o && o.orderId ? { orderId: String(o.orderId) } : {}), ...(o && o.customName ? { customName: String(o.customName) } : {}) };
+      log: { source: 'new', shape: s.shape, widthMm: s.wMm, heightMm: s.hMm, holeMm: s.hole ? s.holeMm : 0 }, ...rides(o) };
     st.subtitle = subtitleFor(st) + ` · ${mmTxt(s.wMm)} × ${mmTxt(s.hMm)} mm${s.hole ? ` · jump ring hole Ø ${mmTxt(s.holeMm)} mm` : ''}`;
     return st;
   }
-  /** A saved design opened again: its Save makes the next version of it. */
-  async function openDesign(d, o) {
-    o = o || {};
+  /** A saved design opened again: its Save makes the next version of it. openDesign(design | id, { version, ... }) or openDesign(id, version, { ... }) (the Design & Engrave tab's). */
+  function openDesign(d, a, b) {
+    const o = a != null && typeof a === 'object' ? Object.assign({}, a) : Object.assign({}, b || {}, a != null && a !== '' ? { version: a } : {});
+    return counted(handed => openDesignNow(d, o, handed));   // (counted before anything is awaited: see `pending`)
+  }
+  async function openDesignNow(d, o, handed) {
     const by = await who('edit a design'); if (!by) return null;
     if (typeof d === 'string' || (d && d.id && !d.faces)) {   // (an id: the version read through the design library, which tells the log it was opened)
       const D = root.CharmNestDesigns, id = typeof d === 'string' ? d : d.id, v = typeof d === 'string' ? o.version : d.version;
@@ -626,9 +656,10 @@
     const src = Object.assign({}, d.source || { kind: 'new' });
     const st = { id: d.id || null, version: d.id ? d.version || null : null, name: d.name || 'Design', title: d.name || 'Design', source: src, faces: facesAgain(d),
       log: d.id ? false : { source: src.kind, ...(src.file ? { file: src.file } : {}), ...(src.type ? { type: src.type } : {}) },   // (a saved one's open is told by CharmNestDesigns.get; an unsaved one's here)
-      ...(d.orderId || o.orderId ? { orderId: String(d.orderId || o.orderId) } : {}), ...(d.customName || o.customName ? { customName: String(d.customName || o.customName) } : {}) };
+      ...rides(Object.assign({}, o, { orderId: d.orderId || o.orderId, customName: d.customName || o.customName })) };
     st.subtitle = subtitleFor(st);
-    return edit(st, by);
+    const p = edit(st, by); handed();
+    return p;
   }
 
   /** A design made elsewhere and not saved yet, opened as a NEW design (charm-nest-ce-import.js "Open as a new design": its file read into a front whose outline is the cut,
@@ -636,7 +667,7 @@
    *  through its own Cancel as every open here does; o.read (what the file held) is not needed. */
   function openNew(d, o) {
     if (!d || !d.faces || !d.faces.front) return Promise.resolve(null);
-    return openDesign(Object.assign({}, d, { id: null, version: null }), { orderId: o && o.orderId, customName: o && o.customName });
+    return openDesign(Object.assign({}, d, { id: null, version: null }), { orderId: o && o.orderId, customName: o && o.customName, back: o && o.back, from: o && typeof o.from === 'string' ? o.from : undefined });
   }
 
   /* ═══ 6 · the picker: the library's charms, or a new start ═══ */

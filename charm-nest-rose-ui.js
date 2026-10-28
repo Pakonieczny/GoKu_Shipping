@@ -317,6 +317,7 @@
       const options=document.createElement('div');options.dataset.roseOptions='';options.className='roseStockOptions';
       options.innerHTML=`<h4>Cut contour</h4><label class="roseAllowance">Contour allowance <span>mm</span><input type="number" min="0.05" max="2" step="0.05" value="${sh.roseAllowanceMm||.2}" data-rose-allowance></label><p class="help">Space around the combined charm outline.</p><div data-rose-stock-choice><button type="button" class="btn ghost xs" data-rose-choose>Choose remnant or new sheet</button><span data-rose-picker></span></div>`;
       (menu.querySelector('.osSheetGrid')||menu).append(options);   // (one more block of the This sheet card)
+      options.closest('.osSettings')?.classList.remove('osNone');   // (the Settings card shows now that it holds this: .osNone, NAV round 4)
       options.querySelector('[data-rose-choose]')?.addEventListener('click',async e=>{
         e.target.disabled=true;try{const result=await api('roseList',{metal:sh.metal}),st=C.stockFor(sh.metal),pick=options.querySelector('[data-rose-picker]');
           const stocks=result.stocks.filter(s=>Math.abs(s.wPt-st.wPt)<.01&&Math.abs(s.hPt-st.hPt)<.01);

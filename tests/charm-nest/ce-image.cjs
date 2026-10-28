@@ -154,7 +154,7 @@ async function partB(kit) {
       ]);
     });
     await R.openEngraveDetail(w, 'cal', { face: 'front' }); await R.settle(page, 700);
-    await page.click(Q + ' .backHost .egCharmEdit');
+    await page.click(Q + ' .egCharmEdit');
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page); await settleP(page);
     const head = await page.evaluate(() => { const b = document.querySelector('.ce-root [data-act="import"]'); return { has: !!b && !b.hidden, title: b && b.title, accept: (CharmEditor.importers || []).map(i => i.id + ':' + i.accept.join(' ')), trace: !!(window.CharmNestTrace && CharmNestTrace.posterise && CharmNestTrace.trace) }; });
     const mine = head.accept.find(a => a.startsWith('image:')) || '';
@@ -325,7 +325,7 @@ async function partB(kit) {
       JSON.stringify(sheet));
 
     /* ── opened again: the greys come back grey, and Re-trace still knows their picture ── */
-    await page.click(Q + ' .backHost .egCharmEdit');
+    await page.click(Q + ' .egCharmEdit');
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page);
     const re = await page.evaluate(() => {
       const E = CharmEditor.current, gs = E.items().filter(i => i.artGrey);

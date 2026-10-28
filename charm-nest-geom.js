@@ -351,26 +351,31 @@
   /** Largest axis-aligned rectangles of 1s (histogram/stack), best first; each one is cleared before the next search. */
   function largestRectangles(m, n) {
     const work = m.bits.slice(); const { w, h, res, ox, oy } = m; const out = [];
-    const hgt = new Int32Array(w), stack = new Int32Array(w + 1);
-    // REFIT (28 Oct 2026): the best rectangle of each row's scan is kept; clearing a rectangle changes only the rows from its top down, so only those are scanned again. The first rectangle
-    // of the largest area in scan order is still the one taken (the first row whose best reaches it, and that row's first), exactly as one scan of every row took it.
-    const rowBest = new Array(h); let from = 0;
+    // REFIT (28 Oct 2026): only the box that holds the 1s is scanned (rows and columns of 0s round it hold no rectangle, and a column of 0s ends the bars beside it exactly as the frame's edge
+    // does), and the best rectangle of each row's scan is kept: clearing a rectangle changes only the rows from its top down, so only those are scanned again. The first rectangle of the largest
+    // area in scan order is still the one taken (the first row whose best reaches it, and that row's first), exactly as one scan of every row of the whole frame took it.
+    let bx0 = w, bx1 = -1, by0 = h, by1 = -1;
+    for (let y = 0; y < h; y++) { const r = y * w; for (let x = 0; x < w; x++) if (work[r + x]) { if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; by1 = y; } }
+    if (bx1 < 0) return out;
+    const cw = bx1 - bx0 + 1, hgt = new Int32Array(cw), stack = new Int32Array(cw + 1), none = { area: 0 };
+    const rowBest = new Array(h); let from = by0;
     for (let k = 0; k < (n || 6); k++) {
-      hgt.fill(0); let best = { area: 0 };
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) hgt[x] = work[y * w + x] ? hgt[x] + 1 : 0;
+      hgt.fill(0); let best = none;
+      for (let y = by0; y <= by1; y++) {
+        const r = y * w + bx0;
+        for (let x = 0; x < cw; x++) hgt[x] = work[r + x] ? hgt[x] + 1 : 0;
         if (y >= from) {
-          let rb = { area: 0 }, sp = 0;
-          for (let x = 0; x <= w; x++) {
-            const cur = x < w ? hgt[x] : 0;
-            while (sp > 0 && hgt[stack[sp - 1]] >= cur) { const hh = hgt[stack[--sp]]; const left = sp > 0 ? stack[sp - 1] + 1 : 0; const ww = x - left, a = ww * hh; if (a > rb.area) rb = { area: a, x: left, y: y - hh + 1, w: ww, h: hh }; }
+          let rb = none, sp = 0;
+          for (let x = 0; x <= cw; x++) {
+            const cur = x < cw ? hgt[x] : 0;
+            while (sp > 0 && hgt[stack[sp - 1]] >= cur) { const hh = hgt[stack[--sp]]; const left = sp > 0 ? stack[sp - 1] + 1 : 0; const ww = x - left, a = ww * hh; if (a > rb.area) rb = { area: a, x: left + bx0, y: y - hh + 1, w: ww, h: hh }; }
             stack[sp++] = x;
           }
           rowBest[y] = rb;
         }
         if (rowBest[y].area > best.area) best = rowBest[y];
       }
-      from = best.area ? best.y : 0;
+      from = best.area ? best.y : by0;
       if (!best.area || best.w < 2 || best.h < 2) break;
       out.push({ px: best.x, py: best.y, pw: best.w, ph: best.h, x0: ox + best.x / res, y0: oy + best.y / res, x1: ox + (best.x + best.w) / res, y1: oy + (best.y + best.h) / res, wPt: best.w / res, hPt: best.h / res, areaPt2: best.area / (res * res) });
       for (let y = best.y; y < best.y + best.h; y++) for (let x = best.x; x < best.x + best.w; x++) work[y * w + x] = 0;

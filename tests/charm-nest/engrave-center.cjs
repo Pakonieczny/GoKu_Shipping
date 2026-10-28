@@ -24,7 +24,7 @@ const src = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
 const cut = (a, b) => { const i = src.indexOf(a), j = src.indexOf(b, i); assert(i > 0 && j > i, `bridge source markers: ${a}`); return src.slice(i, j); };
 const noop = () => {};
 const fakeCanvas = () => { const ctx = new Proxy({}, { get: (_, k) => (k === 'createImageData' ? (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }) : noop), set: () => true }); return { width: 0, height: 0, getContext: () => ctx }; };
-const env = vm.createContext({ G, P, PT, MM, Math, Array, Infinity, document: { createElement: () => fakeCanvas() }, console });
+const env = vm.createContext({ G, P, PT, MM, Math, Array, Infinity, document: { createElement: () => fakeCanvas() }, console, window: {} });   // (window: the design-mode open that sits before renderFront in the slice sets window.CharmEditDesign)
 vm.runInContext(cut('  function textBox(glyphs', '  function resize(job, size)') + cut('  /* ── 7.6 · back files', '  function renderFront(') + '\nthis.renderBack = renderBack;', env);
 
 // charms: a polyline outline with round cut-outs, as the sorter hands them over

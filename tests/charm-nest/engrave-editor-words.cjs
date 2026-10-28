@@ -68,7 +68,7 @@ async function run(kit) {
         job: () => Engrave.items().get(document.querySelector('#egQueue .rvItem[data-kind=placement]').dataset.key),
         jobOf: (rid, face) => [...Engrave.items().values()].find(j => String(j.row.order.receiptId) === rid && (j.face === 'front' ? 'front' : 'back') === face),
         facts: j => j && ({ state: j.state, words: (j.lines || []).join('/'), artOnly: !!(j.fit && j.fit.artOnly), fit: !!j.fit, size: j.fit ? j.fit.size : null, centre: j.fit ? j.fit.centre.slice() : null, lines: (j.lines || []).slice(), gap: j.lineGap, verify: !!(j.verify && j.verify.geometry && j.verify.geometry.ok), approvedAt: j.approvedAt || 0, seals: CNEngravingSeals.list(j).map(s => s.how + ':' + s.by), reason: j.reason || '' }),
-        cardFacts: () => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (!c) return null; const cv = c.querySelector('.backHost canvas'), ap = c.querySelector('[data-a="approve"]'); return { key: c.dataset.key, approve: !!ap, approveOff: !!(ap && ap.disabled), approved: !!c.querySelector('.egApproveButton.egApproved'), canvas: !!cv, box: !!(cv && cv._box), art: cv ? (cv._frontArt || []).length : 0, pill: !!c.querySelector('.backHost .egCharmEdit'), noBack: (c.querySelector('.backHost .noBack') || {}).textContent || '', ctl: (c.querySelector('.ctl') || {}).textContent || '', centreBtn: !!c.querySelector('.ctl [data-a="centre"]'), words: (c.querySelector('.engpWords') || {}).value, ask: (c.querySelector('.engpAsk') || {}).textContent || '', offer: (c.querySelector('.engpOffer') || {}).textContent || '', note: (c.querySelector('.backHost .egArtNote') || {}).textContent || '', title: cv ? cv.title : '' }; },
+        cardFacts: () => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (!c) return null; const cv = c.querySelector('.backHost canvas'), ap = c.querySelector('[data-a="approve"]'); return { key: c.dataset.key, approve: !!ap, approveOff: !!(ap && ap.disabled), approved: !!c.querySelector('.egApproveButton.egApproved'), canvas: !!cv, box: !!(cv && cv._box), art: cv ? (cv._frontArt || []).length : 0, pill: !!c.querySelector('.egCharmEdit'), noBack: (c.querySelector('.backHost .noBack') || {}).textContent || '', ctl: (c.querySelector('.ctl') || {}).textContent || '', centreBtn: !!c.querySelector('.ctl [data-a="centre"]'), words: (c.querySelector('.engpWords') || {}).value, ask: (c.querySelector('.engpAsk') || {}).textContent || '', offer: (c.querySelector('.engpOffer') || {}).textContent || '', note: (c.querySelector('.backHost .egArtNote') || {}).textContent || '', title: cv ? cv.title : '' }; },
         async sheet(ids) {
           const charms = ids.map(id => Pool.charmOf(id)), placements = charms.map((ch, i) => ({ charm: ch, angle: 0, cxPt: 50 + 90 * i, cyPt: 60, scale: 1 }));
           const bytes = await CharmNestPDF.buildSheet({ sheet: { wPt: 110 + 90 * (ids.length - 1), hPt: 130 }, placements, sources: new Map(charms.map(ch => [ch.sourceId, (sourceOf(ch.sourceId) || {}).parsed])), title: 'editor words' });
@@ -88,7 +88,7 @@ async function run(kit) {
 
     /** the calendar's editor on the open card: MAY swept out, NOVEMBER typed where it was (if asked), "21" at 5 pt centred in the day square of row 2, column 4, then Save */
     async function drawCalendar(pid, month) {
-      await page.click(Q + ' .backHost .egCharmEdit');
+      await page.click(Q + ' .egCharmEdit');
       await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page); await settleP(page);
       const fr = await page.evaluate(() => CharmEditor.current.frame());
       let letters = [];
@@ -128,11 +128,11 @@ async function run(kit) {
       check('A0 the world: the three calendars ordered for the front with a note wait for their front words (the note is no inscription); none has an art edit',
         ['paul', 'fresh', 'plain'].every(n => made[n].jobs.length === 1 && made[n].jobs[0].face === 'front' && made[n].jobs[0].state === 'words' && !made[n].jobs[0].text) && !st.doc('Charm_Pool_Art', PID + '~front'), JSON.stringify(['paul', 'fresh', 'plain'].map(n => made[n].jobs)));
 
-      /* ── as before: no words, no art edit: the front waits for its words; the empty work area now holds the "Edit charm" pill ── */
+      /* ── as before: no words, no art edit: the front waits for its words; its card holds the "Open in Charm Editor" button (DESIGN & ENGRAVE, 28 Oct 2026; it was the "Edit charm" pill) ── */
       await R.openEngraveDetail(w, 'paul', { face: 'front' }); await R.settle(page, 800);
       const a1 = await cardFacts();
       await R.shot(w, 'EW-0-front-waiting-for-words-edit-charm-pill');
-      check('A1 the front with no words waits for them as before (no Approve, the panel asks "Say which words go on the front"), and its empty work area holds the quiet "Edit charm" pill, so the charm can be drawn before any words are given',
+      check('A1 the front with no words waits for them as before (no Approve, the panel asks "Say which words go on the front"), and its card holds the "Open in Charm Editor" button, so the charm can be drawn before any words are given',
         !a1.approve && !a1.canvas && /Say which words go on the front/.test(a1.ask) && !a1.offer && a1.pill, JSON.stringify(a1));
 
       /* ── Paul's own path: words "test", then the charm editor ── */

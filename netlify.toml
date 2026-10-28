@@ -301,6 +301,13 @@
   [headers.values]
     Cache-Control = "max-age=0, no-cache, must-revalidate"
 
+# Charm Nest's service worker (charm-nest-sw.js; Paul approved 28 Oct 2026): the browser reads the worker's own script fresh
+# at every load, so a worker switched off there (RETIRED) or a new cache generation reaches every computer at its next load.
+[[headers]]
+  for = "/charm-nest-sw.js"
+  [headers.values]
+    Cache-Control = "max-age=0, no-cache, no-store, must-revalidate"
+
 # ─── Charm Sorter ⇄ Design Station bridge — September 2026 ──────────────────
 # The sorter (brites-charm-sorter.goldenspike.app) embeds Design Station 1 in an
 # <iframe> and drives it over postMessage (origin-checked, nonced). Two headers
