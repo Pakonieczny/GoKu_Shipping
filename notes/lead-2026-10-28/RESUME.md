@@ -85,6 +85,8 @@ board-live-extra.json with the new agent ids.
 - de-custompool (a4d3307fda8a88af0) DONE: claude/de-custompool 36f1f7d (contains de-designs a7009a1 + main). New file charm-nest-custom-pool.js (approved), server op customPiecePut, test custom-piece-pool.cjs 6/6. Ship WITH designs (+ sendsheet must settle the order's custom line). It reports sandbox-wipe-guard fails on origin/main too: op roseReopen is unclassified in the sandbox families file → small fix for the lead (classify roseReopen).
 - de-extras (a5f64f2a38f32df82) finishing its last test runs (7 commits on claude/de-extras).
 
+## Batch 2 in test (03:48 UTC): claude/de-integration 4da1e2c = main 722e4a7 + vimport + text. Test run b1b22dnd5 → logs $SP/int/b2/*.log (node: charm-editor-model art-edit-model public-assets; browser: ce-import ce-text ce-feedback emoji-picker charm-editor-browser charm-editor-engrave charm-editor-back art-edit-page engrave-editor-words). All pass → push HEAD:main (if it contains origin/main), verify live (new files charm-nest-ce-import.js? + charm-nest-ce-text.js), board.
+
 ## Shipped 03:45 UTC
 - refit 722e4a7 (contains main d58eea9): worktree $SP/wt-refitship, tests running (bs0ceqa3m: engrave-worker, charm-edit-refit, charm-editor-engrave, engrave-editor-words, engrave-front-art, engrave-approve-never-silent, charm-editor-back, engrave-preview). If all pass: push HEAD:main (if it still contains origin/main), verify live, board.
 
