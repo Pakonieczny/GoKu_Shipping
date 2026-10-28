@@ -36,7 +36,7 @@
   if (root) root.CharmNestCustomPool = api;
 })(typeof self !== "undefined" ? self : typeof globalThis !== "undefined" ? globalThis : this, function (root) {
   "use strict";
-  const MM = 25.4 / 72, PT = 72 / 25.4;
+  const MM = 25.4 / 72;
   const ROLES = new Set(["cut", "line", "hatch", "art"]), METALS = ["gold", "silver", "rose", "gold10k", "gold14k"];
   const BLACK = [0, 0, 0], RED = [1, 0, 0], BLUE = [0, 0, 1], HAIR_PT = 0.25;
   const LAYER = { cut: "CUT", line: "ENGRAVE", fill: "HATCH" };
