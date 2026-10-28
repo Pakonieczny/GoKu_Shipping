@@ -5524,6 +5524,14 @@ const Gate = window.Gate = (() => {
   }
   // a sheet the sheet window is rewriting (charms taken off or moved onto it) keeps its set: see holdRelease there
   const holding = p => !!p.keepRelease && Date.now() - (+p.keepRelease.at || 0) < 600000;
+  /** (STUCKSPIN, Paul 28 Oct 2026) A join of `sh` into `set` the cloud refused for the owner's rules within ten minutes: its words, else "". */
+  const joinRefused = new Map();
+  const joinRefusedOf = (sh, set) => { const r = sh && joinRefused.get(sh.sheetId); if (!r) return ""; if (r.setId !== set.setId || Date.now() - r.at > 600000) { joinRefused.delete(sh.sheetId); return ""; } return r.why; };
+  /** (STUCKSPIN, Paul 28 Oct 2026: "GF Draft 9 cannot go into Set 1 ... Set 1 already holds a completed GF and a completed SS sheet") The members of a set as the formation reads them: a member that is
+   *  being written again (its nest finishing: finishNest marks it _fullWhileWritten; or kept released while the sheet window rewrites it, holding) counts as the full sheet its record holds. Read as
+   *  filling for those seconds, its set looked short of a class, the free GF Draft 9 was sent to complete it, the cloud refused (the record is full) and the run stopped. */
+  const writtenFull = p => !p.releaseFull && ((!!p._fullWhileWritten && (["nesting", "finishing", "queued"].includes(p.status) || (!!p.persisted && !p.persistedDone))) || (holding(p) && !!p.keepRelease.full));
+  const formMembers = set => membersOfSet(set).map(p => (writtenFull(p) ? Object.assign({}, p, { releaseFull: true }) : p));
   /** A released sheet that pieces are taken off keeps its set and gets its label made again (see holding). */
   const keep = p => { if ((p.releaseFull || (p.setId && !p.draft)) && !p.roseCutAt && !p.laserDoneAt && !p.recalled) p.keepRelease = { full: !!p.releaseFull, at: Date.now() }; };
   const SOrd = () => (window.SharedOrders && window.SharedOrders.fromPage && window.SharedOrders.core) ? window.SharedOrders : null;
@@ -5856,7 +5864,7 @@ const Gate = window.Gate = (() => {
     for (const p of allSheets()) if (p.runId === run.runId) delete p.setWait;
     // (audit A, 25 Oct 2026: the set the free sheets complete is the EARLIEST open set left short of a class, a sheet of it having gone back to filling; only the newest was
     //  ever completed, so an older set that went short stayed short for good, R1)
-    const last = open.find(s => membersOfSet(s).length && !SR.closed(membersOfSet(s))) || open[open.length - 1] || null, lastClosed = !!last && SR.closed(membersOfSet(last));
+    const last = open.find(s => membersOfSet(s).length && !SR.closed(formMembers(s))) || open[open.length - 1] || null, lastClosed = !!last && SR.closed(formMembers(last));   // (STUCKSPIN: formMembers, a member being written again counts as its record)
     let target = null, addTarget = null, formed = 0, apart = new Set(), joinNow = null;       // target: the set the free sheets join now · addTarget: the set 10K, 14K and Rose Gold may join now · formed: sheets it takes · apart: partners that wait for another set
     {
       const free = pages.filter(p => !inOpen(p) && !p.cardinalHome && !handOf(p) && !adder(p) && release(p, last && !lastClosed ? last.seq : 0).include);
@@ -5864,7 +5872,7 @@ const Gate = window.Gate = (() => {
       // (SETFIX, Paul 19 Oct 2026: the units never tie through a sheet in a set, a cut one or an uncut Rose Gold / 10K / 14K one: formationOf(V, true). They did, so Set 2 took every unit that had one order
       //  on a sheet of Set 1)
       const V = cardinalView(run), pagesOfIds = ids => (ids || []).map(id => V.page.get(id)).filter(Boolean), links = V ? formationOf(V, true, choices).groups.map(g => ({ ids: pagesOfIds(g.ids), anchors: pagesOfIds(g.anchors), ends: pagesOfIds(g.ends) })) : [];
-      const f = SR.form(last ? membersOfSet(last) : [], free, !!last, last && last.name, links);
+      const f = SR.form(last ? formMembers(last) : [], free, !!last, last && last.name, links);
       for (const w of f.wait) w.sheet.setWait = w.why;
       if (f.where === "last") target = last;
       else if (f.where === "new") {
@@ -5887,7 +5895,7 @@ const Gate = window.Gate = (() => {
       if (target) open = openSetsOf(run.runId);
       addTarget = target || (last && lastClosed ? last : null);
       const adders = pages.filter(p => !inOpen(p) && !p.cardinalHome && adder(p) && release(p, (addTarget || last) ? (addTarget || last).seq : 0).include);
-      if (!addTarget && adders.length) for (const w of SR.settle(last ? membersOfSet(last) : [], adders).wait) w.sheet.setWait = w.why;
+      if (!addTarget && adders.length) for (const w of SR.settle(last ? formMembers(last) : [], adders).wait) w.sheet.setWait = w.why;
       // a Rose Gold, 10K or 14K sheet the cardinal rule pulls goes with its partners' set: while a free partner waits for a later set, it waits too
       const joining = new Set(f.join || []);
       for (const a of adders) if (links.filter(g => g.ids.includes(a)).some(g => g.ids.some(q => q !== a && !adder(q) && free.includes(q) && !joining.has(q)))) apart.add(a);
@@ -6135,7 +6143,9 @@ const Gate = window.Gate = (() => {
       }
       if (sh.setId && !sh.draft) continue;      // (in another open set of the run: only a person, or the cardinal rule through that set, moves it)
       if (!admits(sh, set)) continue;
-      const previous = { draft:sh.draft, setId:sh.setId, setDay:sh.setDay, seq:sh.seq, group:sh.group, sheetIndex:sh.sheetIndex, fileBase:sh.fileBase };
+      // (STUCKSPIN, Paul 28 Oct 2026) a join the cloud refused for the owner's rules a moment ago is not asked again at every look: the sheet waits outside with the cloud's words (joinRefusedOf)
+      { const rf = joinRefusedOf(sh, set); if (rf) { sh.setWait = rf; continue; } }
+      const previous = { draft:sh.draft, setId:sh.setId, setDay:sh.setDay, seq:sh.seq, group:sh.group, sheetIndex:sh.sheetIndex, fileBase:sh.fileBase, joinedAt:sh.joinedAt, joinedBy:sh.joinedBy }, nosWas = set.sheetNos;
       sh.draft = false; sh.setId = set.setId; sh.setDay = set.day; sh.seq = set.seq; sh.group = "dispatch";
       sh.joinedAt = at; if (sh.handSet === set.setId && !sh.cardinalHome) sh.joinedBy = "person"; else delete sh.joinedBy;      // (SETFIX: when it joined, and whether a person's drop put it there: the checker's closed-set rule reads both)
       // after the highest number in use, and after any number that was ever in use in this set (set.sheetNos): a sheet that left the set must not leave its number to be taken twice.
@@ -6152,7 +6162,19 @@ const Gate = window.Gate = (() => {
       // Membership changes reuse verified artwork and approved backs. Only the
       // manifest metadata and QR need saving; never re-render/re-upload the AI.
       try {
-        await api("charmNestLibrary", {op:"putSheet", sheet:{id:sh.sheetId,draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:sh.sheetIndex,fileBase:sh.fileBase,folder:sh.fileBase,solidIncluded:solidMark(sh, choices)}});   // (a solid sheet the cardinal rule pulled in is in without its own tick: null, so it never reloads as ticked; Rose Gold the same, its own tick or nothing)
+        try { await api("charmNestLibrary", {op:"putSheet", sheet:{id:sh.sheetId,draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:sh.sheetIndex,fileBase:sh.fileBase,folder:sh.fileBase,solidIncluded:solidMark(sh, choices)}}); }   // (a solid sheet the cardinal rule pulled in is in without its own tick: null, so it never reloads as ticked; Rose Gold the same, its own tick or nothing)
+        catch (e) {
+          /* (STUCKSPIN, Paul 28 Oct 2026: "Run stopped: GF Draft 9 cannot go into Set 1: Set 1 would be bigger than the minimum ...") The cloud judges a join by the saved records (putSheet: R7, R3)
+             and refused one this look asked for by itself: this page's copy of the set was behind its records (a sheet of it read as filling while it was written again). An automatic move the rules
+             refuse is LEFT OUT, never the end of the run: the sheet stays where it was, waits outside with the cloud's words, nothing was written, and the next looks do not ask again for ten minutes.
+             A person's own drop is refused to them as before. */
+          if (!(e && e.data && e.data.refused === "setRules") || (sh.handSet === set.setId && !sh.cardinalHome)) throw e;
+          Object.assign(sh, previous); if (previous.joinedAt === undefined) delete sh.joinedAt; if (previous.joinedBy === undefined) delete sh.joinedBy; set.sheetNos = nosWas;
+          const why = String(e.message || "the set rules refused it").replace(/\.$/, "");
+          joinRefused.set(sh.sheetId, { setId: set.setId, at: Date.now(), why }); sh.setWait = why;
+          try { agent({ run: run.runId, metal: sh.metal }, "warn", `${sheetNameOf(sh)} was not put into ${set.name || "the set"} (the cloud refused it for your set rules, so it waits outside and the run goes on): ${why}`); } catch (_) { /* the card says it */ }
+          continue;
+        }
         await Sets.onSheetSaved(sh, sh.charms, undefined, {setOverride:set});
         if (Engrave.saveSheetBacks) await Engrave.saveSheetBacks(sh);
         sh.problem = null;
@@ -6320,8 +6342,10 @@ const Gate = window.Gate = (() => {
   const followTried = new Map();
   const followOpen = run => new Map(openSetsOf(run.runId).map(s => [String(s.setId), s]));
   const followHeld = (run, r) => !!r && !r.archived && r.runId === run.runId && !!r.setId && !r.draft && r.solidIncluded !== false;
-  /** (owed: a sheet whose save a reload cut short, written again at once: it is marked changed until that write, Session.restore) */
-  const followable = (run, p, owed) => !!p && !p.recalled && p.runId === run.runId && !inSetNow(p) && !p.leftSet && !!p.sheetId && (owed || (!p.dirty && !!p.persistedDone)) && !["nesting", "finishing", "queued"].includes(p.status) && !holding(p) && !p._manualHold && !p._incBusy && !p._rosePlanning && !p._roseAction && !p._roseStep;
+  /** (owed: a sheet whose save a reload cut short, written again at once: it is marked changed until that write, Session.restore)
+   *  (STUCKSPIN, Paul 28 Oct 2026: a sheet open in Manual Control follows too: the claim and its hold are about its charms, and only its set, number and label are taken from the record, nothing written.
+   *   Left out, the 14K sheet the record held in Set 3 stayed a draft on the page for as long as Manual Control was on, and its save would have written the draft over the record) */
+  const followable = (run, p, owed) => !!p && !p.recalled && p.runId === run.runId && !inSetNow(p) && !p.leftSet && !!p.sheetId && (owed || (!p.dirty && !!p.persistedDone)) && !["nesting", "finishing", "queued"].includes(p.status) && !holding(p) && !(p._manualHold && !(window.CNManual && typeof CNManual.isOn === "function" && CNManual.isOn(p))) && !p._incBusy && !p._rosePlanning && !p._roseAction && !p._roseStep;
   function followOne(run, p, rec, owed) {
     const st = followHeld(run, rec) ? followOpen(run).get(String(rec.setId)) : null; if (!st || !followable(run, p, owed)) return false;
     Object.assign(p, { draft: false, setId: st.setId, seq: +rec.setSeq || st.seq, setDay: st.day || p.setDay, group: st.group || p.group || "dispatch", sheetIndex: +rec.sheetIndex || null });
