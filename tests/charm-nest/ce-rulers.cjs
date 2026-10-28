@@ -135,9 +135,9 @@ const tickGap = page => page.evaluate(() => {
     return `y ${((g[0].v - (await C(page)).frame.y0) * MM).toFixed(3)} mm`;
   });
   await step('2.2 a part dragged to within a few px of the guide snaps onto it (its top edge exactly on the guide), with the smart guides off: the guide alone does it', async () => {
-    const more = async () => { await page.locator('.ce-root .ce-rail [data-drop="more"] .ce-drop__b').click(); await page.locator('.ce-root [data-opt="smart"]').click(); await page.keyboard.press('Escape'); await settle(page); };
+    const more = async () => { await page.locator('.ce-root .ce-rail [data-drop="more"] .ce-drop__b').click(); await page.locator('.ce-root .ce-rail [data-drop="more"] .ce-menu [data-opt="smart"]').click(); await page.keyboard.press('Escape'); await settle(page); };
     await more();
-    assert.equal(await page.evaluate(() => document.querySelector('.ce-root [data-opt="smart"]').getAttribute('aria-checked')), 'false');
+    assert.equal(await page.evaluate(() => document.querySelector('.ce-root .ce-rail [data-drop="more"] .ce-menu [data-opt="smart"]').getAttribute('aria-checked')), 'false');
     const g = (await C(page)).guides[0];
     const b = await box(page, 'heart-fill'), c = await clientOf(page, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2), k = (await C(page)).zoom / 100 * PX100;
     // the heart's top goes to 4 px under the guide: the snap pulls it the rest of the way
