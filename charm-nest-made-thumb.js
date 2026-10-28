@@ -35,12 +35,12 @@
   if (root) root.CharmNestMadeThumb = api;
 })(typeof self !== 'undefined' ? self : typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
-  const V = 3;                                   // the drawing's own version (sent with the picture, kept on the pool row's made.v: MADEV): a change of how it is drawn is a new signature (2, FACES 28 Oct 2026: the faces named and parted by a hairline; 3, BIGTHUMB: drawn for a box as tall as its row, larger; a picture this computer sent is drawn and sent again, paced)
-  const TILE = 288, GAP = 12, MARGIN = 0.02;     // a face is drawn TILE px high (BIGTHUMB: a list box about 156 px tall at twice the screen's density: the cloud's picture; this page draws its own at its box's size), the faces GAP apart, a 3 % margin
+  const V = 4;                                   // the drawing's own version (sent with the picture, kept on the pool row's made.v: MADEV): 2 FACES (named, a hairline), 3 BIGTHUMB, 4 BOXFIX (drawn to the list's fixed box); a picture of an older drawing is drawn again and sent, paced
+  const TILE = 288, MARGIN = 0.02;               // a list box is drawn at least TILE device px high (BOXFIX: the cloud's picture: a 4:3 box, 384 x 288), each face with a 2 % margin
   const DEBOUNCE = 1500, MAX_WAIT = 6000, PACE = 1500, SWEEP = 120, REFRESH = 200;
   const MAX_PIECES = 4, INK = '#1c1a17', METAL = '#f1ece1', RULE = '#d6cfc2';
   // (the earrings' chip, charm-nest-pair-thumb.js INK / INK_TEXT / FONT, its words 0.07 of the picture's long side: a face's chip says "Front" / "Back" in words a third larger)
-  const CHIP_INK = '#2a2724', CHIP_TEXT = '#fffaf0', CHIP_FONT = '"Source Sans 3","Segoe UI",system-ui,-apple-system,Helvetica,Arial,sans-serif', LABEL_FRAC = 0.09, WIDE = 1.3, BOX_PX = 160, LINE_AR = 1.8, CUT_CSS = 1.25;
+  const CHIP_INK = '#2a2724', CHIP_TEXT = '#fffaf0', CHIP_FONT = '"Source Sans 3","Segoe UI",system-ui,-apple-system,Helvetica,Arial,sans-serif', LABEL_FRAC = 0.1, BOX_PX = 112, BOX_AR = 4 / 3, MIN_CHIP_CSS = 11, CUT_CSS = 1.25;   // (BOXFIX: a list box is 4:3, about 112 css px high; the cloud's picture is drawn for that box)
   const GONE = new Set(['abandoned', 'superseded']);
   const doc = root && root.document || null;
   let host = {};
@@ -128,11 +128,14 @@
       ctx.fill('nonzero');
     }
   }
-  /** The picture of one piece: its faces side by side, each TILE px high. → { url (PNG data URL), w, h, faces } or null. Kept by signature. */
+  /** The picture of one piece, drawn to fill a list box: o = { tile (the box's height in device px), ar (its width over its height), px (its height in css px) }. → { url (PNG data URL), w, h, faces,
+   *  layout, labels, fontPx, hair, boxes } or null. Kept by signature and box. */
   const LOCAL = new Map();
-  function pictureOf(poolId, st, tile) {
+  function pictureOf(poolId, st, o) {
     st = st || stateOf(poolId); if (!st || !doc) return null;
-    const T = Math.max(48, Math.min(1200, Math.round(+tile || TILE))), ck = st.sig + (T === TILE ? '' : '@' + T);
+    o = typeof o === 'number' ? { tile: o } : o && o.nodeType ? (b => (b.px ? { tile: tileFor(b.px), ar: b.ar, px: b.px } : {}))(boxOf(o)) : o || {};
+    const T = Math.max(48, Math.min(1200, Math.round(+o.tile || TILE))), AR = Math.max(0.5, Math.min(3, +o.ar || BOX_AR)), CSSPX = Math.max(40, +o.px || BOX_PX);
+    const ck = st.sig + '@' + T + 'x' + AR.toFixed(3) + '/' + Math.round(CSSPX);
     const hit = LOCAL.get(ck); if (hit) return hit;
     const P = PDF(); if (!P || !P.drawCharm || !P.pathToCanvas || !EP()) return null;
     const parts = [];
@@ -142,55 +145,59 @@
       if (t0.words && t0.words.shelved) { const j = shelvedOf(t0.job, poolId); if (!j) { retrySoon(); return null; } t = { face: t0.face, job: j, words: { view: j.view, fit: j.fit } }; }
       const F = frameOf(poolId, t); if (!F || !F.box) continue;
       const w = F.box[2] - F.box[0], h = F.box[3] - F.box[1], pad = Math.max(w, h) * MARGIN;
-      let k = T / (h + 2 * pad); if ((w + 2 * pad) * k > T * 2.2) k = T * 2.2 / (w + 2 * pad);
-      parts.push({ t, F, pad, k, w: (w + 2 * pad) * k, h: (h + 2 * pad) * k });
+      parts.push({ t, F, pad, fw: w + 2 * pad, fh: h + 2 * pad });   // (the face with its margin, in points)
     }
     if (!parts.length) return null;
-    /* FACES (Paul, 28 Oct 2026: "When Showing the back engraving the system must label the back engraving with the same style of text with the black background. However the text font must be larger
-       so that it's clear that this is not a dual piece piece like an earring ... side-by-side and top bottom alignment, depending on the charm shape ... split the image with very thin lines"). ONE rule
-       for every picture of a piece: the faces side by side, or one over the other for a long piece laid flat (a bar, a tag): whichever is nearer a square, as the boxes are. Under each face its name,
-       "Front" / "Back", in the earrings' own chip (charm-nest-pair-thumb.js: the dark pill, light Semibold words) with words a third larger than theirs (LABEL_FRAC against their 0.07 of the picture's
-       long side): a reader never takes the two faces for a Left and a Right. The faces are parted by one hairline (about one pixel on screen in a list's box), never a frame round each. */
-    /* BIGTHUMB (Paul, 28 Oct 2026: "you did not enlarge the thumbnails. Please make sure you do that"): the list box is now as tall as its row and as wide as this picture, so the picture is laid out
-       for the box's HEIGHT: the chips' words are LABEL_FRAC of the picture's height (side by side: a band under the faces; one over the other: a column of chips at the left of the faces, which costs width,
-       not height, so a wide piece keeps its size), and the hairline is about one pixel of the box (the picture is drawn for a box about H / BOX_PX px tall). */
-    const gap = GAP * T / TILE, n = parts.length, labels = n > 1;
-    // (the shape of the faces decides: a wide face (laid flat, wider than WIDE times its height) one over the other, a tall or square one side by side)
-    const col = n > 1 && parts.reduce((a, p) => a + p.w / Math.max(1, p.h), 0) / n > WIDE;
-    const words = parts.map(p => (p.t.face === 'front' ? 'Front' : 'Back'));
+    /* FACES (Paul, 28 Oct 2026: "label the back engraving with the same style of text with the black background ... larger ... side-by-side and top bottom alignment, depending on the charm shape ...
+       split the image with very thin lines"): under each face (side by side) or beside it (one over the other) its name, "Front" / "Back", in the earrings' own chip (charm-nest-pair-thumb.js: the dark
+       pill, light Semibold words), larger than theirs; the faces parted by one hairline, never a frame round each.
+       BOXFIX (Paul, 28 Oct 2026: "thumbnail preview boxes must be locked into the same size always ... If you're using the split screen, either top bottom or side-by-side, it must always fit into the same
+       sized thumbnail preview box and everything must be always perfectly aligned horizontally"): the picture IS the list's box (BW x BH device px, the box's own shape), white to its edges; the faces are
+       laid in it side by side or one over the other, whichever draws them larger in that box; the chips' words are LABEL_FRAC of the box's height and never under MIN_CHIP_CSS css px. */
+    const BH = T, BW = Math.round(T * AR), dpx = T / CSSPX, n = parts.length, labels = n > 1, gap = Math.max(2, Math.round(BH * 0.04));
+    const fontPx = labels ? Math.max(Math.round(BH * LABEL_FRAC), Math.round(MIN_CHIP_CSS * dpx)) : 0, chipH = Math.round(fontPx * 1.55), hair = Math.max(1, Math.round(dpx));
+    let words = parts.map(p => (p.t.face === 'front' ? 'Front' : 'Back'));
     const meter = canvas(4, 4).getContext('2d');
     const chipW = f => { if (!meter) return f * 3.8; meter.font = `600 ${f}px ${CHIP_FONT}`; return Math.max(...words.map(w => meter.measureText(w).width)) + f * 1.2; };
-    const sizeOf = (band, side) => (col ? [side + Math.max(...parts.map(p => p.w)), parts.reduce((a, p) => a + p.h, 0) + gap * (n - 1)] : [parts.reduce((a, p) => a + p.w, 0) + gap * (n - 1), Math.max(...parts.map(p => p.h)) + band]);
-    let fontPx = 0, chipH = 0, band = 0, side = 0;
-    if (labels) for (let i = 0; i < 4; i++) { fontPx = Math.max(10, Math.round(sizeOf(band, side)[1] * LABEL_FRAC)); chipH = Math.round(fontPx * 1.55); band = col ? 0 : chipH + Math.round(fontPx * 0.4); side = col ? Math.round(chipW(fontPx) + fontPx * 0.8) : 0; }
-    const [W, H] = sizeOf(band, side), hair = Math.max(1, Math.round(H / BOX_PX)), rowH = Math.max(...parts.map(p => p.h)), faceW = Math.max(...parts.map(p => p.w));
-    const cv = canvas(W, H), ctx = cv.getContext('2d'); if (!ctx) return null;
+    const band = labels ? chipH + Math.round(fontPx * 0.3) : 0, side = labels ? Math.round(chipW(fontPx) + fontPx * 1.1) : 0;
+    const inset = Math.round(BH * 0.03);   // (a little white round the drawing)
+    const fitRow = () => { const aw = BW - 2 * inset - gap * (n - 1), ah = BH - 2 * inset - band; return Math.min(aw / parts.reduce((a, p) => a + p.fw, 0), ah / Math.max(...parts.map(p => p.fh))); };
+    const fitCol = () => { const aw = BW - 2 * inset - side, ah = BH - 2 * inset - gap * (n - 1); return Math.min(aw / Math.max(...parts.map(p => p.fw)), ah / parts.reduce((a, p) => a + p.fh, 0)); };
+    const one = () => Math.min((BW - 2 * inset) / parts[0].fw, (BH - 2 * inset) / parts[0].fh);
+    const sRow = n > 1 ? fitRow() : one(), sCol = n > 1 ? fitCol() : 0, col = n > 1 && sCol > sRow, k = col ? sCol : sRow;
+    // (a small box (a cell of a line of several pieces, a card): a chip wider than its face says F / B, as the earrings' say L / R when small)
+    if (labels && !col && parts.some(p => chipW(fontPx) > p.fw * k + gap)) words = words.map(w => w[0]);
+    const cv = canvas(BW, BH), ctx = cv.getContext('2d'); if (!ctx) return null;
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
-    let ox = 0, oy0 = 0; const boxes = [];
     const chip = (word, cx, top) => {
       ctx.save(); ctx.font = `600 ${fontPx}px ${CHIP_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
       const w = ctx.measureText(word).width + fontPx * 1.2, x = cx - w / 2, r = chipH / 2;
       ctx.fillStyle = CHIP_INK; ctx.beginPath(); ctx.moveTo(x + r, top); ctx.lineTo(x + w - r, top); ctx.arc(x + w - r, top + r, r, -Math.PI / 2, Math.PI / 2); ctx.lineTo(x + r, top + chipH); ctx.arc(x + r, top + r, r, Math.PI / 2, Math.PI * 1.5); ctx.closePath(); ctx.fill();
       ctx.fillStyle = CHIP_TEXT; ctx.fillText(word, cx, top + chipH / 2 + fontPx * 0.35); ctx.restore();
     };
+    // (the block of faces, chips and gaps, centred in the box)
+    const fws = parts.map(p => p.fw * k), fhs = parts.map(p => p.fh * k), maxW = Math.max(...fws), maxH = Math.max(...fhs);
+    const blockW = col ? side + maxW : fws.reduce((a, b) => a + b, 0) + gap * (n - 1), blockH = col ? fhs.reduce((a, b) => a + b, 0) + gap * (n - 1) : maxH + band;
+    const bx = (BW - blockW) / 2, by = (BH - blockH) / 2, boxes = [];
+    let ox = bx, oy0 = by;
     for (const [i, p] of parts.entries()) {
-      const { F, pad, k } = p, oy = col ? oy0 : (rowH - p.h) / 2, x0 = F.box[0], y1 = F.box[3], X = col ? side + (faceW - p.w) / 2 : ox;
-      const tx = (x, y) => [X + (x - x0 + pad) * k, oy + (y1 + pad - y) * k];
-      boxes.push({ face: p.t.face, x: Math.round(X), y: Math.round(oy), w: Math.round(p.w), h: Math.round(p.h) });
+      const { F, pad } = p, X = col ? bx + side + (maxW - fws[i]) / 2 : ox, Y = col ? oy0 : by + (maxH - fhs[i]) / 2, x0 = F.box[0], y1 = F.box[3];
+      const tx = (x, y) => [X + (x - x0 + pad) * k, Y + (y1 + pad - y) * k];
+      boxes.push({ face: p.t.face, x: Math.round(X), y: Math.round(Y), w: Math.round(fws[i]), h: Math.round(fhs[i]) });
       try {
         ctx.beginPath(); P.pathToCanvas(ctx, F.outline, tx); for (const m of F.cut || []) if (m !== F.outline && m.closed) P.pathToCanvas(ctx, m, tx);
         ctx.fillStyle = METAL; ctx.fill('evenodd');
         // (the cut line a fine line of about CUT_CSS px on screen, whatever the drawing's own pen: Paul, 28 Oct 2026, "heavy black rounded outlines around each half" — the master's 1 pt pen drawn at this scale)
-        const thin = Math.max(0.05, (CUT_CSS * H / BOX_PX) / k), cut = (F.cut || []).map(m => Object.assign({}, m, { lwPt: thin })), outline = cut[(F.cut || []).indexOf(F.outline)] || Object.assign({}, F.outline, { lwPt: thin });
+        const thin = Math.max(0.05, (CUT_CSS * dpx) / k), cut = (F.cut || []).map(m => Object.assign({}, m, { lwPt: thin })), outline = cut[(F.cut || []).indexOf(F.outline)] || Object.assign({}, F.outline, { lwPt: thin });
         P.drawCharm(ctx, { outline, members: (F.art || []).concat(cut) }, tx, k);
         // (the words only on the frame they were fitted in: the job's own view, the one frameFor drew)
         if (p.t.words && F.kind === 'view') glyphs(ctx, p.t.words.fit.glyphs, tx);
       } catch (e) { safe(() => console.warn('made thumbnail', e)); }
-      if (labels) { if (col) chip(words[i], side / 2, oy0 + (p.h - chipH) / 2); else chip(words[i], ox + p.w / 2, rowH + Math.round(fontPx * 0.15)); }
-      if (i) { ctx.fillStyle = RULE; if (col) ctx.fillRect(Math.round(W * 0.03), Math.round(oy0 - gap / 2 - hair / 2), Math.round(W * 0.94), hair); else ctx.fillRect(Math.round(ox - gap / 2 - hair / 2), Math.round(H * 0.03), hair, Math.round(H * 0.94)); }
-      ox += p.w + gap; oy0 += p.h + gap;
+      if (labels) { if (col) chip(words[i], bx + side / 2, oy0 + (fhs[i] - chipH) / 2); else chip(words[i], ox + fws[i] / 2, by + maxH + Math.round(fontPx * 0.15)); }
+      if (i) { ctx.fillStyle = RULE; if (col) ctx.fillRect(Math.round(BW * 0.04), Math.round(oy0 - gap / 2 - hair / 2), Math.round(BW * 0.92), hair); else ctx.fillRect(Math.round(ox - gap / 2 - hair / 2), Math.round(BH * 0.04), hair, Math.round(BH * 0.92)); }
+      ox += fws[i] + gap; oy0 += fhs[i] + gap;
     }
-    const out = { url: cv.toDataURL('image/png'), w: cv.width, h: cv.height, faces: parts.map(p => p.t.face), layout: col ? 'column' : 'row', labels, fontPx, hair, boxes };
+    const out = { url: cv.toDataURL('image/png'), w: cv.width, h: cv.height, faces: parts.map(p => p.t.face), layout: n < 2 ? 'one' : col ? 'column' : 'row', labels, fontPx, fontCss: fontPx / dpx, hair, boxes };
     LOCAL.set(ck, out); while (LOCAL.size > 400) LOCAL.delete(LOCAL.keys().next().value);
     return out;
   }
@@ -230,9 +237,9 @@
   }
   const imageOf = url => new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('picture')); im.src = url; });
   /** A piece's picture as a data URL (local, or read from the cloud). */
-  async function urlOf(poolId, p, tile) {
+  async function urlOf(poolId, p, box) {
     if (!p) return null;
-    if (p.kind === 'local') { const pic = pictureOf(poolId, p.st, tile); if (pic) return pic.url; if (!p.made) return null; }
+    if (p.kind === 'local') { const pic = pictureOf(poolId, p.st, box); if (pic) return pic.url; if (!p.made) return null; }
     return labelled(p.made);
   }
   /* MADEV (Paul, 28 Oct 2026: "The thumbnails are missing all of the labels (Back/Front Engraving)"): a picture the cloud keeps from the first drawing (v 1: no labels, the master's pen drawn heavy) that no
@@ -262,57 +269,62 @@
     LABELLED.set(made.url, job); while (LABELLED.size > 200) LABELLED.delete(LABELLED.keys().next().value);
     return job;
   }
-  /** Several pieces' pictures in one: a row when every one is a single face and they are few, else two columns; at most MAX_PIECES (the last cell says +N). */
-  async function compose(urls, more) {
-    const ims = (await Promise.all(urls.map(u => (u ? imageOf(u).catch(() => null) : null)))).filter(Boolean);
-    if (!ims.length) return null;
-    if (ims.length === 1 && !more) return urls.find(Boolean);
-    // (BIGTHUMB: as many columns as make the whole nearest LINE_AR wide for its height: the list box is as tall as its row and at most about 2.6 times as wide)
-    const n = ims.length + (more ? 1 : 0), cw = Math.max(...ims.map(im => im.naturalWidth)), ch = Math.max(...ims.map(im => im.naturalHeight)), g = GAP * 1.5;
-    let cols = 1, best = Infinity; for (let c = 1; c <= n; c++) { const r = Math.ceil(n / c), ar = (c * cw + (c - 1) * g) / (r * ch + (r - 1) * g), d = Math.abs(Math.log(ar / LINE_AR)) + (c * r - n) * 0.3; if (d < best) { best = d; cols = c; } }
-    const rows = Math.ceil(n / cols);
-    const cv = canvas(cols * cw + (cols - 1) * g, rows * ch + (rows - 1) * g), ctx = cv.getContext('2d');
+  /** BOXFIX: the grid of a line's pieces in one box of shape `ar` (width over height): 1, 2 side by side (or one over the other in a tall box), 3 and 4 in two by two. */
+  const gridOf = (n, ar) => { const cols = n <= 1 ? 1 : n === 2 ? (ar >= 1 ? 2 : 1) : 2; return { cols, rows: Math.ceil(n / cols) }; };
+  /** Several pieces' pictures in one box (BW x BH px): each in its own cell of the grid, the cells parted by hairlines; the last cell says +N when the line has more pieces than are shown. */
+  async function compose(urls, more, box) {
+    const ims = await Promise.all(urls.map(u => (u ? imageOf(u).catch(() => null) : null)));
+    if (!ims.some(Boolean)) return null;
+    if (urls.length === 1 && !more) return urls[0];
+    const BH = box.tile, BW = Math.round(box.tile * box.ar), n = urls.length + (more ? 1 : 0), { cols, rows } = gridOf(n, box.ar), cw = BW / cols, ch = BH / rows, hair = Math.max(1, Math.round(box.tile / box.px));
+    const cv = canvas(BW, BH), ctx = cv.getContext('2d');
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
-    ims.forEach((im, i) => { const c = i % cols, r = Math.floor(i / cols), k = Math.min(cw / im.naturalWidth, ch / im.naturalHeight), w = im.naturalWidth * k, h = im.naturalHeight * k; ctx.drawImage(im, c * (cw + g) + (cw - w) / 2, r * (ch + g) + (ch - h) / 2, w, h); });
+    ims.forEach((im, i) => { if (!im) return; const c = i % cols, r = Math.floor(i / cols), k = Math.min(cw / im.naturalWidth, ch / im.naturalHeight), w = im.naturalWidth * k, h = im.naturalHeight * k; ctx.drawImage(im, c * cw + (cw - w) / 2, r * ch + (ch - h) / 2, w, h); });
     // (FACES: the pieces parted by the same hairlines as a piece's faces)
-    { const hair = Math.max(1, Math.round(cv.height / BOX_PX)); ctx.fillStyle = RULE;
-      for (let c = 1; c < cols; c++) ctx.fillRect(Math.round(c * (cw + g) - g / 2 - hair / 2), Math.round(cv.height * 0.03), hair, Math.round(cv.height * 0.94));
-      for (let r = 1; r < rows; r++) ctx.fillRect(Math.round(cv.width * 0.03), Math.round(r * (ch + g) - g / 2 - hair / 2), Math.round(cv.width * 0.94), hair); }
-    if (more) { const i = ims.length, c = i % cols, r = Math.floor(i / cols); ctx.fillStyle = '#8a8378'; ctx.font = `600 ${Math.round(ch * 0.28)}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('+' + more, c * (cw + g) + cw / 2, r * (ch + g) + ch / 2); }
+    ctx.fillStyle = RULE;
+    for (let c = 1; c < cols; c++) ctx.fillRect(Math.round(c * cw - hair / 2), Math.round(BH * 0.03), hair, Math.round(BH * 0.94));
+    for (let r = 1; r < rows; r++) ctx.fillRect(Math.round(BW * 0.03), Math.round(r * ch - hair / 2), Math.round(BW * 0.94), hair);
+    if (more) { const i = urls.length, c = i % cols, r = Math.floor(i / cols); ctx.fillStyle = '#8a8378'; ctx.font = `600 ${Math.round(ch * 0.28)}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('+' + more, c * cw + cw / 2, r * ch + ch / 2); }
     return cv.toDataURL('image/png');
   }
   const COMPOSED = new Map();
-  /** The picture of a list box for a line: { key, load } (load → data URL), or null when no piece of the line has anything of its own (the Vector design stands). */
-  /** BIGTHUMB: the face height this page draws its own picture at, for a box `px` css px tall: the box at the screen's density (steps of 64 px, at least TILE, at most 640). */
-  const tileFor = px => { const d = safe(() => +root.devicePixelRatio || 1, 1); return Math.max(TILE, Math.min(640, Math.ceil((+px > 0 ? +px : 0) * Math.max(1, d) / 64) * 64)); };
+  /** BOXFIX: the box a list's picture element draws into: { px (its inner height, css px), ar (its inner width over that) }, {} before it is laid out. */
+  const boxOf = el => { const h = el ? el.clientHeight : 0, w = el ? el.clientWidth : 0; return h > 0 && w > 0 ? { px: h, ar: Math.round(w / h * 1000) / 1000 } : {}; };
+  /** The device px this page draws a box `px` css px high at: the screen's density (steps of 32 px, at least TILE, at most 640). */
+  const tileFor = px => { const d = safe(() => +root.devicePixelRatio || 1, 1); return Math.max(TILE, Math.min(640, Math.ceil((+px > 0 ? +px : BOX_PX) * Math.max(1, d) / 32) * 32)); };
+  /** The picture of a list box for a line: { key, load } (load → data URL), or null when no piece of the line has anything of its own (the Vector design stands). opts = { px (the box's height in css px),
+   *  ar (its width over its height) }: BOXFIX, the picture is drawn to the box's own shape, a line of several pieces in a grid of cells of that box. */
   function forLine(row, opts) {
-    const tile = tileFor(opts && opts.px);
+    if (opts && opts.nodeType) opts = boxOf(opts);
+    const px = +(opts && opts.px) > 0 ? +opts.px : BOX_PX, ar = Math.max(0.5, Math.min(3, +(opts && opts.ar) || BOX_AR)), tile = tileFor(px);
     const ids = (safe(() => host.poolIdsOf && host.poolIdsOf(row), []) || []).filter(Boolean); if (!ids.length) return null;
     const shown = ids.length > MAX_PIECES ? ids.slice(0, MAX_PIECES - 1) : ids, more = ids.length - shown.length;
     const picks = shown.map(id => pick(id)); if (!picks.some(Boolean)) return null;
     // (a piece of the line with nothing of its own, beside one that has: its plain front, when this page holds its charm)
     const plain = id => { const c = safe(() => host.charmOf && host.charmOf(id), null); return c ? { kind: 'plain', sig: 'p' + fnv(String(c.hash || '') + (c.mirror ? 'm' : '')) } : null; };
     const parts = picks.map((p, i) => p || (shown.length > 1 ? plain(shown[i]) : null));
-    const key = 'made:' + parts.map(p => (!p ? '-' : p.kind === 'cloud' ? 'c' + p.made.url : p.kind === 'local' ? 'l' + p.sig + '@' + tile : p.sig + '@' + tile)).join('|') + (more ? '+' + more : '');
+    const { cols, rows } = gridOf(shown.length + (more ? 1 : 0), ar), box = { tile, ar, px }, cell = { tile: Math.round(tile / rows), ar: ar * rows / cols, px: px / rows };
+    const pbox = shown.length > 1 || more ? cell : box, bk = '@' + pbox.tile + 'x' + pbox.ar.toFixed(3);
+    const key = 'made:' + parts.map(p => (!p ? '-' : p.kind === 'cloud' ? 'c' + p.made.url : p.kind === 'local' ? 'l' + p.sig + bk : p.sig + bk)).join('|') + (more ? '+' + more : '') + '#' + tile + 'x' + ar.toFixed(3);
     const load = () => {
       if (COMPOSED.has(key)) return COMPOSED.get(key);
-      const job = Promise.all(parts.map((p, i) => (!p ? null : p.kind === 'plain' ? plainUrl(shown[i], tile) : urlOf(shown[i], p, tile).catch(() => null))))
-        .then(urls => (urls.length === 1 && !more ? urls[0] : compose(urls, more))).catch(e => { COMPOSED.delete(key); throw e; });
+      const job = Promise.all(parts.map((p, i) => (!p ? null : p.kind === 'plain' ? plainUrl(shown[i], pbox) : urlOf(shown[i], p, pbox).catch(() => null))))
+        .then(urls => (urls.length === 1 && !more ? urls[0] : compose(urls, more, box))).catch(e => { COMPOSED.delete(key); throw e; });
       COMPOSED.set(key, job); while (COMPOSED.size > 200) COMPOSED.delete(COMPOSED.keys().next().value);
       return job;
     };
     return { key, load, pieces: ids.length, faces: picks.some(p => p && (p.kind === 'local' ? p.st.tiles.length > 1 : (p.made.faces || []).length > 1)) ? 'both' : 'one' };
   }
-  function plainUrl(poolId, tile) {
+  function plainUrl(poolId, box) {
     const st = { tiles: [{ face: 'front', job: null, words: null }], sig: 'plain|' + poolId + '|' + sigCharm(poolId) };
-    const pic = pictureOf(poolId, st, tile); return pic ? pic.url : null;
+    const pic = pictureOf(poolId, st, box); return pic ? pic.url : null;
   }
   const sigCharm = id => { const c = safe(() => host.charmOf(id), null); return c ? String(c.hash || '') : ''; };
-  /** One piece's own picture (the order window's ear rows, its sheet panel, the sheet window's piece): { key, load(px?) } or null. px: the picture's height on screen, for a drawing made larger
-   *  (this page's own drawing is made again at that size, up to 1200 px a face; the cloud's is what it is). */
+  /** One piece's own picture (the order window's ear rows, its sheet panel, the sheet window's piece): { key, load(box?) } or null. box = { tile, ar, px }: this page's own drawing is made for that
+   *  box; the cloud's is what it is. */
   function forPiece(poolId) {
     const p = pick(poolId); if (!p) return null;
-    return { key: 'made:' + (p.kind === 'cloud' ? 'c' + p.made.url : 'l' + p.sig), local: p.kind === 'local', load: px => (p.kind === 'local' && px && pictureOf(poolId, p.st, px) ? Promise.resolve(pictureOf(poolId, p.st, px).url) : urlOf(poolId, p)) };
+    return { key: 'made:' + (p.kind === 'cloud' ? 'c' + p.made.url : 'l' + p.sig), local: p.kind === 'local', load: box => urlOf(poolId, p, box) };
   }
 
   /** A piece's picture as it will be made, painted over a canvas that shows the piece (the order window's sheet panel, the sheet window's piece: they draw the charm alone, at once): the canvas is
@@ -320,7 +332,8 @@
   function paintInto(cv, poolId) {
     const m = poolId && doc && cv && cv.getContext ? forPiece(poolId) : null; if (!m) return Promise.resolve(false);
     const ask = cv._madeAsk = {};
-    return Promise.resolve(m.load(Math.round(Math.min(cv.width, cv.height) * 0.6))).then(u => (u ? imageOf(u) : null)).then(im => {
+    const t = Math.max(TILE, Math.min(1200, cv.height)), ar = cv.width / Math.max(1, cv.height);
+    return Promise.resolve(m.load({ tile: t, ar, px: t / 2 })).then(u => (u ? imageOf(u) : null)).then(im => {
       if (!im || cv._madeAsk !== ask) return false;
       const ctx = cv.getContext('2d'), k = Math.min(cv.width / im.naturalWidth, cv.height / im.naturalHeight) * 0.92, w = im.naturalWidth * k, h = im.naturalHeight * k;
       ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height); ctx.drawImage(im, (cv.width - w) / 2, (cv.height - h) / 2, w, h); ctx.restore();
@@ -418,5 +431,5 @@
   function state() { return Object.assign({ pending: pend.size, sending, sigs: SIGS.size, mine: mine.size, dev: dev() }, stats); }
   function setHost(h) { host = Object.assign({}, h || {}); IDX = null; return host; }
 
-  return { V, verOf, setHost, changed, adopt, refreshSoon, forLine, forPiece, paintInto, tileFor, sigOf, stateOf, pictureOf, flush, state, host: () => host, _sweep: sweep };
+  return { V, verOf, setHost, changed, adopt, refreshSoon, forLine, forPiece, paintInto, tileFor, boxOf, sigOf, stateOf, pictureOf, flush, state, host: () => host, _sweep: sweep };
 });

@@ -257,8 +257,6 @@ const ListMedia = (() => {
             const img=document.createElement('img');img.alt=host.getAttribute('aria-label') || '';img.decoding='async';img.loading='eager';img.referrerPolicy='no-referrer';
             await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{img.onload=img.onerror=null;reject(Error('Image timed out'));},20000);img.onload=()=>{clearTimeout(timer);resolve();};img.onerror=()=>{clearTimeout(timer);reject(Error('Image unavailable'));};img.src=cors(result);if(!job.soft)host.appendChild(img);});
             if(!host.isConnected || jobs.get(host)!==job)return;host.replaceChildren(img);
-            // (BIGTHUMB, Paul 28 Oct 2026: a piece drawn as it will be made has a box as wide as its picture (charm-nest-activity.css --ar); every other picture keeps its square box)
-            if(host.hasAttribute('data-vector')){if(host.dataset.made && img.naturalWidth>0 && img.naturalHeight>0)host.style.setProperty('--ar',Math.max(.5,Math.min(2.6,img.naturalWidth/img.naturalHeight)).toFixed(3));else host.style.removeProperty('--ar');}
           }else if(result?.nodeType)host.replaceChildren(result);
           else if(host.hasAttribute('data-listing')){host.innerHTML=photoStatus(job.key);host.title=photoTitle(job.key);}
           // the order window's listing photo (data-lid): a listing with no photo said "No vector available" there
@@ -406,11 +404,11 @@ const ListMedia = (() => {
     // THUMBSYNC (Paul, 28 Oct 2026: "a user scrolling through a list of orders can see updated thumbnails that already include the given charm's engraving for both back and front"): a line whose pieces have
     // something of their own (fitted words, a Charm Editor change) shows them as they will be made (charm-nest-made-thumb.js: this page's own drawing while it is live here, else the picture the cloud keeps on
     // the piece's pool row); every other line, the Vector design as before. Its box keeps the picture it shows until the new one is drawn (soft).
-    // (BIGTHUMB: drawn for the box's own height, at the screen's density: charm-nest-made-thumb.js tileFor)
-    let made=null;try{made=host && row && window.CharmNestMadeThumb ? window.CharmNestMadeThumb.forLine(row,{px:host.clientHeight || parseFloat(getComputedStyle(host).minHeight) || 156}) : null;}catch(e){made=null;console.warn('made thumbnail',e);}
+    // (BOXFIX, Paul 28 Oct 2026: "thumbnail preview boxes must be locked into the same size always": the box is the list's fixed size (charm-nest-activity.css); the picture is drawn to its shape, at the screen's density)
+    let made=null;try{made=host && row && window.CharmNestMadeThumb ? window.CharmNestMadeThumb.forLine(row,host) : null;}catch(e){made=null;console.warn('made thumbnail',e);}
     const was=jobs.get(host),soft=!!(was && String(was.key).startsWith('made:')) || !!made;
     // (the box says what it shows: its aria-label, which ListZoom's tooltip begins with; THUMBBIG)
-    if(host){if(made){if(!host.dataset.vecLabel)host.dataset.vecLabel=host.getAttribute('aria-label') || 'Vector design';host.dataset.made=String(made.pieces || 1);host.setAttribute('aria-label',made.faces==='both'?'As it will be made · front and back':'As it will be made');}else if(host.dataset.made){delete host.dataset.made;host.style.removeProperty('--ar');host.setAttribute('aria-label',host.dataset.vecLabel || 'Vector design');}}
+    if(host){if(made){if(!host.dataset.vecLabel)host.dataset.vecLabel=host.getAttribute('aria-label') || 'Vector design';host.dataset.made=String(made.pieces || 1);host.setAttribute('aria-label',made.faces==='both'?'As it will be made · front and back':'As it will be made');}else if(host.dataset.made){delete host.dataset.made;host.setAttribute('aria-label',host.dataset.vecLabel || 'Vector design');}}
     if(made){watch(host,()=>Promise.resolve(made.load()).then(u=>u || vector(row),()=>vector(row)),made.key,false,JSON.stringify([row?.key || '','made']),soft);return;}   // (a picture that cannot be had: the Vector design, as before)
     const sku=row?.spec?.designSku || row?.line?.sku || '';
     const both=matchPair(row),two=twoOf(row),one=oneRow(row),set=setOf(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again; one body once it is known to make one; the two designs of a set)
