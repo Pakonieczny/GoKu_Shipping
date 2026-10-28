@@ -201,7 +201,7 @@
   function openContext(el, cx, cy, w, src) {
     const a = A(); if (!a || !w || !el || typeof a.menuHtml !== 'function' || typeof a.openAt !== 'function') return false;
     const list = safe(() => contextList(w, src), null); if (!list) return false;
-    el.classList.add('ce-aictx'); el.dataset.case = contextCase(w);
+    el.classList.add('ce-aictx'); el.dataset.ctxkind = contextCase(w);   // (not data-case: that is the letter-case buttons' hook in the editor)
     // (the list goes in through openAt: it first closes the menu open before, which may be this same element, emptied as it closes)
     if (!a.openAt(el, cx, cy, tidy(list))) return false;
     el.classList.add('is-in');
@@ -232,7 +232,7 @@
     mac = mac == null ? isMac() : !!mac;
     const has = id => !w || BUILTIN.includes(id) || safe(() => w.x.hasTool(id), false);
     const lab = e => (typeof e.label === 'function' ? (w ? safe(() => e.label(w), '') : '') : e.menuLabel || e.label) || e.id;
-    const kt = e => (e.keyText ? (mac ? e.keyText : e.keyText.replace('⌫', 'Del').replace('↩', 'Enter')) : (e.key || e.sheetKey) ? keyLabel(e.key || e.sheetKey, mac) : '');
+    const kt = e => (e.keyText ? (e.key === 'Delete' ? (mac ? '⌫' : 'Del') : e.key === 'Enter' ? (mac ? '↩' : 'Enter') : e.keyText) : (e.key || e.sheetKey) ? keyLabel(e.key || e.sheetKey, mac) : '');
     const avail = e => !(e.x && w && !w.x.has(e.x)) && !(e.when && w && !safe(() => e.when(w), false));
     const rows = [];
     // Tools: Illustrator's Tools list order
@@ -273,7 +273,8 @@
   function label(id, mac) {
     const a = A(); if (!a) return '';
     const e = a.catalog.find(x => x.id === id) || EXTRA.find(x => x.id === id);
-    if (e) return e.keyText && (mac == null ? isMac() : mac) ? e.keyText : (e.key || e.sheetKey) ? keyLabel(e.key || e.sheetKey, mac) : '';
+    const m = mac == null ? isMac() : !!mac;
+    if (e) return e.key === 'Delete' && e.keyText ? (m ? '⌫' : 'Del') : e.key === 'Enter' && e.keyText ? (m ? '↩' : 'Enter') : (e.key || e.sheetKey) ? keyLabel(e.key || e.sheetKey, m) : '';
     const t = a.tools[id]; return t && t.key ? keyLabel(t.key, mac) : '';
   }
 

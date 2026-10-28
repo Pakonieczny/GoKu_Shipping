@@ -97,7 +97,7 @@ async function run(kit) {
       if (month) {
         letters = await page.evaluate(() => CharmEditor.current.items().filter(i => i.role === 'hatch' && i.source !== 'engrave').map(i => i.id));   // (CETEXT, 28 Oct 2026: the card's own words come in too, as a text of their own: source 'engrave'; the drawing's parts are the rest)
         const mBox = union(await Promise.all(letters.map(id => C(page, id => CharmEditor.current.box(id), id)))), pad = 0.6 * PT;
-        await page.keyboard.press('m');
+        await page.keyboard.press('q');   // (the Marquee: Q, as the Illustrator keys have it; M is the Rectangle)
         await drag(page, await clientOf(page, mBox[0] - pad, mBox[1] - pad), await clientOf(page, mBox[2] + pad, mBox[3] + pad));
         await page.keyboard.press('Delete'); await settleP(page);
         await page.keyboard.press('t');

@@ -221,7 +221,7 @@ async function partB() {
     // the hole moved down 1 mm (Shift + arrow); a small rectangle drawn with the editor's own Rectangle tool (its paint says only `true`); Save: a new design of that size
     await page.click('.ce-root .ce-layer[data-id="hole"]'); await settleP(page);
     await page.keyboard.press('Shift+ArrowDown'); await settleP(page);
-    await page.keyboard.press('Escape'); await page.keyboard.press('r'); await settleP(page);
+    await page.keyboard.press('Escape'); await page.keyboard.press('m'); await settleP(page);   // (the Rectangle: M, as the Illustrator keys have it)
     { const a = await page.evaluate(() => CharmEditor.current.clientOf(20 * 72 / 25.4 * 0.4, 18 * 72 / 25.4 * 0.5)), b = await page.evaluate(() => CharmEditor.current.clientOf(20 * 72 / 25.4 * 0.6, 18 * 72 / 25.4 * 0.62));
       await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 8 }); await page.mouse.up(); await settleP(page); }
     const drawn = await page.evaluate(() => CharmEditor.current.items('front').filter(i => i.name === 'Rectangle').map(i => ({ stroke: i.stroke, fill: i.fill, role: i.role })));
