@@ -615,7 +615,8 @@
       const C = root.CharmNestEngraveCard; let card = null, panel = null;
       const pk = pieceKeyOf(line, slotOfJob(job)), stage = () => stageOf(pk);
       const pick = f => { if (panel) panel.setFace(f); };
-      if (C && C.mountPiece) card = tryDo(() => C.mountPiece(cardHost, { row: line, key: job.key, face, stage: stage(), onPick: pick, approve: false, nameOf: o.nameOf || lineName, isWorking: Eng() && Eng().isWorking ? Eng().isWorking : undefined }), null);
+      // (FACEVIEW, Paul 28 Oct 2026: the card also shows a face the Charm Editor drew on that nothing engraves (o.artFaces), and the face the work area shows (o.view); a press on a face says so, o.onView)
+      if (C && C.mountPiece) card = tryDo(() => C.mountPiece(cardHost, { row: line, key: job.key, face: o.view || face, stage: stage(), onPick: pick, onView: o.onView, artFaces: o.artFaces, approve: false, nameOf: o.nameOf || lineName, isWorking: Eng() && Eng().isWorking ? Eng().isWorking : undefined }), null);
       if (!card) cardHost.remove();
       /** The card follows the STAGED edit: the faces it draws are the ones the staged mode asks for (the same tick), the face being edited is marked, and the thumbnails get the staged words back. */
       const follow = f => { if (!card || !card.update) return; tryDo(() => card.update({ face: f, stage: stage() })); tryDo(() => panel.paintAll()); };

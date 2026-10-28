@@ -11,6 +11,10 @@
 //   B  APPROVEHIT ("Pressing the green Approve does nothing"): his photo on the bar's front saved in the Charm Editor, then ONE real mouse press on Approve (a press at the button's place on the
 //      screen, not a script's click: what was missed before) approves the words and the art and writes the front's file with every grey in it; the same on the bird's BACK after a part was
 //      added there in the editor
+//   C  FACEVIEW ("Engravings and cut-lines should always be visible … when viewing the front … all of the work … performed in the Charm Editor must 100% be showing"): the bird's back draws no
+//      front art laid over it, its own added part, a Front | Back switch, and the card's thumbnails show its back and the front the Charm Editor drew on (C1); Front shows the front as the front,
+//      the master's hatch and every part of the editor, view only (C2); a dot added on the front from the back's card shows the front with it the moment it is saved (C3); the bar's front draws
+//      Paul's photo with the words (C4). C runs after A and B (it looks at what they saved)
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/charm-edit-real-cases.cjs      (CR_ONLY=A0, A or B; SHOTS=<dir> for the screenshots)
 'use strict';
 const path = require('node:path'), fs = require('node:fs');
@@ -83,7 +87,7 @@ async function partPage() {
       const toFront = async () => { await page.click('.ce-root [data-face="front"]'); await settleP(page); };
       const ed = () => page.evaluate(() => { const E = CharmEditor.current; if (!E) return null; const ids = []; const walk = l => l.forEach(i => { ids.push(i.id); if (i.children) walk(i.children); }); walk(E.items('front')); const r = document.querySelector('.ce-root .ce-refuse'); return { face: E.face(), ids, refuse: r ? r.textContent : '', sel: E.selection() }; });
       await open(); const s0 = await jobOf(); await toFront();
-      await page.evaluate(() => { const st = document.querySelector('.ce-root .ce-stage'), r = st.getBoundingClientRect(), dt = new DataTransfer(); dt.items.add(__pic); const at = { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, dataTransfer: dt }; st.dispatchEvent(new DragEvent('dragenter', at)); st.dispatchEvent(new DragEvent('dragover', at)); st.dispatchEvent(new DragEvent('drop', at)); });
+      await page.evaluate(() => { const st = document.querySelector('.ce-root .ce-stage'), r = st.getBoundingClientRect(), dt = new DataTransfer(); dt.items.add(__pic); const at = { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, dataTransfer: dt }; st.dispatchEvent(new DragEvent('dragenter', at)); st.dispatchEvent(new DragEvent('dragover', at)); st.dispatchEvent(new DragEvent('drop', at)); document.dispatchEvent(new DragEvent('dragleave', { bubbles: true, clientX: 0, clientY: 0 })); window.dispatchEvent(new DragEvent('dragend', { bubbles: true })); });   // (the page's own drop target saw the drag come in: it is told it left, as a real drag tells it)
       await page.waitForSelector('.ce-root .cei .cei__card', { timeout: 20000 });
       await page.waitForFunction(() => { const c = CharmNestCeImage.current(); return c && !c.working() && document.querySelector('.cei [data-wait]').hidden; }, null, { timeout: 30000 });
       await page.click('.cei [data-do="place"]'); await page.waitForFunction(() => !document.querySelector('.ce-root .cei .cei__card'), null, { timeout: 60000 }); await settleP(page);
@@ -171,6 +175,43 @@ async function partPage() {
       const wr2 = await until(() => { const d = st.doc('Charm_Pool_Back', s0.pid); return d && ap2 && +d.approvedAt === ap2.at && !d.invalidated ? d : null; }, 90000);
       check(`B2 the bird's back: a part added there in the Charm Editor ("${note2}"); Approve is under the pointer (${hit2.top ? 'yes' : 'no: ' + hit2.on}) and ONE real press approves it and writes the back's file`,
         /^Back artwork saved/.test(note2 || '') && hit2.top && !hit2.clickError && !!ap2 && !!wr2, JSON.stringify({ note2, hit2, ap2, wr2: !!wr2 }));
+    }
+    if (!ONLY || ONLY === 'C') {
+      /* ── C · FACEVIEW: every face drawn as that face, all the Charm Editor's work on it, at once ── */
+      const wa = () => page.evaluate(Q => {
+        const c = document.querySelector(Q), cv = c && c.querySelector('.backHost canvas'), sw = c && c.querySelector('.backHost .egFaceView'), j = c && Engrave.items().get(c.dataset.key);
+        const own = (cv && cv._frontArt || []).filter(s => s.artAdded || s.artChanged), th = f => c && c.querySelector(`.engFace[data-face="${f}"]`);
+        return { job: j && (j.face === 'front' ? 'front' : 'back'), viewFace: cv ? (cv._viewFace || (cv._frontFace ? 'front' : 'back')) : null, front: !!(cv && cv._frontFace), art: cv && cv._frontArt ? cv._frontArt.length : -1, own: own.length, ownIds: own.map(s => s.artMemberId),
+          grey: own.filter(s => s.artGrey).length, back: cv && cv._backArt ? cv._backArt.length : -1, peek: !!(c && c.querySelector('.egFrontPeek')), sw: sw ? [...sw.querySelectorAll('[data-fv]')].map(b => b.dataset.fv + (b.getAttribute('aria-pressed') === 'true' ? '*' : '')).join(' ') : '',
+          words: !!(j && j.fit && (j.fit.glyphs || []).length), thumbs: ['front', 'back'].filter(th).map(f => f + (th(f).dataset.art ? '(art)' : '') + (th(f).getAttribute('aria-current') === 'true' ? '*' : '') + (th(f).querySelector('.engThumb canvas, .engThumb svg, .engThumb img') ? '+pic' : '')).join(' ') };
+      }, Q);
+      // C1 · the bird, engraved on its back, its front drawn on in the Charm Editor (A): the back shows the back only, the front is a thumbnail of its own
+      await R.openEngraveDetail(w, 'sil', { face: 'back' }); await R.settle(page, 1200);
+      const c1 = await wa();
+      await R.shot(w, 'CR-C1-bird-back');
+      check(`C1 the bird's back (${c1.sw}): no "Show front", no front art drawn mirrored on it (${c1.art}), its own added part drawn (${c1.back}); the card's thumbnails show the back and the front the Charm Editor drew on (${c1.thumbs})`,
+        c1.job === 'back' && c1.viewFace === 'back' && !c1.peek && c1.art === 0 && c1.back >= 1 && c1.sw === 'front back*' && /front\(art\)\+pic/.test(c1.thumbs) && /back\*?\+pic/.test(c1.thumbs), JSON.stringify(c1));
+      // C2 · Front in the switch: the front as it is cut and engraved, every part of the editor on it, view only
+      await page.click(Q + ' .backHost .egFaceView [data-fv="front"]'); await R.settle(page, 600);
+      const c2 = await wa();
+      await R.shot(w, 'CR-C2-bird-front');
+      check(`C2 Front in the switch: the work area draws the bird's FRONT (${c2.art} parts of art: the master's hatch and the ${c2.own} parts the Charm Editor put there, ${c2.grey} greys), its cut lines, the card marking the front (${c2.thumbs}); Approve stays the back's`,
+        c2.viewFace === 'front' && c2.front && c2.own >= 6 && c2.grey >= 4 && c2.art > c2.own && c2.sw === 'front* back' && /front\(art\)\*/.test(c2.thumbs) && !!(await page.$(Q + ' [data-a="approve"], ' + Q + ' [data-a="approved"]')), JSON.stringify(c2));
+      // C3 · back to the back, then a dot added on the FRONT in the Charm Editor: the moment it is saved the work area shows the front with the dot, no reload
+      await page.click(Q + ' .backHost .egFaceView [data-fv="back"]'); await R.settle(page, 400);
+      const c3a = await wa();
+      await page.$eval(Q + ' .egCharmEdit', b => b.click()); await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page);
+      await page.click('.ce-root [data-face="front"]'); await settleP(page);
+      const dotId = await page.evaluate(() => { const E = CharmEditor.current, f = E.frame(), x = f.x0 + f.wPt * 0.52, y = f.y0 + f.hPt * 0.58; const ids = E.ctx.addItems([{ kind: 'path', role: 'hatch', name: 'Third dot', fill: true, stroke: false, subpaths: [[['m', [x, y]], ['l', [x + 0.7, y]], ['l', [x + 0.35, y + 0.7]], ['h']]], tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 }], { select: false }); E.ctx.commit('dot'); return ids[0]; });
+      const t0 = Date.now(), note3 = await saveEditor();
+      const c3 = await until(async () => { const s = await wa(); return s.viewFace === 'front' && s.ownIds.includes(dotId) ? s : null; }, 5000), ms = Date.now() - t0, c3z = c3 ? null : Object.assign(await wa(), { dotId, fv: await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); const j = c && Engrave.items().get(c.dataset.key); return j ? { v: Engrave.viewFaceOf(j), pj: Object.entries(Engrave.jobsOfPiece(j.copies[0])).map(([f, x]) => f + ':' + (x ? x.state + (x.editingBack ? 'E' : '') + (x === j ? '=' : '') : '-')), st: j.state } : null; }) });
+      await R.shot(w, 'CR-C3-saved-front-shown');
+      check(`C3 from the back's card, a dot added on the front and saved ("${note3}"): the work area shows the FRONT with the dot ${ms} ms after Save (no reload), the switch on Front`, c3a.viewFace === 'back' && !!c3 && c3.sw === 'front* back', JSON.stringify({ c3a: c3a.viewFace, c3, ms, c3z }));
+      // C4 · the bar, engraved on its front: its front draws Paul's photo (every grey) with the words, and its thumbnail the front
+      await R.openEngraveDetail(w, 'bar', { face: 'front' }); await R.settle(page, 1200);
+      const c4 = await wa();
+      check(`C4 the bar's front: the work area draws Paul's photo (${c4.grey} grey parts) with the words fitted on it, the cut line, and the card's thumbnail is the front (${c4.thumbs})`,
+        c4.job === 'front' && c4.viewFace === 'front' && c4.grey === 8 && c4.words && /front\*?\+pic/.test(c4.thumbs) && !c4.peek, JSON.stringify(c4));
     }
     check('E1 no page error', w.errors.length === 0, JSON.stringify(w.errors).slice(0, 600));
     console.log('screenshots in ' + shots);

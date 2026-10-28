@@ -238,14 +238,10 @@ async function partB(kit) {
     check('B7 the back\'s work area draws HI at once, in the hatch blue, exactly where the view puts it: the blue pixels\' box is its box on the canvas (±2 px), and there is no other blue',
       after.art === after.ids.length && after.blueIn > 30 && after.blueAll === after.blueIn && near(after.blueBox, after.px.map((v, i) => (i < 2 ? Math.round(v) : Math.round(v) - 1)), 2.5),
       JSON.stringify({ art: after.art, blueIn: after.blueIn, blueAll: after.blueAll, blueBox: after.blueBox, px: after.px && after.px.map(v => +v.toFixed(1)) }));
-    // (with "Show front" on, the back is drawn over the front's art seen through it: HI is still there, over it)
-    const peekOf = () => page.evaluate(() => { const cv = __cb.cv(), px = __cb.pxBox(cv, __cb.union(cv._backArt.map(s => s.bbox))); return { show: !!cv._showFront, n: __cb.hatch(cv, px) }; });
+    // (FACEVIEW, Paul 28 Oct 2026: "When viewing the back, the front's art must not be drawn mirrored on top as if it were the back": no "Show front"; the back draws HI and nothing of the front)
+    const peekOf = () => page.evaluate(Q => { const cv = __cb.cv(), px = __cb.pxBox(cv, __cb.union(cv._backArt.map(s => s.bbox))); return { show: !!cv._showFront, front: cv._frontArt.length, peek: !!document.querySelector(Q + ' .backHost .egFrontPeek'), n: __cb.hatch(cv, px) }; }, Q);
     const off0 = await peekOf();
-    await page.click(Q + ' .backHost .egFrontPeek'); await R.settle(page, 300);
-    const on1 = await peekOf();
-    await R.shot(w, 'CB-3b-back-show-front');
-    await page.click(Q + ' .backHost .egFrontPeek'); await R.settle(page, 300);
-    check('B7b with "Show front" on, the back still draws HI (in the same blue, over the front\'s art seen through it)', !off0.show && on1.show && off0.n > 30 && Math.abs(on1.n - off0.n) <= 0.2 * off0.n, JSON.stringify({ off0, on1 }));
+    check('B7b the back has no "Show front": none of the front\'s art is laid over it, HI is drawn in its blue', !off0.show && !off0.peek && off0.front === 0 && off0.n > 30, JSON.stringify({ off0 }));
     const fb = st.doc('Charm_Pool_Back', PID);
     check('B8 the approved back is withdrawn in Engrave.artChanged\'s words: its record invalidated, the face fitted again and waiting for Approve, and the work area\'s note says so',
       fb && fb.invalidated === true && after.approvedAt == null && after.state === 'review' && after.fitted && after.note.includes("This charm's back changed since the words were approved — fit the words again") && /^Back artwork saved for this piece/.test(after.note),

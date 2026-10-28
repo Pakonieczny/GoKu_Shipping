@@ -1,13 +1,13 @@
 // FRONTART (Paul, 27 Oct 2026: "In the Engraving Modal the User sometimes needs to be able to see the engraving on the front of a given charm").
 // The work area of the Engrave card (renderBack, editable) now draws the design's own art (job.view.dropped: a calendar's day grid and month letters) as vectors at the work area's own scale:
-// on a FRONT always, muted, over the grid and the tint and under the cut line and the words; on a BACK only while the quiet "Show front" switch beside the grid's label is on, fainter, seen through
-// the charm. The choice holds for the browser tab (sessionStorage). Display only: job.fit, job.mask, job.view and the saved records are never changed, and the pictures written with a piece never draw it.
+// on a FRONT always, muted, over the grid and the tint and under the cut line and the words; on a BACK never (FACEVIEW, 28 Oct 2026: "Show front" laid it mirrored over the back; the front is now seen as the front, through a Front | Back switch where
+// the front has no job of its own). Display only: job.fit, job.mask, job.view and the saved records are never changed, and the pictures written with a piece never draw it.
 //   A  the real renderBack source (no browser) on a made-up calendar plate, drawn on a canvas that records every call: the art's paths are drawn as vectors through the work area's own transform at two
 //      sizes; the same paths and frame as the Front box (charm-nest-engrave-preview.js frameFor); colours by role (red line, blue hatch, a white fill knocked out; a black stray on CUT and a keep-out not
-//      drawn); layer order; the back's art turned over and drawn only with "Show front" on; the tab's choice (sessionStorage, a tab that cannot keep it); the written pictures unchanged; the job untouched
+//      drawn); layer order; a back draws none of it; the written pictures unchanged; the job untouched
 //   B  the real page over the repo's fake site (tests/charm-nest/_engraveRealWorld.cjs: real drawings, intake, pool, fit; offline, nothing written anywhere real, made-up names): the front job's work
-//      area draws its art as vectors, crisp at any size; "Show front" on a back (and only there), remembered in the tab; dragging still works on a front with art; nothing changes in job.fit / job.mask
-//      / job.view, and "Approve both faces" with the switch on saves records and pictures with no trace of it
+//      area draws its art as vectors, crisp at any size; no art on a back; the Front | Back switch on a back whose front has no job, its front drawn as the front; dragging still works on a front with art; nothing changes in job.fit / job.mask
+//      / job.view, and "Approve both faces" saves records and pictures with no trace of it
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/engrave-front-art.cjs      (FA_ONLY=A or B; SHOTS=<dir> for the screenshots)
 'use strict';
 const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm'), path = require('node:path');
@@ -52,7 +52,7 @@ function partA() {
   const cut = (a, b) => { const i = src.indexOf(a), j = src.indexOf(b, i); assert(i > 0 && j > i, `bridge source markers: ${a}`); return src.slice(i, j); };
   const env = vm.createContext({ G, P, PT, MM, Math, Array, Infinity, document: { createElement: () => makeCanvas() }, console, window: W });
   vm.runInContext(cut('  function textBox(glyphs', '  function resize(job, size)') + cut('  /* ── 7.6 · back files', '  function renderFront(') +
-    '\nthis.renderBack = renderBack; this.frontPeek = frontPeek; this.FRONT_ART_ALPHA = FRONT_ART_ALPHA; this.FRONT_INK = FRONT_INK;', env);
+    '\nthis.renderBack = renderBack; this.FRONT_ART_ALPHA = FRONT_ART_ALPHA; this.FRONT_INK = FRONT_INK;', env);
 
   // a made-up calendar plate, 110 x 80 pt, its hanging hole on the right (so the view is turned 90 degrees: the turn must be the view's own): a day grid of 14 red engraved squares, three blue
   // hatched "letters" (the first with a white window knocked out of it), a blue hatch line, a black stray line left open on CUT and a FRONT KEEP-OUT square (neither is art)
@@ -140,35 +140,14 @@ function partA() {
     check('A6 the written pictures (not editable) draw no art and make exactly the calls they made before', sameAll.every(Boolean), JSON.stringify(sameAll));
   }
 
-  // A7 · the BACK: the front's art turned over with the back (the view's own mirror), drawn only while "Show front" is on, fainter
+  // A7 · the BACK (FACEVIEW, Paul 28 Oct 2026: "When viewing the back, the front's art must not be drawn mirrored on top as if it were the back"): none of the front's art, ever, whatever a tab kept
   {
-    const cv = env.renderBack(back, [500, 500], { grid: true, editable: true }), first = opsOf(cv).filter(o => o[0] === 'drawImage').pop();
-    const turned = cv._frontArt.every(s => JSON.stringify(s.subpaths) === JSON.stringify(G.transformSeg(G.transformSeg(s.original, back.view.M), back.view.R).subpaths));
-    const mirrored = JSON.stringify(cv._frontArt[0].subpaths) !== JSON.stringify(G.transformSeg(cv._frontArt[0].original, back.view.R).subpaths);
-    const offAtFirst = !cv._showFront && !layerOn(cv, env.FRONT_ART_ALPHA.back) && !made.get(first[1][0].canvas).ops.some(o => o[0] === 'drawImage' && Math.abs(o[2].globalAlpha - env.FRONT_ART_ALPHA.back) < 1e-9);
-    cv._showFront = true; cv._paint();
-    const shown = opsOf(cv).filter(o => o[0] === 'drawImage').pop(), peek = made.get(shown[1][0].canvas), L = layerOn(peek, env.FRONT_ART_ALPHA.back);
-    const peekOps = opsOf(peek), artAt = L ? L.i : -1, cutAt = peekOps.findIndex(o => o[0] === 'stroke' && o[2].strokeStyle === '#000');
-    const coords = L && JSON.stringify(pathOps(L.layer)) === JSON.stringify(expectedPath(cv._frontArt, cv._map.tx));
-    cv._showFront = false; cv._paint(); const off = opsOf(cv).filter(o => o[0] === 'drawImage').pop();
-    check('A7 a back: the same art turned over with the back (view.M mirror, then view.R); off by default; "Show front" lays it on at ' + env.FRONT_ART_ALPHA.back + ' under the cut line; off again is the plain back',
-      cv._frontArt.length === ART.length && turned && mirrored && offAtFirst && !!L && coords && artAt < cutAt && shown[1][0].canvas !== first[1][0].canvas && off[1][0].canvas === first[1][0].canvas,
-      JSON.stringify({ art: cv._frontArt.length, turned, mirrored, offAtFirst, layer: !!L, coords, artAt, cutAt }));
-  }
-
-  // A8 · the tab's choice: sessionStorage, read by every new work area; a tab that cannot keep it holds it in memory
-  {
-    const store = W.sessionStorage;
-    const a = env.frontPeek(), b = env.frontPeek(true), kept = store.getItem('cn.engraveShowFront'), cv = env.renderBack(back, [400, 400], { grid: true, editable: true });
-    const onAtOnce = cv._showFront === true && !!layerOn(made.get(opsOf(cv).filter(o => o[0] === 'drawImage').pop()[1][0].canvas), env.FRONT_ART_ALPHA.back);
-    const fr = env.renderBack(front, [400, 400], { grid: true, editable: true }).
-      _showFront;   // (a front never "shows the front": its art is always there)
-    env.frontPeek(false); const kept2 = store.getItem('cn.engraveShowFront');
-    Object.defineProperty(W, 'sessionStorage', { configurable: true, get() { throw new Error('denied'); } });
-    const c = env.frontPeek(true), d = env.frontPeek(), e = env.frontPeek(false), f = env.frontPeek();
-    Object.defineProperty(W, 'sessionStorage', { configurable: true, value: store });
-    check('A8 "Show front" is the tab\'s: off at first, kept in sessionStorage ("1"/"0"), read by the next work area; a tab whose storage throws keeps it in memory', a === false && b === true && kept === '1' && onAtOnce && fr === false && kept2 === '0' && c === true && d === true && e === false && f === false,
-      JSON.stringify({ a, b, kept, onAtOnce, fr, kept2, c, d, e, f }));
+    W.sessionStorage.setItem('cn.engraveShowFront', '1');
+    const cv = env.renderBack(back, [500, 500], { grid: true, editable: true }), layers = opsOf(cv).filter(o => o[0] === 'drawImage');
+    cv._paint(); const again = opsOf(cv).filter(o => o[0] === 'drawImage').pop();
+    check('A7 a back draws none of the front\'s art: no art of its own, no faint layer, the same plain picture when painted again (the old "Show front" choice of the tab is not read)',
+      cv._frontArt.length === 0 && !cv._frontFace && cv._showFront === false && !layerOn(cv, env.FRONT_ART_ALPHA.back) && !layers.some(l => made.get(l[1][0].canvas) && layerOn(made.get(l[1][0].canvas), env.FRONT_ART_ALPHA.back)) && again[1][0].canvas === layers[layers.length - 1][1][0].canvas,
+      JSON.stringify({ art: cv._frontArt.length, show: cv._showFront, layers: layers.length }));
   }
 
   // A9 · display only
@@ -215,7 +194,7 @@ async function partB() {
         },
         card: () => document.querySelector('#egQueue .rvItem[data-kind=placement]'),
         cv: () => document.querySelector('#egQueue .rvItem[data-kind=placement] .backHost canvas'),
-        toggle: () => document.querySelector('#egQueue .rvItem[data-kind=placement] .backHost .egFrontPeek')
+        toggle: () => document.querySelector('#egQueue .rvItem[data-kind=placement] .backHost .egFaceView, #egQueue .rvItem[data-kind=placement] .backHost .egFrontPeek')
       };
     });
     const rid = n => R.ORDERS[n].rid;
@@ -247,36 +226,32 @@ async function partB() {
     check('B4 crisp at any size: drawn again at 320 and 1400 px, every time as vectors at that size\'s own scale (never one small picture stretched)',
       sizes.every(s => s.v.layer && s.v.same && s.v.w === s.size[0] && s.v.h === s.size[1]) && sizes[1].k > 3 * sizes[0].k, JSON.stringify(sizes.map(s => [s.size, +s.k.toFixed(2), s.v.steps, s.v.same])));
 
-    // B5 · the BACK of the same piece: the quiet switch, off at first
+    // B5 · the BACK of the same piece (FACEVIEW, Paul 28 Oct 2026: "When viewing the back, the front's art must not be drawn mirrored on top as if it were the back"): no front art on it, and no
+    //      switch either (its front is a job of its own: its own card)
     await page.evaluate(Q => { const b = document.querySelector(Q + ' .engCard .engFace[data-face="back"] .engThumb'); if (b) b.click(); }, Q); await R.settle(page, 900);
-    const b1 = await page.evaluate(() => { const cv = __fa.cv(), t = __fa.toggle(), r = t && t.getBoundingClientRect(), c = cv.getBoundingClientRect(); const job = Engrave.items().get(__fa.card().dataset.key);
-      return { face: job.face || 'back', art: cv._frontArt.length, front: cv._frontFace, show: cv._showFront, toggle: !!t, checked: t && t.querySelector('input').checked, text: t && t.textContent.trim(), pos: r && [Math.round(r.left - c.left), Math.round(r.top - c.top), Math.round(r.right - c.left)], cw: c.width, pix: __fa.pix(cv), kept: sessionStorage.getItem('cn.engraveShowFront') }; });
-    check('B5 the back: a small "Show front" switch in the drawing\'s top-left corner beside the grid\'s label, off at first, and no art drawn', b1.face === 'back' && b1.art > 0 && !b1.front && b1.toggle && b1.checked === false && b1.show === false && b1.text === 'Show front' &&
-      b1.pos[0] > 30 && b1.pos[1] >= 0 && b1.pos[1] < 30 && b1.pos[2] < b1.cw && b1.pix.red === 0 && b1.kept === null, JSON.stringify(b1));
-    await page.click(Q + ' .backHost .egFrontPeek'); await R.settle(page, 300);
-    const b2 = await page.evaluate(() => { const cv = __fa.cv(), t = __fa.toggle(); return { show: cv._showFront, checked: t.querySelector('input').checked, on: t.classList.contains('on'), pix: __fa.pix(cv), kept: sessionStorage.getItem('cn.engraveShowFront'), focus: document.activeElement && document.activeElement.matches && document.activeElement.matches('.egFrontPeek input') }; });
-    await R.shot(w, 'FA-back-show-front');
-    check('B6 a click: the front\'s art appears faintly through the back, the choice is kept for this tab, and the focus stays where it was (the card\'s keys keep working)', b2.show && b2.checked && b2.on && b2.pix.red > 100 && b2.pix.red < 1e9 && b2.kept === '1' && !b2.focus, JSON.stringify(b2));
-    const b3 = await page.evaluate(() => { const cv = __fa.cv(); window.__rec = []; cv._paint(); const rec = window.__rec; window.__rec = null;
-      const peek = rec.filter(r => r.cv === cv && r.k === 'drawImage').map(r => r.a[0])[0]; window.__rec = []; __fa.card()._remountWork(); const rec2 = window.__rec; window.__rec = null; const cv2 = __fa.cv();
-      const peek2 = rec2.filter(r => r.cv === cv2 && r.k === 'drawImage').map(r => r.a[0]).pop();   // (the back with the front seen through it: the picture the work area lays down first)
-      return { sameSize: !!peek && peek.width === cv.width, v: __fa.vector(cv2, 0.2, rec2, peek2), show: cv2._showFront, checked: __fa.toggle().querySelector('input').checked, art: cv2._frontArt.map(s => JSON.stringify(s.subpaths)).join('|') === cv2._frontArt.map(s => JSON.stringify(CharmNestGeom.transformSeg(CharmNestGeom.transformSeg(s.original, Engrave.items().get(__fa.card().dataset.key).view.M), Engrave.items().get(__fa.card().dataset.key).view.R).subpaths)).join('|') }; });
-    check('B7 drawn again (a resize, a turn), the back keeps the switch on and draws the art as vectors, faint (0.2), turned over with the back (view.M, then view.R)', b3.show && b3.checked && b3.v.layer && b3.v.same && b3.art && b3.sameSize, JSON.stringify(b3));
-
-    // B8 · another back with art: on at once (the tab remembers); a back with no art: no switch; off again
+    const b1 = await page.evaluate(() => { const cv = __fa.cv(), job = Engrave.items().get(__fa.card().dataset.key);
+      return { face: job.face || 'back', art: cv._frontArt.length, front: cv._frontFace, show: cv._showFront, toggle: !!__fa.toggle(), peek: !!document.querySelector('.egFrontPeek'), pix: __fa.pix(cv) }; });
+    check('B5 the back: none of the front\'s art is drawn on it (no "Show front"), and a piece whose front has its own placement has no Front | Back switch (its front is its own card)', b1.face === 'back' && b1.art === 0 && !b1.front && !b1.show && !b1.toggle && !b1.peek && b1.pix.red === 0, JSON.stringify(b1));
+    // B6 · a back whose front is engraved by no job (the disc: a flower on its front, words on its back): the Front | Back switch, on Back, the back drawn as the back
     await R.openEngraveDetail(w, 'discTwin', { face: 'back' }); await R.settle(page, 900);
-    const d1 = await page.evaluate(() => { const cv = __fa.cv(), t = __fa.toggle(); return { art: cv._frontArt.length, toggle: !!t, checked: t && t.querySelector('input').checked, show: cv._showFront, pix: __fa.pix(cv) }; });
-    await R.shot(w, 'FA-disc-back-show-front');
+    const d1 = await page.evaluate(() => { const cv = __fa.cv(), t = __fa.toggle(), r = t && t.getBoundingClientRect(), c = cv.getBoundingClientRect();
+      return { art: cv._frontArt.length, front: cv._frontFace, sw: t ? [...t.querySelectorAll('[data-fv]')].map(b => b.dataset.fv + (b.getAttribute('aria-pressed') === 'true' ? '*' : '')).join(' ') : '', pos: r && [Math.round(r.left - c.left), Math.round(r.top - c.top), Math.round(r.right - c.left)], cw: c.width, pix: __fa.pix(cv) }; });
+    check('B6 the disc\'s back (its front a design with art, engraved by no job): a small Front | Back switch in the drawing\'s top-left corner beside the grid\'s label, on Back; the back draws no art', d1.sw === 'front back*' && d1.art === 0 && !d1.front && d1.pix.red === 0 && d1.pos[0] > 30 && d1.pos[1] >= 0 && d1.pos[1] < 30 && d1.pos[2] < d1.cw, JSON.stringify(d1));
+    // B7 · Front: the front as the front, its flower as vectors (muted, never mirrored); the words stay the back's; Back again: the back
+    await page.click(Q + ' .backHost .egFaceView [data-fv="front"]'); await R.settle(page, 500);
+    const d2 = await page.evaluate(() => { const cv = __fa.cv(), job = Engrave.items().get(__fa.card().dataset.key); window.__rec = []; cv._paint(); window.__rec = null;
+      const live = Pool.charmOf(job.copies[0]), v = cv._frontArt.length && CharmNestGeom.backView(live, CharmNestGeom.viewOptionsFor({ charmUp: live.upAngle, entry: Master.entryFor(job.row.spec.designSku) || {}, face: 'front' }));
+      return { viewFace: cv._viewFace, front: cv._frontFace, art: cv._frontArt.length, unmirrored: !!v && JSON.stringify(v.M) === '[1,0,0,1,0,0]', pix: __fa.pix(cv), sw: [...__fa.toggle().querySelectorAll('[data-fv]')].map(b => b.dataset.fv + (b.getAttribute('aria-pressed') === 'true' ? '*' : '')).join(' '), approve: !!document.querySelector('#egQueue .rvItem[data-kind=placement] [data-a="approve"]') }; });
+    await R.shot(w, 'FA-disc-front-view');
+    await page.click(Q + ' .backHost .egFaceView [data-fv="back"]'); await R.settle(page, 500);
+    const d3 = await page.evaluate(() => { const cv = __fa.cv(); return { viewFace: cv._viewFace || null, front: cv._frontFace, art: cv._frontArt.length, pix: __fa.pix(cv) }; });
+    check('B7 Front in the switch: the disc\'s FRONT as the front (its flower drawn, in red, not mirrored), the switch on Front, Approve still the back\'s; Back again: the back, no art',
+      d2.viewFace === 'front' && d2.front && d2.art > 10 && d2.unmirrored && d2.pix.red > 50 && d2.sw === 'front* back' && d2.approve && !d3.viewFace && !d3.front && d3.art === 0 && d3.pix.red === 0, JSON.stringify({ d2, d3 }));
+    // B8 · the mini tag (a front and a back job): no switch on either face
     await R.openEngraveDetail(w, 'tag', { face: 'back' }); await R.settle(page, 700);
     const t1 = await page.evaluate(() => { const cv = __fa.cv(); return { art: cv._frontArt.length, toggle: !!__fa.toggle(), text: cv.parentElement.textContent.trim() }; });
-    await R.openEngraveDetail(w, 'discTwin', { face: 'back' }); await R.settle(page, 700);
-    await page.click(Q + ' .backHost .egFrontPeek'); await R.settle(page, 300);
-    const d2 = await page.evaluate(() => { const cv = __fa.cv(); return { show: cv._showFront, pix: __fa.pix(cv), kept: sessionStorage.getItem('cn.engraveShowFront') }; });
-    check('B8 the next back with art opens with the switch on (the tab remembers) and its flower seen through; the mini tag (no art on its front) has no switch; off again: no art, kept "0"',
-      d1.art > 10 && d1.toggle && d1.checked && d1.show && d1.pix.red > 50 && t1.art === 0 && !t1.toggle && t1.text === '' && !d2.show && d2.pix.red === 0 && d2.kept === '0', JSON.stringify({ d1, t1, d2 }));
-    // (on again for the approval below: the switch on while approving)
+    check('B8 the mini tag (its front and its back each a job): no switch, nothing of the front on the back', t1.art === 0 && !t1.toggle && t1.text === '', JSON.stringify({ t1 }));
     await R.openEngraveDetail(w, 'both', { face: 'back' }); await R.settle(page, 700);
-    await page.click(Q + ' .backHost .egFrontPeek'); await R.settle(page, 300);
 
     // B9 · display only: every job's fit, mask and view exactly as built
     const h1 = await hashes();
@@ -294,7 +269,7 @@ async function partB() {
     const recs = want.map(id => w.srv.st.doc('Charm_Pool_Back', id));
     const okNums = recs.every((r, i) => { if (!r) return false; const s = snap.find(x => x.face === (want[i].endsWith('~front') ? 'front' : 'back')); return r.sizePt === +s.size.toFixed(3) && JSON.stringify(r.centre) === JSON.stringify(s.centre.map(v => +v.toFixed(2))) && r.angle === s.angle && r.upAngle === s.up; });
     const trace = recs.filter(Boolean).some(r => /frontart|showfront|frontpeek|egfrontpeek|engraveshowfront/i.test(JSON.stringify(r)));
-    check('B10 "Approve both faces" with "Show front" on: both records saved, their size, place, turn and up angle exactly the fit\'s, and nothing of the switch in them', pressed && recs.every(Boolean) && okNums && !trace,
+    check('B10 "Approve both faces" after the faces were looked at: both records saved, their size, place, turn and up angle exactly the fit\'s, and nothing of the switch in them', pressed && recs.every(Boolean) && okNums && !trace,
       JSON.stringify({ pressed, saved: recs.map(Boolean), okNums, trace }));
     const pngs = recs.filter(Boolean).map(r => ({ face: r.face || (String(r.name || '').includes('_front_') ? 'front' : 'back'), path: r.outputs && r.outputs.png && r.outputs.png.path, poolId: r.poolId }));
     const pngFacts = [];

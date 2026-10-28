@@ -110,6 +110,13 @@
         position: live && Pos && Pos.of ? tryDo(() => Pos.of(live), null) : null,
         state: live ? stateOf(live, o) : stage ? 'plain' : 'busy', working: !!(live && o.isWorking && tryDo(() => o.isWorking(live), false)), staged: !live && !!stage };
     }
+    // FACEVIEW (Paul, 28 Oct 2026: "all of the work and updates to a given charm performed in the Charm Editor must 100% be showing and visible in the engraving modal"): a face nothing engraves that
+    // the Charm Editor drew on (o.artFaces(jobs, face): the Engrave detail's card only) is shown too, as `art`: its picture (the piece's own charm from that side, the editor's parts on it), no words, no
+    // approval of its own; a press on it shows it in the work area. A card with no engraved face at all is not made for it.
+    if (typeof o.artFaces === 'function' && (out.front || out.back)) for (const face of ['front', 'back']) {
+      const ak = out[face] || (face === 'back' && never) ? '' : tryDo(() => o.artFaces(jobs || [], face), ''); if (!ak) continue;   // (its key: the piece's drawing as edited, so a new save draws the picture again)
+      out[face] = { face, key: jobKey(lineKey, slot, face), job: null, text: '', fontWord: null, fontId: null, position: null, state: 'art', working: false, staged: false, art: true, artKey: String(ak) };
+    }
     return out;
   }
 
@@ -170,7 +177,7 @@
         out.push({ tag: tagWord, pieceKey: F && F.pieceKeyOf ? F.pieceKeyOf(jobsOfPiece[0] ? jobsOfPiece[0].key : jobKey(line.key, slot, 'back')) : line.key + (slot ? '#' + slot : ''),
           rid, lineKey: line.key, slot: slot || null, row: line, title, name: pname, lineName: name, design: sps || null, lengthText: lenWord, never, faces, jobs: jobsOfPiece, approve, seals,
           metal: metal ? metal.code : '', metalKey: metal ? metal.key : '', metalColor: metal ? metal.color : '', many,   // (ENGPICK: the code "SS" / "GF", its key and colour; `many`: the order has more than one line, so the title says the metal)
-          state: worst(present.map(f => f.state)) });
+          state: worst(present.filter(f => !f.art).map(f => f.state)) });   // (FACEVIEW: a face only drawn on in the Charm Editor says nothing of the engraving's state)
       };
       const was = out.length;
       if (groups.length) for (const g of groups) make(g.slot || null, g.jobs);
@@ -197,6 +204,7 @@
   function faceHtml(piece, face, cur) {
     const f = piece.faces[face], key = f.key;
     let txt;
+    if (f.art) return `<div class="engFace" data-face="${face}" data-key="${esc(key)}" data-art="1"${cur === face ? ' aria-current="true"' : ''}><button type="button" class="engThumb" data-e="open" aria-label="${faceTitle(face)}: the Charm Editor's art, show it"></button><span class="engLbl">${faceTitle(face)}</span><span class="engTxt engCue">Charm Editor art</span></div>`;   // (FACEVIEW)
     if (f.state === 'busy' && !f.text) txt = '<span class="engTxt engCue"><span class="owSpin" aria-hidden="true"></span>Preparing</span>';
     else if (f.state === 'words' && !f.text) txt = '<span class="engTxt engCue">Words to confirm</span>';
     else if (f.text) { const one = f.text.split('\n').join(' / '); txt = `<span class="engTxt" title="${esc(f.text)}"${f.fontId && root && root.CharmNestEngravePreview && root.CharmNestEngravePreview.fontFamilyOf ? ` style="font-family:${esc(tryDo(() => root.CharmNestEngravePreview.fontFamilyOf(f.fontId), ''))}"` : ''}>${esc(one)}</span>`; }
@@ -295,7 +303,7 @@
   const idOf = x => { if (!x || typeof x !== 'object' || !ids) return 0; let n = ids.get(x); if (!n) ids.set(x, n = ++idN); return n; };
   function sig(piece, o) {
     return JSON.stringify([piece.pieceKey, piece.title, piece.rel || 1, piece.metalKey || '', !!piece.many, piece.state, !!piece.never, piece.approve ? [piece.approve.ok, piece.approve.why, piece.approve.jobs.length] : 0, (piece.seals || []).map(s => s.id).join(','), currentOf(piece, o),
-      ['front', 'back'].map(f => { const x = piece.faces[f]; return x ? [x.state, !!x.staged, x.text, x.fontWord, x.fontId, x.position && [x.position.x, x.position.y, x.position.size, x.position.angle], idOf(x.job && x.job.fit), idOf(x.job && x.job.view), x.job && +x.job.approvedAt || 0, x.job && (x.job.backs || []).length] : 0; })]);
+      ['front', 'back'].map(f => { const x = piece.faces[f]; return x ? [x.state, x.artKey || '', !!x.staged, x.text, x.fontWord, x.fontId, x.position && [x.position.x, x.position.y, x.position.size, x.position.angle], idOf(x.job && x.job.fit), idOf(x.job && x.job.view), x.job && +x.job.approvedAt || 0, x.job && (x.job.backs || []).length] : 0; })]);
   }
 
   /* ── the SET STRIP (SETBAR, Paul, 13 Oct 2026: "the user can see both bar charms side-by-side, and then be able to manipulate each one"; "the thinner bar always sits on the shorter chain") ──
@@ -459,9 +467,10 @@
     css(); ctx = Object.assign({}, ctx); let el = null, last = '', gone = false;
     const find = () => {
       const row = lineOf(ctx.row), F = Faces(), pk = ctx.key && F ? F.pieceKeyOf(ctx.key) : '';
-      const ps = piecesOf([row], { nameOf: ctx.nameOf, isWorking: ctx.isWorking, stage: ctx.stage || null, keepEmpty: true }); return ps.find(p => p.pieceKey === pk) || ps.find(p => p.jobs.some(j => j.key === ctx.key)) || ps[0] || null;
+      const ps = piecesOf([row], { nameOf: ctx.nameOf, isWorking: ctx.isWorking, stage: ctx.stage || null, keepEmpty: true, artFaces: ctx.artFaces }); return ps.find(p => p.pieceKey === pk) || ps.find(p => p.jobs.some(j => j.key === ctx.key)) || ps[0] || null;
     };
-    const o = () => ({ approve: false, current: ctx.face || '', onOpen: face => { if (ctx.onPick) tryDo(() => ctx.onPick(face)); return null; } });
+    // (FACEVIEW: a press on a face shows it in the work area (ctx.onView); a face the Charm Editor drew on that nothing engraves is only shown, never picked for the words)
+    const o = () => ({ approve: false, current: ctx.face || '', onOpen: face => { const p = tryDo(find, null), art = !!(p && p.faces[face] && p.faces[face].art); if (ctx.onView) tryDo(() => ctx.onView(face)); if (art) { ctx.face = face; draw(true); } else if (ctx.onPick) tryDo(() => ctx.onPick(face)); return null; } });
     function draw(force) {
       if (gone) return; const p = find();
       if (!p) { last = ''; slot.replaceChildren(); el = null; return; }

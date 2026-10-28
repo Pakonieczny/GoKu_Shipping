@@ -9,8 +9,8 @@
 //      (_artCalendar.cjs, a per-SKU master) ordered front + back, and another calendar order: the card's big gold "Open in Charm Editor" button in its head (Paul, 28 Oct 2026: "way too small and hidden"); the editor opens on the front
 //      with every part a layer and the cut line locked; "MAY" swept and deleted, SEPTEMBER typed and centred where it was with the X / Y fields; the wheel zooms into a day square and "25" is set at
 //      5 pt and moved into it with the arrow keys; Save → the Charm_Pool_Art record (who, what removed, what added), the piece's charm carries the new parts (a hash of its own, "~ae"), the work
-//      area's front art draws them, the card's Front thumbnail is drawn again, the approved front is withdrawn in Engrave.artChanged's words, the back keeps its words and its "Show front" shows
-//      the new front, and CharmNestPDF.buildSheet writes the new outlines as blue hatching on that piece while the other calendar's drawing is byte for byte what it was. Cancel writes nothing;
+//      area's front art draws them, the card's Front thumbnail is drawn again, the approved front is withdrawn in Engrave.artChanged's words, the back keeps its words and draws none of the front's art
+//      (FACEVIEW, 28 Oct 2026: never laid over the back as before), and CharmNestPDF.buildSheet writes the new outlines as blue hatching on that piece while the other calendar's drawing is byte for byte what it was. Cancel writes nothing;
 //      the editor opens again on the saved edit, and a second edit keeps the first; a part off the metal is refused over the open editor (EDITSAVE: the work kept there), and nothing of that edit (front or back) is saved
 //      (27 Oct 2026, Paul: "the thickness of the Red engrave line is too thick, I need ... fine font thickness control over each font") the 25 made 0.04 mm bolder with the Weight field
 //      and one day square's red line thinned to 0.05 mm with the Stroke field (drawn at exactly that width): the record keeps the weight with the outlines AT it and the line's width,
@@ -151,7 +151,7 @@ async function partB(kit) {
     await R.openEngraveDetail(w, 'cal', { face: 'back' }); await R.settle(page, 700);
     const e1 = await entryOf();
     await R.shot(w, 'CE-1b-entry-back');
-    check('B3 on the back the same one button is at the top left of the work area level with Approve, and "Show front" keeps its corner of the drawing (the button covers it nowhere)', e1.n === 1 && e1.all === 1 && e1.inHead && e1.level && e1.peek && !e1.overPeek && !e1.inWork, JSON.stringify(e1));
+    check('B3 on the back the same one button is at the top left of the work area level with Approve, over nothing of the drawing; no "Show front" (FACEVIEW: the front is never laid mirrored over the back)', e1.n === 1 && e1.all === 1 && e1.inHead && e1.level && !e1.peek && !e1.overDrawing && !e1.inWork, JSON.stringify(e1));
     const master = await page.evaluate(id => { const ch = Pool.charmOf(id); return { hash: ch.hash, n: ch.members.length }; }, PID2);
 
     /* ── the editor opens on the front ── */
@@ -311,8 +311,8 @@ async function partB(kit) {
     check('B13 the card\'s Front thumbnail is drawn again', !!thumb0 && !!thumb1 && thumb0 !== thumb1, thumb0 + ' → ' + thumb1);
 
     await R.openEngraveDetail(w, 'cal', { face: 'back' }); await R.settle(page, 800);
-    const bk = await page.evaluate(([added, gone, id]) => { const cv = __ce.cv(), j = __ce.job(), ids = cv._frontArt.map(s => (s.original || s).artMemberId); return { face: j.face || 'back', fit: JSON.stringify([j.state, j.fit.size, j.fit.centre, j.fit.angle]), newOn: added.every(a => ids.includes(a)), goneOff: gone.every(g => !ids.includes(g)), pill: !!__ce.card().querySelector('.egCharmEdit') }; }, [addedIds, letters, PID]);
-    check('B14 the back keeps its words where they were (its fit untouched), and "Show front" there shows the new front, not MAY', bk.face === 'back' && bk.fit === backFit0 && bk.newOn && bk.goneOff && bk.pill, JSON.stringify(Object.assign(bk, { backFit0 })));
+    const bk = await page.evaluate(([added, gone, id]) => { const cv = __ce.cv(), j = __ce.job(), ids = cv._frontArt.map(s => (s.original || s).artMemberId); return { face: j.face || 'back', fit: JSON.stringify([j.state, j.fit.size, j.fit.centre, j.fit.angle]), front: ids.length, newOn: added.every(a => ids.includes(a)), goneOff: gone.every(g => !ids.includes(g)), pill: !!__ce.card().querySelector('.egCharmEdit') }; }, [addedIds, letters, PID]);
+    check('B14 the back keeps its words where they were (its fit untouched), and draws none of the front, old or new (FACEVIEW: the front is seen on its own card, never laid mirrored over the back)', bk.face === 'back' && bk.fit === backFit0 && bk.front === 0 && bk.pill, JSON.stringify(Object.assign(bk, { backFit0 })));
     await R.openEngraveDetail(w, 'cal', { face: 'front' }); await R.settle(page, 800);
 
     /* ── the laser's file ── */

@@ -9618,13 +9618,13 @@ const Engrave = window.Engrave = (() => {
     const base = document.createElement("canvas"); base.width = cv.width; base.height = cv.height;   // grid + mask tint, drawn once
     base.getContext("2d").drawImage(cv, 0, 0);
     /* FRONTART (Paul, 27 Oct 2026: "In the Engraving Modal the User sometimes needs to be able to see the engraving on the front of a given charm"). Only the editor's work area (editable) draws the
-       design's own art: on a FRONT it is always there, muted, over the grid and the tint and under the cut line and the words; on a BACK it is there only while "Show front" is on, fainter still, seen
-       through the charm (the back view's own turn-over), so a person can check the back's words against what is on the other side. The pictures written with a piece (the approval .png, the look, the
-       Approved card) are not editable and never draw it. Display only: job.view, job.mask and job.fit are read, never changed. */
-    const art = editable ? frontArtOf(view) : [], onFront = view.face === "front";
-    cv._frontArt = art; cv._frontFace = onFront; cv._showFront = !!art.length && !onFront && frontPeek();
-    if (art.length && onFront) frontArtOn(ctx, art, tx, k, cv.width, cv.height, FRONT_ART_ALPHA.front);
-    if (grid && art.length && !onFront) cv._gridLabel = gridLabelBox(ctx, cv.width);   // (where "Show front" sits: just after the grid's own label)
+       design's own art: on a FRONT it is always there, muted, over the grid and the tint and under the cut line and the words. (FACEVIEW, Paul 28 Oct 2026: "When viewing the back, the front's art must
+       not be drawn mirrored on top as if it were the back": a BACK draws only what the back carries, its cut lines, the parts added to it and its words; the front is seen as the front, faceViewSwitch.)
+       The pictures written with a piece (the approval .png, the look, the Approved card) are not editable and never draw it. Display only: job.view, job.mask and job.fit are read, never changed. */
+    const onFront = view.face === "front", art = editable && onFront ? frontArtOf(view) : [];
+    cv._frontArt = art; cv._frontFace = onFront; cv._showFront = false;
+    if (art.length) frontArtOn(ctx, art, tx, k, cv.width, cv.height, FRONT_ART_ALPHA.front);
+    if (grid) cv._gridLabel = gridLabelBox(ctx, cv.width);   // (where the Front | Back switch sits: just after the grid's own label)
     // CHARM EDIT · BACK (27 Oct 2026): what a person added to this BACK is engraved by the back's own file with the words, so every picture of the back draws it where the file puts it (backArtOf):
     // the work area as a front draws its art (the laser's colours, muted), the pictures written with the piece in the words' ink, as the file engraves it; under the cut line and the words
     const added = onFront ? [] : backArtOf(job), ownArt = g => { if (!added.length) return; if (editable) frontArtOn(g, added, tx, k, cv.width, cv.height, FRONT_ART_ALPHA.own); else backArtInk(g, added, tx, k); };   // (OWNART: every part added to a back is the person's own: full strength)
@@ -9635,13 +9635,7 @@ const Engrave = window.Engrave = (() => {
     if (false && fit) { ctx.fillStyle = "#111"; for (const g of fit.glyphs) { ctx.beginPath(); let cur = null; for (const c of g.cmds) { if (c.type === "M") { const p = tx(c.x, c.y); ctx.moveTo(p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "L") { const p = tx(c.x, c.y); ctx.lineTo(p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "C") { const a = tx(c.x1, c.y1), b = tx(c.x2, c.y2), p = tx(c.x, c.y); ctx.bezierCurveTo(a[0], a[1], b[0], b[1], p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "Q") { const a = tx(c.x1, c.y1), p = tx(c.x, c.y); ctx.quadraticCurveTo(a[0], a[1], p[0], p[1]); cur = [c.x, c.y]; } else ctx.closePath(); } ctx.fill("nonzero"); } }
     const outline = document.createElement("canvas"); outline.width = cv.width; outline.height = cv.height;   // …and the charm itself
     outline.getContext("2d").drawImage(cv, 0, 0);
-    // a BACK with "Show front" on: the same static layers with the front's art between the tint and the cut line, drawn the first time it is asked for and kept while this canvas lives
-    let peek = null;
-    const under = () => {
-      if (!cv._showFront || onFront || !art.length) return outline;
-      if (!peek) { peek = document.createElement("canvas"); peek.width = cv.width; peek.height = cv.height; const g = peek.getContext("2d"); g.drawImage(base, 0, 0); frontArtOn(g, art, tx, k, cv.width, cv.height, FRONT_ART_ALPHA.back, FRONT_ART_ALPHA.back); ownArt(g); cutLines(g); }
-      return peek;
-    };
+    const under = () => outline;
     /** Repaint: the static layers, then the text — the fitted one, or a provisional one while a hand is moving it. */
     const glyphsOf = g => { ctx.fillStyle = "#111"; for (const gl of g) { ctx.beginPath(); for (const c of gl.cmds) { if (c.type === "M") { const p = tx(c.x, c.y); ctx.moveTo(p[0], p[1]); } else if (c.type === "L") { const p = tx(c.x, c.y); ctx.lineTo(p[0], p[1]); } else if (c.type === "C") { const a = tx(c.x1, c.y1), b2 = tx(c.x2, c.y2), d2 = tx(c.x, c.y); ctx.bezierCurveTo(a[0], a[1], b2[0], b2[1], d2[0], d2[1]); } else if (c.type === "Q") { const a = tx(c.x1, c.y1), d2 = tx(c.x, c.y); ctx.quadraticCurveTo(a[0], a[1], d2[0], d2[1]); } else if (c.type === "Z") ctx.closePath(); } ctx.fill("nonzero"); } };
     cv._paint = (prov) => {
@@ -9775,7 +9769,7 @@ const Engrave = window.Engrave = (() => {
   const BACK_ART = new WeakMap();   // view -> { list (the charm's artBack), art (in the view's frame) }
   function backArtOf(job) {
     const view = job && job.view; if (!view || view.face === "front") return [];
-    let charm = null; try { charm = typeof charmFor === "function" ? charmFor(job) : null; } catch (_) { charm = null; }
+    let charm = job._viewCharm || null; if (!charm) try { charm = typeof charmFor === "function" ? charmFor(job) : null; } catch (_) { charm = null; }   // (FACEVIEW: the back of a piece engraved on its front is drawn from the piece's own charm)
     const list = charm && Array.isArray(charm.artBack) && charm.artBack.length ? charm.artBack : null; if (!list) return [];
     const had = BACK_ART.get(view); if (had && had.list === list) return had.art;
     const art = list.filter(s => s && s.kind === "path" && Array.isArray(s.subpaths) && (s.fill || s.stroke)).map(s => { try { return G.transformSeg(G.transformSeg(s, view.M), view.R); } catch (_) { return null; } }).filter(Boolean);
@@ -9795,49 +9789,76 @@ const Engrave = window.Engrave = (() => {
     let w = 0; try { ctx.save(); ctx.font = `${size}px sans-serif`; const m = ctx.measureText("1 mm grid"); w = m && m.width || 0; ctx.restore(); } catch (_) { w = 0; }
     return { x: 6, y: 6, w: w || size * 4.6, h: size };
   }
-  /* "Show front" on a BACK: the front's art seen through the charm, very faintly, to check the back's words against it. One small switch beside the grid's label, only on a back whose design has art
-     (the window is busy enough). The choice holds for this browser tab (sessionStorage; a tab that cannot keep it holds it in memory) and never travels with a job, a record or a file. */
-  const FRONT_PEEK_KEY = "cn.engraveShowFront";
-  let frontPeekHeld = false;
-  function frontPeek(on) {
-    if (on != null) { frontPeekHeld = !!on; try { window.sessionStorage.setItem(FRONT_PEEK_KEY, frontPeekHeld ? "1" : "0"); } catch (_) { /* this tab only */ } return frontPeekHeld; }
-    try { const v = window.sessionStorage.getItem(FRONT_PEEK_KEY); if (v === "1" || v === "0") return v === "1"; } catch (_) { /* this tab only */ }
-    return frontPeekHeld;
+  /* FACEVIEW (Paul, 28 Oct 2026: "Engravings and cut-lines should always be visible in the engraving mode when viewing the front of a given charm … Definitely all of the work and updates to a given charm
+     performed in the Charm Editor must 100% be showing and visible in the engraving modal"). The work area draws the face it shows as THAT face: every cut line, the master's engraving on it, every part
+     the Charm Editor added or changed there, and the words fitted on it. The old "Show front" laid the front's art over the BACK, mirrored, as if it were the back's: gone. In its place, beside the grid's
+     label, one small Front | Back switch, on a piece whose other face has no engraving of its own (a face that has one is its own card): it shows the other face as it is cut and engraved, view only, while
+     the Approve block stays the face's being approved. A save of the Charm Editor that changed only that other face shows it at once (openCharmEditorOnce), and the card's own thumbnails show it too
+     (charm-nest-engrave-card.js artFaces). In memory only, per job: nothing of it travels with a job, a record or a file. */
+  const FACE_VIEW = new Map();   // job key -> the other face, while the work area shows it
+  const FACE_VIEWS = new WeakMap();   // the piece's charm -> { front, back }: its views, made once per charm (a save gives the piece a new charm, and new views with it)
+  /** The other face of `job`'s piece, when it has no engraving job of its own and the piece's charm is on this page (so it can be drawn), else null. */
+  function otherFaceOf(job) {
+    const pid = job && (job.copies || [])[0], own = faceOf(job), other = own === "front" ? "back" : "front";
+    if (!pid || job.editingBack || jobsOfPiece(pid)[other] || !charmEditUsable(Pool.charmOf(pid))) return null;
+    return other;
   }
-  function frontPeekCss() {
-    if (document.getElementById("egFrontPeekCss")) return;
-    const s = document.createElement("style"); s.id = "egFrontPeekCss";
-    s.textContent = ".backHost{position:relative}.egFrontPeek{position:absolute;left:0;top:0;display:inline-flex;align-items:center;gap:4px;padding:1px 7px 1px 4px;border-radius:999px;background:rgba(255,255,255,.88);border:1px solid var(--line,#e4ddd0);font:11px/1.3 var(--sans,system-ui);color:var(--ink70,#5b554c);cursor:pointer;user-select:none;white-space:nowrap;z-index:1}.egFrontPeek input{margin:0;width:12px;height:12px;accent-color:#5a6f8a;cursor:pointer}.egFrontPeek.on{color:var(--ink,#2a2724);border-color:#b7c3d3}";
+  /** The face the work area of `job` shows now: the other face while a person (or a save of the Charm Editor) chose it, else the job's own. */
+  function viewFaceOf(job) { const f = FACE_VIEW.get(job && job.key); return f && f === otherFaceOf(job) ? f : faceOf(job); }
+  /** Shows `face` in the work area of `job` (its own face: back to it), the card's thumbnails marking it. */
+  function setViewFace(job, face, card) {
+    if (!job) return;
+    if (face === faceOf(job) || face !== otherFaceOf(job)) FACE_VIEW.delete(job.key); else FACE_VIEW.set(job.key, face);
+    const c = card || (EG.card && EG.cardKey === job.key ? EG.card : null);
+    if (c && c._remountWork) c._remountWork();
+    const pm = c && c._pieceMount; if (pm && pm.card && pm.card.update) { try { pm.card.update({ face: viewFaceOf(job) }); } catch (_) { /* the thumbnails follow at the next drawing */ } }
+  }
+  /** The piece of `jobs` carries parts of the Charm Editor on `face` (added, changed or removed there): its card shows that face too, even with no engraving on it. */
+  function pieceArtOn(jobs, face) {
+    const pid = ((jobs || []).find(j => j && (j.copies || []).length) || {}).copies; const c = pid && pid[0] ? Pool.charmOf(pid[0]) : null, n = c && c.artEdit && c.artEdit[face];
+    return n && (n.added || n.changed || n.removed) ? String(c.hash || "art") : "";   // (a key of the drawing as edited: a new save draws the card's picture of it again)
+  }
+  /** The other face of `job`'s piece as the work area draws it: { view, charm } (its views made once per charm: charmEditView, the view the Charm Editor edits it in), or null. */
+  function faceViewOf(job, face) {
+    const pid = (job.copies || [])[0], live = pid ? Pool.charmOf(pid) : null; if (!charmEditUsable(live)) return null;
+    let got = FACE_VIEWS.get(live); if (!got) FACE_VIEWS.set(live, got = {});
+    if (!got[face]) { const row = job.row || {}, sp = row.spec || {}; got[face] = charmEditView(pid, live, face, sp.designSku || (row.line && row.line.sku) || live.name); }
+    return { view: got[face], charm: live };
+  }
+  /** The work area's drawing of the OTHER face of `job`'s piece (view only): renderBack over that face's view, no words, no handles. null when it cannot be drawn. */
+  function renderFaceView(job, face, px) {
+    const fv = faceViewOf(job, face); if (!fv || !fv.view) return null;
+    const cv = renderBack({ key: job.key + "~" + face, view: fv.view, mask: null, fit: null, copies: job.copies, row: job.row, _viewCharm: fv.charm }, px, { grid: true, hatch: false, editable: true });
+    cv._editable = false; cv._viewFace = face;
+    return cv;
+  }
+  function faceViewCss() {
+    if (document.getElementById("egFaceViewCss")) return;
+    const s = document.createElement("style"); s.id = "egFaceViewCss";
+    s.textContent = ".backHost{position:relative}.egFaceView{position:absolute;left:0;top:0;display:inline-flex;align-items:center;padding:1px;border-radius:999px;background:rgba(255,255,255,.92);border:1px solid var(--line,#e4ddd0);z-index:1}"
+      + ".egFaceView button{appearance:none;border:0;background:transparent;font:600 11px/1.3 var(--sans,system-ui);color:var(--ink70,#5b554c);padding:1px 9px;border-radius:999px;cursor:pointer}.egFaceView button[aria-pressed=true]{background:var(--ink,#2a2724);color:#fff;cursor:default}"
+      + ".egFaceView button:not([aria-pressed=true]):hover{color:var(--ink,#2a2724);background:rgba(0,0,0,.05)}.egFaceView button:focus-visible{outline:2px solid #5a6f8a;outline-offset:1px}.egFaceView .egFaceViewNote{font:11px/1.3 var(--sans,system-ui);color:var(--ink45,#8b857b);padding:0 8px 0 4px;white-space:nowrap}";
     (document.head || document.documentElement).appendChild(s);
   }
-  /** The "Show front" switch for the work area's canvas `bc` in `host` (.backHost), or null when the drawing is a front or its design has no art. */
-  function frontPeekToggle(host, bc) {
-    if (!host || !bc || bc._frontFace || !Array.isArray(bc._frontArt) || !bc._frontArt.length || typeof bc._paint !== "function") return null;
-    frontPeekCss();
-    const lab = document.createElement("label"); lab.className = "egFrontPeek"; lab.title = "Show the front's art faintly behind the back, to check the words line up with it";
-    lab.innerHTML = '<input type="checkbox"> Show front';   // (no data-a: the card's own buttons are wired by that, and this is no card action)
-    const box = lab.querySelector("input"); box.checked = !!bc._showFront; lab.classList.toggle("on", box.checked);
-    // a click gives the focus back where it was (the card's keys, A to approve and the arrows, keep working); a person who reached the switch with Tab keeps it there
-    let was = null;
-    lab.addEventListener("pointerdown", () => { was = document.activeElement || null; });
-    lab.addEventListener("mousedown", e => e.preventDefault());
-    box.addEventListener("change", () => {
-      bc._showFront = frontPeek(box.checked); lab.classList.toggle("on", bc._showFront); bc._paint();
-      const back = was; was = null;
-      if (back && document.activeElement === box) { try { if (back !== document.body && back.isConnected && back.focus) back.focus({ preventScroll: true }); else box.blur(); } catch (_) { /* the focus stays */ } }
-    });
-    host.appendChild(lab);
-    // beside the grid's label, in the drawing's own top-left corner (the canvas sits in the middle of the work area); under it when the drawing is too narrow for both
-    // NAV (28 Oct 2026, Paul: "Engraving etc... at near real-time speed"): placed in the frame that shows it, before it is painted: measured in the middle of drawing the card, each
-    // measure laid out the whole page (twice a card, with Edit charm's below), at every Back and Next
+  /** The Front | Back switch of `job`'s work area (canvas `bc` in `host`), or null when the piece's other face has its own engraving (its own card) or cannot be drawn. */
+  function faceViewSwitch(host, bc, job, card) {
+    const other = host && bc ? otherFaceOf(job) : null; if (!other) return null;
+    faceViewCss();
+    const shown = viewFaceOf(job), own = faceOf(job), el = document.createElement("span"); el.className = "egFaceView"; el.setAttribute("role", "group"); el.setAttribute("aria-label", "Face shown in the work area");
+    el.innerHTML = ["front", "back"].map(f => `<button type="button" data-fv="${f}" aria-pressed="${f === shown}" title="${f === own ? `The ${f}: its engraving, to place and approve` : `The ${f} as it is cut and engraved, with every part the Charm Editor put on it (view only: the engraving is on the ${own})`}">${f === "front" ? "Front" : "Back"}</button>`).join("")
+      + (shown !== own ? `<span class="egFaceViewNote">view only</span>` : "");
+    el.addEventListener("mousedown", e => e.preventDefault());   // (the card's keys keep the focus they had)
+    el.addEventListener("click", e => { const b = e.target.closest("[data-fv]"); if (!b || b.getAttribute("aria-pressed") === "true") return; e.stopPropagation(); setViewFace(job, b.dataset.fv, card); });
+    host.appendChild(el);
+    // (beside the grid's label, in the drawing's own top-left corner; under it when the drawing is too narrow for both: where "Show front" stood)
     requestAnimationFrame(() => {
-      if (!lab.isConnected || !bc.isConnected || !(bc.offsetWidth && bc.width)) return;
+      if (!el.isConnected || !bc.isConnected || !(bc.offsetWidth && bc.width)) return;
       const s = bc.offsetWidth / bc.width, g = bc._gridLabel || { x: 6, y: 6, w: 50, h: 11 };
-      let left = bc.offsetLeft + (g.x + g.w + 8) * s, top = bc.offsetTop + Math.max(2, (g.y + g.h / 2) * s - lab.offsetHeight / 2);
-      if (left + lab.offsetWidth > bc.offsetLeft + bc.offsetWidth - 4) { left = bc.offsetLeft + g.x * s; top = bc.offsetTop + (g.y + g.h + 4) * s; }
-      lab.style.left = Math.round(left) + "px"; lab.style.top = Math.round(top) + "px";
+      let left = bc.offsetLeft + (g.x + g.w + 8) * s, top = bc.offsetTop + Math.max(2, (g.y + g.h / 2) * s - el.offsetHeight / 2);
+      if (left + el.offsetWidth > bc.offsetLeft + bc.offsetWidth - 4) { left = bc.offsetLeft + g.x * s; top = bc.offsetTop + (g.y + g.h + 4) * s; }
+      el.style.left = Math.round(left) + "px"; el.style.top = Math.round(top) + "px";
     });
-    return lab;
+    return el;
   }
   /* ── CHARM EDIT · the piece's own artwork in the charm editor (Paul, 27 Oct 2026: "In the Engraving Modal ... The user also needs full control similar to Adobe illustrator ... over each
      individual layer contained on any charm ... add a date inside a given Calendar day square and be able to update the Month name located on top of the Calendar charm ... this is already a
@@ -10213,13 +10234,17 @@ const Engrave = window.Engrave = (() => {
       const refit = jobs.filter(j => !j.view && !j.fit && j.state === "ready");
       await Promise.all(refit.map(j => fitJob(j).catch(e => console.warn("charm edit: fit", e))));
       { const lost = refit.filter(j => j.keepLost).map(j => faceOf(j)); if (lost.length && job) charmEditSay(job, `${(ART_NOTES.get(job.key) || {}).text || "Artwork saved"} · The words no longer fit where they were placed on the ${lost.join(" and ")}: placed again, check them`, false); }   // (KEEP: said when the words could not stay)
-      // a face that was not fitted again keeps its words and its mask (they stand on the cut line, which a piece on a sheet keeps), but the art it shows of the other side ("Show front") is the new one
+      // a face that was not fitted again keeps its words and its mask (they stand on the cut line, which a piece on a sheet keeps), but the art it draws is the new one
       const live = Pool.charmOf(poolId);
       for (const j of jobs) {
         if (refit.includes(j) || !j.view || !live) continue;
         try { const v = G.backView(live, { res: 6, upAngle: j.view.upAngle, holeOnly: true, ...(j.solidBack ? { solidBack: true } : {}), ...(j.view.face === "front" ? { face: "front" } : {}) }); if (JSON.stringify([v.M, v.R]) === JSON.stringify([j.view.M, j.view.R])) { j.view.dropped = v.dropped; FRONT_ART.delete(j.view); } }
         catch (_) { /* shown as it was until the face is fitted again */ }
       }
+      // (FACEVIEW, Paul 28 Oct 2026: "all of the work and updates to a given charm performed in the Charm Editor must 100% be showing and visible in the engraving modal": a save that changed the job's own
+      //  face shows that face; one that changed only the piece's other face, which has no engraving of its own, shows that other face in the work area at once, and its thumbnail on the card)
+      //  (setViewFace draws the card in front again at once: render() keeps a card whose engraving did not change, and its work area with it)
+      for (const j of jobs) { const own = faceOf(j), other = faces.find(f => f !== own), want = faces.includes(own) || !other ? own : otherFaceOf(j) === other ? other : own; if (want !== viewFaceOf(j) || want !== own) setViewFace(j, want); }   // (the other face shown is drawn again from the new charm)
       try { render(); } catch (_) { /* drawn with the next render */ }
       return { saved: faces, records };
     } finally { if (savingArt) { for (const id of t.poolIds) if (ART_SAVES.get(String(id)) === savingArt) ART_SAVES.delete(String(id)); savingArt.end(); } if (wentBack) charmEditBack(t); }
@@ -11642,7 +11667,7 @@ const Engrave = window.Engrave = (() => {
     };
     card._stripSync();
     // what the system decided for this LINE (None / Front only / Back only / Front + back, each face's words and font), checked and edited right here: charm-nest-engrave-setup.js (one control for every card)
-    { const su = card.querySelector("[data-engsetup]"); if (ctx && su && window.CharmNestEngravePanel) card._pieceMount = CharmNestEngravePanel.mountPiece(su, job); }   // (charm-nest-engrave-panel.js: the Front / Back thumbnails and the one panel, inline in the Engrave detail only)
+    { const su = card.querySelector("[data-engsetup]"); if (ctx && su && window.CharmNestEngravePanel) card._pieceMount = CharmNestEngravePanel.mountPiece(su, job, { view: viewFaceOf(job), onView: f => setViewFace(job, f, card), artFaces: pieceArtOn }); }   // (charm-nest-engrave-panel.js: the Front / Back thumbnails and the one panel, inline in the Engrave detail only; FACEVIEW: a face the Charm Editor drew on and nothing engraves is a thumbnail too, a press on it shows it in the work area)
     if (wordsJob) { const bh = card.querySelector(".backHost"); if (readsFree(job) && !preparingNow(job)) setTimeout(() => prepareLate(job.row).catch(() => {}), 0);   // (a press on a face that nobody has started reading starts it: prepareLate)
       const busy = (["ready", "fitting"].includes(job.state) && canFit(job)) || (OPENREAD.includes(job.state) && (preparingNow(job) || readsFree(job)));
       bh.innerHTML = `<div class="noBack">${busy ? '<span class="spin" role="status" aria-label="Preparing"></span>' : ""}${esc(panelOn && undecided ? (job.reason || waitingReason(job, true)) : job.state === "blocked" ? (job.reason || "This preview needs attention — use the words to retry.") : waitingReason(job))}</div>`;
@@ -11806,8 +11831,17 @@ const Engrave = window.Engrave = (() => {
       const full = [side(bw + strip), px0[1]], wide = !!strip && takesStrip(renderBack(dj, [64, 64], { editable: true, hatch: false, include: framed })._sizePt, px0, full, r.height, below);
       const px = wide ? full : px0;
       pm.classList.toggle("egWide", wide);
+      // (FACEVIEW, Paul 28 Oct 2026: the piece's other face, chosen with the Front | Back switch or shown by a save of the Charm Editor that changed it: drawn as that face, view only; the words and
+      //  the Approve block stay the face's being approved)
+      const vf = viewFaceOf(job), ov = vf !== faceOf(job) ? renderFaceView(job, vf, px) : null;
+      if (ov) {
+        framed = null; ov.tabIndex = -1; ov.style.outline = "none"; ov.title = `the ${vf} of this piece as it is cut and engraved, with every part the Charm Editor put on it · view only: the engraving to approve is on the ${fw}`;
+        backHost.appendChild(ov); faceViewSwitch(backHost, ov, job, card);
+        try { charmEditButton(backHost, ov, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }
+        return;
+      }
       const bc = (held && heldCanvas(job, px)) || renderBack(dj, px, { grid: true, editable: true, include: framed, draft: panelOn && !held }); framed = bc._map.bb; bc.tabIndex = -1; bc.style.outline = "none"; bc.title = job.fit && job.fit.artOnly ? `no words: the charm editor's parts are this ${fw}'s engraving` : "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys move them 0.05 mm, 1 mm with Shift · cut-outs and holes stay clear"; backHost.appendChild(bc); if (held) { heldOn(backHost, bc, job, px); return; } wire(bc); markShown(job); syncBoth(); if (panelOn) draftNote(card, DRAFTS.get(job.key));
-      frontPeekToggle(backHost, bc);   // FRONTART: a BACK whose design has art on its front gets the quiet "Show front" switch beside the grid's label (a front draws its art always)
+      faceViewSwitch(backHost, bc, job, card);   // FACEVIEW: the piece's other face (when it has no engraving of its own), seen as that face; "Show front" laid the front mirrored over the back
       try { charmEditButton(backHost, bc, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }   // CHARM EDIT: the quiet "Edit charm" pill after them (and the last save's note under it): the piece's own artwork in the charm editor (never at the drawing's cost)
       bc._reframe = () => { if (raf || disposed || bc.classList.contains("drag")) return; mounted = [0, 0]; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); };
       } catch (error) {
@@ -12097,7 +12131,7 @@ const Engrave = window.Engrave = (() => {
     if (n) { try { Session.schedule(); render(); } catch (_) { /* drawn with the next render */ } }
     return n;
   }
-  return { listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { viewFaceOf, setViewFace, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
    list of pieces, the Pieces counts and a monogram line's pieces (the same slots and piece keys: "<line>" for one piece, "<line>#C<u>" for several) read THIS. Added beside the Engrave object, not inside its return. */
