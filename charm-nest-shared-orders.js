@@ -67,7 +67,16 @@
 
   /* ── the rule over sheets ───────────────────────────────────────────────────────────────────────────────────── */
   // orderId -> Map(sheetId -> Map(pieceKey -> piece))
+  // NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): one drawing of the Library asks this of the same list of sheets for every card (between,
+  // groups, greenHomes: ~150 ms of a metal chip's press at 6,000 orders); the answer is kept for that list for the rest of the task, and read only (no caller changes it)
+  let indexMemo = null;   // (list of sheets -> { n, by }, for this task)
   function index(sheets) {
+    if (!indexMemo) { indexMemo = new WeakMap(); Promise.resolve().then(() => { indexMemo = null; }); }
+    const m = indexMemo.get(sheets); if (m && m.n === sheets.length) return m.by;
+    const by = indexNow(sheets); indexMemo.set(sheets, { n: sheets.length, by });
+    return by;
+  }
+  function indexNow(sheets) {
     const by = new Map(), sidesOf = new Map();
     // the sides each pool id is listed with, across all sheets: an id listed with BOTH a Left and a Right is two bodies (never the case for an id listed with one side, or none: that is one piece, stale copies included)
     for (const s of sheets) for (const p of s.pieces) if (p.side) { let t = sidesOf.get(p.key); if (!t) sidesOf.set(p.key, t = new Set()); t.add(p.side); }
@@ -220,10 +229,19 @@
    * split when it has pieces on a moving sheet and on a sheet that stays in another set (or in none, when `dest` is a set).
    * → items, in order-number order; [] when nothing would be separated.
    */
+  /** The shared orders (spans) of an index, by each sheet they have a piece on: sheetId -> [[orderId, m]] (kept with the index it was made from). */
+  const spanMemo = new WeakMap();
+  function spanningBySheet(by) {
+    let x = spanMemo.get(by); if (x) return x;
+    x = new Map(); for (const [oid, m] of by) { if (!spans(m)) continue; for (const sid of m.keys()) { let l = x.get(sid); if (!l) x.set(sid, l = []); l.push([oid, m]); } }
+    spanMemo.set(by, x); return x;
+  }
   function between(sheets, moving, dest, o = {}) {
     const mv = new Set([].concat(moving || []).map(String)), byId = new Map(sheets.map(s => [s.id, s])), by = index(sheets), out = [];
     const target = dest === undefined || dest === '' ? null : dest;
-    for (const [oid, m] of [...by].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))) {
+    // (NAV, 28 Oct 2026: only the shared orders with a piece on a moving sheet are looked at, found by sheet; every order of the Library was sorted and looked at for each set's card)
+    const cand = new Map(), on = spanningBySheet(by); for (const [sid, list] of on) if (mv.has(sid)) for (const [oid, m] of list) cand.set(oid, m);
+    for (const [oid, m] of [...cand].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))) {
       if (!spans(m)) continue;
       const here = [...m.keys()].filter(id => mv.has(id));
       if (!here.length) continue;
