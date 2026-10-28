@@ -30,7 +30,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - int/live-check.cjs: 7 pages load clean. Live verify = sha256 of each changed served file vs `git show origin/main:<f>`, then live-check.
 - If agents hang holding slots (load ~0, waits > 5 min): find holders: for f in slot1 slot2 slot3: ino=$(stat -c %i $SP/locks/$f); grep ":$ino " /proc/locks → pid → ps --ppid. Kill the idle test, tell its agent.
 
-## Live on main: 03d6b9c = batch 4 (image import, rulers/zoom/pan, pen tools, bar-front for waiting orders; live verify running) on top of 4003913 (build fix: _designLog.js classified; batch 3 verified live after it), 5c417f9 batch 3, ea13162 seals, f15505e Approve.
+## Live on main: 745ee60 = batch 5 (masters, ops, extras, sendsheet; 27 tests pass; live verify bmo7lcrpc) on top of 03d6b9c batch 4 (verified live), 4003913 build fix, 5c417f9 batch 3.
 - 89f2819 Manual Control instant · b2608ff navigation rounds 2+3, Charm Editor Save fix (Saving at once, sheet files in background),
   bar necklaces FRONT by default (BARFRONT) · 077f21c Approve never silent / never stuck · d58eea9 Design & Engrave batch 1: editor
   extension points + live readouts + Ctrl/Alt centre resize + smart guides (feedback), Blend/Warp/Distort (warp), image trace (trace).
@@ -82,13 +82,14 @@ board-live-extra.json with the new agent ids.
 - Phase 5 push (option a) needs a Firestore security rule in the console + a vendored Firestore SDK file.
 
 
-## Phase 1 ship in test (07:25): $SP/wt-guardfix 1599532 = claude/local-store + main 03d6b9c (build OK). Earlier full run all pass except mc-instant check 5 (84 ms block at load 7). Final run bq3qtbibm → $SP/int/p1/f-*.log. Pass → push HEAD:main, verify live (charm-nest-store.js).
-## Batch 5 in test (07:27): claude/de-integration 7dfaaf0 = main 03d6b9c + masters + ops + extras + sendsheet (bbfdb02). Build OK. Run b-batch5 → $SP/int/b5/*.log. Then ship (after Phase 1: merge main first).
-## Refit (Paul's rule) ships after these: claude/de-refit 24406dc.
+## Phase 1 ship in test (07:25; nav-instant engraving world timed out after merging batch 4 → comparing with main, run in background): $SP/wt-guardfix 1599532 = claude/local-store + main 03d6b9c (build OK). Earlier full run all pass except mc-instant check 5 (84 ms block at load 7). Final run bq3qtbibm → $SP/int/p1/f-*.log. Pass → push HEAD:main, verify live (charm-nest-store.js).
+## Batch 6 after these: refit (Paul's rule) claude/de-refit 24406dc + emplog person page claude/de-emplog 0cb9e34 + hold spots fix claude/fix-order-hold-engine c74301f (Hold's consent sentence counted a freed spot twice: '5 empty spots' for 4 pieces; test was stale since fd42973 solid masks; order-hold-engine, release-hold-button, review-release-queue, order-pieces pass; also run hold-ui) (design-log, efficiency-person, efficiency-real, sandbox-wipe-guard pass).
+- a41a92d9950823b21 now on claude/eff-inbox-chart: 'Sent per day' chart is a black block when empty.
 - Phase 2 agent ac1971b04ea413b37 started 07:03 on claude/local-sync (wt-sync) from claude/local-store.
 - designs follow-up (af114bb2ccb5f706c resumed): claude/de-designs-2 = accept stroke/fill true in clean(); test world Master.load race.
 
 ## Handed back, waiting to merge into claude/de-integration
+- local-sw P4 (a7883fa11af818737) DONE 07:24: claude/local-sw 3064100. New charm-nest-sw.js (approved), netlify.toml header block (approved), service-worker.cjs 25 checks. TOKEN DISCIPLINE now matters (changed file without ?v= bump stays cached). Ship with batch 6 after Phase 1.
 - de-refit (a7764b20331f1122f) DONE 07:20 with PAUL'S RULE: claude/de-refit 24406dc. Keeps placement (same → size only → centre ≤1% → afresh with a note); SEPTEMBER stays 5.33 pt level. charm-edit-refit 13/13. SHIP after batch 4 + Phase 1 (tests: charm-edit-refit, charm-editor-engrave, engrave-editor-words, engrave-preview, engrave-front-art, charm-editor-back, engrave-worker).
 - de-extras (a5f64f2a38f32df82) DONE 07:14: claude/de-extras 58ff4da, ce-extras 21. ⌘Y is now Outline view (redo only ⇧⌘Z; charm-editor-browser.cjs line changed). Text-on-path fields need the designs follow-up (sent). BATCH 5.
 - de-sendsheet (a6ecf232b267d8e9d) DONE 07:10: claude/de-sendsheet bbfdb02 (contains main 5c417f9 + designs/custompool/emplog). New file charm-nest-custom-piece.js, test ce-sendsheet 21/21. BATCH 5.
