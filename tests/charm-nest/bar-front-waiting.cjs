@@ -64,14 +64,14 @@ function harness(rows, o = {}) {
     setNone(job, why) { job.state = 'none'; job.reason = why; job.row.engrave = Object.assign({}, job.row.engrave, { needed: false, state: 'none', reason: why, approved: true }); return job; },
     agentCall: async () => { throw new Error('a paid reading was asked for'); },
   };
-  vm.createContext(ctx); vm.runInContext(SLICE1, ctx); vm.runInContext(SLICE2, ctx); vm.runInContext(SLICE3, ctx);
+  vm.createContext(ctx); vm.runInContext(SLICE1, ctx); vm.runInContext(SLICE2, ctx); vm.runInContext(SLICE3, ctx); vm.runInContext('this.wantsFront = wantsFront;', ctx);
   // the Engrave object as the page exports it (the names charm-nest-engrave-bar-front.js reads), over the sliced code; a fit is free and offline: here it only records that it was asked
   const Engrave = vm.runInContext('({ items, jobsOf, isFront, faceOf, ensureJobs, neverEngraves, classify, setupOf, render })', ctx);
   Object.assign(Engrave, { setReady: ctx.setReady, canFit: () => true, isWorking: j => !!(o.working && o.working.has(j.key)), fitJob: async j => { fits.push({ key: j.key, text: j.text, fontKey: j.fontKey }); j.state = 'review'; j.row.engrave = Object.assign({}, j.row.engrave, { state: 'review' }); return j; }, draftOf: () => null, view: () => ({ drafts: {} }) });
   const interpreted = [];
   const env = { Engrave, CharmNestEngraveFaces: Faces, CharmNestOrders: O, Review: ctx.Review, Pool: ctx.Pool, Session: ctx.Session, CNTimeline: ctx.TL, agent: ctx.agent, replaceCutWhy: sh => (sh && sh.laserDoneAt ? 'laser cut' : ''),
     Orders: { rows: () => rows, render() {}, interpretAll() { interpreted.push(Date.now()); for (const r of rows) { r.spec = readNow(r.line); env.CNBarFront.move(r); } } }, B: o.B || { master: { loadedAt: 1, loading: null }, maps: { loadedAt: 1 } } };
-  env.CNBarFront = BarFront.make(env);
+  env.CNBarFront = win.CNBarFront = BarFront.make(env);   // (the page's plan asks it too: faceWant, wantsFront)
   return { ctx, env, jobs, events, agents, reviewAdds, reviewRemoves, fits, readies, poolUpdates, interpreted, Engrave, bf: env.CNBarFront, keys: () => [...jobs.keys()] };
 }
 /** The back the page had made for a restored line before the rule: read, fitted, waiting for Approve, moved by a person (Paul: "after I made adjustments"). */
@@ -155,6 +155,20 @@ function waitingBack(h, row, extra) {
       eq([h.keys(), JSON.stringify(J(Object.assign({}, back, { row: undefined })))], [keys, before], name + ': the back job is exactly as it was');
       eq([h.events.length, h.agents.length, h.reviewRemoves.length, h.fits.length], [0, 0, 0, 0], name + ': no line, no card taken down, no fit');
     }
+  });
+
+  await t('2b a decided bar back gains no front from the page\'s own plan either (Engrave.ensureJobs: a sheet\'s backs, a record, a reading; the run\'s wantsFront): the person\'s decision stands, back only', async () => {
+    for (const [name, extra] of [['approved', { state: 'approved', approvedAt: 5, approvedBy: 'Paul' }], ['written', { state: 'written', approvedAt: 5, approvedBy: 'Paul', backs: [{ poolId: 'x' }] }], ['skipped', { state: 'skipped', decidedAt: 4 }]]) {
+      const row = restoredRow(barLine(60)), h = harness([row]), back = waitingBack(h, row, extra);
+      row.spec = readNow(row.line); row.engrave = { needed: true, state: back.state, approved: true, text: back.text };
+      const js = h.Engrave.ensureJobs(row);
+      eq([js.map(j => j.key), h.keys()], [[row.key], [row.key]], name + ': ensureJobs keeps the back alone, no front is made');
+      eq(h.ctx.wantsFront(row), false, name + ': the run does not look at it for a front');
+      eq([back.state, js[0] === back], [extra.state, true], name + ': the same job, as decided');
+    }
+    // an undecided back is still the plan's to follow (and BARFRONT moves it first, at its reading)
+    const row = restoredRow(barLine(61)), h = harness([row]); waitingBack(h, row); row.spec = readNow(row.line);
+    eq(h.ctx.wantsFront(row), true, 'an undecided back: the run looks at it for its front, as before');
   });
 
   await t('3 a line that is no bar keeps its back, exactly as it was', async () => {

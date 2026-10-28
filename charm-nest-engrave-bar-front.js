@@ -16,6 +16,9 @@
  *                    faces or words), an approval, a stamp or a back file under way or written, words being typed or a placement staged in its card, a piece taken by an edited back, a reading or fit running
  *                    (asked again at the next reading), or a piece on a sheet the laser has cut (replaceCutWhy). Every other line, and a line the rule does not read as front, is left exactly as it is.
  *                    → true when the line moved.
+ *   stays(row)       the other side of the same rule: a bar line whose backs a person DECIDED (approved, written, skipped, "no engraving", an approval under way) or whose piece the laser has cut keeps its back
+ *                    exactly as it is. The page's own plan (charm-nest-bridge.js faceWant, wantsFront) asks this before it makes a front for a line whose setup says front: without it, the line read again as
+ *                    front got a FRONT job beside its approved back the next time anything made its jobs (a sheet's backs, a saved record, the run's reading), a second approval and a second face engraved.
  *   afterRestore()   a reload brings the workspace back with each line's LAST reading (Session.restore): it is read again only at the next pass of Orders.interpretAll (the first order check, which waits up to the
  *                    poll interval, or a Resume). When a restored bar line still waits on its back, the lines are read again as soon as the maps and the library are in (the pass the first order check would
  *                    make: no extra read of the cloud), so the line moves before anyone approves its back. Nothing is read when no such line waits. → true when it read the lines.
@@ -40,11 +43,15 @@
 
   function make(env) {
     const w = () => env || {};
-    /** A back job nobody may move: decided, or something of a person's (or of an approval) under way on it. */
-    function held(j, E) {
+    /** A back a person decided, or whose approval, stamp or file is under way or written: it is the person's, and stays as it is. */
+    function decided(j) {
       if (!j || DONE.includes(j.state)) return true;
       if (j.approvedAt || j.approvalIntent || j.approvalPreparing || j._approvalTask || j._backTask || j.stamping || j.backSaving || j.backPending || j.editingBack || j.archived) return true;
-      if (has(j.backs) || has(j.stagedBacks) || has(j.copyOverrides) || has(j.engravingSeals)) return true;
+      return has(j.backs) || has(j.stagedBacks) || has(j.copyOverrides) || has(j.engravingSeals);
+    }
+    /** A back nobody may move NOW: decided, or a reading or fit running on it, or a person's words or placement staged in its card (asked again at the next reading). */
+    function held(j, E) {
+      if (decided(j)) return true;
       try { if (E.isWorking && E.isWorking(j)) return true; } catch (_) { return true; }
       try { if (E.draftOf && E.draftOf(j.key)) return true; } catch (_) { return true; }
       try { const d = E.view && E.view().drafts; if (d && d[j.key]) return true; } catch (_) { /* no words card open */ }
@@ -54,8 +61,8 @@
     function cut(id) {
       try { const P = w().Pool, sh = P && P.sheetOf ? P.sheetOf(id) : null, why = w().replaceCutWhy; return !!(sh && typeof why === 'function' && why(sh, new Set([id]))); } catch (_) { return true; }
     }
-    /** The line's back jobs when it may move to the front now, else null. */
-    function movable(row) {
+    /** A line the bar rule reads as front, no person's setup on it, still open: its back jobs (all faces), or null. */
+    function barLine(row) {
       const W = w(), E = W.Engrave, F = W.CharmNestEngraveFaces, O = W.CharmNestOrders;
       const sp = row && row.spec, e = sp && sp.engraving;
       if (!E || !F || !e || typeof e !== 'object' || e.source !== 'profile' || e.mode !== 'front' || !BAR_RULE.test(String(e.why || ''))) return null;
@@ -63,9 +70,19 @@
       let setup; try { setup = F.setupOf(row); } catch (_) { return null; }
       if (!setup || setup.mode !== 'front' || setup.edited) return null;
       const backs = E.jobsOf(row, { all: true });
-      if (!backs.length || backs.some(E.isFront) || backs.some(j => held(j, E))) return null;
-      if (backs.some(j => (j.copies || []).some(cut))) return null;
+      return backs.length && !backs.some(E.isFront) ? backs : null;
+    }
+    /** The line's back jobs when it may move to the front now, else null. */
+    function movable(row) {
+      const backs = barLine(row), E = w().Engrave;
+      if (!backs || backs.some(j => held(j, E)) || backs.some(j => (j.copies || []).some(cut))) return null;
       return backs;
+    }
+    /** A bar line whose backs a person decided (or whose approval is under way, or whose piece the laser has cut): it keeps its back exactly as it is, and the page's own plan makes no front for it
+     *  (charm-nest-bridge.js faceWant, wantsFront: without this, a sheet's backs, a record or the run's reading made a front job beside an approved back). */
+    function stays(row) {
+      row = row && (row.parentRow || row); let backs; try { backs = barLine(row); } catch (_) { return false; }
+      return !!backs && (backs.some(decided) || backs.some(j => (j.copies || []).some(cut)));
     }
     function move(row) {
       row = row && (row.parentRow || row); if (!row || !row.spec) return false;
@@ -111,7 +128,7 @@
       const W = w(), E = W.Engrave, O = W.CharmNestOrders, Or = W.Orders, B = W.B;
       if (!E || !O || typeof O.barNecklace !== 'function' || !Or || !B) return false;
       // (a restored line keeps the reading it was saved with: a bar line (its SKU or its title, barNecklace) whose jobs are all open backs is the one the bar rule may move)
-      const open = r => { const js = E.jobsOf(r, { all: true }); return js.length > 0 && !js.some(E.isFront) && !js.some(j => held(j, E)); };
+      const open = r => { const js = E.jobsOf(r, { all: true }); return js.length > 0 && !js.some(E.isFront) && !js.some(decided); };
       const waiting = Or.rows().some(r => { try { return !!(r && r.spec && r.state !== 'gone' && !(O.FINISHED_LINE && O.FINISHED_LINE.has(r.state)) && !r.engravingOverride && O.barNecklace(r.line, r.spec) && open(r)); } catch (_) { return false; } });
       if (!waiting) return false;
       if (B.master && B.master.loading) { try { await B.master.loading; } catch (_) { return false; } }   // (the boot's own read of the library: never a second one)
@@ -119,7 +136,7 @@
       Or.interpretAll(); Or.render(); E.render();
       return true;
     }
-    return { move, afterRestore, movable: row => !!movable(row && (row.parentRow || row)), MOVED };
+    return { move, afterRestore, stays, movable: row => !!movable(row && (row.parentRow || row)), MOVED };
   }
   return Object.assign(make(root), { make, MOVED });
 });

@@ -7874,6 +7874,7 @@ const Engrave = window.Engrave = (() => {
     const F = FACES(); if (!F) return null;
     const setup = F.setupOf(row), anyFront = have.some(isFront);
     if (!anyFront && !setup.faces.includes("front")) return null;
+    if (!anyFront && window.CNBarFront?.stays?.(row)) return null;   // (BARFRONT, Paul 28 Oct 2026: a bar line read as front whose back a person decided keeps that back alone: no front is made beside it)
     // a line that is over (committed, gone) gets no new job; the jobs it has stay
     if (O.FINISHED_LINE && O.FINISHED_LINE.has(row.state)) return have.map(j => ({ slot: j.slot || null, face: faceOf(j) }));
     return F.planFaces(setup, pl.slots);
@@ -8570,6 +8571,7 @@ const Engrave = window.Engrave = (() => {
     const F = FACES(); if (!F || !r.engrave || (O.FINISHED_LINE && O.FINISHED_LINE.has(r.state))) return false;
     try { if (!F.setupOf(r).faces.includes("front")) return false; } catch (_) { return false; }
     if (jobsOf(r).some(isFront)) return false;
+    if (window.CNBarFront?.stays?.(r)) return false;   // (BARFRONT: a bar line whose back a person decided keeps it: no front to read)
     // (the back of that line, if nobody has touched it, is read again from the setup: its words come with the front's, not from the paid reading of the whole note)
     for (const j of jobsOf(r)) if (!isFront(j) && untouched(j) && j.wordsSource !== "spec.engraving") { Object.assign(j, { state: "classify", fit: null, verify: null, view: null, mask: null, lineInput: null, decision: null, wantSize: null, reason: null }); Review.remove("eng:" + j.key); }
     return true;
