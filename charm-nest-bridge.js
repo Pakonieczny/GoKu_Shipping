@@ -9223,16 +9223,28 @@ const Engrave = window.Engrave = (() => {
     approveSay(job, stale ? "This card was out of date: it is drawn again. Look at it, then press Approve." : why, null, /^Still/.test(why));
     if (stale || !["review"].includes(job.state)) { if (EG.cardKey === job.key) { focusOn(job.key); EG.card = null; EG.cardKey = null; } render(); }
   }
+  /* HELDREL (Paul, 28 Oct 2026, order 4212020155: "I noticed that the order that was released before is the one that has the malfunctioning Approve engraving button issue."): with APPROVEFIX every refusal says
+     why, but a press whose approval THREW (anything in approveOnce outside its own waits: the card's words, the seals, the settle) still ended in silence: approve()'s task rejected, cardAction drops it, the
+     finally put "Approve" back, and the person saw the button blink and nothing else. It now says in the card what went wrong (the error's own words, kept in the activity log with the order), and an
+     approval left half made (its verified intent) is let go, so the next press checks the placement as it is now. A placement that did get approved is never told "Not approved". */
+  function approveThrew(job, e) {
+    const msg = String((e && e.message) || e || "unknown error").replace(/[.\s]+$/, "").slice(0, 200);
+    try { console.error("[Engrave] approval failed", e); } catch (_) {}
+    if (["approved", "written"].includes(job.state)) return;
+    if (job.approvalIntent) { delete job.approvalIntent; try { Session.schedule(); } catch (_) {} }
+    try { agent({ engrave: true }, "warn", `${job.row?.order?.receiptId || job.key}: the approval stopped on an error (${msg})`); } catch (_) {}
+    notApproved(job, `Not approved: something went wrong while approving (${msg}). Your changes are kept: press Approve to try again.`);
+  }
   async function approve(job, by, button) {
     if(job._approvalTask){approveSay(job,"Still approving this placement…",null,true);return;}   // (APPROVEFIX: every wait of the task has a time limit, so this ends)
-    const task=approveOnce(job,by,button);job._approvalTask=task;
+    const task=approveOnce(job,by,button).catch(e=>approveThrew(job,e));job._approvalTask=task;   // (HELDREL: an approval that threw says so, never a silent press)
     try{return await task;}finally{if(job._approvalTask===task)delete job._approvalTask;}
   }
   async function approveOnce(job, by, button) {
     const owner=items(),row=job.row,pendingFit=fitTasks.get(job);
     { const why=approveBlocked(job,owner,pendingFit); if(why){approveRefused(job,why);return;} approveSay(job,""); }
     if(neverEngraves(row) && !job.approvalIntent){setNone(job,neverWhy(row));Orders.render();render();return;}   // (NO EARRING IS EVER ENGRAVED: an old open card is put away, nothing is approved)
-    if(job.approvalIntent){recoverApprovals();if(job.state==="approved")await saveBacks(job);return;}
+    if(job.approvalIntent){recoverApprovals();if(job.state==="approved"){approveSay(job,"");await saveBacks(job);}else approveSay(job,"Not approved: the approval that was under way could not be finished. Look at the placement, then press Approve again.");return;}   // (HELDREL: the recovered approval, or one line why not: never a silent press)
     if(pendingFit){
       // A can arrive while new words still wait for fonts or the fitting worker.
       // Keep the duplicate task lock, let that fit finish without preparation
