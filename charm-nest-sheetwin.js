@@ -1523,7 +1523,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (tok !== W.token) return;
     for (const x of W.pieces) {
       const g = got.get(x.sourceId); if (!g) continue;
-      if (g.pool) { const b = await pieceBase(g, x); if (!b) continue; const c = Pool.cloneCharm(b, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; }
+      if (g.pool) { const b = await pieceBase(g, x); if (!b) continue; const c = Pool.cloneCharm(b, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = await withOwnArt(c, x, x.poolId ? poolRowOf(x.poolId, x.rid) : null); }   // (SHEETBACK: the piece's own artwork edit over the master)
       else { const base = g.charms[x.index] && (!x.hash || g.charms[x.index].hash === x.hash) ? g.charms[x.index] : g.charms.find(c => c.hash === x.hash); if (base) x.c = Object.assign({}, base, { id: x.id, name: x.name }); }
     }
     if (failed.length) toast(`${failed.length} design${failed.length === 1 ? "" : "s"} could not be read (${failed.slice(0, 3).join(", ")}); ${failed.length === 1 ? "it shows" : "they show"} as outlines`, "bad", 7000);
@@ -1719,7 +1719,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         if (x.c && !backFace()) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
         else { ctx.strokeStyle = "rgba(60,54,46,.5)"; ctx.lineWidth = W.dpr; outlinePath(ctx, x); ctx.stroke(); }
         // from behind, this charm's own words, where the laser burns them (a charm with no engraving stays plain)
-        if (backFace() && x.c) { const geo = engGeoOf(x, W.backs); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: "#2f2512" })); }
+        if (backFace() && x.c) { const geo = engGeoOf(x, W.backs); tryDo(() => drawBackArt(ctx, x, tx0(x.c), k, "#2f2512")); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: "#2f2512" })); }   // (SHEETBACK: and what the Charm Editor added to its back)
         // the front of the plate: this charm's FRONT words, as they lie on it (not turned over); a charm with no front engraving is drawn as it always was
         else if (x.c && x.eng && x.eng.faces && x.eng.faces.front) { const geo = engGeoOf(x, W.backs, "front"); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: "#2f2512" })); }
         if (cu) { outlinePath(ctx, x); ctx.strokeStyle = "rgba(125,86,168,.9)"; ctx.lineWidth = 1.6 * W.dpr; ctx.setLineDash([4 * W.dpr, 3 * W.dpr]); ctx.stroke(); ctx.setLineDash([]); }
@@ -1833,6 +1833,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function markBack(ctx, x) {
     if (!x.c) return;
     if (!backFace() && !(x.eng && x.eng.faces && x.eng.faces.front)) return;
+    if (backFace()) tryDo(() => drawBackArt(ctx, x, tx0(x.c), W.k, "#2f2512"));   // (SHEETBACK)
     const geo = engGeoOf(x, W.backs, backFace() ? undefined : "front"); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: "#2f2512" }));
   }
   // a point clicked on a picture, where its charm is not known yet: a gold ring about a charm's size, and its centre
@@ -6542,7 +6543,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // (an earring pair's piece keeps its ear on the record this page makes of its own sheet, as the saved descriptor does)
       ...(c.side === "L" || c.side === "R" ? { side: c.side, mirror: c.mirror === true, ...(c.bodyIndex != null ? { bodyIndex: c.bodyIndex } : {}), ...(c.groupKey ? { groupKey: c.groupKey } : {}), ...(c.groupSize ? { groupSize: c.groupSize } : {}) } : {}) })) });
   async function attachGeom(x, g, rec) {
-    if (g.pool) { const b = await pieceBase(g, x); if (!b) return; const c = Pool.cloneCharm(b, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; return; }
+    if (g.pool) { const b = await pieceBase(g, x); if (!b) return; const c = Pool.cloneCharm(b, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = await withOwnArt(c, x); return; }   // (SHEETBACK: the piece's own artwork edit over the master)
     const base = g.charms[x.index] && (!x.hash || g.charms[x.index].hash === x.hash) ? g.charms[x.index] : g.charms.find(c => c.hash === x.hash);
     if (base) x.c = Object.assign({}, base, { id: x.id, name: x.name });
   }
@@ -6641,6 +6642,41 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** Forget the words worked out for a piece (the backs or the font changed). */
   const dropGeo = x => { x._engGeo = null; x._engGeoKey = null; x._engGeoF = null; x._engGeoFKey = null; };
+  /* SHEETBACK (Paul, 28 Oct 2026, order 4214126694: "the back engraving text and the image did not make it to the backside of this charm on the sheet ... If I use her attaches an image to a given
+     charm, that image must be perfectly visible along with all the other charm details in all thumbnail previews throughout the entire application"). What a person added to a piece's BACK in the
+     Charm Editor (charm-nest-art-edit.js: the charm's artBack — words typed there, a traced image — in the charm's own points as seen from the front) is engraved by the back's own file with the
+     words (charm-nest-pdf.js buildBackFile), and the approved back card draws it (Engrave.renderBack). A back whose words were all made in the editor has NO words of its own (its fit is
+     `artOnly`, its record's lines []): the plate drew only a back record's words, so such a back stood bare. Every back drawn here now lays the charm's artBack on the charm too, through the
+     very transform its words are drawn with (the charm's front frame; the plate's own mirror turns both over), a traced image's greys in their own grey, everything else in the words' ink. */
+  const artPaint = s => s && s.kind === "path" && Array.isArray(s.subpaths) && s.subpaths.length && (s.fill || s.stroke);
+  /** The parts added to a piece's back in the Charm Editor that are drawn (none: []). */
+  const backArtOf = x => { const a = x && x.c && x.c.artBack; return Array.isArray(a) ? a.filter(artPaint) : []; };
+  /** The words typed among them (the editor keeps a text's words with its outlines: artText), as one string ("" when none). */
+  const backArtText = x => backArtOf(x).map(s => String(s.artText || "").trim()).filter(Boolean).join("\n");
+  /** Lays the added back parts of a piece on a context already at the piece's place (tx: the charm's own points → the context, k: its scale). True when any was drawn. */
+  function drawBackArt(ctx, x, tx, k, ink) {
+    const art = backArtOf(x); if (!art.length || !window.CharmNestPDF || !CharmNestPDF.pathToCanvas) return false;
+    ctx.save(); ctx.lineJoin = "round"; ctx.lineCap = "round";
+    for (const s of art) {
+      const grey = s.artGrey && Array.isArray(s.fillRGB) ? `rgb(${s.fillRGB.map(v => Math.round(Math.max(0, Math.min(1, +v || 0)) * 255)).join(",")})` : null;
+      ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, s, tx);
+      if (s.fill) { ctx.fillStyle = grey || ink || "#2f2512"; ctx.fill(String(s.paintOp || "").endsWith("*") ? "evenodd" : "nonzero"); }
+      if (s.stroke) { ctx.strokeStyle = ink || "#2f2512"; ctx.lineWidth = Math.max(0.6, (+s.lwPt || 0.25) * k); ctx.stroke(); }
+    }
+    ctx.restore(); return true;
+  }
+  /** The centre of a piece's added back parts in the charm's own points (null when none). */
+  const backArtCentre = x => { const art = backArtOf(x); if (!art.length) return null; let b = null; for (const s of art) { const q = s.bbox; if (!Array.isArray(q)) continue; b = b ? [Math.min(b[0], q[0]), Math.min(b[1], q[1]), Math.max(b[2], q[2]), Math.max(b[3], q[3])] : q.slice(); } return b ? [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2] : null; };
+  /* SHEETBACK: a saved sheet's pieces are drawn from the master (the design the sheet was cut from), so a piece's own edit (its pool row's artEdit, or the "~ae…" the record's hash carries,
+     charm-nest-art-edit.js) is put over it here, as every other place a piece is made from the master does (CharmNestArtEdit.piece): its front parts in its drawing, its back parts on its back.
+     A piece no edit is known for is the master's, as before (no read); a piece whose edit cannot be read is drawn as the master draws it, never left out. */
+  const artAsked = new Set();   // (pool ids whose edits were asked by their hash alone: asked once per page)
+  async function withOwnArt(c, x, row) {
+    const AE = window.CharmNestArtEdit; if (!AE || !AE.piece || !c || !x || !x.poolId) return c;
+    let r = row || (window.B && B.pool && B.pool.rows && B.pool.rows.get(x.poolId)) || null;
+    if (!r && /~ae[0-9a-z]+$/.test(String(x.hash || "")) && !artAsked.has(x.poolId)) { artAsked.add(x.poolId); r = { artEdit: { front: 1, back: 1 } }; }   // (a record cut with an edit, on a page that holds no row of it)
+    try { return (await AE.piece(c, x.poolId, r)) || c; } catch (e) { console.warn("sheet window: the piece's own artwork", x.poolId, (e && e.message) || e); return c; }
+  }
   function orderPiece(ctx, G, x, fn) { const p = x.p, k = G.k; ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale); fn(); ctx.restore(); }
   /** Where a piece's words land on the plate, through the very transform they are drawn with (the view's own check). */
   function engPointOf(G, x, geo) {
@@ -6715,11 +6751,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // order, nothing laid over them and nothing faded (a charm with no engraving keeps its plain back)
     const pills = [];
     if (G.backSide) for (const x of G.pieces) {
-      const geo = engGeoOf(x, G.backs);
-      if (!geo || !geo.glyphs) { if (faceTextOf(x, "back")) pills.push(x); continue; }
+      const geo = engGeoOf(x, G.backs), ink = mine.has(x) ? "#2f2512" : "#3f3320";
+      // (SHEETBACK: what the Charm Editor added to the back — its words, an image — is laid on the charm first, the back's own words over it; a back made only in the editor is drawn by its parts)
+      if (x.c && backArtOf(x).length) orderPiece(ctx, G, x, () => { const c = x.c, k = G.k, cx = c.centerPt[0], cy = c.centerPt[1]; tryDo(() => drawBackArt(ctx, x, (px, py) => [(px - cx) * k, (cy - py) * k], k, ink)); });
+      if (!geo || !geo.glyphs) { if (faceTextOf(x, "back") && !backArtOf(x).length) pills.push(x); continue; }
       orderPiece(ctx, G, x, () => {
         const c = x.c, k = G.k, cx = c.centerPt[0], cy = c.centerPt[1];
-        CharmNestBacks.drawEngrave(ctx, geo, (px, py) => [(px - cx) * k, (cy - py) * k], { fill: mine.has(x) ? "#2f2512" : "#3f3320" });
+        CharmNestBacks.drawEngrave(ctx, geo, (px, py) => [(px - cx) * k, (cy - py) * k], { fill: ink });
       });
     }
     // the front: a charm's FRONT words, as they lie on it, on the plate's front (only a charm that has a front engraving; the plate of a sheet with none is drawn as it always was)
@@ -6830,11 +6868,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // the back side: the sheet's own backs and the engraving font, asked for once, and the plate drawn again as they land
       back: on => { if (!active()) return; G.backSide = !!on; if (G.backSide) ensureBacks(G, readOpts); else ensureFront(G); redraw(); },
       // (pieces that carry words on a face, the back unless asked for the "front": a piece engraved on both faces is counted once on each, never twice on one)
-      engraved: face => G.pieces.filter(x => engGeoOf(x, G.backs, face === "front" ? "front" : undefined) || faceTextOf(x, face === "front" ? "front" : "back")).length,
-      sides: () => ({ front: G.pieces.filter(x => engGeoOf(x, G.backs, "front") || faceTextOf(x, "front")).length, back: G.pieces.filter(x => engGeoOf(x, G.backs) || faceTextOf(x, "back")).length }),
-      // what the back of this sheet says: every charm that carries words, whose it is, and where on the plate they are drawn (face "front": the front words)
-      words: face => G.pieces.map(x => { const f = face === "front" ? "front" : "back", geo = engGeoOf(x, G.backs, f === "front" ? "front" : undefined); const text = (geo && geo.text) || faceTextOf(x, f) || ""; if (!text) return null;
-        return Object.assign({ poolId: x.poolId, rid: x.rid, text, face: f, drawn: !!(geo && geo.glyphs) }, geo ? engPointOf(G, x, geo) : {}); }).filter(Boolean),
+      // (SHEETBACK: a back the Charm Editor drew — its parts on the charm's artBack — is an engraved back too)
+      engraved: face => G.pieces.filter(x => engGeoOf(x, G.backs, face === "front" ? "front" : undefined) || faceTextOf(x, face === "front" ? "front" : "back") || (face !== "front" && backArtOf(x).length)).length,
+      sides: () => ({ front: G.pieces.filter(x => engGeoOf(x, G.backs, "front") || faceTextOf(x, "front")).length, back: G.pieces.filter(x => engGeoOf(x, G.backs) || faceTextOf(x, "back") || backArtOf(x).length).length }),
+      // what the back of this sheet says: every charm that carries words, whose it is, and where on the plate they are drawn (face "front": the front words). SHEETBACK: on the back, a charm's parts
+      // added in the Charm Editor count too: `art` (how many), their words (artText) when it has no words of its own, drawn where they lie
+      words: face => G.pieces.map(x => { const f = face === "front" ? "front" : "back", geo = engGeoOf(x, G.backs, f === "front" ? "front" : undefined), art = f === "back" ? backArtOf(x).length : 0;
+        const text = (geo && geo.text) || faceTextOf(x, f) || (art ? backArtText(x) : "") || ""; if (!text && !art) return null;
+        const at = geo ? engPointOf(G, x, geo) : art && x.c ? tryDo(() => engPointOf(G, x, { centre: backArtCentre(x) })) : null;
+        return Object.assign({ poolId: x.poolId, rid: x.rid, text, face: f, drawn: !!(geo && geo.glyphs) || (art > 0 && !!x.c) }, art ? { art } : {}, at || {}); }).filter(Boolean),
       hitAt: (x, y) => hitOrder(G, x, y),
       // where a piece's centre is on the screen
       pointOf: key => { const x = pieces.find(p => p.poolId === key || p.id === key), r = cv.getBoundingClientRect(); if (!x || !G.base || !r.width) return null; const px = G.R + (G.backSide ? G.Wp - x.p.cxPt * G.k : x.p.cxPt * G.k), py = G.R + x.p.cyPt * G.k; return { x: r.left + px * r.width / cv.width, y: r.top + py * r.height / cv.height }; },
@@ -6901,10 +6943,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     };
     ctx.fillStyle = o.fill || (cu ? "rgba(125,86,168,.20)" : "rgba(200,162,78,.10)"); path(true); ctx.fill("evenodd");
     ctx.strokeStyle = "rgba(60,54,46,.5)"; ctx.lineWidth = dpr; path(false); ctx.stroke();
-    const geo = c ? engGeoOf(x, backs) : null;
+    const geo = c ? engGeoOf(x, backs) : null, art = c ? !!tryDo(() => drawBackArt(ctx, x, t, k, "#2f2512")) : false;   // (SHEETBACK: the parts the Charm Editor added to the back)
     if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, t, { fill: "#2f2512" }));
     if (cu) { path(false); ctx.strokeStyle = "rgba(125,86,168,.9)"; ctx.lineWidth = 1.6 * dpr; ctx.setLineDash([4 * dpr, 3 * dpr]); ctx.stroke(); ctx.setLineDash([]); }
-    return !!(geo && geo.glyphs);
+    return !!(geo && geo.glyphs) || art;
   }
   /** A charm's FRONT words, drawn on a card's front: the context is already at the charm's place on the plate (as backPiece's is), not mirrored. True when words were drawn (a charm with no front engraving, or
       whose font is not here yet, draws nothing). */

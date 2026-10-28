@@ -9749,7 +9749,8 @@ const Engrave = window.Engrave = (() => {
   /** The added parts in the pictures written with a piece (the approval .png, the Approved card, the seals): one ink, the words' own (#111), as the file engraves them: a fill filled, a line stroked at its pen. */
   function backArtInk(ctx, art, tx, k) {
     ctx.save(); ctx.fillStyle = "#111"; ctx.strokeStyle = "#111"; ctx.lineJoin = "round"; ctx.lineCap = "round";
-    for (const s of art) { ctx.beginPath(); P.pathToCanvas(ctx, s, tx); if (s.fill) ctx.fill(String(s.paintOp || "").endsWith("*") ? "evenodd" : "nonzero"); else { ctx.lineWidth = Math.max(0.6, (s.lwPt || 0.25) * k); ctx.stroke(); } }
+    // (SHEETBACK, Paul 28 Oct 2026: "that image must be perfectly visible": a traced image's grey part is drawn in its own grey, as the back file writes it (charm-nest-pdf.js buildBackFile), never one black blob)
+    for (const s of art) { ctx.beginPath(); P.pathToCanvas(ctx, s, tx); if (s.fill) { ctx.fillStyle = s.artGrey && Array.isArray(s.fillRGB) ? `rgb(${s.fillRGB.slice(0, 3).map(v => Math.round(Math.max(0, Math.min(1, +v || 0)) * 255)).join(",")})` : "#111"; ctx.fill(String(s.paintOp || "").endsWith("*") ? "evenodd" : "nonzero"); } else { ctx.lineWidth = Math.max(0.6, (s.lwPt || 0.25) * k); ctx.stroke(); } }
     ctx.restore();
   }
   /** Where renderBack wrote "1 mm grid" (canvas px): { x, y, w, h }. */
