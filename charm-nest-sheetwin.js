@@ -1430,7 +1430,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** A live sheet as a record, enough to draw its plate (its own record is read behind it). */
   function recOfLive(sh) {
     return { id: sh.sheetId, metal: sh.metal, sheetIndex: sh.sheetIndex || null, page: sh.page, setId: sh.setId || null, setSeq: sh.seq || null, draft: !!sh.draft, runId: sh.runId || null, fileBase: sh.fileBase || "",
-      charms: sh.charms.map(c => ({ id: c.id, name: c.name, poolId: c.poolId || null, order: c.order, sku: c.sku, layer: c.layer, sourceId: c.sourceId, index: c.index, hash: c.hash, side: c.side, bodyIndex: c.bodyIndex, groupKey: c.groupKey, groupSize: c.groupSize, mirror: c.mirror, manual: c.manual || undefined })),
+      charms: sh.charms.map(c => Object.assign(hopEntry(c), { layer: c.layer, side: c.side, bodyIndex: c.bodyIndex, groupKey: c.groupKey, groupSize: c.groupSize, mirror: c.mirror }, c.manual ? { manual: c.manual } : {})),   // (the entry a record holds for a charm, as a move writes it)
       placements: sh.placements.map(p => Object.assign({}, p)), stock: stockFor(sh.metal, sh) };
   }
   /** The sheet drawn now from what the page holds; null when it holds nothing to draw it from. -> { sig } once its plate is drawn. */
@@ -5456,8 +5456,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const ric = window.requestIdleCallback ? fn => requestIdleCallback(fn, { timeout: 400 }) : fn => setTimeout(() => fn({ timeRemaining: () => 8 }), 30);
     MCW.on = 1;
     ric(function slice(dl) {
-      MCW.on = 0;
-      while (MCW.q.length && dl.timeRemaining() > 4) { const job = MCW.q.shift(); tryDo(job); }
+      // (one job at least, then more while the browser has idle time, never past 12 ms: a slice never holds back a press)
+      MCW.on = 0; const t0 = performance.now();
+      do { const job = MCW.q.shift(); if (job) tryDo(job); } while (MCW.q.length && dl.timeRemaining() > 4 && performance.now() - t0 < 12);
       if (MCW.q.length) mcWarmPump();
     });
   }

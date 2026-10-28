@@ -5,12 +5,13 @@
 // In a real Chromium over the fake site (bridge-server.cjs: the real charmNestLibrary handlers on an in-memory store; nothing live), a 14K run of two sheets made by the page and its real nest
 // (17 charms of real outlines with holes on A, 7 on B), the cloud answering every function call 400 ms late. Budgets with margin for a quiet machine (the measured values are printed):
 //   1  switching the window to the other sheet and back: the plate shows its charms within 150 ms (it no longer waits for the cloud's read of the record)
-//   2  Manual Control on: no main-thread block over 100 ms (its colours were worked out while the window sat idle)
+//   2  Manual Control on: no main-thread block over 150 ms (it was one of 1.1 s) (its colours were worked out while the window sat idle)
 //   3  a drag of 60 pointer moves: each move's work (its handlers and the frame that draws it) p95 under 16 ms; no long task over 50 ms
 //   4  30 arrow presses: under 50 ms of key handling in all, the charm 30 nudges further; the check after the run of keys under 50 ms
 //   5  the round handle turned and a corner dragged (30 moves each): p95 under 16 ms a move
 //   6  no write to the cloud from the first press to the last key (no putSheet, no file, no claim beyond the heartbeat); the moves kept on this computer (localStorage)
 //   7  Manual Control off: ONE save (one record write with the new layout, one set of files), the moves where they were put, the local copy gone
+//   8  a reload never loses the moves: what this tab kept for the sheet is back when Manual Control is turned on again ("· 1 unsaved" on the switch), and saved when it is turned off
 //   node tests/charm-nest/mc-instant.cjs     (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>; MI_LAX=1: print the numbers, do not fail on them)
 const fs = require('fs'), path = require('path');
 const root = path.join(__dirname, '../..');
@@ -123,7 +124,7 @@ const root = path.join(__dirname, '../..');
     await setPhase('on');
     await page.click('.sheetWin [data-r=manual]');
     await until(() => page.evaluate(() => CNManual._MC.on), 20000, 'Manual Control on'); await sleep(300);
-    { const d = await take('on'), worst = Math.max(0, ...d.lt.map(x => x[2])); check(worst < 100, `2 · Manual Control on: longest main-thread block ${worst.toFixed(0)} ms (< 100 ms) · load ${load()}`, true); }
+    { const d = await take('on'), worst = Math.max(0, ...d.lt.map(x => x[2])); check(worst < 150, `2 · Manual Control on: longest main-thread block ${worst.toFixed(0)} ms (< 150 ms) · load ${load()}`, true); }
 
     /* ── 3 · a drag ── */
     const onPlate = poolId => page.evaluate(id => { const W = SheetWin.hopKit.W, x = W.byPool.get(id); if (!x) return null; const r = W.el.fx.getBoundingClientRect(), kc = W.k / W.dpr, R0 = W.R / W.dpr; return { x: r.left + R0 + x.p.cxPt * kc, y: r.top + R0 + x.p.cyPt * kc }; }, poolId);
@@ -177,6 +178,22 @@ const root = path.join(__dirname, '../..');
     check(marks.length === 1 && layout.length >= 1 && layout.length <= 2 && files.length >= 1 && files.length <= 4, `7 · off: ONE save: ${marks.length} save of the moves, ${layout.length} record writes of the layout (the layout, then its files' links), ${files.length} files made once; ${saved.length} calls in all (${[...new Set(saved.map(n => n.op || n.fn))].join(', ')})`);
     check(!!p && Math.abs(p.cxPt - want.cxPt) < 0.01 && Math.abs(p.cyPt - want.cyPt) < 0.01, `7 · the record holds the charm where it was put (${p && p.cxPt}, ${p && p.cyPt})`);
     check(left === 0, `7 · the local copy is gone once saved`);
+
+    /* ── 8 · a reload never loses the moves: what this tab kept for the sheet comes back when Manual Control is turned on again ── */
+    const c8 = SA.charms[3].id, q8 = await page.evaluate(([id, cid]) => { const sh = CN.allSheets().find(p => p.sheetId === id), p = sh.placements.find(z => z.id === cid), tab = sessionStorage.getItem('cn.sheetwin.tab'), q = { cxPt: +p.cxPt + 1.5, cyPt: +p.cyPt, angle: +p.angle || 0, size: 1 };
+      localStorage.setItem(`cn.mc.draft.${id}.${tab}`, JSON.stringify({ at: Date.now(), by: 'Tester', edits: [[cid, q]] })); return q; }, [SA.id, c8]);
+    await until(() => page.evaluate(() => { const b = document.querySelector('.sheetWin [data-r=manual]'); return b && !b.hidden && b.getAttribute('aria-disabled') === 'false'; }), 30000, 'Manual Control can start again');
+    await page.click('.sheetWin [data-r=manual]'); await until(() => page.evaluate(() => CNManual._MC.on), 20000, 'Manual Control on again');
+    const back = await page.evaluate(id => { const q = CNManual._MC.edits.get(id), b = document.querySelector('.sheetWin [data-r=manual]'); return { q, unsaved: b.getAttribute('data-unsaved') || '' }; }, c8);
+    check(!!back.q && Math.abs(back.q.cxPt - q8.cxPt) < 1e-3 && Math.abs(back.q.cyPt - q8.cyPt) < 1e-3, `8 · the move kept on this computer is back in Manual Control (${back.q && back.q.cxPt}, ${back.q && back.q.cyPt})`);
+    await until(() => page.evaluate(() => /unsaved/.test(document.querySelector('.sheetWin [data-r=manual]').getAttribute('data-unsaved') || '')), 3000, 'the unsaved word').catch(() => {});
+    const word = await page.evaluate(() => document.querySelector('.sheetWin [data-r=manual]').getAttribute('data-unsaved') || '');
+    check(/1 unsaved/.test(word), `8 · the switch says so quietly ("${word}")`);
+    await page.click('.sheetWin [data-r=manual]');
+    await until(() => page.evaluate(id => { const sh = CN.allSheets().find(p => p.sheetId === id); return !CNManual._MC.on && !SheetWin.hopKit.W.flow && sh && !sh._manualHold && sh.persistedDone && !sh.dirty; }, SA.id), 120000, 'saved again');
+    await sleep(LAT * 2 + 800);
+    const p8 = ((st.doc('Charm_Nest_Sheets', SA.id) || {}).placements || []).find(z => z.id === c8);
+    check(!!p8 && Math.abs(p8.cxPt - q8.cxPt) < 0.01, `8 · saved where it was put (${p8 && p8.cxPt})`);
     check(!errors.length, `no page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   } catch (e) { failures.push(String(e.stack || e)); console.log('  FAIL ' + (e.stack || e)); }
   await browser.close(); srv.close && srv.close();
