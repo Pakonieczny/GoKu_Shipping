@@ -130,7 +130,7 @@ function layoutIssues() {
 
     let lettersBox = null;
     await step('1.1 the marquee sweeps the month\'s six letters (and nothing else) and Delete takes them out', async () => {
-      await page.keyboard.press('m'); assert.equal(await cur(page, 'C.tool()'), 'marquee');
+      await page.keyboard.press('q'); assert.equal(await cur(page, 'C.tool()'), 'marquee');   // (Illustrator's keys: Q the Marquee, M the Rectangle)
       lettersBox = await H(page, ids => { let b = null; for (const id of ids) { const x = window.CharmEditor.current.box(id); b = b ? [Math.min(b[0], x[0]), Math.min(b[1], x[1]), Math.max(b[2], x[2]), Math.max(b[3], x[3])] : x; } return b; }, LETTERS);
       const pad = 0.5 * 72 / 25.4;
       const a = await ptClient(page, lettersBox[0] - pad, lettersBox[1] - pad), b = await ptClient(page, lettersBox[2] + pad, lettersBox[3] + pad);
@@ -259,7 +259,7 @@ function layoutIssues() {
     await step('1.7 at 2000 % it is still vector: SVG paths in points, no image, canvas or foreignObject in the room, nothing scaled as a picture, every stroke non-scaling', async () => {
       await page.keyboard.press('v');
       await clickAt(page, await H(page, id => { const b = window.CharmEditor.current.box(id); return window.CharmEditor.current.clientOf((b[0] + b[2]) / 2, (b[1] + b[3]) / 2); }, t25.id));
-      await page.keyboard.press('Control+2'); await settle(page);
+      await page.keyboard.press('Shift+Digit2'); await settle(page);
       await page.locator('.ce-root .ce-zoomb').click();
       await page.locator('.ce-root [data-zoom="2000"]').click(); await settle(page);
       const v = await H(page, () => {
@@ -318,7 +318,7 @@ function layoutIssues() {
     await step('2.3 eight handles and a turn grip; Shift keeps the ratio (the opposite corner stays), Alt resizes from the centre', async () => {
       await page.keyboard.press('Escape');
       await clickAt(page, await edgeOf(page, 'day-1-1'));
-      await page.keyboard.press('Control+2'); await settle(page);   // zoom to the selection
+      await page.keyboard.press('Shift+Digit2'); await settle(page);   // zoom to the selection (⇧2: ⌘2 is Illustrator's Lock)
       assert.ok(await cur(page, 'C.zoom()') > 1000);
       assert.equal(await H(page, () => document.querySelectorAll('.ce-ui [data-h]').length), 9);
       const b0 = await box(page, 'day-1-1');
@@ -382,15 +382,16 @@ function layoutIssues() {
       await page.keyboard.press('Control+z'); await settle(page);   // the cut comes back
       assert.equal((await items(page)).length, n0);
     });
-    await step('2.7 right-click raises the object menu (cut, copy, paste, duplicate, delete, order, group, lock, hide); Hide hides it and it can no longer be clicked', async () => {
+    await step('2.7 right-click raises Illustrator\'s contextual menu (cut, copy, paste, clear, Arrange ▸, Transform ▸, Select ▸); ⌘3 (Hide) hides it and it can no longer be clicked', async () => {
       await page.keyboard.press('Escape');
       const p = await edgeOf(page, 'day-4-2');
       await clickAt(page, p, { button: 'right' });
-      const labels = await H(page, () => { const m = document.querySelector('.ce-ctx'); return m.hidden ? null : [...m.querySelectorAll('.ce-item')].map(b => b.textContent.replace(/[⌘⇧⌫\[\]]|double-click/g, '').trim()); });
-      for (const w of ['Cut', 'Copy', 'Paste', 'Duplicate', 'Delete', 'Bring to front', 'Bring forward', 'Send backward', 'Send to back', 'Group', 'Ungroup', 'Lock', 'Hide']) assert.ok(labels && labels.some(l => l.startsWith(w)), 'menu has ' + w + ': ' + labels);
+      const labels = await H(page, () => { const m = document.querySelector('.ce-ctx'); return m.hidden ? null : [...m.querySelectorAll('.ce-item')].map(b => (b.querySelector('.ce-aimi__l') || b).textContent.trim()); });
+      for (const w of ['Undo', 'Cut', 'Copy', 'Paste', 'Clear', 'Bring to Front', 'Bring Forward', 'Send Backward', 'Send to Back', 'Transform', 'Arrange', 'Select']) assert.ok(labels && labels.includes(w), 'menu has ' + w + ': ' + labels);
+      assert.ok(!labels.includes('Group'), 'one path: no Group (Illustrator shows it for several)');
       assert.deepEqual(await cur(page, 'C.selection()'), ['day-4-2']);
       shots.push(await shot(page, 'desk-7-context.png'));
-      await page.locator('.ce-ctx [data-ctx="hide"]').click(); await settle(page);
+      await page.keyboard.press('Escape'); await page.keyboard.press('Control+3'); await settle(page);   // (Object ▸ Hide ▸ Selection)
       assert.equal(await H(page, () => window.CharmEditor.current.items().find(i => i.id === 'day-4-2').hidden), true);
       await clickAt(page, p);
       assert.notDeepEqual(await cur(page, 'C.selection()'), ['day-4-2']);
@@ -428,7 +429,7 @@ function layoutIssues() {
     await step('2.10 smart guides: a square dragged near the charm\'s middle lands on it exactly, and a guide is drawn while it is held (Alt lets it go anywhere)', async () => {
       await page.keyboard.press('Escape');
       // the month's letters have edges a hair from the middle (the U's left edge is 0.05 mm off it), and a guide rightly takes the nearest: they go first
-      await page.keyboard.press('m');
+      await page.keyboard.press('q');   // (the Marquee: Q)
       const lb = await H(page, ids => { let b = null; for (const id of ids) { const x = window.CharmEditor.current.box(id); b = b ? [Math.min(b[0], x[0]), Math.min(b[1], x[1]), Math.max(b[2], x[2]), Math.max(b[3], x[3])] : x; } return b; }, LETTERS);
       await drag(page, await ptClient(page, lb[0] - 1, lb[1] - 1), await ptClient(page, lb[2] + 1, lb[3] + 1));
       await page.keyboard.press('Delete'); await page.keyboard.press('v'); await settle(page);
@@ -737,7 +738,7 @@ function layoutIssues() {
     await step('6.9 a line is drawn at its TRUE width at every zoom: a day square\'s 0.3 pt line is 8 px across at 2000 %, 4 px at 1000 %; thinned to 0.03 mm it is 2.3 px at 2000 %; at 100 % only a hairline', async () => {
       await H(page, () => document.querySelector('.ce-root [data-opt="grid"]').click()); await settle(page);   // (the More menu's "Millimetre grid", off)
       await clickAt(page, await edgeOf(page, 'day-2-3'));
-      await page.keyboard.press('Control+2'); await settle(page);
+      await page.keyboard.press('Shift+Digit2'); await settle(page);
       const zoomTo = async z => { await page.evaluate(z => window.CharmEditor.current.setZoom(z), z); await settle(page); };
       await page.keyboard.press('Escape'); await settle(page);
       await zoomTo(2000); const at2000 = await across('day-2-3');
