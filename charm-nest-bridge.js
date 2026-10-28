@@ -13045,40 +13045,6 @@ const Sets = window.Sets = (() => {
       fail() { chip.remove(); settle(); }
     };
   }
-  /* LOCAL (Paul, 28 Oct 2026: "as responsive as Photoshop … leverage local storage … keep the API calls to the bare minimum"). The Sets view's two lists are kept on this
-     computer (charm-nest-store.js): the sets (library:sets), the Current sheets (library:sheets) and the sets' own sheets (library:setSheets), every row under its revision.
-     A Library not drawn yet is drawn from them at once (a reload, the cloud slow or away), and the cloud is asked by revision: setList / listSheets with ifRev (nothing the
-     Library reads moved: one small read each) and since (only the sets and sheets written since). The two answers are put together with what is held (takeLibrary); a list
-     that names a row held nowhere is read whole once more. */
-  function heldLibrary() {
-    const St = window.CharmNestStore; if (!St) return null;
-    const a = St.rows("library:sets"), b = St.rows("library:sheets"), c = St.rows("library:setSheets");
-    if (!a.list || !b.list || !c.list || a.missing || b.missing || c.missing) return null;
-    return { sets: a.rows, sheets: [...new Map([...b.rows, ...c.rows].map(r => [r.id, r])).values()] };
-  }
-  function adoptHeld() {
-    const h = heldLibrary(); if (!h) return false;
-    _cache = { rawSets: h.sets, rawSheets: h.sheets, sets: [], sheets: h.sheets, held: true };
-    S.library.rows = Gate.projectLibraryRecords(h.sheets.slice()); S.library.loadedFor = "all";
-    return true;
-  }
-  const askLibrary = St => (heldLibrary() ? { sets: St.ask("library:sets"), sheets: St.ask("library:sheets") } : { sets: { wantRev: true, since: "0.0" }, sheets: { wantRev: true, since: "0.0" } });
-  /** The two answers with what is held: { sets, sheets, same } (same: neither moved), or null when they name a row held nowhere. */
-  function takeLibrary(ss, sh) {
-    const St = window.CharmNestStore; if (!St || !ss || !sh) return null;
-    const was = St.list("library:setSheets"), sentSets = new Set((ss.sets || []).map(x => x.setId)), sentSheets = new Set((ss.sheets || []).map(r => r.id));
-    for (const r of ss.sheets || []) St.put("sheets", r.id, r, "");   // (the sets' own sheets first: a sheet the Current list sent too is the same or newer, and is kept after)
-    const sets = St.take("library:sets", "sets", ss, "sets", x => x.setId), current = St.take("library:sheets", "sheets", sh, "sheets", x => x.id);
-    if (!sets || !current) return null;
-    let ids;
-    if (ss.unchanged) { if (!was) return null; ids = was.ids; }
-    else if (!Array.isArray(ss.ids)) ids = (ss.sheets || []).map(r => r.id);
-    else { const held = new Set(was ? was.ids : []); ids = sets.flatMap(st => (st.sheetIds || []).filter(id => (sentSets.has(st.setId) ? sentSheets : held).has(id))); }
-    const seen = new Set(), setSheets = [];
-    for (const id of ids) { if (seen.has(id)) continue; seen.add(id); const r = St.get("sheets", id); if (!r) return null; setSheets.push(r); }
-    St.putList("library:setSheets", { kind: "sheets", ids: setSheets.map(r => r.id), since: "-", rev: "-" });
-    return { sets, sheets: [...new Map([...current, ...setSheets].map(r => [r.id, St.get("sheets", r.id) || r])).values()], same: !!(ss.unchanged && sh.unchanged) };
-  }
   async function renderLibrary(body, opts) {
     if(window.Seal?.defer("sets-library",()=>renderLibrary(body,opts)))return;
     // the Completed tab is drawn by charm-nest-library.js; this is the Current tab's Sets view
@@ -13146,6 +13112,40 @@ const Sets = window.Sets = (() => {
       body.innerHTML = `<div class="libEmpty">Could not load sets: ${esc(e.message)}<br><button class="btn ghost sm" type="button" style="margin-top:10px">Try again</button></div>`;
       body.querySelector("button").onclick = () => { try { window.CN.loadLibrary().catch(() => {}); } catch (_) { /* a reload of the tab does the same */ } };
     }
+  }
+  /* LOCAL (Paul, 28 Oct 2026: "as responsive as Photoshop … leverage local storage … keep the API calls to the bare minimum"). The Sets view's two lists are kept on this
+     computer (charm-nest-store.js): the sets (library:sets), the Current sheets (library:sheets) and the sets' own sheets (library:setSheets), every row under its revision.
+     A Library not drawn yet is drawn from them at once (a reload, the cloud slow or away), and the cloud is asked by revision: setList / listSheets with ifRev (nothing the
+     Library reads moved: one small read each) and since (only the sets and sheets written since). The two answers are put together with what is held (takeLibrary); a list
+     that names a row held nowhere is read whole once more. */
+  function heldLibrary() {
+    const St = window.CharmNestStore; if (!St) return null;
+    const a = St.rows("library:sets"), b = St.rows("library:sheets"), c = St.rows("library:setSheets");
+    if (!a.list || !b.list || !c.list || a.missing || b.missing || c.missing) return null;
+    return { sets: a.rows, sheets: [...new Map([...b.rows, ...c.rows].map(r => [r.id, r])).values()] };
+  }
+  function adoptHeld() {
+    const h = heldLibrary(); if (!h) return false;
+    _cache = { rawSets: h.sets, rawSheets: h.sheets, sets: [], sheets: h.sheets, held: true };
+    S.library.rows = Gate.projectLibraryRecords(h.sheets.slice()); S.library.loadedFor = "all";
+    return true;
+  }
+  const askLibrary = St => (heldLibrary() ? { sets: St.ask("library:sets"), sheets: St.ask("library:sheets") } : { sets: { wantRev: true, since: "0.0" }, sheets: { wantRev: true, since: "0.0" } });
+  /** The two answers with what is held: { sets, sheets, same } (same: neither moved), or null when they name a row held nowhere. */
+  function takeLibrary(ss, sh) {
+    const St = window.CharmNestStore; if (!St || !ss || !sh) return null;
+    const was = St.list("library:setSheets"), sentSets = new Set((ss.sets || []).map(x => x.setId)), sentSheets = new Set((ss.sheets || []).map(r => r.id));
+    for (const r of ss.sheets || []) St.put("sheets", r.id, r, "");   // (the sets' own sheets first: a sheet the Current list sent too is the same or newer, and is kept after)
+    const sets = St.take("library:sets", "sets", ss, "sets", x => x.setId), current = St.take("library:sheets", "sheets", sh, "sheets", x => x.id);
+    if (!sets || !current) return null;
+    let ids;
+    if (ss.unchanged) { if (!was) return null; ids = was.ids; }
+    else if (!Array.isArray(ss.ids)) ids = (ss.sheets || []).map(r => r.id);
+    else { const held = new Set(was ? was.ids : []); ids = sets.flatMap(st => (st.sheetIds || []).filter(id => (sentSets.has(st.setId) ? sentSheets : held).has(id))); }
+    const seen = new Set(), setSheets = [];
+    for (const id of ids) { if (seen.has(id)) continue; seen.add(id); const r = St.get("sheets", id); if (!r) return null; setSheets.push(r); }
+    St.putList("library:setSheets", { kind: "sheets", ids: setSheets.map(r => r.id), since: "-", rev: "-" });
+    return { sets, sheets: [...new Map([...current, ...setSheets].map(r => [r.id, St.get("sheets", r.id) || r])).values()], same: !!(ss.unchanged && sh.unchanged) };
   }
   return { releaseIssue, ensure, ofRun, keyOf, labelsReady, onSheetSaved, finalize, commit, unrecorded: set => unrecorded.has(set), undo, evaluate, save, renderLibrary, libraryCard, renderLabelPng, sheetsOf, setOfSheet, byRun };
 })();
