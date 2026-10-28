@@ -13,6 +13,9 @@
  *  Three tabs with hash routes: Overview (#efficiency), Stations (#efficiency/stations, charm-nest-efficiency-stations.js) and
  *  People (#efficiency/people); one person's full page is #efficiency/person/<name> (charm-nest-efficiency-person.js). Those two
  *  modules are mounted here when they are loaded (a small labelled spinner and a retry until then); the Overview never waits for them.
+ *  CUSTOM PIECES (Design & Engrave, Paul 28 Oct 2026: "I need to know when employees are commissioning custom pieces, especially when they don't belong to an order
+ *  that way we can correctly track our rates and who creates the errors and who is creating the solutions"): a fourth tab, #efficiency/custom, mounts
+ *  charm-nest-efficiency-custom.js (op custom) for the day or range chosen in the bar; a person's design work is folded into their row (totals.design).
  *  Live: one small `live` read every 3 s (who is signed in, which order each station has now) while the console is in sight and
  *  its tab is the one shown; the heavier overview about every 10 s, and at once when the live read says work was recorded. Both
  *  pause when the page is hidden or another Workspace tab is open, and catch up (with a labelled spinner) when shown again.
@@ -155,6 +158,7 @@
       }
       stations.sort((a, b) => b.minutes - a.minutes);
       const x = { parts: N(t.parts), scanParts: N(t.scanParts), scans: N(t.scans), rejects: N(t.rejects), errors: N(t.errors), orders: t.orders == null ? orders.length : N(t.orders), activeMin: N(t.activeMin), idleMin: N(t.idleMin), signedInMin: N(t.signedInMin), rate: N(t.rate), secPerScan: N(t.secPerScan) };
+      if (t.design && typeof t.design === "object") x.design = { opened: N(t.design.opened), saved: N(t.design.saved), imported: N(t.design.imported), custom: N(t.design.custom), orderless: N(t.design.orderless), fixes: N(t.design.fixes) };   // (Design & Engrave: the design log's counts of the person's days, see designLine)
       if (!x.rate && x.activeMin >= 1 && x.parts) x.rate = x.parts / (x.activeMin / 60);
       if (!x.secPerScan && x.activeMin >= 1 && x.scans) x.secPerScan = x.activeMin * 60 / x.scans;
       const devices = (Array.isArray(p.devices) ? p.devices : []).filter(d => d && deskKey(String(d.station || ""), d.device)).map(d => ({ station: String(d.station), device: deskKey(String(d.station), d.device), minutes: N(d.minutes), parts: N(d.parts), scans: N(d.scans), orders: N(d.orders) }));   // (the desks this person was signed in at: "assembly-2" ...)
@@ -351,7 +355,7 @@
     // which data (real by default, whatever the sorter's own mode), the tab and route, the live read
     view: store.get(VIEW_STORE) === "sandbox" ? "sandbox" : "real", tab: "overview", person: "", locked: false,
     live: null, liveAt: 0, liveErr: "", liveShort: "", liveFails: 0, liveBusy: false, liveGen: 0, liveTimer: 0, liveCtl: null, liveSupported: true, liveRetryAt: 0, liveSig: "", resuming: false, hiddenAt: 0, renderErr: "",
-    wk: new Map(), si: new Map(), roster: new Map(), q: "", sort: "now", mounts: {}, subs: { live: new Set(), view: new Set() },
+    wk: new Map(), si: new Map(), roster: new Map(), q: "", sort: "now", mounts: {}, subs: { live: new Set(), view: new Set(), range: new Set() },
     desk: { asked: new Set(), busy: false, calls: 0 } };   // (desk numbers of older days: the days asked for this page load, see deskFix)
   if (![1, 7, 30].includes(st.days)) st.days = 1;
   const now = () => Date.now() + st.off;
@@ -468,6 +472,7 @@
 .efChip{display:inline-flex;gap:5px;align-items:baseline;border:1px solid var(--line);border-radius:999px;padding:2px 9px;font-size:11px;color:var(--ink70);white-space:nowrap;background:var(--card2)}
 .efChip b{font-weight:700;color:var(--ink)}.efChip.now{border-color:var(--sage);background:var(--sageSoft)}
 .efPW{flex:1 0 100%;font-size:11.5px;color:var(--ink45);font-variant-numeric:tabular-nums}
+.efPD.flag{color:var(--clay,#a5523a)}
 .efN{text-align:right;font-variant-numeric:tabular-nums;min-width:0}.efN>b{font-weight:650;font-size:14px;display:block;white-space:nowrap}.efN:before{content:attr(data-l);display:none;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:700;margin-bottom:1px}
 .efOrd{border:0;background:transparent;border-radius:7px;padding:3px 4px;margin:-3px -4px;color:inherit}.efOrd:hover{background:var(--paper2)}.efOrd>b{display:inline-flex;align-items:center;gap:4px}
 .efOrd i{font-style:normal;color:var(--ink45);font-size:9px;transition:transform .25s ease}.efP.o-orders .efOrd i{transform:rotate(180deg)}
@@ -639,7 +644,7 @@
   <span class="efGrow"></span>
   <span class="efNav" role="group" aria-label="Day"><button type="button" class="efIcon" data-nav="-1" aria-label="Earlier">‹</button><span class="efDay" aria-live="polite"></span><button type="button" class="efIcon" data-nav="1" aria-label="Later">›</button><button type="button" class="efToday hidden" data-today>Today</button></span>
   <span class="seg efSeg" role="group" aria-label="Range"><button type="button" data-days="1">Day</button><button type="button" data-days="7">7 days</button><button type="button" data-days="30">30 days</button></span>
-  <nav class="efTabsBar" role="tablist" aria-label="Employee efficiency"><button type="button" role="tab" class="efTabBtn" data-tab="overview" aria-controls="efPgOverview">Overview</button><button type="button" role="tab" class="efTabBtn" data-tab="stations" aria-controls="efPgStations">Stations</button><button type="button" role="tab" class="efTabBtn" data-tab="people" aria-controls="efPgPeople">People</button><i class="efInk" aria-hidden="true"></i></nav>
+  <nav class="efTabsBar" role="tablist" aria-label="Employee efficiency"><button type="button" role="tab" class="efTabBtn" data-tab="overview" aria-controls="efPgOverview">Overview</button><button type="button" role="tab" class="efTabBtn" data-tab="stations" aria-controls="efPgStations">Stations</button><button type="button" role="tab" class="efTabBtn" data-tab="people" aria-controls="efPgPeople">People</button><button type="button" role="tab" class="efTabBtn" data-tab="custom" aria-controls="efPgCustom">Custom pieces</button><i class="efInk" aria-hidden="true"></i></nav>
 </header>
 <form class="efKey hidden" autocomplete="off"><h3>Manager passcode</h3><p>This screen shows every person's work. Enter the manager passcode (the same one as the Ads console) to open it.</p>
   <div class="efKeyRow"><input type="password" name="efpass" aria-label="Manager passcode" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Passcode"><button class="btn gold xs" type="submit">Open</button></div><div class="efKeyErr" role="alert"></div></form>
@@ -667,6 +672,7 @@
   <section class="efCard efFeedCard" aria-label="Live activity"><button type="button" class="efFeedBtn" aria-expanded="false"><i aria-hidden="true">▶</i>Live activity <b class="efFC"></b></button><div class="efFeedWrap"><div class="efFeedIn"><div class="efFeed"></div></div></div></section>
 </div>
 <div class="efPage hidden" id="efPgStations" role="tabpanel" data-v="stations"><div class="efMount"></div></div>
+<div class="efPage hidden" id="efPgCustom" role="tabpanel" data-v="custom"><div class="efMount"></div></div>
 <div class="efPage hidden" id="efPgPeople" role="tabpanel" data-v="people">
   <div class="efRTools"><input type="search" name="efq" aria-label="Find a person" placeholder="Find a person" autocomplete="off" spellcheck="false"><span class="seg efSort" role="group" aria-label="Order"><button type="button" data-sort="now">On now</button><button type="button" data-sort="parts">Pieces</button><button type="button" data-sort="name">Name</button></span><span class="efQ efRQ"></span></div>
   <div class="efRoster"></div>
@@ -679,7 +685,7 @@
       stations: host.querySelector(".efStations"), people: host.querySelector(".efPeople"), pn: host.querySelector(".efPN"), feedBtn: host.querySelector(".efFeedBtn"), feedWrap: host.querySelector(".efFeedWrap"), feed: host.querySelector(".efFeed"), fc: host.querySelector(".efFC"),
       tabsBar: host.querySelector(".efTabsBar"), ink: host.querySelector(".efInk"), hint: host.querySelector(".efHint"),
       siGrid: host.querySelector(".efSiGrid"), siC: host.querySelector(".efSiC"), wkList: host.querySelector(".efWkList"), wkC: host.querySelector(".efWkC"),
-      pages: { overview: host.querySelector("#efPgOverview"), stations: host.querySelector("#efPgStations"), people: host.querySelector("#efPgPeople"), person: host.querySelector("#efPgPerson") },
+      pages: { overview: host.querySelector("#efPgOverview"), stations: host.querySelector("#efPgStations"), people: host.querySelector("#efPgPeople"), person: host.querySelector("#efPgPerson"), custom: host.querySelector("#efPgCustom") },
       roster: host.querySelector(".efRoster"), rq: host.querySelector('.efRTools input[name="efq"]'), rqN: host.querySelector(".efRQ") };
     st.charts.hours = columns(host.querySelector(".efChart"), { height: 124, name: "Pieces per hour", maxW: 24, unit: "pieces", labelW: 26, thin: true });
     st.charts.tA = columns(host.querySelector(".efChartA"), { height: 118, name: "Pieces per day", maxW: 18, unit: "pieces", labelW: 40 });
@@ -752,15 +758,15 @@
   }
 
   /* ── the tabs and the routes: #efficiency · #efficiency/stations · #efficiency/people · #efficiency/person/<name> ── */
-  const MODS = { stations: { global: "EfficiencyStations", label: "stations board" }, person: { global: "EfficiencyEmployee", label: "employee page" } };
+  const MODS = { stations: { global: "EfficiencyStations", label: "stations board" }, person: { global: "EfficiencyEmployee", label: "employee page" }, custom: { global: "EfficiencyCustom", label: "custom pieces" } };
   const needOverview = () => !st.person && (st.tab === "overview" || st.tab === "people");
-  const hashFor = () => "#efficiency" + (st.person ? "/person/" + encodeURIComponent(st.person) : st.tab === "stations" ? "/stations" : st.tab === "people" ? "/people" : "");
+  const hashFor = () => "#efficiency" + (st.person ? "/person/" + encodeURIComponent(st.person) : st.tab === "stations" ? "/stations" : st.tab === "people" ? "/people" : st.tab === "custom" ? "/custom" : "");
   /** Reads the address into the tab and person; false when the address is not this screen's. */
   function parseHash() {
     const h = String(root.location.hash || "").replace(/^#/, "").split("/");
     if (h[0] !== "efficiency") return false;
     let tab = "overview", person = "";
-    if (h[1] === "stations") tab = "stations"; else if (h[1] === "people") tab = "people";
+    if (h[1] === "stations") tab = "stations"; else if (h[1] === "people") tab = "people"; else if (h[1] === "custom") tab = "custom";
     else if (h[1] === "person" && h.slice(2).join("/")) { tab = "people"; try { person = decodeURIComponent(h.slice(2).join("/")); } catch (_) { person = h.slice(2).join("/"); } }
     st.tab = tab; st.person = person.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 80); return true;
   }
@@ -840,7 +846,7 @@
   }
   const unmountAll = () => { for (const k of Object.keys(MODS)) unmountMod(k); };
   function ensureMounts() {
-    const ok = st.built && st.shown && !!st.key && !st.locked, want = !ok ? "" : st.person ? "person" : st.tab === "stations" ? "stations" : "";
+    const ok = st.built && st.shown && !!st.key && !st.locked, want = !ok ? "" : st.person ? "person" : st.tab === "stations" ? "stations" : st.tab === "custom" ? "custom" : "";
     for (const k of Object.keys(MODS)) if (k !== want && st.mounts[k]) unmountMod(k);
     if (want && st.mounts[want] && want === "person" && st.mounts[want].name !== st.person) unmountMod(want);
     if (want && !st.mounts[want]) mountMod(want);
@@ -1229,9 +1235,10 @@
     r.st.classList.toggle("on", on); r.who.setAttribute("aria-label", p.absent ? `${p.name}, ${whenText(p, M)}` : `${p.name}, ${on ? "on now" : "locked out"}. ${whenText(p, M)}`);
     const wt = whenText(p, M); setText(r.when, wt);
     const wl = weldLine(p);   // (the Welding station's time on task and matched count: the People tab's own helper and wording)
+    const dl = designLine(p);
     const chips = chipsOf(p);
-    const chipSig = chips.map(c => c.label + c.minutes + (c.taskMin ? ":" + c.taskMin.welding + "/" + c.taskMin.matching + "/" + c.taskMin.unknown : "") + (c.now ? "*" : "")).join() + "|" + on + "|" + (wl ? wl.text : "");
-    if (chipSig !== r.chipSig) { r.chipSig = chipSig; r.chips.innerHTML = (chips.length ? chips.map(c => `<span class="efChip${c.now && on ? " now" : ""}"${c.taskMin ? ` title="Welding ${esc(dur(c.taskMin.welding + c.taskMin.unknown))} · Matching ${esc(dur(c.taskMin.matching))}"` : ""}><b>${esc(c.label)}</b>${esc(dur(c.minutes))}</span>`).join("") : `<span class="efMuted">—</span>`) + (wl ? `<span class="efPW" title="${esc(wl.title)}">${esc(wl.text)}</span>` : ""); }
+    const chipSig = chips.map(c => c.label + c.minutes + (c.taskMin ? ":" + c.taskMin.welding + "/" + c.taskMin.matching + "/" + c.taskMin.unknown : "") + (c.now ? "*" : "")).join() + "|" + on + "|" + (wl ? wl.text : "") + "|" + (dl ? dl.text : "");
+    if (chipSig !== r.chipSig) { r.chipSig = chipSig; r.chips.innerHTML = (chips.length ? chips.map(c => `<span class="efChip${c.now && on ? " now" : ""}"${c.taskMin ? ` title="Welding ${esc(dur(c.taskMin.welding + c.taskMin.unknown))} · Matching ${esc(dur(c.taskMin.matching))}"` : ""}><b>${esc(c.label)}</b>${esc(dur(c.minutes))}</span>`).join("") : `<span class="efMuted">—</span>`) + (wl ? `<span class="efPW" title="${esc(wl.title)}">${esc(wl.text)}</span>` : "") + (dl ? `<span class="efPW efPD${dl.flag ? " flag" : ""}" title="${esc(dl.title)}">${esc(dl.text)}</span>` : ""); }
     const t = p.t, src = p.source, kParts = !p.absent && src !== "seals" && src !== "sessions", kOther = !p.absent && src !== "sessions";   // seals know orders and scans, not parts; sessions know only time (a person not signed in has none: dashes, never zeros)
     const sc = scanned(t);
     const nt = p.noThroughput;   // (Welding alone: no pieces, orders or rate to count, a dash as on the People tab and the person's page; scans stay, they are in the Scanned total)
@@ -1528,6 +1535,17 @@
     return r;
   }
   /** The Welding station on a person's card: the minutes signed in under each task and the orders matched, where pieces and orders would be ("Welding 4 h 40 m · Matching 4 h 5 m · 9 matched"). */
+  /** A person's design work in the days shown (the design log's counts, Paul 28 Oct 2026: "all of this must be tracked by employee"): custom pieces sent, the ones with no
+   *  order flagged, fixes, then the editor's saves; null when there was none. The pieces themselves are on the Custom pieces tab. */
+  function designLine(p) {
+    const d = p.t && p.t.design; if (!d) return null;
+    const bits = [];
+    if (d.custom > 0) bits.push(`${nf(d.custom)} custom ${d.custom === 1 ? "piece" : "pieces"}${d.orderless > 0 ? ` (${nf(d.orderless)} no order)` : ""}`);
+    if (d.fixes > 0) bits.push(`${nf(d.fixes)} ${d.fixes === 1 ? "fix" : "fixes"}`);
+    if (d.saved > 0) bits.push(`${nf(d.saved)} design ${d.saved === 1 ? "save" : "saves"}`);
+    if (!bits.length && d.opened + d.imported > 0) bits.push(`Charm Editor ${nf(d.opened + d.imported)}×`);
+    return bits.length ? { text: bits.join(" · "), flag: d.orderless > 0, title: "Design work logged in these days: custom pieces sent to a sheet (with no order flagged), fix pieces, designs saved. The Custom pieces tab lists each one." } : null;
+  }
   function weldLine(p) {
     const w = p.stations.find(x => x.taskMin); if (!w) return null;
     const m = w.taskMin, bits = []; if (m.welding + m.unknown > 0) bits.push(`Welding ${dur(m.welding + m.unknown)}`); if (m.matching > 0) bits.push(`Matching ${dur(m.matching)}`); if (w.matched > 0) bits.push(`${nf(w.matched)} matched`);
@@ -1571,7 +1589,7 @@
     id = String(id || "").replace(/\D/g, ""); if (!id) return;
     try { if (typeof root.openOrderFrom === "function") root.openOrderFrom(btn, id); else if (root.OrderWin && root.OrderWin.openOrder) root.OrderWin.openOrder(id, { from: btn }); } catch (e) { console.warn("[efficiency] order not opened:", e && e.message); }
   }
-  function go(change) { Object.assign(st, change); st.gen++; if (st.ctl) { try { st.ctl.abort(); } catch (_) {} } st.busy = false; st.loadingDay = true; st.reset = true; st.fails = 0; st.err = ""; st.resuming = false; paintDay(); segs(); E.body.classList.add("dim"); st.hist.forEach(h => { h.data = null; h.sig = ""; h.at = 0; }); poll(); }
+  function go(change) { Object.assign(st, change); st.gen++; if (st.ctl) { try { st.ctl.abort(); } catch (_) {} } st.busy = false; st.loadingDay = true; st.reset = true; st.fails = 0; st.err = ""; st.resuming = false; paintDay(); segs(); E.body.classList.add("dim"); st.hist.forEach(h => { h.data = null; h.sig = ""; h.at = 0; }); poll(); for (const fn of [...st.subs.range]) { try { fn(api.range()); } catch (e) { console.warn("[efficiency] range listener:", e && e.message); } } }
   function onClick(e) {
     const t = e.target, b = t.closest && t.closest("button");
     // a whole person row is a way to that person's page (the Orders figure and every other button keep their own job)
@@ -1657,6 +1675,8 @@
     call(body, o) { return call(Object.assign({}, body), null, o && o.signal).catch(e => { if (e && (e.auth || e.locked)) authFail(e); throw e; }); },
     view: () => st.view,
     onView(fn) { st.subs.view.add(fn); return () => st.subs.view.delete(fn); },
+    range: () => ({ day: st.day || today(), days: st.days, label: dayLabel(), today: !st.day }),     // (the day or range the bar shows: the Custom pieces tab reads the same one)
+    onRange(fn) { st.subs.range.add(fn); return () => st.subs.range.delete(fn); },
     live: () => st.live,
     onLive(fn) { st.subs.live.add(fn); return () => st.subs.live.delete(fn); },
     liveNow,     // (the live read now, shared with the one already out)
