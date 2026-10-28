@@ -88,6 +88,10 @@ function meter(srv) {
 async function seedPage(page, shop) {
   await page.evaluate(async ({ orders, skus }) => {
     await Orders.loadMaps(true);
+    // (28 Oct 2026: the page's own first read of the library, still on its way, REPLACED the entries put here when it landed (the fake cloud's library holds none of these
+    //  SKUs): every charm of the shop read as an unknown SKU at the next interpretation, the subject order kept a Review card for its charm, and its card never left Open
+    //  after a Complete Order, on any page, a few runs in three. The page's read is let finish first, as the other worlds do (_reviewSendWorld, ce-masters))
+    try { await Master.load({ force: true, fresh: true }); } catch (_) {}
     for (const s of skus) B.master.entries.set(s, { sku: s, updatedAt: 1 });
     B.orders.rows = []; B.orders.byKey = new Map();
     const at = Date.now();

@@ -713,8 +713,9 @@ async function bumpRev(keys) {
   const counts = await Promise.all([...by].map(([id, names]) => bumpShard(id, names, 0)));
   return Object.fromEntries([...by.keys()].map((id, i) => [id, counts[i]]).filter(([, n]) => n > 0));   // (each shard's count after this op's names, where its list was written)
 }
+const FEED_LOST = new Set();   // (shards whose names this instance could not write at all: its next write there says so, floor = its count, so no reader takes the gap for quiet)
 async function bumpShard(id, list, tries) {
-  const ref = shardRef(id), cap = SHARD_CAP[id] || REV_CAP;
+  const ref = shardRef(id), cap = SHARD_CAP[id] || REV_CAP, lostKey = PREFIX + id;
   feedStats.shards[id] = (feedStats.shards[id] || 0) + (tries ? 0 : 1);
   try {
     return await db.runTransaction(async tx => {
@@ -724,16 +725,17 @@ async function bumpShard(id, list, tries) {
       for (const k of list) changed[k] = n;
       const names = Object.keys(changed);
       if (names.length > cap) { names.sort((a, c) => num(changed[c]) - num(changed[a])); for (const k of names.slice(cap)) { floor = Math.max(floor, num(changed[k])); delete changed[k]; } }
+      if (FEED_LOST.has(lostKey)) floor = n;   // (names were lost before this one: a reader from before it asks its own question, <kind>:*)
       tx.set(ref, { n, mapN: n, floor, changed, at: Date.now() });
       return n;
-    });
+    }).then(n => { FEED_LOST.delete(lostKey); return n; });
   } catch (e) {
     // (FEED: a transaction that lost to another (contention) is tried once more after a short, random wait before it falls back to the plain +1, which sends
     //  that shard's readers to their own question (a count that moved without its list))
     if (!tries) { feedStats.retried++; await new Promise(r => setTimeout(r, 40 + Math.random() * 160)); return bumpShard(id, list, 1); }
     feedStats.fallbacks++;
     console.warn("[charmNestLibrary] revision list not written (" + id + "):", e && e.message);
-    try { await ref.set({ n: FV.increment(1), at: Date.now() }, { merge: true }); } catch (e2) { feedStats.lost++; console.warn("[charmNestLibrary] revision not written (" + id + "):", e2 && e2.message); }
+    try { await ref.set({ n: FV.increment(1), at: Date.now() }, { merge: true }); } catch (e2) { feedStats.lost++; FEED_LOST.add(lostKey); console.warn("[charmNestLibrary] revision not written (" + id + "):", e2 && e2.message); }
     return 0;
   }
 }
