@@ -76,6 +76,11 @@
  *                          a panel slot to the right of the Layers, tabs when there are several, each with a head button that opens and folds it (remembered);
  *                          mount is called the first time its tab is shown, update (at most once a frame) after the work or the selection changes, unmount on close
  *   CharmEditor.onOpen     [fn(ctx)]              after a workspace opens          CharmEditor.onClose   [fn(ctx, result)]   as it closes (result null: cancelled)
+ *   CharmEditor.onChange   [fn(ctx)]              at most once a frame after the work or the selection changed (a panel's update, for a file that has no panel)
+ *   CharmEditor.overlays   [fn(ctx) -> svg]       markup over the charm in screen px with the selection furniture, whatever tool is in hand (it runs with every redraw: keep it cheap)
+ *   CharmEditor.textLayout { key(it), layout(it, engine), bent(it) }   words the font engine does not lay out alone (letter spacing, words along a path: charm-nest-ce-extras.js).
+ *                          key(it): '' when the engine's own outlines are the words, else a string that is part of their cache key; layout -> { subpaths, bbox } | null (null:
+ *                          the engine's own); bent(it): the words do not run straight, so a click finds their outlines rather than their box, and a stretch stays a stretch
  *   ctx (one per open workspace; also CharmEditor.current.ctx)
  *     doc                  the face being edited as a FaceDoc { face, unitPt, frame, items } (read-only: change it through the calls below)
  *     face() items() selection() frame() zoom() tool()      read-outs, as CharmEditor.current's
@@ -88,6 +93,7 @@
  *     setZoom(pct, about)  about: { x, y } client px (default the middle of the work area)
  *     geo                  the geometry provider (geo.raw(it), geo.box(it), geo.matrix(it), geo.drawn(it, P)); model: CharmEditor.model; entry(id) -> { it, P, parent }
  *     say(text, ms)        a short line over the work area;  redraw()  the selection furniture and overlays again;  setTool(id);  root, stage  the elements
+ *     zoomToBox(bb)        the view on a box [x0, y0, x1, y1] pt, as ⌘2 shows the selection
  *
  * WHAT CAME FROM THE STUDIO (Brites Custom Studio, sections/brites-custom-studio.liquid "S" and assets/brites-custom-studio.js "J", brites-custom-studio.css "C",
  * brites-design-language.css "DL"): the design tokens (DL 19-27, C 6529-6536), the rail and its tiles, corner wedge, hold/right-click flyouts, hover cards and
@@ -373,11 +379,12 @@
     function textGeom(it) {
       const words = it.text == null ? '' : String(it.text);
       const wt = weightOf(it);
-      const key = [words, it.fontKey == null ? '' : it.fontKey, num(it.sizePt, 10), it.align || 'left', it.lineGap == null ? '' : it.lineGap, wt].join('\u0001');
+      const lk = layKey(it);   // (28 Oct 2026, Design & Engrave: letter spacing and words along a path, laid out by CharmEditor.textLayout)
+      const key = [words, it.fontKey == null ? '' : it.fontKey, num(it.sizePt, 10), it.align || 'left', it.lineGap == null ? '' : it.lineGap, wt].join('\u0001') + (lk ? '\u0001' + lk : '');
       let g = tcache.get(key);
       if (g) { tcache.delete(key); tcache.set(key, g); return g; }
       let r = null;
-      if (words.trim()) { try { r = engine(words, it.fontKey, num(it.sizePt, 10), { align: it.align || 'left', lineGap: it.lineGap }); } catch (e) { r = null; } }
+      if (words.trim()) { try { r = (lk && api.textLayout.layout(it, engine)) || engine(words, it.fontKey, num(it.sizePt, 10), { align: it.align || 'left', lineGap: it.lineGap }); } catch (e) { r = null; } }
       let subpaths = r && Array.isArray(r.subpaths) ? r.subpaths : [];
       // (the weight: the font's own drawing grown or thinned by half of it on every edge, so a stroke of the letters is that much thicker; the engine always draws the font's own)
       if (wt && subpaths.length) subpaths = weighSubpaths(subpaths, wt * PT / 2, false);
@@ -419,6 +426,10 @@
   }
   const quadOf = (b, W) => (b ? [ap(W, b[0], b[1]), ap(W, b[2], b[1]), ap(W, b[2], b[3]), ap(W, b[0], b[3])] : null);
   const polyBox = q => { let b = null; for (const p of q) b = union(b, [p[0], p[1], p[0], p[1]]); return b; };
+  /** CharmEditor.textLayout (the header's EXTENSION POINTS): '' for words the font engine lays out alone; bentText: words that do not run straight (along a path). */
+  const textLayoutOn = () => !!(api.textLayout && typeof api.textLayout.key === 'function' && typeof api.textLayout.layout === 'function');
+  const layKey = it => { if (it.kind !== 'text' || !textLayoutOn()) return ''; try { return String(api.textLayout.key(it) || ''); } catch (e) { return ''; } };
+  const bentText = it => { if (it.kind !== 'text' || !textLayoutOn() || typeof api.textLayout.bent !== 'function') return false; try { return !!api.textLayout.bent(it); } catch (e) { return false; } };
 
   /** Turn and two scales of a 2 × 2 map (its columns must be at right angles; ortho says whether they were). The sign of sx follows `sign` so a mirrored item stays
    *  mirrored the same way rather than flipping into "turned 180° and mirrored the other way", which draws the same and reads as a change nobody made. */
@@ -473,7 +484,7 @@
   /** A text stretched evenly takes the stretch into its point size (its outlines are drawn at that size and placed where they were), so the size on the bar is the
    *  size on the charm. Uneven stretches stay as sx / sy. */
   function foldTextScale(it, geo) {
-    if (it.kind !== 'text') return it;
+    if (it.kind !== 'text' || bentText(it)) return it;   // (words along a path: their path is in their own drawing, and a stretch of the two stays a stretch)
     const sx = num(it.sx, 1), sy = num(it.sy, 1);
     if (!(sx > 0) || Math.abs(sx - sy) > 1e-6 * sx || Math.abs(sx - 1) < 1e-9) return it;
     const n = retext(Object.assign({}, it, { sx: 1, sy: 1 }), { sizePt: r9(num(it.sizePt, 10) * sx) }, geo);
@@ -652,7 +663,7 @@
     if (hit && hit.key === key) return hit;
     const g = geo.raw(it);
     let out;
-    if (it.kind === 'text') { const q = quadOf(g.bbox, W); out = q ? [{ pts: [].concat(...q), closed: true }] : []; }
+    if (it.kind === 'text' && !bentText(it)) { const q = quadOf(g.bbox, W); out = q ? [{ pts: [].concat(...q), closed: true }] : []; }   // (words round a circle are found by their letters: their box is the whole circle's top)
     else out = flatten(g.subpaths).map(pl => { const p = new Array(pl.pts.length); for (let i = 0; i < p.length; i += 2) { const q = ap(W, pl.pts[i], pl.pts[i + 1]); p[i] = q[0]; p[i + 1] = q[1]; } return { pts: p, closed: pl.closed }; });
     let b = null; for (const pl of out) for (let i = 0; i < pl.pts.length; i += 2) b = union(b, [pl.pts[i], pl.pts[i + 1], pl.pts[i], pl.pts[i + 1]]);
     const rec = { key, polys: out, box: b }; polyCache.set(it, rec); return rec;
@@ -1210,7 +1221,8 @@
     const cmds = [], c = api.commands && typeof api.commands === 'object' ? api.commands : {};
     for (const id of Object.keys(c)) if (c[id] && typeof c[id].run === 'function') cmds.push({ id, c: c[id] });
     return { tools: uniq(arr(api.tools)).filter(t => !BUILTIN_TOOLS.includes(String(t.id))), commands: cmds, importers: uniq(arr(api.importers)).filter(i => typeof i.run === 'function'),
-      panels: uniq(arr(api.panels)).filter(p => typeof p.mount === 'function'), onOpen: fns(api.onOpen), onClose: fns(api.onClose) };
+      panels: uniq(arr(api.panels)).filter(p => typeof p.mount === 'function'), onOpen: fns(api.onOpen), onClose: fns(api.onClose),
+      onChange: fns(api.onChange), overlays: fns(api.overlays) };
   }
   /** 'Mod+Shift+O' -> { mod, shift, alt, key: 'o' } (Mod, Cmd, Ctrl, Meta, ⌘ are all the platform's command key, as the editor's own keys take either). */
   function parseKey(s) {
@@ -1316,12 +1328,12 @@
       <button class="ce-tool" type="button" data-tool="marquee" data-tip="marquee" aria-label="Marquee (M)">${IC.marquee}</button>
       <button class="ce-tool" type="button" data-tool="text" data-tip="text" aria-label="Text (T)">${IC.text}</button>
       <div class="ce-drop" data-drop="shapes">
-        <button class="ce-tool ce-drop__b" type="button" data-tool="rect" data-shapes data-tip="shapes" aria-label="Shapes: rectangle (R), ellipse (E), line (L)">${IC.rect}</button>
+        <button class="ce-tool ce-drop__b" type="button" data-tool="rect" data-shapes data-tip="shapes" aria-label="Shapes: rectangle (R), ellipse (L), line (\\)">${IC.rect}</button>
         <div class="ce-menu" role="menu" hidden>
           <div class="ce-menu__head">Shapes</div>
           <button class="ce-item" type="button" data-tool="rect" role="menuitem">${IC.rect}Rectangle<em>R</em></button>
-          <button class="ce-item" type="button" data-tool="ellipse" role="menuitem">${IC.ellipse}Ellipse<em>E</em></button>
-          <button class="ce-item" type="button" data-tool="line" role="menuitem">${IC.line}Line<em>L</em></button>
+          <button class="ce-item" type="button" data-tool="ellipse" role="menuitem">${IC.ellipse}Ellipse<em>L</em></button>
+          <button class="ce-item" type="button" data-tool="line" role="menuitem">${IC.line}Line<em>\\</em></button>
           ${xShapesHtml}
         </div>
       </div>
@@ -1685,6 +1697,7 @@
       if (g && g.guides) h += g.guides;
       if (g && g.readout) h += g.readout;
       { const xt = xTool(S.tool); if (xt && typeof xt.overlay === 'function') { try { h += xt.overlay(ectx) || ''; } catch (er) { xErr(xt.id + '.overlay', er); } } }
+      for (const fn of X.overlays) { try { h += fn(ectx) || ''; } catch (er) { xErr('overlays', er); } }
       ui.innerHTML = h;
     }
 
@@ -1988,6 +2001,18 @@
       commit(next, made);
     }
     const setListIn = (its, pid, list) => (pid == null ? list : replaceIn(its, new Map([[pid, Object.assign({}, indexTree(its, geo).get(pid).it, { children: list })]])));
+    /** Alt-drag (28 Oct 2026): the selection copied where it is, each copy just above its original, and the copies selected (no step of its own: the drag's is it). */
+    function copiesInPlace() {
+      const ids = S.sel.filter(id => { const e = entry(id); return e && !e.it.locked; }); if (!ids.length) return;
+      let next = normaliseAncestors(items(), ids, geo); const made = [];
+      for (const id of topmost(ids, indexTree(next, geo))) {
+        const cur = indexTree(next, geo), e = cur.get(id); if (!e) continue;
+        const copy = pasteItems([e.it], 0, 0, geo)[0], pid = e.parent ? e.parent.id : null;
+        const list = (pid == null ? next : cur.get(pid).it.children).slice();
+        list.splice(list.findIndex(x => x.id === id) + 1, 0, copy); next = setListIn(next, pid, list); made.push(copy.id);
+      }
+      setItems(next); ixFor = null; S.sel = made;
+    }
     function arrangeSel(how) { if (S.sel.length) commit(arrange(items(), S.sel, how, geo)); }
     function groupSel() {
       if (S.sel.length < 2) return;
@@ -2179,6 +2204,7 @@
     function begin(g) {
       // the first real movement of a gesture: one step of history, the groups above the selection flattened, the starting tree kept to transform FROM every frame
       pushUndo();
+      if (g.copy) copiesInPlace();   // (Alt-drag: the copies are what moves; the copy and the move are one step)
       setItems(normaliseAncestors(items(), S.sel, geo)); ixFor = null;
       g.items0 = items(); g.ix0 = ix();
       g.base = new Map(S.sel.map(id => [id, g.ix0.get(id).it]));
@@ -2214,8 +2240,11 @@
         const hit = hitAt(x, y, { deep: e.altKey });
         if (!hit) { S.g = { kind: 'marquee', x0: x, y0: y, x, y, cx0: e.clientX, cy0: e.clientY, add: additive, base: additive ? S.sel.slice() : [], live: false }; if (!additive && S.sel.length) setSel([]); return; }
         if (additive) { setSel(S.sel.includes(hit.id) ? S.sel.filter(s => s !== hit.id) : S.sel.concat(hit.id)); return; }
-        if (!isSelected(hit.id) || (e.altKey && !S.sel.includes(hit.id))) setSel([hit.id]);
-        S.g = { kind: 'move', x0: x, y0: y, cx0: e.clientX, cy0: e.clientY, live: false };
+        // ALT-DRAG (28 Oct 2026, Illustrator's: research §3 #8): a drag that starts with Alt held moves a COPY and the original stays. Alt on what is already selected keeps
+        // the selection for the copy; a click without a drag still reaches inside the group, on the way up
+        const inside = e.altKey && isSelected(hit.id) && !S.sel.includes(hit.id) ? hit.id : null;
+        if (!inside && (!isSelected(hit.id) || (e.altKey && !S.sel.includes(hit.id)))) setSel([hit.id]);
+        S.g = { kind: 'move', x0: x, y0: y, cx0: e.clientX, cy0: e.clientY, live: false, copy: !!e.altKey, inside };
         return;
       }
       if (S.tool === 'marquee') { S.g = { kind: 'marquee', x0: x, y0: y, x, y, cx0: e.clientX, cy0: e.clientY, add: e.shiftKey, base: e.shiftKey ? S.sel.slice() : [], live: false }; return; }
@@ -2341,6 +2370,7 @@
         renderUI(); return;
       }
       if (g.kind === 'marquee' && !g.live) { renderUI(); return; }
+      if (g.kind === 'move' && !g.live && g.inside) { setSel([g.inside]); return; }   // (an Alt-click with no drag reaches inside, as it always has)
       if (!g.live && g.click) {
         const hit = hitAt(g.x0, g.y0, { deep: g.click.deep });
         if (hit && g.click.additive) setSel(S.sel.includes(hit.id) ? S.sel.filter(s => s !== hit.id) : S.sel.concat(hit.id));
@@ -2605,7 +2635,7 @@
       const kl = k.length === 1 ? k.toLowerCase() : k;
       if (meta) {
         if (kl === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
-        if (kl === 'y') { e.preventDefault(); redo(); return; }
+        // (⌘Y is Illustrator's Outline view, 28 Oct 2026, Design & Engrave: charm-nest-ce-extras.js; redo is ⇧⌘Z, as in Illustrator)
         if (kl === 'a') { e.preventDefault(); selectAll(); return; }
         if (kl === 'c') { if (!X.importers.length) e.preventDefault(); if (copySel()) xCopied(); return; }
         if (kl === 'x') { if (!X.importers.length) e.preventDefault(); const c0 = S.clip; cutSel(); if (S.clip !== c0) xCopied(); return; }
@@ -2634,7 +2664,8 @@
       if (k === 'Enter') { const es = selEntries(); if (es.length === 1 && es[0].it.kind === 'text') { e.preventDefault(); openEditor(es[0].it.id); } return; }
       if (k === 'Escape') { e.preventDefault(); if (S.g) { abandon(); return; } if (S.sel.length) { setSel([]); return; } if (S.tool !== 'select') { setTool('select'); return; } requestClose(); return; }
       if (e.altKey) { xKeyRun(e); return; }
-      const map = { v: 'select', m: 'marquee', t: 'text', r: 'rect', e: 'ellipse', l: 'line', h: 'hand' };
+      // (28 Oct 2026: Illustrator's L is the ellipse and \ the line; M stays the marquee, which the editor's own tests press for it, and R and E keep their shapes)
+      const map = { v: 'select', m: 'marquee', t: 'text', r: 'rect', e: 'ellipse', l: 'ellipse', '\\': 'line', h: 'hand' };
       if (map[kl]) { e.preventDefault(); setTool(map[kl]); return; }
       if (k === '!' || (e.shiftKey && e.code === 'Digit1')) { e.preventDefault(); fit(); return; }
       if (k === '@' || (e.shiftKey && e.code === 'Digit2')) { e.preventDefault(); zoomToBox(selBox()); return; }
@@ -2782,6 +2813,7 @@
       clientOf: (x, y) => { const b = sb(), p = toStage(x, y); return { x: b.l + p[0], y: b.t + p[1] }; },
       pointOf: (cx, cy) => fromClient(cx, cy), stageOf: (x, y) => toStage(x, y), view: () => V(),
       setZoom: (pct, about) => { if (!fin(+pct)) return; const b = sb(); if (about && fin(about.x) && fin(about.y)) zoomAtStage(+pct / 100 * PX100, about.x - b.l, about.y - b.t); else zoomTo(+pct); },
+      zoomToBox: bb => { if (Array.isArray(bb) && bb.length === 4 && bb.every(fin)) zoomToBox(bb); },
       geo, model, entry: id => { const e = entry(String(id)); return e ? { it: e.it, P: e.P, parent: e.parent } : null; },
       say: (text, ms) => say(text, ms), redraw: () => renderUI(), setTool: id => setTool(String(id)), root: rootEl, stage
     };
@@ -2910,8 +2942,9 @@
     }
     let xRaf = 0;
     function xChanged() {
-      if (xRaf || !xMounted.size) return;
-      xRaf = requestAnimationFrame(() => { xRaf = 0; for (const p of X.panels) if (xMounted.has(String(p.id)) && typeof p.update === 'function') { try { p.update(ectx); } catch (er) { xErr(p.id + '.update', er); } } });
+      if (xRaf || (!xMounted.size && !X.onChange.length)) return;
+      xRaf = requestAnimationFrame(() => { xRaf = 0; for (const p of X.panels) if (xMounted.has(String(p.id)) && typeof p.update === 'function') { try { p.update(ectx); } catch (er) { xErr(p.id + '.update', er); } }
+        for (const fn of X.onChange) { if (finished) break; try { fn(ectx); } catch (er) { xErr('onChange', er); } } });   // (CharmEditor.onChange: in the same frame as the panels' update)
     }
     function xClose(v) {
       clearTimeout(xPasteT); clearTimeout(sayT); if (xRaf) cancelAnimationFrame(xRaf);
@@ -3044,5 +3077,9 @@
   Object.assign(api, { tools: [], commands: {}, importers: [], panels: [], onOpen: [], onClose: [] });
   { const pre = root && root.CharmEditor;
     if (pre && typeof pre === 'object') { for (const k of ['tools', 'importers', 'panels', 'onOpen', 'onClose']) if (Array.isArray(pre[k])) api[k].push(...pre[k]); if (pre.commands && typeof pre.commands === 'object') Object.assign(api.commands, pre.commands); } }
+  // (28 Oct 2026, Design & Engrave: two more lists and the text layout, the header's EXTENSION POINTS; taken in the same way from a CharmEditor set before this file)
+  Object.assign(api, { onChange: [], overlays: [], textLayout: null });
+  { const pre = root && root.CharmEditor;
+    if (pre && typeof pre === 'object') { for (const k of ['onChange', 'overlays']) if (Array.isArray(pre[k])) api[k].push(...pre[k]); if (pre.textLayout && typeof pre.textLayout === 'object') api.textLayout = pre.textLayout; } }
   return api;
 });
