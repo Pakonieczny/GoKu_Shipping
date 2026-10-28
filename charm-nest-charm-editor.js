@@ -1678,6 +1678,7 @@
        Rectangle's), the menus and the right-click menu, Import and a button per panel in the Application bar, command buttons on the Control bar, the panel slot right of
        the Layers */
     const X = extensions();
+    let aiDock = null;   // (AIDOCK: charm-nest-ce-ai-panels.js's dock on .ce-dock, mounted once the chrome is wired: aiDockMount below)
     const xTool = id => X.tools.find(t => String(t.id) === String(id)) || null;
     const xIcon = t => (t && AIC[String(t.id)] ? AIC[String(t.id)] : t && typeof t.icon === 'string' && /^\s*<svg/i.test(t.icon) ? t.icon : IC.tool);
     const xKeyOf = t => (t.key ? String(t.key).toUpperCase() : '');
@@ -2538,7 +2539,9 @@
           + '</div>';
         if (isG && opn) for (let i = it.children.length - 1; i >= 0; i--) row(it.children[i], depth + 1);
       };
-      for (let i = its.length - 1; i >= 0; i--) row(its[i], 0);
+      // (AIDOCK: Illustrator's Layers rows, charm-nest-ce-ai-panels.js, when it is loaded: the same classes and data-lact buttons, the same gestures below)
+      if (aiDock && typeof aiDock.rowsHtml === 'function') { try { h = aiDock.rowsHtml(its); } catch (er) { xErr('aiDock.rowsHtml', er); h = ''; for (let i = its.length - 1; i >= 0; i--) row(its[i], 0); } }
+      else for (let i = its.length - 1; i >= 0; i--) row(its[i], 0);
       layersEl.innerHTML = h || '<div class="ce-layers__empty">Nothing on this side yet.<br>Pick the Text tool and click on the charm.</div>';
       for (const r of layersEl.querySelectorAll('.ce-layer')) { const e = entry(r.dataset.id), g = e && greyOf(e.it), sw = g && r.querySelector('.ce-sw'); if (sw) sw.style.background = g; }   // (a traced image's greys)
       for (const f of ['front', 'back']) { const c = $(`[data-count="${f}"]`); if (c) c.textContent = S.faces[f] ? String(S.faces[f].items.length) : '–'; }
@@ -2555,6 +2558,7 @@
       const n = S.sel.length, es = selEntries();
       $('[data-act="forward"]').disabled = !n; $('[data-act="backward"]').disabled = !n; $('[data-act="delete"]').disabled = !n;
       $('[data-act="group"]').disabled = n < 2; $('[data-act="ungroup"]').disabled = !es.some(e => e.it.kind === 'group');
+      if (aiDock && typeof aiDock.paint === 'function') { try { aiDock.paint(); } catch (er) { xErr('aiDock.paint', er); } }
     }
 
     /* ── the property bar ── */
@@ -2645,6 +2649,7 @@
       if (!(S.g && S.g.live)) xBar();
       aiSync(leaves, texts, showText);
       fitBar();
+      if (aiDock && typeof aiDock.update === 'function') aiDock.update();   // (AIDOCK: the panels follow the tool and the bar's state too, at most once a frame)
     }
     /** The Illustrator workspace's read-outs (28 Oct 2026): the Control bar's selection kind, its Fill / Stroke swatches and font style, the Tools panel's Fill / Stroke, the
      *  reference point, the status bar's artboard and the document tabs. */
@@ -2960,17 +2965,21 @@
       commit(replaceIn(items(), new Map([[id, Object.assign({}, e.it, { name: v || undefined })]])));
     }
     /** Typed into the bar: X / Y move the selection's box there, W / H size it (the link keeps the proportions), the angle turns it. */
-    function commitField(k, raw) {
+    function commitField(k, raw, anchor) {
       const v = parseFloat(String(raw).replace(',', '.'));
       const s = sizeRead(); if (!s || !fin(v)) { syncProps(); return; }
       const info = selInfo(), b = info.single ? geo.drawn(info.e.it, info.e.P) : info.b;
+      // (AIDOCK: anchor [fx, fy], the Transform panel's reference point as fractions of the drawn box: a size keeps that point where it is and a turn is about it, as in
+      //  Illustrator; none: the top-left for a size and the middle for a turn, as before)
+      const an = Array.isArray(anchor) && anchor.length === 2 && anchor.every(fin) ? anchor : null, fx = an ? an[0] : S.ref[0], fy = an ? an[1] : S.ref[1];   // (one reference point: the Control bar's locator and the Transform panel's are the same, S.ref)
+      const at = (bb, f, i) => bb[i] + f * (bb[i + 2] - bb[i]);
       if (k === 'x' || k === 'y') {
         const d = (v - s[k]) * PT; if (Math.abs(d) < 1e-9) return syncProps();
         return transformSel(k === 'x' ? tr(d, 0) : tr(0, d));
       }
       if (k === 'r') {
         const delta = s.r == null ? v : v - s.r; if (Math.abs(delta) < 1e-9) return syncProps();
-        const c = info.single ? ap(info.W, ...centreOf(info.rb)) : centreOf(info.b);
+        const c = an ? [at(b, fx, 0), at(b, fy, 1)] : info.single ? ap(info.W, ...centreOf(info.rb)) : centreOf(info.b);
         return transformSel(about(rotM(delta), c[0], c[1]), { fold: true });
       }
       if ((k === 'w' || k === 'h') && v > 0) {
@@ -2982,12 +2991,10 @@
           const W = mul(en.P, geo.matrix(en.it)), rb = geo.box(en.it);
           let n = pushDown(en.it, mul(W, mul(about(scM(kx, ky), rb[0], rb[1]), inv(W) || I)), geo);
           n = foldTextScale(n, geo);
-          // (the drawn box's reference point stays where it was: its top-left unless the Control bar's locator says another)
-          const nb = geo.drawn(n, en.P), fx = S.ref[0], fy = S.ref[1];
-          if (nb) n = pushDown(n, tr(b[0] + fx * (b[2] - b[0]) - (nb[0] + fx * (nb[2] - nb[0])), b[1] + fy * (b[3] - b[1]) - (nb[1] + fy * (nb[3] - nb[1]))), geo);
+          const nb = geo.drawn(n, en.P); if (nb) n = pushDown(n, tr(at(b, fx, 0) - at(nb, fx, 0), at(b, fy, 1) - at(nb, fy, 1)), geo);
           return commit(replaceIn(next, new Map([[id, n]])));
         }
-        return transformSel(about(scM(kx, ky), b[0] + S.ref[0] * (b[2] - b[0]), b[1] + S.ref[1] * (b[3] - b[1])), { fold: true });
+        return transformSel(about(scM(kx, ky), at(b, fx, 0), at(b, fy, 1)), { fold: true });
       }
       syncProps();
     }
@@ -3124,6 +3131,7 @@
       if (!fieldEls) fieldEls = ['x', 'y', 'w', 'h', 'r'].map(k => [k, field(k)]);
       if (r && (S.ref[0] || S.ref[1])) r = Object.assign({}, r, { x: r.x + S.ref[0] * r.w, y: r.y + S.ref[1] * r.h });   // (the Control bar's reference point)
       for (const [k, el] of fieldEls) { el.disabled = !r; el.value = !r ? '' : k === 'r' ? (r.r == null ? '' : trim(r.r, 1)) : fmtMm(r[k]); }
+      if (aiDock && typeof aiDock.live === 'function') aiDock.live(r);   // (AIDOCK: the Properties and Transform panels' X / Y / W / H follow every frame too)
     }
     const badgeSvg = (sx, sy, text, cls) => { const w = text.length * 5.6 + 10; return `<g class="u-bdg ${cls}"><rect x="${(sx - w / 2).toFixed(1)}" y="${(sy - 8).toFixed(1)}" width="${w.toFixed(1)}" height="15"/><text x="${(sx - w / 2 + 5).toFixed(1)}" y="${(sy + 3).toFixed(1)}">${esc(text)}</text></g>`; };
     /** The gap between the selection and each part a guide lines it up with, measured along the guide (two at most on each axis; none where they overlap). */
@@ -3579,17 +3587,23 @@
       layersEl.addEventListener('pointermove', e => {
         if (!drag) return;
         if (!drag.live) { if (Math.abs(e.clientY - drag.y0) < 5) return; drag.live = true; drag.row.classList.add('is-dragging'); try { layersEl.setPointerCapture(drag.pid); } catch (er) { /* fine */ } }
-        layersEl.querySelectorAll('.is-drop-above,.is-drop-below').forEach(r => r.classList.remove('is-drop-above', 'is-drop-below'));
+        layersEl.querySelectorAll('.is-drop-above,.is-drop-below,.is-drop-into').forEach(r => r.classList.remove('is-drop-above', 'is-drop-below', 'is-drop-into'));
         const over = doc.elementFromPoint(e.clientX, e.clientY), r = over && over.closest && over.closest('.ce-layer');
         drag.target = null;
-        if (r && r !== drag.row) { const b = r.getBoundingClientRect(), above = e.clientY < b.top + b.height / 2; r.classList.add(above ? 'is-drop-above' : 'is-drop-below'); drag.target = { id: r.dataset.id, above }; }
+        if (r && r !== drag.row) {
+          const b = r.getBoundingClientRect(), te = entry(r.dataset.id), above = e.clientY < b.top + b.height / 2;
+          // (AIDOCK: as in Illustrator's Layers panel, a row let go over the middle of a group's row goes INTO that group, on top of what it holds)
+          const into = !!(aiDock && te && te.it.kind === 'group' && (te.it.children || []).length && Math.abs(e.clientY - (b.top + b.height / 2)) < b.height / 4);
+          r.classList.add(into ? 'is-drop-into' : above ? 'is-drop-above' : 'is-drop-below'); drag.target = { id: r.dataset.id, above, into };
+        }
         const lb = layersEl.getBoundingClientRect(); if (e.clientY < lb.top + 18) layersEl.scrollTop -= 8; else if (e.clientY > lb.bottom - 18) layersEl.scrollTop += 8;
       });
       const end = e => {
         const d = drag; drag = null; if (!d) return;
         try { layersEl.releasePointerCapture(d.pid); } catch (er) { /* fine */ }
-        layersEl.querySelectorAll('.is-drop-above,.is-drop-below,.is-dragging').forEach(r => r.classList.remove('is-drop-above', 'is-drop-below', 'is-dragging'));
+        layersEl.querySelectorAll('.is-drop-above,.is-drop-below,.is-drop-into,.is-dragging').forEach(r => r.classList.remove('is-drop-above', 'is-drop-below', 'is-drop-into', 'is-dragging'));
         if (!d.live) { rowClick(d.id, e); return; }
+        if (d.target && d.target.into) { const g = entry(d.target.id), kids = g ? g.it.children || [] : []; if (kids.length) moveLayer(d.id, kids[kids.length - 1].id, true); return; }
         if (d.target) moveLayer(d.id, d.target.id, d.target.above);
       };
       // (28 Oct 2026: a row under the pointer lights its part on the charm, as the charm's own hover does)
@@ -3600,6 +3614,8 @@
         const b = e.target.closest('[data-lact]'); if (!b) return;
         const id = b.closest('.ce-layer').dataset.id;
         e.stopPropagation();
+        // (AIDOCK: Illustrator's own clicks on a row, ⌥ on the eye or the lock, ⌘ on the eye, the target and the selection square, are the dock file's; a plain one is as before)
+        if (aiDock && typeof aiDock.lact === 'function') { let used = false; try { used = aiDock.lact(b.dataset.lact, id, e); } catch (er) { xErr('aiDock.lact', er); } if (used) return; }
         if (b.dataset.lact === 'eye') toggleFlag(id, 'hidden');
         else if (b.dataset.lact === 'lock') toggleFlag(id, 'locked');
         else if (b.dataset.lact === 'twist') { if (S.open.has(id)) S.open.delete(id); else S.open.add(id); renderLayers(); }
@@ -4079,8 +4095,9 @@
     }
     let xRaf = 0;
     function xChanged() {
-      if (xRaf || (!xMounted.size && !X.onChange.length)) return;
-      xRaf = requestAnimationFrame(() => { xRaf = 0; for (const p of X.panels) if (xMounted.has(String(p.id)) && typeof p.update === 'function') { try { p.update(ectx); } catch (er) { xErr(p.id + '.update', er); } }
+      if (xRaf || (!xMounted.size && !X.onChange.length && !aiDock)) return;
+      xRaf = requestAnimationFrame(() => { xRaf = 0; if (aiDock && typeof aiDock.update === 'function' && !finished) { try { aiDock.update(); } catch (er) { xErr('aiDock.update', er); } }
+        for (const p of X.panels) if (xMounted.has(String(p.id)) && typeof p.update === 'function') { try { p.update(ectx); } catch (er) { xErr(p.id + '.update', er); } }
         for (const fn of X.onChange) { if (finished) break; try { fn(ectx); } catch (er) { xErr('onChange', er); } } });   // (CharmEditor.onChange: in the same frame as the panels' update)
     }
     function xClose(v) {
@@ -4088,6 +4105,7 @@
       root.removeEventListener('paste', onPaste, true); root.removeEventListener('copy', onCopy, true);
       for (const fn of X.onClose) { try { fn(ectx, v); } catch (er) { xErr('onClose', er); } }
       for (const p of X.panels) if (xMounted.has(String(p.id)) && typeof p.unmount === 'function') { try { p.unmount(); } catch (er) { xErr(p.id + '.unmount', er); } }
+      if (aiDock && typeof aiDock.unmount === 'function') { try { aiDock.unmount(); } catch (er) { xErr('aiDock.unmount', er); } }
     }
 
     /* ── THE ILLUSTRATOR WORKSPACE'S OWN ACTIONS (28 Oct 2026): what the menu bar, the Tools panel's foot and Illustrator's keys ask for that the editor had no single call for.
@@ -4327,8 +4345,29 @@
     let ro = null;
     if (root.ResizeObserver) { let first = true; ro = new root.ResizeObserver(() => { if (first) { first = false; return; } applyView(); }); ro.observe(stage); }
     // (any change to the view by hand ends "fitted": a resize then keeps the zoom and the place instead of fitting again)
-    function layoutDock() { dock.hidden = !S.dock; win.classList.toggle('is-nodock', !S.dock); syncProps(); requestAnimationFrame(() => { if (S.fitted) fit(); else applyView(); }); }
+    /* ── AIDOCK (Paul, 28 Oct 2026: "update the UI for the Entire Charm Editor, all context menus, layer area etc. ... replicate the UI for illustrator ... I'm not looking for you to
+       change the functionality"): the right dock as Illustrator's panel dock, built by charm-nest-ce-ai-panels.js (CharmEditor.aiDock) on .ce-dock. It is handed the editor's own
+       calls here and every control of it runs one of them; without that file the dock is the one above. ── */
+    function aiDockMount() {
+      const ad = api.aiDock; if (!ad || typeof ad.mount !== 'function') return;
+      const xc = id => X.commands.find(c => c.id === String(id)) || null;
+      const D = {
+        S, X, IC, ROLES, ROLE_NAME, ROLE_SAYS, ROLE_SHORT, CASE_NAME, CASE_SIGN, fonts, geo, model, ectx, rootEl, win, dock, layersEl, stage, $, $$, esc,
+        LW_LASER_PT, LW_MIN_MM, LW_MAX_MM, WT_MIN_MM, WT_MAX_MM,
+        items, entry, frame, face: () => S.face, selEntries, selLeaves, isSelected, rowName, eyeSays, greyOf, paintFill, paintStroke, weighable, weightOf, lwOf, canWeigh,
+        fmtMm, fmtLw, fmtWt, numIn, sizeRead, zeroPt, selBox, finished: () => finished,
+        setSel, rowClick, toggleFlag, setAll, rename, moveLayer, commit, arrangeSel, groupSel, ungroupSel, deleteSel, duplicate, commitField,
+        setRole, setFont, setTextSize, setTextStyle, toggleTextStyle, setWeightMm, setStrokeMm, resetStroke, switchFace, fit, zoomCmd, zoomToBox,
+        renderLayers, paintLayerSel, syncProps, closeMenus, placeMenu, openCtx, say, layoutDock, hideTip,
+        hover: id => { if (S.g || id === S.hover) return; S.hover = id; renderUI(); },
+        xPanel: id => xPanel(id), xPanelOn: () => xPanelOn, xRun: id => xRun(String(id)), xHas: id => !!xc(id), xOn: id => { const c = xc(id); return !!c && xEnabled(c); }, xPick: () => xPick(),
+        alphaFind: () => alphaFind(), opt: k => { if (typeof S[k] !== 'boolean' && S[k] != null) return; S[k] = !S[k]; saveOpts(); syncProps(); applyView(); }   // (the More menu's data-opt toggle)
+      };
+      try { aiDock = ad.mount(D) || null; } catch (er) { xErr('aiDock.mount', er); aiDock = null; }
+    }
+    function layoutDock() { dock.hidden = !S.dock; win.classList.toggle('is-nodock', !S.dock); if (aiDock && typeof aiDock.layout === 'function') { try { aiDock.layout(); } catch (er) { xErr('aiDock.layout', er); } } syncProps(); requestAnimationFrame(() => { if (S.fitted) fit(); else applyView(); }); }
     wireDrops(); wireRail(); wireLayers();
+    aiDockMount();
     wireView(); root.addEventListener('keydown', viewKey, true); root.addEventListener('keyup', viewKeyUp, true);
     dock.hidden = !S.dock; win.classList.toggle('is-nodock', !S.dock);
     setTool('select');
@@ -4389,5 +4428,8 @@
   Object.defineProperty(api, 'ai', { enumerable: true, configurable: true, get: () => (root && root.CharmEditorAi) || null, set: () => { /* the shell's own (it sets itself here as it loads) */ } });
   { const pre = root && root.CharmEditor;
     if (pre && typeof pre === 'object') { for (const k of ['onChange', 'overlays']) if (Array.isArray(pre[k])) api[k].push(...pre[k]); if (pre.textLayout && typeof pre.textLayout === 'object') api.textLayout = pre.textLayout; } }
+  // (AIDOCK, 28 Oct 2026: the right dock as Illustrator's, charm-nest-ce-ai-panels.js; taken in the same way when it loaded first)
+  api.aiDock = null;
+  { const pre = root && root.CharmEditor; if (pre && typeof pre === 'object' && pre.aiDock && typeof pre.aiDock.mount === 'function') api.aiDock = pre.aiDock; }
   return api;
 });

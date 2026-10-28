@@ -298,7 +298,8 @@ const assets = [
   "vendor/pdfjs-4.10.38/pdf.min.mjs",
   "vendor/pdfjs-4.10.38/pdf.worker.min.mjs",
   "shopify/assets/brites-custom-studio.js",
-  "charm-nest-ce-library.js"
+  "charm-nest-ce-library.js",
+  "charm-nest-ce-ai-panels.js"
 ];
 fs.rmSync(output, { recursive: true, force: true });
 for (const asset of assets) {
