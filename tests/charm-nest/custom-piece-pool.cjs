@@ -167,9 +167,11 @@ const root = path.join(__dirname, '../..');
       const r = await CN.api('charmNestLibrary', { op: 'setAllocate', day: CN.today(), runId: 'run-custom-pool-test' }), out = {};
       const set = { setId: r.setId, seq: r.seq, day: r.day, runId: 'run-custom-pool-test', group: null, name: 'Set-' + r.seq, folder: '', orders: {}, sheetIds: [], materials: [], labelFiles: [] };
       for (const metal of ['silver', 'gold10k']) {
-        const sh = CN.S.sheets[metal].pages.at(-1); sh.runId = 'run-custom-pool-test';
+        // (a 10K sheet is a draft until it is chosen into its set: chosen here, as the Sets gate does)
+        const sh = CN.S.sheets[metal].pages.at(-1), draft = sh.draft; sh.runId = 'run-custom-pool-test'; sh.draft = false;
         await Sets.onSheetSaved(sh, sh.charms, sh.cloud, { labelsOnly: true, setOverride: set });
-        out[metal] = { files: sh.label.files.map(f => ({ label: f.label, notes: f.notes || [], orders: f.orders, payload: f.payload })), ready: Sets.labelsReady(sh, set) };
+        out[metal] = { files: sh.label.files.map(f => ({ label: f.label, notes: f.notes || [], orders: f.orders, payload: f.payload })), ready: Sets.labelsReady(sh, set), why: { draft, setId: sh.setId === set.setId, fileBase: sh.fileBase, paths: sh.label.files.map(f => !!f.path && !!f.url), indexed: (set.labelFiles || []).filter(f => f.sheetId === sh.sheetId).length } };
+        sh.draft = draft;
       }
       out.setOrders = Object.keys(set.orders); out.orderless = orderless; out.ordered = ordered;
       return out;
@@ -179,7 +181,7 @@ const root = path.join(__dirname, '../..');
     assert(!ssL.payload.includes(Number(lab.orderless.replace(/\D/g, '')).toString(36)), 'nor does its QR');
     assert.deepEqual(ssL.notes, ['Custom · no order: Spare heart']); assert.match(ssL.label, /\+ custom$/);
     assert.equal(lab.gold10k.files.length, 1, 'a sheet with only an orderless piece still has its label'); assert.deepEqual(tkL.orders, []); assert.deepEqual(tkL.notes, ['Custom · no order: Ten K spare']);
-    assert.equal(lab.silver.ready, true); assert.equal(lab.gold10k.ready, true, 'and it is ready (a set waits for no label)');
+    assert.equal(lab.silver.ready, true); assert.equal(lab.gold10k.ready, true, 'and it is ready (a set waits for no label): ' + JSON.stringify(lab.gold10k.why));
     assert(!lab.setOrders.includes(lab.orderless) && lab.setOrders.includes(lab.ordered), 'the set\'s orders: ' + lab.setOrders);
     console.log(`ok   6  labels: SS "${ssL.label}" lists ${ssL.orders.length} orders (not ${lab.orderless}) and says "${ssL.notes[0]}"; the 10K sheet's label says "${tkL.notes[0]}" with no order on it`);
     assert.deepEqual(errors, [], 'no page errors');
