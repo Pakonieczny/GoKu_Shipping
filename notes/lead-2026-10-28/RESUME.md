@@ -30,7 +30,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - int/live-check.cjs: 7 pages load clean. Live verify = sha256 of each changed served file vs `git show origin/main:<f>`, then live-check.
 - If agents hang holding slots (load ~0, waits > 5 min): find holders: for f in slot1 slot2 slot3: ino=$(stat -c %i $SP/locks/$f); grep ":$ino " /proc/locks → pid → ps --ppid. Kill the idle test, tell its agent.
 
-## Live on main: daee8c7 = 4da1e2c (batch 2: vimport + text, 12 tests pass, pushed 06:33, live verify bny0sgane) + guard fix (sandbox-wipe-guard drives roseReopen; guard OK). Before: 722e4a7 refit (verified live 03:5x), d58eea9.
+## Live on main: f15505e = Approve never silent after hold/release (fix-approve-held, all 5 approve tests pass) on top of daee8c7 (guard fix) + 4da1e2c (batch 2, verified live 06:3x). Live verify of f15505e: bm2ejspyl.
 - 89f2819 Manual Control instant · b2608ff navigation rounds 2+3, Charm Editor Save fix (Saving at once, sheet files in background),
   bar necklaces FRONT by default (BARFRONT) · 077f21c Approve never silent / never stuck · d58eea9 Design & Engrave batch 1: editor
   extension points + live readouts + Ctrl/Alt centre resize + smart guides (feedback), Blend/Warp/Distort (warp), image trace (trace).
@@ -82,6 +82,7 @@ board-live-extra.json with the new agent ids.
 
 ## Handed back, waiting to merge into claude/de-integration
 - fix-approve-held (af959c47001f89f4c) handed back 06:34: could NOT reproduce offline; fix = approve() never fails silently (approveThrew shows the error on the card + activity log; stale approvalIntent says why). Branch claude/fix-approve-held a4119ea (contains 4da1e2c). Its reruns write $SP/heldfix/runsA|runsB/summary.txt (ALLDONE at end). Ship when green; then ask Paul to press Approve on 4212020155 again and read the card's line. It did NOT refuse Approve on held orders (ENGPRE rule, 13 Oct) — needs Paul's OK to change.
+- New agents 06:37–06:41: emplog follow-up a41a92d9950823b21 (person page design counts, on claude/de-emplog), order-hold-engine fix a92b66df2d483239a (branch claude/fix-order-hold-engine, wt-ohe; the test fails on main: GF Sheet 2 gets 3 waiting orders, expects 2).
 - All 17 other agents resumed 06:32 with SendMessage (same ids as the table).
 - de-text (ae828a5d729f6efa1) DONE: branch claude/de-text (af6f42b + merge 32078d4), new file charm-nest-ce-text.js (approved), test ce-text.cjs 10/10. Merge with resolve-union.py, then test the batch.
 - de-custompool (a4d3307fda8a88af0) DONE: claude/de-custompool 36f1f7d (contains de-designs a7009a1 + main). New file charm-nest-custom-pool.js (approved), server op customPiecePut, test custom-piece-pool.cjs 6/6. Ship WITH designs (+ sendsheet must settle the order's custom line). It reports sandbox-wipe-guard fails on origin/main too: op roseReopen is unclassified in the sandbox families file → small fix for the lead (classify roseReopen).
