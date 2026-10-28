@@ -1091,8 +1091,10 @@
   --ai-btn:#6a6a6a; --ai-shadow:0 6px 18px rgba(0,0,0,.45); --ai-sel:#4f80ff; --ai-smart:#e535e5;
   --ai-font:'CE Source Sans 3','Source Sans 3','Source Sans Pro','Adobe Clean',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; --ai-fs:12px; --ai-row:24px;
   position:fixed; inset:0; z-index:2147482500; background:rgba(20,20,20,.5);
-  font-family:var(--ai-font); font-size:var(--ai-fs); line-height:1.35; color:var(--ai-text); -webkit-font-smoothing:antialiased; text-align:left;
+  font-family:var(--ai-font); font-size:var(--ai-fs); line-height:1.35; color:var(--ink); -webkit-font-smoothing:antialiased; text-align:left;
 }
+/* (the workspace's own regions take the theme's text colour; a panel or dialog of an extension file keeps the ink it was drawn for) */
+.ce-appbar,.ce-props,.ce-doctabs,.ce-rail,.ce-foot,.ce-wrap .ce-rule{ color:var(--ai-text); }
 .ce-root[data-ui="dark"]{ --ai-frame:#1f1f1f; --ai-panel:#323232; --ai-panel-hi:#2b2b2b; --ai-pasteboard:#262626; --ai-border:#1a1a1a; --ai-input:#1e1e1e; --ai-input-border:#4a4a4a;
   --ai-text:#e3e3e3; --ai-text-dim:#a9a9a9; --ai-text-disabled:#6c6c6c; --ai-hover:#404040; --ai-menu:#323232; --ai-menu-border:#121212; --ai-sep:#4a4a4a; --ai-tool-on:#1a1a1a;
   --ai-ruler:#2d2d2d; --ai-ruler-ink:#c8c8c8; --ai-ruler-tick:#777; --ai-btn:#4a4a4a; }
@@ -1152,13 +1154,13 @@
 .ce-btn--gold:hover{ background:#a2854b; border-color:#a2854b; }
 .ce-btn--gold:active{ background:#8f7644; }
 .ce-btn--ink:hover{ background:var(--on-hov); border-color:var(--on-hov); }
-.ce-appbar .ce-btn,.ce-ask .ce-btn,.ce-aibtn{ height:24px; padding:0 12px; border-radius:12px; font:600 var(--ai-fs)/1 var(--ai-font); text-transform:none !important; letter-spacing:0 !important; white-space:nowrap;
+.ce-appbar .ce-btn,.ce-ask__card .ce-btn,.ce-aibtn{ height:24px; padding:0 12px; border-radius:12px; font:600 var(--ai-fs)/1 var(--ai-font); text-transform:none !important; letter-spacing:0 !important; white-space:nowrap;
   border:1px solid var(--ai-input-border); background:transparent; color:var(--ai-text); transform:none; position:relative; }
-.ce-appbar .ce-btn:hover,.ce-ask .ce-btn:hover,.ce-aibtn:hover{ background:var(--ai-hover); border-color:var(--ai-text-dim); color:var(--ai-text); }
-.ce-appbar .ce-btn--gold,.ce-ask .ce-btn--gold,.ce-ask .ce-btn--ink,.ce-aibtn--cta{ background:var(--ai-accent); border-color:var(--ai-accent); color:var(--ai-accent-text); }
-.ce-appbar .ce-btn--gold:hover,.ce-ask .ce-btn--gold:hover,.ce-ask .ce-btn--ink:hover,.ce-aibtn--cta:hover{ background:#1a6fd6; border-color:#1a6fd6; color:var(--ai-accent-text); }
+.ce-appbar .ce-btn:hover,.ce-ask__card .ce-btn:hover,.ce-aibtn:hover{ background:var(--ai-hover); border-color:var(--ai-text-dim); color:var(--ai-text); }
+.ce-appbar .ce-btn--gold,.ce-ask__card .ce-btn--gold,.ce-ask__card .ce-btn--ink,.ce-aibtn--cta{ background:var(--ai-accent); border-color:var(--ai-accent); color:var(--ai-accent-text); }
+.ce-appbar .ce-btn--gold:hover,.ce-ask__card .ce-btn--gold:hover,.ce-ask__card .ce-btn--ink:hover,.ce-aibtn--cta:hover{ background:#1a6fd6; border-color:#1a6fd6; color:var(--ai-accent-text); }
 .ce-appbar .ce-btn:disabled{ opacity:.55; cursor:default; }
-.ce-root .ce-appbar .ce-btn:focus-visible,.ce-root .ce-ask .ce-btn:focus-visible,.ce-root .ce-aibtn:focus-visible{ outline:2px solid var(--ai-accent); outline-offset:2px; }
+.ce-root .ce-appbar .ce-btn:focus-visible,.ce-root .ce-ask__card .ce-btn:focus-visible,.ce-root .ce-aibtn:focus-visible{ outline:2px solid var(--ai-accent); outline-offset:2px; }
 .ce-ask__b:has(> [data-ask="alt"]){ flex-direction:column-reverse; align-items:stretch; gap:8px; }   /* (three answers: one column, "Save and go back" first, then Discard, then Keep editing) */
 .ce-short{ display:none; }
 /* (27 Oct 2026: a bar that would not fit says the role in one word, Hatch, Line, and the menu says the rest) */
@@ -1166,13 +1168,11 @@
 /* ── the document tabs: Front and Back, the piece as the document (Illustrator's tabs under the Control bar) ── */
 .ce-doctabs{ grid-area:3/2/4/3; display:flex; align-items:flex-end; height:26px; padding:0; background:var(--ai-frame); border-bottom:1px solid var(--ai-border); overflow:hidden; }
 .ce-doctabs .ce-seg{ display:flex; height:100%; border:0; align-items:stretch; }
-.ce-doctabs .ce-seg button{ position:relative; display:inline-flex; align-items:center; gap:0; height:100%; padding:0 26px 0 12px; border:0; border-right:1px solid var(--ai-border); background:var(--ai-panel-hi);
+.ce-doctabs .ce-seg button{ position:relative; display:inline-flex; align-items:center; gap:0; height:100%; padding:0 14px 0 12px; border:0; border-right:1px solid var(--ai-border); background:var(--ai-panel-hi);
   color:var(--ai-text-dim); font:400 var(--ai-fs)/1 var(--ai-font); cursor:pointer; white-space:nowrap; max-width:46vw; }
 .ce-doctabs .ce-seg button.is-on{ background:var(--ai-pasteboard); color:var(--ai-text); }
 .ce-doctabs .ce-seg button:not(.is-on):not(:disabled):hover{ background:var(--ai-hover); color:var(--ai-text); }
 .ce-doctabs .ce-seg button:disabled{ color:var(--ai-text-disabled); cursor:default; }
-.ce-doctabs .ce-seg button::after{ content:"×"; position:absolute; right:9px; top:50%; transform:translateY(-52%); font-size:13px; color:var(--ai-text-dim); opacity:0; }
-.ce-doctabs .ce-seg button.is-on::after{ opacity:.65; }
 .ce-dt__n{ display:inline-block; max-width:24ch; overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; }
 .ce-dt__z{ color:var(--ai-text-dim); margin-left:4px; }
 /* ── the Tools panel (Illustrator's toolbar: single column, » for two, flyout triangles, Fill / Stroke and the screen mode at its foot) ── */
@@ -1205,7 +1205,7 @@
 /* ── the Control bar (Illustrator's Control panel: what is selected and its properties, one row) ── */
 .ce-props{ grid-area:2/1/3/-1; display:flex; align-items:center; flex-wrap:nowrap; gap:6px; min-width:0; height:34px; padding:0 8px; background:var(--ai-panel); border-bottom:1px solid var(--ai-border); overflow:hidden; position:relative; z-index:2; }
 .ce-props > *{ flex:0 0 auto; height:22px; }
-.ce-props > span{ display:inline-flex; align-items:center; }
+.ce-props > span:not(.ce-refpt){ display:inline-flex; align-items:center; }
 /* (a bar that would not fit sheds, as Illustrator's Control panel does: first the section labels and the long names, then the reference point and the kind) */
 .ce-props.is-tight .ce-ctl__lab{ display:none; } .ce-props.is-tight [data-drop="font"] .ce-prop{ min-width:0; } .ce-props.is-tight [data-drop="fstyle"] .ce-prop{ min-width:0; } .ce-props.is-tight .ce-size input{ width:50px; }
 .ce-props.is-tighter .ce-refpt,.ce-props.is-tighter .ce-ctl__kind{ display:none; } .ce-props.is-tighter .ce-size input{ width:44px; } .ce-props.is-tighter{ gap:4px; }
