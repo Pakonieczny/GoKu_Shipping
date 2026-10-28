@@ -1714,7 +1714,9 @@
       if (!rootEl.isConnected) return;
       const dpr = Math.min(2, root.devicePixelRatio || 1);
       const pxmm = S.k * PT, ink = '#1c1d1d', muted = '#8a8784', hair = '#cdc6b8', liveC = '#b8935a', guideC = '#19a6c6';
-      const st = ruleSteps(pxmm), s = sb(), f = frame(), z = zeroPt(), sel = selExtent(), gl = S.showGuides ? guides() : [];
+      // (what is being drawn is marked as it grows, a shape's draft or an extension tool's live box; otherwise the selection)
+      const g0 = S.g, live = g0 && g0.kind === 'draw' && g0.live && g0.draft ? bboxOf(g0.draft) : S.xLive && Array.isArray(S.xLive.box) ? S.xLive.box : null;
+      const st = ruleSteps(pxmm), s = sb(), f = frame(), z = zeroPt(), sel = live || selExtent(), gl = S.showGuides ? guides() : [];
       if (!ruleFont) ruleFont = '700 8px ' + (getComputedStyle(rootEl).fontFamily || 'sans-serif');
       corner.classList.toggle('is-moved', !!face().zero);
       const draw = (cv, vertical) => {

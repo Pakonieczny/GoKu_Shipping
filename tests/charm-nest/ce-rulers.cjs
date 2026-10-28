@@ -3,8 +3,8 @@
 // nothing but the editor (fixtures/charm-editor-harness.html); no server, no network. Everything is done with the mouse, the wheel and the keys, and the rulers are
 // read off their own canvas pixels.
 //   PW_DIR=/opt/node-tools/node_modules CHROMIUM=/opt/pw-browsers/chromium-1243/chrome-linux64/chrome node tests/charm-nest/ce-rulers.cjs     (SHOTS=<dir> keeps screenshots)
-// 1 the rulers: the selection's extent marked on both and following it as it moves; the cursor on both; ticks that refine with the zoom (0.1 mm and finer when
-//   zoomed in), counted on the canvas
+// 1 the rulers: the selection's extent marked on both and following it as it moves (a shape being drawn: its draft's); the cursor on both; ticks that refine
+//   with the zoom (0.1 mm and finer when zoomed in), counted on the canvas
 // 2 guides: dragged out of the top ruler onto a day square's edge (it settles on it exactly), a part dragged to it snaps to it, moved, Shift on the ruler's ticks,
 //   the other face has its own, dragged back onto the ruler it is gone; the zero point dragged from the corner onto a part's corner: X / Y read 0, the rulers'
 //   zero is there; a double-click on the corner puts it back
@@ -98,6 +98,15 @@ const tickGap = page => page.evaluate(() => {
     await page.keyboard.press('Control+z'); await settle(page);
     await shot(page, 'r1-marks.png');
     return `marks x ${m0.x0}–${m0.x1}, y ${m0.y0}–${m0.y1} px; after 1 mm: x ${m1.x0}`;
+  });
+  await step('1.1b while a rectangle is being drawn, its growing extent is what the rulers mark', async () => {
+    await page.keyboard.press('Escape'); await page.keyboard.press('r'); await settle(page);
+    const a = { x: Math.round(stageR.l + stageR.w * 0.2), y: Math.round(stageR.t + stageR.h * 0.3) }, b = { x: a.x + 87, y: a.y + 53 };
+    await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 6 }); await settle(page);
+    const marks = [['x', a.x - rxR.l], ['x', b.x - rxR.l], ['y', a.y - ryR.t], ['y', b.y - ryR.t]];
+    const gold = []; for (const [w, p] of marks) { let hit = false; for (const d of [-1, 0, 1]) if (isGold(await rulerPx(page, w, Math.round(p) + d, 4))) hit = true; gold.push(hit); }
+    await page.keyboard.press('Escape'); await page.mouse.up(); await page.keyboard.press('v'); await settle(page);
+    assert.deepEqual(gold, [true, true, true, true]);
   });
   await step('1.2 the cursor is tracked on both rulers', async () => {
     await page.keyboard.press('Escape'); await settle(page);
