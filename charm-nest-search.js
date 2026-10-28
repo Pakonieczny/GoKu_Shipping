@@ -61,8 +61,10 @@
   function refsNow() {
     const b = Bs(), s = St(), C = W.Cancelled;
     return [b && b.orders.rows, b && b.orders.rows.length, b && b.pool.rows.size, b && b.engrave.items.size, b && b.maps.customDone, s && s.library && s.library.rows, s && s.library && s.library.rows && s.library.rows.length,
-      b && b.review && b.review.items, b && b.review && b.review.items.length, C && C.count ? C.count() : 0, cancelList.length, IX.cloud.size];
+      b && b.review && b.review.items, b && b.review && b.review.items.length, C && C.count ? C.count() : 0, cancelList.length, IX.cloud.size, customRows().length, W.CustomOrders && W.CustomOrders.version ? W.CustomOrders.version() : 0];
   }
+  // (CUSTOMORDERS, Paul 28 Oct 2026: a custom charm "needs to be searchable ... just like any other order": the custom pieces' rows, charm-nest-custom-orders.js, by their order number, name and "custom")
+  const customRows = () => { try { return W.CustomOrders && W.CustomOrders.rows ? W.CustomOrders.rows() : []; } catch (_) { return []; } };
   const stale = () => { const r = refsNow(); return r.length !== IX.refs.length || r.some((v, i) => v !== IX.refs[i]); };
   /** True when the order line's design draws two different bodies (the master record's pair field, the shared module agreeing). */
   function mismatchedRow(r) {
@@ -92,6 +94,13 @@
         const e = at(String(p.orderId)); e.pools.push(p); push(e.skus, p.sku);
         const t = ms(p.arrivedAt) || ms(p.orderDate); if (t > e.at) e.at = t;
       }
+      for (const r of customRows()) {
+        const e = at(String(r.order.receiptId)), cu = (r.spec && r.spec.custom) || {};
+        if (!e.rows.includes(r)) e.rows.push(r);
+        if (!e.buyer && r.order.orderless && cu.name) e.buyer = cu.name;
+        push(e.titles, r.line.title); push(e.skus, "CUSTOM"); e.extra = [e.extra, "custom", cu.name, cu.by, cu.designId].filter(Boolean).join(" ");
+        const t = ms(r.arrivedAt); if (t > e.at) e.at = t;
+      }
       for (const j of b.engrave.items.values()) { const r = j && j.row; if (r && r.order) at(String(r.order.receiptId)).engrave.push(j); }
       for (const [k, c] of Object.entries(b.maps.customDone || {})) {
         const rid = String((c && c.receiptId) || String(k).split("_")[0]); if (!/^\d+$/.test(rid)) continue;
@@ -118,7 +127,7 @@
       e.buyerL = e.buyer.toLowerCase();
       // (a SKU Etsy carries misspelled that Paul named, charm-nest-orders.js KNOWN_SKU_TYPOS, is found by its right spelling too: the words only, the SKUs shown stay as the order has them)
       const O = W.CharmNestOrders, fixed = O && O.knownTypo ? e.skus.map(x => { try { return O.knownTypo(x); } catch (_) { return ""; } }).filter(Boolean) : [];
-      e.hay = (e.buyer + "\u0001" + e.skus.join("\u0001") + (fixed.length ? "\u0001" + fixed.join("\u0001") : "") + "\u0001" + e.titles.join("\u0001") + (e.extra ? "\u0001" + e.extra : "")).toLowerCase();
+      e.hay = ((/^\d+$/.test(e.rid) ? "" : e.rid + "\u0001") + e.buyer + "\u0001" + e.skus.join("\u0001") + (fixed.length ? "\u0001" + fixed.join("\u0001") : "") + "\u0001" + e.titles.join("\u0001") + (e.extra ? "\u0001" + e.extra : "")).toLowerCase();
       e.dig = (e.num && e.num !== e.rid ? e.num + "|" : "") + e.listings.join("|");
     }
     list.sort((a, b2) => b2.at - a.at);                                          // newest first: every pass keeps this order

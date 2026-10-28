@@ -40,7 +40,11 @@
   'use strict';
   const CODE = { gold: 'GF', silver: 'SS', rose: 'RG', gold10k: '10K', gold14k: '14K' };
   const GONE = new Set(['abandoned', 'superseded']);
-  const POOL_ID = /^(\d{4,20})_([^_]*)_(\d{1,3})$/;
+  const POOL_ID = /^(\d{4,20}|CUSTOM-\d{8}-\d{1,6})_([^_]*)_(\d{1,3})$/;
+  // (CUSTOMORDERS, Paul 28 Oct 2026: a custom piece that belongs to no order is an order of its own, CUSTOM-<yyyymmdd>-<n>, read like any order; every other order id is its digits)
+  const CUSTOM_RID = /^CUSTOM-\d{8}-\d{1,6}$/;
+  const ridOfAny = x => { const v = String(x == null ? '' : x).trim(); return CUSTOM_RID.test(v) ? v : v.replace(/\D/g, ''); };
+  const orderIdOk = x => /^\d+$/.test(x) || CUSTOM_RID.test(x);
   const sidOf = s => (s && (s.id || s.sheetId)) || null;
   const stampOf = s => +(s && (s.updatedAt || s.createdAt)) || 0;
   const nOfName = name => +((/_Sheet-(\d+)/.exec(name || '') || [])[1]) || 0;
@@ -78,7 +82,7 @@
 
   /** The pieces of one order. See the header: records first, live pages next, the pool row's sheetId only as a hint. */
   function resolve(input) {
-    const rid = String(input.orderId || '').replace(/\D/g, ''), prefix = rid + '_';
+    const rid = ridOfAny(input.orderId), prefix = rid + '_';
     const livePlaced = typeof input.livePlaced === 'function' ? input.livePlaced : () => null;
     const liveSheet = typeof input.liveSheet === 'function' ? input.liveSheet : () => null;
     const lines = (input.lines || []).filter(l => l && l.state !== 'gone');
@@ -240,7 +244,7 @@
     const subs = new Set();
     let version = 0, lib = null;
     const bump = () => { version++; for (const f of [...subs]) { try { f(version); } catch (e) { console.warn('OrderPieces subscriber', e); } } };
-    const ridOf = x => String(x == null ? '' : x).replace(/\D/g, '');
+    const ridOf = ridOfAny;
     const entry = rid => { let e = learned.get(rid); if (!e) learned.set(rid, e = { at: 0, pools: [], sheets: [], rows: null, ok: false, failed: null, task: null }); return e; };
     /** What a read of an order says, as one short string: it changes exactly when the answer to "where is each piece" could (the rows' state, sheet and take-off marks, the sheets' piece lists and cut marks). */
     const readSig = e => JSON.stringify([e.ok ? 1 : 0, e.failed ? 1 : 0, (e.pools || []).map(p => [p.poolId, p.state, p.sheetId || '', num(p.heldAt), num(p.removedAt), num(p.repooledAt), p.heldBy || '', num(p.updatedAt)]).sort(),
@@ -357,7 +361,7 @@
       const { rec, live } = recordOfSheet(sheetId), ids = new Set();
       for (const id of (rec && rec.poolIds) || []) ids.add(String(id));
       if (live) for (const c of live.charms || []) if (c.poolId && livePlaced(c.poolId) === live) ids.add(String(c.poolId));
-      const rids = [...new Set([...ids].map(id => id.split('_')[0]).filter(x => /^\d+$/.test(x)))];
+      const rids = [...new Set([...ids].map(id => id.split('_')[0]).filter(orderIdOk))];
       return rids.map(orderId => ({ orderId, pieces: of(orderId).filter(p => p.sheetId === sheetId) })).filter(x => x.pieces.length);
     }
     /** Every order with a piece on a sheet of this set: [{ orderId, pieces }] (the pieces that sit on the set's sheets). */
@@ -415,7 +419,7 @@
         if (!rec) { const had = fullSheets.delete(sheetId); if (had) bump(); return false; }   // (gone from the cloud: this page stops holding it)
         const was = fullSheets.get(sheetId), moved = !was || num(was.updatedAt) !== num(rec.updatedAt) || (was.poolIds || []).length !== (rec.poolIds || []).length;
         fullSheets.set(sheetId, rec);
-        const rids = [...new Set(rec.poolIds.map(id => id.split('_')[0]).filter(x => /^\d+$/.test(x)))];
+        const rids = [...new Set(rec.poolIds.map(id => id.split('_')[0]).filter(orderIdOk))];
         const ok = await load(rids, { force: !!opts.force }); if (moved) bump(); return ok;
       } catch (e) { console.warn('OrderPieces: sheet not read', e && e.message); return false; }
     }

@@ -1498,6 +1498,10 @@ const Views = window.Views = (() => {
 /* ═══ 18 · Orders — pulled through the station, read deterministically ══════ */
 const Orders = window.Orders = (() => {
   const rowsOf = () => B.orders.rows;
+  /* CUSTOMORDERS (Paul, 28 Oct 2026: a custom charm "must still have all the same abilities and features that a regular order has ... see it in the orders tab in the list view"): what the list
+     SHOWS is the pull's lines and one row per custom piece's line (charm-nest-custom-orders.js); everything that works on the pull (the Etsy check, the intake, Review, the run's lines) reads rowsOf() only. */
+  const customRows = () => { try { const C = window.CustomOrders; return C && C.rows ? C.rows() : []; } catch (e) { console.warn("[orders] custom rows", e); return []; } };
+  const listRows = () => { const extra = customRows(); return extra.length ? rowsOf().concat(extra) : rowsOf(); };
   function markStale() { B.orders.stale = true; render(); }
   async function loadMaps(force, ttl) {
     if (!S.cloud.ok) return;
@@ -2175,7 +2179,7 @@ const Orders = window.Orders = (() => {
   function visibleRows() {
     // (PERF, Oct 2026: each row's activity time is worked out once for this sort, and the date range and direction read once, not per row)
     const q = OV.q.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean), times = new Map(), act = CNListActivity.state("orders");
-    return rowsOf().filter(r => {
+    return listRows().filter(r => {
       if (r.state === "gone") return false;
       if (OV.metal && (r.material || "none") !== OV.metal) return false;
       if (OV.form && ((r.spec && r.spec.form) || "none") !== OV.form) return false;
@@ -2427,7 +2431,7 @@ const Orders = window.Orders = (() => {
      marks) once at the top; under it each piece as the row it always was (its pictures, design, sheet, jewellery and options, state, seals, Qty). A press on a piece opens the order
      window on that piece (it is the one picked in "Its pieces"); a press on the top opens the order. An order that shows one line is drawn exactly as before. */
   const groupsOf = rows => {
-    const OG = window.CharmNestOrderGroup, at = new Map(rowsOf().map((r, i) => [r, i]));
+    const OG = window.CharmNestOrderGroup, at = new Map(listRows().map((r, i) => [r, i]));
     return OG ? OG.groupRows(rows, r => at.get(r)) : rows.map(r => ({ rid: String(r.order.receiptId), rows: [r] }));
   };
   /** What the list says of one line (a row, or a piece of a grouped order), worked out once. */
@@ -2571,7 +2575,7 @@ const Orders = window.Orders = (() => {
   const FIRST_ROWS = (host, cards) => cards ? 12 : Math.max(3, Math.ceil((host.clientHeight || 800) / 190) + 1);   // (a list row is ~200 px: 4 in the 800 px list of a 900 px screen, so 6; read after the list's scroll place, so nothing is laid out for it)
   let fillAsked = 0, filling = false, showing = false;   // (showing: the drawing is the tab's being shown, shown)
   function walkRows() {
-    const rows = rowsOf(), sig = JSON.stringify([rows.length, OV.pile, OV.q, OV.metal, OV.form, OV.eng, OV.act, OV.sort, OV.desc, CNListActivity.key("orders")]);
+    const rows = rowsOf(), sig = JSON.stringify([rows.length, window.CustomOrders ? CustomOrders.version() + ":" + customRows().length : 0, OV.pile, OV.q, OV.metal, OV.form, OV.eng, OV.act, OV.sort, OV.desc, CNListActivity.key("orders")]);
     if (walkMemo && walkMemo.rows === rows && walkMemo.sig === sig && Date.now() - walkMemo.at < 5000) return walkMemo.list.filter(r => r.state !== "gone");
     const list = groupsOf(visibleRows()).flatMap(g => g.rows);
     walkMemo = { rows, sig, at: Date.now(), list };
@@ -2591,7 +2595,7 @@ const Orders = window.Orders = (() => {
     const at = host.scrollTop;                                             // a run writing to the list must not scroll it away
     const rows = visibleRows();
     paintCount(rows);                                                      // (the live count and the charms, FILTERBAR: whatever drew this, the bar says what the list holds)
-    const alive=new Set(rowsOf().map(r=>r.key));for(const key of orderNodes.keys())if(!alive.has(key))orderNodes.delete(key);
+    const alive=new Set(listRows().map(r=>r.key));for(const key of orderNodes.keys())if(!alive.has(key))orderNodes.delete(key);
     // (the Cancelled list is the sheet window script's: searched with this tab's search box, paged down to what "Show" asked for)
     if (OV.pile === "cancelled") { drawnOn = ""; listKey = "cancelled"; if (window.Cancelled) Cancelled.renderInto(host, () => { const v = document.getElementById("ordersView"); if (v && v.querySelector("#ordChips")) renderHead(v); }, { q: OV.q, focus: cxFocus, live: () => OV.pile === "cancelled" && host.isConnected, clear: () => { OV.q = ""; const box = document.getElementById("ordQ"); if (box) box.value = ""; renderBody(); } }); else host.innerHTML = '<div class="libEmpty">The cancelled orders open with the sheet window script.</div>'; return; }
     const nextKey=listSig();   // (what the bar can change: a change of any resets the list to its first 48)
@@ -2603,7 +2607,7 @@ const Orders = window.Orders = (() => {
     let list=host.querySelector('#ordItems');if(!list){host.innerHTML='<div id="ordItems"></div>';list=host.firstElementChild;}list.className=cards?'ordCards':'ordList';
     // an empty pile says so in the list itself, so the last row out is still seen going (and the words come in softly)
     const wanted=[],mounts=[],pairs=[],rebuilt=[];let shown=[],groupTotal=0;
-    if (!rowsOf().length && (window.Sandbox?.held?.() || window.Sandbox?.pulling?.())) {
+    if (!listRows().length && (window.Sandbox?.held?.() || window.Sandbox?.pulling?.())) {
       // a cleaned sandbox waits for Start: the calm line and the one button that begins the replay (turning Auto on or Pull orders do too)
       const n = blank("held", '<span class="sbWait"></span><button class="btn gold sm" type="button" data-sb-start>Start</button>', n => { const go = n.querySelector("[data-sb-start]"); go.onclick = () => { go.disabled = true; Sandbox.start().catch(err => { toast(err.message, "bad", 7000); go.disabled = false; }); }; });
       const sb = n.querySelector(".sbWait"), t = Sandbox.heldText(); if (sb.textContent !== t) sb.textContent = t;
@@ -2611,7 +2615,7 @@ const Orders = window.Orders = (() => {
       { const go = n.querySelector("[data-sb-start]"), busy = Sandbox.pulling() || ""; if ((go.dataset.busy || "") !== busy) { go.dataset.busy = busy; go.disabled = !!busy; if (busy) { const sp = el("span", "spin"); sp.setAttribute("aria-hidden", "true"); go.setAttribute("aria-busy", "true"); go.replaceChildren(sp, document.createTextNode(busy === "pull" ? `Pulling the ${Sandbox.want()} newest orders…` : "Starting…")); } else { go.removeAttribute("aria-busy"); go.replaceChildren(document.createTextNode("Start")); } } }
       wanted.push(n);
     }
-    else if (!rowsOf().length) wanted.push(blank("none", '<span>Nothing pulled yet — press <b>Pull orders</b> above.</span>'));   // one line: .libEmpty stacks its children
+    else if (!listRows().length) wanted.push(blank("none", '<span>Nothing pulled yet — press <b>Pull orders</b> above.</span>'));   // one line: .libEmpty stacks its children
     else if (!rows.length) wanted.push(blank("filters", 'Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button>', n => { n.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.act = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; render(); }; }));
     else {
     let lastDay=null;
@@ -3003,7 +3007,7 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, walkRows, shown, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, askTable, releaseStampOf, releaseSealHtml, releaseAway, _kept: () => readSaid.size };
+  return { view: () => OV, walkRows, shown, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, listRows, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, askTable, releaseStampOf, releaseSealHtml, releaseAway, _kept: () => readSaid.size };
 })();
 
 /* ═══ 18b · the page is the version that was deployed (MASTER4, Paul 15 Oct 2026) ══════════════════════════════
@@ -20886,7 +20890,9 @@ const OrderWin = window.OrderWin = (() => {
   }
   // (NAV, 28 Oct 2026: the fonts loaded so far: a measure kept from before a font came in is made again, inkTo and grow)
   let inkFonts = 0; try { document.fonts && document.fonts.addEventListener && document.fonts.addEventListener("loadingdone", () => { inkFonts++; }); } catch (_) {}
-  const inPull = key => Orders.rows().find(r => r.key === key) || null;
+  // (CUSTOMORDERS, Paul 28 Oct 2026: the window shows a custom piece's line as any order's: Orders.listRows is the pull's lines and the custom pieces' rows, charm-nest-custom-orders.js)
+  const shownRows = () => (Orders.listRows ? Orders.listRows() : Orders.rows()) || [];
+  const inPull = key => shownRows().find(r => r.key === key) || null;
   const rowOf = key => inPull(key) || (W.row && W.row.key === key ? W.row : null);
   const me = () => employeeName() || "";
   const VIEWS = ["info", "timeline", "sheet"];
@@ -20894,7 +20900,7 @@ const OrderWin = window.OrderWin = (() => {
   const still = () => { try { return window.Motion && Motion.reduced ? Motion.reduced() : matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (_) { return false; } };
   const tryDo = f => { try { return f(); } catch (e) { console.warn("order view:", e); return null; } };
   // the lines of the order on screen: the pull's, or those read from the records
-  const linesOf = r => { const rid = String(r.order.receiptId); const pulled = (Orders.rows() || []).filter(x => String(x.order.receiptId) === rid && x.state !== "gone"); return pulled.length ? pulled : (W.rows && W.rows.some(x => x === r) ? W.rows : [r]); };
+  const linesOf = r => { const rid = String(r.order.receiptId); const pulled = shownRows().filter(x => String(x.order.receiptId) === rid && x.state !== "gone"); return pulled.length ? pulled : (W.rows && W.rows.some(x => x === r) ? W.rows : [r]); };
 
   /* The two pictures at the left of the Overview (the Etsy listing photo and the vector design) zoom and pan where they lie, in
      their own frames (charm-nest-zoompan.js: the click-to-zoom of the lists and Review): a click zooms in centred on the point
@@ -21380,7 +21386,7 @@ const OrderWin = window.OrderWin = (() => {
   const SEAL_ALIAS = { releaseHold: "release", button: "complete", orderComplete: "complete", cancelled: "cancel", orderCancelled: "cancel", cancelOrder: "cancel", sentToSheet: "sheet", sendToSheet: "sheet", review: "hold", sendToReview: "hold", sentToReview: "hold", holdOrder: "hold", onHold: "hold", qr: "print", labelPrinted: "print" };
   const SEAL_SKIP = new Set(["engraveApproved", "engravePlain", "monogramApproved"]);   // (drawn on the window's Engraving cards, beside their own Approve)
   const sealKindOf = k => { k = String(k || ""); return SEAL_ALIAS[k] || k; };
-  const ridDigits = v => String(v == null ? "" : v).replace(/\D/g, "");
+  const ridDigits = v => { const s0 = String(v == null ? "" : v).trim(); return window.CustomOrders && CustomOrders.isCustom(s0) ? s0 : s0.replace(/\D/g, ""); };   // (CUSTOMORDERS: CUSTOM-<yyyymmdd>-<n> is an order's number too)
   /** Every seal the order has collected, oldest first: [{ kind, at, by, id, label, how, n }]. */
   function winSealsOf(rid) {
     rid = ridDigits(rid); if (!rid) return [];
@@ -21458,9 +21464,10 @@ const OrderWin = window.OrderWin = (() => {
   /* (HOLDSTAYS, 28 Oct 2026: a release that moves nothing ends at once, and the window is painted again two or three times in the next moments: the seal pressed at the first paint was gone
      before its stamp came down, so the stamp was heard and never seen.) The stamp comes down once the paints have settled, on the seal the window shows then. */
   function stampSoon(kind, since) {
-    const key = kind + ":" + since; (W.relWaiting || (W.relWaiting = new Map())).set(key, { kind, since });
+    const key = kind + ":" + since, rid = W.rid; (W.relWaiting || (W.relWaiting = new Map())).set(key, { kind, since });
     setTimeout(() => {
       W.relWaiting.delete(key);
+      if (!W.dlg || !W.dlg.open || W.closing || W.rid !== rid) return;   // (a window closed, or on another order, meanwhile: no stamp on a window going away)
       // (the seal's time can move between paints, the press's own moment first and the saved one after: the newest seal of its kind since the press is the one)
       const ns = W.dlg ? [...W.dlg.querySelectorAll(`[data-ow-btn-seals] [data-seal-kind="${kind}"]`)].filter(x => (+x.dataset.sealAt || 0) >= since - 1000) : [];
       const n = ns.sort((x, y) => (+y.dataset.sealAt || 0) - (+x.dataset.sealAt || 0))[0], f = n && n.querySelector(".seal");
@@ -21528,6 +21535,9 @@ const OrderWin = window.OrderWin = (() => {
     // (ENGENT: Etsy hands the customer's words HTML-escaped; they are read decoded here and escaped again when drawn, so "Mom&#39;s" reads "Mom's" and "&lt;b&gt;" stays text)
     const words = x => O.decodeEntities(O.visible(x)).trim();
     const pers = (sp.personalization || r.line.personalization || []).map(words).filter(Boolean), bm = words(sp.buyerMessage);
+    // (CUSTOMORDERS, Paul 28 Oct 2026: a custom piece sent from the Charm Editor says what it is, as an order's line says what was bought: its name, its design and who sent it)
+    const cu = r.custom && sp.custom;
+    if (cu) said.push(["Custom piece", [cu.name || "no name", cu.orderless ? "no order" : "", cu.designId ? `design ${cu.designId} v${cu.version || 1}` : "", cu.widthMm != null && cu.heightMm != null ? `${(+cu.widthMm).toFixed(1)} × ${(+cu.heightMm).toFixed(1)} mm` : "", cu.by ? "sent by " + cu.by : ""].filter(Boolean).join(" · ")]);
     if (pers.length) said.push(["Personalisation", pers.join("\n")]);
     if (bm) said.push(["Buyer message", bm]);
     const gm = words(r.order.giftMessage);
@@ -24047,13 +24057,15 @@ const OrderWin = window.OrderWin = (() => {
     // the page when the caller looks for it, and the plate is not drawn again until that slide has landed)
     if (window.Seal?.busy?.()) await window.Seal.whenIdle();
     wire(); if (!W.dlg) return;
-    rid = String(rid || "").replace(/\D/g, ""); if (!rid) return;
+    { const r0 = String(rid || "").trim(); rid = window.CustomOrders && CustomOrders.isCustom(r0) ? r0 : r0.replace(/\D/g, ""); } if (!rid) return;   // (CUSTOMORDERS: a custom piece's own order number, CUSTOM-<yyyymmdd>-<n>)
+    // (a custom piece's order not yet known on this page: its pool rows are read first, then it opens as any order shown in the list)
+    if (window.CustomOrders && CustomOrders.isCustom(rid) && !CustomOrders.rowsOf(rid).length) await CustomOrders.fetch(rid);
     // (back: called once as this view goes back into `from`, which it does even after Previous or Next, giveBack)
     if (typeof opts.back === "function") W.ret = { fn: opts.back, from: opts.from || null };
     const o = Object.assign({ walk: false }, opts); if (opts.keepFrom) delete o.from; delete o.back;
     // (a search passes the line it found: that line of the pull, else the order's first; an order whose lines are all
     // gone from the pull, cancelled or no longer open, shows those lines as they are)
-    const ofRid = (Orders.rows() || []).filter(r => String(r.order.receiptId) === rid), live = ofRid.filter(r => r.state !== "gone");
+    const ofRid = shownRows().filter(r => String(r.order.receiptId) === rid), live = ofRid.filter(r => r.state !== "gone");
     const pulled = live.length ? live : ofRid;
     // (the piece asked for: the line named, else the line that holds the pool id named (a copy's id starts with its line's key), else the order's first;
     // Paul, 5 Oct, round 3: every place that opens the order shows the piece it was pressed for, with that piece's own back engraving)
@@ -24074,6 +24086,8 @@ const OrderWin = window.OrderWin = (() => {
     show(stub, Object.assign({}, o, { view: o.view && o.view !== "sheet" ? o.view : o.view === "sheet" ? "sheet" : "info" }));
     let rows = null, failed = null;
     try { rows = await lookUp(rid, say); } catch (e) { failed = e; console.warn("order view: look-up", e); }
+    // (CUSTOMORDERS: the order's custom pieces sent from the Charm Editor are lines of it too, which no run's records hold)
+    { const extra = window.CustomOrders ? tryDo(() => CustomOrders.rowsOf(rid)) || [] : []; if (extra.length) rows = (rows || []).concat(extra.filter(x => !(rows || []).some(y => y.key === x.key))); }
     // (drawn once the view has landed, never into it mid-flight; a view going back meanwhile is left to go)
     await landed();
     await window.Seal?.whenIdle?.();
