@@ -69,3 +69,6 @@ server stamps `at`. Call the shared log `window.CNDesignLog && CNDesignLog.event
 ## Report back (SubagentHandback) — short
 Commits (hash, one line each), what Paul will see, the new files, tests run with pass/fail and the key numbers, decisions you made, and
 anything that needs the lead or Paul. If you are blocked for more than ~15 minutes on something outside your scope, say so and hand back.
+
+## Build check (added 07:15 UTC 28 Oct, after a deploy failed)
+Any NEW file in netlify/functions/ must be listed in scripts/netlify-function-entries.json ("endpoints" for a callable function, "modules" for a helper such as _x.js), or the Netlify build stops and NOTHING deploys. Before handing back, run `node scripts/build-netlify.cjs` in your worktree (it must exit 0), then `git checkout -- public-site netlify/production-functions 2>/dev/null; git status` to leave no build output behind.

@@ -36,6 +36,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
   extension points + live readouts + Ctrl/Alt centre resize + smart guides (feedback), Blend/Warp/Distort (warp), image trace (trace).
 
 ## Integration branch for Design & Engrave: claude/de-integration (worktree $SP/wt-de-int), head 5d240fc = d58eea9 + vimport.
+BEFORE EVERY PUSH TO MAIN: `node scripts/build-netlify.cjs` must exit 0 (a new netlify/functions file must be classified in scripts/netlify-function-entries.json; batch 3 did not deploy for 15 min because _designLog.js was not; fixed in 4003913).
 Procedure per finished workstream: `git fetch origin <branch> && git merge --no-commit --no-ff FETCH_HEAD`; conflicts →
 `python3 -I $SP/resolve-union.py <files>`; commit with the attribution lines; when a few have landed, test on the priority lane:
 node: charm-editor-model art-edit-model public-assets (+ the workstreams' node tests); browser (SLOT_PRIO=1 slot.sh): the workstreams'
@@ -87,6 +88,8 @@ board-live-extra.json with the new agent ids.
 - designs follow-up (af114bb2ccb5f706c resumed): claude/de-designs-2 = accept stroke/fill true in clean(); test world Master.load race.
 
 ## Handed back, waiting to merge into claude/de-integration
+- de-sendsheet (a6ecf232b267d8e9d) DONE 07:10: claude/de-sendsheet bbfdb02 (contains main 5c417f9 + designs/custompool/emplog). New file charm-nest-custom-piece.js, test ce-sendsheet 21/21. BATCH 5.
+- de-ops (a3ce05d237db781e5) DONE 07:04: claude/de-ops d4009d1, ce-ops 47 node + 54 browser. BATCH 5.
 - de-masters (acbce20e63df93ae2) DONE 07:00: claude/de-masters f55479f, ce-masters 17/17. BATCH 5 (with library, tab, sendsheet, ops, extras as they land).
 - local-store (a42236c45a7daeff2) DONE 06:59: all gates pass (G1 68 ms, G3 282 ms).
 - de-pen (a925a9f2929572a8f) DONE 06:57: claude/de-pen 64e0f11, ce-paths 25/25. Notes: chainSubpaths/simplifySubpaths available for importers (vimport doesn't call them yet).
