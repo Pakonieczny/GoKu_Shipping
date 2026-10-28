@@ -14611,7 +14611,7 @@ const CustomPrint = window.CustomPrint = (() => {
     }
     return {
       answers(it2, rows2, then) {
-        let left = hs.length; const fin = () => { if (--left <= 0 && typeof then === "function") tryDo(then); };
+        let left = hs.length; const fin = () => { if (--left <= 0 && typeof then === "function") { try { then(); } catch (e) { console.warn("Release Hold: after the answers", e); } } };
         for (const [k, h, cur] of hs) h.done.then(ans => { if (ans && ans.record) { keepDone({ [k]: ans.record }); wrote([k]); settle(); } fin(); }, e => { doneRefused(it2, rows2, k, cur, e); fin(); });
       }
     };
