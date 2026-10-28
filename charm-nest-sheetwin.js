@@ -1147,6 +1147,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // (MOVEINSTANT, Paul 20 Oct 2026: a sheet a move by hand is still saving is drawn with the move made, not as its record says until the save lands: hopOverlay)
       const rec = hopOverlay(r.sheet); if (!rec) throw new Error("This sheet is no longer in the Library.");
       if (window.LaserReview) LaserReview.record(r.sheet);
+      // (STUCKSPIN, Paul 28 Oct 2026: the window said "14K Draft 2 · filling · joins a set when full · No QR yet" while its record held it in Set 3 with its QR label: the page follows the record
+      //  it just read (Gate.followRecords: a sheet the record holds in an open set of the run while this page holds it in none takes that place back, nothing written), and the window is drawn again)
+      if (window.Gate && typeof Gate.followRecords === "function") Promise.resolve(Gate.followRecords([r.sheet])).then(n => { if (n && W.id === id && W.dlg.open && !W.flow && !MC.on) { tryDo(() => Gate.refreshMembership()); open2(id); } }).catch(() => {});
       W.rec = rec; W.st = stockOf(rec); W.live = liveOf(id);
       if (backFace()) W.backs = backsOf(rec, W.live, W.backsList);
       const same = !!(early && W.geom && early.sig === layoutSig(rec));
@@ -2206,7 +2209,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const rec = W.rec, E = W.el, f = (rec.label?.files || [])[0];
     const n = (rec.label?.orders || rec.orders || []).length;
     const qr = f ? `<div class="swQr" data-r2="qr"><figure class="qrPart" style="margin:0"><div class="qrTile"><img data-big title="Sheet QR label" data-label-sheet="${esc(rec.id)}" data-label-path="${esc(f.path || "")}" data-label-part="${+f.part || 1}" crossorigin="anonymous"${f.url ? ` src="${esc(cors(f.url))}"` : ""} alt="Sheet QR code"></div></figure><span class="busy"><span class="owSpin"></span></span><span class="cap"><b>QR label${(rec.label.files || []).length > 1 ? ` · ${(rec.label.files || []).length} parts` : ""}</b><span data-r2="qrText">${n} order${n === 1 ? "" : "s"} · click to enlarge</span></span></div>`
-      : (plan => `<div class="swQr" data-r2="qr"><span class="qrWaiting" style="width:72px;height:72px">No QR yet</span><span class="busy"><span class="owSpin"></span></span><span class="cap"><b>QR label</b><span data-r2="qrText">${esc(plan ? plan.note : rec.metal === "rose" && !(rec.label?.files || []).length ? "Made when you press Cut Sheet" : "Made when the sheet joins a set")}</span></span>${plan ? `<button type="button" class="btn sage xs" data-r2="label" title="${esc(plan.title)}">Make QR label</button>` : ""}</div>`)(labelPlan());
+      : (plan => `<div class="swQr" data-r2="qr"><span class="qrWaiting" style="width:72px;height:72px">No QR yet</span><span class="busy"><span class="owSpin"></span></span><span class="cap"><b>QR label</b><span data-r2="qrText">${esc(qrWhyOf(rec.id) || (plan ? plan.note : rec.metal === "rose" && !(rec.label?.files || []).length ? "Made when you press Cut Sheet" : "Made when the sheet joins a set"))}</span></span>${plan ? `<button type="button" class="btn sage xs" data-r2="label" title="${esc(plan.title)}">Make QR label</button>` : ""}</div>`)(labelPlan());
     const files = [["ai", ".ai", hasFront(rec) ? "Download the sheet with its front and back engravings" : "Download the sheet with its back engravings"], ["dxf", ".dxf", "DXF · millimetres"]].map(([fmt2, label, title]) => `<button class="btn ghost xs" data-export-one="${esc(rec.id)}" data-format="${fmt2}" title="${title}">${label}</button>`).join("") +
       (rec.outputs?.labelled?.url ? `<a class="btn ghost xs" href="${esc(rec.outputs.labelled.url)}" target="_blank" rel="noopener" title="Every charm numbered, as a PDF">Proof</a>` : "") +
       (rec.outputs?.report?.url ? `<a class="btn ghost xs" href="${esc(rec.outputs.report.url)}" target="_blank" rel="noopener" title="The nest report (JSON)">Report</a>` : "");
@@ -2223,6 +2226,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
        label of its own: the same code of the orders placed on it, named by the sheet, saved beside its files.
      Rose Gold gets its label with Cut Sheet, and a sheet being changed or saved waits until it is done. */
   function labelPlan() { return W.rec && !W.flow ? labelPlanOf(W.rec, W.id) : null; }
+  /** (STUCKSPIN 28 Oct 2026) why the last press of Make QR label on this sheet made none, said under the button for two minutes after it (the window drawn again keeps it) */
+  const qrWhyOf = id => (W.qrWhy && W.qrWhy.id === id && Date.now() - W.qrWhy.at < 120000 ? `No QR label made: ${W.qrWhy.why}` : "");
   function labelPlanOf(rec, id) {
     if (!rec) return null;
     const sh = allSheets().find(p => p.sheetId === id), run = window.B && B.run;
@@ -2252,8 +2257,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     const box = W.el.foot.querySelector("[data-r2=qr]"), text = box && box.querySelector("[data-r2=qrText]");
     btn.disabled = true; if (box) box.classList.add("remaking"); if (text) text.textContent = "Making the QR label…";
-    try { await doLabel(plan, rec, sh, sheets, run); } catch (e) { toast("No QR label made: " + e.message, "bad", 8000); }
-    if (W.id === id && W.dlg.open && !W.flow) open2(id);
+    // (STUCKSPIN, Paul 28 Oct 2026: "the QR code button does not produce a QR code. It just sits there spinning". The press waits for the run's own turn (a set look); one that never came back
+    //  held the spinner for good, and a refusal left it spinning whenever the window was busy with another change (W.flow: it was not read again). Now it always ends: made, or why not, under the button)
+    let why = "";
+    try { await within(doLabel(plan, rec, sh, sheets, run), 120000, "the set did not answer in two minutes (the run is busy or stopped): try again in a moment"); } catch (e) { why = String((e && e.message) || e || "it stopped").replace(/\.$/, ""); toast("No QR label made: " + why, "bad", 8000); }
+    W.qrWhy = why ? { id, why, at: Date.now() } : null;
+    if (W.id !== id || !W.dlg.open) return;
+    if (!W.flow && !why) return open2(id);
+    if (box) box.classList.remove("remaking");
+    if (btn.isConnected) btn.disabled = false;
+    if (text && text.isConnected) text.textContent = why ? `No QR label made: ${why}` : (plan.note || "");
+    if (!W.flow) open2(id);
   }
   /* What Make QR label does, without the window: the button's own path, and the Library's moves' (SheetWin.remakeLabel,
      joinSet). It puts back what it changed, and throws, when no label was made. */
@@ -3032,13 +3046,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const n = mcSheetClash(sh).length;
       delete sh._manualHold; delete sh.runHold; if (mcFlagged(sh.problem)) sh.problem = null;
       st.detail = "written as placed by hand, no search"; paint();
-      let wrote = false; try { wrote = !!(await window.writeAsPlaced(sh)); } catch (e) { console.warn("sheet window: write as placed", e); }
+      // (STUCKSPIN 28 Oct 2026: as long as a nest is waited for below, never longer: a save that never comes back leaves the sheet "still saving", said, not a spinner for good)
+      let wrote = false; try { wrote = !!(await within(window.writeAsPlaced(sh), 240000, "it was not written in four minutes")); } catch (e) { console.warn("sheet window: write as placed", e); }
       if (sh.problem && !mcFlagged(sh.problem)) throw new Error(`${sheetWord(sh.sheetId, sh.fileBase, sh)}: ${sh.problem}`);
       if (!sh.persistedDone || (!wrote && !mcFlagged(sh.problem))) { st.state = "now"; st.detail = "still saving; it finishes on its card in the Nest tab"; return false; }
       st.state = "ok"; st.detail = `${n} charms overlap: the sheet stays flagged until they are moved clear`; return true;
     }
-    if (!running) { if (!o.manual) sh._byHand = true; const held = sh._manualHold; delete sh._manualHold; try { startNest(sh); } finally { if (held && !o.manual) sh._manualHold = held; } }
-    const until = t0 + 240000;
+    // (STUCKSPIN, Paul 28 Oct 2026: "The saving icon seems to never go away". With the run stopped, a sheet of it waits for Resume before it is nested (heldForResume), and Manual Control's
+    //  own save waited with it: four minutes of "Saving…", then nothing written. A write a person asked for is theirs, not the run's: _personWrite lets it go now, whatever the run's state)
+    if (!running) { if (!o.manual) sh._byHand = true; else sh._personWrite = true; const held = sh._manualHold; delete sh._manualHold; try { startNest(sh); } finally { if (held && !o.manual) sh._manualHold = held; } }
+    const until = t0 + 240000 * spinScale();   // (STUCKSPIN: spinScale, 1 on the page)
     while (Date.now() < until) {
       if ((running || sh.jobId !== job0) && !busy(sh) && (sh.persistedDone || sh.problem)) break;
       // a new problem on a sheet nothing is working on, or a search that never started, ends the wait at once
@@ -3064,7 +3081,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     st.state = "now"; paint();
     const run = window.B && B.run;
     if (run && window.Gate && Gate.modern(run.runId) && pages.some(sh => sh.runId === run.runId)) {
-      try { await Gate.assemble(run); } catch (e) { st.state = "bad"; st.detail = e.message; }
+      // (STUCKSPIN 28 Oct 2026: the set look waits for the run's own turn; one that never comes is said, and the save ends)
+      try { await within(Gate.assemble(run), 90000, "the set did not answer in 90 seconds (the run is busy or stopped); the label is made at its next look"); } catch (e) { st.state = "bad"; st.detail = e.message; }
     }
     for (const sh of pages) if (allSheets().includes(sh) && sh.draft && sh.label && sh.sheetId) {
       // a label made by hand for a sheet outside any set is made again for its new orders; a set's old label goes
@@ -4745,7 +4763,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     clearTimeout(HOP.chipT); n.hidden = false; n.className = "mhChip" + (state === "ok" ? " ok" : state === "bad" ? " bad" : "");
     n.innerHTML = `<i aria-hidden="true"></i><span></span>`; n.querySelector("span").textContent = text;
     if (state !== "saving") HOP.chipT = setTimeout(() => { n.hidden = true; }, state === "bad" ? 9000 : 3200);
+    // (STUCKSPIN, Paul 28 Oct 2026: "The saving icon seems to never go away. It just keeps on spinning") a "Saving…" chip always ends in an outcome: one that is still spinning after
+    //  SPIN_MS says so in plain words instead of spinning on (the save itself may still land later: the chip then says "Saved")
+    clearTimeout(HOP.watchT); HOP.chipState = state;
+    if (state === "saving") HOP.watchT = setTimeout(() => { if (HOP.chipState !== "saving") return; hopChip("bad", `Not saved yet: the save did not finish in ${Math.round(SPIN_MS / 60000)} minutes. Every charm is still where it was put; turn Manual Control off and on to try again`); tryDo(() => toast("The charms moved by hand are not saved yet: the save did not finish in time. Every charm is still where it was put; turn Manual Control off and on to save them again.", "bad", 9000)); }, SPIN_MS * spinScale());
   }
+  /* STUCKSPIN (Paul, 28 Oct 2026: "the QR code button does not produce a QR code. It just sits there spinning much like the saving UI pill"): a wait on the run's own turn (a set look, a sheet's
+     save) that never comes back must not hold a spinner for good. within(p, ms, why) settles when p does, or rejects with `why` after ms (p itself goes on). */
+  const SPIN_MS = 150000, spinScale = () => Math.max(0.01, +window.CN_SPIN_SCALE || 1);   // (CN_SPIN_SCALE: a test's clock, tests/charm-nest/stuck-spinners.cjs; 1 on the page)
+  const within = (p, ms, why) => new Promise((res, rej) => { const t = setTimeout(() => rej(Object.assign(new Error(why), { stuck: true })), ms * spinScale()); Promise.resolve(p).then(v => { clearTimeout(t); res(v); }, e => { clearTimeout(t); rej(e); }); });
   const hopChipNow = () => { if (HOP.pending) hopChip("saving", HOP.pending > 1 ? `Saving ${HOP.pending} moves…` : "Saving…"); };
   /** The pieces that went to another sheet leave this window's plate at once (no read of the cloud: the window shows the live sheet). */
   function dropFromPlate(ids) {
@@ -4823,7 +4849,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       HOP.pending--;
       if (ok) job.savedAt = Date.now(); else HOP.jobs = HOP.jobs.filter(x => x !== job);
       if (HOP.pending) hopChipNow(); else if (ok) hopChip("ok", "Saved");
-      if (ok && !job.held) return writeOwed([src, target], null, true);   // (no Manual Control to end: the two sheets are written as they stand now)
+      else if (HOP.chipState === "saving") hopChip("bad", "Not moved: the move could not be saved; the charm is back where it was");   // (STUCKSPIN 28 Oct 2026: a failure that put nothing on the chip never leaves it spinning)
+      // (STUCKSPIN: the next move waits for these two sheets' write at most SPIN_MS; one that never comes back says so, and the moves after it are saved)
+      if (ok && !job.held) return within(writeOwed([src, target], null, true), SPIN_MS + 60000, "the two sheets were not written in time").catch(e => { if (e && e.stuck && HOP.chipState === "saving") hopChip("bad", `Not saved yet: ${e.message}; every charm is still where it was put`); throw e; });   // (no Manual Control to end: the two sheets are written as they stand now)
     }).catch(e => console.warn("sheet window: after a move", e));   // (the chain stays whole: the next move's save always runs)
     return { ok: true };
   }
@@ -4924,11 +4952,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!sh || !MANUAL_METALS.includes(sh.metal) || !allSheets().includes(sh)) return;
     delete sh._goldWrite; sh._roseError = null;   // (its card may make its contour again now: a refusal met before the write is not this layout's)
     if (laserCut(sh)) return;
-    try { if (sh.roseRedraw && window.RoseStock && typeof RoseStock.redraw === "function") await RoseStock.redraw(sh); } catch (e) { console.warn("sheet window: green line drawn again", e); }
+    // (STUCKSPIN 28 Oct 2026: neither holds the save's outcome for good: each goes on by itself past its minute, and the card says what it did)
+    try { if (sh.roseRedraw && window.RoseStock && typeof RoseStock.redraw === "function") await within(RoseStock.redraw(sh), 60000, "the green line was not drawn again in a minute"); } catch (e) { console.warn("sheet window: green line drawn again", e); }
     try {
       if (window.Review && typeof Review.inPlaceRefile === "function") {
         const name = sheetWord(sh.sheetId, sh.fileBase, sh);
-        await Review.inPlaceRefile(sh, null, true, { word: set => `${set.name} changed after it was ${set.committedAt ? "sent to the laser station" : set.processReady || set.laserSetPending || sh.processReady || sh.laserSetPending ? "approved for laser cutting" : "released"}: ${name}'s charms ${what || "were changed by hand"} — its files are written again` });
+        await within(Review.inPlaceRefile(sh, null, true, { word: set => `${set.name} changed after it was ${set.committedAt ? "sent to the laser station" : set.processReady || set.laserSetPending || sh.processReady || sh.laserSetPending ? "approved for laser cutting" : "released"}: ${name}'s charms ${what || "were changed by hand"} — its files are written again` }), 60000, "its set's files were not written again in a minute");
       }
     } catch (e) { console.warn("sheet window: released set changed", e); }
     tryDo(() => window.CN && CN.renderCard && CN.renderCard(sh));
@@ -6050,6 +6079,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       }
       delete sh._manualHold; delete sh._manualAsked;
       holdRelease([sh]);
+      // (STUCKSPIN, Paul 28 Oct 2026: the 14K sheet's record held it in Set 3 with its QR label while this page held it as a draft: written now, the page's draft would have been saved over
+      //  the record. Its place is taken from its record first (Gate.followSheet, nothing written; at most 15 s), so the write keeps it there)
+      if (window.Gate && typeof Gate.followSheet === "function") await within(Gate.followSheet(sh), 15000, "").catch(() => false);
       const saved = await rewritePage(sh, put, paint, { manual: true });
       const off = [...edits].filter(([id, q]) => { const p = sh.placements.find(z => z.id === id); return !p || mcChanged({ cxPt: +p.cxPt, cyPt: +p.cyPt, angle: +p.angle, size: q.size }, q); });
       if (off.length) throw new Error(`the nest did not keep ${off.length === 1 ? "a charm" : off.length + " charms"} where ${off.length === 1 ? "it was" : "they were"} put`);

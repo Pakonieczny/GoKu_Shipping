@@ -5708,7 +5708,7 @@ function startNestReady(sh, context) {
   cancelGPUComparison();
   sh.persistedDone = false;
   if (sh._byHand) window.SheetEvents?.renested(sh);   // a person nested it again: on its orders' timelines (idle time)
-  sh.movedOn = null; sh.problem = null; delete sh._byHand; delete sh.resumeWait;
+  sh.movedOn = null; sh.problem = null; delete sh._byHand; delete sh._personWrite; delete sh.resumeWait;
   if (sh.runId && window.LiveNest) LiveNest.prepareSheet(sh);
   // a big batch: the oldest few orders now, the next few once they are placed (feedTurn)
   const all = items.length; items = feedTurn(sh, items);
@@ -5775,7 +5775,7 @@ function writeAsPlaced(sh) {
   sh.sheetId = sh.sheetId || `${sh.metal}${sh.page > 1 ? "-s" + sh.page : ""}-${Date.now().toString(36)}`;
   window.RoseStock?.protect(sh);
   sh.appendOnly = sh.intakeAppend = true; sh.nestInitial = sh.placements.map(p => ({ ...p })); sh.best = null; sh.bestKey = null; sh.evNest = null; sh.evSearch = null;
-  sh.jobId = uid(); sh.startedAt = performance.now(); sh.status = "nesting"; sh.persistedDone = false; sh.dirty = false; sh.problem = null; sh.movedOn = null; sh.rejects = []; delete sh._byHand;
+  sh.jobId = uid(); sh.startedAt = performance.now(); sh.status = "nesting"; sh.persistedDone = false; sh.dirty = false; sh.problem = null; sh.movedOn = null; sh.rejects = []; delete sh._byHand; delete sh._personWrite;
   const job = buildJob(sh);
   sh.nestParams = { seed: job.seed, angles: job.angles, clearancePt: job.clearancePt, insetPt: job.sheet.insetPt, fineRes: job.fineRes, coarseRes: job.coarseRes, maxFill: job.maxFill };
   const result = { placements: sh.placements.map(p => ({ ...p })), rejects: [], endedBy: "kept", trials: 0, elapsedMs: 0, usablePt2, placedPt2, freePt2: Math.max(0, usablePt2 - placedPt2), density: placedPt2 / usablePt2, params: Object.assign({}, sh.nestParams) };
@@ -5872,7 +5872,8 @@ function feedOn(sh) {
 const RESUME_STAGE = "Waits for Resume";
 function heldForResume(sh) {
   const r = window.B?.run;
-  return !!(r && sh.runId && sh.runId === r.runId && r.status === "stopped" && !sh._byHand);
+  // (STUCKSPIN, Paul 28 Oct 2026: "The saving icon seems to never go away": Manual Control's own save, _personWrite, is a person's write and never waits for Resume)
+  return !!(r && sh.runId && sh.runId === r.runId && r.status === "stopped" && !sh._byHand && !sh._personWrite);
 }
 function holdForResume(sh) {
   if (!S.nestQueue.includes(sh)) S.nestQueue.push(sh);
@@ -6239,6 +6240,8 @@ async function finishNest(sh, { result, error }) {
   }
   if(result.placements.length)delete sh.timeoutRetried;
   sh._beforeLearned = null;
+  // (STUCKSPIN, Paul 28 Oct 2026: "Run stopped: GF Draft 9 cannot go into Set 1": while a full sheet of a set is written again its record stays full; the set look reads it so, Gate formMembers)
+  sh._fullWhileWritten = !!sh.releaseFull && !!sh.setId && !sh.draft;
   sh.releaseFull = false;
   sh.status = "finishing"; sh.endedBy = result.endedBy; sh.trials = result.trials; sh.searchMetrics=result.metrics||sh.searchMetrics; sh.gpuProgress=result.gpu||sh.gpuProgress; sh.placements = result.placements; sh.rejects = result.rejects.slice(); sh.livePlacements = [];
   // A piece taken off the sheet while it was searched (a Review decision re-pooled its line) is not written: the search
@@ -6286,7 +6289,7 @@ async function finishNest(sh, { result, error }) {
       sh.seq = await nextSheetSeq(sh);
       if (sheetFileBase(sh) === was.fileBase) {
         sh.fileBase = was.fileBase; sh.outputs = was.outputs; sh.verification = was.verification;
-        sh.releaseFull = topupSettle(sh, result, sheetFull(sh, result, items)) || !!sh.keepRelease?.full;
+        sh.releaseFull = topupSettle(sh, result, sheetFull(sh, result, items)) || !!sh.keepRelease?.full; delete sh._fullWhileWritten;
         if (sh.releaseFull) sh._renderAreas = null;
         if (sh.intakePhase !== "fill") { sh.intakeOptimized = true; sh.intakeOptimizedCount = items.length; }
         delete sh.intakeForceFinal;
@@ -6353,7 +6356,7 @@ async function finishNest(sh, { result, error }) {
     sh.progress = [4, 5]; sh.stage = "Saving to the cloud…"; renderProgress(sh);
     // Overflow after a complete search closes a sheet; merely placing a small queue does not.
     // a sheet released to its set before charms were taken off or moved onto it in the sheet window stays released
-    sh.releaseFull = topupSettle(sh, result, sheetFull(sh, result, items)) || !!sh.keepRelease?.full;
+    sh.releaseFull = topupSettle(sh, result, sheetFull(sh, result, items)) || !!sh.keepRelease?.full; delete sh._fullWhileWritten;
     if (sh.releaseFull) sh._renderAreas = null;   // a released sheet takes no more charms: its kept layer areas (MBs) go
     if(sh.intakePhase!=='fill' && result.endedBy!=='stopped' && sh.verification.ok){sh.intakeOptimized=true;sh.intakeOptimizedCount=items.length;}
     delete sh.intakeForceFinal;
@@ -6388,7 +6391,7 @@ async function finishNest(sh, { result, error }) {
     // 6 · whatever did not fit under the ceiling goes to the next sheet of this metal, which nests on its own
     if (sh.rejects.length && sh.endedBy !== "stopped" && (sh.nestFlow !== "learned" || sh.verification.ok && ["cap", "plateau"].includes(sh.endedBy))) overflowToNextSheet(sh, false);
   } catch (e) {
-    sh.status = "partial"; sh.stage = ""; log(sh, "finish error: " + (e.stack || e)); toast(`${labelOf(sh.metal)}: output failed — ${e.message}`, "bad", 7000); renderCard(sh);
+    sh.status = "partial"; sh.stage = ""; delete sh._fullWhileWritten; log(sh, "finish error: " + (e.stack || e)); toast(`${labelOf(sh.metal)}: output failed — ${e.message}`, "bad", 7000); renderCard(sh);
     if (window.RunCtl) RunCtl.onSheetDone(sh, e);
   }
   pumpNestQueue();
@@ -8617,7 +8620,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25-dc26-bk26-es26-ee26-ep26-sx26-sc26-ns26-pw26-gl1-gk1-r16h1-plc1-en1-vis1-dsg1-dxf1-aw1-once1-c17-rs1-rel1-rel2-ga1-mt1-lf1-fra1-ae1-ce1-cb1-kps1-oos1-gss1-hsi1-edw1-ged1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25-dc26-bk26-es26-ee26-ep26-sx26-sc26-ns26-pw26-gl1-gk1-r16h1-plc1-en1-vis1-dsg1-dxf1-aw1-once1-c17-rs1-rel1-rel2-ga1-mt1-lf1-fra1-ae1-ce1-cb1-kps1-oos1-gss1-hsi1-edw1-ged1-sp1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
@@ -8690,7 +8693,7 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-mseal1-fb1-ms3-cost18-strip1-id1-2b1-mc1-hp2-br1-ms1-bh1-nb1-mv1-wc5-rp1-oh1-sc1-st1-mc9-mi9b-sh29-gl1-en2-fr1-zg1-oos1-nf1-ged1-mi1"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-mseal1-fb1-ms3-cost18-strip1-id1-2b1-mc1-hp2-br1-ms1-bh1-nb1-mv1-wc5-rp1-oh1-sc1-st1-mc9-mi9b-sh29-gl1-en2-fr1-zg1-oos1-nf1-ged1-sp1-mi1"></script>
 <!-- 10K / 14K: a charm dragged onto the next or previous sheet of its metal, in the sheet window's Manual Control (SheetHop; Paul, 18 Oct 2026) -->
 <script src="charm-nest-sheet-hop.js?v=20261018-hop1-hp2-mv1-mc9-mi9b-gk1-fr1-ged1"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
