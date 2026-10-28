@@ -18,7 +18,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - Live board (dashboard artifact): https://claude.ai/artifact/RdLASAbUtTQMqU1Mb6ExLG. Rows in $SP/board/agents.json.
   Refresh: `python3 -I $SP/board-live.py` → Artifact publish {url, file_path: $SP/board/agents.json, asset:true} → ArtifactData update
   url, collection "datasets", doc_id "agents", if_version <current>, data {source:{format:"json",kind:"file",name:"agents.json",url:"<blob url>"},
-  updated:{at,by:"Claude"}}. Last version written: 88 (next write if_version 88; if refused, the error names the current version).
+  updated:{at,by:"Claude"}}. Last version written: 91 (next write if_version 91; if refused, the error names the current version).
 - Plan doc for Paul (local-first): https://claude.ai/artifact/GykrjmCTLTbcohMCKBrkyZ (decisions recorded).
 
 ## Scripts ($SP)
@@ -30,7 +30,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - int/live-check.cjs: 7 pages load clean. Live verify = sha256 of each changed served file vs `git show origin/main:<f>`, then live-check.
 - If agents hang holding slots (load ~0, waits > 5 min): find holders: for f in slot1 slot2 slot3: ino=$(stat -c %i $SP/locks/$f); grep ":$ino " /proc/locks → pid → ps --ppid. Kill the idle test, tell its agent.
 
-## Live on main: f15505e = Approve never silent after hold/release (fix-approve-held, all 5 approve tests pass) on top of daee8c7 (guard fix) + 4da1e2c (batch 2, verified live 06:3x). Live verify of f15505e: bm2ejspyl.
+## Live on main: ea13162 = seals (only ORDER HELD + green ORDER RELEASED) + Release Hold in the order window for every held piece (7 tests pass; live verify running) on top of f15505e (Approve never silent, verified live 06:5x), daee8c7 guard fix, 4da1e2c batch 2.
 - 89f2819 Manual Control instant · b2608ff navigation rounds 2+3, Charm Editor Save fix (Saving at once, sheet files in background),
   bar necklaces FRONT by default (BARFRONT) · 077f21c Approve never silent / never stuck · d58eea9 Design & Engrave batch 1: editor
   extension points + live readouts + Ctrl/Alt centre resize + smart guides (feedback), Blend/Warp/Distort (warp), image trace (trace).
@@ -80,8 +80,12 @@ board-live-extra.json with the new agent ids.
 - ANSWERED by Paul 03:39 UTC: "The refit if necessary, must be in the exact same place with a variance of one percent from where I actually placed it. The rotation needs to be also within one percent accurate to where I placed it." → RULE: a refit after a Charm Editor save keeps his placement: centre within 1% of the charm's size of where he placed it, angle within 1% of his angle (a level word stays level). Only the size may shrink if needed. Sent to the refit agent (a7764b20331f1122f) as a follow-up; if it is gone, re-spawn refit with this rule.
 - Phase 5 push (option a) needs a Firestore security rule in the console + a vendored Firestore SDK file.
 
+## Batch 3 in test (06:50): claude/de-integration a98038d = main f15505e + designs + custompool + emplog (fixed a duplicated SBX_FILES const from the union merge; resolve-union.py now merges token-only line changes). Test run be6bdi534 → $SP/int/b3/*.log. All pass → merge origin/main, push HEAD:main, verify live (new files charm-nest-designs.js, charm-nest-custom-pool.js, charm-nest-design-log.js, charm-nest-efficiency-custom.js, netlify/functions/_designLog.js).
+
 ## Handed back, waiting to merge into claude/de-integration
+- de-designs (af114bb2ccb5f706c) DONE 06:47: claude/de-designs 2f53907; designs-server 95/95, designs-page 13/13.
 - fix-approve-held (af959c47001f89f4c) handed back 06:34: could NOT reproduce offline; fix = approve() never fails silently (approveThrew shows the error on the card + activity log; stale approvalIntent says why). Branch claude/fix-approve-held a4119ea (contains 4da1e2c). Its reruns write $SP/heldfix/runsA|runsB/summary.txt (ALLDONE at end). Ship when green; then ask Paul to press Approve on 4212020155 again and read the card's line. It did NOT refuse Approve on held orders (ENGPRE rule, 13 Oct) — needs Paul's OK to change.
+- fix-seals (a2200fb3aa0ebf322) handed back 06:45: claude/fix-release-button 1d5840e (seals: only ORDER HELD + green ORDER RELEASED; Release Hold in the order window for every held piece). Merged with main in $SP/wt-guardfix (ea13162), test run b9vo80e29 → $SP/int/seals/*.log; all pass → push HEAD:main + verify live. Follow-up sent to the same agent: branch claude/fix-seals-2 = sheet window release seal green ORDER RELEASED + 5 tests failing on main (seals-travel, timeline-events-sheets, review-hold, engraving-stamps, releases).
 - New agents 06:37–06:41: emplog follow-up a41a92d9950823b21 (person page design counts, on claude/de-emplog), order-hold-engine fix a92b66df2d483239a (branch claude/fix-order-hold-engine, wt-ohe; the test fails on main: GF Sheet 2 gets 3 waiting orders, expects 2).
 - All 17 other agents resumed 06:32 with SendMessage (same ids as the table).
 - de-text (ae828a5d729f6efa1) DONE: branch claude/de-text (af6f42b + merge 32078d4), new file charm-nest-ce-text.js (approved), test ce-text.cjs 10/10. Merge with resolve-union.py, then test the batch.
