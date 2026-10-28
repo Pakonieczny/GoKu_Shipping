@@ -30,7 +30,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - int/live-check.cjs: 7 pages load clean. Live verify = sha256 of each changed served file vs `git show origin/main:<f>`, then live-check.
 - If agents hang holding slots (load ~0, waits > 5 min): find holders: for f in slot1 slot2 slot3: ino=$(stat -c %i $SP/locks/$f); grep ":$ino " /proc/locks → pid → ps --ppid. Kill the idle test, tell its agent.
 
-## Live on main: 0eee2c3 = Phase 2 sync worker (verified live: files match; live-check pages load, one random page timed out per run — sorting/etsy-mail/shipping/assembly at different times since 07:30, all answer by curl in <1 s and none were changed: test-runner flake) on top of 70e7cb9 nav round 6 (verified live).
+## Live on main: f58a37a = Phase 3 outbox (presses paint at once; zero lost writes; sibling tabs told at once; flowApply + hold/place engines stay awaited) — pushed 10:2x, live verify running; on top of 0eee2c3 Phase 2 (verified live).
 - 89f2819 Manual Control instant · b2608ff navigation rounds 2+3, Charm Editor Save fix (Saving at once, sheet files in background),
   bar necklaces FRONT by default (BARFRONT) · 077f21c Approve never silent / never stuck · d58eea9 Design & Engrave batch 1: editor
   extension points + live readouts + Ctrl/Alt centre resize + smart guides (feedback), Blend/Warp/Distort (warp), image trace (trace).
@@ -85,7 +85,7 @@ board-live-extra.json with the new agent ids.
 
 ## (earlier) Phase 2 handed back 08:50 (claude/local-sync c07cea4; calls/min 1 tab Orders 36→20, 2 tabs 77→24, tab+windows 86→33; other computer's change in 1–2 s). Sent back for: bumpRev best-effort + revision split by kind (Firestore ~1 write/s per doc), own writes broadcast at once to sibling tabs (library-realtime ≤0.5 s), complete-realtime (fails on main too). Ship after.
 - Phase 3 agent ae248b1326745d816 started 08:52 on claude/local-outbox (wt-outbox) from claude/local-sync.
-## Phase 3 handed back 09:58: claude/local-outbox b13e35b (contains main 0eee2c3). Outbox in IndexedDB, mid ledger (_charmNestMutations.js, classified), MC 1 claim + 1 patch + 1 file job, Hold/Release marks + Complete Order + customDecide + labels' release mark via outbox; flowApply + engines stay awaited (server rules). Lead check run in $SP/wt-guardfix → $SP/int/p3/*.log (incl. sandbox-reset-e2e, monogram-seal, cx-b which it did not run). PAUL: turn on Firestore TTL for Charm_Nest_Mutations + Sandbox_Charm_Nest_Mutations, field expireAt.
+- monogram-seal fails on main since Phase 2 (2 checks: order window + another computer's monogram seal). Sent to ac1971b04ea413b37 → claude/fix-mono-seal-feed.
 ## Remaining: Phase 2 sync worker (ac1971b04ea413b37, claude/local-sync) (nav-6 shipped 09:05). Then Phase 3 (outbox, optimistic writes), then Phase 5 needs Paul (Firestore rule + vendored SDK).
 - a41a92d9950823b21 now on claude/eff-inbox-chart: 'Sent per day' chart is a black block when empty.
 - Phase 2 agent ac1971b04ea413b37 started 07:03 on claude/local-sync (wt-sync) from claude/local-store.
