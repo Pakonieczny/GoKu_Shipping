@@ -2309,6 +2309,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if ((rec.label?.files || []).length || !(rec.placements || []).length || !rec.verification?.ok) return null;
     return { kind: "own", note: "Not in an open set", title: "Make a QR label of the orders on this sheet, saved beside its files" };
   }
+  /** OUTBOX: a field patch of a sheet's record, kept in this computer's outbox (charm-nest-store.js mutate) with what it saw in those fields (base: the later change wins, and says whom it
+      overwrote) and sent from there with its mutation id; → the cloud's answer (rejects with the refusal in the cloud's words). Without the outbox, the plain write. */
+  function patchSheet(id, fields, base, label) {
+    const St = window.CharmNestStore;
+    if (!St || typeof St.mutate !== "function") return api("charmNestLibrary", { op: "putSheet", sheet: Object.assign({ id }, fields) }, { quiet: true });
+    const by = whoAmI() || "";
+    return St.mutate({ entity: "s:" + id, op: "putSheet", args: { sheet: Object.assign({ id }, fields), base, by }, fields: Object.keys(fields), label, by }).done.then(ans => {
+      if (ans && ans.overwrote && ans.overwrote.length) { const w = ans.overwrote[0]; tryDo(() => toast(`${w.by || "Someone"} changed this sheet's ${w.field === "releaseFull" ? "release" : w.field} ${agoWords(w.at)} — your change was kept.`, "", 7000)); }
+      return ans;
+    });
+  }
   async function makeLabel(btn) {
     const plan = labelPlan(), id = W.id, rec = W.rec; if (!plan) return;
     const sh = allSheets().find(p => p.sheetId === id), run = window.B && B.run;
@@ -2339,11 +2350,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     let undo = null;
     try {
       if (plan.kind === "release") {
-        const topup = sh.topup && !sh.topup.closedAt ? sh.topup : null;
+        const topup = sh.topup && !sh.topup.closedAt ? sh.topup : null, topWas = topup ? JSON.parse(JSON.stringify(topup)) : (sh.topup || null);
         const wasFull = !!sh.releaseFull;       // (a sheet that was full already stays full when it cannot join: pressing this must never un-complete it, Paul 12 Oct)
         sh.releaseFull = true; if (topup) { topup.closedAt = nowT(); topup.byHand = true; }
-        undo = () => { if (!sh.draft || wasFull) return; sh.releaseFull = false; if (topup) { delete topup.closedAt; delete topup.byHand; } api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: false, topup: sh.topup || null } }, { quiet: true }).catch(() => {}); };
-        await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: true, topup: sh.topup || null } }, { quiet: true });
+        /* OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"; plan: phase 3, labels and releaseFull): the release mark is drawn at once and kept in this computer's outbox
+           (a field patch with what it saw: the later change wins and the person whose change lost is told). The label itself waits for the mark's answer: the set it joins is numbered and
+           its rules checked on the server (setAllocate, R12), never on a guess. Undone, the same patch goes back (a press still waiting in the outbox is simply replaced). */
+        const markRelease = (on, top) => patchSheet(sh.sheetId, { releaseFull: on, topup: top || null }, { releaseFull: on ? wasFull : true, topup: on ? topWas : (sh.topup || null) }, on ? `The release of ${sheetName(sh)}` : `${sheetName(sh)}'s return to filling`);
+        undo = () => { if (!sh.draft || wasFull) return; sh.releaseFull = false; if (topup) { delete topup.closedAt; delete topup.byHand; } markRelease(false, sh.topup).catch(() => {}); };
+        await markRelease(true, sh.topup);
         await Gate.assemble(run);
         if (sh.draft) throw new Error(reason());
         agent({ metal: sh.metal, run: sh.runId }, "POOL", `${sheetName(sh)} released by hand at ${fmt.pct(sh.density || 0)} full, with its QR label for ${new Set(sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(ridOf)).size} orders`);
@@ -2377,7 +2392,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       files.push({ path: up.path, url: up.url, sheet: name, part: i + 1, parts: parts.length, orders: slice, payload, ecc: png.ecc, label });
     }
     const made = { files, orders: ids, own: true, at: Date.now() };
-    await api("charmNestLibrary", { op: "putSheet", sheet: { id: rec.id, label: made } });
+    await patchSheet(rec.id, { label: made }, { label: rec.label || null }, `${name}'s own QR label`);   // (OUTBOX: from the outbox, as the release mark is)
     if (sh) sh.label = made;
     window.SheetEvents?.qrLabel({ sheetId: rec.id, sheet: nameOf(rec), setId: "", metal: rec.metal }, ids, files, { own: true, by: whoAmI() });
     agent({ metal: rec.metal, run: rec.runId || null }, "cloud", `${name}: QR label made by hand for its ${ids.length} order${ids.length === 1 ? "" : "s"} (not in an open set)`);
@@ -5765,15 +5780,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // the window shows the sheet as this sorter holds it, charm for charm (a read behind the page is read again first)
     const live = new Map(sh.placements.map(p => [p.id, p])), shown = W.pieces.filter(x => !x.gone), byId = new Map(sh.charms.map(c => [c.id, c]));
     if (!W.geom || shown.length !== live.size || shown.some(x => !live.has(x.id) || x.c !== byId.get(x.id))) { mcSay("The window showed an older copy of this sheet; it is read again. Press Manual Control once it is drawn.", "bad"); return open(W.id, { keepWork: true, keepSet: false }); }
-    MC.claiming = true; mcButton();
-    let r = null; try { r = await mcClaim(sh.sheetId); } catch (e) { r = { error: e.message }; }
-    MC.claiming = false;
-    if (!r || r.error || !r.ok) { mcButton(); return mcSay(r && r.held ? `${r.held.by || "Someone"} is moving this sheet's charms by hand on another screen. One person at a time: try again once they are done.` : r && r.refused === "cut" ? LASER_CUT_WORDS : `Manual Control could not start: ${(r && r.error) || "the cloud did not answer"}.`, "bad"); }
+    /* OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"): Manual Control is on in the frame it is pressed in, and the first drag happens at once; the claim
+       (one person at a time, op manualClaim) is taken behind it (mcClaimed). Refused (another screen holds the sheet, the laser cut it): every charm goes back where it stood, Manual
+       Control ends, and the window says why in plain words. No answer yet (offline): it stays on, the moves kept on this computer; the claim is asked again (the heartbeat) and the
+       cloud checks it once more when the moves are saved (sheetLayoutPatch). */
     // (GOLDEDIT, Paul 27 Oct 2026: a recorded green line cut is no lock. Nothing is given up when Manual Control merely starts: its charms are checked against the metal as it was before that
     //  cut (preCut), and the cut is set aside only when a change is saved (mcSave -> goldOpen); turned off with nothing moved, the cut, its line and its stock stay exactly as they were)
     if (sh.roseCutAt || (W.rec && W.rec.roseCutAt)) mcSay("Its green line was approved: a change you save sets that approval aside, and Cut Sheet approves the line again.", "");
-    const again = mcBlock(sh, W.rec);
-    if (W.id !== sh.sheetId || !W.dlg.open || again) { mcRelease(sh.sheetId); mcButton(); if (again) mcSay(again, "bad"); return; }
     stopHand(true); if (W.add) closeAdd();
     if (backFace()) turnPlate("front");   // (the tool works on the sheet as it lies, face up)
     Object.assign(MC, { on: true, sh, id: sh.sheetId, who, sel: null, lift: null, drag: null, edits: new Map(), valid: null, msg: "", tone: "", owed: new Set() });
@@ -5784,10 +5797,38 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     MC.bad = new Set(); MC.badWhy = new Map(); tryDo(() => mcRecolourStart(sh));   // (MCFREE: a charm left overlapping before is red from the start)
     sh._manualHold = true;
     W.hover = null; setHover(null); tip(null); W.el.plate.classList.add("manual");
-    clearInterval(MC.beat); MC.beat = setInterval(() => { if (!MC.on) return clearInterval(MC.beat); mcClaim(MC.id).then(r2 => { if (MC.on && r2 && r2.ok === false) mcSay(`${(r2.held && r2.held.by) || "Someone"} took this sheet on another screen; press Manual Control to save what you moved.`, "bad"); }).catch(() => {}); }, MC_BEAT);
+    clearInterval(MC.beat); MC.beat = setInterval(() => { if (!MC.on) return clearInterval(MC.beat); mcClaim(MC.id).then(r2 => { if (MC.on && r2 && r2.ok === false) mcSay(`${(r2.held && r2.held.by) || "Someone"} took this sheet on another screen; press Manual Control to save what you moved.`, "bad"); else if (MC.on && r2 && r2.ok) MC.claimed = MC.id; }).catch(() => {}); }, MC_BEAT);
     W.fill = null; renderFill();
     mcButton(); mcRender(); paintBase(); paintFx(); mcNotify();
     W.dlg.querySelector(".swBox").focus({ preventScroll: true });
+    // (OUTBOX: the claim, behind the press)
+    const tok = MC.tok = (MC.tok || 0) + 1; MC.claimed = null;
+    mcClaim(sh.sheetId).then(r => r, e => ({ error: e.message, transient: !e.answered })).then(r => mcClaimed(sh, tok, r, 0));
+  }
+  /** OUTBOX: the answer to Manual Control's claim, taken behind the press (mcToggle). */
+  function mcClaimed(sh, tok, r, tries) {
+    const here = MC.on && MC.sh === sh && MC.tok === tok;
+    if (r && r.ok) {
+      if (here) { MC.claimed = sh.sheetId; mcButton(); return; }
+      // (Manual Control ended before the claim landed: given back, unless a save of this sheet gives it back itself)
+      if (!(MC.on && MC.sh === sh) && !HOP.saving.has(sh) && !MCF.has(sh.sheetId) && !tryDo(() => (window.CharmNestStore && CharmNestStore.pending && CharmNestStore.pending(e => e.op === "sheetLayoutPatch" && e.args && e.args.id === sh.sheetId).length)) ) mcRelease(sh.sheetId);
+      return;
+    }
+    if (!here) return;
+    if (r && r.transient && !r.held && r.refused == null && r.ok == null) {
+      // no answer yet: Manual Control stays on (the moves are kept on this computer); asked again in a few seconds, then by the heartbeat
+      if (tries < 3) setTimeout(() => { if (MC.on && MC.sh === sh && MC.tok === tok && !MC.claimed) mcClaim(sh.sheetId).then(x => x, e => ({ error: e.message, transient: !e.answered })).then(x => mcClaimed(sh, tok, x, tries + 1)); }, 3000 * (tries + 1));
+      return;
+    }
+    // refused: every charm back where it stood when Manual Control was turned on, Manual Control ended, and why, in plain words
+    const why = r && r.held ? `${r.held.by || "Someone"} is moving this sheet's charms by hand on another screen. One person at a time: your moves were put back; try again once they are done.`
+      : r && r.refused === "cut" ? LASER_CUT_WORDS : `Manual Control could not start: ${(r && r.error) || "the cloud said no"}.`;
+    MC.tok = (MC.tok || 0) + 1;
+    mcStop(); mcDraftDrop(sh.sheetId);
+    delete sh._manualHold; if (sh._manualAsked) { delete sh._manualAsked; tryDo(() => startNest(sh)); }
+    for (const x of W.pieces) { const q = MC.from.get(x.id); if (q && W.id === sh.sheetId) mcShow(x, q); }
+    if (W.dlg && W.dlg.open) { paintBase(); paintFx(); }
+    mcNotify(); mcSay(why, "bad");
   }
   /** The UI lets go of Manual Control (what was moved is handed back to the caller). */
   function mcStop() {
@@ -6097,6 +6138,105 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
 
   /* ── off: the moves saved ── */
+  /* OUTBOX (Paul, 28 Oct 2026: "every press to feel like a native app": nothing he presses may wait for the cloud; plan: phase 3, Manual Control as ONE patch and one file job).
+     Manual Control off used to be seven calls in a row before the save ended: the sheet read again, the layout written with the nest's files, the QR label, the sheet read back,
+     the manual mark written, the claim given back. Now the moves are checked here and drawn at once, then kept in this computer's outbox as ONE patch (sheetLayoutPatch: the
+     poses and pins, the manual mark and the claim given back, in one write; the cloud checks the claim and the laser's cut as it lands, and the answer carries the record's
+     revision), and the sheet's files (.ai, proof, preview, QR label, its green line drawn again) are made after it by a FILE JOB of their own (mcFiles), kept in the outbox too:
+     a reload finishes it, and a step that fails is tried again by itself. A refusal (another screen took the sheet, the laser cut it, a charm left it) puts the charms back where
+     they were and says why, in the cloud's words, and the moves are kept on this computer to try again (Manual Control turned on again puts them back). A sheet whose green
+     line is drawn or recorded has it set aside first, on the server (RoseStock.reopen: a protected layout is the server's rule), before the patch is kept. No answer within a few
+     seconds (offline): the save ends, saved on this computer; the cloud gets it when it answers, the files follow, and a refusal then still puts the charms back and says so. */
+  const MC_PATCH_WAIT = 8000;
+  const agoWords = at => { const s0 = Math.max(0, Math.round((Date.now() - (+at || Date.now())) / 1000)); return s0 < 60 ? `${s0} s ago` : `${Math.round(s0 / 60)} min ago`; };
+  /** (decision 4, Paul 28 Oct 2026: "the later change wins and the person whose change lost is told") the words for a press that won over another person's change */
+  function overwroteWords(list, sh) {
+    if (!list || !list.length) return "";
+    const by = [...new Set(list.map(x => x.by || "Someone"))], c = list.length, rid = (() => { try { const id = String(list[0].field || "").replace(/^pose:/, ""), ch = sh && sh.charms.find(z => z.id === id); return ch ? ridOfC(ch) : ""; } catch (_) { return ""; } })();
+    return `${by.join(" and ")} moved ${c === 1 ? (rid ? `order ${rid}'s charm` : "this charm") : c + " of these charms"} ${agoWords(Math.max(...list.map(x => +x.at || 0)))} — your position${c === 1 ? " was" : "s were"} kept.`;
+  }
+  /** The ONE patch, kept in the outbox (and its file job beside it). → { done: Promise<answer>, jobK } */
+  function mcPatch(sh, args, name) {
+    const St = window.CharmNestStore;
+    if (!St || typeof St.mutate !== "function") return { done: api("charmNestLibrary", Object.assign({ op: "sheetLayoutPatch", id: sh.sheetId }, args), { quiet: true }), jobK: "" };
+    const h = St.mutate({ entity: "s:" + sh.sheetId, op: "sheetLayoutPatch", args: Object.assign({ id: sh.sheetId }, args), fields: Object.keys(args.poses).map(id => "pose:" + id), label: `The charms moved by hand on ${name}`, by: args.by });
+    const job = St.mutate({ entity: "s:" + sh.sheetId, job: "mcFiles", after: h.mid, args: { sheetId: sh.sheetId, by: args.by, n: Object.keys(args.poses).length }, label: `${name}: its files after Manual Control`, by: args.by });
+    mcDraftDrop(sh.sheetId);   // (the moves are on this computer's disk, in the outbox)
+    return { done: h.done, jobK: job.k, mid: h.mid };
+  }
+  /** The moves of a sheet kept on this computer again (a refusal): Manual Control turned on again for it puts them back. */
+  function mcDraftPut(id, edits, who) { try { const ed = [...edits].filter(([, q]) => q && Number.isFinite(+q.cxPt)); if (ed.length && id) localStorage.setItem(mcDraftKey(id), JSON.stringify({ at: Date.now(), by: who || "", edits: ed })); } catch (_) {} }
+  /** The patch answered: the window's record takes the new poses under the revision the cloud gave them (its next question by revision is answered "unchanged"); a press that
+      won over another person's later-arriving change says so. */
+  function mcAnswered(sh, ans, who) {
+    if (!ans || !ans.ok) return;
+    const St = window.CharmNestStore, id = sh.sheetId;
+    tryDo(() => {
+      const rec = (W.rec && W.rec.id === id ? W.rec : null) || (St && St.get && St.get("sheetFull", id));
+      if (!rec) return;
+      const pl = new Map(sh.placements.map(p => [p.id, p])), ch = new Map(sh.charms.map(c => [c.id, c]));
+      const next = Object.assign({}, rec, { placements: (rec.placements || []).map(p => (pl.has(p.id) ? Object.assign({}, p, pl.get(p.id)) : p)), charms: (rec.charms || []).map(c => (ch.has(c.id) ? Object.assign({}, c, { pinned: ch.get(c.id).pinned, manual: ch.get(c.id).manual }) : c)), manualEdit: null, filesOwed: ans.filesOwed || rec.filesOwed || null });
+      if (W.rec && W.rec.id === id) W.rec = next;
+      if (St && St.put && ans.rev) St.put("sheetFull", id, next, ans.rev);
+    });
+    if (ans.overwrote && ans.overwrote.length) { const words = overwroteWords(ans.overwrote, sh); if (words) tryDo(() => toast(words, "", 8000)); }
+  }
+  /** A patch refused after its save had ended (it waited in the outbox, offline): the charms go back where they were, and the person is told why, in the cloud's words. */
+  function mcRefusedLate(sh, undo, e, name, jobK) {
+    for (const u of undo) { Object.assign(u.p, u.was); u.c.pinned = u.pinned; if (u.arrivalPin) u.c.arrivalPin = u.arrivalPin; else delete u.c.arrivalPin; if (u.manual) u.c.manual = u.manual; else delete u.c.manual; }
+    if (jobK) tryDo(() => window.CharmNestStore.settle(jobK, { ok: true, answer: { dropped: true } }));
+    tryDo(() => { if (window.Session) Session.schedule(); });
+    if (W.dlg && W.dlg.open && W.id === sh.sheetId && !W.flow) tryDo(() => open2(sh.sheetId));
+    toast(`The charms moved by hand on ${name} were not saved: ${String(e.message || "the cloud said no").replace(/\.$/, "")}. They went back where they were.`, "bad", 12000);
+  }
+  /* THE FILE JOB (OUTBOX): the sheet written again as it now stands (the nest holds every charm where it is, verifies the sheet and writes its .ai, proof and preview), its QR label made
+     again, its green line drawn again (goldAfter), and its record told it owes no files. One per sheet at a time; tried again by itself (5 s, 30 s, 2 min) when a step fails for want
+     of the cloud; kept in the outbox (job "mcFiles") until done, so the next page finishes what this one could not. → true when the files were written. */
+  const MCF = new Map(), MCF_TRIED = new Map();   // sheetId → the job running; job → how many times this page ran it
+  function mcFiles(sh, o = {}) {
+    const id = sh.sheetId; if (MCF.has(id)) return MCF.get(id);
+    const job = (async () => {
+      const st = o.files || stepOf(""), lb = o.labels || stepOf(""), paint = o.paint || (() => {});
+      for (let t = 0; t < 4; t++) {
+        try {
+          // (STUCKSPIN, Paul 28 Oct 2026: the sheet's place in its set is taken from its record first (Gate.followSheet, nothing written; at most 15 s), so the write keeps it there)
+          if (window.Gate && typeof Gate.followSheet === "function") await within(Gate.followSheet(sh, o.rec || (W.rec && W.rec.id === id ? W.rec : null)), 15000, "").catch(() => false);   // (the record as the patch's answer left it: no read)
+          holdRelease([sh]);
+          const saved = await rewritePage(sh, st, paint, { manual: true });
+          if (!saved && !sh.persistedDone) st.detail = "still saving; it finishes on its card in the Nest tab";
+          await remakeLabels([sh], lb, paint);
+          letGo([sh]);
+          await goldAfter(sh, "were moved by hand");   // (GOLDEDIT: its green line drawn again, a released set's card says it changed)
+          if (sh.persistedDone) await api("charmNestLibrary", { op: "putSheet", sheet: { id, filesOwed: null } }, { quiet: true }).catch(() => {});   // (its record no longer owes its files)
+          if (o.jobK) tryDo(() => window.CharmNestStore.settle(o.jobK, { ok: true, answer: { files: true } }));
+          return true;
+        } catch (e) {
+          console.warn("sheet window: Manual Control's files", e); letGo([sh]);
+          st.state = "bad"; st.detail = String((e && e.message) || e).replace(/\.$/, "");
+          if (sh.problem || t >= 3) break;   // (a problem of the sheet itself is said on its card; trying again would not change it)
+          paint(); await pause([5000, 30000, 120000][t] * spinScale());
+          st.state = "now"; st.detail = "tried again"; paint();
+        }
+      }
+      return false;
+    })().finally(() => MCF.delete(id));
+    MCF.set(id, job);
+    return job;
+  }
+  /** The file jobs a page before this one left (or whose patch waited for the cloud): run once their patch is answered and their sheet is here, not busy and not in Manual Control. */
+  function mcFilesResume() {
+    const St = window.CharmNestStore; if (!St || typeof St.pending !== "function") return;
+    for (const j of St.pending(e => e.job === "mcFiles")) {
+      const sid = j.args && j.args.sheetId; if (!sid || MCF.has(sid)) continue;
+      if (St.pending(e => e.mid === j.after).length) continue;   // (its patch is not answered yet)
+      const sh = allSheets().find(p => p.sheetId === sid);
+      if (!sh) { if (Date.now() - (+j.at || 0) > 7 * 86400e3) St.settle(j.k, { ok: true, answer: { dropped: true } }); continue; }
+      if (busy(sh) || sh._operationStarting || (MC.on && MC.sh === sh) || HOP.writing.has(sh)) continue;
+      const name = sheetWord(sh.sheetId, sh.fileBase, sh), tried = MCF_TRIED.get(j.k) || 0; if (tried >= 2) continue; MCF_TRIED.set(j.k, tried + 1);   // (twice per page at most: the next page tries again)
+      mcFiles(sh, { jobK: j.k }).then(ok => { if (!ok) toast(`${name}: its files were not made again after the charms moved by hand${sh.problem ? ": " + sh.problem : ""}. The new layout is saved; they are made again by the next page or the sheet's next save.`, "bad", 9000); });
+    }
+  }
+  setInterval(() => tryDo(mcFilesResume), 10000);
   async function mcSave(sh, edits, who, owed, o = {}) {
     // (MOVEINSTANT 2, Paul 20 Oct 2026: o.bg, the save of a sheet Manual Control carried on from (or the window left or closed): in the background, the "Saving…" / "Saved"
     //  chip by the plate and no steps panel; a failure is said in a toast. Manual Control's own toggle keeps its panel.)
@@ -6114,11 +6254,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!edits.size) { delete sh._manualHold; if (sh._manualAsked) { delete sh._manualAsked; tryDo(() => startNest(sh)); } mcRelease(sh.sheetId); return false; }
     const name = sheetWord(sh.sheetId, sh.fileBase, sh), n = edits.size, ids = [...edits.keys()];
     const wait = stepOf("Waiting for the sheet to finish its current step"), check = stepOf(`Checking ${n === 1 ? "the charm" : `the ${n} charms`} moved by hand against the sheet`);
-    const put = stepOf(`Writing ${name} with its new layout`), labels = stepOf("Remaking the QR label"), read = stepOf("Reading the saved sheet back");
+    const put = stepOf(`Saving ${name}'s new layout`), files = stepOf(`Writing ${name}'s files again`), labels = stepOf("Remaking the QR label");
     // another change of this window may still be running (a charm dragged onto the next sheet): the save waits its turn (the sheet stays held meanwhile)
     if (bg) { const job = HOP.saving.get(sh); if (job) job.edits = new Map(edits); HOP.writes = (HOP.writes || 0) + 1; hopChip("saving", "Saving…"); }
     for (const until = Date.now() + 300000; !bg && W.flow && Date.now() < until;) await pause(300);
-    const spec = { state: "working", title: `Saving ${n === 1 ? "1 charm" : n + " charms"} moved by hand on ${name}`, steps: [wait, check, put, labels, read], note: "" };
+    const spec = { state: "working", title: `Saving ${n === 1 ? "1 charm" : n + " charms"} moved by hand on ${name}`, steps: [wait, check, put, files, labels], note: "" };
     const work = bg ? spec : beginFlow(spec);
     // (bg: the chip says how it ended; Manual Control carried back onto this sheet meanwhile keeps its claim and its hold)
     const bgEnd = (ok, why) => {
@@ -6135,12 +6275,19 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const ui = () => W.dlg && W.dlg.open && W.id === sh.sheetId;
     if (!bg) renderWork();
     const undo = [], at = Date.now();
+    // the charms back where they were (a refusal), drawn so, the moves kept on this computer to try again
+    const putBack = () => {
+      for (const u of undo) { Object.assign(u.p, u.was); u.c.pinned = u.pinned; if (u.arrivalPin) u.c.arrivalPin = u.arrivalPin; else delete u.c.arrivalPin; if (u.manual) u.c.manual = u.manual; else delete u.c.manual; }
+      undo.length = 0; delete sh._manualHold; if (sh._manualAsked) { delete sh._manualAsked; tryDo(() => startNest(sh)); }
+      letGo([sh]); mcDraftPut(sh.sheetId, edits, who);
+      if (ui() && !W.flow) tryDo(() => open2(sh.sheetId)); else if (ui()) { tryDo(paintBase); tryDo(paintFx); }
+    };
+    let patched = false, P = null;
     try {
       await waitIdle([sh], wait, paint);
-      // 1 · the guards again, as the cloud has the sheet now; every charm moved checked against the others where they all now stand
+      // 1 · the guards, as this page holds the sheet (the window's record, kept current by the changes feed); the cloud checks the claim and the laser's cut again as the patch lands
       check.state = "now"; paint();
-      const rec = ((await api("charmNestLibrary", { op: "getSheet", id: sh.sheetId }, { quiet: true, timeoutMs: 12000 })) || {}).sheet;
-      if (!rec) throw new Error("the sheet is no longer in the Library");
+      const rec = W.id === sh.sheetId && W.rec && W.rec.id === sh.sheetId ? W.rec : null;
       const why = mcBlock(sh, rec, { saving: true }); if (why) throw new Error(why.replace(/\.$/, ""));
       // (GOLDEDIT: its green line drawn or recorded is given up first, here and on the server, so the new layout is saved; it is drawn again after, goldAfter)
       { const gw = await goldOpen([sh], { recs: new Map([[sh, rec]]) }); if (gw) throw new Error(gw); }
@@ -6154,44 +6301,56 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         if (!res.ok && !mcFree(res)) throw new Error(`${ridOfC(c) ? `order ${ridOfC(c)}'s charm` : "a charm"} could not be checked where it was put (${(res.reason || "it moved").replace(/^No room there: /, "").replace(/\.$/, "")})`);
       }
       check.state = "ok"; paint();
-      // 2 · each charm where the person put it, pinned there by them (the nest keeps it; no later nest, gap fill or making room lifts it), at its own size
-      const clr = +S.settings.clearancePt || 0;
+      // 2 · drawn at once: each charm where the person put it, pinned there by them (the nest keeps it; no later nest, gap fill or making room lifts it), at its own size
+      const clr = +S.settings.clearancePt || 0, poses = {}, pins = {}, base = {};
       for (const [id, q] of edits) {
         const c = sh.charms.find(z => z.id === id), p = sh.placements.find(z => z.id === id), v = mcVariant(c, q.angle, q.size, clr);
         undo.push({ p, was: Object.assign({}, p), c, pinned: c.pinned, arrivalPin: c.arrivalPin, manual: c.manual });
+        base[id] = { cxPt: +p.cxPt, cyPt: +p.cyPt, angle: normDeg(p.angle), scale: +p.scale || 1 };
         Object.assign(p, { cxPt: q.cxPt, cyPt: q.cyPt, angle: q.angle, scale: frozenWhy(c) ? 1 : scaleOf(q.size) }, v ? { wPt: v.solid.w / 2, hPt: v.solid.h / 2 } : {});   // (CUSTOMPOOL: written at 100 %)
         c.pinned = Object.assign({ cxPt: q.cxPt, cyPt: q.cyPt, angle: q.angle }, q.size !== 1 ? { size: q.size } : {}); delete c.arrivalPin;
         c.manual = Object.assign({ by: who, at }, q.size !== 1 ? { size: q.size } : {});
+        poses[id] = Object.assign({ cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle, scale: p.scale }, v ? { wPt: p.wPt, hPt: p.hPt } : {});
+        pins[id] = { pinned: c.pinned, manual: c.manual };
       }
       delete sh._manualHold; delete sh._manualAsked;
       holdRelease([sh]);
-      // (STUCKSPIN, Paul 28 Oct 2026: the 14K sheet's record held it in Set 3 with its QR label while this page held it as a draft: written now, the page's draft would have been saved over
-      //  the record. Its place is taken from its record first (Gate.followSheet, nothing written; at most 15 s), so the write keeps it there)
-      if (window.Gate && typeof Gate.followSheet === "function") await within(Gate.followSheet(sh), 15000, "").catch(() => false);
-      const saved = await rewritePage(sh, put, paint, { manual: true });
-      const off = [...edits].filter(([id, q]) => { const p = sh.placements.find(z => z.id === id); return !p || mcChanged({ cxPt: +p.cxPt, cyPt: +p.cyPt, angle: +p.angle, size: q.size }, q); });
-      if (off.length) throw new Error(`the nest did not keep ${off.length === 1 ? "a charm" : off.length + " charms"} where ${off.length === 1 ? "it was" : "they were"} put`);
-      if (!saved && !sh.persistedDone) put.detail = "still saving; it finishes on its card in the Nest tab";
-      // 3 · its QR label for the sheet as it now stands, then the record read back
-      await remakeLabels([sh], labels, paint);
-      letGo([sh]);
-      await goldAfter(sh, "were moved by hand");   // (GOLDEDIT: its green line drawn again, a released set's card says it changed)
-      read.state = "now"; paint();
-      let back = null; try { back = ((await api("charmNestLibrary", { op: "getSheet", id: sh.sheetId }, { quiet: true, timeoutMs: 12000 })) || {}).sheet; } catch (_) {}
-      const miss = back ? ids.filter(id => { const p = (back.placements || []).find(z => z.id === id), q = edits.get(id); return !p || Math.abs(+p.cxPt - q.cxPt) > .01 || Math.abs(+p.cyPt - q.cyPt) > .01 || Math.abs(normDeg(p.angle) - q.angle) > .01; }) : ids;
-      read.state = miss.length ? "bad" : "ok"; read.detail = !back ? "the record could not be read" : miss.length ? `${miss.length} moved charm${miss.length === 1 ? " is" : "s are"} not where ${miss.length === 1 ? "it was" : "they were"} put on the record yet` : "the record holds the new layout";
-      await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, manual: { at, by: who, n } } }, { quiet: true }).catch(e => console.warn("sheet window: manual mark", e));
-      await giveBack(sh.sheetId);
+      if (ui()) { tryDo(paintBase); tryDo(paintFx); }
+      if (window.Session) tryDo(() => Session.schedule());
+      // 3 · ONE patch, from this computer's outbox: the poses, the pins, the manual mark and the claim given back, in one write
+      put.state = "now"; put.detail = "kept on this computer; on its way to the cloud"; paint();
+      P = mcPatch(sh, { tab: MC_TAB, by: who, poses, pins, base, mark: { at, by: who, n }, release: !(bg && MC.on && MC.sh === sh) }, name);
+      const late = new Promise(res => setTimeout(() => res("late"), MC_PATCH_WAIT * spinScale()));
+      const ans = await Promise.race([P.done, late]);
+      if (ans === "late") {
+        // no answer yet (offline, a slow cloud): saved on this computer; the cloud gets it when it answers, and the files follow (mcFilesResume); a refusal then puts the charms back
+        patched = true;
+        P.done.then(a => { mcAnswered(sh, a, who); }, e => { if (!e || !e.refused) return; mcRefusedLate(sh, undo.slice(), e, name, P.jobK); });
+        put.state = "ok"; put.detail = "saved on this computer: the cloud gets it as soon as it answers";
+        files.state = "now"; files.detail = "made once the cloud has the new layout"; doneStep(labels);
+        work.state = "done"; work.title = `${n === 1 ? "1 charm" : n + " charms"} moved by hand on ${name}`;
+        work.note = `Saved on this computer: ${n === 1 ? "the charm stays" : "the charms stay"} where ${n === 1 ? "it was" : "they were"} put. The cloud gets the new layout as soon as it answers, and the sheet's files and QR label are made then.`;
+        paint(); if (!bg) endFlow(work); bgEnd(true);
+        await restAfter();
+        return true;
+      }
+      patched = true;
+      put.state = "ok"; put.detail = overwroteWords(ans && ans.overwrote, sh);
+      mcAnswered(sh, ans, who);
       tryDo(() => window.SheetEvents && SheetEvents.adjusted && SheetEvents.adjusted(sh, ids, who));
-      const ok = !!(sh.verification && sh.verification.ok) && !miss.length;
       tryDo(() => log(sh, `${n} charm(s) moved by hand by ${who} (Manual Control); the sheet was checked and written again`));
+      // 4 · the file job: the sheet written again as it stands, its QR label, its green line (kept in the outbox until done; a failure is tried again by itself)
+      const filesOk = await mcFiles(sh, { files, labels, paint, jobK: P.jobK });
+      const ok = !!(sh.verification && sh.verification.ok) && filesOk;
       agent({ metal: sh.metal, run: sh.runId }, "nest", `${sheetName(sh)}: ${n === 1 ? "1 charm" : n + " charms"} moved by hand by ${who} (Manual Control), pinned where they were put; the sheet was written again${sh.verification && sh.verification.ok ? " and its check passed" : sh.verification ? "; its check flagged it, see its report" : ""}`);
       work.state = "done"; work.title = `${n === 1 ? "1 charm" : n + " charms"} moved by hand on ${name}`;
       const clashN = tryDo(() => mcSheetClash(sh).length) || 0;   // (MCFREE)
-      work.note = (clashN ? `Saved where ${n === 1 ? "it was" : "they were"} put, but ${clashN} charms overlap: the sheet stays flagged, and goes to no set or laser, until they are moved clear in Manual Control. ` : "") + (ok ? "Checked and saved: " : "Saved: ") + `the sheet's files and QR label were made again, and ${n === 1 ? "the charm stays" : "the charms stay"} where ${n === 1 ? "it was" : "they were"} put. ` + (sh.metal && window.CharmNestRose && CharmNestRose.owesLine && CharmNestRose.owesLine(sh) ? "Its green line is drawn by Cut Sheet, as before." : "");
+      work.note = (put.detail ? put.detail + " " : "") + (clashN ? `Saved where ${n === 1 ? "it was" : "they were"} put, but ${clashN} charms overlap: the sheet stays flagged, and goes to no set or laser, until they are moved clear in Manual Control. ` : "") +
+        (!filesOk ? `Saved: ${n === 1 ? "the charm stays" : "the charms stay"} where ${n === 1 ? "it was" : "they were"} put; the sheet's files are being made again in the background (${files.detail || "a step did not finish"}).` :
+        (ok ? "Checked and saved: " : "Saved: ") + `the sheet's files and QR label were made again, and ${n === 1 ? "the charm stays" : "the charms stay"} where ${n === 1 ? "it was" : "they were"} put. ` + (sh.metal && window.CharmNestRose && CharmNestRose.owesLine && CharmNestRose.owesLine(sh) ? "Its green line is drawn by Cut Sheet, as before." : ""));
       paint(); if (!bg) endFlow(work);
       bgEnd(true);
-      mcDraftDrop(sh.sheetId); if (MC.on && MC.sh === sh) mcDraftSave();   // (MCINSTANT: saved: no longer only on this computer)
+      if (MC.on && MC.sh === sh) mcDraftSave();   // (MCINSTANT: saved: no longer only on this computer)
       if (window.RunCtl) tryDo(() => RunCtl.poke());
       await restAfter();
       if (ui()) open(sh.sheetId, { keepWork: true, keepSet: false, glow: ids.map(id => (sh.charms.find(c => c.id === id) || {}).poolId).filter(Boolean) });
@@ -6199,19 +6358,21 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     } catch (e) {
       console.warn("sheet window: manual save", e);
       for (const st of work.steps) doneStep(st);
-      let back = "";
-      if (undo.length) {
-        for (const u of undo) { Object.assign(u.p, u.was); u.c.pinned = u.pinned; if (u.arrivalPin) u.c.arrivalPin = u.arrivalPin; else delete u.c.arrivalPin; if (u.manual) u.c.manual = u.manual; else delete u.c.manual; }
-        delete sh._manualHold;
-        back = await rewritePage(sh, stepOf(""), () => {}, { manual: true }).then(() => " The charms went back where they were.", e2 => ` Putting them back stopped too (${e2.message}); see the sheet's card in the Nest tab.`);
-      } else { delete sh._manualHold; if (sh._manualAsked) { delete sh._manualAsked; tryDo(() => startNest(sh)); } back = " Nothing on the sheet was changed."; }
-      letGo([sh]); giveBack(sh.sheetId);
-      work.state = "failed"; work.title = `The charms moved by hand on ${name} were not saved`; work.note = esc(String(e.message || e).replace(/^./, ch => ch.toUpperCase())) + "." + esc(back);
+      const refused = !!(e && e.refused);
+      if (patched && !refused) {
+        // (the layout is saved: only a step after it stopped; the file job tries again by itself)
+        work.state = "done"; work.title = `${n === 1 ? "1 charm" : n + " charms"} moved by hand on ${name}`; work.note = `Saved where ${n === 1 ? "it was" : "they were"} put; the sheet's files are being made again in the background (${esc(String(e.message || e))}).`;
+        paint(); if (!bg) endFlow(work); bgEnd(true); await restAfter(); return true;
+      }
+      if (P && P.jobK) tryDo(() => window.CharmNestStore.settle(P.jobK, { ok: true, answer: { dropped: true } }));   // (its file job goes with it: nothing to make)
+      const back = undo.length ? " The charms went back where they were; your moves are kept on this computer: turn Manual Control on again to try them again." : " Nothing on the sheet was changed.";
+      if (undo.length) putBack(); else { delete sh._manualHold; if (sh._manualAsked) { delete sh._manualAsked; tryDo(() => startNest(sh)); } letGo([sh]); }
+      if (!refused || !(e.data && e.data.refused === "held")) giveBack(sh.sheetId);
+      work.state = "failed"; work.title = `The charms moved by hand on ${name} were not saved`; work.note = esc(String(e.message || e).replace(/^./, ch => ch.toUpperCase()).replace(/\.$/, "")) + "." + esc(back);
       paint(); if (!bg) endFlow(work);
       bgEnd(false, String(e.message || e) + "." + back);
-      mcDraftDrop(sh.sheetId); if (MC.on && MC.sh === sh) mcDraftSave();   // (the charms went back where they were: nothing of these moves is kept to come back)
       await restAfter();
-      if (ui()) open2(sh.sheetId);
+      if (ui() && !undo.length) open2(sh.sheetId);
       return false;
     }
   }

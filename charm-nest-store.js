@@ -43,7 +43,23 @@
      shared(key, make) → Promise                   one read in flight per key: a caller asking the same while it is out gets its own copy of the answer
      blob(store, key) → Promise<value | null>      putBlob(store, key, value)   ('parsed' | 'bytes', in cn-blobs)
      on(fn) → off                                  fn({ kind, id, rec, from: 'here' | 'tab' }) after a put, a patch or a drop, here or in another tab
-     sweep() · stats() · freeze() · discard()      discard: this page's own sandbox reset (memory emptied, the database deleted, nothing written again) */
+     sweep() · stats() · freeze() · discard()      discard: this page's own sandbox reset (memory emptied, the database deleted, nothing written again)
+
+   THE OUTBOX (Paul, 28 Oct 2026: "every press to feel like a native app": nothing he presses may wait for the cloud; plan: phase 3). A press is drawn in the
+   frame it happens in and kept here at once (IndexedDB, strict durability: on the disk before the browser says it is written), then sent by the computer's
+   changes feed (charm-nest-sync-worker.js drain), with its mutation id (mid), so a press sent twice (the page closed mid-request, the network dropped) is
+   written once (netlify/functions/_charmNestMutations.js). The cloud's answer is the truth: a refusal comes back in the cloud's own words to where it was
+   pressed (handle.done rejects; a press made before a reload is said in a toast), and a press another person's later change overwrote is said too.
+     mutate({ entity, op, args, fn?, fields?, merge?, batch?, after?, job?, raw?, label, by }) → { mid, k, done }   kept now, sent soon; done: the answer (rejects
+                                                  with the refusal, e.refused). fields: a pending press of the same entity and fields is replaced (the newest
+                                                  wins before anything is sent); merge: one of the same entity has its args merged; batch: several sent as one
+                                                  request (timelineAdd: their events joined); raw: args sent as they are (another function's own format, no op
+                                                  or mid: TeamMail's message, idempotent by its own id); after: sent once that mid is answered; job: not sent, run by the
+                                                  page (pending(job) lists them; finish(k) ends one)
+     pending(filter?) → [entry]                   what this computer has not had answered (memory; the disk's at start)
+     outbox() → Promise<[entry]>                  every entry on the disk (every tab's), oldest first: what the drain sends
+     settle(k, { ok, answer } | { error, refused }) the answer of one entry: it leaves the disk and its press is told (here, and in every tab)
+     onMutation(fn) → off                         fn({ t: 'mut' | 'ack' | 'fail' | 'lost', e, answer?, error? }) */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(root);
   else root.CharmNestStore = factory(root);
@@ -133,7 +149,7 @@
       if (make) { making = p; p.then(() => { making = null; }, () => { making = null; }); }
       return p;
     }
-    return (dbp = openDb(dbName(), KINDS.concat(['meta'])).then(db => { if (!db) dbp = null; return db; }));
+    return (dbp = openDb(dbName(), KINDS.concat(['meta', 'outbox'])).then(db => { if (!db) dbp = null; return db; }));
   }
   const blobsDb = () => (blobp || (blobp = openDb('cn-blobs', BLOBS).then(db => { if (!db) blobp = null; return db; })));
   const errName = e => (e && (e.name || (e.target && e.target.error && e.target.error.name))) || '';
@@ -206,7 +222,7 @@
     inited = true;
     cfg = Object.assign(cfg, o || {});
     world = isWorld(cfg.world) ? cfg.world : 'production';
-    try { channel = typeof root.BroadcastChannel === 'function' ? new root.BroadcastChannel('cn-store:' + world) : null; if (channel) channel.onmessage = e => { if (e && e.data && e.data.t === 'put') heard(e.data.items); }; } catch (_) { channel = null; }
+    try { channel = typeof root.BroadcastChannel === 'function' ? new root.BroadcastChannel('cn-store:' + world) : null; if (channel) channel.onmessage = e => { const d = e && e.data; if (d && d.t === 'put') heard(d.items); else if (d && /^box:/.test(d.t)) boxHeard(d); }; } catch (_) { channel = null; }
     try { const st = root.navigator && root.navigator.storage; if (st && st.persisted) st.persisted().then(p => p || (st.persist && st.persist())).catch(() => {}); } catch (_) {}
     readyP = boot().catch(e => { console.warn('local store: start', e); return { disk: false, rows: 0 }; });
     blobsDb().catch(() => {});   // (opened beside it: the first design a sheet window asks for does not wait for the database to open)
@@ -215,7 +231,7 @@
     return readyP;
   }
   async function boot() {
-    const db = await records(); if (!db) return { disk: false, rows: 0 };
+    const db = await records(); if (!db) { journalLoad(); return { disk: false, rows: 0 }; }
     const t0 = Date.now(), ep = epochNow();
     const [meta, lists] = await new Promise(res => {
       try { const t = db.transaction(['meta', 'lists'], 'readonly'); Promise.all([once(t.objectStore('meta').get('meta')), once(t.objectStore('lists').getAll())]).then(res); } catch (_) { res([null, []]); }
@@ -223,6 +239,8 @@
     // a database of another world (it cannot be, by its name) or made before the last sandbox reset: emptied before anything is read from it
     if (!meta || meta.world !== world || meta.schema !== SCHEMA || (meta.epoch || '') !== ep) {
       if (!canWrite()) return { disk: false, rows: 0 };
+      // (OUTBOX: presses not yet answered are never dropped for a new shape of the copies; a sandbox reset since they were pressed takes them with the records they were for)
+      if (meta && (meta.epoch || '') !== ep) await new Promise(res => { try { const t = db.transaction('outbox', 'readwrite'); t.objectStore('outbox').clear(); t.oncomplete = t.onerror = t.onabort = () => res(); } catch (_) { res(); } });
       await stamp(db);
       diskOn = true;
       return { disk: true, rows: 0, fresh: true, ms: Date.now() - t0 };
@@ -248,6 +266,7 @@
       } catch (_) { res(); }
     });
     diskOn = true;
+    await boxLoad(db);
     return { disk: true, rows: n, ms: Date.now() - t0 };
   }
   function clientId() { try { const c = root.crypto; if (c && c.randomUUID) return c.randomUUID(); } catch (_) {} return Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
@@ -308,6 +327,7 @@
     if (kind === 'sheetFull') { lru(mem[kind], id, LIMITS.memFull); onDisk.add(id); }
     enqueue(kind, id, { k: id, rev: rv, saved: now, rec }, now);
     tell({ kind, id, rec, from: 'here' });
+    if ((kind === 'sheets' || kind === 'sheetFull') && acked.size && acked.has('s:' + id)) lostIn('s:' + id, rec);   // (OUTBOX: a press of this computer another person's later change overwrote: told)
     return true;
   }
   /** Fields the page learned of a record (a seal, a step, a live answer's readiness): merged into the record kept, its revision unchanged. */
@@ -482,6 +502,134 @@
     return removed;
   }
 
+  /* ── THE OUTBOX (phase 3; see the header) ── */
+  const box = new Map();            // k → entry, what this tab knows is not answered yet (its own presses, the disk's at start, other tabs' told on the channel)
+  const waiters = new Map();        // mid → { res, rej } (this tab's own presses, for the place they were pressed)
+  const mutSubs = new Set();
+  const tab = Math.random().toString(36).slice(2, 7);
+  let boxN = 0, lastMs = 0;
+  const mutTell = ev => { for (const fn of [...mutSubs]) { try { fn(ev); } catch (e) { console.warn('local store: outbox listener', e); } } };
+  const boxPost = m => { if (channel) { try { channel.postMessage(m); } catch (_) {} } };
+  // (k: sortable by time across the tabs of this computer, unique to this tab: '<ms base36>-<tab>-<n>')
+  function nextK() { const t = Math.max(Date.now(), lastMs); lastMs = t; return t.toString(36).padStart(9, '0') + '-' + tab + '-' + (++boxN).toString(36); }
+  /** Written to the disk now, strictly (the browser says written once it is on the disk); false when there is no disk (memory and a small journal keep it). Every write
+      of one task goes in ONE transaction, at the task's end (a microtask: before the page can be left; a burst of timeline steps is one write, not one each). */
+  let boxRows = new Map(), boxDels = new Set(), boxP = null;
+  function boxWrite(rows, dels) {
+    if (!canWrite()) return Promise.resolve(false);
+    for (const r of rows || []) { boxRows.set(r.k, r); boxDels.delete(r.k); }
+    for (const k of dels || []) { boxRows.delete(k); boxDels.add(k); }
+    if (boxP) return boxP;
+    return (boxP = new Promise(res => (typeof queueMicrotask === 'function' ? queueMicrotask : f => Promise.resolve().then(f))(() => res()))
+      .then(async () => {
+        const put = [...boxRows.values()], del = [...boxDels]; boxRows = new Map(); boxDels = new Set(); boxP = null;
+        const db = await records(true); if (!db) return journal();
+        return new Promise(res => {
+          try {
+            const t = db.transaction('outbox', 'readwrite', { durability: 'strict' }), s = t.objectStore('outbox');
+            for (const r of put) s.put(r);
+            for (const k of del) s.delete(k);
+            t.oncomplete = () => res(true); t.onerror = t.onabort = () => { console.warn('local store: outbox write', t.error); res(journal()); };
+          } catch (e) { console.warn('local store: outbox write', e); res(journal()); }
+        });
+      }));
+  }
+  // (no disk: what this tab has not had answered is kept in localStorage too, so a reload of THIS page still sends it; read back at start when there is no disk)
+  const JKEY = () => 'cn.outbox.' + world;
+  function journal() { if (world === 'sandbox') return false; try { const list = [...box.values()].filter(e => e.tab === tab); if (list.length) root.localStorage.setItem(JKEY(), JSON.stringify(list.slice(-200))); else root.localStorage.removeItem(JKEY()); } catch (_) {} return false; }
+  function journalLoad() { if (world === 'sandbox') return; let j = null; try { j = JSON.parse(root.localStorage.getItem(JKEY()) || 'null'); } catch (_) { j = null; } if (Array.isArray(j)) for (const e of j) if (e && e.k && e.world === world && !box.has(e.k)) box.set(e.k, Object.assign(e, { tab, state: 'pending' })); if (box.size) mutTell({ t: 'load', n: box.size }); }
+  async function boxLoad(db) {
+    const rows = await new Promise(res => { try { const rq = db.transaction('outbox', 'readonly').objectStore('outbox').getAll(); rq.onsuccess = () => res(rq.result || []); rq.onerror = () => res([]); } catch (_) { res([]); } });
+    for (const e of rows) if (e && e.k && e.world === world && !box.has(e.k)) box.set(e.k, Object.assign(e, { state: e.state === 'sending' ? 'pending' : e.state }));
+    let j = null; try { j = JSON.parse(root.localStorage.getItem(JKEY()) || 'null'); } catch (_) { j = null; }
+    if (Array.isArray(j) && j.length) { const keep = j.filter(e => e && e.k && e.world === world && !box.has(e.k)); for (const e of keep) box.set(e.k, e); if (keep.length) await boxWrite(keep, []); try { root.localStorage.removeItem(JKEY()); } catch (_) {} }
+    if (box.size) mutTell({ t: 'load', n: box.size });
+  }
+  const sameFields = (a, b) => JSON.stringify((a || []).slice().sort()) === JSON.stringify((b || []).slice().sort());
+  /** A press, kept now and sent soon. → { mid, k, done } (done: the cloud's answer; rejects with the refusal: e.refused, e.message the cloud's words). */
+  function mutate(m) {
+    m = m || {};
+    let rej0 = null, this_ = null; const done = new Promise((res, rej) => { rej0 = rej; this_ = { res, rej }; });
+    done.catch(() => {});   // (a press whose place listens catches it there; one that does not is said by the toast of the drain)
+    if (!m.op && !m.job) { rej0(Object.assign(new Error('nothing to send'), { refused: true })); return { mid: '', k: '', done }; }
+    if (!canWrite()) { rej0(Object.assign(new Error(cfg.writable && safe0(cfg.writable) === false ? 'this page cannot write now (the sandbox is being reset, or another tab reset it): reload' : 'this page is of the other world'), { refused: true })); return { mid: '', k: '', done }; }
+    const now = Date.now(), entity = String(m.entity || ''), fields = Array.isArray(m.fields) ? m.fields.map(String) : null;
+    // the same entity and fields still waiting here (not on its way): the newer press replaces it, in its place; merge: its args joined
+    const twin = entity && !m.job && !m.batch ? [...box.values()].find(e => e.entity === entity && e.state === 'pending' && e.tab === tab && !e.job && ((fields && sameFields(e.fields, fields)) || (m.merge && e.merge && e.op === m.op))) : null;
+    if (twin) {
+      twin.args = m.merge && !fields ? Object.assign({}, twin.args, m.args || {}) : Object.assign({}, m.args || {});
+      if (m.merge && twin.args.sheet && m.args && m.args.sheet) twin.args.sheet = Object.assign({}, twin.args.sheet, m.args.sheet);
+      twin.at = now; twin.label = m.label || twin.label; twin.by = m.by || twin.by;
+      const w = waiters.get(twin.mid); if (w) { const prev = w; waiters.set(twin.mid, { res: v => { prev.res(v); this_.res(v); }, rej: e => { prev.rej(e); this_.rej(e); } }); } else waiters.set(twin.mid, this_);
+      boxWrite([twin], []); boxPost({ t: 'box:mut', e: twin }); mutTell({ t: 'mut', e: twin, replaced: true });
+      return { mid: twin.mid, k: twin.k, done };
+    }
+    const k = nextK(), e = { k, mid: 'm' + (world === 'sandbox' ? 's' : 'p') + '-' + k, world, tab, entity, fn: m.fn || 'charmNestLibrary', op: m.op || '', args: m.args || {}, fields,
+      merge: !!m.merge, batch: m.batch || '', after: m.after || '', job: m.job || '', raw: !!m.raw, label: String(m.label || '').slice(0, 200), by: String(m.by || '').slice(0, 80), at: now, state: 'pending', tries: 0, nextAt: 0 };
+    box.set(k, e); waiters.set(e.mid, this_);
+    boxWrite([e], []);   // (the transaction starts in this task: on the disk within milliseconds, strict)
+    boxPost({ t: 'box:mut', e }); mutTell({ t: 'mut', e });
+    return { mid: e.mid, k, done };
+  }
+  const safe0 = f => { try { return f(); } catch (_) { return undefined; } };
+  function pending(filter) {
+    const list = [...box.values()].sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
+    if (!filter) return list;
+    if (typeof filter === 'function') return list.filter(filter);
+    return list.filter(e => e.job === filter || e.entity === filter || e.op === filter);
+  }
+  /** Every entry on the disk, oldest first (every tab's presses: the drain sends them all); with no disk, this tab's memory. */
+  async function outbox() {
+    const db = diskOn ? await records() : null;
+    if (!db) return pending();
+    const rows = await new Promise(res => { try { const rq = db.transaction('outbox', 'readonly').objectStore('outbox').getAll(); rq.onsuccess = () => res(rq.result || []); rq.onerror = () => res(null); } catch (_) { res(null); } });
+    if (!rows) return pending();
+    for (const e of rows) if (e && e.k && !box.has(e.k) && e.world === world) box.set(e.k, e);
+    const onDisk = new Set(rows.map(e => e && e.k));
+    // (this tab's own presses whose disk write has not landed yet are sent all the same: memory is the truth for its own)
+    return rows.filter(e => e && e.world === world).concat([...box.values()].filter(e => e.tab === tab && !onDisk.has(e.k))).sort((a, b) => (a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
+  }
+  /** One entry's state changed on its way (sending, tried again later): kept on the disk, so a page that takes over knows. */
+  function touch(e) { if (!e || !e.k) return; const had = box.get(e.k); if (had && had !== e) Object.assign(had, e); else if (!had) box.set(e.k, e); boxWrite([Object.assign({}, e)], []); }
+  /** The answer of one entry: it leaves the disk, and its press is told (its own place here, every tab, the listeners). */
+  async function settle(k, r) {
+    const e = box.get(k) || (r && r.e) || null; if (!e) return false;
+    box.delete(k);
+    await boxWrite([], [k]);
+    const msg = r && r.ok ? { t: 'box:ack', k, mid: e.mid, e, answer: r.answer } : { t: 'box:fail', k, mid: e.mid, e, error: String((r && r.error) || 'refused'), refused: !!(r && r.refused), data: r && r.data };
+    boxPost(msg); boxSettled(msg, true);
+    return true;
+  }
+  function boxSettled(m, local) {
+    box.delete(m.k);
+    const w = waiters.get(m.mid); waiters.delete(m.mid);
+    if (m.t === 'box:ack') { if (w) w.res(m.answer); remember(m.e, m.answer); mutTell({ t: 'ack', e: m.e, answer: m.answer, here: !!w, local }); }
+    else { if (w) w.rej(Object.assign(new Error(m.error), { refused: m.refused, data: m.data, entry: m.e })); mutTell({ t: 'fail', e: m.e, error: m.error, refused: m.refused, data: m.data, here: !!w, local }); }
+  }
+  function boxHeard(m) {
+    if (m.t === 'box:mut' && m.e && m.e.world === world) { box.set(m.e.k, m.e); mutTell({ t: 'mut', e: m.e, from: 'tab' }); }
+    else if (m.t === 'box:ack' || m.t === 'box:fail') boxSettled(m, false);
+    else if (m.t === 'box:touch' && m.e && box.has(m.e.k)) Object.assign(box.get(m.e.k), m.e);
+  }
+  /* ── the person whose change lost is told (Paul, 28 Oct 2026, decision 4) ── the fields of an answered press of this computer are remembered for 15 minutes: a record
+     read later (the feed, a window) whose _w names another person on one of them, after this press, means that person's later change won over it */
+  const acked = new Map();          // entity → [{ fields, by, at, label }]
+  function remember(e, answer) {
+    if (!e || !e.entity || !e.fields || !e.fields.length) return;
+    const l = (acked.get(e.entity) || []).filter(x => Date.now() - x.at < 900000); l.push({ fields: e.fields.slice(), by: e.by, mid: e.mid, at: Date.now(), label: e.label }); acked.set(e.entity, l.slice(-20));
+  }
+  const toldLost = new Set();
+  /** A record of entity read now: the fields this computer wrote that another person wrote after it, told once each. → [{ field, by, at, label }] */
+  function lostIn(entity, rec) {
+    const l = acked.get(entity), w = rec && rec._w; if (!l || !w || typeof w !== 'object') return [];
+    const out = [];
+    // (the write that stands on a field is another press than this computer's (its mid), made after this one was answered (2 s for two clocks): this one lost)
+    // (the newest press of this computer on the field first: it is the one the later change overwrote)
+    for (const a of l.slice().reverse()) for (const f of a.fields) { const x = w[f]; if (!x || !x.by || (x.mid && x.mid === a.mid) || !(+x.at > a.at - 2000)) continue; const key = entity + '|' + f + '|' + x.at; if (toldLost.has(key)) continue; toldLost.add(key); out.push({ field: f, by: String(x.by).replace(/_/g, ' '), at: +x.at, label: a.label, entity }); }
+    if (out.length) mutTell({ t: 'lost', entity, lost: out });
+    return out;
+  }
+
   /* ── a reset ── */
   /** Nothing is written again from this page (it reloads): a reset under way, or a tab stood down. */
   function freeze() { frozen = true; queue.clear(); clearTimeout(flushTimer); flushTimer = 0; clearTimeout(useTimer); useTimer = 0; }
@@ -489,6 +637,7 @@
   async function discard() {
     freeze();
     for (const k of KINDS) mem[k].clear();
+    box.clear();   // (OUTBOX: the sandbox's presses go with its records; the database below holds them and is deleted)
     if (world !== 'sandbox') return false;
     try { const db = dbp ? await dbp : null; if (db) db.close(); } catch (_) {}
     closed.add(dbName()); dbp = null;
@@ -496,7 +645,7 @@
     return new Promise(res => { try { const rq = idb.deleteDatabase(dbName()); rq.onsuccess = () => res(true); rq.onerror = () => res(false); rq.onblocked = () => res(true); } catch (_) { res(false); } });
   }
   async function stats() {
-    const out = { world, disk: diskOn, frozen, mem: Object.fromEntries(KINDS.map(k => [k, mem[k].size])), rows: {}, blobs: {} };
+    const out = { world, disk: diskOn, frozen, mem: Object.fromEntries(KINDS.map(k => [k, mem[k].size])), rows: {}, blobs: {}, outbox: box.size };
     const db = await records(); if (db) for (const k of KINDS) out.rows[k] = await count(db, k);
     const bd = await blobsDb(); if (bd) for (const s of BLOBS) out.blobs[s] = await count(bd, s);
     try { const st = root.navigator && root.navigator.storage; if (st && st.persisted) out.persisted = await st.persisted(); } catch (_) {}
@@ -506,6 +655,7 @@
     init, ready: () => readyP || Promise.resolve({ disk: false, rows: 0 }), world: () => world, disk: () => diskOn,
     get, rev, has, holds, warm, load, put, patch, drop, list, putList, rows, ask, take, shared, blob, putBlob,
     on: fn => { listeners.add(fn); return () => listeners.delete(fn); },
+    mutate, pending, outbox, settle, touch: e => { touch(e); boxPost({ t: 'box:touch', e }); }, lostIn, onMutation: fn => { mutSubs.add(fn); return () => mutSubs.delete(fn); },
     flush, sweep, squeeze, stats, freeze, discard, LIMITS, KINDS
   };
 });

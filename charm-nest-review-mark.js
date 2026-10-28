@@ -83,11 +83,33 @@
   }
   function told(rid, rec) {   // after the cloud answered: the other tabs of this computer hear the record (BroadcastChannel, no read), and the feed reads soon
     try { if (root.ReviewLive && root.ReviewLive.announce) root.ReviewLive.announce("customPut", { record: rec }); } catch (_) {}
+    if (root.CharmNestStore && root.CharmNestStore.mutate) return;   // (OUTBOX: the answer is the record; the computer's changes feed tells the other computers: no read follows the press)
     try { if (root.ReviewLive && root.ReviewLive.nudge) root.ReviewLive.nudge(); } catch (_) {}
   }
   function line(rid, text, id, data) {   // a plain line on the order's timeline (a note; HOLDORDER: the mark's own note, the one with no `how`, draws the ORDER HELD seal)
     try { const rows = rowsOfRid(rid); if (rows[0] && root.CNTimeline) root.CNTimeline.line(rows[0], "note", { id, text: String(text).slice(0, 200), data: Object.assign({ reviewMark: true }, data || {}) }); } catch (_) {}
   }
+
+  /* OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"; plan: phase 3, Approvals and Complete Order: reviewMarkPut): each write of this file is kept in this
+     computer's outbox at the press (charm-nest-store.js mutate) and sent from there with its mutation id, so a page closed or offline loses none and none is written twice; the press
+     goes on at once (what it changes is on the page already: put), and the cloud's answer comes back to it (onAnswer: the record replaces the page's; onRefused: the page's goes back,
+     and the person is told where they pressed, in the cloud's words). No read follows (the other tabs hear the record on the channel, no feed nudge). Without the outbox, as before:
+     the press waits for the answer. → { ok, pending?, already?, rid, error? } */
+  function write(body, label, onAnswer, onRefused, needRecord) {
+    const St = root.CharmNestStore, rid = body.rid;
+    const fine = r => !!r && !r.error && (!needRecord || !!r.record);
+    if (!St || typeof St.mutate !== "function") {
+      return root.api("charmNestLibrary", body, { quiet: true }).then(r => { if (!fine(r)) throw new Error((r && r.error) || "The cloud sent no record"); onAnswer(r); return { ok: true, already: !!r.already, rid }; },
+        e => { onRefused(e); return { ok: false, rid, error: String((e && e.message) || e || "Not saved") }; });
+    }
+    const args = Object.assign({}, body); delete args.op;
+    const h = St.mutate({ entity: "c:" + keyOf(rid), op: body.op, args, label, by: body.by || "" });
+    const fail = e => { onRefused(e); emit({ rid, kind: "refused", action: body.action, error: String((e && e.message) || e || "Not saved") }); };
+    if (!h.k) { h.done.catch(fail); return h.done.then(() => ({ ok: true, rid }), e => ({ ok: false, rid, error: String((e && e.message) || e || "Not saved") })); }
+    h.done.then(r => { if (!fine(r)) return fail(new Error((r && r.error) || "The cloud sent no record")); try { onAnswer(r); } catch (x) { console.warn("[ReviewMark] answer", x); } }, fail);
+    return Promise.resolve({ ok: true, pending: true, rid, mid: h.mid });
+  }
+  const sayRefused = (opts, rid, what, e) => { const msg = `${what} was not kept: ${String((e && e.message) || e || "the cloud said no").replace(/\.$/, "")}.`; try { if (opts && typeof opts.onRefused === "function") return opts.onRefused(msg, e); } catch (_) {} toast(`Order ${rid}: ${msg}`, "bad"); };
 
   function run(rid, kind, body) {
     if (flying.has(rid)) return flying.get(rid);   // a second press joins the one in flight: nothing is written twice
@@ -107,18 +129,15 @@
       // at once: the Review list and every Hold / button that asks isMarked say so while the cloud writes (an older answer of the feed cannot undo it: customWrites)
       put(Object.assign({ key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", review: { state: "open", markedAt: at, markedBy: by }, updatedAtMs: 0, pending: true }, was && was.release ? { release: was.release } : {}, was && was.cancel ? { cancel: was.cancel } : {}, was && was.sheet ? { sheet: was.sheet } : {}));   // (RELHOLD: a release kept on the record stays) (SEALCANCEL, Paul 20 Oct 2026: and a cancel seal)
       seen.set(rid, stateSig(recOf(rid))); emit({ rid, kind: "marked" }); redraw();
-      try {
-        const r = await root.api("charmNestLibrary", { op: "reviewMarkPut", action: "mark", rid, by }, { quiet: true });
-        if (!r || r.error || !r.record) throw new Error((r && r.error) || "The cloud sent no record");
+      return write({ op: "reviewMarkPut", action: "mark", rid, by }, `Hold Order on order ${rid}`, r => {
         put(r.record); seen.set(rid, stateSig(r.record)); told(rid, r.record); redraw();
         // (HOLDORDER, Paul 20 Oct 2026: the line says what the Hold Order button did; its id and data are as before, so an older line still draws its ORDER HELD seal, charm-nest-timeline-ui.js holdOrderNote)
         if (!r.already) line(rid, "Order held by " + by, `rvmark.${rid}.${(r.record.review && r.record.review.markedAt) || at}`, { by });
-        return { ok: true, already: !!r.already, rid };
-      } catch (e) {   // not written: the order goes back to what it was (nothing else was touched)
+      }, e => {   // not written: the order goes back to what it was (nothing else was touched), and the person is told where they pressed
         if (was) put(was); else drop(key);
         seen.set(rid, stateSig(recOf(rid))); emit({ rid, kind: "synced" }); redraw();
-        return { ok: false, rid, error: String((e && e.message) || e || "Not saved") };
-      }
+        if (root.CharmNestStore && root.CharmNestStore.mutate) sayRefused(opts, rid, "Hold Order", e);
+      }, true);
     });
   }
 
@@ -133,17 +152,14 @@
       const done = Object.assign({}, was.review, { state: "done", doneAt: at, doneBy: by, how }, sku ? { sku } : {}, rowKey ? { rowKey } : {});
       put(Object.assign({}, was, { review: done, updatedAtMs: 0, pending: true }));
       seen.set(rid, stateSig(recOf(rid))); emit({ rid, kind: "resolved" }); redraw();
-      try {
-        const r = await root.api("charmNestLibrary", { op: "reviewMarkPut", action: "resolve", rid, by, how, sku, rowKey }, { quiet: true });
-        if (!r || r.error) throw new Error((r && r.error) || "The cloud sent no answer");
+      return write({ op: "reviewMarkPut", action: "resolve", rid, by, how, sku, rowKey }, `Review answered for order ${rid}`, r => {
         if (r.record) { put(r.record); seen.set(rid, stateSig(r.record)); told(rid, r.record); }
         redraw();
         if (!r.already) line(rid, (how === "pick" ? "Review: charm picked" + (sku ? " (" + sku + ")" : "") : how === "other" ? "Review: released to the nesting queue" : "Review: marked OK") + " by " + by, `rvmark.${rid}.done.${at}`, { by, how, sku });
-        return { ok: true, already: !!r.already, rid };
-      } catch (e) {   // not written: it is in Review again
+      }, e => {   // not written: it is in Review again
         put(was); seen.set(rid, stateSig(was)); emit({ rid, kind: "synced" }); redraw();
-        return { ok: false, rid, error: String((e && e.message) || e || "Not saved") };
-      }
+        if (root.CharmNestStore && root.CharmNestStore.mutate) sayRefused(opts, rid, "The Review answer", e);
+      }, false);
     });
   }
 
@@ -159,14 +175,9 @@
     const at = +opts.at > 0 ? +opts.at : Date.now(), id = String(opts.id || `releaseHold:${rid}:${at}`).slice(0, 120), how = String(opts.how || "releaseHold").slice(0, 20), key = keyOf(rid), was = recOf(rid);
     const mine = Object.assign({ at, by, how, id }, opts.path ? { path: String(opts.path).slice(0, 20) } : {});
     put(Object.assign({ key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", hasLabel: false }, was || {}, { release: mine, updatedAtMs: 0, pending: true }));
-    try {
-      const r = await root.api("charmNestLibrary", Object.assign({ op: "reviewMarkPut", action: "release", rid, by, at, id, how }, opts.path ? { path: mine.path } : {}), { quiet: true });
-      if (!r || r.error || !r.record) throw new Error((r && r.error) || "The cloud sent no record");
-      put(r.record); told(rid, r.record);
-      return { ok: true, already: !!r.already, rid };
-    } catch (e) {   // not kept in the cloud: the page keeps what it showed (the run's lines and the timeline still have the release), and says so to the caller
-      return { ok: false, rid, error: String((e && e.message) || e || "Not saved") };
-    }
+    // (not kept in the cloud: the page keeps what it showed (the run's lines and the timeline still have the release), and says so)
+    return write(Object.assign({ op: "reviewMarkPut", action: "release", rid, by, at, id, how }, opts.path ? { path: mine.path } : {}), `Release Hold on order ${rid}`, r => { put(r.record); told(rid, r.record); },
+      e => { if (root.CharmNestStore && root.CharmNestStore.mutate) sayRefused(opts, rid, "The Release Hold seal", e); }, true);
   }
 
   /* SEALCANCEL (Paul, 20 Oct 2026: "every action button stamps and leaves a custom seal beside it ... persisted on the order so the seal travels with it everywhere until its conclusion"):
@@ -182,12 +193,8 @@
     const by = String(opts.by || "").trim().slice(0, 80); if (!by) return { ok: false, rid, error: "No name" };
     const at = +opts.at > 0 ? +opts.at : Date.now(), id = String(opts.id || `cancel:${rid}:${at}`).slice(0, 120), key = keyOf(rid), was = recOf(rid);
     put(Object.assign({ key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", hasLabel: false }, was || {}, { cancel: { at, by, how: "cancel", id }, updatedAtMs: 0, pending: true }));
-    try {
-      const r = await root.api("charmNestLibrary", { op: "reviewMarkPut", action: "cancel", rid, by, at, id, how: "cancel" }, { quiet: true });
-      if (!r || r.error || !r.record) throw new Error((r && r.error) || "The cloud sent no record");
-      put(r.record); told(rid, r.record);
-      return { ok: true, already: !!r.already, rid };
-    } catch (e) { return { ok: false, rid, error: String((e && e.message) || e || "Not saved") }; }   // (the page keeps what it showed; the timeline has the cancel)
+    return write({ op: "reviewMarkPut", action: "cancel", rid, by, at, id, how: "cancel" }, `Cancel Order seal on order ${rid}`, r => { put(r.record); told(rid, r.record); },
+      e => { if (root.CharmNestStore && root.CharmNestStore.mutate) sayRefused(opts, rid, "The Cancel Order seal", e); }, true);   // (the page keeps what it showed; the timeline has the cancel)
   }
   async function uncancel(rid, opts) {
     rid = ridOf(rid); opts = opts || {}; if (!rid) return { ok: false, rid, error: "No order number" };
@@ -195,12 +202,8 @@
     if (!c || +c.undoneAt > 0) return { ok: true, already: true, rid };
     const by = String(opts.by || "").trim().slice(0, 80) || "operator", at = Date.now();
     put(Object.assign({}, was, { cancel: Object.assign({}, c, { undoneAt: at, undoneBy: by }), updatedAtMs: 0, pending: true }));
-    try {
-      const r = await root.api("charmNestLibrary", { op: "reviewMarkPut", action: "uncancel", rid, by, id: String(c.id || "") }, { quiet: true });
-      if (!r || r.error || !r.record) throw new Error((r && r.error) || "The cloud sent no record");
-      put(r.record); told(rid, r.record);
-      return { ok: true, already: !!r.already, rid };
-    } catch (e) { return { ok: false, rid, error: String((e && e.message) || e || "Not saved") }; }
+    return write({ op: "reviewMarkPut", action: "uncancel", rid, by, id: String(c.id || "") }, `Cancel undone on order ${rid}`, r => { put(r.record); told(rid, r.record); },
+      e => { put(was); emit({ rid, kind: "synced" }); if (root.CharmNestStore && root.CharmNestStore.mutate) sayRefused(opts, rid, "Undo of the cancel", e); }, true);
   }
   /* SEALSHEET (Paul, 20 Oct 2026: "every action button stamps and leaves a custom seal beside it, persisted on the order so the seal travels with it everywhere until its conclusion"): the Send to
      Sheet press, kept the way Release Hold and Cancel Order are: on the order's own Review document, sheet { at, by, how: "sheet", id, earlier? } (charmNestLibrary reviewMarkPut action "sheet"),
@@ -221,12 +224,8 @@
     if (cur && cur.id === id) return { ok: true, already: true, rid };
     const earlier = cur ? [Object.assign({}, cur)].concat(Array.isArray(cur.earlier) ? cur.earlier : []).map(e => { const o = Object.assign({}, e); delete o.earlier; return o; }).slice(0, 10) : [];
     put(Object.assign({ key, kind: "reviewMark", category: "Review", receiptId: rid, state: "open", hasLabel: false }, was || {}, { sheet: Object.assign({ at, by, how: "sheet", id }, earlier.length ? { earlier } : {}), updatedAtMs: 0, pending: true }));
-    try {
-      const r = await root.api("charmNestLibrary", { op: "reviewMarkPut", action: "sheet", rid, by, at, id, how: "sheet" }, { quiet: true });
-      if (!r || r.error || !r.record) throw new Error((r && r.error) || "The cloud sent no record");
-      put(r.record); told(rid, r.record);
-      return { ok: true, already: !!r.already, rid };
-    } catch (e) { return { ok: false, rid, error: String((e && e.message) || e || "Not saved") }; }   // (the page keeps what it showed; the send's own record and the timeline have it)
+    return write({ op: "reviewMarkPut", action: "sheet", rid, by, at, id, how: "sheet" }, `Send to Sheet seal on order ${rid}`, r => { put(r.record); told(rid, r.record); },
+      e => { if (root.CharmNestStore && root.CharmNestStore.mutate) sayRefused(opts, rid, "The Send to Sheet seal", e); }, true);   // (the page keeps what it showed; the send's own record and the timeline have it)
   }
   /** (SEALCANCEL) Every order-level seal this order's Review document keeps, oldest first, as stamps any renderer draws by kind (Seal.html, Seal.labelOf(how), Seal.INK[how]): its Release Hold and its Cancel Order (SEALSHEET: and its Send to Sheet). */
   const sealsOf = rid => [released(rid), cancelled(rid), sheetSent(rid)].filter(Boolean).sort((a, b) => a.at - b.at);

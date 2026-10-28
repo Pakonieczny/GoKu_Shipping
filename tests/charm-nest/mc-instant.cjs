@@ -10,7 +10,10 @@
 //   4  30 arrow presses: under 50 ms of key handling in all, the charm 30 nudges further; the check after the run of keys under 50 ms
 //   5  the round handle turned and a corner dragged (30 moves each): p95 under 16 ms a move
 //   6  no write to the cloud from the first press to the last key (no putSheet, no file, no claim beyond the heartbeat); the moves kept on this computer (localStorage)
-//   7  Manual Control off: ONE save (one record write with the new layout, one set of files), the moves where they were put, the local copy gone
+//   7  Manual Control off: ONE patch (sheetLayoutPatch: the moves, the manual mark and the claim given back in one write, from the outbox) and ONE file job (the layout written with its
+//      files once, its label); no read of the sheet before or after; the moves where they were put, the local copy gone (OUTBOX, phase 3, 28 Oct 2026)
+//   9  OUTBOX gates, every function 3 s late: Manual Control on paints in the frame it is pressed in (< 16 ms from the event to the paint) and the first drag moves the charm before the
+//      claim is answered; off paints in its frame too; a session costs 1 claim + 1 patch + 1 file job; a claim another screen holds puts the moves back and says who, in words
 //   8  a reload never loses the moves: what this tab kept for the sheet is back when Manual Control is turned on again ("· 1 unsaved" on the switch), and saved when it is turned off
 //   node tests/charm-nest/mc-instant.cjs     (PW_DIR=<playwright-core's node_modules>, CHROMIUM=<chrome>; MI_LAX=1: print the numbers, do not fail on them)
 const fs = require('fs'), path = require('path');
@@ -58,11 +61,18 @@ const root = path.join(__dirname, '../..');
   let lat = 0, phase = '';
   await page.route(/\/\.netlify\/functions\//, async r => { if (lat) await new Promise(z => setTimeout(z, lat)); return r.continue(); });
   const net = [];
-  page.on('request', r => { const u = r.url(); if (!/\/\.netlify\/functions\//.test(u)) return; let b = {}; try { b = JSON.parse(r.postData() || '{}'); } catch (_) {} net.push({ phase, fn: u.split('/.netlify/functions/')[1].split('?')[0], op: b.op || '', id: (b.sheet && b.sheet.id) || b.id || '', placements: !!(b.sheet && b.sheet.placements), mark: !!(b.sheet && b.sheet.manual && !b.sheet.placements), bytes: (r.postData() || '').length }); });
+  page.on('request', r => { const u = r.url(); if (!/\/\.netlify\/functions\//.test(u)) return; let b = {}; try { b = JSON.parse(r.postData() || '{}'); } catch (_) {} net.push({ phase, fn: u.split('/.netlify/functions/')[1].split('?')[0], op: b.op || '', id: (b.sheet && b.sheet.id) || b.id || '', placements: !!(b.sheet && b.sheet.placements), mark: !!(b.sheet && b.sheet.manual && !b.sheet.placements), ifRev: !!b.ifRev, bytes: (r.postData() || '').length }); });
   page.on('pageerror', e => errors.push('page: ' + String(e.message).slice(0, 200)));
   page.on('console', m => { if (m.type() === 'error' && !/firebase stub|Failed to load resource|ERR_FAILED|net::|status of 4\d\d/.test(m.text())) errors.push('console: ' + m.text().slice(0, 300)); });
   page.setDefaultTimeout(60000);
   const setPhase = async p => { phase = p; await page.evaluate(p => { window.__perf.phase = p; }, p); };
+  // (OUTBOX: the press's own work, its handlers and every promise turn they set off (a chain of 300 turns queued after them ends after theirs), and what the NEXT frame shows; the time to
+  //  that frame is printed too: it adds the wait for the screen's next refresh, up to 16.7 ms, which is no work of the press)
+  const pressPaint = (sel, probe) => page.evaluate(([sel, probe]) => new Promise(res => {
+    const b = document.querySelector(sel), out = {}, t0 = performance.now(); let last = t0, hops = 0; const hop = () => { last = performance.now(); if (++hops < 300) queueMicrotask(hop); };
+    requestAnimationFrame(() => { let shows; try { shows = (0, eval)(probe); } catch (x) { shows = 'threw: ' + x.message; } Object.assign(out, { frame: +(performance.now() - t0).toFixed(2), shows }); setTimeout(() => res(out), 30); });
+    b.click(); out.sync = +(performance.now() - t0).toFixed(2); queueMicrotask(hop); setTimeout(() => { out.ms = +(last - t0).toFixed(2); }, 0);
+  }), [sel, probe]);
   const until = async (fn, ms = 30000, what = '') => { const t0 = Date.now(); for (;;) { let v; try { v = await fn(); } catch (_) { v = false; } if (v) return v; if (Date.now() - t0 > ms) throw new Error('timed out: ' + what); await new Promise(r => setTimeout(r, 60)); } };
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const pct = (a, p) => { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y); return +s[Math.min(s.length - 1, Math.floor(p * s.length))].toFixed(2); };
@@ -122,17 +132,22 @@ const root = path.join(__dirname, '../..');
     await until(() => page.evaluate(() => { const b = document.querySelector('.sheetWin [data-r=manual]'); return b && !b.hidden && b.getAttribute('aria-disabled') === 'false'; }), 20000, 'Manual Control can start');
     await sleep(800);   // (the window has sat idle: its checks are made)
     await setPhase('on');
-    await page.click('.sheetWin [data-r=manual]');
+    lat = 3000;   // (OUTBOX, 9: every function 3 s late from the press to the first drag)
+    const pOn = await pressPaint('.sheetWin [data-r=manual]', "CNManual._MC.on && SheetWin.hopKit.W.el.plate.classList.contains('manual')");
+    check(pOn.ms < 16 && pOn.shows === true, `9 · Manual Control on paints in the frame after the press: ${pOn.ms} ms of work in the press (< 16 ms; ${pOn.sync} ms in its handlers), on in the next frame (${pOn.frame} ms after the press): ${pOn.shows} (every function 3 s late) · load ${load()}`, true);
     await until(() => page.evaluate(() => CNManual._MC.on), 20000, 'Manual Control on'); await sleep(300);
     { const d = await take('on'), worst = Math.max(0, ...d.lt.map(x => x[2])); check(worst < 150, `2 · Manual Control on: longest main-thread block ${worst.toFixed(0)} ms (< 150 ms) · load ${load()}`, true); }
 
     /* ── 3 · a drag ── */
     const onPlate = poolId => page.evaluate(id => { const W = SheetWin.hopKit.W, x = W.byPool.get(id); if (!x) return null; const r = W.el.fx.getBoundingClientRect(), kc = W.k / W.dpr, R0 = W.R / W.dpr; return { x: r.left + R0 + x.p.cxPt * kc, y: r.top + R0 + x.p.cyPt * kc }; }, poolId);
     const cid = SA.charms[8].id, a = await onPlate(SA.charms[8].poolId);
+    const claimedAtPress = await page.evaluate(() => CNManual._MC.claimed || null);
     await setPhase('press'); await page.mouse.move(a.x, a.y); await page.mouse.down(); await sleep(400);
     await setPhase('drag');
     for (let i = 1; i <= 60; i++) await page.mouse.move(a.x + i * 1.2, a.y + i * 0.4);
     await sleep(200);
+    { const moved = await page.evaluate(id => { const q = CNManual._MC.drag && CNManual._MC.drag.show; return !!q; }, cid);
+      check(claimedAtPress === null && moved, `9 · the first drag moved the charm before the claim was answered (claimed when pressed: ${claimedAtPress}; the claim is taken behind the press)`); }
     { const d = await take('drag'), pm = perMove(d), worst = Math.max(0, ...d.lt.map(x => x[2]));
       check(pm.length >= 30 && pct(pm, .95) < 16 && worst < 50, `3 · drag: ${pm.length} moves, work a move p50 ${pct(pm, .5)} ms, p95 ${pct(pm, .95)} ms (< 16 ms), max ${pct(pm, 1)} ms; longest block ${worst.toFixed(0)} ms (< 50 ms) · load ${load()}`, true); }
     await setPhase('drop'); await page.mouse.up(); await sleep(400);
@@ -168,14 +183,21 @@ const root = path.join(__dirname, '../..');
     /* ── 7 · off: one save ── */
     const want = await page.evaluate(id => CNManual._MC.edits.get(id), cid);
     await setPhase('save');
-    await page.click('.sheetWin [data-r=manual]');
-    await until(() => page.evaluate(id => { const sh = CN.allSheets().find(p => p.sheetId === id); return !CNManual._MC.on && !SheetWin.hopKit.W.flow && sh && !sh._manualHold && sh.persistedDone && !sh.dirty; }, SA.id), 120000, 'saved');
-    await sleep(LAT * 3 + 1500);
+    lat = 3000;
+    const pOff = await pressPaint('.sheetWin [data-r=manual]', "!CNManual._MC.on && !!SheetWin.hopKit.W.work && /moved by hand/.test(SheetWin.hopKit.W.work.title)");
+    check(pOff.ms < 16 && pOff.shows === true, `9 · Manual Control off paints in the frame after the press: ${pOff.ms} ms of work in the press (< 16 ms; ${pOff.sync} ms in its handlers), off with its save shown in the next frame (${pOff.frame} ms after the press): ${pOff.shows} (every function 3 s late) · load ${load()}`, true);
+    await until(() => page.evaluate(id => { const sh = CN.allSheets().find(p => p.sheetId === id); return !CNManual._MC.on && !SheetWin.hopKit.W.flow && sh && !sh._manualHold && sh.persistedDone && !sh.dirty; }, SA.id), 240000, 'saved');
+    await until(() => page.evaluate(() => !(window.CharmNestStore && CharmNestStore.pending().length)), 60000, 'the outbox empty');
+    await sleep(3000 * 2 + 1500); lat = LAT;
     const saved = net.filter(n => n.phase === 'save'), layout = saved.filter(n => n.op === 'putSheet' && n.id === SA.id && n.placements), files = saved.filter(n => n.fn === 'charmNestOutput' && n.op === 'finalize'), marks = saved.filter(n => n.op === 'putSheet' && n.id === SA.id && n.mark);
+    const firstLayout = saved.findIndex(n => n.op === 'putSheet' && n.id === SA.id && n.placements), afterFiles = firstLayout < 0 ? [] : saved.slice(firstLayout).filter(n => n.op === 'getSheet' && n.id === SA.id);
+    const patches = saved.filter(n => n.op === 'sheetLayoutPatch'), reads = (firstLayout < 0 ? saved : saved.slice(0, firstLayout)).filter(n => n.op === 'getSheet' && n.id === SA.id), claims = net.filter(n => ['on', 'press', 'drag', 'drop', 'keys', 'turn', 'size', 'save'].includes(n.phase) && n.op === 'manualClaim');
     const rec = st.doc('Charm_Nest_Sheets', SA.id) || {}, p = (rec.placements || []).find(z => z.id === cid);
     const left = await page.evaluate(id => Object.keys(localStorage).filter(k => k.startsWith('cn.mc.draft.' + id + '.')).length, SA.id);
-    // (one save: Manual Control's mark written once; the sheet's record written by that one write of the sheet (the layout, then the links to its files), its files made once)
-    check(marks.length === 1 && layout.length >= 1 && layout.length <= 2 && files.length >= 1 && files.length <= 4, `7 · off: ONE save: ${marks.length} save of the moves, ${layout.length} record writes of the layout (the layout, then its files' links), ${files.length} files made once; ${saved.length} calls in all (${[...new Set(saved.map(n => n.op || n.fn))].join(', ')})`);
+    // (OUTBOX: one patch from the outbox (the moves, the manual mark and the claim given back in one write); the file job: the sheet's record written once with its layout and files (its links), its files made once)
+    check(patches.length === 1 && !marks.length && !reads.length && layout.length >= 1 && layout.length <= 2 && files.length >= 1 && files.length <= 4, `7 · off: ONE patch (${patches.length} sheetLayoutPatch, ${marks.length} separate mark, ${reads.length} reads of the sheet) and ONE file job (${layout.length} record write(s) of the layout with its files, ${files.length} files made once); after the files, the window read the sheet ${afterFiles.length}× (${afterFiles.filter(n => n.ifRev).length} by revision) to show them; ${saved.length} calls in all (${[...new Set(saved.map(n => n.op || n.fn))].join(', ')})`);
+    check(claims.length >= 1 && claims.length <= 2 && !saved.some(n => n.op === 'manualClaim'), `9 · a Manual Control session: ${claims.length} claim (taken behind the press; ${claims.length > 1 ? 'one heartbeat' : 'no heartbeat'}), 1 patch, 1 file job; no claim given back on its own (the patch gives it back)`);
+    check(rec.manualEdit === null && rec.manual && rec.manual.by === 'Tester' && !rec.filesOwed, `7 · the record: the claim given back, the manual mark (${JSON.stringify(rec.manual)}), no files owed once the file job is done`);
     check(!!p && Math.abs(p.cxPt - want.cxPt) < 0.01 && Math.abs(p.cyPt - want.cyPt) < 0.01, `7 · the record holds the charm where it was put (${p && p.cxPt}, ${p && p.cyPt})`);
     check(left === 0, `7 · the local copy is gone once saved`);
 
@@ -194,6 +216,22 @@ const root = path.join(__dirname, '../..');
     await sleep(LAT * 2 + 800);
     const p8 = ((st.doc('Charm_Nest_Sheets', SA.id) || {}).placements || []).find(z => z.id === c8);
     check(!!p8 && Math.abs(p8.cxPt - q8.cxPt) < 0.01, `8 · saved where it was put (${p8 && p8.cxPt})`);
+    /* ── 9 · a claim another screen holds (the window did not know): on at once, the drag made, then the refusal puts it back and says who ── */
+    await switchTo(SB.id); await until(() => drawn(SB.id), 20000, 'B drawn'); await sleep(LAT + 900);
+    await until(() => page.evaluate(() => { const b = document.querySelector('.sheetWin [data-r=manual]'); return b && !b.hidden && b.getAttribute('aria-disabled') === 'false'; }), 30000, 'Manual Control can start on B');
+    st.put('Charm_Nest_Sheets', SB.id, { manualEdit: { by: 'Tess Welder', tab: 'tab-other-1', at: Date.now() } });   // (another screen took it; the window has not read that)
+    lat = 1500;
+    const cB = SB.charms[2], pB0 = await page.evaluate(id => { const x = SheetWin.hopKit.W.byPool.get(id); return { cx: x.p.cxPt, cy: x.p.cyPt }; }, cB.poolId);
+    await page.click('.sheetWin [data-r=manual]');
+    const onAtOnce = await page.evaluate(() => CNManual._MC.on);
+    const b0 = await onPlate(cB.poolId); await page.mouse.move(b0.x, b0.y); await page.mouse.down(); for (let i = 1; i <= 12; i++) await page.mouse.move(b0.x + i * 2, b0.y + i); await page.mouse.up();
+    const movedB = await page.evaluate(id => { const x = SheetWin.hopKit.W.byPool.get(id); return { cx: x.p.cxPt, cy: x.p.cyPt }; }, cB.poolId);
+    await until(() => page.evaluate(() => !CNManual._MC.on), 15000, 'the refusal ends Manual Control');
+    await sleep(300);
+    const after = await page.evaluate(id => { const x = SheetWin.hopKit.W.byPool.get(id); return { cx: x.p.cxPt, cy: x.p.cyPt, said: [...document.querySelectorAll('.mNote, .toast, [role=status], [role=alert]')].map(n => n.textContent).join(' | ') }; }, cB.poolId);
+    lat = LAT; st.put('Charm_Nest_Sheets', SB.id, { manualEdit: null });
+    check(onAtOnce && Math.abs(movedB.cx - pB0.cx) > 1 && Math.abs(after.cx - pB0.cx) < 1e-3 && Math.abs(after.cy - pB0.cy) < 1e-3 && /Tess Welder is moving this sheet's charms by hand on another screen/.test(after.said),
+      `9 · a claim another screen held: on at once (${onAtOnce}), the charm dragged ${(movedB.cx - pB0.cx).toFixed(1)} pt, then put back where it stood, and said where it was pressed: "${(after.said.match(/Tess Welder[^|]*/) || [''])[0].slice(0, 120)}"`);
     check(!errors.length, `no page errors${errors.length ? ': ' + errors.slice(0, 3).join(' | ') : ''}`);
   } catch (e) { failures.push(String(e.stack || e)); console.log('  FAIL ' + (e.stack || e)); }
   await browser.close(); srv.close && srv.close();

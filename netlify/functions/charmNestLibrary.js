@@ -53,6 +53,8 @@ const EngravingSeals = require("../../charm-nest-engraving-seals.js");
 const PoolPieces = require("../../charm-nest-pool-pieces.js");   // the four fields a piece of a mismatched pair carries (side, bodyIndex, groupKey, groupSize) and how an old row is read
 // the one cloud rule for "is this piece on a sheet" (what is authoritative, the take-off in one commit, the repair on read, placementRev)
 const Placement = require("./_charmNestPlacement");
+const Mutations = require("./_charmNestMutations");   // OUTBOX (Paul, 28 Oct 2026): a press sent twice from the page's outbox is written once (its mutation id), and the same field written by two people: the later wins, both are told
+const MID_READ = /^(get|list|ping|lookup|history|check)|(Get|List|Check|Status|Preview|Read|Url|Info)$/;   // (the reads, by the names the page's api() knows them: a mid on one of them is ignored)
 // A run's archived lines keep the readiness policy's decisions as they were when written (op_runArchive); a part written
 // under another version of Readiness.decisions is decided again from its lines when read (decisionsOfRun).
 const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(Readiness.decisions)).digest("hex").slice(0, 16);
@@ -179,7 +181,7 @@ function slim(d) {
 /* The fields of a sheet record that its list entry (slim) and its laser readiness (Readiness.sheet) read, and the lists
    filter on. A list reads only these: the rest of a record (its charms with their outlines, its placements) is most of
    its up to 900 KB, and a list of 500 sheets used to read all of it to send none of it. */
-const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit", "releasedChange"];   // (releasedChange: a set changed after it was released or approved for laser cutting, said on its Library card, Paul 27 Oct 2026)
+const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit", "releasedChange", "filesOwed", "_w"];   // (releasedChange: a set changed after it was released or approved for laser cutting, said on its Library card, Paul 27 Oct 2026)
 /** What the Library's live read (op_laserStatus) reads of a sheet: SLIM_SHEET, and the sheet's own number (readiness labels a sheet that is in no set by it). */
 const LASER_SHEET = SLIM_SHEET.filter(f => f !== "sources").concat(["seq", "sourcesLite"]);
 /** What decides whether a sheet is on the Library's Current list (op_listSheets with excludeDone): archived, completed, its set (filingRecords), the filters and the order. */
@@ -648,7 +650,7 @@ const REV_CAP = 1000, REV_TOUCHED = Symbol("revTouched");   // (FEED, 28 Oct 202
    '*' stays "not known at all". The Library's readers ask about their own kinds only (revQuiet, localAsk): a pool row moving costs them one read more, never
    a full answer. One bumpRev per op, with every name it touched. */
 const FEED_KEY = /^(?:[strcpxoma]:(?:[\w\-]{4,80}|\*)|\*)$/;
-let FEED_TOUCHED = new Set();   // (names touched by code that has no request body at hand, stamp's events: emptied at every request, as DONE_TOUCH)
+let FEED_TOUCHED = new Set(), PLACE_QUIET = false;   // (PLACE_QUIET, OUTBOX: this request wrote nothing a placement answer reads: a sheet's own field patch, op_putSheet)   // (names touched by code that has no request body at hand, stamp's events: emptied at every request, as DONE_TOUCH)
 const feedTouch = keys => { for (const k of keys || []) if (FEED_KEY.test(String(k))) FEED_TOUCHED.add(String(k)); };
 /** The orders of pool ids ("rid_tid_copy") and receipt ids, named p:<order> (at most 300; more is p:*). */
 function feedOrders(b, lists, kind) {
@@ -1046,9 +1048,13 @@ async function op_putSheet(b) {
   for(const key of ['roseProtectedJson','roseStockId','roseRevision','rosePlanJson','rosePlanHash','roseFingerprint','roseCutAt','roseCutRevision'])delete doc[key];
   if (["gold10k","gold14k"].includes(s.metal) && s.solidIncluded === false) Object.assign(doc, {draft:true,setId:null,setSeq:null,sheetIndex:null,label:null});
   const ref = col(SHEETS).doc(s.id);
+  let overwrote = null;
   const refused = await db.runTransaction(async tx => {
     const ex = await tx.get(ref), old = ex.exists ? ex.data() : {};
-    feedOrders(b, [old.poolIds, old.orders, s.poolIds, s.orders]);   // (FEED: where their pieces are moved with this save, a new sheet's too)
+    // (OUTBOX: a patch of the sheet's own fields that no placement answer reads (PIECE_SHEET_FIELDS), its release mark or its label, moves no piece: it names no order, and
+    //  the placement counter stays: only a save that carries what an order's pieces are read from names their orders)
+    if (ex.exists && !old.archived && Object.keys(s).every(k => k === "id" || !PIECE_SHEET_FIELDS.includes(k))) PLACE_QUIET = true;
+    else feedOrders(b, [old.poolIds, old.orders, s.poolIds, s.orders]);   // (FEED: where their pieces are moved with this save, a new sheet's too)
     // an order line goes on a sheet once (Paul, 29 Sep: a design went on its sheet twice): a record that would place one
     // piece twice is refused, in words; one saved so before this check saves as it was, to be put right by hand
     const twice = ids => { const seen = new Set(), dup = new Set(); for (const id of Array.isArray(ids) ? ids : []) if (id) { if (seen.has(id)) dup.add(id); seen.add(id); } return dup; };
@@ -1130,10 +1136,23 @@ async function op_putSheet(b) {
     if (num(old.laserDoneAt) > 0 && decides(Object.assign({}, old, doc)) !== decides(old)) DONE_TOUCH = true;
     // COST (Oct 2026): a saved sheet is current (CURRENT_MARK) unless it was cut and is in no set it waits for (the save never marks or unmarks it)
     doc.current = !(num(old.laserDoneAt) > 0 && !inCommittedSet(Object.assign({}, old, doc)));
+    // OUTBOX (Paul, 28 Oct 2026, decision 4: "the later change wins and the person whose change lost is told"): a patch that says what it saw in the fields it writes (base) is written
+    // all the same when another person wrote one of them since, and its answer names who (overwrote); _w keeps who wrote each such field last
+    if (b.base && typeof b.base === "object" && !Array.isArray(b.base)) {
+      const fields = Object.keys(b.base).filter(f => /^[a-zA-Z]\w{0,40}$/.test(f) && Object.prototype.hasOwnProperty.call(s, f)), cur = {}, want = {};
+      for (const f of fields) { cur[f] = old[f]; want[f] = s[f]; }
+      overwrote = Mutations.overlap(cur, want, b.base, old._w);
+      if (fields.length) doc._w = Mutations.stampFields(old._w, fields, b.by, b.mid, Date.now());
+    }
     tx.set(ref, doc, {merge:true});
     return null;
   });
-  return refused || { ok: true, id: s.id };
+  if (refused) return refused;
+  const ans = { ok: true, id: s.id };
+  if (overwrote && overwrote.length) ans.overwrote = overwrote;
+  // (OUTBOX: an answer to the outbox carries the record's revision as written, so the page's next question by revision is answered "unchanged")
+  if (typeof b.mid === "string") { try { const [p] = await db.getAll(ref, { fieldMask: ["updatedAt"] }); ans.rev = revOf(p); } catch (_) {} }
+  return ans;
 }
 /* The newest sheets, or a run's or a set's, in parts (ANSWER_BYTES): the first part reads the records the list is made of
    (their SLIM_SHEET fields) and sends as many as fit; `next` names the rest in order, and a later part reads those by id.
@@ -1211,6 +1230,61 @@ async function op_manualClaim(b) {
     tx.set(ref, { manualEdit: held }, { merge: true });
     return { ok: true, held };
   });
+}
+/* OUTBOX (Paul, 28 Oct 2026: "every press to feel like a native app ... nothing he presses may wait for the cloud"; plan: phase 3, Manual Control's save as ONE
+   patch and one file job). Manual Control off used to be seven calls in a row (the sheet read again, the layout written with the nest's files, the label,
+   the sheet read back, the manual mark written, the claim given back). The poses moved by hand are now ONE write, sent from the page's outbox, in one
+   transaction here; the sheet's files (.ai, proof, preview, QR label) are made by the page after it, as a job of its own that tries again by itself.
+     sheetLayoutPatch { id, tab, by, poses: { <placement id>: { cxPt, cyPt, angle, scale, wPt?, hPt? } }, pins: { <id>: { pinned, manual } },
+                        base: { <id>: { cxPt, cyPt, angle, scale } } (where each stood when Manual Control was turned on), mark: { at, by, n }, release }
+     → { ok, id, rev, moved, overwrote: [{ field, by, at }], filesOwed } | 409 { refused: 'held' | 'cut' | 'gone' | 'line', held?, error }
+   Refused, in words, as the old save refused: the laser cut it (its ONE lock), another screen holds the sheet (manualEdit, not lapsed), a charm moved by hand
+   left the sheet meanwhile, or a green line still protects the layout (the page sets a line aside first, RoseStock.reopen, as the old save did). A pose another
+   person changed since this one began is written all the same (the later change wins) and named in overwrote, so the page says so; _w keeps who wrote each pose.
+   The record says filesOwed (the time, as a move between sheets says it) until the page's file job has written them and clears it. */
+async function op_sheetLayoutPatch(b) {
+  if (!isId(b.id)) return { error: "bad sheet id" };
+  const tab = str(b.tab, 40).trim(), by = str(b.by, 80).trim() || "operator", now = Date.now();
+  const poses = b.poses && typeof b.poses === "object" ? b.poses : {}, ids = Object.keys(poses).filter(id => /^[\w\-:.~]{1,120}$/.test(id)).slice(0, 400);   // (a placement's id, as the nest names its charms)
+  if (!ids.length) return { error: "no pose to write" };
+  for (const id of ids) { const q = poses[id]; if (!q || !["cxPt", "cyPt", "angle"].every(k => Number.isFinite(+q[k]))) return { error: `bad pose for ${id}` }; }
+  revTouch(b, ["s:" + b.id]);
+  const ref = col(SHEETS).doc(b.id), pins = b.pins && typeof b.pins === "object" ? b.pins : {}, base = b.base && typeof b.base === "object" ? b.base : null;
+  const out = await db.runTransaction(async tx => {
+    const snap = await tx.get(ref); if (!snap.exists) return { error: "This sheet is no longer in the Library.", status: 409, refused: "gone" };
+    const old = snap.data() || {}, name = Placement.labelOf(old) || `Sheet ${b.id}`;
+    if (num(old.laserDoneAt) > 0) return { error: "This sheet has been cut on the laser: its charms can no longer change.", status: 409, refused: "cut" };
+    const cur = old.manualEdit && typeof old.manualEdit === "object" && old.manualEdit.tab ? old.manualEdit : null;
+    if (cur && cur.tab !== tab && now - num(cur.at) < MANUAL_STALE_MS) return { error: `${str(cur.by, 80) || "Someone"} took this sheet on another screen: your moves were not saved there.`, status: 409, refused: "held", held: { by: str(cur.by, 80), at: num(cur.at) } };
+    if (old.roseCutAt) return { error: `${name}'s green line cut is recorded: it is set aside before its charms change. Try again.`, status: 409, refused: "line" };
+    const placements = (Array.isArray(old.placements) ? old.placements : []).map(p => Object.assign({}, p)), charms = (Array.isArray(old.charms) ? old.charms : []).map(c => Object.assign({}, c));
+    const missing = ids.filter(id => !placements.some(p => p && p.id === id) || !charms.some(c => c && c.id === id));
+    if (missing.length) return { error: `${missing.length === 1 ? "A charm" : missing.length + " charms"} moved by hand left ${name} meanwhile: the moves were not saved.`, status: 409, refused: "gone", missing: missing.slice(0, 20) };
+    const pose = p => (p ? { cxPt: +p.cxPt, cyPt: +p.cyPt, angle: +p.angle || 0, scale: +p.scale || 1 } : null), curOf = {}, wantOf = {}, baseOf = {};
+    let moved = 0;
+    for (const id of ids) {
+      const p = placements.find(z => z && z.id === id), q = poses[id], f = "pose:" + id;
+      curOf[f] = pose(p); wantOf[f] = pose({ cxPt: q.cxPt, cyPt: q.cyPt, angle: q.angle, scale: q.scale != null ? q.scale : p.scale });
+      if (base && base[id]) baseOf[f] = pose(Object.assign({ scale: p.scale }, base[id]));
+      if (!Mutations.same(curOf[f], wantOf[f])) moved++;
+      Object.assign(p, { cxPt: +q.cxPt, cyPt: +q.cyPt, angle: +q.angle || 0 }, q.scale != null ? { scale: +q.scale } : {}, Number.isFinite(+q.wPt) && +q.wPt > 0 ? { wPt: +q.wPt } : {}, Number.isFinite(+q.hPt) && +q.hPt > 0 ? { hPt: +q.hPt } : {});
+      const c = charms.find(z => z && z.id === id), pin = pins[id] && typeof pins[id] === "object" ? pins[id] : null;
+      if (pin && pin.pinned && typeof pin.pinned === "object") { c.pinned = { cxPt: +pin.pinned.cxPt, cyPt: +pin.pinned.cyPt, angle: +pin.pinned.angle || 0, ...(Number.isFinite(+pin.pinned.size) && +pin.pinned.size !== 1 ? { size: +pin.pinned.size } : {}) }; delete c.arrivalPin; }
+      if (pin && pin.manual && typeof pin.manual === "object") c.manual = { by: str(pin.manual.by, 80) || by, at: num(pin.manual.at) || now, ...(Number.isFinite(+pin.manual.size) && +pin.manual.size !== 1 ? { size: +pin.manual.size } : {}) };
+    }
+    const protection = require("./_charmNestRoseStock"), guard = protection.protectedLayout(old);
+    try { protection.assertProtected(guard, placements, old.metal); } catch (e) { return { error: `${name}: ${e.message}. Its green line is set aside first; try again.`, status: 409, refused: "line" }; }
+    const overwrote = Mutations.overlap(curOf, wantOf, base ? baseOf : null, old._w);
+    const doc = { placements, charms, updatedAt: FV.serverTimestamp(), _w: Mutations.stampFields(old._w, ids.map(id => "pose:" + id), by, b.mid, now) };
+    if (b.mark && typeof b.mark === "object") doc.manual = { at: num(b.mark.at) || now, by: str(b.mark.by, 80) || by, n: num(b.mark.n) || ids.length };
+    if (b.release === true && (!cur || cur.tab === tab)) doc.manualEdit = null;
+    if (moved) doc.filesOwed = now;   // (as a move between sheets marks it: the page's file job clears it once the files are written, putSheet { filesOwed: null })
+    if (old.rosePlanJson && protection.fingerprint && protection.fingerprint({ placements, charms }) !== old.roseFingerprint) Object.assign(doc, { rosePlanJson: null, rosePlanHash: null, roseFingerprint: null });
+    tx.set(ref, doc, { merge: true });
+    return { ok: true, id: b.id, moved, overwrote, filesOwed: moved ? doc.filesOwed : (old.filesOwed || null) };
+  });
+  if (out && out.ok) { try { const [p] = await db.getAll(ref, { fieldMask: ["updatedAt"] }); out.rev = revOf(p); } catch (_) {} }   // (the record's revision as written: the page keeps it, and its next question by revision answers "unchanged")
+  return out;
 }
 async function op_getSheet(b) {
   if (!isId(b.id)) return { error: "bad id" };
@@ -2135,7 +2209,8 @@ const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces
 ["customSaveGet", "customSaveCommit", "customSavePending", "customSaveIntent"].forEach(op => NO_GEN_BUMP.add(op));   // (the save writes a master entry, an alias and its own record: nothing a placement answer is made from)
 NO_GEN_BUMP.add("getMany");   // (LOCAL: several records read in one call, see LOCAL_READS; read only)
 ["changes", "getChanges"].forEach(op => NO_GEN_BUMP.add(op));   // (FEED: what moved since a count, see op_changes; read only. getChanges is the name the page sends: a read by every read rule the page and its checks know, get…)
-NO_GEN_BUMP.add("manualClaim");   // (Manual Control's claim writes the sheet record's manualEdit alone: nothing a placement answer is made from)
+NO_GEN_BUMP.add("manualClaim");
+NO_GEN_BUMP.add("sheetLayoutPatch");   // (OUTBOX: Manual Control's poses on one sheet: where a piece is (its sheet) never changes with it, so no placement answer moves)   // (Manual Control's claim writes the sheet record's manualEdit alone: nothing a placement answer is made from)
 ["customPut", "customReopen", "customDelete", "customDecide", "customSheetPut", "reviewMarkPut"].forEach(op => NO_GEN_BUMP.add(op));   // (COST, Oct 2026: a Complete Order, a QR print, a Review mark, a decision and a custom design sent to a sheet write Charm_Custom_Orders / Charm_Custom_Sheet / Charm_Nest_CustomRead and the order's timeline, never a pool row or a sheet; a placement answer is made from those two alone, and the page that pressed learns of its own press without a read. Each press used to send every watching tab to a full read of the orders on screen)
 async function placementGen() {
   // (the sandbox's gen is a number drawn at random at each raise, g: it never repeats one a page holds, even after a reset deleted the document and the counting began again)
@@ -4605,7 +4680,7 @@ function cancelCopy(r) {
   if (!fits()) for (const k of Object.keys(x)) if (!["orderId", "by", "why", "at", "source", "etsyStatus", "etsyAt"].includes(k)) delete x[k];
   return x;
 }
-const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, manualClaim: op_manualClaim, listSheets: op_listSheets, getSheet: op_getSheet, getMany: op_getMany, changes: op_changes, getChanges: op_changes, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
+const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, sheetLayoutPatch: op_sheetLayoutPatch, manualClaim: op_manualClaim, listSheets: op_listSheets, getSheet: op_getSheet, getMany: op_getMany, changes: op_changes, getChanges: op_changes, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, masterRemoveSkus: op_masterRemoveSkus, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxPullOrders: op_sandboxPullOrders, sandboxPullLimitSet: op_sandboxPullLimitSet, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
@@ -5304,7 +5379,7 @@ function feedKeys(body, failed) {
   for (const k of FEED_OP_NAMES[op] || []) keys.add(k);
   if (REV_OPS.has(op) && (failed || !named)) keys.add("*");
   for (const k of named || []) keys.add(k);
-  if (!NO_GEN_BUMP.has(op) && ![...keys].some(k => k === "*" || k[0] === "p")) keys.add("p:*");
+  if (!NO_GEN_BUMP.has(op) && !(PLACE_QUIET && !failed) && ![...keys].some(k => k === "*" || k[0] === "p")) keys.add("p:*");
   return [...keys];
 }
 /** FEED: what the op named, in a response header, so the page that wrote tells the other tabs of its computer at once (charm-nest-sync-worker.js wrote):
@@ -5323,7 +5398,7 @@ exports.handler = async (event) => {
   // (Paul, 9 Oct 2026: Anna and Ana_M are one person. Whoever the sorter says is on duty, a new record keeps the one login name, Ana_M: _activityKinds.js loginName; no read, nothing stored is changed)
   if (typeof body.by === "string") { try { body.by = require("./_activityKinds").loginName(body.by); } catch (_) {} }
   PREFIX = body.sandbox === true || body.sandbox === 1 || body.sandbox === "1" ? "Sandbox_" : "";
-  DONE_TOUCH = false; FEED_TOUCHED = new Set();
+  DONE_TOUCH = false; FEED_TOUCHED = new Set(); PLACE_QUIET = false;
   // the Charm Repo's password door (_charmNestRepoAuth.js; plans/repo-protect-1011): its own ops (unlock, the Alert, the download link), then the
   // token every upload / delete / modify of the repository needs. This is the HTTP door only: code that calls OPS in-process is not asked.
   const RepoAuth = require("./_charmNestRepoAuth");
@@ -5334,16 +5409,25 @@ exports.handler = async (event) => {
   { const need = RepoAuth.requirement("charmNestLibrary", body.op, body); if (need) { const no = await RepoAuth.authorize(db, need, body, event); if (no) return json(no.status, no.body); } }
   // ZODGO (13 Oct 2026): an op that writes a listing's Etsy inventory (listingEtsySkuWrite) is refused for a listing whose ZODIAC SIGN drop-down was sent or may have landed: one Firestore read after the password door, nothing sent; see _charmNestEtsyZodiac.js "THE FENCE"
   { const fenced = await require("./_charmNestEtsyZodiac").fenceFor(body.op, body); if (fenced) return json(200, fenced); }
+  // OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"): a press the page sent from its outbox carries its mutation id; sent again (the page closed
+  // mid-request, the network dropped), it is written once and the first answer comes back (_charmNestMutations.js). A write without one goes as before.
+  const ledger = typeof body.mid === "string" && !MID_READ.test(body.op) ? await Mutations.begin(db, PREFIX, body.mid, { op: body.op, by: body.by, Timestamp: admin.firestore.Timestamp }) : null;
+  if (ledger && ledger.replay) { const res = json(ledger.replay.status, Object.assign({}, ledger.replay.out, { replayed: true })), fh = ledger.replay.out && ledger.replay.out.feed; if (fh) res.headers = Object.assign({}, res.headers, { "X-CN-Feed": String(fh), "Access-Control-Expose-Headers": "X-CN-Feed" }); return res; }
+  if (ledger && ledger.busy) return json(409, { error: "This change is being written already: it is sent again in a moment", inFlight: true, retry: true });
   try {
     const out = await fn(body), checked = body.op === "purgeHistory" && !!out && out.check === true, quiet = checked || sbQuiet(body.op, out);   // (checked: the purge's question first, which deleted and wrote nothing: no counter moves for it)
-    if (!quiet) await bumpPlacementGen(body.op);   // (after the op's writes have landed, before the answer: whoever sees the answer then reads the new gen)
+    if (!quiet && !PLACE_QUIET) await bumpPlacementGen(body.op);   // (after the op's writes have landed, before the answer: whoever sees the answer then reads the new gen)
     if (!checked && (DONE_TOUCH || DONE_BUMP_OPS.has(body.op))) await bumpDoneRev(body.op);
     // the Library's revision moves after a write it reads (see readRev: the readers' one-document question); after an error too, a write may have landed before it
     // (COST, Oct 2026: naming what the op wrote, when it says: revTouch; an op that wrote nothing the Library reads moves nothing)
     // (FEED, 28 Oct 2026: and what the changes feed names, one bumpRev per op with all of it: feedKeys)
     const named = quiet ? [] : feedKeys(body, false);
     const counts = named.length ? await feedBump(named) : null;   // (FEED: best-effort and bounded, never the person's write)
-    const res = json(out && out.error ? (out.status || 400) : 200, out);
+    const status = out && out.error ? (out.status || 400) : 200;
+    // (OUTBOX: an answer to a press from the outbox is kept with its names, so a resend's replayed answer tells the feed the same: X-CN-Feed below)
+    if (ledger && out && typeof out === "object" && !Array.isArray(out)) { out.mid = body.mid; if (named.length) out.feed = feedHeader(named, counts); }
+    await Mutations.end(ledger, status, out);
+    const res = json(status, out);
     if (named.length) res.headers = Object.assign({}, res.headers, { "X-CN-Feed": feedHeader(named, counts), "Access-Control-Expose-Headers": "X-CN-Feed" });   // (FEED: what it named, for the other tabs of the computer that wrote)
     return res;
   } catch (e) {
@@ -5351,6 +5435,7 @@ exports.handler = async (event) => {
     if (DONE_TOUCH || DONE_BUMP_OPS.has(body.op)) await bumpDoneRev(body.op);
     console.error("[charmNestLibrary]", body.op, e);
     await feedBump(feedKeys(body, true));
+    await Mutations.drop(ledger);   // (OUTBOX: a press that threw keeps nothing: sent again, it runs again)
     return json(500, { error: e.message || String(e) });
   }
 };

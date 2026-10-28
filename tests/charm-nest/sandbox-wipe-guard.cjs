@@ -101,6 +101,10 @@ async function session(sb) {
   await L({ op: 'manualClaim', id: SHEET, tab: 'tab-guard-1', by: 'paul' });
   await L({ op: 'manualClaim', id: SHEET, tab: 'tab-guard-1', by: 'paul' });   // (kept alive)
   await L({ op: 'manualClaim', id: SHEET, tab: 'tab-guard-1', release: true });
+  // OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"): Manual Control's save is ONE patch sent from the page's outbox with its mutation id (Charm_Nest_Mutations, a server family:
+  // the sandbox's copy is wiped), sent twice as a page closed mid-request sends it: written once
+  await L({ op: 'putSheet', sheet: { id: SHEET, placements: [{ id: 'gc-mc-1', cxPt: 40, cyPt: 40, angle: 0, scale: 0.971 }], charms: [{ id: 'gc-mc-1', poolId: `${A}_10010_1`, order: A }] } });
+  for (let i = 0; i < 2; i++) await L({ op: 'sheetLayoutPatch', id: SHEET, tab: 'tab-guard-1', by: 'paul', poses: { 'gc-mc-1': { cxPt: 44, cyPt: 41, angle: 15 } }, pins: { 'gc-mc-1': { pinned: { cxPt: 44, cyPt: 41, angle: 15 }, manual: { by: 'paul', at: NOW } } }, mark: { at: NOW, by: 'paul', n: 1 }, release: true, mid: `guard-${sb ? 'sb' : 'pr'}-mc-1` });
   await L({ op: 'flowApply', by: 'Paul', steps: [{ type: 'hold', sheetIds: [SHEET2], note: 'check the back' }] });
   await L({ op: 'flowApply', by: 'Paul', steps: [{ type: 'release', sheetIds: [SHEET2] }] });
   // a laser-ready set (every line, file and QR present: the same fixture server-stamps.cjs uses): cut a sheet, undo it, cut the set, seal a sheet
