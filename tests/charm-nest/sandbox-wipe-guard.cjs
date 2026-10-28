@@ -162,6 +162,7 @@ async function session(sb) {
   await L({ op: 'cancelRestore', orderId: A, by: 'paul' });
   if (sb) await L({ op: 'sandboxCancel', orderId: B, by: 'paul' }); else await L({ op: 'cancelPut', orderId: B, by: 'paul', why: 'sandbox twin' });
   await L({ op: 'timelineAdd', events: [{ orderId: A, type: 'qrLabel', id: 'q1', text: 'QR label for GF Sheet 1', by: 'paul' }, { orderId: B, type: 'designSent', id: 'ds1', text: 'sent', by: 'paul' }, { orderId: C, type: 'note', id: 'n1', text: 'note', by: 'paul' }] });
+  await L({ op: 'designLog', records: [{ id: 'dl-guard-1', kind: 'fixPiece', by: 'paul', customId: 'CUSTOM-20261028-1', customName: 'guard piece', reason: 'a mistake', metal: 'gold', fix: { orderId: A, causedBy: 'Eve' }, sandbox: !!sb }] });   // (DESIGN LOG, 28 Oct 2026: Design_Log, employee efficiency: kept by the wipe, see charm-nest-sandbox-families.js)
   // ── the learned maps ──
   // REVLINK (12 Oct 2026): a person's PICK of a charm is saved for good, in the sandbox too: the shared store (Charm_Sku_Aliases, Charm_Option_Map field design), never the sandbox's copy. The sandbox picks on ITS OWN listing here, so what
   // production saved stays byte-identical; the picks must be in the shared store after the session, survive the wipe, and the master designs they name are the library's (BR-TST-01 / BR-TST-02)

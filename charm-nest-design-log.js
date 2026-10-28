@@ -194,7 +194,7 @@
   }
 
   /* ── the records' door: charmNestLibrary op designLog ── */
-  let sending = null, backoff = options.retryMs, retryTimer = 0;
+  let sending = null, backoff = 0, retryTimer = 0;     // (backoff 0: the next wait is options.retryMs)
   function post(body, final) {
     const sb = !!body.sandbox;
     if (!final && root.CN && typeof root.CN.api === "function" && sb === sandboxNow()) return root.CN.api("charmNestLibrary", body, { quiet: true });   // (the page's own door: its passcode, the sandbox tag, the reset's guard)
@@ -213,10 +213,10 @@
     sending = Promise.resolve().then(() => post({ op: "designLog", records: batch, sandbox: sb }, final)).then(() => {
       const done = new Set(batch.map(r => r.id + "|" + JSON.stringify(r)));
       records = records.filter(r => !done.has(r.id + "|" + JSON.stringify(r)));      // (a record changed while it was on its way, a fix merged into it, stays for the next send)
-      ls.set(boxKey(sb), records); backoff = options.retryMs;
+      ls.set(boxKey(sb), records); backoff = 0;
       if (records.some(r => !!r.sandbox === sb)) retryTimer = setTimeout(() => send(false), 50);
     }, e => {
-      if (!final) { retryTimer = setTimeout(() => send(false), backoff); backoff = Math.min(backoff * 2, options.maxRetryMs); }
+      if (!final) { const ms = backoff || options.retryMs; retryTimer = setTimeout(() => send(false), ms); backoff = Math.min(ms * 2, options.maxRetryMs); }
       warn("custom piece records not sent yet, retrying:", e && e.message);
     }).finally(() => { sending = null; });
     return sending;
@@ -235,7 +235,8 @@
     const j = await T.get(id);
     const rank = new Map(BLAME.map(([t], i) => [t, i])), said = new Map(BLAME);
     const evs = (j && Array.isArray(j.events) ? j.events : []).filter(e => e && rank.has(e.type) && nameOf(e.by) && !NOBODY.test(String(e.by).trim()) && !(e.data && e.data.fix) && (!o.lineKey || !e.lineKey || e.lineKey === o.lineKey));
-    evs.sort((a, b) => rank.get(a.type) - rank.get(b.type) || (Number(b.at) || 0) - (Number(a.at) || 0));
+    const own = e => (o.lineKey && e.lineKey === o.lineKey ? 0 : 1);     // (the line's own step before one of the whole order)
+    evs.sort((a, b) => rank.get(a.type) - rank.get(b.type) || own(a) - own(b) || (Number(b.at) || 0) - (Number(a.at) || 0));
     const seen = new Set(), candidates = [];
     for (const e of evs) { const k = nameOf(e.by) + "|" + e.type; if (seen.has(k)) continue; seen.add(k); candidates.push({ name: nameOf(e.by), step: said.get(e.type), type: e.type, at: Number(e.at) || 0 }); }
     const top = candidates[0];

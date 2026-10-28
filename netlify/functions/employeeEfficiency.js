@@ -339,6 +339,11 @@ function covered(spans) {
 /* ── the people: rollups + sessions + seals, per person per day ── */
 const tmpl = () => ({ scans: 0, scanParts: 0, completes: 0, parts: 0, orders: 0, prints: 0, rejects: 0, errors: 0, notes: 0, undos: 0, undoParts: 0, undoOrders: 0, activeMs: 0, idleMs: 0, matched: 0 });
 const KEYS = Object.keys(tmpl());
+/* Design & Engrave (Paul, 28 Oct 2026: "all of this must be tracked by employee, and I need to know when employees are commissioning custom pieces"): the design log's
+   counters of a person's day (_activityKinds.js designOf): opened, saved, imported or traced, custom pieces sent, of them with no order, fix pieces. Folded into a person's
+   totals as `design` (People and the person's page show them beside the pieces); the pieces themselves, with who made a mistake and who fixed it, are op custom. */
+const DESIGN_KEYS = KIND.DESIGN_X_KEYS || [];
+const designTotals = dx => { const t = { opened: num(dx.x_dopen), saved: num(dx.x_dsave), imported: num(dx.x_dimp), custom: num(dx.x_cust), orderless: num(dx.x_custNo), fixes: num(dx.x_fix) }; return Object.values(t).some(v => v > 0) ? t : null; };
 const newPD = day => ({ day, src: "", st: {}, hours: zeros(24), hs: {}, orders: new Map(), spans: [], inFirst: 0, inLast: 0, signedMs: 0, rawMs: 0, stMs: {}, taskMs: {}, dv: {}, dvMs: {}, firstIn: 0, lastOut: 0, liveSpan: false });
 const dvAgg = (pd, dk) => pd.dv[dk] || (pd.dv[dk] = { parts: 0, scans: 0, fin: 0, ids: new Set(), lastAt: 0 });   // one desk of a numbered station, one person-day
 const stAgg = (pd, st) => pd.st[st] || (pd.st[st] = tmpl());
@@ -401,6 +406,7 @@ async function assemble(ctx, winFrom, toDay) {
         const st = displayStation(st0);                                    // (counters stored under "sorter" or "qr" add to Sorting)
         const v = KIND.readStationCounters(st, v0);                          // (the Welding station keeps its scans, time and matched count, never pieces, orders or completions)
         const a = stAgg(pd, st); for (const k of KEYS) a[k] += Math.max(0, num(v[k]));
+        for (const k of DESIGN_KEYS) if (num(v0[k]) > 0) { const dx = pd.dx || (pd.dx = {}); dx[k] = (dx[k] || 0) + num(v0[k]); }   // (Design & Engrave: the design steps and custom pieces of the day, see designTotals)
         const ob = pd.ob || (pd.ob = {}), o = ob[st] || (ob[st] = {}); o[st0] = (o[st0] || 0) + Math.max(0, num(v.orders) - num(v.undoOrders));
         const fa = ms(v.firstAt), la = ms(v.lastAt);
         if (fa > 0 && (!pd.inFirst || fa < pd.inFirst)) pd.inFirst = fa;
@@ -538,9 +544,11 @@ function summarize(pds) {
     active += a; activeTp += at; idle += i;
   }
   const parts = sum("parts"), scans = sum("scans");
+  const dx = {}; for (const pd of pds) for (const [k, v] of Object.entries(pd.dx || {})) dx[k] = (dx[k] || 0) + v;
   const workIds = [...ids.values()].filter(isWork).length, ordersFin = stations.reduce((n, x) => n + (x.station === "inbox" ? 0 : x.orders), 0);
   const totals = { parts, scanParts: sum("scanParts"), scans, orders: ids.size ? workIds : ordersFin, rejects, errors, activeMin: r1(active / 60000), idleMin: r1(idle / 60000), signedInMin: r1(signed / 60000),
     rate: activeTp >= 60000 ? r1(parts / (activeTp / 3600000)) : 0, secPerScan: evScans > 0 && active > 0 ? r1(active / 1000 / evScans) : 0 };   // (seal scans carry no time: only logged scans divide the active time)
+  const design = designTotals(dx); if (design) totals.design = design;     // (only when there was design work: every other answer reads exactly as before)
   const source = hasE && hasS ? "mixed" : hasE ? "events" : hasS ? "seals" : hasAny || signed > 0 ? "sessions" : "none";
   // the desks of the numbered stations (Assembly 1..4, Shipping 1..3): time signed in at each (sessions, any day), and what the desk's own counters say (events written since desks were told apart)
   const devices = Object.keys(dv).map(dk => ({ station: dk.split("-")[0], device: dk, minutes: r1(dv[dk].ms / 60000), parts: dv[dk].parts, scans: dv[dk].scans, orders: dv[dk].ids.size + dv[dk].short }))
@@ -782,6 +790,82 @@ const INBOX = require("./_employeeInbox");
 INBOX.bind({ cleanName, okName, niceName, bestForm, nameKeyOf, canonOf, num, validDay, addDays, nyDay, nyMidnight, cached, safe, json, resolveRange: PROFILE.resolveRange, RANGE_DAYS: PROFILE.RANGE_DAYS, DAILY_MAX: PROFILE.DAILY_MAX });
 OPS.inbox = INBOX.opInbox;
 OPS.personInbox = INBOX.opPersonInbox;
+/* op "custom" { day, days } (Design & Engrave items 35 to 37 and D7; Paul, 28 Oct 2026: "I need to know when employees are commissioning custom pieces, especially when
+   they don't belong to an order that way we can correctly track our rates and who creates the errors and who is creating the solutions"): the Custom pieces view.
+   Every custom piece sent in the days (Design_Log, _designLog.js: who, when, metal, the order or "no order" with its name and reason, a fix with who made the mistake),
+   and per person and per day: pieces commissioned, with no order, fixes made, mistakes put down to them, and the orders they worked (the rollups the overview already
+   reads, kept in the same cache) so a mistake reads as a rate. Two reads: one range of Design_Log records (kept 5 s while the range is live, 10 min for past days) and the
+   rollups (shared with the overview). Nothing is written. */
+const DLOG = require("./_designLog");
+async function opCustom(ctx, body) {
+  let to = body.day == null || body.day === "" ? ctx.today : String(body.day);
+  if (!validDay(to)) return json(400, { ok: false, error: "day must be YYYY-MM-DD" });
+  if (to > ctx.today) to = ctx.today;
+  const n = Math.floor(num(body.days)), days = n >= 1 ? Math.min(62, n) : 1, from = addDays(to, -(days - 1));
+  const live = to >= addDays(ctx.today, -1);      // (a record queued offline may still arrive for yesterday)
+  const [lr, rr] = await Promise.all([
+    safe(cached(ctx, `dlog|${ctx.prefix}|${from}|${to}`, live ? TTL_LIVE : TTL_PAST, () => DLOG.list(ctx.db, { prefix: ctx.prefix, from, to })), "custom pieces"),
+    safe(readRollups(ctx, from, to), "rollups")]);
+  if (!lr.ok) return json(503, { ok: false, error: "the custom pieces could not be read just now", errors: [lr.error] });
+  const errors = rr.ok ? [] : ["rollups: " + rr.error], capped = [];
+  if (lr.value.capped) capped.push("custom pieces");
+  if (rr.ok && rr.value.capped) capped.push("rollups");
+  const shown = raw => { const nm = cleanName(raw); return okName(nm) ? canonOf(ctx, nameKeyOf(ctx, nm)) || niceName(nm) : ""; };
+  const people = new Map();
+  const person = raw => {
+    const nm = cleanName(raw); if (!okName(nm)) return null;
+    const key = nameKeyOf(ctx, nm); let p = people.get(key);
+    if (!p) people.set(key, p = { name: shown(nm), sent: 0, pieces: 0, orderless: 0, fixes: 0, caused: 0, changed: 0, orders: new Set(), opened: 0, saved: 0, imported: 0, days: new Set() });
+    return p;
+  };
+  const byDay = new Map(dayList(from, to).map(d => [d, { day: d, sent: 0, pieces: 0, orderless: 0, fixes: 0, caused: 0 }]));
+  const pieces = [];
+  for (const x of lr.value.rows) {
+    const p = person(x.by); if (!p) continue;
+    const isFix = !!(x.fix && typeof x.fix === "object") || x.kind === "fixPiece", qty = Math.max(1, Math.floor(num(x.quantity)) || 1), orderless = !digits(x.orderId);
+    p.sent++; p.pieces += qty; if (orderless) p.orderless++; if (isFix) p.fixes++; p.days.add(x.day);
+    const d = byDay.get(x.day); if (d) { d.sent++; d.pieces += qty; if (orderless) d.orderless++; if (isFix) d.fixes++; }
+    let fix = null;
+    if (isFix) {
+      const f = x.fix || {}, cause = person(f.causedBy), sug = shown(f.suggested);
+      if (cause) { cause.caused++; if (d) d.caused++; }
+      fix = { orderId: digits(f.orderId) || "", customId: String(f.customId || ""), poolId: String(f.poolId || ""), causedBy: cause ? cause.name : "", suggested: sug, why: scrub(f.why) };
+      if (cause && sug && sug !== cause.name) { fix.changed = true; p.changed++; }     // (the person changed who the order's history suggested)
+    }
+    if (pieces.length < 400) pieces.push({ id: String(x.id), at: num(x.at), day: String(x.day), by: p.name, station: String(x.station || ""), orderId: digits(x.orderId) || "", orderless, customId: String(x.customId || ""),
+      customName: scrub(x.customName), reason: scrub(x.reason), designId: String(x.designId || ""), version: num(x.version) || null, name: scrub(x.name), sku: scrub(x.sku), metal: String(x.metal || ""), quantity: qty,
+      poolIds: Array.isArray(x.poolIds) ? x.poolIds.slice(0, 12).map(String) : [], fix });
+  }
+  // the rollups: the orders each person worked (the overview's rule: a station that counts, the inbox apart) and their design steps, for the people above and the rates
+  if (rr.ok) for (const r of rr.value.docs) {
+    if (r.person === KIND.UNATTRIBUTED || !validDay(r.day)) continue;
+    const key = nameKeyOf(ctx, cleanName(r.person)), p = people.get(key);
+    let dx = null;
+    for (const [st0, v0] of Object.entries(r.stations && typeof r.stations === "object" ? r.stations : {})) if (okStation(st0) && v0 && typeof v0 === "object") for (const k of DESIGN_KEYS) if (num(v0[k]) > 0) (dx || (dx = {}))[k] = ((dx && dx[k]) || 0) + num(v0[k]);
+    const t = dx && designTotals(dx);
+    if (!p && !t) continue;                           // (somebody with no design work and no custom piece is not listed here)
+    const q = p || person(r.person); if (!q) continue;
+    if (t) { q.opened += t.opened; q.saved += t.saved; q.imported += t.imported; }
+    for (const [id, m] of Object.entries(r.touched && typeof r.touched === "object" ? r.touched : {})) {
+      const oid = digits(id); if (!oid || !m || typeof m !== "object") continue;
+      if (Object.keys(m).some(k => m[k] && okStation(k) && displayStation(k) !== "inbox" && KIND.throughput(displayStation(k)))) q.orders.add(oid);
+    }
+  }
+  const rate = (a, b) => (b > 0 ? Math.round(a / b * 1000) / 10 : null);         // a percentage with one decimal, or null when there is nothing to divide by
+  const list = [...people.values()].map(p => ({ name: p.name, sent: p.sent, pieces: p.pieces, orderless: p.orderless, fixes: p.fixes, caused: p.caused, changed: p.changed, orders: p.orders.size,
+    opened: p.opened, saved: p.saved, imported: p.imported, perDay: days > 1 ? Math.round(p.sent / days * 10) / 10 : p.sent, errorRate: rate(p.caused, p.orders.size), orderlessShare: rate(p.orderless, p.sent) }))
+    .sort((a, b) => b.sent - a.sent || b.caused - a.caused || b.fixes - a.fixes || a.name.localeCompare(b.name));
+  const tot = { sent: 0, pieces: 0, orderless: 0, fixes: 0, caused: 0 };
+  for (const d of byDay.values()) for (const k of Object.keys(tot)) tot[k] += d[k];
+  tot.people = list.filter(p => p.sent > 0).length;
+  const notes = [];
+  if (capped.length) notes.push("Some lists were cut at their size limit: " + capped.join(", ") + ".");
+  if (lr.value.rows.length > pieces.length) notes.push(`Showing the newest ${pieces.length} pieces of ${lr.value.rows.length}.`);
+  const out = { ok: true, now: ctx.now, from, to, days, pieces, people: list, byDay: [...byDay.values()], totals: tot, notes };
+  if (errors.length || capped.length) { out.partial = true; if (errors.length) out.errors = errors; }
+  return json(200, out);
+}
+OPS.custom = opCustom;
 /* COST (Oct 2026): `ifRev` → `unchanged`. The console asks for op live every few seconds and the overview every ten; a warm instance answers them
    from its memo for about one read (the revision), but a call that lands on another instance rebuilt the whole answer (the overview cold ~1 300
    reads). Every answer of these two ops now carries `rev`: what it was asked for (scope), the employee revision it was read under (Station_Rev,

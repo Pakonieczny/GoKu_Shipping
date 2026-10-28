@@ -8234,8 +8234,9 @@ let effWanted = 0, effWantedHash = "";
    page loads them now, once the server has said it is his (or his tab is asked for). They mount themselves on #efficiencyView
    when they arrive (charm-nest-efficiency.js), the tab already shown included; another person signing in later is put away by
    the console's own watch, as before. The tokens are the ones the tags had, in the tags' order. */
-const EFF_FILES = ["charm-nest-efficiency-charts.js?v=20261006-efc4-pb1", "charm-nest-efficiency-stations.js?v=20261006-es11-fx1-sb1-dk1-ps1-rlp2-cost18", "charm-nest-efficiency.js?v=20261006-ef17-fx1-sb1-dk1-wh1-ma1-cost18",
-  "charm-nest-efficiency-orders.js?v=20261006-eo6-in2-rlp2-cost18", "charm-nest-efficiency-laser.js?v=20261006-int2-cost18", "charm-nest-efficiency-person.js?v=20261006-ep14-ad4-cost18"];
+const EFF_FILES = ["charm-nest-efficiency-charts.js?v=20261006-efc4-pb1", "charm-nest-efficiency-stations.js?v=20261006-es11-fx1-sb1-dk1-ps1-rlp2-cost18", "charm-nest-efficiency.js?v=20261006-ef17-fx1-sb1-dk1-wh1-ma1-cost18-dl1",
+  "charm-nest-efficiency-orders.js?v=20261006-eo6-in2-rlp2-cost18", "charm-nest-efficiency-laser.js?v=20261006-int2-cost18", "charm-nest-efficiency-person.js?v=20261006-ep14-ad4-cost18",
+  "charm-nest-efficiency-custom.js?v=20261028-dl1"];   // (Design & Engrave, Paul 28 Oct 2026: the Custom pieces tab, op custom)
 let effLoading = null;
 const loadEfficiency = () => effLoading ||= cnLoadScript(...EFF_FILES).catch(e => { effLoading = null; console.warn("Employee efficiency", e); toast("Employee efficiency did not load: " + e.message, "bad", 6000); return false; });
 window.addEventListener("charmnest:master-admin", () => {

@@ -48,7 +48,7 @@ function nyDay(t) {
 function clean(r, now, prefix) {
   if (!r || typeof r !== "object" || Array.isArray(r)) return null;
   if (typeof r.sandbox === "boolean" && r.sandbox !== !!prefix) return null;     // (a record keeps the store it was made for)
-  const id = typeof r.id === "string" && /^dl-[\w.:-]{4,96}$/.test(r.id) ? r.id : "";
+  const id = typeof r.id === "string" && /^dl-[\w.:-]{1,96}$/.test(r.id) ? r.id : "";
   const by = nameOf(r.by);
   if (!id || !by) return null;
   const c0 = Number(r.clientAt), at = Number.isFinite(c0) && c0 > 1e12 && c0 <= now && now - c0 <= MAX_AGE_MS ? Math.round(c0) : now;
