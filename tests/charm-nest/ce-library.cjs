@@ -143,6 +143,10 @@ const STANDINS = `(function () {
   };
   const openIt = async page => {
     await page.evaluate(() => { try { localStorage.removeItem('ce.xpanel'); } catch (_) {} window.openEditor(); });
+    // (at 1280 px the panel waits for the head's Library button; opened once, it is remembered, so every editor after this opens with it)
+    await page.waitForSelector('.ce-root [data-xpanel="library"]');
+    assert.equal(await page.evaluate(() => document.querySelector('.ce-xpanel').hidden), true, 'at 1280 px the library waits to be asked for');
+    await page.click('.ce-root [data-xpanel="library"]');
     await page.waitForSelector('.ce-root .ce-xpanel .cel-cell:not(.is-free)');
     await settle(page);
   };
@@ -451,6 +455,18 @@ const STANDINS = `(function () {
       assert.equal(await page.evaluate(() => window.__pageKeys), 0);
     });
   } catch (e) { fail('the main page', e); }
+
+  /* ════ a wide screen ════ */
+  await step('1 · on a wide screen (1600 × 900) the library is open beside the charm from the start', async () => {
+    const p = await newPage(1600, 900);
+    await p.evaluate(() => { try { localStorage.removeItem('ce.xpanel'); } catch (_) {} window.openEditor(); });
+    await p.waitForSelector('.ce-root .ce-xpanel .cel-cell:not(.is-free)', { timeout: 5000 });
+    const r = await p.evaluate(() => { const s = document.querySelector('.ce-stage').getBoundingClientRect(), x = document.querySelector('.ce-xpanel').getBoundingClientRect(); return { stage: Math.round(s.width), panel: Math.round(x.width), right: x.left >= s.right }; });
+    console.log(`         the work area ${r.stage} px wide, the library ${r.panel} px, on its right`);
+    assert.ok(r.right); assert.ok(r.stage >= 700, 'the work area keeps most of the room: ' + r.stage);
+    assert.deepEqual(p.__errs, []);
+    await p.context().close();
+  });
 
   /* ════ the phone width ════ */
   await step('7 · at phone width (390 × 844) the library is a drawer over the room; its tiles fit inside it', async () => {
