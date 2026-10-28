@@ -31,6 +31,9 @@
      line   a line engraving: a coloured stroke (red when the editor says no colour)
      hatch  a hatched area: a blue [0 0 1] fill, as every hatching of the masters
      art    the editor's word for "as drawn": a fill is hatched (blue), a stroke is a line (red). Words arrive as outlines: filled, so hatched.
+   GREY (Design & Engrave, 28 Oct 2026, Paul: "All images must be converted to a vector format ... the colour should be a greyscale using the black as base"): a part of a traced image
+   (charm-nest-ce-image.js) is a hatch fill marked `artGrey` with its own grey [g, g, g]. It keeps that grey everywhere (the record, the server's check, the piece's segment: fillRGB, no
+   hatchBlue; charm-nest-pdf.js artOps then writes it as it is), so the laser operator gives each grey its own power. A part not so marked is written exactly as before (blue).
 
    Who and when: every record carries `by` and `at` (charmNestLibrary.js). A saved record changes the piece's front (or back): an engraving approved on that face is approved again
    (the host's `changed`, Engrave.artChanged: "This charm's front changed since the words were approved — fit the words again", restoreWritten's words), and a sheet that holds
@@ -179,12 +182,15 @@
     it = it || {};
     const s = colour(it.stroke), f = colour(it.fill), lw = +it.lwPt > 0 ? +it.lwPt : null, even = it.even === true;
     if (role === "cut") return { stroke: BLACK, fill: null, lwPt: lw || (member && member.stroke && member.lwPt) || CUT_HAIRLINE_PT, even: false };
-    if (role === "hatch") return { stroke: null, fill: BLUE, lwPt: null, even };
+    const grey = it.artGrey === true && isGrey(f) ? f : null;   // (a traced image's grey stays its grey)
+    if (role === "hatch") return grey ? { stroke: null, fill: grey, lwPt: null, even, artGrey: true } : { stroke: null, fill: BLUE, lwPt: null, even };
     const line = () => ({ stroke: Array.isArray(s) && chromatic(s) ? s : member && member.stroke && chromatic(member.strokeRGB) ? member.strokeRGB.slice(0, 3) : RED, fill: null, lwPt: lw || (member && member.stroke && member.lwPt) || CUT_HAIRLINE_PT, even: false });
     if (role === "line") return line();
     const filled = f !== undefined ? !!f : member ? !!member.fill : s === undefined || !s;
-    return filled ? { stroke: null, fill: BLUE, lwPt: null, even } : line();
+    return filled ? (grey ? { stroke: null, fill: grey, lwPt: null, even, artGrey: true } : { stroke: null, fill: BLUE, lwPt: null, even }) : line();
   }
+  /** [g, g, g]: a grey (each channel the same, to a thousandth). */
+  function isGrey(c) { return Array.isArray(c) && c.length >= 3 && Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]) <= 0.001; }
   /** A layer name of this charm's master for a new part of `role` (the master's own ENGRAVE / HATCH / CUT), or null (the part stays on the piece's own layer). */
   function layerFor(role, base) {
     const names = [...new Set((base.members || []).map(m => m && m.layer).filter(Boolean).map(String))];
@@ -237,7 +243,7 @@
       const stroke = Array.isArray(e.stroke) ? e.stroke : null, fill = Array.isArray(e.fill) ? e.fill : null;
       Object.assign(seg, { stroke: !!stroke, fill: !!fill, strokeRGB: (stroke || BLACK).slice(), fillRGB: (fill || BLACK).slice(), lwPt: +e.lwPt > 0 ? +e.lwPt : CUT_HAIRLINE_PT, paintOp: (fill ? (stroke ? "B" : "f") : "S") + (fill && e.even ? "*" : "") });
       seg.manufacturingRole = role === "cut" ? "cut" : role === "hatch" || (role === "art" && fill) ? "hatch" : "engrave";
-      if (fill && !stroke && (role === "hatch" || role === "art")) seg.hatchBlue = true;
+      if (fill && !stroke && (role === "hatch" || role === "art")) { if (e.artGrey === true && isGrey(fill)) seg.artGrey = true; else seg.hatchBlue = true; }
     }
     seg.layer = member ? (member.layer != null ? member.layer : null) : layerFor(role, base);
     if (e.text) seg.artText = String(e.text).slice(0, 200);
@@ -364,14 +370,14 @@
     const subs = okSubs(item.subpaths) ? item.subpaths : own ? own() : null, placed = item.kind === "text" && okSubs(item.subpaths);
     out.push({ id: item.id != null ? String(item.id) : prefix || "", role: ROLES.has(item.role) ? item.role : parentRole || null, kind: item.kind === "text" ? "text" : "path",
       subpaths: subs, M: !subs ? null : placed ? ID : mul(isMat(item.matrix) ? item.matrix : itemMatrix(item, bboxOf(ptsOf(subs))), parentM || ID),
-      stroke: item.stroke, fill: item.fill, lwPt: item.lwPt, even: item.even, text: item.text, group: item.group, weightMm: item.weightMm });
+      stroke: item.stroke, fill: item.fill, lwPt: item.lwPt, even: item.even, text: item.text, group: item.group, weightMm: item.weightMm, ...(item.artGrey === true ? { artGrey: true } : {}) });
     return out;
   }
   const toSource = (leaf, fr) => (leaf.subpaths ? mapSubs(leaf.subpaths, p => fr.toSource(ap(leaf.M, +p[0], +p[1]))) : null);
   /** WEIGHT (27 Oct 2026, Paul: "I need fine font thickness control over each font"): the weight the outlines were made at (mm thicker or thinner than the font draws them), kept with
    *  them so the words opened again say it and a new weight grows them by the difference. The outlines in `d` already have it: nothing here or in the laser file applies it again. */
   const weightRec = leaf => { const w = +leaf.weightMm; return Number.isFinite(w) && Math.abs(w) >= 0.0005 && Math.abs(w) <= 5 ? { weightMm: Math.round(w * 1000) / 1000 } : {}; };
-  const paintRec = p => Object.assign({ stroke: p.stroke ? p.stroke.map(v => Math.round(v * 1000) / 1000) : null, fill: p.fill ? p.fill.map(v => Math.round(v * 1000) / 1000) : null }, p.lwPt ? { lwPt: Math.round(p.lwPt * 1000) / 1000 } : {}, p.even ? { even: true } : {});
+  const paintRec = p => Object.assign({ stroke: p.stroke ? p.stroke.map(v => Math.round(v * 1000) / 1000) : null, fill: p.fill ? p.fill.map(v => Math.round(v * 1000) / 1000) : null }, p.lwPt ? { lwPt: Math.round(p.lwPt * 1000) / 1000 } : {}, p.even ? { even: true } : {}, p.artGrey ? { artGrey: true } : {});
   /** The record to save for one face of one piece, from the editor's changes. Throws { refused: [{ id, why }] } when any part cannot be kept as asked: nothing is half saved.
    *  ctx = { charm (the piece's charm on the page, edited or not), view (the face's view the editor drew: job.view), face, placed (the piece is on a sheet) } */
   function encode(changes, ctx) {
@@ -430,7 +436,7 @@
     const fr = frame(view), out = { removed: [], changed: {}, added: [] };
     if (!rec) return out;
     const item = e => Object.assign({ id: e.id, kind: e.kind || "path", role: e.role, subpaths: mapSubs(fromD(e.d) || [], fr.toItem), tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 },
-      e.keep ? {} : { stroke: e.stroke || null, fill: e.fill || null }, e.lwPt ? { lwPt: e.lwPt } : {}, e.even ? { even: true } : {}, e.text ? { text: e.text } : {}, e.group ? { group: e.group } : {}, weightRec(e));
+      e.keep ? {} : { stroke: e.stroke || null, fill: e.fill || null }, e.lwPt ? { lwPt: e.lwPt } : {}, e.even ? { even: true } : {}, e.text ? { text: e.text } : {}, e.group ? { group: e.group } : {}, weightRec(e), e.artGrey ? { artGrey: true } : {});
     out.removed = (rec.removed || []).slice();
     for (const [id, e] of Object.entries(rec.changed || {})) out.changed[id] = item(Object.assign({}, e, { id }));
     out.added = (rec.added || []).map(item);
@@ -443,7 +449,7 @@
     const fr = frame(view), ids = memberIds(charm), list = [];
     const one = (m, id, origin) => ({ id, origin, changed: !!m.artChanged, kind: m.kind === "text" ? "text" : "path", role: roleOf(m, charm), subpaths: isPath(m) ? mapSubs(m.subpaths, fr.toItem) : [],
       stroke: m.stroke ? (m.strokeRGB || BLACK).slice(0, 3) : null, fill: m.fill ? (m.hatchBlue ? BLUE : (m.fillRGB || BLACK).slice(0, 3)) : null, lwPt: m.lwPt || null, even: String(m.paintOp || "").endsWith("*"),
-      editable: isPath(m) && !(face === "back"), layer: m.layer || null, tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, ...(m.artText ? { text: m.artText } : {}), ...(m.artGroup ? { group: m.artGroup } : {}), ...(m.artWeightMm ? { weightMm: m.artWeightMm } : {}) });
+      editable: isPath(m) && !(face === "back"), layer: m.layer || null, tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, ...(m.artText ? { text: m.artText } : {}), ...(m.artGroup ? { group: m.artGroup } : {}), ...(m.artWeightMm ? { weightMm: m.artWeightMm } : {}), ...(m.artGrey ? { artGrey: true } : {}) });
     charm.members.forEach((m, i) => { if (!m) return; if (face === "back" && roleOf(m, charm) !== "cut") return; list.push(one(m, ids[i], m.artAdded ? "added" : "master")); });
     if (face === "back") for (const m of charm.artBack || []) list.push(Object.assign(one(m, m.artMemberId, "added"), { editable: true }));
     return list;

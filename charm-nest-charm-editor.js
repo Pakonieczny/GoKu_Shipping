@@ -640,6 +640,8 @@
   /* ═══ 6 · hit tests ═══ */
   const paintFill = it => (it.kind === 'text' ? !(it.role === 'line' || it.role === 'cut') : it.role === 'hatch' ? true : it.role === 'art' ? (!!it.fill || !it.stroke) : false);
   const paintStroke = it => (it.kind === 'text' ? (it.role === 'line' || it.role === 'cut') : (it.role === 'cut' || it.role === 'line') ? true : it.role === 'art' ? !!it.stroke : false);
+  // (Paul, 28 Oct 2026: "the colour should be a greyscale using the black as base") a traced image's part (artGrey, charm-nest-ce-image.js) is drawn in its own grey, not its role's colour
+  const greyOf = it => (it && it.artGrey && Array.isArray(it.fill) && it.fill.length >= 3 ? `rgb(${it.fill.slice(0, 3).map(v => Math.round(clamp(+v || 0, 0, 1) * 255)).join(',')})` : '');
   function distSeg(px, py, ax, ay, bx, by) {
     const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
     let t = L ? ((px - ax) * dx + (py - ay) * dy) / L : 0; t = clamp(t, 0, 1);
@@ -1608,6 +1610,7 @@
               el.setAttribute('class', `ce-p ce-p--${it.role}${paintFill(it) ? ' is-fill' : ''}${paintStroke(it) ? ' is-stroke' : ''}${it.evenOdd || it.fillRule === 'evenodd' ? ' is-evenodd' : ''}`);
               el.setAttribute('vector-effect', 'non-scaling-stroke');
               el.style.setProperty('--lw', String(lwOf(it)));
+              el.style.fill = greyOf(it); if (it.artGrey && it.even === true) el.classList.add('is-evenodd');   // (a traced image's grey, its holes even-odd as the laser file fills them)
             } else el.setAttribute('class', 'ce-g');
             el.__it = it;
           }
@@ -1711,6 +1714,7 @@
       };
       for (let i = its.length - 1; i >= 0; i--) row(its[i], 0);
       layersEl.innerHTML = h || '<div class="ce-layers__empty">Nothing on this side yet.<br>Pick the Text tool and click on the charm.</div>';
+      for (const r of layersEl.querySelectorAll('.ce-layer')) { const e = entry(r.dataset.id), g = e && greyOf(e.it), sw = g && r.querySelector('.ce-sw'); if (sw) sw.style.background = g; }   // (a traced image's greys)
       for (const f of ['front', 'back']) { const c = $(`[data-count="${f}"]`); if (c) c.textContent = S.faces[f] ? String(S.faces[f].items.length) : '–'; }
       paintLayerSel();
     }

@@ -2430,6 +2430,8 @@ function artItem(x, keyId) {
   if (x.weightMm != null) { const w = Number(x.weightMm); if (!Number.isFinite(w) || Math.abs(w) > ART_MAX.weightMm) return no(`its weight is -${ART_MAX.weightMm} to ${ART_MAX.weightMm} mm`); if (Math.round(w * 1000)) out.weightMm = Math.round(w * 1000) / 1000; }
   if (x.text != null) out.text = str(x.text, ART_MAX.text);
   if (x.group != null) { const g = str(x.group, 64); if (!ART_ITEM.test(g)) return no("its group is not a short name"); out.group = g; }
+  // (Design & Engrave, 28 Oct 2026: a traced image's part keeps its own grey to the laser's file, so it says so: a grey fill [g, g, g] and no line)
+  if (x.artGrey === true) { const f = out.fill; if (!f || out.stroke || Math.max(f[0], f[1], f[2]) - Math.min(f[0], f[1], f[2]) > 0.001) return no("a grey part is a grey fill [g, g, g] with no line"); out.artGrey = true; }
   return { item: out, ops };
 }
 /** The record a page sent, checked whole: { art, cutKey } or { error }. */
