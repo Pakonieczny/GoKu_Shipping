@@ -5,9 +5,11 @@
    order can be named by the user so the user can easily identify that extra piece that was added, and not linked to an official order."
 
    Pool.addCustomPiece({ design, version, hash, metal, orderId, customName, quantity, by, fixes? }) -> Promise<poolIds>     (the contract the Send to sheet pop-up calls, interfaces.md)
-     1. leavesOf   the design's FRONT FaceDoc (charm-nest-charm-editor.js: points, y down) flattened into its parts, each with its role's pen as the laser knows them: a cut line a
-                   black hairline (always closed), a line engraving a red stroke (or its own colour), a hatch or art fill blue, or its own grey (D2: a traced level keeps its grey);
-                   in the charm's own points (y up), every number on the thousandth of a point the files are written with
+     0. the design is checked against its hash (the design library's, CharmNestDesigns.hash: its size and every part as made): a design that is not the version it says is refused
+     1. leavesOf   the design's FRONT as the design library makes it (CharmNestDesigns.leaves: every part placed in the face, points, y down: exactly what its hash covers), each part
+                   with its role's pen as the laser knows them: a cut line a black hairline (always closed), a line engraving a red stroke (or its own colour), a hatch or art fill
+                   blue, or its own grey (D2: a traced level keeps its grey); in the charm's own points (y up), every number on the thousandth of a point the files are written with;
+                   its size the design library's (sizeOf: its cut line's)
      2. pdfOf      those parts on a page of their own, in CUT / ENGRAVE / HATCH layers as a master's are
      3. readOf     read back exactly as a custom design file is (CustomSheet's reader: parse, group, rings, silhouettes): it must be ONE piece, with nothing left out
      4. writtenOf  that piece written ALONE by the sheet writer itself (CharmNestPDF.buildSheet) and read back from the file: its parts there must be the design's parts, every one,
@@ -15,7 +17,8 @@
      5. the pool rows (charmNestLibrary customPiecePut: a piece that belongs to no order is numbered CUSTOM-<yyyymmdd>-<n> there), one charm per copy named by its pool id, put on
         the next open sheet of the chosen metal in the current run as an arriving order's pieces are (LiveNest.intakePage; an order's piece goes to the order's own sheet of that
         metal, R16), a new sheet when none is open; and nested there (startNest, or the sheet's next turn when it is being nested right now)
-   SANCTITY (D6): every such piece carries `frozen` { designId, version, designHash, geomHash, widthMm, heightMm, customId, name, orderless, by, at }. Its size is frozen: the nest
+   SANCTITY (D6): every such piece carries `frozen` { designId, version, designHash (the library's hash, checked at the send), geomHash (its parts as the laser file has them, checked
+   at every write of its sheet), widthMm, heightMm, customId, name, orderless, by, at }. Its size is frozen: the nest
    writes it at 100 % (holdSize: never the 97.1 % every other charm is written at), the overlap fix never shrinks it, Manual Control moves and turns it but never resizes it (sizeWhy
    says why), and before a sheet holding one is saved its .ai is read back (checkWritten): a frozen piece written at another size, or with other parts than its hash, stops the
    save, loudly (the sheet's card and a toast say which piece and why).
@@ -25,7 +28,8 @@
    An ORDER's piece (orderId given) is that order's piece: named "<order> · Custom · <name>", it goes with the order's other pieces of its metal, its QR label and its set.
    The back of a design (faces.back) is kept with the design (its id and version ride on the piece); the pool side writes the front, the piece itself.
 
-   UMD: window.CharmNestCustomPool in the page (Pool.addCustomPiece is set from here; loaded after charm-nest-bridge.js), module.exports in node (the pure parts, for the tests). */
+   UMD: window.CharmNestCustomPool in the page (Pool.addCustomPiece is set from here; loaded after charm-nest-bridge.js and charm-nest-designs.js), module.exports in node (the pure
+   parts, for the tests). */
 (function (root, factory) {
   const api = factory(root);
   if (typeof module === "object" && module.exports) module.exports = api;
@@ -47,7 +51,7 @@
   const f3 = v => { const r = q3(v); return (Object.is(r, -0) ? 0 : r).toFixed(3); };
   const fw = v => String(q3(v));   // (a number as the files write it: charm-nest-pdf.js syntheticOps' own)
   const finite = p => Array.isArray(p) && p.length >= 2 && Number.isFinite(+p[0]) && Number.isFinite(+p[1]);
-  const editorModel = () => (root && root.CharmEditor && root.CharmEditor.model) || (typeof require === "function" ? (() => { try { return require("./charm-nest-charm-editor.js").model; } catch (_) { return null; } })() : null);
+  const designsLib = () => (root && root.CharmNestDesigns) || (typeof require === "function" ? (() => { try { return require("./charm-nest-designs.js"); } catch (_) { return null; } })() : null);
 
   /** An order id (or a charm, a pool row) that is no order of the shop: a custom piece's own number. */
   function orderless(x) {
@@ -95,40 +99,23 @@
     if (role === "hatch") return own();
     return (f !== undefined ? !!f : !s) ? own() : line();
   }
-  /** An item's own matrix (geometry -> its parent): the one the editor hands back, else made from tx ty sx sy rot about its tight box's centre (the editor's own rule). */
-  function matrixOf(it, geo) {
-    if (isMat(it.matrix)) return it.matrix;
-    const none = !(+it.tx) && !(+it.ty) && !(+it.rot) && (it.sx == null || +it.sx === 1) && (it.sy == null || +it.sy === 1);
-    if (none) return I;
-    if (geo && typeof geo.matrix === "function") return geo.matrix(it);
-    throw new Error(`the part ${it.name || it.id} is turned or sized and the charm editor's model is not loaded here`);
-  }
   /**
-   * The parts of a FaceDoc as the laser will cut and engrave them: [{ id, role, kind, subpaths (the face's points), stroke, fill, lwPt, even }], in z-order. A hidden part is not
-   * engraved (what the person sees is what the laser does; a hidden cut line is still cut). A text carries its outlines placed in the face already (the editor's result).
-   * opts.textToPaths: the font engine, for a text saved without its outlines. → { parts, skipped: [names] }
+   * The parts of a design's front as the laser will cut and engrave them: [{ id, role, kind, subpaths (the face's points, y down), stroke, fill, lwPt, even }], in z-order. The
+   * parts are the design library's own (CharmNestDesigns.leaves: every part as MADE, exactly what the design's hash covers; a hidden part is not engraved, a hidden cut line is
+   * still cut), each given its role's pen. → { parts, skipped: [names of parts with no path to write: a text saved without its outlines] }
    */
-  function partsOf(face, opts) {
-    const M = editorModel(), geo = M && typeof M.createGeo === "function" ? M.createGeo(opts && opts.textToPaths) : null, mm = M && M.mul ? M.mul : mul;
+  function partsOf(design) {
+    const D = designsLib(); if (!D || typeof D.leaves !== "function") throw new Error("the design library (charm-nest-designs.js) is not loaded");
     const parts = [], skipped = [];
-    const walk = (items, P, hid) => {
-      for (const it of items || []) {
-        if (!it || typeof it !== "object") continue;
-        const off = !!(hid || it.hidden);
-        if (it.kind === "group") { walk(it.children, mm(P, matrixOf(it, geo)), off); continue; }
-        const role = ROLES.has(it.role) ? it.role : "art";
-        if (off && role !== "cut") continue;
-        let subs = null;
-        if (it.kind === "text") subs = okSubs(it.subpaths) ? it.subpaths : geo && M.outlinesOf ? M.outlinesOf(it, geo, P) : null;   // (the editor's result places a text's outlines in the face, groups included)
-        else if (okSubs(it.subpaths)) { const W = mm(P, matrixOf(it, geo)); subs = mapSubs(it.subpaths, p => ap(W, p)); }
-        if (!okSubs(subs)) { if (it.kind !== "text" || String(it.text || "").trim()) skipped.push(String(it.text || it.name || it.id || "a part")); continue; }
-        const pen = paintOf(role, it);
-        // (a cut line is a closed line: every subpath of it ends closed)
-        if (pen.kind === "cut") subs = subs.map(sp => (sp[sp.length - 1][0] === "h" ? sp : sp.concat([["h"]])));
-        parts.push(Object.assign({ id: String(it.id == null ? parts.length : it.id), role, subpaths: subs }, pen));
-      }
-    };
-    walk(face && face.items, I, false);
+    for (const l of (D.leaves(design.faces || {}).front || [])) {
+      const role = ROLES.has(l.role) ? l.role : "art";
+      let subs = l.subpaths;
+      if (!okSubs(subs)) { skipped.push(String(l.id || "a part")); continue; }
+      const pen = paintOf(role, l);
+      // (a cut line is a closed line: every subpath of it ends closed)
+      if (pen.kind === "cut") subs = subs.map(sp => (sp[sp.length - 1][0] === "h" ? sp : sp.concat([["h"]])));
+      parts.push(Object.assign({ id: String(l.id == null ? parts.length : l.id), role, subpaths: subs }, pen));
+    }
     return { parts, skipped };
   }
   /** The bounding box of parts (their points, control points included: the page around them only needs to hold them). */
@@ -141,10 +128,10 @@
    * The design's front as the piece is written: its parts in the charm's own points (y up), placed on a page of their own with room round them (as a lone charm's file is,
    * buildSingleCharm: an eighth of its larger side, so it is never read as an artboard frame), every number on the thousandth of a point. → { parts, page: { wPt, hPt }, cut, widthMm, heightMm, skipped }
    */
-  function leavesOf(design, opts) {
+  function leavesOf(design) {
     const face = design && design.faces && design.faces.front;
     if (!face || !Array.isArray(face.items) || !face.items.length) throw new Error("the design has no front to cut");
-    const { parts, skipped } = partsOf(face, opts);
+    const { parts, skipped } = partsOf(design);
     const up = parts.map(pt => Object.assign({}, pt, { subpaths: mapSubs(pt.subpaths, p => [+p[0], -p[1]]) }));
     const cuts = up.filter(pt => pt.kind === "cut");
     if (!cuts.length) throw new Error("the design has no cut line: a piece is the shape its cut outline gives it");
@@ -152,7 +139,9 @@
     const pad = Math.max(lw / 2 + 2, 0.125 * Math.max(cb[2] - cb[0], cb[3] - cb[1]));
     const dx = pad - all[0], dy = pad - all[1];
     const out = up.map(pt => Object.assign({}, pt, { subpaths: mapSubs(pt.subpaths, p => [q3(p[0] + dx), q3(p[1] + dy)]) }));
-    return { parts: out, page: { wPt: q3(all[2] - all[0] + 2 * pad), hPt: q3(all[3] - all[1] + 2 * pad) }, cut: cb, widthMm: (cb[2] - cb[0]) * MM, heightMm: (cb[3] - cb[1]) * MM, skipped };
+    // (its size: the design library's, its cut line's: CharmNestDesigns.sizeOf)
+    const D = designsLib(), sz = D && typeof D.sizeOf === "function" ? D.sizeOf(design.faces) : null;
+    return { parts: out, page: { wPt: q3(all[2] - all[0] + 2 * pad), hPt: q3(all[3] - all[1] + 2 * pad) }, cut: cb, widthMm: sz ? +sz.widthMm : (cb[2] - cb[0]) * MM, heightMm: sz ? +sz.heightMm : (cb[3] - cb[1]) * MM, skipped };
   }
 
   /* ── 2 · the hash of a piece's parts ── */
@@ -262,8 +251,8 @@
    * The design as a piece: { src (the pool source: its page, parsed), charm (the piece as read), geomHash, widthMm, heightMm, parts }. Refused, in words a person reads, when
    * the design cannot be cut exactly as it was made.
    */
-  function sourceFor(design, version, opts) {
-    const L = leavesOf(design, opts), want = hashOf(leafKeys(L.parts)), k = `${design.id}|${version}|${want}`;
+  function sourceFor(design, version) {
+    const L = leavesOf(design), want = hashOf(leafKeys(L.parts)), k = `${design.id}|${version}|${want}`;
     if (making.has(k)) return making.get(k);
     const task = makeSource(design, version, L, want).catch(e => { making.delete(k); throw e; });
     making.set(k, task); return task;
@@ -344,7 +333,11 @@
     if (!rid && !name) throw new Error("a piece that belongs to no order needs a name, so it can be found on its sheet");
     if (!by) throw new Error("nobody is signed in: sign in first, the piece is recorded under your name");
     if (!CN.S.cloud.ok) throw new Error("the cloud cannot be reached: a custom piece is numbered and recorded there first. Send it again once it is back");
-    const made = await sourceFor(design, version, o);
+    // the design is the one saved as that version, exactly (its hash, the design library's: CharmNestDesigns.verify), and every part of it goes on the piece
+    const D = designsLib(); if (!D || typeof D.hash !== "function") throw new Error("the design library (charm-nest-designs.js) is not loaded");
+    const designHash = await D.hash(design);
+    if ((o.hash || design.hash) && designHash !== (o.hash || design.hash)) throw new Error(`the design is not the one saved as version ${version} (its parts or its size changed since): open it again from the library and send it again`);
+    const made = await sourceFor(design, version);
     const P = root.CharmNestPDF, S = CN.S, st = CN.stockFor ? CN.stockFor(metal) : null, inset = +S.settings.insetPt || 0, c0 = made.charm;
     if (st && (c0.areaPt2 > (st.wPt - 2 * inset) * (st.hPt - 2 * inset) * (+S.settings.maxFill || 0.8) || Math.min(c0.widthPt, c0.heightPt) > Math.max(st.wPt, st.hPt) - 2 * inset))
       throw new Error(`the piece (${(c0.widthPt * MM).toFixed(1)} × ${(c0.heightPt * MM).toFixed(1)} mm) does not fit the ${CN.labelOf ? CN.labelOf(metal) : metal} plate`);
@@ -352,7 +345,7 @@
     if (!made.src.cloud && CN.uploadBytes) { try { made.src.cloud = await CN.uploadBytes(`charmnest/custom/designs/${safe(design.id)}/v${version}-${made.geomHash.slice(3, 15)}.pdf`, made.src.bytes, "application/pdf", "Saving the custom design"); } catch (e) { console.warn("[custom piece] design file not kept", e); } }
     const cloud = made.src.cloud;
     const run = liveRun(), req = "cp" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    const ask = () => CN.api("charmNestLibrary", { op: "customPiecePut", requestId: req, by, piece: { designId: String(design.id), version, designHash: o.hash || null, geomHash: made.geomHash, customName: name, metal, quantity: qty, orderId: rid || null,
+    const ask = () => CN.api("charmNestLibrary", { op: "customPiecePut", requestId: req, by, piece: { designId: String(design.id), version, designHash, geomHash: made.geomHash, customName: name, metal, quantity: qty, orderId: rid || null,
       widthMm: made.widthMm, heightMm: made.heightMm, aiPath: (cloud && cloud.path) || null, charmHash: c0.hash || null, runId: run ? run.runId : null, setId: run ? run.setId || null : null, day: CN.today ? CN.today() : null, fixes: o.fixes || null } }, { label: "Numbering the custom piece" });
     let rep; try { rep = await ask(); } catch (e) { if (!e || !(e.transient || +e.status >= 500)) throw e; rep = await ask(); }   // (the same request again: the server gives it the same number)
     if (!rep || !rep.ok || !Array.isArray(rep.pools) || !rep.pools.length) throw new Error((rep && rep.error) || "the piece was not recorded");
@@ -364,7 +357,7 @@
         custom: true, order: r.orderId, orderDate: +r.orderDate || at, arrivedAt: +r.arrivedAt || at, poolId: r.poolId, metal, lineKey: r.lineKey, excluded: false, engravable: false, backKeepOut: null, sku: "CUSTOM",
         orderInfo: { receiptId: r.orderId, transactionId: r.transactionId, sku: "CUSTOM", copy: r.copy, quantity: n, custom: true, file: name || design.name || "", ...(rep.orderless ? { orderless: true } : {}) },
         cloud: cloud ? { ai: cloud.url, aiPath: cloud.path, png: null, pngPath: null } : null,
-        frozen: { designId: String(design.id), version, designHash: o.hash || null, geomHash: made.geomHash, widthMm: +made.widthMm.toFixed(3), heightMm: +made.heightMm.toFixed(3), customId: rep.customId, name: name || null, orderless: !!rep.orderless, by, at }
+        frozen: { designId: String(design.id), version, designHash, geomHash: made.geomHash, widthMm: +made.widthMm.toFixed(3), heightMm: +made.heightMm.toFixed(3), customId: rep.customId, name: name || null, orderless: !!rep.orderless, by, at }
       });
       list.push(c);
       B.pool.rows.set(r.poolId, Object.assign({}, r, { updatedAt: at }));
