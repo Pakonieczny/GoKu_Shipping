@@ -17,19 +17,25 @@ def key(line):
 
 
 def merge_tag(a, b):
-    ma, mb = tok.search(a), tok.search(b)
-    if not (ma and mb):
+    ta, tb = tok.findall(a), tok.findall(b)
+    if not (ta and tb):
         if a == b: return a
         # one side added a ?v= token to a bare tag: keep the tokened side when nothing else differs
         rest = lambda s: tok.sub('"', s)
-        return (a if ma else b) if rest(a) == rest(b) else None
-    pa, pb = ma.group(1).split('-'), mb.group(1).split('-')
-    merged = a.replace(ma.group(0), '?v=' + '-'.join(pa + [p for p in pb if p not in pa]) + '"', 1)
+        return (a if ta else b) if rest(a) == rest(b) else None
     rest = lambda s: tok.sub('', s)
-    if rest(a) == rest(b): return merged
-    # the same tag with different trailing comments (<!-- ... --> after </script>): keep ours' comment, merge the tokens
-    tag = lambda s: tok.sub('', s.split('</script>')[0])
-    return merged if '</script>' in a and tag(a) == tag(b) else None
+    same = rest(a) == rest(b)
+    if not same:
+        # the same tag with different trailing comments (<!-- ... --> after </script>): keep ours' comment, merge the tokens
+        tag = lambda s: tok.sub('', s.split('</script>')[0])
+        if not ('</script>' in a and tag(a) == tag(b)): return None
+    if len(ta) != len(tb): return None
+    # EVERY token on the line (a list of several files' URLs) gets both sides' suffix parts, in order
+    it = iter([(x.split('-'), y.split('-')) for x, y in zip(ta, tb)])
+    def sub(m):
+        pa, pb = next(it)
+        return '?v=' + '-'.join(pa + [q for q in pb if q not in pa]) + '"'
+    return tok.sub(sub, a)
 
 
 for path in sys.argv[1:]:
