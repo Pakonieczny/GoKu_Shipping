@@ -312,6 +312,28 @@ async function partB() {
     check(`B7 from inside a changed editor, a master asks first ("${asked}"); Discard, and COMET_9427 is in the editor (${b7.n} layers, none locked) while the heart's session ended unsaved; Cancel on the untouched master closes it, nothing saved`,
       asked === 'Leave without saving?' && b7.h === null && b7.n > 0 && b7.locked === 0 && b7.cur && b7.cur.source.sku === 'COMET_9427' && b7b.m === null && b7b.puts === 6 && b7b.cur === null, JSON.stringify({ b7, b7b }));
 
+    /* ── B9 the Design & Engrave tab's Charm Designer bar: newDesign(o) and openDesign(id, version, o) with o.back: the editor's head shows the way back; pressed with nothing
+       changed, it leaves and nothing is saved; o.from goes to the log ── */
+    const BACK = { from: 'designerBar', back: { label: 'Back to Design & Engrave', title: 'Back to the Design & Engrave tab' } };
+    await page.evaluate(o => { window.__tb = CharmNestCeMasters.newDesign(o); }, BACK);
+    await waitFor(page, () => !!document.querySelector('.cem-root [data-panel="new"]:not([hidden])'));
+    await page.click('.cem-root [data-act="start"]');
+    await waitFor(page, () => !!(window.CharmEditor && CharmEditor.current));
+    await settleP(page);
+    const b9 = await page.evaluate(() => { const b = document.querySelector('.ce-root [data-act="back"]'); return { has: !!b, text: b ? b.textContent.trim() : '', title: b ? b.title : '', log: window.__log.slice(-1).map(x => x.kind + ':' + x.data.from)[0] }; });
+    if (b9.has) await page.click('.ce-root [data-act="back"]');
+    await waitFor(page, () => !(window.CharmEditor && CharmEditor.current), null, 10000).catch(() => {});
+    const tb = await page.evaluate(() => Promise.race([window.__tb, new Promise(r => setTimeout(() => r('open'), 5000))]));
+    await page.evaluate(([id, o]) => { window.__tb2 = CharmNestCeMasters.openDesign(id, 2, o); }, [ID1, BACK]);
+    await titleIs('BFLOWER_9901'); await settleP(page);
+    const b9b = await page.evaluate(() => ({ back: !!document.querySelector('.ce-root [data-act="back"]'), sub: document.querySelector('.ce-root .ce-eyebrow').textContent, n: CharmEditor.current.items('front').length }));
+    await page.click('.ce-root [data-act="back"]');
+    await waitFor(page, () => !(window.CharmEditor && CharmEditor.current), null, 10000).catch(() => {});
+    const tb2 = await page.evaluate(() => Promise.race([window.__tb2, new Promise(r => setTimeout(() => r('open'), 5000))]));
+    check(`B9 the tab's Charm Designer bar: a new design opened with o.back shows "${b9.text}" in the editor's head (the open logged from ${b9.log && b9.log.split(':')[1]}); pressed with nothing changed it leaves, nothing saved; openDesign(id, 2, o) opens version 2 (${b9b.n} layers: "${b9b.sub.slice(0, 26)}…") with the same way back`,
+      b9.has && b9.text === 'Back to Design & Engrave' && b9.title === 'Back to the Design & Engrave tab' && b9.log === 'designOpen:designerBar' && tb === null
+        && b9b.back && /version 2/.test(b9b.sub) && b9b.n === b3.n - 2 && tb2 === null && designPuts() === 6, JSON.stringify({ b9, tb, b9b, tb2, puts: designPuts() }));
+
     check('B8 no page error, no call that writes a piece\'s artwork (' + artCalls() + ')', w.errors.length === 0 && artCalls() === 0, w.errors.slice(0, 3).join(' | '));
   } finally { await w.close(); }
 }

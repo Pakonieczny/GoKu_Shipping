@@ -24,7 +24,8 @@
  *   openDesign(d, o) a saved design opened again (CharmNestDesigns.get's design, or its id and o.version: read with get(…, { open: true }), which tells the log): its Save makes the
  *                     next version of the same design.
  *   openNew(d, o)  a design made elsewhere and not saved yet (the vector import's "Open as a new design": source { kind: 'import', file, type }) opened as a new design.
- *   o.orderId / o.customName on any of them ride with the design (a custom order's design: charm-nest-custom-piece.js).
+ *   On any of them: o.orderId / o.customName ride with the design (a custom order's design: charm-nest-custom-piece.js); o.back ({ label, title, run }) is the editor's way
+ *   back (CharmEditor opts.back: the Design & Engrave tab's "Back to Design & Engrave"); o.from (a word, "designerBar") goes with the open to the log.
  *
  * The open is the design-mode path: the fonts and their outlines from charm-nest-ce-text.js (CharmNestCeText.prepare: every engraving font, the script fonts a saved design's words need),
  * else from the bridge's design-mode open (window.CharmEditDesign, charm-nest-bridge.js: the engraving fonts as a piece's open has them), lockRoles none; a page with neither opens the
@@ -496,11 +497,11 @@
     if (!mine() || E.current) { drop(); return null; }   // (another design was asked for meanwhile, or an editor opened under us)
     note('');
     const opts = Object.assign({ title: start.title || start.name, subtitle: start.subtitle || '', faces: start.faces, startFace: 'front', lockRoles: [] },
-      Array.isArray(fonts) && fonts.length ? { fonts } : {}, textToPaths ? { textToPaths } : {});
+      Array.isArray(fonts) && fonts.length ? { fonts } : {}, textToPaths ? { textToPaths } : {}, start.back ? { back: Object.assign({}, start.back) } : {});   // (the way back: the editor's head, CharmEditor opts.back)
     let shown;
     try { shown = E.open(opts); }
     catch (e) { drop(); note(`The charm editor could not open · ${(e && e.message) || e}`, true); return null; }
-    if (start.log !== false) log('designOpen', Object.assign({ name: start.name, by }, start.log || {}, start.id ? { designId: start.id, version: start.version } : {}, start.orderId ? { orderId: start.orderId } : {}));
+    if (start.log !== false) log('designOpen', Object.assign({ name: start.name, by }, start.log || {}, start.id ? { designId: start.id, version: start.version } : {}, start.orderId ? { orderId: start.orderId } : {}, start.from ? { from: start.from } : {}));
     let res;
     try { res = await shown; } catch (e) { drop(); note(`The charm editor could not open · ${(e && e.message) || e}`, true); return null; }
     if (!res) { drop(); return null; }   // (Cancel, the ×, Esc: nothing is saved; a master or a design picked in the library panel closes it this way too)
@@ -539,6 +540,13 @@
   }
   /** The faces a design opens with again: its front as saved, its back with the guide made afresh from that front. */
   const facesAgain = d => ({ front: d.faces.front, back: backFace(d.faces.front, d.faces.back ? d.faces.back.items : [], model()) });
+  /** What rides with a design from the call that opened it: its order or name, the editor's way back (CharmEditor opts.back { label, title, run }: the Design & Engrave tab's
+   *  "Back to Design & Engrave"), and where the person came from, for the log (a word: "designerBar"). */
+  function rides(o) {
+    o = o || {};
+    const b = o.back && typeof o.back === 'object' && o.back.label ? { label: String(o.back.label), ...(o.back.title ? { title: String(o.back.title) } : {}), ...(typeof o.back.run === 'function' ? { run: o.back.run } : {}) } : null;
+    return { ...(o.orderId ? { orderId: String(o.orderId) } : {}), ...(o.customName ? { customName: String(o.customName) } : {}), ...(b ? { back: b } : {}), ...(typeof o.from === 'string' && o.from ? { from: o.from.slice(0, 40) } : {}) };
+  }
   function subtitleFor(st) {
     const bits = [];
     if (st.id) bits.push(`Design · version ${st.version || 1}`); else bits.push('A new design');
@@ -601,7 +609,7 @@
     if (!front.items.length) throw new Error('its drawing has no part the editor can hold');
     const skipped = front.skipped; delete front.skipped;
     const st = { name: entry.sku, title: entry.sku, source: Object.assign({ kind: 'master', sku: entry.sku }, sz ? { size: sz } : {}), faces: { front, back: backFace(front, [], M) },
-      log: { source: 'master', sku: entry.sku, size: sz, layers: front.items.length }, ...(o && o.orderId ? { orderId: String(o.orderId) } : {}), ...(o && o.customName ? { customName: String(o.customName) } : {}) };
+      log: { source: 'master', sku: entry.sku, size: sz, layers: front.items.length }, ...rides(o) };
     st.subtitle = subtitleFor(st) + (skipped ? ` · ${skipped} part${skipped === 1 ? ' is' : 's are'} live text or a picture in the master and not here` : '');
     return st;
   }
@@ -629,12 +637,15 @@
   function newStart(spec, o) {
     const s = startSpec(spec), front = startFace(s), name = s.name || defaultName(s);
     const st = { name, title: name, source: { kind: 'new', shape: s.shape }, faces: { front, back: backFace(front, [], model()) },
-      log: { source: 'new', shape: s.shape, widthMm: s.wMm, heightMm: s.hMm, holeMm: s.hole ? s.holeMm : 0 }, ...(o && o.orderId ? { orderId: String(o.orderId) } : {}), ...(o && o.customName ? { customName: String(o.customName) } : {}) };
+      log: { source: 'new', shape: s.shape, widthMm: s.wMm, heightMm: s.hMm, holeMm: s.hole ? s.holeMm : 0 }, ...rides(o) };
     st.subtitle = subtitleFor(st) + ` · ${mmTxt(s.wMm)} × ${mmTxt(s.hMm)} mm${s.hole ? ` · jump ring hole Ø ${mmTxt(s.holeMm)} mm` : ''}`;
     return st;
   }
-  /** A saved design opened again: its Save makes the next version of it. */
-  function openDesign(d, o) { return counted(handed => openDesignNow(d, o || {}, handed)); }   // (counted before anything is awaited: see `pending`)
+  /** A saved design opened again: its Save makes the next version of it. openDesign(design | id, { version, ... }) or openDesign(id, version, { ... }) (the Design & Engrave tab's). */
+  function openDesign(d, a, b) {
+    const o = a != null && typeof a === 'object' ? Object.assign({}, a) : Object.assign({}, b || {}, a != null && a !== '' ? { version: a } : {});
+    return counted(handed => openDesignNow(d, o, handed));   // (counted before anything is awaited: see `pending`)
+  }
   async function openDesignNow(d, o, handed) {
     const by = await who('edit a design'); if (!by) return null;
     if (typeof d === 'string' || (d && d.id && !d.faces)) {   // (an id: the version read through the design library, which tells the log it was opened)
@@ -645,7 +656,7 @@
     const src = Object.assign({}, d.source || { kind: 'new' });
     const st = { id: d.id || null, version: d.id ? d.version || null : null, name: d.name || 'Design', title: d.name || 'Design', source: src, faces: facesAgain(d),
       log: d.id ? false : { source: src.kind, ...(src.file ? { file: src.file } : {}), ...(src.type ? { type: src.type } : {}) },   // (a saved one's open is told by CharmNestDesigns.get; an unsaved one's here)
-      ...(d.orderId || o.orderId ? { orderId: String(d.orderId || o.orderId) } : {}), ...(d.customName || o.customName ? { customName: String(d.customName || o.customName) } : {}) };
+      ...rides(Object.assign({}, o, { orderId: d.orderId || o.orderId, customName: d.customName || o.customName })) };
     st.subtitle = subtitleFor(st);
     const p = edit(st, by); handed();
     return p;
@@ -656,7 +667,7 @@
    *  through its own Cancel as every open here does; o.read (what the file held) is not needed. */
   function openNew(d, o) {
     if (!d || !d.faces || !d.faces.front) return Promise.resolve(null);
-    return openDesign(Object.assign({}, d, { id: null, version: null }), { orderId: o && o.orderId, customName: o && o.customName });
+    return openDesign(Object.assign({}, d, { id: null, version: null }), { orderId: o && o.orderId, customName: o && o.customName, back: o && o.back, from: o && typeof o.from === 'string' ? o.from : undefined });
   }
 
   /* ═══ 6 · the picker: the library's charms, or a new start ═══ */
