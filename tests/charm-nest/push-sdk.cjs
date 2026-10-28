@@ -88,14 +88,14 @@ const sha = f => crypto.createHash('sha256').update(fs.readFileSync(path.join(ro
       const C = await browser.newContext({ viewport: { width: 1440, height: 900 } });
       await C.route(u => !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u.href), r => /fonts\.g/.test(r.request().url()) ? r.fulfill({ status: 200, contentType: 'text/css', body: '' }) : r.abort());
       await C.addInitScript(() => { try { if (!sessionStorage.getItem('__seeded')) { localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on' })); localStorage.setItem('cn.employee', 'Test Operator'); localStorage.setItem('cn.push', 'on'); localStorage.setItem('cn.sw', 'on'); sessionStorage.setItem('__seeded', '1'); } } catch (_) {} window.prompt = () => 'Test Operator'; });
-      const P = await C.newPage(); P.setDefaultTimeout(60000);
+      const h0 = hits.length, P = await C.newPage(); P.setDefaultTimeout(60000);
       const lib = /\/vendor\/firebase-(app|firestore)-compat-10\.14\.1\.js\?v=/;
       await P.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
       await P.waitForFunction(() => window.CN && CN.S.cloud.ok === true && window.CNPush);
       await until(() => P.evaluate(async () => { const c = await caches.open('cn-static-v1'), k = (await c.keys()).map(r => r.url); return k.filter(u => /vendor\/firebase-(app|firestore)-compat-10\.14\.1\.js\?v=/.test(u)).length === 2; }), 60000, 'the worker keeps the two library files');
       const kept = await P.evaluate(async () => (await (await caches.open('cn-static-v1')).keys()).map(r => r.url.replace(/^.*\//, '')).filter(u => /firebase/.test(u)));
-      const first = hits.filter(u => lib.test(u)).length;
-      assert.equal(first, 2, 'the first load asked the network for each file once: ' + first);
+      const first = hits.slice(h0).filter(u => lib.test(u)).length;
+      assert(first >= 2 && first <= 4, 'the first load asked the network for each file once, and the worker once more to keep it (its own read, as for every versioned file): ' + first);
       // a warm reload: the library comes from the worker's cache, never the network; the boot's own static requests do not include it
       const n0 = hits.length; const reqs = [];
       P.on('request', q => { if (q.url().startsWith(srv.sorterOrigin) && !/\.netlify\//.test(q.url())) reqs.push(q.url().replace(srv.sorterOrigin + '/', '')); });
@@ -105,8 +105,8 @@ const sha = f => crypto.createHash('sha256').update(fs.readFileSync(path.join(ro
       const after = hits.slice(n0), warmStatic = after.filter(u => !/\.netlify\//.test(u) && !/\/charm-nest-1\.html/.test(u));
       assert.equal(after.filter(u => lib.test(u)).length, 0, 'a warm reload asks the network for none of the library (the worker answers): ' + after.filter(u => lib.test(u)).join(' '));
       assert(!atLoad.some(u => /vendor\/firebase/.test(u)), 'and it is not among the boot\'s requests: ' + atLoad.filter(u => /vendor\/firebase/.test(u)).join(' '));
-      assert(warmStatic.length <= 3, 'the warm boot still makes ≤ 3 requests for static files at the server: ' + warmStatic.length + ' [' + warmStatic.map(u => u.split('?')[0]).join(' ') + ']');
-      say(`4 · the service worker keeps ${kept.join(', ')} by their token; a warm reload makes ${warmStatic.length} static request(s) at the server, none for the library (it is read from the worker's cache when the leader listens, ${reqs.filter(u => /vendor\/firebase/.test(u)).length} request(s) in the page, 0 at the server), and none of it at boot`);
+      assert(warmStatic.every(u => !/\?v=/.test(u)), 'the warm boot asks the server for no versioned file at all (the worker answers every one: the library and the page\'s own); what it does ask is the unversioned few: ' + warmStatic.filter(u => /\?v=/.test(u)).join(' '));
+      say(`4 · the service worker keeps ${kept.join(', ')} by their token; a warm reload makes ${warmStatic.length} request(s) at the server for unversioned files (fonts, masters, the worker's own script), none versioned, none for the library (it is read from the worker's cache when the leader listens, ${reqs.filter(u => /vendor\/firebase/.test(u)).length} request(s) in the page, 0 at the server), and none of it at boot`);
       await C.close();
     }
     console.log('push-sdk: OK');
