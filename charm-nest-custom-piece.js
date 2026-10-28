@@ -668,13 +668,12 @@
     (g.charms || []).forEach((ch, ci) => { for (const x of AE.itemsOf(ch, null, 'front')) items.push(Object.assign({}, x, { id: `f${ci}.${x.id}`, kind: 'path', source: 'added' })); });   // (ids of their own: two pieces of one file never share one)
     return items.length ? { faces: { front: { face: 'front', unitPt: true, frame: null, items } }, file: F.name } : null;
   }
-  /** The engraving's own fonts and font engine (charm-nest-bridge.js charmEditFonts / charmEditText, CNCharmEditText): words typed in the designer
-   *  come back as the same outlines the engraving cuts. Without them the editor's plain stand-in. */
-  async function textEngine() {
-    const T = root.CNCharmEditText;
-    if (!T || typeof T.text !== 'function') return { fonts: [], text: undefined };
-    let fonts = []; try { fonts = await T.fonts(null); } catch (_) { fonts = []; }
-    return { fonts, text: T.text };
+  /** The engraving's own fonts and font engine for the designer (charm-nest-ce-text.js CharmNestCeText.prepare: every engraving font, script and emoji the back engraving
+   *  has, the ones the words already in `faces` need loaded first): words typed there come back as the outlines the engraving cuts. Without it the editor's own default. */
+  async function textEngine(faces) {
+    const X = root.CharmNestCeText;
+    if (!X || typeof X.prepare !== 'function') return { fonts: undefined, text: undefined };
+    try { const r = await X.prepare({ job: null, faces }); return { fonts: r && r.fonts, text: r && r.textToPaths }; } catch (e) { console.warn('[custom piece] fonts', e); return { fonts: undefined, text: undefined }; }
   }
   let designing = null, live = null;    // live: what the designer opened from here is working on ({ orderId, design, name, source, saved })
   const busyCards = new Set();
@@ -700,7 +699,7 @@
       if (!faces) { try { const f = await orderFileFaces(x); if (f) { faces = f.faces; source = { kind: 'import', file: f.file }; from = 'file'; } } catch (e) { console.warn('[custom piece] the order\'s file could not be read:', e && e.message); } }
       const blank = !faces; if (blank) faces = { front: blankFace() };
       const name = (att && att.name) || (base && base.name) || `${info.sku || 'Custom'} · ${rid}`;
-      const T = await textEngine();
+      const T = await textEngine(faces);
       log('editorOpen', { orderId: rid, sku: info.sku, designId: base ? base.id : undefined, version: base ? base.version : undefined, name, file: source.file, by });
       const l = live = { orderId: rid, design: base, name, source, saved: null, sent: null };
       let res;
@@ -827,19 +826,19 @@
     if (l && out) l.sent = { id: saved.id, version: saved.version, out };
     return out;
   }
-  function editorButton() {
+  function editorButton(ctx) {
     try {
-      const save = doc && doc.querySelector('.ce-root [data-act="save"]'); if (!save || save.parentNode.querySelector('[data-cp-ce-send]')) return;
+      const host = (ctx && ctx.root && ctx.root.querySelector ? ctx.root : null) || doc, save = host && host.querySelector('.ce-root [data-act="save"], [data-act="save"]'); if (!save || save.parentNode.querySelector('[data-cp-ce-send]')) return;
       const b = doc.createElement('button'); b.type = 'button'; b.className = 'ce-btn ce-btn--ghost'; b.dataset.cpCeSend = ''; b.textContent = 'Send to sheet…';
       b.title = 'Keep this design as a new version and put it on the next sheet of a metal you pick, marked handmade custom';
-      b.addEventListener('click', ev => { ev.stopPropagation(); fromEditor({}); });
+      b.addEventListener('click', ev => { ev.stopPropagation(); fromEditor(ctx || {}); });
       save.parentNode.insertBefore(b, save);
     } catch (_) { /* the editor draws its own foot */ }
   }
   function hookEditor() {
     const CE = root.CharmEditor; if (!CE || CE.__cpHooked) return; CE.__cpHooked = true;
-    (CE.commands || (CE.commands = {})).sendToSheet = { title: 'Send to sheet…', run: ctx => fromEditor(ctx), enabled: () => !!(root.CharmNestDesigns && root.Pool && typeof root.Pool.addCustomPiece === 'function') };
-    (CE.onOpen || (CE.onOpen = [])).push(() => editorButton());
+    (CE.commands || (CE.commands = {})).sendToSheet = { title: 'Send to sheet…', group: 'Sheets', run: ctx => fromEditor(ctx), enabled: () => !!(root.CharmNestDesigns && root.Pool && typeof root.Pool.addCustomPiece === 'function') };
+    (CE.onOpen || (CE.onOpen = [])).push(ctx => editorButton(ctx));
   }
   if (doc) hookEditor();
 
