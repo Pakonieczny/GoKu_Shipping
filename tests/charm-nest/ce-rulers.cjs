@@ -134,7 +134,10 @@ const tickGap = page => page.evaluate(() => {
     await away();
     return `y ${((g[0].v - (await C(page)).frame.y0) * MM).toFixed(3)} mm`;
   });
-  await step('2.2 a part dragged to within a few px of the guide snaps onto it (its top edge exactly on the guide)', async () => {
+  await step('2.2 a part dragged to within a few px of the guide snaps onto it (its top edge exactly on the guide), with the smart guides off: the guide alone does it', async () => {
+    const more = async () => { await page.locator('.ce-root .ce-rail [data-drop="more"] .ce-drop__b').click(); await page.locator('.ce-root [data-opt="smart"]').click(); await page.keyboard.press('Escape'); await settle(page); };
+    await more();
+    assert.equal(await page.evaluate(() => document.querySelector('.ce-root [data-opt="smart"]').getAttribute('aria-checked')), 'false');
     const g = (await C(page)).guides[0];
     const b = await box(page, 'heart-fill'), c = await clientOf(page, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2), k = (await C(page)).zoom / 100 * PX100;
     // the heart's top goes to 4 px under the guide: the snap pulls it the rest of the way
@@ -144,6 +147,7 @@ const tickGap = page => page.evaluate(() => {
     assert.deepEqual((await C(page)).sel, ['heart-fill']);
     assert.ok(near(b2[1], g.v, 1e-6), `heart top ${b2[1]}, guide ${g.v}`);
     await page.keyboard.press('Control+z'); await page.keyboard.press('Escape'); await settle(page);
+    await more();
   });
   await step('2.3 a guide is moved by dragging it (where no part is under it); Shift puts it on the ruler\'s ticks; the other face has its own', async () => {
     const g = (await C(page)).guides[0], at = await clientOf(page, 0, g.v);
@@ -272,12 +276,23 @@ const tickGap = page => page.evaluate(() => {
 
   /* ════ 4 · pan ════ */
   await step('4.1 once zoomed in, Space-drag, the Hand (H), the middle button and a trackpad\'s two-finger scroll each move the view by the hand\'s travel', async () => {
+    await page.keyboard.press('Escape'); await settle(page);
     await page.evaluate(() => window.CharmEditor.current.setZoom(1600)); await settle(page);
     const ref = async () => clientOf(page, 100 + 12 * PT, 50 + 15 * PT);
     const c = { x: stageR.l + stageR.w / 2, y: stageR.t + stageR.h / 2 };
     const out = [];
     const check = async (name, fn, dx, dy) => { const a = await ref(); await fn(); const b = await ref(); out.push(`${name} ${Math.round(b.x - a.x)},${Math.round(b.y - a.y)}`); assert.ok(near(b.x - a.x, dx, 0.6) && near(b.y - a.y, dy, 0.6), `${name}: moved ${b.x - a.x}, ${b.y - a.y}; want ${dx}, ${dy}`); };
-    await check('space', async () => { await page.keyboard.down(' '); await drag(page, c, { x: c.x + 120, y: c.y - 70 }); await page.keyboard.up(' '); await settle(page); }, 120, -70);
+    // (mid-pan the charm is slid as drawn, not drawn again: a day square's path is on screen exactly where the view says it is, mid-way and after)
+    const onScreen = async () => page.evaluate(() => { const C = window.CharmEditor.current, b = C.box('day-2-2'), a = C.clientOf(b[0], b[1]), r = document.querySelector('.ce-items path[data-id="day-2-2"]').getBoundingClientRect(); return { dx: r.left - a.x, dy: r.top - a.y, sliding: document.querySelector('.ce-stage').classList.contains('is-fastpan') }; });
+    const r0 = await onScreen(); let mid = null;
+    await check('space', async () => {
+      await page.keyboard.down(' '); await page.mouse.move(c.x, c.y); await page.mouse.down(); await page.mouse.move(c.x + 60, c.y - 35, { steps: 5 }); await settle(page);
+      mid = await onScreen();
+      await page.mouse.move(c.x + 120, c.y - 70, { steps: 5 }); await page.mouse.up(); await page.keyboard.up(' '); await settle(page);
+    }, 120, -70);
+    const r1 = await onScreen();
+    assert.ok(mid.sliding && !r1.sliding, 'slid while panning, drawn afresh after');
+    for (const r of [mid, r1]) assert.ok(near(r.dx, r0.dx, 0.6) && near(r.dy, r0.dy, 0.6), `drawn where the view says: ${JSON.stringify(r)} vs ${JSON.stringify(r0)}`);
     assert.deepEqual((await C(page)).sel, [], 'a pan selects nothing');
     await page.keyboard.press('h'); assert.equal((await C(page)).tool, 'hand');
     await check('hand', () => drag(page, c, { x: c.x - 90, y: c.y + 40 }), -90, 40);
@@ -313,7 +328,7 @@ const tickGap = page => page.evaluate(() => {
     await page.waitForSelector('.ce-root .ce-items path'); await settle(page); await settle(page);
     const stage = await rect(page, '.ce-stage');
     const nPaths = await page.evaluate(() => document.querySelectorAll('.ce-items path').length);
-    const cdp = await page.context().newCDPSession(page); await cdp.send('Performance.enable');
+    const cdp = await page.context().newCDPSession(page); await cdp.send('Performance.enable', { timeDomain: 'threadTicks' });   // (the main thread's own CPU time: a loaded machine does not inflate it)
     const metrics = async () => Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map(m => [m.name, m.value]));
     /** Each step: one input event and one frame; the main thread's task time of that step (ms). */
     const frames = async (n, act) => {

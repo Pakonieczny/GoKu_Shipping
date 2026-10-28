@@ -104,7 +104,8 @@
  * dragging them back onto it, snapped to, kept per face while the charm is open, never saved) and a zero point dragged out of the corner (double-click the corner: back
  * to the charm's top-left; X / Y read from it). The zoom: the Zoom tool (Z: click in, Alt-click out, drag a box, double-click a part), ⌘ + / − / 0 / 1 / 2, the zoom
  * box (typed or a preset), the wheel and a trackpad's pinch about the cursor, 25 % … 6400 %, every step drawn in SVG. The pan: Space or the middle button and drag,
- * the Hand (H), a trackpad's two-finger scroll. */
+ * the Hand (H), a trackpad's two-finger scroll. CharmEditor.current.guides(face) and .zero() read the guides ({ id, axis: 'x' upright | 'y' level, v pt }) and the zero
+ * point ([x, y] pt) out. */
 (function (root, factory) {
   const api = factory(root);
   if (typeof module === 'object' && module.exports) module.exports = api; else root.CharmEditor = api;
@@ -1045,6 +1046,18 @@
 .ce-rule__corner.is-moved::after{ content:""; position:absolute; right:2px; bottom:2px; width:4px; height:4px; background:var(--gold); }
 .ce-rule--x{ cursor:row-resize; touch-action:none; } .ce-rule--y{ cursor:col-resize; touch-action:none; }
 .ce-view{ position:absolute; left:0; top:0; width:100%; height:100%; overflow:hidden; display:block; pointer-events:none; }
+/* (the charm's own paths are never what a press lands on: the editor finds the part under the hand itself, so the browser is spared hit-testing hundreds of curves on every move) */
+.ce-art{ pointer-events:none; }
+/* a pan slides what is drawn (the workspace's slide()): each sliding layer on the compositor, drawn past its own edges */
+.ce-stage.is-fastpan .ce-art,.ce-stage.is-fastpan .ce-ui,.ce-stage.is-fastpan .ce-view{ overflow:visible; will-change:transform; }
+.ce-stage.is-fastpan .ce-paper{ will-change:transform; }
+/* A LONG LAYERS LIST COSTS THE ZOOM NOTHING (28 Oct 2026): a charm of three hundred parts has three hundred rows, and every frame of a zoom or a pan was paying for
+   all of them (each row and its swatch a layer of its own to paint and hit-test, each hidden eye and lock an invisible picture). Rows off the list's screen are not
+   drawn at all, and a row's quiet eye and lock are drawn only when the row is under the hand or the button has the keys; what they look like does not change. */
+.ce-layers .ce-layer,.ce-layers .ce-sw{ position:static; }
+.ce-layers .ce-layer{ content-visibility:auto; contain-intrinsic-block-size:auto 31px; }
+.ce-layers .ce-layer__b.is-quiet{ opacity:1; } .ce-layers .ce-layer__b.is-quiet svg{ display:none; }
+.ce-layers .ce-layer:hover .ce-layer__b.is-quiet svg,.ce-layers .ce-layer__b.is-quiet:focus-visible svg{ display:block; }
 .ce-view .v-guide{ stroke:var(--c-guide); stroke-width:1; shape-rendering:crispEdges; }
 .ce-view .v-guide.is-hot{ stroke:var(--c-guide-hot); stroke-width:2; }
 .ce-view .v-guide.is-off{ stroke-dasharray:3 3; opacity:.55; }
@@ -1392,8 +1405,8 @@
   <div class="ce-props">
     <div class="ce-sizes" data-size>
       <div class="ce-size">
-        <label class="ce-size__f" title="Left edge, in mm from the charm's left edge"><span>X</span><input data-f="x" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="X position, mm" disabled></label>
-        <label class="ce-size__f" title="Top edge, in mm from the charm's top edge"><span>Y</span><input data-f="y" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Y position, mm" disabled></label>
+        <label class="ce-size__f" title="Left edge, in mm from the zero point (the charm's left edge unless it was moved: drag it from the rulers' corner)"><span>X</span><input data-f="x" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="X position, mm" disabled></label>
+        <label class="ce-size__f" title="Top edge, in mm from the zero point (the charm's top edge unless it was moved: drag it from the rulers' corner)"><span>Y</span><input data-f="y" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Y position, mm" disabled></label>
         <span class="ce-size__sep" aria-hidden="true"></span>
         <label class="ce-size__f" title="Width, mm"><span>W</span><input data-f="w" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Width, mm" disabled></label>
         <button class="ce-size__link is-on" type="button" data-act="link" aria-pressed="true" title="Keep the proportions">${IC.link}</button>
@@ -1560,6 +1573,7 @@
       const b = sb(); if (b.w < 2 || b.h < 2) return;
       if (lastStage && (b.l !== lastStage.l || b.t !== lastStage.t)) { S.ox -= b.l - lastStage.l; S.oy -= b.t - lastStage.t; }
       lastStage = b;
+      if (slide(b)) return;
       const f = frame(), vx = f.x0 - S.ox / S.k, vy = f.y0 - S.oy / S.k, vw = b.w / S.k, vh = b.h / S.k;
       art.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`);
       // (a line is drawn at its true width at every zoom, lwPt × px per pt; only a line thinner than one pixel of the screen is held at that pixel, so it stays in sight.
@@ -1567,13 +1581,41 @@
       const hair = (1 / Math.max(1, +root.devicePixelRatio || 1)) + 'px';
       if (viewK !== S.k || viewHair !== hair) { viewK = S.k; viewHair = hair; art.style.setProperty('--k', String(S.k)); art.style.setProperty('--hair', hair); }
       Object.assign(paper.style, { left: S.ox + 'px', top: S.oy + 'px', width: f.wPt * S.k + 'px', height: f.hPt * S.k + 'px' });
-      drawGrid(vx, vy, vw, vh);
+      // (a pan in hand: the frames after this one slide what is drawn now, so the grid reaches half a room beyond each edge for them)
+      const sliding = slideFrom();
+      if (sliding) drawGrid(vx - vw / 2, vy - vh / 2, vw * 2, vh * 2); else drawGrid(vx, vy, vw, vh);
       queueRulers(); renderUI(); drawView();
       const zr = fmtZoom(zoomPct()), zEl = $('[data-zoomread]'); if (zEl.textContent !== zr) zEl.textContent = zr;
       if (S.editing) placeEditor();
     }
     const fmtZoom = p => (p < 100 ? trim(p, 0) : String(Math.round(p))) + '%';
     let viewK = 0, viewHair = '';
+    /* A PAN SLIDES WHAT IS DRAWN (28 Oct 2026: smooth on a charm of hundreds of paths). While the hand pans (Space or the middle button and drag, the Hand, a
+       two-finger scroll), the charm, its paper and grid and the overlays over them are moved as they are, on the compositor, instead of being drawn again on every
+       frame; they are drawn afresh when the hand stops, and after half a room of travel. Each overlay knows where it was drawn (el.__at), so one drawn again in the
+       middle of a pan (a hover) is slid from there. A zoom always draws: nothing is ever scaled as a picture. */
+    let slid = null, wheelPanT = 0;
+    const panning = () => !!(S.g && S.g.kind === 'pan') || !!wheelPanT;
+    function slide(b) {
+      if (!panning()) { if (slid) { slid = null; stage.classList.remove('is-fastpan'); } return false; }
+      if (!slid || slid.k !== S.k || Math.abs(S.ox - slid.ox) > b.w / 2 || Math.abs(S.oy - slid.oy) > b.h / 2) return false;
+      const by = (el, at) => { const t = at && at[2] === S.k ? `translate(${S.ox - at[0]}px,${S.oy - at[1]}px)` : ''; if (el.style.transform !== t) el.style.transform = t; };
+      by(art, [slid.ox, slid.oy, slid.k]); by(paper, [slid.ox, slid.oy, slid.k]); by(ui, ui.__at); by(viewEl, viewEl.__at);
+      queueRulers();
+      if (S.editing) placeEditor();
+      return true;
+    }
+    /** The full drawing of the view is being made: the slide (if a pan is in hand) starts from here. */
+    function slideFrom() {
+      art.style.transform = ''; paper.style.transform = '';
+      if (!panning()) { if (slid) { slid = null; stage.classList.remove('is-fastpan'); } return false; }
+      slid = { ox: S.ox, oy: S.oy, k: S.k }; stage.classList.add('is-fastpan');
+      return true;
+    }
+    /** An overlay was drawn where the view is now: it stands still until the next slide. */
+    function drawnAt(el) { el.__at = [S.ox, S.oy, S.k]; if (el.style.transform) el.style.transform = ''; }
+    /** The hand stopped: the view drawn afresh where it ended (the next frame, so the press's own work is done first). */
+    function slideEnd() { requestAnimationFrame(() => { if (slid && !panning()) applyView(); }); }
 
     /* a TRUE millimetre grid: lines every mm from the charm's corner, every 0.1 mm once they are 6 px apart, every 5 mm a shade darker; only where the charm is,
        only what is on screen, one path per weight */
@@ -1707,10 +1749,12 @@
     const guidePx = g => (g.axis === 'x' ? toStage(g.v, 0)[0] : toStage(0, g.v)[1]);
     /** The values the moving things snap to on one axis ('x': the upright guides): none when the guides are hidden or their snap is off. */
     const guideSnaps = axis => (S.showGuides && S.snapGuides ? guides().filter(g => g.axis === axis).map(g => ({ v: g.v, kind: 'guide' })) : []);
+    /** Is anything there to snap to: smart guides, the grid or a guide. */
+    const snapsAny = () => S.smart || S.snapGrid || (S.showGuides && S.snapGuides && guides().length > 0);
     function guideAt(cx, cy) {
-      if (!S.showGuides) return null;
+      const gl = S.showGuides ? guides() : []; if (!gl.length) return null;
       const b = sb(), px = cx - b.l, py = cy - b.t; let best = null, bd = GUIDE_PX + 0.01;
-      for (const g of guides()) { const d = Math.abs((g.axis === 'x' ? px : py) - guidePx(g)); if (d < bd) { bd = d; best = g; } }
+      for (const g of gl) { const d = Math.abs((g.axis === 'x' ? px : py) - guidePx(g)); if (d < bd) { bd = d; best = g; } }
       return best;
     }
     function viewDim(x, y, text) {
@@ -1719,12 +1763,14 @@
       return `<g class="v-dim"><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="16"/><text x="${(x + 6).toFixed(1)}" y="${(y + 11.5).toFixed(1)}">${esc(text)}</text></g>`;
     }
     function drawView() {
-      const b = sb(), g = vg, R = v => Math.round(v) + 0.5, W = Math.ceil(b.w), H = Math.ceil(b.h);
-      const gLine = (axis, p, cls) => (axis === 'x' ? `<line class="${cls}" x1="${R(p)}" y1="0" x2="${R(p)}" y2="${H}"/>` : `<line class="${cls}" x1="0" y1="${R(p)}" x2="${W}" y2="${R(p)}"/>`);
+      const b = lastStage || sb(), g = vg, R = v => Math.round(v) + 0.5, W = Math.ceil(b.w), H = Math.ceil(b.h);
+      drawnAt(viewEl);
+      // (a guide runs a room past each edge: a pan slides this layer as it is)
+      const gLine = (axis, p, cls) => (axis === 'x' ? `<line class="${cls}" x1="${R(p)}" y1="${-H}" x2="${R(p)}" y2="${2 * H}"/>` : `<line class="${cls}" x1="${-W}" y1="${R(p)}" x2="${2 * W}" y2="${R(p)}"/>`);
       let h = '';
       if (S.showGuides) for (const gd of guides()) {
         if (g && g.kind === 'guide' && g.gd.id === gd.id && g.moved) continue;
-        const p = guidePx(gd); if (p < -2 || p > (gd.axis === 'x' ? b.w : b.h) + 2) continue;
+        const p = guidePx(gd), span = gd.axis === 'x' ? b.w : b.h; if (p < -span || p > 2 * span) continue;
         h += gLine(gd.axis, p, 'v-guide' + (hotGuide === gd.id ? ' is-hot' : ''));
       }
       if (g && g.kind === 'guide' && g.moved && g.v != null) {
@@ -1841,8 +1887,8 @@
         if (S.tool === 'zoom') stage.classList.toggle('is-alt', e.altKey);
         if (vg && vg.el === stage) { e.stopImmediatePropagation(); viewMove(e); } else if (!vg) hoverGuide(e);
       }, true);
-      stage.addEventListener('pointerup', e => { if (vg && vg.el === stage && viewEnd(e)) e.stopImmediatePropagation(); }, true);
-      stage.addEventListener('pointercancel', e => { if (vg && vg.el === stage && viewEnd(e, true)) e.stopImmediatePropagation(); }, true);
+      stage.addEventListener('pointerup', e => { if (S.g && S.g.kind === 'pan') slideEnd(); if (vg && vg.el === stage && viewEnd(e)) e.stopImmediatePropagation(); }, true);
+      stage.addEventListener('pointercancel', e => { if (S.g && S.g.kind === 'pan') slideEnd(); if (vg && vg.el === stage && viewEnd(e, true)) e.stopImmediatePropagation(); }, true);
       // double-click a part with the Zoom tool: it fills the view
       stage.addEventListener('dblclick', e => {
         if (S.tool !== 'zoom') return;
@@ -1864,6 +1910,9 @@
         el.addEventListener('wheel', onWheel, { passive: false });
       }
       corner.addEventListener('dblclick', e => { e.preventDefault(); setZero(null); });
+      // (Illustrator's: a double-click on the Hand fits the charm, on the Zoom tool it is 100 %)
+      $('.ce-rail [data-tool="hand"]').addEventListener('dblclick', () => fit());
+      $('.ce-rail [data-tool="zoom"]').addEventListener('dblclick', () => zoomTo(100));
       // (nowhere in the editor does a pinch or ⌘-wheel zoom the PAGE: over the bars and the Layers too it is the charm's or nothing; Safari pinches with gestures)
       rootEl.addEventListener('wheel', e => { if (e.ctrlKey && !e.defaultPrevented) e.preventDefault(); }, { passive: false });
       let gk = null;
@@ -1965,7 +2014,7 @@
       rec(it, W); return out;
     }
     function renderUI() {
-      queueRulers();   // (the rulers mark the selection's extent: they follow every change of it, in the same frame)
+      queueRulers(); drawnAt(ui);   // (the rulers mark the selection's extent: they follow every change of it, in the same frame; a pan slides the furniture from here)
       let h = '';
       const busy = S.g && S.g.live;
       if (S.hover && !busy && !isSelected(S.hover)) { const e = entry(S.hover); if (e && !e.it.hidden) h += outline(e.it, e.P, 'u-hover'); }
@@ -2055,10 +2104,10 @@
       const f = frame();
       if (info.single) {
         const it = info.e.it, b = geo.drawn(it, info.e.P), rb = info.rb;
-        return { x: (b[0] - f.x0) * MM, y: (b[1] - f.y0) * MM, w: Math.abs(num(it.sx, 1)) * (rb[2] - rb[0]) * MM, h: Math.abs(num(it.sy, 1)) * (rb[3] - rb[1]) * MM, r: wrap180(num(it.rot, 0)) };
+        return { x: (b[0] - zeroPt()[0]) * MM, y: (b[1] - zeroPt()[1]) * MM, w: Math.abs(num(it.sx, 1)) * (rb[2] - rb[0]) * MM, h: Math.abs(num(it.sy, 1)) * (rb[3] - rb[1]) * MM, r: wrap180(num(it.rot, 0)) };
       }
       const b = info.b, leaves = selLeaves(), r0 = leaves.length ? wrap180(num(leaves[0].rot, 0)) : 0;
-      return { x: (b[0] - f.x0) * MM, y: (b[1] - f.y0) * MM, w: (b[2] - b[0]) * MM, h: (b[3] - b[1]) * MM, r: leaves.every(l => Math.abs(wrap180(num(l.rot, 0)) - r0) < 1e-6) ? r0 : null };
+      return { x: (b[0] - zeroPt()[0]) * MM, y: (b[1] - zeroPt()[1]) * MM, w: (b[2] - b[0]) * MM, h: (b[3] - b[1]) * MM, r: leaves.every(l => Math.abs(wrap180(num(l.rot, 0)) - r0) < 1e-6) ? r0 : null };
     }
     function syncProps() {
       const s = sizeRead();
@@ -2467,7 +2516,7 @@
         return { d: best.d, hits };
       };
       const f = frame();
-      const bx = axis(bb[0], bb[2], S.smart ? T.x : [], allowX, f.x0), by = axis(bb[1], bb[3], S.smart ? T.y : [], allowY, f.y0);
+      const bx = axis(bb[0], bb[2], (S.smart ? T.x : []).concat(guideSnaps('x')), allowX, f.x0), by = axis(bb[1], bb[3], (S.smart ? T.y : []).concat(guideSnaps('y')), allowY, f.y0);
       if (bx) { res.dx = bx.d; res.gx = bx.hits; } if (by) { res.dy = by.d; res.gy = by.hits; }
       return res;
     }
@@ -2597,11 +2646,11 @@
         let dx = x - g.x0, dy = y - g.y0;
         const bb0 = info.single ? geo.drawn(info.e.it, info.e.P) : info.b;
         let hits = { gx: [], gy: [] };
-        if (snapOn && (S.smart || S.snapGrid)) { hits = solve([bb0[0] + dx, bb0[1] + dy, bb0[2] + dx, bb0[3] + dy], g.T, tol); dx += hits.dx; dy += hits.dy; }
+        if (snapOn && snapsAny()) { hits = solve([bb0[0] + dx, bb0[1] + dy, bb0[2] + dx, bb0[3] + dy], g.T, tol); dx += hits.dx; dy += hits.dy; }
         applyM(g, tr(dx, dy));
         const bb = [bb0[0] + dx, bb0[1] + dy, bb0[2] + dx, bb0[3] + dy];
         g.guides = guidesSvg(bb, hits);
-        g.readout = readoutSvg(bb, `X ${fmtMm((bb[0] - f.x0) * MM)}  Y ${fmtMm((bb[1] - f.y0) * MM)} mm`);
+        g.readout = readoutSvg(bb, `X ${fmtMm((bb[0] - zeroPt()[0]) * MM)}  Y ${fmtMm((bb[1] - zeroPt()[1]) * MM)} mm`);
       } else if (g.kind === 'resize') {
         const hx = /w/.test(g.h) ? -1 : /e/.test(g.h) ? 1 : 0, hy = /n/.test(g.h) ? -1 : /s/.test(g.h) ? 1 : 0;
         const centred = e.altKey;
@@ -2621,7 +2670,7 @@
           const ax = centred ? cx : hx < 0 ? b[2] : b[0], ay = centred ? cy : hy < 0 ? b[3] : b[1];
           let ex = hx < 0 ? b[0] : b[2], ey = hy < 0 ? b[1] : b[3];
           let px = x, py = y;
-          if (snapOn && !centred && !e.shiftKey && (S.smart || S.snapGrid)) {
+          if (snapOn && !centred && !e.shiftKey && snapsAny()) {
             g.T = g.T || alignTargets(b);
             const hits = solve([hx ? px : b[0], hy ? py : b[1], hx ? px : b[2], hy ? py : b[3]], g.T, tol, hx ? ['lo'] : [], hy ? ['lo'] : []);
             px += hits.dx; py += hits.dy; g.guides = guidesSvg(b, hits);
@@ -2690,15 +2739,18 @@
       e.preventDefault();
       if (S.ask) return;
       // (the studio, J 17201: a bare wheel zooms about the cursor, Shift pans across, ⌘ pans down; a trackpad's two-finger scroll pans, its pinch arrives as Ctrl and zooms)
-      if (e.ctrlKey) { zoomAtClient(e.clientX, e.clientY, Math.pow(1.01, -clamp(e.deltaY, -60, 60))); return; }
+      // (a scroll that pans is a pan in hand until it has been still for a moment: the view slides meanwhile, and is drawn afresh when it stops)
+      const wheelPan = () => { clearTimeout(wheelPanT); wheelPanT = setTimeout(() => { wheelPanT = 0; if (slid) applyView(); }, 140); };
+      const wheelZoom = () => { if (wheelPanT) { clearTimeout(wheelPanT); wheelPanT = 0; } };
+      if (e.ctrlKey) { wheelZoom(); zoomAtClient(e.clientX, e.clientY, Math.pow(1.01, -clamp(e.deltaY, -60, 60))); return; }
       const lineMode = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
       const dx = e.deltaX * lineMode, dy = e.deltaY * lineMode;
       S.fitted = false;
-      if (e.shiftKey) { S.ox -= dy || dx; clampPan(); applyView(); return; }
-      if (e.metaKey) { S.oy -= dy; clampPan(); applyView(); return; }
+      if (e.shiftKey) { wheelPan(); S.ox -= dy || dx; clampPan(); applyView(); return; }
+      if (e.metaKey) { wheelPan(); S.oy -= dy; clampPan(); applyView(); return; }
       const wheelLike = e.deltaMode !== 0 || (Math.abs(e.deltaX) < 0.01 && fin(e.wheelDeltaY) && e.wheelDeltaY !== 0 && Math.abs(e.wheelDeltaY) % 120 === 0);
-      if (wheelLike) { zoomAtClient(e.clientX, e.clientY, Math.pow(1.0018, -clamp(dy, -400, 400))); return; }
-      S.ox -= dx; S.oy -= dy; clampPan(); applyView();
+      if (wheelLike) { wheelZoom(); zoomAtClient(e.clientX, e.clientY, Math.pow(1.0018, -clamp(dy, -400, 400))); return; }
+      wheelPan(); S.ox -= dx; S.oy -= dy; clampPan(); applyView();
     }
     function onDbl(e) {
       if (S.tool !== 'select') return;
