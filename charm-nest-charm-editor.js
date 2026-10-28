@@ -1734,18 +1734,13 @@
         const at = vertical ? (v => s.t - box.top + S.oy + (v - f.y0) * S.k) : (v => s.l - box.left + S.ox + (v - f.x0) * S.k);
         const origin = at(vertical ? z[1] : z[0]);
         const line = (p, from, to) => { if (vertical) { c.moveTo(from, p); c.lineTo(to, p); } else { c.moveTo(p, from); c.lineTo(p, to); } };
-        // the selection's extent: a band between its edges, the edges full depth and its middle half (Illustrator marks the edges; the band reads at a glance)
+        // the selection's extent: a band between its edges under the ticks, and over them (below) its edges full depth and its middle half depth (Illustrator marks
+        // the edges; the band reads at a glance)
+        const sa = sel ? at(vertical ? sel[1] : sel[0]) : 0, sbd = sel ? at(vertical ? sel[3] : sel[2]) : 0;
         if (sel) {
-          const a = at(vertical ? sel[1] : sel[0]), b = at(vertical ? sel[3] : sel[2]);
-          const lo = Math.max(0, Math.min(a, b)), hi = Math.min(len, Math.max(a, b));
-          if (hi >= lo) {
-            c.fillStyle = 'rgba(184,147,90,.2)';
-            if (vertical) c.fillRect(0, lo, thick, hi - lo); else c.fillRect(lo, 0, hi - lo, thick);
-            c.strokeStyle = liveC; c.lineWidth = 1; c.beginPath();
-            for (const p of [a, b]) { const q = Math.round(p) + 0.5; if (q >= 0 && q <= len) line(q, 0, thick); }
-            const m = Math.round((a + b) / 2) + 0.5; if (m >= 0 && m <= len) line(m, thick * 0.5, thick);
-            c.stroke();
-          }
+          const lo = Math.max(0, Math.min(sa, sbd)), hi = Math.min(len, Math.max(sa, sbd));
+          c.fillStyle = 'rgba(184,147,90,.2)';
+          if (hi >= lo) { if (vertical) c.fillRect(0, lo, thick, hi - lo); else c.fillRect(lo, 0, hi - lo, thick); }
         }
         // the ticks: each division short, the half longer, the numbered ones the full depth
         const u0 = -origin / pxmm, u1 = (len - origin) / pxmm;
@@ -1774,6 +1769,12 @@
           c.beginPath();
           if (vertical) { c.moveTo(thick, p - 4); c.lineTo(thick - 5, p); c.lineTo(thick, p + 4); } else { c.moveTo(p - 4, thick); c.lineTo(p, thick - 5); c.lineTo(p + 4, thick); }
           c.closePath(); c.fill();
+        }
+        if (sel) {
+          c.strokeStyle = liveC; c.lineWidth = 1; c.beginPath();
+          for (const p of [sa, sbd]) { const q = Math.round(p) + 0.5; if (q >= 0 && q <= len) line(q, 0, thick); }
+          const m = Math.round((sa + sbd) / 2) + 0.5; if (m >= 0 && m <= len) line(m, thick * 0.5, thick);
+          c.stroke();
         }
         // where the cursor is, right now (J 19275)
         if (cursor) {
