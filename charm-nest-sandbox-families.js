@@ -42,6 +42,7 @@
     fs("Charm_Pool", "pool rows"),
     fs("Charm_Pool_Back", "back pool rows"),
     fs("Charm_Pool_Art", "piece artwork edits"),   // (ART EDIT, Paul 27 Oct 2026: one piece's own changes to its master artwork, charmNestLibrary.js op_artPut)
+    fs("Charm_Designs", "design library", { subs: ["versions"] }),   // (DESIGNS, Paul 28 Oct 2026: every version of every charm saved in the Charm Editor, charmNestLibrary.js op_designPut; its count is Sandbox_Order_Rev/_designs, its pictures and big faces charmnest/sandbox/designs/, both wiped with their families below)
     fs("Charm_Nest_Arrivals", "arrival records"),
     fs("Charm_Nest_Cancelled", "cancelled orders"),
     fs("Charm_Nest_Cancelled_History", "cancel history"),
@@ -132,6 +133,7 @@
     { key: "Station_Live", label: "employee efficiency: live presence", store: "firestore", also: PREFIX + "Station_Live", why: "employee efficiency stays whole" },
     { key: "Laser_Sheet_Times", label: "employee efficiency: laser sheet times", store: "firestore", also: PREFIX + "Laser_Sheet_Times", why: "employee efficiency stays whole" },
     { key: "Station_Rev", label: "employee efficiency: data revision", store: "firestore", why: "employee efficiency stays whole" },
+    { key: "Design_Log", label: "employee efficiency: custom pieces and fixes, by employee", store: "firestore", also: PREFIX + "Design_Log", why: "employee efficiency stays whole (Design & Engrave, Paul 28 Oct 2026: who commissions custom pieces, who made a mistake and who fixed it)" },
     { key: "config/charmNestSandboxPull", label: "how many newest Etsy orders a sandbox pull brings (Paul's number)", store: "firestore", why: "a setting (Settings → Newest Etsy orders the sandbox pulls), not sandbox data: a reset or purge never changes it" },
     { key: "config", label: "config documents and passcodes", store: "firestore", why: "settings and passcodes" },
     { key: "Charm_Sandbox/pulls", label: "the daily Etsy pull budget", store: "firestore", why: "an Etsy call budget, not sandbox data" },
