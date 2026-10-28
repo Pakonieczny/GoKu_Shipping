@@ -1449,12 +1449,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const rid = String(c.order || "").split("/")[0] || (poolId ? poolId.split("_")[0] : "");
       const m = / · (\d+)\/(\d+)$/.exec(name), copy = poolId ? +poolId.split("_").pop() || 1 : m ? +m[1] : 1;
       pieces.push({ id: p.id, p: { cxPt: +p.cxPt, cyPt: +p.cyPt, angle: +p.angle || 0, scale: +p.scale || 1, wPt: +p.wPt || 10, hPt: +p.hPt || 10 },
-        c: null, poolId, rid: /^\d+$/.test(rid) ? rid : "", sku: c.sku || (name.split(" · ")[1] || "").trim() || c.layer || "", name, copy, qty: m ? +m[2] : 1,
+        c: null, poolId, rid: /^\d+$/.test(rid) || /^CUSTOM-\d{8}-\d{1,6}$/.test(rid) ? rid : "",   // (CUSTOMORDERS, Paul 28 Oct 2026: a custom piece of no order is its own order, CUSTOM-<yyyymmdd>-<n>) sku: c.sku || (name.split(" · ")[1] || "").trim() || c.layer || "", name, copy, qty: m ? +m[2] : 1,
         tx: poolId ? poolId.split("_")[1] : "", sourceId: c.sourceId, index: c.index, hash: c.hash, thumb: c.thumbUrl || null,
         // (pairs: the ear a piece is, when the record says so; an old record says nothing and the window asks OrderPieces)
         // (amendment 2: every earring piece says its ear, and `mirror` when it is the mirror image of the drawn design; a record's own `pieceSides` map says the ear of a piece whose charm does not)
         side: c.side === "L" || c.side === "R" ? c.side : poolId && rec.pieceSides && (rec.pieceSides[poolId] === "L" || rec.pieceSides[poolId] === "R") ? rec.pieceSides[poolId] : null,
-        bodyIndex: c.bodyIndex, groupKey: c.groupKey || null, groupSize: c.groupSize || 0, mirror: c.mirror === true });
+        bodyIndex: c.bodyIndex, groupKey: c.groupKey || null, groupSize: c.groupSize || 0, mirror: c.mirror === true, custom: customOf(c) });
     }
     return pieces;
   }
@@ -1464,10 +1464,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const RECS = { get: id => (window.CharmNestStore ? CharmNestStore.get("sheetFull", id) : null) };
   /** What decides the plate: each piece where it lies, whose it is and what it is drawn from. */
   const layoutSig = rec => JSON.stringify(piecesOf(rec).map(x => [x.id, +x.p.cxPt.toFixed(3), +x.p.cyPt.toFixed(3), +(+x.p.angle).toFixed(3), +(+x.p.scale).toFixed(5), x.poolId, x.sourceId, x.index, x.hash, x.side, x.mirror]));
+  /** A custom design's piece (CUSTOMPOOL: sent from the Charm Editor; the record's charm keeps its `frozen`): what the window says of it and opens it with, else null. */
+  const customOf = c => { const f = c && c.frozen; return f && f.designId ? { designId: String(f.designId), version: +f.version || 0, name: f.name || "", customId: f.customId || "", orderless: !!f.orderless, by: f.by || "", widthMm: f.widthMm, heightMm: f.heightMm } : null; };
   /** A live sheet as a record, enough to draw its plate (its own record is read behind it). */
   function recOfLive(sh) {
     return { id: sh.sheetId, metal: sh.metal, sheetIndex: sh.sheetIndex || null, page: sh.page, setId: sh.setId || null, setSeq: sh.seq || null, draft: !!sh.draft, runId: sh.runId || null, fileBase: sh.fileBase || "",
-      charms: sh.charms.map(c => Object.assign(hopEntry(c), { layer: c.layer, side: c.side, bodyIndex: c.bodyIndex, groupKey: c.groupKey, groupSize: c.groupSize, mirror: c.mirror }, c.manual ? { manual: c.manual } : {})),   // (the entry a record holds for a charm, as a move writes it)
+      charms: sh.charms.map(c => Object.assign(hopEntry(c), { layer: c.layer, side: c.side, bodyIndex: c.bodyIndex, groupKey: c.groupKey, groupSize: c.groupSize, mirror: c.mirror }, c.manual ? { manual: c.manual } : {}, c.frozen ? { frozen: c.frozen } : {})),   // (the entry a record holds for a charm, as a move writes it)
       placements: sh.placements.map(p => Object.assign({}, p)), stock: stockFor(sh.metal, sh) };
   }
   /** The sheet drawn now from what the page holds; null when it holds nothing to draw it from. -> { sig } once its plate is drawn. */
@@ -2080,6 +2082,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return Object.assign({}, pick, { text: units.map(say).filter(Boolean).join(" · ") || pick.text, faces, units, face: pick.face });
   }
   function engOf(x, rec = W.rec) {
+    if (x && x.custom) return { kind: "none", label: "custom design" };   // (CUSTOMPOOL: engraved as designed, nothing to approve: renderCustomEng)
     const jobs = jobsOfPiece(x), saved = rec?.engraving?.[x.poolId] || null, recs = rec?.backPool || [];
     const front = !!jobs.front || recs.some(b => b.poolId === x.poolId && isFrontRec(b) && !b.invalidated) || !!(saved && saved.faces && saved.faces.front);
     // a piece with no front: the one reading it always had
@@ -2488,7 +2491,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   function rowOf(x) {
     const key = x.rid && x.tx ? `${x.rid}_${x.tx}` : null;
-    const row = key && window.Orders && Orders.rows().find(r => r.key === key);
+    const row = key && window.Orders && (Orders.listRows ? Orders.listRows() : Orders.rows()).find(r => r.key === key);   // (CUSTOMORDERS: a custom piece's line is shown as an order's)
     if (row) return row;
     if (!x.rid) return null;
     return { key: key || x.rid, order: { receiptId: x.rid }, line: { transactionId: x.tx || "", sku: x.sku }, spec: { designSku: x.sku }, poolIds: x.poolId ? [x.poolId] : [], state: "written", problems: [] };
@@ -2548,6 +2551,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     //  (EngraveLink.openMonogram). Every other piece keeps the engraving card below, untouched.)
     const mp = window.CNMonogramSeals ? tryDo(() => CNMonogramSeals.pieceFor(rowOf(x), x.poolId || x.id)) : null;
     if (mp) { x._monoSig = monoSigOf(x); host.innerHTML = CNMonogramSeals.panel(mp); CNMonogramSeals.wire(host, { open: b => goMonogram(x, mp, b) }); if (flash) host.querySelector('.swEng')?.classList.add('flash'); return; }
+    // (CUSTOMPOOL, Paul 28 Oct 2026: a custom charm read "The words need a decision · Nothing read yet" and its Fix in Engraving spun for good: a design sent from the Charm Editor has no words to
+    //  read; what is engraved on it is its design, kept exactly as made. Its card says so, and opens the design itself in the Charm Editor, where it is changed)
+    if (x.custom) { renderCustomEng(x, host); if (flash) host.querySelector('.swEng')?.classList.add('flash'); return; }
     const e = shownEng(x);
     // (the discs of a counted order, one at a time: the Engrave tab's own switch, charm-nest-piece-switch.js; a press selects that disc's charm, here or on the sheet it is on.
     //  A piece engraved on both faces also has its Front | Back: the same switch, the face shown is the one the card is about)
@@ -2557,6 +2563,20 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (flash) host.querySelector('.swEng')?.classList.add('flash');
   }
 
+  function renderCustomEng(x, host) {
+    const f = x.custom, size = f.widthMm != null && f.heightMm != null ? `${(+f.widthMm).toFixed(1)} × ${(+f.heightMm).toFixed(1)} mm` : "";
+    const can = !!(window.CharmNestCeLibrary && typeof CharmNestCeLibrary.openDesign === "function");
+    host.innerHTML = `<span class="fLabel">Engraving</span><div class="swEng egCard" data-state="custom"><div class="top egTop"><span class="egPill" data-s="approved"><i aria-hidden="true"></i>Custom design</span></div>`
+      + `<div class="egWhy"><b>Engraved exactly as designed</b><span class="by egSub"><span>Design ${esc(f.designId)} · version ${f.version}${size ? " · " + size : ""}${f.by ? " · sent by " + esc(f.by) : ""}. Nothing to confirm: change it in the Charm Editor and send it again.</span></span></div>`
+      + (can ? `<div class="acts"><button type="button" class="btn gold sm egOpen" data-e="design">Open in Charm Editor <span aria-hidden="true">→</span></button></div>` : "") + `</div>`;
+    const b = host.querySelector("[data-e=design]");
+    if (b) b.onclick = () => {
+      if (b.disabled) return;
+      const was = b.innerHTML; b.disabled = true; b.setAttribute("aria-busy", "true"); b.innerHTML = `<span class="spin"></span>Opening the Charm Editor…`;
+      const back = () => { if (b.isConnected) { b.disabled = false; b.removeAttribute("aria-busy"); b.innerHTML = was; } };
+      close().then(() => CharmNestCeLibrary.openDesign(f.designId, f.version || undefined)).then(back, e => { back(); toast(`The design did not open: ${(e && e.message) || e}`, "bad", 7000); });
+    };
+  }
   /** The switch the card shows for a piece: the discs of a counted order (the order window's own cycle) and, for a piece engraved on both faces, its Front | Back. A piece with no front gets
       exactly the cycle it always had (discs only, nothing for any other piece). */
   function cycleFor(x, e) {
@@ -2705,7 +2725,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const sec = W.el.detail.querySelector("[data-r2=msgs]"); if (!sec) return;
     if (!row) { sec.innerHTML = `<span class="fLabel">Messages</span><div class="swEng" data-state="none"><div class="top"><b>No order, so no messages</b></div></div>`; return; }
     let cust = null, team = null;
-    try { cust = window.CustomerMail?.cardPane?.({ key: row.key, row }) || null; } catch (e) { console.warn("sheet window: customer", e); }
+    // (CUSTOMORDERS: a custom piece of no order has no customer on Etsy; its team thread is kept as any order's)
+    if (!(row.custom && row.order && row.order.orderless)) try { cust = window.CustomerMail?.cardPane?.({ key: row.key, row }) || null; } catch (e) { console.warn("sheet window: customer", e); }
     try { team = window.TeamCard?.pane(row) || null; } catch (e) { console.warn("sheet window: team", e); }
     if (!cust && !team) { sec.remove(); return; }
     const box = h("div", "swMsgs"), tabs = h("div", "owTabs");
@@ -2813,6 +2834,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function goEngrave(x, b) {
     const e0 = x.eng, e1 = e0 && e0.faces ? e0.faces[x._face] || e0.faces.back || e0.faces.front : e0, job = e1 && e1.job, rec = W.rec;
     RET.ctx = { sheetId: rec.id, poolId: x.poolId || x.id, rid: x.rid, key: job ? job.key : null, label: nameOf(rec), was: job ? job.state : null };
+    const was = b ? b.innerHTML : "", c0 = RET.ctx;
     if (b) b.innerHTML = `<span class="spin"></span>Opening Design & Engrave…`;
     const plain = () => close().then(() => {
       const v = Engrave.view();
@@ -2826,7 +2848,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // closes for; the way back stays as it was. Without it, the tab as it always was)
     if (window.EngraveLink && typeof EngraveLink.open === "function") {
       let p; try { p = EngraveLink.open(Object.assign({ rid: x.rid, key: job ? job.key : undefined, poolId: x.poolId || x.id, closeFirst: () => close() }, job && faceOfJob(job) === "front" ? { face: "front" } : {})); } catch (_) { p = Promise.reject(); }
-      p.then(() => returnPill(), () => plain());
+      // (Paul, 28 Oct 2026: "the spinner just spins and does nothing": EngraveLink answers false when it opened nothing (no engraving to open here, said in one line where the person is); the
+      //  button is given back as it was, and no way back is kept for a trip that never left)
+      p.then(ok => { if (ok) return returnPill(); if (RET.ctx === c0) RET.ctx = null; if (b && b.isConnected) { b.innerHTML = was; b.disabled = false; b.removeAttribute("aria-busy"); } }, () => plain());
       return;
     }
     plain();

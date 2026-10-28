@@ -148,13 +148,15 @@ const pagePart = async () => {
         }
       });
     }, { rid });
-    // (the Hold Order button of the order window's piece row: the one that also takes the pieces off, HOLDBTN)
+    // (the Hold Order button of the order window's piece row; HOLDSTAYS, 28 Oct 2026: it no longer takes the pieces off, so the take-off of an order held before that day is made with the old engine's own path, HoldUI.takeOff)
     await page.evaluate(k => OrderWin.open(k), key);
     const hb = '#owPcSum .revSendBtn[data-rev-host]';
     await page.waitForSelector(hb, { timeout: 20000 });
     const t0 = Date.now();
     await page.click(hb);
-    await page.waitForFunction(r => CharmNestReviewMark.isMarked(r) && !ReviewSend.busy(r) && window.__eng.runs === 1, rid, { timeout: 30000 });
+    await page.waitForFunction(r => CharmNestReviewMark.isMarked(r) && !ReviewSend.busy(r), rid, { timeout: 30000 });
+    await page.evaluate(r => HoldUI.takeOff(r, { name: 'Test Operator' }), rid);
+    await page.waitForFunction(() => window.__eng.runs === 1, null, { timeout: 30000 });
     await page.evaluate(() => { window.OrderHold = window.__eng.real; if (OrderWin.isOpen()) OrderWin.close(); }); await W.settle(page, 400);
     await until(() => tl().some(e => e.type === 'note') && tl().some(e => e.type === 'held'), 20000, 'the note and the held step in the cloud');
     // the Review card's Release Hold (the real press: ReviewRelease, OrderHold.release, Review.repool)

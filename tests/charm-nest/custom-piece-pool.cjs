@@ -52,13 +52,17 @@ const root = path.join(__dirname, '../..');
     const diamond = [[['m', [40, 24]], ['l', [46, 30]], ['l', [40, 36]], ['l', [34, 30]], ['h']]];
     // (the matrix the Charm Editor hands back with a group: T(c + t) · R(rot) · T(−c), c the centre of its parts' box)
     const turnAbout = (deg, cx, cy, tx, ty) => { const a = deg * Math.PI / 180, cs = Math.cos(a), sn = Math.sin(a); return [cs, sn, -sn, cs, cx + tx - (cs * cx - sn * cy), cy + ty - (sn * cx + cs * cy)]; };
+    const blackLevel = [[['m', [44, 6]], ['l', [52, 6]], ['l', [52, 12]], ['l', [44, 12]], ['h']]], greyLevel = [[['m', [44, 14]], ['l', [52, 14]], ['l', [52, 20]], ['l', [44, 20]], ['h']]];
     const letters = [[['m', [12, 30]], ['l', [16, 30]], ['l', [16, 38]], ['l', [12, 38]], ['h']], [['m', [18, 30]], ['l', [24, 30]], ['l', [24, 33]], ['l', [18, 33]], ['h']]];
     const design0 = { name: 'Spare heart test', source: { kind: 'new' }, widthMm: 20, heightMm: 16, faces: { front: { face: 'front', unitPt: true, frame: { x0: 0, y0: 0, wPt: W, hPt: H }, items: [
       { id: 'out', kind: 'path', role: 'cut', subpaths: outline, stroke: [0, 0, 0] },
       { id: 'zig', kind: 'path', role: 'line', subpaths: zig, stroke: [1, 0, 0] },
       { id: 'grp', kind: 'group', tx: 2, ty: -1, rot: 10, matrix: turnAbout(10, 40, 30, 2, -1), children: [{ id: 'dia', kind: 'path', role: 'hatch', subpaths: diamond, fill: [0, 0, 1] }] },
       { id: 'hidden', kind: 'path', role: 'line', hidden: true, subpaths: [[['m', [5, 5]], ['l', [9, 9]]]], stroke: [1, 0, 0] },
-      { id: 'txt', kind: 'text', role: 'hatch', text: 'AB', fontKey: 'ace', sizePt: 8, subpaths: letters, fill: [0, 0, 1] }] } } };
+      { id: 'txt', kind: 'text', role: 'hatch', text: 'AB', fontKey: 'ace', sizePt: 8, subpaths: letters, fill: [0, 0, 1] },
+      // (PENS, Paul 28 Oct 2026: "the image turned blue ... The Image must retain it's vector greyscale": a picture traced in the Charm Editor is a filled path per grey level, black the darkest)
+      { id: 'img.g0', kind: 'path', role: 'hatch', subpaths: blackLevel, fill: [0, 0, 0], stroke: false, even: true },
+      { id: 'img.g5', kind: 'path', role: 'hatch', subpaths: greyLevel, fill: [0.5, 0.5, 0.5], stroke: false, even: true }] } } };
     const saved = await page.evaluate(async d => { const s = await CharmNestDesigns.put(d); const got = await CharmNestDesigns.get(s.id, s.version); return { s: { id: s.id, version: s.version, hash: s.hash }, design: got }; }, design0);
     assert(saved.s.id && saved.s.version === 1 && /^[0-9a-f]{64}$/.test(saved.s.hash), 'the design is in the library: ' + JSON.stringify(saved.s));
     const send = (metal, extra) => page.evaluate(([d, s, metal, extra]) => Pool.addCustomPiece(Object.assign({ design: d, version: s.version, hash: s.hash, metal, orderId: null, customName: 'Spare heart', quantity: 1, by: 'Tester' }, extra || {})), [saved.design, saved.s, metal, extra || null]);
@@ -82,16 +86,21 @@ const root = path.join(__dirname, '../..');
     assert.equal(live1.frozen.designHash, saved.s.hash); assert.equal(live1.frozen.orderless, true); assert.equal(live1.frozen.geomHash, row.customPiece.geomHash);
     // (the sheet's .ai as it was saved: the file the record names, from the fake storage, read back by the page's own reader)
     const fileCheck = async (metal, poolId) => {
-      const info = await page.evaluate(([metal, poolId]) => { const sh = CN.S.sheets[metal].pages.find(p => p.charms.some(c => c.poolId === poolId)), c = sh.charms.find(x => x.poolId === poolId); return { sheetId: sh.sheetId, i: sh.placements.findIndex(x => x.id === c.id), want: c.frozen.geomHash }; }, [metal, poolId]);
+      const info = await page.evaluate(([metal, poolId]) => { const sh = CN.S.sheets[metal].pages.find(p => p.charms.some(c => c.poolId === poolId)), c = sh.charms.find(x => x.poolId === poolId); return { sheetId: sh.sheetId, i: sh.placements.findIndex(x => x.id === c.id), want: c.frozen.geomHash, pens: c.frozen.penHash }; }, [metal, poolId]);
       const rec = st.doc('Charm_Nest_Sheets', info.sheetId), blob = rec && rec.outputs && rec.outputs.ai && st.blobs.get(rec.outputs.ai.path);
       assert(blob, 'the saved .ai of ' + info.sheetId);
-      return page.evaluate(async ([b64, i, want]) => {
+      return page.evaluate(async ([b64, i, want, penWant]) => {
         const bytes = Uint8Array.from(atob(b64), ch => ch.charCodeAt(0)), got = (await CharmNestCustomPool.writtenOf(bytes, new Set([i]))).get(i);
-        return { written: got ? CharmNestCustomPool.hashOf(got.keys) : null, parts: got ? got.keys.length : 0, scale: got ? Math.sqrt(got.det) : 0, want };
-      }, [blob.buf.toString('base64'), info.i, info.want]);
+        return { written: got ? CharmNestCustomPool.hashOf(got.keys) : null, parts: got ? got.keys.length : 0, scale: got ? Math.sqrt(got.det) : 0, want, pens: got ? CharmNestCustomPool.hashOf(got.pens) : null, penList: got ? got.pens.map(x => x.split('|')[0]) : [], penWant };
+      }, [blob.buf.toString('base64'), info.i, info.want, info.pens]);
     };
     let fc = await fileCheck('silver', ids1[0]);
-    assert.equal(fc.written, fc.want, 'the saved .ai holds exactly its parts: ' + JSON.stringify(fc)); assert.equal(fc.parts, 4, 'cut, line, hatch and the words (the hidden line is not engraved)'); assert(Math.abs(fc.scale - 1) < 1e-6, 'at 100 %: ' + fc.scale);
+    assert.equal(fc.written, fc.want, 'the saved .ai holds exactly its parts: ' + JSON.stringify(fc)); assert.equal(fc.parts, 6, 'cut, line, hatch, the words and the picture\'s two levels (the hidden line is not engraved)'); assert(Math.abs(fc.scale - 1) < 1e-6, 'at 100 %: ' + fc.scale);
+    // PENS: every part in its design's own colour: the picture's black level black and its grey grey (never the hatching blue), the hatch blue, the line red, the cut black
+    assert(/^g1-/.test(fc.penWant || '') && fc.pens === fc.penWant, 'the saved .ai holds every part in its own pen: ' + JSON.stringify({ pens: fc.pens, want: fc.penWant, list: fc.penList }));
+    assert.deepEqual(fc.penList.slice().sort(), ['f:0.000,0.000,0.000', 'f:0.000,0.000,1.000', 'f:0.000,0.000,1.000', 'f:0.500,0.500,0.500', 's:0.000,0.000,0.000', 's:1.000,0.000,0.000'], 'the pens written: ' + JSON.stringify(fc.penList));
+    const ink = await page.evaluate(id => { const sh = CN.S.sheets.silver.pages.at(-1), c = sh.charms.find(x => x.poolId === id); return c.members.filter(m => m.fill && !m.stroke && Array.isArray(m.fillRGB) && m.fillRGB[2] < 0.9).map(m => ({ rgb: m.fillRGB.map(v => Math.round(v * 1000) / 1000), blue: !!m.hatchBlue, grey: !!m.artGrey })); }, ids1[0]);
+    assert(ink.length === 2 && ink.every(m => !m.blue && m.grey), 'the picture\'s levels are drawn in their own grey on the sheet, not as blue hatching: ' + JSON.stringify(ink));
     const rec1 = st.doc('Charm_Nest_Sheets', live1.sheetId), rc = rec1.charms.find(c => c.poolId === ids1[0]);
     assert(rc && rc.frozen && rc.frozen.designId === saved.s.id && rc.frozen.geomHash === fc.want && rec1.poolIds.includes(ids1[0]), 'the sheet record names the piece, its design and its hash');
     console.log(`ok   1  "Spare heart" (no order) → ${ids1[0]} on the open SS sheet (${live1.sheetId}) in ${sendMs} ms: written at 100 % (the others at 97.1 %), its .ai read back = its hash ${fc.want} (${fc.parts} parts, the hidden one left out)`);

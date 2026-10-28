@@ -145,8 +145,8 @@
   }
 
   /* ── 2 · the hash of a piece's parts ── */
-  /** One part as one line: stroke ("s") or fill ("f"), then its subpaths on the thousandth of a point. Colours are left out: the writer turns a black fill blue (the hatching
-   *  rule), and what is checked is the shape the laser follows. */
+  /** One part as one line: stroke ("s") or fill ("f"), then its subpaths on the thousandth of a point: the shape the laser follows. Its colour is checked apart (penOf, PENS),
+   *  so a piece sent before PENS keeps the geometry hash it was sent with. */
   function keyOf(kind, subpaths) {
     return kind + "|" + subpaths.map(sp => sp.map(o => o[0] + o.slice(1).map(p => f3(p[0]) + "," + f3(p[1])).join(" ")).join("")).join("/");
   }
@@ -163,6 +163,28 @@
   /** The hash of a list of part keys (order-free: the writer may write them in another order). */
   function hashOf(keys) { const s = keys.slice().sort().join("\n"); return "g1-" + h53(s, 7) + h53(s, 1031) + "-" + keys.length; }
   const leafKeys = parts => parts.map(pt => keyOf(kindOfPen(pt), pt.subpaths));
+  /* PENS (Paul, 28 Oct 2026: "when the charm was added to the chosen sheet the image turned blue ... The Image must retain it's vector greyscale same as the laser machine will see"): the
+     shape alone (keyOf) let the reader's hatching rule turn a traced image's black level blue in the sheet's file unseen. A part's pen is its kind and the colour it is painted with (a
+     fill's colour, a line's colour), on the thousandth; penHash covers every part's pen with its shape, so a part written in another colour is a part that changed. */
+  const penOf = (kind, rgb) => kind + ":" + (Array.isArray(rgb) && rgb.length >= 3 ? rgb.slice(0, 3).map(v => f3(+v)).join(",") : "-");
+  const leafPens = parts => parts.map(pt => penOf(kindOfPen(pt), pt.kind === "fill" ? pt.fill : pt.stroke) + "|" + keyOf(kindOfPen(pt), pt.subpaths));
+  /**
+   * A custom design's piece keeps the pens its design was made with (PENS): the reader's rules for a shop's master (a black fill, or black line art, inside a charm is blue hatching)
+   * are not for a design made in the Charm Editor, whose file already says each part's pen (a traced image's black level is black and each grey its grey, a hatch blue, a line red).
+   * Its parts lose those stamps (they stay engraving, never a cut line); a grey fill is marked artGrey, as the piece's own art edit marks a traced image's part. → how many changed.
+   */
+  function inkAsMade(c) {
+    let n = 0;
+    for (const m of (c && Array.isArray(c.members) ? c.members : [])) {
+      if (!m) continue;
+      const stamped = !!(m.hatchBlue || m.hatchLine || m.hatchStrip), level = !!(m.fill && !m.stroke && grey(m.fillRGB)) && m !== c.outline && !m.artGrey;
+      if (!stamped && !level) continue;
+      delete m.hatchBlue; delete m.hatchLine; delete m.hatchStrip;
+      if (level) m.artGrey = true;
+      n++;
+    }
+    return n;
+  }
 
   /* ── 3 · the page of the design (a PDF the reader and the writer take as any design file) ── */
   async function pdfOf(L, title) {
@@ -219,7 +241,8 @@
   }
   /**
    * The parts of the charms written as forms "Charm<i>" (buildSheet's names) for the placement indexes `want`, read back from the bytes of a sheet's file: Map i -> { keys, det }
-   * (keys: each part's key in the charm's own points, the placement's matrix undone; det: the scale it was written at, squared). Only those forms are read.
+   * (keys: each part's key in the charm's own points, the placement's matrix undone; pens: the same with the colour it is painted with (PENS); det: the scale it was written at, squared).
+   * Only those forms are read.
    */
   async function writtenOf(bytes, want) {
     const PL = root.PDFLib, P = P_(), doc = await PL.PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false }), page = doc.getPage(0);
@@ -233,13 +256,13 @@
     const { segs } = P.interpret(contentOf(PL, doc, page), name => (forms.get(name) || {}).x || null, I.slice(), 0, {}, {}, {});
     for (const s of segs) {
       const f = s.kind === "xobj" && forms.get(s.name); if (!f) continue;
-      const keys = [];
+      const keys = [], pens = [];
       for (const k of s.children || []) {
         if (k.kind !== "path" || !(k.stroke || k.fill) || !Array.isArray(k.subpaths)) continue;
-        const back = inv(isMat(k.ctm) ? k.ctm : s.matrix) || I;
-        keys.push(keyOf(kindOfSeg(k), mapSubs(k.subpaths, p => ap(back, p))));
+        const back = inv(isMat(k.ctm) ? k.ctm : s.matrix) || I, key = keyOf(kindOfSeg(k), mapSubs(k.subpaths, p => ap(back, p)));
+        keys.push(key); pens.push(penOf(kindOfSeg(k), k.fill && !k.stroke ? k.fillRGB : k.strokeRGB) + "|" + key);
       }
-      const m = s.matrix; out.set(f.i, { keys, det: m ? Math.abs(m[0] * m[3] - m[1] * m[2]) : 0 });
+      const m = s.matrix; out.set(f.i, { keys, pens, det: m ? Math.abs(m[0] * m[3] - m[1] * m[2]) : 0 });
     }
     return out;
   }
@@ -261,10 +284,12 @@
     const CN = page_(), P = P_(), S = CN.S;
     if (L.skipped.length) throw new Error(`${L.skipped.length === 1 ? "a part" : L.skipped.length + " parts"} of the design could not be read (${L.skipped.slice(0, 3).join(", ")}): open it in the Charm Editor and save it again`);
     const id = "cdes:" + want.slice(3, 19), had = S.poolSources && S.poolSources[id];
-    if (had && had.charms && had.charms[0] && had.charms[0].frozen && had.charms[0].frozen.geomHash) { had.usedAt = Date.now(); return { src: had, charm: had.charms[0], geomHash: had.charms[0].frozen.geomHash, widthMm: L.widthMm, heightMm: L.heightMm, parts: L.parts.length }; }
+    // (a design read before PENS has no penHash: it is read again, so the piece sent now carries the check)
+    if (had && had.charms && had.charms[0] && had.charms[0].frozen && had.charms[0].frozen.geomHash && had.charms[0].frozen.penHash) { inkAsMade(had.charms[0]); had.usedAt = Date.now(); return { src: had, charm: had.charms[0], geomHash: had.charms[0].frozen.geomHash, penHash: had.charms[0].frozen.penHash, widthMm: L.widthMm, heightMm: L.heightMm, parts: L.parts.length }; }
     const name = `${safe(design.name || design.id)}-v${version}.pdf`;
     const bytes = await pdfOf(L, `${design.name || "Custom design"} · v${version}`);
     const { parsed, group, charm } = await readOf(bytes, name);
+    inkAsMade(charm);   // (PENS: its parts in its own pens, before the writer writes it)
     const src = { id, pool: true, custom: true, design: true, name: `${design.name || "Custom design"} (design ${design.id} v${version})`, sku: "CUSTOM", bytes, hash: (CN.sha256 ? await CN.sha256(bytes) : want), parsed, group, charms: [charm], metal: null, state: "ready", t0: performance.now(), cloud: null, persisting: null, usedAt: Date.now() };
     Object.assign(charm, { id: id + ":0", sourceId: id, sourceName: src.name, index: 0, name: design.name || "Custom design", sku: "CUSTOM", namedBy: "custom", excluded: false, cloud: null, upAngle: null, engravable: false, backKeepOut: null, custom: true });
     // the piece written alone by the sheet writer, and read back from that file: what the laser gets must be the design, every part of it
@@ -277,9 +302,15 @@
       const mine = new Set(leafKeys(L.parts)), theirs = new Set(got.keys), lost = [...mine].filter(x => !theirs.has(x)).length, extra = [...theirs].filter(x => !mine.has(x)).length;
       throw new Error(`the piece would not be cut exactly as designed (${lost ? `${lost} of its ${mine.size} parts changed or left out` : ""}${lost && extra ? ", " : ""}${extra ? `${extra} part${extra === 1 ? "" : "s"} the design does not have` : ""}): it is not sent. Open it in the Charm Editor: a ring or a part outside the outline is usually the cause`);
     }
-    charm.frozen = { geomHash };   // (the piece's own fields follow per copy; the source's charm keeps its hash so the next send of it is not read again)
+    // (PENS: and in the design's own colours: a grey stays its grey, the black level black; a part the writer would paint in another pen is not sent)
+    const penHash = hashOf(got.pens || []);
+    if (penHash !== hashOf(leafPens(L.parts))) {
+      const mine = new Set(leafPens(L.parts)), off = (got.pens || []).filter(x => !mine.has(x)).length;
+      throw new Error(`the piece would not be engraved in its design's colours (${off} part${off === 1 ? "" : "s"} written in another pen): it is not sent. Open it in the Charm Editor and save it again`);
+    }
+    charm.frozen = { geomHash, penHash };   // (the piece's own fields follow per copy; the source's charm keeps its hashes so the next send of it is not read again)
     S.poolSources[id] = src;
-    return { src, charm, geomHash, widthMm: L.widthMm, heightMm: L.heightMm, parts: L.parts.length };
+    return { src, charm, geomHash, penHash, widthMm: L.widthMm, heightMm: L.heightMm, parts: L.parts.length };
   }
 
   /* ── 7 · Pool.addCustomPiece ── */
@@ -360,7 +391,7 @@
         custom: true, order: r.orderId, orderDate: +r.orderDate || at, arrivedAt: +r.arrivedAt || at, poolId: r.poolId, metal, lineKey: r.lineKey, excluded: false, engravable: false, backKeepOut: null, sku: "CUSTOM",
         orderInfo: { receiptId: r.orderId, transactionId: r.transactionId, sku: "CUSTOM", copy: r.copy, quantity: n, custom: true, file: name || design.name || "", ...(rep.orderless ? { orderless: true } : {}) },
         cloud: cloud ? { ai: cloud.url, aiPath: cloud.path, png: null, pngPath: null } : null,
-        frozen: { designId: String(design.id), version, designHash, geomHash: made.geomHash, widthMm: +made.widthMm.toFixed(3), heightMm: +made.heightMm.toFixed(3), customId: rep.customId, name: name || null, orderless: !!rep.orderless, by, at }
+        frozen: { designId: String(design.id), version, designHash, geomHash: made.geomHash, penHash: made.penHash, widthMm: +made.widthMm.toFixed(3), heightMm: +made.heightMm.toFixed(3), customId: rep.customId, name: name || null, orderless: !!rep.orderless, by, at }
       });
       list.push(c);
       B.pool.rows.set(r.poolId, Object.assign({}, r, { updatedAt: at }));
@@ -403,6 +434,7 @@
       if (!w) { bad.push(`${nm(x.c)} is not in the file`); continue; }
       if (Math.abs(Math.sqrt(w.det) - 1) > 1e-4) bad.push(`${nm(x.c)} is written at ${(Math.sqrt(w.det) * 100).toFixed(2)} % of its size`);
       else if (hashOf(w.keys) !== f.geomHash) bad.push(`${nm(x.c)}'s parts in the file are not its design's (design ${f.designId} v${f.version}: ${f.geomHash} expected, ${hashOf(w.keys)} written)`);
+      else if (f.penHash && hashOf(w.pens || []) !== f.penHash) bad.push(`${nm(x.c)} is not written in its design's colours (design ${f.designId} v${f.version}: a part would be engraved in another pen)`);
     }
     if (!bad.length) return { ok: true, n: list.length };
     return { ok: false, n: list.length, bad, why: `Not saved: a custom piece is not written exactly as it was designed — ${bad.slice(0, 2).join("; ")}${bad.length > 2 ? ` and ${bad.length - 2} more` : ""}` };
@@ -419,7 +451,7 @@
     return uniq.length > 2 ? shown.concat([`+ ${uniq.length - 2} more custom piece${uniq.length - 2 === 1 ? "" : "s"} (no order)`]) : shown;
   }
 
-  const api = { ORDERLESS, orderless, isFrozen, frozenOf, partsOf, leavesOf, keyOf, hashOf, leafKeys, paintOf, pdfOf, readOf, writtenOf, sourceFor, addCustomPiece, holdSize, sizeWhy, checkWritten, shipIds, labelNotes, version: 1 };
+  const api = { ORDERLESS, orderless, isFrozen, frozenOf, partsOf, leavesOf, keyOf, hashOf, leafKeys, leafPens, inkAsMade, paintOf, pdfOf, readOf, writtenOf, sourceFor, addCustomPiece, holdSize, sizeWhy, checkWritten, shipIds, labelNotes, version: 1 };
   // (the contract's own door: Pool.addCustomPiece; the bridge's Pool is made before this file loads)
   if (root && root.Pool && !root.Pool.addCustomPiece) root.Pool.addCustomPiece = addCustomPiece;
   return api;
