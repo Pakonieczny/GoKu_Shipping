@@ -124,6 +124,12 @@ async function session(sb) {
   await L({ op: 'artPut', poolId: `${A}_10010_1`, face: 'front', by: 'Eve', art: { baseKey: 'guard1', removed: ['0-guard'], added: [{ id: 'date1', kind: 'text', role: 'hatch', d: 'M1 1L3 1L3 3Z', fill: [0, 0, 1] }] } });
   await L({ op: 'artGet', poolId: `${A}_10010_1`, face: 'front' });
   await L({ op: 'artList', keys: [`${A}_10010_1~front`] });
+  // DESIGNS (Paul, 28 Oct 2026): the design library (Charm_Designs and its versions, its count Order_Rev/_designs, its picture under charmnest/designs/): driven so the wipe is tested against what it writes
+  { const sq = [[['m', [0, 0]], ['l', [56.693, 0]], ['l', [56.693, 42.52]], ['l', [0, 42.52]], ['h']]], png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=';
+    const dsg = { name: 'Guard heart', faces: { front: { face: 'front', frame: { x0: 0, y0: 0, wPt: 56.693, hPt: 42.52 }, items: [{ id: 'o', kind: 'path', role: 'cut', subpaths: sq }, { id: 'a', kind: 'path', role: 'hatch', fill: [0, 0, 1], subpaths: [[['m', [10, 10]], ['l', [20, 10]], ['l', [20, 20]], ['h']]] }] } }, widthMm: 20, heightMm: 15, source: { kind: 'new' }, orderId: A };
+    const put1 = await L({ op: 'designPut', by: 'Eve', design: dsg, thumb: png });
+    await L({ op: 'designPut', by: 'Eve', design: Object.assign({}, dsg, { id: put1.id, name: 'Guard heart 2' }) });
+    await L({ op: 'designList' }); await L({ op: 'designList', since: put1.rev }); await L({ op: 'designGet', id: put1.id, history: true }); }
   await L({ op: 'runPut', run: { runId: RUN2, status: 'running', step: 'nesting', day: DAY, lines: {} } });   // (an open run: only a sheet of an open run can be repacked)
   await L({ op: 'archiveEmptySheet', id: SHEET2, runId: RUN2 });
   await L({ op: 'sheetPdf', ids: [SHEET, 'no-such-sheet'] });
