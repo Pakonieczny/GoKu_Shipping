@@ -9073,6 +9073,7 @@ const Engrave = window.Engrave = (() => {
   async function seedWords(job, seed) {
     const row = job.row, by = seed.by || employeeName() || "", face = (window.CharmNestEngraveFaces && CharmNestEngraveFaces.faceOf(job)) || "back", was = job.text;
     const keep = job.nudged && job.fit ? { centre: job.fit.centre.slice(), angle: job.fit.angle } : null;   // (a position a person set stays through new words or a new font, as fitNewWords keeps it)
+    if (typeof holdDrawing === "function") holdDrawing(job);   // (REFIT: the drawing it had stays, dimmed, until the new words are fitted)
     job.lineInput = null; job.lineMode = "auto"; job.wantSize = null; job.fit = null;
     Object.assign(job, { text: seed.text, lines: seed.lines.slice(), source: "person", quote: null, confidence: 1, questions: [], claudeReasoning: null, requests: { side: face, font: null, handwriting: false, image: false },
       wordsSource: "spec.engraving", decision: { by, at: Date.now(), text: seed.text, note: "edited", ...(seed.why ? { why: seed.why } : {}) }, faceFontWord: seed.fontWord || null });   // (faceFontWord: the font the person picked for this face, which ensureJobFont fits it in; null = the line's font)
