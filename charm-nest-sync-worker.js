@@ -31,12 +31,13 @@
                                       its own while it is in use (2000: the Review tab, a sheet window), 0 otherwise; wants(key): this
                                       name is one it shows; active(): it is on screen now (else it is read when it is: resume); since(): when its own last read
                                       began (a read that began after the leader's question has what it named: nothing more is asked); read(why, keys, at):
-                                      why 'keys' | 'reset' | 'verify' | 'dirty', at: when the leader asked (what was written before it is named)
+                                      why 'keys' | 'reset' | 'verify' | 'dirty', at: when the leader asked (what was written before it is named);
+                                      clear(): whether something was named while it was not on screen, forgotten (the surface reads it its own way)
      live()                           the feed answers (here or in another tab): a surface lets its own timer go to its net
      quietSince(t, kinds)             nothing of these kinds moved since t, and the feed was heard all along (a list read at t is still what the cloud holds)
      watchOrder(rid) → off            an open order window's Order_Rev, watched by the leader
      once(name, everyMs, fn)          fn in one tab of this computer at most every everyMs (the Library's seal check)
-     poke()                           ask now (a tab shown, the network back)
+     poke(fn?)                        ask now (a tab shown, the network back); fn({ keys, reset }): the first answer to a question asked after it
      state()                          { world, leader, live, n, polls, heard, keys, … } (the tests read it) */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(root);
@@ -64,6 +65,8 @@
   let n = null, heardAt = 0, firstAt = 0, lastInput = now(), actSent = 0, hurry = 0, hurryAt = 0, hurrySent = 0;
   const lastKind = new Map();                  // kind → the leader's question time of the last answer that named it ('*': not known, '!': a reset)
   const subs = new Set();
+  const onceAt = new Map();
+  let pokes = [];                              // ({ at, fn }) poke(fn): told the first answer to a question asked after it                    // name → when a tab of this computer last ran it (once: told on the channel, never stored)
   const mine = new Map();                      // rid → how many order windows of this tab watch it
   const stats = { polls: 0, answers: 0, keys: 0, resets: 0, heard: 0, reads: 0, fetches: 0, errors: 0, gaps: 0, leads: 0 };
 
@@ -74,9 +77,10 @@
   const cursorKey = () => 'cn.sync.cursor.' + world;
 
   /* ── the cursor: kept for this computer, so a new leader (or the page after a reload) goes on from where the last one stopped ── */
-  function keepCursor() { const s = ls(); if (s && n != null) safe(() => s.setItem(cursorKey(), JSON.stringify({ n, at: now(), cg }))); }
+  // (production's only: the sandbox leaves nothing behind in the browser (Paul, 10 Oct 2026), and a sandbox page after a reload begins from the count it is answered)
+  function keepCursor() { const s = world === 'production' ? ls() : null; if (s && n != null) safe(() => s.setItem(cursorKey(), JSON.stringify({ n, at: now(), cg }))); }
   function keptCursor() {
-    const s = ls(); const v = s ? safe(() => JSON.parse(s.getItem(cursorKey()) || 'null'), null) : null;
+    const s = world === 'production' ? ls() : null; const v = s ? safe(() => JSON.parse(s.getItem(cursorKey()) || 'null'), null) : null;
     return v && Number.isFinite(+v.n) && now() - (+v.at || 0) < PACE.cursorFor ? v : null;
   }
 
@@ -91,6 +95,13 @@
   /* A tab's own surfaces hear an answer: from the leader here, or by the channel. An answer asked from a count this tab did not reach (it missed one) is a
      reset for it: every surface asks its own question again. */
   function heard(m, local) {
+    heard0(m, local);
+    if (m && m.v === V && m.t === 'feed' && pokes.length) {   // (poke(fn): the first answer to a question asked after it)
+      const due = pokes.filter(p => (+m.at || 0) >= p.at - 50 || now() - p.at > 10000); pokes = pokes.filter(p => !due.includes(p));
+      for (const p of due) if (now() - p.at <= 10000) safe(() => p.fn({ keys: (m.keys || []).map(String), reset: !!m.reset }));
+    }
+  }
+  function heard0(m, local) {
     if (!m || m.v !== V) return;
     heardAt = now(); if (!firstAt) firstAt = heardAt;
     if (!local) stats.heard++;
@@ -112,6 +123,7 @@
     else if (m.t === 'hello' || m.t === 'poke') { if (leader) soon(); }
     else if (m.t === 'lead') { if (mine.size) post({ t: 'watch', rids: [...mine.keys()] }); }
     else if (m.t === 'dead') { stop(true); }
+    else if (m.t === 'once') { onceAt.set(String(m.name), Math.max(onceAt.get(String(m.name)) || 0, +m.at || 0)); }
   }
 
   /* ── the leader's question ── */
@@ -248,6 +260,7 @@
       },
       live: () => live(),
       dirty: () => !!dirty,
+      clear: () => { const d = !!dirty; dirty = null; return d; },
       resume() { if (gone || !dirty || !active() || !visible()) return false; const d = dirty; dirty = null; run(d.why === 'keys' ? 'dirty' : d.why, [...d.keys], d.at); return true; },
       stop() { gone = true; subs.delete(s); }
     };
@@ -268,17 +281,21 @@
     let off = false;
     return () => { if (off) return; off = true; const c = (mine.get(rid) || 1) - 1; if (c > 0) mine.set(rid, c); else mine.delete(rid); post({ t: 'watch', rids: [...mine.keys()] }); };
   }
-  /** fn in one tab of this computer at most every everyMs (a stamp all tabs read, and a lock while it runs). */
+  /** fn in one tab of this computer at most every everyMs (a lock while it runs, and the time it ran told to every tab). */
   async function once(name, everyMs, fn) {
-    const key = 'cn.sync.once.' + world + '.' + name, s = ls();
-    const last = () => (s ? +safe(() => s.getItem(key), 0) || 0 : 0);
+    name = String(name);
+    const last = () => onceAt.get(name) || 0;
     if (now() - last() < everyMs) return false;
-    const go = async () => { if (now() - last() < everyMs) return false; if (s) safe(() => s.setItem(key, String(now()))); await fn(); return true; };
+    const go = async () => { if (now() - last() < everyMs) return false; const at = now(); onceAt.set(name, at); post({ t: 'once', name, at }); await fn(); return true; };
     const locks = safe(() => root.navigator && root.navigator.locks, null);
     if (!locks || typeof locks.request !== 'function') return go();
     try { return await locks.request('cn-sync-once:' + world + ':' + name, { ifAvailable: true }, lock => (lock ? go() : false)); } catch (_) { return go(); }
   }
-  function poke() { if (!started || dead) return false; if (leader) soon(); else post({ t: 'poke' }); evaluate(); return true; }
+  function poke(fn) {
+    if (!started || dead) return false;
+    if (typeof fn === 'function') { pokes.push({ at: now(), fn }); if (pokes.length > 20) pokes.shift(); }
+    if (leader) soon(); else post({ t: 'poke' }); evaluate(); return true;
+  }
 
   /* ── this tab ── */
   function onInput() {

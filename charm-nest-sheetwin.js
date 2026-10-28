@@ -5177,7 +5177,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   };
   const followGap = () => {
     const now = Date.now();
-    if (followSynced() && FOLLOW.id === W.id) return 600000;
+    if (typeof followSynced === "function" && followSynced() && FOLLOW.id === W.id) return 600000;   // (FEED: the feed names this sheet when it moves; tests/cost/fc4-sheetwin-follow.cjs reads this function alone)
     if (now - FOLLOW.touch < 120000 && (typeof document.hasFocus !== "function" || document.hasFocus())) return 0;
     return now - Math.max(FOLLOW.touch, FOLLOW.moved) < 600000 ? 13500 : 59500;   // (the beat is 2 s: these read at about 14 s and 60 s)
   };

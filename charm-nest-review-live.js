@@ -38,7 +38,7 @@
      write can land with a time older than the last answer's `at`; at 10-60 s cadences the margin re-reads a write about once or twice, a cost
      of nothing next to the calls saved. Not shared across tabs (CnPoll): a cursor feed is per tab, and every tab of this sorter shows it. */
   const SLOW = 10000, IDLE = 60000, WORKING = 120000, IDLE_AFTER = 600000;
-  const st = { timer: 0, due: 0, every: EVERY, second: 0, busy: false, again: false, hint: false, quietNext: true, fails: 0, cursor: 0, lastOk: 0, lastAny: 0, start: 0, end: 0, polls: 0, applied: 0, dead: false, loud: 0, error: "", heard: 0, input: Date.now() };
+  const st = { timer: 0, due: 0, every: EVERY, second: 0, busy: false, again: false, hint: false, quietNext: true, fails: 0, cursor: 0, lastOk: 0, lastAny: 0, start: 0, end: 0, polls: 0, applied: 0, dead: false, loud: 0, error: "", heard: 0, input: Date.now(), peek: 0 };
   const modeOf = () => { try { return S.mode; } catch (_) { return ""; } };
   const cloudOk = () => { try { return !!(S.cloud && S.cloud.ok); } catch (_) { return false; } };
   const onReview = () => modeOf() === "review" && !doc.hidden;
@@ -249,7 +249,19 @@
     // NAV (28 Oct 2026, Paul: "keep the API calls to the bare minimum"): a tab that follows, shown while the last read is still within the loop's own beat (orders → review → library in a
     // few seconds), keeps that beat: the next read comes when it was due, not at once on every switch
     if (FOLLOW.has(mode)) { if (doc.hidden) return; if (synced() && st.lastOk && !st.fails) { if (!(sync.resume())) schedule(); return; } if (st.busy) st.again = true; else if (!st.fails && st.lastOk && Date.now() - st.lastOk < pace()) schedule(); else arm(0); return; }   // (FEED: what moved meanwhile was named: read only if something was)
-    if (synced() && st.lastOk) return;   // (FEED: the records are current: nothing moved that was not read)
+    // (FEED: the records are current unless one was named while nothing here watched: then the one quiet read, as before, so the rail and the header agree)
+    // (and a tab shown after a quiet spell asks the computer's feed at once, not this read: what it names in the next seconds is read, quietly)
+    if (synced() && st.lastOk) {
+      if (TABS.has(mode) && !doc.hidden) {
+        if (sync.clear()) { st.lastAny = Date.now(); if (st.busy) st.again = true; else poll({ quiet: true }).catch(() => {}); }
+        else if (Date.now() - Math.max(st.lastAny, st.end, st.peek) > OTHER_TAB) {
+          st.peek = Date.now();
+          // (the one quiet read as before, for what was written up to now: the answer to the feed's next question, asked now; what is written later waits for a tab that follows)
+          try { root.CNSync.poke(a => { if ((a.reset || a.keys.some(k => k === "*" || k[0] === "c")) && sync.clear()) { st.lastAny = Date.now(); if (st.busy) st.again = true; else poll({ quiet: true }).catch(() => {}); } }); } catch (_) {}
+        }
+      }
+      return;
+    }
     if (TABS.has(mode) && !doc.hidden && Date.now() - Math.max(st.lastAny, st.end) > OTHER_TAB) { st.lastAny = Date.now(); if (st.busy) st.again = true; else poll({ quiet: true }).catch(() => {}); }
   }
   doc.addEventListener("visibilitychange", () => {
@@ -268,7 +280,7 @@
   const follow = () => {
     if (sync || !root.CNSync || typeof root.CNSync.follow !== "function") return;
     sync = root.CNSync.follow({ name: "review", kinds: "c", active: () => !st.dead && watching() && cloudOk(), since: () => st.start, every: () => (onReview() && focused() && Date.now() - st.input <= WORKING ? EVERY : 0),
-      read: why => { if (st.dead || !cloudOk()) return; if (why === "reset" || why === "dirty") st.quietNext = true; if (st.busy) st.again = true; else arm(Math.max(0, st.end + GAP - Date.now())); } });
+      read: why => { if (st.dead || !cloudOk()) return; if (why === "reset" || why === "dirty") st.quietNext = true; if (!watching()) { st.hint = true; st.quietNext = true; } if (st.busy) st.again = true; else arm(Math.max(0, st.end + GAP - Date.now())); } });
   };
   follow(); if (!sync) setTimeout(follow, 0);
   root.ReviewLive = { nudge, announce, heard, shown, poll, ensure, state: () => ({ synced: synced(), polls: st.polls, applied: st.applied, loud: st.loud, heard: st.heard, fails: st.fails, cursor: st.cursor, lastOk: st.lastOk, busy: st.busy, armed: !!st.timer, dead: st.dead, error: st.error, every: st.every, pace: pace() }) };

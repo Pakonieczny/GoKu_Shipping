@@ -230,10 +230,10 @@ const closeWin = async pg => { await pg.page.evaluate(() => { try { OrderWin.clo
   // (COST, Oct 2026: the Library's beat follows the person, 3 s while the page is used and 15 s when not: somebody is at both computers, moving the mouse now and then)
   const used = () => { for (const pg of [A, B]) pg.page.mouse.move(20 + Math.round(Math.random() * 40), 20 + Math.round(Math.random() * 40)).catch(() => {}); };
   used(); const usedIv = setInterval(used, 20000);
-  const reqs = { A: [], B: [] };
+  const reqs = { A: [], B: [] }, feed = { A: [], B: [] };   // (feed: FEED, 28 Oct 2026, the computer's changes feed, charm-nest-sync-worker.js: its questions, getChanges)
   for (const [k, pg] of [['A', A], ['B', B]]) {
-    pg.page.on('request', r => { if (/charmNestLibrary/.test(r.url()) && r.method() === 'POST') { let op = ''; try { op = JSON.parse(r.postData() || '{}').op; } catch (_) {} if (op === 'laserStatus') reqs[k].push({ at: Date.now(), body: r.postData(), req: r }); } });
-    pg.page.on('response', async r => { if (/charmNestLibrary/.test(r.url()) && r.request().method() === 'POST') { const x = reqs[k].find(q => q.req === r.request()); if (x) { try { x.answer = await r.json(); } catch (_) {} } } });
+    pg.page.on('request', r => { if (/charmNestLibrary/.test(r.url()) && r.method() === 'POST') { let op = ''; try { op = JSON.parse(r.postData() || '{}').op; } catch (_) {} if (op === 'laserStatus') reqs[k].push({ at: Date.now(), body: r.postData(), req: r }); else if (op === 'getChanges') feed[k].push({ at: Date.now(), body: r.postData(), req: r }); } });
+    pg.page.on('response', async r => { if (/charmNestLibrary/.test(r.url()) && r.request().method() === 'POST') { const x = reqs[k].find(q => q.req === r.request()) || feed[k].find(q => q.req === r.request()); if (x) { try { x.answer = await r.json(); } catch (_) {} } } });
     pg.page.on('request', r => { if (/etsy\.com|openapi\.etsy/.test(r.url())) etsy.push(r.url()); });
   }
   await show(A); await show(B); await sleep(2500);
@@ -280,12 +280,22 @@ const closeWin = async pg => { await pg.page.evaluate(() => { try { OrderWin.clo
   say('\n== an idle Library (12 s, two computers)');
   await toCard(A); await toCard(B); await sleep(1500);
   // (first, let the pages settle: the seals the first passes record (the pages' own slow checks, the ones above) move the revision, and each page reads in full until they stop)
+  // (FEED: a page whose computer's changes feed answers reads nothing while nothing moves; settled once its feed's last two answers named nothing)
+  const synced = { A: await A.page.evaluate(() => !!LaserReview.liveState().synced), B: await B.page.evaluate(() => !!LaserReview.liveState().synced) };
   for (const t0 = Date.now(); Date.now() - t0 < 120000;) {
     await sleep(1500);
-    if (['A', 'B'].every(k => { const rs = reqs[k].filter(r => r.answer).slice(-2); return rs.length === 2 && rs.every(r => r.answer.unchanged && r.answer.probed === 1); })) break;
+    if (['A', 'B'].every(k => { if (synced[k]) { const fs = feed[k].filter(r => r.answer).slice(-2); return fs.length === 2 && fs.every(r => !(r.answer.keys && r.answer.keys.length) && !r.answer.reset); } const rs = reqs[k].filter(r => r.answer).slice(-2); return rs.length === 2 && rs.every(r => r.answer.unchanged && r.answer.probed === 1); })) break;
   }
-  const i0 = { A: reqs.A.length, B: reqs.B.length }; await sleep(12000);
+  const i0 = { A: reqs.A.length, B: reqs.B.length }, f0 = { A: feed.A.length, B: feed.B.length }; await sleep(12000);
   for (const k of ['A', 'B']) {
+    if (synced[k]) {
+      // FEED: the Library's loop asks the cloud nothing while nothing moves; the computer's one question goes about every 3 s while somebody works at it
+      const polls = reqs[k].slice(i0[k]).filter(r => r.answer && JSON.parse(r.body).recordSeals !== true), asks = feed[k].slice(f0[k]).filter(r => r.answer);
+      say(`  ${k}: the changes feed answers: ${asks.length} questions of the computer in 12 s (each one document), ${polls.length} Library reads`);
+      check(asks.length >= 3 && asks.length <= 6, `${k}: the computer asks what moved about every 3 s while it is used (3 to 6 in 12 s)`, `${asks.length}`);
+      check(polls.length <= 1, `${k}: nothing moving, the Library's loop reads nothing (it looks)`, `${polls.length} reads`);
+      continue;
+    }
     const polls = reqs[k].slice(i0[k]).filter(r => r.answer), cheap = polls.filter(r => r.answer.unchanged && r.answer.probed === 1);
     say(`  ${k}: ${polls.length} reads in 12 s, ${cheap.length} of them one-document`);
     if (polls.length < 3) { const now = Date.now(), d = await (k === 'A' ? A : B).page.evaluate(() => ({ live: LaserReview.liveState(), reads: window.__reads.slice(-6), long: window.__long.slice(-6), hidden: document.hidden })); say('   what the page was doing:', JSON.stringify({ ...d, reads: d.reads.map(r => [r[0] - now, r[1] == null ? null : r[1] - now, r[2]]), long: d.long.map(l => [l[0] - now, l[1]]) })); }
@@ -366,7 +376,9 @@ const closeWin = async pg => { await pg.page.evaluate(() => { try { OrderWin.clo
     const wa = A.page.evaluate(([w]) => window.__lr.waitFor(w, 20000), [last ? "s.area === 'ready'" : `s.panel && !s.panel.includes('${rid}')`]);
     if (i === 0) await openPanel(A);
     // (the write is made just after this tab's own loop read ended: its next turn is 3 s away, so a repaint inside a second can only be the nudge)
-    for (const n0 = reqs.A.length; reqs.A.length === n0 || !reqs.A[reqs.A.length - 1].answer;) await sleep(15);
+    // (FEED: with the changes feed answering, just after the computer's own question was answered: its next is 3 s away)
+    if (synced.A) { for (const n0 = feed.A.length; feed.A.length === n0 || !feed.A[feed.A.length - 1].answer;) await sleep(15); }
+    else for (const n0 = reqs.A.length; reqs.A.length === n0 || !reqs.A[reqs.A.length - 1].answer;) await sleep(15);
     await C.page.evaluate(async ([k, rid, tid, sku]) => { await api('charmNestLibrary', { op: 'customPut', key: k, receiptId: rid, transactionId: tid, sku, how: 'button', by: 'Paul' }, { quiet: true }); }, [b.key, rid, b.key.split('_')[1], b.sku]);
     const rec = lastWrite(), ra = await wa, tw = (await C.page.evaluate(() => window.__wrote.slice())).pop() || rec, ms = ra.at ? ra.at - tw : null;   // (tw: the other tab had the answer of its write: it tells this one then)
     const aw = afterWrite(await readsOf(A), tw), quick = !!aw.r && aw.r[0] - tw <= 450;   // a read within 450 ms of the write: the nudge, not the 3 s loop

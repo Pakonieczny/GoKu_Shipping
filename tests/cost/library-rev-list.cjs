@@ -83,11 +83,11 @@ db.seed(seed);
   await sleep(3); await call({ op: "putSheet", sheet: { id: "sheet-elsewhere", metal: "gold", day: "2026-10-03", poolIds: [], orders: [] } });
   x = await delta(() => ask({ ifRevs: full.revs, ifRev: older })); assert.equal(x.out.via, "docs", "a reader from before the unlisted write cannot be told by the list");
   x = await probe(); assert.equal(x.out.via, "list", "a reader that probed after it can"); assert.equal(x.d.reads, 2); full.rev = x.out.rev;
-  // 9. the list holds 200: a reader older than the oldest it dropped probes the documents
+  // 9. the list holds 1,000 (FEED, 28 Oct 2026: it was 200; the changes feed names pool rows, cancels and timelines in it too): a reader older than the oldest it dropped probes the documents
   const stale = full.rev;
-  for (let i = 0; i < 205; i++) await call({ op: "setUpdate", setId: `set-far-${i}`, patch: { note: "x" } });
+  for (let i = 0; i < 1005; i++) await call({ op: "setUpdate", setId: `set-far-${i}`, patch: { note: "x" } });
   const list = (await db.collection("Charm_Nest_Rev").doc("library").get()).data();
-  assert(Object.keys(list.changed).length <= 200 && list.floor > 0, "the list is bounded");
+  assert(Object.keys(list.changed).length <= 1000 && list.floor > 0, "the list is bounded");
   x = await delta(() => ask({ ifRevs: full.revs, ifRev: stale })); assert.equal(x.out.via, "docs", "older than the list: the documents");
   // 10. a change in one of ours is never missed, whichever way it was written: a '*' write, a named write
   await sleep(3); full = await ask({}); await sleep(3); await db.collection(S).doc("sheet-3-1").update({ verification: { ok: false } }); await call({ op: "noDesignDelete", sku: "NOPE-1", by: "Paul" });
