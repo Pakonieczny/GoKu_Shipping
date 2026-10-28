@@ -278,6 +278,7 @@ const assets = [
   "charm-nest-design-log.js",
   "charm-nest-custom-piece.js",
   "charm-nest-efficiency-custom.js",
+  "charm-nest-sw.js",
   "charm-nest-check.html",
   "vendor/opentype-1.3.4.min.js",
   "vendor/jszip-3.10.1.min.js",
