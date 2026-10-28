@@ -9615,7 +9615,7 @@ const Engrave = window.Engrave = (() => {
     if (!s || s.kind !== "path" || /keep-?out/i.test(String(s.layer || ""))) return none;
     const rule = String(s.paintOp || "").endsWith("*") ? "evenodd" : "nonzero";
     if (s.hatchStrip && s.hatchBlue && s.stroke && !s.fill) return { fill: "hatch", stroke: null, rule: "evenodd" };   // (thin strips outlined in red are the hatched strips themselves)
-    const fill = s.fill ? (artPaper(s.fillRGB) ? "paper" : "hatch") : null;
+    const fill = s.fill ? (s.artGrey ? "grey" : artPaper(s.fillRGB) ? "paper" : "hatch") : null;   // (a traced image's part is drawn in its own grey: charm-nest-ce-image.js)
     let stroke = null;
     if (s.stroke) {
       if ((s.hatchLine && s.hatchBlue) || artHatchBlue(s.strokeRGB)) stroke = "hatch";
@@ -9646,7 +9646,7 @@ const Engrave = window.Engrave = (() => {
         const ink = frontArtInk(s); if (!ink.fill && !ink.stroke) continue;
         g.beginPath(); P.pathToCanvas(g, s, tx);
         if (ink.fill === "paper") { g.save(); g.globalCompositeOperation = "destination-out"; g.fillStyle = "#000"; g.fill(ink.rule); g.restore(); }
-        else if (ink.fill) { g.fillStyle = FRONT_INK.hatch; g.fill(ink.rule); }
+        else if (ink.fill) { g.fillStyle = ink.fill === "grey" ? `rgb(${(s.fillRGB || [0, 0, 0]).slice(0, 3).map(v => Math.round(Math.max(0, Math.min(1, +v || 0)) * 255)).join(",")})` : FRONT_INK.hatch; g.fill(ink.rule); }   // (a traced image's grey: charm-nest-ce-image.js)
         if (ink.stroke) { g.strokeStyle = FRONT_INK[ink.stroke]; g.lineWidth = Math.max(0.6, (s.lwPt || 0.5) * k); g.stroke(); }
       }
       return lay;
@@ -9957,6 +9957,14 @@ const Engrave = window.Engrave = (() => {
     try { render(); } catch (_) { /* drawn with the next render */ }
     return { saved: faces, records };
   }
+  /* DESIGN MODE (Paul, 28 Oct 2026: "search and open any charm existing in our charm repository and have full control over manipulating that charm" ... "designing custom charms"): the charm
+     editor opened on a DESIGN, not on a piece: the engraving fonts and their outlines as a piece's open has them, every layer free (nothing locked unless the person locks it). Nothing here reads
+     or writes a piece's artwork record (no AE.sync, no AE.save): the caller keeps what comes back (charm-nest-ce-masters.js: a design version, CharmNestDesigns.put). */
+  function openCharmEditorDesign(opts) {
+    if (!window.CharmEditor) return Promise.reject(new Error("the charm editor did not load: reload the page"));
+    return charmEditFonts(null).catch(() => []).then(fonts => window.CharmEditor.open(Object.assign({ fonts, textToPaths: charmEditText, lockRoles: [] }, opts)));
+  }
+  window.CharmEditDesign = { open: openCharmEditorDesign, fonts: () => charmEditFonts(null), textToPaths: (text, fontKey, sizePt, o) => charmEditText(text, fontKey, sizePt, o) };
   function renderFront(charm, px, opts) {
     if (!charm?.outline || !Array.isArray(charm.bbox) || charm.bbox.length !== 4 || !charm.bbox.every(Number.isFinite))
       return el("div", "noPic", "The charm preview is still loading.");
@@ -15310,6 +15318,7 @@ const CustomSheet = window.CustomSheet = (() => {
   function wire(node, it) {
     const c = cardOf(it); if (!c) return;
     node._cuIt = it; node._cuCk = c.ck; cardNodes.set(c.ck, node);
+    try { if (window.CharmNestCustomPiece) CharmNestCustomPiece.wire(node, it); } catch (err) { console.warn("Open in Charm Designer", err); }   // (DESIGN & ENGRAVE, Paul 28 Oct 2026: "custom orders that need a custom charm design now must all be able to be opened in the charm design designer": its button, and the design attached to the order: charm-nest-custom-piece.js)
     node.querySelectorAll("[data-cu-designs]").forEach(b => b.onclick = ev => { ev.stopPropagation(); open(it, { browse: !c.files.length, from: node }); });
     node.querySelectorAll("[data-cu-keep-retry]").forEach(b => b.onclick = ev => { ev.stopPropagation(); if (b.dataset.cuKeepRetry === "repo") KeepUI.askPwFocus(); keepRetryFromCard(c.ck, it, node, b.dataset.cuKeepRetry); });
     node.querySelectorAll("[data-cu-mono]").forEach(b => b.onclick = ev => { ev.stopPropagation(); if (window.Engrave && Engrave.openMonogram) Engrave.openMonogram(linesOf(it)[0].key); });
@@ -21079,6 +21088,7 @@ const OrderWin = window.OrderWin = (() => {
     // from this UI and all detailed order modals"): the Back engraving card under the pictures says what the engraving waits
     // for and has its own way into Engraving. (#owFix stays in the page, empty: nothing draws in it.)
     paintSend(r);
+    tryDo(() => window.CharmNestCustomPiece && CharmNestCustomPiece.orderWin(r, byId("owPos")));   // (DESIGN & ENGRAVE, Paul 28 Oct 2026: a custom order opens in the Charm Designer from its order window too: charm-nest-custom-piece.js)
     paintNow(r);
     paintWho();
     tryDo(paintWinSeals);   // (SEALWIN, Paul 20 Oct 2026: every seal of the order, beside its button or in the Seals row)
