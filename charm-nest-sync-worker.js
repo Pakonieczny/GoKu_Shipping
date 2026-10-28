@@ -48,6 +48,15 @@
      here(header)                     the same names to this tab's own surfaces (OUTBOX: a direct write's, in place of api()'s reads now and 1.5 s later)
      state()                          { world, leader, live, n, polls, heard, keys, … } (the tests read it)
 
+   LIVE PUSH (Paul, 28 Oct 2026: "I want a change made on one computer to appear on the others at once, with no idle polling"; plan: phase 5, option a). While
+   charm-nest-push.js says its listener on the cloud's one counter document is HEALTHY (CNSync.push.health), the leader stops asking on a timer: a change in the
+   counter (CNSync.push.nudge) is the leader's question, at once (soon(): the same gap as any), and a safety question every ten minutes is all that is left (every
+   minute while an order window is open: a station's scan is written by the station's own SDK and names nothing, as the window's own net always was). Every
+   tab keeps hearing the feed as live (live()), the leader tells the others on the channel that push is on, and why when it is not ('push' messages, again
+   every minute while it leads). The moment the listener fails (the library does not load, permission denied, an error, offline for more than 20 s) it says so,
+   and the pace is the polled one above again, with a question at once for what the listener missed. CNSync.push.status() → { state: 'push' | 'polling', ok, why, text }
+   is what Settings shows ("Live updates: push" / "Live updates: polling (why)"). Nothing here talks to the cloud's counter: that is charm-nest-push.js's, read-only.
+
    THE OUTBOX'S DRAIN (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"; plan: phase 3). The presses this computer kept (charm-nest-store.js mutate)
    are sent from here, by ONE tab of the computer at a time (a Web Lock per world, 'cn-outbox:<world>', taken by whichever tab has something to send, shown or
    hidden: a press made just before the tab was put away still goes), oldest first, each with its mutation id, several timeline steps in one request. An answer
@@ -63,7 +72,7 @@
 })(typeof self !== 'undefined' ? self : this, function (root) {
   'use strict';
   const V = 1;
-  const PACE = { active: 3000, quiet: 15000, idle: 60000, activeFor: 120000, quietFor: 600000, gap: 600, failMax: 60000, verifyEvery: 600000, liveFor: 150000, fetchEvery: 30000, watchFor: 180000, cursorFor: 1800000 };
+  const PACE = { active: 3000, quiet: 15000, idle: 60000, activeFor: 120000, quietFor: 600000, gap: 600, failMax: 60000, verifyEvery: 600000, liveFor: 150000, fetchEvery: 30000, watchFor: 180000, cursorFor: 1800000, safety: 600000, watchNet: 60000, pushBeat: 60000 };
   const KIND = /^[strcpxoma*]$/;
   const doc = root.document || null;
   const now = () => Date.now();
@@ -151,16 +160,19 @@
     else if (m.t === 'fail') { lost(); }
     else if (m.t === 'wrote') { heardWrote(m); }
     else if (m.t === 'once') { onceAt.set(String(m.name), Math.max(onceAt.get(String(m.name)) || 0, +m.at || 0)); }
+    else if (m.t === 'push') { pushTold = { ok: !!m.ok, why: String(m.why || '').slice(0, 200), at: now() }; pushChanged(); }
   }
 
   /* ── the leader's question ── */
   // (a surface in use that followed faster than 3 s on its own asks for its own pace while it is used: hurry, from any tab)
   const wantFast = () => { let ms = 0; for (const s of subs) { const v = s.every(); if (v > 0 && (!ms || v < ms)) ms = v; } return ms; };
-  const pace = () => {
+  const polled = () => {
     const q = now() - lastInput; if (q >= PACE.activeFor) return q < PACE.quietFor ? PACE.quiet : PACE.idle;
     const own = leader ? wantFast() : 0, other = now() - hurryAt < PACE.activeFor ? hurry : 0, fast = [own, other].filter(v => v > 0);
     return fast.length ? Math.max(1000, Math.min(PACE.active, ...fast)) : PACE.active;
   };
+  // (PUSH: while the listener is healthy only the safety question is asked on a timer: ten minutes; a minute while an order window is open)
+  const pace = () => (pushHealthy() ? (watched() ? PACE.watchNet : PACE.safety) : polled());
   function schedule(ms) {
     clearTimeout(timer); timer = 0;
     if (!leader) return;
@@ -202,7 +214,7 @@
       heard(m, true); post(m); keepCursor();
       if (m.keys.length || m.reset) heldMoved(m.keys, m.reset);
       // (the net: every surface asks once anyway every ten minutes while the computer is in use)
-      if (now() - verifyAt >= PACE.verifyEvery && now() - lastInput < PACE.quietFor) { verifyAt = now(); const v = { v: V, t: 'verify', at: now() }; if (firstAt && verifyAt - firstAt > 1000) { heard(v, true); post(v); } }
+      if (now() - verifyAt >= PACE.verifyEvery - 5000 && now() - lastInput < PACE.quietFor) { verifyAt = now(); const v = { v: V, t: 'verify', at: now() }; if (firstAt && verifyAt - firstAt > 1000) { heard(v, true); post(v); } }
     } catch (e) {
       stats.errors++;
       if (e && (e.unknown || /unknown op/i.test(String(e.message)))) { post({ t: 'dead' }); stop(true); return; }   // (an older cloud: every surface keeps its own timer)
@@ -244,10 +256,14 @@
     if (n == null) { const k = keptCursor(); if (k) { n = String(k.n); if (k.cg != null && cg == null) cg = +k.cg; } }
     post({ t: 'lead' });
     ask();
+    if (pushImpl) safe(() => pushImpl.lead(world));   // (PUSH: this tab listens to the counter now)
   }
   function loseLeadership() {
     if (!leader) return;
     leader = false; clearTimeout(timer); timer = 0; clearTimeout(fetchT); fetchT = 0;
+    clearInterval(pushBeatT); pushBeatT = 0; pushOwn = { ok: false, why: 'this tab does not lead', at: now() };
+    if (pushImpl) safe(() => pushImpl.lose());   // (PUSH: the next leader listens; this tab lets go of the connection)
+    pushChanged();
   }
   function join() {
     if (cand) return;
@@ -298,7 +314,9 @@
     subs.add(s);
     return s;
   }
-  const live = () => started && !dead && !failing && (leader ? now() - lastOk < PACE.liveFor : n != null && now() - heardAt < PACE.liveFor);
+  // (PUSH: a feed that is asked every ten minutes is live all the same while the listener is healthy)
+  const liveFor = () => (pushHealthy() ? PACE.safety + PACE.liveFor : PACE.liveFor);
+  const live = () => started && !dead && !failing && (leader ? now() - lastOk < liveFor() : n != null && now() - heardAt < liveFor());
   /** The feed stopped answering (a failed question, an older cloud): each surface is told once (read 'lost'), so a timer it let go to its net comes back now. */
   function lost(isDead) {
     if (failing && !isDead) return;
@@ -366,6 +384,38 @@
     if (typeof fn === 'function') { pokes.push({ at: now(), fn }); if (pokes.length > 20) pokes.shift(); }
     if (leader) soon(); else post({ t: 'poke' }); evaluate(); return true;
   }
+
+  /* ── LIVE PUSH (phase 5; see the header) ── */
+  let pushImpl = null, pushOwn = { ok: false, why: 'starting', at: 0 }, pushTold = null, pushBeatT = 0, nudges = 0;
+  const pushFresh = () => !!(pushTold && pushTold.ok && now() - pushTold.at < PACE.pushBeat * 2.5);
+  const pushHealthy = () => started && !dead && (leader ? pushOwn.ok : pushFresh());
+  const pushChanged = () => { safe(() => root.dispatchEvent && typeof root.CustomEvent === 'function' && root.dispatchEvent(new root.CustomEvent('cn:push'))); };
+  const pushTell = () => post({ t: 'push', ok: pushOwn.ok, why: pushOwn.why });
+  /** charm-nest-push.js (this tab leads): the listener is healthy (ok) or is not, and why. A fall back asks at once, for what the listener may have missed. */
+  function pushHealth(ok, why) {
+    ok = !!ok; const was = pushOwn.ok; pushOwn = { ok, why: ok ? '' : String(why || 'unknown').slice(0, 200), at: now() };
+    if (leader) { pushTell(); if (!pushBeatT) pushBeatT = setInterval(() => { if (leader) pushTell(); }, PACE.pushBeat); }
+    if (leader && ok !== was) { if (!ok) { schedule(); soon(); } }   // (from push to polling: the polled pace again, and a question now)
+    pushChanged();
+  }
+  /** The counter moved (or the listener has just come: one catch-up): the leader asks the feed now. */
+  function pushNudge() { if (!leader || !started || dead) return false; nudges++; soon(); return true; }
+  function pushStatus() {
+    const info = pushImpl ? safe(() => pushImpl.info(), null) : null;
+    let ok = pushHealthy(), why = '';
+    if (info && info.off) { ok = false; why = info.off; }
+    else if (!pushImpl) { ok = false; why = 'its file is not loaded'; }
+    else if (!started || dead) { ok = false; why = 'the changes feed is not running here'; }
+    else if (leader) why = pushOwn.ok ? '' : pushOwn.why;
+    else if (pushTold && now() - pushTold.at < PACE.pushBeat * 2.5) why = pushTold.ok ? '' : pushTold.why;
+    else { ok = false; why = 'the tab that leads has not said yet'; }
+    return Object.assign({ state: ok ? 'push' : 'polling', ok, why, text: ok ? 'Live updates: push' : 'Live updates: polling (' + why + ')', leader, world, nudges, pace: pace() }, info && info.off ? {} : info || {});
+  }
+  const push = {
+    status: pushStatus, nudge: pushNudge, health: pushHealth,
+    attach(impl) { pushImpl = impl || null; if (pushImpl && leader) safe(() => pushImpl.lead(world)); pushChanged(); return push; },
+    on: () => (pushImpl && pushImpl.on ? safe(() => pushImpl.on(), null) : null), off: () => (pushImpl && pushImpl.off ? safe(() => pushImpl.off(), null) : null)
+  };
 
   /* ── THE OUTBOX'S DRAIN (phase 3; see the header) ── */
   const DR = { batch: 50, batchBytes: 48000, failMax: 60000, keepalive: 60000, tick: 15000 };
@@ -496,8 +546,8 @@
   }
   function state() {
     return { world, started, dead, leader, live: live(), n, cg, pace: pace(), polls: stats.polls, answers: stats.answers, heard: stats.heard, keys: stats.keys, resets: stats.resets, reads: stats.reads,
-      fetches: stats.fetches, errors: stats.errors, gaps: stats.gaps, leads: stats.leads, subs: subs.size, watched: Object.keys(watched() || {}), lastOk, heardAt, me, ownSkipped: stats.ownSkipped || 0 };
+      fetches: stats.fetches, errors: stats.errors, gaps: stats.gaps, leads: stats.leads, subs: subs.size, watched: Object.keys(watched() || {}), lastOk, heardAt, me, ownSkipped: stats.ownSkipped || 0, push: pushHealthy(), nudges };
   }
-  const api = { start, follow, live, quietSince, watchOrder, once, poke, wrote, here, stop, state, PACE, drain, drainState };
+  const api = { start, follow, live, quietSince, watchOrder, once, poke, wrote, here, stop, state, PACE, drain, drainState, push };
   return api;
 });

@@ -91,7 +91,7 @@ function touch(w, db, FV, ids, prefix) {
 }
 /** The same in a batch of its own, for a writer with none at hand. A failure is never the writer's error: the probe's net covers it. */
 async function touchNow(db, FV, ids, prefix) {
-  try { const b = db.batch(); if (touch(b, db, FV, ids, prefix)) await b.commit(); }
+  try { const b = db.batch(); if (touch(b, db, FV, ids, prefix)) { await b.commit(); await require("./_charmNestPush").nudge(db, FV, prefix); } }   // (PUSH, 28 Oct 2026: an open order window watches this revision; the counter the other computers listen to moves after it, _charmNestPush.js)
   catch (e) { console.warn("[orderTimeline] order revision not raised:", (e && e.message) || e); }
 }
 
