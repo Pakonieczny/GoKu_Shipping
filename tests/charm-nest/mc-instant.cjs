@@ -66,11 +66,12 @@ const root = path.join(__dirname, '../..');
   page.on('console', m => { if (m.type() === 'error' && !/firebase stub|Failed to load resource|ERR_FAILED|net::|status of 4\d\d/.test(m.text())) errors.push('console: ' + m.text().slice(0, 300)); });
   page.setDefaultTimeout(60000);
   const setPhase = async p => { phase = p; await page.evaluate(p => { window.__perf.phase = p; }, p); };
-  // (OUTBOX: from the press's event to the frame that paints it, and what that frame shows: the click is dispatched by the page itself, so the clock is the page's)
+  // (OUTBOX: the press's own work, its handlers and every promise turn they set off (a chain of 300 turns queued after them ends after theirs), and what the NEXT frame shows; the time to
+  //  that frame is printed too: it adds the wait for the screen's next refresh, up to 16.7 ms, which is no work of the press)
   const pressPaint = (sel, probe) => page.evaluate(([sel, probe]) => new Promise(res => {
-    const b = document.querySelector(sel), t = {};
-    const on = e => { t.ev = e.timeStamp; requestAnimationFrame(() => { t.paint = performance.now(); try { t.shows = (0, eval)(probe); } catch (x) { t.shows = 'threw: ' + x.message; } res({ ms: +(t.paint - t.ev).toFixed(2), shows: t.shows }); }); };
-    b.addEventListener('click', on, { capture: true, once: true }); b.click();
+    const b = document.querySelector(sel), out = {}, t0 = performance.now(); let last = t0, hops = 0; const hop = () => { last = performance.now(); if (++hops < 300) queueMicrotask(hop); };
+    requestAnimationFrame(() => { let shows; try { shows = (0, eval)(probe); } catch (x) { shows = 'threw: ' + x.message; } Object.assign(out, { frame: +(performance.now() - t0).toFixed(2), shows }); setTimeout(() => res(out), 30); });
+    b.click(); out.sync = +(performance.now() - t0).toFixed(2); queueMicrotask(hop); setTimeout(() => { out.ms = +(last - t0).toFixed(2); }, 0);
   }), [sel, probe]);
   const until = async (fn, ms = 30000, what = '') => { const t0 = Date.now(); for (;;) { let v; try { v = await fn(); } catch (_) { v = false; } if (v) return v; if (Date.now() - t0 > ms) throw new Error('timed out: ' + what); await new Promise(r => setTimeout(r, 60)); } };
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -133,7 +134,7 @@ const root = path.join(__dirname, '../..');
     await setPhase('on');
     lat = 3000;   // (OUTBOX, 9: every function 3 s late from the press to the first drag)
     const pOn = await pressPaint('.sheetWin [data-r=manual]', "CNManual._MC.on && SheetWin.hopKit.W.el.plate.classList.contains('manual')");
-    check(pOn.ms < 16 && pOn.shows === true, `9 · Manual Control on paints in the frame it is pressed in: ${pOn.ms} ms from the event to the paint (< 16 ms), on in that frame: ${pOn.shows} (every function 3 s late) · load ${load()}`, true);
+    check(pOn.ms < 16 && pOn.shows === true, `9 · Manual Control on paints in the frame after the press: ${pOn.ms} ms of work in the press (< 16 ms; ${pOn.sync} ms in its handlers), on in the next frame (${pOn.frame} ms after the press): ${pOn.shows} (every function 3 s late) · load ${load()}`, true);
     await until(() => page.evaluate(() => CNManual._MC.on), 20000, 'Manual Control on'); await sleep(300);
     { const d = await take('on'), worst = Math.max(0, ...d.lt.map(x => x[2])); check(worst < 150, `2 · Manual Control on: longest main-thread block ${worst.toFixed(0)} ms (< 150 ms) · load ${load()}`, true); }
 
@@ -184,7 +185,7 @@ const root = path.join(__dirname, '../..');
     await setPhase('save');
     lat = 3000;
     const pOff = await pressPaint('.sheetWin [data-r=manual]', "!CNManual._MC.on && !!SheetWin.hopKit.W.work && /moved by hand/.test(SheetWin.hopKit.W.work.title)");
-    check(pOff.ms < 16 && pOff.shows === true, `9 · Manual Control off paints in the frame it is pressed in: ${pOff.ms} ms from the event to the paint (< 16 ms), off with its save shown in that frame: ${pOff.shows} (every function 3 s late) · load ${load()}`, true);
+    check(pOff.ms < 16 && pOff.shows === true, `9 · Manual Control off paints in the frame after the press: ${pOff.ms} ms of work in the press (< 16 ms; ${pOff.sync} ms in its handlers), off with its save shown in the next frame (${pOff.frame} ms after the press): ${pOff.shows} (every function 3 s late) · load ${load()}`, true);
     await until(() => page.evaluate(id => { const sh = CN.allSheets().find(p => p.sheetId === id); return !CNManual._MC.on && !SheetWin.hopKit.W.flow && sh && !sh._manualHold && sh.persistedDone && !sh.dirty; }, SA.id), 240000, 'saved');
     await until(() => page.evaluate(() => !(window.CharmNestStore && CharmNestStore.pending().length)), 60000, 'the outbox empty');
     await sleep(3000 * 2 + 1500); lat = LAT;

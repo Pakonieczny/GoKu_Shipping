@@ -4262,7 +4262,13 @@ async function apiOnce(fn, body, opts) {
        Library's cards now and 1.5 s later, where each piece is now and 1.5 s later); the computer's changes feed tells the other tabs and computers. With the feed answering, a write
        made directly hands what it named (X-CN-Feed) to this tab's own surfaces (CNSync.here: each reads what it shows of it, once) where the placement feed, the order window and the
        Review feed each read twice; without the feed, as before. */
-    if (opts.outbox) return data;
+    if (opts.outbox) {
+      // (the other tabs of this computer are told of it at once, with no read, as of a direct write: the names it wrote (X-CN-Feed above; a replayed answer carries them in `feed`), and a
+      //  completion's record on the Review channel (ReviewLive.announce))
+      if (!fk && data && typeof data.feed === "string" && data.feed && window.CNSync && CNSync.wrote) { try { CNSync.wrote(data.feed); } catch (_) {} }
+      if (fn === "charmNestLibrary" && /^custom(Put|Reopen|Delete)$/.test(String((body && body.op) || ""))) { try { window.ReviewLive?.announce?.(body.op, data); } catch (_) {} }
+      return data;
+    }
     const fed = fn === "charmNestLibrary" && !!fk && !READ_OP.test(String((body && body.op) || "")) && !!(window.CNSync && CNSync.live && CNSync.live() && CNSync.here);
     if (fed) { try { CNSync.here(fk); } catch (_) {} }
     // a write to the library can be a step of an order (a piece placed or taken off, a sheet cut, a back saved, a set
