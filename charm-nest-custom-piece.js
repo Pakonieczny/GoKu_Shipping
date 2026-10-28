@@ -14,7 +14,9 @@
  *       its number or its buyer, or no order: a name and a reason; a fix names the order or piece it fixes and who made the original mistake, read
  *       from that order's history and changeable), the metal with the sheet it goes onto, how many, always "handmade custom". Confirm → send().
  *       orderId: opened from a custom order (attached to it, prefilled). poolId: the piece this one fixes. design: the design already in hand (no read).
- *       null when it is put away.
+ *       null when it is put away. Sent for the custom order it was opened from, that order's custom line is released from Review once the piece is on
+ *       (a switch in the pop-up, on by default): the card's own Release Hold (CustomPrint.complete: its record, its seal, its timeline step), since the
+ *       pool's piece is an extra piece of the order and settles nothing by itself.
  *   CharmNestCustomPiece.send({ designId, version, metal, quantity, orderId|null, customName, reason?, fixes: { orderId, poolId, lineKey, causedBy,
  *       suggested } | null, by, design? }) -> Promise<{ poolIds, orderId, sendId }>
  *       The pieces go on through Pool.addCustomPiece (the custompool workstream: the pool, the nest, the files, the frozen design); ONE
@@ -22,8 +24,10 @@
  *       order's timeline, the efficiency count and the Design_Log record from it). An orderless piece's CUSTOM-<yyyymmdd>-<n> is given by the server.
  *   CharmNestCustomPiece.openDesigner(item | row) -> Promise
  *       A custom order in the Charm Designer: opened on the design already attached to it (its latest version), else on the .ai / .dxf dropped on its
- *       card, else blank; its Save keeps the design in the design library as a new version attached to the order (CharmNestDesigns.put, orderId)
- *       and offers the pop-up prefilled with that order.
+ *       card, else blank; words in the engraving's own fonts, scripts and emoji (CharmNestCeText.prepare). Its Save keeps the design in the design
+ *       library as a new version attached to the order (CharmNestDesigns.put, orderId; the editor's true / false paints written as the laser's pens)
+ *       and offers the pop-up prefilled with that order. The picture in the pop-up is the library's own reading of the parts (CharmNestDesigns.leaves),
+ *       what the design's hash covers and the laser file draws.
  *   Hooks the bridge calls (each one line there): wire(node, item) on a Custom Orders card (the "Open in Charm Designer" button in its column, and the
  *   design attached to the order across its foot); orderWin(row, at) in the order window's header. In the Charm Editor: the "Send to sheet…" command
  *   (CharmEditor.commands.sendToSheet) and a button beside Save (CharmEditor.onOpen).
