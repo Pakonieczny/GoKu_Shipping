@@ -37,7 +37,6 @@
   const SRC_MAX = 2400;        // the source kept, px on its long side (a phone's photo is 4000: more than any charm can show)
   const SHOW_MAX = 560;        // the preview's original and greyscale, px
   const PREVIEW_MAX = 280;     // the preview's vector: traced from this, px
-  const FULL_PX_MM = 20, FULL_MAX = 1400;   // the trace on Place: 20 px a mm on the charm (the trace's own working pitch, 0.05 mm, a fibre laser's hatch), at most 1400 px; never enlarged
   const MARGIN_MM = 0.4;       // an image placed in the outline stays this far inside every cut line
   const BUDGET = { layerBytes: 180000, ops: 40000, bytes: 450000 };
   const BUSY_NODES = 5000;     // a level over this many points is said to be busy (the trace's note: a photo gives 4-12 k a level at 20 px a mm; a smaller placed size cuts it)   // (charmNestLibrary.js ART_MAX: d 200 000, ops 60 000, bytes 600 000 for the whole edit; room left for the rest of it)
@@ -235,19 +234,20 @@
     return out;
   }
   /** WHAT PLACE TRACES (one rule for the page and the tests; Paul, 28 Oct 2026: "The image vector Modal sometimes does not produce repeatable results"): the picture as
-   *  shown (RGBA w × h, turned, flipped and cropped) and the settings, the placed size longMm → { grey (RGBA, prepared), opts (CharmNestTrace.trace's) }. Nothing
-   *  else goes in: not the preview's state, not the screen, not the browser's canvas scaling. The working size is the trace's own (CharmNestTrace.plan: 20 px a
-   *  mm, up to 40 at Detail 100; line art at its own pixels, enlarged by the trace), reached here by shrink (linear light), then prepGrey. */
-  function placeInput(px, w, h, o, longMm) {
+   *  shown (RGBA w × h, turned, flipped and cropped at its own pixels) and the settings, the placed size longMm. Nothing else goes in: not the preview's state (Place
+   *  used to take the preview's thresholds when the preview had caught up and work its own out when it had not, so the same settings gave two vectors), not the
+   *  screen, not the browser's canvas scaling. placePlan: the working size (CharmNestTrace.plan: 20 px a mm, up to 40 at Detail 100; line art at its own pixels,
+   *  enlarged by the trace) and the trace's options; placePixels: the picture made that size (shrink, linear light) and prepared (prepGrey). */
+  function placePlan(w, h, o, longMm) {
     o = norm(o);
-    const T = tracer(), mm = fin(longMm) && longMm > 0 ? longMm : Math.max(w, h) / 20, t0 = traceOpts(o, Math.max(w, h) / mm), P = T && T.plan ? T.plan(w, h, t0) : { W: w, H: h };
-    let W = w, H = h;
-    if (o.mode !== 'line' && P.W < w) { px = shrink(px, w, h, P.W, P.H); W = P.W; H = P.H; }
-    const grey = greyImage(px, W, H, Object.assign({}, o, { forTrace: true }));
-    return { grey, opts: Object.assign(traceOpts(o, Math.max(W, H) / mm), { budget: Object.assign({}, BUDGET) }), work: [W, H] };
+    const T = tracer(), mm = fin(longMm) && longMm > 0 ? longMm : Math.max(w, h) / 20, P = T && T.plan ? T.plan(w, h, traceOpts(o, Math.max(w, h) / mm)) : { W: w, H: h };
+    const W = o.mode !== 'line' && P.W < w ? P.W : w, H = o.mode !== 'line' && P.W < w ? P.H : h;
+    return { w, h, W, H, o, opts: Object.assign(traceOpts(o, Math.max(W, H) / mm), { budget: Object.assign({}, BUDGET) }) };
   }
-  /** Place on this thread, start to end (node and the tests; the page runs the same steps in its workers): → { res, size, fits }. A trace more than a piece can hold
-   *  even simplified (CharmNestTrace throws overBudget) is made again from a picture 0.6 × smaller, at most three times. */
+  const placePixels = (px, pl) => greyImage(pl.W < pl.w ? shrink(px, pl.w, pl.h, pl.W, pl.H) : px, pl.W, pl.H, Object.assign({}, pl.o, { forTrace: true }));
+  function placeInput(px, w, h, o, longMm) { const pl = placePlan(w, h, o, longMm); return { grey: placePixels(px, pl), opts: pl.opts, work: [pl.W, pl.H] }; }
+  /** Place on this thread, start to end (node and the tests; the page runs the same steps in its workers, placeAsync): → { res, size, fits, tries }. A trace more
+   *  than a piece can hold even simplified (CharmNestTrace throws overBudget) is made again from a picture 0.6 × smaller, at most three times. */
   function placeSync(src, settings, longMm) {
     const T = tracer(); let w = src.width, h = src.height, px = src.data;
     for (let tries = 0; ; tries++) {
@@ -260,18 +260,37 @@
       }
     }
   }
+  /** The same Place off the page's thread: the shrink and the prep in the prep worker, the trace in CharmNestTrace's. onProgress(p, text). → { res, size, fits, tries } */
+  async function placeAsync(src, settings, longMm, onProgress, alive) {
+    const T = tracer(); let w = src.width, h = src.height, px = src.data;
+    const ok = () => !alive || alive();
+    for (let tries = 0; ; tries++) {
+      const pl = placePlan(w, h, settings, longMm), grey = await pixelsAsync(px, pl);
+      if (!ok()) return null;
+      try {
+        const res = await T.trace(grey, Object.assign({}, pl.opts, { onProgress: p => { if (onProgress && ok()) onProgress(tries ? 0.5 + p * 0.5 : p); } }));
+        const size = sizeOf(res.layers); return { res, size, fits: fits(size), tries };
+      } catch (e) {
+        if (!(e && (e.overBudget || /more than its budget/.test(String(e.message)))) || tries >= 3) throw e;
+        if (onProgress) onProgress(0.5, 'Simplifying to fit what one piece can hold…');
+        const W = Math.max(16, Math.round(pl.W * 0.6)), H = Math.max(16, Math.round(pl.H * 0.6));
+        px = shrink(px, w, h, W, H); w = W; h = H;
+      }
+    }
+  }
   /** Kept for callers of the first version: grey with brightness, contrast and invert only (no filters, no auto-levels). */
   function grey(src, o, dst) {
     const r = prepGrey(src.data, src.width, src.height, Object.assign({}, norm(o), { auto: false, sharpen: 0, denoise: false, mode: 'grey' })), d = (dst || src).data;
     for (let i = 0, p = 0; i < r.g.length; i++, p += 4) { d[p] = d[p + 1] = d[p + 2] = r.g[i]; d[p + 3] = 255; }
     return dst || src;
   }
-  /* the full-size prep off the page (a 1400 px picture's median and sharpen are 60-100 ms: never on the page's own thread), in a worker of its own made from prepGrey's own text */
+  /* the full-size prep off the page (a 1400 px picture's median and sharpen are 60-100 ms: never on the page's own thread), in a worker of its own made from prepGrey's own
+     text (and shrink's: Place's picture is made its working size there too) */
   let prepW = null, prepSeq = 0; const prepWait = new Map();
   function prepWorker() {
     if (prepW !== null) return prepW || null;
     try {
-      const code = `const prepGrey = ${prepGrey.toString()};\nself.onmessage = e => { const m = e.data; try { const r = prepGrey(m.px, m.w, m.h, m.o), d = new Uint8ClampedArray(m.w * m.h * 4);`
+      const code = `const prepGrey = ${prepGrey.toString()};\nconst shrink = ${shrink.toString()};\nself.onmessage = e => { const m = e.data; try { if (m.W) { m.px = shrink(m.px, m.w, m.h, m.W, m.H); m.w = m.W; m.h = m.H; } const r = prepGrey(m.px, m.w, m.h, m.o), d = new Uint8ClampedArray(m.w * m.h * 4);`
         + ` if (m.base) { self.postMessage({ id: m.id, d: r.g }, [r.g.buffer]); return; }`
         + ` for (let i = 0, p = 0; i < r.g.length; i++, p += 4) { d[p] = d[p + 1] = d[p + 2] = r.g[i]; d[p + 3] = 255; } self.postMessage({ id: m.id, d }, [d.buffer]); } catch (er) { self.postMessage({ id: m.id, error: String(er && er.message || er) }); } };`;
       prepW = new root.Worker(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
@@ -280,6 +299,13 @@
     } catch (e) { prepW = false; }
     return prepW || null;
   }
+  /** placePixels off the page when it can be (the same functions' own text: the same pixels as placeSync's). */
+  function pixelsAsync(px, pl) {
+    const W = root && root.Worker && root.Blob && root.URL ? prepWorker() : null;
+    if (!W) return Promise.resolve(placePixels(px, pl));
+    const id = ++prepSeq, copy = px.slice();
+    return new Promise((res, rej) => { prepWait.set(id, { res: d => res({ data: d, width: pl.W, height: pl.H }), rej }); W.postMessage(Object.assign({ id, px: copy, w: pl.w, h: pl.h, o: Object.assign({}, pl.o, { forTrace: true }) }, pl.W < pl.w ? { W: pl.W, H: pl.H } : {}), [copy.buffer]); });
+  }
   /** The filtered base of a picture (its median and unsharp mask, no tone: prepGrey with the tone left as it is) off the page's thread; null when no worker can be made. */
   function baseAsync(px, w, h, o) {
     const W = root && root.Worker && root.Blob && root.URL ? prepWorker() : null;
@@ -287,13 +313,7 @@
     const id = ++prepSeq, flat = Object.assign({}, o, { auto: false, gamma: 1, brightness: 0, contrast: 0, invert: false, mode: 'grey' });
     return new Promise((res, rej) => { prepWait.set(id, { res, rej }); const copy = px.slice(); W.postMessage({ id, px: copy, w, h, o: flat, base: true }, [copy.buffer]); });
   }
-  /** greyImage off the page when it can be (the page's own thread when no worker can be made). */
-  function greyImageAsync(px, w, h, o) {
-    const W = root && root.Worker && root.Blob && root.URL ? prepWorker() : null;
-    if (!W) return Promise.resolve(greyImage(px, w, h, o));
-    const id = ++prepSeq;
-    return new Promise((res, rej) => { prepWait.set(id, { res: d => res({ data: d, width: w, height: h }), rej }); W.postMessage({ id, px, w, h, o: Object.assign({}, o) }, [px.buffer]); });
-  }
+
 
   /* ═══ 3 · where it goes on the charm ═══ */
   /** Polylines (flat x,y arrays, closed) of subpaths, cubics cut into chords. */
@@ -602,11 +622,16 @@
     g.drawImage(src.canvas, 0, 0); g.setTransform(1, 0, 0, 1, 0, 0);
     return dst;
   }
-  /** The kept picture prepared (prepGrey) as the trace's input, at most `max` px; off the page's thread when it can be. */
-  function greyPixels(src, o, max) {
-    const [kw, kh] = keptSize(src.w, src.h, o), [w, h] = fitPx(kw, kh, max), c = drawShown(canvas(w, h), src, o);
-    return greyImageAsync(c.getContext('2d').getImageData(0, 0, w, h).data, w, h, o);
+  /** (REPEAT) The picture as kept (turned, flipped, cropped) at its OWN pixels: the crop to whole pixels, so the canvas copies them and resamples nothing. → { data, width, height } */
+  function keptPixels(src, o) {
+    const [sw, sh] = shownSize(src.w, src.h, o), c = o.crop || [0, 0, 1, 1], x0 = Math.round(c[0] * sw), y0 = Math.round(c[1] * sh);
+    const w = Math.max(1, Math.round(c[2] * sw) - x0), h = Math.max(1, Math.round(c[3] * sh) - y0), cv = canvas(w, h), g = cv.getContext('2d', RD);
+    g.fillStyle = '#fff'; g.fillRect(0, 0, w, h);
+    const M = mul([1, 0, 0, 1, -x0, -y0], shownMatrix(src.w, src.h, o));
+    g.setTransform(M[0], M[1], M[2], M[3], M[4], M[5]); g.imageSmoothingEnabled = false; g.drawImage(src.canvas, 0, 0); g.setTransform(1, 0, 0, 1, 0, 0);
+    return { data: g.getImageData(0, 0, w, h).data, width: w, height: h };
   }
+
   const inv = m => { const d = m[0] * m[3] - m[1] * m[2]; return [m[3] / d, -m[1] / d, -m[2] / d, m[0] / d, (m[2] * m[5] - m[3] * m[4]) / d, (m[1] * m[4] - m[0] * m[5]) / d]; };
   /** THE BACKGROUND TAKEN AWAY (the studio's magic eraser, S 2262: "How close a shade counts"): the area joined to source pixel (x, y) whose colour is within `tol` (0..100) of it, made
    *  white paper, so it is never engraved. The picture as it came is kept for Restore. → the number of pixels made white. */
@@ -880,8 +905,10 @@
       if (!T) { const wt = $('[data-wait]'); wt.hidden = false; wt.textContent = 'Tracing is not on this page yet'; return; }
       if (!tRun) runPreview();
     }
-    /** The vector preview: the grey as shown, at most 280 px, its levels' thresholds from CharmNestTrace.posterise (a few ms here), traced in the worker with them; when it is back the
-     *  newest settings are traced (never a queue). The thresholds are kept for Place, so the charm gets the very bands the preview showed. */
+    /** The vector preview: the grey as shown, at most 280 px, traced in the worker; when it is back the newest settings are traced (never a queue), and a result of
+     *  settings since changed is never drawn over a newer one. (REPEAT, 28 Oct 2026: the preview no longer hands Place its thresholds: Place works everything out
+     *  from the picture and the settings alone, placeAsync, so a Place made before the preview caught up is the same as one made after; the levels are cut by the
+     *  same rule in both, CharmNestTrace's: tone for a photo, Otsu for flat art.) */
     let prevThr = null;
     function runPreview() {
       const v = tWant, [w, h] = fitPx(cvG.width, cvG.height, PREVIEW_MAX), c = canvas(w, h), g = c.getContext('2d', RD);
@@ -890,16 +917,9 @@
       wt.hidden = false; wt.textContent = 'Tracing…';
       const t0 = now();
       const mm = tgt ? Math.max(tgt.box[2] - tgt.box[0], tgt.box[3] - tgt.box[1]) * MM : 0, opts = traceOpts(o, mm > 0 ? Math.max(w, h) / mm : 20);
-      prevThr = null;
-      try {
-        if (typeof T.posterise === 'function') {
-          const pz = T.posterise(input, Object.assign({ maxSide: PREVIEW_MAX }, opts));
-          if (pz && Array.isArray(pz.thresholds) && pz.thresholds.length === opts.levels) { opts.thresholds = pz.thresholds.slice(); prevThr = { v, thresholds: opts.thresholds }; }
-        }
-      } catch (e) { prevThr = null; }
       took('posterise', now() - t0);
       tRun = Promise.resolve().then(() => T.trace(input, opts))
-        .then(res => { if (closed || !res) return; stats.previewTraces++; stats.lastTrace = { ms: Math.round(now() - t0), w: res.width, h: res.height }; prev = res; drawVector(res); })
+        .then(res => { if (closed || !res) return; stats.previewTraces++; stats.lastTrace = { ms: Math.round(now() - t0), w: res.width, h: res.height }; prev = res; prevThr = { v, thresholds: res.thresholds.slice() }; if (v === tWant) drawVector(res); })
         .catch(e => { if (!closed && !(e && (e.cancelled || e.name === 'AbortError'))) console.warn('image: preview trace', e); })
         .then(() => { tRun = null; if (closed) return; if (tWant !== v && !whole()) runPreview(); else wt.hidden = true; });
     }
@@ -914,11 +934,11 @@
       note(sizeOf(layers));
     }
     let busy = [];
-    /** The long side, px, the picture is traced at on Place: 20 px a mm on the charm, never more than it has. */
+    /** The long side, px, the picture is traced at on Place (placePlan: the trace's own working size for this size on the charm and these settings). */
     function fullPx() {
       if (!src || !tgt) return PREVIEW_MAX;
-      const [kw, kh] = keptSize(src.w, src.h, st), longMm = Math.max(tgt.box[2] - tgt.box[0], tgt.box[3] - tgt.box[1]) * MM;
-      return Math.min(clamp(Math.round(longMm * FULL_PX_MM), 16, FULL_MAX), Math.round(Math.max(kw, kh)));
+      const [kw, kh] = keptSize(src.w, src.h, st), pl = placePlan(Math.round(kw), Math.round(kh), st, Math.max(tgt.box[2] - tgt.box[0], tgt.box[3] - tgt.box[1]) * MM);
+      return Math.max(pl.W, pl.H) * (pl.o.mode === 'line' ? 3 : 1);
     }
     /** What the trace makes of a picture, said plainly (the lead, 28 Oct 2026: "say plainly in the panel that a photo becomes a posterised (stencil-like) engraving in N greys"). */
     function note(s) {
@@ -1077,26 +1097,21 @@
       if (tool) setTool(null);
       placing = true; const token = ++placeToken, t0 = now();
       where();
-      const box0 = tgt.box, o2 = Object.assign({}, st), [kw, kh] = keptSize(src.w, src.h, o2);
-      // (never enlarged: the trace measured that an enlarged picture makes no truer outline and three or four times the points, 28 Oct 2026)
-      const longMm = Math.max(box0[2] - box0[0], box0[3] - box0[1]) * MM, thr = prevThr && prevThr.v === tWant ? prevThr.thresholds : null;
-      let px = Math.min(clamp(Math.round(longMm * FULL_PX_MM), 16, FULL_MAX), Math.round(Math.max(kw, kh)));
-      let res = null, size = null, tries = 0, smaller = false;
+      const box0 = tgt.box, o2 = Object.assign({}, st);
+      // (REPEAT, Paul 28 Oct 2026: "The image vector Modal sometimes does not produce repeatable results") the picture as kept, at its own pixels (keptPixels), and the
+      // settings: placeAsync makes everything else from them, the same each time (no threshold of the preview's, no canvas scaling); the trace keeps to what a
+      // piece can hold itself (its budget), and only past its own last step is the picture made smaller here
+      const longMm = Math.max(box0[2] - box0[0], box0[3] - box0[1]) * MM;
+      let res = null, size = null, smaller = false;
       progress(0);
       try {
-        for (;;) {
-          const input = await greyPixels(src, o2, px);
-          if (token !== placeToken || closed) return;
-          res = await T.trace(input, Object.assign(traceOpts(o2, Math.max(input.width, input.height) / longMm), thr ? { thresholds: thr } : {}, { onProgress: p => { if (token === placeToken) progress(tries ? 0.5 + p * 0.5 : p); } }));
-          if (token !== placeToken || closed) return;
-          size = sizeOf(res.layers);
-          if (fits(size) || ++tries > 4 || px <= 64) break;
-          smaller = true; px = Math.max(64, Math.round(px * 0.72));
-          progress(0.5, 'Simplifying to fit what one piece can hold…');
-        }
+        const out = await placeAsync(keptPixels(src, o2), o2, longMm, (p, text) => { if (token === placeToken) progress(p, text); }, () => token === placeToken && !closed);
+        if (!out || token !== placeToken || closed) return;
+        res = out.res; size = out.size; smaller = out.tries > 0 || !!(res.work && (res.work.simplified || res.work.shrunk));
       } catch (e) {
         if (token !== placeToken || closed) return;
-        placing = false; progress(null); $('[data-note]').innerHTML = `<b>The picture was not traced:</b> ${esc(String((e && e.message) || e).slice(0, 160))}`; return;
+        placing = false; progress(null); $('[data-note]').innerHTML = /budget/.test(String(e && e.message)) ? '<b>Too detailed for one charm</b> even simplified: lower Detail or Levels, raise Despeckle, or place it smaller.'
+          : `<b>The picture was not traced:</b> ${esc(String((e && e.message) || e).slice(0, 160))}`; return;
       }
       if (!fits(size)) { placing = false; progress(null); $('[data-note]').innerHTML = `<b>Too detailed for one charm</b> (${size.ops.toLocaleString('en')} points): lower Detail, raise Despeckle or use fewer levels.`; return; }
       // (the group's id is its source's: a piece saved and opened again gives its parts back with it as their `group`, and Re-trace finds the picture by it)
@@ -1216,5 +1231,5 @@
   }
 
   return { ACCEPT, DEF, BUDGET, BUSY_NODES, MAX_LEVELS, traceOpts, norm, shrink, placeInput, placeSync, turn, flip, shownSize, keptSize, shownMatrix, prepGrey, greyImage, suggestLevels, levelsOf, grey, polysOf, inside, fitInOutline, fitInBox, target, sizeOf, fits, buildGroup, traceSet, greyName,
-    codeOf, parseCode, anchorOf, placedBy, register, run, retrace, decode, accepts, stats: () => stats, current: () => live, sources: () => SOURCES };
+    placePlan, placeAsync, keptPixels, codeOf, parseCode, anchorOf, placedBy, register, run, retrace, decode, accepts, stats: () => stats, current: () => live, sources: () => SOURCES };
 });

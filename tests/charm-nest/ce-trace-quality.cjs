@@ -303,6 +303,21 @@ if (require.main !== module) return;
       assert.ok(q.edgeMean < 0.06 && q.edgeP99 < 0.5, 'edge ' + q.edgeMean + ' / ' + q.edgeP99);
     }
   });
+  // (c) REPEAT: the same picture and settings, the same vector, point for point: Place twice; the trace on this thread in slices (trace(), what a page with no Worker
+  // does) against traceSync (what the Worker runs: the same generator straight through); a picture of 600 px and one of 2400 (shrunk to the working size)
+  if (!BEFORE) await step('(c) repeatable: Place twice, and trace() in slices against traceSync, give the same paths and the same node count', async () => {
+    const crc = res => { let h = 2166136261 >>> 0; const s = JSON.stringify(res.layers.map(L => [L.grey, L.subpaths])); for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0; return h.toString(16) + '/' + res.nodes; };
+    const small = down(pic, 600, 600, false), out = [];
+    for (const [what, img, s, mm] of [['photo 600 px, max', small, { levels: 8, detail: 1, smooth: 1, despeckle: 0 }, 30], ['photo 2400 px, defaults', pic, {}, 30], ['line art', art.img, { mode: 'line' }, 30]]) {
+      const a = place(img, s, mm), b = place(img, s, mm);
+      const inp = IM.placeInput(img.data, img.width, img.height, s, mm), sync = T.traceSync(inp.grey, inp.opts), sliced = await T.trace(inp.grey, inp.opts);
+      out.push(`${what}: ${crc(a.res)} · ${crc(b.res)} · sliced ${crc(sliced)} · sync ${crc(sync)}`);
+      assert.equal(crc(a.res), crc(b.res), what + ': Place twice');
+      assert.equal(crc(sliced), crc(sync), what + ': trace() in slices against traceSync');
+      assert.equal(crc(sync), crc(a.res), what + ': Place against its own input traced');
+    }
+    for (const l of out) say(l);
+  });
   console.log(`\n${results.length} passed, ${failures.length} failed`);
   if (failures.length) { console.log(failures.map(f => '  - ' + f).join('\n')); process.exit(1); }
 })().catch(e => { console.error(e); process.exit(1); });

@@ -280,6 +280,21 @@ async function partB(kit) {
         && pl.kids.every((k, i) => !i || k.fill[0] < pl.kids[i - 1].fill[0]) && pl.kids[pl.kids.length - 1].fill[0] === 0 && pl.fills.join() === pl.kids.map(k => css(k.fill[0])).join()
         && inside && centred && pl.trace.src === pl.id && pl.trace.levels === 4 && !!pl.layer, JSON.stringify(pl));
 
+    // REPEAT (Paul, 28 Oct 2026: "The image vector Modal sometimes does not produce repeatable results"): what Place put on the charm is exactly what the rule makes
+    // of the picture and the settings, in the workers twice and on the page's own thread once (placeAsync · placeAsync · placeSync, laid into the same box)
+    const rep = await page.evaluate(async id => {
+      const IMx = CharmNestCeImage, E = CharmEditor.current, g = E.items().find(i => i.id === id), src = IMx.sources().get(g.trace.src), st0 = IMx.norm(g.trace), box = g.trace.box;
+      const mm = Math.max(box[2] - box[0], box[3] - box[1]) * 25.4 / 72, kept = IMx.keptPixels(src, st0);
+      const a = await IMx.placeAsync(kept, st0, mm), b = await IMx.placeAsync(kept, st0, mm), c = IMx.placeSync(kept, st0, mm);
+      const lay = r => JSON.stringify(IMx.buildGroup(r.res, box, { id, src: g.trace.src, settings: st0 }).children.map(ch => ch.subpaths));
+      // (the group keeps its box to 1/10000 pt: what Place laid out is compared to that, the three made here exactly with each other)
+      const nums = s => s.match(/-?[\d.]+(e-?\d+)?/g).map(Number), pa = nums(JSON.stringify(g.children.map(ch => ch.subpaths))), la = nums(lay(a));
+      const off = pa.length === la.length ? Math.max(...pa.map((v, i) => Math.abs(v - la[i]))) : Infinity;
+      return { same: lay(a) === lay(b) && lay(b) === lay(c) && off < 0.002, off, worker: !!a.res.worker, nodes: [a.res.nodes, b.res.nodes, c.res.nodes], n: pa.length };
+    }, pl.id);
+    check(`B7c the same picture and settings give the same vector: Place's group equals placeAsync twice (in the Worker: ${rep.worker}) and placeSync on the page, point for point (${rep.nodes.join(' / ')} nodes; Place's group within ${rep.off} pt of them)`,
+      rep.same && rep.worker && rep.nodes.every(n => n === rep.nodes[0]), JSON.stringify(rep));
+
     /* ── an ordinary group: moved, sized, turned ── */
     for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight');
     await typeField(page, 'w', (((pl.gb[2] - pl.gb[0]) / PT) * 0.8).toFixed(2));
