@@ -82,7 +82,9 @@ const asks = spec => (spec.problems || []).filter(p => p.kind === 'needsMapping'
 
 // ── 1b · the same listing, another listing id: still asks a person (the profile is one row of a table) ───────────────────────────────────────────────────────────────────────────────────
 { const w = world(mk('gold • 3 bars ($45.60)', null, { listingId: '982791278', sku: 'OTHER_1277' })), sp = w.spec;
-  eq([asks(sp).length, sp.pieceCount, sp.pair.noun, sp.pieceProfile, sp.engraving], [1, 1, undefined, undefined, undefined], 'another listing\'s line is not read by this profile: it asks, as it did');
+  eq([asks(sp).length, sp.pieceCount, sp.pair.noun, sp.pieceProfile], [1, 1, undefined, undefined], 'another listing\'s line is not read by this profile: it asks, as it did');
+  // (BARFRONT, Paul 28 Oct 2026: any bar necklace is engraved on its front by default, whatever its listing: the bar rule, not this profile)
+  ok(sp.engraving && sp.engraving.mode === 'front' && /bar rule/.test(sp.engraving.why), 'its engraving is the front, by the bar rule (any bar necklace), not by this profile');
   ok(/not loaded yet/.test(asks(sp)[0].why), 'with Etsy\'s own words for it (list for listing 982791278 is not loaded yet)'); }
 // the SKU alone (a stored line that lost its listing id) and the SKU's other spellings: the profile is found as every SKU is (case, spacing, punctuation set aside)
 for (const sku of ['VERTICAL BAR_1277', 'vertical_bar_1277', 'Vertical Bar 1277', 'VERTICAL-BAR-1277']) { const w = world(mk('silver • 2 bars ($36.80)', ['A\nB'], { listingId: '', sku, metalKey: 'silver' }));

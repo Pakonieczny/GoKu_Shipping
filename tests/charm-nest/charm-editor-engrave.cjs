@@ -246,9 +246,26 @@ async function partB(kit) {
       lwSel.join() === sqLine.id && lw0 === '0.106' && Math.abs(lwNow - 0.05 * PT) < 1e-6 && Math.abs(drawnW[0] - lwNow * drawnW[1] / 100 * 96 / 72) < 1e-3 && drawnW[1] > 1000 && Object.keys(fc2.changed).join() === sqLine.id,
       JSON.stringify({ lw0, lwNow, lwSel, drawnW, changed: Object.keys(fc2.changed) }));
 
-    /* ── Save ── */
+    /* ── Save (Paul, 28 Oct 2026: "my changes made in the Charm Editor were not saved and did not show up in the UI after pressing the Save button ... Everything must be immediate"):
+          the sheet's files are written again slowly here (5 s), and the card says it is saving at once and draws the new art long before they are written ── */
     const puts0 = artPuts();
+    const slow = await page.evaluate(id => {
+      const sh = Pool.sheetOf(id) || allSheets().find(s => (s.charms || []).some(c => c.poolId === id)); if (!sh) return { sheet: false };
+      const had = !!sh.outputs; if (!had) sh.outputs = { ai: { path: 'charm-edit-test.ai' } };
+      window.__slow = { calls: 0, done: 0, had, sh, real: window.writeAsPlaced };
+      window.writeAsPlaced = () => { __slow.calls++; return new Promise(r => setTimeout(r, 5000)).then(() => { __slow.done++; return true; }); };
+      return { sheet: true, had };
+    }, PID);
+    const tSave = Date.now();
     await page.click('.ce-root [data-act="save"]');
+    const saying = await page.waitForFunction(() => { const n = document.querySelector('#egQueue .rvItem[data-kind=placement] .backHost .egArtNote'); return n && /^Saving/.test(n.textContent) ? n.textContent : false; }, null, { timeout: 1500 }).then(h => h.jsonValue()).catch(() => '');
+    const sayMs = Date.now() - tSave;
+    await page.waitForFunction(added => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement] .backHost canvas'), ids = c && c._frontArt ? c._frontArt.map(s => (s.original || s).artMemberId) : []; return added.every(a => ids.includes(a)); }, [sep0.id, t25.id], { timeout: 30000 }).catch(() => {});
+    const shownMs = Date.now() - tSave, slowAt = await page.evaluate(() => ({ calls: __slow.calls, done: __slow.done }));
+    check(`B8c Save says "${saying}" ${sayMs} ms after the press, and the work area draws the new art ${shownMs} ms after it while the sheet's files are still being written (${slowAt.calls} write started, ${slowAt.done} finished)`,
+      /^Saving the front artwork/.test(saying) && sayMs < 1000 && shownMs < 3000 && slowAt.calls === 1 && slowAt.done === 0, JSON.stringify({ saying, sayMs, shownMs, slowAt, slow }));
+    await page.waitForFunction(() => __slow.done >= __slow.calls, null, { timeout: 30000 }).catch(() => {});
+    await page.evaluate(() => { window.writeAsPlaced = __slow.real; if (!__slow.had) delete __slow.sh.outputs; });
     for (let t0 = Date.now(); Date.now() - t0 < 60000 && !st.doc('Charm_Pool_Art', PID + '~front'); ) await new Promise(r => setTimeout(r, 200));
     // the face is fitted again around its new drawing: wait for it (and the card drawn again)
     await page.waitForFunction(id => { const f = [...Engrave.items().values()].find(x => x.face === 'front' && (x.copies || []).includes(id)); return f && f.view && !['ready', 'fitting'].includes(f.state); }, PID, { timeout: 120000 }).catch(() => {});

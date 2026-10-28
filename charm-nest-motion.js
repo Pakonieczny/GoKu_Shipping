@@ -434,6 +434,7 @@
       return {unlock,play,samples,volume,state:()=>({state:context?.state || 'not-created',contacts,lastContact,volume})};
     })();
     let uid = 0, stamping=0, pressChain=Promise.resolve();
+    const PRESS_MS = 8000;   // (a press takes about 1.5 s: down 560 ms, lift 700 ms, after the motion that brought the seal in)
     const pendingDraws=new Map();
     const idleWaiters=new Set();
     const busy=()=>stamping>0;
@@ -662,7 +663,9 @@
     /** The wooden stamp comes down on a seal already in its place, and leaves it inked. */
     function queued(work) {
       stamping++;
-      const run=pressChain.catch(()=>{}).then(work);pressChain=run;
+      // (APPROVEFIX, Paul 28 Oct 2026: "The 'Approve' button is not working": while a press runs every click and key of the page waits for it (busy, above). A press that never ends, an
+      //  animation that never finishes, held them all for good without a word: a press lets the page go after PRESS_MS whatever its animations do; the stamp itself goes on.)
+      const run=pressChain.catch(()=>{}).then(()=>Promise.race([work(),wait(PRESS_MS)]));pressChain=run;
       return run.finally(()=>{stamping--;if(!busy()){for(const resolve of idleWaiters)resolve();idleWaiters.clear();}releaseDraws();});
     }
     function press(seal) {

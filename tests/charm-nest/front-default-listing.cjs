@@ -93,9 +93,13 @@ for (const [pers, words] of [
 }
 
 // ── 5 · another listing is unchanged ───────────────────────────────────────────────────────────────────────────────────────────
+// (BARFRONT, Paul 28 Oct 2026: "all orders that contain a bar necklace should have the engraving default to the front of the bar. Not just this listing, but any listing that has a bar necklace": another listing's
+//  BAR necklace is engraved on its front too, by the bar rule; another listing that is no bar keeps the shop's usual back)
 for (const pers of [['Layla 3HEARTS Skye'], ['Love you to the moon and back']]) {
-  const w = world(mk(pers, { listingId: '1111111111' }));
-  eq([w.setup.mode, w.setup.source === 'profile'], ['back', false], `another listing ${JSON.stringify(pers[0])}: the shop's usual back, as before`);
+  const w = world(mk(pers, { listingId: '1111111111', sku: 'INITIAL_DISC_1', title: 'Initial Disc Necklace Custom Engraved Jewelry' }));
+  eq([w.setup.mode, w.setup.source === 'profile'], ['back', false], `another listing that is no bar ${JSON.stringify(pers[0])}: the shop's usual back, as before`);
+  const b = world(mk(pers, { listingId: '1111111111' }));
+  eq([b.setup.mode, b.setup.source === 'profile', /bar rule/.test(b.spec.engraving.why)], ['front', true, true], `another listing's bar necklace ${JSON.stringify(pers[0])}: its front, by the bar rule`);
 }
 
 console.log(`front-default-listing: ${n} checks passed`);
