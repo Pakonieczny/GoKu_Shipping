@@ -501,7 +501,7 @@
       menu.style.left = Math.max(4, left) + 'px'; menu.style.top = top + 'px'; menu.style.visibility = '';
     }
     const rows = m => [...m.querySelectorAll(':scope > .ce-aimi, :scope > .ce-aisub > .ce-aimi, :scope > .ce-item')].filter(b => !b.classList.contains('is-off') && b.getClientRects().length);
-    function focusFirst(m) { const r = rows(m)[0]; if (r) try { r.focus({ preventScroll: true }); } catch (e) { /* fine */ } }
+    function focusFirst(m) { const r = rows(m)[0] || m; if (r === m) m.setAttribute('tabindex', '-1'); try { r.focus({ preventScroll: true }); } catch (e) { /* fine */ } }   // (a menu with nothing to choose has the keys itself: ← → still go on)
     /** The open menu the keys go to: the deepest one with focus in it, else the deepest one open. */
     function current() {
       const a = doc.activeElement, inMenu = a && a.closest && a.closest('.ce-menu');
