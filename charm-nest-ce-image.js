@@ -408,30 +408,161 @@
         subpaths: sps, tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 };
     });
     const t = Object.assign({ src: opts.src || gid, box: box.map(r4) }, opts.settings ? norm(opts.settings) : {}, opts.name ? { name: String(opts.name).slice(0, 80) } : {});
+    // (REOPEN, Paul 28 Oct 2026: "I can't seem to bring up the image vector popup modal after the initial Import process") the group's `group`: its source's id, its
+    // settings and three of its black's points, in one short name, which a piece saved and opened again keeps on every part (charm-nest-art-edit.js leavesOf,
+    // the record's `group`) and the design library keeps on the group (`trace`, an object, it does not)
+    const anchor = anchorOf(res, layers);
     return { id: gid, kind: 'group', role: 'hatch', source: 'added', name: 'Image' + (opts.name ? ' · ' + String(opts.name).replace(/\.[a-z0-9]+$/i, '').slice(0, 40) : ''), hidden: false, locked: false,
-      tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, trace: t, children };
+      tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, trace: t, group: codeOf(t.src, opts.settings || {}, anchor), children };
   }
-  /** The traced set the selection is in: a group that keeps its `trace`, or (a piece saved and opened again: its parts come back flat) the grey parts that share its `group`.
-   *  → { kind: 'group', id, src, settings, box } | { kind: 'flat', ids, src, box } | null */
+
+  /* ═══ 4b · REOPEN (Paul, 28 Oct 2026: "I can't seem to bring up the image vector popup modal after the initial Import process"). What a traced image keeps when
+     it is saved: a piece's record keeps of each part only its path, paint and `group` (a short name, charmNestLibrary.js ART_ITEM: 64 of A-Z a-z 0-9 _ . : -), and the
+     design library drops an object such as `trace`. So the group's `group` says it all: "<source id>:1<settings and anchor, 6 bits a letter>". The ANCHOR is three
+     points of the black part (its first, the one furthest from it, the one furthest off the line between), by their place in its path and where they were in
+     the picture (0..1 of its width and height): wherever the parts are now (moved, scaled, turned, flattened by a save), those three points say where the
+     picture is, so Place puts the new trace exactly where the old one is. A name with no ':' (made before this) is just the source's id. ═══ */
+  const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  /** Three points of the darkest layer, in the picture (px, y down): { key (its grey × 100), idx: [i0, i1, i2], uv: [[u, v] × 3] } | null. */
+  function anchorOf(res, layers) {
+    const L = (layers || []).reduce((m, x) => (!m || +x.grey < +m.grey ? x : m), null); if (!L || !(res.width > 0 && res.height > 0)) return null;
+    const pts = nodesOf(L.subpaths); if (pts.length < 3 || pts.length > 65535) return null;
+    const p0 = pts[0]; let i1 = 0, d1 = -1;
+    for (let i = 1; i < pts.length; i++) { const d = Math.hypot(pts[i][0] - p0[0], pts[i][1] - p0[1]); if (d > d1) { d1 = d; i1 = i; } }
+    let i2 = 0, d2 = -1; const ax = pts[i1][0] - p0[0], ay = pts[i1][1] - p0[1];
+    for (let i = 1; i < pts.length; i++) { const d = Math.abs(ax * (pts[i][1] - p0[1]) - ay * (pts[i][0] - p0[0])); if (d > d2) { d2 = d; i2 = i; } }
+    if (!(d1 > 2) || !(d2 / Math.max(d1, 1e-9) > 2)) return null;   // (three points that pin a picture down: not on one line)
+    const uv = [0, i1, i2].map(i => [clamp(pts[i][0] / res.width, 0, 1), clamp(pts[i][1] / res.height, 0, 1)]);
+    return { key: Math.round(clamp(+L.grey, 0, 1) * 100), idx: [0, i1, i2], uv };
+  }
+  /** The points a path's operators end on, in order (what anchorOf counts). */
+  function nodesOf(sps) { const out = []; for (const sub of sps || []) for (const op of sub || []) if (op && op[0] !== 'h') out.push(op[op.length - 1]); return out; }
+  function codeOf(src, o, anchor) {
+    o = norm(o); const bits = [];
+    const put = (v, n) => { v = Math.max(0, Math.min((1 << n) - 1, Math.round(v))); for (let i = n - 1; i >= 0; i--) bits.push((v >> i) & 1); };
+    put(o.mode === 'line' ? 1 : 0, 1); put(o.invert ? 1 : 0, 1); put(o.auto ? 1 : 0, 1); put(o.denoise ? 1 : 0, 1); put(o.flipH ? 1 : 0, 1); put(o.flipV ? 1 : 0, 1); put(o.rot / 90, 2);
+    put(o.adaptive === true ? 1 : o.adaptive === false ? 2 : 0, 2); put(o.levels - 1, 4); put(o.despeckle, 4); put(o.detail * 100, 7); put(o.smooth * 100, 7); put(o.sharpen * 100, 7);
+    put(o.gamma * 100 - 30, 9); put(o.brightness * 100 + 100, 8); put(o.contrast * 100 + 100, 8);
+    put(o.crop ? 1 : 0, 1); if (o.crop) for (const v of o.crop) put(v * 1000, 10);
+    put(anchor ? 1 : 0, 1);
+    if (anchor) { put(anchor.key, 7); put(anchor.idx[1], 16); put(anchor.idx[2], 16); for (const p of anchor.uv) { put(p[0] * 65535, 16); put(p[1] * 65535, 16); } }
+    while (bits.length % 6) bits.push(0);
+    let out = ''; for (let i = 0; i < bits.length; i += 6) out += B64[bits[i] << 5 | bits[i + 1] << 4 | bits[i + 2] << 3 | bits[i + 3] << 2 | bits[i + 4] << 1 | bits[i + 5]];
+    return (String(src).replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 20) || 'img') + ':1' + out;
+  }
+  /** A group's name back: { src, settings | null, anchor | null } (settings null when the name says none: made before 28 Oct 2026, or not one of these). */
+  function parseCode(name) {
+    const s = String(name || ''), at = s.indexOf(':');
+    if (at < 0 || s[at + 1] !== '1') return { src: s, settings: null, anchor: null };
+    const bits = []; for (const ch of s.slice(at + 2)) { const v = B64.indexOf(ch); if (v < 0) return { src: s.slice(0, at), settings: null, anchor: null }; for (let i = 5; i >= 0; i--) bits.push((v >> i) & 1); }
+    let p = 0; const get = n => { let v = 0; for (let i = 0; i < n; i++) v = v * 2 + (bits[p++] || 0); return v; };
+    if (bits.length < 74) return { src: s.slice(0, at), settings: null, anchor: null };
+    const o = { mode: get(1) ? 'line' : 'grey', invert: !!get(1), auto: !!get(1), denoise: !!get(1), flipH: !!get(1), flipV: !!get(1), rot: get(2) * 90 };
+    const ad = get(2); o.adaptive = ad === 1 ? true : ad === 2 ? false : 'auto';
+    Object.assign(o, { levels: get(4) + 1, despeckle: get(4), detail: get(7) / 100, smooth: get(7) / 100, sharpen: get(7) / 100, gamma: (get(9) + 30) / 100, brightness: (get(8) - 100) / 100, contrast: (get(8) - 100) / 100 });
+    if (get(1)) o.crop = [get(10), get(10), get(10), get(10)].map(v => v / 1000);
+    let anchor = null;
+    if (get(1) && bits.length - p >= 135) { const key = get(7), i1 = get(16), i2 = get(16), uv = []; for (let k = 0; k < 3; k++) uv.push([get(16) / 65535, get(16) / 65535]); anchor = { key, idx: [0, i1, i2], uv }; }
+    return { src: s.slice(0, at), settings: norm(o), anchor };
+  }
+  /** The affine map [a, b, c, d, e, f] (the editor's order) taking the three (u, v) to the three points q, or null when they are on one line. */
+  function affine3(uv, q) {
+    const [u0, v0] = uv[0], [u1, v1] = uv[1], [u2, v2] = uv[2], det = (u1 - u0) * (v2 - v0) - (u2 - u0) * (v1 - v0);
+    if (!(Math.abs(det) > 1e-12)) return null;
+    const solve = (z0, z1, z2) => { const a = ((z1 - z0) * (v2 - v0) - (z2 - z0) * (v1 - v0)) / det, c = ((u1 - u0) * (z2 - z0) - (u2 - u0) * (z1 - z0)) / det; return [a, c, z0 - a * u0 - c * v0]; };
+    const X = solve(q[0][0], q[1][0], q[2][0]), Y = solve(q[0][1], q[1][1], q[2][1]);
+    return [X[0], Y[0], X[1], Y[1], X[2], Y[2]];
+  }
+  /** Where the picture is now, from its anchor: { box: [0, 0, w, h] (pt, the picture's own size), W: the map from that box to the face } | null. parts: the set's
+   *  grey parts (their entries) as they are now. */
+  function placedBy(ctx, anchor, parts) {
+    if (!anchor) return null;
+    const part = (parts || []).find(x => x.it.artGrey && Array.isArray(x.it.fill) && Math.round(+x.it.fill[0] * 100) === anchor.key); if (!part) return null;
+    const M = ctx.model, geo = ctx.geo, Wm = M.mul(part.P, geo.matrix(part.it)), raw = (geo.raw ? geo.raw(part.it) : part.it).subpaths || part.it.subpaths, pts = nodesOf(raw);
+    if (anchor.idx.some(i => i >= pts.length)) return null;
+    const A = affine3(anchor.uv, anchor.idx.map(i => M.ap(Wm, pts[i][0], pts[i][1]))); if (!A) return null;
+    const w = Math.hypot(A[0], A[1]), h = Math.hypot(A[2], A[3]); if (!(w > 1e-6 && h > 1e-6)) return null;
+    return { box: [0, 0, w, h], W: M.mul(A, [1 / w, 0, 0, 1 / h, 0, 0]) };   // (mul(m, n): n first, then m)
+  }
+  /** THE TRACED SET the selection is in (or the one it holds): the selected part itself, then its groups (nearest first), then what a selected group holds.
+   *  A group that keeps its `trace` (made on this page); a group that keeps only its `group` name (a design opened again); or the grey parts that share a `group`
+   *  name (a piece opened again: its parts come back flat). → { kind: 'group' | 'flat', id?, ids, src, settings, box, anchor, it?, parts } | null */
   function traceSet(ctx) {
     const sel = ctx.selection(); if (!sel.length) return null;
+    const isSet = it => it && it.kind === 'group' && ((it.trace && it.trace.src) || (typeof it.group === 'string' && (it.children || []).some(c => c && c.artGrey)));
+    const ofGroup = it => {
+      const code = parseCode(it.group), tr = it.trace && it.trace.src ? it.trace : null, parts = [];
+      ctx.model.walk(it.children || [], x => { if (x.kind !== 'group' && x.artGrey) { const e = ctx.entry(x.id); if (e) parts.push(e); } });
+      return { kind: 'group', id: it.id, ids: [it.id], src: String(tr ? tr.src : code.src), settings: tr ? norm(tr) : code.settings, box: tr && Array.isArray(tr.box) ? tr.box : null, anchor: code.anchor, it, parts };
+    };
+    const ofFlat = name => {
+      const parts = []; ctx.model.walk(ctx.items(), x => { if (x.kind !== 'group' && x.artGrey && String(x.group || '') === name) { const e = ctx.entry(x.id); if (e) parts.push(e); } });
+      const code = parseCode(name);
+      return { kind: 'flat', ids: parts.map(e => e.it.id), src: code.src, settings: code.settings, box: null, anchor: code.anchor, parts };
+    };
     for (const id of sel) {
       const e = ctx.entry(id); if (!e) continue;
-      let it = e.it;
-      if (it.kind === 'group' && it.trace && it.trace.src) return { kind: 'group', id: it.id, src: String(it.trace.src), settings: norm(it.trace), box: Array.isArray(it.trace.box) ? it.trace.box : null, it };
-      if (it.artGrey && e.parent && e.parent.trace) { it = e.parent; return { kind: 'group', id: it.id, src: String(it.trace.src), settings: norm(it.trace), box: Array.isArray(it.trace.box) ? it.trace.box : null, it }; }
-      if (it.artGrey && it.group) {
-        const gid = String(it.group), ids = [];
-        ctx.model.walk(ctx.items(), x => { if (x.artGrey && String(x.group || '') === gid) ids.push(x.id); });
-        return { kind: 'flat', ids, src: gid, settings: null, box: null };
+      if (isSet(e.it)) return ofGroup(e.it);
+      // a part of one: its nearest traced group, else its own name
+      let up = e.parent;
+      while (up) { if (isSet(up)) return ofGroup(up); const pe = ctx.entry(up.id); up = pe ? pe.parent : null; }
+      if (e.it.artGrey && e.it.group) return ofFlat(String(e.it.group));
+      // a group the person made round one (⌘G): the first traced set inside it
+      if (e.it.kind === 'group') {
+        let found = null;
+        ctx.model.walk(e.it.children || [], x => { if (found) return; if (isSet(x)) found = ofGroup(x); else if (x.kind !== 'group' && x.artGrey && x.group) found = ofFlat(String(x.group)); });
+        if (found) return found;
       }
     }
     return null;
   }
 
-  /* ═══ 5 · the sources this page holds (Re-trace): the decoded picture by id, the newest dozen ═══ */
+  /* ═══ 5 · the sources (Re-trace): the decoded picture by id, the newest dozen in this page; and (REOPEN) the newest two dozen kept on this computer
+     (IndexedDB 'cn-ce-image', as PNG, so the same pixels come back after a reload and trace the same), for a piece or a design opened again another day ═══ */
   const SOURCES = new Map();
-  function keepSource(id, s) { SOURCES.delete(id); SOURCES.set(id, s); while (SOURCES.size > 12) SOURCES.delete(SOURCES.keys().next().value); }
+  const IDB = { name: 'cn-ce-image', store: 'sources', keep: 24 };
+  function idb() {
+    return new Promise((res, rej) => {
+      try {
+        if (!root || !root.indexedDB) { rej(new Error('no IndexedDB')); return; }
+        const rq = root.indexedDB.open(IDB.name, 1);
+        rq.onupgradeneeded = () => { try { rq.result.createObjectStore(IDB.store); } catch (e) { /* there */ } };
+        rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error || new Error('IndexedDB'));
+      } catch (e) { rej(e); }
+    });
+  }
+  /** One transaction: fn(store) → a request (its result is the answer) or nothing. */
+  const idbDo = (mode, fn) => idb().then(db => new Promise((res, rej) => {
+    const tx = db.transaction(IDB.store, mode), rq = fn(tx.objectStore(IDB.store));
+    tx.oncomplete = () => { db.close(); res(rq && 'result' in rq ? rq.result : undefined); }; tx.onerror = () => { db.close(); rej(tx.error); }; tx.onabort = () => { db.close(); rej(tx.error); };
+  }));
+  function keepSource(id, s) {
+    SOURCES.delete(id); SOURCES.set(id, s); while (SOURCES.size > 12) SOURCES.delete(SOURCES.keys().next().value);
+    // on this computer too (a convenience: when it cannot be kept, Re-trace asks for the picture again)
+    try {
+      if (!s || !s.canvas || typeof s.canvas.toBlob !== 'function' || s.stored === id) return;
+      s.stored = id;
+      s.canvas.toBlob(blob => {
+        if (!blob) return;
+        idbDo('readwrite', st => {
+          st.put({ blob, name: s.name, type: s.type, w0: s.w0, h0: s.h0, at: Date.now() }, id);
+          const keys = st.getAllKeys(), all = st.getAll();
+          all.onsuccess = () => { const rows = keys.result.map((k, i) => [k, (all.result[i] && all.result[i].at) || 0]).sort((a, b) => b[1] - a[1]); for (const [k] of rows.slice(IDB.keep)) st.delete(k); };
+          return null;
+        }).catch(() => {});
+      }, 'image/png');
+    } catch (e) { /* storage blocked: the page's copy is enough */ }
+  }
+  /** The picture traced under this id: this page's, else this computer's (decoded again), else null. */
+  async function findSource(id) {
+    if (SOURCES.has(id)) return SOURCES.get(id);
+    try {
+      const row = await idbDo('readonly', st => st.get(id)); if (!row || !row.blob) return null;
+      const s = await decode(row.blob);
+      Object.assign(s, { name: row.name || 'image', type: row.type || '', w0: row.w0 || s.w0, h0: row.h0 || s.h0, stored: id });
+      SOURCES.set(id, s); return s;
+    } catch (e) { return null; }
+  }
 
   /* ═══ 6 · the page: decoding, drawing, the Image step ═══ */
   const doc = root && root.document ? root.document : null;
@@ -984,14 +1115,26 @@
     async function swap(file, via) {
       try {
         const s = await decode(file); if (closed) return;
-        src = s; info.src = null; pxCache = { src: null }; $('[data-do="restore"]').disabled = true;
+        // (REOPEN: the picture a re-trace asked for keeps the set's id and its crop, so the same file comes back as it was placed)
+        const relink = !!(info.relink && !src);
+        src = s; if (!relink) info.src = null; pxCache = { src: null }; $('[data-do="restore"]').disabled = true; $('[data-do="place"]').disabled = false;
         log('imageImport', { name: s.name, type: s.type, px: s.w0 + 'x' + s.h0, via });
-        nameIt(); st = norm(Object.assign({}, st, { crop: null })); paint('swap'); traceSoon();
+        nameIt(); if (!relink) st = norm(Object.assign({}, st, { crop: null })); note(null); paint('swap'); traceSoon();
       } catch (e) { $('[data-note]').innerHTML = `<b>${esc(file.name || 'That file')}</b> could not be read: ${esc((e && e.message) || e)}`; }
     }
     live = { swap, place: () => place(), cancel: () => finish(null), settings: () => Object.assign({}, st), thresholds: () => (prevThr && prevThr.v === tWant ? prevThr.thresholds.slice() : null), busyLevels: () => busy.slice(), target: () => tgt && Object.assign({}, tgt, { box: tgt.box.slice() }),
       preview: () => prev, suggestion: () => sug, working: () => !!tRun || placing, done };
     nameIt(); sync(); setMode('split'); note(null);
+    // (REOPEN) a re-trace whose picture is on neither this page nor this computer (a piece or design opened elsewhere): its settings are here, the picture is asked for
+    if (!src) {
+      $('[data-do="place"]').disabled = true;
+      $('[data-note]').innerHTML = '<b>The picture this was traced from is not on this computer.</b> Re-tracing needs it again: choose the same file (or drop it here) and its settings, crop and place are kept.'
+        + ' <button class="ce-prop" type="button" data-do="pick">Choose the picture…</button><input type="file" data-pick hidden accept="' + esc(ACCEPT.join(',')) + '">';
+      const inp = $('[data-pick]'); tagKeys(inp); tagKeys($('[data-do="pick"]'));
+      $('[data-do="pick"]').addEventListener('click', () => { inp.value = ''; inp.click(); });
+      inp.addEventListener('change', () => { const f = Array.from(inp.files || []).find(accepts); if (f) swap(f, 'relink'); });
+      const wt = $('[data-wait]'); wt.hidden = false; wt.textContent = 'Choose the picture to re-trace';
+    }
     // (the card is laid out by the browser in this frame; the picture is drawn in the next, so neither is one long task)
     requestAnimationFrame(() => setTimeout(() => { if (closed) return; paint('open'); traceSoon(); try { card.focus({ preventScroll: true }); } catch (e) { /* fine */ } }, 0));
     return done;
@@ -1017,47 +1160,54 @@
     ctx.commit('Place image');
     return g;
   }
-  /** RE-TRACE: the selected traced image made again from its source with new settings, where it is now (moved, scaled and turned as it is). */
+  /** RE-TRACE (REOPEN, Paul 28 Oct 2026: "I can't seem to bring up the image vector popup modal after the initial Import process"): the selected traced image (its
+   *  group, a part of it, a group round it, or its parts come back flat from a save) opened again in the Image step with its own settings, and Place puts the new
+   *  trace where the old one is now (moved, scaled and turned as it is), in its place: one group, one undo step. The picture comes from this page, else from this
+   *  computer (findSource); when neither has it, the step opens with the settings and asks for the picture again (the same file, or another). */
   async function retrace(ctx) {
     const set = traceSet(ctx); if (!set) return null;
-    const src = SOURCES.get(set.src);
-    if (!src) { if (ctx.say) ctx.say('The picture this was traced from is not on this page any more: import it again to trace it afresh', 5000); return null; }
     const M = ctx.model, geo = ctx.geo;
-    // the map from where it was placed to where it is now: the group's own matrix (with its parents'), or its first part's (a group's transform is pushed into its parts on every edit)
-    let W = M.I, box = set.box;
-    if (set.kind === 'group') {
-      const e = ctx.entry(set.id), lf = (set.it.children || []).find(c => c.kind === 'path');
-      const lfE = lf && ctx.entry(lf.id);
-      W = lfE ? M.mul(lfE.P, geo.matrix(lf)) : M.mul(e.P, geo.matrix(set.it));
+    // where the picture is now: its three anchor points read off the parts as they are (any move, scale, turn or save since), else the group's placing box and its
+    // first part's map (a group's transform is pushed into its parts on every edit), else the box of the parts as drawn (a set saved before 28 Oct 2026)
+    let W = M.I, box = null;
+    const pb = placedBy(ctx, set.anchor, set.parts);
+    if (pb) { box = pb.box; W = pb.W; }
+    else if (set.kind === 'group' && set.box) {
+      const e = ctx.entry(set.id), lf = (set.it.children || []).find(c => c.kind === 'path'), lfE = lf && ctx.entry(lf.id);
+      box = set.box; W = lfE ? M.mul(lfE.P, geo.matrix(lf)) : M.mul(e.P, geo.matrix(set.it));
     }
-    if (!box) {   // (a piece opened again: its parts are where they were drawn, flat; the trace goes into their box)
-      let b = null; for (const id of set.ids || []) { const e = ctx.entry(id); const d = e && geo.drawn(e.it, e.P); if (d) b = b ? [Math.min(b[0], d[0]), Math.min(b[1], d[1]), Math.max(b[2], d[2]), Math.max(b[3], d[3])] : d.slice(); }
+    if (!box) {
+      let b = null; for (const e of set.parts || []) { const d = geo.drawn(e.it, e.P); if (d) b = b ? [Math.min(b[0], d[0]), Math.min(b[1], d[1]), Math.max(b[2], d[2]), Math.max(b[3], d[3])] : d.slice(); }
       box = b; W = M.I;
     }
     if (!box) return null;
-    const g = await step(ctx, set.settings || src.settings || null, { source: src, retrace: true, box, src: set.src, groupId: set.kind === 'group' ? set.id : set.src });
+    const src = await findSource(set.src);
+    const g = await step(ctx, set.settings || (src && src.settings) || null, { source: src, retrace: true, relink: !src, box, src: set.src, groupId: set.kind === 'group' ? set.id : set.src });
     if (!g) return null;
-    if (set.kind === 'group') { g.name = set.it.name || g.name; g.trace.box = box.map(r4); }
+    if (set.kind === 'group') g.name = set.it.name || g.name;
+    g.trace.box = box.map(r4);
     // the new parts put where the old ones are: the same map on each of them (CharmEditor.model.composeInto: a turn and two scales, exactly as the editor keeps a moved part)
     if (!M.isI(W)) g.children = g.children.map(ch => M.composeInto(ch, W, geo));
     const map = {};
     if (set.kind === 'group') map[set.id] = g;
-    else { set.ids.forEach((id, i) => { map[id] = i === 0 ? g : null; }); }
+    else set.ids.forEach((id, i) => { map[id] = i === 0 ? g : null; });
     ctx.replaceItems(map);
     ctx.select([g.id]);
     ctx.commit('Re-trace image');
     return g;
   }
 
-  /** Registers the importer and the Re-trace command with the Charm Editor (once; before or after charm-nest-charm-editor.js loads). */
+  /** Registers the importer and the Re-trace command with the Charm Editor (once; before or after charm-nest-charm-editor.js loads). (REOPEN) The command is on the
+   *  property bar whenever a traced image is selected (bar), on a double-click of it (dbl: the editor's hook) and in the Object and right-click menus; it no longer
+   *  waits for the picture to be on this page (a piece or design opened again asks for it in the step). */
   let registered = false;
   function register() {
     if (registered || !root) return; registered = true;
     const CE = root.CharmEditor || (root.CharmEditor = {});
     (CE.importers || (CE.importers = [])).push({ id: 'image', accept: ACCEPT.slice(), title: 'Image (PNG, JPG, WebP)', run });
-    (CE.commands || (CE.commands = {})).imageRetrace = { title: 'Re-trace image…', group: 'Image', icon: IC.image, run: ctx => retrace(ctx), enabled: ctx => { try { const s = traceSet(ctx); return !!s && SOURCES.has(s.src); } catch (e) { return false; } } };
+    (CE.commands || (CE.commands = {})).imageRetrace = { title: 'Re-trace image…', group: 'Image', icon: IC.image, bar: true, dbl: true, run: ctx => retrace(ctx), enabled: ctx => { try { return !!traceSet(ctx); } catch (e) { return false; } } };
   }
 
   return { ACCEPT, DEF, BUDGET, BUSY_NODES, MAX_LEVELS, traceOpts, norm, shrink, placeInput, placeSync, turn, flip, shownSize, keptSize, shownMatrix, prepGrey, greyImage, suggestLevels, levelsOf, grey, polysOf, inside, fitInOutline, fitInBox, target, sizeOf, fits, buildGroup, traceSet, greyName,
-    register, run, retrace, decode, accepts, stats: () => stats, current: () => live, sources: () => SOURCES };
+    codeOf, parseCode, anchorOf, placedBy, register, run, retrace, decode, accepts, stats: () => stats, current: () => live, sources: () => SOURCES };
 });

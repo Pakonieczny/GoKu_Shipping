@@ -104,12 +104,35 @@ async function partA(kit) {
   const segs = ed.members.filter(s => s.artGrey), plain = ed.members.find(s => s.artMemberId === 'w1');
   const ops = P.artOps(ed.members, null);
   check(`A8 encode keeps each grey part grey (${greyRec.map(e => e.fill[0]).join(', ')}: artGrey, even-odd) and apply makes it a grey FILL (fillRGB, no blue hatching), which artOps writes as its grey; a hatched part with no mark is blue as before`,
-    greyRec.length === 3 && greyRec.every(e => e.role === 'hatch' && e.even && e.fill[0] === e.fill[1] && e.fill[1] === e.fill[2] && e.group === 'imgRec') && segs.length === 3 && segs.every(s => !s.hatchBlue && s.fill && !s.stroke && s.fillRGB[0] === s.fillRGB[2] && s.manufacturingRole === 'hatch' && /f\*$/.test(s.paintOp))
+    greyRec.length === 3 && greyRec.every(e => e.role === 'hatch' && e.even && e.fill[0] === e.fill[1] && e.fill[1] === e.fill[2] && IM.parseCode(e.group).src === 'imgRec') && segs.length === 3 && segs.every(s => !s.hatchBlue && s.fill && !s.stroke && s.fillRGB[0] === s.fillRGB[2] && s.manufacturingRole === 'hatch' && /f\*$/.test(s.paintOp))
       && greyRec.every(e => { const v = String(Math.round(e.fill[0] * 1000) / 1000); return ops.includes(`${v} ${v} ${v} rg`); }) && !!plain && plain.hatchBlue && !plain.artGrey && rec.added.find(e => e.id === 'w1').fill.join() === '0,0,1' && /q 0 0 1 rg/.test(ops),
     JSON.stringify({ greyRec: greyRec.map(e => [e.id, e.fill, e.artGrey]), segs: segs.map(s => [s.artMemberId, s.fillRGB, s.hatchBlue]), plain: plain && [plain.hatchBlue, plain.fillRGB] }));
   const back = AE.decode(Object.assign({ at: 1 }, rec), cb, view), shown = AE.itemsOf(ed, view, 'front').filter(i => i.artGrey);
   check('A9 opened again the greys come back grey: decode and itemsOf give each part its grey and its mark (and the group\'s id, for Re-trace)',
-    back.added.filter(i => i.artGrey).length === 3 && shown.length === 3 && shown.every(i => i.fill[0] === i.fill[2] && i.group === 'imgRec' && i.role === 'hatch'), JSON.stringify(shown.map(i => [i.id, i.fill, i.group])));
+    back.added.filter(i => i.artGrey).length === 3 && shown.length === 3 && shown.every(i => i.fill[0] === i.fill[2] && IM.parseCode(i.group).src === 'imgRec' && i.role === 'hatch'), JSON.stringify(shown.map(i => [i.id, i.fill, i.group])));
+  // REOPEN (Paul, 28 Oct 2026: "I can't seem to bring up the image vector popup modal after the initial Import process"): the group's `group` name keeps its source's id,
+  // its settings and three anchor points; a piece saved with the group moved, turned 15° and scaled, opened again (its parts flat), gives back the settings, and the
+  // anchor says where the picture is now to within a thousandth of a point
+  {
+    const sett = IM.norm({ levels: 3, detail: 0.73, smooth: 0.2, despeckle: 4, gamma: 1.4, brightness: -0.12, contrast: 0.3, crop: [0.1, 0.05, 0.9, 0.95], rot: 90, flipH: true, mode: 'grey' });
+    const box = [cx - 15, cy - 7.5, cx + 15, cy + 7.5], g2 = IM.buildGroup(tr, box, { src: 'imgRe', settings: sett, name: 'logo.png' }), code = IM.parseCode(g2.group);
+    const Wt = M.mul(M.tr(3, -2), M.about(M.mul(M.rotM(15), [1.2, 0, 0, 0.9, 0, 0]), cx, cy));
+    const moved = Object.assign({}, g2, { children: g2.children.map(ch => M.composeInto(ch, Wt, geo)) });
+    const out2 = M.exportItems(M.prepIn(items, ['cut']).concat([moved]), geo), rec2 = AE.encode(M.diffFace(M.exportItems(M.prepIn(items, ['cut']), geo), out2), { charm: cb, view, face: 'front', placed: true });
+    const flat = AE.itemsOf(AE.apply(cb, Object.assign({ at: 1, by: 'Test' }, rec2), 'front'), view, 'front'), ix = M.indexTree(flat, geo), part = flat.find(i => i.artGrey);
+    const ctx = { model: M, geo, items: () => flat, selection: () => [part.id], entry: id => { const e = ix.get(id); return e ? { it: e.it, P: e.P, parent: e.parent } : null; } };
+    const set = IM.traceSet(ctx), pb = set && IM.placedBy(ctx, set.anchor, set.parts);
+    const want = [[box[0], box[1]], [box[2], box[1]], [box[2], box[3]]].map(p => M.ap(Wt, p[0], p[1])), k = Math.min(30 / tr.width, 15 / tr.height);
+    // (the placing box is the picture's own box at its scale: the trace fills it in width or height)
+    const pic = [[0, 0], [tr.width * k, 0], [tr.width * k, tr.height * k]].map(p => [p[0] + (30 - tr.width * k) / 2 + box[0], p[1] + (15 - tr.height * k) / 2 + box[1]]).map(p => M.ap(Wt, p[0], p[1]));
+    const got = pb && [[0, 0], [pb.box[2], 0], [pb.box[2], pb.box[3]]].map(p => M.ap(pb.W, p[0], p[1]));
+    const off = got ? Math.max(...got.map((p, i) => Math.hypot(p[0] - pic[i][0], p[1] - pic[i][1]))) : Infinity;
+    const keys = ['levels', 'detail', 'smooth', 'despeckle', 'gamma', 'brightness', 'contrast', 'rot', 'flipH', 'mode'];
+    check(`A11 REOPEN: the group's name (${g2.group.length} characters, "${g2.group.slice(0, 24)}…") keeps its source, settings and anchor; saved moved, turned 15° and scaled, opened again flat (${set && set.kind}, ${set && set.ids.length} parts), the settings come back and the anchor puts the picture where it is to ${off.toFixed(4)} pt`,
+      g2.group.length <= 64 && /^[A-Za-z0-9_.:-]+$/.test(g2.group) && code.src === 'imgRe' && keys.every(k2 => code.settings[k2] === sett[k2]) && JSON.stringify(code.settings.crop) === JSON.stringify(sett.crop)
+        && !!set && set.kind === 'flat' && set.src === 'imgRe' && set.ids.length === g2.children.length && keys.every(k2 => set.settings[k2] === sett[k2]) && off < 0.01 && rec2.added.every(e => e.group === g2.group),
+      JSON.stringify({ code, set: set && { kind: set.kind, ids: set.ids, src: set.src }, got, pic, want }));
+  }
   // served: the page loads it after the editor (with a cache token) and the build ships it
   const fs = require('node:fs'), html = fs.readFileSync(path.join(ROOT, 'charm-nest-1.html'), 'utf8'), build = fs.readFileSync(path.join(ROOT, 'scripts/build-public.cjs'), 'utf8');
   const at = html.indexOf('src="charm-nest-ce-image.js?v='), edAt = html.indexOf('src="charm-nest-charm-editor.js?v=');
