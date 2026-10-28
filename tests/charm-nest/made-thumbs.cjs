@@ -30,7 +30,10 @@ const role = page => page.waitForFunction(() => !window.CNRole || ['ask', 'role'
   const puts = pid => st.calls.filter(c => c.op === 'madeThumbPut' && c.body && c.body.poolId === pid);
   try {
     await role(page);
-    const made = await R.build(w, ['tag', 'both', 'earrings']), PID = made.tag.poolIds[0], KEY = made.tag.key, RID = made.tag.rid;
+    // (a necklace of FOUR discs, each engraved on its back: a line of four pieces, for the picture of a line of several)
+    R.ORDERS.discs4 = Object.assign({}, R.ORDERS.discs, { rid: '4290000107', listing: '1890000107', buyer: 'Name Twelve', variations: [{ name: 'Metal choice', value: 'Gold' }, { name: 'Number of Discs', value: '4 Discs' }], personalization: ['Tag 1: A, Tag 2: B, Tag 3: C, Tag 4: D'] });
+    R.EXPECT_JOBS.discs4 = 4;
+    const made = await R.build(w, ['tag', 'both', 'earrings', 'discs4']), PID = made.tag.poolIds[0], KEY = made.tag.key, RID = made.tag.rid;
     console.log(`   built: ${KEY} pieces ${JSON.stringify(made.tag.poolIds)} jobs ${JSON.stringify(made.tag.jobs.map(j => [j.face, j.state, j.text, j.fitted]))}`);
     if (!st.doc('Charm_Pool', PID)) st.put('Charm_Pool', PID, { poolId: PID, orderId: RID, sku: '5X8.5', state: 'pooled' });   // (the pool row the page wrote; a world that did not reach the cloud gets one)
     // ── A ──
@@ -68,9 +71,9 @@ const role = page => page.waitForFunction(() => !window.CNRole || ['ask', 'role'
         const rule = (x, y) => { const k = (y * c.width + x) * 4; return Math.abs(d[k] - 0xd6) < 8 && Math.abs(d[k + 1] - 0xcf) < 8 && Math.abs(d[k + 2] - 0xc2) < 8; };
         let rows = 0, cols = 0; for (let y = 0; y < c.height; y++) { let n = 0; for (let x = 0; x < c.width; x++) if (rule(x, y)) n++; if (n > c.width * 0.85) rows++; } for (let x = 0; x < c.width; x++) { let n = 0; for (let y = 0; y < c.height; y++) if (rule(x, y)) n++; if (n > c.height * 0.85) cols++; }
         let dark = 0; for (let k = 0; k < d.length; k += 4) if (Math.abs(d[k] - 0x2a) < 6 && Math.abs(d[k + 1] - 0x27) < 6 && Math.abs(d[k + 2] - 0x24) < 6) dark++;
-        res({ layout: pic.layout, labels: pic.labels, frac: pic.fontPx / Math.max(pic.w, pic.h), hair: pic.hair, w: pic.w, h: pic.h, ruleRows: rows, ruleCols: cols, chipInk: dark }); }; i.src = pic.url; }))), [PID, made.both.poolIds[0]]);
+        res({ layout: pic.layout, labels: pic.labels, frac: pic.fontPx / pic.h, hair: pic.hair, w: pic.w, h: pic.h, ruleRows: rows, ruleCols: cols, chipInk: dark }); }; i.src = pic.url; }))), [PID, made.both.poolIds[0]]);
     const [wide, tall] = shape;
-    check(`F1 each face is named under it in the earrings' dark chip, its words ${wide && (wide.frac * 100).toFixed(1)} % of the picture's long side (the earrings' 7 %): ${wide && wide.chipInk} chip pixels`, wide && tall && wide.labels && tall.labels && wide.frac >= 0.09 && tall.frac >= 0.09 && wide.chipInk > 200 && tall.chipInk > 200, JSON.stringify(shape));
+    check(`F1 each face is named under it in the earrings' dark chip, its words ${wide && (wide.frac * 100).toFixed(1)} % of the picture's height (the earrings' 7 % of a square picture): ${wide && wide.chipInk} chip pixels`, wide && tall && wide.labels && tall.labels && wide.frac >= 0.085 && tall.frac >= 0.085 && wide.chipInk > 200 && tall.chipInk > 200, JSON.stringify(shape));
     check(`F2 the wide tag one over the other (${wide && wide.w}x${wide && wide.h}), the tall cat side by side (${tall && tall.w}x${tall && tall.h}), each parted by ONE hairline of ${wide && wide.hair} px (${wide && wide.ruleRows} row / ${tall && tall.ruleCols} column of it)`,
       wide && tall && wide.layout === 'column' && tall.layout === 'row' && wide.ruleRows >= 1 && wide.ruleRows <= wide.hair + 1 && wide.ruleCols === 0 && tall.ruleCols >= 1 && tall.ruleCols <= tall.hair + 1 && tall.ruleRows === 0, JSON.stringify(shape));
     const rowLook = await page.evaluate(([k1, k2]) => [k1, k2].map(key => {
@@ -80,8 +83,8 @@ const role = page => page.waitForFunction(() => !window.CNRole || ['ask', 'role'
         listing: (n.querySelector('[data-listing]') || {}).getAttribute && n.querySelector('[data-listing]').getAttribute('aria-label'), reset: reset ? { hidden: reset.hidden, title: reset.title } : null };
     }), [KEY, made.earrings.key]);
     const [tagRow, earRow] = rowLook;
-    check(`F3 the words under the pictures are gone from sight (read by a screen reader: "${tagRow.capText}", "${earRow.capText}") and the boxes are ${tagRow.w}x${tagRow.h} px (88 before), the figure no taller than its box`,
-      tagRow.capPos === 'absolute' && tagRow.capFont === '0px' && tagRow.w >= 100 && tagRow.h >= 100 && tagRow.figH - tagRow.h <= 1 && /Vector design/.test(tagRow.capText) && /Left \+ Right/.test(earRow.capText) && earRow.w === tagRow.w, JSON.stringify(rowLook));
+    check(`F3 the words under the pictures are gone from sight (read by a screen reader: "${tagRow.capText}", "${earRow.capText}") and the boxes are as tall as the row's upper part (${tagRow.h} px; 88 and then 104 before), the figure no taller than its box`,
+      tagRow.capPos === 'absolute' && tagRow.capFont === '0px' && tagRow.h >= 150 && earRow.h >= 150 && Math.abs(earRow.w - earRow.h) <= 1 && tagRow.figH - tagRow.h <= 1 && /Vector design/.test(tagRow.capText) && /Left \+ Right/.test(earRow.capText), JSON.stringify(rowLook));
     check(`F4 each box says what it shows ("${tagRow.label}", "${earRow.label}", "${tagRow.listing}") and its tooltip begins with it`, /As it will be made · front and back/.test(tagRow.label) && /^Vector design · Left \+ Right$/.test(earRow.label) && /Etsy listing/.test(tagRow.listing) && (!tagRow.title || tagRow.title.startsWith(tagRow.label)), JSON.stringify(rowLook));
     const reach = await page.evaluate(async key => {
       const fig = document.querySelector(`[data-key="${key}"] [data-vector]`).closest('figure'), b = fig.querySelector('.thumbReset'), box = fig.querySelector('[data-vector]').getBoundingClientRect();
@@ -91,7 +94,44 @@ const role = page => page.waitForFunction(() => !window.CNRole || ['ask', 'role'
       return { before, after: getComputedStyle(b).opacity, focused: now, still, active: document.activeElement && (document.activeElement.className || document.activeElement.tagName), tabbable, title: b.title, connected: b.isConnected, inCorner: r.right <= box.right + 1 && r.top >= box.top - 1 && r.right > box.right - 40 && r.top < box.top + 40 };
     }, KEY);
     check(`F5 Reset zoom sits on the picture's corner (unseen ${reach.before}, focused ${reach.after}), reachable by keyboard, named "${reach.title}"`, reach.focused && reach.before === '0' && reach.after === '1' && reach.inCorner && reach.title === 'Vector design · reset zoom', JSON.stringify(reach));
-    if (process.env.SHOTS) { require('node:fs').mkdirSync(process.env.SHOTS, { recursive: true }); for (const [n, key] of [['wide-tag', KEY], ['tall-cat', made.both.key], ['earrings', made.earrings.key]]) { await page.locator(`[data-key="${key}"]`).first().scrollIntoViewIfNeeded().catch(() => {}); await page.locator(`[data-key="${key}"]`).first().screenshot({ path: path.join(process.env.SHOTS, `FACES-row-${n}.png`) }).catch(e => console.log('   shot', n, e.message)); } }
+    // ── G: BIGTHUMB (Paul, 28 Oct 2026: "you did not enlarge the thumbnails"): each face on screen, the box as wide as its picture, at 1440x900, 1280x800 and 1024x768, and the cards ──
+    // (each face's width on screen, from the picture the box shows: the face's own box in the picture (pictureOf boxes) times the scale the box draws it at; before: the cat's 50 px, the tag's 72 px in a 104 px box)
+    const BEFORE = { cat: 50.4, tag: 71.9 };
+    const facesOn = keys => page.evaluate(ks => ks.map(([name, key, pid]) => {
+      const row = document.querySelector(`[data-key="${key}"]`), v = row && row.querySelector('[data-vector]'), im = v && v.querySelector('img'); if (!v || !im) return { name, none: true };
+      const r = v.getBoundingClientRect(), MT = CharmNestMadeThumb, pic = pid ? MT.pictureOf(pid, null, MT.tileFor(r.height)) : null, k = Math.min(r.width / im.naturalWidth, r.height / im.naturalHeight);
+      return { name, box: [Math.round(r.width), Math.round(r.height)], ar: v.style.getPropertyValue('--ar'), same: !!(pic && pic.url === im.src), faces: pic ? pic.boxes.map(b => Math.round(b.w * k)) : [], fill: Math.round(Math.min(im.naturalWidth * k / r.width, im.naturalHeight * k / r.height) * 100) / 100,
+        rowW: Math.round(row.getBoundingClientRect().width), overflow: row.scrollWidth - row.clientWidth };
+    }), keys);
+    const KEYS = [['tag', KEY, PID], ['cat', made.both.key, made.both.poolIds[0]], ['earrings', made.earrings.key, null], ['discs4', made.discs4.key, null]];
+    const shots = async tag => { if (!process.env.SHOTS) return; require('node:fs').mkdirSync(process.env.SHOTS, { recursive: true }); for (const [n, key] of KEYS) { const l = page.locator(`[data-key="${key}"]`).first(); await l.scrollIntoViewIfNeeded().catch(() => {}); await l.screenshot({ path: path.join(process.env.SHOTS, `BIG-${tag}-${n}.png`) }).catch(e => console.log('   shot', n, e.message)); } };
+    const settleBoxes = async () => { await page.evaluate(() => { CN.setMode('orders'); Orders.render(); }); await wait(400); await page.evaluate(() => CharmNestMadeThumb.refreshSoon());
+      for (const [, key] of KEYS) { await page.locator(`[data-key="${key}"]`).first().scrollIntoViewIfNeeded().catch(() => {}); await page.waitForFunction(k => { const im = document.querySelector(`[data-key="${k}"] [data-vector] img`); return im && im.complete && im.naturalWidth > 0; }, key, { timeout: 15000 }).catch(() => {}); } await page.waitForFunction(ks => ks.every(k => { const v = document.querySelector(`[data-key="${k}"] [data-vector]`), im = v && v.querySelector('img'); return im && im.complete && im.naturalWidth > 0 && (!v.dataset.made || v.style.getPropertyValue('--ar')); }), KEYS.map(x => x[1]), { timeout: 20000 }).catch(() => {}); await wait(500); };
+    const sizes = {};
+    for (const [vw, vh] of [[1440, 900], [1280, 800], [1024, 768]]) {
+      await page.setViewportSize({ width: vw, height: vh }); await settleBoxes();
+      sizes[vw] = await facesOn(KEYS); await shots(vw + 'x' + vh);
+    }
+    const big = sizes[1440], fc = n => (big.find(x => x.name === n) || {}), cat = fc('cat'), tag = fc('tag'), ear = fc('earrings'), d4 = fc('discs4');
+    console.log('   sizes: ' + JSON.stringify(sizes));
+    check(`G1 at 1440x900 each face is at least 2.5 times as wide on screen as before: the cat's ${cat.faces} px (${BEFORE.cat} before), the tag's ${tag.faces} px (${BEFORE.tag} before)`,
+      cat.same && tag.same && cat.faces.length === 2 && tag.faces.length === 2 && cat.faces.every(x => x >= 2.5 * BEFORE.cat) && tag.faces.every(x => x >= 2.5 * BEFORE.tag), JSON.stringify(big));
+    check(`G2 the box is as wide as its picture: the cat's two faces side by side ${cat.box} (about twice as wide as tall), the tag one over the other ${tag.box}, the earring pair square ${ear.box}, four discs ${d4.box}; the picture fills its box (${cat.fill}, ${tag.fill})`,
+      cat.box[0] >= cat.box[1] * 1.6 && Math.abs(ear.box[0] - ear.box[1]) <= 1 && d4.box[1] >= 150 && cat.fill >= 0.97 && tag.fill >= 0.97, JSON.stringify(big));
+    check(`G3 no row spills at 1440x900, 1280x800 or 1024x768 (${Object.entries(sizes).map(([k, v]) => k + ': ' + v.map(x => x.overflow).join('/')).join(', ')}), and the boxes stay large at 1024 (${sizes[1024].map(x => x.box.join('x')).join(', ')})`,
+      Object.values(sizes).every(v => v.every(x => !x.none && x.overflow <= 1)) && sizes[1024].every(x => x.box[1] >= 130), JSON.stringify(sizes));
+    // (the cards: the same pictures, as large as the card allows)
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.evaluate(() => { const b = document.querySelector('#ordViewSeg [data-view="cards"]'); if (b) b.click(); }); await settleBoxes();
+    const cards = await facesOn(KEYS); await shots('cards');
+    check(`G4 the cards show the same pictures, no card spilling (${cards.map(x => x.box.join('x') + '/' + x.overflow).join(', ')})`, cards.every(x => !x.none && x.overflow <= 1 && x.box[1] >= 110), JSON.stringify(cards));
+    await page.evaluate(() => { const b = document.querySelector('#ordViewSeg [data-view="list"]'); if (b) b.click(); }); await settleBoxes();
+    // (the Design & Engrave list)
+    await page.evaluate(() => { CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', list: true, chosen: true }); Engrave.render(); }); await wait(1200);
+    const eg = await page.evaluate(key => { const v = [...document.querySelectorAll('#engraveView [data-vector]')].find(h => h._mvRow && h._mvRow.key === key); const r = v && v.getBoundingClientRect(); return r ? [Math.round(r.width), Math.round(r.height)] : null; }, made.both.key);
+    if (process.env.SHOTS) { const l = page.locator('#engraveView .placementRow').first(); await l.screenshot({ path: path.join(process.env.SHOTS, 'BIG-engrave-row.png') }).catch(() => {}); }
+    check(`G5 the Design & Engrave list's box of the cat is as large (${eg})`, eg && eg[1] >= 140 && eg[0] >= eg[1] * 1.6, JSON.stringify(eg));
+    await page.evaluate(() => { CN.setMode('orders'); Orders.render(); });
 
     // ── B: the second computer ──
     const ctx2 = await w.browser.newContext({ viewport: { width: 1440, height: 900 } });
