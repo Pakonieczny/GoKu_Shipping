@@ -103,6 +103,18 @@ ok(D.KINDS.length >= 10 && D.KINDS.some(k => k[1] === 'newdoc') && D.KINDS.some(
       await page.keyboard.press('Escape'); await settle();
       assert.equal(await page.$('.cops-modal'), null); assert.equal(await hist(), h0);
     });
+    await step('B2b Step and Repeat… and Round Corners…: every field a label with its colon at the right of a fixed column and the field beside it, Preview, Cancel, OK on one row; Esc cancels', async () => {
+      for (const [id, sel, name, title] of [['ops.repeat', ['heart-fill'], 'B2b-step-and-repeat', 'Step and Repeat'], ['ops.round', ['day-0-0'], 'B2c-round-corners', 'Round Corners']]) {
+        await run(id, sel); await page.waitForSelector('.cops-modal .cops-card'); await settle();
+        const L = await look('.cops-modal', '.cops-card', '.cops-card > h3', '.ce-ask__b button', '.cops-check');
+        assert.equal(L.title.text, title); assert.equal(L.buttons[L.buttons.length - 1].text, 'OK');
+        assert.ok(L.prev && L.buttons.every(b => sameRow(b, L.prev)), JSON.stringify([L.prev, L.buttons]));
+        const xs = await page.$$eval('.cops-card .cops-f .ce-num', els => [...new Set(els.map(e => Math.round(e.getBoundingClientRect().left)))]);
+        assert.equal(xs.length, 1, 'the fields stand in one column: ' + xs.join());
+        await shot(name, '.cops-card');
+        await page.keyboard.press('Escape'); await settle(); assert.equal(await page.$('.cops-modal'), null);
+      }
+    });
     await step('B3 Simplify: its Apply says OK (the same data-x hook), Preview at the left, Cancel then OK; Esc leaves the paths as they were', async () => {
       const h0 = await hist();
       await run('pathSimplify', ['heart-line']); await page.waitForSelector('.cep-pop'); await settle();

@@ -83,7 +83,7 @@
 .aid .cops-card > h3, .aid .ce-ask__card > h3, .aid.cw-panel .cw-head, .aid.cep-pop > h4, .aid .cei__head, .aid .cei-card > .cei-eye, .aid .cem-head, .aid .cem-card > h3, .aid.cpDlg .dlgHead{
   font-family:${FONT} !important; }
 .aid .cops-card > h3, .aid .ce-ask__card > h3, .aid.cep-pop > h4, .aid .cem-card > h3{
-  display:block; margin:-16px -16px 12px !important; padding:0 12px; height:28px; line-height:28px; text-align:center; background:var(--d-title); border-bottom:1px solid #2c2c2c;
+  display:block; margin:-16px -16px 12px !important; padding:0 12px; height:28px; line-height:28px; text-align:center; background:var(--d-title); border-bottom:1px solid var(--d-line);
   font-size:13px !important; font-weight:600 !important; letter-spacing:0 !important; text-transform:none !important; color:var(--d-tx) !important; cursor:default; user-select:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .aid [data-aid-drag]{ cursor:default; }
 .aid p, .aid .cops-card p{ color:var(--d-dim) !important; font-size:12px !important; line-height:1.45 !important; letter-spacing:0 !important; }
@@ -123,7 +123,7 @@
 .aid .ce-seg button:disabled{ color:var(--d-dis) !important; opacity:1 !important; }
 /* BUTTONS: Spectrum's pills; the default (Enter) blue, the others outlined; their words as Illustrator writes them (no capitals, no spacing) */
 .aid .ce-btn, .aid .cei-btn, .aid .cem-btn, .aid .cep-pop__b button, .aid.cpDlg .dlgFoot .btn, .aid .ce-prop, .aid .ce-act, .aid .cx-show{
-  height:24px !important; min-height:24px !important; min-width:66px; padding:0 14px !important; border-radius:12px !important; border:1.5px solid #b8b8b8 !important; background:transparent !important;
+  height:24px !important; min-height:24px !important; min-width:66px; padding:0 14px !important; border-radius:12px !important; border:1.5px solid var(--d-dim) !important; background:transparent !important;
   color:var(--d-tx) !important; font:600 12px/1 ${FONT} !important; letter-spacing:0 !important; text-transform:none !important; box-shadow:none !important; cursor:default; transform:none !important; transition:none !important; }
 .aid .ce-act, .aid .ce-prop{ min-width:0; border-radius:4px !important; border-width:1px !important; border-color:var(--d-inb) !important; background:var(--d-in) !important; padding:0 8px !important; }
 .aid .ce-act.is-on, .aid .ce-prop.is-on, .aid .ce-act[aria-pressed=true]{ background:#727272 !important; color:#fff !important; }
@@ -170,7 +170,7 @@
 .aid .ce-ask__b [data-ask="yes"]:not(:only-child){ order:0; margin-right:auto; }
 .aid .ce-ask__b [data-ask="alt"]{ order:1; } .aid .ce-ask__b [data-ask="no"]{ order:2; }
 .aid .ce-ask__b [data-ask="no"]{ background:var(--d-ac) !important; border-color:var(--d-ac) !important; color:#fff !important; }
-.aid .ce-ask__b [data-ask="yes"]:not(:only-child){ background:transparent !important; border-color:#b8b8b8 !important; color:var(--d-tx) !important; }
+.aid .ce-ask__b [data-ask="yes"]:not(:only-child){ background:transparent !important; border-color:var(--d-dim) !important; color:var(--d-tx) !important; }
 .aid .ce-ask__b [data-ask="yes"]:only-child{ background:var(--d-ac) !important; border-color:var(--d-ac) !important; color:#fff !important; }
 .aid.cel-ask3 .ce-ask__b [data-k="discard"]{ order:0; margin-right:auto; } .aid.cel-ask3 .ce-ask__b [data-k="cancel"]{ order:1; } .aid.cel-ask3 .ce-ask__b [data-k="keep"]{ order:2; }
 .aid.cel-ask3 .ce-ask__b [data-k="keep"]{ background:var(--d-ac) !important; border-color:var(--d-ac) !important; color:#fff !important; }
@@ -187,7 +187,7 @@
 .aid .cep-pop__b [data-x="no"]{ order:1; } .aid .cep-pop__b [data-x="yes"]{ order:2; } .aid .cep-pop__b .aid-prev{ order:0; }
 /* ── Warp / Blend Options ── */
 .aid.cw-panel{ padding:0 14px 12px !important; }
-.aid.cw-panel .cw-head{ display:flex; align-items:center; justify-content:center; gap:8px; margin:0 -14px 12px !important; padding:0 12px !important; height:28px; background:var(--d-title); border-bottom:1px solid #2c2c2c; }
+.aid.cw-panel .cw-head{ display:flex; align-items:center; justify-content:center; gap:8px; margin:0 -14px 12px !important; padding:0 12px !important; height:28px; background:var(--d-title); border-bottom:1px solid var(--d-line); }
 .aid.cw-panel .cw-head h3{ margin:0 !important; font:600 13px/28px ${FONT} !important; letter-spacing:0 !important; color:var(--d-tx) !important; text-transform:none !important; }
 .aid.cw-panel .cw-sub{ color:var(--d-dim) !important; font-size:11px !important; letter-spacing:0 !important; text-transform:none !important; max-width:45%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .aid.cw-panel .cw-row{ display:grid !important; grid-template-columns:84px minmax(0,1fr) auto; gap:8px !important; margin:0 0 8px !important; }
@@ -205,7 +205,7 @@
 /* ── the Image step, as Illustrator's Image Trace beside its picture ── */
 .aid.cei{ background:rgba(0,0,0,.25) !important; }
 .aid .cei__card{ grid-template-columns:minmax(0,1fr) 300px !important; }
-.aid .cei__head{ align-items:center !important; justify-content:center; gap:10px !important; height:28px; padding:0 12px !important; background:var(--d-title); border-bottom:1px solid #2c2c2c !important; }
+.aid .cei__head{ align-items:center !important; justify-content:center; gap:10px !important; height:28px; padding:0 12px !important; background:var(--d-title); border-bottom:1px solid var(--d-line) !important; }
 .aid .cei__head h3{ font:600 13px/28px ${FONT} !important; color:var(--d-tx) !important; letter-spacing:0 !important; }
 .aid .cei__eyebrow{ font-size:11px !important; font-weight:400 !important; letter-spacing:0 !important; text-transform:none !important; color:var(--d-dim) !important; }
 .aid .cei__view{ background:var(--d-bg); }
@@ -213,6 +213,7 @@
 .aid .cei__hint, .aid .cei__wait, .aid .cei__lab{ letter-spacing:0 !important; text-transform:none !important; font-size:11px !important; }
 .aid .cei__wait{ background:rgba(40,40,40,.9) !important; color:var(--d-tx) !important; border-color:#2c2c2c !important; }
 .aid .cei__lab{ color:#1c1d1d !important; }
+.aid .cei__div::before{ background:#c9a55c !important; } .aid .cei__div::after{ border-color:#c9a55c !important; }   /* (the step says "drag the gold lines": they stay gold) */
 .aid .cei__side{ background:var(--d-bg); border-left:1px solid var(--d-line) !important; gap:0 !important; padding:0 !important; }
 .aid .cei__sec{ padding:8px 12px 10px; border-bottom:1px solid var(--d-line); }
 .aid .cei__sec > b{ font-size:12px !important; font-weight:700 !important; letter-spacing:0 !important; text-transform:none !important; color:var(--d-tx) !important; margin:0 0 8px !important; }
@@ -234,7 +235,7 @@
 /* ── the vector import, as Illustrator's Place options ── */
 .aid.cei-root{ background:rgba(0,0,0,.3) !important; }
 .aid .cei-card{ padding:16px 18px 14px !important; }
-.aid .cei-card > .cei-eye{ display:block; margin:-16px -18px 10px !important; height:28px; line-height:28px; text-align:center; background:var(--d-title); border-bottom:1px solid #2c2c2c;
+.aid .cei-card > .cei-eye{ display:block; margin:-16px -18px 10px !important; height:28px; line-height:28px; text-align:center; background:var(--d-title); border-bottom:1px solid var(--d-line);
   font-size:13px !important; font-weight:600 !important; letter-spacing:0 !important; text-transform:none !important; color:var(--d-tx) !important; }
 .aid .cei-card > h3{ font:600 15px/1.3 ${FONT} !important; color:var(--d-tx) !important; letter-spacing:0 !important; margin:0 0 4px !important; }
 .aid .cei-card [class^="cei-"], .aid .cei-card [class*=" cei-"]{ letter-spacing:0 !important; text-transform:none !important; }
@@ -249,7 +250,7 @@
 /* ── Design a charm, as Illustrator's New Document: the tabs across the top, the presets as tiles, the preset details at the right, Close / Create ── */
 .aid.cem-root{ background:rgba(0,0,0,.45) !important; }
 .aid .cem-win{ padding:0 !important; }
-.aid .cem-head{ height:auto; min-height:44px; margin:0 !important; padding:0 12px 0 20px !important; background:var(--d-title); border-bottom:1px solid #2c2c2c !important; }
+.aid .cem-head{ height:auto; min-height:44px; margin:0 !important; padding:0 12px 0 20px !important; background:var(--d-title); border-bottom:1px solid var(--d-line) !important; }
 .aid .cem-id h2{ font:600 13px/1.2 ${FONT} !important; color:var(--d-tx) !important; letter-spacing:0 !important; }
 .aid .cem-eyebrow{ font-size:11px !important; font-weight:400 !important; letter-spacing:0 !important; text-transform:none !important; color:var(--d-dim) !important; }
 .aid .cem-seg{ border:0 !important; background:transparent !important; height:44px !important; border-radius:0; }
@@ -274,7 +275,7 @@
 .aid .cem-new{ grid-template-columns:minmax(0,1fr) 330px !important; }
 .aid .cem-shapes{ gap:4px !important; }
 .aid .cem-name{ width:100%; }
-.aid .cem-new > div:first-child{ order:2; background:var(--d-hi); border-left:1px solid var(--d-line); margin:-14px -20px 0 0; padding:14px 18px; }
+.aid .cem-new > div:first-child{ order:2; background:var(--d-hi); border-left:1px solid var(--d-line); margin:-14px 0 0 0; padding:14px 16px; min-width:0; }
 .aid .cem-new > .cem-prev{ order:1; }
 .aid .cem-new > div:first-child::before{ content:"PRESET DETAILS"; display:block; font-size:11px; font-weight:700; letter-spacing:.06em; color:var(--d-dim); margin:0 0 12px; }
 .aid .cem-label{ font-size:12px !important; font-weight:400 !important; letter-spacing:0 !important; text-transform:none !important; color:var(--d-tx) !important; margin:10px 0 6px !important; }
@@ -303,11 +304,13 @@
 .aid .cem-card{ padding:16px 16px 14px !important; }
 .aid .cem-card p.is-bad{ color:#ffb3a8 !important; }
 .aid .cem-card__b [data-c="discard"], .aid .cem-card__b [data-c="done"]{ margin-right:auto; }
+.aid.aid--saved .cem-card__b .cem-btn:not([data-aid-default]){ background:transparent !important; border-color:var(--d-dim) !important; color:var(--d-tx) !important; }
+.aid.aid--saved .cem-card__b .cem-btn[data-aid-default]{ background:var(--d-ac) !important; border-color:var(--d-ac) !important; color:#fff !important; }
 /* ── Send to sheet ── */
 .aid.cpDlg{ background:transparent !important; color:var(--d-tx) !important; }
 .aid.cpDlg::backdrop{ background:rgba(0,0,0,.35); }
 .aid.cpDlg .dlgHead{ position:relative; background:var(--d-bg) !important; border-bottom:1px solid var(--d-line) !important; padding:38px 14px 10px !important; }
-.aid.cpDlg .dlgHead h3{ position:absolute; left:0; right:0; top:0; height:28px; margin:0 !important; text-align:center; background:var(--d-title); border-bottom:1px solid #2c2c2c;
+.aid.cpDlg .dlgHead h3{ position:absolute; left:0; right:0; top:0; height:28px; margin:0 !important; text-align:center; background:var(--d-title); border-bottom:1px solid var(--d-line);
   font:600 13px/28px ${FONT} !important; color:var(--d-tx) !important; letter-spacing:0 !important; text-transform:none !important; }
 .aid.cpDlg .dlgHead .cpX{ position:absolute; right:6px; top:3px; width:22px; height:22px; line-height:20px; padding:0; z-index:1; border-radius:4px; }
 .aid.cpDlg .dlgHead .sub, .aid.cpDlg .cpHint, .aid.cpDlg .cpMeta, .aid.cpDlg .cpGoes, .aid.cpDlg .cpWho, .aid.cpDlg .cpWhy, .aid.cpDlg .cpLbl i{ color:var(--d-dim) !important; letter-spacing:0 !important; text-transform:none !important; }
@@ -325,7 +328,7 @@
 .aid.cpDlg .dlgFoot [data-cp-close]{ order:1; } .aid.cpDlg .dlgFoot [data-cp-send]{ order:2; }
 /* ── the laser check's list ── */
 .aid.cx-list{ background:var(--d-menu) !important; color:var(--d-tx) !important; border:1px solid #2a2a2a !important; border-radius:4px; box-shadow:0 8px 24px rgba(0,0,0,.5) !important; padding:0 0 4px !important; overflow:hidden; }
-.aid.cx-list::before{ content:"Laser Check"; display:block; height:26px; line-height:26px; padding:0 10px; background:var(--d-title); border-bottom:1px solid #2c2c2c; font:600 12px/26px ${FONT}; color:var(--d-tx); }
+.aid.cx-list::before{ content:"Laser Check"; display:block; height:26px; line-height:26px; padding:0 10px; background:var(--d-title); border-bottom:1px solid var(--d-line); font:600 12px/26px ${FONT}; color:var(--d-tx); }
 .aid.cx-list .cx-row{ color:var(--d-tx) !important; font-size:12px !important; }
 .aid.cx-list .cx-row + .cx-row{ border-top-color:var(--d-line) !important; }
 .aid.cx-list .cx-row > span em{ color:var(--d-dim) !important; letter-spacing:0 !important; text-transform:none !important; font-size:11px !important; }
@@ -397,6 +400,12 @@
       draggable(box, h());
       // (the ops dialog draws itself again on every tab: its new title bar is draggable too)
       if (kind === 'ops' && !box.__aidMo && root.MutationObserver) { box.__aidMo = new root.MutationObserver(() => { draggable(box, h()); words(el, kind); }); box.__aidMo.observe(box, { childList: true }); }
+    }
+    if (kind === 'saved') {
+      // (the card after Save focuses its last button that can be pressed, else its first: that one is Enter's, so that one is drawn blue, as Illustrator draws its default)
+      const bar = el.querySelector('.cem-card__b');
+      const mark = () => { const d = bar.querySelector('button:not(:disabled):last-child') || bar.querySelector('button'); bar.querySelectorAll('button').forEach(b => { if (b === d) b.setAttribute('data-aid-default', ''); else b.removeAttribute('data-aid-default'); }); };
+      if (bar && !bar.__aidMo && root.MutationObserver) { bar.__aidMo = new root.MutationObserver(mark); bar.__aidMo.observe(bar, { childList: true }); mark(); }
     }
     if (TITLES[kind]) el.setAttribute('data-aid-title', TITLES[kind]);
     return kind;
