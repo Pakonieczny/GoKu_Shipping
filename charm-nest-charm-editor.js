@@ -62,7 +62,8 @@
  *                          a button on the rail (before More). flyout: tools that name the same flyout share one rail button with a hold / right-click / corner menu, the
  *                          first is the default; flyout 'shapes' joins the Rectangle / Ellipse / Line menu. key: one letter that arms it (the editor's own letters win).
  *                          cursor: the CSS cursor over the work area while it is armed. p = { x, y } in pt (face coordinates). onMove is called while dragging and,
- *                          with no button down, on hover (ev.buttons says which). onKey returns true (or prevents the default) when it used the key. overlay(ctx)
+ *                          with no button down, on hover (ev.buttons says which). onKey returns true (or prevents the default) when it used the key ('open': used, and its
+ *                          changes stay open for more, as a run of arrow taps is one undo step, until ctx.commit or the next gesture closes them). overlay(ctx)
  *                          returns SVG markup drawn over the charm in screen px (ctx.stageOf, ctx.view); ctx.redraw() asks for it again.
  *   CharmEditor.commands   { [id]: { title, key?, run(ctx), enabled?(ctx), group?, icon?, bar?, menu? } }
  *                          listed by group in the head's Object menu and, when enabled, in the right-click menu; bar: true with an icon puts a button on the property
@@ -2600,7 +2601,7 @@
       if (t && t.__ceKey) { t.__ceKey(e); return; }
       if (isField(t)) { fieldKey(e); return; }
       if (k === 'Escape' && rootEl.querySelector('.ce-menu:not([hidden])')) { e.preventDefault(); closeMenus(); return; }
-      { const xt = xTool(S.tool); if (xt && typeof xt.onKey === 'function' && k !== ' ' && e.code !== 'Space') { const r = xCall(xt, 'onKey', e); if (r === true || e.defaultPrevented) { e.preventDefault(); xCommit(); return; } } }
+      { const xt = xTool(S.tool); if (xt && typeof xt.onKey === 'function' && k !== ' ' && e.code !== 'Space') { const r = xCall(xt, 'onKey', e); if (r === 'open') { e.preventDefault(); return; } if (r === true || e.defaultPrevented) { e.preventDefault(); xCommit(); return; } } }
       if (k === ' ' || e.code === 'Space') { e.preventDefault(); if (!S.space) { S.space = true; stage.classList.add('is-space'); } return; }
       const kl = k.length === 1 ? k.toLowerCase() : k;
       if (meta) {
@@ -2783,7 +2784,7 @@
       pointOf: (cx, cy) => fromClient(cx, cy), stageOf: (x, y) => toStage(x, y), view: () => V(),
       setZoom: (pct, about) => { if (!fin(+pct)) return; const b = sb(); if (about && fin(about.x) && fin(about.y)) zoomAtStage(+pct / 100 * PX100, about.x - b.l, about.y - b.t); else zoomTo(+pct); },
       geo, model, entry: id => { const e = entry(String(id)); return e ? { it: e.it, P: e.P, parent: e.parent } : null; },
-      say: (text, ms) => say(text, ms), redraw: () => renderUI(), setTool: id => setTool(String(id)), root: rootEl, stage
+      say: (text, ms) => say(text, ms), redraw: () => { renderUI(); if (!(S.g && S.g.live)) xBar(); }, setTool: id => setTool(String(id)), root: rootEl, stage
     };
     // tools
     const xTip = id => { const t = xTool(id); return t ? [String(t.title || t.id), String(t.tip || t.hint || ''), xKeyOf(t)] : null; };
@@ -2838,13 +2839,13 @@
       }
       return h;
     }
-    let xBarKey = null, xBarFor = null;
+    let xBarKey = null;
     function xBar() {
       const el = $('.ce-xbar'), bar = X.commands.filter(c => c.c.bar && typeof c.c.icon === 'string');
       if (!el || !bar.length) return;
-      const key = S.face + '#' + S.sel.join('|'); if (key === xBarKey && items() === xBarFor) return;
-      xBarKey = key; xBarFor = items();
-      const on = bar.filter(xEnabled);
+      // (written again only when what is enabled changes: a command may depend on more than the selection, as the anchors picked with Direct Selection)
+      const on = bar.filter(xEnabled), key = on.map(c => c.id).join('|'); if (key === xBarKey) return;
+      xBarKey = key;
       el.innerHTML = on.map(c => `<button class="ce-prop" type="button" data-xcmd="${esc(c.id)}" title="${esc(c.c.title || c.id)}${c.c.key ? ' (' + esc(keyLabel(c.c.key)) + ')' : ''}" aria-label="${esc(c.c.title || c.id)}">${c.c.icon}</button>`).join('');
       el.hidden = !on.length;
     }
