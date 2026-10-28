@@ -549,10 +549,26 @@
     let c = ccache.get(sp); if (!c) { c = toContours(sp); ccache.set(sp, c); }
     return c;
   }
+  /** Contours written as ops, and remembered as the contours of those very ops (as reading them back would give them: a handle on its own anchor is none, an open path's outer
+   *  handles are none, each contour its written subpath's own), so the next frame of a drag does not read thousands of ops again. */
+  function writeContours(cs) {
+    const list = cs.filter(c => c && c.pts && c.pts.length), sps = toSubpaths(list);
+    if (list.length !== sps.length) return sps;
+    const norm = [];
+    for (let k = 0; k < list.length; k++) {
+      const c = list[k], n = c.pts.length;
+      if (c.src) { norm.push(c); continue; }
+      if (c.closed && n >= 2 && same(c.pts[n - 1].p, c.pts[0].p, 1e-6)) return sps;   // (read back, those two would be one anchor: let it be read)
+      const pts = c.pts.map((a, i) => ({ p: a.p, i: a.i && !same(a.i, a.p) && (c.closed || i > 0) ? a.i : null, o: a.o && !same(a.o, a.p) && (c.closed || i < n - 1) ? a.o : null }));
+      norm.push({ closed: c.closed, pts, src: sps[k] });
+    }
+    ccache.set(sps, norm);
+    return sps;
+  }
   /** The item with new contours (null: nothing left of it). Its transform is kept exactly: the editor's transform is about the centre of the geometry's own box, so with new
    *  geometry the move (tx, ty) is set so the matrix is the one it had and every anchor nobody touched stays where it is on the charm. */
   function rebuild(it, cs, geo) {
-    const sps = toSubpaths(cs.filter(c => c && c.pts && c.pts.length));
+    const sps = writeContours(cs);
     if (!sps.length) return null;
     const n = Object.assign({}, it, { subpaths: sps });
     const W = geo.matrix(it);
@@ -794,8 +810,20 @@
 
   /* ── the overlay: the parts being edited drawn over the charm with their anchors and handles, in work-area px (a handful of paths however many anchors) ── */
   const f1 = v => Math.round(v * 10) / 10;
+  /* (the editor draws its overlays again on every change, and a drag changes the work and the read-out one after the other: what is drawn is kept with what it was drawn from,
+     so the second pass of a frame costs nothing) */
+  const treeNo = new WeakMap(); let treeSeq = 0;
   function overlay(ctx, tool) {
-    const st = S(ctx), V = viewOf(ctx);
+    const st = S(ctx), V = viewOf(ctx), items = ctx.items();
+    if (!treeNo.has(items)) treeNo.set(items, ++treeSeq);
+    const g = st.g, memo = [tool, treeNo.get(items), V.join(','), ctx.selection().join(','), [...st.anc].map(([id, k]) => id + ':' + [...k].join(',')).join(';'), st.hovId,
+      st.pen ? [st.pen.id, st.pen.n, st.pen.out, st.pen.in0, st.pen.end].join(',') : '', st.hov && st.pen ? st.hov.x + ',' + st.hov.y : '', st.ring || '', g ? g.kind + (g.live ? 1 : 0) : '',
+      g && g.kind === 'marq' ? [g.x0, g.y0, g.x, g.y].join(',') : '', st.ink ? st.ink.length : 0].join('|');
+    if (st.ovMemo === memo) return st.ovOut;
+    st.ovMemo = memo; st.ovOut = overlayNow(ctx, tool, st, V);
+    return st.ovOut;
+  }
+  function overlayNow(ctx, tool, st, V) {
     const stg = stageSize(ctx), vw = stg.w, vh = stg.h;
     const inView = q => q[0] > -20 && q[1] > -20 && q[0] < vw + 20 && q[1] < vh + 20;
     let h = '', aOff = '', aOn = '', hl = '', hk = '';
@@ -853,6 +881,18 @@
   }
   /** The cursor for what a click will do here (the pen's marks beside its nib), set on the work area while the pointer is over it. */
   function setCursor(ctx, c) { const s = ctx.stage; if (!s || !s.style || !c || s.__cepCur === c) return; s.__cepCur = c; s.style.setProperty('--xcur', c); }
+  /* LIVE FEEDBACK, as the editor's own tools give it (Paul, 28 Oct 2026: "I'm not seeing a real time read out ... in the work area ... and in the X and Y in the menu"): a point
+     dragged or placed snaps to the smart guides (ctx.snap: Alt pauses them; Shift's 45° wins over them), and the gold chip says where the anchor is, or how long a handle is
+     and at what angle, while the bar's X / Y / W / H follow the part as it changes */
+  const fmtMm = v => (Math.abs(v) < 0.0005 ? '0.00' : v.toFixed(2));
+  const snapTo = (ctx, q, ev) => (typeof ctx.snap === 'function' && !(ev && ev.shiftKey) ? ctx.snap(q[0], q[1], ev) : q);
+  const posText = (ctx, q) => { const f = ctx.frame(); return `X ${fmtMm((q[0] - f.x0) * MM)}  Y ${fmtMm((q[1] - f.y0) * MM)} mm`; };
+  const handleText = (a, q) => { let deg = -Math.atan2(q[1] - a[1], q[0] - a[0]) * 180 / Math.PI; if (deg <= -180) deg += 360; return `Handle ${fmtMm(dist(a, q) * MM)} mm · ${(Math.round(deg * 10) / 10) || 0}°`; };
+  function liveOf(ctx, id, text) {
+    if (typeof ctx.live !== 'function') return;
+    const e = ctx.entry(id), b = e && ctx.geo.drawn(e.it, e.P);
+    if (b) ctx.live({ box: b, text, angle: num(e.it.rot, 0) });
+  }
 
   /* ═══ 7 · THE PEN ═══ */
   /** The open contour the pen is drawing: { inf, ci, c } with its active end LAST (reversed when the pen took it up at its first anchor), or null. */
@@ -921,7 +961,7 @@
         }
         const other = endAt(ctx, p, { id: a.inf.id, ci: a.ci });
         if (other) { penConnect(ctx, a, other); return; }
-        let q = [p.x, p.y]; if (ev.shiftKey) q = snap45(lastQ, q);
+        const q = ev.shiftKey ? snap45(lastQ, [p.x, p.y]) : snapTo(ctx, [p.x, p.y], ev);
         const c = mkC(a.c.pts.map(cloneA).concat([{ p: ap(a.inf.Wi, q), i: null, o: null }]), false);
         penWrite(ctx, a, c); st.g = { kind: 'penPt', at: q, live: false }; return;
       }
@@ -932,10 +972,10 @@
       if (t && t.kind === 'seg') { addAnchorAt(ctx, t); st.g = { kind: 'none' }; return; }
       if (t && t.kind === 'anchor') { delAnchorAt(ctx, t); st.g = { kind: 'none' }; return; }
       // a new path, its first anchor here
-      const c0 = mkC([{ p: [p.x, p.y], i: null, o: null }], false), it = newPathItem([c0], 'Pen path');
+      const q0 = snapTo(ctx, [p.x, p.y], ev), c0 = mkC([{ p: q0, i: null, o: null }], false), it = newPathItem([c0], 'Pen path');
       ctx.addItems([it], { select: true });
       st.pen = { id: it.id, ci: 0, end: 'last' }; st.anc = new Map([[it.id, new Set(['0:0'])]]);
-      st.g = { kind: 'penPt', at: [p.x, p.y], live: false };
+      st.g = { kind: 'penPt', at: q0, live: false };
       if (typeof ctx.redraw === 'function') ctx.redraw();
     },
     onMove(ctx, ev, p) {
@@ -950,19 +990,19 @@
         g.pulled = true;
         const n = a.c.pts.length, c = setHandle(a.c, n - 1, 'o', ap(a.inf.Wi, q), ev.altKey || g.alt ? 'free' : 'mirror');
         if (ev.altKey) g.alt = true;
-        penWrite(ctx, a, c);
+        penWrite(ctx, a, c); liveOf(ctx, a.inf.id, handleText(g.at, q));
       } else if (g.kind === 'penCusp') {
         const a = penActive(ctx); if (!a) return;
         const n = a.c.pts.length, last = a.c.pts[n - 1], at = ap(a.inf.W, last.p);
         let q = [p.x, p.y]; if (ev.shiftKey) q = snap45(at, q);
-        penWrite(ctx, a, setHandle(a.c, n - 1, 'o', ap(a.inf.Wi, q), 'free'));
+        penWrite(ctx, a, setHandle(a.c, n - 1, 'o', ap(a.inf.Wi, q), 'free')); liveOf(ctx, a.inf.id, handleText(at, q));
       } else if (g.kind === 'penClose') {   // closing with a drag: the start becomes smooth through the pointer (Alt: only the handle into it)
         const inf = infoOf(ctx, g.id), c = inf && inf.cs[g.ci]; if (!c) return;
         let q = [p.x, p.y]; if (ev.shiftKey) q = snap45(g.at, q);
         const mirror = sub(mulS(g.at, 2), q);
         let c2 = setHandle(c, 0, 'i', ap(inf.Wi, mirror), 'free');
         if (!ev.altKey) c2 = setHandle(c2, 0, 'o', ap(inf.Wi, q), 'free');
-        const cs = inf.cs.slice(); cs[g.ci] = c2; write(ctx, new Map([[inf.id, cs]]));
+        const cs = inf.cs.slice(); cs[g.ci] = c2; write(ctx, new Map([[inf.id, cs]])); liveOf(ctx, inf.id, handleText(g.at, q));
       }
     },
     onUp(ctx) { const st = S(ctx); st.g = null; if (typeof ctx.redraw === 'function') ctx.redraw(); },
@@ -1028,9 +1068,11 @@
     for (const t of targets(ctx)) { const s = picked(st, t); if (s.size) parts.push({ id: t.id, Wi: t.Wi, cs: t.cs, s }); }
     return Object.assign({ kind: 'anchors', x0: p.x, y0: p.y, parts, live: false }, extra || {});
   }
+  /** The picked anchors moved with the pointer; the anchor that was pressed (g.lead, face pt) snaps to the smart guides and its place is read out. */
   function dragAnchors(ctx, g, ev, p) {
     let d = [p.x - g.x0, p.y - g.y0];
     if (ev.shiftKey) { const q = snap45([g.x0, g.y0], [p.x, p.y]); d = [q[0] - g.x0, q[1] - g.y0]; }
+    else if (g.lead) { const q = snapTo(ctx, [g.lead[0] + d[0], g.lead[1] + d[1]], ev); d = [q[0] - g.lead[0], q[1] - g.lead[1]]; }
     const map = new Map();
     for (const part of g.parts) {
       const dr = apL(part.Wi, d), bySub = new Map();
@@ -1038,6 +1080,7 @@
       map.set(part.id, part.cs.map((c, ci) => (bySub.has(ci) ? moveAnchors(c, bySub.get(ci), dr) : c)));
     }
     write(ctx, map);
+    if (g.leadId) liveOf(ctx, g.leadId, g.lead ? posText(ctx, [g.lead[0] + d[0], g.lead[1] + d[1]]) : undefined);
   }
   /** A handle dragged: the anchor's partner turns with it when the anchor was smooth (Alt: alone; Shift: 45° about its anchor). */
   function dragHandle(ctx, g, ev, p) {
@@ -1045,6 +1088,7 @@
     let q = [p.x, p.y]; if (ev.shiftKey) q = snap45(g.at, q);
     const c = setHandle(g.c0, g.ai, g.which, ap(inf.Wi, q), g.free || ev.altKey ? 'free' : 'smooth', g.smooth);
     const cs = g.cs0.slice(); cs[g.ci] = c; write(ctx, new Map([[g.id, cs]]));
+    liveOf(ctx, g.id, handleText(g.at, q));
   }
   /** A segment dragged: a straight one moves its two anchors; a curve bends so the point that was pressed follows the pointer (its handles moved, more the nearer one). */
   function dragSeg(ctx, g, ev, p) {
@@ -1060,6 +1104,7 @@
       if (wasB && B.o) c2 = setHandle(c2, s.kb, 'i', c2.pts[s.kb].i, 'smooth', true);
     }
     const cs = g.cs0.slice(); cs[g.ci] = c2; write(ctx, new Map([[g.id, cs]]));
+    liveOf(ctx, g.id);
   }
   /** The anchors inside a box (face space) on every part that can be edited. */
   function anchorsIn(ctx, r) {
@@ -1093,7 +1138,7 @@
         if (on) { st.anc.get(t.inf.id).delete(kk); if (typeof ctx.redraw === 'function') ctx.redraw(); st.g = { kind: 'none' }; return; }
         selectAnchors(ctx, [{ id: t.inf.id, ci: t.ci, ai: t.ai }], true);
       } else if (!on) selectAnchors(ctx, [{ id: t.inf.id, ci: t.ci, ai: t.ai }]);
-      st.g = beginAnchorDrag(ctx, p);
+      st.g = beginAnchorDrag(ctx, p, { lead: ap(t.inf.W, t.inf.cs[t.ci].pts[t.ai].p), leadId: t.inf.id });
       return;
     }
     if (t && t.kind === 'seg') {
@@ -1107,7 +1152,7 @@
     if (t && t.kind === 'body') {   // inside a filled part: the whole part (all its anchors), dragged as one
       const all = []; t.inf.cs.forEach((c, ci) => c.pts.forEach((a, ai) => all.push({ id: t.inf.id, ci, ai })));
       selectAnchors(ctx, all, ev.shiftKey);
-      st.g = beginAnchorDrag(ctx, p);
+      st.g = beginAnchorDrag(ctx, p, { leadId: t.inf.id });
       return;
     }
     if (!ev.shiftKey) { st.anc = new Map(); if (ctx.selection().length) ctx.select([]); }
@@ -1125,6 +1170,7 @@
       const inf = infoOf(ctx, g.id); if (!inf) return;
       let q = [p.x, p.y]; if (ev.shiftKey) q = snap45(g.at, q);
       const c = setHandle(g.cs0[g.ci], g.ai, 'o', ap(inf.Wi, q), 'mirror'), cs = g.cs0.slice(); cs[g.ci] = c; write(ctx, new Map([[g.id, cs]]));
+      liveOf(ctx, g.id, handleText(g.at, q));
     } else if (g.kind === 'marq') {
       g.x = p.x; g.y = p.y;
       st.anc = new Map([...g.base].map(([id, s]) => [id, new Set(s)]));
@@ -1254,7 +1300,8 @@
       const st = S(ctx); if (!st.ink || !(ev.buttons & 1)) return;
       const k = pxPerPt(ctx), last = st.ink[st.ink.length - 1];
       if (Math.hypot(p.x - last[0], p.y - last[1]) * k < 1) return;
-      st.ink.push([p.x, p.y]); if (typeof ctx.redraw === 'function') ctx.redraw();
+      st.ink.push([p.x, p.y]);
+      const b = bboxPts(st.ink); if (b && typeof ctx.live === 'function') ctx.live({ box: b }); else if (typeof ctx.redraw === 'function') ctx.redraw();
     },
     onUp(ctx) {
       const st = S(ctx), ink = st.ink; st.ink = null; st.g = null;

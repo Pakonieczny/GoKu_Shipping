@@ -172,6 +172,8 @@ async function partB(browser) {
     const got = [];
     for (const [k, want] of [['p', 'pen'], ['a', 'direct'], ['n', 'pencil'], ['c', 'scissors'], ['+', 'anchorAdd'], ['-', 'anchorDel'], ['Shift+C', 'anchorConvert'], ['=', 'anchorAdd']]) { await key(page, k); got.push(k + '>' + await tool(page)); assert.equal(await tool(page), want, k); }
     await key(page, 'Escape'); assert.equal(await tool(page), 'select');
+    // (the steps that check a point lands exactly under the pointer run with the smart guides off, ⌘U; B16 checks the snapping itself)
+    await key(page, 'Control+u'); assert.equal(await page.evaluate(() => document.querySelector('.ce-root .ce-snapb').classList.contains('is-on')), false, 'smart guides off');
     return got.join(' ');
   });
 
@@ -421,7 +423,42 @@ async function partB(browser) {
     return `${work.length} moves: median ${work[work.length >> 1].toFixed(2)} ms, p95 ${p95.toFixed(2)} ms`;
   });
 
-  await step('B16 Save: the result says the pen shape and the pencil lines were added and the heart, the day square changed, each with its geometry; no page error', async () => {
+  await step('B16 smart guides on (⌘U): a pen anchor clicked 3 px off a day square\'s middle lands on it, an anchor dragged 3 px off another square\'s middle lands on it; the gold chip reads the anchor\'s X / Y, then a handle\'s length and angle, as the pointer moves', async () => {
+    await key(page, 'Escape'); await key(page, 'Escape');
+    await key(page, 'Control+u'); assert.equal(await page.evaluate(() => document.querySelector('.ce-root .ce-snapb').classList.contains('is-on')), true);
+    const k = await page.evaluate(() => { const v = window.CharmEditor.current.ctx.view(); return Math.hypot(v[0], v[1]); });
+    const b = await page.evaluate(() => window.CharmEditor.current.box('day-1-1')), cx = (b[0] + b[2]) / 2, y = b[1] + 0.25 * (b[3] - b[1]);
+    await key(page, 'p');
+    const b0 = await page.evaluate(() => window.CharmEditor.current.items().map(i => i.id));
+    await clickC(page, await clientPt(page, [cx + 3 / k, y]));
+    // a handle pulled out of the next anchor: the chip says its length and angle
+    const a2 = await clientPt(page, [cx + 3 * PT, y + 2 * PT]), a2o = await clientPt(page, [cx + 4.5 * PT, y + 2 * PT]);
+    await page.mouse.move(a2.x, a2.y); await page.mouse.down(); await page.mouse.move(a2o.x, a2o.y, { steps: 6 }); await settle(page);
+    const chipH = await page.evaluate(() => (document.querySelector('.ce-ui .u-chip text') || {}).textContent || '');
+    await page.mouse.up(); await settle(page); await key(page, 'Escape');
+    const id = (await page.evaluate(b => window.__pp.added(b), b0))[0], cs = await face(page, id);
+    assert.ok(near(cs[0].pts[0].p[0], cx, 1e-6), 'snapped to the middle: ' + (cs[0].pts[0].p[0] - cx));
+    const hm = /^Handle (\d+\.\d\d) mm · (-?\d+(?:\.\d)?)°$/.exec(chipH);
+    assert.ok(hm && near(+hm[1], 1.5, 0.15) && Math.abs(+hm[2]) < 3, 'handle chip: ' + chipH);
+    // an anchor of it dragged to 3 px right of another square's middle: on it; the chip and the bar's X follow
+    const e2 = await page.evaluate(() => window.CharmEditor.current.box('day-1-3'));
+    await key(page, 'a');
+    const at = cs[0].pts[1].p;
+    await clickC(page, await clientPt(page, at));
+    const cx3 = (e2[0] + e2[2]) / 2, s0 = await clientPt(page, at), s1 = await clientPt(page, [cx3 + 3 / k, at[1] + 0.4 * PT]);
+    await page.mouse.move(s0.x, s0.y); await page.mouse.down(); await page.mouse.move(s1.x, s1.y, { steps: 6 }); await settle(page);
+    const chip = await page.evaluate(() => (document.querySelector('.ce-ui .u-chip text') || {}).textContent || ''), guides = await page.evaluate(() => document.querySelectorAll('.ce-ui .u-gd').length);
+    const barX = await page.evaluate(() => document.querySelector('.ce-root [data-f="x"]').value);
+    await page.mouse.up(); await settle(page);
+    const after = await face(page, id), pa = after[0].pts[1].p, want = 'X ' + ((pa[0] - 100) / PT).toFixed(2) + '  Y ' + ((pa[1] - 50) / PT).toFixed(2) + ' mm';
+    assert.ok(near(pa[0], cx3, 1e-6), 'snapped to the middle: ' + (pa[0] - cx3));
+    assert.equal(chip, want); assert.ok(guides > 0, 'a guide drawn');
+    const bx = await page.evaluate(id => window.CharmEditor.current.box(id), id);
+    assert.equal(barX, ((bx[0] - 100) / PT).toFixed(2), 'the bar\'s X is the part\'s');
+    return `anchor ${chip} · ${chipH}`;
+  });
+
+  await step('B17 Save: the result says the pen shape and the pencil lines were added and the heart, the day square changed, each with its geometry; no page error', async () => {
     await key(page, 'Escape');
     await page.click('.ce-root [data-act="save"]'); await page.waitForFunction(() => window.__closed === true);
     const r = await page.evaluate(() => window.__result), ch = r.changes.front;
