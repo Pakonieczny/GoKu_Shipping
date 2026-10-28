@@ -4,9 +4,8 @@
    the files come from this computer and a warm reload makes at most 3 static requests (tests/charm-nest/service-worker.cjs).
 
    ONE file, two roles:
-     · the worker (registered by charm-nest-1.html as /charm-nest-sw.js, its scope the page's own address: /charm-nest-1.html, or / where
-       the page is served at the root, brites-charm-sorter.goldenspike.app; the other pages of the site are never in its hands): answers
-       the requests below from Cache Storage;
+     · the worker (registered by charm-nest-1.html as /charm-nest-sw.js, scope /: the page's workers, the clock among them, are in
+       its hands only under a scope that holds their own addresses): answers the requests below from Cache Storage;
      · the page (<script src="charm-nest-sw.js?v=…"> in charm-nest-1.html): CNServiceWorker — starts the worker once the page is up and
        idle (never in the way of the boot), hands it what the page already loaded, Settings' "Reload from cloud", the console's off/on.
 
@@ -14,7 +13,8 @@
      · cn-static-<GEN>: a same-origin GET of a static file (script, style, picture, font, wasm, json) whose address names its version
        (?v=…): the page's code, its vendor libraries, the station scripts it shares. The version is the key: a new token is a new
        address, so a page is never handed old code for a new token, and the copy kept for the older token of the same file is dropped
-       when the new one is kept.
+       when the new one is kept. A file outside the app's own names (charm-nest-*, vendor/, lib/) is kept only when the sorter page or
+       one of its workers asks for it: another page of the same site (goldenspike.app/...) keeps its files exactly as before.
      · cn-pics-<GEN>: a picture read whole through /.netlify/functions/charmNestAsset whose Storage address names its own version (v= of
        10–16 digits: the function answers such an address with the same bytes for ever, _charmNestAsset.js identify), outside the
        sandbox's files (charmnest/sandbox/): a sheet's picture is downloaded once per computer.
@@ -51,6 +51,7 @@
   const FILE = /\.(js|mjs|css|png|jpe?g|gif|svg|webp|avif|ico|json|wasm|woff2?|ttf|otf)$/i;   // (a page, .html, never)
   const ASSET = "/.netlify/functions/charmNestAsset";
   const SCRIPT = /\/charm-nest-sw\.js(\?|$)/;
+  const OWN = /^\/(charm-nest-|vendor\/|lib\/)/;   // the app's own names: kept whoever asks (their tokens follow the page's rule)
 
   /** What the worker does with a request: "static" or "pic" (kept, cache-first), "" (the network, untouched). Pure.
    *  o: { method, mode, range (a Range header is present), origin (the worker's own) } */
@@ -102,7 +103,8 @@
       { condition: { urlPattern: { pathname: ASSET } }, source: "fetch-event" },
       { condition: { urlPattern: { pathname: "/.netlify/*" } }, source: "network" }
     ];
-    let idx = null, saving = null, dirty = false, stopped = false;   // (stopped: switched off while pages it controls are still open: it keeps nothing more)
+    // (stopped: switched off while pages it controls are still open: it keeps nothing more. home: the sorter is served at / on this origin, its own host)
+    let idx = null, saving = null, dirty = false, stopped = false, home = null;
     const done = () => stopped || (sw.serviceWorker && sw.serviceWorker.state === "redundant");   // (a worker replaced by a newer copy writes nothing more either)
     /** url -> { url, c: cache, f: file, b: bytes, u: last used }: read once per life of the worker; rebuilt from the caches when missing */
     function index() {
@@ -111,7 +113,7 @@
         try {
           const r = await (await caches.open(META)).match(INDEX);
           const j = r ? await r.json() : null;
-          if (j && j.gen === GEN && Array.isArray(j.e)) { for (const e of j.e) if (e && e.url) m.set(e.url, e); return m; }
+          if (j && j.gen === GEN && Array.isArray(j.e)) { for (const e of j.e) if (e && e.url) m.set(e.url, e); if (home == null) home = !!j.home; return m; }
           for (const c of [STATIC, PICS]) {
             if (!(await caches.has(c))) continue;
             const cache = await caches.open(c);
@@ -127,7 +129,7 @@
       if (saving) return saving;
       return (saving = new Promise(r => setTimeout(r, 2000)).then(async () => {
         saving = null; if (!dirty || done()) return; dirty = false;
-        try { const m = await index(); if (!(await caches.has(STATIC)) && !(await caches.has(PICS))) return; await (await caches.open(META)).put(INDEX, new Response(JSON.stringify({ gen: GEN, v: VERSION, e: [...m.values()] }), { headers: { "Content-Type": "application/json" } })); } catch (_) {}
+        try { const m = await index(); if (!(await caches.has(STATIC)) && !(await caches.has(PICS))) return; await (await caches.open(META)).put(INDEX, new Response(JSON.stringify({ gen: GEN, v: VERSION, home: !!home, e: [...m.values()] }), { headers: { "Content-Type": "application/json" } })); } catch (_) {}
       }));
     }
     async function touch(url) { const m = await index(), e = m.get(url); if (e && !done()) { e.u = Date.now(); return save(); } }
@@ -149,7 +151,20 @@
     /** What keeps the worker alive until the index is written. */
     const later = () => saving || Promise.resolve();
     const keepable = res => res && res.status === 200 && (res.type === "basic" || res.type === "default") && !/no-store/i.test(res.headers.get("cache-control") || "");
+    /** Whether a request comes from the sorter page or one of its workers (memo per client): files outside OWN are kept for them only. */
+    const mine = new Map();
+    function forUs(id) {
+      if (!id) return Promise.resolve(false);
+      if (!mine.has(id)) mine.set(id, (async () => {
+        await index();
+        const c = await sw.clients.get(id), p = c ? new URL(c.url).pathname : "";
+        return p === "/charm-nest-1.html" || p.indexOf("/charm-nest-") === 0 || (p === "/" && !!home);
+      })().catch(() => false));
+      if (mine.size > 200) mine.delete(mine.keys().next().value);
+      return mine.get(id);
+    }
     async function serve(req, kind, ev) {
+      if (kind === "static" && !OWN.test(new URL(req.url).pathname) && !(await forUs(ev.clientId))) return fetch(req);
       const name = kind === "pic" ? PICS : STATIC;
       let hit = null;
       try { hit = await caches.match(req.url, { cacheName: name, ignoreVary: true }); } catch (_) { hit = null; }   // (match, not open: a cache deleted by an off switch is not made again)
@@ -199,6 +214,7 @@
     sw.addEventListener("message", e => {
       const d = e.data || {}, port = e.ports && e.ports[0], reply = x => { try { if (port) port.postMessage(x); } catch (_) {} };
       if (d.op === "stop") stopped = true;   // (the page's off switch, before it unregisters the worker)
+      if (d.op === "adopt" && d.home && !home) { home = true; save(); }   // (the sorter at / on its own host: the origin is the app's)
       const job = d.op === "status" ? status() : d.op === "clear" || d.op === "stop" ? clear().then(n => ({ cleared: n })) : d.op === "adopt" && Array.isArray(d.urls) ? adopt(d.urls).then(n => ({ adopted: n })) : null;
       if (job) e.waitUntil(job.then(reply, err => reply({ error: String(err && err.message || err) })));
     });
@@ -209,8 +225,6 @@
     if (w.CNServiceWorker) return;
     const nav = w.navigator, sw = nav && nav.serviceWorker, me = w.document.currentScript;
     const scriptUrl = (() => { try { return new URL(me && me.src || "charm-nest-sw.js", w.location.href).pathname; } catch (_) { return "/charm-nest-sw.js"; } })();
-    // (the page's own address: /charm-nest-1.html, or / on the sorter's own host: no other page of the site is ever in the worker's hands)
-    const scope = () => w.location.pathname || "/";
     const pref = () => { try { return w.localStorage.getItem("cn.sw") || ""; } catch (_) { return ""; } };
     const setPref = v => { try { if (v) w.localStorage.setItem("cn.sw", v); else w.localStorage.removeItem("cn.sw"); } catch (_) {} };
     /** Whether this page runs the worker, and why not. (The inline lines in charm-nest-1.html's <head> already applied ?sw= and the page's switch.) */
@@ -252,11 +266,11 @@
       started = new Promise(resolve => {
         const go = () => idle(async () => {
           let reg = null;
-          try { reg = await sw.register(scriptUrl, { scope: scope() }); } catch (e) { api.error = String(e && e.message || e); return resolve(null); }   // (no worker: the page goes on as it always did)
+          try { reg = await sw.register(scriptUrl, { scope: "/" }); } catch (e) { api.error = String(e && e.message || e); return resolve(null); }   // (no worker: the page goes on as it always did)
           resolve(reg);
           try {
             const ready = await Promise.race([sw.ready, new Promise(r => setTimeout(() => r(null), 15000))]);
-            if (ready && ready.active) idle(async () => { api.adopted = await ask(ready.active, { op: "adopt", urls: loaded() }, 60000); }, 5000);
+            if (ready && ready.active) idle(async () => { api.adopted = await ask(ready.active, { op: "adopt", urls: loaded(), home: w.location.pathname === "/" }, 60000); }, 5000);
           } catch (_) {}
         }, 4000);
         if (w.document.readyState === "complete") go(); else w.addEventListener("load", go, { once: true });

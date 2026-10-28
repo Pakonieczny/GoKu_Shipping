@@ -38,6 +38,7 @@ const pwDir = process.env.PW_DIR || [path.join(root, 'node_modules'), '/opt/node
 // ── the server: bridge-server.cjs, with every request counted and the static files answered as Netlify answers them ──
 const hits = [];   // { m, p (path + query), s (status) }
 const tx = { html: null, sw: null, gone: false };   // the test's changes to what the server answers: tx.html(text) -> text; tx.sw(text) -> text: the worker's script (/charm-nest-sw.js, no query); tx.gone: the file missing (404, for the worker and the page's script both)
+const PAGE = process.env.PAGE || '/';   // the page's address: / as on the sorter's own host (brites-charm-sorter.goldenspike.app), PAGE=/charm-nest-1.html as on goldenspike.app
 const RTT = +process.env.RTT || 0;   // RTT=<ms>: every request waits this long first (a network between the shop and the site; the numbers printed without it are localhost's)
 const realCreate = http.createServer;
 http.createServer = handler => realCreate((req, res) => RTT ? setTimeout(serve, RTT, handler, req, res) : serve(handler, req, res));
@@ -45,6 +46,7 @@ function serve(handler, req, res) {
   const u = new URL(req.url, 'http://x'), p = decodeURIComponent(u.pathname), rec = { m: req.method, p: u.pathname + u.search, s: 0 }; hits.push(rec);
   const end0 = res.end.bind(res), head0 = res.writeHead.bind(res);
   res.writeHead = (s, ...a) => { rec.s = s; return head0(s, ...a); };
+  if (p === '/__sw-other.html') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp', 'Cache-Control': 'no-store' }); return res.end('<!doctype html><meta charset=utf-8><title>another page of the site</title><script src="/order-timeline.js?v=swother1"></script><script src="/vendor/clipper-6.4.2.js?v=swother1"></script>'); }
   if (p.startsWith('/.netlify/') || p.startsWith('/__') || req.method !== 'GET') return handler(req, res);
   const f = path.join(root, p === '/' ? 'charm-nest-1.html' : p);
   if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) return handler(req, res);
@@ -66,7 +68,8 @@ function serve(handler, req, res) {
 }
 const { start } = require('./bridge-server.cjs');
 
-const isStatic = h => !h.p.startsWith('/.netlify/') && !h.p.startsWith('/__');
+const isStatic = h => h.m === 'GET' && !h.p.startsWith('/.netlify/') && !h.p.startsWith('/__');
+const isPage = h => h.m === 'GET' && (h.p === PAGE || h.p.startsWith(PAGE + '?'));
 const isFn = h => h.p.startsWith('/.netlify/functions/');
 const short = p => p.replace(/\?v=[^&]*/, '?v=…');
 const USABLE = () => window.CN && window.Orders && window.Review && CN.S.cloud.ok === true && document.querySelector('#modeSeg button[data-mode="orders"]');
@@ -113,7 +116,7 @@ const USABLE = () => window.CN && window.Orders && window.Review && CN.S.cloud.o
     console.log(`  load ${os.loadavg().map(x => x.toFixed(2)).join(' ')} · Chromium ${browser.version()}`);
     // ── today: no worker (automation default) ──
     const a = await ctx();
-    const a0 = await load(a, 'no worker, cold', '/charm-nest-1.html');
+    const a0 = await load(a, 'no worker, cold', PAGE);
     const a1 = await load(a, 'no worker, warm reload', 'reload');
     const a2 = await load(a, 'no worker, warm reload again', 'reload');
     ok((await ours(a.page)).regs === 0 && !a.errors.length, `automation without cn.sw = "on": no worker registered, the page as today (${a.errors.length} page errors)`);
@@ -121,7 +124,7 @@ const USABLE = () => window.CN && window.Orders && window.Review && CN.S.cloud.o
 
     // ── with the worker ──
     const b = await ctx({ sw: 'on' });
-    const b0 = await load(b, 'worker, cold (first visit)', '/charm-nest-1.html', async () => {
+    const b0 = await load(b, 'worker, cold (first visit)', PAGE, async () => {
       await until(b.page, () => !!(navigator.serviceWorker.controller && window.CNServiceWorker && CNServiceWorker.adopted), null, 60000);
     });
     const st0 = await b.page.evaluate(() => CNServiceWorker.status());
@@ -132,7 +135,7 @@ const USABLE = () => window.CN && window.Orders && window.Review && CN.S.cloud.o
     ok(b1.static <= 3 && b2.static <= 3, `W1 a warm reload makes ≤ 3 static requests: ${b1.static} and ${b2.static} [${b1.list.join(' ')}] (without the worker: ${a1.static} and ${a2.static})`);
     ok(b1.controlled && b1.fromSW >= 100, `W1 the page's files came from the worker: ${b1.fromSW} responses`);
     // W3 the page is never answered by the worker: it reached the server at every load and its response says so
-    const docs = [b0, b1, b2].map(r => ({ server: r.got.filter(h => h.m === 'GET' && /^\/charm-nest-1\.html/.test(h.p)).length, sw: r.seen.filter(x => x.doc && x.sw).length }));
+    const docs = [b0, b1, b2].map(r => ({ server: r.got.filter(isPage).length, sw: r.seen.filter(x => x.doc && x.sw).length }));
     ok(docs.every(d => d.server === 1 && d.sw === 0), `W3 the page (HTML) came from the server at each load, never from the worker: ${JSON.stringify(docs)}`);
     // W4 functions: every call of the warm reloads reached the server; none was answered by the worker
     const fnSeen = [b1, b2].flatMap(r => r.seen.filter(x => /\/\.netlify\/functions\//.test(x.url)));
@@ -157,14 +160,22 @@ const USABLE = () => window.CN && window.Orders && window.Review && CN.S.cloud.o
       }
       ok(/^1 /.test(reads.prod) && /^2 /.test(reads.sandbox) && /^2 /.test(reads.plain), `W4 pictures read twice reach the server: versioned production ${reads.prod} · sandbox ${reads.sandbox} · unversioned ${reads.plain}`);
     }
+    // another page of the same site, in the worker's scope: its own files are not kept, the app's own (vendor/) are
+    {
+      const o = await b.context.newPage();
+      await o.goto(srv.sorterOrigin + '/__sw-other.html', { waitUntil: 'load' }); await o.waitForTimeout(2600);
+      const kept = await o.evaluate(async () => [!!navigator.serviceWorker.controller, (await (await caches.open('cn-static-v1')).keys()).map(r => r.url).filter(u => /swother1/.test(u)).map(u => u.replace(/^.*\//, ''))]);
+      ok(kept[0] && kept[1].length === 1 && /^clipper/.test(kept[1][0]), `another page of the site (controlled ${kept[0]}): its own versioned file is not kept, the app's own is: ${JSON.stringify(kept[1])}`);
+      await o.close();
+    }
     // W2 one file's token changes: that file is fetched, nothing else, and its older copy is dropped
     {
       const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8'), m = /charm-nest-search\.js\?v=([^"]+)"/.exec(html);
       tx.html = s => s.replace('charm-nest-search.js?v=' + m[1] + '"', 'charm-nest-search.js?v=' + m[1] + '-swt1"');
       const b3 = await load(b, 'worker, one file has a new token', 'reload', () => b.page.waitForTimeout(2600));   // (the index is written 2 s after a change)
-      const extra = b3.list.filter(p => !b1.list.includes(p) && !b2.list.includes(p));
+      const extra = b3.list.filter(p => p !== '/charm-nest-sw.js' && !b1.list.includes(p) && !b2.list.includes(p));
       const kept = await b.page.evaluate(async () => (await (await caches.open('cn-static-v1')).keys()).map(r => r.url).filter(u => /charm-nest-search\.js/.test(u)).map(u => u.replace(/^.*\?v=/, '')));
-      ok(extra.length === 1 && /charm-nest-search\.js/.test(extra[0]) && b3.got.some(h => h.p.endsWith('-swt1')) && b3.static <= b1.static + 1, `W2 a new token for one file fetches that file only: [${b3.list.join(' ')}]`);
+      ok(extra.length === 1 && /charm-nest-search\.js/.test(extra[0]) && b3.got.some(h => h.p.endsWith('-swt1')) && b3.list.filter(p => p !== '/charm-nest-sw.js').length <= b1.list.filter(p => p !== '/charm-nest-sw.js').length + 1, `W2 a new token for one file fetches that file only: [${b3.list.join(' ')}]`);
       ok(kept.length === 1 && /-swt1$/.test(kept[0]), `W2 the older copy of that file is dropped from the cache: ${JSON.stringify(kept)}`);
       tx.html = null;
     }
@@ -178,12 +189,12 @@ const USABLE = () => window.CN && window.Orders && window.Review && CN.S.cloud.o
       const back = await load(b, 'switched on again (cold again)', 'reload', () => until(b.page, () => !!(navigator.serviceWorker.controller && CNServiceWorker.adopted), null, 60000));
       ok((await ours(b.page)).regs === 1 && back.static > 100, `W5 back on: the worker registers again; this load came from the network (${back.static} static requests)`);
       // ?sw=off for one computer, kept until ?sw=on
-      await load(b, '?sw=off', '/charm-nest-1.html?sw=off');
+      await load(b, '?sw=off', PAGE + '?sw=off');
       const off1 = await goneWorker(b.page), pref = await b.page.evaluate(() => localStorage.getItem('cn.sw'));
-      await load(b, 'after ?sw=off, plain address', '/charm-nest-1.html');
+      await load(b, 'after ?sw=off, plain address', PAGE);
       const still = await ours(b.page);
       ok(off1 && pref === 'off' && still.regs === 0 && !still.caches.length, `W5 ?sw=off: unregistered, caches deleted, and it stays off on this computer (cn.sw = ${pref}, ${JSON.stringify(still)})`);
-      await load(b, '?sw=on', '/charm-nest-1.html?sw=on', () => until(b.page, () => !!(navigator.serviceWorker.controller && CNServiceWorker.adopted), null, 60000));
+      await load(b, '?sw=on', PAGE + '?sw=on', () => until(b.page, () => !!(navigator.serviceWorker.controller && CNServiceWorker.adopted), null, 60000));
       ok((await ours(b.page)).regs === 1, '?sw=on: the worker is back');
     }
     // W5 the worker's own retirement: RETIRED = true reaches the computer at its next load (the browser reads the worker's script fresh), which deletes the caches and unregisters
@@ -202,7 +213,7 @@ const USABLE = () => window.CN && window.Orders && window.Review && CN.S.cloud.o
     for (const [name, how] of [['no worker file (404)', 'gone'], ['a worker that fails to install', () => 'throw new Error("broken worker");']]) {
       if (how === 'gone') tx.gone = true; else tx.sw = how;
       const c = await ctx({ sw: 'on' });
-      const r = await load(c, name, '/charm-nest-1.html', () => c.page.waitForTimeout(3000));
+      const r = await load(c, name, PAGE, () => c.page.waitForTimeout(3000));
       const s = await c.page.evaluate(async () => window.CNServiceWorker ? CNServiceWorker.status() : { registered: (await navigator.serviceWorker.getRegistrations()).length > 0, error: 'charm-nest-sw.js did not load' });
       ok(!c.errors.length && r.usable > 0 && !s.registered && /./.test(s.error), `W6 ${name}: the page is usable at ${r.usable} ms, no page error, no worker (${s.error.slice(0, 80)})`);
       await c.context.close(); tx.gone = false; tx.sw = null;
