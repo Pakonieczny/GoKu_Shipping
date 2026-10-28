@@ -25,7 +25,7 @@
  *                     next version of the same design.
  *   openNew(d, o)  a design made elsewhere and not saved yet (the vector import's "Open as a new design": source { kind: 'import', file, type }) opened as a new design.
  *   On any of them: o.orderId / o.customName ride with the design (a custom order's design: charm-nest-custom-piece.js); o.back ({ label, title, run }) is the editor's way
- *   back (CharmEditor opts.back: the Design & Engrave tab's "Back to Design & Engrave"); o.from (a word, "designerBar") goes with the open to the log.
+ *   back (CharmEditor opts.back: the Design & Engrave tab's "Back to Design & Engrave"); o.from (a word: "charmEditorButton", the tab's Charm Editor button, DESIGNBTN) goes with the open to the log.
  *
  * The open is the design-mode path: the fonts and their outlines from charm-nest-ce-text.js (CharmNestCeText.prepare: every engraving font, the script fonts a saved design's words need),
  * else from the bridge's design-mode open (window.CharmEditDesign, charm-nest-bridge.js: the engraving fonts as a piece's open has them), lockRoles none; a page with neither opens the
@@ -541,7 +541,7 @@
   /** The faces a design opens with again: its front as saved, its back with the guide made afresh from that front. */
   const facesAgain = d => ({ front: d.faces.front, back: backFace(d.faces.front, d.faces.back ? d.faces.back.items : [], model()) });
   /** What rides with a design from the call that opened it: its order or name, the editor's way back (CharmEditor opts.back { label, title, run }: the Design & Engrave tab's
-   *  "Back to Design & Engrave"), and where the person came from, for the log (a word: "designerBar"). */
+   *  "Back to Design & Engrave"), and where the person came from, for the log (a word: "charmEditorButton"). */
   function rides(o) {
     o = o || {};
     const b = o.back && typeof o.back === 'object' && o.back.label ? { label: String(o.back.label), ...(o.back.title ? { title: String(o.back.title) } : {}), ...(typeof o.back.run === 'function' ? { run: o.back.run } : {}) } : null;

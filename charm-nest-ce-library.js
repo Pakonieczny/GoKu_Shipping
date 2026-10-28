@@ -1061,7 +1061,7 @@
   }
   function closeHist() { if (S && !S.hist.hidden) { S.hist.hidden = true; S.hist.innerHTML = ''; S.hist._row = null; } }
 
-  /* ═══ 8b · for the Design & Engrave tab's Charm Designer bar (charm-nest-bridge.js charmDesignerBar: its recent chips) ═══ */
+  /* ═══ 8b · recent(n) and openDesign: the designs worked on last, for any caller (the Design & Engrave tab's Charm Designer bar drew them as chips until DESIGNBTN, Paul 28 Oct 2026: "Remove this entire menu from the UI") ═══ */
   const plain = r => ({ id: r.id, version: r.version, name: r.name, orderId: r.orderId || null, customName: r.customName || null, by: r.by || '', at: r.at || 0, thumbUrl: r.thumbUrl || '' });
   /**
    * The designs worked on last, newest first, n at most (default 4): what was opened, placed or saved from the library on this computer (Recent, its time the time of
