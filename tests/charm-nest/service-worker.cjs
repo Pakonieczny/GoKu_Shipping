@@ -21,14 +21,14 @@ let failed = 0; const ok = (c, m) => { console.log(`  ${c ? '✓' : '✗'} ${m}`
   const table = [
     [at('/charm-nest-bridge.js?v=20261028-x1'), {}, 'static'], [at('/vendor/jszip-3.10.1.min.js?v=20261028-sw1'), {}, 'static'], [at('/charm-nest-bridge.js'), {}, ''],
     [at('/charm-nest-1.html?v=1'), {}, ''], [at('/'), { mode: 'navigate' }, ''], [at('/charm-nest-bridge.js?v=1'), { method: 'POST' }, ''], ['https://other.app/charm-nest-bridge.js?v=1', {}, ''],
-    [at('/design-1.js?v=1'), {}, ''], [at('/.netlify/functions/charmNestLibrary?v=1'), {}, ''], [at('/vendor/fonts/emoji-sequences.json'), {}, ''],
+    [at('/order-timeline.js?v=1'), {}, 'static'], [at('/design-1.html?v=1'), {}, ''], [at('/.netlify/functions/charmNestLibrary?v=1'), {}, ''], [at('/vendor/fonts/emoji-sequences.json'), {}, ''],
     [pic('charmnest/sheets/s1/preview.png', '1761600000000'), {}, 'pic'], [pic('charmnest/sheets/s1/preview.png', ''), {}, ''], [pic('charmnest/sandbox/sheets/s1/preview.png', '1761600000000'), {}, ''],
     [pic('charmnest/master/ABC.ai', ''), {}, ''], [pic('charmnest/sheets/s1/preview.png', '1761600000000'), { range: true }, '']
   ];
   const bad = table.filter(([u, x, want]) => SW.classify(u, Object.assign({}, o, x)) !== want);
-  ok(!bad.length, `classify: ${table.length} addresses (versioned code and pictures kept; pages, functions, the sandbox, masters, ranges, unversioned never)${bad.length ? ' — wrong: ' + bad.map(b => b[0]).join(', ') : ''}`);
+  ok(!bad.length, `classify: ${table.length} addresses (versioned files and pictures kept; pages, functions, the sandbox, masters, ranges, unversioned never)${bad.length ? ' — wrong: ' + bad.map(b => b[0]).join(', ') : ''}`);
   ok(SW.fileOf(at('/charm-nest-bridge.js?v=a')) === SW.fileOf(at('/charm-nest-bridge.js?v=b')) && SW.fileOf(pic('charmnest/sheets/s1/preview.png', '1761600000000')) === SW.fileOf(pic('charmnest/sheets/s1/preview.png', '1761600000999')), 'fileOf: two versions of a file are the same file');
-  const e = SW.evict([{ url: 'a', b: 40, u: 1 }, { url: 'b', b: 40, u: 3 }, { url: 'c', b: 40, u: 2 }], { bytes: 100, n: 10 });
+  const e = SW.evict([{ url: 'a', b: 40, u: 1 }, { url: 'b', b: 40, u: 3 }, { url: 'c', b: 40, u: 2 }], { bytes: 70, n: 10 });
   ok(JSON.stringify(e) === '["a","c"]' && SW.evict([{ url: 'a', b: 1, u: 1 }], { bytes: 100, n: 10 }).length === 0, `evict: the least recently used go first, down to 90% of the cap (${JSON.stringify(e)})`);
 }
 
@@ -37,9 +37,11 @@ const pwDir = process.env.PW_DIR || [path.join(root, 'node_modules'), '/opt/node
 
 // ── the server: bridge-server.cjs, with every request counted and the static files answered as Netlify answers them ──
 const hits = [];   // { m, p (path + query), s (status) }
-const tx = { html: null, sw: null };   // the test's changes to what the server answers: tx.html(text) -> text; tx.sw: 404 | (text -> text)
+const tx = { html: null, sw: null, gone: false };   // the test's changes to what the server answers: tx.html(text) -> text; tx.sw(text) -> text: the worker's script (/charm-nest-sw.js, no query); tx.gone: the file missing (404, for the worker and the page's script both)
+const RTT = +process.env.RTT || 0;   // RTT=<ms>: every request waits this long first (a network between the shop and the site; the numbers printed without it are localhost's)
 const realCreate = http.createServer;
-http.createServer = handler => realCreate((req, res) => {
+http.createServer = handler => realCreate((req, res) => RTT ? setTimeout(serve, RTT, handler, req, res) : serve(handler, req, res));
+function serve(handler, req, res) {
   const u = new URL(req.url, 'http://x'), p = decodeURIComponent(u.pathname), rec = { m: req.method, p: u.pathname + u.search, s: 0 }; hits.push(rec);
   const end0 = res.end.bind(res), head0 = res.writeHead.bind(res);
   res.writeHead = (s, ...a) => { rec.s = s; return head0(s, ...a); };
@@ -47,8 +49,8 @@ http.createServer = handler => realCreate((req, res) => {
   const f = path.join(root, p === '/' ? 'charm-nest-1.html' : p);
   if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) return handler(req, res);
   const base = { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp', 'Cross-Origin-Resource-Policy': 'cross-origin', 'Access-Control-Allow-Origin': '*' };
-  if (path.basename(f) === 'charm-nest-sw.js' && tx.sw) {
-    if (tx.sw === 404) { rec.s = 404; res.writeHead(404, base); return res.end(); }
+  if (path.basename(f) === 'charm-nest-sw.js' && tx.gone) { rec.s = 404; res.writeHead(404, base); return res.end(); }
+  if (path.basename(f) === 'charm-nest-sw.js' && tx.sw && !u.search) {
     rec.s = 200; res.writeHead(200, Object.assign({ 'Content-Type': 'text/javascript', 'Cache-Control': 'max-age=0, no-cache, no-store, must-revalidate' }, base)); return res.end(tx.sw(fs.readFileSync(f, 'utf8')));
   }
   if (/\.html$/.test(f)) {   // the page: no-store, as netlify.toml has it (the bridge adds its sign-in seed; a test may change the text)
@@ -61,7 +63,7 @@ http.createServer = handler => realCreate((req, res) => {
   if (req.headers['if-none-match'] === etag) { rec.s = 304; res.writeHead(304, Object.assign({ ETag: etag, 'Cache-Control': cc }, base)); return res.end(); }
   res.setHeader('ETag', etag); res.setHeader('Cache-Control', cc);
   return handler(req, res);
-});
+}
 const { start } = require('./bridge-server.cjs');
 
 const isStatic = h => !h.p.startsWith('/.netlify/') && !h.p.startsWith('/__');
@@ -130,7 +132,7 @@ const USABLE = () => window.CN && window.Orders && window.Review && CN.S.cloud.o
     ok(b1.static <= 3 && b2.static <= 3, `W1 a warm reload makes ≤ 3 static requests: ${b1.static} and ${b2.static} [${b1.list.join(' ')}] (without the worker: ${a1.static} and ${a2.static})`);
     ok(b1.controlled && b1.fromSW >= 100, `W1 the page's files came from the worker: ${b1.fromSW} responses`);
     // W3 the page is never answered by the worker: it reached the server at every load and its response says so
-    const docs = [b0, b1, b2].map(r => ({ server: r.got.filter(h => /^\/charm-nest-1\.html/.test(h.p)).length, sw: r.seen.filter(x => x.doc && x.sw).length }));
+    const docs = [b0, b1, b2].map(r => ({ server: r.got.filter(h => h.m === 'GET' && /^\/charm-nest-1\.html/.test(h.p)).length, sw: r.seen.filter(x => x.doc && x.sw).length }));
     ok(docs.every(d => d.server === 1 && d.sw === 0), `W3 the page (HTML) came from the server at each load, never from the worker: ${JSON.stringify(docs)}`);
     // W4 functions: every call of the warm reloads reached the server; none was answered by the worker
     const fnSeen = [b1, b2].flatMap(r => r.seen.filter(x => /\/\.netlify\/functions\//.test(x.url)));
@@ -188,7 +190,7 @@ const USABLE = () => window.CN && window.Orders && window.Review && CN.S.cloud.o
     {
       tx.sw = s => s.replace('const RETIRED = false;', 'const RETIRED = true;');
       assert.ok(fs.readFileSync(path.join(root, 'charm-nest-sw.js'), 'utf8').includes('const RETIRED = false;'));
-      await load(b, 'worker RETIRED on the server', 'reload');
+      await load(b, 'worker RETIRED on the server', 'reload', () => b.page.waitForTimeout(6000));   // (the page registers it again at idle: it removes itself at once)
       const gone = await goneWorker(b.page, 30000);
       ok(gone && await b.page.evaluate(() => !!(window.CN && CN.S.cloud.ok)), `W5 RETIRED = true: the worker removed itself and its caches (${JSON.stringify(await ours(b.page))}), the page usable`);
       tx.sw = null;
@@ -197,15 +199,14 @@ const USABLE = () => window.CN && window.Orders && window.Review && CN.S.cloud.o
     await b.context.close();
 
     // ── W6 no worker file, a worker that cannot install: the page boots as today ──
-    for (const [name, how] of [['no worker file (404)', 404], ['a worker that fails to install', () => 'throw new Error("broken worker");']]) {
-      tx.sw = how;
+    for (const [name, how] of [['no worker file (404)', 'gone'], ['a worker that fails to install', () => 'throw new Error("broken worker");']]) {
+      if (how === 'gone') tx.gone = true; else tx.sw = how;
       const c = await ctx({ sw: 'on' });
       const r = await load(c, name, '/charm-nest-1.html', () => c.page.waitForTimeout(3000));
-      const s = await c.page.evaluate(() => CNServiceWorker.status());
+      const s = await c.page.evaluate(async () => window.CNServiceWorker ? CNServiceWorker.status() : { registered: (await navigator.serviceWorker.getRegistrations()).length > 0, error: 'charm-nest-sw.js did not load' });
       ok(!c.errors.length && r.usable > 0 && !s.registered && /./.test(s.error), `W6 ${name}: the page is usable at ${r.usable} ms, no page error, no worker (${s.error.slice(0, 80)})`);
-      await c.context.close();
+      await c.context.close(); tx.gone = false; tx.sw = null;
     }
-    tx.sw = null;
 
     // ── the numbers ──
     console.log('\n  static requests per load and the time to the first usable screen (ms from the navigation; "after scripts": from the last script\'s arrival)');

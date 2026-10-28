@@ -4,14 +4,17 @@
    the files come from this computer and a warm reload makes at most 3 static requests (tests/charm-nest/service-worker.cjs).
 
    ONE file, two roles:
-     · the worker (registered by charm-nest-1.html as /charm-nest-sw.js, scope /): answers the requests below from Cache Storage;
+     · the worker (registered by charm-nest-1.html as /charm-nest-sw.js, its scope the page's own address: /charm-nest-1.html, or / where
+       the page is served at the root, brites-charm-sorter.goldenspike.app; the other pages of the site are never in its hands): answers
+       the requests below from Cache Storage;
      · the page (<script src="charm-nest-sw.js?v=…"> in charm-nest-1.html): CNServiceWorker — starts the worker once the page is up and
        idle (never in the way of the boot), hands it what the page already loaded, Settings' "Reload from cloud", the console's off/on.
 
    KEPT (cache-first: a hit never asks the network)
-     · cn-static-<GEN>: a same-origin GET of the app's own files (charm-nest-*, vendor/, lib/, brites-progress.css) whose address names
-       its version (?v=…). The version is the key: a new token is a new address, so a page is never handed old code for a new token,
-       and the copy kept for the older token of the same file is dropped when the new one is kept.
+     · cn-static-<GEN>: a same-origin GET of a static file (script, style, picture, font, wasm, json) whose address names its version
+       (?v=…): the page's code, its vendor libraries, the station scripts it shares. The version is the key: a new token is a new
+       address, so a page is never handed old code for a new token, and the copy kept for the older token of the same file is dropped
+       when the new one is kept.
      · cn-pics-<GEN>: a picture read whole through /.netlify/functions/charmNestAsset whose Storage address names its own version (v= of
        10–16 digits: the function answers such an address with the same bytes for ever, _charmNestAsset.js identify), outside the
        sandbox's files (charmnest/sandbox/): a sheet's picture is downloaded once per computer.
@@ -45,7 +48,7 @@
   const STATIC = "cn-static-" + GEN, PICS = "cn-pics-" + GEN, META = "cn-sw-meta-" + GEN;
   const OURS = /^cn-(static|pics|sw-meta)-/;   // this worker's caches, of any generation (an older generation's are deleted when a new worker starts)
   const MB = 1048576, CAP = { [STATIC]: { bytes: 160 * MB, n: 2000 }, [PICS]: { bytes: 200 * MB, n: 5000 } };
-  const APP = /^\/(charm-nest-[\w.-]+\.(js|mjs|css|png|jpg|svg|webp|json|wasm)|brites-progress\.css|vendor\/[\w.\/-]+|lib\/[\w.\/-]+)$/;
+  const FILE = /\.(js|mjs|css|png|jpe?g|gif|svg|webp|avif|ico|json|wasm|woff2?|ttf|otf)$/i;   // (a page, .html, never)
   const ASSET = "/.netlify/functions/charmNestAsset";
   const SCRIPT = /\/charm-nest-sw\.js(\?|$)/;
 
@@ -60,7 +63,7 @@
       const p = picPath(u);
       return p && !/^charmnest\/sandbox\//.test(p) ? "pic" : "";
     }
-    if (u.pathname.indexOf("/.netlify/") === 0 || !u.searchParams.get("v") || !APP.test(u.pathname)) return "";
+    if (u.pathname.indexOf("/.netlify/") === 0 || !u.searchParams.get("v") || !FILE.test(u.pathname)) return "";
     return "static";
   }
   /** The Storage path of a charmNestAsset address whose Storage address names its version (v= 10–16 digits), "" otherwise. */
@@ -100,6 +103,7 @@
       { condition: { urlPattern: { pathname: "/.netlify/*" } }, source: "network" }
     ];
     let idx = null, saving = null, dirty = false, stopped = false;   // (stopped: switched off while pages it controls are still open: it keeps nothing more)
+    const done = () => stopped || (sw.serviceWorker && sw.serviceWorker.state === "redundant");   // (a worker replaced by a newer copy writes nothing more either)
     /** url -> { url, c: cache, f: file, b: bytes, u: last used }: read once per life of the worker; rebuilt from the caches when missing */
     function index() {
       return idx || (idx = (async () => {
@@ -122,14 +126,14 @@
       dirty = true;
       if (saving) return saving;
       return (saving = new Promise(r => setTimeout(r, 2000)).then(async () => {
-        saving = null; if (!dirty || stopped) return; dirty = false;
-        try { const m = await index(); await (await caches.open(META)).put(INDEX, new Response(JSON.stringify({ gen: GEN, v: VERSION, e: [...m.values()] }), { headers: { "Content-Type": "application/json" } })); } catch (_) {}
+        saving = null; if (!dirty || done()) return; dirty = false;
+        try { const m = await index(); if (!(await caches.has(STATIC)) && !(await caches.has(PICS))) return; await (await caches.open(META)).put(INDEX, new Response(JSON.stringify({ gen: GEN, v: VERSION, e: [...m.values()] }), { headers: { "Content-Type": "application/json" } })); } catch (_) {}
       }));
     }
-    async function touch(url) { const m = await index(), e = m.get(url); if (e) { e.u = Date.now(); return save(); } }
+    async function touch(url) { const m = await index(), e = m.get(url); if (e && !done()) { e.u = Date.now(); return save(); } }
     /** A response kept: the older versions of its file dropped, the cache held to its cap. */
     async function keep(name, url, res) {
-      if (stopped) return;
+      if (done()) return;
       const cache = await caches.open(name), m = await index();
       const sized = res.headers.get("content-length") ? null : res.clone();
       await cache.put(url, res);
@@ -140,16 +144,18 @@
       for (const u of drop.concat(evict([...m.values()].filter(e => e.c === name && e.f !== f), CAP[name]))) {
         const e = m.get(u); m.delete(u); try { await (await caches.open(e && e.c || name)).delete(u); } catch (_) {}
       }
-      return save();
+      save();
     }
+    /** What keeps the worker alive until the index is written. */
+    const later = () => saving || Promise.resolve();
     const keepable = res => res && res.status === 200 && (res.type === "basic" || res.type === "default") && !/no-store/i.test(res.headers.get("cache-control") || "");
     async function serve(req, kind, ev) {
       const name = kind === "pic" ? PICS : STATIC;
       let hit = null;
-      try { hit = await (await caches.open(name)).match(req.url, { ignoreVary: true }); } catch (_) { hit = null; }
+      try { hit = await caches.match(req.url, { cacheName: name, ignoreVary: true }); } catch (_) { hit = null; }   // (match, not open: a cache deleted by an off switch is not made again)
       if (hit) { ev.waitUntil(touch(req.url).catch(() => {})); return hit; }
       const res = await fetch(req);
-      if (keepable(res)) ev.waitUntil(keep(name, req.url, res.clone()).catch(() => {}));
+      if (keepable(res)) ev.waitUntil(keep(name, req.url, res.clone()).then(later).catch(() => {}));
       return res;
     }
     /** The versioned addresses a page loaded before the worker ran: read from the HTTP cache (force-cache) and kept, a few at a time. */
@@ -159,6 +165,7 @@
       let n = 0;
       const run = async () => { for (let t; (t = todo.shift());) { try { const res = await fetch(t[0], { cache: "force-cache", credentials: "same-origin" }); if (keepable(res)) { await keep(t[1] === "pic" ? PICS : STATIC, t[0], res); n++; } } catch (_) {} } };
       await Promise.all([run(), run(), run(), run()]);
+      await later();
       return n;
     }
     async function clear() {
@@ -202,6 +209,8 @@
     if (w.CNServiceWorker) return;
     const nav = w.navigator, sw = nav && nav.serviceWorker, me = w.document.currentScript;
     const scriptUrl = (() => { try { return new URL(me && me.src || "charm-nest-sw.js", w.location.href).pathname; } catch (_) { return "/charm-nest-sw.js"; } })();
+    // (the page's own address: /charm-nest-1.html, or / on the sorter's own host: no other page of the site is ever in the worker's hands)
+    const scope = () => w.location.pathname || "/";
     const pref = () => { try { return w.localStorage.getItem("cn.sw") || ""; } catch (_) { return ""; } };
     const setPref = v => { try { if (v) w.localStorage.setItem("cn.sw", v); else w.localStorage.removeItem("cn.sw"); } catch (_) {} };
     /** Whether this page runs the worker, and why not. (The inline lines in charm-nest-1.html's <head> already applied ?sw= and the page's switch.) */
@@ -243,7 +252,7 @@
       started = new Promise(resolve => {
         const go = () => idle(async () => {
           let reg = null;
-          try { reg = await sw.register(scriptUrl, { scope: "/" }); } catch (e) { api.error = String(e && e.message || e); return resolve(null); }   // (no worker: the page goes on as it always did)
+          try { reg = await sw.register(scriptUrl, { scope: scope() }); } catch (e) { api.error = String(e && e.message || e); return resolve(null); }   // (no worker: the page goes on as it always did)
           resolve(reg);
           try {
             const ready = await Promise.race([sw.ready, new Promise(r => setTimeout(() => r(null), 15000))]);
