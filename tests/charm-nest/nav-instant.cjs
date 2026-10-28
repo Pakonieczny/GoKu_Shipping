@@ -14,7 +14,9 @@ const OPEN = 800, HIST = 6000;
 // Paul's targets (TARGET) are printed beside each row; the budgets that fail the run (BUDGET) are what this branch holds today with margin on a loaded machine (load ~3): a regression guard
 // until the order window reaches the targets (28 Oct 2026, round 2, load ~2.5: tab → orders p95 ~120 ms, review ~100 ms, order window open p50 ~190 ms, Next/Back p95 ~200 ms, Engraving Next p95 ~110 ms)
 const TARGET = { tabP95: 100, tabCalls: 0, winOpenP50: 150, winTabP95: 100, winStepP95: 150, engStepP95: 100, sheetWinP95: 150 };
-const BUDGET = { tabP95: 300, tabCalls: 3, libCalls: 3, libKB: 100, winOpenP50: 400, winTabP95: 400, winStepP95: 500, engStepP95: 250, sheetWinP95: 400 };
+const BUDGET = { tabP95: 300, tabCalls: 3, libCalls: 3, libKB: 100, winOpenP50: 400, winTabP95: 400, winStepP95: 500, engStepP95: 250, sheetWinP95: 400,
+  // (round 4, 28 Oct 2026, load ~4: the main thread's own work, which the load moves far less: order window open p50 ~26 ms, Back / Next p95 ~20, the Library chip p95 ~21 ms; budgets with margin for load 8)
+  winOpenWork50: 90, winStepWork95: 90, libChipWork95: 90 };
 const NOBUDGET = !!process.env.NOBUDGET;
 const CHROME = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome';
 const pwDir = process.env.PW_DIR || [path.join(root, 'node_modules'), '/opt/node-tools/node_modules', '/opt/node22/lib/node_modules/playwright/node_modules'].find(d => fs.existsSync(path.join(d, 'playwright-core')));
@@ -137,14 +139,17 @@ async function scale() {
     await page.evaluate(() => CN.setMode('orders')); await page.waitForTimeout(600);
     const keys = await page.evaluate(() => [...document.querySelectorAll('#ordBody [data-key]')].map(n => n.dataset.key).slice(0, 12));
     const shut = () => page.evaluate(() => { const d = document.getElementById('orderWin'); if (d && d.open) d.close(); });
-    await measure(page, 'order window open (Overview)', 8, new Function('i', `OrderWin.open(${JSON.stringify(keys)}[i % ${keys.length}])`), { settle: 500, after: async () => { await shut(); await page.waitForTimeout(250); }, budget: { p50: BUDGET.winOpenP50 } });
+    await measure(page, 'order window open (Overview)', 8, new Function('i', `OrderWin.open(${JSON.stringify(keys)}[i % ${keys.length}])`), { settle: 500, after: async () => { await shut(); await page.waitForTimeout(250); }, budget: { p50: BUDGET.winOpenP50, work50: BUDGET.winOpenWork50 } });
+    // (round 4: the header's rail is not measured as the window opens: its size observer fits its seals in the frame that first shows it, so the header still flies in whole)
+    { const fit = await page.evaluate(async k => { OrderWin.open(k); const f = () => new Promise(r => requestAnimationFrame(r)); await f(); await f(); const rail = document.querySelector('#owRail .tlRail'); return rail ? rail.style.getPropertyValue('--seal-fit') : 'no rail'; }, keys[1]);
+      console.log(`  order window header rail fitted by its first frame: ${fit || 'NO'}`); if (!fit || fit === 'no rail') fails.push('the order window header rail was not fitted in its first frame'); await shut(); await page.waitForTimeout(400); }
     await page.evaluate(k => OrderWin.open(k), keys[0]); await page.waitForTimeout(800);
     const view = v => new Function(`document.querySelector('#orderWin .owTabsV [data-ow-view="${v}"]').click()`);
     await measure(page, 'order window → Timeline tab', 6, view('timeline'), { settle: 400, after: () => page.evaluate(() => document.querySelector('#orderWin .owTabsV [data-ow-view="info"]').click()).then(() => page.waitForTimeout(300)), budget: { p95: BUDGET.winTabP95 } });
     await measure(page, 'order window → Sheet tab', 6, view('sheet'), { settle: 400, after: () => page.evaluate(() => document.querySelector('#orderWin .owTabsV [data-ow-view="info"]').click()).then(() => page.waitForTimeout(300)), budget: { p95: BUDGET.winTabP95 } });
     await measure(page, 'order window → Overview tab', 6, view('info'), { settle: 400, before: () => page.evaluate(() => document.querySelector('#orderWin .owTabsV [data-ow-view="timeline"]').click()).then(() => page.waitForTimeout(300)), budget: { p95: BUDGET.winTabP95 } });
-    await measure(page, 'order window Next', 10, () => document.getElementById('owNext').click(), { settle: 450, budget: { p95: BUDGET.winStepP95 } });
-    await measure(page, 'order window Back', 10, () => document.getElementById('owPrev').click(), { settle: 450, budget: { p95: BUDGET.winStepP95 } });
+    await measure(page, 'order window Next', 10, () => document.getElementById('owNext').click(), { settle: 450, budget: { p95: BUDGET.winStepP95, work95: BUDGET.winStepWork95 } });
+    await measure(page, 'order window Back', 10, () => document.getElementById('owPrev').click(), { settle: 450, budget: { p95: BUDGET.winStepP95, work95: BUDGET.winStepWork95 } });
     await shut(); await page.waitForTimeout(400);
 
     // ── search and filters
@@ -163,8 +168,18 @@ async function scale() {
     await page.evaluate(() => CN.setMode('library')); await page.waitForTimeout(1200);
     await typed('Library search (per keystroke, 7 keys)', '#libSearch', '4100000');
     await page.waitForTimeout(800);
-    await measure(page, 'Library filter (metal chip)', 6, new Function('i', `document.querySelector('#libView .fchip[data-m="' + ['gold', 'silver', 'all'][i % 3] + '"]').click()`), { settle: 600 });
+    await measure(page, 'Library filter (metal chip)', 6, new Function('i', `document.querySelector('#libView .fchip[data-m="' + ['gold', 'silver', 'all'][i % 3] + '"]').click()`), { settle: 600, budget: { work95: BUDGET.libChipWork95 } });
     await page.waitForTimeout(800);
+    // (round 4: a chip shows the cards it has: what it shows is what a whole drawing of the Library shows, card for card, area for area, the empty lines alike)
+    for (const m of ['gold', 'silver', 'all']) {
+      const seen = () => page.evaluate(() => [...document.querySelectorAll('#libBody [data-laser-area]')].map(a => [a.dataset.laserArea, a.hidden, !!a.querySelector('.laserEmpty')?.hidden, [...a.querySelectorAll('.laserAreaItems > .setCard')].map(c => (c._laserSet && c._laserSet.setId) || (c._laserSheets || []).join('+'))]));
+      await page.evaluate(m => document.querySelector(`#libView .fchip[data-m="${m}"]`).click(), m); await page.waitForTimeout(500);
+      const chip = await seen();
+      await page.evaluate(() => Sets.renderLibrary(document.getElementById('libBody'), { reuse: true })); await page.waitForTimeout(500);
+      const whole = await seen(), same = JSON.stringify(chip) === JSON.stringify(whole);
+      console.log(`  Library chip ${m}: ${chip.map(([a, h, e, ids]) => `${a} ${ids.length}${h ? ' (hidden)' : ''}${e ? '' : ' (says empty)'}`).join(' · ')} — ${same ? 'as a whole drawing shows' : 'NOT as a whole drawing: ' + JSON.stringify(whole.map(([a, h, e, ids]) => [a, h, e, ids.length]))}`);
+      if (!same) fails.push(`Library chip ${m}: the cards shown differ from a whole drawing`);
+    }
 
     // ── the sheet window from the Library, and sheet to sheet
     const sheetIds = await page.evaluate(() => (S => S.library.rows || [])(CN.S).filter(r => r.setId).slice(0, 8).map(r => r.id || r.sheetId));

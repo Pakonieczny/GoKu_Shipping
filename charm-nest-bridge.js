@@ -6643,7 +6643,7 @@ const Gate = window.Gate = (() => {
       node.innerHTML = `<div class="sheetOptions"><button type="button" class="sheetOptionsBtn" aria-haspopup="dialog">Options</button><div class="solidOptions" role="group" aria-label="${esc(labelOf(m))} sheet options" hidden>
         <div class="osInclude"><label class="osSwitch"><input type="checkbox" role="switch" data-solid="include" aria-label="Include ${esc(labelOf(m))} sheet ${sh.page} in current set"><span class="osSwitchText">In current set</span></label><span class="osBusy" data-solid="busy" role="status" hidden><span class="osSpin" aria-hidden="true"></span><span data-solid="busy-text"></span></span><span class="osSay" data-solid="say" role="alert" hidden></span><span class="osSr" role="status" data-solid="status"></span><button type="button" class="btn ghost xs" data-solid="retry" hidden>Retry</button></div>
         <section class="osCard osSheet" data-card="sheet" aria-labelledby="osSheet-${esc(m)}"><header class="osCardHead"><div><h3 class="osCardTitle" id="osSheet-${esc(m)}">Sheet</h3><p class="osLead">Where this sheet's metal comes from: a partial sheet or a brand new one.</p></div></header></section>
-        <section class="osSettings" data-card="settings" aria-label="Settings"><h3 class="osGroupLabel">Settings</h3><div class="osSheetGrid">
+        <section class="osSettings osNone" data-card="settings" aria-label="Settings"><h3 class="osGroupLabel">Settings</h3><div class="osSheetGrid">
         ${solid(m) ? `<section class="sheetOptionSection" data-solid="merge" hidden><h4>Merge sheets</h4><p class="help sheetMergeHelp" data-solid="merge-help"></p>
           <div class="sheetMergeActions" data-solid="merge-actions"><button type="button" class="btn ghost xs" data-solid="merge-move">Move all onto Sheet 1</button><button type="button" class="btn ghost xs" data-solid="merge-renest">Re-nest both sheets</button></div>
           <div class="sheetMergeAsk" data-solid="merge-ask" role="group" aria-label="Confirm merge" hidden><span class="help" data-solid="merge-ask-text"></span><span class="sheetMergeAskBtns"><button type="button" class="btn ghost xs" data-solid="merge-cancel">Cancel</button><button type="button" class="btn sage xs" data-solid="merge-go">Merge</button></span></div>
@@ -6873,6 +6873,7 @@ const Gate = window.Gate = (() => {
     const st = MERGE[m] || (MERGE[m] = {}), q = k => sec.querySelector(`[data-solid="merge-${k}"]`);
     const plan = st.busy ? null : mergePlan(m), done = st.done && Date.now() - st.done.at < 12000 ? st.done : null;
     sec.hidden = !st.busy && !plan && !done;
+    { const box = sec.closest(".osSettings"); if (box) box.classList.toggle("osNone", ![...box.querySelectorAll(":scope > .osSheetGrid > *")].some(c => !c.hidden)); }   // (the Settings card shows while something in it does: .osNone, NAV round 4)
     if (sec.hidden) { st.ask = null; return; }
     const blocked = !!plan && pagesOf(m).some(busyPage), asking = !!(plan && st.ask && !blocked);
     if (!asking) st.ask = null;
@@ -13931,7 +13932,7 @@ const RunCtl = window.RunCtl = (() => {
     LiveStrip.now();                                        // one path: the banner and the ladder can never disagree
     const v = r ? runView(r) : idleView();
     Dock.schedule();
-    if (!v) { const m = h.querySelector("#runMenu"); if (m) m.open = false; h.classList.add("hidden"); return; }
+    if (!v) { const m = h.querySelector("#runMenu"); if (m) m.open = false; h.classList.add("hidden"); h.parentElement?.classList.remove("rbOn"); return; }
     drawPill(h, v);
     if (r) Orders.render();
   }
@@ -14007,6 +14008,7 @@ const RunCtl = window.RunCtl = (() => {
     }
     const focusId = h.contains(document.activeElement) ? document.activeElement.id : "";
     h.className = "runBanner " + v.tone;
+    h.parentElement?.classList.add("rbOn");   // (the bar says the banner shows: .topbar.rbOn.rbOn in the styles, not :has(>.runBanner:not(.hidden)), which cost every restyle of the page; NAV round 4)
     // on a narrow bar the tint says "waiting" and the words keep what is waiting ("1 in Engraving")
     const text = menu.querySelector(".rbText"), words = v.lead && v.short.startsWith(v.lead) ? `<span class="rbLead">${esc(v.lead)}</span>${esc(v.short.slice(v.lead.length))}` : esc(v.short);
     if (text._html !== words) { text._html = words; text.innerHTML = words; }

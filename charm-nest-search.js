@@ -388,9 +388,9 @@
 .cnsKbd{margin-left:auto;font:10px var(--mono);border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:0 5px;color:var(--ink45);background:var(--card);line-height:15px}
 @container workspace (max-width:1180px){.cnsFind{flex-basis:152px}}
 @container workspace (max-width:1000px){.cnsFind{flex:0 0 32px;padding:0;justify-content:center}.cnsFind .t,.cnsFind .cnsKbd{display:none}}
-.topbar:has(>.runBanner:not(.hidden)) .cnsFind{flex:0 0 32px;padding:0;justify-content:center}
-.topbar:has(>.runBanner:not(.hidden)) .cnsFind :is(.t,.cnsKbd){display:none}
-@container workspace (max-width:1300px){.topbar:has(>.runBanner:not(.hidden)) .cnsFind{display:none}}
+.topbar.rbOn.rbOn .cnsFind{flex:0 0 32px;padding:0;justify-content:center}
+.topbar.rbOn.rbOn .cnsFind :is(.t,.cnsKbd){display:none}
+@container workspace (max-width:1300px){.topbar.rbOn.rbOn .cnsFind{display:none}}
 .cns{position:fixed;inset:0;z-index:250;display:flex;justify-content:center;align-items:flex-start;padding:9vh 16px 16px}
 .cns[hidden]{display:none}
 .cnsBd{position:absolute;inset:0;background:rgba(20,18,15,.52)}
