@@ -12,7 +12,9 @@
  *     opts.despeckle 2       specks of up to this many pixels AT 20 px/mm (0.0025 mm² each, so 2 = 0.005 mm², Potrace's turdsize 2) are merged into what
  *                            surrounds them; opts.despeckleMm2 says it in mm² on the charm and wins when given (the lead, 28 Oct 2026: "despeckle measured in mm²")
  *     opts.pxPerMm 20        the source's pixels per mm as placed on the charm. The trace works at workPxPerMm (20 px/mm, ~500 ppi: a fibre laser's hatch pitch
- *                            is 0.02–0.05 mm, so finer buys nothing): a small source is enlarged (bicubic), a big one averaged down, never past maxSide 2048 a side
+ *                            is 0.02–0.05 mm, so finer buys nothing): a bigger source is averaged down to it, and never past maxSide 2048 a side. A smaller
+ *                            one is traced as it is: enlarging it first (bicubic, as a raster engrave wants) was measured on 28 Oct 2026 to make no truer
+ *                            outline (IoU against the drawn shape 0.990 either way) and 3–4 times the nodes, its stair-steps enlarged into features
  *     opts.invert, contrast, brightness, gamma, autoLevels, sharpen, denoise, adaptive   the grey() steps below, under the same names
  *     opts.thresholds        'otsu' (default: multi-level Otsu, so every level holds real area) | 'even' | [t0 < t1 < …] N numbers 0..1 (from posterise())
  *     opts.stack false       true: each layer is its whole nested mask (Inkscape's "stack scans"; the lighter ones must then be drawn underneath)
@@ -41,7 +43,7 @@
  * level masks are NESTED: M_k = every pixel as dark as level k or darker, M_0 ⊂ M_1 ⊂ … ⊂ M_(N-1). Each M_k is traced once; band k is M_k's curves plus
  * M_(k-1)'s curves REVERSED, i.e. M_k minus M_(k-1). So the border between two bands is the very same curve in both: nothing between them, nothing under both,
  * each pixel burnt once at its own grey's power. A border that is the same in both masks (black straight onto white) cancels out of the band between. Despeckle
- * works on the levels, so the masks stay nested: a speck (up to the despeckle area) and a SEAM (a band under 0.075 mm wide between a darker and a lighter
+ * works on the levels, so the masks stay nested: a speck (up to the despeckle area) and a SEAM (a band under 1.5 pixels wide between a darker and a lighter
  * level: an antialiased edge, which would engrave as a hairline ring round every shape) join the level they border most. Measured (circles in four greys,
  * supersampled 4 × 4): the bands overlap on 0.007 % of the ink, in slivers under a fifth of a pixel, and add up to M_(N-1) within 0.02 %.
  *
@@ -71,7 +73,7 @@
   const ROW_PX = 32768;                 // pixels between two yields of a pixel pass
   const PATH_PTS = 12000;               // path points (and scanned pixels / 8) between two yields of the trace
   const SLICE_MS = 8;                   // the page's own slices, when it does the work itself
-  const SEAM_MM = 0.075;                // a band between a darker and a lighter level thinner than this on average is an edge's antialiasing (1.5 px at 20 px/mm)
+  const SEAM_PX = 1.5;                  // a band between a darker and a lighter level thinner than this on average is an edge's antialiasing (0.075 mm at 20 px/mm)
   const DEFAULTS = Object.freeze({ levels: 4, detail: 0.5, smooth: 0.5, despeckle: 2, pxPerMm: 20, workPxPerMm: 20, maxSide: 2048, invert: false,
     contrast: 0, brightness: 0, gamma: 1, autoLevels: true, sharpen: 'auto', denoise: 'auto', adaptive: false, thresholds: 'otsu', stack: false });
 
@@ -111,7 +113,7 @@
     }, p0, p1);
     return out;
   }
-  /** Separable resampling weights: an exact area average going down, Catmull-Rom going up. */
+  /** Separable resampling weights: an exact area average (only ever down: an axis left as it is gets weight 1). */
   function weights(n, N) {
     const s = N / n, off = new Int32Array(N + 1), idx = [], wt = [];
     for (let i = 0; i < N; i++) {
@@ -119,14 +121,7 @@
       if (s < 1) {
         const a = i / s, b = (i + 1) / s, s0 = Math.floor(a), s1 = Math.min(n, Math.ceil(b));
         for (let k = s0; k < s1; k++) { idx.push(k); wt.push((Math.min(b, k + 1) - Math.max(a, k)) * s); }
-      } else {
-        const c = (i + 0.5) / s - 0.5, k0 = Math.floor(c) - 1;
-        for (let t = 0; t < 4; t++) {
-          const x = Math.abs(c - (k0 + t));
-          const w = x <= 1 ? 1.5 * x * x * x - 2.5 * x * x + 1 : x < 2 ? -0.5 * x * x * x + 2.5 * x * x - 4 * x + 2 : 0;
-          idx.push(clamp(k0 + t, 0, n - 1)); wt.push(w);
-        }
-      }
+      } else { idx.push(Math.min(n - 1, i)); wt.push(1); }
     }
     off[N] = idx.length;
     return { off, idx: Int32Array.from(idx), wt: Float32Array.from(wt) };
@@ -260,10 +255,10 @@
     if (o.invert) for (let i = 0; i < v.length; i++) v[i] = 1 - v[i];
     return v;
   }
-  /** The working size: the placed image at workPxPerMm, at most maxSide a side and four times the source. */
+  /** The working size: the placed image at workPxPerMm, at most maxSide a side, never larger than the source. */
   function workSize(w, h, o) {
     let s = o.workPxPerMm / o.pxPerMm;
-    s = Math.min(s, 4, o.maxSide / Math.max(w, h));
+    s = Math.min(s, 1, o.maxSide / Math.max(w, h));
     const W = Math.max(1, Math.round(w * s)), H = Math.max(1, Math.round(h * s));
     return { W, H, sx: W / w, sy: H / h, ppm: o.pxPerMm * Math.sqrt((W / w) * (H / h)) };
   }
@@ -722,7 +717,7 @@
     const lab = yield* labelG(v, W, H, t, 0.16, 0.18);
     const raw = o.keepLabels ? unframe(lab, W, H) : null;
     const speck = Math.round(o.speckMm2 * ws.ppm * ws.ppm);
-    const seam = o.speckMm2 > 0 ? SEAM_MM * ws.ppm : 0;
+    const seam = o.speckMm2 > 0 ? SEAM_PX : 0;
     const merged = yield* despeckleG(lab, W, H, speck, seam, 0.18, 0.22);
     ms.posterise = now() - t0 - ms.prep;
     // pixels per level (the posterised area of each band, source px²)
@@ -938,7 +933,7 @@
   function posterise(src, opts) {
     const p = prepared(src, opts, num(opts && opts.maxSide, 512)), N = p.o.levels, t = thresholdsOf(p.v, N, p.o.thresholds);
     const lab = drain(labelG(p.v, p.W, p.H, t, 0, 1));
-    drain(despeckleG(lab, p.W, p.H, Math.round(p.o.speckMm2 * p.ppm * p.ppm), p.o.speckMm2 > 0 ? SEAM_MM * p.ppm : 0, 0, 1));
+    drain(despeckleG(lab, p.W, p.H, Math.round(p.o.speckMm2 * p.ppm * p.ppm), p.o.speckMm2 > 0 ? SEAM_PX : 0, 0, 1));
     const flat = unframe(lab, p.W, p.H);
     return { image: imageOf(p.W, p.H, i => (flat[i] >= N ? 255 : Math.round(255 * flat[i] / N))), width: p.W, height: p.H, levels: N,
       thresholds: t.map(x => Math.round(x * 1000) / 1000), greys: Array.from({ length: N }, (_, k) => k / N), suggestLevels: p.info.suggestLevels, content: p.info.content, midtones: p.info.midtones };
