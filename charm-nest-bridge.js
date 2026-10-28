@@ -2565,6 +2565,11 @@ const Orders = window.Orders = (() => {
      again (~40 ms on 1,300 lines). The walk is kept while the list it was made from is the same (the same rows, search, filters, sort and range) for a few seconds, and let go whenever the
      list is drawn again (renderBody); a line gone meanwhile is stepped over. */
   let walkMemo = null;
+  /* NAV round 5 (28 Oct 2026, Paul: "move between Tabs, Lists and Modals ... at near real-time speed"): the list's first drawing (nothing in it yet: the tab's first visit) draws the
+     rows a screen holds (FIRST_ROWS) and the rest of its page (to 48) at the next idle moment, where all 48 were built before the tab could show (~110 ms at 800 orders); only for the tab
+     being shown (a drawing asked for any other reason draws its page whole, as before) */
+  const FIRST_ROWS = (host, cards) => cards ? 12 : Math.max(3, Math.ceil((host.clientHeight || 800) / 190) + 1);   // (a list row is ~200 px: 4 in the 800 px list of a 900 px screen, so 6; read after the list's scroll place, so nothing is laid out for it)
+  let fillAsked = 0, filling = false, showing = false;   // (showing: the drawing is the tab's being shown, shown)
   function walkRows() {
     const rows = rowsOf(), sig = JSON.stringify([rows.length, OV.pile, OV.q, OV.metal, OV.form, OV.eng, OV.act, OV.sort, OV.desc, CNListActivity.key("orders")]);
     if (walkMemo && walkMemo.rows === rows && walkMemo.sig === sig && Date.now() - walkMemo.at < 5000) return walkMemo.list.filter(r => r.state !== "gone");
@@ -2613,6 +2618,7 @@ const Orders = window.Orders = (() => {
     // (ONE ORDER, ONE ROW, 13 Oct 2026: the lines of one order stand together where its first line stood; a group of one is a row as it always was)
     const groups=groupsOf(rows);groupTotal=groups.length;
     shown=groups.slice(0,OV.limit || 48);
+    if (showing && !filling && list.childElementCount === 0 && shown.length > FIRST_ROWS(host, cards)) { shown = shown.slice(0, FIRST_ROWS(host, cards)); if (!fillAsked) fillAsked = idleSoon(() => { fillAsked = 0; filling = true; try { renderBody(); } finally { filling = false; } }); }   // (round 5: the first screen now, the rest at idle)
     // a heading counts its day's orders in the list: counted only where headings are drawn, for the days on screen
     const dayCounts=new Map();
     if(OV.sort==='arrival'){for(const g of shown)dayCounts.set(dayOf(g.rows[0]).key,new Set());for(const row of rows){const ids=dayCounts.get(dayOf(row).key);if(ids)ids.add(row.order.receiptId);}}
@@ -2647,7 +2653,7 @@ const Orders = window.Orders = (() => {
     if(orderNodes.size>NODES_KEPT){const onList=new Set(shown.flatMap(g=>g.rows.map(r=>r.key)));for(const key of orderNodes.keys()){if(orderNodes.size<=NODES_KEPT)break;if(!onList.has(key))orderNodes.delete(key);}}
     }
     // the pile and view on screen, drawn before: what changed is seen changing (not "Show more", which only adds below)
-    const same = drawnOn === nextKey && drawnLimit === OV.limit && list.childElementCount > 0;
+    const same = !filling && drawnOn === nextKey && drawnLimit === OV.limit && list.childElementCount > 0;   // (the rest of a first drawing comes in below, as it is: filling)
     // the scroll is put back as soon as the list holds its new rows (Motion.reconcile reads `clip` then, before it
     // measures where the rows now stand), so what stays glides from where it was seen, not from where the scroll put it
     let settled = false;
@@ -2900,7 +2906,8 @@ const Orders = window.Orders = (() => {
     // NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): the counts ask every line where its pieces are (placeNow, ~140 ms on 1,300 lines) and show only
     // in the Filters panel. While the panel is shut and the filter is not in force they are made at the next idle moment (or when the panel opens: actFlush), not in the tab switch's frame
     let act;
-    if (actNow() || (ordFp && ordFp.isOpen) || !actLast) { act = actCount(all); clearActIdle(); }
+    // (round 5: the first drawing too: until the idle moment the panel, shut, draws no Needs action group (renderFilters reads no counts as none), the filter not being in force)
+    if (actNow() || (ordFp && ordFp.isOpen)) { act = actCount(all); clearActIdle(); }
     else { actMemo = null; act = actLast; actWant = { v, all }; if (!actIdle) actIdle = idleSoon(actFlush); }
     const cxN = window.Cancelled ? Cancelled.count() : 0;
     // (Cancelled is always there, Paul 28 Sep A5: every cancelled order, Etsy's and a person's, whatever the pull holds)
@@ -2941,7 +2948,8 @@ const Orders = window.Orders = (() => {
   const piecesVer = () => { try { return window.OrderPieces && OrderPieces.version ? OrderPieces.version() : -1; } catch (_) { return -1; } };
   /** The Orders tab shown again: drawn as it was when nothing asked for a drawing since it was drawn (under 10 s ago, the same answer of where the pieces are), and drawn again at the next
    *  idle moment (so a time or an order that moved without a notice is put right at once, after the frame); else drawn now, as before. */
-  function shown() {
+  function shown() { showing = true; try { return shownNow(); } finally { showing = false; } }
+  function shownNow() {
     const v = document.getElementById("ordersView");
     if (!(v && v.dataset.built && drawnAt)) return renderNow();
     const same = !wantDraw && Date.now() - drawnAt < 10000 && drawVer === piecesVer();
@@ -5549,7 +5557,11 @@ const Gate = window.Gate = (() => {
    *  Control, a piece replaced) it keeps its set, its number and its files' name (nextSheetSeq: keepsPlace); a look at its set never takes it out for being written. Before, the write drafted it on this page
    *  first, and when the cloud refused the write (the saved full-sheet contour guards its layout) the page held it out of its set while its record kept it in: "Set 1 breaks your rules: 14K Sheet 1 ...
    *  is not in it". Only a person takes it out (Include off, Take out, Rebuild: each turns its tick off first), or its partners leaving (greenAway, the trim). */
-  const staysJoined = sh => solid(sh.metal) && sh.solidPick === true && inSetNow(sh) && !sh.leftSet;
+  /* (MERGE, Paul 28 Sep: "a sheet left empty goes ... and the set drops it first"; the sheets a Merge sheets press takes leave their set before a charm moves, Sheet 1 coming back with a new
+     QR label once it is nested and verified) A person's Merge is one of the ways out of the set staysJoined leaves open: the sheets it takes are let go by the look at the set it makes
+     (assemble), as they were before staysJoined (27 Oct 2026) kept them in and the emptied sheet stayed named in its set. Held only for that look (mergeSheets). */
+  const mergeLeaving = new WeakSet();
+  const staysJoined = sh => solid(sh.metal) && sh.solidPick === true && inSetNow(sh) && !sh.leftSet && !mergeLeaving.has(sh);
   const staysInSet = sh => staysCut(sh) || staysJoined(sh);
   // (the run still arranges a metal's sheets once one of them is in, as it did once the metal was: only the set is per sheet)
   const anyPicked = (m, choices = selected(), runId = B.run?.runId) => choices[m] === true || allSheets().some(p => p.metal === m && p.solidPick === true && (!runId || !p.runId || p.runId === runId));
@@ -6837,7 +6849,7 @@ const Gate = window.Gate = (() => {
         for (const p of pages) { for (const c of p.charms) { c.pinned = null; delete c.arrivalPin; } p.feedWait = null; sheetDirty(p); }
       }
       // a sheet in the current set leaves it before a charm moves (a new QR label comes once it is written again)
-      if (run && modern(run.runId) && pages.some(p => p.setId && !p.draft)) { try { await assemble(run, ctx); } catch (e) { changed(); throw e; } }
+      if (run && modern(run.runId) && pages.some(p => p.setId && !p.draft)) { for (const p of pages) mergeLeaving.add(p); try { await assemble(run, ctx); } catch (e) { changed(); throw e; } finally { for (const p of pages) mergeLeaving.delete(p); } }
       // each order that moves, from its sheet to Sheet 1 (idle time); Move all records it once the nest is done, for the
       // orders that landed on Sheet 1 (watchMerge), never for one that did not fit and stayed where it was
       const tell = window.SheetEvents?.merged(kind, pages, t, st.busy.at, moveIn); if (typeof tell === "function") st.busy.tell = tell;
@@ -19430,7 +19442,7 @@ const Review = window.Review = (() => {
    *  else drawn now, as before. */
   function shown() {
     const v = document.getElementById("reviewView");
-    if (rvWant || !v || !v.firstChild || Date.now() - rvDrawnAt >= 10000 || rvVer !== rvPiecesVer()) return render();
+    if (rvWant || !v || !v.firstChild || Date.now() - rvDrawnAt >= 10000 || rvVer !== rvPiecesVer()) return render({ shown: true });
     LiveStrip.render();
     (typeof requestIdleCallback === "function" ? requestIdleCallback : f => setTimeout(f, 60))(() => { const x = document.getElementById("reviewView"); if (x && !x.classList.contains("hidden")) render(); }, { timeout: 1000 });
   }
@@ -19439,7 +19451,7 @@ const Review = window.Review = (() => {
     if(window.Seal?.defer('review-view',()=>render(opts)))return;
     if(!opts.still&&window.CharmNestInteraction?.defer('review-view',render))return;
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) { rvWant = true; return; }
-    rvWant = false; rvVer = rvPiecesVer(); rvDrawnAt = Date.now();
+    rvWant = false; rvVer = typeof rvPiecesVer === "function" ? rvPiecesVer() : -1; rvDrawnAt = Date.now();
     try { CustomSheet.prune(); } catch (_) {}
     const active=v.contains(document.activeElement)?document.activeElement:null;
     // the old Decided chip, and the Decided segment, are Resolved now; a filter on a kind that has no chip lets go (RVRESOLVED)
@@ -19579,7 +19591,12 @@ const Review = window.Review = (() => {
       return null;
     };
     const empty = () => { const n = el("div", "libEmpty"); n.innerHTML = `${orderQ ? "No matching order numbers." : doneMode ? (f === "customOrder" ? "No custom order resolved yet. Print its QR label under Open, or send it to the sheets." : f ? `Nothing resolved under ${esc(what)} yet.` : "Nothing resolved yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}`; return n; };
-    const desired = list.length ? list.slice(0,RV.limit).map(it=>({it,node:it.settled?settledRow(it.settled):reviewRow(it)})) : [];
+    // NAV round 5 (28 Oct 2026, Paul: "move between Tabs, Lists and Modals ... at near real-time speed"): the list's first drawing for the tab shown (nothing in it yet: the tab's first visit)
+    // builds the cards a screen holds (8: a card is ~200 px, 4 on a 900 px screen) and the rest of its page at the next idle moment (RV.filling: drawn in below, nothing moving), where every
+    // card of the page was built before the tab could show
+    const upto = opts.shown && !RV.filling && !back && host.childElementCount === 0 && Math.min(RV.limit, list.length) > 8 ? 8 : RV.limit;
+    if (upto < RV.limit && !RV.fillAsked) RV.fillAsked = (typeof requestIdleCallback === "function" ? requestIdleCallback : f => setTimeout(f, 60))(() => { RV.fillAsked = 0; RV.filling = true; try { render({ still: true }); } finally { RV.filling = false; } }, { timeout: 400 });
+    const desired = list.length ? list.slice(0,upto).map(it=>({it,node:it.settled?settledRow(it.settled):reviewRow(it)})) : [];
     for(const {node} of desired)node.classList.toggle('orderMatch',!!orderQ);
     // A card the Send to Sheet tour is carrying (Motion.carry) stays where it stood, however the list sorts it now: sent,
     // a custom order moves to the foot of its list, and one answered leaves it, its place held empty. Nothing moves
@@ -19603,7 +19620,7 @@ const Review = window.Review = (() => {
     else { host.replaceChildren(...(desired.length ? desired.map(x => x.node) : [empty()])); }
     for (const {it,node} of desired) { if(!it)continue; const r=it.settled?it.settled.row:it.row; if(r)ListMedia.mount(node,r); }
     for (const {node} of desired) if(node._refocus){const f=node._refocus;node._refocus=null;f();}
-    ListMedia.more(host,list.length,Math.min(RV.limit,list.length),()=>{RV.limit+=40;render();});
+    ListMedia.more(host,list.length,Math.min(upto,list.length),()=>{RV.limit+=40;render();});
     // (kept as it was; written only when it moved, so a card being brought into view is not stopped half way)
     {const sc=v.querySelector('.egPane.scroll');if(sc.scrollTop!==oldScroll)sc.scrollTop=oldScroll;}
     if(back){const n=desired.find(x=>x.it===back)?.node;if(n?.isConnected)bringBack(n,back.key);}
