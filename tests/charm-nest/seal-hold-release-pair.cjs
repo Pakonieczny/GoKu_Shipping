@@ -7,12 +7,14 @@
 //        a  Hold Order + its take-off + Release Hold (OrderHold.release: restores, then "released" with the seal): exactly ORDER HELD then ORDER RELEASED, the latter green; the compact rail
 //           and the "Where it is now" card agree
 //        b  the Review card's own "released" step (stamped with the press's time, before the lines are made up): the same two
-//        c  the sheet window's "Take off and hold" (no Hold Order press) and its own Release hold: its hold reads ORDER HELD (never ON HOLD), no RESTORED
+//        c  the sheet window's "Take off and hold" (no Hold Order press) and its own Release hold: ORDER HELD (never ON HOLD), no RESTORED, and a green ORDER RELEASED (an older step with no seal too,
+//           SEALGREEN: it was a red HOLD RELEASED)
 //        d  a restore with no hold seal and no release (the only trace of it) keeps its RESTORED seal
 //        e  a second hold after a release is a seal of its own
 //   3  the REAL sorter page (bridge-server.cjs fake site, _reviewSendWorld.cjs): Hold Order pressed (the real mark writes ORDER HELD's note; the take-off's "held" event recorded the way the sheet
 //      window records it), then the Review card's real Release Hold (the real OrderHold.release: the real "restored" and "released"). The records are all kept; the order window's Timeline draws
-//      exactly two seals, ORDER HELD then ORDER RELEASED, the latter in green ink; the Orders card's release seal reads green.
+//      exactly two seals, ORDER HELD then ORDER RELEASED, the latter in green ink; the Orders card's release seal reads green. And the sheet window's own Release hold (its On hold list): its step
+//      carries the Release Hold seal, the timeline draws it as the green ORDER RELEASED, and the Orders card shows it (SEALGREEN, Paul 28 Oct 2026, "throughout the entire application").
 //   PW_DIR=<playwright node_modules> node tests/charm-nest/seal-hold-release-pair.cjs   (through scratchpad/int/slot.sh)
 'use strict';
 const fs = require('fs'), path = require('path');
@@ -26,6 +28,7 @@ const GREEN = '#19663f', ORANGE = /a2591c|162,\s*89,\s*28/i;
 {
   const html = read('charm-nest-1.html');
   check(['charm-nest-motion.js', 'charm-nest-timeline-ui.js', 'charm-nest-seal-travel.js'].every(f => new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-sg1').test(html)), '1 · the three changed scripts carry -sg1 in charm-nest-1.html');
+  check(['charm-nest-sheetwin.js', 'charm-nest-timeline-ui.js'].every(f => new RegExp(f.replace(/\./g, '\\.') + '\\?v=[^"]*-sg2').test(html)), '1 · and the sheet window and the timeline carry -sg2');
   const rules = html.match(/\.relSeal[^{]*\{[^}]*\}|\.relSealWords[^{]*\{[^}]*\}/g) || [];
   const col = rules.filter(r => /color|border|background/.test(r));
   check(rules.length >= 5 && !rules.some(r => ORANGE.test(r)) && col.some(r => /^\.relSeal\{/.test(r) && /--relInk:#19663f/.test(r) && /rgba\(25,102,63,\.38\)/.test(r) && /rgba\(25,102,63,\.07\)/.test(r)), `1 · the Orders card's ORDER RELEASED seal (.relSeal) is green, words, border and wash; no release rule keeps the orange (${rules.length} rules)`);
@@ -101,6 +104,7 @@ const jsdomPart = async () => {
   ];
   const c = await drawn(C);
   check(c.length === 2 && c[0].action === 'ORDER HELD' && c[0].key.startsWith('held~') && !c.some(x => /ON HOLD|RESTORED/.test(x.action)), `2c · a hold with no Hold Order press: its one seal reads ORDER HELD (never ON HOLD), no RESTORED (${say(c)})`);
+  check(c[1] && c[1].action === 'ORDER RELEASED' && c[1].family === 'release' && c[1].ink === GREEN, `2c · the sheet window's release, an older step with no seal: the green ORDER RELEASED, no red HOLD RELEASED (${say(c)})`);
 
   // d · a restore that is the only trace of something: no hold seal before it, no release around it
   const D = '4299900004';
@@ -189,6 +193,21 @@ const pagePart = async () => {
     }, rid), 20000, 'the release seal on the Orders card');
     check(card.words === 'Order released' && card.color === 'rgb(25, 102, 63)' && /rgba\(25, 102, 63, 0\.38\)/.test(card.border) && /rgba\(25, 102, 63, 0\.07\)/.test(card.bg) && card.ink === GREEN,
       `3 · the Orders card's ORDER RELEASED seal: green face, words, border and wash (${JSON.stringify(card)})`);
+    // the sheet window's own Release hold (its On hold list): an order held the way its "Take off and hold" leaves it, released there
+    await W.addOrders(w, ['alone']);
+    const sh = await W.seedSheet(w, { id: 'sh-sgp1', orders: ['sheeted'] }), rid2 = W.ORDERS.alone.rid;
+    await page.evaluate(r => { for (const row of Orders.rows()) if (String(row.order.receiptId) === r) { row.state = 'held'; row.hold = row.reason = 'Taken off GF Sheet 3 by Test Operator'; row.heldAt = Date.now(); } Review.syncOrderItems(); Orders.render(); }, rid2);
+    await page.evaluate(id => SheetWin.open(id), sh.id); await page.waitForFunction(() => SheetWin.isOpen && SheetWin.isOpen(), null, { timeout: 20000 }); await W.settle(page, 800);
+    await page.click('dialog[open] [data-f="hold"]'); await page.waitForSelector(`dialog[open] .swHeld[data-rid="${rid2}"] [data-h=back]`, { timeout: 15000 });
+    const t2 = Date.now();
+    await page.click(`dialog[open] .swHeld[data-rid="${rid2}"] [data-h=back]`);
+    const swEv = await until(() => st.list('Order_Timeline').find(e => String(e.orderId) === rid2 && e.type === 'released' && +e.at >= t2 - 2000), 30000, 'the sheet window\'s released step');
+    const swFace = await page.evaluate(ev => { const m = OrderTimelineUI.faceModel(Object.assign({}, ev, { key: 'released~sw' })); const f = Seal.face(m); return { action: m.action, family: m.family, green: f.includes('stroke="#19663f"') }; }, swEv);
+    check(swEv.data && swEv.data.seal === 'releaseHold' && swEv.by === 'Test Operator' && swFace.action === 'ORDER RELEASED' && swFace.family === 'release' && swFace.green, `3 · the sheet window's Release hold: its step carries the Release Hold seal and is drawn as the green ORDER RELEASED (${JSON.stringify({ data: swEv.data, face: swFace })})`);
+    await page.evaluate(() => SheetWin.close && SheetWin.close()); await W.settle(page, 600);
+    await page.evaluate(() => { CN.setMode('orders'); Orders.render(); });
+    const card2 = await until(() => page.evaluate(r => { const n = document.querySelector(`#ordItems [data-rid="${r}"] .relSeal`), b = n && n.querySelector('.relSealWords b'); return n ? { words: b && b.textContent, color: b && getComputedStyle(b).color, held: Orders.rows().filter(x => String(x.order.receiptId) === r).some(x => Orders.heldNow(x)) } : null; }, rid2), 20000, 'the release seal on its Orders card').catch(() => null);
+    check(!!card2 && card2.words === 'Order released' && card2.color === 'rgb(25, 102, 63)' && !card2.held, `3 · and the Orders card shows its green ORDER RELEASED seal, the order no longer held (${JSON.stringify(card2)})`);
     check(w.errors.length === 0, '3 · no script error on the page: ' + (w.errors || []).join(' | '));
   } finally { await w.close(); }
 };

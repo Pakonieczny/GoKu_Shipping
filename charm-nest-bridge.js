@@ -19296,7 +19296,10 @@ const Review = window.Review = (() => {
   }
   function reviewRow(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
-    const trav=rvTravel(row?.order?.receiptId || it.record?.receiptId || it.rid,false,it.kind==='customOrder'?['sheet']:null);   // (SEALTRAVEL: every card carries every seal of its order, Open (a held order's ORDER HELD) and Resolved alike)
+    // (SEALTRAVEL fix, 28 Oct 2026: the card leaves the sheet kind out of its strip only where it draws those seals itself: beside its Send to Sheet / Sent to Sheet button (open, sent), or in a completed card's
+    //  seals row when the send was folded into it (alsoSent, withSheetSeals). A completed card with no send of its own lost its SENT TO SHEET seal with 8ba7363 (seals-travel); it draws it in the strip again)
+    const ownSheet=it.kind==='customOrder' && (!it.done || !!(it.alsoSent && (it.alsoSent.stamps || []).some(s=>s && s.how==='sheet')));
+    const trav=rvTravel(row?.order?.receiptId || it.record?.receiptId || it.rid,false,ownSheet?['sheet']:null);   // (SEALTRAVEL: every card carries every seal of its order, Open (a held order's ORDER HELD) and Resolved alike)
     // (Diagnostic, 26 Oct 2026: a Custom Orders card draws its SENT TO SHEET seals after its Send to Sheet / Sent to Sheet button (SEALSHEET, Paul 20 Oct); the strip drew the same seal a second time)
     const stamp=stampOf(it)+'|'+trav.sig;
     const cached=reviewRows.get(it.key);if(cached?.stamp===stamp){Orders.paintTableNotes?.(cached.node);return cached.node;}
