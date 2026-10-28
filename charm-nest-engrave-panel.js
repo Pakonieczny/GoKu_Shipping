@@ -401,8 +401,20 @@
     /* While words, font or mode are staged and not saved, the card's Approve buttons (and its A key) must not approve the OLD fitted words: they are dimmed with a title and a press is stopped before the card sees it. */
     const GATE = '[data-a="approve"],[data-a="approveBoth"],[data-a="approveFaces"]', GATE_WHY = 'Save or Cancel the edit first';
     let gateCard = null, gateOn = false;
-    const blockClick = e => { if (gateOn && e.target && e.target.closest && e.target.closest(GATE)) { e.preventDefault(); e.stopImmediatePropagation(); } };
-    const blockKey = e => { if (gateOn && e.key && e.key.toLowerCase() === 'a' && !e.metaKey && !e.ctrlKey && !e.altKey && e.target && e.target.closest && !e.target.closest('input,textarea,select,[contenteditable]')) { e.preventDefault(); e.stopImmediatePropagation(); } };
+    /* APPROVEFIX (Paul, 28 Oct 2026, order 4212020155: "The 'Approve' button is not working after I made adjustments to this charm's engraving."): the gate never stops a press without a word, and never
+     * stops one for an edit that is not staged any more. A press it stops says why in the card, under the button (the same line the card uses for a press that did not approve: .egApproveWhy), and while the
+     * gate is on that line is there with the dimmed button (a tooltip alone said nothing). A press arriving with nothing staged (the draft ended without this panel being drawn again) lifts the gate and goes on. */
+    const stagedNow = () => { const m = dead ? null : tryDo(() => model(), null); return !!m && hasPatch(Setup().patchOf(m.vm, m.d)); };
+    const gateSay = on => {
+      const host = gateCard && gateCard.querySelector('.pvApproval'); if (!host) return;
+      let n = host.querySelector('.egApproveWhy');
+      if (!on) { if (n && n.textContent === GATE_WHY) n.remove(); return; }
+      if (!n) { n = gateCard.ownerDocument.createElement('div'); n.className = 'egApproveWhy'; n.setAttribute('role', 'status'); host.appendChild(n); }
+      if (n.textContent !== GATE_WHY) n.textContent = GATE_WHY;
+    };
+    const stop = e => { if (!stagedNow()) { applyGate(false); return false; } e.preventDefault(); e.stopImmediatePropagation(); gateSay(true); return true; };
+    const blockClick = e => { if (gateOn && e.target && e.target.closest && e.target.closest(GATE)) stop(e); };
+    const blockKey = e => { if (gateOn && e.key && e.key.toLowerCase() === 'a' && !e.metaKey && !e.ctrlKey && !e.altKey && e.target && e.target.closest && !e.target.closest('input,textarea,select,[contenteditable]')) stop(e); };
     const hookCard = () => {
       const card = el.closest ? el.closest('.rvItem') : null; if (!card || card === gateCard) return;
       if (gateCard) { gateCard.removeEventListener('click', blockClick, true); gateCard.removeEventListener('keydown', blockKey, true); }
@@ -417,6 +429,7 @@
           if (b.title === GATE_WHY) { b.disabled = !!dis; b.title = ttl; }   // (APPRFIX-A: only if the button is still as the gate left it. The card brings "Approve both faces" up to date a frame after it is drawn (syncBoth), and a card drawn with an edit staged was gated BEFORE that: the old "Look at the front placement first" came back after Cancel and the button stayed dead)
         }
       }
+      gateSay(gateOn && !!gateCard.querySelector(GATE));   // (APPROVEFIX: the reason in words in the card while the gate is on)
     };
     /** ENGFRONT: the face being edited has NO job to draw (the front is asked for in the mode and not saved yet, or its job is "no engraving"): the work area would go on drawing the OTHER face's engraving
      *  while this face's thumbnail is marked. It says so in one plain line instead (the card's own empty-box markup; the drawing under it is hidden while the line is there), and the line goes with the next draw. */
