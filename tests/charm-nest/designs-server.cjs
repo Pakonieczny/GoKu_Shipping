@@ -131,6 +131,11 @@ const hashOf = d => sha(D.canonical(D.clean(d).design));
     ok(hashOf(g2) === first.hash && !D.clean(g2).design.faces.front.items[3].matrix && D.clean(g2).design.faces.front.items[3].children[0].subpaths[0][0][1].join() === '7,32', 'C a group placed by a matrix alone: put into its parts, the same hash');
     const disagree = part('front', 2, { matrix: [1, 0, 0, 1, 0, 0] }), wordsIn = design(); wordsIn.faces.front.items[3] = { id: 'g1', kind: 'group', matrix: [1, 0, 0, 1, 5, 2], children: [design().faces.front.items[4]] }; wordsIn.faces.front.items.pop();
     ok(/not what its move, turn and scale/.test(D.clean(disagree).error) && /words in a group placed by a matrix alone/.test(D.clean(wordsIn).error), 'C a matrix that is not what tx … rot make, and words in a group placed by a matrix alone, are refused');
+    // the Charm Editor's Rectangle / Ellipse / Line tools say only "painted" (stroke: true, fill: true, the other false): the role's colour, the same design and hash
+    const shaped = design(); shaped.faces.front.items[0].stroke = true; shaped.faces.front.items[0].fill = false; shaped.faces.front.items[2].fill = true; shaped.faces.front.items[2].stroke = false; shaped.faces.front.items[3].children[0].stroke = true;
+    const shapedC = D.clean(shaped), sItems = shapedC.design && shapedC.design.faces.front.items;
+    ok(!shapedC.error && JSON.stringify([sItems[0].stroke, sItems[0].fill, sItems[2].fill, sItems[2].stroke, sItems[3].children[0].stroke]) === JSON.stringify([[0, 0, 0], null, [0, 0, 1], null, [1, 0, 0]]) && hashOf(shaped) === first.hash && D.canonical(shaped) === D.canonical(D.clean(design()).design),
+      'C an editor shape painted `true` is its role\'s colour (cut black, hatch blue, line red), `false` none: the same design, the same hash, cleaned or not: ' + (shapedC.error || ''));
     const L = D.leaves(D.clean(design()).design.faces);
     eq([L.front.map(l => l.id), L.back.map(l => l.id)], [['outline', 'hole', 'heart', 'ln', 't1'], ['outline']], 'C leaves(): every part as made, in z-order, the hidden one left out');
     ok(Math.abs(L.front[3].subpaths[0][0][1][0] - 7) < 1e-9 && Math.abs(L.front[3].subpaths[0][0][1][1] - 32) < 1e-9, 'C a part in a moved group is placed by the group\'s matrix');
@@ -183,6 +188,7 @@ const hashOf = d => sha(D.canonical(D.clean(d).design));
     ok(r.status === 200 && sb && st.doc('Sandbox_Charm_Designs/' + r.body.id + '/versions', '1') && st.doc('Sandbox_Order_Rev', '_designs').n === 1 && st.blobs.has('charmnest/sandbox/designs/thumbs/' + r.body.hash + '.png'), 'F the sandbox: its own record, version, count (Sandbox_Order_Rev/_designs) and picture (charmnest/sandbox/)');
     eq(JSON.stringify([...st.docs.entries()].filter(([k]) => /^Charm_Designs|^Charm_Nest_Rev\/designs/.test(k))), prod, 'F production untouched');
     ok((await call({ op: 'designGet', id: r.body.id })).body.design === null && (await call({ op: 'designList', sandbox: true })).body.designs.map(x => x.id).join() === r.body.id, 'F production does not see it; the sandbox sees only its own');
+    r = await put(Object.assign(shaped, { id, name: 'Heart tag v3' })); ok(r.status === 200 && r.body.hash === first.hash && st.doc('Charm_Designs/' + r.body.id + '/versions', '1').faces.front.items[2].fill.join() === '0,0,1', 'F (a version of the first design) an editor shape painted `true`: the cloud keeps it as its role\'s colour, with the same hash (the page and the cloud share the rule)');
     const gen = () => (st.doc('Charm_Nest_Rev', 'placement') || {}).n || 0, g0 = gen();
     await put(design()); await call({ op: 'designList' }); await call({ op: 'designGet', id });
     eq(gen(), g0, 'F no design op raises the placement counter (nothing a placement answer is made from)');

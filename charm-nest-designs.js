@@ -138,8 +138,13 @@
     }
     return subs;
   }
-  /** A paint: [r, g, b] from 0 to 1, a CSS colour word or #hex, null for none; undefined when it is none of these. */
-  function cleanPaint(v) {
+  /* The editor's shape tools say only "painted" (stroke: true / fill: true): the role's own colour, the pen the laser knows it by (cut black, line red, hatch blue, art black).
+     Kept as that colour, so a part painted `true` and the same part painted its role's colour are one design with one hash. */
+  const ROLE_RGB = { cut: [0, 0, 0], line: [1, 0, 0], hatch: [0, 0, 1], art: [0, 0, 0] };
+  const paintOf = (v, role) => (v === true ? (ROLE_RGB[role] || ROLE_RGB.art).slice() : v == null || v === false || v === "none" ? null : v);
+  /** A paint: [r, g, b] from 0 to 1, a CSS colour word or #hex, null for none, `true` the role's colour; undefined when it is none of these. */
+  function cleanPaint(v, role) {
+    if (v === true) return paintOf(v, role);
     if (v == null || v === false || v === "none") return null;
     if (Array.isArray(v)) return v.length === 3 && v.every(x => fin(x) && x >= 0 && x <= 1) ? v.map(r3) : undefined;
     if (typeof v === "string" && /^(?:#[0-9a-f]{3,8}|[a-z]{3,20})$/i.test(v.trim())) return v.trim().toLowerCase();
@@ -168,7 +173,7 @@
     if (x.matrix != null) { if (!nums(x.matrix, 6)) return no(at + "its matrix is six numbers"); out.matrix = x.matrix.slice(); }
     if (x.pivot != null && nums(x.pivot, 2)) out.pivot = x.pivot.slice();
     if (x.bbox != null && nums(x.bbox, 4)) out.bbox = x.bbox.slice();
-    for (const k of ["stroke", "fill"]) if (x[k] !== undefined) { const p = cleanPaint(x[k]); if (p === undefined) return no(at + `its ${k} is not a colour ([r, g, b] from 0 to 1)`); out[k] = p; }
+    for (const k of ["stroke", "fill"]) if (x[k] !== undefined) { const p = cleanPaint(x[k], role); if (p === undefined) return no(at + `its ${k} is not a colour ([r, g, b] from 0 to 1)`); out[k] = p; }
     if (x.lwPt != null) { if (!fin(x.lwPt) || x.lwPt < 0 || x.lwPt > 20) return no(at + "its line width is 0 to 20 pt"); out.lwPt = r3(x.lwPt); }
     if (x.weightMm != null) { if (!fin(x.weightMm) || Math.abs(x.weightMm) > 5) return no(at + "its weight is −5 to 5 mm"); out.weightMm = r3(x.weightMm); }
     if (x.even === true) out.even = true;
@@ -304,7 +309,7 @@
         if (hid && it.role !== "cut") continue;
         const subs = it.subpaths || (typeof it.d === "string" ? fromD(it.d) : []);
         const placed = it.kind === "text" ? subs : transform(subs, mul(P, Array.isArray(it.matrix) ? it.matrix : matrixOf(Object.assign({}, it, { subpaths: subs }))));
-        list.push({ id: it.id, kind: it.kind || "path", role: it.role, fill: it.fill == null ? null : it.fill, stroke: it.stroke == null ? null : it.stroke, lwPt: it.lwPt == null ? null : it.lwPt, even: !!(it.even || it.evenOdd || it.fillRule === "evenodd"), subpaths: placed });
+        list.push({ id: it.id, kind: it.kind || "path", role: it.role, fill: paintOf(it.fill, it.role), stroke: paintOf(it.stroke, it.role), lwPt: it.lwPt == null ? null : it.lwPt, even: !!(it.even || it.evenOdd || it.fillRule === "evenodd"), subpaths: placed });
       }
     };
     for (const f of FACES) if (faces && faces[f]) walk(faces[f].items, I, false, out[f] = []);
