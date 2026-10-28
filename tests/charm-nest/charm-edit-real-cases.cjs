@@ -3,10 +3,15 @@
 //   fixtures/PERCHED_43564.ai   the drawing of SILHOUETTE_34560 (order 4211572095: a bird, its hatch and three cut lines; engraved on the BACK, "T")
 //   fixtures/TINY_BAR_7427.ai   the drawing of TINY BAR_7427 (order 4203083230: engraved on the FRONT, "33.47765N 86.80020W" in Angelina)
 //   fixtures/tinybar-front-art-4203083230.json   the front artwork record Paul saved for that bar (Charm_Pool_Art): his photo traced in 8 greys, 250 KB of paths
+//   A  EDITSAVE ("Not saved · Hatched part: it falls outside the piece's outline … · Cut line: …", the editor closed and his picture lost): A0 (node) the bird's front handed back "changed" but
+//      untouched (as given, and with its matrix written out again) is no change and is never refused (it read exactly Paul's "Cut line" refusal before); a part really moved still is. On the page:
+//      the bird opened from its BACK card, a real picture traced and placed on its FRONT, grouped with the bird's own hatch: saved, only the picture in the record (A1); a part off the metal: the
+//      editor stays OPEN with the work and says which part and why, nothing sent (A2), and once it is deleted the save is kept (A3); a save the cloud refuses after the editor closed opens the
+//      editor again on the work with the reason (A4), and Save then keeps it (A5)
 //   B  APPROVEHIT ("Pressing the green Approve does nothing"): his photo on the bar's front saved in the Charm Editor, then ONE real mouse press on Approve (a press at the button's place on the
 //      screen, not a script's click: what was missed before) approves the words and the art and writes the front's file with every grey in it; the same on the bird's BACK after a part was
 //      added there in the editor
-//   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/charm-edit-real-cases.cjs      (CR_ONLY=B; SHOTS=<dir> for the screenshots)
+//   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/charm-edit-real-cases.cjs      (CR_ONLY=A0, A or B; SHOTS=<dir> for the screenshots)
 'use strict';
 const path = require('node:path'), fs = require('node:fs');
 const ROOT = path.join(__dirname, '../..'), FIX = path.join(__dirname, 'fixtures');
@@ -25,6 +30,29 @@ function seedWorld(R) {
   R.ORDERS.bar = { rid: '4290000151', sku: 'TINY BAR_7427', listing: '1890000151', title: 'Tiny Bar Necklace, Personalized Coordinates Bar Necklace in Sterling Silver', buyer: 'Name Thirteen', placed: { day: 0, h: 10, m: 20 }, ship: 5,
     variations: [{ name: 'Metal choice', value: 'Silver' }, { name: 'Chain length', value: '16"' }, { name: 'Font', value: 'Angelina' }], personalization: ['33.47765N 86.80020W'] };
   R.EXPECT_JOBS.sil = 1; R.EXPECT_JOBS.bar = 1;
+}
+
+/* ═══ A0 · the model, on the bird's real drawing ═══ */
+async function partModel() {
+  global.window = global; global.self = global;
+  global.PDFLib = require(path.join(ROOT, 'vendor/pdf-lib-1.17.1.min.js')); require(path.join(ROOT, 'charm-nest-pdf.js'));
+  global.CharmNestVector = require(path.join(ROOT, 'charm-nest-vector.js')); global.CharmNestGeom = require(path.join(ROOT, 'charm-nest-geom.js'));
+  const AE = require(path.join(ROOT, 'charm-nest-art-edit.js')), CE = require(path.join(ROOT, 'charm-nest-charm-editor.js')), P = global.CharmNestPDF, G = global.CharmNestGeom, M = CE.model;
+  const parsed = await P.parseSource(fs.readFileSync(path.join(FIX, 'PERCHED_43564.ai')), 'PERCHED_43564.ai'), charm = P.groupCharms(parsed).charms[0];
+  const view = G.backView(charm, G.viewOptionsFor({ charmUp: charm.upAngle, entry: { upAngle: 267.5 }, face: 'front' })), items = AE.itemsOf(charm, view, 'front');
+  const enc = (changed, placed) => { try { return { rec: AE.encode({ removed: [], changed, added: [] }, { charm, view, face: 'front', placed }) }; } catch (e) { return { refused: e.refused }; } };
+  // every part of the front handed back "changed" exactly as given; then each with a matrix written again (a group's turn about a point and its inverse on the part: the same drawing)
+  const plain = {}; for (const it of items) plain[it.id] = Object.assign({}, it);
+  const Gm = M.mul(M.tr(-7, 3), M.mul(M.rotM(33), M.tr(7, -3))), Gi = M.inv(Gm), wrapped = {};
+  for (const it of items) wrapped[it.id] = Object.assign({}, it, { matrix: M.mul(Gi, Gm).map(v => v + 1e-12) });
+  const a = enc(plain, true), b = enc(wrapped, true);
+  // a real change is still a change: the hatch moved a millimetre off its place stays refused off the metal only when it leaves the metal, the cut line moved on a placed piece is refused
+  const hatch = items.find(i => i.role === 'hatch'), cut = items.find(i => i.role === 'cut' && i.name !== 'x');
+  const moved = enc({ [hatch.id]: Object.assign({}, hatch, { tx: 2.835 }), [cut.id]: Object.assign({}, cut, { tx: 2.835 }) }, true);
+  check(`A0 the bird's front (${items.length} parts: ${items.map(i => i.role).join(', ')}) handed back "changed" but untouched, as given and with its matrix written out again: no change in the record and nothing refused (it read "Hatched part … · Cut line: a cut line is the shape the sheet was nested with" for Paul); a part really moved is still a change (${moved.refused ? moved.refused.map(r => r.id === 'cut' ? 'cut line refused' : 'hatch ' + r.why.slice(0, 20)).join(', ') : 'kept'})`,
+    a.rec && !Object.keys(a.rec.changed).length && !a.rec.cut && b.rec && !Object.keys(b.rec.changed).length && !b.rec.cut && !!moved.refused && moved.refused.some(r => r.id === 'cut'),
+    JSON.stringify({ a: a.refused || Object.keys(a.rec.changed), b: b.refused || Object.keys(b.rec.changed), moved }).slice(0, 600));
+  delete global.window; delete global.self;
 }
 
 async function partPage() {
@@ -47,6 +75,54 @@ async function partPage() {
     for (const s of sheets) st.put('Charm_Nest_Sheets', s.sheetId, { sheetId: s.sheetId, poolIds: s.poolIds, backPool: [] });
     check(`B0 the world: the bar is engraved on its front ("${made.bar.jobs.map(j => j.text).join()}", ${made.bar.jobs.map(j => j.fontKey).join()}), the bird on its back ("${made.sil.jobs.map(j => j.text).join()}"), both fitted, on a sheet`,
       made.bar.jobs.length === 1 && made.bar.jobs[0].face === 'front' && made.bar.jobs[0].fitted && made.sil.jobs.length === 1 && made.sil.jobs[0].face === 'back' && made.sil.jobs[0].fitted, JSON.stringify({ bar: made.bar.jobs, sil: made.sil.jobs }));
+
+    if (!ONLY || ONLY === 'A') {
+      /* ── A · EDITSAVE: the bird, opened from its BACK card, a picture placed on its FRONT ── */
+      await page.evaluate(() => new Promise(res => { const cv = document.createElement('canvas'); cv.width = 300; cv.height = 220; const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 300, 220); for (let i = 0; i < 40; i++) { g.fillStyle = `rgb(${i * 6},${i * 6},${i * 6})`; g.beginPath(); g.arc(30 + (i * 37) % 260, 30 + (i * 53) % 170, 8 + i % 15, 0, 7); g.fill(); } cv.toBlob(b => { window.__pic = new File([b], 'photo.png', { type: 'image/png' }); res(); }, 'image/png'); }));
+      const open = async () => { await R.openEngraveDetail(w, 'sil', { face: 'back' }); await R.settle(page, 700); await page.$eval(Q + ' .egCharmEdit', b => b.click()); await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page); };
+      const toFront = async () => { await page.click('.ce-root [data-face="front"]'); await settleP(page); };
+      const ed = () => page.evaluate(() => { const E = CharmEditor.current; if (!E) return null; const ids = []; const walk = l => l.forEach(i => { ids.push(i.id); if (i.children) walk(i.children); }); walk(E.items('front')); const r = document.querySelector('.ce-root .ce-refuse'); return { face: E.face(), ids, refuse: r ? r.textContent : '', sel: E.selection() }; });
+      await open(); const s0 = await jobOf(); await toFront();
+      await page.evaluate(() => { const st = document.querySelector('.ce-root .ce-stage'), r = st.getBoundingClientRect(), dt = new DataTransfer(); dt.items.add(__pic); const at = { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, dataTransfer: dt }; st.dispatchEvent(new DragEvent('dragenter', at)); st.dispatchEvent(new DragEvent('dragover', at)); st.dispatchEvent(new DragEvent('drop', at)); });
+      await page.waitForSelector('.ce-root .cei .cei__card', { timeout: 20000 });
+      await page.waitForFunction(() => { const c = CharmNestCeImage.current(); return c && !c.working() && document.querySelector('.cei [data-wait]').hidden; }, null, { timeout: 30000 });
+      await page.click('.cei [data-do="place"]'); await page.waitForFunction(() => !document.querySelector('.ce-root .cei .cei__card'), null, { timeout: 60000 }); await settleP(page);
+      // (a group made round the bird's own hatch and the picture, ⌘G: the hatch's parent and place change, what it draws does not)
+      const grouped = await page.evaluate(() => { const E = CharmEditor.current, img = E.items().find(i => i.kind === 'group'), hatch = E.items().find(i => i.role === 'hatch' && i.source === 'master'); E.ctx.select([hatch.id, img.id]); return { img: img.id, hatch: hatch.id, n: img.children.length }; });
+      await page.keyboard.press('Control+g'); await settleP(page);
+      const ch1 = await page.evaluate(() => { const r = CharmEditor.current.result().changes.front; return { changed: Object.keys(r.changed), added: r.added.length }; });
+      const puts1 = artPuts(), note1 = await saveEditor();
+      const rec1 = st.doc('Charm_Pool_Art', s0.pid + '~front');
+      check(`A1 Paul's case: the bird opened from its BACK card, a picture traced and placed on its FRONT (${grouped.n} greys) and put in one group with the bird's own hatch (⌘G: the editor lists ${ch1.changed.length} master part(s) as changed): Save keeps the picture and nothing else ("${note1}"): no part of the master in the record, no cut line, the bird's hatch and cut lines untouched`,
+        /^Front artwork saved/.test(note1 || '') && artPuts() === puts1 + 1 && !!rec1 && !Object.keys(rec1.changed || {}).length && !(rec1.removed || []).length && !rec1.cut && (rec1.added || []).length === grouped.n, JSON.stringify({ grouped, ch1, note1, rec: rec1 && { changed: Object.keys(rec1.changed || {}), removed: rec1.removed, cut: rec1.cut, added: (rec1.added || []).length } }));
+      // A2 · a part that truly cannot be kept: the editor stays open and says which and why; the rest of the work stays
+      await open(); await toFront();
+      await page.evaluate(() => { const E = CharmEditor.current, f = E.frame(), x = f.x0 - 6, y = f.y0 + f.hPt * 0.5, s = 2; E.ctx.addItems([{ kind: 'path', role: 'hatch', name: 'Star off the metal', fill: true, stroke: false, subpaths: [[['m', [x, y - s]], ['l', [x + s, y + s]], ['l', [x - s, y + s]], ['h']]], tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 }, { kind: 'path', role: 'hatch', name: 'Dot on the bird', fill: true, stroke: false, subpaths: [[['m', [f.x0 + f.wPt * 0.45, f.y0 + f.hPt * 0.55]], ['l', [f.x0 + f.wPt * 0.47, f.y0 + f.hPt * 0.55]], ['l', [f.x0 + f.wPt * 0.46, f.y0 + f.hPt * 0.57]], ['h']]], tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 }], { select: false }); E.ctx.commit('two'); });
+      const puts2 = artPuts();
+      await page.click('.ce-root [data-act="save"]');
+      const r2 = await until(async () => { const e = await ed(); return e && e.refuse ? e : null; }, 15000);
+      await R.shot(w, 'CR-A2-editor-says-why');
+      const offId = r2 && await page.evaluate(() => { let id = null; const walk = l => l.forEach(i => { if (i.name === 'Star off the metal') id = i.id; if (i.children) walk(i.children); }); walk(CharmEditor.current.items('front')); return id; });
+      check(`A2 a part placed off the metal: Save leaves the editor OPEN with all the work (${r2 ? r2.ids.length : 0} parts on the front), says "${r2 ? r2.refuse.replace(/\s+/g, ' ').slice(0, 130) : ''}…", that part selected, and sends nothing`,
+        !!r2 && /Not saved yet/.test(r2.refuse) && /Star off the metal/.test(r2.refuse) && /outside the piece's outline/.test(r2.refuse) && !!offId && r2.sel.includes(offId) && r2.ids.length >= 6 && artPuts() === puts2, JSON.stringify(r2));
+      await page.click('.ce-root .ce-refuse [data-ask]'); await settleP(page);
+      await page.keyboard.press('Delete'); await settleP(page);
+      const note2 = await saveEditor(), rec2 = st.doc('Charm_Pool_Art', s0.pid + '~front');
+      check(`A3 … Keep editing, the part deleted, Save: kept ("${note2}"), the dot with the earlier picture`, /^Front artwork saved/.test(note2 || '') && !!rec2 && rec2.added.length === grouped.n + 1 && rec2.added.some(a => a.id && !/^img/.test(a.id)), JSON.stringify({ note2, n: rec2 && rec2.added.length }));
+      // A4 · the cloud refuses after the editor closed (another computer saved first): the editor opens again on the work, says why, and a second Save keeps it
+      await open(); await toFront();
+      await page.evaluate(() => { const E = CharmEditor.current, f = E.frame(), x = f.x0 + f.wPt * 0.5, y = f.y0 + f.hPt * 0.6; E.ctx.addItems([{ kind: 'path', role: 'hatch', name: 'Second dot', fill: true, stroke: false, subpaths: [[['m', [x, y]], ['l', [x + 0.6, y]], ['l', [x + 0.3, y + 0.6]], ['h']]], tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 }], { select: false }); E.ctx.commit('dot');
+        const AE = CharmNestArtEdit, real = AE.save; let once = true; AE.save = function () { if (once) { once = false; return Promise.reject(Object.assign(new Error("This piece's artwork was edited elsewhere. Reopen it before saving your changes."), { conflict: true })); } return real.apply(AE, arguments); }; window.__realSave = real; });
+      await page.click('.ce-root [data-act="save"]');
+      const r4 = await until(async () => { const e = await ed(); return e && /edited elsewhere/.test(e.refuse) ? e : null; }, 20000);
+      await R.shot(w, 'CR-A4-reopened');
+      const kept4 = r4 && r4.ids.length && await page.evaluate(() => { let n = 0; const walk = l => l.forEach(i => { if (i.name === 'Second dot') n++; if (i.children) walk(i.children); }); walk(CharmEditor.current.items('front')); return n; });
+      check(`A4 a save the cloud refused after the editor closed: the editor opens again with the work (the new dot there) and says "${r4 ? r4.refuse.replace(/\s+/g, ' ').slice(0, 110) : ''}…"`, !!r4 && kept4 === 1 && /Not saved/.test(r4.refuse), JSON.stringify(r4));
+      await page.click('.ce-root .ce-refuse [data-ask]'); await settleP(page);
+      const note4 = await saveEditor(), rec4 = st.doc('Charm_Pool_Art', s0.pid + '~front');
+      await page.evaluate(() => { CharmNestArtEdit.save = window.__realSave; });
+      check(`A5 … Save again: kept ("${note4}"), the dot added to the record`, /^Front artwork saved/.test(note4 || '') && !!rec4 && rec4.added.length === grouped.n + 2, JSON.stringify({ note4, n: rec4 && rec4.added.length }));
+    }
 
     if (!ONLY || ONLY === 'B') {
       /* ── B1 · the bar: Paul's photo on its front, saved; one real press on Approve ── */
@@ -102,7 +178,8 @@ async function partPage() {
 }
 
 (async () => {
-  await partPage();
+  if (!ONLY || ONLY === 'A' || ONLY === 'A0') await partModel();
+  if (ONLY !== 'A0') await partPage();
   const bad = RESULTS.filter(r => !r.ok);
   console.log(`\n${RESULTS.length - bad.length}/${RESULTS.length} checks pass`);
   process.exit(bad.length ? 1 : 0);

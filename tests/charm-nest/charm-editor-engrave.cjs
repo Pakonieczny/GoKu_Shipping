@@ -11,7 +11,7 @@
 //      5 pt and moved into it with the arrow keys; Save → the Charm_Pool_Art record (who, what removed, what added), the piece's charm carries the new parts (a hash of its own, "~ae"), the work
 //      area's front art draws them, the card's Front thumbnail is drawn again, the approved front is withdrawn in Engrave.artChanged's words, the back keeps its words and its "Show front" shows
 //      the new front, and CharmNestPDF.buildSheet writes the new outlines as blue hatching on that piece while the other calendar's drawing is byte for byte what it was. Cancel writes nothing;
-//      the editor opens again on the saved edit, and a second edit keeps the first; a part off the metal is refused in the work area's note, and nothing of that edit (front or back) is saved
+//      the editor opens again on the saved edit, and a second edit keeps the first; a part off the metal is refused over the open editor (EDITSAVE: the work kept there), and nothing of that edit (front or back) is saved
 //      (27 Oct 2026, Paul: "the thickness of the Red engrave line is too thick, I need ... fine font thickness control over each font") the 25 made 0.04 mm bolder with the Weight field
 //      and one day square's red line thinned to 0.05 mm with the Stroke field (drawn at exactly that width): the record keeps the weight with the outlines AT it and the line's width,
 //      the sheet's file engraves those very outlines and writes that width, and the editor opened again reads both back
@@ -401,11 +401,13 @@ async function partB(kit) {
     await page.mouse.click(inB.x, inB.y); await settleP(page);
     await page.keyboard.type('HI'); await page.keyboard.press('Enter'); await settleP(page);
     await page.click('.ce-root [data-act="save"]'); await settleP(page); await R.settle(page, 1200);
-    const n3 = await page.evaluate(() => { const n = document.querySelector('#egQueue .rvItem[data-kind=placement] .backHost .egArtNote'); return { text: n ? n.textContent : '', bad: !!(n && n.classList.contains('bad')), open: !!document.querySelector('.ce-root') }; });
+    // (EDITSAVE, Paul 28 Oct 2026: "the editor closed, nothing he did shows": a save that cannot be kept leaves the editor OPEN with the work and says why in it; nothing is sent)
+    const n3 = await page.evaluate(() => { const r = document.querySelector('.ce-root .ce-refuse'); return { text: r ? r.textContent : '', open: !!document.querySelector('.ce-root'), hi: !!(CharmEditor.current && CharmEditor.current.items('back').some(i => i.text === 'HI')) }; });
     await R.shot(w, 'CE-7-refused-note');
-    check('B20 a word put off the metal is refused in the work area\'s note, in the module\'s words, and nothing of that edit is saved: not the front, not the back\'s valid addition',
-      n3.bad && /^Not saved/.test(n3.text) && /X: it falls outside the piece's outline/.test(n3.text) && !n3.open && artPuts() === puts2 && st.doc('Charm_Pool_Art', PID + '~front').at === rec2At && !st.doc('Charm_Pool_Art', PID),
+    check('B20 a word put off the metal is refused over the open editor, in the module\'s words, the work kept (the back\'s HI too), and nothing of that edit is saved: not the front, not the back\'s valid addition',
+      n3.open && n3.hi && /Not saved yet/.test(n3.text) && /X: it falls outside the piece's outline/.test(n3.text) && artPuts() === puts2 && st.doc('Charm_Pool_Art', PID + '~front').at === rec2At && !st.doc('Charm_Pool_Art', PID),
       JSON.stringify({ n3, puts: artPuts() - puts2 }));
+    await page.evaluate(() => { const b = document.querySelector('.ce-root .ce-refuse [data-ask]'); if (b) b.click(); if (CharmEditor.current) CharmEditor.current.end(false); }); await R.settle(page, 300);
     /* ── a part hidden with the eye is not engraved (what the person sees is what the laser does) ── */
     await R.openEngraveDetail(w, 'cal', { face: 'front' }); await R.settle(page, 900);
     await page.click(Q + ' .egCharmEdit');

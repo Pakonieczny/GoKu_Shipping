@@ -98,6 +98,12 @@ const nested = v => Array.isArray(v) ? v.some(x => Array.isArray(x) || nested(x)
     r = await put({ added: [{ id: 'hole', role: 'cut', d: 'M1 1L2 1L2 2Z', stroke: [0, 0, 0], fill: null }] }, { expectedAt: at });
     ok(r.status === 409 && r.body.cutRefused && /nested with/.test(r.body.error) && /take the piece off its sheet/.test(r.body.error), 'C a cut line on a piece on a sheet is refused, saying what a re-nest needs: ' + r.body.error);
     r = await put({ removed: ['1-abc'], cutIds: ['1-abc'] }, { expectedAt: at }); ok(r.status === 409 && r.body.cutRefused, 'C a cut line removed: refused too');
+    // (EDITSAVE, Paul 28 Oct 2026, order 4211572095) a cut line sent as changed whose path is still the master's own (`from`: the page's hash of the master part's path) is no change: kept out of the
+    //  record and never refused; the same line really changed is refused as before
+    { const D = 'M1 1L9 1L9 9Z', cut = d => ({ removed: ['1-abc'], changed: { '7-cut': { kind: 'path', role: 'cut', d, stroke: [0, 0, 0], fill: null, from: AE.fnvOf(D) } }, cutIds: ['7-cut'] });
+      r = await put(cut(D), { expectedAt: at }); const kd = st.doc('Charm_Pool_Art', ID + '~front');
+      ok(r.status === 200 && !kd.cut && !kd.cutIds.length && !('7-cut' in kd.changed) && !JSON.stringify(kd).includes('"from"'), 'C EDITSAVE: a cut line handed back unchanged (its path still the master\'s) is left out, and the save of a piece on a sheet is kept: ' + JSON.stringify(r.body).slice(0, 200));
+      at = kd.at; r = await put(cut('M1 1L9.5 1L9 9Z'), { expectedAt: at }); ok(r.status === 409 && r.body.cutRefused, 'C EDITSAVE: ... the same cut line really changed is still refused'); }
     // a cut edit saved BEFORE the piece was nested stands, and the same edit sent again is no change
     r = await call({ op: 'artPut', poolId: ID2, face: 'front', by: 'Ana_M', expectedAt: st.doc('Charm_Pool_Art', ID2 + '~front').at, art: art({ added: [{ id: 'hole', role: 'cut', d: 'M1 1L2 1L2 2Z', stroke: [0, 0, 0], fill: null }] }) });
     const cutDoc = st.doc('Charm_Pool_Art', ID2 + '~front'); ok(r.status === 200 && cutDoc.cut === true && /^[0-9a-f]{16}$/.test(cutDoc.cutKey), 'C a cut edit of a piece not on a sheet yet is kept (cut, cutKey)');

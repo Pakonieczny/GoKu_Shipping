@@ -28,6 +28,12 @@
  *     opts.host                      the element the workspace is put in (default the page's body): a modal <dialog> open over the page (the order window) sits in the top layer, over
  *                                    anything in the body, so a caller opening the editor from one hands it that dialog
  *
+ *     opts.check(result) -> Promise<null | { title?, text?, lines:[{ face?, id?, text }] }>   (EDITSAVE, Paul 28 Oct 2026: "the editor closed, nothing he did shows"): asked when Save is
+ *                                    pressed, before the workspace closes; lines = what the caller cannot keep: the workspace stays open with all the work, the first part named selected
+ *                                    on its face, and says each line plainly ("Not saved yet"). null: saved as before
+ *     opts.base                      { front?, back? } FaceDocs the changes are measured from (default: opts.faces): a save refused after the workspace closed is opened again with the
+ *                                    work as faces and what it was opened on as base, so the changes are still changes;  opts.notice  { title?, text?, lines } said as the workspace opens
+ *
  *   FaceDoc  { face:'front'|'back', unitPt:true, frame:{ x0, y0, wPt, hPt }, items:[Item] }      points, y down; the frame is the charm's bounding view (shown in mm)
  *   Item     { id, kind:'path'|'text'|'group', role:'cut'|'line'|'hatch'|'art', source:'master'|'engrave'|'added', name, hidden, locked,
  *              subpaths:[[op,...],...], stroke, fill, lwPt,              (path; ops ["m",[x,y]] ["l",[x,y]] ["c",p1,p2,p3] ["h"])
@@ -1293,6 +1299,8 @@
 .ce-ask__card h3{ margin:0 0 8px; font-family:var(--serif); font-weight:500; font-size:22px; line-height:1.15; color:var(--ink); }
 .ce-ask__card p{ margin:0 0 18px; font-size:12.5px; line-height:1.6; color:var(--muted); }
 .ce-ask__b{ display:flex; justify-content:flex-end; gap:10px; }
+.ce-refuse .ce-ask__card{ width:min(460px,100%); border-color:#b0563f; }   /* (EDITSAVE, 28 Oct 2026: what a save cannot keep, said over the open work) */
+.ce-refuse__list{ margin:0 0 12px; padding:0 0 0 18px; font-size:12.5px; line-height:1.55; color:#8a3a26; } .ce-refuse__list li{ margin:0 0 6px; } .ce-refuse__list b{ font-weight:600; }
 .ce-root :focus-visible{ outline:2px solid var(--gold); outline-offset:1px; }
 .ce-root .ce-size input:focus-visible,.ce-root .ce-num input:focus-visible{ outline:none; }
 /* ── the extension points (28 Oct 2026): a panel slot right of the Layers, the property bar's command buttons, a file held over the work area, a line said over it ── */
@@ -1421,8 +1429,9 @@
     try { const o = JSON.parse((root.localStorage && root.localStorage.getItem('ce.opts')) || 'null'); if (o) for (const k of ['grid', 'snapGrid', 'smart']) if (typeof o[k] === 'boolean') S[k] = o[k]; } catch (e) { /* storage blocked or empty: the defaults */ }
     for (const f of ['front', 'back']) {
       const fd = opts.faces && opts.faces[f]; if (!fd || typeof fd !== 'object') continue;
-      const items = prepIn(fd.items, lockRoles);
-      S.faces[f] = { face: f, frame: frameOf(fd.frame, items), items, base: items, docIn: fd };
+      const items = prepIn(fd.items, lockRoles), bd = opts.base && opts.base[f] && Array.isArray(opts.base[f].items) ? opts.base[f] : null;
+      // (EDITSAVE: opts.base, the faces the changes are measured from when the work handed in is a save the cloud refused, opened again with everything the person made: its changes stay changes)
+      S.faces[f] = { face: f, frame: frameOf((bd && bd.frame) || fd.frame, items), items, base: bd ? prepIn(bd.items, lockRoles) : items, docIn: bd || fd };
     }
     if (!S.faces.front && !S.faces.back) S.faces.front = { face: 'front', frame: { x0: 0, y0: 0, wPt: 72, hPt: 72 }, items: [], base: [], docIn: {} };
     S.face = S.faces[opts.startFace] ? opts.startFace : S.faces.front ? 'front' : 'back';
@@ -3480,11 +3489,43 @@
       }
       wentBack = true; finish(null);
     }
-    function save() {
-      if (S.ask) return;
+    /* EDITSAVE (Paul, 28 Oct 2026, order 4211572095: "The editor closed, nothing he did shows on the card", the card saying "Not saved · …" after the work was gone): the caller's
+       opts.check(result) is asked BEFORE the workspace closes. A save it would refuse leaves the editor open, everything the person made still in it, and says plainly which part and why
+       (refuse); only a save it would keep closes the workspace. */
+    let checking = false;
+    async function save() {
+      if (S.ask || checking || finished) return;
       if (S.editing) closeEditor();
       abandon();
-      finish(result());
+      const r = result();
+      if (typeof opts.check === 'function') {
+        checking = true; const sb = $('[data-act="save"]'); if (sb) { sb.disabled = true; sb.setAttribute('aria-busy', 'true'); }
+        let no = null;
+        try { no = await opts.check(r); } catch (e) { no = { lines: [{ text: String((e && e.message) || e || 'the save could not be checked') }] }; }
+        finally { checking = false; if (sb) { sb.disabled = false; sb.removeAttribute('aria-busy'); } }
+        if (finished) return;
+        if (no && Array.isArray(no.lines) && no.lines.length) { wentBack = false; refuse(no); return; }
+      }
+      finish(r);
+    }
+    /** What cannot be kept, said over the open workspace: { title?, text?, lines: [{ face?, id?, text }] }. The first part named is selected on its face (and the view goes to that face),
+     *  so the person sees which one it is; nothing of the work changes. One button: Keep editing. */
+    function refuse(no) {
+      const lines = (no.lines || []).filter(l => l && l.text).slice(0, 8), first = lines.find(l => l.id != null && S.faces[l.face || S.face]);
+      if (first) {
+        const f = first.face && S.faces[first.face] ? first.face : S.face; if (f !== S.face) switchFace(f);
+        const ids = lines.filter(l => (l.face || f) === f && l.id != null).map(l => String(l.id)).filter(id => { const e = entry(id); return e && !e.it.locked; });
+        if (ids.length) setSel(ids);
+      }
+      const box = doc.createElement('div'); box.className = 'ce-ask ce-refuse';
+      const title = no.title || 'Not saved yet';
+      box.innerHTML = `<div class="ce-ask__card" role="alertdialog" aria-modal="true" aria-label="${esc(title)}"><h3>${esc(title)}</h3>`
+        + `<ul class="ce-refuse__list">${lines.map(l => `<li>${l.face ? `<b>${l.face === 'back' ? 'Back' : 'Front'}</b> · ` : ''}${esc(l.text)}</li>`).join('')}</ul>`
+        + `<p>${esc(no.text || 'Everything you made is still here. Change or delete what is listed, then press Save again.')}</p><div class="ce-ask__b"><button class="ce-btn ce-btn--ink" type="button" data-ask="yes">Keep editing</button></div></div>`;
+      win.appendChild(box);
+      S.ask = { done: () => { if (!S.ask) return; S.ask = null; box.remove(); try { win.focus({ preventScroll: true }); } catch (e) { /* fine */ } } };
+      box.addEventListener('click', ev => { if (ev.target.closest('[data-ask]') || ev.target === box) S.ask.done(); });
+      requestAnimationFrame(() => { const b = box.querySelector('[data-ask]'); if (b) b.focus(); });
     }
     let finished = false;
     function finish(v) {
@@ -3841,6 +3882,8 @@
       if (p && !(root.innerWidth && root.innerWidth <= 900)) xPanel(p.id);
     }
     Promise.resolve().then(() => { for (const fn of X.onOpen) { if (finished) break; try { fn(ectx); } catch (er) { xErr('onOpen', er); } } });
+    // (EDITSAVE: a save the cloud refused after the workspace had closed opens it again with the work, and says why at once: opts.notice, as refuse says it)
+    if (opts.notice && Array.isArray(opts.notice.lines) && opts.notice.lines.length) root.requestAnimationFrame(() => { if (!finished && !S.ask) refuse(opts.notice); });
 
     /* read-outs for tests and the caller; nothing here changes the work except through the same calls the buttons make */
     return {

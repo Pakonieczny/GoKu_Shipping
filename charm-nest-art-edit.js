@@ -378,6 +378,31 @@
    *  them so the words opened again say it and a new weight grows them by the difference. The outlines in `d` already have it: nothing here or in the laser file applies it again. */
   const weightRec = leaf => { const w = +leaf.weightMm; return Number.isFinite(w) && Math.abs(w) >= 0.0005 && Math.abs(w) <= 5 ? { weightMm: Math.round(w * 1000) / 1000 } : {}; };
   const paintRec = p => Object.assign({ stroke: p.stroke ? p.stroke.map(v => Math.round(v * 1000) / 1000) : null, fill: p.fill ? p.fill.map(v => Math.round(v * 1000) / 1000) : null }, p.lwPt ? { lwPt: Math.round(p.lwPt * 1000) / 1000 } : {}, p.even ? { even: true } : {}, p.artGrey ? { artGrey: true } : {});
+  /* EDITSAVE (Paul, 28 Oct 2026, order 4211572095: a picture placed on the bird's front, Save, and the save refused for the bird's hatch and its cut lines, which he never touched). A part of
+     the master handed back "changed" whose path is the master's own (every point within a thousandth of a point, the same operators) and whose paint is as the editor was given it is NO change,
+     however it got into the list (a group made round it, a matrix written again, a reorder): it is left out of the record, never refused, so it can never stop the rest of the save. */
+  const SAME_PT = 0.001;
+  function sameSubs(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      const p = a[i], q = b[i]; if (!Array.isArray(p) || !Array.isArray(q) || p.length !== q.length) return false;
+      for (let j = 0; j < p.length; j++) {
+        const o = p[j], r = q[j]; if (!o || !r || o[0] !== r[0] || o.length !== r.length) return false;
+        for (let k = 1; k < o.length; k++) if (!(Math.abs(+o[k][0] - +r[k][0]) <= SAME_PT && Math.abs(+o[k][1] - +r[k][1]) <= SAME_PT)) return false;
+      }
+    }
+    return true;
+  }
+  const sameRgb = (a, b) => (a == null) === (b == null) && (a == null || (a.length >= 3 && b.length >= 3 && [0, 1, 2].every(i => Math.abs(+a[i] - +b[i]) <= 0.001)));
+  /** The leaf's paint is the master part's as the editor was given it (itemsOf: a hatch shown blue, a line in its own pen; nothing said is its own). */
+  function samePaint(leaf, m) {
+    const f = colour(leaf.fill), s = colour(leaf.stroke), shownF = m.fill ? (m.hatchBlue ? BLUE : (m.fillRGB || BLACK).slice(0, 3)) : null, shownS = m.stroke ? (m.strokeRGB || BLACK).slice(0, 3) : null;
+    if (f !== undefined && f !== true && !sameRgb(f, shownF)) return false;
+    if (s !== undefined && s !== true && !sameRgb(s, shownS)) return false;
+    if (leaf.lwPt != null && Math.abs(+leaf.lwPt - (+m.lwPt || 0)) > 0.001 && !(+leaf.lwPt === CUT_HAIRLINE_PT && !m.lwPt)) return false;
+    if ((+leaf.weightMm || 0) !== (+m.artWeightMm || 0)) return false;
+    return leaf.even == null || !!leaf.even === String(m.paintOp || "").endsWith("*");
+  }
   /** The record to save for one face of one piece, from the editor's changes. Throws { refused: [{ id, why }] } when any part cannot be kept as asked: nothing is half saved.
    *  ctx = { charm (the piece's charm on the page, edited or not), view (the face's view the editor drew: job.view), face, placed (the piece is on a sheet) } */
   function encode(changes, ctx) {
@@ -400,16 +425,19 @@
     for (const [id, item] of Object.entries(changes.changed || {})) {
       const i = at.get(id); if (i == null) { no(id, WHY.gone); continue; }
       if (rec.removed.includes(id)) { no(id, "it is removed and changed at once"); continue; }
-      if (face === "back") { no(id, WHY.back); continue; }
-      const m = base.members[i]; if (!isPath(m)) { no(id, WHY.notPath); continue; }
-      const leaves = leavesOf(item, ownOf(id, m)); if (leaves.length !== 1) { no(id, WHY.oneChange); continue; }
+      const back = face === "back", m = base.members[i]; if (!isPath(m)) { no(id, back ? WHY.back : WHY.notPath); continue; }
+      const leaves = leavesOf(item, ownOf(id, m)); if (leaves.length !== 1) { no(id, back ? WHY.back : WHY.oneChange); continue; }
       const leaf = leaves[0], was = roleOf(m, base), role = leaf.role || was, subs = toSource(leaf, fr);
-      if (!subs || !okSubs(subs)) { no(id, WHY.path); continue; }
+      if (!subs || !okSubs(subs)) { no(id, back ? WHY.back : WHY.path); continue; }
+      if (role === was && sameSubs(subs, m.subpaths) && samePaint(leaf, m)) continue;   // (EDITSAVE: the master's own part, untouched: no change, never a refusal, on either face)
+      if (back) { no(id, WHY.back); continue; }
       if (m === base.outline && role !== "cut") { no(id, WHY.outline); continue; }
       if (role !== "cut" && !onMetal(subs, polys)) { no(id, WHY.offMetal); continue; }
       if (role === "cut" || was === "cut") rec.cutIds.push(id);
       const keep = role === was && leaf.stroke === undefined && leaf.fill === undefined && (leaf.lwPt == null) && (leaf.even == null);
-      const e = Object.assign({ kind: "path", role, d: toD(subs) }, keep ? { keep: true } : paintRec(paintOf(role, leaf, m)), weightRec(leaf));
+      // (from: the master part's own path, as a short hash, on a part whose paint is the master's: the cloud leaves out such a part whose path is still that one, so a page that sends one is never
+      //  refused for it: EDITSAVE. A part whose paint changed carries none: a line thinned where it is, is a change)
+      const e = Object.assign({ kind: "path", role, d: toD(subs) }, role === was && samePaint(leaf, m) ? { from: fnv(toD(m.subpaths)) } : {}, keep ? { keep: true } : paintRec(paintOf(role, leaf, m)), weightRec(leaf));
       if (leaf.text != null && leaf.text !== "") e.text = String(leaf.text).slice(0, 200);
       rec.changed[id] = e;
     }
@@ -569,6 +597,6 @@
   /** The page's own ways (charm-nest-bridge.js sets them): api, rowOf, charmOf, placed, who, flag, swap, changed, parsedOf, liveCharms, note. */
   function setHost(h) { host = Object.assign({}, h || {}); return host; }
 
-  return { VERSION, FACES, ROLES: [...ROLES], SUFFIX, WHY, recKey, frame, itemMatrix, toD, fromD, memberId, memberIds, baseKeyOf, baseOf, roleOf, paintOf, apply, encode, decode, itemsOf,
+  return { VERSION, FACES, ROLES: [...ROLES], SUFFIX, WHY, recKey, frame, itemMatrix, toD, fromD, memberId, memberIds, baseKeyOf, baseOf, roleOf, paintOf, apply, encode, decode, itemsOf, sameSubs, fnvOf: fnv,
     load, ready, piece, sync, save, clear, setHost, host: () => host, cached: (poolId, face) => { const c = cache.get(recKey(poolId, face)); return c ? c.rec : undefined; }, forget: () => cache.clear(), remember };
 });

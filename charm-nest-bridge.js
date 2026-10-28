@@ -10036,7 +10036,10 @@ const Engrave = window.Engrave = (() => {
     };
     walk(out, Mx.I, null);
     const same = (a, b) => JSON.stringify(a == null ? null : a) === JSON.stringify(b == null ? null : b);
-    const moved = l => { const g = was.get(l.id); return !g || !same(l.role, g.role) || !same(l.stroke, g.stroke) || !same(l.fill, g.fill) || !same(l.lwPt, g.lwPt) || (l.matrix && !Mx.isI(l.matrix.map(v => Math.round(v * 1e9) / 1e9))) || (l.subpaths !== g.subpaths && !same(l.subpaths, g.subpaths)); };
+    // (EDITSAVE, Paul 28 Oct 2026, order 4211572095: "Hatched part … Cut line …" refused for parts he never touched) a part is moved when what it DRAWS moved: its path as placed (its own matrix and
+    //  its groups') against the path it was handed in with, to a thousandth of a point; a matrix written out again, a group made round it or a new place in the stack is no change
+    const drawn = l => (l.kind !== "text" && isM(l.matrix) && !Mx.isI(l.matrix.map(v => Math.round(v * 1e9) / 1e9)) ? Mx.transformSubpaths(l.subpaths || [], l.matrix) : l.subpaths);
+    const moved = l => { const g = was.get(l.id); return !g || !same(l.role, g.role) || !same(l.stroke, g.stroke) || !same(l.fill, g.fill) || !same(l.lwPt, g.lwPt) || (l.subpaths !== g.subpaths || isM(l.matrix)) && !AE.sameSubs(drawn(l), g.subpaths); };
     const kept = new Set(leaves.map(l => l.id)), changed = {}, added = [];
     for (const l of leaves) { if (!master.has(l.id)) added.push(l); else if (l.changed === true || (touched.has(l.id) && moved(l))) changed[l.id] = l; }
     const removed = [...master].filter(id => !kept.has(id) && (was.has(id) || (face === "front" && !now.has(id))));
@@ -10094,42 +10097,63 @@ const Engrave = window.Engrave = (() => {
     charmEditLog("editorOpen", { poolId, orderId: order || null, sku, by, from: t.from, engraved: !!job });   // (Design & Engrave, Paul 28 Oct 2026: "all of this must be tracked by employee": charm-nest-design-log.js)
     // (opened over a modal window, the order window: the editor is put in it, as the top layer covers the page's body; the window's Esc is the editor's while it is open)
     const host = [...document.querySelectorAll("dialog[open]")].filter(d => { try { return d.matches(":modal"); } catch (_) { return true; } }).pop() || null, keepOpen = e => e.preventDefault();
-    if (host) host.addEventListener("cancel", keepOpen);
-    let res;
-    const startFace = job && t.from === "card" ? faceOf(job) : "front";
-    try { res = await CE.open({ title: sku, subtitle, faces: docs, startFace, fonts, textToPaths: charmEditText, lockRoles: ["cut"], back, host }); }   // (CETEXT: the words open unselected, as everything does: a picture imported first goes into the charm's outline, not into the words' box; a click on them shows their controls)
-    finally { if (host) setTimeout(() => host.removeEventListener("cancel", keepOpen), 0); }
-    try {
-      if (!res) return null;   // (Cancel, the ×, Esc, Back with nothing kept: nothing is written)
-      const todo = [], wordsNow = {}, kept = [];
-      for (const face of Object.keys(words)) wordsNow[face] = charmEditWordsNow(res, face, words[face].item);
+    /* EDITSAVE (Paul, 28 Oct 2026, order 4211572095: "The editor closed, nothing he did shows on the card", and the card then said in red "Not saved · Hatched part: … · Cut line: …"). The parts a
+       save cannot keep were found only after the editor had closed, so the whole save, his picture with it, was lost and the card's line was the only word of it. Now the very same plan (planOf: what
+       each face carries, every copy encoded) is the editor's check: Save asks it before the workspace closes, and a part it cannot keep is said over the open editor, that part selected, the work
+       kept. A save the cloud refuses after the editor closed (another computer saved first, the sheet was cut meanwhile, the network) opens the editor again on the work as it was, with the reason. */
+    const planOf = r => {
+      const todo = [], wordsNow = {}, kept = [], refused = [], seen = new Set();
+      for (const face of Object.keys(words)) wordsNow[face] = charmEditWordsNow(r, face, words[face].item);
       for (const face of ["front", "back"]) {
-        const d = res.changes && res.changes[face]; if (!d || !(d.removed.length + d.added.length + Object.keys(d.changed).length)) continue;
+        const d = r.changes && r.changes[face]; if (!d || !(d.removed.length + d.added.length + Object.keys(d.changed).length)) continue;
         // (CETEXT: the card's words, changed, are saved as the editor's words (an added text, outlines in the face); unchanged they are skipped, never saved as a part of the drawing)
-        const changes = charmEditChanges(charm, docs[face].items, res.faces[face].items, d, face, words[face] && !wordsNow[face].changed ? new Set([words[face].id]) : null);
+        const changes = charmEditChanges(charm, docs[face].items, r.faces[face].items, d, face, words[face] && !wordsNow[face].changed ? new Set([words[face].id]) : null);
         for (const a of changes.added) if (words[face] && a.id === words[face].id) a.source = "added";
         const onlyWords = !!words[face] && [...d.removed, ...Object.keys(d.changed), ...d.added.map(a => a && a.id)].every(id => String(id) === words[face].id);
         if (onlyWords && !(changes.removed.length + changes.added.length + Object.keys(changes.changed).length)) { if (wordsNow[face].gone) kept.push(face); continue; }   // (only the card's words taken out, nothing drawn in their place: the card keeps its words, said below)
+        if (!(changes.removed.length + changes.added.length + Object.keys(changes.changed).length) && !(charm.artEdit && charm.artEdit[face])) continue;   // (EDITSAVE: nothing on this face for the piece to carry, and no edit of it to take off: no save of it)
         todo.push({ face, changes });
       }
-      if (!todo.length) { if (kept.length && job) charmEditTell(t, `The ${kept.join(" and ")} words are the engraving's: they stay on the card · to engrave none, empty its words box or press No engraving`, false); return null; }
-      { let end; const p = new Promise(r => { end = r; }); p.end = end; for (const id of t.poolIds) ART_SAVES.set(String(id), p); savingArt = p; }   // (APPROVE AFTER THE EDITOR: an Approve waits for this save)
       // every face of every copy is checked before anything is sent: a part that cannot be kept as asked, and nothing is saved
-      const refused = [];
       for (const w of todo) for (const pid of t.poolIds) {
         try { AE.encode(w.changes, { charm: Pool.charmOf(pid) || charm, view: views[w.face], face: w.face, placed: placedOf(pid) }); }
-        catch (e) { for (const r of (e && e.refused) || [{ id: "", why: (e && e.message) || String(e) }]) refused.push(`${w.face === "back" ? "Back · " : ""}${r.id ? charmEditPart(res.faces, r.id) + ": " : ""}${r.why}`); }
+        catch (e) { for (const x of (e && e.refused) || [{ id: "", why: (e && e.message) || String(e) }]) { const text = `${x.id ? charmEditPart(r.faces, x.id) + ": " : ""}${x.why}`; if (seen.has(w.face + text)) continue; seen.add(w.face + text); refused.push({ face: w.face, id: x.id && x.id !== "cut" ? String(x.id) : null, text }); } }
       }
-      if (refused.length) { const u = [...new Set(refused)]; charmEditTell(t, `Not saved · ${u.slice(0, 3).join(" · ")}${u.length > 3 ? ` · and ${u.length - 3} more` : ""}`, true); return null; }
-      charmEditTell(t, `Saving the ${todo.length > 1 ? "front and back" : todo[0].face} artwork…`, false);   // (Paul, 28 Oct 2026: said the moment Save is pressed; the drawing follows as soon as the cloud has it)
-      const done = [], records = {};
-      try {
-        for (const w of todo) for (const pid of t.poolIds) { const info = await AE.save(pid, w.face, w.changes, { charm: Pool.charmOf(pid) || charm, view: views[w.face], by, placed: placedOf(pid) }); if (pid === poolId) records[w.face] = info && info.record; done.push(w.face); }
-      } catch (e) {
-        const why = (e && e.refused && e.refused[0] && e.refused[0].why) || (e && e.message) || String(e);
-        charmEditTell(t, `${done.length ? `Saved the ${[...new Set(done)].join(" and ")} only · ` : ""}Not saved · ${why}`, true);
-        if (done.length) charmEditLog("editorSave", { poolId, poolIds: t.poolIds, orderId: order || null, sku, faces: [...new Set(done)], by, from: t.from });
-        return done.length ? { saved: [...new Set(done)], records } : null;
+      return { todo, wordsNow, kept, refused };
+    };
+    const check = r => { let p; try { p = planOf(r); } catch (e) { return { lines: [{ text: `the edit could not be checked (${(e && e.message) || e})` }] }; } return p.refused.length ? { lines: p.refused } : null; };
+    const startFace = job && t.from === "card" ? faceOf(job) : "front";
+    let res = null, again = null, todo = [], wordsNow = {}, kept = [];
+    const done = [], records = {};
+    try {
+      for (;;) {
+        if (host) host.addEventListener("cancel", keepOpen);
+        try { res = await CE.open(Object.assign({ title: sku, subtitle, faces: again ? again.faces : docs, startFace: again ? again.face : startFace, fonts, textToPaths: charmEditText, lockRoles: ["cut"], back, host, check }, again ? { base: docs, notice: again.notice } : {})); }   // (CETEXT: the words open unselected, as everything does: a picture imported first goes into the charm's outline, not into the words' box; a click on them shows their controls)
+        finally { if (host) setTimeout(() => host.removeEventListener("cancel", keepOpen), 0); }
+        if (!res) return null;   // (Cancel, the ×, Esc, Back with nothing kept: nothing is written)
+        const p = planOf(res); todo = p.todo; wordsNow = p.wordsNow; kept = p.kept;
+        if (!todo.length) { if (kept.length && job) charmEditTell(t, `The ${kept.join(" and ")} words are the engraving's: they stay on the card · to engrave none, empty its words box or press No engraving`, false); return null; }
+        if (p.refused.length) { wentBack = false; again = { faces: res.faces, face: p.refused[0].face, notice: { lines: p.refused } }; continue; }   // (the check said yes and the plan now says no: the editor again, never a save lost)
+        { let end; const pr = new Promise(r => { end = r; }); pr.end = end; for (const id of t.poolIds) ART_SAVES.set(String(id), pr); savingArt = pr; }   // (APPROVE AFTER THE EDITOR: an Approve waits for this save)
+        charmEditTell(t, `Saving the ${todo.length > 1 ? "front and back" : todo[0].face} artwork…`, false);   // (Paul, 28 Oct 2026: said the moment Save is pressed; the drawing follows as soon as the cloud has it)
+        let face = null;
+        try {
+          for (const w of todo) for (const pid of t.poolIds) { face = w.face; const info = await AE.save(pid, w.face, w.changes, { charm: Pool.charmOf(pid) || charm, view: views[w.face], by, placed: placedOf(pid) }); if (pid === poolId) records[w.face] = info && info.record; done.push(w.face); }
+        } catch (e) {
+          const why = (e && e.refused && e.refused[0] && e.refused[0].why) || (e && e.message) || String(e);
+          if (done.length) {
+            charmEditTell(t, `Saved the ${[...new Set(done)].join(" and ")} only · Not saved · ${why}`, true);
+            charmEditLog("editorSave", { poolId, poolIds: t.poolIds, orderId: order || null, sku, faces: [...new Set(done)], by, from: t.from });
+            return { saved: [...new Set(done)], records };
+          }
+          // (nothing saved: the editor opens again on the work as it was and says why; the card says it too)
+          charmEditTell(t, `Not saved · ${why} · the Charm Editor is open again with your work`, true);
+          for (const id of t.poolIds) if (ART_SAVES.get(String(id)) === savingArt) ART_SAVES.delete(String(id));
+          savingArt.end(); savingArt = null;
+          wentBack = false; again = { faces: res.faces, face: face || startFace, notice: { title: "Not saved", text: "The cloud did not keep this save. Everything you made is here: change what is said, or press Save to try again.", lines: [{ face, text: why }] } };
+          continue;
+        }
+        break;
       }
       // DESIGNS (Paul, 28 Oct 2026: "this repository must grow with every new update or change to any charm using the charm editor"): the piece as saved is also a new version of its design
       // in the design library (charm-nest-designs.js), one design per piece (pc-<poolId>), its size its cut line's: one call of its own after the piece's save, never in its way

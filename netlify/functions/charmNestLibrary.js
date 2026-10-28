@@ -2781,6 +2781,8 @@ function artPathOps(d) {
   }
   return started ? ops : 0;
 }
+/** The page's short hash of a path (charm-nest-art-edit.js fnv: FNV-1a, 32 bits, base 36). */
+const artFnv = s => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(36); };
 /** A colour as [r, g, b] in 0..1, null for none, undefined when it is not a colour. */
 const artRgb = v => v == null || v === false ? null : Array.isArray(v) && v.length === 3 && v.every(x => typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= 1) ? v.map(x => Math.round(x * 1000) / 1000) : undefined;
 function artItem(x, keyId) {
@@ -2813,13 +2815,20 @@ function cleanArt(a) {
   if (keys.length > ART_MAX.changed || keys.some(k => !ART_MEMBER.test(k))) return { error: `changed: at most ${ART_MAX.changed} part ids of the master drawing` };
   if (keys.some(k => removed.includes(k))) return { error: "a part is both removed and changed" };
   let ops = 0; const changed = {};
-  for (const k of keys) { const r = artItem(ch[k], k); if (r.error) return { error: "changed " + r.error }; changed[k] = r.item; ops += r.ops; }
+  for (const k of keys) {
+    const r = artItem(ch[k], k); if (r.error) return { error: "changed " + r.error };
+    // (EDITSAVE, Paul 28 Oct 2026, order 4211572095: a save refused for a cut line nobody touched) a part sent with `from`, the hash of the master part's own path (charm-nest-art-edit.js fnv of
+    //  toD), whose path IS still that one is no change: left out of the record, so it is never a cut line changed and never refuses the save
+    if (typeof ch[k].from === "string" && ART_KEY.test(ch[k].from) && artFnv(r.item.d) === ch[k].from) continue;
+    changed[k] = r.item; ops += r.ops;
+  }
   const list = Array.isArray(a.added) ? a.added : []; if (list.length > ART_MAX.added) return { error: `added: at most ${ART_MAX.added} new parts on one piece` };
   const added = [], seen = new Set();
   for (const x of list) { const r = artItem(x); if (r.error) return { error: "added " + r.error }; if (seen.has(r.item.id)) return { error: `added ${r.item.id}: the id is used twice` }; seen.add(r.item.id); added.push(r.item); ops += r.ops; }
   if (ops > ART_MAX.ops) return { error: `the artwork edit has ${ops} path operators; one piece's edit is at most ${ART_MAX.ops}` };
-  const cutIds = [...new Set(ids(a.cutIds))]; if (cutIds.some(x => !removed.includes(x) && !Object.prototype.hasOwnProperty.call(changed, x))) return { error: "cutIds names a part that is neither removed nor changed" };
-  const cutItems = keys.filter(k => changed[k].role === "cut").map(k => [k, changed[k].d]).concat(added.filter(x => x.role === "cut").map(x => [x.id, x.d]));
+  const cutIds = [...new Set(ids(a.cutIds))].filter(x => removed.includes(x) || Object.prototype.hasOwnProperty.call(changed, x) || !keys.includes(x));   // (EDITSAVE: a part left out above is no cut line changed)
+  if (cutIds.some(x => !removed.includes(x) && !Object.prototype.hasOwnProperty.call(changed, x))) return { error: "cutIds names a part that is neither removed nor changed" };
+  const cutItems = Object.keys(changed).filter(k => changed[k].role === "cut").map(k => [k, changed[k].d]).concat(added.filter(x => x.role === "cut").map(x => [x.id, x.d]));
   const cut = cutIds.length > 0 || cutItems.length > 0;
   const cutKey = cut ? require("crypto").createHash("sha256").update(JSON.stringify([cutIds.slice().sort(), cutItems.sort((p, q) => (p[0] < q[0] ? -1 : p[0] > q[0] ? 1 : 0))])).digest("hex").slice(0, 16) : "";
   return { art: { v: 1, baseKey, removed, cutIds, changed, added, cut }, cutKey };
