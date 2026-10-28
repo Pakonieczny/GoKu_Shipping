@@ -36,7 +36,18 @@
    What a piece's record can hold is kept to (charmNestLibrary.js ART_MAX: a path at most 200 KB, an edit at most 60 000 operators and 600 KB): a trace over that is made again smaller,
    and said so.
 
-   UMD: window.CharmNestCeImage in the page (it registers itself with CharmEditor), module.exports in Node (the pure parts, for the tests). Nothing here talks to the cloud. */
+   (TRACESRC, Paul 28 Oct 2026: "When I Press Image Trace on an existing already vectorized image, it does not open the actual chosen image") the picture was kept
+   only in the browser that traced it (IndexedDB, the newest two dozen), so on another computer, another browser, or once pruned, Re-trace had nothing to open.
+   Now the picture is kept in the cloud too: the file as it was chosen (its own bytes, when the step traced it at its own pixels and nothing was erased; else the
+   picture as traced, as a PNG, or a WebP / JPEG of high quality when a PNG is over the limit), named by its own hash (SHA-256), sent in the background once it
+   is placed (charmNestLibrary.js traceSrcPut: asked first whether it is there, traceSrcGet, so the same picture is sent once; tried again later when the
+   computer is offline, and at the next page load), and the source's id says where: "s<16 hex of the hash><p|j|w><2 more>", in the `group` name a piece's
+   record and a design's version already keep on the parts. Re-trace looks on this page, then on this computer, then in the cloud (the step opens at once,
+   showing the item's vector and "Fetching the picture…", and takes the picture when it comes: its settings, crop and place kept). Where it is nowhere (a
+   trace made before this), the step shows the item's own vector, never an empty split, and asks for the picture.
+
+   UMD: window.CharmNestCeImage in the page (it registers itself with CharmEditor), module.exports in Node (the pure parts, for the tests). The cloud is the
+   page's api() (or setHost's), only for the picture a trace was made from (section 5b). */
 (function (root, factory) {
   const api = factory(root);
   if (typeof module === 'object' && module.exports) module.exports = api; else root.CharmNestCeImage = api;
@@ -441,7 +452,8 @@
       return { id: gid + '.g' + key, kind: 'path', role: 'hatch', source: 'added', name: greyName(g), hidden: false, locked: false, fill: [g, g, g], stroke: false, artGrey: true, even: true, evenOdd: true,
         subpaths: sps, tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 };
     });
-    const t = Object.assign({ src: opts.src || gid, box: box.map(r4) }, opts.settings ? norm(opts.settings) : {}, opts.name ? { name: String(opts.name).slice(0, 80) } : {});
+    const t = Object.assign({ src: opts.src || gid, box: box.map(r4) }, opts.settings ? norm(opts.settings) : {}, opts.name ? { name: String(opts.name).slice(0, 80) } : {},
+      refOf(opts.src) ? { cloud: refOf(opts.src) } : {});   // (TRACESRC: where the picture is kept, the same as its source id says: charmnest/[sandbox/]trace-src/<key>.<ext>)
     // (REOPEN, Paul 28 Oct 2026: "I can't seem to bring up the image vector popup modal after the initial Import process") the group's `group`: its source's id, its
     // settings and three of its black's points, in one short name, which a piece saved and opened again keeps on every part (charm-nest-art-edit.js leavesOf,
     // the record's `group`) and the design library keeps on the group (`trace`, an object, it does not)
@@ -578,33 +590,163 @@
     const tx = db.transaction(IDB.store, mode), rq = fn(tx.objectStore(IDB.store));
     tx.oncomplete = () => { db.close(); res(rq && 'result' in rq ? rq.result : undefined); }; tx.onerror = () => { db.close(); rej(tx.error); }; tx.onabort = () => { db.close(); rej(tx.error); };
   }));
-  function keepSource(id, s) {
+  /** Kept under its id: in this page, and on this computer (a convenience: when it cannot be kept, Re-trace asks for the picture again). up (TRACESRC): the bytes
+   *  the cloud keeps ({ blob, ext, key }, sourceBytes): this computer keeps the same bytes, and they are sent to the cloud in the background (uploadSoon). */
+  function keepSource(id, s, up) {
     SOURCES.delete(id); SOURCES.set(id, s); while (SOURCES.size > 12) SOURCES.delete(SOURCES.keys().next().value);
-    // on this computer too (a convenience: when it cannot be kept, Re-trace asks for the picture again)
     try {
-      if (!s || !s.canvas || typeof s.canvas.toBlob !== 'function' || s.stored === id) return;
+      if (!s || s.stored === id) { if (up) uploadSoon(id, up, s); return; }
       s.stored = id;
-      s.canvas.toBlob(blob => {
-        if (!blob) return;
-        idbDo('readwrite', st => {
-          st.put({ blob, name: s.name, type: s.type, w0: s.w0, h0: s.h0, at: Date.now() }, id);
-          const keys = st.getAllKeys(), all = st.getAll();
-          all.onsuccess = () => { const rows = keys.result.map((k, i) => [k, (all.result[i] && all.result[i].at) || 0]).sort((a, b) => b[1] - a[1]); for (const [k] of rows.slice(IDB.keep)) st.delete(k); };
-          return null;
-        }).catch(() => {});
-      }, 'image/png');
-    } catch (e) { /* storage blocked: the page's copy is enough */ }
+      const put = (blob, extra) => idbDo('readwrite', st => {
+        st.put(Object.assign({ blob, name: s.name, type: blob.type || s.type, w0: s.w0, h0: s.h0, at: Date.now() }, extra || {}), id);
+        // the newest two dozen kept; a picture not yet in the cloud is kept until it is
+        const keys = st.getAllKeys(), all = st.getAll();
+        all.onsuccess = () => { const rows = keys.result.map((k, i) => [k, (all.result[i] && all.result[i].at) || 0, all.result[i]]).sort((a, b) => b[1] - a[1]); for (const [k, , r] of rows.slice(IDB.keep)) if (!pendingRow(r)) st.delete(k); };
+        return null;
+      });
+      if (up) { put(up.blob, { key: up.key, ext: up.ext, up: {} }).catch(() => {}).then(() => uploadSoon(id, up, s)); return; }
+      if (!s.canvas || typeof s.canvas.toBlob !== 'function') return;
+      s.canvas.toBlob(blob => { if (blob) put(blob).catch(() => {}); }, 'image/png');
+    } catch (e) { /* storage blocked: the page's copy is enough */ if (up) uploadSoon(id, up, s); }
   }
-  /** The picture traced under this id: this page's, else this computer's (decoded again), else null. */
+  /** The picture traced under this id: this page's, else this computer's (decoded again), else null. (The cloud's: cloudSource.) */
   async function findSource(id) {
     if (SOURCES.has(id)) return SOURCES.get(id);
     try {
       const row = await idbDo('readonly', st => st.get(id)); if (!row || !row.blob) return null;
       const s = await decode(row.blob);
       Object.assign(s, { name: row.name || 'image', type: row.type || '', w0: row.w0 || s.w0, h0: row.h0 || s.h0, stored: id });
+      // (TRACESRC: a picture kept with its cloud name is those bytes: the same id again when nothing is changed; sent now if it never reached the cloud)
+      if (row.key && row.ext) { s.up = { edits: s.edits, p: Promise.resolve({ blob: row.blob, ext: row.ext, key: row.key }) }; if (!(row.up && row.up[world()])) uploadSoon(id, null, s); }
       SOURCES.set(id, s); return s;
     } catch (e) { return null; }
   }
+
+  /* ═══ 5b · TRACESRC: the picture in the cloud (charmNestLibrary.js traceSrcPut / traceSrcGet; read through charmNestAsset) ═══ */
+  const CLOUD = { host: null, MAX: 4000000 };   // (the server's TRACE_SRC.bytes: a picture over it is not sent; its base64 stays under a function's 6 MB)
+  const EXT = { p: 'png', j: 'jpg', w: 'webp' }, EXT_CH = { png: 'p', jpg: 'j', webp: 'w' }, MIME = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp' };
+  const REF = /^s([0-9a-f]{16})([pjw])[0-9a-z]{0,3}$/;
+  /** A source id's cloud name: { key, ext } | null (an id made before TRACESRC, "img…", or an item's own id, names none). */
+  function refOf(id) { const m = REF.exec(String(id || '')); return m ? { key: m[1], ext: EXT[m[2]] } : null; }
+  /** A new source id for the picture { key, ext }: its cloud name and two characters of its own (the same picture placed twice is two images). */
+  const idOfRef = (key, ext) => 's' + key + EXT_CH[ext] + Math.floor(Math.random() * 1296).toString(36).padStart(2, '0');
+  /** The page's door to the cloud (charm-nest-1.html api(): the sandbox tag, the passcode, the time limits), or the one setHost gave. */
+  function cloudApi() { const a = CLOUD.host && CLOUD.host.api; return typeof a === 'function' ? a : root && typeof root.api === 'function' ? root.api : null; }
+  /** This page's world: 'sb' (the sandbox: its pictures are its own) or 'live'. */
+  function world() {
+    try { const h = CLOUD.host; if (h && h.sandbox != null) return (typeof h.sandbox === 'function' ? h.sandbox() : h.sandbox) ? 'sb' : 'live'; } catch (e) { return 'live'; }
+    try { return typeof WORKSPACE_SANDBOX !== 'undefined' && WORKSPACE_SANDBOX ? 'sb' : 'live'; } catch (e) { return 'live'; }   // eslint-disable-line no-undef
+  }
+  function cloudCall(body, opts) {
+    const a = cloudApi(); if (!a) return Promise.reject(Object.assign(new Error('this page has no connection to the cloud'), { transient: true, none: true }));
+    return Promise.resolve(a('charmNestLibrary', body, Object.assign({ quiet: true }, opts || {})));
+  }
+  const pendingRow = r => !!(r && r.key && !(r.up && Object.keys(r.up).some(k => r.up[k])));
+  /** The kind of a picture by its first bytes: 'png' | 'jpg' | 'webp' | null. */
+  async function sniff(blob) {
+    try { const b = new Uint8Array(await blob.slice(0, 12).arrayBuffer()), s = String.fromCharCode.apply(null, b);
+      return b[0] === 0x89 && s.slice(1, 4) === 'PNG' ? 'png' : b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff ? 'jpg' : s.slice(0, 4) === 'RIFF' && s.slice(8, 12) === 'WEBP' ? 'webp' : null; } catch (e) { return null; }
+  }
+  /** The first 16 hex of a blob's SHA-256 (what the server checks the name by), or null where this browser has no SubtleCrypto. */
+  async function sha16(blob) {
+    try { const c = root.crypto && root.crypto.subtle; if (!c) return null; const d = new Uint8Array(await c.digest('SHA-256', await blob.arrayBuffer())); let h = ''; for (let i = 0; i < 8; i++) h += d[i].toString(16).padStart(2, '0'); return h; } catch (e) { return null; }
+  }
+  /** WHAT THE CLOUD KEEPS of a picture: the file itself when the step has its own pixels (decoded with nothing scaled) and nothing was erased, else the picture as traced
+   *  (a PNG; a WebP or JPEG of high quality when the PNG is over the limit), with its name: → Promise<{ blob, ext, key } | null>. Made once for each state of the picture. */
+  function sourceBytes(s) {
+    if (!s) return Promise.resolve(null);
+    const ed = s.edits || 0;
+    if (s.up && s.up.edits === ed) return s.up.p;
+    const p = (async () => {
+      let blob = null, ext = null;
+      if (s.pristine !== false && s.exact && s.file && s.file.size > 0 && s.file.size <= CLOUD.MAX) { ext = await sniff(s.file); if (ext) blob = s.file.type === MIME[ext] ? s.file : s.file.slice(0, s.file.size, MIME[ext]); }
+      if (!blob && s.canvas && typeof s.canvas.toBlob === 'function') {
+        for (const [type, q, e] of [['image/png', undefined, 'png'], ['image/webp', 0.95, 'webp'], ['image/jpeg', 0.92, 'jpg']]) {
+          const b = await new Promise(r => { try { s.canvas.toBlob(r, type, q); } catch (err) { r(null); } });
+          if (b && b.size > 0 && b.size <= CLOUD.MAX && b.type === type) { blob = b; ext = e; break; }
+        }
+      }
+      if (!blob) return null;
+      const key = await sha16(blob);
+      return key ? { blob, ext, key } : null;
+    })().catch(() => null);
+    s.up = { edits: ed, p };
+    return p;
+  }
+  const b64 = blob => new Promise((res, rej) => { const fr = new root.FileReader(); fr.onload = () => res(String(fr.result).replace(/^data:[^,]*,/, '')); fr.onerror = () => rej(fr.error || new Error('the picture could not be read')); fr.readAsDataURL(blob); });
+  /* THE SENDING: one picture at a time, in the background; asked first whether the cloud has it (the same picture from another computer is not sent again); a picture the
+     cloud refused (not a picture, too big) is not tried again; offline or a cloud that did not answer: tried again later (15 s, doubling to 15 min), when the computer is
+     back online, and at the next page load (sweep: what this computer keeps that never reached the cloud). */
+  const UP = { q: new Map(), done: new Set(), busy: false, timer: 0, tries: 0, stats: { gets: 0, puts: 0, had: 0, fails: 0, refused: 0, fetched: 0, last: '' } };
+  function uploadSoon(id, up, s) {
+    const ref = refOf(id); if (!ref) return;
+    const w = world(), k = w + ':' + ref.key + '.' + ref.ext;
+    if (UP.done.has(k)) return;
+    const was = UP.q.get(k);
+    UP.q.set(k, { id, ref, w, blob: (up && up.blob) || (was && was.blob) || null, name: s ? s.name : was && was.name, w0: s ? s.w0 : was && was.w0, h0: s ? s.h0 : was && was.h0 });
+    pump(0);
+  }
+  function pump(ms) { if (UP.timer) { if (ms) return; clearTimeout(UP.timer); } UP.timer = setTimeout(sendAll, ms || 0); }
+  async function markRow(id, w, v) {
+    try { await idbDo('readwrite', st => { const rq = st.get(id); rq.onsuccess = () => { const r = rq.result; if (r) { r.up = Object.assign({}, r.up, { [w]: v }); st.put(r, id); } }; return null; }); } catch (e) { /* this computer's copy only */ }
+  }
+  async function sendAll() {
+    UP.timer = 0; if (UP.busy) return; UP.busy = true;
+    try {
+      for (const [k, job] of [...UP.q]) {
+        if (job.w !== world()) continue;
+        try {
+          await sendOne(job); UP.q.delete(k); UP.done.add(k); UP.tries = 0;
+        } catch (e) {
+          const sc = e && +e.status;
+          if (e && (e.refused || sc === 400 || sc === 409 || sc === 413 || (e.answered && !sc))) {   // (refused by the cloud in its own words, traceSrcPut's 400 / 409: not tried again; locked, a 5xx, a timeout, offline: later)
+            UP.q.delete(k); UP.stats.refused++; UP.stats.last = String((e && e.message) || e).slice(0, 160); markRow(job.id, job.w, 'refused'); log('imageSourceRefused', { id: job.id, why: UP.stats.last }); continue; }
+          UP.stats.fails++; UP.stats.last = String((e && e.message) || e).slice(0, 160); UP.tries++;
+          UP.busy = false; pump(Math.min(900000, 15000 * Math.pow(2, Math.min(6, UP.tries - 1)))); return;
+        }
+      }
+    } finally { UP.busy = false; }
+  }
+  async function sendOne(job) {
+    const { ref } = job;
+    const g = await cloudCall({ op: 'traceSrcGet', key: ref.key, ext: ref.ext }); UP.stats.gets++;
+    if (g && g.file) { UP.stats.had++; await markRow(job.id, job.w, Date.now()); return; }
+    let blob = job.blob, row = null;
+    if (!blob) { try { row = await idbDo('readonly', st => st.get(job.id)); } catch (e) { row = null; } blob = row && row.blob; }
+    if (!blob) throw Object.assign(new Error('the picture is no longer on this computer'), { refused: true });
+    const r = await cloudCall({ op: 'traceSrcPut', key: ref.key, ext: ref.ext, data: await b64(blob), name: String(job.name || (row && row.name) || 'image').slice(0, 80), w0: job.w0 || (row && row.w0) || 0, h0: job.h0 || (row && row.h0) || 0 }, { timeoutMs: 180000 });
+    if (!r || !r.ok) throw Object.assign(new Error((r && r.error) || 'the picture was not kept'), { answered: !!(r && r.error) });
+    UP.stats.puts++; if (r.had) UP.stats.had++;
+    log('imageSourceKept', { id: job.id, path: r.file && r.file.path, bytes: blob.size, had: !!r.had });
+    await markRow(job.id, job.w, Date.now());
+  }
+  /** At a page's start: what this computer keeps that never reached the cloud is sent. */
+  async function sweep() {
+    try {
+      const rows = await idbDo('readonly', st => { const keys = st.getAllKeys(), all = st.getAll(); return { get result() { return keys.result.map((k, i) => [k, all.result[i]]); } }; });
+      for (const [id, r] of rows || []) if (r && r.key && refOf(id) && !(r.up && r.up[world()])) uploadSoon(id, null, { name: r.name, w0: r.w0, h0: r.h0 });
+    } catch (e) { /* nothing kept here */ }
+  }
+  /** THE PICTURE FROM THE CLOUD (Re-trace on another computer): asked by its name, read through charmNestAsset (CharmNestAssets: the same-origin door, its retries),
+   *  checked against its name (its own hash), decoded, and kept on this computer too. → Promise<the source | null> (null: the cloud has no picture of that name). */
+  async function cloudSource(id) {
+    const ref = refOf(id); if (!ref) return null;
+    if (SOURCES.has(id)) return SOURCES.get(id);
+    const g = await cloudCall({ op: 'traceSrcGet', key: ref.key, ext: ref.ext }); UP.stats.gets++;
+    const f = g && g.file; if (!f || !f.url) return null;
+    const A = root.CharmNestAssets;
+    const bytes = A && typeof A.bytes === 'function' ? await A.bytes(f.url) : new Uint8Array(await (await root.fetch(f.url)).arrayBuffer());
+    const blob = new Blob([bytes], { type: MIME[ref.ext] });
+    if ((await sha16(blob)) !== ref.key) throw new Error('the picture from the cloud is not the one this image was traced from');
+    const s = await decode(blob);
+    Object.assign(s, { name: f.name || 'image', type: MIME[ref.ext], w0: f.w || s.w0, h0: f.h || s.h0, stored: id });
+    s.up = { edits: s.edits, p: Promise.resolve({ blob, ext: ref.ext, key: ref.key }) };
+    SOURCES.set(id, s); UP.done.add(world() + ':' + ref.key + '.' + ref.ext); UP.stats.fetched++;
+    idbDo('readwrite', st => { st.put({ blob, name: s.name, type: blob.type, w0: s.w0, h0: s.h0, at: Date.now(), key: ref.key, ext: ref.ext, up: { [world()]: Date.now() } }, id); return null; }).catch(() => {});
+    log('imageSourceFetched', { id, bytes: blob.size });
+    return s;
+  }
+  function setHost(h) { CLOUD.host = h && typeof h === 'object' ? Object.assign({}, h) : null; return CLOUD.host; }
 
   /* ═══ 6 · the page: decoding, drawing, the Image step ═══ */
   const doc = root && root.document ? root.document : null;
@@ -624,7 +766,8 @@
     const [w, h] = fitPx(w0, h0, SRC_MAX), c = canvas(w, h), g = c.getContext('2d', RD);
     g.imageSmoothingQuality = 'high'; g.drawImage(bmp, 0, 0, w, h);
     if (bmp.close) bmp.close();
-    return { canvas: c, w, h, w0, h0, name: String(file.name || 'image'), type: String(file.type || '') };
+    // (TRACESRC: the file itself is what the cloud keeps when the step has its own pixels, exact: decoded again anywhere, it is the same picture)
+    return { canvas: c, w, h, w0, h0, name: String(file.name || 'image'), type: String(file.type || ''), file, exact: w === w0 && h === h0, edits: 0, pristine: true };
   }
   /** The source as shown and kept (turned, flipped, cropped), drawn on white into a canvas of tw × th. `whole`: the whole picture as shown, the crop ignored. */
   function drawShown(dst, src, o, whole) {
@@ -669,9 +812,10 @@
       }
     }
     g.putImageData(img, 0, 0);
+    if (n) { src.edits = (src.edits || 0) + 1; src.pristine = false; }   // (TRACESRC: the picture is no longer the file: what the cloud keeps is made again from it)
     return n;
   }
-  function restoreSource(src) { if (src && src.orig) { src.canvas.getContext('2d').putImageData(src.orig, 0, 0); src.orig = null; return true; } return false; }
+  function restoreSource(src) { if (src && src.orig) { src.canvas.getContext('2d').putImageData(src.orig, 0, 0); src.orig = null; src.edits = (src.edits || 0) + 1; src.pristine = true; return true; } return false; }   // (restored: the picture as it came, the file again)
   const dOf = sps => { let d = ''; const f = v => Math.round(v * 100) / 100; for (const sub of sps || []) for (const op of sub || []) { if (op[0] === 'm' || op[0] === 'l') d += (op[0] === 'm' ? 'M' : 'L') + f(op[1][0]) + ' ' + f(op[1][1]); else if (op[0] === 'c') d += 'C' + [op[1], op[2], op[3]].map(p => f(p[0]) + ' ' + f(p[1])).join(' '); else if (op[0] === 'h') d += 'Z'; } return d; };
   const rgb = g => { const v = Math.round(clamp(g, 0, 1) * 255); return `rgb(${v},${v},${v})`; };
 
@@ -872,9 +1016,10 @@
     const whole = () => tool === 'crop' || tool === 'erase';   // (cropping or erasing: the whole picture shown, the crop not applied)
     /* the preview: the original and the grey drawn here at once (the filters kept while only the tone changes), the vector asked of the worker */
     let gImg = null, pxCache = { src: null }, shownPx = null, lastPrep = null;
+    let shape = null;   // (TRACESRC: no picture in hand: the item's own vector is shown, at its own shape)
     function layout() {
-      if (!src) return;
-      const [kw, kh] = whole() ? shownSize(src.w, src.h, st) : keptSize(src.w, src.h, st), r = room.getBoundingClientRect(), pad = 14;
+      if (!src && !shape) return;
+      const [kw, kh] = !src ? shape : whole() ? shownSize(src.w, src.h, st) : keptSize(src.w, src.h, st), r = room.getBoundingClientRect(), pad = 14;
       const k = Math.min((r.width - 2 * pad) / kw, (r.height - 2 * pad) / kh);
       if (!(k > 0)) return;
       sheet.style.width = Math.max(10, Math.round(kw * k)) + 'px'; sheet.style.height = Math.max(10, Math.round(kh * k)) + 'px';
@@ -1121,6 +1266,7 @@
       // settings: placeAsync makes everything else from them, the same each time (no threshold of the preview's, no canvas scaling); the trace keeps to what a
       // piece can hold itself (its budget), and only past its own last step is the picture made smaller here
       const longMm = Math.max(box0[2] - box0[0], box0[3] - box0[1]) * MM;
+      const upP = sourceBytes(src);   // (TRACESRC: what the cloud keeps of the picture and its name, made while it is traced)
       let res = null, size = null, smaller = false;
       progress(0);
       try {
@@ -1134,10 +1280,15 @@
       }
       if (!fits(size)) { placing = false; progress(null); $('[data-note]').innerHTML = `<b>Too detailed for one charm</b> (${size.ops.toLocaleString('en')} points): lower Detail, raise Despeckle or use fewer levels.`; return; }
       // (the group's id is its source's: a piece saved and opened again gives its parts back with it as their `group`, and Re-trace finds the picture by it)
-      const srcId = info.src || newId();
+      // (TRACESRC) the source's id names the picture in the cloud: the one it had when it is the same picture (a re-trace of it, nothing erased since), else a new one
+      const up = await upP, had = refOf(info.src);
+      if (token !== placeToken || closed) return;
+      let srcId = up ? (had && had.key === up.key && had.ext === up.ext ? info.src : idOfRef(up.key, up.ext)) : info.src || newId();
+      // (a new name is not one this face already holds: the same picture placed twice is two images)
+      for (let i = 0; i < 40 && srcId !== info.src && up && ctx.entry && ctx.entry(srcId); i++) srcId = idOfRef(up.key, up.ext);
       const g = buildGroup(res, box0, { id: info.groupId || srcId, src: srcId, settings: o2, name: src.name });
       if (!g.children.length) { placing = false; progress(null); $('[data-note]').innerHTML = '<b>Nothing to engrave:</b> the picture traced as white. Lower the brightness, or turn Invert on.'; return; }
-      keepSource(srcId, Object.assign(src, { settings: o2 }));
+      keepSource(srcId, Object.assign(src, { settings: o2 }), up);
       stats.placeMs = Math.round(now() - t0);
       placing = false;
       const most = (res.layers || []).reduce((m, L) => (fin(+L.nodes) && +L.nodes > m.nodes ? { nodes: +L.nodes, grey: +L.grey } : m), { nodes: 0, grey: 0 });
@@ -1159,7 +1310,7 @@
         const s = await decode(file); if (closed) return;
         // (REOPEN: the picture a re-trace asked for keeps the set's id and its crop, so the same file comes back as it was placed)
         const relink = !!(info.relink && !src);
-        src = s; if (!relink) info.src = null; pxCache = { src: null }; $('[data-do="restore"]').disabled = true; $('[data-do="place"]').disabled = false;
+        src = s; if (!relink) info.src = null; pxCache = { src: null }; $('[data-do="restore"]').disabled = true; $('[data-do="place"]').disabled = false; vectorOnly(false);
         log('imageImport', { name: s.name, type: s.type, px: s.w0 + 'x' + s.h0, via });
         nameIt(); if (!relink) st = norm(Object.assign({}, st, { crop: null })); note(null); paint('swap'); traceSoon();
       } catch (e) { $('[data-note]').innerHTML = `<b>${esc(file.name || 'That file')}</b> could not be read: ${esc((e && e.message) || e)}`; }
@@ -1167,15 +1318,52 @@
     live = { swap, place: () => place(), cancel: () => finish(null), settings: () => Object.assign({}, st), thresholds: () => (prevThr && prevThr.v === tWant ? prevThr.thresholds.slice() : null), busyLevels: () => busy.slice(), target: () => tgt && Object.assign({}, tgt, { box: tgt.box.slice() }),
       preview: () => prev, suggestion: () => sug, working: () => !!tRun || placing, done };
     nameIt(); sync(); setMode('split'); note(null);
-    // (REOPEN) a re-trace whose picture is on neither this page nor this computer (a piece or design opened elsewhere): its settings are here, the picture is asked for
-    if (!src) {
+    /* (REOPEN, TRACESRC) NO PICTURE IN HAND: the item's own vector is shown (the Vector view, its greys, its shape), never an empty split with its handles; the other
+       views wait for the picture. info.loading: the cloud is asked for it (the step says so and takes it when it comes, its settings, crop and place kept); else, or when
+       the cloud has none, the step says where it is not and asks for it (the same file chosen or dropped: its settings, crop and place are kept). */
+    function vectorOnly(on) {
+      const was = sheet.classList.contains('is-vonly');
+      sheet.classList.toggle('is-vonly', !!on);
+      $$('button[data-mode]').forEach(b => { b.disabled = !!on && b.dataset.mode !== 'vec'; });
+      $$('.cei__row [data-do]').forEach(b => { b.disabled = !!on; });   // (turn, flip, crop, background: the picture's, when it is here)
+      sheet.hidden = !!on && !shape;
+      if (on) { setMode('vec'); $('[data-hint]').textContent = info.vector ? 'The image as it is on the charm' : ''; }
+      else if (was) setMode('split');
+    }
+    function showVector(v) {
+      if (!v || !v.box || !(v.box[2] > v.box[0]) || !(v.box[3] > v.box[1])) return;
+      const [x0, y0, x1, y1] = v.box, layers = (v.layers || []).filter(L => L && L.subpaths && L.subpaths.length && +L.grey < 0.999).slice().sort((a, b) => b.grey - a.grey);
+      svg.setAttribute('viewBox', `${x0} ${y0} ${x1 - x0} ${y1 - y0}`);
+      svg.innerHTML = layers.map(L => `<path d="${dOf(L.subpaths)}" fill="${rgb(+L.grey)}"/>`).join('');
+      $('[data-greys]').innerHTML = layers.slice().reverse().map(L => `<i style="background:${rgb(+L.grey)}" title="${esc(greyName(+L.grey))}"></i>`).join('');
+      shape = [x1 - x0, y1 - y0]; layout();
+    }
+    function askForIt(why) {
+      if (src || closed) return;
       $('[data-do="place"]').disabled = true;
-      $('[data-note]').innerHTML = '<b>The picture this was traced from is not on this computer.</b> Re-tracing needs it again: choose the same file (or drop it here) and its settings, crop and place are kept.'
+      $('[data-note]').innerHTML = (why || '<b>The picture this was traced from is not on this computer.</b>') + ' Re-tracing needs it again: choose the same file (or drop it here) and its settings, crop and place are kept.'
         + ' <button class="ce-prop" type="button" data-do="pick">Choose the picture…</button><input type="file" data-pick hidden accept="' + esc(ACCEPT.join(',')) + '">';
       const inp = $('[data-pick]'); tagKeys(inp); tagKeys($('[data-do="pick"]'));
       $('[data-do="pick"]').addEventListener('click', () => { inp.value = ''; inp.click(); });
       inp.addEventListener('change', () => { const f = Array.from(inp.files || []).find(accepts); if (f) swap(f, 'relink'); });
       const wt = $('[data-wait]'); wt.hidden = false; wt.textContent = 'Choose the picture to re-trace';
+    }
+    /** The picture from the cloud, taken as this set's own (its id, settings and crop kept). */
+    function adopt(s) {
+      if (closed || src || !s) return;
+      src = s; pxCache = { src: null }; $('[data-do="restore"]').disabled = true; $('[data-do="place"]').disabled = false;
+      vectorOnly(false); $('[data-wait]').hidden = true; nameIt(); note(null); paint('cloud'); traceSoon();
+    }
+    if (!src) {
+      showVector(info.vector); vectorOnly(true);
+      if (info.loading) {
+        $('[data-do="place"]').disabled = true;
+        $('[data-note]').innerHTML = '<b>Fetching the picture this was traced from…</b> It is kept in the cloud: it opens here in a moment, with its settings, crop and place.';
+        const wt = $('[data-wait]'); wt.hidden = false; wt.textContent = 'Fetching the picture…';
+        $('[data-name]').textContent = 'Fetching the picture…';
+        Promise.resolve(info.loading).then(s => { if (closed || src) return; if (s) adopt(s); else { nameIt(); askForIt('<b>The picture this was traced from is not in the cloud, nor on this computer.</b>'); } },
+          e => { if (closed || src) return; nameIt(); askForIt(`<b>The picture this was traced from could not be fetched</b> (${esc(String((e && e.message) || e).slice(0, 120))}).`); });
+      } else askForIt(info.nowhere ? '<b>The picture this was traced from is not kept anywhere</b> (it was traced before pictures were kept in the cloud, and is not on this computer).' : null);
     }
     // (the card is laid out by the browser in this frame; the picture is drawn in the next, so neither is one long task)
     requestAnimationFrame(() => setTimeout(() => { if (closed) return; paint('open'); traceSoon(); try { card.focus({ preventScroll: true }); } catch (e) { /* fine */ } }, 0));
@@ -1222,8 +1410,13 @@
       box = b; W = M.I;
     }
     if (!box) return null;
-    const src = await findSource(set.src);
-    const g = await step(ctx, set.settings || (src && src.settings) || null, { source: src, retrace: true, relink: !src, box, src: set.src, groupId: set.kind === 'group' ? set.id : set.src });
+    // (TRACESRC) the picture: this page's, else this computer's, else the cloud's (the step opens at once and takes it when it comes); the item's own vector is shown
+    // while there is none. A set traced before its settings were kept says its levels by its greys (k / N).
+    const src = await findSource(set.src), ref = src ? null : refOf(set.src);
+    const loading = ref ? cloudSource(set.src) : null;
+    if (loading) loading.catch(e => log('imageSourceFetchFailed', { id: set.src, why: String((e && e.message) || e).slice(0, 160) }));
+    const g = await step(ctx, set.settings || (src && src.settings) || guessSettings(set) || null, { source: src, retrace: true, relink: !src, box, src: set.src, groupId: set.kind === 'group' ? set.id : set.src,
+      loading, vector: src ? null : vectorOf(ctx, set), nowhere: !src && !ref });
     if (!g) return null;
     if (set.kind === 'group') g.name = set.it.name || g.name;
     g.trace.box = box.map(r4);
@@ -1238,6 +1431,27 @@
     return g;
   }
 
+  /** (TRACESRC) The set's grey parts as they are drawn on the charm (face pt): { box, layers: [{ grey, subpaths }] } | null: what the step shows while it has no picture. */
+  function vectorOf(ctx, set) {
+    try {
+      const M = ctx.model, geo = ctx.geo, layers = []; let b = null;
+      for (const e of set.parts || []) {
+        const it = e && e.it; if (!it || !it.artGrey || !Array.isArray(it.fill)) continue;
+        const W = M.mul(e.P, geo.matrix(it)), raw = ((geo.raw ? geo.raw(it) : it) || it).subpaths || it.subpaths || [];
+        const sps = raw.map(sub => (sub || []).map(op => (op[0] === 'h' ? ['h'] : [op[0]].concat(op.slice(1).map(p => { const q = M.ap(W, p[0], p[1]); b = b ? [Math.min(b[0], q[0]), Math.min(b[1], q[1]), Math.max(b[2], q[0]), Math.max(b[3], q[1])] : [q[0], q[1], q[0], q[1]]; return q; })))));
+        layers.push({ grey: +it.fill[0], subpaths: sps });
+      }
+      return b && layers.length ? { box: b, layers } : null;
+    } catch (e) { return null; }
+  }
+  /** (TRACESRC) The settings of a set traced before they were kept with it (its name says none): its level count read off its greys, which the trace makes k / N; null when they say nothing. */
+  function guessSettings(set) {
+    const gs = [...new Set((set.parts || []).map(e => e && e.it && e.it.artGrey && Array.isArray(e.it.fill) ? +e.it.fill[0] : NaN).filter(fin).map(g => Math.round(g * 1000) / 1000))];
+    if (!gs.length) return null;
+    for (let n = Math.max(1, gs.length); n <= MAX_LEVELS; n++) if (gs.every(g => g < 0.999 && Math.abs(g * n - Math.round(g * n)) < 0.004)) return norm({ levels: n });
+    return null;
+  }
+
   /** Registers the importer and the Re-trace command with the Charm Editor (once; before or after charm-nest-charm-editor.js loads). (REOPEN) The command is on the
    *  property bar whenever a traced image is selected (bar), on a double-click of it (dbl: the editor's hook) and in the Object and right-click menus; it no longer
    *  waits for the picture to be on this page (a piece or design opened again asks for it in the step). */
@@ -1246,9 +1460,13 @@
     if (registered || !root) return; registered = true;
     const CE = root.CharmEditor || (root.CharmEditor = {});
     (CE.importers || (CE.importers = [])).push({ id: 'image', accept: ACCEPT.slice(), title: 'Image (PNG, JPG, WebP)', run });
+    // (TRACESRC) what this computer keeps that never reached the cloud is sent, once the page has settled; and again whenever the computer is back online
+    try { setTimeout(sweep, 8000); if (root.addEventListener) root.addEventListener('online', () => { if (UP.q.size) pump(0); }); } catch (e) { /* no timers: nothing to send */ }
     (CE.commands || (CE.commands = {})).imageRetrace = { title: 'Re-trace image…', group: 'Image', icon: IC.image, bar: true, dbl: true, run: ctx => retrace(ctx), enabled: ctx => { try { return !!traceSet(ctx); } catch (e) { return false; } } };
   }
 
   return { ACCEPT, DEF, BUDGET, BUSY_NODES, MAX_LEVELS, traceOpts, norm, shrink, placeInput, placeSync, turn, flip, shownSize, keptSize, shownMatrix, prepGrey, greyImage, suggestLevels, levelsOf, grey, polysOf, inside, fitInOutline, fitInBox, target, sizeOf, fits, buildGroup, traceSet, greyName,
-    placePlan, placeAsync, keptPixels, codeOf, parseCode, anchorOf, placedBy, register, run, retrace, decode, accepts, stats: () => stats, current: () => live, sources: () => SOURCES };
+    placePlan, placeAsync, keptPixels, codeOf, parseCode, anchorOf, placedBy, register, run, retrace, decode, accepts, stats: () => stats, current: () => live, sources: () => SOURCES,
+    // (TRACESRC) the cloud: its names, the door (setHost), what the sending did (cloudStats), send now (flushUploads), the picture fetched (cloudSource)
+    refOf, idOfRef, guessSettings, setHost, cloudSource, sourceBytes, flushUploads: () => { pump(0); return UP.q.size; }, cloudStats: () => Object.assign({ queued: UP.q.size, busy: UP.busy }, UP.stats) };
 });

@@ -36,6 +36,7 @@
  *      noDesignGet · noDesignPut · noDesignDelete · optionMapGet · optionMapPut · customSheetGet · customSheetPut · customGet · customPut · customReopen
  *      (customDelete: an older page's name for customReopen; nothing deletes a record)
  *    + designs (Paul, 28 Oct 2026): designPut · designList · designGet   (the design library: every version of every charm saved in the Charm Editor, charm-nest-designs.js)
+ *    + traced pictures (TRACESRC, 28 Oct 2026): traceSrcPut · traceSrcGet   (the picture a Charm Editor image was traced from, by its own hash, charm-nest-ce-image.js)
  *  ═══════════════════════════════════════════════════════════════════════ */
 "use strict";
 const admin = require("./firebaseAdmin");
@@ -2921,6 +2922,79 @@ async function op_madeThumbPut(b) {
   delete out.was;
   return out;
 }
+/* ── TRACESRC (Paul, 28 Oct 2026: "When I Press Image Trace on an existing already vectorized image, it does not open the actual chosen image"). The picture a traced image
+   was made from, kept in Storage so that Re-trace opens it on any computer (charm-nest-ce-image.js; it used to be kept only in the browser that traced it, IndexedDB):
+     traceSrcPut { key, ext, data (base64, or a data URL), name?, w0?, h0? }  → { ok, key, ext, had, file: { path, url, name, size, w, h } }
+       named by its own bytes: charmnest/trace-src/<key>.<ext> (charmnest/sandbox/trace-src/… in the sandbox, which its reset clears with the rest of charmnest/sandbox/),
+       key the first 16 hex of the bytes' SHA-256 (checked here), so the same picture is kept once: one already there is answered as it is (had) and nothing is written.
+       A PNG, JPEG or WebP by its own bytes (the kind named), at most TRACE_SRC.bytes and TRACE_SRC.px on its long side. name, w0 × h0: the file as it was chosen (the step says them).
+     traceSrcGet { key, ext }  → { file: { path, url, name, size, w, h } | null }   (read only; the page reads the bytes through charmNestAsset)
+   The page sends the picture in the background once it is placed (and again later when it could not); its reference travels in the image's own name (the `group` of its
+   parts, which a piece's record and a design's version keep). Neither op writes a pool row, a sheet or anything the Library reads (NO_GEN_BUMP). ── */
+const TRACE_SRC = { bytes: 4000000, px: 3000 }, TRACE_KEY = /^[0-9a-f]{16}$/, TRACE_EXT = { png: "image/png", jpg: "image/jpeg", webp: "image/webp" };
+/** A picture's kind and size read off its own bytes (PNG's IHDR, JPEG's SOF, WebP's VP8 / VP8L / VP8X header): { ext, w, h } | null. Nothing is decoded. */
+function traceImageDims(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 16) return null;
+  if (buf.readUInt32BE(0) === 0x89504e47 && buf.readUInt32BE(4) === 0x0d0a1a0a && buf.toString("latin1", 12, 16) === "IHDR" && buf.length >= 24) return { ext: "png", w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+    for (let i = 2; i + 9 < buf.length;) {
+      if (buf[i] !== 0xff) { i++; continue; }
+      const m = buf[i + 1]; if (m === 0xff) { i++; continue; }
+      if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
+      const len = buf.readUInt16BE(i + 2);
+      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { ext: "jpg", w: buf.readUInt16BE(i + 7), h: buf.readUInt16BE(i + 5) };
+      if (m === 0xda || len < 2) return { ext: "jpg", w: 0, h: 0 };
+      i += 2 + len;
+    }
+    return { ext: "jpg", w: 0, h: 0 };
+  }
+  if (buf.toString("latin1", 0, 4) === "RIFF" && buf.toString("latin1", 8, 12) === "WEBP" && buf.length >= 30) {
+    const kind = buf.toString("latin1", 12, 16);
+    if (kind === "VP8 " && buf[23] === 0x9d && buf[24] === 0x01 && buf[25] === 0x2a) return { ext: "webp", w: buf.readUInt16LE(26) & 0x3fff, h: buf.readUInt16LE(28) & 0x3fff };
+    if (kind === "VP8L" && buf[20] === 0x2f) { const b0 = buf[21], b1 = buf[22], b2 = buf[23], b3 = buf[24]; return { ext: "webp", w: 1 + (((b1 & 0x3f) << 8) | b0), h: 1 + (((b3 & 0x0f) << 10) | (b2 << 2) | ((b1 & 0xc0) >> 6)) }; }
+    if (kind === "VP8X") return { ext: "webp", w: 1 + buf.readUIntLE(24, 3), h: 1 + buf.readUIntLE(27, 3) };
+    return { ext: "webp", w: 0, h: 0 };
+  }
+  return null;
+}
+const traceSrcPath = (key, ext) => (PREFIX ? "charmnest/sandbox/trace-src/" : "charmnest/trace-src/") + key + "." + ext;
+/** The picture kept at `path` (with its download token and what was said of it), else null. */
+async function traceSrcAt(path) {
+  const bucket = admin.storage().bucket();
+  try {
+    const [meta] = await bucket.file(path).getMetadata(), md = (meta && meta.metadata) || {}, t = md.firebaseStorageDownloadTokens; if (!t) return null;
+    return { path, url: designUrl(bucket.name, path, String(t).split(",")[0]), name: md.name ? String(md.name) : null, size: num(meta.size), w: num(md.w0) || null, h: num(md.h0) || null, sha: md.sha256 ? String(md.sha256) : null };
+  } catch (_) { return null; }
+}
+const traceSrcOut = f => (f ? { path: f.path, url: f.url, name: f.name, size: f.size, w: f.w, h: f.h } : null);
+async function op_traceSrcGet(b) {
+  const key = String(b.key || ""), ext = String(b.ext || "");
+  if (!TRACE_KEY.test(key) || !Object.prototype.hasOwnProperty.call(TRACE_EXT, ext)) return { error: "a traced picture is named by 16 hex of its hash and png, jpg or webp", status: 400 };
+  return { file: traceSrcOut(await traceSrcAt(traceSrcPath(key, ext))) };
+}
+async function op_traceSrcPut(b) {
+  const key = String(b.key || ""), ext = String(b.ext || "");
+  if (!TRACE_KEY.test(key) || !Object.prototype.hasOwnProperty.call(TRACE_EXT, ext)) return { error: "a traced picture is named by 16 hex of its hash and png, jpg or webp", status: 400 };
+  const raw = String(b.data == null ? "" : b.data).replace(/^data:[a-z]+\/[a-z0-9.+-]+;base64,/i, "");
+  if (raw.length > Math.ceil(TRACE_SRC.bytes / 3) * 4 + 8) return { error: `a traced picture is kept up to ${TRACE_SRC.bytes / 1e6} MB`, status: 400 };
+  const buf = Buffer.from(raw, "base64");
+  if (buf.length < 16 || buf.length > TRACE_SRC.bytes) return { error: `a traced picture is kept up to ${TRACE_SRC.bytes / 1e6} MB`, status: 400 };
+  const dims = traceImageDims(buf);
+  if (!dims || dims.ext !== ext) return { error: `the picture is not a ${ext === "jpg" ? "JPEG" : ext.toUpperCase()} by its own bytes (a traced picture is a PNG, JPEG or WebP)`, status: 400 };
+  if (!(dims.w > 0 && dims.h > 0) || Math.max(dims.w, dims.h) > TRACE_SRC.px) return { error: `a traced picture is kept at most ${TRACE_SRC.px} px on its long side`, status: 400 };
+  const crypto = require("crypto"), sha = crypto.createHash("sha256").update(buf).digest("hex");
+  if (sha.slice(0, 16) !== key) return { error: "the key is not the picture's own (the first 16 hex of its SHA-256)", status: 400 };
+  const path = traceSrcPath(key, ext), had = await traceSrcAt(path);
+  if (had) {
+    if (had.sha && had.sha !== sha) return { error: "another picture is kept under this key", status: 409 };
+    return { ok: true, key, ext, had: true, file: traceSrcOut(had) };
+  }
+  const name = str(b.name, 80).replace(/[^\w .()+-]+/g, "_").trim() || "image";
+  const side = v => { const n = Math.round(num(v)); return n >= 1 && n <= 100000 ? n : 0; }, w0 = side(b.w0) || dims.w, h0 = side(b.h0) || dims.h;
+  const bucket = admin.storage().bucket(), token = crypto.randomUUID();
+  await bucket.file(path).save(buf, { resumable: false, contentType: TRACE_EXT[ext], metadata: { cacheControl: "private, max-age=31536000", metadata: { firebaseStorageDownloadTokens: token, uploadedBy: "charm-nest-trace-src", sha256: sha, name, w0: String(w0), h0: String(h0) } } });
+  return { ok: true, key, ext, had: false, file: { path, url: designUrl(bucket.name, path, token), name, size: buf.length, w: w0, h: h0 } };
+}
 // ── sets: the number is allocated in a transaction, per date, across every material ──
 async function op_setAllocate(b) {
   const day = str(b.day, 10); if (!isDay(day)) return { error: "bad day" };
@@ -4777,6 +4851,7 @@ NO_GEN_BUMP.add("customPieceList");   // CUSTOMPOOL (Paul, 28 Oct 2026): a desig
 /* ART EDIT (Paul, 27 Oct 2026): one piece's own artwork, kept beside it (op_artPut above). artPut writes the piece's record, its pool row's artEdit stamp and its sheet's filesOwed;
    artGet and artList only read the documents named (they move no counter). */
 Object.assign(OPS, { artPut: op_artPut, artGet: op_artGet, artList: op_artList }); NO_GEN_BUMP.add("artGet"); NO_GEN_BUMP.add("artList");
+Object.assign(OPS, { traceSrcPut: op_traceSrcPut, traceSrcGet: op_traceSrcGet }); NO_GEN_BUMP.add("traceSrcPut"); NO_GEN_BUMP.add("traceSrcGet");   // TRACESRC (28 Oct 2026): the picture a traced image was made from, in Storage by its own hash (op_traceSrcPut above); no pool row, sheet or Library record is written
 OPS.madeThumbPut = op_madeThumbPut;   // THUMBSYNC (28 Oct 2026): a piece's picture as it will be made, kept on its pool row (op_madeThumbPut above); it writes a pool row, so the placement counter moves
 /* DESIGN LOG (Paul, 28 Oct 2026: "I need to know when employees are commissioning custom pieces, especially when they don't belong to an order"): designLog {records} keeps one
    record per custom piece sent, and per fix piece with who made the mistake (_designLog.js, Design_Log; charm-nest-design-log.js sends them). One write per record, no read; nothing a placement answer is made from. */

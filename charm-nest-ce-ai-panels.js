@@ -779,7 +779,9 @@
     const ts = tset && tset.settings ? tset.settings : null;
     const kvH = ts ? [['Preset', 'Custom'], ['View', 'Tracing Result'], ['Mode', ts.mode === 'line' ? 'Black and White' : 'Grayscale'], [ts.mode === 'line' ? 'Threshold' : 'Grays', ts.mode === 'line' ? 'Auto' : String(ts.levels || 4)],
       ['Paths', Math.round(num(ts.detail, 0.5) * 100) + '%'], ['Smoothness', Math.round(num(ts.smooth, 0.5) * 100) + '%'], ['Noise', num(ts.despeckle, 2) + ' px'], ['Invert', ts.invert ? 'On' : 'Off']]
-      .map(([k, v]) => `<span>${esc(k)}:</span><b>${esc(v)}</b>`).join('') : tset ? '<span>Settings:</span><b>kept with the picture</b>' : '';
+      .map(([k, v]) => `<span>${esc(k)}:</span><b>${esc(v)}</b>`).join('')
+      // (TRACESRC: an image traced before its settings were kept with it: what its greys say, and that the rest is not known; it used to read "kept with the picture")
+      : tset ? (() => { let g = null; try { g = typeof im.guessSettings === 'function' ? im.guessSettings(tset) : null; } catch (e) { g = null; } return (g ? `<span>Grays:</span><b>${esc(String(g.levels))}</b>` : '') + '<span>Settings:</span><b>not kept with this image</b>'; })() : '';
     for (const el of R.querySelectorAll('[data-aip-trace]')) if (el.__h !== kvH) { el.innerHTML = kvH; el.__h = kvH; }
     for (const b of R.querySelectorAll('[data-aip-place]')) b.hidden = !(D.X.importers || []).length;
     // the "select something" notes of the panels that need a selection

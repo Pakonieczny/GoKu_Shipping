@@ -5,7 +5,8 @@
 //      level count; the box inside an outline that keeps off a hole; the trace laid out as one group of greys; and the record: encode → apply keeps a grey part grey (fillRGB, no hatchBlue),
 //      artOps writes its grey, decode and itemsOf give it back, while a hatched part with no mark is blue exactly as before
 //   (REOPEN, 28 Oct 2026) A11 the group's name keeps source, settings and anchor through a save; B8b the property bar's Re-trace and a double-click; B16 opened again flat, the
-//      picture from this computer (IndexedDB), ONE group in the parts' place; B17 the picture nowhere: the step asks for it
+//      picture from this computer (IndexedDB), ONE group in the parts' place; (TRACESRC) B16b the pictures sent to the cloud as they were placed, and fetched from it when this
+//      computer has none; B17 the picture nowhere: the step shows the image's own vector (no split handles) and asks for it
 //   B  the real sorter page over the repo's fake site (_engraveRealWorld.cjs, offline, made-up names) with the calendar charm (_artCalendar.cjs): Edit charm; a PNG made in the page DROPPED on the
 //      work area opens the Image step (split preview: original | greyscale | vector); its suggestion, levels, tone, turn, flip, crop, background removal, line art and the "more" filters,
 //      each change measured in main-thread ms; Place → one group of grey paths fitted inside the outline; moved, sized and turned as any group; Re-trace (the Object menu) with 2 levels where it
@@ -134,6 +135,17 @@ async function partA(kit) {
       g2.group.length <= 64 && /^[A-Za-z0-9_.:-]+$/.test(g2.group) && code.src === 'imgRe' && keys.every(k2 => code.settings[k2] === sett[k2]) && JSON.stringify(code.settings.crop) === JSON.stringify(sett.crop)
         && !!set && set.kind === 'flat' && set.src === 'imgRe' && set.ids.length === g2.children.length && keys.every(k2 => set.settings[k2] === sett[k2]) && off < 0.01 && rec2.added.every(e => e.group === g2.group),
       JSON.stringify({ code, set: set && { kind: set.kind, ids: set.ids, src: set.src }, got, pic, want }));
+    // (TRACESRC) a source id that names its picture in the cloud; and a traced image inside a group made round it (⌘G, a clipping mask) keeps its own name on its parts
+    // through a save (charm-nest-art-edit.js leavesOf: they used to take the outer group's id, and Re-trace then knew neither the picture nor the settings)
+    const gC = IM.buildGroup(tr, box, { src: 's0123456789abcdefpab', settings: sett, name: 'logo.png' }), user = { id: 'usergrp', kind: 'group', role: 'hatch', source: 'added', hidden: false, locked: false, tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, children: [gC] };
+    const out3 = M.exportItems(M.prepIn(items, ['cut']).concat([user]), geo), rec3 = AE.encode(M.diffFace(M.exportItems(M.prepIn(items, ['cut']), geo), out3), { charm: cb, view, face: 'front', placed: true });
+    const greys3 = rec3.added.filter(e => e.artGrey), flat3 = AE.itemsOf(AE.apply(cb, Object.assign({ at: 1, by: 'Test' }, rec3), 'front'), view, 'front'), ix3 = M.indexTree(flat3, geo), part3 = flat3.find(i => i.artGrey);
+    const set3 = part3 && IM.traceSet({ model: M, geo, items: () => flat3, selection: () => [part3.id], entry: id => { const e = ix3.get(id); return e ? { it: e.it, P: e.P, parent: e.parent } : null; } });
+    const ref3 = set3 && IM.refOf(set3.src);
+    check(`A12 TRACESRC: the source's id names its picture in the cloud (${JSON.stringify(gC.trace.cloud)}, in a ${gC.group.length}-character name); grouped round and saved, its ${greys3.length} parts keep that name, and opened again the set knows its picture (${ref3 && ref3.key}.${ref3 && ref3.ext}) and settings (${set3 && set3.settings && set3.settings.levels} levels)`,
+      gC.group.length <= 64 && gC.trace.cloud.key === '0123456789abcdef' && gC.trace.cloud.ext === 'png' && greys3.length === gC.children.length && greys3.every(e => e.group === gC.group)
+        && !!set3 && set3.src === 's0123456789abcdefpab' && ref3 && ref3.key === '0123456789abcdef' && set3.settings && set3.settings.levels === 3 && IM.refOf('imgRe') === null,
+      JSON.stringify({ groups: rec3.added.map(e => e.group), set3: set3 && { kind: set3.kind, src: set3.src } }));
   }
   // served: the page loads it after the editor (with a cache token) and the build ships it
   const fs = require('node:fs'), html = fs.readFileSync(path.join(ROOT, 'charm-nest-1.html'), 'utf8'), build = fs.readFileSync(path.join(ROOT, 'scripts/build-public.cjs'), 'utf8');
@@ -365,7 +377,7 @@ async function partB(kit) {
     await R.settle(page, 1200);
     const rec = st.doc('Charm_Pool_Art', PID + '~front'), greys = rec ? rec.added.filter(e => e.artGrey) : [];
     check(`B12 Save: the piece's record (Charm_Pool_Art, by ${rec && rec.by}) keeps ${greys.length} grey parts, each artGrey with its grey fill (${[...new Set(greys.map(e => e.fill[0]))].sort().join(', ')}), even-odd, in its image's group; nothing else changed`,
-      !!rec && greys.length === pl.kids.length + pb.kids.length && greys.every(e => e.role === 'hatch' && e.even === true && e.fill[0] === e.fill[1] && e.fill[1] === e.fill[2] && !e.stroke && /^img/.test(e.group))
+      !!rec && greys.length === pl.kids.length + pb.kids.length && greys.every(e => e.role === 'hatch' && e.even === true && e.fill[0] === e.fill[1] && e.fill[1] === e.fill[2] && !e.stroke && /^s[0-9a-f]{16}[pjw][0-9a-z]{2}:1/.test(e.group))
         && greys.map(e => e.fill[0]).sort().join() === pl.kids.map(k => k.fill[0]).concat(pb.kids).sort().join() && !Object.keys(rec.changed || {}).length && !(rec.removed || []).length && rec.added.length === greys.length, JSON.stringify(rec && rec.added.map(e => [e.id, e.fill, e.artGrey, e.group])));
 
     /* ── the laser's file: each grey its own fill colour; the month's letters still blue ── */
@@ -412,16 +424,34 @@ async function partB(kit) {
     check(`B16 opened again (flat parts), with this page's copy of the picture gone: Re-trace on the bar finds it on this computer (${rf.name}), with its settings (${rf.st.levels} levels, crop ${rf.st.crop && rf.st.crop.map(v => v.toFixed(2)).join(',')}), and Place puts ONE group of ${flat1.kids} greys in the parts' place (their box to ${boxOff.toFixed(3)} pt)`,
       flat0.bar && /^logo\.png/.test(rf.name) && rf.st.levels === 4 && !!rf.st.crop && flat1.left === 0 && flat1.kind === 'group' && flat1.kids === flat0.ids.length && flat1.n === flat0.n - flat0.ids.length + 1 && boxOff < 0.15 && IMcode(flat1.group) === IMcode(flat0.group),
       JSON.stringify({ flat0, rf, flat1 }));
-    // and with the picture on neither: the step says so, keeps the settings and asks for the file
+    // (TRACESRC) the picture on neither this page nor this computer, but in the cloud (the page sent it when it was placed, charmNestLibrary.js traceSrcPut): Re-trace fetches it
+    const kept = [...st.blobs.keys()].filter(k => /^charmnest\/(sandbox\/)?trace-src\//.test(k)), putN = st.calls.filter(c => c.op === 'traceSrcPut').length;
+    const dir = (await page.evaluate(() => typeof WORKSPACE_SANDBOX !== 'undefined' && !!WORKSPACE_SANDBOX)) ? 'charmnest/sandbox/trace-src/' : 'charmnest/trace-src/';   // (this page's world's own)
     await page.evaluate(() => new Promise(r => { CharmNestCeImage.sources().clear(); const q = indexedDB.deleteDatabase('cn-ce-image'); q.onsuccess = q.onerror = q.onblocked = () => r(); }));
-    await page.evaluate(() => { const E = CharmEditor.current, p = E.items().find(i => i.artGrey && i.kind !== 'group'); E.ctx.select([p.id]); });
+    await page.evaluate(src => { const E = CharmEditor.current, p = E.items().find(i => String(i.group || '').split(':')[0] === src); E.ctx.select([p.id]); }, IMcode(flat0.group));
     await settleP(page);
     await page.click('.ce-root .ce-xbar [data-xcmd="imageRetrace"]');
-    await page.waitForSelector('.ce-root .cei .cei__card', { timeout: 20000 }); await settleP(page);
-    const miss = await page.evaluate(() => ({ note: document.querySelector('.cei [data-note]').textContent, pick: !!document.querySelector('.cei [data-do="pick"]'), place: document.querySelector('.cei [data-do="place"]').disabled, levels: CharmNestCeImage.current().settings().levels }));
+    await page.waitForSelector('.ce-root .cei .cei__card', { timeout: 20000 });
+    await page.waitForFunction(() => /^logo\.png/.test(document.querySelector('.cei [data-name]').textContent) || !!document.querySelector('.cei [data-do="pick"]'), null, { timeout: 30000 });
+    if (await page.evaluate(() => /^logo\.png/.test(document.querySelector('.cei [data-name]').textContent))) await previewDone(page);
+    const cl = await page.evaluate(() => ({ name: document.querySelector('.cei [data-name]').textContent, note: document.querySelector('.cei [data-note]').textContent, mode: document.querySelector('.cei__sheet').dataset.mode, place: !document.querySelector('.cei [data-do="place"]').disabled, levels: CharmNestCeImage.current().settings().levels, cs: CharmNestCeImage.cloudStats() }));
     await page.click('.cei [data-do="cancel"]'); await page.waitForFunction(() => !document.querySelector('.cei'), null, { timeout: 20000 });
-    check(`B17 the picture on neither this page nor this computer: the step says so ("${miss.note.slice(0, 70)}…"), offers to choose it again, keeps its ${miss.levels} levels and holds Place until it is chosen`,
-      /not on this computer/.test(miss.note) && miss.pick && miss.place && miss.levels === 4, JSON.stringify(miss));
+    check(`B16b the pictures went to the cloud as they were placed (${kept.length} kept in ${dir}, ${putN} sent); with this page's and this computer's copies gone, Re-trace fetches it (${cl.name}, ${cl.levels} levels)`,
+      kept.length === 2 && putN === 2 && kept.every(k => k.startsWith(dir)) && /^logo\.png/.test(cl.name) && cl.mode === 'split' && cl.place && cl.levels === 4 && cl.cs.fetched >= 1, JSON.stringify({ kept, putN, cl }));
+    // and with the picture nowhere (on neither this page, this computer nor the cloud): the step shows the item's vector, keeps the settings and asks for the file
+    for (const k of kept) st.blobs.delete(k);
+    await page.evaluate(() => new Promise(r => { CharmNestCeImage.sources().clear(); const q = indexedDB.deleteDatabase('cn-ce-image'); q.onsuccess = q.onerror = q.onblocked = () => r(); }));
+    await page.evaluate(src => { const E = CharmEditor.current, p = E.items().find(i => String(i.group || '').split(':')[0] === src); E.ctx.select([p.id]); }, IMcode(flat0.group));
+    await settleP(page);
+    await page.click('.ce-root .ce-xbar [data-xcmd="imageRetrace"]');
+    await page.waitForSelector('.ce-root .cei .cei__card', { timeout: 20000 });
+    await page.waitForFunction(() => !!document.querySelector('.cei [data-do="pick"]'), null, { timeout: 30000 }); await settleP(page);
+    const miss = await page.evaluate(() => ({ note: document.querySelector('.cei [data-note]').textContent, pick: !!document.querySelector('.cei [data-do="pick"]'), place: document.querySelector('.cei [data-do="place"]').disabled, levels: CharmNestCeImage.current().settings().levels,
+      mode: document.querySelector('.cei__sheet').dataset.mode, vec: document.querySelectorAll('.cei__vec path').length, handles: [...document.querySelectorAll('.cei .cei__div, .cei .cei__lab')].filter(el => getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().width > 0).length }));
+    await R.shot(w, 'CEI-17-nowhere');
+    await page.click('.cei [data-do="cancel"]'); await page.waitForFunction(() => !document.querySelector('.cei'), null, { timeout: 20000 });
+    check(`B17 the picture nowhere: the step shows the image's own vector (${miss.vec} greys, ${miss.handles} split handles), says so ("${miss.note.slice(0, 70)}…"), offers to choose it again, keeps its ${miss.levels} levels and holds Place until it is chosen`,
+      /not in the cloud, nor on this computer/.test(miss.note) && miss.pick && miss.place && miss.levels === 4 && miss.mode === 'vec' && miss.vec >= 2 && miss.handles === 0, JSON.stringify(miss));
     await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
     check('B15 no page error', w.errors.length === 0, JSON.stringify(w.errors).slice(0, 400));
   } finally { await w.close(); }

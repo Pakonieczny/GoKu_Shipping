@@ -364,7 +364,10 @@
       let bb = null;
       if (!isMat(item.matrix)) for (const { ch } of kids) { if (!ch || !okSubs(ch.subpaths)) continue; const m = itemMatrix(ch, bboxOf(ptsOf(ch.subpaths))); const b = bboxOf(ptsOf(mapSubs(ch.subpaths, p => ap(m, +p[0], +p[1])))); if (b) bb = bb ? [Math.min(bb[0], b[0]), Math.min(bb[1], b[1]), Math.max(bb[2], b[2]), Math.max(bb[3], b[3])] : b; }
       const G = mul(isMat(item.matrix) ? item.matrix : itemMatrix(item, bb), parentM || ID);
-      for (const { ch, id } of kids) leavesOf(Object.assign({}, ch, { id, group: item.group || item.id }), null, G, ROLES.has(item.role) ? item.role : parentRole, out, id);
+      // (TRACESRC, 28 Oct 2026: a traced image's name, its `group`, says where its picture is kept and with which settings it was traced (charm-nest-ce-image.js codeOf): a traced
+      //  image grouped with other parts, or masked, keeps its own name on its parts; it used to take the outer group's id, and Re-trace then knew neither its picture nor its settings)
+      const ownName = ch => !!ch && typeof ch.group === "string" && !!ch.group && (ch.artGrey === true || (ch.kind === "group" && Array.isArray(ch.children) && ch.children.some(c => c && c.artGrey === true)));
+      for (const { ch, id } of kids) leavesOf(Object.assign({}, ch, { id, group: ownName(ch) ? ch.group : item.group || item.id }), null, G, ROLES.has(item.role) ? item.role : parentRole, out, id);
       return out;
     }
     const subs = okSubs(item.subpaths) ? item.subpaths : own ? own() : null, placed = item.kind === "text" && okSubs(item.subpaths);
