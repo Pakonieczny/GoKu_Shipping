@@ -124,7 +124,7 @@ async function partB() {
     await page.evaluate(sel => document.querySelector(sel).scrollIntoView({ block: 'center' }), `${card} [data-cp-design]`); await shot(page, '0-card');
     const btn = await page.evaluate(sel => { const b = document.querySelector(sel); const r = b.getBoundingClientRect(); return { text: b.textContent.trim(), w: r.width, h: r.height, inCol: !!b.closest('.rowActions') }; }, `${card} [data-cp-design]`);
     const regular = await page.evaluate(rid => !!document.querySelector(`#rvList > .reviewListRow[data-rid="${rid}"] [data-cp-design]`), FIXED);
-    check('B1 the Custom Orders card has "Open in Charm Designer" in its column (a regular order\'s card has none)', btn.text === 'Open in Charm Designer' && btn.inCol && btn.h >= 30 && !regular, `${Math.round(btn.w)}×${Math.round(btn.h)} px`);
+    check('B1 the Custom Orders card has "Open in Charm Editor" in its column (a regular order\'s card has none)', btn.text === 'Open in Charm Editor' && btn.inCol && btn.h >= 30 && !regular, `${Math.round(btn.w)}×${Math.round(btn.h)} px`);
     const tClick = Date.now();
     await page.click(`${card} [data-cp-design]`);
     await page.waitForFunction(() => window.CharmEditor.current && document.querySelector('.ce-root')).catch(async e => { console.log('  (diagnosis)', JSON.stringify(await page.evaluate(() => ({ toasts: [...document.querySelectorAll('#toasts .toast')].map(t => t.textContent), who: B.employee })))); throw e; });
@@ -182,7 +182,7 @@ async function partB() {
     await page.evaluate(rid => OrderWin.openOrder(rid), CUSTOM);
     await page.waitForFunction(() => { const b = document.getElementById('owCpDesign'); return b && !b.hidden; });
     const ow = await page.evaluate(() => { const b = document.getElementById('owCpDesign'); return { text: b.textContent.trim(), title: b.title }; });
-    check('B9b the order window shows the design attached to the order (name, version) and opens it in the Charm Designer', ow.text === 'Edit design' && /v1 is attached to this order/.test(ow.title), ow.title);
+    check('B9b the order window shows the design attached to the order (name, version) and opens it in the Charm Designer', ow.text === 'Edit Design' && /v1 is attached to this order/.test(ow.title), ow.title);
     await page.evaluate(() => OrderWin.close()); await page.waitForFunction(() => !OrderWin.isOpen());
 
     /* ── B10 · an orderless piece that fixes a mistake ── */

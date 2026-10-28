@@ -9823,16 +9823,12 @@ const Engrave = window.Engrave = (() => {
     //  app's own gold button, full size, with its icon and three words, in the card's head beside its ×, where Back / Next and Open order are: in view on every card, never over the drawing)
     // (APPROVEHIT, Paul 28 Oct 2026, order 4203083230: "Pressing the green Approve does nothing": this rule makes the work area position:relative, so a wide piece's work area (.egWide: it runs under the
     //  Approve block at its top right) was painted over the block and took every real click on Approve; the block stands above it: charm-nest-activity.css says the same)
-    s.textContent = ".backHost{position:relative}.pvApproval{z-index:3}.rvItem .rh>.egCharmEdit{order:98;flex:none;display:inline-flex;align-items:center;gap:8px;margin-left:auto;padding:9px 18px 9px 13px;border-radius:9px;font:650 14px/1.2 var(--sans,system-ui);letter-spacing:.005em;box-shadow:0 4px 14px rgba(169,130,63,.32)}"
-      + ".rvItem .rh>.egCharmEdit svg{width:19px;height:19px;flex:none}.rvItem .rh>.egCharmEdit:hover{background:#94703a;border-color:#94703a;color:#fff;opacity:1}.rvItem .rh>.egCharmEdit:focus-visible{outline:2px solid var(--ink,#1c1a17);outline-offset:2px}.rvItem .rh>.egCharmEdit~.x{margin-left:0}.egCharmEdit[aria-busy=true]{opacity:.65;cursor:progress}"
+    s.textContent = ".backHost{position:relative}.pvApproval{z-index:3}"   // (CEBTN: the button's look and place are charm-nest-activity.css .cnCeBtn, as every way into the Charm Editor)
       + ".egArtNote{position:absolute;left:0;top:0;display:block;padding:3px 9px;border-radius:10px;background:rgba(255,255,255,.94);border:1px solid var(--line,#e4ddd0);font:11.5px/1.4 var(--sans,system-ui);color:var(--ink70,#5b554c);z-index:1;cursor:pointer;white-space:normal}"
       + ".egArtNote.bad{color:#8a3a26;border-color:#e2c4b8}"
       // (DESIGNBTN, Paul 28 Oct 2026: "Remove this entire menu from the UI" ... "Add a new button called 'Charm Editor' that opens the Design a Charm Modal" ... "Make sure the button has a nice hover state and it's visible and easy to click/interact with":
       //  the Charm Designer's bar at the top of the tab is gone; one gold button at the right end of the tab's own bar, charmEditorButton; the order window's button is styled by the page, .owCharmEdit)
-      + ".btn.egDesignBtn{flex:none;display:inline-flex;align-items:center;gap:8px;margin-left:auto;min-height:36px;padding:7px 16px 7px 12px;border-radius:9px;font:650 13.5px/1.2 var(--sans,system-ui);letter-spacing:.005em;white-space:nowrap;box-shadow:0 3px 10px rgba(169,130,63,.28);transition:background-color .15s,border-color .15s,color .15s,box-shadow .15s,transform .08s}"
-      + ".btn.egDesignBtn svg{width:18px;height:18px;flex:none}.btn.egDesignBtn:hover:not(:disabled){background:#94703a;border-color:#94703a;color:#fff;opacity:1;box-shadow:0 5px 16px rgba(169,130,63,.42)}.btn.egDesignBtn:active:not(:disabled){transform:translateY(1px);box-shadow:0 2px 6px rgba(169,130,63,.3)}"
-      + ".btn.egDesignBtn:focus-visible{outline:2px solid var(--ink,#1c1a17);outline-offset:2px}.btn.egDesignBtn[aria-busy=true]{opacity:.65;cursor:progress}.btn.egDesignBtn:disabled{box-shadow:none}"
-      + "@media(prefers-reduced-motion:reduce){.btn.egDesignBtn{transition:none}}";
+      + ".btn.cnCeBtn.egDesignBtn{flex:none;margin-left:auto}";
     (document.head || document.documentElement).appendChild(s);
   }
   /** The piece `x` can open in the charm editor with its charm on this page: { poolIds, charm, row, job, from, say } (charmEditPiece), or null: no editor or art module here, a saved back opened
@@ -9859,14 +9855,15 @@ const Engrave = window.Engrave = (() => {
   function charmEditButton(host, bc, job) {
     if (!host || !charmEditTarget(job)) return null;   // (EDITOR WORDS, 27 Oct 2026: a face still waiting for words has no drawing (bc) yet; the button is on its card too, so the art can be drawn first and no words are needed to reach the editor)
     charmEditCss();
-    const card = host.closest ? host.closest(".rvItem") : null, head = card && card.querySelector(":scope > .rh"), at = head || host;
+    // (CEBTN, Paul 28 Oct 2026: "relocate the 'Open In Charm Editor' button": at the top left of the card's work area, level with Approve at its top right (charm-nest-activity.css))
+    const card = host.closest ? host.closest(".rvItem") : null, main = host.closest ? host.closest(".pvMain") : null, head = card && card.querySelector(":scope > .rh"), at = main || head || host;
     let b = at.querySelector(":scope > .egCharmEdit");
     if (!b) {
-      b = document.createElement("button"); b.type = "button"; b.className = "btn gold egCharmEdit";   // (no data-a: the card's own buttons are wired by that, and this is no card action)
+      b = document.createElement("button"); b.type = "button"; b.className = "btn cnCeBtn egCharmEdit";   // (no data-a: the card's own buttons are wired by that, and this is no card action)
       b.title = "Open this piece in the Charm Editor: its front and back, layer by layer, the words as outlines, zoom to any detail · saved for this piece only";
       b.innerHTML = CHARM_EDIT_ICON + "<span>Open in Charm Editor</span>"; b.setAttribute("aria-label", "Open in Charm Editor");
       b.addEventListener("click", e => { e.stopPropagation(); const j = b._job; if (!j) return; b.setAttribute("aria-busy", "true"); openCharmEditor(j).catch(err => charmEditSay(j, `Not saved · ${err && err.message || err}`, true)).finally(() => { if (b.isConnected) b.removeAttribute("aria-busy"); }); });
-      at.insertBefore(b, head ? head.querySelector(":scope > .x") : null);
+      at.insertBefore(b, at === head ? head.querySelector(":scope > .x") : at.firstChild);
     }
     b._job = job;
     charmEditNoteOn(host, job);
@@ -10216,7 +10213,7 @@ const Engrave = window.Engrave = (() => {
     if (!host) return null;
     charmEditCss();
     if (!cdBtnEl) {
-      const b = document.createElement("button"); b.type = "button"; b.className = "btn gold egDesignBtn"; b.id = "egDesignBtn"; b.dataset.cd = "new";
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn cnCeBtn egDesignBtn"; b.id = "egDesignBtn"; b.dataset.cd = "new";
       b.innerHTML = `${CHARM_EDIT_ICON}<span>Charm Editor</span>`;
       b.addEventListener("click", () => {
         const M = window.CharmNestCeMasters; if (b.disabled || b.getAttribute("aria-busy") === "true" || !cdFn(M, "newDesign")) return;
@@ -21782,7 +21779,7 @@ const OrderWin = window.OrderWin = (() => {
     const E = window.Engrave, can = !!(window.CharmEditor && window.CharmNestArtEdit && E && E.openCharmEditor);
     if (!can || !r || r.loading || (r.spec && (r.spec.noDesign || r.spec.ownDesign))) { if (b) { b.hidden = true; const n = b.nextElementSibling; if (n && n.classList.contains("owCharmEditNote")) n.hidden = true; } return; }
     if (!b) {
-      b = document.createElement("button"); b.type = "button"; b.className = "btn gold owCharmEdit"; b.dataset.testid = "ow-charm-edit";
+      b = document.createElement("button"); b.type = "button"; b.className = "btn cnCeBtn owCharmEdit"; b.dataset.testid = "ow-charm-edit";
       b.innerHTML = CE_ICON + "<span>Open in Charm Editor</span>";
       const note = document.createElement("div"); note.className = "owCharmEditNote"; note.setAttribute("role", "status"); note.hidden = true;
       fig.append(b, note);

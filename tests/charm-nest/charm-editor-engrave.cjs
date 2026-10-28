@@ -140,18 +140,18 @@ async function partB(kit) {
     const entryOf = () => page.evaluate(() => {
       const c = __ce.card(), bs = [...c.querySelectorAll('.egCharmEdit')], b = bs[0], r = b && b.getBoundingClientRect(), x = c.querySelector('.rh > .x'), xr = x && x.getBoundingClientRect(), cv = __ce.cv(), cr = cv && cv.getBoundingClientRect(), ctl = c.querySelector('.ctl'), cs = b && getComputedStyle(b);
       const peek = c.querySelector('.backHost .egFrontPeek'), pr = peek && peek.getBoundingClientRect(), over = (p, q) => !!(p && q && p.left < q.right && q.left < p.right && p.top < q.bottom && q.top < p.bottom);
-      return { n: bs.length, all: document.querySelectorAll('.egCharmEdit').length, text: b && b.textContent.trim(), name: b && b.getAttribute('aria-label'), icon: !!(b && b.querySelector('svg')), inHead: !!(b && b.parentElement.matches('.rh')),
-        besideX: !!(r && xr && Math.abs((r.top + r.bottom) / 2 - (xr.top + xr.bottom) / 2) < 12 && xr.left >= r.right - 1 && xr.left - r.right < 40), w: r && Math.round(r.width), h: r && Math.round(r.height), font: cs && parseFloat(cs.fontSize), bg: cs && cs.backgroundColor,
+      return { n: bs.length, all: document.querySelectorAll('.egCharmEdit').length, text: b && b.textContent.trim(), name: b && b.getAttribute('aria-label'), icon: !!(b && b.querySelector('svg')), inHead: !!(b && b.parentElement.matches('.pvMain')), level: (() => { const ap = c.querySelector('.pvApproval'), ar = ap && ap.getBoundingClientRect(); return !!(r && ar && Math.abs(r.top - ar.top) < 3); })(),
+        besideX: !!(r && xr && Math.abs((r.top + r.bottom) / 2 - (xr.top + xr.bottom) / 2) < 12 && xr.left >= r.right - 1 && xr.left - r.right < 40), w: r && Math.round(r.width), h: r && Math.round(r.height), font: cs && parseFloat(cs.fontSize), bg: cs && cs.backgroundImage,
         inWork: !!c.querySelector('.backHost .egCharmEdit'), inToolbar: !!(ctl && ctl.querySelector('.egCharmEdit')), overDrawing: over(r, cr), quiet: (c.querySelector('.backHost') || {}).textContent.trim(), peek: !!peek, overPeek: over(r, pr) };
     });
     const e0 = await entryOf();
     const entryShot = await R.shot(w, 'CE-1-entry-front');
-    check('B2 the card: ONE big gold "Open in Charm Editor" button (an icon and the words) in its head right beside the ×, ' + (e0.w || 0) + 'x' + (e0.h || 0) + ' px, ' + e0.font + ' px words; not in the work area, not in the toolbar, over nothing of the drawing; the work area\'s own text (its messages) stays empty',
-      e0.n === 1 && e0.all === 1 && e0.text === 'Open in Charm Editor' && e0.name === 'Open in Charm Editor' && e0.icon && e0.inHead && e0.besideX && e0.w >= 160 && e0.h >= 34 && e0.font >= 13 && e0.bg === 'rgb(169, 130, 63)' && !e0.inWork && !e0.inToolbar && !e0.overDrawing && e0.quiet === '', JSON.stringify(e0));
+    check('B2 the card: ONE "Open in Charm Editor" button, the white pill with a gold outline (CEBTN), at the top left of the work area level with Approve, ' + (e0.w || 0) + 'x' + (e0.h || 0) + ' px, ' + e0.font + ' px words; not in the work area, not in the toolbar, over nothing of the drawing; the work area\'s own text (its messages) stays empty',
+      e0.n === 1 && e0.all === 1 && e0.text === 'Open in Charm Editor' && e0.name === 'Open in Charm Editor' && e0.icon && e0.inHead && e0.level && e0.w >= 160 && e0.h >= 36 && e0.font >= 13 && /linear-gradient\(rgb\(255, 255, 255\)/.test(e0.bg) && !e0.inWork && !e0.inToolbar && !e0.overDrawing && e0.quiet === '', JSON.stringify(e0));
     await R.openEngraveDetail(w, 'cal', { face: 'back' }); await R.settle(page, 700);
     const e1 = await entryOf();
     await R.shot(w, 'CE-1b-entry-back');
-    check('B3 on the back the same one button is in the card\'s head, and "Show front" keeps its corner of the drawing (the button covers it nowhere)', e1.n === 1 && e1.all === 1 && e1.inHead && e1.besideX && e1.peek && !e1.overPeek && !e1.inWork, JSON.stringify(e1));
+    check('B3 on the back the same one button is at the top left of the work area level with Approve, and "Show front" keeps its corner of the drawing (the button covers it nowhere)', e1.n === 1 && e1.all === 1 && e1.inHead && e1.level && e1.peek && !e1.overPeek && !e1.inWork, JSON.stringify(e1));
     const master = await page.evaluate(id => { const ch = Pool.charmOf(id); return { hash: ch.hash, n: ch.members.length }; }, PID2);
 
     /* ── the editor opens on the front ── */

@@ -522,3 +522,28 @@
 .rowActions>.relSealSlot>.relSeal{margin:0;max-width:100%}
 .ogHead .ogActs>.relSealSlot{flex:1 0 100%;justify-content:flex-end;margin-top:12px}
 @container (max-width:1100px){.ordList .doneRow.orderListRow>.rowActions>.relSealSlot{flex:1 0 100%;margin-top:10px}}
+
+/* CEBTN (Paul, 28 Oct 2026: "change the colour of these buttons to have white fill and a elegant tasteful outline. Both buttons must look a bit special and different from the others ...
+   noticeable but inconspicuous at the same time and have a beautifully designed and executed hover states ... This change should happen application wide ... anywhere there is even a shortcut
+   to the charm editor. The button always looks the same and is roughly the same size")
+   EVERY way into the Charm Editor is this one button: a white pill (the app's other buttons are square-cornered), a fine gold outline that shades from light to deep gold, the pen nib in gold and
+   the words in ink, the same height and type everywhere. On hover the pill fills with deep ink from the outline in (a layer under the words that fades in), the words turn white and the nib
+   light gold and tips forward; pressed, it settles back. Placed by each place's own rule (.egCharmEdit, .egDesignBtn, .owCharmEdit, .cpOwBtn, .cpOpenBtn, .swCeBtn); styled only here. */
+.btn.cnCeBtn{position:relative;isolation:isolate;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:38px;padding:0 18px 0 14px;border:1.5px solid transparent;border-radius:999px;
+  background:linear-gradient(#fff,#fff) padding-box,linear-gradient(135deg,#e2cb95 0%,#a9823f 48%,#7f5f2b 72%,#d9be86 100%) border-box;color:#2a2219;font:600 13.5px/1.15 var(--sans);letter-spacing:.012em;
+  white-space:nowrap;cursor:pointer;opacity:1;box-shadow:0 1px 1.5px rgba(70,50,20,.07),0 6px 16px -9px rgba(169,130,63,.55);
+  transition:color .24s ease,box-shadow .24s ease,transform .24s cubic-bezier(.2,.8,.2,1)}
+.btn.cnCeBtn::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;background:radial-gradient(120% 140% at 30% 0%,#3a3024 0%,#1d1812 60%,#14110d 100%);opacity:0;transform:scale(.94);
+  transition:opacity .24s ease,transform .3s cubic-bezier(.2,.8,.2,1)}
+.btn.cnCeBtn svg{width:18px;height:18px;flex:none;color:#a9823f;transition:color .24s ease,transform .32s cubic-bezier(.2,.8,.2,1)}
+.btn.cnCeBtn>span{display:inline-block}
+.btn.cnCeBtn:hover:not(:disabled):not([aria-disabled=true]){color:#fff;opacity:1;transform:translateY(-1px);box-shadow:0 2px 3px rgba(30,22,10,.12),0 12px 24px -10px rgba(110,80,35,.6)}
+.btn.cnCeBtn:hover:not(:disabled):not([aria-disabled=true])::before{opacity:1;transform:none}
+.btn.cnCeBtn:hover:not(:disabled):not([aria-disabled=true]) svg{color:#e8d29c;transform:rotate(-14deg) translateY(-.5px)}
+.btn.cnCeBtn:active:not(:disabled){transform:translateY(0);box-shadow:0 1px 2px rgba(30,22,10,.18)}
+.btn.cnCeBtn:focus-visible{outline:2px solid #a9823f;outline-offset:3px}
+.btn.cnCeBtn:disabled,.btn.cnCeBtn[aria-disabled=true]{opacity:.5;cursor:default;box-shadow:none}
+.btn.cnCeBtn[aria-busy=true]{cursor:progress;opacity:.72}
+@media (prefers-reduced-motion:reduce){.btn.cnCeBtn,.btn.cnCeBtn::before,.btn.cnCeBtn svg{transition:none}.btn.cnCeBtn:hover:not(:disabled){transform:none}.btn.cnCeBtn:hover:not(:disabled) svg{transform:none}}
+/* (the Engraving card's: at the top left of its work area, level with the Approve block at the top right, where the work area is empty; never over the drawing) */
+.pvMain>.btn.cnCeBtn.egCharmEdit{position:absolute;left:0;top:calc(var(--seal-base,50px) / 2);z-index:3;margin:0}

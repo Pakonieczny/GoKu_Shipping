@@ -2563,12 +2563,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (flash) host.querySelector('.swEng')?.classList.add('flash');
   }
 
+  // (CEBTN, Paul 28 Oct 2026: every way into the Charm Editor is the same button: charm-nest-activity.css .cnCeBtn, the pen nib and its words)
+  const CE_NIB = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5 6 12l2.8 6.5h6.4L18 12Z"/><path d="M12 3.5V11"/><circle cx="12" cy="12.6" r="1.5"/><path d="M8.8 21h6.4"/></svg>';
   function renderCustomEng(x, host) {
     const f = x.custom, size = f.widthMm != null && f.heightMm != null ? `${(+f.widthMm).toFixed(1)} × ${(+f.heightMm).toFixed(1)} mm` : "";
     const can = !!(window.CharmNestCeLibrary && typeof CharmNestCeLibrary.openDesign === "function");
     host.innerHTML = `<span class="fLabel">Engraving</span><div class="swEng egCard" data-state="custom"><div class="top egTop"><span class="egPill" data-s="approved"><i aria-hidden="true"></i>Custom design</span></div>`
       + `<div class="egWhy"><b>Engraved exactly as designed</b><span class="by egSub"><span>Design ${esc(f.designId)} · version ${f.version}${size ? " · " + size : ""}${f.by ? " · sent by " + esc(f.by) : ""}. Nothing to confirm: change it in the Charm Editor and send it again.</span></span></div>`
-      + (can ? `<div class="acts"><button type="button" class="btn gold sm egOpen" data-e="design">Open in Charm Editor <span aria-hidden="true">→</span></button></div>` : "") + `</div>`;
+      + (can ? `<div class="acts"><button type="button" class="btn cnCeBtn swCeBtn" data-e="design">${CE_NIB}<span>Open in Charm Editor</span></button></div>` : "") + `</div>`;
     const b = host.querySelector("[data-e=design]");
     if (b) b.onclick = () => {
       if (b.disabled) return;

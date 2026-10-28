@@ -207,7 +207,7 @@ async function browserChecks() {
     assert.deepEqual(chainRow.buttons, ['Print QR label', 'Release Hold'], 'nothing to decide and nothing to cut: its label, or released (completed) as it is');   // (RELORDER, Paul 20 Oct 2026: Release Hold where Complete Order stood)
     // no Review & resolve on a custom card (Paul, 27 Sep 19:45): Complete Order, and Send to Sheet for its own designs
     // (DESIGN & ENGRAVE, Paul 28 Oct 2026: a custom order that takes a design opens in the Charm Designer from its column: charm-nest-custom-piece.js)
-    for (const r of list.filter(x => x.rid !== '4176744752')) assert.deepEqual(r.buttons, ['Print QR label', 'Release Hold', 'Send to Sheet', 'Open in Charm Designer', 'Drop .ai / .dxf designs here'], r.rid + ': ' + r.buttons.join(', '));
+    for (const r of list.filter(x => x.rid !== '4176744752')) assert.deepEqual(r.buttons, ['Print QR label', 'Release Hold', 'Send to Sheet', 'Open in Charm Editor', 'Drop .ai / .dxf designs here'], r.rid + ': ' + r.buttons.join(', '));
     // one Open / Completed switch at the front of the bar, for every filter (Paul, 27 Sep)
     // no Everything chip (Paul, 27 Sep: it always read the same as Open)
     const seg = await page.evaluate(() => ({ first: document.querySelector('#reviewView .ordBar').firstElementChild.className, b: [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim()), all: !!document.querySelector('#reviewView .egTab[data-k=""]'), n: Review.count() }));

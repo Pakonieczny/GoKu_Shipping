@@ -374,13 +374,12 @@
       '.cpDlg .dlgFoot .btn{min-height:34px}',
       '@media(max-width:740px){.cpBody{grid-template-columns:1fr}.cpLeft{border-right:0;border-bottom:1px solid var(--line2)}.cpPlate{height:180px}.cpSub{margin-left:0}.cpDlg .dlgFoot{flex-wrap:wrap}.cpDlg .dlgFoot .left{flex:1 1 100%}}',
       // the Custom Orders card: the button in its column, and the design attached to the order across its foot
-      '.btn.cpOpenBtn{display:inline-flex;align-items:center;gap:7px;background:#fff;border-color:rgba(125,86,168,.6);color:#4d3470}.btn.cpOpenBtn svg{width:16px;height:16px;flex:none}',
-      '.btn.cpOpenBtn:hover{background:#f8f4fc;border-color:#8e6bb8}.btn.cpOpenBtn[aria-busy=true]{opacity:.65;cursor:progress}.btn.cpOpenBtn:focus-visible{outline:2px solid #8e6bb8;outline-offset:2px}',
+      '.btn.cnCeBtn.cpOpenBtn{flex:none}',   // (CEBTN: its look is charm-nest-activity.css .cnCeBtn)
       '.cpStrip{grid-column:1/-1;display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;padding:9px 12px;border-radius:10px;background:#faf7fd;border:1px solid rgba(125,86,168,.22);animation:aiIn .25s ease-out}',
       '.cpStLbl{font:700 10px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:#6a4a93;white-space:nowrap}',
       '.cpStPic{width:44px;height:44px;box-sizing:border-box;padding:3px;border-radius:8px;background:#fff;border:1px solid var(--line);display:grid;place-items:center;overflow:hidden;cursor:pointer}.cpStPic svg,.cpStPic img{max-width:100%;max-height:100%}',
       '.cpStMeta{display:grid;gap:2px;min-width:0;flex:1 1 220px}.cpStMeta b{font:600 12.5px var(--sans);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cpStMeta .dim{font:11.5px var(--sans);color:var(--ink70)}.cpStMeta .ok{color:#3c5a39;font-weight:600}',
-      '.btn.cpOwBtn{display:inline-flex;align-items:center;gap:5px;background:#fff;border-color:rgba(125,86,168,.6);color:#4d3470}.btn.cpOwBtn svg{width:14px;height:14px}',
+      '.btn.cnCeBtn.cpOwBtn{flex:none}',   // (CEBTN: the look of every way into the Charm Editor is charm-nest-activity.css .cnCeBtn)
       '@media(prefers-reduced-motion:reduce){dialog.cpDlg[open],.cpStrip,.cpIn.cpShake,.cpWhy.cpNudge,.cpPlate .cpSk{animation:none}.cpPlate svg{transition:none}}'
     ].join('\n');
     (doc.head || doc.documentElement).appendChild(s);
@@ -782,11 +781,11 @@
     css();
     const rid = String(row.order.receiptId), att = attachedOf(rid)[0] || null, busy = busyCards.has(rid);
     if (!b) {
-      b = el('button', 'btn sm cpOpenBtn'); b.type = 'button'; b.dataset.cpDesign = '';
+      b = el('button', 'btn cnCeBtn cpOpenBtn'); b.type = 'button'; b.dataset.cpDesign = '';
       b.addEventListener('click', ev => { ev.stopPropagation(); openDesigner(node._cpIt || it); });
       const hint = acts.querySelector('.cuHint'); if (hint) acts.insertBefore(b, hint); else acts.appendChild(b);
     }
-    const label = busy ? 'Opening the Charm Designer…' : att ? 'Edit in Charm Designer' : 'Open in Charm Designer';
+    const label = busy ? 'Opening the Charm Editor…' : att ? 'Edit Design' : 'Open in Charm Editor';
     if (b.dataset.l !== label) { b.innerHTML = NIB + `<span>${esc(label)}</span>`; b.dataset.l = label; }
     b.setAttribute('aria-busy', String(busy));
     b.title = att ? `Open ${att.name} v${att.version} in the Charm Designer: a save is a new version, attached to this order` : 'Design this order\'s charm in the Charm Designer (start blank, from its dropped .ai / .dxf, or import one there); its Save is attached to this order and offers Send to sheet';
@@ -795,7 +794,7 @@
     const last = att.sends && att.sends[att.sends.length - 1];
     const sig = [att.id, att.version, last ? last.at : 0].join('|'); if (strip.dataset.sig === sig) return; strip.dataset.sig = sig;
     strip.setAttribute('aria-label', `Design attached to order ${rid}`);
-    strip.innerHTML = `<span class="cpStLbl">Charm Designer</span><button type="button" class="cpStPic" data-cp-strip-pic title="Open it in the Charm Designer">${att.svg || (att.thumbUrl ? `<img alt="" src="${esc(att.thumbUrl)}">` : NIB)}</button>`
+    strip.innerHTML = `<span class="cpStLbl">Charm Editor</span><button type="button" class="cpStPic" data-cp-strip-pic title="Open it in the Charm Designer">${att.svg || (att.thumbUrl ? `<img alt="" src="${esc(att.thumbUrl)}">` : NIB)}</button>`
       + `<span class="cpStMeta"><b>${esc(att.name)}<span class="cpV">v${esc(att.version)}</span></b><span class="dim mono">${(+att.widthMm || 0).toFixed(2)} × ${(+att.heightMm || 0).toFixed(2)} mm</span>`
       + `<span class="dim">${last ? `<span class="ok">On ${esc(last.sheet || codeOf(last.metal) + ' sheet')} × ${last.quantity}</span> · sent by ${esc(last.by)} · ${esc(when(last.at))}` : `Attached${att.by ? ' by ' + esc(att.by) : ''}${att.at ? ' · ' + esc(when(att.at)) : ''} · not on a sheet yet`}</span></span>`
       + `<button type="button" class="btn ${last ? 'ghost' : 'gold'} sm" data-cp-strip-send title="Choose the metal and send this design to its next sheet, marked handmade custom">${last ? 'Send again…' : 'Send to sheet…'}</button>`;
@@ -806,9 +805,9 @@
     let b = doc.getElementById('owCpDesign');
     if (!r || !at || !at.parentNode || !r.order || !(needsDesign(r) || attachedOf(String(r.order.receiptId)).length)) { if (b) b.hidden = true; return; }
     css();
-    if (!b) { b = el('button', 'btn xs cpOwBtn'); b.type = 'button'; b.id = 'owCpDesign'; at.before(b); }
+    if (!b) { b = el('button', 'btn cnCeBtn cpOwBtn'); b.type = 'button'; b.id = 'owCpDesign'; at.before(b); }
     const rid = String(r.order.receiptId), att = attachedOf(rid)[0];
-    b.hidden = false; b.innerHTML = NIB + `<span>${att ? 'Edit design' : 'Charm Designer'}</span>`;
+    b.hidden = false; b.innerHTML = NIB + `<span>${att ? 'Edit Design' : 'Design Charm'}</span>`;   // (CEBTN, Paul 28 Oct 2026: "allow the name of the button to stay as edit design ... capitalize the word 'Edit Design'": the same button everywhere, its words by where it stands)
     b.title = att ? `${att.name} v${att.version} is attached to this order: open it in the Charm Designer` : 'Design this custom order\'s charm in the Charm Designer';
     b.onclick = () => { const R = root.Review; let it = null; try { it = R && typeof R.customItemFor === 'function' ? R.customItemFor(r.key, r) : null; } catch (_) { it = null; } openDesigner(it || { rows: [r], row: r }); };
   }
