@@ -116,6 +116,7 @@ const assets = [
   "charm-nest-charm-editor.js",
   "charm-nest-ce-trace.js",
   "charm-nest-ce-warp.js",
+  "charm-nest-ce-image.js",
   "charm-nest-dxf.js",
   "charm-nest-ce-import.js",
   "charm-nest-motion.js",

@@ -9612,7 +9612,7 @@ const Engrave = window.Engrave = (() => {
     if (!s || s.kind !== "path" || /keep-?out/i.test(String(s.layer || ""))) return none;
     const rule = String(s.paintOp || "").endsWith("*") ? "evenodd" : "nonzero";
     if (s.hatchStrip && s.hatchBlue && s.stroke && !s.fill) return { fill: "hatch", stroke: null, rule: "evenodd" };   // (thin strips outlined in red are the hatched strips themselves)
-    const fill = s.fill ? (artPaper(s.fillRGB) ? "paper" : "hatch") : null;
+    const fill = s.fill ? (s.artGrey ? "grey" : artPaper(s.fillRGB) ? "paper" : "hatch") : null;   // (a traced image's part is drawn in its own grey: charm-nest-ce-image.js)
     let stroke = null;
     if (s.stroke) {
       if ((s.hatchLine && s.hatchBlue) || artHatchBlue(s.strokeRGB)) stroke = "hatch";
@@ -9643,7 +9643,7 @@ const Engrave = window.Engrave = (() => {
         const ink = frontArtInk(s); if (!ink.fill && !ink.stroke) continue;
         g.beginPath(); P.pathToCanvas(g, s, tx);
         if (ink.fill === "paper") { g.save(); g.globalCompositeOperation = "destination-out"; g.fillStyle = "#000"; g.fill(ink.rule); g.restore(); }
-        else if (ink.fill) { g.fillStyle = FRONT_INK.hatch; g.fill(ink.rule); }
+        else if (ink.fill) { g.fillStyle = ink.fill === "grey" ? `rgb(${(s.fillRGB || [0, 0, 0]).slice(0, 3).map(v => Math.round(Math.max(0, Math.min(1, +v || 0)) * 255)).join(",")})` : FRONT_INK.hatch; g.fill(ink.rule); }   // (a traced image's grey: charm-nest-ce-image.js)
         if (ink.stroke) { g.strokeStyle = FRONT_INK[ink.stroke]; g.lineWidth = Math.max(0.6, (s.lwPt || 0.5) * k); g.stroke(); }
       }
       return lay;
