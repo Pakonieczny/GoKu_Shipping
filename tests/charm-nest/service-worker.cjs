@@ -173,13 +173,24 @@ const USABLE = () => window.CN && window.Orders && window.Review && CN.S.cloud.o
       ok(kept.length === 1 && /-swt1$/.test(kept[0]), `W2 the older copy of that file is dropped from the cache: ${JSON.stringify(kept)}`);
       tx.html = null;
     }
-    // another page of the same site, in the worker's scope: its own files are not kept, the app's own (vendor/) are
+    // another page of the same site, in the worker's scope: nothing it loads is kept (its own files keep their HTTP caching as before; the app's are kept from the sorter's hand-over only)
     {
       const o = await b.context.newPage();
       await o.goto(srv.sorterOrigin + '/__sw-other.html', { waitUntil: 'load' }); await o.waitForTimeout(2600);
       const kept = await o.evaluate(async () => [!!navigator.serviceWorker.controller, (await (await caches.open('cn-static-v1')).keys()).map(r => r.url).filter(u => /swother1/.test(u)).map(u => u.replace(/^.*\//, ''))]);
-      ok(kept[0] && kept[1].length === 1 && /^clipper/.test(kept[1][0]), `another page of the site (controlled ${kept[0]}): its own versioned file is not kept, the app's own is: ${JSON.stringify(kept[1])}`);
+      ok(kept[0] && kept[1].length === 0, `another page of the site (controlled ${kept[0]}): nothing it loads is kept, its own versioned files or the app's (kept: ${JSON.stringify(kept[1])})`);
       await o.close();
+    }
+    // Settings → This computer's copy: what is kept, and Reload from cloud (the kept files go; the page is read again from the network)
+    {
+      const row = await b.page.evaluate(async () => ({ button: !!document.querySelector('#dlgSettings #stLocalCopy [data-sw-reload]'), say: await CNServiceWorker.describe() }));
+      ok(row.button && /^Kept here: \d{3} files of the page/.test(row.say), `Settings row: a Reload from cloud button and "${row.say}"`);
+      const h0 = hits.length;
+      await Promise.all([b.page.waitForNavigation({ waitUntil: 'load' }), b.page.evaluate(() => document.querySelector('#stLocalCopy [data-sw-reload]').click())]);
+      await b.page.waitForFunction(() => window.__usable > 0); await b.page.waitForTimeout(1500);
+      const n = hits.slice(h0).filter(isStatic).length;
+      ok(n > 100, `Reload from cloud: the kept files deleted and the page read again from the network (${n} static requests)`);
+      ok(await until(b.page, () => !!(navigator.serviceWorker.controller && CNServiceWorker.adopted), null, 60000), 'Reload from cloud: the files are kept again for the next load');
     }
     // W5 the page's switch: CN_SW = "off" in charm-nest-1.html unregisters the worker and deletes its caches; the page works
     {

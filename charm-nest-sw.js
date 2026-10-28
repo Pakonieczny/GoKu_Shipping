@@ -4,8 +4,8 @@
    the files come from this computer and a warm reload makes at most 3 static requests (tests/charm-nest/service-worker.cjs).
 
    ONE file, two roles:
-     · the worker (registered by charm-nest-1.html as /charm-nest-sw.js, scope /: the page's workers, the clock among them, are in
-       its hands only under a scope that holds their own addresses): answers the requests below from Cache Storage;
+     · the worker (registered by charm-nest-1.html as /charm-nest-sw.js, scope /, because a page's worker is served by the scope of
+       its own address: the clock, nesting and compute workers are kept too): answers the requests below from Cache Storage;
      · the page (<script src="charm-nest-sw.js?v=…"> in charm-nest-1.html): CNServiceWorker — starts the worker once the page is up and
        idle (never in the way of the boot), hands it what the page already loaded, Settings' "Reload from cloud", the console's off/on.
 
@@ -25,8 +25,10 @@
        written again under the same download token, so their address does not name their bytes: the content-addressed blob store
        of the plan, keyed by charmHash, is their place), the engraving fonts (the page asks force-cache: the HTTP cache keeps them),
        emoji-sequences.json (asked no-cache on purpose: it names the emoji font's version), the workers' unversioned imports.
-   No precache: the worker ships no list of files. What the page loaded before the worker was running is ADOPTED at idle: the page
-   hands over the versioned addresses it used and the worker reads them from the HTTP cache (force-cache), so the next load is warm.
+   No precache: the worker ships no list of files. The page HANDS OVER, at idle, the versioned addresses it loaded (all of them, the ones
+   loaded before the worker ran included): the worker keeps the ones it does not hold, read from the HTTP cache (force-cache), so the
+   next load is warm. Where the browser has static routing, the app's own versioned files are served by a cache rule without waking
+   the worker at all, and a miss goes to the network until the next hand-over.
    Sandbox and production share one origin and one worker: the caches hold code, and production's pictures only, nothing of a world.
    LIMITS: each cache is an LRU (CAP below: bytes and entries; the least recently used go first). The index of what is kept and when
    it was last used is one JSON in cn-sw-meta-<GEN>.
@@ -34,8 +36,9 @@
    RETIRING IT (any one is enough)
      · every computer, from the page: window.CN_SW = "off" in charm-nest-1.html's <head> (the page itself is never cached, so the next
        load of every computer unregisters the worker and deletes its caches, by a few inline lines that do not need this file);
-     · every computer, from the worker: RETIRED = true below (the browser checks this file at every load; the new copy deletes the
-       caches and unregisters itself). A new GEN throws every kept file away (each is downloaded once more); VERSION names the copy;
+     · every computer, from the worker: RETIRED = true below (the browser reads this file again after a load; the new copy deletes the
+       caches and unregisters itself; the page registers it again at its next load and it goes again at once, so set CN_SW = "off" as
+       well to stop even that). A new GEN throws every kept file away (each is downloaded once more); VERSION names the copy;
      · one computer: ?sw=off in the address (kept as localStorage cn.sw = "off"; ?sw=on undoes it), or CNServiceWorker.off() in the console;
      · Settings → This computer's copy → Reload from cloud (CNServiceWorker.reloadFromCloud()): the kept files go, the page reloads.
    Automation (navigator.webdriver: the test suites) runs without the worker unless localStorage cn.sw = "on", so a test that routes
@@ -262,13 +265,27 @@
       try { for (const r of await sw.getRegistrations()) if (ours(r)) { if (r.active) await ask(r.active, { op: "stop" }, 2000); unregistered = (await r.unregister()) || unregistered; } } catch (_) {}
       return { unregistered, caches: await dropCaches() };
     }
-    /** The versioned files this page loaded, handed to the worker to keep (it reads them from the HTTP cache). */
-    function loaded() {
-      const out = [];
-      try { for (const e of w.performance.getEntriesByType("resource")) if (classify(e.name, { origin: w.location.origin })) out.push(e.name); } catch (_) {}
-      return out;
-    }
     const idle = (fn, ms) => (typeof w.requestIdleCallback === "function" ? w.requestIdleCallback(fn, { timeout: ms }) : setTimeout(fn, 200));
+    /* The hand-over: every versioned file this page loads (seen by a resource observer, so a module loaded an hour later is seen too, past
+       the browser's 250-entry timing buffer) goes to the worker a few seconds later, at idle, in one message. The worker keeps what it
+       does not hold (read from the HTTP cache) and marks the rest as used (the cache rule serves them without waking it). */
+    const handed = new Set();
+    let pending = new Set(), worker = null, flushing = 0, watching = false;
+    function flush() {
+      flushing = 0;
+      if (!worker || !pending.size) return;
+      const urls = [...pending]; pending = new Set();
+      idle(async () => { const r = await ask(worker, { op: "adopt", urls, home: w.location.pathname === "/" }, 60000); api.adopted = r || api.adopted; }, 5000);
+    }
+    function seen(list) {
+      for (const e of list) if (!handed.has(e.name) && classify(e.name, { origin: w.location.origin })) { handed.add(e.name); pending.add(e.name); }
+      if (pending.size && worker && !flushing) flushing = setTimeout(flush, 3000);
+    }
+    function watch() {
+      if (watching) return; watching = true;
+      try { new w.PerformanceObserver(l => seen(l.getEntries())).observe({ type: "resource", buffered: true }); }
+      catch (_) { try { seen(w.performance.getEntriesByType("resource")); } catch (_) {} }
+    }
     let started = null;
     /** Registers the worker once the page has loaded and is idle; then hands it what the page loaded. -> Promise<registration | null> */
     function start() {
@@ -280,7 +297,7 @@
           resolve(reg);
           try {
             const ready = await Promise.race([sw.ready, new Promise(r => setTimeout(() => r(null), 15000))]);
-            if (ready && ready.active) idle(async () => { api.adopted = await ask(ready.active, { op: "adopt", urls: loaded(), home: w.location.pathname === "/" }, 60000); }, 5000);
+            if (ready && ready.active) { worker = ready.active; seen([]); }
           } catch (_) {}
         }, 4000);
         if (w.document.readyState === "complete") go(); else w.addEventListener("load", go, { once: true });
@@ -311,20 +328,21 @@
       /** this computer: the worker off (and its caches gone) until on() */
       off: () => { setPref("off"); return stop(); },
       /** this computer: the worker back on (also under automation) */
-      on: () => { setPref("on"); started = null; return start(); }
+      on: () => { setPref("on"); watch(); started = null; return start(); }
     };
     const want = wanted();
-    if (want.kill) stop(); else if (want.on) start();
+    if (want.kill) stop(); else if (want.on) { watch(); start(); }
     settingsRow(w, api);
   }
   /** Settings → "This computer's copy": what is kept, and Reload from cloud (the row is charm-nest-1.html's #stLocalCopy). */
   function settingsRow(w, api) {
     const doc = w.document, fmt = b => (b / MB).toFixed(1) + " MB";
-    const paint = async host => {
-      const say = host.querySelector("[data-sw-say]"); if (!say) return;
+    /** The row's line: what this computer keeps now. */
+    api.describe = async () => {
       const s = await api.status(), k = s.worker;
-      say.textContent = k ? `Kept here: ${k.static.n} files of the page (${fmt(k.static.bytes)}) and ${k.pics.n} pictures (${fmt(k.pics.bytes)}) · worker ${k.version}` : s.on ? "The worker is starting: the page's files are kept from the next load." : `Not kept on this computer: ${s.why}.`;
+      return k ? `Kept here: ${k.static.n} files of the page (${fmt(k.static.bytes)}) and ${k.pics.n} pictures (${fmt(k.pics.bytes)}) · worker ${k.version}` : s.on ? "The worker is starting: the page's files are kept from the next load." : `Not kept on this computer: ${s.why}.`;
     };
+    const paint = async host => { const say = host.querySelector("[data-sw-say]"); if (say) say.textContent = await api.describe(); };
     const mount = () => {
       const host = doc.getElementById("stLocalCopy"); if (!host || host.dataset.sw) return;
       host.dataset.sw = "1";
