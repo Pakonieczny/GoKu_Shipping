@@ -224,7 +224,7 @@
     // (SETFIX A, Paul 17 Oct 2026) a set that breaks the owner's rules says exactly what to press, and names the sheets that press is about (the press itself is on the set's card)
     const m = gate.rules && gate.rules.breaks && gate.rules.remedy ? gate.rules.remedy : null;
     const items = gate.blockers.slice(0, LISTED).filter(b => !(m && b.rule === 'setBreaks' && (m.sheets || []).length)).map(b => ({ kind: 'sheet', id: b.sheetId, label: b.sheetLabel, why: b.why }));
-    if (m) items.unshift(...(m.sheets || []).map((id, k) => ({ kind: 'sheet', id, label: (m.names || [])[k] || id, why: m.kind === 'backs' ? 'approve its back engraving (Engraving tab)' : `press "${m.button}" on ${setName(v.set)}'s card` })));
+    if (m) items.unshift(...(m.sheets || []).map((id, k) => ({ kind: 'sheet', id, label: (m.names || [])[k] || id, why: m.kind === 'backs' ? 'approve its back engraving (Design & Engrave tab)' : `press "${m.button}" on ${setName(v.set)}'s card` })));
     return { key: 'setGate', label: gate.reason, detail: m ? m.say : `${setName(v.set)} is approved together, so every sheet of it must be ready first.`, items, ...(m ? { remedy: m } : {}) };
   }
 

@@ -1861,12 +1861,12 @@
       // (the person's own words for the listing, when they left some ("pre-made piece, not laser cut"), stand in the reason: the one line that says why)
       if (KIND_WORDS_[lk.kind]) { const note = String(lk.note || "").replace(/\s+/g, " ").trim().slice(0, 90); return { kind: lk.kind, why: `listing ${lid}: ${lk.by || "a person"} said every order of it is ${KIND_WORDS_[lk.kind]}${note ? ` (${note})` : ""}` }; }
     }
-    if (lid && MONOGRAM_LISTINGS[lid]) return { kind: "custom", monogram: true, words: monogramWords(line), why: `listing ${lid} is a custom monogram listing: the buyer's three letters are made into one charm (Engrave tab)` };
+    if (lid && MONOGRAM_LISTINGS[lid]) return { kind: "custom", monogram: true, words: monogramWords(line), why: `listing ${lid} is a custom monogram listing: the buyer's three letters are made into one charm (Design & Engrave tab)` };
     if (lid && ADDON_LISTINGS[lid]) return { kind: "custom", why: `listing ${lid} “${ADDON_LISTINGS[lid]}” is an add-on listing: a charm made to the buyer's own request, not a master design` };
     const title = String(line.title || "").replace(/&#0*39;/g, "'").replace(/&amp;/g, "&").trim(), lead = title.toLowerCase().split(/\s*[,|•·:;–—(\[]\s*|\s+-\s+|\s+\/\s+/)[0].trim();
     for (const [name, re] of ADDON_TITLE) if (re.test(lead)) return { kind: "custom", why: `listing “${title.length > 48 ? title.slice(0, 47) + "…" : title}” is an add-on listing (“${name}”): a charm made to the buyer's own request, not a master design` };
     if (!(o && o.known) && MONO_TITLE.test(title)) { const letters = monogramLetters(line);   // (a line whose SKU is a design of the master is a catalogue charm with an engraving: a person's "monogram" there is its back words, never a monogram to build)
-      if (letters) return { kind: "custom", monogram: true, letters, words: monogramWords(line), why: `listing “${title.length > 48 ? title.slice(0, 47) + "…" : title}” says monogram and the buyer gave three letters (${letters.split("").join(" ")}): made into one charm (Engrave tab)` }; }
+      if (letters) return { kind: "custom", monogram: true, letters, words: monogramWords(line), why: `listing “${title.length > 48 ? title.slice(0, 47) + "…" : title}” says monogram and the buyer gave three letters (${letters.split("").join(" ")}): made into one charm (Design & Engrave tab)` }; }
     return null;
   }
   /* Claude's reading of a line (Charm Sorter › Custom Orders, charmNestLibrary customRead) and a person's decision name
