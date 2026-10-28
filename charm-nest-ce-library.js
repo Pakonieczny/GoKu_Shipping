@@ -1058,9 +1058,10 @@
   function closeHist() { if (S && !S.hist.hidden) { S.hist.hidden = true; S.hist.innerHTML = ''; S.hist._row = null; } }
 
   /* ═══ 9 · registration: one panel in the editor's right-hand slot ═══ */
-  // open beside the charm by itself on a wide screen (the studio's dock is "continuously docked beside the canvas", J 19372); on a narrower one the two columns would
-  // take too much of the work area, so it waits for the head's Library button, and once it is opened there the editor remembers it open (ce.xpanel)
-  const WIDE_PX = 1440;
+  // open beside the charm by itself on a wide screen (the studio's dock is "continuously docked beside the canvas", J 19372); on a narrower one (a 1440 px laptop
+  // would keep a work area of under 700 px beside the Layers and the library) it waits for the head's Library button, and once it is opened there the editor
+  // remembers it open (ce.xpanel)
+  const WIDE_PX = 1680;
   const panel = {
     id: 'library', title: 'Library', side: 'right', icon: IC.lib,
     get open() { return !!(root.innerWidth && root.innerWidth >= WIDE_PX); },

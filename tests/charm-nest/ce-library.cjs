@@ -463,8 +463,8 @@ const STANDINS = `(function () {
   } catch (e) { fail('the main page', e); }
 
   /* ════ a wide screen ════ */
-  await step('1 · on a wide screen (1600 × 900) the library is open beside the charm from the start', async () => {
-    const p = await newPage(1600, 900);
+  await step('1 · on a wide screen (1920 × 1080) the library is open beside the charm from the start', async () => {
+    const p = await newPage(1920, 1080);
     await p.evaluate(() => { try { localStorage.removeItem('ce.xpanel'); } catch (_) {} window.openEditor(); });
     await p.waitForSelector('.ce-root .ce-xpanel .cel-cell:not(.is-free)', { timeout: 5000 });
     const r = await p.evaluate(() => { const s = document.querySelector('.ce-stage').getBoundingClientRect(), x = document.querySelector('.ce-xpanel').getBoundingClientRect(); return { stage: Math.round(s.width), panel: Math.round(x.width), right: x.left >= s.right }; });
