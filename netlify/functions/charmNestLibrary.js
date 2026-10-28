@@ -26,7 +26,7 @@
  *
  *  OPS (POST JSON {op, …}; X-Edit-Passcode when EDIT_PASSCODE is set)
  *    ping · lookupCharms · putCharms · renameCharm · listCharms
- *    putSheet · listSheets · getSheet · deleteSheet · sheetPdf
+ *    putSheet · listSheets · getSheet · getMany · deleteSheet · sheetPdf   (LOCAL_READS: ifRev / since / several at once)
  *    laserDone · laserDoneList · findSheets   (the Library's Current | Completed tabs and its order / listing search)
  *    putCalibration · getCalibration
  *    startJob · getJob · stopJob
@@ -35,6 +35,7 @@
  *      setAllocate · setUpdate · setGet · setList · runPut · runArchive · runGet · runList · bridgeLog · listingSkus · aliasGet · aliasPut · listingKindPut ·
  *      noDesignGet · noDesignPut · noDesignDelete · optionMapGet · optionMapPut · customSheetGet · customSheetPut · customGet · customPut · customReopen
  *      (customDelete: an older page's name for customReopen; nothing deletes a record)
+ *    + designs (Paul, 28 Oct 2026): designPut · designList · designGet   (the design library: every version of every charm saved in the Charm Editor, charm-nest-designs.js)
  *  ═══════════════════════════════════════════════════════════════════════ */
 "use strict";
 const admin = require("./firebaseAdmin");
@@ -222,10 +223,12 @@ async function currentFlagReady() {
     return (currentReady = true);
   } catch (e) { console.warn("[charmNestLibrary] current flag not ready:", (e && e.message) || e); return false; }
 }
-/** The flagged sheets, with what decides them (FILTER_SHEET and filingRecords): { rows, stale } — stale: the ids flagged and not current. */
-async function flaggedSheets() {
+/** The flagged sheets, with what decides them (FILTER_SHEET and filingRecords): { rows, stale } — stale: the ids flagged and not current.
+    seen (LOCAL, a Map): each sheet's update time and its set's, as the read found them (listSheets with since). */
+async function flaggedSheets(seen) {
   const snap = await col(SHEETS).where("current", "==", true).limit(CURRENT_CAP).select(...FILTER_SHEET).get();
-  const rows = await filingRecords(snap.docs.map(d => ({ ...d.data(), id: d.id })));
+  if (seen) for (const d of snap.docs) seen.set(d.id, revOf(d));
+  const rows = await filingRecords(snap.docs.map(d => ({ ...d.data(), id: d.id })), seen && new Map());
   return { rows, stale: rows.filter(sheetUnflagged).map(s => s.id) };
 }
 /** Clears the flag of records a read found flagged and not current: each read again in its own transaction (a record made current again
@@ -283,10 +286,11 @@ async function sheetEntries(rows, budget) {
 // One run read per batch supplies the exact per-copy engraving decisions.
 // Old/incomplete records remain pending until evidence is available.
 // Set membership controls filing, independently of an individual sheet's completion badge.
-async function filingRecords(records) {
+// (setRevs, LOCAL: a Map that is given each set's update time as read here, for listSheets with since; the records carry it as _setRev)
+async function filingRecords(records, setRevs) {
   const ids=[...new Set(records.filter(s=>s.setId && !s.draft && s.solidIncluded!==false).map(s=>s.setId))].filter(isId), sets=new Map();
-  for(let i=0;i<ids.length;i+=100) for(const d of await db.getAll(...ids.slice(i,i+100).map(id=>col(SETS).doc(id)),{fieldMask:["laserDoneAt"]})) sets.set(d.id,d.exists?d.data():null);
-  return records.map(s=>({...s,laserSetPending:!!(s.setId && !s.draft && s.solidIncluded!==false && !(num(sets.get(s.setId)?.laserDoneAt)>0))}));
+  for(let i=0;i<ids.length;i+=100) for(const d of await db.getAll(...ids.slice(i,i+100).map(id=>col(SETS).doc(id)),{fieldMask:["laserDoneAt"]})) { sets.set(d.id,d.exists?d.data():null); if(setRevs) setRevs.set(d.id,revOf(d)); }
+  return records.map(s=>({...s,laserSetPending:!!(s.setId && !s.draft && s.solidIncluded!==false && !(num(sets.get(s.setId)?.laserDoneAt)>0)),...(setRevs && setRevs.has(s.setId)?{_setRev:setRevs.get(s.setId)}:{})}));
 }
 async function readinessRecords(records,{revs=null}={}) {
   records=await filingRecords(records);
@@ -678,6 +682,41 @@ async function bumpRev(keys) {
   }
 }
 const REV_FORM = /^[\w.\-]{1,40}$/;
+/* ── LOCAL_READS (Paul, 28 Oct 2026: "as responsive as Photoshop … leverage local storage … keep the API calls to the bare minimum"). A page keeps the
+   records it has read on its own computer (charm-nest-store.js), each under the revision it was read at, and asks the cloud only whether they moved:
+     getSheet { id, ifRev }        ifRev: the sheet's revision (`rev`, its record's update time as revOf names it, now in every full answer). One read of
+                                   one field, and { unchanged: true, rev } when nothing was written to the record since: no link refresh, no readiness, the
+                                   page keeps its copy (its readiness follows by laserStatus, as before).
+     listSheets / setList { ifRev, wantRev, since }   ifRev: the Library's revision (laserStatus' rev; wantRev asks for it): nothing the Library reads was
+                                   written since → { unchanged: true, rev } for one read. since (the `upTo` of the page's last answer of the same list): the
+                                   rows are chosen and ordered as before and all named in `ids`, but only those written after since are sent whole (a sheet:
+                                   its record, its set or its run; a set: its record), each with its revision in `revs`; upTo is the newest update time the
+                                   answer saw. A row gone from `ids` is gone from the list (deleted, cut, archived). since '0.0' sends every row.
+     getMany { keys, ifRevs, full }   several records in one call ('s:' sheets, whole as getSheet with full, else their list entries; 't:' sets; 'r:' runs;
+                                   'c:' custom orders): only those whose revision is not the ifRevs' one, under recs { key: { rev, rec } }, and gone (the keys
+                                   with no record).
+   An update time is Firestore's own and moves with EVERY write to the document, whoever made it, so none of this can miss a write to the documents it
+   watches. Every answer keeps its shape; a page that sends none of these is answered as before; verify:true skips every shortcut. ── */
+const SINCE_FORM = /^\d{1,12}\.\d{1,9}$/;
+const revParts = r => { const m = /^(\d{1,12})\.(\d{1,9})$/.exec(String(r == null ? "" : r)); return m ? [+m[1], +m[2]] : null; };
+/** Whether the revision a (an update time, revOf) is later than b; what is not a revision ("0", nothing) is earlier than any. */
+function revAfter(a, b) { const x = revParts(a), y = revParts(b); if (!x) return false; if (!y) return true; return x[0] > y[0] || (x[0] === y[0] && x[1] > y[1]); }
+const revMax = (a, c) => (revAfter(c, a) ? c : a);
+/** What a list read asks (localAsk): { rev: the Library's revision, read first, or null; since; unchanged }. A later part (cursor) asks nothing. */
+async function localAsk(b, cursor) {
+  const ifRev = !cursor && typeof b.ifRev === "string" && REV_FORM.test(b.ifRev) ? b.ifRev : null;
+  const since = !cursor && b.verify !== true && typeof b.since === "string" && SINCE_FORM.test(b.since) ? b.since : null;
+  const rev = !cursor && (ifRev !== null || b.wantRev === true) ? await readRev() : null;
+  return { rev, since, unchanged: rev !== null && ifRev !== null && rev === ifRev && b.verify !== true };
+}
+/** LOCAL: a listed sheet's revision is the newest of its record's, its set's (filingRecords' _setRev) and its run's update times, so its row is sent
+    again when any of them moved since. One read of one field per run. */
+async function foldRevs(records, seen, own) {
+  for (const r of records) if (r && seen.has(r.id)) own.set(r.id, seen.get(r.id));   // (each record's own revision, as getSheet and laserStatus name it: what the page keeps a row under)
+  const runIds = [...new Set(records.map(r => r && r.runId).filter(isId))], runs = new Map();
+  for (let i = 0; i < runIds.length; i += 100) for (const s of await db.getAll(...runIds.slice(i, i + 100).map(id => col(RUNS).doc(id)), { fieldMask: ["updatedAt"] })) runs.set(s.id, revOf(s));
+  for (const r of records) if (r) seen.set(r.id, [r._setRev, runs.get(r.runId)].reduce(revMax, seen.get(r.id) || "0"));
+}
 async function op_laserStatus(b) {
   const ids=[...new Set((b.sheetIds || []).filter(isId))].slice(0,500), records=[], sealing=b.recordSeals===true;
   // the revision, read first (only for a reader that knows revisions: one that sends ifRev, or asks for the answer's: wantRevs / wantRev)
@@ -1020,19 +1059,26 @@ async function op_putSheet(b) {
   return refused || { ok: true, id: s.id };
 }
 /* The newest sheets, or a run's or a set's, in parts (ANSWER_BYTES): the first part reads the records the list is made of
-   (their SLIM_SHEET fields) and sends as many as fit; `next` names the rest in order, and a later part reads those by id. */
+   (their SLIM_SHEET fields) and sends as many as fit; `next` names the rest in order, and a later part reads those by id.
+   LOCAL (see LOCAL_READS): ifRev (the Library's revision) unchanged is { unchanged: true, rev } for one read; since sends whole only the rows
+   written after it, with ids (every row, in order) and upTo. */
 async function op_listSheets(b) {
+  const cursor = !!(b.cursor && Array.isArray(b.cursor.sheets)), ask = await localAsk(b, cursor);
+  if (ask.unchanged) return { sheets: [], next: null, truncated: false, unchanged: true, rev: ask.rev, checkedAt: Date.now() };
+  const seen = ask.since ? new Map() : null, own = new Map();   // (LOCAL: id → the newest update time of what its entry is made of: its record, its set, its run; own: the record's)
   let rows;
-  if (b.cursor && Array.isArray(b.cursor.sheets)) rows = b.cursor.sheets.filter(isId).slice(0, 500).map(id => [id]);
+  if (cursor) rows = b.cursor.sheets.filter(isId).slice(0, 500).map(id => [id]);
   else if (b.excludeDone && !b.runId && !b.setId && !b.from && !b.to && await currentFlagReady()) {
     /* COST (Oct 2026): the Current tab is the FLAGGED sheets (see CURRENT_MARK), not the newest `limit` by day of which most were cut:
        a few dozen reads however long the history (727 at 1,500 completed sheets), and a current sheet older than that window is no longer
        left out. The same filter decides, the newest `limit` by day are kept, and the list is in the same order. */
-    const limit = Math.min(500, Math.max(1, num(b.limit) || 300)), { rows: flagged, stale } = await flaggedSheets();
+    const limit = Math.min(500, Math.max(1, num(b.limit) || 300)), { rows: flagged, stale } = await flaggedSheets(seen);
     if (stale.length) await clearStale("sheet", stale);
     rows = flagged.filter(d => !d.archived && !Readiness.filed(d)).sort((x, y) => String(y.day || "").localeCompare(String(x.day || ""))).slice(0, limit).map(d => [d.id, d]);
     if (b.metal && /^(gold|silver|rose|gold10k|gold14k)$/.test(b.metal)) rows = rows.filter(([, d]) => d.metal === b.metal);
-    rows = rows.sort(([, x], [, y]) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0)).map(([id]) => [id]);
+    rows = rows.sort(([, x], [, y]) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0));
+    if (seen) await foldRevs(rows.map(([, d]) => d), seen, own);
+    rows = rows.map(([id]) => [id]);
   } else {
     const limit = Math.min(500, Math.max(1, num(b.limit) || 300));
     let q = b.runId ? col(SHEETS).where("runId", "==", b.runId) : b.setId ? col(SHEETS).where("setId", "==", b.setId) : col(SHEETS).orderBy("day", "desc");
@@ -1043,21 +1089,26 @@ async function op_listSheets(b) {
     // (sheetEntries reads a row given as [id] itself), not all `limit` of them whole to throw most away (Firebase cost, FC2).
     const slimOnly = !!b.excludeDone;
     const snap = await q.limit(limit).select(...(slimOnly ? FILTER_SHEET : SLIM_SHEET)).get();
+    if (seen) for (const d of snap.docs) seen.set(d.id, revOf(d));
     // (excludeDone: the Library's Current tab, which leaves out what the laser has cut, and its readiness is not worked out)
-    const records=await filingRecords(snap.docs.map(d=>({...d.data(),id:d.id})));
+    const records=await filingRecords(snap.docs.map(d=>({...d.data(),id:d.id})), seen && new Map());
     rows = records.filter(d=>!d.archived && !(b.excludeDone && Readiness.filed(d))).map(d=>[d.id,d]);
     if (b.metal && /^(gold|silver|rose|gold10k|gold14k)$/.test(b.metal)) rows = rows.filter(([, d]) => d.metal === b.metal);
     if (b.setId) rows = rows.filter(([, d]) => d.setId === b.setId);
     if (b.runId) rows = rows.filter(([, d]) => d.runId === b.runId);
     rows.sort(([, x], [, y]) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0));
+    if (seen) await foldRevs(rows.map(([, d]) => d), seen, own);
     if (slimOnly) rows = rows.map(([id]) => [id]);
   }
+  // LOCAL: every row is named, in order; only those written after since are read for their entries and sent
+  const ids = seen ? rows.map(r => r[0]) : null, upTo = seen ? [...seen.values()].reduce(revMax, ask.since) : null;
+  if (seen) rows = rows.filter(r => !seen.has(r[0]) || revAfter(seen.get(r[0]), ask.since));
   /* PERF (Paul, 26 Oct 2026: "the performance of the overall platform once it's being used at scale with tens of thousands of orders"): a part of
      the sheet list is at most LIST_SHEETS_BYTES, half a megabyte, not ANSWER_BYTES: 300 sheets of a 30,000-order history answered ~0.9 MB in one
      part. The rest comes with `next` as before (every page reading a run, a day or the Library follows it: `all: "sheets"`); one set's own
      sheets (setId, read by the set editor and the rose flow without following `next`) keep the whole budget, a set being a few sheets. */
   const { sheets, rest } = await sheetEntries(rows, answerBudget(Date.now(), b.setId ? ANSWER_BYTES : LIST_SHEETS_BYTES));
-  return { sheets, next: rest.length ? { sheets: rest } : null, truncated: rest.length > 0 };
+  return { sheets, next: rest.length ? { sheets: rest } : null, truncated: rest.length > 0, ...(ids ? { ids, upTo, revs: Object.fromEntries(rows.map(r => [r[0], own.get(r[0]) || "0"])) } : {}), ...(ask.rev !== null ? { rev: ask.rev } : {}) };
 }
 /* Manual Control (Paul, 18 Oct 2026): one person at a time moves, turns and resizes the charms of a 10K / 14K sheet by hand in the sheet window. The claim is the
    sheet record's manualEdit { by, tab, at }: taken in a transaction when nobody else holds it (a claim not kept alive for MANUAL_STALE_MS is a closed tab's
@@ -1086,12 +1137,52 @@ async function op_manualClaim(b) {
 }
 async function op_getSheet(b) {
   if (!isId(b.id)) return { error: "bad id" };
+  // LOCAL (see LOCAL_READS): the page holds this record at ifRev: one read of one field says whether it moved
+  const ifRev = typeof b.ifRev === "string" && REV_FORM.test(b.ifRev) && b.verify !== true ? b.ifRev : null;
+  if (ifRev !== null) {
+    const [p] = await db.getAll(col(SHEETS).doc(b.id), { fieldMask: ["updatedAt"] });
+    if (!p.exists) return { sheet: null };
+    if (revOf(p) === ifRev) return { unchanged: true, rev: ifRev };
+  }
   const s = await col(SHEETS).doc(b.id).get();
   if (!s.exists) return { sheet: null };
   const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt);
   await withFullBacks(d);
   await refreshLinks(d);
-  return { sheet: (await readinessRecords([d]))[0] };
+  return { sheet: (await readinessRecords([d]))[0], rev: revOf(s) };
+}
+/** LOCAL (see LOCAL_READS): several records in one call. keys 's:<sheet>' 't:<set>' 'r:<run>' 'c:<custom order key>' (at most MANY_MAX); ifRevs { key: rev }
+    the revisions the page holds; full: a sheet whole, as getSheet answers it (its links as saved: a link that fails is recovered where it fails,
+    charm-nest-assets.js), else its list entry. → { recs: { key: { rev, rec } }, gone: [keys], same: n (held at their revision, not sent), checkedAt } */
+const MANY_MAX = 300, manyColl = kind => ({ s: SHEETS, t: SETS, r: RUNS, c: CUSTOM })[kind];   // (a function: the collections' names are declared further down)
+async function op_getMany(b) {
+  const keys = [...new Set((Array.isArray(b.keys) ? b.keys : []).map(String))].filter(k => REV_KEY.test(k) && (k[0] !== "c" || lineKeyOk(k.slice(2)))).slice(0, MANY_MAX);
+  const held = b.ifRevs && typeof b.ifRevs === "object" ? b.ifRevs : {}, recs = {}, gone = [], want = [];
+  const refOf = k => col(manyColl(k[0])).doc(k.slice(2)), heldRev = k => (typeof held[k] === "string" && REV_FORM.test(held[k]) && b.verify !== true ? held[k] : null);
+  // the records held at a revision are asked for their update times alone (one read each); only those that moved are read whole
+  const probe = keys.filter(k => heldRev(k) !== null);
+  for (let i = 0; i < probe.length; i += 100) {
+    const part = probe.slice(i, i + 100), snaps = await db.getAll(...part.map(refOf), { fieldMask: ["updatedAt"] });
+    snaps.forEach((p, j) => { if (!p.exists) gone.push(part[j]); else if (revOf(p) !== heldRev(part[j])) want.push(part[j]); });
+  }
+  for (const k of keys) if (heldRev(k) === null) want.push(k);
+  for (const kind of ["s", "t", "r", "c"]) {
+    const ks = want.filter(k => k[0] === kind), rows = [];
+    for (let i = 0; i < ks.length; i += 100) {
+      const part = ks.slice(i, i + 100), snaps = await db.getAll(...part.map(refOf), ...(kind === "s" && b.full !== true ? [{ fieldMask: SLIM_SHEET }] : []));
+      snaps.forEach((d, j) => { if (!d.exists) gone.push(part[j]); else rows.push([part[j], revOf(d), d.data()]); });
+    }
+    if (kind === "s") {
+      const recordsOf = rows.map(([, , d], j) => Object.assign(d, { id: rows[j][0].slice(2) }));
+      if (b.full === true) for (const d of recordsOf) { d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt); await withFullBacks(d); }
+      else await withPlacements(recordsOf.map(d => [d.id, d]));
+      const ready = await readinessRecords(recordsOf);
+      rows.forEach(([k, rev], j) => { recs[k] = { rev, rec: b.full === true ? ready[j] : slim(ready[j]) }; });
+    } else if (kind === "t") rows.forEach(([k, rev, d]) => { d.setId ||= k.slice(2); for (const f of ["updatedAt", "createdAt", "completedAt"]) d[f] = ms(d[f]); d.committedAt = ms(d.committedAt) || d.committedAt || null; recs[k] = { rev, rec: d }; });
+    else if (kind === "r") for (const [k, rev, d0] of rows) { const d = await withLiveLines(k.slice(2), d0); if (!d) { gone.push(k); continue; } delete d.liveLines; d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt); recs[k] = { rev, rec: d }; }
+    else rows.forEach(([k, rev, d]) => { recs[k] = { rev, rec: customRow(d, true) }; });
+  }
+  return { recs, gone, same: keys.length - want.length - gone.filter(k => !want.includes(k)).length, checkedAt: Date.now() };
 }
 /** Same-origin recovery of a saved PNG; never accepts an arbitrary caller URL. */
 async function op_backPreview(b) {
@@ -1348,7 +1439,7 @@ const POOL = "Charm_Pool", BACK = "Charm_Pool_Back", SETS = "Charm_Nest_Sets", C
 // the learned maps: shared and read by both sides, but a sandbox answer is written to Sandbox_<name> only (see the top of this file)
 const SANDBOX_MAPS = [ALIASES, NODESIGN, OPTMAP];
 const isDay = d => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ""));
-const isPoolId = s => /^\d{5,20}_\d{5,20}_\d{1,3}$/.test(String(s || ""));
+const isPoolId = s => /^(?:\d{5,20}|CUSTOM-\d{8}-\d{1,6})_\d{5,20}_\d{1,3}$/.test(String(s || ""));   // (CUSTOMPOOL, 28 Oct 2026: a piece that belongs to no order is named CUSTOM-<yyyymmdd>-<n>, op_customPiecePut)
 /* The fields of a pool row that the writes below look at before they change it (what a row says of its run, its state, its sheet and its
    take-off marks; and what the order's timeline names of the sheet a piece leaves): read with only these, never the whole row. */
 const POOL_PUT_FIELDS = ["runId", "state", "sheetId", "setId", "sheetName", "updatedAt", "repooledAt", "heldAt", "removedAt", "heldBy", "removedBy", "side", "groupSize", "quantity"];
@@ -1820,6 +1911,45 @@ async function op_poolGet(b) {
   for (let i = 0; i < ids.length; i += 30) { const snaps = await db.getAll(...ids.slice(i, i + 30).map(id => col(POOL).doc(id))); for (const s of snaps) if (s.exists) { const r = s.data(); r.updatedAt = ms(r.updatedAt); if (r[Placement.REPOOLED]) r[Placement.REPOOLED] = ms(r[Placement.REPOOLED]) || 1; out[s.id] = r; } }
   return { pools: out };
 }
+/* CUSTOMPOOL (Paul, 28 Oct 2026: "sometimes the user just needs to add a charm onto a sheet and that custom order can be named by the user so the user can easily identify that
+   extra piece that was added, and not linked to an official order"; "You need to ensure the sanctity of the designed charm. It's exact dimensions and user designed features, and
+   that has to be linked to that specific Custom order"; items 27 and 28, the lead's D4 and D6). A design of the design library sent to a sheet becomes its pool rows here, one per
+   piece: {piece: {designId, version, designHash, geomHash, customName, metal, quantity, orderId?, widthMm, heightMm, aiPath, charmHash, runId?, setId?, day?, fixes?}, requestId, by}
+   → {ok, customId, orderId, orderless, serial, poolIds, pools, again?}.
+   Every send is numbered CUSTOM-<yyyymmdd>-<n> (the day's own counter, Charm_Nest_Counters/custom-<yyyymmdd>); a piece that belongs to no order takes that number as its order
+   id, so it is named everywhere by it and by the person's name for it. Its pool ids are <order>_<yyyymmdd><nnnn>_<copy>: an order's piece keeps the order's number in front, as every
+   pool id does, and never takes the id of one of the order's own lines. The same requestId (a retry, a reply lost on the way) is given the same number and the same rows. */
+const CUSTOM_PIECE_METALS = new Set(["gold", "silver", "rose", "gold10k", "gold14k"]);
+async function op_customPiecePut(b) {
+  const p = b && b.piece && typeof b.piece === "object" && !Array.isArray(b.piece) ? b.piece : null; if (!p) return { error: "no piece", status: 400 };
+  const by = str(b.by || p.by, 80).trim(), req = str(b.requestId, 80), metal = str(p.metal, 12), qty = Math.floor(+p.quantity);
+  if (!by) return { error: "who sent the piece is needed (by)", status: 400 };
+  if (!isId(req)) return { error: "bad request id", status: 400 };
+  if (!CUSTOM_PIECE_METALS.has(metal)) return { error: "bad metal", status: 400 };
+  if (!(qty >= 1 && qty <= 99)) return { error: "a custom piece is sent 1 to 99 at a time", status: 400 };
+  const designId = str(p.designId, 120), geomHash = str(p.geomHash, 64), name = str(p.customName, 80).trim(), rid = p.orderId == null || p.orderId === "" ? "" : str(p.orderId, 30);
+  if (!designId || !/^[\w-]{6,64}$/.test(geomHash)) return { error: "the design and the hash of its geometry are needed", status: 400 };
+  if (rid && !/^\d{5,20}$/.test(rid)) return { error: "bad order id", status: 400 };
+  if (!rid && !name) return { error: "a piece that belongs to no order needs a name", status: 400 };
+  // (the day of the page that sent it, as a set's day is; a day more than a day away from the server's is not taken)
+  const near = d => isDay(d) && Math.abs(Date.parse(d + "T12:00:00Z") - Date.now()) < 36 * 3600e3, day = near(p.day) ? p.day : OrderRules.localDay(new Date()), ymd = day.replace(/-/g, "");
+  const n2 = v => (Number.isFinite(+v) ? Math.round(+v * 1000) / 1000 : null), fx = p.fixes && typeof p.fixes === "object" && !Array.isArray(p.fixes) ? p.fixes : null;
+  const piece = { designId, version: Math.max(0, Math.floor(+p.version) || 0), designHash: str(p.designHash, 80) || null, geomHash, widthMm: n2(p.widthMm), heightMm: n2(p.heightMm), name: name || null, by,
+    ...(fx ? { fixes: { orderId: str(fx.orderId, 30) || null, poolId: str(fx.poolId, 80) || null, causedBy: str(fx.causedBy, 80) || null } } : {}) };
+  return db.runTransaction(async tx => {
+    const cref = col(COUNTERS).doc("custom-" + ymd), cs = await tx.get(cref), c = cs.exists ? cs.data() : {}, reqs = c.reqs && typeof c.reqs === "object" ? c.reqs : {};
+    const had = Math.floor(+reqs[req]) || 0, n = had || (num(c.n) || 0) + 1, customId = `CUSTOM-${ymd}-${n}`, serial = ymd + String(n).padStart(4, "0"), orderId = rid || customId;
+    const poolIds = Array.from({ length: qty }, (_, i) => `${orderId}_${serial}_${i + 1}`);
+    if (had) { const got = await txGetAll(tx, poolIds.map(id => col(POOL).doc(id))); if (got.every(s => s.exists)) return { ok: true, again: true, customId, orderId, orderless: !rid, serial, poolIds, pools: got.map(s => msRow(s.data())) }; }
+    const keep = Object.entries(reqs).slice(-400).concat([[req, n]]);   // (a retry within the day finds its number; the map stays small)
+    tx.set(cref, { day, n: Math.max(n, num(c.n) || 0), reqs: Object.fromEntries(keep), updatedAt: FV.serverTimestamp() }, { merge: true });
+    const at = Date.now(), pools = poolIds.map((poolId, i) => ({ poolId, orderId, transactionId: serial, lineKey: `${orderId}_${serial}`, copy: i + 1, quantity: qty, sku: "CUSTOM", material: metal, size: null, form: null, chain: null,
+      runId: str(p.runId, 80) || null, setId: str(p.setId, 80) || null, sheetId: null, charmHash: str(p.charmHash, 120) || null, masterHash: null, aiPath: str(p.aiPath, 300) || null, engrave: false, state: "ready",
+      custom: true, customId, customName: name || null, orderless: !rid, customPiece: piece, orderDate: at, arrivedAt: at, by }));
+    for (const r of pools) tx.set(col(POOL).doc(r.poolId), Object.assign({}, r, { createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() }));
+    return { ok: true, customId, orderId, orderless: !rid, serial, poolIds, pools };
+  });
+}
 /* Where each piece of an order is, from the records that can say so (Paul, 5 Oct: a Silver piece on SS Sheet 1 read "not on a
    sheet yet" from its order's Gold Filled sheet). The pool row's sheetId is only a hint (a re-nest, a restart or an older run
    clears it while the sheet still holds the piece); the SAVED SHEETS that list the piece in poolIds are the truth. One light
@@ -1874,6 +2004,7 @@ const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces
   "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "listingKindPut", "noDesignPut", "noDesignDelete", "optionMapPut",
   "sandboxCancel", "sandboxPut", "sandboxPullOrders", "sandboxPullLimitSet", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
 ["customSaveGet", "customSaveCommit", "customSavePending", "customSaveIntent"].forEach(op => NO_GEN_BUMP.add(op));   // (the save writes a master entry, an alias and its own record: nothing a placement answer is made from)
+NO_GEN_BUMP.add("getMany");   // (LOCAL: several records read in one call, see LOCAL_READS; read only)
 NO_GEN_BUMP.add("manualClaim");   // (Manual Control's claim writes the sheet record's manualEdit alone: nothing a placement answer is made from)
 ["customPut", "customReopen", "customDelete", "customDecide", "customSheetPut", "reviewMarkPut"].forEach(op => NO_GEN_BUMP.add(op));   // (COST, Oct 2026: a Complete Order, a QR print, a Review mark, a decision and a custom design sent to a sheet write Charm_Custom_Orders / Charm_Custom_Sheet / Charm_Nest_CustomRead and the order's timeline, never a pool row or a sheet; a placement answer is made from those two alone, and the page that pressed learns of its own press without a read. Each press used to send every watching tab to a full read of the orders on screen)
 async function placementGen() {
@@ -2430,6 +2561,8 @@ function artItem(x, keyId) {
   if (x.weightMm != null) { const w = Number(x.weightMm); if (!Number.isFinite(w) || Math.abs(w) > ART_MAX.weightMm) return no(`its weight is -${ART_MAX.weightMm} to ${ART_MAX.weightMm} mm`); if (Math.round(w * 1000)) out.weightMm = Math.round(w * 1000) / 1000; }
   if (x.text != null) out.text = str(x.text, ART_MAX.text);
   if (x.group != null) { const g = str(x.group, 64); if (!ART_ITEM.test(g)) return no("its group is not a short name"); out.group = g; }
+  // (Design & Engrave, 28 Oct 2026: a traced image's part keeps its own grey to the laser's file, so it says so: a grey fill [g, g, g] and no line)
+  if (x.artGrey === true) { const f = out.fill; if (!f || out.stroke || Math.max(f[0], f[1], f[2]) - Math.min(f[0], f[1], f[2]) > 0.001) return no("a grey part is a grey fill [g, g, g] with no line"); out.artGrey = true; }
   return { item: out, ops };
 }
 /** The record a page sent, checked whole: { art, cutKey } or { error }. */
@@ -2645,9 +2778,14 @@ async function op_setList(b) {
   // The answer comes in parts (ANSWER_BYTES): the sets first, then their sheets, read for what their list entries show
   // (SLIM_SHEET) where every sheet used to be read whole; `next` names the sets and sheets left, in order, and a later part
   // reads those by id.
-  const setRow = d => { const r=d.data(); r.setId ||= d.id; for(const k of ["updatedAt","createdAt","completedAt","committedAt"]) r[k]=ms(r[k]); return [d.id, r]; };
-  const budget = answerBudget(), cur = b.cursor && typeof b.cursor === "object" ? b.cursor : null;
-  let rows = [], sheetIds = [];
+  // LOCAL (see LOCAL_READS): ifRev unchanged is { unchanged: true, rev } for one read; since sends whole only the sets written after it (and, with
+  // includeSheets, those sets' sheets: a sheet that changed in a set that did not is in the Current sheet list read beside this one, listSheets with since)
+  const cur = b.cursor && typeof b.cursor === "object" ? b.cursor : null, ask = await localAsk(b, !!cur);
+  if (ask.unchanged) return { sets: [], ...(b.includeSheets ? { sheets: [] } : {}), next: null, truncated: false, unchanged: true, rev: ask.rev, checkedAt: Date.now() };
+  const seen = ask.since ? new Map() : null;
+  const setRow = d => { const r=d.data(); r.setId ||= d.id; for(const k of ["updatedAt","createdAt","completedAt","committedAt"]) r[k]=ms(r[k]); if (seen) seen.set(d.id, revOf(d)); return [d.id, r]; };
+  const budget = answerBudget();
+  let rows = [], sheetIds = [], ids = null;
   if (cur) {
     const ids = (Array.isArray(cur.sets) ? cur.sets : []).filter(isId).slice(0, 500);
     for (let i = 0; i < ids.length; i += 100) for (const d of await db.getAll(...ids.slice(i, i + 100).map(id => col(SETS).doc(id)))) if (d.exists) rows.push(setRow(d));
@@ -2670,6 +2808,7 @@ async function op_setList(b) {
     rows = snap.docs.map(setRow);
     }
     rows=rows.filter(([,r])=>(!isDay(b.from) || OrderRules.completionDay(r)>=b.from)&&(!isDay(b.to) || OrderRules.completionDay(r)<=b.to)&&(!b.status || r.status===b.status)&&!(b.excludeDone && num(r.laserDoneAt)>0)).sort(([,x],[,y])=>OrderRules.compareCompleted(x,y)).slice(0,limit);
+    if (seen) { ids = rows.map(([id]) => id); rows = rows.filter(([id]) => !seen.has(id) || revAfter(seen.get(id), ask.since)); }   // (LOCAL: every set named, in order; only those written since read whole)
     const whole = new Map();
     for (let i = 0; i < rows.length; i += 100) for (const d of await db.getAll(...rows.slice(i, i + 100).map(([id]) => col(SETS).doc(id)))) if (d.exists) whole.set(d.id, setRow(d)[1]);
     rows = rows.filter(([id]) => whole.has(id)).map(([id]) => [id, whole.get(id)]);
@@ -2678,7 +2817,7 @@ async function op_setList(b) {
   let n = 0; while (n < rows.length && budget.fits(rows[n][1])) n++;
   const part = b.includeSheets && n === rows.length ? await sheetEntries(sheetIds.map(id => [id]), budget) : { sheets: [], rest: sheetIds };
   const next = n < rows.length || part.rest.length ? { sets: rows.slice(n).map(([id]) => id), sheets: part.rest } : null;
-  return {sets:rows.slice(0, n).map(([,r])=>r), ...(b.includeSheets ? {sheets:part.sheets} : {}), next, truncated: !!next};
+  return {sets:rows.slice(0, n).map(([,r])=>r), ...(b.includeSheets ? {sheets:part.sheets} : {}), next, truncated: !!next, ...(ids ? { ids, upTo: [...seen.values()].reduce(revMax, ask.since), revs: Object.fromEntries(rows.slice(0, n).map(([id]) => [id, seen.get(id) || "0"])) } : {}), ...(ask.rev !== null ? { rev: ask.rev } : {})};
 }
 // ── release: when each slow material last went out, and the days a person opened one early (shop-wide, not per browser) ──
 async function op_releaseGet() { const s = await col(RELEASE).doc("current").get(); const d = s.exists ? s.data() : {}; return { lastReleased: d.lastReleased || {}, released: d.released || {}, updatedAt: ms(d.updatedAt) }; }
@@ -4331,16 +4470,128 @@ function cancelCopy(r) {
   if (!fits()) for (const k of Object.keys(x)) if (!["orderId", "by", "why", "at", "source", "etsyStatus", "etsyAt"].includes(k)) delete x[k];
   return x;
 }
-const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, manualClaim: op_manualClaim, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
+const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, manualClaim: op_manualClaim, listSheets: op_listSheets, getSheet: op_getSheet, getMany: op_getMany, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, masterRemoveSkus: op_masterRemoveSkus, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxPullOrders: op_sandboxPullOrders, sandboxPullLimitSet: op_sandboxPullLimitSet, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
   cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
   listingSkus: op_listingSkus, aliasGet: op_aliasGet, aliasPut: op_aliasPut, listingKindPut: op_listingKindPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
   customSheetGet: op_customSheetGet, customSheetPut: op_customSheetPut, customGet: op_customGet, customPut: op_customPut, reviewMarkPut: op_reviewMarkPut, reviewMarkOpen: op_reviewMarkOpen, customReopen: op_customReopen, customDelete: op_customReopen };
+OPS.customPiecePut = op_customPiecePut;   // CUSTOMPOOL (Paul, 28 Oct 2026): a design sent to a sheet becomes its pool rows; an orderless piece is numbered CUSTOM-<yyyymmdd>-<n>
 /* ART EDIT (Paul, 27 Oct 2026): one piece's own artwork, kept beside it (op_artPut above). artPut writes the piece's record, its pool row's artEdit stamp and its sheet's filesOwed;
    artGet and artList only read the documents named (they move no counter). */
 Object.assign(OPS, { artPut: op_artPut, artGet: op_artGet, artList: op_artList }); NO_GEN_BUMP.add("artGet"); NO_GEN_BUMP.add("artList");
+/* DESIGN LOG (Paul, 28 Oct 2026: "I need to know when employees are commissioning custom pieces, especially when they don't belong to an order"): designLog {records} keeps one
+   record per custom piece sent, and per fix piece with who made the mistake (_designLog.js, Design_Log; charm-nest-design-log.js sends them). One write per record, no read; nothing a placement answer is made from. */
+OPS.designLog = b => require("./_designLog").add(db, FV, b.records, { prefix: PREFIX }); NO_GEN_BUMP.add("designLog");
+/* ── DESIGNS (Paul, 28 Oct 2026: "this charm editor must have a repository of all opened, modified designed pieces, and this repository must be searchable ... this repository must
+   grow with every new update or change to any charm using the charm editor"; "The system must also track which order each design was attached to"; "You need to ensure the sanctity
+   of the designed charm. It's exact dimensions and user designed features"): the design library (items 18, 21 and 27; the lead's D6 and D8). charm-nest-designs.js is the ONE rule
+   for what a design is (clean: checked whole, as cleanArt checks a piece's edit, refused whole with nothing written), how it is kept (its faces as path strings) and its geometry
+   hash (canonical): the page and this file use the same code.
+     Charm_Designs/{id}                the LATEST version's fields, what a list shows (no faces); seq: the library's count when it was saved; orders / people: every order and person
+                                       any of its versions had (searched by array-contains: no composite index)
+     Charm_Designs/{id}/versions/{n}   every version whole (its faces; a very big one in Storage beside it, facesPath, gzip). Never changed, never deleted: every save is a version (D8)
+     the count (Charm_Nest_Rev/designs; Sandbox_Order_Rev/_designs in the sandbox) { n, epoch }: raised in the same transaction as each save, so a save's seq is given in the order
+                                       the saves commit and a list read `since` a revision ("<epoch>.<n>") misses none; a count begun again (a sandbox reset) has a new epoch
+     designPut  { design, thumb?, by }  one transaction: the count, the design's record, its new version. Its picture (thumb, a PNG of at most 96 KB) is kept in Storage named by
+                                       the geometry hash (charmnest/designs/thumbs/<hash>.png): the same drawing is the same picture, and a picture that cannot be kept never costs the design
+     designList { since | ifRev }       nothing saved since: { unchanged: true } for ONE read (the count); else only the designs saved since. None: the newest first. `next`: the cursor
+                { q | by | orderId }    the cloud's own search (one whole word of q, a person, an order: one array-contains each), for designs older than a computer keeps
+     designGet  { id, version?, history? }   a version whole (the latest without version: one read more); history: its versions, newest first
+   None of them writes a pool row or a sheet (NO_GEN_BUMP); none is in the Library's revision (REV_OPS). ── */
+const DESIGNS = "Charm_Designs"; SANDBOXED.add(DESIGNS);
+const Designs = require("../../charm-nest-designs.js");
+const DESIGN_ID = /^[A-Za-z0-9_-]{4,64}$/, DESIGN_REV = /^([0-9a-z]{4,12})\.(\d{1,12})$/, DESIGN_ORDER = /^(?:\d{4,20}|CUSTOM-\d{8}-\d{1,5})$/, DESIGN_PART = 500;
+const DESIGN_ROW = ["name", "version", "thumbUrl", "widthMm", "heightMm", "orderId", "customName", "by", "at", "source", "hash", "orders", "createdBy", "createdAt"];
+const DESIGN_HISTORY = ["version", "name", "by", "at", "hash", "thumbUrl", "orderId", "customName", "widthMm", "heightMm", "source"];
+const designRevRef = () => (PREFIX ? db.collection(PREFIX + SB_REV_COLL).doc("_designs") : db.collection(REV).doc("designs"));
+const designRow = (id, d) => Object.assign({ id }, Object.fromEntries(DESIGN_ROW.filter(k => d[k] !== undefined).map(k => [k, d[k]])));
+/** Keeps `buf` at `path` with a download token (the file door's way, charmNestOutput op_put), unless a file is there already: a picture or faces named by their own hash are
+    the same bytes. → { path, url } */
+const designUrl = (bucket, path, token) => "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(token);
+/** The file at `path` when it is there (with its download token): { path, url }, else null. */
+async function designFileAt(path) {
+  const bucket = admin.storage().bucket();
+  try { const [meta] = await bucket.file(path).getMetadata(); const t = meta && meta.metadata && meta.metadata.firebaseStorageDownloadTokens; return t ? { path, url: designUrl(bucket.name, path, String(t).split(",")[0]) } : null; } catch (_) { return null; }
+}
+async function designFile(path, buf, contentType) {
+  const had = await designFileAt(path); if (had) return had;
+  const bucket = admin.storage().bucket(), token = require("crypto").randomUUID();
+  await bucket.file(path).save(buf, { resumable: false, contentType, metadata: { cacheControl: "public, max-age=31536000", metadata: { firebaseStorageDownloadTokens: token, uploadedBy: "charm-nest-designs" } } });
+  return { path, url: designUrl(bucket.name, path, token) };
+}
+async function op_designPut(b) {
+  const by = str(b.by, 80).trim(); if (!by) return { error: "a design is saved with the name of the signed-in person who made it", status: 400 };
+  const c = Designs.clean(b.design); if (c.error) return { error: c.error, status: 400 };
+  const crypto = require("crypto"), d = c.design, hash = Designs.sha256Sync(Designs.canonical(d));
+  const id = d.id || "d" + Date.now().toString(36) + crypto.randomBytes(3).toString("hex"), base = PREFIX ? "charmnest/sandbox/designs/" : "charmnest/designs/";
+  let thumb = null;
+  if (b.thumb != null && b.thumb !== "") {
+    const buf = Buffer.from(String(b.thumb).replace(/^data:image\/png;base64,/, ""), "base64");
+    if (buf.length < 8 || buf.length > Designs.LIMITS.thumb || buf.readUInt32BE(0) !== 0x89504e47) return { error: `the design's picture is a PNG of at most ${Designs.LIMITS.thumb / 1024} KB`, status: 400 };
+    try { thumb = await designFile(base + "thumbs/" + hash + ".png", buf, "image/png"); } catch (e) { console.warn("[charmNestLibrary] designPut: the picture was not kept:", (e && e.message) || e); }
+  } else thumb = await designFileAt(base + "thumbs/" + hash + ".png");   // (no picture sent: the same drawing's, when one was kept)
+  // a very big design (a traced photograph) keeps its faces in Storage beside its record (a record holds at most 1 MB), named by their own bytes
+  let facesPath = null;
+  if (c.bytes > Designs.LIMITS.inline) { const text = JSON.stringify(c.stored); facesPath = (await designFile(base + "faces/" + id + "/" + crypto.createHash("sha256").update(text).digest("hex").slice(0, 32) + ".json.gz", require("zlib").gzipSync(text), "application/octet-stream")).path; }
+  const ref = col(DESIGNS).doc(id), rv = designRevRef();
+  return db.runTransaction(async tx => {
+    const [cur, rs] = await txGetAll(tx, [ref, rv]), old = cur.exists ? cur.data() || {} : null, r = rs.exists ? rs.data() || {} : {};
+    const epoch = /^[0-9a-z]{4,12}$/.test(String(r.epoch || "")) ? String(r.epoch) : crypto.randomBytes(5).readUIntBE(0, 5).toString(36), n = num(r.n), seq = n + 1;
+    const version = num(old && old.version) + 1, at = Math.max(Date.now(), num(old && old.at) + 1);
+    const pic = thumb || (old && old.hash === hash && old.thumbUrl ? { url: old.thumbUrl, path: old.thumbPath || null } : null);   // (the same drawing saved again under another name keeps its picture)
+    const union = (list, v) => [...new Set((Array.isArray(list) ? list : []).concat(v ? [v] : []))].slice(-50);
+    const head = { id, name: d.name, version, seq, thumbUrl: pic ? pic.url : null, thumbPath: pic ? pic.path : null, widthMm: d.widthMm, heightMm: d.heightMm, orderId: d.orderId, customName: d.customName, by, at, source: d.source, hash,
+      orders: union(old && old.orders, d.orderId), people: union(old && old.people, by), createdBy: (old && old.createdBy) || by, createdAt: num(old && old.createdAt) || at };
+    head.words = Designs.wordsOf(head);
+    tx.set(ref.collection("versions").doc(String(version)), { id, version, name: d.name, faces: facesPath ? null : c.stored, facesPath, bytes: c.bytes, ops: c.ops, widthMm: d.widthMm, heightMm: d.heightMm, source: d.source, orderId: d.orderId, customName: d.customName, by, at, hash, thumbUrl: head.thumbUrl, thumbPath: head.thumbPath, createdAt: FV.serverTimestamp() });
+    tx.set(ref, Object.assign({}, head, { updatedAt: FV.serverTimestamp() }));
+    tx.set(rv, { n: seq, epoch, at });
+    return { ok: true, id, version, at, hash, rev: epoch + "." + seq, prev: r.epoch === epoch ? epoch + "." + n : null, row: designRow(id, head) };
+  });
+}
+async function op_designList(b) {
+  const limit = Math.min(DESIGN_PART, Math.max(1, Math.floor(num(b.limit)) || 300));
+  const by = str(b.by, 80).trim(), orderId = String(b.orderId == null ? "" : b.orderId).trim(), q = Designs.fold(str(b.q, 120));
+  if (orderId && !DESIGN_ORDER.test(orderId)) return { error: "orderId is an order number or CUSTOM-<yyyymmdd>-<n>", status: 400 };
+  const rowsOf = snap => snap.docs.map(s => designRow(s.id, Object.assign({}, s.data() || {}))), seqOf = snap => num((snap.docs[snap.docs.length - 1].data() || {}).seq);
+  if (by || orderId || q) {
+    // the cloud's own search: ONE array-contains (an order, a person, or the longest whole word of q), the rest matched in the answer
+    const terms = q.split(" ").filter(Boolean), word = terms.join(" ").split(/[^a-z0-9]+/).filter(w => w && w.length <= 32).sort((x, y) => y.length - x.length)[0] || "";
+    if (!orderId && !by && !word) return { designs: [], next: null, upTo: null };
+    const snap = await (orderId ? col(DESIGNS).where("orders", "array-contains", orderId) : by ? col(DESIGNS).where("people", "array-contains", by) : col(DESIGNS).where("words", "array-contains", word)).limit(DESIGN_PART).select(...DESIGN_ROW, "people", "seq").get();
+    const hits = snap.docs.map(s => Object.assign({ id: s.id }, s.data() || {})).filter(x => (!by || (x.people || []).includes(by)) && (!orderId || (x.orders || []).includes(orderId)) && terms.every(t => Designs.hayOf(x).includes(t)));
+    hits.sort((x, y) => num(y.seq) - num(x.seq));
+    return { designs: hits.slice(0, limit).map(x => designRow(x.id, x)), next: null, upTo: null, truncated: snap.size >= DESIGN_PART || hits.length > limit };
+  }
+  const cursor = b.cursor != null && b.cursor !== "" && Number.isInteger(+b.cursor) && +b.cursor >= 0 ? +b.cursor : null;
+  const sm = DESIGN_REV.exec(typeof b.since === "string" ? b.since : typeof b.ifRev === "string" ? b.ifRev : "");
+  const page = async (since, after) => {   // since: the designs saved after that count, oldest first; else the newest first, `after` a cursor
+    const snap = await (since != null ? col(DESIGNS).where("seq", ">", Math.max(since, after == null ? 0 : after)).orderBy("seq") : after == null ? col(DESIGNS).orderBy("seq", "desc") : col(DESIGNS).orderBy("seq", "desc").startAfter(after)).limit(limit).select(...DESIGN_ROW, "seq").get();
+    return { designs: rowsOf(snap), next: snap.size >= limit ? seqOf(snap) : null };
+  };
+  if (cursor != null) return Object.assign(await page(sm ? +sm[2] : null, cursor), { upTo: null });   // (a later part: the first part said upTo)
+  // the count first (one read): a write landing after it is sent again next time, never missed
+  const rs = await designRevRef().get(), r = rs.exists ? rs.data() || {} : {}, epoch = String(r.epoch || ""), n = num(r.n), upTo = epoch ? epoch + "." + n : "0";
+  if (sm && epoch && sm[1] === epoch) { if (+sm[2] >= n) return { designs: [], next: null, upTo, unchanged: true }; return Object.assign(await page(+sm[2], null), { upTo }); }
+  return Object.assign(await page(null, null), { upTo }, sm ? { reset: true } : {});   // (a revision the count does not know: it began again, a sandbox reset: the page drops what it holds)
+}
+async function op_designGet(b) {
+  const id = str(b.id, 80); if (!DESIGN_ID.test(id)) return { error: "bad design id", status: 400 };
+  const ref = col(DESIGNS).doc(id);
+  let v = Number.isInteger(+b.version) && +b.version > 0 ? +b.version : 0;
+  if (!v) { const s = await ref.get(); v = s.exists ? num((s.data() || {}).version) : 0; if (!v) return { design: null }; }
+  const s = await ref.collection("versions").doc(String(v)).get(); if (!s.exists) return { design: null };
+  const x = s.data() || {};
+  let stored = x.faces;
+  if (!stored && x.facesPath) { const [buf] = await admin.storage().bucket().file(String(x.facesPath)).download(); stored = JSON.parse(require("zlib").gunzipSync(buf).toString("utf8")); }
+  const design = { id, version: v, name: x.name, faces: Designs.decodeFaces(stored || {}), widthMm: x.widthMm, heightMm: x.heightMm, source: x.source || null, orderId: x.orderId || null, customName: x.customName || null, by: x.by, at: num(x.at), hash: x.hash, thumbUrl: x.thumbUrl || null };
+  if (b.history !== true) return { design };
+  const h = await ref.collection("versions").orderBy("version", "desc").limit(100).select(...DESIGN_HISTORY).get();
+  return { design, history: h.docs.map(d => Object.fromEntries(DESIGN_HISTORY.map(k => [k, (d.data() || {})[k] === undefined ? null : (d.data() || {})[k]]))) };
+}
+Object.assign(OPS, { designPut: op_designPut, designList: op_designList, designGet: op_designGet }); ["designPut", "designList", "designGet"].forEach(op => NO_GEN_BUMP.add(op));
 
 /* ── sign-in time (Paul, 28 Sep 23:53; plans/sign-in-sessions.md part L): sessionsList {since, until, limit} is the
    sorter's read of Station_Sessions, one document per sign-in, which the stations write through firebaseOrders

@@ -124,6 +124,15 @@ async function session(sb) {
   await L({ op: 'artPut', poolId: `${A}_10010_1`, face: 'front', by: 'Eve', art: { baseKey: 'guard1', removed: ['0-guard'], added: [{ id: 'date1', kind: 'text', role: 'hatch', d: 'M1 1L3 1L3 3Z', fill: [0, 0, 1] }] } });
   await L({ op: 'artGet', poolId: `${A}_10010_1`, face: 'front' });
   await L({ op: 'artList', keys: [`${A}_10010_1~front`] });
+  // CUSTOMPOOL (Paul, 28 Oct 2026): a design sent to a sheet, a piece of an order and a piece of no order (numbered CUSTOM-<yyyymmdd>-<n> on the day's counter): its pool rows and the counter
+  await L({ op: 'customPiecePut', requestId: 'guard-cp-1', by: 'Eve', piece: { designId: 'design-guard-1', version: 2, geomHash: 'g1-guardhash0001-3', customName: 'Spare heart', metal: 'silver', quantity: 2, orderId: null, day: DAY, widthMm: 12, heightMm: 10 } });
+  await L({ op: 'customPiecePut', requestId: 'guard-cp-2', by: 'Eve', piece: { designId: 'design-guard-1', version: 2, geomHash: 'g1-guardhash0001-3', customName: 'Fix', metal: 'gold', quantity: 1, orderId: C, day: DAY, fixes: { orderId: C, poolId: `${C}_30030_1`, causedBy: 'Ann' } } });
+  // DESIGNS (Paul, 28 Oct 2026): the design library (Charm_Designs and its versions, its count Order_Rev/_designs, its picture under charmnest/designs/): driven so the wipe is tested against what it writes
+  { const sq = [[['m', [0, 0]], ['l', [56.693, 0]], ['l', [56.693, 42.52]], ['l', [0, 42.52]], ['h']]], png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=';
+    const dsg = { name: 'Guard heart', faces: { front: { face: 'front', frame: { x0: 0, y0: 0, wPt: 56.693, hPt: 42.52 }, items: [{ id: 'o', kind: 'path', role: 'cut', subpaths: sq }, { id: 'a', kind: 'path', role: 'hatch', fill: [0, 0, 1], subpaths: [[['m', [10, 10]], ['l', [20, 10]], ['l', [20, 20]], ['h']]] }] } }, widthMm: 20, heightMm: 15, source: { kind: 'new' }, orderId: A };
+    const put1 = await L({ op: 'designPut', by: 'Eve', design: dsg, thumb: png });
+    await L({ op: 'designPut', by: 'Eve', design: Object.assign({}, dsg, { id: put1.id, name: 'Guard heart 2' }) });
+    await L({ op: 'designList' }); await L({ op: 'designList', since: put1.rev }); await L({ op: 'designGet', id: put1.id, history: true }); }
   await L({ op: 'runPut', run: { runId: RUN2, status: 'running', step: 'nesting', day: DAY, lines: {} } });   // (an open run: only a sheet of an open run can be repacked)
   await L({ op: 'archiveEmptySheet', id: SHEET2, runId: RUN2 });
   await L({ op: 'sheetPdf', ids: [SHEET, 'no-such-sheet'] });
@@ -151,6 +160,10 @@ async function session(sb) {
   await L({ op: 'partialPolicySet', metal: 'rose', mode: 'new', by: 'Kim' });
   const remId = `${claim.stock.id}-1`;
   await L({ op: 'remnantMark', id: remId, status: 'discarded', by: 'Kim' }); await L({ op: 'remnantMark', id: remId, status: 'available', by: 'Kim' });
+  // (gold-editable, Paul 27 Oct 2026: a 10K / 14K sheet's green line is set aside when its charms change by hand, roseReopen; it writes the sheet record. It was a new op
+  //  this session did not drive, which stopped this guard on main before the checks below)
+  store.set(`${P}Charm_Nest_Sheets/sheet-k14-guard`, { id: 'sheet-k14-guard', metal: 'gold14k', sheetIndex: 3, fileBase: '14K_Oct.09.26_Set-1_Sheet-3', status: 'complete', runId: 'run-rose', setId: SET, poolIds: ['pool-9'], placedCount: 1, orders: [D], rosePlanJson: JSON.stringify({ lines: [[0, 0, 1, 1]] }), rosePlanHash: 'guard-plan' });
+  await L({ op: 'roseReopen', sheetId: 'sheet-k14-guard', by: 'Kim' });
   await L({ op: 'partialClaim', metal: 'rose', id: remId, sheetId: 'sheet-rose-guard-3', by: 'Kim' });
   await L({ op: 'partialRelease', sheetId: 'sheet-rose-guard-3', by: 'Kim' });
   await L({ op: 'partialUse', id: remId, sheetId: SHEET, by: 'Kim' });
@@ -165,6 +178,7 @@ async function session(sb) {
   await L({ op: 'cancelRestore', orderId: A, by: 'paul' });
   if (sb) await L({ op: 'sandboxCancel', orderId: B, by: 'paul' }); else await L({ op: 'cancelPut', orderId: B, by: 'paul', why: 'sandbox twin' });
   await L({ op: 'timelineAdd', events: [{ orderId: A, type: 'qrLabel', id: 'q1', text: 'QR label for GF Sheet 1', by: 'paul' }, { orderId: B, type: 'designSent', id: 'ds1', text: 'sent', by: 'paul' }, { orderId: C, type: 'note', id: 'n1', text: 'note', by: 'paul' }] });
+  await L({ op: 'designLog', records: [{ id: 'dl-guard-1', kind: 'fixPiece', by: 'paul', customId: 'CUSTOM-20261028-1', customName: 'guard piece', reason: 'a mistake', metal: 'gold', fix: { orderId: A, causedBy: 'Eve' }, sandbox: !!sb }] });   // (DESIGN LOG, 28 Oct 2026: Design_Log, employee efficiency: kept by the wipe, see charm-nest-sandbox-families.js)
   // ── the learned maps ──
   // REVLINK (12 Oct 2026): a person's PICK of a charm is saved for good, in the sandbox too: the shared store (Charm_Sku_Aliases, Charm_Option_Map field design), never the sandbox's copy. The sandbox picks on ITS OWN listing here, so what
   // production saved stays byte-identical; the picks must be in the shared store after the session, survive the wipe, and the master designs they name are the library's (BR-TST-01 / BR-TST-02)
@@ -306,6 +320,7 @@ const sandboxDoc = (k, v) => { const o = own('firestore', k); if (!o || o.kind !
   const READ_ONLY = new Set(['bridgeLog' /* (COST, Oct 2026: answers, writes nothing) */, 'ping', 'lookupCharms', 'listCharms', 'listSheets', 'getSheet', 'listingPhotos', 'getShapeGuidance', 'laserStatus', 'laserDoneList', 'getCalibration', 'jobList', 'getJob', 'getAgent', 'poolList', 'poolGet', 'backList', 'backPreview', 'setGet', 'setList', 'runGet', 'runList', 'history', 'releaseGet', 'cancelCheck', 'timelineGet', 'listingSkus', 'aliasGet', 'noDesignGet', 'optionMapGet', 'customReadGet',
     'customSheetGet', 'customGet', 'sandboxStatus', 'roseGet', 'roseList', 'remnantList', 'partialList', 'partialPolicyGet', 'partialPlan', 'partialStocks', 'sheetHistory', 'partialSearchList', 'masterGet', 'masterGetMany', 'masterList', 'masterListFiles', 'flowState', 'sharedOrders', 'getOrderPieces', 'laserDoneList', 'sessionsList']);
   READ_ONLY.add('reviewMarkOpen');   // REVMARK: one batch get by key of {rid}_review documents (which orders are in Review); writes nothing (tests/charm-nest/review-mark.cjs drives reviewMarkPut, this guard drives it on both sides)
+  READ_ONLY.add('getMany');   // LOCAL (28 Oct 2026): several sheets, sets, runs and custom orders read by key in one call, those that moved since the page's revisions only; writes nothing (tests/charm-nest/local-reads.cjs drives it)
   READ_ONLY.add('customSkuCheck');   // SKUGEN: reads the master by id, the listing's alias and cached table; writes nothing and asks Etsy nothing (tests/charm-nest/save-sku.cjs drives it)
   const REPO = { sandboxPullLimitSet: 'a setting (config/charmNestSandboxPull), behind the repo-token door; tests/charm-nest/sandbox-pull-limit.cjs drives it and proves the wipe leaves it', masterPutIndex: 'the Charm repo (shared by design, never wiped)', masterPatch: 'the Charm repo', masterPutFile: 'the Charm repo', masterRemoveFile: 'the Charm repo', masterRemoveSku: 'the Charm repo', startMaster: 'the Charm repo indexing job' };
   const NOT_SANDBOX = { putCharms: 'skipped in the sandbox (shared library)', renameCharm: 'skipped in the sandbox', putCalibration: 'skipped in the sandbox', cancelSweep: 'refused in the sandbox (sandboxCancel is its twin)', sandboxPut: 'retired (410)', sandboxPullOrders: 'ETSYPULL: its own test (tests/charm-nest/sandbox-pull.cjs) drives it against a fake Etsy; it writes Charm_Sandbox/current, stream, pulls and orders-pull/*', sandboxReset: 'the wipe itself', purgeHistory: 'ends in the wipe (phase 5)', restoreSheet: 'rebuilds a record from the files of a run (needs a nest report)' };
