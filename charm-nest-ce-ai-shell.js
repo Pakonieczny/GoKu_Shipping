@@ -248,10 +248,13 @@
   add('Window', [
     { id: 'win.tools', label: 'Toolbars', run: act('panelVis', 'tools'), chk: w => !st(w).hidden.tools, menuLabel: 'Tools' },
     { id: 'win.control', label: 'Control', run: act('panelVis', 'control'), chk: w => !st(w).hidden.control },
-    { id: 'win.align', label: 'Align', key: 'Shift+F7', when: w => w.panelOr('align', 'ops.alignBar'), run: w => w.openPanel('align', 'ops.alignBar') },
-    { id: 'win.layers', label: 'Layers', key: 'F7', run: act('dock'), chk: w => st(w).dock },
+    { id: 'win.align', label: 'Align', key: 'Shift+F7', when: w => !!aiDock() || w.panelOr('align', 'ops.alignBar'), run: w => { const d = aiDock(); if (d) d.openPanel('align'); else w.openPanel('align', 'ops.alignBar'); } },
+    { id: 'win.layers', label: 'Layers', key: 'F7', run: w => { const d = aiDock(); if (d) d.openPanel('layers'); else w.act('dock'); }, chk: w => st(w).dock },
     { id: 'win.libraries', label: 'Libraries', when: w => st(w).panels.some(p => p.id === 'xlib'), run: w => w.act('xpanel', 'xlib'), chk: w => st(w).xpanel === 'xlib' },
-    { id: 'win.pathfinder', label: 'Pathfinder', key: 'Mod+Shift+F9', when: w => w.panelOr('pathfinder', 'ops.pfBar'), run: w => w.openPanel('pathfinder', 'ops.pfBar') },
+    { id: 'win.pathfinder', label: 'Pathfinder', key: 'Mod+Shift+F9', when: w => !!aiDock() || w.panelOr('pathfinder', 'ops.pfBar'), run: w => { const d = aiDock(); if (d) d.openPanel('pathfinder'); else w.openPanel('pathfinder', 'ops.pfBar'); } },
+    // (the docked panels of charm-nest-ce-ai-panels.js, for the keys and the shortcuts sheet: the Window menu lists them from CharmEditor.aiDock itself)
+    ...[['properties', 'Properties', ''], ['transform', 'Transform', 'Shift+F8'], ['stroke', 'Stroke', 'Mod+F10'], ['swatches', 'Swatches', ''], ['character', 'Character', 'Mod+T'], ['trace', 'Image Trace', '']].map(([id, label, key]) =>
+      ({ id: 'win.' + id, label, key: key || undefined, menu: false, dock: id, when: () => !!(aiDock() && (aiDock().panels || []).some(p => p.id === id)), run: () => { const d = aiDock(); if (d) d.openPanel(id); } })),
     { id: 'win.panels', label: 'Hide Panels', key: 'Tab', run: act('panels', 'all'), menu: false, sheet: 'with the work area in focus' },
     { id: 'win.panelsSide', label: 'Hide Panels Except the Toolbar', key: 'Shift+Tab', run: act('panels', 'side'), menu: false }
   ]);
@@ -305,6 +308,9 @@
     more: { name: 'Edit Toolbar', key: '', desc: 'Grid, guides, snapping and zoom' }
   };
   const windowItems = [];
+  /** The dock of charm-nest-ce-ai-panels.js (CharmEditor.aiDock) when the page has it, and Illustrator's keys of its panels (the Window menu's column). */
+  const aiDock = () => { const CE = root && root.CharmEditor; return CE && CE.aiDock && typeof CE.aiDock.openPanel === 'function' ? CE.aiDock : null; };
+  const DOCK_KEYS = { layers: 'F7', transform: 'Shift+F8', align: 'Shift+F7', pathfinder: 'Mod+Shift+F9', stroke: 'Mod+F10', character: 'Mod+T', color: 'F6', swatches: '', properties: '', trace: '' };
 
   /* ═══ 4 · the menus: Illustrator's order, groupings and submenus, built from the catalog each time one opens ═══ */
   const S = s => ({ sub: s });
@@ -379,8 +385,14 @@
   }
   function windowList(w) {
     const s = st(w), out = [resolve(w, byId.get('win.tools')), resolve(w, byId.get('win.control')), { sep: true }];
-    const rows = [];
-    for (const id of ['win.align', 'win.layers', 'win.libraries', 'win.pathfinder']) { const r = resolve(w, byId.get(id)); if (r) rows.push(r); }
+    const rows = [], dock = aiDock();
+    if (dock) {
+      // (the docked panels of charm-nest-ce-ai-panels.js, Illustrator's Window menu: each brought into view by its own call, ✓ while it shows)
+      let stt = null; try { stt = dock.current && typeof dock.current.state === 'function' ? dock.current.state() : null; } catch (e) { stt = null; }
+      const shows = id => !!stt && ((stt.fly === id) || (stt.mode !== 'collapsed' && stt.mode !== 'narrow' && Array.isArray(stt.layout && stt.layout.main) && stt.layout.main.some(g => g.active === id && !g.min))) && (id !== 'layers' || st(w).dock);
+      for (const p of dock.panels || []) rows.push({ e: { id: 'win.dock' }, id: 'win.dock', arg: String(p.id), label: String(p.title || p.id), key: DOCK_KEYS[p.id] ? keyLabel(DOCK_KEYS[p.id]) : p.key ? (/[⌘⇧⌥]/.test(p.key) ? p.key : keyLabel(p.key)) : '', on: true, chk: shows(String(p.id)) });
+      const lib = resolve(w, byId.get('win.libraries')); if (lib) rows.push(lib);
+    } else for (const id of ['win.align', 'win.layers', 'win.libraries', 'win.pathfinder']) { const r = resolve(w, byId.get(id)); if (r) rows.push(r); }
     for (const it of windowItems) {
       if (!it || !it.label) continue;
       if (it.when && !safe(() => it.when(w))) continue;
@@ -577,6 +589,7 @@
     if (id === 'type.size') { w.act('size', +arg); return true; }
     if (id === 'type.caseSet') { w.act('style', { letterCase: arg || undefined }); return true; }
     if (id === 'win.panel') { w.act('xpanel', arg); return true; }
+    if (id === 'win.dock') { const d = aiDock(); if (d) safe(() => d.openPanel(String(arg))); else if (arg === 'layers') w.act('dock'); return true; }
     if (/^win\.x\./.test(id)) { const it = windowItems.find(x => 'win.x.' + x.id === id); if (it && typeof it.run === 'function') safe(() => it.run(w)); return true; }
     const e = byId.get(id); if (!e) { if (w.x.has(id)) { w.x.run(id); return true; } return false; }
     if (e.x) { w.x.run(e.x); return true; }

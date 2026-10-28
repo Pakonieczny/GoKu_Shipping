@@ -1204,7 +1204,11 @@
 .ce-scr svg{ width:18px; height:18px; } .ce-scr:hover{ background:var(--ai-hover); }
 /* ── the Control bar (Illustrator's Control panel: what is selected and its properties, one row) ── */
 .ce-props{ grid-area:2/1/3/-1; display:flex; align-items:center; flex-wrap:nowrap; gap:6px; min-width:0; height:34px; padding:0 8px; background:var(--ai-panel); border-bottom:1px solid var(--ai-border); overflow:hidden; position:relative; z-index:2; }
-.ce-props > *{ flex:0 0 auto; }
+.ce-props > *{ flex:0 0 auto; height:22px; }
+.ce-props > span{ display:inline-flex; align-items:center; }
+/* (a bar that would not fit sheds, as Illustrator's Control panel does: first the section labels and the long names, then the reference point and the kind) */
+.ce-props.is-tight .ce-ctl__lab{ display:none; } .ce-props.is-tight [data-drop="font"] .ce-prop{ min-width:0; } .ce-props.is-tight [data-drop="fstyle"] .ce-prop{ min-width:0; } .ce-props.is-tight .ce-size input{ width:50px; }
+.ce-props.is-tighter .ce-refpt,.ce-props.is-tighter .ce-ctl__kind{ display:none; } .ce-props.is-tighter .ce-size input{ width:44px; } .ce-props.is-tighter{ gap:4px; }
 .ce-ctl__kind{ flex:none; font-size:var(--ai-fs); color:var(--ai-text); min-width:72px; padding-right:2px; white-space:nowrap; }
 .ce-ctl__lab{ flex:none; font-size:var(--ai-fs); color:var(--ai-text-dim); white-space:nowrap; text-decoration:underline dotted; text-underline-offset:2px; text-decoration-color:var(--ai-text-disabled); }
 .ce-ctl__sep{ flex:none; width:1px; height:20px; background:var(--ai-sep); opacity:.8; }
@@ -1243,8 +1247,8 @@
 .ce-item.ce-font:hover[data-kind]::after{ color:var(--ai-accent-text); }
 .ce-menu:has(.ce-font){ min-width:250px; }
 /* position and size, then the angle: Illustrator's Transform fields (X: Y: W: H:, the link between W and H, the reference point before them) */
-.ce-refpt{ flex:none; display:grid; grid-template-columns:repeat(3,6px); grid-template-rows:repeat(3,6px); gap:2px; padding:2px; border:1px solid var(--ai-input-border); border-radius:2px; background:var(--ai-input); }
-.ce-refpt button{ width:6px; height:6px; padding:0; border:1px solid var(--ai-text-dim); background:transparent; cursor:pointer; border-radius:0; }
+.ce-refpt{ flex:none; display:grid; grid-template-columns:repeat(3,5px); grid-template-rows:repeat(3,5px); gap:1px; padding:1.5px; border:1px solid var(--ai-input-border); border-radius:2px; background:var(--ai-input); }
+.ce-refpt button{ width:5px; height:5px; padding:0; border:1px solid var(--ai-text-dim); background:transparent; cursor:pointer; border-radius:0; }
 .ce-refpt button.is-on{ background:var(--ai-text); border-color:var(--ai-text); }
 .ce-refpt button:hover{ border-color:var(--ai-text); }
 .ce-sizes{ display:inline-flex; align-items:center; flex:0 0 auto; gap:4px; height:22px; }
@@ -1566,7 +1570,8 @@
   .ce-zoomb{ min-width:52px; }
   .ce-tool{ width:30px; height:26px; } .ce-tools{ grid-template-columns:30px; }
   .ce-paint{ width:44px; transform:scale(.85); transform-origin:center top; }
-  .ce-props{ gap:4px; padding:0 4px; overflow-x:auto; }
+  .ce-props{ gap:5px; row-gap:5px; padding:5px 4px; height:auto; min-height:34px; flex-wrap:wrap; overflow:visible; }
+  .ce-sizes,.ce-size{ display:contents; } .ce-ctl__grow{ display:none; }
   .ce-props.is-empty{ display:none; }
   .ce-refpt,.ce-ctl__kind{ display:none; }
   .ce-size input{ width:44px; }
@@ -2687,10 +2692,10 @@
       const bar = $('.ce-props'), vw = doc.documentElement.clientWidth || root.innerWidth || 0;
       const sig = [...bar.children].map(e => (e.hidden ? 0 : 1)).join('') + '|' + $('[data-fontname]').textContent + '|' + $('[data-tsname]').textContent + '|' + $('[data-rolename]').textContent + '|' + vw + '|' + (S.dock ? 1 : 0);
       if (sig === barSig) return; barSig = sig;
-      bar.classList.remove('is-tight');
+      bar.classList.remove('is-tight', 'is-tighter');
       if (vw <= 640) return;   // (a phone's bar wraps by design)
-      const shown = [...bar.children].filter(e => !e.hidden && e.offsetHeight > 0);
-      if (shown.length > 1 && shown.some(e => e.offsetTop > shown[0].offsetTop + 4)) bar.classList.add('is-tight');
+      // (Illustrator workspace: the Control bar is one row that does not wrap; what would run past its end makes it shed its labels, then the reference point and the kind)
+      if (bar.scrollWidth > bar.clientWidth + 1) { bar.classList.add('is-tight'); if (bar.scrollWidth > bar.clientWidth + 1) bar.classList.add('is-tighter'); }
     }
     function syncHist() { $('[data-act="undo"]').disabled = !S.hist.canUndo; $('[data-act="redo"]').disabled = !S.hist.canRedo; }
     function setTool(t) {

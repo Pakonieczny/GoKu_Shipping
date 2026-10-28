@@ -244,6 +244,8 @@ async function browser() {
     check(await page.evaluate(() => { const bt = document.querySelector('.ce-root [data-act="import"]'); return !!bt && !bt.hidden && /\.ai/.test(bt.title); }), 'I the head\'s Import button is there and names .ai');
     const fr = await page.evaluate(() => CharmEditor.current.frame());
     const at = await page.evaluate(([x, y]) => CharmEditor.current.clientOf(x, y), [fr.x0 + fr.wPt * 0.4, fr.y0 + fr.hPt * 0.55]);
+    // (a drag event's clientX / clientY are whole pixels: the drop point is rounded here and the point it means read back, so the check does not depend on where the frame falls in a pixel)
+    at.x = Math.round(at.x); at.y = Math.round(at.y); const atPt = await page.evaluate(([x, y]) => CharmEditor.current.ptOf(x, y), [at.x, at.y]);
     const before = await page.evaluate(() => ({ n: CharmEditor.current.items().length, h: CharmEditor.current.history().undo }));
     const d1 = await drop(page, path.join(CEF, 'tag-mm.svg'), at.x, at.y);
     check(d1.up, `I a file dropped on the charm: the picker is up in the same frame (${d1.ms.toFixed(1)} ms of main thread for the drop)`);
@@ -265,7 +267,7 @@ async function browser() {
     check(JSON.stringify(after.g.roles) === JSON.stringify(['cut', 'cut', 'line', 'line', 'hatch']), 'I the roles as picked: ' + after.g.roles.join(' '));
     const w = (after.box[2] - after.box[0]) * MM, h = (after.box[3] - after.box[1]) * MM, cx = (after.box[0] + after.box[2]) / 2, cy = (after.box[1] + after.box[3]) / 2;
     check(Math.abs(w - 30) < 0.01 && Math.abs(h - 20) < 0.01, `I at its exact size in the charm: ${w.toFixed(4)} × ${h.toFixed(4)} mm`);
-    const want = [fr.x0 + fr.wPt * 0.4, fr.y0 + fr.hPt * 0.55], tol = 0.6 / (await page.evaluate(() => CharmEditor.current.zoom()) / 100 * 96 / 72);
+    const want = atPt, tol = 0.6 / (await page.evaluate(() => CharmEditor.current.zoom()) / 100 * 96 / 72);
     check(Math.abs(cx - want[0]) < tol && Math.abs(cy - want[1]) < tol, `I centred where it was dropped (${((cx - want[0]) * MM).toFixed(3)}, ${((cy - want[1]) * MM).toFixed(3)} mm off)`);
     check(after.sel.length === 1 && after.sel[0] === after.g.id && after.h === before.h + 1, 'I selected, and one step of history'); await shot(page, 'ce-import-placed.png');
     await page.keyboard.press('Control+z'); await settle(page);

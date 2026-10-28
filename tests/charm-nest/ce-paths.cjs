@@ -166,7 +166,7 @@ async function partB(browser) {
 
   await step('B1 the rail: a Pen flyout (Pen, Add, Delete, Anchor Point), Direct Selection, a Pencil flyout (Pencil, Scissors); P A N C + − ⇧C = arm them; Esc goes back to Select', async () => {
     const rail = await page.evaluate(() => [...document.querySelectorAll('.ce-tools > .ce-tool, .ce-tools > .ce-drop > .ce-tool')].map(b => b.dataset.tool));
-    const fly = await page.evaluate(() => [...document.querySelectorAll('.ce-rail .ce-menu [data-tool]')].map(b => b.dataset.tool));
+    const fly = await page.evaluate(() => [...document.querySelectorAll('.ce-rail .ce-menu [data-tool], .ce-rail .ce-tools > .ce-tool[data-tool]')].map(b => b.dataset.tool));   // (Illustrator workspace: the Pencil and the Scissors each a tool of its own, as Illustrator's panel has them)
     for (const id of ['pen', 'direct', 'pencil']) assert.ok(rail.includes(id), 'rail: ' + rail.join(','));
     for (const id of ['pen', 'anchorAdd', 'anchorDel', 'anchorConvert', 'pencil', 'scissors']) assert.ok(fly.includes(id), 'flyouts: ' + fly.join(','));
     const got = [];
