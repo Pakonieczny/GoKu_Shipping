@@ -5171,6 +5171,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const followFeed = () => {
     if (followSync || !window.CNSync || typeof window.CNSync.follow !== "function") return;
     followSync = window.CNSync.follow({ name: "sheetwin", kinds: "st", active: () => !!(W.dlg && W.dlg.open && W.rec && W.id) && !document.hidden, since: () => FOLLOW.at,
+      every: () => (W.dlg && W.dlg.open && Date.now() - FOLLOW.touch < 120000 ? 2000 : 0),   // (the window followed every 2 s while used: so does the computer's question)
       wants: k => k === "s:" + W.id || (!!W.rec && !!W.rec.setId && k === "t:" + W.rec.setId),
       read: () => { clearTimeout(followHook.t); followHook.t = setTimeout(() => follow(true), 0); } });
   };

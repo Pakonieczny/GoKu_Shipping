@@ -267,7 +267,7 @@
   // FEED: a custom record named by the changes feed is read now (one read for any number of them); quiet unless the Review tab is on screen, as a poll is
   const follow = () => {
     if (sync || !root.CNSync || typeof root.CNSync.follow !== "function") return;
-    sync = root.CNSync.follow({ name: "review", kinds: "c", active: () => !st.dead && watching() && cloudOk(), since: () => st.start,
+    sync = root.CNSync.follow({ name: "review", kinds: "c", active: () => !st.dead && watching() && cloudOk(), since: () => st.start, every: () => (onReview() && focused() && Date.now() - st.input <= WORKING ? EVERY : 0),
       read: why => { if (st.dead || !cloudOk()) return; if (why === "reset" || why === "dirty") st.quietNext = true; if (st.busy) st.again = true; else arm(Math.max(0, st.end + GAP - Date.now())); } });
   };
   follow(); if (!sync) setTimeout(follow, 0);

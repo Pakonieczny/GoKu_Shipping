@@ -11,7 +11,8 @@
      · the leader: a Web Lock per world ('cn-sync:production' | 'cn-sync:sandbox', as cn-poll.js elects one poller per computer), taken by a VISIBLE tab
        only: a tab hidden lets it go to the next visible one at once, a tab closed lets it go by itself, and with every tab hidden nothing is asked at all;
      · the pace (the pace the five timers kept, now for the computer): 3 s while somebody touched any tab of it in the last 2 minutes, 15 s for the next
-       ten, then 60 s; at once when a tab is shown again or the network comes back; a failure waits 2, 4, 8 … 60 s;
+       ten, then 60 s; 2 s while a surface that followed at 2 s is in use (the Review tab, a sheet window: nothing anybody looks at is slower than it was);
+       at once when a tab is shown again or the network comes back; a failure waits 2, 4, 8 … 60 s;
      · the tabs hear it on BroadcastChannel 'cn-sync:<world>' (the sandbox and production never meet: their own lock, channel, database and revision
        document); each answer carries the count it was asked from, so a tab that missed one asks every surface again (as after a reset);
      · records this computer keeps (charm-nest-store.js: the Library's rows and sets) that moved are read again in one getMany at most every 30 s and
@@ -23,10 +24,11 @@
 
    CNSync (window; module.exports in tests)
      start({ world, api, enabled })   api(fn, body, opts) the page's; enabled() false while the cloud is not answering (nothing is asked)
-     follow({ name, kinds, wild, wants(key), active(), since(), read(why, keys) }) → { live(), dirty(), resume(), stop() }
+     follow({ name, kinds, wild, wants(key), active(), since(), every(), read(why, keys) }) → { live(), dirty(), resume(), stop() }
                                       a surface's subscription. kinds: the first letters of the names it reads ('s' sheets, 't' sets, 'r' runs, 'c' custom
                                       records, 'p' where an order's pieces are, 'x' cancels, 'o' timelines, 'm' designs, 'a' learned maps); wild: the kinds whose
-                                      '<kind>:*' (some of it, not known which) concerns it (all of its kinds unless said); wants(key): this
+                                      '<kind>:*' (some of it, not known which) concerns it (all of its kinds unless said); every(): the pace it followed at on
+                                      its own while it is in use (2000: the Review tab, a sheet window), 0 otherwise; wants(key): this
                                       name is one it shows; active(): it is on screen now (else it is read when it is: resume); since(): when its own last read
                                       began (a read that began after the leader's question has what it named: nothing more is asked); read(why, keys, at):
                                       why 'keys' | 'reset' | 'verify' | 'dirty', at: when the leader asked (what was written before it is named)
@@ -59,7 +61,7 @@
   const stale = new Map();                     // 'kind\u0000id' → [kind, id]: records this computer keeps that moved (getMany, fetchEvery)
   let fetchT = 0, fetchAt = 0;
   // every tab's
-  let n = null, heardAt = 0, firstAt = 0, lastInput = now(), actSent = 0;
+  let n = null, heardAt = 0, firstAt = 0, lastInput = now(), actSent = 0, hurry = 0, hurryAt = 0, hurrySent = 0;
   const lastKind = new Map();                  // kind → the leader's question time of the last answer that named it ('*': not known, '!': a reset)
   const subs = new Set();
   const mine = new Map();                      // rid → how many order windows of this tab watch it
@@ -105,7 +107,7 @@
   function onMessage(ev) {
     const m = ev && ev.data; if (!m || m.v !== V || m.from_ === me || !started) return;
     if (m.t === 'feed' || m.t === 'verify') heard(m, false);
-    else if (m.t === 'act') { lastInput = Math.max(lastInput, +m.at || 0); if (leader) wake(); }
+    else if (m.t === 'act') { lastInput = Math.max(lastInput, +m.at || 0); hurry = +m.hurry || 0; hurryAt = +m.at || now(); if (leader) wake(); }
     else if (m.t === 'watch') { watching.set(m.from_, { rids: (m.rids || []).map(String).slice(0, 12), at: now() }); }
     else if (m.t === 'hello' || m.t === 'poke') { if (leader) soon(); }
     else if (m.t === 'lead') { if (mine.size) post({ t: 'watch', rids: [...mine.keys()] }); }
@@ -113,7 +115,13 @@
   }
 
   /* ── the leader's question ── */
-  const pace = () => { const q = now() - lastInput; return q < PACE.activeFor ? PACE.active : q < PACE.quietFor ? PACE.quiet : PACE.idle; };
+  // (a surface in use that followed faster than 3 s on its own asks for its own pace while it is used: hurry, from any tab)
+  const wantFast = () => { let ms = 0; for (const s of subs) { const v = s.every(); if (v > 0 && (!ms || v < ms)) ms = v; } return ms; };
+  const pace = () => {
+    const q = now() - lastInput; if (q >= PACE.activeFor) return q < PACE.quietFor ? PACE.quiet : PACE.idle;
+    const own = leader ? wantFast() : 0, other = now() - hurryAt < PACE.activeFor ? hurry : 0, fast = [own, other].filter(v => v > 0);
+    return fast.length ? Math.max(1000, Math.min(PACE.active, ...fast)) : PACE.active;
+  };
   function schedule(ms) {
     clearTimeout(timer); timer = 0;
     if (!leader) return;
@@ -149,11 +157,11 @@
       }
       fails = 0; lastOk = now(); stats.answers++;
       if (r.orders) for (const [rid, rev] of Object.entries(r.orders)) orderRevs.set(String(rid), String(rev || ''));
-      const m = { t: 'feed', from, n: +r.n, keys: r.keys || [], reset: !!r.reset, first: from == null, cg: r.cg != null ? +r.cg : cg, at };
+      const m = { v: V, t: 'feed', from, n: +r.n, keys: r.keys || [], reset: !!r.reset, first: from == null, cg: r.cg != null ? +r.cg : cg, at };
       heard(m, true); post(m); keepCursor();
       if (m.keys.length || m.reset) heldMoved(m.keys, m.reset);
       // (the net: every surface asks once anyway every ten minutes while the computer is in use)
-      if (now() - verifyAt >= PACE.verifyEvery && now() - lastInput < PACE.quietFor) { verifyAt = now(); const v = { t: 'verify', at: now() }; if (firstAt && verifyAt - firstAt > 1000) { heard(v, true); post(v); } }
+      if (now() - verifyAt >= PACE.verifyEvery && now() - lastInput < PACE.quietFor) { verifyAt = now(); const v = { v: V, t: 'verify', at: now() }; if (firstAt && verifyAt - firstAt > 1000) { heard(v, true); post(v); } }
     } catch (e) {
       stats.errors++;
       if (e && (e.unknown || /unknown op/i.test(String(e.message)))) { post({ t: 'dead' }); stop(true); return; }   // (an older cloud: every surface keeps its own timer)
@@ -226,6 +234,7 @@
     const active = () => safe(() => (spec.active ? !!spec.active() : visible()), false);
     const run = (why, keys, at) => { stats.reads++; safe(() => spec.read(why, keys, at)); };
     const s = {
+      every: () => (gone || !spec.every ? 0 : safe(() => +spec.every() || 0, 0)),
       take(keys, reset, verify, at) {
         if (gone) return;
         let hit = reset || verify || keys.has('*'), mine = [];
@@ -275,7 +284,8 @@
   function onInput() {
     const t = now(); const was = lastInput; lastInput = t;
     if (leader) { if (t - was > PACE.activeFor) wake(); return; }
-    if (t - actSent >= 5000) { actSent = t; post({ t: 'act', at: t }); }
+    const h = wantFast();
+    if (t - actSent >= 5000 || (h && t - hurrySent >= 5000)) { actSent = t; if (h) hurrySent = t; post({ t: 'act', at: t, hurry: h || 0 }); }
   }
   function onVisible() {
     evaluate();
