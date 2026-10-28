@@ -929,6 +929,7 @@
 /* (opts.back, 28 Oct 2026: the way back to where the editor was opened from, first in the head and filled, so it is never taken for one of the editor's own tools) */
 .ce-back{ flex:none; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 13px 0 8px; border:1px solid var(--ink); background:var(--ink); color:#fff; cursor:pointer; font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; white-space:nowrap; }
 .ce-back svg{ width:16px; height:16px; } .ce-back:hover{ background:#3a3b3b; border-color:#3a3b3b; } .ce-back:focus-visible{ outline:2px solid var(--gold); outline-offset:2px; }
+@media (max-width:640px){ .ce-back{ padding:0 8px; } .ce-back span{ display:none; } }   /* (a phone: the arrow alone, its words in its title) */
 .ce-ask__b:has(> [data-ask="alt"]){ flex-direction:column-reverse; align-items:stretch; gap:8px; }   /* (three answers: one column, "Save and go back" first, then Discard, then Keep editing) */
 .ce-head .ce-seg{ flex:none; }
 .ce-short{ display:none; }
