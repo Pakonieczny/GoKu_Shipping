@@ -410,7 +410,8 @@ function layoutIssues() {
       assert.ok(!(await cur(page, 'C.selection()')).includes('day-4-1'), 'a locked layer is not picked on the canvas');
       await row('heart-fill').scrollIntoViewIfNeeded();
       const a = await row('heart-fill').boundingBox(), b = await row('heart-line').boundingBox();
-      await drag(page, { x: a.x + 20, y: a.y + a.height / 2 }, { x: b.x + 20, y: b.y + b.height * 0.8 });
+      // (AIDOCK: the rows start with Illustrator's eye and lock columns; the row is held past them)
+      await drag(page, { x: a.x + 60, y: a.y + a.height / 2 }, { x: b.x + 60, y: b.y + b.height * 0.8 });
       const order = (await items(page)).map(i => i.id);
       assert.ok(order.indexOf('heart-fill') < order.indexOf('heart-line'), 'heart-fill moved below heart-line');
       shots.push(await shot(page, 'desk-8-layers.png'));

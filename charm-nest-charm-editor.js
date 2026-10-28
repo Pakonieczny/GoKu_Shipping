@@ -3903,7 +3903,7 @@
         renderLayers, paintLayerSel, syncProps, closeMenus, placeMenu, openCtx, say, layoutDock, hideTip,
         hover: id => { if (S.g || id === S.hover) return; S.hover = id; renderUI(); },
         xPanel: id => xPanel(id), xPanelOn: () => xPanelOn, xRun: id => xRun(String(id)), xHas: id => !!xc(id), xOn: id => { const c = xc(id); return !!c && xEnabled(c); }, xPick: () => xPick(),
-        alphaFind: () => alphaFind()
+        alphaFind: () => alphaFind(), opt: k => { if (typeof S[k] !== 'boolean' && S[k] != null) return; S[k] = !S[k]; saveOpts(); syncProps(); applyView(); }   // (the More menu's data-opt toggle)
       };
       try { aiDock = ad.mount(D) || null; } catch (er) { xErr('aiDock.mount', er); aiDock = null; }
     }

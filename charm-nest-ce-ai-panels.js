@@ -5,8 +5,8 @@
  *
  * This file builds the dock only (the menu bar, tools, control bar, context menus, shortcuts and the theme are the shell's). It plugs into charm-nest-charm-editor.js as
  * CharmEditor.aiDock: the workspace calls mount(D) once its chrome is wired and hands over its own calls in D; every control here runs one of them, or an existing command
- * (CharmEditor.commands: charm-nest-ce-ops.js, -ce-extras.js, -ce-image.js), or an existing data-* hook of the editor (data-act, data-role, data-font, data-case, data-opt ...),
- * so nothing new is done to the work. Without this file the dock is the editor's own.
+ * (CharmEditor.commands: charm-nest-ce-ops.js, -ce-extras.js, -ce-image.js) or the editor's call behind one of its data-* hooks (data-act, data-role, data-font, data-case,
+ * data-opt ...: under data-aim here, so the page's own controls stay the only ones answering to those), so nothing new is done to the work. Without this file the dock is the editor's own.
  *
  *   THE DOCK        Illustrator's: an expanded column of panel groups (tabs; the ☰ panel menu at the right of each tab bar; a double-click on a tab minimises the
  *                   group; a tab dragged to another group, to the icon strip or to the column moves the panel, remembered in localStorage 'ce.aidock'), an icon strip of
@@ -30,7 +30,8 @@
  *   (the CETEXT fonts, style, size, leading, tracking, case, alignment), IMAGE TRACE (the traced picture's settings; Trace… opens the Image step: Re-trace image)
  *
  * The theme is the shell's: every colour, the font and the row height are its --ai-* tokens on .ce-root, with Illustrator's Medium Dark as the fallback.
- * Hooks for the shell: CharmEditor.aiDock.openPanel(id) (its Window menu), .panels (the ids and titles), D.S.aiRef (the reference point, [fx, fy]). If the shell's command
+ * Hooks for the shell and other files: CharmEditor.aiDock.add({ id, title, icon, key, group, mount(ctx, el), update(ctx), unmount() }) (a panel of another file as a tab of this
+ * dock; see add below), CharmEditor.aiDock.openPanel(id) (the shell's Window menu), .panels (the ids, titles and keys), D.S.aiRef (the reference point, [fx, fy]). If the shell's command
  * catalog (CharmEditor.ai.catalog) is there, its labels and keys are used for the panel menus' shortcuts (catalogKey); nothing waits for it.
  *
  * UMD: window.CharmEditorAiPanels and CharmEditor.aiDock in the page; module.exports in node (the pure parts: the layout's clean-up and the row model, for tests). */
@@ -59,9 +60,12 @@
   const DEF_LAYOUT = () => ({ v: 1, collapsed: false,
     main: [{ tabs: ['properties'], active: 'properties', min: false }, { tabs: ['layers'], active: 'layers', min: false }],
     strip: [{ tabs: ['transform', 'align', 'pathfinder'], active: 'transform' }, { tabs: ['character'], active: 'character' }, { tabs: ['stroke', 'swatches'], active: 'stroke' }, { tabs: ['trace'], active: 'trace' }] });
-  /** A layout read back (or dropped on the floor): every panel exactly once, the groups that are left, anything missing as an icon group of its own. */
+  /* the panels other files add (CharmEditor.aiDock.add): id -> { id, title, icon, key, group, mount(ctx, el), update?(ctx), unmount?() } */
+  const EXT = new Map();
+  /** A layout read back (or dropped on the floor): every panel exactly once, the groups that are left; an added panel missing goes where it asked (group: a panel's id: its
+   *  tabs; 'main': a group of its own in the column; else an icon of its own), anything else missing as an icon group of its own. */
   function cleanLayout(o) {
-    if (!o || o.v !== 1 || !Array.isArray(o.main) || !Array.isArray(o.strip)) return DEF_LAYOUT();
+    if (!o || o.v !== 1 || !Array.isArray(o.main) || !Array.isArray(o.strip)) o = DEF_LAYOUT();
     const seen = new Set();
     const grp = (g, main) => {
       const tabs = (g && Array.isArray(g.tabs) ? g.tabs : []).map(String).filter(id => ALL.includes(id) && !seen.has(id) && !!seen.add(id));
@@ -69,7 +73,13 @@
       const out = { tabs, active: tabs.includes(g.active) ? g.active : tabs[0] }; if (main) out.min = !!g.min; return out;
     };
     const L = { v: 1, collapsed: !!o.collapsed, main: o.main.map(g => grp(g, true)).filter(Boolean), strip: o.strip.map(g => grp(g, false)).filter(Boolean) };
-    const miss = ALL.filter(id => !seen.has(id)); if (miss.length) L.strip.push({ tabs: miss, active: miss[0] });
+    const miss = ALL.filter(id => !seen.has(id)), loose = [];
+    for (const id of miss) {
+      const d = EXT.get(id), want = d && d.group ? String(d.group) : '';
+      const host = want && want !== 'main' ? L.main.concat(L.strip).find(g => g.tabs.includes(want)) : null;
+      if (host) host.tabs.push(id); else if (want === 'main') L.main.push({ tabs: [id], active: id, min: false }); else if (d) L.strip.push({ tabs: [id], active: id }); else loose.push(id);
+    }
+    if (loose.length) L.strip.push({ tabs: loose, active: loose[0] });
     return L;
   }
   const DEF_PREFS = () => ({ rowSize: 'medium', thumbs: true, swList: false, alignTo: null, gap: '', ref: [0, 0] });
@@ -382,13 +392,13 @@
   const locHtml = () => `<div class="aip-loc" role="radiogroup" aria-label="Reference point">${[0, 0.5, 1].map(fy => [0, 0.5, 1].map(fx => `<button type="button" data-aim="ref:${fx},${fy}" role="radio" aria-checked="false" title="Reference point: ${['top', 'middle', 'bottom'][fy * 2]} ${['left', 'centre', 'right'][fx * 2]}" aria-label="Reference point ${fx},${fy}"><i></i></button>`).join('')).join('')}</div>`;
   const tfHtml = () => `<div class="aip-tf">${locHtml()}`
     + field('x', 'X:', 'X position of the reference point, mm from the zero point (↑ ↓ 0.1 mm, Shift 1 mm)') + field('w', 'W:', 'Width, mm (↑ ↓ 0.1 mm, Shift 1 mm)')
-    + `<button class="aip-ib aip-link" type="button" data-act="link" title="Constrain Width and Height Proportions" aria-label="Constrain Width and Height Proportions">${IC.link}</button>`
+    + `<button class="aip-ib aip-link" type="button" data-aim="link" title="Constrain Width and Height Proportions" aria-label="Constrain Width and Height Proportions">${IC.link}</button>`
     + field('y', 'Y:', 'Y position of the reference point, mm from the zero point (↑ ↓ 0.1 mm, Shift 1 mm)') + field('h', 'H:', 'Height, mm (↑ ↓ 0.1 mm, Shift 1 mm)') + '</div>';
   const ALIGN_BTNS = () => `<div class="aip-ibs">${ib('data-aim="al:left"', IC.alL, 'Horizontal Align Left')}${ib('data-aim="al:hcenter"', IC.alC, 'Horizontal Align Center')}${ib('data-aim="al:right"', IC.alR, 'Horizontal Align Right')}${ib('data-aim="al:top"', IC.alT, 'Vertical Align Top')}${ib('data-aim="al:vcenter"', IC.alM, 'Vertical Align Center')}${ib('data-aim="al:bottom"', IC.alB, 'Vertical Align Bottom')}</div>`;
   const DIST_BTNS = () => `<div class="aip-ibs">${ib('data-aim="di:top"', IC.diT, 'Vertical Distribute Top')}${ib('data-aim="di:vcenter"', IC.diM, 'Vertical Distribute Center')}${ib('data-aim="di:bottom"', IC.diB, 'Vertical Distribute Bottom')}${ib('data-aim="di:left"', IC.diL, 'Horizontal Distribute Left')}${ib('data-aim="di:hcenter"', IC.diC, 'Horizontal Distribute Center')}${ib('data-aim="di:right"', IC.diR, 'Horizontal Distribute Right')}</div>`;
   const PF_SHAPE = [['ops.unite', IC.pfUnite, 'Unite'], ['ops.minus', IC.pfMinus, 'Minus Front'], ['ops.intersect', IC.pfIntersect, 'Intersect'], ['ops.exclude', IC.pfExclude, 'Exclude']];
   const PF_FIND = [['ops.divide', IC.pfDivide, 'Divide'], ['ops.trim', IC.pfTrim, 'Trim']];
-  const pfBtns = list => `<div class="aip-ibs">${list.map(([id, icon, t]) => ib(`data-xcmd="${id}"`, icon, t)).join('')}</div>`;
+  const pfBtns = list => `<div class="aip-ibs">${list.map(([id, icon, t]) => ib(`data-aim="x:${id}"`, icon, t)).join('')}</div>`;
   const ALIGN_TO = { selection: 'Align to Selection', key: 'Align to Key Object', charm: 'Align to Artboard (the charm)', centre: "Align to the charm's centre of area" };
   const PT_PRESETS = [6, 7, 8, 9, 10, 11, 12, 14, 18, 21, 24, 36, 48, 60, 72];
   const LW_PRESETS = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.75, 1];
@@ -403,26 +413,26 @@
     const fillStroke = `<div class="aip-row"><span class="aip-lab">Fill</span><button class="aip-swb" type="button" data-aim="rolemenu" data-aip-fill title="Fill: what the laser does (hatch engrave fills; the Swatches are the roles)"><i class="aip-sw"></i><span></span>${IC.caret}</button></div>`
       + `<div class="aip-row"><span class="aip-lab">Stroke</span><button class="aip-swb" type="button" data-aim="rolemenu" data-aip-stroke title="Stroke: what the laser does (a cut or a line engraving follows the line)"><i class="aip-sw is-stroke"></i><span></span>${IC.caret}</button>`
       + `<span data-aip-when="lw" class="aip-f" style="flex:1 1 auto">${field('lw', '', 'Stroke weight: the line width on the charm, mm, as the laser file writes it (↑ ↓ 0.01 mm, Shift 0.05 mm)', { ddc: 'lwmenu' }).replace(/^<label class="aip-f"/, '<label class="aip-f" style="flex:1 1 auto"')}</span></div>`
-      + `<div class="aip-row" data-aip-when="wt"><span class="aip-lab">Weight</span>${field('wt', '', 'Weight: every stroke of the letters or the hatched part this much thicker (+) or thinner (−) than drawn, mm (↑ ↓ 0.01 mm, Shift 0.05 mm)')}<button class="aip-ib" type="button" data-act="wt0" title="Back to the font's own weight" aria-label="Back to the font's own weight">${D.IC.weight || IC.stroke}</button></div>`;
+      + `<div class="aip-row" data-aip-when="wt"><span class="aip-lab">Weight</span>${field('wt', '', 'Weight: every stroke of the letters or the hatched part this much thicker (+) or thinner (−) than drawn, mm (↑ ↓ 0.01 mm, Shift 0.05 mm)')}<button class="aip-ib" type="button" data-aim="wt0" title="Back to the font's own weight" aria-label="Back to the font's own weight">${D.IC.weight || IC.stroke}</button></div>`;
     const charHtml = full => `<div class="aip-row"><button class="aip-dd aip-fontname" type="button" data-aim="fontmenu" title="Font family (the engraving fonts)"><span data-aip-font>Font</span>${IC.caret}</button></div>`
       + `<div class="aip-row"><button class="aip-dd" type="button" data-aim="stylemenu" title="Font style"><span data-aip-fstyle>Regular</span>${IC.caret}</button></div>`
       + `<div class="aip-row">${field('pt', '<b style="font:700 11px var(--aip-font)">T</b><small style="font-size:8px">T</small>', 'Font size, pt (↑ ↓ 0.5 pt, Shift 2 pt)', { ddc: 'ptmenu' })}${field('lead', '<b style="font:700 10px var(--aip-font)">A↕</b>', 'Leading, pt (empty: Auto)', { ph: '(Auto)' })}</div>`
       + `<div class="aip-row">${field('track', '<b style="font:700 10px var(--aip-font)">VA</b>', 'Tracking, thousandths of an em (↑ ↓ 10, Shift 50)', { ddc: 'trackmenu' })}${full ? '<span class="aip-f"></span>' : ''}</div>`
-      + `<div class="aip-row aip-ibs" role="group" aria-label="Letter case">${['', 'upper', 'lower', 'title', 'small'].map(c => `<button class="aip-ib" type="button" data-case="${c}" role="menuitemradio" aria-checked="false" title="${esc((D.CASE_NAME || {})[c] || c)}" aria-label="${esc((D.CASE_NAME || {})[c] || c)}"><b style="font:700 11px var(--aip-font)">${esc((D.CASE_SIGN || {})[c] || 'Aa')}</b></button>`).join('')}</div>`;
-    const paraHtml = `<div class="aip-row aip-ibs" role="group" aria-label="Paragraph alignment">${ib('data-talign="left" role="menuitemradio" aria-checked="false"', IC.pL, 'Align left')}${ib('data-talign="center" role="menuitemradio" aria-checked="false"', IC.pC, 'Align center')}${ib('data-talign="right" role="menuitemradio" aria-checked="false"', IC.pR, 'Align right')}<span style="flex:1 1 auto"></span><button class="aip-btn" type="button" data-alphafind title="Glyphs: letters, words and phrases of other alphabets, found by their English">Glyphs…</button></div>`;
+      + `<div class="aip-row aip-ibs" role="group" aria-label="Letter case">${['', 'upper', 'lower', 'title', 'small'].map(c => `<button class="aip-ib" type="button" data-aim="case:${c}" role="menuitemradio" aria-checked="false" title="${esc((D.CASE_NAME || {})[c] || c)}" aria-label="${esc((D.CASE_NAME || {})[c] || c)}"><b style="font:700 11px var(--aip-font)">${esc((D.CASE_SIGN || {})[c] || 'Aa')}</b></button>`).join('')}</div>`;
+    const paraHtml = `<div class="aip-row aip-ibs" role="group" aria-label="Paragraph alignment">${ib('data-aim="talign:left" role="menuitemradio" aria-checked="false"', IC.pL, 'Align left')}${ib('data-aim="talign:center" role="menuitemradio" aria-checked="false"', IC.pC, 'Align center')}${ib('data-aim="talign:right" role="menuitemradio" aria-checked="false"', IC.pR, 'Align right')}<span style="flex:1 1 auto"></span><button class="aip-btn" type="button" data-aim="alphafind" title="Glyphs: letters, words and phrases of other alphabets, found by their English">Glyphs…</button></div>`;
     const traceHtml = `<div class="aip-kv" data-aip-trace></div>`;
-    const docHtml = sec('doc', 'Document', `<div class="aip-row"><span class="aip-lab">Artboard</span><div class="aip-ibs" style="flex:1 1 auto"><button class="aip-btn" type="button" data-face="front" style="flex:1 1 0">Front</button><button class="aip-btn" type="button" data-face="back" style="flex:1 1 0">Back</button></div></div>`
+    const docHtml = sec('doc', 'Document', `<div class="aip-row"><span class="aip-lab">Artboard</span><div class="aip-ibs" style="flex:1 1 auto"><button class="aip-btn" type="button" data-aim="face:front" style="flex:1 1 0">Front</button><button class="aip-btn" type="button" data-aim="face:back" style="flex:1 1 0">Back</button></div></div>`
         + `<div class="aip-row"><span class="aip-lab">Units</span><span class="aip-dd" style="cursor:default"><span>Millimeters</span></span></div>`)
-      + sec('rulers', 'Rulers & Grids', `<div class="aip-ibs">${ib('data-opt="grid" role="menuitemcheckbox"', IC.grid, 'Show Grid (the millimetre grid)')}</div>`)
-      + sec('guides', 'Guides', `<div class="aip-ibs">${ib('data-opt="showGuides" role="menuitemcheckbox"', IC.guides, 'Show Guides (⌘;)')}</div>`)
-      + sec('snap', 'Snap Options', `<div class="aip-ibs">${ib('data-opt="smart" role="menuitemcheckbox"', IC.smart, 'Smart Guides (⌘U)')}${ib('data-opt="snapGrid" role="menuitemcheckbox"', IC.snapGrid, 'Snap to Grid')}${ib('data-opt="snapGuides" role="menuitemcheckbox"', IC.snapGuides, 'Snap to Guides')}</div>`)
-      + sec('docqa', 'Quick Actions', `<div class="aip-qa"><button class="aip-btn" type="button" data-zoom="fit" title="Fit Artboard in Window (⌘0)">Fit Artboard</button><button class="aip-btn" type="button" data-cmd="unlockAll" title="Unlock All (⌥⌘2)">Unlock All</button><button class="aip-btn" type="button" data-cmd="showAll" title="Show All (⌥⌘3)">Show All</button><button class="aip-btn" type="button" data-xcmd="cx.check" title="The laser check: what the laser cannot make">Laser Check</button></div>`);
+      + sec('rulers', 'Rulers & Grids', `<div class="aip-ibs">${ib('data-aim="opt:grid" role="menuitemcheckbox"', IC.grid, 'Show Grid (the millimetre grid)')}</div>`)
+      + sec('guides', 'Guides', `<div class="aip-ibs">${ib('data-aim="opt:showGuides" role="menuitemcheckbox"', IC.guides, 'Show Guides (⌘;)')}</div>`)
+      + sec('snap', 'Snap Options', `<div class="aip-ibs">${ib('data-aim="opt:smart" role="menuitemcheckbox"', IC.smart, 'Smart Guides (⌘U)')}${ib('data-aim="opt:snapGrid" role="menuitemcheckbox"', IC.snapGrid, 'Snap to Grid')}${ib('data-aim="opt:snapGuides" role="menuitemcheckbox"', IC.snapGuides, 'Snap to Guides')}</div>`)
+      + sec('docqa', 'Quick Actions', `<div class="aip-qa"><button class="aip-btn" type="button" data-aim="zoom:fit" title="Fit Artboard in Window (⌘0)">Fit Artboard</button><button class="aip-btn" type="button" data-aim="unlockAll" title="Unlock All (⌥⌘2)">Unlock All</button><button class="aip-btn" type="button" data-aim="showAll" title="Show All (⌥⌘3)">Show All</button><button class="aip-btn" type="button" data-aim="x:cx.check" title="The laser check: what the laser cannot make">Laser Check</button></div>`);
     B.properties = mk('properties', `<div class="aip-pp"><div class="aip-kind" data-aip-kind>No Selection</div>`
-      + sec('transform', 'Transform', tfHtml() + `<div class="aip-row">${field('r', IC.angle.replace('<svg', '<svg width="15" height="15"'), 'Rotate, degrees (↑ ↓ 1°, Shift 15°)')}<span style="flex:1 1 auto"></span>${ib('data-xcmd="ops.flipH"', IC.flipH, 'Flip Along Horizontal Axis (left to right)')}${ib('data-xcmd="ops.flipV"', IC.flipV, 'Flip Along Vertical Axis (top to bottom)')}</div>`, 'transform')
+      + sec('transform', 'Transform', tfHtml() + `<div class="aip-row">${field('r', IC.angle.replace('<svg', '<svg width="15" height="15"'), 'Rotate, degrees (↑ ↓ 1°, Shift 15°)')}<span style="flex:1 1 auto"></span>${ib('data-aim="x:ops.flipH"', IC.flipH, 'Flip Along Horizontal Axis (left to right)')}${ib('data-aim="x:ops.flipV"', IC.flipV, 'Flip Along Vertical Axis (top to bottom)')}</div>`, 'transform')
       + sec('appearance', 'Appearance', fillStroke, 'stroke')
       + sec('character', 'Character', charHtml(false), 'character')
       + sec('paragraph', 'Paragraph', paraHtml)
-      + sec('trace', 'Image Trace', traceHtml + `<div class="aip-row"><button class="aip-btn" type="button" data-xcmd="imageRetrace" style="flex:1 1 auto" title="Image Trace: the Image step on this picture, its settings, Re-trace">Image Trace…</button></div>`, 'trace')
+      + sec('trace', 'Image Trace', traceHtml + `<div class="aip-row"><button class="aip-btn" type="button" data-aim="x:imageRetrace" style="flex:1 1 auto" title="Image Trace: the Image step on this picture, its settings, Re-trace">Image Trace…</button></div>`, 'trace')
       + sec('pathfinder', 'Pathfinder', pfBtns(PF_SHAPE.concat(PF_FIND)), 'pathfinder')
       + sec('align', 'Align', ALIGN_BTNS(), 'align')
       + sec('quick', 'Quick Actions', '<div class="aip-qa" data-aip-qa></div>')
@@ -433,7 +443,7 @@
     B.layers.appendChild(P.bar);
     // TRANSFORM
     B.transform = mk('transform', `<div class="aip-pp"><div class="aip-sec" style="border:0;padding-top:8px">${tfHtml()}<div class="aip-row" style="margin-top:8px">${field('r', IC.angle.replace('<svg', '<svg width="15" height="15"'), 'Rotate, degrees (↑ ↓ 1°, Shift 15°)')}<span class="aip-f"></span></div>`
-      + `<div class="aip-row" style="margin-top:10px">${ib('data-xcmd="ops.flipH"', IC.flipH, 'Flip Horizontal')}${ib('data-xcmd="ops.flipV"', IC.flipV, 'Flip Vertical')}<span style="flex:1 1 auto"></span><button class="aip-btn" type="button" data-xcmd="ops.move" title="Move… (⇧⌘M)">Move…</button><button class="aip-btn" type="button" data-xcmd="ops.scale" title="Scale…">Scale…</button></div>`
+      + `<div class="aip-row" style="margin-top:10px">${ib('data-aim="x:ops.flipH"', IC.flipH, 'Flip Horizontal')}${ib('data-aim="x:ops.flipV"', IC.flipV, 'Flip Vertical')}<span style="flex:1 1 auto"></span><button class="aip-btn" type="button" data-aim="x:ops.move" title="Move… (⇧⌘M)">Move…</button><button class="aip-btn" type="button" data-aim="x:ops.scale" title="Scale…">Scale…</button></div>`
       + `<div class="aip-note" data-aip-none>Select an object to transform it.</div></div></div>`);
     // ALIGN
     B.align = mk('align', `<div class="aip-pp"><div class="aip-sub">Align Objects:</div>${ALIGN_BTNS()}<div class="aip-sub">Distribute Objects:</div>${DIST_BTNS()}`
@@ -444,18 +454,18 @@
     // PATHFINDER
     B.pathfinder = mk('pathfinder', `<div class="aip-pp"><div class="aip-sub">Shape Modes:</div>${pfBtns(PF_SHAPE)}<div class="aip-sub">Pathfinders:</div>${pfBtns(PF_FIND)}<div class="aip-note">Curves stay curves. Each is one step: ⌘Z takes it back.</div></div>`);
     // STROKE
-    B.stroke = mk('stroke', `<div class="aip-pp"><div class="aip-row" style="margin-top:8px"><span class="aip-lab">Weight:</span>${field('lw', '', 'Stroke weight: the line width on the charm, mm, as the laser file writes it (↑ ↓ 0.01 mm, Shift 0.05 mm)', { ddc: 'lwmenu' })}<button class="aip-ib" type="button" data-act="lw0" title="Back to the width it came with" aria-label="Back to the width it came with">${IC.stroke}</button></div>`
+    B.stroke = mk('stroke', `<div class="aip-pp"><div class="aip-row" style="margin-top:8px"><span class="aip-lab">Weight:</span>${field('lw', '', 'Stroke weight: the line width on the charm, mm, as the laser file writes it (↑ ↓ 0.01 mm, Shift 0.05 mm)', { ddc: 'lwmenu' })}<button class="aip-ib" type="button" data-aim="lw0" title="Back to the width it came with" aria-label="Back to the width it came with">${IC.stroke}</button></div>`
       + `<div class="aip-row"><span class="aip-lab">Cap:</span><div class="aip-ibs">${ib('disabled', IC.capButt, 'Butt Cap (the laser draws round ends)')}${ib('', IC.capRound, 'Round Cap: the laser draws round ends', 'is-on')}${ib('disabled', IC.capProj, 'Projecting Cap (the laser draws round ends)')}</div></div>`
       + `<div class="aip-row"><span class="aip-lab">Corner:</span><div class="aip-ibs">${ib('disabled', IC.joinMiter, 'Miter Join (the laser draws round corners)')}${ib('', IC.joinRound, 'Round Join: the laser draws round corners', 'is-on')}${ib('disabled', IC.joinBevel, 'Bevel Join (the laser draws round corners)')}</div></div>`
       + `<div class="aip-row"><span class="aip-lab">Align Stroke:</span><div class="aip-ibs">${ib('', IC.stCenter, 'Align Stroke to Center: the laser follows the line', 'is-on')}${ib('disabled', IC.stInside, 'Align Stroke to Inside (not for a laser)')}${ib('disabled', IC.stOutside, 'Align Stroke to Outside (not for a laser)')}</div></div>`
       + `<div class="aip-note" data-aip-none>Select a line, a cut or a line engraving to set its weight.</div></div>`);
     // SWATCHES: our engraving colours (the roles)
-    B.swatches = mk('swatches', `<div class="aip-sws" role="listbox" aria-label="Swatches">${D.ROLES.map(r => `<button class="aip-swc" type="button" data-role="${r}" title="${esc(D.ROLE_NAME[r] + ' · ' + D.ROLE_SAYS[r])}" aria-label="${esc(D.ROLE_NAME[r])}"><i class="aip-sw${r === 'cut' || r === 'line' ? ' is-stroke' : ''}" style="--c:var(--aip-c-${r})"></i><b>${esc(D.ROLE_NAME[r])}</b></button>`).join('')}</div>`
+    B.swatches = mk('swatches', `<div class="aip-sws" role="listbox" aria-label="Swatches">${D.ROLES.map(r => `<button class="aip-swc" type="button" data-aim="role:${r}" title="${esc(D.ROLE_NAME[r] + ' · ' + D.ROLE_SAYS[r])}" aria-label="${esc(D.ROLE_NAME[r])}"><i class="aip-sw${r === 'cut' || r === 'line' ? ' is-stroke' : ''}" style="--c:var(--aip-c-${r})"></i><b>${esc(D.ROLE_NAME[r])}</b></button>`).join('')}</div>`
       + `<div class="aip-pp" style="flex:none;padding-top:0"><div class="aip-note">Our colours are what the laser does: a swatch clicked sets it for what is selected (or for the next part drawn).</div></div>`);
     // CHARACTER
     B.character = mk('character', `<div class="aip-pp"><div class="aip-sec" style="border:0">${charHtml(true)}</div><div class="aip-sec"><div class="aip-sec__h"><span>Paragraph</span></div>${paraHtml}</div><div class="aip-note" data-aip-none>Select words, or pick the Type tool, to set their character.</div></div>`);
     // IMAGE TRACE
-    B.trace = mk('trace', `<div class="aip-pp"><div class="aip-kv" data-aip-trace></div><div class="aip-row" style="margin-top:12px"><span style="flex:1 1 auto"></span><button class="aip-btn" type="button" data-act="import" data-aip-place title="Place an image (PNG, JPG, WebP): it is traced as it comes in">Place Image…</button><button class="aip-btn is-cta" type="button" data-xcmd="imageRetrace" title="Trace: the Image step on this picture, its settings, then Place">Trace…</button></div><div class="aip-note" data-aip-none>Select a traced picture to see its settings, or place an image.</div></div>`);
+    B.trace = mk('trace', `<div class="aip-pp"><div class="aip-kv" data-aip-trace></div><div class="aip-row" style="margin-top:12px"><span style="flex:1 1 auto"></span><button class="aip-btn" type="button" data-aim="import" data-aip-place title="Place an image (PNG, JPG, WebP): it is traced as it comes in">Place Image…</button><button class="aip-btn is-cta" type="button" data-aim="x:imageRetrace" title="Trace: the Image step on this picture, its settings, then Place">Trace…</button></div><div class="aip-note" data-aip-none>Select a traced picture to see its settings, or place an image.</div></div>`);
     return B;
   }
 
@@ -501,8 +511,8 @@
       const [nm, kept] = splitName(D.rowName(it));
       const says = `${nm} · ${D.ROLE_NAME[role] || (role === 'mixed' ? 'Mixed roles' : '')}${kept ? ' · ' + kept : ''}${it.source === 'added' ? ' · added here' : ''}`;
       h += `<div class="ce-layer aip-row${it.hidden ? ' is-hidden' : ''}${it.locked ? ' is-locked' : ''}${isG ? ' is-group' : ''}" data-id="${esc(it.id)}" role="option" aria-selected="false" tabindex="-1" style="--depth:${depth};--lc:${lcOf(role)}">`
-        + `<button class="ce-layer__b aip-eye" type="button" data-lact="eye" aria-label="${it.hidden ? 'Show' : 'Hide'}" aria-pressed="${!it.hidden}" title="${esc(D.eyeSays(it))} · ⌥-click: hide or show the others · ⌘-click: Outline view (⌘Y)">${it.hidden ? '' : IC.eye}</button>`
-        + `<button class="ce-layer__b aip-lock" type="button" data-lact="lock" aria-label="${it.locked ? 'Unlock' : 'Lock'}" aria-pressed="${!!it.locked}" title="${it.locked ? 'Unlock' : 'Lock'} · ⌥-click: lock or unlock the others">${it.locked ? IC.lock : ''}</button>`
+        + `<button class="ce-layer__b aip-eye" type="button" data-lact="eye" aria-label="${it.hidden ? 'Show' : 'Hide'}" aria-pressed="${!it.hidden}" title="${esc(D.eyeSays(it))}" data-aip-tip="⌥-click: hide or show the others · ⌘-click: Outline view (⌘Y)">${it.hidden ? '' : IC.eye}</button>`
+        + `<button class="ce-layer__b aip-lock" type="button" data-lact="lock" aria-label="${it.locked ? 'Unlock' : 'Lock'}" aria-pressed="${!!it.locked}" title="${it.locked ? 'Unlock' : 'Lock'}" data-aip-tip="⌥-click: lock or unlock the others">${it.locked ? IC.lock : ''}</button>`
         + `<span class="aip-rb"><i class="aip-lc" aria-hidden="true"></i>`
         + (isG ? `<button class="ce-layer__tw aip-tw" type="button" data-lact="twist" aria-label="${opn ? 'Collapse' : 'Expand'}" aria-expanded="${opn}" title="${opn ? 'Collapse' : 'Expand'} · ⌥-click: everything inside">${opn ? IC.triD : IC.triR}</button>` : '<span class="aip-tw0"></span>')
         + `<span class="aip-thumb${isG ? ' ce-layer__fold' : ''}" aria-hidden="true">${P.prefs.thumbs ? thumbOf(D, it) : ''}</span>`
@@ -547,12 +557,12 @@
     dk.classList.toggle('is-icons', icons); dk.classList.toggle('is-labels', mode === 'collapsed'); dk.classList.toggle('is-drawer', mode === 'drawer');
     const flyWas = P.fly && !P.fly.hidden ? P.flyFor : null;
     closeFly(P, true);
-    for (const id of ALL) P.store.appendChild(P.bodies[id]);
+    for (const id of ALL) if (P.bodies[id]) P.store.appendChild(P.bodies[id]);
     // the expanded column: the group holding Layers fills what is left (or the last open one)
     let fillAt = L.main.findIndex(g => !g.min && g.active === 'layers'); if (fillAt < 0) fillAt = L.main.findIndex(g => !g.min && g.tabs.includes('layers'));
     if (fillAt < 0) for (let i = L.main.length - 1; i >= 0; i--) if (!L.main[i].min) { fillAt = i; break; }
     P.main.innerHTML = icons ? '' : L.main.map((g, i) => `<section class="aip-grp${g.min ? ' is-min' : ''}${i === fillAt ? ' is-fill' : ''}" data-aip-g="m${i}" aria-label="${esc(TITLE[g.active])}">${tabsHtml(g, 'm' + i)}<div class="aip-gbody"></div></section>`).join('');
-    if (!icons) L.main.forEach((g, i) => { if (!g.min) P.main.querySelector(`[data-aip-g="m${i}"] .aip-gbody`).appendChild(P.bodies[g.active]); });
+    if (!icons) L.main.forEach((g, i) => { if (!g.min) { P.main.querySelector(`[data-aip-g="m${i}"] .aip-gbody`).appendChild(P.bodies[g.active]); extMount(P, g.active); } });
     // the icon strip: the collapsed groups (all of them when the dock is collapsed), then the extension panels
     const sgs = (icons ? L.main.map((g, i) => ['m' + i, g]) : []).concat(L.strip.map((g, i) => ['s' + i, g]));
     const xps = D.X.panels || [];
@@ -577,7 +587,7 @@
     g.active = id;
     for (const b of P.fly.querySelectorAll('.aip-pb')) P.store.appendChild(b);
     P.fly.innerHTML = `<section class="aip-grp${id === 'layers' ? ' has-layers' : ''}" data-aip-g="${key}" aria-label="${esc(TITLE[id])}">${tabsHtml(g, key)}<div class="aip-gbody"></div></section>`;
-    P.fly.querySelector('.aip-gbody').appendChild(P.bodies[id]);
+    P.fly.querySelector('.aip-gbody').appendChild(P.bodies[id]); extMount(P, id);
     P.fly.classList.toggle('is-swlist', !!P.prefs.swList);
     P.fly.hidden = false; P.flyFor = id; P.flyKey = key;
     const ico = P.strip.querySelector(`[data-aip-ico="${id}"]`), dr = P.D.dock.getBoundingClientRect();
@@ -694,9 +704,9 @@
     // Quick Actions: only what this page has, only what can run now
     const qa = [];
     if (I.n) {
-      const x = (id, label) => { if (D.xOn(id)) qa.push(`<button class="aip-btn" type="button" data-xcmd="${id}" title="${esc(label)}">${esc(label)}</button>`); };
-      if (I.n >= 2) qa.push('<button class="aip-btn" type="button" data-act="group" title="Group (⌘G)">Group</button>');
-      if (I.es.some(e => e.it.kind === 'group')) qa.push('<button class="aip-btn" type="button" data-act="ungroup" title="Ungroup (⇧⌘G)">Ungroup</button>');
+      const x = (id, label) => { if (D.xOn(id)) qa.push(`<button class="aip-btn" type="button" data-aim="x:${id}" title="${esc(label)}">${esc(label)}</button>`); };
+      if (I.n >= 2) qa.push('<button class="aip-btn" type="button" data-aim="group" title="Group (⌘G)">Group</button>');
+      if (I.es.some(e => e.it.kind === 'group')) qa.push('<button class="aip-btn" type="button" data-aim="ungroup" title="Ungroup (⇧⌘G)">Ungroup</button>');
       x('ops.offset', 'Offset Path…'); x('ops.outline', 'Outline Stroke'); x('cx.onPath', 'Type on a Path'); x('cx.offPath', 'Release Type on Path');
       x('cx.clip', 'Make Clipping Mask'); x('cx.unclip', 'Release Clipping Mask'); x('ops.contour', 'Cut Line Around Art…'); x('cx.jumpRing', 'Jump Ring on Top');
       qa.push(`<button class="aip-btn" type="button" data-aim="arrangemenu" title="Arrange">Arrange ${IC.caret}</button>`);
@@ -735,16 +745,16 @@
     const lg = I.texts.length ? num(I.texts[0].lineGap, 0) : 0, lgSame = I.texts.every(t => num(t.lineGap, 0) === lg);
     for (const inp of R.querySelectorAll('[data-aif="lead"]')) { inp.disabled = !I.texts.length; setVal(inp, I.texts.length && lgSame && lg > 0 ? trim(lg * sz, 2) + ' pt' : ''); }
     const cs = I.texts.length ? (I.texts.every(t => (t.letterCase || '') === (I.texts[0].letterCase || '')) ? I.texts[0].letterCase || '' : null) : (st && st.letterCase) || '';
-    for (const b of R.querySelectorAll('[data-case]')) { const on = showText && cs != null && b.dataset.case === cs; b.classList.toggle('is-on', on); b.setAttribute('aria-checked', String(on)); b.disabled = !showText; }
+    for (const b of R.querySelectorAll('[data-aim^="case:"]')) { const on = showText && cs != null && b.dataset.aim.slice(5) === cs; b.classList.toggle('is-on', on); b.setAttribute('aria-checked', String(on)); b.disabled = !showText; }
     const al = I.texts.length ? (I.texts.every(t => (t.align || 'left') === (I.texts[0].align || 'left')) ? I.texts[0].align || 'left' : null) : (st && st.align) || 'left';
-    for (const b of R.querySelectorAll('[data-talign]')) { const on = showText && b.dataset.talign === al; b.classList.toggle('is-on', on); b.setAttribute('aria-checked', String(on)); b.disabled = !showText; }
-    for (const b of R.querySelectorAll('[data-alphafind],[data-aim="fontmenu"],[data-aim="stylemenu"],[data-aim="ptmenu"]')) b.disabled = !showText;
+    for (const b of R.querySelectorAll('[data-aim^="talign:"]')) { const on = showText && b.dataset.aim.slice(7) === al; b.classList.toggle('is-on', on); b.setAttribute('aria-checked', String(on)); b.disabled = !showText; }
+    for (const b of R.querySelectorAll('[data-aim="alphafind"],[data-aim="fontmenu"],[data-aim="stylemenu"],[data-aim="ptmenu"]')) b.disabled = !showText;
     for (const b of R.querySelectorAll('[data-aim="trackmenu"]')) b.disabled = !I.texts.length;
     // the commands' buttons: there only when this page has the command, lit when it can run
-    for (const b of R.querySelectorAll('[data-xcmd]')) { const id = b.dataset.xcmd; b.hidden = !D.xHas(id); b.disabled = !D.xOn(id); }
-    for (const b of R.querySelectorAll('[data-act="group"]')) if (b.closest('.aip-pp')) b.disabled = I.n < 2;
-    for (const b of R.querySelectorAll('[data-act="ungroup"]')) if (b.closest('.aip-pp')) b.disabled = !I.es.some(e => e.it.kind === 'group');
-    for (const b of R.querySelectorAll('[data-act="lw0"],[data-act="wt0"]')) if (b.closest('.aip-pp')) b.disabled = b.dataset.act === 'lw0' ? !showLw : !showWt;
+    for (const b of R.querySelectorAll('[data-aim^="x:"]')) { const id = b.dataset.aim.slice(2); b.hidden = !D.xHas(id); b.disabled = !D.xOn(id); }
+    for (const b of R.querySelectorAll('[data-aim="group"]')) b.disabled = I.n < 2;
+    for (const b of R.querySelectorAll('[data-aim="ungroup"]')) b.disabled = !I.es.some(e => e.it.kind === 'group');
+    for (const b of R.querySelectorAll('[data-aim="lw0"],[data-aim="wt0"]')) b.disabled = b.dataset.aim === 'lw0' ? !showLw : !showWt;
     // Align: what can be aligned to what
     const to = P.prefs.alignTo || (I.n >= 2 ? 'selection' : 'charm');
     if (to === 'key' && !S.sel.includes(P.key)) P.key = S.sel.length ? S.sel[S.sel.length - 1] : null;
@@ -772,13 +782,29 @@
     // the "select something" notes of the panels that need a selection
     const need = { transform: !I.s, stroke: !showLw, character: !showText, trace: !tset };
     for (const id of Object.keys(need)) { const b = P.bodies[id]; if (b) for (const el of b.querySelectorAll('[data-aip-none]')) el.hidden = !need[id]; }
-    // the Document section: the artboards (faces), the toggles (the editor lights data-opt itself)
-    for (const b of R.querySelectorAll('.aip-pp [data-face]')) { b.disabled = !S.faces[b.dataset.face]; b.classList.toggle('is-cta', b.dataset.face === S.face); }
-    for (const b of R.querySelectorAll('.aip-pp [data-opt]')) { const on = !!S[b.dataset.opt]; b.classList.toggle('is-on', on); b.setAttribute('aria-checked', String(on)); }
+    // the Document section: the artboards (faces), the toggles
+    for (const b of R.querySelectorAll('[data-aim^="face:"]')) { const f = b.dataset.aim.slice(5); b.disabled = !S.faces[f]; b.classList.toggle('is-cta', f === S.face); }
+    for (const b of R.querySelectorAll('[data-aim^="opt:"]')) { const on = !!S[b.dataset.aim.slice(4)]; b.classList.toggle('is-on', on); b.setAttribute('aria-checked', String(on)); }
     // Swatches: the role of what is selected
-    for (const b of R.querySelectorAll('.aip-swc[data-role]')) b.classList.toggle('is-on', b.dataset.role === role);
+    for (const b of R.querySelectorAll('.aip-swc[data-aim^="role:"]')) b.classList.toggle('is-on', b.dataset.aim.slice(5) === role);
     D.dock.classList.toggle('is-swlist', !!P.prefs.swList);
     paint(P);
+    extEach(P, 'update');
+  }
+  /* ── the panels other files add: a body each, mounted the first time it is shown, updated with the rest ── */
+  function extBody(P, id) {
+    if (P.bodies[id]) return;
+    const b = doc.createElement('div'); b.className = 'aip-pb'; b.dataset.aipPanel = id;
+    const el = doc.createElement('div'); el.className = 'aip-pp aip-xbody'; b.appendChild(el);
+    b.__def = EXT.get(id); b.__el = el; P.bodies[id] = b; P.store.appendChild(b);
+  }
+  function extMount(P, id) {
+    const b = P.bodies[id]; if (!b || !b.__def || b.__mounted) return;
+    b.__mounted = true;
+    try { b.__def.mount(P.D.ectx, b.__el); } catch (e) { try { root.console.error('CharmEditor.aiDock panel ' + id + '.mount:', e); } catch (_) { /* fine */ } }
+  }
+  function extEach(P, name) {
+    for (const id of EXT.keys()) { const b = P.bodies[id]; if (!b || !b.__mounted || typeof b.__def[name] !== 'function') continue; try { b.__def[name](P.D.ectx); } catch (e) { try { root.console.error('CharmEditor.aiDock panel ' + id + '.' + name + ':', e); } catch (_) { /* fine */ } } }
   }
   function schedule(P) { if (P.raf || P.dead) return; P.raf = root.requestAnimationFrame(() => { P.raf = 0; sync(P); }); }
 
@@ -857,7 +883,7 @@
     try { const c = root.CharmEditor && root.CharmEditor.ai && root.CharmEditor.ai.catalog; const e = c && (typeof c.get === 'function' ? c.get(id) : c[id]); if (e && typeof e.key === 'string' && e.key) return e.key; } catch (e) { /* the shell's own */ }
     return ours || '';
   }
-  const xmi = (D, id, label, key) => (D.xHas(id) ? mi(label, `data-xcmd="${id}"`, D.xOn(id), catalogKey(id, key)) : '');
+  const xmi = (D, id, label, key) => (D.xHas(id) ? mi(label, `data-aim="x:${id}"`, D.xOn(id), catalogKey(id, key)) : '');
   function openMenu(P, html, anchor, cls) {
     const D = P.D;
     D.closeMenus(); D.hideTip && D.hideTip();
@@ -874,7 +900,7 @@
       h = mi(`Duplicate ${nm}`.trim(), 'data-aim="dup"', n > 0, '⌘D') + mi(`Delete ${nm}`.trim(), 'data-aim="del"', n > 0, '⌫') + SEP
         + mi(`Options for ${nm || '…'}…`, 'data-aim="lopt"', !!one, '') + SEP
         + xmi(D, 'cx.clip', 'Make Clipping Mask', '⌘7') + xmi(D, 'cx.unclip', 'Release Clipping Mask', '⌥⌘7') + (D.xHas('cx.clip') ? SEP : '')
-        + mi('Locate Object', 'data-aim="locate"', n > 0, '') + mi('Collect in New Layer', 'data-act="group"', n >= 2, '⌘G') + mi('Release to Layers (Sequence)', 'data-act="ungroup"', es.some(e => e.it.kind === 'group'), '⇧⌘G') + SEP
+        + mi('Locate Object', 'data-aim="locate"', n > 0, '') + mi('Collect in New Layer', 'data-aim="group"', n >= 2, '⌘G') + mi('Release to Layers (Sequence)', 'data-aim="ungroup"', es.some(e => e.it.kind === 'group'), '⇧⌘G') + SEP
         + mi('Hide Others', 'data-aim="hideOthers"', n > 0, '') + mi('Show All Layers', 'data-aim="showAll"', true, '') + xmi(D, 'cx.outline', 'Outline / Preview', '⌘Y')
         + mi('Lock Others', 'data-aim="lockOthers"', n > 0, '') + mi('Unlock All Layers', 'data-aim="unlockAll"', true, '') + SEP
         + mi('Panel Options…', 'data-aim="popt"', true, '');
@@ -889,14 +915,14 @@
     } else if (id === 'pathfinder') {
       h = xmi(D, 'ops.compound', 'Make Compound Path', '⌘8') + xmi(D, 'ops.release', 'Release Compound Path', '⌥⇧⌘8') + xmi(D, 'ops.outline', 'Outline Stroke') + xmi(D, 'ops.offset', 'Offset Path…');
     } else if (id === 'stroke') {
-      h = mi('Reset Weight', 'data-act="lw0"', true, '') + xmi(D, 'ops.outline', 'Outline Stroke');
+      h = mi('Reset Weight', 'data-aim="lw0"', true, '') + xmi(D, 'ops.outline', 'Outline Stroke');
     } else if (id === 'swatches') {
       h = mi('Small Thumbnail View', 'data-aim="swview:grid"', true, '', P.prefs.swList ? 1 : 2) + mi('List View', 'data-aim="swview:list"', true, '', P.prefs.swList ? 2 : 1);
     } else if (id === 'character') {
-      h = mi('Bold', 'data-tstyle="bold"', true, '⌘B') + mi('Italic', 'data-tstyle="italic"', true, '⌘I') + SEP
-        + ['upper', 'lower', 'title', 'small', ''].map(c => mi((D.CASE_NAME || {})[c] || c, `data-case="${c}"`, true, '')).join('') + SEP + mi('Glyphs…', 'data-alphafind', true, '');
+      h = mi('Bold', 'data-aim="tstyle:bold"', true, '⌘B') + mi('Italic', 'data-aim="tstyle:italic"', true, '⌘I') + SEP
+        + ['upper', 'lower', 'title', 'small', ''].map(c => mi((D.CASE_NAME || {})[c] || c, `data-aim="case:${c}"`, true, '')).join('') + SEP + mi('Glyphs…', 'data-aim="alphafind"', true, '');
     } else if (id === 'trace') {
-      h = xmi(D, 'imageRetrace', 'Trace…') + ((D.X.importers || []).length ? mi('Place Image…', 'data-act="import"', true, '') : '');
+      h = xmi(D, 'imageRetrace', 'Trace…') + ((D.X.importers || []).length ? mi('Place Image…', 'data-aim="import"', true, '') : '');
     } else if (id === 'properties') {
       h = ALL.filter(x => x !== 'properties').map(x => mi(TITLE[x], `data-aim="open:${x}"`, true, WKEY[x])).join('');
     }
@@ -905,8 +931,8 @@
   }
   function menuFor(P, kind, anchor) {
     const D = P.D, S = D.S;
-    if (kind === 'rolemenu') return openMenu(P, `<div class="ce-menu__head">Swatches · what the laser does</div>${D.ROLES.map(r => `<button class="ce-item" type="button" data-role="${r}" role="menuitemradio"><i class="ce-sw ce-sw--${r}"></i>${esc(D.ROLE_NAME[r])}<em>${esc(D.ROLE_SAYS[r])}</em></button>`).join('')}`, anchor);
-    if (kind === 'fontmenu') return openMenu(P, `<div class="ce-menu__head">Font</div>` + D.fonts.map(f => `<button class="ce-item ce-font" type="button" data-font="${esc(f.key)}" data-keep role="menuitemradio"${f.kind ? ` data-kind="${esc(f.kind)}"` : ''}${f.family ? ` style="font-family:${esc(f.family)}"` : ''} title="${esc(f.name)}">${esc(f.name)}</button>`).join(''), anchor);
+    if (kind === 'rolemenu') return openMenu(P, `<div class="ce-menu__head">Swatches · what the laser does</div>${D.ROLES.map(r => `<button class="ce-item" type="button" data-aim="role:${r}" role="menuitemradio"><i class="ce-sw ce-sw--${r}"></i>${esc(D.ROLE_NAME[r])}<em>${esc(D.ROLE_SAYS[r])}</em></button>`).join('')}`, anchor);
+    if (kind === 'fontmenu') return openMenu(P, `<div class="ce-menu__head">Font</div>` + D.fonts.map(f => `<button class="ce-item ce-font" type="button" data-aim="font:${esc(f.key)}" data-keep role="menuitemradio"${f.kind ? ` data-kind="${esc(f.kind)}"` : ''}${f.family ? ` style="font-family:${esc(f.family)}"` : ''} title="${esc(f.name)}">${esc(f.name)}</button>`).join(''), anchor);
     if (kind === 'stylemenu') {
       const texts = D.selLeaves().filter(l => l.kind === 'text'), noBold = texts.length ? texts.every(t => { const f = D.fonts.find(x => x.key === t.fontKey); return !!(f && f.bold === false); }) : !!((D.fonts.find(x => x.key === S.textFont) || {}).bold === false);
       return openMenu(P, [['regular', 'Regular', true], ['bold', 'Bold', !noBold], ['italic', 'Italic', true], ['bolditalic', 'Bold Italic', !noBold]].map(([v, l, on]) => mi(l, `data-aim="fstyle:${v}"`, on, '')).join(''), anchor);
@@ -1098,6 +1124,23 @@
       case 'unlockAll': { D.closeMenus(); allOf(P, 'locked'); return; }
       case 'swview': { D.closeMenus(); P.prefs.swList = v === 'list'; savePrefs(P); applyPrefs(P); if (P.fly) P.fly.classList.toggle('is-swlist', P.prefs.swList); return; }
       case 'tostrip': case 'tomain': { D.closeMenus(); moveTab(P, v, k === 'tostrip' ? 'new-strip' : 'new-main'); return; }
+      // (the editor's own calls behind its data-* hooks, here under data-aim so the page's own controls stay the only ones answering to theirs)
+      case 'x': { D.closeMenus(); if (D.xOn(v)) D.xRun(v); return; }
+      case 'group': { D.closeMenus(); D.groupSel(); return; }
+      case 'ungroup': { D.closeMenus(); D.ungroupSel(); return; }
+      case 'lw0': { D.closeMenus(); D.resetStroke(); return; }
+      case 'wt0': return D.setWeightMm(0);
+      case 'link': { S.link = !S.link; D.syncProps(); return; }
+      case 'import': { D.closeMenus(); D.xPick(); return; }
+      case 'face': return D.switchFace(v);
+      case 'opt': return D.opt(v);
+      case 'zoom': return D.zoomCmd(v);
+      case 'role': { D.closeMenus(); D.setRole(v); return; }
+      case 'case': return D.setTextStyle({ letterCase: v || undefined });
+      case 'talign': return D.setTextStyle({ align: v });
+      case 'tstyle': return D.toggleTextStyle(v);
+      case 'font': { const f = D.fonts.find(x => String(x.key) === v); if (f) D.setFont(f.key); return; }
+      case 'alphafind': { D.closeMenus(); D.alphaFind(); return; }
       default: if (/menu$/.test(k)) return menuFor(P, k, el);
     }
   }
@@ -1141,7 +1184,10 @@
       if (del) { del.innerHTML = IC.trash; del.title = 'Delete Selection (⌫)'; del.setAttribute('aria-label', 'Delete Selection'); P.bar.appendChild(del); }
     }
     P.bodies = buildBodies(P);
-    for (const id of ALL) P.store.appendChild(P.bodies[id]);
+    for (const id of ALL) if (P.bodies[id]) P.store.appendChild(P.bodies[id]);
+    takePending();
+    for (const id of EXT.keys()) extBody(P, id);
+    P.layout = cleanLayout(P.layout);
     for (const inp of dk.querySelectorAll('[data-aif]')) wireField(P, inp);
     for (const s of dk.querySelectorAll('[data-aip-key]')) s.addEventListener('change', () => { P.key = s.value; });
     { const xp = D.rootEl.querySelector('.ce-xpanel'); if (xp) xp.classList.add('aip-x'); }
@@ -1149,7 +1195,7 @@
     P.menu = doc.createElement('div'); P.menu.className = 'ce-menu aip-menu'; P.menu.setAttribute('role', 'menu'); P.menu.hidden = true; D.rootEl.appendChild(P.menu);
     P.menu.addEventListener('click', e => {
       const m = e.target.closest('[data-aim]');
-      if (m && !m.disabled) { e.stopPropagation(); act(P, m.dataset.aim, m, e); if (!m.closest('[data-aim$="menu"]') && !/menu$/.test(m.dataset.aim)) D.closeMenus(); return; }
+      if (m && !m.disabled) { e.stopPropagation(); act(P, m.dataset.aim, m, e); if (!m.hasAttribute('data-keep') && !/menu$/.test(m.dataset.aim)) D.closeMenus(); return; }
       const it = e.target.closest('.ce-item'); if (it && !it.hasAttribute('data-keep')) root.setTimeout(() => D.closeMenus(), 0);   // (a font picked keeps its menu open, as the bar's does)
     });
     // the dock's own clicks
@@ -1182,14 +1228,35 @@
       rowsHtml: its => rowsHtml(P, its), paint: () => paint(P), update: () => schedule(P),
       live: r => { if (!P.dead) { P.liveBox = r ? [0, 0, (r.w || 0) / MM, (r.h || 0) / MM] : null; fieldsTo(P, r); P.liveBox = null; } },
       lact: (a, id, e) => lact(P, a, id, e), layout: () => { const m = modeOf(P); if (m !== P.mode) render(P); else sync(P); },
-      unmount: () => { P.dead = true; if (P.raf) root.cancelAnimationFrame(P.raf); doc.removeEventListener('pointerdown', P.onDocDown, true); if (P.menu) P.menu.remove(); },
+      unmount: () => { P.dead = true; if (P.raf) root.cancelAnimationFrame(P.raf); doc.removeEventListener('pointerdown', P.onDocDown, true); if (P.menu) P.menu.remove(); extEach(P, 'unmount'); if (liveP === P) liveP = null; },
       openPanel: id => openPanel(P, String(id)), state: () => ({ mode: P.mode, layout: JSON.parse(JSON.stringify(P.layout)), prefs: JSON.parse(JSON.stringify(P.prefs)), fly: P.fly.hidden ? null : P.flyFor })
     };
-    api.current = out;
+    api.current = out; liveP = P;
     return out;
   }
 
-  const api = { mount, cleanLayout, cleanPrefs, splitName, DEF_LAYOUT, panels: ALL.map(id => ({ id, title: TITLE[id], key: WKEY[id] })), version: 1, current: null,
+  /** CharmEditor.aiDock.add({ id, title, icon?, key?, group?, mount(ctx, el), update?(ctx), unmount?() }): a panel of another file as a tab of this dock, as Illustrator's
+   *  panels are: dragged, minimised, collapsed to an icon and remembered like the others. icon: an <svg> (18-unit box reads best); key: the Window menu's key, shown in its
+   *  tooltip; group: a panel's id to share its tabs ('properties', 'layers', 'character' ...), 'main' for a group of its own in the column, none for an icon of its own.
+   *  mount is called the first time the panel is shown (el: its body; ctx: the editor's extension ctx), update at most once a frame after the work or the selection
+   *  changed, unmount as the editor closes. A file loaded before this one can leave its panels in CharmEditor.aiDockPanels (an array); they are taken in. -> true when added. */
+  let liveP = null;
+  function add(def) {
+    if (!def || typeof def !== 'object' || def.id == null || String(def.id) === '' || typeof def.mount !== 'function') return false;
+    const id = String(def.id);
+    if (ALL.includes(id) && !EXT.has(id)) return false;   // (the dock's own panels are not replaced)
+    if (!ALL.includes(id)) ALL.push(id);
+    EXT.set(id, def); TITLE[id] = String(def.title || id); WKEY[id] = def.key ? String(def.key) : '';
+    if (typeof def.icon === 'string' && /^\s*<svg/i.test(def.icon)) IC[id] = def.icon;
+    if (liveP && !liveP.dead) { extBody(liveP, id); liveP.layout = cleanLayout(liveP.layout); render(liveP); }
+    return true;
+  }
+  function takePending() {
+    const CE = root && root.CharmEditor, list = CE && Array.isArray(CE.aiDockPanels) ? CE.aiDockPanels.splice(0) : [];
+    for (const d of list) add(d);
+  }
+
+  const api = { mount, add, cleanLayout, cleanPrefs, splitName, DEF_LAYOUT, get panels() { return ALL.map(id => ({ id, title: TITLE[id], key: WKEY[id], added: EXT.has(id) })); }, version: 1, current: null,
     openPanel: id => (api.current ? api.current.openPanel(id) : false) };
   return api;
 });
