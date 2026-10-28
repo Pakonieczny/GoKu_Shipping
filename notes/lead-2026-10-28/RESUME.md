@@ -18,7 +18,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - Live board (dashboard artifact): https://claude.ai/artifact/RdLASAbUtTQMqU1Mb6ExLG. Rows in $SP/board/agents.json.
   Refresh: `python3 -I $SP/board-live.py` → Artifact publish {url, file_path: $SP/board/agents.json, asset:true} → ArtifactData update
   url, collection "datasets", doc_id "agents", if_version <current>, data {source:{format:"json",kind:"file",name:"agents.json",url:"<blob url>"},
-  updated:{at,by:"Claude"}}. Last version written: 83 (next write if_version 83; if refused, the error names the current version).
+  updated:{at,by:"Claude"}}. Last version written: 87 (next write if_version 87; if refused, the error names the current version).
 - Plan doc for Paul (local-first): https://claude.ai/artifact/GykrjmCTLTbcohMCKBrkyZ (decisions recorded).
 
 ## Scripts ($SP)
@@ -75,6 +75,13 @@ branch was never pushed) and re-spawn an Agent (general-purpose, run_in_backgrou
 paul-37.md, interfaces.md. Your previous work is on branch claude/<x> (worktree $SP/wt-<x>): read `git log origin/main..HEAD` and the diff,
 finish the scope <scope>, test (slot.sh with time limit inside), push, hand back." Max 20 agents at once. Update agent-mon.py AGENTS and
 board-live-extra.json with the new agent ids.
+
+## Open questions for Paul (ask when he is back)
+- Refit after a Charm Editor save: the fit searches again from scratch and may move already-approved words (e.g. "SEPTEMBER" 5.33 pt level → 5.50 pt turned −15°). Keep the approved placement when it still fits? (refit agent's point 1)
+- Phase 5 push (option a) needs a Firestore security rule in the console + a vendored Firestore SDK file.
+
+## Ship in progress at 03:36 UTC
+- refit 722e4a7 (contains main d58eea9): worktree $SP/wt-refitship, tests running (bs0ceqa3m: engrave-worker, charm-edit-refit, charm-editor-engrave, engrave-editor-words, engrave-front-art, engrave-approve-never-silent, charm-editor-back, engrave-preview). If all pass: push HEAD:main (if it still contains origin/main), verify live, board.
 
 ## Next for the lead, in order
 1. Re-arm the monitor; publish the board each tick.
