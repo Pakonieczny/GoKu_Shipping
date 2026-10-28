@@ -8636,7 +8636,8 @@ const Engrave = window.Engrave = (() => {
     return {charm:charm && {outline:charm.outline,members:charm.members,bbox:charm.bbox,widthPt:charm.widthPt,heightPt:charm.heightPt,upAngle:charm.upAngle},
       lines:(job.lineInput || job.lines).slice(),lineMode:job.lineMode || "auto",opts:fitOpts(job),fontKey:fontIdOf(job),...(job.scriptFonts && job.scriptFonts.length ? {scriptIds:job.scriptFonts.map(f=>f.id)} : {}),
       viewOptions:G.viewOptionsFor({editingBack:!!job.editingBack,savedUp:job.editingBack ? job.editOriginal.upAngle : null,charmUp:charm?.upAngle,entry,nudged:!!job.nudged,viewUp:job.view?.upAngle,oriented:job.orientVersion === G.ORIENT,turnUp:job.turnUp,...(isFront(job) ? {face:"front"} : {})}),
-      maskOptions:{marginMm:+S.settings.engraveMarginMm || .8,keepOut:(isFront(job) ? charm?.frontKeepOut : charm?.backKeepOut) || [],...(!isFront(job) && charm?.artBack?.length ? {avoid:charm.artBack} : {})}};
+      maskOptions:{marginMm:+S.settings.engraveMarginMm || .8,keepOut:(isFront(job) ? charm?.frontKeepOut : charm?.backKeepOut) || [],...(!isFront(job) && charm?.artBack?.length ? {avoid:charm.artBack} : {})},
+      ...(keepFor(job) ? {keep:keepFor(job)} : {})};   // (KEEP: after a charm edit the words stay where they were placed: CharmNestEngraveFit keepPlacement)
   }
   const fitStamp = ({charm, ...options}) => JSON.stringify(options);
   const fitTasks = new WeakMap();
@@ -8707,7 +8708,9 @@ const Engrave = window.Engrave = (() => {
     // skipped job or edit made during calculation cannot be overwritten.
     if (items() !== currentItems || items().get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== "fitting" || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
     if (charmFor(job) !== charm || charm.outline !== input.charm.outline || charm.members !== input.charm.members || stamp !== fitStamp(fitInput(job, charmFor(job), Master.entryFor(job.row.spec.designSku) || {}))) return fitJobOnce(job);
-    const {view,mask,fit,lines,check}=result;
+    const {view,mask,lines,check}=result, kept=result.kept || null, had=KEPT.get(job), lost=!!input.keep && !kept;
+    const fit=kept === "same" && had ? had : result.fit;   // (KEEP: the words where they were, as they were: the very fit, nothing laid out again)
+    delete job.keepPlace; KEPT.delete(job); if (lost) job.keepLost = Date.now(); else delete job.keepLost;
     // materialVersion marks a fit made with the current material model; Pool.repairRecoveredGeometry refits only older
     // ones on restore. Without the mark every fit (and every nudge, turn and resize on it) was thrown away on reload.
     job.view=view; job.mask=mask; if(job.turnUp == null && view && Number.isFinite(view.upAngle))job.upSystem=view.upAngle; job.lines=lines; job.text=lines.join("\n"); job.fit=fit; job.fitAt=Date.now(); job.materialVersion=2; if(!input.viewOptions?.holeOnly)job.orientVersion=G.ORIENT;   // (a view kept as it was saved is not one made with the long-axis rule)
@@ -8716,7 +8719,7 @@ const Engrave = window.Engrave = (() => {
       if(!job.editingBack)Review.add({kind:"placement",key:"eng:"+job.key,row:(job.row.parentRow || job.row),job,why:result.reason});
       render();return job;
     }
-    job.wantSize=fit.size; job.verify={geometry:check,at:Date.now()};
+    if (!kept) job.wantSize=fit.size; job.verify={geometry:check,at:Date.now()};   // (KEEP: the size a person asked for stands; the fit says what fits now)
     job.state = "review"; job.row.engrave.state = "review"; job.claude = null;
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: "${job.lines.join(" / ")}" fits at ${fit.size.toFixed(2)} pt (cap ${fit.capMm.toFixed(2)} mm, ${fit.weight}${fit.angle ? `, ${fit.angle}°` : ""}${fit.small ? ", SMALL" : ""}${fit.thin ? ", strokes under the engraver limit" : ""}) — awaiting a person`);
     if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job });
@@ -9926,6 +9929,7 @@ const Engrave = window.Engrave = (() => {
     charmEditSay(job, `${faces.length > 1 ? "Front and back" : faces[0] === "front" ? "Front" : "Back"} artwork saved for this piece${said.length ? ` · ${said.join(" · ")}` : ""}${bare.length ? ` · No words needed on the ${bare.join(" or ")}: approve it as drawn` : ""}`, false);
     const refit = jobs.filter(j => !j.view && !j.fit && j.state === "ready");
     await Promise.all(refit.map(j => fitJob(j).catch(e => console.warn("charm edit: fit", e))));
+    { const lost = refit.filter(j => j.keepLost).map(j => faceOf(j)); if (lost.length) charmEditSay(job, `${(ART_NOTES.get(job.key) || {}).text || "Artwork saved"} · The words no longer fit where they were placed on the ${lost.join(" and ")}: placed again, check them`, false); }   // (KEEP: said when the words could not stay)
     // a face that was not fitted again keeps its words and its mask (they stand on the cut line, which a piece on a sheet keeps), but the art it shows of the other side ("Show front") is the new one
     const live = Pool.charmOf(poolId);
     for (const j of jobs) {
@@ -11637,6 +11641,21 @@ const Engrave = window.Engrave = (() => {
     const h = HELD.get(j); if (h && h.view === j.view && h.fit === j.fit) return;   // (the same drawing: kept as it is, with its picture)
     HELD.set(j, { view: j.view, mask: j.mask, fit: j.fit, at: Date.now() });
   }
+  /* KEEP (Paul, 28 Oct 2026, of the calendar whose "SEPTEMBER" came back turned and moved after a "21" was saved: "The refit if necessary, must be in the exact same place with a variance of
+     one percent from where I actually placed it. The rotation needs to be also within one percent accurate to where I placed it."). A charm edit sends the face to be fitted again with the placement
+     it had (job.keepPlace, numbers only: it travels with the job and the worker's input), and the worker keeps it: unchanged when the words still sit on the metal, else only smaller about the same
+     centre and at the same angle, else within 1 % of the charm's size of that centre (CharmNestEngraveFit keepPlacement). Only when nothing fits there are the words placed afresh, and the note says so. */
+  const KEPT = new WeakMap();   // job -> the fit it had (the very object, given back when nothing moved)
+  function keepPlace(j) {
+    const f = j && (j.fit || j.writtenFit); if (!f || f.artOnly || !Array.isArray(f.centre) || !(f.size > 0)) return;
+    const v = j.view, lines = (Array.isArray(f.lines) && f.lines.length ? f.lines : j.lines || []).slice(); if (!lines.length) return;
+    j.keepPlace = { centre: f.centre.slice(), angle: f.angle || 0, size: f.size, lines, weight: f.weight || "Regular", lineGap: f.lineGap != null ? f.lineGap : fitOpts(j).lineGap, fittedMax: f.fittedMax || f.size,
+      upAngle: v ? v.upAngle : f.upAngle, ...(v ? { cx: v.cx, cy: v.cy } : {}), fontKey: fontIdOf(j) };
+    if (j.fit) KEPT.set(j, j.fit); else KEPT.delete(j);
+  }
+  /** The placement to keep in the next fit of `job`: only for the very words and font it was made with (words or a font changed since are a person's new choice, placed afresh). */
+  const wordsOf = l => (Array.isArray(l) ? l : []).join(" ").replace(/\s+/g, " ").trim();
+  const keepFor = job => { const k = job && job.keepPlace; return k && k.fontKey === fontIdOf(job) && wordsOf(k.lines) === wordsOf(job.lineInput || job.lines) ? k : null; };
   /** The face is on its way to a new fit (being read, waiting for the worker, or in it): its work area and pictures wait for that fit, and never place the words themselves meanwhile. */
   const refitting = job => !!job && ((["ready", "fitting"].includes(job.state) && canFit(job)) || (OPENREAD.includes(job.state) && (preparingNow(job) || readsFree(job))));
   /** What the work area of `job` draws while it is fitted again: a stand-in for the job (its own fields, the held view, mask and fit), or null when nothing is held or a newer fit has landed. */
@@ -11696,12 +11715,12 @@ const Engrave = window.Engrave = (() => {
         toWords(j, `Say what to engrave on the ${face}`); n++; continue;
       }
       if (["approved", "written"].includes(j.state) || j.approvedAt) {
-        revokeBacks(j); holdDrawing(j);   // (REFIT: drawn, dimmed, until the new fit lands)
+        revokeBacks(j); holdDrawing(j); keepPlace(j);   // (REFIT: drawn, dimmed, until the new fit lands, which keeps the words where they were placed)
         Object.assign(j, { state: "ready", view: null, mask: null, fit: null, writtenFit: null, verify: null, approvedBy: null, approvedAt: null, reason: said });
         if (j.row && j.row.engrave) Object.assign(j.row.engrave, { state: "ready", approved: false, reason: said });
         n++;
       } else if (j.view || j.mask || j.fit) {
-        holdDrawing(j);
+        holdDrawing(j); keepPlace(j);
         Object.assign(j, { view: null, mask: null, fit: null, verify: null });
         if (["review", "blocked", "fitting"].includes(j.state)) { j.state = "ready"; if (j.row && j.row.engrave) j.row.engrave.state = "ready"; }
         n++;
