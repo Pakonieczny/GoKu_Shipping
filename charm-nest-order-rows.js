@@ -129,15 +129,17 @@
     chev.setAttribute('aria-expanded', open ? 'true' : 'false'); chev.classList.toggle('open', open);
     chev.title = open ? 'Hide each piece' : 'Show each piece';
     const row = chev.closest('.owPcRow'); if (row) row.classList.toggle('drawerOpen', open);
-    if (drawer.getAnimations) drawer.getAnimations().forEach(a => a.cancel());
+    // NAV (28 Oct 2026, Paul: "Order Details … at near real-time speed"): the drawer's own movement (started below) is the one stopped; asking the drawer for its animations made the
+    // browser work out every style of the page first, once for each drawer of each order window opened
+    if (drawer._anim) { try { drawer._anim.cancel(); } catch (_) {} drawer._anim = null; }
     if (quick || reduced() || !drawer.animate) { drawer.hidden = !open; drawer.style.height = ''; drawer.style.overflow = ''; return; }
     if (open) {
       drawer.hidden = false; drawer.style.overflow = 'hidden';
-      const h = drawer.scrollHeight, a = drawer.animate([{ height: '0px', opacity: 0 }, { height: h + 'px', opacity: 1 }], { duration: 170, easing: 'cubic-bezier(.2,.8,.2,1)' });
+      const h = drawer.scrollHeight, a = drawer._anim = drawer.animate([{ height: '0px', opacity: 0 }, { height: h + 'px', opacity: 1 }], { duration: 170, easing: 'cubic-bezier(.2,.8,.2,1)' });
       const done = () => { drawer.style.overflow = ''; drawer.style.height = ''; }; a.onfinish = done; a.oncancel = done;
     } else {
       drawer.style.overflow = 'hidden';
-      const h = drawer.offsetHeight, a = drawer.animate([{ height: h + 'px', opacity: 1 }, { height: '0px', opacity: 0 }], { duration: 140, easing: 'ease-in' });
+      const h = drawer.offsetHeight, a = drawer._anim = drawer.animate([{ height: h + 'px', opacity: 1 }, { height: '0px', opacity: 0 }], { duration: 140, easing: 'ease-in' });
       a.onfinish = () => { drawer.hidden = true; drawer.style.overflow = ''; drawer.style.height = ''; };
       a.oncancel = () => { drawer.style.overflow = ''; drawer.style.height = ''; };
     }

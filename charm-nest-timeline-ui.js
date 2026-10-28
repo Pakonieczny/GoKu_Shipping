@@ -78,8 +78,13 @@
   /** One Web Animation, or none when motion is reduced (the end state is what the page already shows). */
   function anim(el, frames, ms, o) {
     if (!el || typeof el.animate !== "function" || reduced()) return null;
-    try { const a = el.animate(frames, Object.assign({ duration: ms, easing: E }, o || {})); a.finished.catch(() => {}); return a; } catch (_) { return null; }
+    try { const a = tlMove(el.animate(frames, Object.assign({ duration: ms, easing: E }, o || {}))); a.finished.catch(() => {}); return a; } catch (_) { return null; }
   }
+  /* NAV (28 Oct 2026, Paul: "Order Details … at near real-time speed"): the movements this module starts, while they run: a timeline taken down (destroy) stops its own from here, where
+     asking its box for them (getAnimations) made the browser work out every style of the page first, at every order the window moved to. CSS animations and transitions end with the
+     box, which is removed there. */
+  const liveMoves = new Set();
+  function tlMove(a) { if (a) { liveMoves.add(a); const off = () => liveMoves.delete(a); a.finished.then(off, off); } return a; }
 
   /* ── the zoomed seal (Paul, 2 Oct 2026: "get rid of the hover states on all the seals and just add a compelling zooming
      animation where the seal grows in size in its current position"): the stamp itself grows from its own centre, by the one
@@ -658,10 +663,16 @@
   //  the redraw has just changed, twice a step, and a live step over a hundred events then no longer fits a frame)
   const sealBase = new WeakMap(); let sealBaseGen = 0;
   try { root.addEventListener("resize", () => { sealBaseGen++; }); } catch (_) { /* no window to resize */ }
+  // (NAV, 28 Oct 2026: and per place on the page, not per element: the order window mounts a new rail for every order it shows, and each read of the style laid out the page's styles;
+  //  the size is a CSS custom property, so a host with the same classes on the same chain of parents, at the same window size, has the same one)
+  const sealBaseAt = new Map();
+  const sealPlaceOf = host => { const k = []; for (let n = host; n && n.nodeType === 1 && k.length < 12; n = n.parentElement) k.push(n.tagName + (n.id ? "#" + n.id : "") + "." + n.className); return k.join(">"); };
   function baseSealSize(host) {
     const hit = sealBase.get(host); if (hit && hit.gen === sealBaseGen) return hit.size;
+    let place = ""; try { place = sealPlaceOf(host); } catch (_) {}
+    const at = place && sealBaseAt.get(place); if (at && at.gen === sealBaseGen && !(host.style && host.style.getPropertyValue("--seal-size"))) { sealBase.set(host, at); return at.size; }
     let size = SEAL_SIZE; try { size = Math.max(1, parseFloat(root.getComputedStyle(host).getPropertyValue("--seal-size")) || SEAL_SIZE); } catch (_) { /* the default */ }
-    sealBase.set(host, { gen: sealBaseGen, size }); return size;
+    const v = { gen: sealBaseGen, size }; sealBase.set(host, v); if (place) { sealBaseAt.set(place, v); if (sealBaseAt.size > 50) sealBaseAt.delete(sealBaseAt.keys().next().value); } return size;
   }
   // m: what measure() read before the redraw wrote anything (without it, read now)
   function fitRail(rail, m) {
@@ -2074,9 +2085,9 @@
           if (Math.abs(dx) >= .5 || Math.abs(dy) >= .5 || Math.abs(k - 1) >= .01) moving.push([b, dx, dy, k]);
         }
         if (moving.length <= 40) for (const [b, dx, dy, k] of moving) {
-          try { b._tlGlide = b.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${k}) rotate(var(--rot))` }, { transform: "rotate(var(--rot))" }], { duration: 260, easing: E }); } catch (_) { /* no glide */ }
+          try { b._tlGlide = tlMove(b.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${k}) rotate(var(--rot))` }, { transform: "rotate(var(--rot))" }], { duration: 260, easing: E })); } catch (_) { /* no glide */ }
         }
-        if (resized) for (const n of cv.children) if (n.tagName !== "BUTTON" && !n.classList.contains("tlSt")) { try { n.animate([{ opacity: .3 }, { opacity: 1 }], { duration: 220, easing: E }); } catch (_) { /* no fade */ } }
+        if (resized) for (const n of cv.children) if (n.tagName !== "BUTTON" && !n.classList.contains("tlSt")) { try { tlMove(n.animate([{ opacity: .3 }, { opacity: 1 }], { duration: 220, easing: E })); } catch (_) { /* no fade */ } }
       }
       if (o.first) {
         const p = cv.querySelector(".tlPath"); anim(p, [{ opacity: 0 }, { opacity: 1 }], 900, { easing: SLIDE });
@@ -2300,7 +2311,7 @@
       box.removeEventListener("click", onClick);
       box.removeEventListener("focusin", expFocus); box.removeEventListener("focusout", expBlur);
       scroller.removeEventListener("scroll", onScroll);
-      try { for (const a of box.getAnimations({ subtree: true })) a.cancel(); } catch (_) {}
+      try { for (const a of [...liveMoves]) { const t = a.effect && a.effect.target; if (t && (t === box || box.contains(t))) a.cancel(); } } catch (_) {}
       if (tb) { bar.removeEventListener("click", onClick); bar.remove(); }
       box.remove();
     }
