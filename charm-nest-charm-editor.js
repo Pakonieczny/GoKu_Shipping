@@ -18,6 +18,11 @@
  *                                    the app's font engine: outlines in pt, y down, the anchor (start of the first baseline for 'left') at 0,0. Without it the
  *                                    editor uses CharmEditor.builtinTextToPaths, a plain single-stroke stand-in (for tests and for a page with no font engine)
  *     opts.lockRoles                 default ['cut']: items of these roles open locked (the Layers panel unlocks them); the lock the editor adds is not a change
+ *     opts.back                      { label, title, run(result) } (DESIGN & ENGRAVE, Paul 28 Oct 2026: "accessible from the back engraving modal and vice versa from the charm editor back
+ *                                    into the back engraving modal"): a clear way back at the head's left, "‹ Back to engraving". It closes the editor as Cancel does (asked first when there
+ *                                    are changes, with "Save and go back" offered) and then calls run(result | null) once the workspace is gone; the caller takes the person there
+ *     opts.host                      the element the workspace is put in (default the page's body): a modal <dialog> open over the page (the order window) sits in the top layer, over
+ *                                    anything in the body, so a caller opening the editor from one hands it that dialog
  *
  *   FaceDoc  { face:'front'|'back', unitPt:true, frame:{ x0, y0, wPt, hPt }, items:[Item] }      points, y down; the frame is the charm's bounding view (shown in mm)
  *   Item     { id, kind:'path'|'text'|'group', role:'cut'|'line'|'hatch'|'art', source:'master'|'engrave'|'added', name, hidden, locked,
@@ -858,6 +863,7 @@
     ungroup: SV('<path d="M3 7V3h4"/><path d="M17 21h4v-4"/><rect x="3" y="9.5" width="7" height="7"/><rect x="14" y="4.5" width="7" height="7"/>'),
     del: SV('<path d="M4 6.5h16"/><path d="M9 6.5V4h6v2.5"/><path d="M6.5 6.5 7.5 20h9l1-13.5"/>'),
     layers: SV('<path d="m12 3 8 4-8 4-8-4Z"/><path d="m4 12 8 4 8-4"/><path d="m4 17 8 4 8-4"/>'),
+    back: SV('<path d="M15 5 8 12l7 7"/>', ' stroke-width="1.9"'),   // (opts.back: the head's way back)
     // (weight: a shape and the same shape grown round it, Illustrator's "offset path"; stroke: lines of three widths, its "stroke weight")
     weight: SV('<rect x="8" y="8" width="8" height="8" rx=".6"/><rect x="4" y="4" width="16" height="16" rx="3.2" stroke-dasharray="2.2 2.2"/>'),
     stroke: SV('<path d="M4 6.5h16" stroke-width="1"/><path d="M4 12h16" stroke-width="2"/><path d="M4 17.8h16" stroke-width="3.2"/>', ' stroke-linecap="butt"'),
@@ -920,6 +926,10 @@
 .ce-icon:not(.is-on):hover{ background:var(--hov); border-color:var(--hov-line); }
 .ce-icon.is-on{ border-color:var(--ink); background:var(--band); }
 .ce-close{ font-size:20px; font-weight:400; border-color:transparent; color:var(--muted); }
+/* (opts.back, 28 Oct 2026: the way back to where the editor was opened from, first in the head and filled, so it is never taken for one of the editor's own tools) */
+.ce-back{ flex:none; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 13px 0 8px; border:1px solid var(--ink); background:var(--ink); color:#fff; cursor:pointer; font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; white-space:nowrap; }
+.ce-back svg{ width:16px; height:16px; } .ce-back:hover{ background:#3a3b3b; border-color:#3a3b3b; } .ce-back:focus-visible{ outline:2px solid var(--gold); outline-offset:2px; }
+.ce-ask__b:has(> [data-ask="alt"]){ flex-direction:column-reverse; align-items:stretch; gap:8px; }   /* (three answers: one column, "Save and go back" first, then Discard, then Keep editing) */
 .ce-head .ce-seg{ flex:none; }
 .ce-short{ display:none; }
 /* (27 Oct 2026: a bar that would wrap on a desk, words with a long font name and their weight, says the role in one word, Hatch, Line, and the menu says the rest) */
@@ -1266,6 +1276,8 @@
     const rootEl = doc.createElement('div');
     rootEl.className = 'ce-root';
     const title = opts.title == null ? 'Charm editor' : String(opts.title), subtitle = opts.subtitle == null ? '' : String(opts.subtitle);
+    const back = opts.back && opts.back.label ? { label: String(opts.back.label), title: opts.back.title ? String(opts.back.title) : '', run: typeof opts.back.run === 'function' ? opts.back.run : null } : null;
+    let wentBack = false;   // (opts.back pressed: run once the workspace is gone)
     const roleItems = ROLES.map(r => `<button class="ce-item" type="button" data-role="${r}" role="menuitemradio"><i class="ce-sw ce-sw--${r}"></i>${ROLE_NAME[r]}<em>${ROLE_SAYS[r]}</em></button>`).join('');
     const fontItems = fonts.map(f => `<button class="ce-item" type="button" data-font="${esc(f.key)}" role="menuitemradio">${esc(f.name)}</button>`).join('');
     /* the extensions' places in the chrome (the header's EXTENSION POINTS): their tools on the rail before More (a flyout of their own, or the Shapes menu), the Object
@@ -1302,6 +1314,7 @@
     rootEl.innerHTML = `
 <div class="ce-win" tabindex="-1" role="dialog" aria-modal="true" aria-label="${esc(title)}">
   <header class="ce-head">
+    ${back ? `<button class="ce-back" type="button" data-act="back" title="${esc(back.title || back.label)}">${IC.back}<span>${esc(back.label)}</span></button>` : ''}
     <div class="ce-id"><h2 title="${esc(title)}">${esc(title)}</h2>${subtitle ? `<span class="ce-eyebrow" title="${esc(subtitle)}">${esc(subtitle)}</span>` : ''}</div>
     <div class="ce-seg" role="tablist" aria-label="Face">
       <button type="button" data-face="front" role="tab"${S.faces.front ? '' : ' disabled'}>Front</button><button type="button" data-face="back" role="tab"${S.faces.back ? '' : ' disabled'}>Back</button>
@@ -1434,7 +1447,7 @@
   ${xPanelHtml}
   <div class="ce-menu ce-ctx" role="menu" hidden></div>
 </div>`;
-    doc.body.appendChild(rootEl);
+    (opts.host && opts.host.isConnected ? opts.host : doc.body).appendChild(rootEl);   // (opts.host: inside a modal dialog open over the page, which covers the body)
     doc.documentElement.style.overflow = 'hidden';
     const $ = s => rootEl.querySelector(s), $$ = s => Array.from(rootEl.querySelectorAll(s));
     const win = $('.ce-win'), stage = $('.ce-stage'), art = $('.ce-art'), gridG = $('.ce-grid'), itemsG = $('.ce-items'), ui = $('.ce-ui'), paper = $('.ce-paper');
@@ -2683,10 +2696,10 @@
       return new Promise(res => {
         const box = doc.createElement('div'); box.className = 'ce-ask';
         box.innerHTML = `<div class="ce-ask__card" role="alertdialog" aria-modal="true" aria-label="${esc(o.title)}"><h3>${esc(o.title)}</h3><p>${esc(o.text)}</p><div class="ce-ask__b">`
-          + `<button class="ce-btn ce-btn--ghost" type="button" data-ask="no">${esc(o.no)}</button><button class="ce-btn ce-btn--ink" type="button" data-ask="yes">${esc(o.yes)}</button></div></div>`;
+          + `<button class="ce-btn ce-btn--ghost" type="button" data-ask="no">${esc(o.no)}</button><button class="ce-btn ce-btn--ink" type="button" data-ask="yes">${esc(o.yes)}</button>${o.alt ? `<button class="ce-btn ce-btn--gold" type="button" data-ask="alt">${esc(o.alt)}</button>` : ''}</div></div>`;
         win.appendChild(box);
         S.ask = { done: v => { if (!S.ask) return; S.ask = null; box.remove(); try { win.focus({ preventScroll: true }); } catch (e) { /* fine */ } res(v); } };
-        box.addEventListener('click', ev => { const b = ev.target.closest('[data-ask]'); if (b) S.ask.done(b.dataset.ask === 'yes'); else if (ev.target === box) S.ask.done(false); });
+        box.addEventListener('click', ev => { const b = ev.target.closest('[data-ask]'); if (b) S.ask.done(b.dataset.ask === 'alt' ? 'alt' : b.dataset.ask === 'yes'); else if (ev.target === box) S.ask.done(false); });
         requestAnimationFrame(() => { const nb = box.querySelector('[data-ask="no"]'); if (nb) nb.focus(); });
       });
     }
@@ -2697,6 +2710,18 @@
       if (!dirty()) { finish(null); return; }
       const yes = await ask({ title: 'Leave without saving?', text: 'The changes you made to this charm will be lost. Nothing is kept until you press Save.', yes: 'Discard changes', no: 'Keep editing' });
       if (yes) finish(null);
+    }
+    /** opts.back pressed: closed as Cancel closes (asked first when there are changes; "Save and go back" saves), then the caller's run. */
+    async function requestBack() {
+      if (S.ask || !back) return;
+      if (S.editing) closeEditor();
+      abandon();
+      if (dirty()) {
+        const a = await ask({ title: 'Leave without saving?', text: 'The changes you made to this charm will be lost. Nothing is kept until you press Save.', yes: 'Discard changes', no: 'Keep editing', alt: 'Save and go back' });
+        if (a === 'alt') { wentBack = true; save(); return; }
+        if (a !== true) return;
+      }
+      wentBack = true; finish(null);
     }
     function save() {
       if (S.ask) return;
@@ -2714,6 +2739,7 @@
       doc.documentElement.style.overflow = prevOverflow;
       try { if (prevFocus && prevFocus.focus) prevFocus.focus({ preventScroll: true }); } catch (e) { /* the page moved on */ }
       done(v);
+      if (wentBack && back && back.run) { try { back.run(v); } catch (e) { /* the caller's own */ } }
     }
 
     /* ── the extension points (the header's EXTENSION POINTS, 28 Oct 2026): the ctx every tool, command, importer and panel is handed, the one undo step their changes
@@ -2941,6 +2967,7 @@
       const act = t.closest('[data-act]');
       if (act && !act.disabled) {
         const a = act.dataset.act;
+        if (a === 'back') { requestBack(); return; }
         if (a === 'undo') undo(); else if (a === 'redo') redo(); else if (a === 'cancel') requestClose(); else if (a === 'save') save();
         else if (a === 'link') { S.link = !S.link; syncProps(); }
         else if (a === 'wt0') setWeightMm(0); else if (a === 'lw0') resetStroke();

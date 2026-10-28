@@ -225,8 +225,8 @@
     if (s === 'words' || s === 'blocked') return Object.assign(base, { kind: 'words', text: job.text, reason: job.reason });
     const working = !!(E && E.isWorking && tryDo(() => E.isWorking(job), false));
     const note = working ? (s === 'classify' ? 'Reading the words…' : aboutFace('Fitting the words on the back…', faceOf(job)))
-      : s === 'classify' ? 'Confirm them in Engraving, or wait for them to be read'
-      : E && E.canFit && !tryDo(() => E.canFit(job), true) ? 'Waits for its sheet to be written, then it is fitted' : 'Waits its turn in Engraving';
+      : s === 'classify' ? 'Confirm them in Design & Engrave, or wait for them to be read'
+      : E && E.canFit && !tryDo(() => E.canFit(job), true) ? 'Waits for its sheet to be written, then it is fitted' : 'Waits its turn in Design & Engrave';
     return Object.assign(base, { kind: 'preparing', text: job.text, working, note });
   }
   function fromSaved(re) {
@@ -396,8 +396,8 @@
     function openEngrave(face, key, btn, piece) {
       const cur = last.get(keyOf(piece)) || piece, fj = cur.faces[face] && cur.faces[face].job, any = fj || cur.jobs[0] || null, link = root.EngraveLink;
       const t = { rid: String(cur.rid || ctx.rid || ''), key: cur.lineKey, poolId: ((any && any.copies) || [])[0] || (cur.row && (cur.row.poolIds || [])[0]) || '', piece: fj ? fj.key : (any ? any.key : key), face };
-      if (link && typeof link.open === 'function') return Promise.resolve(link.open(t)).catch(e => { say('Could not open Engraving: ' + (e && e.message || e), 'bad', 5000); });
-      return fallbackOpen({ job: any, eng: { kind: cur.state === 'approved' ? 'approved' : '' } }, t).catch(e => { say('Could not open Engraving: ' + (e && e.message || e), 'bad', 5000); });
+      if (link && typeof link.open === 'function') return Promise.resolve(link.open(t)).catch(e => { say('Could not open Design & Engrave: ' + (e && e.message || e), 'bad', 5000); });
+      return fallbackOpen({ job: any, eng: { kind: cur.state === 'approved' ? 'approved' : '' } }, t).catch(e => { say('Could not open Design & Engrave: ' + (e && e.message || e), 'bad', 5000); });
     }
     function showFail(el, msg) { const f = el && el.querySelector('.engFail'); if (!f) return; f.textContent = msg || ''; f.hidden = !msg; }
     /** The one Approve button of a card: the faces of this piece that wait for approval are approved in turn (Front first), each with its own seal and back file, exactly as if each had been pressed. */
@@ -484,7 +484,7 @@
       el.className = 'engMono'; el.dataset.testid = 'ow-mono'; el.dataset.key = pc.key; el.dataset.line = line.key; el.dataset.slot = pc.slot || ''; el.dataset.piece = String(pc.n); el.dataset.rid = String(ctx.rid || (line.order && line.order.receiptId) || ''); el.dataset.state = 'reading';
       el.setAttribute('aria-label', 'Monogram');
       el.innerHTML = '<header class="engHd" data-testid="ow-mono-head"><i class="engDot" data-testid="ow-mono-dot" role="img"></i><b class="engName">Monogram</b></header><div class="engMonoBody" data-testid="ow-mono-body"></div>'
-        + '<div class="engOpenRow"><button type="button" class="btn ghost sm egOpen" data-e="engrave" data-testid="ow-mono-open" title="Open this monogram in the Engraving tab">Open in Engraving <span aria-hidden="true">\u2192</span></button></div>';
+        + '<div class="engOpenRow"><button type="button" class="btn ghost sm egOpen" data-e="engrave" data-testid="ow-mono-open" title="Open this monogram in the Design & Engrave tab">Open in Design & Engrave <span aria-hidden="true">\u2192</span></button></div>';
       m = { el, body: el.querySelector('.engMonoBody'), line, row: line, piece: pc, handle: null };
       monos.set(pc.key, m);
       { const ob = el.querySelector('[data-e=engrave]'); if (ob) ob.addEventListener('click', () => openMonoEngrave(pc, ob)); }
@@ -500,10 +500,10 @@
     function openMonoEngrave(pc, btn) {
       if (!btn || btn.getAttribute('aria-busy') === 'true') return;
       const link = root.EngraveLink, E = root.Engrave, was = btn.innerHTML;
-      btn.setAttribute('aria-busy', 'true'); btn.innerHTML = '<span class="spin" aria-hidden="true"></span>Opening Engraving\u2026';
+      btn.setAttribute('aria-busy', 'true'); btn.innerHTML = '<span class="spin" aria-hidden="true"></span>Opening Design & Engrave\u2026';
       const back = () => { if (btn.isConnected) { btn.removeAttribute('aria-busy'); btn.innerHTML = was; } };
-      let run; try { run = link && link.openMonogram ? link.openMonogram({ rid: String(ctx.rid || (pc.line && pc.line.order && pc.line.order.receiptId) || ''), key: pc.key }) : E && E.openMonogram ? Promise.resolve(E.openMonogram(pc.key)) : Promise.resolve(false); } catch (e) { back(); say('Could not open Engraving: ' + (e && e.message || e), 'bad', 5000); return; }
-      Promise.resolve(run).then(ok => { back(); if (ok === false) say('This monogram cannot be opened in Engraving here.', 'bad', 5000); }, e => { back(); say('Could not open Engraving: ' + (e && e.message || e), 'bad', 5000); });
+      let run; try { run = link && link.openMonogram ? link.openMonogram({ rid: String(ctx.rid || (pc.line && pc.line.order && pc.line.order.receiptId) || ''), key: pc.key }) : E && E.openMonogram ? Promise.resolve(E.openMonogram(pc.key)) : Promise.resolve(false); } catch (e) { back(); say('Could not open Design & Engrave: ' + (e && e.message || e), 'bad', 5000); return; }
+      Promise.resolve(run).then(ok => { back(); if (ok === false) say('This monogram cannot be opened in Design & Engrave here.', 'bad', 5000); }, e => { back(); say('Could not open Design & Engrave: ' + (e && e.message || e), 'bad', 5000); });
     }
     /** PIECES: a monogram of a line of several says which piece it is, as an engraved copy's card does: "Monogram · Piece 1 of 2". A line of one piece: "Monogram", as ever. */
     function monoTitle(m) {
@@ -673,7 +673,7 @@
   }
   /** The way to Engrave while EngraveLink is not here: the Sheet tab's own (close the window, open that order's engraving). */
   async function fallbackOpen(r, t) {
-    const E = root.Engrave; if (!E || !E.restoreView) throw new Error('Engraving is not ready');
+    const E = root.Engrave; if (!E || !E.restoreView) throw new Error('Design & Engrave is not ready');
     try { if (root.OrderWin && root.OrderWin.close) await root.OrderWin.close(); } catch (_) {}
     const job = r.job, done = DONE.concat(['skipped']).includes(job && job.state) || (r.eng && r.eng.kind === 'approved');
     E.restoreView(Object.assign({}, E.view(), { tab: 'place', focus: (job && job.key) || t.key, list: false, chosen: true, q: done ? t.rid : '' }));   // (NODECIDED: a decided piece opens in the same detail card)

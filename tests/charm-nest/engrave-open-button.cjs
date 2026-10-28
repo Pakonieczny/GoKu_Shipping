@@ -7,7 +7,7 @@
 //   2  a press opens the right piece and the right face through the real EngraveLink.open({ rid, key, poolId, piece, face }): the order window closes, the Engrave tab is on THAT job; a thumbnail press
 //      opens its own face; a press on the card's name / words / empty places opens nothing
 //   3  every state differs in the computed styles: default / hover / focus-visible / active (pressed) / disabled (aria-disabled, a title that says why; a press opens nothing; a piece with no job yet is NOT disabled: ENGPRE) / loading (the labelled
-//      spinner, "Opening Engraving…", full strength, a progress cursor, focus kept, a second press ignored); the same for the thumbnails (hover, pressed, focus ring, cursor)
+//      spinner, "Opening Design & Engrave…", full strength, a progress cursor, focus kept, a second press ignored); the same for the thumbnails (hover, pressed, focus ring, cursor)
 //   4  the keyboard: Tab reaches the button and the thumbnails (in that card's order), Enter and Space press them
 //   5  the three older places (the card of the Sheet view / sheet window / Review: charm-nest-engraving-seals.js panel()) draw the SAME button: same classes, same words, same computed look (only the card's
 //      compact height differs), the same hover and pressed fill
@@ -182,7 +182,7 @@ async function main() {
     const lk = await look(page, SB); await R.shot(w, 'BUTTON-loading', { clip: await stageClip() });
     await page.click(SB); await page.click(ST); await sleep(150);
     const again = await page.evaluate(() => window.__btCalls.length);
-    check(ld.busy === 'true' && ld.text === 'Opening Engraving…' && ld.spin && ld.spinAnim !== 'none' && ld.card === '1', `loading: aria-busy, a spinner and the words "${ld.text}"`, ld);
+    check(ld.busy === 'true' && ld.text === 'Opening Design & Engrave…' && ld.spin && ld.spinAnim !== 'none' && ld.card === '1', `loading: aria-busy, a spinner and the words "${ld.text}"`, ld);
     check(ld.focus && ld.calls === 1 && again === 1, `loading: keyboard focus stays on the button and a second press does nothing (${again} call)`, { ld, again });
     check(+lk.opacity === 1 && lk.cursor === 'progress' && lk.text !== before.text, `loading: full strength, progress cursor (${lk.opacity}, ${lk.cursor})`, { before, lk });
     await page.evaluate(() => window.__btRelease && window.__btRelease(true)); await sleep(200);
@@ -192,7 +192,7 @@ async function main() {
     await mk({ key: made.both.key, pending: true });
     await page.click(ST); await sleep(200);
     const tl = await page.evaluate(s => { const t = document.querySelector(s); return { busy: t.getAttribute('aria-busy'), over: !!t.querySelector('.engOpening[role=status]'), label: (t.querySelector('.engOpening') || {}).title, btn: document.querySelector('#btStage .egOpen').textContent.replace(/\s+/g, ' ').trim() }; }, ST);
-    check(tl.busy === 'true' && tl.over && tl.label === 'Opening Engraving…' && tl.btn === 'Opening Engraving…', 'a thumbnail press: the spinner on the picture and on the button, both say "Opening Engraving…"', tl);
+    check(tl.busy === 'true' && tl.over && tl.label === 'Opening Design & Engrave…' && tl.btn === 'Opening Design & Engrave…', 'a thumbnail press: the spinner on the picture and on the button, both say "Opening Design & Engrave…"', tl);
     await page.evaluate(() => window.__btRelease && window.__btRelease(true)); await sleep(150);
     await page.evaluate(() => document.querySelectorAll('#btStage').forEach(n => n.remove()));
 
@@ -201,7 +201,7 @@ async function main() {
     await page.click(cardSel('back') + ' .egOpen'); await sleep(250);
     const real = await page.evaluate(s => { const b = document.querySelector(s); return { text: b.textContent.replace(/\s+/g, ' ').trim(), busy: b.getAttribute('aria-busy') }; }, cardSel('back') + ' .egOpen');
     await R.shot(w, 'BUTTON-loading-real', { clip: await clip() });
-    check(real.busy === 'true' && real.text === 'Opening Engraving…', 'in the real order window the button says "Opening Engraving…" with its spinner while it opens', real);
+    check(real.busy === 'true' && real.text === 'Opening Design & Engrave…', 'in the real order window the button says "Opening Design & Engrave…" with its spinner while it opens', real);
     await sleep(700); await page.evaluate(() => { window.__hold = 0; });
     check(await page.evaluate(s => { const b = document.querySelector(s); return !!b && b.getAttribute('aria-busy') === null && /Engraving →$/.test(b.textContent.trim()); }, cardSel('back') + ' .egOpen'), 'and gives the button back when the opening ends (here the stub opens nothing)');
 

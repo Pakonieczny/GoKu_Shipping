@@ -133,14 +133,14 @@ async function main() {
       await page.click('#owSheetPanel [data-engraving-panel] [data-e=engrave]');
       return text;
     };
-    check(/Fix in Engraving/.test(await sheetTab(A, 0)), 'Sheet tab, one piece: its shortcut is Fix in Engraving');
+    check(/Fix in Design & Engrave/.test(await sheetTab(A, 0)), 'Sheet tab, one piece: its shortcut is Fix in Design & Engrave');
     await lands(A, 0, 'place', 'Sheet tab, one piece');
     await reset();
-    check(/Fix in Engraving/.test(await sheetTab(B, 1)), 'Sheet tab, piece 2 of 3: its shortcut is Fix in Engraving');
+    check(/Fix in Design & Engrave/.test(await sheetTab(B, 1)), 'Sheet tab, piece 2 of 3: its shortcut is Fix in Design & Engrave');
     const w2 = await lands(B, 1, 'place', 'Sheet tab, piece 2 of 3');
     check(!w2.cards.includes(keyOf(B, 0)) && !w2.cards.includes(keyOf(C, 0)), 'the first piece and the order in front are not what opened');
     await reset();
-    check(/View in Engraving/.test(await sheetTab(B, 2)), 'Sheet tab, piece 3 of 3 (approved): its shortcut says View in Engraving');
+    check(/View in Design & Engrave/.test(await sheetTab(B, 2)), 'Sheet tab, piece 3 of 3 (approved): its shortcut says View in Design & Engrave');
     await lands(B, 2, 'done', 'Sheet tab, piece 3 of 3 (approved)');
     await reset();
 
@@ -154,7 +154,7 @@ async function main() {
       return text;
     };
     const dismiss = () => page.evaluate(() => { document.querySelector('.swReturn [data-a=x]')?.click(); });
-    check(/Fix in Engraving/.test(await sheetWin(B, 1)), 'Sheet window, piece 2 of 3: its shortcut is Fix in Engraving');
+    check(/Fix in Design & Engrave/.test(await sheetWin(B, 1)), 'Sheet window, piece 2 of 3: its shortcut is Fix in Design & Engrave');
     const w3 = await lands(B, 1, 'place', 'Sheet window, piece 2 of 3');
     check(w3.pill, 'the way back to the sheet is still offered (Back to the sheet)');
     await dismiss(); await reset();

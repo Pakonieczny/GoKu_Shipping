@@ -88,7 +88,7 @@ const writes = from => from.filter(c => (!isRead(c) && !intakeOnly(c)) || /agent
     await page.waitForFunction(() => { const h = document.getElementById('owEng'); return h && !h.hidden && h.querySelector('.engCard .egOpen'); }, null, { timeout: 60000 });
     await R.settle(page, 600);
     const btn = await page.evaluate(() => { const b = document.querySelector('#owEng .engCard .egOpen'); const th = document.querySelector('#owEng .engCard .engFace[data-face=back] .engThumb'); return { text: b.textContent.replace(/\s+/g, ' ').trim(), disabled: b.getAttribute('aria-disabled'), title: b.title || '', thumbDisabled: th && th.getAttribute('aria-disabled'), thumbTitle: th && th.title }; });
-    check(/Fix in Engraving|View in Engraving/.test(btn.text) && !btn.disabled && !btn.title && !btn.thumbDisabled, 'the order window\'s Engraving button and Back box are enabled (no "on hold / not on a sheet" refusal) (' + JSON.stringify(btn) + ')');
+    check(/Fix in Design & Engrave|View in Design & Engrave/.test(btn.text) && !btn.disabled && !btn.title && !btn.thumbDisabled, 'the order window\'s Engraving button and Back box are enabled (no "on hold / not on a sheet" refusal) (' + JSON.stringify(btn) + ')');
     const t0 = Date.now();
     await page.click('#owEng .engCard .egOpen');
     await page.waitForFunction(k => { const c = document.querySelector('#egQueue .rvItem'); return c && c.dataset.key === k && !document.getElementById('engraveView').classList.contains('hidden'); }, keys.back, { timeout: 60000 });

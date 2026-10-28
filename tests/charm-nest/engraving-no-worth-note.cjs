@@ -35,8 +35,8 @@ for (const [name, e] of [
   ok(!/<ul>/.test(h), `${name}: no note list at all`);
 }
 { const h = SEALS.panel({ kind: 'words', job: job('words'), text: 'diabetic' });
-  ok(/egApproveButton egAsk egOff" disabled/.test(h) && /Confirm the words in Engraving first/.test(h), 'words to confirm are still never approved on the card (the button is off, with its why)');
-  ok(/data-e="engrave"/.test(h) && /Fix in Engraving/.test(h), 'and Fix in Engraving still takes the person to the decision');
+  ok(/egApproveButton egAsk egOff" disabled/.test(h) && /Confirm the words in Design &(?:amp;)? Engrave first/.test(h), 'words to confirm are still never approved on the card (the button is off, with its why)');
+  ok(/data-e="engrave"/.test(h) && /Fix in Design &(?:amp;)? Engrave/.test(h), 'and Fix in Design & Engrave still takes the person to the decision');
   ok(/class="words">diabetic</.test(h), 'the words as read are still shown'); }
 
 // ── 2 · the other surfaces (charm-nest-bridge.js: Engrave tab detail, Review placement card, Review feed card; charm-nest-mail.js: the message box) ──

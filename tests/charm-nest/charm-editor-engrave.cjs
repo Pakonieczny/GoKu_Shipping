@@ -1,12 +1,12 @@
 // CHARM EDIT (Paul, 27 Oct 2026: "In the Engraving Modal the User sometimes needs to be able to see the engraving on the front of a given charm. The user also needs full control similar to
 // Adobe illustrator ... over each individual layer contained on any charm ... In this case the user needs to be able to add a date inside a given Calendar day square and be able to update the
 // Month name located on top of the Calendar charm ... zoom into a given charm while maintaining full vector file details and have very fine and accurate control when adding text").
-// The charm editor (charm-nest-charm-editor.js) opened from the Engraving window's "Edit charm" and saved through the art edit (charm-nest-art-edit.js) into the piece's record and its laser files.
+// The charm editor (charm-nest-charm-editor.js) opened from the Design & Engrave card's "Open in Charm Editor" and saved through the art edit (charm-nest-art-edit.js) into the piece's record and its laser files.
 //   A  (node) the two modules agree: CharmNestArtEdit.itemsOf opens cleanly in the editor (nothing read as a change, the cut line locked), and encode takes what the editor hands back: a turned
 //      and scaled curve lands where the editor drew it (its matrix is made about the TIGHT box of the curve, not the box of its control points), and words in a turned group land where the editor
 //      drew them (their outlines come already placed: nothing is put on them twice)
 //   B  the real sorter page over the repo's fake site (_engraveRealWorld.cjs: the real intake, pool, classifier and fit; offline, nothing written anywhere real, made-up names) with a calendar charm
-//      (_artCalendar.cjs, a per-SKU master) ordered front + back, and another calendar order: the Engraving window's quiet "Edit charm" pill beside the grid's label; the editor opens on the front
+//      (_artCalendar.cjs, a per-SKU master) ordered front + back, and another calendar order: the card's big gold "Open in Charm Editor" button in its head (Paul, 28 Oct 2026: "way too small and hidden"); the editor opens on the front
 //      with every part a layer and the cut line locked; "MAY" swept and deleted, SEPTEMBER typed and centred where it was with the X / Y fields; the wheel zooms into a day square and "25" is set at
 //      5 pt and moved into it with the arrow keys; Save → the Charm_Pool_Art record (who, what removed, what added), the piece's charm carries the new parts (a hash of its own, "~ae"), the work
 //      area's front art draws them, the card's Front thumbnail is drawn again, the approved front is withdrawn in Engrave.artChanged's words, the back keeps its words and its "Show front" shows
@@ -134,17 +134,23 @@ async function partB(kit) {
     const a0 = await page.evaluate(() => { const j = __ce.job(); return { face: j.face, state: j.state, approvedAt: j.approvedAt, art: __ce.cv()._frontArt.length }; });
     check('B1 the calendar\'s front is approved (its record saved) and its card shows the month and the day grid in the work area', !!st.doc('Charm_Pool_Back', PID + '~front') && ['approved', 'written'].includes(a0.state) && a0.art === 23, JSON.stringify(a0));
 
-    /* ── the entry: one quiet pill beside the grid's label ── */
-    const e0 = await page.evaluate(() => {
-      const b = document.querySelector('#egQueue .rvItem[data-kind=placement] .backHost .egCharmEdit'), cv = __ce.cv(), r = b && b.getBoundingClientRect(), c = cv.getBoundingClientRect(), ctl = __ce.card().querySelector('.ctl');
-      return { has: !!b, text: b && getComputedStyle(b, '::after').content.replace(/"/g, ''), name: b && b.getAttribute('aria-label'), quiet: (b && b.parentElement.textContent.trim()) || '', icon: !!(b && b.querySelector('svg')), pos: r && [Math.round(r.left - c.left), Math.round(r.top - c.top), Math.round(r.right - c.left), Math.round(r.height)], cw: Math.round(c.width), inToolbar: !!(ctl && ctl.querySelector('.egCharmEdit')), all: document.querySelectorAll('.egCharmEdit').length };
+    /* ── the entry (DESIGN & ENGRAVE, Paul 28 Oct 2026: "the Charm Editor button in the back engraving Modal is way too small and hidden, and should be a lot more visible and prominent and easy
+       to click"): one big gold "Open in Charm Editor" button in the card's head beside its ×, never over the drawing and never in the toolbar ── */
+    const entryOf = () => page.evaluate(() => {
+      const c = __ce.card(), bs = [...c.querySelectorAll('.egCharmEdit')], b = bs[0], r = b && b.getBoundingClientRect(), x = c.querySelector('.rh > .x'), xr = x && x.getBoundingClientRect(), cv = __ce.cv(), cr = cv && cv.getBoundingClientRect(), ctl = c.querySelector('.ctl'), cs = b && getComputedStyle(b);
+      const peek = c.querySelector('.backHost .egFrontPeek'), pr = peek && peek.getBoundingClientRect(), over = (p, q) => !!(p && q && p.left < q.right && q.left < p.right && p.top < q.bottom && q.top < p.bottom);
+      return { n: bs.length, all: document.querySelectorAll('.egCharmEdit').length, text: b && b.textContent.trim(), name: b && b.getAttribute('aria-label'), icon: !!(b && b.querySelector('svg')), inHead: !!(b && b.parentElement.matches('.rh')),
+        besideX: !!(r && xr && Math.abs((r.top + r.bottom) / 2 - (xr.top + xr.bottom) / 2) < 12 && xr.left >= r.right - 1 && xr.left - r.right < 40), w: r && Math.round(r.width), h: r && Math.round(r.height), font: cs && parseFloat(cs.fontSize), bg: cs && cs.backgroundColor,
+        inWork: !!c.querySelector('.backHost .egCharmEdit'), inToolbar: !!(ctl && ctl.querySelector('.egCharmEdit')), overDrawing: over(r, cr), quiet: (c.querySelector('.backHost') || {}).textContent.trim(), peek: !!peek, overPeek: over(r, pr) };
     });
+    const e0 = await entryOf();
     const entryShot = await R.shot(w, 'CE-1-entry-front');
-    check('B2 the Engraving window: one "Edit charm" pill (an icon and two words) in the drawing\'s top-left corner beside the grid\'s label, not in the toolbar below; its words are the style sheet\'s, so the work area\'s own text (its messages) stays empty', e0.has && e0.text === 'Edit charm' && e0.name === 'Edit charm' && e0.quiet === '' && e0.icon && e0.pos[0] > 30 && e0.pos[1] >= 0 && e0.pos[1] < 30 && e0.pos[2] < e0.cw / 2 && e0.pos[3] < 24 && !e0.inToolbar && e0.all === 1, JSON.stringify(e0));
+    check('B2 the card: ONE big gold "Open in Charm Editor" button (an icon and the words) in its head right beside the ×, ' + (e0.w || 0) + 'x' + (e0.h || 0) + ' px, ' + e0.font + ' px words; not in the work area, not in the toolbar, over nothing of the drawing; the work area\'s own text (its messages) stays empty',
+      e0.n === 1 && e0.all === 1 && e0.text === 'Open in Charm Editor' && e0.name === 'Open in Charm Editor' && e0.icon && e0.inHead && e0.besideX && e0.w >= 160 && e0.h >= 34 && e0.font >= 13 && e0.bg === 'rgb(169, 130, 63)' && !e0.inWork && !e0.inToolbar && !e0.overDrawing && e0.quiet === '', JSON.stringify(e0));
     await R.openEngraveDetail(w, 'cal', { face: 'back' }); await R.settle(page, 700);
-    const e1 = await page.evaluate(() => { const h = document.querySelector('#egQueue .rvItem[data-kind=placement] .backHost'), b = h.querySelector('.egCharmEdit'), p = h.querySelector('.egFrontPeek'); const rb = b && b.getBoundingClientRect(), rp = p && p.getBoundingClientRect(); return { has: !!b, peek: !!p, after: !!(rb && rp && rb.left >= rp.right && Math.abs(rb.top - rp.top) < 4) }; });
+    const e1 = await entryOf();
     await R.shot(w, 'CE-1b-entry-back');
-    check('B3 on the back it sits right after "Show front", on the same line', e1.has && e1.peek && e1.after, JSON.stringify(e1));
+    check('B3 on the back the same one button is in the card\'s head, and "Show front" keeps its corner of the drawing (the button covers it nowhere)', e1.n === 1 && e1.all === 1 && e1.inHead && e1.besideX && e1.peek && !e1.overPeek && !e1.inWork, JSON.stringify(e1));
     const master = await page.evaluate(id => { const ch = Pool.charmOf(id); return { hash: ch.hash, n: ch.members.length }; }, PID2);
 
     /* ── the editor opens on the front ── */
@@ -152,11 +158,11 @@ async function partB(kit) {
     const thumb0 = await page.evaluate(() => __ce.thumb('front'));
     const backFit0 = await page.evaluate(id => { const b = [...Engrave.items().values()].find(x => x.face !== 'front' && (x.copies || []).includes(id)); return JSON.stringify([b.state, b.fit.size, b.fit.centre, b.fit.angle]); }, PID);
     const sheet0 = await page.evaluate(ids => __ce.sheet(ids), [PID, PID2]);
-    await page.click(Q + ' .backHost .egCharmEdit');
+    await page.click(Q + ' .egCharmEdit');
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page); await settleP(page);
     const o0 = await page.evaluate(() => { const E = CharmEditor.current, its = E.items(); return { face: E.face(), n: its.length, back: E.items('back').length, roles: its.map(i => i.role).join(), locked: its.filter(i => i.locked).map(i => [i.role, i.name]), paths: document.querySelectorAll('.ce-items path').length, title: document.querySelector('.ce-id h2').textContent, sub: document.querySelector('.ce-eyebrow').textContent, fonts: [...document.querySelectorAll('.ce-root .ce-item[data-font]')].map(b => b.textContent), frame: E.frame() }; });
     await R.shot(w, 'CE-2-editor-open');
-    check('B4 Edit charm opens the editor on the front: CALENDAR, "order … · piece 1 of 1", every part a layer (outline, 3 month letters, 20 day squares), drawn as SVG paths',
+    check('B4 Open in Charm Editor opens the editor on the front: CALENDAR, "order … · piece 1 of 1", every part a layer (outline, 3 month letters, 20 day squares), drawn as SVG paths',
       o0.face === 'front' && o0.n === 24 && o0.title === 'CALENDAR' && o0.sub === `order ${made.cal.rid} · piece 1 of 1` && o0.paths >= 24 && (o0.roles.match(/hatch/g) || []).length === 3 && (o0.roles.match(/line/g) || []).length === 20 && o0.back === 1, JSON.stringify(o0));
     check('B5 the cut line is locked and says why (the piece is on a sheet); the fonts are the engraving drop-down\'s words, the piece\'s own first (Ace)',
       o0.locked.length === 1 && o0.locked[0][0] === 'cut' && /on a sheet/.test(o0.locked[0][1]) && o0.fonts[0] === 'Ace' && ['Stylish', 'Pristina', 'Typewriter', 'Britannic Bold'].every(f => o0.fonts.includes(f)), JSON.stringify(o0.locked) + ' ' + o0.fonts.join(','));
@@ -286,7 +292,7 @@ async function partB(kit) {
     check('B13 the card\'s Front thumbnail is drawn again', !!thumb0 && !!thumb1 && thumb0 !== thumb1, thumb0 + ' → ' + thumb1);
 
     await R.openEngraveDetail(w, 'cal', { face: 'back' }); await R.settle(page, 800);
-    const bk = await page.evaluate(([added, gone, id]) => { const cv = __ce.cv(), j = __ce.job(), ids = cv._frontArt.map(s => (s.original || s).artMemberId); return { face: j.face || 'back', fit: JSON.stringify([j.state, j.fit.size, j.fit.centre, j.fit.angle]), newOn: added.every(a => ids.includes(a)), goneOff: gone.every(g => !ids.includes(g)), pill: !!__ce.card().querySelector('.backHost .egCharmEdit') }; }, [addedIds, letters, PID]);
+    const bk = await page.evaluate(([added, gone, id]) => { const cv = __ce.cv(), j = __ce.job(), ids = cv._frontArt.map(s => (s.original || s).artMemberId); return { face: j.face || 'back', fit: JSON.stringify([j.state, j.fit.size, j.fit.centre, j.fit.angle]), newOn: added.every(a => ids.includes(a)), goneOff: gone.every(g => !ids.includes(g)), pill: !!__ce.card().querySelector('.egCharmEdit') }; }, [addedIds, letters, PID]);
     check('B14 the back keeps its words where they were (its fit untouched), and "Show front" there shows the new front, not MAY', bk.face === 'back' && bk.fit === backFit0 && bk.newOn && bk.goneOff && bk.pill, JSON.stringify(Object.assign(bk, { backFit0 })));
     await R.openEngraveDetail(w, 'cal', { face: 'front' }); await R.settle(page, 800);
 
@@ -314,7 +320,7 @@ async function partB(kit) {
 
     /* ── Cancel writes nothing ── */
     const recAt = rec.at, puts1 = artPuts();
-    await page.click(Q + ' .backHost .egCharmEdit');
+    await page.click(Q + ' .egCharmEdit');
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page);
     const re = await page.evaluate(([gone]) => { const its = CharmEditor.current.items(); return { names: its.map(i => i.name || ''), sources: its.filter(i => i.source === 'added').map(i => i.name), gone: gone.every(g => !its.some(i => i.id === g)), n: its.length }; }, [letters]);
     await R.shot(w, 'CE-6-reopened');
@@ -343,7 +349,7 @@ async function partB(kit) {
       asked && !c1.open && artPuts() === puts1 && st.doc('Charm_Pool_Art', PID + '~front').at === recAt && c1.hash === after.hash, JSON.stringify({ asked, c1, puts: artPuts() - puts1 }));
 
     /* ── a second edit keeps the first; a part off the metal is refused and nothing is saved ── */
-    await page.click(Q + ' .backHost .egCharmEdit');
+    await page.click(Q + ' .egCharmEdit');
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page);
     await page.keyboard.press('t');
     const sq2 = squares[0].b, at2 = await clientOf(page, sq2[0] + 0.6 * PT, sq2[3] - 0.8 * PT);
@@ -360,7 +366,7 @@ async function partB(kit) {
       JSON.stringify({ removed: rec2.removed, added: rec2.added.map(a => [a.id, a.text]) }));
     await R.openEngraveDetail(w, 'cal', { face: 'front' }); await R.settle(page, 900);
     const puts2 = artPuts(), rec2At = rec2.at;
-    await page.click(Q + ' .backHost .egCharmEdit');
+    await page.click(Q + ' .egCharmEdit');
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page);
     const fr2 = await page.evaluate(() => CharmEditor.current.frame());
     await page.keyboard.press('Control+0'); await settleP(page);
@@ -383,7 +389,7 @@ async function partB(kit) {
       JSON.stringify({ n3, puts: artPuts() - puts2 }));
     /* ── a part hidden with the eye is not engraved (what the person sees is what the laser does) ── */
     await R.openEngraveDetail(w, 'cal', { face: 'front' }); await R.settle(page, 900);
-    await page.click(Q + ' .backHost .egCharmEdit');
+    await page.click(Q + ' .egCharmEdit');
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page);
     const line = await page.evaluate(() => { const it = CharmEditor.current.items().find(i => i.role === 'line' && i.source === 'master'); return it ? String(it.id) : null; });
     const eyeOf = id => page.evaluate(id => { const b = document.querySelector(`.ce-root .ce-layer[data-id="${id}"] [data-lact="eye"]`); return b ? b.title : ''; }, id), eye0 = await eyeOf(line);

@@ -31,7 +31,7 @@
   const ICON_X = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>';
   const EASE = "cubic-bezier(.2,.8,.2,1)";
   const VIEW_OF = { orders: "ordersView", engrave: "engraveView", review: "reviewView", library: "libView", design: "designView", master: "masterView", efficiency: "efficiencyView", charms: "charmsView", nest: "sheets" };
-  const WORD_OF = { orders: "Orders", engrave: "Engraving", review: "Review", library: "Library", design: "Design Station", master: "Master files", efficiency: "Employee efficiency", charms: "Charms", nest: "Nest" };
+  const WORD_OF = { orders: "Orders", engrave: "Design & Engrave", review: "Review", library: "Library", design: "Design Station", master: "Master files", efficiency: "Employee efficiency", charms: "Charms", nest: "Nest" };
   const R = { ctx: null, el: null, poll: 0, timer: 0, obs: null, going: false, seq: 0 };
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const digits = v => String(v == null ? "" : v).replace(/\D/g, "");

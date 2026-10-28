@@ -1998,8 +1998,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         // a spinner only while Engrave is actually reading or fitting it; otherwise what it waits for
         const working = !!(Engrave.isWorking && Engrave.isWorking(job)), where = face === "front" ? "front" : "back";
         const note = working ? (s === "classify" ? "Reading the words…" : `Fitting the words on the ${where}…`)
-          : s === "classify" ? "Confirm them in Engraving, or wait for them to be read"
-          : Engrave.canFit && !Engrave.canFit(job) ? "Waits for its sheet to be written, then it is fitted" : "Waits its turn in Engraving";
+          : s === "classify" ? "Confirm them in Design & Engrave, or wait for them to be read"
+          : Engrave.canFit && !Engrave.canFit(job) ? "Waits for its sheet to be written, then it is fitted" : "Waits its turn in Design & Engrave";
         return { kind: "preparing", label: "being prepared", job, text: job.text, working, note };
       }
       return { kind: "none", label: "none" };
@@ -2516,7 +2516,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (here && !here.gone) { if (p.face) here._face = p.face; selectPiece(here, { from: "disc" }); return; }
     const it = x.rid ? trailItems(x, x.rid).find(q => q.poolId === pid) : null;
     if (it && it.sheetId && it.sheetId !== W.id) { switchSheet(it.sheetId, { select: pid, from: "trail" }); return; }
-    toast(`${p.name} is not on a sheet yet: its engraving is in the Engraving tab`, "", 5000);
+    toast(`${p.name} is not on a sheet yet: its engraving is in the Design & Engrave tab`, "", 5000);
   }
   async function approveHere(x, b) {
     // (the face the card shows is the one approved: a piece engraved on both faces has two cards, one for each)
@@ -2736,7 +2736,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function goEngrave(x, b) {
     const e0 = x.eng, e1 = e0 && e0.faces ? e0.faces[x._face] || e0.faces.back || e0.faces.front : e0, job = e1 && e1.job, rec = W.rec;
     RET.ctx = { sheetId: rec.id, poolId: x.poolId || x.id, rid: x.rid, key: job ? job.key : null, label: nameOf(rec), was: job ? job.state : null };
-    if (b) b.innerHTML = `<span class="spin"></span>Opening Engraving…`;
+    if (b) b.innerHTML = `<span class="spin"></span>Opening Design & Engrave…`;
     const plain = () => close().then(() => {
       const v = Engrave.view();
       if (job && ["approved", "written", "skipped"].includes(job.state)) Engrave.restoreView(Object.assign({}, v, { tab: "place", focus: job.key, list: false, chosen: true, q: x.rid || "" }));   // (NODECIDED: a decided piece opens in the same detail card)
@@ -2759,7 +2759,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const rec = W.rec; RET.ctx = { sheetId: rec.id, poolId: x.poolId || x.id, rid: x.rid, key: null, label: nameOf(rec), was: null };
     const c0 = RET.ctx;
     return Promise.resolve(CNMonogramSeals.openIn(mp, { rid: x.rid, closeFirst: () => close() })).then(ok => {
-      if (ok === false) { if (RET.ctx === c0) RET.ctx = null; toast("This monogram cannot be opened in Engraving here", "bad", 5000); return ok; }
+      if (ok === false) { if (RET.ctx === c0) RET.ctx = null; toast("This monogram cannot be opened in Design & Engrave here", "bad", 5000); return ok; }
       returnPill(); return ok;
     }, err => { if (RET.ctx === c0) RET.ctx = null; throw err; });
   }

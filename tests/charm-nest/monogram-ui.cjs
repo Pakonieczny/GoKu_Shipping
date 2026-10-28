@@ -487,7 +487,7 @@ FX.ai2 = { rid: '4200900026', sku: 'MONOGRAM_5351', listing: '997905351', title:
     check(await rvIn('4200900032') === 0, 'Mark OK takes it out of Review again (the Engraving tab\'s, as before)');
     // a hold a person pressed on the line is a hold (its pill says held, the piece placement says "On hold"); with none the line waits in the Engraving tab (the pill says where, the placement does not call it a hold)
     { const sts = await page.evaluate(() => { const row = Orders.rows().find(r => r.order.receiptId === '4200900032'), snap = () => ({ pill: Orders.statePill(row)[1], place: (PiecePlacement.ofRow(row) || {}).state }); row.state = 'held'; const free = snap(); row.hold = 'held by a person: wait for the buyer\'s reply'; const held = snap(); row.hold = null; return { free, held }; });
-      check(sts.free.pill === 'monogram · Engraving' && sts.free.place !== 'hold' && /held/i.test(sts.held.pill) && sts.held.place === 'hold', 'a monogram line with no hold waits in the Engraving tab (pill "monogram · Engraving", placement not "On hold"); with a hold a person pressed it is held and On hold: ' + JSON.stringify(sts)); }
+      check(sts.free.pill === 'monogram · Design & Engrave' && sts.free.place !== 'hold' && /held/i.test(sts.held.pill) && sts.held.place === 'hold', 'a monogram line with no hold waits in the Engraving tab (pill "monogram · Engraving", placement not "On hold"); with a hold a person pressed it is held and On hold: ' + JSON.stringify(sts)); }
     await hideCases(false);
 
     // ═══ 6 · the page is told, a host can hold Approve, a widget can be moved and removed ═══

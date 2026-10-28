@@ -90,10 +90,10 @@
   /** Can this card approve the back, and when not, the one plain reason why. */
   function canApprove(e){
     const job=e.job;
-    if(e.kind==='words')return {why:'Confirm the words in Engraving first: words that are not confirmed are never approved.'};
+    if(e.kind==='words')return {why:'Confirm the words in Design & Engrave first: words that are not confirmed are never approved.'};
     if(e.kind==='preparing')return {why:'Not ready to approve: the back is still being prepared.'};
     if(e.kind==='approve'){
-      if(!job)return {why:'Not loaded here yet: use Fix in Engraving to approve it.'};
+      if(!job)return {why:'Not loaded here yet: use Fix in Design & Engrave to approve it.'};
       if(job.row?.state==='gone')return {why:'This order has left the pull (cancelled or shipped), so it is not approved here.'};
       return {ok:true};
     }
@@ -151,7 +151,7 @@
     else if(ap.why)approve=`<span class="egApproveWrap"><button type="button" class="btn sm egApproveButton egAsk egOff" disabled aria-describedby="${reasonId}">Approve engraving</button></span><span class="egOffWhy" id="${reasonId}">${esc(say(ap.why))}</span>`;
     // one press for both faces of the piece shown ("Approve both faces"): offered by the host (e.both = { ok, why }) only when this piece has a Front and a Back still to approve; off, with the reason as its tip, until both placements have been looked at
     if(e.both && e.cycle?.faces && ap.ok && kind==='approve')approve+=`<button type="button" class="btn ghost sm egApproveBoth" data-e="approveBoth"${e.both.ok?'':` disabled title="${esc(e.both.why || '')}"`}>Approve both faces</button>`;
-    const open=kind==='none'?'':`<button type="button" class="btn ${kind==='words'?'gold':'ghost'} sm egOpen" data-e="engrave">${done?'View in Engraving':'Fix in Engraving'} <span aria-hidden="true">→</span></button>`;
+    const open=kind==='none'?'':`<button type="button" class="btn ${kind==='words'?'gold':'ghost'} sm egOpen" data-e="engrave">${done?'View in Design & Engrave':'Fix in Design & Engrave'} <span aria-hidden="true">→</span></button>`;
     const acts=kind==='words'?open+approve:approve+open;
     if(kind==='none')return `${compact?'':`<span class="fLabel">${say('Back engraving')}</span>`}<div class="swEng egCard${compact?' egCompact':''}" data-state="none"><div class="top">${cycle}<b>${status}</b></div></div>`;
     const preview=['approve','approved'].includes(kind)?'<div class="pv" data-engraving-preview></div>':'';
@@ -216,7 +216,7 @@
       const was=btn.innerHTML;let run;
       try{run=open?.(btn);}catch(err){console.warn('engraving card: open',err);return;}
       if(!run || typeof run.then!=='function')return;
-      btn.disabled=true;btn.setAttribute('aria-busy','true');btn.innerHTML='<span class="spin"></span>Opening Engraving…';
+      btn.disabled=true;btn.setAttribute('aria-busy','true');btn.innerHTML='<span class="spin"></span>Opening Design & Engrave…';
       const back=()=>{if(btn.isConnected){btn.disabled=false;btn.removeAttribute('aria-busy');btn.innerHTML=was;}};
       run.then(back,err=>{console.warn('engraving card: open',err);back();});
     });
@@ -235,7 +235,7 @@
     // A fresh placement must use the current fit; an old approved thumbnail must not disguise edits.
     if(job?.fit && job?.view && root?.Engrave?.renderBack){try{const cv=root.Engrave.renderBack(job,600,{hatch:false,grid:false});cv.setAttribute('role','img');cv.setAttribute('aria-label',aboutFace('The full back engraving',faceOf(job)));slot.replaceChildren(cv);zoomPreview(slot,zoom,job,true);return;}catch(_){}}
     if(img){const im=root.document.createElement('img');im.alt=aboutFace('The full approved back engraving',faceOf(job));im.crossOrigin='anonymous';im.src=imageUrl?imageUrl(img):img;slot.replaceChildren(im);zoomPreview(slot,zoom,job,false);return;}
-    slot.classList.add('egPvNone');slot.innerHTML=`<span class="by">${aboutFace('No preview here: see the back in Engraving',faceOf(job))}</span>`;
+    slot.classList.add('egPvNone');slot.innerHTML=`<span class="by">${aboutFace('No preview here: see the back in Design & Engrave',faceOf(job))}</span>`;
   }
   async function press(button,stamp){
     if(!button || !root?.Seal)return;
