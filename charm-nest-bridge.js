@@ -12060,12 +12060,23 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     if(only && every){batch(()=>paint(only));drawAll=true;if(!frame)frame=requestAnimationFrame(refresh);return;}
     batch(()=>paint(only));
   }
+  /** The cards of each area in their order (actual sets first, each by its last activity), and (areas) which area shows and which says it is empty: after every drawing, and when the
+   *  Library shows its cards again for a metal chip (Sets.renderLibrary, NAV round 4) */
+  function arrange(areas){
+    if(!areas)for(const list of document.querySelectorAll('#libBody .laserAreaItems')){
+      const value=card=>({...card._laserSet,sheets:(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean)});
+      const ordered=[...list.children].sort((a,b)=>CNListActivity.compareBlocks(value(a),value(b),CNListActivity.state('library').direction));   // (actual sets first, then the groups of loose sheets: charm-nest-activity.js)
+      ordered.forEach((card,i)=>{if(list.children[i]!==card)list.insertBefore(card,list.children[i] || null);});
+    }
+    else document.querySelectorAll('[data-laser-area]').forEach(area=>{const hasItems=!!area.querySelector('.laserAreaItems')?.children.length;area.hidden=area.dataset.laserArea!=='ready' && !hasItems;const empty=area.querySelector('.laserEmpty');if(empty)empty.hidden=hasItems;});
+  }
   function paint(only){
     if(live.checking)paintedWhileChecking=true;
-    let needsSeals=false,names=null,before=null,home=null;const lookup=()=>names || (names=R.lookup({rows:Orders.rows()})),moved=[],stepWant=[];
+    let needsSeals=false,names=null,before=null,home=null;const lookup=()=>names || (names=R.lookup({rows:Orders.rows()})),moved=[],stepWant=[],painted=[];
     document.querySelectorAll('[data-laser-card]').forEach(card=>{
       if(!card._laserSheets)return;   // (a copy of a card flying to a tab, charm-nest-motion.js, is not a card: it holds none of its records)
       if(only && !(card._laserSet?.setId && only.has('t:'+card._laserSet.setId)) && !card._laserSheets.some(id=>only.has('s:'+id)))return;   // (a card of nothing that changed is as it was drawn)
+      card._lrFresh=false;painted.push(card);   // (painted: a metal chip may show it again as it is, Sets.renderLibrary)
       const sheets=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean),report=card._laserSet?group(card._laserSet,sheets):{...sheet(sheets[0] || {}),ready:canCut(sheets[0] || {})};
       if(sheets.some(s=>!s.laserDoneAt && sheet(s).ready!==!!s.processReady))needsSeals=true;
       for(const s of sheets)if(stepBehind(s)){needsSeals=true;stepWant.push(s);}   // (a step changed since the server last noted the steps: the pass records when it was completed)
@@ -12081,14 +12092,11 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       syncApprove(card);   // the manual "Approve for laser cutting" button: one for a set, one for each sheet that is part of no set (below)
       try{window.LibraryReviewHold?.decorate?.(card);}catch(e){console.warn('Review hold',e);}   // (a held sheet's one-line note under its rail, when its own Approve line does not say it)
     });
-    for(const list of document.querySelectorAll('#libBody .laserAreaItems')){
-      const value=card=>({...card._laserSet,sheets:(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean)});
-      const ordered=[...list.children].sort((a,b)=>CNListActivity.compareBlocks(value(a),value(b),CNListActivity.state('library').direction));   // (actual sets first, then the groups of loose sheets: charm-nest-activity.js)
-      ordered.forEach((card,i)=>{if(list.children[i]!==card)list.insertBefore(card,list.children[i] || null);});
-    }
-    if(window.LibraryDone)LibraryDone.refreshCards(document.getElementById('libBody'));
+    arrange(false);
+    // (NAV round 4: a drawing of some cards (only) finishes those cards: the others are as they were finished)
+    if(window.LibraryDone)LibraryDone.refreshCards(only?painted:document.getElementById('libBody'));
     if(needsSeals && !polling && !sealPoll && S.cloud.ok){for(const s of stepWant)stepAsked.set(s.id || s.sheetId,stepBehind(s,true));sealPoll=setTimeout(()=>{sealPoll=0;poll(true);},Math.max(0,5100-(Date.now()-lastPoll)));}
-    document.querySelectorAll('[data-laser-area]').forEach(area=>{const hasItems=!!area.querySelector('.laserAreaItems')?.children.length;area.hidden=area.dataset.laserArea!=='ready' && !hasItems;const empty=area.querySelector('.laserEmpty');if(empty)empty.hidden=hasItems;});
+    arrange(true);
     if(moved.length)landed(home,before,moved);
     try{window.LibraryIssues?.refresh?.();}catch(e){console.warn('Library issues',e);}   // (an open '!' panel follows what this pass drew)
   }
@@ -12304,8 +12312,12 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     afterApprove(box,!error);
   }
   /** Cards to draw again: `only` (a Set of 's:<sheet>' / 't:<set>' keys, from a live answer) draws the cards that hold those; no argument draws them all. */
+  // (NAV round 4: the drawings asked for, counted, and when each card's keys (or every card) were last asked to be drawn: a card the Library's metal chips took off the screen and show
+  //  again is painted again only when it missed one of them, Sets.renderLibrary)
+  let changes=0,allAt=0;const keyAt=new Map();
+  const missed=(card,at)=>!!card._lrFresh || allAt>at || (card._laserSet?.setId && (keyAt.get('t:'+card._laserSet.setId) || 0)>at) || (card._laserSheets || []).some(id=>(keyAt.get('s:'+id) || 0)>at);
   function changed(only){
-    if(only instanceof Set){if(!only.size)return;if(!dirty)dirty=new Set();for(const k of only)dirty.add(k);}else drawAll=true;
+    if(only instanceof Set){if(!only.size)return;if(!dirty)dirty=new Set();changes++;for(const k of only){dirty.add(k);keyAt.set(k,changes);}}else{drawAll=true;allAt=++changes;}
     if(!frame)frame=requestAnimationFrame(refresh);ensureLive();
   }
   /* ── The Library follows the cloud (Paul, 3 Oct 04:47: "real-time", and "I'm often wondering what is still remaining for a
@@ -12562,7 +12574,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       return c && c.why ? String(c.why) : '';
     }catch(_){return '';}
   }
-  return {follow:ensureLive,record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,moveBlock,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
+  return {follow:ensureLive,record,sheet,group,canCut,labels,sections,place,changed,changes:()=>changes,missed,arrange:()=>{arrange(false);arrange(true);},saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,moveBlock,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -13034,6 +13046,12 @@ const Sets = window.Sets = (() => {
     document.head.appendChild(s);
   }
   let _cache = null, libraryRequest = 0;
+  /* NAV round 4 (28 Oct 2026, Paul: "every interaction ... must be as responsive as Photoshop"): a metal chip (opts.filter) shows the same sets, filtered. While the Library's list is
+     the one read before (_cache) and the search the same, the sets are those of the last drawing (_cache.sets, the same objects) and so are their cards: the cards on screen stay as they
+     are, a card an earlier chip took off the screen (kept here) is put back and painted again in the next frame only if a drawing was asked for while it was away (LaserReview.missed),
+     and only a set with no card is built (and painted, its keys alone). A chip press built every card again and painted every card again in the next frame (~330 ms at 80 sets). Any
+     other drawing builds them all, as before. */
+  const kept = { cache: null, q: null, cards: new Map() };
   /** One set's card, its sheets side by side with their QR labels (the Library's Sets view, and a set opened in its
       Completed list): `shown` are the sheets drawn, `all` every sheet of the set (its laser readiness reads them all). */
   /** GOLDEDIT (Paul, 27 Oct 2026): a sheet of this set changed after the set was released (approved for laser cutting, sent to the station, its labels made): its record's releasedChange (Review's
@@ -13133,33 +13151,49 @@ const Sets = window.Sets = (() => {
         Promise.resolve(Gate.followRecords(records)).then(n => { if (n) Gate.refreshMembership(); }).catch(() => {});
       }
       if (S.library.kind !== "sets" || (LD && LD.tab() === "done")) return;
-      _cache.sheets=Gate.projectLibraryRecords(_cache.rawSheets || _cache.sheets);
-      _cache.sheets.forEach(LaserReview.record);
       // a number searched for (an order, a listing): the sets that hold it, loaded or found by the search
-      const focus = LD ? LD.focus() : null, pool = LD ? LD.rows(_cache.sheets, focus, {allMetals:true}) : _cache.sheets;
-      if (pool !== _cache.sheets) pool.forEach(LaserReview.record);
-      const rawSets = focus && focus.sets.length ? [...new Map([...focus.sets, ...(_cache.rawSets || [])].map(x=>[x.setId,x])).values()] : (_cache.rawSets || []);
-      _cache.sets=libraryGroups(rawSets,pool);
-      const done = r => !!(LD && LD.isDone(r));
+      const focus = LD ? LD.focus() : null;
       // the metal chips and the search used to light up and change nothing here: this view read neither
       const metal = S.library.metal && S.library.metal !== "all" ? S.library.metal : null;
       const q = (document.getElementById("libSearch").value || "").trim().toLowerCase();
+      const again = !!(opts && opts.filter) && reuse && !focus && kept.cache === _cache && kept.q === q && Array.isArray(_cache.sets);   // (NAV round 4: the same sets, another metal: kept)
+      if (!again) {
+        kept.cards.clear();
+        _cache.sheets=Gate.projectLibraryRecords(_cache.rawSheets || _cache.sheets);
+        _cache.sheets.forEach(LaserReview.record);
+        const pool = LD ? LD.rows(_cache.sheets, focus, {allMetals:true}) : _cache.sheets;
+        if (pool !== _cache.sheets) pool.forEach(LaserReview.record);
+        const rawSets = focus && focus.sets.length ? [...new Map([...focus.sets, ...(_cache.rawSets || [])].map(x=>[x.setId,x])).values()] : (_cache.rawSets || []);
+        _cache.sets=libraryGroups(rawSets,pool);
+      }
+      const done = r => !!(LD && LD.isDone(r));
       // Current: a set the laser has cut, and a group each of whose sheets it has cut, are under Completed
       let sets = _cache.sets.filter(st => !done(st) && st.sheets.some(r => !done(r)));
       if (metal) sets = sets.filter(st => (st.materials || []).includes(metal));
       if (focus) sets = sets.filter(st => st.sheets.concat(st.goldPending || []).some(r => focus.test(r)));   // (a 10K / 14K sheet drawn greyed in a set is found with it)
       else if (q) sets = sets.filter(st => `${st.setId ? O.completedTitle(st) : st.name || ""} ${st.setId || ""} ${st.setId ? O.completionDay(st) : st.day || ""} ${st.runId || ""} ${Object.keys(st.orders || {}).join(" ")} ${(st.sheets || []).concat(st.goldPending || []).flatMap(r=>[r.fileBase,r.names,(r.listings || []).join(" "),...(r.backs || []).map(b=>b.text)]).join(" ")}`.toLowerCase().includes(q));
       sets=CNListActivity.selectBlocks("library",sets);   // (actual sets before every group of loose sheets, each in last-activity order)
-      if (!sets.length) { body.innerHTML = `<div class="libEmpty">${focus ? "" : q || metal ? "No sets match this filter." : "No sets yet."}</div>`; if (LD) LD.decorate(body); return; }
+      // (NAV round 4: the cards on screen, and where each stands, before the body is emptied: shown again, or kept for the next chip)
+      const shown = again ? new Map([...body.querySelectorAll(".laserAreaItems > .setCard")].filter(c => c._keptSt).map(c => { c._keptReady = !!c.closest('[data-laser-area="ready"]'); return [c._keptSt, c]; })) : null;
+      const keepRest = () => { if (shown) for (const [st, c] of shown) { c._keptAt = LaserReview.changes(); kept.cards.set(st, c); } kept.cache = _cache; kept.q = q; };
+      if (!sets.length) { body.innerHTML = `<div class="libEmpty">${focus ? "" : q || metal ? "No sets match this filter." : "No sets yet."}</div>`; keepRest(); if (LD) LD.decorate(body); return; }
       LaserReview.sections(body);
+      const fresh = [], back = [];
       LaserReview.batch(() => { for (const st of sets) {
+        let card = again ? shown.get(st) || null : null;
+        if (card) shown.delete(st); else if (again && (card = kept.cards.get(st) || null)) { kept.cards.delete(st); if (LaserReview.missed(card, card._keptAt)) back.push(card); }
+        if (card) { LaserReview.place(card, card._keptReady, body); continue; }
         const all = st.sheets.slice().sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || (a.sheetIndex || 0) - (b.sheetIndex || 0));
         // (after Undo set the view is read again, and each card glides from where it was rather than being redrawn in one go)
-        const card = libraryCard(st, all, all, {onUndo: () => LD && LD.glide ? LD.glide(body, () => renderLibrary(body)) : renderLibrary(body)});
+        card = libraryCard(st, all, all, {onUndo: () => LD && LD.glide ? LD.glide(body, () => renderLibrary(body)) : renderLibrary(body)});
+        card._keptSt = st; card._lrFresh = true; fresh.push(card);
         LaserReview.place(card,LaserReview.group(st,all).ready,body);
       } });
-      LaserReview.changed();
-      if (LD) LD.decorate(body);
+      // (every card drawn anew is painted in the next frame; on a chip press only those, by their keys)
+      if (again) { LaserReview.arrange(); LaserReview.changed(new Set(fresh.concat(back).flatMap(c => (c._laserSheets || []).map(id => "s:" + id).concat(c._laserSet && c._laserSet.setId ? ["t:" + c._laserSet.setId] : [])))); }   // (in their order, and the areas' empty lines, at once: no drawing of every card follows)
+      else LaserReview.changed();
+      keepRest();
+      if (LD) LD.decorate(body, again ? fresh : null);
     } catch (e) {
       if (request !== libraryRequest || S.library.kind !== "sets") return;
       // ADV-MASTER (Paul, 15 Oct 2026: "lost internet connections"): sets already on screen stay when their refresh fails, with the time of the list, why it was not refreshed and a Retry, as the Sheets list always did (libraryStale);
@@ -20682,7 +20716,11 @@ const OrderWin = window.OrderWin = (() => {
     const key = TeamMail.drawKey(rid, up);
     if (key === W.painted) return;
     W.painted = key;
-    const stick = !keep || t.scrollHeight - t.scrollTop - t.clientHeight < 48, at = keep ? t.scrollTop : 0;
+    // NAV round 4 (28 Oct 2026, Paul: "Order Details … at near real-time speed"): where the person left the thread (at its end, or how far up) is what its own scroll events last saw,
+    // not read here: the read laid out the whole window once more per order opened and per Back / Next, before any of it was on screen (a thread never scrolled counts as at its end)
+    if (!t._seenOn) { t._seenOn = true; t.addEventListener("scroll", () => { t._seen = { end: t.scrollHeight - t.scrollTop - t.clientHeight < 48, at: t.scrollTop }; }, { passive: true }); }
+    const seen = keep ? t._seen : null, stick = !seen || seen.end, at = seen ? seen.at : 0;
+    if (!keep) t._seen = null;
     t.innerHTML = TeamMail.html(rid, up);
     // NAV (28 Oct 2026, Paul: "Order Details … at near real-time speed"): the thread is put at its end (or back where it was) in the frame that shows it, once for every drawing of the
     // turn, not at each drawing: reading its height there laid out the whole page, three and four times per order window opened (the read starting, the read answered, the window's own)

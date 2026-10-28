@@ -1923,7 +1923,9 @@
       // (the steps of the piece shown, or of all of them: drawn again when they change)
       const keys = R.map(r => r.s.k).join(" ");
       if (wrap.dataset.keys !== keys) { wrap.dataset.keys = keys; rail.style.setProperty("--n", R.length); wrap.innerHTML = R.map(r => `<button type="button" class="tlStop f" data-stage="${r.s.k}"><i class="tlSeal"></i><span>${esc(r.s.l)}</span></button>`).join(""); }
-      fitRail(rail, S.M);
+      // (NAV round 4, 28 Oct 2026: the first drawing of a mount is not measured: the size observer fits it in the same frame, before it is painted (fitAll), and the read here laid out
+      //  the whole order window once more per order it showed)
+      if (S.M || !(o && o.first && fitObserver)) fitRail(rail, S.M);
       const nodes = [...wrap.children], presses = [];
       // (all pieces: how many have reached a step is said in the step's aria-label below; no "2 of 6" is drawn over the rail any more, Paul, 12 Oct 2026: "this 1 of 3 is confusing in the UI ... I would just remove it")
       const sumOf = i => D.sum && D.sum.rail.find(r => r.i === i);

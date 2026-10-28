@@ -8547,7 +8547,7 @@ async function boot() {
   { const m = (location.hash || "").slice(1).split("/")[0]; if (m && tabNamed(m)) setMode(m); }
   $$("#libKind button").forEach(b => b.onclick = () => { $$("#libKind button").forEach(x => x.classList.toggle("on", x === b)); S.library.kind = b.dataset.k; loadLibrary(); });
   $("#rpClose").onclick = () => closeDlg($("#dlgReport")); $("#lsClose").onclick = () => closeDlg($("#dlgSheet"));
-  $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; if (window.LibraryDone && LibraryDone.tab() === "done") LibraryDone.show(); else if (S.library.kind === "sets" && window.Sets) Sets.renderLibrary($("#libBody"), { reuse: true }); else loadLibrary(); });
+  $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; if (window.LibraryDone && LibraryDone.tab() === "done") LibraryDone.show(); else if (S.library.kind === "sets" && window.Sets) Sets.renderLibrary($("#libBody"), { reuse: true, filter: true }); else loadLibrary(); });   // (filter: the same sets, another metal: Sets.renderLibrary shows the cards it has, NAV round 4)
   // (a search in either tab is debounced, and a number is looked up as an order and as a listing: charm-nest-library.js)
   $("#libSearch").oninput = () => (window.LibraryDone ? LibraryDone.input() : S.library.kind === "sets" ? Sets.renderLibrary($("#libBody"), { reuse: true }) : renderLibrary());
   // the two search boxes on adjacent tabs must behave the same: type and it searches, and the native × clears it.

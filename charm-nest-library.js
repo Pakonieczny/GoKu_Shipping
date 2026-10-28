@@ -787,17 +787,25 @@
     setTimeout(() => els.forEach(el => el.classList.remove('ldHit')), 4200);
   }
   /** Finishes Current once it is drawn (renderLibrary, the Sets view): the marks, the search's line and its lit cards. */
-  function decorate(body) {
+  /** A list of cards as the root the passes read (its querySelectorAll and contains), NAV round 4; any other root as it is. */
+  const cardsRoot = r => Array.isArray(r) ? { querySelectorAll: sel => r.flatMap(c => (c.matches(sel) ? [c] : []).concat([...c.querySelectorAll(sel)])), contains: n => r.some(c => c.contains(n)) } : r;
+  function decorate(body, only) {
     body = body || byId('libBody'); if (!body) return;
     L.currentQ = query();
-    pass(() => { cards(body, 'current'); partials(body); });
+    // (NAV round 4, 28 Oct 2026: `only`, the cards a metal chip drew anew (Sets.renderLibrary): those alone are finished, the others are on screen as they were finished; the passes read
+    //  a root's querySelectorAll / contains, which these cards stand in for)
+    const root = Array.isArray(only) ? cardsRoot(only) : body;
+    pass(() => { cards(root, 'current'); partials(root); });
     body.querySelectorAll(':scope > .ldFound').forEach(n => n.remove());
     const empty = body.querySelector(':scope > .libEmpty'); if (empty && !empty.textContent.trim()) empty.remove();
     const line = foundLine('current'); if (line) body.prepend(line);
     locate(body);
     if (L.flash) { const f = L.flash; L.flash = null; landBack(body, f); }
-    paintCount(); refreshCounts(); syncSearching(); fitPlaceholder();
+    paintCount(); refreshCounts(); syncSearching(); fitSoon();
   }
+  // (NAV round 4: the placeholder is fitted in the frame that shows the list, once: measured at once it laid out the whole Library a second time per drawing)
+  let fitAsked = 0;
+  const fitSoon = () => { if (!fitAsked) fitAsked = requestAnimationFrame(() => { fitAsked = 0; fitPlaceholder(); }); };
 
   /* ── Completed: the list ── */
   const rowKey = r => r.kind === 'set' ? 'set:' + r.setId : 'sheet:' + r.id;
@@ -1138,7 +1146,7 @@
     const w = PP.sheetWords(ids, nums); if (w) t.title = w; else t.removeAttribute('title');
   }
 
-  window.LibraryDone = { mark, isDone, isFiled, cutStamp, canComplete, addedSeals, recordOf, nameOf, setSheets, refreshCards: root => pass(() => { cards(root, L.tab); partials(root); }), tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, snapshot, glideFrom, counts: () => L.counts && Object.assign({}, L.counts) };
+  window.LibraryDone = { mark, isDone, isFiled, cutStamp, canComplete, addedSeals, recordOf, nameOf, setSheets, refreshCards: root => pass(() => { root = cardsRoot(root); cards(root, L.tab); partials(root); }), tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, snapshot, glideFrom, counts: () => L.counts && Object.assign({}, L.counts) };
   window.LibraryDone.reload = reload;
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', init); else init();
 })();
