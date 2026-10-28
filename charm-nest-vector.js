@@ -34,13 +34,15 @@
     engine.AddPaths(points(subject),C.PolyType.ptSubject,true);
     engine.AddPaths(points(clip),C.PolyType.ptClip,true);
     const rule=r=>r==='evenodd'?C.PolyFillType.pftEvenOdd:C.PolyFillType.pftNonZero;
-    if(!engine.Execute(operation==='difference'?C.ClipType.ctDifference:C.ClipType.ctUnion,tree,rule(subjectRule),rule(clipRule)))return [];
+    // (intersection and xor: the Charm Editor's Pathfinder, Paul 28 Oct 2026; union and difference as before)
+    const ct={difference:C.ClipType.ctDifference,intersection:C.ClipType.ctIntersection,xor:C.ClipType.ctXor}[operation]??C.ClipType.ctUnion;
+    if(!engine.Execute(ct,tree,rule(subjectRule),rule(clipRule)))return [];
     const out=[];
     function visit(node,depth){for(const child of node.Childs()) {out.push({points:child.Contour().map(p=>[p.X/SCALE,p.Y/SCALE]),hole:child.IsHole(),depth});visit(child,depth+1);}}
     visit(tree,0);return out;
   }
   const filled=path=>boolean((path.subpaths||[]).map(s=>flatten(s).points),[],'union',path.paintOp?.endsWith('*')?'evenodd':'nonzero');
   const subpath=points=>[['m',points[0]],...points.slice(1).map(p=>['l',p]),['h']];
-  const api={flatten,boolean,filled,subpath};root.CharmNestVector=api;
+  const api={flatten,boolean,filled,subpath,SCALE,ops:['union','difference','intersection','xor']};root.CharmNestVector=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(typeof window!=='undefined'?window:globalThis);
