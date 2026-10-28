@@ -160,14 +160,21 @@
   }
 
   /** Disc erosion by r cells (the box shrinks by r on every side). */
+  // (MCINSTANT, 28 Oct 2026: the same disc, read a row at a time: each row of the disc is one run of pixels, counted from the row's running sum, so a pixel costs 2r+1 reads, not
+  //  the ~r² of testing every offset (r = 7 at the verifier's 6 px/pt: 15 reads, not ~160). Exactly the same pixels: a run must lie inside the bitmap and be all set)
   function erode(bits, w, h, r) {
     if (r <= 0) return { bits: bits.slice(), w, h };
-    const W = Math.max(1, w - 2 * r), H = Math.max(1, h - 2 * r), out = new Uint8Array(W * H);
-    const offs = [];
-    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r) offs.push([dx, dy]);
+    const W = Math.max(1, w - 2 * r), H = Math.max(1, h - 2 * r), out = new Uint8Array(W * H), R2 = r * r + r;
+    const half = new Int32Array(2 * r + 1);
+    for (let dy = -r; dy <= r; dy++) { let hw = 0; while ((hw + 1) * (hw + 1) + dy * dy <= R2) hw++; half[dy + r] = hw; }
+    const w1 = w + 1, P = new Int32Array(w1 * h);
+    for (let y = 0; y < h; y++) { let n = 0; for (let x = 0; x < w; x++) { n += bits[y * w + x] ? 1 : 0; P[y * w1 + x + 1] = n; } }
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       let ok = 1;
-      for (let i = 0; i < offs.length; i++) { const sx = x + r + offs[i][0], sy = y + r + offs[i][1]; if (sx < 0 || sy < 0 || sx >= w || sy >= h || !bits[sy * w + sx]) { ok = 0; break; } }
+      for (let dy = -r; dy <= r; dy++) {
+        const sy = y + r + dy, hw = half[dy + r], a = x + r - hw, b = x + r + hw;
+        if (sy < 0 || sy >= h || a < 0 || b >= w || P[sy * w1 + b + 1] - P[sy * w1 + a] !== b - a + 1) { ok = 0; break; }
+      }
       out[y * W + x] = ok;
     }
     return { bits: out, w: W, h: H };
@@ -2829,14 +2836,14 @@
       const p = byId.get(pl.id); if (!p) return;
       // (25 Oct 2026: at the size written — job.writeScale, the shrink about the centre the page applies after the nest; see shrinkUnion.
       //  Not pl.scale: that also holds a Manual Control size, which the job's piece already carries)
-      const r = resample(p.bits, p.w, p.h, p.scale / writeScaleOf(job) / (pl.fixScale > 0 && pl.fixScale < 1 ? pl.fixScale : 1), res);   // (and the overlap fix's own shrink, pl.fixScale: OVERLAPFIX 25 Oct 2026)
-      const rot0 = rotateBitmap(r.bits, r.w, r.h, pl.angle);
+      const sc = p.scale / writeScaleOf(job) / (pl.fixScale > 0 && pl.fixScale < 1 ? pl.fixScale : 1);   // (and the overlap fix's own shrink, pl.fixScale: OVERLAPFIX 25 Oct 2026)
+      // (MCINSTANT, 28 Oct 2026: opts.cache, Manual Control's check: the mask of one charm at one size and angle is made once, not on every check of every pose)
+      const { rot0, rot } = verifyMask(p, sc, pl.angle, res, erodePx, !!(opts && opts.cache));
       const remnant=locked.has(pl.id)?job.sheet.remnant:job.protectedRose?.profile||job.sheet.remnant;
       if(remnant){
         const rx=Math.round(pl.cxPt*res-rot0.cx),ry=Math.round(pl.cyPt*res-rot0.cy);
         for(let y=0;y<rot0.h;y++)for(let x=0;x<rot0.w;x++)if(rot0.bits[y*rot0.w+x]&&Rose.intersects(remnant,(rx+x)/res,(ry+y)/res,1/res,1/res))removedPx++;
       }
-      const rot = erodePx ? Object.assign(erode(rot0.bits, rot0.w, rot0.h, erodePx), { cx: rot0.cx - erodePx, cy: rot0.cy - erodePx }) : rot0;
       const x0 = Math.round(pl.cxPt * res - rot.cx), y0 = Math.round(pl.cyPt * res - rot.cy);
       masks.push({ i, id: pl.id, bits: rot.bits, w: rot.w, h: rot.h, x0, y0 });
       for (let y = 0; y < rot.h; y++) for (let x = 0; x < rot.w; x++) if (rot.bits[y * rot.w + x]) {
@@ -2847,24 +2854,40 @@
         ids[k] = i;
       }
     });
-    // min gap: chamfer distance to the nearest *other* piece, sampled at the boundary
+    // min gap: chamfer distance to the nearest *other* piece, sampled at the boundary (opts.noGap: not asked for, Manual Control reads only overlap and edge)
     let minGapPt = Infinity, minEdgePt = Infinity;
-    const near = nearestOther(ids, FW, FH, masks);
+    const near = opts && opts.noGap ? null : nearestOther(ids, FW, FH, masks);
     for (const m of masks) {
-      minGapPt = Math.min(minGapPt, near.get(m.i) / res);
+      if (near) minGapPt = Math.min(minGapPt, near.get(m.i) / res);
       minEdgePt = Math.min(minEdgePt, m.x0 / res, m.y0 / res, (FW - m.x0 - m.w) / res, (FH - m.y0 - m.h) / res);
     }
     return {
       ok: overlapPx === 0 && outsidePx === 0 && removedPx === 0 && protectedMoved === 0,
       overlapPx, outsidePx, removedPx, protectedMoved, res,
       overlappingPairs: [...pairs].map(s => s.split(":").map(n => placements[+n].id)),
-      minGapPt: masks.length > 1 ? +minGapPt.toFixed(3) : null,
+      minGapPt: masks.length > 1 && near ? +minGapPt.toFixed(3) : null,
       minEdgePt: masks.length ? +minEdgePt.toFixed(3) : null,
       // (OVERLAPFIX, 25 Oct 2026: each charm's checked outline in page pixels, on request: the page's overlap fix plans its nudge so that this check passes too)
       ...(opts && opts.masks ? { masks: masks.map(m => ({ id: m.id, x0: m.x0, y0: m.y0, w: m.w, h: m.h, bits: m.bits })) } : {})
     };
   }
 
+  /* MCINSTANT (Paul, 28 Oct 2026: "every interaction with a given charm on this sheet manual mode is very slow ... I need this editor to be as responsive as Photoshop"). verify() made each
+     charm's mask again on every call: resampled to 6 px/pt, turned (2 x 2 samples a pixel) and eroded by the shop's allowance (7 px: ~160 tests a pixel), 20-60 ms a charm, for every pose
+     Manual Control checked. With cache, one mask per (bits, size, angle, res, erosion), kept beside the charm's own bits (dropped with them), the last 96 per charm. Same arithmetic. */
+  const VMASK = new WeakMap();
+  function verifyMask(p, sc, angle, res, erodePx, cache) {
+    const make = () => {
+      const r = resample(p.bits, p.w, p.h, sc, res), rot0 = rotateBitmap(r.bits, r.w, r.h, angle);
+      return { rot0, rot: erodePx ? Object.assign(erode(rot0.bits, rot0.w, rot0.h, erodePx), { cx: rot0.cx - erodePx, cy: rot0.cy - erodePx }) : rot0 };
+    };
+    if (!cache || !p.bits || typeof p.bits !== "object") return make();
+    let m = VMASK.get(p.bits); if (!m) VMASK.set(p.bits, m = new Map());
+    const k = p.w + "x" + p.h + "|" + sc + "|" + angle + "|" + res + "|" + erodePx;
+    let hit = m.get(k);
+    if (!hit) { hit = make(); m.set(k, hit); if (m.size > 96) m.delete(m.keys().next().value); }
+    return hit;
+  }
   /** For each piece, the smallest distance from its cells to any other piece's cells. */
   function nearestOther(ids, W, H, masks) {
     const out = new Map();

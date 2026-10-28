@@ -399,6 +399,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swManual[aria-disabled=true]{color:var(--ink25);background:var(--card);cursor:default}
 .swManual.busy svg{animation:swSpin .8s linear infinite}
 .swManual[hidden]{display:none}
+.swManual[data-unsaved]::after{content:attr(data-unsaved);margin-left:2px;font:500 10.5px var(--sans);opacity:.8}
 .swHand.swMc{padding-left:12px}
 .swHand.swMc .k.ok{color:#cfe6c9}
 .swPlate.manual canvas.swFx{cursor:default}
@@ -1135,8 +1136,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (grow && !flipOpen(origin, !!(opts.select || (W.pre && W.pre.at)))) { stopFlip(); W.flying = false; W.fitLater = false; W.dlg.classList.remove("swGrow", "swFlying"); fitPlate(); veil(W.rec ? null : "Opening the sheet…"); }
     } else if (opts.slide) slidePlate(opts.slide);
     const ready = () => { if (W.flip && W.flip.readyNow) W.flip.readyNow(); };
+    // MCINSTANT (Paul, 28 Oct 2026: "It takes a long time to load a sheet when moving between sheets ... Every sheet that opens must be instantaneous"): another sheet in the window is
+    // drawn at once from what this page already holds (its record as last read here, else the live sheet of the run), and its record read behind it; the same layout read keeps the
+    // pieces drawn (a charm taken in hand meanwhile stays in hand), a different one is drawn as before
+    const early = !fresh && !again && !backFace() ? tryDo(() => openEarly(id, tok)) : null;
     try {
       const r = await api("charmNestLibrary", { op: "getSheet", id }, { quiet: true, timeoutMs: 12000 });
+      if (r && r.sheet) { RECS.delete(id); RECS.set(id, r.sheet); if (RECS.size > 16) RECS.delete(RECS.keys().next().value); }
       if (tok !== W.token) return;
       // (MOVEINSTANT, Paul 20 Oct 2026: a sheet a move by hand is still saving is drawn with the move made, not as its record says until the save lands: hopOverlay)
       const rec = hopOverlay(r.sheet); if (!rec) throw new Error("This sheet is no longer in the Library.");
@@ -1146,7 +1152,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (window.Gate && typeof Gate.followRecords === "function") Promise.resolve(Gate.followRecords([r.sheet])).then(n => { if (n && W.id === id && W.dlg.open && !W.flow && !MC.on) { tryDo(() => Gate.refreshMembership()); open2(id); } }).catch(() => {});
       W.rec = rec; W.st = stockOf(rec); W.live = liveOf(id);
       if (backFace()) W.backs = backsOf(rec, W.live, W.backsList);
-      head(rec, false); indexPieces(); if (MC.on && MC.id === id) mcReattach(); if (fresh) W.opAsked = new Set(); readPieces(!!again); pruneFreed(); fitPlate(); renderStrip(); renderSheetPane(); renderFoot(); renderMenu(); unstill(); frontWordsReady();
+      const same = !!(early && W.geom && early.sig === layoutSig(rec));
+      head(rec, false); if (same) { for (const x of W.pieces) x.eng = engOf(x); } else { if (early) W.geom = false; indexPieces(); if (MC.on && MC.id === id) mcReattach(); } if (fresh) W.opAsked = new Set(); readPieces(!!again); pruneFreed(); fitPlate(); renderStrip(); renderSheetPane(); renderFoot(); renderMenu(); unstill(); frontWordsReady();
       E.addBtn.hidden = !canAdd();
       if (!rec.outputs?.preview?.url && !W.live && !W.pvCard) E.pv.removeAttribute("src"); else if (rec.outputs?.preview?.url && !E.pv.getAttribute("src")) E.pv.src = cors(rec.outputs.preview.url);
       // the charm clicked is the one the window opens on, as soon as the sheet's pieces are known: the panel comes in
@@ -1416,6 +1423,30 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return pieces;
   }
   const liveOf = id => allSheets().find(p => p.sheetId === id && p.placements.length) || null;
+  /* (MCINSTANT, 28 Oct 2026) The records this window read, the last 16 (a sheet switched back to is drawn from its own record at once, then read again behind it). */
+  const RECS = new Map();
+  /** What decides the plate: each piece where it lies, whose it is and what it is drawn from. */
+  const layoutSig = rec => JSON.stringify(piecesOf(rec).map(x => [x.id, +x.p.cxPt.toFixed(3), +x.p.cyPt.toFixed(3), +(+x.p.angle).toFixed(3), +(+x.p.scale).toFixed(5), x.poolId, x.sourceId, x.index, x.hash, x.side, x.mirror]));
+  /** A live sheet as a record, enough to draw its plate (its own record is read behind it). */
+  function recOfLive(sh) {
+    return { id: sh.sheetId, metal: sh.metal, sheetIndex: sh.sheetIndex || null, page: sh.page, setId: sh.setId || null, setSeq: sh.seq || null, draft: !!sh.draft, runId: sh.runId || null, fileBase: sh.fileBase || "",
+      charms: sh.charms.map(c => Object.assign(hopEntry(c), { layer: c.layer, side: c.side, bodyIndex: c.bodyIndex, groupKey: c.groupKey, groupSize: c.groupSize, mirror: c.mirror }, c.manual ? { manual: c.manual } : {})),   // (the entry a record holds for a charm, as a move writes it)
+      placements: sh.placements.map(p => Object.assign({}, p)), stock: stockFor(sh.metal, sh) };
+  }
+  /** The sheet drawn now from what the page holds; null when it holds nothing to draw it from. -> { sig } once its plate is drawn. */
+  function openEarly(id, tok) {
+    const live = liveOf(id), kept = RECS.get(id) || null, rec0 = kept ? hopOverlay(kept) : live ? recOfLive(live) : null;
+    if (!rec0 || !(rec0.placements || []).length) return null;
+    W.rec = rec0; W.st = stockOf(rec0); W.live = live;
+    indexPieces(); if (MC.on && MC.id === id) mcReattach();
+    fitPlate();
+    if (!W.live) return null;
+    const byId = new Map(W.live.charms.map(c => [c.id, c]));
+    for (const x of W.pieces) x.c = byId.get(x.id) || null;
+    if (!W.pieces.length || W.pieces.some(x => !x.c)) { for (const x of W.pieces) x.c = null; return null; }
+    geometryReady(tok); veil(null);
+    return { sig: layoutSig(rec0) };
+  }
   // room that something has gone into since (an arrival, a move, a restore) is no longer shown as free
   function pruneFreed() {
     if (W.flow || !W.freed.length) return;
@@ -1506,6 +1537,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (the picture the window grew out of gives way to the sheet drawn here, the two fading into each other)
     dropSnap(true);
     paintFx();
+    tryDo(() => { const live = mcLive(); if (live && !(MC.on && MC.sh === live)) mcWarm(live); });   // (MCINSTANT: a 10K / 14K sheet's checks made while it sits idle, so Manual Control starts at once)
   }
 
   /* ── the plate: base (the charms as the Nest draws them) and fx (hover, focus, links, marks) ── */
@@ -4106,7 +4138,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     for (const [k, gs] of Object.entries(o)) { const list = (gs || []).filter(g => g && g.p && Date.now() - (+g.at || 0) < 12 * 3600e3).map(g => ({ x: { id: g.id || undefined, p: g.p, c: g.s && g.s.outline ? Object.assign({}, g.s, { mini: true }, g.b && g.b.bits ? g.b : null) : null, gone: true }, rid: g.rid, sku: g.sku, at: +g.at, t0: 0 })); if (list.length) FREED.set(k, list); }
   } catch (_) {}
   const SV = () => window.CharmNestSolver;
-  const bitsOf = c => typeof c.bits === "string" ? SV().bitsFromBase64(c.bits, c.w * c.h) : c.bits;
+  // (MCINSTANT, 28 Oct 2026: a charm's bits read from their text once, so every check of it meets the same array and the verifier's masks kept for it, CharmNestSolver.verify's cache)
+  const BITS = new WeakMap();
+  const bitsOf = c => { if (typeof c.bits !== "string") return c.bits; const h = BITS.get(c); if (h && h.s === c.bits) return h.bits; const bits = SV().bitsFromBase64(c.bits, c.w * c.h); BITS.set(c, { s: c.bits, bits }); return bits; };
   const VARS = new WeakMap();
   function variantOf(c, angle, clearancePt) {
     let m = VARS.get(c); if (!m) VARS.set(c, m = new Map());
@@ -5252,9 +5286,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const clr = mcClr(), prof = mcGuard(sh) && sh.roseProtected.profile;
     const sig = JSON.stringify([sh.sheetId || sh.page, exceptId, clr, MC_INSET, prof ? 1 : 0, sh.roseStock && sh.roseStock.revision, sh.roseStock && sh.roseStock.profileJson ? String(sh.roseStock.profileJson).length : 0, (sh.roseStock && sh.roseStock.owner) || "", sh.placements.map(p => { const q = mcPoseOf(sh, p.id, poses); return q ? [p.id, q.cxPt, q.cyPt, q.angle, q.size] : p.id; }), sh.charms.length]);
     const hit = MC.grids.get(sig); if (hit) return hit;
-    const job = buildJob(sh), sheet = Object.assign(preCut(sh, job.sheet), { insetPt: MC_INSET });   // (GOLDEDIT: preCut)
-    if (prof) sheet.remnant = prof;   // (a charm outside an earlier green line stays out of what that line takes, as the nest keeps it: verify's own rule)
-    const Sv = SV(), edge = Sv.makeSheetGrid(sheet, mcClr(), 2), grid = Object.assign(edge.clone(), { fineRes: 2 }), others = [], byId = new Map(sh.charms.map(c => [c.id, c]));
+    // (MCINSTANT, 28 Oct 2026: the empty sheet kept (mcEdgeOf, GOLDEDIT's preCut and an earlier line's remnant as before), copied without its summed-area table: THE check asks fits() only)
+    const E = mcEdgeOf(sh), sheet = E.sheet, edge = E.edge, grid = mcGridCopy(edge), others = [], byId = new Map(sh.charms.map(c => [c.id, c]));
     const guarded = new Set(((mcGuard(sh) && sh.roseProtected.placements) || []).map(p => p.id));
     for (const p of sh.placements) {
       if (p.id === exceptId) continue;
@@ -5263,7 +5296,6 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       grid.stamp(v.fine.bits, v.fine.w, v.fine.h, Math.round(q.cxPt * 2 - v.solid.cx), Math.round(q.cyPt * 2 - v.solid.cy));
       others.push({ id: p.id, c, q, guarded: guarded.has(p.id) });
     }
-    if (grid.buildSAT) grid.buildSAT();
     const G = { grid, edge, sheet, clearancePt: mcClr(), others, except: exceptId };
     MC.grids.set(sig, G); if (MC.grids.size > 6) MC.grids.delete(MC.grids.keys().next().value);
     return G;
@@ -5274,7 +5306,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     for (const o of G.others) { const d = Math.hypot(o.q.cxPt - at.cxPt, o.q.cyPt - at.cyPt); if (d < bd) { bd = d; best = o; } }
     const rid = best && ridOfC(best.c); return rid ? `order ${rid}'s charm` : "another charm";
   }
-  /** The independent verifier over the charm and its neighbours: no pixel of two silhouettes on the same spot, none off the sheet, none on metal cut away. */
+  /** The independent verifier over the charm and its neighbours: no pixel of two silhouettes on the same spot, none off the sheet, none on metal cut away.
+   *  (MCINSTANT, 28 Oct 2026: each charm's mask at one size and angle made once, cache; the gap to the nearest charm, never read here, not measured, noGap) */
+  const MC_VERIFY = { cache: true, noGap: true };
   function mcVerify(G, c, at) {
     const rad = (cc, s) => Math.hypot(+cc.widthPt || 20, +cc.heightPt || 20) / 2 * s + 2;
     const r0 = rad(c, at.size), list = [{ id: c.id, c, q: at }].concat(G.others.filter(o => !o.guarded && Math.hypot(o.q.cxPt - at.cxPt, o.q.cyPt - at.cyPt) < r0 + rad(o.c, o.q.size)));
@@ -5289,10 +5323,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         if (!(wPt > 0 && hPt > 0)) { ox = 0; oy = 0; wPt = G.sheet.wPt; hPt = G.sheet.hPt; }
       }
       const job = { sheet: Object.assign({ wPt, hPt }, G.sheet.remnant ? { remnant: G.sheet.remnant } : {}), clearancePt: G.clearancePt, fineRes: 2, pieces: list.map(o => Object.assign({ id: o.id }, pieceOf(o.c, o.q.size))) };
-      const r = SV().verify(job, list.map(o => ({ id: o.id, cxPt: o.q.cxPt - ox, cyPt: o.q.cyPt - oy, angle: o.q.angle })), 6);
+      const r = SV().verify(job, list.map(o => ({ id: o.id, cxPt: o.q.cxPt - ox, cyPt: o.q.cyPt - oy, angle: o.q.angle })), 6, undefined, MC_VERIFY);
       // (the edge is read from the charm's own outline, whole: the shop's allowance lets two cut lines touch, never one run past the sheet's edge or into metal cut away)
       if (G.clearancePt < 0) {
-        const e = SV().verify(Object.assign({}, job, { clearancePt: 0, pieces: [job.pieces[0]] }), [{ id: c.id, cxPt: at.cxPt - ox, cyPt: at.cyPt - oy, angle: at.angle }], 6);
+        const e = SV().verify(Object.assign({}, job, { clearancePt: 0, pieces: [job.pieces[0]] }), [{ id: c.id, cxPt: at.cxPt - ox, cyPt: at.cyPt - oy, angle: at.angle }], 6, undefined, MC_VERIFY);
         r.outsidePx = e.outsidePx; r.removedPx = e.removedPx; r.ok = !r.overlapPx && !e.outsidePx && !e.removedPx && !r.protectedMoved;
       }
       if (r.ok) return { ok: true };
@@ -5342,13 +5376,24 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const mcFlagOnly = sh => !!sh && mcFlagged(sh.problem) && (!sh.runHold || mcFlagged(sh.runHold));
   const mcClashWords = reason => { const t = String(reason || "").replace(/^No room there: /, "").replace(/\.$/, "") || "it overlaps another charm"; return t.replace(/^it would (\w+)/, (m, v) => "it " + (v === "run" ? "runs" : v === "go" ? "goes" : v + "s")); };
   const mcRad = (c, size) => Math.hypot(+(c && c.widthPt) || 20, +(c && c.heightPt) || 20) / 2 * (size || 1) + 2;
+  /** (MCINSTANT, Paul 28 Oct 2026: "Every drag every key stroke there could be no delay") A copy of a collision grid for THE check: its occupancy alone (fits and tryPlace read nothing else),
+   *  never its free map or summed-area table (a clone copied both and the table was built again, per charm checked). Stamping into it writes a shared scratch free map nobody reads. */
+  let MCFREE0 = null;
+  function mcGridCopy(edge) {
+    const g = Object.create(Object.getPrototypeOf(edge)), n = edge.W * edge.H;
+    if (!MCFREE0 || MCFREE0.length < n) MCFREE0 = new Uint8Array(n);
+    Object.assign(g, { W: edge.W, H: edge.H, words: edge.words, occ: edge.occ.slice(), free: MCFREE0, remnant: edge.remnant, fineRes: 2 });
+    return g;
+  }
   /** The empty sheet as the nest sees it: its edge, inset and any metal cut away (kept for the same sheet). */
   const MCE = new Map();
   function mcEdgeOf(sh) {
-    const job = buildJob(sh), sheet = Object.assign(preCut(sh, job.sheet), { insetPt: MC_INSET }), prof = mcGuard(sh) && sh.roseProtected.profile;
-    if (prof) sheet.remnant = prof;
-    const sig = JSON.stringify([sh.sheetId || sh.page, sh.metal, mcClr(), sheet.wPt, sheet.hPt, sheet.insetPt, prof ? 1 : 0, sh.roseStock && sh.roseStock.revision]);
+    // (MCINSTANT, 28 Oct 2026: known by what makes it (its stock, metal cut away, an earlier line), so a check that finds it kept builds no job for the sheet)
+    const prof = mcGuard(sh) && sh.roseProtected.profile, rs = sh.roseStock || null, st0 = typeof stockFor === "function" ? tryDo(() => stockFor(sh.metal, sh)) : null;
+    const sig = JSON.stringify([sh.sheetId || sh.page, sh.metal, mcClr(), MC_INSET, st0 ? [st0.wPt, st0.hPt] : 0, prof ? 1 : 0, rs && rs.revision, rs && rs.profileJson ? String(rs.profileJson).length : 0, (rs && rs.owner) || "", sh.roseCutAt || 0, (sh.roseHistory || []).length]);
     let E = MCE.get(sig); if (E) return E;
+    const job = buildJob(sh), sheet = Object.assign(preCut(sh, job.sheet), { insetPt: MC_INSET });
+    if (prof) sheet.remnant = prof;
     E = { edge: SV().makeSheetGrid(sheet, mcClr(), 2), sheet, clearancePt: mcClr() };   // (ZEROGAP)
     MCE.set(sig, E); if (MCE.size > 8) MCE.delete(MCE.keys().next().value);
     return E;
@@ -5362,7 +5407,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** THE check's grid for one charm, with only its neighbours stamped (what it can meet), on the empty sheet's edge. */
   function mcLocalGrid(sh, id, q, poses, E) {
-    const grid = Object.assign(E.edge.clone(), { fineRes: 2 }), others = [], byId = new Map(sh.charms.map(c => [c.id, c]));
+    const grid = mcGridCopy(E.edge), others = [], byId = new Map(sh.charms.map(c => [c.id, c]));   // (MCINSTANT: a light copy, no table: it was a whole clone of the sheet per charm)
     const guarded = new Set(((mcGuard(sh) && sh.roseProtected.placements) || []).map(p => p.id));
     for (const oid of mcNearIds(sh, byId.get(id), q, poses)) {
       const c = byId.get(oid), o = mcPoseOf(sh, oid, poses); if (!c || !o || !c.bits || !c.w) continue;
@@ -5370,7 +5415,6 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       grid.stamp(v.fine.bits, v.fine.w, v.fine.h, Math.round(o.cxPt * 2 - v.solid.cx), Math.round(o.cyPt * 2 - v.solid.cy));
       others.push({ id: oid, c, q: o, guarded: guarded.has(oid) });
     }
-    if (grid.buildSAT) grid.buildSAT();
     return { grid, edge: E.edge, sheet: E.sheet, clearancePt: E.clearancePt, others, except: id };
   }
   /** Map id -> "" (clear) | why it is red, for the given placed charms (all of them when ids is null), each where it stands (poses: Manual Control's moves). */
@@ -5396,11 +5440,53 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     for (const [id, why] of res) { if (why) { MC.bad.add(id); MC.badWhy.set(id, why); } else { MC.bad.delete(id); MC.badWhy.delete(id); } }
     mcWarn();
   }
+  /** (MCINSTANT, 28 Oct 2026) Manual Control's colours as it starts: nothing is moved yet, so they are the sheet's own as its placements stand (mcSheetClash), worked out while the window
+   *  sat idle (mcWarm) and kept for the same layout: taken at once. Not worked out yet: THE check of every charm now, as before. */
+  function mcRecolourStart(sh) {
+    const hit = MCC.get(sh);
+    if (hit && !MC.edits.size && hit.sig === mcClashSig(sh)) { MC.bad = new Set(hit.ids); MC.badWhy = new Map(hit.why); return mcWarn(); }
+    mcRecolour(null);
+  }
+  /* MCINSTANT (Paul, 28 Oct 2026: "I need this editor to be as responsive as Photoshop ... Every drag every key stroke there could be no delay"). What THE check will need is made while the
+     window sits idle, a charm at a time (requestIdleCallback, never more than the browser offers): each charm's grid mask and verifier masks where it stands, then the sheet's colours
+     (mcSheetClash, kept), so Manual Control starts with nothing to work out; for the charm in hand, its masks at every 15° turn, so the round handle and [ ] meet them made. */
+  const MCW = { q: [], on: 0 };
+  function mcWarmPump() {
+    if (MCW.on) return;
+    const ric = window.requestIdleCallback ? fn => requestIdleCallback(fn, { timeout: 400 }) : fn => setTimeout(() => fn({ timeRemaining: () => 8 }), 30);
+    MCW.on = 1;
+    ric(function slice(dl) {
+      // (one job at least, then more while the browser has idle time, never past 12 ms: a slice never holds back a press)
+      MCW.on = 0; const t0 = performance.now();
+      do { const job = MCW.q.shift(); if (job) tryDo(job); } while (MCW.q.length && dl.timeRemaining() > 4 && performance.now() - t0 < 12);
+      if (MCW.q.length) mcWarmPump();
+    });
+  }
+  /** The masks of charm c at pose q (its grid variant, its verifier masks), made now if they are not kept. */
+  function mcWarmOne(sh, c, q) {
+    if (!c || !c.bits || !c.w || !q) return;
+    const E = mcEdgeOf(sh); if (!mcVariant(c, q.angle, q.size, E.clearancePt)) return;
+    mcVerify({ sheet: E.sheet, clearancePt: E.clearancePt, others: [] }, c, q);
+  }
+  function mcWarm(sh, focus) {
+    const Sv = SV(); if (!sh || !MANUAL_METALS.includes(sh.metal) || !Array.isArray(sh.placements) || !Sv || !Sv.verify || !Sv.makeSheetGrid) return;
+    if (focus) {
+      // (the charm in hand: its 15° turns, nearest first)
+      const c = focus.c, q = mcDraftOf(focus), a0 = Math.round(normDeg(q.angle) / MC_TURN) * MC_TURN, tok = MC.tok;
+      for (let i = 1; i <= 12; i++) for (const s of [1, -1]) { const a = normDeg(a0 + s * i * MC_TURN); if (i === 12 && s < 0) continue; MCW.q.push(() => { if (MC.on && MC.tok === tok && MC.sel === focus) mcWarmOne(sh, c, Object.assign({}, q, { angle: a })); }); }
+      return mcWarmPump();
+    }
+    const byId = new Map(sh.charms.map(c => [c.id, c]));
+    for (const p of sh.placements) MCW.q.push(() => { if (allSheets().includes(sh)) mcWarmOne(sh, byId.get(p.id), mcPoseOf(sh, p.id, null)); });
+    MCW.q.push(() => { if (allSheets().includes(sh) && !(MC.on && MC.sh === sh)) mcSheetClash(sh); });
+    mcWarmPump();
+  }
   /** The sheet's charms left where they overlap (or run past the margin), as its placements stand (the save, the write): kept for the same layout. */
   const MCC = new WeakMap();
+  const mcClashSig = sh => JSON.stringify([mcClr(), MC_INSET, sh.placements.map(p => [p.id, +p.cxPt, +p.cyPt, +p.angle, +p.scale || 1]), sh.charms.map(c => [c.id, sizeOf(c), !!c.bits])]);
   function mcSheetClash(sh) {
     if (!sh || !MANUAL_METALS.includes(sh.metal) || !Array.isArray(sh.placements) || !sh.placements.length) return [];
-    const sig = JSON.stringify([mcClr(), MC_INSET, sh.placements.map(p => [p.id, +p.cxPt, +p.cyPt, +p.angle, +p.scale || 1]), sh.charms.map(c => [c.id, sizeOf(c), !!c.bits])]);
+    const sig = mcClashSig(sh);
     const hit = MCC.get(sh); if (hit && hit.sig === sig) return hit.ids;
     const res = mcClashes(sh, null, null), ids = [...res].filter(([, w]) => w).map(([id]) => id);
     MCC.set(sh, { sig, ids, why: new Map([...res].filter(([, w]) => w)) });
@@ -5457,14 +5543,19 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const n = W.el && W.el.mcSize; if (!n) return;
     const x = MC.sel, dr = MC.drag, q = t && x ? (dr && dr.moved && dr.show) || mcDraftOf(x) : null, size = q ? +q.size || 1 : 1;
     if (!q || (Math.abs(size - 1) < 0.005 && !(dr && dr.moved && dr.mode === "size"))) { if (!n.hidden) n.hidden = true; return; }
+    // (MCINSTANT: where it goes is read before anything in it changes, so a frame lays the window out once)
+    const fast = !n.hidden && n._host && n._host.isConnected, hr0 = fast ? n._host.getBoundingClientRect() : null;
     const pct = Math.round((size - 1) * 100), txt = pct === 0 ? "100%" : (pct > 0 ? "+" : "\u2212") + Math.abs(pct) + "%", v = n.querySelector("[data-mcsz=v]"), r = n.querySelector("[data-mcsz=reset]");
     if (v.textContent !== txt) v.textContent = txt;
     const title = `${Math.round(size * 100)}% of its original size`; if (n.title !== title) n.title = title;
     if (r.hidden !== (pct === 0)) r.hidden = pct === 0;
     if (!r._wired) { r._wired = true; r.onpointerdown = e => e.stopPropagation(); r.onclick = e => { e.stopPropagation(); mcOriginalSize(); }; }
     if (n.hidden) n.hidden = false;
-    const host = n.offsetParent || n.parentElement; if (!host) return;
-    const hr = host.getBoundingClientRect(), w = n.offsetWidth, h = n.offsetHeight, xs = t.frame.map(p => p[0]), vis = t.vis;
+    const host = fast ? n._host : (n._host = n.offsetParent || n.parentElement); if (!host) return;
+    const hr = hr0 || host.getBoundingClientRect();
+    // (MCINSTANT, 28 Oct 2026: its size as last measured, read again after the frame: reading it right after its words changed laid the whole window out again on every frame of a resize)
+    if (!n._wh) n._wh = [n.offsetWidth, n.offsetHeight]; else if (!n._whF) n._whF = requestAnimationFrame(() => { n._whF = 0; if (!n.hidden) n._wh = [n.offsetWidth, n.offsetHeight]; });
+    const w = n._wh[0], h = n._wh[1], xs = t.frame.map(p => p[0]), vis = t.vis;
     let left = Math.max(...xs) + 10, top = t.centre[1] - h / 2;
     if (left + w > vis.right - 4) left = Math.min(...xs) - 10 - w;
     left = Math.max(vis.left + 4, Math.min(vis.right - w - 4, left)); top = Math.max(vis.top + 4, Math.min(vis.bottom - h - 4, top));
@@ -5482,10 +5573,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function mcFocus() { try { const f = W.el.fx; if (!f) return; if (!f.hasAttribute("tabindex")) f.setAttribute("tabindex", "-1"); if (document.activeElement !== f) f.focus({ preventScroll: true }); } catch (_) {} }
   function mcToolPaint() {
     const cv = W.el && W.el.mcTool, box = W.el && W.el.plateBox; if (!cv || !box) return;
-    const t = mcTool();
+    const t = mcTool(), o = cv.getBoundingClientRect();   // (MCINSTANT: read before the size chip writes)
     tryDo(() => mcSizePaint(t));   // (SIZECHIP)
     if (!t) { if (cv.width) { cv.width = 0; cv.height = 0; } return; }
-    const o = cv.getBoundingClientRect(), dpr = W.dpr || devicePixelRatio || 1, w = Math.round(o.width * dpr), h = Math.round(o.height * dpr);
+    const dpr = W.dpr || devicePixelRatio || 1, w = Math.round(o.width * dpr), h = Math.round(o.height * dpr);
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
     const ctx = cv.getContext("2d"), P = p => [(p[0] - o.left) * dpr, (p[1] - o.top) * dpr], d = dpr, bad = mcBadNow();
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, w, h);
@@ -5511,6 +5602,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (written only when it changes: the window's flights watch that nothing in it is drawn again while they run)
     const put = (k, v) => { if (b.getAttribute(k) !== v) b.setAttribute(k, v); };
     put("aria-pressed", String(MC.on)); put("aria-disabled", String(!!why || MC.claiming)); put("data-why", why); put("title", title);
+    // (MCINSTANT, 28 Oct 2026: a quiet, true word for what is not written yet, instead of a spinner: "· 2 unsaved", kept on this computer until Manual Control is turned off)
+    { const n = MC.on && !MC.wait ? movedCount() : 0, u = n ? `· ${n} unsaved` : ""; if ((b.getAttribute("data-unsaved") || "") !== u) { if (u) b.setAttribute("data-unsaved", u); else b.removeAttribute("data-unsaved"); } }
     if (b.classList.contains("busy") !== MC.claiming) b.classList.toggle("busy", MC.claiming);
     tryDo(mcWarn);   // (MCFREE)
   }
@@ -5542,6 +5635,32 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const mcNotify = () => { const e = { on: MC.on, sheetId: MC.id, sheet: MC.sh }; for (const fn of [...MC.subs]) tryDo(() => fn(e)); };
   const mcClaim = (id, release) => api("charmNestLibrary", Object.assign({ op: "manualClaim", id, tab: MC_TAB, by: whoAmI() || "" }, release ? { release: true } : {}), { quiet: true, timeoutMs: 12000 });
   const mcRelease = id => mcClaim(id, true).catch(e => console.warn("sheet window: manual release", e));
+  /* MCINSTANT (Paul, 28 Oct 2026: "you need to leverage local storage to provide immediate responses to every movement ... I absolutely wanna keep the API calls to the bare minimum").
+     Every move is the page's own until Manual Control is turned off (one save: the record and the sheet's files once, mcSave); meanwhile the moves not saved are kept on this
+     computer (localStorage, by sheet and tab), a quarter second after the last change, so a reload never loses them: Manual Control turned on again for that sheet in that tab
+     puts them back. Dropped once a save has them. Nothing is sent to the cloud per move. */
+  const mcDraftKey = id => `cn.mc.draft.${id}.${MC_TAB}`;
+  function mcDraftSave() {
+    clearTimeout(MC.draftT);
+    MC.draftT = setTimeout(() => {
+      tryDo(mcButton);
+      if (!MC.on || !MC.id || MC.wait) return;
+      try { const ed = [...MC.edits].filter(([pid, q]) => mcChanged(MC.from.get(pid), q)), k = mcDraftKey(MC.id); if (ed.length) localStorage.setItem(k, JSON.stringify({ at: Date.now(), by: MC.who || "", edits: ed })); else localStorage.removeItem(k); } catch (_) {}
+    }, 250);
+  }
+  function mcDraftDrop(id) { try { if (id) localStorage.removeItem(mcDraftKey(id)); } catch (_) {} }
+  /** The moves a reload left unsaved on this sheet, back in Manual Control (charms still on it only). -> how many. */
+  function mcDraftRestore(sh) {
+    let d = null; try { d = JSON.parse(localStorage.getItem(mcDraftKey(sh.sheetId)) || "null"); } catch (_) { d = null; }
+    if (!d || !Array.isArray(d.edits) || !(Date.now() - (+d.at || 0) < 7 * 86400e3)) return 0;
+    let n = 0;
+    for (const [pid, q] of d.edits) {
+      if (!q || ![q.cxPt, q.cyPt].every(v => Number.isFinite(+v)) || !sh.placements.some(p => p.id === pid)) continue;
+      const p = mcAsPut(q); if (!mcChanged(MC.from.get(pid), p)) continue;
+      MC.edits.set(pid, p); const x = W.byId.get(pid); if (x) mcShow(x, p); n++;
+    }
+    return n;
+  }
 
   const MC_OWED = "The sheet is waiting to be written again. Try again once it has saved.";
   async function mcToggle() {
@@ -5577,7 +5696,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     Object.assign(MC, { on: true, sh, id: sh.sheetId, who, sel: null, lift: null, drag: null, edits: new Map(), valid: null, msg: "", tone: "", owed: new Set() });
     MC.from = new Map(sh.placements.map(p => [p.id, mcPoseOf(sh, p.id, null)]));
     for (const x of W.pieces) { const q = MC.from.get(x.id); if (q) mcShow(x, q); }   // (drawn as this sorter holds them)
-    MC.bad = new Set(); MC.badWhy = new Map(); tryDo(() => mcRecolour(null));   // (MCFREE: a charm left overlapping before is red from the start)
+    const restored = tryDo(() => mcDraftRestore(sh)) || 0;   // (MCINSTANT: moves a reload left unsaved here, back)
+    if (restored) mcSay(`${restored === 1 ? "1 charm" : restored + " charms"} you moved before the page was reloaded ${restored === 1 ? "is" : "are"} back where you put ${restored === 1 ? "it" : "them"}: turn Manual Control off to save.`, "ok");
+    MC.bad = new Set(); MC.badWhy = new Map(); tryDo(() => mcRecolourStart(sh));   // (MCFREE: a charm left overlapping before is red from the start)
     sh._manualHold = true;
     W.hover = null; setHover(null); tip(null); W.el.plate.classList.add("manual");
     clearInterval(MC.beat); MC.beat = setInterval(() => { if (!MC.on) return clearInterval(MC.beat); mcClaim(MC.id).then(r2 => { if (MC.on && r2 && r2.ok === false) mcSay(`${(r2.held && r2.held.by) || "Someone"} took this sheet on another screen; press Manual Control to save what you moved.`, "bad"); }).catch(() => {}); }, MC_BEAT);
@@ -5611,6 +5732,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     if (!edits.size) {
       // nothing moved: the sheet is let go as it was, and a nest asked for meanwhile starts now
+      mcDraftDrop(id);
       delete sh._manualHold; if (sh._manualAsked) { delete sh._manualAsked; tryDo(() => startNest(sh)); }
       mcRelease(id);
       for (const x of W.pieces) { const q = MC.from.get(x.id); if (q && W.id === id) mcShow(x, q); }
@@ -5697,6 +5819,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     MC.sel = x || null; MC.lift = MC.sel; MC.msg = "";
     MC.G = x ? mcGrid(MC.sh, x.id, MC.edits) : null; MC.valid = x ? mcDraftOf(x) : null;
     paintBase(); paintFx(); mcRender();
+    if (x) tryDo(() => mcWarm(MC.sh, x));   // (MCINSTANT: its turns made while the hand rests)
   }
   function mcEsc() { if (MC.drag) return mcCancel(); mcSelect(null); }
   // where the tool lies round the charm in hand, in plate pixels: its frame, the turning knob above it, its middle
@@ -5750,11 +5873,24 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (d.mode === "move") { q.cxPt = Math.max(0, Math.min(W.st.wPt, d.q0.cxPt + (pt[0] - d.pt0[0]) / k)); q.cyPt = Math.max(0, Math.min(W.st.hPt, d.q0.cyPt + (pt[1] - d.pt0[1]) / k)); }
     else if (d.mode === "turn") { const a = d.q0.angle + (Math.atan2(pt[1] - d.c[1], pt[0] - d.c[0]) - d.a0) * 180 / Math.PI; q.angle = normDeg(e.shiftKey ? Math.round(a) : Math.round(a / MC_TURN) * MC_TURN); }
     else q.size = clampSize(d.q0.size * Math.hypot(pt[0] - d.c[0], pt[1] - d.c[1]) / d.r0);
+    // (MCINSTANT, Paul 28 Oct 2026: "Every drag every key stroke there could be no delay": a turn or a resize is drawn in this frame as the hand has it (neither one snaps), and its
+    //  check, which may meet a size or an angle not made yet, follows right after the frame: its colour a frame later, never the hand)
+    if (d.mode !== "move") { d.raw = q; d.show = q; mcShow(d.x, q); paintFx(); mcReadout(q); return mcDragCheckSoon(d); }
     // (ZEROGAP: the grid first; where it says no, the pixels at the exact pose, at most every 90 ms; a hair over and still no, the nearest legal spot within a point, as before)
     d.raw = q; d.res = mcCheck(MC.G, d.x.c, q, 0, false);
     if (!d.res.ok) { const now = performance.now(), ask = !(now - (d.exactAt || 0) < 90); if (ask) d.exactAt = now; d.res = mcCheck(MC.G, d.x.c, q, d.mode === "move" ? MC_SNAP_PT : 0, ask ? "exact" : false); }
     d.show = d.res.ok ? d.res.pose : q;
     mcShow(d.x, d.show); paintFx(); mcReadout(d.show);
+  }
+  function mcDragCheckSoon(d) {
+    if (d.chk) return;
+    d.chk = setTimeout(() => {
+      d.chk = 0; if (MC.drag !== d || !d.raw) return;
+      const q = d.raw, was = d.res && d.res.ok;
+      let r = mcCheck(MC.G, d.x.c, q, 0, false);
+      if (!r.ok) { const now = performance.now(), ask = !(now - (d.exactAt || 0) < 90); if (ask) d.exactAt = now; r = mcCheck(MC.G, d.x.c, q, 0, ask ? "exact" : false); }
+      d.res = r; if (was !== r.ok) paintFx();
+    }, 0);
   }
   function mcUp() {
     const d = MC.drag; MC.drag = null; W.el.plate.classList.remove("mcDrag");
@@ -5769,6 +5905,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function mcCommit(x, q, v, clash, said) {
     const was = MC.valid;
     if (mcChanged(MC.from.get(x.id), q)) MC.edits.set(x.id, q); else MC.edits.delete(x.id);
+    mcDraftSave();   // (MCINSTANT: kept on this computer, never sent per move)
     MC.valid = q; mcShow(x, q); if (v) { x.p.wPt = v.solid.w / 2; x.p.hPt = v.solid.h / 2; }
     // (MCFREE, Paul 20 Oct 2026: "Green when clear, red when conflicting/overlapping": the charm and those round where it left and where it went take their colour again)
     tryDo(() => mcRecolour([x.id].concat(mcNearIds(MC.sh, x.c, was, MC.edits), mcNearIds(MC.sh, x.c, q, MC.edits))));
@@ -5799,7 +5936,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const x = MC.sel, q = x && MC.from.get(x.id); if (!x || !q) return;
     // (MCFREE, Paul 20 Oct 2026: never refused: a place taken meanwhile by a charm moved after it leaves this one red there)
     const was = mcDraftOf(x);
-    mcSpring(x, was, q, ""); MC.edits.delete(x.id); MC.valid = q;
+    mcSpring(x, was, q, ""); MC.edits.delete(x.id); MC.valid = q; mcDraftSave();
     tryDo(() => mcRecolour([x.id].concat(mcNearIds(MC.sh, x.c, was, MC.edits), mcNearIds(MC.sh, x.c, q, MC.edits))));
     if (MC.bad && MC.bad.has(x.id)) mcSay(`Back where it was, but ${mcClashWords((MC.badWhy && MC.badWhy.get(x.id)) || "")}: it stays red until it is moved clear.`, "bad"); else mcSay("Back where it was", "ok");
   }
@@ -5829,9 +5966,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const run = MC.keyRun && MC.keyRun.x === x ? MC.keyRun : (MC.keyRun = { x, from: mcDraftOf(x), t: 0 });
     const p = { cxPt: +q.cxPt, cyPt: +q.cyPt, angle: normDeg(q.angle), size: clampSize(q.size == null ? 1 : q.size) };   // (exact, as THE check keeps a pose that passes: a 0.05 mm step is one)
     if (mcChanged(MC.from.get(x.id), p)) MC.edits.set(x.id, p); else MC.edits.delete(x.id);
-    MC.valid = p; mcShow(x, p); paintFx();
+    mcDraftSave();
+    MC.valid = p; mcShow(x, p); mcPaintSoon();   // (MCINSTANT, 28 Oct 2026: drawn once a frame, however fast the key repeats: a held key never queues paints)
     clearTimeout(run.t); run.t = setTimeout(() => mcNudgeRest(x), MC_KEY_REST);
   }
+  /** (MCINSTANT, Paul 28 Oct 2026: "pressing a key several times ... in quick succession results in multi-wait times") the plate's marks drawn at the next frame, once, with the latest pose. */
+  function mcPaintSoon() { if (MC.paintF) return; MC.paintF = requestAnimationFrame(() => { MC.paintF = 0; tryDo(paintFx); }); }
   function mcNudgeRest(x) {
     const run = MC.keyRun; if (!run || run.x !== x) return;
     clearTimeout(run.t); MC.keyRun = null;
@@ -5966,6 +6106,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       work.note = (clashN ? `Saved where ${n === 1 ? "it was" : "they were"} put, but ${clashN} charms overlap: the sheet stays flagged, and goes to no set or laser, until they are moved clear in Manual Control. ` : "") + (ok ? "Checked and saved: " : "Saved: ") + `the sheet's files and QR label were made again, and ${n === 1 ? "the charm stays" : "the charms stay"} where ${n === 1 ? "it was" : "they were"} put. ` + (sh.metal && window.CharmNestRose && CharmNestRose.owesLine && CharmNestRose.owesLine(sh) ? "Its green line is drawn by Cut Sheet, as before." : "");
       paint(); if (!bg) endFlow(work);
       bgEnd(true);
+      mcDraftDrop(sh.sheetId); if (MC.on && MC.sh === sh) mcDraftSave();   // (MCINSTANT: saved: no longer only on this computer)
       if (window.RunCtl) tryDo(() => RunCtl.poke());
       await restAfter();
       if (ui()) open(sh.sheetId, { keepWork: true, keepSet: false, glow: ids.map(id => (sh.charms.find(c => c.id === id) || {}).poolId).filter(Boolean) });
@@ -5983,6 +6124,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       work.state = "failed"; work.title = `The charms moved by hand on ${name} were not saved`; work.note = esc(String(e.message || e).replace(/^./, ch => ch.toUpperCase())) + "." + esc(back);
       paint(); if (!bg) endFlow(work);
       bgEnd(false, String(e.message || e) + "." + back);
+      mcDraftDrop(sh.sheetId); if (MC.on && MC.sh === sh) mcDraftSave();   // (the charms went back where they were: nothing of these moves is kept to come back)
       await restAfter();
       if (ui()) open2(sh.sheetId);
       return false;
