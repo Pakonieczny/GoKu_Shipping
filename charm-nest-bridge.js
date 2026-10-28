@@ -1485,10 +1485,10 @@ const Views = window.Views = (() => {
   function onShow(mode) {
     if (mode === "design") { const host = designHost(); if (!document.getElementById("dsFrame")) DesignLink.mount(host); else Dock.setHost(host); DesignLink.renderConsole(); }
     Dock.schedule();
-    if (mode === "orders") Orders.renderNow();
+    if (mode === "orders") { if (Orders.shown) Orders.shown(); else Orders.renderNow(); }   // (NAV, 28 Oct 2026: as it was drawn when nothing changed, and drawn again at idle)
     if (mode === "master") Master.render();
     if (mode === "engrave") Engrave.render();
-    if (mode === "review") Review.render();
+    if (mode === "review") { if (Review.shown) Review.shown(); else Review.render(); }   // (NAV, 28 Oct 2026: as drawn when nothing changed, drawn again at idle)
     // the Review tab follows the cloud while it is on screen (ReviewLive); another tab is brought up to date once as it is shown
     try { window.ReviewLive?.shown?.(mode); } catch (_) {}
   }
@@ -2557,7 +2557,19 @@ const Orders = window.Orders = (() => {
     env.mounts.push([node, first, "review"]);
     return node;
   }
+  /* NAV (28 Oct 2026, Paul: "Order Details … at near real-time speed"): the order window's Back and Next walk the list in the order it is drawn, and each press filtered and sorted every line
+     again (~40 ms on 1,300 lines). The walk is kept while the list it was made from is the same (the same rows, search, filters, sort and range) for a few seconds, and let go whenever the
+     list is drawn again (renderBody); a line gone meanwhile is stepped over. */
+  let walkMemo = null;
+  function walkRows() {
+    const rows = rowsOf(), sig = JSON.stringify([rows.length, OV.pile, OV.q, OV.metal, OV.form, OV.eng, OV.act, OV.sort, OV.desc, CNListActivity.key("orders")]);
+    if (walkMemo && walkMemo.rows === rows && walkMemo.sig === sig && Date.now() - walkMemo.at < 5000) return walkMemo.list.filter(r => r.state !== "gone");
+    const list = groupsOf(visibleRows()).flatMap(g => g.rows);
+    walkMemo = { rows, sig, at: Date.now(), list };
+    return list;
+  }
   function renderBody() {
+    walkMemo = null;
     if(window.Seal?.defer('orders-list',renderBody) || window.CharmNestInteraction?.defer('orders-list',renderBody))return;
     const host = document.getElementById("ordBody"); if (!host) return;
     // the order window open over the list: the list is drawn when it closes, so what was done in it is seen going where
@@ -2641,6 +2653,10 @@ const Orders = window.Orders = (() => {
     for (const [node, pair] of pairs) node.querySelector('.comparePair')?.replaceWith(pair);
     for (const [node, r, only] of mounts) { if (only !== "review") { ListMedia.mount(node, r); try { Review.fixMount(node, r); } catch (_) {} } if (only !== "media" && window.ReviewSend) ReviewSend.mount(node, r); }   // (a grouped order's pieces mount their pictures, its one card mounts the button; Send to Review: the one button under Qty · Ship by, charm-nest-review-send.js; it draws nothing until the Review mark API is there)
     ListMedia.more(list,groupTotal||rows.length,shown.length,()=>{OV.limit=(OV.limit || 48)+48;renderBody();});
+    // NAV (28 Oct 2026, Paul: "keep the API calls to the bare minimum"): the designs of the page of rows just drawn are asked for together at the next idle moment (one masterGetMany:
+    // Master.fetchEntry groups what is asked within a frame), where each row asked for its own as a scroll brought it near (47 reads for one scroll); what is known or asked is not asked again
+    { const skus = [...new Set(shown.flatMap(g => g.rows).map(r => String((r.spec && r.spec.designSku) || "").toUpperCase()).filter(Boolean))];
+      if (skus.length && window.Master && Master.fetchEntry) (typeof requestIdleCallback === "function" ? requestIdleCallback : f => setTimeout(f, 60))(() => { for (const k of skus) if (!Master.entryFor(k)) Master.fetchEntry(k).catch(() => {}); }, { timeout: 400 }); }
     settle();
     drawnOn = onScreen() ? nextKey : ""; drawnLimit = OV.limit;
     // what a person changed that stays in this pile (Release hold under Open Orders, Send now) is marked where it is
@@ -2743,8 +2759,8 @@ const Orders = window.Orders = (() => {
     // Filters: a panel of chip groups under the button (a bottom sheet on a phone); a press on a chip narrows the list at once
     const fbtn = v.querySelector("#ordFiltersBtn"), fpop = v.querySelector("#ordFiltersPop");
     ordFp = CNListActivity.popover({ trigger: fbtn, panel: fpop, sheet: true, sheetMax: 640, focus: p => p.querySelector('.ordChip[aria-pressed=true]:not([data-v=""])') || p.querySelector(".ordChip") });
-    fbtn.onclick = () => ordFp.toggle();
-    fbtn.addEventListener("keydown", e => { if (e.key === "ArrowDown") { e.preventDefault(); ordFp.open(); } });
+    fbtn.onclick = () => { if (!ordFp.isOpen) actFlush(); ordFp.toggle(); };   // (NAV: the Needs action counts are made now if they were left for an idle moment)
+    fbtn.addEventListener("keydown", e => { if (e.key === "ArrowDown") { e.preventDefault(); actFlush(); ordFp.open(); } });
     fpop.addEventListener("click", e => {
       const chip = e.target.closest(".ordChip");
       if (chip) { const f = chip.dataset.f, val = chip.dataset.v || null; narrow(fbtn, () => { if (f === "act" && val) OV.act = actToggle(actNow(), val); else OV[f] = OV[f] === val ? null : val; }); return; }   // (RQFILTER: the two action chips switch on and off one by one, "Any" lets go)
@@ -2835,6 +2851,20 @@ const Orders = window.Orders = (() => {
     const clear = pop.querySelector("[data-clear]"); if (clear) clear.disabled = !n;
     if (cx && ordFp && ordFp.isOpen) ordFp.close(false);
   }
+  /* NAV (28 Oct 2026): the Needs action counts of the last drawing (actLast), the drawing waiting for fresh ones (actWant) and the filter arguments it was drawn with (actArgs) */
+  let actLast = null, actWant = null, actArgs = null, actIdle = 0;
+  const idleSoon = f => typeof requestIdleCallback === "function" ? requestIdleCallback(f, { timeout: 400 }) : setTimeout(f, 60);
+  const clearActIdle = () => { if (actIdle) { if (typeof cancelIdleCallback === "function") cancelIdleCallback(actIdle); clearTimeout(actIdle); } actIdle = 0; actWant = null; };
+  function actCount(all) {
+    const act = { hold: 0, qr: 0, either: 0 }; { const am = openActions(true), on = { hold: new Set(), qr: new Set(), either: new Set() }; for (const r of all) { const a = am.get(r.key); if (!a) continue; const id = String(r.order.receiptId); if (a.hold) on.hold.add(id); if (a.qr) on.qr.add(id); if (a.hold || a.qr) on.either.add(id); } act.hold = on.hold.size; act.qr = on.qr.size; act.either = on.either.size; }
+    return actLast = act;
+  }
+  /** The counts left for an idle moment, made now; the Filters panel drawn with them when they differ from what it shows. */
+  function actFlush() {
+    const w = actWant; clearActIdle(); if (!w || !actArgs) return;
+    const was = JSON.stringify(actArgs.act), act = actCount(w.all);
+    if (JSON.stringify(act) !== was) { actArgs = Object.assign({}, actArgs, { act }); try { renderFilters(w.v, actArgs); } catch (e) { console.warn("[orders] filters", e && e.message); } }
+  }
   /** Update totals and filters without rebuilding the search field. */
   function renderHead(v) {
     const all = rowsOf().filter(r=>r.state!=="gone"), totals=orderTotals(all);
@@ -2863,7 +2893,11 @@ const Orders = window.Orders = (() => {
     const engN = all.filter(r => r.engrave && r.engrave.needed).length;
     // (RQFILTER: what the lines wait on, read afresh for this drawing; the list below asks for the same answer and gets it)
     // (orders, not lines: a Release Hold or a Print QR label is an order's, and the chip then says what the list will count, "3 of 7 orders")
-    const act = { hold: 0, qr: 0, either: 0 }; { const am = openActions(true), on = { hold: new Set(), qr: new Set(), either: new Set() }; for (const r of all) { const a = am.get(r.key); if (!a) continue; const id = String(r.order.receiptId); if (a.hold) on.hold.add(id); if (a.qr) on.qr.add(id); if (a.hold || a.qr) on.either.add(id); } act.hold = on.hold.size; act.qr = on.qr.size; act.either = on.either.size; }
+    // NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): the counts ask every line where its pieces are (placeNow, ~140 ms on 1,300 lines) and show only
+    // in the Filters panel. While the panel is shut and the filter is not in force they are made at the next idle moment (or when the panel opens: actFlush), not in the tab switch's frame
+    let act;
+    if (actNow() || (ordFp && ordFp.isOpen) || !actLast) { act = actCount(all); clearActIdle(); }
+    else { actMemo = null; act = actLast; actWant = { v, all }; if (!actIdle) actIdle = idleSoon(actFlush); }
     const cxN = window.Cancelled ? Cancelled.count() : 0;
     // (Cancelled is always there, Paul 28 Sep A5: every cancelled order, Etsy's and a person's, whatever the pull holds)
     const pills = v.querySelector("#ordChips"), pillsHtml = chip(!OV.pile,"","Open Orders",totals.orders,"","Distinct open order numbers, across all materials")
@@ -2878,7 +2912,8 @@ const Orders = window.Orders = (() => {
       if (had.size && window.Motion && !Motion.reduced() && onScreen()) for (const b of pills.querySelectorAll("[data-pile]")) if (!had.has(b.dataset.pile)) b.animate([{ opacity: 0, transform: "scale(.6)" }, { opacity: 1, transform: "none" }], { duration: 560, easing: "cubic-bezier(.3,1.3,.5,1)" });
     }
     // Material and engraved are the Filters panel's chip groups (and the gold chips under the bar while one is in force)
-    renderFilters(v, { metals, byMetal, engN, act, orders: totals.orders, allN: all.length });
+    actArgs = { metals, byMetal, engN, act, orders: totals.orders, allN: all.length };
+    renderFilters(v, actArgs);
     renderActive(v);
     // another pile slides in softly from the side it lies on (pills left to right), so a switch is seen as one; the tab that was pressed shows the busy state until the list is drawn
     v.querySelectorAll("[data-pile]").forEach(b => b.onclick = () => {
@@ -2898,7 +2933,19 @@ const Orders = window.Orders = (() => {
      it was shown is drawn in full even if it is hidden by the frame, as it was when it was drawn at once. */
   let bodyWanted = false;
   const onScreen = () => { const v = document.getElementById("ordersView"); return !!v && !v.classList.contains("hidden"); };
+  /* NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): what the tab last drew, when, and whether anything has asked for a drawing since (shown) */
+  let drawnAt = 0, drawVer = -1, wantDraw = true;
+  const piecesVer = () => { try { return window.OrderPieces && OrderPieces.version ? OrderPieces.version() : -1; } catch (_) { return -1; } };
+  /** The Orders tab shown again: drawn as it was when nothing asked for a drawing since it was drawn (under 10 s ago, the same answer of where the pieces are), and drawn again at the next
+   *  idle moment (so a time or an order that moved without a notice is put right at once, after the frame); else drawn now, as before. */
+  function shown() {
+    const v = document.getElementById("ordersView");
+    if (!(v && v.dataset.built && !wantDraw && Date.now() - drawnAt < 10000 && drawVer === piecesVer())) return renderNow();
+    tabCount();
+    (typeof requestIdleCallback === "function" ? requestIdleCallback : f => setTimeout(f, 60))(() => { if (onScreen()) renderNow(); }, { timeout: 1000 });
+  }
   function render() {
+    wantDraw = true;
     if(window.Seal?.defer('orders-view',render))return;
     if (!window.CNFrame) return renderNow();
     if (onScreen()) bodyWanted = true;
@@ -2912,15 +2959,17 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), wanted = bodyWanted; bodyWanted = false;
     if (!v || (v.classList.contains("hidden") && !wanted)) { tabCount(); return; }
     if (!v.dataset.built) { v.dataset.built = "1"; buildHead(v); }
+    wantDraw = false; drawVer = piecesVer();
     renderHead(v);
     renderBody();
     tabCount();
+    drawnAt = Date.now();
   }
   // The list says where each piece is from the ONE answer (placeNow: OrderPieces -> PiecePlacement), so it is drawn again when a read lands that changed it: the list had no
   // such listener, and said "1/5 pooled" for a piece the cloud had put on a sheet, and nothing for one it had put on hold, until the next Etsy check (Paul, 5 Oct).
-  try { if (window.OrderPieces && OrderPieces.subscribe) OrderPieces.subscribe(() => { if (onScreen()) render(); }); } catch (_) { /* drawn when next shown */ }
+  try { if (window.OrderPieces && OrderPieces.subscribe) OrderPieces.subscribe(() => { if (onScreen()) render(); else wantDraw = true; }); } catch (_) { /* drawn when next shown */ }
   // (RQFILTER, Paul 19 Oct 2026: a Send to Review, or an order taken out of Review, changes which orders have a Release Hold to press: the Needs action filter and its counts are drawn again then; the Review mark's own event, nothing is read)
-  try { document.addEventListener("cn-review-mark", () => { if (onScreen()) render(); }); } catch (_) { /* drawn with the next change */ }
+  try { document.addEventListener("cn-review-mark", () => { if (onScreen()) render(); else wantDraw = true; }); } catch (_) { /* drawn with the next change */ }
   /** The Orders tab's count (open orders). A change while the station is in use (an order in, an order gone) shows as a
    *  soft ring round the number, not a jump: a line put on hold or released stays an open order and leaves it as it is. */
   function tabCount() {
@@ -2938,7 +2987,7 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, walkRows: () => groupsOf(visibleRows()).flatMap(g => g.rows), showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, askTable, releaseStampOf, releaseSealHtml, releaseAway, _kept: () => readSaid.size };
+  return { view: () => OV, walkRows, shown, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, askTable, releaseStampOf, releaseSealHtml, releaseAway, _kept: () => readSaid.size };
 })();
 
 /* ═══ 18b · the page is the version that was deployed (MASTER4, Paul 15 Oct 2026) ══════════════════════════════
@@ -3149,6 +3198,21 @@ const Master = window.Master = (() => {
      added or read in again): opening one order asked masterGet four times for it. A read on its way is shared; a failed
      read is not remembered. */
   const missing = new Map(), asking = new Map(), MISS_MS = 300000;
+  /* NAV (28 Oct 2026, Paul: "keep the API calls to the bare minimum"): the SKUs asked for within one frame (the rows a scroll brings in: 47 reads for one scroll of the Orders list at
+     800 orders) are read together, one masterGetMany (the same entries masterGet answers: no `bare`); a SKU asked for alone is read as before. → { entry } per SKU */
+  let entryWant = null;
+  function askEntry(sku) {
+    if (!entryWant) {
+      entryWant = new Map();
+      setTimeout(() => {
+        const want = entryWant; entryWant = null; const skus = [...want.keys()];
+        if (skus.length === 1) { const w = want.get(skus[0]); api("charmNestLibrary", { op: "masterGet", sku: skus[0] }).then(w.ok, w.no); return; }
+        (async () => { for (let i = 0; i < skus.length; i += 300) { const part = skus.slice(i, i + 300); try { const got = await api("charmNestLibrary", { op: "masterGetMany", skus: part }), es = (got && got.entries) || {}; for (const k of part) want.get(k).ok({ entry: es[k] || null }); } catch (e) { for (const k of part) want.get(k).no(e); } } })();
+      }, 16);
+    }
+    let w = entryWant.get(sku); if (!w) { w = {}; w.p = new Promise((ok, no) => { w.ok = ok; w.no = no; }); entryWant.set(sku, w); }
+    return w.p;
+  }
   const libSig = () => { try { return JSON.stringify(B.master.index || null) + "|" + B.master.entries.size; } catch (_) { return ""; } };
   async function fetchEntry(sku) {
     sku = String(sku || "").toUpperCase(); if (!sku) return null;
@@ -3159,7 +3223,7 @@ const Master = window.Master = (() => {
     if (m && m.map === B.master.entries && m.sig === libSig() && Date.now() - m.at < MISS_MS) return m.entry;
     if (asking.has(sku)) return asking.get(sku);
     const p = (async () => {
-      const r = await api("charmNestLibrary", { op: "masterGet", sku });
+      const r = await askEntry(sku);
       if (r.entry) { B.master.entries.set(sku, r.entry); missing.delete(sku); }
       else { missing.set(sku, { at: Date.now(), map: B.master.entries, sig: libSig(), entry: r.entry }); while (missing.size > 500) missing.delete(missing.keys().next().value); }
       return r.entry;
@@ -4476,9 +4540,14 @@ const Pool = window.Pool = (() => {
   }
   const pickedIn = rid => { const M = window.CharmNestReviewMark, i = M && typeof M.info === "function" ? M.info(rid) : null; return !!(i && i.state === "done" && i.how === "pick"); };
   /** The orders whose Review was answered by a pick and whose piece on a sheet still carries the old drawing (see drawingDiffers). */
+  // NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): every card of a Library drawing asks this (ReviewHold.swaps), and each ask read every line
+  // of the pull (~500 ms of a metal chip's press at 800 open orders); the answer is kept for the rest of the task (nothing it reads changes inside one), a copy to each caller
+  let swapMemo = null;
   function swapRids() {
+    if (swapMemo) return new Set(swapMemo);
     const out = new Set(); try { for (const row of B.orders.rows || []) { const rid = row && row.order && String(row.order.receiptId); if (rid && !out.has(rid) && pickedIn(rid) && drawingDiffers(row)) out.add(rid); } } catch (_) {}
-    return out;
+    swapMemo = out; Promise.resolve().then(() => { swapMemo = null; });
+    return new Set(out);
   }
   const swapWaits = rid => { rid = String(rid || ""); try { return !!rid && pickedIn(rid) && (B.orders.rows || []).some(row => row && row.order && String(row.order.receiptId) === rid && drawingDiffers(row)); } catch (_) { return false; } };
   function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); delete k.frontAt; delete k.manual; return k; }   // (a copy never carries another order's place in the queue, nor a size a person gave another piece by hand: Manual Control)
@@ -18923,11 +18992,23 @@ const Review = window.Review = (() => {
     settledRows.set(d, node); return node;
   }
   /** opts.still: laid out as it stands, nothing glides (the Send to Sheet tour, home: the list is still out of sight). */
+  /* NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): whether anything asked for a drawing while the tab was hidden, and when it was last drawn (shown) */
+  let rvWant = true, rvDrawnAt = 0, rvVer = -1;
+  const rvPiecesVer = () => { try { return window.OrderPieces && OrderPieces.version ? OrderPieces.version() : -1; } catch (_) { return -1; } };
+  /** The Review tab shown again: as it was drawn when nothing asked for a drawing since (under 10 s ago, the same answer of where the pieces are), drawn again at the next idle moment;
+   *  else drawn now, as before. */
+  function shown() {
+    const v = document.getElementById("reviewView");
+    if (rvWant || !v || !v.firstChild || Date.now() - rvDrawnAt >= 10000 || rvVer !== rvPiecesVer()) return render();
+    LiveStrip.render();
+    (typeof requestIdleCallback === "function" ? requestIdleCallback : f => setTimeout(f, 60))(() => { const x = document.getElementById("reviewView"); if (x && !x.classList.contains("hidden")) render(); }, { timeout: 1000 });
+  }
   function render(opts) {
     opts = opts && typeof opts === "object" && !(opts instanceof Event) ? opts : {};
     if(window.Seal?.defer('review-view',()=>render(opts)))return;
     if(!opts.still&&window.CharmNestInteraction?.defer('review-view',render))return;
-    const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
+    const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) { rvWant = true; return; }
+    rvWant = false; rvVer = rvPiecesVer(); rvDrawnAt = Date.now();
     try { CustomSheet.prune(); } catch (_) {}
     const active=v.contains(document.activeElement)?document.activeElement:null;
     // the old Decided chip, and the Decided segment, are Resolved now; a filter on a kind that has no chip lets go (RVRESOLVED)
@@ -19128,7 +19209,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
+  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, shown, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -20221,6 +20302,8 @@ const OrderWin = window.OrderWin = (() => {
     // them), and the side the last switch came from
     pieces: [], piece: null, pieceDir: 0 };
   const byId = id => document.getElementById(id);
+  // (NAV, 28 Oct 2026: the fonts loaded so far: a measure kept from before a font came in is made again, inkTo and grow)
+  let inkFonts = 0; try { document.fonts && document.fonts.addEventListener && document.fonts.addEventListener("loadingdone", () => { inkFonts++; }); } catch (_) {}
   const inPull = key => Orders.rows().find(r => r.key === key) || null;
   const rowOf = key => inPull(key) || (W.row && W.row.key === key ? W.row : null);
   const me = () => employeeName() || "";
@@ -20389,8 +20472,12 @@ const OrderWin = window.OrderWin = (() => {
     byId("owSend").disabled = !input.value.trim() && !W.tray.length;
     // a box not on screen (the window still closed, the Customer tab in front) has no height to read: it keeps its own
     // until it is shown, and is sized then
+    // NAV (28 Oct 2026): an empty box is as tall as the empty box measured last at this width (each measure is a layout of the whole page, once or twice per opening)
+    const emptyKey = [innerWidth, devicePixelRatio, inkFonts].join("|");
+    if (!input.value && W.emptyH && W.emptyKey === emptyKey) { if (input.style.height !== W.emptyH) input.style.height = W.emptyH; return; }
     if (!input.offsetParent) { input.style.height = ""; return; }
     input.style.height = "auto"; input.style.height = Math.min(120, input.scrollHeight) + "px";
+    if (!input.value) { W.emptyH = input.style.height; W.emptyKey = emptyKey; }
   }
   /** Each order keeps its own draft and its own images: another order opened (Next, Previous, the list) never takes them. */
   function stashTray() {
@@ -20484,9 +20571,12 @@ const OrderWin = window.OrderWin = (() => {
     const key = TeamMail.drawKey(rid, up);
     if (key === W.painted) return;
     W.painted = key;
-    const stick = !keep || t.scrollHeight - t.scrollTop - t.clientHeight < 48, at = t.scrollTop;
+    const stick = !keep || t.scrollHeight - t.scrollTop - t.clientHeight < 48, at = keep ? t.scrollTop : 0;
     t.innerHTML = TeamMail.html(rid, up);
-    t.scrollTop = stick ? t.scrollHeight : at;
+    // NAV (28 Oct 2026, Paul: "Order Details … at near real-time speed"): the thread is put at its end (or back where it was) in the frame that shows it, once for every drawing of the
+    // turn, not at each drawing: reading its height there laid out the whole page, three and four times per order window opened (the read starting, the read answered, the window's own)
+    if (!t._stick) requestAnimationFrame(() => { const w = t._stick; t._stick = null; if (w) t.scrollTop = w.stick ? t.scrollHeight : w.at; });
+    t._stick = { stick, at };
     if (stick) t.querySelectorAll("img").forEach(img => { if (!img.complete) img.addEventListener("load", () => { t.scrollTop = t.scrollHeight; }, { once: true }); });
   }
   /** The live line at the right end of the tab row ("Updated live · last change Mon 12:44 PM · Paul"), where the Skip switch
@@ -22055,10 +22145,16 @@ const OrderWin = window.OrderWin = (() => {
   /* ── the views: Overview, Timeline, Sheet; the old one leaves sideways and the new one comes in from the other side ── */
   // (the underline moves by transform, never by left/width, which laid the header out again every frame; a fresh opening
   // puts it in place at once, under the header coming in)
+  // NAV (28 Oct 2026, Paul: "Order Details … at near real-time speed"): the ink under the tab in front stands where it stood when the same tab, with the same tab words, was last measured at
+  // this window width (the tabs do not move from order to order): it is measured again only when one of those changed, each measure being a layout of the whole page (two per opening)
   function inkTo(now) {
+    if (!W.dlg.open) return;   // (a closed window has nothing laid out to measure: the opening measures it)
     const b = W.dlg.querySelector(`.owTabsV [data-ow-view="${W.view}"]`), ink = W.dlg.querySelector(".owInk"); if (!b || !ink) return;
+    const row = b.closest(".owTabsV"), key = [W.view, row ? row.textContent : b.textContent, innerWidth, inkFonts, devicePixelRatio].join("|");   // (the words of every tab: one before it that grew moves it)
+    if (ink._inkKey === key && ink.style.transform) return;
     if (now) ink.style.transition = "none";
     ink.style.transform = `translateX(${b.offsetLeft + 6}px) scaleX(${Math.max(0, b.offsetWidth - 12) / 100})`;
+    ink._inkKey = key;
     if (now) { getComputedStyle(ink).transform; ink.style.transition = ""; }
   }
   /* the order's two conversations (Paul, 29 Sep 01:04: "I don't see the message history for the emails or their
