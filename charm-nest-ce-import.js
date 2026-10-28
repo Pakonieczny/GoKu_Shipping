@@ -50,8 +50,8 @@
   const mm2 = v => (Math.round(v * 100) / 100).toFixed(2);
   const tick = () => new Promise(r => setTimeout(r, 0));
   const now = () => (root.performance && root.performance.now ? root.performance.now() : Date.now());
-  /** Cooperative slicing: work runs until `ms` have gone by, then gives the page a frame. */
-  function slicer(ms) { let t0 = now(); return { async step() { if (now() - t0 > ms) { await tick(); t0 = now(); } } }; }
+  /** Cooperative slicing: work runs until `ms` have gone by, then gives the page a frame (step() -> true when it did). */
+  function slicer(ms) { let t0 = now(); return { async step() { if (now() - t0 > ms) { await tick(); t0 = now(); return true; } return false; } }; }
 
   /* the app's own modules (loaded before this file in the page; require()'d in node) */
   const need = (name, file) => (root && root[name]) || (typeof require === 'function' ? (() => { try { return require(file); } catch (e) { return null; } })() : null);
@@ -135,26 +135,29 @@
   const cssRgb = c => (c ? `rgb(${c.map(v => Math.round(Math.max(0, Math.min(1, v)) * 255)).join(',')})` : 'none');
 
   /* ═══ 4 · the result: parts placed at 0,0, ids, the outline ═══ */
-  /** parts: { subpaths (pt, y down), stroke, fill, lwPt, evenOdd, layer, name, role?, charm?, outline? } -> the read result. */
-  function finish(parts, meta) {
-    const warnings = (meta.warnings || []).slice();
+  /** parts: { subpaths (pt, y down), stroke, fill, lwPt, evenOdd, layer, name, role?, charm?, outline? } -> the read result (in slices of 8 ms: a sheet of 132 charms is 120 ms of work). */
+  async function finish(parts, meta) {
+    const warnings = (meta.warnings || []).slice(), slice = slicer(8);
     let box = null; const keep = [];
     for (const p of parts) {
+      await slice.step();
       const subs = cleanSubs(p.subpaths, 1e-3);
       if (!subs.length) continue;
       const b = tightBox(subs); if (!b) continue;
       keep.push(Object.assign({}, p, { subpaths: subs, box: b })); box = union(box, b);
     }
     if (!keep.length || !box) throw new Error(`${meta.name}: nothing drawn in it that can be cut or engraved${warnings.length ? ' (' + warnings.join('; ') + ')' : ''}`);
-    const x0 = box[0], y0 = box[1];
-    const items = keep.map((p, i) => {
+    const x0 = box[0], y0 = box[1], items = [];
+    for (let i = 0; i < keep.length; i++) {
+      await slice.step();
+      const p = keep[i];
       const subs = mapSubs(p.subpaths, q => [r6(q[0] - x0), r6(q[1] - y0)]), closed = isClosed(subs);
       const it = { id: newId(), kind: 'path', role: ROLES.includes(p.role) ? p.role : guessRole(Object.assign({}, p, { closed })), source: 'added', name: p.name || defaultName(p, i),
         subpaths: subs, stroke: p.stroke ? p.stroke.slice(0, 3) : null, fill: p.fill ? p.fill.slice(0, 3) : null, lwPt: p.stroke && fin(p.lwPt) && p.lwPt > 0 ? r6(p.lwPt) : null,
         layer: p.layer || null, closed, tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 };
       if (p.evenOdd) { it.evenOdd = true; it.even = true; }   // (the editor draws evenOdd; the art edit writes `even`)
-      p.item = it; return it;
-    });
+      p.item = it; items.push(it);
+    }
     // the outline: the one the reader named, else the largest closed part (a cut line before any other) that spans most of the drawing
     let outline = keep.find(p => p.outline) || null;
     if (!outline) {
@@ -672,15 +675,16 @@
     const counted = m => { if (m.kind === 'text' && !m.outlined) texts++; else if (m.kind === 'image' || m.kind === 'shading' || (m.kind === 'xobj' && !(m.children && m.children.length))) pictures++; };
     const add = (m, subs, role, charm, isOutline) => parts.push(Object.assign(paint(m), { subpaths: mapSubs(subs, toItem), role, charm, outline: !!isOutline }));
     const roleOf = (m, c) => (A && A.roleOf ? A.roleOf(m, c) : guessRole(Object.assign(paint(m), { closed: !!m.closed })));
-    g.charms.forEach((c, ci) => {
-      const chain = new Set((c.outline && c.outline.parts) || []);
+    for (let ci = 0; ci < g.charms.length; ci++) {
+      const c = g.charms[ci], chain = new Set((c.outline && c.outline.parts) || []);
       if (chain.size) { const j = joinedOutline(c.outline); add(c.outline, j.subs, 'cut', ci, true); if (j.extra.length) add(c.outline, j.extra, 'cut', ci, false); }
       for (const m of c.members) {
+        await slice.step();
         if (!m || chain.has(m)) continue;
         if (m.kind !== 'path' || !Array.isArray(m.subpaths) || !(m.stroke || m.fill)) { counted(m); continue; }
         add(m, m.subpaths, m === c.outline ? 'cut' : roleOf(m, c), ci, m === c.outline);
       }
-    });
+    }
     if (!g.charms.length) {
       // no outline: every drawn path on the page but the page's own frames
       const frames = new Set(g.frames || []);
@@ -884,14 +888,34 @@
         if (!R || !view || (mode === 'place' && !o.place) || (mode === 'new' && !o.newDesign)) return;
         finish({ mode, result: applied(mode) });
       }
+      /** A part's class in the preview: painted as the editor paints its role (charm-nest-charm-editor.js paintFill / paintStroke). */
+      function classOf(it, roles) {
+        const M = model(), t = Object.assign({}, it, { role: roles.get(it.id) || it.role });
+        const pf = M && M.paintFill ? M.paintFill(t) : t.role === 'hatch' || (t.role === 'art' && !!t.fill), ps = M && M.paintStroke ? M.paintStroke(t) : t.role === 'cut' || t.role === 'line' || (t.role === 'art' && !!t.stroke);
+        return `cei-p cei-p--${t.role}${pf ? ' is-fill' : ''}${ps ? ' is-stroke' : ''}${t.evenOdd ? ' is-evenodd' : ''}`;
+      }
+      // the preview drawn part by part in slices of 8 ms (a sheet of 132 charms is 33 000 path commands: one string of it held the page for 100 ms)
+      let fillToken = 0;
+      async function fillPreview(svg) {
+        const my = ++fillToken, sl = slicer(8), f = v => Math.round(v * 100) / 100;
+        let roles = roleOfId();
+        for (const it of view.items) {
+          if (await sl.step()) roles = roleOfId();   // (a role pressed meanwhile)
+          if (my !== fillToken || done) return;
+          let d = '';
+          for (const sub of it.subpaths) for (const op of sub) {
+            const k = op[0];
+            if (k === 'c') d += 'C' + f(op[1][0]) + ' ' + f(op[1][1]) + ' ' + f(op[2][0]) + ' ' + f(op[2][1]) + ' ' + f(op[3][0]) + ' ' + f(op[3][1]);
+            else if (k === 'h') d += 'Z'; else d += (k === 'm' ? 'M' : 'L') + f(op[1][0]) + ' ' + f(op[1][1]);
+          }
+          const el = doc.createElementNS('http://www.w3.org/2000/svg', 'path');
+          el.setAttribute('d', d); el.setAttribute('data-id', it.id); el.setAttribute('class', classOf(it, roles));
+          svg.appendChild(el);
+        }
+      }
       function paint() {
-        const roles = roleOfId(), M = model();
-        rootEl.querySelectorAll('.cei-p').forEach(el => {
-          const it = view.items.find(x => x.id === el.dataset.id); if (!it) return;
-          const t = Object.assign({}, it, { role: roles.get(it.id) || it.role });
-          const pf = M && M.paintFill ? M.paintFill(t) : t.role === 'hatch' || (t.role === 'art' && !!t.fill), ps = M && M.paintStroke ? M.paintStroke(t) : t.role === 'cut' || t.role === 'line' || (t.role === 'art' && !!t.stroke);
-          el.setAttribute('class', `cei-p cei-p--${t.role}${pf ? ' is-fill' : ''}${ps ? ' is-stroke' : ''}${t.evenOdd ? ' is-evenodd' : ''}`);
-        });
+        const roles = roleOfId(), byId = new Map(view.items.map(it => [it.id, it]));
+        rootEl.querySelectorAll('.cei-p').forEach(el => { const it = byId.get(el.dataset.id); if (it) el.setAttribute('class', classOf(it, roles)); });
         rootEl.querySelectorAll('[data-g]').forEach(row => { const g = groups.find(x => x.key === row.dataset.g); row.querySelectorAll('[data-role]').forEach(b => b.setAttribute('aria-pressed', String(!!g && b.dataset.role === g.role))); });
       }
       function show() {
@@ -899,8 +923,6 @@
         view = chosen && chosen !== 'all' && R.charms ? subset(R, (R.charms[+chosen] || {}).ids) : R;
         groups = groupsOf(view.items); for (const g of groups) if (keepRoles.has(g.key)) g.role = keepRoles.get(g.key);
         const wPt = view.widthMm * PT, hPt = view.heightMm * PT, pad = Math.max(wPt, hPt) * 0.04 + 0.5;
-        const d = sp => { const f = v => Math.round(v * 1000) / 1000; let s = ''; for (const sub of sp) for (const op of sub) s += op[0] === 'm' ? 'M' + f(op[1][0]) + ' ' + f(op[1][1]) : op[0] === 'l' ? 'L' + f(op[1][0]) + ' ' + f(op[1][1]) : op[0] === 'c' ? 'C' + [op[1], op[2], op[3]].map(p => f(p[0]) + ' ' + f(p[1])).join(' ') : 'Z'; return s; };
-        const paths = view.items.map(it => `<path class="cei-p" data-id="${esc(it.id)}" d="${d(it.subpaths)}"/>`).join('');
         const outline = view.items.find(it => it.id === view.outlineId), ob = outline ? tightBox(outline.subpaths) : null;
         const rows = groups.map(g => `<div class="cei-row" data-g="${esc(g.key)}"><i class="cei-paint" style="${g.fill ? `background:${cssRgb(g.fill)}` : ''}${g.stroke ? `;border-color:${cssRgb(g.stroke)}` : ''}${g.fill && white(g.fill) ? ';border-color:#ccc' : ''}"></i>`
           + `<span class="cei-lab">${esc(g.label)}<em>${g.ids.length} part${g.ids.length > 1 ? 's' : ''}${g.ids.includes(view.outlineId) ? ' · the outline' : ''}</em></span>`
@@ -913,12 +935,12 @@
         const warns = (view.warnings || []).slice(0, 4).map(w => `<p class="cei-note is-warn">${esc(w[0].toUpperCase() + w.slice(1))}</p>`).join('');
         card.innerHTML = `<div class="cei-eye">Import vector · ${esc(String(view.type || '').toUpperCase() === 'PDF' ? (/\.ai$/i.test(view.name) ? 'AI' : 'PDF') : String(view.type || '').toUpperCase())}</div><h3>${esc(view.name)}</h3>`
           + `<div class="cei-size"><b data-size>${mm2(view.widthMm)} × ${mm2(view.heightMm)} mm</b> · exact size · ${view.items.length} part${view.items.length > 1 ? 's' : ''}</div>`
-          + `<div class="cei-body"><div class="cei-pre" aria-hidden="true"><svg viewBox="${-pad} ${-pad} ${wPt + 2 * pad} ${hPt + 2 * pad}" preserveAspectRatio="xMidYMid meet">${paths}</svg></div>`
+          + `<div class="cei-body"><div class="cei-pre" aria-hidden="true"><svg viewBox="${-pad} ${-pad} ${wPt + 2 * pad} ${hPt + 2 * pad}" preserveAspectRatio="xMidYMid meet"></svg></div>`
           + `<div>${charmPick}<p class="cei-h">What the laser does</p><div class="cei-rows">${rows}</div>${notes.map(t => `<p class="cei-note">${t}</p>`).join('')}${warns}</div></div>`
           + `<div class="cei-foot"><button class="cei-btn cei-btn--ghost" type="button" data-a="cancel">Cancel</button>`
           + (o.newDesign ? `<button class="cei-btn ${o.place ? 'cei-btn--line' : 'cei-btn--gold'}" type="button" data-a="new">Open as a new design</button>` : '')
           + (o.place ? `<button class="cei-btn cei-btn--gold" type="button" data-a="place">Place into this charm</button>` : '') + `</div>`;
-        paint(); arm();
+        paint(); arm(); fillPreview(card.querySelector('.cei-pre svg'));
         const first = card.querySelector(`[data-a="${primary() || 'cancel'}"]`); try { (first || card).focus({ preventScroll: true }); } catch (e) { /* fine */ }
       }
       Promise.resolve().then(() => o.read()).then(r => { if (done) return; R = r; show(); }, err => {

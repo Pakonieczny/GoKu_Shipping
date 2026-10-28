@@ -297,6 +297,24 @@ async function browser() {
     await drop(page, path.join(FIX, 'COMET_9427.ai'), at.x, at.y); await ready(page);
     check(await page.locator('.cei-root [data-size]').innerText() === '7.20 × 13.38 mm', 'I an .ai master through the app\'s reader: 7.20 × 13.38 mm');
     await page.locator('.cei-root [data-a="cancel"]').click(); await settle(page);
+
+    // a sheet of 132 charms (2 MB): read here on the main thread (the page reads it in its compute worker); once read, the picker and its preview never hold the page
+    await page.evaluate(() => {
+      window.__lt = []; window.__readyAt = 0;
+      new PerformanceObserver(l => { for (const e of l.getEntries()) window.__lt.push([e.startTime, e.duration]); }).observe({ type: 'longtask' });
+      const mo = new MutationObserver(() => { if (!window.__readyAt && document.querySelector('.cei-root [data-size]')) { window.__readyAt = performance.now(); mo.disconnect(); } });
+      mo.observe(document.body, { childList: true, subtree: true });
+    });
+    await drop(page, path.join(FIX, 'SKUs_CORRECTED_2024-1014.ai'), at.x, at.y); await page.waitForSelector('.cei-root [data-size]', { timeout: 120000 });
+    await page.waitForFunction(() => document.querySelectorAll('.cei-pre path').length >= 300, null, { timeout: 60000 }); await settle(page);
+    const lt = await page.evaluate(() => ({ after: window.__lt.filter(([t, d]) => t + d > window.__readyAt - 1).map(([, d]) => Math.round(d)), all: window.__lt.map(([, d]) => Math.round(d)), paths: document.querySelectorAll('.cei-pre path').length }));
+    console.log(`         132 charms: ${lt.paths} parts in the preview; long tasks while reading on the main thread here (the worker's, in the page): ${lt.all.join(', ') || 'none'} ms; after it was read: ${lt.after.join(', ') || 'none'}`);
+    check(!lt.after.length, 'I a sheet of 132 charms: once read, no task over 50 ms while the picker and its preview (315 parts) are drawn');
+    const opts = await page.$$eval('.cei-root [data-charm] option', o => o.length);
+    check(opts === 133, 'I its charms are listed to pick from: all, then each of the 132');
+    await page.selectOption('.cei-root [data-charm]', '2'); await settle(page);
+    check(await page.locator('.cei-root [data-size]').innerText() === '14.50 × 14.55 mm', 'I one charm picked: its own size, 14.50 × 14.55 mm');
+    await page.keyboard.press('Escape'); await settle(page);
     check(page.__errs.length === 0, 'I no page errors: ' + page.__errs.join(' | '));
     await page.context().close();
 
