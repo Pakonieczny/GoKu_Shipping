@@ -481,9 +481,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
       else assert(n >= 6 && n <= 11, 'about one read every 2 s while watched: ' + n + ' in 20 s');
       const mut = await A.page.evaluate(() => new Promise(res => { let n = 0; const o = new MutationObserver(m => { n += m.length; }); o.observe(document.getElementById('rvList'), { childList: true, subtree: true, attributes: true, characterData: true }); setTimeout(() => { o.disconnect(); res(n); }, 8000); }));
       assert.equal(mut, 0, 'idle reads change nothing on screen (8 s)');
-      const q0 = srv.st.queries || 0, d0 = srv.st.reads || 0;
+      // (FEED: the computer's own question runs beside it, one document every 2 to 3 s: the read is measured right after one, alone)
+      // (and its last read was the one after the last write: the records of its 15 s overlap come once more; a read first brings the cursor up to now)
+      if (synced) { await A.page.evaluate(() => ReviewLive.poll({ quiet: true })); for (const n0 = A.asks.length, t = Date.now(); A.asks.length === n0 && Date.now() - t < 10000;) await sleep(20); await sleep(200); }
+      const q0 = srv.st.queries || 0, d0 = srv.st.reads || 0, c0 = srv.st.calls.length;
       await A.page.evaluate(() => ReviewLive.poll({}));
-      assert.equal((srv.st.queries || 0) - q0, 1, 'one query per read'); assert.equal((srv.st.reads || 0) - d0, 0, 'no document when nothing changed (Firestore bills one)');
+      // (FEED: what the computers' own questions read meanwhile, getAll of the revision, the cancel counter and any watched order, is theirs: no query, a document each)
+      const feedReads = srv.st.calls.slice(c0).filter(c => c.op === 'getChanges').reduce((n, c) => n + 2 + Object.keys((c.body && c.body.watch) || {}).length, 0);
+      assert.equal((srv.st.queries || 0) - q0, 1, 'one query per read'); assert.equal((srv.st.reads || 0) - d0 - feedReads, 0, 'no document when nothing changed (Firestore bills one)');
       assert.deepEqual(outside, [], 'no Etsy or AI call');
       log(synced ? `cost: the changes feed answering, ${n} Review reads and ${asks} questions of the computer in 20 s while watched (one document each), 0 hidden, nothing drawn` : `cost: ${n} reads in 20 s while watched = ${perHour} a hour for one open Review tab (one query, no document read when idle), 0 hidden, nothing drawn`);
     }
