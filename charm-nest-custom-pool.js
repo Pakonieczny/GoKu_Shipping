@@ -36,7 +36,7 @@
   if (root) root.CharmNestCustomPool = api;
 })(typeof self !== "undefined" ? self : typeof globalThis !== "undefined" ? globalThis : this, function (root) {
   "use strict";
-  const MM = 25.4 / 72, PT = 72 / 25.4;
+  const MM = 25.4 / 72;
   const ROLES = new Set(["cut", "line", "hatch", "art"]), METALS = ["gold", "silver", "rose", "gold10k", "gold14k"];
   const BLACK = [0, 0, 0], RED = [1, 0, 0], BLUE = [0, 0, 1], HAIR_PT = 0.25;
   const LAYER = { cut: "CUT", line: "ENGRAVE", fill: "HATCH" };
@@ -337,8 +337,11 @@
     const D = designsLib(); if (!D || typeof D.hash !== "function") throw new Error("the design library (charm-nest-designs.js) is not loaded");
     const designHash = await D.hash(design);
     if ((o.hash || design.hash) && designHash !== (o.hash || design.hash)) throw new Error(`the design is not the one saved as version ${version} (its parts or its size changed since): open it again from the library and send it again`);
-    const made = await sourceFor(design, version);
-    const P = root.CharmNestPDF, S = CN.S, st = CN.stockFor ? CN.stockFor(metal) : null, inset = +S.settings.insetPt || 0, c0 = made.charm;
+    const made = await sourceFor(design, version), S = CN.S;
+    // (the page lets a design no sheet uses any more go, Upkeep: one sent again is its source again, the one this page holds when it holds one)
+    if (!S.poolSources[made.src.id]) S.poolSources[made.src.id] = made.src; else if (S.poolSources[made.src.id] !== made.src) Object.assign(made, { src: S.poolSources[made.src.id], charm: S.poolSources[made.src.id].charms[0] });
+    made.src.usedAt = Date.now();
+    const st = CN.stockFor ? CN.stockFor(metal) : null, inset = +S.settings.insetPt || 0, c0 = made.charm;
     if (st && (c0.areaPt2 > (st.wPt - 2 * inset) * (st.hPt - 2 * inset) * (+S.settings.maxFill || 0.8) || Math.min(c0.widthPt, c0.heightPt) > Math.max(st.wPt, st.hPt) - 2 * inset))
       throw new Error(`the piece (${(c0.widthPt * MM).toFixed(1)} × ${(c0.heightPt * MM).toFixed(1)} mm) does not fit the ${CN.labelOf ? CN.labelOf(metal) : metal} plate`);
     // the design's file, kept once per design and version (a sheet holding the piece writes its files from it on any computer)
@@ -372,10 +375,12 @@
   }
 
   /* ── 8 · sanctity on the sheet (the page's nest and the sheet window call these) ── */
-  /** Every frozen piece of a sheet written at its exact size (finishNest, after the shrink every other charm gets). → how many. */
-  function holdSize(placements, byId) {
+  /** Every frozen piece of a sheet written at its exact size (finishNest, after the shrink every other charm gets), and held there in the layout the sheet's check holds still (its
+   *  saved placements, nestInitial: the geometry check reads a held charm at another size as moved). → how many were not at 100 %. */
+  function holdSize(placements, byId, sh) {
     let n = 0;
     for (const p of placements || []) { const c = byId && byId.get ? byId.get(p.id) : null; if (isFrozen(c)) { if (p.scale !== 1) n++; p.scale = 1; delete p.fixScale; } }
+    for (const p of (sh && sh.nestInitial) || []) { const c = byId && byId.get ? byId.get(p.id) : null; if (isFrozen(c)) { p.scale = 1; delete p.fixScale; } }
     return n;
   }
   /** Why a piece's size cannot change ("" when it can): a custom design sent at its exact size. */

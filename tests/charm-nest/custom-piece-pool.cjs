@@ -117,9 +117,10 @@ const root = path.join(__dirname, '../..');
     const bad = await page.evaluate(async id => {
       const sh = CN.S.sheets.silver.pages.at(-1), c = sh.charms.find(x => x.poolId === id), was = c.frozen.geomHash;
       c.frozen = Object.assign({}, c.frozen, { geomHash: 'g1-0000000000000000000000000000-4' });
-      const ok = await window.writeAsPlaced(sh), problem = sh.problem, status = sh.status;
+      // (a Gold or Silver sheet whose layout is as last written keeps its files and writes nothing: finishNest's own rule. Its files are written again here)
+      sh._written = null; const ok = await window.writeAsPlaced(sh), problem = sh.problem, status = sh.status;
       c.frozen = Object.assign({}, c.frozen, { geomHash: was });
-      const ok2 = await window.writeAsPlaced(sh);
+      sh._written = null; const ok2 = await window.writeAsPlaced(sh);
       return { ok, problem, status, ok2, problem2: sh.problem };
     }, ids1[0]);
     assert.equal(bad.ok, false, 'not saved'); assert.match(bad.problem || '', /^Not saved: a custom piece is not written exactly as it was designed — "Spare heart"'s parts in the file are not its design's/, 'the sheet says why: ' + bad.problem);
@@ -155,8 +156,8 @@ const root = path.join(__dirname, '../..');
     await until(() => page.evaluate(() => !CNManual._MC.on), 5000, 'Manual Control off');
     const done = await until(() => page.evaluate(() => { const w = SheetWin._W.work; return w && w.state !== 'working' && !SheetWin._W.flow ? { state: w.state, title: w.title } : null; }), 180000, 'the save to end');
     assert.equal(done.state, 'done', 'saved: ' + JSON.stringify(done));
-    const after = await page.evaluate(() => { const sh = CN.S.sheets.gold10k.pages.at(-1), c = sh.charms[0], p = sh.placements[0]; return { scale: p.scale, cxPt: p.cxPt, manual: c.manual || null, ok: sh.verification && sh.verification.ok, problem: sh.problem || null }; });
-    assert.equal(after.scale, 1, 'saved at 100 %'); assert(Math.abs(after.cxPt - (tk.p.cxPt + MMp)) < 1e-6, 'where it was moved'); assert(after.manual && after.manual.by === 'Tester' && after.manual.size == null, 'its manual mark has no size: ' + JSON.stringify(after.manual)); assert.equal(after.ok, true); assert.equal(after.problem, null);
+    const after = await page.evaluate(() => { const sh = CN.S.sheets.gold10k.pages.at(-1), c = sh.charms[0], p = sh.placements[0]; return { scale: p.scale, cxPt: p.cxPt, manual: c.manual || null, ok: sh.verification && sh.verification.ok, ver: JSON.stringify(sh.verification || null).slice(0, 600), log: (sh.log || []).slice(-6), problem: sh.problem || null }; });
+    assert.equal(after.scale, 1, 'saved at 100 %'); assert(Math.abs(after.cxPt - (tk.p.cxPt + MMp)) < 1e-6, 'where it was moved'); assert(after.manual && after.manual.by === 'Tester' && after.manual.size == null, 'its manual mark has no size: ' + JSON.stringify(after.manual)); assert.equal(after.ok, true, 'verified: ' + after.ver + ' ' + JSON.stringify(after.log)); assert.equal(after.problem, null);
     fc = await fileCheck('gold10k', ids3[0]); assert.equal(fc.written, fc.want, 'its file still its hash after Manual Control'); assert(Math.abs(fc.scale - 1) < 1e-6);
     console.log('ok   5  10K: Manual Control refused the resize (API, + key, corner) and said why, moved it 1 mm; saved at 100 %, the file still its hash');
     await page.evaluate(() => SheetWin.close && SheetWin.close());
@@ -166,9 +167,11 @@ const root = path.join(__dirname, '../..');
       const r = await CN.api('charmNestLibrary', { op: 'setAllocate', day: CN.today(), runId: 'run-custom-pool-test' }), out = {};
       const set = { setId: r.setId, seq: r.seq, day: r.day, runId: 'run-custom-pool-test', group: null, name: 'Set-' + r.seq, folder: '', orders: {}, sheetIds: [], materials: [], labelFiles: [] };
       for (const metal of ['silver', 'gold10k']) {
-        const sh = CN.S.sheets[metal].pages.at(-1); sh.runId = 'run-custom-pool-test';
+        // (a 10K sheet is a draft until it is chosen into its set: chosen here, as the Sets gate does)
+        const sh = CN.S.sheets[metal].pages.at(-1), draft = sh.draft; sh.runId = 'run-custom-pool-test'; sh.draft = false;
         await Sets.onSheetSaved(sh, sh.charms, sh.cloud, { labelsOnly: true, setOverride: set });
-        out[metal] = { files: sh.label.files.map(f => ({ label: f.label, notes: f.notes || [], orders: f.orders, payload: f.payload })), ready: Sets.labelsReady(sh, set) };
+        out[metal] = { files: sh.label.files.map(f => ({ label: f.label, notes: f.notes || [], orders: f.orders, payload: f.payload })), ready: Sets.labelsReady(sh, set), why: { draft, setId: sh.setId === set.setId, fileBase: sh.fileBase, paths: sh.label.files.map(f => !!f.path && !!f.url), indexed: (set.labelFiles || []).filter(f => f.sheetId === sh.sheetId).length } };
+        sh.draft = draft;
       }
       out.setOrders = Object.keys(set.orders); out.orderless = orderless; out.ordered = ordered;
       return out;
@@ -178,7 +181,7 @@ const root = path.join(__dirname, '../..');
     assert(!ssL.payload.includes(Number(lab.orderless.replace(/\D/g, '')).toString(36)), 'nor does its QR');
     assert.deepEqual(ssL.notes, ['Custom · no order: Spare heart']); assert.match(ssL.label, /\+ custom$/);
     assert.equal(lab.gold10k.files.length, 1, 'a sheet with only an orderless piece still has its label'); assert.deepEqual(tkL.orders, []); assert.deepEqual(tkL.notes, ['Custom · no order: Ten K spare']);
-    assert.equal(lab.silver.ready, true); assert.equal(lab.gold10k.ready, true, 'and it is ready (a set waits for no label)');
+    assert.equal(lab.silver.ready, true); assert.equal(lab.gold10k.ready, true, 'and it is ready (a set waits for no label): ' + JSON.stringify(lab.gold10k.why));
     assert(!lab.setOrders.includes(lab.orderless) && lab.setOrders.includes(lab.ordered), 'the set\'s orders: ' + lab.setOrders);
     console.log(`ok   6  labels: SS "${ssL.label}" lists ${ssL.orders.length} orders (not ${lab.orderless}) and says "${ssL.notes[0]}"; the 10K sheet's label says "${tkL.notes[0]}" with no order on it`);
     assert.deepEqual(errors, [], 'no page errors');
