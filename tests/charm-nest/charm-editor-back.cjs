@@ -189,10 +189,10 @@ async function partB(kit) {
     check('B1 the calendar\'s back is approved (its record saved); its work area and its Back thumbnail have no blue art (the back shows only its cut line and words)', !!st.doc('Charm_Pool_Back', PID) && ['approved', 'written'].includes(b0.state) && b0.art === 0 && b0.blue === 0 && thumb0.blue === 0 && !!thumb0.h, JSON.stringify(Object.assign({}, b0, { words: undefined, thumb0 })));
 
     /* ── the editor opens on the back; "HI" is typed right where the back's words stand ── */
-    await page.click(Q + ' .backHost .egCharmEdit');
+    await page.click(Q + ' .egCharmEdit');
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page); await settleP(page);
     const o0 = await page.evaluate(() => { const E = CharmEditor.current, its = E.items(); return { face: E.face(), n: its.length, roles: its.map(i => i.role), locked: its.filter(i => i.locked).length, frame: E.frame() }; });
-    check('B2 Edit charm on the back opens the editor on the back: its cut line, locked (the back takes additions only)', o0.face === 'back' && o0.n === 1 && o0.roles[0] === 'cut' && o0.locked === 1, JSON.stringify(o0));
+    check('B2 Open in Charm Editor on the back opens the editor on the back: its cut line, locked (the back takes additions only)', o0.face === 'back' && o0.n === 1 && o0.roles[0] === 'cut' && o0.locked === 1, JSON.stringify(o0));
     const wb = b0.words, mid = [(wb[0] + wb[2]) / 2, -(wb[1] + wb[3]) / 2];   // (the words' middle in the editor's frame: the view's, y down)
     await page.keyboard.press('t');
     const at0 = await clientOf(page, mid[0] - 3, mid[1] + 2);
@@ -303,7 +303,7 @@ async function partB(kit) {
 
     /* ── the editor opens again on the saved back: HI an added, editable layer ── */
     await R.openEngraveDetail(w, 'cal', { face: 'back' }); await R.settle(page, 900);
-    await page.click(Q + ' .backHost .egCharmEdit');
+    await page.click(Q + ' .egCharmEdit');
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page);
     const re = await page.evaluate(() => { const its = CharmEditor.current.items(); return { face: CharmEditor.current.face(), n: its.length, added: its.filter(i => i.source === 'added').map(i => ({ name: i.name, locked: !!i.locked, role: i.role })), cut: its.filter(i => i.role === 'cut').map(i => !!i.locked) }; });
     await R.shot(w, 'CB-5-editor-reopened-back');

@@ -8,6 +8,7 @@
 //   3  a line that is no bar (another listing's disc necklace): exactly as it was
 //   4  a back with no settled words yet: its front is read from the setup (free), as a new line's front is
 //   5  afterRestore: reads the lines again only when a restored bar line waits on its back and the maps and library are in
+//   7  keep: a bar line whose back a person decided says what it really engraves (the panel: CharmNestEngraveSetup.read): "Back only" with the approved words, or "No engraving" when cut plain
 //   6  the hooks: Orders.interpretAll asks every line, the boot asks after a restore, the page loads the file
 //   node tests/charm-nest/bar-front-waiting.cjs
 'use strict';
@@ -21,6 +22,7 @@ const Seals = require(path.join(root, 'charm-nest-engraving-seals.js'));
 const Faces = require(path.join(root, 'charm-nest-engrave-faces.js'));
 const O = require(path.join(root, 'charm-nest-orders.js'));
 const BarFront = require(path.join(root, 'charm-nest-engrave-bar-front.js'));
+const Setup = require(path.join(root, 'charm-nest-engrave-setup.js'));
 
 let checks = 0; const results = [];
 const ok = (c, m) => { assert.ok(c, m); checks++; }, eq = (a, b, m) => { assert.deepEqual(J(a), J(b), m); checks++; };
@@ -70,7 +72,7 @@ function harness(rows, o = {}) {
   Object.assign(Engrave, { setReady: ctx.setReady, canFit: () => true, isWorking: j => !!(o.working && o.working.has(j.key)), fitJob: async j => { fits.push({ key: j.key, text: j.text, fontKey: j.fontKey }); j.state = 'review'; j.row.engrave = Object.assign({}, j.row.engrave, { state: 'review' }); return j; }, draftOf: () => null, view: () => ({ drafts: {} }) });
   const interpreted = [];
   const env = { Engrave, CharmNestEngraveFaces: Faces, CharmNestOrders: O, Review: ctx.Review, Pool: ctx.Pool, Session: ctx.Session, CNTimeline: ctx.TL, agent: ctx.agent, replaceCutWhy: sh => (sh && sh.laserDoneAt ? 'laser cut' : ''),
-    Orders: { rows: () => rows, render() {}, interpretAll() { interpreted.push(Date.now()); for (const r of rows) { r.spec = readNow(r.line); env.CNBarFront.move(r); } } }, B: o.B || { master: { loadedAt: 1, loading: null }, maps: { loadedAt: 1 } } };
+    Orders: { rows: () => rows, render() {}, interpretAll() { interpreted.push(Date.now()); for (const r of rows) { r.spec = readNow(r.line); env.CNBarFront.follow(r); } } }, B: o.B || { master: { loadedAt: 1, loading: null }, maps: { loadedAt: 1 } } };
   env.CNBarFront = win.CNBarFront = BarFront.make(env);   // (the page's plan asks it too: faceWant, wantsFront)
   return { ctx, env, jobs, events, agents, reviewAdds, reviewRemoves, fits, readies, poolUpdates, interpreted, Engrave, bf: env.CNBarFront, keys: () => [...jobs.keys()] };
 }
@@ -201,11 +203,43 @@ function waitingBack(h, row, extra) {
 
   await t('6 the hooks: Orders.interpretAll asks every line it reads, the boot asks after a restore, the page loads the file', () => {
     const ia = cut('  function interpretAll() {', '    // what a line was read as is kept for the lines on the list');
-    ok(/row\.spec = readLine\(row\)[\s\S]*window\.Engrave\?\.raiseCandidate\?\.\(row\);[^\n]*\n\s*window\.CNBarFront\?\.move\?\.\(row\);/.test(ia), 'interpretAll: after the line is read (and raised), the bar rule\'s move');
+    ok(/row\.spec = readLine\(row\)[\s\S]*window\.Engrave\?\.raiseCandidate\?\.\(row\);[^\n]*\n\s*window\.CNBarFront\?\.follow\?\.\(row\);/.test(ia), 'interpretAll: after the line is read (and raised), the bar rule\'s move');
     ok(/if \(recovered\) setTimeout\(\(\) => \{ Promise\.resolve\(window\.CNBarFront\?\.afterRestore\?\.\(\)\)/.test(bridgeSrc), 'the boot asks after a restore');
     const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8'), build = fs.readFileSync(path.join(root, 'scripts/build-public.cjs'), 'utf8');
     ok(/<script src="charm-nest-engrave-bar-front\.js\?v=[^"]+"><\/script>/.test(html), 'charm-nest-1.html loads it'); ok(build.includes('"charm-nest-engrave-bar-front.js"'), 'the build ships it');
     eq(typeof O.barNecklace, 'function', 'the reader tells a bar line');
+  });
+
+  await t('7 a bar line whose back a person decided says what it really engraves: "Back only" with its words, or "No engraving" when it was cut plain; never "Front only"', async () => {
+    const panel = (row, h) => { const vm = Setup.read(row, { jobs: h.Engrave.jobsOf(row) }); return { mode: vm.modeLabel, faces: vm.rows.map(r => r.face), words: vm.rows.map(r => r.text.replace(/\n/g, ' / ')), why: vm.why, from: vm.from }; };
+    for (const [name, extra, mode, faces, words, why] of [
+      ['approved', { state: 'approved', approvedAt: 5, approvedBy: 'Paul' }, 'Back only', ['back'], ['VIII / XVII / XXVI'], /^back only, as decided: Paul approved the back/],
+      ['written', { state: 'written', approvedAt: 5, approvedBy: 'Paul', backs: [{ poolId: 'x' }] }, 'Back only', ['back'], ['VIII / XVII / XXVI'], /^back only, as decided: Paul approved the back/],
+      ['skipped', { state: 'skipped', decidedAt: 4, decidedBy: 'Rita' }, 'No engraving', [], [], /^no engraving, as decided: Rita cut it plain/],
+    ]) {
+      const row = restoredRow(barLine(70)), h = harness([row]), back = waitingBack(h, row, extra);
+      row.spec = readNow(row.line);
+      eq(Setup.read(row, { jobs: h.Engrave.jobsOf(row) }).modeLabel, 'Front only', name + ': as main reads it, the panel says Front only (what Paul saw)');
+      ok(h.bf.follow(row), name + ': the reading is set');
+      const p = panel(row, h); console.log(`      ${name}: ${p.mode} · ${p.words.join(' · ') || '—'} · ${p.why}`);
+      eq([p.mode, p.faces, p.words, p.from], [mode, faces, words, ''], name + ': the panel says what is engraved');
+      ok(why.test(p.why) && /front by default/.test(p.why), name + ': and why: ' + p.why);
+      eq([Faces.setupOf(row).mode, h.Engrave.ensureJobs(row).map(j => j.key), h.ctx.wantsFront(row), back.state], [mode === 'Back only' ? 'back' : 'none', [row.key], false, extra.state], name + ': the plan and the run agree: the back alone, as decided');
+      eq([h.bf.follow(row), h.events.length, h.agents.length, h.reviewRemoves.length], [false, 0, 0, 0], name + ': asked again, nothing more; nothing said, no card touched');
+      row.spec = readNow(row.line); eq([h.bf.follow(row), Setup.read(row, { jobs: h.Engrave.jobsOf(row) }).modeLabel], [true, mode], name + ': read again (a new reading): the same');
+    }
+    // two pieces approved with different words: each piece says its own
+    const line = barLine(71, { quantity: 2 }), row = restoredRow(line, { poolIds: [`${RID}_${line.transactionId}_1`, `${RID}_${line.transactionId}_2`] }), h = harness([row]);
+    const bs = h.Engrave.ensureJobs(row); bs.forEach((b, i) => Object.assign(b, { state: 'approved', approvedAt: 5, approvedBy: 'Paul', text: i ? 'TWO' : 'ONE', lines: [i ? 'TWO' : 'ONE'] }));
+    row.spec = readNow(row.line); ok(h.bf.follow(row), 'two pieces: set');
+    eq([Faces.setupOf(row).mode, Faces.setupOf(row, undefined, 'C1').back.text, Faces.setupOf(row, undefined, 'C2').back.text], ['back', 'ONE', 'TWO'], 'each piece\'s back says its own words');
+    // left as they are: an undecided back (it moves instead), a person's own setup, a line that is no bar
+    const r1 = restoredRow(barLine(72)), h1 = harness([r1]); waitingBack(h1, r1); r1.spec = readNow(r1.line);
+    eq([h1.bf.keep(r1), Setup.read(r1, { jobs: h1.Engrave.jobsOf(r1) }).modeLabel], [false, 'Front only'], 'an undecided back: no kept reading (follow moves it to the front)');
+    const r2 = restoredRow(barLine(73), { engravingOverride: { mode: 'back', by: 'Rita', at: 3 } }), h2 = harness([r2]); waitingBack(h2, r2, { state: 'approved', approvedAt: 5, approvedBy: 'Rita' }); r2.spec = readNow(r2.line); const e2 = r2.spec.engraving;
+    eq([h2.bf.follow(r2), r2.spec.engraving === e2, Setup.read(r2, { jobs: h2.Engrave.jobsOf(r2) }).why], [false, true, 'Set by Rita on ' + new Date(3).toLocaleDateString()], 'a person\'s own setup: it speaks, the reading is not touched');
+    const r3 = restoredRow(barLine(74, { sku: 'INITIAL_DISC_1', title: 'Initial Disc Necklace' })), h3 = harness([r3]); waitingBack(h3, r3, { state: 'approved', approvedAt: 5, approvedBy: 'Paul' }); r3.spec = readNow(r3.line);
+    eq([h3.bf.follow(r3), r3.spec.engraving || null], [false, null], 'a line that is no bar: untouched');
   });
 
   const failed = results.filter(r => r[1]);

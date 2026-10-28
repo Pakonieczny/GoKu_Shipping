@@ -169,7 +169,7 @@
     await frame(); if (my !== seq) return null;
     try { await window.Seal?.whenIdle?.(); } catch (_) {}
     if (my !== seq) return null;
-    let sp = null; const late = setTimeout(() => { sp = spinner("Opening Engraving…"); }, WAIT_SPIN_MS);
+    let sp = null; const late = setTimeout(() => { sp = spinner("Opening Design & Engrave…"); }, WAIT_SPIN_MS);
     try {
       const ok = await land(job, rid);
       return { ok, el: ok ? cardOf(job) : null };
@@ -196,7 +196,7 @@
       say(`${r.rid ? "Order " + r.rid : "This order"} belongs to ${t.sandbox ? "the Sandbox" : "production"}, and this page is in ${sandboxNow() ? "Sandbox" : "production"} mode, so its engraving is not opened here.`, "bad", 8000);
       return false;
     }
-    if (!r.rid && !r.job) { say("There is no order to open in Engraving.", "bad"); return false; }
+    if (!r.rid && !r.job) { say("There is no order to open in Design & Engrave.", "bad"); return false; }
     // (ENGCRASH: no job and none coming, or a job with nothing to engrave: nothing is closed and nothing is filtered, the reason is said where the person is)
     if (r.job ? !r.tab : !mayArrive(t, r.rid)) return fallback(r.rid, r.job ? "none" : "missing", t);
     let waited = false;

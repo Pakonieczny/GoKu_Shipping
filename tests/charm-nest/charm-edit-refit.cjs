@@ -96,7 +96,7 @@ async function partB() {
     const b0 = await page.evaluate(() => { const card = document.querySelector('#egQueue .rvItem[data-kind=placement]'), j = Engrave.items().get(card.dataset.key), cv = card.querySelector('.backHost canvas'); return { state: j.state, text: j.text, art: cv && cv._frontArt ? cv._frontArt.length : -1, own: cv && cv._frontArt ? cv._frontArt.filter(s => s.artAdded || s.artChanged).length : -1, size: j.fit && j.fit.size, angle: j.fit && j.fit.angle, centre: j.fit && j.fit.centre }; });
     check('B0 the calendar\'s front "SEPTEMBER" is approved and its work area draws the master\'s day grid and digits, none of it a person\'s own', ['approved', 'written'].includes(b0.state) && b0.text === 'SEPTEMBER' && b0.art > 0 && b0.own === 0, JSON.stringify(b0));
     // the charm editor: "21" written into a day square (the third column of the fourth row of days), 3 pt
-    await page.click(Q + ' .backHost .egCharmEdit');
+    await page.click(Q + ' .egCharmEdit');
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page); await settleP(page);
     const lines = await page.evaluate(() => CharmEditor.current.items().filter(i => i.role === 'line').map(i => CharmEditor.current.box(i.id)));
     const u = lines.reduce((a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])]);

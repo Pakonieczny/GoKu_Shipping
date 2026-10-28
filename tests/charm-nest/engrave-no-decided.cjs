@@ -197,7 +197,7 @@ const SHOTS = process.env.SHOTS || '/tmp/dec/shots';
     // the order window: no Reopen, a button to the same card
     await R.openOrderWindow(w, 'back'); await settle(500);
     const ow = await page.evaluate(() => ({ reopen: !!document.querySelector('#orderWin [data-a=reopen]'), eng: [...document.querySelectorAll('#orderWin .egOpen')].map(b => b.textContent.trim()) }));
-    note(!ow.reopen && ow.eng.some(t => /Engraving/.test(t)), 'the order window\'s engraving card has no Reopen, only its button to Engraving', JSON.stringify(ow));
+    note(!ow.reopen && ow.eng.some(t => /Design & Engrave/.test(t)), 'the order window\'s engraving card has no Reopen, only its button to Design & Engrave', JSON.stringify(ow));
     await page.evaluate(() => { try { OrderWin.close(); } catch (_) {} }); await settle(400);
 
     // ═══ 8 · phone width (400 px, the rail folded as a person would) ═══

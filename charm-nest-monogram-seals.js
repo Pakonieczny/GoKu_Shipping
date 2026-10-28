@@ -104,7 +104,7 @@
     const done = st ? !!st.approved : seals.length > 0, by = [...seals].reverse().map(s => s.by).find(Boolean) || '';
     const letters = st && st.letters ? spaced(st.letters) : (seals.map(s => s.letters).filter(Boolean).pop() || '');
     const pillText = done ? 'Approved' : (st && st.label) || 'Waiting', pillS = done ? 'approved' : st && ['letters', 'error'].includes(st.state) ? 'words' : 'approve';
-    const why = done ? 'The monogram is approved' : 'Monogram waits for approval in Engraving';
+    const why = done ? 'The monogram is approved' : 'Monogram waits for approval in Design & Engrave';
     const sub = done ? (by ? `Approved by ${by}` : '') : '';
     const forPiece = p.of > 1 ? `<span class="egFor"><b>Piece ${p.n} of ${p.of}</b></span>` : '';
     const sealsHtml = html(p.row, p.slot), compact = !!o.compact;
@@ -114,7 +114,7 @@
       + `<div class="top egTop">${forPiece}<span class="egPill" data-s="${pillS}"><i aria-hidden="true"></i>${esc(pillText)}</span></div>`
       + (done && sealsHtml ? `<div class="egSealLine">${whyHtml}${sealsHtml}</div>` : whyHtml)
       + (letters ? `<div class="egWords"><span class="egLbl">The letters</span><div class="words">${esc(letters)}</div></div>` : '')
-      + `<div class="acts"><button type="button" class="btn ghost sm egOpen" data-e="monogram">View in Engraving <span aria-hidden="true">→</span></button></div>`
+      + `<div class="acts"><button type="button" class="btn ghost sm egOpen" data-e="monogram">View in Design & Engrave <span aria-hidden="true">→</span></button></div>`
       + (!done && sealsHtml ? `<div class="egHistory">${sealsHtml}</div>` : '') + '</div>';
   }
   /** The View in Engraving button of a panel: the host's own `open(button)` runs (EngraveLink.openMonogram); the wait is said on the button with a small spinner, as the engraving card's button does. */
@@ -126,7 +126,7 @@
       const was = btn.innerHTML; let run;
       try { run = h.open(btn); } catch (err) { if (root && root.console) root.console.warn('monogram panel: open', err); return; }
       if (!run || typeof run.then !== 'function') return;
-      btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.innerHTML = '<span class="spin"></span>Opening Engraving…';
+      btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.innerHTML = '<span class="spin"></span>Opening Design & Engrave…';
       const back = () => { if (btn.isConnected) { btn.disabled = false; btn.removeAttribute('aria-busy'); btn.innerHTML = was; } };
       run.then(back, err => { if (root && root.console) root.console.warn('monogram panel: open', err); back(); });
     });

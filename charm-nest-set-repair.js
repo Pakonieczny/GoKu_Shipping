@@ -182,7 +182,7 @@
     // (audit, 25 Oct 2026: "never a dead end". A back engraving that is not approved is no fault a Rebuild or a Cut puts right: a cut sheet never moves, so "Cut, then Rebuild" was refused
     //  for good. Its press is approving that back engraving (the Engraving tab), said by name, first)
     const backIds = [...new Set(vs.filter(v => v.rule === 'notReady' && list(v.reasons).some(x => /back engraving/.test(str(x)))).map(v => v.sheets[0]))].filter(i => rowOf.has(i));
-    const backs = backIds.length ? `approve the back engraving of ${and(backIds.map(nm))} (Engraving tab)` : '', Backs = backs ? backs[0].toUpperCase() + backs.slice(1) : '';
+    const backs = backIds.length ? `approve the back engraving of ${and(backIds.map(nm))} (Design & Engrave tab)` : '', Backs = backs ? backs[0].toUpperCase() + backs.slice(1) : '';
     const rest = vs.some(v => v.rule !== 'notReady');
     if (!cut.length && backs && !rest) return { kind: 'backs', button: '', sheets: backIds, names: backIds.map(nm), say: `${Backs}; ${name} can then be approved.`, short: backs, server: Backs };
     if (!cut.length) return { kind: 'rebuild', button: REBUILD, sheets: [], names: [], say: `Press "${REBUILD}" on its card in the Library.`, short: `press "${REBUILD}"`, server: `Press "${REBUILD}" on its card in the Library` };
