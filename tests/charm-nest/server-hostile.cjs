@@ -39,7 +39,7 @@ F.db.runTransaction = async function (fn) {
   }
   throw new Error('10 ABORTED: too much contention on these documents');
 };
-const snapshot = () => canon([...store.entries()].filter(([k]) => !/^Charm_Nest_Rev\//.test(k)).sort(([a], [b]) => (a < b ? -1 : 1)));
+const snapshot = () => canon([...store.entries()].filter(([k]) => !/^Charm_Nest_(Rev|Push)\//.test(k)).sort(([a], [b]) => (a < b ? -1 : 1)));
 const DAY = '2026-10-15', RUN1 = 'run-aaaa0001', RUN2 = 'run-bbbb0002';
 const pid = (o, k) => `${4200000000 + o}_${9000000000 + o}_${k || 1}`;
 const row = (o, run) => ({ poolId: pid(o), runId: run, orderId: String(4200000000 + o), state: 'pooled', quantity: 1, material: 'gold', metal: 'gold' });

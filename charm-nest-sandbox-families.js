@@ -70,6 +70,8 @@
     fs("Charm_Nest_Agent", "engraving jobs"),
     fs("Charm_Nest_Agent_Cache", "saved engraving readings"),
     fs("Charm_Nest_Shape_Guidance", "shape guidance"),
+    // (PUSH, Paul 28 Oct 2026: the one document {n, at} the sandbox's computers listen to, Sandbox_Charm_Nest_Push/counter, raised after every write that moved the feed: netlify/functions/_charmNestPush.js. LAST of the collections on purpose: the wipe clears them in this order, so its going is the final thing a listening computer sees and the feed's answer (reset) is asked for once everything else is gone)
+    fs("Charm_Nest_Push", "live-update counter"),
     // the stream and the snapshot pointer (Charm_Sandbox is the sandbox's own collection, no prefix; the pull budget doc stays)
     { key: "Charm_Sandbox", label: "stream and snapshot", store: "doc", collection: "Charm_Sandbox", keepDocs: ["pulls"] },
     // places production uses too, cut by the sandbox's own marks
@@ -146,6 +148,7 @@
     { key: "Charm_Custom_EtsyLeases", label: "one Etsy write per listing at a time (a 60 second lease)", store: "firestore", why: "KEEP: production only (the Etsy step is refused in the sandbox); no buyer data" },
     { key: "CharmRepo_Tokens", label: "the Charm repo's upload-password tokens", store: "firestore", why: "KEEP: a session token of the repo password (only its hash, with an expiry): security data, never sandbox content, and expiring on its own" },
     { key: "Charm_Nest_Rev", label: "production revision counters", store: "firestore", why: "production" },
+    { key: "Charm_Nest_Push", label: "production live-update counter", store: "firestore", why: "production (PUSH: the real world's {n, at} counter every computer listens to; no names in it)" },
     { key: "EtsyMail_Config", label: "Etsy call counters", store: "firestore", why: "the Etsy call budget: a counter every Etsy caller bumps, no sandbox content" },
     { key: "EtsyMail_OrderLinkMeta", label: "customer-mail change counter", store: "firestore", why: "a change counter every engagement bumps, real or sandbox: no sandbox content" }
   ];

@@ -41,7 +41,7 @@ const until = async (f, what) => { for (let n = 0; n < 600; n++) { if (f()) retu
     st.put(RUN, 'run-x', { runId: 'run-x', status: 'review', lines: {} });
     const PERMANENT = ['processSeals', 'processReady', 'laserDoneAt', 'laserDoneBy', 'roseCutAt', 'roseStockId', 'committedAt', 'status'];
     const permanent = () => JSON.stringify([...st.list(S), ...st.list(SET)].map(d => [d._id, ...PERMANENT.map(k => d[k] === undefined ? null : d[k])]));
-    const everything = () => JSON.stringify([...st.docs.entries()].filter(([k]) => !k.startsWith('Charm_Nest_Rev/')));
+    const everything = () => JSON.stringify([...st.docs.entries()].filter(([k]) => !k.startsWith('Charm_Nest_Rev/') && !k.startsWith('Charm_Nest_Push/'))); // (PUSH, 28 Oct 2026: a refusal still raises the feed's revision documents above and, after them, the live-update counter Charm_Nest_Push/counter: a derived nudge, not data)
     const sheet = id => st.doc(S, id), set = id => st.doc(SET, id), held = id => !!(sheet(id).laserHold && sheet(id).laserHold.at);
 
     // ── the page: its Gate (renderRelease and the switch), the Options window, SetEdit (the pages follow what the server wrote), LibraryFlow (the Library's own plan and commit) ──

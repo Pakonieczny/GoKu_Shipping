@@ -54,6 +54,7 @@ const PoolPieces = require("../../charm-nest-pool-pieces.js");   // the four fie
 // the one cloud rule for "is this piece on a sheet" (what is authoritative, the take-off in one commit, the repair on read, placementRev)
 const Placement = require("./_charmNestPlacement");
 const Mutations = require("./_charmNestMutations");   // OUTBOX (Paul, 28 Oct 2026): a press sent twice from the page's outbox is written once (its mutation id), and the same field written by two people: the later wins, both are told
+const Push = require("./_charmNestPush");   // PUSH (Paul, 28 Oct 2026: "a change made on one computer to appear on the others at once"): after every bump of the feed the counter a computer listens to moves (Charm_Nest_Push/counter, Sandbox_ in the sandbox): see bumpRev
 const MID_READ = /^(get|list|ping|lookup|history|check)|(Get|List|Check|Status|Preview|Read|Url|Info)$/;   // (the reads, by the names the page's api() knows them: a mid on one of them is ignored)
 // A run's archived lines keep the readiness policy's decisions as they were when written (op_runArchive); a part written
 // under another version of Readiness.decisions is decided again from its lines when read (decisionsOfRun).
@@ -727,7 +728,11 @@ async function bumpRev(keys) {
   const by = new Map();
   for (const k of list) { const id = shardOf(String(k)); if (!by.has(id)) by.set(id, []); by.get(id).push(k); }
   feedStats.bumps++;
+  const prefix = PREFIX;   // (PUSH: this request's world, taken before any wait)
   const counts = await Promise.all([...by].map(([id, names]) => bumpShard(id, names, 0)));
+  // PUSH (Paul, 28 Oct 2026: "a change made on one computer to appear on the others at once, with no idle polling"): the counter the other computers listen to moves AFTER the shards
+  // (what they then ask the feed finds the names there): one write for every nudge waiting, awaited here (an instance freezes after its answer), best-effort and bounded like this bump (_charmNestPush.js)
+  await Push.nudge(db, FV, prefix);
   return Object.fromEntries([...by.keys()].map((id, i) => [id, counts[i]]).filter(([, n]) => n > 0));   // (each shard's count after this op's names, where its list was written)
 }
 const FEED_LOST = new Set();   // (shards whose names this instance could not write at all: its next write there says so, floor = its count, so no reader takes the gap for quiet)
