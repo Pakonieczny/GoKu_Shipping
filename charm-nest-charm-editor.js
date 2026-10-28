@@ -3501,8 +3501,10 @@
       });
     }
     /* the object menu: one, raised by a right-click (or a long press) on the object or its row (S 2763-2793) */
-    function openCtx(cx, cy) {
+    function openCtx(cx, cy, src) {
       closeMenus();
+      // (the Illustrator workspace, 28 Oct 2026: Illustrator's contextual menu for what is selected, charm-nest-ce-ai-keys.js, when the page has it and the menu bar's handle)
+      { const AK = aiKeys(), w = aiW(); if (AK && w && AK.openContext(ctx, cx, cy, w, src || 'stage')) return; }
       const es = selEntries(), n = es.length, anyText = n === 1 && es[0].it.kind === 'text';
       const lockable = n > 0, anyGroup = es.some(e => e.it.kind === 'group');
       const it = (act, label, key, on, cls) => `<button class="ce-item${on ? '' : ' is-off'}${cls ? ' ' + cls : ''}" type="button" data-ctx="${act}" role="menuitem"${on ? '' : ' aria-disabled="true"'}>${label}${key ? `<em>${key}</em>` : ''}</button>`;
@@ -3611,7 +3613,7 @@
         const row = e.target.closest('.ce-layer'); if (!row) return;
         e.preventDefault(); const id = row.dataset.id, en = entry(id);
         if (en && !en.it.locked && !S.sel.includes(id)) setSel([id]);
-        openCtx(e.clientX, e.clientY);
+        openCtx(e.clientX, e.clientY, 'layers');
       });
     }
     function rowClick(id, e) {
@@ -3652,6 +3654,9 @@
     /* ── keyboard: ONE listener, on the window, in the capture phase, so the page under the editor never sees a key while it is open (the Engraving card's own A,
        S and arrows must not fire behind it), and every key the editor uses is handled here ── */
     const isField = t => t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable);
+    // (the Illustrator workspace: charm-nest-ce-ai-keys.js and the handle the menu bar is given, CharmEditor.current.ai; either missing, the editor's own keys and menu)
+    const aiKeys = () => (root.CharmEditorAiKeys && typeof root.CharmEditorAiKeys.key === 'function' ? root.CharmEditorAiKeys : null);
+    const aiW = () => (api.current && api.current.ai && typeof api.current.ai.st === 'function' ? api.current.ai : null);
     // (CE TEXT, 28 Oct 2026: a key pressed in a popover over the editor that is not the editor's own, the emoji picker of the words box, is that popover's: its arrows, Enter and Esc)
     const notOurs = e => { const t = e.target; return !!(t && t.nodeType === 1 && t !== doc.body && t !== doc.documentElement && !rootEl.contains(t)); };
     function onKey(e) {
@@ -3670,6 +3675,9 @@
       if (isField(t)) { fieldKey(e); return; }
       if (k === 'Escape' && rootEl.querySelector('.ce-menu:not([hidden])')) { e.preventDefault(); closeMenus(); return; }
       { const xt = xTool(S.tool); if (xt && typeof xt.onKey === 'function' && k !== ' ' && e.code !== 'Space') { const r = xCall(xt, 'onKey', e); if (r === 'open') { e.preventDefault(); return; } if (r === true || e.defaultPrevented) { e.preventDefault(); xCommit(); return; } } }
+      // (the Illustrator workspace, 28 Oct 2026: Illustrator's keys, charm-nest-ce-ai-keys.js's one dispatcher over the menu bar's catalog, before the editor's own older ones below,
+      //  which stay for what the catalog leaves to the editor (the clipboard, undo, the arrows, Delete, Esc, Space) and for a page without that file)
+      { const AK = aiKeys(), w = aiW(); if (AK && w) { let used = false; try { used = AK.key(e, w); } catch (er) { xErr('the keys', er); } if (used) return; } }
       if (k === ' ' || e.code === 'Space') { e.preventDefault(); if (!S.space) { S.space = true; stage.classList.add('is-space'); } return; }
       const kl = k.length === 1 ? k.toLowerCase() : k;
       if (meta) {
@@ -3716,6 +3724,7 @@
       if (!rootEl.isConnected) return;
       if (notOurs(e)) return;
       e.stopPropagation();
+      { const AK = aiKeys(), w = aiW(); if (AK && w) try { AK.keyUp(e, w); } catch (er) { xErr('the keys', er); } }
       if (e.key === ' ' || e.code === 'Space') { S.space = false; stage.classList.remove('is-space'); }
       if (S.g && S.g.live && S.g.ev && /^(Shift|Control|Alt|Meta)$/.test(e.key)) remodify(e);
     }
