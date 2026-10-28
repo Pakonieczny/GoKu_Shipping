@@ -5815,7 +5815,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       return;
     }
     if (!here) return;
-    if (r && (r.error || r.transient) && !r.held && r.refused == null && r.ok == null) {
+    if (r && r.transient && !r.held && r.refused == null && r.ok == null) {
       // no answer yet: Manual Control stays on (the moves are kept on this computer); asked again in a few seconds, then by the heartbeat
       if (tries < 3) setTimeout(() => { if (MC.on && MC.sh === sh && MC.tok === tok && !MC.claimed) mcClaim(sh.sheetId).then(x => x, e => ({ error: e.message, transient: !e.answered })).then(x => mcClaimed(sh, tok, x, tries + 1)); }, 3000 * (tries + 1));
       return;
