@@ -9806,14 +9806,12 @@ const Engrave = window.Engrave = (() => {
       + ".rvItem .rh>.egCharmEdit svg{width:19px;height:19px;flex:none}.rvItem .rh>.egCharmEdit:hover{background:#94703a;border-color:#94703a;color:#fff;opacity:1}.rvItem .rh>.egCharmEdit:focus-visible{outline:2px solid var(--ink,#1c1a17);outline-offset:2px}.rvItem .rh>.egCharmEdit~.x{margin-left:0}.egCharmEdit[aria-busy=true]{opacity:.65;cursor:progress}"
       + ".egArtNote{position:absolute;left:0;top:0;display:block;padding:3px 9px;border-radius:10px;background:rgba(255,255,255,.94);border:1px solid var(--line,#e4ddd0);font:11.5px/1.4 var(--sans,system-ui);color:var(--ink70,#5b554c);z-index:1;cursor:pointer;white-space:normal}"
       + ".egArtNote.bad{color:#8a3a26;border-color:#e2c4b8}"
-      // (DESIGN & ENGRAVE: the Charm Designer's bar at the top of the tab, charmDesignerBar; the order window's button is styled by the page, .owCharmEdit)
-      + "#engraveView>.cdBar{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;margin:0 0 10px;padding:7px 10px 7px 12px;background:var(--card,#fff);border:1px solid var(--line,#e4ddd0);border-left:4px solid var(--gold,#a9823f);border-radius:10px;min-width:0;flex:none}"
-      + ".cdBar .cdHd{display:inline-flex;align-items:center;gap:8px;min-width:0;color:var(--ink,#1c1a17)}.cdBar .cdHd svg{width:19px;height:19px;flex:none;color:var(--gold,#a9823f)}.cdBar .cdHd b{font:600 15.5px/1.1 var(--serif,Georgia,serif);white-space:nowrap}.cdBar .cdHd small{font:11.5px/1.2 var(--sans,system-ui);color:var(--ink45,#938c80);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}"
-      + ".cdBar .cdActs{display:inline-flex;gap:6px;flex:none}.cdBar .cdActs .btn{display:inline-flex;align-items:center;gap:6px}.cdBar .cdActs svg{width:14px;height:14px}.cdBar [aria-busy=true]{opacity:.65;cursor:progress}"
-      + ".cdBar .cdRecent{display:flex;align-items:center;gap:6px;min-width:0;flex:1 1 220px;overflow:hidden}.cdBar .cdRecent>i{font:700 9.5px var(--mono,monospace);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45,#938c80);font-style:normal;flex:none}"
-      + ".cdBar .cdChip{display:inline-flex;align-items:center;gap:6px;max-width:200px;min-width:0;flex:none;border:1px solid var(--line,#e4ddd0);background:var(--card,#fff);border-radius:999px;padding:2px 11px 2px 3px;font:600 11.5px/1.3 var(--sans,system-ui);color:var(--ink70,#5b554c);cursor:pointer}"
-      + ".cdBar .cdChip:hover{background:var(--card2,#f7f3ea);color:var(--ink,#1c1a17);border-color:var(--goldLine,#e3d3a6)}.cdBar .cdChip img,.cdBar .cdChip .ph{width:24px;height:24px;border-radius:50%;object-fit:contain;background:#fff;border:1px solid var(--line2,#efe9dd);flex:none}.cdBar .cdChip .ph{display:grid;place-items:center;background:var(--goldSoft,#f0e6cd);border-color:var(--goldLine,#e3d3a6);color:#7a5a1d;font:700 11px/1 var(--serif,Georgia,serif)}.cdBar .cdChip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}"
-      + ".cdBar .cdNone{font:11.5px var(--sans,system-ui);color:var(--ink45,#938c80);white-space:nowrap}@media(max-width:1180px){.cdBar .cdHd small{display:none}}";
+      // (DESIGNBTN, Paul 28 Oct 2026: "Remove this entire menu from the UI" ... "Add a new button called 'Charm Editor' that opens the Design a Charm Modal" ... "Make sure the button has a nice hover state and it's visible and easy to click/interact with":
+      //  the Charm Designer's bar at the top of the tab is gone; one gold button at the right end of the tab's own bar, charmEditorButton; the order window's button is styled by the page, .owCharmEdit)
+      + ".btn.egDesignBtn{flex:none;display:inline-flex;align-items:center;gap:8px;margin-left:auto;min-height:36px;padding:7px 16px 7px 12px;border-radius:9px;font:650 13.5px/1.2 var(--sans,system-ui);letter-spacing:.005em;white-space:nowrap;box-shadow:0 3px 10px rgba(169,130,63,.28);transition:background-color .15s,border-color .15s,color .15s,box-shadow .15s,transform .08s}"
+      + ".btn.egDesignBtn svg{width:18px;height:18px;flex:none}.btn.egDesignBtn:hover:not(:disabled){background:#94703a;border-color:#94703a;color:#fff;opacity:1;box-shadow:0 5px 16px rgba(169,130,63,.42)}.btn.egDesignBtn:active:not(:disabled){transform:translateY(1px);box-shadow:0 2px 6px rgba(169,130,63,.3)}"
+      + ".btn.egDesignBtn:focus-visible{outline:2px solid var(--ink,#1c1a17);outline-offset:2px}.btn.egDesignBtn[aria-busy=true]{opacity:.65;cursor:progress}.btn.egDesignBtn:disabled{box-shadow:none}"
+      + "@media(prefers-reduced-motion:reduce){.btn.egDesignBtn{transition:none}}";
     (document.head || document.documentElement).appendChild(s);
   }
   /** The piece `x` can open in the charm editor with its charm on this page: { poolIds, charm, row, job, from, say } (charmEditPiece), or null: no editor or art module here, a saved back opened
@@ -10092,74 +10090,35 @@ const Engrave = window.Engrave = (() => {
   }
   /** The shared design log (charm-nest-design-log.js, every step by employee): one call, never in the way. */
   function charmEditLog(kind, data) { try { if (window.CNDesignLog && CNDesignLog.event) CNDesignLog.event(kind, data); } catch (_) { /* the log is a courtesy here */ } }
-  /* ── DESIGN & ENGRAVE · the Charm Designer (Paul, 28 Oct 2026: "Since this is all part of the back engraving tab, I would suggest we rename the tab "Design & Engrave". And the Charm Editor will be
-     its own entity within that new updated tab that will be accessible from the back engraving modal and vice versa from the charm editor back into the back engraving modal") ──
-     A bar at the top of the tab, its own part of it: New design and Open charm… (charm-nest-ce-masters.js: a blank charm, or any charm of the master library, in the editor) and the designs made
-     last (the design library: charm-nest-ce-library.js, else charm-nest-designs.js's local index), one press each. It is ONE node through every drawing of the tab (renderView puts it back first),
-     so a press is never lost to a redraw; nothing here reads the network, and the recent designs are drawn again only when they change. A module that is not on the page leaves its button off. */
-  let cdBarEl = null, cdSig = null, cdAt = 0, cdSrc = null;
-  const cdWatched = new WeakSet();   // (the libraries whose onChange the bar listens to: each once, whichever loads first or later)
+  /* ── DESIGN & ENGRAVE · the Charm Editor button (DESIGNBTN, Paul 28 Oct 2026: "Remove this entire menu from the UI" ... "Add a new button called 'Charm Editor' that opens the Design a Charm
+     Modal" ... "Make sure the button has a nice hover state and it's visible and easy to click/interact with"): the Charm Designer's bar that stood at the top of the tab (New design, Open charm…
+     and the recent designs) is gone, and its space with it; in its place ONE gold button at the right end of the tab's own bar (Placements / Approved, the search, the date and the sort), its
+     pen nib and two words. It opens the "Design a charm" modal on its New design side (charm-nest-ce-masters.js newDesign: the outline to start from; its other side is the charm library), as
+     the bar's New design did, with the way back to this tab. The recent designs are still the editor's own (charm-nest-ce-library.js recent / openDesign: its Recent shelf).
+     It is ONE node through every drawing of the tab (the bar is drawn again with each render, the button put back last), so a press is never lost to a redraw; off while the module is not on the page. */
+  let cdBtnEl = null;
   const cdFn = (o, k) => !!(o && typeof o[k] === "function");
-  function charmDesignerBar(v) {
-    if (!v) return null;
+  function charmEditorButton(host) {
+    if (!host) return null;
     charmEditCss();
-    if (!cdBarEl) {
-      const el = document.createElement("div"); el.className = "cdBar"; el.id = "cdBar"; el.setAttribute("role", "region"); el.setAttribute("aria-label", "Charm Designer");
-      el.innerHTML = `<span class="cdHd">${CHARM_EDIT_ICON}<b>Charm Designer</b><small>design a new charm, or open any charm to change it</small></span>`
-        + `<span class="cdActs"><button type="button" class="btn gold sm" data-cd="new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New design</button>`
-        + `<button type="button" class="btn ghost sm" data-cd="open"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>Open charm…</button></span>`
-        + `<span class="cdRecent" role="group" aria-label="Recent designs" hidden></span>`;
-      el.addEventListener("click", e => {
-        const b = e.target.closest("[data-cd]"); if (!b || b.disabled || b.getAttribute("aria-busy") === "true") return;
-        const M = window.CharmNestCeMasters, L = window.CharmNestCeLibrary, how = b.dataset.cd;
-        // (each opens the editor over this tab, which closing it shows again: the way back says so)
-        const o = { from: "designerBar", back: { label: "Back to Design & Engrave", title: "Back to the Design & Engrave tab" } };
-        const go = (f, what) => { b.setAttribute("aria-busy", "true"); Promise.resolve().then(f).catch(err => toast(`${what}: ${(err && err.message) || err}`, "bad", 6000)).finally(() => b.removeAttribute("aria-busy")); };
-        if (how === "new" && cdFn(M, "newDesign")) { charmEditLog("designerNew", { from: "designerBar" }); go(() => M.newDesign(o), "New design"); }
-        else if (how === "open" && cdFn(M, "openPicker")) { charmEditLog("designerOpen", { from: "designerBar" }); go(() => M.openPicker(o), "Open charm"); }
-        else if (how === "recent") {
-          const id = b.dataset.id, ver = b.dataset.ver ? (Number.isFinite(+b.dataset.ver) ? +b.dataset.ver : b.dataset.ver) : undefined;
-          const f = cdFn(L, "openDesign") ? () => L.openDesign(id, ver, o) : cdFn(L, "open") ? () => L.open(id, ver, o) : cdFn(M, "openDesign") ? () => M.openDesign(id, ver, o) : null;
-          charmEditLog("designOpen", { designId: id, version: ver == null ? null : ver, from: "designerBar" });
-          if (f) go(f, "Open design"); else toast("The design library is still loading: open it from the Charm Editor", "", 5000);
-        }
+    if (!cdBtnEl) {
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn gold egDesignBtn"; b.id = "egDesignBtn"; b.dataset.cd = "new";
+      b.innerHTML = `${CHARM_EDIT_ICON}<span>Charm Editor</span>`;
+      b.addEventListener("click", () => {
+        const M = window.CharmNestCeMasters; if (b.disabled || b.getAttribute("aria-busy") === "true" || !cdFn(M, "newDesign")) return;
+        // (the editor opens over this tab, which closing it shows again: the way back says so)
+        const o = { from: "charmEditorButton", back: { label: "Back to Design & Engrave", title: "Back to the Design & Engrave tab" } };
+        charmEditLog("designerNew", { from: "charmEditorButton" });
+        b.setAttribute("aria-busy", "true");
+        Promise.resolve().then(() => M.newDesign(o)).catch(err => toast(`Charm Editor: ${(err && err.message) || err}`, "bad", 6000)).finally(() => b.removeAttribute("aria-busy"));
       });
-      cdBarEl = el;
+      cdBtnEl = b;
     }
-    paintDesigner();
-    if (v.firstElementChild !== cdBarEl) v.insertBefore(cdBarEl, v.firstChild);
-    for (const lib of [window.CharmNestCeLibrary, window.CharmNestDesigns]) if (cdFn(lib, "onChange") && !cdWatched.has(lib)) { cdWatched.add(lib); try { lib.onChange(() => { cdSig = null; if (cdBarEl && cdBarEl.isConnected) paintDesigner(); }); } catch (_) { /* asked again at the next drawing */ } }
-    return cdBarEl;
-  }
-  function paintDesigner() {
-    const el = cdBarEl; if (!el) return;
-    const M = window.CharmNestCeMasters, nb = el.querySelector('[data-cd="new"]'), ob = el.querySelector('[data-cd="open"]');
-    const wait = "The Charm Designer is still loading";
-    nb.disabled = !cdFn(M, "newDesign"); nb.title = nb.disabled ? wait : "A new charm of your own design, from a blank outline, in the Charm Editor";
-    ob.disabled = !cdFn(M, "openPicker"); ob.title = ob.disabled ? wait : "Search every charm in the master library and open one in the Charm Editor, with full control";
-    // (the tab is drawn again at every fit and approval: the list is asked again when the library says it changed, else at most every 2 s)
-    // (no list yet, or another library on the page since: asked again at once, it costs nothing)
-    const L = window.CharmNestCeLibrary, D = window.CharmNestDesigns, src = cdFn(L, "recent") ? L : cdFn(D, "search") ? D : null;
-    if (cdSig && src === cdSrc && Date.now() - cdAt < 2000) return;   // (Date, not performance: the tab's code also runs where only the language's own globals are, engrave-ui-faces)
-    cdAt = Date.now(); cdSrc = src;
-    let got = null;
-    try { got = cdFn(L, "recent") ? L.recent(4) : cdFn(D, "search") ? D.search("", { limit: 8 }) : null; } catch (_) { got = null; }
-    if (got && typeof got.then === "function") got.then(paintRecent, () => {}); else paintRecent(got);
-  }
-  /** The designs made last (newest first, four), one chip each: its picture, its name; its order or "Custom · no order", who and when in its tip. Nothing at all when no library is on the page. */
-  function paintRecent(got) {
-    const host = cdBarEl && cdBarEl.querySelector(".cdRecent"); if (!host) return;
-    const list = Array.isArray(got) ? got : got && Array.isArray(got.designs) ? got.designs : null;
-    const rows = (list || []).filter(d => d && d.id != null).slice().sort((a, b) => (+b.at || 0) - (+a.at || 0)).slice(0, 4);
-    const sig = list ? JSON.stringify(rows.map(d => [d.id, d.version, d.name, d.customName, d.thumbUrl, d.at])) : "";
-    if (sig === cdSig) return; cdSig = sig;
-    host.hidden = !list;
-    if (!list) { host.innerHTML = ""; return; }
-    const when = at => { const d = new Date(+at || 0); return +at > 0 ? d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""; };
-    host.innerHTML = "<i>Recent</i>" + (rows.length ? rows.map(d => {
-      const name = String(d.name || d.customName || d.id), tip = [name + (d.version != null ? ` · v${d.version}` : ""), d.orderId && !/^CUSTOM-/.test(String(d.orderId)) ? `order ${d.orderId}` : "Custom · no order", d.by ? `by ${d.by}` : "", when(d.at)].filter(Boolean).join(" · ");
-      return `<button type="button" class="cdChip" data-cd="recent" data-id="${esc(d.id)}" data-ver="${esc(d.version == null ? "" : d.version)}" title="${esc(tip)}">${d.thumbUrl ? `<img alt="" loading="lazy" src="${esc(d.thumbUrl)}">` : `<b class="ph" aria-hidden="true">${esc(name.charAt(0).toUpperCase())}</b>`}<span>${esc(name)}</span></button>`;
-    }).join("") : '<span class="cdNone">No designs yet: New design starts one</span>');
+    const on = cdFn(window.CharmNestCeMasters, "newDesign");
+    cdBtnEl.disabled = !on; cdBtnEl.title = on ? "Design a charm: start from the charm library or a new outline, in the Charm Editor (saved as a design)" : "The Charm Editor is still loading";
+    const bar = host.querySelector(":scope > .egBar") || host;   // (the tab's own bar; the preview's failure note when the tab could not be drawn)
+    if (bar.lastElementChild !== cdBtnEl) bar.appendChild(cdBtnEl);
+    return cdBtnEl;
   }
   /* DESIGN MODE (Paul, 28 Oct 2026: "search and open any charm existing in our charm repository and have full control over manipulating that charm" ... "designing custom charms"): the charm
      editor opened on a DESIGN, not on a piece: the engraving fonts and their outlines as a piece's open has them, every layer free (nothing locked unless the person locks it). Nothing here reads
@@ -10875,7 +10834,7 @@ const Engrave = window.Engrave = (() => {
   function renderChrome(v, queue) {
     const jobs = CNListActivity.select(activityScope(), [...items().values()].filter(j => j.row.state !== "gone"));
     activityTools(v);
-    charmDesignerBar(v);   // (DESIGN & ENGRAVE: the Charm Designer's bar, first in the tab: the same node, put back after a rebuild)
+    charmEditorButton(v);   // (DESIGNBTN, Paul 28 Oct 2026: the Charm Editor button, last in the tab's bar: the same node, put back after a rebuild)
     renderWorking(v, jobs);
     syncEgFind(v);
     const qrows = rowsIn(queue, queueUniverse()), counts = rowCountsOf(qrows);
@@ -11090,7 +11049,7 @@ const Engrave = window.Engrave = (() => {
         disposeCards();
         v.innerHTML = `<div class="libEmpty" role="alert"><b>This engraving preview could not open.</b><p>Your sheets and decisions are kept.</p><p>${esc(error.message)}</p><button class="btn ghost sm" data-eg-retry>Retry preview</button><button class="btn ghost sm" data-eg-list>Placements</button></div>`;
         v.querySelector("[data-eg-retry]").onclick = render;
-        try { charmDesignerBar(v); } catch (_) { /* the designer waits for the next drawing */ }   // (DESIGN & ENGRAVE: the Charm Designer stays in reach when the engraving preview fails)
+        try { charmEditorButton(v.querySelector(".libEmpty")); } catch (_) { /* the button waits for the next drawing */ }   // (DESIGNBTN: the Charm Editor stays in reach when the engraving preview fails, beside Retry)
         v.querySelector("[data-eg-list]").onclick = () => { EG.list = true; EG.tab = "place"; EG.chosen = true; render(); };
       }
       console.error("Engrave preview could not render", error);
@@ -11160,7 +11119,7 @@ const Engrave = window.Engrave = (() => {
       <div class="egPane grow"><div class="rvList" id="egQueue"></div>
         <div class="egNext" id="egNext"></div></div>`;
     activityTools(v);
-    charmDesignerBar(v);   // (DESIGN & ENGRAVE: the Charm Designer's bar, first in the tab: the same node, put back after a rebuild)
+    charmEditorButton(v);   // (DESIGNBTN, Paul 28 Oct 2026: the Charm Editor button, last in the tab's bar: the same node, put back after a rebuild)
     renderWorking(v, jobs);
     // a tab pressed shows what it holds softly (a quick fade), rather than at a blink
     v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { const was = EG.tab; EG.tab = b.dataset.tab; EG.chosen = true; EG.list = true; render(); const p = was !== EG.tab && MO() && document.querySelector("#engraveView .egPane:not([hidden])"); if (p) p.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: "ease-out" }); });   // (APPTAB: a chip shows its list, whatever card was in front)

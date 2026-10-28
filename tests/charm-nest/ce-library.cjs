@@ -447,7 +447,7 @@ const STANDINS = `(function () {
       assert.equal(v, 'v5');
     });
 
-    await step('8 · for the Design & Engrave tab\'s Charm Designer bar: recent(n) at once, onChange, openDesign(id, version, o) through the masters module with the way back', async () => {
+    await step('8 · recent(n) at once, onChange, openDesign(id, version, o) through the masters module with the way back', async () => {
       const r = await page.evaluate(() => {
         const L = window.CharmNestCeLibrary, calls0 = window.__calls.list || 0, ops0 = window.__calls.ops.length;
         const rec = L.recent(4);
@@ -457,12 +457,12 @@ const STANDINS = `(function () {
       assert.deepEqual(r.rec, [['dz00003', 5], ['dz00004', 1], ['dz00002', 3], ['dz00001', 2]], 'the designs worked on here, newest first, at their latest version');
       assert.equal(r.fields, 'at,by,customName,id,name,orderId,thumbUrl,version'); assert.ok(r.sorted);
       assert.equal(r.calls, 0, 'no call to the cloud');
-      await page.evaluate(() => CharmEditor.current.end(false));   // (the bar is pressed in the tab, with no editor over it)
-      await page.evaluate(() => { window.__opened = window.CharmNestCeLibrary.openDesign('dz00004', 1, { from: 'designerBar', back: { label: 'Back to Design & Engrave', title: 'Back to the tab' } }); });
+      await page.evaluate(() => CharmEditor.current.end(false));   // (opened from the tab, with no editor over it)
+      await page.evaluate(() => { window.__opened = window.CharmNestCeLibrary.openDesign('dz00004', 1, { from: 'charmEditorButton', back: { label: 'Back to Design & Engrave', title: 'Back to the tab' } }); });
       await page.waitForFunction(() => CharmEditor.current && document.querySelector('.ce-id h2').textContent === 'Paw 4', null, { timeout: 4000 });
       const o = await page.evaluate(() => ({ od: window.__calls.openDesign[window.__calls.openDesign.length - 1], told: window.__told, first: window.CharmNestCeLibrary.recent(1)[0].id }));
       assert.deepEqual(o.od, { id: 'dz00004', version: 1, back: 'Back to Design & Engrave' }, 'the masters module opened it, the way back passed through');
-      assert.ok(o.told >= 1, 'onChange told the bar'); assert.equal(o.first, 'dz00004');
+      assert.ok(o.told >= 1, 'onChange told its listener'); assert.equal(o.first, 'dz00004');
       await page.evaluate(() => window.__off());
     });
 
