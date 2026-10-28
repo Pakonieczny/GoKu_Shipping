@@ -118,6 +118,29 @@ const KIND_X = { cancelAlert: "x_cancel", heldOrSkipped: "x_held", unknownSku: "
 /** the inbox counters (E3's phrases): replies drafted / sent / delivered / unconfirmed / failed / refused, edited AI drafts, first-reply minutes */
 const INBOX_X = ["x_draft", "x_sent", "x_deliv", "x_unconf", "x_fail", "x_refuse", "x_edit", "x_aiok", "x_first", "x_firstMin", "x_wait", "x_waitMin"];
 const X_KEYS = Object.values(KIND_X).concat(INBOX_X, ["x_phone"]);
+/* ── Design & Engrave (Paul, 28 Oct 2026: "all of this must be tracked by employee, and I need to know when employees are commissioning custom pieces, especially
+ *  when they don't belong to an order") ──
+ *  The design log (charm-nest-design-log.js) writes one `note` per design step, its detail a fixed phrase: "design: editor opened", "design: design saved",
+ *  "design: image traced", "design: custom piece sent · gold · no order", "design: fix piece sent · rose". Each adds one of these counters to the person's day, so the
+ *  Efficiency page counts a person's design work and custom pieces with the rollups it already reads. They are work, not issues: never a kind of kindOf. */
+const DESIGN_X = Object.freeze({ x_dopen: "opened in the editor or the library", x_dsave: "saved", x_dimp: "imported or traced", x_cust: "custom pieces sent", x_custNo: "custom pieces with no order", x_fix: "fix pieces sent" });
+const DESIGN_X_KEYS = Object.keys(DESIGN_X);
+/** The design counters one event adds ({ x_cust: 1, x_custNo: 1 } ...); {} for every other event. */
+function designOf(ev) {
+  const x = {};
+  if (!ev || ev.action !== "note") return x;
+  const d = detailOf(ev).trim();
+  if (!/^design: /i.test(d)) return x;
+  if (/^design: (editor|design) opened\b/i.test(d)) x.x_dopen = 1;
+  else if (/^design: (editor|design) saved\b/i.test(d)) x.x_dsave = 1;
+  else if (/^design: (image imported|image traced|vector imported)\b/i.test(d)) x.x_dimp = 1;
+  else if (/^design: (custom|fix) piece sent\b/i.test(d)) {
+    x.x_cust = 1;
+    if (/ · no order\b/i.test(d)) x.x_custNo = 1;
+    if (/^design: fix piece sent\b/i.test(d) || / · fix\b/i.test(d)) x.x_fix = 1;
+  }
+  return x;
+}
 
 const detailOf = ev => String((ev && ev.detail) == null ? "" : ev.detail);
 /** The desk page's own plain scan of a phone scan at the Welding station: the page writes "phone scan" in its detail (typed orders say "typed"). The scanner app writes the
@@ -194,6 +217,7 @@ function classify(ev) {
     out.kind = kindOf(ev);
     if (KIND_X[out.kind]) out.x[KIND_X[out.kind]] = 1;
     if (isPhonePlainScan(ev)) out.x.x_phone = 1;
+    Object.assign(out.x, designOf(ev));                                             // (a design step: counted as work, never an issue kind)
     const ib = inboxOf(ev);
     if (ib) {
       const r = ib.reply;
@@ -213,4 +237,4 @@ function classify(ev) {
   return out;
 }
 
-module.exports = { NUMBERED, NUMBERED_RE, deviceNo, KIND_X, INBOX_X, X_KEYS, STATION_FOLD, displayStation, storedStations, TASKS, UNATTRIBUTED, NO_THROUGHPUT, throughput, taskOf, isMatched, readStationCounters, touchedStations, isPhonePlainScan, echoScans, ECHO_MS, kindOf, inboxOf, classify, PEOPLE_ALIASES, personName, STANDARD_LOGIN, loginName };
+module.exports = { NUMBERED, NUMBERED_RE, deviceNo, KIND_X, INBOX_X, X_KEYS, DESIGN_X, DESIGN_X_KEYS, designOf, STATION_FOLD, displayStation, storedStations, TASKS, UNATTRIBUTED, NO_THROUGHPUT, throughput, taskOf, isMatched, readStationCounters, touchedStations, isPhonePlainScan, echoScans, ECHO_MS, kindOf, inboxOf, classify, PEOPLE_ALIASES, personName, STANDARD_LOGIN, loginName };
