@@ -327,7 +327,7 @@ const K = require(path.join(root, 'netlify/functions/_activityKinds.js'));
       await pg.click('#efficiencyView .efTabBtn[data-tab="custom"]');
       await pg.waitForFunction(() => location.hash === '#efficiency/custom' && document.querySelectorAll('#efficiencyView .efcRow').length === 5, null, { timeout: 15000 })
         .catch(async () => { throw new Error('the Custom pieces tab: ' + JSON.stringify(await pg.evaluate(() => ({ hash: location.hash, mounted: Efficiency.state.mounted, tab: Efficiency.state.tab, rows: document.querySelectorAll('#efficiencyView .efcRow').length, text: (document.querySelector('#efPgCustom') || {}).innerText }))) + ' errors: ' + errs.join(' | ')); });
-      const kp = await pg.$$eval('#efficiencyView .efc .efKV', n => n.map(x => x.textContent));
+      const kp = await pg.$$eval('#efficiencyView .efcu .efKV', n => n.map(x => x.textContent));
       assert.deepEqual(kp, ['5', '4', '2', '2'], 'custom pieces, no order, fixes, mistakes');
       assert.equal(await pg.locator('#efficiencyView .efcRow.no').count(), 4, 'every piece with no order is flagged');
       const ana = await pg.locator('#efficiencyView .efcPeople tr[data-name="Ana M."]').innerText();

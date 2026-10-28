@@ -44,14 +44,16 @@
   }
 
   function style() {
-    if (doc.getElementById("efcStyle")) return;
-    const s = doc.createElement("style"); s.id = "efcStyle";
+    // its own id and root class: "efcStyle" and .efc are the charts library's (charm-nest-efficiency-charts.js). Sharing them, whichever came first kept
+    // its CSS and the other's never landed: a chart drawn after this tab lost its styles (its day columns filled black), or this tab lost its own
+    if (doc.getElementById("efcuStyle")) return;
+    const s = doc.createElement("style"); s.id = "efcuStyle";
     s.textContent = `
-.efc{display:grid;gap:14px;min-width:0}
-.efc [hidden]{display:none!important}
+.efcu{display:grid;gap:14px;min-width:0}
+.efcu [hidden]{display:none!important}
 .efcBody{display:grid;gap:14px;min-width:0}
-.efc .efKpis{grid-template-columns:repeat(4,minmax(0,1fr))}
-.efc .efKV.flag{color:var(--clay)}
+.efcu .efKpis{grid-template-columns:repeat(4,minmax(0,1fr))}
+.efcu .efKV.flag{color:var(--clay)}
 .efcTW{overflow-x:auto;min-width:0}
 .efcT{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
 .efcT th{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);font-weight:700;text-align:right;padding:9px 12px 7px;white-space:nowrap;border-bottom:1px solid var(--line2)}
@@ -80,7 +82,7 @@
 .efcOrd{border:0;background:transparent;padding:0;font:650 11.5px var(--mono);color:var(--gold);cursor:pointer}.efcOrd:hover{text-decoration:underline}
 .efcEmpty{padding:26px 16px;text-align:center;color:var(--ink45);font-size:12.5px}
 .efcNote{font-size:11.5px;color:var(--ink45);margin:0 2px}
-@container ef (max-width:640px){.efc .efKpis{grid-template-columns:repeat(2,minmax(0,1fr))}.efc .efKpi:nth-child(3){border-left:0}.efcRow{grid-template-columns:minmax(0,1fr) auto}.efcWhen{grid-column:1/-1}.efcDay{grid-template-columns:72px minmax(0,1fr) auto}}`;
+@container ef (max-width:640px){.efcu .efKpis{grid-template-columns:repeat(2,minmax(0,1fr))}.efcu .efKpi:nth-child(3){border-left:0}.efcRow{grid-template-columns:minmax(0,1fr) auto}.efcWhen{grid-column:1/-1}.efcDay{grid-template-columns:72px minmax(0,1fr) auto}}`;
     doc.head.appendChild(s);
   }
 
@@ -89,7 +91,7 @@
     if (!api) throw new Error("the console is not loaded");
     style();
     const st = { M: null, busy: false, err: "", at: 0, gen: 0, ctl: null, filter: "all", sig: "", dead: false };
-    el.innerHTML = `<div class="efc">
+    el.innerHTML = `<div class="efcu">
   <div class="efLoadMod efcWait" role="status"><span class="spin" aria-hidden="true"></span><span>Reading custom pieces…</span></div>
   <div class="efcBody" hidden>
     <section class="efCard" aria-label="Custom pieces at a glance"><div class="efKpis">

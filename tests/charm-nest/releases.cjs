@@ -69,6 +69,8 @@ vm.runInContext(part('Gate','/* ═══ 21'),c);
  `,recovery);
  const restore=code.slice(code.indexOf('  async function restoreRunSheets(rec)'),code.indexOf('  function onComplete(r)',code.indexOf('  async function restoreRunSheets(rec)')));
  vm.runInContext(restore,recovery);
+ // (DUPID, e81ac73, 27 Oct 2026: two pieces of one design never share one id on a sheet; the restore reads a saved record's placements through the page's placedOfRecord, CharmNestPoolPieces.placedCharms)
+ { const i=code.indexOf('function placedOfRecord(d) {'),j=code.indexOf('\n}\n',i); assert(i>0&&j>i,'placedOfRecord is where the test expects it'); recovery.window.CharmNestPoolPieces=recovery.CharmNestPoolPieces; vm.runInContext(code.slice(i,j+3),recovery); }
  await vm.runInContext(`(async()=>{
  await restoreRunSheets({runId:'working',setIds:[]});
  assert.equal(page.charms.length,1,'a working run restores even before a set number exists');
