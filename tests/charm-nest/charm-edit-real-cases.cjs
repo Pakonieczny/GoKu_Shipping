@@ -15,7 +15,11 @@
 //      front art laid over it, its own added part, a Front | Back switch, and the card's thumbnails show its back and the front the Charm Editor drew on (C1); Front shows the front as the front,
 //      the master's hatch and every part of the editor, view only (C2); a dot added on the front from the back's card shows the front with it the moment it is saved (C3); the bar's front draws
 //      Paul's photo with the words (C4). C runs after A and B (it looks at what they saved)
-//   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/charm-edit-real-cases.cjs      (CR_ONLY=A0, A or B; SHOTS=<dir> for the screenshots)
+//   D  the bar after B1 (Paul, 28 Oct 2026, order 4203083230): MADEPV ("In this view the vectorized image does not show up in the right side preview"): the order window's Sheet tab, its FRONT
+//      ENGRAVING card's preview draws the photo's greys beside the words, read by its pixels (D1), and still does once the upkeep let go of the written placement (D2: it drew the words-only saved
+//      picture); EDITDESIGN ("When I press the 'Edit Design' button ... the engraving text is not present"): the order window's Edit Design opens the piece itself, its front words ONE editable
+//      text of the engraving, the photo with them (D4), and a part added there is saved for the piece, the words staying the engraving's, never copied into its art (D5)
+//   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/charm-edit-real-cases.cjs      (CR_ONLY=A0, A, B, C or D (D runs B first); SHOTS=<dir> for the screenshots)
 'use strict';
 const path = require('node:path'), fs = require('node:fs');
 const ROOT = path.join(__dirname, '../..'), FIX = path.join(__dirname, 'fixtures');
@@ -128,7 +132,7 @@ async function partPage() {
       check(`A5 … Save again: kept ("${note4}"), the dot added to the record`, /^Front artwork saved/.test(note4 || '') && !!rec4 && rec4.added.length === grouped.n + 2, JSON.stringify({ note4, n: rec4 && rec4.added.length }));
     }
 
-    if (!ONLY || ONLY === 'B') {
+    if (!ONLY || ONLY === 'B' || ONLY === 'D') {
       /* ── B1 · the bar: Paul's photo on its front, saved; one real press on Approve ── */
       await R.openEngraveDetail(w, 'bar', { face: 'front' }); await R.settle(page, 700);
       const j0 = await jobOf();
@@ -212,6 +216,67 @@ async function partPage() {
       const c4 = await wa();
       check(`C4 the bar's front: the work area draws Paul's photo (${c4.grey} grey parts) with the words fitted on it, the cut line, and the card's thumbnail is the front (${c4.thumbs})`,
         c4.job === 'front' && c4.viewFace === 'front' && c4.grey === 8 && c4.words && /front\*?\+pic/.test(c4.thumbs) && !c4.peek, JSON.stringify(c4));
+    }
+    if (!ONLY || ONLY === 'D') {
+      /* ── D · the bar of order 4203083230 after B1 (his photo saved on the front, the words approved) ──
+         MADEPV ("In this view the vectorized image does not show up in the right side preview"): the engraving card beside the sheet (order window's Sheet tab, the sheet window) draws the face as made
+         EDITDESIGN ("When I press the 'Edit Design' button ... the engraving text is not present"): Edit Design opens the piece as the engraving card's Open in Charm Editor does, words as text */
+      const bar = await page.evaluate(() => { const row = B.orders.rows.find(r => r.spec && r.spec.designSku === 'TINY BAR_7427'); const j = row && Engrave.jobsOf(row).find(x => x.face === 'front'); const pid = j && j.copies[0]; const sh = pid && Pool.sheetOf(pid); return j ? { key: row.key, rid: String(row.order.receiptId), job: j.key, pid, state: j.state, sheet: sh ? sh.sheetId : null } : null; });
+      const greys = [...new Set(ART.added.map(a => Math.round(Math.max(0, Math.min(1, a.fill[0])) * 255)))].filter(v => v > 0 && v < 255);
+      /** The picture in an engraving card's preview, read by its pixels: the photo's own greys (exact, as its parts are filled), and the words' dark ink beside them (outside the greys' box). */
+      const pixels = sel => page.evaluate(({ sel, greys }) => {
+        const cv = document.querySelector(sel + ' [data-engraving-preview] canvas'); if (!cv) { const s = document.querySelector(sel + ' [data-engraving-preview]'); return { canvas: false, slot: s ? s.innerHTML.slice(0, 120) : null }; }
+        // (a grey of the photo: a pixel of one of its exact levels whose four neighbours are that grey too, the inside of a filled part, never the anti-aliased edge of a letter or the cut line;
+        //  the words: their ink's exact #111 (renderBack's glyphs), which neither the cut line (#000) nor any grey level is)
+        const W = cv.width, H = cv.height, d = cv.getContext('2d').getImageData(0, 0, W, H).data, lv = new Set(greys), at = (x, y) => (y * W + x) * 4, g = (x, y) => { const i = at(x, y); return d[i] === d[i + 1] && d[i] === d[i + 2] ? d[i] : -1; };
+        let grey = 0, ink = 0, gx0 = 1e9, gx1 = -1, ix0 = 1e9, ix1 = -1;
+        for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) { const v = g(x, y); if (v === 17) { ink++; if (x < ix0) ix0 = x; if (x > ix1) ix1 = x; } else if (lv.has(v) && g(x - 1, y) === v && g(x + 1, y) === v && g(x, y - 1) === v && g(x, y + 1) === v) { grey++; if (x < gx0) gx0 = x; if (x > gx1) gx1 = x; } }
+        return { canvas: true, w: W, h: H, grey, ink, greyX: grey ? [gx0, gx1] : null, inkX: ink ? [ix0, ix1] : null, beside: grey > 0 && ink > 0 && ix1 > gx1 + 20, made: !!cv._made, art: (cv._frontArt || []).filter(s => s.artGrey).length };
+      }, { sel, greys });
+      const shelved = () => page.evaluate(k => { const j = Engrave.items().get(k); return j ? { state: j.state, view: !!j.view, fit: !!j.fit, written: !!j.writtenFit } : null; }, bar.job);
+      const sheetTab = async () => {
+        await page.evaluate(async k => { CN.setMode('orders'); if (OrderWin.isOpen()) OrderWin.close(); await OrderWin.open(k, { view: 'sheet' }); }, bar.key);
+        await until(() => page.evaluate(() => !!document.querySelector('#owSheetPanel [data-engraving-panel] [data-engraving-preview] > *')), 30000); await R.settle(page, 600);
+        return pixels('#owSheetPanel [data-engraving-panel]');
+      };
+      // D1 · the order window's Sheet tab: the FRONT ENGRAVING card's preview
+      const d1 = await sheetTab(), s1 = await shelved();
+      await R.shot(w, 'CR-D1-sheet-tab-card');
+      check(`D1 the order window's Sheet tab, the bar's FRONT ENGRAVING card (${s1 && s1.state}): its preview draws Paul's photo in its own greys (${d1.grey} px of the ${greys.length} grey levels, ${d1.art} grey parts) beside the words (${d1.ink} px of ink outside the photo)`,
+        !!bar && /approved|written/.test(s1 && s1.state) && d1.canvas && d1.made && d1.art === 8 && d1.grey > 400 && d1.ink > 150 && d1.beside, JSON.stringify({ bar, s1, d1 }));
+      // D2 · the same once the upkeep let go of the written placement (shelveWritten: no view, no fit, only the saved picture before): the card lays it out again for the picture
+      await page.evaluate(() => { try { if (OrderWin.isOpen()) OrderWin.close(); } catch (_) {} }); await R.openEngraveDetail(w, 'sil', { face: 'back' }); await R.settle(page, 400);   // (the upkeep keeps the placement of the card in front: another piece's card is put in front, as a person moving on does)
+      await page.evaluate(() => { try { CN.setMode('orders'); } catch (_) {} Engrave.shelveWritten(); });
+      const s2 = await shelved();
+      const d2 = s2 && !s2.view ? await sheetTab() : null;
+      await R.shot(w, 'CR-D2-sheet-tab-card-shelved');
+      check(`D2 … after the upkeep let go of the written placement (${JSON.stringify(s2)}): the card still draws the photo's greys (${d2 ? d2.grey : '-'} px) beside the words (${d2 ? d2.ink : '-'} px), not the words-only saved picture`,
+        !!s2 && !s2.view && s2.written && !!d2 && d2.canvas && d2.grey > 400 && d2.ink > 150 && d2.beside, JSON.stringify({ s2, d2 }));
+      // D3 · the sheet window's own card for the piece
+      // (the sheet window's card is this very card: charm-nest-sheetwin.js renderEng draws CNEngravingSeals.panel and wirePanel with the piece's job, as the Sheet tab does; this offline world's
+      //  sheets are working pages with no saved record to open that window on, so D1 and D2 are its check)
+      await page.evaluate(() => { try { if (OrderWin.isOpen()) OrderWin.close(); } catch (_) {} });
+      // D4 · Edit Design in the order window's header: the piece's own design (pc-<poolId>, kept by B1's save) opens THE PIECE, its front words as an editable text of the engraving, the photo's greys with it
+      await page.evaluate(async k => { CN.setMode('orders'); if (OrderWin.isOpen()) OrderWin.close(); await OrderWin.open(k); }, bar.key);
+      const btn = await until(() => page.evaluate(() => { const b = document.getElementById('owCpDesign'); return b && !b.hidden ? b.textContent.trim() : null; }), 20000);
+      const s4 = await shelved(), puts4 = artPuts();
+      if (btn) await page.click('#owCpDesign');
+      await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }).catch(() => {}); await settleP(page);
+      const d4 = await page.evaluate(() => { const E = CharmEditor.current; if (!E) return null; const all = []; const walk = (l, d) => l.forEach(i => { all.push(Object.assign({ depth: d }, i)); if (i.children) walk(i.children, d + 1); }); walk(E.items('front'), 0); const t = all.find(i => i.kind === 'text');
+        return { face: E.face(), text: t ? { text: t.text, source: t.source, fontKey: t.fontKey, depth: t.depth, eng: t.engraving ? t.engraving.face : null } : null, greys: all.filter(i => i.artGrey || (Array.isArray(i.fill) && i.fill[0] === i.fill[1] && i.fill[1] === i.fill[2] && i.fill[0] > 0 && i.fill[0] < 1 && i.kind === 'path')).length, design: !!document.querySelector('.ce-root [data-cp-ce-send]'), backN: E.items('back').length, title: (document.querySelector('.ce-root .ce-id h2') || {}).textContent || '' }; });
+      await R.shot(w, 'CR-D4-edit-design');
+      check(`D4 the order window's "${btn}" (the bar's job ${s4 && s4.view ? 'with' : 'without'} its placement in memory): the Charm Editor opens on the piece with its front words "${d4 && d4.text ? d4.text.text : ''}" as ONE editable text of the engraving (${d4 && d4.text ? d4.text.source + ', ' + d4.text.fontKey : '-'}) and the photo's ${d4 ? d4.greys : 0} greys, Send to sheet… beside Save`,
+        btn === 'Edit Design' && !!d4 && !!d4.text && d4.text.text === '33.47765N 86.80020W' && d4.text.source === 'engrave' && d4.text.eng === 'front' && d4.text.depth === 0 && d4.greys >= 8 && d4.face === 'front' && d4.design, JSON.stringify({ btn, s4, d4 }));
+      // D5 · a dot added there and saved: the piece keeps it, the words stay the engraving's (never copied into the art, never lost)
+      const dot = d4 && await page.evaluate(() => { const E = CharmEditor.current, f = E.frame(), x = f.x0 + f.wPt * 0.9, y = f.y0 + f.hPt * 0.5; const ids = E.ctx.addItems([{ kind: 'path', role: 'hatch', name: 'Edit Design dot', fill: true, stroke: false, subpaths: [[['m', [x, y]], ['l', [x + 0.5, y]], ['l', [x + 0.25, y + 0.5]], ['h']]], tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 }], { select: false }); E.ctx.commit('dot'); return ids[0]; });
+      if (d4) await page.click('.ce-root [data-act="save"]');
+      await until(async () => artPuts() > puts4 && !(await page.evaluate(() => !!document.querySelector('.ce-root'))), 90000);
+      const rec5 = st.doc('Charm_Pool_Art', bar.pid + '~front');
+      const j5 = await until(() => page.evaluate(k => { const j = Engrave.items().get(k); return j && j.fit && j.view ? { state: j.state, text: j.text, lines: (j.fit.lines || j.lines || []).join(' '), glyphs: (j.fit.glyphs || []).length, artOnly: !!j.fit.artOnly } : null; }, bar.job), 60000);
+      check(`D5 … a dot added there and saved: the piece's record keeps the photo and the dot (${rec5 ? (rec5.added || []).length : 0} parts, no text among them), the front's words stay the engraving's ("${j5 ? j5.lines : ''}", ${j5 ? j5.glyphs : 0} glyphs, ${j5 ? j5.state : '-'})`,
+        !!dot && !!rec5 && (rec5.added || []).length === 9 && !(rec5.added || []).some(a => a.kind === 'text' || a.artText || /33\.47765N/.test(String(a.text || a.name || ''))) && !!j5 && j5.lines === '33.47765N 86.80020W' && j5.glyphs > 0 && !j5.artOnly,
+        JSON.stringify({ dot, rec: rec5 && (rec5.added || []).map(a => a.kind + ':' + (a.name || a.text || a.id)).slice(-3), j5 }));
+      await page.evaluate(() => { try { if (OrderWin.isOpen()) OrderWin.close(); } catch (_) {} });
     }
     check('E1 no page error', w.errors.length === 0, JSON.stringify(w.errors).slice(0, 600));
     console.log('screenshots in ' + shots);

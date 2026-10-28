@@ -27,7 +27,9 @@
  *       card, else blank; words in the engraving's own fonts, scripts and emoji (CharmNestCeText.prepare). Its Save keeps the design in the design
  *       library as a new version attached to the order (CharmNestDesigns.put, orderId; the editor's true / false paints written as the laser's pens)
  *       and offers the pop-up prefilled with that order. The picture in the pop-up is the library's own reading of the parts (CharmNestDesigns.leaves),
- *       what the design's hash covers and the laser file draws.
+ *       what the design's hash covers and the laser file draws. EDITDESIGN: an attached design that is one of the order's own PIECES (pc-<poolId>, the
+ *       version the bridge keeps with every Charm Editor save of a piece) opens that piece instead, as its engraving card does (Engrave.openCharmEditor:
+ *       its words as editable text, its Save kept for the piece).
  *   Hooks the bridge calls (each one line there): wire(node, item) on a Custom Orders card (the "Open in Charm Designer" button in its column, and the
  *   design attached to the order across its foot); orderWin(row, at) in the order window's header. In the Charm Editor: the "Send to sheet…" command
  *   (CharmEditor.commands.sendToSheet) and a button beside Save (CharmEditor.onOpen).
@@ -283,7 +285,7 @@
   const pickOrder = (r, rid) => (Array.isArray(r) ? r : r && Array.isArray(r.designs) ? r.designs : []).filter(d => d && d.id && String(d.orderId || '') === rid);
   function summaryOf(d, extra) {
     const sz = d.widthMm ? { wMm: +d.widthMm, hMm: +d.heightMm } : sizeOf(d) || { wMm: 0, hMm: 0 }, pic = d.faces ? previewSvg(d, { px: 38 }) : null;
-    return Object.assign({ id: d.id, version: +d.version || 0, name: d.name || 'Custom design', widthMm: sz.wMm, heightMm: sz.hMm, hash: d.hash || '', at: +d.at || Date.now(), by: d.by || '', svg: pic ? pic.svg : '', thumbUrl: d.thumbUrl || '', sends: [] }, extra || {});
+    return Object.assign({ id: d.id, version: +d.version || 0, name: d.name || 'Custom design', widthMm: sz.wMm, heightMm: sz.hMm, hash: d.hash || '', at: +d.at || Date.now(), by: d.by || '', svg: pic ? pic.svg : '', thumbUrl: d.thumbUrl || '', sends: [], ...(d.source && d.source.kind === 'piece' && d.source.poolId ? { source: { kind: 'piece', poolId: String(d.source.poolId) } } : {}) }, extra || {});
   }
   function attach(rid, d, extra) {
     rid = String(rid || ''); if (!rid || !d || !d.id) return null;
@@ -680,8 +682,39 @@
   }
   let designing = null, live = null;    // live: what the designer opened from here is working on ({ orderId, design, name, source, saved })
   const busyCards = new Set();
+  /* EDITDESIGN (Paul, 28 Oct 2026, order 4203083230: "When I press the 'Edit Design' button ... the engraving text is not present in the Charm ... when I enter the Charm Editor from the Engraving
+     Modal the text appears correctly"). The design attached to that order was the PIECE's own (pc-<poolId>: the version of the piece the bridge keeps in the design library with every Charm Editor
+     save of it, Engrave.openCharmEditor), and Edit Design opened it in design mode: the drawing as a design, with no engraving words (they are the face's job's, never the design's), and a Save there
+     made a new design version the piece never carries (its laser file is made from its own artwork record). A design that is a piece of this order now opens THAT PIECE, exactly as its engraving
+     card's "Open in Charm Editor" opens it: the drawing with every part the editor saved on it, each face's words as the editable text the card hands in (CETEXT), its Save kept for the piece (and as
+     the design's next version, by the bridge), and Send to sheet… beside Save as on every open. Any other design attached (a custom order's own) opens in design mode as before. */
+  function pieceDesignOf(x) {
+    const row = rowsOf(x)[0]; if (!row || !row.order) return null;
+    const rid = String(row.order.receiptId), att = attachedOf(rid)[0] || null; if (!att) return null;
+    const m = /^pc-(.+)$/.exec(String(att.id || '')), src = att.source && att.source.kind === 'piece' ? String(att.source.poolId || '') : '', pid = src || (m ? m[1] : '');
+    if (!pid) return null;
+    const own = r => r && r.order && String(r.order.receiptId) === rid && (r.poolIds || []).map(String).includes(pid);
+    const line = own(row) ? row : rowsAll().find(own) || rowsOf(x).find(own) || null;
+    return line ? { rid, poolId: pid, row: line, att } : null;
+  }
+  async function openPiece(pc) {
+    const E = root.Engrave, CE = root.CharmEditor;
+    if (CE && CE.current) { say('The Charm Editor is already open'); return null; }
+    const W = root.OrderWin, inWin = !!(W && typeof W.isOpen === 'function' && W.isOpen());
+    // (what a save says: under the order window's own "Open in Charm Editor" when it is in view, a toast would be under that window; else a toast)
+    const note = () => { try { const f = doc && doc.getElementById('owVector'), n = f && f.closest('figure'); return n ? n.querySelector('.owCharmEditNote') : null; } catch (_) { return null; } };
+    const tell = (text, bad) => { const n = inWin ? note() : null; if (n) { n.textContent = text || ''; n.classList.toggle('bad', !!bad); n.hidden = !text; return; } if (text) say(text, bad ? 'bad' : '', 6000); };
+    busyCards.add(pc.rid); repaint(pc.rid);
+    try { return await E.openCharmEditor({ row: pc.row, poolId: pc.poolId, from: inWin ? 'orderWindow' : 'piece', say: tell }); }
+    finally { busyCards.delete(pc.rid); repaint(pc.rid); }
+  }
   function openDesigner(x, o) {
     if (designing) return designing;
+    const pc = root.Engrave && typeof root.Engrave.openCharmEditor === 'function' && root.CharmNestArtEdit ? pieceDesignOf(x) : null;
+    if (pc) {
+      designing = openPiece(pc).catch(e => { console.warn('[custom piece] Charm Editor (piece):', e); say(`Charm Editor: ${String((e && e.message) || e).slice(0, 160)}`, 'bad', 7000); return null; }).finally(() => { designing = null; });
+      return designing;
+    }
     designing = designOnce(x, o || {}).catch(e => { console.warn('[custom piece] Charm Designer:', e); say(`Charm Designer: ${String((e && e.message) || e).slice(0, 160)}`, 'bad', 7000); return null; }).finally(() => { designing = null; });
     return designing;
   }

@@ -165,6 +165,13 @@
     const pill=status?`<span class="egPill" data-s="${esc(kind)}"><i aria-hidden="true"></i>${status}</span>`:'';
     return `${compact?'':`<span class="fLabel">${say('Back engraving')}</span>`}<div class="swEng egCard${compact?' egCompact':''}" data-state="${esc(kind)}"${face==='front'?' data-face="front"':''}><div class="top egTop">${cycle}${forPiece}${pill}</div><div class="egWhy"><b>${why}</b>${sub}</div>${preview}${words}<div class="acts">${acts}</div>${failed?`<div class="egFail" role="alert">${esc(failed)}</div>`:''}${history?`<div class="egHistory">${history}</div>`:''}</div>`;
   }
+  /* MADEPV (Paul, 28 Oct 2026: "the vectorized image does not show up in the right side preview"): the face drawn as it is made (Engrave.renderMade: the words, the cut line and the Charm Editor's
+     parts, a traced photo's greys in their own grey; a written piece laid out again for the picture), else (a page without it, or a face it cannot draw) the words and the cut line as before. null: not drawable here. */
+  function madeOf(job,px){
+    const E=root?.Engrave;if(!job || !E)return null;
+    if(typeof E.renderMade==='function'){let cv=null;try{cv=E.renderMade(job,px);}catch(_){cv=null;}if(cv)return cv;}   // (one that cannot be drawn so: the words and the cut line, as before)
+    return job.fit && job.view && E.renderBack?E.renderBack(job,px,{hatch:false,grid:false}):null;
+  }
   /** The preview zooms and pans where it lies (charm-nest-zoompan.js, the one module for every order picture): a click zooms in on the
    *  point clicked, a drag pans, the frame keeps its size. `zoom` ({id, key}) names the place and what it shows, so a card drawn again for
    *  the same piece keeps its zoom; the picture drawn from the fitted words is drawn again larger when the zoom settles. */
@@ -172,7 +179,7 @@
     const Z=root?.CNZoomPan;if(!Z||!slot)return;
     const face=faceOf(job);
     try{Z.attach(slot,{id:(zoom&&zoom.id)||'eng',key:((zoom&&zoom.key)||job?.key||'')+(fitted?'|fit':'|png'),label:aboutFace('Back engraving preview',face),maxPx:1800,
-      hires:fitted?async({px})=>{const size=Math.max(900,Math.min(1800,Math.ceil(px/300)*300)),cv=root.Engrave.renderBack(job,size,{hatch:false,grid:false});cv.setAttribute('role','img');cv.setAttribute('aria-label',aboutFace('The full back engraving',face));return{el:cv,px:size};}:undefined});}catch(_){}
+      hires:fitted?async({px})=>{const size=Math.max(900,Math.min(1800,Math.ceil(px/300)*300)),cv=madeOf(job,size);if(!cv)return null;cv.setAttribute('role','img');cv.setAttribute('aria-label',aboutFace('The full back engraving',face));return{el:cv,px:size};}:undefined});}catch(_){}
   }
   function wirePanel(host,e,{approve,approveBoth,open,imageUrl,zoom,stale,pick}={}){
     // Approve engraving: the host's own approval runs (its name bar, Engrave.approve, the BACK ENGRAVING seal pressed on this very button). The wait
@@ -233,7 +240,7 @@
     const slot=host.querySelector('[data-engraving-preview]');if(!slot)return;
     const job=e.job,img=e.back && (e.back.outputs?.png?.url || e.back.png || e.back.preview);
     // A fresh placement must use the current fit; an old approved thumbnail must not disguise edits.
-    if(job?.fit && job?.view && root?.Engrave?.renderBack){try{const cv=root.Engrave.renderBack(job,600,{hatch:false,grid:false});cv.setAttribute('role','img');cv.setAttribute('aria-label',aboutFace('The full back engraving',faceOf(job)));slot.replaceChildren(cv);zoomPreview(slot,zoom,job,true);return;}catch(_){}}
+    {let cv=null;try{cv=madeOf(job,600);}catch(_){cv=null;}if(cv){cv.setAttribute('role','img');cv.setAttribute('aria-label',aboutFace('The full back engraving',faceOf(job)));slot.replaceChildren(cv);zoomPreview(slot,zoom,job,true);return;}}
     if(img){const im=root.document.createElement('img');im.alt=aboutFace('The full approved back engraving',faceOf(job));im.crossOrigin='anonymous';im.src=imageUrl?imageUrl(img):img;slot.replaceChildren(im);zoomPreview(slot,zoom,job,false);return;}
     slot.classList.add('egPvNone');slot.innerHTML=`<span class="by">${aboutFace('No preview here: see the back in Design & Engrave',faceOf(job))}</span>`;
   }

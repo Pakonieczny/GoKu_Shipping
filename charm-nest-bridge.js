@@ -9592,7 +9592,7 @@ const Engrave = window.Engrave = (() => {
       job.mask = mask; if (job.verify && !job.fit.artOnly) job.verify = { geometry: G.verifyInk(job.fit.cmds, mask), at: Date.now() };
     } catch (_) { /* the area it had stands */ }
   }
-  function renderBack(job, px, { grid = false, hatch = true, editable = false, include = null, draft = false } = {}) {
+  function renderBack(job, px, { grid = false, hatch = true, editable = false, include = null, draft = false, made = false } = {}) {
     if (editable) freshMask(job);
     const view = job.view, mask = job.mask, fit = job.fit; const cv = document.createElement("canvas"); cv._editable = editable; cv._draft = !!draft;
     const handles = view.members.reduce((a, s) => [Math.min(a[0], s.bbox[0]), Math.min(a[1], s.bbox[1]), Math.max(a[2], s.bbox[2]), Math.max(a[3], s.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
@@ -9620,8 +9620,8 @@ const Engrave = window.Engrave = (() => {
     /* FRONTART (Paul, 27 Oct 2026: "In the Engraving Modal the User sometimes needs to be able to see the engraving on the front of a given charm"). Only the editor's work area (editable) draws the
        design's own art: on a FRONT it is always there, muted, over the grid and the tint and under the cut line and the words. (FACEVIEW, Paul 28 Oct 2026: "When viewing the back, the front's art must
        not be drawn mirrored on top as if it were the back": a BACK draws only what the back carries, its cut lines, the parts added to it and its words; the front is seen as the front, faceViewSwitch.)
-       The pictures written with a piece (the approval .png, the look, the Approved card) are not editable and never draw it. Display only: job.view, job.mask and job.fit are read, never changed. */
-    const onFront = view.face === "front", art = editable && onFront ? frontArtOf(view) : [];
+       The pictures written with a piece (the approval .png, the look) are not editable and never draw it; the engraving card's preview (`made`, MADEPV: renderMade) draws it as the work area does. Display only: job.view, job.mask and job.fit are read, never changed. */
+    const onFront = view.face === "front", art = (editable || made) && onFront ? frontArtOf(view) : [];   // (MADEPV: `made`, the cards' picture of the face as it is made, renderMade)
     cv._frontArt = art; cv._frontFace = onFront; cv._showFront = false;
     if (art.length) frontArtOn(ctx, art, tx, k, cv.width, cv.height, FRONT_ART_ALPHA.front);
     if (grid) cv._gridLabel = gridLabelBox(ctx, cv.width);   // (where the Front | Back switch sits: just after the grid's own label)
@@ -9831,6 +9831,33 @@ const Engrave = window.Engrave = (() => {
     const cv = renderBack({ key: job.key + "~" + face, view: fv.view, mask: null, fit: null, copies: job.copies, row: job.row, _viewCharm: fv.charm }, px, { grid: true, hatch: false, editable: true });
     cv._editable = false; cv._viewFace = face;
     return cv;
+  }
+  /* MADEPV (Paul, 28 Oct 2026, order 4203083230: "In this view the vectorized image does not show up in the right side preview"): the engraving card of an order (the order window's Sheet tab and
+     Overview, the sheet window: CNEngravingSeals.wirePanel) drew the face's words and cut line only (renderBack as the approval .png draws it), or, for a written piece whose placement the upkeep let
+     go of (shelveWritten), that very .png: the photo traced in the Charm Editor on the bar's front was on the sheet and in the work area but never in that card. The card now draws the face as it is
+     made: the cut line, the words, and the Charm Editor's parts, the front's art as the work area draws it (the master's own art muted, a person's parts at full strength, a traced image's greys in their
+     own grey) and the parts added to a back in the words' ink (backArtOf). A written piece with no placement in memory is laid out again for the picture only (restoreWritten on a copy: the very check
+     the card's own revival makes, so what is drawn is what was approved; the job is not touched and nothing is kept on it); a face that cannot be (its font still loading, its charm changed since):
+     null, and the card shows the saved picture as before. A few are kept, by job and approval, so a card drawn again (and its zoom) does not lay them out again. → canvas | null */
+  const MADE_JOBS = new Map();   // job key -> { job, at, charm, j } (at most MADE_KEEP)
+  const MADE_KEEP = 12;
+  function madeJobOf(job) {
+    if (!job || !job.view && !job.fit && !job.writtenFit) return null;
+    if (job.fit && job.view) return job;
+    const w = job.writtenFit; if (!w || w.approvedAt !== job.approvedAt || !["approved", "written"].includes(job.state) || recalledJob(job)) return null;
+    let charm = null; try { charm = charmFor(job); } catch (_) { charm = null; } if (!charm) return null;
+    const had = MADE_JOBS.get(job.key); if (had && had.job === job && had.at === job.approvedAt && had.charm === charm) return had.j;
+    if (!F_.ok || !fontSetOf(job)) { try { if (F_.ok) loadFontSet(fontIdOf(job)); } catch (_) { /* the saved picture stands */ } return null; }
+    const j = Object.assign({}, job);
+    try { restoreWritten(j); } catch (_) { return null; }
+    j.mask = null; j.verify = null;   // (a picture: no tint, no handles; only the view and the words are kept)
+    MADE_JOBS.delete(job.key); MADE_JOBS.set(job.key, { job, at: job.approvedAt, charm, j });
+    while (MADE_JOBS.size > MADE_KEEP) MADE_JOBS.delete(MADE_JOBS.keys().next().value);
+    return j;
+  }
+  function renderMade(job, px) {
+    const j = madeJobOf(job); if (!j || !j.view || !j.fit) return null;
+    try { const cv = renderBack(j, px, { grid: false, hatch: false, made: true }); cv._made = true; return cv; } catch (e) { console.warn("engraving card: the face as made", e); return null; }
   }
   function faceViewCss() {
     if (document.getElementById("egFaceViewCss")) return;
@@ -10138,6 +10165,7 @@ const Engrave = window.Engrave = (() => {
     // (on a sheet: one of this page's, or, for a piece opened from its order (ITEM 30), the sheet its pool row names: its cut line stays as the sheet was nested with it)
     const placedOf = id => !!Pool.sheetOf(id) || (t.from !== "card" && !!((B.pool.rows.get(id) || {}).sheetId)), placed = placedOf(poolId);
     const fonts = await charmEditFonts(job), views = {}, docs = {}, words = {};
+    await charmEditRevive(poolId);   // (EDITDESIGN: a written face the upkeep let go of is built again first, as opening its card does, so its words are handed in from every way into the editor)
     for (const face of ["front", "back"]) { views[face] = charmEditView(poolId, charm, face, sku); docs[face] = charmEditDoc(charm, views[face], face, placed); }
     // (CETEXT, Paul 28 Oct 2026: "the text that is currently on the charm does not show up in the editor": the words each face's job has fitted, as an editable text on that face, on top)
     { const pj = jobsOfPiece(poolId); for (const face of ["front", "back"]) { let w = null; try { w = charmEditWords(pj[face], views[face], face); } catch (e) { console.warn("charm edit: the words", e); } if (w) { docs[face].items.push(w); words[face] = { id: w.id, job: pj[face], item: w }; } } }
@@ -10248,6 +10276,18 @@ const Engrave = window.Engrave = (() => {
       try { render(); } catch (_) { /* drawn with the next render */ }
       return { saved: faces, records };
     } finally { if (savingArt) { for (const id of t.poolIds) if (ART_SAVES.get(String(id)) === savingArt) ART_SAVES.delete(String(id)); savingArt.end(); } if (wentBack) charmEditBack(t); }
+  }
+  /* EDITDESIGN (Paul, 28 Oct 2026, order 4203083230: "When I press the 'Edit Design' button ... the engraving text is not present in the Charm ... when I enter the Charm Editor from the Engraving Modal
+     the text appears correctly"). The words are handed in from the face's job (charmEditWords: its fit, in its own view); a WRITTEN face whose placement the upkeep let go of (shelveWritten) has
+     neither, and only opening its engraving card built it again (reviveShelved). From the order window (its Edit Design, its Open in Charm Editor) the editor opened with no words. Each face of the
+     piece is built again here first, exactly as its card does (its font loaded and waited for); a face that cannot be built keeps its saved picture and opens with no words, as before. */
+  async function charmEditRevive(poolId) {
+    let pj = {}; try { pj = jobsOfPiece(poolId) || {}; } catch (_) { pj = {}; }
+    for (const j of [pj.front, pj.back]) {
+      if (!j || (j.fit && j.view) || !j.writtenFit || !["approved", "written"].includes(j.state)) continue;
+      try { if (!F_.ok) await loadFonts(); if (F_.ok && !fontSetOf(j)) await loadFontSet(fontIdOf(j)); } catch (_) { /* opened with no words for that face */ }
+      try { reviveShelved(j); } catch (e) { console.warn("charm edit: the written words", e); }
+    }
   }
   /** The target of `x` (charmEditTarget) with its charm made from its master when this page holds no drawing of it (a piece of an order on no sheet of this page, or not nested yet: ITEM 30), with
    *  its own artwork edits put over it, as the placement's picture makes it (mountPlacementThumbnail). null: no piece, or its design has no drawing in the master library. */
@@ -12131,7 +12171,7 @@ const Engrave = window.Engrave = (() => {
     if (n) { try { Session.schedule(); render(); } catch (_) { /* drawn with the next render */ } }
     return n;
   }
-  return { viewFaceOf, setViewFace, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { viewFaceOf, setViewFace, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
    list of pieces, the Pieces counts and a monogram line's pieces (the same slots and piece keys: "<line>" for one piece, "<line>#C<u>" for several) read THIS. Added beside the Engrave object, not inside its return. */
