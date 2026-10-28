@@ -47,7 +47,7 @@ async function calendar() {
     const PID = made.calText.poolIds[0];
     check('0 the world: the calendar is pooled and its back fitted', made.calText.jobs.length === 1 && made.calText.jobs[0].fitted, JSON.stringify(made.calText.jobs));
     await R.openEngraveDetail(w, 'calText', { face: 'back' });
-    await page.click(Q + ' .backHost .egCharmEdit');
+    await page.click(Q + ' .egCharmEdit');
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page);
 
     /* 1 · the fonts */

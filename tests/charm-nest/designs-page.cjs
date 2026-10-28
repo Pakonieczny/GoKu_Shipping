@@ -39,7 +39,7 @@ const settleP = page => page.evaluate(() => new Promise(r => requestAnimationFra
     /* ── Edit charm → hide a grid line → Save ── */
     const edit = async () => {
       await R.openEngraveDetail(w, 'cal', { face: 'front' }); await R.settle(page, 800);
-      await page.click(Q + ' .backHost .egCharmEdit');
+      await page.click(Q + ' .egCharmEdit');
       await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page);
       const line = await page.evaluate(() => { const it = CharmEditor.current.items().find(i => i.role === 'line' && i.source === 'master' && !i.hidden); return it ? String(it.id) : null; });
       await page.click(`.ce-root .ce-layer[data-id="${line}"] [data-lact="eye"]`); await settleP(page);
