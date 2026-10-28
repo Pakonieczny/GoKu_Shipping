@@ -14592,6 +14592,7 @@ const CustomPrint = window.CustomPrint = (() => {
      would write is stamped here at once, as op_customPut stamps it (completed, who, how, the seal appended), marked pending. completeKept → { answers(it, rows, then) }: the cloud's
      records replace the ones stamped here as they come; a refusal (in the cloud's own words) takes the card back to Open, says why on the card and in a toast. */
   const OUTBOXED = () => !!(window.CharmNestStore && typeof CharmNestStore.mutate === "function");
+  const afterPaint = f => requestAnimationFrame(() => setTimeout(() => { try { f(); } catch (e) { console.warn("Review: after the press", e); } }, 0));
   function predictDone(t, who, how, label, cur) {
     const now = Date.now(), button = how === "button", doc = Object.assign({}, cur || {}, { key: t.key, receiptId: t.receiptId, transactionId: t.transactionId, sku: t.sku, title: t.title, category: t.category, kind: t.kind, state: "completed", updatedAtMs: now, pending: true });
     if (!cur || cur.state !== "completed" || !cur.completedAt) Object.assign(doc, { completedAt: now, completedBy: who, how: button ? "button" : "print" });
@@ -14763,7 +14764,8 @@ const CustomPrint = window.CustomPrint = (() => {
       if (putErr) humanAct("error", { orderId: String(targets[0].receiptId || ""), detail: "label printed but not marked completed" });
       if (done.length && it.onDone) { try { it.onDone(who, "print"); } catch (_) {} }   // a Review card's question: answered, by who
       if (done.length && cancelled) printedAnyway(cancelled, who, "print", done.length);
-      settle(); say(key, null); unlay(); pressSoon(); if (done.length && !kept) tlFresh();   // (the open order window reads its timeline now, as after Complete Order)
+      if (kept) afterPaint(settle); else settle();   // (OUTBOX: the press painted first)
+      say(key, null); unlay(); pressSoon(); if (done.length && !kept) tlFresh();   // (the open order window reads its timeline now, as after Complete Order)
       if (kept) kept.answers(it, rows.length ? rows : [{ key: targets[0].key, order: { receiptId: targets[0].receiptId } }], () => { if (done.length) tlFresh(); });
       agent({ bridge: true }, putErr ? "warn" : "DS", `${targets[0].receiptId}: sorting-station QR label printed by ${who}${putErr ? ` — not marked completed (${putErr.message})` : cut.size ? ` — ${cut.size} piece(s) went on a sheet meanwhile, not marked` : " · Review → Resolved"}`);
       if (putErr) toast(`The QR label was printed but ${done.length ? "not every piece was" : "the order was not"} marked completed: ${putErr.message} — press Print again to retry`, "bad", 9000);
@@ -14829,7 +14831,8 @@ const CustomPrint = window.CustomPrint = (() => {
       if (putErr) humanAct("error", { orderId: String(rid), detail: done.length ? "not every piece was completed" : "order not completed" });
       if (done.length && it.onDone) { try { it.onDone(who, "button"); } catch (_) {} }
       if (done.length && cancelled) printedAnyway(cancelled, who, "complete", done.length);
-      settle(); say(key, null); pressSoon(); if (done.length && !kept) tlFresh();
+      if (kept) afterPaint(settle); else settle();   // (OUTBOX: the press painted first; the whole order list is read again in the frame after)
+      say(key, null); pressSoon(); if (done.length && !kept) tlFresh();
       if (kept) kept.answers(it, rows, () => { if (done.length) tlFresh(); });   // (OUTBOX: the cloud's records replace the ones stamped here; a refusal takes the card back to Open)
       agent({ bridge: true }, putErr ? "warn" : "DS", `${rid}: custom order completed by ${who} (no label printed)${putErr ? ` — not every piece was saved (${putErr.message})` : " · Review → Resolved"}`);
       if (putErr) toast(`${rid}: ${done.length ? "not every piece was" : "the order was not"} released: ${putErr.message} — press Release Hold to try again`, "bad", 9000);
