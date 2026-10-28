@@ -18,7 +18,11 @@ def key(line):
 
 def merge_tag(a, b):
     ma, mb = tok.search(a), tok.search(b)
-    if not (ma and mb): return a if a == b else None
+    if not (ma and mb):
+        if a == b: return a
+        # one side added a ?v= token to a bare tag: keep the tokened side when nothing else differs
+        rest = lambda s: tok.sub('"', s)
+        return (a if ma else b) if rest(a) == rest(b) else None
     pa, pb = ma.group(1).split('-'), mb.group(1).split('-')
     merged = a.replace(ma.group(0), '?v=' + '-'.join(pa + [p for p in pb if p not in pa]) + '"', 1)
     rest = lambda s: tok.sub('', s)

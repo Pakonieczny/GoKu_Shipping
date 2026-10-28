@@ -30,7 +30,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - int/live-check.cjs: 7 pages load clean. Live verify = sha256 of each changed served file vs `git show origin/main:<f>`, then live-check.
 - If agents hang holding slots (load ~0, waits > 5 min): find holders: for f in slot1 slot2 slot3: ino=$(stat -c %i $SP/locks/$f); grep ":$ino " /proc/locks → pid → ps --ppid. Kill the idle test, tell its agent.
 
-## Live on main: 5c417f9 = batch 3 (designs + custompool + emplog; 20 tests pass + 4 after main merge; live verify bww1uux0c) on top of ea13162 (seals + Release button, verified live), f15505e (Approve never silent, verified live).
+## Live on main: 03d6b9c = batch 4 (image import, rulers/zoom/pan, pen tools, bar-front for waiting orders; live verify running) on top of 4003913 (build fix: _designLog.js classified; batch 3 verified live after it), 5c417f9 batch 3, ea13162 seals, f15505e Approve.
 - 89f2819 Manual Control instant · b2608ff navigation rounds 2+3, Charm Editor Save fix (Saving at once, sheet files in background),
   bar necklaces FRONT by default (BARFRONT) · 077f21c Approve never silent / never stuck · d58eea9 Design & Engrave batch 1: editor
   extension points + live readouts + Ctrl/Alt centre resize + smart guides (feedback), Blend/Warp/Distort (warp), image trace (trace).
@@ -81,13 +81,16 @@ board-live-extra.json with the new agent ids.
 - ANSWERED by Paul 03:39 UTC: "The refit if necessary, must be in the exact same place with a variance of one percent from where I actually placed it. The rotation needs to be also within one percent accurate to where I placed it." → RULE: a refit after a Charm Editor save keeps his placement: centre within 1% of the charm's size of where he placed it, angle within 1% of his angle (a level word stays level). Only the size may shrink if needed. Sent to the refit agent (a7764b20331f1122f) as a follow-up; if it is gone, re-spawn refit with this rule.
 - Phase 5 push (option a) needs a Firestore security rule in the console + a vendored Firestore SDK file.
 
-## Batch 4 in test (07:00): claude/de-integration 1bf67d3 = main 5c417f9 + de-image + de-rulers + de-pen + bar-front-waiting. Test run bywaqa04a → $SP/int/b4/*.log (12 node + 17 browser). All pass → fetch main, push HEAD:main, verify live (new files charm-nest-ce-image.js, charm-nest-ce-paths.js, charm-nest-engrave-bar-front.js). bar-front-waiting fixes a BARFRONT bug on main (a decided back got a 2nd FRONT job).
 
-## Phase 1 ship in test (07:02): claude/local-store 2f7ec40 (= 53d5d79 + main 5c417f9, pushed) in $SP/wt-guardfix. Run b3au0659x → $SP/int/p1/*.log. All pass → push HEAD:main, verify live (new file charm-nest-store.js). Then batch 4 must merge main again.
+## Phase 1 ship in test (07:25): $SP/wt-guardfix 1599532 = claude/local-store + main 03d6b9c (build OK). Earlier full run all pass except mc-instant check 5 (84 ms block at load 7). Final run bq3qtbibm → $SP/int/p1/f-*.log. Pass → push HEAD:main, verify live (charm-nest-store.js).
+## Batch 5 in test (07:27): claude/de-integration 7dfaaf0 = main 03d6b9c + masters + ops + extras + sendsheet (bbfdb02). Build OK. Run b-batch5 → $SP/int/b5/*.log. Then ship (after Phase 1: merge main first).
+## Refit (Paul's rule) ships after these: claude/de-refit 24406dc.
 - Phase 2 agent ac1971b04ea413b37 started 07:03 on claude/local-sync (wt-sync) from claude/local-store.
 - designs follow-up (af114bb2ccb5f706c resumed): claude/de-designs-2 = accept stroke/fill true in clean(); test world Master.load race.
 
 ## Handed back, waiting to merge into claude/de-integration
+- de-refit (a7764b20331f1122f) DONE 07:20 with PAUL'S RULE: claude/de-refit 24406dc. Keeps placement (same → size only → centre ≤1% → afresh with a note); SEPTEMBER stays 5.33 pt level. charm-edit-refit 13/13. SHIP after batch 4 + Phase 1 (tests: charm-edit-refit, charm-editor-engrave, engrave-editor-words, engrave-preview, engrave-front-art, charm-editor-back, engrave-worker).
+- de-extras (a5f64f2a38f32df82) DONE 07:14: claude/de-extras 58ff4da, ce-extras 21. ⌘Y is now Outline view (redo only ⇧⌘Z; charm-editor-browser.cjs line changed). Text-on-path fields need the designs follow-up (sent). BATCH 5.
 - de-sendsheet (a6ecf232b267d8e9d) DONE 07:10: claude/de-sendsheet bbfdb02 (contains main 5c417f9 + designs/custompool/emplog). New file charm-nest-custom-piece.js, test ce-sendsheet 21/21. BATCH 5.
 - de-ops (a3ce05d237db781e5) DONE 07:04: claude/de-ops d4009d1, ce-ops 47 node + 54 browser. BATCH 5.
 - de-masters (acbce20e63df93ae2) DONE 07:00: claude/de-masters f55479f, ce-masters 17/17. BATCH 5 (with library, tab, sendsheet, ops, extras as they land).
