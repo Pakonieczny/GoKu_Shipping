@@ -54,7 +54,7 @@ const step = async (name, fn) => { try { const note = await fn(); n++; console.l
     const errs = []; page.on('pageerror', e => errs.push(e.message)); page.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
     await page.addInitScript(() => { try { localStorage.clear(); } catch (e) { /* fine */ } });
     await page.goto(base + 'tests/charm-nest/fixtures/charm-editor-harness.html');
-    for (const f of ['charm-nest-vector.js', 'charm-nest-ce-paths.js', 'charm-nest-ce-ops.js', 'charm-nest-ce-extras.js', 'charm-nest-ce-warp.js', 'charm-nest-ce-ai-keys.js']) await page.addScriptTag({ url: base + f });
+    for (const f of ['charm-nest-vector.js', 'charm-nest-ce-paths.js', 'charm-nest-ce-ops.js', 'charm-nest-ce-extras.js', 'charm-nest-ce-warp.js']) await page.addScriptTag({ url: base + f });
     const settle = () => page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
     const shot = async name => { if (SHOTS) await page.screenshot({ path: path.join(SHOTS, name) }); };
     await page.evaluate(() => { window.openEditor(); }); await page.waitForSelector('.ce-root .ce-items path'); await settle();
@@ -91,7 +91,7 @@ const step = async (name, fn) => { try { const note = await fn(); n++; console.l
       const L = labels(rows);
       console.log('         nothing: ' + L.join(' | '));
       assert.equal(L[0], 'Undo'); assert.equal(L[1], 'Redo'); assert.ok(rows[0].off && rows[1].off, 'nothing to undo yet: greyed');
-      for (const w of ['Paste', 'Paste in Place', 'Zoom In', 'Zoom Out', 'Fit Artboard in Window', 'Actual Size', 'Hide Rulers', 'Hide Grid', 'Select All'.replace('Select All', 'All')]) assert.ok(L.includes(w), 'has ' + w + ': ' + L.join(', '));
+      for (const w of ['Paste', 'Paste in Place', 'Zoom In', 'Zoom Out', 'Fit Artboard in Window', 'Actual Size', 'Hide Rulers', 'Hide Grid', 'Select All']) assert.ok(L.includes(w), 'has ' + w + ': ' + L.join(', '));
       assert.ok(rows.find(r => r.label === 'Paste').off, 'nothing copied: Paste greyed');
       assert.ok(!L.includes('Cut') && !L.includes('Group') && !L.includes('Transform ▸'), 'nothing to cut, group or transform');
       assert.ok(L.includes('Select ▸') && L.includes('Laser Check…'), L.join(', '));

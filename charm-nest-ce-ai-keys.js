@@ -163,7 +163,7 @@
       list.push(R('edit.paste'), on(R('edit.pasteFront')), on(R('edit.pasteBack')), R('edit.pasteInPlace'), SEP,
         R('view.zoomIn'), R('view.zoomOut'), R('view.fit'), R('view.actual'), SEP,
         R('view.rulers'), R('view.grid'), R('view.guides'), on(R('view.clearGuides')), SEP,
-        R('view.outline'), SEP, R('sel.all'));
+        R('view.outline'), SEP, R('sel.all', { label: 'Select All' }));
     } else {
       list.push(R('edit.cut'), R('edit.copy'), R('edit.paste'), R('edit.pasteInPlace'), R('edit.clear'), SEP);
       if (kind === 'text') {
@@ -183,6 +183,13 @@
     }
     const selKids = SELECT_ORDER.map(id => X(id)).concat([SEP, sub('Same', a.subItems(w, 'Select', 'Same')), R('sel.inverse')]);
     list.push(sub('Select', selKids), SEP);
+    // an extension command the catalog does not name (a file added later): offered here when it can be done, as the editor's own menu did, so nothing is out of reach
+    const known = new Set(a.catalog.filter(e => e.x).map(e => e.x).concat(['ops.pfBar', 'toolAnchorConvert', 'toolAnchorAdd']));
+    for (const c of safe(() => w.x.list(), [])) {
+      if (known.has(c.id) || /^ai\./.test(c.id) || c.menu === false || c.context === false || !w.x.enabled(c.id)) continue;
+      list.push({ e: { id: c.id, x: c.id }, id: c.id, xid: c.id, label: c.title || c.id, key: c.key ? a.keyLabel(c.key) : '', on: true, chk: null });
+    }
+    list.push(SEP);
     // the charm's own, where Illustrator has Add to Library / Collect for Export / Export Selection…
     list.push(s.n ? on(R('obj.jumpRing')) : null, R('file.sendToSheet'), R('view.check'));
     return tidy(list);
