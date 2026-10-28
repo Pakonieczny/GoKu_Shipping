@@ -648,11 +648,20 @@
     const bb = path.getBoundingBox();
     return { cmds, bbox: [bb.x1, -bb.y2, bb.x2, -bb.y1], advance: font.getAdvanceWidth(text, size, { kerning: true }) };
   }
+  /* REFIT (28 Oct 2026): while fitText searches, a line set at a size is set once: the same size is tried at many places (each rectangle, each turn) and its letters are the same every time
+     (lineGlyphs depends on the font, the words and the size only). Kept for that one search, then let go. */
+  let glyphsKept = null;
+  function glyphsOf(font, text, size) {
+    if (!glyphsKept) return lineGlyphs(font, text, size);
+    let m = glyphsKept.get(font); if (!m) glyphsKept.set(font, m = new Map());
+    const k = text + "\u0000" + size; let g = m.get(k); if (!g) m.set(k, g = lineGlyphs(font, text, size));
+    return g;
+  }
   /** Lay lines out centred on the origin; returns glyph command lists in the local frame plus the ink bbox. */
   function layoutLines(lines, font, size, lineGap, angle, centre) {
     const cap = size * capPerEm(font), gap = size * (lineGap == null ? 0.216 : lineGap);
     const totalH = lines.length * cap + (lines.length - 1) * gap;
-    const rows = lines.map((t, i) => { const g = lineGlyphs(font, t, size); const x = -g.advance / 2, y = totalH / 2 - cap - i * (cap + gap); return { text: t, x, y, glyphs: g, bbox: [g.bbox[0] + x, g.bbox[1] + y, g.bbox[2] + x, g.bbox[3] + y] }; });
+    const rows = lines.map((t, i) => { const g = glyphsOf(font, t, size); const x = -g.advance / 2, y = totalH / 2 - cap - i * (cap + gap); return { text: t, x, y, glyphs: g, bbox: [g.bbox[0] + x, g.bbox[1] + y, g.bbox[2] + x, g.bbox[3] + y] }; });
     const local = rows.reduce((a, r) => bbUnion(a, r.bbox), null) || [0, 0, 0, 0];
     const R = mul(rotateAbout(0, 0, angle || 0), translate(centre ? centre[0] : 0, centre ? centre[1] : 0));
     const P = (x, y) => ap(R, x, y);
@@ -754,6 +763,10 @@
    * Returns { ok, size, capMm, weight, small, thin, angle, rect, centre, layout, glyphs (cmds, mask frame), metrics, gain } or { ok:false, reason }.
    */
   function fitText(lines, font, mask, opts) {
+    if (glyphsKept) return fitTextOnce(lines, font, mask, opts);
+    glyphsKept = new Map(); try { return fitTextOnce(lines, font, mask, opts); } finally { glyphsKept = null; }
+  }
+  function fitTextOnce(lines, font, mask, opts) {
     opts = Object.assign({ minCapMm: 1.6, maxHeightFrac: 0.4, lineGap: 0.216, minStrokeMm: 0.15, minGapMm: 0.12, tryRotated: true, rects: 6, semiboldBelowMm: 2.2, rotGain: 0.12 }, opts || {});
     lines = (lines || []).map(s => String(s)).filter(s => s.trim().length);
     if (!lines.length) return { ok: false, reason: "no text" };
