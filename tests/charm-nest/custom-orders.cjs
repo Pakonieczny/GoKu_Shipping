@@ -389,8 +389,15 @@ async function browserChecks() {
 
     // Release Hold (RELORDER, Paul 20 Oct 2026: it replaced Complete Order): completed at once with no label printed, "Completed by" under Completed, and reopened again
     assert.equal(await page.$('#rvList [data-cu-complete]'), null, 'no Complete Order on a Custom Orders card');
-    await page.click('#rvList .reviewListRow[data-rid="4177425406"] .relHoldBtn');
+    // OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"): every function 3 s late, the press is completed in the frame it is pressed in (the record stamped here and kept in the
+    // outbox; the cloud's answer replaces it), from the press's event to the paint under 16 ms
+    await page.route(/\/\.netlify\/functions\//, async q => { await new Promise(z => setTimeout(z, 3000)); return q.continue().catch(() => {}); });
+    const relPaint = await page.evaluate(k => new Promise(res => { const b = document.querySelector('#rvList .reviewListRow[data-rid="4177425406"] .relHoldBtn'); b.addEventListener('click', e => { const t = e.timeStamp; requestAnimationFrame(() => res({ ms: +(performance.now() - t).toFixed(2), done: !!B.maps.customDone[k], pending: !!(B.maps.customDone[k] && B.maps.customDone[k].pending) })); }, { capture: true, once: true }); b.click(); }), hKey);
+    assert(relPaint.ms < 16 && relPaint.done && relPaint.pending, 'Release Hold (Complete Order) completed in the frame it was pressed in, its record stamped here, pending: ' + JSON.stringify(relPaint));
     await page.waitForFunction(k => B.maps.customDone[k] && document.querySelector('#motionLayer .mGhost .seal.seal-releaseHold'), hKey, { timeout: 30000 });
+    await page.waitForFunction(k => B.maps.customDone[k] && !B.maps.customDone[k].pending, hKey, { timeout: 30000 });   // (the cloud's record in place of the one stamped here)
+    await page.unroute(/\/\.netlify\/functions\//);
+    console.log(`  ✓ Release Hold on a custom card: ${relPaint.ms} ms from the press to the paint (< 16 ms, every function 3 s late), completed and stamped in that frame; the cloud's record replaced it`);
     if (shots) { await page.waitForTimeout(1100); await page.screenshot({ path: path.join(shots, 'seal-complete.png') }); }
     await page.waitForFunction(() => /moved to Resolved · released by Test Operator · Release Hold, no label printed$/.test(document.querySelector('.mNote .mNoteT')?.textContent || ''), null, { timeout: 8000 });
     const byButton = srv.st.doc('Charm_Custom_Orders', hKey);

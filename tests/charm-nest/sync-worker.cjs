@@ -38,11 +38,11 @@ const say = s => { out.push(s); console.log('  ' + s); };
       const moved = parts(c.n).map((x, i) => x - parts(n0)[i]);
       assert(moved.every(x => x === 0 || x === 1), `${b.op}: each shard it named moved once (${moved})`);
       return w; };
-    const sw = await fetch(srv.sorterOrigin + '/.netlify/functions/charmNestLibrary', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'putSheet', sheet: { id: 'pending-sheet', note: 'w' } }) });
+    const sw = await fetch(srv.sorterOrigin + '/.netlify/functions/charmNestLibrary', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'putSheet', sheet: { id: 'pending-sheet', note: 'w', orders: ['3700000102'] } }) });   // (OUTBOX, 28 Oct 2026: a save that carries what the sheet's pieces are read from names their orders; a field patch alone (a note, its release mark, its label) names the sheet only, outbox.cjs A)
     const hdr = sw.headers.get('x-cn-feed') || ''; await sw.text();
     assert(/s:pending-sheet/.test(hdr) && /p:3700000102/.test(hdr) && /;(.*,)?lib=\d+/.test(hdr) && /[;,]p=\d+/.test(hdr), 'a write\'s answer names what it wrote, with the shards\' counts (X-CN-Feed): ' + hdr);
     c = await lib({ op: 'getChanges' });
-    await step({ op: 'putSheet', sheet: { id: 'pending-sheet', note: 'x' } }, ['s:pending-sheet', 'p:3700000102']);
+    await step({ op: 'putSheet', sheet: { id: 'pending-sheet', note: 'x', orders: ['3700000102'] } }, ['s:pending-sheet', 'p:3700000102']);
     await step({ op: 'poolUpdate', poolIds: ['3700000101_12345_1'], patch: { note: 'y' } }, ['p:3700000101']);
     await step({ op: 'reviewMarkPut', rid: '3700000101', action: 'mark', by: 'Ana_M' }, ['c:3700000101_review']);
     await step({ op: 'timelineAdd', events: [{ orderId: '3700000100', type: 'note', at: Date.now(), by: 'Bea', text: 'a' }] }, ['o:3700000100'], direct);   // (the fixture answers timelineAdd itself; the real handler is called here)

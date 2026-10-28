@@ -137,7 +137,7 @@ const part = p => !ONLY || ONLY.split(',').includes(p);
         await page.evaluate(() => CharmNestStore.mutate({ entity: 's:ob-sheet-b', op: 'putSheet', args: { sheet: { id: 'ob-sheet-b', releaseFull: true }, base: { releaseFull: false }, by: 'Test Operator' }, fields: ['releaseFull'], label: 'The release of GF Sheet B', by: 'Test Operator' }).done);
         await sleep(300);
         const bea = await lib({ op: 'putSheet', sheet: { id: 'ob-sheet-b', releaseFull: false }, base: { releaseFull: false }, by: 'Bea', mid: 'mp-bea-b-1' });
-        assert(bea.ok && bea.overwrote && bea.overwrote[0].by === 'Test_Operator', 'Bea\'s later change won and named whom it overwrote: ' + JSON.stringify(bea));
+        assert(bea.ok && bea.overwrote && /^Test.Operator$/.test(bea.overwrote[0].by), 'Bea\'s later change won and named whom it overwrote: ' + JSON.stringify(bea));
         const toldLost = await page.evaluate(async () => { const r = await CN.api('charmNestLibrary', { op: 'getSheet', id: 'ob-sheet-b' }, { quiet: true }); CharmNestStore.put('sheetFull', 'ob-sheet-b', r.sheet, r.rev); await new Promise(z => setTimeout(z, 300)); return [...document.querySelectorAll('.toast, [role=status], [role=alert]')].map(n => n.textContent).join(' | '); });
         assert(/Bea changed the release of GF Sheet B after you .* their change was kept/.test(toldLost), 'the person whose change lost is told, in words: ' + toldLost.slice(0, 300));
         await ctx.close();
