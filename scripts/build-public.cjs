@@ -229,6 +229,7 @@ const assets = [
   "charm-nest-alphabet-picker.js",
   "charm-nest-emoji-data.js",
   "charm-nest-ce-text.js",
+  "charm-nest-ce-words.js",
   "vendor/fonts/emoji-sequences.json",
   "vendor/fonts/NotoEmoji-OFL.txt",
   "vendor/fonts/MarckScript-OFL.txt",

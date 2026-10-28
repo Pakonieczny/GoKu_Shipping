@@ -6,8 +6,8 @@
 //   B  the real sorter page over the repo's fake site (_engraveRealWorld.cjs; offline, made-up names): the back of a Stylish order ("Name One", turned on the charm with the work area's angle) opened
 //      in the Charm Editor from its card: the words are ONE editable text on the back (the editor's own text kind), in the card's font, at the fitted size, standing exactly where the card fitted
 //      them (to 0.05 pt), selected, with the text controls on the bar: the Font menu (every font of the card's drop-down, each name drawn in its own font, its kind beside it), Bold, Italic,
-//      the alignment and the Alphabet menu. Each control draws the words again at once and is one step of the undo. Save: the words as the editor drew them are the back's engraving (the art
-//      edit's record, their text kept), the card's own words come off (no words engraved twice), and Approve approves it and writes the back file
+//      the alignment and the Alphabet menu. Each control draws the words again at once and is one step of the undo. Save (TYPEWORDS, 28 Oct 2026): the words retyped in the editor are the
+//      back's ENGRAVING words (its job's words and font, fitted again; nothing in the art record; the style the fit cannot cut said as not kept), and Approve approves them and writes the back file
 //   C  words handed in and not changed are no change: another part added on the front of a front + back order is saved alone, and the card keeps its words on both faces
 //   D  Approve after the editor: a front order, an image (grey fills, as the image importer makes them) added in the editor and saved, back on the card: one Approve press approves it and writes the
 //      front file; and an Approve pressed while that save is still going (slow) waits for it, says so at once, and approves what the save left (never the placement before it)
@@ -160,26 +160,28 @@ async function partBCD() {
       await R.shot(w, 'CW-3-retyped');
       // (back to the size the card fitted, so "Mimi" stands on the metal)
       { const el = page.locator('.ce-root [data-f="pt"]'); await el.click(); await page.keyboard.press('Control+a'); await page.keyboard.type(String(+j0.size.toFixed(2))); await page.keyboard.press('Enter'); await settleP(page); }
-      /* ── Save: the words as the editor drew them are the back's engraving; the card's own words come off; Approve writes the back ── */
+      /* ── Save (TYPEWORDS, Paul 28 Oct 2026: "The user also needs the ability to update existing text, even if that text came from back engraving modal"): the words retyped in the editor are the
+         back's ENGRAVING words: the job takes "Mimi" in Typewriter (the setup's words and font, as the card's words box saves them), fitted again; the style the fit cannot cut (Small Caps, Bold,
+         Italic, the alignment) is said as not kept; nothing of the words goes into the art record; Approve writes the back with them ── */
       const PID = made.back.poolIds ? made.back.poolIds[0] : await page.evaluate(k => Engrave.items().get(k).copies[0], j0.key);
       const puts0 = artPuts();
       await page.click('.ce-root [data-act="save"]');
-      await until(async () => artPuts() > puts0 && !(await page.evaluate(() => !!document.querySelector('.ce-root'))), 60000);
-      await until(() => page.evaluate(k => { const j = Engrave.items().get(k); return j && j.state === 'review' && j.fit && j.fit.artOnly; }, j0.key), 60000);
+      await until(async () => !(await page.evaluate(() => !!document.querySelector('.ce-root'))), 60000);
+      await until(() => page.evaluate(k => { const j = Engrave.items().get(k); return j && j.state === 'review' && j.fit && !j.fit.artOnly && (j.fit.lines || []).join(' ') === 'Mimi'; }, j0.key), 60000);
       await R.openEngraveDetail(w, 'back', { face: 'back' }); await R.settle(page, 900);
       const sv = await page.evaluate(([k, pid]) => {
         const j = Engrave.items().get(k), ch = Pool.charmOf(pid), line = (j.row.parentRow || j.row), ov = line.engravingOverride || {};
-        return { state: j.state, artOnly: !!(j.fit && j.fit.artOnly), lines: j.lines, text: j.text, art: (ch.artBack || []).filter(m => m.artText === 'Mimi').length, ov: ov.back === undefined ? 'none' : ov.back, reason: ov.reason && ov.reason.text, note: (document.querySelector('#egQueue .rvItem[data-kind=placement] .egArtNote') || {}).textContent || '' };
+        return { state: j.state, artOnly: !!(j.fit && j.fit.artOnly), lines: (j.fit && j.fit.lines) || j.lines, text: j.text, fontKey: j.fontKey || null, fontWord: j.faceFontWord || null, glyphs: j.fit && j.fit.glyphs ? j.fit.glyphs.length : 0, art: (ch.artBack || []).filter(m => m.artText).length, ov: ov.back === undefined ? 'none' : ov.back, reason: ov.reason && ov.reason.text, note: (document.querySelector('#egQueue .rvItem[data-kind=placement] .egArtNote') || {}).textContent || '' };
       }, [j0.key, PID]);
       const rec = st.doc('Charm_Pool_Art', PID);
-      check(`B10 Save: the record keeps the words as the editor drew them ("Mimi" with its outlines, hatched); the back is engraved by them and the card's own words come off it (the line says so: no back words, "${sv.reason}"); the card says "${sv.note}"`,
-        !!rec && rec.added.some(a => a.text === 'Mimi' && a.role === 'hatch' && /^M/.test(a.d)) && sv.art >= 1 && sv.artOnly && sv.state === 'review' && !(sv.lines || []).length && !sv.text && sv.ov === null && /words changed in the Charm Editor/i.test(sv.reason || '') && /The back words are engraved as the Charm Editor drew them/.test(sv.note),
-        JSON.stringify({ rec: rec && rec.added.map(a => [a.id, a.text, a.role]), sv }));
+      check(`B10 Save: the back's engraving takes the words retyped in the editor ("${(sv.lines || []).join(' ')}" in ${sv.fontWord}, ${sv.glyphs} glyphs fitted, ${sv.state}); nothing of them goes into the art (${artPuts() - puts0} art saves, no outlines of words on the piece); the card says "${sv.note}"`,
+        artPuts() === puts0 && !(rec && (rec.added || []).some(a => a.text)) && sv.art === 0 && !sv.artOnly && sv.state === 'review' && (sv.lines || []).join(' ') === 'Mimi' && sv.glyphs > 0 && sv.fontWord === 'Typewriter' && sv.ov && sv.ov.text === 'Mimi' && /words changed in the Charm Editor/i.test(sv.reason || '') && /The back engraving now reads "Mimi" in Typewriter/.test(sv.note) && /Small capitals/i.test(sv.note),
+        JSON.stringify({ puts: artPuts() - puts0, rec: rec && (rec.added || []).map(a => [a.id, a.text, a.role]), sv }));
       const backs0 = st.calls.filter(x => x.op === 'saveSheetBack' || x.op === 'backPut').length;
       const p = await page.evaluate(Q => { const b = document.querySelector(Q + ' [data-a="approve"]'); if (!b) return 'none'; if (b.disabled) return 'dimmed'; b.click(); return 'pressed'; }, Q);
       const ap = await until(() => page.evaluate(k => { const j = Engrave.items().get(k); return j && /approved|written/.test(j.state) ? { state: j.state, at: j.approvedAt } : null; }, j0.key), 60000);
       const wr = await until(() => { const d = st.doc('Charm_Pool_Back', PID); return d && ap && +d.approvedAt === ap.at ? d : null; }, 60000);
-      check('B11 Approve approves the back as the editor drew it and writes its file (its record, with the words as artwork)', p === 'pressed' && !!ap && !!wr, JSON.stringify({ p, ap, wr: wr && { approvedAt: wr.approvedAt, art: !!wr.artBack, backs0 } }));
+      check(`B11 Approve approves the back with the words retyped in the editor and writes its file (its record: "${wr ? wr.text : ''}")`, p === 'pressed' && !!ap && !!wr && wr.text === 'Mimi', JSON.stringify({ p, ap, wr: wr && { approvedAt: wr.approvedAt, text: wr.text, backs0 } }));
     }
 
     if (!ONLY || ONLY === 'C') {
