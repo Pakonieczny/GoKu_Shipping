@@ -2566,9 +2566,10 @@ const Orders = window.Orders = (() => {
      list is drawn again (renderBody); a line gone meanwhile is stepped over. */
   let walkMemo = null;
   /* NAV round 5 (28 Oct 2026, Paul: "move between Tabs, Lists and Modals ... at near real-time speed"): the list's first drawing (nothing in it yet: the tab's first visit) draws the
-     rows a screen holds (FIRST_ROWS) and the rest of its page (to 48) at the next idle moment, where all 48 were built before the tab could show (~110 ms at 800 orders) */
+     rows a screen holds (FIRST_ROWS) and the rest of its page (to 48) at the next idle moment, where all 48 were built before the tab could show (~110 ms at 800 orders); only for the tab
+     being shown (a drawing asked for any other reason draws its page whole, as before) */
   const FIRST_ROWS = 8;   // (a row is ~200 px: 4 on a 900 px screen, 7 on a 1440 px one)
-  let fillAsked = 0, filling = false;
+  let fillAsked = 0, filling = false, showing = false;   // (showing: the drawing is the tab's being shown, shown)
   function walkRows() {
     const rows = rowsOf(), sig = JSON.stringify([rows.length, OV.pile, OV.q, OV.metal, OV.form, OV.eng, OV.act, OV.sort, OV.desc, CNListActivity.key("orders")]);
     if (walkMemo && walkMemo.rows === rows && walkMemo.sig === sig && Date.now() - walkMemo.at < 5000) return walkMemo.list.filter(r => r.state !== "gone");
@@ -2617,7 +2618,7 @@ const Orders = window.Orders = (() => {
     // (ONE ORDER, ONE ROW, 13 Oct 2026: the lines of one order stand together where its first line stood; a group of one is a row as it always was)
     const groups=groupsOf(rows);groupTotal=groups.length;
     shown=groups.slice(0,OV.limit || 48);
-    if (!filling && list.childElementCount === 0 && shown.length > FIRST_ROWS) { shown = shown.slice(0, FIRST_ROWS); if (!fillAsked) fillAsked = idleSoon(() => { fillAsked = 0; filling = true; try { renderBody(); } finally { filling = false; } }); }   // (round 5: the first screen now, the rest at idle)
+    if (showing && !filling && list.childElementCount === 0 && shown.length > FIRST_ROWS) { shown = shown.slice(0, FIRST_ROWS); if (!fillAsked) fillAsked = idleSoon(() => { fillAsked = 0; filling = true; try { renderBody(); } finally { filling = false; } }); }   // (round 5: the first screen now, the rest at idle)
     // a heading counts its day's orders in the list: counted only where headings are drawn, for the days on screen
     const dayCounts=new Map();
     if(OV.sort==='arrival'){for(const g of shown)dayCounts.set(dayOf(g.rows[0]).key,new Set());for(const row of rows){const ids=dayCounts.get(dayOf(row).key);if(ids)ids.add(row.order.receiptId);}}
@@ -2947,7 +2948,8 @@ const Orders = window.Orders = (() => {
   const piecesVer = () => { try { return window.OrderPieces && OrderPieces.version ? OrderPieces.version() : -1; } catch (_) { return -1; } };
   /** The Orders tab shown again: drawn as it was when nothing asked for a drawing since it was drawn (under 10 s ago, the same answer of where the pieces are), and drawn again at the next
    *  idle moment (so a time or an order that moved without a notice is put right at once, after the frame); else drawn now, as before. */
-  function shown() {
+  function shown() { showing = true; try { return shownNow(); } finally { showing = false; } }
+  function shownNow() {
     const v = document.getElementById("ordersView");
     if (!(v && v.dataset.built && drawnAt)) return renderNow();
     const same = !wantDraw && Date.now() - drawnAt < 10000 && drawVer === piecesVer();
@@ -19283,13 +19285,12 @@ const Review = window.Review = (() => {
   /** opts.still: laid out as it stands, nothing glides (the Send to Sheet tour, home: the list is still out of sight). */
   /* NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): whether anything asked for a drawing while the tab was hidden, and when it was last drawn (shown) */
   let rvWant = true, rvDrawnAt = 0, rvVer = -1;
-  const RV_FIRST = 8; let rvFillAsked = 0, rvFilling = false;   // (NAV round 5: the first drawing's first screen, render)
   const rvPiecesVer = () => { try { return window.OrderPieces && OrderPieces.version ? OrderPieces.version() : -1; } catch (_) { return -1; } };
   /** The Review tab shown again: as it was drawn when nothing asked for a drawing since (under 10 s ago, the same answer of where the pieces are), drawn again at the next idle moment;
    *  else drawn now, as before. */
   function shown() {
     const v = document.getElementById("reviewView");
-    if (rvWant || !v || !v.firstChild || Date.now() - rvDrawnAt >= 10000 || rvVer !== rvPiecesVer()) return render();
+    if (rvWant || !v || !v.firstChild || Date.now() - rvDrawnAt >= 10000 || rvVer !== rvPiecesVer()) return render({ shown: true });
     LiveStrip.render();
     (typeof requestIdleCallback === "function" ? requestIdleCallback : f => setTimeout(f, 60))(() => { const x = document.getElementById("reviewView"); if (x && !x.classList.contains("hidden")) render(); }, { timeout: 1000 });
   }
@@ -19298,7 +19299,7 @@ const Review = window.Review = (() => {
     if(window.Seal?.defer('review-view',()=>render(opts)))return;
     if(!opts.still&&window.CharmNestInteraction?.defer('review-view',render))return;
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) { rvWant = true; return; }
-    rvWant = false; rvVer = rvPiecesVer(); rvDrawnAt = Date.now();
+    rvWant = false; rvVer = typeof rvPiecesVer === "function" ? rvPiecesVer() : -1; rvDrawnAt = Date.now();
     try { CustomSheet.prune(); } catch (_) {}
     const active=v.contains(document.activeElement)?document.activeElement:null;
     // the old Decided chip, and the Decided segment, are Resolved now; a filter on a kind that has no chip lets go (RVRESOLVED)
@@ -19438,10 +19439,11 @@ const Review = window.Review = (() => {
       return null;
     };
     const empty = () => { const n = el("div", "libEmpty"); n.innerHTML = `${orderQ ? "No matching order numbers." : doneMode ? (f === "customOrder" ? "No custom order resolved yet. Print its QR label under Open, or send it to the sheets." : f ? `Nothing resolved under ${esc(what)} yet.` : "Nothing resolved yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}`; return n; };
-    // NAV round 5 (28 Oct 2026, Paul: "move between Tabs, Lists and Modals ... at near real-time speed"): the list's first drawing (nothing in it yet: the tab's first visit) builds the cards a
-    // screen holds (RV_FIRST: a card is ~200 px, 4 on a 900 px screen) and the rest of its page at the next idle moment (rvFilling: drawn in below, nothing moving), where every card of the page was built before the tab could show
-    const upto = !rvFilling && !back && host.childElementCount === 0 && Math.min(RV.limit, list.length) > RV_FIRST ? RV_FIRST : RV.limit;
-    if (upto < RV.limit && !rvFillAsked) rvFillAsked = (typeof requestIdleCallback === "function" ? requestIdleCallback : f => setTimeout(f, 60))(() => { rvFillAsked = 0; rvFilling = true; try { render({ still: true }); } finally { rvFilling = false; } }, { timeout: 400 });
+    // NAV round 5 (28 Oct 2026, Paul: "move between Tabs, Lists and Modals ... at near real-time speed"): the list's first drawing for the tab shown (nothing in it yet: the tab's first visit)
+    // builds the cards a screen holds (8: a card is ~200 px, 4 on a 900 px screen) and the rest of its page at the next idle moment (RV.filling: drawn in below, nothing moving), where every
+    // card of the page was built before the tab could show
+    const upto = opts.shown && !RV.filling && !back && host.childElementCount === 0 && Math.min(RV.limit, list.length) > 8 ? 8 : RV.limit;
+    if (upto < RV.limit && !RV.fillAsked) RV.fillAsked = (typeof requestIdleCallback === "function" ? requestIdleCallback : f => setTimeout(f, 60))(() => { RV.fillAsked = 0; RV.filling = true; try { render({ still: true }); } finally { RV.filling = false; } }, { timeout: 400 });
     const desired = list.length ? list.slice(0,upto).map(it=>({it,node:it.settled?settledRow(it.settled):reviewRow(it)})) : [];
     for(const {node} of desired)node.classList.toggle('orderMatch',!!orderQ);
     // A card the Send to Sheet tour is carrying (Motion.carry) stays where it stood, however the list sorts it now: sent,
