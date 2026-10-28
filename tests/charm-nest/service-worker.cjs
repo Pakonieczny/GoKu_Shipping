@@ -160,6 +160,19 @@ const USABLE = () => window.CN && window.Orders && window.Review && CN.S.cloud.o
       }
       ok(/^1 /.test(reads.prod) && /^2 /.test(reads.sandbox) && /^2 /.test(reads.plain), `W4 pictures read twice reach the server: versioned production ${reads.prod} · sandbox ${reads.sandbox} · unversioned ${reads.plain}`);
     }
+    // W2 one file's token changes: that file is fetched, nothing else, and its older copy is dropped
+    {
+      const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8'), m = /charm-nest-search\.js\?v=([^"]+)"/.exec(html);
+      tx.html = s => s.replace('charm-nest-search.js?v=' + m[1] + '"', 'charm-nest-search.js?v=' + m[1] + '-swt1"');
+      const b3 = await load(b, 'worker, one file has a new token', 'reload');
+      const extra = b3.list.filter(p => p !== '/charm-nest-sw.js' && !b1.list.includes(p) && !b2.list.includes(p));
+      // (a file the cache rule missed is kept by the page's hand-over at idle; its index is written 2 s later)
+      await until(b.page, async () => (await (await caches.open('cn-static-v1')).keys()).filter(r => /charm-nest-search\.js/.test(r.url)).length === 1 && (await (await caches.open('cn-static-v1')).keys()).some(r => /swt1$/.test(r.url)), null, 20000);
+      const kept = await b.page.evaluate(async () => (await (await caches.open('cn-static-v1')).keys()).map(r => r.url).filter(u => /charm-nest-search\.js/.test(u)).map(u => u.replace(/^.*\?v=/, '')));
+      ok(extra.length === 1 && /charm-nest-search\.js/.test(extra[0]) && b3.got.some(h => h.p.endsWith('-swt1')) && b3.list.filter(p => p !== '/charm-nest-sw.js').length <= b1.list.filter(p => p !== '/charm-nest-sw.js').length + 1, `W2 a new token for one file fetches that file only: [${b3.list.join(' ')}]`);
+      ok(kept.length === 1 && /-swt1$/.test(kept[0]), `W2 the older copy of that file is dropped from the cache: ${JSON.stringify(kept)}`);
+      tx.html = null;
+    }
     // another page of the same site, in the worker's scope: its own files are not kept, the app's own (vendor/) are
     {
       const o = await b.context.newPage();
@@ -167,17 +180,6 @@ const USABLE = () => window.CN && window.Orders && window.Review && CN.S.cloud.o
       const kept = await o.evaluate(async () => [!!navigator.serviceWorker.controller, (await (await caches.open('cn-static-v1')).keys()).map(r => r.url).filter(u => /swother1/.test(u)).map(u => u.replace(/^.*\//, ''))]);
       ok(kept[0] && kept[1].length === 1 && /^clipper/.test(kept[1][0]), `another page of the site (controlled ${kept[0]}): its own versioned file is not kept, the app's own is: ${JSON.stringify(kept[1])}`);
       await o.close();
-    }
-    // W2 one file's token changes: that file is fetched, nothing else, and its older copy is dropped
-    {
-      const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8'), m = /charm-nest-search\.js\?v=([^"]+)"/.exec(html);
-      tx.html = s => s.replace('charm-nest-search.js?v=' + m[1] + '"', 'charm-nest-search.js?v=' + m[1] + '-swt1"');
-      const b3 = await load(b, 'worker, one file has a new token', 'reload', () => b.page.waitForTimeout(2600));   // (the index is written 2 s after a change)
-      const extra = b3.list.filter(p => p !== '/charm-nest-sw.js' && !b1.list.includes(p) && !b2.list.includes(p));
-      const kept = await b.page.evaluate(async () => (await (await caches.open('cn-static-v1')).keys()).map(r => r.url).filter(u => /charm-nest-search\.js/.test(u)).map(u => u.replace(/^.*\?v=/, '')));
-      ok(extra.length === 1 && /charm-nest-search\.js/.test(extra[0]) && b3.got.some(h => h.p.endsWith('-swt1')) && b3.list.filter(p => p !== '/charm-nest-sw.js').length <= b1.list.filter(p => p !== '/charm-nest-sw.js').length + 1, `W2 a new token for one file fetches that file only: [${b3.list.join(' ')}]`);
-      ok(kept.length === 1 && /-swt1$/.test(kept[0]), `W2 the older copy of that file is dropped from the cache: ${JSON.stringify(kept)}`);
-      tx.html = null;
     }
     // W5 the page's switch: CN_SW = "off" in charm-nest-1.html unregisters the worker and deletes its caches; the page works
     {

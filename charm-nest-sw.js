@@ -97,12 +97,16 @@
   /* ═══ the worker ═══ */
   function worker(sw) {
     const origin = sw.location.origin, INDEX = origin + "/__cn-sw/index.json";
-    // (static routing: a page and every function call but the pictures go straight to the network; the worker is not even started for them)
-    const ROUTES = [
+    /* Static routing (Chrome 123+; the browser applies these rules itself, in order, without starting the worker's code):
+       a page and every function call but the pictures go straight to the network; a versioned file of the app's own names is read
+       straight from the cache (a miss goes to the network, and the page's hand-over at idle keeps it for the next load). Each group is
+       added on its own, so a browser that knows the first and not the second keeps the first; without them the fetch handler below
+       does the same work. */
+    const ROUTES = [[
       { condition: { requestMode: "navigate" }, source: "network" },
       { condition: { urlPattern: { pathname: ASSET } }, source: "fetch-event" },
       { condition: { urlPattern: { pathname: "/.netlify/*" } }, source: "network" }
-    ];
+    ], ["/charm-nest-*", "/vendor/*", "/lib/*"].map(pathname => ({ condition: { requestMethod: "GET", urlPattern: { pathname, search: "*v=*" } }, source: { cacheName: STATIC } }))];
     // (stopped: switched off while pages it controls are still open: it keeps nothing more. home: the sorter is served at / on this origin, its own host)
     let idx = null, saving = null, dirty = false, stopped = false, home = null;
     const done = () => stopped || (sw.serviceWorker && sw.serviceWorker.state === "redundant");   // (a worker replaced by a newer copy writes nothing more either)
@@ -175,8 +179,14 @@
     }
     /** The versioned addresses a page loaded before the worker ran: read from the HTTP cache (force-cache) and kept, a few at a time. */
     async function adopt(urls) {
-      const m = await index(), todo = [];
-      for (const url of urls.slice(0, 600)) { const kind = typeof url === "string" ? classify(url, { origin }) : ""; if (kind && !m.has(url) && todo.indexOf(url) < 0) todo.push([url, kind]); }
+      const m = await index(), todo = [], seen = new Set(), now = Date.now();
+      for (const url of urls.slice(0, 600)) {
+        const kind = typeof url === "string" && !seen.has(url) ? classify(url, { origin }) : ""; seen.add(url);
+        if (!kind) continue;
+        if (m.has(url)) m.get(url).u = now;   // (used by this load: the files the cache rule served never reach the worker, so their use is told here)
+        else todo.push([url, kind]);
+      }
+      if (seen.size && !done()) save();
       let n = 0;
       const run = async () => { for (let t; (t = todo.shift());) { try { const res = await fetch(t[0], { cache: "force-cache", credentials: "same-origin" }); if (keepable(res)) { await keep(t[1] === "pic" ? PICS : STATIC, t[0], res); n++; } } catch (_) {} } };
       await Promise.all([run(), run(), run(), run()]);
@@ -196,7 +206,7 @@
 
     sw.addEventListener("install", e => {
       sw.skipWaiting();
-      if (!RETIRED && typeof e.addRoutes === "function") { try { e.waitUntil(Promise.resolve(e.addRoutes(ROUTES)).catch(() => {})); } catch (_) {} }
+      if (!RETIRED && typeof e.addRoutes === "function") e.waitUntil((async () => { for (const group of ROUTES) { try { await e.addRoutes(group); } catch (_) {} } })());
     });
     sw.addEventListener("activate", e => e.waitUntil((async () => {
       const mine = RETIRED ? [] : [STATIC, PICS, META];
