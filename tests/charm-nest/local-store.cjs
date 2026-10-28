@@ -28,8 +28,23 @@ const day = 86400000;
     assert(await St.putBlob('parsed', 'k', { a: new Float32Array([1, 2]) }) === false && (await St.blob('parsed', 'k')).a[1] === 2, 'a design is kept in memory');
     assert(St.patch('sheets', 'a', { n: 2 }) && St.get('sheets', 'a').n === 2 && St.rev('sheets', 'a') === '1.1');
     assert(!St.put('sheets', 'x', { id: 'x' }, '1', { world: 'sandbox' }), 'another world is refused');
+    // a list read: everything once, then only what moved, put together with what is held
+    assert.deepEqual(St.ask('lib2'), { wantRev: true, since: '0.0' });
+    const idOf = x => x.id;
+    assert.deepEqual(St.take('lib2', 'sheets', { sheets: [{ id: 'p', v: 1 }, { id: 'q', v: 1 }], ids: ['p', 'q'], upTo: '9.1', rev: 'R1', revs: { p: '5.1', q: '5.2' } }, 'sheets', idOf).map(x => x.v), [1, 1]);
+    assert.deepEqual(St.ask('lib2'), { wantRev: true, since: '9.1', ifRev: 'R1' });
+    assert.deepEqual(St.take('lib2', 'sheets', { unchanged: true, rev: 'R1', sheets: [] }, 'sheets', idOf).map(x => x.id), ['p', 'q']);
+    const moved = St.take('lib2', 'sheets', { sheets: [{ id: 'q', v: 2 }, { id: 'r', v: 1 }], ids: ['r', 'q'], upTo: '9.3', rev: 'R2', revs: { q: '5.3', r: '5.4' } }, 'sheets', idOf);
+    assert.deepEqual(moved.map(x => x.id + x.v), ['r1', 'q2'], 'the rows sent new, the rest as held, in the answer\'s order; p gone from the list');
+    assert(St.rev('sheets', 'q') === '5.3' && St.list('lib2').since === '9.3');
+    assert.equal(St.take('lib2', 'sheets', { sheets: [], ids: ['r', 'zz'], upTo: '9.4' }, 'sheets', idOf), null, 'a row held nowhere: read it whole');
+    // one read in flight per key; a second caller gets its own copy
+    let made = 0; const mk = () => new Promise(r => setTimeout(() => r({ n: ++made, list: [1] }), 20));
+    const [x1, x2] = await Promise.all([St.shared('k', mk), St.shared('k', mk)]);
+    assert(made === 1 && x1.n === 1 && x2.n === 1 && x1 !== x2 && x1.list !== x2.list, 'one read, two answers');
+    assert.equal((await St.shared('k', mk)).n, 2, 'a read asked after the first came back is asked again');
     await St.flush();
-    console.log('7 · Node, no IndexedDB: put, get, lists, patch, designs from memory');
+    console.log('7 · Node, no IndexedDB: put, get, lists (ask / take), patch, one read in flight, designs from memory');
   }
 
   const { chromium } = require(path.join(pwDir, 'playwright-core'));

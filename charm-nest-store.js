@@ -35,6 +35,10 @@
      patch(kind, id, fields) → bool                fields merged into the record kept (its rev stays: the cloud's next answer says what it is)
      drop(kind, id)
      list(name) → { kind, ids, since, rev, at }    putList(name, { kind, ids, since, rev })    rows(name) → { rows, missing }
+     ask(name) → { wantRev, since, ifRev? }        what a list read sends: since '0.0' (everything) unless this computer holds the list and every row of it
+     take(name, kind, answer, field, idOf) → rows | null   a list's answer put together with what is held (unchanged, or only the rows written since),
+                                                  kept for next time; null when it cannot be (the page reads it whole)
+     shared(key, make) → Promise                   one read in flight per key: a caller asking the same while it is out gets its own copy of the answer
      blob(store, key) → Promise<value | null>      putBlob(store, key, value)   ('parsed' | 'bytes', in cn-blobs)
      on(fn) → off                                  fn({ kind, id, rec, from: 'here' | 'tab' }) after a put, a patch or a drop, here or in another tab
      sweep() · stats() · freeze() · discard()      discard: this page's own sandbox reset (memory emptied, the database deleted, nothing written again) */
@@ -260,12 +264,12 @@
     markUse(kind, id, mem[kind].get(id));
     return row.rec;
   }
-  /** Keep a record the cloud answered, under its revision. The object is kept as given (the caller does not change it in place, or puts it again). */
+  /** Keep a record the cloud answered, under its revision. The object is kept as given and written at the end of this task (a caller that changes it
+      in place later puts it again; one that only holds it again need not: get() hands the kept object back). */
   function put(kind, id, rec, r, opts) {
     id = sid(id); if (!known(kind) || !id || rec == null || typeof rec !== 'object') return false;
     if (!canWrite(opts && opts.world)) return false;
-    const now = Date.now(), had = mem[kind].get(id), rv = r == null ? '' : String(r);
-    if (had && had.rec === rec && had.rev === rv && rv) { had.used = now; return true; }   // (the same answer again: nothing to write)
+    const now = Date.now(), rv = r == null ? '' : String(r);
     mem[kind].set(id, { rec, rev: rv, saved: now, used: now, diskUsed: now });
     if (kind === 'sheetFull') lru(mem[kind], id, LIMITS.memFull);
     enqueue(kind, id, { k: id, rev: rv, saved: now, rec }, now);
@@ -302,6 +306,38 @@
     const out = []; let missing = 0;
     for (const id of l.ids) { const r = get(l.kind, id); if (r) out.push(r); else missing++; }
     return { rows: out, missing, list: l };
+  }
+
+  /** What a list read asks the cloud (charmNestLibrary.js LOCAL_READS): the list's revision and how far it was read, when this computer holds it whole;
+      else everything once (since '0.0': every row, each with its revision, and how far that read saw). */
+  function ask(name) {
+    const r = rows(name), l = r.list;
+    return l && !r.missing && l.since ? { wantRev: true, since: l.since, ...(l.rev ? { ifRev: l.rev } : {}) } : { wantRev: true, since: '0.0' };
+  }
+  /** A list's answer (rows under `field`, each named by idOf) put together with what is held, and kept for next time: unchanged → the held rows; ids → every row
+      in order, the ones sent new, the rest as held; neither (an older server) → the rows sent, as they are. null when a row it names is held nowhere. */
+  function take(name, kind, ans, field, idOf) {
+    if (!ans || typeof ans !== 'object' || !known(kind)) return null;
+    const l = list(name), sent = Array.isArray(ans[field]) ? ans[field] : [], revs = ans.revs && typeof ans.revs === 'object' ? ans.revs : {};
+    if (ans.unchanged) { const r = rows(name); if (!l || r.missing) return null; if (ans.rev && ans.rev !== l.rev) putList(name, Object.assign({}, l, { rev: ans.rev })); return r.rows; }
+    for (const x of sent) { const id = idOf(x); if (id != null) put(kind, id, x, revs[id] != null ? revs[id] : ''); }
+    if (!Array.isArray(ans.ids)) { putList(name, { kind, ids: sent.map(idOf).filter(x => x != null), since: '', rev: '' }); return sent; }
+    const out = [];
+    for (const id of ans.ids) { const r = get(kind, id); if (!r) return null; out.push(r); }
+    putList(name, { kind, ids: ans.ids, since: ans.upTo || '', rev: ans.rev || '' });
+    return out;
+  }
+  /* the same read asked again while it is on its way waits for that one (charm-nest-1.html api()); each caller after the first gets a copy of the answer,
+     so a page that changes what it was given changes only its own */
+  const inflight = new Map();
+  const copyOf = v => { try { return typeof root.structuredClone === 'function' ? root.structuredClone(v) : JSON.parse(JSON.stringify(v)); } catch (_) { return v; } };
+  function shared(key, make) {
+    const hit = inflight.get(key); if (hit) return hit.then(copyOf);
+    const p = Promise.resolve().then(make);
+    inflight.set(key, p);
+    const out = () => { if (inflight.get(key) === p) inflight.delete(key); };
+    p.then(out, out);
+    return p;
   }
 
   /* ── content: designs as read and parsed (cn-blobs, shared by both worlds: named by the file and its version, never by a record) ── */
@@ -431,7 +467,7 @@
   }
   return {
     init, ready: () => readyP || Promise.resolve({ disk: false, rows: 0 }), world: () => world, disk: () => diskOn,
-    get, rev, has, load, put, patch, drop, list, putList, rows, blob, putBlob,
+    get, rev, has, load, put, patch, drop, list, putList, rows, ask, take, shared, blob, putBlob,
     on: fn => { listeners.add(fn); return () => listeners.delete(fn); },
     flush, sweep, squeeze, stats, freeze, discard, LIMITS, KINDS
   };
