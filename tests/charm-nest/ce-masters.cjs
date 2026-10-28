@@ -9,7 +9,8 @@
 //      comes up in the Charm Editor with every part of its drawing a layer, none locked; a petal deleted and a part nudged, Save makes version 1 of a design (source master, its SKU),
 //      the master and every piece's artwork record untouched; Keep editing, another change, Save makes version 2 of the SAME design; Send to sheet hands that version on; a blank
 //      heart 20 × 18 mm with a jump ring hole opens as its outline and hole (the cut), a rectangle drawn on it with the editor's own tool, saved as a new design of that size; a saved
-//      design opened again by its id; and a master opened from inside a changed editor asks first
+//      design opened again by its id; a design read from a file and not saved yet (the vector import's "Open as a new design") opened as a new one; and a master opened from
+//      inside a changed editor asks first
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/ce-masters.cjs      (CEM_ONLY=A or B; SHOTS=<dir> keeps screenshots)
 'use strict';
 const path = require('node:path'), fs = require('node:fs');
@@ -84,6 +85,8 @@ async function partB() {
   const libCalls = () => st.calls.filter(c => c.name === 'charmNestLibrary').length;
   const artCalls = () => st.calls.filter(c => c.name === 'charmNestLibrary' && /^art/.test(String(c.op || ''))).length;
   try {
+    // (the world seeds the library while the page's own first read of it may still be on its way, and Master.load(true) then answers with that read: it is read once more, fresh)
+    await page.evaluate(() => Master.load({ force: true, fresh: true }));
     // the stand-ins for what other workstreams build: the Send to sheet pop-up, the employee log (the design library is the real one: every put is counted)
     await page.evaluate(() => {
       window.__sends = []; window.__log = []; window.__puts = 0;
@@ -243,6 +246,22 @@ async function partB() {
     check(`B6c the design opened again by its id: version 2's ${b6c.n} layers, its back guide, "${b6c.sub.slice(0, 48)}…"; the library told the log it was opened; Cancel saves nothing`,
       b6c.n === b3.n - 2 && b6c.back === 2 && /version 2/.test(b6c.sub) && b6c.cur && b6c.cur.designId === ID1 && b6c.log[0] === 'designOpen:2' && od === null && designPuts() === 3, JSON.stringify(b6c));
 
+    /* ── B6d the vector import's hand-over: an unsaved design read from a file (source import), opened as a NEW design; its Save is version 1 of a design of its own ── */
+    await page.evaluate(() => {
+      const f = CharmNestCeMasters.model.startFace({ shape: 'rounded', wMm: 16, hMm: 22, hole: true });
+      f.items = f.items.map((it, i) => Object.assign({}, it, { id: 'imp' + i, source: 'master' }));
+      window.__imp = CharmNestCeMasters.openNew({ name: 'star-tag', faces: { front: f }, widthMm: 16, heightMm: 22, source: { kind: 'import', file: 'star-tag.svg', type: 'svg' }, outlineId: 'imp0', warnings: [] }, { from: null, read: {} });
+    });
+    await waitFor(page, () => !!(window.CharmEditor && CharmEditor.current) && document.querySelector('.ce-root .ce-id h2').textContent === 'star-tag');
+    const b6d0 = await page.evaluate(() => ({ n: CharmEditor.current.items('front').length, sub: document.querySelector('.ce-root .ce-eyebrow').textContent, log: window.__log.slice(-1).map(x => x.kind + ':' + x.data.source + ':' + x.data.file)[0] }));
+    await page.click('.ce-root [data-act="save"]');
+    await waitFor(page, () => document.querySelector('.cem-card h3') && /Saved · version 1/.test(document.querySelector('.cem-card h3').textContent));
+    await page.click('.cem-card [data-c="done"]');
+    const b6d = await page.evaluate(async () => { const r = await window.__imp, d = r && await CharmNestDesigns.get(r.designId); return { r, src: d && d.source, w: d && d.widthMm, h: d && d.heightMm, n: d && d.faces.front.items.length }; });
+    check(`B6d a design read from a file and not saved yet opens as a new design ("${b6d0.sub}", ${b6d0.n} layers, the open logged as ${b6d0.log}); Save makes version 1 of a design of its own, source ${JSON.stringify(b6d.src)}, ${b6d.w} × ${b6d.h} mm`,
+      b6d0.n === 2 && /star-tag\.svg/.test(b6d0.sub) && b6d0.log === 'designOpen:import:star-tag.svg' && b6d.r && b6d.r.version === 1 && b6d.r.designId !== ID1 && b6d.r.designId !== ID2
+        && b6d.src && b6d.src.kind === 'import' && b6d.src.file === 'star-tag.svg' && Math.abs(b6d.w - 16) < 1e-3 && Math.abs(b6d.h - 22) < 1e-3 && b6d.n === 2 && designPuts() === 4, JSON.stringify(b6d));
+
     /* ── B7 the library panel's way in: a master opened while the editor holds changes asks first (Discard), and the editor is then the master's ── */
     await page.evaluate(() => { window.__h = CharmNestCeMasters.newDesign(); });
     await waitFor(page, () => !!document.querySelector('.cem-root [data-panel="new"]:not([hidden])'));
@@ -260,7 +279,7 @@ async function partB() {
     await waitFor(page, () => !(window.CharmEditor && CharmEditor.current));
     const b7b = await page.evaluate(async () => ({ m: await window.__m, puts: window.__puts, cur: CharmNestCeMasters.current() }));
     check(`B7 from inside a changed editor, a master asks first ("${asked}"); Discard, and COMET_9427 is in the editor (${b7.n} layers, none locked) while the heart's session ended unsaved; Cancel on the untouched master closes it, nothing saved`,
-      asked === 'Leave without saving?' && b7.h === null && b7.n > 0 && b7.locked === 0 && b7.cur && b7.cur.source.sku === 'COMET_9427' && b7b.m === null && b7b.puts === 3 && b7b.cur === null, JSON.stringify({ b7, b7b }));
+      asked === 'Leave without saving?' && b7.h === null && b7.n > 0 && b7.locked === 0 && b7.cur && b7.cur.source.sku === 'COMET_9427' && b7b.m === null && b7b.puts === 4 && b7b.cur === null, JSON.stringify({ b7, b7b }));
 
     check('B8 no page error, no call that writes a piece\'s artwork (' + artCalls() + ')', w.errors.length === 0 && artCalls() === 0, w.errors.slice(0, 3).join(' | '));
   } finally { await w.close(); }

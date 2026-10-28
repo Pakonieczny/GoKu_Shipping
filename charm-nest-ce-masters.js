@@ -23,6 +23,7 @@
  *                     kept on this computer by charm-nest-thumbs.js, and only for the tiles on screen).
  *   openDesign(d, o) a saved design opened again (CharmNestDesigns.get's design, or its id and o.version: read with get(…, { open: true }), which tells the log): its Save makes the
  *                     next version of the same design.
+ *   openNew(d, o)  a design made elsewhere and not saved yet (the vector import's "Open as a new design": source { kind: 'import', file, type }) opened as a new design.
  *   o.orderId / o.customName on any of them ride with the design (a custom order's design: charm-nest-custom-piece.js).
  *
  * The open itself is the bridge's design-mode path (window.CharmEditDesign.open, charm-nest-bridge.js: the engraving fonts and their outlines as a piece's open has them, lockRoles none); a page
@@ -530,6 +531,7 @@
     if (st.id) bits.push(`Design · version ${st.version || 1}`); else bits.push('A new design');
     if (st.source && st.source.kind === 'master') bits.push(`from ${st.source.sku}${st.source.size ? ' · ' + st.source.size : ''} in the charm library (the master never changes)`);
     else if (st.source && st.source.kind === 'new') bits.push(st.source.shape === 'free' ? 'draw the outline, then make it a Cut line' : 'the outline is the cut');
+    else if (st.source && st.source.kind === 'import' && st.source.file) bits.push(`from the file ${st.source.file} (the file never changes)`);
     if (st.orderId) bits.push(`order ${st.orderId}`); else if (st.customName) bits.push(st.customName);
     return bits.join(' · ');
   }
@@ -618,10 +620,20 @@
       try { d = D && typeof D.get === 'function' ? await D.get(id, v || undefined, { open: true }) : null; } catch (e) { note(`The design could not be read · ${(e && e.message) || e}`, true); return null; }
     }
     if (!d || !d.faces || !d.faces.front) return null;
-    const st = { id: d.id || null, version: d.version || null, name: d.name || 'Design', title: d.name || 'Design', source: Object.assign({}, d.source || { kind: 'new' }), faces: facesAgain(d),
-      log: false, ...(d.orderId || o.orderId ? { orderId: String(d.orderId || o.orderId) } : {}), ...(d.customName ? { customName: d.customName } : {}) };
+    const src = Object.assign({}, d.source || { kind: 'new' });
+    const st = { id: d.id || null, version: d.id ? d.version || null : null, name: d.name || 'Design', title: d.name || 'Design', source: src, faces: facesAgain(d),
+      log: d.id ? false : { source: src.kind, ...(src.file ? { file: src.file } : {}), ...(src.type ? { type: src.type } : {}) },   // (a saved one's open is told by CharmNestDesigns.get; an unsaved one's here)
+      ...(d.orderId || o.orderId ? { orderId: String(d.orderId || o.orderId) } : {}), ...(d.customName || o.customName ? { customName: String(d.customName || o.customName) } : {}) };
     st.subtitle = subtitleFor(st);
     return edit(st, by);
+  }
+
+  /** A design made elsewhere and not saved yet, opened as a NEW design (charm-nest-ce-import.js "Open as a new design": its file read into a front whose outline is the cut,
+   *  source { kind: 'import', file, type }): any id it carries is dropped, so its first Save makes version 1 of a design of its own. o.from (the editor it came from) is closed
+   *  through its own Cancel as every open here does; o.read (what the file held) is not needed. */
+  function openNew(d, o) {
+    if (!d || !d.faces || !d.faces.front) return Promise.resolve(null);
+    return openDesign(Object.assign({}, d, { id: null, version: null }), { orderId: o && o.orderId, customName: o && o.customName });
   }
 
   /* ═══ 6 · the picker: the library's charms, or a new start ═══ */
@@ -825,7 +837,7 @@
 
   const api = {
     search, load, count, picture, onChange: fn => { if (typeof fn === 'function') listeners.add(fn); return () => listeners.delete(fn); },
-    open, openPicker, newDesign, openDesign,
+    open, openPicker, newDesign, openDesign, openNew,
     current: () => (session ? { name: session.start.name, source: Object.assign({}, session.start.source), designId: session.start.id || null, version: session.start.version || null, orderId: session.start.orderId || null } : null),
     model: { startSpec, startWhy, startFace, outlineSP, holeFor, masterFace, backFace, cutOutlines, cutBox, designOf, changed, indexOf, rank, norm, newStart, SHAPES, WALL_MM, HOLE_MM, HEART_CLEFT },
     version: 1
