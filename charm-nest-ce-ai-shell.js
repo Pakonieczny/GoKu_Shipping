@@ -113,7 +113,7 @@
     { id: 'file.open', label: 'Open…', key: 'Mod+O', when: w => st(w).panels.some(p => p.id === 'xlib'), run: w => w.act('xpanel', 'xlib'), sheet: 'Opens the Library: a design or a charm from the library' },
     { id: 'file.close', label: 'Close', run: act('cancel') },
     { id: 'file.back', label: w => st(w).back || 'Close and Return', when: w => !!st(w).back, run: act('back') },
-    { id: 'file.save', label: 'Save', key: 'Mod+S', run: act('save') },
+    { id: 'file.save', label: 'Save', key: 'Mod+S', run: act('save'), own: true },   // (own: the editor's own key already saves)
     xe('file.sendToSheet', 'sendToSheet', 'Send to Sheet…'),
     { id: 'file.place', label: 'Place…', key: 'Mod+Shift+P', when: w => st(w).importers > 0, run: act('import') }
   ]);
