@@ -189,6 +189,23 @@ const hashOf = d => sha(D.canonical(D.clean(d).design));
     eq(JSON.stringify([...st.docs.entries()].filter(([k]) => /^Charm_Designs|^Charm_Nest_Rev\/designs/.test(k))), prod, 'F production untouched');
     ok((await call({ op: 'designGet', id: r.body.id })).body.design === null && (await call({ op: 'designList', sandbox: true })).body.designs.map(x => x.id).join() === r.body.id, 'F production does not see it; the sandbox sees only its own');
     r = await put(Object.assign(shaped, { id, name: 'Heart tag v3' })); ok(r.status === 200 && r.body.hash === first.hash && st.doc('Charm_Designs/' + r.body.id + '/versions', '1').faces.front.items[2].fill.join() === '0,0,1', 'F (a version of the first design) an editor shape painted `true`: the cloud keeps it as its role\'s colour, with the same hash (the page and the cloud share the rule)');
+    // the editor's extras (charm-nest-ce-extras.js): words along a path (a heart, over 4 KB of path), their letter spacing, a blank's numbers and a clipped part's original travel with
+    // the design, and none of them is in the hash (the words' outlines, which are, are already laid along the path)
+    const sigOf = sps => { let k = 0, sum = 0; for (const sub of sps || []) for (const op of sub || []) { k++; for (const pt of op.slice(1)) if (Array.isArray(pt)) sum += pt[0] * 0.618 + pt[1] * 1.414; } return k + ':' + sum.toFixed(3); };   // (charm-nest-ce-extras.js sigOf)
+    const heartD = 'M28.346 8.504' + Array.from({ length: 110 }, (_, i) => { const t = (i + 1) / 110 * Math.PI * 2, x = 16 * Math.sin(t) ** 3, y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)); return 'C' + [x - 0.3, y - 0.2, x + 0.3, y + 0.2, x, y].map(v => (28.346 + v).toFixed(3)).join(' '); }).join(' ') + 'Z';
+    const ext = () => { const d = design({ id, name: 'Heart tag v3' }); d.faces.front.items[3].children[0].subpaths = [[['m', [2.00049, 30.0004]], ['l', [30.12345, 30]]]]; return d; };
+    const plainX = ext(), rich = ext(), ri = rich.faces.front.items, ln = ri[3].children[0];
+    Object.assign(ri[4], { pathD: heartD, pathAt: 0.25, pathFlip: true, pathRisePt: 1.5, pathRole: 'line', tracking: 50 });
+    ln.shape = { kind: 'line', sig: sigOf(ln.subpaths), w: 6, ring: 'std' };
+    ri[2].clipOf = { id: 'heart', kind: 'text', role: 'hatch', text: 'Love', fontKey: 'jost-ace', sizePt: 9, pathD: heartD, pathAt: 0.5, tx: 1, ty: 2, sx: 1, sy: 1, rot: 0, fill: true, stroke: false, shape: { kind: 'x', bad: { no: 1 } } };
+    r = await put(rich); const back = (await call({ op: 'designGet', id })).body.design, bt = back.faces.front.items[4], bl = back.faces.front.items[3].children[0], bc = back.faces.front.items[2].clipOf;
+    ok(r.status === 200 && heartD.length > 4000 && bt.pathD === heartD && bt.pathAt === 0.25 && bt.pathFlip === true && bt.pathRisePt === 1.5 && bt.pathRole === 'line' && bt.tracking === 50,
+      `F words along a path come back on it: their path (pathD, ${(heartD.length / 1000).toFixed(1)} KB), where on it, flipped, raised, its role, their letter spacing: ` + (r.body.error || ''));
+    ok(bl.shape && bl.shape.kind === 'line' && bl.shape.w === 6 && bl.shape.ring === 'std' && bl.shape.sig === sigOf(bl.subpaths) && bl.subpaths[0][0][1].join() === '2,30', 'F a blank\'s numbers come back, signed for its points as kept (to a thousandth), so the extras still offer them');
+    ok(bc && bc.kind === 'text' && bc.text === 'Love' && bc.pathD === heartD && bc.tx === 1 && bc.fill.join() === '0,0,1' && !('subpaths' in bc) && !('shape' in bc), 'F a clipped part\'s original comes back whole (words as words; a blank\'s numbers that are not plain values are left out)');
+    ok(r.body.hash === hashOf(plainX) && hashOf(rich) === hashOf(plainX), 'F none of them is in the hash: the design hashes as it does without them');
+    let refusedX = D.clean(Object.assign(ext(), {})); refusedX.design.faces.front.items[4].pathD = 'M0 0' + 'L1 1'.repeat(5000); refusedX = D.clean(refusedX.design);
+    ok(/pathD/.test(refusedX.error || ''), 'F a path for words of over 16 KB is refused: ' + refusedX.error);
     const gen = () => (st.doc('Charm_Nest_Rev', 'placement') || {}).n || 0, g0 = gen();
     await put(design()); await call({ op: 'designList' }); await call({ op: 'designGet', id });
     eq(gen(), g0, 'F no design op raises the placement counter (nothing a placement answer is made from)');
