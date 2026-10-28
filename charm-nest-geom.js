@@ -108,6 +108,17 @@
   }
   const emptyMask = frame => Object.assign({}, frame, { bits: new Uint8Array(frame.w * frame.h) });
   const cloneMask = m => Object.assign({}, m, { bits: m.bits.slice() });
+  /* REFIT (Paul, 28 Oct 2026: "Everything must be immediate and responsive"): the edges a scanline crosses, row after row (y never goes down). A row used to look at every edge of the
+     drawing from the first; the edges already passed (their top below the row) are dropped once instead, and the ones still crossing are kept in the very order the full pass met them
+     (the edges sorted by their lower end), so every row gets the same crossings in the same order and every pixel comes out exactly as before. */
+  function activeEdges(edges) {
+    let next = 0, live = [];
+    return y => {
+      while (next < edges.length && edges[next][1] <= y) live.push(edges[next++]);
+      let k = 0; for (let i = 0; i < live.length; i++) if (live[i][3] > y) live[k++] = live[i];
+      live.length = k; return live;
+    };
+  }
   /** Even-odd scanline fill of polygons (pt) into the frame. Returns a mask. */
   function rasterPolys(polys, frame, into, value) {
     const m = into || emptyMask(frame); const { w, h, res, ox, oy } = m; const bits = m.bits; value = value == null ? 1 : value;
@@ -115,10 +126,10 @@
     for (const poly of polys) for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const a = poly[j], b = poly[i]; if (a[1] === b[1]) continue; edges.push(a[1] < b[1] ? [a[0], a[1], b[0], b[1]] : [b[0], b[1], a[0], a[1]]); }
     if (!edges.length) return m;
     edges.sort((p, q) => p[1] - q[1]);
-    const xs = new Float64Array(edges.length);
+    const xs = new Float64Array(edges.length), live = activeEdges(edges);
     for (let py = 0; py < h; py++) {
       const y = oy + (py + 0.5) / res; let n = 0;
-      for (const e of edges) { if (e[1] > y) break; if (e[3] <= y) continue; xs[n++] = e[0] + (y - e[1]) * (e[2] - e[0]) / (e[3] - e[1]); }
+      for (const e of live(y)) xs[n++] = e[0] + (y - e[1]) * (e[2] - e[0]) / (e[3] - e[1]);
       if (n < 2) continue;
       const row = Array.prototype.slice.call(xs, 0, n).sort((a, b) => a - b);
       for (let k = 0; k + 1 < n; k += 2) {
@@ -333,7 +344,7 @@
     const out = emptyMask(frame);
     for (let py = 0; py < out.h; py++) for (let px = 0; px < out.w; px++) {
       const x = out.ox + (px + 0.5) / out.res, y = out.oy + (py + 0.5) / out.res;
-      const s = ap(Ri, x, y); out.bits[py * out.w + px] = at(m, s[0], s[1]);
+      out.bits[py * out.w + px] = at(m, Ri[0] * x + Ri[2] * y + Ri[4], Ri[1] * x + Ri[3] * y + Ri[5]);   // (ap's own sums, written out: no pair made for every pixel)
     }
     return out;
   }
@@ -341,17 +352,25 @@
   function largestRectangles(m, n) {
     const work = m.bits.slice(); const { w, h, res, ox, oy } = m; const out = [];
     const hgt = new Int32Array(w), stack = new Int32Array(w + 1);
+    // REFIT (28 Oct 2026): the best rectangle of each row's scan is kept; clearing a rectangle changes only the rows from its top down, so only those are scanned again. The first rectangle
+    // of the largest area in scan order is still the one taken (the first row whose best reaches it, and that row's first), exactly as one scan of every row took it.
+    const rowBest = new Array(h); let from = 0;
     for (let k = 0; k < (n || 6); k++) {
       hgt.fill(0); let best = { area: 0 };
       for (let y = 0; y < h; y++) {
         for (let x = 0; x < w; x++) hgt[x] = work[y * w + x] ? hgt[x] + 1 : 0;
-        let sp = 0;
-        for (let x = 0; x <= w; x++) {
-          const cur = x < w ? hgt[x] : 0;
-          while (sp > 0 && hgt[stack[sp - 1]] >= cur) { const hh = hgt[stack[--sp]]; const left = sp > 0 ? stack[sp - 1] + 1 : 0; const ww = x - left, a = ww * hh; if (a > best.area) best = { area: a, x: left, y: y - hh + 1, w: ww, h: hh }; }
-          stack[sp++] = x;
+        if (y >= from) {
+          let rb = { area: 0 }, sp = 0;
+          for (let x = 0; x <= w; x++) {
+            const cur = x < w ? hgt[x] : 0;
+            while (sp > 0 && hgt[stack[sp - 1]] >= cur) { const hh = hgt[stack[--sp]]; const left = sp > 0 ? stack[sp - 1] + 1 : 0; const ww = x - left, a = ww * hh; if (a > rb.area) rb = { area: a, x: left, y: y - hh + 1, w: ww, h: hh }; }
+            stack[sp++] = x;
+          }
+          rowBest[y] = rb;
         }
+        if (rowBest[y].area > best.area) best = rowBest[y];
       }
+      from = best.area ? best.y : 0;
       if (!best.area || best.w < 2 || best.h < 2) break;
       out.push({ px: best.x, py: best.y, pw: best.w, ph: best.h, x0: ox + best.x / res, y0: oy + best.y / res, x1: ox + (best.x + best.w) / res, y1: oy + (best.y + best.h) / res, wPt: best.w / res, hPt: best.h / res, areaPt2: best.area / (res * res) });
       for (let y = best.y; y < best.y + best.h; y++) for (let x = best.x; x < best.x + best.w; x++) work[y * w + x] = 0;
@@ -654,18 +673,19 @@
     if (poly.length > 1) polys.push(poly);
     return polys;
   }
-  function rasterGlyphs(cmds, frame) {
+  function rasterGlyphs(cmds, frame, polys) {   // (polys: glyphPolys(cmds) when the caller already has them: verifyInk)
     // Canvas and exported PDF fill glyphs with nonzero winding. Emoji can have overlapping components;
     // an even-odd mask would incorrectly erase their overlap during the manufacturing check.
     const m=emptyMask(frame), edges=[];
-    for (const p of glyphPolys(cmds)) for (let i=0,j=p.length-1;i<p.length;j=i++) {
+    for (const p of polys || glyphPolys(cmds)) for (let i=0,j=p.length-1;i<p.length;j=i++) {
       const a=p[j],b=p[i]; if(a[1]===b[1])continue;
       edges.push(a[1]<b[1]?[a[0],a[1],b[0],b[1],1]:[b[0],b[1],a[0],a[1],-1]);
     }
     edges.sort((a,b)=>a[1]-b[1]);
+    const live=activeEdges(edges);
     for(let py=0;py<m.h;py++) {
       const y=m.oy+(py+.5)/m.res,row=[];
-      for(const e of edges){if(e[1]>y)break;if(e[3]<=y)continue;row.push([e[0]+(y-e[1])*(e[2]-e[0])/(e[3]-e[1]),e[4]]);}
+      for(const e of live(y))row.push([e[0]+(y-e[1])*(e[2]-e[0])/(e[3]-e[1]),e[4]]);
       row.sort((a,b)=>a[0]-b[0]);let winding=0;
       for(let i=0;i+1<row.length;i++) {
         winding+=row[i][1];if(!winding)continue;
@@ -692,7 +712,7 @@
     // continuous dragging responsive without reducing clearance or resolution.
     const x0=Math.max(0,Math.floor((bb[0]-mask.ox)*mask.res)),y0=Math.max(0,Math.floor((bb[1]-mask.oy)*mask.res));
     const x1=Math.min(mask.w,Math.ceil((bb[2]-mask.ox)*mask.res)+1),y1=Math.min(mask.h,Math.ceil((bb[3]-mask.oy)*mask.res)+1);
-    const ink=rasterGlyphs(cmds,{w:x1-x0,h:y1-y0,res:mask.res,ox:mask.ox+x0/mask.res,oy:mask.oy+y0/mask.res});let outside=0,total=0;
+    const ink=rasterGlyphs(cmds,{w:x1-x0,h:y1-y0,res:mask.res,ox:mask.ox+x0/mask.res,oy:mask.oy+y0/mask.res},polys);let outside=0,total=0;
     for(let y=0;y<ink.h;y++)for(let x=0;x<ink.w;x++)if(ink.bits[y*ink.w+x]){total++;if(!mask.bits[(y+y0)*mask.w+x+x0])outside++;}
     return { ok: outside === 0 && total > 0, outside, total };
   }
@@ -709,11 +729,25 @@
     for (let x = -h; x < w; x++) scan(x < 0 ? 0 : x, x < 0 ? -x : 0, 1, 1);
     for (let x = 0; x < w + h; x++) scan(x < w ? x : w - 1, x < w ? 0 : x - w + 1, -1, 1);
     // gaps: background runs that start AND end at ink (the scan above only records a run closed by ink; drop the leading one)
-    const q = (arr, p) => { if (!arr.length) return 0; const s = arr.slice().sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * (s.length - 1)))]; };
+    const q = (arr, p) => { if (!arr.length) return 0; const s = Float64Array.from(arr).sort(); return s[Math.min(s.length - 1, Math.floor(p * (s.length - 1)))]; };   // (REFIT: the typed array's own numeric sort, the same order as (a, b) => a - b for these lengths, without a call per comparison)
     const strokePx = q(inkRuns, 0.05), gapPx = q(gapRuns.filter(g => g <= Math.max(6, 6 * strokePx)), 0.05);
     return { strokeMm: strokePx / res * MM_PER_PT, gapMm: gapPx / res * MM_PER_PT, samples: { ink: inkRuns.length, gap: gapRuns.length } };
   }
 
+  /** REFIT: [width, height] of the block of `lines` set at 1 pt (layoutLines' own frame), or null when it cannot be measured (fitText then tries every size as before). */
+  function blockAtOne(lines, font, lineGap) {
+    try { const L = layoutLines(lines, font, 1, lineGap, 0, [0, 0]), w = L.local[2] - L.local[0], h = L.local[3] - L.local[1]; return w > 0 && h > 0 && Number.isFinite(w) && Number.isFinite(h) ? [w, h] : null; }
+    catch (_) { return null; }
+  }
+  /* REFIT: the turned mask and its largest rectangles for each angle fitText tries, kept for the last mask asked about: the words are fitted in Regular, then in Semibold, and each way they
+     can be split into lines, all on the same mask, and these are the same every time (a mask is never changed once made; every change makes a new one). One mask at a time, so nothing grows. */
+  let rectsMask = null, rectsKept = null;
+  function rectsAt(mask, angle, n) {
+    if (rectsMask !== mask) { rectsMask = mask; rectsKept = new Map(); }
+    const key = angle + "/" + (n || 6); let got = rectsKept.get(key);
+    if (!got) { const mA = angle ? rotateMask(mask, -angle) : mask; got = { mA, rects: largestRectangles(mA, n) }; rectsKept.set(key, got); }
+    return got;
+  }
   /**
    * lines[]  the customer's text split into lines; font: an opentype.js Font; mask: the eroded back mask (engraveMask)
    * opts: { minCapMm 1.6, maxHeightFrac 0.4, lineGap 0.216, minStrokeMm 0.15, minGapMm 0.12, tryRotated true, angles, rects 6, semiboldBelowMm 2.2, fonts:{Regular, Semibold} }
@@ -728,15 +762,22 @@
     const maxH = opts.maxHeightFrac * (mask.hPt || mask.h / mask.res);
     const strokeOk = layout => { if (!(opts.minStrokeMm > 0) && !(opts.minGapMm > 0)) return true; const mt = strokeMetrics(layout.cmds, 24); return (!(opts.minStrokeMm > 0) || mt.strokeMm >= opts.minStrokeMm) && (!(opts.minGapMm > 0) || !mt.gapMm || mt.gapMm >= opts.minGapMm); };
     const fitsIn = (b, r) => b[0] >= r.x0 && b[1] >= r.y0 && b[2] <= r.x1 && b[3] <= r.y1;
+    // REFIT (Paul, 28 Oct 2026: "Everything must be immediate and responsive"; a calendar's "SEPTEMBER" took 2.7 s to fit again after a charm edit). The block of words grows in proportion to its
+    // size, so its width and height at 1 pt say which sizes cannot go in a rectangle at all: those are never laid out, and a rectangle where even the largest size that could go in would not
+    // beat the best already found (by more than the 0.01 pt a candidate must win by) is not searched. Neither changes a single answer: the same sizes are tried and pass or fail exactly as
+    // before (a margin a million times wider than rounding keeps the shortcut to sizes that are certainly too big), only the hopeless ones are no longer drawn and checked.
+    const unit = blockAtOne(lines, font, opts.lineGap), SURE = 1e-6;
+    const tooBig = (size, r) => !!unit && (size * unit[0] * (1 - SURE) > r.x1 - r.x0 || size * unit[1] * (1 - SURE) > r.y1 - r.y0);
     let best = null, best0 = null;
     for (const angle of angles) {
-      const mA = angle ? rotateMask(mask, -angle) : mask;
-      const rects = largestRectangles(mA, opts.rects);
+      const { mA, rects } = rectsAt(mask, angle, opts.rects);
       for (const r of rects) {
         const centre = [(r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2];
-        const passes = (size, withStroke) => { const L = layoutLines(lines, font, size, opts.lineGap, 0, centre); if (!fitsIn(L.bbox, r)) return null; if (!verifyInk(L.cmds, mA).ok) return null; if (withStroke && !strokeOk(L)) return null; return L; };
+        const passes = (size, withStroke) => { if (tooBig(size, r)) return null; const L = layoutLines(lines, font, size, opts.lineGap, 0, centre); if (!fitsIn(L.bbox, r)) return null; if (!verifyInk(L.cmds, mA).ok) return null; if (withStroke && !strokeOk(L)) return null; return L; };
         let lo = 0.01, hi = Math.min(r.hPt, maxH, opts.maxSize || Infinity, r.wPt * 4), size = 0, thin = false;
         if (!(hi > lo)) continue;
+        const top = angle === 0 ? best0 : best, reach = unit ? Math.min(hi, (r.x1 - r.x0) / unit[0], (r.y1 - r.y0) / unit[1]) * (1 + SURE) : hi;
+        if (top && reach <= top.size + 0.01) continue;   // (it could not win: a candidate replaces the best only when it is larger by more than 0.01 pt)
         for (let withStroke of [true, false]) {
           let l = lo, h = hi; size = 0;
           while (h - l > 0.002) { const mid = (l + h) / 2; if (passes(mid, withStroke)) { size = mid; l = mid; } else h = mid; }
@@ -752,7 +793,7 @@
     // the search on a rotated raster is only a guide: each candidate's size is settled again at its final centre and
     // angle against the UNROTATED eroded mask, so what is returned is the largest size that verifies there and 0.1 pt
     // more does not. The block centre goes back into the unrotated frame by rotating it +angle about the mask centre.
-    const settle = cand => { if (!cand) return null; const centre = cand.angle ? ap(rotateAbout(mask.cx, mask.cy, cand.angle), cand.centreA[0], cand.centreA[1]) : cand.centreA; const s = refitAt(lines, font, mask, opts, { centre, angle: cand.angle }); return s.ok ? Object.assign(cand, { centre, size: s.size, layout: s.layout }) : null; };
+    const settle = cand => { if (!cand) return null; const centre = cand.angle ? ap(rotateAbout(mask.cx, mask.cy, cand.angle), cand.centreA[0], cand.centreA[1]) : cand.centreA; const s = refitAt(lines, font, mask, Object.assign({}, opts, { measure: false }), { centre, angle: cand.angle }); return s.ok ? Object.assign(cand, { centre, size: s.size, layout: s.layout }) : null; };   // (REFIT: only the size and the layout are taken from it: its stroke measure is not made)
     const s0 = settle(best0), sR = settle(best);
     let pick = s0;
     if (sR && (!s0 || (sR.size - s0.size) / s0.size >= opts.rotGain)) pick = Object.assign(sR, { gain: s0 ? (sR.size - s0.size) / s0.size : Infinity });
