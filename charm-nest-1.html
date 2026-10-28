@@ -4106,6 +4106,9 @@ try {
     if (ev.t === "fail" && !ev.here && ev.local && ev.e) toast(`${ev.e.label || "A change made on this computer"} was not saved: ${String(ev.error || "the cloud said no").replace(/\.$/, "")}.`, "bad", 12000);
     else if (ev.t === "lost" && Array.isArray(ev.lost)) for (const l of ev.lost.slice(0, 3)) { const secs = Math.max(0, Math.round((Date.now() - l.at) / 1000)); toast(`${l.by} changed ${l.label ? l.label.charAt(0).toLowerCase() + l.label.slice(1) : "what you changed"} after you (${secs < 60 ? secs + " s" : Math.round(secs / 60) + " min"} ago) — their change was kept.`, "", 10000); }
   });
+  // (and what waits too long is said, once in ten minutes: more than 200 presses, or one older than ten minutes; they stay on this computer until the cloud has them)
+  let boxSaid = 0;
+  setInterval(() => { try { const St = window.CharmNestStore; if (!St || !St.pending || Date.now() - boxSaid < 600000) return; const list = St.pending(e => !e.job), old = list.length ? Date.now() - Math.min(...list.map(e => +e.at || Date.now())) : 0; if (list.length > 200 || old > 600000) { boxSaid = Date.now(); toast(`${list.length} change${list.length === 1 ? " is" : "s are"} waiting to reach the cloud (the oldest ${Math.round(old / 60000)} min): kept on this computer, and sent as soon as the cloud answers.`, "bad", 12000); } } catch (_) {} }, 60000);
 } catch (e) { console.warn("outbox notices", e); }
 /* The sandbox order stream plays the shop's day faster than real time: each check the sorter makes moves its clock ten
    simulated minutes, and between checks it runs at the chosen speed, never past the next check. The day (set numbers,

@@ -16985,6 +16985,7 @@ const CustomRead = window.CustomRead = (() => {
           const got = r.reads && r.reads[x.row.key];
           if (got && (!B.maps.customRead[x.row.key] || B.maps.customRead[x.row.key].hash !== got.hash)) { B.maps.customRead[x.row.key] = got; changed = true; }
           const dec = r.decided && r.decided[x.row.key], had = B.maps.customDecided[x.row.key];
+          if (had && had.pending) continue;   // (OUTBOX: a person's decision still on its way stays as drawn: decide)
           if (dec && (!had || had.at !== dec.at)) { B.maps.customDecided[x.row.key] = dec; changed = true; }
           else if (!dec && had) { delete B.maps.customDecided[x.row.key]; changed = true; }
         }
@@ -17023,6 +17024,26 @@ const CustomRead = window.CustomRead = (() => {
    *  Every line of the card at once (an Unknown SKU card can hold many orders): one write. */
   async function decide(rows, kind, who) {
     rows = rows.filter(Boolean); if (!rows.length) return;
+    /* OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"; plan: phase 3, approvals): the decision is drawn at once, as the cloud keeps it ({ kind, by, at }, marked pending),
+       kept in this computer's outbox and sent from there with its mutation id; the cloud's answer replaces it; a refusal puts the lines back as they were and says why. */
+    const St = window.CharmNestStore, ids0 = [...new Set(rows.map(r => r.order.receiptId))];
+    if (St && typeof St.mutate === "function") {
+      const was = new Map(rows.map(r => [r.key, B.maps.customDecided[r.key]])), rec = kind ? { kind, by: who, at: Date.now(), pending: true } : null;
+      const h = St.mutate({ entity: "c:" + rows[0].key, op: "customDecide", args: { keys: rows.map(r => r.key), kind, by: who }, label: `The decision on order ${ids0.slice(0, 3).join(", ")}`, by: who });
+      if (!h.k) return h.done;   // (this page cannot write: the refusal is the caller's to say)
+      for (const r of rows) { if (rec) B.maps.customDecided[r.key] = rec; else delete B.maps.customDecided[r.key]; }
+      h.done.then(res => {
+        if (!res || !res.ok) throw new Error((res && res.error) || "the decision was not saved");
+        for (const r of rows) { const cur = B.maps.customDecided[r.key]; if (cur && cur !== rec && !cur.pending) continue; if (res.decided) B.maps.customDecided[r.key] = res.decided; else delete B.maps.customDecided[r.key]; }
+        apply();
+      }).catch(e => {
+        for (const [k, v] of was) { if (B.maps.customDecided[k] !== rec && rec) continue; if (v) B.maps.customDecided[k] = v; else delete B.maps.customDecided[k]; }
+        apply(); toast(`The decision on order ${ids0[0] || ""} was not saved: ${String((e && e.message) || e).replace(/\.$/, "")}. It is as it was.`, "bad", 10000);
+      });
+      agent({ pool: true }, "DS", `${ids0.slice(0, 3).join(", ")}${ids0.length > 3 ? ` +${ids0.length - 3}` : ""}: ${kind === "regular" ? "not a custom order" : kind ? "a custom order" : "handed back to Claude's reading"} (${who})`);
+      apply();
+      return;
+    }
     const res = await api("charmNestLibrary", { op: "customDecide", keys: rows.map(r => r.key), kind, by: who });
     if (!res || res.error || !res.ok) throw new Error((res && res.error) || "the decision was not saved");
     for (const r of rows) { if (res.decided) B.maps.customDecided[r.key] = res.decided; else delete B.maps.customDecided[r.key]; }
