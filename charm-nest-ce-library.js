@@ -32,6 +32,9 @@
  *     computer by the page's picture store (charm-nest-thumbs.js, IndexedDB) under the design's id and VERSION, which never change: a reload, a new tab or a bad
  *     connection shows it with no request at all
  *   · several words, each found anywhere (a name and an order number: "heart 4213"), and the filters an employee needs (Mine, Order, No order, Today, Week)
+ *   · a list view beside the tiles (one design a row, three lines: more of them on screen when looking for an order or a person), and the keys: ↓ from the search into
+ *     the list, the arrows through it, Enter opens, a letter goes back to the search, ⌘Z / ⌘S … still reach the editor
+ * Measured (tests/charm-nest/ce-library.cjs, 3,000 designs): a keystroke 2 ms of work (most 7), a scroll 2 ms (most 5), ~14 elements in the list.
  *
  * READS (guarded: a module that is not on the page leaves its tab saying so):
  *   CharmNestDesigns   rows() (this computer's index, newest first: the list shows at once), list() (the same after asking the cloud only what was saved since), get(id,
