@@ -27,7 +27,8 @@
     print:    { label: "QR Label Printed", ink: "#65737f", family: "prepared",   icon: "qr",        action: "QR LABEL PRINTED" },
     complete: { label: "Order Complete",   ink: "#77518a", family: "fulfilment", icon: "complete",  action: "ORDER COMPLETE" },
     // (RELEASED, Paul 27 Oct 2026: "updating the Hold Order seal to a Released Order Seal": the seal of a release reads ORDER RELEASED; the button keeps its name, Release Hold)
-    release:  { label: "Order Released",   ink: "#a2591c", family: "release",    icon: "release",   action: "ORDER RELEASED" },
+    // (SEALGREEN, Paul 28 Oct 2026: "change the colour of the 'Order Released' seal to be green": Seal's release ink, #19663f)
+    release:  { label: "Order Released",   ink: "#19663f", family: "release",    icon: "release",   action: "ORDER RELEASED" },
     cancel:   { label: "Order Cancelled",  ink: "#982f48", family: "cancelled",  icon: "cancelled", action: "ORDER CANCELLED" },
     sheet:    { label: "Sent to Sheet",    ink: "#65737f", family: "prepared",   icon: "prepared",  action: "SENT TO SHEET" },
     // (HOLDORDER / SEALTRAVEL, Paul 20 Oct 2026: the Hold Order press (was Send to Review): ORDER HELD, in the family of a hold, as the timeline draws it (charm-nest-timeline-ui.js holdOrderNote))

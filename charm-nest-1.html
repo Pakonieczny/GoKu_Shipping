@@ -3652,13 +3652,14 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
    card's Release Hold press on the Orders card (charm-nest-bridge.js, Orders.releaseSealHtml), 72 px (half again the regular 50), with its words beside it: Release Hold, by whom, the date and the time.
    Whole on its own line of the card's actions when it is narrow; the seal zooms like every other (Seal.zoom). */
 /* RELORANGE (Paul, 19 Oct 2026: "Shrink the size of the entire 'Release Hold' UI by 33%. Change the colour of the 'Release Hold' Seal and UI to be orange"): two thirds of its old size (the seal 72 -> 48 px, its padding, gaps and words with it), in the Hold button's orange (--holdOrange, #a2591c) */
-.relSeal{--relOrange:var(--holdOrange,#a2591c);display:inline-flex;align-items:center;gap:7px;flex:0 1 auto;max-width:100%;min-width:0;margin:3px 0;padding:4px 8px 4px 4px;border:1px solid rgba(162,89,28,.38);border-radius:9px;background:rgba(162,89,28,.07);color:var(--relOrange);--seal-fit:48px;box-sizing:border-box}
+/* SEALGREEN (Paul, 28 Oct 2026: "change the colour of the 'Order Released' seal to be green so that it better represents a green light to go ahead"): the seal (charm-nest-motion.js FAMILY.release) and its words, border and wash are the app's green, #19663f (the sealedDone green); the Release Hold BUTTON keeps the Hold orange, --relHold */
+.relSeal{--relInk:#19663f;display:inline-flex;align-items:center;gap:7px;flex:0 1 auto;max-width:100%;min-width:0;margin:3px 0;padding:4px 8px 4px 4px;border:1px solid rgba(25,102,63,.38);border-radius:9px;background:rgba(25,102,63,.07);color:var(--relInk);--seal-fit:48px;box-sizing:border-box}
 .relSeal>.seal{flex:0 0 48px;width:48px;height:48px;opacity:1}
 .relSealWords{display:flex;flex-direction:column;gap:0;min-width:0;line-height:1.25;font:8px var(--sans)}
-.relSealWords b{font-size:9.5px;font-weight:800;letter-spacing:.02em;color:var(--relOrange,#a2591c);overflow-wrap:anywhere}
+.relSealWords b{font-size:9.5px;font-weight:800;letter-spacing:.02em;color:var(--relInk,#19663f);overflow-wrap:anywhere}
 .relSealWords .relSealBy{font-weight:600;color:var(--ink,#222);overflow-wrap:anywhere}
 .relSealWords .relSealAt{color:var(--ink70,#555)}
-.relSealWords .relSealHeld{margin-top:2px;padding-top:2px;border-top:1px dashed color-mix(in srgb,var(--relOrange,#a2591c) 35%,transparent);color:var(--ink45,#888);overflow-wrap:anywhere}   /* (RELEASED, Paul 27 Oct 2026: the hold it ended) */
+.relSealWords .relSealHeld{margin-top:2px;padding-top:2px;border-top:1px dashed color-mix(in srgb,var(--relInk,#19663f) 35%,transparent);color:var(--ink45,#888);overflow-wrap:anywhere}   /* (RELEASED, Paul 27 Oct 2026: the hold it ended) */
 /* (RELSEAL, Paul 19 Oct 2026: "the seal would be visible in the list of view of each order card and both the Engraving and Orders Tabs as part of each relevant Order card"): the date and the time wrap, and so does "Release Hold" when the card is narrower than the words (they were nowrap, and a narrow card or list column cut them off at its edge);
    the seals row of an Orders card or list row (charm-nest-bridge.js cardSealHtml): the Release Hold seal first, the approval strip (charm-nest-activity.css .ordSeals) beside it while there is room and under it when there is not; in an Engraving row it is the first of the seals cell. */
 .ordSealsRow{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px 10px;margin:8px 0 2px;min-width:0;max-width:100%;flex:1 0 100%}
@@ -3885,8 +3886,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1-ml1-m2-m3-szf1-mfile1-mc1-bd1-ovf1-ae1"></script>
 <script src="charm-nest-overlap-fix.js?v=20261025-ovf1"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2-hdr1-ms1-cost18-rh1-hp2-ro1-sc1-ss1-vis1-rs1-rel1"></script>
-<script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1-hdr1-pl1-ms1-pk1-cost18-rh1-ho1-ss1-rel1"></script>
+<script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2-hdr1-ms1-cost18-rh1-hp2-ro1-sc1-ss1-vis1-rs1-rel1-sg1"></script>
+<script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1-hdr1-pl1-ms1-pk1-cost18-rh1-ho1-ss1-rel1-sg1"></script>
 <script src="charm-nest-geom.js?v=20261009-flat-col-fb1-fb2-fr1-rb1-m3-wd1-cb1"></script>
 <script src="charm-nest-monogram.js?v=20261015-mono1-monoui1-mx4-mh2"></script>
 <script src="charm-nest-monogram-fit.js?v=20261016-mx4-mh2"></script>
@@ -3917,7 +3918,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-monogram-seals.js?v=20261017-mseal1"></script>
 <script src="charm-nest-order-seals.js?v=20261019-cs1"></script>
 <!-- (SEALTRAVEL, Paul 20 Oct 2026: every seal an order has collected, drawn by kind, wherever the order ends up) -->
-<script src="charm-nest-seal-travel.js?v=20261020-st1-rel1"></script>
+<script src="charm-nest-seal-travel.js?v=20261020-st1-rel1-sg1"></script>
 <script src="charm-nest-sheet-name.js?v=20261010-sn1"></script>
 <script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2-sf2-sn1-fb1-eu3-hg1-rh1-rh3-rh4-sp1-cost18-gl1-lg1-gs1"></script>
 <script src="charm-nest-export.js?v=20261009-cutfill-plb1-bf1-ba1-ef1"></script>

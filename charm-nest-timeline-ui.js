@@ -284,6 +284,31 @@
   //  draws the ORDER HELD seal. Its record is the note charm-nest-review-mark.js writes, as it always was (data.reviewMark, no `how`: the note of its resolve has one), so an older press draws it too)
   const holdOrderNote = e => !!e && e.type === "note" && !!e.data && !!e.data.reviewMark && !e.data.how;
   const sealed = e => !!e && (isPlainDecision(e) || MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type) || holdOrderNote(e) || !!opStepOf(e));
+  /* SEALPAIR (Paul, 28 Oct 2026, on an order whose Hold then Release made four seals within a minute, ORDER HELD, ON HOLD, RESTORED and ORDER RELEASED: "Out of these 4 Seals I only
+     want to see the First one 'Order Held' and last one 'Order Released'. The two middle seals are pointless and useless and then just crowd up the whole timeline, so please remove
+     them everywhere"): a hold is ONE seal, ORDER HELD, and its release ONE seal, ORDER RELEASED. Every record stays as it is (the hold card, the Now line, the explainer and the
+     derived state still read each one); only these stamps are not drawn (echoesOf):
+       held      a Hold Order press's pieces coming off their sheets (SheetWin's take-off under OrderHold.run): the press's own ORDER HELD seal (holdOrderNote) came just before it, in the
+                 same hold (no release since, within HOLD_ECHO_MS). A hold with no such seal (the sheet window's "Take off and hold", Shared Orders) is no echo: it is the only seal of
+                 that hold and is drawn as the hold's seal, ORDER HELD (faceModel), never ON HOLD.
+       restored  a line made up again as its hold is lifted (Review.repool): the lift of a hold that has its seal (a hold seal before it, no release between), or a step of a release
+                 (a "released" of the order around it: OrderHold.release writes it once the pieces are placed, its data.frontAt when the press began; the Review card's own step is
+                 stamped with the press's time, before the lines are made up). A restore that is neither is the only trace of it: its RESTORED seal stays. */
+  const HOLD_ECHO_MS = 30 * 60000, REL_SPAN_MS = 15 * 60000;
+  /** The events of `events` whose seal is the echo of another one (a Set of those very events; empty when there is none). */
+  function echoesOf(events) {
+    const out = new Set(), list = (events || []).filter(e => e && (e.type === "held" || e.type === "restored" || e.type === "released" || holdOrderNote(e)));
+    if (!list.some(e => e.type === "held" || e.type === "restored")) return out;
+    const notes = list.filter(holdOrderNote), holds = notes.concat(list.filter(e => e.type === "held")), rels = list.filter(e => e.type === "released");
+    const relIn = (a, b) => rels.some(r => +r.at > a && +r.at < b);
+    const spanOf = r => { const d = r.data || {}, ts = [+r.at, +d.frontAt, +d.sealAt].filter(t => t > 0); return ts.length ? [Math.min(...ts) - 5000, Math.max(...ts) + REL_SPAN_MS] : null; };
+    for (const e of list) {
+      const t = +e.at || 0;
+      if (e.type === "held") { if (notes.some(n => +n.at <= t + 120000 && t - +n.at <= HOLD_ECHO_MS && !relIn(+n.at, t))) out.add(e); }
+      else if (e.type === "restored" && (holds.some(h => +h.at <= t && !relIn(+h.at, t)) || rels.some(r => { const s = spanOf(r); return !!s && t >= s[0] && t <= s[1]; }))) out.add(e);
+    }
+    return out;
+  }
   /** The seals to draw, oldest first: one per rail step per piece. A step recorded again for the same line (a second
    *  sorting scan, a rose sheet's cut after its laser mark) keeps the first seal and hangs the rest on it as `same`, so
    *  nothing is lost — the explainer and the detail can still read them. Etsy's completion folds into the order's
@@ -293,8 +318,9 @@
     let ship = null;
     // (PIECES: a line cut by unit has an Engraved seal for EACH piece; a line whose events name no such slot groups by line, exactly as before)
     const cut = new Set(); for (const e of events || []) if (e && e.type === "engraveApproved" && unitSlotOf(e)) cut.add(e.lineKey || e.transactionId || "");
+    const echo = echoesOf(events);   // (SEALPAIR: the ON HOLD and RESTORED of a hold already sealed ORDER HELD / ORDER RELEASED)
     for (const e of events || []) {
-      if (!sealed(e)) continue;
+      if (!sealed(e) || echo.has(e)) continue;
       e.same = null;
       if (!MILESTONE_SEAL.has(e.type)) { out.push(e); continue; }
       const st = own(STOP_OF, e.type) ? STAGES[STOP_OF[e.type]].k : e.type;
@@ -715,7 +741,8 @@
     //  stamped with, the release family; a hold released anywhere else (Orders › On hold, the sheet window) is drawn as it always was)
     if (e.type === "released" && e.data && e.data.seal === "releaseHold") Object.assign(m, { family: "release", action: "ORDER RELEASED", icon: "release", path: undefined });   // (RELEASED, Paul 27 Oct 2026: the seal reads ORDER RELEASED)
     // (HOLDORDER, Paul 20 Oct 2026: the Hold Order press's seal says what it did, ORDER HELD, in the family of a hold)
-    if (holdOrderNote(e)) Object.assign(m, { family: "exceptions", action: "ORDER HELD", icon: "exceptions", path: undefined });
+    // (SEALPAIR, Paul 28 Oct 2026: a hold with no ORDER HELD seal of its own, the sheet window's "Take off and hold", wears that seal too: ON HOLD is drawn nowhere)
+    if (holdOrderNote(e) || e.type === "held") Object.assign(m, { family: "exceptions", action: "ORDER HELD", icon: "exceptions", path: undefined });
     return m;
   }
   /** One stamp as SVG. full: the face that reads (ring words, icon, date, time, name); otherwise edge + big icon.
@@ -735,7 +762,7 @@
       const edge = Kd.sh === "m" ? scallops(26, 52, 58, 6) : Kd.sh === "a" ? `<circle cx="60" cy="60" r="54" stroke-width="9" stroke-dasharray="14 6"/>` : `<circle cx="60" cy="60" r="54" stroke-width="7"/><circle cx="60" cy="60" r="43" stroke-width="2.4" fill="none"/>`;
       return `<svg viewBox="0 0 120 120" aria-hidden="true" focusable="false"><defs>${tex}</defs><g${g} fill="${ink}" stroke="${ink}"><g fill="rgba(255,254,251,.08)"${opts.ghost ? ' stroke-dasharray="8 7"' : ""}>${edge}</g><circle cx="60" cy="60" r="${Kd.sh === "e" ? 41 : 48}" fill="${wash}" stroke="none"/>${iconG(Kd.ic, 60, 60, 2.1, ink, 2.8)}</g></svg>`;
     }
-    const top = String((e.data && e.data.ring) || labelOf(e.type)).toUpperCase(), foot = footOf(e).toUpperCase().slice(0, 26);
+    const top = String((e.data && e.data.ring) || (e.type === "held" ? "Order held" : labelOf(e.type))).toUpperCase(), foot = footOf(e).toUpperCase().slice(0, 26);   // (SEALPAIR: a hold's seal reads ORDER HELD, here too)
     let nm = whoOf(e).toUpperCase().replace(/\s+/g, " ");
     if (nm.length > 13) { const w = nm.split(" "); nm = w.length > 1 ? `${w[0]} ${w[w.length - 1][0]}.` : nm; }
     if (nm.length > 14) nm = nm.slice(0, 13) + "…";
@@ -2358,7 +2385,8 @@
     //  their rows, their boxes and the Timeline)
     const seals = sealsOf(evs), hand = o.hand ? handSealOf(norm(o.hand)) : null, asked = hand || (o.ev && norm(o.ev));
     const liveKeys = hand ? null : new Set([...handLive(evs)].map(e => e.key)), pool = liveKeys && liveKeys.size ? seals.filter(e => !liveKeys.has(e.key)) : seals;
-    const last = (hand || (asked && sealed(asked) && !(liveKeys && liveKeys.has(asked.key)) ? asked : pool[pool.length - 1])) || null;
+    // (SEALPAIR: an ON HOLD or RESTORED that only echoes the hold's ORDER HELD or its ORDER RELEASED is no seal here either: the card wears the latest real one)
+    const last = (hand || (asked && sealed(asked) && !echoesOf(evs.concat([asked])).has(asked) && !(liveKeys && liveKeys.has(asked.key)) ? asked : pool[pool.length - 1])) || null;
     const blocker = c ? null : blockerOf(evs, o.live);
     let seal = "";
     if (c) {

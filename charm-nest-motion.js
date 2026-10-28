@@ -287,7 +287,7 @@
   /* ════ Seals ════ */
   const Seal = (() => {
     const BASE_SIZE = 50, META_INK = '#12294c';
-    const INK = { print: "#65737f", sheet: "#2f7a6c", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58", monogramApproved:"#4d3f99", releaseHold:"#a2591c", cancel:"#982f48" };   // (RELORANGE, Paul 19 Oct 2026: the Release Hold seal is orange, the Hold button's) (SEALCANCEL, Paul 20 Oct 2026: the ORDER CANCELLED seal is the muted brick red of the Cancelled Orders family)
+    const INK = { print: "#65737f", sheet: "#2f7a6c", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58", monogramApproved:"#4d3f99", releaseHold:"#19663f", cancel:"#982f48" };   // (RELORANGE, Paul 19 Oct 2026: the Release Hold seal was orange, the Hold button's; SEALGREEN, Paul 28 Oct 2026: "change the colour of the 'Order Released' seal to be green so that it better represents a green light to go ahead": the app's green, #19663f, the timeline's "released" and the sealedDone button's) (SEALCANCEL, Paul 20 Oct 2026: the ORDER CANCELLED seal is the muted brick red of the Cancelled Orders family)
     /* MONOSEAL (Paul, 17 Oct 2026: "When I approved the monogram, I didn't see any stamp or seal animation, and we do not have a custom-made seal that is
        specifically for approving monograms ... a brand new seal that is specific for monograms and the stamping animation whenever a monogram is approved"):
        the MONOGRAM seal, the ninth family. How to use it from any surface (the page's other modules never need to know more than this):
@@ -325,7 +325,8 @@
       // (RELHOLD: the Completed rosette made over: twelve small scallops round a medallion, one at the top over the padlock, so it is never taken for the eight-lobed Fulfilment rosette or the plain Received circle)
       // (SEALSHEET, Paul 20 Oct 2026: "SENT TO SHEET" is a seal of its own, in its own muted teal ink: a sheet with its top right corner folded over, so it is never taken for the Prepared square)
       sheet:{name:'Sent to Sheet',ink:'#2f7a6c',d:'M14 6H90L114 30V106Q114 114 106 114H14Q6 114 6 106V14Q6 6 14 6Z'},
-      release:{name:'Order Released',ink:'#a2591c',d:'M72.68 12.67A13.2 13.2 0 0 1 94.65 25.35A13.2 13.2 0 0 1 107.33 47.32A13.2 13.2 0 0 1 107.33 72.68A13.2 13.2 0 0 1 94.65 94.65A13.2 13.2 0 0 1 72.68 107.33A13.2 13.2 0 0 1 47.32 107.33A13.2 13.2 0 0 1 25.35 94.65A13.2 13.2 0 0 1 12.67 72.68A13.2 13.2 0 0 1 12.67 47.32A13.2 13.2 0 0 1 25.35 25.35A13.2 13.2 0 0 1 47.32 12.67A13.2 13.2 0 0 1 72.68 12.67Z'}
+      // (SEALGREEN, Paul 28 Oct 2026: the ORDER RELEASED seal is green, "a green light to go ahead": its outline, rings, words, icon, wooden stamp and ink ripple all take this ink; was RELORANGE's #a2591c)
+      release:{name:'Order Released',ink:'#19663f',d:'M72.68 12.67A13.2 13.2 0 0 1 94.65 25.35A13.2 13.2 0 0 1 107.33 47.32A13.2 13.2 0 0 1 107.33 72.68A13.2 13.2 0 0 1 94.65 94.65A13.2 13.2 0 0 1 72.68 107.33A13.2 13.2 0 0 1 47.32 107.33A13.2 13.2 0 0 1 25.35 94.65A13.2 13.2 0 0 1 12.67 72.68A13.2 13.2 0 0 1 12.67 47.32A13.2 13.2 0 0 1 25.35 25.35A13.2 13.2 0 0 1 47.32 12.67A13.2 13.2 0 0 1 72.68 12.67Z'}
     };
     const SYMBOL = {
       received:'<path d="M8 2h9l4 4v11H8zM17 2v5h4M11 9h7M11 12h7M3 15h5l2 4h8l2-4h4v8H3zM14 14v4m-2-2 2 2 2-2"/>',
