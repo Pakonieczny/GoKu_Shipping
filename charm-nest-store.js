@@ -119,7 +119,22 @@
     });
     return within(attempt(0), LIMITS.openMs);
   }
-  const records = () => (dbp || (dbp = openDb(dbName(), KINDS.concat(['meta'])).then(db => { if (!db) dbp = null; return db; })));
+  /* The sandbox's database is made by its first write, never by a page that only reads (LOCAL, 28 Oct 2026): the page that boots right after a sandbox reset
+     holds nothing of the sandbox until the new one keeps something, so the reset's own count in Settings (Sandbox.browserLeft) reads nothing left, as it
+     should. Production's is opened at once (it is there, and the Library's first paint waits on it). make: this call writes. */
+  let made = false, making = null;
+  const exists = async name => { try { const idb = idbOf(); if (!idb || typeof idb.databases !== 'function') return true; const l = await within(idb.databases(), LIMITS.openMs); return !l || l.some(d => d && d.name === name); } catch (_) { return true; } };
+  const stamp = db => new Promise(res => { try { const t = db.transaction(KINDS.concat(['meta', 'uses']), 'readwrite'); for (const s of KINDS.concat(['uses'])) t.objectStore(s).clear(); t.objectStore('meta').put({ k: 'meta', world, schema: SCHEMA, epoch: epochNow(), clientId: clientId(), at: Date.now() }); t.oncomplete = t.onerror = t.onabort = () => res(); } catch (_) { res(); } });
+  function records(make) {
+    if (dbp) return dbp;
+    if (world === 'sandbox' && !made) {
+      if (making) return making;   // (one making, stamped once: a read meanwhile waits for it)
+      const p = exists(dbName()).then(there => { if (!there && !make) return null; made = true; return records(make).then(async db => { if (db && !there) await stamp(db); return db; }); });
+      if (make) { making = p; p.then(() => { making = null; }, () => { making = null; }); }
+      return p;
+    }
+    return (dbp = openDb(dbName(), KINDS.concat(['meta'])).then(db => { if (!db) dbp = null; return db; }));
+  }
   const blobsDb = () => (blobp || (blobp = openDb('cn-blobs', BLOBS).then(db => { if (!db) blobp = null; return db; })));
   const errName = e => (e && (e.name || (e.target && e.target.error && e.target.error.name))) || '';
   const isQuota = e => /QuotaExceeded/i.test(errName(e)) || /quota/i.test(String(e && e.message));
@@ -137,7 +152,7 @@
   }
   async function writeBatch(batch, tries) {
     if (!canWrite()) return false;
-    const db = await records(); if (!db) return false;
+    const db = await records(true); if (!db) return false;
     const ok = await new Promise(res => {
       try {
         const stores = [...new Set(batch.map(b => b.kind))].concat(['uses']), t = db.transaction(stores, 'readwrite'), uses = t.objectStore('uses');
@@ -208,7 +223,7 @@
     // a database of another world (it cannot be, by its name) or made before the last sandbox reset: emptied before anything is read from it
     if (!meta || meta.world !== world || meta.schema !== SCHEMA || (meta.epoch || '') !== ep) {
       if (!canWrite()) return { disk: false, rows: 0 };
-      await new Promise(res => { try { const t = db.transaction(KINDS.concat(['meta', 'uses']), 'readwrite'); for (const s of KINDS.concat(['uses'])) t.objectStore(s).clear(); t.objectStore('meta').put({ k: 'meta', world, schema: SCHEMA, epoch: ep, clientId: clientId(), at: Date.now() }); t.oncomplete = t.onerror = t.onabort = () => res(); } catch (_) { res(); } });
+      await stamp(db);
       diskOn = true;
       return { disk: true, rows: 0, fresh: true, ms: Date.now() - t0 };
     }

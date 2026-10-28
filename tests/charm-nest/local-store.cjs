@@ -2,7 +2,7 @@
    computer (charm-nest-store.js) in a real headless Chromium (its IndexedDB is real), served by the fixture server. No function is called, nothing live.
      1 · kept across a reload: the Library's lists and their rows are in memory before any call (the start read, timed), a whole sheet record from disk
      2 · the worlds never mix: cn-local.production and cn-local.sandbox; a write for the other world, or while the page's guard says no, is refused
-     3 · a sandbox reset: the page's own discard deletes cn-local.sandbox (production's stays); a database made before the last reset is emptied when opened
+     3 · a sandbox reset: the page's own discard deletes cn-local.sandbox (production's stays); a database made before the last reset is emptied when opened; a sandbox page makes its database with its first write, not by reading
      4 · 45 days unused (Paul's decision, every kind): gone from disk and memory; the oldest-used go when space is short, designs first; a write refused
          for space is tried once more after room is made
      5 · another tab of the same world hears a write and reads it from disk
@@ -113,7 +113,10 @@ const day = 86400000;
     assert.deepEqual(gone, { ok: true, after: false, dbs: ['cn-local.production'] }, 'the page\'s own reset deleted the sandbox\'s database alone, and nothing is written again');
     // the registry's sweep (another tab's reset) deletes it too, while a page holds it open: that page lets go
     const sb2 = await page(); await boot(sb2, { world: 'sandbox' });
+    // (a sandbox page that has only read makes no database: right after a reset, Settings counts nothing left until the new sandbox keeps something)
+    assert.equal(await sb2.evaluate(async () => { CharmNestStore.get('sheets', 'sb-6'); await CharmNestStore.load('sheetFull', 'sb-6'); return (await indexedDB.databases()).map(d => d.name).includes('cn-local.sandbox'); }), false, 'a sandbox page that only read made no database');
     await sb2.evaluate(() => { CharmNestStore.put('sheets', 'sb-6', { id: 'sb-6' }, '1'); return CharmNestStore.flush(); });
+    assert.equal(await sb2.evaluate(async () => (await indexedDB.databases()).map(d => d.name).includes('cn-local.sandbox')), true, 'its first write made it');
     const sweeper = await page(); await sweeper.addScriptTag({ url: '/charm-nest-sandbox-families.js' }); await sweeper.addScriptTag({ url: '/charm-nest-sandbox-browser.js' });
     const left0 = await sweeper.evaluate(() => CharmNestSandboxBrowser.left());
     const swept = await sweeper.evaluate(() => CharmNestSandboxBrowser.sweep());
@@ -123,7 +126,7 @@ const day = 86400000;
     assert.deepEqual(await sweeper.evaluate(async () => (await indexedDB.databases()).map(d => d.name).filter(n => /^cn-local\./.test(n)).sort()), ['cn-local.production']);
     assert.equal(await sb2.evaluate(async () => { CharmNestStore.put('sheets', 'sb-7', { id: 'sb-7' }, '1'); await CharmNestStore.flush(); return (await indexedDB.databases()).map(d => d.name).includes('cn-local.sandbox'); }), false, 'the page that held it open does not make it again');
     await Promise.all([sb, sb2, sweeper].map(x => x.close()));
-    console.log('3 · a sandbox reset: the database deleted (the page\'s own, or the registry\'s sweep in another tab), production\'s kept; one older than the reset emptied');
+    console.log('3 · a sandbox reset: the database deleted (the page\'s own, or the registry\'s sweep in another tab), production\'s kept; one older than the reset emptied; a page that only read made none');
 
     /* ── 4 · 45 days; space ── */
     const ev = await p.evaluate(async day => {
