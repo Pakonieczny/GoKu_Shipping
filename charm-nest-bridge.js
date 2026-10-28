@@ -9653,12 +9653,15 @@ const Engrave = window.Engrave = (() => {
     });
     host.appendChild(lab);
     // beside the grid's label, in the drawing's own top-left corner (the canvas sits in the middle of the work area); under it when the drawing is too narrow for both
-    if (bc.offsetWidth && bc.width) {
+    // NAV (28 Oct 2026, Paul: "Engraving etc... at near real-time speed"): placed in the frame that shows it, before it is painted: measured in the middle of drawing the card, each
+    // measure laid out the whole page (twice a card, with Edit charm's below), at every Back and Next
+    requestAnimationFrame(() => {
+      if (!lab.isConnected || !bc.isConnected || !(bc.offsetWidth && bc.width)) return;
       const s = bc.offsetWidth / bc.width, g = bc._gridLabel || { x: 6, y: 6, w: 50, h: 11 };
       let left = bc.offsetLeft + (g.x + g.w + 8) * s, top = bc.offsetTop + Math.max(2, (g.y + g.h / 2) * s - lab.offsetHeight / 2);
       if (left + lab.offsetWidth > bc.offsetLeft + bc.offsetWidth - 4) { left = bc.offsetLeft + g.x * s; top = bc.offsetTop + (g.y + g.h + 4) * s; }
       lab.style.left = Math.round(left) + "px"; lab.style.top = Math.round(top) + "px";
-    }
+    });
     return lab;
   }
   /* ── CHARM EDIT · the piece's own artwork in the charm editor (Paul, 27 Oct 2026: "In the Engraving Modal ... The user also needs full control similar to Adobe illustrator ... over each
@@ -9701,12 +9704,13 @@ const Engrave = window.Engrave = (() => {
     host.appendChild(b);
     // beside the grid's label in the drawing's own top-left corner, after "Show front" when a back has it; under them when the drawing is too narrow
     if (!bc) { b.style.left = "8px"; b.style.top = "8px"; }
-    else if (bc.offsetWidth && bc.width) {
+    else requestAnimationFrame(() => {   // (NAV, 28 Oct 2026: placed in the frame that shows it, after "Show front" is: frontPeekToggle)
+      if (!b.isConnected || !bc.isConnected || !(bc.offsetWidth && bc.width)) return;
       const s = bc.offsetWidth / bc.width, g = bc._gridLabel || gridLabelBox(bc.getContext("2d"), bc.width), peek = host.querySelector(".egFrontPeek");
       let left = peek ? peek.offsetLeft + peek.offsetWidth + 6 : bc.offsetLeft + (g.x + g.w + 8) * s, top = peek ? peek.offsetTop : bc.offsetTop + Math.max(2, (g.y + g.h / 2) * s - b.offsetHeight / 2);
       if (left + b.offsetWidth > bc.offsetLeft + bc.offsetWidth - 4) { left = bc.offsetLeft + g.x * s; top = (peek ? peek.offsetTop + peek.offsetHeight : bc.offsetTop + (g.y + g.h) * s) + 4; }
       b.style.left = Math.round(left) + "px"; b.style.top = Math.round(top) + "px";
-    }
+    });
     charmEditNoteOn(host, job);
     return b;
   }

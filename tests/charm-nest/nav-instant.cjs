@@ -27,7 +27,7 @@ function rec(name, times, extra, budget) {
   rows.push(row);
   const over = budget && !NOBUDGET ? Object.entries(budget).filter(([k, v]) => row[k] > v).map(([k, v]) => `${name}: ${k} ${row[k]} > ${v}`) : [];
   fails.push(...over);
-  console.log(`  ${over.length ? '✗' : '✓'} ${name.padEnd(44)} p50 ${String(row.p50).padStart(5)} ms  p95 ${String(row.p95).padStart(5)} ms  long ${String(row.long).padStart(2)} (${row.longMs} ms)  calls ${String(row.calls).padStart(3)} ${row.kb} KB${row.ops ? '  [' + row.ops + ']' : ''}${budget ? '  budget ' + JSON.stringify(budget) : ''}${TARGET_OF[name.replace(/ \(.*$/, '')] ? '  target ' + TARGET_OF[name.replace(/ \(.*$/, '')] : ''}  · load ${row.load}`);
+  console.log(`  ${over.length ? '✗' : '✓'} ${name.padEnd(44)} p50 ${String(row.p50).padStart(5)} ms  p95 ${String(row.p95).padStart(5)} ms${row.work50 != null ? `  work ${row.work50}/${row.work95}` : ''}  long ${String(row.long).padStart(2)} (${row.longMs} ms)  calls ${String(row.calls).padStart(3)} ${row.kb} KB${row.ops ? '  [' + row.ops + ']' : ''}${budget ? '  budget ' + JSON.stringify(budget) : ''}${TARGET_OF[name.replace(/ \(.*$/, '')] ? '  target ' + TARGET_OF[name.replace(/ \(.*$/, '')] : ''}  · load ${row.load}`);
   return row;
 }
 
@@ -61,12 +61,13 @@ async function world(opts) {
 
 /** One measured action, n times: the time from the input to the next frame, then a quiet wait (settle ms) in which its background reads and long tasks are still counted to it. */
 async function measure(page, name, n, act, o = {}) {
-  const times = [], ops = new Map(); let long = 0, longMs = 0, calls = 0, bytes = 0;
+  const times = [], work = [], ops = new Map(); let long = 0, longMs = 0, calls = 0, bytes = 0;
   for (let i = 0; i < n; i++) {
     if (o.before) await o.before(i);
     const from = await page.evaluate(() => [performance.now(), window.__net.length]);
-    const t = await page.evaluate(async ({ src, i }) => { const f = eval("(" + src + ")"); const t0 = performance.now(); await f(i); await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0))); return performance.now() - t0; }, { src: String(act), i });
-    times.push(t);
+    // (and the main thread's own work for it, the press's handler until it returns: a figure the machine's load moves far less than the time to the frame)
+    const [t, wk] = await page.evaluate(async ({ src, i }) => { const f = eval("(" + src + ")"); const t0 = performance.now(); const p = f(i); const t1 = performance.now(); await p; await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0))); return [performance.now() - t0, t1 - t0]; }, { src: String(act), i });
+    times.push(t); work.push(wk);
     await page.waitForTimeout(o.settle == null ? 400 : o.settle);
     const got = await page.evaluate(([t0, n0]) => ({ net: window.__net.slice(n0).map(x => [x.op || x.fn, x.bytes]), long: window.__long.filter(([s]) => s >= t0).map(([, d]) => d) }), from);
     for (const [op, b] of got.net) { calls++; bytes += b; ops.set(op, (ops.get(op) || 0) + 1); }
@@ -74,7 +75,7 @@ async function measure(page, name, n, act, o = {}) {
     if (o.after) await o.after(i);
   }
   const perAct = x => +(x / n).toFixed(1);
-  return rec(name, times, { long, longMs, calls: perAct(calls), kb: Math.round(bytes / 1024 / n), ops: [...ops].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}×${perAct(v)}`).join(' ') }, o.budget);
+  return rec(name, times, { work50: Math.round(q(work, .5)), work95: Math.round(q(work, .95)), long, longMs, calls: perAct(calls), kb: Math.round(bytes / 1024 / n), ops: [...ops].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}×${perAct(v)}`).join(' ') }, o.budget);
 }
 
 async function scrollList(page, name, sel, o = {}) {
@@ -112,17 +113,17 @@ async function scale() {
     for (const m of TABS) await measure(page, `tab → ${m} (first visit)`, 1, new Function(`document.querySelector('#modeSeg button[data-mode="${m}"]').click()`), { settle: 1200 });
     await page.waitForTimeout(1500);
     // ── tab switches, all day: round after round, each tab from the one before
-    const R = 8, tabTimes = Object.fromEntries(TABS.map(m => [m, { t: [], long: 0, longMs: 0, calls: 0, kb: 0, ops: new Map() }]));
+    const R = 8, tabTimes = Object.fromEntries(TABS.map(m => [m, { t: [], w: [], long: 0, longMs: 0, calls: 0, kb: 0, ops: new Map() }]));
     for (let r = 0; r < R; r++) for (const m of TABS) {
       const from = await page.evaluate(() => [performance.now(), window.__net.length]);
-      const t = await page.evaluate(async m => { const t0 = performance.now(); document.querySelector(`#modeSeg button[data-mode="${m}"]`).click(); await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0))); return performance.now() - t0; }, m);
+      const [t, wk] = await page.evaluate(async m => { const t0 = performance.now(); document.querySelector(`#modeSeg button[data-mode="${m}"]`).click(); const t1 = performance.now(); await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0))); return [performance.now() - t0, t1 - t0]; }, m);
       await page.waitForTimeout(350);
       const got = await page.evaluate(([t0, n0]) => ({ net: window.__net.slice(n0).map(x => [x.op || x.fn, x.bytes]), long: window.__long.filter(([s]) => s >= t0).map(([, d]) => d) }), from);
-      const T = tabTimes[m]; T.t.push(t); T.long += got.long.length; T.longMs = Math.max(T.longMs, Math.round(Math.max(0, ...got.long)));
+      const T = tabTimes[m]; T.t.push(t); T.w.push(wk); T.long += got.long.length; T.longMs = Math.max(T.longMs, Math.round(Math.max(0, ...got.long)));
       for (const [op, b] of got.net) { T.calls++; T.kb += b / 1024; T.ops.set(op, (T.ops.get(op) || 0) + 1); }
     }
     // (the Library shown again within a minute reads by revision only: its whole read was 8 calls and 2.5 MB at this size)
-    for (const m of TABS) { const T = tabTimes[m]; rec(`tab → ${m}`, T.t, { long: T.long, longMs: T.longMs, calls: +(T.calls / R).toFixed(1), kb: Math.round(T.kb / R), ops: [...T.ops].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}×${+(v / R).toFixed(1)}`).join(' ') }, m === 'library' ? { p95: BUDGET.tabP95, calls: BUDGET.libCalls, kb: BUDGET.libKB } : { p95: BUDGET.tabP95, calls: BUDGET.tabCalls }); }
+    for (const m of TABS) { const T = tabTimes[m]; rec(`tab → ${m}`, T.t, { work50: Math.round(q(T.w, .5)), work95: Math.round(q(T.w, .95)), long: T.long, longMs: T.longMs, calls: +(T.calls / R).toFixed(1), kb: Math.round(T.kb / R), ops: [...T.ops].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}×${+(v / R).toFixed(1)}`).join(' ') }, m === 'library' ? { p95: BUDGET.tabP95, calls: BUDGET.libCalls, kb: BUDGET.libKB } : { p95: BUDGET.tabP95, calls: BUDGET.tabCalls }); }
 
     // ── scrolling each list
     await page.evaluate(() => CN.setMode('orders')); await page.waitForTimeout(500);
