@@ -309,11 +309,12 @@ const K = require(path.join(root, 'netlify/functions/_activityKinds.js'));
       await pg.click('#efficiencyView .efSeg button[data-days="7"]');
       await pg.waitForFunction(() => { const s = document.querySelector('#efficiencyView .efcDaysSec'); return s && !s.hidden && s.querySelectorAll('.efcDay').length === 7; }, null, { timeout: 15000 });
       assert(asked.includes(7), 'asked for 7 days');
+      await pg.screenshot({ path: path.join(process.env.SHOT_DIR || require('os').tmpdir(), 'design-log-custom-1440.png'), fullPage: false }).catch(() => {});
       // phone width: no sideways scroll on the tab
       await pg.setViewportSize({ width: 390, height: 800 }); await wait(200);
       const over = await pg.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       assert(over <= 1, `no sideways scroll at 390 px (${over})`);
-      await pg.screenshot({ path: path.join(process.env.SHOT_DIR || require('os').tmpdir(), 'design-log-custom.png') }).catch(() => {});
+      await pg.screenshot({ path: path.join(process.env.SHOT_DIR || require('os').tmpdir(), 'design-log-custom-390.png') }).catch(() => {});
       assert.deepEqual(errs, [], 'no page errors');
       console.log(`  ✓ browser: 4 events from the page cost ${ms.toFixed(2)} ms; notes counted, records stored, timeline written; the Custom pieces tab: 5 pieces, 4 flagged, Ana M 50%; filter ${busy.toFixed(1)} ms; 7 days; 390 px`);
     } finally { await browser.close(); }

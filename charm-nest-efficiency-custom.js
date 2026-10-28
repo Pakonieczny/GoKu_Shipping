@@ -49,6 +49,7 @@
     s.textContent = `
 .efc{display:grid;gap:14px;min-width:0}
 .efc [hidden]{display:none!important}
+.efcBody{display:grid;gap:14px;min-width:0}
 .efc .efKpis{grid-template-columns:repeat(4,minmax(0,1fr))}
 .efc .efKV.flag{color:var(--clay)}
 .efcTW{overflow-x:auto;min-width:0}
