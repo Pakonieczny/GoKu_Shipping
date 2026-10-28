@@ -262,6 +262,37 @@ async function partB() {
       b6d0.n === 2 && /star-tag\.svg/.test(b6d0.sub) && b6d0.log === 'designOpen:import:star-tag.svg' && b6d.r && b6d.r.version === 1 && b6d.r.designId !== ID1 && b6d.r.designId !== ID2
         && b6d.src && b6d.src.kind === 'import' && b6d.src.file === 'star-tag.svg' && Math.abs(b6d.w - 16) < 1e-3 && Math.abs(b6d.h - 22) < 1e-3 && b6d.n === 2 && designPuts() === 4, JSON.stringify(b6d));
 
+    /* ── B6e the design library's "Keep and open" (charm-nest-ce-library.js openRow → endSession(keep) → openDesign, in one moment): the design being left is kept as its Save
+       keeps it, and NO card of it comes over the design that opens; B6f a card already up is put away when another design opens ── */
+    const titleIs = t => waitFor(page, t => !!(window.CharmEditor && CharmEditor.current) && document.querySelector('.ce-root .ce-id h2').textContent === t, t, 90000);
+    await page.evaluate(id => { window.__od2 = CharmNestCeMasters.openDesign(id); }, ID1);
+    await titleIs('BFLOWER_9901'); await settleP(page);
+    const third = await page.evaluate(() => CharmEditor.current.items('front').filter(i => i.role === 'line')[0].id);
+    await page.click(`.ce-root .ce-layer[data-id="${third}"]`); await settleP(page);
+    await page.keyboard.press('Delete'); await settleP(page);
+    const p6e = designPuts();
+    await page.evaluate(id => {   // (as the library does it: the session ended as kept, the next design asked for in the same task)
+      const cur = CharmEditor.current; if (typeof cur.end === 'function') cur.end(true); else document.querySelector('.ce-root [data-act="save"]').click();
+      window.__next = CharmNestCeMasters.openDesign(id, { version: 1 });
+    }, ID2);
+    await titleIs('Heart 20 × 18 mm');
+    const b6e = await page.evaluate(async id => { const left = await Promise.race([window.__od2, new Promise(r => setTimeout(() => r('still waiting on its card'), 20000))]), d = await CharmNestDesigns.get(id); return { left, v: d.version, n: d.faces.front.items.length, card: document.querySelectorAll('.cem-card').length, note: (document.querySelector('.cem-note') || {}).textContent || '', cur: CharmNestCeMasters.current() }; }, ID1);
+    check(`B6e "Keep and open" from the design library: the design left is kept (version ${b6e.v}, ${b6e.n} layers) and its card never comes over the design that opened (${b6e.card} cards; the editor is "${b6e.cur && b6e.cur.name}")`,
+      b6e.left && b6e.left.designId === ID1 && b6e.left.version === 3 && b6e.v === 3 && b6e.n === b3.n - 3 && b6e.card === 0 && !b6e.note && designPuts() === p6e + 1 && b6e.cur && b6e.cur.designId === ID2, JSON.stringify(b6e));
+    // B6f: the heart changed and saved: its card is up; another design opened from outside (the library panel's way) puts it away
+    await page.click('.ce-root .ce-layer[data-id="hole"]'); await settleP(page);
+    await page.keyboard.press('Shift+ArrowUp'); await settleP(page);
+    await page.click('.ce-root [data-act="save"]');
+    await waitFor(page, () => document.querySelector('.cem-card h3') && /Saved · version 2/.test(document.querySelector('.cem-card h3').textContent));
+    await page.evaluate(id => { window.__od3 = CharmNestCeMasters.openDesign(id); }, ID1);
+    await titleIs('BFLOWER_9901'); await settleP(page);
+    const b6f = await page.evaluate(async () => ({ heart: await Promise.race([window.__next, new Promise(r => setTimeout(() => r('still waiting on its card'), 20000))]), card: document.querySelectorAll('.cem-card').length, focusInEditor: !!(document.activeElement && document.activeElement.closest('.ce-root')) }));
+    await page.click('.ce-root [data-act="cancel"]');
+    await waitFor(page, () => !(window.CharmEditor && CharmEditor.current));
+    const od3 = await page.evaluate(() => window.__od3);
+    check(`B6f a card already up (the heart's version 2) is put away when another design opens; the heart's session says what it saved (${JSON.stringify(b6f.heart)}); the keys stay with the new editor`,
+      b6f.heart && b6f.heart.designId === ID2 && b6f.heart.version === 2 && b6f.card === 0 && b6f.focusInEditor && od3 === null && designPuts() === p6e + 2, JSON.stringify(b6f));
+
     /* ── B7 the library panel's way in: a master opened while the editor holds changes asks first (Discard), and the editor is then the master's ── */
     await page.evaluate(() => { window.__h = CharmNestCeMasters.newDesign(); });
     await waitFor(page, () => !!document.querySelector('.cem-root [data-panel="new"]:not([hidden])'));
@@ -279,7 +310,7 @@ async function partB() {
     await waitFor(page, () => !(window.CharmEditor && CharmEditor.current));
     const b7b = await page.evaluate(async () => ({ m: await window.__m, puts: window.__puts, cur: CharmNestCeMasters.current() }));
     check(`B7 from inside a changed editor, a master asks first ("${asked}"); Discard, and COMET_9427 is in the editor (${b7.n} layers, none locked) while the heart's session ended unsaved; Cancel on the untouched master closes it, nothing saved`,
-      asked === 'Leave without saving?' && b7.h === null && b7.n > 0 && b7.locked === 0 && b7.cur && b7.cur.source.sku === 'COMET_9427' && b7b.m === null && b7b.puts === 4 && b7b.cur === null, JSON.stringify({ b7, b7b }));
+      asked === 'Leave without saving?' && b7.h === null && b7.n > 0 && b7.locked === 0 && b7.cur && b7.cur.source.sku === 'COMET_9427' && b7b.m === null && b7b.puts === 6 && b7b.cur === null, JSON.stringify({ b7, b7b }));
 
     check('B8 no page error, no call that writes a piece\'s artwork (' + artCalls() + ')', w.errors.length === 0 && artCalls() === 0, w.errors.slice(0, 3).join(' | '));
   } finally { await w.close(); }
