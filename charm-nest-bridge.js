@@ -1752,7 +1752,7 @@ const Orders = window.Orders = (() => {
       }
       window.Engrave?.putAwayNever?.(row);     // (NO EARRING IS EVER ENGRAVED, ZODNOBACK: an engraving job still open on an earring line, from an earlier reading or session, is put away as "no engraving")
       window.Engrave?.raiseCandidate?.(row);   // (a front / both line the buyer wrote no words for is a line to engrave: a person is asked; the intake's engraveCandidate is about words)
-      window.CNBarFront?.move?.(row);          // (BARFRONT, Paul 28 Oct 2026: a bar line the rule now reads as front whose jobs are still undecided backs moves its words to the front, once: charm-nest-engrave-bar-front.js)
+      window.CNBarFront?.follow?.(row);        // (BARFRONT, Paul 28 Oct 2026: a bar line the rule now reads as front whose jobs are still undecided backs moves its words to the front, once; one whose back a person decided reads as that back: charm-nest-engrave-bar-front.js)
       if (row.materialOverride) { row.spec.material = row.materialOverride; row.problems = row.problems.filter(p => p.kind !== "needsMaterial"); } if (row.sizeOverride) { row.spec.size = row.sizeOverride; row.problems = row.problems.filter(p => p.kind !== "missingSize"); } row.material = row.spec.material;
       // (RELEASE, Paul 19 Oct 2026: a person's Release Hold on a line that still asks something sets those questions aside for this line, row.releaseAnyway = { at, by, kinds }: they are not asked again, and a line with nothing to place is "noDesign", makePool)
       if (row.releaseAnyway && Array.isArray(row.releaseAnyway.kinds) && row.problems.length) row.problems = row.problems.filter(p => !row.releaseAnyway.kinds.includes(p.kind));

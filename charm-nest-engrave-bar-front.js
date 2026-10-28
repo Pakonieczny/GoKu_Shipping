@@ -4,7 +4,8 @@
  * The bar rule (charm-nest-orders.js listingFaceOf / barNecklace) reads a bar necklace's line as FRONT when the order names no face, so a line read since then is made with a front job. A line whose jobs were made
  * BEFORE the rule kept its BACK jobs: the line's faces were reconciled only when a person changed the engraving (Engrave.applyEngraving), so it stayed on the back however often it was read again.
  *
- *   move(row)        asked for EVERY line each time it is read again (Orders.interpretAll: a pull, an arrival, a Resume, an answer, the first reading after a reload). A line the bar rule now reads as front
+ *   follow(row)      asked for EVERY line each time it is read again (Orders.interpretAll: a pull, an arrival, a Resume, an answer, the first reading after a reload): move(row), else keep(row).
+ *   move(row)        a line the bar rule now reads as front
  *                    (spec.engraving source "profile", the bar rule's why, no person's override) whose jobs are all BACKS, none of them decided, follows the rule by itself, ONCE:
  *                      · each piece's front job is made (Engrave.ensureJobs: the setup asks for the front now) and takes its back's words exactly (text, line split, font word, the font, a person's word on them);
  *                        a back that had no settled words yet leaves its front to be read from the setup (free, no paid reading), as a new line's front is;
@@ -19,6 +20,11 @@
  *   stays(row)       the other side of the same rule: a bar line whose backs a person DECIDED (approved, written, skipped, "no engraving", an approval under way) or whose piece the laser has cut keeps its back
  *                    exactly as it is. The page's own plan (charm-nest-bridge.js faceWant, wantsFront) asks this before it makes a front for a line whose setup says front: without it, the line read again as
  *                    front got a FRONT job beside its approved back the next time anything made its jobs (a sheet's backs, a saved record, the run's reading), a second approval and a second face engraved.
+ *   keep(row)        what such a line's panel says (Paul's lead, 28 Oct 2026: its setup read "Front only" while its back was approved): the line's reading (spec.engraving, read again on every pass, as
+ *                    Engrave.raiseCandidate sets spec.engraveCandidate) becomes what the line REALLY engraves: "Back only" with the decided back's words (each piece's own when they differ), or "No engraving"
+ *                    when every back was cut plain or put away, with one plain line saying who decided it and that bar necklaces engrave on the front by default since. source "decided", so the panel
+ *                    (CharmNestEngraveSetup.read), the Front chip (faceModeOf), the job plan and the system's own choice (autoChoice) all read the same. In memory only: it is no person's override and nothing
+ *                    is saved for it. → true when the reading was set.
  *   afterRestore()   a reload brings the workspace back with each line's LAST reading (Session.restore): it is read again only at the next pass of Orders.interpretAll (the first order check, which waits up to the
  *                    poll interval, or a Resume). When a restored bar line still waits on its back, the lines are read again as soon as the maps and the library are in (the pass the first order check would
  *                    make: no extra read of the cloud), so the line moves before anyone approves its back. Nothing is read when no such line waits. → true when it read the lines.
@@ -124,6 +130,30 @@
         .finally(() => { try { E.render(); if (W.Orders) W.Orders.render(); if (W.Session) W.Session.schedule(); } catch (_) { /* drawn with the next render */ } });
       return true;
     }
+    /** The words a decided back engraves: its own (as given), '' when it has none. */
+    const wordsOf = j => (Array.isArray(j.lineInput) && j.lineInput.length && !DONE.includes(j.state) ? j.lineInput : (j.lines && j.lines.length ? j.lines : String(j.text || '').split(/\r?\n/))).map(x => String(x).replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const plain = j => j.state === 'skipped' || j.state === 'none';
+    const whoOf = j => String(j.approvedBy || j.decidedBy || (j.decision && j.decision.by) || (j.approvalIntent && j.approvalIntent.by) || '').trim();
+    function keep(row) {
+      row = row && (row.parentRow || row); if (!row || !row.spec || !stays(row)) return false;
+      const backs = barLine(row); if (!backs) return false;
+      const live = backs.filter(j => !j.archived), list = live.length ? live : backs, engraved = list.filter(j => !plain(j));
+      const names = [...new Set(list.filter(decided).map(whoOf).filter(Boolean))], by = names.join(' and ');
+      const was = row.spec.engraving, since = 'bar necklaces are engraved on the front by default only for pieces nobody decided';
+      const eng = { v: 1, mode: engraved.length ? 'back' : 'none', source: 'decided', front: null, back: null, textSource: 'none', needsPerson: false, confidence: 1, option: null, kept: 'bar', why: '' };
+      if (engraved.length) {
+        const words = engraved.map(j => ({ slot: j.slot || null, lines: wordsOf(j) })).filter(x => x.lines.length), distinct = [...new Set(words.map(x => x.lines.join('\n')))];
+        if (distinct.length === 1) { eng.back = { text: distinct[0], lines: distinct[0].split('\n'), fontWord: null }; eng.textSource = 'single'; }
+        else if (distinct.length > 1) { eng.pieces = {}; for (const x of words) if (x.slot) eng.pieces[x.slot] = { front: null, back: { text: x.lines.join('\n'), lines: x.lines.slice(), fontWord: null } }; eng.textSource = 'labelled'; }
+        const cutOnly = !engraved.some(decided);
+        eng.why = clip(cutOnly ? `back only: the laser has cut this piece with its back (${since})` : `back only, as decided: ${names.length ? by + ' approved the back' : 'the back was approved'} (${since})`, 200);
+      } else eng.why = clip(`no engraving, as decided${names.length ? ': ' + by + (list.every(j => j.state === 'skipped') ? ' cut it plain' : ' said no engraving') : ''} (${since})`, 200);
+      if (was && was.kept === 'bar' && JSON.stringify(was) === JSON.stringify(eng)) return false;
+      row.spec.engraving = eng;
+      return true;
+    }
+    /** The bar rule followed on one line as it is read: the line moves to its front (nobody decided it), or reads as what a person decided (keep). */
+    function follow(row) { return move(row) || keep(row); }
     async function afterRestore() {
       const W = w(), E = W.Engrave, O = W.CharmNestOrders, Or = W.Orders, B = W.B;
       if (!E || !O || typeof O.barNecklace !== 'function' || !Or || !B) return false;
@@ -136,7 +166,7 @@
       Or.interpretAll(); Or.render(); E.render();
       return true;
     }
-    return { move, afterRestore, stays, movable: row => !!movable(row && (row.parentRow || row)), MOVED };
+    return { follow, move, keep, afterRestore, stays, movable: row => !!movable(row && (row.parentRow || row)), MOVED };
   }
   return Object.assign(make(root), { make, MOVED });
 });
