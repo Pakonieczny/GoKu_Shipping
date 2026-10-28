@@ -68,6 +68,7 @@ const ORDERS = [
 ];
 /** The pop-up closed after Send; when it does not, what it says (its why line) is the evidence. */
 const gone = page => page.waitForFunction(() => !document.querySelector('dialog.cpDlg'), null, { timeout: 30000 }).catch(async e => { console.log('  (pop-up still open)', await page.evaluate(() => (document.querySelector('dialog.cpDlg [data-cp-why]') || {}).textContent)); throw e; });
+const shot = (page, name) => (process.env.SHOTS ? page.screenshot({ path: path.join(process.env.SHOTS, name + '.png') }) : Promise.resolve());
 const settle = page => page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
 
 async function partB() {
@@ -120,6 +121,7 @@ async function partB() {
     await page.click('#reviewView .egTab[data-k="customOrder"]');
     const card = `#rvList > .reviewListRow[data-rid="${CUSTOM}"]`;
     await page.waitForSelector(`${card} [data-cp-design]`);
+    await page.evaluate(sel => document.querySelector(sel).scrollIntoView({ block: 'center' }), `${card} [data-cp-design]`); await shot(page, '0-card');
     const btn = await page.evaluate(sel => { const b = document.querySelector(sel); const r = b.getBoundingClientRect(); return { text: b.textContent.trim(), w: r.width, h: r.height, inCol: !!b.closest('.rowActions') }; }, `${card} [data-cp-design]`);
     const regular = await page.evaluate(rid => !!document.querySelector(`#rvList > .reviewListRow[data-rid="${rid}"] [data-cp-design]`), FIXED);
     check('B1 the Custom Orders card has "Open in Charm Designer" in its column (a regular order\'s card has none)', btn.text === 'Open in Charm Designer' && btn.inCol && btn.h >= 30 && !regular, `${Math.round(btn.w)}×${Math.round(btn.h)} px`);
@@ -140,6 +142,7 @@ async function partB() {
     await page.click('.ce-root [data-act="save"]');
     await page.waitForSelector('dialog.cpDlg[open]');
     const saveMs = Date.now() - tSave;
+    if (process.env.SHOTS) { await page.waitForTimeout(600); await shot(page, '1a-popup-open'); console.log('  (dialog box)', JSON.stringify(await page.evaluate(() => { const d = document.querySelector('dialog.cpDlg'), r = d.getBoundingClientRect(); return { r: [r.x, r.y, r.width, r.height].map(Math.round), op: getComputedStyle(d).opacity, modal: d.matches(':modal'), tf: getComputedStyle(d).transform }; }))); }
     await page.waitForFunction(() => document.querySelector('dialog.cpDlg [data-cp-plate] svg'));
     const m1 = await page.evaluate(() => {
       const d = document.querySelector('dialog.cpDlg'), svg = d.querySelector('[data-cp-plate] svg'), on = d.querySelector('[data-cp-attach].on');
@@ -157,7 +160,7 @@ async function partB() {
     const goes = await page.evaluate(() => ({ goes: document.querySelector('dialog.cpDlg [data-cp-goes]').textContent, send: document.querySelector('dialog.cpDlg [data-cp-send]').textContent, dis: document.querySelector('dialog.cpDlg [data-cp-send]').getAttribute('aria-disabled'), fill: (document.querySelector('dialog.cpDlg [data-cp-plate] stop[data-t="1"]') || { getAttribute: () => '' }).getAttribute('stop-color') === '#8d95a0' }));
     check('B6 SS picked: the sheet it goes onto is named ("a new SS sheet" while no SS sheet is open), the piece is drawn in silver, Send names it too; the press paints in one frame',
       /Goes onto a new SS sheet/.test(goes.goes) && goes.send === 'Send to a new SS sheet' && goes.dis === 'false' && goes.fill && pickMs < 16, `"${goes.goes}" · ${pickMs.toFixed(1)} ms`);
-    await page.click('dialog.cpDlg [data-cp-send]');
+    await shot(page, '1-popup-order'); await page.click('dialog.cpDlg [data-cp-send]');
     await gone(page);
     await page.waitForFunction(() => __poolOut.length >= 1);
     const s1 = await page.evaluate(() => ({ poolIds: __poolOut[0], pool: __pool, logs: __logs.map(e => ({ kind: e.kind, orderId: e.orderId || null, customId: e.customId || null, designId: e.designId, version: e.version, metal: e.metal, quantity: e.quantity, by: e.by, fix: e.fix || e.fixes || null, customName: e.customName || null })) }));
@@ -198,6 +201,7 @@ async function partB() {
     const cause = await page.evaluate(() => { const d = document.querySelector('dialog.cpDlg'); return { value: d.querySelector('[data-cp-causer]').value, why: (d.querySelector('.cpWhyL') || {}).textContent || '', cands: [...d.querySelectorAll('[data-cp-causer-pick]')].map(b => b.dataset.cpCauserPick), picked: d.querySelector('[data-cp-fixed]').textContent }; });
     check('B10 no order: named, "Fix a mistake", the order it fixes found by its number (buyer shown); who made the mistake is read from that order\'s history and suggested (Bea approved its engraving), the others named there offered',
       m2.attach === 'none' && !m2.hasThis && hit.includes('Noor Haddad') && cause.picked.includes(FIXED) && cause.value === 'Bea' && /approved the engraving/.test(cause.why) && cause.cands.includes('Marco R.'), `${cause.why} · offered ${cause.cands.join(', ')} · search ${typeMs} ms`);
+    await shot(page, '2-popup-fix');
     await page.click('dialog.cpDlg [data-cp-causer-pick="Marco R."]');
     await page.click('dialog.cpDlg [data-cp-metal="gold"]');
     await page.click('dialog.cpDlg [data-cp-qty="1"]');
