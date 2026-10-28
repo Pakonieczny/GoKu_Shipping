@@ -21748,6 +21748,36 @@ const OrderWin = window.OrderWin = (() => {
     return `<div class="owPcSub owPcPieceSub" data-sub="${esc(sub.key)}" role="group" aria-label="${esc(nm + " · " + sub.label)}"><span class="owPcSubName owPcSubTag">${esc(sub.label)}</span>` +
       pieceStatusHtml(sub.x, sub.sp, { inButton: false }) + `</div>`;
   }
+  /* RELWIN2 (Paul, 28 Oct 2026, order 4202871419: "When an order is held for review, the users should be able to release it from the detailed order Modal. Some orders I see the release button but
+     most other ones I don't see it so there must be some sort of disconnect here"): a piece row showed Release Hold only when the piece had a Review card of its own. A line held with no card (the
+     sheet window's "Take off and hold", a hold another computer made that this page reads from the cloud, a Custom Orders line sent to its sheet, a card that draws none) offered only "In Review",
+     while its Orders card had Release Hold. Now every piece of the order that is held (its placement, or its line: Orders.heldNow, the Orders card's own test), or of an order held in Review, has the
+     Orders card's Release Hold (ReviewRelease.itemOf: the order's Review card, else its "Held order" item): the same press, release (OrderHold.release) and ORDER RELEASED seal. A row whose card
+     already draws one keeps its own. An order this sorter has not pulled has it greyed, with what to do. "" when the piece has nothing to release. */
+  function relHtmlOf(key, ctl) {
+    const RR = window.ReviewRelease; if (!RR || !RR.itemOf || !RR.buttonHtml || (ctl && /data-rel-hold|data-cu-release/.test(ctl.html || ""))) return "";
+    const r = rowOf(key) || (W.rows || []).find(x => x && x.key === key) || null; if (!r || !r.order || r.state === "gone") return "";
+    const rid = String(r.order.receiptId), pl = placeOfKey(key);
+    if ((window.Cancelled && Cancelled.has && Cancelled.has(rid)) || (pl && pl.state === "cancelled")) return "";
+    const pulled = Orders.rows().some(x => x && x.order && String(x.order.receiptId) === rid && x.state !== "gone");
+    const held = (pl && pl.state === "hold") || !!tryDo(() => Orders.heldNow(r)) || !!r.hold, marked = pulled && !!tryDo(() => window.CharmNestReviewMark && CharmNestReviewMark.isMarked(rid));
+    if (!held && !marked) return "";
+    if (!pulled) { const why = `Order ${rid} is not in this sorter's pull, so it cannot be released from here yet: pull the orders (Orders tab), then press Release Hold.`; return `<button type="button" class="btn ghost xs" data-ow-rel="${esc(rid)}" data-ow-rel-off="1" aria-disabled="true" title="${esc(why)}" aria-label="${esc(`${RR.label || "Release Hold"} (not possible yet): ${why}`)}">${esc(RR.label || "Release Hold")}</button>`; }
+    const h = tryDo(() => RR.buttonHtml({ src: RR.itemOf(rid) }, "xs")) || "";
+    return h ? h.replace("<button ", `<button data-ow-rel="${esc(rid)}" `) : "";
+  }
+  /** RELWIN2: the rows' own Release Hold buttons (relHtmlOf) given the Review card's press (ReviewRelease.wire: the very button and release the Orders card has), before the rows are tidied. */
+  function wireOwRel(box) {
+    const RR = window.ReviewRelease;
+    box.querySelectorAll("[data-ow-rel]:not([data-ow-rel-wired])").forEach(b => {
+      const rid = b.dataset.owRel;
+      if (b.dataset.owRelOff || !RR || !RR.wire) { b.dataset.owRelWired = "1"; b.onclick = e => { e.stopPropagation(); toast(b.title, "", 7000); }; return; }
+      const par = b.parentNode, nx = b.nextSibling;
+      tryDo(() => RR.wire(b, { src: RR.itemOf(rid) }, "xs"));
+      const nb = nx ? nx.previousSibling : par && par.lastChild;
+      if (nb && nb.nodeType === 1) { nb.dataset.owRel = rid; nb.dataset.owRelWired = "1"; }
+    });
+  }
   function paintPieceSum() {
     const box = byId("owPcSum"); if (!box) return;
     // (an order of several keeps EVERY item on a row, whichever is shown: the one picked is marked in place by markPieces, never drawn alone)
@@ -21763,7 +21793,8 @@ const OrderWin = window.OrderWin = (() => {
     const ctls = sum ? new Map(sum.each.map(x => [x.p.key, tryDo(() => pieceCtl(x.p.key))])) : null;
     // (the Hold of a piece that has no buttons of its own: a place for it, empty when the order cannot be held, or HoldUI is not there)
     const holds = sum ? new Map(sum.each.map(x => [x.p.key, ctls.get(x.p.key) ? "" : holdSlotOfKey(x.p.key)])) : null;
-    if (!sum || (!all && !ctls.get(list[0].key) && !holds.get(list[0].key) && !(sideEach && list[0].sides) && !list[0].copies)) { box.hidden = true; box._h = ""; box.innerHTML = ""; return; }
+    const rels = sum ? new Map(sum.each.map(x => [x.p.key, tryDo(() => relHtmlOf(x.p.key, ctls.get(x.p.key))) || ""])) : null;   // (RELWIN2: a held piece's Release Hold)
+    if (!sum || (!all && !ctls.get(list[0].key) && !holds.get(list[0].key) && !rels.get(list[0].key) && !(sideEach && list[0].sides) && !list[0].copies)) { box.hidden = true; box._h = ""; box.innerHTML = ""; return; }
     const scope = r0 && !r0.loading ? tryDo(() => scopePieces(r0)) : null;   // (the sheets each piece's copies are on: its status names one)
     const OR = window.CharmNestOrderRows;
     const items = sum.each.map(x => pcItemOf(x, { scope, sideEach })), orderStep = items.length ? Math.min(...items.map(it => it.step)) : -1;
@@ -21794,7 +21825,8 @@ const OrderWin = window.OrderWin = (() => {
           const part = it.placed > 0 && it.placed < it.total ? { hint: `${it.placed} of ${it.total}`, hintTitle: `${it.placed} of its ${it.total} pieces are on a sheet` } : {};
           st = pieceStatusHtml(x, it.lineScope, Object.assign({ inButton: false }, part)); steps = pieceDotsHtml(x, rid);
         }
-        const act = ctl ? `<span class="pcAct" data-pc-act="${esc(key)}">${ctl.html}</span>` : hold ? `<span class="pcAct" data-pc-hold>${hold}</span>` : `<span class="pcAct" aria-hidden="true"></span>`;
+        const rel = rels.get(key);   // (RELWIN2)
+        const act = ctl ? `<span class="pcAct" data-pc-act="${esc(key)}">${rel}${ctl.html}</span>` : hold || rel ? `<span class="pcAct" data-pc-hold>${rel}${hold}</span>` : `<span class="pcAct" aria-hidden="true"></span>`;
         const chev = `<span class="owPcTools"><button type="button" class="owPcX" data-line="${esc(key)}" aria-expanded="false" aria-controls="${drawer}" title="Show each piece" aria-label="${esc("Each piece of " + p.name)}">${pcIcon("chevron-right", 14, "›")}</button></span>`;
         const marker = pair ? pcMarkerHtml(it) : "";
         return `<div class="owPcRow owPcMulti owPc-${it.kind} hasAct hasHold hasWords${all ? "" : " solo"}${slow ? " slow" : ""}"${all ? ` data-piece="${esc(key)}"` : ""} data-item="${esc(key)}" data-name="${esc(p.name)}" role="group" aria-label="${esc(aria)}">${dot}` +
@@ -21809,15 +21841,15 @@ const OrderWin = window.OrderWin = (() => {
       const ctl = ctls.get(x.p.key);
       // (a piece in no card keeps its words, and its Hold at the right end of the row; nothing nests in a button, so with a Hold the row is a
       // group like the card rows are, its name the button that opens the piece, and a press anywhere else on it still does the same)
-      const hold = holds.get(x.p.key);
+      const hold = holds.get(x.p.key), rel = rels.get(x.p.key);   // (RELWIN2: a held piece's Release Hold, before its Hold Order / In Review)
       // (its status, said once: a chip, a button that opens that sheet (every row is a group now, its name the button that picks the piece); or only
       // for a screen reader where the row says it another way: the Review card's buttons, or the one piece the window shows)
       const sp = it.lineScope, st = pieceStatusHtml(x, sp, { inButton: false }), stSr = pieceStatusHtml(x, sp, { sr: true });
-      if (!ctl && hold) {
+      if (!ctl && (hold || rel)) {
         const aria = x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : "");
         return `<div class="owPcRow hasAct hasHold${all ? " hasWords" : " solo"}${slow ? " slow" : ""}"${all ? ` data-piece="${esc(x.p.key)}"` : ""} role="group" aria-label="${esc(aria)}">${dot}` +
           (all ? `<button type="button" class="nm owPcName" title="Show only this piece">${nm}</button>` : `<span class="nm owPcName">${nm}</span>`) +
-          (all ? st : stSr) + `<span class="pcAct" data-pc-hold>${hold}</span>${steps}${tools}</div>`;
+          (all ? st : stSr) + `<span class="pcAct" data-pc-hold>${rel}${hold}</span>${steps}${tools}</div>`;
       }
       if (!ctl) return `<div class="owPcRow${slow ? " slow" : ""}" data-piece="${esc(x.p.key)}" role="group" aria-label="${esc(x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : ""))}">${dot}<button type="button" class="nm owPcName" title="Show only this piece">${nm}</button>${st}${steps}${tools}</div>`;
       // (what the card is, said beside the name: the kind of custom order it is, which the bar used to say)
@@ -21825,16 +21857,17 @@ const OrderWin = window.OrderWin = (() => {
       const name = `${pieceMetalTag(x.p)}<b>${esc(x.p.name)}</b>${meta ? " · " + meta : ""}`, aria = x.p.name + (pieceMeta(x.p) ? " · " + pieceMeta(x.p) : "") + (ctl.label ? " · " + ctl.label : "");
       return `<div class="owPcRow hasAct${slow ? " slow" : ""}${all ? "" : " solo"}"${all ? ` data-piece="${esc(x.p.key)}"` : ""} role="group" aria-label="${esc(aria)}">${dot}` +
         (all ? `<button type="button" class="nm owPcName" title="Show only this piece">${name}</button>` : `<span class="nm owPcName">${name}</span>`) +
-        `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${ctl.html}</span>${stSr}${steps}${tools}</div>`;
+        `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${rel}${ctl.html}</span>${stSr}${steps}${tools}</div>`;
     }).join("");
     box.hidden = false; box.dataset.rid = rid; box.classList.toggle("hasTools", hasTools);
     // (RELWIRE, 27 Oct 2026: the rows drawn as before are kept, and a row whose buttons were drawn while its piece could not be wired yet (the window still opening) is wired now: its Release
     //  Hold had no press at all once the window was opened again on an order after another one, "hold A, hold B, open A again", and the drawing never changed after)
-    if (box._h === html) { box.querySelectorAll("[data-pc-act]:not([data-pc-wired])").forEach(h => wirePcAct(h, [])); markPieces(); return; }
+    if (box._h === html) { wireOwRel(box); box.querySelectorAll("[data-pc-act]:not([data-pc-wired])").forEach(h => wirePcAct(h, [])); markPieces(); return; }
     // (a name being typed in a row's question is carried over a redraw, the field and where its cursor was)
     const typed = [...box.querySelectorAll("[data-cu-name]")].map(i => ({ key: i.closest("[data-pc-act]")?.dataset.pcAct, v: i.value, on: document.activeElement === i, a: i.selectionStart, b: i.selectionEnd })).filter(t => t.key);
     const held = pdotHeld(box);
     box._h = html; box.innerHTML = html; pdotBack(box, held);
+    wireOwRel(box);   // (RELWIN2: before the rows are tidied, so a row of several pieces knows it for a Release Hold)
     // (a row of several pieces: its one main action stays, the rest go behind the three dots; the drawers are put as they were)
     if (OR) {
       OR.mount(box, { open: PC_OPEN, rid: () => { const r = rowOf(W.key); return r ? String(r.order.receiptId) : ""; } });
