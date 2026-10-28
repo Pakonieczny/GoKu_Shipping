@@ -89,7 +89,9 @@
   const bs = (key, label, kind, extra) => Object.assign({ key, label, store: "browser", kind }, extra || {});
   const BROWSER = [
     bs("indexedDB:charm-nest-workspace", "saved workspace parts", "idb", { db: "charm-nest-workspace", objectStore: "workspaces", keys: ["sandbox"], prefixes: ["sandbox:best:"] }),
-    bs("indexedDB:sandbox-databases", "other sandbox databases", "idbDatabases", { match: SB }),
+    // (LOCAL, Paul 28 Oct 2026: this computer's copy of the sandbox's sheets, sets and lists, charm-nest-store.js; the whole database goes, production's cn-local.production stays)
+    bs("indexedDB:cn-local.sandbox", "the sandbox's records kept on this computer", "idbDatabases", { match: "^cn-local\\.sandbox$" }),
+    bs("indexedDB:sandbox-databases", "other sandbox databases", "idbDatabases", { match: SB, keep: ["cn-local.sandbox"] }),
     bs("localStorage:sandbox", "stored sandbox keys", "localStorage", { match: SB, keep: ["cn.resetEpoch.sandbox"] }),
     bs("localStorage:queued-items", "queued sandbox items", "sharedList", { lists: [{ key: "orderTimeline.outbox.v1", flag: "sandbox" }, { key: "cn.mail.outbox", flag: "body.sandbox" }, { prefix: "station_activity_q.", flag: "sandbox" }] }),
     bs("localStorage:mail-notices", "customer-mail notices", "sharedMap", { maps: [{ key: "cn.mail.told", idPrefix: "olsb_" }] }),
@@ -113,6 +115,8 @@
     { key: "localStorage:cn.settings", label: "page settings and the sandbox switch (only the saved seed goes)", store: "browser", why: "settings" },
     { key: "localStorage:cn.listingSkus.v1|cn.listingPhotos.v1|cn.listingPhotoPause.v2", label: "shared Etsy listing caches", store: "browser", why: "shared Etsy listing cache" },
     { key: "indexedDB:cn-thumbs|cn-master-list", label: "Charm repo thumbnails and master list", store: "browser", why: "the Charm repo" },
+    { key: "indexedDB:cn-blobs", label: "master designs as read and parsed on this computer (charm-nest-store.js), kept by the file's own name and version", store: "browser", why: "the Charm repo: content named by its bytes, never a record of either side" },
+    { key: "indexedDB:cn-local.production", label: "production's records kept on this computer (charm-nest-store.js)", store: "browser", why: "the real side" },
     { key: "localStorage:production keys", label: "every key without the sandbox's mark (names, roles, sign-in, production drafts and queues)", store: "browser", why: "the real side" }
   ];
 

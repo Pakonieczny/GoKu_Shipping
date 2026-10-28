@@ -26,7 +26,7 @@
  *
  *  OPS (POST JSON {op, …}; X-Edit-Passcode when EDIT_PASSCODE is set)
  *    ping · lookupCharms · putCharms · renameCharm · listCharms
- *    putSheet · listSheets · getSheet · deleteSheet · sheetPdf
+ *    putSheet · listSheets · getSheet · getMany · deleteSheet · sheetPdf   (LOCAL_READS: ifRev / since / several at once)
  *    laserDone · laserDoneList · findSheets   (the Library's Current | Completed tabs and its order / listing search)
  *    putCalibration · getCalibration
  *    startJob · getJob · stopJob
@@ -222,10 +222,12 @@ async function currentFlagReady() {
     return (currentReady = true);
   } catch (e) { console.warn("[charmNestLibrary] current flag not ready:", (e && e.message) || e); return false; }
 }
-/** The flagged sheets, with what decides them (FILTER_SHEET and filingRecords): { rows, stale } — stale: the ids flagged and not current. */
-async function flaggedSheets() {
+/** The flagged sheets, with what decides them (FILTER_SHEET and filingRecords): { rows, stale } — stale: the ids flagged and not current.
+    seen (LOCAL, a Map): each sheet's update time and its set's, as the read found them (listSheets with since). */
+async function flaggedSheets(seen) {
   const snap = await col(SHEETS).where("current", "==", true).limit(CURRENT_CAP).select(...FILTER_SHEET).get();
-  const rows = await filingRecords(snap.docs.map(d => ({ ...d.data(), id: d.id })));
+  if (seen) for (const d of snap.docs) seen.set(d.id, revOf(d));
+  const rows = await filingRecords(snap.docs.map(d => ({ ...d.data(), id: d.id })), seen && new Map());
   return { rows, stale: rows.filter(sheetUnflagged).map(s => s.id) };
 }
 /** Clears the flag of records a read found flagged and not current: each read again in its own transaction (a record made current again
@@ -283,10 +285,11 @@ async function sheetEntries(rows, budget) {
 // One run read per batch supplies the exact per-copy engraving decisions.
 // Old/incomplete records remain pending until evidence is available.
 // Set membership controls filing, independently of an individual sheet's completion badge.
-async function filingRecords(records) {
+// (setRevs, LOCAL: a Map that is given each set's update time as read here, for listSheets with since; the records carry it as _setRev)
+async function filingRecords(records, setRevs) {
   const ids=[...new Set(records.filter(s=>s.setId && !s.draft && s.solidIncluded!==false).map(s=>s.setId))].filter(isId), sets=new Map();
-  for(let i=0;i<ids.length;i+=100) for(const d of await db.getAll(...ids.slice(i,i+100).map(id=>col(SETS).doc(id)),{fieldMask:["laserDoneAt"]})) sets.set(d.id,d.exists?d.data():null);
-  return records.map(s=>({...s,laserSetPending:!!(s.setId && !s.draft && s.solidIncluded!==false && !(num(sets.get(s.setId)?.laserDoneAt)>0))}));
+  for(let i=0;i<ids.length;i+=100) for(const d of await db.getAll(...ids.slice(i,i+100).map(id=>col(SETS).doc(id)),{fieldMask:["laserDoneAt"]})) { sets.set(d.id,d.exists?d.data():null); if(setRevs) setRevs.set(d.id,revOf(d)); }
+  return records.map(s=>({...s,laserSetPending:!!(s.setId && !s.draft && s.solidIncluded!==false && !(num(sets.get(s.setId)?.laserDoneAt)>0)),...(setRevs && setRevs.has(s.setId)?{_setRev:setRevs.get(s.setId)}:{})}));
 }
 async function readinessRecords(records,{revs=null}={}) {
   records=await filingRecords(records);
@@ -678,6 +681,40 @@ async function bumpRev(keys) {
   }
 }
 const REV_FORM = /^[\w.\-]{1,40}$/;
+/* ── LOCAL_READS (Paul, 28 Oct 2026: "as responsive as Photoshop … leverage local storage … keep the API calls to the bare minimum"). A page keeps the
+   records it has read on its own computer (charm-nest-store.js), each under the revision it was read at, and asks the cloud only whether they moved:
+     getSheet { id, ifRev }        ifRev: the sheet's revision (`rev`, its record's update time as revOf names it, now in every full answer). One read of
+                                   one field, and { unchanged: true, rev } when nothing was written to the record since: no link refresh, no readiness, the
+                                   page keeps its copy (its readiness follows by laserStatus, as before).
+     listSheets / setList { ifRev, wantRev, since }   ifRev: the Library's revision (laserStatus' rev; wantRev asks for it): nothing the Library reads was
+                                   written since → { unchanged: true, rev } for one read. since (the `upTo` of the page's last answer of the same list): the
+                                   rows are chosen and ordered as before and all named in `ids`, but only those written after since are sent whole (a sheet:
+                                   its record, its set or its run; a set: its record); upTo is the newest update time the answer saw. A row gone from `ids`
+                                   is gone from the list (deleted, cut, archived).
+     getMany { keys, ifRevs, full }   several records in one call ('s:' sheets, whole as getSheet with full, else their list entries; 't:' sets; 'r:' runs;
+                                   'c:' custom orders): only those whose revision is not the ifRevs' one, under recs { key: { rev, rec } }, and gone (the keys
+                                   with no record).
+   An update time is Firestore's own and moves with EVERY write to the document, whoever made it, so none of this can miss a write to the documents it
+   watches. Every answer keeps its shape; a page that sends none of these is answered as before; verify:true skips every shortcut. ── */
+const SINCE_FORM = /^\d{1,12}\.\d{1,9}$/;
+const revParts = r => { const m = /^(\d{1,12})\.(\d{1,9})$/.exec(String(r == null ? "" : r)); return m ? [+m[1], +m[2]] : null; };
+/** Whether the revision a (an update time, revOf) is later than b; what is not a revision ("0", nothing) is earlier than any. */
+function revAfter(a, b) { const x = revParts(a), y = revParts(b); if (!x) return false; if (!y) return true; return x[0] > y[0] || (x[0] === y[0] && x[1] > y[1]); }
+const revMax = (a, c) => (revAfter(c, a) ? c : a);
+/** What a list read asks (localAsk): { rev: the Library's revision, read first, or null; since; unchanged }. A later part (cursor) asks nothing. */
+async function localAsk(b, cursor) {
+  const ifRev = !cursor && typeof b.ifRev === "string" && REV_FORM.test(b.ifRev) ? b.ifRev : null;
+  const since = !cursor && b.verify !== true && typeof b.since === "string" && SINCE_FORM.test(b.since) ? b.since : null;
+  const rev = !cursor && (ifRev !== null || b.wantRev === true) ? await readRev() : null;
+  return { rev, since, unchanged: rev !== null && ifRev !== null && rev === ifRev && b.verify !== true };
+}
+/** LOCAL: a listed sheet's revision is the newest of its record's, its set's (filingRecords' _setRev) and its run's update times, so its row is sent
+    again when any of them moved since. One read of one field per run. */
+async function foldRevs(records, seen) {
+  const runIds = [...new Set(records.map(r => r && r.runId).filter(isId))], runs = new Map();
+  for (let i = 0; i < runIds.length; i += 100) for (const s of await db.getAll(...runIds.slice(i, i + 100).map(id => col(RUNS).doc(id)), { fieldMask: ["updatedAt"] })) runs.set(s.id, revOf(s));
+  for (const r of records) if (r) seen.set(r.id, [r._setRev, runs.get(r.runId)].reduce(revMax, seen.get(r.id) || "0"));
+}
 async function op_laserStatus(b) {
   const ids=[...new Set((b.sheetIds || []).filter(isId))].slice(0,500), records=[], sealing=b.recordSeals===true;
   // the revision, read first (only for a reader that knows revisions: one that sends ifRev, or asks for the answer's: wantRevs / wantRev)
@@ -1020,19 +1057,26 @@ async function op_putSheet(b) {
   return refused || { ok: true, id: s.id };
 }
 /* The newest sheets, or a run's or a set's, in parts (ANSWER_BYTES): the first part reads the records the list is made of
-   (their SLIM_SHEET fields) and sends as many as fit; `next` names the rest in order, and a later part reads those by id. */
+   (their SLIM_SHEET fields) and sends as many as fit; `next` names the rest in order, and a later part reads those by id.
+   LOCAL (see LOCAL_READS): ifRev (the Library's revision) unchanged is { unchanged: true, rev } for one read; since sends whole only the rows
+   written after it, with ids (every row, in order) and upTo. */
 async function op_listSheets(b) {
+  const cursor = !!(b.cursor && Array.isArray(b.cursor.sheets)), ask = await localAsk(b, cursor);
+  if (ask.unchanged) return { sheets: [], next: null, truncated: false, unchanged: true, rev: ask.rev, checkedAt: Date.now() };
+  const seen = ask.since ? new Map() : null;   // (LOCAL: id → the newest update time of what its entry is made of: its record, its set, its run)
   let rows;
-  if (b.cursor && Array.isArray(b.cursor.sheets)) rows = b.cursor.sheets.filter(isId).slice(0, 500).map(id => [id]);
+  if (cursor) rows = b.cursor.sheets.filter(isId).slice(0, 500).map(id => [id]);
   else if (b.excludeDone && !b.runId && !b.setId && !b.from && !b.to && await currentFlagReady()) {
     /* COST (Oct 2026): the Current tab is the FLAGGED sheets (see CURRENT_MARK), not the newest `limit` by day of which most were cut:
        a few dozen reads however long the history (727 at 1,500 completed sheets), and a current sheet older than that window is no longer
        left out. The same filter decides, the newest `limit` by day are kept, and the list is in the same order. */
-    const limit = Math.min(500, Math.max(1, num(b.limit) || 300)), { rows: flagged, stale } = await flaggedSheets();
+    const limit = Math.min(500, Math.max(1, num(b.limit) || 300)), { rows: flagged, stale } = await flaggedSheets(seen);
     if (stale.length) await clearStale("sheet", stale);
     rows = flagged.filter(d => !d.archived && !Readiness.filed(d)).sort((x, y) => String(y.day || "").localeCompare(String(x.day || ""))).slice(0, limit).map(d => [d.id, d]);
     if (b.metal && /^(gold|silver|rose|gold10k|gold14k)$/.test(b.metal)) rows = rows.filter(([, d]) => d.metal === b.metal);
-    rows = rows.sort(([, x], [, y]) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0)).map(([id]) => [id]);
+    rows = rows.sort(([, x], [, y]) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0));
+    if (seen) await foldRevs(rows.map(([, d]) => d), seen);
+    rows = rows.map(([id]) => [id]);
   } else {
     const limit = Math.min(500, Math.max(1, num(b.limit) || 300));
     let q = b.runId ? col(SHEETS).where("runId", "==", b.runId) : b.setId ? col(SHEETS).where("setId", "==", b.setId) : col(SHEETS).orderBy("day", "desc");
@@ -1043,21 +1087,26 @@ async function op_listSheets(b) {
     // (sheetEntries reads a row given as [id] itself), not all `limit` of them whole to throw most away (Firebase cost, FC2).
     const slimOnly = !!b.excludeDone;
     const snap = await q.limit(limit).select(...(slimOnly ? FILTER_SHEET : SLIM_SHEET)).get();
+    if (seen) for (const d of snap.docs) seen.set(d.id, revOf(d));
     // (excludeDone: the Library's Current tab, which leaves out what the laser has cut, and its readiness is not worked out)
-    const records=await filingRecords(snap.docs.map(d=>({...d.data(),id:d.id})));
+    const records=await filingRecords(snap.docs.map(d=>({...d.data(),id:d.id})), seen && new Map());
     rows = records.filter(d=>!d.archived && !(b.excludeDone && Readiness.filed(d))).map(d=>[d.id,d]);
     if (b.metal && /^(gold|silver|rose|gold10k|gold14k)$/.test(b.metal)) rows = rows.filter(([, d]) => d.metal === b.metal);
     if (b.setId) rows = rows.filter(([, d]) => d.setId === b.setId);
     if (b.runId) rows = rows.filter(([, d]) => d.runId === b.runId);
     rows.sort(([, x], [, y]) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0));
+    if (seen) await foldRevs(rows.map(([, d]) => d), seen);
     if (slimOnly) rows = rows.map(([id]) => [id]);
   }
+  // LOCAL: every row is named, in order; only those written after since are read for their entries and sent
+  const ids = seen ? rows.map(r => r[0]) : null, upTo = seen ? [...seen.values()].reduce(revMax, ask.since) : null;
+  if (seen) rows = rows.filter(r => !seen.has(r[0]) || revAfter(seen.get(r[0]), ask.since));
   /* PERF (Paul, 26 Oct 2026: "the performance of the overall platform once it's being used at scale with tens of thousands of orders"): a part of
      the sheet list is at most LIST_SHEETS_BYTES, half a megabyte, not ANSWER_BYTES: 300 sheets of a 30,000-order history answered ~0.9 MB in one
      part. The rest comes with `next` as before (every page reading a run, a day or the Library follows it: `all: "sheets"`); one set's own
      sheets (setId, read by the set editor and the rose flow without following `next`) keep the whole budget, a set being a few sheets. */
   const { sheets, rest } = await sheetEntries(rows, answerBudget(Date.now(), b.setId ? ANSWER_BYTES : LIST_SHEETS_BYTES));
-  return { sheets, next: rest.length ? { sheets: rest } : null, truncated: rest.length > 0 };
+  return { sheets, next: rest.length ? { sheets: rest } : null, truncated: rest.length > 0, ...(ids ? { ids, upTo } : {}), ...(ask.rev !== null ? { rev: ask.rev } : {}) };
 }
 /* Manual Control (Paul, 18 Oct 2026): one person at a time moves, turns and resizes the charms of a 10K / 14K sheet by hand in the sheet window. The claim is the
    sheet record's manualEdit { by, tab, at }: taken in a transaction when nobody else holds it (a claim not kept alive for MANUAL_STALE_MS is a closed tab's
@@ -1086,12 +1135,52 @@ async function op_manualClaim(b) {
 }
 async function op_getSheet(b) {
   if (!isId(b.id)) return { error: "bad id" };
+  // LOCAL (see LOCAL_READS): the page holds this record at ifRev: one read of one field says whether it moved
+  const ifRev = typeof b.ifRev === "string" && REV_FORM.test(b.ifRev) && b.verify !== true ? b.ifRev : null;
+  if (ifRev !== null) {
+    const [p] = await db.getAll(col(SHEETS).doc(b.id), { fieldMask: ["updatedAt"] });
+    if (!p.exists) return { sheet: null };
+    if (revOf(p) === ifRev) return { unchanged: true, rev: ifRev };
+  }
   const s = await col(SHEETS).doc(b.id).get();
   if (!s.exists) return { sheet: null };
   const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt);
   await withFullBacks(d);
   await refreshLinks(d);
-  return { sheet: (await readinessRecords([d]))[0] };
+  return { sheet: (await readinessRecords([d]))[0], rev: revOf(s) };
+}
+/** LOCAL (see LOCAL_READS): several records in one call. keys 's:<sheet>' 't:<set>' 'r:<run>' 'c:<custom order key>' (at most MANY_MAX); ifRevs { key: rev }
+    the revisions the page holds; full: a sheet whole, as getSheet answers it (its links as saved: a link that fails is recovered where it fails,
+    charm-nest-assets.js), else its list entry. → { recs: { key: { rev, rec } }, gone: [keys], same: n (held at their revision, not sent), checkedAt } */
+const MANY_MAX = 300, manyColl = kind => ({ s: SHEETS, t: SETS, r: RUNS, c: CUSTOM })[kind];   // (a function: the collections' names are declared further down)
+async function op_getMany(b) {
+  const keys = [...new Set((Array.isArray(b.keys) ? b.keys : []).map(String))].filter(k => REV_KEY.test(k) && (k[0] !== "c" || lineKeyOk(k.slice(2)))).slice(0, MANY_MAX);
+  const held = b.ifRevs && typeof b.ifRevs === "object" ? b.ifRevs : {}, recs = {}, gone = [], want = [];
+  const refOf = k => col(manyColl(k[0])).doc(k.slice(2)), heldRev = k => (typeof held[k] === "string" && REV_FORM.test(held[k]) && b.verify !== true ? held[k] : null);
+  // the records held at a revision are asked for their update times alone (one read each); only those that moved are read whole
+  const probe = keys.filter(k => heldRev(k) !== null);
+  for (let i = 0; i < probe.length; i += 100) {
+    const part = probe.slice(i, i + 100), snaps = await db.getAll(...part.map(refOf), { fieldMask: ["updatedAt"] });
+    snaps.forEach((p, j) => { if (!p.exists) gone.push(part[j]); else if (revOf(p) !== heldRev(part[j])) want.push(part[j]); });
+  }
+  for (const k of keys) if (heldRev(k) === null) want.push(k);
+  for (const kind of ["s", "t", "r", "c"]) {
+    const ks = want.filter(k => k[0] === kind), rows = [];
+    for (let i = 0; i < ks.length; i += 100) {
+      const part = ks.slice(i, i + 100), snaps = await db.getAll(...part.map(refOf), ...(kind === "s" && b.full !== true ? [{ fieldMask: SLIM_SHEET }] : []));
+      snaps.forEach((d, j) => { if (!d.exists) gone.push(part[j]); else rows.push([part[j], revOf(d), d.data()]); });
+    }
+    if (kind === "s") {
+      const recordsOf = rows.map(([, , d], j) => Object.assign(d, { id: rows[j][0].slice(2) }));
+      if (b.full === true) for (const d of recordsOf) { d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt); await withFullBacks(d); }
+      else await withPlacements(recordsOf.map(d => [d.id, d]));
+      const ready = await readinessRecords(recordsOf);
+      rows.forEach(([k, rev], j) => { recs[k] = { rev, rec: b.full === true ? ready[j] : slim(ready[j]) }; });
+    } else if (kind === "t") rows.forEach(([k, rev, d]) => { d.setId ||= k.slice(2); for (const f of ["updatedAt", "createdAt", "completedAt"]) d[f] = ms(d[f]); d.committedAt = ms(d.committedAt) || d.committedAt || null; recs[k] = { rev, rec: d }; });
+    else if (kind === "r") for (const [k, rev, d0] of rows) { const d = await withLiveLines(k.slice(2), d0); if (!d) { gone.push(k); continue; } delete d.liveLines; d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt); recs[k] = { rev, rec: d }; }
+    else rows.forEach(([k, rev, d]) => { recs[k] = { rev, rec: customRow(d, true) }; });
+  }
+  return { recs, gone, same: keys.length - want.length - gone.filter(k => !want.includes(k)).length, checkedAt: Date.now() };
 }
 /** Same-origin recovery of a saved PNG; never accepts an arbitrary caller URL. */
 async function op_backPreview(b) {
@@ -1874,6 +1963,7 @@ const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces
   "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "listingKindPut", "noDesignPut", "noDesignDelete", "optionMapPut",
   "sandboxCancel", "sandboxPut", "sandboxPullOrders", "sandboxPullLimitSet", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
 ["customSaveGet", "customSaveCommit", "customSavePending", "customSaveIntent"].forEach(op => NO_GEN_BUMP.add(op));   // (the save writes a master entry, an alias and its own record: nothing a placement answer is made from)
+NO_GEN_BUMP.add("getMany");   // (LOCAL: several records read in one call, see LOCAL_READS; read only)
 NO_GEN_BUMP.add("manualClaim");   // (Manual Control's claim writes the sheet record's manualEdit alone: nothing a placement answer is made from)
 ["customPut", "customReopen", "customDelete", "customDecide", "customSheetPut", "reviewMarkPut"].forEach(op => NO_GEN_BUMP.add(op));   // (COST, Oct 2026: a Complete Order, a QR print, a Review mark, a decision and a custom design sent to a sheet write Charm_Custom_Orders / Charm_Custom_Sheet / Charm_Nest_CustomRead and the order's timeline, never a pool row or a sheet; a placement answer is made from those two alone, and the page that pressed learns of its own press without a read. Each press used to send every watching tab to a full read of the orders on screen)
 async function placementGen() {
@@ -2645,9 +2735,14 @@ async function op_setList(b) {
   // The answer comes in parts (ANSWER_BYTES): the sets first, then their sheets, read for what their list entries show
   // (SLIM_SHEET) where every sheet used to be read whole; `next` names the sets and sheets left, in order, and a later part
   // reads those by id.
-  const setRow = d => { const r=d.data(); r.setId ||= d.id; for(const k of ["updatedAt","createdAt","completedAt","committedAt"]) r[k]=ms(r[k]); return [d.id, r]; };
-  const budget = answerBudget(), cur = b.cursor && typeof b.cursor === "object" ? b.cursor : null;
-  let rows = [], sheetIds = [];
+  // LOCAL (see LOCAL_READS): ifRev unchanged is { unchanged: true, rev } for one read; since sends whole only the sets written after it (and, with
+  // includeSheets, those sets' sheets: a sheet that changed in a set that did not is in the Current sheet list read beside this one, listSheets with since)
+  const cur = b.cursor && typeof b.cursor === "object" ? b.cursor : null, ask = await localAsk(b, !!cur);
+  if (ask.unchanged) return { sets: [], ...(b.includeSheets ? { sheets: [] } : {}), next: null, truncated: false, unchanged: true, rev: ask.rev, checkedAt: Date.now() };
+  const seen = ask.since ? new Map() : null;
+  const setRow = d => { const r=d.data(); r.setId ||= d.id; for(const k of ["updatedAt","createdAt","completedAt","committedAt"]) r[k]=ms(r[k]); if (seen) seen.set(d.id, revOf(d)); return [d.id, r]; };
+  const budget = answerBudget();
+  let rows = [], sheetIds = [], ids = null;
   if (cur) {
     const ids = (Array.isArray(cur.sets) ? cur.sets : []).filter(isId).slice(0, 500);
     for (let i = 0; i < ids.length; i += 100) for (const d of await db.getAll(...ids.slice(i, i + 100).map(id => col(SETS).doc(id)))) if (d.exists) rows.push(setRow(d));
@@ -2670,6 +2765,7 @@ async function op_setList(b) {
     rows = snap.docs.map(setRow);
     }
     rows=rows.filter(([,r])=>(!isDay(b.from) || OrderRules.completionDay(r)>=b.from)&&(!isDay(b.to) || OrderRules.completionDay(r)<=b.to)&&(!b.status || r.status===b.status)&&!(b.excludeDone && num(r.laserDoneAt)>0)).sort(([,x],[,y])=>OrderRules.compareCompleted(x,y)).slice(0,limit);
+    if (seen) { ids = rows.map(([id]) => id); rows = rows.filter(([id]) => !seen.has(id) || revAfter(seen.get(id), ask.since)); }   // (LOCAL: every set named, in order; only those written since read whole)
     const whole = new Map();
     for (let i = 0; i < rows.length; i += 100) for (const d of await db.getAll(...rows.slice(i, i + 100).map(([id]) => col(SETS).doc(id)))) if (d.exists) whole.set(d.id, setRow(d)[1]);
     rows = rows.filter(([id]) => whole.has(id)).map(([id]) => [id, whole.get(id)]);
@@ -2678,7 +2774,7 @@ async function op_setList(b) {
   let n = 0; while (n < rows.length && budget.fits(rows[n][1])) n++;
   const part = b.includeSheets && n === rows.length ? await sheetEntries(sheetIds.map(id => [id]), budget) : { sheets: [], rest: sheetIds };
   const next = n < rows.length || part.rest.length ? { sets: rows.slice(n).map(([id]) => id), sheets: part.rest } : null;
-  return {sets:rows.slice(0, n).map(([,r])=>r), ...(b.includeSheets ? {sheets:part.sheets} : {}), next, truncated: !!next};
+  return {sets:rows.slice(0, n).map(([,r])=>r), ...(b.includeSheets ? {sheets:part.sheets} : {}), next, truncated: !!next, ...(ids ? { ids, upTo: [...seen.values()].reduce(revMax, ask.since) } : {}), ...(ask.rev !== null ? { rev: ask.rev } : {})};
 }
 // ── release: when each slow material last went out, and the days a person opened one early (shop-wide, not per browser) ──
 async function op_releaseGet() { const s = await col(RELEASE).doc("current").get(); const d = s.exists ? s.data() : {}; return { lastReleased: d.lastReleased || {}, released: d.released || {}, updatedAt: ms(d.updatedAt) }; }
@@ -4331,7 +4427,7 @@ function cancelCopy(r) {
   if (!fits()) for (const k of Object.keys(x)) if (!["orderId", "by", "why", "at", "source", "etsyStatus", "etsyAt"].includes(k)) delete x[k];
   return x;
 }
-const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, manualClaim: op_manualClaim, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
+const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, manualClaim: op_manualClaim, listSheets: op_listSheets, getSheet: op_getSheet, getMany: op_getMany, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, masterRemoveSkus: op_masterRemoveSkus, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxPullOrders: op_sandboxPullOrders, sandboxPullLimitSet: op_sandboxPullLimitSet, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,

@@ -104,7 +104,8 @@ const RID = '4173162973', OLD = 'OLDREC';
   const PROD_CHECKPOINT = { v: 1, at: 1, epoch: '', marker: 'production-untouched', settled: [{ key: 'prod' }] };
   await idbDo(page, ([k, v]) => new Promise((res, rej) => { const r = indexedDB.open('charm-nest-workspace', 1); r.onsuccess = () => { const tx = r.result.transaction('workspaces', 'readwrite'); tx.objectStore('workspaces').put(v, k); tx.oncomplete = () => res(true); tx.onerror = () => rej(tx.error); }; r.onerror = () => rej(r.error); }), ['production', PROD_CHECKPOINT]);
   await idbDo(page, ([k, v]) => new Promise((res, rej) => { const r = indexedDB.open('charm-nest-workspace', 1); r.onsuccess = () => { const tx = r.result.transaction('workspaces', 'readwrite'); tx.objectStore('workspaces').put(v, k); tx.oncomplete = () => res(true); tx.onerror = () => rej(tx.error); }; r.onerror = () => rej(r.error); }), ['sandbox:best:sheet-old', { jobId: OLD }]);
-  await idbDo(page, () => Promise.all(['probe:sandbox', 'probe-real'].map(n => new Promise(res => { const r = indexedDB.open(n, 1); r.onupgradeneeded = () => r.result.createObjectStore('s'); r.onsuccess = () => { r.result.close(); res(); }; }))));
+  // (and this computer's record stores, charm-nest-store.js: the sandbox's goes whole, production's stays; LOCAL, 28 Oct 2026)
+  await idbDo(page, () => Promise.all(['probe:sandbox', 'probe-real', 'cn-local.sandbox', 'cn-local.production'].map(n => new Promise(res => { const r = indexedDB.open(n); r.onupgradeneeded = () => r.result.createObjectStore('s'); r.onsuccess = () => { r.result.close(); res(); }; }))));
   await idbDo(page, async () => { for (const n of ['probe:sandbox', 'probe-real']) { const c = await caches.open(n); await c.put('/x', new Response('old')); } });
   assert.strictEqual(await page.evaluate(() => Session.flushNow()), true, 'the workspace was saved');
   const snapshot = p => p.evaluate(() => ({ ls: Object.fromEntries(Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])), ss: Object.fromEntries(Object.keys(sessionStorage).map(k => [k, sessionStorage.getItem(k)])) }));
@@ -180,6 +181,7 @@ const RID = '4173162973', OLD = 'OLDREC';
   assert(!('probe:sandbox' in after.ss) && !('late:sandbox' in after.ss), 'the sandbox\'s session keys are gone, and the one a late timer wrote');
   const st2 = await page.evaluate(async () => ({ dbs: (await indexedDB.databases()).map(d => d.name).sort(), caches: (await caches.keys()).sort() }));
   assert(st2.dbs.includes('probe-real') && !st2.dbs.includes('probe:sandbox'), 'the sandbox\'s database is gone, the real one stays: ' + st2.dbs);
+  assert(st2.dbs.includes('cn-local.production') && !st2.dbs.includes('cn-local.sandbox'), 'the sandbox\'s record store is gone, production\'s stays: ' + st2.dbs);
   assert(st2.caches.includes('probe-real') && !st2.caches.includes('probe:sandbox'), 'the sandbox\'s cache is gone, the real one stays: ' + st2.caches);
   const dump = await idbDo(page, () => new Promise((res, rej) => { const r = indexedDB.open('charm-nest-workspace', 1); r.onsuccess = () => { const s = r.result.transaction('workspaces', 'readonly').objectStore('workspaces'), keys = s.getAllKeys(), out = {}; keys.onsuccess = () => { let n = keys.result.length; if (!n) return res(out); for (const k of keys.result) { const g = s.get(k); g.onsuccess = () => { out[k] = g.result; if (!--n) res(out); }; } }; }; r.onerror = () => rej(r.error); }));
   assert.deepStrictEqual(dump.production, PROD_CHECKPOINT, 'the real workspace checkpoint is unchanged');
