@@ -82,8 +82,8 @@ board-live-extra.json with the new agent ids.
 - Phase 5 push (option a) needs a Firestore security rule in the console + a vendored Firestore SDK file.
 
 
-## Phase 1 ship in test (07:25; nav-instant engraving world timed out after merging batch 4 → comparing with main, run in background): $SP/wt-guardfix 1599532 = claude/local-store + main 03d6b9c (build OK). Earlier full run all pass except mc-instant check 5 (84 ms block at load 7). Final run bq3qtbibm → $SP/int/p1/f-*.log. Pass → push HEAD:main, verify live (charm-nest-store.js).
-## Batch 6 after these: refit (Paul's rule) claude/de-refit 24406dc + emplog person page claude/de-emplog 0cb9e34 + hold spots fix claude/fix-order-hold-engine c74301f (Hold's consent sentence counted a freed spot twice: '5 empty spots' for 4 pieces; test was stale since fd42973 solid masks; order-hold-engine, release-hold-button, review-release-queue, order-pieces pass; also run hold-ui) (design-log, efficiency-person, efficiency-real, sandbox-wipe-guard pass).
+## Phase 1 ship (07:40): $SP/wt-guardfix ad2b701 = local-store + main 745ee60, build OK; nav-instant failure was load (passes on main and Phase 1 side by side). Checks ba4tgvpwr → $SP/int/p1/g-*.log. Pass → push HEAD:main, verify live.
+## Batch 6 in test (07:41): claude/de-integration 104c887 = main 745ee60 + refit 24406dc + emplog 0cb9e34 + hold fix c74301f + service worker 3064100. Run b6ebtfpf1 → $SP/int/b6/*.log. After Phase 1 lands: merge main, rerun local-store/local-first/service-worker/nav-instant, push, verify live.
 - a41a92d9950823b21 now on claude/eff-inbox-chart: 'Sent per day' chart is a black block when empty.
 - Phase 2 agent ac1971b04ea413b37 started 07:03 on claude/local-sync (wt-sync) from claude/local-store.
 - designs follow-up (af114bb2ccb5f706c resumed): claude/de-designs-2 = accept stroke/fill true in clean(); test world Master.load race.
