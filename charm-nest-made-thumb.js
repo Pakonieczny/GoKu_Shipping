@@ -35,7 +35,7 @@
   if (root) root.CharmNestMadeThumb = api;
 })(typeof self !== 'undefined' ? self : typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
-  const V = 3;                                   // the drawing's own version: a change of how it is drawn is a new signature (2, FACES 28 Oct 2026: the faces named and parted by a hairline; 3, BIGTHUMB: drawn for a box as tall as its row, larger; a picture this computer sent is drawn and sent again, paced)
+  const V = 3;                                   // the drawing's own version (sent with the picture, kept on the pool row's made.v: MADEV): a change of how it is drawn is a new signature (2, FACES 28 Oct 2026: the faces named and parted by a hairline; 3, BIGTHUMB: drawn for a box as tall as its row, larger; a picture this computer sent is drawn and sent again, paced)
   const TILE = 288, GAP = 12, MARGIN = 0.02;     // a face is drawn TILE px high (BIGTHUMB: a list box about 156 px tall at twice the screen's density: the cloud's picture; this page draws its own at its box's size), the faces GAP apart, a 3 % margin
   const DEBOUNCE = 1500, MAX_WAIT = 6000, PACE = 1500, SWEEP = 120, REFRESH = 200;
   const MAX_PIECES = 4, INK = '#1c1a17', METAL = '#f1ece1', RULE = '#d6cfc2';
@@ -72,7 +72,21 @@
     if (!j || j.archived || j.editingBack || ['none', 'skipped'].includes(j.state)) return null;
     let view = j.view, fit = j.fit;
     if (!(fit && view)) { const h = safe(() => { const R = REFIT(); return R && R.held ? R.held(j) : null; }, null); if (h && h.view && h.fit) { view = h.view; fit = h.fit; } }
-    return fit && view && Array.isArray(fit.glyphs) && fit.glyphs.length ? { view, fit } : null;
+    if (fit && view && Array.isArray(fit.glyphs) && fit.glyphs.length) return { view, fit };
+    /* MADEV (Paul, 28 Oct 2026: "The thumbnails are missing all of the labels"): an approved face the upkeep put away (charm-nest-bridge.js shelveWritten: its placement kept as numbers, writtenFit, its
+       view and letters let go) still has its words: counted here by its kept placement, and drawn from a copy laid out again exactly as approved (shelvedOf, Engrave.madeJobOf: the engraving card's own way) */
+    const w = !fit && j.writtenFit; if (w && w.approvedAt && w.approvedAt === j.approvedAt && ['approved', 'written'].includes(j.state) && Array.isArray(w.lines) && w.lines.length) return { shelved: true, fit: w };
+    return null;
+  }
+  /** A shelved face laid out again for its picture (Engrave.madeJobOf on a copy: the job is never touched): { view, fit, job } or null (its font still loading, its charm changed since). Kept per job and approval. */
+  const SHELVED = typeof WeakMap === 'function' ? new WeakMap() : null;
+  function shelvedOf(job, poolId) {
+    if (!job) return null;
+    const charm = safe(() => host.charmOf && host.charmOf(poolId), null), had = SHELVED && SHELVED.get(job);
+    if (had && had.at === job.approvedAt && had.charm === charm && (had.j || Date.now() - had.t < 20000)) return had.j;
+    const j = safe(() => (host.madeJob ? host.madeJob(job) : null), null), ok = j && j.view && j.fit && Array.isArray(j.fit.glyphs) && j.fit.glyphs.length ? j : null;
+    if (SHELVED) SHELVED.set(job, { at: job.approvedAt, charm, j: ok, t: Date.now() });
+    return ok;
   }
   const busy = j => !!j && (j.state === 'fitting' || safe(() => { const R = REFIT(); return !!(R && R.busy && !j.fit && R.busy(j)); }, false));
   /** What a face's art edit says (charm-nest-art-edit.js apply: the charm's artEdit[face] note), '' when it has none. */
@@ -87,8 +101,9 @@
     if (!charm && !(wf || wb)) return null;
     const tiles = [{ face: 'front', job: wf ? pj.front : null, words: wf }];
     if (wb || eb) tiles.push({ face: 'back', job: pj.back || null, words: wb });
-    const fitSig = w => (w ? [(w.fit.lines || []).join('\n'), r2(w.fit.size), (w.fit.centre || []).map(r2), r2(w.fit.angle), w.fit.glyphs.length, String(w.fit.weight || '')] : 0);
-    const viewSig = w => (w ? [w.view.face || '', (w.view.R || []).map(r2).join(','), w.view.M ? 1 : 0, (w.view.members || []).length] : 0);
+    // (MADEV: the same words in the same place are the same signature whether the face holds its placement or the upkeep put it away: its turn is the view's upAngle, kept with it as writtenFit.upAngle)
+    const fitSig = w => (w ? [(w.fit.lines || []).join('\n'), r2(w.fit.size), (w.fit.centre || []).map(r2), r2(w.fit.angle), String(w.fit.weight || '')] : 0);
+    const viewSig = w => (!w ? 0 : [r2(w.shelved ? w.fit.upAngle : w.view.upAngle)]);
     const sig = fnv(JSON.stringify([V, charm ? String(charm.hash || charm.charmHash || '') + (charm.mirror ? 'm' : '') : '', ef, eb,
       tiles.map(t => [t.face, viewSig(t.words), fitSig(t.words), t.job ? String(t.job.fontKey || '') : ''])]));
     return { tiles, sig, faces: tiles.map(t => t.face), busy: busy(pj.front) || busy(pj.back) };
@@ -121,7 +136,10 @@
     const hit = LOCAL.get(ck); if (hit) return hit;
     const P = PDF(); if (!P || !P.drawCharm || !P.pathToCanvas || !EP()) return null;
     const parts = [];
-    for (const t of st.tiles) {
+    for (const t0 of st.tiles) {
+      // (MADEV: a shelved face is drawn from its copy laid out again; one that cannot be yet (its font is loading) leaves the picture to the cloud's for now, and the boxes look again shortly)
+      let t = t0;
+      if (t0.words && t0.words.shelved) { const j = shelvedOf(t0.job, poolId); if (!j) { retrySoon(); return null; } t = { face: t0.face, job: j, words: { view: j.view, fit: j.fit } }; }
       const F = frameOf(poolId, t); if (!F || !F.box) continue;
       const w = F.box[2] - F.box[0], h = F.box[3] - F.box[1], pad = Math.max(w, h) * MARGIN;
       let k = T / (h + 2 * pad); if ((w + 2 * pad) * k > T * 2.2) k = T * 2.2 / (w + 2 * pad);
@@ -190,10 +208,12 @@
   }
   const known = poolId => (safe(() => (host.poolRows ? host.poolRows(poolId) : []), []) || []).some(Boolean);
   const mine = new Set();                       // pieces changed on this page (their picture is this page's until the cloud has it)
-  /** Which picture a piece shows: { kind: 'local', sig, st } | { kind: 'cloud', made } | null. */
+  /** MADEV (Paul, 28 Oct 2026: "The thumbnails are missing all of the labels"): the drawing a cloud picture was made by (made.v; one sent before the version was kept is 1). */
+  const verOf = m => (m && Number.isFinite(+m.v) && +m.v >= 1 ? Math.floor(+m.v) : 1);
+  /** Which picture a piece shows: { kind: 'local', sig, st, made } | { kind: 'cloud', made } | null. A cloud picture drawn by an older drawing than this page's never wins over this page's own. */
   function pick(poolId) {
     const st = stateOf(poolId), made = cloudOf(poolId);
-    if (st && (!made || made.sig === st.sig || mine.has(poolId) || made.dev === dev())) return { kind: 'local', sig: st.sig, st };
+    if (st && (!made || verOf(made) < V || made.sig === st.sig || mine.has(poolId) || made.dev === dev())) return { kind: 'local', sig: st.sig, st, made };
     if (made) return { kind: 'cloud', made };
     return null;
   }
@@ -212,8 +232,35 @@
   /** A piece's picture as a data URL (local, or read from the cloud). */
   async function urlOf(poolId, p, tile) {
     if (!p) return null;
-    if (p.kind === 'local') { const pic = pictureOf(poolId, p.st, tile); return pic ? pic.url : null; }
-    return cloudPicture(p.made.url);
+    if (p.kind === 'local') { const pic = pictureOf(poolId, p.st, tile); if (pic) return pic.url; if (!p.made) return null; }
+    return labelled(p.made);
+  }
+  /* MADEV (Paul, 28 Oct 2026: "The thumbnails are missing all of the labels (Back/Front Engraving)"): a picture the cloud keeps from the first drawing (v 1: no labels, the master's pen drawn heavy) that no
+     page here can draw again yet is shown with its faces named over it: the same chips, under each face of a picture side by side, beside each of one over the other. Which layout it was is read
+     from its size: the first drawing drew a face 192 px high, so a picture up to 200 px high is side by side and one 380 to 400 px high one over the other. A picture that says it is of a later
+     drawing (made.v), or of a size the first drawing never made (a later drawing sent before the version was kept), has its chips already: shown as it is. */
+  const OLD_TILE = 192;
+  const LABELLED = new Map();
+  function labelled(made) {
+    const faces = Array.isArray(made.faces) ? made.faces.filter(f => f === 'front' || f === 'back') : [];
+    if (verOf(made) >= 2 || faces.length < 2 || !doc) return cloudPicture(made.url);
+    if (LABELLED.has(made.url)) return LABELLED.get(made.url);
+    const job = cloudPicture(made.url).then(u => imageOf(u).then(im => {
+      const W = im.naturalWidth, H = im.naturalHeight, row = H <= OLD_TILE + 8, col = !row && H >= 2 * OLD_TILE - 4 && H <= 2 * OLD_TILE + 16;
+      if (!row && !col) return u;   // (a later drawing's picture: its chips are in it)
+      const cv = canvas(W, H), ctx = cv.getContext('2d'); ctx.drawImage(im, 0, 0);
+      const f = Math.max(10, Math.round((row ? H : H / 2) * LABEL_FRAC * 1.05)), ch = Math.round(f * 1.55);
+      const chip = (word, cx, top) => {
+        ctx.save(); ctx.font = `600 ${f}px ${CHIP_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+        const w = ctx.measureText(word).width + f * 1.2, x = cx - w / 2, r = ch / 2;
+        ctx.fillStyle = CHIP_INK; ctx.beginPath(); ctx.moveTo(x + r, top); ctx.lineTo(x + w - r, top); ctx.arc(x + w - r, top + r, r, -Math.PI / 2, Math.PI / 2); ctx.lineTo(x + r, top + ch); ctx.arc(x + r, top + r, r, Math.PI / 2, Math.PI * 1.5); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = CHIP_TEXT; ctx.fillText(word, cx, top + ch / 2 + f * 0.35); ctx.restore();
+      };
+      faces.slice(0, 2).forEach((face, i) => { const word = face === 'front' ? 'Front' : 'Back'; if (row) chip(word, W * (i ? 0.75 : 0.25), H - ch - Math.round(f * 0.2)); else chip(word, Math.round(f * 2.4), H * (i ? 0.75 : 0.25) - ch / 2); });
+      return cv.toDataURL('image/png');
+    })).catch(e => { LABELLED.delete(made.url); throw e; });
+    LABELLED.set(made.url, job); while (LABELLED.size > 200) LABELLED.delete(LABELLED.keys().next().value);
+    return job;
   }
   /** Several pieces' pictures in one: a row when every one is a single face and they are few, else two columns; at most MAX_PIECES (the last cell says +N). */
   async function compose(urls, more) {
@@ -265,7 +312,7 @@
    *  (this page's own drawing is made again at that size, up to 1200 px a face; the cloud's is what it is). */
   function forPiece(poolId) {
     const p = pick(poolId); if (!p) return null;
-    return { key: 'made:' + (p.kind === 'cloud' ? 'c' + p.made.url : 'l' + p.sig), local: p.kind === 'local', load: px => (p.kind === 'local' && px ? Promise.resolve((pictureOf(poolId, p.st, px) || {}).url || null) : urlOf(poolId, p)) };
+    return { key: 'made:' + (p.kind === 'cloud' ? 'c' + p.made.url : 'l' + p.sig), local: p.kind === 'local', load: px => (p.kind === 'local' && px && pictureOf(poolId, p.st, px) ? Promise.resolve(pictureOf(poolId, p.st, px).url) : urlOf(poolId, p)) };
   }
 
   /** A piece's picture as it will be made, painted over a canvas that shows the piece (the order window's sheet panel, the sheet window's piece: they draw the charm alone, at once): the canvas is
@@ -281,8 +328,11 @@
     }).catch(() => false);
   }
 
+  let retryT = 0, retries = 0;
+  const retrySoon = () => { if (retryT || retries > 20) return; retries++; retryT = setTimeout(() => { retryT = 0; safe(() => host.refresh && host.refresh(null)); }, 1500); };
+
   /* ── what moved: the sweep ── */
-  const SIGS = new Map(), quiet = new Map(), touched = new Set();
+  const SIGS = new Map(), quiet = new Map(), touched = new Set(), redrawn = new Set();
   let sweepT = 0, refreshT = 0, first = true;
   /** Something may have moved (poolIds: the pieces, when known): looked at SWEEP ms later, once for a burst. */
   function changed(why, ids) {
@@ -304,12 +354,15 @@
         if (!sig || isQuiet(id)) continue;
         // (first seen on this page: sent only when the cloud has no picture of it while its row is held here, or the cloud's was sent from here and is older: never over another computer's)
         const made = cloudOf(id);
-        if ((!made && known(id)) || (made && made.dev === dev() && made.sig !== sig)) want(id, true);
+        if ((!made && known(id)) || (made && verOf(made) < V) || (made && made.dev === dev() && made.sig !== sig)) want(id, true);   // (MADEV: a picture of an older drawing is drawn again by any page that can, paced)
         if (!first) moved.push(id);   // (a piece restored or pooled since the page began: its boxes look again)
       } else if (prev !== sig) {
         SIGS.set(id, sig); moved.push(id);
         if (isQuiet(id)) { quiet.delete(id); continue; }
         mine.add(id); want(id, false);
+      } else if (sig && !pend.has(id) && !redrawn.has(id)) {
+        // (MADEV: a piece this page knows whose cloud picture is of an older drawing (one the feed brought since, or one this page saw before it could draw the piece): drawn again and sent, once, paced)
+        const made = cloudOf(id); if (made && verOf(made) < V) { redrawn.add(id); want(id, true); }
       }
     }
     first = false;
@@ -317,7 +370,7 @@
     while (SIGS.size > 6000) SIGS.delete(SIGS.keys().next().value);
   }
   /** The boxes on screen look again (the cloud's rows moved: OrderPieces told so). */
-  function refreshSoon() { if (refreshT) return; refreshT = setTimeout(() => { refreshT = 0; safe(() => host.refresh && host.refresh(null)); }, REFRESH); }
+  function refreshSoon() { if (refreshT) return; refreshT = setTimeout(() => { refreshT = 0; safe(() => host.refresh && host.refresh(null)); changed('cloud'); }, REFRESH); }   // (MADEV: and a look at what the cloud's rows say of the pieces this page can draw)
 
   /* ── to the cloud: one piece at a time, once its moves have stopped ── */
   const pend = new Map();                       // poolId → { first, due, backfill }
@@ -349,12 +402,12 @@
   async function send(id, st) {
     if (!host.api) return;
     const made = cloudOf(id);
-    if (st && made && made.sig === st.sig) { stats.skipped++; return; }
+    if (st && made && made.sig === st.sig && verOf(made) >= V) { stats.skipped++; return; }
     if (!st && !made) { stats.skipped++; return; }
     const pic = st ? pictureOf(id, st) : null;
-    if (st && !pic) { stats.skipped++; return; }
+    if (st && !pic) { const p = pend.get(id) || { first: Date.now(), backfill: true }; if ((p.tries = (p.tries || 0) + 1) <= 8) { p.due = Date.now() + 5000; pend.set(id, p); } stats.skipped++; return; }   // (a shelved face whose font is loading: tried again shortly)
     const by = String(safe(() => host.who && host.who(), '') || '').trim() || null;
-    const body = st ? { op: 'madeThumbPut', poolId: id, png: pic.url, sig: st.sig, faces: pic.faces, by, dev: dev() } : { op: 'madeThumbPut', poolId: id, clear: true, by, dev: dev() };
+    const body = st ? { op: 'madeThumbPut', poolId: id, png: pic.url, sig: st.sig, faces: pic.faces, by, dev: dev(), v: V } : { op: 'madeThumbPut', poolId: id, clear: true, by, dev: dev() };
     const res = await host.api('charmNestLibrary', body, { quiet: true, timeoutMs: 30000 });
     if (!res || !res.ok) throw new Error((res && res.error) || 'the picture was not kept');
     if (st) stats.puts++; else stats.clears++;
@@ -365,5 +418,5 @@
   function state() { return Object.assign({ pending: pend.size, sending, sigs: SIGS.size, mine: mine.size, dev: dev() }, stats); }
   function setHost(h) { host = Object.assign({}, h || {}); IDX = null; return host; }
 
-  return { V, setHost, changed, adopt, refreshSoon, forLine, forPiece, paintInto, tileFor, sigOf, stateOf, pictureOf, flush, state, host: () => host, _sweep: sweep };
+  return { V, verOf, setHost, changed, adopt, refreshSoon, forLine, forPiece, paintInto, tileFor, sigOf, stateOf, pictureOf, flush, state, host: () => host, _sweep: sweep };
 });

@@ -2910,7 +2910,8 @@ async function op_madeThumbPut(b) {
     const snap = await tx.get(ref); if (!snap.exists) return { error: "this piece is not in the pool", status: 404 };
     const row = snap.data() || {}, old = row.made && typeof row.made === "object" ? row.made : null, at = Math.max(Date.now(), num(old && old.at) + 1);
     // (the address names its own version, v: charmNestAsset lets a browser keep it a day, and a new picture is a new address)
-    const made = file ? { url: file.url + "&v=" + at, path: file.path, at, sig, faces, base: row.charmHash == null ? null : String(row.charmHash), by, dev } : null;
+    // (MADEV, 28 Oct 2026: the drawing that made it, v: a page draws again and sends a picture of an older drawing than its own; a picture sent without one is the first drawing's, 1)
+    const made = file ? { url: file.url + "&v=" + at, path: file.path, at, sig, faces, base: row.charmHash == null ? null : String(row.charmHash), by, dev, v: Math.max(1, Math.min(99, Math.floor(num(b.v)) || 1)) } : null;
     tx.set(ref, { made: made || FV.delete(), updatedAt: FV.serverTimestamp() }, { merge: true });
     return { ok: true, poolId, made, was: old && old.path ? String(old.path) : null };
   });

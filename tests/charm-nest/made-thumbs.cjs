@@ -13,6 +13,9 @@
 //      words a third larger than theirs; a wide piece (the tag) is drawn one over the other, a tall one (the cat) side by side, parted by one hairline; the words under the pictures are gone from sight
 //      (still read by a screen reader) and the boxes are larger than the 88 px they were; Reset zoom is a button on the picture's corner, reachable by Tab, named by its tooltip; the box says what it shows.
 //      Screenshots of the rows (wide, tall, an earring pair) go to SHOTS.
+//   H  MADEV (Paul, 28 Oct 2026, live: "The thumbnails are missing all of the labels (Back/Front Engraving)"): the cat's two faces approved and put away by the upkeep (Engrave.shelveWritten: their
+//      placement kept as numbers, the letters let go), the cloud's row holding a picture of the FIRST drawing (no `v`): the list shows this page's labelled picture, drawn again from the kept placement,
+//      and sends it once, paced, with v 3, which the cloud keeps; a page that cannot draw a piece shows the cloud's first-drawing picture with its faces named over it (the chips)
 //   E  the sandbox keeps its pictures apart (a Sandbox_ pool row and charmnest/sandbox/made/), a PNG that is not one is refused, a clear takes the picture and its file away
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/made-thumbs.cjs
 'use strict';
@@ -190,6 +193,51 @@ const role = page => page.waitForFunction(() => !window.CNRole || ['ask', 'role'
     check('D2 nothing on either page erred', !w.errors.length && !errors2.length, JSON.stringify({ one: w.errors.slice(0, 3), two: errors2.slice(0, 3) }));
     if (process.env.SHOTS) { const rowSel = `[data-key="${KEY}"]`; await page.locator(rowSel).first().screenshot({ path: path.join(process.env.SHOTS, 'MADE-row-1.png') }).catch(() => {}); await p2.locator(rowSel).first().screenshot({ path: path.join(process.env.SHOTS, 'MADE-row-2.png') }).catch(() => {}); }
 
+    // ── H: a picture of the first drawing in the cloud, a face put away by the upkeep ──
+    const CAT = made.both.poolIds[0], CATKEY = made.both.key;
+    // (a picture as the first drawing made it: two faces side by side, 192 px high, no chips; kept in the fake Storage as the cloud keeps one)
+    const oldPng = await page.evaluate(() => { const c = document.createElement('canvas'); c.width = 404; c.height = 192; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 404, 192); g.fillStyle = '#f1ece1'; g.strokeStyle = '#000'; g.lineWidth = 5; for (const x of [8, 212]) { g.beginPath(); g.ellipse(x + 92, 96, 84, 84, 0, 0, 7); g.fill(); g.stroke(); } return c.toDataURL('image/png'); });
+    const putOld = (pathName, faces) => { st.blobs.set(pathName, { buf: Buffer.from(oldPng.split(',')[1], 'base64'), generation: 7, meta: { contentType: 'image/png', metadata: { firebaseStorageDownloadTokens: 'tok1' } } });
+      const at = Date.now(); return { url: `https://firebasestorage.googleapis.com/v0/b/test-bucket/o/${encodeURIComponent(pathName)}?alt=media&token=tok1&v=${at}`, path: pathName, at, sig: 'w4kb3u', faces, base: null, by: 'Paul_K', dev: 'd3gcry3ib' }; };
+    const old = putOld('charmnest/made/' + CAT + '/c9c3old.png', ['front', 'back']);
+    st.put('Charm_Pool', CAT, { made: old });
+    const shelf = await page.evaluate(([pid, old]) => {
+      // (both faces approved and their files kept, as the upkeep needs them, then put away by the upkeep itself)
+      const pj = Engrave.jobsOfPiece(pid), at = Date.now();
+      for (const j of [pj.front, pj.back]) { j.state = 'written'; j.approvedAt = at; j.approvedBy = 'Test Operator'; j.backs = (j.copies || []).map(id => ({ poolId: id, approvedAt: at, outputs: { ai: { url: 'x' }, png: { url: 'y' } } })); }
+      const n = Engrave.shelveWritten();
+      // (the row as the placement feed brings it: this page's own and the one the feed read)
+      const e = OrderPieces._learned.get(pid.split('_')[0]), lr = e && e.pools && e.pools.find(p => p.poolId === pid);
+      for (const row of [B.pool.rows.get(pid), lr]) if (row) row.made = Object.assign({}, old, { base: row.charmHash == null ? null : String(row.charmHash) });
+      CharmNestMadeThumb.changed('test');
+      return { shelved: n, front: [!!pj.front.fit, !!pj.front.writtenFit], back: [!!pj.back.fit, !!pj.back.writtenFit] };
+    }, [CAT, old]);
+    st.put('Charm_Pool', CAT, { made: Object.assign({}, old, { base: (st.doc('Charm_Pool', CAT) || {}).charmHash == null ? null : String(st.doc('Charm_Pool', CAT).charmHash) }) });
+    const catPuts0 = puts(CAT).length;
+    await page.evaluate(() => { CN.setMode('orders'); Orders.render(); });
+    await page.locator(`[data-key="${CATKEY}"]`).first().scrollIntoViewIfNeeded().catch(() => {});
+    let h1 = null; for (let t0 = Date.now(); Date.now() - t0 < 20000; ) { h1 = await page.evaluate(([key, pid]) => { const v = document.querySelector(`[data-key="${key}"] [data-vector]`), im = v && v.querySelector('img'), s = CharmNestMadeThumb.stateOf(pid), r = v && v.getBoundingClientRect(), pic = s && r ? CharmNestMadeThumb.pictureOf(pid, null, CharmNestMadeThumb.tileFor(r.height)) : null;
+      return { shelved: !!(s && s.tiles.every(t => t.words && t.words.shelved)), labels: !!(pic && pic.labels), same: !!(pic && im && im.src === pic.url), made: v && v.dataset.made }; }, [CATKEY, CAT]); if (h1.same) break; await wait(300); }
+    check(`H1 both faces put away by the upkeep (${JSON.stringify(shelf)}), the cloud holding a picture of the first drawing: the row shows this page's labelled picture, drawn again from the kept placement`, shelf.shelved >= 2 && h1.shelved && h1.labels && h1.same, JSON.stringify({ shelf, h1 }));
+    for (let t0 = Date.now(); Date.now() - t0 < 20000 && !((st.doc('Charm_Pool', CAT) || {}).made || {}).v; ) await wait(300);
+    await wait(2500);
+    const sent = puts(CAT).slice(catPuts0), mNew = (st.doc('Charm_Pool', CAT) || {}).made || {};
+    check(`H2 it is sent again once (${sent.length}), with v 3, and the cloud keeps the version (${mNew.v}); the first drawing's file is gone`, sent.length === 1 && sent[0].body.v === 3 && mNew.v === 3 && mNew.url !== old.url && !st.blobs.has(old.path), JSON.stringify({ sent: sent.map(c => ({ v: c.body.v, sig: c.body.sig })), mNew }));
+    // (a page that cannot draw the piece: the second computer, its row of the tag holding a picture of the first drawing)
+    const oldTag = putOld('charmnest/made/' + PID + '/c9c3tag.png', ['front', 'back']);
+    const h3 = await p2.evaluate(async ([pid, old, key]) => {
+      const rid = pid.split('_')[0], e = OrderPieces._learned.get(rid), row = e && e.pools && e.pools.find(p => p.poolId === pid); if (!row) return { none: true };
+      row.made = Object.assign({}, old, { base: row.charmHash == null ? null : String(row.charmHash) });
+      CharmNestMadeThumb.refreshSoon();
+      const ink = src => new Promise(res => { const i = new Image(); i.onload = () => { const c = document.createElement('canvas'); c.width = i.naturalWidth; c.height = i.naturalHeight; const g = c.getContext('2d'); g.drawImage(i, 0, 0); const d = g.getImageData(0, 0, c.width, c.height).data; let n = 0; for (let k = 0; k < d.length; k += 4) if (Math.abs(d[k] - 0x2a) < 6 && Math.abs(d[k + 1] - 0x27) < 6 && Math.abs(d[k + 2] - 0x24) < 6) n++; res({ n, w: c.width, h: c.height }); }; i.onerror = () => res(null); i.src = src; });
+      for (let i = 0; i < 60; i++) { await new Promise(r => setTimeout(r, 250)); const v = document.querySelector(`[data-key="${key}"] [data-vector]`), im = v && v.querySelector('img'), f = v && v._mvRow && CharmNestMadeThumb.forLine(v._mvRow); if (im && im.complete && f && f.key.includes(old.url) && im.src.startsWith('data:')) { const shown = await ink(im.src); return { shown, key: f.key.slice(0, 60) }; } }
+      return { timeout: true };
+    }, [PID, oldTag, KEY]);
+    const plain = await page.evaluate(src => new Promise(res => { const i = new Image(); i.onload = () => { const c = document.createElement('canvas'); c.width = i.naturalWidth; c.height = i.naturalHeight; const g = c.getContext('2d'); g.drawImage(i, 0, 0); const d = g.getImageData(0, 0, c.width, c.height).data; let n = 0; for (let k = 0; k < d.length; k += 4) if (Math.abs(d[k] - 0x2a) < 6 && Math.abs(d[k + 1] - 0x27) < 6 && Math.abs(d[k + 2] - 0x24) < 6) n++; res(n); }; i.src = src; }), oldPng);
+    check(`H3 a page that cannot draw the piece shows the first drawing's picture with its faces named over it (${h3.shown && h3.shown.n} chip pixels against ${plain} in the picture as kept)`, h3.shown && h3.shown.w === 404 && h3.shown.n > plain + 500, JSON.stringify({ h3, plain }));
+    if (process.env.SHOTS) { await page.locator(`[data-key="${CATKEY}"]`).first().screenshot({ path: path.join(process.env.SHOTS, 'MADEV-shelved-cat.png') }).catch(() => {}); await p2.locator(`[data-key="${KEY}"]`).first().screenshot({ path: path.join(process.env.SHOTS, 'MADEV-old-picture-named.png') }).catch(() => {}); }
+    check('H4 nothing on either page erred', !w.errors.length && !errors2.length, JSON.stringify({ one: w.errors.slice(0, 3), two: errors2.slice(0, 3) }));
+
     // ── E: the server's own rules ──
     const call = async body => { const r = await fetch(`${w.srv.sorterOrigin}/.netlify/functions/charmNestLibrary`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, out: await r.json().catch(() => ({})), feed: r.headers.get('x-cn-feed') || '' }; };
     const png = await page.evaluate(pid => CharmNestMadeThumb.pictureOf(pid).url, PID);
@@ -197,7 +245,7 @@ const role = page => page.waitForFunction(() => !window.CNRole || ['ask', 'role'
     const sb = await call({ op: 'madeThumbPut', sandbox: true, poolId: PID, png, sig: 'abc1', faces: ['front', 'back'], by: 'Test Operator', dev: 'dtest1' });
     const sbRow = st.doc('Sandbox_Charm_Pool', PID), prod = st.doc('Charm_Pool', PID);
     check('E1 the sandbox keeps its picture on its own pool row and under charmnest/sandbox/made/; the real row is untouched; the answer names the order for the feed',
-      sb.status === 200 && sbRow.made && /^charmnest\/sandbox\/made\//.test(sbRow.made.path) && sbRow.made.base === 'h1' && prod.made && prod.made.url === m1.url && new RegExp('p:' + RID).test(sb.feed), JSON.stringify({ sb, sbRow: sbRow && sbRow.made }));
+      sb.status === 200 && sbRow.made && /^charmnest\/sandbox\/made\//.test(sbRow.made.path) && sbRow.made.base === 'h1' && sbRow.made.v === 1 && prod.made && prod.made.url === m1.url && new RegExp('p:' + RID).test(sb.feed), JSON.stringify({ sb, sbRow: sbRow && sbRow.made }));
     const bad = await call({ op: 'madeThumbPut', sandbox: true, poolId: PID, png: 'data:image/png;base64,' + Buffer.from('not a png at all').toString('base64'), sig: 'abc2' });
     const none = await call({ op: 'madeThumbPut', sandbox: true, poolId: '4290000999_42900009991_1', png, sig: 'abc3' });
     const files = () => [...st.blobs.keys()].filter(k => k.startsWith('charmnest/sandbox/made/'));
