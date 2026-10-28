@@ -12,7 +12,7 @@
  *                     Master.load once (load()), and onChange(fn) says when it has come. o.limit (default 60). Every word typed must be in the SKU or its master file's name; the SKU itself
  *                     first, then SKUs that start with it, then a word that starts with it, then the rest, each in the library's order. An empty search: the masters opened last, then A to Z.
  *                     widthMm / heightMm: the drawing's own size (the index keeps its outer box, a margin of SIZE_PAD_PT round it). thumbUrl: the stored picture through the page's asset
- *                     address (the page's COEP blocks the Storage address itself), "" when the library has none.
+ *                     address (the page's COEP blocks the Storage address itself), "" when the library has none: picture(sku) draws that one (Promise<url>, kept on this computer).
  *   open(sku, o)   -> Promise<{ designId, version } | null>   the master opened in the Charm Editor as a NEW design: every part of its drawing a layer (the outline, its holes, every engraving),
  *                     where the .ai draws it, NOTHING locked unless the person locks it. o.size: one of a sized design's sizes (the first when none is named). An editor already open (the
  *                     library panel inside it) is closed first, through its own Cancel: changes there are asked about before anything is thrown away; "Keep editing" keeps it, and null
@@ -21,13 +21,15 @@
  *                     or none (its diameter, a wall of WALL_MM to the edge), a name.
  *   openPicker(o)  the picker on its library side: the search and the charms as tiles (their stored pictures; a design with none is drawn by Pool.masterPreview as the Master tab draws it,
  *                     kept on this computer by charm-nest-thumbs.js, and only for the tiles on screen).
- *   openDesign(d)  a saved design opened again (CharmNestDesigns.get's design): its Save makes the next version of the same design.
+ *   openDesign(d, o) a saved design opened again (CharmNestDesigns.get's design, or its id and o.version: read with get(…, { open: true }), which tells the log): its Save makes the
+ *                     next version of the same design.
  *   o.orderId / o.customName on any of them ride with the design (a custom order's design: charm-nest-custom-piece.js).
  *
  * The open itself is the bridge's design-mode path (window.CharmEditDesign.open, charm-nest-bridge.js: the engraving fonts and their outlines as a piece's open has them, lockRoles none); a page
  * without it opens the editor plainly. The editor's Save hands back the faces; they are saved as a version (by: the signed-in person), and a small card offers what is next: Send to sheet
  * (CharmNestCustomPiece.open, the pop-up of charm-nest-custom-piece.js: the metal, the order or a name), Keep editing (the editor again on this version), Done. A save that fails keeps the work:
- * "Back to the editor" opens it again as it was. Every step is told to the shared log (CNDesignLog.event: designOpen, designSave).
+ * "Back to the editor" opens it again as it was. Every step is told to the shared log (CNDesignLog.event): designOpen here (a master or a new start; a saved design's open is told by CharmNestDesigns.get), designSave by
+ * CharmNestDesigns.put. The design is sent with every part's paint as the library keeps it: the editor's own shapes say `true` (their role's pen colour) or `false` (none).
  *
  * The back: a design's back starts with the front's cut lines seen from behind, locked, as a guide (the back of a piece shows only its cut, charm-nest-art-edit.js); what the person adds on the
  * back is the design's back, and the guide is never saved (a back with nothing added is no back).
@@ -175,16 +177,30 @@
   }
 
   /* ═══ 3 · the design made from what the editor hands back ═══ */
-  const faceOut = (f, items) => ({ face: f.face, unitPt: true, frame: { x0: f.frame.x0, y0: f.frame.y0, wPt: f.frame.wPt, hPt: f.frame.hPt }, items: items || f.items || [] });
+  /* a part's paint as the design library keeps it ([r, g, b] from 0 to 1, or none): the editor's own shapes say only `true` (drawn in the role's colour) or `false`; a pen is
+     named by its role's colour, as charm-nest-art-edit.js paintOf names it (cut black, line red, hatch blue, art black) */
+  const PEN = { cut: [0, 0, 0], line: [1, 0, 0], hatch: [0, 0, 1], art: [0, 0, 0] };
+  const paint = (v, role) => (v === true ? (PEN[role] || PEN.art).slice() : Array.isArray(v) && v.length >= 3 && v.slice(0, 3).every(fin) ? v.slice(0, 3).map(x => clamp(x, 0, 1)) : v === false || v == null ? null : v);
+  function painted(items) {
+    return (items || []).map(it => {
+      if (!it || typeof it !== 'object') return it;
+      const o = Object.assign({}, it);
+      if ('stroke' in o) o.stroke = paint(o.stroke, o.role);
+      if ('fill' in o) o.fill = paint(o.fill, o.role);
+      if (Array.isArray(o.children)) o.children = painted(o.children);
+      return o;
+    });
+  }
+  const faceOut = (f, items) => ({ face: f.face, unitPt: true, frame: { x0: f.frame.x0, y0: f.frame.y0, wPt: f.frame.wPt, hPt: f.frame.hPt }, items: painted(items || f.items || []) });
   /** The design to save (CharmNestDesigns.put) from the editor's result: the front as edited, the back only when the person put something on it (the guide left out), the size of the cut
-   *  as drawn (the frame's when there is no cut line yet: noCut), where it came from, who. */
+   *  as drawn (the front's, else the back's; the frame's when there is no cut line yet: noCut), where it came from, who. */
   function designOf(res, start, by, M) {
     M = M || model();
     const F = (res && res.faces) || {}, front = F.front || start.faces.front;
     const faces = { front: faceOut(front) };
     const back = F.back ? (F.back.items || []).filter(it => it && !it.guide) : [];
     if (back.length) faces.back = faceOut(F.back, back);
-    const box = cutBox(faces.front.items, M), fr = faces.front.frame;
+    const box = cutBox(faces.front.items, M) || (faces.back ? cutBox(faces.back.items, M) : null), fr = faces.front.frame;
     const wPt = box ? box[2] - box[0] : fr.wPt, hPt = box ? box[3] - box[1] : fr.hPt;
     const d = { name: start.name, faces, widthMm: r3(wPt * MM), heightMm: r3(hPt * MM), source: Object.assign({}, start.source), by: by || '' };
     if (start.id) d.id = start.id;
@@ -254,6 +270,14 @@
     return rank(indexOf(ents), q, o.limit, o.recent === false ? null : recent()).map(r => rowOut(r.e));
   }
   const count = () => indexOf(entries()).length;
+  /** A master's picture for a list that has none stored (thumbUrl ""): drawn from its drawing as the Master tab draws it (Pool.masterPreview, kept on this computer, so a
+   *  picture drawn once is never drawn or read again). → Promise<url | "">; ask it only for what is on screen. */
+  function picture(sku) {
+    const ents = entries(), e = ents && ents.get(String(sku || '').toUpperCase()), Pl = root && root.Pool;
+    if (!e) return Promise.resolve('');
+    const t = thumbOf(e); if (t) return Promise.resolve(cors(t));
+    return Pl && typeof Pl.masterPreview === 'function' ? Promise.resolve().then(() => Pl.masterPreview(e, sizesOf(e)[0] || null, false)).then(u => u || '', () => '') : Promise.resolve('');
+  }
   /* the library read once when the page holds none (Master.load: the copy on this computer first, the cloud's signatures, what changed): never per keystroke */
   let loading = null, loadError = '', tried = false;
   const listeners = new Set();
@@ -305,6 +329,7 @@
 .cem-search:focus-within{ border-color:var(--ink); }
 .cem-search svg{ width:17px; height:17px; flex:none; color:var(--muted); }
 .cem-search input{ flex:1 1 auto; min-width:0; border:0; outline:none; background:none; font-size:14px; color:var(--ink); height:100%; padding:0; }
+.cem-root .cem-search input:focus-visible,.cem-root .cem-name input:focus-visible,.cem-root .cem-f input:focus-visible{ outline:none; }
 .cem-count{ flex:none; font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
 .cem-grid{ flex:1 1 auto; min-height:0; overflow-y:auto; display:grid; grid-template-columns:repeat(auto-fill,minmax(128px,1fr)); grid-auto-rows:min-content; gap:8px; padding:1px 2px 8px; align-content:start; overscroll-behavior:contain; }
 .cem-tile{ position:relative; display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:7px; border:1px solid var(--hair); background:#fff; cursor:pointer; text-align:left; transition:background var(--in), border-color var(--in); }
@@ -371,12 +396,13 @@
 .cem-btn--ink:not(:disabled):hover{ background:#33342f; border-color:#33342f; }
 .cem-btn--sm{ padding:8px 14px; font-size:10.5px; letter-spacing:.18em !important; }
 .cem-root.cem-root--card{ z-index:2147482450; background:rgba(28,29,29,.30); }
-.cem-card{ width:min(440px,100%); background:#fff; border:1px solid var(--ink); box-shadow:0 18px 44px rgba(28,29,29,.22); padding:22px 22px 18px; outline:none; }
+.cem-card{ width:min(560px,100%); background:#fff; border:1px solid var(--ink); box-shadow:0 18px 44px rgba(28,29,29,.22); padding:22px 22px 18px; outline:none; }
 .cem-card h3{ margin:0 0 8px; font-family:var(--serif); font-weight:500; font-size:24px; line-height:1.15; color:var(--ink); }
 .cem-card p{ margin:0 0 6px; font-size:12.5px; line-height:1.6; color:var(--muted); }
 .cem-card p b{ color:var(--ink); }
 .cem-card p.is-bad{ color:#8a3a26; }
 .cem-card__b{ display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; margin-top:16px; }
+.cem-card__b .cem-btn{ padding:11px 18px; letter-spacing:.2em !important; }
 .cem-note{ position:fixed; left:50%; bottom:22px; transform:translateX(-50%); z-index:2147482600; max-width:min(560px,calc(100vw - 32px)); padding:9px 16px; background:var(--ink,#1c1d1d); color:#fff;
   font:600 12px/1.45 'Nunito Sans','Helvetica Neue',Helvetica,Arial,sans-serif; letter-spacing:.02em; box-shadow:0 14px 34px rgba(28,29,29,.25); pointer-events:auto; cursor:default; }
 .cem-note.is-bad{ background:#8a3a26; cursor:pointer; }
@@ -463,7 +489,7 @@
     let shown;
     try { shown = E.open(opts); }
     catch (e) { drop(); note(`The charm editor could not open · ${(e && e.message) || e}`, true); return null; }
-    log('designOpen', Object.assign({ name: start.name, by }, start.log || {}, start.id ? { designId: start.id, version: start.version } : {}, start.orderId ? { orderId: start.orderId } : {}));
+    if (start.log !== false) log('designOpen', Object.assign({ name: start.name, by }, start.log || {}, start.id ? { designId: start.id, version: start.version } : {}, start.orderId ? { orderId: start.orderId } : {}));
     let res;
     try { res = await shown; } catch (e) { drop(); note(`The charm editor could not open · ${(e && e.message) || e}`, true); return null; }
     if (!res) { drop(); return null; }   // (Cancel, the ×, Esc: nothing is saved; a master or a design picked in the library panel closes it this way too)
@@ -487,7 +513,6 @@
       if (again !== 'again') return null;
       return edit(Object.assign({}, start, { faces: facesAgain(design) }), by);
     }
-    if (!got.same) log('designSave', { designId: got.id, version: got.version, name: design.name, source: design.source, widthMm: design.widthMm, heightMm: design.heightMm, by, ...(design.orderId ? { orderId: design.orderId } : {}), changes: changed(res, M) });
     if (design.source && design.source.kind === 'master' && design.source.sku) remember(design.source.sku);
     card.done(design, got);
     const next = await card.choice();
@@ -587,10 +612,14 @@
   /** A saved design opened again: its Save makes the next version of it. */
   async function openDesign(d, o) {
     o = o || {};
-    if (!d || !d.faces || !d.faces.front) return null;
     const by = await who('edit a design'); if (!by) return null;
+    if (typeof d === 'string' || (d && d.id && !d.faces)) {   // (an id: the version read through the design library, which tells the log it was opened)
+      const D = root.CharmNestDesigns, id = typeof d === 'string' ? d : d.id, v = typeof d === 'string' ? o.version : d.version;
+      try { d = D && typeof D.get === 'function' ? await D.get(id, v || undefined, { open: true }) : null; } catch (e) { note(`The design could not be read · ${(e && e.message) || e}`, true); return null; }
+    }
+    if (!d || !d.faces || !d.faces.front) return null;
     const st = { id: d.id || null, version: d.version || null, name: d.name || 'Design', title: d.name || 'Design', source: Object.assign({}, d.source || { kind: 'new' }), faces: facesAgain(d),
-      log: { source: 'design' }, ...(d.orderId || o.orderId ? { orderId: String(d.orderId || o.orderId) } : {}), ...(d.customName ? { customName: d.customName } : {}) };
+      log: false, ...(d.orderId || o.orderId ? { orderId: String(d.orderId || o.orderId) } : {}), ...(d.customName ? { customName: d.customName } : {}) };
     st.subtitle = subtitleFor(st);
     return edit(st, by);
   }
@@ -795,7 +824,7 @@
   }
 
   const api = {
-    search, load, count, onChange: fn => { if (typeof fn === 'function') listeners.add(fn); return () => listeners.delete(fn); },
+    search, load, count, picture, onChange: fn => { if (typeof fn === 'function') listeners.add(fn); return () => listeners.delete(fn); },
     open, openPicker, newDesign, openDesign,
     current: () => (session ? { name: session.start.name, source: Object.assign({}, session.start.source), designId: session.start.id || null, version: session.start.version || null, orderId: session.start.orderId || null } : null),
     model: { startSpec, startWhy, startFace, outlineSP, holeFor, masterFace, backFace, cutOutlines, cutBox, designOf, changed, indexOf, rank, norm, newStart, SHAPES, WALL_MM, HOLE_MM, HEART_CLEFT },

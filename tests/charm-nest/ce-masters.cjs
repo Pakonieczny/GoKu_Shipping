@@ -2,12 +2,14 @@
 // repository and have full control over manipulating that charm" ... "designing custom charms").
 //   A  (node) the starting outlines are the size asked for (their TIGHT box, to a thousandth of a mm), the jump ring hole keeps its wall to the edge, a hole too big for a small charm is
 //      refused, the design made from the editor's result leaves the back's guide out and measures the cut, and the search over a 7,000-charm library ranks the SKU first and is quick
-//   B  the real sorter page over the repo's fake site (_engraveRealWorld.cjs: the master library holding the fixture drawings; offline, nothing real written, made-up names), with stand-ins
-//      for the design library (CharmNestDesigns), the Send to sheet pop-up (CharmNestCustomPiece) and the employee log (CNDesignLog), which other workstreams build:
+//   B  the real sorter page over the repo's fake site (_engraveRealWorld.cjs: the master library holding the fixture drawings; offline, nothing real written, made-up names) with the
+//      real design library (charm-nest-designs.js, its designPut over the fake site's Firestore), and stand-ins for the Send to sheet pop-up (CharmNestCustomPiece) and the employee
+//      log (CNDesignLog), which other workstreams build:
 //      the search is answered from what the page holds (no call per keystroke, typing in the picker paints within a frame over a 7,000-charm library); a master opened from the picker
 //      comes up in the Charm Editor with every part of its drawing a layer, none locked; a petal deleted and a part nudged, Save makes version 1 of a design (source master, its SKU),
 //      the master and every piece's artwork record untouched; Keep editing, another change, Save makes version 2 of the SAME design; Send to sheet hands that version on; a blank
-//      heart 20 × 18 mm with a jump ring hole opens as its outline and hole (the cut), saved as a new design of that size; and a master opened from inside a changed editor asks first
+//      heart 20 × 18 mm with a jump ring hole opens as its outline and hole (the cut), a rectangle drawn on it with the editor's own tool, saved as a new design of that size; a saved
+//      design opened again by its id; and a master opened from inside a changed editor asks first
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/ce-masters.cjs      (CEM_ONLY=A or B; SHOTS=<dir> keeps screenshots)
 'use strict';
 const path = require('node:path'), fs = require('node:fs');
@@ -82,30 +84,32 @@ async function partB() {
   const libCalls = () => st.calls.filter(c => c.name === 'charmNestLibrary').length;
   const artCalls = () => st.calls.filter(c => c.name === 'charmNestLibrary' && /^art/.test(String(c.op || ''))).length;
   try {
-    // the stand-ins for what other workstreams build: the design library, the Send to sheet pop-up, the employee log
+    // the stand-ins for what other workstreams build: the Send to sheet pop-up, the employee log (the design library is the real one: every put is counted)
     await page.evaluate(() => {
-      const ver = {}; let n = 0;
-      window.__puts = []; window.__sends = []; window.__log = [];
-      window.CharmNestDesigns = { put: async d => { await new Promise(r => setTimeout(r, 30)); window.__puts.push(JSON.parse(JSON.stringify(d))); const id = d.id || 'DSG-' + (++n); ver[id] = (ver[id] || 0) + 1; return { id, version: ver[id], at: Date.now(), hash: 'h' + ver[id] }; } };
+      window.__sends = []; window.__log = []; window.__puts = 0;
       window.CharmNestCustomPiece = { open: o => { window.__sends.push(o); } };
       window.CNDesignLog = { event: (kind, data) => window.__log.push({ kind, data: JSON.parse(JSON.stringify(data || {})) }) };
+      const put = CharmNestDesigns.put; CharmNestDesigns.put = function () { window.__puts++; return put.apply(this, arguments); };
     });
+    const designPuts = () => st.calls.filter(c => c.name === 'charmNestLibrary' && c.op === 'designPut').length;
     const b0 = await page.evaluate(() => ({ mod: !!window.CharmNestCeMasters, host: !!(window.CharmEditDesign && CharmEditDesign.fonts && CharmEditDesign.textToPaths && CharmEditDesign.open), n: B.master.entries.size, entry: JSON.stringify(Master.entryFor('BFLOWER_9901')) }));
     check('B0 the page has the module and the bridge\'s design-mode open (fonts, outlines), and the fixture library (' + b0.n + ' masters)', b0.mod && b0.host && b0.n >= 5, JSON.stringify({ mod: b0.mod, host: b0.host }));
 
     /* ── B1 the search: what the page holds, no call ── */
     const c0 = libCalls();
     const s1 = await page.evaluate(() => { const out = {}; for (const q of ['flower', 'BFLOWER_9901', 'cat', 'comet 9427', 'nothing here', '']) out[q] = CharmNestCeMasters.search(q); return out; });
-    const fl = s1.flower[0] || {};
-    check('B1 search answers from the library the page holds: "flower" finds BFLOWER_9901 with its size (the drawing\'s own, ' + fl.widthMm + ' × ' + fl.heightMm + ' mm), "cat" both cats, nothing for nonsense, A to Z for nothing typed; no call to the cloud',
+    const fl = s1.flower[0] || {}, pic = await page.evaluate(async () => String(await CharmNestCeMasters.picture('COMET_9427')).slice(0, 22));
+    check('B1 search answers from the library the page holds: "flower" finds BFLOWER_9901 with its size (the drawing\'s own, ' + fl.widthMm + ' × ' + fl.heightMm + ' mm), "cat" both cats, nothing for nonsense, A to Z for nothing typed; no call to the cloud; a master with no stored picture is drawn on asking (' + pic + '…)',
       fl.sku === 'BFLOWER_9901' && Math.abs(fl.widthMm - (34 - 2.6) * MM) < 0.06 && s1.BFLOWER_9901[0].sku === 'BFLOWER_9901' && s1.cat.map(r => r.sku).join() === 'SCHRODINGER CAT 1,SCHRODINGER CAT 2'
-        && s1['comet 9427'][0].sku === 'COMET_9427' && s1['nothing here'].length === 0 && s1[''].length === b0.n && libCalls() === c0, JSON.stringify({ cat: s1.cat.map(r => r.sku), calls: libCalls() - c0 }));
+        && s1['comet 9427'][0].sku === 'COMET_9427' && s1['nothing here'].length === 0 && s1[''].length === b0.n && libCalls() === c0 && /^data:image\/png/.test(pic), JSON.stringify({ cat: s1.cat.map(r => r.sku), calls: libCalls() - c0 }));
 
     /* ── B2 the picker: typing over a 7,000-charm library, within a frame, no call ── */
     await page.evaluate(() => { window.__pick = CharmNestCeMasters.openPicker(); });
     await waitFor(page, () => document.querySelectorAll('.cem-root .cem-tile').length > 0);
     await settleP(page);
     const p0 = await page.evaluate(() => ({ tiles: document.querySelectorAll('.cem-tile').length, count: document.querySelector('[data-count]').textContent, focus: document.activeElement && document.activeElement.dataset.cf, title: document.querySelector('.cem-id h2').textContent }));
+    await waitFor(page, () => document.querySelectorAll('.cem-root .cem-pic img').length >= 5, null, 60000).catch(() => {});
+    const pics = await page.evaluate(() => document.querySelectorAll('.cem-root .cem-pic img').length);
     await shot('B2-picker');
     const t2 = await page.evaluate(async () => {
       const real = B.master.entries, big = new Map(real), pic = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>');
@@ -123,8 +127,8 @@ async function partB() {
       times.sort((a, b) => a - b);
       return { med: times[times.length >> 1], max: times[times.length - 1], tIndex, tiles, count };
     });
-    check(`B2 the picker opens on the library (${p0.tiles} charms, "${p0.count}", the search field ready); typing over 7,000 charms paints each keystroke in ${t2.med.toFixed(1)} ms (median), ${t2.max.toFixed(1)} ms at most (60 tiles; the index ${t2.tIndex.toFixed(1)} ms once); no call to the cloud`,
-      p0.tiles === b0.n && p0.focus === 'q' && t2.med < 16 && t2.max < 50 && t2.tiles === 60 && /^60\+ of 7,0\d\d$/.test(t2.count) && libCalls() === c0, JSON.stringify({ count: t2.count, calls: libCalls() - c0 }));
+    check(`B2 the picker opens on the library (${p0.tiles} charms, "${p0.count}", the search field ready, ${pics} pictures drawn as the Master tab draws them); typing over 7,000 charms paints each keystroke in ${t2.med.toFixed(1)} ms (median), ${t2.max.toFixed(1)} ms at most (60 tiles; the index ${t2.tIndex.toFixed(1)} ms once); no call to the cloud`,
+      p0.tiles === b0.n && p0.focus === 'q' && pics >= 5 && t2.med < 16 && t2.max < 50 && t2.tiles === 60 && /^60\+ of 7,0\d\d$/.test(t2.count) && libCalls() === c0, JSON.stringify({ count: t2.count, calls: libCalls() - c0 }));
 
     /* ── B3 a master opened from the picker: every part a layer, none locked ── */
     await page.fill('.cem-root [data-cf="q"]', 'bflower');
@@ -160,13 +164,17 @@ async function partB() {
     await page.click('.ce-root [data-act="save"]');
     await waitFor(page, () => document.querySelector('.cem-card h3') && /Saved · version 1/.test(document.querySelector('.cem-card h3').textContent));
     await shot('B4-saved-card');
-    const b4 = await page.evaluate(() => ({ puts: window.__puts.length, d: window.__puts[0], card: document.querySelector('.cem-card').textContent, send: !document.querySelector('.cem-card [data-c="send"]').disabled, log: window.__log.map(x => x.kind + ':' + (x.data.source && (x.data.source.kind || x.data.source) || '')), entry: JSON.stringify(Master.entryFor('BFLOWER_9901')), open: !!CharmEditor.current }));
+    const b4 = await page.evaluate(async () => {
+      const row = CharmNestDesigns.rows().find(r => r.name === 'BFLOWER_9901'), d = row && await CharmNestDesigns.get(row.id, 1);
+      return { puts: window.__puts, row, d, ok: d ? await CharmNestDesigns.verify(d) : null, card: document.querySelector('.cem-card').textContent, send: !document.querySelector('.cem-card [data-c="send"]').disabled, log: window.__log.map(x => x.kind + ':' + ((x.data.source && (x.data.source.kind || x.data.source)) || x.data.sku || '')), entry: JSON.stringify(Master.entryFor('BFLOWER_9901')), open: !!CharmEditor.current };
+    });
     const d1 = b4.d || {}, f1 = (d1.faces && d1.faces.front) || {}, moved = after.box[0] - before[0];
-    check(`B4 a petal deleted and the centre nudged ${(moved * MM).toFixed(3)} mm; Save makes version 1 of a design: "${d1.name}", source master ${d1.source && d1.source.sku}, ${f1.items && f1.items.length} layers, ${d1.widthMm} × ${d1.heightMm} mm, by ${d1.by}, no back (the guide is not kept); the card offers Send to sheet; the master record and every piece's artwork untouched (${artCalls() - a0} art calls)`,
-      after.n === b3.n - 1 && after.dirty && Math.abs(moved * MM - 0.2) < 1e-6 && b4.puts === 1 && d1.name === 'BFLOWER_9901' && d1.source.kind === 'master' && d1.source.sku === 'BFLOWER_9901' && !d1.id
+    check(`B4 a petal deleted and the centre nudged ${(moved * MM).toFixed(3)} mm; Save makes version 1 of a design in the design library: "${d1.name}" (${d1.id}), source master ${d1.source && d1.source.sku}, ${f1.items && f1.items.length} layers, ${d1.widthMm} × ${d1.heightMm} mm, by ${d1.by}, its hash checks out, no back (the guide is not kept); the card offers Send to sheet; the master record and every piece's artwork untouched (${artCalls() - a0} art calls)`,
+      after.n === b3.n - 1 && after.dirty && Math.abs(moved * MM - 0.2) < 1e-6 && b4.puts === 1 && designPuts() === 1 && d1.name === 'BFLOWER_9901' && d1.source.kind === 'master' && d1.source.sku === 'BFLOWER_9901' && d1.version === 1 && b4.ok === true
         && f1.items.length === b3.n - 1 && !f1.items.some(i => i.id === ids.petal) && !d1.faces.back && Math.abs(d1.widthMm - b3.box[2] * MM) < 1e-3 && Math.abs(d1.heightMm - b3.box[3] * MM) < 1e-3 && d1.by === 'Test Operator'
         && b4.send && /The master BFLOWER_9901 in the charm library is unchanged/.test(b4.card) && b4.entry === b0.entry && artCalls() === a0 && artCalls() === 0 && !b4.open
-        && b4.log.join() === 'designOpen:master,designSave:master', JSON.stringify({ n: after.n, moved, log: b4.log, art: artCalls() }));
+        && b4.log.join() === 'designOpen:master,designSave:BFLOWER_9901', JSON.stringify({ n: after.n, moved, log: b4.log, art: artCalls(), ok: b4.ok, row: b4.row && b4.row.id }));
+    const ID1 = d1.id;
 
     /* ── B5 Keep editing: the same design, another change, version 2; then Send to sheet hands version 2 on ── */
     await page.click('.cem-card [data-c="again"]');
@@ -180,11 +188,11 @@ async function partB() {
     await waitFor(page, () => document.querySelector('.cem-card h3') && /Saved · version 2/.test(document.querySelector('.cem-card h3').textContent));
     await page.click('.cem-card [data-c="send"]');
     await settleP(page);
-    const b5 = await page.evaluate(() => ({ puts: window.__puts.length, d: window.__puts[1], sends: window.__sends, card: !!document.querySelector('.cem-card'), result: null }));
+    const b5 = await page.evaluate(async id => ({ puts: window.__puts, d: await CharmNestDesigns.get(id), sends: window.__sends, card: !!document.querySelector('.cem-card'), rows: CharmNestDesigns.rows().length }), ID1);
     const pick = await page.evaluate(() => window.__pick);
     check(`B5 Keep editing opens version 1 again (${r5.n} layers, none locked: "${r5.sub.slice(0, 40)}…"); a second petal deleted and Save makes version 2 of the SAME design; Send to sheet hands it on (${JSON.stringify(b5.sends[0])}); the picker's promise says what was made`,
-      r5.n === b3.n - 1 && r5.locked === 0 && /version 1/.test(r5.sub) && b5.puts === 2 && b5.d.id === 'DSG-1' && b5.d.faces.front.items.length === b3.n - 2 && b5.sends.length === 1 && b5.sends[0].designId === 'DSG-1' && b5.sends[0].version === 2
-        && !b5.card && pick && pick.designId === 'DSG-1' && pick.version === 2, JSON.stringify({ puts: b5.puts, id: b5.d && b5.d.id, pick }));
+      r5.n === b3.n - 1 && r5.locked === 0 && /version 1/.test(r5.sub) && b5.puts === 2 && b5.rows === 1 && b5.d.id === ID1 && b5.d.version === 2 && b5.d.faces.front.items.length === b3.n - 2 && b5.sends.length === 1 && b5.sends[0].designId === ID1 && b5.sends[0].version === 2
+        && !b5.card && pick && pick.designId === ID1 && pick.version === 2, JSON.stringify({ puts: b5.puts, id: b5.d && b5.d.id, v: b5.d && b5.d.version, pick }));
 
     /* ── B6 a blank heart, 20 × 18 mm, with a jump ring hole ── */
     await page.evaluate(() => { window.__new = CharmNestCeMasters.newDesign(); });
@@ -207,17 +215,33 @@ async function partB() {
       prev.paths === 2 && prev.start && /20 × 18 mm · hole Ø 1.5 mm/.test(prev.dims) && b6.ids === 'outline:cut,hole:cut' && b6.locked === 0 && Math.abs(b6.o[0] - 20) < 1e-3 && Math.abs(b6.o[1] - 18) < 1e-3
         && Math.abs(b6.hole.dia - 1.5) < 1e-3 && Math.abs(b6.hole.cx - 10) < 1e-3 && Math.abs(b6.hole.top - 0.2 * 18 - 1) < 1e-3 && b6.title === 'Heart 20 × 18 mm' && b6.back === 2, JSON.stringify(b6));
     await shot('B6-heart-editor');
-    // the hole moved down 1 mm (Shift + arrow), Save: a new design of that size
+    // the hole moved down 1 mm (Shift + arrow); a small rectangle drawn with the editor's own Rectangle tool (its paint says only `true`); Save: a new design of that size
     await page.click('.ce-root .ce-layer[data-id="hole"]'); await settleP(page);
     await page.keyboard.press('Shift+ArrowDown'); await settleP(page);
+    await page.keyboard.press('Escape'); await page.keyboard.press('r'); await settleP(page);
+    { const a = await page.evaluate(() => CharmEditor.current.clientOf(20 * 72 / 25.4 * 0.4, 18 * 72 / 25.4 * 0.5)), b = await page.evaluate(() => CharmEditor.current.clientOf(20 * 72 / 25.4 * 0.6, 18 * 72 / 25.4 * 0.62));
+      await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 8 }); await page.mouse.up(); await settleP(page); }
+    const drawn = await page.evaluate(() => CharmEditor.current.items('front').filter(i => i.name === 'Rectangle').map(i => ({ stroke: i.stroke, fill: i.fill, role: i.role })));
     await page.click('.ce-root [data-act="save"]');
     await waitFor(page, () => document.querySelector('.cem-card h3') && /Saved · version 1/.test(document.querySelector('.cem-card h3').textContent));
-    const b6s = await page.evaluate(() => { const d = window.__puts[2]; const h = d.faces.front.items.find(i => i.id === 'hole'); return { name: d.name, source: d.source, w: d.widthMm, h: d.heightMm, n: d.faces.front.items.length, id: d.id || null, holeTy: h && h.ty * 25.4 / 72, log: window.__log.slice(-2).map(x => x.kind + ':' + JSON.stringify(x.data.source || '')) }; });
+    const b6s = await page.evaluate(async () => { const row = CharmNestDesigns.rows().find(r => /^Heart/.test(r.name)), d = await CharmNestDesigns.get(row.id); const h = d.faces.front.items.find(i => i.id === 'hole'), rc = d.faces.front.items.find(i => i.name === 'Rectangle'); return { name: d.name, source: d.source, w: d.widthMm, h: d.heightMm, n: d.faces.front.items.length, id: d.id, version: d.version, holeTy: h && h.ty * 25.4 / 72, rect: rc && { stroke: rc.stroke, fill: rc.fill, role: rc.role }, log: window.__log.slice(-2).map(x => x.kind) }; });
     await page.click('.cem-card [data-c="done"]');
     const nw = await page.evaluate(() => window.__new);
-    check(`B6b saved as a new design: "${b6s.name}", ${b6s.w} × ${b6s.h} mm, source ${JSON.stringify(b6s.source)}, its hole ${b6s.holeTy && b6s.holeTy.toFixed(3)} mm lower; Done puts the card away`,
-      b6s.name === 'Heart 20 × 18 mm' && b6s.source.kind === 'new' && b6s.source.shape === 'heart' && Math.abs(b6s.w - 20) < 1e-3 && Math.abs(b6s.h - 18) < 1e-3 && b6s.n === 2 && !b6s.id && Math.abs(b6s.holeTy - 1) < 1e-6
-        && nw && nw.designId === 'DSG-2' && nw.version === 1 && !(await page.$('.cem-card')), JSON.stringify(b6s));
+    check(`B6b saved as a new design: "${b6s.name}", ${b6s.w} × ${b6s.h} mm, source ${JSON.stringify(b6s.source)}, its hole ${b6s.holeTy && b6s.holeTy.toFixed(3)} mm lower, the drawn rectangle kept (the editor said stroke ${JSON.stringify(drawn[0] && drawn[0].stroke)}; the library keeps ${JSON.stringify(b6s.rect && b6s.rect.stroke)}); Done puts the card away`,
+      b6s.name === 'Heart 20 × 18 mm' && b6s.source.kind === 'new' && Math.abs(b6s.w - 20) < 1e-3 && Math.abs(b6s.h - 18) < 1e-3 && b6s.n === 3 && b6s.id !== ID1 && b6s.version === 1 && Math.abs(b6s.holeTy - 1) < 1e-6
+        && drawn.length === 1 && drawn[0].stroke === true && b6s.rect && b6s.rect.role === 'line' && JSON.stringify(b6s.rect.stroke) === '[1,0,0]' && b6s.rect.fill == null
+        && nw && nw.designId === b6s.id && nw.version === 1 && !(await page.$('.cem-card')), JSON.stringify(b6s));
+    const ID2 = b6s.id;
+
+    /* ── B6c a saved design opened again by its id (the design library's get, open): its parts as saved; Cancel saves nothing ── */
+    await page.evaluate(id => { window.__od = CharmNestCeMasters.openDesign(id); }, ID1);
+    await waitFor(page, () => !!(window.CharmEditor && CharmEditor.current));
+    await settleP(page);
+    const b6c = await page.evaluate(() => ({ n: CharmEditor.current.items('front').length, back: CharmEditor.current.items('back').filter(i => i.guide).length, sub: document.querySelector('.ce-root .ce-eyebrow').textContent, cur: CharmNestCeMasters.current(), log: window.__log.slice(-1).map(x => x.kind + ':' + x.data.version) }));
+    await page.click('.ce-root [data-act="cancel"]');
+    const od = await page.evaluate(() => window.__od);
+    check(`B6c the design opened again by its id: version 2's ${b6c.n} layers, its back guide, "${b6c.sub.slice(0, 48)}…"; the library told the log it was opened; Cancel saves nothing`,
+      b6c.n === b3.n - 2 && b6c.back === 2 && /version 2/.test(b6c.sub) && b6c.cur && b6c.cur.designId === ID1 && b6c.log[0] === 'designOpen:2' && od === null && designPuts() === 3, JSON.stringify(b6c));
 
     /* ── B7 the library panel's way in: a master opened while the editor holds changes asks first (Discard), and the editor is then the master's ── */
     await page.evaluate(() => { window.__h = CharmNestCeMasters.newDesign(); });
@@ -234,7 +258,7 @@ async function partB() {
     const b7 = await page.evaluate(async () => ({ h: await window.__h, n: CharmEditor.current.items('front').length, locked: CharmEditor.current.items('front').filter(i => i.locked).length, cur: CharmNestCeMasters.current() }));
     await page.click('.ce-root [data-act="cancel"]');
     await waitFor(page, () => !(window.CharmEditor && CharmEditor.current));
-    const b7b = await page.evaluate(async () => ({ m: await window.__m, puts: window.__puts.length, cur: CharmNestCeMasters.current() }));
+    const b7b = await page.evaluate(async () => ({ m: await window.__m, puts: window.__puts, cur: CharmNestCeMasters.current() }));
     check(`B7 from inside a changed editor, a master asks first ("${asked}"); Discard, and COMET_9427 is in the editor (${b7.n} layers, none locked) while the heart's session ended unsaved; Cancel on the untouched master closes it, nothing saved`,
       asked === 'Leave without saving?' && b7.h === null && b7.n > 0 && b7.locked === 0 && b7.cur && b7.cur.source.sku === 'COMET_9427' && b7b.m === null && b7b.puts === 3 && b7b.cur === null, JSON.stringify({ b7, b7b }));
 
