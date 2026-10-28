@@ -31,7 +31,8 @@
                                       its own while it is in use (2000: the Review tab, a sheet window), 0 otherwise; wants(key): this
                                       name is one it shows; active(): it is on screen now (else it is read when it is: resume); since(): when its own last read
                                       began (a read that began after the leader's question has what it named: nothing more is asked); read(why, keys, at):
-                                      why 'keys' | 'reset' | 'verify' | 'dirty', at: when the leader asked (what was written before it is named);
+                                      why 'keys' | 'reset' | 'verify' | 'dirty' | 'lost' (the feed stopped answering: back to its own timer, read now),
+                                      at: when the leader asked (what was written before it is named);
                                       clear(): whether something was named while it was not on screen, forgotten (the surface reads it its own way)
      live()                           the feed answers (here or in another tab): a surface lets its own timer go to its net
      quietSince(t, kinds)             nothing of these kinds moved since t, and the feed was heard all along (a list read at t is still what the cloud holds)
@@ -66,7 +67,7 @@
   const lastKind = new Map();                  // kind → the leader's question time of the last answer that named it ('*': not known, '!': a reset)
   const subs = new Set();
   const onceAt = new Map();
-  let pokes = [];                              // ({ at, fn }) poke(fn): told the first answer to a question asked after it                    // name → when a tab of this computer last ran it (once: told on the channel, never stored)
+  let pokes = [], failing = false;             // (failing: the leader's last question failed; every surface reads on its own until one is answered)                              // ({ at, fn }) poke(fn): told the first answer to a question asked after it                    // name → when a tab of this computer last ran it (once: told on the channel, never stored)
   const mine = new Map();                      // rid → how many order windows of this tab watch it
   const stats = { polls: 0, answers: 0, keys: 0, resets: 0, heard: 0, reads: 0, fetches: 0, errors: 0, gaps: 0, leads: 0 };
 
@@ -104,6 +105,7 @@
   function heard0(m, local) {
     if (!m || m.v !== V) return;
     heardAt = now(); if (!firstAt) firstAt = heardAt;
+    if (m.t === 'feed') failing = false;
     if (!local) stats.heard++;
     if (m.t === 'verify') { deliver({ verify: true, at: m.at }); return; }
     const gap = !m.reset && n != null && m.from != null && m.from !== n && m.n !== n;
@@ -123,6 +125,7 @@
     else if (m.t === 'hello' || m.t === 'poke') { if (leader) soon(); }
     else if (m.t === 'lead') { if (mine.size) post({ t: 'watch', rids: [...mine.keys()] }); }
     else if (m.t === 'dead') { stop(true); }
+    else if (m.t === 'fail') { lost(); }
     else if (m.t === 'once') { onceAt.set(String(m.name), Math.max(onceAt.get(String(m.name)) || 0, +m.at || 0)); }
   }
 
@@ -178,6 +181,7 @@
       stats.errors++;
       if (e && (e.unknown || /unknown op/i.test(String(e.message)))) { post({ t: 'dead' }); stop(true); return; }   // (an older cloud: every surface keeps its own timer)
       fails++;
+      post({ t: 'fail', at: now() }); lost();   // (the question failed: every surface of every tab reads on its own, as before this file, until one is answered)
     } finally {
       busy = false;
       if (leader) { if (again) { again = false; schedule(Math.max(0, lastStart + PACE.gap - now())); } else schedule(); }
@@ -261,13 +265,20 @@
       live: () => live(),
       dirty: () => !!dirty,
       clear: () => { const d = !!dirty; dirty = null; return d; },
+      lost: () => { if (gone) return; if (active() && visible()) run('lost', [], now()); else dirty = { why: 'reset', keys: new Set(), at: now() }; },
       resume() { if (gone || !dirty || !active() || !visible()) return false; const d = dirty; dirty = null; run(d.why === 'keys' ? 'dirty' : d.why, [...d.keys], d.at); return true; },
       stop() { gone = true; subs.delete(s); }
     };
     subs.add(s);
     return s;
   }
-  const live = () => started && !dead && (leader ? now() - lastOk < PACE.liveFor : n != null && now() - heardAt < PACE.liveFor);
+  const live = () => started && !dead && !failing && (leader ? now() - lastOk < PACE.liveFor : n != null && now() - heardAt < PACE.liveFor);
+  /** The feed stopped answering (a failed question, an older cloud): each surface is told once (read 'lost'), so a timer it let go to its net comes back now. */
+  function lost(isDead) {
+    if (failing && !isDead) return;
+    failing = true;
+    for (const s of [...subs]) s.lost();
+  }
   /** Nothing of these kinds (or not known, or a reset) moved after t, and this tab heard the feed all along since before it. */
   function quietSince(t, kinds) {
     if (!live() || !firstAt || firstAt > t) return false;
@@ -338,7 +349,7 @@
   }
   /** Stop for good on this page (an older cloud, or a test): every surface goes back to its own timer. */
   function stop(isDead) {
-    if (isDead) dead = true;
+    if (isDead && !dead) { dead = true; lost(true); }
     leave(); clearTimeout(fetchT); fetchT = 0;
   }
   function state() {
