@@ -115,6 +115,8 @@ const assets = [
   "charm-nest-art-edit.js",
   "charm-nest-designs.js",
   "charm-nest-charm-editor.js",
+  "charm-nest-ce-ai-shell.js",
+  "charm-nest-ce-ai-keys.js",
   "charm-nest-ce-ops.js",
   "charm-nest-ce-paths.js",
   "charm-nest-ce-trace.js",
@@ -123,6 +125,7 @@ const assets = [
   "charm-nest-ce-image.js",
   "charm-nest-dxf.js",
   "charm-nest-ce-import.js",
+  "charm-nest-ce-ai-dialogs.js",
   "charm-nest-motion.js",
   "charm-nest-stamp-walnut.png",
   "charm-nest-timeline-ui.js",
@@ -296,7 +299,8 @@ const assets = [
   "vendor/pdfjs-4.10.38/pdf.min.mjs",
   "vendor/pdfjs-4.10.38/pdf.worker.min.mjs",
   "shopify/assets/brites-custom-studio.js",
-  "charm-nest-ce-library.js"
+  "charm-nest-ce-library.js",
+  "charm-nest-ce-ai-panels.js"
 ];
 fs.rmSync(output, { recursive: true, force: true });
 for (const asset of assets) {

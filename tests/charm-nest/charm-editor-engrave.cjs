@@ -172,7 +172,7 @@ async function partB(kit) {
     await page.evaluate(() => { const E = CharmEditor.current; for (const f of ['front', 'back']) for (const it of E.items(f).filter(i => i.source === 'engrave')) { if (E.face() !== f) continue; E.ctx.replaceItems({ [it.id]: Object.assign({}, it, { locked: true }) }); E.ctx.commit('lock the words'); } });   // (CETEXT, 28 Oct 2026: the card's own words are in the editor now; locked here, the clicks below that place new words land beside them, never on them (a lock is no change of the words))
     const letters = await page.evaluate(() => CharmEditor.current.items().filter(i => i.role === 'hatch' && i.source !== 'engrave').map(i => i.id));   // (CETEXT, 28 Oct 2026: the card's own words come in too, as a text of their own: source 'engrave'; the drawing's parts are the rest)
     const mBox = union(await Promise.all(letters.map(id => C(page, id => CharmEditor.current.box(id), id))));
-    await page.keyboard.press('m');
+    await page.keyboard.press('q');   // (the Marquee: Q, as the Illustrator keys have it; M is the Rectangle)
     const pad = 0.6 * PT;
     await drag(page, await clientOf(page, mBox[0] - pad, mBox[1] - pad), await clientOf(page, mBox[2] + pad, mBox[3] + pad));
     const swept = await page.evaluate(() => CharmEditor.current.selection());
@@ -244,7 +244,7 @@ async function partB(kit) {
     { const p = await clientOf(page, sqLine.b[0], (sqLine.b[1] + sqLine.b[3]) / 2); await page.mouse.click(p.x, p.y); await settleP(page); }
     const lw0 = await page.evaluate(() => document.querySelector('.ce-root [data-f="lw"]').value), lwSel = await page.evaluate(() => CharmEditor.current.selection());
     await typeField(page, 'lw', '0.05');
-    await page.keyboard.press('Control+2'); await settleP(page);   // (zoomed to the square: the thin line next to its neighbours' own)
+    await page.keyboard.press('Shift+Digit2'); await settleP(page);   // (zoomed to the square: the thin line next to its neighbours' own; ⇧2 Zoom to Selection: ⌘2 is Illustrator's Lock)
     await page.keyboard.press('Escape'); await page.mouse.move(4, 360); await settleP(page);
     const lwNow = await page.evaluate(id => CharmEditor.current.items().find(i => i.id === id).lwPt, sqLine.id);
     const drawnW = await page.evaluate(([id, z]) => [parseFloat(getComputedStyle(document.querySelector(`.ce-items path[data-id="${id}"]`)).strokeWidth), CharmEditor.current.zoom()], [sqLine.id, 0]);
@@ -360,7 +360,7 @@ async function partB(kit) {
     const sp0 = await page.evaluate(() => window.__p);
     await page.mouse.click(sp0.x, sp0.y); await settleP(page);
     await page.keyboard.press('Delete'); await settleP(page);
-    await page.click('.ce-root .ce-foot [data-act="cancel"]'); await settleP(page);
+    await page.click('.ce-root .ce-actions [data-act="cancel"]'); await settleP(page);
     const asked = await page.evaluate(() => !!document.querySelector('.ce-ask'));
     await page.click('.ce-ask [data-ask="yes"]'); await settleP(page); await R.settle(page, 500);
     const c1 = await page.evaluate(id => ({ open: !!document.querySelector('.ce-root'), hash: Pool.charmOf(id).hash }), PID);

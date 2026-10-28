@@ -990,11 +990,12 @@
     injectCss();
     W = { ctx, gen: 0, checkT: 0, cache: {}, problems: [], checked: false, mark: null, outline: false, items: null, face: ctx.face() };
     W.bar = buildBar(ctx);
-    const foot = ctx.root.querySelector('.ce-foot'), actions = foot && foot.querySelector('.ce-actions');
+    // (the Illustrator workspace, 28 Oct 2026: Save and Cancel are at the right of the Application bar; the chip stays in the status bar, at its end)
+    const foot = ctx.root.querySelector('.ce-foot'), actions = ctx.root.querySelector('.ce-actions');
     if (foot && actions) {
       const chip = doc.createElement('button'); chip.type = 'button'; chip.className = 'ce-prop ce-drop__b cx-chk'; chip.hidden = true; chip.setAttribute('data-cx-check', '');
       chip.innerHTML = '<i aria-hidden="true"></i><span></span>';
-      foot.insertBefore(chip, actions); W.chip = chip;
+      foot.insertBefore(chip, actions.parentNode === foot ? actions : null); W.chip = chip;
       const list = doc.createElement('div'); list.className = 'ce-menu cx-list'; list.setAttribute('role', 'menu'); list.hidden = true;
       ctx.root.querySelector('.ce-win').appendChild(list); W.list = list;
       chip.addEventListener('click', e => { e.stopPropagation(); openList(ctx); });
