@@ -10039,7 +10039,7 @@ const Engrave = window.Engrave = (() => {
      A bar at the top of the tab, its own part of it: New design and Open charm… (charm-nest-ce-masters.js: a blank charm, or any charm of the master library, in the editor) and the designs made
      last (the design library: charm-nest-ce-library.js, else charm-nest-designs.js's local index), one press each. It is ONE node through every drawing of the tab (renderView puts it back first),
      so a press is never lost to a redraw; nothing here reads the network, and the recent designs are drawn again only when they change. A module that is not on the page leaves its button off. */
-  let cdBarEl = null, cdSig = null, cdAt = 0;
+  let cdBarEl = null, cdSig = null, cdAt = 0, cdSrc = null;
   const cdWatched = new WeakSet();   // (the libraries whose onChange the bar listens to: each once, whichever loads first or later)
   const cdFn = (o, k) => !!(o && typeof o[k] === "function");
   function charmDesignerBar(v) {
@@ -10080,9 +10080,11 @@ const Engrave = window.Engrave = (() => {
     nb.disabled = !cdFn(M, "newDesign"); nb.title = nb.disabled ? wait : "A new charm of your own design, from a blank outline, in the Charm Editor";
     ob.disabled = !cdFn(M, "openPicker"); ob.title = ob.disabled ? wait : "Search every charm in the master library and open one in the Charm Editor, with full control";
     // (the tab is drawn again at every fit and approval: the list is asked again when the library says it changed, else at most every 2 s)
-    if (cdSig && performance.now() - cdAt < 2000) return;   // (no library yet, or an empty one: asked again at once, it costs nothing)
-    cdAt = performance.now();
-    let got = null; const L = window.CharmNestCeLibrary, D = window.CharmNestDesigns;
+    // (no list yet, or another library on the page since: asked again at once, it costs nothing)
+    const L = window.CharmNestCeLibrary, D = window.CharmNestDesigns, src = cdFn(L, "recent") ? L : cdFn(D, "search") ? D : null;
+    if (cdSig && src === cdSrc && performance.now() - cdAt < 2000) return;
+    cdAt = performance.now(); cdSrc = src;
+    let got = null;
     try { got = cdFn(L, "recent") ? L.recent(4) : cdFn(D, "search") ? D.search("", { limit: 8 }) : null; } catch (_) { got = null; }
     if (got && typeof got.then === "function") got.then(paintRecent, () => {}); else paintRecent(got);
   }
