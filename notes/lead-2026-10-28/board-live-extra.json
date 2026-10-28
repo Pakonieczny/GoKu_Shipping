@@ -38,5 +38,9 @@
  "ae248b1326745d816": [
   "local-outbox-p3",
   "wt-outbox"
+ ],
+ "a0bc21a1885c695a1": [
+  "local-push-p5",
+  "wt-push"
  ]
 }

@@ -5,6 +5,7 @@ import json, os, subprocess, sys, time
 TASKS = "/tmp/claude-0/-home-user/41f0c21f-5485-5cfe-8e7d-8dab8957f410/tasks"
 WT = "/home/user/goku_shipping/.claude/worktrees"
 AGENTS = [
+    ("a0bc21a1885c695a1", "Local-first Phase 5 (live push)", "/tmp/claude-0/-home-user/41f0c21f-5485-5cfe-8e7d-8dab8957f410/scratchpad/wt-push"),
     ("ae248b1326745d816", "Local-first Phase 3 (outbox)", "/tmp/claude-0/-home-user/41f0c21f-5485-5cfe-8e7d-8dab8957f410/scratchpad/wt-outbox"),
     ("ac1971b04ea413b37", "Local-first Phase 2 (sync worker)", "/tmp/claude-0/-home-user/41f0c21f-5485-5cfe-8e7d-8dab8957f410/scratchpad/wt-sync"),
     ("a92b66df2d483239a", "FIX order-hold-engine test", "/tmp/claude-0/-home-user/41f0c21f-5485-5cfe-8e7d-8dab8957f410/scratchpad/wt-ohe"),
