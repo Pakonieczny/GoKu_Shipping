@@ -54,7 +54,9 @@ async function partA(kit) {
   check('A0 the parts typed on a back are the piece\'s artBack (in its own points), the members its master\'s', (c2.artBack || []).length === 4 && c2.members === cb.members && c2.artBack.filter(s => s.hatchBlue && s.fill).length === 2 && (cF.artBack || []).length === 1,
     JSON.stringify({ n: (c2.artBack || []).length, roles: (c2.artBack || []).map(s => s.artRole) }));
 
-  const mk = (o, avoid) => G.engraveMask(view, Object.assign({ marginMm: 0.8, keepOut: [] }, o || {}, avoid ? { avoid } : {}));
+  // (MARGINS, Paul 28 Oct 2026: "Text should be allowed to overlap with all engravings": the parts are kept clear only by the rule a placement approved before then is rebuilt with, keepArtClear:
+  //  A1-A5 check that rule there; A6 the rule every new placement is made with)
+  const mk = (o, avoid) => G.engraveMask(view, Object.assign({ marginMm: 0.8, keepOut: [] }, o || {}, avoid ? { avoid, keepArtClear: true } : {}));
   const m0 = mk(), m1 = mk(null, c2.artBack), at = (m, x, y) => G.at(m, x, y);
   check('A1 a filled part keeps its whole inside clear (and the margin round it): the words may never go there; they could before', at(m0, cx - 10, cy + 5) === 1 && at(m1, cx - 10, cy + 5) === 0 && at(m1, cx - 10, cy + 4 - 1.5) === 0 && at(m1, cx - 10, cy + 4 - 3.5 * PT) === 1,
     JSON.stringify([at(m0, cx - 10, cy + 5), at(m1, cx - 10, cy + 5), at(m1, cx - 10, cy + 2.5), at(m1, cx - 10, cy + 4 - 3.5 * PT)]));
@@ -72,6 +74,8 @@ async function partA(kit) {
   for (let py = 0; py < m0.h; py++) for (let px = 0; px < m0.w; px++) { const i = py * m0.w + px, a = m0.bits[i], b = m1.bits[i]; if (b && !a) gained++; if (a && !b) { const x = m0.ox + (px + 0.5) / m0.res, y = m0.oy + (py + 0.5) / m0.res; if (!boxes.some(q => x > q[0] - pad && x < q[2] + pad && y > q[1] - pad && y < q[3] + pad)) far++; } }
   const same = o => { const a = G.engraveMask(view, Object.assign({ marginMm: 0.8, keepOut: [] }, o)); return a.w === m0.w && a.h === m0.h && a.bits.every((v, i) => v === m0.bits[i]); };
   check('A5 nothing else changes: no pixel is freed, none taken away farther than the margin from a part; a back given no parts (none, or an empty list) is the mask it always was', gained === 0 && far === 0 && same({}) && same({ avoid: [] }), JSON.stringify({ gained, far }));
+  const mNew = G.engraveMask(view, { marginMm: 0.8, keepOut: [], avoid: c2.artBack }), mNewF = G.engraveMask(view, { marginMm: 0.8, keepOut: [], avoid: cF.artBack });
+  check('A5b MARGINS: by the rule new placements are made with, the words may cross every part added to the back (filled, overlapping, a line, a ring, a frame): the area is the plain back\'s', [mNew, mNewF].every(a => a.w === m0.w && a.h === m0.h && a.bits.every((v, i) => v === m0.bits[i]) && a.artFree), '');
 
   // the file: buildBackFile writes the parts where the view draws them, plus the page's own offset (frame.T)
   const built = await P.buildBackFile({ charm: c2, parsed: cal.parsed, cutMembers: view.cutMembers, cx, cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: [], artBack: c2.artBack });
@@ -255,8 +259,9 @@ async function partB(kit) {
       const maskOff = art.every(s => { const b = s.bbox; return G.at(j.mask, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2) === 0; });
       return { inside, gapMm: gap * 25.4 / 72, marginMm: j.mask.marginMm, overlapBefore, maskOff, ink: G.verifyInk(j.fit.cmds, j.mask).ok, words, artBox };
     }, [PID, b0.words]);
-    check(`B9 the back's words are fitted again clear of HI: none of their points inside it, ${clear.gapMm.toFixed(2)} mm from it at the closest (at least the engraving margin, ${clear.marginMm} mm), the mask has no room on it; HI stood where the words had been`,
-      clear.inside === 0 && clear.marginMm > 0 && clear.gapMm >= clear.marginMm - 0.02 && clear.maskOff && clear.ink && clear.overlapBefore, JSON.stringify(clear));
+    // (MARGINS, Paul 28 Oct 2026: "Text should be allowed to overlap with all engravings": the words were kept clear of HI before; now the area keeps the room under it and the words may cross it)
+    check(`B9 the back's words are fitted again and may cross HI (MARGINS): the area keeps its room under HI, the words verify on the metal; HI stood where the words had been`,
+      clear.marginMm > 0 && !clear.maskOff && clear.ink && clear.overlapBefore, JSON.stringify(clear));
     const thumb1 = await page.evaluate(id => { const t = __cb.thumbCv('back'), F = CharmNestEngravePreview.frameFor({ job: __cb.backJob(id), face: 'back' }); return { h: __cb.thumb('back'), blue: t ? __cb.blue(t).n : -1, frameArt: F ? F.art.length : -1 }; }, PID);
     check('B10 the card\'s Back thumbnail is drawn again with HI on it (the preview\'s frame of the back carries the parts, drawn in the hatch blue)', thumb1.h && thumb1.h !== thumb0.h && thumb1.blue > 10 && thumb1.frameArt === after.ids.length, JSON.stringify({ thumb0, thumb1 }));
     const fr1 = await page.evaluate(id => { const f = __cb.frontJob(id); return JSON.stringify([f.state, f.fit.size, f.fit.centre, f.fit.angle]); }, PID);
@@ -285,7 +290,7 @@ async function partB(kit) {
     // (an added part may stand nearer the cut edge than the words' margin: it was checked on the metal when it was saved; the file's re-check is the words' own clearance and leaves it out)
     const edge = await page.evaluate(async id => {
       const j = __cb.backJob(id), live = Pool.charmOf(id); if (!j || !j.view || !j.fit) return { shelved: true };
-      const b = live.outline.bbox, my = (b[1] + b[3]) / 2, x0 = b[0] + 0.4, sq = [[['m', [x0, my - 1]], ['l', [x0 + 2, my - 1]], ['l', [x0 + 2, my + 1]], ['l', [x0, my + 1]], ['h']]];
+      const b = live.outline.bbox, my = (b[1] + b[3]) / 2, x0 = b[0] + 0.12, sq = [[['m', [x0, my - 1]], ['l', [x0 + 2, my - 1]], ['l', [x0 + 2, my + 1]], ['l', [x0, my + 1]], ['h']]];
       const part = { kind: 'path', subpaths: sq, bbox: [x0, my - 1, x0 + 2, my + 1], closed: true, fill: true, stroke: false, fillRGB: [0, 0, 1], strokeRGB: [0, 0, 0], hatchBlue: true, paintOp: 'f', artRole: 'hatch', artAdded: true, artMemberId: 'edge1', synthetic: true };
       const withEdge = Object.assign({}, live, { artBack: live.artBack.concat([part]) }), view = j.view;
       const rel = j.fit.glyphs.map(g => ({ cmds: g.cmds.map(c => { const o = { type: c.type }; if (c.type !== 'Z') { o.x = c.x - view.cx; o.y = c.y - view.cy; } if (c.type === 'C' || c.type === 'Q') { o.x1 = c.x1 - view.cx; o.y1 = c.y1 - view.cy; } if (c.type === 'C') { o.x2 = c.x2 - view.cx; o.y2 = c.y2 - view.cy; } return o; }) }));

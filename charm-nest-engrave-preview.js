@@ -368,7 +368,7 @@
     const input = {
       charm: { outline: ch.outline, members: ch.members, bbox: ch.bbox, widthPt: ch.widthPt, heightPt: ch.heightPt, upAngle: ch.upAngle }, face: a.face, lines: a.lines.slice(), opts, fontKey: a.id, ...(sf.length ? { scriptIds: sf.map(f => f.id) } : {}),
       ...(a.job && a.job.view && a.job.mask ? { mask: a.job.mask } : { viewOptions: G.viewOptionsFor({ charmUp: ch.upAngle, entry, ...(a.face === 'front' ? { face: 'front' } : {}) }),
-        maskOptions: Object.assign({ marginMm: +s.engraveMarginMm || 0.8, keepOut: (a.face === 'front' ? ch.frontKeepOut : ch.backKeepOut) || [] }, adds ? { avoid: adds } : {}) })
+        maskOptions: Object.assign({ marginMm: s.engraveMarginMm, keepOut: (a.face === 'front' ? ch.frontKeepOut : ch.backKeepOut) || [] }, adds ? { avoid: adds } : {}) })
     };
     const take = out => { out = out || {}; rec.rect = out.rect || null; if (out.status === 'ready' && out.fit) { rec.fit = out.fit; rec.status = 'ready'; } else fail(out.why || 'none'); };
     // REFIT (28 Oct 2026): in the page's fit worker, off this thread (0.4 s of it on a calendar); here, as before, only when the page has no worker

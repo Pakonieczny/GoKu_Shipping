@@ -512,6 +512,9 @@ async function partReason(w, made) {
   const w = await R.world({ viewport: { width: 1440, height: 900 } });
   if (!w) { console.log('engrave-realtime: playwright-core not found, skipped'); process.exit(0); }
   let code = 0;
+  // (MARGINS, 28 Oct 2026: the words now reach the cut line's inner edge, 0.09 mm, and fit larger and elsewhere. The picture instruments below (the font and words looks of the thumbnails) were
+  //  calibrated on placements fitted 0.3 mm off the cut line, so this world keeps that margin: what is measured here is the same tick and the same picture, not where the words fit)
+  await w.page.evaluate(() => { S.settings.engraveMarginMm = 0.3; });
   try {
     const names = ONLY === 'detail' || ONLY === 'faces' ? ['back', 'front', 'both', 'refAnna', 'refMarck'] : ONLY === 'said' ? ['back', 'front', 'both', 'tag'] : ONLY === 'reason' ? ['back'] : ONLY === 'order' ? ['back', 'front', 'both', 'tag', 'discs', 'earrings'] : ['back', 'front', 'both', 'tag', 'discs', 'earrings', 'refAnna', 'refMarck'];
     const made = await R.build(w, names);

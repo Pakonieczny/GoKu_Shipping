@@ -34,7 +34,9 @@ function partA() {
   const line = sub => mem(sub, { layer: 'ENGRAVE', strokeRGB: [1, 0, 0] });                                  // (engraved art drawn as a line: ENGRAVE layer, red stroke, no fill)
   const solid = sub => mem(sub, { layer: 'ENGRAVE', stroke: false, fill: true, fillRGB: [0, 0, 1] });         // (engraved art drawn filled: hatching)
   const charm = (body, holes, art) => { const o = mem(body), hs = holes.map(h => mem(h)); return { outline: o, members: [o, ...hs, ...(art || [])], bbox: o.bbox, widthPt: o.bbox[2] - o.bbox[0], heightPt: o.bbox[3] - o.bbox[1] }; };
-  const mask = (c, face) => { const v = G.backView(c, face ? { res: 6, face } : { res: 6 }); return { v, m: G.engraveMask(v, { marginMm: .8 }) }; };
+  // (MARGINS, 28 Oct 2026: the words may now cross every engraving; the frame / ring / filled-shape rule below is the rule a placement approved before then is rebuilt with, keepArtClear: A3-A6 check it there, A7 the new rule)
+  const mask = (c, face, o) => { const v = G.backView(c, face ? { res: 6, face } : { res: 6 }); return { v, m: G.engraveMask(v, Object.assign({ marginMm: .8 }, o)) }; };
+  const OLD = { keepArtClear: true };
 
   // the real mini tag (5X8.5): 16.9 x 26.6 pt, the hanging hole near the top end; the ENGRAVE layer copies the outline (0.22 pt out) and the hole
   const tag = (art) => charm(rect(3, 3, 19.9, 29.6), [circ(11.45, 24.5, 1.7)], art);
@@ -46,17 +48,21 @@ function partA() {
 
   // an inset frame (a line 6 pt inside the cut line of a big charm, 88 % of the body): the words may go inside it, never over its own line
   const big = (art) => charm(rect(0, 0, 200, 200), [], art);
-  const fr = mask(big([line(rect(6, 6, 194, 194))]), 'front'), bare = mask(big([]), 'front');
+  const fr = mask(big([line(rect(6, 6, 194, 194))]), 'front', OLD), bare = mask(big([]), 'front');
   const at = (c, x, y) => G.at(c.m, x, y);   // (a square with no hole is not turned, so the drawn coordinates are the mask's)
   check('A3 an inset frame line: the inside of the frame is usable, its own line is kept clear (the same spot is usable without the frame)', at(fr, 100, 100) === 1 && at(fr, 30, 100) === 1 && at(fr, 6, 100) === 0 && at(fr, 100, 6) === 0 && at(bare, 6, 100) === 1,
     `centre ${at(fr, 100, 100)}, inside ${at(fr, 30, 100)}, on the line ${at(fr, 6, 100)}, without the frame ${at(bare, 6, 100)}`);
   check('A4 …and it costs only a strip along its line (the usable pixels stay at least 85% of the same charm without the frame)', G.area(fr.m) >= 0.85 * G.area(bare.m) && G.area(fr.m) < G.area(bare.m), `${G.area(fr.m)} vs ${G.area(bare.m)}`);
 
   // a small closed line (a ring round a fifth of the body) and a big filled shape keep their whole inside clear, as before
-  const ring = mask(big([line(circ(100, 100, 45))]), 'front');
+  const ring = mask(big([line(circ(100, 100, 45))]), 'front', OLD);
   check('A5 a small closed line (a ring, 16 % of the body) still keeps its whole inside clear', G.at(ring.m, 100, 100) === 0 && G.at(ring.m, 100, 60) === 0 && G.at(ring.m, 30, 30) === 1, `centre ${G.at(ring.m, 100, 100)}, near the ring ${G.at(ring.m, 100, 60)}, away ${G.at(ring.m, 30, 30)}`);
-  const slab = mask(big([solid(rect(6, 6, 194, 194))]), 'front');
+  const slab = mask(big([solid(rect(6, 6, 194, 194))]), 'front', OLD);
   check('A6 a FILLED shape over 88 % of the body still keeps all of it clear (only a line is a frame)', G.at(slab.m, 100, 100) === 0 && G.at(slab.m, 30, 100) === 0, `centre ${G.at(slab.m, 100, 100)}, inside ${G.at(slab.m, 30, 100)}`);
+  // MARGINS (Paul, 28 Oct 2026: "Text should be allowed to overlap with all engravings"): by the rule every new placement is made with, none of them takes anything from the front's area
+  const now = [mask(big([line(rect(6, 6, 194, 194))]), 'front'), mask(big([line(circ(100, 100, 45))]), 'front'), mask(big([solid(rect(6, 6, 194, 194))]), 'front')];
+  check('A7 MARGINS: a frame line, a small ring and a big filled shape leave the front\'s whole area to the words (they may overlap every engraving)', now.every(x => G.area(x.m) === G.area(bare.m) && x.m.artFree) && framed.m.artFree && aF === aP,
+    `${now.map(x => G.area(x.m)).join(', ')} vs ${G.area(bare.m)}; tag ${aF} vs ${aP}`);
 }
 
 /* ═══ B · the real page, the real 5X8.5 ═══ */

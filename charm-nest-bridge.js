@@ -3551,7 +3551,7 @@ const Master = window.Master = (() => {
     if (!Pr || !Pr.pairLayer || !lab || !(lab.labels instanceof Map)) return (job.pairLayer = none);
     try {
       const items = charms.filter(c => c.mergedInto == null && c.sku && !c.excluded && !c.alreadyHeld).map(c => ({ index: c.index, l: lab.labels.get(c.index), c })).filter(it => it.l);
-      const out = Pr.pairLayer(P, G, { charms }, lab, items, { engraveMarginMm: +S.settings.engraveMarginMm || 0.8 }, m => tell("MASTER", String(m).trim()));
+      const out = Pr.pairLayer(P, G, { charms }, lab, items, { engraveMarginMm: S.settings.engraveMarginMm }, m => tell("MASTER", String(m).trim()));
       out.partners = new Set(); out.stale = [];
       for (const r of out.rows) if (r.folded) for (const i of r.partners || []) out.partners.add(i);
       // a sure row whose labelled body is already in the library was left alone by this run: when the library holds it as the pair it is, its other body is built into it (not "a charm with no SKU"); when it holds ONE body of it,
@@ -7740,6 +7740,7 @@ const Engrave = window.Engrave = (() => {
      size no text reaches (maxHeightFrac x height = that size). */
   const fitOpts = (job, byHand) => { const o = { minCapMm: +S.settings.engraveMinCapMm || 1.6, maxHeightFrac: +S.settings.engraveMaxHeightFrac || 0.4, lineGap: job?.lineGap ?? 0.216, minStrokeMm: +S.settings.engraveMinStrokeMm || 0, minGapMm: +S.settings.engraveMinGapMm || 0, tryRotated: S.settings.engraveTryRotated !== "off" };
     if (byHand && job?.mask) { const h = job.mask.hPt || job.mask.h / job.mask.res, w = job.mask.wPt || job.mask.w / job.mask.res; o.maxHeightFrac = 4 * Math.max(w, h) / h; }
+    if (byHand) o.slideMm = 1;   // (MARGINS, Paul 28 Oct 2026: "allowing the user to place the text a bit more freely": a drag, turn or size a little over the edge slides back onto the metal at that size, up to 1 mm; further out is off the charm. charm-nest-geom.js slideAt)
     return o; };
   const items = () => B.engrave.items;
   /** What a face's file says of itself: the BACK's is as the setting asks (as seen from behind, or the front's coordinates); the FRONT's is always as seen from the front (nothing is turned over). */
@@ -7815,7 +7816,7 @@ const Engrave = window.Engrave = (() => {
       await ensureJobFont(job);   // (the font the back was saved in, from its record: job.fontKey is set from it above)
       // (the FRONT of a piece is drawn as the charm is, not turned over: backView takes the face, and the keep-out is the master's FRONT KEEP-OUT layer; plans/front-back-1011/CONTRACT.md section 9)
       job.view=G.backView(charm,{res:6,upAngle:saved.upAngle ?? charm.upAngle,holeOnly:true,solidBack:job.solidBack,...(face === "front" ? {face:"front"} : {})});
-      job.mask=G.engraveMask(job.view,{marginMm:+S.settings.engraveMarginMm || .8,keepOut:(face === "front" ? charm.frontKeepOut : charm.backKeepOut) || [],...(face !== "front" && charm.artBack?.length ? {avoid:charm.artBack} : {})});   // (CHARM EDIT · BACK: see fitInput)
+      job.mask=G.engraveMask(job.view,{marginMm:S.settings.engraveMarginMm,keepOut:(face === "front" ? charm.frontKeepOut : charm.backKeepOut) || [],...(face !== "front" && charm.artBack?.length ? {avoid:charm.artBack} : {})});   // (CHARM EDIT · BACK: see fitInput)
       const font=fontFor(saved.weight,job),layout=G.layoutLines(job.lines,font,saved.sizePt,job.lineGap,saved.angle || 0,saved.centre || [job.mask.cx,job.mask.cy]);
       const check=G.verifyInk(layout.cmds,job.mask);
       if(check.ok) {
@@ -8709,21 +8710,23 @@ const Engrave = window.Engrave = (() => {
   function fitClient() {
     if (!workerClient) {
       if (!window.Worker || !F_.workerFonts?.Regular) throw new Error("Background engraving could not start. Reload and retry this placement.");
-      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col-vf1-fb1-fb2-fr1-wd1-cb1-sy1-rf2",fonts:F_.workerFonts,fontsFor:id=>{const set=FONT_SETS.get(id);return set&&set.ok?set.workerFonts:null;},scriptsFor:scriptsPack});
+      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col-vf1-fb1-fb2-fr1-wd1-cb1-sy1-rf2-mg1",fonts:F_.workerFonts,fontsFor:id=>{const set=FONT_SETS.get(id);return set&&set.ok?set.workerFonts:null;},scriptsFor:scriptsPack});
     }
     return workerClient;
   }
   /* CHARM EDIT · BACK (27 Oct 2026): the parts a person added to a piece's BACK in the charm editor (charm-nest-art-edit.js: the charm's artBack, in its own points as seen from the front) are engraved
      by the back's own file with the words (buildBackFile), so the back's words keep off them as a front's keep off the design's art: every mask of a back is made with them as `avoid`
      (charm-nest-geom.js engraveMask), here, in a turn (turnTo), a saved back opened again and a written back made again (restoreWritten's maskKey), so all of them agree. Written out at each
-     place (the tests run those functions on their own). A back with nothing added gets exactly the options it had. */
+     place (the tests run those functions on their own). A back with nothing added gets exactly the options it had.
+     (MARGINS, Paul 28 Oct 2026: "Text should be allowed to overlap with all engravings": engraveMask no longer keeps the words off `avoid`, nor a front's off its art; `avoid` is still handed on, so a
+     placement approved before is rebuilt by the rule it was approved under, keepArtClear: restoreWritten) */
   function fitInput(job, charm, entry) {
     // Keep path identity (outline may also be a member), but exclude UI/cache
     // objects and any DOM references from the structured-clone payload.
     return {charm:charm && {outline:charm.outline,members:charm.members,bbox:charm.bbox,widthPt:charm.widthPt,heightPt:charm.heightPt,upAngle:charm.upAngle},
       lines:(job.lineInput || job.lines).slice(),lineMode:job.lineMode || "auto",opts:fitOpts(job),fontKey:fontIdOf(job),...(job.scriptFonts && job.scriptFonts.length ? {scriptIds:job.scriptFonts.map(f=>f.id)} : {}),
       viewOptions:G.viewOptionsFor({editingBack:!!job.editingBack,savedUp:job.editingBack ? job.editOriginal.upAngle : null,charmUp:charm?.upAngle,entry,nudged:!!job.nudged,viewUp:job.view?.upAngle,oriented:job.orientVersion === G.ORIENT,turnUp:job.turnUp,...(isFront(job) ? {face:"front"} : {})}),
-      maskOptions:{marginMm:+S.settings.engraveMarginMm || .8,keepOut:(isFront(job) ? charm?.frontKeepOut : charm?.backKeepOut) || [],...(!isFront(job) && charm?.artBack?.length ? {avoid:charm.artBack} : {})},
+      maskOptions:{marginMm:S.settings.engraveMarginMm,keepOut:(isFront(job) ? charm?.frontKeepOut : charm?.backKeepOut) || [],...(!isFront(job) && charm?.artBack?.length ? {avoid:charm.artBack} : {})},
       ...(keepFor(job) ? {keep:keepFor(job)} : {})};   // (KEEP: after a charm edit the words stay where they were placed: CharmNestEngraveFit keepPlacement)
   }
   const fitStamp = ({charm, ...options}) => JSON.stringify(options);
@@ -9027,7 +9030,7 @@ const Engrave = window.Engrave = (() => {
     let view, mask;
     try {
       view = G.backView(charm, { res: 6, upAngle: base - deg, holeOnly: true, ...(front ? { face: "front" } : {}) });
-      mask = G.engraveMask(view, { marginMm: +S.settings.engraveMarginMm || .8, keepOut: (front ? charm.frontKeepOut : charm.backKeepOut) || [], ...(!front && charm.artBack?.length ? { avoid: charm.artBack } : {}) });   // (CHARM EDIT · BACK: see fitInput)
+      mask = G.engraveMask(view, { marginMm: S.settings.engraveMarginMm, keepOut: (front ? charm.frontKeepOut : charm.backKeepOut) || [], ...(!front && charm.artBack?.length ? { avoid: charm.artBack } : {}) });   // (CHARM EDIT · BACK: see fitInput)
     } catch (e) { return no(e && e.message ? e.message : "the charm could not be turned"); }
     // the words keep their place on the charm: about the charm's own centre, by the step this change adds (the view's turn is about that same centre)
     const f0 = job.fit, step = wrap180(deg - was) * Math.PI / 180, ca = Math.cos(step), sa = Math.sin(step), cx = view.cx, cy = view.cy, dx = f0.centre[0] - cx, dy = f0.centre[1] - cy;
@@ -9576,7 +9579,21 @@ const Engrave = window.Engrave = (() => {
   }
 
   /* ── 7.6 · back files, one per piece, only after approval ── */
+  /* MARGINS (Paul, 28 Oct 2026: "The engravable area should be allowed to back up against the inner edge of the cut line"): a placement still in front of a person (review, not saved, not approved)
+     that a checkpoint kept with the area made by the rule before (0.3 mm off the cut line, the art kept clear: no mask.artFree) gets the new area when its work area is drawn. The new area holds the
+     old one (a smaller margin, nothing taken out for art), so the words stay exactly where they are and still verify; only what the person may use grows. Nothing else changes. */
+  function freshMask(job) {
+    try {
+      if (!job || job.state !== "review" || !job.mask || job.mask.artFree || !job.view || !job.fit || job.approvedAt || job.approvalPreparing || job.backSaving || job.stamping) return;
+      const charm = charmFor(job); if (!charm) return;
+      const mask = G.engraveMask(job.view, { marginMm: S.settings.engraveMarginMm, keepOut: (isFront(job) ? charm.frontKeepOut : charm.backKeepOut) || [] });
+      if (mask.w !== job.mask.w || mask.h !== job.mask.h || (!job.fit.artOnly && !G.verifyInk(job.fit.cmds, mask).ok)) return;
+      if (job.mask.lin) mask.lin = job.mask.lin;   // (the turns' lineage: CharmNestEngravePosition.restore)
+      job.mask = mask; if (job.verify && !job.fit.artOnly) job.verify = { geometry: G.verifyInk(job.fit.cmds, mask), at: Date.now() };
+    } catch (_) { /* the area it had stands */ }
+  }
   function renderBack(job, px, { grid = false, hatch = true, editable = false, include = null, draft = false } = {}) {
+    if (editable) freshMask(job);
     const view = job.view, mask = job.mask, fit = job.fit; const cv = document.createElement("canvas"); cv._editable = editable; cv._draft = !!draft;
     const handles = view.members.reduce((a, s) => [Math.min(a[0], s.bbox[0]), Math.min(a[1], s.bbox[1]), Math.max(a[2], s.bbox[2]), Math.max(a[3], s.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
     /* px is the long side, framed as before on the members' bounds with 3 mm around them (the pictures written with a
@@ -9613,7 +9630,7 @@ const Engrave = window.Engrave = (() => {
     const added = onFront ? [] : backArtOf(job), ownArt = g => { if (!added.length) return; if (editable) frontArtOn(g, added, tx, k, cv.width, cv.height, FRONT_ART_ALPHA.own); else backArtInk(g, added, tx, k); };   // (OWNART: every part added to a back is the person's own: full strength)
     cv._backArt = added;
     ownArt(ctx);
-    const cutLines = g => { for (const m of view.members) { g.beginPath(); P.pathToCanvas(g, m, tx); g.strokeStyle = "#000"; g.lineWidth = Math.max(1, 0.5 * k); g.stroke(); } };
+    const cutLines = g => { for (const m of view.members) { g.beginPath(); P.pathToCanvas(g, m, tx); g.strokeStyle = "#000"; g.lineWidth = Math.max(1, (G.CUT_LINE_PT || 0.5) * k); g.stroke(); } };   // (MARGINS: the engravable tint above reaches this line's inner edge, charm-nest-geom.js EDGE_MM)
     cutLines(ctx);
     if (false && fit) { ctx.fillStyle = "#111"; for (const g of fit.glyphs) { ctx.beginPath(); let cur = null; for (const c of g.cmds) { if (c.type === "M") { const p = tx(c.x, c.y); ctx.moveTo(p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "L") { const p = tx(c.x, c.y); ctx.lineTo(p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "C") { const a = tx(c.x1, c.y1), b = tx(c.x2, c.y2), p = tx(c.x, c.y); ctx.bezierCurveTo(a[0], a[1], b[0], b[1], p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "Q") { const a = tx(c.x1, c.y1), p = tx(c.x, c.y); ctx.quadraticCurveTo(a[0], a[1], p[0], p[1]); cur = [c.x, c.y]; } else ctx.closePath(); } ctx.fill("nonzero"); } }
     const outline = document.createElement("canvas"); outline.width = cv.width; outline.height = cv.height;   // …and the charm itself
@@ -10476,12 +10493,12 @@ const Engrave = window.Engrave = (() => {
     if (!fontSetOf(job)) { loadFontSet(fontIdOf(job)); throw Object.assign(new Error("The engraving font is loading; retry in a moment"), { engravingPending: true }); }
     const charm = charmFor(job); if (!charm) throw Object.assign(new Error("The charm is being moved between sheets; retry saving its engraving after nesting finishes"),{engravingPending:true});
     let view; try { view = G.backView(charm, { res: 6, upAngle: w.upAngle, holeOnly: true, ...(isFront(job) ? { face: "front" } : {}) }); } catch (e) { throw again(`This charm's ${faceWord(job)} could not be read again (${e.message}) — fit the words again`); }
-    const mask = G.engraveMask(view, { marginMm: w.marginMm, keepOut: (isFront(job) ? charm.frontKeepOut : charm.backKeepOut) || [], ...(!isFront(job) && charm.artBack?.length ? { avoid: charm.artBack } : {}) });   // (CHARM EDIT · BACK: see fitInput)
+    const mask = G.engraveMask(view, { marginMm: w.marginMm, keepOut: (isFront(job) ? charm.frontKeepOut : charm.backKeepOut) || [], ...(!isFront(job) && charm.artBack?.length ? { avoid: charm.artBack } : {}), ...(w.artFree ? {} : { keepArtClear: true }) });   // (CHARM EDIT · BACK: see fitInput; MARGINS: a placement kept before 28 Oct 2026 is rebuilt by the rule it was approved under, art kept clear)
     // the charm's back is not what the words were approved on (its drawing or keep-out changed): a person fits them again
     if (maskKey(mask) !== w.maskKey) throw again(`This charm's ${faceWord(job)} changed since the words were approved — fit the words again`);
     const layout = G.layoutLines(w.lines, fontFor(w.weight, job), w.size, w.lineGap, w.angle || 0, w.centre), geometry = G.verifyInk(layout.cmds, mask);
     if (!geometry.ok) throw again(`The approved words no longer fit this charm's ${faceWord(job)} — fit the words again`);
-    const { approvedAt, upAngle, marginMm, lineGap, filledArtwork, maskKey: k, ...fit } = w;
+    const { approvedAt, upAngle, marginMm, lineGap, filledArtwork, maskKey: k, artFree, ...fit } = w;
     job.view = view; job.mask = mask; job.fit = Object.assign(fit, { layout, glyphs: layout.glyphs, cmds: layout.cmds }); job.verify = { geometry, at: Date.now() };
   }
   function shelveWritten() {
@@ -10496,7 +10513,7 @@ const Engrave = window.Engrave = (() => {
       try { same = JSON.stringify(G.layoutLines(lines, fontFor(fit.weight, job), fit.size, lineGap, fit.angle || 0, fit.centre).cmds) === JSON.stringify(fit.cmds); } catch (_) {}
       if (!same) { job._shelveTried = job.approvedAt; continue; }
       const { layout, glyphs, cmds, ...rest } = fit;
-      job.writtenFit = Object.assign({}, rest, { lines, approvedAt: job.approvedAt, upAngle: job.view.upAngle, marginMm: job.mask.marginMm, lineGap, filledArtwork: !!job.view.detail?.filledArtwork, maskKey: maskKey(job.mask) });
+      job.writtenFit = Object.assign({}, rest, { lines, approvedAt: job.approvedAt, upAngle: job.view.upAngle, marginMm: job.mask.marginMm, lineGap, filledArtwork: !!job.view.detail?.filledArtwork, maskKey: maskKey(job.mask), ...(job.mask.artFree ? { artFree: true } : {}) });
       job.view = job.mask = job.fit = job.verify = null; delete job.flipError;
       delete job._backPreview; delete job._previewSize; delete job._previewAt; n++;
     }

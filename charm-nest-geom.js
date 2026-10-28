@@ -600,13 +600,25 @@
     }
     return out;
   }
-  /** The eroded back mask: margin off every cut edge and cut-out, keep-out layers subtracted (and on a back, opts.avoid: the parts a person added to it, kept clear: keepBackArtClear). */
+  /* MARGINS (Paul, 28 Oct 2026: "the margins for where engravable text is allowed are too high and we're losing too much surface area of the charm, The engravable area should be allowed to back up
+     against the inner edge of the cut line for every charm. That goes for holes and cut outs and engraving and outer edge profile cut out. Text should be allowed to overlap with all engravings").
+     The words' area reaches the INNER EDGE of the cut line as the work area draws it: the line is CUT_LINE_PT wide, centred on the cut path, so the area stops half of it inside the path, EDGE_MM
+     (0.088 mm), off the outer profile, the jump-ring hole and every cut-out alike. That half line is also all the laser needs: its beam takes about 0.03 mm either side of the path, so a letter at the
+     line's inner edge is still whole on the metal. It was 0.3 mm (the Settings margin; 0.8 mm before settings v18), and the art was kept clear on top of it. The words may now cross every engraving:
+     the design's own front art and the parts a person added to a back are no longer taken out of the area (they are engraved together; the laser burns their union). opts.keepArtClear brings the
+     old rule back for one mask only: a placement approved under it is rebuilt with it (charm-nest-bridge.js restoreWritten), so its saved mask key still matches. The keep-out LAYERS a designer drew
+     (BACK / FRONT KEEP-OUT) are an instruction, not an engraving, and still keep the words off. */
+  const CUT_LINE_PT = 0.5, EDGE_MM = CUT_LINE_PT / 2 * MM_PER_PT;
+  /** The eroded back mask: EDGE_MM (or opts.marginMm) off every cut edge and cut-out, keep-out layers subtracted. Engravings are not taken out (MARGINS) unless opts.keepArtClear: then a front keeps
+   *  its words off the design's art and a back off opts.avoid, the parts a person added to it (keepBackArtClear), as before 28 Oct 2026. m.artFree: made by the new rule. */
   function engraveMask(view, opts) {
-    opts = Object.assign({ marginMm: 0.8, keepOut: [] }, opts || {});
+    opts = Object.assign({ keepOut: [] }, opts || {});
+    opts.marginMm = opts.marginMm == null || opts.marginMm === "" || !Number.isFinite(+opts.marginMm) ? EDGE_MM : Math.max(0, +opts.marginMm);   // (no margin, or none that is a number, is the cut line's inner edge; a 0 the Settings hold is 0, never the old 0.8)
     let m = view.mask;
     if (opts.keepOut && opts.keepOut.length) m = subtract(m, polysOfSegs(opts.keepOut.map(k => transformSeg(transformSeg(k, view.M), view.R))));
-    // the FRONT keeps its words off the design's own engraved art (opts.avoid: more segments to keep clear; the closed or filled shapes the cut view dropped are always kept clear)
-    if (view.face === "front") {
+    // (keepArtClear only, the rule before MARGINS) the FRONT keeps its words off the design's own engraved art (opts.avoid: more segments to keep clear; the closed or filled shapes the cut view dropped are always kept clear)
+    if (!opts.keepArtClear) { /* MARGINS: the words may overlap every engraving */ }
+    else if (view.face === "front") {
       const art = (view.dropped || []).filter(d => d && (d.closed || d.fill) && !/back\s*keep-?out/i.test(d.layer || "")).concat(opts.avoid || []);   // (a BACK keep-out layer keeps the back's words off a place; the front's words may go there)
       if (art.length) {
         // ENGFRONT: a closed LINE (no fill) drawn round almost the whole of the body, as the ENGRAVE layer of a plain tag copies the cut outline, is a frame and not a figure: only its own line is kept clear,
@@ -634,6 +646,7 @@
     const rPx = opts.marginMm * PT_PER_MM * m.res;
     m = erode(m, rPx);
     m.marginMm = opts.marginMm; m.wPt = m.w / m.res; m.hPt = m.h / m.res;
+    if (!opts.keepArtClear) m.artFree = true;   // (MARGINS: made by the rule that lets the words cross the art; a mask without it was made by the rule before: charm-nest-bridge.js restoreWritten, freshMask)
     return m;
   }
 
@@ -947,8 +960,29 @@
     }
     if(cache.size>=64)cache.delete(cache.keys().next().value);cache.set(key,variants);return variants;
   }
+  /* MARGINS (Paul, 28 Oct 2026: "The system should be a little bit more loose and allowing the user to place the text a bit more freely"). A person's move, turn or size (opts.slideMm: fitOpts by
+     hand) that puts a letter a little over the edge of the area is not refused, made smaller or sent back to where it was: the words, at the very size, lines and turn asked, slide the least distance
+     that puts every letter back on the metal (rings about the asked centre, half a pixel apart near it, then a pixel; at most opts.slideMm, and never more than half the words' own shorter side, so a
+     block dropped mostly off the charm is not dragged back across it). Further out than that the words are clearly off the charm and the rule before answers (smaller there, or no room). The ink
+     check itself is never loosened: whatever is placed still verifies on the mask (verifyInk), so the laser file only ever engraves on the metal. → { layout, centre, slidMm } | null */
+  function slideAt(lines, font, mask, opts, place, size) {
+    let reach = (+opts.slideMm || 0) * PT_PER_MM; if (!(reach > 0) || !place.centre) return null;
+    const angle = place.angle || 0, L0 = layoutLines(lines, font, size, opts.lineGap, angle, place.centre);
+    reach = Math.min(reach, Math.min(L0.local[2] - L0.local[0], L0.local[3] - L0.local[1]) / 2);
+    const px = 1 / mask.res, pts = glyphPolys(L0.cmds).flat(), off = (dx, dy) => { for (const p of pts) if (!at(mask, p[0] + dx, p[1] + dy)) return true; return false; };   // (a quick test of the letters' points first: most places fail it)
+    for (let r = px / 2; r <= reach + 1e-9; r += r < 2 * px ? px / 2 : px) {
+      const n = Math.max(16, Math.min(64, Math.ceil(2 * Math.PI * r / (px / 2))));
+      for (let i = 0; i < n; i++) {
+        const t = 2 * Math.PI * i / n, dx = r * Math.cos(t), dy = r * Math.sin(t); if (off(dx, dy)) continue;
+        const centre = [place.centre[0] + dx, place.centre[1] + dy], L = layoutLines(lines, font, size, opts.lineGap, angle, centre);
+        if (verifyInk(L.cmds, mask).ok) return { layout: L, centre, slidMm: r * MM_PER_PT };
+      }
+    }
+    return null;
+  }
   /** Reflow at the operator's centre/angle. Try every wrap at the requested
-   * size before shrinking; at equal size fewer lines win, so it unwraps again. */
+   * size before shrinking; at equal size fewer lines win, so it unwraps again.
+   * MARGINS: by hand (opts.slideMm) a place a little over the edge slides back onto the metal at that size before anything shrinks (slideAt). */
   function reflowAt(input, font, mask, opts, place, mode='auto') {
     opts=Object.assign({lineGap:.216,maxHeightFrac:.4,minCapMm:1.6,semiboldBelowMm:2.2},opts || {});
     const limit=opts.maxHeightFrac*(mask.hPt || mask.h/mask.res);
@@ -957,6 +991,10 @@
     for(const lines of variants){
       const layout=layoutLines(lines,font,want,opts.lineGap,angle,place.centre);
       if(verifyInk(layout.cmds,mask).ok){best={ok:true,size:want,lines,layout,angle,centre:place.centre};break;}
+    }
+    if(!best && opts.slideMm>0)for(const lines of variants){
+      const s=slideAt(lines,font,mask,opts,{centre:place.centre,angle},want);
+      if(s){best={ok:true,size:want,lines,layout:s.layout,angle,centre:s.centre,slidMm:s.slidMm};break;}
     }
     if(!best)for(const lines of variants){
       const fit=refitAt(lines,font,mask,{...opts,measure:false},{...place,maxSize:want});
@@ -1022,7 +1060,7 @@
 
   return { MM_PER_PT, PT_PER_MM, mul, ap, mirrorX, rotateAbout, translate, transformSeg, flatten, polyCentroid, pointInPolys, distToPolys, interiorPoint,
     makeFrame, emptyMask, cloneMask, rasterPolys, raster, area, flipX, diffFraction, at, distanceTransform, erode, subtract, rotateMask, largestRectangles,
-    pathRole, isCutLine, BackViewError, upAngleOf, holeUpAngle, longAxisOf, LONG_ASPECT, ORIENT, viewOptionsFor, orientStale, backView, engraveMask, materialMask,
-    glyphCoverage, capPerEm, lineGlyphs, layoutLines, glyphPolys, rasterGlyphs, verifyInk, strokeMetrics, fitText, refitAt, defaultSize, sizeRange, SIZE_RULE, splitVariants, wrapLines, flowVariants, reflowAt, fitMultiline,
+    pathRole, isCutLine, BackViewError, upAngleOf, holeUpAngle, longAxisOf, LONG_ASPECT, ORIENT, viewOptionsFor, orientStale, backView, engraveMask, CUT_LINE_PT, EDGE_MM, materialMask,
+    glyphCoverage, capPerEm, lineGlyphs, layoutLines, glyphPolys, rasterGlyphs, verifyInk, strokeMetrics, fitText, refitAt, defaultSize, sizeRange, SIZE_RULE, splitVariants, wrapLines, flowVariants, reflowAt, slideAt, fitMultiline,
     svgPathOf, svgPathOfCmds, silhouetteBits };
 });

@@ -105,13 +105,17 @@ const sq = (x, y, w, h) => [[['m', [x, y]], ['l', [x + w, y]], ['l', [x + w, y +
   ok(ed.bits === piece.bits && ed.bbox === base.bbox && ed.id === piece.id && ed.poolId === piece.poolId, 'D the silhouette, the box, the id and the pool id stay (no cut line changed)');
   ok(ed.artEdit.front.at === saved.at && ed.artEdit.front.by === 'Ana_M' && ed.artEdit.front.removed === 3 && ed.artEdit.front.added === 5 && !ed.artEdit.front.refused.length && !ed.artEdit.front.stale.length, 'D who and when, and what was put on');
   ok(ed.artFrom && ed.artFrom.members === base.members && ed.artFrom.hash === base.hash, 'D the master is kept by reference (artFrom), never copied');
-  // the front view of the edited piece: the words keep off the new month name and the date; the old month's band is free
-  const v2 = G.backView(ed, { face: 'front', upAngle: 60, res: 6 }), m1 = G.engraveMask(front, { marginMm: 0.3 }), m2 = G.engraveMask(v2, { marginMm: 0.3 });
+  // the front view of the edited piece: the words keep off the new month name and the date; the old month's band is free (MARGINS, 28 Oct 2026: that is the rule a placement approved before then is
+  // rebuilt with, keepArtClear; every new placement may cross the art, checked last)
+  const OLD = { marginMm: 0.3, keepArtClear: true };
+  const v2 = G.backView(ed, { face: 'front', upAngle: 60, res: 6 }), m1 = G.engraveMask(front, OLD), m2 = G.engraveMask(v2, OLD);
   const vc = p => G.ap(G.mul(front.M, front.R), p[0], p[1]);
   const inN = vc(cal.at(44, 74));   // (inside the new "N", clear of every old letter)
   ok(G.at(m1, ...inN) && !G.at(m2, ...inN), 'D the front\'s mask keeps the words off the new month name');
-  const ed0 = AE.apply(piece, Object.assign({}, saved, { added: [] }), 'front'), m0 = G.engraveMask(G.backView(ed0, { face: 'front', upAngle: 60, res: 6 }), { marginMm: 0.3 }), inA = vc(cal.at(35.5, 70));   // (inside the old "A"'s left leg)
+  const ed0 = AE.apply(piece, Object.assign({}, saved, { added: [] }), 'front'), m0 = G.engraveMask(G.backView(ed0, { face: 'front', upAngle: 60, res: 6 }), OLD), inA = vc(cal.at(35.5, 70));   // (inside the old "A"'s left leg)
   ok(!G.at(m1, ...inA) && G.at(m0, ...inA), 'D and where the old "A" stood is free for words once it is removed');
+  { const n1 = G.engraveMask(front, { marginMm: 0.09 }), n2 = G.engraveMask(v2, { marginMm: 0.09 });   // (MARGINS: "Text should be allowed to overlap with all engravings")
+    ok(G.at(n1, ...inN) && G.at(n2, ...inN) && G.at(n1, ...inA) && G.at(n2, ...inA) && G.area(n2) === G.area(n1), 'D MARGINS: by the rule new placements are made with, the words may cross the new month name and the old one alike'); }
   // the editor reads it back
   const items = AE.itemsOf(ed, front, 'front');
   eq(items.map(x => x.id), AE.memberIds(ed), 'D itemsOf: one item a part, by its id'); ok(items.filter(x => x.origin === 'added').length === 5 && items.filter(x => x.origin === 'master').length === 21, 'D the master\'s parts and the added ones told apart');

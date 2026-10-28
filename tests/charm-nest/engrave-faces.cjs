@@ -386,10 +386,12 @@ ok('geom: the front view', () => {
   assert.equal(G.viewOptionsFor({ face: 'front', entry: { upSource: 'operator', upAngle: 33 } }).upAngle, undefined); assert.equal(G.viewOptionsFor({ entry: { upSource: 'operator', upAngle: 33 } }).upAngle, 33);
   const bar = charm(rect(0, 0, 58, 10), [circ(1.5, 9, 2), circ(56.5, 9, 2)]), fb = G.backView(bar, { res: 6, face: 'front' }), bb = fb.outline.bbox;
   assert.ok((bb[2] - bb[0]) / (bb[3] - bb[1]) > 5, 'a long charm lies flat in the front view'); assert.ok(Math.abs(fb.angleDeg) < 1e-6);
-  // the front keeps its words off the design's own engraved art (a filled shape), the back view is not asked to
+  // the front kept its words off the design's own engraved art (a filled shape), the back view is not asked to: since MARGINS (Paul, 28 Oct 2026: "Text should be allowed to overlap with all
+  // engravings") only for a placement approved before (keepArtClear); every new one may cross it
   const art = charm(rect(0, 0, 60, 60), [], [rect(20, 20, 40, 40)]);
-  const fa = G.backView(art, { res: 6, face: 'front' }), mAvoid = G.engraveMask(fa, { marginMm: .8 }), mPlain = G.engraveMask(Object.assign({}, fa, { face: undefined }), { marginMm: .8 });
-  assert.ok(G.area(mAvoid) < G.area(mPlain), 'the shape on the front is kept clear (' + G.area(mAvoid) + ' < ' + G.area(mPlain) + ')');
+  const fa = G.backView(art, { res: 6, face: 'front' }), mAvoid = G.engraveMask(fa, { marginMm: .8, keepArtClear: true }), mPlain = G.engraveMask(Object.assign({}, fa, { face: undefined }), { marginMm: .8 });
+  assert.ok(G.area(mAvoid) < G.area(mPlain), 'the shape on the front is kept clear by the rule before (' + G.area(mAvoid) + ' < ' + G.area(mPlain) + ')');
+  assert.equal(G.area(G.engraveMask(fa, { marginMm: .8 })), G.area(mPlain), 'MARGINS: the words may cross the shape on the front');
   assert.equal(G.area(G.engraveMask(bv, { marginMm: .8 })), G.area(G.engraveMask(G.backView(disc, { res: 6 }), { marginMm: .8 })));
 });
 

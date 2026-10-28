@@ -40,6 +40,9 @@ async function partA() {
   const ace = { Regular: T.withEmoji(ot.parse(fb('vendor/fonts/JostSlashedZero-Regular.ttf')), emoji, map, ot.Path, [sans]), Semibold: T.withEmoji(ot.parse(fb('vendor/fonts/JostSlashedZero-SemiBold.ttf')), emoji, map, ot.Path, [sans]) };
   // A1 · the page's own input, as its worker got it
   const inp = JSON.parse(fs.readFileSync(path.join(FIX, 'calendar-front-fit-input.json'), 'utf8')); inp.charm.outline = inp.charm.members[inp.charm.outlineAt]; delete inp.charm.outlineAt;
+  // (MARGINS, Paul 28 Oct 2026: the words may now cross the calendar's own art and come to the cut line's inner edge. These sha-256s were recorded on the area as it was then, 0.3 mm with the art kept
+  //  clear, so A1-A3 ask for that very area (keepArtClear, the rule a placement approved before then is rebuilt with); A4 fits the same calendar on the area every new placement is made with)
+  const page0 = inp.maskOptions; inp.maskOptions = Object.assign({}, page0, { keepArtClear: true });
   const runs = []; let r = null;
   for (let i = 0; i < 7; i++) { const c0 = process.cpuUsage(), t0 = performance.now(); r = Fit.calculate(inp, ace, G); const c = process.cpuUsage(c0); runs.push({ cpu: (c.user + c.system) / 1000, wall: performance.now() - t0 }); }
   const warm = runs.slice(2), cpu = Math.min(...warm.map(x => x.cpu)), wall = Math.min(...warm.map(x => x.wall)), f = r.fit, b = BEFORE.saved21;
@@ -51,7 +54,7 @@ async function partA() {
   const opts = { minCapMm: 1.6, maxHeightFrac: .4, lineGap: .216, minStrokeMm: .15, minGapMm: .12, tryRotated: true };
   const faces = {};
   for (const [face, lines] of [['front', ['SEPTEMBER']], ['back', ['12:11 P.M.']]]) {
-    const c0 = process.cpuUsage(); const out = Fit.calculate({ charm, lines, lineMode: 'auto', viewOptions: G.viewOptionsFor({ face }), maskOptions: { marginMm: .3, keepOut: [] }, opts }, ace, G); const u = process.cpuUsage(c0);
+    const c0 = process.cpuUsage(); const out = Fit.calculate({ charm, lines, lineMode: 'auto', viewOptions: G.viewOptionsFor({ face }), maskOptions: { marginMm: .3, keepOut: [], keepArtClear: true }, opts }, ace, G); const u = process.cpuUsage(c0);
     faces[face] = { sha: sha(out.fit), size: +out.fit.size.toFixed(4), angle: out.fit.angle, ms: Math.round((u.user + u.system) / 1000) };
   }
   // A3 · KEEP: the placement the face had before the 21, kept by the refit after it
@@ -70,6 +73,11 @@ async function partA() {
   }
   check(`A2 the calendar master: its front "SEPTEMBER" (${faces.front.size} pt, ${faces.front.ms} ms) and its back "12:11 P.M." (${faces.back.size} pt, ${faces.back.ms} ms) are fitted exactly as before`,
     faces.front.sha === BEFORE.front && faces.back.sha === BEFORE.back, JSON.stringify(faces));
+  {
+    const now = Fit.calculate(Object.assign({}, inp, { maskOptions: { marginMm: G.EDGE_MM, keepOut: [] } }), ace, G), was = Fit.calculate(inp, ace, G);
+    check(`A4 MARGINS: on the area new placements are made with (the cut line's inner edge, the art crossed) "SEPTEMBER" fits at least as large (${now.fit && now.fit.fittedMax.toFixed(3)} pt largest, ${was.fit.fittedMax.toFixed(3)} pt before) and verifies on the metal`,
+      now.fit && now.check.ok && now.mask.artFree && now.fit.fittedMax >= was.fit.fittedMax - 1e-9 && G.area(now.mask) > G.area(was.mask), JSON.stringify({ now: now.fit && now.fit.fittedMax, was: was.fit.fittedMax }));
+  }
   delete global.window; delete global.self;
 }
 

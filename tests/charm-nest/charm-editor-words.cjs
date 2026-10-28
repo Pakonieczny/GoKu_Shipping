@@ -148,7 +148,11 @@ async function partBCD() {
         steps === h0 + 7 && z0.wd.fontKey === j0.fontKey && !z0.wd.bold && !z0.wd.italic && !z0.wd.letterCase && z0.wd.align === 'center' && near(z0.d.box, o1.d.box, 1e-6) && !z0.dirty && z1.wd.fontKey === 'crimson-text' && z1.wd.bold && z1.wd.italic && z1.wd.letterCase === 'small' && z1.wd.align === 'right' && near(z1.d.box, s1.d.box, 1e-6),
         JSON.stringify({ steps, h0, z0: z0.wd, z1: z1.wd, dirty: z0.dirty }));
       // retyped: double-click the words, the editor's own words box
-      { const b = z1.d.box, c = await page.evaluate(([x, y]) => CharmEditor.current.clientOf(x, y), [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2]); await page.mouse.dblclick(c.x, c.y); await settleP(page); }
+      // (on the letters: the middle of their box can fall in the space between two words, where nothing is hit; MARGINS, 28 Oct 2026, fits the words larger and elsewhere, so the middle is not always ink)
+      for (const f of [0.5, 0.35, 0.65, 0.2, 0.8, 0.42, 0.58]) {
+        const b = z1.d.box, c = await page.evaluate(([x, y]) => CharmEditor.current.clientOf(x, y), [b[0] + f * (b[2] - b[0]), (b[1] + b[3]) / 2]); await page.mouse.dblclick(c.x, c.y); await settleP(page);
+        if (await page.evaluate(() => !!document.querySelector('.ce-root textarea.ce-editor'))) break;
+      }
       const ta = await page.evaluate(() => { const t = document.querySelector('.ce-root textarea.ce-editor'); return t ? t.value : null; });
       await page.keyboard.press('Control+a'); await page.keyboard.type('Mimi'); await page.keyboard.press('Enter'); await settleP(page);
       const r1 = await page.evaluate(id => ({ wd: __cw.words('back'), d: __cw.drawn('back', id) }), wid);

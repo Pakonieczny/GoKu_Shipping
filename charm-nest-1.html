@@ -3853,7 +3853,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
       <div class="field"><label>Standard charm size (mm) · long and narrow from</label><div class="fieldRow"><input id="stCharmMaxMm" type="number" min="0" max="60" step="0.1"><input id="stCharmLongRatio" type="number" min="1.1" max="5" step="0.1"></div><div class="help">When a master is indexed, a charm body longer than this size is drawn at it; the hanging ring keeps its own size and a smaller charm is left as drawn. A body whose long side is at least the second number times its short side (a pencil, a bar, a word) keeps its size. 0 leaves every charm as drawn.</div></div>
     </div>
     <div class="fieldRow3">
-      <div class="field"><label>Engrave margin (mm) · min cap (mm)</label><div class="fieldRow"><input id="stEngraveMarginMm" type="number" min="0" max="5" step="0.05"><input id="stEngraveMinCapMm" type="number" min="0.5" max="10" step="0.1"></div><div class="help">Keep-out from every cut edge and cut-out; below the cap height a placement is flagged small, never dropped.</div></div>
+      <div class="field"><label>Engrave margin (mm) · min cap (mm)</label><div class="fieldRow"><input id="stEngraveMarginMm" type="number" min="0" max="5" step="0.01"><input id="stEngraveMinCapMm" type="number" min="0.5" max="10" step="0.1"></div><div class="help">How far the words stay inside every cut line (outer edge, hole, cut-out); 0.09 mm is the inner edge of the cut line as drawn. The words may cross the design's engravings. Below the cap height a placement is flagged small, never dropped.</div></div>
       <div class="field"><label>Max height (fraction) · confidence</label><div class="fieldRow"><input id="stEngraveMaxHeightFrac" type="number" min="0.1" max="1" step="0.05"><input id="stEngraveConfidence" type="number" min="0" max="1" step="0.05"></div><div class="help">How large the automatic first placement may set the words, as a fraction of the charm's height; by hand the words can be enlarged to the edge of the usable metal. Confidence controls uncertain no-engraving decisions; proposed inscriptions always get a placement preview.</div></div>
       <div class="field"><label>Engraver limits: min gap · min stroke (mm)</label><div class="fieldRow"><input id="stEngraveMinGapMm" type="number" min="0" max="2" step="0.01"><input id="stEngraveMinStrokeMm" type="number" min="0" max="2" step="0.01"></div><div class="help">From a test coupon.</div></div>
     </div>
@@ -3908,7 +3908,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-dxf.js?v=20260927-custom-vi1"></script>
 <script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2-hdr1-ms1-cost18-rh1-hp2-ro1-sc1-ss1-vis1-rs1-rel1-sg1-apx1-sw1-pf1"></script>
 <script src="charm-nest-timeline-ui.js?v=20261007-fc4c-lb2-pow2-fb1-ui2-tn1-tb1-br1-ns1-nr1-hdr1-pl1-ms1-pk1-cost18-rh1-ho1-ss1-rel1-sg1-nv3-sy1-nv6-sg2-fw1"></script>
-<script src="charm-nest-geom.js?v=20261009-flat-col-fb1-fb2-fr1-rb1-m3-wd1-cb1-rf1-rf2"></script>
+<script src="charm-nest-geom.js?v=20261009-flat-col-fb1-fb2-fr1-rb1-m3-wd1-cb1-rf1-rf2-mg1"></script>
 <script src="charm-nest-monogram.js?v=20261015-mono1-monoui1-mx4-mh2"></script>
 <script src="charm-nest-monogram-fit.js?v=20261016-mx4-mh2"></script>
 <!-- charm-nest-monogram-edits.js (0.8 MB) loads the first time a monogram is made (charm-nest-bridge.js MonoUI: ready) -->
@@ -3966,7 +3966,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-engrave-said.js?v=20261012-nt1-en1-od1"></script>
 <script src="charm-nest-engrave-read.js?v=20261013-sbc1"></script>
 <script src="charm-nest-engrave-piece-words.js?v=20261016-pw1-br1-ms1-bh1"></script>
-<script src="charm-nest-engrave-preview.js?v=20261012-pv1-r2th1-th2-bg1-sb2-cb1-rf2"></script>
+<script src="charm-nest-engrave-preview.js?v=20261012-pv1-r2th1-th2-bg1-sb2-cb1-rf2-mg1"></script>
 <script src="charm-nest-made-thumb.js?v=20261028-ts1"></script><!-- charm-nest-made-thumb.js: every list box shows its pieces as they will be made (cut, art, Charm Editor changes, fitted words; front and back), live here and kept on the pool row for the other computers (THUMBSYNC, Paul 28 Oct 2026) -->
 <script src="charm-nest-pair-labels.js?v=20261009-plb2-as1-adv2-cg1-nk1-dm1-ko1-pv1"></script>
 <script src="qr-piece-label.js?v=20261014-ql1-noord1"></script><!-- qr-piece-label.js: the sticker of ONE piece of a multi-piece order, printed by hand: its note, fitted (Paul, 14 Oct 2026) -->
@@ -4005,13 +4005,13 @@ const DEFAULTS = {
   stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
   nestFlow: "standard", learnedBudgetS: 600, learnedStallS: 300,
   clearancePt: -0.5, insetPt: 1.5, angleStep: 10, budgetS: 180, seed: 1, freshSeed: true, serverAbove: 0, parallel: 0,
-  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", computePipeline: "cpu", aiRounds: 10, snapIn: 0.25, maxFill: 0.80, orderView: "list", v: 26,
+  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", computePipeline: "cpu", aiRounds: 10, snapIn: 0.25, maxFill: 0.80, orderView: "list", v: 27,
   // Design Station bridge, orders, run (design doc §14)
   dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, pollOrders: "on", pollMinutes: 10, finalOptimizeCount: 85, optimizeAt: 85, etsyHourlyCap: 600, sandbox: "off",
   sandboxStream: "on", sandboxSpeed: 50, sandboxSeed: 0,   // in the sandbox, orders arrive a few per simulated 10 minutes, 50x faster than real time
   skuPattern: "^[A-Z0-9][A-Z0-9 _.,'&()+\\-]{1,60}$", labelGapMm: 6.4, masterServerAbove: 0, sizeMinMm: 3, sizeMaxMm: 60, charmMaxMm: 11.5, charmLongRatio: 1.6,
   cadenceDays: 2, lateDays: 2,
-  engraveMarginMm: 0.3, engraveMinCapMm: 1.6, engraveMaxHeightFrac: 0.4, engraveConfidence: 0.65, engraveTryRotated: "on", engraveMinGapMm: 0.12, engraveMinStrokeMm: 0.15, backFileView: "asSeenFromBack"
+  engraveMarginMm: 0.09, engraveMinCapMm: 1.6, engraveMaxHeightFrac: 0.4, engraveConfidence: 0.65, engraveTryRotated: "on", engraveMinGapMm: 0.12, engraveMinStrokeMm: 0.15, backFileView: "asSeenFromBack"
 };
 /* The two plates production actually uses. Sizes are held in mm; `w`/`h` stay in inches for the code that reads them. */
 const STOCK_PRESETS = [
@@ -4162,6 +4162,8 @@ function loadSettings() {
     if ((saved.v || 1) < 24) { if(saved.sandbox!=="on")saved.pollMinutes=Math.max(10,+saved.pollMinutes || 10); saved.v=24; }
     if ((saved.v || 1) < 25) { saved.pollMinutes=Math.max(10,+saved.pollMinutes || 10); saved.v=25; }
     if ((saved.v || 1) < 26) { saved.maxFill=.80; saved.finalOptimizeCount=85; saved.v=26; }
+    // v27 MARGINS (Paul, 28 Oct 2026: "The engravable area should be allowed to back up against the inner edge of the cut line for every charm"): the 0.3 mm (or older 0.8 mm) margin comes down to the cut line's inner edge
+    if ((saved.v || 1) < 27) { if (!(+saved.engraveMarginMm <= DEFAULTS.engraveMarginMm)) saved.engraveMarginMm = DEFAULTS.engraveMarginMm; saved.v = 27; }
     if (![2,5,10].includes(+saved.angleStep)) saved.angleStep = DEFAULTS.angleStep;
     const out = Object.assign({}, DEFAULTS, saved); out.stock = Object.assign({}, DEFAULTS.stock, saved.stock || {}); return out;
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
@@ -8747,7 +8749,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25-dc26-bk26-es26-ee26-ep26-sx26-sc26-ns26-pw26-gl1-gk1-r16h1-plc1-en1-vis1-dsg1-dxf1-aw1-once1-c17-rs1-rel1-rel2-ga1-mt1-lf1-fra1-ae1-ce1-cb1-kps1-oos1-gss1-hsi1-edw1-ged1-sp1-nv1-rf1-apx1-nv2-nv3-nv4-nv5-cet1-ls1-hr1-cp1-dl1-rw2-sy1-im1-bfw1-cem1-sndsh1-rf2-bfw2-nv6-tab1-tab2-ob1-st2-nv7-sy2-ps1-hc1-hc2-af1-ss1-ah1-ce1-sb1-es1-ts1"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25-dc26-bk26-es26-ee26-ep26-sx26-sc26-ns26-pw26-gl1-gk1-r16h1-plc1-en1-vis1-dsg1-dxf1-aw1-once1-c17-rs1-rel1-rel2-ga1-mt1-lf1-fra1-ae1-ce1-cb1-kps1-oos1-gss1-hsi1-edw1-ged1-sp1-nv1-rf1-apx1-nv2-nv3-nv4-nv5-cet1-ls1-hr1-cp1-dl1-rw2-sy1-im1-bfw1-cem1-sndsh1-rf2-bfw2-nv6-tab1-tab2-ob1-st2-nv7-sy2-ps1-hc1-hc2-af1-ss1-ah1-ce1-sb1-es1-ts1-mg1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1-sy1-sy2"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1-ob1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
