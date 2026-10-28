@@ -143,7 +143,7 @@
   }
   /** The lines the job's own fit laid the words in (Ace: NAME over ONE), when the words and the font shown are the job's own: that is what the laser cuts, so that is what the picture shows. Words or a font typed since are shown as typed. */
   function fitLinesOf(o, id) {
-    const j = o && o.job, f = j && (j.fit || j.writtenFit); if (!f) return null;
+    const j = o && o.job, f = j && (j.fit || j.writtenFit || (heldOf(j) || {}).fit); if (!f) return null;
     const mine = linesOf(f.lines && f.lines.length ? f.lines : j.lines); if (!mine.length) return null;
     if (runOf(o.text) !== runOf(mine) || (j.fontKey && idOf(j.fontKey) !== id)) return null;
     return mine;
@@ -267,10 +267,15 @@
     try { const M = root && root.Master, sku = row && row.spec && row.spec.designSku, e = M && M.entryFor && sku ? M.entryFor(sku) : null; return e && e.upSource === 'operator' && fin(+e.upAngle) ? +e.upAngle : null; } catch (_) { return null; }
   }
   const faceOfJob = job => (job && job.face === 'front' ? 'front' : 'back');
+  /* REFIT (Paul, 28 Oct 2026: "Everything must be immediate and responsive"): a face fitted again after a charm edit has no fit of its own for a moment. The work area draws the drawing it had meanwhile
+     (charm-nest-bridge.js heldDrawing: its view, with the art as it is now, and its fit); these pictures draw the same, so the words stay where they were and nothing is placed again here on the
+     page's own thread (quickFit took 0.4 s of it on a calendar). → the stand-in { view, fit } or null. */
+  const heldOf = job => { try { const f = job && !job.fit && root && root.CNEngraveHeld; return typeof f === 'function' ? f(job) : null; } catch (_) { return null; } };
   /** The frame to draw for `o` ({ job, row, slot, face }): the job's view when it has one, else the piece's pool charm. null when neither exists. */
   function frameFor(o) {
     o = o || {}; const job = o.job, face = job ? faceOfJob(job) : o.face === 'front' ? 'front' : 'back';
-    if (job && job.view) { const f = face === 'back' ? frameOfViewWith(job.view, backAddsOf(charmFor(o))) : frameOfView(job.view); if (f) return f; }
+    const view = job && (job.view || (heldOf(job) || {}).view);
+    if (view) { const f = face === 'back' ? frameOfViewWith(view, backAddsOf(charmFor(o))) : frameOfView(view); if (f) return f; }
     const charm = charmAny(o); if (!charm) return null;
     const w = job && job.writtenFit, up = w && fin(+w.upAngle) ? +w.upAngle : (face === 'front' ? null : operatorUp(o.row || (job && job.row)));
     return frameOfCharm(charm, face, up);
@@ -282,6 +287,8 @@
       if (!job) return null; o = o || {};
       const fit = job.fit && Array.isArray(job.fit.centre) && job.fit.centre.every(fin) ? job.fit : null;
       if (fit && job.view) { const F = frameOfView(job.view); return F ? placeOf(fit, F.box) : null; }
+      const h = !fit ? heldOf(job) : null;   // (REFIT: fitted again after a charm edit: where the held drawing has them)
+      if (h && h.view && h.fit && Array.isArray(h.fit.centre) && h.fit.centre.every(fin)) { const F = frameOfView(h.view); return F ? placeOf(h.fit, F.box) : null; }
       const w = job.writtenFit;
       if (w && Array.isArray(w.centre) && w.centre.every(fin) && fin(+w.upAngle)) { const F = frameFor({ job, row: o.row || job.row, slot: o.slot }); return F ? placeOf(w, F.box) : null; }
     } catch (e) { warn(e); }

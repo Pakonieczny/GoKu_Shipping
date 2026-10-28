@@ -208,9 +208,10 @@
   }
   const endOf = s => { const c = s.cmds[s.cmds.length - 1]; return c ? c[c.length - 1] : s.start; };
 
-  /** Every drawable entity, flattened through its blocks, with its transform and colour. */
+  /** Every drawable entity, flattened through its blocks, with its transform and colour. opts.spline(e): a SPLINE drawn another way (the Charm Editor's import keeps it as
+   *  Béziers: charm-nest-ce-import.js); null from it falls back to the sampled curve below. */
   const WCS = new Set(["LINE", "SPLINE", "ELLIPSE"]);
-  function collect(doc) {
+  function collect(doc, opts) {
     const out = [], skipped = {};
     const skip = t => { skipped[t] = (skipped[t] || 0) + 1; };
     const layerOf = name => doc.layers.get(name) || { rgb: [0, 0, 0], off: false };
@@ -263,7 +264,7 @@
             if (rx > 0) { const a = arcCmds(num(e, 10, 0), num(e, 20, 0), rx, rx * q, Math.atan2(my, mx), t0, sw); a.closed = sw >= 2 * Math.PI - 1e-9; subs.push(a); }
             break;
           }
-          case "SPLINE": { const s = splineSub(e); if (s) subs.push(s); break; }
+          case "SPLINE": { const s = (opts && opts.spline && opts.spline(e)) || splineSub(e); if (s) subs.push(s); break; }
           case "HATCH": { const s = hatchSubs(e); if (!s.length) skip("hatch"); subs.push(...s); break; }
           case "POINT": case "VIEWPORT": case "ATTDEF": case "ATTRIB": case "SEQEND": case "VERTEX": break;
           default: skip(e.type.toLowerCase());
@@ -369,5 +370,5 @@
     return { bytes, meta: { units, widthMm: (x1 - x0) * k / MM, heightMm: (y1 - y0) * k / MM, paths, skipped } };
   }
   const isDxf = (name, bytes) => /\.dxf$/i.test(name || "") || (!!bytes && /^\s*0\s*[\r\n]+\s*SECTION/.test(new TextDecoder("latin1").decode(bytes.subarray(0, 64))));
-  return { toPdf, parse, isDxf, aci };
+  return { toPdf, parse, isDxf, aci, collect, chain, UNITS };   // (collect, chain, UNITS: the Charm Editor's vector import reads a drawing with them, charm-nest-ce-import.js)
 });
