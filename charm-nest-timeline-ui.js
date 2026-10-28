@@ -1538,7 +1538,7 @@
     const synced = () => !!(sync && sync.live());
     const pace = () => { if (synced()) return Math.max(IDLE_K, fullEvery() / POLL_OPEN); const idle = Date.now() - Math.max(lastTouch, F.moved); if (idle >= IDLE_MS) return IDLE_K; return idle < ACTIVE_MS && focused() ? 1 : POLL_QUIET / POLL_OPEN; };
     const feedOn = () => {
-      const C = root.CNSync; if (sync || !id || !C || typeof C.follow !== "function") return;
+      const C = root.CNSync; if (sync || !id || !C || typeof C.follow !== "function" || +o.pollMs > 0) return;   // (a feed asked for its own poll, pollMs, polls as asked)
       // (its pieces and custom records reach it as before: the placement feed's read of this order (OrderPieces → poke) and the Review feed's (UI.poke); a p:* or x:* is theirs to read)
       sync = C.follow({ name: "timeline:" + id, kinds: "ox", wild: "o", active: () => !F.dead && subs.size > 0 && seen(), since: () => F.began,
         wants: k => k.slice(2) === id,

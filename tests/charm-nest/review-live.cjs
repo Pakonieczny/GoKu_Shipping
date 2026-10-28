@@ -65,10 +65,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
     });
     if (o.noLive) await context.route(/charm-nest-review-live\.js/, r => r.abort());
     await context.addInitScript(who => { try { if (!sessionStorage.getItem('__seeded')) { localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on' })); localStorage.setItem('cn.employee', who); sessionStorage.setItem('__seeded', '1'); } } catch (_) {} }, name);
-    const page = await context.newPage(), c = { name, context, page, reads: [], writes: [] };
+    const page = await context.newPage(), c = { name, context, page, reads: [], writes: [], asks: [] };   // (asks: FEED, 28 Oct 2026: the computer's changes feed, getChanges)
     page.setDefaultTimeout(30000 * K);
     page.on('pageerror', e => { errors.push(name + ': ' + e.message); console.error(name, 'page error:', String(e.stack || e.message).split('\n').slice(0, 4).join(' | ')); });
-    page.on('request', rq => { if (!/charmNestLibrary/.test(rq.url()) || rq.method() !== 'POST') return; let b = {}; try { b = JSON.parse(rq.postData() || '{}'); } catch (_) {} if (b.op === 'customGet' && b.since != null) c.reads.push(Date.now()); else if (/^custom(Put|Reopen)$/.test(b.op)) c.writes.push({ op: b.op, at: Date.now() }); });
+    page.on('request', rq => { if (!/charmNestLibrary/.test(rq.url()) || rq.method() !== 'POST') return; let b = {}; try { b = JSON.parse(rq.postData() || '{}'); } catch (_) {} if (b.op === 'customGet' && b.since != null) c.reads.push(Date.now()); else if (b.op === 'getChanges') c.asks.push(Date.now()); else if (/^custom(Put|Reopen)$/.test(b.op)) c.writes.push({ op: b.op, at: Date.now() }); });
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.CN && window.Orders && window.Review && window.CustomPrint && window.Seal && window.Motion && window.OrderWin && CN.S.cloud.ok === true, null, { timeout: 90000 });
     c.load = async (orders, mode = 'review') => {
@@ -474,16 +474,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms)), nap = ms => sleep(Math.
     /* ── 8 · cost ── */
     {
       await A.seg('open');
-      const r0 = A.reads.length, t0 = Date.now(); await sleep(20000);
-      const n = A.reads.length - r0, per = (Date.now() - t0) / n, perHour = Math.round(3600000 / per);
-      assert(n >= 6 && n <= 11, 'about one read every 2 s while watched: ' + n + ' in 20 s');
+      const r0 = A.reads.length, q0a = A.asks.length, t0 = Date.now(); await sleep(20000);
+      const n = A.reads.length - r0, per = (Date.now() - t0) / Math.max(1, n), perHour = Math.round(3600000 / per), asks = A.asks.length - q0a, synced = await A.page.evaluate(() => !!ReviewLive.state().synced);
+      // FEED (28 Oct 2026): with the computer's changes feed answering, the Review feed reads nothing while nothing changes; the computer's one question goes about every 2 s while Review is worked at
+      if (synced) { assert(n <= 1, 'the feed answering: no Review read while nothing changes: ' + n + ' in 20 s'); assert(asks >= 6 && asks <= 11, 'the computer asks what moved about every 2 s while Review is worked at: ' + asks + ' in 20 s'); }
+      else assert(n >= 6 && n <= 11, 'about one read every 2 s while watched: ' + n + ' in 20 s');
       const mut = await A.page.evaluate(() => new Promise(res => { let n = 0; const o = new MutationObserver(m => { n += m.length; }); o.observe(document.getElementById('rvList'), { childList: true, subtree: true, attributes: true, characterData: true }); setTimeout(() => { o.disconnect(); res(n); }, 8000); }));
       assert.equal(mut, 0, 'idle reads change nothing on screen (8 s)');
       const q0 = srv.st.queries || 0, d0 = srv.st.reads || 0;
       await A.page.evaluate(() => ReviewLive.poll({}));
       assert.equal((srv.st.queries || 0) - q0, 1, 'one query per read'); assert.equal((srv.st.reads || 0) - d0, 0, 'no document when nothing changed (Firestore bills one)');
       assert.deepEqual(outside, [], 'no Etsy or AI call');
-      log(`cost: ${n} reads in 20 s while watched = ${perHour} a hour for one open Review tab (one query, no document read when idle), 0 hidden, nothing drawn`);
+      log(synced ? `cost: the changes feed answering, ${n} Review reads and ${asks} questions of the computer in 20 s while watched (one document each), 0 hidden, nothing drawn` : `cost: ${n} reads in 20 s while watched = ${perHour} a hour for one open Review tab (one query, no document read when idle), 0 hidden, nothing drawn`);
     }
     {
       // 300 cards in Review still draw fast, an idle read draws nothing, and a change among them is applied at the cost of about one
