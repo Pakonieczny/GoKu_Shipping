@@ -156,6 +156,18 @@
   }
   function designsLoad(more, fresh) {
     const D = Designs(); if (!D || typeof D.list !== 'function') return null;
+    designsWatch(D);
+    if (!more && !DS.byId.size && typeof D.rows === 'function') { designsRows(D); if (DS.byId.size) changed('designs'); }
+    if (DS.loading) return DS.loading;
+    if (more && !DS.next) return null;
+    if (!more && DS.loaded && !fresh) return null;
+    DS.loading = Promise.resolve().then(() => D.list(more ? { cursor: DS.next } : {})).then(r => {
+      designsMerge(summaries(r)); DS.next = r && !Array.isArray(r) && r.next ? r.next : null; DS.loaded = true; DS.error = '';
+    }, e => { DS.error = (e && e.message) || String(e); DS.loaded = true; }).finally(() => { DS.loading = null; changed('designs'); });
+    return DS.loading;
+  }
+  /** The design library's change feed, listened to once (no call of its own: a save, another tab, the cloud's answer to someone else's list). */
+  function designsWatch(D) {
     if (!DS.sub && typeof D.onChange === 'function') {
       DS.sub = true;
       // (the module's copy changed: a save (its row comes with it), another tab, the cloud's answer. Coalesced, as the studio's sessionsViewsSoon, J 1556)
@@ -168,14 +180,6 @@
         });
       } catch (_) { /* no change feed: the list is as loaded */ }
     }
-    if (!more && !DS.byId.size && typeof D.rows === 'function') { designsRows(D); if (DS.byId.size) changed('designs'); }
-    if (DS.loading) return DS.loading;
-    if (more && !DS.next) return null;
-    if (!more && DS.loaded && !fresh) return null;
-    DS.loading = Promise.resolve().then(() => D.list(more ? { cursor: DS.next } : {})).then(r => {
-      designsMerge(summaries(r)); DS.next = r && !Array.isArray(r) && r.next ? r.next : null; DS.loaded = true; DS.error = '';
-    }, e => { DS.error = (e && e.message) || String(e); DS.loaded = true; }).finally(() => { DS.loading = null; changed('designs'); });
-    return DS.loading;
   }
   const designFull = new Map();                              // 'id|version' -> Promise<design>: a design asked for once (a drag starts asking before the drop)
   function designGet(id, version) {
@@ -1057,6 +1061,62 @@
   }
   function closeHist() { if (S && !S.hist.hidden) { S.hist.hidden = true; S.hist.innerHTML = ''; S.hist._row = null; } }
 
+  /* ═══ 8b · for the Design & Engrave tab's Charm Designer bar (charm-nest-bridge.js charmDesignerBar: its recent chips) ═══ */
+  const plain = r => ({ id: r.id, version: r.version, name: r.name, orderId: r.orderId || null, customName: r.customName || null, by: r.by || '', at: r.at || 0, thumbUrl: r.thumbUrl || '' });
+  /**
+   * The designs worked on last, newest first, n at most (default 4): what was opened, placed or saved from the library on this computer (Recent, its time the time of
+   * that use), then the newest of the design library (its time the save's). Rows { id, version (the latest), name, orderId, customName, by, at, thumbUrl }. At once and
+   * from this computer only: the design library's own index, no call (the bar is drawn with the tab, and the tab is drawn often).
+   */
+  function recent(n) {
+    n = n > 0 ? Math.floor(n) : 4;
+    const D = Designs();
+    if (D) { designsWatch(D); if (!DS.byId.size && typeof D.rows === 'function') designsRows(D); }
+    const out = [], seen = new Set();
+    for (const x of recentRead()) {
+      if (out.length >= n) break;
+      if (x.kind === 'master' || !x.id || seen.has(x.id)) continue;
+      const r = DS.byId.get(x.id) || designRow({ id: x.id, name: x.n, version: x.v, orderId: x.o });
+      seen.add(x.id); out.push(Object.assign(plain(r), { at: Math.max(x.at || 0, r.at || 0) }));
+    }
+    for (const r of designsIndex().rows) { if (out.length >= n) break; if (!seen.has(r.id)) { seen.add(r.id); out.push(plain(r)); } }
+    return out.sort((a, b) => b.at - a.at);
+  }
+  /** fn(which) when the designs or the recent ones change ('designs' | 'recent'); returns the way to stop. */
+  function onChange(fn) {
+    if (typeof fn !== 'function') return () => {};
+    const D = Designs(); if (D) designsWatch(D);
+    const w = which => { if (which === 'designs' || which === 'recent') fn(which); };
+    watchers.add(w);
+    return () => watchers.delete(w);
+  }
+  /**
+   * A design opened in the editor by its id (its latest version without `version`), from anywhere on the page: the masters module's design mode (its Save makes the next
+   * version; o, the way back o.back among it, passed through). Without it: the design read here and the editor opened on it (the bridge's design-mode fonts when the
+   * page has them), its Save a version of it. Resolves when that editor is done.
+   */
+  async function openDesign(id, version, o) {
+    id = String(id == null ? '' : id); if (!id) return null;
+    o = Object.assign({}, o || {});
+    const v = +version > 0 ? +version : undefined;
+    const row = DS.byId.get(id) || { key: 'd:' + id, kind: 'design', id, name: id, version: v || 0, orderId: '' };
+    recentPush(row, v || row.version, 'opened');
+    const M = Masters();
+    if (M && typeof M.openDesign === 'function') return M.openDesign(id, Object.assign(o, v ? { version: v } : {}));
+    const C = root.CharmEditor; if (!C || typeof C.open !== 'function') throw new Error('the charm editor did not load: reload the page');
+    const D = Designs();
+    const d = D && typeof D.get === 'function' ? await D.get(id, v, { open: true }) : await designGet(id, v);
+    if (!d || !d.faces) throw new Error('that design could not be read');
+    const faces = {}; for (const f of ['front', 'back']) if (d.faces[f]) faces[f] = d.faces[f];
+    const design = { id, version: d.version, latest: row.version || d.version, name: d.name || row.name, orderId: d.orderId || null, customName: d.customName || null, source: d.source || null, keptBy: 'library' };
+    const opts = Object.assign({ title: design.name, subtitle: `design · v${d.version} · ${noOrder(design.orderId) ? (design.customName ? `custom · ${design.customName}` : 'custom · no order') : 'order ' + design.orderId}`,
+      faces, startFace: faces.front ? 'front' : 'back', design }, o.back ? { back: o.back } : {});
+    const DM = root.CharmEditDesign;
+    const res = await (DM && typeof DM.open === 'function' ? DM.open(opts) : C.open(opts));
+    if (res) await keepVersion(design, res);
+    return res ? { designId: id } : null;
+  }
+
   /* ═══ 9 · registration: one panel in the editor's right-hand slot ═══ */
   // open beside the charm by itself on a wide screen (the studio's dock is "continuously docked beside the canvas", J 19372); on a narrower one (a 1440 px laptop
   // would keep a work area of under 700 px beside the Layers and the library) it waits for the head's Library button, and once it is opened there the editor
@@ -1083,5 +1143,5 @@
     reload: () => { DS.loaded = false; MS.loaded = false; designsLoad(); mastersLoad(); },
     forget: () => { DS.byId.clear(); DS.dirty = true; DS.loaded = false; DS.next = null; DS.sub = false; MS.ix = { rows: [], sig: '' }; MS.bySku.clear(); MS.loaded = false; MS.sub = false; shown.clear(); designFull.clear(); recentList = null; recentFor = ''; stats.asked = 0; }
   };
-  return { panel, query, counts, tokens, designRow, masterRow, msOf, noOrder, open: openRow, place: placeRow, probe, version: 1 };
+  return { panel, recent, onChange, openDesign, open: openDesign, openRow, query, counts, tokens, designRow, masterRow, msOf, noOrder, place: placeRow, probe, version: 1 };
 });

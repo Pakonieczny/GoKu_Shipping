@@ -105,7 +105,7 @@ const STANDINS = `(function () {
     // (a design, or its id and o.version read through the design library with { open: true }, as charm-nest-ce-masters.js openDesign)
     openDesign: async (d, o) => {
       if (typeof d === 'string') d = await window.CharmNestDesigns.get(d, (o && o.version) || undefined, { open: true });
-      calls.openDesign.push({ id: d.id, version: d.version });
+      calls.openDesign.push({ id: d.id, version: d.version, back: (o && o.back && o.back.label) || undefined });
       return edit(d.name, d.faces, { id: d.id, name: d.name, source: { kind: 'design', designId: d.id, version: d.version }, orderId: d.orderId, customName: d.customName });
     },
     picture: sku => Promise.resolve(pic('drawn ' + sku)),
@@ -443,6 +443,25 @@ const STANDINS = `(function () {
       assert.equal(s.keys[0], 'd:dz00003'); assert.equal(s.total, 3000);
       const v = await page.evaluate(() => document.querySelector('.cel-cell[data-i="0"] .cel-v').textContent);
       assert.equal(v, 'v5');
+    });
+
+    await step('8 · for the Design & Engrave tab\'s Charm Designer bar: recent(n) at once, onChange, openDesign(id, version, o) through the masters module with the way back', async () => {
+      const r = await page.evaluate(() => {
+        const L = window.CharmNestCeLibrary, calls0 = window.__calls.list || 0, ops0 = window.__calls.ops.length;
+        const rec = L.recent(4);
+        window.__told = 0; window.__off = L.onChange(() => { window.__told++; });
+        return { rec: rec.map(d => [d.id, d.version]), fields: Object.keys(rec[0] || {}).sort().join(','), sorted: rec.every((d, i) => !i || rec[i - 1].at >= d.at), calls: window.__calls.ops.length - ops0 };
+      });
+      assert.deepEqual(r.rec, [['dz00003', 5], ['dz00004', 1], ['dz00002', 3], ['dz00001', 2]], 'the designs worked on here, newest first, at their latest version');
+      assert.equal(r.fields, 'at,by,customName,id,name,orderId,thumbUrl,version'); assert.ok(r.sorted);
+      assert.equal(r.calls, 0, 'no call to the cloud');
+      await page.evaluate(() => CharmEditor.current.end(false));   // (the bar is pressed in the tab, with no editor over it)
+      await page.evaluate(() => { window.__opened = window.CharmNestCeLibrary.openDesign('dz00004', 1, { from: 'designerBar', back: { label: 'Back to Design & Engrave', title: 'Back to the tab' } }); });
+      await page.waitForFunction(() => CharmEditor.current && document.querySelector('.ce-id h2').textContent === 'Paw 4', null, { timeout: 4000 });
+      const o = await page.evaluate(() => ({ od: window.__calls.openDesign[window.__calls.openDesign.length - 1], told: window.__told, first: window.CharmNestCeLibrary.recent(1)[0].id }));
+      assert.deepEqual(o.od, { id: 'dz00004', version: 1, back: 'Back to Design & Engrave' }, 'the masters module opened it, the way back passed through');
+      assert.ok(o.told >= 1, 'onChange told the bar'); assert.equal(o.first, 'dz00004');
+      await page.evaluate(() => window.__off());
     });
 
     await step('7 · the list view: one to a row, the same virtual list', async () => {
