@@ -30,7 +30,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - int/live-check.cjs: 7 pages load clean. Live verify = sha256 of each changed served file vs `git show origin/main:<f>`, then live-check.
 - If agents hang holding slots (load ~0, waits > 5 min): find holders: for f in slot1 slot2 slot3: ino=$(stat -c %i $SP/locks/$f); grep ":$ino " /proc/locks → pid → ps --ppid. Kill the idle test, tell its agent.
 
-## Live on main: b7c15cf = batch 8 (sheet window release green ORDER RELEASED, 5 tests fixed incl. Resolved card's Sent-to-Sheet seal; person-page chart CSS id clash fixed; live verify bln74tymk) on top of 14ca7b2 batch 7 (verified live).
+## Live on main: 8626631 = nav round 5 (live verify running) on top of b7c15cf batch 8 (verified live), 14ca7b2 batch 7.
 - 89f2819 Manual Control instant · b2608ff navigation rounds 2+3, Charm Editor Save fix (Saving at once, sheet files in background),
   bar necklaces FRONT by default (BARFRONT) · 077f21c Approve never silent / never stuck · d58eea9 Design & Engrave batch 1: editor
   extension points + live readouts + Ctrl/Alt centre resize + smart guides (feedback), Blend/Warp/Distort (warp), image trace (trace).
@@ -82,7 +82,7 @@ board-live-extra.json with the new agent ids.
 - Phase 5 push (option a) needs a Firestore security rule in the console + a vendored Firestore SDK file.
 
 
-## Batch 9 in test: claude/de-integration 8626631 = main b7c15cf + nav-instant-5 0ce6367 (first visits Orders 90 ms / Review 61 ms; merge-sheets regression fixed). Run b3b80k8vz → $SP/int/b9/*.log. Then: Phase 2 (sync worker) when it hands back; nav-6 (piece-row-review-buttons at 390 px).
+## Remaining: Phase 2 sync worker (ac1971b04ea413b37, claude/local-sync) and nav-6 (a2ce3dc0daa28facb, piece-row-review-buttons at 390 px). Then Phase 3 (outbox, optimistic writes), then Phase 5 needs Paul (Firestore rule + vendored SDK).
 - a41a92d9950823b21 now on claude/eff-inbox-chart: 'Sent per day' chart is a black block when empty.
 - Phase 2 agent ac1971b04ea413b37 started 07:03 on claude/local-sync (wt-sync) from claude/local-store.
 - designs follow-up (af114bb2ccb5f706c resumed): claude/de-designs-2 = accept stroke/fill true in clean(); test world Master.load race.
