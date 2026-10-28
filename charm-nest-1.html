@@ -4229,7 +4229,9 @@ async function apiOnce(fn, body, opts) {
     // A sheet marked completed carries how long it took this Laser person by the page's own count (charm-nest-laser-time.js); the server decides and stores the figure (R7)
     let laserSent = null;
     if (fn === "charmNestLibrary" && payload.op === "laserDone" && window.LaserSheetTime) { try { if (payload.done !== false) laserSent = payload.laserTime = window.LaserSheetTime.measure(payload.by); else window.LaserSheetTime.forget(payload.by); } catch (_) {} }
-    const res = await fetch(`${FN}/${fn}`, { method: "POST", headers, body: JSON.stringify(payload), signal: window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined });
+    // (OUTBOX: the page going away sends what its outbox still holds with keepalive, 64 KB at most: the next page sends it again and its mid makes that a no-op)
+    const text = JSON.stringify(payload), keep = !!opts.keepalive && text.length < 60000;
+    const res = await fetch(`${FN}/${fn}`, { method: "POST", headers, body: text, keepalive: keep, signal: !keep && window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined });
     const txt = await readBody(res, bar);
     let data = null, page = false; try { data = JSON.parse(txt); } catch (_) { page = true; data = { error: txt.trim() ? cloudWords(txt, res.status).slice(0, 200) : "" }; }
     if (res.status === 401 && !(data && data.error === "repo-locked")) { S.cloud.locked = true; throw Object.assign(new Error("unauthorized"), { status: 401 }); }   // (a Charm Repo "repo-locked" 401 is not the cloud passcode: it throws below with its answer in e.data, and the cloud stays unlocked)
@@ -4240,10 +4242,17 @@ async function apiOnce(fn, body, opts) {
     if (page) throw Object.assign(new Error(data.error || "The cloud sent back an empty answer"), { status: res.status, data, transient: true });
     if (S.cloud.ok === false && !S.cloud.locked) cloudRecovered();   // any answer says the cloud is back
     if (laserSent) { try { window.LaserSheetTime.noted(data, laserSent, payload.by); } catch (_) {} }   // (the accepted press is this person's previous completion from now on)
+    /* OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"; plan: phase 3): a press sent from this computer's outbox (charm-nest-sync-worker.js drain) was drawn
+       when it was pressed, and its answer says what it wrote: no surface reads anything for it here (a write used to set off seven reads within 4 s: the order window's timeline, the
+       Library's cards now and 1.5 s later, where each piece is now and 1.5 s later); the computer's changes feed tells the other tabs and computers. With the feed answering, a write
+       made directly asks the feed once (CNSync.poke) where the placement feed, the order window and the Review feed each read twice; without it, as before. */
+    if (opts.outbox) return data;
+    const fed = fn === "charmNestLibrary" && !READ_OP.test(String((body && body.op) || "")) && !!(window.CNSync && CNSync.live && CNSync.live());
+    if (fed) { try { CNSync.poke(); } catch (_) {} }
     // a write to the library can be a step of an order (a piece placed or taken off, a sheet cut, a back saved, a set
     // committed, a cancel): the order view that is open reads its timeline again now and 1.5 s later, not at its next poll
     // (Paul, 3 Oct 04:03). Reads, and writes that no order's timeline shows, do not ask.
-    if (fn === "charmNestLibrary" && TL_WRITE.test(String((body && body.op) || "")) && !READ_OP.test(String((body && body.op) || ""))) { try { if (window.OrderWin && OrderWin.isOpen()) OrderWin.nudge(); } catch (_) {} }
+    if (!fed && fn === "charmNestLibrary" && TL_WRITE.test(String((body && body.op) || "")) && !READ_OP.test(String((body && body.op) || ""))) { try { if (window.OrderWin && OrderWin.isOpen()) OrderWin.nudge(); } catch (_) {} }
     // ... and the Library's cards (a sheet's or a set's place and readiness) read the cloud again now and 1.5 s after the last write
     // (Paul, 3 Oct 04:47: real time). The slow check that records seals (laserStatus) is not a write and never lands here.
     if (fn === "charmNestLibrary" && /^(roseRecordCut|roseClaim|roseRelease|roseTakeOff|remnantMark|partialClaim|partialRelease|partialUse|partialPolicySet)$/.test(String((body && body.op) || ""))) { try { window.PartialSheets?.changed?.(); } catch (_) {} }   // (PS3: the partial sheet lists ask again, with their revision: one tiny read when nothing else moved)
@@ -4251,10 +4260,10 @@ async function apiOnce(fn, body, opts) {
     // ... and the Review tab's changes feed reads now and 1.5 s later after a completion, a print or a reopen written from here
     // (Paul, 5 Oct: whatever is done from any view is the same everywhere within seconds, another computer's too)
     // (and the other tabs of this computer are told the record the cloud answered, at once: ReviewLive.announce, BroadcastChannel, no read; LB2, 7 Oct)
-    if (fn === "charmNestLibrary" && /^custom(Put|Reopen|Delete)$/.test(String((body && body.op) || ""))) { try { window.ReviewLive?.announce?.(body.op, data); } catch (_) {} try { window.ReviewLive?.nudge?.(); } catch (_) {} }
+    if (fn === "charmNestLibrary" && /^custom(Put|Reopen|Delete)$/.test(String((body && body.op) || ""))) { try { window.ReviewLive?.announce?.(body.op, data); } catch (_) {} if (!fed) try { window.ReviewLive?.nudge?.(); } catch (_) {} }
     // ... and where each piece is (on a sheet, which one, on hold, cancelled, done by hand) is read again, for the orders on screen, now and 1.5 s later
     // after any write that can move it, so the lists, the cards, the search and the windows say what the cloud says (PlacementFeed)
-    if (fn === "charmNestLibrary" && PLACEMENT_WRITE.test(String((body && body.op) || "")) && !READ_OP.test(String((body && body.op) || ""))) { try { window.PlacementFeed?.nudge?.(); } catch (_) {} }
+    if (!fed && fn === "charmNestLibrary" && PLACEMENT_WRITE.test(String((body && body.op) || "")) && !READ_OP.test(String((body && body.op) || ""))) { try { window.PlacementFeed?.nudge?.(); } catch (_) {} }
     return data;
   } catch (e) {
     if (e && e.name === "TimeoutError") throw Object.assign(new Error(`${fn}: no answer in ${Math.round(ms / 1000)} s — timed out`), { transient: true });

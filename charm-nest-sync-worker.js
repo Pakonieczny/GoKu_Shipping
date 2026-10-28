@@ -39,7 +39,18 @@
      watchOrder(rid) → off            an open order window's Order_Rev, watched by the leader
      once(name, everyMs, fn)          fn in one tab of this computer at most every everyMs (the Library's seal check)
      poke(fn?)                        ask now (a tab shown, the network back); fn({ keys, reset }): the first answer to a question asked after it
-     state()                          { world, leader, live, n, polls, heard, keys, … } (the tests read it) */
+     state()                          { world, leader, live, n, polls, heard, keys, … } (the tests read it)
+
+   THE OUTBOX'S DRAIN (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"; plan: phase 3). The presses this computer kept (charm-nest-store.js mutate)
+   are sent from here, by ONE tab of the computer at a time (a Web Lock per world, 'cn-outbox:<world>', taken by whichever tab has something to send, shown or
+   hidden: a press made just before the tab was put away still goes), oldest first, each with its mutation id, several timeline steps in one request. An answer
+   leaves the outbox and tells the press (here and in every tab); a refusal in the cloud's own words too; no answer (offline, a timeout, the cloud down) is tried
+   again after 1, 2, 4 … 60 s (a fifth either way), at once when the network comes back or a tab is shown. The page going away sends what is still waiting with
+   keepalive (the next page sends it again, and the mid makes that a no-op). An answer says the feed's count it wrote (n) and the names it wrote under (keys):
+   the feed's next answer that names only those is this computer's own write, already drawn, and no surface reads for it (follow-up reads per write: 0).
+     drain()                          send now what waits (the store calls it on every press)
+     own(keys, n)                     these names at this count are this computer's own write (every tab is told)
+     drainState()                     { sent, acked, failed, retried, replayed, batches, waiting } (the tests read it) */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(root);
   else root.CNSync = factory(root);
@@ -114,7 +125,10 @@
     if (m.cg != null) cg = m.cg;
     if (m.first && !gap) return;   // (the first answer of a fresh computer names nothing: what the tabs read at start is what the cloud holds)
     if (m.n === m.from && !m.reset && !gap && !(m.keys && m.keys.length)) return;
-    deliver({ keys: m.keys, reset: m.reset || gap, at: m.at });
+    // (OUTBOX: a name written last by this computer's own press, at the count its answer said, is drawn already: no surface reads for it)
+    const keys = !m.reset && !gap && m.counts && Array.isArray(m.keys) ? m.keys.filter(k => !(ownN.has(k) && ownN.get(k).n === +m.counts[k])) : m.keys;
+    if (keys && m.keys && keys.length < m.keys.length) { stats.ownSkipped = (stats.ownSkipped || 0) + m.keys.length - keys.length; if (!keys.length && !m.reset && !gap) return; }
+    deliver({ keys, reset: m.reset || gap, at: m.at });
   }
   function post(m) { if (!ch) return; try { ch.postMessage(Object.assign({ v: V, from_: me }, m)); } catch (_) {} }
   function onMessage(ev) {
@@ -127,6 +141,7 @@
     else if (m.t === 'dead') { stop(true); }
     else if (m.t === 'fail') { lost(); }
     else if (m.t === 'once') { onceAt.set(String(m.name), Math.max(onceAt.get(String(m.name)) || 0, +m.at || 0)); }
+    else if (m.t === 'own') { ownHeard(m.keys, m.n); }
   }
 
   /* ── the leader's question ── */
@@ -172,7 +187,7 @@
       }
       fails = 0; lastOk = now(); stats.answers++;
       if (r.orders) for (const [rid, rev] of Object.entries(r.orders)) orderRevs.set(String(rid), String(rev || ''));
-      const m = { v: V, t: 'feed', from, n: +r.n, keys: r.keys || [], reset: !!r.reset, first: from == null, cg: r.cg != null ? +r.cg : cg, at };
+      const m = { v: V, t: 'feed', from, n: +r.n, keys: r.keys || [], counts: r.counts || null, reset: !!r.reset, first: from == null, cg: r.cg != null ? +r.cg : cg, at };
       heard(m, true); post(m); keepCursor();
       if (m.keys.length || m.reset) heldMoved(m.keys, m.reset);
       // (the net: every surface asks once anyway every ten minutes while the computer is in use)
@@ -308,6 +323,91 @@
     if (leader) soon(); else post({ t: 'poke' }); evaluate(); return true;
   }
 
+  /* ── THE OUTBOX'S DRAIN (phase 3; see the header) ── */
+  const ownN = new Map();                      // name → { n, at }: written last by this computer's own press at count n (5 minutes)
+  function ownHeard(keys, n) { if (!Number.isFinite(+n)) return; const t = now(); for (const k of keys || []) { const had = ownN.get(String(k)); if (!had || had.n < +n) ownN.set(String(k), { n: +n, at: t }); } for (const [k, v] of ownN) if (t - v.at > 300000) ownN.delete(k); }
+  function own(keys, n) { if (!Array.isArray(keys) || !keys.length || !Number.isFinite(+n)) return; ownHeard(keys, n); post({ t: 'own', keys, n: +n }); }
+  const DR = { batch: 50, batchBytes: 48000, failMax: 60000, keepalive: 60000, tick: 15000 };
+  const dstats = { sent: 0, acked: 0, failed: 0, retried: 0, replayed: 0, batches: 0, keepalive: 0 };
+  let draining = false, drainAgain = false, drainT = 0, drainFails = 0, drainOn = false;
+  const ostore = () => (root.CharmNestStore && typeof root.CharmNestStore.outbox === 'function' ? root.CharmNestStore : null);
+  const sendable = e => e && !e.job && e.state !== 'failed' && e.op;
+  function bodyOf(group) {
+    const h = group[0];
+    if (h.batch === 'timelineAdd') return { op: 'timelineAdd', events: group.flatMap(e => (e.args && Array.isArray(e.args.events) ? e.args.events : [])) };   // (the timeline's own wire format: its events carry their ids, kept once by the server)
+    return Object.assign({}, h.args || {}, { op: h.op, mid: h.mid });
+  }
+  // (a refusal is the cloud's own answer in words: a 4xx with its JSON; a 409 "being written already", a 401, a 5xx, a timeout or no network is no answer yet)
+  const refusedBy = e => !!e && !!e.answered && !(e.data && (e.data.inFlight || e.data.retry)) && e.status !== 401 && e.status !== 408 && e.status !== 429 && !(e.status >= 500);
+  function drainSoon(ms) { if (!drainOn) return; clearTimeout(drainT); drainT = setTimeout(() => { drainT = 0; drain(); }, Math.max(0, ms || 0)); }
+  async function drain() {
+    const St = ostore(); if (!drainOn || !St || typeof cfg.api !== 'function') return false;
+    if (draining) { drainAgain = true; return false; }
+    if (!online()) return false;
+    const mine = St.pending(sendable); if (!mine.length) { const disk = await St.outbox().catch(() => []); if (!disk.some(sendable)) return false; }
+    draining = true;
+    try {
+      const locks = safe(() => root.navigator && root.navigator.locks, null), run = () => drainLoop(St);
+      if (locks && typeof locks.request === 'function') await locks.request('cn-outbox:' + world, run); else await run();
+    } catch (e) { console.warn('outbox: drain', e); }
+    finally { draining = false; if (drainAgain) { drainAgain = false; drainSoon(0); } }
+    return true;
+  }
+  async function drainLoop(St) {
+    for (let round = 0; round < 1000; round++) {
+      if (!online()) return;
+      const list = (await St.outbox()).filter(sendable); if (!list.length) return;
+      const t = now(), head = list[0];
+      // (one computer's presses land in the order they were made: one waiting out its back-off holds the ones after it)
+      if ((+head.nextAt || 0) > t) { drainSoon(+head.nextAt - t); return; }
+      const group = [head];
+      if (head.batch) { let bytes = JSON.stringify(head.args || {}).length; for (const x of list.slice(1)) { const nb = JSON.stringify(x.args || {}).length; if (x.batch !== head.batch || x.fn !== head.fn || (+x.nextAt || 0) > t || group.length >= DR.batch || bytes + nb > DR.batchBytes) break; group.push(x); bytes += nb; } }
+      for (const e of group) { e.state = 'sending'; e.tries = (+e.tries || 0) + 1; e.sentAt = t; St.touch(e); }
+      dstats.sent += group.length; if (group.length > 1) dstats.batches++;
+      let r = null, err = null;
+      try { r = await cfg.api(head.fn || 'charmNestLibrary', bodyOf(group), { quiet: true, timeoutMs: 30000, outbox: true }); } catch (x) { err = x; }
+      if (!err && r && !r.error) {
+        drainFails = 0;
+        if (r.replayed) dstats.replayed++;
+        for (const e of group) { await St.settle(e.k, { ok: true, answer: r }); dstats.acked++; }
+        if (Array.isArray(r.keys) && Number.isFinite(+r.n)) own(r.keys, r.n);
+        continue;
+      }
+      if (!err) err = Object.assign(new Error((r && r.error) || 'the cloud sent back no answer'), { answered: !!(r && r.error), data: r });
+      if (refusedBy(err)) {
+        for (const e of group) { await St.settle(e.k, { error: String(err.message || 'refused').replace(/\.$/, ''), refused: true, data: err.data || null }); dstats.failed++; }
+        continue;
+      }
+      // no answer yet: tried again after a back-off (1, 2, 4 … 60 s, a fifth either way); the network back or a tab shown tries at once
+      drainFails++; dstats.retried++;
+      const wait = Math.min(DR.failMax, 1000 * 2 ** Math.min(drainFails - 1, 6)) * (0.8 + Math.random() * 0.4);
+      for (const e of group) { e.state = 'pending'; e.nextAt = now() + wait; e.error = String((err && err.message) || '').slice(0, 200); St.touch(e); }
+      drainSoon(wait);
+      return;
+    }
+  }
+  /** The page going away: what still waits goes with keepalive (64 KB at most in all, the browser's limit); it stays in the outbox, and the next page sends it again (the mid: written once). */
+  function drainLeaving() {
+    const St = ostore(); if (!drainOn || !St || typeof cfg.api !== 'function') return;
+    let bytes = 0;
+    for (const e of St.pending(sendable)) {
+      const body = bodyOf([e]), n = JSON.stringify(body).length + 200; if (bytes + n > DR.keepalive) break; bytes += n;
+      dstats.keepalive++;
+      try { Promise.resolve(cfg.api(e.fn || 'charmNestLibrary', body, { quiet: true, keepalive: true, outbox: true })).catch(() => {}); } catch (_) {}
+    }
+  }
+  function drainBack() { const St = ostore(); drainFails = 0; if (St) for (const e of St.pending(sendable)) if (+e.nextAt > now()) { e.nextAt = 0; St.touch(e); } drainSoon(0); }
+  function drainStart() {
+    if (drainOn) return; const St = ostore(); if (!St || typeof cfg.api !== 'function') return;
+    drainOn = true;
+    St.onMutation(ev => { if (ev && (ev.t === 'mut' || ev.t === 'load')) drainSoon(ev.t === 'mut' && ev.from === 'tab' ? 300 : 0); });   // (another tab's press: that tab drains it; this one looks a moment later, in case that tab is gone)
+    if (root.addEventListener) { root.addEventListener('online', drainBack); root.addEventListener('cn-cloud-back', drainBack); root.addEventListener('pagehide', drainLeaving); }
+    if (doc && doc.addEventListener) doc.addEventListener('visibilitychange', () => { if (visible()) drainBack(); });
+    setInterval(() => { const S2 = ostore(); if (S2 && !draining && S2.pending(e => sendable(e) && !(+e.nextAt > now())).length) drain(); }, DR.tick);
+    Promise.resolve(St.ready && St.ready()).then(() => drainSoon(0), () => drainSoon(0));
+  }
+  function drainState() { const St = ostore(); return Object.assign({ waiting: St ? St.pending(sendable).length : 0, jobs: St ? St.pending(e => !!e.job).length : 0, draining, fails: drainFails }, dstats); }
+
   /* ── this tab ── */
   function onInput() {
     const t = now(); const was = lastInput; lastInput = t;
@@ -325,6 +425,7 @@
     if (started) return api;
     cfg = Object.assign(cfg, o || {});
     world = o && o.world === 'sandbox' ? 'sandbox' : 'production';
+    try { drainStart(); } catch (e) { console.warn('outbox: drain start', e); }   // (OUTBOX: the presses kept on this computer are sent whether or not the feed runs)
     if (typeof cfg.api !== 'function' || typeof root.BroadcastChannel !== 'function') { dead = true; return api; }   // (nothing to share it with: every surface keeps its own timer)
     started = true;
     try { ch = new root.BroadcastChannel('cn-sync:' + world); ch.onmessage = onMessage; } catch (_) { ch = null; dead = true; started = false; return api; }
@@ -354,8 +455,8 @@
   }
   function state() {
     return { world, started, dead, leader, live: live(), n, cg, pace: pace(), polls: stats.polls, answers: stats.answers, heard: stats.heard, keys: stats.keys, resets: stats.resets, reads: stats.reads,
-      fetches: stats.fetches, errors: stats.errors, gaps: stats.gaps, leads: stats.leads, subs: subs.size, watched: Object.keys(watched() || {}), lastOk, heardAt, me };
+      fetches: stats.fetches, errors: stats.errors, gaps: stats.gaps, leads: stats.leads, subs: subs.size, watched: Object.keys(watched() || {}), lastOk, heardAt, me, ownSkipped: stats.ownSkipped || 0 };
   }
-  const api = { start, follow, live, quietSince, watchOrder, once, poke, stop, state, PACE };
+  const api = { start, follow, live, quietSince, watchOrder, once, poke, stop, state, PACE, drain, own, drainState };
   return api;
 });

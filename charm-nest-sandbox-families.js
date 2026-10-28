@@ -51,6 +51,7 @@
     fs("Design_Bridge", "bridge logs", { subs: ["log"] }),
     fs("Order_Timeline", "timeline events"),
     fs("Order_Rev", "order window revisions"),   // (COST, Oct 2026: _orderTimeline's one-read answer; wiped with the events, so an open window sees the reset)
+    fs("Charm_Nest_Mutations", "presses sent from the outbox"),   // (OUTBOX, Paul 28 Oct 2026: a press sent twice from a page's outbox is written once, by its mutation id: netlify/functions/_charmNestMutations.js; 7 days each)
     // cuts and leftovers
     fs("Charm_Nest_Rose_Stock", "Rose Gold stock records", { subs: ["cuts"] }),
     fs("Charm_Nest_Rose_Rehearsals", "Rose Gold rehearsals"),
