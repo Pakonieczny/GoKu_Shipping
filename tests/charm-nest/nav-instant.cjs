@@ -177,9 +177,20 @@ async function scale() {
       const chip = await seen();
       await page.evaluate(() => Sets.renderLibrary(document.getElementById('libBody'), { reuse: true })); await page.waitForTimeout(500);
       const whole = await seen(), same = JSON.stringify(chip) === JSON.stringify(whole);
-      console.log(`  Library chip ${m}: ${chip.map(([a, h, e, ids]) => `${a} ${ids.length}${h ? ' (hidden)' : ''}${e ? '' : ' (says empty)'}`).join(' · ')} — ${same ? 'as a whole drawing shows' : 'NOT as a whole drawing: ' + JSON.stringify(whole.map(([a, h, e, ids]) => [a, h, e, ids.length]))}`);
+      console.log(`  Library chip ${m}: ${chip.map(([a, h, e, ids]) => `${a} ${ids.length}${h ? ' (hidden)' : ''}`).join(' · ')} — ${same ? 'as a whole drawing shows' : 'NOT as a whole drawing: ' + JSON.stringify(whole.map(([a, h, e, ids]) => [a, h, e, ids.length]))}`);
       if (!same) fails.push(`Library chip ${m}: the cards shown differ from a whole drawing`);
     }
+    // (the cards a chip took off the screen come back as they were: Rose Gold shows none of these sets, so every card is kept; one card's sheet is asked to be drawn while it is away
+    //  and is painted again when All brings it back, another is shown as it was kept: the same element, nothing built again)
+    { const chipTo = m => page.evaluate(m => document.querySelector(`#libView .fchip[data-m="${m}"]`).click(), m);
+      await page.evaluate(() => { const cs = [...document.querySelectorAll('#libBody .laserAreaItems > .setCard')]; window.__kA = cs[0]; window.__kB = cs[1]; });
+      await chipTo('rose'); await page.waitForTimeout(400);
+      await page.evaluate(() => { for (const c of [__kA, __kB]) c && c.querySelectorAll('.flowBox').forEach(b => b.remove()); if (__kA) LaserReview.changed(new Set(['s:' + __kA._laserSheets[0]])); });
+      await page.waitForTimeout(300); await chipTo('all'); await page.waitForTimeout(500);
+      const k = await page.evaluate(() => ({ a: !!(window.__kA && __kA.isConnected), b: !!(window.__kB && __kB.isConnected), aPainted: !!(window.__kA && __kA.querySelector('.flowBox')), bAsKept: !!(window.__kB && !__kB.querySelector('.flowBox')) }));
+      console.log(`  Library chip back from Rose Gold: the same cards ${k.a && k.b ? 'yes' : 'NO'} · the one asked to be drawn while away painted again ${k.aPainted ? 'yes' : 'NO'} · another shown as kept ${k.bAsKept ? 'yes' : 'no (painted again: a drawing of every card came meanwhile)'}`);
+      if (!(k.a && k.b && k.aPainted)) fails.push('Library chip: the cards kept off the screen did not come back as they should');
+      await page.evaluate(() => Sets.renderLibrary(document.getElementById('libBody'), { reuse: true })); await page.waitForTimeout(500); }
 
     // ── the sheet window from the Library, and sheet to sheet
     const sheetIds = await page.evaluate(() => (S => S.library.rows || [])(CN.S).filter(r => r.setId).slice(0, 8).map(r => r.id || r.sheetId));
