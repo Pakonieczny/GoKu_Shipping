@@ -8,6 +8,11 @@
 //   C  on the first page a square is added to the front in the charm editor (CharmNestArtEdit.save) and the back's words are resized twice right after: the row's picture shows the new part within a
 //      second of the save, with no reload; the cloud is written ONCE for the burst (debounced), with the signature of what the page shows
 //   D  the second computer's row shows the new picture after its changes feed moves, without a reload (the same page, the new address)
+//   F  FACES (Paul, 28 Oct 2026: "label the back engraving with the same style of text with the black background ... the text font must be larger ... side-by-side and top bottom alignment, depending on
+//      the charm shape ... split the image with very thin lines ... enlarge every image thumbnail preview ... by remove the text underneath"): each face is named under it in the earrings' dark chip with
+//      words a third larger than theirs; a wide piece (the tag) is drawn one over the other, a tall one (the cat) side by side, parted by one hairline; the words under the pictures are gone from sight
+//      (still read by a screen reader) and the boxes are larger than the 88 px they were; Reset zoom is a button on the picture's corner, reachable by Tab, named by its tooltip; the box says what it shows.
+//      Screenshots of the rows (wide, tall, an earring pair) go to SHOTS.
 //   E  the sandbox keeps its pictures apart (a Sandbox_ pool row and charmnest/sandbox/made/), a PNG that is not one is refused, a clear takes the picture and its file away
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/made-thumbs.cjs
 'use strict';
@@ -25,7 +30,7 @@ const role = page => page.waitForFunction(() => !window.CNRole || ['ask', 'role'
   const puts = pid => st.calls.filter(c => c.op === 'madeThumbPut' && c.body && c.body.poolId === pid);
   try {
     await role(page);
-    const made = await R.build(w, ['tag']), PID = made.tag.poolIds[0], KEY = made.tag.key, RID = made.tag.rid;
+    const made = await R.build(w, ['tag', 'both', 'earrings']), PID = made.tag.poolIds[0], KEY = made.tag.key, RID = made.tag.rid;
     console.log(`   built: ${KEY} pieces ${JSON.stringify(made.tag.poolIds)} jobs ${JSON.stringify(made.tag.jobs.map(j => [j.face, j.state, j.text, j.fitted]))}`);
     if (!st.doc('Charm_Pool', PID)) st.put('Charm_Pool', PID, { poolId: PID, orderId: RID, sku: '5X8.5', state: 'pooled' });   // (the pool row the page wrote; a world that did not reach the cloud gets one)
     // ── A ──
@@ -40,7 +45,7 @@ const role = page => page.waitForFunction(() => !window.CNRole || ['ask', 'role'
     }, [box, PID]);
     check(`A1 the Orders row of the mini tag shows the piece as it will be made, front and back (${a.shown ? a.shown.w + 'x' + a.shown.h : '-'} px, faces ${a.faces}, the long tag laid flat: one over the other, near a square), this page's own drawing`,
       a.made && a.same && JSON.stringify(a.faces) === '["front","back"]' && a.layout === 'column' && a.shown && Math.max(a.shown.w, a.shown.h) / Math.min(a.shown.w, a.shown.h) < 2, JSON.stringify(a));
-    check(`A2 the fitted words are in it: ${a.shown && a.shown.n} dark pixels against ${a.without && a.without.n} for the same faces without words`, a.words && a.words.every(Boolean) && a.shown && a.without && a.shown.n > a.without.n * 1.15 + 40, JSON.stringify(a));
+    check(`A2 the fitted words are in it: ${a.shown && a.shown.n} dark pixels against ${a.without && a.without.n} for the same faces without words`, a.words && a.words.every(Boolean) && a.shown && a.without && a.shown.n > a.without.n + 600, JSON.stringify(a));
     for (let t0 = Date.now(); Date.now() - t0 < 20000 && !(st.doc('Charm_Pool', PID) || {}).made; ) await wait(250);
     const m0 = (st.doc('Charm_Pool', PID) || {}).made, n0 = puts(PID).length, sig0 = await page.evaluate(pid => CharmNestMadeThumb.sigOf(pid), PID);
     check(`A3 the cloud keeps it on the piece's pool row (${n0} upload${n0 === 1 ? '' : 's'} during the build, the last with what the page shows) and in Storage`, !!m0 && m0.sig === sig0 && st.blobs.has(m0.path) && /^charmnest\/made\//.test(m0.path) && n0 >= 1 && n0 <= 3, JSON.stringify({ m0, n0, sig0 }));
@@ -53,6 +58,40 @@ const role = page => page.waitForFunction(() => !window.CNRole || ['ask', 'role'
     const inWindow = await madeIn('#owVector');
     await page.evaluate(() => { try { OrderWin.close(); } catch (_) {} CN.setMode('orders'); Orders.render(); });
     check('A4 the Design & Engrave list and the order window\'s Vector design show the same picture', inEngrave && inWindow, JSON.stringify({ inEngrave, inWindow }));
+
+    // ── F: the faces named and parted, the captions gone, the boxes larger ──
+    for (let i = 0; i < 5 && await page.evaluate(() => !!document.querySelector('dialog[open]')); i++) { await page.keyboard.press('Escape'); await wait(400); }   // (the order window closed as a person closes it: nothing modal over the list)
+    await page.evaluate(() => { for (const d of document.querySelectorAll('dialog[open]')) d.close(); });
+    const shape = await page.evaluate(([a, b]) => Promise.all([a, b].map(pid => new Promise(res => {
+      const pic = CharmNestMadeThumb.pictureOf(pid); if (!pic) return res(null);
+      const i = new Image(); i.onload = () => { const c = document.createElement('canvas'); c.width = i.naturalWidth; c.height = i.naturalHeight; const g = c.getContext('2d'); g.drawImage(i, 0, 0); const d = g.getImageData(0, 0, c.width, c.height).data;
+        const rule = (x, y) => { const k = (y * c.width + x) * 4; return Math.abs(d[k] - 0xd6) < 8 && Math.abs(d[k + 1] - 0xcf) < 8 && Math.abs(d[k + 2] - 0xc2) < 8; };
+        let rows = 0, cols = 0; for (let y = 0; y < c.height; y++) { let n = 0; for (let x = 0; x < c.width; x++) if (rule(x, y)) n++; if (n > c.width * 0.85) rows++; } for (let x = 0; x < c.width; x++) { let n = 0; for (let y = 0; y < c.height; y++) if (rule(x, y)) n++; if (n > c.height * 0.85) cols++; }
+        let dark = 0; for (let k = 0; k < d.length; k += 4) if (Math.abs(d[k] - 0x2a) < 6 && Math.abs(d[k + 1] - 0x27) < 6 && Math.abs(d[k + 2] - 0x24) < 6) dark++;
+        res({ layout: pic.layout, labels: pic.labels, frac: pic.fontPx / Math.max(pic.w, pic.h), hair: pic.hair, w: pic.w, h: pic.h, ruleRows: rows, ruleCols: cols, chipInk: dark }); }; i.src = pic.url; }))), [PID, made.both.poolIds[0]]);
+    const [wide, tall] = shape;
+    check(`F1 each face is named under it in the earrings' dark chip, its words ${wide && (wide.frac * 100).toFixed(1)} % of the picture's long side (the earrings' 7 %): ${wide && wide.chipInk} chip pixels`, wide && tall && wide.labels && tall.labels && wide.frac >= 0.09 && tall.frac >= 0.09 && wide.chipInk > 200 && tall.chipInk > 200, JSON.stringify(shape));
+    check(`F2 the wide tag one over the other (${wide && wide.w}x${wide && wide.h}), the tall cat side by side (${tall && tall.w}x${tall && tall.h}), each parted by ONE hairline of ${wide && wide.hair} px (${wide && wide.ruleRows} row / ${tall && tall.ruleCols} column of it)`,
+      wide && tall && wide.layout === 'column' && tall.layout === 'row' && wide.ruleRows >= 1 && wide.ruleRows <= wide.hair + 1 && wide.ruleCols === 0 && tall.ruleCols >= 1 && tall.ruleCols <= tall.hair + 1 && tall.ruleRows === 0, JSON.stringify(shape));
+    const rowLook = await page.evaluate(([k1, k2]) => [k1, k2].map(key => {
+      const n = document.querySelector(`[data-key="${key}"]`), v = n && n.querySelector('[data-vector]'), fig = v && v.closest('figure'), cap = fig && fig.querySelector('figcaption'), reset = fig && fig.querySelector('.thumbReset');
+      const r = v ? v.getBoundingClientRect() : null, f = fig ? fig.getBoundingClientRect() : null, cs = cap ? getComputedStyle(cap) : null;
+      return { w: r && Math.round(r.width), h: r && Math.round(r.height), figH: f && Math.round(f.height), capPos: cs && cs.position, capFont: cs && cs.fontSize, capText: cap && cap.textContent, label: v && v.getAttribute('aria-label'), title: v && v.title,
+        listing: (n.querySelector('[data-listing]') || {}).getAttribute && n.querySelector('[data-listing]').getAttribute('aria-label'), reset: reset ? { hidden: reset.hidden, title: reset.title } : null };
+    }), [KEY, made.earrings.key]);
+    const [tagRow, earRow] = rowLook;
+    check(`F3 the words under the pictures are gone from sight (read by a screen reader: "${tagRow.capText}", "${earRow.capText}") and the boxes are ${tagRow.w}x${tagRow.h} px (88 before), the figure no taller than its box`,
+      tagRow.capPos === 'absolute' && tagRow.capFont === '0px' && tagRow.w >= 100 && tagRow.h >= 100 && tagRow.figH - tagRow.h <= 1 && /Vector design/.test(tagRow.capText) && /Left \+ Right/.test(earRow.capText) && earRow.w === tagRow.w, JSON.stringify(rowLook));
+    check(`F4 each box says what it shows ("${tagRow.label}", "${earRow.label}", "${tagRow.listing}") and its tooltip begins with it`, /As it will be made · front and back/.test(tagRow.label) && /^Vector design · Left \+ Right$/.test(earRow.label) && /Etsy listing/.test(tagRow.listing) && (!tagRow.title || tagRow.title.startsWith(tagRow.label)), JSON.stringify(rowLook));
+    const reach = await page.evaluate(async key => {
+      const fig = document.querySelector(`[data-key="${key}"] [data-vector]`).closest('figure'), b = fig.querySelector('.thumbReset'), box = fig.querySelector('[data-vector]').getBoundingClientRect();
+      if (!b || b.hidden) return { none: true, hidden: b && b.hidden };
+      const before = getComputedStyle(b).opacity; b.focus(); const now = document.activeElement === b, tabbable = b.tabIndex >= 0 && !b.disabled;
+      await new Promise(r => setTimeout(r, 300)); const r = b.getBoundingClientRect(), still = document.activeElement === b;
+      return { before, after: getComputedStyle(b).opacity, focused: now, still, active: document.activeElement && (document.activeElement.className || document.activeElement.tagName), tabbable, title: b.title, connected: b.isConnected, inCorner: r.right <= box.right + 1 && r.top >= box.top - 1 && r.right > box.right - 40 && r.top < box.top + 40 };
+    }, KEY);
+    check(`F5 Reset zoom sits on the picture's corner (unseen ${reach.before}, focused ${reach.after}), reachable by keyboard, named "${reach.title}"`, reach.focused && reach.before === '0' && reach.after === '1' && reach.inCorner && reach.title === 'Vector design · reset zoom', JSON.stringify(reach));
+    if (process.env.SHOTS) { require('node:fs').mkdirSync(process.env.SHOTS, { recursive: true }); for (const [n, key] of [['wide-tag', KEY], ['tall-cat', made.both.key], ['earrings', made.earrings.key]]) { await page.locator(`[data-key="${key}"]`).first().scrollIntoViewIfNeeded().catch(() => {}); await page.locator(`[data-key="${key}"]`).first().screenshot({ path: path.join(process.env.SHOTS, `FACES-row-${n}.png`) }).catch(e => console.log('   shot', n, e.message)); } }
 
     // ── B: the second computer ──
     const ctx2 = await w.browser.newContext({ viewport: { width: 1440, height: 900 } });

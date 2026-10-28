@@ -334,7 +334,7 @@
    pictures | order, the words one line per piece (a small chip, the words, its own state on that same line), ONE muted line of what was bought | seals / actions; under 600px the row is two bands (pictures and order on top,
    the pieces and the rest under). The Placements and Decided rows only (.placementRow, .decidedRow: no other list is touched); this block supersedes their earlier rules in charm-nest-1.html. */
 .egPlacementList,#egDone{grid-auto-rows:max-content;align-content:start}
-:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow){--thumb-size:88px;display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto 1fr;grid-template-areas:"media id" "media sum";column-gap:22px;row-gap:0;align-items:start;min-height:0;height:auto;max-height:none;padding:16px 18px;border-left-width:3px;width:100%;min-width:0;box-sizing:border-box;overflow:visible}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow){--thumb-size:104px;display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto 1fr;grid-template-areas:"media id" "media sum";column-gap:22px;row-gap:0;align-items:start;min-height:0;height:auto;max-height:none;padding:16px 18px;border-left-width:3px;width:100%;min-width:0;box-sizing:border-box;overflow:visible}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow):has(>.egPlacementSeals:not(:empty)){grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"media id seals" "media sum seals"}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow):has(>.decisionActions){grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"media id actions" "media sum actions"}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow).quietRow{grid-template-columns:minmax(0,1fr);grid-template-areas:"id"}
@@ -342,7 +342,7 @@
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .comparePair{grid-area:media;align-self:start;grid-template-columns:repeat(2,var(--thumb-size));gap:8px}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .comparePair figure{position:relative;gap:4px}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .comparePair .placementThumb{width:var(--thumb-size);height:var(--thumb-size)}
-:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .comparePair figcaption{position:static;min-height:0;font:400 9px/1.3 var(--sans);color:var(--ink45);letter-spacing:.02em}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .comparePair figcaption{position:absolute;top:3px;right:3px;min-height:0;font-size:0;line-height:0}   /* (THUMBBIG, 28 Oct 2026: the caption is read, not seen; its buttons sit on the picture) */
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .thumbReset{position:absolute;top:3px;right:3px;width:22px;height:22px;padding:0;display:grid;place-items:center;border-radius:50%;background:rgba(255,255,255,.92);box-shadow:0 0 0 1px var(--line2);opacity:0;pointer-events:none;transition:opacity .15s}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .thumbReset[hidden]{display:none}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) figure:hover .thumbReset,:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) figure:focus-within .thumbReset,:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .thumbReset:focus-visible{opacity:1;pointer-events:auto}
@@ -394,7 +394,7 @@
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow)>.doneDetail{grid-area:auto;grid-column:1/-1;grid-row:3;margin-top:12px}
 /* narrow (the list under 600px wide: a phone, or a window with its rail open): two bands, never squeezed: the pictures and the order on top, the pieces, what was bought and the seals under */
 @container (max-width:600px){
-:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow){--thumb-size:62px;grid-template-columns:auto minmax(0,1fr);grid-template-rows:none;grid-template-areas:"media order" "cap cap" "jobs jobs" "sum sum" "seals seals" "actions actions";column-gap:14px;padding:12px 14px}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow){--thumb-size:70px;grid-template-columns:auto minmax(0,1fr);grid-template-rows:none;grid-template-areas:"media order" "cap cap" "jobs jobs" "sum sum" "seals seals" "actions actions";column-gap:14px;padding:12px 14px}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow):has(>.egPlacementSeals:not(:empty)),:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow):has(>.decisionActions){grid-template-columns:auto minmax(0,1fr);grid-template-areas:"media order" "cap cap" "jobs jobs" "sum sum" "seals seals" "actions actions"}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow).quietRow{grid-template-columns:minmax(0,1fr);grid-template-areas:"id"}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .engravingIdentity{display:contents}
@@ -430,7 +430,7 @@
    The Orders tab's rows (a single-line order, and each piece of a grouped order) and cards read as an Engraving row: pictures | the order, its SKU and "Front + back", the caption, one line per piece and face (chip, words, its state),
    ONE muted line of what was bought | the seals (one chip + seal per piece and face, the Release Hold seal first) | the order's own column (state, Qty · Ship by, Release hold, Send to Review). charm-nest-bridge.js Orders lineIdHtml / lineSealsHtml. */
 /* -- the list -- */
-.ordList .doneRow.orderListRow{--thumb-size:88px;display:grid;grid-template-columns:auto minmax(0,1fr) minmax(150px,210px);grid-template-rows:auto 1fr;grid-template-areas:"media id acts" "media sum acts";column-gap:22px;row-gap:0;align-items:start;min-height:0;padding:16px 18px}
+.ordList .doneRow.orderListRow{--thumb-size:104px;display:grid;grid-template-columns:auto minmax(0,1fr) minmax(150px,210px);grid-template-rows:auto 1fr;grid-template-areas:"media id acts" "media sum acts";column-gap:22px;row-gap:0;align-items:start;min-height:0;padding:16px 18px}
 .ordList .doneRow.orderListRow:has(>.egPlacementSeals:not(:empty)){grid-template-columns:auto minmax(0,1fr) auto minmax(150px,210px);grid-template-areas:"media id seals acts" "media sum seals acts"}
 .ordList .doneRow.orderListRow>.comparePair{grid-area:media;align-self:start;grid-template-columns:repeat(2,var(--thumb-size));gap:8px}
 .ordList .doneRow.orderListRow>.engravingIdentity{grid-area:id;display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;row-gap:3px;align-content:start;align-self:start;min-width:0;overflow:visible}
@@ -480,7 +480,7 @@
 }
 /* a phone, or a window with its rail open: two bands (pictures and order; the pieces, what was bought, the seals and the order's column under) */
 @container (max-width:600px){
-.ordList .doneRow.orderListRow,.ordList .doneRow.orderListRow:has(>.egPlacementSeals:not(:empty)){--thumb-size:62px;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"media id" "sum sum" "seals seals" "acts acts";column-gap:14px;padding:12px 14px}
+.ordList .doneRow.orderListRow,.ordList .doneRow.orderListRow:has(>.egPlacementSeals:not(:empty)){--thumb-size:70px;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"media id" "sum sum" "seals seals" "acts acts";column-gap:14px;padding:12px 14px}
 .ordList .doneRow.orderListRow>.egPlacementSeals{justify-self:start;align-self:start;flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px 14px;margin-top:10px}
 .ordList .doneRow.orderListRow>.egPlacementSeals .egEarSeals{justify-content:flex-start}
 :is(.ordList .doneRow.orderListRow) .ordEngId .egEars{grid-template-columns:max-content minmax(0,1fr)}

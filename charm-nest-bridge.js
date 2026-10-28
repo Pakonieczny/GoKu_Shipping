@@ -63,7 +63,7 @@ const ListZoom = (() => {
     im.dataset.scale=z.s;im.dataset.offsetX=z.x*ratio;im.dataset.offsetY=z.y*ratio;
     im.style.transform=`scale(${z.s}) translate(${z.x*ratio}px, ${z.y*ratio}px)`;
     im.draggable=false;box.classList.add('zoomReady');box.tabIndex=0;box.setAttribute('role','group');
-    box.title='Click to zoom at a point · drag to pan · scroll to zoom · reset ↺. Keyboard: + / −, arrows, 0 to reset.';
+    box.title=(box.getAttribute('aria-label')?box.getAttribute('aria-label')+' · ':'')+'Click to zoom at a point · drag to pan · scroll to zoom · reset ↺. Keyboard: + / −, arrows, 0 to reset.';
     function persistZoom(s,x,y){
       frames.delete(key);frames.set(key,{s,x,y,vw:box.clientWidth,vh:box.clientHeight});while(frames.size>300)frames.delete(frames.keys().next().value);
       clearTimeout(saveTimer);saveTimer=setTimeout(saveFrames,150);
@@ -226,7 +226,10 @@ const ListMedia = (() => {
   // (is this design one of the set a person saved for the line: asked for by one piece's picture, opts.design)
   const inSet = (row, design) => setOf(row).some(k => k.toUpperCase() === String(design || '').toUpperCase());
   function pair(row) {
-    return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design${earPair(row) ? " · Left + Right" : ""}<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
+    // (THUMBBIG, Paul 28 Oct 2026: "enlarge every image thumbnail preview by as much as practical by remove the text underneath the thumbnail image": the captions are read, not seen (srOnly); the box says
+    //  what it shows (its aria-label, and its tooltip with ListZoom's), and the caption's buttons sit on the picture's corner (charm-nest-1.html THUMBBIG))
+    const vecWords = `Vector design${earPair(row) ? " · Left + Right" : ""}`;
+    return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="${vecWords}" aria-busy="true">${loading}</span><figcaption><span class="srOnly">${vecWords}</span><button class="thumbReset" type="button" aria-label="Vector design · reset zoom" title="Vector design · reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="Etsy listing · its first photo" aria-busy="true">${loading}</span><figcaption><span class="srOnly">Etsy listing</span><button class="thumbReset" type="button" aria-label="Etsy listing · reset zoom" title="Etsy listing · reset zoom" hidden>↺</button></figcaption></figure></div>`;
   }
   function clean() {ListZoom.clean();for(const host of watched)if(!host.isConnected){observer?.unobserve(host);watched.delete(host);}}
   // (THUMBSYNC, Paul 28 Oct 2026: `soft`: a box that shows a finished picture keeps it until the new one is drawn, no spinner in between: a piece's picture changing as a person works on it)
@@ -403,7 +406,8 @@ const ListMedia = (() => {
     // the piece's pool row); every other line, the Vector design as before. Its box keeps the picture it shows until the new one is drawn (soft).
     let made=null;try{made=host && row && window.CharmNestMadeThumb ? window.CharmNestMadeThumb.forLine(row) : null;}catch(e){made=null;console.warn('made thumbnail',e);}
     const was=jobs.get(host),soft=!!(was && String(was.key).startsWith('made:')) || !!made;
-    if(host){if(made){host.dataset.made=String(made.pieces || 1);host.title='As it will be made: the engraving and the changes of its pieces, front and back';}else if(host.dataset.made){delete host.dataset.made;host.removeAttribute('title');}}
+    // (the box says what it shows: its aria-label, which ListZoom's tooltip begins with; THUMBBIG)
+    if(host){if(made){if(!host.dataset.vecLabel)host.dataset.vecLabel=host.getAttribute('aria-label') || 'Vector design';host.dataset.made=String(made.pieces || 1);host.setAttribute('aria-label',made.faces==='both'?'As it will be made · front and back':'As it will be made');}else if(host.dataset.made){delete host.dataset.made;host.setAttribute('aria-label',host.dataset.vecLabel || 'Vector design');}}
     if(made){watch(host,()=>Promise.resolve(made.load()).then(u=>u || vector(row),()=>vector(row)),made.key,false,JSON.stringify([row?.key || '','made']),soft);return;}   // (a picture that cannot be had: the Vector design, as before)
     const sku=row?.spec?.designSku || row?.line?.sku || '';
     const both=matchPair(row),two=twoOf(row),one=oneRow(row),set=setOf(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again; one body once it is known to make one; the two designs of a set)
@@ -18150,8 +18154,9 @@ const Review = window.Review = (() => {
     const cap = node && node.querySelector(".comparePair figure:first-child figcaption"); if (!cap) return;
     let b = cap.querySelector(".cfOpen"); const off = row && !row.loading ? fixOffer(row) : { ok: false };
     if (!off.ok) { if (b) b.remove(); return; }
-    if (!b) { b = el("button", "cfOpen", "Wrong charm?"); b.type = "button"; cap.appendChild(b); }
-    b.title = `Pick the right library charm for listing ${off.listingId} (matched to ${off.cur} now)`;
+    // (THUMBBIG, Paul 28 Oct 2026: the words under the picture are gone; "Wrong charm?" is a small round button on the picture's corner, named by its tooltip and its label)
+    if (!b) { b = el("button", "cfOpen"); b.type = "button"; b.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h9l-2.5-2.5M13.5 10.5h-9l2.5 2.5"/></svg><span class="srOnly">Wrong charm?</span>'; cap.appendChild(b); }
+    b.title = `Wrong charm? · pick the right library charm for listing ${off.listingId} (matched to ${off.cur} now)`; b.setAttribute("aria-label", "Wrong charm?");
     b.onclick = ev => { ev.stopPropagation(); ev.preventDefault(); OrderWin.open(row.key, { from: node }); OrderWin.charmFix(true); };
   }
   /** One list of the master's SKUs for every field that picks a charm, made again when the index changes. */

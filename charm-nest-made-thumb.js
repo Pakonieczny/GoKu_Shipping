@@ -35,10 +35,12 @@
   if (root) root.CharmNestMadeThumb = api;
 })(typeof self !== 'undefined' ? self : typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
-  const V = 1;                                   // the drawing's own version: a change of how it is drawn is a new signature (every piece is sent again once, when it moves)
+  const V = 2;                                   // the drawing's own version: a change of how it is drawn is a new signature (2, FACES 28 Oct 2026: the faces named and parted by a hairline; a picture this computer sent is drawn and sent again, paced)
   const TILE = 192, GAP = 12, MARGIN = 0.06;     // a face is drawn TILE px high (a 88 px box at twice the screen's density), the faces GAP apart
   const DEBOUNCE = 1500, MAX_WAIT = 6000, PACE = 1500, SWEEP = 120, REFRESH = 200;
-  const MAX_PIECES = 4, INK = '#1c1a17', METAL = '#f1ece1', RULE = '#e4ddd0';
+  const MAX_PIECES = 4, INK = '#1c1a17', METAL = '#f1ece1', RULE = '#d6cfc2';
+  // (the earrings' chip, charm-nest-pair-thumb.js INK / INK_TEXT / FONT, its words 0.07 of the picture's long side: a face's chip says "Front" / "Back" in words a third larger)
+  const CHIP_INK = '#2a2724', CHIP_TEXT = '#fffaf0', CHIP_FONT = '"Source Sans 3","Segoe UI",system-ui,-apple-system,Helvetica,Arial,sans-serif', LABEL_FRAC = 0.095, WIDE = 1.3;
   const GONE = new Set(['abandoned', 'superseded']);
   const doc = root && root.document || null;
   let host = {};
@@ -126,15 +128,30 @@
       parts.push({ t, F, pad, k, w: (w + 2 * pad) * k, h: (h + 2 * pad) * k });
     }
     if (!parts.length) return null;
-    // (the faces side by side, or one over the other for a long piece laid flat (a bar, a tag): whichever is nearer a square, as the list's boxes are)
-    const gap = GAP * T / TILE, sum = k => parts.reduce((a, p) => a + p[k], 0) + gap * (parts.length - 1), mx = k => Math.max(...parts.map(p => p[k]));
-    const ratio = (w, h) => Math.max(w, h) / Math.max(1, Math.min(w, h)), col = parts.length > 1 && ratio(mx('w'), sum('h')) < ratio(sum('w'), mx('h'));
-    const W = col ? mx('w') : sum('w'), H = col ? sum('h') : mx('h');
+    /* FACES (Paul, 28 Oct 2026: "When Showing the back engraving the system must label the back engraving with the same style of text with the black background. However the text font must be larger
+       so that it's clear that this is not a dual piece piece like an earring ... side-by-side and top bottom alignment, depending on the charm shape ... split the image with very thin lines"). ONE rule
+       for every picture of a piece: the faces side by side, or one over the other for a long piece laid flat (a bar, a tag): whichever is nearer a square, as the boxes are. Under each face its name,
+       "Front" / "Back", in the earrings' own chip (charm-nest-pair-thumb.js: the dark pill, light Semibold words) with words a third larger than theirs (LABEL_FRAC against their 0.07 of the picture's
+       long side): a reader never takes the two faces for a Left and a Right. The faces are parted by one hairline (about one pixel on screen in a list's box), never a frame round each. */
+    const gap = GAP * T / TILE, n = parts.length, labels = n > 1;
+    const sizeOf = (col, band) => (col ? [Math.max(...parts.map(p => p.w)), parts.reduce((a, p) => a + p.h + band, 0) + gap * (n - 1)] : [parts.reduce((a, p) => a + p.w, 0) + gap * (n - 1), Math.max(...parts.map(p => p.h)) + band]);
+    // (the shape of the faces decides: a wide face (laid flat, wider than WIDE times its height) one over the other, a tall or square one side by side)
+    const col = n > 1 && parts.reduce((a, p) => a + p.w / Math.max(1, p.h), 0) / n > WIDE;
+    // (the chip's words are LABEL_FRAC of the finished picture's long side, the band under each face counted in: found in a few steps)
+    let fontPx = 0, chipH = 0, band = 0;
+    if (labels) for (let i = 0; i < 4; i++) { fontPx = Math.max(10, Math.round(Math.max(...sizeOf(col, band)) * LABEL_FRAC)); chipH = Math.round(fontPx * 1.55); band = chipH + Math.round(fontPx * 0.7); }
+    const [W, H] = sizeOf(col, band), hair = Math.max(1, Math.round(Math.max(W, H) / 120)), rowH = Math.max(...parts.map(p => p.h));
     const cv = canvas(W, H), ctx = cv.getContext('2d'); if (!ctx) return null;
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
     let ox = 0, oy0 = 0;
+    const chip = (word, cx, top) => {
+      ctx.save(); ctx.font = `600 ${fontPx}px ${CHIP_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      const w = ctx.measureText(word).width + fontPx * 1.2, x = cx - w / 2, r = chipH / 2;
+      ctx.fillStyle = CHIP_INK; ctx.beginPath(); ctx.moveTo(x + r, top); ctx.lineTo(x + w - r, top); ctx.arc(x + w - r, top + r, r, -Math.PI / 2, Math.PI / 2); ctx.lineTo(x + r, top + chipH); ctx.arc(x + r, top + r, r, Math.PI / 2, Math.PI * 1.5); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = CHIP_TEXT; ctx.fillText(word, cx, top + chipH / 2 + fontPx * 0.35); ctx.restore();
+    };
     for (const [i, p] of parts.entries()) {
-      const { F, pad, k } = p, oy = col ? oy0 : (H - p.h) / 2, x0 = F.box[0], y1 = F.box[3], X = col ? (W - p.w) / 2 : ox;
+      const { F, pad, k } = p, oy = col ? oy0 : (rowH - p.h) / 2, x0 = F.box[0], y1 = F.box[3], X = col ? (W - p.w) / 2 : ox;
       const tx = (x, y) => [X + (x - x0 + pad) * k, oy + (y1 + pad - y) * k];
       try {
         ctx.beginPath(); P.pathToCanvas(ctx, F.outline, tx); for (const m of F.cut || []) if (m !== F.outline && m.closed) P.pathToCanvas(ctx, m, tx);
@@ -143,10 +160,11 @@
         // (the words only on the frame they were fitted in: the job's own view, the one frameFor drew)
         if (p.t.words && F.kind === 'view') glyphs(ctx, p.t.words.fit.glyphs, tx);
       } catch (e) { safe(() => console.warn('made thumbnail', e)); }
-      if (i) { ctx.fillStyle = RULE; const t = Math.max(1, Math.round(T / TILE)); if (col) ctx.fillRect(Math.round(W * 0.12), Math.round(oy0 - gap / 2), Math.round(W * 0.76), t); else ctx.fillRect(Math.round(ox - gap / 2), Math.round(H * 0.12), t, Math.round(H * 0.76)); }
-      ox += p.w + gap; oy0 += p.h + gap;
+      if (labels) chip(p.t.face === 'front' ? 'Front' : 'Back', col ? W / 2 : ox + p.w / 2, (col ? oy0 + p.h : rowH) + Math.round(fontPx * 0.25));
+      if (i) { ctx.fillStyle = RULE; if (col) ctx.fillRect(Math.round(W * 0.04), Math.round(oy0 - gap / 2 - hair / 2), Math.round(W * 0.92), hair); else ctx.fillRect(Math.round(ox - gap / 2 - hair / 2), Math.round(H * 0.04), hair, Math.round(H * 0.92)); }
+      ox += p.w + gap; oy0 += p.h + band + gap;
     }
-    const out = { url: cv.toDataURL('image/png'), w: cv.width, h: cv.height, faces: parts.map(p => p.t.face), layout: col ? 'column' : 'row' };
+    const out = { url: cv.toDataURL('image/png'), w: cv.width, h: cv.height, faces: parts.map(p => p.t.face), layout: col ? 'column' : 'row', labels, fontPx, hair };
     LOCAL.set(ck, out); while (LOCAL.size > 400) LOCAL.delete(LOCAL.keys().next().value);
     return out;
   }
@@ -199,6 +217,10 @@
     const cv = canvas(cols * cw + (cols - 1) * g, rows * ch + (rows - 1) * g), ctx = cv.getContext('2d');
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
     ims.forEach((im, i) => { const c = i % cols, r = Math.floor(i / cols), k = Math.min(cw / im.naturalWidth, ch / im.naturalHeight), w = im.naturalWidth * k, h = im.naturalHeight * k; ctx.drawImage(im, c * (cw + g) + (cw - w) / 2, r * (ch + g) + (ch - h) / 2, w, h); });
+    // (FACES: the pieces parted by the same hairlines as a piece's faces)
+    { const hair = Math.max(1, Math.round(Math.max(cv.width, cv.height) / 120)); ctx.fillStyle = RULE;
+      for (let c = 1; c < cols; c++) ctx.fillRect(Math.round(c * (cw + g) - g / 2 - hair / 2), Math.round(cv.height * 0.03), hair, Math.round(cv.height * 0.94));
+      for (let r = 1; r < rows; r++) ctx.fillRect(Math.round(cv.width * 0.03), Math.round(r * (ch + g) - g / 2 - hair / 2), Math.round(cv.width * 0.94), hair); }
     if (more) { const i = ims.length, c = i % cols, r = Math.floor(i / cols); ctx.fillStyle = '#8a8378'; ctx.font = `600 ${Math.round(ch * 0.28)}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('+' + more, c * (cw + g) + cw / 2, r * (ch + g) + ch / 2); }
     return cv.toDataURL('image/png');
   }
@@ -219,7 +241,7 @@
       COMPOSED.set(key, job); while (COMPOSED.size > 200) COMPOSED.delete(COMPOSED.keys().next().value);
       return job;
     };
-    return { key, load, pieces: ids.length };
+    return { key, load, pieces: ids.length, faces: picks.some(p => p && (p.kind === 'local' ? p.st.tiles.length > 1 : (p.made.faces || []).length > 1)) ? 'both' : 'one' };
   }
   function plainUrl(poolId) {
     const st = { tiles: [{ face: 'front', job: null, words: null }], sig: 'plain|' + poolId + '|' + sigCharm(poolId) };
