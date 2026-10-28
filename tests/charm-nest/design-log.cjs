@@ -276,6 +276,8 @@ const K = require(path.join(root, 'netlify/functions/_activityKinds.js'));
       assert(pk && pk.stations && pk.stations.sorter, 'the real station-activity.js wrote the notes');
       assert.deepEqual([pk.stations.sorter.x_dopen, pk.stations.sorter.x_dsave, pk.stations.sorter.x_cust, pk.stations.sorter.x_custNo, pk.stations.sorter.x_fix], [1, 1, 2, 2, 1]);
       assert(fdoc('Design_Log', 'dl-pg-1') && fdoc('Design_Log', 'dl-pg-2').fix.causedBy === 'Ana_M', 'the records reached Design_Log');
+      await wait(5200);   // (an answer of op custom is kept 5 s per instance, as the overview's: what was written since shows after it)
+      { const q0 = queries.Design_Log || 0, chk = await eff({ op: 'custom', key: PASS }); assert.equal(chk.j.totals.sent, 5, 'op custom sees them: ' + JSON.stringify({ q: (queries.Design_Log || 0) - q0, today, pg1: fdoc('Design_Log', 'dl-pg-1'), ids: chk.j.pieces.map(p => p.id), now: Date.now() })); }
       await pg.evaluate(() => OrderTimeline.flush()); await wait(400);
       const tl = st.list('Order_Timeline').filter(e => e.orderId === '3521000555' || e.orderId === '3521000888').map(e => [e.orderId, e.type, e.by]);
       assert.deepEqual(tl.sort(), [['3521000555', 'designDropped', me], ['3521000888', 'designSent', me]], 'the order\'s timeline: the save, and the fix on the order it fixes');
@@ -288,7 +290,8 @@ const K = require(path.join(root, 'netlify/functions/_activityKinds.js'));
       const line = await pg.locator('#efficiencyView .efP[data-name="Paul K."] .efPD').innerText();
       assert.match(line, /^2 custom pieces \(2 no order\) · 1 fix · 1 design save$/, 'the People row folds in the design work: ' + line);
       await pg.click('#efficiencyView .efTabBtn[data-tab="custom"]');
-      await pg.waitForFunction(() => location.hash === '#efficiency/custom' && document.querySelectorAll('#efficiencyView .efcRow').length === 5, null, { timeout: 15000 });
+      await pg.waitForFunction(() => location.hash === '#efficiency/custom' && document.querySelectorAll('#efficiencyView .efcRow').length === 5, null, { timeout: 15000 })
+        .catch(async () => { throw new Error('the Custom pieces tab: ' + JSON.stringify(await pg.evaluate(() => ({ hash: location.hash, mounted: Efficiency.state.mounted, tab: Efficiency.state.tab, rows: document.querySelectorAll('#efficiencyView .efcRow').length, text: (document.querySelector('#efPgCustom') || {}).innerText }))) + ' errors: ' + errs.join(' | ')); });
       const kp = await pg.$$eval('#efficiencyView .efc .efKV', n => n.map(x => x.textContent));
       assert.deepEqual(kp, ['5', '4', '2', '2'], 'custom pieces, no order, fixes, mistakes');
       assert.equal(await pg.locator('#efficiencyView .efcRow.no').count(), 4, 'every piece with no order is flagged');
