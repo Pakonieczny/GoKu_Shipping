@@ -26,7 +26,10 @@ def merge_tag(a, b):
     pa, pb = ma.group(1).split('-'), mb.group(1).split('-')
     merged = a.replace(ma.group(0), '?v=' + '-'.join(pa + [p for p in pb if p not in pa]) + '"', 1)
     rest = lambda s: tok.sub('', s)
-    return merged if rest(a) == rest(b) else None
+    if rest(a) == rest(b): return merged
+    # the same tag with different trailing comments (<!-- ... --> after </script>): keep ours' comment, merge the tokens
+    tag = lambda s: tok.sub('', s.split('</script>')[0])
+    return merged if '</script>' in a and tag(a) == tag(b) else None
 
 
 for path in sys.argv[1:]:

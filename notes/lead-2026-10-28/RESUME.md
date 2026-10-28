@@ -82,7 +82,7 @@ board-live-extra.json with the new agent ids.
 - Phase 5 push (option a) needs a Firestore security rule in the console + a vendored Firestore SDK file.
 
 
-## Batch 7 next: library dca16a8 + library-2 (when back) + tab 7d14e6b + masters-2 d547987 + designs-2 7c72de3 + bar-front-2 a94a2d6 + nav-4 7565096 (+ eff-inbox-chart, seals-2 when back).
+## Batch 7 in test (08:15): claude/de-integration fa33106 = main 323cf50 + designs-2 + bar-front-2 + nav-4 + masters-2 (with de-tab; bridge save code: de-tab's version + refit's keepLost note, hand-merged) + library-2. Build OK. Run → $SP/int/b7/*.log (14 node + 23 browser). Pass → push, verify live. Remaining after: seals-2, eff-inbox-chart, nav-5, Phase 2.
 - a41a92d9950823b21 now on claude/eff-inbox-chart: 'Sent per day' chart is a black block when empty.
 - Phase 2 agent ac1971b04ea413b37 started 07:03 on claude/local-sync (wt-sync) from claude/local-store.
 - designs follow-up (af114bb2ccb5f706c resumed): claude/de-designs-2 = accept stroke/fill true in clean(); test world Master.load race.
