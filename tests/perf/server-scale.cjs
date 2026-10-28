@@ -185,16 +185,23 @@ async function measure(name, budget, fn) {
     const parts = n => String(n).split('.').map(Number), first = JSON.parse((await lib({ op: 'getChanges' })).body), before = JSON.parse(JSON.stringify(Lib.feedStats));
     st.atomic = true; st.txRetries = 0; st.tick = () => new Promise(r => setTimeout(r, 2 + Math.random() * 8));
     const r0 = st.reads || 0, w0 = st.writes || 0, t0 = Date.now(), pending = [];
+    // PUSH (28 Oct 2026): every write that moves the feed also raises Charm_Nest_Push/counter (_charmNestPush.js: one write in flight, a dirty flag, a gap); its writes are counted here
+    const Push = require(path.join(fnDir, '_charmNestPush.js')), cWrites = [], setP = st.docs.set, pushBefore = JSON.parse(JSON.stringify(Push.stats)); let cN0 = (st.doc('Charm_Nest_Push', 'counter') || {}).n || 0;
+    st.docs.set = (k, v) => { if (k === 'Charm_Nest_Push/counter') cWrites.push(Date.now()); return setP.call(st.docs, k, v); };
     for (let i = 0; i < total; i++) { const due = t0 + Math.floor(i / rate) * 1000 - Date.now(); if (due > 0) await new Promise(r => setTimeout(r, due)); pending.push(lib(write(i)).then(x => x.statusCode, e => String(e))); }
     const codes = await Promise.all(pending), ms = Date.now() - t0;
+    st.docs.set = setP;
+    const peak = cWrites.reduce((m, t, i) => { let j = i; while (j < cWrites.length && cWrites[j] < t + 1000) j++; return Math.max(m, j - i); }, 0), cN = ((st.doc('Charm_Nest_Push', 'counter') || {}).n || 0) - cN0;
+    const pushNote = `counter writes/s ${(cWrites.length / secs).toFixed(2)} (peak ${peak} in any second; counter n +${cN}; shared ${Push.stats.shared - pushBefore.shared} of ${Push.stats.asked - pushBefore.asked} nudges, failed ${Push.stats.failed - pushBefore.failed})`;
     const after = Lib.feedStats, failed = after.fallbacks - before.fallbacks + after.lost - before.lost, retried = after.retried - before.retried;
     const perShard = Object.fromEntries(Object.entries(after.shards).map(([k, v]) => [k, +((v - (before.shards[k] || 0)) / secs).toFixed(1)]));
     const ch = JSON.parse((await lib({ op: 'getChanges', since: first.n })).body), moved = parts(ch.n).map((x, j) => x - parts(first.n)[j]), bad = codes.filter(c => c !== 200).length;
     const named = k => Array.isArray(ch.keys) && ch.keys.includes(k);
-    const ok = bad === 0 && failed === 0 && !ch.reset && named('p:' + open(0)) && named('o:' + open(4)) && named('c:' + open(3) + '_review') && named('x:' + open(5)) && named('s:sheet-open1') && moved.every(x => x > 0);
-    results.push({ name: `FEED contention: ${rate} writes/s for ${secs} s across kinds (person's writes failed ${bad}; bumps failed ${failed}, retried ${retried}, transactions run again ${st.txRetries || 0}; shard writes/s ${JSON.stringify(perShard)}; counts +${moved.join('/')})`, ms, reads: (st.reads || 0) - r0, writes: (st.writes || 0) - w0, bytes: 0, ok, err: ok ? '' : `non-200 ${bad}, bumps failed ${failed}, reset ${!!ch.reset}, keys ${(ch.keys || []).length}` });
+    const pushOk = cWrites.length > 0 && cN === cWrites.length && Push.stats.failed === pushBefore.failed && peak <= 5 && cWrites.length / secs <= 3;   // (the counter: at most about three writes a second on average and five in any second, none lost, none failed, while ten writes a second arrive)
+    const ok = pushOk && bad === 0 && failed === 0 && !ch.reset && named('p:' + open(0)) && named('o:' + open(4)) && named('c:' + open(3) + '_review') && named('x:' + open(5)) && named('s:sheet-open1') && moved.every(x => x > 0);
+    results.push({ name: `FEED contention: ${rate} writes/s for ${secs} s across kinds (person's writes failed ${bad}; bumps failed ${failed}, retried ${retried}, transactions run again ${st.txRetries || 0}; shard writes/s ${JSON.stringify(perShard)}; ${pushNote}; counts +${moved.join('/')})`, ms, reads: (st.reads || 0) - r0, writes: (st.writes || 0) - w0, bytes: 0, ok, err: ok ? '' : `non-200 ${bad}, bumps failed ${failed}, reset ${!!ch.reset}, keys ${(ch.keys || []).length}` });
     // the feed's documents refuse every write: best-effort, never the person's write
-    const feedDoc = k => /^(Charm_Nest_Rev\/(library|feed-[pox]))$/.test(k), set0 = st.docs.set;
+    const feedDoc = k => /^(Charm_Nest_Rev\/(library|feed-[pox])|Charm_Nest_Push\/counter)$/.test(k), set0 = st.docs.set;   // (PUSH: the counter refuses with them)
     st.docs.set = (k, v) => { if (feedDoc(k)) throw new Error('UNAVAILABLE: the feed\'s document refuses (test)'); return set0.call(st.docs, k, v); };
     const b1 = JSON.parse(JSON.stringify(Lib.feedStats)), from = JSON.parse((await lib({ op: 'getChanges' })).body).n, t1 = Date.now(), refused = [];
     for (let i = 0; i < 20; i++) refused.push(lib(write(i)).then(x => x.statusCode, e => String(e)));

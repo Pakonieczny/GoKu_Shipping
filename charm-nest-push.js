@@ -182,7 +182,7 @@
     const s = sw();
     if (!s.on) { setHealth(false, s.why, true); return; }
     setHealth(false, 'starting', true);
-    arm(ready() ? 0 : T.idle);   // (a tab that has the library already, a handover, listens at once; the first one waits for the page to be idle)
+    arm(ready() || !(root.performance && root.performance.now() < 10000) ? 0 : T.idle);   // (a tab that has the library already, or has been up for a while (a handover), listens at once; one just opened waits for the page to be idle)
   }
   /** This tab is not the leader any more (hidden, closed, or another was elected): let go of the connection. */
   function lose() {

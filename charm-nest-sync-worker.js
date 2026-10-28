@@ -72,7 +72,7 @@
 })(typeof self !== 'undefined' ? self : this, function (root) {
   'use strict';
   const V = 1;
-  const PACE = { active: 3000, quiet: 15000, idle: 60000, activeFor: 120000, quietFor: 600000, gap: 600, failMax: 60000, verifyEvery: 600000, liveFor: 150000, fetchEvery: 30000, watchFor: 180000, cursorFor: 1800000, safety: 600000, watchNet: 60000, pushBeat: 60000 };
+  const PACE = { active: 3000, quiet: 15000, idle: 60000, activeFor: 120000, quietFor: 600000, gap: 600, failMax: 60000, verifyEvery: 600000, nudgeGap: 250, liveFor: 150000, fetchEvery: 30000, watchFor: 180000, cursorFor: 1800000, safety: 600000, watchNet: 60000, pushBeat: 60000 };
   const KIND = /^[strcpxoma*]$/;
   const doc = root.document || null;
   const now = () => Date.now();
@@ -154,7 +154,7 @@
     if (m.t === 'feed' || m.t === 'verify') heard(m, false);
     else if (m.t === 'act') { lastInput = Math.max(lastInput, +m.at || 0); hurry = +m.hurry || 0; hurryAt = +m.at || now(); if (leader) wake(); }
     else if (m.t === 'watch') { watching.set(m.from_, { rids: (m.rids || []).map(String).slice(0, 12), since: m.since && typeof m.since === 'object' ? m.since : {}, at: now() }); }
-    else if (m.t === 'hello' || m.t === 'poke') { if (leader) soon(); }
+    else if (m.t === 'hello' || m.t === 'poke') { if (leader) { soon(); if (m.t === 'hello' && pushImpl) pushTell(); } }   // (PUSH: a tab that has just come is told whether push is on)
     else if (m.t === 'lead') { if (mine.size) post(watchMsg()); }
     else if (m.t === 'dead') { stop(true); }
     else if (m.t === 'fail') { lost(); }
@@ -179,7 +179,8 @@
     const wait = ms != null ? ms : fails ? Math.min(PACE.failMax, 2000 * 2 ** Math.min(fails - 1, 5)) : Math.max(PACE.gap, lastStart + pace() - now());
     timer = setTimeout(() => { timer = 0; ask(); }, Math.max(0, wait));
   }
-  function soon() { if (!leader) return; if (busy) { again = true; return; } schedule(Math.max(0, lastStart + PACE.gap - now())); }
+  let againGap = PACE.gap;   // (PUSH: a nudge asks at most every nudgeGap, any other reason every gap: a question that was begun just before holds it back by that much, not more)
+  function soon(gap) { if (!leader) return; const g = gap == null ? PACE.gap : gap; if (busy) { again = true; againGap = Math.min(againGap, g); return; } schedule(Math.max(0, lastStart + g - now())); }
   function wake() { if (leader && !busy && timer && !fails) schedule(); }   // (input after a quiet spell: the next question at the active pace from the last one)
   function watched() {
     const out = new Map();   // rid → the earliest read of it by a window watching it (0: not said, a tab with an older copy of this file)
@@ -222,7 +223,7 @@
       post({ t: 'fail', at: now() }); lost();   // (the question failed: every surface of every tab reads on its own, as before this file, until one is answered)
     } finally {
       busy = false;
-      if (leader) { if (again) { again = false; schedule(Math.max(0, lastStart + PACE.gap - now())); } else schedule(); }
+      if (leader) { if (again) { again = false; const g = againGap; againGap = PACE.gap; schedule(Math.max(0, lastStart + g - now())); } else schedule(); }
     }
   }
 
@@ -399,7 +400,7 @@
     pushChanged();
   }
   /** The counter moved (or the listener has just come: one catch-up): the leader asks the feed now. */
-  function pushNudge() { if (!leader || !started || dead) return false; nudges++; soon(); return true; }
+  function pushNudge() { if (!leader || !started || dead) return false; nudges++; soon(PACE.nudgeGap); return true; }
   function pushStatus() {
     const info = pushImpl ? safe(() => pushImpl.info(), null) : null;
     let ok = pushHealthy(), why = '';

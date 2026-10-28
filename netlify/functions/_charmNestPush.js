@@ -21,15 +21,15 @@
        written by the request that made it (it awaits the write that covers it, inside the request), never dropped and never left to a later request;
      · at least GAP_MS between the starts of two writes (a stream of requests one after another on one instance is held to 4 a second, each waiting out the rest
        of the gap, which is awaited in the request as well);
-     · best effort, like the feed's shards (feedBump): it never throws, a failed write is tried once more after a short random wait and then given up (the next
-       write's nudge, or the page's ten-minute check, covers it), and no request waits for it longer than WAIT_MS.
+     · best effort, like the feed's shards (feedBump): it never throws, a failed write (or one that takes longer than TRY_MS) is tried once more after a short random
+       wait and then given up (the next write's nudge, or the page's ten-minute check, covers it), and no request waits for it longer than WAIT_MS.
    A write that is slow or fails costs the people on other computers a later look, never the person's own write.
 
    nudge(db, FV, prefix) → Promise<boolean>   prefix "" or "Sandbox_"; true when the write that covers this nudge landed
    stats                                      { asked, writes, shared, retried, failed, slow }: the contention test reads them (tests/perf/server-scale.cjs) */
 "use strict";
 const COLL = "Charm_Nest_Push", DOC = "counter";
-const GAP_MS = 250, WAIT_MS = 2500, RETRY_MIN_MS = 40, RETRY_SPREAD_MS = 160;
+const GAP_MS = 250, WAIT_MS = 2500, TRY_MS = 1500, RETRY_MIN_MS = 40, RETRY_SPREAD_MS = 160;
 const stats = { asked: 0, writes: 0, shared: 0, retried: 0, failed: 0, slow: 0 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const worlds = new WeakMap();   // db → Map(prefix → { flying: the write in the air, next: the write that has not begun (it carries every nudge that comes before it does), last: when the last began })
@@ -39,13 +39,15 @@ function stateOf(db, prefix) {
   let st = m.get(prefix); if (!st) m.set(prefix, st = { flying: null, next: null, last: 0 });
   return st;
 }
-/** One write of the counter, with one more try after a short random wait. Never throws. */
+/** One write of the counter, each try given TRY_MS (a write that hangs must not hold back the nudges behind it), with one more try after a short random wait. Never throws. */
 async function writeOnce(db, FV, prefix, st) {
   st.last = Date.now();
   for (let tries = 0; tries < 2; tries++) {
     try {
       stats.writes++;
-      await db.collection(prefix + COLL).doc(DOC).set({ n: FV.increment(1), at: typeof FV.serverTimestamp === "function" ? FV.serverTimestamp() : Date.now() }, { merge: true });
+      let timer = 0;
+      const wrote = db.collection(prefix + COLL).doc(DOC).set({ n: FV.increment(1), at: typeof FV.serverTimestamp === "function" ? FV.serverTimestamp() : Date.now() }, { merge: true });
+      try { await Promise.race([wrote, new Promise((_, no) => { timer = setTimeout(() => no(new Error("the counter write took longer than " + TRY_MS + " ms")), TRY_MS); })]); } finally { clearTimeout(timer); }
       return true;
     } catch (e) {
       if (!tries) { stats.retried++; await sleep(RETRY_MIN_MS + Math.random() * RETRY_SPREAD_MS); continue; }
