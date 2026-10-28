@@ -1752,6 +1752,7 @@ const Orders = window.Orders = (() => {
       }
       window.Engrave?.putAwayNever?.(row);     // (NO EARRING IS EVER ENGRAVED, ZODNOBACK: an engraving job still open on an earring line, from an earlier reading or session, is put away as "no engraving")
       window.Engrave?.raiseCandidate?.(row);   // (a front / both line the buyer wrote no words for is a line to engrave: a person is asked; the intake's engraveCandidate is about words)
+      window.CNBarFront?.move?.(row);          // (BARFRONT, Paul 28 Oct 2026: a bar line the rule now reads as front whose jobs are still undecided backs moves its words to the front, once: charm-nest-engrave-bar-front.js)
       if (row.materialOverride) { row.spec.material = row.materialOverride; row.problems = row.problems.filter(p => p.kind !== "needsMaterial"); } if (row.sizeOverride) { row.spec.size = row.sizeOverride; row.problems = row.problems.filter(p => p.kind !== "missingSize"); } row.material = row.spec.material;
       // (RELEASE, Paul 19 Oct 2026: a person's Release Hold on a line that still asks something sets those questions aside for this line, row.releaseAnyway = { at, by, kinds }: they are not asked again, and a line with nothing to place is "noDesign", makePool)
       if (row.releaseAnyway && Array.isArray(row.releaseAnyway.kinds) && row.problems.length) row.problems = row.problems.filter(p => !row.releaseAnyway.kinds.includes(p.kind));
@@ -7873,6 +7874,7 @@ const Engrave = window.Engrave = (() => {
     const F = FACES(); if (!F) return null;
     const setup = F.setupOf(row), anyFront = have.some(isFront);
     if (!anyFront && !setup.faces.includes("front")) return null;
+    if (!anyFront && window.CNBarFront?.stays?.(row)) return null;   // (BARFRONT, Paul 28 Oct 2026: a bar line read as front whose back a person decided keeps that back alone: no front is made beside it)
     // a line that is over (committed, gone) gets no new job; the jobs it has stay
     if (O.FINISHED_LINE && O.FINISHED_LINE.has(row.state)) return have.map(j => ({ slot: j.slot || null, face: faceOf(j) }));
     return F.planFaces(setup, pl.slots);
@@ -8569,6 +8571,7 @@ const Engrave = window.Engrave = (() => {
     const F = FACES(); if (!F || !r.engrave || (O.FINISHED_LINE && O.FINISHED_LINE.has(r.state))) return false;
     try { if (!F.setupOf(r).faces.includes("front")) return false; } catch (_) { return false; }
     if (jobsOf(r).some(isFront)) return false;
+    if (window.CNBarFront?.stays?.(r)) return false;   // (BARFRONT: a bar line whose back a person decided keeps it: no front to read)
     // (the back of that line, if nobody has touched it, is read again from the setup: its words come with the front's, not from the paid reading of the whole note)
     for (const j of jobsOf(r)) if (!isFront(j) && untouched(j) && j.wordsSource !== "spec.engraving") { Object.assign(j, { state: "classify", fit: null, verify: null, view: null, mask: null, lineInput: null, decision: null, wantSize: null, reason: null }); Review.remove("eng:" + j.key); }
     return true;
@@ -25907,6 +25910,7 @@ async function bootBridge() {
     CustomSheet.load().catch(e => console.warn("Custom design recovery", e)).then(() => { CustomSheet.keepKick("load"); setTimeout(() => CustomSheet.keepPending(), 4000); });   // (KEEPSAVE: the saves the person switched on before this load go on from where they stopped)
     // an approval whose back files a reload cut short is written now, not when the run next passes Engraving
     if (recovered) Engrave.resumeBacks();
+    if (recovered) setTimeout(() => { Promise.resolve(window.CNBarFront?.afterRestore?.()).catch(() => {}); }, 3000);   // (BARFRONT: a restored bar line still waiting on its back is read again now, before anyone approves the back)
     if (recovered) setTimeout(() => { Engrave.earlyAll().catch(() => {}); }, 4000);   // (ENGPRE: lines that carry an engraving but are not nested yet get their job, beside everything else)
     if(recovered)RunCtl.recoverReviewStop().catch(e=>RunCtl.stop(e.message,"Reconnect and Resume."));
     // a reload (a discarded tab, a crash, a browser update) left an Auto run stopped with no station until someone pressed
