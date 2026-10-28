@@ -82,3 +82,7 @@ board-live-extra.json with the new agent ids.
 3. After Phase 1 lands: start Phase 2 (sync worker: one changes feed per computer; report section 6). Phase 3 (outbox, optimistic writes)
    after it. Phase 5 push option (a) needs Paul to add a Firestore security rule in the console + a vendored Firestore SDK file: ask him.
 4. Keep Paul informed in short messages; he reads the board.
+
+## Scheduled resume messages (send_later, one-shot; once one has got you working, delete the rest with delete_trigger)
+04:30 trig_016Uw6uizhWzsjcFH5KLafu8 · 05:30 trig_01EfdotnNNQSsY1iSzZHCqVv · 06:30 trig_016b6HDW4qdsiQBK8VHKN1ze · 07:30 trig_013sPayqPjKBmoHEd7DobThs ·
+08:30 trig_01X1G9rAxWwbSQXPZhdr3fD5 · 09:30 trig_018Vyc472WYCC6N2WXYxmy9y (all UTC, 28 Oct 2026)
