@@ -257,8 +257,8 @@ const K = require(path.join(root, 'netlify/functions/_activityKinds.js'));
       await pg.waitForFunction(() => window.CNDesignLog && window.CN && window.CNAct && window.StationActivity && document.readyState === 'complete', null, { timeout: 60000 });
       st.fn.firebaseOrders = require(path.join(fnDir, 'firebaseOrders.js')).handler;     // (the sign-in session: the real door on the page's store)
       await pg.evaluate(() => { CNRole.setAdminLookup(async () => true); });            // (the Admin: no "Laser or Design?" step, as tests/stations/laser-wired.cjs signs in)
-      await signInAs(pg, srv, 'Paul K');
-      await pg.waitForFunction(() => { const w = StationActivity.who(); return !!w && w.person === 'Paul K'; }, null, { timeout: 15000 })
+      const me = await signInAs(pg, srv, 'Paul K');     // (the name the sign-in keeps: "Paul K.")
+      await pg.waitForFunction(n => { const w = StationActivity.who(); return !!w && w.person === n; }, me, { timeout: 15000 })
         .catch(async e => { throw new Error('not signed in: ' + JSON.stringify(await pg.evaluate(() => ({ sa: StationActivity.who(), ss: StationSession.who(), page: StationSession.page && StationSession.page(), name: CNEmployee.name(), role: CNRole.state() })))); });
       // a burst from the page: the editor opened and saved on an order, a custom piece with no order, a fix of order 3521000888
       const ms = await pg.evaluate(() => {
@@ -271,14 +271,14 @@ const K = require(path.join(root, 'netlify/functions/_activityKinds.js'));
       });
       await pg.evaluate(() => CNDesignLog.flush().then(() => StationActivity.flush(true)));
       await pg.waitForFunction(() => CNDesignLog.pending().records === 0, null, { timeout: 15000 });
-      for (let i = 0; i < 60 && !((fdoc('Efficiency_Daily', `${today}__Paul K`) || {}).stations || {}).sorter; i++) { await pg.evaluate(() => StationActivity.flush(true)); await wait(250); }
-      const pk = fdoc('Efficiency_Daily', `${today}__Paul K`);
+      for (let i = 0; i < 60 && !((fdoc('Efficiency_Daily', `${today}__${me}`) || {}).stations || {}).sorter; i++) { await pg.evaluate(() => StationActivity.flush(true)); await wait(250); }
+      const pk = fdoc('Efficiency_Daily', `${today}__${me}`);
       assert(pk && pk.stations && pk.stations.sorter, 'the real station-activity.js wrote the notes');
       assert.deepEqual([pk.stations.sorter.x_dopen, pk.stations.sorter.x_dsave, pk.stations.sorter.x_cust, pk.stations.sorter.x_custNo, pk.stations.sorter.x_fix], [1, 1, 2, 2, 1]);
       assert(fdoc('Design_Log', 'dl-pg-1') && fdoc('Design_Log', 'dl-pg-2').fix.causedBy === 'Ana_M', 'the records reached Design_Log');
       await pg.evaluate(() => OrderTimeline.flush()); await wait(400);
       const tl = st.list('Order_Timeline').filter(e => e.orderId === '3521000555' || e.orderId === '3521000888').map(e => [e.orderId, e.type, e.by]);
-      assert.deepEqual(tl.sort(), [['3521000555', 'designDropped', 'Paul K'], ['3521000888', 'designSent', 'Paul K']], 'the order\'s timeline: the save, and the fix on the order it fixes');
+      assert.deepEqual(tl.sort(), [['3521000555', 'designDropped', me], ['3521000888', 'designSent', me]], 'the order\'s timeline: the save, and the fix on the order it fixes');
       // the console: Workspace > Employee efficiency, the passcode, the Custom pieces tab
       await pg.waitForFunction(() => window.CharmNestMasterAdmin && CharmNestMasterAdmin.is() === true, null, { timeout: 15000 });
       await pg.click('#moreMenu > summary'); await pg.click('#moreMenu .moreList button[data-mode="efficiency"]');

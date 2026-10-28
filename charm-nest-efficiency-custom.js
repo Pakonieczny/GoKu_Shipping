@@ -120,6 +120,7 @@
         if (st.dead || gen !== st.gen || (e && e.name === "AbortError")) return;
         st.err = (e && e.message) || "The custom pieces could not be read";
         if (!st.M) { V.wait.hidden = false; V.wait.innerHTML = `<span class="efKeyErr"></span><button type="button" data-retry>Try again</button>`; V.wait.firstChild.textContent = "The custom pieces could not be read just now."; }
+        else { V.wait.hidden = true; V.note.hidden = false; V.note.textContent = "Not updated just now: the pieces shown are from the last answer. They are asked again in a moment."; st.sig = ""; st.at = Date.now() - options.refreshMs / 2; }   // (what was read stays, said plainly; the console's live read asks again)
       } finally { if (gen === st.gen) { st.busy = false; V.body.style.opacity = ""; } }
     }
     function paint() {
