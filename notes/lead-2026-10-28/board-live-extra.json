@@ -34,5 +34,9 @@
  "af114bb2ccb5f706c": [
   "de-designs-2",
   "wt-de-designs"
+ ],
+ "ae248b1326745d816": [
+  "local-outbox-p3",
+  "wt-outbox"
  ]
 }

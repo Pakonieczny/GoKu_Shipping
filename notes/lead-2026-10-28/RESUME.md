@@ -82,6 +82,8 @@ board-live-extra.json with the new agent ids.
 - Phase 5 push (option a) needs a Firestore security rule in the console + a vendored Firestore SDK file.
 
 
+## Phase 2 handed back 08:50 (claude/local-sync c07cea4; calls/min 1 tab Orders 36→20, 2 tabs 77→24, tab+windows 86→33; other computer's change in 1–2 s). Sent back for: bumpRev best-effort + revision split by kind (Firestore ~1 write/s per doc), own writes broadcast at once to sibling tabs (library-realtime ≤0.5 s), complete-realtime (fails on main too). Ship after.
+- Phase 3 agent ae248b1326745d816 started 08:52 on claude/local-outbox (wt-outbox) from claude/local-sync.
 ## Remaining: Phase 2 sync worker (ac1971b04ea413b37, claude/local-sync) and nav-6 (a2ce3dc0daa28facb, piece-row-review-buttons at 390 px). Then Phase 3 (outbox, optimistic writes), then Phase 5 needs Paul (Firestore rule + vendored SDK).
 - a41a92d9950823b21 now on claude/eff-inbox-chart: 'Sent per day' chart is a black block when empty.
 - Phase 2 agent ac1971b04ea413b37 started 07:03 on claude/local-sync (wt-sync) from claude/local-store.
