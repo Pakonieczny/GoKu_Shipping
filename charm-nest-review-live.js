@@ -280,7 +280,7 @@
   const follow = () => {
     if (sync || !root.CNSync || typeof root.CNSync.follow !== "function") return;
     sync = root.CNSync.follow({ name: "review", kinds: "c", active: () => !st.dead && watching() && cloudOk(), since: () => st.start, every: () => (onReview() && focused() && Date.now() - st.input <= WORKING ? EVERY : 0),
-      read: why => { if (st.dead || !cloudOk()) return; if (why === "reset" || why === "dirty") st.quietNext = true; if (!watching()) { st.hint = true; st.quietNext = true; } if (st.busy) st.again = true; else arm(Math.max(0, st.end + GAP - Date.now())); } });
+      read: why => { if (st.dead || !cloudOk()) return; if (why === "reset" || why === "dirty") st.quietNext = true; if (!watching()) { st.hint = true; st.quietNext = true; } if (st.busy) st.again = true; else arm(why === "wrote" ? 0 : Math.max(0, st.end + GAP - Date.now())); } });   // (wrote: another tab of this computer: at once)
   };
   follow(); if (!sync) setTimeout(follow, 0);
   root.ReviewLive = { nudge, announce, heard, shown, poll, ensure, state: () => ({ synced: synced(), polls: st.polls, applied: st.applied, loud: st.loud, heard: st.heard, fails: st.fails, cursor: st.cursor, lastOk: st.lastOk, busy: st.busy, armed: !!st.timer, dead: st.dead, error: st.error, every: st.every, pace: pace() }) };

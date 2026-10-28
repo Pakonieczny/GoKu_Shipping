@@ -28,9 +28,20 @@ const say = s => { out.push(s); console.log('  ' + s); };
   let browser = null;
   try {
     /* ── A · the cloud's side ── */
+    const stats = handler.feedStats, parts = n => String(n).split('.').map(Number);
     let c = await lib({ op: 'getChanges' });
-    assert(c.n >= 0 && !c.keys && !c.reset && c.cg === 0, 'the first question: the count now, nothing else');
-    const step = async (b, want, how) => { const n0 = c.n; const w = await (how || lib)(b); c = await lib({ op: 'getChanges', since: n0, cg: c.cg }); assert.equal(c.n, n0 + 1, b.op + ': one bumpRev, the count moved once'); for (const k of want) assert(c.keys.includes(k), `${b.op} names ${k}: ${c.keys}`); return w; };
+    assert(/^\d+\.\d+\.\d+\.\d+$/.test(c.n) && !c.keys && !c.reset && c.cg === 0, 'the first question: the count now (its four shards: lib.p.o.x), nothing else: ' + c.n);
+    const step = async (b, want, how) => {
+      const n0 = c.n, b0 = stats.bumps; const w = await (how || lib)(b); c = await lib({ op: 'getChanges', since: n0, cg: c.cg });
+      assert.equal(stats.bumps - b0, 1, b.op + ': one bumpRev');
+      for (const k of want) assert(c.keys.includes(k) && (k.endsWith('*') || c.kn[k] > 0), `${b.op} names ${k}, with its count: ${c.keys}`);
+      const moved = parts(c.n).map((x, i) => x - parts(n0)[i]);
+      assert(moved.every(x => x === 0 || x === 1), `${b.op}: each shard it named moved once (${moved})`);
+      return w; };
+    const sw = await fetch(srv.sorterOrigin + '/.netlify/functions/charmNestLibrary', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ op: 'putSheet', sheet: { id: 'pending-sheet', note: 'w' } }) });
+    const hdr = sw.headers.get('x-cn-feed') || ''; await sw.text();
+    assert(/s:pending-sheet/.test(hdr) && /p:3700000102/.test(hdr) && /;(.*,)?lib=\d+/.test(hdr) && /[;,]p=\d+/.test(hdr), 'a write\'s answer names what it wrote, with the shards\' counts (X-CN-Feed): ' + hdr);
+    c = await lib({ op: 'getChanges' });
     await step({ op: 'putSheet', sheet: { id: 'pending-sheet', note: 'x' } }, ['s:pending-sheet', 'p:3700000102']);
     await step({ op: 'poolUpdate', poolIds: ['3700000101_12345_1'], patch: { note: 'y' } }, ['p:3700000101']);
     await step({ op: 'reviewMarkPut', rid: '3700000101', action: 'mark', by: 'Ana_M' }, ['c:3700000101_review']);
@@ -41,14 +52,20 @@ const say = s => { out.push(s); console.log('  ' + s); };
     st.put('Order_Rev', '3700000100', { n: 7, at: Date.now() });   // (a station's scan, firebaseOrders: its own batch raises Order_Rev)
     w = await lib({ op: 'getChanges', since: c.n, watch: { 'o:3700000100': w.orders['3700000100'] } });
     assert.deepEqual(w.keys, ['o:3700000100'], 'a watched Order_Rev that moved is named');
-    assert((await lib({ op: 'getChanges', since: c.n + 3 })).reset, 'a count ahead of the cloud\'s (a sandbox reset began it again): reset');
+    const ahead = i => parts(c.n).map((x, j) => x + (j === i ? 3 : 0)).join('.');
+    assert((await lib({ op: 'getChanges', since: ahead(0) })).reset, 'the Library\'s shard ahead of the cloud\'s (a sandbox reset began it again): reset');
+    const pAhead = await lib({ op: 'getChanges', since: ahead(1) });
+    assert(!pAhead.reset && pAhead.keys.includes('p:*'), 'the pool rows\' shard ahead: p:* only (those surfaces ask their own question), no reset: ' + JSON.stringify(pAhead.keys));
     const sb = await lib({ op: 'getChanges', sandbox: true });
-    assert(sb.n === 0 && sb.cg === undefined, 'the sandbox has its own count (and no cancel counter)');
+    assert(sb.n === '0.0.0.0' && sb.cg === undefined, 'the sandbox has its own counts (and no cancel counter)');
     const ls = await lib({ op: 'listSheets', excludeDone: true, wantRev: true, since: '0.0' });
     await lib({ op: 'poolUpdate', poolIds: ['3700000101_12345_1'], patch: { note: 'z' } });
     st.reads = 0; const ls2 = await lib({ op: 'listSheets', excludeDone: true, ifRev: ls.rev, since: ls.upTo });
-    assert(ls2.unchanged && st.reads === 2, `a list read by revision after only a pool row moved: unchanged for 2 reads (${st.reads})`);
-    say(`A · cloud: each write names what it touched (s: p: c: o: x:), one bumpRev each; watched Order_Rev named; reset ahead; sandbox apart; list unchanged after a pool row in ${st.reads} reads`);
+    const listReads = st.reads;
+    assert(ls2.unchanged && listReads === 1, `a list read by revision after only a pool row moved: unchanged for 1 read, the Library's shard did not move (${listReads})`);
+    st.reads = 0; await lib({ op: 'getChanges', since: c.n });
+    const askReads = st.reads;
+    say(`A · cloud: each write names what it touched (s: p: c: o: x:) in its shard, one bumpRev each, its answer says so (X-CN-Feed: ${hdr}); a question reads ${askReads} documents (4 shards + the cancel counter, one getAll); watched Order_Rev named; reset / p:* ahead; sandbox apart; list unchanged after a pool row in ${listReads} read`);
 
     /* ── the browser: one computer (one context), its tabs ── */
     const { chromium } = require(path.join(pwDir, 'playwright-core'));
@@ -106,6 +123,19 @@ const say = s => { out.push(s); console.log('  ' + s); };
     const extra = since(t0, x => !['getChanges', 'customGet', 'getOrderPieces', 'cancelList', 'masterGet', 'listingPhotos', 'timelineAdd'].includes(x.op));
     say(`C · another computer's pool row → tab 1 reads that order in ${tPieces} ms; its Complete Order → customGet in tab 1 ${tReview1} ms, tab 2 ${tReview2} ms (other calls: ${extra.map(x => x.op).join(' ') || 'none'})`);
     assert(tPieces < 5000 && tReview1 < 5000 && tReview2 < 5000, 'a change on another computer within the active pace and a read');
+    // a write made in tab 1 reaches tab 2 at once (the answer's X-CN-Feed, told on the channel: wrote), not at the next question; and that question reads it no more
+    await A2.evaluate(m => document.querySelector(`#modeSeg button[data-mode="${m}"]`).click(), 'orders');
+    await A2.waitForFunction(rid => PlacementFeed.watched().includes(rid), rid);
+    await new Promise(r => setTimeout(r, 2500));
+    t0 = Date.now();
+    const tw = await A1.evaluate(async rid => { await api('charmNestLibrary', { op: 'poolUpdate', poolIds: [`${rid}_66666_1`], patch: { note: 'held here' } }, { quiet: true }); return Date.now(); }, rid);
+    const tSib = await until(() => since(t0, x => x.tag === 'A2' && x.op === 'getOrderPieces' && x.body.includes(rid)).length > 0, 5000, 'tab 2 reads what tab 1 wrote');
+    const sib = since(t0, x => x.tag === 'A2' && x.op === 'getOrderPieces' && x.body.includes(rid))[0].t - tw;
+    await new Promise(r => setTimeout(r, 3500));
+    const again = since(t0, x => x.tag === 'A2' && x.op === 'getOrderPieces' && x.body.includes(rid)).length;
+    say(`C · a write in tab 1 → tab 2 reads it ${sib} ms after tab 1 had its answer (told on the channel, wrote); the next feed answer read it again ${again - 1} time(s)`);
+    assert(sib <= 500, 'a sibling tab reads a write of its own computer within 0.5 s: ' + sib + ' ms');
+    assert(again <= 1, 'the feed\'s next answer does not send it to read the same write again: ' + again);
 
     /* ── D · the windows: an order window hears a station's scan, a sheet window its sheet's save ── */
     const key = await A1.evaluate(rid => Orders.rows().find(r => String(r.order.receiptId) === rid).key, rid);
@@ -137,7 +167,7 @@ const say = s => { out.push(s); console.log('  ' + s); };
     const tClose = await until(() => state(other).then(s => s.leader), 8000, 'the last visible tab leads once the leader is closed');
     const n0 = (await state(other)).n;
     await lib({ op: 'putSheet', sheet: { id: 'cut-sheet', note: 'after the handover' } });
-    await until(() => state(other).then(s => s.n > n0), 8000, 'the new leader goes on asking');
+    await until(() => state(other).then(s => s.n !== n0), 8000, 'the new leader goes on asking');
     say(`E · the leader hidden → another tab leads in ${tHide} ms; that one closed → the last leads in ${tClose} ms and goes on from count ${n0}`);
     assert(tHide < 5000 && tClose < 5000, 'a handover within a few seconds');
 
@@ -150,11 +180,11 @@ const say = s => { out.push(s); console.log('  ' + s); };
     assert(sbs.world === 'sandbox' && ps.world === 'production' && ps.leader, 'one leader per world on one computer');
     const sbN = sbs.n, pN = ps.n;
     await lib({ op: 'putSheet', sheet: { id: 'pending-sheet', note: 'production only' } });
-    await until(() => state(other).then(s => s.n > pN), 8000, 'production hears production');
+    await until(() => state(other).then(s => s.n !== pN), 8000, 'production hears production');
     assert.equal((await state(SB)).n, sbN, 'the sandbox never hears production');
     st.put('Sandbox_Charm_Nest_Sheets', 'sb-sheet', { id: 'sb-sheet', metal: 'gold', day: '2026-10-28' });
     await lib({ op: 'putSheet', sandbox: true, sheet: { id: 'sb-sheet', note: 'sandbox' } });
-    await until(() => state(SB).then(s => s.n > sbN), 8000, 'the sandbox hears its own');
+    await until(() => state(SB).then(s => s.n !== sbN), 8000, 'the sandbox hears its own');
     const sbCalls = since(0, x => x.tag === 'SB' && x.op === 'getChanges'), mixed = sbCalls.filter(x => !/"sandbox":true/.test(x.body));
     assert.equal(mixed.length, 0, 'every question of the sandbox tab is the sandbox\'s');
     say(`F · worlds apart: production leads at count ${(await state(other)).n}, the sandbox tab leads its own at ${(await state(SB)).n}; ${sbCalls.length} sandbox questions, none to production`);

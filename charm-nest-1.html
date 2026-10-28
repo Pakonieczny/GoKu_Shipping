@@ -4231,6 +4231,8 @@ async function apiOnce(fn, body, opts) {
     if (fn === "charmNestLibrary" && payload.op === "laserDone" && window.LaserSheetTime) { try { if (payload.done !== false) laserSent = payload.laserTime = window.LaserSheetTime.measure(payload.by); else window.LaserSheetTime.forget(payload.by); } catch (_) {} }
     const res = await fetch(`${FN}/${fn}`, { method: "POST", headers, body: JSON.stringify(payload), signal: window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined });
     const txt = await readBody(res, bar);
+    // FEED (Paul, 28 Oct 2026: "everything immediate"): what this write named in the cloud (its answer's X-CN-Feed) is told to the other tabs of this computer now (charm-nest-sync-worker.js wrote)
+    try { const fk = res.headers && res.headers.get && res.headers.get("X-CN-Feed"); if (fk && window.CNSync && CNSync.wrote) CNSync.wrote(fk); } catch (_) {}
     let data = null, page = false; try { data = JSON.parse(txt); } catch (_) { page = true; data = { error: txt.trim() ? cloudWords(txt, res.status).slice(0, 200) : "" }; }
     if (res.status === 401 && !(data && data.error === "repo-locked")) { S.cloud.locked = true; throw Object.assign(new Error("unauthorized"), { status: 401 }); }   // (a Charm Repo "repo-locked" 401 is not the cloud passcode: it throws below with its answer in e.data, and the cloud stays unlocked)
     // such a page, a 5xx or a timeout passes by itself (e.transient): whoever asked tries again and holds nothing over it

@@ -12841,7 +12841,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     if(sync || !window.CNSync || typeof window.CNSync.follow!=='function')return;
     sync=window.CNSync.follow({name:'library',kinds:'strc',active:liveOn,since:()=>live.start,
       wants:k=>!live.revs || Object.prototype.hasOwnProperty.call(live.revs,k),
-      read:why=>{if(!liveOn())return;if(why==='verify' || why==='reset')live.verifiedAt=0;live.feedWant=true;if(!live.inResume)readSoon(false);}});
+      read:why=>{if(!liveOn())return;if(why==='verify' || why==='reset')live.verifiedAt=0;live.feedWant=true;if(live.inResume)return;if(why==='wrote'){live.fresh=true;live.heard=Date.now();readSoon(true);}else readSoon(false);}});   // (wrote: another tab of this computer wrote it: read now, as its own write would)
   };
   feedFollow();
   /** The orders of the sheet cards on screen (the placement feed reads where their pieces are, so the Library's lists and chips follow a hold or a take-off made elsewhere). */

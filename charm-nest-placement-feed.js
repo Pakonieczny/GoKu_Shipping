@@ -197,7 +197,7 @@
   // (an order read after the leader asked holds what it named: a person's own change, read at once by nudge, is not read a third time)
   const mark = (r, at) => { const e = learnedOf(r); if (!(e && e.ok && (+e.at || 0) > (+at || 0))) st.stale.add(r); };
   function feedRead(why, keys, at) {
-    if (why !== 'keys' && why !== 'dirty') { st.staleBefore = Date.now(); st.cancelNext = true; st.full = true; }
+    if (why !== 'keys' && why !== 'dirty' && why !== 'wrote') { st.staleBefore = Date.now(); st.cancelNext = true; st.full = true; }
     else {
       const all = keys.some(k => k === 'p:*' || k === 's:*');
       if (all) st.staleBefore = Date.now();
@@ -208,7 +208,7 @@
       }
       while (st.stale.size > 4000) st.stale.delete(st.stale.values().next().value);
     }
-    if (st.busy) st.again = true; else arm(Math.max(0, st.end + GAP - Date.now()));
+    if (st.busy) st.again = true; else arm(why === 'wrote' ? 0 : Math.max(0, st.end + GAP - Date.now()));   // (wrote: another tab of this computer: at once)
   }
   const follow = () => {
     if (sync || !root.CNSync || typeof root.CNSync.follow !== 'function') return;
