@@ -750,7 +750,9 @@
     if (e.type === "monogramApproved") { const L = String((e.data && e.data.letters) || "").toUpperCase(); if (/^[A-Z]{3}$/.test(L)) m.letters = L; }
     // (RELHOLD, Paul 18 Oct 2026: a hold released with the Review card's Release Hold button says so in its data, seal "releaseHold": its step in the lane is the RELEASE HOLD seal the card was
     //  stamped with, the release family; a hold released anywhere else (Orders › On hold, the sheet window) is drawn as it always was)
-    if (e.type === "released" && e.data && e.data.seal === "releaseHold") Object.assign(m, { family: "release", action: "ORDER RELEASED", icon: "release", path: undefined });   // (RELEASED, Paul 27 Oct 2026: the seal reads ORDER RELEASED)
+    // (SEALGREEN, Paul 28 Oct 2026: "change the colour of the 'Order Released' seal to be green ... throughout the entire application everywhere these seals are used": every release of a hold, the sheet
+    //  window's Release hold and an older step that carries no seal included, is the green ORDER RELEASED seal; it was a red HOLD RELEASED unless the Release Hold button made it)
+    if (e.type === "released") Object.assign(m, { family: "release", action: "ORDER RELEASED", icon: "release", path: undefined });   // (RELEASED, Paul 27 Oct 2026: the seal reads ORDER RELEASED)
     // (HOLDORDER, Paul 20 Oct 2026: the Hold Order press's seal says what it did, ORDER HELD, in the family of a hold)
     // (SEALPAIR, Paul 28 Oct 2026: a hold with no ORDER HELD seal of its own, the sheet window's "Take off and hold", wears that seal too: ON HOLD is drawn nowhere)
     if (holdOrderNote(e) || e.type === "held") Object.assign(m, { family: "exceptions", action: "ORDER HELD", icon: "exceptions", path: undefined });
