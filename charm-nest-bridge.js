@@ -9806,6 +9806,14 @@ const Engrave = window.Engrave = (() => {
     try { render(); } catch (_) { /* drawn with the next render */ }
     return { saved: faces, records };
   }
+  /* DESIGN MODE (Paul, 28 Oct 2026: "search and open any charm existing in our charm repository and have full control over manipulating that charm" ... "designing custom charms"): the charm
+     editor opened on a DESIGN, not on a piece: the engraving fonts and their outlines as a piece's open has them, every layer free (nothing locked unless the person locks it). Nothing here reads
+     or writes a piece's artwork record (no AE.sync, no AE.save): the caller keeps what comes back (charm-nest-ce-masters.js: a design version, CharmNestDesigns.put). */
+  function openCharmEditorDesign(opts) {
+    if (!window.CharmEditor) return Promise.reject(new Error("the charm editor did not load: reload the page"));
+    return charmEditFonts(null).catch(() => []).then(fonts => window.CharmEditor.open(Object.assign({ fonts, textToPaths: charmEditText, lockRoles: [] }, opts)));
+  }
+  window.CharmEditDesign = { open: openCharmEditorDesign, fonts: () => charmEditFonts(null), textToPaths: (text, fontKey, sizePt, o) => charmEditText(text, fontKey, sizePt, o) };
   function renderFront(charm, px, opts) {
     if (!charm?.outline || !Array.isArray(charm.bbox) || charm.bbox.length !== 4 || !charm.bbox.every(Number.isFinite))
       return el("div", "noPic", "The charm preview is still loading.");
