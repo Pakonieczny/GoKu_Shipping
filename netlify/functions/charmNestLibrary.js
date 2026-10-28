@@ -1107,7 +1107,7 @@ async function op_listSheets(b) {
      part. The rest comes with `next` as before (every page reading a run, a day or the Library follows it: `all: "sheets"`); one set's own
      sheets (setId, read by the set editor and the rose flow without following `next`) keep the whole budget, a set being a few sheets. */
   const { sheets, rest } = await sheetEntries(rows, answerBudget(Date.now(), b.setId ? ANSWER_BYTES : LIST_SHEETS_BYTES));
-  return { sheets, next: rest.length ? { sheets: rest } : null, truncated: rest.length > 0, ...(ids ? { ids, upTo, revs: Object.fromEntries(sheets.map(x => [x.id, own.get(x.id) || "0"])) } : {}), ...(ask.rev !== null ? { rev: ask.rev } : {}) };
+  return { sheets, next: rest.length ? { sheets: rest } : null, truncated: rest.length > 0, ...(ids ? { ids, upTo, revs: Object.fromEntries(rows.map(r => [r[0], own.get(r[0]) || "0"])) } : {}), ...(ask.rev !== null ? { rev: ask.rev } : {}) };
 }
 /* Manual Control (Paul, 18 Oct 2026): one person at a time moves, turns and resizes the charms of a 10K / 14K sheet by hand in the sheet window. The claim is the
    sheet record's manualEdit { by, tab, at }: taken in a transaction when nobody else holds it (a claim not kept alive for MANUAL_STALE_MS is a closed tab's

@@ -30,6 +30,8 @@
                                                   must not happen (a reset under way, a stale tab); epoch() the reset epoch. → ready()
      ready() → Promise<{ disk, rows }>             the start read done (at once with no IndexedDB)
      get(kind, id) / rev(kind, id) / has(kind, id) memory, at once ('sheets' list rows, 'sheetFull' whole sheet records, 'sets', 'lists')
+     holds(kind, id)                               at once: whether this computer holds it, in memory or on disk (the whole sheet records' names are read at start)
+     warm(kind, n) → Promise<records>              the n used last brought into memory (while the page is idle: the next opening finds them there)
      load(kind, id) → Promise<record | null>       memory, else this computer's disk
      put(kind, id, record, rev, { world }) → bool  kept now in memory, on disk at the end of this task; refused (false) for another world or while not writable
      patch(kind, id, fields) → bool                fields merged into the record kept (its rev stays: the cloud's next answer says what it is)
@@ -77,6 +79,7 @@
 
   /* ── memory: what the page draws from (the disk below is only its copy across reloads) ── */
   const mem = Object.fromEntries(KINDS.map(k => [k, new Map()]));   // id → { rec, rev, saved, used, diskUsed }
+  const onDisk = new Set();   // (the names of the whole sheet records on disk, read at start: a window knows at once that it will draw from here)
   const blobMem = Object.fromEntries(BLOBS.map(k => [k, new Map()]));
   const lru = (map, key, max) => { const v = map.get(key); if (v === undefined) return v; map.delete(key); map.set(key, v); while (map.size > max) map.delete(map.keys().next().value); return v; };
   const listeners = new Set();
@@ -191,6 +194,7 @@
     try { channel = typeof root.BroadcastChannel === 'function' ? new root.BroadcastChannel('cn-store:' + world) : null; if (channel) channel.onmessage = e => { if (e && e.data && e.data.t === 'put') heard(e.data.items); }; } catch (_) { channel = null; }
     try { const st = root.navigator && root.navigator.storage; if (st && st.persisted) st.persisted().then(p => p || (st.persist && st.persist())).catch(() => {}); } catch (_) {}
     readyP = boot().catch(e => { console.warn('local store: start', e); return { disk: false, rows: 0 }; });
+    blobsDb().catch(() => {});   // (opened beside it: the first design a sheet window asks for does not wait for the database to open)
     readyP.then(() => { try { setTimeout(() => sweep().catch(() => {}), 9000); } catch (_) {} });
     try { root.addEventListener('pagehide', () => flush()); } catch (_) {}   // (what this task kept goes to disk before the page leaves, as far as the browser lets it)
     return readyP;
@@ -216,12 +220,14 @@
       for (const id of l.rec.ids) { if (!want.has(l.rec.kind)) want.set(l.rec.kind, new Set()); want.get(l.rec.kind).add(String(id)); }
     }
     let n = 0;
+    await new Promise(res => { try { const rq = db.transaction('sheetFull', 'readonly').objectStore('sheetFull').getAllKeys(); rq.onsuccess = () => { for (const k of rq.result || []) onDisk.add(String(k)); res(); }; rq.onerror = () => res(); } catch (_) { res(); } });
     if (want.size) await new Promise(res => {
       try {
         const t = db.transaction([...want.keys()], 'readonly'), now = Date.now();
         for (const [kind, ids] of want) {
           const s = t.objectStore(kind);
-          for (const id of ids) { const rq = s.get(id); rq.onsuccess = () => { const r = rq.result; if (r && r.rec && !mem[kind].has(id)) { mem[kind].set(id, { rec: r.rec, rev: r.rev || '', saved: r.saved || 0, used: now, diskUsed: 0 }); n++; } }; }
+          // (a row a kept list names is in use while its list is: sweep spares it, so no use is written for each at every start)
+          for (const id of ids) { const rq = s.get(id); rq.onsuccess = () => { const r = rq.result; if (r && r.rec && !mem[kind].has(id)) { mem[kind].set(id, { rec: r.rec, rev: r.rev || '', saved: r.saved || 0, used: now, diskUsed: now }); n++; } }; }
         }
         t.oncomplete = t.onerror = t.onabort = () => res();
       } catch (_) { res(); }
@@ -252,6 +258,7 @@
   const get = (kind, id) => { const s = slot(kind, sid(id)); return s ? s.rec : null; };
   const rev = (kind, id) => { const s = mem[kind] && mem[kind].get(sid(id)); return s ? s.rev : ''; };
   const has = (kind, id) => !!(mem[kind] && mem[kind].has(sid(id)));
+  const holds = (kind, id) => has(kind, id) || (kind === 'sheetFull' && diskOn && onDisk.has(sid(id)));
   async function load(kind, id) {
     id = sid(id); if (!known(kind) || !id) return null;
     const s = slot(kind, id); if (s) return s.rec;
@@ -264,6 +271,18 @@
     markUse(kind, id, mem[kind].get(id));
     return row.rec;
   }
+  /** The n records of a kind used last, read from disk into memory (oldest-used first in the answer is not promised: newest first). */
+  async function warm(kind, n) {
+    if (!known(kind) || !(n > 0)) return [];
+    const db = await records(); if (!db) return [...mem[kind].values()].map(x => x.rec);
+    const ids = await new Promise(res => {
+      const out = [];
+      try { const rq = db.transaction('uses', 'readonly').objectStore('uses').index('kindUsed').openCursor(IDBKeyRange.bound([kind, 0], [kind, Infinity]), 'prev'); rq.onsuccess = () => { const c = rq.result; if (!c || out.length >= n) return res(out); out.push(c.value.id); c.continue(); }; rq.onerror = () => res(out); } catch (_) { res(out); }
+    });
+    const out = [];
+    for (const id of ids) { const had = mem[kind].get(id); const rec = had ? had.rec : await load(kind, id); if (rec) out.push(rec); }
+    return out;
+  }
   /** Keep a record the cloud answered, under its revision. The object is kept as given and written at the end of this task (a caller that changes it
       in place later puts it again; one that only holds it again need not: get() hands the kept object back). */
   function put(kind, id, rec, r, opts) {
@@ -271,7 +290,7 @@
     if (!canWrite(opts && opts.world)) return false;
     const now = Date.now(), rv = r == null ? '' : String(r);
     mem[kind].set(id, { rec, rev: rv, saved: now, used: now, diskUsed: now });
-    if (kind === 'sheetFull') lru(mem[kind], id, LIMITS.memFull);
+    if (kind === 'sheetFull') { lru(mem[kind], id, LIMITS.memFull); onDisk.add(id); }
     enqueue(kind, id, { k: id, rev: rv, saved: now, rec }, now);
     tell({ kind, id, rec, from: 'here' });
     return true;
@@ -289,6 +308,7 @@
   function drop(kind, id) {
     id = sid(id); if (!known(kind) || !id || !canWrite()) return false;
     const had = mem[kind].delete(id);
+    if (kind === 'sheetFull') onDisk.delete(id);
     enqueue(kind, id, null);
     if (had) tell({ kind, id, rec: null, from: 'here' });
     return true;
@@ -397,7 +417,7 @@
     return new Promise(res => {
       try {
         const t = db.transaction([kind, 'uses'], 'readwrite');
-        for (const id of ids) { t.objectStore(kind).delete(id); t.objectStore('uses').delete(kind + '|' + id); if (inMem) inMem.delete(id); }
+        for (const id of ids) { t.objectStore(kind).delete(id); t.objectStore('uses').delete(kind + '|' + id); if (inMem) inMem.delete(id); if (kind === 'sheetFull') onDisk.delete(String(id)); }
         t.oncomplete = () => res(ids.length); t.onerror = t.onabort = () => res(0);
       } catch (_) { res(0); }
     });
@@ -410,8 +430,10 @@
       const t = now || Date.now(), before = t - LIMITS.keepDays * day, out = { removed: 0 };
       const db = canWrite() ? await records() : null;
       // (every row is written with its use, in the same transaction: a row without one cannot be left behind)
+      // (the rows a list names go with the list: a list used in the last 45 days keeps its rows, whatever their own last use)
+      const listed = new Set(); for (const [, l] of mem.lists) if (l.rec && Array.isArray(l.rec.ids) && l.used >= before) for (const id of l.rec.ids) listed.add(l.rec.kind + '|' + id);
       if (db) for (const kind of KINDS) {
-        out.removed += await remove(db, kind, await oldest(db, kind, 100000, before), mem[kind]);
+        out.removed += await remove(db, kind, (await oldest(db, kind, 100000, before)).filter(id => !listed.has(kind + '|' + id)), mem[kind]);
         const cap = LIMITS[kind === 'sheetFull' ? 'full' : kind], n = await count(db, kind);
         if (n > cap) out.removed += await remove(db, kind, await oldest(db, kind, n - cap), null);
       }
@@ -467,7 +489,7 @@
   }
   return {
     init, ready: () => readyP || Promise.resolve({ disk: false, rows: 0 }), world: () => world, disk: () => diskOn,
-    get, rev, has, load, put, patch, drop, list, putList, rows, ask, take, shared, blob, putBlob,
+    get, rev, has, holds, warm, load, put, patch, drop, list, putList, rows, ask, take, shared, blob, putBlob,
     on: fn => { listeners.add(fn); return () => listeners.delete(fn); },
     flush, sweep, squeeze, stats, freeze, discard, LIMITS, KINDS
   };

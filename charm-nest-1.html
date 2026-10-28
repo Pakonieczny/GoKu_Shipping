@@ -3899,6 +3899,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-assets.js?v=20261007-imgcache-perf1-nv2"></script>
 <script src="charm-nest-thumbs.js?v=20261009-th1-pb1"></script>
 <script src="charm-nest-master-cache.js?v=20261009-mc1-cost18-mp1"></script>
+<script src="charm-nest-store.js?v=20261028-ls1"></script><!-- charm-nest-store.js: the records kept on this computer, one database per world, reads keyed by revision (LOCAL, Paul 28 Oct 2026) -->
 <script src="charm-nest-engrave-faces.js?v=20261011-fb1-fb2-sd1-nb1-el1-pc1"></script>
 <script src="charm-nest-engrave-position.js?v=20261012-ep1-rb1-nd1"></script>
 <script src="charm-nest-engrave-sides.js?v=20261009-pe1-nk1-dr1-ko1-fb1-fb2-el1-sb1-pc1-br1-ms1-bh1"></script>
@@ -4059,6 +4060,10 @@ const S = {
   sources: [], poolSources: {}, unassigned: [], sheets: {}, mode: "nest", calibration: [], library: { rows: [], metal: "all", q: "", kind: "sets" }, nestQueue: [], stockPreset: (v => STOCK_PRESETS.some(p => p.id === v) ? v : DEFAULT_STOCK)(localStorage.getItem("cn.stock"))
 };
 const WORKSPACE_SANDBOX = S.settings.sandbox === "on";
+/* LOCAL (Paul, 28 Oct 2026: "as responsive as Photoshop … leverage local storage … keep the API calls to the bare minimum"): this computer's copy of the records
+   (charm-nest-store.js), the database of this page's world, opened now so the Library and the sheet windows are drawn from it before the cloud answers. It refuses
+   a write for the other world, while the sandbox is being reset, or from a tab another tab's reset made stale. */
+try { if (window.CharmNestStore) CharmNestStore.init({ world: WORKSPACE_SANDBOX ? "sandbox" : "production", worldNow: () => (S.settings.sandbox === "on" ? "sandbox" : "production"), writable: () => !(window.CNWipe && CNWipe.active) && !(WORKSPACE_SANDBOX && window.Session && Session.stale && Session.stale()) }); } catch (e) { console.warn("local store", e); }
 /* The sandbox order stream plays the shop's day faster than real time: each check the sorter makes moves its clock ten
    simulated minutes, and between checks it runs at the chosen speed, never past the next check. The day (set numbers,
    folders, run dates) and the due dates follow it; nesting searches keep their real seconds. Anywhere else, and
@@ -4161,6 +4166,12 @@ const LIBRARY_WRITE = /^(poolPut|poolUpdate|backPut|backInvalidate|setAllocate|s
 const SETTINGS_LOCKED_OPS = { purgeHistory: "Purging the real run history.", sandboxReset: "Clearing the sandbox.", sandboxPullOrders: "Pulling the newest Etsy orders for the sandbox.", sandboxPullLimitSet: "Changing how many newest orders the sandbox pulls." };
 async function api(fn, body, opts = {}) {
   if (opts.all) return apiAll(fn, body, opts);
+  // LOCAL (28 Oct 2026): the very same read already on its way is not asked again (the sheet window, the order view and the Library open the same sheet at once): the
+  // second waits for the first and is given its own copy of the answer (charm-nest-store.js shared). A write is always sent.
+  if (window.CharmNestStore && CharmNestStore.shared && READ_OP.test(String((body && body.op) || "")) && !opts.wipe) return CharmNestStore.shared(fn + "\u0000" + JSON.stringify(body || {}), () => apiOnce(fn, body, opts));
+  return apiOnce(fn, body, opts);
+}
+async function apiOnce(fn, body, opts) {
   if (window.CNWipe.active && !opts.wipe && !READ_OP.test(String((body && body.op) || ""))) throw Object.assign(new Error("the sandbox is being reset: try again once the page has reloaded"), { transient: true, wiping: true });
   // (Paul, 26 Oct 2026: "information contamination where I'm not sure which set is old from a previous test-run and which is new current run") a sandbox tab whose side another
   // tab reset since it opened (it slept, was frozen, or missed the storage event and the channel) holds a run, sets and sheets that are gone: it never writes them back, it stands down and reloads (Session.stale)
@@ -7825,15 +7836,24 @@ function carefulSoFar(sh) {
 /** Inner cut lines of a charm: closed achromatic strokes other than its outline (hoop holes, windows). */
 function cutLinesOf(c) { return CharmNestPDF.cutLinesOf(c); }
 /** Millimetre rulers: top and left bands, 1 mm ticks, 5 mm mids, labelled every 10 mm. */
+// (LOCAL, 28 Oct 2026: the page's mono font is read once: reading the body's style at every ruler forced the whole page's styles, 20 to 40 ms, at each sheet window opening)
+let rulerFont = "";
+// (read while the page is idle, and the font drawn once there, so the first ruler of a sheet window does not wait for the font to be made ready)
+try { (window.requestIdleCallback || (f => setTimeout(f, 1500)))(() => { if (!rulerFont) rulerFont = getComputedStyle(document.body).getPropertyValue("--mono") || "monospace"; try { const c = document.createElement("canvas"); c.width = c.height = 16; const x = c.getContext("2d"); x.font = `10px ${rulerFont}`; x.fillText("10 mm", 0, 8); } catch (_) {} }, { timeout: 5000 }); } catch (_) {}
 function drawRulers(ctx, R, k, W, H) {
-  const pxPerMm = k / MM_PER_PT; const f = getComputedStyle(document.body).getPropertyValue("--mono") || "monospace";
+  const pxPerMm = k / MM_PER_PT; const f = rulerFont || (rulerFont = getComputedStyle(document.body).getPropertyValue("--mono") || "monospace");
   ctx.save(); ctx.fillStyle = "#f3efe6"; ctx.fillRect(0, 0, W + R, R); ctx.fillRect(0, 0, R, H + R);
   ctx.strokeStyle = "rgba(60,54,46,.55)"; ctx.fillStyle = "rgba(60,54,46,.85)"; ctx.lineWidth = 1; ctx.font = `${Math.max(8, Math.round(R * 0.42))}px ${f}`;
   const labelEvery = pxPerMm >= 5 ? 10 : pxPerMm >= 2.5 ? 20 : 50;
   const tick = (mm) => mm % labelEvery === 0 ? R * 0.55 : mm % 5 === 0 ? R * 0.34 : (pxPerMm >= 3 ? R * 0.18 : 0);
   ctx.textAlign = "left"; ctx.textBaseline = "top";
-  for (let mm = 0; mm * pxPerMm <= W; mm++) { const t = tick(mm); if (!t) continue; const x = Math.round(R + mm * pxPerMm) + 0.5; ctx.beginPath(); ctx.moveTo(x, R); ctx.lineTo(x, R - t); ctx.stroke(); if (mm % labelEvery === 0) ctx.fillText(String(mm), x + 2, 1); }
-  for (let mm = 0; mm * pxPerMm <= H; mm++) { const t = tick(mm); if (!t) continue; const y = Math.round(R + mm * pxPerMm) + 0.5; ctx.beginPath(); ctx.moveTo(R, y); ctx.lineTo(R - t, y); ctx.stroke(); if (mm % labelEvery === 0 && mm) { ctx.save(); ctx.translate(1, y - 2); ctx.rotate(-Math.PI / 2); ctx.fillText(String(mm), 0, 0); ctx.restore(); } }
+  // (LOCAL, 28 Oct 2026: every tick in one path and one stroke, then the numbers: a stroke per millimetre was most of a sheet window's first drawing, 50 to 90 ms)
+  ctx.beginPath();
+  for (let mm = 0; mm * pxPerMm <= W; mm++) { const t = tick(mm); if (!t) continue; const x = Math.round(R + mm * pxPerMm) + 0.5; ctx.moveTo(x, R); ctx.lineTo(x, R - t); }
+  for (let mm = 0; mm * pxPerMm <= H; mm++) { const t = tick(mm); if (!t) continue; const y = Math.round(R + mm * pxPerMm) + 0.5; ctx.moveTo(R, y); ctx.lineTo(R - t, y); }
+  ctx.stroke();
+  for (let mm = 0; mm * pxPerMm <= W; mm += labelEvery) ctx.fillText(String(mm), Math.round(R + mm * pxPerMm) + 2.5, 1);
+  for (let mm = labelEvery; mm * pxPerMm <= H; mm += labelEvery) { const y = Math.round(R + mm * pxPerMm) + 0.5; ctx.save(); ctx.translate(1, y - 2); ctx.rotate(-Math.PI / 2); ctx.fillText(String(mm), 0, 0); ctx.restore(); }
   ctx.fillStyle = "rgba(60,54,46,.6)"; ctx.font = `${Math.max(7, Math.round(R * 0.36))}px ${f}`; ctx.fillText("mm", 2, R * 0.5);
   ctx.strokeStyle = "rgba(60,54,46,.35)"; ctx.beginPath(); ctx.moveTo(R + 0.5, 0); ctx.lineTo(R + 0.5, H + R); ctx.moveTo(0, R + 0.5); ctx.lineTo(W + R, R + 0.5); ctx.stroke();
   ctx.restore();
@@ -8015,16 +8035,33 @@ async function loadLibrary(context) {
   const body = $("#libBody"); if (S.library.kind !== "sets" && !S.library.rows?.length) body.innerHTML = `<div class="libEmpty">Loading sheets…</div>`;
   // a refresh that fails keeps the list on screen, with its time and a Retry: it used to be replaced by "Could not load"
   // while the rows were still here (a click on Library just after a wake, the network not back yet)
+  /* LOCAL (Paul, 28 Oct 2026: "as responsive as Photoshop … leverage local storage"): a Library not drawn yet is drawn at once from this computer's copy (charm-nest-store.js),
+     whatever the cloud is doing; the read below (or the cloud's first answer, cloudProbe) then asks only whether it moved */
+  const St = window.CharmNestStore, listName = "library:list:" + (S.library.metal || "all");
+  if (St && !body.querySelector('.setCard, [data-laser-card="sheet"]')) {
+    // (once every script of the page has run: the cards are drawn whole, with what the Library's own modules add, and none of them meets cards drawn before it loaded)
+    if (document.readyState === "loading") await new Promise(r => document.addEventListener("DOMContentLoaded", r, { once: true }));
+    await St.ready(); if (loadId !== libraryLoadId) return;
+    if (S.library.kind === "sets" && window.Sets) await Sets.renderLibrary(body, { held: true });
+    else { const h = St.rows(listName); if (h.list && !h.missing && h.rows.length) { S.library.rows = window.Gate?.projectLibraryRecords(h.rows.slice()) || h.rows.slice(); S.library.loadedAt = h.list.at; S.library.loadedFor = S.library.metal; renderLibrary(); } }
+    if (loadId !== libraryLoadId) return;
+  }
   const kept = S.library.kind !== "sets" && S.library.rows?.length && S.library.loadedFor === S.library.metal;
   const stale = why => { if (!body.querySelector('[data-laser-card="sheet"]')) renderLibrary(); libraryStale(why); };   // (a set card's sheets are .librarySheet too)
-  // (the page's first check, not answered yet, is not offline: the loading line stays until it answers, cloudProbe)
+  // (the page's first check, not answered yet, is not offline: the loading line, or what this computer holds, stays until it answers, cloudProbe)
   // (the sets on screen stay with the reason, as the sheets do: ADV-MASTER, Paul 15 Oct 2026, "lost internet connections")
-  if (!S.cloud.ok) { if (kept) stale("the cloud is offline"); else if (S.library.kind === "sets" && body.querySelector(".setCard")) libraryStale("the cloud is offline"); else if (S.cloud.ok === false) body.innerHTML = `<div class="libEmpty">Cloud offline — the library needs the Netlify functions.</div>`; return; }
+  if (!S.cloud.ok) { if (S.cloud.ok === false) { if (kept) stale("the cloud is offline"); else if (S.library.kind === "sets" && body.querySelector(".setCard")) libraryStale("the cloud is offline"); else body.innerHTML = `<div class="libEmpty">Cloud offline — the library needs the Netlify functions.</div>`; } return; }
   if (S.library.kind === "sets" && window.Sets) return Sets.renderLibrary(body);
   try {
-    const r = await api("charmNestLibrary", { op: "listSheets", metal: S.library.metal === "all" ? null : S.library.metal, limit: 300, excludeDone: true }, { label: "Loading library", all: "sheets" });
+    // LOCAL: asked by revision (listSheets ifRev / since): nothing moved is one small read, a change sends only the rows written since
+    const ask = { op: "listSheets", metal: S.library.metal === "all" ? null : S.library.metal, limit: 300, excludeDone: true }, L = St ? St.ask(listName) : null;
+    let r = await api("charmNestLibrary", Object.assign({}, ask, L), { label: "Loading library", all: "sheets" });
+    let rows = St ? St.take(listName, "sheets", r, "sheets", x => x.id) : null;
+    if (St && !rows && L && L.since !== "0.0") { r = await api("charmNestLibrary", Object.assign({}, ask, { wantRev: true, since: "0.0" }), { label: "Loading library", all: "sheets" }); rows = St.take(listName, "sheets", r, "sheets", x => x.id); }
     if (loadId !== libraryLoadId || S.library.kind === "sets") return;
-    S.library.rows = window.Gate?.projectLibraryRecords(r.sheets || []) || r.sheets || []; S.library.loadedAt = Date.now(); S.library.loadedFor = S.library.metal; renderLibrary();
+    if (r.unchanged && kept && body.querySelector('[data-laser-card="sheet"]')) { S.library.loadedAt = Date.now(); return; }   // (what is on screen is what the cloud holds)
+    rows = rows || r.sheets || [];
+    S.library.rows = window.Gate?.projectLibraryRecords(rows.slice()) || rows.slice(); S.library.loadedAt = Date.now(); S.library.loadedFor = S.library.metal; renderLibrary();
   } catch (e) { if (loadId === libraryLoadId) { if (kept) stale(e.message); else body.innerHTML = `<div class="libEmpty">Could not load: ${esc(e.message)}</div>`; } }
 }
 function libraryStale(why) {
@@ -8042,12 +8079,10 @@ function showLibrary() {
   const shown = S.library.kind !== "sets" && S.library.rows?.length && S.library.loadedFor === S.library.metal;
   if (shown && !$('#libBody [data-laser-card="sheet"]')) renderLibrary();
   if (shown || S.library.kind === "sets" && $("#libBody .setCard")) libraryReturn(S.library.place);   // (sets shown stay, read again behind)
-  if (shown && Date.now() - (S.library.loadedAt || 0) < 60000) return;
-  // NAV (28 Oct 2026, Paul: "Every sheet that opens must be instantaneous … keep the API calls to the bare minimum"): the Sets view read under a minute ago, with no Library write made
-  // here or heard from another tab since it was asked, is shown as it is (each visit read every set and sheet again: 8 calls, 2.5 MB at 6,000 orders). Its live read (LaserReview: one
-  // small read by revision) starts again and brings the cards in view up to date (nothing is drawn again unless it answers a change); anything older, or written since, is read again behind
-  // the cards on screen as before.
-  if (S.library.kind === "sets" && $("#libBody .setCard") && Date.now() - (S.library.setsAskedAt || 0) < 60000 && (S.library.wroteAt || 0) < S.library.setsAskedAt) { try { window.LaserReview?.follow?.(); } catch (_) {} return; }
+  // NAV (28 Oct 2026, Paul: "Every sheet that opens must be instantaneous … keep the API calls to the bare minimum"): the cards on screen are shown as they are, at once. LOCAL (the same
+  // day): they are no longer read again by the clock (a list a minute old was read whole, 8 calls and 2.5 MB at 6,000 orders) but asked by revision (setList / listSheets ifRev: one small
+  // read each when nothing moved, only the rows written since when something did; nothing is drawn again unless they answer a change), and the live read follows the cards in view
+  try { window.LaserReview?.follow?.(); } catch (_) {}
   loadLibrary().catch(() => {});
 }
 function libraryPlace() {
@@ -8625,7 +8660,7 @@ boot();
 <script src="charm-nest-relink-flow.js?v=20261020-wc5-ep26"></script>
 <!-- the one line-icon set (charm-nest-icons.js: CharmNestIcons.svg(name, {size, title}), colour follows the text), used by the bridge's order window -->
 <script src="charm-nest-icons.js?v=20261012-ic1"></script>
-<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25-dc26-bk26-es26-ee26-ep26-sx26-sc26-ns26-pw26-gl1-gk1-r16h1-plc1-en1-vis1-dsg1-dxf1-aw1-once1-c17-rs1-rel1-rel2-ga1-mt1-lf1-fra1-ae1-ce1-cb1-kps1-oos1-gss1-hsi1-edw1-ged1-sp1-nv1-nv2-nv3"></script>
+<script src="charm-nest-bridge.js?v=20261005-lis2-cardinal4-zoom-psb1-egl1-osc1-r3f-setgate1-hand1-sameset1-rl1-nowait1-opt1-rt1-pcr1-one1-st1-five1-pd1-zp1-rel2-cx1-hold2-sl2-sealsh1-sealpc2-live1-pst1-nofix1-pcsel1-pst2-sk1-nonote1-pdot3-pr1-lvx1-rvx1-pl1-en2-pf5-en3-ld1-sa5b-em2-nm1-fc9a-fc17a-fc2h-lb1-lb2-ls2-gc1-ps1-rvn1-os1-mn2-inc1-pso1-psc1-cs1-tg1-hz1-gt1-col1-vsku1-pt1-pt2-pset1-pairflow2-plb2-pt3-pset2-pp1-pset3-ps1-pairflow1-pe1-th1-rem1-pe3-rem2-pi1-pow4-mc1-mi3-ana1-adv1-mi4-pi2-adv2-pm8-al2-cg1-ol2-ot1-fnt1-nk1-sz1-sf2-rlp1-sk1-lo1-ew1-re1-rlp2-rlp3-wbt1-lf1-epg1-wb1-sx1-wbt2-wd1-bl1-sn1-lm1-dr1-tl1-dc1-zt1-ac1-dm1-vf1-dr2-fw1-tb1-as1-ms1-kl1-ko1-rpu1-fb1-ef1-su1-fb2-ui2-spl1-eu3-eu1-sv1-sui1-lrt1-tb1-sg1-hg1-tn1-bf1-sd1-sl1-or1-fa1-pm1-br1-zs1-el1-nb1-cm1-ch1-ns1-lk1-nn1-ud1-egm1-pv1-ep1-nr1-eg1-el1-tr1-tr2-nt1-crash1-rh1-rvb1-ap1-rvl1-rvm1-bk1-rh2-rlk1-r2wk1-wy1-rh3-an1-rlk2-rh4-rs1-sp1-sel1-nq1-nw1-fm1-pn1-fr1-pc1-pk1-pn2-on1-en1-ap2-wo1-rb1-sc1-sb1-od1-sbc1-sb2-nl1-ko2-ql1-ml1-m2-m3-m4-m5-m6-orx1-advspecials1-advmaster1-advlaser1-advmk1-advnest1-advoff1-rvd1-dpt1-advsb1-advengrave1-aut1-advoff2-szf1-setr1-egr1-acct1-szr1-mono1-monoui1-nosets1-mc1-del1-pv1-meg1-ow1-hdr1-keepb1-ksv1-ku1-pc1-pv1-pcm1-pl1-nd1-mseal1-setfix1-fb1-ns1-ms1-rv1-ms3-ns2-rid1-rgbig1-cost18-kind1-wal1-nr1-id1-sx1-ql2-res1-lp1-rh1-mc1-wc1-mono1-hp2-mnew1-sy1-at1-cs1-ws1-rc1-rw1-rq1-mp1-ol1-ns1-pf1-ru1-rd1-rm1-rr1-mw1-bh1-rd2-sets9-mh2-rc1-rh9-mt1-fh1-ns2-nm1-wc5-rp1-tf1-sv2-sr1-rhs1-oh1-ch1-ro1-cr1-rvh1-ho1-sw1-ss1-hb1-mc9-bd1-sh29-sa25-dc26-bk26-es26-ee26-ep26-sx26-sc26-ns26-pw26-gl1-gk1-r16h1-plc1-en1-vis1-dsg1-dxf1-aw1-once1-c17-rs1-rel1-rel2-ga1-mt1-lf1-fra1-ae1-ce1-cb1-kps1-oos1-gss1-hsi1-edw1-ged1-sp1-nv1-nv2-nv3-ls1"></script>
 <script src="charm-nest-review-live.js?v=20261005-rl1-pf1-pf2-lb2b-cost18-nv1"></script>
 <script src="charm-nest-review-mark.js?v=20261012-rvm3-rh1-rd1-ho1-sc1-ss1"></script>
 <script src="charm-nest-review-hold.js?v=20261012-rh4-advreview1"></script>
@@ -8698,7 +8733,7 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-mseal1-fb1-ms3-cost18-strip1-id1-2b1-mc1-hp2-br1-ms1-bh1-nb1-mv1-wc5-rp1-oh1-sc1-st1-mc9-mi9b-sh29-gl1-en2-fr1-zg1-oos1-nf1-ged1-sp1-mi1"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-mseal1-fb1-ms3-cost18-strip1-id1-2b1-mc1-hp2-br1-ms1-bh1-nb1-mv1-wc5-rp1-oh1-sc1-st1-mc9-mi9b-sh29-gl1-en2-fr1-zg1-oos1-nf1-ged1-sp1-mi1-ls1"></script>
 <!-- 10K / 14K: a charm dragged onto the next or previous sheet of its metal, in the sheet window's Manual Control (SheetHop; Paul, 18 Oct 2026) -->
 <script src="charm-nest-sheet-hop.js?v=20261018-hop1-hp2-mv1-mc9-mi9b-gk1-fr1-ged1"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->

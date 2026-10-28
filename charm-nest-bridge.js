@@ -4176,10 +4176,43 @@ const Pool = window.Pool = (() => {
     for (const h of hashesOfSrc(src)) out.add(h);
     return out;
   }
+  /* LOCAL (Paul, 28 Oct 2026: "as responsive as Photoshop … leverage local storage … keep the API calls to the bare minimum"; decision 3: 45 days). A master design as read, parsed,
+     traced and split here (loadMasterCharm) is kept on this computer (charm-nest-store.js, cn-blobs 'parsed'), named by its file, its drawing's hash and the code that read and drew
+     it, so a reload, another tab, or a sheet window opened while the cloud is slow draws it again with no download and no parse. Its parse is kept as the worker gave it, without a
+     PDF document (a writer reads that from the bytes in the worker, as it always did) and without the worker's own key for it (another session's worker numbers its own); a page
+     with no worker keeps none. A re-pointed or re-drawn design has another hash, and changed drawing code another name: an old copy is never used. Shared by both worlds: it names
+     a file, never a record. KEPT_REV: bump by hand when the reading below changes in a way no ?v= shows. */
+  const KEPT_REV = 1;
+  const keptKey = (path, hash) => (path && hash ? [String(path), String(hash), KEPT_REV, window.CharmNestThumbs && CharmNestThumbs.drawingVersion ? CharmNestThumbs.drawingVersion() : ""].join("|") : "");
+  function keepMaster(path, src) {
+    const St = window.CharmNestStore, k = keptKey(path, src && src.hash);
+    if (!St || !k || !src.parsed || src.parsed.doc || !window.CharmNestBackground) return;
+    const later = typeof requestIdleCallback === "function" ? f => requestIdleCallback(f, { timeout: 3000 }) : f => setTimeout(f, 300);
+    later(() => { try { const parsed = Session.copy(src.parsed); delete parsed.computeKey; St.putBlob("parsed", k, { v: 1, src: Session.copy(Object.assign({}, src, { parsed: undefined })), parsed }).catch(() => {}); } catch (e) { console.warn("master design not kept", e); } });
+  }
+  const keptBlob = async (path, hash) => { const St = window.CharmNestStore, k = keptKey(path, hash); if (!St || !k) return null; try { const v = await St.blob("parsed", k); return v && v.src && v.parsed && Array.isArray(v.src.charms) && v.src.charms[0] ? v : null; } catch (_) { return null; } };
+  /** The design this computer keeps for a file and its drawing (path, hash), a source of this page again (as loadMasterCharm leaves one); null when none is kept. */
+  const keptAsked = new Map();   // (one read per design however many ask at once: the sheet window asks as soon as it has the record, and again as it draws)
+  async function keptMaster(path, hash) {
+    if (!path || !hash) return null;
+    const had = B.pool.sources.get(path); if (had && String(had.hash) === String(hash)) { had.usedAt = Date.now(); return had; }
+    const ak = path + "|" + hash; let ask = keptAsked.get(ak);
+    if (!ask) { ask = keptBlob(path, hash).finally(() => keptAsked.delete(ak)); keptAsked.set(ak, ask); }
+    const v = await ask; if (!v) return null;
+    const now = B.pool.sources.get(path); if (now && String(now.hash) === String(hash)) return now;   // (read meanwhile)
+    const src = Object.assign({}, v.src, { parsed: v.parsed, t0: performance.now(), usedAt: Date.now(), persisting: null, state: "ready" });
+    // (REDRAW: an id this page holds for another drawing of the same file is not taken over; the design is read as before)
+    { const had2 = S.poolSources && S.poolSources[src.id]; if (had2 && had2.hash && String(had2.hash) !== String(hash)) return null; }
+    S.poolSources[src.id] = src; B.pool.sources.set(path, src);
+    return src;
+  }
+  /** The parse kept for a source of the restored workspace (Session), so a reload parses no master design this computer has read; null when none is kept. */
+  async function keptParse(src) { const v = src && src.pool ? await keptBlob(src.cloud && src.cloud.path, src.hash) : null; return v ? v.parsed : null; }
   async function loadMasterCharm(entry, size) {
     const geom = sizeEntry(entry, size); if (!geom || !geom.aiPath) throw new Error(`no design file for ${entry.sku}${size ? " · " + size : ""}`);
     const key = geom.aiPath;
     if (B.pool.sources.has(key)) { const src = B.pool.sources.get(key); src.usedAt = Date.now(); return src; }   // (Upkeep lets idle ones go)
+    { const kept = await keptMaster(key, geom.scaled ? geom.charmHash : entry.charmHash || geom.charmHash); if (kept) return kept; }   // (LOCAL: read before on this computer)
     const {url,bytes,parsed,g,charm}=await readMasterCharm(entry,size);
     // A design file indexed while the grouping lost track of the labels (22–23 Sep) kept the SKU written under its charm.
     // The text stays part of the charm, so the nest keeps its room and no neighbour is placed under it, but it still goes
@@ -4199,7 +4232,7 @@ const Pool = window.Pool = (() => {
     await splitBodies(src);
     S.poolSources[srcId] = src;
     // (REDRAW: a read that began before the library re-pointed the SKU to another drawing is not kept as the design of that path)
-    { const cur = Master.entryFor(entry.sku), cg = cur && cur !== entry ? sizeEntry(cur, size) : null; if (!(cg && cg.charmHash && geom.charmHash && String(cg.charmHash) !== String(geom.charmHash))) B.pool.sources.set(key, src); }
+    { const cur = Master.entryFor(entry.sku), cg = cur && cur !== entry ? sizeEntry(cur, size) : null; if (!(cg && cg.charmHash && geom.charmHash && String(cg.charmHash) !== String(geom.charmHash))) { B.pool.sources.set(key, src); keepMaster(key, src); } }
     return src;
   }
   /* Mismatched pair (Paul, 9 Oct 2026): src.charms stays the ONE folded charm it always was (every picture of the design, the Master tab and
@@ -5289,7 +5322,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(ListMedia.oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig, greenFits, partnerSheets };
+  return { keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig, greenFits, partnerSheets };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -11626,7 +11659,11 @@ const LaserReview = window.LaserReview = (()=>{
      a sheet that moved to another set or was cut elsewhere); `revs` are the revisions of the documents the last full answer
      was made from, sent back so the cloud can answer "unchanged" without working anything out. */
   const live={timer:0,second:0,reloadTimer:0,busy:false,again:false,want:false,checking:false,local:0,nudged:0,fails:0,start:0,end:0,seq:0,applied:0,revs:null,legacy:false,reload:false,seen:0,reloadAt:0,sigs:new Map(),shape:new Map(),rev:null,verifiedAt:0,pace:0,waste:0,skipRev:0,sealRev:null,sealKey:'',sealN:0,heard:0,flight:0,sync:false,view:null,viewAt:0};
-  function record(s){const id=s.id || s.sheetId,old=records.get(id);if(id && (!old || (s.updatedAt || 0)>=(old.updatedAt || 0)))records.set(id,s);return s;}
+  /* LOCAL (Paul, 28 Oct 2026: "leverage local storage"): what the cloud says of a sheet's list row (this live read, the sheet window's follow, a read elsewhere) is kept on this computer
+     too, under its revision (charm-nest-store.js), so the Library drawn after a reload is the one last seen. A whole record (its charms) is the sheet window's to keep, not a row. */
+  const keep=(s,rev)=>{try{const St=window.CharmNestStore,id=s && (s.id || s.sheetId);if(!St || !id || Array.isArray(s.charms))return;St.put('sheets',id,s,rev!=null?rev:St.rev('sheets',id));}catch(_){}};
+  // (rev: the row is the cloud's, read at that revision: it is kept; a row the page made or projected is not)
+  function record(s,rev){const id=s.id || s.sheetId,old=records.get(id);if(id && (!old || (s.updatedAt || 0)>=(old.updatedAt || 0)))records.set(id,s);if(rev!==undefined)keep(s,rev);return s;}
   function projected(s){
     const id=s.id || s.sheetId,base=records.get(id) || s;
     const known=passDepth && passProjected?.get(base);if(known)return known;
@@ -12261,7 +12298,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     for(const set of response.sets || []){
       shaped('t:'+set.setId,(set.sheetIds || []).slice().sort().join(',')+'|'+(set.laserDoneAt?'cut':''));
       if(!differs('t:'+set.setId,set) && !always)continue;
-      diff=true;moved.add('t:'+set.setId);sets.set(set.setId,set);
+      diff=true;moved.add('t:'+set.setId);sets.set(set.setId,set);try{window.CharmNestStore?.patch('sets',set.setId,set);}catch(_){}   // (LOCAL: the held set takes what the live read says of it)
       for(const card of cardsOf(set.setId))card._laserSet={...card._laserSet,...set};
     }
     const found=new Set();
@@ -12269,7 +12306,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       found.add(s.id);
       shaped('s:'+s.id,(!s.draft && s.solidIncluded!==false?s.setId || '':'')+'|'+(s.laserDoneAt?'cut':''));
       if(!differs('s:'+s.id,s) && !always)continue;
-      diff=true;moved.add('s:'+s.id);records.set(s.id,s);patchRow(s);
+      diff=true;moved.add('s:'+s.id);records.set(s.id,s);patchRow(s);keep(s,response.revs && response.revs['s:'+s.id]);
     }
     for(const id of ids)if(!found.has(id) && records.has(id)){
       shaped('s:'+id,'gone');if(!records.get(id).archived)live.gone=true;
@@ -12449,7 +12486,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   /** The orders of the sheet cards on screen (the placement feed reads where their pieces are, so the Library's lists and chips follow a hold or a take-off made elsewhere). */
   const shownOrders=()=>{try{if(!liveOn())return [];return [...new Set(shown().ids.flatMap(id=>(records.get(id)?.orders || []).map(String)))].filter(x=>/^\d{4,20}$/.test(x)).slice(0,24);}catch(_){return [];}};
   /** A sheet's cloud record read elsewhere (the sheet window's own follow): taken in as the live read would, the Library's list row too; rec null: the sheet is gone (id given). */
-  const patch=(rec,id)=>{if(rec){record(rec);patchRow(rec);}else if(id){if(records.has(id))records.set(id,{...records.get(id),archived:true});patchRow({id,archived:true});}try{window.SharedOrders?.refreshed?.();}catch(_){}changed();};
+  const patch=(rec,id,rev)=>{if(rec){record(rec);patchRow(rec);keep(rec,rev);}else if(id){if(records.has(id))records.set(id,{...records.get(id),archived:true});patchRow({id,archived:true});try{window.CharmNestStore?.patch('sheets',id,{archived:true});}catch(_){}}try{window.SharedOrders?.refreshed?.();}catch(_){}changed();};
   /** Why a drop of this sheet or set on Laser cutting (or on Completed, through it) cannot work now, in the words of its card's own grey Approve button ('' when it can be approved, or when a
    *  press can do the rest by itself). The Library's dock reads it, so a place that cannot take the item says why right where it is dropped (Paul, 10 Oct: never a vague word). */
   function moveBlock(item){
@@ -13008,10 +13045,47 @@ const Sets = window.Sets = (() => {
       fail() { chip.remove(); settle(); }
     };
   }
+  /* LOCAL (Paul, 28 Oct 2026: "as responsive as Photoshop … leverage local storage … keep the API calls to the bare minimum"). The Sets view's two lists are kept on this
+     computer (charm-nest-store.js): the sets (library:sets), the Current sheets (library:sheets) and the sets' own sheets (library:setSheets), every row under its revision.
+     A Library not drawn yet is drawn from them at once (a reload, the cloud slow or away), and the cloud is asked by revision: setList / listSheets with ifRev (nothing the
+     Library reads moved: one small read each) and since (only the sets and sheets written since). The two answers are put together with what is held (takeLibrary); a list
+     that names a row held nowhere is read whole once more. */
+  function heldLibrary() {
+    const St = window.CharmNestStore; if (!St) return null;
+    const a = St.rows("library:sets"), b = St.rows("library:sheets"), c = St.rows("library:setSheets");
+    if (!a.list || !b.list || !c.list || a.missing || b.missing || c.missing) return null;
+    return { sets: a.rows, sheets: [...new Map([...b.rows, ...c.rows].map(r => [r.id, r])).values()] };
+  }
+  function adoptHeld() {
+    const h = heldLibrary(); if (!h) return false;
+    _cache = { rawSets: h.sets, rawSheets: h.sheets, sets: [], sheets: h.sheets, held: true };
+    S.library.rows = Gate.projectLibraryRecords(h.sheets.slice()); S.library.loadedFor = "all";
+    return true;
+  }
+  const askLibrary = St => (heldLibrary() ? { sets: St.ask("library:sets"), sheets: St.ask("library:sheets") } : { sets: { wantRev: true, since: "0.0" }, sheets: { wantRev: true, since: "0.0" } });
+  /** The two answers with what is held: { sets, sheets, same } (same: neither moved), or null when they name a row held nowhere. */
+  function takeLibrary(ss, sh) {
+    const St = window.CharmNestStore; if (!St || !ss || !sh) return null;
+    const was = St.list("library:setSheets"), sentSets = new Set((ss.sets || []).map(x => x.setId)), sentSheets = new Set((ss.sheets || []).map(r => r.id));
+    for (const r of ss.sheets || []) St.put("sheets", r.id, r, "");   // (the sets' own sheets first: a sheet the Current list sent too is the same or newer, and is kept after)
+    const sets = St.take("library:sets", "sets", ss, "sets", x => x.setId), current = St.take("library:sheets", "sheets", sh, "sheets", x => x.id);
+    if (!sets || !current) return null;
+    let ids;
+    if (ss.unchanged) { if (!was) return null; ids = was.ids; }
+    else if (!Array.isArray(ss.ids)) ids = (ss.sheets || []).map(r => r.id);
+    else { const held = new Set(was ? was.ids : []); ids = sets.flatMap(st => (st.sheetIds || []).filter(id => (sentSets.has(st.setId) ? sentSheets : held).has(id))); }
+    const seen = new Set(), setSheets = [];
+    for (const id of ids) { if (seen.has(id)) continue; seen.add(id); const r = St.get("sheets", id); if (!r) return null; setSheets.push(r); }
+    St.putList("library:setSheets", { kind: "sheets", ids: setSheets.map(r => r.id), since: "-", rev: "-" });
+    return { sets, sheets: [...new Map([...current, ...setSheets].map(r => [r.id, St.get("sheets", r.id) || r])).values()], same: !!(ss.unchanged && sh.unchanged) };
+  }
   async function renderLibrary(body, opts) {
     if(window.Seal?.defer("sets-library",()=>renderLibrary(body,opts)))return;
     // the Completed tab is drawn by charm-nest-library.js; this is the Current tab's Sets view
     const LD = window.LibraryDone; if (LD && LD.tab() === "done") return;
+    // LOCAL: drawn first from what this computer holds, then asked below; held: that only (the cloud's first check has not answered yet, loadLibrary)
+    if (!_cache && adoptHeld()) { await renderLibrary(body, { reuse: true }); if (opts && opts.held) return; }
+    else if (opts && opts.held) return _cache && !body.querySelector(".setCard") ? renderLibrary(body, { reuse: true }) : undefined;
     const request = ++libraryRequest;
     const reuse = !!(opts && opts.reuse && _cache);
     if (!reuse && !_cache) body.innerHTML = `<div class="libEmpty">Loading sets…</div>`;
@@ -13019,12 +13093,17 @@ const Sets = window.Sets = (() => {
       if (!reuse) {
         // both come in parts when they pass what one answer holds (apiAll), and are read to the end before any is shown;
         // what the laser has cut is left out (it is under Completed), save the cut sheets of a set still in progress
-        const askedAt = Date.now();   // (NAV, 28 Oct 2026: showLibrary shows this read again as it is while it is under a minute old and no Library write was made or heard after it was asked)
-        const [ss, sh] = await Promise.all([api("charmNestLibrary", {op:"setList", includeSheets:true, limit:200, excludeDone:true}, {all:["sets", "sheets"]}), api("charmNestLibrary", {op:"listSheets", limit:500, excludeDone:true}, {all:"sheets"})]);
+        const askedAt = Date.now();
+        // (LOCAL: asked by revision, see heldLibrary; a reply that cannot be put together with what is held is asked again whole, once)
+        const St = window.CharmNestStore, read = L => Promise.all([api("charmNestLibrary", Object.assign({op:"setList", includeSheets:true, limit:200, excludeDone:true}, L && L.sets), {all:["sets", "sheets"]}), api("charmNestLibrary", Object.assign({op:"listSheets", limit:500, excludeDone:true}, L && L.sheets), {all:"sheets"})]);
+        let L = St ? askLibrary(St) : null, [ss, sh] = await read(L), got = St ? takeLibrary(ss, sh) : null;
+        if (St && !got && (L.sets.since !== "0.0" || L.sheets.since !== "0.0")) { L = { sets: { wantRev: true, since: "0.0" }, sheets: { wantRev: true, since: "0.0" } }; [ss, sh] = await read(L); got = takeLibrary(ss, sh); }
         if (request !== libraryRequest || S.library.kind !== "sets") return;
         S.library.setsAskedAt = askedAt;
-        const records = [...new Map([...(sh.sheets || []), ...(ss.sheets || [])].map(r=>[r.id,r])).values()];
-        _cache = {rawSets:ss.sets || [], rawSheets:records, sets:[], sheets:records};
+        const records = got ? got.sheets : [...new Map([...(sh.sheets || []), ...(ss.sheets || [])].map(r=>[r.id,r])).values()];
+        // (nothing moved since what is on screen was read or held: it is the cloud's, and nothing is drawn again; the page still follows its records, as below)
+        if (got && got.same && _cache && body.querySelector(".setCard, .libEmpty")) { S.library.loadedAt = Date.now(); if (_cache.held) { _cache.held = false; Promise.resolve(Gate.followRecords(records)).then(n => { if (n) Gate.refreshMembership(); }).catch(() => {}); } return; }
+        _cache = {rawSets:got ? got.sets : ss.sets || [], rawSheets:records, sets:[], sheets:records};
         // the Library's records (S.library.rows) are what the sheet window, the order search and the cards' backs read a
         // sheet by: Sets, the view the Library opens on (Paul, 29 Sep), keeps them too, every metal as it reads them
         S.library.rows = Gate.projectLibraryRecords(records.slice()); S.library.loadedAt = Date.now(); S.library.loadedFor = "all";
@@ -19545,7 +19624,7 @@ const Sandbox = window.Sandbox = (() => {
   /* COST (Oct 2026): the registry and the engine are no longer tags of the page (a blocking script in its head for every
      production page): they load here, at once on a page in the sandbox, when Settings opens, and before anything that
      clears or counts the browser's side (wipe, browserLeft, wipeBrowser). The tokens are the ones the tags had. */
-  const SBX_FILES = ["charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1-spl1-sv1-advsb1-krep1-kt1-cost18-plc1-ae1", "charm-nest-sandbox-browser.js?v=20261010-wb1"];
+  const SBX_FILES = ["charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1-spl1-sv1-advsb1-krep1-kt1-cost18-plc1-ae1-ls1", "charm-nest-sandbox-browser.js?v=20261010-wb1"];
   let sbxTask = null, hooked = false;
   function loadScripts() {
     const done = () => { if (!hooked && BX()) { hooked = true; try { BX().setHooks(memoryHooks); } catch (_) {} } return !!(BX() && window.CharmNestSandboxFamilies); };
@@ -19602,6 +19681,8 @@ const Sandbox = window.Sandbox = (() => {
     catch (e) { console.warn("sandbox workspace", e); }
     try { if (window.OrderTimeline && OrderTimeline.discard) OrderTimeline.discard(true); } catch (_) {}
     if (own) {
+      // (LOCAL, 28 Oct 2026: this page's copy of the sandbox's records, charm-nest-store.js: nothing written to it again, and its database deleted; the sweep below deletes it for the other tabs)
+      try { if (window.CharmNestStore && CharmNestStore.world() === "sandbox") await CharmNestStore.discard(); } catch (_) {}
       try { if (window.CNTimeline && CNTimeline.forget) CNTimeline.forget(); } catch (_) {}
       try { if (window.TeamMail && TeamMail.wipe) TeamMail.wipe(); } catch (_) {}
       try { if (window.CustomerMail && CustomerMail.wipeSandbox) CustomerMail.wipeSandbox(); } catch (_) {}
@@ -19625,6 +19706,7 @@ const Sandbox = window.Sandbox = (() => {
   function standDown() {
     bar(); W.active = true;
     try { if (window.Session && Session.freeze) Session.freeze(); } catch (_) {}
+    try { if (window.CharmNestStore && CharmNestStore.world() === "sandbox") CharmNestStore.freeze(); } catch (_) {}   // (LOCAL: the records this sandbox tab kept are the reset's to delete)
     try { if (window.OrderTimeline && OrderTimeline.discard) OrderTimeline.discard(true); } catch (_) {}
     try { if (window.CNTimeline && CNTimeline.forget) CNTimeline.forget(); } catch (_) {}
     try { if (window.TeamMail && TeamMail.wipe) TeamMail.wipe(); } catch (_) {}
@@ -24591,7 +24673,7 @@ const Session = window.Session = (() => {
         // with its bytes; reading it again threw, so the WHOLE workspace stayed unrestored at every reload and the page ran without its arrivals, upkeep and saving.
         // A file that was an error is not read again; one that cannot be read now becomes an error row, and the rest comes back)
         if (src.bytes?.length && src.state !== "error") {
-          try { src.parsed = await P.parseSource(src.bytes, src.name); }
+          try { src.parsed = (src.pool && await Pool.keptParse(src)) || await P.parseSource(src.bytes, src.name); }   // (LOCAL: a master design's parse kept on this computer is not made again)
           catch (e) { src.state = "error"; src.error = `${src.name} could not be read again after the reload: ${e.message || e}`; }
         }
         src.persisting = null; src.t0 = performance.now();
