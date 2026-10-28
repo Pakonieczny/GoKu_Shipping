@@ -1072,7 +1072,13 @@
   function dragAnchors(ctx, g, ev, p) {
     let d = [p.x - g.x0, p.y - g.y0];
     if (ev.shiftKey) { const q = snap45([g.x0, g.y0], [p.x, p.y]); d = [q[0] - g.x0, q[1] - g.y0]; }
-    else if (g.lead) { const q = snapTo(ctx, [g.lead[0] + d[0], g.lead[1] + d[1]], ev); d = [q[0] - g.lead[0], q[1] - g.lead[1]]; }
+    else if (g.lead) {
+      // (the guides are every part's edges and middles, the part being changed among them: its own, as the last frame left it, would hold the anchor where it was, so a
+      // snap onto one of those is not taken)
+      const raw = [g.lead[0] + d[0], g.lead[1] + d[1]], q = snapTo(ctx, raw, ev), e = ctx.entry(g.leadId), ob = e && ctx.geo.drawn(e.it, e.P);
+      const own = (v, a, b) => ob && [ob[a], (ob[a] + ob[b]) / 2, ob[b]].some(w => Math.abs(w - v) < 1e-9);
+      d = [(own(q[0], 0, 2) ? raw[0] : q[0]) - g.lead[0], (own(q[1], 1, 3) ? raw[1] : q[1]) - g.lead[1]];
+    }
     const map = new Map();
     for (const part of g.parts) {
       const dr = apL(part.Wi, d), bySub = new Map();
