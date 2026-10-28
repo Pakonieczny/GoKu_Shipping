@@ -176,7 +176,7 @@ async function partB() {
       after.n === b3.n - 1 && after.dirty && Math.abs(moved * MM - 0.2) < 1e-6 && b4.puts === 1 && designPuts() === 1 && d1.name === 'BFLOWER_9901' && d1.source.kind === 'master' && d1.source.sku === 'BFLOWER_9901' && d1.version === 1 && b4.ok === true
         && f1.items.length === b3.n - 1 && !f1.items.some(i => i.id === ids.petal) && !d1.faces.back && Math.abs(d1.widthMm - b3.box[2] * MM) < 1e-3 && Math.abs(d1.heightMm - b3.box[3] * MM) < 1e-3 && d1.by === 'Test Operator'
         && b4.send && /The master BFLOWER_9901 in the charm library is unchanged/.test(b4.card) && b4.entry === b0.entry && artCalls() === a0 && artCalls() === 0 && !b4.open
-        && b4.log.join() === 'designOpen:master,designSave:BFLOWER_9901', JSON.stringify({ n: after.n, moved, log: b4.log, art: artCalls(), ok: b4.ok, row: b4.row && b4.row.id }));
+        && b4.log.filter(k => !/^designCheck/.test(k)).join() === 'designOpen:master,designSave:BFLOWER_9901'   /* (designCheck: the extras' laser check logs itself on Save) */, JSON.stringify({ n: after.n, moved, log: b4.log, art: artCalls(), ok: b4.ok, row: b4.row && b4.row.id }));
     const ID1 = d1.id;
 
     /* ── B5 Keep editing: the same design, another change, version 2; then Send to sheet hands version 2 on ── */
