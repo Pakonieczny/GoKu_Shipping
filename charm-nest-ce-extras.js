@@ -270,13 +270,14 @@
     if (closed) out.push(['h']);
     return out;
   }
-  /** The height of a capital in the font at this size, pt (an H's outlines; 0.7 of the size when the engine draws none). */
+  /** A capital's ink from its baseline, pt, y down: [top, bottom] of an H's outlines ([-0.7 of the size, 0] when the engine draws none); capOf: its height. */
   const capCache = new Map();
-  function capOf(engine, fontKey, size) {
+  function capBand(engine, fontKey, size) {
     const key = fontKey + '\u0001' + size; let v = capCache.get(key);
-    if (v == null) { let b = null; try { const r = engine('H', fontKey, size, { align: 'left' }); b = r && (M.bboxOf(r.subpaths) || r.bbox); } catch (e) { b = null; } v = b && b[3] > b[1] ? b[3] - b[1] : 0.7 * size; capCache.set(key, v); if (capCache.size > 500) capCache.delete(capCache.keys().next().value); }
+    if (v == null) { let b = null; try { const r = engine('H', fontKey, size, { align: 'left' }); b = r && (M.bboxOf(r.subpaths) || r.bbox); } catch (e) { b = null; } v = b && b[3] > b[1] ? [b[1], b[3]] : [-0.7 * size, 0]; capCache.set(key, v); if (capCache.size > 500) capCache.delete(capCache.keys().next().value); }
     return v;
   }
+  const capOf = (engine, fontKey, size) => { const b = capBand(engine, fontKey, size); return b[1] - b[0]; };
   const isBent = it => !!it && it.kind === 'text' && typeof it.pathD === 'string' && it.pathD.length > 0;
   /** CharmEditor.textLayout: words spaced (tracking) and words along their path. */
   const textLayout = {
@@ -405,8 +406,26 @@
     const metal = C.Clipper.CleanPolygons(C.Clipper.PolyTreeToPaths(tree), 0.003 * PT * SC).filter(p => p.length >= 3), outs = tree.Childs().map(n => n.Contour());
     yield;
     const outer = cRun(C.ClipType.ctUnion, outs, null, 'nonzero', 'nonzero'), holePaths = cRun(C.ClipType.ctDifference, outer, metal, 'nonzero', 'nonzero');
-    const holes = holePaths.filter(h => C.Clipper.Area(h) > 0).map(h => { const b = boxOfC([h]), w = b[2] - b[0], hh = b[3] - b[1]; return { path: h, box: b, ring: Math.max(w, hh) <= 13.6 && Math.abs(w - hh) < 1 }; });
-    return { metal, outer, holes, open };
+    const holes = holePaths.filter(h => C.Clipper.Area(h) > 0).map(h => { const b = boxOfC([h]), w = b[2] - b[0], hh = b[3] - b[1]; return { path: h, pts: fromC(h), box: b, ring: Math.max(w, hh) <= 13.6 && Math.abs(w - hh) < 1 }; });
+    return { metal, outer, outerPts: outer.map(fromC), holes, open };
+  }
+  /** Does any edge of these rings reach into the box (cross it or lie in it)? */
+  function edgesIn(rings, b) {
+    for (const r of rings) for (let i = 0, n = r.length; i < n; i++) {
+      const a = r[i], c = r[(i + 1) % n];
+      if (Math.max(a[0], c[0]) < b[0] || Math.min(a[0], c[0]) > b[2] || Math.max(a[1], c[1]) < b[1] || Math.min(a[1], c[1]) > b[3]) continue;
+      if ((a[0] >= b[0] && a[0] <= b[2] && a[1] >= b[1] && a[1] <= b[3]) || (c[0] >= b[0] && c[0] <= b[2] && c[1] >= b[1] && c[1] <= b[3])) return true;
+      // the segment against the box's four sides
+      const side = (x1, y1, x2, y2) => { const d = (c[0] - a[0]) * (y2 - y1) - (c[1] - a[1]) * (x2 - x1); if (!d) return false; const t = ((x1 - a[0]) * (y2 - y1) - (y1 - a[1]) * (x2 - x1)) / d, u = ((x1 - a[0]) * (c[1] - a[1]) - (y1 - a[1]) * (c[0] - a[0])) / d; return t >= 0 && t <= 1 && u >= 0 && u <= 1; };
+      if (side(b[0], b[1], b[2], b[1]) || side(b[2], b[1], b[2], b[3]) || side(b[0], b[3], b[2], b[3]) || side(b[0], b[1], b[0], b[3])) return true;
+    }
+    return false;
+  }
+  /** Is the point inside these rings (non-zero)? */
+  function inside(rings, x, y) {
+    let w = 0;
+    for (const r of rings) for (let i = 0, n = r.length; i < n; i++) { const a = r[i], c = r[(i + 1) % n]; if (a[1] <= y) { if (c[1] > y && (c[0] - a[0]) * (y - a[1]) - (x - a[0]) * (c[1] - a[1]) > 0) w++; } else if (c[1] <= y && (c[0] - a[0]) * (y - a[1]) - (x - a[0]) * (c[1] - a[1]) < 0) w--; }
+    return w !== 0;
   }
   const metalOf = (leaves, geo) => drain(metalSteps(leaves, geo));
   /** THIN PARTS of the metal, step by step (a morphological opening by a disc of minMm: what it leaves out is thinner than minMm): bridges and walls (the part touches the
@@ -540,8 +559,10 @@
           if (capMm < cap - 1e-6) ps.push({ kind: 'small', box: geo.drawn(l.it, l.P), text: `${nameOf(l.it)}: letters ${trim(capMm, 2)} mm tall, under the engraver's ${cap} mm` });
         }
         if (mt.metal) {
-          const sps = placed(l, geo), r = ringsOf(sps, CHECK_TOL_MM), fill = M.paintFill(l.it);
-          if (fill && r.rings.length) {
+          const sps = placed(l, geo), r = ringsOf(sps, CHECK_TOL_MM), fill = M.paintFill(l.it), all = r.lines.map(x => x.pts), lb = M.bboxOf(all.map(p => [['m', p[0]]].concat(p.slice(1).map(q => ['l', q])))), p0 = all.length && all[0][0];
+          // (the quick answer, exact: no edge of the outline reaches into the part's box, so one of its points says on which side all of it is; the same for each hole)
+          const clear = lb && p0 && !edgesIn(mt.outerPts, lb) && inside(mt.outerPts, p0[0], p0[1]) && mt.holes.every(h => !edgesIn([h.pts], lb) && !inside([h.pts], p0[0], p0[1]));
+          if (clear) { /* wholly on the metal */ } else if (fill && r.rings.length) {
             const A = r.rings.map(toC), ruleA = l.it.kind !== 'text' && evenOddOf(l.it) ? 'evenodd' : 'nonzero';
             const off = cRun(C.ClipType.ctDifference, A, mt.outer, ruleA, 'nonzero'), a = areaMm2(off);
             if (a > LIMIT.outsideMm2) ps.push({ kind: 'outside', box: boxOfC(off), text: `${nameOf(l.it)} runs past the cut line (${mm2(a)} mm²)` });
@@ -801,15 +822,21 @@
   }
   /** FLIP: the words to the other side of their path. Round a charm, words at its top go to its bottom and keep their band (the same distance in from the edge), reading
    *  the right way, as a coin's words do; elsewhere they cross the path where they are. */
-  function flipSel(ctx) {
-    const t = barTarget(ctx), it = t.path; if (!it) return;
-    const G = guideOf(it.pathD); if (!G) return;
+  function flipPatch(it, geo) {
+    const G = guideOf(it.pathD); if (!G) return null;
     const at = num(it.pathAt, 0.5), top = G.fwd.top(), bottom = G.fwd.bottom(), near = (a, b) => Math.min(Math.abs(a - b), 1 - Math.abs(a - b)) < 0.03;
     const patch = { pathFlip: !it.pathFlip };
     if (G.closed && (near(at, top) || near(at, bottom))) {
+      // (the letters' ink from y0 to y1 off the baseline lies between rise − y1 and rise − y0 off the path; on the other side, turned, the same band needs rise' = y0 + y1 − rise)
+      const b = capBand(geo.engine, it.fontKey, num(it.sizePt, 10));
       patch.pathAt = r4(near(at, top) ? bottom : top);
-      patch.pathRisePt = r4(-(num(it.pathRisePt, 0) + capOf(ctx.geo.engine, it.fontKey, num(it.sizePt, 10))));
+      patch.pathRisePt = r4(b[0] + b[1] - num(it.pathRisePt, 0));
     }
+    return patch;
+  }
+  function flipSel(ctx) {
+    const t = barTarget(ctx), it = t.path; if (!it) return;
+    const patch = flipPatch(it, ctx.geo); if (!patch) return;
     ctx.replaceItems({ [it.id]: M.retext(it, patch, ctx.geo) });
     log('textOnPath', { face: ctx.face(), flip: patch.pathFlip });
   }
@@ -1030,7 +1057,7 @@
 
   return {
     ready: true, version: 1, RING, LIMIT, SHAPES, rrectSP, starUnit, HEART, fitTo, ringSP, bailSP, shapeItem, shapeOf, reshape, dragBox, topAt, sigOf,
-    textLayout, letters, dStr, parseD, guideOf, orient, onPathItem, offPathItems, capOf,
+    textLayout, letters, dStr, parseD, guideOf, orient, onPathItem, offPathItems, flipPatch, capOf, capBand,
     ringsOf, metalOf, thinParts, clipPlan, clipLeaf, releasePlan, checkSteps, checkFace, leavesOf, minCapMm,
     current: () => W
   };
