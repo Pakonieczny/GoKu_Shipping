@@ -127,6 +127,12 @@ async function session(sb) {
   // CUSTOMPOOL (Paul, 28 Oct 2026): a design sent to a sheet, a piece of an order and a piece of no order (numbered CUSTOM-<yyyymmdd>-<n> on the day's counter): its pool rows and the counter
   await L({ op: 'customPiecePut', requestId: 'guard-cp-1', by: 'Eve', piece: { designId: 'design-guard-1', version: 2, geomHash: 'g1-guardhash0001-3', customName: 'Spare heart', metal: 'silver', quantity: 2, orderId: null, day: DAY, widthMm: 12, heightMm: 10 } });
   await L({ op: 'customPiecePut', requestId: 'guard-cp-2', by: 'Eve', piece: { designId: 'design-guard-1', version: 2, geomHash: 'g1-guardhash0001-3', customName: 'Fix', metal: 'gold', quantity: 1, orderId: C, day: DAY, fixes: { orderId: C, poolId: `${C}_30030_1`, causedBy: 'Ann' } } });
+  // DESIGNS (Paul, 28 Oct 2026): the design library (Charm_Designs and its versions, its count Order_Rev/_designs, its picture under charmnest/designs/): driven so the wipe is tested against what it writes
+  { const sq = [[['m', [0, 0]], ['l', [56.693, 0]], ['l', [56.693, 42.52]], ['l', [0, 42.52]], ['h']]], png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=';
+    const dsg = { name: 'Guard heart', faces: { front: { face: 'front', frame: { x0: 0, y0: 0, wPt: 56.693, hPt: 42.52 }, items: [{ id: 'o', kind: 'path', role: 'cut', subpaths: sq }, { id: 'a', kind: 'path', role: 'hatch', fill: [0, 0, 1], subpaths: [[['m', [10, 10]], ['l', [20, 10]], ['l', [20, 20]], ['h']]] }] } }, widthMm: 20, heightMm: 15, source: { kind: 'new' }, orderId: A };
+    const put1 = await L({ op: 'designPut', by: 'Eve', design: dsg, thumb: png });
+    await L({ op: 'designPut', by: 'Eve', design: Object.assign({}, dsg, { id: put1.id, name: 'Guard heart 2' }) });
+    await L({ op: 'designList' }); await L({ op: 'designList', since: put1.rev }); await L({ op: 'designGet', id: put1.id, history: true }); }
   await L({ op: 'runPut', run: { runId: RUN2, status: 'running', step: 'nesting', day: DAY, lines: {} } });   // (an open run: only a sheet of an open run can be repacked)
   await L({ op: 'archiveEmptySheet', id: SHEET2, runId: RUN2 });
   await L({ op: 'sheetPdf', ids: [SHEET, 'no-such-sheet'] });

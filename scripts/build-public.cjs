@@ -112,6 +112,7 @@ const assets = [
   "charm-nest-seal-travel.js",
   "charm-nest-relink-flow.js",
   "charm-nest-art-edit.js",
+  "charm-nest-designs.js",
   "charm-nest-charm-editor.js",
   "charm-nest-dxf.js",
   "charm-nest-motion.js",

@@ -35,6 +35,7 @@
  *      setAllocate · setUpdate · setGet · setList · runPut · runArchive · runGet · runList · bridgeLog · listingSkus · aliasGet · aliasPut · listingKindPut ·
  *      noDesignGet · noDesignPut · noDesignDelete · optionMapGet · optionMapPut · customSheetGet · customSheetPut · customGet · customPut · customReopen
  *      (customDelete: an older page's name for customReopen; nothing deletes a record)
+ *    + designs (Paul, 28 Oct 2026): designPut · designList · designGet   (the design library: every version of every charm saved in the Charm Editor, charm-nest-designs.js)
  *  ═══════════════════════════════════════════════════════════════════════ */
 "use strict";
 const admin = require("./firebaseAdmin");
@@ -4381,6 +4382,114 @@ OPS.customPiecePut = op_customPiecePut;   // CUSTOMPOOL (Paul, 28 Oct 2026): a d
 /* ART EDIT (Paul, 27 Oct 2026): one piece's own artwork, kept beside it (op_artPut above). artPut writes the piece's record, its pool row's artEdit stamp and its sheet's filesOwed;
    artGet and artList only read the documents named (they move no counter). */
 Object.assign(OPS, { artPut: op_artPut, artGet: op_artGet, artList: op_artList }); NO_GEN_BUMP.add("artGet"); NO_GEN_BUMP.add("artList");
+/* ── DESIGNS (Paul, 28 Oct 2026: "this charm editor must have a repository of all opened, modified designed pieces, and this repository must be searchable ... this repository must
+   grow with every new update or change to any charm using the charm editor"; "The system must also track which order each design was attached to"; "You need to ensure the sanctity
+   of the designed charm. It's exact dimensions and user designed features"): the design library (items 18, 21 and 27; the lead's D6 and D8). charm-nest-designs.js is the ONE rule
+   for what a design is (clean: checked whole, as cleanArt checks a piece's edit, refused whole with nothing written), how it is kept (its faces as path strings) and its geometry
+   hash (canonical): the page and this file use the same code.
+     Charm_Designs/{id}                the LATEST version's fields, what a list shows (no faces); seq: the library's count when it was saved; orders / people: every order and person
+                                       any of its versions had (searched by array-contains: no composite index)
+     Charm_Designs/{id}/versions/{n}   every version whole (its faces; a very big one in Storage beside it, facesPath, gzip). Never changed, never deleted: every save is a version (D8)
+     the count (Charm_Nest_Rev/designs; Sandbox_Order_Rev/_designs in the sandbox) { n, epoch }: raised in the same transaction as each save, so a save's seq is given in the order
+                                       the saves commit and a list read `since` a revision ("<epoch>.<n>") misses none; a count begun again (a sandbox reset) has a new epoch
+     designPut  { design, thumb?, by }  one transaction: the count, the design's record, its new version. Its picture (thumb, a PNG of at most 96 KB) is kept in Storage named by
+                                       the geometry hash (charmnest/designs/thumbs/<hash>.png): the same drawing is the same picture, and a picture that cannot be kept never costs the design
+     designList { since | ifRev }       nothing saved since: { unchanged: true } for ONE read (the count); else only the designs saved since. None: the newest first. `next`: the cursor
+                { q | by | orderId }    the cloud's own search (one whole word of q, a person, an order: one array-contains each), for designs older than a computer keeps
+     designGet  { id, version?, history? }   a version whole (the latest without version: one read more); history: its versions, newest first
+   None of them writes a pool row or a sheet (NO_GEN_BUMP); none is in the Library's revision (REV_OPS). ── */
+const DESIGNS = "Charm_Designs"; SANDBOXED.add(DESIGNS);
+const Designs = require("../../charm-nest-designs.js");
+const DESIGN_ID = /^[A-Za-z0-9_-]{4,64}$/, DESIGN_REV = /^([0-9a-z]{4,12})\.(\d{1,12})$/, DESIGN_ORDER = /^(?:\d{4,20}|CUSTOM-\d{8}-\d{1,5})$/, DESIGN_PART = 500;
+const DESIGN_ROW = ["name", "version", "thumbUrl", "widthMm", "heightMm", "orderId", "customName", "by", "at", "source", "hash", "orders", "createdBy", "createdAt"];
+const DESIGN_HISTORY = ["version", "name", "by", "at", "hash", "thumbUrl", "orderId", "customName", "widthMm", "heightMm", "source"];
+const designRevRef = () => (PREFIX ? db.collection(PREFIX + SB_REV_COLL).doc("_designs") : db.collection(REV).doc("designs"));
+const designRow = (id, d) => Object.assign({ id }, Object.fromEntries(DESIGN_ROW.filter(k => d[k] !== undefined).map(k => [k, d[k]])));
+/** Keeps `buf` at `path` with a download token (the file door's way, charmNestOutput op_put), unless a file is there already: a picture or faces named by their own hash are
+    the same bytes. → { path, url } */
+const designUrl = (bucket, path, token) => "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(token);
+/** The file at `path` when it is there (with its download token): { path, url }, else null. */
+async function designFileAt(path) {
+  const bucket = admin.storage().bucket();
+  try { const [meta] = await bucket.file(path).getMetadata(); const t = meta && meta.metadata && meta.metadata.firebaseStorageDownloadTokens; return t ? { path, url: designUrl(bucket.name, path, String(t).split(",")[0]) } : null; } catch (_) { return null; }
+}
+async function designFile(path, buf, contentType) {
+  const had = await designFileAt(path); if (had) return had;
+  const bucket = admin.storage().bucket(), token = require("crypto").randomUUID();
+  await bucket.file(path).save(buf, { resumable: false, contentType, metadata: { cacheControl: "public, max-age=31536000", metadata: { firebaseStorageDownloadTokens: token, uploadedBy: "charm-nest-designs" } } });
+  return { path, url: designUrl(bucket.name, path, token) };
+}
+async function op_designPut(b) {
+  const by = str(b.by, 80).trim(); if (!by) return { error: "a design is saved with the name of the signed-in person who made it", status: 400 };
+  const c = Designs.clean(b.design); if (c.error) return { error: c.error, status: 400 };
+  const crypto = require("crypto"), d = c.design, hash = Designs.sha256Sync(Designs.canonical(d));
+  const id = d.id || "d" + Date.now().toString(36) + crypto.randomBytes(3).toString("hex"), base = PREFIX ? "charmnest/sandbox/designs/" : "charmnest/designs/";
+  let thumb = null;
+  if (b.thumb != null && b.thumb !== "") {
+    const buf = Buffer.from(String(b.thumb).replace(/^data:image\/png;base64,/, ""), "base64");
+    if (buf.length < 8 || buf.length > Designs.LIMITS.thumb || buf.readUInt32BE(0) !== 0x89504e47) return { error: `the design's picture is a PNG of at most ${Designs.LIMITS.thumb / 1024} KB`, status: 400 };
+    try { thumb = await designFile(base + "thumbs/" + hash + ".png", buf, "image/png"); } catch (e) { console.warn("[charmNestLibrary] designPut: the picture was not kept:", (e && e.message) || e); }
+  } else thumb = await designFileAt(base + "thumbs/" + hash + ".png");   // (no picture sent: the same drawing's, when one was kept)
+  // a very big design (a traced photograph) keeps its faces in Storage beside its record (a record holds at most 1 MB), named by their own bytes
+  let facesPath = null;
+  if (c.bytes > Designs.LIMITS.inline) { const text = JSON.stringify(c.stored); facesPath = (await designFile(base + "faces/" + id + "/" + crypto.createHash("sha256").update(text).digest("hex").slice(0, 32) + ".json.gz", require("zlib").gzipSync(text), "application/octet-stream")).path; }
+  const ref = col(DESIGNS).doc(id), rv = designRevRef();
+  return db.runTransaction(async tx => {
+    const [cur, rs] = await txGetAll(tx, [ref, rv]), old = cur.exists ? cur.data() || {} : null, r = rs.exists ? rs.data() || {} : {};
+    const epoch = /^[0-9a-z]{4,12}$/.test(String(r.epoch || "")) ? String(r.epoch) : crypto.randomBytes(5).readUIntBE(0, 5).toString(36), n = num(r.n), seq = n + 1;
+    const version = num(old && old.version) + 1, at = Math.max(Date.now(), num(old && old.at) + 1);
+    const pic = thumb || (old && old.hash === hash && old.thumbUrl ? { url: old.thumbUrl, path: old.thumbPath || null } : null);   // (the same drawing saved again under another name keeps its picture)
+    const union = (list, v) => [...new Set((Array.isArray(list) ? list : []).concat(v ? [v] : []))].slice(-50);
+    const head = { id, name: d.name, version, seq, thumbUrl: pic ? pic.url : null, thumbPath: pic ? pic.path : null, widthMm: d.widthMm, heightMm: d.heightMm, orderId: d.orderId, customName: d.customName, by, at, source: d.source, hash,
+      orders: union(old && old.orders, d.orderId), people: union(old && old.people, by), createdBy: (old && old.createdBy) || by, createdAt: num(old && old.createdAt) || at };
+    head.words = Designs.wordsOf(head);
+    tx.set(ref.collection("versions").doc(String(version)), { id, version, name: d.name, faces: facesPath ? null : c.stored, facesPath, bytes: c.bytes, ops: c.ops, widthMm: d.widthMm, heightMm: d.heightMm, source: d.source, orderId: d.orderId, customName: d.customName, by, at, hash, thumbUrl: head.thumbUrl, thumbPath: head.thumbPath, createdAt: FV.serverTimestamp() });
+    tx.set(ref, Object.assign({}, head, { updatedAt: FV.serverTimestamp() }));
+    tx.set(rv, { n: seq, epoch, at });
+    return { ok: true, id, version, at, hash, rev: epoch + "." + seq, prev: r.epoch === epoch ? epoch + "." + n : null, row: designRow(id, head) };
+  });
+}
+async function op_designList(b) {
+  const limit = Math.min(DESIGN_PART, Math.max(1, Math.floor(num(b.limit)) || 300));
+  const by = str(b.by, 80).trim(), orderId = String(b.orderId == null ? "" : b.orderId).trim(), q = Designs.fold(str(b.q, 120));
+  if (orderId && !DESIGN_ORDER.test(orderId)) return { error: "orderId is an order number or CUSTOM-<yyyymmdd>-<n>", status: 400 };
+  const rowsOf = snap => snap.docs.map(s => designRow(s.id, Object.assign({}, s.data() || {}))), seqOf = snap => num((snap.docs[snap.docs.length - 1].data() || {}).seq);
+  if (by || orderId || q) {
+    // the cloud's own search: ONE array-contains (an order, a person, or the longest whole word of q), the rest matched in the answer
+    const terms = q.split(" ").filter(Boolean), word = terms.join(" ").split(/[^a-z0-9]+/).filter(w => w && w.length <= 32).sort((x, y) => y.length - x.length)[0] || "";
+    if (!orderId && !by && !word) return { designs: [], next: null, upTo: null };
+    const snap = await (orderId ? col(DESIGNS).where("orders", "array-contains", orderId) : by ? col(DESIGNS).where("people", "array-contains", by) : col(DESIGNS).where("words", "array-contains", word)).limit(DESIGN_PART).select(...DESIGN_ROW, "people", "seq").get();
+    const hits = snap.docs.map(s => Object.assign({ id: s.id }, s.data() || {})).filter(x => (!by || (x.people || []).includes(by)) && (!orderId || (x.orders || []).includes(orderId)) && terms.every(t => Designs.hayOf(x).includes(t)));
+    hits.sort((x, y) => num(y.seq) - num(x.seq));
+    return { designs: hits.slice(0, limit).map(x => designRow(x.id, x)), next: null, upTo: null, truncated: snap.size >= DESIGN_PART || hits.length > limit };
+  }
+  const cursor = b.cursor != null && b.cursor !== "" && Number.isInteger(+b.cursor) && +b.cursor >= 0 ? +b.cursor : null;
+  const sm = DESIGN_REV.exec(typeof b.since === "string" ? b.since : typeof b.ifRev === "string" ? b.ifRev : "");
+  const page = async (since, after) => {   // since: the designs saved after that count, oldest first; else the newest first, `after` a cursor
+    const snap = await (since != null ? col(DESIGNS).where("seq", ">", Math.max(since, after == null ? 0 : after)).orderBy("seq") : after == null ? col(DESIGNS).orderBy("seq", "desc") : col(DESIGNS).orderBy("seq", "desc").startAfter(after)).limit(limit).select(...DESIGN_ROW, "seq").get();
+    return { designs: rowsOf(snap), next: snap.size >= limit ? seqOf(snap) : null };
+  };
+  if (cursor != null) return Object.assign(await page(sm ? +sm[2] : null, cursor), { upTo: null });   // (a later part: the first part said upTo)
+  // the count first (one read): a write landing after it is sent again next time, never missed
+  const rs = await designRevRef().get(), r = rs.exists ? rs.data() || {} : {}, epoch = String(r.epoch || ""), n = num(r.n), upTo = epoch ? epoch + "." + n : "0";
+  if (sm && epoch && sm[1] === epoch) { if (+sm[2] >= n) return { designs: [], next: null, upTo, unchanged: true }; return Object.assign(await page(+sm[2], null), { upTo }); }
+  return Object.assign(await page(null, null), { upTo }, sm ? { reset: true } : {});   // (a revision the count does not know: it began again, a sandbox reset: the page drops what it holds)
+}
+async function op_designGet(b) {
+  const id = str(b.id, 80); if (!DESIGN_ID.test(id)) return { error: "bad design id", status: 400 };
+  const ref = col(DESIGNS).doc(id);
+  let v = Number.isInteger(+b.version) && +b.version > 0 ? +b.version : 0;
+  if (!v) { const s = await ref.get(); v = s.exists ? num((s.data() || {}).version) : 0; if (!v) return { design: null }; }
+  const s = await ref.collection("versions").doc(String(v)).get(); if (!s.exists) return { design: null };
+  const x = s.data() || {};
+  let stored = x.faces;
+  if (!stored && x.facesPath) { const [buf] = await admin.storage().bucket().file(String(x.facesPath)).download(); stored = JSON.parse(require("zlib").gunzipSync(buf).toString("utf8")); }
+  const design = { id, version: v, name: x.name, faces: Designs.decodeFaces(stored || {}), widthMm: x.widthMm, heightMm: x.heightMm, source: x.source || null, orderId: x.orderId || null, customName: x.customName || null, by: x.by, at: num(x.at), hash: x.hash, thumbUrl: x.thumbUrl || null };
+  if (b.history !== true) return { design };
+  const h = await ref.collection("versions").orderBy("version", "desc").limit(100).select(...DESIGN_HISTORY).get();
+  return { design, history: h.docs.map(d => Object.fromEntries(DESIGN_HISTORY.map(k => [k, (d.data() || {})[k] === undefined ? null : (d.data() || {})[k]]))) };
+}
+Object.assign(OPS, { designPut: op_designPut, designList: op_designList, designGet: op_designGet }); ["designPut", "designList", "designGet"].forEach(op => NO_GEN_BUMP.add(op));
 
 /* ── sign-in time (Paul, 28 Sep 23:53; plans/sign-in-sessions.md part L): sessionsList {since, until, limit} is the
    sorter's read of Station_Sessions, one document per sign-in, which the stations write through firebaseOrders
