@@ -251,7 +251,7 @@ function layoutIssues() {
       assert.ok(LETTERS.every(id => ids.includes(id)) && !(await findText(page, 'SEPTEMBER')), 'back to the charm as it came in');
       assert.equal((await cur(page, 'C.history()')).undo, 0);
       assert.equal(await cur(page, 'C.dirty()'), false, 'nothing to save');
-      for (let i = 0; i < 6; i++) { await page.keyboard.press(i % 2 ? 'Control+y' : 'Control+Shift+z'); await settle(page); }
+      for (let i = 0; i < 6; i++) { await page.keyboard.press('Control+Shift+z'); await settle(page); }   // (28 Oct 2026: ⌘Y is Illustrator's Outline view now; redo is ⇧⌘Z, as in Illustrator)
       assert.equal(await sig(), end, 'redo arrives at exactly the same charm');
       assert.equal((await cur(page, 'C.history()')).redo, 0);
     });
