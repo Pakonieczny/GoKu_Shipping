@@ -18,7 +18,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - Live board (dashboard artifact): https://claude.ai/artifact/RdLASAbUtTQMqU1Mb6ExLG. Rows in $SP/board/agents.json.
   Refresh: `python3 -I $SP/board-live.py` → Artifact publish {url, file_path: $SP/board/agents.json, asset:true} → ArtifactData update
   url, collection "datasets", doc_id "agents", if_version <current>, data {source:{format:"json",kind:"file",name:"agents.json",url:"<blob url>"},
-  updated:{at,by:"Claude"}}. Last version written: 87 (next write if_version 87; if refused, the error names the current version).
+  updated:{at,by:"Claude"}}. Last version written: 88 (next write if_version 88; if refused, the error names the current version).
 - Plan doc for Paul (local-first): https://claude.ai/artifact/GykrjmCTLTbcohMCKBrkyZ (decisions recorded).
 
 ## Scripts ($SP)
@@ -77,10 +77,14 @@ finish the scope <scope>, test (slot.sh with time limit inside), push, hand back
 board-live-extra.json with the new agent ids.
 
 ## Open questions for Paul (ask when he is back)
-- Refit after a Charm Editor save: the fit searches again from scratch and may move already-approved words (e.g. "SEPTEMBER" 5.33 pt level → 5.50 pt turned −15°). Keep the approved placement when it still fits? (refit agent's point 1)
+- ANSWERED by Paul 03:39 UTC: "The refit if necessary, must be in the exact same place with a variance of one percent from where I actually placed it. The rotation needs to be also within one percent accurate to where I placed it." → RULE: a refit after a Charm Editor save keeps his placement: centre within 1% of the charm's size of where he placed it, angle within 1% of his angle (a level word stays level). Only the size may shrink if needed. Sent to the refit agent (a7764b20331f1122f) as a follow-up; if it is gone, re-spawn refit with this rule.
 - Phase 5 push (option a) needs a Firestore security rule in the console + a vendored Firestore SDK file.
 
-## Ship in progress at 03:36 UTC
+## Handed back, waiting to merge into claude/de-integration
+- de-text (ae828a5d729f6efa1) DONE: branch claude/de-text (af6f42b + merge 32078d4), new file charm-nest-ce-text.js (approved), test ce-text.cjs 10/10. Merge with resolve-union.py, then test the batch.
+- de-extras (a5f64f2a38f32df82) finishing its last test runs (7 commits on claude/de-extras).
+
+## Ship in progress at 03:36 UTC (03:39: engrave-worker, charm-edit-refit, charm-editor-engrave all PASS; rest still running)
 - refit 722e4a7 (contains main d58eea9): worktree $SP/wt-refitship, tests running (bs0ceqa3m: engrave-worker, charm-edit-refit, charm-editor-engrave, engrave-editor-words, engrave-front-art, engrave-approve-never-silent, charm-editor-back, engrave-preview). If all pass: push HEAD:main (if it still contains origin/main), verify live, board.
 
 ## Next for the lead, in order
