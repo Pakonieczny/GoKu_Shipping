@@ -173,6 +173,17 @@ const step = async (name, fn) => { try { const note = await fn(); n++; console.l
       await page.evaluate(() => { const b = [...document.querySelectorAll('.ce-root [data-face="front"]')].find(x => !x.disabled); b.click(); }); await settle();
     });
 
+    await step('C6 a letter typed while the right-click menu is open is no tool key; the arrows walk the menu; Esc closes it', async () => {
+      await deselect(); await rightClick(await client(30, 15));
+      await page.keyboard.press('m'); await page.keyboard.press('l'); await settle();
+      assert.equal(await page.evaluate(() => CharmEditor.current.tool()), 'select');
+      await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown'); await settle();
+      const focus = await page.evaluate(() => { const a = document.activeElement; return a && a.closest('.ce-ctx') ? (a.querySelector('.ce-aimi__l') || a).textContent : null; });
+      assert.ok(focus && focus !== 'Undo', 'focus walks the rows (greyed ones skipped): ' + focus);
+      await escape();
+      assert.ok(await page.evaluate(() => document.querySelector('.ce-root .ce-ctx').hidden), 'closed');
+    });
+
     /* ── K · the keys ── */
     const press = async k => { await page.keyboard.press(k); await settle(); };
     await page.evaluate(() => document.querySelector('.ce-root .ce-win').focus());

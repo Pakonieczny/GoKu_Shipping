@@ -382,12 +382,12 @@ function layoutIssues() {
       await page.keyboard.press('Control+z'); await settle(page);   // the cut comes back
       assert.equal((await items(page)).length, n0);
     });
-    await step('2.7 right-click raises Illustrator\'s contextual menu (cut, copy, paste, clear, Arrange ▸, Transform ▸, Select ▸); ⌘3 (Hide) hides it and it can no longer be clicked', async () => {
+    await step('2.7 right-click raises Illustrator\'s contextual menu (cut, copy, paste, clear, Arrange ▸, Select ▸); ⌘3 (Hide) hides it and it can no longer be clicked', async () => {
       await page.keyboard.press('Escape');
       const p = await edgeOf(page, 'day-4-2');
       await clickAt(page, p, { button: 'right' });
       const labels = await H(page, () => { const m = document.querySelector('.ce-ctx'); return m.hidden ? null : [...m.querySelectorAll('.ce-item')].map(b => (b.querySelector('.ce-aimi__l') || b).textContent.trim()); });
-      for (const w of ['Undo', 'Cut', 'Copy', 'Paste', 'Clear', 'Bring to Front', 'Bring Forward', 'Send Backward', 'Send to Back', 'Transform', 'Arrange', 'Select']) assert.ok(labels && labels.includes(w), 'menu has ' + w + ': ' + labels);
+      for (const w of ['Undo', 'Cut', 'Copy', 'Paste', 'Clear', 'Bring to Front', 'Bring Forward', 'Send Backward', 'Send to Back', 'Arrange', 'Select', 'Next Object Above']) assert.ok(labels && labels.includes(w), 'menu has ' + w + ': ' + labels);
       assert.ok(!labels.includes('Group'), 'one path: no Group (Illustrator shows it for several)');
       assert.deepEqual(await cur(page, 'C.selection()'), ['day-4-2']);
       shots.push(await shot(page, 'desk-7-context.png'));
