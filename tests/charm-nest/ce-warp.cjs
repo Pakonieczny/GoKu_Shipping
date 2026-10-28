@@ -14,7 +14,8 @@
 //   A7 the work: a dense drawing warped at 0.01 mm, ms printed
 // B in a real Chromium page (fixtures/charm-editor-harness.html with this file added): Warp on the filled heart (the panel, the live preview with the heart ghosted, OK
 //   is one undo step, the warp kept so Warp starts again from the original, Expand), words warped into outlines on the back, the Blend tool (W: two clicks, the
-//   panel, 3 steps, one group, undo), Free Distort by a corner, Esc cancels, preview frames measured in main-thread ms, no page errors
+//   panel, 3 steps, one group, undo), Free Distort by a corner, Esc cancels, preview frames measured in main-thread ms, a big selection previewed in the Worker,
+//   Save hands the parts back, no page errors
 'use strict';
 const path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
@@ -240,7 +241,13 @@ async function browserPart() {
   if (!chromium) { console.log('  - no playwright-core: the browser checks were not run (run through slot.sh)'); return; }
   console.log('B · in the browser');
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome', args: ['--no-sandbox'] });
-  const step = async (name, fn) => { try { const r = await fn(); pass(name + (r ? ' · ' + r : '')); } catch (e) { fail(name, e); } };
+  // (every wait is short and every step has a deadline, so a step that waits for something that never comes fails with its name instead of holding a test slot)
+  const step = async (name, fn) => {
+    let timer = null;
+    try { const r = await Promise.race([fn(), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('timed out after 45 s')), 45000); })]); pass(name + (r ? ' · ' + r : '')); }
+    catch (e) { fail(name, e); } finally { clearTimeout(timer); }
+  };
+  const watchdog = setTimeout(() => { console.log('  FAIL the browser part took over 4 minutes: stopped'); process.exit(2); }, 240000); watchdog.unref();
   const settle = page => page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
   const ptClient = (page, x, y) => page.evaluate(([x, y]) => window.CharmEditor.current.clientOf(x, y), [x, y]);
   const items = (page, f) => page.evaluate(f => window.CharmEditor.current.items(f), f || null);
@@ -250,6 +257,7 @@ async function browserPart() {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 760 }, reducedMotion: 'reduce' });
     await ctx.route(u => !u.href.startsWith('file://'), r => r.abort());
     const page = await ctx.newPage(), errs = [];
+    page.setDefaultTimeout(20000);
     page.on('pageerror', e => errs.push('pageerror: ' + e.message));
     page.on('console', m => { if (m.type() === 'error') errs.push('console: ' + m.text()); });
     await page.goto(HARNESS);
@@ -312,6 +320,18 @@ async function browserPart() {
       await page.keyboard.press('Control+Alt+Shift+W'); await page.waitForSelector('.cw-panel'); await page.keyboard.press('Escape'); await settle(page);
       assert.deepEqual((await find(page, 'heart-fill')).subpaths, heart0.subpaths, 'Esc: no change'); assert.equal(await hist(page), u0);
     });
+    await step('B3b at phone width (390 × 844) the panel sits inside the screen, over the charm and clear of the Cancel / Save foot', async () => {
+      await page.setViewportSize({ width: 390, height: 844 }); await settle(page); await settle(page);
+      await clickSel('heart-fill');
+      await page.keyboard.press('Control+Alt+Shift+W'); await page.waitForSelector('.cw-panel'); await settle(page);
+      const r = await page.evaluate(() => { const R = s => document.querySelector(s).getBoundingClientRect(); const p = R('.cw-panel'), f = R('.ce-foot'); return { p: [p.left, p.top, p.right, p.bottom], f: [f.left, f.top, f.right, f.bottom], vw: innerWidth, vh: innerHeight, cut: [...document.querySelectorAll('.cw-panel .ce-btn, .cw-panel .ce-seg button')].some(b => b.scrollWidth > b.clientWidth + 1) }; });
+      if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'warp-phone.png') });
+      assert.ok(r.p[0] >= 0 && r.p[1] >= 0 && r.p[2] <= r.vw && r.p[3] <= r.vh, 'inside the screen: ' + r.p.map(Math.round));
+      assert.ok(r.p[3] <= r.f[1] + 0.5, 'clear of the foot: ' + Math.round(r.p[3]) + ' vs ' + Math.round(r.f[1]));
+      assert.ok(!r.cut, 'no button cut off');
+      await page.keyboard.press('Escape'); await page.setViewportSize({ width: 1280, height: 760 }); await settle(page); await settle(page);
+      return `panel ${Math.round(r.p[2] - r.p[0])} × ${Math.round(r.p[3] - r.p[1])} px`;
+    });
     await step('B4 words warped on the back: FOREVER becomes its outlines (a hatch path, filled), Arc 40 %, and Expand drops the warp', async () => {
       await page.locator('.ce-root .ce-head [data-face="back"]').click(); await settle(page); await settle(page);
       await clickSel('b-words');
@@ -322,7 +342,7 @@ async function browserPart() {
       const w = await find(page, 'b-words', 'back');
       assert.equal(w.kind, 'path'); assert.equal(w.role, 'hatch'); assert.ok(w.fill && !w.text, 'outlines, filled, no words');
       assert.equal(w.warp.style, 'arc'); assert.ok(near(w.warp.bend, 0.4, 1e-9));
-      await page.evaluate(() => window.CharmEditor.commands['cw-warp-expand'].run(window.CharmEditor.current.ctx)); await settle(page);
+      await page.evaluate(() => { window.CharmEditor.commands['cw-warp-expand'].run(window.CharmEditor.current.ctx); }); await settle(page);
       assert.ok(!(await find(page, 'b-words', 'back')).warp, 'expanded');
       await page.locator('.ce-root .ce-head [data-face="front"]').click(); await settle(page); await settle(page);
     });
@@ -351,7 +371,7 @@ async function browserPart() {
       assert.equal(await hist(page), u1 + 1, 'one undo step');
       assert.deepEqual(await page.evaluate(() => window.CharmEditor.current.selection()), [G.id]);
       // Blend options again: 1 step
-      await page.evaluate(() => window.CharmEditor.commands['cw-blend-options'].run(window.CharmEditor.current.ctx)); await page.waitForSelector('.cw-panel');
+      await page.evaluate(() => { window.CharmEditor.commands['cw-blend-options'].run(window.CharmEditor.current.ctx); }); await page.waitForSelector('.cw-panel');   // (not returned: run's promise ends with the panel)
       await page.fill('.cw-panel [data-cw-n="steps"]', '1'); await page.keyboard.press('Enter'); await settle(page);
       const G2 = (await items(page)).find(i => i.blend); assert.equal(G2.children.length, 3, 'options: one step now'); assert.equal(G2.id, G.id);
       await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z'); await settle(page);
@@ -361,7 +381,7 @@ async function browserPart() {
     await step('B6 Free Distort: the selection\'s corners on the charm; the top-right corner dragged 3 mm: the outline follows (projective, curves kept), one undo step', async () => {
       await page.keyboard.press('Escape'); await page.keyboard.press('v'); await clickSel('heart-line');
       const u2 = await hist(page), h0 = await find(page, 'heart-line');
-      await page.evaluate(() => window.CharmEditor.commands['cw-free'].run(window.CharmEditor.current.ctx)); await settle(page);
+      await page.evaluate(() => { window.CharmEditor.commands['cw-free'].run(window.CharmEditor.current.ctx); }); await settle(page);
       assert.equal(await page.evaluate(() => window.CharmEditor.current.tool()), 'cw-free');
       assert.equal(await page.evaluate(() => document.querySelectorAll('.ce-ui .cw-quad').length), 1, 'the quad drawn');
       const bx = await page.evaluate(() => window.CharmEditor.current.box('heart-line'));
@@ -378,7 +398,32 @@ async function browserPart() {
       assert.deepEqual((await find(page, 'heart-line')).subpaths, h0.subpaths, 'undone');
       return `box grew to ${((nb[2] - nb[0]) * MM).toFixed(2)} × ${((nb[3] - nb[1]) * MM).toFixed(2)} mm`;
     });
-    await step('B7 Save hands back plain data with the new parts; no page errors', async () => {
+    await step('B7 a big selection (500 circles, 3 000 ops) is previewed in the Worker: the page keeps its frames; OK applies at 0.01 mm; one undo step', async () => {
+      await page.keyboard.press('v');
+      const ids = await page.evaluate(() => {
+        const C = window.CharmEditor, ctx = C.current.ctx, F = window.fixture, list = [];
+        for (let i = 0; i < 500; i++) { const x = F.X0 + (2 + (i % 25) * 0.8) * F.PT, y = F.Y0 + (10 + Math.floor(i / 25) * 0.8) * F.PT; list.push({ kind: 'path', role: 'hatch', name: 'Dot ' + i, fill: true, stroke: false, subpaths: C.model.ellipseSP(x, y, 0.3 * F.PT, 0.3 * F.PT) }); }
+        const made = ctx.addItems(list); ctx.commit('dots'); ctx.select(made); return made;
+      });
+      await settle(page);
+      const u3 = await hist(page), w0 = await page.evaluate(() => window.CharmNestWarp.stats.fromWorker), n0 = await page.evaluate(() => window.CharmNestWarp.stats.frames.length), d0 = await page.evaluate(() => window.CharmNestWarp.stats.draws.length);
+      await page.keyboard.press('Control+Alt+Shift+W'); await page.waitForSelector('.cw-panel');
+      await page.selectOption('.cw-panel [data-cw="style"]', 'twist');
+      for (const v of [20, 40, 60, 80]) { await page.fill('.cw-panel [data-cw-n="bend"]', String(v)); await page.waitForTimeout(30); }
+      await page.waitForFunction(() => document.querySelectorAll('.ce-art .cw-prev path').length === 500, null, { timeout: 20000 });
+      const st = await page.evaluate(([n, d]) => ({ worker: window.CharmNestWarp.stats.fromWorker, frames: window.CharmNestWarp.stats.frames.slice(n), draws: window.CharmNestWarp.stats.draws.slice(d) }), [n0, d0]);
+      assert.ok(st.worker > w0, 'previews came back from the Worker');
+      const max = Math.max(...st.frames), maxD = Math.max(...st.draws);
+      assert.ok(max < 16 && maxD < 16, `the page's own share of each preview frame: ${max} ms posting, ${maxD} ms drawing 500 paths`);
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(id => { const f = window.CharmEditor.current.items().find(i => i.id === id); return f && f.warp; }, ids[250], { timeout: 20000 }); await settle(page);
+      const it = await find(page, ids[250]); assert.equal(it.warp.style, 'twist'); assert.ok(it.subpaths[0].some(op => op[0] === 'c'));
+      assert.equal(await hist(page), u3 + 1, 'one undo step');
+      await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z'); await settle(page);
+      assert.ok(!(await find(page, ids[0])), 'the dots undone');
+      return `${st.worker - w0} previews worked in the Worker; on the page: posting max ${max.toFixed(2)} ms, drawing max ${maxD.toFixed(2)} ms`;
+    });
+    await step('B8 Save hands back plain data with the new parts; no page errors', async () => {
       await clickSel('heart-fill');
       await page.keyboard.press('Control+Alt+Shift+W'); await page.waitForSelector('.cw-panel'); await page.keyboard.press('Enter'); await settle(page);
       await page.keyboard.press('Escape'); await page.keyboard.press('Control+s'); await page.waitForFunction(() => window.__closed === true);

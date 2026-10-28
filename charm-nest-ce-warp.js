@@ -174,7 +174,7 @@
       case 'shellUpper': { const k = 0.95 * b; return (x, y) => [x, y1 - (y1 - y) * (1 + k * (2 * Math.sin(Math.PI * clamp((x - x0) / W, 0, 1)) - 1))]; }
       case 'flag': return (x, y) => [x, y - b * H / 2 * Math.sin(2 * Math.PI * (x - x0) / W)];
       case 'wave': return (x, y) => [x, y - b * H / 2 * Math.sin(2 * Math.PI * (x - x0) / W - ((y - y0) / H - 0.5) * Math.PI / 2)];
-      case 'fish': return (x, y) => [x, cy + (y - cy) * (1 + 0.5 * b * Math.sin(1.5 * Math.PI * (x - x0) / W))];
+      case 'fish': return (x, y) => [x, cy + (y - cy) * (1 + 0.8 * b * Math.sin(1.5 * Math.PI * (x - x0) / W))];   // (a body two thirds along, the tail narrowing)
       case 'rise': return (x, y) => [x, y - b * H / 2 * Math.sin(Math.PI * ((x - x0) / W - 0.5))];
       case 'fisheye': return (x, y) => { const X = (x - cx) / (W / 2), Y = (y - cy) / (H / 2), w = bump(X); return [cx + (x - cx) * (1 + 0.3 * b * w * bump(Y * 0.7)), cy + (y - cy) * (1 + b * w)]; };
       case 'inflate': return (x, y) => { const X = (x - cx) / (W / 2), Y = (y - cy) / (H / 2); return [cx + (x - cx) * (1 + 0.45 * b * (1 - Y * Y)), cy + (y - cy) * (1 + 0.45 * b * (1 - X * X))]; };
@@ -514,7 +514,7 @@
   };
 
   const CSS = `
-.ce-root .cw-panel{ position:absolute; z-index:17; width:min(286px,calc(100% - 24px)); background:#fff; border:1px solid var(--ink); box-shadow:0 18px 44px rgba(28,29,29,.22);
+.ce-root .cw-panel{ position:absolute; z-index:17; width:min(286px,calc(100% - 24px)); overflow-y:auto; background:#fff; border:1px solid var(--ink); box-shadow:0 18px 44px rgba(28,29,29,.22);
   padding:13px 14px 12px; font-size:12px; color:var(--ink); animation:cwIn .16s cubic-bezier(.16,1,.3,1); }
 @keyframes cwIn{ from{ opacity:0; transform:translateY(-4px); } to{ opacity:1; transform:none; } }
 .ce-root .cw-head{ display:flex; align-items:baseline; gap:10px; margin:0 0 10px; padding-bottom:8px; border-bottom:1px solid var(--hair); min-width:0; }
@@ -544,7 +544,6 @@
 .ce-ui .cw-quad{ fill:rgba(165,138,82,.06); stroke:var(--gold); stroke-width:1; stroke-dasharray:5 3; }
 .ce-ui .cw-pick{ fill:var(--gold); stroke:#fff; stroke-width:1.5; }
 .ce-ui .cw-hov{ fill:#fff; stroke:var(--gold); stroke-width:1.5; }
-@media (max-width:640px){ .ce-root .cw-panel{ left:8px !important; right:8px !important; top:auto !important; bottom:62px; width:auto; } }
 @media (prefers-reduced-motion: reduce){ .ce-root .cw-panel{ animation:none; } }
 `;
   function injectCss() {
@@ -561,7 +560,7 @@
       if (!root.Worker || !root.Blob || !root.URL || typeof factory !== 'function') throw new Error('no Worker');
       const src = 'self.CW=(' + factory.toString() + ')(self,null);self.onmessage=function(e){var d=e.data,r;try{r={id:d.id,out:d.jobs.map(function(j){return self.CW.model.runJob(j);})};}catch(er){r={id:d.id,error:String(er&&er.message||er)};}self.postMessage(r);};';
       worker = new root.Worker(root.URL.createObjectURL(new root.Blob([src], { type: 'text/javascript' })));
-      worker.onmessage = e => { const d = e.data || {}, w = wWait.get(d.id); if (!w) return; wWait.delete(d.id); if (d.error) w.reject(new Error(d.error)); else w.resolve(d.out); };
+      worker.onmessage = e => { const d = e.data || {}, w = wWait.get(d.id); if (!w) return; wWait.delete(d.id); if (d.error) w.reject(new Error(d.error)); else { stats.fromWorker++; w.resolve(d.out); } };
       worker.onerror = () => { for (const w of wWait.values()) w.reject(new Error('worker failed')); wWait.clear(); worker = false; };
     } catch (e) { worker = false; }
     return worker || null;
@@ -619,19 +618,20 @@
       },
       /** list: [{ sps, it (the item it stands for: its role, paint and width) }] */
       draw(list) {
-        const M = ctx.model;
+        const M = ctx.model, t0 = now();
         let h = '';
         for (const { sps, it } of list) {
           const fill = M.paintFill(it), stroke = M.paintStroke(it);
           h += `<path class="ce-p ce-p--${esc(it.role || 'art')}${fill ? ' is-fill' : ''}${stroke ? ' is-stroke' : ''}${it.evenOdd || it.fillRule === 'evenodd' ? ' is-evenodd' : ''}" d="${M.dOf(sps) || 'M0 0'}" vector-effect="non-scaling-stroke" style="--lw:${+M.lwOf(it) || 0.25}"/>`;
         }
         g.innerHTML = h;
+        stats.draws.push(+(now() - t0).toFixed(2)); if (stats.draws.length > 200) stats.draws.shift();
       },
       blank() { g.innerHTML = ''; unghost(); },
       clear() { unghost(); if (g.parentNode) g.parentNode.removeChild(g); }
     };
   }
-  const stats = { frames: [], worker: 0 };   // (the main-thread ms of each preview frame, for the tests: work measured, not waited for)
+  const stats = { frames: [], draws: [], worker: 0, fromWorker: 0 };   // (the main-thread ms of each preview frame and of each drawing of one, for the tests: work measured, not waited for)
   /** Work done once a frame with only the latest settings; a preview slower than 12 ms moves to the Worker for the rest of the session. */
   function frameRunner(work) {
     let pending = false, inFlight = false, again = false, slow = false, dead = false;
@@ -665,9 +665,12 @@
     shield.addEventListener('pointerdown', e => { e.stopPropagation(); e.preventDefault(); });
     stage.appendChild(shield);
     win.appendChild(el);
+    // over the work area's top-right on a desk; on a phone across the bottom of the work area, clear of the Cancel / Save foot; never taller than the work area
     const place = () => {
-      const w = win.getBoundingClientRect(), s = stage.getBoundingClientRect();
-      el.style.top = Math.round(s.top - w.top + 10) + 'px'; el.style.right = Math.round(w.right - s.right + 10) + 'px'; el.style.left = 'auto';
+      const w = win.getBoundingClientRect(), s = stage.getBoundingClientRect(), px = v => Math.round(v) + 'px';
+      if (w.width <= 640) Object.assign(el.style, { left: px(s.left - w.left + 6), right: px(w.right - s.right + 6), top: 'auto', bottom: px(w.bottom - s.bottom + 6), width: 'auto' });
+      else Object.assign(el.style, { top: px(s.top - w.top + 10), right: px(w.right - s.right + 10), left: 'auto', bottom: 'auto', width: '' });
+      el.style.maxHeight = px(Math.max(160, s.height - 12));
     };
     place();
     root.addEventListener('resize', place);
