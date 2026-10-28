@@ -21742,7 +21742,7 @@ const OrderWin = window.OrderWin = (() => {
     const vh = byId("owVector"); if (vh) { if (W.zoom) tryDo(() => W.zoom.vector.key(vectorKey(r))); tryDo(() => ListMedia.vectorInto(vh, r)); }
     // (the SKU alone, as the Copy button copies it: an earring pair says its Left and Right in its pieces and facts, not on this line: Paul, 12 Oct 2026)
     paintSkuCard(r);   // (SKUCARD: the SKU, its state, Copy / Suggest / Change, the suggested charms)
-    tryDo(() => paintCharmEdit(r));   // (ITEM 30: the piece shown, engraved or not, in the Charm Editor)
+    tryDo(() => paintCharmEdit());   // (OWNOCE: no Charm Editor button in the order window)
     paintSetLens(r);
     paintEng(r);
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller
@@ -21911,35 +21911,12 @@ const OrderWin = window.OrderWin = (() => {
   };
   const skuNorm = t => String(t == null ? "" : t).toUpperCase().replace(/[_\-–—/.,:;()&+#'"*]+/g, " ").replace(/\s+/g, " ").trim();
   const skuPic = sku => { const e = tryDo(() => Master.entryFor(sku)); return (e && tryDo(() => Master.pictureTag(e))) || SKI.q; };
-  /* CHARM EDIT · ANY PIECE (Paul, 28 Oct 2026: "in the charm editor users will be able to edit orders that may not have a requirement for back engraving"): under the vector design, the piece this
-     window shows opens in the Charm Editor, engraved or not (Engrave.openCharmEditor: its front and its back, saved for this piece only; a piece with an engraving goes "Back to engraving" from
-     there, one with none "Back to order"). The piece picked of a line of several (W.piece "<line>#C2") is that one, else the line's first. A line not pooled yet has no piece to keep an edit on:
-     the button says so and waits. What a save says is said under the button (a toast would be under this window). */
-  const CE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5 6 12l2.8 6.5h6.4L18 12Z"/><path d="M12 3.5V11"/><circle cx="12" cy="12.6" r="1.5"/><path d="M8.8 21h6.4"/></svg>';
-  function paintCharmEdit(r) {
+  /* (OWNOCE, Paul 28 Oct 2026: "Remove this UI completely from the Detailed Order view modal": the order window has no "Open in Charm Editor" under its vector design
+     any more, nor the note under it; the piece opens in the Charm Editor from its engraving card, the Design & Engrave tab, or the header's Edit Design.) A button left by an
+     earlier drawing of the window is taken away. */
+  function paintCharmEdit() {
     const vh = byId("owVector"), fig = vh && vh.closest("figure"); if (!fig) return;
-    let b = fig.querySelector(".owCharmEdit");
-    const E = window.Engrave, can = !!(window.CharmEditor && window.CharmNestArtEdit && E && E.openCharmEditor);
-    if (!can || !r || r.loading || (r.spec && (r.spec.noDesign || r.spec.ownDesign))) { if (b) { b.hidden = true; const n = b.nextElementSibling; if (n && n.classList.contains("owCharmEditNote")) n.hidden = true; } return; }
-    if (!b) {
-      b = document.createElement("button"); b.type = "button"; b.className = "btn cnCeBtn owCharmEdit"; b.dataset.testid = "ow-charm-edit";
-      b.innerHTML = CE_ICON + "<span>Open in Charm Editor</span>";
-      const note = document.createElement("div"); note.className = "owCharmEditNote"; note.setAttribute("role", "status"); note.hidden = true;
-      fig.append(b, note);
-      b.addEventListener("click", () => {
-        const row = rowOf(W.key), pid = b.dataset.pool; if (!row || !pid || b.getAttribute("aria-busy") === "true") return;
-        const say = (text, bad) => { note.textContent = text || ""; note.classList.toggle("bad", !!bad); note.hidden = !text; };
-        say(""); b.setAttribute("aria-busy", "true");
-        Promise.resolve(Engrave.openCharmEditor({ row, poolId: pid, from: "orderWindow", say })).catch(e => say(`Not saved · ${(e && e.message) || e}`, true)).finally(() => b.removeAttribute("aria-busy"));
-      });
-    }
-    // (the piece picked: a copy "<line>#C2", an ear "<line>#L" / "#R" (its pool row says its side), else the line's first)
-    const ids = (r.poolIds || []).filter(Boolean).map(String), m = /#C(\d+)$/.exec(String(W.piece || "")), ear = /#([LR])$/.exec(String(W.piece || ""));
-    const pid = (m && ids[+m[1] - 1]) || (ear && ids.find(id => (tryDo(() => Pool.pieceOf(id)) || {}).side === ear[1])) || ids[0] || "";
-    const of = ids.length > 1 ? ` (piece ${ids.indexOf(pid) + 1} of ${ids.length})` : "";
-    b.hidden = false; b.disabled = !pid; b.dataset.pool = pid;
-    b.title = pid ? `Open this piece${of} in the Charm Editor: its front and back, every layer, zoom to any detail · saved for this piece only` : "This piece is not pooled yet: it opens in the Charm Editor once it is";
-    b.setAttribute("aria-label", "Open in Charm Editor" + of);
+    for (const el of fig.querySelectorAll(".owCharmEdit, .owCharmEditNote")) el.remove();
   }
   function paintSkuCard(r) {
     const card = byId("owSkuCard"); if (!card || !r) return;

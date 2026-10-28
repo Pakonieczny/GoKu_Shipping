@@ -124,12 +124,12 @@ const R = require('./_engraveRealWorld.cjs');
 
     /* ── T4 · a piece that is not engraved, from its order window ── */
     await R.openOrderWindow(w, 'earrings'); await settle(600);
-    const owb = await page.evaluate(() => { const b = document.querySelector('#orderWin .owCharmEdit'), r = b && b.getBoundingClientRect(), v = document.getElementById('owVector').getBoundingClientRect(); return b ? { shown: !b.hidden && r.width > 0, on: !b.disabled, text: b.textContent.trim(), under: r.top >= v.bottom - 1, w: Math.round(r.width), h: Math.round(r.height), pool: b.dataset.pool, eng: !document.getElementById('owEng') || document.getElementById('owEng').hidden } : null; });
+    const owb = await page.evaluate(() => ({ btn: document.querySelectorAll('#orderWin .owCharmEdit, #orderWin .owCharmEditNote').length }));   // (OWNOCE, Paul 28 Oct 2026: "Remove this UI completely from the Detailed Order view modal")
     await R.shot(w, 'DE-4-order-window-button');
     const PID = made.earrings.poolIds[0];
-    check(`T4a the order window of an order with NO engraving shows "Open in Charm Editor" (${owb && owb.w}x${owb && owb.h} px) under the vector design, on, for its first piece`, owb && owb.shown && owb.on && owb.text === 'Open in Charm Editor' && owb.under && owb.h >= 30 && owb.pool === PID && owb.eng, JSON.stringify(owb));
+    check(`T4a the order window has no "Open in Charm Editor" button nor its note (OWNOCE)`, owb && owb.btn === 0, JSON.stringify(owb));
     const t0 = Date.now();
-    await page.click('#orderWin .owCharmEdit');
+    await page.evaluate(({ key, pid }) => { window.__pv = Engrave.openCharmEditor({ row: B.orders.byKey.get(key), poolId: pid, from: 'orderWindow' }); }, { key: made.earrings.key, pid: PID });   // (the piece opened as the order window's button opened it)
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settle(300);
     const openMs = Date.now() - t0;
     const ed = await page.evaluate(() => { const E = CharmEditor.current; return { title: document.querySelector('.ce-id h2').textContent, sub: document.querySelector('.ce-eyebrow').textContent, back: (document.querySelector('.ce-root .ce-back') || {}).textContent, n: E.items().length, face: E.face(), roles: E.items().map(i => i.role).join() }; });
@@ -142,11 +142,11 @@ const R = require('./_engraveRealWorld.cjs');
     for (let i = 0; i < 100 && !st.doc('Charm_Pool_Art', PID + '~front'); i++) await new Promise(r => setTimeout(r, 200));
     await settle(400);
     const rec = st.doc('Charm_Pool_Art', PID + '~front'), saved = await page.evaluate(() => ({ note: (document.querySelector('#orderWin .owCharmEditNote') || {}).textContent, hidden: (document.querySelector('#orderWin .owCharmEditNote') || {}).hidden, ow: OrderWin.isOpen(), ce: !!document.querySelector('.ce-root'), log: window.__log.filter(l => /^editor/.test(l[0])).map(l => [l[0], l[1].from, l[1].engraved, l[1].poolId]) }));
-    check('T4c Save keeps the line for THAT piece (its Charm_Pool_Art record: who, one part added) and says so under the button; the order window stays; opened and saved are logged (from the order window, not engraved)',
-      rec && rec.by && (rec.added || []).length === 1 && /Front artwork saved for this piece/.test(saved.note || '') && !saved.hidden && saved.ow && !saved.ce && saved.log.some(l => l[0] === 'editorOpen' && l[1] === 'orderWindow' && l[2] === false && l[3] === PID) && saved.log.some(l => l[0] === 'editorSave' && l[1] === 'orderWindow'),
+    check('T4c Save keeps the line for THAT piece (its Charm_Pool_Art record: who, one part added) ; the order window stays; opened and saved are logged (from the order window, not engraved)',
+      rec && rec.by && (rec.added || []).length === 1 && saved.ow && !saved.ce && saved.log.some(l => l[0] === 'editorOpen' && l[1] === 'orderWindow' && l[2] === false && l[3] === PID) && saved.log.some(l => l[0] === 'editorSave' && l[1] === 'orderWindow'),
       JSON.stringify({ rec: rec && { by: rec.by, added: (rec.added || []).length }, saved }));
     // Back to order: the editor goes, the order window is as it was
-    await page.click('#orderWin .owCharmEdit'); await page.waitForSelector('.ce-root .ce-back', { timeout: 60000 }); await settle(200);
+    await page.evaluate(({ key, pid }) => { window.__pv = Engrave.openCharmEditor({ row: B.orders.byKey.get(key), poolId: pid, from: 'orderWindow' }); }, { key: made.earrings.key, pid: PID }); await page.waitForSelector('.ce-root .ce-back', { timeout: 60000 }); await settle(200);
     await page.click('.ce-root .ce-back'); await settle(400);
     const bo = await page.evaluate(() => ({ ce: !!document.querySelector('.ce-root'), ow: OrderWin.isOpen(), rid: OrderWin.isOpen() && OrderWin.rid() }));
     check('T4d "Back to order" closes the editor and leaves the order window open on that order', !bo.ce && bo.ow && String(bo.rid) === made.earrings.rid, JSON.stringify(bo));
@@ -165,7 +165,7 @@ const R = require('./_engraveRealWorld.cjs');
 
     /* ── T5b · Back to engraving from the order window of an engraved piece; a change asks first ── */
     await R.openOrderWindow(w, 'both'); await settle(600);
-    await page.click('#orderWin .owCharmEdit'); await page.waitForSelector('.ce-root .ce-back', { timeout: 60000 }); await settle(300);
+    await page.evaluate(({ key, pid }) => { window.__pv = Engrave.openCharmEditor({ row: B.orders.byKey.get(key), poolId: pid, from: 'orderWindow' }); }, { key: made.both.key, pid: made.both.poolIds[0] }); await page.waitForSelector('.ce-root .ce-back', { timeout: 60000 }); await settle(300);
     const sub2 = await page.evaluate(() => ({ sub: document.querySelector('.ce-eyebrow').textContent, back: document.querySelector('.ce-root .ce-back').textContent.trim() }));
     await page.evaluate(() => { const E = CharmEditor.current, f = E.frame(), cx = f.x0 + f.wPt / 2, cy = f.y0 + f.hPt / 2; E.ctx.addItems([{ kind: 'path', role: 'line', source: 'added', stroke: true, fill: false, subpaths: [[['m', [cx - 1, cy + 1]], ['l', [cx + 1, cy + 1]]]] }]); E.ctx.commit('test'); });
     await page.click('.ce-root .ce-back'); await settle(200);
