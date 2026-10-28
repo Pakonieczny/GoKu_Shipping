@@ -9111,27 +9111,64 @@ const Engrave = window.Engrave = (() => {
     if(recovered)Session.schedule();
     return recovered;
   }
+  /* APPROVEFIX (Paul, 28 Oct 2026, order 4212020155: "The 'Approve' button is not working after I made adjustments to this charm's engraving."): a press on Approve ends in one of two things, the placement
+     approved or ONE plain line in the card, under the button, that says why not (approveSay; the toast as before). It used to end in silence in a dozen places (cardAction while busy, approve() while a
+     task was held, approveOnce's own checks), and every wait of an approval (the fit of new words, a sign-in, the back file, the workspace save, the stamp) could hold job._approvalTask and approvalPreparing
+     for good: that press never ended, every later press was dropped without a word, and the card, drawn again by any adjustment, showed a live green Approve. Each wait now has a time limit (approveWithin,
+     as STUCKSPIN's within: the wait itself goes on, the approval lets go and says so). Nothing of the placement is reset by a press that does not approve: the words stay where they were moved. */
+  const APPROVE_MS = { fit: 60000, sign: 300000, file: 90000, save: 30000, stamp: 8000 };
+  const approveWithin = (p, ms, why) => new Promise((res, rej) => { const t = setTimeout(() => rej(Object.assign(new Error(why), { stuck: true })), ms * Math.max(0.001, +window.CN_SPIN_SCALE || 1)); Promise.resolve(p).then(v => { clearTimeout(t); res(v); }, e => { clearTimeout(t); rej(e); }); });   // (CN_SPIN_SCALE: a test's clock; 1 on the page)
+  /** The line under the card's Approve that says why the press did not approve ('' takes it away). Kept in memory, by the job's key, for a card of it drawn again within 20 s (a "still approving" line is not). */
+  const APPROVE_WHY = new Map();
+  function approveSay(job, text, card, passing) {
+    try {
+      text = String(text || "").trim(); const was = APPROVE_WHY.get(job.key);
+      for (const [k, v] of APPROVE_WHY) if (Date.now() - v.at > 20000) APPROVE_WHY.delete(k);
+      if (text && !passing) { if (!was || was.text !== text) APPROVE_WHY.set(job.key, { text, at: Date.now() }); } else APPROVE_WHY.delete(job.key);
+      const c = card || (EG.card && EG.card.isConnected && EG.cardKey === job.key ? EG.card : null), host = c && c.querySelector(".pvApproval"); if (!host) return;
+      let n = host.querySelector(".egApproveWhy");
+      if (!text) { if (n) n.remove(); return; }
+      if (!n) { n = document.createElement("div"); n.className = "egApproveWhy"; n.setAttribute("role", "status"); host.appendChild(n); }
+      if (n.textContent !== text) n.textContent = text;
+    } catch (_) { /* the toast still says it */ }
+  }
+  const notApproved = (job, text, ms) => { approveSay(job, text); toast(text, "bad", ms || 7000); };
+  /** Why this job cannot be approved now ('' = it can): what approveOnce used to return on without a word. */
+  function approveBlocked(job, owner, pendingFit) {
+    if (owner.get(job.key) !== job) return "stale";
+    if (job.row?.state === "gone") return "Not approved: this order is no longer in the run.";
+    if (job.stamping || job.backSaving || job.approvalPreparing) return "Still approving this placement…";
+    if (job.state === "review" || job.state === "fitting" && pendingFit) return "";
+    return "Not approved: " + ({ fitting: "the words are still being placed. Approve once they are drawn.", ready: "the words are waiting to be placed on the charm. Approve once they are drawn.", classify: "the words are being read again. Approve once they are placed.", reclassify: "the words are being read again. Approve once they are placed.", words: "the words need a decision first.", blocked: "the words need a decision first.", approved: "it is approved already.", written: "it is approved and saved already.", skipped: "it is cut plain.", none: "it has no engraving." }[job.state] || `this placement is ${job.state || "not ready"}.`);
+  }
+  /** Says why, and when the card in front is not the card of the job as it is now (another object, another state), draws it again. */
+  function approveRefused(job, why) {
+    const stale = why === "stale";
+    approveSay(job, stale ? "This card was out of date: it is drawn again. Look at it, then press Approve." : why, null, /^Still/.test(why));
+    if (stale || !["review"].includes(job.state)) { if (EG.cardKey === job.key) { focusOn(job.key); EG.card = null; EG.cardKey = null; } render(); }
+  }
   async function approve(job, by, button) {
-    if(job._approvalTask)return;
+    if(job._approvalTask){approveSay(job,"Still approving this placement…",null,true);return;}   // (APPROVEFIX: every wait of the task has a time limit, so this ends)
     const task=approveOnce(job,by,button);job._approvalTask=task;
     try{return await task;}finally{if(job._approvalTask===task)delete job._approvalTask;}
   }
   async function approveOnce(job, by, button) {
     const owner=items(),row=job.row,pendingFit=fitTasks.get(job);
-    if(owner.get(job.key)!==job || row?.state==="gone" || job.state!=="review" && !(job.state==="fitting" && pendingFit) || job.stamping || job.backSaving || job.approvalPreparing) return;
+    { const why=approveBlocked(job,owner,pendingFit); if(why){approveRefused(job,why);return;} approveSay(job,""); }
     if(neverEngraves(row) && !job.approvalIntent){setNone(job,neverWhy(row));Orders.render();render();return;}   // (NO EARRING IS EVER ENGRAVED: an old open card is put away, nothing is approved)
     if(job.approvalIntent){recoverApprovals();if(job.state==="approved")await saveBacks(job);return;}
     if(pendingFit){
       // A can arrive while new words still wait for fonts or the fitting worker.
       // Keep the duplicate task lock, let that fit finish without preparation
       // flags blocking it, and verify only its latest resulting geometry.
-      try{await pendingFit;}catch(e){
-        if(items()===owner && owner.get(job.key)===job && job.row===row && row.state!=="gone" && !["approved","written","skipped","none"].includes(job.state))toast(`Not approved: the engraving preview could not finish (${e.message}). Refit the words before approving.`,"bad",7000);
+      try{await approveWithin(pendingFit,APPROVE_MS.fit,"the words were not placed within a minute");}catch(e){
+        if(items()===owner && owner.get(job.key)===job && job.row===row && row.state!=="gone" && !["approved","written","skipped","none"].includes(job.state))notApproved(job,`Not approved: the engraving preview could not finish (${e.message}). Refit the words before approving.`);
+        else approveSay(job,"Not approved: the placement changed while its words were placed. Look at it, then press Approve.");
         return;
       }
-      if(items()!==owner || owner.get(job.key)!==job || job.row!==row || row.state==="gone" || job.state!=="review" || job.stamping || job.backSaving || job.approvalPreparing)return;
+      { const why=items()!==owner || job.row!==row ? "stale" : approveBlocked(job,owner,null); if(why){approveRefused(job,why);return;} }
     }
-    if(EG.cardKey === job.key && EG.card?._previewFailed) { toast("Refit the words to restore the preview before approving.", "bad"); return; }
+    if(EG.cardKey === job.key && EG.card?._previewFailed) { notApproved(job, "Not approved: refit the words to restore the preview before approving.", 4000); return; }
     if(EG.cardKey===job.key) EG.card?._flushSpacing?.();
     const approvalButton=(button?.isConnected===false ? null : button) || (EG.cardKey===job.key ? EG.card?.querySelector('[data-a="approve"]') : null);
     const wasDisabled=!!approvalButton?.disabled;
@@ -9142,47 +9179,48 @@ const Engrave = window.Engrave = (() => {
       clearTimeout(EG.card?._wordsTimer);
       const text=EG.card?.querySelector('[data-f="words"]')?.value.trim();
       const bare=text === "" && typeof faceHasEditorArt === "function" && faceHasEditorArt(job);   // (EDITOR WORDS: an empty words box on a face the charm editor drew is that face's engraving, not a missing one)
-      if(text === "" && !bare) { toast("Type the words first", "bad"); return; }
+      if(text === "" && !bare) { notApproved(job, "Not approved: type the words first.", 4000); return; }
       if(text != null) delete EG.drafts?.[job.key];
-      if(bare) { if(!(job.fit && job.fit.artOnly)) { by = by || employeeName() || await needEmployee("Kept with this approval and its seal."); if (!by) return; if(!clearWords(job, by)) { toast("Not approved: this face's drawing could not be read", "bad"); return; } } }
+      if(bare) { if(!(job.fit && job.fit.artOnly)) { by = by || employeeName() || await approveWithin(needEmployee("Kept with this approval and its seal."), APPROVE_MS.sign, "").catch(() => ""); if (!by) { approveSay(job, "Not approved: nobody is signed in. Sign in, then press Approve."); return; } if(!clearWords(job, by)) { notApproved(job, "Not approved: this face's drawing could not be read", 4000); return; } } }
       else if(text != null && text!==(job.lineInput || job.lines).join("\n")) {
         job.text=text;job.lineInput=text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
         // placed somewhere new, the words are shown before anyone approves them
-        job.lines=job.lineInput.slice();if(!(await fitNewWords(job)))return;
+        job.lines=job.lineInput.slice();if(!(await approveWithin(fitNewWords(job),APPROVE_MS.fit,"").catch(()=>false))){approveSay(job,"Not approved: the new words are being placed. Look at them, then press Approve.");return;}
       }
     }
-    if (job.backSaving) return;
-    by = by || employeeName() || await needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: button });   // (SIGNIN, 27 Oct 2026: asked under Approve; put away, a note says why)
-    if (!by) return;
+    if (job.backSaving) { approveSay(job, "Still saving this placement's file. Press Approve again in a moment.", null, true); return; }
+    by = by || employeeName() || await approveWithin(needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: button }), APPROVE_MS.sign, "").catch(() => "");   // (SIGNIN, 27 Oct 2026: asked under Approve; put away, a note says why)
+    if (!by) { approveSay(job, "Not approved: nobody is signed in. Sign in, then press Approve."); return; }
     // says which step is missing (it read "Nothing verified to approve" whatever the reason)
-    if (!job.fit || !job.verify || !job.verify.geometry.ok) { toast(!job.fit ? "Not approved: the words are not placed on the charm yet" : !job.verify ? "Not approved: the placement is still being checked" : "Not approved: the placement failed its check · move or resize the words first", "bad"); return; }
+    if (!job.fit || !job.verify || !job.verify.geometry.ok) { notApproved(job, !job.fit ? "Not approved: the words are not placed on the charm yet" : !job.verify ? "Not approved: the placement is still being checked" : "Not approved: the placement failed its check · move or resize the words first", 4000); return; }
     const approvedAt=Date.now();let prepared;
-    try{prepared=await prepareApproval(job,by,approvedAt);}catch(e){toast(`Not approved: ${e.message}`,"bad",7000);return;}
-    if(job.row?.state==="gone" || typeof items==="function" && items().get(job.key)!==job)return;
-    if(job.fit!==prepared.fit || job.view!==prepared.view){toast("The placement changed while it was checked. Review it before approving.","bad");return;}
+    try{prepared=await approveWithin(prepareApproval(job,by,approvedAt),APPROVE_MS.file,`the ${faceWord(job)} file was not made in ${Math.round(APPROVE_MS.file/1000)} seconds. Press Approve to try again`);}catch(e){notApproved(job,`Not approved: ${e.message}`);return;}
+    if(job.row?.state==="gone" || typeof items==="function" && items().get(job.key)!==job){approveRefused(job,job.row?.state==="gone" ? "Not approved: this order is no longer in the run." : "stale");return;}
+    if(job.fit!==prepared.fit || job.view!==prepared.view){notApproved(job,"Not approved: the placement changed while it was checked. Review it before approving.",4000);return;}
     job.approvalIntent={phase:"verified",at:approvedAt,by,text:job.text};
     if(typeof Session!=="undefined"){
-      try {Session.schedule();if(await Session.flushNow?.()===false)throw new Error("Workspace checkpoint did not complete");}
-      catch(e){delete job.approvalIntent;toast("Approval could not be saved on this browser. Keep this view open and retry once workspace saving recovers.","bad",7000);return;}
+      try {Session.schedule();if(await approveWithin(Session.flushNow?.(),APPROVE_MS.save,"the workspace save did not answer")===false)throw new Error("Workspace checkpoint did not complete");}
+      catch(e){delete job.approvalIntent;notApproved(job,`Not approved: the approval could not be saved on this browser${e && e.stuck ? " (the workspace save did not answer in " + Math.round(APPROVE_MS.save / 1000) + " seconds)" : ""}. Your changes are kept: press Approve to try again.`);return;}
     }
     CNEngravingSeals.keep(job);
     const seal=CNEngravingSeals.add(job,"engraveApproved",by,approvedAt);
     // Publish the new state only after the wooden press, ink and lift finish. Pollers must not advance early.
-    job.stamping=true;try{await CNEngravingSeals.press(approvalButton,seal);}finally{job.stamping=false;}
-    if(job.fit!==prepared.fit || job.view!==prepared.view){toast("The placement changed while it was approved. Review the current words.","bad");delete job.approvalIntent;return;}
-    settleApproval(job);
+    job.stamping=true;try{await approveWithin(CNEngravingSeals.press(approvalButton,seal),APPROVE_MS.stamp,"").catch(()=>{});}finally{job.stamping=false;}   // (APPROVEFIX: the stamp is the picture of the approval, never what holds it up)
+    if(job.fit!==prepared.fit || job.view!==prepared.view){notApproved(job,"Not approved: the placement changed while it was approved. Review the current words.",4000);delete job.approvalIntent;return;}
+    if(!settleApproval(job)){notApproved(job,"Not approved: the placement changed while it was approved. Look at it, then press Approve again.",4000);return;}
+    approveSay(job,"");   // (APPROVEFIX: it used to go on as if approved, and the card came back with Approve)
     // ENGPRE: approved before its piece was pooled: the run's record of the line keeps the approval (one coalesced save), the back file follows once the piece is on a sheet
     if(unplacedPre(job) && job.state==="approved" && B.run){try{B.run.lines=Object.fromEntries(Orders.rows().map(Orders.lineRecord));RunCtl.save(B.run).catch(()=>{});}catch(_){}}
     // the person pressed Approve and the approval stands: engraving approved for this line's pieces (once per press)
     if(job.state==="approved")try{humanAct("complete",{orderId:String(job.row.order.receiptId),line:String(job.row.line.transactionId||""),sku:String(job.row.spec&&job.row.spec.designSku||""),parts:(job.copies||[]).length||1,detail:(isFront(job) ? "front " : "") + "engraving approved"});}catch(_){}
     job.approvalPreparing=false;
-    if(typeof Session!=="undefined"){Session.schedule();await Session.flushNow?.();}
+    if(typeof Session!=="undefined"){Session.schedule();await approveWithin(Session.flushNow?.(),APPROVE_MS.save,"").catch(()=>{});}   // (the approval is checkpointed already: this save only carries what followed)
     if (EG.opened === job.key) EG.opened = null;   // (NODECIDED: the card of a piece just approved moves on to the next piece; the approved piece is in the list, its seals on its row)
     for(const show of [()=>goes(job,{to:EG_TAB("approved")}),()=>Review.remove("eng:"+job.key),()=>agent({engrave:true},"ENGRAVE",`${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.artOnly ? "the charm editor's parts, no words" : `${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""}`})`),render,()=>Orders.render()])try{show();}catch(e){console.warn("Engraving approval view",e);}
     await saveBacks(job);
     } finally {
       job.approvalPreparing=false;
-      if(approvalButton){approvalButton.removeAttribute?.("aria-busy");approvalButton.textContent="Approved";if(job.state==="review")approvalButton.disabled=wasDisabled;}
+      if(approvalButton){approvalButton.removeAttribute?.("aria-busy");approvalButton.textContent=job.state==="review" ? "Approve" : "Approved";if(job.state==="review")approvalButton.disabled=wasDisabled;}   // (APPROVEFIX: a press that did not approve leaves "Approve", never a live "Approved")
       if(job.state==="review")render();
     }
   }
@@ -11346,6 +11384,7 @@ const Engrave = window.Engrave = (() => {
     const oo = card.querySelector("[data-open-order]"); if (oo) oo.onclick = e => { e.stopPropagation(); const rid = String(r.order.receiptId); if (typeof window.openOrderFrom === "function") openOrderFrom(oo, rid, { row: r.key && !job.editingBack ? { key: r.key } : null, poolId: job.copies[0] }); else OrderWin.openOrder(rid, { from: oo }); };
     const sealHistory=CNEngravingSeals.html(job);if(sealHistory)card.querySelector(".pvApproval")?.insertAdjacentHTML("beforeend",sealHistory);
     const approvalBusy = () => !!(job._approvalTask || job._backTask || job.approvalPreparing || job.stamping || job.backSaving);
+    { const w0 = APPROVE_WHY.get(job.key); if (w0 && Date.now() - w0.at < 20000) approveSay(job, w0.text, card); }   // (APPROVEFIX: why the last press did not approve, on a card drawn again just after it)
     /* The switch follows its pieces while the card is judged (a disc's words read, a placement prepared behind this one): only the switch is drawn again, in place, the card is not touched. */
     card._switchSync = pieces => {
       const sw = card.querySelector(".egSwitchStack, .egEarSwitch"); if (!sw || !pieces || !PSW()) return;   // (the stack: the piece switch with the Front | Back switch beneath it, one block)
@@ -11354,8 +11393,10 @@ const Engrave = window.Engrave = (() => {
       sw.replaceWith(next); card._switchHtml = next.outerHTML; next.querySelectorAll("[data-a]").forEach(b => { b.onclick = () => cardAction(b.dataset.a, b); });
     };
     const cardAction = (a, b, noGuard) => {
-      if (items().get(job.key) !== job) return;
+      const approving = a === "approve" || a === "approveBoth" || a === "approveFaces";
+      if (items().get(job.key) !== job) { if (approving) approveRefused(job, "stale"); return; }   // (APPROVEFIX: never a press that does nothing without a word)
       if (approvalBusy()) {
+        if (approving) approveSay(job, job.backSaving || job._backTask ? "Still saving this placement's file. Press Approve again in a moment." : "Still approving this placement…", card, true);
         if (["close", "prev", "next", "ear", "piece"].includes(a) && !card._afterApproval) {
           // Close/Escape may arrive during export verification, before the stamp
           // starts. Keep the edit attached until its whole approval has settled.
