@@ -103,27 +103,36 @@ async function main() {
     /* ── the reload, every call held 2 s ── */
     await a.context.route(/\/\.netlify\/functions\//, async r => { await new Promise(res => setTimeout(res, HOLD)); try { await r.continue(); } catch (_) {} });
     // (G1 is taken after three reloads, its median: the machine is shared, and one number is the noise of whoever else runs; each reopen is the first opening of the sheet in its page)
-    const reopens = [];
+    // (the main thread's own work beside each wall time, from Chrome's counters: about twenty agents share this machine, and a wall time alone mixes the page's work with their waiting)
+    const cdp = await a.context.newCDPSession(a.page); await cdp.send('Performance.enable');
+    const counters = async () => Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map(x => [x.name, x.value]));
+    const work = (m0, m1) => { const d = k => Math.round(Math.max(0, (m1[k] || 0) - ((m1[k] || 0) >= (m0[k] || 0) ? (m0[k] || 0) : 0)) * 1000); return { task: d('TaskDuration'), script: d('ScriptDuration'), style: d('RecalcStyleDuration'), layout: d('LayoutDuration') }; };
+    const told = w => `main thread ${w.task} ms: script ${w.script}, style ${w.style}, layout ${w.layout}`;
+    const reopens = [], reopenWork = [];
     for (let k = 0; k < 3; k++) {
+      const r0 = await counters();
       await a.page.reload({ waitUntil: 'domcontentloaded' });
       await a.page.waitForFunction(() => window.__cardAt > 0 && window.SheetWin && window.CharmNestStore, null, { timeout: 30000 });
+      const loadWork = work(r0, await counters());
       if (process.env.DEBUG) console.log('  reload', k, JSON.stringify(await a.page.evaluate(async () => ({ origin: Math.round(performance.timeOrigin), ready: await CharmNestStore.ready(), card: Math.round(window.__cardAt) }))));
       if (!k) {
         // (the scripts' start: the first of the page's scripts arrived; their end: DOMContentLoaded, every script run)
         const lib = await a.page.evaluate(() => { const first = performance.getEntriesByType('resource').find(e => /charm-nest-clock\.js/.test(e.name)); return { fromStart: window.__cardAt - (first ? first.responseEnd : 0), afterAll: window.__cardAt - (window.__scriptsAt || Infinity), cards: document.querySelectorAll('#libBody .setCard').length, calls: window.__net.filter(x => x.done && x.done < window.__cardAt).length }; });
         // (measured from the moment every script of the page has run, DOMContentLoaded: nothing can draw a card before the Library's own code is on the page; from the first script's arrival is printed beside it)
-        gate('G3', lib.afterAll < GATE.libraryMs && lib.calls === 0, `warm reload: Library cards painted ${Math.round(lib.afterAll)} ms after the page's scripts ran (${Math.round(lib.fromStart)} ms after the first of them arrived; ${lib.cards} set cards, ${lib.calls} calls answered before; gate < ${GATE.libraryMs} ms)`);
+        gate('G3', lib.afterAll < GATE.libraryMs && lib.calls === 0, `warm reload: Library cards painted ${Math.round(lib.afterAll)} ms after the page's scripts ran (${Math.round(lib.fromStart)} ms after the first of them arrived; ${lib.cards} set cards, ${lib.calls} calls answered before; gate < ${GATE.libraryMs} ms); ${told(loadWork)} from the reload until the cards were seen`);
       }
       await a.page.waitForTimeout(HOLD + 2500);   // (the reload's own reads, held, come back and are drawn: the reopen is a person's click on a page at rest; the calls stay held)
+      const o0 = await counters();
       const g1 = await a.page.evaluate(async ({ id, src }) => {
         const drawn = eval('(' + src + ')'), t0 = performance.now(); SheetWin.open(id);
         for (;;) { await new Promise(r => requestAnimationFrame(r)); if (drawn(id)) return { ms: performance.now() - t0 }; if (performance.now() - t0 > 15000) return { ms: Infinity }; }
       }, { id: SHEET, src: String(drawn) });
+      reopenWork.push(work(o0, await counters()));
       reopens.push(Math.round(g1.ms));
       if (k < 2) { await a.page.evaluate(() => SheetWin.close()); await a.page.waitForTimeout(600); }
     }
-    const g1ms = reopens.slice().sort((x, y) => x - y)[1];
-    gate('G1', g1ms < GATE.reopenMs, `a sheet seen before, reopened after a reload (calls held ${HOLD / 1000} s): whole plate and orders in ${g1ms} ms (median of ${reopens.join(', ')}; load ${os.loadavg()[0].toFixed(2)}), no veil (gate < ${GATE.reopenMs} ms)`);
+    const g1ms = reopens.slice().sort((x, y) => x - y)[1], g1w = reopenWork[reopens.indexOf(g1ms)];
+    gate('G1', g1ms < GATE.reopenMs, `a sheet seen before, reopened after a reload (calls held ${HOLD / 1000} s): whole plate and orders in ${g1ms} ms (median of ${reopens.join(', ')}; load ${os.loadavg()[0].toFixed(2)}), no veil (gate < ${GATE.reopenMs} ms); ${told(g1w)} (each: ${reopenWork.map(w => w.task).join(', ')} ms)`);
     await a.page.waitForTimeout(HOLD + 1500);   // (the reopen's question comes back)
     const after = await a.page.evaluate(() => ({ parses: window.__parses, masters: window.__masters, get: window.__net.filter(x => x.op === 'getSheet').map(x => ({ bytes: x.bytes, body: x.body })) }));
     gate('G5', after.masters === GATE.downloads && after.parses === GATE.parses, `after the reload: ${after.masters} master download(s), ${after.parses} parse(s) for the designs used (gate 0 and 0)`);
