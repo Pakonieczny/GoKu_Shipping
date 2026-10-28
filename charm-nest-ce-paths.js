@@ -1111,7 +1111,7 @@
       return;
     }
     if (!ev.shiftKey) { st.anc = new Map(); if (ctx.selection().length) ctx.select([]); }
-    st.g = { kind: 'marq', x0: p.x, y0: p.y, x: p.x, y: p.y, add: !!ev.shiftKey, base: new Map([...st.anc].map(([id, s]) => [id, new Set(s)])), live: false };
+    st.g = { kind: 'marq', x0: p.x, y0: p.y, x: p.x, y: p.y, add: !!ev.shiftKey, base: new Map([...st.anc].map(([id, s]) => [id, new Set(s)])), baseSel: ev.shiftKey ? ctx.selection() : [], live: false };
     if (typeof ctx.redraw === 'function') ctx.redraw();
   }
   function directMove(ctx, ev, p, tool) {
@@ -1127,10 +1127,9 @@
       const c = setHandle(g.cs0[g.ci], g.ai, 'o', ap(inf.Wi, q), 'mirror'), cs = g.cs0.slice(); cs[g.ci] = c; write(ctx, new Map([[g.id, cs]]));
     } else if (g.kind === 'marq') {
       g.x = p.x; g.y = p.y;
-      const hit = anchorsIn(ctx, [g.x0, g.y0, g.x, g.y]);
       st.anc = new Map([...g.base].map(([id, s]) => [id, new Set(s)]));
-      selectAnchors(ctx, hit, true);
-      const ids = [...new Set([...st.anc.keys()].filter(id => st.anc.get(id).size))];
+      for (const { id, ci, ai } of anchorsIn(ctx, [g.x0, g.y0, g.x, g.y])) { if (!st.anc.has(id)) st.anc.set(id, new Set()); st.anc.get(id).add(key(ci, ai)); }
+      const ids = [...new Set(g.baseSel.concat([...st.anc.keys()].filter(id => st.anc.get(id).size)))];
       const cur = ctx.selection(); if (ids.length !== cur.length || ids.some(id => !cur.includes(id))) ctx.select(ids);
       if (typeof ctx.redraw === 'function') ctx.redraw();
     }
