@@ -170,7 +170,7 @@
   }
   /** The words as the engine draws them, cut into letters: [{ line, at (its place in the line), of (letters in the line), subs }], or null when the letters do not add up
    *  to the words (a ligature, a shaped script: the engine's own drawing is then the words, unspaced). */
-  function letters(engine, words, it, size) {
+  function letters(engine, words, it, size, again) {
     const full = engine(words, it.fontKey, size, { align: it.align || 'left', lineGap: it.lineGap });
     const subs = full && Array.isArray(full.subpaths) ? full.subpaths : [];
     const out = []; let k = 0;
@@ -178,7 +178,10 @@
       const gs = graphemes(line);
       gs.forEach((g, gi) => { const n = countOf(engine, g, it.fontKey, size); out.push({ line: li, at: gi, of: gs.length, subs: subs.slice(k, k + n) }); k += n; });
     });
-    return k === subs.length ? { out, full } : null;
+    if (k === subs.length) return { out, full };
+    // (a font the words need may have arrived since the letters were counted, charm-nest-ce-text.js loads them on demand: counted once more before giving up)
+    if (!again) { countCache.clear(); capCache.clear(); return letters(engine, words, it, size, true); }
+    return null;
   }
   const move = (sps, dx, dy) => (dx || dy ? M.transformSubpaths(sps, [1, 0, 0, 1, dx, dy]) : sps);
 
@@ -653,7 +656,7 @@
       id: 'shape-' + kind,
       title: d.title, flyout: 'shapes', icon: IC[kind], cursor: 'crosshair', tip: d.hint.split(' · ')[0], hint: d.hint,
       onArm(ctx) { syncBar(ctx); }, onDisarm(ctx) { this.g = null; syncBar(ctx); },
-      onDown(ctx, ev, p) { if (!p || ev.button) return; this.g = { a: [p.x, p.y], cx: ev.clientX, cy: ev.clientY, id: null, live: false, box: null, t0: now() }; },
+      onDown(ctx, ev, p) { if (!p || ev.button) return; this.g = { a: [p.x, p.y], cx: ev.clientX, cy: ev.clientY, id: null, live: false, box: null }; },
       onMove(ctx, ev, p) {
         const g = this.g; if (!g || !p || !(ev.buttons & 1)) return;
         if (!g.live && Math.hypot(ev.clientX - g.cx, ev.clientY - g.cy) < 3) return;
