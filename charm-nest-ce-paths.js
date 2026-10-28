@@ -885,7 +885,10 @@
      dragged or placed snaps to the smart guides (ctx.snap: Alt pauses them; Shift's 45° wins over them), and the gold chip says where the anchor is, or how long a handle is
      and at what angle, while the bar's X / Y / W / H follow the part as it changes */
   const fmtMm = v => (Math.abs(v) < 0.0005 ? '0.00' : v.toFixed(2));
-  const snapTo = (ctx, q, ev) => (typeof ctx.snap === 'function' && !(ev && ev.shiftKey) ? ctx.snap(q[0], q[1], ev) : q);
+  // (asked only while the smart guides or the grid snap are switched on and Alt is not held: the editor lists every guide afresh as the work changes, which a drag of a big part
+  // should not pay for when nothing would snap)
+  const snapOn = ctx => !!(ctx.root && ctx.root.querySelector && ctx.root.querySelector('[data-opt="smart"].is-on, [data-opt="snapGrid"].is-on'));
+  const snapTo = (ctx, q, ev) => (typeof ctx.snap === 'function' && !(ev && (ev.shiftKey || ev.altKey)) && snapOn(ctx) ? ctx.snap(q[0], q[1], ev) : q);
   const posText = (ctx, q) => { const f = ctx.frame(); return `X ${fmtMm((q[0] - f.x0) * MM)}  Y ${fmtMm((q[1] - f.y0) * MM)} mm`; };
   const handleText = (a, q) => { let deg = -Math.atan2(q[1] - a[1], q[0] - a[0]) * 180 / Math.PI; if (deg <= -180) deg += 360; return `Handle ${fmtMm(dist(a, q) * MM)} mm · ${(Math.round(deg * 10) / 10) || 0}°`; };
   function liveOf(ctx, id, text) {
