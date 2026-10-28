@@ -99,7 +99,7 @@
       { condition: { urlPattern: { pathname: ASSET } }, source: "fetch-event" },
       { condition: { urlPattern: { pathname: "/.netlify/*" } }, source: "network" }
     ];
-    let idx = null, saving = null, dirty = false;
+    let idx = null, saving = null, dirty = false, stopped = false;   // (stopped: switched off while pages it controls are still open: it keeps nothing more)
     /** url -> { url, c: cache, f: file, b: bytes, u: last used }: read once per life of the worker; rebuilt from the caches when missing */
     function index() {
       return idx || (idx = (async () => {
@@ -122,13 +122,14 @@
       dirty = true;
       if (saving) return saving;
       return (saving = new Promise(r => setTimeout(r, 2000)).then(async () => {
-        saving = null; if (!dirty) return; dirty = false;
+        saving = null; if (!dirty || stopped) return; dirty = false;
         try { const m = await index(); await (await caches.open(META)).put(INDEX, new Response(JSON.stringify({ gen: GEN, v: VERSION, e: [...m.values()] }), { headers: { "Content-Type": "application/json" } })); } catch (_) {}
       }));
     }
     async function touch(url) { const m = await index(), e = m.get(url); if (e) { e.u = Date.now(); return save(); } }
     /** A response kept: the older versions of its file dropped, the cache held to its cap. */
     async function keep(name, url, res) {
+      if (stopped) return;
       const cache = await caches.open(name), m = await index();
       const sized = res.headers.get("content-length") ? null : res.clone();
       await cache.put(url, res);
@@ -182,7 +183,7 @@
       await sw.clients.claim();
     })().catch(() => {})));
     sw.addEventListener("fetch", e => {
-      if (RETIRED) return;
+      if (RETIRED || stopped) return;
       const r = e.request, kind = classify(r.url, { method: r.method, mode: r.mode, range: r.headers.has("range"), origin });
       if (!kind) return;
       // (whatever goes wrong in here, the page gets the network's answer, as it would with no worker)
@@ -190,7 +191,8 @@
     });
     sw.addEventListener("message", e => {
       const d = e.data || {}, port = e.ports && e.ports[0], reply = x => { try { if (port) port.postMessage(x); } catch (_) {} };
-      const job = d.op === "status" ? status() : d.op === "clear" ? clear().then(n => ({ cleared: n })) : d.op === "adopt" && Array.isArray(d.urls) ? adopt(d.urls).then(n => ({ adopted: n })) : null;
+      if (d.op === "stop") stopped = true;   // (the page's off switch, before it unregisters the worker)
+      const job = d.op === "status" ? status() : d.op === "clear" || d.op === "stop" ? clear().then(n => ({ cleared: n })) : d.op === "adopt" && Array.isArray(d.urls) ? adopt(d.urls).then(n => ({ adopted: n })) : null;
       if (job) e.waitUntil(job.then(reply, err => reply({ error: String(err && err.message || err) })));
     });
   }
@@ -224,7 +226,7 @@
     /** Unregisters the worker and deletes its caches. -> { unregistered, caches } */
     async function stop() {
       let unregistered = false;
-      try { for (const r of await sw.getRegistrations()) if (ours(r)) unregistered = (await r.unregister()) || unregistered; } catch (_) {}
+      try { for (const r of await sw.getRegistrations()) if (ours(r)) { if (r.active) await ask(r.active, { op: "stop" }, 2000); unregistered = (await r.unregister()) || unregistered; } } catch (_) {}
       return { unregistered, caches: await dropCaches() };
     }
     /** The versioned files this page loaded, handed to the worker to keep (it reads them from the HTTP cache). */
