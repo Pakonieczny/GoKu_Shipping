@@ -181,7 +181,7 @@
 .pvMain{position:relative}
 .pvMain:has(.pvApproval:not(:empty)){padding-right:calc(156px + var(--seal-base,50px) / 2);box-sizing:border-box}
 .pvMain.egWide:has(.pvApproval:not(:empty)){padding-right:0}   /* a wide piece that sits clear below the Approved block takes the block's column too (charm-nest-bridge.js takesStrip); the block itself does not move */
-.pvApproval{position:absolute;top:calc(var(--seal-base,50px) / 2);right:0;display:flex;flex-direction:column;align-items:flex-end;gap:8px;width:calc(156px + var(--seal-base,50px) / 2)}
+.pvApproval{position:absolute;top:calc(var(--seal-base,50px) / 2);right:0;display:flex;flex-direction:column;align-items:flex-end;gap:8px;width:calc(156px + var(--seal-base,50px) / 2);z-index:3}   /* (APPROVEHIT, Paul 28 Oct 2026, order 4203083230: "Pressing the green Approve does nothing": the block stands over the work area's top right; a wide piece's work area (.egWide) runs under it, and the work area is position:relative since CHARM EDIT, so it was painted OVER the block and took every real click on Approve) */
 .pvApproval>.sealRow.engravingSeals{padding:0;max-width:100%;min-height:0;justify-content:flex-end}
 .egButtonSeal>.seal{background:transparent;border-radius:0;mix-blend-mode:normal}
 .sealRow.engravingSeals{display:inline-flex;flex-wrap:nowrap;align-items:center;gap:4px;margin:0;padding:4px;max-width:min(240px,100%);min-height:0;overflow:visible}
