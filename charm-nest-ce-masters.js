@@ -719,10 +719,22 @@
       }
       shown = search(qs, { limit: limit + 1 });
       const extra = shown.length > limit; if (extra) shown = shown.slice(0, limit);
-      grid.innerHTML = shown.length ? shown.map(tile).join('') : `<div class="cem-empty">No charm in the library matches “${esc(qs)}”.<br>Try fewer letters, or start a new design.</div>`;
+      let fresh = 0;
+      if (shown.length) { const els = tilesFor(shown); fresh = els.fresh; grid.replaceChildren(...els); }
+      else grid.innerHTML = `<div class="cem-empty">No charm in the library matches “${esc(qs)}”.<br>Try fewer letters, or start a new design.</div>`;
       cnt.textContent = qs.trim() ? `${shown.length}${extra ? '+' : ''} of ${total.toLocaleString()}` : `${total.toLocaleString()} charms`;
       more.hidden = !extra;
-      mark(); mountPics();
+      if (fresh) { mark(); mountPics(); }
+    }
+    /* the tiles kept while the picker is open: a charm shown again by the next keystroke is the same element (nothing parsed again, its picture stays drawn); only the new
+       ones are made, in one parse. → the tiles of `rows`, in order, with .fresh (how many were made) */
+    const tileEls = new Map();
+    function tilesFor(rows) {
+      const want = rows.filter(r => !tileEls.has(r.sku));
+      if (want.length) { const t = doc.createElement('template'); t.innerHTML = want.map(tile).join(''); for (const el of Array.from(t.content.children)) tileEls.set(el.dataset.sku, el); }
+      if (tileEls.size > 600) { const keep = new Set(rows.map(r => r.sku)); for (const k of [...tileEls.keys()]) if (!keep.has(k)) tileEls.delete(k); }
+      const els = rows.map(r => tileEls.get(r.sku)).filter(Boolean); els.fresh = want.length;
+      return els;
     }
     /* (the editor, when it is open under the picker, hears every key first: a picker element says the key is not the editor's, charm-nest-charm-editor.js onKey's __ceKey) */
     const NOT_MINE = () => {};
@@ -738,11 +750,11 @@
         selector: '[data-cem-preview]', concurrency: 3, keep: false,
         keyOf: h => { const e = ent(h), g = e && Pl.sizeEntry(e, sizeOf(e)); return g && g.aiPath && !(root.B && root.B.pool && root.B.pool.sources.has(g.aiPath)) ? T.designKey(g.aiPath, g.charmHash || e.charmHash, e.indexedAt) : ''; },
         produce: h => { const e = ent(h); return e ? Pl.masterPreview(e, sizeOf(e), false) : null; },
-        paint: (h, url) => { const img = doc.createElement('img'); img.alt = ''; img.src = url; h.replaceChildren(img); },
+        paint: (h, url) => { const img = doc.createElement('img'); img.alt = ''; img.src = url; h.replaceChildren(img); h.removeAttribute('data-cem-preview'); },
         fail: () => { /* the letters stay */ }
       });
     }
-    const onLib = () => { if (pane === 'lib' && wrap.isConnected) renderLib(); };
+    const onLib = () => { tileEls.clear(); if (pane === 'lib' && wrap.isConnected) renderLib(); };   // (the library read again: every tile is made afresh)
     listeners.add(onLib);
     async function pickMaster(t, size) {
       if (busy) return;
