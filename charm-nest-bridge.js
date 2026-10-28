@@ -12338,6 +12338,8 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   //  again is painted again only when it missed one of them, Sets.renderLibrary)
   let changes=0,allAt=0;const keyAt=new Map();
   const missed=(card,at)=>!!card._lrFresh || allAt>at || (card._laserSet?.setId && (keyAt.get('t:'+card._laserSet.setId) || 0)>at) || (card._laserSheets || []).some(id=>(keyAt.get('s:'+id) || 0)>at);
+  // (a drawing asked for and not made yet that would draw this card: taken off the screen now, it misses it)
+  const owes=card=>!!frame && (drawAll || !!(dirty && ((card._laserSet?.setId && dirty.has('t:'+card._laserSet.setId)) || (card._laserSheets || []).some(id=>dirty.has('s:'+id)))));
   function changed(only){
     if(only instanceof Set){if(!only.size)return;if(!dirty)dirty=new Set();changes++;for(const k of only){dirty.add(k);keyAt.set(k,changes);}}else{drawAll=true;allAt=++changes;}
     if(!frame)frame=requestAnimationFrame(refresh);ensureLive();
@@ -12596,7 +12598,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       return c && c.why ? String(c.why) : '';
     }catch(_){return '';}
   }
-  return {follow:ensureLive,record,sheet,group,canCut,labels,sections,place,changed,changes:()=>changes,missed,arrange:()=>{arrange(false);arrange(true);},saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,moveBlock,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
+  return {follow:ensureLive,record,sheet,group,canCut,labels,sections,place,changed,changes:()=>changes,missed,owes,arrange:()=>{arrange(false);arrange(true);},saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,moveBlock,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -13198,7 +13200,7 @@ const Sets = window.Sets = (() => {
       sets=CNListActivity.selectBlocks("library",sets);   // (actual sets before every group of loose sheets, each in last-activity order)
       // (NAV round 4: the cards on screen, and where each stands, before the body is emptied: shown again, or kept for the next chip)
       const shown = again ? new Map([...body.querySelectorAll(".laserAreaItems > .setCard")].filter(c => c._keptSt).map(c => { c._keptReady = !!c.closest('[data-laser-area="ready"]'); return [c._keptSt, c]; })) : null;
-      const keepRest = () => { if (shown) for (const [st, c] of shown) { c._keptAt = LaserReview.changes(); kept.cards.set(st, c); } kept.cache = _cache; kept.q = q; };
+      const keepRest = () => { if (shown) for (const [st, c] of shown) { c._keptAt = LaserReview.owes(c) ? -1 : LaserReview.changes(); kept.cards.set(st, c); } kept.cache = _cache; kept.q = q; };   // (-1: it is painted again when it is back)
       if (!sets.length) { body.innerHTML = `<div class="libEmpty">${focus ? "" : q || metal ? "No sets match this filter." : "No sets yet."}</div>`; keepRest(); if (LD) LD.decorate(body); return; }
       LaserReview.sections(body);
       const fresh = [], back = [];
