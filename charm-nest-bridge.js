@@ -10036,7 +10036,8 @@ const Engrave = window.Engrave = (() => {
      A bar at the top of the tab, its own part of it: New design and Open charm… (charm-nest-ce-masters.js: a blank charm, or any charm of the master library, in the editor) and the designs made
      last (the design library: charm-nest-ce-library.js, else charm-nest-designs.js's local index), one press each. It is ONE node through every drawing of the tab (renderView puts it back first),
      so a press is never lost to a redraw; nothing here reads the network, and the recent designs are drawn again only when they change. A module that is not on the page leaves its button off. */
-  let cdBarEl = null, cdSig = null, cdWatch = false, cdAt = 0;
+  let cdBarEl = null, cdSig = null, cdAt = 0;
+  const cdWatched = new WeakSet();   // (the libraries whose onChange the bar listens to: each once, whichever loads first or later)
   const cdFn = (o, k) => !!(o && typeof o[k] === "function");
   function charmDesignerBar(v) {
     if (!v) return null;
@@ -10057,7 +10058,7 @@ const Engrave = window.Engrave = (() => {
         else if (how === "open" && cdFn(M, "openPicker")) { charmEditLog("designerOpen", { from: "designerBar" }); go(() => M.openPicker(o), "Open charm"); }
         else if (how === "recent") {
           const id = b.dataset.id, ver = b.dataset.ver ? (Number.isFinite(+b.dataset.ver) ? +b.dataset.ver : b.dataset.ver) : undefined;
-          const f = cdFn(L, "openDesign") ? () => L.openDesign(id, ver, o) : cdFn(M, "openDesign") ? () => M.openDesign(id, ver, o) : null;
+          const f = cdFn(L, "openDesign") ? () => L.openDesign(id, ver, o) : cdFn(L, "open") ? () => L.open(id, ver, o) : cdFn(M, "openDesign") ? () => M.openDesign(id, ver, o) : null;
           charmEditLog("designOpen", { designId: id, version: ver == null ? null : ver, from: "designerBar" });
           if (f) go(f, "Open design"); else toast("The design library is still loading: open it from the Charm Editor", "", 5000);
         }
@@ -10066,7 +10067,7 @@ const Engrave = window.Engrave = (() => {
     }
     paintDesigner();
     if (v.firstElementChild !== cdBarEl) v.insertBefore(cdBarEl, v.firstChild);
-    if (!cdWatch && cdFn(window.CharmNestDesigns, "onChange")) { cdWatch = true; try { CharmNestDesigns.onChange(() => { cdSig = null; if (cdBarEl && cdBarEl.isConnected) paintDesigner(); }); } catch (_) { cdWatch = false; } }
+    for (const lib of [window.CharmNestCeLibrary, window.CharmNestDesigns]) if (cdFn(lib, "onChange") && !cdWatched.has(lib)) { cdWatched.add(lib); try { lib.onChange(() => { cdSig = null; if (cdBarEl && cdBarEl.isConnected) paintDesigner(); }); } catch (_) { /* asked again at the next drawing */ } }
     return cdBarEl;
   }
   function paintDesigner() {
@@ -10079,7 +10080,7 @@ const Engrave = window.Engrave = (() => {
     if (cdSig && performance.now() - cdAt < 2000) return;   // (no library yet, or an empty one: asked again at once, it costs nothing)
     cdAt = performance.now();
     let got = null; const L = window.CharmNestCeLibrary, D = window.CharmNestDesigns;
-    try { got = cdFn(L, "recent") ? L.recent(4) : cdFn(D, "search") ? D.search("") : null; } catch (_) { got = null; }
+    try { got = cdFn(L, "recent") ? L.recent(4) : cdFn(D, "search") ? D.search("", { limit: 8 }) : null; } catch (_) { got = null; }
     if (got && typeof got.then === "function") got.then(paintRecent, () => {}); else paintRecent(got);
   }
   /** The designs made last (newest first, four), one chip each: its picture, its name; its order or "Custom · no order", who and when in its tip. Nothing at all when no library is on the page. */

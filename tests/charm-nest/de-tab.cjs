@@ -6,7 +6,8 @@
 // pair that is never engraved ("earrings"):
 //   T1  the tab reads "Design & Engrave" where the bar has room and "Design" where it has not; its mode and its link stay "engrave" (#engrave)
 //   T2  the Charm Designer bar is the first thing in the tab, the same node through the tab's redraws: New design and Open charm… call charm-nest-ce-masters.js (stand-ins here), off
-//       while it is not on the page; the recent designs come from the design library (a stand-in CharmNestDesigns), newest first, four at most, and a press opens one; every press is logged
+//       while it is not on the page; the recent designs come from the design library (charm-nest-designs.js; a stand-in charm-nest-ce-library.js wins), newest first, four at most, a
+//       save shows at once, and a press opens one; every press is logged
 //   T3  the engraving card's "Open in Charm Editor": one big gold button in the card's head beside its ×
 //   T4  a piece that is NOT engraved opens in the editor from its order window ("Open in Charm Editor" under the vector design): "piece 1 of 2 · no engraving", "Back to order"; a line drawn and
 //       Save keep it for that piece (Charm_Pool_Art: who, what) and say so under the button; Back to order leaves the order window as it was; a piece on no sheet of this page opens from its master
@@ -48,8 +49,9 @@ const R = require('./_engraveRealWorld.cjs');
       Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render();
     });
     await settle(300);
-    const off = await page.evaluate(() => { const b = document.getElementById('cdBar'); return b ? { first: b.parentElement.id === 'engraveView' && b.parentElement.firstElementChild === b, newOff: b.querySelector('[data-cd="new"]').disabled, openOff: b.querySelector('[data-cd="open"]').disabled, recentHidden: b.querySelector('.cdRecent').hidden } : null; });
-    check('T2a the Charm Designer bar is the first thing in the tab; with no charm-nest-ce-masters.js on the page its two buttons are off, and with no design library there is no recent list', off && off.first && off.newOff && off.openOff && off.recentHidden, JSON.stringify(off));
+    const off = await page.evaluate(() => { const b = document.getElementById('cdBar'), r = b && b.querySelector('.cdRecent'); return b ? { first: b.parentElement.id === 'engraveView' && b.parentElement.firstElementChild === b, masters: !!window.CharmNestCeMasters, newOff: b.querySelector('[data-cd="new"]').disabled, openOff: b.querySelector('[data-cd="open"]').disabled, lib: !!window.CharmNestDesigns, recent: r.hidden ? null : r.textContent.trim() } : null; });
+    check(`T2a the Charm Designer bar is the first thing in the tab; with no charm-nest-ce-masters.js on the page its two buttons are off; the design library (${off && off.lib ? 'charm-nest-designs.js' : 'none'}) gives the recent list: "${off && off.recent}"`,
+      off && off.first && (off.masters || (off.newOff && off.openOff)) && (off.lib ? /^Recent/.test(off.recent || '') : off.recent === null), JSON.stringify(off));
     const now = Date.now();
     await page.evaluate(now => {
       const designs = [
@@ -59,7 +61,7 @@ const R = require('./_engraveRealWorld.cjs');
         { id: 'd4', name: 'Sun', version: 1, at: now - 30000, by: 'Ana Test' },
         { id: 'd5', name: 'Old star', version: 1, at: now - 900000, by: 'Ana Test' }];
       let fn = null;
-      window.CharmNestDesigns = { search: q => designs.filter(d => !q || d.name.includes(q)), onChange: f => { fn = f; }, __add: d => { designs.push(d); if (fn) fn(); } };
+      window.CharmNestCeLibrary = { recent: () => designs.slice(), onChange: f => { fn = f; }, __add: d => { designs.push(d); if (fn) fn(); } };   // (charm-nest-ce-library.js, a stand-in: its recent designs win over the index)
       window.CharmNestCeMasters = { newDesign: o => { window.__calls.push(['new', o && o.from, o && o.back && o.back.label]); }, openPicker: o => { window.__calls.push(['open', o && o.from]); }, openDesign: (id, v) => { window.__calls.push(['design', id, v]); } };
       Engrave.render();
     }, now);
@@ -71,7 +73,7 @@ const R = require('./_engraveRealWorld.cjs');
     const node0 = await page.evaluateHandle(() => document.getElementById('cdBar'));
     await page.evaluate(() => { Engrave.restoreView({ tab: 'approved', list: true, chosen: true, focus: null }); Engrave.render(); Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render(); });
     await page.click('#cdBar [data-cd="new"]'); await page.click('#cdBar [data-cd="open"]'); await page.click('#cdBar .cdChip[data-id="d3"]'); await settle(100);
-    await page.evaluate(now => { CharmNestDesigns.__add({ id: 'd6', name: 'Brand new', version: 1, at: now, by: 'Cy Test' }); }, now + 10);
+    await page.evaluate(now => { CharmNestCeLibrary.__add({ id: 'd6', name: 'Brand new', version: 1, at: now, by: 'Cy Test' }); }, now + 10);
     const after = await page.evaluate(n0 => ({ same: document.getElementById('cdBar') === n0, first: document.querySelector('#engraveView').firstElementChild === n0, calls: window.__calls, chips: [...document.querySelectorAll('#cdBar .cdChip span')].map(c => c.textContent.trim()), log: window.__log.map(l => l[0] + ':' + (l[1].action || l[1].designId || '')) }), node0);
     check('T2c the bar is the same node after the tab is drawn again (Approved, then Placements); New design, Open charm… and a recent design call the designer (with the way back), each logged; a design saved shows at once',
       after.same && after.first && JSON.stringify(after.calls) === JSON.stringify([['new', 'designerBar', 'Back to Design & Engrave'], ['open', 'designerBar'], ['design', 'd3', 4]]) && after.chips[0] === 'Brand new' && after.chips.length === 4 && after.log.join() === 'designerNew:,designerOpen:,designOpen:d3', JSON.stringify(after));
