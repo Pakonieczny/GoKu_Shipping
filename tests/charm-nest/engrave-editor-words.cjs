@@ -57,6 +57,7 @@ async function run(kit) {
   R.ORDERS.move = Object.assign({}, R.ORDERS.back, { rid: '4290000154', sku: 'CALENDAR', listing: '1890000154', title: calTitle, buyer: 'Name Fourteen', personalization: ['Name One'] });
   Object.assign(R.EXPECT_JOBS, { paul: 1, fresh: 1, plain: 1, move: 1 });
   const w = await R.world({ shots });
+  if (w) await w.page.waitForFunction(() => !window.CNRole || ['ask', 'role', 'admin'].includes(CNRole.state()), null, { timeout: 20000 }).catch(() => {}).then(() => w.page.evaluate(() => { try { if (window.CNRole && CNRole.state() === 'ask') CNRole.choose('design'); } catch (_) { /* no role step on this page */ } }));   // (the "Laser or Design?" step (charm-nest-role.js) is answered as a person would: its bar, fixed over the top right, otherwise covers the card's Open in Charm Editor)
   if (!w) { console.log('SKIP no playwright-core'); return; }
   const page = w.page, st = w.srv.st, Q = '#egQueue .rvItem[data-kind=placement]';
   try {

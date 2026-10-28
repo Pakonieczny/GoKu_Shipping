@@ -1059,13 +1059,19 @@
 .ce-caret{ width:0; height:0; margin-left:2px; flex:none; border-left:3.5px solid transparent; border-right:3.5px solid transparent; border-top:4px solid currentColor; opacity:.75; }
 .ce-fontA{ font-size:12px; font-weight:700; letter-spacing:0; text-transform:none; }
 .ce-fontname{ max-width:96px; overflow:hidden; text-overflow:ellipsis; letter-spacing:.08em; }
-/* (CETEXT, Paul 28 Oct 2026: "the text style and font style and alphabet style": one Style menu (Bold, Italic, the alignment, the Alphabet: the bar stays one row on a desk); each font of
-   the Font menu drawn in itself, its kind beside it) */
-.ce-tsname{ display:none; }   /* (the bar keeps one row: the button is its sign, Aa, AB, Aʙ ..., and says what is set in its title) */
-.ce-props.is-tight [data-drop="tstyle"] .ce-drop__b{ padding:0 7px; gap:0; } .ce-props.is-tight [data-drop="tstyle"] .ce-caret{ display:none; }
-.ce-menu--tstyle{ min-width:240px; }
-.ce-menu--tstyle .ce-tsB{ font-weight:800; } .ce-menu--tstyle .ce-tsI{ font-style:italic; font-family:Georgia,serif; }
-.ce-case{ display:inline-block; min-width:22px; font-weight:700; color:var(--muted); }
+/* (CETEXT, Paul 28 Oct 2026: "the text style and font style and alphabet style": the Font menu is the words' one menu, the bar stays one row on a desk: Style (Bold, Italic, the
+   alignment) and the Alphabet as rows of buttons at its top, every engraving font below, each drawn in itself with its kind beside it) */
+.ce-menu--text{ min-width:268px; }
+.ce-tsrow{ display:flex; align-items:center; gap:4px; padding:2px 9px 6px; }
+.ce-tsgap{ width:10px; flex:none; }
+.ce-tsbtn{ min-width:32px; height:30px; padding:0 7px; border:1px solid var(--hair); background:#fff; cursor:pointer; color:var(--ink); display:inline-flex; align-items:center; justify-content:center; font-size:13px; line-height:1; flex:none; }
+.ce-tsbtn b{ font-weight:800; font-family:Georgia,serif; } .ce-tsbtn i{ font-family:Georgia,serif; font-weight:600; }
+.ce-tsbtn svg{ width:15px; height:15px; }
+.ce-tsbtn:hover{ background:var(--hov); border-color:var(--hov-line); }
+.ce-tsbtn.is-on{ background:var(--ink); border-color:var(--ink); color:#fff; }
+.ce-tsbtn.is-off{ opacity:.32; cursor:default; } .ce-tsbtn.is-off:hover{ background:#fff; border-color:var(--hair); }
+.ce-tsbtn--case{ font-weight:700; font-size:12.5px; }
+.ce-tsname{ margin-left:6px; letter-spacing:.06em; text-transform:none; font-weight:600; color:var(--ink); }
 .ce-item.ce-font{ font-size:16px; padding:6px 9px; text-transform:none; letter-spacing:0; }
 .ce-item.ce-font[data-kind]::after{ content:attr(data-kind); margin-left:auto; padding-left:14px; font:400 10px/1 var(--sans,sans-serif); letter-spacing:.06em; color:var(--muted); white-space:nowrap; }
 .ce-menu:has(.ce-font){ min-width:250px; }
@@ -1440,7 +1446,8 @@
     // (CETEXT, Paul 28 Oct 2026: "font style": every engraving font, its name drawn in the font itself as the engraving card's drop-down draws it, and its kind beside it: cursive, script ...)
     const fontItems = fonts.map(f => `<button class="ce-item ce-font" type="button" data-font="${esc(f.key)}" role="menuitemradio"${f.kind || f.caps ? ` data-kind="${esc([f.kind, f.caps ? 'capitals only' : ''].filter(Boolean).join(' · '))}"` : ''}${f.family ? ` style="font-family:${esc(f.family)}"` : ''} title="${esc(f.name + (f.kind ? ' · ' + f.kind : '') + (f.caps ? ' · capitals only' : '') + (f.bold === false ? ' · one weight (no Bold)' : ''))}">${esc(f.name)}</button>`).join('');
     const CASE_NAME = { '': 'As typed', upper: 'CAPITALS', lower: 'lowercase', title: 'Title Case', small: 'Small Caps' };
-    const caseItems = ['', 'upper', 'lower', 'title', 'small'].map(c => `<button class="ce-item" type="button" data-case="${c}" role="menuitemradio"><span class="ce-case ce-case--${c || 'as'}">${{ '': 'Aa', upper: 'AB', lower: 'ab', title: 'Ab', small: 'Aʙ' }[c]}</span>${CASE_NAME[c]}<em>${{ '': 'the words as typed', upper: 'every letter a capital', lower: 'every letter small', title: 'each word a capital', small: 'small letters as small capitals' }[c]}</em></button>`).join('');
+    const CASE_SIGN = { '': 'Aa', upper: 'AB', lower: 'ab', title: 'Ab', small: 'Aʙ' }, CASE_SAYS = { '': 'the words as typed', upper: 'every letter a capital', lower: 'every letter small', title: 'each word with a capital', small: 'the small letters as small capitals' };
+    const caseItems = ['', 'upper', 'lower', 'title', 'small'].map(c => `<button class="ce-tsbtn ce-tsbtn--case" type="button" data-case="${c}" role="menuitemradio" aria-checked="false" aria-label="${CASE_NAME[c]}" title="${CASE_NAME[c]} · ${CASE_SAYS[c]}">${CASE_SIGN[c]}</button>`).join('');
     /* the extensions' places in the chrome (the header's EXTENSION POINTS): their tools on the rail before More (a flyout of their own, or the Shapes menu), the Object
        menu, Import and a button per panel in the head, command buttons at the end of the property bar, the panel slot right of the Layers */
     const X = extensions();
@@ -1549,24 +1556,21 @@
       </div>
     </div>
     <div class="ce-drop" data-drop="font" data-when="text" hidden>
-      <button class="ce-prop ce-drop__b" type="button" title="Font"><span class="ce-fontA">Aa</span><span class="ce-fontname" data-fontname></span><i class="ce-caret"></i></button>
-      <div class="ce-menu" role="menu" hidden><div class="ce-menu__head">Font</div>${fontItems}</div>
-    </div>
-    <label class="ce-num" data-when="text" title="Text size, points" hidden><input data-f="pt" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Text size, points"><i>pt</i></label>
-    <div class="ce-drop" data-drop="tstyle" data-when="text" hidden>
-      <button class="ce-prop ce-drop__b" type="button" title="Text style: Bold, Italic, the alignment and the Alphabet (capitals, lowercase, Title Case, small capitals)"><span class="ce-fontA" data-caseA>Aa</span><span class="ce-tsname" data-tsname>Style</span><i class="ce-caret"></i></button>
-      <div class="ce-menu ce-menu--tstyle" role="menu" hidden>
+      <button class="ce-prop ce-drop__b" type="button" title="Font and style: the engraving fonts, Bold, Italic, the alignment and the Alphabet"><span class="ce-fontA" data-caseA>Aa</span><span class="ce-fontname" data-fontname></span><i class="ce-caret"></i></button>
+      <div class="ce-menu ce-menu--text" role="menu" hidden>
         <div class="ce-menu__head">Style</div>
-        <button class="ce-item ce-item--tog" type="button" data-tstyle="bold" role="menuitemcheckbox" aria-checked="false" title="Bold · the font's heavier cut (⌘B) · small words (a capital under 2.2 mm) are always cut in it, as the engraving cuts them"><i class="ce-tick"></i><b class="ce-tsB">Bold</b><em>⌘B</em></button>
-        <button class="ce-item ce-item--tog" type="button" data-tstyle="italic" role="menuitemcheckbox" aria-checked="false" title="Italic · the letters slanted 12° (⌘I) · none of the engraving fonts has an italic of its own, so its letters are slanted as outlines"><i class="ce-tick"></i><i class="ce-tsI">Italic</i><em>⌘I</em></button>
-        <div class="ce-menu__head">Alignment</div>
-        <button class="ce-item" type="button" data-talign="left" role="menuitemradio" title="The lines start together">${IC.alignL}Left</button>
-        <button class="ce-item" type="button" data-talign="center" role="menuitemradio" title="Each line centred">${IC.alignC}Centre</button>
-        <button class="ce-item" type="button" data-talign="right" role="menuitemradio" title="The lines end together">${IC.alignR}Right</button>
-        <div class="ce-menu__head">Alphabet</div>${caseItems}
-        <div class="ce-menu__note">The words you typed are kept: <b>As typed</b> gives them back. Every alphabet the engraving has is typed as it is: Greek, Cyrillic, Hebrew, Arabic, Indian scripts, Chinese, Japanese, Korean and emoji, each set in its own font.</div>
+        <div class="ce-tsrow" role="group" aria-label="Style">
+          <button class="ce-tsbtn" type="button" data-tstyle="bold" role="menuitemcheckbox" aria-checked="false" aria-label="Bold" title="Bold · the font's heavier cut (⌘B) · small words (a capital under 2.2 mm) are always cut in it, as the engraving cuts them"><b>B</b></button><button class="ce-tsbtn" type="button" data-tstyle="italic" role="menuitemcheckbox" aria-checked="false" aria-label="Italic" title="Italic · the letters slanted 12° (⌘I) · none of the engraving fonts has an italic of its own, so its letters are slanted as outlines"><i>I</i></button>
+          <span class="ce-tsgap" aria-hidden="true"></span>
+          <button class="ce-tsbtn" type="button" data-talign="left" role="menuitemradio" aria-checked="false" aria-label="Align left" title="Align left · the lines start together">${IC.alignL}</button><button class="ce-tsbtn" type="button" data-talign="center" role="menuitemradio" aria-checked="false" aria-label="Align centre" title="Align centre · each line centred">${IC.alignC}</button><button class="ce-tsbtn" type="button" data-talign="right" role="menuitemradio" aria-checked="false" aria-label="Align right" title="Align right · the lines end together">${IC.alignR}</button>
+        </div>
+        <div class="ce-menu__head">Alphabet <span class="ce-tsname" data-tsname>Style</span></div>
+        <div class="ce-tsrow ce-tsrow--case" role="group" aria-label="Alphabet">${caseItems}</div>
+        <div class="ce-menu__head">Font</div>${fontItems}
+        <div class="ce-menu__note">The words you typed are kept: <b>Aa</b> (as typed) gives them back. Every alphabet the engraving has is typed as it is: Greek, Cyrillic, Hebrew, Arabic, Indian scripts, Chinese, Japanese, Korean and emoji, each set in its own font.</div>
       </div>
     </div>
+    <label class="ce-num" data-when="text" title="Text size, points" hidden><input data-f="pt" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Text size, points"><i>pt</i></label>
     <label class="ce-num ce-num--thick" data-when="weight" title="Weight: how much thicker (+) or thinner (−) every stroke of the letters is than the font draws them, in mm · ↑ ↓ 0.01 mm, Shift 0.05 mm" hidden><button class="ce-num__b" type="button" data-act="wt0" title="Weight · back to the font's own weight" aria-label="Back to the font's own weight">${IC.weight}</button><input data-f="wt" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Weight, mm thicker or thinner than the font draws it"><i>mm</i></label>
     <div class="ce-drop" data-drop="role" data-when="role" hidden>
       <button class="ce-prop ce-drop__b" type="button" title="What the laser does with it"><i class="ce-sw" data-rolesw></i><span data-rolename></span><i class="ce-caret"></i></button>
@@ -2321,10 +2325,10 @@
         const cs = ['', ...CASES].find(c => all('letterCase', c));
         $$('[data-case]').forEach(b => { const on = cs != null && b.dataset.case === cs; b.classList.toggle('is-on', on); b.setAttribute('aria-checked', String(on)); });
         // (the Style button says what is set: "Bold · Italic · CAPITALS", "Right", or "Style" for the font's own as typed, left or centred)
-        const sum = [lit.bold && !noBold ? 'Bold' : '', lit.italic ? 'Italic' : '', al === 'right' ? 'Right' : '', cs == null ? 'Mixed' : cs ? CASE_NAME[cs] : ''].filter(Boolean);
-        $('[data-tsname]').textContent = sum.length ? sum.join(' · ') : 'Style';
-        $('[data-drop="tstyle"] .ce-drop__b').title = 'Text style: ' + (sum.length ? sum.join(' · ') : 'the font\'s own, as typed') + ' · Bold, Italic, the alignment and the Alphabet (capitals, lowercase, Title Case, small capitals)';
-        $('[data-caseA]').textContent = cs == null ? 'Aa' : { '': 'Aa', upper: 'AB', lower: 'ab', title: 'Ab', small: 'Aʙ' }[cs];
+        const sum = [lit.bold && !noBold ? 'Bold' : '', lit.italic ? 'Italic' : '', al === 'right' ? 'Right' : al === 'center' ? 'Centred' : '', cs == null ? 'Mixed' : cs ? CASE_NAME[cs] : ''].filter(Boolean);
+        $('[data-tsname]').textContent = cs == null ? 'Mixed' : CASE_NAME[cs];
+        $('[data-drop="font"] .ce-drop__b').title = 'Font and style: ' + $('[data-fontname]').textContent + (sum.length ? ' · ' + sum.join(' · ') : '') + ' · the engraving fonts, Bold, Italic, the alignment and the Alphabet (capitals, lowercase, Title Case, small capitals)';
+        $('[data-caseA]').textContent = cs == null ? 'Aa' : CASE_SIGN[cs];
       }
       const showRole = leaves.length > 0 || (creating && !S.sel.length);
       $('[data-when="role"]').hidden = !showRole;

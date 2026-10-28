@@ -81,6 +81,7 @@ async function partB() {
   R.ORDERS.cal = Object.assign({}, R.ORDERS.both, { rid: '4290000131', sku: 'CALENDAR_86188', title: 'Calendar Necklace, Personalized Month Calendar Charm', buyer: 'Name Eleven', personalization: ['front - September\nback - 12:11 p.m.'] });
   R.EXPECT_JOBS.cal = 2;
   const w = await R.world({ shots: process.env.SHOTS || '/tmp/charm-edit-refit-shots' });
+  if (w) await w.page.waitForFunction(() => !window.CNRole || ['ask', 'role', 'admin'].includes(CNRole.state()), null, { timeout: 20000 }).catch(() => {}).then(() => w.page.evaluate(() => { try { if (window.CNRole && CNRole.state() === 'ask') CNRole.choose('design'); } catch (_) { /* no role step on this page */ } }));   // (the "Laser or Design?" step (charm-nest-role.js) is answered as a person would: its bar, fixed over the top right, otherwise covers the card's Open in Charm Editor)
   if (!w) { console.log('SKIP no playwright-core'); return; }
   const page = w.page, st = w.srv.st, Q = '#egQueue .rvItem[data-kind=placement]';
   try {

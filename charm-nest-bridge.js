@@ -9935,7 +9935,7 @@ const Engrave = window.Engrave = (() => {
   /* CETEXT (Paul, 28 Oct 2026: "When I press the 'Open in Charm Editor' button everything seems to be working correctly, however the text that is currently on the charm does not show up in the
      editor"). The editor was handed the piece's DRAWING only (charmEditDoc: the charm's own parts, AE.itemsOf); the words the card had fitted on a face live on that face's job (job.fit: the
      lines, the font, the size, the turn and the centre, in the job's own view), never in the charm, so they were nowhere in the editor. Each face whose job has fitted words now hands them in as
-     ONE text of the editor (its own text kind: retyped with a double-click, its font, size, style and letter case on the bar), in the font the card fitted them in, at the fitted size, centred
+     ONE text of the editor (its own text kind: a click shows its font, size, style and letter case on the bar, a double-click retypes it), in the font the card fitted them in, at the fitted size, centred
      line by line as the fit sets them, turned as the fit turned them and standing exactly where the card draws them (their ink's middle where the fit put it), on the face the job engraves.
      source "engrave": what the card engraves, not a part of the drawing. Unchanged, it is no change and nothing is saved for it; changed, it is saved as the editor saves every words
      (charmEditChanges: the art edit, outlines in the face) and the face's own words are taken off the card (charmEditWordsTaken), so nothing is engraved twice. */
@@ -10083,7 +10083,7 @@ const Engrave = window.Engrave = (() => {
     if (host) host.addEventListener("cancel", keepOpen);
     let res;
     const startFace = job && t.from === "card" ? faceOf(job) : "front";
-    try { res = await CE.open({ title: sku, subtitle, faces: docs, startFace, fonts, textToPaths: charmEditText, lockRoles: ["cut"], back, host, ...(words[startFace] ? { select: [words[startFace].id] } : {}) }); }   // (CETEXT: the words selected, their text controls on the bar)
+    try { res = await CE.open({ title: sku, subtitle, faces: docs, startFace, fonts, textToPaths: charmEditText, lockRoles: ["cut"], back, host }); }   // (CETEXT: the words open unselected, as everything does: a picture imported first goes into the charm's outline, not into the words' box; a click on them shows their controls)
     finally { if (host) setTimeout(() => host.removeEventListener("cancel", keepOpen), 0); }
     try {
       if (!res) return null;   // (Cancel, the ×, Esc, Back with nothing kept: nothing is written)

@@ -41,6 +41,7 @@ async function partBCD() {
   const R = require('./_engraveRealWorld.cjs');
   const shots = process.env.SHOTS || '/tmp/charm-editor-words-shots';
   const w = await R.world({ viewport: { width: 1440, height: 900 }, shots });
+  if (w) await w.page.waitForFunction(() => !window.CNRole || ['ask', 'role', 'admin'].includes(CNRole.state()), null, { timeout: 20000 }).catch(() => {}).then(() => w.page.evaluate(() => { try { if (window.CNRole && CNRole.state() === 'ask') CNRole.choose('design'); } catch (_) { /* no role step on this page */ } }));   // (the "Laser or Design?" step (charm-nest-role.js) is answered as a person would: its bar, fixed over the top right, otherwise covers the card's Open in Charm Editor)
   if (!w) { console.log('SKIP no playwright-core'); return; }
   const page = w.page, st = w.srv.st;
   const until = async (fn, ms) => { const t0 = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t0 > ms) return null; await new Promise(r => setTimeout(r, 150)); } };
@@ -69,17 +70,21 @@ async function partBCD() {
       const j0 = await page.evaluate(() => { const j = __cw.job(); return { key: j.key, face: j.face || 'back', lines: j.fit.lines || j.lines, fontKey: j.fontKey, size: j.fit.size, angle: j.fit.angle, box: __cw.fitBox(j), weight: j.fit.weight }; });
       await page.click(Q + ' .egCharmEdit');
       await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page); await settleP(page);
+      const sel0 = await page.evaluate(() => CharmEditor.current.selection());
+      // (a click on the words, as a person selects them)
+      { const b = await page.evaluate(() => { const w = __cw.words('back'); return w && CharmEditor.current.box(w.id); }); if (b) { const c = await page.evaluate(([x, y]) => CharmEditor.current.clientOf(x, y), [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2]); await page.mouse.click(c.x, c.y); await settleP(page); } }
       const o1 = await page.evaluate(() => {
         const E = CharmEditor.current, wd = __cw.words('back'), fr = __cw.words('front'), d = wd && __cw.drawn('back', wd.id), bar = [...document.querySelectorAll('.ce-root .ce-props [data-when="text"]')];
-        return { face: E.face(), wd, front: !!fr, d, sel: E.selection(), barShown: bar.length === 3 && bar.every(e => !e.hidden && e.getBoundingClientRect().width > 0), fontName: document.querySelector('.ce-root [data-fontname]').textContent, fontFam: getComputedStyle(document.querySelector('.ce-root [data-fontname]')).fontFamily, pt: document.querySelector('.ce-root [data-f="pt"]').value, caseName: document.querySelector('.ce-root [data-tsname]').textContent, alignOn: (document.querySelector('.ce-root [data-talign].is-on') || {}).dataset };
+        return { face: E.face(), wd, front: !!fr, d, sel: E.selection(), barShown: bar.length === 2 && bar.every(e => !e.hidden && e.getBoundingClientRect().width > 0), fontName: document.querySelector('.ce-root [data-fontname]').textContent, fontFam: getComputedStyle(document.querySelector('.ce-root [data-fontname]')).fontFamily, pt: document.querySelector('.ce-root [data-f="pt"]').value, caseName: document.querySelector('.ce-root [data-tsname]').textContent, alignOn: (document.querySelector('.ce-root [data-talign].is-on') || {}).dataset };
       });
       check(`B1 Open in Charm Editor on the back (the words turned ${(+j0.angle || 0).toFixed(1)}° on the charm): the card's words are ONE text of the editor on the back (its own text kind, "engrave"), the very lines the card fitted, in its font (${j0.fontKey}) at its size; none on the front (this order engraves its back)`,
         turned.ok !== false && Math.abs(+j0.angle) > 1 && o1.face === 'back' && !!o1.wd && o1.wd.kind === 'text' && o1.wd.text === j0.lines.join('\n') && o1.wd.fontKey === j0.fontKey && Math.abs(o1.wd.sizePt - j0.size) < 1e-6 && Math.abs(o1.wd.rot + j0.angle) < 1e-6 && !o1.front,
         JSON.stringify({ turned, j0, wd: o1.wd && { text: o1.wd.text, fontKey: o1.wd.fontKey, sizePt: o1.wd.sizePt, rot: o1.wd.rot }, front: o1.front }));
       check('B2 …standing exactly where the card fitted them: the editor\'s outlines of the words and the fitted letters have the same box on the charm (to 0.05 pt)', near(o1.d && o1.d.box, j0.box, 0.05), JSON.stringify({ drawn: o1.d && o1.d.box, fitted: j0.box }));
+      o1.sel0 = sel0;
       await R.shot(w, 'CW-0-opened-words-selected');
-      check(`B3 the words open selected, their text controls on the bar: Font "${o1.fontName}" drawn in itself (${o1.fontFam}), ${o1.pt} pt, and "${o1.caseName}" (Bold, Italic, the alignment: centre, as the card centres them, the Alphabet)`,
-        o1.sel.join() === (o1.wd && o1.wd.id) && o1.barShown && o1.fontName === 'Stylish' && /CNEng playwrite-us-trad/.test(o1.fontFam) && +o1.pt > 0 && o1.caseName === 'Style' && o1.alignOn && o1.alignOn.talign === 'center', JSON.stringify(o1));
+      check(`B3 the words open unselected (a picture imported first goes into the outline), a click selects them and their text controls are on the bar: Font "${o1.fontName}" drawn in itself (${o1.fontFam}), ${o1.pt} pt, and "${o1.caseName}" (Bold, Italic, the alignment: centre, as the card centres them, the Alphabet)`,
+        o1.sel0.length === 0 && o1.sel.join() === (o1.wd && o1.wd.id) && o1.barShown && o1.fontName === 'Stylish' && /CNEng playwrite-us-trad/.test(o1.fontFam) && +o1.pt > 0 && o1.caseName === 'As typed' && o1.alignOn && o1.alignOn.talign === 'center', JSON.stringify(o1));
       // the Font menu: every font of the card's own drop-down, each drawn in itself with its kind beside it
       await page.click('.ce-root [data-drop="font"] .ce-drop__b'); await settleP(page);
       const menu = await page.evaluate(() => {
@@ -104,7 +109,7 @@ async function partBCD() {
       { const el = page.locator('.ce-root [data-f="pt"]'); await el.click(); await page.keyboard.press('Control+a'); await page.keyboard.type('16'); await page.keyboard.press('Enter'); await settleP(page); }
       const f8 = await page.evaluate(id => ({ wd: __cw.words('back'), d: __cw.drawn('back', id) }), wid);
       // Bold, Italic, the alignment, the Alphabet
-      const style = async sel => { if (await page.evaluate(() => document.querySelector('.ce-root [data-drop="tstyle"] .ce-menu').hidden)) { await page.click('.ce-root [data-drop="tstyle"] .ce-drop__b'); await settleP(page); } await page.click('.ce-root [data-drop="tstyle"] .ce-menu ' + sel); await settleP(page); };   // (the Style menu: it stays open from one pick to the next)
+      const style = async sel => { if (await page.evaluate(() => document.querySelector('.ce-root [data-drop="font"] .ce-menu').hidden)) { await page.click('.ce-root [data-drop="font"] .ce-drop__b'); await settleP(page); } await page.click('.ce-root [data-drop="font"] .ce-menu ' + sel); await settleP(page); };   // (the Style menu: it stays open from one pick to the next)
       await style('[data-tstyle="bold"]');
       const b1 = await page.evaluate(id => ({ wd: __cw.words('back'), d: __cw.drawn('back', id), on: document.querySelector('.ce-root [data-tstyle="bold"]').classList.contains('is-on') }), wid);
       await style('[data-tstyle="italic"]');
@@ -113,7 +118,7 @@ async function partBCD() {
       const a1 = await page.evaluate(() => ({ wd: __cw.words('back'), on: (document.querySelector('.ce-root [data-talign].is-on') || {}).dataset }));
       check(`B6 at 16 pt, Bold draws the family's heavier cut (more ink: ${f8.d.ink.toFixed(1)} → ${b1.d.ink.toFixed(1)} pt²), Italic slants the letters (another box), right alignment is kept on the words; each lit on the bar`,
         f8.wd.sizePt === 16 && b1.wd.bold === true && b1.on && b1.d.ink > f8.d.ink * 1.04 && i1.wd.italic === true && i1.on && JSON.stringify(i1.d.box) !== JSON.stringify(b1.d.box) && a1.wd.align === 'right' && a1.on && a1.on.talign === 'right', JSON.stringify({ b1: b1.d, i1: i1.d, a1 }));
-      const caseMenu = await page.evaluate(() => [...document.querySelectorAll('.ce-root [data-drop="tstyle"] .ce-menu [data-case]')].map(b => b.dataset.case + ':' + b.firstChild.nextSibling.textContent));
+      const caseMenu = await page.evaluate(() => [...document.querySelectorAll('.ce-root [data-drop="font"] .ce-menu [data-case]')].map(b => b.dataset.case + ':' + b.getAttribute('aria-label')));
       await style('[data-case="upper"]');
       const u1 = await page.evaluate(id => ({ wd: __cw.words('back'), d: __cw.drawn('back', id), name: document.querySelector('.ce-root [data-tsname]').textContent }), wid);
       await style('[data-case="small"]');
