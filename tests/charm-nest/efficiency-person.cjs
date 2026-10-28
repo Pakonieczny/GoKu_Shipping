@@ -131,6 +131,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await page.waitForFunction(sel => document.querySelector(sel).dataset.s === 'live', `${P} .efpLive`); assert(/^Live/.test(await page.locator(`${P} .efpLiveT`).innerText()), 'the quiet live light');
     assert.equal((await page.locator(`${P} .efpBack`).innerText()).trim(), 'Employee efficiency'); assert.equal(await page.locator(`${P} .efpSeg button.on`).innerText(), 'Week', 'Week first');
     const first = person()[0]; assert(first.compare === true && first.range === 'week' && first.name === 'Ana M.', 'asks for the window with its comparison');
+    assert.deepEqual(seen.custom.map(c => [c.name, c.range, c.day]), [['Ana M.', 'week', today]], 'her custom pieces: asked once, by name, for the same window');
+    assert.equal(await page.locator(`${P} .efpDl`).isVisible(), false, 'no design work and no mistake: the Custom pieces section stays out of the way');
     console.log('  ✓ opens as a page: labelled spinner, header (initials, where signed in and since, station chips), live light, Back, Week first');
 
     /* ── 3 · every range ── */

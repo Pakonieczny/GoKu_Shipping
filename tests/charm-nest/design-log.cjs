@@ -225,6 +225,41 @@ const K = require(path.join(root, 'netlify/functions/_activityKinds.js'));
       assert(!ov.j.people.find(p => p.name === 'Ana M.').totals.design, 'nobody else\'s answer changes');
       console.log(`  ✓ op custom: 3 pieces (2 no order, 1 fix), Ana M. 1 mistake in 4 orders = 25%; ${JSON.stringify(first)} queries, none again within seconds; totals.design on the overview`);
     }
+    {
+      // the employee page: op person carries the People row's counters (`design`, from the rollups it reads anyway); op custom with a name gives that
+      // person's own pieces and the mistakes put down to them, over the page's own window, from the SAME Design_Log entry as the tab's (no rollups)
+      for (const k of Object.keys(queries)) delete queries[k];
+      const pi = await eff({ op: 'person', key: PASS, name: 'Ivy', range: 'week', day: today, compare: true });
+      assert.equal(pi.status, 200, JSON.stringify(pi.j).slice(0, 300));
+      assert.deepEqual(pi.j.design, { opened: 1, saved: 1, imported: 0, custom: 2, orderless: 1, fixes: 0 }, 'the same figures as her People row');
+      const pa = await eff({ op: 'person', key: PASS, name: 'Ana M.', range: 'week', day: today, compare: true });
+      assert.equal(pa.j.design, undefined, 'no design work: the answer reads as before');
+      const q0 = Object.assign({}, queries);
+      const iv = await eff({ op: 'custom', key: PASS, name: 'Ivy', range: 'week', day: today });
+      assert.equal(iv.status, 200, JSON.stringify(iv.j));
+      assert.deepEqual([iv.j.from, iv.j.to, iv.j.days, iv.j.name], [EE._t.addDays(today, -6), today, 7, 'Ivy'], 'op person\'s week');
+      assert.deepEqual(iv.j.pieces.map(p => [p.id, p.orderId, p.orderless, p.customName]), [['dl-s2', '', true, 'Spare star'], ['dl-s1', '3521000999', false, '']], 'her own pieces, newest first, nobody else\'s');
+      assert.deepEqual(iv.j.people, [{ name: 'Ivy', sent: 2, pieces: 3, orderless: 1, fixes: 0, caused: 0, changed: 0 }]); assert.deepEqual(iv.j.mistakes, []);
+      assert.equal((queries.Design_Log || 0) - (q0.Design_Log || 0) + (queries.Efficiency_Daily || 0) - (q0.Efficiency_Daily || 0), 0, 'the tab\'s 7-day entry, read seconds ago: no query, and no rollups for one person');
+      const an = (await eff({ op: 'custom', key: PASS, name: 'Ana M.', range: 'week', day: today })).j;
+      assert.deepEqual(an.pieces, []); assert.equal(an.people[0].caused, 1);
+      assert.deepEqual(an.mistakes.map(m => [m.id, m.by, m.orderId, m.piece, m.suggested, m.changed]), [['dl-s3', 'Bea', '3521000888', 'Redo moon', 'Ivy', true]], 'the fix that put the mistake down to her, and who fixed it');
+      const bea = (await eff({ op: 'custom', key: PASS, name: 'Bea', range: 'day', day: today })).j;
+      assert.deepEqual([bea.people[0].fixes, bea.pieces[0].fix.causedBy, bea.mistakes.length], [1, 'Ana M.', 0]);
+      assert.equal((await eff({ op: 'custom', key: PASS, name: '123456' })).status, 400, 'a PIN is no name');
+      // nothing written since: a live window's read is kept past its 5 s while the employee revision has not moved; a new record counts its own write and is read at once
+      const memo = EE._t.cacheOf(fdb).memo, dlogs = () => [...memo.entries()].filter(([k]) => k.startsWith('dlog|'));
+      for (const [, e] of dlogs()) e.at -= 6000;      // (the entries read above, made 6 s old: past their 5 s)
+      try {
+        for (const k of Object.keys(queries)) delete queries[k];
+        await eff({ op: 'custom', key: PASS, name: 'Ivy', range: 'week', day: today }); await eff({ op: 'custom', key: PASS, days: 7 });
+        assert.equal(queries.Design_Log || 0, 0, 'past its 5 s, nothing written: no read');
+        await DL.add(fdb, FV, [{ id: 'dl-s9', kind: 'customPieceSent', by: 'Ivy', station: 'design', clientAt: Date.now() - 1000, customId: 'CUSTOM-20261028-9', customName: 'Late one', metal: 'gold' }], {});
+        const iv2 = (await eff({ op: 'custom', key: PASS, name: 'Ivy', range: 'week', day: today })).j;
+        assert.equal(queries.Design_Log, 1, 'written: one read'); assert.equal(iv2.people[0].sent, 3, 'the new piece is seen at once');
+      } finally { SF.store.delete('Design_Log/dl-s9'); for (const [k] of dlogs()) memo.delete(k); }
+      console.log(`  ✓ the employee page's reads: op person's design ${JSON.stringify(pi.j.design)}; op custom by name: Ivy 2 pieces (1 no order), Ana M. 1 mistake (fixed by Bea); the tab's entry reused, no rollups; kept while nothing was written, a new record read at once`);
+    }
 
     /* ── 3 · the browser: the real page logs, the console shows ── */
     // (the browser runs only through slot.sh, which sets PW_DIR: two browser tests at a time on this machine)
@@ -315,8 +350,56 @@ const K = require(path.join(root, 'netlify/functions/_activityKinds.js'));
       const over = await pg.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       assert(over <= 1, `no sideways scroll at 390 px (${over})`);
       await pg.screenshot({ path: path.join(process.env.SHOT_DIR || require('os').tmpdir(), 'design-log-custom-390.png') }).catch(() => {});
-      assert.deepEqual(errs, [], 'no page errors');
       console.log(`  ✓ browser: 4 events from the page cost ${ms.toFixed(2)} ms; notes counted, records stored, timeline written; the Custom pieces tab: 5 pieces, 4 flagged, Ana M 50%; filter ${busy.toFixed(1)} ms; 7 days; 390 px`);
+
+      // each person's own page (#efficiency/person/<name>, its default week): the People row's line, the mistakes put down to them, their pieces
+      await pg.setViewportSize({ width: 1440, height: 900 });
+      const customAsks = [];
+      pg.on('request', r => { if (/employeeEfficiency/.test(r.url())) { try { const b = JSON.parse(r.postData() || '{}'); if (b.op === 'custom' && b.name) customAsks.push([b.name, b.range, Date.now()]); } catch (_) {} } });
+      const personPage = async name => {
+        await pg.click(`#efficiencyView .efcPeople .efcName[data-person="${name}"]`);
+        await pg.waitForFunction(n => { const p = document.querySelector('#efficiencyView .efp'), s = p && p.querySelector('.efpDl'); return !!s && p.querySelector('.efpName').textContent === n && !s.classList.contains('hidden') && !!s.querySelector('.efpDlMis').textContent && !s.querySelector('.efpDlBusy.on'); }, name, { timeout: 20000 })
+          .catch(async () => { throw new Error(`${name}'s page: ` + JSON.stringify(await pg.evaluate(() => ({ hash: location.hash, sec: (document.querySelector('#efficiencyView .efp .efpDl') || {}).outerHTML }))) + ' errors: ' + errs.join(' | ')); });
+        const t0 = Date.now(), v = await pg.evaluate(() => { const s = document.querySelector('#efficiencyView .efp .efpDl'), L = s.querySelector('.efpDlLine'); return { line: L.textContent, flag: L.classList.contains('flag'), mis: s.querySelector('.efpDlMis').innerText.replace(/\s+/g, ' ').trim(), rows: [...s.querySelectorAll('.efpDlR')].map(r => ({ no: r.classList.contains('no'), tag: !!r.querySelector('.efpDlTag.no'), red: getComputedStyle(r.querySelector('.efpDlTag.no') || r).backgroundColor, text: r.innerText.replace(/\s+/g, ' ').trim() })), n: s.querySelector('.efpDlN').textContent, label: s.querySelector('.efpLabel').innerText.replace(/\s+/g, ' ') }; });
+        return Object.assign(v, { t0 });
+      };
+      const back = async () => { await pg.click('#efficiencyView .efp .efpBack'); await pg.waitForFunction(() => location.hash === '#efficiency/custom', null, { timeout: 10000 }); };
+      const paul = await personPage(me);
+      assert.equal(paul.line, '2 custom pieces (2 no order) · 1 fix · 1 design save', 'the same figures and words as the People row: ' + paul.line);
+      assert(paul.flag, 'pieces with no order: the line is flagged, as on the People row');
+      assert.equal(paul.mis, `Mistakes made 0 · none put down to ${me} in this period`);
+      assert.equal(paul.rows.length, 2, JSON.stringify(paul.rows)); assert(paul.rows.every(r => r.no && r.tag), 'both of his pieces carry the "Custom · no order" tag: ' + JSON.stringify(paul.rows));
+      assert(paul.rows.every(r => { const [R, G, B] = (r.red.match(/\d+/g) || []).map(Number); return R > G + 50 && R > B + 50; }), 'the tag is red: ' + paul.rows.map(r => r.red).join());
+      assert(paul.rows.some(r => /Custom · no order\s*Shop sample CUSTOM-20261028-7 Cat v2 · 14K Reason: for the display/i.test(r.text)), paul.rows.map(r => r.text).join(' | '));
+      assert(paul.rows.some(r => /Redo cat/.test(r.text) && /Fixes order 3521000888 · mistake by Ana M\./.test(r.text)), paul.rows.map(r => r.text).join(' | '));
+      await back();
+      const anaP = await personPage('Ana M.');
+      assert.equal(anaP.line, 'No custom pieces sent in this period'); assert.equal(anaP.rows.length, 0);
+      assert.match(anaP.mis, /^Mistakes made 2 · 50% of 4 orders worked /, 'two mistakes in four orders worked: ' + anaP.mis);
+      assert.match(anaP.mis, new RegExp(`Order 3521000888 · fixed by ${me.replace('.', '\\.')} with “Redo cat”`)); assert.match(anaP.mis, /Order 3521000888 · fixed by Bea with “Redo moon” · .*\(the order's history said Ivy\)/);
+      await back();
+      const ivy = await personPage('Ivy');
+      assert.equal(ivy.line, '2 custom pieces (1 no order) · 1 design save'); assert.equal(ivy.n, '2');
+      assert.deepEqual(ivy.rows.map(r => [r.no, r.tag]).sort(), [[false, false], [true, true]], 'one piece on an order, one with the tag');
+      assert(ivy.rows.some(r => !r.no && /^.*Order 3521000999 Heart v3 · GF × 2/.test(r.text)), ivy.rows.map(r => r.text).join(' | '));
+      // one read per page opened, none while it sits (the next is due in 30 s, or when her own counters move)
+      const asksIvy = customAsks.filter(a => a[0] === 'Ivy').length; await wait(2500);
+      assert.equal(customAsks.filter(a => a[0] === 'Ivy').length, asksIvy, 'nothing asked again while nothing changed');
+      assert.deepEqual(customAsks.map(a => [a[0], a[1]]), [[me, 'week'], ['Ana M.', 'week'], ['Ivy', 'week']], 'one op custom per page, by name, over the page\'s own week');
+      const dayAsk = customAsks.length; await pg.click('#efficiencyView .efp .efpSeg button[data-range="day"]');
+      await pg.waitForFunction(() => document.querySelector('#efficiencyView .efp .efpDlLr').textContent.startsWith('Today'), null, { timeout: 10000 });
+      for (let i = 0; i < 50 && customAsks.length === dayAsk; i++) await wait(100);
+      assert.deepEqual(customAsks.slice(dayAsk).map(a => a[1]), ['day'], 'the Day chip asks for the day');
+      await pg.click('#efficiencyView .efp .efpSeg button[data-range="week"]'); await back(); await personPage(me);
+      await pg.evaluate(() => document.querySelector('#efficiencyView .efp .efpDl').scrollIntoView({ block: 'center' }));
+      await pg.screenshot({ path: path.join(process.env.SHOT_DIR || require('os').tmpdir(), 'design-log-person-1440.png') }).catch(() => {});
+      await pg.setViewportSize({ width: 390, height: 800 }); await wait(250);
+      const overP = await pg.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      assert(overP <= 1, `the person page: no sideways scroll at 390 px (${overP})`);
+      await pg.evaluate(() => document.querySelector('#efficiencyView .efp .efpDl').scrollIntoView());
+      await pg.screenshot({ path: path.join(process.env.SHOT_DIR || require('os').tmpdir(), 'design-log-person-390.png') }).catch(() => {});
+      assert.deepEqual(errs, [], 'no page errors');
+      console.log(`  ✓ the person pages: ${me} "${paul.line}" (2 tagged pieces), Ana M. 2 mistakes = 50% of 4 orders, Ivy one piece on order 3521000999 and one tagged; one op custom per page, none again while nothing changed; 390 px`);
     } finally { await browser.close(); }
   }
 })().catch(e => { console.error(e); process.exit(1); });
