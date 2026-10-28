@@ -11539,6 +11539,7 @@ const Engrave = window.Engrave = (() => {
     if (n) { try { Session.schedule(); render(); } catch (_) { /* drawn with the next render */ } }
     return n;
   }
+  window.CNCharmEditText = { text: charmEditText, fonts: charmEditFonts };   // (DESIGN & ENGRAVE, Paul 28 Oct 2026: the engraving's own fonts and font engine for a Charm Designer opened anywhere else, a custom order's included: charm-nest-custom-piece.js)
   return { listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
@@ -15125,6 +15126,7 @@ const CustomSheet = window.CustomSheet = (() => {
   function wire(node, it) {
     const c = cardOf(it); if (!c) return;
     node._cuIt = it; node._cuCk = c.ck; cardNodes.set(c.ck, node);
+    try { if (window.CharmNestCustomPiece) CharmNestCustomPiece.wire(node, it); } catch (err) { console.warn("Open in Charm Designer", err); }   // (DESIGN & ENGRAVE, Paul 28 Oct 2026: "custom orders that need a custom charm design now must all be able to be opened in the charm design designer": its button, and the design attached to the order: charm-nest-custom-piece.js)
     node.querySelectorAll("[data-cu-designs]").forEach(b => b.onclick = ev => { ev.stopPropagation(); open(it, { browse: !c.files.length, from: node }); });
     node.querySelectorAll("[data-cu-keep-retry]").forEach(b => b.onclick = ev => { ev.stopPropagation(); if (b.dataset.cuKeepRetry === "repo") KeepUI.askPwFocus(); keepRetryFromCard(c.ck, it, node, b.dataset.cuKeepRetry); });
     node.querySelectorAll("[data-cu-mono]").forEach(b => b.onclick = ev => { ev.stopPropagation(); if (window.Engrave && Engrave.openMonogram) Engrave.openMonogram(linesOf(it)[0].key); });
@@ -20863,6 +20865,7 @@ const OrderWin = window.OrderWin = (() => {
     // from this UI and all detailed order modals"): the Back engraving card under the pictures says what the engraving waits
     // for and has its own way into Engraving. (#owFix stays in the page, empty: nothing draws in it.)
     paintSend(r);
+    tryDo(() => window.CharmNestCustomPiece && CharmNestCustomPiece.orderWin(r, byId("owPos")));   // (DESIGN & ENGRAVE, Paul 28 Oct 2026: a custom order opens in the Charm Designer from its order window too: charm-nest-custom-piece.js)
     paintNow(r);
     paintWho();
     tryDo(paintWinSeals);   // (SEALWIN, Paul 20 Oct 2026: every seal of the order, beside its button or in the Seals row)
