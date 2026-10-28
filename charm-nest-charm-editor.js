@@ -62,12 +62,16 @@
  *                          a button on the rail (before More). flyout: tools that name the same flyout share one rail button with a hold / right-click / corner menu, the
  *                          first is the default; flyout 'shapes' joins the Rectangle / Ellipse / Line menu. key: one letter that arms it (the editor's own letters win).
  *                          cursor: the CSS cursor over the work area while it is armed. p = { x, y } in pt (face coordinates). onMove is called while dragging and,
- *                          with no button down, on hover (ev.buttons says which). onKey returns true (or prevents the default) when it used the key. overlay(ctx)
+ *                          with no button down, on hover (ev.buttons says which). onKey returns true (or prevents the default) when it used the key ('open': used, and its
+ *                          changes stay open for more, as a run of arrow taps is one undo step, until ctx.commit or the next gesture closes them). overlay(ctx)
  *                          returns SVG markup drawn over the charm in screen px (ctx.stageOf, ctx.view); ctx.redraw() asks for it again.
  *   CharmEditor.commands   { [id]: { title, key?, run(ctx), enabled?(ctx), group?, icon?, bar?, menu? } }
  *                          listed by group in the head's Object menu and, when enabled, in the right-click menu; bar: true with an icon puts a button on the property
  *                          bar while enabled; menu: false keeps it to its key. key: 'Mod+Shift+O', 'Alt+P', 'P' (Mod is ⌘ on a Mac, Ctrl elsewhere; the editor's own
  *                          keys win).
+ *                          context: false keeps it out of the right-click menu (the Object menu still lists it)
+ *   CharmEditor.beforeDuplicate(ctx, ev) -> true   ⌘D asks it first and duplicates only when it did not use the key (charm-nest-ce-ops.js: Transform Again after a
+ *                          transform with a copy, the lead's keymap of 28 Oct 2026)
  *   CharmEditor.importers  [{ id, accept: ['.png', 'image/', ...], title, run(ctx, file, info) -> Promise }]
  *                          one Import entry for all of them: the head's Import button (a file picker of every accepted type), a file dropped on the work area
  *                          (info.at = [x, y] pt where it fell) and a file pasted (⌘V with a file or image on the system clipboard; the editor's own copy wins
@@ -76,6 +80,11 @@
  *                          a panel slot to the right of the Layers, tabs when there are several, each with a head button that opens and folds it (remembered);
  *                          mount is called the first time its tab is shown, update (at most once a frame) after the work or the selection changes, unmount on close
  *   CharmEditor.onOpen     [fn(ctx)]              after a workspace opens          CharmEditor.onClose   [fn(ctx, result)]   as it closes (result null: cancelled)
+ *   CharmEditor.onChange   [fn(ctx)]              at most once a frame after the work or the selection changed (a panel's update, for a file that has no panel)
+ *   CharmEditor.overlays   [fn(ctx) -> svg]       markup over the charm in screen px with the selection furniture, whatever tool is in hand (it runs with every redraw: keep it cheap)
+ *   CharmEditor.textLayout { key(it), layout(it, engine), bent(it) }   words the font engine does not lay out alone (letter spacing, words along a path: charm-nest-ce-extras.js).
+ *                          key(it): '' when the engine's own outlines are the words, else a string that is part of their cache key; layout -> { subpaths, bbox } | null (null:
+ *                          the engine's own); bent(it): the words do not run straight, so a click finds their outlines rather than their box, and a stretch stays a stretch
  *   ctx (one per open workspace; also CharmEditor.current.ctx)
  *     doc                  the face being edited as a FaceDoc { face, unitPt, frame, items } (read-only: change it through the calls below)
  *     face() items() selection() frame() zoom() tool()      read-outs, as CharmEditor.current's
@@ -88,6 +97,7 @@
  *     setZoom(pct, about)  about: { x, y } client px (default the middle of the work area)
  *     geo                  the geometry provider (geo.raw(it), geo.box(it), geo.matrix(it), geo.drawn(it, P)); model: CharmEditor.model; entry(id) -> { it, P, parent }
  *     say(text, ms)        a short line over the work area;  redraw()  the selection furniture and overlays again;  setTool(id);  root, stage  the elements
+ *     zoomToBox(bb)        the view on a box [x0, y0, x1, y1] pt, as ⌘2 shows the selection
  *     snap(x, y, ev) -> [x, y]   the point on the smart guides (and the grid when it snaps; Alt held in ev pauses them), the agreeing guides drawn
  *     live({ box: [x0, y0, x1, y1] pt, text?, angle? } | null)   the size chip beside the box (default "W × H mm") and the bar's X / Y / W / H / angle, for a tool's own
  *                          drag (LIVE FEEDBACK below); both are cleared when the tool's gesture ends
@@ -107,8 +117,17 @@
  * about the cursor and space/middle-button pan (J 13257-13268, 17201-17211, 18468-18507), the selection furniture (J 12238-12300, C 3948-4034), the transform
  * drags (J 17696-17840: Shift locks the ratio, a centred resize, Shift snaps the turn to 15°), the align engine (J 16670-16957), the snapshot undo (J 11732-11823),
  * the clipboard and keyboard map (J 18558-18615, 21920-21955), the one-textarea text editor (J 13030-13101), the layer rows, eye and lock icons (J 19492-19535, C
- * 4219-4331) and the Cancel / Save pair (S 2807-2815, C 5172-5184, 6654-6674). What the studio does not do, this does: it draws in SVG (crisp at 4000%), it has a
- * true 1 mm grid with 0.1 mm lines when zoomed in, X / Y are a position, and text comes back as outlines. */
+ * 4219-4331) and the Cancel / Save pair (S 2807-2815, C 5172-5184, 6654-6674). What the studio does not do, this does: it draws in SVG (crisp at 6400%), it has a
+ * true 1 mm grid with 0.1 mm lines when zoomed in, X / Y are a position, and text comes back as outlines.
+ *
+ * RULERS, GUIDES, ZOOM AND PAN (Paul, 28 Oct 2026: "I also don't see a ruler like we have already in the charm studio ... I also need the ability to zoom into a given
+ * feature in the vector file. I need the ability to pan the work area once zoomed in"): the studio's two canvas rulers, and what Illustrator's add to them: the
+ * selection's extent marked on both, the cursor on both, ticks from a 1-2-5 ladder down to 0.01 mm, guides dragged out of a ruler (moved by dragging, thrown away by
+ * dragging them back onto it, snapped to, kept per face while the charm is open, never saved) and a zero point dragged out of the corner (double-click the corner: back
+ * to the charm's top-left; X / Y read from it). The zoom: the Zoom tool (Z: click in, Alt-click out, drag a box, double-click a part), ⌘ + / − / 0 / 1 / 2, the zoom
+ * box (typed or a preset), the wheel and a trackpad's pinch about the cursor, 25 % … 6400 %, every step drawn in SVG. The pan: Space or the middle button and drag,
+ * the Hand (H), a trackpad's two-finger scroll. CharmEditor.current.guides(face) and .zero() read the guides ({ id, axis: 'x' upright | 'y' level, v pt }) and the zero
+ * point ([x, y] pt) out. */
 (function (root, factory) {
   const api = factory(root);
   if (typeof module === 'object' && module.exports) module.exports = api; else root.CharmEditor = api;
@@ -117,7 +136,7 @@
   const doc = root && root.document ? root.document : null;
   const MM = 25.4 / 72, PT = 72 / 25.4;              // mm per pt, pt per mm
   const PX100 = 96 / 72;                              // CSS px per pt at 100%: true size, as Illustrator's 100% is
-  const ZMIN = 0.25, ZMAX = 40;                       // 25% … 4000%
+  const ZMIN = 0.25, ZMAX = 64;                       // 25% … 6400% (Illustrator's own top; 28 Oct 2026, was 4000%)
   const NUDGE_MM = 0.05, NUDGE_BIG_MM = 1, PASTE_MM = 0.5;   // (Paul, 27 Oct 2026, in another tool the same day: arrows 0.05 mm, Shift + arrow 1 mm; keep it the same)
   const ROLES = ['cut', 'line', 'hatch', 'art'];
   const ROLE_NAME = { cut: 'Cut line', line: 'Line engrave', hatch: 'Hatch engrave', art: 'Artwork' };
@@ -393,11 +412,12 @@
     function textGeom(it) {
       const words = it.text == null ? '' : String(it.text);
       const wt = weightOf(it);
-      const key = [words, it.fontKey == null ? '' : it.fontKey, num(it.sizePt, 10), it.align || 'left', it.lineGap == null ? '' : it.lineGap, wt].join('\u0001');
+      const lk = layKey(it);   // (28 Oct 2026, Design & Engrave: letter spacing and words along a path, laid out by CharmEditor.textLayout)
+      const key = [words, it.fontKey == null ? '' : it.fontKey, num(it.sizePt, 10), it.align || 'left', it.lineGap == null ? '' : it.lineGap, wt].join('\u0001') + (lk ? '\u0001' + lk : '');
       let g = tcache.get(key);
       if (g) { tcache.delete(key); tcache.set(key, g); return g; }
       let r = null;
-      if (words.trim()) { try { r = engine(words, it.fontKey, num(it.sizePt, 10), { align: it.align || 'left', lineGap: it.lineGap }); } catch (e) { r = null; } }
+      if (words.trim()) { try { r = (lk && api.textLayout.layout(it, engine)) || engine(words, it.fontKey, num(it.sizePt, 10), { align: it.align || 'left', lineGap: it.lineGap }); } catch (e) { r = null; } }
       let subpaths = r && Array.isArray(r.subpaths) ? r.subpaths : [];
       // (the weight: the font's own drawing grown or thinned by half of it on every edge, so a stroke of the letters is that much thicker; the engine always draws the font's own)
       if (wt && subpaths.length) subpaths = weighSubpaths(subpaths, wt * PT / 2, false);
@@ -439,6 +459,10 @@
   }
   const quadOf = (b, W) => (b ? [ap(W, b[0], b[1]), ap(W, b[2], b[1]), ap(W, b[2], b[3]), ap(W, b[0], b[3])] : null);
   const polyBox = q => { let b = null; for (const p of q) b = union(b, [p[0], p[1], p[0], p[1]]); return b; };
+  /** CharmEditor.textLayout (the header's EXTENSION POINTS): '' for words the font engine lays out alone; bentText: words that do not run straight (along a path). */
+  const textLayoutOn = () => !!(api.textLayout && typeof api.textLayout.key === 'function' && typeof api.textLayout.layout === 'function');
+  const layKey = it => { if (it.kind !== 'text' || !textLayoutOn()) return ''; try { return String(api.textLayout.key(it) || ''); } catch (e) { return ''; } };
+  const bentText = it => { if (it.kind !== 'text' || !textLayoutOn() || typeof api.textLayout.bent !== 'function') return false; try { return !!api.textLayout.bent(it); } catch (e) { return false; } };
 
   /** Turn and two scales of a 2 × 2 map (its columns must be at right angles; ortho says whether they were). The sign of sx follows `sign` so a mirrored item stays
    *  mirrored the same way rather than flipping into "turned 180° and mirrored the other way", which draws the same and reads as a change nobody made. */
@@ -493,7 +517,7 @@
   /** A text stretched evenly takes the stretch into its point size (its outlines are drawn at that size and placed where they were), so the size on the bar is the
    *  size on the charm. Uneven stretches stay as sx / sy. */
   function foldTextScale(it, geo) {
-    if (it.kind !== 'text') return it;
+    if (it.kind !== 'text' || bentText(it)) return it;   // (words along a path: their path is in their own drawing, and a stretch of the two stays a stretch)
     const sx = num(it.sx, 1), sy = num(it.sy, 1);
     if (!(sx > 0) || Math.abs(sx - sy) > 1e-6 * sx || Math.abs(sx - 1) < 1e-9) return it;
     const n = retext(Object.assign({}, it, { sx: 1, sy: 1 }), { sizePt: r9(num(it.sizePt, 10) * sx) }, geo);
@@ -660,6 +684,8 @@
   /* ═══ 6 · hit tests ═══ */
   const paintFill = it => (it.kind === 'text' ? !(it.role === 'line' || it.role === 'cut') : it.role === 'hatch' ? true : it.role === 'art' ? (!!it.fill || !it.stroke) : false);
   const paintStroke = it => (it.kind === 'text' ? (it.role === 'line' || it.role === 'cut') : (it.role === 'cut' || it.role === 'line') ? true : it.role === 'art' ? !!it.stroke : false);
+  // (Paul, 28 Oct 2026: "the colour should be a greyscale using the black as base") a traced image's part (artGrey, charm-nest-ce-image.js) is drawn in its own grey, not its role's colour
+  const greyOf = it => (it && it.artGrey && Array.isArray(it.fill) && it.fill.length >= 3 ? `rgb(${it.fill.slice(0, 3).map(v => Math.round(clamp(+v || 0, 0, 1) * 255)).join(',')})` : '');
   function distSeg(px, py, ax, ay, bx, by) {
     const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
     let t = L ? ((px - ax) * dx + (py - ay) * dy) / L : 0; t = clamp(t, 0, 1);
@@ -672,7 +698,7 @@
     if (hit && hit.key === key) return hit;
     const g = geo.raw(it);
     let out;
-    if (it.kind === 'text') { const q = quadOf(g.bbox, W); out = q ? [{ pts: [].concat(...q), closed: true }] : []; }
+    if (it.kind === 'text' && !bentText(it)) { const q = quadOf(g.bbox, W); out = q ? [{ pts: [].concat(...q), closed: true }] : []; }   // (words round a circle are found by their letters: their box is the whole circle's top)
     else out = flatten(g.subpaths).map(pl => { const p = new Array(pl.pts.length); for (let i = 0; i < p.length; i += 2) { const q = ap(W, pl.pts[i], pl.pts[i + 1]); p[i] = q[0]; p[i + 1] = q[1]; } return { pts: p, closed: pl.closed }; });
     let b = null; for (const pl of out) for (let i = 0; i < pl.pts.length; i += 2) b = union(b, [pl.pts[i], pl.pts[i + 1], pl.pts[i], pl.pts[i + 1]]);
     const rec = { key, polys: out, box: b }; polyCache.set(it, rec); return rec;
@@ -915,6 +941,10 @@
     rect: 'Drag a box · Shift for a square · Ctrl or Alt from the centre', ellipse: 'Drag an oval · Shift for a circle · Ctrl or Alt from the centre',
     line: 'Drag a line · Shift keeps it to 45° · Ctrl or Alt from the middle', polygon: 'Drag a polygon · ↑ ↓ while dragging: more or fewer sides · Shift keeps it regular · Ctrl or Alt from the centre', hand: 'Drag to move around · or hold Space with any tool'
   };
+  /* the Zoom tool (28 Oct 2026): a magnifier in the same hand as the rest; Illustrator's Z */
+  IC.zoom = SV('<circle cx="10.5" cy="10.5" r="6.3"/><path d="m15.2 15.2 5.3 5.3"/><path d="M7.9 10.5h5.2"/><path d="M10.5 7.9v5.2"/>');
+  TIPS.zoom = ['Zoom', 'Click in · Alt-click out · drag a box', 'Z'];
+  HINTS.zoom = 'Click to zoom in · Alt-click out · drag a box round what you want to see · double-click a part to fill the view with it';
 
   const CSS = `
 .ce-root{
@@ -923,6 +953,7 @@
   --in:.11s cubic-bezier(.22,.9,.28,1); --press-t:.06s cubic-bezier(.3,.8,.4,1);
   --sans:'Nunito Sans','Helvetica Neue',Helvetica,Arial,sans-serif; --serif:'Cormorant','Hoefler Text',Georgia,serif;
   --rule:19px; --c-cut:#1c1d1d; --c-line:#d4291f; --c-hatch:#1a5fc4; --c-art:#57534e;
+  --c-guide:#19a6c6; --c-guide-hot:#0e7f99;
   position:fixed; inset:0; z-index:2147482500; background:rgba(28,29,29,.36);
   font-family:var(--sans); font-size:13px; line-height:1.4; color:var(--ink); -webkit-font-smoothing:antialiased; text-align:left;
 }
@@ -1054,6 +1085,40 @@
 .ce-rule__corner{ grid-area:1/1; border-right:1px solid var(--hair); border-bottom:1px solid var(--hair); font-size:7.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); display:flex; align-items:center; justify-content:center; }
 .ce-rule--x{ grid-area:1/2; border-bottom:1px solid var(--hair); }
 .ce-rule--y{ grid-area:2/1; border-right:1px solid var(--hair); }
+/* (28 Oct 2026) the corner is the zero point's handle (C 4954-4961: the studio's corner is a button too), the rulers give guides */
+.ce-root button.ce-rule__corner{ padding:0; border-top:0; border-left:0; background:var(--band); cursor:crosshair; touch-action:none; position:relative; transition:color var(--in), background var(--in); }
+.ce-root button.ce-rule__corner:hover{ color:var(--ink); background:#fff; }
+.ce-rule__corner.is-moved::after{ content:""; position:absolute; right:2px; bottom:2px; width:4px; height:4px; background:var(--gold); }
+.ce-rule--x{ cursor:row-resize; touch-action:none; } .ce-rule--y{ cursor:col-resize; touch-action:none; }
+.ce-view{ position:absolute; left:0; top:0; width:100%; height:100%; overflow:hidden; display:block; pointer-events:none; }
+/* (the charm's own paths are never what a press lands on: the editor finds the part under the hand itself, so the browser is spared hit-testing hundreds of curves on every move) */
+.ce-art{ pointer-events:none; }
+/* a pan slides what is drawn (the workspace's slide()): each sliding layer on the compositor, drawn past its own edges */
+.ce-selo{ position:absolute; left:0; top:0; width:100%; height:100%; overflow:hidden; display:block; pointer-events:none; }
+.ce-selo .u-sel{ fill:none; stroke:var(--gold); stroke-width:1; }
+.ce-stage.is-fastpan .ce-art,.ce-stage.is-fastpan .ce-ui,.ce-stage.is-fastpan .ce-view,.ce-stage.is-fastpan .ce-selo{ overflow:visible; will-change:transform; }
+.ce-stage.is-fastpan .ce-paper{ will-change:transform; }
+/* A LONG LAYERS LIST COSTS THE ZOOM NOTHING (28 Oct 2026): a charm of three hundred parts has three hundred rows, and every frame of a zoom or a pan was paying for
+   all of them (each row and its swatch a layer of its own to paint and hit-test, each hidden eye and lock an invisible picture). Rows off the list's screen are not
+   drawn at all, and a row's quiet eye and lock are drawn only when the row is under the hand or the button has the keys; what they look like does not change. */
+.ce-layers .ce-layer,.ce-layers .ce-sw{ position:static; }
+.ce-layers .ce-layer{ content-visibility:auto; contain-intrinsic-block-size:auto 31px; }
+.ce-layers .ce-layer__b.is-quiet{ opacity:1; } .ce-layers .ce-layer__b.is-quiet svg{ display:none; }
+.ce-layers .ce-layer:hover .ce-layer__b.is-quiet svg,.ce-layers .ce-layer__b.is-quiet:focus-visible svg{ display:block; }
+.ce-view .v-guide{ stroke:var(--c-guide); stroke-width:1; shape-rendering:crispEdges; }
+.ce-view .v-guide.is-hot{ stroke:var(--c-guide-hot); stroke-width:2; }
+.ce-view .v-guide.is-off{ stroke-dasharray:3 3; opacity:.55; }
+.ce-view .v-zero{ stroke:var(--gold); stroke-width:1; stroke-dasharray:4 3; shape-rendering:crispEdges; }
+.ce-view .v-zero-dot{ fill:#fff; stroke:var(--gold); stroke-width:1.5; }
+.ce-view .v-zbox{ fill:rgba(28,29,29,.05); stroke:var(--ink); stroke-width:1; stroke-dasharray:4 3; }
+.ce-view .v-dim rect{ fill:var(--c-guide-hot); } .ce-view .v-dim text{ fill:#fff; font:600 9.5px var(--sans); letter-spacing:.06em; }
+.ce-stage[data-tool="zoom"]{ cursor:zoom-in; } .ce-stage[data-tool="zoom"].is-alt{ cursor:zoom-out; }
+.ce-stage.is-guide-x{ cursor:col-resize; } .ce-stage.is-guide-y{ cursor:row-resize; }
+.ce-zoomtype{ display:flex; align-items:center; gap:6px; margin:2px 2px 4px; height:32px; padding:0 9px; border:1px solid var(--hair); background:#fff; cursor:text; }
+.ce-zoomtype:focus-within{ background:var(--band); border-color:var(--ink); }
+.ce-zoomtype input{ flex:1 1 auto; min-width:0; width:60px; border:0; padding:0; outline:none; background:none; font-family:inherit; font-size:12.5px; font-weight:600; color:var(--ink); text-align:right; height:auto; font-variant-numeric:tabular-nums; }
+.ce-zoomtype i{ font-style:normal; font-size:10px; font-weight:800; letter-spacing:.1em; color:var(--muted); }
+.ce-root .ce-zoomtype input:focus-visible{ outline:none; }
 .ce-stage{ grid-area:2/2; position:relative; overflow:hidden; background:var(--band); touch-action:none; user-select:none; -webkit-user-select:none; cursor:default; }
 .ce-stage[data-tool="text"]{ cursor:text; }
 .ce-stage[data-tool="marquee"],.ce-stage[data-tool="rect"],.ce-stage[data-tool="ellipse"],.ce-stage[data-tool="line"]{ cursor:crosshair; }
@@ -1241,7 +1306,7 @@
   }
 
   /** The extensions as one opening of the workspace sees them (the header's EXTENSION POINTS): checked, the first of an id kept, the editor's own tool ids left to it. */
-  const BUILTIN_TOOLS = ['select', 'marquee', 'text', 'rect', 'ellipse', 'line', 'hand', 'polygon'];
+  const BUILTIN_TOOLS = ['select', 'marquee', 'text', 'rect', 'ellipse', 'line', 'hand', 'polygon', 'zoom'];
   function extensions() {
     const arr = v => (Array.isArray(v) ? v.filter(x => x && typeof x === 'object' && x.id != null && String(x.id) !== '') : []);
     const uniq = list => { const seen = new Set(); return list.filter(x => { const k = String(x.id); if (seen.has(k)) return false; seen.add(k); return true; }); };
@@ -1249,7 +1314,8 @@
     const cmds = [], c = api.commands && typeof api.commands === 'object' ? api.commands : {};
     for (const id of Object.keys(c)) if (c[id] && typeof c[id].run === 'function') cmds.push({ id, c: c[id] });
     return { tools: uniq(arr(api.tools)).filter(t => !BUILTIN_TOOLS.includes(String(t.id))), commands: cmds, importers: uniq(arr(api.importers)).filter(i => typeof i.run === 'function'),
-      panels: uniq(arr(api.panels)).filter(p => typeof p.mount === 'function'), onOpen: fns(api.onOpen), onClose: fns(api.onClose) };
+      panels: uniq(arr(api.panels)).filter(p => typeof p.mount === 'function'), onOpen: fns(api.onOpen), onClose: fns(api.onClose),
+      onChange: fns(api.onChange), overlays: fns(api.overlays) };
   }
   /** 'Mod+Shift+O' -> { mod, shift, alt, key: 'o' } (Mod, Cmd, Ctrl, Meta, ⌘ are all the platform's command key, as the editor's own keys take either). */
   function parseKey(s) {
@@ -1368,6 +1434,7 @@
         </div>
       </div>
       <button class="ce-tool" type="button" data-tool="hand" data-tip="hand" aria-label="Hand (H, or hold Space)">${IC.hand}</button>
+      <button class="ce-tool" type="button" data-tool="zoom" data-tip="zoom" aria-label="Zoom (Z)">${IC.zoom}</button>
       ${xRailHtml}
       <div class="ce-drop" data-drop="more">
         <button class="ce-tool ce-drop__b" type="button" data-tip="more" aria-label="More">${IC.more}</button>
@@ -1376,6 +1443,10 @@
           <button class="ce-item ce-item--tog" type="button" data-opt="grid" role="menuitemcheckbox"><i class="ce-tick"></i>Millimetre grid</button>
           <button class="ce-item ce-item--tog" type="button" data-opt="snapGrid" role="menuitemcheckbox"><i class="ce-tick"></i>Snap to the grid</button>
           <button class="ce-item ce-item--tog" type="button" data-opt="smart" role="menuitemcheckbox"><i class="ce-tick"></i>Smart guides<em>Alt pauses</em></button>
+          <button class="ce-item ce-item--tog" type="button" data-opt="showGuides" role="menuitemcheckbox"><i class="ce-tick"></i>Show the guides<em>⌘;</em></button>
+          <button class="ce-item ce-item--tog" type="button" data-opt="snapGuides" role="menuitemcheckbox"><i class="ce-tick"></i>Snap to the guides</button>
+          <button class="ce-item" type="button" data-view="clearGuides" role="menuitem">Clear the guides</button>
+          <button class="ce-item" type="button" data-view="zero0" role="menuitem">Zero point to the corner<em>double-click ⌜</em></button>
           <div class="ce-menu__head">Zoom</div>
           <button class="ce-item" type="button" data-zoom="fit" role="menuitem">Fit the charm<em>⌘0</em></button>
           <button class="ce-item" type="button" data-zoom="100" role="menuitem">Actual size<em>⌘1</em></button>
@@ -1384,6 +1455,7 @@
           <button class="ce-item" type="button" data-cmd="unlockAll" role="menuitem">Unlock everything</button>
           <button class="ce-item" type="button" data-cmd="showAll" role="menuitem">Show everything</button>
           <div class="ce-menu__note">Hold <b>Space</b> and drag to move around. <b>Alt</b>-click reaches inside a group. Arrows nudge 0.05 mm, <b>Shift</b> 1 mm. <b>Ctrl</b> (or Alt) on a handle resizes from the centre, <b>Shift</b> keeps the proportions.</div>
+          <div class="ce-menu__note">Drag from a <b>ruler</b> for a guide, back onto it to remove it. Drag from the <b>corner</b> to move the zero point.</div>
         </div>
       </div>
     </div>
@@ -1395,8 +1467,8 @@
   <div class="ce-props">
     <div class="ce-sizes" data-size>
       <div class="ce-size">
-        <label class="ce-size__f" title="Left edge, in mm from the charm's left edge"><span>X</span><input data-f="x" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="X position, mm" disabled></label>
-        <label class="ce-size__f" title="Top edge, in mm from the charm's top edge"><span>Y</span><input data-f="y" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Y position, mm" disabled></label>
+        <label class="ce-size__f" title="Left edge, in mm from the zero point (the charm's left edge unless it was moved: drag it from the rulers' corner)"><span>X</span><input data-f="x" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="X position, mm" disabled></label>
+        <label class="ce-size__f" title="Top edge, in mm from the zero point (the charm's top edge unless it was moved: drag it from the rulers' corner)"><span>Y</span><input data-f="y" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Y position, mm" disabled></label>
         <span class="ce-size__sep" aria-hidden="true"></span>
         <label class="ce-size__f" title="Width, mm"><span>W</span><input data-f="w" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Width, mm" disabled></label>
         <button class="ce-size__link is-on" type="button" data-act="link" aria-pressed="true" title="Keep the proportions">${IC.link}</button>
@@ -1423,12 +1495,14 @@
     <div class="ce-xbar" data-when="xbar" hidden></div>
   </div>
   <div class="ce-wrap">
-    <span class="ce-rule ce-rule__corner" aria-hidden="true">mm</span>
+    <button class="ce-rule ce-rule__corner" type="button" data-zero title="Zero point · drag it onto the charm to measure from there · double-click: back to the charm's top-left corner" aria-label="Zero point of the rulers">mm</button>
     <canvas class="ce-rule ce-rule--x" aria-hidden="true"></canvas>
     <canvas class="ce-rule ce-rule--y" aria-hidden="true"></canvas>
     <div class="ce-stage" data-tool="select">
       <div class="ce-paper"></div>
       <svg class="ce-art" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" role="img" aria-label="The charm"><g class="ce-grid"></g><g class="ce-items"></g></svg>
+      <svg class="ce-view" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
+      <svg class="ce-selo" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
       <svg class="ce-ui" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
       <div class="ce-say" role="status" aria-live="polite"></div>
     </div>
@@ -1437,6 +1511,7 @@
     <div class="ce-drop" data-drop="zoom">
       <button class="ce-prop ce-drop__b ce-zoomb" type="button" title="Zoom" aria-label="Zoom"><span data-zoomread>100%</span><i class="ce-caret"></i></button>
       <div class="ce-menu" role="menu" hidden>
+        <label class="ce-zoomtype" title="Type a zoom and press Enter · ↑ ↓ step"><input data-zoomtype inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Zoom, percent"><i>%</i></label>
         <div class="ce-menu__head">Zoom</div>
         <button class="ce-item" type="button" data-zoom="in" role="menuitem">Zoom in<em>⌘+</em></button>
         <button class="ce-item" type="button" data-zoom="out" role="menuitem">Zoom out<em>⌘−</em></button>
@@ -1448,6 +1523,7 @@
         <button class="ce-item" type="button" data-zoom="1000" role="menuitem">1000%</button>
         <button class="ce-item" type="button" data-zoom="2000" role="menuitem">2000%</button>
         <button class="ce-item" type="button" data-zoom="4000" role="menuitem">4000%</button>
+        <button class="ce-item" type="button" data-zoom="6400" role="menuitem">6400%</button>
       </div>
     </div>
     <button class="ce-prop ce-snapb" type="button" data-opt="smart" title="Smart guides: snap to the other parts and the charm, with the distances shown (⌘U) · Alt pauses them while you drag">${IC.magnet}<span>Snap</span></button>
@@ -1531,10 +1607,11 @@
       S.ox = (b.w - f.wPt * S.k) / 2; S.oy = (b.h - f.hPt * S.k) / 2; S.fitted = true; lastStage = b;
       applyView();
     }
-    function zoomToBox(bb) {
+    /** The view filled with a box of the charm (pt): `fill` of the room's shorter side (0.6 for ⌘2, the whole of it for a box swept with the Zoom tool). */
+    function zoomToBox(bb, fill) {
       if (!bb) return fit();
-      const b = sb(), w = Math.max(bb[2] - bb[0], 0.5 * PT), h = Math.max(bb[3] - bb[1], 0.5 * PT);
-      S.k = clamp(Math.min(b.w * 0.6 / w, b.h * 0.6 / h), ZMIN * PX100, ZMAX * PX100); S.fitted = false;
+      const b = sb(), w = Math.max(bb[2] - bb[0], 0.05 * PT), h = Math.max(bb[3] - bb[1], 0.05 * PT), q = fill || 0.6;
+      S.k = clamp(Math.min(b.w * q / w, b.h * q / h), ZMIN * PX100, ZMAX * PX100); S.fitted = false;
       const f = frame(), cx = (bb[0] + bb[2]) / 2, cy = (bb[1] + bb[3]) / 2;
       S.ox = b.w / 2 - (cx - f.x0) * S.k; S.oy = b.h / 2 - (cy - f.y0) * S.k; lastStage = b; clampPan(); applyView();
     }
@@ -1545,25 +1622,64 @@
     let lastStage = null;
     function zoomCmd(z) {
       if (z === 'fit') fit(); else if (z === '100') zoomTo(100); else if (z === 'sel') zoomToBox(selBox());
-      else if (z === 'in' || z === 'out') { const b = sb(); zoomAtStage(S.k * (z === 'in' ? 1.5 : 1 / 1.5), b.w / 2, b.h / 2); }
+      else if (z === 'in' || z === 'out') { const b = sb(); zoomAtStage(stepZoom(z === 'in' ? 1 : -1) / 100 * PX100, b.w / 2, b.h / 2); }
       else if (fin(+z)) zoomTo(+z);
+    }
+    /* ⌘ + / − and a click of the Zoom tool go up and down Illustrator's own ladder of zooms, so a number on the box is always one a person would pick */
+    const ZLADDER = [25, 100 / 3, 50, 200 / 3, 100, 150, 200, 300, 400, 600, 800, 1200, 1600, 2400, 3200, 4800, 6400];
+    function stepZoom(dir) {
+      const p = zoomPct();
+      if (dir > 0) { for (const z of ZLADDER) if (z > p * 1.004) return z; return ZMAX * 100; }
+      for (let i = ZLADDER.length - 1; i >= 0; i--) if (ZLADDER[i] < p / 1.004) return ZLADDER[i];
+      return ZMIN * 100;
     }
     function applyView() {
       const b = sb(); if (b.w < 2 || b.h < 2) return;
       if (lastStage && (b.l !== lastStage.l || b.t !== lastStage.t)) { S.ox -= b.l - lastStage.l; S.oy -= b.t - lastStage.t; }
       lastStage = b;
+      if (slide(b)) return;
       const f = frame(), vx = f.x0 - S.ox / S.k, vy = f.y0 - S.oy / S.k, vw = b.w / S.k, vh = b.h / S.k;
       art.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`);
-      art.style.setProperty('--k', String(S.k));
-      // (a line is drawn at its true width at every zoom, lwPt × px per pt; only a line thinner than one pixel of the screen is held at that pixel, so it stays in sight)
-      art.style.setProperty('--hair', (1 / Math.max(1, +root.devicePixelRatio || 1)) + 'px');
+      // (a line is drawn at its true width at every zoom, lwPt × px per pt; only a line thinner than one pixel of the screen is held at that pixel, so it stays in sight.
+      //  Set only when they change: a pan leaves them alone, so three hundred paths are not restyled on every frame of one)
+      const hair = (1 / Math.max(1, +root.devicePixelRatio || 1)) + 'px';
+      if (viewK !== S.k || viewHair !== hair) { viewK = S.k; viewHair = hair; art.style.setProperty('--k', String(S.k)); art.style.setProperty('--hair', hair); }
       Object.assign(paper.style, { left: S.ox + 'px', top: S.oy + 'px', width: f.wPt * S.k + 'px', height: f.hPt * S.k + 'px' });
-      drawGrid(vx, vy, vw, vh);
-      queueRulers(); renderUI();
-      $('[data-zoomread]').textContent = fmtZoom(zoomPct());
+      // (a pan in hand: the frames after this one slide what is drawn now, so the grid reaches half a room beyond each edge for them)
+      const sliding = slideFrom();
+      if (sliding) drawGrid(vx - vw / 2, vy - vh / 2, vw * 2, vh * 2); else drawGrid(vx, vy, vw, vh);
+      queueRulers(); renderUI(); drawView();
+      const zr = fmtZoom(zoomPct()), zEl = $('[data-zoomread]'); if (zEl.textContent !== zr) zEl.textContent = zr;
       if (S.editing) placeEditor();
     }
     const fmtZoom = p => (p < 100 ? trim(p, 0) : String(Math.round(p))) + '%';
+    let viewK = 0, viewHair = '';
+    /* A PAN SLIDES WHAT IS DRAWN (28 Oct 2026: smooth on a charm of hundreds of paths). While the hand pans (Space or the middle button and drag, the Hand, a
+       two-finger scroll), the charm, its paper and grid and the overlays over them are moved as they are, on the compositor, instead of being drawn again on every
+       frame; they are drawn afresh when the hand stops, and after half a room of travel. Each overlay knows where it was drawn (el.__at), so one drawn again in the
+       middle of a pan (a hover) is slid from there. A zoom always draws: nothing is ever scaled as a picture. */
+    let slid = null, wheelPanT = 0;
+    const panning = () => !!(S.g && S.g.kind === 'pan') || !!wheelPanT;
+    function slide(b) {
+      if (!panning()) { if (slid) { slid = null; stage.classList.remove('is-fastpan'); } return false; }
+      if (!slid || slid.k !== S.k || Math.abs(S.ox - slid.ox) > b.w / 2 || Math.abs(S.oy - slid.oy) > b.h / 2) return false;
+      const by = (el, at) => { const t = at && at[2] === S.k ? `translate(${S.ox - at[0]}px,${S.oy - at[1]}px)` : ''; if (el.style.transform !== t) el.style.transform = t; };
+      by(art, [slid.ox, slid.oy, slid.k]); by(paper, [slid.ox, slid.oy, slid.k]); by(ui, ui.__at); by(viewEl, viewEl.__at); by(seloEl, seloEl.__at);
+      queueRulers();
+      if (S.editing) placeEditor();
+      return true;
+    }
+    /** The full drawing of the view is being made: the slide (if a pan is in hand) starts from here. */
+    function slideFrom() {
+      art.style.transform = ''; paper.style.transform = '';
+      if (!panning()) { if (slid) { slid = null; stage.classList.remove('is-fastpan'); } return false; }
+      slid = { ox: S.ox, oy: S.oy, k: S.k }; stage.classList.add('is-fastpan');
+      return true;
+    }
+    /** An overlay was drawn where the view is now: it stands still until the next slide. */
+    function drawnAt(el) { el.__at = [S.ox, S.oy, S.k]; if (el.style.transform) el.style.transform = ''; }
+    /** The hand stopped: the view drawn afresh where it ended (the next frame, so the press's own work is done first). */
+    function slideEnd() { requestAnimationFrame(() => { if (slid && !panning()) applyView(); }); }
 
     /* a TRUE millimetre grid: lines every mm from the charm's corner, every 0.1 mm once they are 6 px apart, every 5 mm a shade darker; only where the charm is,
        only what is on screen, one path per weight */
@@ -1588,47 +1704,342 @@
       gridG.innerHTML = h;
     }
 
-    /* ── the rulers (the studio's mkRulerDraw, J 19196-19291: one routine for both axes, ticks from a ladder of numbers a person would write, the cursor line) ── */
-    const STEPS = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50, 100];
-    let ruleRaf = 0, cursor = null;
+    /* ── the rulers (the studio's mkRulerDraw, J 19196-19291: one routine for both axes, drawn on a canvas, the cursor line) and what Illustrator's have that the
+       studio's do not (Paul, 28 Oct 2026: "I also don't see a ruler like we have already in the charm studio"): the selection's extent marked on both, the guides
+       on them, ticks in three heights from a 1-2-5 ladder that reaches 0.01 mm (tenths of a millimetre marked from about 1300 %), the numbers read from the zero point ── */
+    const LADDER = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
+    /** The numbered step (the first at least 46 px apart) and its finest division still 5 px apart: tenths, fifths or halves (a 2 in quarters, so every mark falls on
+     *  a number a person would write), with a longer middle tick when the division is even. */
+    function ruleSteps(pxmm) {
+      let major = LADDER[LADDER.length - 1];
+      for (const s of LADDER) if (s * pxmm >= 46) { major = s; break; }
+      const lead = Math.round(major / Math.pow(10, Math.floor(Math.log10(major) + 1e-9)));
+      let n = 1;
+      for (const d of lead === 2 ? [10, 4, 2] : lead === 5 ? [10, 5] : [10, 5, 2]) if (major / d * pxmm >= 5) { n = d; break; }
+      return { major, n, minor: major / n, half: n % 2 === 0 ? n / 2 : 0 };
+    }
+    const ruleNum = u => String(+(Math.abs(u) < 1e-9 ? 0 : u).toFixed(3));
+    let ruleRaf = 0, cursor = null, ruleFont = '', selMemo = { its: null, key: '', b: null };
     const queueRulers = () => { if (!ruleRaf) ruleRaf = requestAnimationFrame(drawRulers); };
+    /** The selection's box, worked out again only when the tree or the selection changes (the tree is immutable: the same array is the same drawing). */
+    function selExtent() {
+      const its = items(), key = S.face + '|' + S.sel.join('|');
+      if (selMemo.its !== its || selMemo.key !== key) selMemo = { its, key, b: S.sel.length ? selBox() : null };
+      return selMemo.b;
+    }
     function drawRulers() {
       ruleRaf = 0;
+      if (!rootEl.isConnected) return;
       const dpr = Math.min(2, root.devicePixelRatio || 1);
-      const pxmm = S.k * PT, ink = '#1c1d1d', muted = '#8a8784', hair = '#d9d4ca', liveC = '#b8935a';
-      const step = minPx => { for (const s of STEPS) if (s * pxmm >= minPx) return s; return STEPS[STEPS.length - 1]; };
+      const pxmm = S.k * PT, ink = '#1c1d1d', muted = '#8a8784', hair = '#cdc6b8', liveC = '#b8935a', guideC = '#19a6c6';
+      // (what is being drawn is marked as it grows, a shape's draft or an extension tool's live box; otherwise the selection)
+      const g0 = S.g, live = g0 && g0.kind === 'draw' && g0.live && g0.draft ? bboxOf(g0.draft) : S.xLive && Array.isArray(S.xLive.box) ? S.xLive.box : null;
+      const st = ruleSteps(pxmm), s = sb(), f = frame(), z = zeroPt(), sel = live || selExtent(), gl = S.showGuides ? guides() : [];
+      if (!ruleFont) ruleFont = '700 8px ' + (getComputedStyle(rootEl).fontFamily || 'sans-serif');
+      corner.classList.toggle('is-moved', !!face().zero);
       const draw = (cv, vertical) => {
-        const box = cv.getBoundingClientRect(), len = vertical ? box.height : box.width, thick = vertical ? box.width : box.height;
+        // (the bitmap is the canvas's own box inside its hairline border: sized to the border box it was squeezed a pixel in, and every tick was a little soft)
+        const box = cv.getBoundingClientRect(), cw = cv.clientWidth, ch = cv.clientHeight, len = vertical ? ch : cw, thick = vertical ? cw : ch;
         if (len < 4 || thick < 2) return;
-        if (cv.width !== Math.round(box.width * dpr) || cv.height !== Math.round(box.height * dpr)) { cv.width = Math.max(1, Math.round(box.width * dpr)); cv.height = Math.max(1, Math.round(box.height * dpr)); }
+        if (cv.width !== Math.round(cw * dpr) || cv.height !== Math.round(ch * dpr)) { cv.width = Math.max(1, Math.round(cw * dpr)); cv.height = Math.max(1, Math.round(ch * dpr)); }
         const c = cv.getContext('2d'); if (!c) return;
-        c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, box.width, box.height);
-        c.font = '700 8px ' + (getComputedStyle(rootEl).fontFamily || 'sans-serif'); c.textBaseline = 'top';
-        const s = sb(), origin = (vertical ? s.t + S.oy : s.l + S.ox) - (vertical ? box.top : box.left);
-        const minor = step(6), major = step(44), u0 = -origin / pxmm, u1 = (len - origin) / pxmm;
+        c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, cw, ch);
+        c.font = ruleFont; c.textBaseline = 'top';
+        // where a point of the charm (pt, on this ruler's axis) falls on the ruler, in the ruler's own px; the numbers count from the zero point
+        const at = vertical ? (v => s.t - box.top + S.oy + (v - f.y0) * S.k) : (v => s.l - box.left + S.ox + (v - f.x0) * S.k);
+        const origin = at(vertical ? z[1] : z[0]);
+        const line = (p, from, to) => { if (vertical) { c.moveTo(from, p); c.lineTo(to, p); } else { c.moveTo(p, from); c.lineTo(p, to); } };
+        // the selection's extent: a band between its edges under the ticks, and over them (below) its edges full depth and its middle half depth (Illustrator marks
+        // the edges; the band reads at a glance)
+        const sa = sel ? at(vertical ? sel[1] : sel[0]) : 0, sbd = sel ? at(vertical ? sel[3] : sel[2]) : 0;
+        if (sel) {
+          const lo = Math.max(0, Math.min(sa, sbd)), hi = Math.min(len, Math.max(sa, sbd));
+          c.fillStyle = 'rgba(184,147,90,.2)';
+          if (hi >= lo) { if (vertical) c.fillRect(0, lo, thick, hi - lo); else c.fillRect(lo, 0, hi - lo, thick); }
+        }
+        // the ticks: each division short, the half longer, the numbered ones the full depth
+        const u0 = -origin / pxmm, u1 = (len - origin) / pxmm;
+        const i0 = Math.ceil(u0 / st.minor - 1e-6), i1 = Math.min(i0 + 4000, Math.floor(u1 / st.minor + 1e-6));
         c.strokeStyle = hair; c.lineWidth = 1; c.beginPath();
-        const first = Math.ceil(u0 / minor) * minor, count = Math.min(4000, Math.floor((u1 - first) / minor) + 1);
-        for (let i = 0; i < count; i++) {
-          const u = first + i * minor, p = Math.round(origin + u * pxmm) + 0.5; if (p < 0 || p > len) continue;
-          const big = Math.abs(u / major - Math.round(u / major)) < 1e-6, h = big ? thick - 1 : Math.min(4, thick * 0.28);
-          if (vertical) { c.moveTo(thick - h, p); c.lineTo(thick - 1, p); } else { c.moveTo(p, thick - h); c.lineTo(p, thick - 1); }
+        for (let i = i0; i <= i1; i++) {
+          const p = Math.round(origin + i * st.minor * pxmm) + 0.5; if (p < 0 || p > len) continue;
+          const big = i % st.n === 0, mid = !big && st.half && i % st.half === 0;
+          const h = big ? thick - 1 : mid ? Math.min(7, thick * 0.4) : Math.min(4, thick * 0.24);
+          line(p, thick - h, thick - 1);
         }
         c.stroke();
-        const mFirst = Math.ceil(u0 / major) * major, mCount = Math.min(400, Math.floor((u1 - mFirst) / major) + 1);
-        for (let i = 0; i < mCount; i++) {
-          const u = mFirst + i * major, p = Math.round(origin + u * pxmm); if (p < -20 || p > len + 20) continue;
-          const txt = String(+(Math.abs(u) < 1e-9 ? 0 : u).toFixed(2));
-          c.fillStyle = Math.abs(u) < 1e-9 ? ink : muted;
-          if (vertical) { c.save(); c.translate(1.5, p + 2); c.rotate(-Math.PI / 2); c.textAlign = 'right'; c.fillText(txt, 0, 0); c.restore(); }
-          else { c.textAlign = 'left'; c.fillText(txt, p + 2.5, 2); }
+        // the numbers, on the numbered ticks; the zero in ink
+        const j0 = Math.ceil(u0 / st.major - 1e-6) - 1, j1 = Math.min(j0 + 400, Math.floor(u1 / st.major + 1e-6) + 1);
+        for (let j = j0; j <= j1; j++) {
+          const u = j * st.major, p = Math.round(origin + u * pxmm); if (p < -40 || p > len + 4) continue;
+          c.fillStyle = j === 0 ? ink : muted;
+          if (vertical) { c.save(); c.translate(1.5, p + 2); c.rotate(-Math.PI / 2); c.textAlign = 'right'; c.fillText(ruleNum(u), 0, 0); c.restore(); }
+          else { c.textAlign = 'left'; c.fillText(ruleNum(u), p + 2.5, 2); }
         }
+        // the guides across this ruler: a small flag on its inner edge (the top ruler carries the upright guides, at their x)
+        c.fillStyle = guideC;
+        for (const g of gl) {
+          if (g.axis !== (vertical ? 'y' : 'x')) continue;
+          const p = Math.round(at(g.v)) + 0.5; if (p < -4 || p > len + 4) continue;
+          c.beginPath();
+          if (vertical) { c.moveTo(thick, p - 4); c.lineTo(thick - 5, p); c.lineTo(thick, p + 4); } else { c.moveTo(p - 4, thick); c.lineTo(p, thick - 5); c.lineTo(p + 4, thick); }
+          c.closePath(); c.fill();
+        }
+        if (sel) {
+          c.strokeStyle = liveC; c.lineWidth = 1; c.beginPath();
+          for (const p of [sa, sbd]) { const q = Math.round(p) + 0.5; if (q >= 0 && q <= len) line(q, 0, thick); }
+          const m = Math.round((sa + sbd) / 2) + 0.5; if (m >= 0 && m <= len) line(m, thick * 0.5, thick);
+          c.stroke();
+        }
+        // where the cursor is, right now (J 19275)
         if (cursor) {
           const p = Math.round(vertical ? cursor.y - box.top : cursor.x - box.left) + 0.5;
-          if (p >= 0 && p <= len) { c.strokeStyle = liveC; c.beginPath(); if (vertical) { c.moveTo(0, p); c.lineTo(thick, p); } else { c.moveTo(p, 0); c.lineTo(p, thick); } c.stroke(); }
+          if (p >= 0 && p <= len) { c.strokeStyle = liveC; c.lineWidth = 1; c.beginPath(); line(p, 0, thick); c.stroke(); }
         }
       };
       draw(rx, false); draw(ry, true);
     }
+
+    /* ── guides, the zero point and the Zoom tool: the view's own gestures (28 Oct 2026). They draw in their own layer (.ce-view, over the charm and under the
+       selection) and listen for themselves: the room's press is taken in the capture phase, before the gestures of the room see it, only when it is theirs.
+       A guide: dragged out of a ruler (the top one gives a level guide, the left one an upright one), moved by dragging it, thrown away by dragging it back onto its
+       ruler; it settles on the charm's edges and middle, the selection's, every part's and the other guides' within 7 px (Alt: free; Shift: on the ruler's ticks);
+       moving things snap to it. Guides belong to a face and last while the charm is open: aids to the eye, never saved, never engraved.
+       The zero point: dragged out of the corner where the rulers meet (it settles on the same marks), double-click the corner to put it back at the charm's top-left;
+       the rulers and X / Y count from it, as Illustrator's do. ── */
+    const viewEl = $('.ce-view'), corner = $('[data-zero]');
+    S.showGuides = true; S.snapGuides = true;
+    const GUIDE_PX = 4;   // a press this close to a guide picks it up
+    let guideSeq = 0, vg = null, hotGuide = null;
+    const guides = () => face().guides || (face().guides = []);
+    const zeroPt = () => (vg && vg.kind === 'zero' && vg.p) || face().zero || [frame().x0, frame().y0];
+    const guidePx = g => (g.axis === 'x' ? toStage(g.v, 0)[0] : toStage(0, g.v)[1]);
+    /** The values the moving things snap to on one axis ('x': the upright guides): none when the guides are hidden or their snap is off. */
+    const guideSnaps = axis => (S.showGuides && S.snapGuides ? guides().filter(g => g.axis === axis).map(g => ({ v: g.v, kind: 'guide' })) : []);
+    /** Is anything there to snap to: smart guides, the grid or a guide. */
+    const snapsAny = () => S.smart || S.snapGrid || (S.showGuides && S.snapGuides && guides().length > 0);
+    function guideAt(cx, cy) {
+      const gl = S.showGuides ? guides() : []; if (!gl.length) return null;
+      const b = sb(), px = cx - b.l, py = cy - b.t; let best = null, bd = GUIDE_PX + 0.01;
+      for (const g of gl) { const d = Math.abs((g.axis === 'x' ? px : py) - guidePx(g)); if (d < bd) { bd = d; best = g; } }
+      return best;
+    }
+    function viewDim(x, y, text) {
+      const b = sb(), w = text.length * 5.9 + 12;
+      x = clamp(x, 4, Math.max(4, b.w - w - 4)); y = clamp(y, 4, Math.max(4, b.h - 20));
+      return `<g class="v-dim"><rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="16"/><text x="${(x + 6).toFixed(1)}" y="${(y + 11.5).toFixed(1)}">${esc(text)}</text></g>`;
+    }
+    function drawView() {
+      const b = lastStage || sb(), g = vg, R = v => Math.round(v) + 0.5, W = Math.ceil(b.w), H = Math.ceil(b.h);
+      drawnAt(viewEl);
+      // (a guide runs a room past each edge: a pan slides this layer as it is)
+      const gLine = (axis, p, cls) => (axis === 'x' ? `<line class="${cls}" x1="${R(p)}" y1="${-H}" x2="${R(p)}" y2="${2 * H}"/>` : `<line class="${cls}" x1="${-W}" y1="${R(p)}" x2="${2 * W}" y2="${R(p)}"/>`);
+      let h = '';
+      if (S.showGuides) for (const gd of guides()) {
+        if (g && g.kind === 'guide' && g.gd.id === gd.id && g.moved) continue;
+        const p = guidePx(gd), span = gd.axis === 'x' ? b.w : b.h; if (p < -span || p > 2 * span) continue;
+        h += gLine(gd.axis, p, 'v-guide' + (hotGuide === gd.id ? ' is-hot' : ''));
+      }
+      if (g && g.kind === 'guide' && g.moved && g.v != null) {
+        const up = g.axis === 'x', p = up ? toStage(g.v, 0)[0] : toStage(0, g.v)[1];
+        h += gLine(g.axis, p, 'v-guide is-hot' + (g.off ? ' is-off' : ''));
+        if (!g.off) { const z = zeroPt(); h += viewDim(up ? p + 8 : g.lx + 12, up ? g.ly + 12 : p + 8, `${up ? 'X' : 'Y'} ${fmtMm((g.v - z[up ? 0 : 1]) * MM)} mm`); }
+      }
+      if (g && g.kind === 'zero' && g.p) {
+        const p = toStage(g.p[0], g.p[1]);
+        h += `<line class="v-zero" x1="${R(p[0])}" y1="0" x2="${R(p[0])}" y2="${H}"/><line class="v-zero" x1="0" y1="${R(p[1])}" x2="${W}" y2="${R(p[1])}"/><circle class="v-zero-dot" cx="${R(p[0])}" cy="${R(p[1])}" r="3.5"/>`;
+      }
+      if (g && g.kind === 'zbox' && g.live) {
+        const x0 = Math.min(g.cx0, g.cx) - b.l, y0 = Math.min(g.cy0, g.cy) - b.t;
+        h += `<rect class="v-zbox" x="${R(x0)}" y="${R(y0)}" width="${Math.round(Math.abs(g.cx - g.cx0))}" height="${Math.round(Math.abs(g.cy - g.cy0))}"/>`;
+      }
+      if (viewEl.__h !== h) { viewEl.__h = h; viewEl.innerHTML = h; }
+    }
+    /** The value on one axis within 7 screen px of `v` that it settles on, or null. */
+    const snapTo = (v, vals) => { let best = null, bd = 7 / S.k; for (const t of vals) { const d = Math.abs(t - v); if (d <= bd) { bd = d; best = t; } } return best; };
+    /** What a guide or the zero point settles on: the charm's edges and middle, the selection's, each part's on top (as drawn) and the other guides. Worked out once,
+     *  when the drag begins. */
+    function viewTargets(skip) {
+      const f = frame(), T = { x: [f.x0, f.x0 + f.wPt / 2, f.x0 + f.wPt], y: [f.y0, f.y0 + f.hPt / 2, f.y0 + f.hPt] };
+      const add = b => { if (!b) return; T.x.push(b[0], (b[0] + b[2]) / 2, b[2]); T.y.push(b[1], (b[1] + b[3]) / 2, b[3]); };
+      add(selExtent());
+      let n = 0; for (const it of items()) { if (it.hidden) continue; if (++n > 600) break; add(geo.drawn(it, I)); }
+      for (const g of guides()) if (!skip || g.id !== skip.id) T[g.axis].push(g.v);
+      return T;
+    }
+    function startView(e, o) {
+      if (S.editing) closeEditor();
+      closeMenus(); hideTip();
+      vg = Object.assign({ pid: e.pointerId, cx0: e.clientX, cy0: e.clientY, cx: e.clientX, cy: e.clientY }, o);
+      try { o.el.setPointerCapture(e.pointerId); } catch (er) { /* fine without */ }
+    }
+    function startGuide(e, gd, isNew, el) {
+      startView(e, { kind: 'guide', gd, axis: gd.axis, isNew, el, v: isNew ? null : gd.v, off: false, moved: false, T: viewTargets(gd) });
+      if (!S.showGuides) { S.showGuides = true; syncProps(); }
+    }
+    function viewMove(e) {
+      const g = vg; if (!g) return;
+      g.cx = e.clientX; g.cy = e.clientY; cursor = { x: e.clientX, y: e.clientY }; queueRulers();
+      const b = sb();
+      if (g.kind === 'guide') {
+        g.moved = g.moved || Math.hypot(e.clientX - g.cx0, e.clientY - g.cy0) > 2;
+        if (!g.moved) return;
+        const up = g.axis === 'x', pt = fromClient(e.clientX, e.clientY);
+        let v = up ? pt[0] : pt[1];
+        g.off = up ? e.clientX < b.l : e.clientY < b.t;   // over its own ruler: it goes when it is let go
+        if (e.shiftKey) { const step = ruleSteps(S.k * PT).minor * PT, z0 = zeroPt()[up ? 0 : 1]; v = z0 + Math.round((v - z0) / step) * step; }
+        else if (!e.altKey) { const t = snapTo(v, g.T[g.axis]); if (t != null) v = t; }
+        g.v = v; g.lx = e.clientX - b.l; g.ly = e.clientY - b.t; hotGuide = null;
+      } else if (g.kind === 'zero') {
+        const inside = e.clientX >= b.l && e.clientX <= b.l + b.w && e.clientY >= b.t && e.clientY <= b.t + b.h;
+        if (!inside) g.p = null;
+        else {
+          let [x, y] = fromClient(e.clientX, e.clientY);
+          if (!e.altKey) { const tx = snapTo(x, g.T.x), ty = snapTo(y, g.T.y); if (tx != null) x = tx; if (ty != null) y = ty; }
+          g.p = [x, y];
+        }
+      } else if (g.kind === 'zbox') {
+        if (!g.live && Math.hypot(g.cx - g.cx0, g.cy - g.cy0) > 5) g.live = true;
+        g.out = e.altKey;
+      }
+      drawView();
+    }
+    function viewEnd(e, cancel) {
+      const g = vg; if (!g || g.pid !== e.pointerId) return false;
+      vg = null;
+      try { g.el.releasePointerCapture(e.pointerId); } catch (er) { /* not captured */ }
+      if (!cancel) {
+        if (g.kind === 'guide' && g.moved && g.v != null) {
+          const list = guides().filter(x => x.id !== g.gd.id);
+          if (!g.off) list.push({ id: g.gd.id, axis: g.axis, v: r9(g.v) });
+          face().guides = list;
+        } else if (g.kind === 'zero' && g.p) setZero(g.p);
+        else if (g.kind === 'zbox') {
+          if (g.live) {
+            const a = fromClient(g.cx0, g.cy0), c = fromClient(g.cx, g.cy);
+            zoomToBox([Math.min(a[0], c[0]), Math.min(a[1], c[1]), Math.max(a[0], c[0]), Math.max(a[1], c[1])], 1);
+          } else { const s = sb(); zoomAtStage(stepZoom(g.out ? -1 : 1) / 100 * PX100, g.cx0 - s.l, g.cy0 - s.t); }
+        }
+      }
+      drawView(); queueRulers();
+      return true;
+    }
+    function setZero(p) {
+      const f = frame();
+      if (!p || (Math.abs(p[0] - f.x0) < 1e-9 && Math.abs(p[1] - f.y0) < 1e-9)) delete face().zero; else face().zero = [r9(p[0]), r9(p[1])];
+      queueRulers(); drawView(); syncProps();
+    }
+    /* THE OUTLINES OF A SELECTION OF MANY, DRAWN ONCE AND KEPT (28 Oct 2026): every part of the selection outlined in gold, in the charm's own coordinates under one
+       matrix, the view. A zoom or a pan changes that matrix and nothing else; the outlines are made again only when the selection or the drawing changes (a zoom
+       with three hundred parts selected was making three hundred outlines afresh on every frame). */
+    const seloEl = $('.ce-selo');
+    let seloKey = '', seloFor = null;
+    function selOutlines(es) {
+      if (!es.length) { if (seloKey) { seloEl.innerHTML = ''; seloKey = ''; seloFor = null; } return; }
+      const key = S.face + '|' + es.map(e => e.it.id).join('|');
+      if (seloFor !== items() || seloKey !== key) {
+        seloFor = items(); seloKey = key;
+        let h = '', n = 0;
+        const leaf = (lf, M) => { h += `<path d="${dOf(geo.raw(lf).subpaths)}"${isI(M) ? '' : ` transform="matrix(${M.map(v => +v.toFixed(9)).join(' ')})"`} vector-effect="non-scaling-stroke"/>`; n++; };
+        const rec = (g, M) => { for (const ch of g.children || []) { if (n > 400 || ch.hidden) continue; const M2 = mul(M, geo.matrix(ch)); if (ch.kind === 'group') rec(ch, M2); else leaf(ch, M2); } };
+        let m = 0;
+        for (const e of es) { if (m++ > 300) break; const W = mul(e.P, geo.matrix(e.it)); if (e.it.kind === 'group') rec(e.it, W); else leaf(e.it, W); }
+        seloEl.innerHTML = `<g class="u-sel">${h}</g>`;
+      }
+      const g = seloEl.firstChild, t = `matrix(${V().map(v => +v.toFixed(9)).join(' ')})`;
+      if (g && g.getAttribute('transform') !== t) g.setAttribute('transform', t);
+      drawnAt(seloEl);
+    }
+    function hoverGuide(e) {
+      let on = null;
+      if ((S.tool === 'select' || S.tool === 'marquee') && !S.g && !S.space && !(e.target.closest && e.target.closest('[data-h]'))) {
+        const gd = guideAt(e.clientX, e.clientY);
+        if (gd) { const [x, y] = fromClient(e.clientX, e.clientY); if (!hitAt(x, y, { deep: e.altKey })) on = gd; }
+      }
+      const was = hotGuide; hotGuide = on ? on.id : null;
+      stage.classList.toggle('is-guide-x', !!on && on.axis === 'x'); stage.classList.toggle('is-guide-y', !!on && on.axis === 'y');
+      if (was !== hotGuide) drawView();
+    }
+    function wireView() {
+      // the room: the Zoom tool's press, and a press on a guide with a selecting tool (a part under the press wins: a guide laid on an edge is picked up beside it)
+      stage.addEventListener('pointerdown', e => {
+        if (S.ask || vg || e.button !== 0 || S.space || e.pointerType === 'touch') return;
+        if (e.target.closest && e.target.closest('.ce-editor')) return;
+        if (S.tool === 'zoom') { e.preventDefault(); e.stopImmediatePropagation(); startView(e, { kind: 'zbox', el: stage, out: e.altKey, live: false }); return; }
+        if (S.tool !== 'select' && S.tool !== 'marquee') return;
+        const gd = guideAt(e.clientX, e.clientY); if (!gd || (e.target.closest && e.target.closest('[data-h]'))) return;
+        const [x, y] = fromClient(e.clientX, e.clientY); if (hitAt(x, y, { deep: e.altKey })) return;
+        e.preventDefault(); e.stopImmediatePropagation(); startGuide(e, gd, false, stage);
+      }, true);
+      stage.addEventListener('pointermove', e => {
+        if (S.tool === 'zoom') stage.classList.toggle('is-alt', e.altKey);
+        if (vg && vg.el === stage) { e.stopImmediatePropagation(); viewMove(e); } else if (!vg) hoverGuide(e);
+      }, true);
+      stage.addEventListener('pointerup', e => { if (S.g && S.g.kind === 'pan') slideEnd(); if (vg && vg.el === stage && viewEnd(e)) e.stopImmediatePropagation(); }, true);
+      stage.addEventListener('pointercancel', e => { if (S.g && S.g.kind === 'pan') slideEnd(); if (vg && vg.el === stage && viewEnd(e, true)) e.stopImmediatePropagation(); }, true);
+      // double-click a part with the Zoom tool: it fills the view
+      stage.addEventListener('dblclick', e => {
+        if (S.tool !== 'zoom') return;
+        e.stopImmediatePropagation();
+        const [x, y] = fromClient(e.clientX, e.clientY), hit = hitAt(x, y, { deep: true }), en = hit && entry(hit.id);
+        if (en) zoomToBox(geo.drawn(en.it, en.P), 0.8);
+      }, true);
+      // the rulers give guides; the corner moves the zero point
+      for (const [el, axis] of [[rx, 'y'], [ry, 'x'], [corner, null]]) {
+        el.addEventListener('pointerdown', e => {
+          if (S.ask || vg || e.button !== 0) return;
+          e.preventDefault();
+          if (axis) startGuide(e, { id: 'g' + (++guideSeq), axis, v: null }, true, el);
+          else startView(e, { kind: 'zero', el, p: null, T: viewTargets(null) });
+        });
+        el.addEventListener('pointermove', e => { if (vg && vg.el === el) viewMove(e); });
+        el.addEventListener('pointerup', e => { if (vg && vg.el === el) viewEnd(e); });
+        el.addEventListener('pointercancel', e => { if (vg && vg.el === el) viewEnd(e, true); });
+        el.addEventListener('wheel', onWheel, { passive: false });
+      }
+      corner.addEventListener('dblclick', e => { e.preventDefault(); setZero(null); });
+      // (Illustrator's: a double-click on the Hand fits the charm, on the Zoom tool it is 100 %)
+      $('.ce-rail [data-tool="hand"]').addEventListener('dblclick', () => fit());
+      $('.ce-rail [data-tool="zoom"]').addEventListener('dblclick', () => zoomTo(100));
+      // (nowhere in the editor does a pinch or ⌘-wheel zoom the PAGE: over the bars and the Layers too it is the charm's or nothing; Safari pinches with gestures)
+      rootEl.addEventListener('wheel', e => { if (e.ctrlKey && !e.defaultPrevented) e.preventDefault(); }, { passive: false });
+      let gk = null;
+      rootEl.addEventListener('gesturestart', e => { e.preventDefault(); gk = e.target.closest && e.target.closest('.ce-stage') ? S.k : null; });
+      rootEl.addEventListener('gesturechange', e => { e.preventDefault(); if (gk == null || !fin(e.scale)) return; const b = sb(); zoomAtStage(gk * e.scale, e.clientX - b.l, e.clientY - b.t); });
+      rootEl.addEventListener('gestureend', e => { e.preventDefault(); gk = null; });
+      // the More menu's guide commands
+      rootEl.addEventListener('click', e => {
+        const v = e.target.closest && e.target.closest('[data-view]'); if (!v) return;
+        closeMenus();
+        if (v.dataset.view === 'clearGuides') face().guides = []; else if (v.dataset.view === 'zero0') setZero(null);
+        drawView(); queueRulers();
+      });
+      // the zoom box: the menu opens with the zoom typed in, selected (a phone keeps its keyboard down: the presets are a tap away)
+      const zin = $('[data-zoomtype]');
+      $('.ce-zoomb').addEventListener('click', e => {
+        if (zin.closest('.ce-menu').hidden) return;
+        zin.value = trim(zoomPct(), zoomPct() < 100 ? 1 : 0);
+        if (e.pointerType !== 'touch') { try { zin.focus({ preventScroll: true }); zin.select(); } catch (er) { /* fine */ } }
+      });
+      const backToWin = () => { closeMenus(); try { win.focus({ preventScroll: true }); } catch (er) { /* fine */ } };
+      zin.__ceKey = e => {
+        const k = e.key;
+        if (k === 'Enter') { e.preventDefault(); const v = numIn(zin.value); if (fin(v) && v > 0) zoomTo(v); backToWin(); }
+        else if (k === 'Escape') { e.preventDefault(); backToWin(); }
+        else if (k === 'ArrowUp' || k === 'ArrowDown') { e.preventDefault(); zoomTo(stepZoom(k === 'ArrowUp' ? 1 : -1)); zin.value = trim(zoomPct(), zoomPct() < 100 ? 1 : 0); zin.select(); }
+      };
+    }
+    /* the view's keys, heard after the editor's own (that one stops the page hearing them, not this): Z for the Zoom tool, ⌘; shows and hides the guides, Alt turns
+       the Zoom tool's cursor to zoom out */
+    function viewKey(e) {
+      if (!rootEl.isConnected || S.ask || S.editing) return;
+      const t = e.target; if (t && (t.__ceKey || isField(t))) return;
+      if (e.key === 'Alt') { stage.classList.add('is-alt'); return; }
+      const meta = e.metaKey || e.ctrlKey;
+      if (meta && !e.altKey && (e.key === ';' || e.code === 'Semicolon')) { e.preventDefault(); S.showGuides = !S.showGuides; syncProps(); drawView(); queueRulers(); return; }
+      if (!meta && !e.altKey && !e.shiftKey && (e.key === 'z' || e.key === 'Z') && !rootEl.querySelector('.ce-menu:not([hidden])')) { e.preventDefault(); setTool('zoom'); }
+    }
+    function viewKeyUp(e) { if (e.key === 'Alt' || !e.altKey) stage.classList.remove('is-alt'); }
 
     /* ── drawing the charm: one element per item, kept by id; an item object that has not changed is not touched (the tree is immutable, so "changed" is "!==") ── */
     const els = new Map();
@@ -1651,6 +2062,7 @@
               el.setAttribute('class', `ce-p ce-p--${it.role}${paintFill(it) ? ' is-fill' : ''}${paintStroke(it) ? ' is-stroke' : ''}${it.evenOdd || it.fillRule === 'evenodd' ? ' is-evenodd' : ''}`);
               el.setAttribute('vector-effect', 'non-scaling-stroke');
               el.style.setProperty('--lw', String(lwOf(it)));
+              el.style.fill = greyOf(it); if (it.artGrey && it.even === true) el.classList.add('is-evenodd');   // (a traced image's grey, its holes even-odd as the laser file fills them)
             } else el.setAttribute('class', 'ce-g');
             el.__it = it;
           }
@@ -1691,13 +2103,15 @@
       rec(it, W); return out;
     }
     function renderUI() {
+      queueRulers(); drawnAt(ui);   // (the rulers mark the selection's extent: they follow every change of it, in the same frame; a pan slides the furniture from here)
       let h = '';
       const busy = S.g && S.g.live;
       if (S.hover && !busy && !isSelected(S.hover)) { const e = entry(S.hover); if (e && !e.it.hidden) h += outline(e.it, e.P, 'u-hover'); }
       const info = selInfo();
+      // (the outlines of a selection of many, or of a group, are kept in a layer of their own and moved by the view: selOutlines)
+      { const many = info && !(S.g && S.g.kind === 'marquee') ? selEntries() : []; selOutlines(many.length > 1 || (many.length === 1 && many[0].it.kind === 'group') ? many : []); }
       if (info && !(S.g && S.g.kind === 'marquee')) {
         const es = selEntries();
-        if (es.length > 1 || es[0].it.kind === 'group') { let n = 0; for (const e of es) { if (n++ > 300) break; h += outline(e.it, e.P, 'u-sel'); } }
         const sc = info.corners.map(p => toStage(p[0], p[1]));
         const poly = sc.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
         h += `<polygon class="u-box--under" points="${poly}"/><polygon class="u-box${info.single ? '' : ' is-many'}" points="${poly}"/>`;
@@ -1736,6 +2150,7 @@
       if (!g && S.flash) h += readoutSvg(selBox(), S.flash);
       if (S.xLive) h += (S.xLive.guides || '') + (S.xLive.box ? readoutSvg(S.xLive.box, S.xLive.text) : '');
       { const xt = xTool(S.tool); if (xt && typeof xt.overlay === 'function') { try { h += xt.overlay(ectx) || ''; } catch (er) { xErr(xt.id + '.overlay', er); } } }
+      for (const fn of X.overlays) { try { h += fn(ectx) || ''; } catch (er) { xErr('overlays', er); } }
       ui.innerHTML = h;
     }
 
@@ -1762,6 +2177,7 @@
       };
       for (let i = its.length - 1; i >= 0; i--) row(its[i], 0);
       layersEl.innerHTML = h || '<div class="ce-layers__empty">Nothing on this side yet.<br>Pick the Text tool and click on the charm.</div>';
+      for (const r of layersEl.querySelectorAll('.ce-layer')) { const e = entry(r.dataset.id), g = e && greyOf(e.it), sw = g && r.querySelector('.ce-sw'); if (sw) sw.style.background = g; }   // (a traced image's greys)
       for (const f of ['front', 'back']) { const c = $(`[data-count="${f}"]`); if (c) c.textContent = S.faces[f] ? String(S.faces[f].items.length) : '–'; }
       paintLayerSel();
     }
@@ -1788,10 +2204,10 @@
       const f = frame();
       if (info.single) {
         const it = info.e.it, b = geo.drawn(it, info.e.P), rb = info.rb;
-        return { x: (b[0] - f.x0) * MM, y: (b[1] - f.y0) * MM, w: Math.abs(num(it.sx, 1)) * (rb[2] - rb[0]) * MM, h: Math.abs(num(it.sy, 1)) * (rb[3] - rb[1]) * MM, r: wrap180(num(it.rot, 0)) };
+        return { x: (b[0] - zeroPt()[0]) * MM, y: (b[1] - zeroPt()[1]) * MM, w: Math.abs(num(it.sx, 1)) * (rb[2] - rb[0]) * MM, h: Math.abs(num(it.sy, 1)) * (rb[3] - rb[1]) * MM, r: wrap180(num(it.rot, 0)) };
       }
       const b = info.b, leaves = selLeaves(), r0 = leaves.length ? wrap180(num(leaves[0].rot, 0)) : 0;
-      return { x: (b[0] - f.x0) * MM, y: (b[1] - f.y0) * MM, w: (b[2] - b[0]) * MM, h: (b[3] - b[1]) * MM, r: leaves.every(l => Math.abs(wrap180(num(l.rot, 0)) - r0) < 1e-6) ? r0 : null };
+      return { x: (b[0] - zeroPt()[0]) * MM, y: (b[1] - zeroPt()[1]) * MM, w: (b[2] - b[0]) * MM, h: (b[3] - b[1]) * MM, r: leaves.every(l => Math.abs(wrap180(num(l.rot, 0)) - r0) < 1e-6) ? r0 : null };
     }
     function syncProps() {
       const s = sizeRead();
@@ -1863,7 +2279,7 @@
     }
     function syncHist() { $('[data-act="undo"]').disabled = !S.hist.canUndo; $('[data-act="redo"]').disabled = !S.hist.canRedo; }
     function setTool(t) {
-      if (!['select', 'marquee', 'text', 'rect', 'ellipse', 'line', 'hand', 'polygon'].includes(t) && !xTool(t)) return;
+      if (!['select', 'marquee', 'text', 'rect', 'ellipse', 'line', 'hand', 'polygon', 'zoom'].includes(t) && !xTool(t)) return;
       if (S.editing) closeEditor();
       const was = S.tool; xCommit();
       S.tool = t;
@@ -2050,6 +2466,18 @@
       commit(next, made);
     }
     const setListIn = (its, pid, list) => (pid == null ? list : replaceIn(its, new Map([[pid, Object.assign({}, indexTree(its, geo).get(pid).it, { children: list })]])));
+    /** Alt-drag (28 Oct 2026): the selection copied where it is, each copy just above its original, and the copies selected (no step of its own: the drag's is it). */
+    function copiesInPlace() {
+      const ids = S.sel.filter(id => { const e = entry(id); return e && !e.it.locked; }); if (!ids.length) return;
+      let next = normaliseAncestors(items(), ids, geo); const made = [];
+      for (const id of topmost(ids, indexTree(next, geo))) {
+        const cur = indexTree(next, geo), e = cur.get(id); if (!e) continue;
+        const copy = pasteItems([e.it], 0, 0, geo)[0], pid = e.parent ? e.parent.id : null;
+        const list = (pid == null ? next : cur.get(pid).it.children).slice();
+        list.splice(list.findIndex(x => x.id === id) + 1, 0, copy); next = setListIn(next, pid, list); made.push(copy.id);
+      }
+      setItems(next); ixFor = null; S.sel = made;
+    }
     function arrangeSel(how) { if (S.sel.length) commit(arrange(items(), S.sel, how, geo)); }
     function groupSel() {
       if (S.sel.length < 2) return;
@@ -2237,7 +2665,7 @@
         return { d: best.d, hits };
       };
       const f = frame();
-      const bx = axis(bb[0], bb[2], S.smart ? T.x : [], allowX, f.x0), by = axis(bb[1], bb[3], S.smart ? T.y : [], allowY, f.y0);
+      const bx = axis(bb[0], bb[2], (S.smart ? T.x : []).concat(guideSnaps('x')), allowX, f.x0), by = axis(bb[1], bb[3], (S.smart ? T.y : []).concat(guideSnaps('y')), allowY, f.y0);
       if (bx) { res.dx = bx.d; res.gx = bx.hits; } if (by) { res.dy = by.d; res.gy = by.hits; }
       return res;
     }
@@ -2297,7 +2725,7 @@
     }
     /** A point snapped to the smart guides and the grid (Alt pauses them), with the guides that agree with it: for drawing, and for the extensions (ctx.snap). */
     function snapPt(x, y, T, e) {
-      if ((e && e.altKey) || !(S.smart || S.snapGrid)) return { x, y, guides: '' };
+      if ((e && e.altKey) || !snapsAny()) return { x, y, guides: '' };
       const hits = solve([x, y, x, y], T, 7 / S.k, ['lo'], ['lo']);
       return { x: x + hits.dx, y: y + hits.dy, guides: guidesSvg([x + hits.dx, y + hits.dy, x + hits.dx, y + hits.dy], hits) };
     }
@@ -2328,6 +2756,7 @@
     function begin(g) {
       // the first real movement of a gesture: one step of history, the groups above the selection flattened, the starting tree kept to transform FROM every frame
       pushUndo();
+      if (g.copy) copiesInPlace();   // (Alt-drag: the copies are what moves; the copy and the move are one step)
       setItems(normaliseAncestors(items(), S.sel, geo)); ixFor = null;
       g.items0 = items(); g.ix0 = ix();
       g.base = new Map(S.sel.map(id => [id, g.ix0.get(id).it]));
@@ -2363,8 +2792,11 @@
         const hit = hitAt(x, y, { deep: e.altKey });
         if (!hit) { S.g = { kind: 'marquee', x0: x, y0: y, x, y, cx0: e.clientX, cy0: e.clientY, add: additive, base: additive ? S.sel.slice() : [], live: false }; if (!additive && S.sel.length) setSel([]); return; }
         if (additive) { setSel(S.sel.includes(hit.id) ? S.sel.filter(s => s !== hit.id) : S.sel.concat(hit.id)); return; }
-        if (!isSelected(hit.id) || (e.altKey && !S.sel.includes(hit.id))) setSel([hit.id]);
-        S.g = { kind: 'move', x0: x, y0: y, cx0: e.clientX, cy0: e.clientY, live: false };
+        // ALT-DRAG (28 Oct 2026, Illustrator's: research §3 #8): a drag that starts with Alt held moves a COPY and the original stays. Alt on what is already selected keeps
+        // the selection for the copy; a click without a drag still reaches inside the group, on the way up
+        const inside = e.altKey && isSelected(hit.id) && !S.sel.includes(hit.id) ? hit.id : null;
+        if (!inside && (!isSelected(hit.id) || (e.altKey && !S.sel.includes(hit.id)))) setSel([hit.id]);
+        S.g = { kind: 'move', x0: x, y0: y, cx0: e.clientX, cy0: e.clientY, live: false, copy: !!e.altKey, inside };
         return;
       }
       if (S.tool === 'marquee') { S.g = { kind: 'marquee', x0: x, y0: y, x, y, cx0: e.clientX, cy0: e.clientY, add: e.shiftKey, base: e.shiftKey ? S.sel.slice() : [], live: false }; return; }
@@ -2438,7 +2870,7 @@
         }
         const db = bboxOf(g.draft), f = frame();
         g.guides = sp.guides; g.readout = readoutSvg(db, text);
-        if (db) liveFields({ x: (db[0] - f.x0) * MM, y: (db[1] - f.y0) * MM, w: (db[2] - db[0]) * MM, h: (db[3] - db[1]) * MM, r: 0 });
+        if (db) liveFields({ x: (db[0] - zeroPt()[0]) * MM, y: (db[1] - zeroPt()[1]) * MM, w: (db[2] - db[0]) * MM, h: (db[3] - db[1]) * MM, r: 0 });
         renderUI(); return;
       }
       if (!g.live) { if (!far) return; begin(g); g.info0 = selInfo(); g.T = g.kind === 'move' && g.info0 ? alignTargets(g.info0.single ? geo.drawn(g.info0.e.it, g.info0.e.P) : g.info0.b) : null; busy(g.kind === 'move' ? 'move' : g.kind === 'rotate' ? ROT_CUR : g.cur || 'crosshair'); }
@@ -2450,7 +2882,7 @@
         let dx = x - g.x0, dy = y - g.y0;
         const bb0 = info.single ? geo.drawn(info.e.it, info.e.P) : info.b;
         let hits = { gx: [], gy: [] }; const sps = [];
-        if (snapOn && (S.smart || S.snapGrid)) { hits = solve([bb0[0] + dx, bb0[1] + dy, bb0[2] + dx, bb0[3] + dy], g.T, tol); dx += hits.dx; dy += hits.dy; }
+        if (snapOn && snapsAny()) { hits = solve([bb0[0] + dx, bb0[1] + dy, bb0[2] + dx, bb0[3] + dy], g.T, tol); dx += hits.dx; dy += hits.dy; }
         if (snapOn && S.smart && g.T) for (const horiz of [true, false]) {
           const sp = spacing([bb0[0] + dx, bb0[1] + dy, bb0[2] + dx, bb0[3] + dy], g.T.boxes, tol, horiz); if (!sp) continue;
           if (!(horiz ? hits.gx : hits.gy).length) { if (horiz) dx += sp.delta; else dy += sp.delta; }
@@ -2459,7 +2891,7 @@
         applyM(g, tr(dx, dy));
         const bb = [bb0[0] + dx, bb0[1] + dy, bb0[2] + dx, bb0[3] + dy];
         g.guides = guidesSvg(bb, hits) + gapsSvg(bb, hits) + spacingSvg(bb, sps);
-        g.readout = readoutSvg(bb, `X ${fmtMm((bb[0] - f.x0) * MM)}  Y ${fmtMm((bb[1] - f.y0) * MM)} mm`);
+        g.readout = readoutSvg(bb, `X ${fmtMm((bb[0] - zeroPt()[0]) * MM)}  Y ${fmtMm((bb[1] - zeroPt()[1]) * MM)} mm`);
       } else if (g.kind === 'resize') {
         const hx = /w/.test(g.h) ? -1 : /e/.test(g.h) ? 1 : 0, hy = /n/.test(g.h) ? -1 : /s/.test(g.h) ? 1 : 0;
         const centred = e.altKey || e.ctrlKey || e.metaKey;   // (Paul, 28 Oct 2026: "resize every object from its center-point ... by holding the control key while dragging"; Alt too, as in Illustrator: D1)
@@ -2481,7 +2913,7 @@
           let ex = hx < 0 ? b[0] : b[2], ey = hy < 0 ? b[1] : b[3];
           let px = ex + (x - g.x0), py = ey + (y - g.y0);   // (the edge moves by as much as the hand does)
           g.hits = null;
-          if (snapOn && !(e.shiftKey && hx && hy) && (S.smart || S.snapGrid)) {
+          if (snapOn && !(e.shiftKey && hx && hy) && snapsAny()) {
             g.T = g.T || alignTargets(b);
             g.hits = solve([hx ? px : b[0], hy ? py : b[1], hx ? px : b[2], hy ? py : b[3]], g.T, tol, hx ? ['lo'] : [], hy ? ['lo'] : []);
             px += g.hits.dx; py += g.hits.dy;
@@ -2522,6 +2954,7 @@
         renderUI(); syncProps(); return;
       }
       if (g.kind === 'marquee' && !g.live) { renderUI(); return; }
+      if (g.kind === 'move' && !g.live && g.inside) { setSel([g.inside]); return; }   // (an Alt-click with no drag reaches inside, as it always has)
       if (!g.live && g.click) {
         const hit = hitAt(g.x0, g.y0, { deep: g.click.deep });
         if (hit && g.click.additive) setSel(S.sel.includes(hit.id) ? S.sel.filter(s => s !== hit.id) : S.sel.concat(hit.id));
@@ -2554,15 +2987,18 @@
       e.preventDefault();
       if (S.ask) return;
       // (the studio, J 17201: a bare wheel zooms about the cursor, Shift pans across, ⌘ pans down; a trackpad's two-finger scroll pans, its pinch arrives as Ctrl and zooms)
-      if (e.ctrlKey) { zoomAtClient(e.clientX, e.clientY, Math.pow(1.01, -clamp(e.deltaY, -60, 60))); return; }
+      // (a scroll that pans is a pan in hand until it has been still for a moment: the view slides meanwhile, and is drawn afresh when it stops)
+      const wheelPan = () => { clearTimeout(wheelPanT); wheelPanT = setTimeout(() => { wheelPanT = 0; if (slid) applyView(); }, 140); };
+      const wheelZoom = () => { if (wheelPanT) { clearTimeout(wheelPanT); wheelPanT = 0; } };
+      if (e.ctrlKey) { wheelZoom(); zoomAtClient(e.clientX, e.clientY, Math.pow(1.01, -clamp(e.deltaY, -60, 60))); return; }
       const lineMode = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
       const dx = e.deltaX * lineMode, dy = e.deltaY * lineMode;
       S.fitted = false;
-      if (e.shiftKey) { S.ox -= dy || dx; clampPan(); applyView(); return; }
-      if (e.metaKey) { S.oy -= dy; clampPan(); applyView(); return; }
+      if (e.shiftKey) { wheelPan(); S.ox -= dy || dx; clampPan(); applyView(); return; }
+      if (e.metaKey) { wheelPan(); S.oy -= dy; clampPan(); applyView(); return; }
       const wheelLike = e.deltaMode !== 0 || (Math.abs(e.deltaX) < 0.01 && fin(e.wheelDeltaY) && e.wheelDeltaY !== 0 && Math.abs(e.wheelDeltaY) % 120 === 0);
-      if (wheelLike) { zoomAtClient(e.clientX, e.clientY, Math.pow(1.0018, -clamp(dy, -400, 400))); return; }
-      S.ox -= dx; S.oy -= dy; clampPan(); applyView();
+      if (wheelLike) { wheelZoom(); zoomAtClient(e.clientX, e.clientY, Math.pow(1.0018, -clamp(dy, -400, 400))); return; }
+      wheelPan(); S.ox -= dx; S.oy -= dy; clampPan(); applyView();
     }
     function onDbl(e) {
       if (S.tool !== 'select') return;
@@ -2790,17 +3226,17 @@
       if (t && t.__ceKey) { t.__ceKey(e); return; }
       if (isField(t)) { fieldKey(e); return; }
       if (k === 'Escape' && rootEl.querySelector('.ce-menu:not([hidden])')) { e.preventDefault(); closeMenus(); return; }
-      { const xt = xTool(S.tool); if (xt && typeof xt.onKey === 'function' && k !== ' ' && e.code !== 'Space') { const r = xCall(xt, 'onKey', e); if (r === true || e.defaultPrevented) { e.preventDefault(); xCommit(); return; } } }
+      { const xt = xTool(S.tool); if (xt && typeof xt.onKey === 'function' && k !== ' ' && e.code !== 'Space') { const r = xCall(xt, 'onKey', e); if (r === 'open') { e.preventDefault(); return; } if (r === true || e.defaultPrevented) { e.preventDefault(); xCommit(); return; } } }
       if (k === ' ' || e.code === 'Space') { e.preventDefault(); if (!S.space) { S.space = true; stage.classList.add('is-space'); } return; }
       const kl = k.length === 1 ? k.toLowerCase() : k;
       if (meta) {
         if (kl === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
-        if (kl === 'y') { e.preventDefault(); redo(); return; }
+        // (⌘Y is Illustrator's Outline view, 28 Oct 2026, Design & Engrave: charm-nest-ce-extras.js; redo is ⇧⌘Z, as in Illustrator)
         if (kl === 'a') { e.preventDefault(); selectAll(); return; }
         if (kl === 'c') { if (!X.importers.length) e.preventDefault(); if (copySel()) xCopied(); return; }
         if (kl === 'x') { if (!X.importers.length) e.preventDefault(); const c0 = S.clip; cutSel(); if (S.clip !== c0) xCopied(); return; }
         if (kl === 'v') { if (X.importers.length) { xPasteSoon(e.shiftKey); return; } e.preventDefault(); paste(e.shiftKey); return; }
-        if (kl === 'd') { e.preventDefault(); duplicate(); return; }
+        if (kl === 'd') { e.preventDefault(); if (typeof api.beforeDuplicate === 'function' && api.beforeDuplicate(ectx, e) === true) return; duplicate(); return; }
         if (kl === 'g') { e.preventDefault(); if (e.shiftKey) ungroupSel(); else groupSel(); return; }
         if (k === ']' || k === '}' || e.code === 'BracketRight') { e.preventDefault(); arrangeSel(e.shiftKey ? 'front' : 'forward'); return; }
         if (k === '[' || k === '{' || e.code === 'BracketLeft') { e.preventDefault(); arrangeSel(e.shiftKey ? 'back' : 'backward'); return; }
@@ -2825,7 +3261,8 @@
       if (k === 'Enter') { const es = selEntries(); if (es.length === 1 && es[0].it.kind === 'text') { e.preventDefault(); openEditor(es[0].it.id); } return; }
       if (k === 'Escape') { e.preventDefault(); if (S.g) { abandon(); return; } if (S.sel.length) { setSel([]); return; } if (S.tool !== 'select') { setTool('select'); return; } requestClose(); return; }
       if (e.altKey) { xKeyRun(e); return; }
-      const map = { v: 'select', m: 'marquee', t: 'text', r: 'rect', e: 'ellipse', l: 'line', h: 'hand' };
+      // (28 Oct 2026: \ is Illustrator's line too; M and L keep the marquee and the line, which the editor's tests and the live-feedback test press for them)
+      const map = { v: 'select', m: 'marquee', t: 'text', r: 'rect', e: 'ellipse', l: 'line', '\\': 'line', h: 'hand' };
       if (map[kl]) { e.preventDefault(); setTool(map[kl]); return; }
       if (k === '!' || (e.shiftKey && e.code === 'Digit1')) { e.preventDefault(); fit(); return; }
       if (k === '@' || (e.shiftKey && e.code === 'Digit2')) { e.preventDefault(); zoomToBox(selBox()); return; }
@@ -2907,6 +3344,7 @@
     function finish(v) {
       if (finished) return; finished = true;
       root.removeEventListener('keydown', onKey, true); root.removeEventListener('keyup', onKeyUp, true); root.removeEventListener('resize', onResize); root.removeEventListener('blur', onBlur);
+      root.removeEventListener('keydown', viewKey, true); root.removeEventListener('keyup', viewKeyUp, true);
       xClose(v);
       if (ro) ro.disconnect();
       if (rootEl.parentNode) rootEl.parentNode.removeChild(rootEl);
@@ -2981,8 +3419,9 @@
       clientOf: (x, y) => { const b = sb(), p = toStage(x, y); return { x: b.l + p[0], y: b.t + p[1] }; },
       pointOf: (cx, cy) => fromClient(cx, cy), stageOf: (x, y) => toStage(x, y), view: () => V(),
       setZoom: (pct, about) => { if (!fin(+pct)) return; const b = sb(); if (about && fin(about.x) && fin(about.y)) zoomAtStage(+pct / 100 * PX100, about.x - b.l, about.y - b.t); else zoomTo(+pct); },
+      zoomToBox: bb => { if (Array.isArray(bb) && bb.length === 4 && bb.every(fin)) zoomToBox(bb); },
       geo, model, entry: id => { const e = entry(String(id)); return e ? { it: e.it, P: e.P, parent: e.parent } : null; },
-      say: (text, ms) => say(text, ms), redraw: () => renderUI(), setTool: id => setTool(String(id)), root: rootEl, stage,
+      say: (text, ms) => say(text, ms), redraw: () => { renderUI(); if (!(S.g && S.g.live)) xBar(); }, setTool: id => setTool(String(id)), root: rootEl, stage,
       /* (28 Oct 2026, live feedback for an extension's own gestures) snap(x, y, ev) -> [x, y]: the point on the smart guides (Alt in ev pauses them), the guides drawn with the
          live read-out; live({ box: [x0, y0, x1, y1] pt, text?, angle? } | null): the size chip beside the box (default "W × H mm") and the X / Y / W / H fields; both end with the gesture */
       snap: (x, y, ev) => {
@@ -2994,7 +3433,7 @@
         if (!o || !Array.isArray(o.box)) { S.xLive = null; renderUI(); return; }
         const b = o.box, f = frame(), w = (b[2] - b[0]) * MM, hh = (b[3] - b[1]) * MM;
         S.xLive = Object.assign({}, S.xLive, { box: b, text: o.text != null ? String(o.text) : `${fmtMm(w)} × ${fmtMm(hh)} mm` });
-        liveFields({ x: (b[0] - f.x0) * MM, y: (b[1] - f.y0) * MM, w, h: hh, r: fin(o.angle) ? o.angle : 0 }); renderUI();
+        liveFields({ x: (b[0] - zeroPt()[0]) * MM, y: (b[1] - zeroPt()[1]) * MM, w, h: hh, r: fin(o.angle) ? o.angle : 0 }); renderUI();
       }
     };
     let xSnap = {};
@@ -3041,7 +3480,7 @@
     function xMenuHtml(onlyOn) {
       const groups = new Map();
       for (const c of X.commands) {
-        if (c.c.menu === false) continue;
+        if (c.c.menu === false || (onlyOn && c.c.context === false)) continue;
         const on = xEnabled(c); if (onlyOn && !on) continue;
         const gn = c.c.group ? String(c.c.group) : 'More'; if (!groups.has(gn)) groups.set(gn, []); groups.get(gn).push({ c, on });
       }
@@ -3052,13 +3491,13 @@
       }
       return h;
     }
-    let xBarKey = null, xBarFor = null;
+    let xBarKey = null;
     function xBar() {
       const el = $('.ce-xbar'), bar = X.commands.filter(c => c.c.bar && typeof c.c.icon === 'string');
       if (!el || !bar.length) return;
-      const key = S.face + '#' + S.sel.join('|'); if (key === xBarKey && items() === xBarFor) return;
-      xBarKey = key; xBarFor = items();
-      const on = bar.filter(xEnabled);
+      // (written again only when what is enabled changes: a command may depend on more than the selection, as the anchors picked with Direct Selection)
+      const on = bar.filter(xEnabled), key = on.map(c => c.id).join('|'); if (key === xBarKey) return;
+      xBarKey = key;
       el.innerHTML = on.map(c => `<button class="ce-prop" type="button" data-xcmd="${esc(c.id)}" title="${esc(c.c.title || c.id)}${c.c.key ? ' (' + esc(keyLabel(c.c.key)) + ')' : ''}" aria-label="${esc(c.c.title || c.id)}">${c.c.icon}</button>`).join('');
       el.hidden = !on.length;
     }
@@ -3124,8 +3563,9 @@
     }
     let xRaf = 0;
     function xChanged() {
-      if (xRaf || !xMounted.size) return;
-      xRaf = requestAnimationFrame(() => { xRaf = 0; for (const p of X.panels) if (xMounted.has(String(p.id)) && typeof p.update === 'function') { try { p.update(ectx); } catch (er) { xErr(p.id + '.update', er); } } });
+      if (xRaf || (!xMounted.size && !X.onChange.length)) return;
+      xRaf = requestAnimationFrame(() => { xRaf = 0; for (const p of X.panels) if (xMounted.has(String(p.id)) && typeof p.update === 'function') { try { p.update(ectx); } catch (er) { xErr(p.id + '.update', er); } }
+        for (const fn of X.onChange) { if (finished) break; try { fn(ectx); } catch (er) { xErr('onChange', er); } } });   // (CharmEditor.onChange: in the same frame as the panels' update)
     }
     function xClose(v) {
       clearTimeout(xPasteT); clearTimeout(sayT); if (xRaf) cancelAnimationFrame(xRaf);
@@ -3221,6 +3661,7 @@
     // (any change to the view by hand ends "fitted": a resize then keeps the zoom and the place instead of fitting again)
     function layoutDock() { dock.hidden = !S.dock; win.classList.toggle('is-nodock', !S.dock); syncProps(); requestAnimationFrame(() => { if (S.fitted) fit(); else applyView(); }); }
     wireDrops(); wireRail(); wireLayers();
+    wireView(); root.addEventListener('keydown', viewKey, true); root.addEventListener('keyup', viewKeyUp, true);
     dock.hidden = !S.dock; win.classList.toggle('is-nodock', !S.dock);
     setTool('select');
     render(); renderLayers(true); syncHist();
@@ -3240,6 +3681,8 @@
       selection: () => S.sel.slice(),
       zoom: () => zoomPct(),
       tool: () => S.tool,
+      guides: f => ((S.faces[f || S.face] || {}).guides || []).map(g => Object.assign({}, g)),
+      zero: () => zeroPt().slice(),
       clientOf: (x, y) => { const b = sb(), p = toStage(x, y); return { x: b.l + p[0], y: b.t + p[1] }; },
       ptOf: (cx, cy) => fromClient(cx, cy),
       box: id => { const e = entry(id); return e ? geo.drawn(e.it, e.P) : null; },
@@ -3259,5 +3702,9 @@
   Object.assign(api, { tools: [], commands: {}, importers: [], panels: [], onOpen: [], onClose: [] });
   { const pre = root && root.CharmEditor;
     if (pre && typeof pre === 'object') { for (const k of ['tools', 'importers', 'panels', 'onOpen', 'onClose']) if (Array.isArray(pre[k])) api[k].push(...pre[k]); if (pre.commands && typeof pre.commands === 'object') Object.assign(api.commands, pre.commands); } }
+  // (28 Oct 2026, Design & Engrave: two more lists and the text layout, the header's EXTENSION POINTS; taken in the same way from a CharmEditor set before this file)
+  Object.assign(api, { onChange: [], overlays: [], textLayout: null });
+  { const pre = root && root.CharmEditor;
+    if (pre && typeof pre === 'object') { for (const k of ['onChange', 'overlays']) if (Array.isArray(pre[k])) api[k].push(...pre[k]); if (pre.textLayout && typeof pre.textLayout === 'object') api.textLayout = pre.textLayout; } }
   return api;
 });
