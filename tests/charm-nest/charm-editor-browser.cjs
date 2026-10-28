@@ -387,7 +387,9 @@ function layoutIssues() {
       const p = await edgeOf(page, 'day-4-2');
       await clickAt(page, p, { button: 'right' });
       const labels = await H(page, () => { const m = document.querySelector('.ce-ctx'); return m.hidden ? null : [...m.querySelectorAll('.ce-item')].map(b => (b.querySelector('.ce-aimi__l') || b).textContent.trim()); });
-      for (const w of ['Undo', 'Cut', 'Copy', 'Paste', 'Clear', 'Bring to Front', 'Bring Forward', 'Send Backward', 'Send to Back', 'Transform', 'Arrange', 'Select']) assert.ok(labels && labels.includes(w), 'menu has ' + w + ': ' + labels);
+      // (Transform ▸ lists the object commands of charm-nest-ce-ops.js: this harness loads the editor without them, and a submenu with nothing in it is not shown, as Illustrator shows none)
+      const hasOps = await H(page, () => !!(window.CharmEditor.commands && window.CharmEditor.commands['ops.move']));
+      for (const w of ['Undo', 'Cut', 'Copy', 'Paste', 'Clear', 'Bring to Front', 'Bring Forward', 'Send Backward', 'Send to Back', ...(hasOps ? ['Transform'] : []), 'Arrange', 'Select']) assert.ok(labels && labels.includes(w), 'menu has ' + w + ': ' + labels);
       assert.ok(!labels.includes('Group'), 'one path: no Group (Illustrator shows it for several)');
       assert.deepEqual(await cur(page, 'C.selection()'), ['day-4-2']);
       shots.push(await shot(page, 'desk-7-context.png'));

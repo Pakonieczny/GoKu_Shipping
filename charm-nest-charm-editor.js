@@ -3127,9 +3127,9 @@
        ... especially all the feedback"): the five fields follow every frame of a draw, drag, resize and turn; the gap to the part a guide agrees with is measured on it,
        and a part dropped between two others in a row snaps to even spacing with both gaps shown (the studio's mkAlignSpacing, J 16773) ── */
     let fieldEls = null;
-    function liveFields(r) {
+    function liveFields(r, atRef) {
       if (!fieldEls) fieldEls = ['x', 'y', 'w', 'h', 'r'].map(k => [k, field(k)]);
-      if (r && (S.ref[0] || S.ref[1])) r = Object.assign({}, r, { x: r.x + S.ref[0] * r.w, y: r.y + S.ref[1] * r.h });   // (the Control bar's reference point)
+      if (r && !atRef && (S.ref[0] || S.ref[1])) r = Object.assign({}, r, { x: r.x + S.ref[0] * r.w, y: r.y + S.ref[1] * r.h });   // (the reference point: a box's top-left moved to it; sizeRead()'s values are at it already)
       for (const [k, el] of fieldEls) { el.disabled = !r; el.value = !r ? '' : k === 'r' ? (r.r == null ? '' : trim(r.r, 1)) : fmtMm(r[k]); }
       if (aiDock && typeof aiDock.live === 'function') aiDock.live(r);   // (AIDOCK: the Properties and Transform panels' X / Y / W / H follow every frame too)
     }
@@ -3221,7 +3221,7 @@
     function applyM(g, M, foldText) {
       const map = new Map();
       for (const [id, it] of g.base) { let n = pushDown(it, M, geo); if (foldText) n = foldAll(n); map.set(id, n); }
-      setItems(replaceIn(g.items0, map)); ixFor = null; render(); liveFields(sizeRead());
+      setItems(replaceIn(g.items0, map)); ixFor = null; render(); liveFields(sizeRead(), true);
     }
     function onDown(e) {
       if (S.ask) return;

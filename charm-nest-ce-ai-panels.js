@@ -688,7 +688,7 @@
       const k = inp.dataset.aif; inp.disabled = !r;
       if (!r) { setVal(inp, ''); continue; }
       let v = r[k];
-      if (k === 'x' || k === 'y') { const span = b ? (k === 'x' ? b[2] - b[0] : b[3] - b[1]) * MM : (k === 'x' ? r.w : r.h); v = r[k] + (k === 'x' ? ref[0] : ref[1]) * span; }
+      // (X and Y come from the editor already at the one reference point, S.ref: the Control bar's and this panel's locators are the same point, read the same way)
       setVal(inp, k === 'r' ? (r.r == null ? '' : trim(r.r, 2) + '°') : D.fmtMm(v) + ' mm');
     }
   }
@@ -852,8 +852,7 @@
     if (!fin(v)) { sync(P); return; }
     if (k === 'x' || k === 'y') {
       const s = D.sizeRead(), b = D.selBox(); if (!s || !b) return;
-      const f = k === 'x' ? refOf(P)[0] : refOf(P)[1], span = (k === 'x' ? b[2] - b[0] : b[3] - b[1]) * MM;
-      D.commitField(k, v - f * span);
+      D.commitField(k, v);   // (the editor's X / Y are the reference point's: the value typed is where that point goes)
     } else if (k === 'w' || k === 'h' || k === 'r') D.commitField(k, v, refOf(P).slice());
     else if (k === 'pt') D.setTextSize(v);
     else if (k === 'lw') D.setStrokeMm(v);
