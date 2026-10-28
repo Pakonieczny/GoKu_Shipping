@@ -7,10 +7,15 @@
      2 · the real SDK, asked to listen to the counter with no network, tries the cloud's listen channel and nothing else: every request it makes is to firestore.googleapis.com, on the
          Listen channel (never Write, never a commit, never a lookup, never an identity call), for the project's database and the ONE document Charm_Nest_Push/counter
      3 · and the page falls back to the polled feed, with the reason, within the 20 s it is given, and keeps asking at the polled pace (no network is not an error page)
+     4 · the service worker keeps the two files by their ?v= token (the page hands them over like any versioned file), so after one load a warm reload never asks the network for
+         them, and they are no cost at boot: the warm boot makes the same few static requests it made, none of them the library's
    node tests/charm-nest/push-sdk.cjs   (through the slot queue: slot.sh timeout 300 node tests/charm-nest/push-sdk.cjs) */
 'use strict';
 const path = require('path'), fs = require('fs'), crypto = require('crypto'), assert = require('node:assert/strict');
 const root = path.join(__dirname, '../..');
+// (every request that reaches the server is counted: a file the service worker answers from its cache never does)
+const http = require('http'), hits = [], realCreate = http.createServer;
+http.createServer = handler => realCreate((req, res) => { hits.push(req.url); return handler(req, res); });
 const { start } = require('./bridge-server.cjs'), { seed } = require('./laser-workflow.cjs');
 const CHROME = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome';
 const pwDir = process.env.PW_DIR || [path.join(root, 'node_modules'), '/opt/node-tools/node_modules'].find(d => fs.existsSync(path.join(d, 'playwright-core')));
@@ -77,6 +82,33 @@ const sha = f => crypto.createHash('sha256').update(fs.readFileSync(path.join(ro
     const n = calls.filter(c => c.t >= t0 && c.op === 'getChanges').length;
     assert(n >= 2, 'the polled pace: ' + n + ' feed questions in 10 s of use');
     say(`3 · "${s.text}", ${n} feed questions in 10 s of use (the polled pace)`);
+
+    /* ── 4 · the service worker keeps them by token; no boot cost ── */
+    {
+      const C = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      await C.route(u => !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u.href), r => /fonts\.g/.test(r.request().url()) ? r.fulfill({ status: 200, contentType: 'text/css', body: '' }) : r.abort());
+      await C.addInitScript(() => { try { if (!sessionStorage.getItem('__seeded')) { localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on' })); localStorage.setItem('cn.employee', 'Test Operator'); localStorage.setItem('cn.push', 'on'); localStorage.setItem('cn.sw', 'on'); sessionStorage.setItem('__seeded', '1'); } } catch (_) {} window.prompt = () => 'Test Operator'; });
+      const P = await C.newPage(); P.setDefaultTimeout(60000);
+      const lib = /\/vendor\/firebase-(app|firestore)-compat-10\.14\.1\.js\?v=/;
+      await P.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
+      await P.waitForFunction(() => window.CN && CN.S.cloud.ok === true && window.CNPush);
+      await until(() => P.evaluate(async () => { const c = await caches.open('cn-static-v1'), k = (await c.keys()).map(r => r.url); return k.filter(u => /vendor\/firebase-(app|firestore)-compat-10\.14\.1\.js\?v=/.test(u)).length === 2; }), 60000, 'the worker keeps the two library files');
+      const kept = await P.evaluate(async () => (await (await caches.open('cn-static-v1')).keys()).map(r => r.url.replace(/^.*\//, '')).filter(u => /firebase/.test(u)));
+      const first = hits.filter(u => lib.test(u)).length;
+      assert.equal(first, 2, 'the first load asked the network for each file once: ' + first);
+      // a warm reload: the library comes from the worker's cache, never the network; the boot's own static requests do not include it
+      const n0 = hits.length; const reqs = [];
+      P.on('request', q => { if (q.url().startsWith(srv.sorterOrigin) && !/\.netlify\//.test(q.url())) reqs.push(q.url().replace(srv.sorterOrigin + '/', '')); });
+      await P.reload({ waitUntil: 'load' }); const atLoad = reqs.slice();
+      await P.waitForFunction(() => window.firebase && typeof firebase.firestore === 'function', null, { timeout: 30000 });
+      await sleep(1500);
+      const after = hits.slice(n0), warmStatic = after.filter(u => !/\.netlify\//.test(u) && !/\/charm-nest-1\.html/.test(u));
+      assert.equal(after.filter(u => lib.test(u)).length, 0, 'a warm reload asks the network for none of the library (the worker answers): ' + after.filter(u => lib.test(u)).join(' '));
+      assert(!atLoad.some(u => /vendor\/firebase/.test(u)), 'and it is not among the boot\'s requests: ' + atLoad.filter(u => /vendor\/firebase/.test(u)).join(' '));
+      assert(warmStatic.length <= 3, 'the warm boot still makes ≤ 3 requests for static files at the server: ' + warmStatic.length + ' [' + warmStatic.map(u => u.split('?')[0]).join(' ') + ']');
+      say(`4 · the service worker keeps ${kept.join(', ')} by their token; a warm reload makes ${warmStatic.length} static request(s) at the server, none for the library (it is read from the worker's cache when the leader listens, ${reqs.filter(u => /vendor\/firebase/.test(u)).length} request(s) in the page, 0 at the server), and none of it at boot`);
+      await C.close();
+    }
     console.log('push-sdk: OK');
   } catch (e) { console.error(e); process.exitCode = 1; }
   finally { if (browser) await browser.close().catch(() => {}); srv.close(); }

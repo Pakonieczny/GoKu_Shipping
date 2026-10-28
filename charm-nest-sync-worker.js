@@ -50,7 +50,7 @@
 
    LIVE PUSH (Paul, 28 Oct 2026: "I want a change made on one computer to appear on the others at once, with no idle polling"; plan: phase 5, option a). While
    charm-nest-push.js says its listener on the cloud's one counter document is HEALTHY (CNSync.push.health), the leader stops asking on a timer: a change in the
-   counter (CNSync.push.nudge) is the leader's question, at once (soon(): the same gap as any), and a safety question every ten minutes is all that is left (every
+   counter (CNSync.push.nudge) is the leader's question, at once (a quarter of a second after the last question at the earliest: PACE.nudgeGap), and a safety question every ten minutes is all that is left (every
    minute while an order window is open: a station's scan is written by the station's own SDK and names nothing, as the window's own net always was). Every
    tab keeps hearing the feed as live (live()), the leader tells the others on the channel that push is on, and why when it is not ('push' messages, again
    every minute while it leads). The moment the listener fails (the library does not load, permission denied, an error, offline for more than 20 s) it says so,

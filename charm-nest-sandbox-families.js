@@ -52,7 +52,6 @@
     fs("Order_Timeline", "timeline events"),
     fs("Order_Rev", "order window revisions"),   // (COST, Oct 2026: _orderTimeline's one-read answer; wiped with the events, so an open window sees the reset)
     fs("Charm_Nest_Mutations", "presses sent from the outbox"),   // (OUTBOX, Paul 28 Oct 2026: a press sent twice from a page's outbox is written once, by its mutation id: netlify/functions/_charmNestMutations.js; 7 days each)
-    fs("Charm_Nest_Push", "live-update counter"),   // (PUSH, Paul 28 Oct 2026: the one document {n, at} the sandbox's computers listen to, Sandbox_Charm_Nest_Push/counter, raised after every write that moved the feed: netlify/functions/_charmNestPush.js; a reset deletes it and the listeners ask the feed, which answers reset)
     // cuts and leftovers
     fs("Charm_Nest_Rose_Stock", "Rose Gold stock records", { subs: ["cuts"] }),
     fs("Charm_Nest_Rose_Rehearsals", "Rose Gold rehearsals"),
@@ -71,6 +70,8 @@
     fs("Charm_Nest_Agent", "engraving jobs"),
     fs("Charm_Nest_Agent_Cache", "saved engraving readings"),
     fs("Charm_Nest_Shape_Guidance", "shape guidance"),
+    // (PUSH, Paul 28 Oct 2026: the one document {n, at} the sandbox's computers listen to, Sandbox_Charm_Nest_Push/counter, raised after every write that moved the feed: netlify/functions/_charmNestPush.js. LAST of the collections on purpose: the wipe clears them in this order, so its going is the final thing a listening computer sees and the feed's answer (reset) is asked for once everything else is gone)
+    fs("Charm_Nest_Push", "live-update counter"),
     // the stream and the snapshot pointer (Charm_Sandbox is the sandbox's own collection, no prefix; the pull budget doc stays)
     { key: "Charm_Sandbox", label: "stream and snapshot", store: "doc", collection: "Charm_Sandbox", keepDocs: ["pulls"] },
     // places production uses too, cut by the sandbox's own marks
