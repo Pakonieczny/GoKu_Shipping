@@ -26,5 +26,13 @@
  "a92b66df2d483239a": [
   "fix-order-hold-engine",
   "wt-ohe"
+ ],
+ "ac1971b04ea413b37": [
+  "local-sync-p2",
+  "wt-sync"
+ ],
+ "af114bb2ccb5f706c": [
+  "de-designs-2",
+  "wt-de-designs"
  ]
 }

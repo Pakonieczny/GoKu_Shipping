@@ -82,7 +82,13 @@ board-live-extra.json with the new agent ids.
 
 ## Batch 4 in test (07:00): claude/de-integration 1bf67d3 = main 5c417f9 + de-image + de-rulers + de-pen + bar-front-waiting. Test run bywaqa04a → $SP/int/b4/*.log (12 node + 17 browser). All pass → fetch main, push HEAD:main, verify live (new files charm-nest-ce-image.js, charm-nest-ce-paths.js, charm-nest-engrave-bar-front.js). bar-front-waiting fixes a BARFRONT bug on main (a decided back got a 2nd FRONT job).
 
+## Phase 1 ship in test (07:02): claude/local-store 2f7ec40 (= 53d5d79 + main 5c417f9, pushed) in $SP/wt-guardfix. Run b3au0659x → $SP/int/p1/*.log. All pass → push HEAD:main, verify live (new file charm-nest-store.js). Then batch 4 must merge main again.
+- Phase 2 agent ac1971b04ea413b37 started 07:03 on claude/local-sync (wt-sync) from claude/local-store.
+- designs follow-up (af114bb2ccb5f706c resumed): claude/de-designs-2 = accept stroke/fill true in clean(); test world Master.load race.
+
 ## Handed back, waiting to merge into claude/de-integration
+- de-masters (acbce20e63df93ae2) DONE 07:00: claude/de-masters f55479f, ce-masters 17/17. BATCH 5 (with library, tab, sendsheet, ops, extras as they land).
+- local-store (a42236c45a7daeff2) DONE 06:59: all gates pass (G1 68 ms, G3 282 ms).
 - de-pen (a925a9f2929572a8f) DONE 06:57: claude/de-pen 64e0f11, ce-paths 25/25. Notes: chainSubpaths/simplifySubpaths available for importers (vimport doesn't call them yet).
 - bar-waiting (aa6569d65415c6c37) DONE 06:56: claude/bar-front-waiting c813f6f. Pending cosmetic: panel setup still says 'Front only' for decided-back bar lines. engrave-ui-faces fails on main (pre-existing, unassigned).
 - de-rulers (a909d6b516f6d76c5) DONE 06:55: claude/de-rulers 8ddc4c2 (contains main ea13162), ce-rulers 17/17, editor tests pass. Editor token -ru1. BATCH 4.
