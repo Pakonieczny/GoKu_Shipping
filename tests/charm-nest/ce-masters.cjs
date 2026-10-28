@@ -146,12 +146,12 @@ async function partB() {
       const ob = C.box(outId), fr = C.frame();
       return { members: ch.members.length, paths: paths.length, ids: items.map(i => i.id).join() === paths.map(i => i.id).join(), n: items.length, locked: items.filter(i => i.locked).length, master: items.every(i => i.source === 'master'),
         out: out && out.role === 'cut' && out.name === 'Outline', box: ob && [ob[0], ob[1], ob[2] - ob[0], ob[3] - ob[1]].map(v => +v.toFixed(3)), frame: [fr.x0, fr.y0, +fr.wPt.toFixed(3), +fr.hPt.toFixed(3)],
-        title: document.querySelector('.ce-root .ce-id h2').textContent, sub: (document.querySelector('.ce-root .ce-eyebrow') || {}).textContent || '', back: back.length, backLocked: back.every(i => i.locked && i.guide), cuts: items.filter(i => i.role === 'cut').length,
+        fonts: document.querySelectorAll('.ce-root [data-font]').length, title: document.querySelector('.ce-root .ce-id h2').textContent, sub: (document.querySelector('.ce-root .ce-eyebrow') || {}).textContent || '', back: back.length, backLocked: back.every(i => i.locked && i.guide), cuts: items.filter(i => i.role === 'cut').length,
         roles: [...new Set(items.map(i => i.role))].sort().join() };
     });
-    check(`B3 BFLOWER_9901 opens in the Charm Editor as a new design: all ${b3.n} parts of its drawing are layers (the master's ${b3.members} members, the same ids, roles ${b3.roles}), none locked, its outline the cut framing it; the back starts with its ${b3.back} cut lines seen from behind, locked as a guide`,
+    check(`B3 BFLOWER_9901 opens in the Charm Editor as a new design: all ${b3.n} parts of its drawing are layers (the master's ${b3.members} members, the same ids, roles ${b3.roles}), none locked, its outline the cut framing it, the engraving fonts offered (${b3.fonts}); the back starts with its ${b3.back} cut lines seen from behind, locked as a guide`,
       b3.ids && b3.n === b3.paths && b3.n === b3.members && b3.locked === 0 && b3.master && b3.out && b3.box && b3.box[0] === 0 && b3.box[1] === 0 && Math.abs(b3.box[2] - b3.frame[2]) < 1e-6 && b3.title === 'BFLOWER_9901'
-        && /charm library/.test(b3.sub) && b3.back === b3.cuts && b3.backLocked, JSON.stringify(b3));
+        && /charm library/.test(b3.sub) && b3.back === b3.cuts && b3.backLocked && b3.fonts >= 2, JSON.stringify(b3));
     await shot('B3-master-open');
 
     /* ── B4 changed as a person changes it: a petal deleted from the Layers, the hatched centre nudged 0.2 mm, Save ── */

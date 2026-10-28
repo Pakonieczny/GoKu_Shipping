@@ -26,8 +26,9 @@
  *   openNew(d, o)  a design made elsewhere and not saved yet (the vector import's "Open as a new design": source { kind: 'import', file, type }) opened as a new design.
  *   o.orderId / o.customName on any of them ride with the design (a custom order's design: charm-nest-custom-piece.js).
  *
- * The open itself is the bridge's design-mode path (window.CharmEditDesign.open, charm-nest-bridge.js: the engraving fonts and their outlines as a piece's open has them, lockRoles none); a page
- * without it opens the editor plainly. The editor's Save hands back the faces; they are saved as a version (by: the signed-in person), and a small card offers what is next: Send to sheet
+ * The open is the design-mode path: the fonts and their outlines from charm-nest-ce-text.js (CharmNestCeText.prepare: every engraving font, the script fonts a saved design's words need),
+ * else from the bridge's design-mode open (window.CharmEditDesign, charm-nest-bridge.js: the engraving fonts as a piece's open has them), lockRoles none; a page with neither opens the
+ * editor plainly. The editor's Save hands back the faces; they are saved as a version (by: the signed-in person), and a small card offers what is next: Send to sheet
  * (CharmNestCustomPiece.open, the pop-up of charm-nest-custom-piece.js: the metal, the order or a name), Keep editing (the editor again on this version), Done. A save that fails keeps the work:
  * "Back to the editor" opens it again as it was. Every step is told to the shared log (CNDesignLog.event): designOpen here (a master or a new start; a saved design's open is told by CharmNestDesigns.get), designSave by
  * CharmNestDesigns.put. The design is sent with every part's paint as the library keeps it: the editor's own shapes say `true` (their role's pen colour) or `false` (none).
@@ -480,13 +481,15 @@
     const token = {}; session = { token, start };
     const mine = () => !!session && session.token === token, drop = () => { if (mine()) session = null; };
     if (!(await closeEditor())) { drop(); note(''); return null; }   // (the person kept the charm they were editing)
-    const host = root.CharmEditDesign;
-    let fonts = null;
-    if (host && typeof host.fonts === 'function') { note('Opening the editor…'); try { fonts = await host.fonts(); } catch (e) { console.warn('masters: fonts', e); } }
+    // the fonts: the text module's (charm-nest-ce-text.js prepare: every engraving font, and the script fonts the words already in the faces need, loaded first), else the bridge's
+    const host = root.CharmEditDesign, TX = root.CharmNestCeText;
+    let fonts = null, textToPaths = host && typeof host.textToPaths === 'function' ? host.textToPaths : null;
+    if (TX && typeof TX.prepare === 'function') { note('Opening the editor…'); try { const p = await TX.prepare({ faces: start.faces }); if (p) { fonts = p.fonts; if (typeof p.textToPaths === 'function') textToPaths = p.textToPaths; } } catch (e) { console.warn('masters: fonts', e); } }
+    if (!fonts && host && typeof host.fonts === 'function') { note('Opening the editor…'); try { fonts = await host.fonts(); } catch (e) { console.warn('masters: fonts', e); } }
     if (!mine() || E.current) { drop(); return null; }   // (another design was asked for meanwhile, or an editor opened under us)
     note('');
     const opts = Object.assign({ title: start.title || start.name, subtitle: start.subtitle || '', faces: start.faces, startFace: 'front', lockRoles: [] },
-      Array.isArray(fonts) && fonts.length ? { fonts } : {}, host && typeof host.textToPaths === 'function' ? { textToPaths: host.textToPaths } : {});
+      Array.isArray(fonts) && fonts.length ? { fonts } : {}, textToPaths ? { textToPaths } : {});
     let shown;
     try { shown = E.open(opts); }
     catch (e) { drop(); note(`The charm editor could not open · ${(e && e.message) || e}`, true); return null; }
