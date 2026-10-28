@@ -46,10 +46,11 @@
   const SOURCES = new Set(["master", "import", "new", "piece", "design"]);
   /* What one version may hold (the cloud refuses more, and so does put before anything is sent). A version's faces up to INLINE bytes are kept in its record; up to
      `bytes` in Storage beside it (a traced photograph: D2's levels of smooth paths). Coordinates are points, y down, kept to a thousandth of a point (0.35 micron). */
-  const LIMITS = { bytes: 4000000, inline: 700000, items: 4000, depth: 8, ops: 300000, coord: 20000, name: 120, text: 400, extra: 16, sizeMm: 1000, sizeTolMm: 0.1, thumb: 98304 };
+  const LIMITS = { bytes: 4000000, inline: 700000, items: 4000, depth: 8, ops: 300000, coord: 20000, name: 120, text: 400, extra: 16, sizeMm: 1000, sizeTolMm: 0.1, thumb: 98304, pathD: 16000 };
   const ID = /^[A-Za-z0-9_.:~-]{1,64}$/, DESIGN_ID = /^[A-Za-z0-9_-]{4,64}$/, ORDER_ID = /^(?:\d{4,20}|CUSTOM-\d{8}-\d{1,5})$/, EXTRA = /^[A-Za-z][A-Za-z0-9_]{0,30}$/;
   const KNOWN = new Set(["id", "kind", "role", "source", "name", "hidden", "locked", "subpaths", "d", "children", "stroke", "fill", "lwPt", "weightMm", "even", "evenOdd", "fillRule",
-    "text", "fontKey", "sizePt", "align", "lineGap", "tx", "ty", "sx", "sy", "rot", "matrix", "pivot", "bbox", "extra"]);
+    "text", "fontKey", "sizePt", "align", "lineGap", "tx", "ty", "sx", "sy", "rot", "matrix", "pivot", "bbox", "extra",
+    "pathD", "pathAt", "pathFlip", "pathRisePt", "pathRole", "tracking", "shape", "clipOf"]);
   const fin = v => typeof v === "number" && Number.isFinite(v);
   const str = (v, n) => (v == null ? "" : String(v)).slice(0, n);
   const r3 = v => { const r = Math.round(v * 1000) / 1000; return Object.is(r, -0) ? 0 : r; };
@@ -138,8 +139,13 @@
     }
     return subs;
   }
-  /** A paint: [r, g, b] from 0 to 1, a CSS colour word or #hex, null for none; undefined when it is none of these. */
-  function cleanPaint(v) {
+  /* The editor's shape tools say only "painted" (stroke: true / fill: true): the role's own colour, the pen the laser knows it by (cut black, line red, hatch blue, art black).
+     Kept as that colour, so a part painted `true` and the same part painted its role's colour are one design with one hash. */
+  const ROLE_RGB = { cut: [0, 0, 0], line: [1, 0, 0], hatch: [0, 0, 1], art: [0, 0, 0] };
+  const paintOf = (v, role) => (v === true ? (ROLE_RGB[role] || ROLE_RGB.art).slice() : v == null || v === false || v === "none" ? null : v);
+  /** A paint: [r, g, b] from 0 to 1, a CSS colour word or #hex, null for none, `true` the role's colour; undefined when it is none of these. */
+  function cleanPaint(v, role) {
+    if (v === true) return paintOf(v, role);
     if (v == null || v === false || v === "none") return null;
     if (Array.isArray(v)) return v.length === 3 && v.every(x => fin(x) && x >= 0 && x <= 1) ? v.map(r3) : undefined;
     if (typeof v === "string" && /^(?:#[0-9a-f]{3,8}|[a-z]{3,20})$/i.test(v.trim())) return v.trim().toLowerCase();
@@ -148,7 +154,22 @@
   const paintKey = p => (p == null ? "" : Array.isArray(p) ? p.map(f3).join(",") : String(p));
 
   /* ── clean: a design checked whole, as charmNestLibrary.js cleanArt checks a piece's edit (the page asks it before sending; the cloud again before keeping) ── */
-  function cleanItem(x, depth, seen, stats, face) {
+  /* What the editor's extras (charm-nest-ce-extras.js) keep on a part travels with it, so a design opened again is edited as it was made: a text along a path (pathD, its
+     path in the text's own points, with pathAt, pathFlip, pathRisePt, pathRole) and its letter spacing (tracking); a blank's numbers (shape: { kind, sig, its numbers }, offered
+     while its drawing is still the one they made); a clipped part's original (clipOf: Release gives it back). None of them is in the hash: the words' outlines are already laid
+     along their path and spaced, a blank's drawing and a clipped part's cut drawing are what is made. */
+  /** A blank's numbers: a plain object of short plain values, or null (left out: it only offers the numbers again). */
+  function cleanShape(v) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+    const keys = Object.keys(v); if (keys.length > 16) return null;
+    const out = {};
+    for (const k of keys) { const x = v[k]; if (!EXTRA.test(k) || !(typeof x === "boolean" || (typeof x === "string" && x.length <= 80) || fin(x))) return null; out[k] = x; }
+    return out;
+  }
+  /** The extras' fingerprint of a drawing (charm-nest-ce-extras.js sigOf): a blank whose numbers matched its drawing still matches it once its points are kept to a thousandth. */
+  function sigOf(sps) { let n = 0, sum = 0; for (const sub of sps || []) for (const op of sub || []) { n++; for (const p of op.slice(1)) if (Array.isArray(p)) sum += p[0] * 0.618 + p[1] * 1.414; } return n + ":" + sum.toFixed(3); }
+  function cleanItem(x, depth, seen, stats, face, o) {
+    o = o || {};
     const at = (x && x.id != null ? `${face} · ${String(x.id).slice(0, 40)}` : `${face} · a part`) + ": ";
     if (!x || typeof x !== "object" || Array.isArray(x)) return no(at + "not a part");
     if (++stats.items > LIMITS.items) return no(`a design has at most ${LIMITS.items} parts`);
@@ -168,12 +189,17 @@
     if (x.matrix != null) { if (!nums(x.matrix, 6)) return no(at + "its matrix is six numbers"); out.matrix = x.matrix.slice(); }
     if (x.pivot != null && nums(x.pivot, 2)) out.pivot = x.pivot.slice();
     if (x.bbox != null && nums(x.bbox, 4)) out.bbox = x.bbox.slice();
-    for (const k of ["stroke", "fill"]) if (x[k] !== undefined) { const p = cleanPaint(x[k]); if (p === undefined) return no(at + `its ${k} is not a colour ([r, g, b] from 0 to 1)`); out[k] = p; }
+    for (const k of ["stroke", "fill"]) if (x[k] !== undefined) { const p = cleanPaint(x[k], role); if (p === undefined) return no(at + `its ${k} is not a colour ([r, g, b] from 0 to 1)`); out[k] = p; }
     if (x.lwPt != null) { if (!fin(x.lwPt) || x.lwPt < 0 || x.lwPt > 20) return no(at + "its line width is 0 to 20 pt"); out.lwPt = r3(x.lwPt); }
     if (x.weightMm != null) { if (!fin(x.weightMm) || Math.abs(x.weightMm) > 5) return no(at + "its weight is −5 to 5 mm"); out.weightMm = r3(x.weightMm); }
     if (x.even === true) out.even = true;
     if (x.evenOdd === true) out.evenOdd = true;
     if (x.fillRule === "evenodd" || x.fillRule === "nonzero") out.fillRule = x.fillRule;
+    if (x.pathD != null && x.pathD !== "") { if (typeof x.pathD !== "string" || x.pathD.length > LIMITS.pathD || !/^[MLCZHVQSTAmlczhvqsta0-9eE.,+\-\s]*$/.test(x.pathD)) return no(at + `the path its words run along (pathD) is SVG path data of at most ${LIMITS.pathD / 1000} KB`); out.pathD = x.pathD; }
+    for (const k of ["pathAt", "pathRisePt", "tracking"]) if (x[k] != null) { if (!fin(x[k]) || Math.abs(x[k]) > 1e5) return no(at + `its ${k} is not a number`); out[k] = x[k]; }
+    if (x.pathFlip === true) out.pathFlip = true;
+    if (x.pathRole != null && x.pathRole !== "") out.pathRole = str(x.pathRole, 20);
+    if (x.shape != null) { const sh = cleanShape(x.shape); if (sh) out.shape = sh; }
     if (kind === "text") {
       out.text = str(x.text, LIMITS.text);
       if (x.fontKey != null) out.fontKey = str(x.fontKey, 40);
@@ -191,10 +217,12 @@
     } else {
       // a text comes with its outlines (the editor's result: already placed in the face); a path with its own geometry
       if (x.subpaths == null && typeof x.d === "string") x = Object.assign({}, x, { subpaths: fromD(x.d) });
-      const subs = cleanSubs(x.subpaths == null && kind === "text" ? null : x.subpaths, stats);
+      const subs = o.kept && kind === "text" && x.subpaths == null ? [] : cleanSubs(x.subpaths == null && kind === "text" ? null : x.subpaths, stats);   // (a clipped text's original is kept as words)
       if (!subs) return no(at + (kind === "text" ? "a text comes with its outlines (the Charm Editor's result has them)" : "its path is not m / l / c / h with numbers within ±" + LIMITS.coord + " pt"));
       if (kind === "path" && !subs.length) return no(at + "its path is empty");
       out.subpaths = subs;
+      if (o.kept && kind === "text" && x.subpaths == null) delete out.subpaths;
+      if (out.shape && out.shape.sig === sigOf(x.subpaths)) out.shape.sig = sigOf(subs);   // (signed again for the points as kept; a drawing moved by a matrix put into it below is no longer its blank's)
       // the editor places a part by tx … rot (about its tight box) and states the matrix they make: a matrix alone is put into the geometry (so the editor opens it where it is
       // drawn and hashed); a matrix that is not what tx … rot make is refused (which of the two is the part?)
       if (kind === "path" && out.matrix) {
@@ -202,6 +230,8 @@
         else if (!agrees(out.matrix, matrixOf(out))) return no(at + "its matrix is not what its move, turn and scale (tx … rot) make");
       }
     }
+    // a clipped part's original, as Release gives it back (a path or words; one that cannot be kept is left out: the part itself is what is made)
+    if (!o.kept && x.clipOf && typeof x.clipOf === "object" && !Array.isArray(x.clipOf)) { const r = cleanItem(x.clipOf, depth + 1, new Set(), stats, face, { kept: true }); if (!r.error && r.item.kind !== "group") out.clipOf = r.item; }
     // what else an item carries travels with it (the editor's rule: layer, origin, a member id ...): short plain values only
     let extra = 0;
     for (const k of Object.keys(x)) {
@@ -279,12 +309,14 @@
     const o = Object.assign({}, it);
     if (o.subpaths) { o.d = toD(o.subpaths); delete o.subpaths; }
     if (o.children) o.children = o.children.map(encodeItem);
+    if (o.clipOf) o.clipOf = encodeItem(o.clipOf);
     return o;
   }
   function decodeItem(it) {
     const o = Object.assign({}, it);
     if (typeof o.d === "string") { o.subpaths = fromD(o.d); delete o.d; }
     if (Array.isArray(o.children)) o.children = o.children.map(decodeItem);
+    if (o.clipOf && typeof o.clipOf === "object") o.clipOf = decodeItem(o.clipOf);
     return o;
   }
   const encodeFaces = faces => Object.fromEntries(FACES.filter(f => faces && faces[f]).map(f => [f, Object.assign({}, faces[f], { items: (faces[f].items || []).map(encodeItem) })]));
@@ -304,7 +336,7 @@
         if (hid && it.role !== "cut") continue;
         const subs = it.subpaths || (typeof it.d === "string" ? fromD(it.d) : []);
         const placed = it.kind === "text" ? subs : transform(subs, mul(P, Array.isArray(it.matrix) ? it.matrix : matrixOf(Object.assign({}, it, { subpaths: subs }))));
-        list.push({ id: it.id, kind: it.kind || "path", role: it.role, fill: it.fill == null ? null : it.fill, stroke: it.stroke == null ? null : it.stroke, lwPt: it.lwPt == null ? null : it.lwPt, even: !!(it.even || it.evenOdd || it.fillRule === "evenodd"), subpaths: placed });
+        list.push({ id: it.id, kind: it.kind || "path", role: it.role, fill: paintOf(it.fill, it.role), stroke: paintOf(it.stroke, it.role), lwPt: it.lwPt == null ? null : it.lwPt, even: !!(it.even || it.evenOdd || it.fillRule === "evenodd"), subpaths: placed });
       }
     };
     for (const f of FACES) if (faces && faces[f]) walk(faces[f].items, I, false, out[f] = []);

@@ -127,7 +127,14 @@ async function world(opts = {}) {
   const w = await Base.world(Object.assign({ viewport: { width: 1440, height: 900 } }, opts));
   if (!w) return null;
   seedMaster(w.srv.st); seedOptionMaps(w.srv.st);
-  await w.page.evaluate(async () => { await Master.load(true); await Orders.loadMaps(true); if (window.Engrave) await Engrave.loadFonts(); });
+  // (the page's own first read of the library may be on its way from before the seeding, and load(true) hands that read back, with no masters in it: fresh waits for it and reads
+  //  again; then the library is read until it holds every master seeded, so a test that reads B.master.entries finds them)
+  await w.page.evaluate(async n => {
+    await Master.load({ force: true, fresh: true });
+    for (let i = 0; i < 4 && B.master.entries.size < n; i++) await Master.load({ force: true, fresh: true });
+    if (B.master.entries.size < n) throw new Error(`the page's charm library holds ${B.master.entries.size} of the ${n} masters seeded`);
+    await Orders.loadMaps(true); if (window.Engrave) await Engrave.loadFonts();
+  }, Object.keys(DESIGNS).length);
   w.shots = opts.shots || process.env.SHOTS || DEFAULT_SHOTS; w.made = {};
   return w;
 }
