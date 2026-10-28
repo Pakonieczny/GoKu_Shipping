@@ -74,22 +74,32 @@
   const PATH_PTS = 12000;               // path points (and scanned pixels / 8) between two yields of the trace
   const SLICE_MS = 8;                   // the page's own slices, when it does the work itself
   const SEAM_PX = 1.5;                  // a band between a darker and a lighter level thinner than this on average is an edge's antialiasing (0.075 mm at 20 px/mm)
-  const DEFAULTS = Object.freeze({ levels: 4, detail: 0.5, smooth: 0.5, despeckle: 2, pxPerMm: 20, workPxPerMm: 20, maxSide: 2048, invert: false,
-    contrast: 0, brightness: 0, gamma: 1, autoLevels: true, sharpen: 'auto', denoise: 'auto', adaptive: false, thresholds: 'otsu', stack: false });
+  // (TRACEHQ, Paul 28 Oct 2026: "I need the vectorized images to be very high quality"): up to 16 greys, the working pitch rising with Detail, a budget the trace keeps to itself
+  const MAX_LEVELS = 16;
+  const OP_BYTES = [17, 17, 49, 1];     // what an m · l · c · h costs in a piece's record (charm-nest-art-edit.js toD: three decimals; charm-nest-ce-image.js sizeOf says the same)
+  const DEFAULTS = Object.freeze({ levels: 4, detail: 0.5, smooth: 0.5, despeckle: 2, pxPerMm: 20, workPxPerMm: 'auto', maxSide: 4096, invert: false,
+    contrast: 0, brightness: 0, gamma: 1, autoLevels: true, sharpen: 'auto', denoise: 'auto', adaptive: false, thresholds: 'auto', stack: false,
+    smoothing: 'auto', lineArt: false, upscale: 'auto', budget: null });
 
   function options(o) {
     o = Object.assign({}, DEFAULTS, o || {});
-    o.levels = clamp(Math.round(num(o.levels, 4)), 1, 8);
+    o.levels = clamp(Math.round(num(o.levels, 4)), 1, MAX_LEVELS);
     o.detail = clamp(num(o.detail, 0.5), 0, 1);
     o.smooth = clamp(num(o.smooth, 0.5), 0, 1);
     o.pxPerMm = num(o.pxPerMm, 20) > 0 ? +o.pxPerMm : 20;
-    o.workPxPerMm = num(o.workPxPerMm, 20) > 0 ? +o.workPxPerMm : 20;
-    o.maxSide = Math.max(16, Math.round(num(o.maxSide, 2048)));
+    // (TRACEHQ) the working pitch: 20 px a mm up to Detail 50 (0.05 mm, a fibre laser's hatch), then up to 40 at Detail 100 (0.025 mm); black-only line art twice that,
+    // so a hairline of the drawing is still a band of pixels and not a guess
+    const hi = Math.max(0, (o.detail - 0.5) * 2);
+    o.workPxPerMm = num(o.workPxPerMm, 0) > 0 ? +o.workPxPerMm : 20 + 20 * hi;
+    o.lineArt = o.lineArt === true;
+    o.maxSide = Math.max(16, Math.round(num(o.maxSide, 4096)));
     // the speck size in mm² on the charm: despeckleMm2 when given, else despeckle pixels at 20 px/mm
     o.speckMm2 = num(o.despeckleMm2, null) != null ? Math.max(0, o.despeckleMm2) : Math.max(0, num(o.despeckle, 2)) / 400;
     // Potrace's two knobs (its defaults at 0.5 each): alphamax 0..1..1.333 and opttolerance 0.4..0.2..0.1
     o.alphamax = o.smooth <= 0.5 ? o.smooth * 2 : 1 + (o.smooth - 0.5) * (2 / 3);
     o.opttol = 0.2 * Math.pow(2, 2 * (0.5 - o.detail));
+    const b = o.budget;
+    o.budget = b && typeof b === 'object' ? { ops: num(b.ops, Infinity) > 0 ? +b.ops : Infinity, bytes: num(b.bytes, Infinity) > 0 ? +b.bytes : Infinity, layerBytes: num(b.layerBytes, Infinity) > 0 ? +b.layerBytes : Infinity } : null;
     return o;
   }
 
@@ -126,14 +136,20 @@
     off[N] = idx.length;
     return { off, idx: Int32Array.from(idx), wt: Float32Array.from(wt) };
   }
+  /** (TRACEHQ, Paul 28 Oct 2026) sRGB ↔ linear light: an average of greys is taken of the light they stand for, not of their numbers (a hair's black line on a
+   *  white face averaged as numbers comes out too dark and too wide: the face gets blotches where its fine lines were). LIN: 4096 steps of the grey. */
+  const LIN = new Float32Array(4096);
+  for (let i = 0; i < 4096; i++) { const c = i / 4095; LIN[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+  const toGamma = l => (l <= 0.0031308 ? 12.92 * l : 1.055 * Math.pow(l, 1 / 2.4) - 0.055);
   function* resampleG(v, w, h, W, H, p0, p1) {
     if (W === w && H === h) return v;
+    if (W > w || H > h) return yield* upsampleG(v, w, h, W, H, p0, p1);
     const kx = weights(w, W), ky = weights(h, H), tmp = new Float32Array(W * h), out = new Float32Array(W * H);
     const pm = (p0 + p1) / 2;
     yield* rows(h, w, (y0, y1) => {
       for (let y = y0; y < y1; y++) {
         const r = y * w, o = y * W;
-        for (let x = 0; x < W; x++) { let s = 0; for (let t = kx.off[x], e = kx.off[x + 1]; t < e; t++) s += v[r + kx.idx[t]] * kx.wt[t]; tmp[o + x] = s; }
+        for (let x = 0; x < W; x++) { let s = 0; for (let t = kx.off[x], e = kx.off[x + 1]; t < e; t++) s += LIN[(v[r + kx.idx[t]] * 4095 + 0.5) | 0] * kx.wt[t]; tmp[o + x] = s; }
       }
     }, p0, pm);
     yield* rows(H, W, (y0, y1) => {
@@ -143,7 +159,64 @@
           const r = ky.idx[t] * W, k = ky.wt[t];
           for (let x = 0; x < W; x++) out[o + x] += tmp[r + x] * k;
         }
-        for (let x = 0; x < W; x++) { const q = out[o + x]; out[o + x] = q < 0 ? 0 : q > 1 ? 1 : q; }
+        for (let x = 0; x < W; x++) { const q = out[o + x]; out[o + x] = q <= 0 ? 0 : q >= 1 ? 1 : toGamma(q); }
+      }
+    }, pm, p1);
+    return out;
+  }
+  /** (LINEART, Paul 28 Oct 2026: "the Line Art option produces very poor results even when I import perfect black and white line images") a small drawing ENLARGED
+   *  before its threshold: Catmull-Rom (bicubic) on the grey, so an antialiased edge's 50 % line is found between the pixels, not on their corners, and a line
+   *  thinner than a pixel stays a line. Only line art is enlarged (a photo's levels gain nothing from it: the measure of 28 Oct 2026 in the header). */
+  function* upsampleG(v, w, h, W, H, p0, p1) {
+    const tap = (n, N) => {   // for each output index: 4 source indices and weights
+      const idx = new Int32Array(N * 4), wt = new Float32Array(N * 4), s = n / N;
+      for (let i = 0; i < N; i++) {
+        const x = (i + 0.5) * s - 0.5, f = Math.floor(x), t = x - f;
+        const t2 = t * t, t3 = t2 * t, ws = [(-t3 + 2 * t2 - t) / 2, (3 * t3 - 5 * t2 + 2) / 2, (-3 * t3 + 4 * t2 + t) / 2, (t3 - t2) / 2];
+        for (let k = 0; k < 4; k++) { idx[i * 4 + k] = clamp(f - 1 + k, 0, n - 1); wt[i * 4 + k] = ws[k]; }
+      }
+      return { idx, wt };
+    };
+    const kx = tap(w, W), ky = tap(h, H), tmp = new Float32Array(W * h), out = new Float32Array(W * H), pm = (p0 + p1) / 2;
+    yield* rows(h, W, (y0, y1) => {
+      for (let y = y0; y < y1; y++) { const r = y * w, o = y * W; for (let x = 0, j = 0; x < W; x++, j += 4) tmp[o + x] = v[r + kx.idx[j]] * kx.wt[j] + v[r + kx.idx[j + 1]] * kx.wt[j + 1] + v[r + kx.idx[j + 2]] * kx.wt[j + 2] + v[r + kx.idx[j + 3]] * kx.wt[j + 3]; }
+    }, p0, pm);
+    yield* rows(H, W, (y0, y1) => {
+      for (let y = y0; y < y1; y++) {
+        const o = y * W, j = y * 4, r0 = ky.idx[j] * W, r1 = ky.idx[j + 1] * W, r2 = ky.idx[j + 2] * W, r3 = ky.idx[j + 3] * W, a = ky.wt[j], b = ky.wt[j + 1], c = ky.wt[j + 2], d = ky.wt[j + 3];
+        for (let x = 0; x < W; x++) { const q = tmp[r0 + x] * a + tmp[r1 + x] * b + tmp[r2 + x] * c + tmp[r3 + x] * d; out[o + x] = q < 0 ? 0 : q > 1 ? 1 : q; }
+      }
+    }, pm, p1);
+    return out;
+  }
+  /** (TRACEHQ, Paul 28 Oct 2026: "with Levels 8, Detail 100 ... blotchy") EDGE-PRESERVING smoothing before the levels: a bilateral filter (Tomasi & Manduchi), done
+   *  as two passes, across then down (Pham & van Vliet's separable form): grain and JPEG noise near a level's threshold no longer flicker across it into islands
+   *  and ragged borders (blotches, and thousands of points spent on noise), while an edge (an eye, a lip, a strand of hair) keeps its place. ss: the reach in
+   *  working pixels, sr: how different a grey may be and still be averaged in. */
+  function* bilateralG(v, W, H, ss, sr, p0, p1) {
+    if (!(ss > 0.25) || !(sr > 0)) return v;
+    const r = Math.max(1, Math.ceil(2 * ss)), ks = new Float32Array(2 * r + 1), RN = 1024, kr = new Float32Array(RN + 1);
+    for (let i = -r; i <= r; i++) ks[i + r] = Math.exp(-i * i / (2 * ss * ss));
+    for (let q = 0; q <= RN; q++) { const d = q / RN; kr[q] = Math.exp(-d * d / (2 * sr * sr)); }
+    const tmp = new Float32Array(W * H), out = new Float32Array(W * H), pm = (p0 + p1) / 2;
+    yield* rows(H, W, (y0, y1) => {
+      for (let y = y0; y < y1; y++) {
+        const o = y * W;
+        for (let x = 0; x < W; x++) {
+          const c = v[o + x]; let s = 0, n = 0;
+          for (let t = -r; t <= r; t++) { const xx = x + t, q = v[o + (xx < 0 ? 0 : xx >= W ? W - 1 : xx)], d = q - c, k = ks[t + r] * kr[((d < 0 ? -d : d) * RN + 0.5) | 0]; s += q * k; n += k; }
+          tmp[o + x] = s / n;
+        }
+      }
+    }, p0, pm);
+    yield* rows(H, W, (y0, y1) => {
+      for (let y = y0; y < y1; y++) {
+        const o = y * W;
+        for (let x = 0; x < W; x++) {
+          const c = tmp[o + x]; let s = 0, n = 0;
+          for (let t = -r; t <= r; t++) { const yy = y + t, q = tmp[(yy < 0 ? 0 : yy >= H ? H - 1 : yy) * W + x], d = q - c, k = ks[t + r] * kr[((d < 0 ? -d : d) * RN + 0.5) | 0]; s += q * k; n += k; }
+          out[o + x] = s / n;
+        }
       }
     }, pm, p1);
     return out;
@@ -255,10 +328,21 @@
     if (o.invert) for (let i = 0; i < v.length; i++) v[i] = 1 - v[i];
     return v;
   }
-  /** The working size: the placed image at workPxPerMm, at most maxSide a side, never larger than the source. */
+  /** The working size: the placed image at workPxPerMm, at most maxSide a side, never larger than the source. Black-only line art (lineArt, or one level) is
+   *  the exception (LINEART, Paul 28 Oct 2026): it is never made smaller than it came (a hairline of the drawing would be averaged into the paper), and a small
+   *  drawing is ENLARGED (2–4 ×, upsampleG) toward twice the working pitch, so its thin lines and the gaps between them survive the threshold. */
   function workSize(w, h, o) {
-    let s = o.workPxPerMm / o.pxPerMm;
-    s = Math.min(s, 1, o.maxSide / Math.max(w, h));
+    let s;
+    const line = o.lineArt || o.levels === 1;
+    if (line) {
+      // a whole number (coverageG: each of the drawing's pixels a block of s × s), three times the working pitch, at most 3 × (measured on 28 Oct 2026, a
+      // 600 × 450 drawing at 30 mm: IoU against the drawing 0.918 at 2 ×, 0.947 at 3 ×, 0.944 at 4 ×), as big as maxSide allows
+      const want = o.upscale === false ? 1 : num(o.upscale, null) != null ? +o.upscale : (3 * o.workPxPerMm) / o.pxPerMm;
+      s = Math.min(Math.round(clamp(want, 1, 3)), Math.max(1, Math.floor(o.maxSide / Math.max(w, h))));
+      if (s > 1) return { W: w * s, H: h * s, sx: s, sy: s, ppm: o.pxPerMm * s, up: s };
+      s = 1;
+    } else s = Math.min(o.workPxPerMm / o.pxPerMm, 1);
+    s = Math.min(s, o.maxSide / Math.max(w, h));
     const W = Math.max(1, Math.round(w * s)), H = Math.max(1, Math.round(h * s));
     return { W, H, sx: W / w, sy: H / h, ppm: o.pxPerMm * Math.sqrt((W / w) * (H / h)) };
   }
@@ -288,9 +372,15 @@
     return cuts;
   }
   /** Thresholds 0..1, one per inked level: grey <= t[k] is level k or darker. */
-  function thresholdsOf(v, N, how) {
+  function thresholdsOf(v, N, how, content) {
     if (Array.isArray(how) && how.length === N && how.every(t => num(t, null) != null)) return how.map(t => clamp(+t, 0, 1)).sort((a, b) => a - b);
     if (how === 'even') return Array.from({ length: N }, (_, k) => (k + 1) / (N + 1));
+    // (TRACEHQ, Paul 28 Oct 2026: "blotchy/posterised") TONE: each pixel to the band whose fixed grey k / N is NEAREST its own, the cuts half way between them
+    // ((k + ½) / N). Otsu's cuts follow where a photo's pixels crowd, but the band's grey is fixed at k / N, so a face held in a few mid-tones came out in
+    // bands of the wrong greys, darker or lighter than it is, its shading broken into blotches. 'auto': black only cuts at the half (an antialiased edge's own
+    // line), a photo by TONE, flat art (a logo's few tones, each one band) by Otsu
+    if (how === 'auto' || how == null) how = N === 1 ? 'tone' : content === 'photo' ? 'tone' : 'otsu';
+    if (how === 'tone') return Array.from({ length: N }, (_, k) => (k + 0.5) / N);
     const hist = new Float64Array(256); for (let i = 0; i < v.length; i++) hist[(v[i] * 255 + 0.5) | 0]++;
     return otsu(hist, N + 1).map(b => (b + 0.5) / 255);
   }
@@ -299,6 +389,47 @@
     const N = t.length, Wp = W + 2, lab = new Uint8Array(Wp * (H + 2)).fill(N), lut = new Uint8Array(1024);
     for (let q = 0; q < 1024; q++) { let c = 0; while (c < N && q / 1023 > t[c]) c++; lut[q] = c; }
     yield* rows(H, W, (y0, y1) => { for (let y = y0; y < y1; y++) for (let x = 0, i = y * W, j = (y + 1) * Wp + 1; x < W; x++) lab[j++] = lut[(v[i++] * 1023 + 0.5) | 0]; }, p0, p1);
+    return lab;
+  }
+  /** (LINEART, Paul 28 Oct 2026: "even when I import perfect black and white line images") BLACK ONLY FROM A DRAWING ENLARGED s × (s whole): each of the drawing's
+   *  own pixels is s × s working pixels, and as many of them are inked as its grey says of ink (a pixel 40 % dark: 40 % of its block), the darkest of the
+   *  enlarged grey first, so the ink lands on the side of the pixel its neighbours say it lies on. A line 0.8 px wide across two pixels (60 % grey each, past
+   *  no threshold) is kept, 0.8 px wide; a gap between two lines stays open as wide as it is; an edge falls where a half threshold puts it. The paper's own
+   *  grain (under 6 % dark) inks nothing and ink over 94 % dark fills its block. t: the threshold (the half, or Brightness's), as labelG's. */
+  function* coverageG(v, own, W, H, s, t, p0, p1) {
+    const Wp = W + 2, lab = new Uint8Array(Wp * (H + 2)).fill(1), n = s * s, val = new Float32Array(n), ord = Array.from({ length: n }, (_, i) => i);
+    const bw = Math.floor(W / s), bh = Math.floor(H / s), span = 2 * Math.min(t, 1 - t) || 1, tau = new Float32Array(bw * bh), pure = new Int8Array(bw * bh), pm = (p0 + p1) / 2;
+    // each block's own threshold: half way between its last pixel inked and its first left (a block all paper or all ink: the threshold, kept clear of its greys)
+    yield* rows(bh, bw * s, (b0, b1) => {
+      for (let by = b0; by < b1; by++) for (let bx = 0; bx < bw; bx++) {
+        let lo = Infinity, hi = -Infinity;
+        for (let j = 0, k = 0; j < s; j++) for (let i = 0; i < s; i++, k++) { const x = v[(by * s + j) * W + bx * s + i]; val[k] = x; if (x < lo) lo = x; if (x > hi) hi = x; }
+        const d = clamp(((t - own[by * bw + bx]) / span + 0.5 - 0.06) / 0.88, 0, 1), want = Math.round(d * n);
+        if (want === 0) { tau[by * bw + bx] = Math.min(t, lo - 1e-4); pure[by * bw + bx] = 1; }
+        else if (want === n) { tau[by * bw + bx] = Math.max(t, hi + 1e-4); pure[by * bw + bx] = -1; }
+        else {
+          // (the share itself, not rounded to whole working pixels: the threshold between two neighbours' counts, so a slanted edge's ink moves on smoothly)
+          ord.sort((a, b) => val[a] - val[b] || a - b);
+          const mid = k => (k <= 0 ? val[ord[0]] - 0.01 : k >= n ? val[ord[n - 1]] + 0.01 : (val[ord[k - 1]] + val[ord[k]]) / 2), a = d * n, k = Math.floor(a);
+          tau[by * bw + bx] = mid(k) + (mid(k + 1) - mid(k)) * (a - k);
+        }
+      }
+    }, p0, pm);
+    // and the threshold of every working pixel drawn smoothly between the blocks' (bilinear between their centres), so the edge runs on from block to block
+    // instead of stepping at each one: the ink of each block is kept to within a few working pixels
+    yield* rows(H, W, (y0, y1) => {
+      for (let y = y0; y < y1; y++) {
+        const fy = clamp((y + 0.5) / s - 0.5, 0, bh - 1), j0 = Math.floor(fy), j1 = Math.min(bh - 1, j0 + 1), wy = fy - j0;
+        for (let x = 0; x < W; x++) {
+          const fx = clamp((x + 0.5) / s - 0.5, 0, bw - 1), i0 = Math.floor(fx), i1 = Math.min(bw - 1, i0 + 1), wx = fx - i0;
+          // (a block all paper or all ink is that, whatever its neighbours: a square's corner stays square)
+          const own = pure[Math.min(bh - 1, (y / s) | 0) * bw + Math.min(bw - 1, (x / s) | 0)];
+          if (own) { lab[(y + 1) * Wp + x + 1] = own > 0 ? 1 : 0; continue; }
+          const a = tau[j0 * bw + i0] + (tau[j0 * bw + i1] - tau[j0 * bw + i0]) * wx, b = tau[j1 * bw + i0] + (tau[j1 * bw + i1] - tau[j1 * bw + i0]) * wx;
+          lab[(y + 1) * Wp + x + 1] = v[y * W + x] <= a + (b - a) * wy ? 0 : 1;
+        }
+      }
+    }, pm, p1);
     return lab;
   }
   /** Despeckle on the levels. A region (4-connected pixels of one level) joins the level it borders most (ties: the nearer grey) when it is
@@ -338,7 +469,7 @@
     const order = []; for (let r = 0; r < pick.length; r += 2) order.push(r);
     order.sort((a, b) => pick[a + 1] - pick[b + 1]);
     yield p0 + (p1 - p0) * 0.9;
-    const votes = new Float64Array(16); let merged = 0;
+    const votes = new Float64Array(MAX_LEVELS + 1); let merged = 0;
     for (const r of order) {
       const s = pick[r], c = pick[r + 1], own = lab[Q[s]];
       votes.fill(0);
@@ -348,7 +479,7 @@
         q = lab[p - Wp]; if (q !== own) votes[q]++; q = lab[p + Wp]; if (q !== own) votes[q]++;
       }
       let best = -1, bv = 0;
-      for (let q = 0; q < 16; q++) if (votes[q] > bv || (votes[q] === bv && bv > 0 && Math.abs(q - own) < Math.abs(best - own))) { bv = votes[q]; best = q; }
+      for (let q = 0; q <= MAX_LEVELS; q++) if (votes[q] > bv || (votes[q] === bv && bv > 0 && Math.abs(q - own) < Math.abs(best - own))) { bv = votes[q]; best = q; }
       if (best < 0) continue;
       for (let t = s; t < s + c; t++) lab[Q[t]] = best;
       merged++;
@@ -709,26 +840,98 @@
     const w0 = img.width | 0, h0 = img.height | 0, ch = channelsOf(img);
     let v = yield* luminanceG(img.data, w0, h0, ch, 0, 0.02);
     const ws = workSize(w0, h0, o), W = ws.W, H = ws.H;
-    v = yield* resampleG(v, w0, h0, W, H, 0.02, 0.06);
     const info = {};
-    v = yield* prepG(v, W, H, o, ws.ppm, info, 0.06, 0.16);
+    // (a drawing to be enlarged is prepared at its own pixels, and coverageG reads each one's own grey from them)
+    let own = null;
+    if (ws.up > 1) { own = yield* prepG(v, w0, h0, o, o.pxPerMm, info, 0.02, 0.1); v = yield* resampleG(own, w0, h0, W, H, 0.1, 0.16); }
+    else { v = yield* resampleG(v, w0, h0, W, H, 0.02, 0.06); v = yield* prepG(v, W, H, o, ws.ppm, info, 0.06, 0.16); }
     ms.prep = now() - t0;
-    const N = o.levels, t = thresholdsOf(v, N, o.thresholds);
-    const lab = yield* labelG(v, W, H, t, 0.16, 0.18);
-    const raw = o.keepLabels ? unframe(lab, W, H) : null;
-    const speck = Math.round(o.speckMm2 * ws.ppm * ws.ppm);
-    const seam = o.speckMm2 > 0 ? SEAM_PX : 0;
-    const merged = yield* despeckleG(lab, W, H, speck, seam, 0.18, 0.22);
-    ms.posterise = now() - t0 - ms.prep;
-    // pixels per level (the posterised area of each band, source px²)
+    const N = o.levels, t = thresholdsOf(v, N, o.thresholds, info.content);
+    const line = o.lineArt || N === 1, base = v;
+    // (TRACEHQ) the edge-preserving smoothing a photo's levels are cut from (none for black-only line art: its antialiased edge IS the line), and the steps the
+    // trace takes, finer to coarser, while what it makes is more than the piece's record can hold (o.budget): smoother tones and bigger specks at the same pitch
+    // first, so the face keeps its place and size and only loses what is smallest; only past the last step is the working picture made smaller (3/4 a side,
+    // at most four times). The old way (the whole picture traced again at 0.72 ×, from the first) lost the face first: a 5000 px photo at Paul's settings
+    // on a 30 mm charm came out 311 px across (10 px a mm)
+    const sm0 = smoothingOf(o, info, line), steps = o.budget ? SIMPLIFY.length : 1;
+    let res = null, pass = 0, total = null, tries = 0, shrunk = 0, cw = ws, cb = base, lastOver = null, refined = false, kept = null;
+    for (;;) {
+      const W1 = cw.W, H1 = cw.H, VIS = new Uint8Array((W1 + 2) * (H1 + 2));
+      for (; pass < steps; tries++) {
+        const S = Object.assign({}, SIMPLIFY[pass], o._simplify || null), p0 = steps === 1 ? 0.16 : pass ? 0.6 + 0.35 * (1 - Math.pow(0.5, pass - 1)) : 0.16, p1 = steps === 1 ? 0.95 : pass ? 0.6 + 0.35 * (1 - Math.pow(0.5, pass)) : 0.6;
+        const q = d => p0 + (p1 - p0) * d;
+        v = sm0.ss * S.ss > 0.25 ? yield* bilateralG(cb, W1, H1, sm0.ss * S.ss, sm0.sr * S.sr, p0, q(0.04)) : cb;
+        const lab = cw.up > 1 && N === 1 ? yield* coverageG(v, own, W1, H1, cw.up, t[0], q(0.04), q(0.06)) : yield* labelG(v, W1, H1, t, q(0.04), q(0.06));
+        const raw = o.keepLabels ? unframe(lab, W1, H1) : null;
+        const speck = Math.round(o.speckMm2 * cw.ppm * cw.ppm * S.speck + (S.speck > 1 ? S.speckMin * (cw.ppm / 20) * (cw.ppm / 20) : 0));
+        const seam = o.speckMm2 > 0 || S.speck > 1 ? SEAM_PX : 0;
+        const merged = yield* despeckleG(lab, W1, H1, speck, seam, q(0.06), q(0.1));
+        if (!tries) ms.posterise = now() - t0 - ms.prep;
+        // (a drawing enlarged k × keeps its curves' tolerance in its own pixels: k × in the working ones, so the enlargement buys truer edges, not more points)
+        const up = Math.max(1, Math.sqrt(cw.sx * cw.sy)), oo = S.tol !== 1 || S.alpha || up > 1 ? Object.assign({}, o, { opttol: o.opttol * S.tol * up, alphamax: o.alphamax + (S.alpha || 0) }) : o;
+        const r = yield* traceLevelsG(lab, W1, H1, N, VIS, oo, cw, o.budget, p0 + (p1 - p0) * 0.1, p1);
+        total = r.bytes;
+        res = { lab, raw, speck, merged, layers: r.layers, over: r.over, ratio: r.ratio, bytes: r.bytes, simplify: S, ws: cw, pass };
+        if (!r.over) break;
+        // the next step: the first takes the grain away (measured on a 5000 px photo at 40 px a mm, 28 Oct 2026: 4.7 MB → 0.88 MB), each after it about a
+        // fifth less, so a trace far over its budget goes straight to the step that should hold it rather than through each
+        pass = pass === 0 ? 1 : Math.min(steps - 1 === pass ? steps : steps - 1, pass + Math.max(1, Math.ceil(Math.log(r.ratio) / Math.log(1.25))));
+      }
+      if (!res.over && shrunk && !refined && o.budget && total < 0.7 * o.budget.bytes && lastOver) {
+        // made too small by the guess: once more half way (in scale) toward the last size that was over, kept if it holds
+        refined = true; kept = res;
+        const W2 = Math.round(Math.sqrt(W1 * lastOver[0])), H2 = Math.round(Math.sqrt(H1 * lastOver[1]));
+        if (W2 > W1) { cb = yield* resampleG(base, W, H, W2, H2, 0.9, 0.9); cw = { W: W2, H: H2, sx: W2 / w0, sy: H2 / h0, ppm: ws.ppm * Math.sqrt((W2 / W) * (H2 / H)) }; pass = steps - 1; continue; }
+      }
+      if (kept && res.over) { res = kept; break; }
+      if (!res.over || line || shrunk >= 6 || Math.max(W1, H1) <= 64) break;
+      lastOver = [W1, H1];
+      // past the last step: smaller, by what the last step says (a trace's bytes go about as its pitch to the 0.85: measured on a 5000 × 2500 photo at
+      // 8 levels, 28 Oct 2026: 1202 · 906 · 690 · 487 KB at 40 · 29 · 20 · 14 px a mm), and traced again at that step: past it, a smoother picture lost more
+      // of the face than a smaller one (at 450 KB, 20 px a mm and a 4 px smoothing: grey error 10.5; 14 px a mm and 4 px: 9.9)
+      shrunk++;
+      const f = clamp(0.95 * Math.pow(res.ratio, -1 / 0.85), 0.5, 0.85), W2 = Math.max(16, Math.round(W1 * f)), H2 = Math.max(16, Math.round(H1 * f));
+      cb = yield* resampleG(base, W, H, W2, H2, 0.9, 0.9);
+      cw = { W: W2, H: H2, sx: W2 / w0, sy: H2 / h0, ppm: ws.ppm * Math.sqrt((W2 / W) * (H2 / H)) };
+      pass = steps - 1;
+    }
+    if (res.over) throw Object.assign(new Error('CharmNestTrace: the trace is more than its budget even simplified'), { overBudget: true, bytes: total });
+    ms.trace = now() - t0 - ms.prep - ms.posterise;
+    ms.work = now() - t0;
+    const out = { width: w0, height: h0, levels: N, thresholds: t.map(x => Math.round(x * 1000) / 1000), greys: Array.from({ length: N }, (_, k) => k / N),
+      suggestLevels: info.suggestLevels, content: info.content, midtones: info.midtones, scale: res.ws.sx,
+      work: { width: res.ws.W, height: res.ws.H, pxPerMm: res.ws.ppm, speckPx: res.speck, merged: res.merged, smoothing: { ss: +(sm0.ss * res.simplify.ss).toFixed(3), sr: +(sm0.sr * res.simplify.sr).toFixed(3) },
+        simplified: res.pass, shrunk, passes: tries + 1, bytes: res.bytes },
+      mode: o.stack ? 'stack' : 'bands', layers: res.layers, ms };
+    if (o.keepLabels) { out.work.labels = unframe(res.lab, res.ws.W, res.ws.H); out.work.labelsRaw = res.raw; }
+    return out;
+  }
+  /** (TRACEHQ) The bilateral smoothing for these settings: a photo's levels at Detail 100 are cut from a lightly smoothed grey (reach 0.5 px, greys within 3 %
+   *  averaged), at Detail 0 from a much smoother one; an illustration's flat tones and black-only line art are left as they are. opts.smoothing (0..1) says it. */
+  function smoothingOf(o, info, line) {
+    if (num(o.smoothing, null) != null) { const s = clamp(+o.smoothing, 0, 1); return { ss: 3 * s, sr: 0.02 + 0.1 * s }; }
+    if (line || o.smoothing === false || info.content !== 'photo') return { ss: 0, sr: 0 };
+    return { ss: 0.6 + 1.4 * (1 - o.detail), sr: 0.035 + 0.05 * (1 - o.detail) };
+  }
+  /** The steps of simplification, the first as asked: the smoothing's reach (×) and tolerance (×), the speck area (×, and at least speckMin px at 20 px/mm), the
+   *  curves' tolerance (×) and how much rounder a corner must be to stay one (alphamax +). */
+  const SIMPLIFY = [
+    { ss: 1, sr: 1, speck: 1, speckMin: 0, tol: 1, alpha: 0 },
+    { ss: 1.6, sr: 1.3, speck: 2, speckMin: 2, tol: 1.5, alpha: 0 },
+    { ss: 2.4, sr: 1.6, speck: 3, speckMin: 4, tol: 2, alpha: 0.1 },
+    { ss: 3.5, sr: 2, speck: 4, speckMin: 8, tol: 2.5, alpha: 0.15 },
+    { ss: 5, sr: 2.4, speck: 6, speckMin: 14, tol: 3, alpha: 0.2 },
+    { ss: 7, sr: 2.8, speck: 8, speckMin: 24, tol: 3.5, alpha: 0.25 }
+  ];
+  /** Every level traced and laid out as bands (or stacked): { layers, bytes, over } — over when a budget is given and what is made passes it (the work stops there). */
+  function* traceLevelsG(lab, W, H, N, VIS, o, ws, budget, p0, p1) {
     const counts = new Float64Array(N + 1), Wp = W + 2;
     for (let y = 1; y <= H; y++) for (let i = y * Wp + 1, e = i + W; i < e; i++) counts[lab[i]]++;
-    const VIS = new Uint8Array(Wp * (H + 2));
-    yield 0.22;
-    let prev = null, cur = store(), spare = store();
-    const layers = [], span = 0.75 / N;
+    yield p0;
+    let prev = null, cur = store(), spare = store(), bytes = 0, ops = 0;
+    const layers = [], span = (p1 - p0) / N;
     for (let k = 0; k < N; k++) {
-      yield* traceLevelG(lab, W, H, k, VIS, o, cur, 0.22 + span * k, 0.22 + span * (k + 1));
+      yield* traceLevelG(lab, W, H, k, VIS, o, cur, p0 + span * k, p0 + span * (k + 0.8));
       const L = { level: k, grey: k / N, cmd: new Uint8Array(1024), xy: new Float32Array(4096), nc: 0, nx: 0, areaPx: counts[k] / (ws.sx * ws.sy) };
       if (o.stack) L.areaPx = Array.from(counts.subarray(0, k + 1)).reduce((a, b) => a + b, 0) / (ws.sx * ws.sy);
       if (prev && !o.stack) {
@@ -739,23 +942,23 @@
           if (q !== undefined && prev.len[q] === cur.len[c] && prev.hash[q] === cur.hash[c]) { cur.match[c] = 1; prev.match[q] = 1; }
         }
       }
-      const pe = 0.22 + span * (k + 1);
+      const pe = p0 + span * (k + 1);
       for (let c = 0; c < cur.n; c++) { if (!cur.match[c]) emit(L, cur, c, false, ws.sx, ws.sy, W, H); if ((c & 2047) === 2047) yield pe; }
       if (prev && !o.stack) for (let c = 0; c < prev.n; c++) { if (!prev.match[c]) emit(L, prev, c, true, ws.sx, ws.sy, W, H); if ((c & 2047) === 2047) yield pe; }
       for (let c = 0; c < cur.n; c++) cur.match[c] = 0;
       L.cmd = L.cmd.slice(0, L.nc); L.xy = L.xy.slice(0, L.nx);
-      let nodes = 0; for (let i = 0; i < L.nc; i++) if (L.cmd[i] !== 3) nodes++;
-      L.nodes = nodes; delete L.nc; delete L.nx;
+      let nodes = 0, lb = 0; for (let i = 0; i < L.nc; i++) { const c = L.cmd[i]; if (c !== 3) nodes++; lb += OP_BYTES[c]; }
+      L.nodes = nodes; L.bytes = lb; delete L.nc; delete L.nx;
+      bytes += lb; ops += L.cmd.length;
+      if (budget && (bytes > budget.bytes || ops > budget.ops || lb > budget.layerBytes)) {
+        // how far over the whole would be, from the levels made so far (an inner level holds two borders: each level after the first counts double)
+        const done = 2 * (k + 1) - 1, all = 2 * N - 1, f = Math.max(bytes / budget.bytes, ops / budget.ops, lb / budget.layerBytes);
+        return { layers, bytes, ops, over: true, ratio: f * all / done };
+      }
       if (nodes) layers.push(L);
       const used = prev; prev = cur; cur = used || spare;
     }
-    ms.trace = now() - t0 - ms.prep - ms.posterise;
-    ms.work = now() - t0;
-    const res = { width: w0, height: h0, levels: N, thresholds: t.map(x => Math.round(x * 1000) / 1000), greys: Array.from({ length: N }, (_, k) => k / N),
-      suggestLevels: info.suggestLevels, content: info.content, midtones: info.midtones, scale: ws.sx, work: { width: W, height: H, pxPerMm: ws.ppm, speckPx: speck, merged },
-      mode: o.stack ? 'stack' : 'bands', layers, ms };
-    if (o.keepLabels) { res.work.labels = unframe(lab, W, H); res.work.labelsRaw = raw; }
-    return res;
+    return { layers, bytes, ops, over: false };
   }
   function unframe(lab, W, H) { const out = new Uint8Array(W * H), Wp = W + 2; for (let y = 0; y < H; y++) out.set(lab.subarray((y + 1) * Wp + 1, (y + 1) * Wp + 1 + W), y * W); return out; }
   /** The packed layers as the editor's subpaths (rounded to 1/1000 px), in slices. */
@@ -931,7 +1134,7 @@
     return imageOf(p.W, p.H, i => Math.round(p.v[i] * 255));
   }
   function posterise(src, opts) {
-    const p = prepared(src, opts, num(opts && opts.maxSide, 512)), N = p.o.levels, t = thresholdsOf(p.v, N, p.o.thresholds);
+    const p = prepared(src, opts, num(opts && opts.maxSide, 512)), N = p.o.levels, t = thresholdsOf(p.v, N, p.o.thresholds, p.info.content);
     const lab = drain(labelG(p.v, p.W, p.H, t, 0, 1));
     drain(despeckleG(lab, p.W, p.H, Math.round(p.o.speckMm2 * p.ppm * p.ppm), p.o.speckMm2 > 0 ? SEAM_PX : 0, 0, 1));
     const flat = unframe(lab, p.W, p.H);
