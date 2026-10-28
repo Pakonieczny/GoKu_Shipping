@@ -672,6 +672,10 @@
     function press(seal) {
       if (!seal) return Promise.resolve();
       if(seal._press)return seal._press;
+      // (PHONEFIT, 28 Oct 2026: a seal is fitted to its row before the stamp comes down on it. Drawn and pressed in the same moment (a Release Hold or a Print in the order window, RELSTAMP),
+      //  its row's fit waited for the press to end (no seal moves under a stamp: busy), so the stamp came down on it at the full size and, at a phone's 390 px, the row stood a line taller
+      //  for the press and then shrank under it. A row with a seal already under a stamp is left as it is.)
+      {const row=seal.closest?.('.sealRow');if(row && ![...row.querySelectorAll('.seal')].some(x=>x._press)){try{fitRows([row],true);}catch(_){}}}
       const run=queued(()=>pressOnce(seal));seal._press=run;
       run.finally(()=>{if(seal._press===run)seal._press=null;}).catch(()=>{});
       return run;
