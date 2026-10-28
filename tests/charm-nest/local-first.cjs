@@ -6,7 +6,7 @@
           in under 100 ms, no veil (the median of three reloads, each the sheet's first opening in its page, once the page is at rest)
      G2 · the reopen's getSheet {ifRev} answers unchanged in under 1 KB, at 1 Firestore read
      G3 · a warm reload paints the Library's cards within 500 ms of the page's scripts having run (calls held 2 s: only this computer's copy can)
-     G4 · the Library visited again with nothing changed: under 20 KB
+     G4 · the Library visited again with nothing changed: under 20 KB (within a minute of its read nothing is asked; later the lists are asked by revision)
      G5 · after the reload, 0 master downloads and 0 parses for the designs the sheet uses
      G6 · window.indexedDB removed: the Library and the sheet window work as before, from the cloud, with no page error
    node tests/charm-nest/local-first.cjs        PW_DIR=<playwright node_modules> CHROMIUM=<chrome>   NOGATE=1: report only */
@@ -144,11 +144,15 @@ async function main() {
     /* ── the Library visited again, nothing changed ── */
     await a.context.unroute(/\/\.netlify\/functions\//);
     await a.page.waitForTimeout(HOLD + 500);
-    await a.page.evaluate(() => CN.setMode('orders')); await a.page.waitForTimeout(800);
-    const n0 = await a.page.evaluate(() => window.__net.length);
-    await a.page.evaluate(() => CN.setMode('library')); await a.page.waitForTimeout(2500);
-    const rv = await a.page.evaluate(n0 => { const l = window.__net.slice(n0); return { kb: l.reduce((n, x) => n + (x.bytes || 0), 0) / 1024, ops: l.map(x => x.op || x.fn) }; }, n0);
-    gate('G4', rv.kb < GATE.revisitKB, `the Library visited again, nothing changed: ${rv.kb.toFixed(1)} KB in ${rv.ops.length} call(s) [${rv.ops.join(' ')}] (gate < ${GATE.revisitKB} KB)`);
+    // (twice: within a minute of its last read nothing is asked (NAV); later, the lists are asked by revision (LOCAL), the read's clock set back a minute as an hour away would)
+    const visit = async aged => {
+      await a.page.evaluate(() => CN.setMode('orders')); await a.page.waitForTimeout(800);
+      const n0 = await a.page.evaluate(aged => { if (aged) { CN.S.library.setsAskedAt -= 61000; CN.S.library.loadedAt -= 61000; } return window.__net.length; }, aged);
+      await a.page.evaluate(() => CN.setMode('library')); await a.page.waitForTimeout(2500);
+      return a.page.evaluate(n0 => { const l = window.__net.slice(n0); return { kb: l.reduce((n, x) => n + (x.bytes || 0), 0) / 1024, ops: l.map(x => x.op || x.fn), lists: l.filter(x => /^(setList|listSheets)$/.test(x.op)).length }; }, n0);
+    };
+    const soon = await visit(false), rv = await visit(true);
+    gate('G4', soon.kb < GATE.revisitKB && rv.kb < GATE.revisitKB && !soon.lists && rv.lists === 2, `the Library visited again, nothing changed: within a minute ${soon.kb.toFixed(1)} KB in ${soon.ops.length} call(s) [${soon.ops.join(' ')}], ${soon.lists} list read(s); later, asked by revision, ${rv.kb.toFixed(1)} KB in ${rv.ops.length} call(s) [${rv.ops.join(' ')}] (gate < ${GATE.revisitKB} KB)`);
     if (a.errors.length) fails.push('page errors: ' + a.errors.slice(0, 3).join(' | '));
     await a.context.close();
 

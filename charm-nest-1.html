@@ -8079,10 +8079,12 @@ function showLibrary() {
   const shown = S.library.kind !== "sets" && S.library.rows?.length && S.library.loadedFor === S.library.metal;
   if (shown && !$('#libBody [data-laser-card="sheet"]')) renderLibrary();
   if (shown || S.library.kind === "sets" && $("#libBody .setCard")) libraryReturn(S.library.place);   // (sets shown stay, read again behind)
-  // NAV (28 Oct 2026, Paul: "Every sheet that opens must be instantaneous … keep the API calls to the bare minimum"): the cards on screen are shown as they are, at once. LOCAL (the same
-  // day): they are no longer read again by the clock (a list a minute old was read whole, 8 calls and 2.5 MB at 6,000 orders) but asked by revision (setList / listSheets ifRev: one small
-  // read each when nothing moved, only the rows written since when something did; nothing is drawn again unless they answer a change), and the live read follows the cards in view
-  try { window.LaserReview?.follow?.(); } catch (_) {}
+  if (shown && Date.now() - (S.library.loadedAt || 0) < 60000) return;
+  // NAV (28 Oct 2026, Paul: "Every sheet that opens must be instantaneous … keep the API calls to the bare minimum"): the Sets view read under a minute ago, with no Library write made
+  // here or heard from another tab since it was asked, is shown as it is, with no call; its live read (LaserReview: one small read by revision) starts again and brings the cards in
+  // view up to date. LOCAL (the same day): anything older, or written since, is no longer read whole again (8 calls, 2.5 MB at 6,000 orders) but asked by revision (setList /
+  // listSheets ifRev: one small read each when nothing moved, only the rows written since when something did; nothing is drawn again unless they answer a change).
+  if (S.library.kind === "sets" && $("#libBody .setCard") && Date.now() - (S.library.setsAskedAt || 0) < 60000 && (S.library.wroteAt || 0) < S.library.setsAskedAt) { try { window.LaserReview?.follow?.(); } catch (_) {} return; }
   loadLibrary().catch(() => {});
 }
 function libraryPlace() {
