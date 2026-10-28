@@ -32,7 +32,8 @@
   const PT = 72 / 25.4, MM = 25.4 / 72;
   const ACCEPT = ['.png', '.jpg', '.jpeg', '.webp', 'image/png', 'image/jpeg', 'image/webp'];
   const DEF = Object.freeze({ mode: 'grey', levels: 4, detail: 0.5, smooth: 0.5, despeckle: 2, invert: false, auto: true, gamma: 1, brightness: 0, contrast: 0, sharpen: 0, denoise: false,
-    rot: 0, flipH: false, flipV: false, crop: null });
+    rot: 0, flipH: false, flipV: false, crop: null, adaptive: 'auto' });
+  const MAX_LEVELS = 16;       // (TRACEHQ, Paul 28 Oct 2026: "I need the vectorized images to be very high quality": up to 16 greys, CharmNestTrace's own limit)
   const SRC_MAX = 2400;        // the source kept, px on its long side (a phone's photo is 4000: more than any charm can show)
   const SHOW_MAX = 560;        // the preview's original and greyscale, px
   const PREVIEW_MAX = 280;     // the preview's vector: traced from this, px
@@ -45,7 +46,8 @@
   const r4 = v => Math.round(v * 1e4) / 1e4;
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const log = (kind, data) => { try { if (root && root.CNDesignLog && typeof root.CNDesignLog.event === 'function') root.CNDesignLog.event(kind, data); } catch (e) { /* the log is the log's business */ } };
-  const tracer = () => (root && root.CharmNestTrace && typeof root.CharmNestTrace.trace === 'function' ? root.CharmNestTrace : null);
+  const tracer = () => (root && root.CharmNestTrace && typeof root.CharmNestTrace.trace === 'function' ? root.CharmNestTrace
+    : typeof module === 'object' && module.exports && typeof require === 'function' ? require('./charm-nest-ce-trace.js') : null);   // (node: the tests' placeSync)
   const now = () => (root && root.performance ? root.performance.now() : Date.now());
   let seq = 0;
   const newId = () => 'img' + Date.now().toString(36) + (++seq).toString(36);
@@ -56,7 +58,8 @@
     o = Object.assign({}, DEF, o || {});
     const c = Array.isArray(o.crop) && o.crop.length === 4 && o.crop.every(fin) ? o.crop.map(v => clamp(v, 0, 1)) : null;
     const n01 = (v, d) => clamp(fin(+v) ? +v : d, 0, 1), npm = v => clamp(fin(+v) ? +v : 0, -1, 1);
-    return { mode: o.mode === 'line' ? 'line' : 'grey', levels: clamp(Math.round(+o.levels || DEF.levels), 1, 8), detail: n01(o.detail, DEF.detail), smooth: n01(o.smooth, DEF.smooth),
+    return { mode: o.mode === 'line' ? 'line' : 'grey', levels: clamp(Math.round(+o.levels || DEF.levels), 1, MAX_LEVELS), detail: n01(o.detail, DEF.detail), smooth: n01(o.smooth, DEF.smooth),
+      adaptive: o.adaptive === true || o.adaptive === false ? o.adaptive : 'auto',
       despeckle: clamp(Math.round(fin(+o.despeckle) ? +o.despeckle : DEF.despeckle), 0, 10), invert: !!o.invert, auto: o.auto !== false, gamma: clamp(fin(+o.gamma) && +o.gamma > 0 ? +o.gamma : 1, 0.3, 3),
       brightness: npm(o.brightness), contrast: npm(o.contrast), sharpen: n01(o.sharpen, 0), denoise: !!o.denoise,
       rot: ((Math.round((+o.rot || 0) / 90) * 90) % 360 + 360) % 360, flipH: !!o.flipH, flipV: !!o.flipV,
@@ -66,8 +69,12 @@
   const levelsOf = o => (o.mode === 'line' ? 1 : o.levels);
   /** What CharmNestTrace.trace is asked (charm-nest-ce-trace.js): the picture comes already prepared here (prepGrey: what the Greyscale pane shows is what is traced), so the trace's own
    *  prep is left out; pxPerMm says how big it is on the charm, so despeckle is an area on the metal. */
-  const traceOpts = (o, pxPerMm) => ({ levels: levelsOf(o), detail: o.detail, smooth: o.smooth, despeckle: o.despeckle, invert: false, autoLevels: false, gamma: 1, contrast: 0, brightness: 0,
-    sharpen: 0, denoise: false, adaptive: false, pxPerMm: fin(pxPerMm) && pxPerMm > 0 ? pxPerMm : 20 });
+  const traceOpts = (o, pxPerMm) => Object.assign({ levels: levelsOf(o), detail: o.detail, smooth: o.smooth, despeckle: o.despeckle, invert: false, autoLevels: false, gamma: 1, contrast: 0, brightness: 0,
+    sharpen: 0, denoise: false, adaptive: false, pxPerMm: fin(pxPerMm) && pxPerMm > 0 ? pxPerMm : 20 },
+    // (LINEART, Paul 28 Oct 2026) line art is black only, from the antialiased grey (enlarged and cut at its own half by the trace), Brightness moving the cut
+    o.mode === 'line' ? { lineArt: true, thresholds: [lineCut(o)] } : {});
+  /** Where line art is cut (the grey after the tone): the half, lower with Brightness up (less ink), higher with it down. */
+  const lineCut = o => clamp(0.5 - 0.3 * (+o.brightness || 0), 0.15, 0.85);
   const KIND = { line: 'line art', illustration: 'an illustration', photo: 'a photo' };
   /** A quarter turn (dir 1 clockwise, -1 the other way) of what is shown: the crop turns with the picture, and a flip made before it is the other flip after it (R·H = V·R). */
   function turn(o, dir) {
@@ -145,14 +152,30 @@
     if (o.auto !== false) { const clip = n * 0.005; let s = 0; while (lo < 250 && (s += hist[lo]) <= clip) lo++; s = 0; while (hi > lo + 4 && (s += hist[hi]) <= clip) hi--; }
     const g = 1 / Math.max(0.05, +o.gamma || 1), c = +o.contrast || 0, k = c >= 0 ? 1 / Math.max(0.02, 1 - c) : 1 + c, br = (+o.brightness || 0) * 0.5, line = o.mode === 'line';
     const lut = new Uint8ClampedArray(256), lev = new Uint8ClampedArray(256);
+    for (let v = 0; v < 256; v++) { const x0 = Math.min(1, Math.max(0, (v - lo) / Math.max(1, hi - lo))); lev[v] = Math.round(x0 * 255); }
+    // (LINEART, Paul 28 Oct 2026: "the Line Art option produces very poor results even when I import perfect black and white line images") the local-mean threshold
+    // only for a page lit unevenly (o.adaptive true, or 'auto' and the paper's own grey wanders by more than a fifth across the picture: the paper's level is
+    // each of 8 × 8 tiles' 90th percentile, the spread between the 10th and 90th of those); a drawing on even paper is cut at its own half (the trace, enlarged)
+    let adapt = line && o.adaptive === true;
+    if (line && o.adaptive !== false && o.adaptive !== true && w >= 16 && h >= 16) {
+      const tp = [], th = new Uint32Array(256);
+      for (let ty = 0; ty < 8; ty++) for (let tx = 0; tx < 8; tx++) {
+        th.fill(0); let cnt = 0;
+        for (let y = (ty * h) >> 3, ye = ((ty + 1) * h) >> 3; y < ye; y++) for (let x = (tx * w) >> 3, xe = ((tx + 1) * w) >> 3; x < xe; x++) { th[lev[base[y * w + x]]]++; cnt++; }
+        let acc = 0, b = 0; for (; b < 255; b++) { acc += th[b]; if (acc >= cnt * 0.9) break; }
+        tp.push(b);
+      }
+      tp.sort((a, b) => a - b);
+      adapt = tp[57] - tp[6] > 51;
+    }
     for (let v = 0; v < 256; v++) {
-      const x0 = Math.min(1, Math.max(0, (v - lo) / Math.max(1, hi - lo))); lev[v] = Math.round(x0 * 255);
-      let x = Math.pow(x0, g); x = (x - 0.5) * k + 0.5 + (line ? 0 : br); x = Math.min(1, Math.max(0, x));
-      lut[v] = Math.round((o.invert && !line ? 1 - x : x) * 255);
+      let x = Math.pow(lev[v] / 255, g); x = (x - 0.5) * k + 0.5 + (line ? 0 : br); x = Math.min(1, Math.max(0, x));
+      lut[v] = Math.round((o.invert && !adapt ? 1 - x : x) * 255);
     }
     const out = new Uint8ClampedArray(n);
     for (let i = 0; i < n; i++) out[i] = lut[base[i]];
-    if (line) {   // (Bradley & Roth: the sum of the window from an integral image; ink when darker than its mean by t)
+    if (line && !adapt && !o.forTrace) { const cut = Math.round(255 * Math.min(0.85, Math.max(0.15, 0.5 - 0.3 * (+o.brightness || 0)))); for (let i = 0; i < n; i++) out[i] = out[i] <= cut ? 0 : 255; }
+    if (adapt) {   // (Bradley & Roth: the sum of the window from an integral image; ink when darker than its mean by t)
       const I = new Float64Array((w + 1) * (h + 1)), W1 = w + 1, s = Math.max(4, Math.round(Math.max(w, h) / 16)), t = Math.min(0.45, Math.max(0.02, 0.15 + (+o.brightness || 0) * 0.12));
       for (let y = 0; y < h; y++) { let row = 0; for (let x = 0; x < w; x++) { row += out[y * w + x]; I[(y + 1) * W1 + x + 1] = I[y * W1 + x + 1] + row; } }
       for (let y = 0; y < h; y++) {
@@ -168,7 +191,7 @@
     let mid = 0; const bins = new Float64Array(32);
     for (let v = 0; v < 256; v++) { const L = lev[v], m = hist[v] / n; if (L >= 51 && L <= 204) mid += m; bins[L >> 3] += m; }
     const top4 = Array.from(bins).sort((a, b) => b - a).slice(0, 4).reduce((a, b) => a + b, 0);
-    return { g: out, mid, top4, bins: Array.from(bins) };
+    return { g: out, mid, top4, bins: Array.from(bins), adaptive: adapt };
   }
   /** The key prepGrey keeps its filtered base under (the same words as in it: prepGrey is a worker's body and can see nothing outside itself). */
   const filterKey = (w, h, o) => w + 'x' + h + ':' + (o.denoise ? 1 : 0) + ':' + Math.round((+o.sharpen || 0) * 3 * 100);
@@ -185,6 +208,57 @@
     const r = prepGrey(px, w, h, o), d = new Uint8ClampedArray(w * h * 4);
     for (let i = 0, p = 0; i < r.g.length; i++, p += 4) { d[p] = d[p + 1] = d[p + 2] = r.g[i]; d[p + 3] = 255; }
     return { data: d, width: w, height: h };
+  }
+  /** (TRACEHQ, Paul 28 Oct 2026: "with Levels 8, Detail 100, Smoothness 100, Despeckle 0 a 5000×5000 photo still comes out blotchy") RGBA w × h averaged down to
+   *  W × H by area IN LINEAR LIGHT (each channel: sRGB to linear, the average, back), a transparent pixel counted as white paper. A browser's drawImage averages the
+   *  numbers, so a strand of dark hair over a light face came out darker and wider than it is, and the canvas a browser draws with may differ from computer to
+   *  computer; this is the same everywhere. Self-contained: it is also the body of the prep worker. */
+  function shrink(px, w, h, W, H) {
+    if (W >= w && H >= h) return px;
+    const L = new Float32Array(256); for (let i = 0; i < 256; i++) { const c = i / 255; L[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+    const sx = w / W, sy = h / H, out = new Uint8ClampedArray(W * H * 4), acc = new Float64Array(W * 3), wx = [];
+    for (let X = 0; X < W; X++) { const a = X * sx, b = (X + 1) * sx, xs = []; for (let x = Math.floor(a); x < Math.min(w, Math.ceil(b)); x++) xs.push(x, Math.min(b, x + 1) - Math.max(a, x)); wx.push(xs); }
+    const enc = l => Math.round(255 * (l <= 0.0031308 ? 12.92 * l : 1.055 * Math.pow(l, 1 / 2.4) - 0.055));
+    for (let Y = 0; Y < H; Y++) {
+      acc.fill(0); const a = Y * sy, b = (Y + 1) * sy;
+      for (let y = Math.floor(a); y < Math.min(h, Math.ceil(b)); y++) {
+        const wy = Math.min(b, y + 1) - Math.max(a, y), r = y * w * 4;
+        for (let X = 0; X < W; X++) {
+          const xs = wx[X]; let s0 = 0, s1 = 0, s2 = 0;
+          for (let t = 0; t < xs.length; t += 2) { const q = r + xs[t] * 4, al = px[q + 3] / 255, k = xs[t + 1]; s0 += (L[px[q]] * al + 1 - al) * k; s1 += (L[px[q + 1]] * al + 1 - al) * k; s2 += (L[px[q + 2]] * al + 1 - al) * k; }
+          acc[X * 3] += s0 * wy; acc[X * 3 + 1] += s1 * wy; acc[X * 3 + 2] += s2 * wy;
+        }
+      }
+      const area = sx * sy;
+      for (let X = 0, q = Y * W * 4; X < W; X++, q += 4) { out[q] = enc(acc[X * 3] / area); out[q + 1] = enc(acc[X * 3 + 1] / area); out[q + 2] = enc(acc[X * 3 + 2] / area); out[q + 3] = 255; }
+    }
+    return out;
+  }
+  /** WHAT PLACE TRACES (one rule for the page and the tests; Paul, 28 Oct 2026: "The image vector Modal sometimes does not produce repeatable results"): the picture as
+   *  shown (RGBA w × h, turned, flipped and cropped) and the settings, the placed size longMm → { grey (RGBA, prepared), opts (CharmNestTrace.trace's) }. Nothing
+   *  else goes in: not the preview's state, not the screen, not the browser's canvas scaling. The working size is the trace's own (CharmNestTrace.plan: 20 px a
+   *  mm, up to 40 at Detail 100; line art at its own pixels, enlarged by the trace), reached here by shrink (linear light), then prepGrey. */
+  function placeInput(px, w, h, o, longMm) {
+    o = norm(o);
+    const T = tracer(), mm = fin(longMm) && longMm > 0 ? longMm : Math.max(w, h) / 20, t0 = traceOpts(o, Math.max(w, h) / mm), P = T && T.plan ? T.plan(w, h, t0) : { W: w, H: h };
+    let W = w, H = h;
+    if (o.mode !== 'line' && P.W < w) { px = shrink(px, w, h, P.W, P.H); W = P.W; H = P.H; }
+    const grey = greyImage(px, W, H, Object.assign({}, o, { forTrace: true }));
+    return { grey, opts: Object.assign(traceOpts(o, Math.max(W, H) / mm), { budget: Object.assign({}, BUDGET) }), work: [W, H] };
+  }
+  /** Place on this thread, start to end (node and the tests; the page runs the same steps in its workers): → { res, size, fits }. A trace more than a piece can hold
+   *  even simplified (CharmNestTrace throws overBudget) is made again from a picture 0.6 × smaller, at most three times. */
+  function placeSync(src, settings, longMm) {
+    const T = tracer(); let w = src.width, h = src.height, px = src.data;
+    for (let tries = 0; ; tries++) {
+      const inp = placeInput(px, w, h, settings, longMm);
+      try { const res = T.traceSync(inp.grey, inp.opts), size = sizeOf(res.layers); return { res, size, fits: fits(size), tries }; }
+      catch (e) {
+        if (!(e && e.overBudget) || tries >= 3) throw e;
+        const W = Math.max(16, Math.round(inp.work[0] * 0.6)), H = Math.max(16, Math.round(inp.work[1] * 0.6));
+        px = shrink(px, w, h, W, H); w = W; h = H;
+      }
+    }
   }
   /** Kept for callers of the first version: grey with brightness, contrast and invert only (no filters, no auto-levels). */
   function grey(src, o, dst) {
@@ -984,6 +1058,6 @@
     (CE.commands || (CE.commands = {})).imageRetrace = { title: 'Re-trace image…', group: 'Image', icon: IC.image, run: ctx => retrace(ctx), enabled: ctx => { try { const s = traceSet(ctx); return !!s && SOURCES.has(s.src); } catch (e) { return false; } } };
   }
 
-  return { ACCEPT, DEF, BUDGET, BUSY_NODES, traceOpts, norm, turn, flip, shownSize, keptSize, shownMatrix, prepGrey, greyImage, suggestLevels, levelsOf, grey, polysOf, inside, fitInOutline, fitInBox, target, sizeOf, fits, buildGroup, traceSet, greyName,
+  return { ACCEPT, DEF, BUDGET, BUSY_NODES, MAX_LEVELS, traceOpts, norm, shrink, placeInput, placeSync, turn, flip, shownSize, keptSize, shownMatrix, prepGrey, greyImage, suggestLevels, levelsOf, grey, polysOf, inside, fitInOutline, fitInBox, target, sizeOf, fits, buildGroup, traceSet, greyName,
     register, run, retrace, decode, accepts, stats: () => stats, current: () => live, sources: () => SOURCES };
 });
