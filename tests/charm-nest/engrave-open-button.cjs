@@ -69,10 +69,10 @@ async function main() {
       for (const c of cards) {
         const id = `${n}${c.slot ? ' ' + c.slot : ''}`;
         check(c.n === 1 && c.tag === 'BUTTON' && c.type === 'button' && c.de === 'engrave', `${id}: exactly one real <button type=button data-e=engrave> in the card`, c);
-        check(/^(Fix|View) in Engraving →$/.test(c.text) && /\bbtn\b/.test(c.cls) && /\bsm\b/.test(c.cls) && /\begOpen\b/.test(c.cls) && /\b(ghost|gold)\b/.test(c.cls), `${id}: the old button's words and classes ("${c.text}", ${c.cls})`);
+        check(/^(Fix|View) in Design & Engrave →$/.test(c.text) && /\bbtn\b/.test(c.cls) && /\bsm\b/.test(c.cls) && /\begOpen\b/.test(c.cls) && /\b(ghost|gold)\b/.test(c.cls), `${id}: the old button's words and classes ("${c.text}", ${c.cls})`);
         check(c.inside && c.spill <= 0, `${id}: the button sits inside the card and nothing spills out of it`, { inside: c.inside, spill: c.spill });
         console.log(`  info ${id}: faces shown ${c.faces.join('+')} (which faces a card shows is ENGSMART's; the button is on every card whatever they are)`);
-        check(c.thumbs.every(t => t.tag === 'BUTTON' && t.type === 'button' && t.tab === 0 && /engraving of .+: open in Engraving/.test(t.label || '')), `${id}: each thumbnail is a real focusable button with its own name (aria-label)`, c.thumbs);
+        check(c.thumbs.every(t => t.tag === 'BUTTON' && t.type === 'button' && t.tab === 0 && /engraving of .+: open in Design & Engrave/.test(t.label || '')), `${id}: each thumbnail is a real focusable button with its own name (aria-label)`, c.thumbs);
         check(c.h <= 290 && c.h >= 230 && c.w > 190 && c.w < (c.faces.length === 2 ? 440 : 215), `${id}: the card is ${Math.round(c.h)}px tall at ${Math.round(c.w)}px wide (ENGBIG: 160px pictures; about 255 tall and one 207px track wide with one face, about 270 and two tracks, 424px, with two)`);
       }
       check(await page.evaluate(() => [...document.querySelectorAll('#owEng > .engCard')].every(c => c.querySelectorAll('.egOpen').length === 1) && !document.querySelector('#owEng .engCard a[href], #owEng .engCard [role=link]')), `${n}: one button per card, no link or role=link stand-in`);
@@ -187,7 +187,7 @@ async function main() {
     check(+lk.opacity === 1 && lk.cursor === 'progress' && lk.text !== before.text, `loading: full strength, progress cursor (${lk.opacity}, ${lk.cursor})`, { before, lk });
     await page.evaluate(() => window.__btRelease && window.__btRelease(true)); await sleep(200);
     const rel = await page.evaluate(s => { const b = document.querySelector(s); return { text: b.textContent.replace(/\s+/g, ' ').trim(), busy: b.getAttribute('aria-busy'), card: document.querySelector('#btStage .engCard').dataset.opening || '' }; }, SB);
-    check(/^(Fix|View) in Engraving →$/.test(rel.text) && rel.busy === null && rel.card === '', 'loading ends: the button has its words and its state back', rel);
+    check(/^(Fix|View) in Design & Engrave →$/.test(rel.text) && rel.busy === null && rel.card === '', 'loading ends: the button has its words and its state back', rel);
     // a thumbnail press shows the spinner on the thumbnail and on the button
     await mk({ key: made.both.key, pending: true });
     await page.click(ST); await sleep(200);
@@ -203,7 +203,7 @@ async function main() {
     await R.shot(w, 'BUTTON-loading-real', { clip: await clip() });
     check(real.busy === 'true' && real.text === 'Opening Design & Engrave…', 'in the real order window the button says "Opening Design & Engrave…" with its spinner while it opens', real);
     await sleep(700); await page.evaluate(() => { window.__hold = 0; });
-    check(await page.evaluate(s => { const b = document.querySelector(s); return !!b && b.getAttribute('aria-busy') === null && /Engraving →$/.test(b.textContent.trim()); }, cardSel('back') + ' .egOpen'), 'and gives the button back when the opening ends (here the stub opens nothing)');
+    check(await page.evaluate(s => { const b = document.querySelector(s); return !!b && b.getAttribute('aria-busy') === null && /Design & Engrave →$/.test(b.textContent.trim()); }, cardSel('back') + ' .egOpen'), 'and gives the button back when the opening ends (here the stub opens nothing)');
 
     /* ── 4 · the keyboard ── */
     console.log('\n  4 · the keyboard');
