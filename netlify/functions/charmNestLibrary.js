@@ -4341,6 +4341,9 @@ const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneL
 /* ART EDIT (Paul, 27 Oct 2026): one piece's own artwork, kept beside it (op_artPut above). artPut writes the piece's record, its pool row's artEdit stamp and its sheet's filesOwed;
    artGet and artList only read the documents named (they move no counter). */
 Object.assign(OPS, { artPut: op_artPut, artGet: op_artGet, artList: op_artList }); NO_GEN_BUMP.add("artGet"); NO_GEN_BUMP.add("artList");
+/* DESIGN LOG (Paul, 28 Oct 2026: "I need to know when employees are commissioning custom pieces, especially when they don't belong to an order"): designLog {records} keeps one
+   record per custom piece sent, and per fix piece with who made the mistake (_designLog.js, Design_Log; charm-nest-design-log.js sends them). One write per record, no read; nothing a placement answer is made from. */
+OPS.designLog = b => require("./_designLog").add(db, FV, b.records, { prefix: PREFIX }); NO_GEN_BUMP.add("designLog");
 
 /* ── sign-in time (Paul, 28 Sep 23:53; plans/sign-in-sessions.md part L): sessionsList {since, until, limit} is the
    sorter's read of Station_Sessions, one document per sign-in, which the stations write through firebaseOrders
