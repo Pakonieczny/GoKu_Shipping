@@ -64,7 +64,9 @@
     if (P && typeof P.fontFamilyOf === 'function') { try { if (typeof P.ensure === 'function') Promise.resolve(P.ensure(id)).catch(() => null); out.family = P.fontFamilyOf(id); } catch (_) { /* its name in the page's own font */ } }
     const row = Or && Array.isArray(Or.FONT_STYLES) ? Or.FONT_STYLES.find(r => Array.isArray(r.prefer) && r.prefer[0] === id && r.label) : null;
     if (row) out.kind = row.label;
-    if (s) out.bold = !!s.Semibold;
+    // (BOLDALL, Paul 28 Oct 2026: "The Bold option has no effect on the text, also some fonts don't have the option to be bolded": every font has Bold now: its heavier cut where that
+    //  is not already the one engraved, else its own letters grown (textToPaths below). Only a page without the editor's offsets (CharmEditorOps) has none for a one-weight family.)
+    if (s) out.bold = !!s.Semibold || canGrow();
     if (Or && Or.fontCaps && Or.fontCaps(id)) out.caps = true;
     return out;
   }
@@ -128,12 +130,24 @@
   /** The face the words are cut in: the set of `fontKey` (Source Sans 3 while it is not loaded: asked for, and the words drawn again when it comes), its Semibold for a small capital. */
   function faceFor(fontKey, size, bold) {
     const En = E(), Gm = G(), Or = O(); if (!En || !Gm) return null;
+    const f = cutFor(fontKey, size, bold); if (!f) return null;
+    // (BOLDALL: Bold is the heavier cut when the words would otherwise be in the regular; when they are already in the heavier one (a small capital) or the family has one weight, the letters
+    //  themselves are grown: `grow`, the share of the size each outline grows by on every side)
+    if (bold && (!f.set.Semibold || f.small) && canGrow()) f.grow = BOLD_GROW;
+    return f;
+  }
+  const BOLD_GROW = 0.022;   // (each side, a share of the type size: about a third of a regular stroke, the weight Illustrator's faux bold adds)
+  const ops = () => (root.CharmEditorOps && root.CharmEditorOps.kernel && typeof root.CharmEditorOps.kernel.offsetPath === 'function' ? root.CharmEditorOps.kernel : null);
+  const canGrow = () => !!ops();
+  function cutFor(fontKey, size, bold) {
+    const En = E(), Gm = G(), Or = O(); if (!En || !Gm) return null;
     let set = setOf(fontKey);
     if (!set && fontKey && Or && Or.fontById && Or.fontById(fontKey)) { askedFonts.add(String(fontKey)); want('font:' + fontKey, 'font:' + fontKey, () => En.loadFontSet(fontKey)); }
     if (!set) set = En.fonts && En.fonts.Regular ? En.fonts : null;
     if (!set) return null;
-    const font = ((bold || size * Gm.capPerEm(set.Regular) * MM < SEMI_MM) && set.Semibold) || set.Regular;   // (CETEXT: Bold is the family's heavier cut at any size; a family with one weight has none)
-    return { set, font, id: set === En.fonts ? (Or && Or.DEFAULT_FONT) : set.id };
+    const small = size * Gm.capPerEm(set.Regular) * MM < SEMI_MM;
+    const font = ((bold || small) && set.Semibold) || set.Regular;   // (CETEXT: Bold is the family's heavier cut at any size)
+    return { set, font, small: small && !!set.Semibold, id: set === En.fonts ? (Or && Or.DEFAULT_FONT) : set.id };
   }
   /** Words as filled outlines in an engraving font (the editor's textToPaths). Lines are a capital and the fit's own gap apart unless the editor gives a gap (a factor of the size).
    *  A cluster nothing can set yet is left out of the outlines (and asked for); a cluster nothing can set at all is left out and said under the words box. */
@@ -164,6 +178,8 @@
     });
     if (gone.length) askFor(words, gone, f.set.Regular);
     let subs = subpaths.filter(s => s.some(op => op[0] === 'l' || op[0] === 'c'));
+    // (BOLDALL: the letters grown by `grow` of the size on every side, their joins mitred so a serif and a corner stay sharp; the counters (the holes of a, e, o) shrink with them)
+    if (f.grow && subs.length) { try { const g = ops().offsetPath({ subpaths: subs, evenOdd: false }, size * f.grow, 'miter', 2, false, false); if (g && g.length) subs = g; } catch (e) { console.warn('[ce-text] bold', e && e.message); } }
     // (CETEXT: ITALIC, the letters slanted 12° to the right about their baselines (y down: up is -y), as outlines: none of the engraving fonts has an italic of its own)
     if (o.italic && subs.length) { const k = Math.tan(ITALIC_DEG * Math.PI / 180), sl = p => [p[0] - p[1] * k, p[1]]; subs = subs.map(sp => sp.map(op => (op[0] === 'h' ? op : [op[0]].concat(op.slice(1).map(sl))))); }
     return { subpaths: subs, bbox: subs.length && CE && CE.model ? CE.model.bboxOf(subs) : null };

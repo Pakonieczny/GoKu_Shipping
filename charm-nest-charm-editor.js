@@ -3752,7 +3752,9 @@
       const op = t.closest('[data-opt]'); if (op) { S[op.dataset.opt] = !S[op.dataset.opt]; saveOpts(); syncProps(); applyView(); return; }
       const cm = t.closest('[data-cmd]'); if (cm) { closeMenus(); if (cm.dataset.cmd === 'unlockAll') setAll('locked', false); else if (cm.dataset.cmd === 'showAll') setAll('hidden', false); return; }
       const rl = t.closest('[data-role]'); if (rl) { closeMenus(); setRole(rl.dataset.role); return; }
-      const fo = t.closest('[data-font]'); if (fo) { closeMenus(); const f = fonts.find(x => String(x.key) === fo.dataset.font); if (f) setFont(f.key); return; }
+      // (FONTOPEN, Paul 28 Oct 2026: "the dropdown closes every-time I choose an alternate Font style. The dropdown should stay open and the selected font should be updating the text in real-time":
+      //  a font picked is drawn on the words at once and the menu stays open, as its Style buttons do; Esc, a press outside or the menu's own button closes it)
+      const fo = t.closest('[data-font]'); if (fo) { const f = fonts.find(x => String(x.key) === fo.dataset.font); if (f) setFont(f.key); return; }
       // (CETEXT, 28 Oct 2026: Bold / Italic, the alignment and the letter case of the words)
       // (the Style menu stays open: bold, italic, an alignment and a letter case can be set one after the other, each drawn at once)
       const ts = t.closest('[data-tstyle]'); if (ts) { if (!ts.classList.contains('is-off')) toggleTextStyle(ts.dataset.tstyle); return; }

@@ -101,10 +101,10 @@ async function partBCD() {
       const anchor = it => { const g = CharmEditor.current.ctx.geo, m = g.matrix(it); return [m[4], m[5]]; };   // (where the words' anchor, the middle of their first baseline, lands on the charm)
       const an0 = await page.evaluate(`(${anchor})(__cw.words("back"))`);
       await page.click('.ce-root [data-drop="font"] .ce-menu .ce-item[data-font="crimson-text"]').catch(() => {});
-      const f1 = await page.evaluate(id => ({ wd: __cw.words('back'), d: __cw.drawn('back', id), h: CharmEditor.current.history().undo, name: document.querySelector('.ce-root [data-fontname]').textContent }), wid);
+      const f1 = await page.evaluate(id => ({ wd: __cw.words('back'), d: __cw.drawn('back', id), h: CharmEditor.current.history().undo, name: document.querySelector('.ce-root [data-fontname]').textContent, open: !document.querySelector('.ce-root [data-drop="font"] .ce-menu').hidden }), wid);
       const an1 = await page.evaluate(`(${anchor})(__cw.words("back"))`);
-      check('B5 Typewriter picked from the menu: the words are drawn again at once in Crimson Text (other outlines), their anchor (the middle of their first baseline) where it was, one step of the undo; the bar says Typewriter',
-        f1.wd.fontKey === 'crimson-text' && f1.wd.text === o1.wd.text && f1.d && JSON.stringify(f1.d.box) !== JSON.stringify(o1.d.box) && near(an1, an0, 0.01) && f1.h === h0 + 1 && f1.name === 'Typewriter', JSON.stringify({ f1, h0, an0, an1 }));
+      check('B5 Typewriter picked from the menu (FONTOPEN: the menu stays open): the words are drawn again at once in Crimson Text (other outlines), their anchor (the middle of their first baseline) where it was, one step of the undo; the bar says Typewriter',
+        f1.open && f1.wd.fontKey === 'crimson-text' && f1.wd.text === o1.wd.text && f1.d && JSON.stringify(f1.d.box) !== JSON.stringify(o1.d.box) && near(an1, an0, 0.01) && f1.h === h0 + 1 && f1.name === 'Typewriter', JSON.stringify({ f1, h0, an0, an1 }));
       // (the card fitted these words small: under 2.2 mm of capital the font's heavier cut is the one cut anyway, as the fit cuts it; at 16 pt Bold shows)
       { const el = page.locator('.ce-root [data-f="pt"]'); await el.click(); await page.keyboard.press('Control+a'); await page.keyboard.type('16'); await page.keyboard.press('Enter'); await settleP(page); }
       const f8 = await page.evaluate(id => ({ wd: __cw.words('back'), d: __cw.drawn('back', id) }), wid);
@@ -118,6 +118,18 @@ async function partBCD() {
       const a1 = await page.evaluate(() => ({ wd: __cw.words('back'), on: (document.querySelector('.ce-root [data-talign].is-on') || {}).dataset }));
       check(`B6 at 16 pt, Bold draws the family's heavier cut (more ink: ${f8.d.ink.toFixed(1)} → ${b1.d.ink.toFixed(1)} pt²), Italic slants the letters (another box), right alignment is kept on the words; each lit on the bar`,
         f8.wd.sizePt === 16 && b1.wd.bold === true && b1.on && b1.d.ink > f8.d.ink * 1.04 && i1.wd.italic === true && i1.on && JSON.stringify(i1.d.box) !== JSON.stringify(b1.d.box) && a1.wd.align === 'right' && a1.on && a1.on.talign === 'right', JSON.stringify({ b1: b1.d, i1: i1.d, a1 }));
+      // (BOLDALL, Paul 28 Oct 2026: "The Bold option has no effect on the text, also some fonts don't have the option to be bolded": in EVERY font, at a small size (where the heavier cut was the one cut
+      //  anyway) and at 16 pt, Bold draws more ink, and no font says it has none)
+      const bAll = await page.evaluate(async () => {
+        const T = CharmNestCeText, K = CharmEditorOps.kernel, list = await T.fonts(), out = [];
+        for (const f of list) for (const pt of [5, 16]) {
+          const a = s => K.filledArea(s.subpaths), r = T.textToPaths('Mimi 86', f.key, pt, {}), b = T.textToPaths('Mimi 86', f.key, pt, { bold: true });
+          out.push({ font: f.name, pt, bold: f.bold, gain: +(a(b) / Math.max(1e-9, a(r))).toFixed(3) });
+        }
+        return out;
+      });
+      check(`B6b Bold in every font (${[...new Set(bAll.map(x => x.font))].length}) and at every size draws more ink (least gain ×${Math.min(...bAll.map(x => x.gain)).toFixed(3)}), and no font is offered without Bold`,
+        bAll.length >= 12 && bAll.every(x => x.bold !== false && x.gain > 1.04), JSON.stringify(bAll.filter(x => x.bold === false || x.gain <= 1.04).slice(0, 8)));
       const caseMenu = await page.evaluate(() => [...document.querySelectorAll('.ce-root [data-drop="font"] .ce-menu [data-case]')].map(b => b.dataset.case + ':' + b.getAttribute('aria-label')));
       await style('[data-case="upper"]');
       const u1 = await page.evaluate(id => ({ wd: __cw.words('back'), d: __cw.drawn('back', id), name: document.querySelector('.ce-root [data-tsname]').textContent }), wid);
