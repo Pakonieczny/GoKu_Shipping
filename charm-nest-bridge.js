@@ -7481,12 +7481,26 @@ const Engrave = window.Engrave = (() => {
   // DejaVu Sans (Bitstream Vera licence, free to ship): the symbols neither the face nor Noto Emoji has (♡ ☆ ✿ ✓ ∞ ♪ ...), drawn at the capital height of the face
   const SYMBOL_FILE = "vendor/fonts/DejaVuSans.ttf";
   const FONT_MISSING_WHY = "Source Sans 3 font files are missing";   // (what a line is blocked with while the font files cannot be had: loadFonts reads it again when they are)
+  // (SCRIPTSLOW, Paul 28 Oct 2026: "it's not letting me add any other language/alphabet fonts to the charm": a fixed 12 s for the whole file gave up on Noto Sans SC (1.4 MB) and the
+  //  Japanese and Korean fonts (up to 8 MB) on a slow connection, and the words stayed "not engraved". A download is given up only when NOTHING arrives for 15 s (or after 4 minutes in all).)
+  const FONT_STALL_MS=15000,FONT_MAX_MS=240000;
   async function fontResource(path,type="arrayBuffer",cache="force-cache") {
-    const controller=new AbortController();let timer;
+    const controller=new AbortController();let timer,fail;
+    const stalled=new Promise((_,reject)=>{fail=reject;});
+    const poke=()=>{clearTimeout(timer);timer=setTimeout(()=>{fail(new Error("Engraving font download timed out"));controller.abort();},FONT_STALL_MS);};
+    const cap=setTimeout(()=>{fail(new Error("Engraving font download timed out"));controller.abort();},FONT_MAX_MS);
+    poke();
     try{return await Promise.race([
-      (async()=>{const r=await fetch(path,{cache,signal:controller.signal});if(!r.ok)throw new Error(`HTTP ${r.status}`);return await r[type]();})(),
-      new Promise((_,reject)=>{timer=setTimeout(()=>{reject(new Error("Engraving font download timed out"));controller.abort();},12000);})
-    ]);}finally{clearTimeout(timer);}
+      (async()=>{
+        const r=await fetch(path,{cache,signal:controller.signal});if(!r.ok)throw new Error(`HTTP ${r.status}`);
+        if(!r.body||typeof r.body.getReader!=="function"){poke();return await r[type]();}
+        const reader=r.body.getReader(),parts=[];let n=0;
+        for(;;){poke();const {done,value}=await reader.read();if(done)break;parts.push(value);n+=value.byteLength;}
+        const all=new Uint8Array(n);let at=0;for(const c of parts){all.set(c,at);at+=c.byteLength;}
+        return type==="json"?JSON.parse(new TextDecoder().decode(all)):type==="text"?new TextDecoder().decode(all):all.buffer;
+      })(),
+      stalled
+    ]);}finally{clearTimeout(timer);clearTimeout(cap);}
   }
   /* ═══ the script fonts (WORLD, Paul 19 Oct 2026: "add the compatibility with the Arabic, Hebrew, Chinese, Japanese, Korean, Indian letters, characters, words/symbols depending on the language") ═══
      Source Sans 3 and the shop's faces draw Latin, Greek and Cyrillic. The letters of another script are set by a Noto Sans script font (vendor/fonts/script-fonts.json lists them, vendor/fonts/scripts/ holds them) through the shaping
@@ -12021,7 +12035,7 @@ const Engrave = window.Engrave = (() => {
     if (n) { try { Session.schedule(); render(); } catch (_) { /* drawn with the next render */ } }
     return n;
   }
-  return { listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
    list of pieces, the Pieces counts and a monogram line's pieces (the same slots and piece keys: "<line>" for one piece, "<line>#C<u>" for several) read THIS. Added beside the Engrave object, not inside its return. */

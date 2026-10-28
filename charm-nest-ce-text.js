@@ -84,31 +84,51 @@
   const inflight = new Map(), tried = new Map(), askedFonts = new Set();
   let lastSig = '';
   const fontSig = () => { const En = E(), Tx = T(); return [Tx && Tx.sharedScripts ? Tx.sharedScripts.version : 0, En && En.fonts && En.fonts.emoji ? 1 : 0, [...askedFonts].filter(k => !!setOf(k)).length].join('|'); };
-  function want(kind, key, start) {
+  function want(kind, key, start, still) {
     if (inflight.has(kind)) return;
     const t = tried.get(key); if (t && Date.now() - t < 60000) return;
     tried.set(key, Date.now()); if (tried.size > 200) tried.delete(tried.keys().next().value);
     if (!lastSig) lastSig = fontSig();
-    const p = Promise.resolve().then(start).catch(() => null).then(() => { inflight.delete(kind); arrived(); });
+    const p = Promise.resolve().then(start).catch(() => null).then(() => { inflight.delete(kind); arrived(); if (typeof still === 'function' && tryDo(still)) again(key); });
     inflight.set(kind, p); UI.note();
   }
-  /** Something asked for is back: when it changed what the fonts can draw, every text in the open editor is made again from its words. */
+  const redraw = () => { const cur = root.CharmEditor && root.CharmEditor.current; if (cur && typeof cur.refreshText === 'function') { try { cur.refreshText(); } catch (e) { console.warn('CE text: drawn again', e); } } };
+  const tryDo = f => { try { return f(); } catch (_) { return false; } };
+  /** (SCRIPTSLOW) After an ask: are some of these clusters still not in the font (its script fonts with it)? */
+  const stillMissing = (font, joined) => () => { const Gm = G(); return !!(Gm && Gm.glyphCoverage(font, joined).missing.some(c => !/^\s+$/.test(c))); };
+  /** Something asked for is back: when it changed what the fonts can draw, every text in the open editor is made again from its words. → whether it changed. */
   function arrived() {
-    const sig = fontSig();
-    if (sig !== lastSig) {
-      lastSig = sig;
-      const cur = root.CharmEditor && root.CharmEditor.current;
-      if (cur && typeof cur.refreshText === 'function') { try { cur.refreshText(); } catch (e) { console.warn('CE text: drawn again', e); } }
-    }
+    const sig = fontSig(), changed = sig !== lastSig;
+    if (changed) { lastSig = sig; redraw(); }
     UI.note();
+    return changed;
   }
+  /* (SCRIPTSLOW, Paul 28 Oct 2026: "it's not letting me add any other language/alphabet fonts to the charm": one script font that did not come (a slow connection) left the words "not
+     engraved" for good, as the editor draws the same words from its cache and never asked again. An ask that brought nothing is asked again by itself, three times (after 3, 10 and 30 s,
+     the engraving's own memory of the failed files cleared first); after that the line under the words box offers "Try again", and the network coming back asks at once.) */
+  const RETRY_MS = [3000, 10000, 30000], attempts = new Map();
+  let againTimer = 0;
+  function again(key) {
+    const n = attempts.get(key) || 0; if (n >= RETRY_MS.length) { UI.note(); return; }
+    attempts.set(key, n + 1); clearTimeout(againTimer);
+    againTimer = setTimeout(() => retry(key), RETRY_MS[n]);
+  }
+  /** The words' fonts asked for again now: the failed files forgotten (here and in the engraving's loaders) and every text drawn again, so what is still missing is asked for. */
+  function retry(key) {
+    clearTimeout(againTimer); againTimer = 0;
+    if (key) tried.delete(key); else { tried.clear(); attempts.clear(); }
+    const En = E(); if (En && typeof En.retryScripts === 'function') { try { En.retryScripts(); } catch (_) { /* (asked again by its own minute rule) */ } }
+    if (En && En.fonts && En.fonts.emojiError && typeof En.loadFonts === 'function') Promise.resolve().then(() => En.loadFonts(true)).catch(() => null);
+    redraw(); UI.note();
+  }
+  if (root.addEventListener) root.addEventListener('online', () => retry());
   /** Ask for what `missing` (clusters the font cannot set now) needs: the script fonts, the emoji outlines. */
   function askFor(text, missing, font) {
     const En = E(), Tx = T(); if (!En || !missing.length) return;
     const joined = missing.join('');
     if (Tx && typeof Tx.scriptHint === 'function' && Tx.scriptHint(joined) && typeof En.ensureScriptFonts === 'function')
-      want('scripts', 'scripts:' + [...new Set(missing)].sort().join(''), () => En.ensureScriptFonts(String(text).split(/\r?\n/), font));
-    if (PICTO.test(joined) && En.fonts && !En.fonts.emoji && typeof En.loadFonts === 'function') want('emoji', 'emoji', () => En.loadFonts(true));
+      want('scripts', 'scripts:' + [...new Set(missing)].sort().join(''), () => En.ensureScriptFonts(String(text).split(/\r?\n/), font), stillMissing(font, joined));
+    if (PICTO.test(joined) && En.fonts && !En.fonts.emoji && typeof En.loadFonts === 'function') want('emoji', 'emoji', () => En.loadFonts(true), () => !(En.fonts && En.fonts.emoji));
   }
 
   /* ═══ the font engine ═══ */
@@ -226,7 +246,8 @@
       + '.ce-tx-emoji svg{width:17px;height:17px}.ce-tx-emoji:hover,.ce-tx-emoji:focus-visible,.ce-tx-emoji.on{color:var(--ink,#1c1d1d);background:var(--hov,#f2eee4)}'
       + '.ce-tx-emoji.ce-tx-alpha{font:600 13px/1 "Noto Sans",system-ui,sans-serif;letter-spacing:-.02em}'   // (ALPHAFIND: the other alphabets' button, beside Emoji)
       + '.ce-tx-note{position:absolute;z-index:6;pointer-events:none;max-width:300px;padding:4px 9px;background:rgba(255,255,255,.97);border:1px solid var(--hair,#e6e4e0);font:600 10px/1.45 var(--sans,sans-serif);letter-spacing:.05em;color:var(--muted,#6d6a66)}'
-      + '.ce-tx-note[hidden]{display:none}.ce-tx-note b{color:var(--ink,#1c1d1d);font-weight:700}.ce-tx-note.is-bad{color:#8a3a26;border-color:#e2c4b8}.ce-tx-note .ce-tx-spin{display:inline-block;width:8px;height:8px;margin-right:6px;border:1.5px solid var(--gold-lt,#cdb98a);border-top-color:var(--gold,#a58a52);border-radius:50%;animation:ceTxSpin .8s linear infinite;vertical-align:-1px}'
+      + '.ce-tx-note[hidden]{display:none}.ce-tx-note .ce-tx-retry{pointer-events:auto;margin-left:6px;padding:1px 7px;border:1px solid currentColor;background:#fff;color:inherit;font:inherit;letter-spacing:inherit;cursor:pointer}.ce-tx-note .ce-tx-retry:hover,.ce-tx-note .ce-tx-retry:focus-visible{background:#f7ebe5}'
+      + '.ce-tx-note b{color:var(--ink,#1c1d1d);font-weight:700}.ce-tx-note.is-bad{color:#8a3a26;border-color:#e2c4b8}.ce-tx-note .ce-tx-spin{display:inline-block;width:8px;height:8px;margin-right:6px;border:1.5px solid var(--gold-lt,#cdb98a);border-top-color:var(--gold,#a58a52);border-radius:50%;animation:ceTxSpin .8s linear infinite;vertical-align:-1px}'
       + '@keyframes ceTxSpin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion: reduce){.ce-tx-note .ce-tx-spin{animation:none}}';
     (d.head || d.documentElement).appendChild(s);
   }
@@ -251,7 +272,12 @@
       if (r.loading) parts.push('<span class="ce-tx-spin" aria-hidden="true"></span>' + (inflight.has('emoji') ? 'Loading the emoji outlines…' : inflight.has('scripts') ? 'Loading the letters of these words…' : 'Loading the font…'));
       if (r.scripts.length) parts.push('Set in <b>' + r.scripts.map(s => esc(s.name)).join('</b> + <b>') + '</b>');
       // (a letter of a script whose font could not be had, an emoji Noto Emoji has no outline for, a sign no font draws: left out of the outlines, said here, never engraved as a box)
-      if (r.missing.length) { bad = true; parts.push('Not engraved: ' + r.missing.slice(0, 6).map(esc).join(' ') + (r.missing.length > 6 ? ' …' : '') + ' · no engraving font for ' + (r.missing.length > 1 ? 'them' : 'it') + ' could be had'); }
+      if (r.missing.length) {
+        bad = true;
+        const Tx = T(), wait = !!againTimer && r.missing.some(c => (Tx && Tx.scriptHint(c)) || PICTO.test(c));
+        parts.push('Not engraved: ' + r.missing.slice(0, 6).map(esc).join(' ') + (r.missing.length > 6 ? ' …' : '') + (wait ? ' · their font did not come yet, asked again in a moment' : ' · no engraving font for ' + (r.missing.length > 1 ? 'them' : 'it') + ' could be had')
+          + ' <button type="button" class="ce-tx-retry" data-ce-keeps-words>Try again</button>');
+      }
       L.note.innerHTML = parts.join(' · '); L.note.hidden = !parts.length; L.note.classList.toggle('is-bad', bad);
       place();
     }
@@ -273,6 +299,9 @@
       btn.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); });
       for (const t of ['pointerup', 'dblclick', 'contextmenu', 'wheel']) btn.addEventListener(t, e => e.stopPropagation());
       const line = d.createElement('div'); line.className = 'ce-tx-note'; line.hidden = true; line.setAttribute('role', 'status'); line.setAttribute('aria-live', 'polite');
+      // (SCRIPTSLOW: its "Try again" asks for the words' fonts at once; a press on it is no press on the charm and keeps the words box open)
+      line.addEventListener('pointerdown', e => { if (e.target.closest('.ce-tx-retry')) { e.preventDefault(); e.stopPropagation(); } });
+      line.addEventListener('click', e => { if (e.target.closest('.ce-tx-retry')) { e.preventDefault(); e.stopPropagation(); retry(); } });
       L.stage.appendChild(btn); L.stage.appendChild(line); L.btn = btn; L.note = line;
       const P = root.CNEmojiPicker;
       if (!(P && P.attach({ textarea: ta, button: btn, key: 'ce:' + ((root.CharmEditor && root.CharmEditor.current && root.CharmEditor.current.editing()) || '') }))) { btn.remove(); L.btn = null; ta.style.paddingRight = ''; }

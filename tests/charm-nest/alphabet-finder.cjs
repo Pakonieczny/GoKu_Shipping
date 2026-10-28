@@ -5,6 +5,7 @@
 //      a word that changes with who says it says so (Hebrew "I love you"), a phrase whose little words are missing still finds something ("forever and always")
 //   B  the real page (_engraveRealWorld.cjs, offline): the Engraving card's words box has "Aα" beside Emoji; it opens the finder; "love" + Hebrew → a press puts אהבה in the words at the caret, as
 //      typing does (the box's input event), and the finder stays open
+//   E  (SCRIPTSLOW) a Chinese letter typed in the editor whose font download stalls the first time is asked for again by itself and set, the note never left saying it cannot be had
 //   C  the Charm Editor: the Font menu has "Other alphabets"; with the words selected it opens the words box and the finder on it; "omega" in Letters → Ω goes into the words, and the editor's
 //      text item reads it; the words box has its own "Aα" beside Emoji
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/alphabet-finder.cjs
@@ -42,6 +43,9 @@ async function partBC() {
   const w = await R.world({ viewport: { width: 1440, height: 900 } });
   if (!w) { console.log('SKIP no playwright-core'); return; }
   const page = w.page;
+  // (E: the first download of Noto Sans SC sends nothing for longer than the loader waits; the next one comes)
+  const STALL = 17000;
+  await page.route(/NotoSansSC/, async r => { await page.evaluate(() => { window.__scAsked = (window.__scAsked || 0) + 1; }).catch(() => {}); if (!w.__scSlowed) { w.__scSlowed = true; await new Promise(x => setTimeout(x, STALL)); } await r.continue().catch(() => {}); });
   await page.waitForFunction(() => !window.CNRole || ['ask', 'role', 'admin'].includes(CNRole.state()), null, { timeout: 20000 }).catch(() => {});
   await page.evaluate(() => { try { if (window.CNRole && CNRole.state() === 'ask') CNRole.choose('design'); } catch (_) {} });
   try {
@@ -90,6 +94,21 @@ async function partBC() {
     const w1 = await words();
     check(`C2 Other alphabets opens the words box (editing ${opened.editing}, with its own Aα beside Emoji) and the finder on it; "omega" in Letters → ${first}: Ω goes into the words (${w0.text} → ${w1.text})`,
       opened.editing === w0.id && opened.btn && opened.emoji && first === 'Ω ω' && w1.text.includes('Ω') && w1.text.length === w0.text.length + 1, JSON.stringify({ opened, first, w0, w1 }));
+    /* ── E · a script font that does not come at first (SCRIPTSLOW: "it's not letting me add any other language/alphabet fonts to the charm") ── */
+    await page.keyboard.press('Escape').catch(() => {}); await settleP(page);
+    if (!(await page.evaluate(() => !!document.querySelector('textarea.ce-editor')))) { const b = await page.evaluate(id => CharmEditor.current.box(id), w0.id); const c = await page.evaluate(([x, y]) => CharmEditor.current.clientOf(x, y), [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2]); await page.mouse.dblclick(c.x, c.y); await page.waitForSelector('textarea.ce-editor', { timeout: 8000 }); }
+    await page.evaluate(() => { const t = document.querySelector('textarea.ce-editor'); t.focus(); t.setSelectionRange(t.value.length, t.value.length); });
+    await page.keyboard.insertText('爱');
+    const seen = new Set(); let e1 = null;
+    for (let i = 0; i < 70; i++) {
+      await page.waitForTimeout(1000);
+      e1 = await page.evaluate(() => { const n = document.querySelector('.ce-tx-note'), t = document.querySelector('textarea.ce-editor'); let hit = null; const walk = l => l.forEach(i => { if (i.kind === 'text') hit = hit || i; if (i.children) walk(i.children); }); walk(CharmEditor.current.items('back')); walk(CharmEditor.current.items('front'));
+        return { note: n && !n.hidden ? n.textContent : '', bad: !!(n && !n.hidden && n.classList.contains('is-bad')), retry: !!(n && n.querySelector('.ce-tx-retry')), inflight: CharmNestCeText.state().inflight, chk: CharmNestCeText.check(t ? t.value : hit.text, hit.fontKey), sc: window.__scAsked }; });
+      if (e1.bad) seen.add('bad'); if (e1.retry) seen.add('retry');
+      if (!e1.inflight.length && !e1.chk.missing.length && e1.chk.scripts.some(x => x.id === 'cjk-sc')) break;
+    }
+    check(`E1 a Chinese letter whose font did not come the first time (the download stalled ${STALL / 1000}s) is asked for again by itself and set: ${e1 && e1.note}`,
+      e1 && w.__scSlowed && !e1.chk.missing.length && e1.chk.scripts.some(x => x.id === 'cjk-sc') && !e1.bad && (window_sc => window_sc >= 2)(e1.sc), JSON.stringify({ e1, seen: [...seen], slowed: w.__scSlowed }));
     if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'alphabet-finder-editor.png') });
     check('D1 no page error', w.errors.length === 0, JSON.stringify(w.errors).slice(0, 600));
   } finally { await w.close(); }
