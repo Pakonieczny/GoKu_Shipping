@@ -2335,6 +2335,9 @@ const Orders = window.Orders = (() => {
   const pillOf = (p, rid) => Object.assign(() => document.querySelector(PILL(p)) || document.querySelector(ORDERS_TAB), { ordRid: rid });
   const acted = new Map();                                        // receipt id → { t, win, lit }: what a person acted on
   const mine = rid => { const a = acted.get(String(rid)); return !!a && Date.now() - a.t < 10000; };
+  let drawnAt = 0, drawVer = -1, wantDraw = true, drawnSig = "";   // (NAV, 28 Oct 2026: what the tab last drew and when: shown)
+  /** What the bar can change (pile, search, filters, sort, view, range): the list drawn is the list asked for while this is the same (renderBody, shown). */
+  const listSig = () => JSON.stringify([OV.pile,OV.q,OV.metal,OV.form,OV.eng,OV.act,OV.sort,OV.desc,viewMode(),CNListActivity.key("orders")]);
   let drawnOn = "", drawnLimit = 0;                               // the pile and view last drawn on screen ("" hidden since)
   /** Once, when the tab is built: which order a person acts on (a row's own button, or anything in the order window
    *  opened on it), and the tab being hidden (shown again, it is drawn at once). */
@@ -2585,7 +2588,7 @@ const Orders = window.Orders = (() => {
     const alive=new Set(rowsOf().map(r=>r.key));for(const key of orderNodes.keys())if(!alive.has(key))orderNodes.delete(key);
     // (the Cancelled list is the sheet window script's: searched with this tab's search box, paged down to what "Show" asked for)
     if (OV.pile === "cancelled") { drawnOn = ""; listKey = "cancelled"; if (window.Cancelled) Cancelled.renderInto(host, () => { const v = document.getElementById("ordersView"); if (v && v.querySelector("#ordChips")) renderHead(v); }, { q: OV.q, focus: cxFocus, live: () => OV.pile === "cancelled" && host.isConnected, clear: () => { OV.q = ""; const box = document.getElementById("ordQ"); if (box) box.value = ""; renderBody(); } }); else host.innerHTML = '<div class="libEmpty">The cancelled orders open with the sheet window script.</div>'; return; }
-    const nextKey=JSON.stringify([OV.pile,OV.q,OV.metal,OV.form,OV.eng,OV.act,OV.sort,OV.desc,viewMode(),CNListActivity.key("orders")]);   // (what the bar can change: a change of any resets the list to its first 48)
+    const nextKey=listSig();   // (what the bar can change: a change of any resets the list to its first 48)
     if(nextKey!==listKey){OV.limit=48;listKey=nextKey;}
     const anchor=at>0?[...host.querySelectorAll('[data-key]')].find(n=>n.getBoundingClientRect().bottom>host.getBoundingClientRect().top):null;
     const anchorKey=anchor?.dataset.key, anchorTop=anchor?.getBoundingClientRect().top;
@@ -2658,7 +2661,7 @@ const Orders = window.Orders = (() => {
     { const skus = [...new Set(shown.flatMap(g => g.rows).map(r => String((r.spec && r.spec.designSku) || "").toUpperCase()).filter(Boolean))];
       if (skus.length && window.Master && Master.fetchEntry) (typeof requestIdleCallback === "function" ? requestIdleCallback : f => setTimeout(f, 60))(() => { for (const k of skus) if (!Master.entryFor(k)) Master.fetchEntry(k).catch(() => {}); }, { timeout: 400 }); }
     settle();
-    drawnOn = onScreen() ? nextKey : ""; drawnLimit = OV.limit;
+    drawnOn = onScreen() ? nextKey : ""; drawnLimit = OV.limit; if (drawnOn) drawnSig = nextKey;   // (drawnSig: kept while hidden, NAV shown)
     // what a person changed that stays in this pile (Release hold under Open Orders, Send now) is marked where it is
     if (same) { const now = rebuilt.filter(n => { const a = acted.get(n.dataset.rid); return a && !a.lit && mine(n.dataset.rid); }); for (const n of now) { lit(n); acted.get(n.dataset.rid).lit = true; } }
   }
@@ -2934,15 +2937,19 @@ const Orders = window.Orders = (() => {
   let bodyWanted = false;
   const onScreen = () => { const v = document.getElementById("ordersView"); return !!v && !v.classList.contains("hidden"); };
   /* NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): what the tab last drew, when, and whether anything has asked for a drawing since (shown) */
-  let drawnAt = 0, drawVer = -1, wantDraw = true;
   const piecesVer = () => { try { return window.OrderPieces && OrderPieces.version ? OrderPieces.version() : -1; } catch (_) { return -1; } };
   /** The Orders tab shown again: drawn as it was when nothing asked for a drawing since it was drawn (under 10 s ago, the same answer of where the pieces are), and drawn again at the next
    *  idle moment (so a time or an order that moved without a notice is put right at once, after the frame); else drawn now, as before. */
   function shown() {
     const v = document.getElementById("ordersView");
-    if (!(v && v.dataset.built && !wantDraw && Date.now() - drawnAt < 10000 && drawVer === piecesVer())) return renderNow();
+    if (!(v && v.dataset.built && drawnAt)) return renderNow();
+    const same = !wantDraw && Date.now() - drawnAt < 10000 && drawVer === piecesVer();
+    // (round 3: a list asked to be drawn again while it was hidden, under a minute ago and with the same search, filters, sort and range on screen, is shown as it was in this frame
+    //  and drawn again in the next one, so the tab comes up at once and what changed comes in a frame later; a different list, or one drawn longer ago, is drawn now as before)
+    if (!same && !(Date.now() - drawnAt < 60000 && drawnSig && drawnSig === listSig())) return renderNow();
     tabCount();
-    (typeof requestIdleCallback === "function" ? requestIdleCallback : f => setTimeout(f, 60))(() => { if (onScreen()) renderNow(); }, { timeout: 1000 });
+    if (same) (typeof requestIdleCallback === "function" ? requestIdleCallback : f => setTimeout(f, 60))(() => { if (onScreen()) renderNow(); }, { timeout: 1000 });
+    else requestAnimationFrame(() => setTimeout(() => { if (onScreen()) renderNow(); }, 0));
   }
   function render() {
     wantDraw = true;
@@ -9679,12 +9686,15 @@ const Engrave = window.Engrave = (() => {
     });
     host.appendChild(lab);
     // beside the grid's label, in the drawing's own top-left corner (the canvas sits in the middle of the work area); under it when the drawing is too narrow for both
-    if (bc.offsetWidth && bc.width) {
+    // NAV (28 Oct 2026, Paul: "Engraving etc... at near real-time speed"): placed in the frame that shows it, before it is painted: measured in the middle of drawing the card, each
+    // measure laid out the whole page (twice a card, with Edit charm's below), at every Back and Next
+    requestAnimationFrame(() => {
+      if (!lab.isConnected || !bc.isConnected || !(bc.offsetWidth && bc.width)) return;
       const s = bc.offsetWidth / bc.width, g = bc._gridLabel || { x: 6, y: 6, w: 50, h: 11 };
       let left = bc.offsetLeft + (g.x + g.w + 8) * s, top = bc.offsetTop + Math.max(2, (g.y + g.h / 2) * s - lab.offsetHeight / 2);
       if (left + lab.offsetWidth > bc.offsetLeft + bc.offsetWidth - 4) { left = bc.offsetLeft + g.x * s; top = bc.offsetTop + (g.y + g.h + 4) * s; }
       lab.style.left = Math.round(left) + "px"; lab.style.top = Math.round(top) + "px";
-    }
+    });
     return lab;
   }
   /* ── CHARM EDIT · the piece's own artwork in the charm editor (Paul, 27 Oct 2026: "In the Engraving Modal ... The user also needs full control similar to Adobe illustrator ... over each
@@ -9727,12 +9737,13 @@ const Engrave = window.Engrave = (() => {
     host.appendChild(b);
     // beside the grid's label in the drawing's own top-left corner, after "Show front" when a back has it; under them when the drawing is too narrow
     if (!bc) { b.style.left = "8px"; b.style.top = "8px"; }
-    else if (bc.offsetWidth && bc.width) {
+    else requestAnimationFrame(() => {   // (NAV, 28 Oct 2026: placed in the frame that shows it, after "Show front" is: frontPeekToggle)
+      if (!b.isConnected || !bc.isConnected || !(bc.offsetWidth && bc.width)) return;
       const s = bc.offsetWidth / bc.width, g = bc._gridLabel || gridLabelBox(bc.getContext("2d"), bc.width), peek = host.querySelector(".egFrontPeek");
       let left = peek ? peek.offsetLeft + peek.offsetWidth + 6 : bc.offsetLeft + (g.x + g.w + 8) * s, top = peek ? peek.offsetTop : bc.offsetTop + Math.max(2, (g.y + g.h / 2) * s - b.offsetHeight / 2);
       if (left + b.offsetWidth > bc.offsetLeft + bc.offsetWidth - 4) { left = bc.offsetLeft + g.x * s; top = (peek ? peek.offsetTop + peek.offsetHeight : bc.offsetTop + (g.y + g.h) * s) + 4; }
       b.style.left = Math.round(left) + "px"; b.style.top = Math.round(top) + "px";
-    }
+    });
     charmEditNoteOn(host, job);
     return b;
   }
@@ -9881,6 +9892,7 @@ const Engrave = window.Engrave = (() => {
       catch (e) { for (const r of (e && e.refused) || [{ id: "", why: (e && e.message) || String(e) }]) refused.push(`${w.face === "back" ? "Back · " : ""}${r.id ? charmEditPart(res.faces, r.id) + ": " : ""}${r.why}`); }
     }
     if (refused.length) { const u = [...new Set(refused)]; charmEditSay(job, `Not saved · ${u.slice(0, 3).join(" · ")}${u.length > 3 ? ` · and ${u.length - 3} more` : ""}`, true); return null; }
+    charmEditSay(job, `Saving the ${todo.length > 1 ? "front and back" : todo[0].face} artwork…`, false);   // (Paul, 28 Oct 2026: said the moment Save is pressed; the drawing follows as soon as the cloud has it)
     const done = [], records = {};
     try {
       for (const w of todo) for (const pid of t.poolIds) { const info = await AE.save(pid, w.face, w.changes, { charm: Pool.charmOf(pid) || charm, view: views[w.face], by, placed: !!Pool.sheetOf(pid) }); if (pid === poolId) records[w.face] = info && info.record; done.push(w.face); }
@@ -20384,6 +20396,16 @@ const OrderWin = window.OrderWin = (() => {
     // them), and the side the last switch came from
     pieces: [], piece: null, pieceDir: 0 };
   const byId = id => document.getElementById(id);
+  /* NAV (28 Oct 2026, Paul: "Order Details … at near real-time speed"): the window body's own movements (Back / Next, a swap), newest last, as asking the element for them would list them:
+     cancelled and waited on from here, where each ask (getAnimations) made the browser work out every style of the page first, once per Back or Next. A movement that ended leaves the
+     list unless it holds its last frame (fill forwards), as it would leave the element's own. */
+  const bodyMoves = [];
+  const bodyMovesNow = () => bodyMoves.slice();
+  function bodyMove(el, frames, o) {
+    const a = el.animate(frames, o), drop = () => { const i = bodyMoves.indexOf(a); if (i >= 0) bodyMoves.splice(i, 1); };
+    bodyMoves.push(a); a.finished.then(() => { if (!/^(forwards|both)$/.test(String((o && o.fill) || ""))) drop(); }, drop);
+    return a;
+  }
   // (NAV, 28 Oct 2026: the fonts loaded so far: a measure kept from before a font came in is made again, inkTo and grow)
   let inkFonts = 0; try { document.fonts && document.fonts.addEventListener && document.fonts.addEventListener("loadingdone", () => { inkFonts++; }); } catch (_) {}
   const inPull = key => Orders.rows().find(r => r.key === key) || null;
@@ -23033,7 +23055,7 @@ const OrderWin = window.OrderWin = (() => {
     try { go(); } finally { faceSet(face); }
     // (an order read from the records first: its panel says so from the first frame, not the one left)
     if (W.view === "sheet" && SV.rid !== W.rid) tryDo(() => { paintPanel(null); sheetShow(); });
-    const a = W.dlg.querySelector(".owBody").getAnimations().slice(-1)[0];
+    const a = bodyMovesNow().slice(-1)[0];
     if (a) a.finished.then(end, end); else end();
     setTimeout(end, 700);
   }
@@ -23063,7 +23085,7 @@ const OrderWin = window.OrderWin = (() => {
     const body = W.dlg.querySelector(".owBody");
     const go = () => openOrder(rid, { view: o.view, keepFrom: true, sheetId: o.sheetId, poolId: o.poolId, highlight: o.highlight });
     if (still() || !body) return go();
-    body.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: "ease-in", fill: "forwards" }).finished.then(() => { go(); body.getAnimations().forEach(a => a.cancel()); body.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: EASE }); }, () => go());
+    bodyMove(body, [{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: "ease-in", fill: "forwards" }).finished.then(() => { go(); bodyMovesNow().forEach(a => a.cancel()); bodyMove(body, [{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: EASE }); }, () => go());
   }
   /** Front | Back: the plate turns to its edge, is drawn from behind, and turns back — one turn at a time (Motion.turner):
       a second press while it turns is taken up by that turn, and it ends on the side asked for last. */
@@ -23338,7 +23360,7 @@ const OrderWin = window.OrderWin = (() => {
       if (opts.back) { W.dlg.classList.add("owGrow"); if (!still()) { const a = W.dlg.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease" }); W.anims.push(a); flight(a); } }
       else growIn(W.from);
     } else if (opts.view && opts.view !== W.view) setView(opts.view, { noLoad: true });
-    else if (opts.dir && !still()) { const b = W.dlg.querySelector(".owBody"); b.getAnimations().forEach(a => a.cancel()); b.animate([{ opacity: .2, transform: `translateX(${opts.dir * 14}px)` }, { opacity: 1, transform: "none" }], { duration: 280, easing: EASE }); }
+    else if (opts.dir && !still()) { const b = W.dlg.querySelector(".owBody"); bodyMovesNow().forEach(a => a.cancel()); bodyMove(b, [{ opacity: .2, transform: `translateX(${opts.dir * 14}px)` }, { opacity: 1, transform: "none" }], { duration: 280, easing: EASE }); }
     if (other) mountRail(rid);
     if (W.view === "timeline") mountFull();
     if (W.view === "sheet" && !r.loading) { if (opts.sheetAt != null) { const pending = sheetShow(), epoch = SV.epoch; pending.then(() => { if (W.key === key && W.rid === rid && SV.epoch === epoch && W.dlg.open && !W.closing && W.view === "sheet" && SV.list && SV.at !== opts.sheetAt && SV.list[opts.sheetAt]) { SV.at = opts.sheetAt; sheetDraw(); } }); } else sheetShow(opts.sheetId, opts.poolId); }
@@ -25730,6 +25752,22 @@ const Upkeep = window.Upkeep = (() => {
      note     a piece whose edit could not be put on it (its master was drawn again since) is said on the log
    The hooks where a piece is made from the master again (a recall: restoreRunSheets and Recall.rebuild, a back opened from a saved sheet, a line pooled again, the placement's picture, a
    checkpoint) call CharmNestArtEdit.piece / sync themselves. ── */
+/** A sheet's files written again after an artwork edit, in the background: one write at a time per sheet, and once more when another edit came in during it (two copies of a piece saved
+ *  together, a second save). → Promise<boolean> (true: written and saved; its record no longer owes its files). */
+const ART_SHEET_WRITES = new WeakMap();
+function artSheetWrite(sh) {
+  const cur = ART_SHEET_WRITES.get(sh); if (cur) { cur.again = true; return cur.run; }
+  const st = { again: false };
+  st.run = (async () => {
+    let ok = false;
+    do { st.again = false; ok = await Promise.resolve(window.writeAsPlaced(sh)).catch(e => { console.warn("artwork edit: sheet write", e); return false; }); } while (st.again && !sh.roseCutAt && !sh.laserDoneAt && allSheets().includes(sh));
+    if (ok && sh.sheetId) api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, filesOwed: null } }, { quiet: true }).catch(() => {});   // (its record no longer owes its files)
+    return ok;
+  })().finally(() => ART_SHEET_WRITES.delete(sh));
+  ART_SHEET_WRITES.set(sh, st);
+  return st.run;
+}
+window.artSheetWrite = artSheetWrite;   // (tests wait for it)
 if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
   api: (fn, body, opts) => api(fn, body, opts),
   who: () => { try { return employeeName() || ""; } catch (_) { return ""; } },
@@ -25759,8 +25797,10 @@ if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
     if (!sh || sh.roseCutAt || sh.laserDoneAt) return;
     sh.dirty = true;
     if (!sh.outputs || typeof window.writeAsPlaced !== "function") return;   // (a sheet not written yet writes the edit with its first files)
-    const ok = await Promise.resolve(window.writeAsPlaced(sh)).catch(e => { console.warn("artwork edit: sheet write", e); return false; });
-    if (ok && sh.sheetId) api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, filesOwed: null } }, { quiet: true }).catch(() => {});   // (its record no longer owes its files)
+    // (Paul, 28 Oct 2026: "my changes made in the Charm Editor were not saved and did not show up in the UI after pressing the Save button ... Everything must be immediate and responsive")
+    // the sheet's files are written again on their own, its card saying so as for any write: the save, the engraving card and the editor never wait for them (a whole sheet written again took
+    // 10–30 s, and longer while the sheet was busy, and the card showed the old drawing all that time)
+    artSheetWrite(sh);
   },
   note: (poolId, face, n) => agent({ pool: true }, "warn", `${poolId}: its own ${face} artwork edit was not put on the piece${n && n.by ? ` (made by ${n.by})` : ""}: ${(n && (n.why || (n.refused[0] && n.refused[0].why))) || "it could not be read"}`)
 });
