@@ -375,10 +375,12 @@
   }
 
   /* ── 8 · sanctity on the sheet (the page's nest and the sheet window call these) ── */
-  /** Every frozen piece of a sheet written at its exact size (finishNest, after the shrink every other charm gets). → how many. */
-  function holdSize(placements, byId) {
+  /** Every frozen piece of a sheet written at its exact size (finishNest, after the shrink every other charm gets), and held there in the layout the sheet's check holds still (its
+   *  saved placements, nestInitial: the geometry check reads a held charm at another size as moved). → how many were not at 100 %. */
+  function holdSize(placements, byId, sh) {
     let n = 0;
     for (const p of placements || []) { const c = byId && byId.get ? byId.get(p.id) : null; if (isFrozen(c)) { if (p.scale !== 1) n++; p.scale = 1; delete p.fixScale; } }
+    for (const p of (sh && sh.nestInitial) || []) { const c = byId && byId.get ? byId.get(p.id) : null; if (isFrozen(c)) { p.scale = 1; delete p.fixScale; } }
     return n;
   }
   /** Why a piece's size cannot change ("" when it can): a custom design sent at its exact size. */

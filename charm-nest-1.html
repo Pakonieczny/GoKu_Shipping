@@ -5591,7 +5591,7 @@ function handLocks(sh, items) {
   const Sv = typeof CharmNestSolver !== "undefined" ? CharmNestSolver : null, out = [];
   for (const c of items || []) {
     const pin = c && c.manual && c.pinned && !c.arrivalPin ? c.pinned : null; if (!pin || ![pin.cxPt, pin.cyPt].every(Number.isFinite)) continue;
-    const size = manualSize(c), angle = ((+pin.angle || 0) % 360 + 360) % 360, scale = size !== 1 ? +(CHARM_SCALE * size).toFixed(5) : CHARM_SCALE;
+    const size = manualSize(c), angle = ((+pin.angle || 0) % 360 + 360) % 360, scale = c.frozen ? 1 : size !== 1 ? +(CHARM_SCALE * size).toFixed(5) : CHARM_SCALE;   // (CUSTOMPOOL: a custom design sent at its exact size is held at 100 %)
     let wPt = (+c.widthPt || 20) * size, hPt = (+c.heightPt || 20) * size;
     try { const v = Sv && c.bits && Sv.prepareVariant({ bits: c.bits, w: c.w, h: c.h, scale: size === 1 ? c.scale : c.scale / size }, angle, 0, 2); if (v) { wPt = v.solid.w / 2; hPt = v.solid.h / 2; } } catch (_) { /* its own size stands */ }
     out.push({ id: c.id, angle, cxPt: +pin.cxPt, cyPt: +pin.cyPt, xPt: +pin.cxPt - wPt / 2, yPt: +pin.cyPt - hPt / 2, wPt, hPt, contact: 0, scale });
@@ -6279,7 +6279,7 @@ async function finishNest(sh, { result, error }) {
     const optT0 = performance.now(), kept = new Map(((sh.appendOnly ? sh.nestInitial : sh.roseProtected?.placements) || []).map(p => [p.id, p.scale]));
     // (a piece resized by hand, Manual Control, is written at its own size: the same shrink of its new size)
     for (const p of sh.placements) p.scale = kept.get(p.id) || (manualSize(byId.get(p.id)) !== 1 ? +(CHARM_SCALE * manualSize(byId.get(p.id))).toFixed(5) : CHARM_SCALE);
-    if (window.CharmNestCustomPool) CharmNestCustomPool.holdSize(sh.placements, byId);   // (CUSTOMPOOL, Paul 28 Oct 2026: "the sanctity of the designed charm. It's exact dimensions": a custom design sent to the sheet is written at 100 %, never shrunk)
+    if (window.CharmNestCustomPool) CharmNestCustomPool.holdSize(sh.placements, byId, sh);   // (CUSTOMPOOL, Paul 28 Oct 2026: "the sanctity of the designed charm. It's exact dimensions": a custom design sent to the sheet is written at 100 %, never shrunk)
     sh.progress = [sh.placements.length, sh.placements.length]; renderProgress(sh); drawPreview(sh);
     sh.optimized = { count: sh.placements.length, scale: CHARM_SCALE, ms: Math.round(performance.now() - optT0) };
     // Nothing new went in (a Gold or Silver sheet filling its gaps, whose new orders all found no room): the layout is

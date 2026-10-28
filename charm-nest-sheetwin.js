@@ -5813,7 +5813,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     tryDo(() => mcRecolour(null));   // (MCFREE)
     mcRender();
   }
-  function mcShow(x, q) { x.p = Object.assign({}, x.p, { cxPt: q.cxPt, cyPt: q.cyPt, angle: q.angle, scale: scaleOf(q.size) }); }
+  function mcShow(x, q) { x.p = Object.assign({}, x.p, { cxPt: q.cxPt, cyPt: q.cyPt, angle: q.angle, scale: frozenWhy(x.c) ? 1 : scaleOf(q.size) }); }   // (CUSTOMPOOL: drawn at the 100 % it is written at)
   function mcSelect(x) {
     if (MC.sel === x) return;
     cancelAnimationFrame(MC.spring); MC.spring = 0; MC.springBad = false;
@@ -6078,7 +6078,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       for (const [id, q] of edits) {
         const c = sh.charms.find(z => z.id === id), p = sh.placements.find(z => z.id === id), v = mcVariant(c, q.angle, q.size, clr);
         undo.push({ p, was: Object.assign({}, p), c, pinned: c.pinned, arrivalPin: c.arrivalPin, manual: c.manual });
-        Object.assign(p, { cxPt: q.cxPt, cyPt: q.cyPt, angle: q.angle, scale: scaleOf(q.size) }, v ? { wPt: v.solid.w / 2, hPt: v.solid.h / 2 } : {});
+        Object.assign(p, { cxPt: q.cxPt, cyPt: q.cyPt, angle: q.angle, scale: frozenWhy(c) ? 1 : scaleOf(q.size) }, v ? { wPt: v.solid.w / 2, hPt: v.solid.h / 2 } : {});   // (CUSTOMPOOL: written at 100 %)
         c.pinned = Object.assign({ cxPt: q.cxPt, cyPt: q.cyPt, angle: q.angle }, q.size !== 1 ? { size: q.size } : {}); delete c.arrivalPin;
         c.manual = Object.assign({ by: who, at }, q.size !== 1 ? { size: q.size } : {});
       }
