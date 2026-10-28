@@ -3,17 +3,21 @@
  * You need to follow the 70/30 Ruel where we're looking only for the most commonly used 70% of the features without overburdening the need and requirements").
  *
  * What is here, and what is NOT built again: the editor (charm-nest-charm-editor.js) already has the studio's align engine (smart guides while dragging), group / ungroup, the
- * clipboard, duplicate and the four arrange moves; their maths is CharmEditor.model and these commands call it. New here:
- *   Pathfinder      Unite · Minus Front · Intersect · Exclude · Divide · Trim (window.ClipperLib, the page's own: vendor/clipper-6.4.2.js)
- *   Path            Offset Path (mm; round, miter or bevel corners) · Outline Stroke · Make / Release Compound Path · Round Corners (a radius, mm)
- *   Align           left / centre / right / top / middle / bottom, to the selection, to a key object, to the charm's outline or to its centre (the outline's centre of area:
- *                   a heart's middle, not its box's); Distribute the lefts / centres / rights / tops / middles / bottoms, or the spacing (even, or a value in mm)
- *   Transform       Move / Rotate / Scale / Reflect by values, each with Copy, about the selection, the charm or each object's own centre · Transform Again (⌘D: with nothing
- *                   to repeat it is the editor's Duplicate, which is itself a move with a copy, so ⌘D ⌘D ⌘D steps on as Illustrator's does) · Step and Repeat
- *   Arrange         front / forward / backward / back (the editor's own arrange)
- *   Select          Same role · Same fill · Same stroke · Inverse; Lock / Unlock all; Hide / Show all
- * Every command is ONE undo step. A boolean operation on big paths runs in a Worker (a Blob URL, this file and Clipper inside it) so the page never waits; small ones run at
- * once (measured: well under 50 ms).
+ * clipboard, Duplicate, the four arrange moves (⌘] ⌘[ and the right-click menu), Lock / Hide of the selection and Unlock / Show everything (its More menu); those stay
+ * the editor's, and the tree work here is CharmEditor.model's (normaliseAncestors, pushDown, reid, retext, outlinesOf ...). New here:
+ *   Pathfinder      Unite · Minus Front · Intersect · Exclude · Divide · Trim, on the repo's own booleans (CharmNestVector.boolean, Clipper at 0.002 mm)
+ *   Path            Offset Path (mm; round, mitre or bevel corners) · Cut line round the art (one cut line round the selection at a gap, the lead's "contour cut") ·
+ *                   Outline Stroke · Make / Release Compound Path (⌘8 / ⌥⇧⌘8) · Round Corners (a radius, mm)
+ *   Align           left / centre / right / top / middle / bottom, to the selection, to a key object, to the charm's outline or to its centre of area (where a heart
+ *                   balances, not its box's middle) · Distribute the lefts / centres / rights / tops / middles / bottoms, or the gaps (even, or a value in mm) ·
+ *                   Centre on the charm (one click)
+ *   Transform       Move (⇧⌘M) / Rotate / Scale / Reflect by values, each with Copy, about the selection, the charm or each thing's own middle · Flip, Rotate 90° ·
+ *                   Transform Again (⌘D after a transform with a copy, the lead's keymap; otherwise ⌘D duplicates as it always has; ⇧⌘D repeats any) · Step and Repeat
+ *   Select          Same role · Same fill · Same line (colour and width) · Inverse · Lock / Hide everything else · Unlock all · Show all
+ * Where they are: the head's Object menu (by group), the right-click menu (the common ones), two flyouts on the property bar (Align and distribute; Pathfinder) that
+ * stay open while you click through them, and small value dialogs at the top right of the work area that draw their answer over the charm while Preview is ticked.
+ * Every command is ONE undo step. A boolean on big paths (over 3000 chord corners) runs in a Worker (a Blob URL loading Clipper, CharmNestVector and this file) with a
+ * "working" line over the work area, so the page never waits; a charm-sized one takes a few ms on the page.
  *
  * CURVES STAY CURVES. Clipper works on polygons, so every operand is cut into chords that stray at most 0.002 mm from its curves, and every chord's corner is
  * remembered by WHERE IT IS (Clipper never moves an input vertex): the polygon that comes back is read edge by edge, every run of edges along one curve of the input is written
@@ -22,8 +26,8 @@
  * (Schneider's fit, corners kept, straight runs written as lines).
  *
  * Loads in the page (window.CharmEditorOps; it registers its commands on window.CharmEditor), in a Worker (the kernel only) and in node (module.exports: the kernel and the
- * operations on items, for tests/charm-nest/ce-ops.cjs). The commands use the editor's extension points (CharmEditor.commands / panels / onOpen, the ctx the editor hands
- * them) and touch nothing else of the editor. */
+ * operations on items, for tests/charm-nest/ce-ops.cjs). The commands use the editor's extension points (CharmEditor.commands / onOpen / onClose / beforeDuplicate and
+ * the ctx the editor hands them) and touch nothing else of the editor. */
 (function (root, factory) {
   const api = factory(root);
   if (typeof module === 'object' && module.exports) module.exports = api;
@@ -674,8 +678,8 @@
     if (pk.entries.length < 2 && !one) return { error: `${PF[op] || op} needs two things selected or more` };
     return { pk, op, operands: pk.entries.map(e => operandOf(e, geo, M)) };
   }
-  /** A Pathfinder answer (kernel.pathfinder's) put in place of its operands: one path (Unite, Intersect, Exclude: the paint of the frontmost; Minus Front: of the backmost,
-   *  as Illustrator does), or a group of pieces (Divide, Trim: each piece painted as the operand it came from), where the frontmost operand was. */
+  /** A Pathfinder answer (kernel.pathfinder's) put in place of its operands: one path (Unite, Intersect, Exclude: the paint of the frontmost, where it was; Minus Front: the
+   *  backmost's paint, in its place, as Illustrator does), or a group of pieces (Divide, Trim: each piece painted as the operand it came from), where the frontmost was. */
   function placePathfinder(job, r) {
     const M = MD(), es = job.pk.entries, front = es[es.length - 1];
     let made;
@@ -688,7 +692,7 @@
       const kids = r.pieces.map((p, i) => newPath(paintOf(es[p.of].it, M), p.subpaths, nameOf(es[p.of].it) + ' ' + (i + 1), M));
       made = kids.length === 1 ? kids[0] : newGroup(kids, job.op === 'divide' ? 'Divided' : 'Trimmed', M);
     }
-    const map = new Map(job.pk.ids.map(id => [id, []])); map.set(front.it.id, [made]);
+    const map = new Map(job.pk.ids.map(id => [id, []])); map.set((job.op === 'minus' ? es[0] : front).it.id, [made]);
     return { items: spliceIn(job.pk.items, map), sel: [made.id] };
   }
   function pathfinderItems(items, sel, op, geo) {
@@ -720,7 +724,7 @@
     if (!pk.entries.length) return { error: 'Select what to offset' };
     const d = num(+o.mm, 0) * PT;
     if (o.contour) {
-      const operand = { parts: pk.entries.map(e => operandOf(e, geo, M)).map(op => (op.parts ? { parts: op.parts } : op)) };
+      const operand = { parts: pk.entries.map(e => operandOf(e, geo, M)) };
       const sps = offsetPath(operand, Math.abs(d), 'round', 4, false, true);
       if (!sps.length) return { error: 'Nothing to put a cut line round' };
       const cut = charmOutline(pk.items, geo, null).it;
@@ -1353,7 +1357,8 @@
       values: { count: '3', dx: '2', dy: '0', deg: '0', pct: '100', pivot: 'selection' },
       fields: [{ id: 'count', label: 'Copies', unit: '', step: 1 }, { id: 'dx', label: 'Across', unit: 'mm', step: 0.1 }, { id: 'dy', label: 'Down', unit: 'mm', step: 0.1 }, { id: 'deg', label: 'Turn', unit: '°', step: 1 }, { id: 'pct', label: 'Scale', unit: '%', step: 1 }, { id: 'pivot', type: 'seg', label: 'Turn about', options: PIVOTS.slice(0, 2) }],
       result: v => { const t = { dx: numIn(v.dx) * PT, dy: numIn(v.dy) * PT, deg: numIn(v.deg), sx: numIn(v.pct) / 100, sy: numIn(v.pct) / 100 }; if (Object.values(t).some(x => !fin(x)) || !(t.sx > 0)) return { error: 'A number in every field' }; return ops.stepRepeatItems(ctx.items(), ctx.selection(), ctx.geo, t, { count: numIn(v.count), pivot: v.pivot, frame: ctx.frame() }); }
-    }).then(a => { if (!a || !land(ctx, a.r, 'stepRepeat')) return false; remember(ctx, { dx: numIn(a.vals.dx) * PT, dy: numIn(a.vals.dy) * PT, deg: numIn(a.vals.deg), sx: numIn(a.vals.pct) / 100, sy: numIn(a.vals.pct) / 100 }, { copy: true, pivot: a.vals.pivot }); return true; }) },
+    // (it is its own repeat: ⌘D after it duplicates what it left selected, the originals and every copy, rather than turning the whole ring once more)
+    }).then(a => { if (!a || !land(ctx, a.r, 'stepRepeat')) return false; last = null; return true; }) },
     'ops.centre': { title: 'Centre on the charm', group: 'Align', icon: IC.centre, enabled: any, run: ctx => land(ctx, ops.centreOnCharm(ctx.items(), ctx.selection(), ctx.geo, ctx.frame()), 'centreOnCharm') },
     'ops.sameRole': { title: 'Select the same role', group: 'Select', icon: IC.same, enabled: any, run: ctx => land(ctx, ops.selectSame(ctx.items(), ctx.selection(), ctx.geo, 'role'), 'selectSame:role') },
     'ops.sameFill': { title: 'Select the same fill', group: 'Select', icon: IC.same, context: false, enabled: any, run: ctx => land(ctx, ops.selectSame(ctx.items(), ctx.selection(), ctx.geo, 'fill'), 'selectSame:fill') },
@@ -1383,7 +1388,11 @@
     (CE.onOpen = Array.isArray(CE.onOpen) ? CE.onOpen : []).push(ctx => {
       injectCss(); last = null; memo.key = null; closeFly();
       // (a press on a flyout's own button while it is open folds it: the editor closes menus on the press, the click must not open it again)
-      const down = e => { if (fly && e.target.closest && fly.btn && fly.btn.contains(e.target)) flySkip = true; else flySkip = false; if (fly && !fly.el.isConnected) fly = null; };
+      const down = e => {
+        if (fly && !fly.el.isConnected) fly = null;
+        const b = fly && ctx.root.querySelector(`.ce-xbar [data-xcmd="${fly.cmdId}"]`);   // (the bar is drawn again as the selection changes: its button is found afresh)
+        flySkip = !!(b && e.target.closest && b.contains(e.target));
+      };
       doc.addEventListener('pointerdown', down, true);
       ctx.root.addEventListener('click', flyClick, true);
       ctx.__opsOff = () => { doc.removeEventListener('pointerdown', down, true); };

@@ -88,8 +88,8 @@ const lens = (r, d) => 2 * r * r * Math.acos(d / (2 * r)) - (d / 2) * Math.sqrt(
   ok(u.items.length === 2 && u.items[0].id === 'mid' && u.items[1].role === 'hatch' && u.sel[0] === u.items[1].id && Math.abs(mm2(u.items[1].subpaths) - 175) < 1e-3,
     'D1 Unite: one hatched shape (the frontmost\'s paint) where the frontmost was, 175 mm²; the one between them untouched');
   const m = O.pathfinderItems(items, ['front', 'back'], 'minus', geo);
-  ok(m.items.find(i => i.id === m.sel[0]).role === 'cut' && m.items.find(i => i.id === m.sel[0]).layer === 'CUT' && Math.abs(mm2(m.items.find(i => i.id === m.sel[0]).subpaths) - 75) < 1e-3,
-    'D2 Minus Front keeps the backmost\'s paint and whatever it carries (its laser layer): a cut line, 75 mm²');
+  ok(m.items[0].id === m.sel[0] && m.items[1].id === 'mid' && m.items[0].role === 'cut' && m.items[0].layer === 'CUT' && Math.abs(mm2(m.items[0].subpaths) - 75) < 1e-3,
+    'D2 Minus Front keeps the backmost\'s place, its paint and whatever it carries (its laser layer): a cut line, 75 mm²');
   const turned = [rect('a', 0, 0, 10, 2), rect('b', 0, 0, 10, 2, { rot: 90, tx: 0, ty: 0 })];
   const plus = O.pathfinderItems(turned, ['a', 'b'], 'unite', geo);
   ok(Math.abs(mm2(plus.items[0].subpaths) - 36) < 1e-3, 'D3 a turned rectangle is cut where it is drawn: two 10 × 2 bars crossed make a plus of 36 mm²');
