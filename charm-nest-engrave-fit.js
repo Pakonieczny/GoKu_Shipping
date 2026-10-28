@@ -58,6 +58,50 @@
     return {view,mask:job.mask,fit,lines:job.lines,check};
   }
 
+  /* QUICK PLACE (moved here from charm-nest-engrave-preview.js quickRun, 28 Oct 2026, REFIT: Paul, "Everything must be immediate and responsive"). Words with no job fit to read (no job yet,
+     or a face waiting for words) are placed on the card's pictures inside the engravable area by the same geometry the fit uses, cut short: the charm turned (backView), the engravable area
+     (engraveMask), the largest empty rectangle of it at a few turns as the place, refitAt there, the shop's size rule (defaultSize) and the line breaks (reflowAt). It ran on the page's own
+     thread and took 0.4 s on a calendar; it now runs in this worker (input.kind "quick"), and the page runs this very function only when it has no worker. Nothing is saved.
+     input = { charm, face, lines, viewOptions, maskOptions, opts, mask? (a mask the job already has) } -> { status: 'ready', fit: { lines, centre, angle, size }, rect } | { status: 'none', why, rect? } */
+  const QUICK_CANDS = typeof WeakMap === "function" ? new WeakMap() : null;
+  function quickPlace(input, F_, G) {
+    const font = F_.Regular, opts = input.opts, charm = input.charm, lines = input.lines || [];
+    let mask = input.mask || null;
+    if (!mask) {
+      try { mask = G.engraveMask(G.backView(charm, input.viewOptions), input.maskOptions); }
+      catch (e) { return { status: "none", why: "view: " + String(e && e.message || "") }; }
+    }
+    try {
+      if (!G.glyphCoverage(font, lines.join("\n")).ok) return { status: "none", why: "glyphs" };
+      // the places to try, once per eroded mask (the words do not change them): the largest empty rectangle of the area at a few turns, as fitText finds them (a turn is searched on the mask turned the other way)
+      let cands = QUICK_CANDS && QUICK_CANDS.get(mask);
+      if (!cands) {
+        cands = [];
+        for (const angle of [0, 15, -15, 45, -45, 90, -90]) {
+          const mA = angle ? G.rotateMask(mask, -angle) : mask, r = G.largestRectangles(mA, 1)[0]; if (!r) continue;
+          const cA = [(r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2];
+          cands.push({ angle, centre: angle ? G.ap(G.rotateAbout(mask.cx, mask.cy, angle), cA[0], cA[1]) : cA, hPt: r.hPt, wPt: r.wPt });
+        }
+        if (QUICK_CANDS) QUICK_CANDS.set(mask, cands);
+      }
+      if (!cands.length) return { status: "none", why: "no area" };
+      const rect = { centre: cands[0].centre, hPt: cands[0].hPt, wPt: cands[0].wPt };
+      // the page's own order of work (fitMultiline, then calculate): every way of breaking the lines is tried in turn, a turned placement is taken only when it is clearly larger (12 %, as fitText), a new
+      // line break only when it is clearly larger (5 %), the size is the shop's rule for how much there is to say, and the lines are laid again at that size and place (reflowAt)
+      const MMPT = 25.4 / 72, bw = charm.widthPt || (charm.bbox ? charm.bbox[2] - charm.bbox[0] : 0), bh = charm.heightPt || (charm.bbox ? charm.bbox[3] - charm.bbox[1] : 0);
+      const sizeOpts = { capPerEm: G.capPerEm(font), minCapMm: opts.minCapMm, charmMinMm: Math.min(bw, bh) * MMPT, charmMaxMm: Math.max(bw, bh) * MMPT, usableAreaMm2: G.area(mask) / (mask.res * mask.res) * MMPT * MMPT, advanceOf: t => font.getAdvanceWidth(t, 1, { kerning: true }) };
+      const variants = G.flowVariants(lines, font, "auto"); if (!variants.length) return { status: "none", why: "no text", rect };
+      const maxH = opts.maxHeightFrac * (mask.hPt || mask.h / mask.res), want0 = G.defaultSize(variants[0], maxH, sizeOpts);
+      const bestOf = ls => { let b0 = null, bR = null; for (const c of cands) { const f = G.refitAt(ls, font, mask, opts, { centre: c.centre, angle: c.angle, maxSize: want0 }); if (!f.ok) continue; if (c.angle === 0) b0 = f; else if (!bR || f.size > bR.size) bR = f; } return bR && (!b0 || (bR.size - b0.size) / b0.size >= 0.12) ? bR : b0; };
+      let first = null;
+      for (const v of variants) { const f = bestOf(v); if (f && (!first || f.size > first.size * 1.05)) first = Object.assign({ lines: v }, f); if (f && f.size >= want0 - 0.01) break; }
+      if (!first) return { status: "none", why: "no room", rect };
+      const want = G.defaultSize(first.lines, first.size, sizeOpts);
+      const fit = G.reflowAt(lines, font, mask, opts, { centre: first.centre, angle: first.angle, size: want }, "auto");
+      return { status: "ready", rect, fit: fit && fit.ok ? { lines: fit.lines.slice(), centre: fit.centre, angle: fit.angle || 0, size: fit.size } : { lines: lines.slice(), centre: first.centre, angle: first.angle, size: first.size } };
+    } catch (e) { return { status: "none", why: "fit: " + String(e && e.message || "") }; }
+  }
+
   // One worker, one active calculation. Queued inputs stay on the caller's
   // side; they are not cloned into dozens of workers or an unbounded inbox.
   function createClient({WorkerClass, url, fonts, fontsFor, scriptsFor, timeoutMs=120000}) {
@@ -107,5 +151,5 @@
     }
     return {run(input){return new Promise((resolve,reject)=>{queue.push({id:++seq,input,resolve,reject});pump();});}};
   }
-  return {calculate,createClient};
+  return {calculate,quickPlace,createClient};
 });

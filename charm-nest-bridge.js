@@ -8516,6 +8516,7 @@ const Engrave = window.Engrave = (() => {
       if (!changed) continue;
       if (j.state === "none") { Object.assign(j, { state: "classify", fit: null, verify: null, view: null, mask: null, decision: null, lineInput: null, wantSize: null, reason: null, missing: null }); j.row.engrave = { needed: false, state: "classify", seals: CNEngravingSeals.merge(j.row.engrave, j) }; Review.remove("eng:" + j.key); continue; }   // (a person's setup is the newer word over a plain decision)
       if (DECIDED.includes(j.state) || j.state === "none") { out.kept.push(j.key); continue; }
+      if (typeof holdDrawing === "function") holdDrawing(j);   // (REFIT: drawn, dimmed, while its new words are read and fitted)
       Object.assign(j, { state: "classify", fit: null, verify: null, view: null, mask: null, decision: null, lineInput: null, wantSize: null, reason: null, missing: null }); Review.remove("eng:" + j.key);
     }
     // 3 · the jobs the setup asks for, and their words
@@ -8621,7 +8622,7 @@ const Engrave = window.Engrave = (() => {
   function fitClient() {
     if (!workerClient) {
       if (!window.Worker || !F_.workerFonts?.Regular) throw new Error("Background engraving could not start. Reload and retry this placement.");
-      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col-vf1-fb1-fb2-fr1-wd1-cb1-sy1-rf1",fonts:F_.workerFonts,fontsFor:id=>{const set=FONT_SETS.get(id);return set&&set.ok?set.workerFonts:null;},scriptsFor:scriptsPack});
+      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col-vf1-fb1-fb2-fr1-wd1-cb1-sy1-rf2",fonts:F_.workerFonts,fontsFor:id=>{const set=FONT_SETS.get(id);return set&&set.ok?set.workerFonts:null;},scriptsFor:scriptsPack});
     }
     return workerClient;
   }
@@ -8680,6 +8681,7 @@ const Engrave = window.Engrave = (() => {
     if (items() !== currentItems || currentItems.get(job.key) !== job || job.row !== row || row.state === "gone" || job.state !== state || job.stamping || job.backSaving || !preparing && job.approvalPreparing) return job;
     if (EG.cardKey === job.key) { EG.card = null; EG.cardKey = null; }
     if (typeof faceHasEditorArt === "function" && !engravedWords(job).length && faceHasEditorArt(job) && artOnlyPlacement(job)) { render(); return job; }   // (EDITOR WORDS: no words on a face the charm editor drew: its parts are the engraving, nothing to fit)
+    if (typeof holdDrawing === "function") holdDrawing(job);   // (REFIT: the drawing it had stays on the work area, dimmed, until this fit lands)
     job.reason = null; job.verify = null; job.fit = null; delete job.writtenFit;
     job.lineInput ||= job.lines.slice();
     job.lines = job.lineInput.slice();
@@ -11341,7 +11343,7 @@ const Engrave = window.Engrave = (() => {
     // every rebuild of the card. Without the picker or its data the button is not offered.
     { const eb = ta && card.querySelector(".pvWords [data-emoji]"); if (eb && !(window.CNEmojiPicker && window.CNEmojiPicker.attach({ textarea: ta, button: eb, key: "words:" + job.key }))) eb.remove(); }   // (only this box's own button: the panel's Emoji button is the panel's)
     const backHost = card.querySelector(".backHost");
-    const held = wordsJob && ["ready", "fitting"].includes(job.state) && canFit(job) ? heldDrawing(job) : (HELD.delete(job), null), dj = held || job;   // (REFIT: the drawing it had, while it is fitted again)
+    const held = wordsJob && refitting(job) ? (holdDrawing(job), heldDrawing(job)) : (HELD.delete(job), null), dj = held || job;   // (REFIT: the drawing it had, while it is read and fitted again)
     let mounted = [0, 0], mountedBelow = -1, raf = 0, framed = null;
     const syncBoth = () => {
       if (!ears) return;
@@ -11630,7 +11632,13 @@ const Engrave = window.Engrave = (() => {
      for the 2.7 s the fit took. The drawing the face had is kept (HELD) and drawn, dimmed, with a small "Fitting…" in its corner, until the new fit lands and takes its place in one frame: the words
      where they were, the art as it is now (the edit just saved, in the same frame: the cut line is the same, so the piece is turned the same way). It is only looked at: never moved or approved. */
   const HELD = new WeakMap();   // job -> { view, mask, fit, at } it was drawn with when an artwork edit sent it to be fitted again
-  function holdDrawing(j) { if (j && j.view && j.mask && j.fit) HELD.set(j, { view: j.view, mask: j.mask, fit: j.fit, at: Date.now() }); }
+  function holdDrawing(j) {
+    if (!j || !j.view || !j.mask || !j.fit) return;
+    const h = HELD.get(j); if (h && h.view === j.view && h.fit === j.fit) return;   // (the same drawing: kept as it is, with its picture)
+    HELD.set(j, { view: j.view, mask: j.mask, fit: j.fit, at: Date.now() });
+  }
+  /** The face is on its way to a new fit (being read, waiting for the worker, or in it): its work area and pictures wait for that fit, and never place the words themselves meanwhile. */
+  const refitting = job => !!job && ((["ready", "fitting"].includes(job.state) && canFit(job)) || (OPENREAD.includes(job.state) && (preparingNow(job) || readsFree(job))));
   /** What the work area of `job` draws while it is fitted again: a stand-in for the job (its own fields, the held view, mask and fit), or null when nothing is held or a newer fit has landed. */
   function heldDrawing(job) {
     const h = job && HELD.get(job); if (!h) return null;
@@ -11646,7 +11654,9 @@ const Engrave = window.Engrave = (() => {
     h.charm = ch; h.bc = null; h.stand = Object.assign(Object.create(job), { view, mask: h.mask, fit: h.fit });
     return h.stand;
   }
-  window.CNEngraveHeld = heldDrawing;   // (the card's Front / Back pictures draw it too while the face is fitted again: charm-nest-engrave-preview.js heldOf)
+  /* The card's Front / Back pictures (charm-nest-engrave-preview.js): the held drawing while the face is fitted again, whether the worker's fit is coming (then they wait for it), and the
+     placement of words that have no job fit to read, made by the same worker off the page's own thread (CharmNestEngraveFit.quickPlace). */
+  window.CNEngraveRefit = { held: heldDrawing, busy: refitting, quick: input => { let c; try { c = fitClient(); } catch (e) { return Promise.reject(e); } return c.run(Object.assign({}, input, { kind: "quick" })); } };
   /** The held drawing already made for `job` at this size (the card is drawn again as the face goes from waiting to being fitted: the same picture is moved over, not drawn twice), or null. */
   const heldCanvas = (job, px) => { const h = HELD.get(job), bc = h && h.bc; return bc && bc._heldPx === px.join("x") ? bc : null; };
   /** The held drawing `bc` on the work area `host` of `job`: still, dimmed, "Fitting…" in its top-right corner; the Edit charm pill and the save's note as on any drawing. */

@@ -1,7 +1,7 @@
 /* Dedicated initial-fit worker. Fonts arrive once, already hash-verified by
  * the page. No cloud calls, DOM work or production writes happen here. */
 "use strict";
-importScripts("vendor/opentype-1.3.4.min.js", "charm-nest-text.js?v=20261019-wd1-rf1", "charm-nest-geom.js?v=20261009-flat-col-fb1-fb2-fr1-m3-wd1-cb1-rf1", "charm-nest-engrave-fit.js?v=20261019-wd1");
+importScripts("vendor/opentype-1.3.4.min.js", "charm-nest-text.js?v=20261019-wd1-rf1", "charm-nest-geom.js?v=20261009-flat-col-fb1-fb2-fr1-m3-wd1-cb1-rf1", "charm-nest-engrave-fit.js?v=20261019-wd1-rf1");
 let fonts=null, fontError=null, emojiFont=null, emojiMap=null, sansRaw=null, symbolFont=null; const sets={};   // sets: the other engraving fonts by id (sent once, before the first piece that uses one)
 // (WORLD, Paul 19 Oct 2026: Arabic, Hebrew, Indic, CJK lines) the script fonts and the shaper arrive on demand, in a "scripts" message before the first fit that needs them: HarfBuzz starts asynchronously, so the messages are handled one at a time, in order,
 // and a fit never runs before the init that precedes it has finished. Every engraving font set is wrapped with the same (still empty) script set (CharmNestText.sharedScripts, the one withEmoji takes); the shaper script itself is only loaded when the first script font comes.
@@ -54,7 +54,8 @@ async function handle({data}){
     if(own && (!set || set.error))throw new Error("The engraving font "+key+" is unavailable.");
     // (the words are set in exactly the script fonts the page chose for them: one regional font for a Chinese line, however it wraps)
     const ids=(data.input && data.input.scriptIds) || [],use=set || fonts,pin=f=>f && ids.length && f.pin ? f.pin(ids) : f;
-    self.postMessage({id:data.id,result:CharmNestEngraveFit.calculate(data.input,ids.length ? {Regular:pin(use.Regular),Semibold:pin(use.Semibold)} : use,CharmNestGeom)});
+    const run=data.input && data.input.kind === "quick" ? CharmNestEngraveFit.quickPlace : CharmNestEngraveFit.calculate;   // (REFIT, 28 Oct 2026: the card pictures' placement of words with no fit, off the page's own thread)
+    self.postMessage({id:data.id,result:run(data.input,ids.length ? {Regular:pin(use.Regular),Semibold:pin(use.Semibold)} : use,CharmNestGeom)});
   } catch(error) {
     self.postMessage({id:data.id,error:{message:error.message,stage:error.stage,checks:error.checks,images:error.images}});
   }

@@ -270,7 +270,10 @@
   /* REFIT (Paul, 28 Oct 2026: "Everything must be immediate and responsive"): a face fitted again after a charm edit has no fit of its own for a moment. The work area draws the drawing it had meanwhile
      (charm-nest-bridge.js heldDrawing: its view, with the art as it is now, and its fit); these pictures draw the same, so the words stay where they were and nothing is placed again here on the
      page's own thread (quickFit took 0.4 s of it on a calendar). → the stand-in { view, fit } or null. */
-  const heldOf = job => { try { const f = job && !job.fit && root && root.CNEngraveHeld; return typeof f === 'function' ? f(job) : null; } catch (_) { return null; } };
+  const REFIT = () => (root && root.CNEngraveRefit) || null;   // (charm-nest-bridge.js: { held, busy, quick })
+  const heldOf = job => { try { const R = job && !job.fit && REFIT(); return R && typeof R.held === 'function' ? R.held(job) : null; } catch (_) { return null; } };
+  /** The job's own fit is on its way (its words being read or fitted in the worker): the picture waits for it and never places the words itself meanwhile. */
+  const fitComing = job => { try { const R = job && !job.fit && REFIT(); return !!(R && typeof R.busy === 'function' && R.busy(job)); } catch (_) { return false; } };
   /** The frame to draw for `o` ({ job, row, slot, face }): the job's view when it has one, else the piece's pool charm. null when neither exists. */
   function frameFor(o) {
     o = o || {}; const job = o.job, face = job ? faceOfJob(job) : o.face === 'front' ? 'front' : 'back';
@@ -341,7 +344,7 @@
    * area), the largest empty rectangle of that mask as the centre, refitAt (the largest size that verifies at that centre), defaultSize (the shop's size rule: what is said decides how much of that
    * is used) and reflowAt (the line breaks, every wrap tried at that size). Nothing is saved; the job's own fit, once there, replaces it. Deferred (one task at a time, never inside a paint) and kept
    * per charm, face, font and words. */
-  const QF = new Map(), QBASE = new WeakMap(), CANDS = new WeakMap(), QUEUE = [];
+  const QF = new Map(), QUEUE = [];
   let qBusy = false;
   const cfg = () => { try { return (typeof S !== 'undefined' && S && S.settings) || {}; } catch (_) { return {}; } };
   function quickRun(rec) {
@@ -357,52 +360,25 @@
       Promise.resolve().then(() => load.call(E, a.id)).catch(() => {}).then(() => { quickRun(rec); quickDone(rec); });
       return 'wait';
     }
-    const s = cfg(), MM = 25.4 / 72, font = set.Regular, opts = { minCapMm: +s.engraveMinCapMm || 1.6, maxHeightFrac: +s.engraveMaxHeightFrac || 0.4, lineGap: 0.216, minStrokeMm: +s.engraveMinStrokeMm || 0, minGapMm: +s.engraveMinGapMm || 0, measure: false };
-    let base = a.job && a.job.view && a.job.mask ? { view: a.job.view, mask: a.job.mask } : null;
-    if (!base) {
-      const per = QBASE.get(a.charm) || QBASE.set(a.charm, {}).get(a.charm);
-      if (!per[a.face]) {
-        try {
-          const M = root && root.Master, entry = (a.row && a.row.spec && M && M.entryFor ? M.entryFor(a.row.spec.designSku) : null) || {};
-          const view = G.backView(a.charm, G.viewOptionsFor({ charmUp: a.charm.upAngle, entry, ...(a.face === 'front' ? { face: 'front' } : {}) }));
-          const adds = a.face === 'front' ? null : backAddsOf(a.charm);   // (CHARM EDIT · BACK: the words keep off what a person added to the back, as the bridge makes every mask of a back: fitInput)
-          const mask = G.engraveMask(view, Object.assign({ marginMm: +s.engraveMarginMm || 0.8, keepOut: (a.face === 'front' ? a.charm.frontKeepOut : a.charm.backKeepOut) || [] }, adds ? { avoid: adds } : {}));
-          per[a.face] = { view, mask };
-        } catch (e) { return fail('view: ' + str(e && e.message)); }
-      }
-      base = per[a.face];
+    const s = cfg(), font = set.Regular, opts = { minCapMm: +s.engraveMinCapMm || 1.6, maxHeightFrac: +s.engraveMaxHeightFrac || 0.4, lineGap: 0.216, minStrokeMm: +s.engraveMinStrokeMm || 0, minGapMm: +s.engraveMinGapMm || 0, measure: false };
+    const Fit = root && root.CharmNestEngraveFit; if (!Fit || typeof Fit.quickPlace !== 'function') return fail('no fit code');
+    const ch = a.charm, M = root && root.Master, entry = (a.row && a.row.spec && M && M.entryFor ? M.entryFor(a.row.spec.designSku) : null) || {};
+    const adds = a.face === 'front' ? null : backAddsOf(ch);   // (CHARM EDIT · BACK: the words keep off what a person added to the back, as the bridge makes every mask of a back: fitInput)
+    let sf = []; try { sf = typeof font.scriptFonts === 'function' ? font.scriptFonts(a.lines.join('\n')) : []; } catch (_) { sf = []; }
+    const input = {
+      charm: { outline: ch.outline, members: ch.members, bbox: ch.bbox, widthPt: ch.widthPt, heightPt: ch.heightPt, upAngle: ch.upAngle }, face: a.face, lines: a.lines.slice(), opts, fontKey: a.id, ...(sf.length ? { scriptIds: sf.map(f => f.id) } : {}),
+      ...(a.job && a.job.view && a.job.mask ? { mask: a.job.mask } : { viewOptions: G.viewOptionsFor({ charmUp: ch.upAngle, entry, ...(a.face === 'front' ? { face: 'front' } : {}) }),
+        maskOptions: Object.assign({ marginMm: +s.engraveMarginMm || 0.8, keepOut: (a.face === 'front' ? ch.frontKeepOut : ch.backKeepOut) || [] }, adds ? { avoid: adds } : {}) })
+    };
+    const take = out => { out = out || {}; rec.rect = out.rect || null; if (out.status === 'ready' && out.fit) { rec.fit = out.fit; rec.status = 'ready'; } else fail(out.why || 'none'); };
+    // REFIT (28 Oct 2026): in the page's fit worker, off this thread (0.4 s of it on a calendar); here, as before, only when the page has no worker
+    const R = REFIT();
+    if (R && typeof R.quick === 'function') {
+      rec.status = 'loading';
+      Promise.resolve().then(() => R.quick(input)).then(take, () => take(Fit.quickPlace(input, { Regular: font }, G))).then(() => quickDone(rec));
+      return 'wait';
     }
-    const mask = base.mask;
-    try {
-      if (!G.glyphCoverage(font, a.lines.join('\n')).ok) return fail('glyphs');
-      // the places to try, once per eroded mask (the words do not change them): the largest empty rectangle of the area at a few turns, as fitText finds them (a turn is searched on the mask turned the other way)
-      let cands = CANDS.get(mask);
-      if (!cands) {
-        cands = [];
-        for (const angle of [0, 15, -15, 45, -45, 90, -90]) {
-          const mA = angle ? G.rotateMask(mask, -angle) : mask, r = G.largestRectangles(mA, 1)[0]; if (!r) continue;
-          const cA = [(r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2];
-          cands.push({ angle, centre: angle ? G.ap(G.rotateAbout(mask.cx, mask.cy, angle), cA[0], cA[1]) : cA, hPt: r.hPt, wPt: r.wPt });
-        }
-        CANDS.set(mask, cands);
-      }
-      if (!cands.length) return fail('no area');
-      rec.rect = { centre: cands[0].centre, hPt: cands[0].hPt, wPt: cands[0].wPt };
-      // the page's own order of work (fitMultiline, then calculate): every way of breaking the lines is tried in turn, a turned placement is taken only when it is clearly larger (12 %, as fitText), a new
-      // line break only when it is clearly larger (5 %), the size is the shop's rule for how much there is to say, and the lines are laid again at that size and place (reflowAt)
-      const MMPT = 25.4 / 72, bw = a.charm.widthPt || (a.charm.bbox ? a.charm.bbox[2] - a.charm.bbox[0] : 0), bh = a.charm.heightPt || (a.charm.bbox ? a.charm.bbox[3] - a.charm.bbox[1] : 0);
-      const sizeOpts = { capPerEm: G.capPerEm(font), minCapMm: opts.minCapMm, charmMinMm: Math.min(bw, bh) * MMPT, charmMaxMm: Math.max(bw, bh) * MMPT, usableAreaMm2: G.area(mask) / (mask.res * mask.res) * MMPT * MMPT, advanceOf: t => font.getAdvanceWidth(t, 1, { kerning: true }) };
-      const variants = G.flowVariants(a.lines, font, 'auto'); if (!variants.length) return fail('no text');
-      const maxH = opts.maxHeightFrac * (mask.hPt || mask.h / mask.res), want0 = G.defaultSize(variants[0], maxH, sizeOpts);
-      const bestOf = ls => { let b0 = null, bR = null; for (const c of cands) { const f = G.refitAt(ls, font, mask, opts, { centre: c.centre, angle: c.angle, maxSize: want0 }); if (!f.ok) continue; if (c.angle === 0) b0 = f; else if (!bR || f.size > bR.size) bR = f; } return bR && (!b0 || (bR.size - b0.size) / b0.size >= 0.12) ? bR : b0; };
-      let first = null;
-      for (const v of variants) { const f = bestOf(v); if (f && (!first || f.size > first.size * 1.05)) first = Object.assign({ lines: v }, f); if (f && f.size >= want0 - 0.01) break; }
-      if (!first) return fail('no room');
-      const want = G.defaultSize(first.lines, first.size, sizeOpts);
-      const fit = G.reflowAt(a.lines, font, mask, opts, { centre: first.centre, angle: first.angle, size: want }, 'auto');
-      rec.fit = fit && fit.ok ? { lines: fit.lines.slice(), centre: fit.centre, angle: fit.angle || 0, size: fit.size } : { lines: a.lines.slice(), centre: first.centre, angle: first.angle, size: first.size };
-      rec.status = 'ready';
-    } catch (e) { return fail('fit: ' + str(e && e.message)); }
+    take(Fit.quickPlace(input, { Regular: font }, G));
     return 'done';
   }
   function quickDone(rec) { const subs = [...rec.subs]; rec.subs.clear(); for (const f of subs) { try { f(); } catch (_) { /* its own */ } } }
@@ -458,6 +434,7 @@
 .engpvBox{position:absolute;inset:0;container-type:size;pointer-events:none}
 .engpvText{position:absolute;margin:0;white-space:pre;text-align:center;color:var(--ink,#1c1a17);transform-origin:50% 50%;pointer-events:none}
 .engpvText[hidden]{display:block;visibility:hidden}
+.engpv[data-held="1"] .engpvText{opacity:.55}
 .engpvSlot{position:absolute;transform-origin:50% 50%;box-sizing:border-box;border:1px dashed var(--ink45,#938c80);opacity:.7;pointer-events:none}
 .engpvWait{position:absolute;right:4px;bottom:3px;display:inline-flex;align-items:center;gap:5px;max-width:calc(100% - 8px);padding:1px 6px;border-radius:999px;background:var(--card,#fffefb);font:10px var(--sans,system-ui);color:var(--ink70,#5b554c);white-space:nowrap;overflow:hidden}
 .engpvWait[hidden]{display:none}
@@ -530,7 +507,14 @@
       const capsOf = l => (O && O.fontCaps && O.fontCaps(id) ? l.map(x => (O.capsText ? O.capsText(x, id) : x.toLocaleUpperCase('en-US'))) : l);
       const typed = src.baked ? [] : capsOf(linesOf(o.text)), hasPos = !!(st.pos && fin(+st.pos.x) && fin(+st.pos.y));
       let qf = null;
-      if (src.kind === 'frame' && !dr && typed.length && !hasPos) { if (!st.qsub) st.qsub = () => { if (el._engpv === st) paint(el); }; qf = quickFit(o, id, typed, st.qsub); }
+      // REFIT: the job's own fit is on its way from the worker: the picture waits for it (looked at again shortly, for half a minute at most, in case nothing draws it again) and places nothing itself
+      const awaited = src.kind === 'frame' && !dr && typed.length && !hasPos && fitComing(o.job), coming = awaited && (st.comingN || 0) < 120;
+      if (!awaited) st.comingN = 0;
+      if (src.kind === 'frame' && !dr && typed.length && !hasPos && !coming) { if (!st.qsub) st.qsub = () => { if (el._engpv === st) paint(el); }; qf = quickFit(o, id, typed, st.qsub); }
+      if (coming) {
+        qf = { status: 'loading', coming: true, subs: new Set() };
+        if (!st.comingT) st.comingT = setTimeout(() => { st.comingT = 0; st.comingN = (st.comingN || 0) + 1; if (el._engpv === st && el.isConnected) paint(el); }, 250);
+      }
       if (st.qrec && st.qrec !== qf && st.qsub) st.qrec.subs.delete(st.qsub);
       st.qrec = qf;
       if (qf && qf.status === 'loading') {   // (a few milliseconds; a slow one shows a small labelled wait after a short while, nothing is drawn wrong meanwhile)
@@ -546,6 +530,9 @@
       const x = num(p.x, AUTO.x), y = num(p.y, AUTO.y);
       let lines = src.baked ? [] : dr ? linesOf(dr.lines) : qf && qf.status === 'ready' ? linesOf(qf.fit.lines) : (fitLinesOf(o, id) || linesOf(o.text)); if (lines.length) lines = capsOf(lines);
       N.root.dataset.state = src.baked ? 'baked' : lines.length ? 'ready' : 'empty';
+      // REFIT: the words where the held drawing has them while the face is fitted again: dimmed, "Fitting" in the corner (after a moment), as the work area says it
+      if (!src.baked && o.job && !o.job.fit && heldOf(o.job)) { N.root.dataset.held = '1'; if (status === 'ready' && !picWait) { N.wait.hidden = false; N.wait.setAttribute('data-late', ''); N.wait.setAttribute('aria-label', 'Fitting'); N.wait.querySelector('.engpvWaitT').textContent = 'Fitting'; N.wait.removeAttribute('title'); } }
+      else delete N.root.dataset.held;
       const pos = `left:${+(x * 100).toFixed(3)}%;top:${+(y * 100).toFixed(3)}%;`;
       if (src.baked) { N.slot.hidden = true; N.text.hidden = true; N.text.textContent = ''; N.root.dataset.size = ''; return; }   // (a saved picture has its words in it already)
       if (!lines.length && src.kind === 'frame') { N.slot.hidden = true; N.text.hidden = true; N.text.textContent = ''; N.root.dataset.size = ''; return; }   // (the charm itself is the picture of a face with no words yet: no dashed slot on it)
