@@ -624,7 +624,8 @@
     const l = acked.get(entity), w = rec && rec._w; if (!l || !w || typeof w !== 'object') return [];
     const out = [];
     // (the write that stands on a field is another press than this computer's (its mid), made after this one was answered (2 s for two clocks): this one lost)
-    for (const a of l) for (const f of a.fields) { const x = w[f]; if (!x || !x.by || (x.mid && x.mid === a.mid) || !(+x.at > a.at - 2000)) continue; const key = entity + '|' + f + '|' + x.at; if (toldLost.has(key)) continue; toldLost.add(key); out.push({ field: f, by: String(x.by).replace(/_/g, ' '), at: +x.at, label: a.label, entity }); }
+    // (the newest press of this computer on the field first: it is the one the later change overwrote)
+    for (const a of l.slice().reverse()) for (const f of a.fields) { const x = w[f]; if (!x || !x.by || (x.mid && x.mid === a.mid) || !(+x.at > a.at - 2000)) continue; const key = entity + '|' + f + '|' + x.at; if (toldLost.has(key)) continue; toldLost.add(key); out.push({ field: f, by: String(x.by).replace(/_/g, ' '), at: +x.at, label: a.label, entity }); }
     if (out.length) mutTell({ t: 'lost', entity, lost: out });
     return out;
   }

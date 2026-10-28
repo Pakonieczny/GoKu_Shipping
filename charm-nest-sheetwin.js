@@ -2356,7 +2356,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         /* OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"; plan: phase 3, labels and releaseFull): the release mark is drawn at once and kept in this computer's outbox
            (a field patch with what it saw: the later change wins and the person whose change lost is told). The label itself waits for the mark's answer: the set it joins is numbered and
            its rules checked on the server (setAllocate, R12), never on a guess. Undone, the same patch goes back (a press still waiting in the outbox is simply replaced). */
-        const markRelease = (on, top) => patchSheet(sh.sheetId, { releaseFull: on, topup: top || null }, { releaseFull: on ? wasFull : true, topup: on ? topWas : (sh.topup || null) }, on ? `Release ${sheetName(sh)}` : `${sheetName(sh)} back to filling`);
+        const markRelease = (on, top) => patchSheet(sh.sheetId, { releaseFull: on, topup: top || null }, { releaseFull: on ? wasFull : true, topup: on ? topWas : (sh.topup || null) }, on ? `The release of ${sheetName(sh)}` : `${sheetName(sh)}'s return to filling`);
         undo = () => { if (!sh.draft || wasFull) return; sh.releaseFull = false; if (topup) { delete topup.closedAt; delete topup.byHand; } markRelease(false, sh.topup).catch(() => {}); };
         await markRelease(true, sh.topup);
         await Gate.assemble(run);
@@ -2392,7 +2392,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       files.push({ path: up.path, url: up.url, sheet: name, part: i + 1, parts: parts.length, orders: slice, payload, ecc: png.ecc, label });
     }
     const made = { files, orders: ids, own: true, at: Date.now() };
-    await patchSheet(rec.id, { label: made }, { label: rec.label || null }, `${name}: its own QR label`);   // (OUTBOX: from the outbox, as the release mark is)
+    await patchSheet(rec.id, { label: made }, { label: rec.label || null }, `${name}'s own QR label`);   // (OUTBOX: from the outbox, as the release mark is)
     if (sh) sh.label = made;
     window.SheetEvents?.qrLabel({ sheetId: rec.id, sheet: nameOf(rec), setId: "", metal: rec.metal }, ids, files, { own: true, by: whoAmI() });
     agent({ metal: rec.metal, run: rec.runId || null }, "cloud", `${name}: QR label made by hand for its ${ids.length} order${ids.length === 1 ? "" : "s"} (not in an open set)`);

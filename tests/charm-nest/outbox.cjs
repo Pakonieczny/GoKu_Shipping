@@ -114,7 +114,7 @@ const part = p => !ONLY || ONLY.split(',').includes(p);
         sheet('ob-sheet-b');
         const ctx = await computer(), page = await open(ctx, 'B');
         const r = await page.evaluate(async () => {
-          const t0 = performance.now(), h = CharmNestStore.mutate({ entity: 's:ob-sheet-b', op: 'putSheet', args: { sheet: { id: 'ob-sheet-b', releaseFull: true } }, fields: ['releaseFull'], label: 'Release this sheet', by: 'Test Operator' });
+          const t0 = performance.now(), h = CharmNestStore.mutate({ entity: 's:ob-sheet-b', op: 'putSheet', args: { sheet: { id: 'ob-sheet-b', releaseFull: true } }, fields: ['releaseFull'], label: 'The release of GF Sheet B', by: 'Test Operator' });
           const ms = performance.now() - t0, inMem = CharmNestStore.pending().length;
           const ans = await h.done; return { ms, inMem, ans, mid: h.mid };
         });
