@@ -22,7 +22,9 @@ const MINE = ['renested', 'merged', 'sizeChanged', 'included', 'excluded', 'rose
 // a nest started by hand is recorded as it starts (a static check: the real nest needs the solver and its workers)
 {
   const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8'), at = html.indexOf('if (sh._byHand) window.SheetEvents?.renested(sh);');
-  assert(at > html.indexOf('function startNestReady(') && at < html.indexOf('delete sh._byHand; delete sh.resumeWait;', at) && html.indexOf('delete sh._byHand; delete sh.resumeWait;', at) - at < 200, 'startNestReady records a nest by hand before it forgets it was one');
+  // (STUCKSPIN, 0e22ae5, Paul 28 Oct 2026: the same line forgets sh._personWrite too now; what is checked is that it is recorded before sh._byHand is forgotten)
+  const gone = html.indexOf('delete sh._byHand;', at);
+  assert(at > html.indexOf('function startNestReady(') && at < gone && gone - at < 200, 'startNestReady records a nest by hand before it forgets it was one');
 }
 
 (async () => {

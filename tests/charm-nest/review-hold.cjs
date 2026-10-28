@@ -215,10 +215,12 @@ const A = '9100000001', B = '9100000002';
       for (const sku of [NEW, 'COMET_9427']) { const w2 = worldOf(), r2 = rowOf(); const id2 = placed(w2, r2, true); w2.c.B.pool.rows.get(id2).sku = sku; w2.c.window.CharmNestReviewMark = globalThis.CharmNestReviewMark; w2.c.B.orders.rows = [r2]; assert.equal(w2.Pool.swapRids().size, 0, `${sku} is already on the piece: the hold is released as before`); }
       // not on a sheet (nothing to cut), Review marked OK, an open Review, a piece superseded by the swap: no swap to wait for
       { const w3 = worldOf(), r3 = rowOf(); placed(w3, r3, false); w3.c.window.CharmNestReviewMark = globalThis.CharmNestReviewMark; w3.c.B.orders.rows = [r3]; assert.equal(w3.Pool.swapRids().size, 0, 'a piece on no sheet'); }
-      doneHow.set(rid, 'ok'); assert.equal(w.Pool.swapRids().size, 0, 'marked OK is not a pick'); doneHow.set(rid, 'pick');
-      mark(rid); assert.equal(w.Pool.swapRids().size, 0, 'an open Review is the Review hold, not a swap'); unmark(rid); doneHow.set(rid, 'pick');
+      // (NAV round 2, 28 Oct 2026, Paul: "near real-time speed": Pool.swapRids is kept for the rest of the task, nothing it reads changes inside one on the page (a mark changes after its cloud write);
+      //  each change of the stubbed record below is asked about in a task of its own)
+      doneHow.set(rid, 'ok'); await null; assert.equal(w.Pool.swapRids().size, 0, 'marked OK is not a pick'); doneHow.set(rid, 'pick');
+      mark(rid); await null; assert.equal(w.Pool.swapRids().size, 0, 'an open Review is the Review hold, not a swap'); unmark(rid); doneHow.set(rid, 'pick');
       w.c.B.pool.rows.get(row.poolIds[0]).state = 'superseded'; w.c.B.pool.rows.set(rid + '_5246703786_9', { poolId: rid + '_5246703786_9', state: 'ready', sku: NEW, copy: 1, quantity: 1 }); row.poolIds = [rid + '_5246703786_9']; w.pages.gold.charms.push({ poolId: row.poolIds[0] });
-      assert.equal(w.Pool.swapRids().size, 0, 'the piece now carries the picked charm: released'); }
+      await null; assert.equal(w.Pool.swapRids().size, 0, 'the piece now carries the picked charm: released'); }
     doneHow.set(rid, 'ok');
     { const w = worldOf(), row = rowOf(); placed(w, row, true); w.Pool.pinPooled(row); assert.equal(w.reviews.length, 1, 'marked OK: the card is offered as before'); }
     // (e) a card already offered, then the order goes to Review (or is picked): Accept the new order keeps the piece where it is (never lifted, never nested again)
