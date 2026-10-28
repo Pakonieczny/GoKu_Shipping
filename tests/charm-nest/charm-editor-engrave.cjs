@@ -160,7 +160,7 @@ async function partB(kit) {
     const sheet0 = await page.evaluate(ids => __ce.sheet(ids), [PID, PID2]);
     await page.click(Q + ' .egCharmEdit');
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page); await settleP(page);
-    const o0 = await page.evaluate(() => { const E = CharmEditor.current, its = E.items(); return { face: E.face(), n: its.length, back: E.items('back').length, roles: its.map(i => i.role).join(), locked: its.filter(i => i.locked).map(i => [i.role, i.name]), paths: document.querySelectorAll('.ce-items path').length, title: document.querySelector('.ce-id h2').textContent, sub: document.querySelector('.ce-eyebrow').textContent, fonts: [...document.querySelectorAll('.ce-root .ce-item[data-font]')].map(b => b.textContent), frame: E.frame() }; });
+    const o0 = await page.evaluate(() => { const E = CharmEditor.current, its = E.items().filter(i => i.source !== 'engrave'); return { face: E.face(), n: its.length, back: E.items('back').filter(i => i.source !== 'engrave').length, words: [E.items(), E.items('back')].map(l => (l.find(i => i.source === 'engrave') || {}).text || ''), roles: its.map(i => i.role).join(), locked: its.filter(i => i.locked).map(i => [i.role, i.name]), paths: document.querySelectorAll('.ce-items path').length, title: document.querySelector('.ce-id h2').textContent, sub: document.querySelector('.ce-eyebrow').textContent, fonts: [...document.querySelectorAll('.ce-root .ce-item[data-font]')].map(b => b.textContent), frame: E.frame() }; });
     await R.shot(w, 'CE-2-editor-open');
     check('B4 Open in Charm Editor opens the editor on the front: CALENDAR, "order … · piece 1 of 1", every part a layer (outline, 3 month letters, 20 day squares), drawn as SVG paths',
       o0.face === 'front' && o0.n === 24 && o0.title === 'CALENDAR' && o0.sub === `order ${made.cal.rid} · piece 1 of 1` && o0.paths >= 24 && (o0.roles.match(/hatch/g) || []).length === 3 && (o0.roles.match(/line/g) || []).length === 20 && o0.back === 1, JSON.stringify(o0));
@@ -168,7 +168,8 @@ async function partB(kit) {
       o0.locked.length === 1 && o0.locked[0][0] === 'cut' && /on a sheet/.test(o0.locked[0][1]) && o0.fonts[0] === 'Ace' && ['Stylish', 'Pristina', 'Typewriter', 'Britannic Bold'].every(f => o0.fonts.includes(f)), JSON.stringify(o0.locked) + ' ' + o0.fonts.join(','));
 
     /* ── the month: swept, deleted, SEPTEMBER typed and centred where MAY was ── */
-    const letters = await page.evaluate(() => CharmEditor.current.items().filter(i => i.role === 'hatch').map(i => i.id));
+    await page.evaluate(() => { const E = CharmEditor.current; for (const f of ['front', 'back']) for (const it of E.items(f).filter(i => i.source === 'engrave')) { if (E.face() !== f) continue; E.ctx.replaceItems({ [it.id]: Object.assign({}, it, { locked: true }) }); E.ctx.commit('lock the words'); } });   // (CETEXT, 28 Oct 2026: the card's own words are in the editor now; locked here, the clicks below that place new words land beside them, never on them (a lock is no change of the words))
+    const letters = await page.evaluate(() => CharmEditor.current.items().filter(i => i.role === 'hatch' && i.source !== 'engrave').map(i => i.id));   // (CETEXT, 28 Oct 2026: the card's own words come in too, as a text of their own: source 'engrave'; the drawing's parts are the rest)
     const mBox = union(await Promise.all(letters.map(id => C(page, id => CharmEditor.current.box(id), id))));
     await page.keyboard.press('m');
     const pad = 0.6 * PT;
@@ -232,7 +233,7 @@ async function partB(kit) {
     // where the record must put the 25's outlines: the editor's own, taken back to the charm's points through the face's view (as the art edit does)
     const want25 = await page.evaluate(id => { const it = CharmEditor.current.result().faces.front.items.find(i => i.id === id), j = __ce.job(), fr = CharmNestArtEdit.frame(j.view); let b = null; for (const sp of it.subpaths) for (const o of sp) for (const p of o.slice(1)) { const q = fr.toSource(p); b = b ? [Math.min(b[0], q[0]), Math.min(b[1], q[1]), Math.max(b[2], q[0]), Math.max(b[3], q[1])] : [q[0], q[1], q[0], q[1]]; } return b; }, t25.id);
     const res = await page.evaluate(() => CharmEditor.current.result());
-    const fc = res.changes.front;
+    const fc = res.changes.front; for (const k of Object.keys(fc.changed)) if (/^engrave-words-/.test(k)) delete fc.changed[k];   // (CETEXT: the card's words, only locked above: no change of them, the bridge keeps them the card's)
     check('B8 what the editor hands back: the three letters removed, SEPTEMBER and 25 added (as outlines), nothing else changed, the back untouched',
       fc.removed.slice().sort().join() === letters.slice().sort().join() && fc.added.map(a => a.text).sort().join() === '25,SEPTEMBER' && !Object.keys(fc.changed).length && fc.added.every(a => a.subpaths.length > 1) && res.changes.back.added.length === 0,
       JSON.stringify({ removed: fc.removed, added: fc.added.map(a => a.text), changed: Object.keys(fc.changed) }));
@@ -247,7 +248,7 @@ async function partB(kit) {
     const lwNow = await page.evaluate(id => CharmEditor.current.items().find(i => i.id === id).lwPt, sqLine.id);
     const drawnW = await page.evaluate(([id, z]) => [parseFloat(getComputedStyle(document.querySelector(`.ce-items path[data-id="${id}"]`)).strokeWidth), CharmEditor.current.zoom()], [sqLine.id, 0]);
     await R.shot(w, 'CE-4c-grid-line-thinned');
-    const fc2 = (await page.evaluate(() => CharmEditor.current.result())).changes.front;
+    const fc2 = (await page.evaluate(() => CharmEditor.current.result())).changes.front; for (const k of Object.keys(fc2.changed)) if (/^engrave-words-/.test(k)) delete fc2.changed[k];
     check(`B8b a day square's red line reads ${lw0} mm in the Stroke field (its own 0.3 pt) and is thinned to 0.05 mm, drawn at exactly that (${drawnW[0].toFixed(2)} px at ${Math.round(drawnW[1])} %); it is now the one part changed`,
       lwSel.join() === sqLine.id && lw0 === '0.106' && Math.abs(lwNow - 0.05 * PT) < 1e-6 && Math.abs(drawnW[0] - lwNow * drawnW[1] / 100 * 96 / 72) < 1e-3 && drawnW[1] > 1000 && Object.keys(fc2.changed).join() === sqLine.id,
       JSON.stringify({ lw0, lwNow, lwSel, drawnW, changed: Object.keys(fc2.changed) }));
@@ -339,7 +340,7 @@ async function partB(kit) {
     const recAt = rec.at, puts1 = artPuts();
     await page.click(Q + ' .egCharmEdit');
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page);
-    const re = await page.evaluate(([gone]) => { const its = CharmEditor.current.items(); return { names: its.map(i => i.name || ''), sources: its.filter(i => i.source === 'added').map(i => i.name), gone: gone.every(g => !its.some(i => i.id === g)), n: its.length }; }, [letters]);
+    const re = await page.evaluate(([gone]) => { const its = CharmEditor.current.items().filter(i => i.source !== 'engrave'); return { names: its.map(i => i.name || ''), sources: its.filter(i => i.source === 'added').map(i => i.name), gone: gone.every(g => !its.some(i => i.id === g)), n: its.length }; }, [letters]);
     await R.shot(w, 'CE-6-reopened');
     check('B17 the editor opens again on the saved edit: SEPTEMBER and 25 are layers of their own (added here), MAY is not there', re.sources.includes('SEPTEMBER') && re.sources.includes('25') && re.gone && re.n === 23, JSON.stringify(re));
     { // (27 Oct 2026) opened again, the 25 says its weight and the square its width: picked from their rows, the bar reads them

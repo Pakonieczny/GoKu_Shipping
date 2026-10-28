@@ -90,10 +90,11 @@ async function run(kit) {
     async function drawCalendar(pid, month) {
       await page.click(Q + ' .egCharmEdit');
       await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page); await settleP(page);
+      await page.evaluate(() => { const E = CharmEditor.current; for (const f of ['front', 'back']) for (const it of E.items(f).filter(i => i.source === 'engrave')) { if (E.face() !== f) continue; E.ctx.replaceItems({ [it.id]: Object.assign({}, it, { locked: true }) }); E.ctx.commit('lock the words'); } });   // (CETEXT, 28 Oct 2026: the card's own words are in the editor now; locked here, the clicks below that place new words land beside them, never on them (a lock is no change of the words))
       const fr = await page.evaluate(() => CharmEditor.current.frame());
       let letters = [];
       if (month) {
-        letters = await page.evaluate(() => CharmEditor.current.items().filter(i => i.role === 'hatch').map(i => i.id));
+        letters = await page.evaluate(() => CharmEditor.current.items().filter(i => i.role === 'hatch' && i.source !== 'engrave').map(i => i.id));   // (CETEXT, 28 Oct 2026: the card's own words come in too, as a text of their own: source 'engrave'; the drawing's parts are the rest)
         const mBox = union(await Promise.all(letters.map(id => C(page, id => CharmEditor.current.box(id), id)))), pad = 0.6 * PT;
         await page.keyboard.press('m');
         await drag(page, await clientOf(page, mBox[0] - pad, mBox[1] - pad), await clientOf(page, mBox[2] + pad, mBox[3] + pad));

@@ -191,11 +191,11 @@ async function partB(kit) {
     /* ── the editor opens on the back; "HI" is typed right where the back's words stand ── */
     await page.click(Q + ' .egCharmEdit');
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page); await settleP(page);
-    const o0 = await page.evaluate(() => { const E = CharmEditor.current, its = E.items(); return { face: E.face(), n: its.length, roles: its.map(i => i.role), locked: its.filter(i => i.locked).length, frame: E.frame() }; });
+    const o0 = await page.evaluate(() => { const E = CharmEditor.current, its = E.items().filter(i => i.source !== 'engrave'); return { face: E.face(), n: its.length, roles: its.map(i => i.role), locked: its.filter(i => i.locked).length, frame: E.frame() }; });
     check('B2 Open in Charm Editor on the back opens the editor on the back: its cut line, locked (the back takes additions only)', o0.face === 'back' && o0.n === 1 && o0.roles[0] === 'cut' && o0.locked === 1, JSON.stringify(o0));
     const wb = b0.words, mid = [(wb[0] + wb[2]) / 2, -(wb[1] + wb[3]) / 2];   // (the words' middle in the editor's frame: the view's, y down)
     await page.keyboard.press('t');
-    const at0 = await clientOf(page, mid[0] - 3, mid[1] + 2);
+    const at0 = await clientOf(page, mid[0] - 3, -wb[1] + 3);   // (just under the words: CETEXT, 28 Oct 2026: the card's own words come in too, as a text of their own: source 'engrave'; the drawing's parts are the rest, and a click on them would edit them)
     await page.mouse.click(at0.x, at0.y); await settleP(page);
     await page.keyboard.type('HI'); await page.keyboard.press('Enter'); await settleP(page);
     await typeField(page, 'pt', '9');
@@ -305,7 +305,7 @@ async function partB(kit) {
     await R.openEngraveDetail(w, 'cal', { face: 'back' }); await R.settle(page, 900);
     await page.click(Q + ' .egCharmEdit');
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page);
-    const re = await page.evaluate(() => { const its = CharmEditor.current.items(); return { face: CharmEditor.current.face(), n: its.length, added: its.filter(i => i.source === 'added').map(i => ({ name: i.name, locked: !!i.locked, role: i.role })), cut: its.filter(i => i.role === 'cut').map(i => !!i.locked) }; });
+    const re = await page.evaluate(() => { const its = CharmEditor.current.items().filter(i => i.source !== 'engrave'); return { face: CharmEditor.current.face(), n: its.length, added: its.filter(i => i.source === 'added').map(i => ({ name: i.name, locked: !!i.locked, role: i.role })), cut: its.filter(i => i.role === 'cut').map(i => !!i.locked) }; });
     await R.shot(w, 'CB-5-editor-reopened-back');
     check('B15 the editor opens again on the back with HI a layer of its own: added here, not locked (it can be moved, changed or deleted), named by its words; the cut line still locked',
       re.face === 'back' && re.added.length === after.ids.length && re.added.some(a => a.name === 'HI') && re.added.every(a => !a.locked && a.role === 'hatch') && re.cut.length === 1 && re.cut[0] === true, JSON.stringify(re));

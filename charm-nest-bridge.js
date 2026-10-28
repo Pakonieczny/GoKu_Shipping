@@ -9275,9 +9275,11 @@ const Engrave = window.Engrave = (() => {
   }
   /** Says why, and when the card in front is not the card of the job as it is now (another object, another state), draws it again. */
   function approveRefused(job, why) {
-    const stale = why === "stale";
-    approveSay(job, stale ? "This card was out of date: it is drawn again. Look at it, then press Approve." : why, null, /^Still/.test(why));
+    const stale = why === "stale", text = stale ? "This card was out of date: it is drawn again. Look at it, then press Approve." : why;
+    approveSay(job, text, null, /^Still/.test(why));
     if (stale || !["review"].includes(job.state)) { if (EG.cardKey === job.key) { focusOn(job.key); EG.card = null; EG.cardKey = null; } render(); }
+    // (APPROVE AFTER THE EDITOR: a card drawn again in another shape (the words step, a face waiting) has no place for the line: the refusal is said in a toast, never lost)
+    try { if (text && ![...document.querySelectorAll(".egApproveWhy")].some(n => n.textContent === text)) toast(text, /^Still/.test(why) ? "" : "bad", 6000); } catch (_) { /* said in the card when it is there */ }
   }
   /* HELDREL (Paul, 28 Oct 2026, order 4212020155: "I noticed that the order that was released before is the one that has the malfunctioning Approve engraving button issue."): with APPROVEFIX every refusal says
      why, but a press whose approval THREW (anything in approveOnce outside its own waits: the card's words, the seals, the settle) still ended in silence: approve()'s task rejected, cardAction drops it, the
@@ -9297,6 +9299,8 @@ const Engrave = window.Engrave = (() => {
     try{return await task;}finally{if(job._approvalTask===task)delete job._approvalTask;}
   }
   async function approveOnce(job, by, button) {
+    { const art=typeof charmEditSaving==="function" ? charmEditSaving(job) : null;   // (APPROVE AFTER THE EDITOR: the Charm Editor's save of this piece is still under way: it is waited for, said at once, and what it left is approved)
+      if(art){approveSay(job,"Saving this piece's artwork from the Charm Editor first · the approval follows",null,true);try{await approveWithin(art,APPROVE_MS.fit,"the artwork was not saved within a minute");}catch(e){notApproved(job,`Not approved: ${e.message}. Press Approve again once the card says the artwork is saved.`);return;}approveSay(job,"");return approveOnce(job,by,button);} }
     const owner=items(),row=job.row,pendingFit=fitTasks.get(job);
     { const why=approveBlocked(job,owner,pendingFit); if(why){approveRefused(job,why);return;} approveSay(job,""); }
     if(neverEngraves(row) && !job.approvalIntent){setNone(job,neverWhy(row));Orders.render();render();return;}   // (NO EARRING IS EVER ENGRAVED: an old open card is put away, nothing is approved)
@@ -9305,6 +9309,7 @@ const Engrave = window.Engrave = (() => {
       // A can arrive while new words still wait for fonts or the fitting worker.
       // Keep the duplicate task lock, let that fit finish without preparation
       // flags blocking it, and verify only its latest resulting geometry.
+      approveSay(job,"Placing the words on the charm first · the approval follows",null,true);   // (APPROVE AFTER THE EDITOR: this wait was silent, up to a minute: the press seemed to do nothing)
       try{await approveWithin(pendingFit,APPROVE_MS.fit,"the words were not placed within a minute");}catch(e){
         if(items()===owner && owner.get(job.key)===job && job.row===row && row.state!=="gone" && !["approved","written","skipped","none"].includes(job.state))notApproved(job,`Not approved: the engraving preview could not finish (${e.message}). Refit the words before approving.`);
         else approveSay(job,"Not approved: the placement changed while its words were placed. Look at it, then press Approve.");
@@ -9925,11 +9930,76 @@ const Engrave = window.Engrave = (() => {
     const out = layers.find(i => i.id === outlineId) || layers.find(i => i.role === "cut"), b = out ? window.CharmEditor.model.bboxOf(out.subpaths) : null;
     return { face, unitPt: true, frame: b ? { x0: b[0], y0: b[1], wPt: b[2] - b[0], hPt: b[3] - b[1] } : null, items: layers };
   }
+  /* CETEXT (Paul, 28 Oct 2026: "When I press the 'Open in Charm Editor' button everything seems to be working correctly, however the text that is currently on the charm does not show up in the
+     editor"). The editor was handed the piece's DRAWING only (charmEditDoc: the charm's own parts, AE.itemsOf); the words the card had fitted on a face live on that face's job (job.fit: the
+     lines, the font, the size, the turn and the centre, in the job's own view), never in the charm, so they were nowhere in the editor. Each face whose job has fitted words now hands them in as
+     ONE text of the editor (its own text kind: retyped with a double-click, its font, size, style and letter case on the bar), in the font the card fitted them in, at the fitted size, centred
+     line by line as the fit sets them, turned as the fit turned them and standing exactly where the card draws them (their ink's middle where the fit put it), on the face the job engraves.
+     source "engrave": what the card engraves, not a part of the drawing. Unchanged, it is no change and nothing is saved for it; changed, it is saved as the editor saves every words
+     (charmEditChanges: the art edit, outlines in the face) and the face's own words are taken off the card (charmEditWordsTaken), so nothing is engraved twice. */
+  const CHARM_EDIT_WORDS = "engrave-words-";   // (+ the face and the moment: the id of the words handed in; saved, it is a part of the piece, so the next words handed in take another)
+  /** opentype commands (M L Q C Z, y UP: the fit's frame) as the editor's subpaths (y down: the art edit's item frame, AE.frame), every curve a cubic. */
+  function charmEditCmdSubs(cmds) {
+    const out = []; let sp = null, cur = null, start = null; const ok = v => Number.isFinite(v), P = (x, y) => [x, -y];
+    for (const c of cmds || []) {
+      if (c.type === "M") { if (!ok(c.x) || !ok(c.y)) continue; cur = P(c.x, c.y); start = cur; sp = [["m", cur]]; out.push(sp); }
+      else if (c.type === "Z") { if (sp) sp.push(["h"]); sp = null; cur = start; }
+      else if (!cur || !ok(c.x) || !ok(c.y)) continue;
+      else { if (!sp) { sp = [["m", cur]]; out.push(sp); } const p = P(c.x, c.y);
+        if (c.type === "L") sp.push(["l", p]);
+        else if (c.type === "C") sp.push(["c", P(c.x1, c.y1), P(c.x2, c.y2), p]);
+        else if (c.type === "Q") { const q = P(c.x1, c.y1); sp.push(["c", [cur[0] + 2 / 3 * (q[0] - cur[0]), cur[1] + 2 / 3 * (q[1] - cur[1])], [p[0] + 2 / 3 * (q[0] - p[0]), p[1] + 2 / 3 * (q[1] - p[1])], p]); }
+        cur = p; }
+    }
+    return out.filter(s => s.some(op => op[0] === "l" || op[0] === "c"));
+  }
+  /** The words job `j` has fitted, as the editor's text on its face (`view`: the face's view in the editor, the job's own or nothing is handed in: the words stand in the job's view). null: no
+   *  words fitted (a face waiting for words, a face the editor's parts engrave alone), or the font engine cannot draw them yet. */
+  function charmEditWords(j, view, face) {
+    const f = j && j.fit, Mx = window.CharmEditor && window.CharmEditor.model, eng = window.CharmNestCeText ? window.CharmNestCeText.textToPaths : charmEditText;
+    if (!f || f.artOnly || !Array.isArray(f.glyphs) || !f.glyphs.length || !Array.isArray(f.centre) || !(+f.size > 0) || !Mx || !view || j.view !== view) return null;
+    const lines = (Array.isArray(f.lines) && f.lines.length ? f.lines : j.lines || []).map(s => String(s == null ? "" : s)).filter(s => s.trim()); if (!lines.length) return null;
+    const set = setOf(j), font = fontFor(f.weight, j), gap = fitOpts(j).lineGap, fontKey = fontIdOf(j), size = +f.size;
+    // (the fit cuts small words in the Semibold, as the editor's engine does; a fit that chose the Semibold where the engine would not is the text's Bold)
+    const bold = f.weight === "Semibold" && !!set.Semibold && !(size * G.capPerEm(set.Regular) * MM < CHARM_EDIT_SEMI_MM);
+    const it = { id: CHARM_EDIT_WORDS + face + "-" + Date.now().toString(36), kind: "text", role: "hatch", source: "engrave", name: `Engraving · ${lines.join(" ").slice(0, 40)}`, text: lines.join("\n"), fontKey, sizePt: Math.round(size * 1e6) / 1e6, align: "center",
+      ...(lines.length > 1 ? { lineGap: Math.round((G.capPerEm(font) + gap) * 1e6) / 1e6 } : {}), ...(bold ? { bold: true } : {}), tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, engraving: { job: j.key, face } };
+    let mine = null, fitted = null;
+    try { const r = eng(it.text, fontKey, it.sizePt, { align: "center", lineGap: it.lineGap, bold }); mine = r && Mx.bboxOf(r.subpaths || []); } catch (_) { mine = null; }
+    try { fitted = Mx.bboxOf(charmEditCmdSubs(G.layoutLines(lines, font, size, gap, 0, [0, 0]).cmds)); } catch (_) { fitted = null; }
+    if (!mine || !fitted) return null;
+    // where the fit put them: its layout (centred on 0,0, unturned) turned by its angle (y up, anticlockwise: the editor's turn is clockwise on screen, y down, so the same turn is -angle) and moved
+    // to its centre; the editor turns a text about the middle of its own ink, so its move is what takes that middle to where the fit's middle lands
+    const rot = -(+f.angle || 0), th = rot * Math.PI / 180, cs = Math.cos(th), sn = Math.sin(th), m = [(fitted[0] + fitted[2]) / 2, (fitted[1] + fitted[3]) / 2], c = [(mine[0] + mine[2]) / 2, (mine[1] + mine[3]) / 2];
+    const at = [f.centre[0] + cs * m[0] - sn * m[1], -f.centre[1] + sn * m[0] + cs * m[1]];
+    return Object.assign(it, { tx: Math.round((at[0] - c[0]) * 1e9) / 1e9, ty: Math.round((at[1] - c[1]) * 1e9) / 1e9, rot: Math.abs(rot) < 1e-9 ? 0 : Math.round(rot * 1e9) / 1e9 });
+  }
+  /** Where the words handed in (`given`) are in what the editor gave back: { changed, gone } (gone: deleted, or hidden, which the editor engraves nowhere). Changed is what is engraved: the words, their
+   *  font, size, style, letter case, spacing, place, turn or weight, or a group they went into; a lock or a new name in the Layers is no change of the words. */
+  const CHARM_EDIT_WORDS_KEYS = ["text", "fontKey", "sizePt", "align", "lineGap", "bold", "italic", "letterCase", "tracking", "weightMm", "tx", "ty", "sx", "sy", "rot", "role", "lwPt", "pathD", "pathAt", "pathFlip", "pathRisePt"];
+  function charmEditWordsNow(res, face, given) {
+    const id = given.id;
+    let hit = null, off = false, inGroup = false; const look = (list, hid, deep) => { for (const it of list || []) { if (hit || !it) continue; if (String(it.id) === id) { hit = it; off = !!(hid || it.hidden); inGroup = deep; } else look(it.children, hid || it.hidden, true); } };
+    look(res && res.faces && res.faces[face] && res.faces[face].items, false, false);
+    const gone = !hit || off, num = v => typeof v === "number" && Number.isFinite(v), DEF = { tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, align: "left" };
+    const same = k => { const a = hit[k] == null || hit[k] === false || hit[k] === "" ? DEF[k] : hit[k], b = given[k] == null || given[k] === false || given[k] === "" ? DEF[k] : given[k]; return num(a) && num(b) ? Math.abs(a - b) < 1e-6 : JSON.stringify(a == null ? null : a) === JSON.stringify(b == null ? null : b); };
+    return { gone, changed: gone || inGroup || CHARM_EDIT_WORDS_KEYS.some(k => !same(k)) };
+  }
+  /** The words of `job`'s face, changed in the editor and saved as its parts, are taken off the card: the face is engraved by those parts and no words of its own (EDITOR WORDS' own path: the
+   *  panel's Save of an empty words box, Engrave.saveSetup -> CharmNestEngraveSetup.apply -> clearWords, so the line's setup says it too and a later Save keeps it; one piece of several takes
+   *  its words off on its own: clearWords). → true when the face has no words left. */
+  async function charmEditWordsTaken(job, by) {
+    const face = faceOf(job), why = "words changed in the Charm Editor";
+    if (!job.slot) { try { const r = await saveSetup(job.row, { [face]: { text: "" }, reason: { code: "other", text: "Words changed in the Charm Editor", of: face } }); if (r && !r.ok && !r.cancelled) console.warn("charm edit: the card's words", r.message); } catch (e) { console.warn("charm edit: the card's words", e); } }
+    const j = items().get(job.key) || job;
+    if (engravedWords(j).length && !(j.fit && j.fit.artOnly)) clearWords(j, by, why);
+    return !engravedWords(j).length || !!(j.fit && j.fit.artOnly);
+  }
   /** What one face of the piece is to carry over its master, from what the editor hands back: `given` the layers it was opened with, `out` the face as edited, `diff` what changed in it.
    *  The piece's record says everything the piece carries over the master, so what an earlier edit removed, changed or added stays unless this edit undid it. Every leaf comes out flat, placed
    *  in the face: a path with its own geometry and the matrix that places it (its groups' included), a text with its outlines as placed; the leaves of a new group keep the group's name.
    *  A part only hidden or locked is not changed (the eye and the lock are the editor's; a part leaves the charm by Delete). */
-  function charmEditChanges(charm, given, out, diff, face) {
+  function charmEditChanges(charm, given, out, diff, face, skip) {
     const AE = window.CharmNestArtEdit, Mx = window.CharmEditor.model, isM = m => Array.isArray(m) && m.length === 6 && m.every(Number.isFinite);
     const master = new Set(AE.memberIds(AE.baseOf(charm))), now = new Set(AE.memberIds(charm)), was = new Map((given || []).map(i => [String(i.id), i]));
     const touched = new Set(Object.keys((diff && diff.changed) || {})), mark = it => { if (!it) return; touched.add(String(it.id)); (it.children || []).forEach(mark); }; ((diff && diff.added) || []).forEach(mark);
@@ -9940,6 +10010,7 @@ const Engrave = window.Engrave = (() => {
         const off = !!(hid || it.hidden);   // (hidden in the editor, or in a hidden group: not engraved, so the laser does what the person sees; a cut line hidden is still the piece's outline)
         if (it.kind === "group") { walk(it.children, Mx.mul(P, isM(it.matrix) ? it.matrix : Mx.I), gid || String(it.id), off); continue; }
         if (off && it.role !== "cut") continue;
+        if (skip && skip.has(String(it.id))) continue;   // (CETEXT: the card's own words handed in and not changed: they stay the card's, never a part of the drawing)
         const leaf = Object.assign({}, it, { id: String(it.id) });
         if (it.kind !== "text") { const own = isM(it.matrix) ? it.matrix : Mx.isI(P) ? null : AE.itemMatrix(it, Mx.bboxOf(it.subpaths || [])); if (own) leaf.matrix = Mx.mul(P, own); }
         if (gid) leaf.group = gid;
@@ -9962,6 +10033,14 @@ const Engrave = window.Engrave = (() => {
     return hit ? String(hit.text || hit.name || { cut: "Cut line", line: "Line engraving", hatch: "Hatched part", art: "Artwork" }[hit.role] || "A part") : "A part";
   }
   let charmEditOpen = null;
+  /* APPROVE AFTER THE EDITOR (Paul, 28 Oct 2026, order 4203083230: "After I added an image to this order and then try to approve the engraving by using the 'Approve' button, the system did nothing to
+     approve the engraving and the image I added. Once the user is done using the charm editor and comes back to the engraving screen, the Approve button should be approving both the edits from
+     the charm editor, and any back or front engraving"). The editor's Save goes on after the editor has closed: the piece's record is sent, the faces it changed are fitted again around the new
+     drawing (artChanged), and the card says "Saving the front artwork…" meanwhile. An Approve pressed in that time approved the placement AS IT WAS (the old drawing, before the art was in the
+     record), and the save that landed a moment later took that approval back ("changed since the words were approved"): the press seemed to do nothing. A press now waits for the piece's art save
+     (and the fit it starts) and approves what the save left, saying so at once. One promise per piece while its save runs. */
+  const ART_SAVES = new Map();   // poolId -> Promise (settles when the editor's save of that piece, its refit included, is over)
+  const charmEditSaving = job => { for (const id of (job && job.copies) || []) { const p = ART_SAVES.get(String(id)); if (p) return p; } return null; };
   /** CHARM EDIT: the piece `x` names in the charm editor, and what comes back saved for it. `x`: an engraving job (its card's button) or a piece of any order, engraved or not (ITEM 30,
    *  charmEditPiece). → { saved: [faces], records } | null (put away, nothing changed, or not saved: the note says why). */
   function openCharmEditor(x) {
@@ -9981,8 +10060,10 @@ const Engrave = window.Engrave = (() => {
     const poolId = t.poolIds[0], charm = t.charm, row = t.row || (job && job.row) || null, sp = (row && row.spec) || {}, sku = sp.designSku || (row && row.line && row.line.sku) || charm.name || "Charm";
     // (on a sheet: one of this page's, or, for a piece opened from its order (ITEM 30), the sheet its pool row names: its cut line stays as the sheet was nested with it)
     const placedOf = id => !!Pool.sheetOf(id) || (t.from !== "card" && !!((B.pool.rows.get(id) || {}).sheetId)), placed = placedOf(poolId);
-    const fonts = await charmEditFonts(job), views = {}, docs = {};
+    const fonts = await charmEditFonts(job), views = {}, docs = {}, words = {};
     for (const face of ["front", "back"]) { views[face] = charmEditView(poolId, charm, face, sku); docs[face] = charmEditDoc(charm, views[face], face, placed); }
+    // (CETEXT, Paul 28 Oct 2026: "the text that is currently on the charm does not show up in the editor": the words each face's job has fitted, as an editable text on that face, on top)
+    { const pj = jobsOfPiece(poolId); for (const face of ["front", "back"]) { let w = null; try { w = charmEditWords(pj[face], views[face], face); } catch (e) { console.warn("charm edit: the words", e); } if (w) { docs[face].items.push(w); words[face] = { id: w.id, job: pj[face], item: w }; } } }
     const order = row && row.order ? String(row.order.receiptId) : "";
     let subtitle;
     if (job && t.from === "card") { const slots = [...new Set(jobsOf(job.row).map(j => j.slot || null))], at = Math.max(0, slots.indexOf(job.slot || null)); subtitle = `${order ? `order ${order} · ` : ""}piece ${at + 1} of ${Math.max(1, slots.length)}`; }
@@ -9990,7 +10071,7 @@ const Engrave = window.Engrave = (() => {
     if (job) charmEditSay(job, "");
     // the way back (DESIGN & ENGRAVE, Paul 28 Oct 2026: "accessible from the back engraving modal and vice versa from the charm editor back into the back engraving modal"): a piece with an engraving
     // goes back to its engraving card (from its order too: EngraveLink puts the order window away); a piece with none, opened over its order, back to that order
-    let wentBack = false;
+    let wentBack = false, savingArt = null;
     const back = job ? { label: "Back to engraving", title: "Back to this piece's engraving card in Design & Engrave", run: () => { wentBack = true; } }
       : t.from === "orderWindow" ? { label: "Back to order", title: `Back to order ${order}`, run: () => { wentBack = true; } } : null;
     charmEditLog("editorOpen", { poolId, orderId: order || null, sku, by, from: t.from, engraved: !!job });   // (Design & Engrave, Paul 28 Oct 2026: "all of this must be tracked by employee": charm-nest-design-log.js)
@@ -9998,16 +10079,24 @@ const Engrave = window.Engrave = (() => {
     const host = [...document.querySelectorAll("dialog[open]")].filter(d => { try { return d.matches(":modal"); } catch (_) { return true; } }).pop() || null, keepOpen = e => e.preventDefault();
     if (host) host.addEventListener("cancel", keepOpen);
     let res;
-    try { res = await CE.open({ title: sku, subtitle, faces: docs, startFace: job && t.from === "card" ? faceOf(job) : "front", fonts, textToPaths: charmEditText, lockRoles: ["cut"], back, host }); }
+    const startFace = job && t.from === "card" ? faceOf(job) : "front";
+    try { res = await CE.open({ title: sku, subtitle, faces: docs, startFace, fonts, textToPaths: charmEditText, lockRoles: ["cut"], back, host, ...(words[startFace] ? { select: [words[startFace].id] } : {}) }); }   // (CETEXT: the words selected, their text controls on the bar)
     finally { if (host) setTimeout(() => host.removeEventListener("cancel", keepOpen), 0); }
     try {
       if (!res) return null;   // (Cancel, the ×, Esc, Back with nothing kept: nothing is written)
-      const todo = [];
+      const todo = [], wordsNow = {}, kept = [];
+      for (const face of Object.keys(words)) wordsNow[face] = charmEditWordsNow(res, face, words[face].item);
       for (const face of ["front", "back"]) {
         const d = res.changes && res.changes[face]; if (!d || !(d.removed.length + d.added.length + Object.keys(d.changed).length)) continue;
-        todo.push({ face, changes: charmEditChanges(charm, docs[face].items, res.faces[face].items, d, face) });
+        // (CETEXT: the card's words, changed, are saved as the editor's words (an added text, outlines in the face); unchanged they are skipped, never saved as a part of the drawing)
+        const changes = charmEditChanges(charm, docs[face].items, res.faces[face].items, d, face, words[face] && !wordsNow[face].changed ? new Set([words[face].id]) : null);
+        for (const a of changes.added) if (words[face] && a.id === words[face].id) a.source = "added";
+        const onlyWords = !!words[face] && [...d.removed, ...Object.keys(d.changed), ...d.added.map(a => a && a.id)].every(id => String(id) === words[face].id);
+        if (onlyWords && !(changes.removed.length + changes.added.length + Object.keys(changes.changed).length)) { if (wordsNow[face].gone) kept.push(face); continue; }   // (only the card's words taken out, nothing drawn in their place: the card keeps its words, said below)
+        todo.push({ face, changes });
       }
-      if (!todo.length) return null;
+      if (!todo.length) { if (kept.length && job) charmEditTell(t, `The ${kept.join(" and ")} words are the engraving's: they stay on the card · to engrave none, empty its words box or press No engraving`, false); return null; }
+      { let end; const p = new Promise(r => { end = r; }); p.end = end; for (const id of t.poolIds) ART_SAVES.set(String(id), p); savingArt = p; }   // (APPROVE AFTER THE EDITOR: an Approve waits for this save)
       // every face of every copy is checked before anything is sent: a part that cannot be kept as asked, and nothing is saved
       const refused = [];
       for (const w of todo) for (const pid of t.poolIds) {
@@ -10028,13 +10117,21 @@ const Engrave = window.Engrave = (() => {
       // DESIGNS (Paul, 28 Oct 2026: "this repository must grow with every new update or change to any charm using the charm editor"): the piece as saved is also a new version of its design
       // in the design library (charm-nest-designs.js), one design per piece (pc-<poolId>), its size its cut line's: one call of its own after the piece's save, never in its way
       if (window.CharmNestDesigns) window.CharmNestDesigns.put({ id: "pc-" + poolId, name: sku, faces: res.faces, source: { kind: "piece", poolId, sku }, orderId: order || null, by }).catch(e => { console.warn("charm edit: design library", e); agent({ pool: true }, "warn", `${poolId}: its artwork is saved; the design library did not keep this version: ${(e && e.message) || e}`); });
+      // (CETEXT: a face whose card words were changed in the editor is engraved by the words as the editor drew them, saved above with its parts: the card's own words come off it, before
+      //  anything fits them again around the new drawing, so they are never engraved twice)
+      for (const face of Object.keys(words)) if (wordsNow[face].changed && done.includes(face)) {
+        const wj = items().get(words[face].job.key) || words[face].job;
+        if (!faceHasEditorArt(wj, face)) { kept.push(face); continue; }   // (the words only taken out, with no part of the editor's on that face to engrave instead: the card keeps them)
+        try { await charmEditWordsTaken(wj, by); } catch (e) { console.warn("charm edit: the card's words", e); }
+      }
       // what the save did to the piece's engraving: an approved face is approved again (artChanged's own words), and every face whose drawing changed is fitted again around it, so the work area
       // draws the new art at once
       const pj = jobsOfPiece(poolId), jobs = [pj.front, pj.back].filter(Boolean);
       const said = [...new Set(jobs.map(j => j.reason).filter(r => /changed since the words were approved/.test(String(r || ""))))];
       const faces = [...new Set(done)];
       const bare = jobs.filter(j => j.fit && j.fit.artOnly && j.state === "review" && faces.includes(faceOf(j))).map(j => faceOf(j));   // (EDITOR WORDS: a face its parts engrave on their own: said so, never asked for words)
-      charmEditTell(t, `${faces.length > 1 ? "Front and back" : faces[0] === "front" ? "Front" : "Back"} artwork saved for this piece${said.length ? ` · ${said.join(" · ")}` : ""}${bare.length ? ` · No words needed on the ${bare.join(" or ")}: approve it as drawn` : ""}`, false);
+      const drawnWords = Object.keys(words).filter(f => wordsNow[f].changed && !wordsNow[f].gone && done.includes(f) && !kept.includes(f));   // (CETEXT: the words as the editor drew them are that face's engraving now)
+      charmEditTell(t, `${faces.length > 1 ? "Front and back" : faces[0] === "front" ? "Front" : "Back"} artwork saved for this piece${drawnWords.length ? ` · The ${drawnWords.join(" and ")} words are engraved as the Charm Editor drew them` : ""}${kept.length ? ` · The ${kept.join(" and ")} words are the engraving's: they stay on the card` : ""}${said.length ? ` · ${said.join(" · ")}` : ""}${bare.length && !drawnWords.length ? ` · No words needed on the ${bare.join(" or ")}: approve it as drawn` : bare.length ? ": approve it as drawn" : ""}`, false);
       charmEditLog("editorSave", { poolId, poolIds: t.poolIds, orderId: order || null, sku, faces, by, from: t.from });   // (who saved which piece's artwork, when: the efficiency count and the order's timeline)
       const refit = jobs.filter(j => !j.view && !j.fit && j.state === "ready");
       await Promise.all(refit.map(j => fitJob(j).catch(e => console.warn("charm edit: fit", e))));
@@ -10048,7 +10145,7 @@ const Engrave = window.Engrave = (() => {
       }
       try { render(); } catch (_) { /* drawn with the next render */ }
       return { saved: faces, records };
-    } finally { if (wentBack) charmEditBack(t); }
+    } finally { if (savingArt) { for (const id of t.poolIds) if (ART_SAVES.get(String(id)) === savingArt) ART_SAVES.delete(String(id)); savingArt.end(); } if (wentBack) charmEditBack(t); }
   }
   /** The target of `x` (charmEditTarget) with its charm made from its master when this page holds no drawing of it (a piece of an order on no sheet of this page, or not nested yet: ITEM 30), with
    *  its own artwork edits put over it, as the placement's picture makes it (mountPlacementThumbnail). null: no piece, or its design has no drawing in the master library. */

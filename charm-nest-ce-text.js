@@ -7,9 +7,9 @@
  * UAX #9) → Noto Emoji (vendor/fonts/NotoEmoji-Regular.ttf, SIL Open Font License, its licence beside it: a MONOCHROME OUTLINE font, so an emoji is a filled vector shape the laser
  * hatches, never a colour picture). This file gives the editor's Text tool exactly that and nothing of its own (no second font file, no second loader, no second picker):
  *
- *   CharmNestCeText.fonts(job?)                -> Promise<[{ key, name }]>  every engraving font, the piece's own first, then the shop's words for its fonts ("Stylish", "Ace" ...), then
+ *   CharmNestCeText.fonts(job?)                -> Promise<[{ key, name, family, kind, bold, caps }]>  every engraving font, the piece's own first, then the shop's words for its fonts ("Stylish", "Ace" ...), then
  *                                                 the other installed fonts by name (a saved back may name them); each one loaded. (charm-nest-bridge.js charmEditFonts hands over to it)
- *   CharmNestCeText.textToPaths(text, fontKey, sizePt, { align, lineGap })    the editor's font engine (CharmEditor opts.textToPaths; the bridge's charmEditText hands over to it):
+ *   CharmNestCeText.textToPaths(text, fontKey, sizePt, { align, lineGap, bold, italic, smallCaps })    the editor's font engine (CharmEditor opts.textToPaths; the bridge's charmEditText hands over to it):
  *                                                 filled outlines in pt, y down, every curve a cubic, the anchor at 0,0. The anchor is the START of the first baseline, and the start of
  *                                                 words that read right to left (their first letter Hebrew, Arabic ...) is their RIGHT end, so they grow leftwards from where they were
  *                                                 put, as Illustrator's Middle Eastern composer does. Synchronous: a script font, the emoji outlines or the engraving font the words need
@@ -18,6 +18,11 @@
  *                                                 words already in `faces` need, loaded before the editor opens, so a text opened again is drawn right at once
  *   CharmNestCeText.check(text, fontKey)       -> { missing: [clusters nothing can engrave], scripts: [{ id, name }], loading }  what the line under the words box says
  *   CharmEditor.open without a font engine of its own gets this one (and the fonts already loaded): no caller engraves the editor's stand-in font by mistake.
+ * (CETEXT, Paul 28 Oct 2026: "I also don't see a way to change the text style and font style and alphabet style inside the charm editor as I had requested") the engine draws a text's style
+ * as the editor's bar sets it: bold (the family's Semibold at any size; a family with one weight has none, and fonts() says so: bold false), italic (the outlines slanted 12° about their
+ * baselines: no engraving font has an italic file) and small capitals (a lowercase letter as a capital at the font's own x-height); the other letter cases are the editor's own (the words
+ * in capitals, lowercase or Title Case). fonts() names each font's CSS family (CharmNestEngravePreview's FontFace of the very file it engraves with) so the Font menu draws every name in its
+ * own font, as the engraving card's drop-down does, and its kind (cursive, script, handwriting ...: charm-nest-orders.js FONT_STYLES).
  *
  * In the editor, while words are typed (the words box, the editor's one textarea): an Emoji button in the box (the back engraving's own picker, charm-nest-emoji-picker.js: search by
  * name, categories, recently used, each cell drawn as it will be engraved), the box reads right to left when the words do (dir=auto), and a line under it says what is being loaded,
@@ -50,14 +55,27 @@
     return [...new Set([job && job.fontKey, ...(Or.FONT_WORDS || []).map(g => g.id), Or.DEFAULT_FONT, ...(Or.ENGRAVING_FONTS || []).map(f => f.id)].filter(Boolean))];
   }
   const fontName = id => { const Or = O(), g = Or && (Or.FONT_WORDS || []).find(x => x.id === id); return (g && g.words && g.words[0]) || ((Or && Or.fontById && Or.fontById(id)) || {}).name || String(id); };
+  /* (CETEXT, Paul 28 Oct 2026: "I also don't see a way to change the text style and font style and alphabet style inside the charm editor as I had requested"): each font as the editor's Font menu
+     draws it: its name in the font itself (the engraving card's drop-down does the same: CharmNestEngravePreview's FontFace of the very file the engraving fits with), its kind (the first style of
+     charm-nest-orders.js FONT_STYLES that prefers it: cursive, script, handwriting ...), whether its family has a heavier cut (Bold) and whether it is capitals only (Ace). */
+  const Pv = () => root.CharmNestEngravePreview || null;
+  function fontEntry(id) {
+    const Or = O(), P = Pv(), s = setOf(id), out = { key: id, name: fontName(id) };
+    if (P && typeof P.fontFamilyOf === 'function') { try { if (typeof P.ensure === 'function') Promise.resolve(P.ensure(id)).catch(() => null); out.family = P.fontFamilyOf(id); } catch (_) { /* its name in the page's own font */ } }
+    const row = Or && Array.isArray(Or.FONT_STYLES) ? Or.FONT_STYLES.find(r => Array.isArray(r.prefer) && r.prefer[0] === id && r.label) : null;
+    if (row) out.kind = row.label;
+    if (s) out.bold = !!s.Semibold;
+    if (Or && Or.fontCaps && Or.fontCaps(id)) out.caps = true;
+    return out;
+  }
   /** The fonts the editor offers, each loaded (a font whose files cannot be had is left out, as the engraving's own list leaves it). */
   async function fonts(job) {
     const En = E(), ids = fontIds(job); if (!En || !ids.length) return [];
     await Promise.all(ids.map(id => Promise.resolve().then(() => En.loadFontSet(id)).catch(() => null)));
-    return ids.filter(id => !!setOf(id)).map(id => ({ key: id, name: fontName(id) }));
+    return ids.filter(id => !!setOf(id)).map(fontEntry);
   }
   /** The fonts already loaded, at once (for a caller that gave the editor none). */
-  const loadedFonts = () => fontIds(null).filter(id => !!setOf(id)).map(id => ({ key: id, name: fontName(id) }));
+  const loadedFonts = () => fontIds(null).filter(id => !!setOf(id)).map(fontEntry);
 
   /* ═══ what is asked for while the words are typed: a script font, the emoji outlines, an engraving font. One ask at a time of each kind, the same words not asked again for a minute
      (the loaders keep their own once-a-minute rule for a file that failed); when something came, every text in the editor is drawn again ═══ */
@@ -108,35 +126,53 @@
     return out;
   }
   /** The face the words are cut in: the set of `fontKey` (Source Sans 3 while it is not loaded: asked for, and the words drawn again when it comes), its Semibold for a small capital. */
-  function faceFor(fontKey, size) {
+  function faceFor(fontKey, size, bold) {
     const En = E(), Gm = G(), Or = O(); if (!En || !Gm) return null;
     let set = setOf(fontKey);
     if (!set && fontKey && Or && Or.fontById && Or.fontById(fontKey)) { askedFonts.add(String(fontKey)); want('font:' + fontKey, 'font:' + fontKey, () => En.loadFontSet(fontKey)); }
     if (!set) set = En.fonts && En.fonts.Regular ? En.fonts : null;
     if (!set) return null;
-    const font = (size * Gm.capPerEm(set.Regular) * MM < SEMI_MM && set.Semibold) || set.Regular;
+    const font = ((bold || size * Gm.capPerEm(set.Regular) * MM < SEMI_MM) && set.Semibold) || set.Regular;   // (CETEXT: Bold is the family's heavier cut at any size; a family with one weight has none)
     return { set, font, id: set === En.fonts ? (Or && Or.DEFAULT_FONT) : set.id };
   }
   /** Words as filled outlines in an engraving font (the editor's textToPaths). Lines are a capital and the fit's own gap apart unless the editor gives a gap (a factor of the size).
    *  A cluster nothing can set yet is left out of the outlines (and asked for); a cluster nothing can set at all is left out and said under the words box. */
   function textToPaths(text, fontKey, sizePt, o) {
     o = o || {};
-    const size = +sizePt > 0 ? +sizePt : 10, f = faceFor(fontKey, size), Gm = G(), Or = O(), CE = root.CharmEditor;
+    const size = +sizePt > 0 ? +sizePt : 10, f = faceFor(fontKey, size, !!o.bold), Gm = G(), Or = O(), CE = root.CharmEditor;
     if (!f) return { subpaths: [], bbox: null };
     let words = String(text == null ? '' : text); if (Or && Or.fontCaps && Or.fontCaps(f.id)) words = Or.capsText(words, f.id);
     const font = f.font, lead = Number.isFinite(+o.lineGap) && +o.lineGap > 0 ? size * +o.lineGap : size * (Gm.capPerEm(font) + 0.216);
     // the start of right-to-left words is their right end: 'left' (the start) and 'right' (the end) change sides, a centre stays the centre
-    const al = o.align || 'left', side = baseRtl(words) ? ({ left: 'right', right: 'left' }[al] || al) : al;
+    const rtl = baseRtl(words), al = o.align || 'left', side = rtl ? ({ left: 'right', right: 'left' }[al] || al) : al;
     const subpaths = [], gone = [];
+    // (CETEXT, Paul 28 Oct 2026, "alphabet style": SMALL CAPITALS, a lowercase letter drawn as a capital at the height of the font's own small letters; words that read right to left have no small letters)
+    const sc = o.smallCaps && !rtl ? smallCapScale(font) : 0;
     words.split(/\r?\n/).forEach((line, i) => {
       try { const miss = Gm.glyphCoverage(font, line).missing; for (const m of miss) { gone.push(m); line = line.split(m).join(''); } } catch (_) { /* drawn as it is */ }
       if (!line.trim()) return;
-      let cmds; try { const w = font.getAdvanceWidth(line, size), x = side === 'center' ? -w / 2 : side === 'right' ? -w : 0; cmds = font.getPath(line, x, i * lead, size).commands; } catch (_) { return; }
+      let cmds;
+      try {
+        if (sc && LOWER.test(line)) {
+          const runs = []; for (const g of graphemes(line)) { const low = LOWER.test(g) && g.toLocaleUpperCase() !== g, last = runs[runs.length - 1]; if (last && last.low === low) last.t += g; else runs.push({ low, t: g }); }
+          const parts = runs.map(r => ({ t: r.low ? r.t.toLocaleUpperCase() : r.t, s: r.low ? size * sc : size })), w = parts.reduce((a, p) => a + font.getAdvanceWidth(p.t, p.s), 0);
+          let x = side === 'center' ? -w / 2 : side === 'right' ? -w : 0; cmds = [];
+          for (const p of parts) { for (const c of font.getPath(p.t, x, i * lead, p.s).commands) cmds.push(c); x += font.getAdvanceWidth(p.t, p.s); }
+        } else { const w = font.getAdvanceWidth(line, size), x = side === 'center' ? -w / 2 : side === 'right' ? -w : 0; cmds = font.getPath(line, x, i * lead, size).commands; }
+      } catch (_) { return; }
       toSubpaths(cmds, subpaths);
     });
     if (gone.length) askFor(words, gone, f.set.Regular);
-    const subs = subpaths.filter(s => s.some(op => op[0] === 'l' || op[0] === 'c'));
+    let subs = subpaths.filter(s => s.some(op => op[0] === 'l' || op[0] === 'c'));
+    // (CETEXT: ITALIC, the letters slanted 12° to the right about their baselines (y down: up is -y), as outlines: none of the engraving fonts has an italic of its own)
+    if (o.italic && subs.length) { const k = Math.tan(ITALIC_DEG * Math.PI / 180), sl = p => [p[0] - p[1] * k, p[1]]; subs = subs.map(sp => sp.map(op => (op[0] === 'h' ? op : [op[0]].concat(op.slice(1).map(sl))))); }
     return { subpaths: subs, bbox: subs.length && CE && CE.model ? CE.model.bboxOf(subs) : null };
+  }
+  const ITALIC_DEG = 12, LOWER = /\p{Ll}/u;
+  /** The size of a small capital against a capital: the font's own x-height over its cap height (OS/2), 0.72 when the font does not say; held to 0.6 … 0.85. */
+  function smallCapScale(font) {
+    const t = font && font.tables && font.tables.os2, x = t && +t.sxHeight, c = t && +t.sCapHeight;
+    return x > 0 && c > 0 ? Math.min(0.85, Math.max(0.6, x / c)) : 0.72;
   }
   textToPaths.engine = 'engrave';   // (how a caller tells this engine from the editor's stand-in)
 

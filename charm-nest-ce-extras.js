@@ -163,7 +163,7 @@
   /** How many subpaths the engine draws for one letter (a letter is drawn the same alone as among others: its outlines, in order). */
   function countOf(engine, g, fontKey, size) {
     const k = engine === CE.builtinTextToPaths ? '' : null;
-    const key = (k != null ? 'b' : 'e') + '\u0001' + fontKey + '\u0001' + size + '\u0001' + g;
+    const key = (k != null ? 'b' : 'e') + '\u0001' + fontKey + '\u0001' + size + '\u0001' + g + (engine.sig ? '\u0002' + engine.sig : '');   // (CETEXT, 28 Oct 2026: a bold, slanted or small-capital letter is counted as drawn: charm-nest-charm-editor.js styledEngine)
     let n = countCache.get(key);
     if (n == null) { let r = null; try { r = engine(g, fontKey, size, { align: 'left' }); } catch (e) { r = null; } n = r && Array.isArray(r.subpaths) ? r.subpaths.length : 0; countCache.set(key, n); if (countCache.size > 4000) countCache.delete(countCache.keys().next().value); }
     return n;
@@ -276,7 +276,7 @@
   /** A capital's ink from its baseline, pt, y down: [top, bottom] of an H's outlines ([-0.7 of the size, 0] when the engine draws none); capOf: its height. */
   const capCache = new Map();
   function capBand(engine, fontKey, size) {
-    const key = fontKey + '\u0001' + size; let v = capCache.get(key);
+    const key = fontKey + '\u0001' + size + (engine.sig ? '\u0002' + engine.sig : ''); let v = capCache.get(key);
     if (v == null) { let b = null; try { const r = engine('H', fontKey, size, { align: 'left' }); b = r && (M.bboxOf(r.subpaths) || r.bbox); } catch (e) { b = null; } v = b && b[3] > b[1] ? [b[1], b[3]] : [-0.7 * size, 0]; capCache.set(key, v); if (capCache.size > 500) capCache.delete(capCache.keys().next().value); }
     return v;
   }

@@ -14,7 +14,11 @@
  *     opts.title, opts.subtitle      "CALENDAR 86188 · SS" / "order 4213955608 · piece 2 of 3"
  *     opts.faces                     { front?: FaceDoc, back?: FaceDoc }     opts.startFace 'front' | 'back'
  *     opts.fonts                     [{ key, name }]                         the first is the default for new text
- *     opts.textToPaths(text, fontKey, sizePt, { align, lineGap }) -> { subpaths, bbox:[x0,y0,x1,y1] }
+ *                                    (CETEXT, Paul 28 Oct 2026: "I also don't see a way to change the text style and font style and alphabet style inside the charm editor") a font may
+ *                                    also say { family (a CSS font-family: its name in the Font menu is drawn in the font itself, as the engraving card's drop-down draws it), kind ("cursive",
+ *                                    "script" ...: said beside its name), bold (false: the family has no heavier cut, so Bold is off for it), caps (true: capitals only) }
+ *     opts.textToPaths(text, fontKey, sizePt, { align, lineGap, bold, italic, smallCaps }) -> { subpaths, bbox:[x0,y0,x1,y1] }   (CETEXT: the style the text asks for; an engine
+ *                                    that knows none of them draws the words plain)
  *                                    the app's font engine: outlines in pt, y down, the anchor (start of the first baseline for 'left') at 0,0. Without it the
  *                                    editor uses CharmEditor.builtinTextToPaths, a plain single-stroke stand-in (for tests and for a page with no font engine)
  *     opts.lockRoles                 default ['cut']: items of these roles open locked (the Layers panel unlocks them); the lock the editor adds is not a change
@@ -28,6 +32,9 @@
  *   Item     { id, kind:'path'|'text'|'group', role:'cut'|'line'|'hatch'|'art', source:'master'|'engrave'|'added', name, hidden, locked,
  *              subpaths:[[op,...],...], stroke, fill, lwPt,              (path; ops ["m",[x,y]] ["l",[x,y]] ["c",p1,p2,p3] ["h"])
  *              text, fontKey, sizePt, align, lineGap,                    (text)
+ *              bold, italic, letterCase                                  (CETEXT, 28 Oct 2026: the text's style. bold: the family's heavier cut; italic: the letters slanted; letterCase
+ *                                                                         (Paul's "alphabet style"): 'upper' CAPITALS, 'lower' lowercase, 'title' Title Case, 'small' Small Capitals,
+ *                                                                         none: as typed. The words stay as typed; the case is how they are drawn)
  *              weightMm, lwPt                                            (27 Oct 2026: a filled text's or hatched part's WEIGHT, mm thicker (+) or thinner (−) than drawn: a text's
  *                                                                         outlines are made at it from its words; a path's geometry already has it in it, so a path that carries it
  *                                                                         is a weighted drawing (words saved and opened again). lwPt: a line's width, pt; none = the laser's 0.25 pt.
@@ -52,6 +59,8 @@
  *       changed  items still there whose own fields or whose group changed (a group is compared on its own fields; its children are listed on their own)
  *     z-order is in `faces`. A path that is turned and then stretched along a slant cannot be said with one turn and two scales: its geometry is redrawn (subpaths
  *     change, transform back to none), exactly as Illustrator does.
+ *
+ *   opts.select                    (CETEXT) ids selected as the workspace opens on its start face (the engraving card selects the words it handed in, so their text controls are in view)
  *
  *   CharmEditor.current           while a workspace is open: small read-outs for tests and for the caller (face(), items(), selection(), zoom(), clientOf(x, y),
  *                                 box(id), result(), dirty(), tool()); null when closed
@@ -409,20 +418,44 @@
   /** Can this part take a weight: a filled text, a hatched path, or filled words saved as their outlines (a path that keeps its words). A line engraving takes a width instead. */
   const weighable = it => !!it && (it.kind === 'text' || (it.kind === 'path' && (it.role === 'hatch' || (it.text != null && String(it.text) !== '')))) && paintFill(it);
   const EMPTY = Object.freeze([]);
+  /* TEXT STYLE (CETEXT, Paul 28 Oct 2026: "I also don't see a way to change the text style and font style and alphabet style inside the charm editor as I had requested"): a text's bold
+     (the family's heavier cut), italic (its letters slanted) and letter case (Paul's "alphabet style": CAPITALS, lowercase, Title Case, Small Capitals). The words stay as they were typed;
+     the case is how they are drawn (Illustrator's All Caps and Small Caps), so "As typed" gives back what was typed. The case is made here for any engine; bold, italic and small
+     capitals are asked of the engine (charm-nest-ce-text.js draws them; the stand-in draws them plain). */
+  const CASES = ['upper', 'lower', 'title', 'small'];
+  const caseOf = it => (it && CASES.includes(it.letterCase) ? it.letterCase : '');
+  /** The words in a letter case ('small' is drawn by the engine, from words as typed). Title Case: each word's first letter a capital, the rest lowercase (after a space, a hyphen, a slash or a bracket). */
+  function casedText(text, c) {
+    const s = String(text == null ? '' : text);
+    if (c === 'upper') return s.toLocaleUpperCase();
+    if (c === 'lower') return s.toLocaleLowerCase();
+    if (c === 'title') return s.toLocaleLowerCase().replace(/(^|[\s\-/([])(\p{L})/gu, (m, a, b) => a + b.toLocaleUpperCase());
+    return s;
+  }
+  const styleKey = it => (it && it.kind === 'text' ? (it.bold ? 'b' : '') + (it.italic ? 'i' : '') + caseOf(it) : '');
+  /** The engine as one styled text asks for it: its bold / italic / small capitals in the options (`sig` names the style, for a cache that counts letters: charm-nest-ce-extras.js). */
+  function styledEngine(engine, it) {
+    const sk = styleKey(it); if (!sk) return engine;
+    const st = { bold: !!it.bold, italic: !!it.italic, smallCaps: caseOf(it) === 'small' };
+    const f = (t, k, s, o) => engine(t, k, s, Object.assign({}, o, st)); f.sig = sk;
+    return f;
+  }
   /** The geometry provider: raw outlines of a leaf (a path's own subpaths, a text's outlines from the font engine, cached by its words, font, size, align and line
    *  gap), the raw box of any item and its transform matrix. Every pure function below takes one, so the font engine is a parameter and not a global. */
   function createGeo(textToPaths) {
     const engine = typeof textToPaths === 'function' ? textToPaths : builtinTextToPaths;
     const tcache = new Map(), pcache = new WeakMap();
     function textGeom(it) {
-      const words = it.text == null ? '' : String(it.text);
+      const words = casedText(it.text, caseOf(it));   // (CETEXT: the words in their letter case, as the engine and a text layout both see them)
       const wt = weightOf(it);
       const lk = layKey(it);   // (28 Oct 2026, Design & Engrave: letter spacing and words along a path, laid out by CharmEditor.textLayout)
-      const key = [words, it.fontKey == null ? '' : it.fontKey, num(it.sizePt, 10), it.align || 'left', it.lineGap == null ? '' : it.lineGap, wt].join('\u0001') + (lk ? '\u0001' + lk : '');
+      const sk = styleKey(it);
+      const key = [words, it.fontKey == null ? '' : it.fontKey, num(it.sizePt, 10), it.align || 'left', it.lineGap == null ? '' : it.lineGap, wt].join('\u0001') + (lk ? '\u0001' + lk : '') + (sk ? '\u0002' + sk : '');
       let g = tcache.get(key);
       if (g) { tcache.delete(key); tcache.set(key, g); return g; }
       let r = null;
-      if (words.trim()) { try { r = (lk && api.textLayout.layout(it, engine)) || engine(words, it.fontKey, num(it.sizePt, 10), { align: it.align || 'left', lineGap: it.lineGap }); } catch (e) { r = null; } }
+      const eng = styledEngine(engine, it);
+      if (words.trim()) { try { r = (lk && api.textLayout.layout(words === it.text ? it : Object.assign({}, it, { text: words }), eng)) || eng(words, it.fontKey, num(it.sizePt, 10), { align: it.align || 'left', lineGap: it.lineGap }); } catch (e) { r = null; } }
       let subpaths = r && Array.isArray(r.subpaths) ? r.subpaths : [];
       // (the weight: the font's own drawing grown or thinned by half of it on every edge, so a stroke of the letters is that much thicker; the engine always draws the font's own)
       if (wt && subpaths.length) subpaths = weighSubpaths(subpaths, wt * PT / 2, false);
@@ -885,6 +918,7 @@
     groupItems, ungroupItem, arrange, hitTest, touching, History, prepIn, exportItems, diffFace, changeCount, outlinesOf, newId, paintFill, paintStroke,
     weighSubpaths, weighItem, weighable, weightOf, lwOf, inkArea, canWeigh, LW_LASER_PT, WT_MIN_MM, WT_MAX_MM };
   Object.assign(model, { polygonSP, polygonRatio });
+  Object.assign(model, { casedText, caseOf, styledEngine, CASES });   // (CETEXT, 28 Oct 2026: the text's style, for node tests and the extensions)
 
   /* ════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
      9 · THE WORKSPACE
@@ -927,7 +961,11 @@
     tool: SV('<circle cx="12" cy="12" r="7.5"/><path d="M12 8.5v7"/><path d="M8.5 12h7"/>'),
     // (28 Oct 2026, live feedback: the Polygon in the Shapes menu; the magnet of the snapping switch)
     polygon: SV('<path d="M12 3.5 20 9.3 17 19h-10L4 9.3Z"/>'),
-    magnet: SV('<path d="M5.5 4v7.5a6.5 6.5 0 0 0 13 0V4h-4v7.5a2.5 2.5 0 0 1-5 0V4Z"/><path d="M5.5 8h4"/><path d="M14.5 8h4"/>')
+    magnet: SV('<path d="M5.5 4v7.5a6.5 6.5 0 0 0 13 0V4h-4v7.5a2.5 2.5 0 0 1-5 0V4Z"/><path d="M5.5 8h4"/><path d="M14.5 8h4"/>'),
+    // (CETEXT, 28 Oct 2026: the words' alignment, three lines of text as every editor draws it)
+    alignL: SV('<path d="M4 6h16"/><path d="M4 10.5h10"/><path d="M4 15h16"/><path d="M4 19.5h10"/>'),
+    alignC: SV('<path d="M4 6h16"/><path d="M7 10.5h10"/><path d="M4 15h16"/><path d="M7 19.5h10"/>'),
+    alignR: SV('<path d="M4 6h16"/><path d="M10 10.5h10"/><path d="M4 15h16"/><path d="M10 19.5h10"/>')
   };
   /* the cursor of a turn: a round arrow, white under black so it reads on the charm and on the room (28 Oct 2026: "cursors that say the action") */
   const ROT_CUR = 'url("data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round">'
@@ -1020,6 +1058,16 @@
 .ce-caret{ width:0; height:0; margin-left:2px; flex:none; border-left:3.5px solid transparent; border-right:3.5px solid transparent; border-top:4px solid currentColor; opacity:.75; }
 .ce-fontA{ font-size:12px; font-weight:700; letter-spacing:0; text-transform:none; }
 .ce-fontname{ max-width:96px; overflow:hidden; text-overflow:ellipsis; letter-spacing:.08em; }
+/* (CETEXT, Paul 28 Oct 2026: "the text style and font style and alphabet style": one Style menu (Bold, Italic, the alignment, the Alphabet: the bar stays one row on a desk); each font of
+   the Font menu drawn in itself, its kind beside it) */
+.ce-tsname{ display:none; }   /* (the bar keeps one row: the button is its sign, Aa, AB, Aʙ ..., and says what is set in its title) */
+.ce-props.is-tight [data-drop="tstyle"] .ce-drop__b{ padding:0 7px; gap:0; } .ce-props.is-tight [data-drop="tstyle"] .ce-caret{ display:none; }
+.ce-menu--tstyle{ min-width:240px; }
+.ce-menu--tstyle .ce-tsB{ font-weight:800; } .ce-menu--tstyle .ce-tsI{ font-style:italic; font-family:Georgia,serif; }
+.ce-case{ display:inline-block; min-width:22px; font-weight:700; color:var(--muted); }
+.ce-item.ce-font{ font-size:16px; padding:6px 9px; text-transform:none; letter-spacing:0; }
+.ce-item.ce-font[data-kind]::after{ content:attr(data-kind); margin-left:auto; padding-left:14px; font:400 10px/1 var(--sans,sans-serif); letter-spacing:.06em; color:var(--muted); white-space:nowrap; }
+.ce-menu:has(.ce-font){ min-width:250px; }
 /* position and size, then the angle behind a shaded gutter: one box on a desktop (C 3707-3716), two boxes that wrap on their own on a phone */
 .ce-sizes{ display:inline-flex; align-items:stretch; flex:0 0 auto; border:1px solid var(--hair); background:#fff; height:30px; }
 .ce-size{ display:inline-flex; align-items:center; flex:0 0 auto; background:#fff; height:100%; }
@@ -1350,13 +1398,14 @@
   function workspace(opts, done) {
     injectCss();
     const geo = createGeo(opts.textToPaths);
-    const fonts = (Array.isArray(opts.fonts) ? opts.fonts : []).filter(f => f && f.key != null).map(f => ({ key: f.key, name: f.name == null ? String(f.key) : String(f.name) }));
+    const fonts = (Array.isArray(opts.fonts) ? opts.fonts : []).filter(f => f && f.key != null).map(f => Object.assign({ key: f.key, name: f.name == null ? String(f.key) : String(f.name) },
+      typeof f.family === 'string' && f.family ? { family: f.family } : {}, f.kind ? { kind: String(f.kind) } : {}, f.bold === false ? { bold: false } : {}, f.caps ? { caps: true } : {}));   // (CETEXT: drawn in itself, its kind, a heavier cut or none)
     if (!fonts.length) fonts.push({ key: 'sans', name: 'Sans' });
     const lockRoles = Array.isArray(opts.lockRoles) ? opts.lockRoles : ['cut'];
     const S = {
       faces: {}, face: null, sel: [], tool: 'select', shape: 'rect', k: 1, ox: 0, oy: 0, fitted: false,
       hist: new History(120), clip: null, pasteN: 0, grid: true, snapGrid: false, smart: true, link: true,
-      textFont: fonts[0].key, textSize: 8, textWeight: 0, textRole: 'hatch', shapeRole: 'line', lw: LW_LASER_PT, run: null,
+      textFont: fonts[0].key, textSize: 8, textWeight: 0, textRole: 'hatch', shapeRole: 'line', lw: LW_LASER_PT, run: null, textStyle: {},   // (CETEXT: the bold / italic / case / alignment of the next words)
       editing: null, g: null, space: false, hover: null, open: new Set(), dock: true, nudgeAt: 0, ask: null
     };
     S.sides = 6; S.flash = null; S.xLive = null;
@@ -1387,7 +1436,10 @@
     const back = opts.back && opts.back.label ? { label: String(opts.back.label), title: opts.back.title ? String(opts.back.title) : '', run: typeof opts.back.run === 'function' ? opts.back.run : null } : null;
     let wentBack = false;   // (opts.back pressed: run once the workspace is gone)
     const roleItems = ROLES.map(r => `<button class="ce-item" type="button" data-role="${r}" role="menuitemradio"><i class="ce-sw ce-sw--${r}"></i>${ROLE_NAME[r]}<em>${ROLE_SAYS[r]}</em></button>`).join('');
-    const fontItems = fonts.map(f => `<button class="ce-item" type="button" data-font="${esc(f.key)}" role="menuitemradio">${esc(f.name)}</button>`).join('');
+    // (CETEXT, Paul 28 Oct 2026: "font style": every engraving font, its name drawn in the font itself as the engraving card's drop-down draws it, and its kind beside it: cursive, script ...)
+    const fontItems = fonts.map(f => `<button class="ce-item ce-font" type="button" data-font="${esc(f.key)}" role="menuitemradio"${f.kind || f.caps ? ` data-kind="${esc([f.kind, f.caps ? 'capitals only' : ''].filter(Boolean).join(' · '))}"` : ''}${f.family ? ` style="font-family:${esc(f.family)}"` : ''} title="${esc(f.name + (f.kind ? ' · ' + f.kind : '') + (f.caps ? ' · capitals only' : '') + (f.bold === false ? ' · one weight (no Bold)' : ''))}">${esc(f.name)}</button>`).join('');
+    const CASE_NAME = { '': 'As typed', upper: 'CAPITALS', lower: 'lowercase', title: 'Title Case', small: 'Small Caps' };
+    const caseItems = ['', 'upper', 'lower', 'title', 'small'].map(c => `<button class="ce-item" type="button" data-case="${c}" role="menuitemradio"><span class="ce-case ce-case--${c || 'as'}">${{ '': 'Aa', upper: 'AB', lower: 'ab', title: 'Ab', small: 'Aʙ' }[c]}</span>${CASE_NAME[c]}<em>${{ '': 'the words as typed', upper: 'every letter a capital', lower: 'every letter small', title: 'each word a capital', small: 'small letters as small capitals' }[c]}</em></button>`).join('');
     /* the extensions' places in the chrome (the header's EXTENSION POINTS): their tools on the rail before More (a flyout of their own, or the Shapes menu), the Object
        menu, Import and a button per panel in the head, command buttons at the end of the property bar, the panel slot right of the Layers */
     const X = extensions();
@@ -1500,6 +1552,20 @@
       <div class="ce-menu" role="menu" hidden><div class="ce-menu__head">Font</div>${fontItems}</div>
     </div>
     <label class="ce-num" data-when="text" title="Text size, points" hidden><input data-f="pt" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Text size, points"><i>pt</i></label>
+    <div class="ce-drop" data-drop="tstyle" data-when="text" hidden>
+      <button class="ce-prop ce-drop__b" type="button" title="Text style: Bold, Italic, the alignment and the Alphabet (capitals, lowercase, Title Case, small capitals)"><span class="ce-fontA" data-caseA>Aa</span><span class="ce-tsname" data-tsname>Style</span><i class="ce-caret"></i></button>
+      <div class="ce-menu ce-menu--tstyle" role="menu" hidden>
+        <div class="ce-menu__head">Style</div>
+        <button class="ce-item ce-item--tog" type="button" data-tstyle="bold" role="menuitemcheckbox" aria-checked="false" title="Bold · the font's heavier cut (⌘B) · small words (a capital under 2.2 mm) are always cut in it, as the engraving cuts them"><i class="ce-tick"></i><b class="ce-tsB">Bold</b><em>⌘B</em></button>
+        <button class="ce-item ce-item--tog" type="button" data-tstyle="italic" role="menuitemcheckbox" aria-checked="false" title="Italic · the letters slanted 12° (⌘I) · none of the engraving fonts has an italic of its own, so its letters are slanted as outlines"><i class="ce-tick"></i><i class="ce-tsI">Italic</i><em>⌘I</em></button>
+        <div class="ce-menu__head">Alignment</div>
+        <button class="ce-item" type="button" data-talign="left" role="menuitemradio" title="The lines start together">${IC.alignL}Left</button>
+        <button class="ce-item" type="button" data-talign="center" role="menuitemradio" title="Each line centred">${IC.alignC}Centre</button>
+        <button class="ce-item" type="button" data-talign="right" role="menuitemradio" title="The lines end together">${IC.alignR}Right</button>
+        <div class="ce-menu__head">Alphabet</div>${caseItems}
+        <div class="ce-menu__note">The words you typed are kept: <b>As typed</b> gives them back. Every alphabet the engraving has is typed as it is: Greek, Cyrillic, Hebrew, Arabic, Indian scripts, Chinese, Japanese, Korean and emoji, each set in its own font.</div>
+      </div>
+    </div>
     <label class="ce-num ce-num--thick" data-when="weight" title="Weight: how much thicker (+) or thinner (−) every stroke of the letters is than the font draws them, in mm · ↑ ↓ 0.01 mm, Shift 0.05 mm" hidden><button class="ce-num__b" type="button" data-act="wt0" title="Weight · back to the font's own weight" aria-label="Back to the font's own weight">${IC.weight}</button><input data-f="wt" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Weight, mm thicker or thinner than the font draws it"><i>mm</i></label>
     <div class="ce-drop" data-drop="role" data-when="role" hidden>
       <button class="ce-prop ce-drop__b" type="button" title="What the laser does with it"><i class="ce-sw" data-rolesw></i><span data-rolename></span><i class="ce-caret"></i></button>
@@ -1590,6 +1656,7 @@
     function snapshot(f) { f = f || S.face; return { face: f, items: S.faces[f].items, sel: f === S.face ? S.sel.slice() : [] }; }
     function pushUndo() { if (xPending) xCommit(); S.hist.push(snapshot()); S.nudgeAt = 0; syncHist(); }
     function setSel(ids) {
+      S.autoSel = null;
       const ixm = ix();
       S.sel = topmost(ids.filter(id => ixm.has(id)), ixm);
       S.flash = null; renderUI(); paintLayerSel(true); syncProps();
@@ -2239,9 +2306,24 @@
         const fk = texts.length ? texts[0].fontKey : S.textFont, same = texts.every(t => t.fontKey === fk);
         const fo = fonts.find(f => f.key === fk);
         $('[data-fontname]').textContent = same ? (fo ? fo.name : (fk == null ? 'Font' : String(fk))) : 'Mixed';
+        $('[data-fontname]').style.fontFamily = same && fo && fo.family ? fo.family : '';   // (CETEXT: the font's name in the font itself, as the engraving card's drop-down shows it)
         $$('[data-font]').forEach(b => b.classList.toggle('is-on', same && b.dataset.font === String(fk)));
         const pt = field('pt');
         if (doc.activeElement !== pt) { const sz = texts.length ? num(texts[0].sizePt, 10) : S.textSize; pt.value = texts.every(t => Math.abs(num(t.sizePt, 10) - sz) < 1e-6) ? trim(sz, 2) : ''; }
+        // (CETEXT, Paul 28 Oct 2026: the text style, the alignment and the letter case of what is selected (all of it, or "mixed": nothing lit); with nothing selected, of the next words)
+        const st = texts.length ? null : S.textStyle, all = (k, v) => (st ? (st[k] || '') === v : texts.every(t => (t[k] || '') === v));
+        const noBold = texts.length ? texts.every(t => { const f = fonts.find(x => x.key === t.fontKey); return !!(f && f.bold === false); }) : !!((fonts.find(x => x.key === S.textFont) || {}).bold === false);
+        const lit = {};
+        for (const b of $$('[data-tstyle]')) { const k = b.dataset.tstyle, on = st ? !!st[k] : texts.every(t => !!t[k]); lit[k] = on; b.classList.toggle('is-on', on && !(k === 'bold' && noBold)); b.setAttribute('aria-checked', String(on)); if (k === 'bold') { b.classList.toggle('is-off', noBold && !on); b.title = noBold ? 'Bold · this font has one weight, no heavier cut' : 'Bold · the font\'s heavier cut (⌘B) · small words (a capital under 2.2 mm) are always cut in it, as the engraving cuts them'; } }
+        let al = null;
+        for (const b of $$('[data-talign]')) { const v = b.dataset.talign, on = st ? (st.align || 'left') === v : texts.every(t => (t.align || 'left') === v); if (on) al = v; b.classList.toggle('is-on', on); b.setAttribute('aria-checked', String(on)); }
+        const cs = ['', ...CASES].find(c => all('letterCase', c));
+        $$('[data-case]').forEach(b => { const on = cs != null && b.dataset.case === cs; b.classList.toggle('is-on', on); b.setAttribute('aria-checked', String(on)); });
+        // (the Style button says what is set: "Bold · Italic · CAPITALS", "Right", or "Style" for the font's own as typed, left or centred)
+        const sum = [lit.bold && !noBold ? 'Bold' : '', lit.italic ? 'Italic' : '', al === 'right' ? 'Right' : '', cs == null ? 'Mixed' : cs ? CASE_NAME[cs] : ''].filter(Boolean);
+        $('[data-tsname]').textContent = sum.length ? sum.join(' · ') : 'Style';
+        $('[data-drop="tstyle"] .ce-drop__b').title = 'Text style: ' + (sum.length ? sum.join(' · ') : 'the font\'s own, as typed') + ' · Bold, Italic, the alignment and the Alphabet (capitals, lowercase, Title Case, small capitals)';
+        $('[data-caseA]').textContent = cs == null ? 'Aa' : { '': 'Aa', upper: 'AB', lower: 'ab', title: 'Ab', small: 'Aʙ' }[cs];
       }
       const showRole = leaves.length > 0 || (creating && !S.sel.length);
       $('[data-when="role"]').hidden = !showRole;
@@ -2284,7 +2366,7 @@
     let barSig = '';
     function fitBar() {
       const bar = $('.ce-props'), vw = doc.documentElement.clientWidth || root.innerWidth || 0;
-      const sig = [...bar.children].map(e => (e.hidden ? 0 : 1)).join('') + '|' + $('[data-fontname]').textContent + '|' + $('[data-rolename]').textContent + '|' + vw + '|' + (S.dock ? 1 : 0);
+      const sig = [...bar.children].map(e => (e.hidden ? 0 : 1)).join('') + '|' + $('[data-fontname]').textContent + '|' + $('[data-tsname]').textContent + '|' + $('[data-rolename]').textContent + '|' + vw + '|' + (S.dock ? 1 : 0);
       if (sig === barSig) return; barSig = sig;
       bar.classList.remove('is-tight');
       if (vw <= 640) return;   // (a phone's bar wraps by design)
@@ -2296,6 +2378,8 @@
       if (!['select', 'marquee', 'text', 'rect', 'ellipse', 'line', 'hand', 'polygon', 'zoom'].includes(t) && !xTool(t)) return;
       if (S.editing) closeEditor();
       const was = S.tool; xCommit();
+      if (S.autoSel && t !== 'select' && t !== 'hand' && t !== 'zoom' && S.sel.length && S.sel.join() === S.autoSel.join()) setSel([]);
+      S.autoSel = null;   // (CETEXT: the words selected as the editor opened only show their controls: a tool that makes something new starts with nothing selected, as it did)
       S.tool = t;
       if (t === 'rect' || t === 'ellipse' || t === 'line' || t === 'polygon') {
         S.shape = t;
@@ -2448,6 +2532,28 @@
       pt = clamp(pt, 0.5, 400); S.textSize = pt;
       if (!S.sel.length) { syncProps(); return; }
       patchLeaves(it => (it.kind === 'text' ? retext(it, { sizePt: pt }, geo) : null));
+    }
+    /** TEXT STYLE (CETEXT, Paul 28 Oct 2026: "a way to change the text style and font style and alphabet style inside the charm editor"): the selection's words in bold, italic, a letter
+     *  case or an alignment, each one step of the undo, drawn again at once where they stood (retext keeps their middle); with nothing selected, the style of the next words. A style
+     *  put back to plain leaves no field behind, so a text set and unset is no change. */
+    function setTextStyle(patch) {
+      const keys = Object.keys(patch);
+      S.textStyle = Object.assign({}, S.textStyle, patch);
+      for (const k of keys) if (!S.textStyle[k]) delete S.textStyle[k];
+      if (!S.sel.length) { syncProps(); return; }
+      const val = (it, k) => (k === 'align' ? it.align || 'left' : it[k] || '');
+      patchLeaves(it => {
+        if (it.kind !== 'text' || keys.every(k => val(it, k) === (k === 'align' ? patch[k] || 'left' : patch[k] || ''))) return null;
+        const n = retext(it, patch, geo);
+        for (const k of keys) if (k !== 'align' && !patch[k]) delete n[k];
+        return n;
+      });
+    }
+    /** Bold or italic on for the selection's words, or off when every one of them has it already (⌘B, ⌘I, the B and I buttons). Bold is a family's heavier cut: a font with one weight has none. */
+    function toggleTextStyle(k) {
+      const texts = selLeaves().filter(l => l.kind === 'text' && !l.locked);
+      const on = texts.length ? !texts.every(t => !!t[k]) : !S.textStyle[k];
+      setTextStyle({ [k]: on || undefined });
     }
     function deleteSel() {
       const ids = S.sel.filter(id => { const e = entry(id); return e && !e.it.locked; }); if (!ids.length) return;
@@ -2610,6 +2716,7 @@
       const before = snapshot();
       const it = { id: newId(), kind: 'text', role: S.textRole, source: 'added', name: 'Text', _autoName: true, hidden: false, locked: false, text: '', fontKey: S.textFont, sizePt: S.textSize, align: 'left', tx: r9(x), ty: r9(y), sx: 1, sy: 1, rot: 0 };
       if (S.textWeight && canWeigh()) it.weightMm = S.textWeight;
+      Object.assign(it, S.textStyle);   // (CETEXT: the bold / italic / case / alignment armed on the bar with nothing selected)
       if ((S.textRole === 'line' || S.textRole === 'cut') && Math.abs(S.lw - LW_LASER_PT) > 1e-9) it.lwPt = S.lw;
       setItems(items().concat(it)); S.sel = [it.id]; ixFor = null;
       refresh();
@@ -3252,6 +3359,7 @@
         if (kl === 'v') { if (X.importers.length) { xPasteSoon(e.shiftKey); return; } e.preventDefault(); paste(e.shiftKey); return; }
         if (kl === 'd') { e.preventDefault(); if (typeof api.beforeDuplicate === 'function' && api.beforeDuplicate(ectx, e) === true) return; duplicate(); return; }
         if (kl === 'g') { e.preventDefault(); if (e.shiftKey) ungroupSel(); else groupSel(); return; }
+        if ((kl === 'b' || kl === 'i') && !e.shiftKey && !e.altKey && (selLeaves().some(l => l.kind === 'text') || S.tool === 'text')) { e.preventDefault(); toggleTextStyle(kl === 'b' ? 'bold' : 'italic'); return; }   // (CETEXT: ⌘B / ⌘I, as in every editor)
         if (k === ']' || k === '}' || e.code === 'BracketRight') { e.preventDefault(); arrangeSel(e.shiftKey ? 'front' : 'forward'); return; }
         if (k === '[' || k === '{' || e.code === 'BracketLeft') { e.preventDefault(); arrangeSel(e.shiftKey ? 'back' : 'backward'); return; }
         if (k === '0' || e.code === 'Digit0' || e.code === 'Numpad0') { e.preventDefault(); fit(); return; }
@@ -3637,6 +3745,11 @@
       const cm = t.closest('[data-cmd]'); if (cm) { closeMenus(); if (cm.dataset.cmd === 'unlockAll') setAll('locked', false); else if (cm.dataset.cmd === 'showAll') setAll('hidden', false); return; }
       const rl = t.closest('[data-role]'); if (rl) { closeMenus(); setRole(rl.dataset.role); return; }
       const fo = t.closest('[data-font]'); if (fo) { closeMenus(); const f = fonts.find(x => String(x.key) === fo.dataset.font); if (f) setFont(f.key); return; }
+      // (CETEXT, 28 Oct 2026: Bold / Italic, the alignment and the letter case of the words)
+      // (the Style menu stays open: bold, italic, an alignment and a letter case can be set one after the other, each drawn at once)
+      const ts = t.closest('[data-tstyle]'); if (ts) { if (!ts.classList.contains('is-off')) toggleTextStyle(ts.dataset.tstyle); return; }
+      const ta = t.closest('[data-talign]'); if (ta) { setTextStyle({ align: ta.dataset.talign }); return; }
+      const lc = t.closest('[data-case]'); if (lc) { setTextStyle({ letterCase: lc.dataset.case || undefined }); return; }
       const c = t.closest('[data-ctx]'); if (c) { if (!c.classList.contains('is-off')) ctxAct(c.dataset.ctx); return; }
     });
     for (const f of ['x', 'y', 'w', 'h', 'r', 'pt', 'wt', 'lw']) {
@@ -3694,6 +3807,7 @@
     setTool('select');
     render(); renderLayers(true); syncHist();
     fit(); syncProps();
+    if (Array.isArray(opts.select) && opts.select.length) { setSel(opts.select.map(String)); S.autoSel = S.sel.length ? S.sel.slice() : null; }   // (CETEXT: the engraving card's words selected as the editor opens: their text controls are on the bar at once)
     requestAnimationFrame(() => { fit(); try { win.focus({ preventScroll: true }); } catch (e) { /* fine */ } });
     if (X.panels.length) {
       let want = null; try { want = root.localStorage && root.localStorage.getItem('ce.xpanel'); } catch (e) { /* storage blocked */ }
