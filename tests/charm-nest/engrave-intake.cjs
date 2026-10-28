@@ -361,7 +361,8 @@ await t('7a all offline order data: 755 lines x 2 (as stored, and with one plain
       const sp = O.interpretLine(x.order, x.line, W.ctx()), base = BASE.interpretLine(x.order, x.line, W.ctx()), { engraving, ...rest } = sp;
       const { engraving: be, ...br } = base; assert.equal(JSON.stringify(rest), JSON.stringify(br), `${variant} ${x.key}: the line reads as before`);
       // (a PROFILED line (a BEADY bar or disc necklace, charm-nest-orders.js profileWords) has its faces reading from its piece profile, source "profile", with or without the intake hook: the hook then leaves it as it is)
-      assert.ok(!be || (be.source === 'profile' && JSON.stringify(be) === JSON.stringify(engraving)), `${variant} ${x.key}: only a piece profile reads the faces without the intake hook, and the hook keeps that reading`);
+      // (BARFRONT, 28 Oct 2026: a bar necklace reads its front without the intake hook too, by the bar rule; the hook's own reading of a face the order names then stands)
+      assert.ok(!be || (be.source === 'profile' && (JSON.stringify(be) === JSON.stringify(engraving) || /bar rule/.test(be.why))), `${variant} ${x.key}: only a piece profile or the bar rule reads the faces without the intake hook, and the hook keeps a profile's reading`);
       noNested(sp, x.key);
       if (engraving) { if (!be) withEng.add(x.key); shapeOk(engraving, variant + ' ' + x.key); }   // (the readings the intake hook itself makes)
     }
