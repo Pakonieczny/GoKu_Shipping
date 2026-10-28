@@ -227,6 +227,11 @@ const hashOf = d => sha(D.canonical(D.clean(d).design));
     // the sandbox's index is its own key (a sandbox reset clears every key with ":sandbox")
     D.setHost({ sandbox: true, api: async (fn, body) => (await call(Object.assign({}, body, { sandbox: true }))).body }); await D.list(); await flush();   // (the page's api() tags every call of a sandbox page)
     ok(ls.has('cn.designs.v1:sandbox') && D.rows().length === 1 && D.rows()[0].id === sb.id, 'G the sandbox keeps its own index (cn.designs.v1:sandbox)');
+    for (const k of [...st.docs.keys()]) if (/^Sandbox_(Charm_Designs|Order_Rev)\//.test(k)) st.docs.delete(k);   // (a sandbox reset, on another computer)
+    const after = (await call({ op: 'designPut', by: 'Eve', sandbox: true, design: design({ name: 'After the reset' }) })).body;
+    let asked = 0; D.setHost({ api: async (fn, body) => { asked++; return (await call(Object.assign({}, body, { sandbox: true }))).body; } });
+    rows = await D.list({ force: true });
+    ok(asked === 1 && rows.length === 1 && rows[0].id === after.id, 'G after a sandbox reset the count began again: the page drops what it held and takes the whole list from that one answer');
     console.log(`PASS ${n} checks: DESIGNS — designPut / designList / designGet checked strictly, every save a version with who, when, its order and a geometry hash (D6), pictures and big faces in Storage, since/ifRev unchanged for 1 read, the sandbox apart, no placement counter; the page module's instant search (${each.toFixed(2)} ms on 3,000) and one-question refresh`);
   } finally { srv.close(); }
 })().catch(e => { console.error(e); process.exit(1); });
