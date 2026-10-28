@@ -233,6 +233,8 @@
         if(search)search.after(bar);else host.appendChild(bar);
       }
     }
+    // (the boxes that hold it say so by a class, for charm-nest-activity.css: a :has() there restyled the whole page at every element added, NAV 28 Oct 2026)
+    {const p=bar.parentElement,ob=bar.closest('.ordBar');if(p&&!p.classList.contains('cnToolsIn'))p.classList.add('cnToolsIn');if(ob&&!ob.classList.contains('cnToolsDeep'))ob.classList.add('cnToolsDeep');}
     bar._cn={scope,change,opts:opts||{},host};
     build(bar);paint(bar);
     return bar;

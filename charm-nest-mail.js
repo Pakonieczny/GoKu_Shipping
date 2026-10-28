@@ -1030,7 +1030,9 @@
       // NAV (28 Oct 2026, Paul: "Order Details … at near real-time speed"): an empty box that stays empty (the next order has no draft either) keeps the height it was sized to; sizing
       // it again laid out the whole page at every order the window opened on. Its thread is drawn and scrolled when the order's messages come (load).
       const was = P.el.input.value; P.el.input.value = d;
-      if (!d && !was && P.el.input.style.height) { P.el.send.disabled = true; return; }
+      // (round 4: an empty box that stays empty is not sized again even when it has no height of its own yet: sized while the Customer tab was not in front it read 0 and kept none, and
+      //  was sized again, a layout of the whole page, at every order; a box with no height of its own is one row high, as an empty one is)
+      if (!d && !was) { P.el.send.disabled = true; return; }
       P.grow();
     }
   }
