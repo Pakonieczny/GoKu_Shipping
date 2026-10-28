@@ -1,7 +1,8 @@
 /* Source Sans text + shaped monochrome emoji; every displayed glyph is exported as an outline. */
 (function(root,factory){if(typeof module==='object'&&module.exports)module.exports=factory();else root.CharmNestText=factory();})(typeof self!=='undefined'?self:this,function(){
   'use strict';
-  const graphemes = text => [...new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(text)].map(x=>x.segment);
+  let segmenter = null;   // (REFIT, 28 Oct 2026: one segmenter, made once: a new one for every line measured cost a fit a third of its time)
+  const graphemes = text => [...(segmenter || (segmenter = new Intl.Segmenter(undefined,{granularity:'grapheme'}))).segment(text)].map(x=>x.segment);
   const PICTO=/\p{Extended_Pictographic}|\p{Regional_Indicator}|⃣/u;
   // Nothing to draw and nothing to cut: variation selectors, zero-width joiners and spaces, the soft hyphen, bidi marks. A phone keyboard appends one to a ♡ or an ❤; they were refused as "no glyph".
   const IGNORABLE=/\p{Default_Ignorable_Code_Point}/gu;
