@@ -371,26 +371,27 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     /* ── 10 · the charts after the Custom pieces tab (Design & Engrave): a chart drawn after the tab keeps the charts' CSS; an empty range is the calm empty state ── */
     {
       const C = await boot({ reducedMotion: 'reduce' }), cp = C.page;
-      await cp.click(`${V} .efTabBtn[data-tab="custom"]`); await cp.waitForSelector(`${V} .efcuBody:not([hidden])`, { timeout: 15000 });
+      await cp.click(`${V} .efTabBtn[data-tab="custom"]`); await cp.waitForSelector(`${V} .efcu .efcBody:not([hidden])`, { timeout: 15000 });
+      const tabGrid = await cp.evaluate(() => getComputedStyle(document.querySelector('#efficiencyView .efcu')).display);
       await openPerson(cp, 'Ben R.');      // (a known inbox operator who has sent nothing: every day of the week is a zero)
       const inb = `${P} [data-c="inb"]`;
       await cp.waitForFunction(sel => { const c = document.querySelector(sel); return !!c && c.dataset.state === 'empty'; }, `${inb} .efc`, { timeout: 15000 });
       await cp.locator(inb).scrollIntoViewIfNeeded(); await cp.mouse.move(2, 2); await cp.waitForTimeout(300);
       const v = await cp.evaluate(sel => {
         const card = document.querySelector(sel), svg = card.querySelector('svg.efc-svg'), r = svg.getBoundingClientRect(), slots = [...card.querySelectorAll('.efc-slot')];
-        const hit = document.elementsFromPoint(r.left + r.width * .5, r.top + r.height * .5).filter(e => card.contains(e)).map(e => getComputedStyle(e).fill === 'rgb(0, 0, 0)' && getComputedStyle(e).opacity !== '0' ? e.getAttribute('class') || e.tagName : '').filter(Boolean);
-        return { text: (card.querySelector('.efc-state') || {}).innerText || '', days: slots.length, painted: slots.filter(x => getComputedStyle(x).opacity !== '0').length, black: hit, charts: (document.getElementById('efcStyle') || {}).textContent || '', tab: !!document.getElementById('efcuStyle'), tabGrid: getComputedStyle(document.querySelector('#efficiencyView .efcu')).display };
+        const hit = document.elementsFromPoint(r.left + r.width * .5, r.top + r.height * .5).filter(e => card.contains(e) && e instanceof SVGGeometryElement).map(e => getComputedStyle(e).fill === 'rgb(0, 0, 0)' && getComputedStyle(e).opacity !== '0' ? e.getAttribute('class') || e.tagName : '').filter(Boolean);
+        return { text: (card.querySelector('.efc-state') || {}).innerText || '', days: slots.length, painted: slots.filter(x => getComputedStyle(x).opacity !== '0').length, black: hit, charts: (document.getElementById('efcStyle') || {}).textContent || '', tab: !!document.getElementById('efcuStyle') };
       }, inb);
       assert.equal(v.text.trim(), 'No replies in this range', 'the empty range says so, in the charts\' own quiet words');
       assert(v.charts.includes('.efc-slot') && v.tab, 'both style sheets are on the page, each under its own id');
       assert(v.days >= 7 && v.painted === 0 && !v.black.length, `no day column is painted (${v.painted} of ${v.days}; black: ${v.black.join()})`);
-      assert.equal(v.tabGrid, 'grid', 'the Custom pieces tab keeps its own layout');
+      assert.equal(tabGrid, 'grid', 'the Custom pieces tab keeps its own layout');
       await C.ctx.close(); assert(C.errs.length === 0, 'no page errors: ' + C.errs.join(' | '));
       // the other order, on a fresh page: a chart first, then the tab: the tab still gets its own CSS
       const D = await boot({ reducedMotion: 'reduce' }), dp = D.page;
       await openPerson(dp, 'Ben R.'); await dp.waitForFunction(sel => !!document.querySelector(sel), `${P} [data-c="inb"] svg.efc-svg`, { timeout: 15000 });
       await dp.evaluate(() => Efficiency.go('people')); await dp.waitForFunction(() => !EfficiencyEmployee.instances.length);
-      await dp.click(`${V} .efTabBtn[data-tab="custom"]`); await dp.waitForSelector(`${V} .efcuBody:not([hidden])`, { timeout: 15000 });
+      await dp.click(`${V} .efTabBtn[data-tab="custom"]`); await dp.waitForSelector(`${V} .efcu .efcBody:not([hidden])`, { timeout: 15000 });
       const t2 = await dp.evaluate(() => ({ grid: getComputedStyle(document.querySelector('#efficiencyView .efcu')).display, charts: !!document.getElementById('efcStyle') }));
       assert.deepEqual(t2, { grid: 'grid', charts: true }, 'charts first, then the tab: both keep their CSS');
       await D.ctx.close(); assert(D.errs.length === 0, 'no page errors: ' + D.errs.join(' | '));
