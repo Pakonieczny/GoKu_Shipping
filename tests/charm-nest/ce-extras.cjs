@@ -332,8 +332,10 @@ check('N5 the check of a 1500-point outline and 12 words runs in short steps (CP
   });
   await step('B10 Alt-drag moves a copy and the original stays (one step); an Alt-click with no drag still reaches inside a group', async () => {
     await key('Escape'); await key('Control+0');
+    // (Illustrator workspace: the work area is larger, so ⌘0 fits the charm bigger and the small heart's box grows edge handles, one of them on its bottom tip; at 350 % it is as before)
+    await H(() => window.CharmEditor.current.setZoom(350)); await settle();
     const b0 = await boxOf('heart-line'), n0 = (await cur('C.items()')).length, h0 = (await cur('C.history()')).undo;
-    const q = await H(() => { const sp = window.CharmEditor.current.ctx.entry('heart-line').it.subpaths[0], a = sp[0][1], c = sp[1]; return [0, 1].map(k => (a[k] + 3 * c[1][k] + 3 * c[2][k] + c[3][k]) / 8); }), p = await ptClient(q[0], q[1]), hl = true;   // (Illustrator workspace: the work area is larger, so the heart is drawn bigger and its bottom tip now sits on the box's bottom handle: the press is on its outline halfway up instead)
+    const q = await H(() => window.CharmEditor.current.ctx.entry('heart-line').it.subpaths[0][0][1]), p = await ptClient(q[0], q[1]), hl = true;
     await page.mouse.click(p.x, p.y); await settle();
     const s0 = await cur('C.selection()');
     await page.keyboard.down('Alt'); await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(p.x + 60, p.y + 10, { steps: 8 }); await page.mouse.up(); await page.keyboard.up('Alt'); await settle();

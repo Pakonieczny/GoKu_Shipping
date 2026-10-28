@@ -206,6 +206,10 @@
     { id: 'sel.all', label: 'All', key: 'Mod+A', run: act('selectAll'), own: true },
     { id: 'sel.allBoard', label: 'All on Active Artboard', key: 'Mod+Alt+A', run: act('selectAll') },
     { id: 'sel.none', label: 'Deselect', key: 'Mod+Shift+A', on: sel, run: act('deselect') },
+    xe('sel.firstAbove', 'ai.selFirstAbove', 'First Object Above', 'Mod+Alt+Shift+]'),
+    xe('sel.nextAbove', 'ai.selNextAbove', 'Next Object Above', 'Mod+Alt+]'),
+    xe('sel.nextBelow', 'ai.selNextBelow', 'Next Object Below', 'Mod+Alt+['),
+    xe('sel.lastBelow', 'ai.selLastBelow', 'Last Object Below', 'Mod+Alt+Shift+['),
     xe('sel.inverse', 'ops.inverse', 'Inverse'),
     xe('sel.sameFill', 'ops.sameFill', 'Fill Color', null, { sub: 'Same' }),
     xe('sel.sameStroke', 'ops.sameStroke', 'Stroke Color', null, { sub: 'Same' }),
@@ -319,7 +323,7 @@
     ['Edit', ['edit.undo', 'edit.redo', '-', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.pasteFront', 'edit.pasteBack', 'edit.pasteInPlace', 'edit.clear', 'edit.duplicate', '-', 'edit.shortcuts', S('Preferences')]],
     ['Object', [S('Transform'), S('Arrange'), S('Align'), '-', 'obj.group', 'obj.ungroup', S('Lock'), 'obj.unlockAll', S('Hide'), 'obj.showAll', '-', S('Path'), S('Shape'), S('Blend'), S('Envelope Distort'), S('Image Trace'), '-', S('Clipping Mask'), S('Compound Path'), '-', { more: true }]],
     ['Type', [S('Font'), S('Size'), S('Font Style'), '-', 'type.glyphs', '-', S('Type on a Path'), '-', S('Change Case'), S('Paragraph'), '-', 'type.edit']],
-    ['Select', ['sel.all', 'sel.allBoard', 'sel.none', '-', 'sel.inverse', '-', S('Same')]],
+    ['Select', ['sel.all', 'sel.allBoard', 'sel.none', '-', 'sel.firstAbove', 'sel.nextAbove', 'sel.nextBelow', 'sel.lastBelow', '-', 'sel.inverse', '-', S('Same')]],
     ['Effect', [S('Distort & Transform'), S('Pathfinder'), S('Stylize'), S('Warp')]],
     ['View', ['view.outline', '-', 'view.check', '-', 'view.zoomIn', 'view.zoomOut', 'view.fit', 'view.fitAll', 'view.actual', 'view.zoomSel', '-', S('Screen Mode'), '-', S('Rulers'), '-', 'view.smart', S('Guides'), '-', 'view.grid', 'view.snapGrid']],
     ['Window', [{ window: true }]],
@@ -450,14 +454,46 @@
       closeAll();
       run(id, arg);
     });
+    /* a row under the pointer: as Illustrator's menus, a submenu opens after a moment (not as the pointer only passes over its row) and an open submenu stays open while the
+       pointer heads for it across the rows on the way (the triangle from where the pointer was to the submenu's near edge: "menu aim") */
+    let aimT = 0, lastPt = null, prevPt = null;
+    let aimPending = null;   // (a row's change waiting while the pointer still heads for the open submenu: put off again at every move that still heads there; done once it stops)
+    rootEl.addEventListener('pointermove', ev => {
+      if (!M.open) return;
+      if (!lastPt || Math.hypot(ev.clientX - lastPt.x, ev.clientY - lastPt.y) > 1.5) {
+        prevPt = lastPt; lastPt = { x: ev.clientX, y: ev.clientY };
+        if (aimPending && aimMenu && headingFor(aimMenu)) { clearTimeout(aimT); aimT = setTimeout(aimPending, 320); }
+      }
+    }, true);
+    const side = (p, a, b) => (p.x - b.x) * (a.y - b.y) - (a.x - b.x) * (p.y - b.y);
+    const inTri = (p, a, b, c) => { const d1 = side(p, a, b), d2 = side(p, b, c), d3 = side(p, c, a); return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0)); };
+    function headingFor(menu) {
+      const open = [...menu.querySelectorAll(':scope > .ce-aisub > .ce-menu')].find(x => !x.hidden);
+      if (!open || !prevPt || !lastPt) return false;
+      const r = open.getBoundingClientRect(), x = r.left >= lastPt.x - 2 ? r.left : r.right;
+      return inTri(lastPt, prevPt, { x, y: r.top - 6 }, { x, y: r.bottom + 6 });
+    }
+    let aimMenu = null;
     rootEl.addEventListener('pointerover', ev => {
       if (!M.open) return;
+      // (the pointer arrived in a submenu, on a row or between rows: what its parent menu was about to do is called off)
+      const inMenu = ev.target.closest && ev.target.closest('.ce-menu');
+      if (inMenu && aimMenu && inMenu !== aimMenu && aimMenu.contains(inMenu)) { clearTimeout(aimT); aimMenu = null; aimPending = null; }
       const it = ev.target.closest('.ce-aimi'); if (!it || !it.closest('.ce-aimenu, .ce-ctx')) return;
       const menu = it.closest('.ce-menu');
-      // (the rows of this menu: a deeper submenu of another row closes; a submenu row opens its own)
-      for (const s of menu.querySelectorAll(':scope > .ce-aisub > .ce-aimi--sub')) if (s !== it) closeSub(s);
-      if (it.classList.contains('ce-aimi--sub') && !it.classList.contains('is-off')) openSub(it, false);
       if (M.kb) try { it.focus({ preventScroll: true }); } catch (e) { /* fine */ }
+      clearTimeout(aimT);
+      // (the rows of this menu: a deeper submenu of another row closes; a submenu row opens its own)
+      const act = () => {
+        if (!M.open || !menu.isConnected || menu.hidden) return;
+        for (const s of menu.querySelectorAll(':scope > .ce-aisub > .ce-aimi--sub')) if (s !== it) closeSub(s);
+        if (it.classList.contains('ce-aimi--sub') && !it.classList.contains('is-off')) openSub(it, false);
+      };
+      if (it.parentNode.querySelector(':scope > .ce-menu:not([hidden])')) return;   // (its own submenu is open already)
+      aimMenu = menu;
+      aimPending = null;
+      if (headingFor(menu)) { aimPending = () => { aimPending = null; if (it.matches(':hover')) act(); }; aimT = setTimeout(aimPending, 320); return; }
+      aimT = setTimeout(act, it.classList.contains('ce-aimi--sub') ? 160 : 110);
     });
     function topEl() { return M.open && M.open.el; }
     function openTop(key, kb) {

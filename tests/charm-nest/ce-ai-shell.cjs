@@ -41,7 +41,7 @@ const settle = page => page.evaluate(() => new Promise(r => requestAnimationFram
   const menuOpen = async (page, name) => { await closeM(page); await page.click(`.ce-menubar .ce-mb__t:text-is("${name}")`); await settle(page); };
   const rows = page => page.evaluate(() => { const m = document.querySelector('.ce-aimenu:not([hidden])'); return m ? [...m.querySelectorAll(':scope > .ce-aimi, :scope > .ce-aisub > .ce-aimi, :scope > .ce-menu__sep')].map(b => b.classList.contains('ce-menu__sep') ? '-' : (b.querySelector('.ce-aimi__l') || b).textContent + (b.querySelector('em') ? ' [' + b.querySelector('em').textContent + ']' : '') + (b.classList.contains('is-off') ? ' (off)' : '') + (b.classList.contains('ce-aimi--sub') ? ' ▸' : '') + (b.classList.contains('is-chk') ? ' ✓' : '')) : null; });
   const subRows = async (page, label) => {
-    await page.hover(`.ce-aimenu:not([hidden]) .ce-aimi--sub:has(.ce-aimi__l:text-is("${label}"))`); await settle(page);
+    await page.hover(`.ce-aimenu:not([hidden]) .ce-aimi--sub:has(.ce-aimi__l:text-is("${label}"))`); await page.waitForTimeout(400); await settle(page);   // (a submenu opens after a moment, as Illustrator's)
     return page.evaluate(l => { const b = [...document.querySelectorAll('.ce-aimenu .ce-aimi--sub')].find(x => x.querySelector('.ce-aimi__l').textContent === l); const m = b && b.parentNode.querySelector(':scope > .ce-menu'); return m && !m.hidden ? [...m.querySelectorAll(':scope > .ce-aimi, :scope > .ce-aisub > .ce-aimi')].map(x => x.querySelector('.ce-aimi__l').textContent + (x.querySelector('em') ? ' [' + x.querySelector('em').textContent + ']' : '') + (x.classList.contains('is-off') ? ' (off)' : '')) : null; }, label);
   };
   const pick = async (page, label) => { await page.locator(`.ce-aimenu:not([hidden]) .ce-aimi:visible:has(.ce-aimi__l:text-is("${label}"))`).last().click(); await settle(page); };
@@ -83,6 +83,22 @@ const settle = page => page.evaluate(() => new Promise(r => requestAnimationFram
     assert.deepEqual(await subRows(page, 'Shape'), ['Jump Ring on Top']);
     await subRows(page, 'Arrange');
     await shot(page, 'ai-menu-object-1440.png');
+    await closeM(page);
+  });
+  await step('1.3b a submenu opens after a moment, not as the pointer passes over its row; heading for an open submenu across the rows below it keeps it open (menu aim)', async () => {
+    await menuOpen(page, 'Object');
+    const tr = await page.evaluate(() => { const b = [...document.querySelectorAll('.ce-aimenu .ce-aimi--sub')].find(x => x.querySelector('.ce-aimi__l').textContent === 'Transform').getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom }; });
+    const subOpen = name => page.evaluate(n => { const b = [...document.querySelectorAll('.ce-aimenu .ce-aimi--sub')].find(x => x.querySelector('.ce-aimi__l').textContent === n); const m = b && b.parentNode.querySelector(':scope > .ce-menu'); return !!m && !m.hidden; }, name);
+    await page.mouse.move(tr.l + 30, (tr.t + tr.b) / 2);
+    assert.equal(await subOpen('Transform'), false, 'not at once');
+    await page.waitForTimeout(350);
+    assert.equal(await subOpen('Transform'), true, 'after a moment');
+    const sub = await page.evaluate(() => { const m = [...document.querySelectorAll('.ce-aimenu--sub')].find(x => !x.hidden).getBoundingClientRect(); return { l: m.left, t: m.top, b: m.bottom }; });
+    { const x0 = tr.l + 30, y0 = (tr.t + tr.b) / 2, x1 = sub.l + 6, y1 = sub.t + 60;   // (down and right, slowly, across Arrange and Align, into the submenu)
+      for (let i = 1; i <= 8; i++) { await page.mouse.move(x0 + (x1 - x0) * i / 8, y0 + (y1 - y0) * i / 8); await page.waitForTimeout(90); if (i === 5) assert.equal(await subOpen('Transform'), true, 'open while crossing the rows'); } }
+    await page.waitForTimeout(450);
+    assert.equal(await subOpen('Transform'), true, 'still open on the way to it');
+    assert.equal(await subOpen('Arrange'), false);
     await closeM(page);
   });
   await step('1.4 a menu item runs the editor\'s own command: Object ▸ Arrange ▸ Send to Back puts the heart under everything (one undo step), Edit ▸ Undo puts it back', async () => {
@@ -321,7 +337,7 @@ const settle = page => page.evaluate(() => new Promise(r => requestAnimationFram
     await clickPart(pg, 'heart-fill');
     await shot(pg, `ai-selection-${w}.png`);
     await pg.click('.ce-menubar .ce-mb__t:text-is("Object")'); await settle(pg);
-    await pg.hover('.ce-aimenu .ce-aimi--sub:has(.ce-aimi__l:text-is("Path"))'); await settle(pg);
+    await pg.hover('.ce-aimenu .ce-aimi--sub:has(.ce-aimi__l:text-is("Path"))'); await pg.waitForTimeout(400); await settle(pg);
     await shot(pg, `ai-menu-object-path-${w}.png`);
     await pg.keyboard.press('Escape');
     await step(`6.${w} no page error`, async () => { assert.deepEqual(pg.__errs, []); });
