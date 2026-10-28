@@ -97,8 +97,8 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 2 min ago \u00b7 9 commits \u00b7 2 files changed \u00b7 now: Wait for the nav-instant rerun \u00b7 says: Now G4 will measure both cases: a visit within the minute (no call) and one after the minute (an ask by revisi \u2016 Paul decided 28 Oct: files approved, push (a), 45 days for all kinds, later change wins, Chrome keep-data. Step A now (store file + server ifRev/since/getMany); Step B page wiring after the MC and nav branches land.",
-  "updated": "2026-10-28T03:12:55Z",
+  "note": "LIVE 03:16 UTC \u00b7 last step 5 min ago \u00b7 9 commits \u00b7 2 files changed \u00b7 now: Wait for the nav-instant rerun \u00b7 says: Now G4 will measure both cases: a visit within the minute (no call) and one after the minute (an ask by revisi \u2016 Paul decided 28 Oct: files approved, push (a), 45 days for all kinds, later change wins, Chrome keep-data. Step A now (store file + server ifRev/since/getMany); Step B page wiring after the MC and nav branches land.",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Paul decided 28 Oct: files approved, push (a), 45 days for all kinds, later change wins, Chrome keep-data. Step A now (store file + server ifRev/since/getMany); Step B page wiring after the MC and nav branches land."
  },
  {
@@ -149,7 +149,7 @@
   "tests_removed": 0,
   "fixes": 0,
   "note": "Handed back 03:03 UTC \u00b7 0 commits \u2016 Done (8ee2613): extension points; live size chip while drawing / resizing / moving / turning; X/Y/W/H fields live; Ctrl/Alt resize from centre, Shift keeps ratio; smart guides with gap readouts and even spacing; Snap switch (Cmd+U); hover highlight; cursors. p95 <= 7 ms work per frame on a 300-path charm. 21/21 + editor tests. SHIPPED d58eea9 (batch 1: 11 tests pass), verifying live.",
-  "updated": "2026-10-28T03:12:55Z",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Done (8ee2613): extension points; live size chip while drawing / resizing / moving / turning; X/Y/W/H fields live; Ctrl/Alt resize from centre, Shift keeps ratio; smart guides with gap readouts and even spacing; Snap switch (Cmd+U); hover highlight; cursors. p95 <= 7 ms work per frame on a 300-path charm. 21/21 + editor tests. SHIPPED d58eea9 (batch 1: 11 tests pass), verifying live.",
   "finished": "2026-10-28T03:04:27Z"
  },
@@ -166,8 +166,8 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 0 min ago \u00b7 2 commits \u00b7 3 files changed \u00b7 now: Run the rulers test again \u2016 Started 01:55 UTC",
-  "updated": "2026-10-28T03:12:55Z",
+  "note": "LIVE 03:16 UTC \u00b7 last step 2 min ago \u00b7 3 commits \u00b7 2 files changed \u00b7 now: Run rulers test after the outline layer \u00b7 says: Now the persistent selection-outline layer. \u2016 Started 01:55 UTC",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Started 01:55 UTC"
  },
  {
@@ -183,8 +183,8 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 0 min ago \u00b7 4 commits \u00b7 2 files changed \u00b7 now: Run part B after merge \u00b7 says: Running part B on the merged tree with the new snapping/chip step. \u2016 Started 01:55 UTC",
-  "updated": "2026-10-28T03:12:55Z",
+  "note": "LIVE 03:16 UTC \u00b7 last step 3 min ago \u00b7 4 commits \u00b7 2 files changed \u00b7 now: Run part B after merge \u00b7 says: Running part B on the merged tree with the new snapping/chip step. \u2016 Started 01:55 UTC",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Started 01:55 UTC"
  },
  {
@@ -201,7 +201,7 @@
   "tests_removed": 0,
   "fixes": 1,
   "note": "Handed back 02:53 UTC \u00b7 0 commits \u2016 Done (e0c7865): Blend tool (W) with steps/distance/along a path; Warp with all 15 styles + live preview; Free Distort + Perspective. Arc warp within 0.001 mm of true circles; previews <= 2.3 ms work per frame; big selections in a Worker. 16/16 + editor tests pass. SHIPPED d58eea9 (batch 1: 11 tests pass), verifying live.",
-  "updated": "2026-10-28T03:12:55Z",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Done (e0c7865): Blend tool (W) with steps/distance/along a path; Warp with all 15 styles + live preview; Free Distort + Perspective. Arc warp within 0.001 mm of true circles; previews <= 2.3 ms work per frame; big selections in a Worker. 16/16 + editor tests pass. SHIPPED d58eea9 (batch 1: 11 tests pass), verifying live.",
   "finished": "2026-10-28T02:53:55Z"
  },
@@ -218,8 +218,8 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 3 min ago \u00b7 1 commits \u00b7 2 files changed \u00b7 now: Wait for the last browser suites \u00b7 says: The monitor is too chatty (it matches every PASS line); stopping it and waiting quietly for the last three sui \u2016 Started 01:55 UTC",
-  "updated": "2026-10-28T03:12:55Z",
+  "note": "LIVE 03:16 UTC \u00b7 last step 6 min ago \u00b7 1 commits \u00b7 2 files changed \u00b7 now: Wait for the last browser suites \u00b7 says: The monitor is too chatty (it matches every PASS line); stopping it and waiting quietly for the last three sui \u2016 Started 01:55 UTC",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Started 01:55 UTC"
  },
  {
@@ -236,7 +236,7 @@
   "tests_removed": 0,
   "fixes": 0,
   "note": "Handed back 03:02 UTC \u00b7 0 commits \u2016 Done (f067da0): image -> greyscale vectors, black base, N fixed greys (Otsu cuts), bands share borders exactly (0 % gaps), despeckle in mm2, Worker; 1 MP photo in 413 ms; IoU 0.97-0.997. SHIPPED d58eea9 (batch 1: 11 tests pass), verifying live.",
-  "updated": "2026-10-28T03:12:55Z",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Done (f067da0): image -> greyscale vectors, black base, N fixed greys (Otsu cuts), bands share borders exactly (0 % gaps), despeckle in mm2, Worker; 1 MP photo in 413 ms; IoU 0.97-0.997. SHIPPED d58eea9 (batch 1: 11 tests pass), verifying live.",
   "finished": "2026-10-28T03:04:27Z"
  },
@@ -253,8 +253,8 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 2 min ago \u00b7 6 commits \u00b7 0 files changed \u00b7 now: Wait for the remaining nearby tests \u00b7 says: That check is a feedback tool's overlay mid-drag (renderUI/overlay code I didn't touch), measured without wait \u2016 Started 01:55 UTC",
-  "updated": "2026-10-28T03:12:55Z",
+  "note": "LIVE 03:16 UTC \u00b7 last step 5 min ago \u00b7 6 commits \u00b7 0 files changed \u00b7 now: Wait for the remaining nearby tests \u00b7 says: That check is a feedback tool's overlay mid-drag (renderUI/overlay code I didn't touch), measured without wait \u2016 Started 01:55 UTC",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Started 01:55 UTC"
  },
  {
@@ -270,8 +270,8 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 1 min ago \u00b7 2 commits \u00b7 0 files changed \u00b7 now: Wait until half the post-merge runs finish \u00b7 says: Now re-run the browser tests on the merged tree (two chains in parallel slots). \u2016 Started 01:55 UTC",
-  "updated": "2026-10-28T03:12:55Z",
+  "note": "LIVE 03:16 UTC \u00b7 last step 4 min ago \u00b7 2 commits \u00b7 0 files changed \u00b7 now: Wait until half the post-merge runs finish \u00b7 says: Now re-run the browser tests on the merged tree (two chains in parallel slots). \u2016 Started 01:55 UTC",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Started 01:55 UTC"
  },
  {
@@ -288,7 +288,7 @@
   "tests_removed": 0,
   "fixes": 1,
   "note": "Handed back 03:08 UTC \u00b7 4 commits \u2016 Done (b6b3154): drop or Import an .ai/.pdf/.svg/.dxf: exact size (sizes to 0.01 mm on real masters; DXF splines exact), a role picker (cut / line / hatch / art), Place into this charm or Open as a new design; big files never hold the page. 119 node + 29 browser checks. Merged into integration batch 2.",
-  "updated": "2026-10-28T03:12:55Z",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Done (b6b3154): drop or Import an .ai/.pdf/.svg/.dxf: exact size (sizes to 0.01 mm on real masters; DXF splines exact), a role picker (cut / line / hatch / art), Place into this charm or Open as a new design; big files never hold the page. 119 node + 29 browser checks. Merged into integration batch 2.",
   "finished": "2026-10-28T03:09:15Z"
  },
@@ -305,8 +305,8 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 0 min ago \u00b7 3 commits \u00b7 0 files changed \u00b7 now: Push the merged branch now \u2016 Started 01:55 UTC",
-  "updated": "2026-10-28T03:12:55Z",
+  "note": "LIVE 03:16 UTC \u00b7 last step 2 min ago \u00b7 3 commits \u00b7 0 files changed \u00b7 now: Wait for the first browser test output \u00b7 says: Now the browser tests after the merge, through the slot queue. \u2016 Started 01:55 UTC",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Started 01:55 UTC"
  },
  {
@@ -322,8 +322,8 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 2 min ago \u00b7 8 commits \u00b7 0 files changed \u00b7 now: Block until editor tests finish \u00b7 says: Now let me run my test plus the existing editor browser tests through the slot queue in the background. \u2016 Started 01:55 UTC",
-  "updated": "2026-10-28T03:12:55Z",
+  "note": "LIVE 03:16 UTC \u00b7 last step 5 min ago \u00b7 8 commits \u00b7 0 files changed \u00b7 now: Block until editor tests finish \u00b7 says: Now let me run my test plus the existing editor browser tests through the slot queue in the background. \u2016 Started 01:55 UTC",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Started 01:55 UTC"
  },
  {
@@ -339,8 +339,8 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 0 min ago \u00b7 5 commits \u00b7 0 files changed \u00b7 now: Probe master library state in the test world \u00b7 says: Two things to handle: the post-merge test world shows 0 masters (something on main changed), and vimport's `op \u2016 Started 01:55 UTC",
-  "updated": "2026-10-28T03:12:55Z",
+  "note": "LIVE 03:16 UTC \u00b7 last step 3 min ago \u00b7 5 commits \u00b7 0 files changed \u00b7 now: Probe master library state in the test world \u00b7 says: Two things to handle: the post-merge test world shows 0 masters (something on main changed), and vimport's `op \u2016 Started 01:55 UTC",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Started 01:55 UTC"
  },
  {
@@ -356,8 +356,8 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 0 min ago \u00b7 7 commits \u00b7 5 files changed \u00b7 now: Make drawn shape a cut line; rerun \u2016 Started 01:55 UTC",
-  "updated": "2026-10-28T03:12:55Z",
+  "note": "LIVE 03:16 UTC \u00b7 last step 3 min ago \u00b7 7 commits \u00b7 5 files changed \u00b7 now: Make drawn shape a cut line; rerun \u2016 Started 01:55 UTC",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Started 01:55 UTC"
  },
  {
@@ -373,8 +373,8 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 1 min ago \u00b7 5 commits \u00b7 1 files changed \u00b7 now: Wait for custom piece test result \u2016 Started 01:55 UTC",
-  "updated": "2026-10-28T03:12:55Z",
+  "note": "LIVE 03:16 UTC \u00b7 last step 0 min ago \u00b7 6 commits \u00b7 3 files changed \u00b7 now: Hold frozen scale in locks, nestInitial and Manual Control \u2016 Started 01:55 UTC",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Started 01:55 UTC"
  },
  {
@@ -390,8 +390,8 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 7 min ago \u00b7 1 commits \u00b7 1 files changed \u00b7 now: Block until the batch finishes \u00b7 says: Now the browser tests, sequentially through the slot queue in the background. \u2016 Started 01:55 UTC",
-  "updated": "2026-10-28T03:12:55Z",
+  "note": "LIVE 03:16 UTC \u00b7 last step 0 min ago \u00b7 3 commits \u00b7 0 files changed \u00b7 now: Block until the batch finishes \u2016 Started 01:55 UTC",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Started 01:55 UTC"
  },
  {
@@ -407,8 +407,8 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 0 min ago \u00b7 4 commits \u00b7 2 files changed \u00b7 now: Wait out the cache and rerun \u00b7 says: Generic. Now fix the error state when a refresh fails after data was shown. \u2016 Started 01:55 UTC",
-  "updated": "2026-10-28T03:12:55Z",
+  "note": "LIVE 03:16 UTC \u00b7 last step 3 min ago \u00b7 4 commits \u00b7 2 files changed \u00b7 now: Wait out the cache and rerun \u00b7 says: Generic. Now fix the error state when a refresh fails after data was shown. \u2016 Started 01:55 UTC",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Started 01:55 UTC"
  },
  {
@@ -424,8 +424,8 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 0 min ago \u00b7 5 commits \u00b7 1 files changed \u00b7 now: Confirm the remote branch matches HEAD \u00b7 says: Waiting for engrave-editor-words, charm-editor-back and engrave-front-art. \u2016 Started 01:55 UTC",
-  "updated": "2026-10-28T03:12:55Z",
+  "note": "LIVE 03:16 UTC \u00b7 last step 1 min ago \u00b7 5 commits \u00b7 1 files changed \u00b7 now: refit second batch lines \u00b7 says: Waiting for the remaining suites to report. \u2016 Started 01:55 UTC",
+  "updated": "2026-10-28T03:16:10Z",
   "summary": "Started 01:55 UTC"
  },
  {
@@ -447,7 +447,7 @@
  },
  {
   "id": "fix-approve",
-  "updated": "2026-10-28T03:12:55Z",
+  "updated": "2026-10-28T03:16:10Z",
   "order": 169,
   "agent": "Agent (wt-fix-approve)",
   "phase": "Requests 28 Oct",
@@ -465,7 +465,7 @@
  },
  {
   "id": "fix-seals",
-  "updated": "2026-10-28T03:12:55Z",
+  "updated": "2026-10-28T03:16:10Z",
   "order": 170,
   "agent": "Agent (wt-fix-seals)",
   "phase": "Requests 28 Oct",
@@ -477,7 +477,7 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 7 min ago \u00b7 2 commits \u00b7 0 files changed \u00b7 now: Wait for more merged browser results \u00b7 says: The focused test passes on the merged code. Waiting for the rest. \u2016 Events stay recorded; only the two middle seals stop being drawn.",
+  "note": "LIVE 03:16 UTC \u00b7 last step 0 min ago \u00b7 2 commits \u00b7 0 files changed \u00b7 now: Block until all merged browser tests finish \u00b7 says: Waiting for the remaining queued tests (release-seal-window, release-hold, seals-travel, adv-sheetwin-hold, ti \u2016 Events stay recorded; only the two middle seals stop being drawn.",
   "summary": "Events stay recorded; only the two middle seals stop being drawn."
  },
  {
@@ -511,8 +511,8 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "Shipped d58eea9 = Design & Engrave batch 1 (editor extension points, live readouts, Ctrl/Alt centre resize, smart guides; Blend + Warp + Distort; image trace) to main, verifying live. Merging the next workstreams into the integration branch as they hand back. \u00b7 tests finished: 0/11 \u00b7 last:",
-  "updated": "2026-10-28T03:12:55Z"
+  "note": "Overnight plan: everything is saved (RESUME notes + briefs + scripts on branch claude/lead-notes; every agent WIP-commits and pushes every ~20 min). Resume messages are scheduled hourly 04:30-09:30 UTC so work continues after the usage-limit reset. LIVE: d58eea9 (Design & Engrave batch 1), 077f21c, b2608ff. \u00b7 tests finished: 0/11 \u00b7 last:",
+  "updated": "2026-10-28T03:16:10Z"
  },
  {
   "id": "bar-front",
@@ -545,9 +545,9 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 0 min ago \u00b7 3 commits \u00b7 4 files changed \u00b7 now: Run the browser pass through the slot queue \u00b7 says: Node part passes; the middle step is now 1 ms. Now let me fix the browser measurements (dispatch the tracking  \u2016 Started 02:34 UTC",
+  "note": "LIVE 03:16 UTC \u00b7 last step 3 min ago \u00b7 3 commits \u00b7 4 files changed \u00b7 now: Rerun browser pass after test fixes \u00b7 says: Node part passes; the middle step is now 1 ms. Now let me fix the browser measurements (dispatch the tracking  \u2016 Started 02:34 UTC",
   "summary": "Started 02:34 UTC",
-  "updated": "2026-10-28T03:12:55Z"
+  "updated": "2026-10-28T03:16:10Z"
  },
  {
   "id": "perf-nav-4",
@@ -562,9 +562,9 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 3 min ago \u00b7 0 commits \u00b7 0 files changed \u00b7 now: Bisect which :has() rule makes small changes recalc everything \u2016 Started 02:53 UTC",
+  "note": "LIVE 03:16 UTC \u00b7 last step 0 min ago \u00b7 0 commits \u00b7 1 files changed \u00b7 now: Read the CSS probe results \u00b7 says: Now the fix: a class on the toasts box set by setMode, instead of the body-level `:has()`. \u2016 Started 02:53 UTC",
   "summary": "Started 02:53 UTC",
-  "updated": "2026-10-28T03:12:55Z"
+  "updated": "2026-10-28T03:16:10Z"
  },
  {
   "id": "bar-waiting",
@@ -579,9 +579,9 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 0 min ago \u00b7 0 commits \u00b7 0 files changed \u00b7 now: wt-bar-waiting/charm-nest-bridge.js \u2016 Started 03:05",
+  "note": "LIVE 03:16 UTC \u00b7 last step 0 min ago \u00b7 0 commits \u00b7 0 files changed \u00b7 now: Inspect draftPaint cost \u2016 Started 03:05",
   "summary": "Started 03:05",
-  "updated": "2026-10-28T03:12:55Z"
+  "updated": "2026-10-28T03:16:10Z"
  },
  {
   "id": "local-sw-p4",
@@ -596,9 +596,9 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 1 min ago \u00b7 0 commits \u00b7 0 files changed \u00b7 now: Find string references to unversioned assets in tests \u2016 Started 03:05 (Paul approved the file and its netlify.toml header)",
+  "note": "LIVE 03:16 UTC \u00b7 last step 1 min ago \u00b7 0 commits \u00b7 0 files changed \u00b7 now: Inspect fake storage bucket in the bridge server \u2016 Started 03:05 (Paul approved the file and its netlify.toml header)",
   "summary": "Started 03:05 (Paul approved the file and its netlify.toml header)",
-  "updated": "2026-10-28T03:12:55Z"
+  "updated": "2026-10-28T03:16:10Z"
  },
  {
   "id": "fix-approve-held",
@@ -613,8 +613,8 @@
   "tests_failed": 0,
   "tests_removed": 0,
   "fixes": 0,
-  "note": "LIVE 03:12 UTC \u00b7 last step 0 min ago \u00b7 0 commits \u00b7 0 files changed \u00b7 now: cd wt-fix-held && git status --short | head; git push -u origin claude/fix-approve-held 2> \u2016 Started 03:16",
+  "note": "LIVE 03:16 UTC \u00b7 last step 1 min ago \u00b7 0 commits \u00b7 0 files changed \u00b7 now: cd heldfix && python3 - <<'EOF' p='explore1.cjs' s=open(p).read() s=s.replace(\"await R.bui \u2016 Started 03:16",
   "summary": "Started 03:16",
-  "updated": "2026-10-28T03:12:55Z"
+  "updated": "2026-10-28T03:16:10Z"
  }
 ]

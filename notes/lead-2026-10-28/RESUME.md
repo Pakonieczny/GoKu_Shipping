@@ -18,7 +18,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - Live board (dashboard artifact): https://claude.ai/artifact/RdLASAbUtTQMqU1Mb6ExLG. Rows in $SP/board/agents.json.
   Refresh: `python3 -I $SP/board-live.py` → Artifact publish {url, file_path: $SP/board/agents.json, asset:true} → ArtifactData update
   url, collection "datasets", doc_id "agents", if_version <current>, data {source:{format:"json",kind:"file",name:"agents.json",url:"<blob url>"},
-  updated:{at,by:"Claude"}}. Last version written: 79 (next write if_version 79; if refused, the error names the current version).
+  updated:{at,by:"Claude"}}. Last version written: 80 (next write if_version 80; if refused, the error names the current version).
 - Plan doc for Paul (local-first): https://claude.ai/artifact/GykrjmCTLTbcohMCKBrkyZ (decisions recorded).
 
 ## Scripts ($SP)
@@ -83,6 +83,6 @@ board-live-extra.json with the new agent ids.
    after it. Phase 5 push option (a) needs Paul to add a Firestore security rule in the console + a vendored Firestore SDK file: ask him.
 4. Keep Paul informed in short messages; he reads the board.
 
-## Scheduled resume messages (send_later, one-shot; once one has got you working, delete the rest with delete_trigger)
-04:30 trig_016Uw6uizhWzsjcFH5KLafu8 · 05:30 trig_01EfdotnNNQSsY1iSzZHCqVv · 06:30 trig_016b6HDW4qdsiQBK8VHKN1ze · 07:30 trig_013sPayqPjKBmoHEd7DobThs ·
-08:30 trig_01X1G9rAxWwbSQXPZhdr3fD5 · 09:30 trig_018Vyc472WYCC6N2WXYxmy9y (all UTC, 28 Oct 2026)
+## Scheduled resume messages (send_later, one-shot). The usage limit resets at 2:31 am Toronto = 06:31 UTC, 28 Oct 2026.
+06:33 trig_01S4EwRYu7UdCm7koKNqYLvA (main) · 06:50 trig_01CQebUb74FYfm9bW1vZmmSK (backup) · 07:30 trig_013sPayqPjKBmoHEd7DobThs ·
+08:30 trig_01X1G9rAxWwbSQXPZhdr3fD5 · 09:30 trig_018Vyc472WYCC6N2WXYxmy9y (backups). Once you are working again, delete the remaining ones (delete_trigger).
