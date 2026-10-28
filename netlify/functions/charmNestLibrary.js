@@ -4382,6 +4382,9 @@ OPS.customPiecePut = op_customPiecePut;   // CUSTOMPOOL (Paul, 28 Oct 2026): a d
 /* ART EDIT (Paul, 27 Oct 2026): one piece's own artwork, kept beside it (op_artPut above). artPut writes the piece's record, its pool row's artEdit stamp and its sheet's filesOwed;
    artGet and artList only read the documents named (they move no counter). */
 Object.assign(OPS, { artPut: op_artPut, artGet: op_artGet, artList: op_artList }); NO_GEN_BUMP.add("artGet"); NO_GEN_BUMP.add("artList");
+/* DESIGN LOG (Paul, 28 Oct 2026: "I need to know when employees are commissioning custom pieces, especially when they don't belong to an order"): designLog {records} keeps one
+   record per custom piece sent, and per fix piece with who made the mistake (_designLog.js, Design_Log; charm-nest-design-log.js sends them). One write per record, no read; nothing a placement answer is made from. */
+OPS.designLog = b => require("./_designLog").add(db, FV, b.records, { prefix: PREFIX }); NO_GEN_BUMP.add("designLog");
 /* ── DESIGNS (Paul, 28 Oct 2026: "this charm editor must have a repository of all opened, modified designed pieces, and this repository must be searchable ... this repository must
    grow with every new update or change to any charm using the charm editor"; "The system must also track which order each design was attached to"; "You need to ensure the sanctity
    of the designed charm. It's exact dimensions and user designed features"): the design library (items 18, 21 and 27; the lead's D6 and D8). charm-nest-designs.js is the ONE rule

@@ -9905,6 +9905,7 @@ const Engrave = window.Engrave = (() => {
     const slots = [...new Set(jobsOf(job.row).map(j => j.slot || null))], at = Math.max(0, slots.indexOf(job.slot || null));
     const order = job.row && job.row.order ? String(job.row.order.receiptId) : "";
     charmEditSay(job, "");
+    try { window.CNDesignLog && CNDesignLog.event("editorOpen", { orderId: order, sku, poolId, by }); } catch (_) {}   // (Design & Engrave, Paul 28 Oct 2026: "all of this must be tracked by employee": charm-nest-design-log.js)
     const res = await CE.open({ title: sku, subtitle: `${order ? `order ${order} · ` : ""}piece ${at + 1} of ${Math.max(1, slots.length)}`, faces: docs, startFace: faceOf(job), fonts, textToPaths: charmEditText, lockRoles: ["cut"] });
     if (!res) return null;   // (Cancel, the ×, Esc: nothing is written)
     const todo = [];
@@ -9927,6 +9928,7 @@ const Engrave = window.Engrave = (() => {
     } catch (e) {
       const why = (e && e.refused && e.refused[0] && e.refused[0].why) || (e && e.message) || String(e);
       charmEditSay(job, `${done.length ? `Saved the ${[...new Set(done)].join(" and ")} only · ` : ""}Not saved · ${why}`, true);
+      if (done.length) try { window.CNDesignLog && CNDesignLog.event("editorSave", { orderId: order, sku, poolId, poolIds: t.poolIds, faces: [...new Set(done)], by }); } catch (_) {}
       return done.length ? { saved: [...new Set(done)], records } : null;
     }
     // DESIGNS (Paul, 28 Oct 2026: "this repository must grow with every new update or change to any charm using the charm editor"): the piece as saved is also a new version of its design
@@ -9937,6 +9939,7 @@ const Engrave = window.Engrave = (() => {
     const pj = jobsOfPiece(poolId), jobs = [pj.front, pj.back].filter(Boolean);
     const said = [...new Set(jobs.map(j => j.reason).filter(r => /changed since the words were approved/.test(String(r || ""))))];
     const faces = [...new Set(done)];
+    try { window.CNDesignLog && CNDesignLog.event("editorSave", { orderId: order, sku, poolId, poolIds: t.poolIds, faces, by }); } catch (_) {}   // (who saved which piece's artwork, when: the efficiency count and the order's timeline)
     const bare = jobs.filter(j => j.fit && j.fit.artOnly && j.state === "review" && faces.includes(faceOf(j))).map(j => faceOf(j));   // (EDITOR WORDS: a face its parts engrave on their own: said so, never asked for words)
     charmEditSay(job, `${faces.length > 1 ? "Front and back" : faces[0] === "front" ? "Front" : "Back"} artwork saved for this piece${said.length ? ` · ${said.join(" · ")}` : ""}${bare.length ? ` · No words needed on the ${bare.join(" or ")}: approve it as drawn` : ""}`, false);
     const refit = jobs.filter(j => !j.view && !j.fit && j.state === "ready");
@@ -19662,6 +19665,7 @@ const Sandbox = window.Sandbox = (() => {
   /* COST (Oct 2026): the registry and the engine are no longer tags of the page (a blocking script in its head for every
      production page): they load here, at once on a page in the sandbox, when Settings opens, and before anything that
      clears or counts the browser's side (wipe, browserLeft, wipeBrowser). The tokens are the ones the tags had. */
+  const SBX_FILES = ["charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1-spl1-sv1-advsb1-krep1-kt1-cost18-plc1-ae1-dl1", "charm-nest-sandbox-browser.js?v=20261010-wb1"];
   const SBX_FILES = ["charm-nest-sandbox-families.js?v=20261010-wbt1-wb1-tb1-spl1-sv1-advsb1-krep1-kt1-cost18-plc1-ae1-dsg1", "charm-nest-sandbox-browser.js?v=20261010-wb1"];
   let sbxTask = null, hooked = false;
   function loadScripts() {
