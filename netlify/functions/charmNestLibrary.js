@@ -650,7 +650,7 @@ const REV_CAP = 1000, REV_TOUCHED = Symbol("revTouched");   // (FEED, 28 Oct 202
    '*' stays "not known at all". The Library's readers ask about their own kinds only (revQuiet, localAsk): a pool row moving costs them one read more, never
    a full answer. One bumpRev per op, with every name it touched. */
 const FEED_KEY = /^(?:[strcpxoma]:(?:[\w\-]{4,80}|\*)|\*)$/;
-let FEED_TOUCHED = new Set();   // (names touched by code that has no request body at hand, stamp's events: emptied at every request, as DONE_TOUCH)
+let FEED_TOUCHED = new Set(), PLACE_QUIET = false;   // (PLACE_QUIET, OUTBOX: this request wrote nothing a placement answer reads: a sheet's own field patch, op_putSheet)   // (names touched by code that has no request body at hand, stamp's events: emptied at every request, as DONE_TOUCH)
 const feedTouch = keys => { for (const k of keys || []) if (FEED_KEY.test(String(k))) FEED_TOUCHED.add(String(k)); };
 /** The orders of pool ids ("rid_tid_copy") and receipt ids, named p:<order> (at most 300; more is p:*). */
 function feedOrders(b, lists, kind) {
@@ -1016,8 +1016,10 @@ async function op_putSheet(b) {
   let overwrote = null;
   const refused = await db.runTransaction(async tx => {
     const ex = await tx.get(ref), old = ex.exists ? ex.data() : {};
-    // (OUTBOX: a patch of the sheet's own fields, its release mark or its label, moves no piece: only a save that carries its pieces names their orders)
-    if (!ex.exists || ["poolIds", "orders", "placements", "charms"].some(k => Object.prototype.hasOwnProperty.call(s, k))) feedOrders(b, [old.poolIds, old.orders, s.poolIds, s.orders]);   // (FEED: where their pieces are moved with this save, a new sheet's too)
+    // (OUTBOX: a patch of the sheet's own fields that no placement answer reads (PIECE_SHEET_FIELDS), its release mark or its label, moves no piece: it names no order, and
+    //  the placement counter stays: only a save that carries what an order's pieces are read from names their orders)
+    if (ex.exists && !old.archived && Object.keys(s).every(k => k === "id" || !PIECE_SHEET_FIELDS.includes(k))) PLACE_QUIET = true;
+    else feedOrders(b, [old.poolIds, old.orders, s.poolIds, s.orders]);   // (FEED: where their pieces are moved with this save, a new sheet's too)
     // an order line goes on a sheet once (Paul, 29 Sep: a design went on its sheet twice): a record that would place one
     // piece twice is refused, in words; one saved so before this check saves as it was, to be put right by hand
     const twice = ids => { const seen = new Set(), dup = new Set(); for (const id of Array.isArray(ids) ? ids : []) if (id) { if (seen.has(id)) dup.add(id); seen.add(id); } return dup; };
@@ -1208,7 +1210,7 @@ async function op_manualClaim(b) {
 async function op_sheetLayoutPatch(b) {
   if (!isId(b.id)) return { error: "bad sheet id" };
   const tab = str(b.tab, 40).trim(), by = str(b.by, 80).trim() || "operator", now = Date.now();
-  const poses = b.poses && typeof b.poses === "object" ? b.poses : {}, ids = Object.keys(poses).filter(isId).slice(0, 400);
+  const poses = b.poses && typeof b.poses === "object" ? b.poses : {}, ids = Object.keys(poses).filter(id => /^[\w\-:.~]{1,120}$/.test(id)).slice(0, 400);   // (a placement's id, as the nest names its charms)
   if (!ids.length) return { error: "no pose to write" };
   for (const id of ids) { const q = poses[id]; if (!q || !["cxPt", "cyPt", "angle"].every(k => Number.isFinite(+q[k]))) return { error: `bad pose for ${id}` }; }
   revTouch(b, ["s:" + b.id]);
@@ -5329,7 +5331,7 @@ function feedKeys(body, failed) {
   for (const k of FEED_OP_NAMES[op] || []) keys.add(k);
   if (REV_OPS.has(op) && (failed || !named)) keys.add("*");
   for (const k of named || []) keys.add(k);
-  if (!NO_GEN_BUMP.has(op) && ![...keys].some(k => k === "*" || k[0] === "p")) keys.add("p:*");
+  if (!NO_GEN_BUMP.has(op) && !(PLACE_QUIET && !failed) && ![...keys].some(k => k === "*" || k[0] === "p")) keys.add("p:*");
   return [...keys];
 }
 exports.ops = OPS;   // the connections check runs the same queries the app runs
@@ -5341,7 +5343,7 @@ exports.handler = async (event) => {
   // (Paul, 9 Oct 2026: Anna and Ana_M are one person. Whoever the sorter says is on duty, a new record keeps the one login name, Ana_M: _activityKinds.js loginName; no read, nothing stored is changed)
   if (typeof body.by === "string") { try { body.by = require("./_activityKinds").loginName(body.by); } catch (_) {} }
   PREFIX = body.sandbox === true || body.sandbox === 1 || body.sandbox === "1" ? "Sandbox_" : "";
-  DONE_TOUCH = false; FEED_TOUCHED = new Set();
+  DONE_TOUCH = false; FEED_TOUCHED = new Set(); PLACE_QUIET = false;
   // the Charm Repo's password door (_charmNestRepoAuth.js; plans/repo-protect-1011): its own ops (unlock, the Alert, the download link), then the
   // token every upload / delete / modify of the repository needs. This is the HTTP door only: code that calls OPS in-process is not asked.
   const RepoAuth = require("./_charmNestRepoAuth");
@@ -5359,7 +5361,7 @@ exports.handler = async (event) => {
   if (ledger && ledger.busy) return json(409, { error: "This change is being written already: it is sent again in a moment", inFlight: true, retry: true });
   try {
     const out = await fn(body), checked = body.op === "purgeHistory" && !!out && out.check === true, quiet = checked || sbQuiet(body.op, out);   // (checked: the purge's question first, which deleted and wrote nothing: no counter moves for it)
-    if (!quiet) await bumpPlacementGen(body.op);   // (after the op's writes have landed, before the answer: whoever sees the answer then reads the new gen)
+    if (!quiet && !PLACE_QUIET) await bumpPlacementGen(body.op);   // (after the op's writes have landed, before the answer: whoever sees the answer then reads the new gen)
     if (!checked && (DONE_TOUCH || DONE_BUMP_OPS.has(body.op))) await bumpDoneRev(body.op);
     // the Library's revision moves after a write it reads (see readRev: the readers' one-document question); after an error too, a write may have landed before it
     // (COST, Oct 2026: naming what the op wrote, when it says: revTouch; an op that wrote nothing the Library reads moves nothing)

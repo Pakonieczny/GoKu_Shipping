@@ -57,7 +57,8 @@ async function drop(ledger) {
    both that base and the patch (another person wrote it since), the patch still wins, and the answer names who it overwrote (overwrote: [{ field, by, at }])
    so the page says so; the record keeps who wrote each field last (_w: field → { by, at, mid }), so the person whose change was overwritten is told too
    (charm-nest-store.js reads _w of a record it holds an acknowledged write of). */
-const same = (a, b) => JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b);
+const blank = v => (v === undefined || v === false ? null : v);   // (a field never written and a mark taken away read the same: releaseFull absent is releaseFull false)
+const same = (a, b) => JSON.stringify(blank(a)) === JSON.stringify(blank(b));
 /** cur: field → the record's value now; want: field → the patch's; base: field → what the page saw; w: the record's _w. → [{ field, by, at }] */
 function overlap(cur, want, base, w) {
   const out = [];
