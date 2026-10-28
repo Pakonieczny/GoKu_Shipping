@@ -148,7 +148,25 @@
  * to the charm's top-left; X / Y read from it). The zoom: the Zoom tool (Z: click in, Alt-click out, drag a box, double-click a part), ⌘ + / − / 0 / 1 / 2, the zoom
  * box (typed or a preset), the wheel and a trackpad's pinch about the cursor, 25 % … 6400 %, every step drawn in SVG. The pan: Space or the middle button and drag,
  * the Hand (H), a trackpad's two-finger scroll. CharmEditor.current.guides(face) and .zero() read the guides ({ id, axis: 'x' upright | 'y' level, v pt }) and the zero
- * point ([x, y] pt) out. */
+ * point ([x, y] pt) out.
+ *
+ * THE ILLUSTRATOR WORKSPACE (Paul, 28 Oct 2026: "my employees know how to operate Adobe illustrator very well ... replicate the UI for illustrator while also keeping some of the
+ * specific functions that are dedicated to our platform ... I'm not looking for you to change the functionality of things"). The frame is Illustrator's, top to bottom: the
+ * Application bar (.ce-appbar: the menu bar File … Help, which charm-nest-ce-ai-shell.js fills from its one command catalog, the document's name, Undo / Redo and the commit
+ * area Cancel · Send to Sheet… · Save at its right), the Control bar (.ce-props: the selection's kind, Fill / Stroke (the laser role), the stroke and weight, Character and
+ * Paragraph for words, the extension buttons, the reference point and X Y W H), the document tabs (.ce-doctabs: Front and Back, the piece as the document), the Tools panel
+ * on the left (.ce-rail: Illustrator's tool order and groups, flyouts, single or double column with the » at its top, Fill / Stroke, the screen mode), the rulers and the
+ * pasteboard with the artboard on it, the docked panels on the right (.ce-dock, .ce-xpanel) and the status bar (.ce-foot: the zoom, the artboard navigator, the tool in hand).
+ * Every data-* hook of before is kept (data-act, data-tool, data-drop, data-tip, data-face, data-opt, data-zoom, data-f ...), every command, tool and key works as before;
+ * Illustrator's own keys are added and win where the two differed (M Rectangle, L Ellipse, ⌘2 Lock, ⌘3 Hide, ⌘B Paste in Back: charm-nest-ce-ai-shell.js lists them all).
+ *   THEME TOKENS (on .ce-root; one set per UI brightness, .ce-root[data-ui="dark" | "mdark" | "mlight" | "light"], Medium Dark when nothing is chosen, as Illustrator ships;
+ *   [data-canvas="white"]: the pasteboard white, Illustrator's Canvas Color). A docked panel uses the same names:
+ *     --ai-frame  the application frame and menu bar     --ai-panel  a panel's ground       --ai-panel-hi  a panel's header / tab strip     --ai-pasteboard  round the artboard
+ *     --ai-border  the lines between regions               --ai-input  a field's ground       --ai-input-border  a field's edge
+ *     --ai-text  --ai-text-dim  --ai-text-disabled          --ai-hover  a row or button under the pointer                  --ai-accent  Spectrum blue (selection, focus)
+ *     --ai-accent-text  text on the accent                  --ai-menu  a menu's ground         --ai-menu-hover  a menu row under the pointer (the accent)
+ *     --ai-font  Source Sans 3 (vendor/fonts, the closest free match to Adobe Clean)   --ai-fs  12px, the UI's text   --ai-row  24px, a menu or list row
+ *   CharmEditor.current.ai   the workspace handle the shell is given (st(), act(name, arg), x ...; charm-nest-ce-ai-shell.js describes it) */
 (function (root, factory) {
   const api = factory(root);
   if (typeof module === 'object' && module.exports) module.exports = api; else root.CharmEditor = api;
@@ -982,7 +1000,7 @@
   const TIPS = {
     select: ['Select', 'Move, resize, rotate', 'V'], marquee: ['Marquee', 'Select what a box touches', 'M'], text: ['Text', 'Click to place words', 'T'],
     shapes: ['Shapes', 'Rectangle, ellipse, line, polygon', 'R'], hand: ['Hand', 'Move around the charm', 'H'], more: ['More', 'Grid, guides, zoom', ''],
-    undo: ['Undo', 'Take the last thing back', '⌘Z'], redo: ['Redo', 'Put it back', '⇧⌘Z']
+    undo: ['Undo', 'Take the last thing back', 'Mod+Z'], redo: ['Redo', 'Put it back', 'Mod+Shift+Z']
   };
   /* the instruction for the tool in hand, in the foot (the studio's MK_HINTS, J 9260) */
   const HINTS = {
@@ -996,6 +1014,67 @@
   IC.zoom = SV('<circle cx="10.5" cy="10.5" r="6.3"/><path d="m15.2 15.2 5.3 5.3"/><path d="M7.9 10.5h5.2"/><path d="M10.5 7.9v5.2"/>');
   TIPS.zoom = ['Zoom', 'Click in · Alt-click out · drag a box', 'Z'];
   HINTS.zoom = 'Click to zoom in · Alt-click out · drag a box round what you want to see · double-click a part to fill the view with it';
+  /* THE TOOLS PANEL'S ICONS (Illustrator workspace, 28 Oct 2026): the standard metaphors drawn in our own hand, in the weight of Illustrator's panel (a 24-unit box, thin
+     outlines, the Selection arrow solid and the Direct Selection arrow hollow); a tool an extension registers is drawn from here when its id is known */
+  const SA = (d, extra) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"${extra || ''}>${d}</svg>`;
+  const ARROW = 'M7 3.6v15.6l3.9-3.7 2.7 6.1 2.3-1-2.7-6h5.5Z';
+  const NIB = '<path d="M11 3.2 6.6 13.1 8.2 17.4h5.6l1.6-4.3Z"/><path d="M11 3.2v7"/><circle cx="11" cy="11.4" r="1.1"/><path d="M8.3 20.2h5.4"/>';
+  const AIC = {
+    select: SA(`<path d="${ARROW}" fill="currentColor"/>`),
+    direct: SA(`<path d="${ARROW}"/>`),
+    marquee: SA('<rect x="3.5" y="4.5" width="13" height="10" stroke-dasharray="2.2 1.8"/><path d="M14 12.5v8l2.2-2 1.6 3.3 1.3-.6-1.5-3.2h3Z" fill="currentColor" stroke-width=".8"/>'),
+    pen: SA(NIB), anchorAdd: SA(NIB + '<path d="M17 17h5M19.5 14.5v5"/>'), anchorDel: SA(NIB + '<path d="M17 17h5"/>'),
+    anchorConvert: SA('<path d="M4 19.5 12 5l8 14.5"/><rect x="10.6" y="3.6" width="2.8" height="2.8" fill="currentColor"/>'),
+    text: SA('<path d="M5 6.2V4.5h14v1.7"/><path d="M12 4.5v15"/><path d="M9.3 19.5h5.4"/>'),
+    line: SA('<path d="M5 19 19 5"/>'),
+    rect: SA('<rect x="4" y="6" width="16" height="12"/>'),
+    'shape-rrect': SA('<rect x="4" y="6" width="16" height="12" rx="3.2"/>'),
+    ellipse: SA('<ellipse cx="12" cy="12" rx="8" ry="6.5"/>'),
+    polygon: SA('<path d="M12 4 19.6 9.5 16.7 19H7.3L4.4 9.5Z"/>'),
+    'shape-star': SA('<path d="m12 3.5 2.6 5.6 6 .7-4.5 4.1 1.2 6-5.3-3-5.3 3 1.2-6L3.4 9.8l6-.7Z"/>'),
+    'shape-heart': SA('<path d="M12 19.5s-7.5-4.6-7.5-9.6A4 4 0 0 1 12 7.6a4 4 0 0 1 7.5 2.3c0 5-7.5 9.6-7.5 9.6Z"/>'),
+    'shape-ring': SA('<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="4"/>'),
+    'shape-bail': SA('<circle cx="12" cy="7.5" r="3.6"/><path d="M6 21v-5.5a6 6 0 0 1 12 0V21"/>'),
+    pencil: SA('<path d="M4.5 19.5 5.6 15 15.8 4.8l3.4 3.4L9 18.4Z"/><path d="m13.8 6.8 3.4 3.4"/><path d="m5.6 15 3.4 3.4"/>'),
+    scissors: SA('<circle cx="6.5" cy="17" r="2.6"/><circle cx="17.5" cy="17" r="2.6"/><path d="M8.4 15.2 16.5 4.5M15.6 15.2 7.5 4.5"/>'),
+    'cw-free': SA('<path d="M5.5 7.5 18 5l1 13.5-13.5 1Z" stroke-dasharray="2 1.5"/><rect x="4" y="6" width="3" height="3" fill="currentColor"/><rect x="16.5" y="3.5" width="3" height="3" fill="currentColor"/><rect x="17.5" y="17" width="3" height="3" fill="currentColor"/><rect x="4" y="18" width="3" height="3" fill="currentColor"/>'),
+    'cw-persp': SA('<path d="M8.5 6h7l4 12.5h-15Z"/><path d="M12 6v12.5M6.2 13h11.6" stroke-dasharray="1.6 1.4"/>'),
+    'cw-blend': SA('<rect x="3.5" y="12.5" width="6.5" height="6.5"/><circle cx="17" cy="8.5" r="3.6"/><path d="M10 13.5 13.8 11" stroke-dasharray="1.4 1.4"/>'),
+    hand: IC.hand,
+    zoom: SA('<circle cx="10.5" cy="10.5" r="6.3"/><path d="m15.2 15.2 5.3 5.3"/>'),
+    more: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="6" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18" cy="12" r="1.5"/></svg>',
+    swap: SA('<path d="M6 8.5a4 4 0 0 1 4-4h6"/><path d="m14 2.5 2.2 2-2.2 2"/><path d="m8 6.5-2 2-2-2"/>'),
+    screen: SA('<rect x="3.5" y="5" width="17" height="11.5"/><path d="M9 19.5h6M12 16.5v3"/>'),
+    cols: '<svg viewBox="0 0 12 8" aria-hidden="true"><path d="M1.5 1 4.5 4 1.5 7M6.5 1l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>',
+    menu: SA('<path d="M5 7h14M5 12h14M5 17h14"/>'),
+    close: SA('<path d="m7 7 10 10M17 7 7 17"/>')
+  };
+  /* Illustrator's names and letters for the hover cards when the shell is not loaded (charm-nest-ce-ai-shell.js TOOLS has the full list) */
+  Object.assign(TIPS, {
+    select: ['Selection Tool', 'Select, move, scale and rotate objects', 'V'], marquee: ['Marquee Selection Tool', 'Drag a box: everything it touches is selected', 'Q'],
+    text: ['Type Tool', 'Click to place words; click words to edit them', 'T'], line: ['Line Segment Tool', 'Draw straight lines (Shift: 45°)', '\\'],
+    rect: ['Rectangle Tool', 'Draw rectangles (Shift: square)', 'M'], ellipse: ['Ellipse Tool', 'Draw ellipses (Shift: circle)', 'L'], polygon: ['Polygon Tool', 'Draw polygons (↑ ↓ while dragging: sides)', ''],
+    hand: ['Hand Tool', 'Move around the artboard (or hold Space)', 'H'], zoom: ['Zoom Tool', 'Click to zoom in, Alt-click out, drag a box', 'Z'], more: ['Edit Toolbar', 'Grid, guides, snapping and zoom', '']
+  });
+  const TOOL_NAME = { select: 'Selection', marquee: 'Marquee Selection', text: 'Type', rect: 'Rectangle', ellipse: 'Ellipse', line: 'Line Segment', polygon: 'Polygon', hand: 'Hand', zoom: 'Zoom' };
+  /** Where each tool sits in Illustrator's Tools panel: its slot (tools sharing a slot share a flyout) and the groups, a line between each. */
+  const AI_SLOT = { direct: 'direct', pen: 'pen', anchorAdd: 'pen', anchorDel: 'pen', anchorConvert: 'pen', pencil: 'pencil', scissors: 'scissors', 'cw-free': 'distort', 'cw-persp': 'distort', 'cw-blend': 'blend' };
+  const SHAPE_ORDER = ['rect', 'shape-rrect', 'ellipse', 'polygon', 'shape-star', 'shape-heart', 'shape-ring', 'shape-bail'];
+  /** The person's Illustrator preferences (charm-nest-ce-ai-shell.js writes them: Edit ▸ Preferences ▸ User Interface): read here too, so the workspace opens in them. */
+  function aiPrefs() {
+    let p = null; try { p = JSON.parse((root.localStorage && root.localStorage.getItem('ce.ai')) || 'null'); } catch (e) { p = null; }
+    p = p && typeof p === 'object' ? p : {};
+    return { ui: ['dark', 'mdark', 'mlight', 'light'].includes(p.ui) ? p.ui : 'mdark', canvas: p.canvas === 'white' ? 'white' : 'match', cols: p.cols === 2 ? 2 : 1 };
+  }
+  /* (the page's own copy of Source Sans 3, vendor/fonts beside this file: the UI font, loaded once as a FontFace so no stylesheet has to know where the page is) */
+  const SCRIPT_BASE = (() => { try { const s = doc && doc.currentScript && doc.currentScript.src; return s ? new URL('.', s).href : ''; } catch (e) { return ''; } })();
+  let uiFontAsked = false;
+  function loadUiFont() {
+    if (uiFontAsked || !doc || !doc.fonts || typeof root.FontFace !== 'function' || !SCRIPT_BASE) return; uiFontAsked = true;
+    for (const [w, f] of [['400', 'SourceSans3-Regular.otf'], ['600', 'SourceSans3-Semibold.otf']]) {
+      try { const ff = new root.FontFace('CE Source Sans 3', `url("${SCRIPT_BASE}vendor/fonts/${f}")`, { weight: w, style: 'normal' }); doc.fonts.add(ff); ff.load().catch(() => { /* the fallbacks: Adobe Clean where installed, the system's sans */ }); } catch (e) { /* old engines */ }
+    }
+  }
 
   const CSS = `
 .ce-root{
@@ -1003,120 +1082,205 @@
   --hov:#f2eee4; --hov-line:#c6bfaf; --press:#e6dfcd; --on-hov:#33342f;
   --in:.11s cubic-bezier(.22,.9,.28,1); --press-t:.06s cubic-bezier(.3,.8,.4,1);
   --sans:'Nunito Sans','Helvetica Neue',Helvetica,Arial,sans-serif; --serif:'Cormorant','Hoefler Text',Georgia,serif;
-  --rule:19px; --c-cut:#1c1d1d; --c-line:#d4291f; --c-hatch:#1a5fc4; --c-art:#57534e;
+  --rule:17px; --c-cut:#1c1d1d; --c-line:#d4291f; --c-hatch:#1a5fc4; --c-art:#57534e;
   --c-guide:#19a6c6; --c-guide-hot:#0e7f99;
-  position:fixed; inset:0; z-index:2147482500; background:rgba(28,29,29,.36);
-  font-family:var(--sans); font-size:13px; line-height:1.4; color:var(--ink); -webkit-font-smoothing:antialiased; text-align:left;
+  /* THE ILLUSTRATOR THEME (see the header's THEME TOKENS): Medium Dark, Illustrator's own default */
+  --ai-frame:#3f3f3f; --ai-panel:#535353; --ai-panel-hi:#4a4a4a; --ai-pasteboard:#4a4a4a; --ai-border:#383838; --ai-input:#454545; --ai-input-border:#6b6b6b;
+  --ai-text:#efefef; --ai-text-dim:#c4c4c4; --ai-text-disabled:#8d8d8d; --ai-hover:#5e5e5e; --ai-accent:#2680eb; --ai-accent-text:#fff;
+  --ai-menu:#535353; --ai-menu-hover:#2680eb; --ai-menu-border:#2f2f2f; --ai-sep:#6a6a6a; --ai-tool-on:#3a3a3a; --ai-ruler:#4f4f4f; --ai-ruler-ink:#d9d9d9; --ai-ruler-tick:#9a9a9a;
+  --ai-btn:#6a6a6a; --ai-shadow:0 6px 18px rgba(0,0,0,.45); --ai-sel:#4f80ff; --ai-smart:#e535e5;
+  --ai-font:'CE Source Sans 3','Source Sans 3','Source Sans Pro','Adobe Clean',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif; --ai-fs:12px; --ai-row:24px;
+  position:fixed; inset:0; z-index:2147482500; background:rgba(20,20,20,.5);
+  font-family:var(--ai-font); font-size:var(--ai-fs); line-height:1.35; color:var(--ai-text); -webkit-font-smoothing:antialiased; text-align:left;
 }
+.ce-root[data-ui="dark"]{ --ai-frame:#1f1f1f; --ai-panel:#323232; --ai-panel-hi:#2b2b2b; --ai-pasteboard:#262626; --ai-border:#1a1a1a; --ai-input:#1e1e1e; --ai-input-border:#4a4a4a;
+  --ai-text:#e3e3e3; --ai-text-dim:#a9a9a9; --ai-text-disabled:#6c6c6c; --ai-hover:#404040; --ai-menu:#323232; --ai-menu-border:#121212; --ai-sep:#4a4a4a; --ai-tool-on:#1a1a1a;
+  --ai-ruler:#2d2d2d; --ai-ruler-ink:#c8c8c8; --ai-ruler-tick:#777; --ai-btn:#4a4a4a; }
+.ce-root[data-ui="mlight"]{ --ai-frame:#a6a6a6; --ai-panel:#b8b8b8; --ai-panel-hi:#adadad; --ai-pasteboard:#a3a3a3; --ai-border:#8e8e8e; --ai-input:#d5d5d5; --ai-input-border:#8a8a8a;
+  --ai-text:#1b1b1b; --ai-text-dim:#3d3d3d; --ai-text-disabled:#767676; --ai-hover:#c9c9c9; --ai-accent:#1473e6; --ai-menu:#c6c6c6; --ai-menu-hover:#1473e6; --ai-menu-border:#8a8a8a;
+  --ai-sep:#9c9c9c; --ai-tool-on:#9a9a9a; --ai-ruler:#c4c4c4; --ai-ruler-ink:#262626; --ai-ruler-tick:#6a6a6a; --ai-btn:#a0a0a0; --ai-shadow:0 6px 18px rgba(0,0,0,.28); }
+.ce-root[data-ui="light"]{ --ai-frame:#e4e4e4; --ai-panel:#f1f1f1; --ai-panel-hi:#e8e8e8; --ai-pasteboard:#e2e2e2; --ai-border:#cbcbcb; --ai-input:#fff; --ai-input-border:#b3b3b3;
+  --ai-text:#222; --ai-text-dim:#555; --ai-text-disabled:#a3a3a3; --ai-hover:#e1e1e1; --ai-accent:#1473e6; --ai-menu:#fbfbfb; --ai-menu-hover:#1473e6; --ai-menu-border:#c8c8c8;
+  --ai-sep:#dadada; --ai-tool-on:#d0d0d0; --ai-ruler:#f4f4f4; --ai-ruler-ink:#333; --ai-ruler-tick:#8f8f8f; --ai-btn:#e1e1e1; --ai-shadow:0 6px 18px rgba(0,0,0,.18); }
+.ce-root[data-canvas="white"]{ --ai-pasteboard:#fff; }
 .ce-root *,.ce-root *::before,.ce-root *::after{ box-sizing:border-box; }
 .ce-root button{ font-family:inherit; border-radius:0; margin:0; box-shadow:none; text-transform:none; letter-spacing:normal; line-height:1.2; min-width:0; min-height:0; }
 .ce-root label{ font:inherit; letter-spacing:normal; text-transform:none; color:inherit; margin:0; }
 .ce-root input,.ce-root textarea{ border-radius:0; box-shadow:none; margin:0; }
 .ce-root [hidden]{ display:none !important; }
+/* ── the frame: Application bar, Control bar, document tabs, the Tools panel at the left, the docked panels at the right, the status bar ── */
 .ce-win{
-  position:absolute; inset:14px 16px; background:#fff; overflow:hidden; outline:none;
-  display:grid; grid-template-columns:auto minmax(0,1fr) auto; grid-template-rows:auto auto minmax(0,1fr) auto;
-  column-gap:12px; padding:10px 16px 10px; box-shadow:0 30px 80px rgba(28,29,29,.30);
+  position:absolute; inset:0; background:var(--ai-frame); overflow:hidden; outline:none;
+  display:grid; grid-template-columns:auto minmax(0,1fr) auto auto; grid-template-rows:auto auto auto minmax(0,1fr) auto;
 }
-.ce-win.is-nodock{ grid-template-columns:auto minmax(0,1fr); }
-/* ── head ── */
-.ce-head{ grid-area:1/1/2/-1; display:flex; align-items:center; gap:10px; min-width:0; padding:0 0 9px; margin-bottom:8px; border-bottom:1px solid var(--hair); }
-.ce-id{ flex:1 1 auto; min-width:0; display:flex; align-items:baseline; gap:14px; white-space:nowrap; overflow:hidden; }
-.ce-id h2{ font-family:var(--serif); font-weight:500; font-size:22px; line-height:1.1; margin:0; letter-spacing:.01em; color:var(--ink); flex:none; max-width:60%; overflow:hidden; text-overflow:ellipsis; }
-.ce-eyebrow{ font-size:10px; font-weight:700; letter-spacing:.2em; text-transform:uppercase; color:#8a8784; overflow:hidden; text-overflow:ellipsis; min-width:0; }
-.ce-icon{ flex:none; display:inline-flex; align-items:center; justify-content:center; gap:5px; height:32px; min-width:32px; padding:0 8px; border:1px solid var(--hair); background:#fff; color:var(--ink); cursor:pointer; font-size:9.5px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+.ce-head{ min-width:0; }
+.ce-appbar{ grid-area:1/1/2/-1; display:flex; align-items:center; gap:2px; height:32px; padding:0 4px 0 2px; background:var(--ai-frame); border-bottom:1px solid var(--ai-border); position:relative; z-index:3; }
+.ce-menubar{ flex:none; display:flex; align-items:stretch; height:100%; }
+.ce-mb__t,.ce-mb__all{ flex:none; display:inline-flex; align-items:center; height:100%; padding:0 8px; border:0; background:none; color:var(--ai-text); font-size:var(--ai-fs); cursor:default; border-radius:0; }
+.ce-mb__all{ display:none; padding:0 7px; } .ce-mb__all svg{ width:16px; height:16px; }
+.ce-mb__t:hover,.ce-mb__all:hover{ background:var(--ai-hover); }
+.ce-mb__t.is-open,.ce-mb__all.is-open{ background:var(--ai-menu-hover); color:var(--ai-accent-text); }
+.ce-root .ce-mb__t:focus-visible,.ce-root .ce-mb__all:focus-visible{ outline:2px solid var(--ai-accent); outline-offset:-2px; }
+.ce-id{ flex:1 1 auto; min-width:0; display:flex; align-items:baseline; justify-content:center; gap:8px; white-space:nowrap; overflow:hidden; padding:0 10px; }
+.ce-id h2{ font:600 var(--ai-fs)/1.2 var(--ai-font); margin:0; letter-spacing:0; color:var(--ai-text); flex:none; max-width:55%; overflow:hidden; text-overflow:ellipsis; }
+.ce-eyebrow{ font-size:11px; color:var(--ai-text-dim); overflow:hidden; text-overflow:ellipsis; min-width:0; }
+.ce-icon{ flex:none; display:inline-flex; align-items:center; justify-content:center; gap:5px; height:24px; min-width:24px; padding:0 4px; border:1px solid transparent; border-radius:3px; background:transparent; color:var(--ai-text); cursor:pointer; font-size:11px; }
 .ce-icon svg{ width:16px; height:16px; }
-.ce-icon b{ font-size:9px; font-weight:700; background:var(--ink); color:#fff; padding:1px 5px; letter-spacing:.04em; }
-.ce-icon:not(.is-on):hover{ background:var(--hov); border-color:var(--hov-line); }
-.ce-icon.is-on{ border-color:var(--ink); background:var(--band); }
-.ce-close{ font-size:20px; font-weight:400; border-color:transparent; color:var(--muted); }
-/* (opts.back, 28 Oct 2026: the way back to where the editor was opened from, first in the head and filled, so it is never taken for one of the editor's own tools) */
-.ce-back{ flex:none; display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 13px 0 8px; border:1px solid var(--ink); background:var(--ink); color:#fff; cursor:pointer; font-size:10px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; white-space:nowrap; }
-.ce-back svg{ width:16px; height:16px; } .ce-back:hover{ background:#3a3b3b; border-color:#3a3b3b; } .ce-back:focus-visible{ outline:2px solid var(--gold); outline-offset:2px; }
-@media (max-width:640px){ .ce-back{ padding:0 8px; } .ce-back span{ display:none; } }   /* (a phone: the arrow alone, its words in its title) */
+.ce-icon span{ display:none; }
+.ce-icon b{ font-size:9px; font-weight:600; background:var(--ai-accent); color:var(--ai-accent-text); padding:0 4px; border-radius:6px; }
+.ce-icon:not(.is-on):hover{ background:var(--ai-hover); }
+.ce-icon.is-on{ background:var(--ai-tool-on); border-color:var(--ai-border); }
+.ce-appbar .ce-drop{ flex:none; }
+.ce-close{ width:28px; color:var(--ai-text-dim); } .ce-close svg{ width:14px; height:14px; } .ce-close:hover{ color:var(--ai-text); }
+.ce-appbar__sep{ flex:none; width:1px; height:16px; background:var(--ai-sep); margin:0 4px; }
+/* (opts.back, 28 Oct 2026: the way back to where the editor was opened from, first in the bar, so it is never taken for one of the editor's own tools) */
+.ce-back{ flex:none; display:inline-flex; align-items:center; gap:4px; height:24px; padding:0 10px 0 4px; margin-right:2px; border:1px solid var(--ai-input-border); border-radius:12px; background:transparent; color:var(--ai-text); cursor:pointer; font-size:var(--ai-fs); font-weight:600; white-space:nowrap; }
+.ce-back svg{ width:14px; height:14px; } .ce-back:hover{ background:var(--ai-hover); } .ce-back:focus-visible{ outline:2px solid var(--ai-accent); outline-offset:1px; }
+@media (max-width:640px){ .ce-back{ padding:0 4px; } .ce-back span{ display:none; } }   /* (a phone: the arrow alone, its words in its title) */
+/* the commit area, at the right of the Application bar where Illustrator has its Share button: Cancel and Save as Spectrum buttons */
+.ce-hist{ flex:none; display:flex; gap:1px; }
+.ce-hist__b{ width:26px; height:24px; border:0; border-radius:3px; background:transparent; cursor:pointer; color:var(--ai-text); display:inline-flex; align-items:center; justify-content:center; }
+.ce-hist__b svg{ width:14px; height:14px; }
+.ce-hist__b:not(:disabled):hover{ background:var(--ai-hover); }
+.ce-hist__b:disabled{ color:var(--ai-text-disabled); cursor:default; }
+.ce-actions{ display:flex; gap:6px; flex:none; align-items:center; margin-left:4px; }
+.ce-btn{ display:inline-flex; align-items:center; justify-content:center; gap:8px; border:1px solid var(--ink); background:var(--ink); color:#fff; cursor:pointer; font-weight:700; font-size:11.5px; text-transform:uppercase !important; letter-spacing:.26em !important; padding:11px 24px; transition:background var(--in), border-color var(--in), color var(--in), transform var(--press-t); }
+.ce-btn:active{ transform:translateY(1px); }
+.ce-btn--ghost{ background:transparent; border-color:transparent; color:var(--muted); padding:11px 12px; }
+.ce-btn--ghost:hover,.ce-btn--ghost:focus-visible{ background:var(--hov); border-color:var(--hov-line); color:var(--ink); }
+.ce-btn--gold{ background:var(--gold); border-color:var(--gold); }
+.ce-btn--gold:hover{ background:#a2854b; border-color:#a2854b; }
+.ce-btn--gold:active{ background:#8f7644; }
+.ce-btn--ink:hover{ background:var(--on-hov); border-color:var(--on-hov); }
+.ce-appbar .ce-btn,.ce-ask .ce-btn,.ce-aibtn{ height:24px; padding:0 12px; border-radius:12px; font:600 var(--ai-fs)/1 var(--ai-font); text-transform:none !important; letter-spacing:0 !important; white-space:nowrap;
+  border:1px solid var(--ai-input-border); background:transparent; color:var(--ai-text); transform:none; position:relative; }
+.ce-appbar .ce-btn:hover,.ce-ask .ce-btn:hover,.ce-aibtn:hover{ background:var(--ai-hover); border-color:var(--ai-text-dim); color:var(--ai-text); }
+.ce-appbar .ce-btn--gold,.ce-ask .ce-btn--gold,.ce-ask .ce-btn--ink,.ce-aibtn--cta{ background:var(--ai-accent); border-color:var(--ai-accent); color:var(--ai-accent-text); }
+.ce-appbar .ce-btn--gold:hover,.ce-ask .ce-btn--gold:hover,.ce-ask .ce-btn--ink:hover,.ce-aibtn--cta:hover{ background:#1a6fd6; border-color:#1a6fd6; color:var(--ai-accent-text); }
+.ce-appbar .ce-btn:disabled{ opacity:.55; cursor:default; }
+.ce-root .ce-appbar .ce-btn:focus-visible,.ce-root .ce-ask .ce-btn:focus-visible,.ce-root .ce-aibtn:focus-visible{ outline:2px solid var(--ai-accent); outline-offset:2px; }
 .ce-ask__b:has(> [data-ask="alt"]){ flex-direction:column-reverse; align-items:stretch; gap:8px; }   /* (three answers: one column, "Save and go back" first, then Discard, then Keep editing) */
-.ce-head .ce-seg{ flex:none; }
 .ce-short{ display:none; }
-/* (27 Oct 2026: a bar that would wrap on a desk, words with a long font name and their weight, says the role in one word, Hatch, Line, and the menu says the rest) */
+/* (27 Oct 2026: a bar that would not fit says the role in one word, Hatch, Line, and the menu says the rest) */
 .ce-props.is-tight .ce-long{ display:none; } .ce-props.is-tight .ce-short{ display:inline; }
-/* ── the rail (C 5049-5111) ── */
-.ce-rail{ grid-area:2/1/5/2; align-self:stretch; display:flex; flex-direction:column; width:52px; padding:5px 4px; border:1px solid var(--hair); background:#fff; overflow:visible; min-height:0; }
-.ce-tools{ display:flex; flex-direction:column; gap:1px; }
-.ce-tool{ position:relative; width:42px; height:42px; padding:0; display:inline-flex; align-items:center; justify-content:center; border:1px solid transparent; background:none; cursor:pointer; color:var(--muted);
-  transform-origin:center; transition:background var(--in), color var(--in), border-color var(--in); }
-.ce-tool svg{ width:18px; height:18px; transition:transform .13s cubic-bezier(.22,.9,.25,1); will-change:transform; }
-.ce-tool.is-on{ background:var(--ink); border-color:var(--ink); color:#fff; }
-.ce-tool:not(.is-on):hover{ background:var(--hov); color:var(--ink); }
-.ce-tool.is-on:hover{ background:var(--on-hov); border-color:var(--on-hov); }
-.ce-tool:not(.is-on):active{ background:var(--press); transform:translateY(1px); }
-.ce-rail .ce-drop__b::after{ content:""; position:absolute; right:3px; bottom:3px; width:0; height:0; border-left:4.5px solid transparent; border-bottom:4.5px solid currentColor; opacity:.5; pointer-events:none; }
-.ce-rail .ce-drop__b.is-on::after,.ce-rail .ce-drop__b:hover::after{ opacity:.85; }
-.ce-hist{ display:flex; flex-direction:column; gap:3px; margin:auto 0 0; padding:7px 0 1px; border-top:1px solid var(--hair); }
-.ce-hist__b{ width:42px; height:32px; border:1px solid var(--hair); background:#fff; cursor:pointer; color:var(--ink); display:inline-flex; align-items:center; justify-content:center; }
-.ce-hist__b svg{ width:15px; height:15px; }
-.ce-hist__b:not(:disabled):hover{ background:var(--hov); border-color:var(--hov-line); }
-.ce-hist__b:disabled{ opacity:.35; cursor:default; }
-/* ── the property bar (C 3572-3734) ── */
-.ce-props{ grid-area:2/2/3/3; display:flex; align-items:center; flex-wrap:wrap; gap:6px; row-gap:6px; min-width:0; padding:0 0 7px; margin-bottom:7px; border-bottom:1px solid var(--hair); }
-.ce-prop{ display:inline-flex; align-items:center; gap:6px; white-space:nowrap; height:30px; border:1px solid var(--hair); background:#fff; cursor:pointer; padding:0 9px;
-  font-size:9.5px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--ink); flex:0 0 auto; transition:border-color var(--in), background var(--in); }
-.ce-prop:not(:disabled):hover{ background:var(--hov); border-color:var(--hov-line); }
-.ce-prop:disabled{ opacity:.32; cursor:default; }
-.ce-caret{ width:0; height:0; margin-left:2px; flex:none; border-left:3.5px solid transparent; border-right:3.5px solid transparent; border-top:4px solid currentColor; opacity:.75; }
-.ce-fontA{ font-size:12px; font-weight:700; letter-spacing:0; text-transform:none; }
-.ce-fontname{ max-width:96px; overflow:hidden; text-overflow:ellipsis; letter-spacing:.08em; }
-/* (CETEXT, Paul 28 Oct 2026: "the text style and font style and alphabet style": the Font menu is the words' one menu, the bar stays one row on a desk: Style (Bold, Italic, the
-   alignment) and the Alphabet as rows of buttons at its top, every engraving font below, each drawn in itself with its kind beside it) */
+/* ── the document tabs: Front and Back, the piece as the document (Illustrator's tabs under the Control bar) ── */
+.ce-doctabs{ grid-area:3/2/4/3; display:flex; align-items:flex-end; height:26px; padding:0; background:var(--ai-frame); border-bottom:1px solid var(--ai-border); overflow:hidden; }
+.ce-doctabs .ce-seg{ display:flex; height:100%; border:0; align-items:stretch; }
+.ce-doctabs .ce-seg button{ position:relative; display:inline-flex; align-items:center; gap:0; height:100%; padding:0 26px 0 12px; border:0; border-right:1px solid var(--ai-border); background:var(--ai-panel-hi);
+  color:var(--ai-text-dim); font:400 var(--ai-fs)/1 var(--ai-font); cursor:pointer; white-space:nowrap; max-width:46vw; }
+.ce-doctabs .ce-seg button.is-on{ background:var(--ai-pasteboard); color:var(--ai-text); }
+.ce-doctabs .ce-seg button:not(.is-on):not(:disabled):hover{ background:var(--ai-hover); color:var(--ai-text); }
+.ce-doctabs .ce-seg button:disabled{ color:var(--ai-text-disabled); cursor:default; }
+.ce-doctabs .ce-seg button::after{ content:"×"; position:absolute; right:9px; top:50%; transform:translateY(-52%); font-size:13px; color:var(--ai-text-dim); opacity:0; }
+.ce-doctabs .ce-seg button.is-on::after{ opacity:.65; }
+.ce-dt__n{ display:inline-block; max-width:24ch; overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; }
+.ce-dt__z{ color:var(--ai-text-dim); margin-left:4px; }
+/* ── the Tools panel (Illustrator's toolbar: single column, » for two, flyout triangles, Fill / Stroke and the screen mode at its foot) ── */
+.ce-rail{ grid-area:3/1/6/2; align-self:stretch; display:flex; flex-direction:column; align-items:center; width:auto; padding:0 0 6px; background:var(--ai-panel); border-right:1px solid var(--ai-border); min-height:0; overflow:visible; position:relative; z-index:2; }
+.ce-rail__head{ flex:none; align-self:stretch; display:flex; align-items:center; justify-content:flex-start; height:13px; padding:0 3px; background:var(--ai-panel-hi); border-bottom:1px solid var(--ai-border); }
+.ce-rail__cols{ width:14px; height:11px; padding:0; border:0; background:none; color:var(--ai-text-dim); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+.ce-rail__cols svg{ width:9px; height:7px; } .ce-rail__cols:hover{ color:var(--ai-text); }
+.ce-rail.is-2col .ce-rail__cols svg{ transform:scaleX(-1); }
+.ce-tools{ display:grid; grid-template-columns:32px; gap:1px 0; padding:4px 3px 0; justify-items:center; }
+.ce-rail.is-2col .ce-tools{ grid-template-columns:32px 32px; }
+.ce-tsep{ grid-column:1/-1; justify-self:stretch; height:1px; background:var(--ai-sep); margin:3px 2px; opacity:.7; }
+.ce-tool{ position:relative; width:32px; height:28px; padding:0; display:inline-flex; align-items:center; justify-content:center; border:0; border-radius:3px; background:none; cursor:default; color:var(--ai-text); }
+.ce-tool svg{ width:20px; height:20px; }
+.ce-tool.is-on{ background:var(--ai-tool-on); }
+.ce-tool:not(.is-on):hover{ background:var(--ai-hover); }
+.ce-rail .ce-drop__b::after{ content:""; position:absolute; right:2px; bottom:2px; width:0; height:0; border-left:4px solid transparent; border-bottom:4px solid currentColor; opacity:.75; pointer-events:none; }
+.ce-paint{ flex:none; position:relative; width:52px; height:46px; margin:8px 0 2px; }
+.ce-paint__sw{ position:absolute; width:24px; height:24px; padding:0; border:1px solid var(--ai-border); cursor:pointer; background:#fff; }
+.ce-paint__sw--fill{ left:6px; top:5px; z-index:1; }
+.ce-paint__sw--stroke{ left:18px; top:17px; background:transparent; border:6px solid #000; box-shadow:inset 0 0 0 1px var(--ai-border), 0 0 0 1px var(--ai-border); }
+.ce-paint__sw.is-front{ z-index:2; }
+.ce-paint__sw.is-none{ background:linear-gradient(to top right,#fff calc(50% - 1px),#e2262b calc(50% - 1px),#e2262b calc(50% + 1px),#fff calc(50% + 1px)) !important; }
+.ce-paint__sw--stroke.is-none{ border-color:#fff; background:linear-gradient(to top right,transparent calc(50% - 1px),#e2262b calc(50% - 1px),#e2262b calc(50% + 1px),transparent calc(50% + 1px)) !important; }
+.ce-paint__mini{ position:absolute; width:14px; height:14px; padding:0; border:0; background:none; color:var(--ai-text-dim); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+.ce-paint__mini svg{ width:12px; height:12px; } .ce-paint__mini:hover{ color:var(--ai-text); }
+.ce-paint__mini--swap{ right:2px; top:0; } .ce-paint__mini--def{ left:1px; bottom:0; }
+.ce-paint__mini--def i{ position:absolute; width:6px; height:6px; border:1px solid #000; background:#fff; } .ce-paint__mini--def i + i{ left:6px; top:6px; background:#000; border-color:#fff; outline:1px solid #000; }
+.ce-scr{ flex:none; width:32px; height:24px; margin-top:4px; border:0; border-radius:3px; background:none; color:var(--ai-text); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+.ce-scr svg{ width:18px; height:18px; } .ce-scr:hover{ background:var(--ai-hover); }
+/* ── the Control bar (Illustrator's Control panel: what is selected and its properties, one row) ── */
+.ce-props{ grid-area:2/1/3/-1; display:flex; align-items:center; flex-wrap:nowrap; gap:6px; min-width:0; height:34px; padding:0 8px; background:var(--ai-panel); border-bottom:1px solid var(--ai-border); overflow:hidden; position:relative; z-index:2; }
+.ce-props > *{ flex:0 0 auto; }
+.ce-ctl__kind{ flex:none; font-size:var(--ai-fs); color:var(--ai-text); min-width:72px; padding-right:2px; white-space:nowrap; }
+.ce-ctl__lab{ flex:none; font-size:var(--ai-fs); color:var(--ai-text-dim); white-space:nowrap; text-decoration:underline dotted; text-underline-offset:2px; text-decoration-color:var(--ai-text-disabled); }
+.ce-ctl__sep{ flex:none; width:1px; height:20px; background:var(--ai-sep); opacity:.8; }
+.ce-ctl__grow{ flex:1 1 auto !important; min-width:0; }
+.ce-prop{ display:inline-flex; align-items:center; gap:6px; white-space:nowrap; height:22px; border:1px solid var(--ai-input-border); border-radius:2px; background:var(--ai-input); cursor:pointer; padding:0 6px;
+  font-size:var(--ai-fs); font-weight:400; letter-spacing:0; text-transform:none; color:var(--ai-text); flex:0 0 auto; }
+.ce-prop:not(:disabled):hover{ border-color:var(--ai-text-dim); }
+.ce-prop:disabled{ opacity:.45; cursor:default; }
+.ce-prop svg{ width:16px; height:16px; }
+.ce-caret{ width:0; height:0; margin-left:2px; flex:none; border-left:3.5px solid transparent; border-right:3.5px solid transparent; border-top:4px solid currentColor; opacity:.8; }
+.ce-fontA{ font-size:12px; font-weight:600; letter-spacing:0; text-transform:none; }
+.ce-fontname{ max-width:110px; overflow:hidden; text-overflow:ellipsis; }
+.ce-props [data-drop="font"] .ce-prop{ min-width:150px; justify-content:space-between; }
+.ce-props [data-drop="fstyle"] .ce-prop{ min-width:82px; justify-content:space-between; }
+.ce-props [data-drop="role"] .ce-prop{ gap:4px; padding:0 5px 0 3px; }
+.ce-ctl__sw{ width:16px; height:16px; flex:none; display:inline-block; border:1px solid var(--ai-border); background:#fff; position:relative; }
+.ce-ctl__sw.is-stroke{ background:transparent; border:4px solid #000; box-shadow:0 0 0 1px var(--ai-border); }
+.ce-ctl__sw.is-none{ background:linear-gradient(to top right,#fff calc(50% - 1px),#e2262b calc(50% - 1px),#e2262b calc(50% + 1px),#fff calc(50% + 1px)) !important; border-color:var(--ai-border) !important; border-width:1px !important; }
+.ce-ctl__para{ display:inline-flex; gap:1px; }
+.ce-ctl__para .ce-tsbtn{ min-width:24px; height:22px; padding:0 3px; }
+/* (CETEXT, Paul 28 Oct 2026: "the text style and font style and alphabet style": the Font menu is the words' one menu: Style (Bold, Italic, the alignment) and the Alphabet as
+   rows of buttons at its top, every engraving font below, each drawn in itself with its kind beside it) */
 .ce-menu--text{ min-width:268px; }
-.ce-tsrow{ display:flex; align-items:center; gap:4px; padding:2px 9px 6px; }
+.ce-tsrow{ display:flex; align-items:center; gap:3px; padding:2px 10px 6px; }
 .ce-tsgap{ width:10px; flex:none; }
-.ce-tsbtn{ min-width:32px; height:30px; padding:0 7px; border:1px solid var(--hair); background:#fff; cursor:pointer; color:var(--ink); display:inline-flex; align-items:center; justify-content:center; font-size:13px; line-height:1; flex:none; }
+.ce-tsbtn{ min-width:30px; height:26px; padding:0 6px; border:1px solid var(--ai-input-border); border-radius:2px; background:var(--ai-input); cursor:pointer; color:var(--ai-text); display:inline-flex; align-items:center; justify-content:center; font-size:13px; line-height:1; flex:none; }
 .ce-tsbtn b{ font-weight:800; font-family:Georgia,serif; } .ce-tsbtn i{ font-family:Georgia,serif; font-weight:600; }
 .ce-tsbtn svg{ width:15px; height:15px; }
-.ce-tsbtn:hover{ background:var(--hov); border-color:var(--hov-line); }
-.ce-tsbtn.is-on{ background:var(--ink); border-color:var(--ink); color:#fff; }
-.ce-tsbtn.is-off{ opacity:.32; cursor:default; } .ce-tsbtn.is-off:hover{ background:#fff; border-color:var(--hair); }
-.ce-tsbtn--case{ font-weight:700; font-size:12.5px; }
-.ce-tsname{ margin-left:6px; letter-spacing:.06em; text-transform:none; font-weight:600; color:var(--ink); }
-.ce-item.ce-font{ font-size:16px; padding:6px 9px; text-transform:none; letter-spacing:0; }
-.ce-item.ce-font[data-kind]::after{ content:attr(data-kind); margin-left:auto; padding-left:14px; font:400 10px/1 var(--sans,sans-serif); letter-spacing:.06em; color:var(--muted); white-space:nowrap; }
+.ce-tsbtn:hover{ border-color:var(--ai-text-dim); }
+.ce-tsbtn.is-on{ background:var(--ai-tool-on); border-color:var(--ai-text-dim); color:var(--ai-text); box-shadow:inset 0 0 0 1px var(--ai-accent); }
+.ce-tsbtn.is-off{ opacity:.35; cursor:default; }
+.ce-tsbtn--case{ font-weight:600; font-size:12.5px; }
+.ce-tsname{ margin-left:6px; font-weight:600; color:var(--ai-text); text-transform:none; letter-spacing:0; }
+.ce-item.ce-font{ font-size:16px; height:auto; min-height:var(--ai-row); padding:4px 18px 4px 26px; text-transform:none; letter-spacing:0; }
+.ce-item.ce-font[data-kind]::after{ content:attr(data-kind); margin-left:auto; padding-left:14px; font:400 10.5px/1 var(--ai-font); color:var(--ai-text-dim); white-space:nowrap; }
+.ce-item.ce-font:hover[data-kind]::after{ color:var(--ai-accent-text); }
 .ce-menu:has(.ce-font){ min-width:250px; }
-/* position and size, then the angle behind a shaded gutter: one box on a desktop (C 3707-3716), two boxes that wrap on their own on a phone */
-.ce-sizes{ display:inline-flex; align-items:stretch; flex:0 0 auto; border:1px solid var(--hair); background:#fff; height:30px; }
-.ce-size{ display:inline-flex; align-items:center; flex:0 0 auto; background:#fff; height:100%; }
-.ce-size__f{ display:inline-flex; align-items:center; gap:6px; padding:0 8px; height:100%; cursor:text; border-left:1px solid var(--hair); }
-.ce-size__f:first-child,.ce-size__sep + .ce-size__f,.ce-size__link + .ce-size__f{ border-left:0; }
-.ce-size__f > span{ font-size:12px; font-weight:800; letter-spacing:.06em; color:var(--ink); opacity:.62; }
-.ce-size input{ width:40px; border:0; padding:0; background:none; outline:none; height:auto; font-family:inherit; font-size:11px; font-weight:600; color:var(--ink); text-align:right; -moz-appearance:textfield; }
-.ce-size input:disabled{ color:var(--muted); opacity:.55; }
-.ce-size__f:focus-within{ background:var(--band); }
-.ce-size__f:focus-within > span{ opacity:1; }
-.ce-size__sep{ align-self:stretch; flex:0 0 auto; width:10px; border-left:1px solid var(--hair); border-right:1px solid var(--hair); background:var(--band); }
-.ce-size__link{ align-self:stretch; width:22px; border:0; border-left:1px solid var(--hair); border-right:1px solid var(--hair); background:none; cursor:pointer; color:var(--hov-line); display:inline-flex; align-items:center; justify-content:center; padding:0; }
+/* position and size, then the angle: Illustrator's Transform fields (X: Y: W: H:, the link between W and H, the reference point before them) */
+.ce-refpt{ flex:none; display:grid; grid-template-columns:repeat(3,6px); grid-template-rows:repeat(3,6px); gap:2px; padding:2px; border:1px solid var(--ai-input-border); border-radius:2px; background:var(--ai-input); }
+.ce-refpt button{ width:6px; height:6px; padding:0; border:1px solid var(--ai-text-dim); background:transparent; cursor:pointer; border-radius:0; }
+.ce-refpt button.is-on{ background:var(--ai-text); border-color:var(--ai-text); }
+.ce-refpt button:hover{ border-color:var(--ai-text); }
+.ce-sizes{ display:inline-flex; align-items:center; flex:0 0 auto; gap:4px; height:22px; }
+.ce-size{ display:inline-flex; align-items:center; gap:4px; flex:0 0 auto; height:100%; }
+.ce-size__f{ display:inline-flex; align-items:center; gap:3px; padding:0; height:100%; cursor:text; }
+.ce-size__f > span{ font-size:var(--ai-fs); color:var(--ai-text-dim); }
+.ce-size__f > span::after{ content:":"; }
+.ce-size__f--rot > span::after{ content:""; }
+.ce-size input{ width:58px; height:22px; border:1px solid var(--ai-input-border); border-radius:2px; padding:0 5px; background:var(--ai-input); outline:none; font-family:inherit; font-size:var(--ai-fs); color:var(--ai-text); text-align:left; -moz-appearance:textfield; }
+.ce-size input:focus{ border-color:var(--ai-accent); box-shadow:0 0 0 1px var(--ai-accent); }
+.ce-size input:disabled{ color:var(--ai-text-disabled); background:transparent; border-color:var(--ai-border); }
+.ce-size__sep{ align-self:center; flex:0 0 auto; width:1px; height:20px; background:var(--ai-sep); opacity:.7; margin:0 2px; }
+.ce-size__link{ align-self:center; width:18px; height:22px; border:0; background:none; cursor:pointer; color:var(--ai-text-disabled); display:inline-flex; align-items:center; justify-content:center; padding:0; border-radius:2px; }
 .ce-size__link svg{ width:13px; height:13px; }
-.ce-size__link.is-on{ color:var(--ink); }
-.ce-size__link:hover{ background:var(--hov); }
-.ce-size__u{ padding:0 8px 0 4px; font-style:normal; font-size:10px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); line-height:28px; }
-.ce-size__f--rot{ padding-left:8px; }
-.ce-size__f--rot > span{ font-size:16px; line-height:1; font-weight:600; letter-spacing:0; position:relative; top:-1px; }
-.ce-size__f--rot input{ width:38px; }
-.ce-size__u--deg{ font-size:13px; letter-spacing:0; padding:0 8px 0 1px; }
-.ce-num{ display:inline-flex; align-items:center; gap:4px; height:30px; padding:0 8px; border:1px solid var(--hair); background:#fff; flex:0 0 auto; }
-.ce-num input{ width:34px; border:0; padding:0; outline:none; background:none; font-family:inherit; font-size:11px; font-weight:600; color:var(--ink); text-align:right; height:auto; }
-.ce-num i{ font-style:normal; font-size:10px; font-weight:800; letter-spacing:.1em; color:var(--muted); }
-.ce-num:focus-within{ background:var(--band); }
-.ce-num__b{ flex:none; width:20px; height:24px; margin:0 0 0 -4px; padding:0; border:0; background:none; cursor:pointer; color:var(--muted); display:inline-flex; align-items:center; justify-content:center; }
+.ce-size__link.is-on{ color:var(--ai-text); }
+.ce-size__link:hover{ background:var(--ai-hover); }
+.ce-size__u{ padding:0 2px 0 0; font-style:normal; font-size:11px; color:var(--ai-text-dim); line-height:22px; }
+.ce-size__f--rot > span{ font-size:14px; line-height:1; position:relative; top:-1px; }
+.ce-size__f--rot input{ width:46px; }
+.ce-size__u--deg{ font-size:12px; padding:0 2px 0 0; }
+.ce-num{ display:inline-flex; align-items:center; gap:4px; height:22px; padding:0 4px 0 2px; border:1px solid var(--ai-input-border); border-radius:2px; background:var(--ai-input); flex:0 0 auto; color:var(--ai-text); }
+.ce-num input{ width:38px; border:0; padding:0; outline:none; background:none; font-family:inherit; font-size:var(--ai-fs); color:var(--ai-text); text-align:right; height:auto; }
+.ce-num i{ font-style:normal; font-size:11px; color:var(--ai-text-dim); }
+.ce-num b{ font-weight:400; color:var(--ai-text-dim); }
+.ce-num:focus-within{ border-color:var(--ai-accent); box-shadow:0 0 0 1px var(--ai-accent); }
+.ce-num__b{ flex:none; width:20px; height:20px; margin:0; padding:0; border:0; background:none; cursor:pointer; color:var(--ai-text-dim); display:inline-flex; align-items:center; justify-content:center; border-radius:2px; }
 .ce-num__b svg{ width:15px; height:15px; }
-.ce-num__b:hover{ background:var(--hov); color:var(--ink); }
-.ce-num__b.is-on{ color:var(--gold); }
-.ce-num--thick{ padding:0 7px; gap:3px; } .ce-num--thick input{ width:34px; }
-.ce-seg{ display:inline-flex; flex:0 0 auto; border:1px solid var(--hair); height:30px; }
-.ce-seg button{ border:0; background:#fff; padding:0 11px; cursor:pointer; font-size:9.5px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); }
-.ce-seg button + button{ border-left:1px solid var(--hair); }
-.ce-seg button.is-on{ background:var(--ink); color:#fff; }
-.ce-seg button:not(.is-on):not(:disabled):hover{ background:var(--hov); color:var(--ink); }
-.ce-seg button:disabled{ opacity:.35; cursor:default; }
-.ce-zoomb{ min-width:74px; justify-content:space-between; font-variant-numeric:tabular-nums; letter-spacing:.06em; }
+.ce-num__b:hover{ background:var(--ai-hover); color:var(--ai-text); }
+.ce-num__b.is-on{ color:var(--ai-accent); }
+.ce-num--thick{ padding:0 4px 0 1px; gap:3px; } .ce-num--thick input{ width:38px; }
+.ce-seg{ display:inline-flex; flex:0 0 auto; border:1px solid var(--ai-input-border); border-radius:2px; height:22px; }
+.ce-seg button{ border:0; background:var(--ai-input); padding:0 9px; cursor:pointer; font-size:var(--ai-fs); color:var(--ai-text-dim); }
+.ce-seg button + button{ border-left:1px solid var(--ai-input-border); }
+.ce-seg button.is-on{ background:var(--ai-tool-on); color:var(--ai-text); }
+.ce-seg button:not(.is-on):not(:disabled):hover{ background:var(--ai-hover); color:var(--ai-text); }
+.ce-seg button:disabled{ opacity:.45; cursor:default; }
 .ce-sw{ width:12px; height:12px; flex:none; display:inline-block; position:relative; }
 .ce-sw--cut{ border:1.5px solid var(--c-cut); background:#fff; }
 .ce-sw--line{ border:1.5px solid var(--c-line); background:#fff; }
@@ -1126,55 +1290,61 @@
 .ce-sw--mixed{ background:linear-gradient(135deg,var(--c-line) 0 50%,var(--c-hatch) 50% 100%); }
 .ce-sw.is-text{ background:none; border:0; font-size:12px; font-weight:800; line-height:12px; text-align:center; }
 .ce-sw.is-text.ce-sw--cut{ color:var(--c-cut); } .ce-sw.is-text.ce-sw--line{ color:var(--c-line); } .ce-sw.is-text.ce-sw--hatch{ color:var(--c-hatch); } .ce-sw.is-text.ce-sw--art{ color:var(--c-art); }
-/* ── menus (C 3736-3826, 5149-5170) ── */
+/* ── menus: Illustrator's (one row 24 px, the check column, the name, the shortcut column at the right, ▸ for a submenu; the row under the pointer in Spectrum blue) ── */
 .ce-drop{ position:relative; flex:0 0 auto; }
-.ce-menu{ position:fixed; z-index:20; min-width:200px; max-height:min(70vh,520px); max-width:min(320px,calc(100vw - 32px)); overflow-y:auto; background:#fff; border:1px solid var(--ink); padding:5px; box-shadow:0 18px 44px rgba(28,29,29,.22); }
-.ce-rail .ce-menu{ min-width:190px; padding:4px; }
-.ce-menu__head{ font-size:9px; font-weight:700; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); padding:8px 9px 5px; }
-.ce-item.ce-alphafind{ display:grid; gap:2px; text-align:left; font-weight:600; text-transform:none; letter-spacing:0; }
-.ce-item.ce-alphafind small{ font:400 11px/1.3 "Noto Sans",system-ui,sans-serif; color:var(--muted); }
-.ce-menu__note{ font-size:11px; line-height:1.55; color:var(--muted); padding:7px 9px 4px; border-top:1px solid var(--hair); margin-top:4px; }
-.ce-menu__note b{ color:var(--ink); font-weight:700; }
-.ce-item{ position:relative; display:flex; align-items:center; gap:9px; width:100%; text-align:left; border:0; background:none; cursor:pointer; padding:7px 9px; font-size:12.5px; color:var(--ink); }
-.ce-item svg{ width:15px; height:15px; flex:none; opacity:.75; }
-.ce-item em{ font-style:normal; margin-left:auto; padding-left:14px; font-size:10px; letter-spacing:.06em; color:var(--muted); white-space:nowrap; }
-.ce-item:hover,.ce-item:focus-visible{ background:#f1ede3; outline:none; }
-.ce-item:hover::before,.ce-item:focus-visible::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:2px; background:var(--gold); }
-.ce-item:active{ background:#e7e1d3; }
-.ce-item.is-on{ box-shadow:inset 3px 0 0 0 var(--gold); font-weight:700; }
-.ce-item.is-off{ opacity:.34; cursor:default; }
-.ce-item.is-off:hover{ background:none; } .ce-item.is-off:hover::before{ display:none; }
-.ce-item--danger:not(.is-off):hover{ color:#c0392b; }
-.ce-tick{ width:14px; height:14px; flex:none; border:1px solid var(--hair); position:relative; }
-.ce-item--tog.is-on{ box-shadow:none; font-weight:400; }
-.ce-item--tog.is-on .ce-tick::after{ content:"✓"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:11px; line-height:1; }
-.ce-menu__sep{ height:1px; background:var(--hair); margin:4px 2px; }
-@keyframes cePopDown{ from{ opacity:0; transform:translateY(-5px) scale(.985); } to{ opacity:1; transform:none; } }
-@keyframes cePopRight{ from{ opacity:0; transform:translateX(-7px) scale(.985); } to{ opacity:1; transform:none; } }
-.ce-menu.is-in{ animation:cePopDown .17s cubic-bezier(.16,1,.3,1); }
-.ce-menu.is-in--right{ animation:cePopRight .18s cubic-bezier(.16,1,.3,1); }
-/* ── the work area: rulers and the room (C 4939-4995, 5207-5228) ── */
-.ce-wrap{ grid-area:3/2/4/3; min-height:0; min-width:0; display:grid; grid-template-columns:var(--rule) minmax(0,1fr); grid-template-rows:var(--rule) minmax(0,1fr); border:1px solid var(--hair); }
-.ce-rule{ display:block; background:var(--band); min-width:0; min-height:0; width:100%; height:100%; }
-.ce-rule__corner{ grid-area:1/1; border-right:1px solid var(--hair); border-bottom:1px solid var(--hair); font-size:7.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); display:flex; align-items:center; justify-content:center; }
-.ce-rule--x{ grid-area:1/2; border-bottom:1px solid var(--hair); }
-.ce-rule--y{ grid-area:2/1; border-right:1px solid var(--hair); }
-/* (28 Oct 2026) the corner is the zero point's handle (C 4954-4961: the studio's corner is a button too), the rulers give guides */
-.ce-root button.ce-rule__corner{ padding:0; border-top:0; border-left:0; background:var(--band); cursor:crosshair; touch-action:none; position:relative; transition:color var(--in), background var(--in); }
-.ce-root button.ce-rule__corner:hover{ color:var(--ink); background:#fff; }
-.ce-rule__corner.is-moved::after{ content:""; position:absolute; right:2px; bottom:2px; width:4px; height:4px; background:var(--gold); }
+.ce-menu{ position:fixed; z-index:20; min-width:200px; max-height:min(80vh,640px); max-width:min(360px,calc(100vw - 16px)); overflow-y:auto; overflow-x:hidden; background:var(--ai-menu); color:var(--ai-text);
+  border:1px solid var(--ai-menu-border); border-radius:4px; padding:4px 0; box-shadow:var(--ai-shadow); font-size:var(--ai-fs); }
+.ce-aimenu{ min-width:220px; max-width:min(420px,calc(100vw - 16px)); }
+.ce-rail .ce-menu{ min-width:200px; }
+.ce-menu__head{ font-size:11px; font-weight:600; color:var(--ai-text-dim); padding:6px 18px 3px 26px; }
+.ce-item.ce-alphafind{ display:grid; gap:2px; text-align:left; height:auto; padding:5px 18px 5px 26px; }
+.ce-item.ce-alphafind small{ font:400 11px/1.3 "Noto Sans",system-ui,sans-serif; color:var(--ai-text-dim); }
+.ce-menu__note{ font-size:11px; line-height:1.5; color:var(--ai-text-dim); padding:7px 18px 4px 26px; border-top:1px solid var(--ai-sep); margin-top:4px; max-width:340px; }
+.ce-menu__note b{ color:var(--ai-text); font-weight:600; }
+.ce-item{ position:relative; display:flex; align-items:center; gap:8px; width:100%; min-height:var(--ai-row); text-align:left; border:0; background:none; cursor:default; padding:0 18px 0 26px; font-size:var(--ai-fs); color:var(--ai-text); white-space:nowrap; }
+.ce-root .ce-item{ min-height:var(--ai-row); line-height:1.25; }
+.ce-item svg{ width:16px; height:16px; flex:none; opacity:.85; margin-left:-20px; }
+.ce-item em{ font-style:normal; margin-left:auto; padding-left:28px; font-size:var(--ai-fs); color:var(--ai-text-dim); white-space:nowrap; }
+.ce-item:hover:not(.is-off),.ce-item:focus-visible:not(.is-off),.ce-aimi.is-open{ background:var(--ai-menu-hover); color:var(--ai-accent-text); outline:none; }
+.ce-item:hover:not(.is-off) em,.ce-item:focus-visible:not(.is-off) em,.ce-aimi.is-open em{ color:var(--ai-accent-text); }
+.ce-item:focus{ outline:none; }
+.ce-item.is-on::before,.ce-aimi.is-chk::before{ content:"✓"; position:absolute; left:9px; top:50%; transform:translateY(-50%); font-size:11px; line-height:1; }
+.ce-item.is-on{ font-weight:400; }
+.ce-item.is-off{ color:var(--ai-text-disabled); cursor:default; }
+.ce-item.is-off em{ color:var(--ai-text-disabled); }
+.ce-item--danger:not(.is-off):hover{ background:#d7373f; }
+.ce-tick{ display:none; }
+.ce-item--tog.is-on::before{ content:"✓"; }
+.ce-aimi__l{ overflow:hidden; text-overflow:ellipsis; }
+.ce-aimi--sub{ padding-right:24px; }
+.ce-aimi--sub::after{ content:""; position:absolute; right:9px; top:50%; margin-top:-4px; border-top:4px solid transparent; border-bottom:4px solid transparent; border-left:5px solid currentColor; opacity:.85; }
+.ce-aisub{ position:relative; }
+.ce-menu__sep{ height:1px; background:var(--ai-sep); margin:4px 0; }
+@keyframes cePopDown{ from{ opacity:0; } to{ opacity:1; } }
+.ce-menu.is-in,.ce-menu.is-in--right{ animation:cePopDown .08s linear; }
+/* ── the work area: rulers and the pasteboard (C 4939-4995, 5207-5228) ── */
+.ce-wrap{ grid-area:4/2/5/3; min-height:0; min-width:0; display:grid; grid-template-columns:var(--rule) minmax(0,1fr); grid-template-rows:var(--rule) minmax(0,1fr); background:var(--ai-pasteboard); }
+.ce-wrap.is-norulers{ grid-template-columns:0 minmax(0,1fr); grid-template-rows:0 minmax(0,1fr); }
+.ce-wrap.is-norulers .ce-rule{ visibility:hidden; }
+.ce-rule{ display:block; background:var(--ai-ruler); min-width:0; min-height:0; width:100%; height:100%; }
+.ce-rule__corner{ grid-area:1/1; border-right:1px solid var(--ai-border); border-bottom:1px solid var(--ai-border); font-size:7px; color:var(--ai-ruler-ink); display:flex; align-items:center; justify-content:center; }
+.ce-rule--x{ grid-area:1/2; border-bottom:1px solid var(--ai-border); }
+.ce-rule--y{ grid-area:2/1; border-right:1px solid var(--ai-border); }
+/* (28 Oct 2026) the corner is the zero point's handle, the rulers give guides */
+.ce-root button.ce-rule__corner{ padding:0; border-top:0; border-left:0; background:var(--ai-ruler); cursor:crosshair; touch-action:none; position:relative; color:var(--ai-ruler-tick); }
+.ce-root button.ce-rule__corner:hover{ color:var(--ai-ruler-ink); background:var(--ai-hover); }
+.ce-rule__corner.is-moved::after{ content:""; position:absolute; right:2px; bottom:2px; width:4px; height:4px; background:var(--ai-accent); }
 .ce-rule--x{ cursor:row-resize; touch-action:none; } .ce-rule--y{ cursor:col-resize; touch-action:none; }
 .ce-view{ position:absolute; left:0; top:0; width:100%; height:100%; overflow:hidden; display:block; pointer-events:none; }
 /* (the charm's own paths are never what a press lands on: the editor finds the part under the hand itself, so the browser is spared hit-testing hundreds of curves on every move) */
 .ce-art{ pointer-events:none; }
 /* a pan slides what is drawn (the workspace's slide()): each sliding layer on the compositor, drawn past its own edges */
 .ce-selo{ position:absolute; left:0; top:0; width:100%; height:100%; overflow:hidden; display:block; pointer-events:none; }
-.ce-selo .u-sel{ fill:none; stroke:var(--gold); stroke-width:1; }
+.ce-selo .u-sel{ fill:none; stroke:var(--ai-sel); stroke-width:1; }
 .ce-stage.is-fastpan .ce-art,.ce-stage.is-fastpan .ce-ui,.ce-stage.is-fastpan .ce-view,.ce-stage.is-fastpan .ce-selo{ overflow:visible; will-change:transform; }
 .ce-stage.is-fastpan .ce-paper{ will-change:transform; }
-/* A LONG LAYERS LIST COSTS THE ZOOM NOTHING (28 Oct 2026): a charm of three hundred parts has three hundred rows, and every frame of a zoom or a pan was paying for
-   all of them (each row and its swatch a layer of its own to paint and hit-test, each hidden eye and lock an invisible picture). Rows off the list's screen are not
-   drawn at all, and a row's quiet eye and lock are drawn only when the row is under the hand or the button has the keys; what they look like does not change. */
+/* A LONG LAYERS LIST COSTS THE ZOOM NOTHING (28 Oct 2026): rows off the list's screen are not drawn at all, and a row's quiet eye and lock are drawn only when the row is under
+   the hand or the button has the keys; what they look like does not change. */
 .ce-layers .ce-layer,.ce-layers .ce-sw{ position:static; }
 .ce-layers .ce-layer{ content-visibility:auto; contain-intrinsic-block-size:auto 31px; }
 .ce-layers .ce-layer__b.is-quiet{ opacity:1; } .ce-layers .ce-layer__b.is-quiet svg{ display:none; }
@@ -1182,23 +1352,25 @@
 .ce-view .v-guide{ stroke:var(--c-guide); stroke-width:1; shape-rendering:crispEdges; }
 .ce-view .v-guide.is-hot{ stroke:var(--c-guide-hot); stroke-width:2; }
 .ce-view .v-guide.is-off{ stroke-dasharray:3 3; opacity:.55; }
-.ce-view .v-zero{ stroke:var(--gold); stroke-width:1; stroke-dasharray:4 3; shape-rendering:crispEdges; }
-.ce-view .v-zero-dot{ fill:#fff; stroke:var(--gold); stroke-width:1.5; }
-.ce-view .v-zbox{ fill:rgba(28,29,29,.05); stroke:var(--ink); stroke-width:1; stroke-dasharray:4 3; }
-.ce-view .v-dim rect{ fill:var(--c-guide-hot); } .ce-view .v-dim text{ fill:#fff; font:600 9.5px var(--sans); letter-spacing:.06em; }
+.ce-view .v-zero{ stroke:var(--ai-accent); stroke-width:1; stroke-dasharray:4 3; shape-rendering:crispEdges; }
+.ce-view .v-zero-dot{ fill:#fff; stroke:var(--ai-accent); stroke-width:1.5; }
+.ce-view .v-zbox{ fill:rgba(28,29,29,.05); stroke:#000; stroke-width:1; stroke-dasharray:2 2; }
+.ce-view .v-dim rect{ fill:#4b4b4b; } .ce-view .v-dim text{ fill:#fff; font:400 10px var(--ai-font); }
 .ce-stage[data-tool="zoom"]{ cursor:zoom-in; } .ce-stage[data-tool="zoom"].is-alt{ cursor:zoom-out; }
 .ce-stage.is-guide-x{ cursor:col-resize; } .ce-stage.is-guide-y{ cursor:row-resize; }
-.ce-zoomtype{ display:flex; align-items:center; gap:6px; margin:2px 2px 4px; height:32px; padding:0 9px; border:1px solid var(--hair); background:#fff; cursor:text; }
-.ce-zoomtype:focus-within{ background:var(--band); border-color:var(--ink); }
-.ce-zoomtype input{ flex:1 1 auto; min-width:0; width:60px; border:0; padding:0; outline:none; background:none; font-family:inherit; font-size:12.5px; font-weight:600; color:var(--ink); text-align:right; height:auto; font-variant-numeric:tabular-nums; }
-.ce-zoomtype i{ font-style:normal; font-size:10px; font-weight:800; letter-spacing:.1em; color:var(--muted); }
+.ce-zoomtype{ display:flex; align-items:center; gap:6px; margin:2px 8px 4px; height:24px; padding:0 6px; border:1px solid var(--ai-input-border); border-radius:2px; background:var(--ai-input); cursor:text; }
+.ce-zoomtype:focus-within{ border-color:var(--ai-accent); }
+.ce-zoomtype input{ flex:1 1 auto; min-width:0; width:60px; border:0; padding:0; outline:none; background:none; font-family:inherit; font-size:var(--ai-fs); color:var(--ai-text); text-align:right; height:auto; font-variant-numeric:tabular-nums; }
+.ce-zoomtype i{ font-style:normal; font-size:11px; color:var(--ai-text-dim); }
 .ce-root .ce-zoomtype input:focus-visible{ outline:none; }
-.ce-stage{ grid-area:2/2; position:relative; overflow:hidden; background:var(--band); touch-action:none; user-select:none; -webkit-user-select:none; cursor:default; }
+.ce-stage{ grid-area:2/2; position:relative; overflow:hidden; background:var(--ai-pasteboard); touch-action:none; user-select:none; -webkit-user-select:none; cursor:default; }
 .ce-stage[data-tool="text"]{ cursor:text; }
 .ce-stage[data-tool="marquee"],.ce-stage[data-tool="rect"],.ce-stage[data-tool="ellipse"],.ce-stage[data-tool="line"]{ cursor:crosshair; }
 .ce-stage[data-tool="hand"],.ce-stage.is-space{ cursor:grab; }
 .ce-stage.is-panning{ cursor:grabbing; }
-.ce-paper{ position:absolute; background:#fff; pointer-events:none; box-shadow:0 0 0 1px var(--hair), 0 6px 26px rgba(28,29,29,.10); }
+/* the artboard: white, a hairline edge and Illustrator's drop shadow on the pasteboard */
+.ce-paper{ position:absolute; background:#fff; pointer-events:none; box-shadow:0 0 0 1px rgba(0,0,0,.35), 3px 3px 0 rgba(0,0,0,.28); }
+.ce-root[data-canvas="white"] .ce-paper{ box-shadow:0 0 0 1px #9a9a9a, 3px 3px 0 rgba(0,0,0,.12); }
 .ce-art,.ce-ui{ position:absolute; left:0; top:0; width:100%; height:100%; overflow:hidden; display:block; }
 .ce-ui{ pointer-events:none; }
 .ce-art .ce-p{ vector-effect:non-scaling-stroke; fill:none; stroke:none; stroke-width:max(calc(var(--lw, .25) * var(--k, 1) * 1px), var(--hair, 1px)); stroke-linejoin:round; stroke-linecap:round; }
@@ -1209,39 +1381,42 @@
 .ce-art .ce-p.is-evenodd{ fill-rule:evenodd; }
 .ce-art .ce-grid path{ fill:none; vector-effect:non-scaling-stroke; stroke-width:1px; shape-rendering:crispEdges; }
 .ce-art .ce-grid .g-fine{ stroke:rgba(28,29,29,.045); } .ce-art .ce-grid .g-mm{ stroke:rgba(28,29,29,.10); } .ce-art .ce-grid .g-five{ stroke:rgba(28,29,29,.17); }
-/* selection furniture, in screen pixels (C 3948-4034, 6150-6171) */
-.ce-ui .u-hover{ fill:none; stroke:var(--gold); stroke-width:1.5; opacity:.9; }
-.ce-ui .u-sel{ fill:none; stroke:var(--gold); stroke-width:1; }
-.ce-ui .u-box{ fill:none; stroke:var(--ink); stroke-width:1; stroke-dasharray:4 3; }
-.ce-ui .u-box--under{ fill:none; stroke:rgba(255,255,255,.85); stroke-width:3; }
-.ce-ui .u-box.is-many{ stroke:var(--gold); stroke-dasharray:none; }
-.ce-ui .u-h{ fill:#fff; stroke:var(--ink); stroke-width:1; pointer-events:all; }
+/* selection furniture, in screen pixels: Illustrator's (the layer colour, light blue: the bounding box, its hollow square handles, the paths selected; the smart guides magenta) */
+.ce-ui .u-hover{ fill:none; stroke:var(--ai-sel); stroke-width:1.5; opacity:.95; }
+.ce-ui .u-sel{ fill:none; stroke:var(--ai-sel); stroke-width:1; }
+.ce-ui .u-box{ fill:none; stroke:var(--ai-sel); stroke-width:1; }
+.ce-ui .u-box--under{ fill:none; stroke:rgba(255,255,255,.6); stroke-width:3; }
+.ce-ui .u-box.is-many{ stroke:var(--ai-sel); }
+.ce-ui .u-h{ fill:#fff; stroke:var(--ai-sel); stroke-width:1; pointer-events:all; }
 .ce-ui .u-h[data-h="nw"],.ce-ui .u-h[data-h="se"]{ cursor:nwse-resize; } .ce-ui .u-h[data-h="ne"],.ce-ui .u-h[data-h="sw"]{ cursor:nesw-resize; }
 .ce-ui .u-h[data-h="n"],.ce-ui .u-h[data-h="s"]{ cursor:ns-resize; } .ce-ui .u-h[data-h="e"],.ce-ui .u-h[data-h="w"]{ cursor:ew-resize; }
 .ce-ui .u-h[data-h="rot"]{ cursor:grab; }
-.ce-ui .u-stem{ stroke:var(--ink); stroke-width:1; }
-.ce-ui .u-marq{ fill:rgba(28,29,29,.06); stroke:var(--ink); stroke-width:1; stroke-dasharray:4 3; }
-.ce-ui .u-draft{ fill:none; stroke:var(--c-line); stroke-width:1.5; stroke-dasharray:5 3; }
-.ce-ui .u-gd{ stroke:var(--gold); stroke-width:1; } .ce-ui .u-gd--mid{ stroke:#e0483c; stroke-dasharray:4 3; } .ce-ui .u-gd--frame{ stroke:rgba(165,138,82,.6); }
-.ce-ui .u-dim rect{ fill:var(--gold); } .ce-ui .u-dim text{ fill:#fff; font:600 9.5px var(--sans); letter-spacing:.06em; }
+.ce-ui .u-stem{ stroke:var(--ai-sel); stroke-width:1; }
+.ce-ui .u-marq{ fill:none; stroke:#000; stroke-width:1; stroke-dasharray:2 2; }
+.ce-ui .u-draft{ fill:none; stroke:var(--ai-sel); stroke-width:1; }
+.ce-ui .u-gd{ stroke:var(--ai-smart); stroke-width:1; } .ce-ui .u-gd--mid{ stroke:var(--ai-smart); stroke-dasharray:4 3; } .ce-ui .u-gd--frame{ stroke:var(--ai-smart); opacity:.75; }
+.ce-ui .u-dim rect{ fill:#4b4b4b; } .ce-ui .u-dim text{ fill:#fff; font:400 10px var(--ai-font); }
 /* the one text editor (C 3940-3946) */
-.ce-editor{ position:absolute; z-index:6; resize:none; overflow:hidden; background:rgba(255,255,255,.98); border:1px solid var(--ink); box-shadow:0 10px 30px rgba(28,29,29,.22);
-  padding:6px 9px; line-height:1.35; color:var(--ink); font-family:var(--sans); font-size:14px; outline:none; min-width:160px; width:220px; max-width:calc(100% - 12px); }
-/* ── foot (C 5172-5184, 6654-6674) ── */
-.ce-foot{ grid-area:4/2/5/3; display:flex; align-items:center; gap:14px; padding:10px 0 0; margin-top:8px; border-top:1px solid var(--hair); min-width:0; }
+.ce-editor{ position:absolute; z-index:6; resize:none; overflow:hidden; background:rgba(255,255,255,.98); border:1px solid var(--ai-sel); box-shadow:0 6px 20px rgba(0,0,0,.28);
+  padding:6px 9px; line-height:1.35; color:#1c1d1d; font-family:var(--ai-font); font-size:14px; outline:none; min-width:160px; width:220px; max-width:calc(100% - 12px); }
+/* ── the status bar (the document window's foot: the zoom, the artboard navigator, the tool in hand) ── */
+.ce-foot{ grid-area:5/2/6/3; display:flex; align-items:center; gap:8px; height:24px; padding:0 6px; background:var(--ai-panel); border-top:1px solid var(--ai-border); min-width:0; font-size:11px; color:var(--ai-text); }
 .ce-foot .ce-drop{ flex:none; }
-.ce-hint{ flex:1 1 0; min-width:0; font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.ce-actions{ display:flex; gap:12px; flex:none; margin-left:auto; }
-.ce-btn{ display:inline-flex; align-items:center; justify-content:center; gap:8px; border:1px solid var(--ink); background:var(--ink); color:#fff; cursor:pointer; font-weight:700; font-size:11.5px; text-transform:uppercase !important; letter-spacing:.26em !important; padding:11px 24px; transition:background var(--in), border-color var(--in), color var(--in), transform var(--press-t); }
-.ce-btn:active{ transform:translateY(1px); }
-.ce-btn--ghost{ background:transparent; border-color:transparent; color:var(--muted); padding:11px 12px; }
-.ce-btn--ghost:hover,.ce-btn--ghost:focus-visible{ background:var(--hov); border-color:var(--hov-line); color:var(--ink); }
-.ce-btn--gold{ background:var(--gold); border-color:var(--gold); }
-.ce-btn--gold:hover{ background:#a2854b; border-color:#a2854b; }
-.ce-btn--gold:active{ background:#8f7644; }
-.ce-btn--ink:hover{ background:var(--on-hov); border-color:var(--on-hov); }
+.ce-foot .ce-prop{ height:18px; padding:0 4px; font-size:11px; border-color:var(--ai-input-border); }
+.ce-zoomb{ min-width:64px; justify-content:space-between; font-variant-numeric:tabular-nums; }
+.ce-abnav{ flex:none; display:inline-flex; align-items:center; gap:0; }
+.ce-abnav button{ height:18px; min-width:16px; padding:0 3px; border:0; background:none; color:var(--ai-text); cursor:pointer; font-size:11px; border-radius:2px; display:inline-flex; align-items:center; justify-content:center; }
+.ce-abnav button:hover:not(:disabled){ background:var(--ai-hover); } .ce-abnav button:disabled{ color:var(--ai-text-disabled); cursor:default; }
+.ce-abnav .ce-abnav__cur{ min-width:58px; height:18px; margin:0 2px; padding:0 4px; border:1px solid var(--ai-input-border); border-radius:2px; background:var(--ai-input); justify-content:space-between; gap:4px; }
+.ce-stat__tool{ flex:none; color:var(--ai-text); padding:0 6px; border-left:1px solid var(--ai-sep); border-right:1px solid var(--ai-sep); white-space:nowrap; }
+.ce-hint{ flex:1 1 0; min-width:0; font-size:11px; color:var(--ai-text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ce-snapb{ gap:4px; }
+.ce-snapb svg{ width:13px; height:13px; color:var(--ai-text-dim); }
+.ce-snapb.is-on{ border-color:var(--ai-text-dim); background:var(--ai-tool-on); }
+.ce-snapb.is-on svg{ color:var(--ai-accent); }
+@media (max-width:640px){ .ce-snapb span{ display:none; } }
 /* ── the dock: layers (C 4095-4331, 6677-6697) ── */
-.ce-dock{ grid-area:2/3/5/4; width:clamp(232px,19vw,296px); min-height:0; display:flex; flex-direction:column; border:1px solid var(--hair); background:#fff; }
+.ce-dock{ grid-area:3/3/6/4; width:clamp(232px,19vw,296px); min-height:0; display:flex; flex-direction:column; border:1px solid var(--hair); background:#fff; color:var(--ink); }
 .ce-dock__tabs{ flex:none; display:flex; align-items:stretch; border-bottom:1px solid var(--hair); }
 .ce-dock__tab{ flex:1; border:0; background:none; cursor:pointer; padding:11px 6px; font-size:10px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; color:var(--muted); border-bottom:2px solid transparent; }
 .ce-dock__tab.is-on{ color:var(--ink); border-bottom-color:var(--gold); }
@@ -1260,7 +1435,7 @@
 .ce-act__sep{ flex:0 0 1px; align-self:stretch; background:var(--hair); margin:0 2px; }
 .ce-layers{ flex:1 1 auto; min-height:0; overflow-y:auto; padding:5px; touch-action:pan-y; overflow-anchor:none; }
 .ce-layer{ position:relative; display:flex; align-items:center; gap:7px; min-height:31px; padding:2px 2px 2px 2px; padding-left:calc(2px + var(--depth,0) * 16px); border:1px solid transparent; background:#fff; cursor:pointer; user-select:none; -webkit-user-select:none;
-  transition:background var(--in), border-color var(--in); }
+  transition:background var(--in), border-color var(--in); color:var(--ink); }
 .ce-layer + .ce-layer{ margin-top:1px; }
 .ce-layer:hover{ background:var(--hov); }
 .ce-layer.is-sel{ background:#eddfba; border-color:var(--ink); box-shadow:inset 3px 0 0 0 var(--gold); }
@@ -1284,101 +1459,132 @@
 .ce-layer__b:hover{ background:var(--hov); color:var(--ink); }
 .ce-layer__b.is-quiet{ opacity:0; } .ce-layer:hover .ce-layer__b.is-quiet,.ce-layer__b.is-quiet:focus-visible{ opacity:1; }
 .ce-layers__empty{ font-size:12px; line-height:1.7; color:var(--muted); padding:20px 12px; text-align:center; }
-/* ── the hover card (C 5122-5146, 5871-5877) ── */
-.ce-tip{ position:fixed; z-index:30; pointer-events:none; display:flex; align-items:center; gap:11px; max-width:264px; padding:9px 13px 9px 9px; background:#fff; border:1px solid var(--ink);
-  box-shadow:0 14px 34px rgba(28,29,29,.19); opacity:0; transform:translateX(-6px) scale(.98); transform-origin:left center; transition:opacity .12s ease-out, transform .19s cubic-bezier(.16,1,.3,1); }
-.ce-tip.is-in{ opacity:1; transform:none; }
-.ce-tip__ico{ width:40px; height:40px; flex:none; display:block; overflow:visible; }
-.ce-tip__ico .b{ fill:none; stroke:var(--gold); stroke-width:2.6; } .ce-tip__ico .c{ fill:#eddfbc; stroke:var(--gold); stroke-width:1.8; }
-.ce-tip b{ display:flex; align-items:center; gap:7px; font-size:11.5px; font-weight:700; color:var(--ink); line-height:1.25; }
-.ce-tip i{ font-style:normal; font-size:8px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--gold); border:1px solid var(--gold-lt); background:var(--band); padding:2px 5px; flex:none; }
-.ce-tip span{ display:block; margin-top:3px; font-size:10.5px; line-height:1.45; color:var(--muted); }
-/* ── asking before anything is thrown away ── */
-.ce-ask{ position:absolute; inset:0; z-index:40; background:rgba(255,255,255,.55); display:flex; align-items:center; justify-content:center; padding:16px; }
-.ce-ask__card{ width:min(380px,100%); background:#fff; border:1px solid var(--ink); box-shadow:0 18px 44px rgba(28,29,29,.22); padding:22px 22px 18px; }
-.ce-ask__card h3{ margin:0 0 8px; font-family:var(--serif); font-weight:500; font-size:22px; line-height:1.15; color:var(--ink); }
-.ce-ask__card p{ margin:0 0 18px; font-size:12.5px; line-height:1.6; color:var(--muted); }
-.ce-ask__b{ display:flex; justify-content:flex-end; gap:10px; }
-.ce-refuse .ce-ask__card{ width:min(460px,100%); border-color:#b0563f; }   /* (EDITSAVE, 28 Oct 2026: what a save cannot keep, said over the open work) */
-.ce-refuse__list{ margin:0 0 12px; padding:0 0 0 18px; font-size:12.5px; line-height:1.55; color:#8a3a26; } .ce-refuse__list li{ margin:0 0 6px; } .ce-refuse__list b{ font-weight:600; }
-.ce-root :focus-visible{ outline:2px solid var(--gold); outline-offset:1px; }
+/* ── the hover card of a tool: Illustrator's rich tool tip (the name, the key, a line on what it does) ── */
+.ce-tip{ position:fixed; z-index:30; pointer-events:none; display:block; max-width:260px; padding:6px 9px 7px; background:var(--ai-menu); color:var(--ai-text); border:1px solid var(--ai-menu-border); border-radius:4px;
+  box-shadow:var(--ai-shadow); opacity:0; transition:opacity .1s ease-out; font-family:var(--ai-font); }
+.ce-tip.is-in{ opacity:1; }
+.ce-tip b{ display:block; font-size:var(--ai-fs); font-weight:600; line-height:1.3; }
+.ce-tip b i{ font-style:normal; font-weight:400; color:var(--ai-text-dim); margin-left:4px; }
+.ce-tip span{ display:block; margin-top:2px; font-size:11px; line-height:1.4; color:var(--ai-text-dim); }
+/* ── asking before anything is thrown away: Illustrator's modal dialog ── */
+.ce-ask{ position:absolute; inset:0; z-index:40; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; padding:16px; }
+.ce-ask__card{ width:min(400px,100%); background:var(--ai-panel); color:var(--ai-text); border:1px solid var(--ai-menu-border); border-radius:4px; box-shadow:var(--ai-shadow); padding:18px 20px 16px; }
+.ce-ask__card h3{ margin:0 0 8px; font:600 14px/1.3 var(--ai-font); color:var(--ai-text); }
+.ce-ask__card p{ margin:0 0 16px; font-size:var(--ai-fs); line-height:1.55; color:var(--ai-text-dim); }
+.ce-ask__b{ display:flex; justify-content:flex-end; gap:8px; }
+.ce-refuse .ce-ask__card{ width:min(460px,100%); border-color:#d7373f; }   /* (EDITSAVE, 28 Oct 2026: what a save cannot keep, said over the open work) */
+.ce-refuse__list{ margin:0 0 12px; padding:0 0 0 18px; font-size:var(--ai-fs); line-height:1.55; color:#ff9a8a; } .ce-refuse__list li{ margin:0 0 6px; } .ce-refuse__list b{ font-weight:600; }
+.ce-root[data-ui="mlight"] .ce-refuse__list,.ce-root[data-ui="light"] .ce-refuse__list{ color:#b5261e; }
+.ce-root :focus-visible{ outline:2px solid var(--ai-accent); outline-offset:1px; }
 .ce-root .ce-size input:focus-visible,.ce-root .ce-num input:focus-visible{ outline:none; }
-/* ── the extension points (28 Oct 2026): a panel slot right of the Layers, the property bar's command buttons, a file held over the work area, a line said over it ── */
-.ce-win.has-xpanel{ grid-template-columns:auto minmax(0,1fr) auto auto; }
-.ce-win.has-xpanel.is-nodock{ grid-template-columns:auto minmax(0,1fr) auto; }
-.ce-xpanel{ grid-area:2/4/5/5; width:clamp(260px,22vw,340px); min-height:0; display:flex; flex-direction:column; border:1px solid var(--hair); background:#fff; }
-.ce-win.is-nodock .ce-xpanel{ grid-area:2/3/5/4; }
+/* ── the extension points (28 Oct 2026): a panel slot right of the Layers, the Control bar's command buttons, a file held over the work area, a line said over it ── */
+.ce-xpanel{ grid-area:3/4/6/5; width:clamp(260px,22vw,340px); min-height:0; display:flex; flex-direction:column; border:1px solid var(--hair); background:#fff; color:var(--ink); }
 .ce-xpanel__body{ flex:1 1 auto; min-height:0; position:relative; display:flex; flex-direction:column; }
 .ce-xpanel__pane{ flex:1 1 auto; min-height:0; overflow:auto; }
-.ce-xbar{ display:inline-flex; gap:3px; flex:0 0 auto; }
-.ce-xbar .ce-prop{ padding:0 7px; letter-spacing:.08em; }
+.ce-xbar{ display:inline-flex; gap:2px; flex:0 0 auto; }
+.ce-xbar .ce-prop{ padding:0 4px; }
 .ce-xbar .ce-prop svg{ width:16px; height:16px; }
 .ce-stage[data-tool="polygon"]{ cursor:crosshair; }
 .ce-stage[data-tool="select"].is-over{ cursor:move; }
 .ce-ui .u-h[data-h="rot"],.ce-ui .u-rz{ cursor:${ROT_CUR}; }
 .ce-ui .u-rz{ fill:transparent; stroke:none; pointer-events:all; }
 .ce-stage.is-busy,.ce-stage.is-busy *{ cursor:var(--gcur,default) !important; }
-.ce-ui .u-bdg text{ fill:#fff; font:600 9.5px var(--sans); letter-spacing:.06em; } .ce-ui .u-bdg--ink rect{ fill:var(--ink); } .ce-ui .u-bdg--gap rect{ fill:#e0483c; } .ce-ui .u-gd--gap{ stroke:#e0483c; }
-.ce-snapb{ gap:6px; padding:0 9px; }
-.ce-snapb svg{ width:15px; height:15px; color:var(--muted); }
-.ce-snapb.is-on{ border-color:var(--ink); background:var(--band); }
-.ce-snapb.is-on svg{ color:var(--gold); }
-@media (max-width:640px){ .ce-snapb span{ display:none; } }
+.ce-ui .u-bdg text{ fill:#fff; font:400 10px var(--ai-font); } .ce-ui .u-bdg--ink rect{ fill:#4b4b4b; } .ce-ui .u-bdg--gap rect{ fill:var(--ai-smart); } .ce-ui .u-gd--gap{ stroke:var(--ai-smart); }
 .ce-stage[data-xtool]{ cursor:var(--xcur,crosshair); } .ce-stage[data-xtool].is-space{ cursor:grab; } .ce-stage[data-xtool].is-panning{ cursor:grabbing; }
-.ce-stage.is-drop::after{ content:""; position:absolute; inset:8px; border:2px dashed var(--gold); background:rgba(165,138,82,.07); pointer-events:none; }
-.ce-say{ position:absolute; left:50%; bottom:14px; z-index:7; transform:translate(-50%,4px); max-width:calc(100% - 28px); padding:7px 13px; background:var(--ink); color:#fff; font-size:11.5px; line-height:1.4;
-  pointer-events:none; opacity:0; transition:opacity .14s ease-out, transform .2s cubic-bezier(.16,1,.3,1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ce-stage.is-drop::after{ content:""; position:absolute; inset:8px; border:2px dashed var(--ai-accent); background:rgba(38,128,235,.08); pointer-events:none; }
+.ce-say{ position:absolute; left:50%; bottom:14px; z-index:7; transform:translate(-50%,4px); max-width:calc(100% - 28px); padding:7px 14px; background:#4b4b4b; color:#fff; font-size:var(--ai-fs); line-height:1.4; border-radius:4px;
+  box-shadow:0 4px 12px rgba(0,0,0,.3); pointer-events:none; opacity:0; transition:opacity .14s ease-out, transform .2s cubic-bezier(.16,1,.3,1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .ce-say.is-in{ opacity:1; transform:translate(-50%,0); }
-/* ── a short window sheds chrome before it sheds the charm (C 5099-5112, 5186-5200) ── */
-@media (max-height:820px){ .ce-tool{ height:38px; } .ce-hist__b{ height:28px; } }
-@media (max-height:660px){ .ce-tool{ height:33px; } .ce-tool svg{ width:16px; height:16px; } .ce-hist__b{ height:26px; } .ce-btn{ padding:9px 16px; } }
-/* ── narrow: the layers fold over the room instead of beside it, and the frame goes edge to edge ── */
+/* ── Tab hides the panels, Shift+Tab all but the Tools panel; F: the screen modes (Full Screen: the work area alone) ── */
+.ce-win.is-nopanels .ce-rail,.ce-win.is-nopanels .ce-props,.ce-win.is-nopanels .ce-dock,.ce-win.is-nopanels .ce-xpanel,.ce-win.is-noside .ce-dock,.ce-win.is-noside .ce-xpanel{ display:none !important; }
+.ce-win.is-hide-tools .ce-rail,.ce-win.is-hide-control .ce-props{ display:none !important; }
+.ce-scrx{ display:none; position:absolute; right:10px; top:10px; z-index:12; height:24px; padding:0 12px; border:1px solid var(--ai-input-border); border-radius:12px; background:var(--ai-panel); color:var(--ai-text); font:600 var(--ai-fs)/1 var(--ai-font); cursor:pointer; opacity:.55; }
+.ce-scrx:hover{ opacity:1; } .ce-win.is-scr-full .ce-scrx{ display:inline-flex; align-items:center; }
+.ce-win.is-scr-full .ce-appbar,.ce-win.is-scr-full .ce-props,.ce-win.is-scr-full .ce-doctabs,.ce-win.is-scr-full .ce-rail,.ce-win.is-scr-full .ce-dock,.ce-win.is-scr-full .ce-xpanel,.ce-win.is-scr-full .ce-foot{ display:none !important; }
+/* ── dialogs of the shell: Keyboard Shortcuts, Preferences, Help ── */
+.ce-aidlg{ position:absolute; inset:0; z-index:45; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; padding:16px; }
+.ce-aidlg__card{ width:min(560px,100%); max-height:calc(100% - 24px); display:flex; flex-direction:column; background:var(--ai-panel); color:var(--ai-text); border:1px solid var(--ai-menu-border); border-radius:4px; box-shadow:var(--ai-shadow); }
+.ce-aidlg__card.is-wide{ width:min(720px,100%); height:min(640px,calc(100% - 24px)); }
+.ce-aidlg__title{ flex:none; padding:12px 16px 8px; font:600 14px/1.2 var(--ai-font); }
+.ce-aidlg__body{ flex:1 1 auto; min-height:0; overflow:auto; padding:4px 16px 8px; display:flex; flex-direction:column; }
+.ce-aidlg__foot{ flex:none; display:flex; align-items:center; gap:8px; padding:10px 16px 14px; }
+.ce-aidlg__gap{ flex:1 1 auto; }
+.ce-aidlg__note{ font-size:11px; color:var(--ai-text-dim); margin:8px 0 0; }
+.ce-aiks__top{ display:flex; align-items:center; gap:12px; margin:0 0 8px; }
+.ce-aiks__q{ flex:1 1 auto; display:flex; align-items:center; gap:6px; } .ce-aiks__q span{ color:var(--ai-text-dim); }
+.ce-aiks__q input{ flex:1 1 auto; height:24px; border:1px solid var(--ai-input-border); border-radius:2px; background:var(--ai-input); color:var(--ai-text); padding:0 6px; font:inherit; outline:none; }
+.ce-aiks__q input:focus{ border-color:var(--ai-accent); }
+.ce-aiseg{ display:inline-flex; border:1px solid var(--ai-input-border); border-radius:2px; }
+.ce-aiseg button{ height:22px; padding:0 10px; border:0; background:var(--ai-input); color:var(--ai-text-dim); cursor:pointer; font:inherit; } .ce-aiseg button + button{ border-left:1px solid var(--ai-input-border); }
+.ce-aiseg button.is-on{ background:var(--ai-tool-on); color:var(--ai-text); }
+.ce-aiks__scroll{ flex:1 1 auto; min-height:0; overflow:auto; border:1px solid var(--ai-border); background:var(--ai-input); }
+.ce-aiks{ width:100%; border-collapse:collapse; font-size:var(--ai-fs); }
+.ce-aiks th,.ce-aiks td{ text-align:left; padding:3px 10px; border-bottom:1px solid var(--ai-border); vertical-align:top; }
+.ce-aiks thead th{ position:sticky; top:0; background:var(--ai-panel-hi); font-weight:600; z-index:1; }
+.ce-aiks td:last-child,.ce-aiks th:last-child{ width:34%; white-space:nowrap; }
+.ce-aiks td small{ display:block; color:var(--ai-text-dim); font-size:11px; }
+.ce-aiks__g th{ background:var(--ai-panel); color:var(--ai-text); font-weight:600; padding-top:7px; }
+.ce-aiks kbd{ font:inherit; color:var(--ai-text); }
+.ce-aiks__none{ color:var(--ai-text-dim); padding:12px; }
+.ce-aipf{ display:flex; gap:14px; min-height:260px; }
+.ce-aipf__nav{ flex:none; width:130px; display:flex; flex-direction:column; gap:1px; border-right:1px solid var(--ai-border); padding-right:6px; }
+.ce-aipf__nav button{ text-align:left; height:24px; padding:0 8px; border:0; background:none; color:var(--ai-text); cursor:pointer; font:inherit; border-radius:2px; }
+.ce-aipf__nav button.is-on{ background:var(--ai-accent); color:var(--ai-accent-text); } .ce-aipf__nav button:not(.is-on):hover{ background:var(--ai-hover); }
+.ce-aipf__pane{ flex:1 1 auto; min-width:0; }
+.ce-aipf__pane h4{ margin:0 0 12px; font:600 13px/1.2 var(--ai-font); }
+.ce-aipf__row{ display:flex; align-items:center; gap:10px; margin:0 0 14px; flex-wrap:wrap; }
+.ce-aipf__lab{ width:100px; text-align:right; color:var(--ai-text); }
+.ce-aipf__bright{ display:inline-flex; gap:6px; }
+.ce-aibright{ width:26px; height:20px; border:1px solid #777; border-radius:2px; padding:0; cursor:pointer; }
+.ce-aibright--dark{ background:#323232; } .ce-aibright--mdark{ background:#535353; } .ce-aibright--mlight{ background:#b8b8b8; } .ce-aibright--light{ background:#f1f1f1; }
+.ce-aibright.is-on{ outline:2px solid var(--ai-accent); outline-offset:1px; }
+.ce-aipf__val{ color:var(--ai-text-dim); }
+.ce-aipf__radios{ display:flex; flex-direction:column; gap:6px; }
+.ce-aipf__dl{ display:grid; grid-template-columns:130px 1fr; gap:6px 10px; margin:0 0 14px; } .ce-aipf__dl dt{ color:var(--ai-text-dim); text-align:right; } .ce-aipf__dl dd{ margin:0; }
+.ce-aipf__dl small,.ce-aichk small{ color:var(--ai-text-dim); }
+.ce-aichk{ display:flex; align-items:center; gap:6px; margin:0 0 8px; cursor:pointer; }
+.ce-aichk input{ accent-color:var(--ai-accent); margin:0; }
+.ce-aihelp p{ margin:0 0 8px; line-height:1.5; } .ce-aihelp ul{ margin:0; padding-left:18px; line-height:1.55; } .ce-aihelp li{ margin:0 0 6px; } .ce-aihelp b{ font-weight:600; }
+/* ── a short window sheds chrome before it sheds the charm ── */
+@media (max-height:760px){ .ce-tool{ height:26px; } .ce-paint{ margin-top:4px; } }
+@media (max-height:640px){ .ce-tool{ height:23px; } .ce-tool svg{ width:18px; height:18px; } .ce-paint{ height:40px; transform:scale(.88); } }
+/* ── narrow: the menus behind one ☰, the panels fold over the room instead of beside it ── */
+@media (max-width:1100px){ .ce-id .ce-eyebrow{ display:none; } .ce-mb__t{ padding:0 6px; } }
 @media (max-width:900px){
-  .ce-win,.ce-win.is-nodock{ grid-template-columns:auto minmax(0,1fr); }
-  .ce-dock{ grid-area:auto; position:absolute; z-index:15; right:8px; top:52px; bottom:8px; width:min(300px,calc(100% - 64px)); box-shadow:-18px 0 44px rgba(28,29,29,.22); }
+  .ce-rail.is-2col .ce-tools{ grid-template-columns:32px; }
+  .ce-dock{ grid-area:auto; position:absolute; z-index:15; right:0; top:92px; bottom:24px; width:min(300px,calc(100% - 56px)); box-shadow:-18px 0 44px rgba(0,0,0,.35); }
+  .ce-mb__t{ display:none; } .ce-mb__all{ display:inline-flex; }
+  .ce-ctl__lab{ display:none; }
 }
 @media (max-width:640px){
-  .ce-win{ inset:0; padding:8px 8px 8px; column-gap:7px; }
-  .ce-head{ padding-bottom:7px; margin-bottom:6px; }
-  .ce-id{ flex-direction:column; gap:2px; align-items:flex-start; }
-  .ce-id h2{ font-size:18px; max-width:100%; }
-  .ce-eyebrow{ font-size:8.5px; letter-spacing:.14em; max-width:100%; }
-  .ce-head{ gap:6px; }
-  .ce-head .ce-icon span{ display:none; }
-  .ce-head .ce-seg button{ padding:0 8px; }
+  .ce-appbar{ padding:0 2px; gap:1px; }
+  .ce-id{ padding:0 4px; justify-content:flex-start; }
+  .ce-hist{ display:none; }
+  .ce-actions{ gap:3px; margin-left:2px; }
+  .ce-appbar .ce-btn{ padding:0 8px; }
   .ce-long{ display:none; } .ce-short{ display:inline; }
-  .ce-zoomb{ min-width:64px; }
-  .ce-rail{ width:44px; padding:3px; }
-  .ce-tool{ width:36px; height:38px; }
-  .ce-hist__b{ width:36px; }
-  .ce-props{ gap:5px; row-gap:5px; padding-bottom:6px; margin-bottom:6px; }
+  .ce-zoomb{ min-width:52px; }
+  .ce-tool{ width:30px; height:26px; } .ce-tools{ grid-template-columns:30px; }
+  .ce-paint{ width:44px; transform:scale(.85); transform-origin:center top; }
+  .ce-props{ gap:4px; padding:0 4px; overflow-x:auto; }
   .ce-props.is-empty{ display:none; }
-  .ce-sizes{ display:contents; }
-  .ce-size{ border:1px solid var(--hair); height:30px; }
-  .ce-size--rot .ce-size__sep{ display:none; }
-  .ce-size__f{ padding:0 5px; gap:4px; }
-  .ce-size input{ width:34px; }
-  .ce-size__f--rot input{ width:30px; }
-  .ce-size__u{ padding:0 5px 0 2px; }
-  .ce-size__sep{ width:6px; }
-  .ce-hint{ display:none; }
-  .ce-foot{ padding-top:8px; margin-top:6px; }
-  .ce-foot{ gap:8px; }
-  .ce-actions{ gap:6px; }
-  .ce-btn{ padding:10px 18px; }
-  .ce-root{ --rule:15px; }
-  .ce-dock{ top:48px; right:0; bottom:0; width:min(300px,calc(100% - 48px)); }
+  .ce-refpt,.ce-ctl__kind{ display:none; }
+  .ce-size input{ width:44px; }
+  .ce-hint,.ce-stat__tool{ display:none; }
+  .ce-root{ --rule:14px; }
+  .ce-dock{ top:58px; right:0; bottom:24px; width:min(300px,calc(100% - 44px)); }
+  .ce-dt__n{ max-width:12ch; }
 }
-@media (prefers-reduced-motion: reduce){ .ce-menu.is-in,.ce-menu.is-in--right{ animation:none; } .ce-tool,.ce-tool svg,.ce-tip{ transition:none; } }
+@media (prefers-reduced-motion: reduce){ .ce-menu.is-in,.ce-menu.is-in--right{ animation:none; } .ce-tip{ transition:none; } }
 @media (max-width:900px){
-  .ce-win.has-xpanel,.ce-win.has-xpanel.is-nodock{ grid-template-columns:auto minmax(0,1fr); }
-  .ce-xpanel,.ce-win.is-nodock .ce-xpanel{ grid-area:auto; position:absolute; z-index:16; right:8px; top:52px; bottom:8px; width:min(340px,calc(100% - 64px)); box-shadow:-18px 0 44px rgba(28,29,29,.22); }
+  .ce-xpanel{ grid-area:auto; position:absolute; z-index:16; right:0; top:92px; bottom:24px; width:min(340px,calc(100% - 56px)); box-shadow:-18px 0 44px rgba(0,0,0,.35); }
 }
-@media (max-width:640px){ .ce-xpanel,.ce-win.is-nodock .ce-xpanel{ top:48px; right:0; bottom:0; width:min(340px,calc(100% - 48px)); } }
+@media (max-width:640px){ .ce-xpanel{ top:58px; right:0; bottom:24px; width:min(340px,calc(100% - 44px)); } }
 `;
   function injectCss() {
     if (doc.getElementById('ceCss')) return;
     const s = doc.createElement('style'); s.id = 'ceCss'; s.textContent = CSS; (doc.head || doc.documentElement).appendChild(s);
+    loadUiFont();
   }
 
   /** The extensions as one opening of the workspace sees them (the header's EXTENSION POINTS): checked, the first of an id kept, the editor's own tool ids left to it. */
@@ -1400,7 +1606,8 @@
     for (const p of parts.map(q => q.toLowerCase())) { if (/^(mod|cmd|ctrl|control|meta|⌘)$/.test(p)) k.mod = true; else if (/^(shift|⇧)$/.test(p)) k.shift = true; else if (/^(alt|opt|option|⌥)$/.test(p)) k.alt = true; }
     return k;
   }
-  const keyLabel = s => { const k = parseKey(s); return k ? (k.shift ? '⇧' : '') + (k.alt ? '⌥' : '') + (k.mod ? '⌘' : '') + (k.key.length === 1 ? k.key.toUpperCase() : k.key) : ''; };
+  // (a command's key as Illustrator spells it on this computer, ⌥⇧⌘8 or Alt+Shift+Ctrl+8, when charm-nest-ce-ai-shell.js is on the page)
+  const keyLabel = s => { if (root && root.CharmEditorAi && typeof root.CharmEditorAi.keyLabel === 'function') return root.CharmEditorAi.keyLabel(s); const k = parseKey(s); return k ? (k.alt ? '⌥' : '') + (k.shift ? '⇧' : '') + (k.mod ? '⌘' : '') + (k.key.length === 1 ? k.key.toUpperCase() : k.key) : ''; };
 
   let live = null;
   function open(opts) {
@@ -1426,6 +1633,9 @@
       editing: null, g: null, space: false, hover: null, open: new Set(), dock: true, nudgeAt: 0, ask: null
     };
     S.sides = 6; S.flash = null; S.xLive = null;
+    // (the Illustrator workspace, 28 Oct 2026: the reference point of X / Y, the rulers shown, the screen mode, the panels hidden with Tab, the Fill / Stroke in front)
+    S.ref = [0, 0]; S.rulers = true; S.screen = 'normal'; S.hidePanels = ''; S.hide = { tools: false, control: false }; S.paintFocus = 'fill';
+    try { const o = JSON.parse((root.localStorage && root.localStorage.getItem('ce.view')) || 'null'); if (o) { if (o.rulers === false) S.rulers = false; if (Array.isArray(o.ref) && o.ref.length === 2 && o.ref.every(v => v === 0 || v === 0.5 || v === 1)) S.ref = o.ref.slice(); } } catch (e) { /* storage blocked: the defaults */ }
     try { const o = JSON.parse((root.localStorage && root.localStorage.getItem('ce.opts')) || 'null'); if (o) for (const k of ['grid', 'snapGrid', 'smart']) if (typeof o[k] === 'boolean') S[k] = o[k]; } catch (e) { /* storage blocked or empty: the defaults */ }
     for (const f of ['front', 'back']) {
       const fd = opts.faces && opts.faces[f]; if (!fd || typeof fd !== 'object') continue;
@@ -1459,119 +1669,102 @@
     const CASE_NAME = { '': 'As typed', upper: 'CAPITALS', lower: 'lowercase', title: 'Title Case', small: 'Small Caps' };
     const CASE_SIGN = { '': 'Aa', upper: 'AB', lower: 'ab', title: 'Ab', small: 'Aʙ' }, CASE_SAYS = { '': 'the words as typed', upper: 'every letter a capital', lower: 'every letter small', title: 'each word with a capital', small: 'the small letters as small capitals' };
     const caseItems = ['', 'upper', 'lower', 'title', 'small'].map(c => `<button class="ce-tsbtn ce-tsbtn--case" type="button" data-case="${c}" role="menuitemradio" aria-checked="false" aria-label="${CASE_NAME[c]}" title="${CASE_NAME[c]} · ${CASE_SAYS[c]}">${CASE_SIGN[c]}</button>`).join('');
-    /* the extensions' places in the chrome (the header's EXTENSION POINTS): their tools on the rail before More (a flyout of their own, or the Shapes menu), the Object
-       menu, Import and a button per panel in the head, command buttons at the end of the property bar, the panel slot right of the Layers */
+    /* the extensions' places in the chrome (the header's EXTENSION POINTS): their tools in the Tools panel at their Illustrator places (a flyout of their own, or the
+       Rectangle's), the menus and the right-click menu, Import and a button per panel in the Application bar, command buttons on the Control bar, the panel slot right of
+       the Layers */
     const X = extensions();
     const xTool = id => X.tools.find(t => String(t.id) === String(id)) || null;
-    const xIcon = t => (t && typeof t.icon === 'string' && /^\s*<svg/i.test(t.icon) ? t.icon : IC.tool);
+    const xIcon = t => (t && AIC[String(t.id)] ? AIC[String(t.id)] : t && typeof t.icon === 'string' && /^\s*<svg/i.test(t.icon) ? t.icon : IC.tool);
     const xKeyOf = t => (t.key ? String(t.key).toUpperCase() : '');
-    const xItem = t => `<button class="ce-item" type="button" data-tool="${esc(t.id)}" role="menuitem">${xIcon(t)}${esc(t.title || t.id)}${xKeyOf(t) ? `<em>${esc(xKeyOf(t))}</em>` : ''}</button>`;
-    const xFly = new Map(), xRail = [];
+    const aiShell = () => (root.CharmEditorAi && typeof root.CharmEditorAi.mount === 'function' ? root.CharmEditorAi : null);
+    const keyText = k => { const A = aiShell(); return k ? (A ? A.keyLabel(String(k).length === 1 ? String(k).toUpperCase() : k) : String(k).toUpperCase()) : ''; };
+    const toolName = t => { const A = aiShell(), n = A && A.tools[String(t.id)]; return n ? n.name : String(t.title || t.id) + (/tool$/i.test(String(t.title || '')) ? '' : ' Tool'); };
+    const xItem = t => `<button class="ce-item" type="button" data-tool="${esc(t.id)}" role="menuitem">${xIcon(t)}${esc(toolName(t))}${xKeyOf(t) ? `<em>${esc(keyText(t.key))}</em>` : ''}</button>`;
+    // each extension tool in its Illustrator slot (tools sharing a slot share a flyout); a tool of a slot of its own that came in a flyout keeps a flyout (the old rail's)
+    const slots = new Map(), usedDrop = new Set();
     for (const t of X.tools) {
-      const f = t.flyout ? String(t.flyout) : '';
-      if (f === 'shapes') continue;
-      if (!f) { xRail.push({ solo: t }); continue; }
-      if (!xFly.has(f)) { xFly.set(f, []); xRail.push({ fly: f }); }
-      xFly.get(f).push(t);
+      if (String(t.flyout || '') === 'shapes') continue;
+      const k = AI_SLOT[String(t.id)] || ('x:' + (t.flyout ? String(t.flyout) : '#' + t.id));
+      if (!slots.has(k)) slots.set(k, { key: k, known: !!AI_SLOT[String(t.id)], tools: [] });
+      slots.get(k).tools.push(t);
     }
-    const xRailHtml = xRail.map(r => {
-      const t = r.solo || xFly.get(r.fly)[0], label = esc(t.title || t.id) + (xKeyOf(t) ? ` (${esc(xKeyOf(t))})` : '');
-      if (r.solo) return `<button class="ce-tool" type="button" data-tool="${esc(t.id)}" data-tip="${esc(t.id)}" aria-label="${label}">${xIcon(t)}</button>`;
-      return `<div class="ce-drop" data-drop="x-${esc(r.fly)}"><button class="ce-tool ce-drop__b" type="button" data-tool="${esc(t.id)}" data-tip="${esc(t.id)}" aria-label="${label}">${xIcon(t)}</button>`
-        + `<div class="ce-menu" role="menu" hidden><div class="ce-menu__head">${esc(r.fly)}</div>${xFly.get(r.fly).map(xItem).join('')}</div></div>`;
-    }).join('');
-    const xShapesHtml = X.tools.filter(t => String(t.flyout || '') === 'shapes').map(xItem).join('');
+    const slotHtml = s => {
+      if (!s) return '';
+      const t = s.tools[0], label = esc(toolName(t)) + (xKeyOf(t) ? ` (${esc(keyText(t.key))})` : '');
+      const fly = s.tools.length > 1 || (!s.known && !!t.flyout);
+      if (!fly) return `<button class="ce-tool" type="button" data-tool="${esc(t.id)}" data-tip="${esc(t.id)}" aria-label="${label}">${xIcon(t)}</button>`;
+      let name = 'x-' + (t.flyout ? String(t.flyout) : String(t.id)); if (usedDrop.has(name)) name = 'x-' + String(t.id); usedDrop.add(name);
+      return `<div class="ce-drop" data-drop="${esc(name)}"><button class="ce-tool ce-drop__b" type="button" data-tool="${esc(t.id)}" data-tip="${esc(t.id)}" aria-label="${label}">${xIcon(t)}</button>`
+        + `<div class="ce-menu" role="menu" hidden>${s.tools.map(xItem).join('')}</div></div>`;
+    };
+    const take = k => { const s = slots.get(k); slots.delete(k); return slotHtml(s); };
+    const sep = '<i class="ce-tsep" aria-hidden="true"></i>';
+    const shapeTools = X.tools.filter(t => String(t.flyout || '') === 'shapes');
+    const builtinShape = { rect: `<button class="ce-item" type="button" data-tool="rect" role="menuitem">${AIC.rect}Rectangle Tool<em>${esc(keyText('M'))}</em></button>`,
+      ellipse: `<button class="ce-item" type="button" data-tool="ellipse" role="menuitem">${AIC.ellipse}Ellipse Tool<em>${esc(keyText('L'))}</em></button>`,
+      polygon: `<button class="ce-item" type="button" data-tool="polygon" role="menuitem">${AIC.polygon}Polygon Tool<em>↑ ↓ sides</em></button>` };
+    const shapesMenu = SHAPE_ORDER.map(id => builtinShape[id] || (shapeTools.find(t => String(t.id) === id) ? xItem(shapeTools.find(t => String(t.id) === id)) : ''))
+      .concat(shapeTools.filter(t => !SHAPE_ORDER.includes(String(t.id))).map(xItem)).join('');
+    const railTools = [
+      `<button class="ce-tool is-on" type="button" data-tool="select" data-tip="select" aria-label="Selection Tool (V)">${AIC.select}</button>`, take('direct'),
+      `<button class="ce-tool" type="button" data-tool="marquee" data-tip="marquee" aria-label="Marquee Selection Tool (Q)">${AIC.marquee}</button>`, sep,
+      take('pen'), `<button class="ce-tool" type="button" data-tool="text" data-tip="text" aria-label="Type Tool (T)">${AIC.text}</button>`,
+      `<button class="ce-tool" type="button" data-tool="line" data-tip="line" aria-label="Line Segment Tool (\\)">${AIC.line}</button>`,
+      `<div class="ce-drop" data-drop="shapes"><button class="ce-tool ce-drop__b" type="button" data-tool="rect" data-shapes data-tip="rect" aria-label="Rectangle Tool (M), Ellipse Tool (L), Polygon Tool">${AIC.rect}</button><div class="ce-menu" role="menu" hidden>${shapesMenu}</div></div>`,
+      take('pencil'), take('scissors'), sep, take('distort'), take('blend'), sep,
+      `<button class="ce-tool" type="button" data-tool="hand" data-tip="hand" aria-label="Hand Tool (H, or hold Space)">${AIC.hand}</button>`,
+      `<button class="ce-tool" type="button" data-tool="zoom" data-tip="zoom" aria-label="Zoom Tool (Z)">${AIC.zoom}</button>`
+    ];
+    const rest = [...slots.values()].map(slotHtml).join('');
+    if (rest) railTools.push(sep, rest);
+    const xRailHtml = railTools.join('').replace(new RegExp('(' + sep.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '){2,}', 'g'), sep);
     const xAccept = [].concat(...X.importers.map(i => (Array.isArray(i.accept) ? i.accept.map(String) : [])));
-    const xHeadHtml = `<div class="ce-drop" data-drop="xcmd"${X.commands.some(c => c.c.menu !== false) ? '' : ' hidden'}><button class="ce-icon ce-drop__b" type="button" aria-label="Object" title="Object: what can be done to the selection">${IC.object}<span>Object</span></button><div class="ce-menu" role="menu" hidden></div></div>`
-      + `<button class="ce-icon" type="button" data-act="import" aria-label="Import a file" title="Import a file (or drop it on the charm, or paste it): ${esc(xAccept.join(' '))}"${X.importers.length ? '' : ' hidden'}>${IC.import}<span>Import</span></button>`
+    const xHeadHtml = `<div class="ce-drop" data-drop="xcmd"${X.commands.some(c => c.c.menu !== false) ? '' : ' hidden'}><button class="ce-icon ce-drop__b" type="button" aria-label="All commands" title="All commands, by group">${IC.object}<span>Object</span></button><div class="ce-menu" role="menu" hidden></div></div>`
+      + `<button class="ce-icon" type="button" data-act="import" aria-label="Place a file" title="Place… (${esc(keyText('Mod+Shift+P'))}) · or drop it on the artboard, or paste it: ${esc(xAccept.join(' '))}"${X.importers.length ? '' : ' hidden'}>${IC.import}<span>Import</span></button>`
       + `<input class="ce-file" type="file" multiple hidden tabindex="-1" aria-hidden="true">`
       + X.panels.map(p => `<button class="ce-icon" type="button" data-xpanel="${esc(p.id)}" aria-label="${esc(p.title || p.id)}" title="${esc(p.title || p.id)}">${typeof p.icon === 'string' && /^\s*<svg/i.test(p.icon) ? p.icon : IC.panel}<span>${esc(p.title || p.id)}</span></button>`).join('');
     const xPanelHtml = !X.panels.length ? '' : `<aside class="ce-xpanel" aria-label="Panels" hidden><div class="ce-dock__tabs" role="tablist">`
       + X.panels.map(p => `<button class="ce-dock__tab" type="button" data-xtab="${esc(p.id)}" role="tab" aria-selected="false">${esc(p.title || p.id)}</button>`).join('')
       + `<button class="ce-dock__x" type="button" data-act="xpanel0" aria-label="Fold the panel away" title="Fold the panel away">&raquo;</button></div>`
       + `<div class="ce-xpanel__body">${X.panels.map(p => `<div class="ce-xpanel__pane" data-pane="${esc(p.id)}" role="tabpanel" hidden></div>`).join('')}</div></aside>`;
+    const P0 = aiPrefs();
+    rootEl.dataset.ui = P0.ui; rootEl.dataset.canvas = P0.canvas;
+    let AIS = null;   // (charm-nest-ce-ai-shell.js mounted on this workspace: the menu bar, the right-click menus, Illustrator's keys)
+    const docTab = f => `<button type="button" data-face="${f}" role="tab"${S.faces[f] ? '' : ' disabled'} title="${esc(title)} · ${f === 'back' ? 'Back' : 'Front'}"><span class="ce-dt__n">${esc(title)}</span>: ${f === 'back' ? 'Back' : 'Front'}<span class="ce-dt__z" data-dtz="${f}"></span></button>`;
+    const FS = [6, 7, 8, 9, 10, 11, 12, 14, 18, 21, 24, 36, 48, 60, 72];
     rootEl.innerHTML = `
 <div class="ce-win" tabindex="-1" role="dialog" aria-modal="true" aria-label="${esc(title)}">
-  <header class="ce-head">
+  <header class="ce-head ce-appbar">
     ${back ? `<button class="ce-back" type="button" data-act="back" title="${esc(back.title || back.label)}">${IC.back}<span>${esc(back.label)}</span></button>` : ''}
+    <div class="ce-menubar" role="menubar" aria-label="Menu bar"></div>
     <div class="ce-id"><h2 title="${esc(title)}">${esc(title)}</h2>${subtitle ? `<span class="ce-eyebrow" title="${esc(subtitle)}">${esc(subtitle)}</span>` : ''}</div>
-    <div class="ce-seg" role="tablist" aria-label="Face">
-      <button type="button" data-face="front" role="tab"${S.faces.front ? '' : ' disabled'}>Front</button><button type="button" data-face="back" role="tab"${S.faces.back ? '' : ' disabled'}>Back</button>
-    </div>
-    <button class="ce-icon" type="button" data-act="dock" aria-label="Layers" title="Layers">${IC.layers}<span>Layers</span></button>
+    <button class="ce-icon" type="button" data-act="dock" aria-label="Layers" title="Layers (F7)">${IC.layers}<span>Layers</span></button>
     ${xHeadHtml}
-    <button class="ce-icon ce-close" type="button" data-act="cancel" aria-label="Close without saving" title="Close (Esc)">×</button>
-  </header>
-  <div class="ce-rail" role="toolbar" aria-label="Tools" aria-orientation="vertical">
-    <div class="ce-tools">
-      <button class="ce-tool is-on" type="button" data-tool="select" data-tip="select" aria-label="Select (V)">${IC.select}</button>
-      <button class="ce-tool" type="button" data-tool="marquee" data-tip="marquee" aria-label="Marquee (M)">${IC.marquee}</button>
-      <button class="ce-tool" type="button" data-tool="text" data-tip="text" aria-label="Text (T)">${IC.text}</button>
-      <div class="ce-drop" data-drop="shapes">
-        <button class="ce-tool ce-drop__b" type="button" data-tool="rect" data-shapes data-tip="shapes" aria-label="Shapes: rectangle (R), ellipse (E), line (L)">${IC.rect}</button>
-        <div class="ce-menu" role="menu" hidden>
-          <div class="ce-menu__head">Shapes</div>
-          <button class="ce-item" type="button" data-tool="rect" role="menuitem">${IC.rect}Rectangle<em>R</em></button>
-          <button class="ce-item" type="button" data-tool="ellipse" role="menuitem">${IC.ellipse}Ellipse<em>E</em></button>
-          <button class="ce-item" type="button" data-tool="line" role="menuitem">${IC.line}Line<em>L</em></button>
-          <button class="ce-item" type="button" data-tool="polygon" role="menuitem">${IC.polygon}Polygon<em>↑ ↓ sides</em></button>
-          ${xShapesHtml}
-        </div>
-      </div>
-      <button class="ce-tool" type="button" data-tool="hand" data-tip="hand" aria-label="Hand (H, or hold Space)">${IC.hand}</button>
-      <button class="ce-tool" type="button" data-tool="zoom" data-tip="zoom" aria-label="Zoom (Z)">${IC.zoom}</button>
-      ${xRailHtml}
-      <div class="ce-drop" data-drop="more">
-        <button class="ce-tool ce-drop__b" type="button" data-tip="more" aria-label="More">${IC.more}</button>
-        <div class="ce-menu" role="menu" hidden>
-          <div class="ce-menu__head">While you work</div>
-          <button class="ce-item ce-item--tog" type="button" data-opt="grid" role="menuitemcheckbox"><i class="ce-tick"></i>Millimetre grid</button>
-          <button class="ce-item ce-item--tog" type="button" data-opt="snapGrid" role="menuitemcheckbox"><i class="ce-tick"></i>Snap to the grid</button>
-          <button class="ce-item ce-item--tog" type="button" data-opt="smart" role="menuitemcheckbox"><i class="ce-tick"></i>Smart guides<em>Alt pauses</em></button>
-          <button class="ce-item ce-item--tog" type="button" data-opt="showGuides" role="menuitemcheckbox"><i class="ce-tick"></i>Show the guides<em>⌘;</em></button>
-          <button class="ce-item ce-item--tog" type="button" data-opt="snapGuides" role="menuitemcheckbox"><i class="ce-tick"></i>Snap to the guides</button>
-          <button class="ce-item" type="button" data-view="clearGuides" role="menuitem">Clear the guides</button>
-          <button class="ce-item" type="button" data-view="zero0" role="menuitem">Zero point to the corner<em>double-click ⌜</em></button>
-          <div class="ce-menu__head">Zoom</div>
-          <button class="ce-item" type="button" data-zoom="fit" role="menuitem">Fit the charm<em>⌘0</em></button>
-          <button class="ce-item" type="button" data-zoom="100" role="menuitem">Actual size<em>⌘1</em></button>
-          <button class="ce-item" type="button" data-zoom="sel" role="menuitem">Zoom to selection<em>⌘2</em></button>
-          <div class="ce-menu__head">Layers</div>
-          <button class="ce-item" type="button" data-cmd="unlockAll" role="menuitem">Unlock everything</button>
-          <button class="ce-item" type="button" data-cmd="showAll" role="menuitem">Show everything</button>
-          <div class="ce-menu__note">Hold <b>Space</b> and drag to move around. <b>Alt</b>-click reaches inside a group. Arrows nudge 0.05 mm, <b>Shift</b> 1 mm. <b>Ctrl</b> (or Alt) on a handle resizes from the centre, <b>Shift</b> keeps the proportions.</div>
-          <div class="ce-menu__note">Drag from a <b>ruler</b> for a guide, back onto it to remove it. Drag from the <b>corner</b> to move the zero point.</div>
-        </div>
-      </div>
-    </div>
     <div class="ce-hist">
-      <button class="ce-hist__b" type="button" data-act="undo" data-tip="undo" aria-label="Undo (⌘Z)" disabled>${IC.undo}</button>
-      <button class="ce-hist__b" type="button" data-act="redo" data-tip="redo" aria-label="Redo (⇧⌘Z)" disabled>${IC.redo}</button>
+      <button class="ce-hist__b" type="button" data-act="undo" data-tip="undo" aria-label="Undo" title="Undo (${esc(keyText('Mod+Z'))})" disabled>${IC.undo}</button>
+      <button class="ce-hist__b" type="button" data-act="redo" data-tip="redo" aria-label="Redo" title="Redo (${esc(keyText('Mod+Shift+Z'))})" disabled>${IC.redo}</button>
     </div>
-  </div>
-  <div class="ce-props">
-    <div class="ce-sizes" data-size>
-      <div class="ce-size">
-        <label class="ce-size__f" title="Left edge, in mm from the zero point (the charm's left edge unless it was moved: drag it from the rulers' corner)"><span>X</span><input data-f="x" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="X position, mm" disabled></label>
-        <label class="ce-size__f" title="Top edge, in mm from the zero point (the charm's top edge unless it was moved: drag it from the rulers' corner)"><span>Y</span><input data-f="y" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Y position, mm" disabled></label>
-        <span class="ce-size__sep" aria-hidden="true"></span>
-        <label class="ce-size__f" title="Width, mm"><span>W</span><input data-f="w" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Width, mm" disabled></label>
-        <button class="ce-size__link is-on" type="button" data-act="link" aria-pressed="true" title="Keep the proportions">${IC.link}</button>
-        <label class="ce-size__f" title="Height, mm"><span>H</span><input data-f="h" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Height, mm" disabled></label>
-        <i class="ce-size__u" aria-hidden="true">mm</i>
-      </div>
-      <div class="ce-size ce-size--rot">
-        <span class="ce-size__sep" aria-hidden="true"></span>
-        <label class="ce-size__f ce-size__f--rot" title="Angle, degrees clockwise"><span>&#8635;</span><input data-f="r" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Angle, degrees" disabled></label>
-        <i class="ce-size__u ce-size__u--deg" aria-hidden="true">&deg;</i>
-      </div>
+    <div class="ce-actions">
+      <button class="ce-btn ce-btn--ghost" type="button" data-act="cancel" title="Close without saving (Esc)">Cancel</button>
+      <button class="ce-btn ce-btn--gold" type="button" data-act="save" title="Save (${esc(keyText('Mod+S'))})">Save</button>
     </div>
+    <button class="ce-icon ce-close" type="button" data-act="cancel" aria-label="Close without saving" title="Close (Esc)">${AIC.close}</button>
+  </header>
+  <div class="ce-props" role="toolbar" aria-label="Control">
+    <span class="ce-ctl__kind" data-selkind>No Selection</span>
+    <div class="ce-drop" data-drop="role" data-when="role" hidden>
+      <button class="ce-prop ce-drop__b" type="button" title="Fill and Stroke: what the laser does with it (a stroke is engraved along the line, a fill as a hatch, a cut line is cut through)"><i class="ce-ctl__sw" data-ctlsw="fill"></i><i class="ce-ctl__sw is-stroke" data-ctlsw="stroke"></i><i class="ce-sw" data-rolesw hidden></i><span data-rolename></span><i class="ce-caret"></i></button>
+      <div class="ce-menu" role="menu" hidden><div class="ce-menu__head">What the laser does</div>${roleItems}</div>
+    </div>
+    <label class="ce-num ce-num--thick" data-when="stroke" title="Stroke weight: the line's width on the charm, in mm, as the laser file writes it · ↑ ↓ 0.01 mm, Shift 0.05 mm" hidden><button class="ce-num__b" type="button" data-act="lw0" title="Stroke weight · back to the width it came with" aria-label="Back to the width it came with">${IC.stroke}</button><input data-f="lw" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Stroke weight, mm"><i>mm</i></label>
+    <label class="ce-num ce-num--thick" data-when="weight" title="Weight: how much thicker (+) or thinner (−) every stroke of the letters is than the font draws them, in mm · ↑ ↓ 0.01 mm, Shift 0.05 mm" hidden><button class="ce-num__b" type="button" data-act="wt0" title="Weight · back to the font's own weight" aria-label="Back to the font's own weight">${IC.weight}</button><input data-f="wt" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Weight, mm thicker or thinner than the font draws it"><i>mm</i></label>
+    <span class="ce-ctl__lab" data-ai-when="text" hidden>Character:</span>
     <div class="ce-drop" data-drop="font" data-when="text" hidden>
-      <button class="ce-prop ce-drop__b" type="button" title="Font and style: the engraving fonts, Bold, Italic, the alignment, the letter case and other alphabets"><span class="ce-fontA" data-caseA>Aa</span><span class="ce-fontname" data-fontname></span><i class="ce-caret"></i></button>
+      <button class="ce-prop ce-drop__b" type="button" title="Font family and style: the engraving fonts, Bold, Italic, the alignment, the letter case and other alphabets"><span class="ce-fontA" data-caseA hidden>Aa</span><span class="ce-fontname" data-fontname></span><i class="ce-caret"></i></button>
       <div class="ce-menu ce-menu--text" role="menu" hidden>
         <div class="ce-menu__head">Style</div>
         <div class="ce-tsrow" role="group" aria-label="Style">
-          <button class="ce-tsbtn" type="button" data-tstyle="bold" role="menuitemcheckbox" aria-checked="false" aria-label="Bold" title="Bold (⌘B) · the font's heavier cut, or the letters made thicker where the font has no heavier cut or the words are already cut in it (small words, a capital under 2.2 mm, as the engraving cuts them)"><b>B</b></button><button class="ce-tsbtn" type="button" data-tstyle="italic" role="menuitemcheckbox" aria-checked="false" aria-label="Italic" title="Italic · the letters slanted 12° (⌘I) · none of the engraving fonts has an italic of its own, so its letters are slanted as outlines"><i>I</i></button>
+          <button class="ce-tsbtn" type="button" data-tstyle="bold" role="menuitemcheckbox" aria-checked="false" aria-label="Bold" title="Bold (${esc(keyText('Mod+Shift+B'))}) · the font's heavier cut, or the letters made thicker where the font has no heavier cut or the words are already cut in it (small words, a capital under 2.2 mm, as the engraving cuts them)"><b>B</b></button><button class="ce-tsbtn" type="button" data-tstyle="italic" role="menuitemcheckbox" aria-checked="false" aria-label="Italic" title="Italic · the letters slanted 12° (${esc(keyText('Mod+I'))}) · none of the engraving fonts has an italic of its own, so its letters are slanted as outlines"><i>I</i></button>
           <span class="ce-tsgap" aria-hidden="true"></span>
           <button class="ce-tsbtn" type="button" data-talign="left" role="menuitemradio" aria-checked="false" aria-label="Align left" title="Align left · the lines start together">${IC.alignL}</button><button class="ce-tsbtn" type="button" data-talign="center" role="menuitemradio" aria-checked="false" aria-label="Align centre" title="Align centre · each line centred">${IC.alignC}</button><button class="ce-tsbtn" type="button" data-talign="right" role="menuitemradio" aria-checked="false" aria-label="Align right" title="Align right · the lines end together">${IC.alignR}</button>
         </div>
@@ -1583,14 +1776,75 @@
         <div class="ce-menu__note">The words you typed are kept: <b>Aa</b> (as typed) gives them back. Every alphabet the engraving has is typed as it is: Greek, Cyrillic, Hebrew, Arabic, Indian scripts, Chinese, Japanese, Korean and emoji, each set in its own font.</div>
       </div>
     </div>
-    <label class="ce-num" data-when="text" title="Text size, points" hidden><input data-f="pt" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Text size, points"><i>pt</i></label>
-    <label class="ce-num ce-num--thick" data-when="weight" title="Weight: how much thicker (+) or thinner (−) every stroke of the letters is than the font draws them, in mm · ↑ ↓ 0.01 mm, Shift 0.05 mm" hidden><button class="ce-num__b" type="button" data-act="wt0" title="Weight · back to the font's own weight" aria-label="Back to the font's own weight">${IC.weight}</button><input data-f="wt" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Weight, mm thicker or thinner than the font draws it"><i>mm</i></label>
-    <div class="ce-drop" data-drop="role" data-when="role" hidden>
-      <button class="ce-prop ce-drop__b" type="button" title="What the laser does with it"><i class="ce-sw" data-rolesw></i><span data-rolename></span><i class="ce-caret"></i></button>
-      <div class="ce-menu" role="menu" hidden><div class="ce-menu__head">What the laser does</div>${roleItems}</div>
+    <div class="ce-drop" data-drop="fstyle" data-ai-when="text" hidden>
+      <button class="ce-prop ce-drop__b" type="button" title="Font style"><span data-fstylename>Regular</span><i class="ce-caret"></i></button>
+      <div class="ce-menu" role="menu" hidden>${[['regular', 'Regular'], ['bold', 'Bold'], ['italic', 'Italic'], ['bolditalic', 'Bold Italic']].map(([k, n]) => `<button class="ce-item" type="button" data-fstyle="${k}" role="menuitemradio">${n}</button>`).join('')}</div>
     </div>
-    <label class="ce-num ce-num--thick" data-when="stroke" title="Line width on the charm, in mm, as the laser file writes it · ↑ ↓ 0.01 mm, Shift 0.05 mm" hidden><button class="ce-num__b" type="button" data-act="lw0" title="Line width · back to the width it came with" aria-label="Back to the width it came with">${IC.stroke}</button><input data-f="lw" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Line width, mm"><i>mm</i></label>
+    <label class="ce-num" data-when="text" title="Font size, points" hidden><input data-f="pt" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Font size, points"><i>pt</i></label>
+    <div class="ce-drop" data-drop="tsize" data-ai-when="text" hidden>
+      <button class="ce-prop ce-drop__b" type="button" title="Font size presets" aria-label="Font size presets" style="padding:0 3px"><i class="ce-caret"></i></button>
+      <div class="ce-menu" role="menu" hidden style="min-width:96px">${FS.map(z => `<button class="ce-item" type="button" data-tsize="${z}" role="menuitemradio">${z} pt</button>`).join('')}</div>
+    </div>
+    <span class="ce-ctl__lab" data-ai-when="text" hidden>Paragraph:</span>
+    <div class="ce-ctl__para" data-ai-when="text" role="group" aria-label="Paragraph alignment" hidden><button class="ce-tsbtn" type="button" data-talign="left" aria-label="Align left" title="Align Left (${esc(keyText('Mod+Shift+L'))})">${IC.alignL}</button><button class="ce-tsbtn" type="button" data-talign="center" aria-label="Align center" title="Align Center (${esc(keyText('Mod+Shift+C'))})">${IC.alignC}</button><button class="ce-tsbtn" type="button" data-talign="right" aria-label="Align right" title="Align Right (${esc(keyText('Mod+Shift+R'))})">${IC.alignR}</button></div>
     <div class="ce-xbar" data-when="xbar" hidden></div>
+    <span class="ce-ctl__grow ce-grow" aria-hidden="true"></span>
+    <span class="ce-ctl__lab" data-ai-transform>Transform:</span>
+    <span class="ce-refpt" role="radiogroup" aria-label="Reference point" title="Reference point: the point of the selection X and Y read and W and H keep">${[0, 0.5, 1].map(fy => [0, 0.5, 1].map(fx => `<button type="button" data-refpt="${fx},${fy}" role="radio" aria-label="Reference point ${fy === 0 ? 'top' : fy === 1 ? 'bottom' : 'middle'} ${fx === 0 ? 'left' : fx === 1 ? 'right' : 'centre'}"></button>`).join('')).join('')}</span>
+    <div class="ce-sizes" data-size>
+      <div class="ce-size">
+        <label class="ce-size__f" title="X: the reference point, in mm from the zero point (the charm's left edge unless it was moved: drag it from the rulers' corner)"><span>X</span><input data-f="x" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="X position, mm" disabled></label>
+        <label class="ce-size__f" title="Y: the reference point, in mm from the zero point (the charm's top edge unless it was moved: drag it from the rulers' corner)"><span>Y</span><input data-f="y" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Y position, mm" disabled></label>
+        <span class="ce-size__sep" aria-hidden="true"></span>
+        <label class="ce-size__f" title="Width, mm"><span>W</span><input data-f="w" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Width, mm" disabled></label>
+        <button class="ce-size__link is-on" type="button" data-act="link" aria-pressed="true" title="Constrain Width and Height Proportions">${IC.link}</button>
+        <label class="ce-size__f" title="Height, mm"><span>H</span><input data-f="h" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Height, mm" disabled></label>
+        <i class="ce-size__u" aria-hidden="true">mm</i>
+      </div>
+      <div class="ce-size ce-size--rot">
+        <span class="ce-size__sep" aria-hidden="true"></span>
+        <label class="ce-size__f ce-size__f--rot" title="Rotate: the angle, degrees clockwise, about the centre"><span>&#8635;</span><input data-f="r" inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Angle, degrees" disabled></label>
+        <i class="ce-size__u ce-size__u--deg" aria-hidden="true">&deg;</i>
+      </div>
+    </div>
+  </div>
+  <div class="ce-head ce-doctabs" role="tablist" aria-label="Documents">
+    <div class="ce-seg" role="presentation">${docTab('front')}${docTab('back')}</div>
+  </div>
+  <div class="ce-rail${P0.cols === 2 ? ' is-2col' : ''}" role="toolbar" aria-label="Tools" aria-orientation="vertical">
+    <div class="ce-rail__head"><button class="ce-rail__cols" type="button" data-act="toolcols" title="Toggle the Toolbar between one and two columns" aria-label="Toggle one or two columns">${AIC.cols}</button></div>
+    <div class="ce-tools">
+      ${xRailHtml}
+      <div class="ce-drop" data-drop="more">
+        <button class="ce-tool ce-drop__b" type="button" data-tip="more" aria-label="Edit Toolbar">${AIC.more}</button>
+        <div class="ce-menu" role="menu" hidden>
+          <div class="ce-menu__head">While you work</div>
+          <button class="ce-item ce-item--tog" type="button" data-opt="grid" role="menuitemcheckbox"><i class="ce-tick"></i>Show Grid<em>${esc(keyText("Mod+'"))}</em></button>
+          <button class="ce-item ce-item--tog" type="button" data-opt="snapGrid" role="menuitemcheckbox"><i class="ce-tick"></i>Snap to Grid<em>${esc(keyText("Mod+Shift+'"))}</em></button>
+          <button class="ce-item ce-item--tog" type="button" data-opt="smart" role="menuitemcheckbox"><i class="ce-tick"></i>Smart Guides<em>${esc(keyText('Mod+U'))}</em></button>
+          <button class="ce-item ce-item--tog" type="button" data-opt="showGuides" role="menuitemcheckbox"><i class="ce-tick"></i>Show Guides<em>${esc(keyText('Mod+;'))}</em></button>
+          <button class="ce-item ce-item--tog" type="button" data-opt="snapGuides" role="menuitemcheckbox"><i class="ce-tick"></i>Snap to Guides</button>
+          <button class="ce-item" type="button" data-view="clearGuides" role="menuitem">Clear Guides</button>
+          <button class="ce-item" type="button" data-view="zero0" role="menuitem">Reset Zero Point<em>double-click ⌜</em></button>
+          <div class="ce-menu__head">Zoom</div>
+          <button class="ce-item" type="button" data-zoom="fit" role="menuitem">Fit Artboard in Window<em>${esc(keyText('Mod+0'))}</em></button>
+          <button class="ce-item" type="button" data-zoom="100" role="menuitem">Actual Size<em>${esc(keyText('Mod+1'))}</em></button>
+          <button class="ce-item" type="button" data-zoom="sel" role="menuitem">Zoom to Selection<em>${esc(keyText('Shift+2'))}</em></button>
+          <div class="ce-menu__head">Layers</div>
+          <button class="ce-item" type="button" data-cmd="unlockAll" role="menuitem">Unlock All<em>${esc(keyText('Mod+Alt+2'))}</em></button>
+          <button class="ce-item" type="button" data-cmd="showAll" role="menuitem">Show All<em>${esc(keyText('Mod+Alt+3'))}</em></button>
+          <div class="ce-menu__note">Hold <b>Space</b> and drag to move around. <b>Alt</b>-click reaches inside a group. Arrows nudge 0.05 mm, <b>Shift</b> 1 mm. <b>Ctrl</b> (or Alt) on a handle resizes from the centre, <b>Shift</b> keeps the proportions.</div>
+          <div class="ce-menu__note">Drag from a <b>ruler</b> for a guide, back onto it to remove it. Drag from the <b>corner</b> to move the zero point.</div>
+        </div>
+      </div>
+    </div>
+    <div class="ce-paint" data-paint>
+      <button class="ce-paint__sw ce-paint__sw--fill is-front" type="button" data-act="paintFill" data-paintsw="fill" title="Fill (X): engraved as a hatch" aria-label="Fill"></button>
+      <button class="ce-paint__sw ce-paint__sw--stroke" type="button" data-act="paintStroke" data-paintsw="stroke" title="Stroke (X): engraved along the line" aria-label="Stroke"></button>
+      <button class="ce-paint__mini ce-paint__mini--swap" type="button" data-act="swapPaint" title="Swap Fill and Stroke (${esc(keyText('Shift+X'))})" aria-label="Swap Fill and Stroke">${AIC.swap}</button>
+      <button class="ce-paint__mini ce-paint__mini--def" type="button" data-act="defaultPaint" title="Default Fill and Stroke (D)" aria-label="Default Fill and Stroke"><i></i><i></i></button>
+    </div>
+    <button class="ce-scr" type="button" data-act="screen" title="Change Screen Mode (F)" aria-label="Change Screen Mode">${AIC.screen}</button>
   </div>
   <div class="ce-wrap">
     <button class="ce-rule ce-rule__corner" type="button" data-zero title="Zero point · drag it onto the charm to measure from there · double-click: back to the charm's top-left corner" aria-label="Zero point of the rulers">mm</button>
@@ -1610,26 +1864,25 @@
       <button class="ce-prop ce-drop__b ce-zoomb" type="button" title="Zoom" aria-label="Zoom"><span data-zoomread>100%</span><i class="ce-caret"></i></button>
       <div class="ce-menu" role="menu" hidden>
         <label class="ce-zoomtype" title="Type a zoom and press Enter · ↑ ↓ step"><input data-zoomtype inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Zoom, percent"><i>%</i></label>
-        <div class="ce-menu__head">Zoom</div>
-        <button class="ce-item" type="button" data-zoom="in" role="menuitem">Zoom in<em>⌘+</em></button>
-        <button class="ce-item" type="button" data-zoom="out" role="menuitem">Zoom out<em>⌘−</em></button>
-        <button class="ce-item" type="button" data-zoom="fit" role="menuitem">Fit the charm<em>⌘0</em></button>
-        <button class="ce-item" type="button" data-zoom="100" role="menuitem">Actual size<em>⌘1</em></button>
-        <button class="ce-item" type="button" data-zoom="sel" role="menuitem">Zoom to selection<em>⌘2</em></button>
+        <button class="ce-item" type="button" data-zoom="in" role="menuitem">Zoom In<em>${esc(keyText('Mod++'))}</em></button>
+        <button class="ce-item" type="button" data-zoom="out" role="menuitem">Zoom Out<em>${esc(keyText('Mod+-'))}</em></button>
+        <button class="ce-item" type="button" data-zoom="fit" role="menuitem">Fit Artboard in Window<em>${esc(keyText('Mod+0'))}</em></button>
+        <button class="ce-item" type="button" data-zoom="100" role="menuitem">Actual Size<em>${esc(keyText('Mod+1'))}</em></button>
+        <button class="ce-item" type="button" data-zoom="sel" role="menuitem">Zoom to Selection<em>${esc(keyText('Shift+2'))}</em></button>
         <div class="ce-menu__sep"></div>
-        <button class="ce-item" type="button" data-zoom="400" role="menuitem">400%</button>
-        <button class="ce-item" type="button" data-zoom="1000" role="menuitem">1000%</button>
-        <button class="ce-item" type="button" data-zoom="2000" role="menuitem">2000%</button>
-        <button class="ce-item" type="button" data-zoom="4000" role="menuitem">4000%</button>
-        <button class="ce-item" type="button" data-zoom="6400" role="menuitem">6400%</button>
+        ${[6400, 4000, 2000, 1000, 400, 200, 100, 50].map(z => `<button class="ce-item" type="button" data-zoom="${z}" role="menuitem">${z}%</button>`).join('')}
       </div>
     </div>
-    <button class="ce-prop ce-snapb" type="button" data-opt="smart" title="Smart guides: snap to the other parts and the charm, with the distances shown (⌘U) · Alt pauses them while you drag">${IC.magnet}<span>Snap</span></button>
-    <span class="ce-hint" data-hint></span>
-    <div class="ce-actions">
-      <button class="ce-btn ce-btn--ghost" type="button" data-act="cancel">Cancel</button>
-      <button class="ce-btn ce-btn--gold" type="button" data-act="save">Save</button>
+    <div class="ce-abnav" role="group" aria-label="Artboard navigation">
+      <button type="button" data-ai-face="first" title="First" aria-label="First artboard"><svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true"><path d="M2 1.5v7M8 1.5 4 5l4 3.5Z" fill="currentColor" stroke="currentColor" stroke-width=".9"/></svg></button>
+      <button type="button" data-ai-face="prev" title="Previous" aria-label="Previous artboard"><svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true"><path d="M7 1.5 3 5l4 3.5Z" fill="currentColor"/></svg></button>
+      <button type="button" class="ce-abnav__cur" data-ai-face="toggle" title="The face shown: Front or Back" aria-label="Artboard"><span data-ai-facename>1 Front</span><i class="ce-caret"></i></button>
+      <button type="button" data-ai-face="next" title="Next" aria-label="Next artboard"><svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true"><path d="M3 1.5 7 5l-4 3.5Z" fill="currentColor"/></svg></button>
+      <button type="button" data-ai-face="last" title="Last" aria-label="Last artboard"><svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true"><path d="M8 1.5v7M2 1.5 6 5l-4 3.5Z" fill="currentColor" stroke="currentColor" stroke-width=".9"/></svg></button>
     </div>
+    <span class="ce-stat__tool" data-ai-toolname>Selection</span>
+    <span class="ce-hint" data-hint></span>
+    <button class="ce-prop ce-snapb" type="button" data-opt="smart" title="Smart Guides (${esc(keyText('Mod+U'))}): snap to the other parts and the charm, with the distances shown · Alt pauses them while you drag">${IC.magnet}<span>Snap</span></button>
   </footer>
   <aside class="ce-dock" aria-label="Layers">
     <div class="ce-dock__tabs" role="tablist">
@@ -1650,6 +1903,7 @@
   </aside>
   ${xPanelHtml}
   <div class="ce-menu ce-ctx" role="menu" hidden></div>
+  <button class="ce-scrx" type="button" data-act="screen0" title="Back to Normal Screen Mode (F)">Exit Full Screen</button>
 </div>`;
     (opts.host && opts.host.isConnected ? opts.host : doc.body).appendChild(rootEl);   // (opts.host: inside a modal dialog open over the page, which covers the body)
     doc.documentElement.style.overflow = 'hidden';
@@ -1657,6 +1911,7 @@
     const win = $('.ce-win'), stage = $('.ce-stage'), art = $('.ce-art'), gridG = $('.ce-grid'), itemsG = $('.ce-items'), ui = $('.ce-ui'), paper = $('.ce-paper');
     const rx = $('.ce-rule--x'), ry = $('.ce-rule--y'), layersEl = $('.ce-layers'), dock = $('.ce-dock'), ctx = $('.ce-ctx');
     const field = f => $(`[data-f="${f}"]`);
+    const dtzEls = $$('[data-dtz]');
     const SVGNS = 'http://www.w3.org/2000/svg';
 
     /* ── state helpers ── */
@@ -1749,6 +2004,8 @@
       if (sliding) drawGrid(vx - vw / 2, vy - vh / 2, vw * 2, vh * 2); else drawGrid(vx, vy, vw, vh);
       queueRulers(); renderUI(); drawView();
       const zr = fmtZoom(zoomPct()), zEl = $('[data-zoomread]'); if (zEl.textContent !== zr) zEl.textContent = zr;
+      // (the document tab says its zoom and view, as Illustrator's: "@ 1206% (Preview)")
+      for (const el of dtzEls) { const t = el.dataset.dtz === S.face ? ` @ ${zr} (${rootEl.classList.contains('cx-outline') ? 'Outline' : 'Preview'})` : ''; if (el.textContent !== t) el.textContent = t; }
       if (S.editing) placeEditor();
     }
     const fmtZoom = p => (p < 100 ? trim(p, 0) : String(Math.round(p))) + '%';
@@ -1818,7 +2075,7 @@
       return { major, n, minor: major / n, half: n % 2 === 0 ? n / 2 : 0 };
     }
     const ruleNum = u => String(+(Math.abs(u) < 1e-9 ? 0 : u).toFixed(3));
-    let ruleRaf = 0, cursor = null, ruleFont = '', selMemo = { its: null, key: '', b: null };
+    let ruleRaf = 0, cursor = null, ruleFont = '', ruleInk = null, selMemo = { its: null, key: '', b: null };
     const queueRulers = () => { if (!ruleRaf) ruleRaf = requestAnimationFrame(drawRulers); };
     /** The selection's box, worked out again only when the tree or the selection changes (the tree is immutable: the same array is the same drawing). */
     function selExtent() {
@@ -1830,11 +2087,13 @@
       ruleRaf = 0;
       if (!rootEl.isConnected) return;
       const dpr = Math.min(2, root.devicePixelRatio || 1);
-      const pxmm = S.k * PT, ink = '#1c1d1d', muted = '#8a8784', hair = '#cdc6b8', liveC = '#b8935a', guideC = '#19a6c6';
+      // (the colours of the UI brightness in use, Illustrator's rulers: read from the theme once per brightness)
+      if (!ruleInk || ruleInk.ui !== rootEl.dataset.ui) { const cs = getComputedStyle(rootEl), v = n => cs.getPropertyValue(n).trim(); ruleInk = { ui: rootEl.dataset.ui, ink: v('--ai-ruler-ink') || '#1c1d1d', tick: v('--ai-ruler-tick') || '#8a8784', live: v('--ai-accent') || '#2680eb' }; }
+      const pxmm = S.k * PT, ink = ruleInk.ink, muted = ruleInk.tick, hair = ruleInk.tick, liveC = ruleInk.live, guideC = '#19a6c6';
       // (what is being drawn is marked as it grows, a shape's draft or an extension tool's live box; otherwise the selection)
       const g0 = S.g, live = g0 && g0.kind === 'draw' && g0.live && g0.draft ? bboxOf(g0.draft) : S.xLive && Array.isArray(S.xLive.box) ? S.xLive.box : null;
       const st = ruleSteps(pxmm), s = sb(), f = frame(), z = zeroPt(), sel = live || selExtent(), gl = S.showGuides ? guides() : [];
-      if (!ruleFont) ruleFont = '700 8px ' + (getComputedStyle(rootEl).fontFamily || 'sans-serif');
+      if (!ruleFont) ruleFont = '400 9px ' + (getComputedStyle(rootEl).fontFamily || 'sans-serif');
       corner.classList.toggle('is-moved', !!face().zero);
       const draw = (cv, vertical) => {
         // (the bitmap is the canvas's own box inside its hairline border: sized to the border box it was squeezed a pixel in, and every tick was a little soft)
@@ -1853,7 +2112,7 @@
         const sa = sel ? at(vertical ? sel[1] : sel[0]) : 0, sbd = sel ? at(vertical ? sel[3] : sel[2]) : 0;
         if (sel) {
           const lo = Math.max(0, Math.min(sa, sbd)), hi = Math.min(len, Math.max(sa, sbd));
-          c.fillStyle = 'rgba(184,147,90,.2)';
+          c.fillStyle = 'rgba(38,128,235,.18)';
           if (hi >= lo) { if (vertical) c.fillRect(0, lo, thick, hi - lo); else c.fillRect(lo, 0, hi - lo, thick); }
         }
         // the ticks: each division short, the half longer, the numbered ones the full depth
@@ -2301,12 +2560,14 @@
     function sizeRead() {
       const info = selInfo(); if (!info) return null;
       const f = frame();
+      // (Illustrator's reference point, the 9-dot locator on the Control bar: X and Y read that point of the box as drawn; the top-left unless another is picked)
+      const rx = b => b[0] + S.ref[0] * (b[2] - b[0]), ry = b => b[1] + S.ref[1] * (b[3] - b[1]);
       if (info.single) {
         const it = info.e.it, b = geo.drawn(it, info.e.P), rb = info.rb;
-        return { x: (b[0] - zeroPt()[0]) * MM, y: (b[1] - zeroPt()[1]) * MM, w: Math.abs(num(it.sx, 1)) * (rb[2] - rb[0]) * MM, h: Math.abs(num(it.sy, 1)) * (rb[3] - rb[1]) * MM, r: wrap180(num(it.rot, 0)) };
+        return { x: (rx(b) - zeroPt()[0]) * MM, y: (ry(b) - zeroPt()[1]) * MM, w: Math.abs(num(it.sx, 1)) * (rb[2] - rb[0]) * MM, h: Math.abs(num(it.sy, 1)) * (rb[3] - rb[1]) * MM, r: wrap180(num(it.rot, 0)) };
       }
       const b = info.b, leaves = selLeaves(), r0 = leaves.length ? wrap180(num(leaves[0].rot, 0)) : 0;
-      return { x: (b[0] - zeroPt()[0]) * MM, y: (b[1] - zeroPt()[1]) * MM, w: (b[2] - b[0]) * MM, h: (b[3] - b[1]) * MM, r: leaves.every(l => Math.abs(wrap180(num(l.rot, 0)) - r0) < 1e-6) ? r0 : null };
+      return { x: (rx(b) - zeroPt()[0]) * MM, y: (ry(b) - zeroPt()[1]) * MM, w: (b[2] - b[0]) * MM, h: (b[3] - b[1]) * MM, r: leaves.every(l => Math.abs(wrap180(num(l.rot, 0)) - r0) < 1e-6) ? r0 : null };
     }
     function syncProps() {
       const s = sizeRead();
@@ -2377,7 +2638,47 @@
       // (a phone has no height to spare for a bar describing nothing: it folds away, as the studio's size box does with nothing selected)
       $('.ce-props').classList.toggle('is-empty', !s && !showText && !showRole && !showW && !showWt);
       if (!(S.g && S.g.live)) xBar();
+      aiSync(leaves, texts, showText);
       fitBar();
+    }
+    /** The Illustrator workspace's read-outs (28 Oct 2026): the Control bar's selection kind, its Fill / Stroke swatches and font style, the Tools panel's Fill / Stroke, the
+     *  reference point, the status bar's artboard and the document tabs. */
+    function aiSync(leaves, texts, showText) {
+      const es = selEntries(), n = es.length;
+      const kind = !n ? (S.tool === 'text' ? 'Characters' : 'No Selection') : n > 1 ? (es.every(e => e.it.kind === 'text') ? 'Type' : es.every(e => e.it.kind === 'path') ? 'Paths' : 'Mixed Objects')
+        : es[0].it.kind === 'text' ? (S.editing ? 'Characters' : 'Type') : es[0].it.kind === 'group' ? (es[0].it.clipOf ? 'Clip Group' : 'Group') : (es[0].it.subpaths || []).length > 1 ? 'Compound Path' : 'Path';
+      const kEl = $('[data-selkind]'); if (kEl.textContent !== kind) kEl.textContent = kind;
+      $$('[data-ai-when="text"]').forEach(el => { el.hidden = !showText; });
+      // the paint the selection has (or the next shape or words will have): a fill engraves as a hatch, a stroke along the line; the swatch shows the role's colour or None
+      const paint = list => {
+        if (!list.length) { const r = S.tool === 'text' ? S.textRole : S.shapeRole, it = { kind: S.tool === 'text' ? 'text' : 'path', role: r, fill: r === 'hatch', stroke: r !== 'hatch' }; list = [it]; }
+        const col = r => `var(--c-${ROLES.includes(r) ? r : 'art'})`;
+        const fills = list.filter(paintFill), strokes = list.filter(paintStroke);
+        return { fill: fills.length ? col(fills[0].role) : null, stroke: strokes.length ? col(strokes[0].role) : null };
+      };
+      const p = paint(leaves);
+      for (const el of $$('[data-paintsw], [data-ctlsw]')) {
+        const which = el.dataset.paintsw || el.dataset.ctlsw, c = p[which];
+        el.classList.toggle('is-none', !c);
+        if (which === 'fill') el.style.background = c || ''; else el.style.borderColor = c || '';
+      }
+      $$('[data-paintsw]').forEach(el => el.classList.toggle('is-front', el.dataset.paintsw === S.paintFocus));
+      if (showText) {
+        const st = texts.length ? null : S.textStyle, b = st ? !!st.bold : texts.length && texts.every(t => !!t.bold), i = st ? !!st.italic : texts.length && texts.every(t => !!t.italic);
+        const mixed = !st && texts.some(t => !!t.bold !== b || !!t.italic !== i);
+        const fs = mixed ? '' : b && i ? 'bolditalic' : b ? 'bold' : i ? 'italic' : 'regular';
+        $('[data-fstylename]').textContent = mixed ? 'Mixed' : { regular: 'Regular', bold: 'Bold', italic: 'Italic', bolditalic: 'Bold Italic' }[fs];
+        $$('[data-fstyle]').forEach(el => el.classList.toggle('is-on', el.dataset.fstyle === fs));
+        const sz = texts.length ? num(texts[0].sizePt, 10) : S.textSize;
+        $$('[data-tsize]').forEach(el => el.classList.toggle('is-on', Math.abs(+el.dataset.tsize - sz) < 1e-6));
+      }
+      $$('[data-refpt]').forEach(el => { const on = el.dataset.refpt === S.ref.join(','); el.classList.toggle('is-on', on); el.setAttribute('aria-checked', String(on)); });
+      const fn = $('[data-ai-facename]'), fl = (S.face === 'back' ? '2 Back' : '1 Front'); if (fn.textContent !== fl) fn.textContent = fl;
+      const has = ['front', 'back'].filter(f => S.faces[f]);
+      for (const b of $$('[data-ai-face]')) { const a = b.dataset.aiFace; b.disabled = a === 'toggle' ? has.length < 2 : (a === 'first' || a === 'prev') ? S.face === has[0] : (a === 'next' || a === 'last') ? S.face === has[has.length - 1] : false; }
+      $$('[data-face]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.face === S.face)));
+      win.classList.toggle('is-hide-tools', !!S.hide.tools); win.classList.toggle('is-hide-control', !!S.hide.control);
+      if (AIS) AIS.sync();
     }
     /** ONE ROW ON A DESK (27 Oct 2026): when what the bar now shows would wrap it (a long font name, the weight beside the size), the role says itself in one word. Measured only
      *  when the bar's contents change, never on every frame of a drag. */
@@ -2399,15 +2700,15 @@
       if (S.autoSel && t !== 'select' && t !== 'hand' && t !== 'zoom' && S.sel.length && S.sel.join() === S.autoSel.join()) setSel([]);
       S.autoSel = null;   // (CETEXT: the words selected as the editor opened only show their controls: a tool that makes something new starts with nothing selected, as it did)
       S.tool = t;
-      if (t === 'rect' || t === 'ellipse' || t === 'line' || t === 'polygon') {
-        S.shape = t;
-        const b = $('[data-shapes]'); b.dataset.tool = t; b.innerHTML = IC[t];
-      }
+      if (t === 'rect' || t === 'ellipse' || t === 'line' || t === 'polygon') S.shape = t;
+      // (the Rectangle's flyout shows the shape last picked, as Illustrator's does; the Line Segment has a button of its own)
+      if (t === 'rect' || t === 'ellipse' || t === 'polygon') { const b = $('[data-shapes]'); b.dataset.tool = t; b.dataset.tip = t; b.innerHTML = AIC[t]; }
       xFlyButton(t);
-      $$('.ce-tool').forEach(b => b.classList.toggle('is-on', b.dataset.tool === t || (b.hasAttribute('data-shapes') && (t === 'rect' || t === 'ellipse' || t === 'line' || t === 'polygon'))));
+      $$('.ce-tool').forEach(b => b.classList.toggle('is-on', b.dataset.tool === t || (b.hasAttribute('data-shapes') && (t === 'rect' || t === 'ellipse' || t === 'polygon'))));
       stage.dataset.tool = t;
       xArm(was, t);
       $('[data-hint]').textContent = HINTS[t] || (xTool(t) ? String(xTool(t).hint || xTool(t).title || '') : '');
+      { const A = aiShell(), nm = (A && A.tools[t] ? A.tools[t].name.replace(/ Tool$/, '') : TOOL_NAME[t] || (xTool(t) ? String(xTool(t).title || t) : t)); $('[data-ai-toolname]').textContent = nm; }
       S.hover = null; renderUI(); syncProps();
     }
     function refresh(opts2) {
@@ -2676,10 +2977,12 @@
           const W = mul(en.P, geo.matrix(en.it)), rb = geo.box(en.it);
           let n = pushDown(en.it, mul(W, mul(about(scM(kx, ky), rb[0], rb[1]), inv(W) || I)), geo);
           n = foldTextScale(n, geo);
-          const nb = geo.drawn(n, en.P); if (nb) n = pushDown(n, tr(b[0] - nb[0], b[1] - nb[1]), geo);
+          // (the drawn box's reference point stays where it was: its top-left unless the Control bar's locator says another)
+          const nb = geo.drawn(n, en.P), fx = S.ref[0], fy = S.ref[1];
+          if (nb) n = pushDown(n, tr(b[0] + fx * (b[2] - b[0]) - (nb[0] + fx * (nb[2] - nb[0])), b[1] + fy * (b[3] - b[1]) - (nb[1] + fy * (nb[3] - nb[1]))), geo);
           return commit(replaceIn(next, new Map([[id, n]])));
         }
-        return transformSel(about(scM(kx, ky), b[0], b[1]), { fold: true });
+        return transformSel(about(scM(kx, ky), b[0] + S.ref[0] * (b[2] - b[0]), b[1] + S.ref[1] * (b[3] - b[1])), { fold: true });
       }
       syncProps();
     }
@@ -2814,6 +3117,7 @@
     let fieldEls = null;
     function liveFields(r) {
       if (!fieldEls) fieldEls = ['x', 'y', 'w', 'h', 'r'].map(k => [k, field(k)]);
+      if (r && (S.ref[0] || S.ref[1])) r = Object.assign({}, r, { x: r.x + S.ref[0] * r.w, y: r.y + S.ref[1] * r.h });   // (the Control bar's reference point)
       for (const [k, el] of fieldEls) { el.disabled = !r; el.value = !r ? '' : k === 'r' ? (r.r == null ? '' : trim(r.r, 1)) : fmtMm(r[k]); }
     }
     const badgeSvg = (sx, sy, text, cls) => { const w = text.length * 5.6 + 10; return `<g class="u-bdg ${cls}"><rect x="${(sx - w / 2).toFixed(1)}" y="${(sy - 8).toFixed(1)}" width="${w.toFixed(1)}" height="15"/><text x="${(sx - w / 2 + 5).toFixed(1)}" y="${(sy + 3).toFixed(1)}">${esc(text)}</text></g>`; };
@@ -3156,6 +3460,7 @@
     function closeMenus() {
       $$('.ce-menu').forEach(m => { if (!m.hidden) { m.hidden = true; m.classList.remove('is-in', 'is-in--right'); } });
       $$('.ce-drop__b').forEach(b => b.setAttribute('aria-expanded', 'false'));
+      if (AIS) AIS.closed();   // (the menu bar's menus go with them)
     }
     function placeMenu(menu, r, rail) {
       const vw = doc.documentElement.clientWidth || root.innerWidth, vh = doc.documentElement.clientHeight || root.innerHeight;
@@ -3232,12 +3537,12 @@
     let tipEl = null, tipTimer = 0;
     function hideTip() { clearTimeout(tipTimer); if (tipEl) tipEl.classList.remove('is-in'); }
     function showTip(btn) {
-      const t = TIPS[btn.dataset.tip] || xTip(btn.dataset.tip); if (!t || rootEl.querySelector('.ce-menu:not([hidden])')) return;
+      const id = btn.dataset.tip, A = AIS && AIS.tip(id);
+      const t = A || (TIPS[id] ? [TIPS[id][0], TIPS[id][1], keyText(TIPS[id][2])] : null) || (xTip(id) ? [toolName(xTool(id)), xTip(id)[1], keyText(xTool(id).key)] : null);
+      if (!t || rootEl.querySelector('.ce-menu:not([hidden])')) return;
       if (!tipEl) { tipEl = doc.createElement('div'); tipEl.className = 'ce-tip'; rootEl.appendChild(tipEl); }
-      const src = btn.querySelector('svg'), filled = src && (src.getAttribute('fill') || 'none') !== 'none';
-      const paint = filled ? 'fill:#9a7c3e;stroke:none' : 'fill:none;stroke:#9a7c3e;stroke-width:' + ((src && src.getAttribute('stroke-width')) || '1.6') + ';stroke-linecap:round;stroke-linejoin:round';
-      tipEl.innerHTML = `<svg class="ce-tip__ico" viewBox="0 0 56 56" aria-hidden="true"><circle class="b" cx="28" cy="9" r="4.4"/><circle class="c" cx="28" cy="32" r="18.5"/><g transform="translate(15 19) scale(1.08)" style="${paint}">${src ? src.innerHTML : ''}</g></svg>`
-        + `<span><b>${esc(t[0])}${t[2] ? `<i>${esc(t[2])}</i>` : ''}</b><span>${esc(t[1])}</span></span>`;
+      // (Illustrator's rich tool tip: "Selection Tool (V)" and a line on what it does)
+      tipEl.innerHTML = `<b>${esc(t[0])}${t[2] ? `<i>(${esc(t[2])})</i>` : ''}</b>${t[1] ? `<span>${esc(t[1])}</span>` : ''}`;
       tipEl.style.left = '0px'; tipEl.style.top = '0px';
       const r = btn.getBoundingClientRect(), c = tipEl.getBoundingClientRect(), vw = doc.documentElement.clientWidth || root.innerWidth, vh = doc.documentElement.clientHeight || root.innerHeight;
       let left = r.right + 9; if (left + c.width > vw - 8) left = Math.max(8, r.left - 9 - c.width);
@@ -3253,11 +3558,7 @@
         clearTimeout(tipTimer); tipTimer = setTimeout(() => showTip(b), 260);
       });
       rail.addEventListener('pointerleave', hideTip); rail.addEventListener('pointerdown', hideTip);
-      let raf = 0, y = null;
-      const paint = () => { raf = 0; rail.querySelectorAll('.ce-tool svg').forEach(g => { if (y == null) { g.style.transform = ''; return; } const r = g.getBoundingClientRect(), d = (y - (r.top + r.height / 2)) / 58, k = Math.exp(-d * d); g.style.transform = k > 0.012 ? `scale(${(1 + 0.78 * k).toFixed(4)})` : ''; }); };
-      const q = () => { if (!raf) raf = requestAnimationFrame(paint); };
-      rail.addEventListener('pointermove', e => { if (e.pointerType === 'touch') return; if (fromMenu(e) || rootEl.querySelector('.ce-menu:not([hidden])')) { if (y !== null) { y = null; q(); } return; } y = e.clientY; q(); });
-      rail.addEventListener('pointerleave', () => { y = null; q(); });
+      // (Illustrator's Tools panel stands still under the pointer: the studio's magnifying wave is gone with the studio's look)
     }
 
     /* ── the Layers panel's own gestures: a row selects (⌘ / Shift add), eye and lock, a twisty, a double-click renames, a drag reorders ── */
@@ -3532,6 +3833,10 @@
       if (finished) return; finished = true;
       root.removeEventListener('keydown', onKey, true); root.removeEventListener('keyup', onKeyUp, true); root.removeEventListener('resize', onResize); root.removeEventListener('blur', onBlur);
       root.removeEventListener('keydown', viewKey, true); root.removeEventListener('keyup', viewKeyUp, true);
+      doc.removeEventListener('fullscreenchange', onFullscreen);
+      root.removeEventListener('keydown', aiMenuKey, true); root.removeEventListener('keyup', aiMenuKeyUp, true);
+      try { if (doc.fullscreenElement === rootEl && doc.exitFullscreen) { const p = doc.exitFullscreen(); if (p && p.catch) p.catch(() => { /* fine */ }); } } catch (e) { /* fine */ }
+      if (AIS) { try { AIS.closeAll(); } catch (e) { /* fine */ } AIS = null; }
       xClose(v);
       if (ro) ro.disconnect();
       if (rootEl.parentNode) rootEl.parentNode.removeChild(rootEl);
@@ -3771,6 +4076,133 @@
       for (const p of X.panels) if (xMounted.has(String(p.id)) && typeof p.unmount === 'function') { try { p.unmount(); } catch (er) { xErr(p.id + '.unmount', er); } }
     }
 
+    /* ── THE ILLUSTRATOR WORKSPACE'S OWN ACTIONS (28 Oct 2026): what the menu bar, the Tools panel's foot and Illustrator's keys ask for that the editor had no single call for.
+       Each is made of the editor's own calls (paste, arrange, setRole, setAll ...): nothing here changes what an edit does. ── */
+    function saveView() { try { if (root.localStorage) root.localStorage.setItem('ce.view', JSON.stringify({ rulers: S.rulers, ref: S.ref })); } catch (e) { /* fine */ } }
+    const refit = () => requestAnimationFrame(() => { if (!rootEl.isConnected) return; if (S.fitted) fit(); else { clampPan(); applyView(); } });
+    /** Paste in Back (⌘B): the clipboard where it was copied, under everything. Paste in Front (⌘F) is the editor's paste in place, on top. */
+    function pasteBack() { if (!S.clip || !S.clip.length) return; const add = pasteItems(S.clip, 0, 0, geo); commit(add.concat(items()), add.map(a => a.id)); }
+    /** View ▸ Rulers (⌘R): the rulers shown or hidden; the charm stays where it is on screen. */
+    function setRulers(on) { S.rulers = !!on; $('.ce-wrap').classList.toggle('is-norulers', !S.rulers); saveView(); queueRulers(); requestAnimationFrame(() => { if (rootEl.isConnected) applyView(); }); }
+    /** The Toolbar in one column or two (the » at its top; Edit ▸ Preferences ▸ User Interface). */
+    function setCols(n, keep) {
+      $('.ce-rail').classList.toggle('is-2col', n === 2);
+      if (!keep) { const A = aiShell(); if (A) A.setPrefs({ cols: n === 2 ? 2 : 1 }); else try { const p = aiPrefs(); p.cols = n === 2 ? 2 : 1; root.localStorage.setItem('ce.ai', JSON.stringify(p)); } catch (e) { /* fine */ } }
+      refit();
+    }
+    /** F: Normal Screen Mode, Full Screen Mode with Menu Bar (the browser's full screen), Full Screen Mode (the artboard alone); Esc or F comes back. */
+    function setScreen(m) {
+      const order = ['normal', 'menus', 'full'];
+      if (m === 'cycle') m = order[(order.indexOf(S.screen) + 1) % order.length];
+      if (!order.includes(m)) return;
+      S.screen = m; win.classList.toggle('is-scr-full', m === 'full');
+      try {
+        const fe = doc.fullscreenElement;
+        if (m !== 'normal' && !fe && rootEl.requestFullscreen) { const p = rootEl.requestFullscreen(); if (p && p.catch) p.catch(() => { /* not allowed here: the editor's own full screen still hides the chrome */ }); }
+        else if (m === 'normal' && fe === rootEl && doc.exitFullscreen) { const p = doc.exitFullscreen(); if (p && p.catch) p.catch(() => { /* fine */ }); }
+      } catch (e) { /* fine */ }
+      if (m === 'full') say('Full Screen Mode · F, or Exit Full Screen at the top right, to come back', 2600);
+      refit(); if (AIS) AIS.sync();
+    }
+    const onFullscreen = () => { if (!doc.fullscreenElement && S.screen !== 'normal') { S.screen = 'normal'; win.classList.remove('is-scr-full'); refit(); } };
+    /** Tab: every panel hidden (the Tools panel, the Control bar, the docked panels) and back; Shift+Tab: all but the Tools panel and the Control bar. */
+    function setPanels(w) { S.hidePanels = w || ''; win.classList.toggle('is-nopanels', S.hidePanels === 'all'); win.classList.toggle('is-noside', S.hidePanels === 'side'); refit(); }
+    /** Shift+X: Swap Fill and Stroke. Here a fill is engraved as a hatch and a stroke along the line: the selection's line engraving becomes a hatch and back. */
+    function swapPaint() {
+      const leaves = selLeaves().filter(l => !l.locked);
+      if (!leaves.length) {
+        if (!S.sel.length) { const k = S.tool === 'text' ? 'textRole' : 'shapeRole'; S[k] = S[k] === 'hatch' ? 'line' : S[k] === 'line' ? 'hatch' : S[k]; syncProps(); }
+        return;
+      }
+      const roles = new Set(leaves.map(l => l.role));
+      if (roles.size === 1 && (roles.has('line') || roles.has('hatch'))) setRole(roles.has('line') ? 'hatch' : 'line');
+      else say('Swap Fill and Stroke: select parts engraved the same way (all lines or all hatch fills)', 2600);
+    }
+    /** D: Default Fill and Stroke: words a hatch fill, shapes a line engraving (a cut line stays a cut line). */
+    function defaultPaint() {
+      if (!S.sel.length) { S.textRole = 'hatch'; S.shapeRole = 'line'; syncProps(); return; }
+      patchLeaves(it => {
+        if (it.role === 'cut') return null;
+        const role = it.kind === 'text' ? 'hatch' : 'line'; if (it.role === role) return null;
+        const n = Object.assign({}, it, { role });
+        if (it.kind === 'path') { if (role === 'hatch') { n.fill = true; n.stroke = false; } else { n.stroke = true; n.fill = false; } }
+        return n;
+      });
+    }
+    /** The person's brightness, canvas colour and Toolbar columns, as Edit ▸ Preferences ▸ User Interface sets them (at once, as Illustrator's do). */
+    function applyPrefs(p) {
+      if (!p) return; rootEl.dataset.ui = p.ui; rootEl.dataset.canvas = p.canvas; ruleInk = null; setCols(p.cols === 2 ? 2 : 1, true); queueRulers();
+    }
+    /** A dialog over the work (Keyboard Shortcuts, Preferences): the editor's keys wait while it is open, as they do for its own questions. */
+    function aiModal(box, onClose) {
+      win.appendChild(box);
+      const done = ok => { if (!S.ask || S.ask.box !== box) return; S.ask = null; box.remove(); try { win.focus({ preventScroll: true }); } catch (e) { /* fine */ } if (onClose) onClose(ok); };
+      S.ask = { box, done: v => done(!!v) };
+      return done;
+    }
+    /** The menus' view of the workspace (charm-nest-ce-ai-shell.js reads it as each menu opens). */
+    function aiState() {
+      const es = selEntries(), leaves = selLeaves(), texts = leaves.filter(l => l.kind === 'text');
+      const tsrc = texts.length ? texts[0] : null;
+      return {
+        n: es.length, anyText: texts.length > 0, anyGroup: es.some(e => e.it.kind === 'group'), anyPath: leaves.some(l => l.kind === 'path'),
+        canUndo: S.hist.canUndo, canRedo: S.hist.canRedo, clip: !!(S.clip && S.clip.length), face: S.face, faces: ['front', 'back'].filter(f => S.faces[f]), tool: S.tool,
+        opts: { grid: !!S.grid, snapGrid: !!S.snapGrid, smart: !!S.smart, showGuides: !!S.showGuides, snapGuides: !!S.snapGuides }, outline: rootEl.classList.contains('cx-outline'),
+        rulers: S.rulers, dock: S.dock, xpanel: xPanelOn, panels: X.panels.map(p => ({ id: String(p.id), title: String(p.title || p.id) })), importers: X.importers.length,
+        back: back ? back.label : '', screen: S.screen, hidden: { tools: !!S.hide.tools, control: !!S.hide.control }, fonts: fonts.slice(), textTool: S.tool === 'text', editing: !!S.editing,
+        font: tsrc ? tsrc.fontKey : S.textFont, size: tsrc ? num(tsrc.sizePt, 10) : S.textSize, style: tsrc ? { bold: !!tsrc.bold, italic: !!tsrc.italic } : { bold: !!S.textStyle.bold, italic: !!S.textStyle.italic },
+        align: tsrc ? (tsrc.align || 'left') : (S.textStyle.align || 'left'), letterCase: tsrc ? (tsrc.letterCase || '') : (S.textStyle.letterCase || '')
+      };
+    }
+    function aiAct(name, arg) {
+      const run = () => {
+        switch (name) {
+          case 'undo': return undo(); case 'redo': return redo();
+          case 'pasteFront': return paste(true); case 'pasteBack': return pasteBack();
+          case 'ctx': return ctxAct(arg);
+          case 'selectAll': return selectAll(); case 'deselect': return setSel([]);
+          case 'lock': return ctxAct('lock'); case 'hide': return ctxAct('hide');
+          case 'unlockAll': return setAll('locked', false); case 'showAll': return setAll('hidden', false);
+          case 'tool': return setTool(String(arg));
+          case 'face': return switchFace(arg);
+          case 'opt': S[arg] = !S[arg]; saveOpts(); syncProps(); drawView(); queueRulers(); return applyView();
+          case 'zoom': return zoomCmd(String(arg));
+          case 'save': return save(); case 'cancel': return requestClose(); case 'back': return requestBack();
+          case 'import': return xPick();
+          case 'dock': S.dock = !S.dock; try { if (root.localStorage && (root.innerWidth || 1000) > 900) root.localStorage.setItem('ce.dock', S.dock ? '1' : '0'); } catch (er) { /* fine */ } return layoutDock();
+          case 'xpanel': return xPanel(xPanelOn === String(arg) ? null : String(arg));
+          case 'font': { const f = fonts.find(x => String(x.key) === String(arg)); if (f) setFont(f.key); return; }
+          case 'size': return setTextSize(+arg);
+          case 'sizeStep': { const texts = selLeaves().filter(l => l.kind === 'text'), sz = texts.length ? num(texts[0].sizePt, 10) : S.textSize; return setTextSize(Math.max(0.5, Math.round((sz + (arg > 0 ? 2 : -2)) * 2) / 2)); }
+          case 'style': return setTextStyle(arg || {});
+          case 'toggleStyle': return toggleTextStyle(String(arg));
+          case 'role': return setRole(String(arg));
+          case 'alphaFind': return alphaFind();
+          case 'clearGuides': face().guides = []; drawView(); return queueRulers();
+          case 'zero0': setZero(null); drawView(); return queueRulers();
+          case 'rulers': return setRulers(!S.rulers);
+          case 'paintFocus': S.paintFocus = S.paintFocus === 'fill' ? 'stroke' : 'fill'; return syncProps();
+          case 'swapPaint': return swapPaint(); case 'defaultPaint': return defaultPaint();
+          case 'screen': return setScreen(String(arg || 'cycle'));
+          case 'panels': return setPanels(S.hidePanels === arg ? '' : String(arg));
+          case 'panelVis': S.hide[arg] = !S.hide[arg]; syncProps(); return refit();
+          case 'say': return say(String(arg || ''), 3200);
+        }
+      };
+      if (S.ask && name !== 'opt') return;
+      try { run(); } catch (er) { xErr('menu ' + name, er); }
+    }
+    const AIW = {
+      root: rootEl, win, st: aiState, act: aiAct, closeMenus: () => closeMenus(), modal: aiModal, applyPrefs,
+      x: {
+        has: id => X.commands.some(c => c.id === id), enabled: id => { const c = X.commands.find(x => x.id === id); return !!c && xEnabled(c); }, run: id => xRun(id),
+        title: id => { const c = X.commands.find(x => x.id === id); return c ? String(c.c.title || id) : ''; }, hasTool: id => BUILTIN_TOOLS.includes(String(id)) || !!xTool(id),
+        list: () => X.commands.map(c => ({ id: c.id, title: c.c.title, group: c.c.group, key: c.c.key, menu: c.c.menu, context: c.c.context }))
+      },
+      panelOr: (pid, xid) => X.panels.some(p => String(p.id) === pid) || X.commands.some(c => c.id === xid),
+      openPanel: (pid, xid) => { if (X.panels.some(p => String(p.id) === pid)) xPanel(xPanelOn === pid ? null : pid); else if (xid) xRun(xid); }
+    };
+
     /* ── wiring ── */
     const cssEsc =s => (root.CSS && root.CSS.escape ? root.CSS.escape(s) : String(s).replace(/["\\]/g, '\\$&'));
     rootEl.addEventListener('pointerdown', e => {
@@ -3799,8 +4231,17 @@
         else if (a === 'dock') { S.dock = !S.dock; try { if (root.localStorage && (root.innerWidth || 1000) > 900) root.localStorage.setItem('ce.dock', S.dock ? '1' : '0'); } catch (er) { /* fine */ } layoutDock(); }
         else if (a === 'forward' || a === 'backward') arrangeSel(a); else if (a === 'group') groupSel(); else if (a === 'ungroup') ungroupSel(); else if (a === 'delete') deleteSel();
         else if (a === 'import') xPick(); else if (a === 'xpanel0') xPanel(null);
+        // (the Illustrator workspace: the Toolbar's columns, its Fill / Stroke, the screen mode)
+        else if (a === 'toolcols') setCols($('.ce-rail').classList.contains('is-2col') ? 1 : 2);
+        else if (a === 'paintFill' || a === 'paintStroke') { S.paintFocus = a === 'paintFill' ? 'fill' : 'stroke'; syncProps(); const rb = $('[data-drop="role"] .ce-drop__b'); if (rb && !rb.closest('[hidden]')) rb.click(); }
+        else if (a === 'swapPaint') swapPaint(); else if (a === 'defaultPaint') defaultPaint(); else if (a === 'screen') setScreen('cycle'); else if (a === 'screen0') setScreen('normal');
         return;
       }
+      const rp = t.closest('[data-refpt]'); if (rp) { S.ref = rp.dataset.refpt.split(',').map(Number); saveView(); syncProps(); return; }
+      const fs = t.closest('[data-fstyle]'); if (fs) { closeMenus(); const v = fs.dataset.fstyle; setTextStyle({ bold: /bold/.test(v) || undefined, italic: /italic/.test(v) || undefined }); return; }
+      const tz = t.closest('[data-tsize]'); if (tz) { closeMenus(); setTextSize(+tz.dataset.tsize); return; }
+      const af2 = t.closest('[data-ai-face]'); if (af2 && !af2.disabled) { const has = ['front', 'back'].filter(f => S.faces[f]), i = has.indexOf(S.face), a2 = af2.dataset.aiFace;
+        switchFace(a2 === 'first' ? has[0] : a2 === 'last' ? has[has.length - 1] : a2 === 'prev' ? has[Math.max(0, i - 1)] : a2 === 'next' ? has[Math.min(has.length - 1, i + 1)] : has[(i + 1) % has.length]); return; }
       const fc = t.closest('[data-face]'); if (fc && !fc.disabled) { switchFace(fc.dataset.face); return; }
       const z = t.closest('[data-zoom]'); if (z) { closeMenus(); zoomCmd(z.dataset.zoom); return; }
       const op = t.closest('[data-opt]'); if (op) { S[op.dataset.opt] = !S[op.dataset.opt]; saveOpts(); syncProps(); applyView(); return; }
@@ -3850,6 +4291,11 @@
     rootEl.addEventListener('contextmenu', e => { if (!e.target.closest('.ce-stage') && !e.target.closest('.ce-layers') && !e.target.closest('.ce-drop__b')) e.preventDefault(); });
     const onResize = () => { closeMenus(); const was = S.fitted; layoutDock(); if (was) fit(); else { clampPan(); applyView(); } };
     const onBlur = () => { S.space = false; stage.classList.remove('is-space'); };
+    // (the menu bar's keys come first, while one of its menus is open: ↑ ↓ ← → Enter Esc go to the menu, not to the work; F10, or Alt pressed and let go, opens it)
+    const aiMenuKey = e => { if (!AIS || !rootEl.isConnected || S.ask || S.editing || notOurs(e) || (isField(e.target) && !(e.target.closest && e.target.closest('.ce-menu')))) return; if (AIS.menuKey(e)) { e.stopImmediatePropagation(); e.stopPropagation(); } };
+    const aiMenuKeyUp = e => { if (!AIS || !rootEl.isConnected || S.ask || notOurs(e)) return; if (AIS.keyUp(e)) { e.stopImmediatePropagation(); e.stopPropagation(); } };
+    root.addEventListener('keydown', aiMenuKey, true);
+    root.addEventListener('keyup', aiMenuKeyUp, true);
     root.addEventListener('keydown', onKey, true);
     root.addEventListener('keyup', onKeyUp, true);
     root.addEventListener('resize', onResize);
@@ -3875,6 +4321,11 @@
     render(); renderLayers(true); syncHist();
     fit(); syncProps();
     if (Array.isArray(opts.select) && opts.select.length) { setSel(opts.select.map(String)); S.autoSel = S.sel.length ? S.sel.slice() : null; }   // (CETEXT: the engraving card's words selected as the editor opens: their text controls are on the bar at once)
+    // (the Illustrator workspace: the menu bar, the right-click menus and Illustrator's keys from charm-nest-ce-ai-shell.js when the page has it; the rulers as last left)
+    if (aiShell()) { try { AIS = aiShell().mount(AIW); } catch (er) { xErr('the menu bar', er); AIS = null; } }
+    if (!S.rulers) $('.ce-wrap').classList.add('is-norulers');
+    doc.addEventListener('fullscreenchange', onFullscreen);
+    syncProps();
     requestAnimationFrame(() => { fit(); try { win.focus({ preventScroll: true }); } catch (e) { /* fine */ } });
     if (X.panels.length) {
       let want = null; try { want = root.localStorage && root.localStorage.getItem('ce.xpanel'); } catch (e) { /* storage blocked */ }
@@ -3904,6 +4355,7 @@
       setZoom: pct => zoomTo(pct),
       editing: () => (S.editing ? S.editing.id : null),
       ctx: ectx,
+      ai: AIW,   // (the Illustrator workspace's handle: charm-nest-ce-ai-shell.js and a docked panel's own menu use it)
       refreshText: () => refreshText(),   // (CE TEXT, 28 Oct 2026: a font the words need has arrived; the texts are drawn again from their words, nothing else changes)
       // (28 Oct 2026, the design library, charm-nest-ce-library.js: it asks "keep your changes?" itself, closes this session as chosen (kept: exactly as Save; left: as
       //  Cancel, nothing asked again) and opens the editor on another design with the same fonts, font engine and locks)
@@ -3919,6 +4371,8 @@
     if (pre && typeof pre === 'object') { for (const k of ['tools', 'importers', 'panels', 'onOpen', 'onClose']) if (Array.isArray(pre[k])) api[k].push(...pre[k]); if (pre.commands && typeof pre.commands === 'object') Object.assign(api.commands, pre.commands); } }
   // (28 Oct 2026, Design & Engrave: two more lists and the text layout, the header's EXTENSION POINTS; taken in the same way from a CharmEditor set before this file)
   Object.assign(api, { onChange: [], overlays: [], textLayout: null });
+  // (the Illustrator workspace, 28 Oct 2026: CharmEditor.ai is charm-nest-ce-ai-shell.js's catalog, keys and preferences, whichever of the two files loaded first)
+  Object.defineProperty(api, 'ai', { enumerable: true, configurable: true, get: () => (root && root.CharmEditorAi) || null, set: () => { /* the shell's own (it sets itself here as it loads) */ } });
   { const pre = root && root.CharmEditor;
     if (pre && typeof pre === 'object') { for (const k of ['onChange', 'overlays']) if (Array.isArray(pre[k])) api[k].push(...pre[k]); if (pre.textLayout && typeof pre.textLayout === 'object') api.textLayout = pre.textLayout; } }
   return api;

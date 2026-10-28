@@ -368,7 +368,7 @@
   }
   /** Extension commands no catalog entry names (a file added later): under Object, a submenu per group, so nothing an extension offers is out of reach. */
   function moreGroups(w) {
-    const known = new Set(C.filter(e => e.x).map(e => e.x).concat(['ops.pfBar', 'toolAnchorConvert', 'toolAnchorAdd']));
+    const known = new Set(C.filter(e => e.x).map(e => e.x).concat(['ops.pfBar', 'toolAnchorConvert', 'toolAnchorAdd', 'ops.unlockAll', 'ops.showAll']));   // (the last two: Object ▸ Unlock All / Show All already)
     const groups = new Map();
     for (const c of w.x.list()) {
       if (known.has(c.id) || c.menu === false) continue;
@@ -426,6 +426,7 @@
       bar.addEventListener('click', ev => { const t = ev.target.closest('[data-mb]'); if (!t) return; ev.stopPropagation(); const i = t.dataset.mb; if (M.open && M.open.key === i) closeAll(); else openTop(i, false); });
       bar.addEventListener('pointerover', ev => { const t = ev.target.closest('[data-mb]'); if (!t || !M.open || M.open.key === t.dataset.mb || M.open.key === 'ctx') return; openTop(t.dataset.mb, M.kb); });
     }
+    rootEl.addEventListener('pointerdown', () => { M.altAlone = false; }, true);   // (Alt held for a click or a drag is not Alt for the menu bar)
     /* a row picked: a catalog command run here (the editor's own hooks, data-ctx and data-xcmd, it runs itself) */
     rootEl.addEventListener('click', ev => {
       const sb = ev.target.closest('[data-ai-sub]');
