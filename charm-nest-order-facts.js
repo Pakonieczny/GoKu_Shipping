@@ -292,14 +292,16 @@
   function setDetails(host, open, animate) {
     const s = S_OF(host), d = host.querySelector('.owfDetails'), b = host.querySelector('.owfMore'); if (!d || !b) return;
     open = !!open; s.details = open; b.setAttribute('aria-expanded', open ? 'true' : 'false');
-    anims(d).forEach(a => a.cancel()); d.style.overflow = '';
+    // NAV (28 Oct 2026, Paul: "Order Details … at near real-time speed"): the drop-down's own movement is the only one it carries (started below): that one is stopped, where asking the
+    // element for its animations made the browser work out every style of the page first (~35 ms of each order window opened)
+    if (s.dAnim) { try { s.dAnim.cancel(); } catch (_) {} s.dAnim = null; } d.style.overflow = '';
     const go = animate && !reduced() && d.isConnected;
     if (open) {
       d.hidden = false;
-      if (go) { const h = d.scrollHeight; if (h) { d.style.overflow = 'hidden'; const a = play(d, [{ height: '0px', opacity: 0 }, { height: h + 'px', opacity: 1 }], { duration: 170, easing: EASE }); const end = () => { d.style.overflow = ''; }; if (a) { a.onfinish = end; a.oncancel = end; } else end(); } }
+      if (go) { const h = d.scrollHeight; if (h) { d.style.overflow = 'hidden'; const a = s.dAnim = play(d, [{ height: '0px', opacity: 0 }, { height: h + 'px', opacity: 1 }], { duration: 170, easing: EASE }); const end = () => { d.style.overflow = ''; }; if (a) { a.onfinish = end; a.oncancel = end; } else end(); } }
     } else if (go && !d.hidden) {
       const h = d.offsetHeight; d.style.overflow = 'hidden';
-      const a = play(d, [{ height: h + 'px', opacity: 1 }, { height: '0px', opacity: 0 }], { duration: 140, easing: EASE });
+      const a = s.dAnim = play(d, [{ height: h + 'px', opacity: 1 }, { height: '0px', opacity: 0 }], { duration: 140, easing: EASE });
       if (a) { a.onfinish = () => { if (!s.details) d.hidden = true; d.style.overflow = ''; }; a.oncancel = () => { d.style.overflow = ''; }; } else { d.hidden = true; d.style.overflow = ''; }
     } else d.hidden = true;
   }

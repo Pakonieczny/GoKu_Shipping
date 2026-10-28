@@ -1026,7 +1026,13 @@
   }
   function input0(P) {
     const d = draftOf(draftKey(P));
-    if (document.activeElement !== P.el.input) { P.el.input.value = d; P.grow(); }
+    if (document.activeElement !== P.el.input) {
+      // NAV (28 Oct 2026, Paul: "Order Details … at near real-time speed"): an empty box that stays empty (the next order has no draft either) keeps the height it was sized to; sizing
+      // it again laid out the whole page at every order the window opened on. Its thread is drawn and scrolled when the order's messages come (load).
+      const was = P.el.input.value; P.el.input.value = d;
+      if (!d && !was && P.el.input.style.height) { P.el.send.disabled = true; return; }
+      P.grow();
+    }
   }
 
   async function load(P) {

@@ -3829,9 +3829,20 @@
     "1830130714": "front",   // FRONTDEFAULT: Tiny Bar Necklace Custom Engraved (SKU BEADY), order 4205982652
     "1008014571": "front"    // FRONTDEFAULT (Paul, 19 Oct 2026, order 4204843889): Initial Disc Necklace (SKU INITIAL_DISC_4571, "nitial_Disc_4571" on Etsy), 1 or more discs ("Necklace Options: ROSEGOLD - 2 Disc")
   });
-  /** (FRONTDEFAULT) The default-face reading of a line of a LISTING_FACES listing whose order names no face (spec.engraving absent), or null. */
+  /* BARFRONT (Paul, 28 Oct 2026, order 4212020155, TINY BAR 7427 engraved on its back by default: "Also make sure that all orders that contain a bar necklace should have the engraving default to the front of the bar. Not
+     just this listing, but any listing that has a bar necklace."). A line of ANY listing whose design is a bar (its SKU names BAR as a word: "TINY BAR_7427", "VERTICAL BAR_1277") or whose listing title sells a bar necklace
+     ("Tiny Bar Necklace ...", "Vertical Bar Necklace") is engraved on its FRONT when the order names no face, exactly as a LISTING_FACES listing is (listingFaceOf). A face the order names stands; a listing of LISTING_FACES or
+     PIECE_LISTINGS keeps its own face; a "bar mitzvah" / "bat mitzvah" gift is no bar. */
+  const BAR_SKU = /(?:^|[\s_\-.])BARS?(?=[\s_\-.\d]|$)/i, BAR_TITLE = /\bbars?\s+(?:charm\s+)?necklaces?\b/i, NOT_BAR = /\bba[rt]\s+mitzvah\b/i;
+  function barNecklace(line, spec) {
+    const sku = String((spec && spec.designSku) || (line && line.sku) || ""), title = decodeEntities(String((line && line.title) || ""));
+    if (NOT_BAR.test(title)) return false;
+    return BAR_SKU.test(sku) || BAR_TITLE.test(title);
+  }
+  /** (FRONTDEFAULT) The default-face reading of a line of a LISTING_FACES listing whose order names no face (spec.engraving absent), or null. (BARFRONT: and of a bar necklace of any listing: its front) */
   function listingFaceOf(line, spec) {
-    const face = LISTING_FACES[pieceListingId(line)];
+    const listed = LISTING_FACES[pieceListingId(line)], face = listed || (!pieceListing(line) && barNecklace(line, spec) ? "front" : null);
+    const from = listed ? "this listing's profile" : "the bar rule", whose = listed ? "this listing" : "a bar necklace";
     if (face !== "front" && face !== "back") return null;
     if (!spec || spec.engraveNever || spec.noDesign || !spec.engraveCandidate) return null;
     // ("Love you to the moon and back" is read as a back label by the faces reading: on a listing with a default face, a back reading whose ONLY face word is that "... and back" is no face the buyer named)
@@ -3845,7 +3856,7 @@
     const ls = pers.join("\n").split("\n").map(x => x.replace(/[ \t]+/g, " ").trim()).filter(Boolean);
     const words = ls.length ? { text: ls.join("\n"), lines: ls, fontWord: null } : null;
     const eng = { v: 1, mode: face, source: "profile", front: null, back: null, textSource: "none", needsPerson: false, confidence: 0.5, why: "", option: null };
-    if (!words) return Object.assign(eng, { needsPerson: true, reviewKind: "texts", why: clip(`${face} only from this listing's profile, but the words are only in a note, not in the personalisation box: a person says exactly what is engraved`, 170), raw: [spec.buyerMessage, spec.staffNote].map(x => String(x || "").trim()).filter(Boolean).join("\n").slice(0, 300) });
+    if (!words) return Object.assign(eng, { needsPerson: true, reviewKind: "texts", why: clip(`${face} only from ${from}, but the words are only in a note, not in the personalisation box: a person says exactly what is engraved`, 170), raw: [spec.buyerMessage, spec.staffNote].map(x => String(x || "").trim()).filter(Boolean).join("\n").slice(0, 300) });
     eng[face] = words; eng.textSource = "single"; eng.confidence = 0.9;
     // (a counted line of several pieces, the discs D1..Dn: each disc its own words, in order, on its own face; words that do not split one per disc wait for a person, on the same face)
     const pr = spec.pair, pc = Math.floor(+spec.pieceCount) || 0, per = pr && !pr.earring && !pr.glued && pr.kind === "multi" && pc >= 2 ? Math.round(pc / Math.max(1, Math.round(+spec.quantity) || 1)) : 0;
@@ -3855,11 +3866,11 @@
       if (r && r.split && slots.every((_, i) => String(r.words[i] || "").trim())) {
         eng.pieces = {}; slots.forEach((sl, i) => { const l2 = String(r.words[i]).split("\n").map(x => x.replace(/[ \t]+/g, " ").trim()).filter(Boolean), f2 = { text: l2.join("\n"), lines: l2, fontWord: null }; eng.pieces[sl] = { front: face === "front" ? f2 : null, back: face === "back" ? f2 : null }; });
         eng.textSource = "labelled";
-        eng.why = clip(`${face} only from this listing's profile (every ${noun} is engraved on its ${face}): ${slots.map((sl, i) => `“${clip(r.words[i], 20)}” on ${noun} ${i + 1}`).join(", ")}`, 200);
-      } else return Object.assign(eng, { needsPerson: true, reviewKind: "pieces", textSource: "unlabelled", confidence: 0.5, raw: pers.join("\n").slice(0, 300), why: clip(`${face} only from this listing's profile (every ${noun} is engraved on its ${face}), but the words do not give one text for each of the ${per} ${noun}s: a person says what goes on each`, 170) });
+        eng.why = clip(`${face} only from ${from} (every ${noun} is engraved on its ${face}): ${slots.map((sl, i) => `“${clip(r.words[i], 20)}” on ${noun} ${i + 1}`).join(", ")}`, 200);
+      } else return Object.assign(eng, { needsPerson: true, reviewKind: "pieces", textSource: "unlabelled", confidence: 0.5, raw: pers.join("\n").slice(0, 300), why: clip(`${face} only from ${from} (every ${noun} is engraved on its ${face}), but the words do not give one text for each of the ${per} ${noun}s: a person says what goes on each`, 170) });
     }
-    if (!eng.pieces) eng.why = clip(`${face} only from this listing's profile (this listing is engraved on its ${face}): “${clip(ls.join(" / "), 40)}” goes on the ${face}`, 200);
-    if (notes.length) Object.assign(eng, { needsPerson: true, reviewKind: "texts", textSource: "labelled", confidence: 0.5, raw: pers.join("\n").slice(0, 300), why: clip(`${face} only from this listing's profile; the buyer also wrote a note to the shop (${notes.map(t => `“${clip(t, 40)}”`).join(", ")}), which is not engraved: a person confirms the words`, 170) });
+    if (!eng.pieces) eng.why = clip(`${face} only from ${from} (${whose} is engraved on its ${face}): “${clip(ls.join(" / "), 40)}” goes on the ${face}`, 200);
+    if (notes.length) Object.assign(eng, { needsPerson: true, reviewKind: "texts", textSource: "labelled", confidence: 0.5, raw: pers.join("\n").slice(0, 300), why: clip(`${face} only from ${from}; the buyer also wrote a note to the shop (${notes.map(t => `“${clip(t, 40)}”`).join(", ")}), which is not engraved: a person confirms the words`, 170) });
     return eng;
   }
   /** What the buyer chose and wrote about the faces of ONE line (the CONTRACT's spec.engraving, plans/front-back-1011/CONTRACT.md section 2). line: the Etsy line (variations, title,

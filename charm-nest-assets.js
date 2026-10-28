@@ -90,6 +90,13 @@
       try{const page=await pdf.getPage(1),base=page.getViewport({scale:1}),viewport=page.getViewport({scale:Math.min(3,1200/base.width)}),cv=document.createElement('canvas');cv.width=Math.ceil(viewport.width);cv.height=Math.ceil(viewport.height);await page.render({canvasContext:cv.getContext('2d'),viewport}).promise;img.src=cv.toDataURL('image/png');await img.decode();}finally{await pdf.destroy();}
     }
   }
+  /** The Library list's record of a sheet, while that list was read under a minute ago (null otherwise). */
+  const libIx=new WeakMap();
+  function libRow(id){
+    try{const L=window.CN&&CN.S&&CN.S.library,rows=L&&L.rows;if(!Array.isArray(rows)||!(Date.now()-(L.loadedAt||0)<60000))return null;
+      let ix=libIx.get(rows);if(!ix||ix.n!==rows.length){ix={n:rows.length,by:new Map(rows.map(r=>[String(r.id||r.sheetId),r]))};libIx.set(rows,ix);}
+      return ix.by.get(String(id))||null;}catch(_){return null;}
+  }
   function mount(){
     const recovering=new WeakSet();
     /* PERFSCALE (Paul, 26 Oct 2026: "the performance of the overall platform once it's being used at scale with tens of thousands of orders in live and historical"): every card drawn without a picture (a Library
@@ -107,6 +114,9 @@
         catch(error){
           const id=img.dataset.sheetPreview||img.dataset.labelSheet;
           if(!id || !window.CN)throw error;
+          // NAV (28 Oct 2026, Paul: "keep the API calls to the bare minimum"): a sheet picture the Library's own list (read under a minute ago, with the record's files: listSheets' SLIM_SHEET) says
+          // the sheet has none of is not read again for it (a scroll of the Library read 82 sheets for pictures none of them had); a press on the picture still reads at once (force)
+          if(!force && img.dataset.sheetPreview && !img.dataset.labelSheet){const row=libRow(id);if(row && !(row.outputs && (row.outputs.preview?.url || row.outputs.ai)) && !row.preview)throw error;}
           const {sheet}=await CN.api('charmNestLibrary',{op:'getSheet',id},{label:'Restoring preview'});
           if(!sheet)throw error;
           if(img.dataset.labelSheet){

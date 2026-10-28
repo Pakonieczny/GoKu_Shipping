@@ -113,7 +113,8 @@ const read = (line, c) => O.interpretLine(ORDER, line, c || ctx());
   });
 
   await section('B4 · ENGRAVED and BLANK', async () => {
-    const yes = read(lineOf('GOLD·Set·ENGRAVED')); eq([yes.pair.set.engraved, yes.engraveCandidate, yes.engraving || null], [true, true, null], 'ENGRAVED with words: engraved, the words are a candidate (no front word anywhere: the back, as every line is read)');
+    // (BARFRONT, Paul 28 Oct 2026: "all orders that contain a bar necklace should have the engraving default to the front of the bar": no face word anywhere is the FRONT of a bar, the bar rule)
+    const yes = read(lineOf('GOLD·Set·ENGRAVED')); eq([yes.pair.set.engraved, yes.engraveCandidate, yes.engraving && yes.engraving.mode, !!(yes.engraving && /bar rule/.test(yes.engraving.why))], [true, true, 'front', true], 'ENGRAVED with words: engraved, the words are a candidate (no front word anywhere: the front of the bar, by the bar rule)');
     const blank = read(lineOf('SILVER·Set·BLANK', null, { words: [] })); eq([blank.pair.set.engraved, blank.engraveCandidate, blank.pieceCount, blank.problems], [false, false, 2, []], 'BLANK with no words: no engraving, nothing to engrave, still both bars');
     const stray = read(lineOf('ROSE·Set·BLANK')); eq([stray.pair.set.engraved, stray.engraving && stray.engraving.mode, stray.engraving && stray.engraving.needsPerson, stray.engraving && stray.engraving.reviewKind], [false, 'none', true, 'conflict'], 'BLANK with words written: a person decides (never engraved by a guess)');
     for (const sp of [yes, blank, stray]) eq(sp.pair.sides, [null, null], 'the same two bars');

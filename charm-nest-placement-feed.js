@@ -37,7 +37,7 @@
   const ACTIVE = 4000, RECENT = 15000, IDLE = 60000, ACTIVE_FOR = 120000, RECENT_FOR = 600000;
   let lastInput = Date.now();
   const cadence = () => { const quiet = Date.now() - lastInput, focused = safe(() => doc.hasFocus(), true); return quiet < ACTIVE_FOR && focused ? ACTIVE : quiet < RECENT_FOR ? RECENT : IDLE; };
-  const st = { timer: 0, second: 0, busy: false, again: false, fails: 0, start: 0, end: 0, ticks: 0, last: '', lastOk: 0, sig: '', cancelSig: '', dead: false };
+  const st = { timer: 0, second: 0, busy: false, again: false, fails: 0, start: 0, end: 0, ticks: 0, last: '', lastOk: 0, sig: '', cancelSig: '', cx: new Map(), dead: false };
   const watchers = new Map();   // token -> { ids: () => Iterable, at }
   const safe = (f, d) => { try { const v = f(); return v === undefined ? d : v; } catch (_) { return d; } };
   const ridOf = x => String(x == null ? '' : x).replace(/\D/g, '');
@@ -141,8 +141,12 @@
       if (C && C.load) jobs.push(Promise.resolve(C.load(true)).catch(() => null));
       await Promise.all(jobs);
       st.fails = 0; st.lastOk = Date.now(); st.last = rids.join(',');
-      const cs = cancelSig(rids);
-      if (cs !== st.cancelSig) { const first = st.cancelSig === ''; st.cancelSig = cs; if (!first && OP && OP.notify) OP.notify(); }
+      // NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): told only when an order read before changed its cancelled state. The signature was one
+      // digit per order on screen, so a tab showing other orders ("000" → "0000") told every listener something changed at each switch, and the Orders list, Review and the order window
+      // were all drawn again for nothing
+      let moved = false; for (const r of rids) { const c = cancelSig([r]); if (st.cx.has(r) && st.cx.get(r) !== c) moved = true; st.cx.delete(r); st.cx.set(r, c); }
+      while (st.cx.size > 4000) st.cx.delete(st.cx.keys().next().value);
+      if (moved && OP && OP.notify) OP.notify();
       adoptHolds(rids);
     } catch (e) { if (++st.fails === 1) safe(() => console.warn('Placement feed', e)); }
     finally {
