@@ -9,7 +9,7 @@
 //      each change measured in main-thread ms; Place → one group of grey paths fitted inside the outline; moved, sized and turned as any group; Re-trace (the Object menu) with 2 levels where it
 //      stands, one undo step; a second PNG PASTED with a day square selected goes into that square; Save → the Charm_Pool_Art record keeps every grey (artGrey) through the real artPut; the
 //      sheet's file (CharmNestPDF.buildSheet) fills each grey as its own colour while the month's letters stay blue; opened again, the greys come back grey.
-//   Until charm-nest-ce-trace.js (CharmNestTrace) is on the page, B puts a small stand-in in its place: posterised bands k/N, each a set of row rectangles.
+//   The trace is the real one (charm-nest-ce-trace.js, CharmNestTrace): which tone takes which band is its choice (multi-level Otsu), so the greys are checked as k/N, black the base.
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/ce-image.cjs      (CEI_ONLY=A or B; SHOTS=<dir>)
 'use strict';
 const path = require('node:path');
@@ -27,42 +27,15 @@ async function nodeKit() {
   global.CharmNestGeom = global.CharmNestGeom || require(path.join(ROOT, 'charm-nest-geom.js'));
   const cal = await require('./_artCalendar.cjs')(ROOT);
   const kit = { P: global.CharmNestPDF, G: global.CharmNestGeom, L: global.PDFLib, AE: require(path.join(ROOT, 'charm-nest-art-edit.js')), CE: require(path.join(ROOT, 'charm-nest-charm-editor.js')),
-    IM: require(path.join(ROOT, 'charm-nest-ce-image.js')), cal };
+    IM: require(path.join(ROOT, 'charm-nest-ce-image.js')), T: require(path.join(ROOT, 'charm-nest-ce-trace.js')), cal };
   if (!hadWindow) delete global.window; if (!hadSelf) delete global.self;
   return kit;
 }
 
-/** The stand-in trace (until charm-nest-ce-trace.js lands): band k of N+1 (0 the darkest) is grey k/N, the lightest band not inked; each band as row rectangles merged down the rows. */
-function standinTrace(src, o) {
-  const N = Math.max(1, Math.min(8, Math.round((o && o.levels) || 4))), w = src.width, h = src.height, d = src.data, band = new Uint8Array(w * h);
-  for (let i = 0; i < w * h; i++) { const v = d[i * 4]; band[i] = Math.min(N, Math.floor(v * (N + 1) / 256)); }
-  // (its despeckle: a pixel that is in no 3 × 3 block of its own band is a sliver, the ramp of an anti-aliased edge, and takes the band of a neighbour that is in one)
-  const solid = new Uint8Array(w * h);
-  for (let y = 0; y + 2 < h; y++) for (let x = 0; x + 2 < w; x++) { const b = band[y * w + x]; let all = true; for (let j = 0; j < 3 && all; j++) for (let i = 0; i < 3; i++) if (band[(y + j) * w + x + i] !== b) { all = false; break; } if (all) for (let j = 0; j < 3; j++) for (let i = 0; i < 3; i++) solid[(y + j) * w + x + i] = 1; }
-  const fixed = band.slice();
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const i = y * w + x; if (solid[i]) continue; let best = N, bd = Infinity;
-    for (let j = -2; j <= 2; j++) for (let k = -2; k <= 2; k++) { const yy = y + j, xx = x + k; if (yy < 0 || xx < 0 || yy >= h || xx >= w || !solid[yy * w + xx]) continue; const dd = j * j + k * k; if (dd < bd) { bd = dd; best = band[yy * w + xx]; } }
-    fixed[i] = best;
-  }
-  band.set(fixed);
-  const layers = [];
-  for (let k = 0; k < N; k++) {
-    const subs = []; let open = new Map();
-    for (let y = 0; y <= h; y++) {
-      const next = new Map();
-      if (y < h) for (let x = 0; x < w;) { if (band[y * w + x] !== k) { x++; continue; } let e = x; while (e < w && band[y * w + e] === k) e++; const key = x + ':' + e, r = open.get(key); if (r) { open.delete(key); next.set(key, r); } else next.set(key, { x0: x, x1: e, y0: y }); x = e; }
-      for (const r of open.values()) subs.push([['m', [r.x0, r.y0]], ['l', [r.x1, r.y0]], ['l', [r.x1, y]], ['l', [r.x0, y]], ['h']]);
-      open = next;
-    }
-    if (subs.length) layers.push({ grey: k / N, subpaths: subs });
-  }
-  return { width: w, height: h, layers };
-}
-
 /* ═══ A · the pure parts ═══ */
 async function partA(kit) {
-  const { IM, AE, CE, G, P, cal } = kit, M = CE.model;
+  const { IM, AE, CE, G, P, T, cal } = kit, M = CE.model;
+  const kOfN = (gs, N) => gs.length > 0 && gs.every(g => Math.abs(g * N - Math.round(g * N)) < 0.002) && new Set(gs.map(g => Math.round(g * N))).size === gs.length;
   // turns and flips: the crop follows the picture; four turns are none; a flip then a turn is the turn then the other flip
   const o0 = IM.norm({ crop: [0.1, 0.2, 0.5, 0.9] });
   const t4 = [1, 2, 3, 4].reduce(o => IM.turn(o, 1), o0), tl = IM.turn(IM.turn(o0, 1), -1), fh = IM.turn(IM.flip(o0, true), 1), hf = IM.flip(IM.turn(o0, 1), false);
@@ -111,10 +84,11 @@ async function partA(kit) {
 
   // the trace laid out as one group: lightest at the bottom, black on top, fills [g, g, g], hatch, artGrey, even-odd; mapped into the box
   const pic = { width: 40, height: 20, data: img(40, 20, x => (x < 10 ? 0 : x < 20 ? 128 : x < 30 ? 200 : 255)) };
-  const tr = standinTrace(pic, { levels: 4 }), g = IM.buildGroup(tr, [10, 10, 50, 30], { src: 'imgTest', settings: { levels: 4 }, name: 'logo.png' });
+  const tr = T.traceSync(pic, IM.traceOpts(IM.norm({ levels: 4 }), 20)), g = IM.buildGroup(tr, [10, 10, 50, 30], { src: 'imgTest', settings: { levels: 4 }, name: 'logo.png' });
+  const fl = g.children.map(c => c.fill[0]);
   const gb = M.bboxOf([].concat(...g.children.map(c => c.subpaths)));
   check('A7 the trace becomes ONE group: a path per grey (lightest first, black on top), role hatch, fill [g,g,g], artGrey, even-odd, laid into the box; the group keeps its source and settings (trace)',
-    g.kind === 'group' && g.id === 'imgTest' && g.trace.src === 'imgTest' && g.trace.levels === 4 && g.children.map(c => c.fill[0]).join() === '0.75,0.5,0' && g.children.every(c => c.role === 'hatch' && c.artGrey && c.even && c.fill.length === 3 && c.fill[0] === c.fill[2])
+    g.kind === 'group' && g.id === 'imgTest' && g.trace.src === 'imgTest' && g.trace.levels === 4 && fl.length === 3 && kOfN(fl, 4) && fl.every((v, i) => !i || v < fl[i - 1]) && g.children.every(c => c.role === 'hatch' && c.artGrey && c.even && c.fill.length === 3 && c.fill[0] === c.fill[2])
       && g.children[2].name === 'Black' && g.trace.box.join() === '10,10,50,30' && Math.abs(gb[0] - 10) < 1e-6 && Math.abs(gb[2] - 40) < 1e-6 && Math.abs(gb[1] - 10) < 1e-6 && Math.abs(gb[3] - 30) < 1e-6,
     JSON.stringify({ fills: g.children.map(c => c.fill), gb, names: g.children.map(c => c.name) }));
 
@@ -131,7 +105,7 @@ async function partA(kit) {
   const ops = P.artOps(ed.members, null);
   check(`A8 encode keeps each grey part grey (${greyRec.map(e => e.fill[0]).join(', ')}: artGrey, even-odd) and apply makes it a grey FILL (fillRGB, no blue hatching), which artOps writes as its grey; a hatched part with no mark is blue as before`,
     greyRec.length === 3 && greyRec.every(e => e.role === 'hatch' && e.even && e.fill[0] === e.fill[1] && e.fill[1] === e.fill[2] && e.group === 'imgRec') && segs.length === 3 && segs.every(s => !s.hatchBlue && s.fill && !s.stroke && s.fillRGB[0] === s.fillRGB[2] && s.manufacturingRole === 'hatch' && /f\*$/.test(s.paintOp))
-      && ['0 0 0 rg', '0.5 0.5 0.5 rg', '0.75 0.75 0.75 rg'].every(t => ops.includes(t)) && !!plain && plain.hatchBlue && !plain.artGrey && rec.added.find(e => e.id === 'w1').fill.join() === '0,0,1' && /q 0 0 1 rg/.test(ops),
+      && greyRec.every(e => { const v = String(Math.round(e.fill[0] * 1000) / 1000); return ops.includes(`${v} ${v} ${v} rg`); }) && !!plain && plain.hatchBlue && !plain.artGrey && rec.added.find(e => e.id === 'w1').fill.join() === '0,0,1' && /q 0 0 1 rg/.test(ops),
     JSON.stringify({ greyRec: greyRec.map(e => [e.id, e.fill, e.artGrey]), segs: segs.map(s => [s.artMemberId, s.fillRGB, s.hatchBlue]), plain: plain && [plain.hatchBlue, plain.fillRGB] }));
   const back = AE.decode(Object.assign({ at: 1 }, rec), cb, view), shown = AE.itemsOf(ed, view, 'front').filter(i => i.artGrey);
   check('A9 opened again the greys come back grey: decode and itemsOf give each part its grey and its mark (and the group\'s id, for Re-trace)',
@@ -147,7 +121,7 @@ const settleP = page => page.evaluate(() => new Promise(r => requestAnimationFra
 const C = (page, fn, arg) => page.evaluate(fn, arg);
 async function typeField(page, f, value) { const el = page.locator(`.ce-root [data-f="${f}"]`); await el.click(); await page.keyboard.press('Control+a'); await page.keyboard.type(String(value)); await page.keyboard.press('Enter'); await settleP(page); }
 /** Waits until the Image step's preview trace has caught up (nothing running and the newest drawn). */
-const previewDone = page => page.waitForFunction(() => { const c = CharmNestCeImage.current(); return c && !c.busy() && document.querySelector('.cei [data-wait]').hidden; }, null, { timeout: 30000 });
+const previewDone = page => page.waitForFunction(() => { const c = CharmNestCeImage.current(); return c && !c.working() && document.querySelector('.cei [data-wait]').hidden; }, null, { timeout: 30000 });
 const vecGreys = page => C(page, () => [...document.querySelectorAll('.cei__vec path')].map(p => p.getAttribute('fill')));
 /** 'rgb(a,a,a)' or 'rgb(a, a, a)' → a / 255; and whether greys are the trace's fixed k / N (the stand-in's and CharmNestTrace's alike: which tone takes which band is the trace's choice). */
 const g01 = c => +String(c).match(/\d+/)[0] / 255;
@@ -168,12 +142,8 @@ async function partB(kit) {
     const made = await R.build(w, ['cal']);
     const PID = made.cal.poolIds[0];
     check('B0 the world: the calendar is pooled and its faces fitted', made.cal.jobs.length === 2, JSON.stringify(made.cal.jobs.map(j => [j.face, j.state])));
-    const standin = await page.evaluate(src => {
-      if (window.CharmNestTrace && typeof window.CharmNestTrace.trace === 'function') return false;
-      const fn = new Function('return (' + src + ')')();
-      window.CharmNestTrace = { trace: (img, o) => new Promise(r => setTimeout(() => { if (o && o.onProgress) o.onProgress(1); r(fn(img, o)); }, 4)), cancel() {}, standin: true };
-      return true;
-    }, standinTrace.toString());
+    // the employee log (charm-nest-design-log.js, another workstream's): what this page is told, kept to read back
+    await page.evaluate(() => { window.__ceiLog = []; const was = window.CNDesignLog; window.CNDesignLog = { event: (k, d) => { window.__ceiLog.push([k, d]); if (was && was.event) try { was.event(k, d); } catch (e) { /* theirs */ } } }; });
     // two pictures made in the page: a logo (black disc, a mid-grey square, a light-grey band, on white) and a small badge
     await page.evaluate(() => {
       const mk = (w, h, draw, name) => new Promise(res => { const cv = document.createElement('canvas'); cv.width = w; cv.height = h; const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); draw(g); cv.toBlob(b => res(new File([b], name, { type: 'image/png' })), 'image/png'); });
@@ -186,9 +156,10 @@ async function partB(kit) {
     await R.openEngraveDetail(w, 'cal', { face: 'front' }); await R.settle(page, 700);
     await page.click(Q + ' .backHost .egCharmEdit');
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page); await settleP(page);
-    const head = await page.evaluate(() => { const b = document.querySelector('.ce-root [data-act="import"]'); return { has: !!b && !b.hidden, title: b && b.title, accept: (CharmEditor.importers || []).map(i => i.id + ':' + i.accept.join(' ')) }; });
-    check(`B1 the editor's Import takes pictures (${head.accept.find(a => a.startsWith('image:'))}); the trace is ${standin ? 'the test\'s stand-in (charm-nest-ce-trace.js not on the page yet)' : 'CharmNestTrace'}`,
-      head.has && /\.png/.test(head.title) && head.accept.some(a => /^image:.*\.png.*\.webp.*image\/png/.test(a)), JSON.stringify(head));
+    const head = await page.evaluate(() => { const b = document.querySelector('.ce-root [data-act="import"]'); return { has: !!b && !b.hidden, title: b && b.title, accept: (CharmEditor.importers || []).map(i => i.id + ':' + i.accept.join(' ')), trace: !!(window.CharmNestTrace && CharmNestTrace.posterise && CharmNestTrace.trace) }; });
+    const mine = head.accept.find(a => a.startsWith('image:')) || '';
+    check(`B1 the editor's Import takes pictures (${mine}: png, jpeg and webp named, never image/svg+xml, which is the drawing importer's), on a page with CharmNestTrace`,
+      head.has && /\.png/.test(head.title) && /^image:\.png \.jpg \.jpeg \.webp image\/png image\/jpeg image\/webp$/.test(mine) && !/svg|image\/ /.test(mine + ' ') && head.trace, JSON.stringify(head));
 
     /* ── DROP: the logo let go on the work area ── */
     const n0 = await page.evaluate(() => CharmEditor.current.items().length);
@@ -263,6 +234,7 @@ async function partB(kit) {
       gE.length === g0.length - 1 && gE.includes('rgb(0,0,0)') && restoreOn && gR.length === g0.length && gL.join() === 'rgb(0,0,0)' && /^Line art:/.test(noteL), JSON.stringify({ gE, gR, gL, noteL }));
 
     /* ── PLACE ── */
+    const thr0 = await page.evaluate(() => CharmNestCeImage.current().thresholds());
     await page.click('.cei [data-do="place"]');
     await page.waitForFunction(() => !document.querySelector('.cei'), null, { timeout: 60000 }); await settleP(page);
     const pl = await page.evaluate(() => {
@@ -273,6 +245,10 @@ async function partB(kit) {
     });
     const m = 0.4 * PT - 0.01, inside = pl.gb[0] >= pl.cb[0] + m && pl.gb[1] >= pl.cb[1] + m && pl.gb[2] <= pl.cb[2] - m && pl.gb[3] <= pl.cb[3] - m;
     const centred = Math.abs((pl.trace.box[0] + pl.trace.box[2]) / 2 - (pl.cb[0] + pl.cb[2]) / 2) < 0.5 && Math.abs((pl.trace.box[1] + pl.trace.box[3]) / 2 - (pl.cb[1] + pl.cb[3]) / 2) < 0.5;
+    const ev = await page.evaluate(() => (window.__ceiLog || []).filter(e => e[0] === 'imageTrace').map(e => e[1]));
+    check(`B7a Place traces with the thresholds the preview showed (CharmNestTrace.posterise: ${thr0 && thr0.join(', ')}) and logs imageTrace for the employee (${ev.length}: ${ev[0] && ev[0].levels} levels, ${ev[0] && ev[0].ops} points, ${ev[0] && ev[0].ms} ms)`,
+      Array.isArray(thr0) && thr0.length === 4 && ev.length === 1 && JSON.stringify(ev[0].thresholds) === JSON.stringify(thr0.map(x => Math.round(x * 1000) / 1000)) && ev[0].levels === 4 && ev[0].layers === pl.kids.length && ev[0].into === 'outline',
+      JSON.stringify({ thr0, ev }));
     await R.shot(w, 'CEI-3-placed');
     check(`B7 Place: ONE group "${pl.name}" on top, selected (${pl.kids.length} grey paths: ${pl.kids.map(k => k.name).join(', ')}, black on top), drawn in their own greys (${pl.fills.join(' ')}), centred and fitted inside the outline (${((pl.gb[2] - pl.gb[0]) / PT).toFixed(1)} × ${((pl.gb[3] - pl.gb[1]) / PT).toFixed(1)} mm in ${((pl.cb[2] - pl.cb[0]) / PT).toFixed(1)} × ${((pl.cb[3] - pl.cb[1]) / PT).toFixed(1)}), in ${pl.stat} ms`,
       pl.n === n0 + 1 && pl.kind === 'group' && pl.name === 'Image · logo' && pl.sel.join() === pl.id && pl.kids.length === g0.length && kOfN(pl.kids.map(k => k.fill[0]), 4) && pl.kids.every(k => k.role === 'hatch' && k.artGrey && k.fill[0] === k.fill[2])

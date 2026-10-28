@@ -38,7 +38,8 @@
   const PREVIEW_MAX = 280;     // the preview's vector: traced from this, px
   const FULL_PX_MM = 20, FULL_MAX = 1400;   // the trace on Place: 20 px a mm on the charm (the trace's own working pitch, 0.05 mm, a fibre laser's hatch), at most 1400 px; never enlarged
   const MARGIN_MM = 0.4;       // an image placed in the outline stays this far inside every cut line
-  const BUDGET = { layerBytes: 180000, ops: 40000, bytes: 450000 };   // (charmNestLibrary.js ART_MAX: d 200 000, ops 60 000, bytes 600 000 for the whole edit; room left for the rest of it)
+  const BUDGET = { layerBytes: 180000, ops: 40000, bytes: 450000 };
+  const BUSY_NODES = 5000;     // a level over this many points is said to be busy (the trace's note: a photo gives 4-12 k a level at 20 px a mm; a smaller placed size cuts it)   // (charmNestLibrary.js ART_MAX: d 200 000, ops 60 000, bytes 600 000 for the whole edit; room left for the rest of it)
   const fin = v => typeof v === 'number' && Number.isFinite(v);
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const r4 = v => Math.round(v * 1e4) / 1e4;
@@ -666,15 +667,25 @@
       if (!T) { const wt = $('[data-wait]'); wt.hidden = false; wt.textContent = 'Tracing is not on this page yet'; return; }
       if (!tRun) runPreview();
     }
-    /** The vector preview: the grey as shown, at most 280 px, traced in the worker; when it is back the newest settings are traced (never a queue). */
+    /** The vector preview: the grey as shown, at most 280 px, its levels' thresholds from CharmNestTrace.posterise (a few ms here), traced in the worker with them; when it is back the
+     *  newest settings are traced (never a queue). The thresholds are kept for Place, so the charm gets the very bands the preview showed. */
+    let prevThr = null;
     function runPreview() {
       const v = tWant, [w, h] = fitPx(cvG.width, cvG.height, PREVIEW_MAX), c = canvas(w, h), g = c.getContext('2d', RD);
       g.imageSmoothingQuality = 'high'; g.drawImage(cvG, 0, 0, w, h);
       const input = g.getImageData(0, 0, w, h), o = Object.assign({}, st), wt = $('[data-wait]');
       wt.hidden = false; wt.textContent = 'Tracing…';
       const t0 = now();
-      const mm = tgt ? Math.max(tgt.box[2] - tgt.box[0], tgt.box[3] - tgt.box[1]) * MM : 0;
-      tRun = Promise.resolve().then(() => T.trace(input, traceOpts(o, mm > 0 ? Math.max(w, h) / mm : 20)))
+      const mm = tgt ? Math.max(tgt.box[2] - tgt.box[0], tgt.box[3] - tgt.box[1]) * MM : 0, opts = traceOpts(o, mm > 0 ? Math.max(w, h) / mm : 20);
+      prevThr = null;
+      try {
+        if (typeof T.posterise === 'function') {
+          const pz = T.posterise(input, Object.assign({ maxSide: PREVIEW_MAX }, opts));
+          if (pz && Array.isArray(pz.thresholds) && pz.thresholds.length === opts.levels) { opts.thresholds = pz.thresholds.slice(); prevThr = { v, thresholds: opts.thresholds }; }
+        }
+      } catch (e) { prevThr = null; }
+      took('posterise', now() - t0);
+      tRun = Promise.resolve().then(() => T.trace(input, opts))
         .then(res => { if (closed || !res) return; stats.previewTraces++; stats.lastTrace = { ms: Math.round(now() - t0), w: res.width, h: res.height }; prev = res; drawVector(res); })
         .catch(e => { if (!closed && !(e && (e.cancelled || e.name === 'AbortError'))) console.warn('image: preview trace', e); })
         .then(() => { tRun = null; if (closed) return; if (tWant !== v && !whole()) runPreview(); else wt.hidden = true; });
@@ -684,11 +695,22 @@
       const layers = (res.layers || []).filter(L => L && L.subpaths && L.subpaths.length && +L.grey < 0.999).slice().sort((a, b) => b.grey - a.grey);
       svg.innerHTML = layers.map(L => `<path d="${dOf(L.subpaths)}" fill="${rgb(+L.grey)}"/>`).join('');
       $('[data-greys]').innerHTML = layers.slice().reverse().map(L => `<i style="background:${rgb(+L.grey)}" title="${esc(greyName(+L.grey))}"></i>`).join('');
+      // (a level's points on the charm, from the preview's: a border's points grow with the picture's size in pixels, so they are scaled to the size it will be traced at)
+      const k = fullPx() / Math.max(res.width, res.height, 1), nodesOf = L => (fin(+L.nodes) ? +L.nodes : (L.subpaths || []).reduce((a, sp) => a + sp.length, 0));
+      busy = layers.map(L => ({ grey: +L.grey, nodes: Math.round(nodesOf(L) * k) })).filter(x => x.nodes > BUSY_NODES).sort((a, b) => b.nodes - a.nodes);
       note(sizeOf(layers));
+    }
+    let busy = [];
+    /** The long side, px, the picture is traced at on Place: 20 px a mm on the charm, never more than it has. */
+    function fullPx() {
+      if (!src || !tgt) return PREVIEW_MAX;
+      const [kw, kh] = keptSize(src.w, src.h, st), longMm = Math.max(tgt.box[2] - tgt.box[0], tgt.box[3] - tgt.box[1]) * MM;
+      return Math.min(clamp(Math.round(longMm * FULL_PX_MM), 16, FULL_MAX), Math.round(Math.max(kw, kh)));
     }
     /** What the trace makes of a picture, said plainly (the lead, 28 Oct 2026: "say plainly in the panel that a photo becomes a posterised (stencil-like) engraving in N greys"). */
     function note(s) {
-      const n = levelsOf(st), pts = s ? ` <b>${s.ops.toLocaleString('en')}</b> points in the preview.` : '';
+      const n = levelsOf(st), pts = (s ? ` <b>${s.ops.toLocaleString('en')}</b> points in the preview.` : '')
+        + (s && busy.length ? ` <b>Busy:</b> about ${busy[0].nodes.toLocaleString('en')} points in ${greyName(busy[0].grey).toLowerCase()} at this size (over ${BUSY_NODES.toLocaleString('en')} a level engraves slowly): place it smaller, raise Despeckle, lower Detail or use fewer levels.` : '');
       $('[data-note]').innerHTML = st.mode === 'line'
         ? `<b>Line art:</b> black only, inked wherever the picture is darker than the paper round it, for handwriting and signatures photographed in uneven light.${pts}`
         : n === 1 ? `<b>Black only:</b> everything darker than the middle grey is engraved, the rest is left.${pts}`
@@ -844,7 +866,7 @@
       where();
       const box0 = tgt.box, o2 = Object.assign({}, st), [kw, kh] = keptSize(src.w, src.h, o2);
       // (never enlarged: the trace measured that an enlarged picture makes no truer outline and three or four times the points, 28 Oct 2026)
-      const longMm = Math.max(box0[2] - box0[0], box0[3] - box0[1]) * MM;
+      const longMm = Math.max(box0[2] - box0[0], box0[3] - box0[1]) * MM, thr = prevThr && prevThr.v === tWant ? prevThr.thresholds : null;
       let px = Math.min(clamp(Math.round(longMm * FULL_PX_MM), 16, FULL_MAX), Math.round(Math.max(kw, kh)));
       let res = null, size = null, tries = 0, smaller = false;
       progress(0);
@@ -852,7 +874,7 @@
         for (;;) {
           const input = await greyPixels(src, o2, px);
           if (token !== placeToken || closed) return;
-          res = await T.trace(input, Object.assign(traceOpts(o2, Math.max(input.width, input.height) / longMm), { onProgress: p => { if (token === placeToken) progress(tries ? 0.5 + p * 0.5 : p); } }));
+          res = await T.trace(input, Object.assign(traceOpts(o2, Math.max(input.width, input.height) / longMm), thr ? { thresholds: thr } : {}, { onProgress: p => { if (token === placeToken) progress(tries ? 0.5 + p * 0.5 : p); } }));
           if (token !== placeToken || closed) return;
           size = sizeOf(res.layers);
           if (fits(size) || ++tries > 4 || px <= 64) break;
@@ -871,7 +893,9 @@
       keepSource(srcId, Object.assign(src, { settings: o2 }));
       stats.placeMs = Math.round(now() - t0);
       placing = false;
-      log(info.retrace ? 'imageRetrace' : 'imageTrace', { name: src.name, mode: o2.mode, levels: levelsOf(o2), layers: g.children.length, ops: size.ops, px: res.width + 'x' + res.height,
+      const most = (res.layers || []).reduce((m, L) => (fin(+L.nodes) && +L.nodes > m.nodes ? { nodes: +L.nodes, grey: +L.grey } : m), { nodes: 0, grey: 0 });
+      if (most.nodes > BUSY_NODES && ctx.say) ctx.say(`${greyName(most.grey)} has ${most.nodes.toLocaleString('en')} points: a busy level engraves slowly (place it smaller, or raise Despeckle)`, 6000);
+      log(info.retrace ? 'imageRetrace' : 'imageTrace', { name: src.name, mode: o2.mode, levels: levelsOf(o2), layers: g.children.length, ops: size.ops, nodes: res.nodes, busiest: most.nodes, thresholds: res.thresholds, px: res.width + 'x' + res.height,
         mm: [+((box0[2] - box0[0]) * MM).toFixed(2), +((box0[3] - box0[1]) * MM).toFixed(2)], into: tgt.into, ms: stats.placeMs, simplified: smaller });
       finish(g, smaller);
     }
@@ -891,8 +915,8 @@
         nameIt(); st = norm(Object.assign({}, st, { crop: null })); paint('swap'); traceSoon();
       } catch (e) { $('[data-note]').innerHTML = `<b>${esc(file.name || 'That file')}</b> could not be read: ${esc((e && e.message) || e)}`; }
     }
-    live = { swap, place: () => place(), cancel: () => finish(null), settings: () => Object.assign({}, st), target: () => tgt && Object.assign({}, tgt, { box: tgt.box.slice() }),
-      preview: () => prev, suggestion: () => sug, busy: () => !!tRun || placing, done };
+    live = { swap, place: () => place(), cancel: () => finish(null), settings: () => Object.assign({}, st), thresholds: () => (prevThr && prevThr.v === tWant ? prevThr.thresholds.slice() : null), busyLevels: () => busy.slice(), target: () => tgt && Object.assign({}, tgt, { box: tgt.box.slice() }),
+      preview: () => prev, suggestion: () => sug, working: () => !!tRun || placing, done };
     nameIt(); sync(); setMode('split'); note(null);
     // (the card is laid out by the browser in this frame; the picture is drawn in the next, so neither is one long task)
     requestAnimationFrame(() => setTimeout(() => { if (closed) return; paint('open'); traceSoon(); try { card.focus({ preventScroll: true }); } catch (e) { /* fine */ } }, 0));
@@ -960,6 +984,6 @@
     (CE.commands || (CE.commands = {})).imageRetrace = { title: 'Re-trace image…', group: 'Image', icon: IC.image, run: ctx => retrace(ctx), enabled: ctx => { try { const s = traceSet(ctx); return !!s && SOURCES.has(s.src); } catch (e) { return false; } } };
   }
 
-  return { ACCEPT, DEF, BUDGET, norm, turn, flip, shownSize, keptSize, shownMatrix, prepGrey, greyImage, suggestLevels, levelsOf, grey, polysOf, inside, fitInOutline, fitInBox, target, sizeOf, fits, buildGroup, traceSet, greyName,
+  return { ACCEPT, DEF, BUDGET, BUSY_NODES, traceOpts, norm, turn, flip, shownSize, keptSize, shownMatrix, prepGrey, greyImage, suggestLevels, levelsOf, grey, polysOf, inside, fitInOutline, fitInBox, target, sizeOf, fits, buildGroup, traceSet, greyName,
     register, run, retrace, decode, accepts, stats: () => stats, current: () => live, sources: () => SOURCES };
 });
