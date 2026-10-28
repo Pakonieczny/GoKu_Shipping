@@ -238,7 +238,9 @@
     clearTimeout(st.timer); st.timer = 0; clearTimeout(st.second); st.second = 0;
     if (st.dead || !cloudOk()) return;
     st.quietNext = true;   // (what changed while another tab was on screen is not replayed)
-    if (FOLLOW.has(mode)) { if (doc.hidden) return; if (st.busy) st.again = true; else arm(0); return; }
+    // NAV (28 Oct 2026, Paul: "keep the API calls to the bare minimum"): a tab that follows, shown while the last read is still within the loop's own beat (orders → review → library in a
+    // few seconds), keeps that beat: the next read comes when it was due, not at once on every switch
+    if (FOLLOW.has(mode)) { if (doc.hidden) return; if (st.busy) st.again = true; else if (!st.fails && st.lastOk && Date.now() - st.lastOk < pace()) schedule(); else arm(0); return; }
     if (TABS.has(mode) && !doc.hidden && Date.now() - Math.max(st.lastAny, st.end) > OTHER_TAB) { st.lastAny = Date.now(); if (st.busy) st.again = true; else poll({ quiet: true }).catch(() => {}); }
   }
   doc.addEventListener("visibilitychange", () => {

@@ -73,7 +73,7 @@ async function page(scene, direction) {
   const api = async (_, b) => { asked.push(b.op); return b.op === 'setList' ? { sets: rawSets, sheets: [] } : b.op === 'listSheets' ? { sheets } : scene.api ? scene.api(b) : { sheets: [], sets: [], counts: {} }; };
   Object.assign(w, { S: { mode: 'library', library: { rows: sheets, kind: 'sets', metal: 'all' }, cloud: { ok: true } }, api, allSheets: () => [], Orders: { rows: () => rows }, Engrave: { items: () => jobs, backsMarkup: () => '' },
     esc: x => String(x ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])), el: (tag, cls) => { const e = d.createElement(tag); e.className = cls; return e; },
-    Gate: { projectLibraryRecords: x => x }, RoseStock: {}, CODE: { gold: 'GF', silver: 'SS' }, toast: () => null, CNEmployee: { name: () => 'Tester' }, dayShort: x => x, metalOf: r => ({ label: r.metal }), cors: x => x,
+    Gate: { projectLibraryRecords: x => x, followRecords: () => 0, refreshMembership: () => {} }, RoseStock: {}, CODE: { gold: 'GF', silver: 'SS' }, toast: () => null, CNEmployee: { name: () => 'Tester' }, dayShort: x => x, metalOf: r => ({ label: r.metal }), cors: x => x,
     swatch: () => '', sheetHead: r => `<div class="h"><span class="nm">Sheet ${r.sheetIndex}</span></div>`, openLibrarySheet: () => {}, showLibrary: () => {}, loadLibrary: () => Promise.resolve(), pvRatio: () => '' });
   w.eval(fs.readFileSync(path.join(root, 'charm-nest-orders.js'), 'utf8')); w.O = w.CharmNestOrders;
   w.eval(fs.readFileSync(path.join(root, 'charm-nest-readiness.js'), 'utf8'));

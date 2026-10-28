@@ -396,7 +396,10 @@
           } catch (err) { for (const r of part) { const e = entry(r), was = readSig(e); e.failed = err; e.at = Date.now(); if (was !== readSig(e)) changed = true; } console.warn('OrderPieces: sheet records not read', err && err.message); }
         }
         for (const r of fresh) { const e = learned.get(r); if (e) e.task = null; }
-        if (changed || !opts.force) bump();   // (a forced re-read of what the page already holds says nothing new: nothing redraws)
+        // (a forced re-read of what the page already holds says nothing new: nothing redraws)
+        // NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): an unforced read that answered what the page already held says nothing new either. Each order window
+        // opened (and each Back / Next) reads its order this way, and the bump redrew the whole Orders list behind the window (~100 ms on 800 orders) for an answer that changed nothing
+        if (changed) bump();
         return fresh.every(r => learned.get(r) && learned.get(r).ok);
       })();
       for (const r of fresh) entry(r).task = task;

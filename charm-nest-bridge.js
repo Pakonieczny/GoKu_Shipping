@@ -12257,7 +12257,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
      origin may announce a write the same way (the Sorter, Design and Laser pages): { t:'write', op, at } on BroadcastChannel('cn-library'), or
      localStorage 'cn-library-write' = the time. No cloud call is made for it beyond the one read the nudge asks for. */
   const announce=op=>{const at=Date.now();live.heard=at;try{if(channel){channel.postMessage({t:'write',op:String(op || ''),at});return;}}catch(_){}try{localStorage.setItem('cn-library-write',String(at));}catch(_){}};   // (the storage write only where there is no BroadcastChannel: a synchronous storage write, on the page that has just pressed Complete, is time it has not got)
-  const heard=at=>{at=+at || Date.now();if(at===live.heard)return;live.heard=at;live.fresh=at>=(live.nudged||0);nudge();};
+  const heard=at=>{at=+at || Date.now();if(at===live.heard)return;live.heard=at;live.fresh=at>=(live.nudged||0);try{S.library.wroteAt=Math.max(S.library.wroteAt || 0,Date.now());}catch(_){}nudge();};   // (wroteAt: the Library shown again reads in full: showLibrary)
   // (Paul, 26 Oct 2026, several computers at once in production: a write another tab made AFTER this page's last read for a write left cannot be in that read's
   //  answer, so it is read now, never held by the 600 ms gap that groups a burst of writes; that wait was what made another tab's write show 1.2 s late)
   let channel=null;try{channel=typeof BroadcastChannel==='function'?new BroadcastChannel('cn-library'):null;if(channel)channel.onmessage=e=>{if(e && e.data && e.data.t==='write')heard(e.data.at);};}catch(_){channel=null;}
@@ -12392,7 +12392,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       return c && c.why ? String(c.why) : '';
     }catch(_){return '';}
   }
-  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,moveBlock,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
+  return {follow:ensureLive,record,sheet,group,canCut,labels,sections,place,changed,saved,poll,nudge,written,shownOrders,patch,liveState,projected,batch,acceptProcess,openChecklist,issuesOf,photo:photoOf,moveBlock,explain:(kind,id,card)=>explainOf({kind,id},card || {_laserSheets:[id]},()=>R.lookup({rows:Orders.rows()}))};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -12950,8 +12950,10 @@ const Sets = window.Sets = (() => {
       if (!reuse) {
         // both come in parts when they pass what one answer holds (apiAll), and are read to the end before any is shown;
         // what the laser has cut is left out (it is under Completed), save the cut sheets of a set still in progress
+        const askedAt = Date.now();   // (NAV, 28 Oct 2026: showLibrary shows this read again as it is while it is under a minute old and no Library write was made or heard after it was asked)
         const [ss, sh] = await Promise.all([api("charmNestLibrary", {op:"setList", includeSheets:true, limit:200, excludeDone:true}, {all:["sets", "sheets"]}), api("charmNestLibrary", {op:"listSheets", limit:500, excludeDone:true}, {all:"sheets"})]);
         if (request !== libraryRequest || S.library.kind !== "sets") return;
+        S.library.setsAskedAt = askedAt;
         const records = [...new Map([...(sh.sheets || []), ...(ss.sheets || [])].map(r=>[r.id,r])).values()];
         _cache = {rawSets:ss.sets || [], rawSheets:records, sets:[], sheets:records};
         // the Library's records (S.library.rows) are what the sheet window, the order search and the cards' backs read a
@@ -23169,7 +23171,9 @@ const OrderWin = window.OrderWin = (() => {
     // (the Team tab too: while an order outside the pull is read it showed the thread of the order shown before; the
     // thread is the order's, read by its number, so it is read at once)
     grow(); paintThread();
-    TeamMail.load(rid, !r.loading);
+    // NAV (28 Oct 2026, Paul: "keep the API calls to the bare minimum"): a thread read in full under 20 s ago (this window's own beat, below) is drawn from memory; Back and Next
+    // through orders seen a moment ago read nothing, and the beat brings what is newer
+    { const th = tryDo(() => TeamMail.thread(rid)); if (!(th && th.fullAt && !th.err && Date.now() - th.fullAt < 20000)) TeamMail.load(rid, !r.loading); }
     // what the other stations write shows within about 20 s while the window is open and in view
     clearInterval(W.poll);
     W.poll = setInterval(() => { if (W.dlg.open && W.rid && !document.hidden) { TeamMail.load(W.rid); primePools(W.rid, true); } }, 20000);
