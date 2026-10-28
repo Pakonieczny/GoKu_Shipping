@@ -1145,7 +1145,10 @@
     const p = prepared(src, Object.assign({}, opts, { sharpen: 0, denoise: false }), 256);
     return { levels: p.info.suggestLevels, content: p.info.content, midtones: p.info.midtones };
   }
-  return { trace, cancel, grey, posterise, suggest, traceSync, defaults: DEFAULTS,
+  /** (TRACEHQ) The working size the trace takes a w × h picture to with these options: { W, H, up } (up: black-only line art enlarged that many times). The
+   *  Image step makes its picture that size itself (in linear light), so what it shows and what is traced are the same pixels. */
+  function plan(w, h, opts) { const o = options(opts), ws = workSize(w | 0, h | 0, o); return { W: ws.W, H: ws.H, up: ws.up || 1, pxPerMm: ws.ppm, maxLevels: MAX_LEVELS }; }
+  return { trace, cancel, grey, posterise, suggest, traceSync, plan, MAX_LEVELS, defaults: DEFAULTS,
     get busy() { return jobs.size; }, get usesWorker() { return !broken && !!(root && root.Worker); },
     _core: { options, otsu, thresholdsOf, runG, unpackG, contentOf } };
 });
