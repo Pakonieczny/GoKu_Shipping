@@ -224,6 +224,7 @@
     s.textContent = 'html.ce-text-on .emPop{z-index:2147482600}'   // (the one emoji picker of the page, over the editor while it is open)
       + '.ce-tx-emoji{position:absolute;z-index:7;width:28px;height:28px;display:flex;align-items:center;justify-content:center;padding:0;border:0;border-left:1px solid var(--hair,#e6e4e0);background:#fff;color:var(--muted,#6d6a66);cursor:pointer;transition:color var(--in,.11s),background var(--in,.11s)}'
       + '.ce-tx-emoji svg{width:17px;height:17px}.ce-tx-emoji:hover,.ce-tx-emoji:focus-visible,.ce-tx-emoji.on{color:var(--ink,#1c1d1d);background:var(--hov,#f2eee4)}'
+      + '.ce-tx-emoji.ce-tx-alpha{font:600 13px/1 "Noto Sans",system-ui,sans-serif;letter-spacing:-.02em}'   // (ALPHAFIND: the other alphabets' button, beside Emoji)
       + '.ce-tx-note{position:absolute;z-index:6;pointer-events:none;max-width:300px;padding:4px 9px;background:rgba(255,255,255,.97);border:1px solid var(--hair,#e6e4e0);font:600 10px/1.45 var(--sans,sans-serif);letter-spacing:.05em;color:var(--muted,#6d6a66)}'
       + '.ce-tx-note[hidden]{display:none}.ce-tx-note b{color:var(--ink,#1c1d1d);font-weight:700}.ce-tx-note.is-bad{color:#8a3a26;border-color:#e2c4b8}.ce-tx-note .ce-tx-spin{display:inline-block;width:8px;height:8px;margin-right:6px;border:1.5px solid var(--gold-lt,#cdb98a);border-top-color:var(--gold,#a58a52);border-radius:50%;animation:ceTxSpin .8s linear infinite;vertical-align:-1px}'
       + '@keyframes ceTxSpin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion: reduce){.ce-tx-note .ce-tx-spin{animation:none}}';
@@ -236,6 +237,7 @@
       if (!L || !L.ta) return;
       const ta = L.ta, x = ta.offsetLeft, y = ta.offsetTop, w = ta.offsetWidth, h = ta.offsetHeight;
       if (L.btn) { L.btn.style.left = (x + w - 29) + 'px'; L.btn.style.top = (y + 1) + 'px'; L.btn.style.height = Math.min(28, h - 2) + 'px'; }
+      if (L.abtn) { L.abtn.style.left = (x + w - 29 - (L.btn ? 29 : 0)) + 'px'; L.abtn.style.top = (y + 1) + 'px'; L.abtn.style.height = Math.min(28, h - 2) + 'px'; }
       if (L.note && !L.note.hidden) {
         const nh = L.note.offsetHeight || 22, sh = L.stage.clientHeight, below = y + h + 4;
         L.note.style.left = x + 'px'; L.note.style.top = (below + nh <= sh - 4 ? below : Math.max(4, y - nh - 4)) + 'px';
@@ -264,7 +266,7 @@
     function wire(ta) {
       const d = doc(); L.ta = ta;
       ta.dir = 'auto';                        // (Hebrew and Arabic read right to left in the box as they will on the charm)
-      ta.style.paddingRight = '36px';         // (room for the Emoji button inside the box)
+      ta.style.paddingRight = '64px';         // (room for the Emoji and the other alphabets' buttons inside the box)
       const btn = d.createElement('button'); btn.type = 'button'; btn.className = 'ce-tx-emoji'; btn.setAttribute('data-ce-keeps-words', '');
       btn.title = 'Emoji · every one the laser can engrave, as a one-colour outline (search by name; typed or pasted emoji work too)'; btn.setAttribute('aria-label', 'Emoji'); btn.innerHTML = SMILE;
       // (the box keeps its caret, and a press on the button is no press on the charm: the stage must not place words or select under it)
@@ -274,6 +276,14 @@
       L.stage.appendChild(btn); L.stage.appendChild(line); L.btn = btn; L.note = line;
       const P = root.CNEmojiPicker;
       if (!(P && P.attach({ textarea: ta, button: btn, key: 'ce:' + ((root.CharmEditor && root.CharmEditor.current && root.CharmEditor.current.editing()) || '') }))) { btn.remove(); L.btn = null; ta.style.paddingRight = ''; }
+      // (ALPHAFIND, Paul 28 Oct 2026: "the option to choose a alphabet/language letters/characters ... searchable for equivalent english letters and words": the letters, words and phrases of
+      //  other alphabets found by their English, charm-nest-alphabet-picker.js, put in the words as typing puts them)
+      { const ab = d.createElement('button'); ab.type = 'button'; ab.className = 'ce-tx-emoji ce-tx-alpha'; ab.setAttribute('data-ce-keeps-words', ''); ab.textContent = 'Aα';
+        ab.title = 'Other alphabets · letters, words and phrases in Greek, Hebrew, Arabic, Chinese, Japanese, Korean, Latin and more, found by their English'; ab.setAttribute('aria-label', 'Other alphabets');
+        ab.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); });
+        for (const t of ['pointerup', 'dblclick', 'contextmenu', 'wheel']) ab.addEventListener(t, e => e.stopPropagation());
+        const AP = root.CNAlphabetPicker;
+        if (AP && AP.attach({ textarea: ta, button: ab, key: 'ce-alpha:' + ((root.CharmEditor && root.CharmEditor.current && root.CharmEditor.current.editing()) || '') })) { L.stage.appendChild(ab); L.abtn = ab; } }
       L.onInput = () => note();
       ta.addEventListener('input', L.onInput);
       if (root.MutationObserver) { L.taMo = new root.MutationObserver(place); L.taMo.observe(ta, { attributes: true, attributeFilter: ['style'] }); }
@@ -282,10 +292,11 @@
     function unwire() {
       if (!L || !L.ta) return;
       const P = root.CNEmojiPicker; try { if (P && P.isOpen && P.isOpen()) P.close(false); } catch (_) { /* fine */ }
+      const AP = root.CNAlphabetPicker; try { if (AP && AP.isOpen && AP.isOpen()) AP.close(false); } catch (_) { /* fine */ }
       if (L.taMo) L.taMo.disconnect();
       L.ta.removeEventListener('input', L.onInput);
-      if (L.btn) L.btn.remove(); if (L.note) L.note.remove();
-      L.ta = L.btn = L.note = L.taMo = L.onInput = null;
+      if (L.btn) L.btn.remove(); if (L.abtn) L.abtn.remove(); if (L.note) L.note.remove();
+      L.ta = L.btn = L.abtn = L.note = L.taMo = L.onInput = null;
     }
     /** The editor opened (CharmEditor.onOpen): its work area watched for the words box. Once per workspace. */
     function attach(ctx) {

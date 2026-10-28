@@ -1125,6 +1125,8 @@
 .ce-menu{ position:fixed; z-index:20; min-width:200px; max-height:min(70vh,520px); max-width:min(320px,calc(100vw - 32px)); overflow-y:auto; background:#fff; border:1px solid var(--ink); padding:5px; box-shadow:0 18px 44px rgba(28,29,29,.22); }
 .ce-rail .ce-menu{ min-width:190px; padding:4px; }
 .ce-menu__head{ font-size:9px; font-weight:700; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); padding:8px 9px 5px; }
+.ce-item.ce-alphafind{ display:grid; gap:2px; text-align:left; font-weight:600; text-transform:none; letter-spacing:0; }
+.ce-item.ce-alphafind small{ font:400 11px/1.3 "Noto Sans",system-ui,sans-serif; color:var(--muted); }
 .ce-menu__note{ font-size:11px; line-height:1.55; color:var(--muted); padding:7px 9px 4px; border-top:1px solid var(--hair); margin-top:4px; }
 .ce-menu__note b{ color:var(--ink); font-weight:700; }
 .ce-item{ position:relative; display:flex; align-items:center; gap:9px; width:100%; text-align:left; border:0; background:none; cursor:pointer; padding:7px 9px; font-size:12.5px; color:var(--ink); }
@@ -1556,16 +1558,18 @@
       </div>
     </div>
     <div class="ce-drop" data-drop="font" data-when="text" hidden>
-      <button class="ce-prop ce-drop__b" type="button" title="Font and style: the engraving fonts, Bold, Italic, the alignment and the Alphabet"><span class="ce-fontA" data-caseA>Aa</span><span class="ce-fontname" data-fontname></span><i class="ce-caret"></i></button>
+      <button class="ce-prop ce-drop__b" type="button" title="Font and style: the engraving fonts, Bold, Italic, the alignment, the letter case and other alphabets"><span class="ce-fontA" data-caseA>Aa</span><span class="ce-fontname" data-fontname></span><i class="ce-caret"></i></button>
       <div class="ce-menu ce-menu--text" role="menu" hidden>
         <div class="ce-menu__head">Style</div>
         <div class="ce-tsrow" role="group" aria-label="Style">
-          <button class="ce-tsbtn" type="button" data-tstyle="bold" role="menuitemcheckbox" aria-checked="false" aria-label="Bold" title="Bold · the font's heavier cut (⌘B) · small words (a capital under 2.2 mm) are always cut in it, as the engraving cuts them"><b>B</b></button><button class="ce-tsbtn" type="button" data-tstyle="italic" role="menuitemcheckbox" aria-checked="false" aria-label="Italic" title="Italic · the letters slanted 12° (⌘I) · none of the engraving fonts has an italic of its own, so its letters are slanted as outlines"><i>I</i></button>
+          <button class="ce-tsbtn" type="button" data-tstyle="bold" role="menuitemcheckbox" aria-checked="false" aria-label="Bold" title="Bold (⌘B) · the font's heavier cut, or the letters made thicker where the font has no heavier cut or the words are already cut in it (small words, a capital under 2.2 mm, as the engraving cuts them)"><b>B</b></button><button class="ce-tsbtn" type="button" data-tstyle="italic" role="menuitemcheckbox" aria-checked="false" aria-label="Italic" title="Italic · the letters slanted 12° (⌘I) · none of the engraving fonts has an italic of its own, so its letters are slanted as outlines"><i>I</i></button>
           <span class="ce-tsgap" aria-hidden="true"></span>
           <button class="ce-tsbtn" type="button" data-talign="left" role="menuitemradio" aria-checked="false" aria-label="Align left" title="Align left · the lines start together">${IC.alignL}</button><button class="ce-tsbtn" type="button" data-talign="center" role="menuitemradio" aria-checked="false" aria-label="Align centre" title="Align centre · each line centred">${IC.alignC}</button><button class="ce-tsbtn" type="button" data-talign="right" role="menuitemradio" aria-checked="false" aria-label="Align right" title="Align right · the lines end together">${IC.alignR}</button>
         </div>
-        <div class="ce-menu__head">Alphabet <span class="ce-tsname" data-tsname>Style</span></div>
-        <div class="ce-tsrow ce-tsrow--case" role="group" aria-label="Alphabet">${caseItems}</div>
+        <div class="ce-menu__head">Letter case <span class="ce-tsname" data-tsname>Style</span></div>
+        <div class="ce-tsrow ce-tsrow--case" role="group" aria-label="Letter case">${caseItems}</div>
+        <div class="ce-menu__head">Other alphabets</div>
+        <button class="ce-item ce-alphafind" type="button" data-alphafind title="Letters, words and phrases of other alphabets, found by their English (love, mother, a, alpha …), put in the words">Find letters, words &amp; phrases…<small>Ελληνικά · עברית · العربية · हिन्दी · 中文 · 日本語 · 한국어 · Latin …</small></button>
         <div class="ce-menu__head">Font</div>${fontItems}
         <div class="ce-menu__note">The words you typed are kept: <b>Aa</b> (as typed) gives them back. Every alphabet the engraving has is typed as it is: Greek, Cyrillic, Hebrew, Arabic, Indian scripts, Chinese, Japanese, Korean and emoji, each set in its own font.</div>
       </div>
@@ -2327,7 +2331,7 @@
         // (the Style button says what is set: "Bold · Italic · CAPITALS", "Right", or "Style" for the font's own as typed, left or centred)
         const sum = [lit.bold && !noBold ? 'Bold' : '', lit.italic ? 'Italic' : '', al === 'right' ? 'Right' : al === 'center' ? 'Centred' : '', cs == null ? 'Mixed' : cs ? CASE_NAME[cs] : ''].filter(Boolean);
         $('[data-tsname]').textContent = cs == null ? 'Mixed' : CASE_NAME[cs];
-        $('[data-drop="font"] .ce-drop__b').title = 'Font and style: ' + $('[data-fontname]').textContent + (sum.length ? ' · ' + sum.join(' · ') : '') + ' · the engraving fonts, Bold, Italic, the alignment and the Alphabet (capitals, lowercase, Title Case, small capitals)';
+        $('[data-drop="font"] .ce-drop__b').title = 'Font and style: ' + $('[data-fontname]').textContent + (sum.length ? ' · ' + sum.join(' · ') : '') + ' · the engraving fonts, Bold, Italic, the alignment, the letter case (capitals, lowercase, Title Case, small capitals) and other alphabets';
         $('[data-caseA]').textContent = cs == null ? 'Aa' : CASE_SIGN[cs];
       }
       const showRole = leaves.length > 0 || (creating && !S.sel.length);
@@ -3548,6 +3552,15 @@
     }
     let sayT = 0, sayN = 0;
     /** A short line over the work area (ms 0: until the next one). */
+    function alphaFind() {
+      const tx = selEntries().filter(e => e.it.kind === 'text'), id = tx.length ? tx[0].it.id : S.editing ? S.editing.id : null;
+      if (!id) { say('Select the words first (or add words with the Text tool), then find the letters of another alphabet for them.', 4200); return; }
+      if (!S.editing || S.editing.id !== id) openEditor(id);
+      // (the words box gets its buttons from charm-nest-ce-text.js as it appears: the finder's own button is pressed once it is there)
+      // (the words box opens with its words selected, ready to be typed over: the finder ADDS to them, so the caret goes to their end first)
+      let n = 0; const go = () => { const b = stage.querySelector('.ce-tx-alpha'); if (b) { const ta = stage.querySelector('textarea.ce-editor'); if (ta && ta.selectionStart === 0 && ta.selectionEnd === ta.value.length && ta.value) ta.setSelectionRange(ta.value.length, ta.value.length); b.click(); return; } if (++n < 20) root.requestAnimationFrame(go); else say('The other alphabets are not loaded on this page: reload it.', 4200); };
+      root.requestAnimationFrame(go);
+    }
     function say(text, ms) {
       const el = $('.ce-say'); if (!el) return; sayN++; clearTimeout(sayT);
       if (!text) { el.classList.remove('is-in'); return; }
@@ -3754,6 +3767,9 @@
       const rl = t.closest('[data-role]'); if (rl) { closeMenus(); setRole(rl.dataset.role); return; }
       // (FONTOPEN, Paul 28 Oct 2026: "the dropdown closes every-time I choose an alternate Font style. The dropdown should stay open and the selected font should be updating the text in real-time":
       //  a font picked is drawn on the words at once and the menu stays open, as its Style buttons do; Esc, a press outside or the menu's own button closes it)
+      // (ALPHAFIND, Paul 28 Oct 2026: "I also don't see the option to choose a alphabet/language letters/characters": the words selected are opened for typing and the other alphabets' finder,
+      //  charm-nest-alphabet-picker.js, opens on them; a pick goes in at the caret)
+      const af = t.closest('[data-alphafind]'); if (af) { closeMenus(); alphaFind(); return; }
       const fo = t.closest('[data-font]'); if (fo) { const f = fonts.find(x => String(x.key) === fo.dataset.font); if (f) setFont(f.key); return; }
       // (CETEXT, 28 Oct 2026: Bold / Italic, the alignment and the letter case of the words)
       // (the Style menu stays open: bold, italic, an alignment and a letter case can be set one after the other, each drawn at once)

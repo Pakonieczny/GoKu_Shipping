@@ -65,8 +65,8 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       check(m.panel.w >= 232 - 1, `${w}px: the panel is at least 232px wide: ${Math.round(m.panel.w)}px`);
       check(m.taW >= 200 && m.ta.w >= 200, `${w}px: the text area is a normal width: ${Math.round(m.ta.w)}px (computed ${Math.round(m.taW)})`);
       check(m.sel.t >= m.ta.b - 0.5 && m.sel.w >= 200, `${w}px: the font drop-down is under the text area, full width, touching nothing: select top ${Math.round(m.sel.t)} >= text bottom ${Math.round(m.ta.b)}, width ${Math.round(m.sel.w)}`);
-      const acts = m.buttons.filter(b => !/^(None|Front|Back|Front \+ back|Emoji)$/.test(b));   // (Emoji is Paul's own picker button, beside the words)
-      check(acts.join('|') === 'Save|Cancel', `${w}px: Save and Cancel are the only action buttons (besides the quiet Emoji button): ${acts.join(' | ')}`);
+      const acts = m.buttons.filter(b => !/^(None|Front|Back|Front \+ back|Emoji|Aα)$/.test(b));   // (Emoji and Aα, the other alphabets (ALPHAFIND, 28 Oct 2026), are Paul's own picker buttons, beside the words)
+      check(acts.join('|') === 'Save|Cancel', `${w}px: Save and Cancel are the only action buttons (besides the quiet Emoji and Aα buttons): ${acts.join(' | ')}`);
       check(!/ENGRAVES|system read|nothing in the listing|Undo|sure|%/i.test(m.text), `${w}px: none of the old words in the panel: "${m.text.slice(0, 120)}"`);
       if (shots) await page.screenshot({ path: path.join(shots, `panel-${w}.png`) });
     }

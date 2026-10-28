@@ -221,6 +221,8 @@ const assets = [
   "charm-nest-shared-orders-modal.js",
   "charm-nest-text.js",
   "charm-nest-emoji-picker.js",
+  "charm-nest-alphabet-data.js",
+  "charm-nest-alphabet-picker.js",
   "charm-nest-emoji-data.js",
   "charm-nest-ce-text.js",
   "vendor/fonts/emoji-sequences.json",

@@ -265,7 +265,7 @@
 
   function faceHtml(vm, d, face, id, slot) {
     const cur = vm.rows.find(r => r.face === face), x = d.faces[face] || { text: '', font: '' }, locked = !!(cur && cur.locked), per = !!(cur && cur.perPiece), dis = d.busy ? ' disabled' : '';
-    const words = `<div class="engpBox"><textarea class="engpWords" id="${id}" data-engp="words" data-face="${face}" rows="2" placeholder="Words for the ${face}" aria-label="${cap1(face)} words"${locked || per || d.busy ? ' disabled' : ''}>${esc(per ? '' : x.text)}</textarea>${locked || per ? '' : `<button type="button" class="btn ghost xs engpEmoji emBtn" data-emoji${d.busy ? ' disabled' : ''} title="Choose an emoji the laser can engrave and put it in the words">Emoji</button>`}</div>`;
+    const words = `<div class="engpBox"><textarea class="engpWords" id="${id}" data-engp="words" data-face="${face}" rows="2" placeholder="Words for the ${face}" aria-label="${cap1(face)} words"${locked || per || d.busy ? ' disabled' : ''}>${esc(per ? '' : x.text)}</textarea>${locked || per ? '' : `<span class="engpTools"><button type="button" class="btn ghost xs engpAlpha emBtn" data-alpha${d.busy ? ' disabled' : ''} title="Other alphabets: letters, words and phrases in Greek, Hebrew, Arabic, Chinese, Japanese, Korean, Latin and more, found by their English" aria-label="Other alphabets">Aα</button><button type="button" class="btn ghost xs engpEmoji emBtn" data-emoji${d.busy ? ' disabled' : ''} title="Choose an emoji the laser can engrave and put it in the words">Emoji</button></span>`}</div>`;
     const font = `<select class="engpFont" data-engp="font" data-face="${face}" aria-label="${cap1(face)} font"${locked || d.busy ? ' disabled' : ''}>${fontOptions(vm, x.font)}</select>`;
     const job = faceJobOf(vm, face, slot), P = Pos();
     const can = !job || locked ? false : P && P.canMove ? tryDo(() => P.canMove(job), false) : !!(job.fit && job.state === 'review');
@@ -321,6 +321,7 @@
 .engpBox{position:relative;min-width:0}
 .engpWords{min-height:64px;resize:none;padding:6px 8px 26px;font:13px/1.4 var(--sans,system-ui);overflow-y:auto}
 .engpEmoji{position:absolute;right:5px;bottom:5px;padding:2px 8px}
+.engpTools{position:absolute;right:5px;bottom:5px;display:flex;gap:4px}.engpTools>.engpEmoji,.engpTools>.engpAlpha{position:static}.engpAlpha{font-weight:600}
 .engpFont{padding:6px 8px;font:13px var(--sans,system-ui)}
 .engpWords:disabled,.engpFont:disabled{background:var(--paper2,#ebe5d9);color:var(--ink70,#5b554c)}
 .engpPos{display:grid;gap:4px}
@@ -452,7 +453,10 @@
       const ta = el.querySelector('.engpWords'); if (ta) growBox(ta);
       { const fs = el.querySelector('.engpFont'); if (fs && fs.selectedOptions[0] && fs.selectedOptions[0].style.fontFamily) fs.style.fontFamily = fs.selectedOptions[0].style.fontFamily; }
       { const eb = el.querySelector('[data-emoji]'), tb = el.querySelector('.engpWords'), CE = el.ownerDocument.defaultView && el.ownerDocument.defaultView.CNEmojiPicker;   // (Paul's own Emoji button, as the words box of the card had it: it types into the box, so the panel sees an ordinary input)
-        if (eb && !(CE && tb && tryDo(() => CE.attach({ textarea: tb, button: eb, key: 'engp:' + key + ':' + d.face }), false))) eb.remove(); }
+        if (eb && !(CE && tb && tryDo(() => CE.attach({ textarea: tb, button: eb, key: 'engp:' + key + ':' + d.face }), false))) eb.remove();
+        // (ALPHAFIND, Paul 28 Oct 2026: the letters, words and phrases of other alphabets, found by their English, typed into the box beside Emoji: charm-nest-alphabet-picker.js)
+        const ab = el.querySelector('[data-alpha]'), AP = el.ownerDocument.defaultView && el.ownerDocument.defaultView.CNAlphabetPicker;
+        if (ab && !(AP && tb && tryDo(() => AP.attach({ textarea: tb, button: ab, key: 'engpa:' + key + ':' + d.face }), false))) ab.remove(); }
       hiDecorate(el, vm, d, slot);   // (ENGHILITE: the system's own choice stays marked)
       hookCard(); applyGate(hasPatch(Setup().patchOf(vm, d)));
       noJob(vm, d);
