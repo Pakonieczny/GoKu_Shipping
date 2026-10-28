@@ -63,7 +63,7 @@
   /* ── the pieces this page holds (jobs and edited charms), indexed once per sweep ── */
   let IDX = null;
   const index = () => { if (!IDX) IDX = safe(() => host.pieceIndex && host.pieceIndex(), null) || new Map(); return IDX; };
-  const jobsOf = id => index().get(id) || safe(() => host.jobsOfPiece && host.jobsOfPiece(id), null) || {};
+  const jobsOf = id => index().get(id) || {};   // (the index holds every job's pieces: a piece not in it has none, and no scan of the jobs is made for it)
   const REFIT = () => (root && root.CNEngraveRefit) || null;
   /** The fitted words of a face: { view, fit } with glyphs (the job's own, else the drawing held while it is fitted again after a charm edit), null when the face has none. */
   function wordsOf(j) {
