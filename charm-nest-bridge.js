@@ -12500,13 +12500,13 @@ const Sets = window.Sets = (() => {
   function labelsReady(sh, set) {
     const byId = new Map(sh.charms.map(c => [c.id, c]));
     const placed = sh.placements.map(p => byId.get(p.id)).filter(Boolean);
-    const ids = [...new Set(placed.map(c => String(c.order || c.id).split("/")[0]))];
-    const parts = O.safeChunks(ids, O.CARD_TO_METAL[sh.metal] || sh.metal, 1000, 500, 8);
+    const CPL = window.CharmNestCustomPool, ids = [...new Set(placed.map(c => String(c.order || c.id).split("/")[0]))].filter(id => !(CPL && CPL.orderless(id)));   // (CUSTOMPOOL, 28 Oct 2026: a piece of no order is on no shipping list: onSheetSaved)
+    const parts = O.safeChunks(ids, O.CARD_TO_METAL[sh.metal] || sh.metal, 1000, 500, 8); if (!parts.length && placed.length) parts.push([]);
     const files = sh.label?.files || [], indexed = (set.labelFiles || []).filter(f => f.sheetId === sh.sheetId);
     // (a label is out of date when the split notes it carries are: a sibling piece moved to another sheet; a label with none and a sheet with none agree, as before)
     return sh.setId === set.setId && !sh.draft && parts.length > 0 && files.length === parts.length && indexed.length === files.length &&
       files.every((f, i) => f.url && f.path && f.sheet === sh.fileBase && f.payload === O.encodeOrderList(parts[i], O.CARD_TO_METAL[sh.metal] || sh.metal) &&
-        indexed.some(g => g.path === f.path && g.url === f.url && g.part === f.part) && (f.notes || []).join("|") === pairNotes(sh, set, placed, parts[i]).join("|"));
+        indexed.some(g => g.path === f.path && g.url === f.url && g.part === f.part) && (f.notes || []).join("|") === pairNotes(sh, set, placed, parts[i]).concat(i === 0 && CPL ? CPL.labelNotes(placed) : []).join("|"));
   }
   async function onSheetSaved(sh, items, outputs, {labelsOnly = false, setOverride = null} = {}) {
     const set = setOverride || setOfSheet(sh); if (!set) return;
@@ -12515,15 +12515,16 @@ const Sets = window.Sets = (() => {
     if (set.committedAt) labelsOnly = true;
     const byId = new Map(items.map(c => [c.id, c]));
     const placed = sh.placements.map(p => byId.get(p.id)).filter(Boolean);
-    const ids = [...new Set(placed.map(c => String(c.order || c.id).split("/")[0]))];
+    // (CUSTOMPOOL, Paul 28 Oct 2026: a piece that belongs to no order, CUSTOM-<yyyymmdd>-<n>, rides the sheet and the laser but is no order to sort or ship: the QR's list leaves it out, the label names it under the title, its set's orders leave it out)
+    const CPL = window.CharmNestCustomPool, ids = [...new Set(placed.map(c => String(c.order || c.id).split("/")[0]))].filter(id => !(CPL && CPL.orderless(id))), loose = CPL ? CPL.labelNotes(placed) : [];
     const metalDS = O.CARD_TO_METAL[sh.metal] || sh.metal;
     // one code per sheet: a QR holds a thousand characters (about ninety orders) before it has to split; it used to split at fifty
-    const parts = O.safeChunks(ids, metalDS, 1000, 500, 8);
+    const parts = O.safeChunks(ids, metalDS, 1000, 500, 8); if (!parts.length && placed.length) parts.push([]);
     const files = [];
     for (const [i, slice] of parts.entries()) {
       const payload = O.encodeOrderList(slice, metalDS);
-      const label = `${METAL_TAG[sh.metal]} · ${set.name} · Sheet ${sh.sheetIndex || (window.CharmNestSheetName && CharmNestSheetName.numberOf(sh)) || sh.page}${parts.length > 1 ? ` [${i + 1}/${parts.length}]` : ""} · ${slice.length} order${slice.length === 1 ? "" : "s"}`;
-      const notes = pairNotes(sh, set, placed, slice);   // (groups split over sheets: said on the label; [] for most sheets)
+      const label = `${METAL_TAG[sh.metal]} · ${set.name} · Sheet ${sh.sheetIndex || (window.CharmNestSheetName && CharmNestSheetName.numberOf(sh)) || sh.page}${parts.length > 1 ? ` [${i + 1}/${parts.length}]` : ""} · ${slice.length} order${slice.length === 1 ? "" : "s"}${i === 0 && loose.length ? " + custom" : ""}`;
+      const notes = pairNotes(sh, set, placed, slice).concat(i === 0 ? loose : []);   // (groups split over sheets: said on the label; [] for most sheets) (CUSTOMPOOL: "Custom · no order: <name>")
       const png = await renderLabelPng(payload, label, undefined, notes);
       let up = null; if (S.cloud.ok && sh.folderPath) up = await uploadBytes(`${sh.folderPath}/${sh.fileBase}_label${parts.length > 1 ? `_${i + 1}of${parts.length}` : ""}.png`, png.blob, "image/png", "Saving the sheet label");
       files.push({ path: up && up.path, url: up && up.url, dataUrl: up ? null : png.dataUrl, sheet: sh.fileBase, sheetId: sh.sheetId, metal: metalDS, part: i + 1, parts: parts.length, orders: slice, payload, ecc: png.ecc, label, ...(notes.length ? { notes } : {}) });
@@ -12540,7 +12541,7 @@ const Sets = window.Sets = (() => {
     // the set record
     if (!set.sheetIds.includes(sh.sheetId)) set.sheetIds.push(sh.sheetId);
     if (!set.materials.includes(sh.metal)) set.materials.push(sh.metal);
-    for (const c of placed) { const rid = String(c.order || "").split("/")[0]; if (!rid || !c.orderInfo) continue; const o = set.orders[rid] = set.orders[rid] || { lines: {}, held: null }; const ln = o.lines[c.orderInfo.transactionId] = o.lines[c.orderInfo.transactionId] || { transactionId: c.orderInfo.transactionId, sku: c.orderInfo.sku, copies: [] }; if (!ln.copies.some(x => x.poolId === c.poolId)) { const sd = c.side || c.orderInfo.side; const gs = +c.groupSize; ln.copies.push({ copy: c.orderInfo.copy, sheetId: sh.sheetId, sheet: sh.fileBase, poolId: c.poolId, backPoolId: null, ...(sd === "L" || sd === "R" ? { side: sd } : {}), ...(gs >= 2 || (gs === 1 && (sd === "L" || sd === "R")) ? { groupSize: Math.floor(gs) } : {}) }); } }   // (a piece of a mismatched pair keeps its side in the set's copy list; a piece of a GROUP says how big its group is, a plain piece nothing)
+    for (const c of placed) { const rid = String(c.order || "").split("/")[0]; if (!rid || !c.orderInfo || (CPL && CPL.orderless(rid))) continue; const o = set.orders[rid] = set.orders[rid] || { lines: {}, held: null }; const ln = o.lines[c.orderInfo.transactionId] = o.lines[c.orderInfo.transactionId] || { transactionId: c.orderInfo.transactionId, sku: c.orderInfo.sku, copies: [] }; if (!ln.copies.some(x => x.poolId === c.poolId)) { const sd = c.side || c.orderInfo.side; const gs = +c.groupSize; ln.copies.push({ copy: c.orderInfo.copy, sheetId: sh.sheetId, sheet: sh.fileBase, poolId: c.poolId, backPoolId: null, ...(sd === "L" || sd === "R" ? { side: sd } : {}), ...(gs >= 2 || (gs === 1 && (sd === "L" || sd === "R")) ? { groupSize: Math.floor(gs) } : {}) }); } }   // (a piece of a mismatched pair keeps its side in the set's copy list; a piece of a GROUP says how big its group is, a plain piece nothing)
     set.labelFiles = set.labelFiles.filter(f => f.sheetId !== sh.sheetId).concat(sh.label.files.map(f => Object.assign({ sheetId: sh.sheetId }, f)));
     set.labels = null; // A previously collected PDF/manifest no longer describes these sheet labels.
     if (!labelsOnly) set.status = "nesting";

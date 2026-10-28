@@ -5208,7 +5208,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const MC = { on: false, sh: null, id: null, who: "", sel: null, lift: null, drag: null, edits: new Map(), from: new Map(), G: null, valid: null, msg: "", tone: "", msgT: 0, beat: 0, spring: 0, springBad: false, claiming: false, subs: new Set(), grids: new Map(), owed: new Set() };   // (owed: the sheets charms were moved between while it was on, MANUALHOP)
   const drawScale = () => (typeof CHARM_SCALE === "number" ? CHARM_SCALE : 0.971);
   const scaleOf = size => +(drawScale() * size).toFixed(5);
-  const sizeOf = c => { const v = c && c.manual ? +c.manual.size : 0; return v >= MC_MIN && v <= MC_MAX ? v : 1; };
+  const sizeOf = c => { const v = c && c.manual && !c.frozen ? +c.manual.size : 0; return v >= MC_MIN && v <= MC_MAX ? v : 1; };
+  // (CUSTOMPOOL, Paul 28 Oct 2026: "the sanctity of the designed charm. It's exact dimensions": a custom design sent to the sheet at its exact size is moved and turned here, never resized; the words say why)
+  const frozenWhy = c => (window.CharmNestCustomPool && typeof CharmNestCustomPool.sizeWhy === "function" ? CharmNestCustomPool.sizeWhy(c) : "");
   const normDeg = a => { const v = (((+a || 0) % 360) + 360) % 360; return Math.round(v * 1000) / 1000 % 360; };
   const clampSize = v => Math.max(MC_MIN, Math.min(MC_MAX, Math.round((+v || 1) * 100) / 100));
   const mcChanged = (a, b) => !a || !b || Math.abs(a.cxPt - b.cxPt) > 1e-3 || Math.abs(a.cyPt - b.cyPt) > 1e-3 || Math.abs(normDeg(a.angle) - normDeg(b.angle)) > 1e-3 || Math.abs((a.size || 1) - (b.size || 1)) > 1e-4;
@@ -5851,6 +5853,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (MC.spring || !W.geom) return;
     const pt = mcPx(e);
     let mode = mcHandleAt(e), x = MC.sel;
+    if (mode === "size" && x && frozenWhy(x.c)) { mcSay(frozenWhy(x.c), "bad"); return; }   // (CUSTOMPOOL: its corners do not resize it)
     if (!mode) {
       const hit = hitAt(e);
       if (!hit) return mcSelect(null);
@@ -5948,6 +5951,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const x = MC.sel; if (!x || MC.drag || MC.spring || e.altKey || e.ctrlKey || e.metaKey) return false;   // (Alt + Shift + ← / → is the sheet hop's: the charm onto the next sheet)
     const st = e.shiftKey ? MC_NUDGE_BIG : MC_NUDGE, mv = { ArrowLeft: [-st, 0], ArrowRight: [st, 0], ArrowUp: [0, -st], ArrowDown: [0, st] }[e.key];   // (NUDGE: 0.05 mm, Shift 1 mm)
     const turn = { "[": -MC_TURN, "]": MC_TURN, "{": -1, "}": 1 }[e.key], grow = { "+": .01, "=": .01, "-": -.01, "_": -.01 }[e.key];
+    if (grow && frozenWhy(x.c)) { e.preventDefault(); mcSay(frozenWhy(x.c), "bad"); return true; }   // (CUSTOMPOOL: + and − do not size it)
     if (!mv && !turn && !grow) return false;
     e.preventDefault();
     const q = Object.assign({}, mcDraftOf(x));
@@ -6157,6 +6161,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const lock = mcLocked(sh, c); if (lock) return { ok: false, why: c.bits ? "blocked" : "drawing", reason: lock };
       if (!pose || !Number.isFinite(+pose.cxPt) || !Number.isFinite(+pose.cyPt)) return { ok: false, why: "pose", reason: "No position was given." };
       if (pose.size != null && !(+pose.size >= MC_MIN && +pose.size <= MC_MAX)) return { ok: false, why: "size", reason: "A charm can be sized from 80% to 120% of its design size." };
+      if (pose.size != null && Math.abs(+pose.size - 1) > 1e-9 && frozenWhy(c)) return { ok: false, why: "size", reason: frozenWhy(c) };   // (CUSTOMPOOL)
       const r = mcCheck(mcGrid(sh, c.id, MC.on && MC.sh === sh ? MC.edits : null), c, { cxPt: +pose.cxPt, cyPt: +pose.cyPt, angle: +pose.angle || 0, size: pose.size == null ? sizeOf(c) : +pose.size }, +opts.snapPt || 0, true);
       return Object.assign({ ok: r.ok, why: r.why, reason: r.reason }, r.ok && r.pose ? { pose: r.pose } : {});
     },
