@@ -136,6 +136,10 @@ async function partA(kit) {
   const back = AE.decode(Object.assign({ at: 1 }, rec), cb, view), shown = AE.itemsOf(ed, view, 'front').filter(i => i.artGrey);
   check('A9 opened again the greys come back grey: decode and itemsOf give each part its grey and its mark (and the group\'s id, for Re-trace)',
     back.added.filter(i => i.artGrey).length === 3 && shown.length === 3 && shown.every(i => i.fill[0] === i.fill[2] && i.group === 'imgRec' && i.role === 'hatch'), JSON.stringify(shown.map(i => [i.id, i.fill, i.group])));
+  // served: the page loads it after the editor (with a cache token) and the build ships it
+  const fs = require('node:fs'), html = fs.readFileSync(path.join(ROOT, 'charm-nest-1.html'), 'utf8'), build = fs.readFileSync(path.join(ROOT, 'scripts/build-public.cjs'), 'utf8');
+  const at = html.indexOf('src="charm-nest-ce-image.js?v='), edAt = html.indexOf('src="charm-nest-charm-editor.js?v=');
+  check('A10 the page loads charm-nest-ce-image.js after the editor, with a ?v= token, and scripts/build-public.cjs ships it', at > edAt && edAt > 0 && /"charm-nest-ce-image\.js"/.test(build), JSON.stringify({ at, edAt }));
 }
 
 /* ═══ B · the real page ═══ */
@@ -145,6 +149,10 @@ async function typeField(page, f, value) { const el = page.locator(`.ce-root [da
 /** Waits until the Image step's preview trace has caught up (nothing running and the newest drawn). */
 const previewDone = page => page.waitForFunction(() => { const c = CharmNestCeImage.current(); return c && !c.busy() && document.querySelector('.cei [data-wait]').hidden; }, null, { timeout: 30000 });
 const vecGreys = page => C(page, () => [...document.querySelectorAll('.cei__vec path')].map(p => p.getAttribute('fill')));
+/** 'rgb(a,a,a)' or 'rgb(a, a, a)' → a / 255; and whether greys are the trace's fixed k / N (the stand-in's and CharmNestTrace's alike: which tone takes which band is the trace's choice). */
+const g01 = c => +String(c).match(/\d+/)[0] / 255;
+const kOfN = (gs, N) => gs.length > 0 && gs.every(g => Math.abs(g * N - Math.round(g * N)) < 0.02) && new Set(gs.map(g => Math.round(g * N))).size === gs.length;
+const css = g => `rgb(${Math.round(g * 255)}, ${Math.round(g * 255)}, ${Math.round(g * 255)})`;
 
 async function partB(kit) {
   const R = require('./_engraveRealWorld.cjs');
@@ -201,16 +209,20 @@ async function partB(kit) {
     await R.shot(w, 'CEI-1-image-step');
     check(`B2 a PNG dropped on the work area opens the Image step on it (${s0.name}): a split preview, ${s0.labs.join(' | ')}, the vector traced in the background (${g0.length} greys: ${g0.join(' ')}), nothing on the charm yet`,
       /^logo\.png · 240 × 160 px$/.test(s0.name) && s0.mode === 'split' && s0.labs.join() === 'Original,Greyscale,Vector' && s0.inkO > 1000 && s0.inkG > 1000 && Math.abs(s0.ar - 1.5) < 0.03
-        && g0.join() === 'rgb(191,191,191),rgb(128,128,128),rgb(0,0,0)' && s0.items === n0, JSON.stringify(s0));
+        && g0.length === 3 && kOfN(g0.map(g01), 4) && g0[2] === 'rgb(0,0,0)' && s0.items === n0, JSON.stringify(Object.assign(s0, { g0 })));
     check(`B3 the panel says plainly what a photo becomes ("${s0.note.slice(0, 92)}…"), offers the picture's own level count ("${s0.sug.trim()}") and where it will go (${s0.where})`,
-      /posterised, stencil-like engraving in 4 greys/.test(s0.note) && /an illustration: 3 greys suggested/.test(s0.sug) && /Use 3/.test(s0.sug) && /centred in the charm's outline/.test(s0.where), JSON.stringify(s0));
+      /posterised, stencil-like engraving in 4 greys/.test(s0.note) && /Looks like an illustration: \d greys suggested/.test(s0.sug) && /centred in the charm's outline/.test(s0.where), JSON.stringify(s0));
 
     /* ── adjusting: each change drawn at once (main-thread ms measured), the vector following ── */
-    await page.click('.cei [data-do="usesug"]'); await previewDone(page);
+    // the suggestion's Use (when it suggests other than the 4 in hand), else the slider one step down: 3 levels; then back to 4
+    const useN = await page.evaluate(() => { const b = document.querySelector('.cei [data-do="usesug"]'); return b ? +b.textContent.replace(/\D/g, '') : 0; });
+    if (useN === 3) await page.click('.cei [data-do="usesug"]'); else { await page.focus('.cei [data-k="levels"]'); await page.keyboard.press('ArrowLeft'); }
+    await previewDone(page);
     const g3 = await vecGreys(page), lv3 = await page.evaluate(() => document.querySelector('.cei [data-k="levels"]').value);
     await page.focus('.cei [data-k="levels"]'); await page.keyboard.press('ArrowRight'); await previewDone(page);
     const g4 = await vecGreys(page);
-    check(`B4 "Use 3" sets 3 levels (the vector: ${g3.join(' ')}), and the slider back to 4 (${g4.length} greys again); the greys are the trace's fixed k/N`, lv3 === '3' && g3.join() === 'rgb(170,170,170),rgb(0,0,0)' && g4.length === 3, JSON.stringify({ g3, g4 }));
+    check(`B4 ${useN === 3 ? '"Use 3"' : 'the Levels slider'} sets 3 levels (the vector: ${g3.join(' ')}, thirds), and back to 4 (${g4.length} greys again, quarters): the trace's fixed k/N, black the base`,
+      lv3 === '3' && kOfN(g3.map(g01), 3) && g3.includes('rgb(0,0,0)') && g4.length === g0.length && kOfN(g4.map(g01), 4), JSON.stringify({ useN, g3, g4 }));
     await page.focus('.cei [data-k="brightness"]'); for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowRight');
     for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowLeft');
     await page.focus('.cei [data-k="contrast"]'); for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowRight'); for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowLeft');
@@ -231,8 +243,9 @@ async function partB(kit) {
     const stats = await page.evaluate(() => { const s = CharmNestCeImage.stats(), med = a => { const b = a.slice().sort((x, y) => x - y); return b.length ? b[b.length >> 1] : 0; }; const out = {}; for (const [k, v] of Object.entries(s.byKind)) out[k] = { n: v.length, med: +med(v).toFixed(1), max: +Math.max(...v).toFixed(1) }; return { out, traces: s.previewTraces, last: s.lastTrace }; });
     const tone = ['brightness', 'contrast', 'gamma'].map(k => stats.out[k]), fl = ['sharpen', 'denoise', 'turn', 'flip'].map(k => stats.out[k]);
     console.log('      main-thread ms per change (median / max):', Object.entries(stats.out).map(([k, v]) => `${k} ${v.med}/${v.max} ×${v.n}`).join(' · '), `· ${stats.traces} preview traces, the last ${stats.last && stats.last.ms} ms in the background`);
-    check(`B5 every change paints in the same frame: tone (brightness, contrast, gamma: one lookup table) median ${Math.max(...tone.map(t => t.med))} ms, filters and turns median ${Math.max(...fl.map(t => t && t.med || 0))} ms; a turn turns the preview (${ar0.toFixed(2)} → ${ar1.toFixed(2)}); the crop kept (${cs.crop && cs.crop.map(v => v.toFixed(2)).join(',')})`,
-      tone.every(t => t && t.n >= 12 && t.med < 8) && fl.every(t => t && t.med < 16) && Math.abs(ar0 * ar1 - 1) < 0.05 && cs.crop && cs.crop[2] < 0.95 && cs.crop[2] > 0.85 && cs.rot === 0 && !cs.flipH && cs.sharpen === 0 && cs.gamma === 1 && !cs.denoise,
+    // (a slider dragged is painted inside its frame; a click (a turn, a flip, a filter switched) never holds the page 50 ms, on this machine under the other agents' load too)
+    check(`B5 a slider dragged paints in its frame: tone (brightness, contrast, gamma: one lookup table) median ${Math.max(...tone.map(t => t.med))} ms, sharpen ${stats.out.sharpen.med} ms (its filter in the worker); a click (turn, flip, denoise) at most ${Math.max(...fl.map(t => t && t.max || 0))} ms; a turn turns the preview (${ar0.toFixed(2)} → ${ar1.toFixed(2)}); the crop kept (${cs.crop && cs.crop.map(v => v.toFixed(2)).join(',')})`,
+      tone.every(t => t && t.n >= 12 && t.med < 8) && stats.out.sharpen.med < 8 && fl.every(t => t && t.max < 50) && Math.abs(ar0 * ar1 - 1) < 0.05 && cs.crop && cs.crop[2] < 0.95 && cs.crop[2] > 0.85 && cs.rot === 0 && !cs.flipH && cs.sharpen === 0 && cs.gamma === 1 && !cs.denoise,
       JSON.stringify({ stats, cs, ar0, ar1 }));
     // background: the light band clicked away (white is never engraved), then put back
     await page.click('.cei [data-do="erase"]'); await settleP(page);
@@ -247,7 +260,7 @@ async function partB(kit) {
     await page.click('.cei [data-tmode="grey"]'); await previewDone(page);
     await R.shot(w, 'CEI-2-adjusted');
     check(`B6 the background clicked away takes the light band off the engraving (${gE.length} greys) and Restore puts it back (${gR.length}); Line art traces black only (${gL.join(' ')})`,
-      gE.join() === 'rgb(128,128,128),rgb(0,0,0)' && restoreOn && gR.length === 3 && gL.join() === 'rgb(0,0,0)' && /^Line art:/.test(noteL), JSON.stringify({ gE, gR, gL, noteL }));
+      gE.length === g0.length - 1 && gE.includes('rgb(0,0,0)') && restoreOn && gR.length === g0.length && gL.join() === 'rgb(0,0,0)' && /^Line art:/.test(noteL), JSON.stringify({ gE, gR, gL, noteL }));
 
     /* ── PLACE ── */
     await page.click('.cei [data-do="place"]');
@@ -262,8 +275,9 @@ async function partB(kit) {
     const centred = Math.abs((pl.trace.box[0] + pl.trace.box[2]) / 2 - (pl.cb[0] + pl.cb[2]) / 2) < 0.5 && Math.abs((pl.trace.box[1] + pl.trace.box[3]) / 2 - (pl.cb[1] + pl.cb[3]) / 2) < 0.5;
     await R.shot(w, 'CEI-3-placed');
     check(`B7 Place: ONE group "${pl.name}" on top, selected (${pl.kids.length} grey paths: ${pl.kids.map(k => k.name).join(', ')}, black on top), drawn in their own greys (${pl.fills.join(' ')}), centred and fitted inside the outline (${((pl.gb[2] - pl.gb[0]) / PT).toFixed(1)} × ${((pl.gb[3] - pl.gb[1]) / PT).toFixed(1)} mm in ${((pl.cb[2] - pl.cb[0]) / PT).toFixed(1)} × ${((pl.cb[3] - pl.cb[1]) / PT).toFixed(1)}), in ${pl.stat} ms`,
-      pl.n === n0 + 1 && pl.kind === 'group' && pl.name === 'Image · logo' && pl.sel.join() === pl.id && pl.kids.map(k => k.fill.join()).join('|') === '0.75,0.75,0.75|0.5,0.5,0.5|0,0,0' && pl.kids.every(k => k.role === 'hatch' && k.artGrey)
-        && pl.fills.join() === 'rgb(191, 191, 191),rgb(128, 128, 128),rgb(0, 0, 0)' && inside && centred && pl.trace.src === pl.id && pl.trace.levels === 4 && !!pl.layer, JSON.stringify(pl));
+      pl.n === n0 + 1 && pl.kind === 'group' && pl.name === 'Image · logo' && pl.sel.join() === pl.id && pl.kids.length === g0.length && kOfN(pl.kids.map(k => k.fill[0]), 4) && pl.kids.every(k => k.role === 'hatch' && k.artGrey && k.fill[0] === k.fill[2])
+        && pl.kids.every((k, i) => !i || k.fill[0] < pl.kids[i - 1].fill[0]) && pl.kids[pl.kids.length - 1].fill[0] === 0 && pl.fills.join() === pl.kids.map(k => css(k.fill[0])).join()
+        && inside && centred && pl.trace.src === pl.id && pl.trace.levels === 4 && !!pl.layer, JSON.stringify(pl));
 
     /* ── an ordinary group: moved, sized, turned ── */
     for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight');
@@ -290,11 +304,11 @@ async function partB(kit) {
     const rt = await placed(pl.id), off = rt && Math.max(...rt.corners.map((p, i) => Math.hypot(p[0] - mv.corners[i][0], p[1] - mv.corners[i][1])));
     await R.shot(w, 'CEI-4-retraced');
     check(`B9 Re-trace (the Object menu: "${menu && menu.text}") opens the step on the same picture and settings (${rt0.levels} levels, its crop), traced again with 2 levels: put where it stands (turned ${rt.rot && rt.rot.map(r => +r.toFixed(2)).join(', ')}°, the picture's corners where they were to ${off.toFixed(4)} pt), ONE undo step`,
-      !!menu && menu.on && rt0.title === 'Re-trace image' && rt0.levels === 4 && !!rt0.crop && rt.fills.join() === '0.5,0' && rt.levels === 2 && rt.rot.every(r => Math.abs(r - 15) < 1e-6) && off < 0.01 && rt.hist === h0 + 1,
+      !!menu && menu.on && rt0.title === 'Re-trace image' && rt0.levels === 4 && !!rt0.crop && kOfN(rt.fills, 2) && rt.fills.includes(0) && rt.levels === 2 && rt.rot.every(r => Math.abs(r - 15) < 1e-6) && off < 0.01 && rt.hist === h0 + 1,
       JSON.stringify({ menu, rt0, rt, mv }));
     await page.keyboard.press('Control+z'); await settleP(page);
     const un = await page.evaluate(id => { const g = CharmEditor.current.items().find(i => i.id === id); return g && g.children.map(c => c.fill[0]); }, pl.id);
-    check('B10 one ⌘Z takes the re-trace back (the three greys again)', un && un.join() === '0.75,0.5,0', JSON.stringify(un));
+    check(`B10 one ⌘Z takes the re-trace back (its ${pl.kids.length} greys again)`, un && un.join() === pl.kids.map(k => k.fill[0]).join(), JSON.stringify(un));
 
     /* ── PASTE with a day square selected: the picture goes into that square ── */
     await page.keyboard.press('Escape'); await settleP(page);
@@ -308,7 +322,7 @@ async function partB(kit) {
     await page.waitForFunction(() => !document.querySelector('.cei'), null, { timeout: 60000 }); await settleP(page);
     const pb = await page.evaluate(() => { const E = CharmEditor.current, its = E.items(), g = its[its.length - 1]; return { kind: g.kind, name: g.name, box: E.box(g.id), kids: g.children.map(c => c.fill[0]) }; });
     check(`B11 a picture PASTED with a day square selected (${ps.name}) goes into that square ("${ps.where}"): its box inside the square's`,
-      selSq.join() === sq.id && ps.sel && /centred in the selected part/.test(ps.where) && pb.kind === 'group' && pb.box[0] >= sq.b[0] - 0.01 && pb.box[1] >= sq.b[1] - 0.01 && pb.box[2] <= sq.b[2] + 0.01 && pb.box[3] <= sq.b[3] + 0.01 && pb.kids.join() === '0.5,0',
+      selSq.join() === sq.id && ps.sel && /centred in the selected part/.test(ps.where) && pb.kind === 'group' && pb.box[0] >= sq.b[0] - 0.01 && pb.box[1] >= sq.b[1] - 0.01 && pb.box[2] <= sq.b[2] + 0.01 && pb.box[3] <= sq.b[3] + 0.01 && pb.kids.length === 2 && kOfN(pb.kids, 4) && pb.kids.includes(0),
       JSON.stringify({ ps, pb, sq }));
 
     /* ── SAVE: the record keeps every grey, through the real artPut ── */
@@ -317,8 +331,8 @@ async function partB(kit) {
     await R.settle(page, 1200);
     const rec = st.doc('Charm_Pool_Art', PID + '~front'), greys = rec ? rec.added.filter(e => e.artGrey) : [];
     check(`B12 Save: the piece's record (Charm_Pool_Art, by ${rec && rec.by}) keeps ${greys.length} grey parts, each artGrey with its grey fill (${[...new Set(greys.map(e => e.fill[0]))].sort().join(', ')}), even-odd, in its image's group; nothing else changed`,
-      !!rec && greys.length === 5 && greys.every(e => e.role === 'hatch' && e.even === true && e.fill[0] === e.fill[1] && e.fill[1] === e.fill[2] && !e.stroke && /^img/.test(e.group)) && [...new Set(greys.map(e => e.fill[0]))].sort().join() === '0,0.5,0.75'
-        && !Object.keys(rec.changed || {}).length && !(rec.removed || []).length && rec.added.length === 5, JSON.stringify(rec && rec.added.map(e => [e.id, e.fill, e.artGrey, e.group])));
+      !!rec && greys.length === pl.kids.length + pb.kids.length && greys.every(e => e.role === 'hatch' && e.even === true && e.fill[0] === e.fill[1] && e.fill[1] === e.fill[2] && !e.stroke && /^img/.test(e.group))
+        && greys.map(e => e.fill[0]).sort().join() === pl.kids.map(k => k.fill[0]).concat(pb.kids).sort().join() && !Object.keys(rec.changed || {}).length && !(rec.removed || []).length && rec.added.length === greys.length, JSON.stringify(rec && rec.added.map(e => [e.id, e.fill, e.artGrey, e.group])));
 
     /* ── the laser's file: each grey its own fill colour; the month's letters still blue ── */
     await R.openEngraveDetail(w, 'cal', { face: 'front' }); await R.settle(page, 900);
@@ -329,9 +343,9 @@ async function partB(kit) {
       const text = new TextDecoder('latin1').decode(bytes);
       return { fills, greys: ch.members.filter(m => m.artGrey).map(m => [m.fillRGB.join(), !!m.hatchBlue]), hash: ch.hash, n: bytes.length };
     }, PID);
-    const count = (list, v) => list.filter(x => x === v).length;
-    check(`B13 the sheet's file (CharmNestPDF.buildSheet): the piece's grey parts are written as grey fills (${['0,0,0', '0.5,0.5,0.5', '0.75,0.75,0.75'].map(v => v + ' ×' + count(sheet.fills, v)).join(', ')}), never blue hatching, and MAY's three letters stay blue (×${count(sheet.fills, '0,0,1')})`,
-      count(sheet.fills, '0,0,0') === 2 && count(sheet.fills, '0.5,0.5,0.5') === 2 && count(sheet.fills, '0.75,0.75,0.75') === 1 && count(sheet.fills, '0,0,1') === 3 && sheet.greys.length === 5 && sheet.greys.every(g => !g[1]) && /~ae/.test(sheet.hash),
+    const count = (list, v) => list.filter(x => x === v).length, want = [...new Set(greys.map(e => e.fill.join()))].sort();
+    check(`B13 the sheet's file (CharmNestPDF.buildSheet): the piece's grey parts are written as grey fills (${want.map(v => v + ' ×' + count(sheet.fills, v)).join(', ')}, as in the record), never blue hatching, and MAY's three letters stay blue (×${count(sheet.fills, '0,0,1')})`,
+      want.every(v => count(sheet.fills, v) === count(greys.map(e => e.fill.join()), v)) && count(sheet.fills, '0,0,1') === 3 && sheet.fills.length === 3 + greys.length && sheet.greys.length === greys.length && sheet.greys.every(g => !g[1]) && /~ae/.test(sheet.hash),
       JSON.stringify(sheet));
 
     /* ── opened again: the greys come back grey, and Re-trace still knows their picture ── */
@@ -344,7 +358,7 @@ async function partB(kit) {
       return { n: gs.length, fills: gs.map(i => i.fill[0]), css, groups: [...new Set(gs.map(i => i.group))].length, retrace: !!(c && CharmEditor.commands.imageRetrace.enabled(c)) };
     });
     check(`B14 opened again, the ${re.n} grey parts come back grey (drawn ${[...new Set(re.css)].join(' · ')}), each with its image's group, and Re-trace is offered on them`,
-      re.n === 5 && re.groups === 2 && re.css.every(f => /^rgb\((\d+), \1, \1\)$/.test(f)) && re.css.includes('rgb(191, 191, 191)') && re.retrace, JSON.stringify(re));
+      re.n === greys.length && re.groups === 2 && re.css.every((f, i) => f === css(re.fills[i])) && re.fills.some(g => g > 0) && re.retrace, JSON.stringify(re));
     await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
     check('B15 no page error', w.errors.length === 0, JSON.stringify(w.errors).slice(0, 400));
   } finally { await w.close(); }

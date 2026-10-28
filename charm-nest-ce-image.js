@@ -36,7 +36,7 @@
   const SRC_MAX = 2400;        // the source kept, px on its long side (a phone's photo is 4000: more than any charm can show)
   const SHOW_MAX = 560;        // the preview's original and greyscale, px
   const PREVIEW_MAX = 280;     // the preview's vector: traced from this, px
-  const FULL_PX_MM = 24, FULL_MAX = 1400, FULL_MIN = 160;   // the trace on Place: 24 px a mm on the charm (a 0.04 mm pixel, under the laser's spot), at most 1400 px
+  const FULL_PX_MM = 20, FULL_MAX = 1400;   // the trace on Place: 20 px a mm on the charm (the trace's own working pitch, 0.05 mm, a fibre laser's hatch), at most 1400 px; never enlarged
   const MARGIN_MM = 0.4;       // an image placed in the outline stays this far inside every cut line
   const BUDGET = { layerBytes: 180000, ops: 40000, bytes: 450000 };   // (charmNestLibrary.js ART_MAX: d 200 000, ops 60 000, bytes 600 000 for the whole edit; room left for the rest of it)
   const fin = v => typeof v === 'number' && Number.isFinite(v);
@@ -63,6 +63,11 @@
   }
   /** The levels the trace is asked for: line art is one (black), greys their own. */
   const levelsOf = o => (o.mode === 'line' ? 1 : o.levels);
+  /** What CharmNestTrace.trace is asked (charm-nest-ce-trace.js): the picture comes already prepared here (prepGrey: what the Greyscale pane shows is what is traced), so the trace's own
+   *  prep is left out; pxPerMm says how big it is on the charm, so despeckle is an area on the metal. */
+  const traceOpts = (o, pxPerMm) => ({ levels: levelsOf(o), detail: o.detail, smooth: o.smooth, despeckle: o.despeckle, invert: false, autoLevels: false, gamma: 1, contrast: 0, brightness: 0,
+    sharpen: 0, denoise: false, adaptive: false, pxPerMm: fin(pxPerMm) && pxPerMm > 0 ? pxPerMm : 20 });
+  const KIND = { line: 'line art', illustration: 'an illustration', photo: 'a photo' };
   /** A quarter turn (dir 1 clockwise, -1 the other way) of what is shown: the crop turns with the picture, and a flip made before it is the other flip after it (R·H = V·R). */
   function turn(o, dir) {
     o = norm(o); const c = o.crop;
@@ -652,7 +657,7 @@
       const d = gImg.data, g = lastPrep.g;
       for (let i = 0, p = 0; i < g.length; i++, p += 4) { d[p] = d[p + 1] = d[p + 2] = g[i]; d[p + 3] = 255; }
       gx.putImageData(gImg, 0, 0);
-      suggest();
+      suggest(!kind || kind === 'picture' || kind === 'mode');
       if (kind) took(kind, now() - t0);
     }
     function traceSoon() {
@@ -668,9 +673,10 @@
       const input = g.getImageData(0, 0, w, h), o = Object.assign({}, st), wt = $('[data-wait]');
       wt.hidden = false; wt.textContent = 'Tracing…';
       const t0 = now();
-      tRun = Promise.resolve().then(() => T.trace(input, { levels: levelsOf(o), detail: o.detail, smooth: o.smooth, despeckle: o.despeckle, invert: false }))
+      const mm = tgt ? Math.max(tgt.box[2] - tgt.box[0], tgt.box[3] - tgt.box[1]) * MM : 0;
+      tRun = Promise.resolve().then(() => T.trace(input, traceOpts(o, mm > 0 ? Math.max(w, h) / mm : 20)))
         .then(res => { if (closed || !res) return; stats.previewTraces++; stats.lastTrace = { ms: Math.round(now() - t0), w: res.width, h: res.height }; prev = res; drawVector(res); })
-        .catch(e => { if (!closed) console.warn('image: preview trace', e); })
+        .catch(e => { if (!closed && !(e && (e.cancelled || e.name === 'AbortError'))) console.warn('image: preview trace', e); })
         .then(() => { tRun = null; if (closed) return; if (tWant !== v && !whole()) runPreview(); else wt.hidden = true; });
     }
     function drawVector(res) {
@@ -688,12 +694,15 @@
         : n === 1 ? `<b>Black only:</b> everything darker than the middle grey is engraved, the rest is left.${pts}`
           : `A photo becomes a <b>posterised, stencil-like engraving in ${n} greys</b>, not a photograph: black engraves deepest, white is not engraved, and each grey is a laser layer of its own.${pts}`;
     }
-    /** The level count this picture asks for, offered beside the slider (the trace's own suggestion when it makes one). */
+    /** The level count this picture asks for, offered beside the slider: the trace's own suggestion (CharmNestTrace.suggest) when it makes one, else this file's; worked out once for
+     *  each picture as shown (fresh: a new picture, a turn, a crop, the background taken away), then only said again. */
     let sug = null;
-    function suggest() {
-      let s = null;
-      try { if (T && typeof T.suggest === 'function' && gImg) { const r = T.suggest(gImg); const lv = r && typeof r === 'object' ? +r.levels : +r; if (lv >= 1 && lv <= 8) s = { levels: Math.round(lv), kind: (r && r.kind) || 'this picture' }; } } catch (e) { s = null; }
-      sug = s || suggestLevels(lastPrep);
+    function suggest(fresh) {
+      if (fresh || !sug) {
+        let s = null;
+        try { if (T && typeof T.suggest === 'function' && gImg) { const r = T.suggest(gImg); const lv = r && typeof r === 'object' ? +r.levels : +r; if (lv >= 1 && lv <= 8) s = { levels: Math.round(lv), kind: KIND[r && r.content] || (r && r.kind) || 'this picture' }; } } catch (e) { s = null; }
+        sug = s || suggestLevels(lastPrep);
+      }
       const el = $('[data-sug]');
       if (!sug || st.mode === 'line') { el.hidden = true; return; }
       el.hidden = false;
@@ -834,20 +843,20 @@
       placing = true; const token = ++placeToken, t0 = now();
       where();
       const box0 = tgt.box, o2 = Object.assign({}, st), [kw, kh] = keptSize(src.w, src.h, o2);
-      let px = clamp(Math.round(Math.max(box0[2] - box0[0], box0[3] - box0[1]) * MM * FULL_PX_MM), FULL_MIN, FULL_MAX);
-      px = Math.min(px, Math.max(FULL_MIN, Math.round(Math.max(kw, kh) * 2)));   // (a small picture is enlarged at most twice: smooth curves, no invented detail)
+      // (never enlarged: the trace measured that an enlarged picture makes no truer outline and three or four times the points, 28 Oct 2026)
+      const longMm = Math.max(box0[2] - box0[0], box0[3] - box0[1]) * MM;
+      let px = Math.min(clamp(Math.round(longMm * FULL_PX_MM), 16, FULL_MAX), Math.round(Math.max(kw, kh)));
       let res = null, size = null, tries = 0, smaller = false;
       progress(0);
       try {
         for (;;) {
           const input = await greyPixels(src, o2, px);
           if (token !== placeToken || closed) return;
-          res = await T.trace(input, { levels: levelsOf(o2), detail: o2.detail, smooth: o2.smooth, despeckle: o2.despeckle, invert: false,
-            onProgress: p => { if (token === placeToken) progress(tries ? 0.5 + p * 0.5 : p); } });
+          res = await T.trace(input, Object.assign(traceOpts(o2, Math.max(input.width, input.height) / longMm), { onProgress: p => { if (token === placeToken) progress(tries ? 0.5 + p * 0.5 : p); } }));
           if (token !== placeToken || closed) return;
           size = sizeOf(res.layers);
-          if (fits(size) || ++tries > 4 || px <= FULL_MIN) break;
-          smaller = true; px = Math.max(FULL_MIN, Math.round(px * 0.72));
+          if (fits(size) || ++tries > 4 || px <= 64) break;
+          smaller = true; px = Math.max(64, Math.round(px * 0.72));
           progress(0.5, 'Simplifying to fit what one piece can hold…');
         }
       } catch (e) {
