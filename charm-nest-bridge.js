@@ -1488,7 +1488,7 @@ const Views = window.Views = (() => {
     if (mode === "orders") { if (Orders.shown) Orders.shown(); else Orders.renderNow(); }   // (NAV, 28 Oct 2026: as it was drawn when nothing changed, and drawn again at idle)
     if (mode === "master") Master.render();
     if (mode === "engrave") Engrave.render();
-    if (mode === "review") Review.render();
+    if (mode === "review") { if (Review.shown) Review.shown(); else Review.render(); }   // (NAV, 28 Oct 2026: as drawn when nothing changed, drawn again at idle)
     // the Review tab follows the cloud while it is on screen (ReviewLive); another tab is brought up to date once as it is shown
     try { window.ReviewLive?.shown?.(mode); } catch (_) {}
   }
@@ -18992,11 +18992,23 @@ const Review = window.Review = (() => {
     settledRows.set(d, node); return node;
   }
   /** opts.still: laid out as it stands, nothing glides (the Send to Sheet tour, home: the list is still out of sight). */
+  /* NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): whether anything asked for a drawing while the tab was hidden, and when it was last drawn (shown) */
+  let rvWant = true, rvDrawnAt = 0, rvVer = -1;
+  const rvPiecesVer = () => { try { return window.OrderPieces && OrderPieces.version ? OrderPieces.version() : -1; } catch (_) { return -1; } };
+  /** The Review tab shown again: as it was drawn when nothing asked for a drawing since (under 10 s ago, the same answer of where the pieces are), drawn again at the next idle moment;
+   *  else drawn now, as before. */
+  function shown() {
+    const v = document.getElementById("reviewView");
+    if (rvWant || !v || !v.firstChild || Date.now() - rvDrawnAt >= 10000 || rvVer !== rvPiecesVer()) return render();
+    LiveStrip.render();
+    (typeof requestIdleCallback === "function" ? requestIdleCallback : f => setTimeout(f, 60))(() => { const x = document.getElementById("reviewView"); if (x && !x.classList.contains("hidden")) render(); }, { timeout: 1000 });
+  }
   function render(opts) {
     opts = opts && typeof opts === "object" && !(opts instanceof Event) ? opts : {};
     if(window.Seal?.defer('review-view',()=>render(opts)))return;
     if(!opts.still&&window.CharmNestInteraction?.defer('review-view',render))return;
-    const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
+    const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) { rvWant = true; return; }
+    rvWant = false; rvVer = rvPiecesVer(); rvDrawnAt = Date.now();
     try { CustomSheet.prune(); } catch (_) {}
     const active=v.contains(document.activeElement)?document.activeElement:null;
     // the old Decided chip, and the Decided segment, are Resolved now; a filter on a kind that has no chip lets go (RVRESOLVED)
@@ -19197,7 +19209,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
+  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, shown, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -20290,6 +20302,8 @@ const OrderWin = window.OrderWin = (() => {
     // them), and the side the last switch came from
     pieces: [], piece: null, pieceDir: 0 };
   const byId = id => document.getElementById(id);
+  // (NAV, 28 Oct 2026: the fonts loaded so far: a measure kept from before a font came in is made again, inkTo and grow)
+  let inkFonts = 0; try { document.fonts && document.fonts.addEventListener && document.fonts.addEventListener("loadingdone", () => { inkFonts++; }); } catch (_) {}
   const inPull = key => Orders.rows().find(r => r.key === key) || null;
   const rowOf = key => inPull(key) || (W.row && W.row.key === key ? W.row : null);
   const me = () => employeeName() || "";
@@ -20458,8 +20472,12 @@ const OrderWin = window.OrderWin = (() => {
     byId("owSend").disabled = !input.value.trim() && !W.tray.length;
     // a box not on screen (the window still closed, the Customer tab in front) has no height to read: it keeps its own
     // until it is shown, and is sized then
+    // NAV (28 Oct 2026): an empty box is as tall as the empty box measured last at this width (each measure is a layout of the whole page, once or twice per opening)
+    const emptyKey = [innerWidth, devicePixelRatio, inkFonts].join("|");
+    if (!input.value && W.emptyH && W.emptyKey === emptyKey) { if (input.style.height !== W.emptyH) input.style.height = W.emptyH; return; }
     if (!input.offsetParent) { input.style.height = ""; return; }
     input.style.height = "auto"; input.style.height = Math.min(120, input.scrollHeight) + "px";
+    if (!input.value) { W.emptyH = input.style.height; W.emptyKey = emptyKey; }
   }
   /** Each order keeps its own draft and its own images: another order opened (Next, Previous, the list) never takes them. */
   function stashTray() {
@@ -20553,9 +20571,12 @@ const OrderWin = window.OrderWin = (() => {
     const key = TeamMail.drawKey(rid, up);
     if (key === W.painted) return;
     W.painted = key;
-    const stick = !keep || t.scrollHeight - t.scrollTop - t.clientHeight < 48, at = t.scrollTop;
+    const stick = !keep || t.scrollHeight - t.scrollTop - t.clientHeight < 48, at = keep ? t.scrollTop : 0;
     t.innerHTML = TeamMail.html(rid, up);
-    t.scrollTop = stick ? t.scrollHeight : at;
+    // NAV (28 Oct 2026, Paul: "Order Details … at near real-time speed"): the thread is put at its end (or back where it was) in the frame that shows it, once for every drawing of the
+    // turn, not at each drawing: reading its height there laid out the whole page, three and four times per order window opened (the read starting, the read answered, the window's own)
+    if (!t._stick) requestAnimationFrame(() => { const w = t._stick; t._stick = null; if (w) t.scrollTop = w.stick ? t.scrollHeight : w.at; });
+    t._stick = { stick, at };
     if (stick) t.querySelectorAll("img").forEach(img => { if (!img.complete) img.addEventListener("load", () => { t.scrollTop = t.scrollHeight; }, { once: true }); });
   }
   /** The live line at the right end of the tab row ("Updated live · last change Mon 12:44 PM · Paul"), where the Skip switch
@@ -22124,10 +22145,16 @@ const OrderWin = window.OrderWin = (() => {
   /* ── the views: Overview, Timeline, Sheet; the old one leaves sideways and the new one comes in from the other side ── */
   // (the underline moves by transform, never by left/width, which laid the header out again every frame; a fresh opening
   // puts it in place at once, under the header coming in)
+  // NAV (28 Oct 2026, Paul: "Order Details … at near real-time speed"): the ink under the tab in front stands where it stood when the same tab, with the same tab words, was last measured at
+  // this window width (the tabs do not move from order to order): it is measured again only when one of those changed, each measure being a layout of the whole page (two per opening)
   function inkTo(now) {
+    if (!W.dlg.open) return;   // (a closed window has nothing laid out to measure: the opening measures it)
     const b = W.dlg.querySelector(`.owTabsV [data-ow-view="${W.view}"]`), ink = W.dlg.querySelector(".owInk"); if (!b || !ink) return;
+    const row = b.closest(".owTabsV"), key = [W.view, row ? row.textContent : b.textContent, innerWidth, inkFonts, devicePixelRatio].join("|");   // (the words of every tab: one before it that grew moves it)
+    if (ink._inkKey === key && ink.style.transform) return;
     if (now) ink.style.transition = "none";
     ink.style.transform = `translateX(${b.offsetLeft + 6}px) scaleX(${Math.max(0, b.offsetWidth - 12) / 100})`;
+    ink._inkKey = key;
     if (now) { getComputedStyle(ink).transform; ink.style.transition = ""; }
   }
   /* the order's two conversations (Paul, 29 Sep 01:04: "I don't see the message history for the emails or their
