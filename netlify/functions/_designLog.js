@@ -77,7 +77,8 @@ function clean(r, now, prefix) {
 }
 
 /** Writes a batch (at most 50): one set per record, merged, so a retry or the second kind of one send changes the same document.
- *  Returns { ok, written, refused }. One write per record, no read. */
+ *  Returns { ok, written, refused }. One write per record, no read; then the employee revision is counted (production only, _employeeRev.js), so the
+ *  console's readers of Design_Log, which keep what they read while nothing was written, see the new records at once. */
 async function add(db, FV, records, opts) {
   const prefix = (opts && opts.prefix) || "", now = Date.now();
   const list = Array.isArray(records) ? records.slice(0, MAX_BATCH) : [];
@@ -88,6 +89,7 @@ async function add(db, FV, records, opts) {
   const batch = db.batch();
   for (const d of docs.values()) batch.set(db.collection(prefix + COL).doc(d.id), Object.assign({}, d, FV && FV.serverTimestamp ? { ts: FV.serverTimestamp() } : {}), { merge: true });
   await batch.commit();
+  await require("./_employeeRev").afterWrite(db, prefix, ["act"], FV);     // (never throws; a lost count only means the readers refresh at their maximum age)
   return { ok: true, written: docs.size, refused };
 }
 

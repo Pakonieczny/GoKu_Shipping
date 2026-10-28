@@ -14,6 +14,7 @@
     try { view=G.backView(charm,input.viewOptions); }
     catch(e){e.stage="flip";throw e;}
     job.mask=G.engraveMask(view,input.maskOptions);
+    if(input.keep){const kept=keepPlacement(input,F_,G,view,job.mask);if(kept)return kept;}   // (KEEP: a face fitted again after a charm edit stays where a person placed it; below, only when it cannot)
     job.lineInput ||= job.lines.slice();
     let fit = G.fitMultiline(job.lineInput, F_.Regular, job.mask, opts, job.lineMode || "auto");
     if (fit.ok) {job.lines=fit.lines.slice();job.text=job.lines.join("\n");}
@@ -56,6 +57,79 @@
     const check = G.verifyInk(fit.cmds, job.mask);                          // 7.4 · geometry: zero ink outside the eroded mask, zero in any hole
     if (!check.ok) { throw new Error(`ink outside the eroded mask after fitting (${check.outside} px) — a bug, not a review item`); }
     return {view,mask:job.mask,fit,lines:job.lines,check};
+  }
+
+  /* KEEP (Paul, 28 Oct 2026, on a face fitted again after a charm edit: "The refit if necessary, must be in the exact same place with a variance of one percent from where I actually placed it.
+     The rotation needs to be also within one percent accurate to where I placed it."). input.keep = the placement the face had: { centre, angle, size, lines, weight, lineGap, fittedMax, upAngle, cx?, cy? }.
+     The words stay exactly as they were when they still sit on the metal of the new mask; when they do not, only the size comes down, about the very same centre at the very same angle (refitAt); when
+     no size at all fits at that centre, the centre may move by up to 1 % of the charm's size (rings of eight about it), the angle never. → the result calculate gives, with `kept`: "same" | "smaller" |
+     "moved"; null when the piece is turned another way now (its cut line changed: there is no same place) or nothing fits within those limits (calculate then fits the words afresh). */
+  function keepPlacement(input,F_,G,view,mask) {
+    const k=input.keep,opts=input.opts || {},MM=25.4/72;
+    if(!k || !Array.isArray(k.centre) || !(k.size>0) || !Array.isArray(k.lines) || !k.lines.length)return null;
+    const near=(a,b)=>Math.abs(a-b)<=1e-6;
+    if(Number.isFinite(k.upAngle) && !near(view.upAngle,k.upAngle))return null;
+    if(Number.isFinite(k.cx) && (!near(view.cx,k.cx) || !near(view.cy,k.cy)))return null;
+    const weight=k.weight === "Semibold" && F_.Semibold ? "Semibold" : "Regular",font=F_[weight],gap=k.lineGap != null ? k.lineGap : opts.lineGap,angle=k.angle || 0;
+    const o=Object.assign({},opts,{lineGap:gap,maxHeightFrac:1e9});   // (the size a person set is the ceiling here, whatever the automatic rule allows)
+    const build=(size,centre,how)=>{
+      const L=G.layoutLines(k.lines,font,size,gap,angle,centre),metrics=G.strokeMetrics(L.cmds,24),capMm=size*G.capPerEm(font)*MM;
+      const fit={ok:true,size,capMm,weight,small:capMm<(o.minCapMm || 1.6),thin:!!((o.minStrokeMm>0 && metrics.strokeMm<o.minStrokeMm) || (o.minGapMm>0 && metrics.gapMm>0 && metrics.gapMm<o.minGapMm)),angle,centre,layout:L,glyphs:L.glyphs,cmds:L.cmds,metrics,lines:k.lines.slice(),fittedMax:how === "same" && k.fittedMax>size ? k.fittedMax : size,kept:how};
+      return {view,mask,fit,lines:k.lines.slice(),check:G.verifyInk(L.cmds,mask),kept:how};
+    };
+    if(G.verifyInk(G.layoutLines(k.lines,font,k.size,gap,angle,k.centre).cmds,mask).ok)return build(k.size,k.centre.slice(),"same");
+    let best=null;
+    const at=(c,how)=>{const f=G.refitAt(k.lines,font,mask,Object.assign({},o,{measure:false}),{centre:c,angle,maxSize:k.size});if(f.ok && (!best || f.size>best.size+1e-9))best={size:f.size,centre:c,how};};
+    at(k.centre.slice(),"smaller");
+    if(!best){
+      const ch=input.charm || {},w=ch.widthPt || (ch.bbox ? ch.bbox[2]-ch.bbox[0] : 0),h=ch.heightPt || (ch.bbox ? ch.bbox[3]-ch.bbox[1] : 0),d=0.01*Math.max(w,h);
+      if(d>0)for(const r of [d/3,2*d/3,d])for(let i=0;i<8;i++){const a=i*Math.PI/4;at([k.centre[0]+r*Math.cos(a),k.centre[1]+r*Math.sin(a)],"moved");}
+    }
+    return best ? build(best.size,best.centre,best.how) : null;
+  }
+
+  /* QUICK PLACE (moved here from charm-nest-engrave-preview.js quickRun, 28 Oct 2026, REFIT: Paul, "Everything must be immediate and responsive"). Words with no job fit to read (no job yet,
+     or a face waiting for words) are placed on the card's pictures inside the engravable area by the same geometry the fit uses, cut short: the charm turned (backView), the engravable area
+     (engraveMask), the largest empty rectangle of it at a few turns as the place, refitAt there, the shop's size rule (defaultSize) and the line breaks (reflowAt). It ran on the page's own
+     thread and took 0.4 s on a calendar; it now runs in this worker (input.kind "quick"), and the page runs this very function only when it has no worker. Nothing is saved.
+     input = { charm, face, lines, viewOptions, maskOptions, opts, mask? (a mask the job already has) } -> { status: 'ready', fit: { lines, centre, angle, size }, rect } | { status: 'none', why, rect? } */
+  const QUICK_CANDS = typeof WeakMap === "function" ? new WeakMap() : null;
+  function quickPlace(input, F_, G) {
+    const font = F_.Regular, opts = input.opts, charm = input.charm, lines = input.lines || [];
+    let mask = input.mask || null;
+    if (!mask) {
+      try { mask = G.engraveMask(G.backView(charm, input.viewOptions), input.maskOptions); }
+      catch (e) { return { status: "none", why: "view: " + String(e && e.message || "") }; }
+    }
+    try {
+      if (!G.glyphCoverage(font, lines.join("\n")).ok) return { status: "none", why: "glyphs" };
+      // the places to try, once per eroded mask (the words do not change them): the largest empty rectangle of the area at a few turns, as fitText finds them (a turn is searched on the mask turned the other way)
+      let cands = QUICK_CANDS && QUICK_CANDS.get(mask);
+      if (!cands) {
+        cands = [];
+        for (const angle of [0, 15, -15, 45, -45, 90, -90]) {
+          const mA = angle ? G.rotateMask(mask, -angle) : mask, r = G.largestRectangles(mA, 1)[0]; if (!r) continue;
+          const cA = [(r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2];
+          cands.push({ angle, centre: angle ? G.ap(G.rotateAbout(mask.cx, mask.cy, angle), cA[0], cA[1]) : cA, hPt: r.hPt, wPt: r.wPt });
+        }
+        if (QUICK_CANDS) QUICK_CANDS.set(mask, cands);
+      }
+      if (!cands.length) return { status: "none", why: "no area" };
+      const rect = { centre: cands[0].centre, hPt: cands[0].hPt, wPt: cands[0].wPt };
+      // the page's own order of work (fitMultiline, then calculate): every way of breaking the lines is tried in turn, a turned placement is taken only when it is clearly larger (12 %, as fitText), a new
+      // line break only when it is clearly larger (5 %), the size is the shop's rule for how much there is to say, and the lines are laid again at that size and place (reflowAt)
+      const MMPT = 25.4 / 72, bw = charm.widthPt || (charm.bbox ? charm.bbox[2] - charm.bbox[0] : 0), bh = charm.heightPt || (charm.bbox ? charm.bbox[3] - charm.bbox[1] : 0);
+      const sizeOpts = { capPerEm: G.capPerEm(font), minCapMm: opts.minCapMm, charmMinMm: Math.min(bw, bh) * MMPT, charmMaxMm: Math.max(bw, bh) * MMPT, usableAreaMm2: G.area(mask) / (mask.res * mask.res) * MMPT * MMPT, advanceOf: t => font.getAdvanceWidth(t, 1, { kerning: true }) };
+      const variants = G.flowVariants(lines, font, "auto"); if (!variants.length) return { status: "none", why: "no text", rect };
+      const maxH = opts.maxHeightFrac * (mask.hPt || mask.h / mask.res), want0 = G.defaultSize(variants[0], maxH, sizeOpts);
+      const bestOf = ls => { let b0 = null, bR = null; for (const c of cands) { const f = G.refitAt(ls, font, mask, opts, { centre: c.centre, angle: c.angle, maxSize: want0 }); if (!f.ok) continue; if (c.angle === 0) b0 = f; else if (!bR || f.size > bR.size) bR = f; } return bR && (!b0 || (bR.size - b0.size) / b0.size >= 0.12) ? bR : b0; };
+      let first = null;
+      for (const v of variants) { const f = bestOf(v); if (f && (!first || f.size > first.size * 1.05)) first = Object.assign({ lines: v }, f); if (f && f.size >= want0 - 0.01) break; }
+      if (!first) return { status: "none", why: "no room", rect };
+      const want = G.defaultSize(first.lines, first.size, sizeOpts);
+      const fit = G.reflowAt(lines, font, mask, opts, { centre: first.centre, angle: first.angle, size: want }, "auto");
+      return { status: "ready", rect, fit: fit && fit.ok ? { lines: fit.lines.slice(), centre: fit.centre, angle: fit.angle || 0, size: fit.size } : { lines: lines.slice(), centre: first.centre, angle: first.angle, size: first.size } };
+    } catch (e) { return { status: "none", why: "fit: " + String(e && e.message || "") }; }
   }
 
   // One worker, one active calculation. Queued inputs stay on the caller's
@@ -107,5 +181,5 @@
     }
     return {run(input){return new Promise((resolve,reject)=>{queue.push({id:++seq,input,resolve,reject});pump();});}};
   }
-  return {calculate,createClient};
+  return {calculate,quickPlace,createClient};
 });

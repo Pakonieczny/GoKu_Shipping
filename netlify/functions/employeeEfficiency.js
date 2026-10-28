@@ -776,7 +776,7 @@ async function opOrders(ctx, body) {
 }
 
 /* ── the door ── */
-const PROFILE = require("./_employeeProfile")({ KIND, COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, okStation, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays, nyDay, nyMidnight, clip, covered, spanOf, cached, revDep, readRollups, readEventsStart, eventRow, col, json, safe, tmpl, KEYS });   // the employee page: ops person (with range) and personOrders
+const PROFILE = require("./_employeeProfile")({ KIND, COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, okStation, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays, nyDay, nyMidnight, clip, covered, spanOf, cached, revDep, readRollups, readEventsStart, eventRow, col, json, safe, tmpl, KEYS, designTotals });   // the employee page: ops person (with range) and personOrders
 const OPS = { overview: opOverview, person: (ctx, body) => (body.range != null || body.from || body.to ? PROFILE.opProfile(ctx, body) : opPerson(ctx, body)), orders: opOrders, personOrders: PROFILE.opOrders };
 /* op "deskBackfill" { day } (Paul, 7 Oct 2026: the desk rows must add up for days recorded before desks were told apart): recovers one day's desk counters from that day's events, once, bounded; see _deskBackfill.js */
 OPS.deskBackfill = (ctx, body) => DESK.op(ctx, body, { json, validDay, addDays });
@@ -795,17 +795,27 @@ OPS.personInbox = INBOX.opPersonInbox;
    Every custom piece sent in the days (Design_Log, _designLog.js: who, when, metal, the order or "no order" with its name and reason, a fix with who made the mistake),
    and per person and per day: pieces commissioned, with no order, fixes made, mistakes put down to them, and the orders they worked (the rollups the overview already
    reads, kept in the same cache) so a mistake reads as a rate. Two reads: one range of Design_Log records (kept 5 s while the range is live, 10 min for past days) and the
-   rollups (shared with the overview). Nothing is written. */
+   rollups (shared with the overview). Nothing is written.
+   { name, range, day } (or { name, day, days }): ONE person, for their employee page (charm-nest-efficiency-person.js; Paul, 28 Oct 2026: "all of this must be tracked by
+   employee"), over the page's own window (op person's range rules, up to two years): the pieces they sent and, as `mistakes`, the fix pieces that put a mistake down to
+   them (who fixed it, which order); nobody else's pieces. One read: the same Design_Log entry as the tab's when the window is the same; no rollups (the page has the
+   person's orders worked and design counters from op person). A live window's read is kept 5 s, and longer while nothing was written (the employee revision: a custom
+   piece or a fix always comes with an activity note, and _designLog.add counts its own write). */
 const DLOG = require("./_designLog");
 async function opCustom(ctx, body) {
-  let to = body.day == null || body.day === "" ? ctx.today : String(body.day);
+  const one = body.name == null || body.name === "" ? "" : cleanName(body.name);
+  if (body.name != null && body.name !== "" && !okName(one)) return json(400, { ok: false, error: "name must be a person's name" });
+  const rg = one && (body.range != null || body.from || body.to) ? PROFILE.resolveRange(ctx, body) : null;
+  if (rg && rg.error) return json(400, { ok: false, error: rg.error });
+  let to = rg ? rg.to : body.day == null || body.day === "" ? ctx.today : String(body.day);
   if (!validDay(to)) return json(400, { ok: false, error: "day must be YYYY-MM-DD" });
   if (to > ctx.today) to = ctx.today;
-  const n = Math.floor(num(body.days)), days = n >= 1 ? Math.min(62, n) : 1, from = addDays(to, -(days - 1));
+  const n = Math.floor(num(body.days)), days = rg ? rg.days : n >= 1 ? Math.min(one ? PROFILE.MAX_DAYS : 62, n) : 1, from = rg ? rg.from : addDays(to, -(days - 1));
   const live = to >= addDays(ctx.today, -1);      // (a record queued offline may still arrive for yesterday)
+  const oneKey = one ? nameKeyOf(ctx, one) : "", keyOf = raw => nameKeyOf(ctx, cleanName(raw));
   const [lr, rr] = await Promise.all([
-    safe(cached(ctx, `dlog|${ctx.prefix}|${from}|${to}`, live ? TTL_LIVE : TTL_PAST, () => DLOG.list(ctx.db, { prefix: ctx.prefix, from, to })), "custom pieces"),
-    safe(readRollups(ctx, from, to), "rollups")]);
+    safe(cached(ctx, `dlog|${ctx.prefix}|${from}|${to}`, live ? TTL_LIVE : TTL_PAST, () => DLOG.list(ctx.db, { prefix: ctx.prefix, from, to }), live ? revDep(ctx, "act") : undefined), "custom pieces"),
+    oneKey ? Promise.resolve({ ok: true, value: { docs: [], capped: false } }) : safe(readRollups(ctx, from, to), "rollups")]);
   if (!lr.ok) return json(503, { ok: false, error: "the custom pieces could not be read just now", errors: [lr.error] });
   const errors = rr.ok ? [] : ["rollups: " + rr.error], capped = [];
   if (lr.value.capped) capped.push("custom pieces");
@@ -818,9 +828,18 @@ async function opCustom(ctx, body) {
     if (!p) people.set(key, p = { name: shown(nm), sent: 0, pieces: 0, orderless: 0, fixes: 0, caused: 0, changed: 0, orders: new Set(), opened: 0, saved: 0, imported: 0, days: new Set() });
     return p;
   };
-  const byDay = new Map(dayList(from, to).map(d => [d, { day: d, sent: 0, pieces: 0, orderless: 0, fixes: 0, caused: 0 }]));
-  const pieces = [];
+  const byDay = new Map(oneKey ? [] : dayList(from, to).map(d => [d, { day: d, sent: 0, pieces: 0, orderless: 0, fixes: 0, caused: 0 }]));
+  const pieces = [], mistakes = [];
+  // a mistake put down to the one person: the fix piece, who fixed it and the order or piece it fixes
+  const mistakeOf = (x, f) => ({ id: String(x.id), at: num(x.at), day: String(x.day), by: shown(x.by), orderId: digits(f.orderId) || "", customId: String(f.customId || ""), piece: scrub(x.customName) || scrub(x.name) || "",
+    suggested: shown(f.suggested), changed: !!(shown(f.suggested) && shown(f.suggested) !== shown(f.causedBy)), why: scrub(f.why) });
   for (const x of lr.value.rows) {
+    const fx0 = x.fix && typeof x.fix === "object" ? x.fix : null, onOne = !!oneKey && !!fx0 && keyOf(fx0.causedBy) === oneKey;
+    if (oneKey && keyOf(x.by) !== oneKey) {              // (one person: somebody else's piece is here only when it puts a mistake down to them)
+      if (onOne) { const me = person(fx0.causedBy); if (me) me.caused++; if (mistakes.length < 200) mistakes.push(mistakeOf(x, fx0)); }
+      continue;
+    }
+    if (onOne && mistakes.length < 200) mistakes.push(mistakeOf(x, fx0));     // (their own fix of their own mistake)
     const p = person(x.by); if (!p) continue;
     const isFix = !!(x.fix && typeof x.fix === "object") || x.kind === "fixPiece", qty = Math.max(1, Math.floor(num(x.quantity)) || 1), orderless = !digits(x.orderId);
     p.sent++; p.pieces += qty; if (orderless) p.orderless++; if (isFix) p.fixes++; p.days.add(x.day);
@@ -860,6 +879,15 @@ async function opCustom(ctx, body) {
   tot.people = list.filter(p => p.sent > 0).length;
   const notes = [];
   if (capped.length) notes.push("Some lists were cut at their size limit: " + capped.join(", ") + ".");
+  if (oneKey) {
+    const me = people.get(oneKey) || { name: canonOf(ctx, oneKey) || niceName(one), sent: 0, pieces: 0, orderless: 0, fixes: 0, caused: 0, changed: 0 };
+    if (me.sent > pieces.length) notes.push(`Showing the newest ${pieces.length} pieces of ${me.sent}.`);
+    const mine = { name: me.name, sent: me.sent, pieces: me.pieces, orderless: me.orderless, fixes: me.fixes, caused: me.caused, changed: me.changed };
+    const out = { ok: true, now: ctx.now, name: me.name, range: rg ? rg.range : "days", from, to, days, live: to === ctx.today, pieces, mistakes, people: [mine],
+      totals: { sent: me.sent, pieces: me.pieces, orderless: me.orderless, fixes: me.fixes, caused: me.caused, people: me.sent > 0 ? 1 : 0 }, notes };
+    if (capped.length) out.partial = true;
+    return json(200, out);
+  }
   if (lr.value.rows.length > pieces.length) notes.push(`Showing the newest ${pieces.length} pieces of ${lr.value.rows.length}.`);
   const out = { ok: true, now: ctx.now, from, to, days, pieces, people: list, byDay: [...byDay.values()], totals: tot, notes };
   if (errors.length || capped.length) { out.partial = true; if (errors.length) out.errors = errors; }

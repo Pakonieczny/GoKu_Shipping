@@ -96,6 +96,9 @@ function make(K) {
   const { COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, okStation, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays,
     nyDay, nyMidnight, clip, covered, spanOf, cached, readRollups, readEventsStart, eventRow, col, json, safe, tmpl, KEYS } = K;
   const revDep = typeof K.revDep === "function" ? K.revDep : () => undefined;     // the employee data revision (FC5): a read kept while nothing was written; without it the short lifetimes alone
+  /* Design & Engrave (Paul, 28 Oct 2026: "all of this must be tracked by employee"): the design log's counters of a person-day (x_dopen x_dsave x_dimp x_cust x_custNo x_fix),
+     added up over the window as the answer's `design` (the People row's own rule, employeeEfficiency.js designTotals): read from the rollups already read, nothing more */
+  const DESIGN_KEYS = KIND.DESIGN_X_KEYS || [], designTotals = typeof K.designTotals === "function" ? K.designTotals : () => null;
   const DAY = 86400000;
 
   /* ── days ── */
@@ -198,6 +201,7 @@ function make(K) {
         const a = pd.st[st] || (pd.st[st] = tmpl()); for (const k of KEYS) a[k] += Math.max(0, num(v[k]));
         const ob = pd.ob || (pd.ob = {}), o = ob[st] || (ob[st] = {}); o[st0] = (o[st0] || 0) + Math.max(0, num(v.orders) - num(v.undoOrders));
         const fa = ms(v.firstAt), la = ms(v.lastAt); if (fa > 0 && (!pd.inFirst || fa < pd.inFirst)) pd.inFirst = fa; if (la > pd.inLast) pd.inLast = la;
+        for (const k of DESIGN_KEYS) if (num(v0[k]) > 0) { const dx = pd.dx || (pd.dx = {}); dx[k] = (dx[k] || 0) + num(v0[k]); }   // (the design steps and custom pieces of the day, see `design`)
       }
       for (const [hh, h] of Object.entries(x.hours && typeof x.hours === "object" ? x.hours : {})) {
         const hr = parseInt(hh, 10); if (!(hr >= 0 && hr < 24) || !h || typeof h !== "object") continue;
@@ -518,6 +522,8 @@ function make(K) {
       if (iss.issues) out.issues = iss.issues; if (iss.rates) out.rates = iss.rates; if (iss.contact) out.contact = iss.contact; if (iss.definitions) out.definitions = iss.definitions;
       if (Array.isArray(iss.notes)) for (const n of iss.notes.slice(0, 8)) if (typeof n === "string" && n) out.notes.push(n.slice(0, 300));
     }
+    const dx = {}; for (const d of A.days) if (d.pd && d.pd.dx) for (const [k, n] of Object.entries(d.pd.dx)) dx[k] = (dx[k] || 0) + n;
+    const design = designTotals(dx); if (design) out.design = design;     // (only when there was design work in the window: every other answer reads exactly as before)
     if (prof.errors.length || prof.capped.length) { out.partial = true; if (prof.errors.length) out.errors = [...new Set(prof.errors)].slice(0, 12); }
     return out;
   }
