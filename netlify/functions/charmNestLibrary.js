@@ -692,31 +692,66 @@ function revQuietKinds(doc, since, kinds) {
 function revTouch(b, keys) { if (!b || typeof b !== "object") return; const t = b[REV_TOUCHED] || (b[REV_TOUCHED] = new Set()); for (const k of keys || []) t.add(FEED_KEY.test(String(k)) ? String(k) : "*"); }   // (a key no reader's revs can name is "not known")
 /** Something the Library reads was written: move the revision, and note what (keys; null: not known, '*'; an empty list moves nothing). One read and one
     write (a transaction: the list is the count's); a failure falls back to the plain +1, which readers take as "not known" (mapN), and their probe of the documents is the net. */
-const feedStats = { bumps: 0, retried: 0, fallbacks: 0, lost: 0 };   // (FEED: the contention test reads them, tests/perf/server-scale.cjs)
-async function bumpRev(keys, tries) {
+/* FEED shards (28 Oct 2026: Firestore keeps about one sustained write a second on ONE document, and a busy shop hour (nesting runs, scans, Hold / Release,
+   label prints) writes more than that). The names are kept in four documents by kind, each with its own count and list, so each takes only its own share:
+     lib   s: t: r: c: and '*'   the Library's revision itself (revRef: what laserStatus and the Library's lists read, exactly as before)
+     p     p:                    where pieces are (pool rows, sheets saved: the busiest)
+     o     o:                    the order timelines (timelineAdd, the events an op records)
+     x     x: m: a:              cancels, the master index, the learned maps (rare)
+   An op's one bumpRev writes the shards its names fall in, side by side; op changes reads all four in one getAll. A shard that could not be written is
+   best-effort, never the person's write (feedBump): its readers are sent to their own question for that kind (<kind>:*), as a count that moved without
+   its list says, or, lost altogether, at the ten-minute check. */
+const FEED_SHARDS = [{ id: "lib", kinds: ["*"] }, { id: "p", kinds: ["p"] }, { id: "o", kinds: ["o"] }, { id: "x", kinds: ["x", "m", "a"] }];
+const SHARD_CAP = { lib: REV_CAP, p: 1000, o: 1000, x: 300 };
+const shardOf = k => (k === "*" || "strc".includes(k[0]) ? "lib" : k[0] === "p" ? "p" : k[0] === "o" ? "o" : "x");
+const shardRef = id => (id === "lib" ? revRef() : PREFIX ? db.collection(PREFIX + SB_REV_COLL).doc("_feed_" + id) : db.collection(REV).doc("feed-" + id));   // (the sandbox's in Sandbox_Order_Rev, a family its reset wipes)
+const feedStats = { bumps: 0, retried: 0, fallbacks: 0, lost: 0, slow: 0, shards: {} };   // (FEED: the contention test reads them, tests/perf/server-scale.cjs)
+async function bumpRev(keys) {
   const list = keys == null ? ["*"] : [...keys];
   if (!list.length) return;
-  const ref = revRef();
+  const by = new Map();
+  for (const k of list) { const id = shardOf(String(k)); if (!by.has(id)) by.set(id, []); by.get(id).push(k); }
+  feedStats.bumps++;
+  const counts = await Promise.all([...by].map(([id, names]) => bumpShard(id, names, 0)));
+  return Object.fromEntries([...by.keys()].map((id, i) => [id, counts[i]]).filter(([, n]) => n > 0));   // (each shard's count after this op's names, where its list was written)
+}
+const FEED_LOST = new Set();   // (shards whose names this instance could not write at all: its next write there says so, floor = its count, so no reader takes the gap for quiet)
+async function bumpShard(id, list, tries) {
+  const ref = shardRef(id), cap = SHARD_CAP[id] || REV_CAP, lostKey = PREFIX + id;
+  feedStats.shards[id] = (feedStats.shards[id] || 0) + (tries ? 0 : 1);
   try {
-    feedStats.bumps += tries ? 0 : 1;
-    return await db.runTransaction(async tx => {   // (OUTBOX: the count it wrote is the answer's `n`, so the page that wrote knows which answer of the feed was its own)
+    return await db.runTransaction(async tx => {
       const s = await tx.get(ref), d = s.exists ? s.data() || {} : {}, was = num(d.n), kept = num(d.mapN) === was && !!d.changed && typeof d.changed === "object";
       const n = was + 1, changed = kept ? Object.assign({}, d.changed) : {};
       let floor = kept ? num(d.floor) : was;   // (a count that moved without its list: everything up to it is unknown)
       for (const k of list) changed[k] = n;
       const names = Object.keys(changed);
-      if (names.length > REV_CAP) { names.sort((a, c) => num(changed[c]) - num(changed[a])); for (const k of names.slice(REV_CAP)) { floor = Math.max(floor, num(changed[k])); delete changed[k]; } }
+      if (names.length > cap) { names.sort((a, c) => num(changed[c]) - num(changed[a])); for (const k of names.slice(cap)) { floor = Math.max(floor, num(changed[k])); delete changed[k]; } }
+      if (FEED_LOST.has(lostKey)) floor = n;   // (names were lost before this one: a reader from before it asks its own question, <kind>:*)
       tx.set(ref, { n, mapN: n, floor, changed, at: Date.now() });
       return n;
-    });
+    }).then(n => { FEED_LOST.delete(lostKey); return n; });
   } catch (e) {
-    // (FEED: the document is everybody's now, a few writes a second in a busy shop: a transaction that lost to another (contention) is tried once more after a
-    //  short, random wait before it falls back to the plain +1, which costs every reader a reset)
-    if (!tries && /contention|ABORTED|aborted/i.test(String(e && (e.message || e.code)))) { feedStats.retried++; await new Promise(r => setTimeout(r, 40 + Math.random() * 160)); return bumpRev(keys, 1); }
+    // (FEED: a transaction that lost to another (contention) is tried once more after a short, random wait before it falls back to the plain +1, which sends
+    //  that shard's readers to their own question (a count that moved without its list))
+    if (!tries) { feedStats.retried++; await new Promise(r => setTimeout(r, 40 + Math.random() * 160)); return bumpShard(id, list, 1); }
     feedStats.fallbacks++;
-    console.warn("[charmNestLibrary] revision list not written:", e && e.message);
-    try { await ref.set({ n: FV.increment(1), at: Date.now() }, { merge: true }); } catch (e2) { feedStats.lost++; console.warn("[charmNestLibrary] revision not written:", e2 && e2.message); }
+    console.warn("[charmNestLibrary] revision list not written (" + id + "):", e && e.message);
+    try { await ref.set({ n: FV.increment(1), at: Date.now() }, { merge: true }); } catch (e2) { feedStats.lost++; FEED_LOST.add(lostKey); console.warn("[charmNestLibrary] revision not written (" + id + "):", e2 && e2.message); }
+    return 0;
   }
+}
+/** The feed's bump after a person's write: best-effort, never the write's failure, and never a long wait for its answer (FEED_WAIT_MS; a bump still on its
+    way then lands by itself or is lost, and the ten-minute check covers it). */
+const FEED_WAIT_MS = 2500;
+async function feedBump(keys) {
+  try {
+    let late = false, timer = 0; const t = new Promise(r => { timer = setTimeout(() => { late = true; r(null); }, FEED_WAIT_MS); });
+    const counts = await Promise.race([bumpRev(keys).catch(e => { feedStats.lost++; console.warn("[charmNestLibrary] feed not raised:", e && e.message); return null; }), t]);
+    clearTimeout(timer);
+    if (late) feedStats.slow++;
+    return counts || null;
+  } catch (_) { return null; }   // (never the person's write)
 }
 const REV_FORM = /^[\w.\-]{1,40}$/;
 /* ── LOCAL_READS (Paul, 28 Oct 2026: "as responsive as Photoshop … leverage local storage … keep the API calls to the bare minimum"). A page keeps the
@@ -1314,25 +1349,28 @@ async function op_getMany(b) {
                gives each one's rev now, and a moved one is o:<order>
    Cost: one read, one more for the cancel counter, one per watched order (at most WATCH_MAX). Reads only; the sandbox reads its own (revRef, PREFIX). ── */
 const WATCH_MAX = 12, KEYS_MAX = 1200;
+/* (the count is the four shards' counts, "lib.p.o.x" (FEED_SHARDS): a page holds it as it is given; a shard asked from before its list's memory, or whose count
+   moved without its list, names its kinds' wildcards (p:*, o:*, x:* m:* a:*): those surfaces ask their own question; the Library's shard is a reset, as before) */
 async function op_changes(b) {
-  const since = b.since == null || b.since === "" || !Number.isFinite(Number(b.since)) ? null : Math.floor(Number(b.since));
+  const parts = String(b.since == null ? "" : b.since).split("."), since = parts.length === FEED_SHARDS.length && parts.every(x => /^\d{1,15}$/.test(x)) ? parts.map(Number) : null;
   const watch = [...new Set((b.watch && typeof b.watch === "object" ? Object.keys(b.watch) : []).map(k => orderIdOf(String(k).replace(/^o:/, ""))).filter(Boolean))].slice(0, WATCH_MAX);
-  const refs = [revRef()].concat(PREFIX ? [] : [db.collection(OrderCancel.REV_COL).doc(OrderCancel.REV_DOC)], watch.map(id => db.collection(PREFIX + Timeline.REV_COL).doc(id)));
-  const snaps = await db.getAll(...refs), d = snaps[0].exists ? snaps[0].data() || {} : {}, n = num(d.n);
-  const out = { n, at: Date.now() };
-  if (since !== null && since !== n) {
+  const S = FEED_SHARDS.length, refs = FEED_SHARDS.map(x => shardRef(x.id)).concat(PREFIX ? [] : [db.collection(OrderCancel.REV_COL).doc(OrderCancel.REV_DOC)], watch.map(id => db.collection(PREFIX + Timeline.REV_COL).doc(id)));
+  const snaps = await db.getAll(...refs), docs = snaps.slice(0, S).map(x => (x.exists ? x.data() || {} : {})), ns = docs.map(d => num(d.n));
+  const out = { n: ns.join("."), at: Date.now() }, keys = new Set(), kn = {};
+  if (since !== null) FEED_SHARDS.forEach((sh, i) => {
+    const d = docs[i], n = ns[i], from = since[i];
+    if (from === n) return;
     const kept = num(d.mapN) === n && !!d.changed && typeof d.changed === "object";
-    if (since > n || !kept || since < num(d.floor)) out.reset = true;
-    else out.keys = Object.keys(d.changed).filter(k => num(d.changed[k]) > since).slice(0, KEYS_MAX);
-  }
-  if (!PREFIX) { const c = snaps[1], cg = c && c.exists ? num((c.data() || {}).n) : 0; out.cg = cg; if (b.cg != null && Number(b.cg) !== cg && !out.reset) (out.keys || (out.keys = [])).push("x:*"); }
+    if (from > n || !kept || from < num(d.floor)) { if (sh.id === "lib") out.reset = true; else for (const k of sh.kinds) keys.add(k + ":*"); }
+    else for (const [k, v] of Object.entries(d.changed)) if (num(v) > from) { keys.add(k); kn[k] = num(v); }
+  });
+  if (!PREFIX) { const c = snaps[S], cg = c && c.exists ? num((c.data() || {}).n) : 0; out.cg = cg; if (b.cg != null && Number(b.cg) !== cg) keys.add("x:*"); }
   if (watch.length) {
     out.orders = {};
-    watch.forEach((id, i) => { const r = revOf(snaps[i + (PREFIX ? 1 : 2)]), had = b.watch["o:" + id] != null ? b.watch["o:" + id] : b.watch[id]; out.orders[id] = r; if (typeof had === "string" && had && had !== r && !out.reset) (out.keys || (out.keys = [])).push("o:" + id); });
+    const at = S + (PREFIX ? 0 : 1);
+    watch.forEach((id, i) => { const r = revOf(snaps[at + i]), had = b.watch["o:" + id] != null ? b.watch["o:" + id] : b.watch[id]; out.orders[id] = r; if (typeof had === "string" && had && had !== r) keys.add("o:" + id); });
   }
-  if (out.keys) out.keys = [...new Set(out.keys)];
-  // (OUTBOX: the count each name was last written at, so a computer knows which names its own presses wrote last: charm-nest-sync-worker.js own; no read follows its own write)
-  if (out.keys && d.changed && typeof d.changed === "object") { const counts = {}; for (const k of out.keys) if (d.changed[k] != null) counts[k] = num(d.changed[k]); out.counts = counts; }
+  if (keys.size && !out.reset) { out.keys = [...keys].slice(0, KEYS_MAX); out.kn = {}; for (const k of out.keys) if (kn[k]) out.kn[k] = kn[k]; }   // (kn: the count each name was written at, in its shard)
   return out;
 }
 /** Same-origin recovery of a saved PNG; never accepts an arbitrary caller URL. */
@@ -5334,6 +5372,13 @@ function feedKeys(body, failed) {
   if (!NO_GEN_BUMP.has(op) && !(PLACE_QUIET && !failed) && ![...keys].some(k => k === "*" || k[0] === "p")) keys.add("p:*");
   return [...keys];
 }
+/** FEED: what the op named, in a response header, so the page that wrote tells the other tabs of its computer at once (charm-nest-sync-worker.js wrote):
+    at most 40 names; more is each kind's wildcard. */
+function feedHeader(keys, counts) {
+  const list = [...new Set(keys.map(String))], named = (list.length <= 40 ? list : [...new Set(list.map(k => (k === "*" ? "*" : k[0] + ":*")))]).join(",").slice(0, 3000);
+  // (and each shard's count after them, "lib=12,p=40": the tabs that heard them skip the same names when the feed brings them, a write at that count or before)
+  return counts && Object.keys(counts).length ? named + ";" + Object.entries(counts).map(([k, n]) => k + "=" + n).join(",") : named;
+}
 exports.ops = OPS;   // the connections check runs the same queries the app runs
 exports.feedStats = feedStats;   // (FEED: bumpRev's counts, for the contention test)
 exports.handler = async (event) => {
@@ -5357,7 +5402,7 @@ exports.handler = async (event) => {
   // OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"): a press the page sent from its outbox carries its mutation id; sent again (the page closed
   // mid-request, the network dropped), it is written once and the first answer comes back (_charmNestMutations.js). A write without one goes as before.
   const ledger = typeof body.mid === "string" && !MID_READ.test(body.op) ? await Mutations.begin(db, PREFIX, body.mid, { op: body.op, by: body.by, Timestamp: admin.firestore.Timestamp }) : null;
-  if (ledger && ledger.replay) return json(ledger.replay.status, Object.assign({}, ledger.replay.out, { replayed: true }));
+  if (ledger && ledger.replay) { const res = json(ledger.replay.status, Object.assign({}, ledger.replay.out, { replayed: true })), fh = ledger.replay.out && ledger.replay.out.feed; if (fh) res.headers = Object.assign({}, res.headers, { "X-CN-Feed": String(fh), "Access-Control-Expose-Headers": "X-CN-Feed" }); return res; }
   if (ledger && ledger.busy) return json(409, { error: "This change is being written already: it is sent again in a moment", inFlight: true, retry: true });
   try {
     const out = await fn(body), checked = body.op === "purgeHistory" && !!out && out.check === true, quiet = checked || sbQuiet(body.op, out);   // (checked: the purge's question first, which deleted and wrote nothing: no counter moves for it)
@@ -5366,17 +5411,20 @@ exports.handler = async (event) => {
     // the Library's revision moves after a write it reads (see readRev: the readers' one-document question); after an error too, a write may have landed before it
     // (COST, Oct 2026: naming what the op wrote, when it says: revTouch; an op that wrote nothing the Library reads moves nothing)
     // (FEED, 28 Oct 2026: and what the changes feed names, one bumpRev per op with all of it: feedKeys)
-    const fk = quiet ? [] : feedKeys(body, false), n = quiet ? undefined : await bumpRev(fk);
-    // (OUTBOX: an answer to a press from the outbox says the feed's count it wrote and the names it wrote under, so the page knows that answer of the feed as its own: no read follows a write)
-    if (ledger && out && typeof out === "object" && !Array.isArray(out)) { if (Number.isFinite(n)) out.n = n; out.keys = fk.slice(0, 400); out.mid = body.mid; }
+    const named = quiet ? [] : feedKeys(body, false);
+    const counts = named.length ? await feedBump(named) : null;   // (FEED: best-effort and bounded, never the person's write)
     const status = out && out.error ? (out.status || 400) : 200;
+    // (OUTBOX: an answer to a press from the outbox is kept with its names, so a resend's replayed answer tells the feed the same: X-CN-Feed below)
+    if (ledger && out && typeof out === "object" && !Array.isArray(out)) { out.mid = body.mid; if (named.length) out.feed = feedHeader(named, counts); }
     await Mutations.end(ledger, status, out);
-    return json(status, out);
+    const res = json(status, out);
+    if (named.length) res.headers = Object.assign({}, res.headers, { "X-CN-Feed": feedHeader(named, counts), "Access-Control-Expose-Headers": "X-CN-Feed" });   // (FEED: what it named, for the other tabs of the computer that wrote)
+    return res;
   } catch (e) {
     await bumpPlacementGen(body.op);   // (a failed op may have written some of what it meant to)
     if (DONE_TOUCH || DONE_BUMP_OPS.has(body.op)) await bumpDoneRev(body.op);
     console.error("[charmNestLibrary]", body.op, e);
-    await bumpRev(feedKeys(body, true));
+    await feedBump(feedKeys(body, true));
     await Mutations.drop(ledger);   // (OUTBOX: a press that threw keeps nothing: sent again, it runs again)
     return json(500, { error: e.message || String(e) });
   }

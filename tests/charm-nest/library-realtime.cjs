@@ -13,7 +13,9 @@
    Timed, from the moment the record was written to the moment the set card (its Order check step, the '!' list of what is
    left, the single Approve for laser cutting gate, the step rail, and the card's area) shows it:
      · the computer that pressed         ≤ SAME_MS   (1 s)       · another computer    ≤ CROSS_MS  (3 s)
-     · a second tab of that computer     ≤ TAB_MS    (1 s, through the BroadcastChannel, never the 3 s loop)
+     · a second tab of that computer     ≤ TAB_MS    (0.5 s, through the BroadcastChannel, never the 3 s loop; FEED, 28 Oct 2026: the tab looked at is the one in
+                                                       front: headless Chromium gives a page behind another about one frame a second, so a drawing that waits for its frame
+                                                       waited up to a second there, whatever the data did (its read is answered in about 40 ms))
      · a Library tab hidden, then shown  ≤ SHOW_MS   (3 s after it is shown)
    Counted, not timed: the Library's idle read costs ONE document (the cloud's revision) and a few bytes, not one per
    document it is made of; a read after somebody else's unrelated write costs the old probe plus one; a Complete Order of a
@@ -44,7 +46,7 @@ function starvation() {
   return r.sort((a, b) => a - b)[2];
 }
 const STARVED = starvation(), SLACK = process.env.LIBRARY_RT_SLACK ? Math.max(1, +process.env.LIBRARY_RT_SLACK || 1) : Math.min(8, Math.max(1, Math.ceil(STARVED - 0.25)));
-const SAME_MS = 1000 * SLACK, CROSS_MS = 3000 * SLACK, TAB_MS = 1000 * SLACK, SHOW_MS = 3000 * SLACK;
+const SAME_MS = 1000 * SLACK, CROSS_MS = 3000 * SLACK, TAB_MS = 500 * SLACK, SHOW_MS = 3000 * SLACK;
 const fails = [], say = (...a) => console.log(...a);
 const check = (ok, what, detail) => { if (ok) say('  ok  ', what); else { fails.push(what + (detail ? ' — ' + detail : '')); say('  FAIL', what, detail || ''); } };
 
@@ -371,6 +373,7 @@ const closeWin = async pg => { await pg.page.evaluate(() => { try { OrderWin.clo
   const C = await libraryPage(browser, srv, shop, 'C', A);
   await C.page.evaluate(() => { window.__anyLibraryCall = true; });
   for (let i = 0; i < 3; i++) {
+    await A.page.bringToFront();   // (the tab a person looks at: in front, as on the shop's screen)
     await toCard(A);
     const rid = shop.target.blockers[i].rid, last = i === 2, b = shop.target.blockers[i];
     const wa = A.page.evaluate(([w]) => window.__lr.waitFor(w, 20000), [last ? "s.area === 'ready'" : `s.panel && !s.panel.includes('${rid}')`]);

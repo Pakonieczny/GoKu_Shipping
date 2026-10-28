@@ -92,8 +92,12 @@ async function main() {
     page.on('pageerror', e => { errors.push(e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 4).join(' | ')); });
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.CN && window.Orders && window.Review && window.CustomPrint && window.Seal && window.OrderWin && window.OrderTimeline && CN.S.cloud.ok === true, null, { timeout: 60000 });
+    // (the page's first read of the charm library ends by putting the cloud's entries in place: the two set below were lost to it when it ended after them, and their pieces turned into an
+    //  Unknown SKU card with a Release Hold on the rows "on sheets" (a race the test lost more often as the page got quicker): that read is waited for first, 28 Oct 2026)
+    await page.waitForFunction(() => B.master.loadedAt > 0 && !B.master.loading, null, { timeout: 20000 }).catch(() => {});
     await page.evaluate(async ({ orders }) => {
       await Orders.loadMaps(true);
+      if (B.master.loading) await B.master.loading.catch(() => {});
       B.master.entries.set('MIDDLE_9935', { sku: 'MIDDLE_9935', updatedAt: 1 }); B.master.entries.set('BLUE_72587', { sku: 'BLUE_72587', updatedAt: 1 });   // (a design in a master file: its pieces are on sheets, in no Review card)
       for (const [order, pools] of orders) order.lines.forEach((line, i) => { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: pools[i] ? 'pooled' : 'pulled', reason: null, claimedBy: null, poolIds: pools[i] ? [pools[i]] : [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); });
       Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('review'); Review.render();

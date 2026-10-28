@@ -5122,11 +5122,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       li.querySelector("[data-h=back]").onclick = async ev => {
         const b = ev.currentTarget; b.disabled = true; b.innerHTML = `<span class="spin"></span>Releasing`;
         let went = false;
+        // (SEALGREEN, Paul 28 Oct 2026: "change the colour of the 'Order Released' seal to be green ... throughout the entire application everywhere these seals are used": this release is an ORDER RELEASED
+        //  seal too, as a Release Hold press is: its step carries the seal (who, when) and the release is kept as the Review card's is, ReviewRelease.keep, so the cards and the order window draw it; was a
+        //  plain "released" step the timeline drew as a red HOLD RELEASED. How it releases is unchanged.)
+        const at = Date.now(), who = whoAmI(), seal = { how: "releaseHold", at, by: who, id: `releaseHold:${rid}:${at}` };
         try {
           for (const r of rows()) { r.heldAt = null; await Review.repool(r); }
           if (window.RunCtl) RunCtl.poke();
-          agent({ bridge: true }, "DS", `Order ${rid} put back in line by ${whoAmI() || "someone"}`);
-          window.SheetEvents?.order({ type: "released", orderId: rid, id: `sw-release-${Date.now()}`, by: whoAmI(), text: "Hold released in the sheet window · back in line" });
+          agent({ bridge: true }, "DS", `Order ${rid} put back in line by ${who || "someone"}`);
+          window.SheetEvents?.order({ type: "released", orderId: rid, id: `sw-release-${at}`, by: who, at, text: "Hold released in the sheet window · back in line", data: { seal: "releaseHold", sealAt: at, sealId: seal.id, from: "sheetWindow" } });
+          if (who && window.ReviewRelease && ReviewRelease.keep) ReviewRelease.keep([rid], seal, "sheetWindow").catch(e => console.warn("sheet window: release seal", e));
           went = true;
         } catch (e) { toast("Hold not released: " + e.message, "bad", 7000); }
         b.disabled = false;

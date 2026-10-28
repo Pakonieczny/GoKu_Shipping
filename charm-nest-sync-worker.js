@@ -18,7 +18,9 @@
      · records this computer keeps (charm-nest-store.js: the Library's rows and sets) that moved are read again in one getMany at most every 30 s and
        written through the store, which tells the other tabs;
      · the open order windows of every tab are watched by their Order_Rev (a station's scan, a Team message, a cancel), at most 12;
-     · every ten minutes while the computer is in use, every surface asks once anyway (verify): the net for a write nothing named.
+     · every ten minutes while the computer is in use, every surface asks once anyway (verify): the net for a write nothing named;
+     · a write made HERE is told to the other tabs of this computer at once, with the names the cloud says it wrote (its answer's X-CN-Feed, api() hands
+       them to wrote()): they read now, not at the next question, and the next answer that names the same writes is not read again (each name's count).
    It never writes to the cloud. When the cloud does not know `changes` (an older deploy) or the browser has no BroadcastChannel, it stops and every surface
    keeps its own timer, as before this file existed.
 
@@ -31,7 +33,8 @@
                                       its own while it is in use (2000: the Review tab, a sheet window), 0 otherwise; wants(key): this
                                       name is one it shows; active(): it is on screen now (else it is read when it is: resume); since(): when its own last read
                                       began (a read that began after the leader's question has what it named: nothing more is asked); read(why, keys, at):
-                                      why 'keys' | 'reset' | 'verify' | 'dirty' | 'lost' (the feed stopped answering: back to its own timer, read now),
+                                      why 'keys' | 'wrote' (another tab of this computer wrote it: read now) | 'reset' | 'verify' | 'dirty' |
+                                      'lost' (the feed stopped answering: back to its own timer, read now),
                                       at: when the leader asked (what was written before it is named);
                                       clear(): whether something was named while it was not on screen, forgotten (the surface reads it its own way)
      live()                           the feed answers (here or in another tab): a surface lets its own timer go to its net
@@ -39,6 +42,8 @@
      watchOrder(rid) → off            an open order window's Order_Rev, watched by the leader
      once(name, everyMs, fn)          fn in one tab of this computer at most every everyMs (the Library's seal check)
      poke(fn?)                        ask now (a tab shown, the network back); fn({ keys, reset }): the first answer to a question asked after it
+     wrote(header)                    a write of this tab was answered: its X-CN-Feed ("names;lib=12,p=40") to the other tabs at once
+     here(header)                     the same names to this tab's own surfaces (OUTBOX: a direct write's, in place of api()'s reads now and 1.5 s later)
      state()                          { world, leader, live, n, polls, heard, keys, … } (the tests read it)
 
    THE OUTBOX'S DRAIN (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"; plan: phase 3). The presses this computer kept (charm-nest-store.js mutate)
@@ -46,10 +51,9 @@
    hidden: a press made just before the tab was put away still goes), oldest first, each with its mutation id, several timeline steps in one request. An answer
    leaves the outbox and tells the press (here and in every tab); a refusal in the cloud's own words too; no answer (offline, a timeout, the cloud down) is tried
    again after 1, 2, 4 … 60 s (a fifth either way), at once when the network comes back or a tab is shown. The page going away sends what is still waiting with
-   keepalive (the next page sends it again, and the mid makes that a no-op). An answer says the feed's count it wrote (n) and the names it wrote under (keys):
-   the feed's next answer that names only those is this computer's own write, already drawn, and no surface reads for it (follow-up reads per write: 0).
+   keepalive (the next page sends it again, and the mid makes that a no-op). Its answer's names (X-CN-Feed) reach wrote() as every write's do: the feed's next
+   answer that names only those is this computer's own write, already drawn, and no surface reads for it (follow-up reads per write: 0).
      drain()                          send now what waits (the store calls it on every press)
-     own(keys, n)                     these names at this count are this computer's own write (every tab is told)
      drainState()                     { sent, acked, failed, retried, replayed, batches, waiting } (the tests read it) */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(root);
@@ -78,7 +82,8 @@
   const lastKind = new Map();                  // kind → the leader's question time of the last answer that named it ('*': not known, '!': a reset)
   const subs = new Set();
   const onceAt = new Map();
-  let pokes = [], failing = false;             // (failing: the leader's last question failed; every surface reads on its own until one is answered)                              // ({ at, fn }) poke(fn): told the first answer to a question asked after it                    // name → when a tab of this computer last ran it (once: told on the channel, never stored)
+  let pokes = [], failing = false;
+  const seenN = new Map();                     // name → the count of its shard when this computer heard it written (wrote): the feed's answer at or before it is not read again             // (failing: the leader's last question failed; every surface reads on its own until one is answered)                              // ({ at, fn }) poke(fn): told the first answer to a question asked after it                    // name → when a tab of this computer last ran it (once: told on the channel, never stored)
   const mine = new Map();                      // rid → how many order windows of this tab watch it
   const stats = { polls: 0, answers: 0, keys: 0, resets: 0, heard: 0, reads: 0, fetches: 0, errors: 0, gaps: 0, leads: 0 };
 
@@ -93,16 +98,16 @@
   function keepCursor() { const s = world === 'production' ? ls() : null; if (s && n != null) safe(() => s.setItem(cursorKey(), JSON.stringify({ n, at: now(), cg }))); }
   function keptCursor() {
     const s = world === 'production' ? ls() : null; const v = s ? safe(() => JSON.parse(s.getItem(cursorKey()) || 'null'), null) : null;
-    return v && Number.isFinite(+v.n) && now() - (+v.at || 0) < PACE.cursorFor ? v : null;
+    return v && v.n != null && now() - (+v.at || 0) < PACE.cursorFor ? v : null;
   }
 
   /* ── what reaches the surfaces ── */
   function deliver(m) {
-    const reset = !!m.reset, verify = !!m.verify, keys = new Set(Array.isArray(m.keys) ? m.keys.map(String) : []), at = +m.at || now();
+    const reset = !!m.reset, verify = !!m.verify, wrote = !!m.wrote, keys = new Set(Array.isArray(m.keys) ? m.keys.map(String) : []), at = +m.at || now();
     if (reset) { lastKind.set('!', at); stats.resets++; }
     for (const k of keys) { const kind = k === '*' ? '*' : k[0]; if (KIND.test(kind)) lastKind.set(kind, Math.max(lastKind.get(kind) || 0, at)); }
     stats.keys += keys.size;
-    for (const s of [...subs]) s.take(keys, reset, verify, at);
+    for (const s of [...subs]) s.take(keys, reset, verify, at, wrote);
   }
   /* A tab's own surfaces hear an answer: from the leader here, or by the channel. An answer asked from a count this tab did not reach (it missed one) is a
      reset for it: every surface asks its own question again. */
@@ -124,10 +129,10 @@
     if (m.n != null) n = m.n;
     if (m.cg != null) cg = m.cg;
     if (m.first && !gap) return;   // (the first answer of a fresh computer names nothing: what the tabs read at start is what the cloud holds)
-    if (m.n === m.from && !m.reset && !gap && !(m.keys && m.keys.length)) return;
-    // (OUTBOX: a name written last by this computer's own press, at the count its answer said, is drawn already: no surface reads for it)
-    const keys = !m.reset && !gap && m.counts && Array.isArray(m.keys) ? m.keys.filter(k => !(ownN.has(k) && ownN.get(k).n === +m.counts[k])) : m.keys;
-    if (keys && m.keys && keys.length < m.keys.length) { stats.ownSkipped = (stats.ownSkipped || 0) + m.keys.length - keys.length; if (!keys.length && !m.reset && !gap) return; }
+    let keys = Array.isArray(m.keys) ? m.keys : [];
+    if (m.kn && seenN.size) { const all = keys.length; keys = keys.filter(k => !(m.kn[k] > 0 && (seenN.get(k) || 0) >= m.kn[k])); stats.ownSkipped = (stats.ownSkipped || 0) + all - keys.length; }   // (written here, and told at once: read then)
+    if (m.n === m.from && !m.reset && !gap && !keys.length) return;
+    if (!keys.length && !m.reset && !gap) return;
     deliver({ keys, reset: m.reset || gap, at: m.at });
   }
   function post(m) { if (!ch) return; try { ch.postMessage(Object.assign({ v: V, from_: me }, m)); } catch (_) {} }
@@ -140,8 +145,8 @@
     else if (m.t === 'lead') { if (mine.size) post({ t: 'watch', rids: [...mine.keys()] }); }
     else if (m.t === 'dead') { stop(true); }
     else if (m.t === 'fail') { lost(); }
+    else if (m.t === 'wrote') { heardWrote(m); }
     else if (m.t === 'once') { onceAt.set(String(m.name), Math.max(onceAt.get(String(m.name)) || 0, +m.at || 0)); }
-    else if (m.t === 'own') { ownHeard(m.keys, m.n); }
   }
 
   /* ── the leader's question ── */
@@ -180,14 +185,14 @@
     try {
       const r = await cfg.api('charmNestLibrary', body, { quiet: true, timeoutMs: 15000 });
       if (!leader) return;
-      if (!r || r.error || !Number.isFinite(+r.n)) {
+      if (!r || r.error || r.n == null) {
         const e = new Error((r && r.error) || 'no answer');
         if (r && /unknown op/i.test(String(r.error))) e.unknown = true;
         throw e;
       }
       fails = 0; lastOk = now(); stats.answers++;
       if (r.orders) for (const [rid, rev] of Object.entries(r.orders)) orderRevs.set(String(rid), String(rev || ''));
-      const m = { v: V, t: 'feed', from, n: +r.n, keys: r.keys || [], counts: r.counts || null, reset: !!r.reset, first: from == null, cg: r.cg != null ? +r.cg : cg, at };
+      const m = { v: V, t: 'feed', from, n: String(r.n), keys: r.keys || [], kn: r.kn || null, reset: !!r.reset, first: from == null, cg: r.cg != null ? +r.cg : cg, at };
       heard(m, true); post(m); keepCursor();
       if (m.keys.length || m.reset) heldMoved(m.keys, m.reset);
       // (the net: every surface asks once anyway every ten minutes while the computer is in use)
@@ -230,7 +235,7 @@
   function becomeLeader() {
     if (leader) return;
     leader = true; stats.leads++; fails = 0; again = false; verifyAt = now();   // (a handover is not a reason for every surface to ask again)
-    if (n == null) { const k = keptCursor(); if (k) { n = +k.n; if (k.cg != null && cg == null) cg = +k.cg; } }
+    if (n == null) { const k = keptCursor(); if (k) { n = String(k.n); if (k.cg != null && cg == null) cg = +k.cg; } }
     post({ t: 'lead' });
     ask();
   }
@@ -266,14 +271,14 @@
     const run = (why, keys, at) => { stats.reads++; safe(() => spec.read(why, keys, at)); };
     const s = {
       every: () => (gone || !spec.every ? 0 : safe(() => +spec.every() || 0, 0)),
-      take(keys, reset, verify, at) {
+      take(keys, reset, verify, at, wrote) {
         if (gone) return;
         let hit = reset || verify || keys.has('*'), mine = [];
         if (!hit) for (const k of keys) { if (!kinds.has(k[0])) continue; if (k.endsWith(':*') ? wild.has(k[0]) : safe(() => (spec.wants ? !!spec.wants(k) : true), true)) { hit = true; mine.push(k); } }
         if (!hit) return;
-        const why = reset ? 'reset' : verify ? 'verify' : 'keys';
-        // (its own read began after the leader's question: it holds what that answer named)
-        if (why === 'keys' && spec.since && safe(() => +spec.since() || 0, 0) > at) return;
+        const why = reset ? 'reset' : verify ? 'verify' : wrote ? 'wrote' : 'keys';
+        // (its own read began after the leader's question (or the write's answer): it holds what that named)
+        if ((why === 'keys' || why === 'wrote') && spec.since && safe(() => +spec.since() || 0, 0) > at) return;
         if (!active() || !visible()) { dirty = dirty || { why, keys: new Set(), at }; if (why === 'reset' || why === 'verify') dirty.why = why; dirty.at = Math.min(dirty.at, at); for (const k of mine) dirty.keys.add(k); return; }
         run(why, mine, at);
       },
@@ -317,6 +322,38 @@
     if (!locks || typeof locks.request !== 'function') return go();
     try { return await locks.request('cn-sync-once:' + world + ':' + name, { ifAvailable: true }, lock => (lock ? go() : false)); } catch (_) { return go(); }
   }
+  // (the shard of a name, as charmNestLibrary.js FEED_SHARDS keeps them)
+  const shardOf = k => (k === '*' || 'strc'.includes(k[0]) ? 'lib' : k[0] === 'p' ? 'p' : k[0] === 'o' ? 'o' : 'x');
+  function noteSeen(keys, counts) {
+    if (!counts) return;
+    for (const k of keys) { const c = +counts[shardOf(k)] || 0; if (c > (seenN.get(k) || 0)) { seenN.delete(k); seenN.set(k, c); } }
+    while (seenN.size > 3000) seenN.delete(seenN.keys().next().value);
+  }
+  const NAME = /^(\*|[strcpxoma]:(?:[\w\-]{1,80}|\*))$/;
+  /** A write of this tab was answered: its names (the answer's X-CN-Feed, "names;lib=12,p=40") go to the other tabs now; here they are only noted (this tab's
+      own surfaces are told by api() as before), so the feed's next answer does not send anybody to read them again. */
+  function wrote(header) {
+    if (!started || dead || !header) return false;
+    const [names, cs] = String(header).split(';'), keys = names.split(',').map(x => x.trim()).filter(k => NAME.test(k)).slice(0, 60);
+    if (!keys.length) return false;
+    const counts = {}; for (const p of String(cs || '').split(',')) { const [k, v] = p.split('='); if (k && +v > 0) counts[k.trim()] = +v; }
+    noteSeen(keys, Object.keys(counts).length ? counts : null);
+    post({ t: 'wrote', keys, counts, at: now() });
+    return true;
+  }
+  /** OUTBOX: a direct write of THIS tab was answered (api(), the feed answering): its names go to this tab's own surfaces now, as another tab's do (heardWrote): each
+      reads what it shows of them, once, where api() used to send the placement feed, the order window and the Review feed to read twice each. */
+  function here(header) {
+    if (!started || dead || !header) return false;
+    const keys = String(header).split(';')[0].split(',').map(x => x.trim()).filter(k => NAME.test(k)).slice(0, 60); if (!keys.length) return false;
+    deliver({ keys, at: now(), wrote: true });
+    return true;
+  }
+  function heardWrote(m) {
+    const keys = (Array.isArray(m.keys) ? m.keys : []).map(String).filter(k => NAME.test(k)).slice(0, 60); if (!keys.length) return;
+    noteSeen(keys, m.counts && typeof m.counts === 'object' && Object.keys(m.counts).length ? m.counts : null);
+    deliver({ keys, at: +m.at || now(), wrote: true });
+  }
   function poke(fn) {
     if (!started || dead) return false;
     if (typeof fn === 'function') { pokes.push({ at: now(), fn }); if (pokes.length > 20) pokes.shift(); }
@@ -324,9 +361,6 @@
   }
 
   /* ── THE OUTBOX'S DRAIN (phase 3; see the header) ── */
-  const ownN = new Map();                      // name → { n, at }: written last by this computer's own press at count n (5 minutes)
-  function ownHeard(keys, n) { if (!Number.isFinite(+n)) return; const t = now(); for (const k of keys || []) { const had = ownN.get(String(k)); if (!had || had.n < +n) ownN.set(String(k), { n: +n, at: t }); } for (const [k, v] of ownN) if (t - v.at > 300000) ownN.delete(k); }
-  function own(keys, n) { if (!Array.isArray(keys) || !keys.length || !Number.isFinite(+n)) return; ownHeard(keys, n); post({ t: 'own', keys, n: +n }); }
   const DR = { batch: 50, batchBytes: 48000, failMax: 60000, keepalive: 60000, tick: 15000 };
   const dstats = { sent: 0, acked: 0, failed: 0, retried: 0, replayed: 0, batches: 0, keepalive: 0 };
   let draining = false, drainAgain = false, drainT = 0, drainFails = 0, drainOn = false;
@@ -371,7 +405,6 @@
         drainFails = 0;
         if (r.replayed) dstats.replayed++;
         for (const e of group) { await St.settle(e.k, { ok: true, answer: r }); dstats.acked++; }
-        if (Array.isArray(r.keys) && Number.isFinite(+r.n)) own(r.keys, r.n);
         continue;
       }
       if (!err) err = Object.assign(new Error((r && r.error) || 'the cloud sent back no answer'), { answered: !!(r && r.error), data: r });
@@ -458,6 +491,6 @@
     return { world, started, dead, leader, live: live(), n, cg, pace: pace(), polls: stats.polls, answers: stats.answers, heard: stats.heard, keys: stats.keys, resets: stats.resets, reads: stats.reads,
       fetches: stats.fetches, errors: stats.errors, gaps: stats.gaps, leads: stats.leads, subs: subs.size, watched: Object.keys(watched() || {}), lastOk, heardAt, me, ownSkipped: stats.ownSkipped || 0 };
   }
-  const api = { start, follow, live, quietSince, watchOrder, once, poke, stop, state, PACE, drain, own, drainState };
+  const api = { start, follow, live, quietSince, watchOrder, once, poke, wrote, here, stop, state, PACE, drain, drainState };
   return api;
 });

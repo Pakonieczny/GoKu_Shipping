@@ -26,7 +26,7 @@ function keepable(out) {
   const s = JSON.stringify(out == null ? {} : out);
   if (s.length <= KEEP_BYTES) return s;
   const o = out && typeof out === "object" ? out : {};
-  return JSON.stringify(Object.fromEntries(["ok", "error", "status", "refused", "rev", "n", "id", "overwrote"].filter(k => o[k] !== undefined).map(k => [k, o[k]])));
+  return JSON.stringify(Object.fromEntries(["ok", "error", "status", "refused", "rev", "n", "id", "overwrote", "mid", "feed"].filter(k => o[k] !== undefined).map(k => [k, o[k]])));
 }
 
 /** db: the Firestore; prefix: "" or "Sandbox_"; Timestamp: firebase-admin's (expireAt). → { ref } (run the op), { replay: { status, out } } or { busy: true }. */

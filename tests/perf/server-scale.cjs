@@ -166,31 +166,47 @@ async function measure(name, budget, fn) {
   if (mirrored !== NEW_ORDERS) results.push({ name: 'mirror brought every new receipt', ok: false, err: mirrored + ' of ' + NEW_ORDERS + ' ' + JSON.stringify(mir).slice(0, 200) });
   await measure('Library purgeHistory (check)', { ms: 2000, reads: 60000 }, () => lib({ op: 'purgeHistory', code: '975311', check: true }));
 
-  /* FEED (Paul, 28 Oct 2026: "fewer cloud calls"; plan: phase 2, one changes feed per computer): the Library's revision document is every surface's now (one bumpRev per op,
-     naming pool rows, cancels, timelines, custom records and sheets). Contention: 5 writes a second for 60 s (CONTENTION_SECS), with transactions run as Firestore runs them
-     (st.atomic: a commit that lost to another is run again) and every read and commit taking a few milliseconds, the five of each second sent at once, so the bumps race. No bumpRev may fail (fall back to the
-     plain +1, which sends every computer's feed to a reset), every write moves the count once, and one question (getChanges) names every write's keys. */
+  /* FEED (Paul, 28 Oct 2026: "fewer cloud calls"; plan: phase 2, one changes feed per computer): every write names what it touched in the feed's four
+     documents (charmNestLibrary.js FEED_SHARDS: the Library's own, pool rows, timelines, cancels / designs / maps), one bumpRev per op. Contention: 10 writes a
+     second for 60 s (CONTENTION_SECS) across the kinds, the ten of each second sent at once, from ten computers, with transactions run as Firestore runs
+     them (st.atomic: a commit that lost to another is run again) and every read and commit taking a few milliseconds, so the bumps race. Not one person's
+     write may fail; every write moves its shards' counts; one question (getChanges) names every write's keys. Then the feed's documents refuse every
+     write for 10 s: the persons' writes still answer, and the feed sends the readers of what it lost to their own question (p:* and the like). */
   {
-    const secs = +process.env.CONTENTION_SECS || 60, rate = 5, total = secs * rate, open = i => String(3500000000 + N_ORDERS + (i % N_OPEN));
+    const secs = +process.env.CONTENTION_SECS || 60, rate = 10, total = secs * rate, open = i => String(3500000000 + N_ORDERS + (i % N_OPEN));
     const write = i => [
       () => ({ op: 'poolUpdate', poolIds: [`${open(i)}_12345_1`], patch: { note: 'c' + i } }),
       () => ({ op: 'putSheet', sheet: { id: 'sheet-open' + (i % 20), perfNote: i } }),
       () => ({ op: 'customPut', key: `${open(i)}_12345`, receiptId: open(i), how: 'button', by: 'Paul K' }),
       () => ({ op: 'reviewMarkPut', rid: open(i), action: i % 2 ? 'mark' : 'resolve', by: 'Ana_M' }),
-      () => ({ op: 'timelineAdd', events: [{ orderId: open(i), type: 'note', at: Date.now(), by: 'Bea', text: 'contention ' + i, id: 'cont-' + i }] })
-    ][i % 5]();
-    const before = Object.assign({}, Lib.feedStats), first = JSON.parse((await lib({ op: 'getChanges' })).body);
+      () => ({ op: 'timelineAdd', events: [{ orderId: open(i), type: 'note', at: Date.now(), by: 'Bea', text: 'contention ' + i, id: 'cont-' + i }] }),
+      () => ({ op: 'cancelFates', orderId: open(i), fates: [], by: 'Paul K' })
+    ][i % 6]();
+    const parts = n => String(n).split('.').map(Number), first = JSON.parse((await lib({ op: 'getChanges' })).body), before = JSON.parse(JSON.stringify(Lib.feedStats));
     st.atomic = true; st.txRetries = 0; st.tick = () => new Promise(r => setTimeout(r, 2 + Math.random() * 8));
     const r0 = st.reads || 0, w0 = st.writes || 0, t0 = Date.now(), pending = [];
-    // (the worst case of 5 a second: all five at once, every second, from five computers: their bumps overlap and race on the one document)
     for (let i = 0; i < total; i++) { const due = t0 + Math.floor(i / rate) * 1000 - Date.now(); if (due > 0) await new Promise(r => setTimeout(r, due)); pending.push(lib(write(i)).then(x => x.statusCode, e => String(e))); }
     const codes = await Promise.all(pending), ms = Date.now() - t0;
-    st.atomic = false; st.tick = null;
     const after = Lib.feedStats, failed = after.fallbacks - before.fallbacks + after.lost - before.lost, retried = after.retried - before.retried;
-    const ch = JSON.parse((await lib({ op: 'getChanges', since: first.n })).body), moved = ch.n - first.n, bad = codes.filter(c => c !== 200).length;
-    const ok = failed === 0 && bad === 0 && moved === total && !ch.reset && Array.isArray(ch.keys) && ch.keys.includes('p:' + open(0)) && ch.keys.includes('o:' + open(4)) && ch.keys.includes('c:' + open(3) + '_review');
-    results.push({ name: `FEED contention: ${rate} writes/s for ${secs} s (bumpRev failed ${failed}, retried ${retried}, transactions run again ${st.txRetries || 0}, count +${moved}/${total}, ${ch.keys ? ch.keys.length : 0} names)`, ms, reads: (st.reads || 0) - r0, writes: (st.writes || 0) - w0, bytes: 0, ok, err: ok ? '' : `failed ${failed}, non-200 ${bad}, count +${moved} of ${total}, reset ${!!ch.reset}` });
+    const perShard = Object.fromEntries(Object.entries(after.shards).map(([k, v]) => [k, +((v - (before.shards[k] || 0)) / secs).toFixed(1)]));
+    const ch = JSON.parse((await lib({ op: 'getChanges', since: first.n })).body), moved = parts(ch.n).map((x, j) => x - parts(first.n)[j]), bad = codes.filter(c => c !== 200).length;
+    const named = k => Array.isArray(ch.keys) && ch.keys.includes(k);
+    const ok = bad === 0 && failed === 0 && !ch.reset && named('p:' + open(0)) && named('o:' + open(4)) && named('c:' + open(3) + '_review') && named('x:' + open(5)) && named('s:sheet-open1') && moved.every(x => x > 0);
+    results.push({ name: `FEED contention: ${rate} writes/s for ${secs} s across kinds (person's writes failed ${bad}; bumps failed ${failed}, retried ${retried}, transactions run again ${st.txRetries || 0}; shard writes/s ${JSON.stringify(perShard)}; counts +${moved.join('/')})`, ms, reads: (st.reads || 0) - r0, writes: (st.writes || 0) - w0, bytes: 0, ok, err: ok ? '' : `non-200 ${bad}, bumps failed ${failed}, reset ${!!ch.reset}, keys ${(ch.keys || []).length}` });
+    // the feed's documents refuse every write: best-effort, never the person's write
+    const feedDoc = k => /^(Charm_Nest_Rev\/(library|feed-[pox]))$/.test(k), set0 = st.docs.set;
+    st.docs.set = (k, v) => { if (feedDoc(k)) throw new Error('UNAVAILABLE: the feed\'s document refuses (test)'); return set0.call(st.docs, k, v); };
+    const b1 = JSON.parse(JSON.stringify(Lib.feedStats)), from = JSON.parse((await lib({ op: 'getChanges' })).body).n, t1 = Date.now(), refused = [];
+    for (let i = 0; i < 20; i++) refused.push(lib(write(i)).then(x => x.statusCode, e => String(e)));
+    const codes2 = await Promise.all(refused), ms2 = Date.now() - t1;
+    st.docs.set = set0; st.atomic = false; st.tick = null;
+    const lost = Lib.feedStats.lost - b1.lost, bad2 = codes2.filter(c => c !== 200).length;
+    await lib({ op: 'poolUpdate', poolIds: [`${open(0)}_12345_1`], patch: { note: 'after' } });   // (the feed's documents take writes again: a count that moved without its list)
+    const ch2 = JSON.parse((await lib({ op: 'getChanges', since: from })).body);
+    const ok2 = bad2 === 0 && lost > 0 && !!ch2.keys && ch2.keys.includes('p:*');
+    results.push({ name: `FEED best-effort: the feed's documents refusing every write, 20 writes of persons all answered (${20 - bad2}/20, ${lost} bumps lost); after, the pool rows' readers sent to their own question (p:*)`, ms: ms2, reads: 0, writes: 0, bytes: 0, ok: ok2, err: ok2 ? '' : `non-200 ${bad2}, lost ${lost}, keys ${JSON.stringify(ch2.keys)}` });
   }
+
 
   console.log('\n' + ['operation', 'ms', 'reads', 'writes', 'KB', 'ok', 'note'].join(' | '));
   for (const r of results) console.log([r.name, r.ms, r.reads, r.writes, r.bytes != null ? (r.bytes / 1024).toFixed(1) : '', r.ok ? 'PASS' : 'FAIL', r.err || (r.ok ? '' : `budget ${r.budget.ms} ms / ${r.budget.reads} reads`)].join(' | '));

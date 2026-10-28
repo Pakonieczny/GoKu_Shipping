@@ -50,6 +50,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   assert.equal(j(E.pickLive(snapA, 'Ana Maria')).where, null, 'another spelling alone is not recognised'); assert.equal(j(E.pickLive(snapA, 'Ana Maria', ['Ana Maria', 'Ana M.'])).where.stationKey, 'welding', 'a spelling the server lists (E4 spellings) finds the person on the live board');
   console.log('  ✓ periods are rolling windows, a missing figure stays a dash, the answer\'s shapes are read, the live card picks this person only (under any spelling the server lists)');
 }
+/* ── 1b · every module of the console injects its CSS under its own id: the Custom pieces tab once took the charts library's "efcStyle", and whichever came
+      first kept its CSS (a chart drawn after the tab painted its empty day columns as a black block) ── */
+{
+  const ids = new Map();
+  for (const f of fs.readdirSync(root).filter(n => /^charm-nest-efficiency.*\.js$/.test(n))) for (const m of fs.readFileSync(path.join(root, f), 'utf8').matchAll(/\.id = "([\w-]+)"/g)) { if (!ids.has(m[1])) ids.set(m[1], new Set()); ids.get(m[1]).add(f); }
+  const shared = [...ids].filter(([, fs2]) => fs2.size > 1).map(([id, fs2]) => id + ': ' + [...fs2].join(', '));
+  assert.deepEqual(shared, [], 'a style id used by two modules');
+  assert(ids.has('efcStyle') && [...ids.get('efcStyle')][0] === 'charm-nest-efficiency-charts.js', 'the charts library\'s own id');
+  console.log(`  ✓ ${ids.size} style ids across the console's modules, each used by one module only`);
+}
 
 (async () => {
   const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
@@ -359,6 +369,36 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     console.log('  ✓ motion: numbers count up to the new value, frames stay short (median ' + m.med.toFixed(1) + ' ms, 95th ' + m.p95.toFixed(1) + ' ms), thumbnails zoom in place');
     await B.ctx.close(); assert(B.errs.length === 0, 'no page errors (normal motion): ' + B.errs.join(' | '));
     assert(seen.urls.every(u => !u.includes(F.KEY) && !u.includes('key=')), 'the passcode is never in a URL');
+
+    /* ── 10 · the charts after the Custom pieces tab (Design & Engrave): a chart drawn after the tab keeps the charts' CSS; an empty range is the calm empty state ── */
+    {
+      const C = await boot({ reducedMotion: 'reduce' }), cp = C.page;
+      await cp.click(`${V} .efTabBtn[data-tab="custom"]`); await cp.waitForSelector(`${V} .efcu .efcBody:not([hidden])`, { timeout: 15000 });
+      const tabGrid = await cp.evaluate(() => getComputedStyle(document.querySelector('#efficiencyView .efcu')).display);
+      await openPerson(cp, 'Ben R.');      // (a known inbox operator who has sent nothing: every day of the week is a zero)
+      const inb = `${P} [data-c="inb"]`;
+      await cp.waitForFunction(sel => { const c = document.querySelector(sel); return !!c && c.dataset.state === 'empty'; }, `${inb} .efc`, { timeout: 15000 });
+      await cp.locator(inb).scrollIntoViewIfNeeded(); await cp.mouse.move(2, 2); await cp.waitForTimeout(300);
+      const v = await cp.evaluate(sel => {
+        const card = document.querySelector(sel), svg = card.querySelector('svg.efc-svg'), r = svg.getBoundingClientRect(), slots = [...card.querySelectorAll('.efc-slot')];
+        const hit = document.elementsFromPoint(r.left + r.width * .5, r.top + r.height * .5).filter(e => card.contains(e) && e instanceof SVGGeometryElement).map(e => getComputedStyle(e).fill === 'rgb(0, 0, 0)' && getComputedStyle(e).opacity !== '0' ? e.getAttribute('class') || e.tagName : '').filter(Boolean);
+        return { text: (card.querySelector('.efc-state') || {}).innerText || '', days: slots.length, painted: slots.filter(x => getComputedStyle(x).opacity !== '0').length, black: hit, charts: (document.getElementById('efcStyle') || {}).textContent || '', tab: !!document.getElementById('efcuStyle') };
+      }, inb);
+      assert.equal(v.text.trim(), 'No replies in this range', 'the empty range says so, in the charts\' own quiet words');
+      assert(v.charts.includes('.efc-slot') && v.tab, 'both style sheets are on the page, each under its own id');
+      assert(v.days >= 7 && v.painted === 0 && !v.black.length, `no day column is painted (${v.painted} of ${v.days}; black: ${v.black.join()})`);
+      assert.equal(tabGrid, 'grid', 'the Custom pieces tab keeps its own layout');
+      await C.ctx.close(); assert(C.errs.length === 0, 'no page errors: ' + C.errs.join(' | '));
+      // the other order, on a fresh page: a chart first, then the tab: the tab still gets its own CSS
+      const D = await boot({ reducedMotion: 'reduce' }), dp = D.page;
+      await openPerson(dp, 'Ben R.'); await dp.waitForFunction(sel => !!document.querySelector(sel), `${P} [data-c="inb"] svg.efc-svg`, { timeout: 15000 });
+      await dp.evaluate(() => Efficiency.go('people')); await dp.waitForFunction(() => !EfficiencyEmployee.instances.length);
+      await dp.click(`${V} .efTabBtn[data-tab="custom"]`); await dp.waitForSelector(`${V} .efcu .efcBody:not([hidden])`, { timeout: 15000 });
+      const t2 = await dp.evaluate(() => ({ grid: getComputedStyle(document.querySelector('#efficiencyView .efcu')).display, charts: !!document.getElementById('efcStyle') }));
+      assert.deepEqual(t2, { grid: 'grid', charts: true }, 'charts first, then the tab: both keep their CSS');
+      await D.ctx.close(); assert(D.errs.length === 0, 'no page errors: ' + D.errs.join(' | '));
+      console.log(`  ✓ after the Custom pieces tab: Ben R.'s empty week reads "${v.text.trim()}", 0 of ${v.days} day columns painted; the tab keeps its layout in either order`);
+    }
 
     /* ── screenshots (fixture only) ── */
     if (SHOTS) {

@@ -16,7 +16,9 @@ const OPEN = 800, HIST = 6000;
 const TARGET = { tabP95: 100, tabCalls: 0, winOpenP50: 150, winTabP95: 100, winStepP95: 150, engStepP95: 100, sheetWinP95: 150 };
 const BUDGET = { tabP95: 300, tabCalls: 3, libCalls: 3, libKB: 100, winOpenP50: 400, winTabP95: 400, winStepP95: 500, engStepP95: 250, sheetWinP95: 400,
   // (round 4, 28 Oct 2026, load ~4: the main thread's own work, which the load moves far less: order window open p50 ~26 ms, Back / Next p95 ~20, the Library chip p95 ~21 ms; budgets with margin for load 8)
-  winOpenWork50: 90, winStepWork95: 90, libChipWork95: 90 };
+  winOpenWork50: 90, winStepWork95: 90, libChipWork95: 90,
+  // (round 5, load ~2.7: the Orders and Review tabs' first visit ~108 / 82 ms to the frame, work ~57 / 68 ms; one sample each, so the budgets leave room for a loaded machine)
+  firstTabP95: 300, firstTabWork: 140 };
 const NOBUDGET = !!process.env.NOBUDGET;
 const CHROME = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome';
 const pwDir = process.env.PW_DIR || [path.join(root, 'node_modules'), '/opt/node-tools/node_modules', '/opt/node22/lib/node_modules/playwright/node_modules'].find(d => fs.existsSync(path.join(d, 'playwright-core')));
@@ -112,7 +114,7 @@ async function scale() {
     await page.evaluate(async ({ orders, toRows }) => { B.orders.rows = eval(toRows)(orders); B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r])); await Orders.interpretAll(); }, { orders: F.openOrders(OPEN), toRows });
     const TABS = ['orders', 'engrave', 'review', 'library', 'nest'];
     // the first visit of each tab (draws it; what a person meets once a session)
-    for (const m of TABS) await measure(page, `tab → ${m} (first visit)`, 1, new Function(`document.querySelector('#modeSeg button[data-mode="${m}"]').click()`), { settle: 1200 });
+    for (const m of TABS) await measure(page, `tab → ${m} (first visit)`, 1, new Function(`document.querySelector('#modeSeg button[data-mode="${m}"]').click()`), { settle: 1200, budget: m === 'orders' || m === 'review' ? { p95: BUDGET.firstTabP95, work95: BUDGET.firstTabWork } : undefined });
     await page.waitForTimeout(1500);
     // ── tab switches, all day: round after round, each tab from the one before
     const R = 8, tabTimes = Object.fromEntries(TABS.map(m => [m, { t: [], w: [], long: 0, longMs: 0, calls: 0, kb: 0, ops: new Map() }]));

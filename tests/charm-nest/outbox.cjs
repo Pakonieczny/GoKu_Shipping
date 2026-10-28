@@ -38,17 +38,18 @@ const part = p => !ONLY || ONLY.split(',').includes(p);
       /* ── A · the cloud's side ── */
       sheet('ob-sheet-a');
       const patch = (o = {}) => Object.assign({ op: 'sheetLayoutPatch', id: 'ob-sheet-a', tab: 'tab-ob-1', by: 'Ana_M', poses: { c1: { cxPt: 44, cyPt: 41, angle: 15 } }, pins: { c1: { pinned: { cxPt: 44, cyPt: 41, angle: 15 }, manual: { by: 'Ana_M', at: Date.now() } } }, base: { c1: { cxPt: 40, cyPt: 40, angle: 0 } }, mark: { at: Date.now(), by: 'Ana_M', n: 1 }, release: true }, o);
+      const n00 = (await lib({ op: 'getChanges' })).n;
       const r1 = await lib(patch({ mid: 'mp-test-a-1' })), r2 = await lib(patch({ mid: 'mp-test-a-1' }));
       assert.equal(r1.status, 200, JSON.stringify(r1)); assert.equal(r1.ok, true); assert.equal(r1.moved, 1);
-      assert(r1.rev && r1.n > 0 && r1.keys.includes('s:ob-sheet-a') && r1.mid === 'mp-test-a-1', 'the answer carries the record\'s revision, the feed\'s count and its names: ' + JSON.stringify(r1));
+      assert(r1.rev && /^s:ob-sheet-a;lib=\d+/.test(r1.feed) && r1.mid === 'mp-test-a-1', 'the answer carries the record\'s revision, and the names it wrote with their counts (the feed\'s X-CN-Feed, kept for a replay): ' + JSON.stringify(r1));
       assert.equal(r2.replayed, true, 'sent again: the first answer, replayed'); assert.equal(r2.rev, r1.rev); assert.equal(ran.sheetLayoutPatch, 1, 'and the op ran once');
       const rec = st.doc(SHEETS, 'ob-sheet-a'), led = st.doc(MUT, 'mp-test-a-1');
       assert(rec.placements[0].cxPt === 44 && rec.placements[0].angle === 15 && rec.charms[0].pinned.cxPt === 44 && rec.charms[0].manual.by === 'Ana_M' && !('arrivalPin' in rec.charms[0]), 'the pose and the pin written: ' + JSON.stringify(rec.placements[0]));
       assert(rec.manual && rec.manual.n === 1 && rec.manualEdit === null && rec.filesOwed > 0 && rec._w['pose:c1'].by === 'Ana_M' && rec._w['pose:c1'].mid === 'mp-test-a-1', 'the mark, the claim given back, the files owed, who wrote the pose');
       assert(led && led.state === 'done' && led.status === 200 && led.expireAt && led.op === 'sheetLayoutPatch', 'the ledger keeps the answer, with its expiry: ' + JSON.stringify(led).slice(0, 200));
       // the feed: what it lists, with the count each was written at
-      const ch = await lib({ op: 'getChanges', since: r1.n - 1 });
-      assert(ch.keys.includes('s:ob-sheet-a') && ch.counts['s:ob-sheet-a'] === r1.n, 'the feed lists the sheet at the count the press wrote it: ' + JSON.stringify(ch));
+      const libN = +/lib=(\d+)/.exec(r1.feed)[1], ch = await lib({ op: 'getChanges', since: n00 });
+      assert(ch.keys && ch.keys.includes('s:ob-sheet-a') && ch.kn['s:ob-sheet-a'] === libN, 'the feed lists the sheet at the count the press wrote it: ' + JSON.stringify(ch));
       // a refusal: another screen holds the sheet; sent again, the same refusal; the cut sheet; a charm gone
       st.put(SHEETS, 'ob-sheet-a', { manualEdit: { by: 'Tess Welder', tab: 'tab-other', at: Date.now() } });
       const f1 = await lib(patch({ mid: 'mp-test-a-2' })), f2 = await lib(patch({ mid: 'mp-test-a-2' }));
@@ -83,7 +84,7 @@ const part = p => !ONLY || ONLY.split(',').includes(p);
       // a patch of the sheet's own fields names no order (no placement read follows it)
       const n0 = (await lib({ op: 'getChanges' })).n; await lib({ op: 'putSheet', sheet: { id: 'ob-sheet-a', label: null } }); const ch2 = await lib({ op: 'getChanges', since: n0 });
       assert.deepEqual(ch2.keys, ['s:ob-sheet-a'], 'a field patch names the sheet alone, no p:<order>: ' + ch2.keys);
-      say(`A · cloud: a press sent twice ran once (replayed, its revision ${r1.rev}, count ${r1.n}), a refusal comes back the same, "being written already", a throw keeps nothing; held / cut / gone refused in words; the later change wins and names Bea; the feed's counts`);
+      say(`A · cloud: a press sent twice ran once (replayed, its revision ${r1.rev}, ${r1.feed}), a refusal comes back the same, "being written already", a throw keeps nothing; held / cut / gone refused in words; the later change wins and names Bea; the feed's counts`);
     }
 
     if (['B', 'C', 'D'].some(part)) {
