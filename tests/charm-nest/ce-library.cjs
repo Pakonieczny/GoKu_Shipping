@@ -102,7 +102,13 @@ const STANDINS = `(function () {
     search: (q, o) => (q ? masters.filter(m => m.sku.toLowerCase().includes(String(q).toLowerCase())) : masters).slice(0, (o && o.limit) || 60).map(m => Object.assign({}, m)),
     onChange: () => () => {},
     open: sku => { calls.open.push(sku); return edit(sku, { front: mfront(sku) }, { name: sku, source: { kind: 'master', sku } }); },
-    openDesign: d => { calls.openDesign.push({ id: d.id, version: d.version }); return edit(d.name, d.faces, { id: d.id, name: d.name, source: { kind: 'design', designId: d.id, version: d.version }, orderId: d.orderId, customName: d.customName }); },
+    // (a design, or its id and o.version read through the design library with { open: true }, as charm-nest-ce-masters.js openDesign)
+    openDesign: async (d, o) => {
+      if (typeof d === 'string') d = await window.CharmNestDesigns.get(d, (o && o.version) || undefined, { open: true });
+      calls.openDesign.push({ id: d.id, version: d.version });
+      return edit(d.name, d.faces, { id: d.id, name: d.name, source: { kind: 'design', designId: d.id, version: d.version }, orderId: d.orderId, customName: d.customName });
+    },
+    picture: sku => Promise.resolve(pic('drawn ' + sku)),
     faces: sku => { calls.faces.push(sku); return Promise.resolve({ front: mfront(sku) }); },
     current: () => null
   };

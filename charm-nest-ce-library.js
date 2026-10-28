@@ -251,7 +251,9 @@
       return new Promise(res => { const im = new root.Image(); im.decoding = 'async'; im.onload = im.onerror = () => res(row.thumbUrl); im.src = row.thumbUrl; });
     }
     const M = Masters();
-    if (row.kind === 'master' && M && typeof M.thumb === 'function') { stats.asked++; return Promise.resolve().then(() => M.thumb(row.sku)).then(u => (typeof u === 'string' ? u : ''), () => ''); }
+    // (a master with no stored picture: the masters module draws it as the Master tab does, kept on this computer)
+    const draw = M && (typeof M.picture === 'function' ? M.picture : typeof M.thumb === 'function' ? M.thumb : null);
+    if (row.kind === 'master' && draw) { stats.asked++; return Promise.resolve().then(() => draw.call(M, row.sku)).then(u => (typeof u === 'string' ? u : ''), () => ''); }
     return Promise.resolve('');
   }
 
@@ -449,7 +451,7 @@
     const s = S; S = null;
     prefs.top[prefs.tab] = s.list.scrollTop;
     watchers.delete(s.onData);
-    clearTimeout(s.timer);
+    clearTimeout(s.timer); clearTimeout(s.countT); clearTimeout(s.moreT);
     if (s.ro) try { s.ro.disconnect(); } catch (_) { /* fine */ }
     endDrag(null, true, s);
     if (s.ask) s.ask.done('cancel');
@@ -511,14 +513,18 @@
       b.classList.toggle('is-on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false');
       if (k === 'mine') { b.disabled = !meName; b.title = meName ? `Made by ${meName}` : 'Sign in to see your own designs'; }
     }
-    if (prefs.tab === 'designs' && S.ix && S.ix.rows.length <= 20000) {
-      // (how many each would leave, on the chip's own title: the question the chip is pressed to answer, J 20907; counted only while the list is a few thousand)
-      const c = counts(S.ix, prefs.q, meName, now()), say = { mine: c.mine, with: c.with, none: c.none, today: c.today, week: c.week };
-      const words = { with: 'with an order', none: 'with no order (custom pieces)', today: 'made or changed today', week: 'made or changed this week' };
-      for (const b of S.box.querySelectorAll('[data-cel="f"]')) { const k = b.dataset.k === 'mine' ? 'mine' : b.dataset.v; if (k !== 'mine' || meName) b.title = `${say[k]} ${k === 'mine' ? `by ${meName}` : words[k]}`; }
-    }
+    // (how many each would leave, on the chip's own title: the question the chip is pressed to answer, J 20907. Counted once the typing pauses: a title is read by
+    //  hovering, never in the frame of a keystroke)
+    clearTimeout(S.countT);
+    if (prefs.tab === 'designs' && S.ix && S.ix.rows.length) S.countT = setTimeout(chipTitles, 250);
     const v = S.box.querySelector('[data-cel="view"]');
     v.innerHTML = prefs.view === 'tiles' ? IC.list : IC.tiles; v.title = prefs.view === 'tiles' ? 'Show as a list' : 'Show as tiles'; v.setAttribute('aria-label', v.title);
+  }
+  function chipTitles() {
+    if (!S || prefs.tab !== 'designs') return;
+    const meName = me(), c = counts(S.ix, prefs.q, meName, now()), say = { mine: c.mine, with: c.with, none: c.none, today: c.today, week: c.week };
+    const words = { with: 'with an order', none: 'with no order (custom pieces)', today: 'made or changed today', week: 'made or changed this week' };
+    for (const b of S.box.querySelectorAll('[data-cel="f"]')) { const k = b.dataset.k === 'mine' ? 'mine' : b.dataset.v; if (k !== 'mine' || meName) b.title = `${say[k]} ${k === 'mine' ? `by ${meName}` : words[k]}`; }
   }
   function sayCount() {
     const total = S.ix.rows.length, n = S.n, unit = prefs.tab === 'masters' ? 'charm' : 'design';
@@ -950,7 +956,8 @@
       if (row.kind === 'design' && M && typeof M.openDesign === 'function') {
         if (!endSession(cur, keep)) return;
         recentPush(row, v, 'opened');
-        M.openDesign(d);
+        // (by its id and version: the masters module reads it through the design library, from the copy just read, and that read tells the log it was opened)
+        M.openDesign(row.id, { version: v });
         return;
       }
       const o = cur.opts || {};
