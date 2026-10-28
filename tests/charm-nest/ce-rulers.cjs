@@ -299,7 +299,9 @@ const tickGap = page => page.evaluate(() => {
     await page.keyboard.press('v');
     await check('middle', () => drag(page, c, { x: c.x + 33, y: c.y + 55 }, { button: 'middle' }), 33, 55);
     await page.mouse.move(c.x, c.y);
-    await check('trackpad', async () => { await page.mouse.wheel(30, 0); await page.mouse.wheel(0, 45); await settle(page); }, -30, -45);
+    // (a trackpad's scroll comes in pixels and slanted; a synthetic one straight down reads as a mouse wheel's notch, which zooms, so this one is slanted)
+    await check('trackpad', async () => { await page.mouse.wheel(30, 45); await page.mouse.wheel(-12, 20); await settle(page); await page.waitForTimeout(200); await settle(page); }, -18, -65);
+    assert.ok(!(await page.evaluate(() => document.querySelector('.ce-stage').classList.contains('is-fastpan'))), 'drawn afresh once the scroll stops');
     assert.equal((await C(page)).zoom, 1600, 'the zoom is untouched');
     return out.join(' · ');
   });

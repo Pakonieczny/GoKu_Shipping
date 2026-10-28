@@ -1049,7 +1049,9 @@
 /* (the charm's own paths are never what a press lands on: the editor finds the part under the hand itself, so the browser is spared hit-testing hundreds of curves on every move) */
 .ce-art{ pointer-events:none; }
 /* a pan slides what is drawn (the workspace's slide()): each sliding layer on the compositor, drawn past its own edges */
-.ce-stage.is-fastpan .ce-art,.ce-stage.is-fastpan .ce-ui,.ce-stage.is-fastpan .ce-view{ overflow:visible; will-change:transform; }
+.ce-selo{ position:absolute; left:0; top:0; width:100%; height:100%; overflow:hidden; display:block; pointer-events:none; }
+.ce-selo .u-sel{ fill:none; stroke:var(--gold); stroke-width:1; }
+.ce-stage.is-fastpan .ce-art,.ce-stage.is-fastpan .ce-ui,.ce-stage.is-fastpan .ce-view,.ce-stage.is-fastpan .ce-selo{ overflow:visible; will-change:transform; }
 .ce-stage.is-fastpan .ce-paper{ will-change:transform; }
 /* A LONG LAYERS LIST COSTS THE ZOOM NOTHING (28 Oct 2026): a charm of three hundred parts has three hundred rows, and every frame of a zoom or a pan was paying for
    all of them (each row and its swatch a layer of its own to paint and hit-test, each hidden eye and lock an invisible picture). Rows off the list's screen are not
@@ -1440,6 +1442,7 @@
       <div class="ce-paper"></div>
       <svg class="ce-art" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" role="img" aria-label="The charm"><g class="ce-grid"></g><g class="ce-items"></g></svg>
       <svg class="ce-view" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
+      <svg class="ce-selo" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
       <svg class="ce-ui" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
       <div class="ce-say" role="status" aria-live="polite"></div>
     </div>
@@ -1600,7 +1603,7 @@
       if (!panning()) { if (slid) { slid = null; stage.classList.remove('is-fastpan'); } return false; }
       if (!slid || slid.k !== S.k || Math.abs(S.ox - slid.ox) > b.w / 2 || Math.abs(S.oy - slid.oy) > b.h / 2) return false;
       const by = (el, at) => { const t = at && at[2] === S.k ? `translate(${S.ox - at[0]}px,${S.oy - at[1]}px)` : ''; if (el.style.transform !== t) el.style.transform = t; };
-      by(art, [slid.ox, slid.oy, slid.k]); by(paper, [slid.ox, slid.oy, slid.k]); by(ui, ui.__at); by(viewEl, viewEl.__at);
+      by(art, [slid.ox, slid.oy, slid.k]); by(paper, [slid.ox, slid.oy, slid.k]); by(ui, ui.__at); by(viewEl, viewEl.__at); by(seloEl, seloEl.__at);
       queueRulers();
       if (S.editing) placeEditor();
       return true;
@@ -1862,6 +1865,27 @@
       if (!p || (Math.abs(p[0] - f.x0) < 1e-9 && Math.abs(p[1] - f.y0) < 1e-9)) delete face().zero; else face().zero = [r9(p[0]), r9(p[1])];
       queueRulers(); drawView(); syncProps();
     }
+    /* THE OUTLINES OF A SELECTION OF MANY, DRAWN ONCE AND KEPT (28 Oct 2026): every part of the selection outlined in gold, in the charm's own coordinates under one
+       matrix, the view. A zoom or a pan changes that matrix and nothing else; the outlines are made again only when the selection or the drawing changes (a zoom
+       with three hundred parts selected was making three hundred outlines afresh on every frame). */
+    const seloEl = $('.ce-selo');
+    let seloKey = '', seloFor = null;
+    function selOutlines(es) {
+      if (!es.length) { if (seloKey) { seloEl.innerHTML = ''; seloKey = ''; seloFor = null; } return; }
+      const key = S.face + '|' + es.map(e => e.it.id).join('|');
+      if (seloFor !== items() || seloKey !== key) {
+        seloFor = items(); seloKey = key;
+        let h = '', n = 0;
+        const leaf = (lf, M) => { h += `<path d="${dOf(geo.raw(lf).subpaths)}"${isI(M) ? '' : ` transform="matrix(${M.map(v => +v.toFixed(9)).join(' ')})"`} vector-effect="non-scaling-stroke"/>`; n++; };
+        const rec = (g, M) => { for (const ch of g.children || []) { if (n > 400 || ch.hidden) continue; const M2 = mul(M, geo.matrix(ch)); if (ch.kind === 'group') rec(ch, M2); else leaf(ch, M2); } };
+        let m = 0;
+        for (const e of es) { if (m++ > 300) break; const W = mul(e.P, geo.matrix(e.it)); if (e.it.kind === 'group') rec(e.it, W); else leaf(e.it, W); }
+        seloEl.innerHTML = `<g class="u-sel">${h}</g>`;
+      }
+      const g = seloEl.firstChild, t = `matrix(${V().map(v => +v.toFixed(9)).join(' ')})`;
+      if (g && g.getAttribute('transform') !== t) g.setAttribute('transform', t);
+      drawnAt(seloEl);
+    }
     function hoverGuide(e) {
       let on = null;
       if ((S.tool === 'select' || S.tool === 'marquee') && !S.g && !S.space && !(e.target.closest && e.target.closest('[data-h]'))) {
@@ -2019,9 +2043,10 @@
       const busy = S.g && S.g.live;
       if (S.hover && !busy && !isSelected(S.hover)) { const e = entry(S.hover); if (e && !e.it.hidden) h += outline(e.it, e.P, 'u-hover'); }
       const info = selInfo();
+      // (the outlines of a selection of many, or of a group, are kept in a layer of their own and moved by the view: selOutlines)
+      { const many = info && !(S.g && S.g.kind === 'marquee') ? selEntries() : []; selOutlines(many.length > 1 || (many.length === 1 && many[0].it.kind === 'group') ? many : []); }
       if (info && !(S.g && S.g.kind === 'marquee')) {
         const es = selEntries();
-        if (es.length > 1 || es[0].it.kind === 'group') { let n = 0; for (const e of es) { if (n++ > 300) break; h += outline(e.it, e.P, 'u-sel'); } }
         const sc = info.corners.map(p => toStage(p[0], p[1]));
         const poly = sc.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
         h += `<polygon class="u-box--under" points="${poly}"/><polygon class="u-box${info.single ? '' : ' is-many'}" points="${poly}"/>`;
