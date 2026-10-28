@@ -12,9 +12,9 @@ const { start } = require('./bridge-server.cjs');
 const F = require('../perf/scale-fixture.cjs');
 const OPEN = 800, HIST = 6000;
 // Paul's targets (TARGET) are printed beside each row; the budgets that fail the run (BUDGET) are what this branch holds today with margin on a loaded machine (load ~3): a regression guard
-// until the order window and the Orders tab reach the targets (28 Oct 2026: tab → orders p95 ~280 ms, order window open p50 ~290 ms, Next/Back p95 ~450 ms at load 3)
-const TARGET = { tabP95: 100, tabCalls: 0, winOpenP50: 150, winTabP95: 100, winStepP95: 100, engStepP95: 100, sheetWinP95: 150 };
-const BUDGET = { tabP95: 450, tabCalls: 3, libCalls: 3, libKB: 100, winOpenP50: 500, winTabP95: 400, winStepP95: 700, engStepP95: 300, sheetWinP95: 400 };
+// until the order window reaches the targets (28 Oct 2026, round 2, load ~2.5: tab → orders p95 ~120 ms, review ~100 ms, order window open p50 ~190 ms, Next/Back p95 ~200 ms, Engraving Next p95 ~110 ms)
+const TARGET = { tabP95: 100, tabCalls: 0, winOpenP50: 150, winTabP95: 100, winStepP95: 150, engStepP95: 100, sheetWinP95: 150 };
+const BUDGET = { tabP95: 300, tabCalls: 3, libCalls: 3, libKB: 100, winOpenP50: 400, winTabP95: 400, winStepP95: 500, engStepP95: 250, sheetWinP95: 400 };
 const NOBUDGET = !!process.env.NOBUDGET;
 const CHROME = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1243/chrome-linux64/chrome';
 const pwDir = process.env.PW_DIR || [path.join(root, 'node_modules'), '/opt/node-tools/node_modules', '/opt/node22/lib/node_modules/playwright/node_modules'].find(d => fs.existsSync(path.join(d, 'playwright-core')));
@@ -182,15 +182,16 @@ async function engraving() {
   if (!process.env.PW_DIR && pwDir) process.env.PW_DIR = pwDir;   // (the engraving world finds playwright-core where this file found it)
   if (!process.env.CHROMIUM) process.env.CHROMIUM = CHROME;          // (and the browser this file runs: its own default is an older build)
   const say = m => { if (process.env.TRACE) console.log('    · ' + m); };
+  const within = (what, p, ms = 120000) => { let t; return Promise.race([p, new Promise((_, no) => { t = setTimeout(() => no(new Error(`${what}: no answer in ${ms / 1000} s`)), ms); })]).finally(() => clearTimeout(t)); };
   const R = require('./_engraveRealWorld.cjs');
   say('starting the engraving world');
-  const w = await R.world({ viewport: { width: 1440, height: 900 } }); if (!w) { console.log('  – the engraving world did not start'); return; }
+  const w = await within('starting the engraving world', R.world({ viewport: { width: 1440, height: 900 } })); if (!w) { console.log('  – the engraving world did not start'); return; }
   say('world up');
   const page = w.page;
   try {
     await page.evaluate(probes);
     say('building the engraving orders');
-    const made = await R.build(w);
+    const made = await within('building the engraving orders', R.build(w), 180000);
     say('built');
     const jobs = Object.values(made).flatMap(m => m.jobs.map(j => j.key));
     console.log(`  engraving world: ${jobs.length} placements · load ${os.loadavg().map(x => x.toFixed(2)).join(' ')}`);
@@ -209,9 +210,19 @@ async function engraving() {
   } finally { await w.close(); }
 }
 
+/* The engraving phase runs in a process of its own: a second bridge-server started in this process after the scale world shares the functions' modules (Node's require cache) with
+   the first one, whose servers are closed, and the engraving world's first build waited on them for good (28 Oct 2026: the run sat at 2 % CPU until it was killed). Each step of it
+   also has a time limit, named when it is passed, so it can never wait in silence. */
+function engravingApart() {
+  const { spawnSync } = require('child_process'), out = path.join(os.tmpdir(), `nav-instant-eng-${process.pid}.json`);
+  const r = spawnSync(process.execPath, [__filename], { stdio: 'inherit', env: Object.assign({}, process.env, { ONLY_ENGRAVE: '1', JSON: out }), timeout: 300000 });
+  try { rows.push(...JSON.parse(fs.readFileSync(out, 'utf8'))); fs.unlinkSync(out); } catch (_) {}
+  if (r.status !== 0) fails.push(`the engraving phase ${r.error ? 'did not finish: ' + r.error.message : 'ended with ' + (r.status == null ? r.signal : 'exit ' + r.status)}`);
+}
 async function main() {
   if (!process.env.ONLY_ENGRAVE) await scale();
-  if (!process.env.SKIP_ENGRAVE) await engraving().catch(e => { console.log('  engraving world failed:', e.message); fails.push('engraving world: ' + e.message); });
+  if (process.env.ONLY_ENGRAVE) await engraving().catch(e => { console.log('  engraving world failed:', e.message); fails.push('engraving world: ' + e.message); });
+  else if (!process.env.SKIP_ENGRAVE) engravingApart();
   if (process.env.JSON) fs.writeFileSync(process.env.JSON, JSON.stringify(rows, null, 1));
   if (fails.length) { console.log('\n  OVER BUDGET:\n   · ' + fails.join('\n   · ')); process.exitCode = 1; } else console.log('\n  every budget held');
 }
