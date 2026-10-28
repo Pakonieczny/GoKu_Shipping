@@ -229,14 +229,16 @@ const ListMedia = (() => {
     return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design${earPair(row) ? " · Left + Right" : ""}<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
   }
   function clean() {ListZoom.clean();for(const host of watched)if(!host.isConnected){observer?.unobserve(host);watched.delete(host);}}
-  function watch(host,load,key,force=false,zoomKey=key) {
+  // (THUMBSYNC, Paul 28 Oct 2026: `soft`: a box that shows a finished picture keeps it until the new one is drawn, no spinner in between: a piece's picture changing as a person works on it)
+  function watch(host,load,key,force=false,zoomKey=key,soft=false) {
     if(!host)return;
-    if(window.CharmNestInteraction?.defer(host,()=>watch(host,load,key,force,zoomKey)))return;
+    if(window.CharmNestInteraction?.defer(host,()=>watch(host,load,key,force,zoomKey,soft)))return;
     const old=jobs.get(host);if(old?.key===key && !force){if(old.state==="done")ListZoom.bind(host,(host.hasAttribute('data-listing')?'listing:':'vector:')+old.zoomKey);if(old.state==="waiting" && observer && !watched.has(host)){watched.add(host);observer.observe(host);}return;}
     observer?.unobserve(host);watched.delete(host);
     ListZoom.detach(host);
-    const job={load,key,zoomKey,state:"waiting"};jobs.set(host,job);
-    host.innerHTML=loading;host.setAttribute('aria-busy','true');host.onclick=null;host.removeAttribute('role');host.removeAttribute('tabindex');host.onkeydown=null;
+    const keep=!!soft && old?.state==="done" && !!host.querySelector('img,canvas');
+    const job={load,key,zoomKey,state:"waiting",soft:keep};jobs.set(host,job);
+    if(!keep){host.innerHTML=loading;host.setAttribute('aria-busy','true');}host.onclick=null;host.removeAttribute('role');host.removeAttribute('tabindex');host.onkeydown=null;
     if(observer){watched.add(host);observer.observe(host);}else{queue.push(host);pump();}
   }
   function pump() {
@@ -250,7 +252,7 @@ const ListMedia = (() => {
           const result=await job.load();if(!host.isConnected || jobs.get(host)!==job)return;
           if(typeof result==='string' && result){
             const img=document.createElement('img');img.alt=host.getAttribute('aria-label') || '';img.decoding='async';img.loading='eager';img.referrerPolicy='no-referrer';
-            await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{img.onload=img.onerror=null;reject(Error('Image timed out'));},20000);img.onload=()=>{clearTimeout(timer);resolve();};img.onerror=()=>{clearTimeout(timer);reject(Error('Image unavailable'));};img.src=cors(result);host.appendChild(img);});
+            await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{img.onload=img.onerror=null;reject(Error('Image timed out'));},20000);img.onload=()=>{clearTimeout(timer);resolve();};img.onerror=()=>{clearTimeout(timer);reject(Error('Image unavailable'));};img.src=cors(result);if(!job.soft)host.appendChild(img);});
             if(!host.isConnected || jobs.get(host)!==job)return;host.replaceChildren(img);
           }else if(result?.nodeType)host.replaceChildren(result);
           else if(host.hasAttribute('data-listing')){host.innerHTML=photoStatus(job.key);host.title=photoTitle(job.key);}
@@ -396,9 +398,26 @@ const ListMedia = (() => {
     if(host && row)host._mvRow=row;   // (MONOTHUMB: monoSweep finds the line of a box drawn before its monogram was made)
     if(host && row && monoInto(host,row))return;   // (MONOTHUMB, above)
     if(host && host.dataset.monoKey){delete host.dataset.monoKey;host._monoMount=null;if(monoView)monoView.unobserve(host);}
+    // THUMBSYNC (Paul, 28 Oct 2026: "a user scrolling through a list of orders can see updated thumbnails that already include the given charm's engraving for both back and front"): a line whose pieces have
+    // something of their own (fitted words, a Charm Editor change) shows them as they will be made (charm-nest-made-thumb.js: this page's own drawing while it is live here, else the picture the cloud keeps on
+    // the piece's pool row); every other line, the Vector design as before. Its box keeps the picture it shows until the new one is drawn (soft).
+    let made=null;try{made=host && row && window.CharmNestMadeThumb ? window.CharmNestMadeThumb.forLine(row) : null;}catch(e){made=null;console.warn('made thumbnail',e);}
+    const was=jobs.get(host),soft=!!(was && String(was.key).startsWith('made:')) || !!made;
+    if(host){if(made){host.dataset.made=String(made.pieces || 1);host.title='As it will be made: the engraving and the changes of its pieces, front and back';}else if(host.dataset.made){delete host.dataset.made;host.removeAttribute('title');}}
+    if(made){watch(host,made.load,made.key,false,JSON.stringify([row?.key || '','made']),soft);return;}
     const sku=row?.spec?.designSku || row?.line?.sku || '';
     const both=matchPair(row),two=twoOf(row),one=oneRow(row),set=setOf(row);   // (the line's picture is the pair once the line is known to be an earring pair: the key changes with it, so the row draws again; one body once it is known to make one; the two designs of a set)
-    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline),designVer(sku),pieceSig(row)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[]).concat(two?['two',two,!!Master.entryFor(two),Master.entryFor(two)?.updatedAt || 0]:[]).concat(set.length?['set',set.join('+'),set.map(k=>Master.entryFor(k)?.updatedAt || 0).join('+')]:[]).concat(one>=0?['one',one]:[])),false,JSON.stringify([sku,row?.spec?.size,pieceSig(row)].concat(both?['pair']:[]).concat(two?['two',two]:[]).concat(set.length?['set',set.join('+')]:[]).concat(one>=0?['one',one]:[])));   // (the framing key carries no designVer (26 Oct 2026): before the catalog loads on a refresh designVer is '', so a key with it lost every vector's zoom on a refresh (tests/charm-nest/list-views.cjs); the picture's own key above still redraws a new design)
+    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline),designVer(sku),pieceSig(row)].concat(both?['pair',Master.entryFor(sku)?.facing || '']:[]).concat(two?['two',two,!!Master.entryFor(two),Master.entryFor(two)?.updatedAt || 0]:[]).concat(set.length?['set',set.join('+'),set.map(k=>Master.entryFor(k)?.updatedAt || 0).join('+')]:[]).concat(one>=0?['one',one]:[])),false,JSON.stringify([sku,row?.spec?.size,pieceSig(row)].concat(both?['pair']:[]).concat(two?['two',two]:[]).concat(set.length?['set',set.join('+')]:[]).concat(one>=0?['one',one]:[])),soft);   // (the framing key carries no designVer (26 Oct 2026): before the catalog loads on a refresh designVer is '', so a key with it lost every vector's zoom on a refresh (tests/charm-nest/list-views.cjs); the picture's own key above still redraws a new design)
+  }
+  /** THUMBSYNC: the boxes on this page look again at what they show (ids: the pieces that moved; null: every box). A box whose picture is the same keeps it (watch's key); one whose picture changed draws
+   *  the new one over the old (soft). The order window's ear pictures too. */
+  function refresh(ids){
+    try{
+      const want=ids && ids.length ? new Set(ids.map(String)) : null, MT=window.CharmNestMadeThumb;
+      const hit=row=>{if(!want)return true;const own=(MT && MT.host().poolIdsOf ? MT.host().poolIdsOf(row) : row?.poolIds) || [];return own.some(id=>want.has(String(id)));};
+      for(const el of document.querySelectorAll('[data-vector],#owVector')){const r=el._mvRow;if(r && el.isConnected && hit(r))vectorInto(el,r);}
+      for(const el of document.querySelectorAll('[data-pc-thumb]')){if(el._pcRedo && el.isConnected)el._pcRedo();}
+    }catch(e){console.warn('made thumbnails: refresh',e);}
   }
   function mount(node,row) {
     clean();const lid=String(row?.line?.listingId || '');
@@ -417,7 +436,7 @@ const ListMedia = (() => {
     const io=window.IntersectionObserver ? new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))go();},{rootMargin:'160px'}) : null;
     button.onclick=go;host.appendChild(button);if(io){pages.set(host,io);io.observe(button);}
   }
-  return {pair,pairRow,oneRow,earPair,earMirror,mount,vectorInto,monoSweep,vectorBig,vectorThumb,vectorKey,pieceSig,designVer,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
+  return {pair,pairRow,oneRow,earPair,earMirror,mount,vectorInto,refresh,monoSweep,vectorBig,vectorThumb,vectorKey,pieceSig,designVer,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
 })();
 // (the piece dots' hover card, charm-nest-piece-dots.js, reads the vector design through these two only: ListMedia itself stays private to this page's code)
 window.PieceMedia = { vectorKey: (row, opts) => ListMedia.vectorKey(row, opts && opts.pair === true ? opts : Object.assign({}, opts, { piece: true })), vectorThumb: ListMedia.vectorThumb, pairRow: ListMedia.pairRow, earMirror: ListMedia.earMirror };
@@ -11136,6 +11155,7 @@ const Engrave = window.Engrave = (() => {
   }
   /** Repaint the card in place: the picture, the numbers, the chips. The pane is only rebuilt when what it holds changes. */
   function refresh(job) {
+    try { window.CharmNestMadeThumb?.changed("words", job && job.copies); } catch (_) { /* THUMBSYNC: words resized, moved or turned: the list boxes look again */ }
     const c = EG.card;
     if (!c || !c.isConnected || EG.cardKey !== job.key) { render(); return; }
     const f = job.fit; if (!f) { render(); return; }
@@ -11173,6 +11193,7 @@ const Engrave = window.Engrave = (() => {
   }                                   // which tab is open and which placement is in front
   let rendering = false;
   function render() {
+    try { window.CharmNestMadeThumb?.changed("engrave"); } catch (_) { /* THUMBSYNC: words fitted, approved or changed: the list boxes look again (charm-nest-made-thumb.js) */ }
     if(window.Seal?.defer('engraving-view',render) || window.CharmNestInteraction?.defer('engraving-view',render))return;
     if (rendering) return;
     rendering = true;
@@ -22554,7 +22575,11 @@ const OrderWin = window.OrderWin = (() => {
     }
     wirePcSheet(box);
     // (the small pictures of the Left and Right lines: the pair's own picture with the other body washed out, from the one renderer the other pictures use; a picture already drawn is kept)
-    box.querySelectorAll("[data-pc-thumb]").forEach(h => { const pr = rowOf(h.dataset.pcThumbLine); if (pr) tryDo(() => { const o = { highlight: h.dataset.pcThumb, side: h.dataset.pcThumb, mirror: h.dataset.pcMirror === "1", px: 120 }; ListMedia.watch(h, () => ListMedia.vectorThumb(pr, o), ListMedia.vectorKey(pr, o)); }); });
+    // (THUMBSYNC, Paul 28 Oct 2026: an ear with something of its own (a Charm Editor change) is drawn as it will be made, charm-nest-made-thumb.js forPiece; ListMedia.refresh asks again through _pcRedo)
+    box.querySelectorAll("[data-pc-thumb]").forEach(h => { const pr = rowOf(h.dataset.pcThumbLine); if (pr) tryDo(() => { const o = { highlight: h.dataset.pcThumb, side: h.dataset.pcThumb, mirror: h.dataset.pcMirror === "1", px: 120 };
+      const go = () => { const MT = window.CharmNestMadeThumb, pid = MT ? ((tryDo(() => OrderPieces.ofRow(pr)) || []).find(c => c && c.side === h.dataset.pcThumb) || {}).poolId : "", m = pid ? tryDo(() => MT.forPiece(pid)) : null;
+        if (m) ListMedia.watch(h, m.load, m.key, false, m.key, true); else ListMedia.watch(h, () => ListMedia.vectorThumb(pr, o), ListMedia.vectorKey(pr, o), false, ListMedia.vectorKey(pr, o), true); };
+      h._pcRedo = go; go(); }); });
     box.querySelectorAll("[data-pc-act]").forEach(h => wirePcAct(h, typed));
     if (window.ReviewSend && ReviewSend.fill) tryDo(() => ReviewSend.fill(box));   // (the Send to Review of the rows that have no card's buttons: HOLDBTN, Paul 20 Oct 2026, where Hold stood)
     markPieces();
@@ -23598,11 +23623,14 @@ const OrderWin = window.OrderWin = (() => {
       `<section><span class="fLabel">This order · ${pieces.length} piece${pieces.length === 1 ? "" : "s"}</span><ul class="owPieces">${pieces.map((it, i) => `<li data-i="${i}" class="${it.here && (!SV.focus || it.poolId === SV.focus || !x0 || x0 === it.piece) && it.piece === x0 ? "on" : !it.here && !it.nested && !it.loading ? "off" : ""}"><span class="n">${i + 1}</span><span class="sku">${esc(it.sku || "")}${it.qty > 1 ? ` <small>copy ${it.copy} of ${it.qty}</small>` : ""}</span>${where(it)}</li>`).join("")}</ul></section>` +
       (rec ? `<div class="acts"><button type="button" class="btn ghost sm" data-full${cut ? "" : ""}>Open full sheet ›</button><button type="button" class="btn ghost sm" data-off${cut || lined ? " disabled" : ""}${lined ? ` title="Inside the saved Rose Gold green line: its pieces stay on the sheet until it is cut, then are set aside"` : ""}>Take off the sheet…</button>${cut ? `<span class="why">Cut — it can no longer be taken off</span>` : lined ? `<span class="why">Inside the saved green line</span>` : ""}</div>` : "");
     // the charm's own picture: its drawing on this sheet, else the order's vector
-    const pic = panel.querySelector("[data-pic]"); if (pic) { if (x0 && x0.c) { const c2 = document.createElement("canvas"); c2.width = c2.height = 184; drawCharmInto(c2, x0.c); pic.appendChild(c2); } else tryDo(() => ListMedia.vectorInto(pic, lr));
+    // (THUMBSYNC, Paul 28 Oct 2026: "that image must be perfectly visible along with all the other charm details in all thumbnail previews": a piece with words or Charm Editor parts of its own is painted
+    //  over as it will be made, front and back: charm-nest-made-thumb.js paintInto; the plain drawing stands until then, and for every other piece)
+    const madeOn = cv => { if (x0 && x0.poolId) tryDo(() => window.CharmNestMadeThumb?.paintInto(cv, x0.poolId)); return cv; };
+    const pic = panel.querySelector("[data-pic]"); if (pic) { if (x0 && x0.c) { const c2 = document.createElement("canvas"); c2.width = c2.height = 184; drawCharmInto(c2, x0.c); pic.appendChild(madeOn(c2)); } else tryDo(() => ListMedia.vectorInto(pic, lr));
       // (zooms and pans where it lies, as the Overview's pictures do; the drawing is made again larger when the zoom settles, and the panel drawn again keeps it)
       const Z = window.CNZoomPan, picKey = rid + "|" + ((x0 && (x0.poolId || x0.id)) || "") + "|" + sku;
       if (Z) tryDo(() => Z.attach(pic, { id: "ow:sheetPic", key: picKey, label: "Charm drawing", maxPx: 1472,
-        hires: x0 && x0.c ? ({ px }) => { const size = Math.min(1472, Math.max(368, Math.ceil(px / 184) * 184)), c3 = document.createElement("canvas"); c3.width = c3.height = size; drawCharmInto(c3, x0.c); return { el: c3, px: size }; }
+        hires: x0 && x0.c ? ({ px }) => { const size = Math.min(1472, Math.max(368, Math.ceil(px / 184) * 184)), c3 = document.createElement("canvas"); c3.width = c3.height = size; drawCharmInto(c3, x0.c); return { el: madeOn(c3), px: size }; }
           : ({ px }) => { const size = Math.min(1472, Math.max(512, Math.ceil(px / 184) * 184)); return Promise.resolve(ListMedia.vectorBig(lr, size)).then(src => src ? { src, px: size } : null); } })); }
     panel.querySelectorAll("[data-at]").forEach(b => b.onclick = () => { if (+b.dataset.at === SV.at) return; SV.at = +b.dataset.at; SV.focus = null; paintPanel(null); sheetDraw(); });
     panel.querySelectorAll(".owPieces li[data-i]").forEach(li => {
@@ -25281,7 +25309,7 @@ const Session = window.Session = (() => {
     });
     return chain;
   }
-  function schedule() { if (quiet || frozen) return; rev++; arm(1000); }
+  function schedule() { try { window.CharmNestMadeThumb?.changed("session"); } catch (_) { /* THUMBSYNC: a change of the workspace may be a piece's picture */ } if (quiet || frozen) return; rev++; arm(1000); }
   /** Leaving the page (reload, close, another tab): write the workspace now. flush() first waits for the pointer and the
       keyboard to rest and for a save already in flight, and a reloading page is gone before either happens, so whatever
       was done in the last second before a reload (a nudge, a word, a decision) was lost. The write is issued here, in the
@@ -26464,9 +26492,11 @@ if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
       const list = sh.charms.slice(); list[i] = mine; sh.charms = list; n++;
     }
     if (n) Session.schedule();
+    try { window.CharmNestMadeThumb?.changed("art", [poolId]); } catch (_) { /* THUMBSYNC: the list boxes show the piece's new art at the next sweep */ }
     return n;
   },
   changed: async (poolId, face, info) => {
+    if (info && info.sync) { try { window.CharmNestMadeThumb?.adopt([poolId]); } catch (_) { /* THUMBSYNC: an edit made on another computer is shown here, and sent from there */ } }
     let n = 0; try { n = Engrave.artChanged(poolId, face); if (info && info.cut) n += Engrave.artChanged(poolId, face === "front" ? "back" : "front", `This charm's cut line changed since the words were approved — fit the words again`); } catch (e) { console.warn("artwork edit: engraving", e); }   // (a cut line is both faces' edge)
     const sh = Pool.sheetOf(poolId), rec = info && info.record;
     agent({ pool: true, ...(sh ? { metal: sh.metal } : {}) }, "info", `${poolId}: its own ${face} artwork ${rec ? `edited${rec.by ? " by " + rec.by : ""}` : "taken back to the master drawing"}${info && info.sync ? " (on another computer)" : ""}${n ? `; its ${face} engraving is fitted again and waits for Approve` : ""}${sh && sh.outputs ? `; ${sh.fileBase || "its sheet"} writes its files again` : ""}`);
@@ -26480,6 +26510,41 @@ if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
   },
   note: (poolId, face, n) => agent({ pool: true }, "warn", `${poolId}: its own ${face} artwork edit was not put on the piece${n && n.by ? ` (made by ${n.by})` : ""}: ${(n && (n.why || (n.refused[0] && n.refused[0].why))) || "it could not be read"}`)
 });
+/* ── THUMBSYNC (Paul, 28 Oct 2026: "the same changes should be saved as thumbnails to represent those particular orders ... real time on the host computer and updated on the cloud fairly quickly for
+   others to see on other computers"): charm-nest-made-thumb.js draws each piece as it will be made and keeps that picture on its pool row; this page lends it what it holds. The pieces it looks at are
+   those of the Engrave jobs and the charms the Charm Editor changed (pieceIndex: one pass, once per sweep); a line's pieces are its pool ids, or, on a computer that did not pool it, the pool rows the
+   placement feed read for its order (OrderPieces); a piece's rows are this page's own and the feed's, the newer `made` wins. ── */
+if (window.CharmNestMadeThumb) {
+  const MADE_GONE = new Set(["abandoned", "superseded"]);
+  const learnedPools = rid => { try { const e = window.OrderPieces && OrderPieces._learned ? OrderPieces._learned.get(/^CUSTOM-/.test(rid) ? rid : String(rid).replace(/\D/g, "")) : null; return (e && e.pools) || []; } catch (_) { return []; } };
+  window.CharmNestMadeThumb.setHost({
+    api: (fn, body, opts) => api(fn, body, opts),
+    who: () => { try { return employeeName() || ""; } catch (_) { return ""; } },
+    sandbox: () => WORKSPACE_SANDBOX,
+    charmOf: poolId => Pool.charmOf(poolId) || null,
+    jobsOfPiece: poolId => Engrave.jobsOfPiece(poolId),
+    pieceIndex: () => {
+      const m = new Map();
+      for (const j of Engrave.items().values()) { if (!j || j.editingBack || j.archived) continue; const f = j.face === "front" ? "front" : "back"; for (const id of j.copies || []) { const e = m.get(id) || { front: null, back: null }; if (!e[f]) e[f] = j; m.set(id, e); } }
+      for (const sh of allSheets()) for (const c of sh.charms || []) if (c && c.poolId && c.artEdit && (c.artEdit.front || c.artEdit.back) && !m.has(c.poolId)) m.set(c.poolId, { front: null, back: null });
+      return m;
+    },
+    poolRows: poolId => [B.pool.rows.get(poolId), learnedPools(String(poolId).split("_")[0]).find(p => p && p.poolId === poolId)].filter(Boolean),
+    poolIdsOf: row => {
+      if (!row) return [];
+      const own = (row.poolIds || []).filter(Boolean); if (own.length) return own;
+      const rid = String(row.order?.receiptId ?? ""), tid = String(row.line?.transactionId ?? ""); if (!rid || !tid) return [];
+      const pre = rid + "_" + tid + "_", tail = id => +String(id).split("_").pop() || 0;
+      return learnedPools(rid).filter(p => p && String(p.poolId || "").startsWith(pre) && !MADE_GONE.has(p.state)).map(p => p.poolId).sort((a, b) => tail(a) - tail(b));
+    },
+    keepMade: (poolId, made) => {
+      for (const r of [B.pool.rows.get(poolId), learnedPools(String(poolId).split("_")[0]).find(p => p && p.poolId === poolId)]) if (r) { if (made) r.made = made; else delete r.made; }
+      Session.schedule();   // (the checkpoint keeps it: after a reload this page knows what the cloud holds, and sends nothing again)
+    },
+    refresh: ids => ListMedia.refresh(ids)
+  });
+  try { if (window.OrderPieces && OrderPieces.subscribe) OrderPieces.subscribe(() => window.CharmNestMadeThumb.refreshSoon()); } catch (_) { /* the boxes look again when they are drawn */ }
+}
 async function bootBridge() {
   // The Design Station guards unload in three places; the sorter guarded it nowhere. A reload mid-run loses every
   // engraving approval not yet written to a back file and every review decision made that shift.

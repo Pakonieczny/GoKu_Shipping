@@ -2878,6 +2878,48 @@ async function op_artList(b) {
   for (let i = 0; i < keys.length; i += 100) (await db.getAll(...keys.slice(i, i + 100).map(k => col(ART).doc(k)))).forEach((s, j) => { if (s.exists) arts[keys[i + j]] = artOut(s.data()); });
   return { arts };
 }
+/* ── THUMBSYNC (Paul, 28 Oct 2026: "the same changes should be saved as thumbnails to represent those particular orders so that a user scrolling through a list of orders can see updated thumbnails
+   that already include the given charm's engraving for both back and front when necessary ... updated on the cloud fairly quickly for others to see on other computers"). The page that changed a piece
+   (its words fitted or moved, a Charm Editor save) draws it as it will be made (charm-nest-made-thumb.js) and sends the picture here, once its changes have stopped:
+     madeThumbPut { poolId, png (a PNG data URL, at most MADE_MAX), sig (the page's signature of what it drew), faces ["front", "back"], by, dev (the computer that drew it) } | { poolId, clear: true }
+       → the PNG is kept in Storage, named by its own bytes beside the piece (charmnest/made/<poolId>/<sha>.png; charmnest/sandbox/made/... in the sandbox, which its reset clears), and the pool row says
+         where (made { url, path, at, sig, faces, base: the row's charmHash it was drawn on, by, dev }); the picture it replaces is deleted. The row is the piece's own: a page that shows the order reads it
+         anyway (getOrderPieces, poolList), so another computer learns of the picture with no read of its own, when the changes feed names the order (p:<order>, below) and its placement feed reads it.
+   One read and one write of the pool row (a transaction), one file kept, one deleted. The placement counter moves (a pool row was written): a reader's `unchanged` must not hide the new picture. ── */
+const MADE_MAX = 400 * 1024, MADE_SIG = /^[0-9a-z]{1,40}$/, MADE_DEV = /^d[0-9a-z]{4,12}$/;
+async function op_madeThumbPut(b) {
+  const poolId = str(b.poolId, 80); if (!isPoolId(poolId)) return { error: "bad pool id", status: 400 };
+  const clear = b.clear === true, sig = str(b.sig, 40), dev = MADE_DEV.test(String(b.dev || "")) ? String(b.dev) : null, by = str(b.by, 80).trim() || null;
+  const faces = [...new Set((Array.isArray(b.faces) ? b.faces : []).map(String).filter(f => f === "front" || f === "back"))];
+  let buf = null;
+  if (!clear) {
+    if (!MADE_SIG.test(sig)) return { error: "the picture's signature is missing", status: 400 };
+    buf = Buffer.from(String(b.png == null ? "" : b.png).replace(/^data:image\/png;base64,/, ""), "base64");
+    if (buf.length < 8 || buf.length > MADE_MAX || buf.readUInt32BE(0) !== 0x89504e47) return { error: `a piece's picture is a PNG of at most ${MADE_MAX / 1024} KB`, status: 400 };
+  }
+  feedOrders(b, [[poolId]]);   // (FEED: the order whose pool row moves: the other computers' placement feed reads it)
+  const bucket = admin.storage().bucket(), crypto = require("crypto");
+  let file = null;
+  if (buf) {
+    const path = (PREFIX ? "charmnest/sandbox/made/" : "charmnest/made/") + poolId + "/" + crypto.createHash("sha256").update(buf).digest("hex").slice(0, 24) + ".png", token = crypto.randomUUID();
+    await bucket.file(path).save(buf, { resumable: false, contentType: "image/png", metadata: { cacheControl: "private, max-age=86400", metadata: { firebaseStorageDownloadTokens: token, uploadedBy: "charm-nest-made-thumb" } } });
+    file = { path, url: designUrl(bucket.name, path, token) };
+  }
+  const ref = col(POOL).doc(poolId);
+  const out = await db.runTransaction(async tx => {
+    const snap = await tx.get(ref); if (!snap.exists) return { error: "this piece is not in the pool", status: 404 };
+    const row = snap.data() || {}, old = row.made && typeof row.made === "object" ? row.made : null, at = Math.max(Date.now(), num(old && old.at) + 1);
+    // (the address names its own version, v: charmNestAsset lets a browser keep it a day, and a new picture is a new address)
+    const made = file ? { url: file.url + "&v=" + at, path: file.path, at, sig, faces, base: row.charmHash == null ? null : String(row.charmHash), by, dev } : null;
+    tx.set(ref, { made: made || FV.delete(), updatedAt: FV.serverTimestamp() }, { merge: true });
+    return { ok: true, poolId, made, was: old && old.path ? String(old.path) : null };
+  });
+  // (the picture it replaced goes; a picture that was not taken goes too: nothing is kept that no row names)
+  const drop = out.ok ? (out.was && (!file || out.was !== file.path) ? out.was : null) : file && file.path;
+  if (drop && /^charmnest\/(?:sandbox\/)?made\//.test(drop)) { try { await bucket.file(drop).delete(); } catch (_) { /* a file left behind is only bytes */ } }
+  delete out.was;
+  return out;
+}
 // ── sets: the number is allocated in a transaction, per date, across every material ──
 async function op_setAllocate(b) {
   const day = str(b.day, 10); if (!isDay(day)) return { error: "bad day" };
@@ -4734,6 +4776,7 @@ NO_GEN_BUMP.add("customPieceList");   // CUSTOMPOOL (Paul, 28 Oct 2026): a desig
 /* ART EDIT (Paul, 27 Oct 2026): one piece's own artwork, kept beside it (op_artPut above). artPut writes the piece's record, its pool row's artEdit stamp and its sheet's filesOwed;
    artGet and artList only read the documents named (they move no counter). */
 Object.assign(OPS, { artPut: op_artPut, artGet: op_artGet, artList: op_artList }); NO_GEN_BUMP.add("artGet"); NO_GEN_BUMP.add("artList");
+OPS.madeThumbPut = op_madeThumbPut;   // THUMBSYNC (28 Oct 2026): a piece's picture as it will be made, kept on its pool row (op_madeThumbPut above); it writes a pool row, so the placement counter moves
 /* DESIGN LOG (Paul, 28 Oct 2026: "I need to know when employees are commissioning custom pieces, especially when they don't belong to an order"): designLog {records} keeps one
    record per custom piece sent, and per fix piece with who made the mistake (_designLog.js, Design_Log; charm-nest-design-log.js sends them). One write per record, no read; nothing a placement answer is made from. */
 OPS.designLog = b => require("./_designLog").add(db, FV, b.records, { prefix: PREFIX }); NO_GEN_BUMP.add("designLog");

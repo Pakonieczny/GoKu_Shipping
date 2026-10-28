@@ -2536,6 +2536,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const t = (px, py) => [(px - cx) * k, (cy - py) * k];
     ctx.fillStyle = "rgba(200,162,78,.12)"; ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, t); for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, t); ctx.fill("evenodd");
     CharmNestPDF.drawCharm(ctx, c, t, k); ctx.restore();
+    if (x.poolId && window.CharmNestMadeThumb) tryDo(() => window.CharmNestMadeThumb.paintInto(cv, x.poolId));   // (THUMBSYNC, Paul 28 Oct 2026: the piece as it will be made, its words and its Charm Editor parts and images, front and back, when it has any: charm-nest-made-thumb.js)
   }
   /** MSSTALE: what a monogram piece's panel says (its seals and its status), as one text: a monogram has no job, so engOf cannot tell the poll that its approval changed (another computer approved it while this window was open). "" for any other piece. */
   function monoSigOf(x) {
