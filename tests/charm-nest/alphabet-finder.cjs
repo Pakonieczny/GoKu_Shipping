@@ -34,6 +34,11 @@ function partA() {
   const ily = q('I love you', { lang: 'he' }), fa = q('forever and always', { lang: 'it' });
   check('A5 a word that changes with who says it says so (Hebrew "I love you"); a phrase whose little words are missing still finds what it has ("forever and always" → per sempre)',
     ily[0] && /said by a man; a woman says/.test(ily[0].note) && fa.length >= 1 && fa[0].text === 'per sempre', JSON.stringify({ ily: ily.slice(0, 1), fa: fa.map(x => x.text) }));
+  // (Paul, 28 Oct 2026: "You forgot to add the Polish and Ukranian language.")
+  const plu = { pl: q('love', { lang: 'pl' }), uk: q('love', { lang: 'uk' }), ukh: q('h', { kind: 'letters', lang: 'uk' }), plw: q('w', { kind: 'letters', lang: 'pl' }), bday: q('happy birthday', { lang: 'pl' }) };
+  check(`A6 Polish and Ukrainian: love is ${plu.pl[0] && plu.pl[0].text} and ${plu.uk[0] && plu.uk[0].text}; their letters (Ukrainian Г for h, Polish Ł for w) and a Polish phrase (sto lat) are found`,
+    langs.has('pl') && langs.has('uk') && plu.pl[0] && plu.pl[0].text === 'miłość' && plu.uk[0] && plu.uk[0].text === 'любов' && plu.ukh[0] && plu.ukh[0].text === 'Г г' && plu.ukh[0].script === 'Cyrillic'
+      && plu.plw[0] && plu.plw[0].text === 'Ł ł' && plu.bday[0] && plu.bday[0].text === 'sto lat', JSON.stringify(Object.fromEntries(Object.entries(plu).map(([k, v]) => [k, v.slice(0, 2).map(x => x.text)]))));
   delete global.CNAlphabetPicker; delete global.CNAlphabetData;
 }
 
