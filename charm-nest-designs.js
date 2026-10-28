@@ -239,8 +239,9 @@
     return { face: { face, unitPt: true, frame, items } };
   }
   const cleanOrder = v => { const s = String(v == null ? "" : v).trim(); return ORDER_ID.test(s) ? s : null; };
-  /** A design checked whole: { design, stored, bytes, ops, items } or { error }. `design` is the wire form (subpaths), rounded; `stored` its faces as a record keeps them. */
-  function clean(d) {
+  /** A design checked whole: { design, stored, bytes, ops, items } or { error }. `design` is the wire form (subpaths), rounded; `stored` its faces as a record keeps them
+      (o.stored false: not made, nor measured). */
+  function clean(d, o) {
     if (!d || typeof d !== "object" || Array.isArray(d)) return no("the design is missing");
     const stats = { ops: 0, items: 0 };
     const id = d.id == null || d.id === "" ? null : String(d.id); if (id != null && !DESIGN_ID.test(id)) return no("the design's id is not a short name (letters, digits, - and _)");
@@ -267,6 +268,7 @@
     if (d.orderId != null && d.orderId !== "" && !orderId) return no("the design's order is an order number or CUSTOM-<yyyymmdd>-<n>");
     const name = str(d.name, LIMITS.name).trim() || source.sku || "Untitled design";
     const design = { ...(id ? { id } : {}), name, faces: out, widthMm: r3(w), heightMm: r3(h), source, orderId, customName: str(d.customName, 80).trim() || null };
+    if (o && o.stored === false) return { design, ops: stats.ops, items: stats.items };   // (the page's check before it sends: the cloud keeps it, and measures it)
     const stored = encodeFaces(out), bytes = JSON.stringify(stored).length;
     if (bytes > LIMITS.bytes) return no(`the design is ${Math.ceil(bytes / 1000)} KB; one version is at most ${LIMITS.bytes / 1000} KB`);
     return { design, stored, bytes, ops: stats.ops, items: stats.items };
@@ -432,9 +434,10 @@
     if (!(opts && opts.force) && idx.checkedAt && Date.now() - idx.checkedAt < FRESH_MS) return Promise.resolve(rowsNow());
     refreshing = (async () => {
       let since = idx.upTo, cursor = null, upTo = null, changed = false;
+      const was = idx.upTo;
       for (let part = 0; part < 40; part++) {
         const r = await call(Object.assign({ op: "designList", limit: PART }, since ? { since } : {}, cursor != null ? { cursor } : {}));
-        if (r.reset) { idx.rows.clear(); idx.list = null; changed = true; since = null; cursor = null; upTo = null; continue; }   // (the cloud's counter began again: a sandbox reset)
+        if (r.reset) { idx.rows.clear(); idx.list = null; changed = true; since = null; }   // (the cloud's count began again, a sandbox reset: what this computer held is gone; the answer is the whole list)
         if (upTo == null) upTo = r.upTo || null;
         if (r.unchanged) break;
         for (const row of r.designs || []) if (upsert(row)) changed = true;
@@ -443,7 +446,7 @@
       }
       if (upTo) idx.upTo = upTo;
       idx.checkedAt = Date.now();
-      if (changed) { persist(); tell({ kind: "refresh" }); } else if (upTo) persist();
+      if (changed) { persist(); tell({ kind: "refresh" }); } else if (upTo !== was) persist();
       return rowsNow();
     })().finally(() => { refreshing = null; });
     return refreshing;
@@ -498,51 +501,83 @@
   const paintFill = l => (l.kind === "text" ? !(l.role === "line" || l.role === "cut") : l.role === "hatch" ? true : l.role === "art" ? (!!l.fill || !l.stroke) : false);   // (the editor's rule)
   const paintStroke = l => (l.kind === "text" ? (l.role === "line" || l.role === "cut") : (l.role === "cut" || l.role === "line") ? true : l.role === "art" ? !!l.stroke : false);
   const inkOf = p => (Array.isArray(p) && p[0] === p[1] && p[1] === p[2] ? `rgb(${Math.round(p[0] * 255)},${Math.round(p[0] * 255)},${Math.round(p[0] * 255)})` : INK);   // (a trace's grey keeps its grey, D2; a laser pen's blue or red is drawn as ink)
-  function pathOf(subs, P2) { const p = new P2(); for (const sp of subs) for (const o of sp) { if (o[0] === "m") p.moveTo(o[1][0], o[1][1]); else if (o[0] === "l") p.lineTo(o[1][0], o[1][1]); else if (o[0] === "c") p.bezierCurveTo(o[1][0], o[1][1], o[2][0], o[2][1], o[3][0], o[3][1]); else p.closePath(); } return p; }
-  /** The design's picture as PNG base64 (no "data:" prefix), or null where there is no canvas or nothing to draw. The front, or the back when the front is empty. */
-  function thumbPng(faces, px) {
+  /** A Path2D made from path data in ONE call (a call per operator costs ~15 µs: 40,000 of them, a traced photograph, held the page for 400 ms), to a tenth of a point (a third of a pixel). */
+  function pathOf(subs, P2) {
+    const f = v => Math.round(v * 10) / 10, out = [];
+    for (const sp of subs) for (const o of sp) {
+      if (o[0] === "m") out.push("M" + f(o[1][0]) + " " + f(o[1][1]));
+      else if (o[0] === "l") out.push("L" + f(o[1][0]) + " " + f(o[1][1]));
+      else if (o[0] === "c") out.push("C" + f(o[1][0]) + " " + f(o[1][1]) + " " + f(o[2][0]) + " " + f(o[2][1]) + " " + f(o[3][0]) + " " + f(o[3][1]));
+      else out.push("Z");
+    }
+    return new P2(out.join(""));
+  }
+  const SLICE_OPS = 8000;   // (the operators drawn in one task: a traced photograph's picture is drawn over several, none of them long)
+  /** The design's picture as PNG base64 (no "data:" prefix), or null where there is no canvas or nothing to draw: the front, or the back when the front is empty, framed by its
+      cut line. Drawn in slices of a few thousand operators, one task each (o.stats.longest: the longest slice, ms). → Promise */
+  async function thumbPng(faces, o) {
+    o = o || {};
     const P2 = root && root.Path2D; if (!doc || !P2) return null;
+    const now = () => (root.performance ? root.performance.now() : Date.now()), stats = o.stats || {}; stats.longest = stats.longest || 0;
+    let t = now(), done = 0;
+    const step = async n => { done += n; if (done >= SLICE_OPS) { stats.longest = Math.max(stats.longest, now() - t); await nextTask(); t = now(); done = 0; } };
     const L = leaves(faces || {}), list = (L.front && L.front.length ? L.front : L.back) || []; if (!list.length) return null;
-    let b = null; for (const l of list) b = boxOf(l.subpaths, b || undefined); b = realBox(b); if (!b) return null;
-    for (const size of [px || THUMB_PX, 128, 96]) {
+    const cuts = list.filter(l => l.role === "cut"), opsIn = l => l.subpaths.reduce((k, sp) => k + sp.length, 0);
+    let b = null; for (const l of cuts.length ? cuts : list) b = boxOf(l.subpaths, b || undefined); b = realBox(b); if (!b) return null;
+    const paths = new Map(), pathFor = l => paths.get(l) || (paths.set(l, pathOf(l.subpaths, P2)), paths.get(l));
+    for (const size of [o.px || THUMB_PX, 128, 96]) {
       const pad = Math.max(3, size * 0.04), w = Math.max(b[2] - b[0], 1e-3), h = Math.max(b[3] - b[1], 1e-3), k = (size - 2 * pad) / Math.max(w, h);
       const cv = doc.createElement("canvas"); cv.width = Math.max(8, Math.round(w * k + 2 * pad)); cv.height = Math.max(8, Math.round(h * k + 2 * pad));
       const ctx = cv.getContext("2d"); if (!ctx) return null;
       ctx.setTransform(k, 0, 0, k, pad - b[0] * k, pad - b[1] * k); ctx.lineJoin = "round"; ctx.lineCap = "round";
-      const cuts = list.filter(l => l.role === "cut");
-      if (cuts.length) { const body = pathOf(cuts.flatMap(l => l.subpaths), P2); ctx.fillStyle = BODY; ctx.fill(body, "evenodd"); }
+      if (cuts.length) { const body = paths.get("body") || (paths.set("body", pathOf(cuts.flatMap(l => l.subpaths), P2)), paths.get("body")); ctx.fillStyle = BODY; ctx.fill(body, "evenodd"); }
       for (const l of list) {
         if (l.role === "cut") continue;
-        const p = pathOf(l.subpaths, P2);
+        const p = pathFor(l);
         if (paintFill(l)) { ctx.fillStyle = inkOf(l.fill); ctx.fill(p, l.even ? "evenodd" : "nonzero"); }
         if (paintStroke(l)) { ctx.strokeStyle = inkOf(l.stroke); ctx.lineWidth = Math.max(0.9 / k, (l.lwPt || 0.25)); ctx.stroke(p); }
+        await step(opsIn(l));
       }
-      if (cuts.length) { ctx.strokeStyle = EDGE; ctx.lineWidth = 1.2 / k; for (const l of cuts) ctx.stroke(pathOf(l.subpaths, P2)); }
+      if (cuts.length) { ctx.strokeStyle = EDGE; ctx.lineWidth = 1.2 / k; for (const l of cuts) ctx.stroke(pathFor(l)); }
       const b64 = String(cv.toDataURL("image/png")).split(",")[1] || "";
+      stats.longest = Math.max(stats.longest, now() - t);
       if (b64 && b64.length * 0.75 <= LIMITS.thumb) return b64;
+      await nextTask(); t = now(); done = 0;
     }
     return null;
   }
 
-  /** Saves a new version of a design (a new design without `id`). → { id, version, at, hash, row } */
+  /** The path operators of a design's faces, counted without checking anything (a fraction of a millisecond). */
+  function opsOf(faces) {
+    let k = 0;
+    const walk = list => { for (const it of list || []) { if (!it) continue; if (Array.isArray(it.children)) walk(it.children); else if (Array.isArray(it.subpaths)) for (const sp of it.subpaths) k += Array.isArray(sp) ? sp.length : 0; } };
+    for (const f of FACES) if (faces && faces[f]) walk(faces[f].items);
+    return k;
+  }
+  const LOCAL_CHECK_OPS = 6000;   // (a design up to this is checked here before it is sent, in a few ms; a bigger one, a traced photograph, is checked once, by the cloud: never a long task on the page)
+  const nextTask = () => new Promise(r => setTimeout(r, 0));
+  /** Saves a new version of a design (a new design without `id`). → { id, version, at, hash, row }. Its work starts in a task of its own: the caller's press paints first. */
   async function put(design, opts) {
     opts = opts || {};
     const by = String((design && design.by) || who() || "").trim();
     if (!by) throw Object.assign(new Error("Sign in to save this design: every version says who made it"), { needSignIn: true });
-    const d = Object.assign({}, design);
+    await nextTask();
+    let d = Object.assign({}, design); delete d.by;
     if (!(+d.widthMm > 0 && +d.heightMm > 0)) { const s = sizeOf(d.faces); if (s) Object.assign(d, s); }
-    const c = clean(d); if (c.error) throw Object.assign(new Error(c.error), { refused: true });
-    let thumb = null; if (opts.thumb !== false) { try { thumb = thumbPng(c.design.faces); } catch (e) { console.warn("design library: picture", e); } }
-    const r = await call({ op: "designPut", design: c.design, ...(thumb ? { thumb } : {}), by }, { label: "Saving the design to the library", background: true });
+    const small = opsOf(d.faces) <= LOCAL_CHECK_OPS;
+    if (small) { const c = clean(d, { stored: false }); if (c.error) throw Object.assign(new Error(c.error), { refused: true }); d = c.design; }
+    let thumb = null; if (opts.thumb !== false) { try { thumb = await thumbPng(d.faces); } catch (e) { console.warn("design library: picture", e); } }
+    const r = await call({ op: "designPut", design: d, ...(thumb ? { thumb } : {}), by }, { label: "Saving the design to the library", background: true });
     if (!r || !r.id) throw new Error((r && r.error) || "the design was not saved");
-    const saved = Object.assign({}, c.design, r.row || {}, { id: r.id, version: r.version, at: r.at, hash: r.hash, by });
-    keepFull(saved);
+    if (small) keepFull(Object.assign({}, d, r.row || {}, { id: r.id, version: r.version, at: r.at, hash: r.hash, by }));   // (a big one is read back when it is asked for: what is kept is what the cloud made of it)
     ensureLoaded();
-    if (upsert(r.row || rowOf(saved))) { if (idx.upTo && r.prev && idx.upTo === r.prev) idx.upTo = r.rev; persist(); }   // (this save is the only one since the index's revision: the index stays current without a call)
+    const row = r.row || { id: r.id, version: r.version, at: r.at, hash: r.hash, by, name: d.name };
+    if (upsert(row)) { if (idx.upTo && r.prev && idx.upTo === r.prev) idx.upTo = r.rev; persist(); }   // (this save is the only one since the index's revision: the index stays current without a call)
     tell({ kind: "put", row: idx.rows.get(r.id) });
     // (the employee log, charm-nest-design-log.js: an editorSave and this designSave of one order in one burst are one step of its timeline)
-    log("designSave", { designId: r.id, version: r.version, name: c.design.name, sku: c.design.source.sku || null, orderId: c.design.orderId || null, customName: c.design.customName || null, poolId: c.design.source.poolId || null, faces: FACES.filter(f => c.design.faces[f]), by });
-    return { id: r.id, version: r.version, at: r.at, hash: r.hash, row: idx.rows.get(r.id) || r.row };
+    const src = d.source || {};
+    log("designSave", { designId: r.id, version: r.version, name: row.name || d.name || null, sku: src.sku || null, orderId: row.orderId || d.orderId || null, customName: row.customName || d.customName || null, poolId: src.poolId || null, faces: FACES.filter(f => d.faces && d.faces[f]), by });
+    return { id: r.id, version: r.version, at: r.at, hash: r.hash, row: idx.rows.get(r.id) || row };
   }
   function onChange(fn) { if (typeof fn === "function") listeners.add(fn); return () => listeners.delete(fn); }
   function setHost(h) { host = Object.assign({}, host, h || {}); }
