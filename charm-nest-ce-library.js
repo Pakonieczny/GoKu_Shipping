@@ -151,7 +151,7 @@
     DS.ix = { rows, sig: rows.length + '|' + (rows[0] ? rows[0].key + rows[0].version + rows[0].at : '') }; DS.dirty = false;
     return DS.ix;
   }
-  function designsLoad(more) {
+  function designsLoad(more, fresh) {
     const D = Designs(); if (!D || typeof D.list !== 'function') return null;
     if (!DS.sub && typeof D.onChange === 'function') {
       DS.sub = true;
@@ -168,7 +168,7 @@
     if (!more && !DS.byId.size && typeof D.rows === 'function') { designsRows(D); if (DS.byId.size) changed('designs'); }
     if (DS.loading) return DS.loading;
     if (more && !DS.next) return null;
-    if (!more && DS.loaded) return null;
+    if (!more && DS.loaded && !fresh) return null;
     DS.loading = Promise.resolve().then(() => D.list(more ? { cursor: DS.next } : {})).then(r => {
       designsMerge(summaries(r)); DS.next = r && !Array.isArray(r) && r.next ? r.next : null; DS.loaded = true; DS.error = '';
     }, e => { DS.error = (e && e.message) || String(e); DS.loaded = true; }).finally(() => { DS.loading = null; changed('designs'); });
@@ -306,7 +306,8 @@
 .cel-cell.is-pic .cel-ph{ display:none; }
 .cel-tx{ display:block; min-width:0; }
 .cel-nm{ display:block; font-size:11.5px; font-weight:600; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.cel-s1,.cel-s2{ display:block; font-size:8.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cel-nm{ line-height:16px; }
+.cel-s1,.cel-s2{ display:block; font-size:8.5px; line-height:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cel-s1.is-custom{ color:var(--gold); font-weight:700; }
 .cel-v{ position:absolute; left:5px; top:5px; z-index:1; background:var(--ink); color:#fff; font-size:8px; font-weight:700; letter-spacing:.12em; padding:3px 5px; line-height:1; pointer-events:none; }
 .cel-v:empty{ display:none; }
@@ -319,15 +320,15 @@
 .cel-cell.is-nohist .cel-b--hist{ display:none; }
 /* tiles: two to a row, as the studio's library (C 4404-4462) */
 .cel.is-tiles .cel-cell{ display:flex; flex-direction:column; border:1px solid var(--hair); }
-.cel.is-tiles .cel-pic{ width:100%; height:var(--pw,110px); }
-.cel.is-tiles .cel-tx{ padding:5px 7px 6px; border-top:1px solid var(--hair); }
+.cel.is-tiles .cel-cell .cel-pic{ width:100%; height:var(--pw,110px); }
+.cel.is-tiles .cel-cell .cel-tx{ padding:5px 7px 6px; border-top:1px solid var(--hair); }
 .cel.is-tiles .cel-cell:hover,.cel.is-tiles .cel-cell.is-act{ border-color:var(--ink); box-shadow:0 6px 18px rgba(28,29,29,.12); }
 /* list: one to a row, a small picture and three lines (more of them on screen, for finding by order or by person) */
 .cel.is-list .cel-cell{ display:flex; align-items:center; gap:9px; padding:0 66px 0 8px; border-bottom:1px solid var(--hair); }
-.cel.is-list .cel-pic{ width:46px; height:46px; border:1px solid var(--hair); }
-.cel.is-list .cel-ph{ font-size:15px; }
-.cel.is-list .cel-v{ left:auto; right:8px; top:50%; transform:translateY(-50%); }
-.cel.is-list .cel-b{ top:50%; transform:translateY(-50%); right:36px; width:24px; height:24px; } .cel.is-list .cel-b--place{ right:66px; display:none; }
+.cel.is-list .cel-cell .cel-pic{ width:46px; height:46px; border:1px solid var(--hair); }
+.cel.is-list .cel-cell .cel-ph{ font-size:15px; }
+.cel.is-list .cel-cell .cel-v{ left:auto; right:8px; top:50%; transform:translateY(-50%); }
+.cel.is-list .cel-cell .cel-b{ top:50%; transform:translateY(-50%); right:36px; width:24px; height:24px; } .cel.is-list .cel-cell .cel-b--place{ right:66px; display:none; }
 .cel.is-list .cel-cell:hover,.cel.is-list .cel-cell.is-act{ background:var(--hov); }
 .cel-cell.is-cur{ box-shadow:inset 3px 0 0 0 var(--gold); }
 .cel-cell.is-lift{ opacity:.45; }
@@ -360,7 +361,8 @@
 .cel-vrow.is-pic .cel-ph{ display:none; }
 .cel-vrow .cel-tx{ flex:1 1 auto; }
 .cel-vrow .cel-nm{ font-size:12px; }
-.cel-ask3 .ce-ask__b{ flex-wrap:wrap; }
+.cel-ask3 .ce-ask__card{ width:min(480px,100%); }
+.cel-ask3 .ce-ask__b{ flex-wrap:wrap; row-gap:8px; }
 @media (max-width:640px){ .cel-b{ opacity:1; } }
 @media (prefers-reduced-motion: reduce){ .cel-cell,.cel-tab,.cel-chip,.cel-b{ transition:none; } }
 `;
@@ -403,7 +405,7 @@
   <button class="cel-tab" type="button" role="tab" data-cel="tab" data-t="recent" title="Opened or placed from here on this computer">Recent<b data-n="recent">0</b></button>
 </div>
 <div class="cel-head">
-  <label class="cel-search">${IC.search}<input type="text" data-cel="q" placeholder="Name, SKU, order or person" autocomplete="off" spellcheck="false" aria-label="Search the library"><button class="cel-x" type="button" data-cel="clear" aria-label="Clear the search" title="Clear (Esc)" hidden>${IC.x}</button></label>
+  <div class="cel-search">${IC.search}<input type="text" data-cel="q" placeholder="Name, SKU, order or person" autocomplete="off" spellcheck="false" aria-label="Search the library"><button class="cel-x" type="button" data-cel="clear" aria-label="Clear the search" title="Clear (Esc)" hidden>${IC.x}</button></div>
   <div class="cel-bar">
     <div class="cel-chips" role="group" aria-label="Filters">
       <button class="cel-chip" type="button" data-cel="f" data-k="mine" aria-pressed="false">Mine</button>
@@ -432,7 +434,9 @@
     measure();
     const onData = which => { if (!S) return; if (which === prefs.tab || which === 'designs' || which === 'masters') refresh(true); else if (which === 'recent') { counts3(); if (prefs.tab === 'recent') refresh(true); } };
     S.onData = onData; watchers.add(onData);
-    designsLoad(); mastersLoad();
+    // (every time the editor opens: the design library is asked what was saved since (it asks the cloud at most every 20 s, one read when nothing was), so another
+    //  person's work is here too; the list shows this computer's copy meanwhile)
+    designsLoad(false, true); mastersLoad();
     setTab(prefs.tab, true);
     if (prefs.top[prefs.tab]) list.scrollTop = prefs.top[prefs.tab];
     render(true);
@@ -525,8 +529,9 @@
   function layoutFor(w) {
     const pad = prefs.view === 'tiles' ? 8 : 0, gap = prefs.view === 'tiles' ? 8 : 0;
     if (prefs.view === 'list') return { cols: 1, cw: Math.max(1, w), ch: 58, pw: 46, rowH: 58, gap, pad, w };
-    const cols = w >= 430 ? 3 : 2, cw = Math.max(60, Math.floor((w - 2 * pad - (cols - 1) * gap) / cols)), pw = Math.round(cw * 0.86);
-    return { cols, cw, ch: pw + 46, pw, rowH: pw + 46 + gap, gap, pad, w };
+    // (the caption: a name line of 16 px and two small lines of 13, its padding and its rule: 54 px)
+    const cols = w >= 430 ? 3 : 2, cw = Math.max(60, Math.floor((w - 2 * pad - (cols - 1) * gap) / cols)), pw = Math.round(cw * 0.86), cap = 54;
+    return { cols, cw, ch: pw + cap, pw, rowH: pw + cap + gap, gap, pad, w };
   }
   function measure() {
     if (!S) return;
@@ -595,7 +600,7 @@
         c._s2.textContent = r.recent ? `${r.recent} ${when(r.at)}` : r.widthMm && r.heightMm ? `${+r.widthMm.toFixed(1)} × ${+r.heightMm.toFixed(1)} mm` : '';
         c._v.textContent = '';
       } else {
-        c._s1.textContent = r.custom ? (r.orderId ? `Custom · ${r.orderId}` : 'Custom · no order') : '#' + r.orderId; c._s1.classList.toggle('is-custom', r.custom);
+        c._s1.textContent = r.custom ? 'Custom · no order' : '#' + r.orderId; c._s1.classList.toggle('is-custom', r.custom);   // (D4: its own name, and the tag; its CUSTOM- id is found by the search)
         c._s2.textContent = r.recent ? `${r.recent} ${when(r.at)}` : [r.by, when(r.at)].filter(Boolean).join(' · ');
         c._v.textContent = 'v' + r.version;
       }
@@ -681,6 +686,13 @@
     else if (k === 'Enter') { e.preventDefault(); if (S.act >= 0) openRow(S.rows[S.res.list[S.act]]); }
     else if (k === 'Escape') { e.preventDefault(); S.input.focus(); }
     else if (k.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) { S.input.focus(); }   // (typing goes to the search, the letter with it)
+    else if ((e.metaKey || e.ctrlKey) && k.length === 1) { e.preventDefault(); passOn(e); }  // (⌘Z, ⌘S … are the editor's, wherever the focus is)
+  }
+  /** A key the library has no use for, handed to the editor as if pressed on its window (the editor keeps one listener for all keys, on the window). */
+  function passOn(e) {
+    const w = S.box.closest('.ce-win'); if (!w) return;
+    focusWin();
+    try { w.dispatchEvent(new root.KeyboardEvent('keydown', { key: e.key, code: e.code, ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey, altKey: e.altKey, bubbles: true, cancelable: true })); } catch (_) { /* fine */ }
   }
   function setAct(i) {
     S.act = i; if (i < 0) return render(true);
@@ -859,7 +871,8 @@
       kind: 'group', role, source: 'added', name: row.kind === 'master' ? name : `${name} · v${v}`, hidden: false, locked: false,
       tx: +(at[0] - c[0]).toFixed(6), ty: +(at[1] - c[1]).toFixed(6), sx: 1, sy: 1, rot: 0,
       children: kids.map(it => reid(strip(it))),
-      design: row.kind === 'master' ? { sku: row.sku } : { id: row.id, version: v }
+      // (where it came from, as plain values: they travel with the part into the design library and the laser files' records)
+      ...(row.kind === 'master' ? { masterSku: row.sku } : { designId: row.id, designVersion: v })
     };
     let ids = null;
     try { ids = ctx.addItems([g]); if (typeof ctx.commit === 'function') ctx.commit(`Place ${name}`); }
@@ -886,11 +899,12 @@
         + `<button class="ce-btn ce-btn--ink" type="button" data-k="keep">Keep and open</button></div></div>`;
       win.appendChild(box);
       const s = S;
+      // (the keys go to the question at once: an Esc pressed the moment it appears is its Cancel)
+      const kb = box.querySelector('[data-k="keep"]'); if (kb) kb.focus({ preventScroll: true });
       s.ask = { done: v => { if (!s.ask) return; s.ask = null; box.remove(); res(v); } };
       box.addEventListener('click', ev => { const b = ev.target.closest('[data-k]'); if (b) s.ask.done(b.dataset.k); else if (ev.target === box) s.ask.done('cancel'); });
       const keys = ev => { if (ev.key === 'Escape') { ev.preventDefault(); s.ask && s.ask.done('cancel'); } };
       for (const b of box.querySelectorAll('button')) b.__ceKey = keys;
-      requestAnimationFrame(() => { const k = box.querySelector('[data-k="keep"]'); if (k) k.focus(); });
     });
   }
   let opening = false;
