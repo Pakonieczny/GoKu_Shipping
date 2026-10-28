@@ -39,7 +39,9 @@
                                       clear(): whether something was named while it was not on screen, forgotten (the surface reads it its own way)
      live()                           the feed answers (here or in another tab): a surface lets its own timer go to its net
      quietSince(t, kinds)             nothing of these kinds moved since t, and the feed was heard all along (a list read at t is still what the cloud holds)
-     watchOrder(rid) → off            an open order window's Order_Rev, watched by the leader
+     watchOrder(rid, since?) → off    an open order window's Order_Rev, watched by the leader; since (a time, or a function giving one; now by default):
+                                      when the window's own read of the order began. The leader's first look at the order asks what was written since
+                                      then ('@<age>'), so an event landing between that read and the first look is news, not the baseline
      once(name, everyMs, fn)          fn in one tab of this computer at most every everyMs (the Library's seal check)
      poke(fn?)                        ask now (a tab shown, the network back); fn({ keys, reset }): the first answer to a question asked after it
      wrote(header)                    a write of this tab was answered: its X-CN-Feed ("names;lib=12,p=40") to the other tabs at once
@@ -63,7 +65,7 @@
   // the leader's
   let leader = false, cand = null, timer = 0, busy = false, again = false, fails = 0, lastStart = 0, lastOk = 0, verifyAt = 0, cg = null;
   const orderRevs = new Map();                 // rid → its Order_Rev as last answered
-  const watching = new Map();                  // tab → { rids, at } (the open order windows of every tab)
+  const watching = new Map();                  // tab → { rids, since: { rid: time }, at } (the open order windows of every tab)
   const stale = new Map();                     // 'kind\u0000id' → [kind, id]: records this computer keeps that moved (getMany, fetchEvery)
   let fetchT = 0, fetchAt = 0;
   // every tab's
@@ -73,7 +75,9 @@
   const onceAt = new Map();
   let pokes = [], failing = false;
   const seenN = new Map();                     // name → the count of its shard when this computer heard it written (wrote): the feed's answer at or before it is not read again             // (failing: the leader's last question failed; every surface reads on its own until one is answered)                              // ({ at, fn }) poke(fn): told the first answer to a question asked after it                    // name → when a tab of this computer last ran it (once: told on the channel, never stored)
-  const mine = new Map();                      // rid → how many order windows of this tab watch it
+  const mine = new Map();                      // rid → the since of each order window of this tab that watches it (watchOrder)
+  const sinceOf = rid => { let t = 0; for (const x of mine.get(rid) || []) { const v = +safe(() => (typeof x === 'function' ? x() : x), 0) || 0; if (v > 0 && (!t || v < t)) t = v; } return t; };
+  const watchMsg = () => { const since = {}; for (const rid of mine.keys()) { const t = sinceOf(rid); if (t) since[rid] = t; } return { t: 'watch', rids: [...mine.keys()], since }; };
   const stats = { polls: 0, answers: 0, keys: 0, resets: 0, heard: 0, reads: 0, fetches: 0, errors: 0, gaps: 0, leads: 0 };
 
   const enabled = () => started && !dead && safe(() => (cfg.enabled ? !!cfg.enabled() : true), false);
@@ -129,9 +133,9 @@
     const m = ev && ev.data; if (!m || m.v !== V || m.from_ === me || !started) return;
     if (m.t === 'feed' || m.t === 'verify') heard(m, false);
     else if (m.t === 'act') { lastInput = Math.max(lastInput, +m.at || 0); hurry = +m.hurry || 0; hurryAt = +m.at || now(); if (leader) wake(); }
-    else if (m.t === 'watch') { watching.set(m.from_, { rids: (m.rids || []).map(String).slice(0, 12), at: now() }); }
+    else if (m.t === 'watch') { watching.set(m.from_, { rids: (m.rids || []).map(String).slice(0, 12), since: m.since && typeof m.since === 'object' ? m.since : {}, at: now() }); }
     else if (m.t === 'hello' || m.t === 'poke') { if (leader) soon(); }
-    else if (m.t === 'lead') { if (mine.size) post({ t: 'watch', rids: [...mine.keys()] }); }
+    else if (m.t === 'lead') { if (mine.size) post(watchMsg()); }
     else if (m.t === 'dead') { stop(true); }
     else if (m.t === 'fail') { lost(); }
     else if (m.t === 'wrote') { heardWrote(m); }
@@ -155,11 +159,13 @@
   function soon() { if (!leader) return; if (busy) { again = true; return; } schedule(Math.max(0, lastStart + PACE.gap - now())); }
   function wake() { if (leader && !busy && timer && !fails) schedule(); }   // (input after a quiet spell: the next question at the active pace from the last one)
   function watched() {
-    const out = new Map();
-    for (const [rid] of mine) out.set(rid, 1);
-    for (const [tab, w] of watching) { if (now() - w.at > PACE.watchFor) { watching.delete(tab); continue; } for (const rid of w.rids) out.set(rid, 1); }
+    const out = new Map();   // rid → the earliest read of it by a window watching it (0: not said, a tab with an older copy of this file)
+    const add = (rid, t) => { const was = out.get(rid) || 0; out.set(rid, t > 0 && (!was || t < was) ? t : was); };
+    for (const rid of mine.keys()) add(rid, sinceOf(rid));
+    for (const [tab, w] of watching) { if (now() - w.at > PACE.watchFor) { watching.delete(tab); continue; } for (const rid of w.rids) add(rid, +(w.since && w.since[rid]) || 0); }
     const body = {}; let k = 0;
-    for (const rid of out.keys()) { if (k++ >= 12) break; body['o:' + rid] = orderRevs.get(rid) || ''; }
+    // (the first look at an order: what was written since its window's read, '@<age>', a duration on this computer's clock; then the rev it was answered)
+    for (const [rid, t] of out) { if (k++ >= 12) break; body['o:' + rid] = orderRevs.get(rid) || (t ? '@' + Math.max(0, Math.round(now() - t)) : ''); }
     for (const rid of [...orderRevs.keys()]) if (!out.has(rid)) orderRevs.delete(rid);
     return k ? body : null;
   }
@@ -295,11 +301,12 @@
     for (const k of String(kinds || '')) if ((lastKind.get(k) || 0) >= t) return false;
     return true;
   }
-  function watchOrder(rid) {
+  function watchOrder(rid, since) {
     rid = String(rid == null ? '' : rid).replace(/\D/g, ''); if (!rid) return () => {};
-    mine.set(rid, (mine.get(rid) || 0) + 1); post({ t: 'watch', rids: [...mine.keys()] });
+    const x = typeof since === 'function' || +since > 0 ? since : now();   // (one entry per window: its own, removed by its own off)
+    mine.set(rid, (mine.get(rid) || []).concat([x])); post(watchMsg());
     let off = false;
-    return () => { if (off) return; off = true; const c = (mine.get(rid) || 1) - 1; if (c > 0) mine.set(rid, c); else mine.delete(rid); post({ t: 'watch', rids: [...mine.keys()] }); };
+    return () => { if (off) return; off = true; const l = (mine.get(rid) || []).slice(), i = l.indexOf(x); if (i >= 0) l.splice(i, 1); if (l.length) mine.set(rid, l); else mine.delete(rid); post(watchMsg()); };
   }
   /** fn in one tab of this computer at most every everyMs (a lock while it runs, and the time it ran told to every tab). */
   async function once(name, everyMs, fn) {
@@ -377,7 +384,7 @@
     evaluate();
     // (the cloud's first answer and a sign-in come without an event of their own: a look every 2 s starts the feed once it may ask)
     let watchSent = 0;
-    setInterval(() => { if (dead) return; evaluate(); if (mine.size && now() - watchSent > 30000) { watchSent = now(); post({ t: 'watch', rids: [...mine.keys()] }); } }, 2000);
+    setInterval(() => { if (dead) return; evaluate(); if (mine.size && now() - watchSent > 30000) { watchSent = now(); post(watchMsg()); } }, 2000);
     return api;
   }
   /** Stop for good on this page (an older cloud, or a test): every surface goes back to its own timer. */

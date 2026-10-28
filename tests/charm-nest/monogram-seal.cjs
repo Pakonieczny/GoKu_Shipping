@@ -195,12 +195,18 @@ const finish = () => { console.log(`\nmonogram-seal: ${nCheck - fails.length}/${
     });
     check(JSON.stringify(node.all) === JSON.stringify([['Ann', 'ABC', 1], ['Bob', 'XYZ', 2]]) && JSON.stringify(node.two) === JSON.stringify([['Bob', 'XYZ', 2]]) && node.other === 1 && node.merged === 2, 'stampsFromEvents / mergeStamps: one press is one stamp (a second of leeway, per piece), a slot names its piece, other lines and other types are not read: ' + JSON.stringify(node));
 
-    // an approval another computer makes while the Order window is open: the window's own timeline read brings it (OrderTimelineUI polls the open order), and the card draws the seal at rest
+    // an approval another computer makes while the Order window is open: that computer's page sends the event as every page does (its outbox: charmNestLibrary
+    // timelineAdd, which raises the order's Order_Rev and, on the real server, names o:<order> in the changes feed); this computer's feed hears it (the open
+    // window's order is watched) and the window's own timeline read brings it; the card draws the seal at rest. The event lands a moment after the window's
+    // own read, before the feed's first look at the order: that first look asks what was raised since the read ('@<age>'), so it is news, not the baseline.
+    // (FEED: the window no longer polls every pollOpenMs while the feed answers, so an event put straight into the store, as no computer writes one, is not news to it.)
     await page.evaluate(() => { OrderTimelineUI.pollOpenMs = 800; });
     const pBefore = (await presses()).length, tBefore = (await tools()).length;
     await openWin(kB); await winReady();
     const n0 = await page.evaluate(() => document.querySelectorAll('#owEng .mwSeal .seal').length);
-    st.put('Order_Timeline', `${ridB}~monogramApproved~foreign-1`, { orderId: ridB, type: 'monogramApproved', at: Date.now() - 30000, by: 'Other Computer', source: 'sorter', station: 'sorter', device: 'charm-nest-1', lineKey: kB, transactionId: '', sheetId: '', sheet: '', setId: '', text: 'Monogram OSR', data: { letters: 'OSR', slot: null, n: 1, of: 1, poolId: kB + '_1', signedIn: true }, milestone: false });
+    const sentByOther = await fetch(`${srv.sorterOrigin}/.netlify/functions/charmNestLibrary`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'timelineAdd', sandbox: false, events: [
+      { orderId: ridB, type: 'monogramApproved', id: 'foreign-1', at: Date.now() - 30000, by: 'Other Computer', station: 'sorter', device: 'charm-nest-1', lineKey: kB, transactionId: '', text: 'Monogram OSR', data: { letters: 'OSR', slot: null, n: 1, of: 1, poolId: kB + '_1', signedIn: true } }] }) }).then(r => r.json());
+    check(!!(sentByOther && sentByOther.ok && st.doc('Order_Timeline', `${ridB}~monogramApproved~foreign-1`)), 'the other computer\'s approval is on the order\'s timeline (timelineAdd, as its page sends it): ' + JSON.stringify(sentByOther));
     const got = await until(n => document.querySelectorAll('#owEng .mwSeal .seal').length === n + 1, 'the window to read the other computer\'s stamp', n0, 20000);
     check(n0 === 1 && !!got, 'the Order window, open, draws the seal another computer pressed once its timeline read brings the event (' + n0 + ' seal, then ' + (await page.evaluate(() => document.querySelectorAll('#owEng .mwSeal .seal').length)) + ')');
     check(await page.evaluate(() => [...document.querySelectorAll('#owEng .mwSeal .seal')].some(x => /approved by Other Computer/.test(x.getAttribute('aria-label'))) && ![...document.querySelectorAll('#owEng .mwSeal .seal')].some(x => x.classList.contains('pending'))) && (await presses()).length === pBefore && (await tools()).length === tBefore, 'it names the other person, rests (not pending), and nothing came down for it');

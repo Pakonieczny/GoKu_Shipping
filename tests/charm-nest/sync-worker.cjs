@@ -52,6 +52,15 @@ const say = s => { out.push(s); console.log('  ' + s); };
     st.put('Order_Rev', '3700000100', { n: 7, at: Date.now() });   // (a station's scan, firebaseOrders: its own batch raises Order_Rev)
     w = await lib({ op: 'getChanges', since: c.n, watch: { 'o:3700000100': w.orders['3700000100'] } });
     assert.deepEqual(w.keys, ['o:3700000100'], 'a watched Order_Rev that moved is named');
+    // (the first look at an order, '@<age>': its window read the timeline <age> ms ago; a raise since then is news, not the baseline)
+    st.put('Order_Rev', '3700000100', { n: 8, at: Date.now() - 60000 });   // (raised a minute ago: before the window's read)
+    w = await lib({ op: 'getChanges', since: c.n, watch: { 'o:3700000100': '@10000' } });
+    assert(!w.keys && w.orders['3700000100'], 'the first look at an order its window read 10 s ago, raised before that: no name');
+    st.put('Order_Rev', '3700000100', { n: 9, at: Date.now() - 2000 });   // (a station's scan 2 s ago: after the window's read, before the feed's first look)
+    w = await lib({ op: 'getChanges', since: c.n, watch: { 'o:3700000100': '@10000' } });
+    assert.deepEqual(w.keys, ['o:3700000100'], 'the first look at an order raised since its window\'s read: named at once');
+    w = await lib({ op: 'getChanges', since: c.n, watch: { 'o:3700000199': '@10000' } });
+    assert(!w.keys, 'the first look at an order nothing raised: no name');
     const ahead = i => parts(c.n).map((x, j) => x + (j === i ? 3 : 0)).join('.');
     assert((await lib({ op: 'getChanges', since: ahead(0) })).reset, 'the Library\'s shard ahead of the cloud\'s (a sandbox reset began it again): reset');
     const pAhead = await lib({ op: 'getChanges', since: ahead(1) });
@@ -65,7 +74,7 @@ const say = s => { out.push(s); console.log('  ' + s); };
     assert(ls2.unchanged && listReads === 1, `a list read by revision after only a pool row moved: unchanged for 1 read, the Library's shard did not move (${listReads})`);
     st.reads = 0; await lib({ op: 'getChanges', since: c.n });
     const askReads = st.reads;
-    say(`A · cloud: each write names what it touched (s: p: c: o: x:) in its shard, one bumpRev each, its answer says so (X-CN-Feed: ${hdr}); a question reads ${askReads} documents (4 shards + the cancel counter, one getAll); watched Order_Rev named; reset / p:* ahead; sandbox apart; list unchanged after a pool row in ${listReads} read`);
+    say(`A · cloud: each write names what it touched (s: p: c: o: x:) in its shard, one bumpRev each, its answer says so (X-CN-Feed: ${hdr}); a question reads ${askReads} documents (4 shards + the cancel counter, one getAll); watched Order_Rev named, and on the first look one raised since the window's read; reset / p:* ahead; sandbox apart; list unchanged after a pool row in ${listReads} read`);
 
     /* ── the browser: one computer (one context), its tabs ── */
     const { chromium } = require(path.join(pwDir, 'playwright-core'));

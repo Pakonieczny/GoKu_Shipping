@@ -1272,9 +1272,14 @@ async function op_getMany(b) {
        cg      the cancel counter (Charm_Nest_Rev/cancel, production): every writer of a cancel record raises it, the receipts mirror too, so a cg that moved
                is x:* whatever wrote it
        watch   { 'o:<order>': rev } the open order windows' Order_Rev (raised by every writer of a timeline, the stations' and the Team's too): orders
-               gives each one's rev now, and a moved one is o:<order>
+               gives each one's rev now, and a moved one is o:<order>. An order asked of for the first time is { 'o:<order>': '@<age>' }: the window
+               read its timeline <age> ms ago (on the page's clock: a duration, so no two clocks are compared), and an Order_Rev written since
+               (WATCH_SLACK before, for the question's way here) is o:<order> at once. Without it a station's event landing between the window's
+               own read and the feed's first look at its order was the window's baseline, never news to it (until its ten-minute read).
    Cost: one read, one more for the cancel counter, one per watched order (at most WATCH_MAX). Reads only; the sandbox reads its own (revRef, PREFIX). ── */
-const WATCH_MAX = 12, KEYS_MAX = 1200;
+const WATCH_MAX = 12, KEYS_MAX = 1200, WATCH_SLACK = 5000, WATCH_AGE_MAX = 24 * 3600000;
+/** When an order's Order_Rev was last raised (ms): its `at` (every raise writes it, _orderTimeline touch) or its update time, the later. */
+const raisedAt = snap => (snap && snap.exists ? Math.max(num((snap.data() || {}).at), snap.updateTime ? num(snap.updateTime.seconds) * 1000 + Math.floor(num(snap.updateTime.nanoseconds) / 1e6) : 0) : 0);
 /* (the count is the four shards' counts, "lib.p.o.x" (FEED_SHARDS): a page holds it as it is given; a shard asked from before its list's memory, or whose count
    moved without its list, names its kinds' wildcards (p:*, o:*, x:* m:* a:*): those surfaces ask their own question; the Library's shard is a reset, as before) */
 async function op_changes(b) {
@@ -1294,7 +1299,12 @@ async function op_changes(b) {
   if (watch.length) {
     out.orders = {};
     const at = S + (PREFIX ? 0 : 1);
-    watch.forEach((id, i) => { const r = revOf(snaps[at + i]), had = b.watch["o:" + id] != null ? b.watch["o:" + id] : b.watch[id]; out.orders[id] = r; if (typeof had === "string" && had && had !== r) keys.add("o:" + id); });
+    watch.forEach((id, i) => {
+      const snap = snaps[at + i], r = revOf(snap), had = b.watch["o:" + id] != null ? b.watch["o:" + id] : b.watch[id]; out.orders[id] = r;
+      if (typeof had !== "string" || !had) return;
+      if (had[0] === "@") { const age = Math.min(WATCH_AGE_MAX, Math.max(0, num(had.slice(1)))), t = raisedAt(snap); if (t && t >= Date.now() - age - WATCH_SLACK) keys.add("o:" + id); return; }   // (the first look: written since the window's read)
+      if (had !== r) keys.add("o:" + id);
+    });
   }
   if (keys.size && !out.reset) { out.keys = [...keys].slice(0, KEYS_MAX); out.kn = {}; for (const k of out.keys) if (kn[k]) out.kn[k] = kn[k]; }   // (kn: the count each name was written at, in its shard)
   return out;

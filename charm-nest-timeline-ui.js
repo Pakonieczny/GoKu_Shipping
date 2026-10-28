@@ -1545,7 +1545,9 @@
       sync = C.follow({ name: "timeline:" + id, kinds: "ox", wild: "o", active: () => !F.dead && subs.size > 0 && seen(), since: () => F.began,
         wants: k => k.slice(2) === id,
         read: () => { if (F.dead || !subs.size) return; F.moved = Date.now(); F.verifyNext = true; if (F.loading) { F.dirty = true; return; } arm(Math.max(0, F.began + gap - Date.now())); } });
-      unwatch = C.watchOrder ? C.watchOrder(id) : null;
+      // (since: when this window's own read began, so the feed's first look at the order names what landed after it, a station's scan or another computer's
+      //  approval in the seconds between: without it that write was the feed's baseline, never news to the window)
+      unwatch = C.watchOrder ? C.watchOrder(id, () => F.began || Date.now()) : null;
     };
     const feedOff = () => { try { if (sync) sync.stop(); } catch (_) {} try { if (typeof unwatch === "function") unwatch(); } catch (_) {} sync = null; unwatch = null; };
     const core = r => String(r || "").split(".").slice(0, 2).join(".");   // (the server's digest and Order_Rev, without the time the digest was taken)
