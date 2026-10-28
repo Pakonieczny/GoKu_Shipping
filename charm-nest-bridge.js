@@ -8654,7 +8654,7 @@ const Engrave = window.Engrave = (() => {
   function fitClient() {
     if (!workerClient) {
       if (!window.Worker || !F_.workerFonts?.Regular) throw new Error("Background engraving could not start. Reload and retry this placement.");
-      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col-vf1-fb1-fb2-fr1-wd1-cb1-sy1",fonts:F_.workerFonts,fontsFor:id=>{const set=FONT_SETS.get(id);return set&&set.ok?set.workerFonts:null;},scriptsFor:scriptsPack});
+      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20261009-flat-col-vf1-fb1-fb2-fr1-wd1-cb1-sy1-rf1",fonts:F_.workerFonts,fontsFor:id=>{const set=FONT_SETS.get(id);return set&&set.ok?set.workerFonts:null;},scriptsFor:scriptsPack});
     }
     return workerClient;
   }
@@ -9220,27 +9220,64 @@ const Engrave = window.Engrave = (() => {
     if(recovered)Session.schedule();
     return recovered;
   }
+  /* APPROVEFIX (Paul, 28 Oct 2026, order 4212020155: "The 'Approve' button is not working after I made adjustments to this charm's engraving."): a press on Approve ends in one of two things, the placement
+     approved or ONE plain line in the card, under the button, that says why not (approveSay; the toast as before). It used to end in silence in a dozen places (cardAction while busy, approve() while a
+     task was held, approveOnce's own checks), and every wait of an approval (the fit of new words, a sign-in, the back file, the workspace save, the stamp) could hold job._approvalTask and approvalPreparing
+     for good: that press never ended, every later press was dropped without a word, and the card, drawn again by any adjustment, showed a live green Approve. Each wait now has a time limit (approveWithin,
+     as STUCKSPIN's within: the wait itself goes on, the approval lets go and says so). Nothing of the placement is reset by a press that does not approve: the words stay where they were moved. */
+  const APPROVE_MS = { fit: 60000, sign: 300000, file: 90000, save: 30000, stamp: 8000 };
+  const approveWithin = (p, ms, why) => new Promise((res, rej) => { const t = setTimeout(() => rej(Object.assign(new Error(why), { stuck: true })), ms * Math.max(0.001, +window.CN_SPIN_SCALE || 1)); Promise.resolve(p).then(v => { clearTimeout(t); res(v); }, e => { clearTimeout(t); rej(e); }); });   // (CN_SPIN_SCALE: a test's clock; 1 on the page)
+  /** The line under the card's Approve that says why the press did not approve ('' takes it away). Kept in memory, by the job's key, for a card of it drawn again within 20 s (a "still approving" line is not). */
+  const APPROVE_WHY = new Map();
+  function approveSay(job, text, card, passing) {
+    try {
+      text = String(text || "").trim(); const was = APPROVE_WHY.get(job.key);
+      for (const [k, v] of APPROVE_WHY) if (Date.now() - v.at > 20000) APPROVE_WHY.delete(k);
+      if (text && !passing) { if (!was || was.text !== text) APPROVE_WHY.set(job.key, { text, at: Date.now() }); } else APPROVE_WHY.delete(job.key);
+      const c = card || (EG.card && EG.card.isConnected && EG.cardKey === job.key ? EG.card : null), host = c && c.querySelector(".pvApproval"); if (!host) return;
+      let n = host.querySelector(".egApproveWhy");
+      if (!text) { if (n) n.remove(); return; }
+      if (!n) { n = document.createElement("div"); n.className = "egApproveWhy"; n.setAttribute("role", "status"); host.appendChild(n); }
+      if (n.textContent !== text) n.textContent = text;
+    } catch (_) { /* the toast still says it */ }
+  }
+  const notApproved = (job, text, ms) => { approveSay(job, text); toast(text, "bad", ms || 7000); };
+  /** Why this job cannot be approved now ('' = it can): what approveOnce used to return on without a word. */
+  function approveBlocked(job, owner, pendingFit) {
+    if (owner.get(job.key) !== job) return "stale";
+    if (job.row?.state === "gone") return "Not approved: this order is no longer in the run.";
+    if (job.stamping || job.backSaving || job.approvalPreparing) return "Still approving this placement…";
+    if (job.state === "review" || job.state === "fitting" && pendingFit) return "";
+    return "Not approved: " + ({ fitting: "the words are still being placed. Approve once they are drawn.", ready: "the words are waiting to be placed on the charm. Approve once they are drawn.", classify: "the words are being read again. Approve once they are placed.", reclassify: "the words are being read again. Approve once they are placed.", words: "the words need a decision first.", blocked: "the words need a decision first.", approved: "it is approved already.", written: "it is approved and saved already.", skipped: "it is cut plain.", none: "it has no engraving." }[job.state] || `this placement is ${job.state || "not ready"}.`);
+  }
+  /** Says why, and when the card in front is not the card of the job as it is now (another object, another state), draws it again. */
+  function approveRefused(job, why) {
+    const stale = why === "stale";
+    approveSay(job, stale ? "This card was out of date: it is drawn again. Look at it, then press Approve." : why, null, /^Still/.test(why));
+    if (stale || !["review"].includes(job.state)) { if (EG.cardKey === job.key) { focusOn(job.key); EG.card = null; EG.cardKey = null; } render(); }
+  }
   async function approve(job, by, button) {
-    if(job._approvalTask)return;
+    if(job._approvalTask){approveSay(job,"Still approving this placement…",null,true);return;}   // (APPROVEFIX: every wait of the task has a time limit, so this ends)
     const task=approveOnce(job,by,button);job._approvalTask=task;
     try{return await task;}finally{if(job._approvalTask===task)delete job._approvalTask;}
   }
   async function approveOnce(job, by, button) {
     const owner=items(),row=job.row,pendingFit=fitTasks.get(job);
-    if(owner.get(job.key)!==job || row?.state==="gone" || job.state!=="review" && !(job.state==="fitting" && pendingFit) || job.stamping || job.backSaving || job.approvalPreparing) return;
+    { const why=approveBlocked(job,owner,pendingFit); if(why){approveRefused(job,why);return;} approveSay(job,""); }
     if(neverEngraves(row) && !job.approvalIntent){setNone(job,neverWhy(row));Orders.render();render();return;}   // (NO EARRING IS EVER ENGRAVED: an old open card is put away, nothing is approved)
     if(job.approvalIntent){recoverApprovals();if(job.state==="approved")await saveBacks(job);return;}
     if(pendingFit){
       // A can arrive while new words still wait for fonts or the fitting worker.
       // Keep the duplicate task lock, let that fit finish without preparation
       // flags blocking it, and verify only its latest resulting geometry.
-      try{await pendingFit;}catch(e){
-        if(items()===owner && owner.get(job.key)===job && job.row===row && row.state!=="gone" && !["approved","written","skipped","none"].includes(job.state))toast(`Not approved: the engraving preview could not finish (${e.message}). Refit the words before approving.`,"bad",7000);
+      try{await approveWithin(pendingFit,APPROVE_MS.fit,"the words were not placed within a minute");}catch(e){
+        if(items()===owner && owner.get(job.key)===job && job.row===row && row.state!=="gone" && !["approved","written","skipped","none"].includes(job.state))notApproved(job,`Not approved: the engraving preview could not finish (${e.message}). Refit the words before approving.`);
+        else approveSay(job,"Not approved: the placement changed while its words were placed. Look at it, then press Approve.");
         return;
       }
-      if(items()!==owner || owner.get(job.key)!==job || job.row!==row || row.state==="gone" || job.state!=="review" || job.stamping || job.backSaving || job.approvalPreparing)return;
+      { const why=items()!==owner || job.row!==row ? "stale" : approveBlocked(job,owner,null); if(why){approveRefused(job,why);return;} }
     }
-    if(EG.cardKey === job.key && EG.card?._previewFailed) { toast("Refit the words to restore the preview before approving.", "bad"); return; }
+    if(EG.cardKey === job.key && EG.card?._previewFailed) { notApproved(job, "Not approved: refit the words to restore the preview before approving.", 4000); return; }
     if(EG.cardKey===job.key) EG.card?._flushSpacing?.();
     const approvalButton=(button?.isConnected===false ? null : button) || (EG.cardKey===job.key ? EG.card?.querySelector('[data-a="approve"]') : null);
     const wasDisabled=!!approvalButton?.disabled;
@@ -9251,47 +9288,48 @@ const Engrave = window.Engrave = (() => {
       clearTimeout(EG.card?._wordsTimer);
       const text=EG.card?.querySelector('[data-f="words"]')?.value.trim();
       const bare=text === "" && typeof faceHasEditorArt === "function" && faceHasEditorArt(job);   // (EDITOR WORDS: an empty words box on a face the charm editor drew is that face's engraving, not a missing one)
-      if(text === "" && !bare) { toast("Type the words first", "bad"); return; }
+      if(text === "" && !bare) { notApproved(job, "Not approved: type the words first.", 4000); return; }
       if(text != null) delete EG.drafts?.[job.key];
-      if(bare) { if(!(job.fit && job.fit.artOnly)) { by = by || employeeName() || await needEmployee("Kept with this approval and its seal."); if (!by) return; if(!clearWords(job, by)) { toast("Not approved: this face's drawing could not be read", "bad"); return; } } }
+      if(bare) { if(!(job.fit && job.fit.artOnly)) { by = by || employeeName() || await approveWithin(needEmployee("Kept with this approval and its seal."), APPROVE_MS.sign, "").catch(() => ""); if (!by) { approveSay(job, "Not approved: nobody is signed in. Sign in, then press Approve."); return; } if(!clearWords(job, by)) { notApproved(job, "Not approved: this face's drawing could not be read", 4000); return; } } }
       else if(text != null && text!==(job.lineInput || job.lines).join("\n")) {
         job.text=text;job.lineInput=text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
         // placed somewhere new, the words are shown before anyone approves them
-        job.lines=job.lineInput.slice();if(!(await fitNewWords(job)))return;
+        job.lines=job.lineInput.slice();if(!(await approveWithin(fitNewWords(job),APPROVE_MS.fit,"").catch(()=>false))){approveSay(job,"Not approved: the new words are being placed. Look at them, then press Approve.");return;}
       }
     }
-    if (job.backSaving) return;
-    by = by || employeeName() || await needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: button });   // (SIGNIN, 27 Oct 2026: asked under Approve; put away, a note says why)
-    if (!by) return;
+    if (job.backSaving) { approveSay(job, "Still saving this placement's file. Press Approve again in a moment.", null, true); return; }
+    by = by || employeeName() || await approveWithin(needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: button }), APPROVE_MS.sign, "").catch(() => "");   // (SIGNIN, 27 Oct 2026: asked under Approve; put away, a note says why)
+    if (!by) { approveSay(job, "Not approved: nobody is signed in. Sign in, then press Approve."); return; }
     // says which step is missing (it read "Nothing verified to approve" whatever the reason)
-    if (!job.fit || !job.verify || !job.verify.geometry.ok) { toast(!job.fit ? "Not approved: the words are not placed on the charm yet" : !job.verify ? "Not approved: the placement is still being checked" : "Not approved: the placement failed its check · move or resize the words first", "bad"); return; }
+    if (!job.fit || !job.verify || !job.verify.geometry.ok) { notApproved(job, !job.fit ? "Not approved: the words are not placed on the charm yet" : !job.verify ? "Not approved: the placement is still being checked" : "Not approved: the placement failed its check · move or resize the words first", 4000); return; }
     const approvedAt=Date.now();let prepared;
-    try{prepared=await prepareApproval(job,by,approvedAt);}catch(e){toast(`Not approved: ${e.message}`,"bad",7000);return;}
-    if(job.row?.state==="gone" || typeof items==="function" && items().get(job.key)!==job)return;
-    if(job.fit!==prepared.fit || job.view!==prepared.view){toast("The placement changed while it was checked. Review it before approving.","bad");return;}
+    try{prepared=await approveWithin(prepareApproval(job,by,approvedAt),APPROVE_MS.file,`the ${faceWord(job)} file was not made in ${Math.round(APPROVE_MS.file/1000)} seconds. Press Approve to try again`);}catch(e){notApproved(job,`Not approved: ${e.message}`);return;}
+    if(job.row?.state==="gone" || typeof items==="function" && items().get(job.key)!==job){approveRefused(job,job.row?.state==="gone" ? "Not approved: this order is no longer in the run." : "stale");return;}
+    if(job.fit!==prepared.fit || job.view!==prepared.view){notApproved(job,"Not approved: the placement changed while it was checked. Review it before approving.",4000);return;}
     job.approvalIntent={phase:"verified",at:approvedAt,by,text:job.text};
     if(typeof Session!=="undefined"){
-      try {Session.schedule();if(await Session.flushNow?.()===false)throw new Error("Workspace checkpoint did not complete");}
-      catch(e){delete job.approvalIntent;toast("Approval could not be saved on this browser. Keep this view open and retry once workspace saving recovers.","bad",7000);return;}
+      try {Session.schedule();if(await approveWithin(Session.flushNow?.(),APPROVE_MS.save,"the workspace save did not answer")===false)throw new Error("Workspace checkpoint did not complete");}
+      catch(e){delete job.approvalIntent;notApproved(job,`Not approved: the approval could not be saved on this browser${e && e.stuck ? " (the workspace save did not answer in " + Math.round(APPROVE_MS.save / 1000) + " seconds)" : ""}. Your changes are kept: press Approve to try again.`);return;}
     }
     CNEngravingSeals.keep(job);
     const seal=CNEngravingSeals.add(job,"engraveApproved",by,approvedAt);
     // Publish the new state only after the wooden press, ink and lift finish. Pollers must not advance early.
-    job.stamping=true;try{await CNEngravingSeals.press(approvalButton,seal);}finally{job.stamping=false;}
-    if(job.fit!==prepared.fit || job.view!==prepared.view){toast("The placement changed while it was approved. Review the current words.","bad");delete job.approvalIntent;return;}
-    settleApproval(job);
+    job.stamping=true;try{await approveWithin(CNEngravingSeals.press(approvalButton,seal),APPROVE_MS.stamp,"").catch(()=>{});}finally{job.stamping=false;}   // (APPROVEFIX: the stamp is the picture of the approval, never what holds it up)
+    if(job.fit!==prepared.fit || job.view!==prepared.view){notApproved(job,"Not approved: the placement changed while it was approved. Review the current words.",4000);delete job.approvalIntent;return;}
+    if(!settleApproval(job)){notApproved(job,"Not approved: the placement changed while it was approved. Look at it, then press Approve again.",4000);return;}
+    approveSay(job,"");   // (APPROVEFIX: it used to go on as if approved, and the card came back with Approve)
     // ENGPRE: approved before its piece was pooled: the run's record of the line keeps the approval (one coalesced save), the back file follows once the piece is on a sheet
     if(unplacedPre(job) && job.state==="approved" && B.run){try{B.run.lines=Object.fromEntries(Orders.rows().map(Orders.lineRecord));RunCtl.save(B.run).catch(()=>{});}catch(_){}}
     // the person pressed Approve and the approval stands: engraving approved for this line's pieces (once per press)
     if(job.state==="approved")try{humanAct("complete",{orderId:String(job.row.order.receiptId),line:String(job.row.line.transactionId||""),sku:String(job.row.spec&&job.row.spec.designSku||""),parts:(job.copies||[]).length||1,detail:(isFront(job) ? "front " : "") + "engraving approved"});}catch(_){}
     job.approvalPreparing=false;
-    if(typeof Session!=="undefined"){Session.schedule();await Session.flushNow?.();}
+    if(typeof Session!=="undefined"){Session.schedule();await approveWithin(Session.flushNow?.(),APPROVE_MS.save,"").catch(()=>{});}   // (the approval is checkpointed already: this save only carries what followed)
     if (EG.opened === job.key) EG.opened = null;   // (NODECIDED: the card of a piece just approved moves on to the next piece; the approved piece is in the list, its seals on its row)
     for(const show of [()=>goes(job,{to:EG_TAB("approved")}),()=>Review.remove("eng:"+job.key),()=>agent({engrave:true},"ENGRAVE",`${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.artOnly ? "the charm editor's parts, no words" : `${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""}`})`),render,()=>Orders.render()])try{show();}catch(e){console.warn("Engraving approval view",e);}
     await saveBacks(job);
     } finally {
       job.approvalPreparing=false;
-      if(approvalButton){approvalButton.removeAttribute?.("aria-busy");approvalButton.textContent="Approved";if(job.state==="review")approvalButton.disabled=wasDisabled;}
+      if(approvalButton){approvalButton.removeAttribute?.("aria-busy");approvalButton.textContent=job.state==="review" ? "Approve" : "Approved";if(job.state==="review")approvalButton.disabled=wasDisabled;}   // (APPROVEFIX: a press that did not approve leaves "Approve", never a live "Approved")
       if(job.state==="review")render();
     }
   }
@@ -9495,7 +9533,7 @@ const Engrave = window.Engrave = (() => {
     if (grid && art.length && !onFront) cv._gridLabel = gridLabelBox(ctx, cv.width);   // (where "Show front" sits: just after the grid's own label)
     // CHARM EDIT · BACK (27 Oct 2026): what a person added to this BACK is engraved by the back's own file with the words, so every picture of the back draws it where the file puts it (backArtOf):
     // the work area as a front draws its art (the laser's colours, muted), the pictures written with the piece in the words' ink, as the file engraves it; under the cut line and the words
-    const added = onFront ? [] : backArtOf(job), ownArt = g => { if (!added.length) return; if (editable) frontArtOn(g, added, tx, k, cv.width, cv.height, FRONT_ART_ALPHA.front); else backArtInk(g, added, tx, k); };
+    const added = onFront ? [] : backArtOf(job), ownArt = g => { if (!added.length) return; if (editable) frontArtOn(g, added, tx, k, cv.width, cv.height, FRONT_ART_ALPHA.own); else backArtInk(g, added, tx, k); };   // (OWNART: every part added to a back is the person's own: full strength)
     cv._backArt = added;
     ownArt(ctx);
     const cutLines = g => { for (const m of view.members) { g.beginPath(); P.pathToCanvas(g, m, tx); g.strokeStyle = "#000"; g.lineWidth = Math.max(1, 0.5 * k); g.stroke(); } };
@@ -9507,7 +9545,7 @@ const Engrave = window.Engrave = (() => {
     let peek = null;
     const under = () => {
       if (!cv._showFront || onFront || !art.length) return outline;
-      if (!peek) { peek = document.createElement("canvas"); peek.width = cv.width; peek.height = cv.height; const g = peek.getContext("2d"); g.drawImage(base, 0, 0); frontArtOn(g, art, tx, k, cv.width, cv.height, FRONT_ART_ALPHA.back); ownArt(g); cutLines(g); }
+      if (!peek) { peek = document.createElement("canvas"); peek.width = cv.width; peek.height = cv.height; const g = peek.getContext("2d"); g.drawImage(base, 0, 0); frontArtOn(g, art, tx, k, cv.width, cv.height, FRONT_ART_ALPHA.back, FRONT_ART_ALPHA.back); ownArt(g); cutLines(g); }
       return peek;
     };
     /** Repaint: the static layers, then the text — the fitted one, or a provisional one while a hand is moving it. */
@@ -9584,7 +9622,7 @@ const Engrave = window.Engrave = (() => {
      area's own scale: it is drawn again at every size the area takes, never a small picture stretched. What is drawn is what engraves, in the laser's colours, muted so the words stay the thing to
      look at: a line engraving in red, a hatched area in blue, a white fill knocked out of the art under it. A black line left on the CUT layer and the keep-out layers are not art and are not drawn. */
   const FRONT_ART = new WeakMap();   // view -> its art, turned into the view's frame once
-  const FRONT_ART_ALPHA = { front: 0.5, back: 0.2 };   // (the FRONT's own art, muted; the front seen through the BACK while "Show front" is on, fainter)
+  const FRONT_ART_ALPHA = { front: 0.5, back: 0.2, own: 1 };   // (the FRONT's own art, muted; the front seen through the BACK while "Show front" is on, fainter; OWNART: what a person drew in the charm editor, at full strength)
   const FRONT_INK = { line: "rgb(214,48,40)", hatch: "rgb(30,80,220)" };
   const artHatchBlue = c => !!c && c.length >= 3 && c[2] >= 0.5 && c[2] - Math.max(c[0], c[1]) >= 0.4;   // (charm-nest-geom.js hatchBlue)
   const artGrey = c => !c || Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]) <= 0.15;
@@ -9615,19 +9653,28 @@ const Engrave = window.Engrave = (() => {
     return art;
   }
   /** Draws the art onto ctx through tx (pt -> canvas px, k px per pt): every path as a vector on a layer the size of the canvas, at full colour, then the layer laid on at `alpha`, so lines that cross
-   *  (a calendar's day grid) do not darken where they meet and the grid and the tint still show through a hatched area. */
-  function frontArtOn(ctx, art, tx, k, w, h, alpha) {
-    const lay = document.createElement("canvas"); lay.width = w; lay.height = h; const g = lay.getContext("2d");
-    g.lineJoin = "round"; g.lineCap = "round";
-    for (const s of art) {
-      const ink = frontArtInk(s); if (!ink.fill && !ink.stroke) continue;
-      g.beginPath(); P.pathToCanvas(g, s, tx);
-      if (ink.fill === "paper") { g.save(); g.globalCompositeOperation = "destination-out"; g.fillStyle = "#000"; g.fill(ink.rule); g.restore(); }
-      else if (ink.fill) { g.fillStyle = FRONT_INK.hatch; g.fill(ink.rule); }
-      if (ink.stroke) { g.strokeStyle = FRONT_INK[ink.stroke]; g.lineWidth = Math.max(0.6, (s.lwPt || 0.5) * k); g.stroke(); }
-    }
-    ctx.save(); ctx.globalAlpha = alpha; ctx.drawImage(lay, 0, 0); ctx.restore();
+   *  (a calendar's day grid) do not darken where they meet and the grid and the tint still show through a hatched area. OWNART (Paul, 28 Oct 2026, a "21" written into a calendar's day square came
+   *  back "not saved": it was, drawn at half strength among the master's lines): the parts a person added or changed in the charm editor are laid on once more at `own` (full strength by default),
+   *  so their work reads at a glance while the master's art stays muted under the words. */
+  function frontArtOn(ctx, art, tx, k, w, h, alpha, own) {
+    const layer = list => {
+      const lay = document.createElement("canvas"); lay.width = w; lay.height = h; const g = lay.getContext("2d");
+      g.lineJoin = "round"; g.lineCap = "round";
+      for (const s of list) {
+        const ink = frontArtInk(s); if (!ink.fill && !ink.stroke) continue;
+        g.beginPath(); P.pathToCanvas(g, s, tx);
+        if (ink.fill === "paper") { g.save(); g.globalCompositeOperation = "destination-out"; g.fillStyle = "#000"; g.fill(ink.rule); g.restore(); }
+        else if (ink.fill) { g.fillStyle = FRONT_INK.hatch; g.fill(ink.rule); }
+        if (ink.stroke) { g.strokeStyle = FRONT_INK[ink.stroke]; g.lineWidth = Math.max(0.6, (s.lwPt || 0.5) * k); g.stroke(); }
+      }
+      return lay;
+    };
+    ctx.save(); ctx.globalAlpha = alpha; ctx.drawImage(layer(art), 0, 0); ctx.restore();
+    const mine = own == null ? FRONT_ART_ALPHA.own : own, theirs = mine > alpha ? art.filter(byHand) : [];
+    if (theirs.length) { ctx.save(); ctx.globalAlpha = mine; ctx.drawImage(layer(theirs), 0, 0); ctx.restore(); }
   }
+  /** OWNART: a part the charm editor put on this piece (charm-nest-art-edit.js applyFront: added, or a part of the master the person changed), as against the master's own drawing. */
+  const byHand = s => !!(s && (s.artAdded || s.artChanged));
   /* CHARM EDIT · BACK (27 Oct 2026): the parts a person added to a piece's BACK in the charm editor (charm-nest-art-edit.js: the charm's artBack, in its own points as seen from the front). The back's
      file engraves them with the words, turned over with the cut by M, then R (charm-nest-pdf.js buildBackFile, handed the same charm by writeBacksOnce and prepareApproval: charmFor), and the work area's frame is the view's
      own (view.M, then view.R): so they are turned into it by the very same two steps, from that same charm, and a part sits on the screen exactly where the file puts it. Kept per view and list. */
@@ -9771,6 +9818,7 @@ const Engrave = window.Engrave = (() => {
   }
   /** The engraving fonts the editor offers, as the engraving's own drop-down names them (the shop's words: "Ace", "Stylish" ...), the piece's own font first; each one loaded. */
   async function charmEditFonts(job) {
+    if (window.CharmNestCeText) return window.CharmNestCeText.fonts(job);   // (CE TEXT, 28 Oct 2026: every engraving font, the shop's words first: charm-nest-ce-text.js)
     const ids = [...new Set([job && job.fontKey, ...(O.FONT_WORDS || []).map(g => g.id), O.DEFAULT_FONT].filter(Boolean))];
     await Promise.all(ids.map(id => Promise.resolve().then(() => loadFontSet(id)).catch(() => null)));
     const word = id => { const g = (O.FONT_WORDS || []).find(x => x.id === id); return (g && g.words && g.words[0]) || (O.fontById(id) || {}).name || id; };
@@ -9780,6 +9828,7 @@ const Engrave = window.Engrave = (() => {
    *  The faces the words are fitted in: the Semibold for a small capital, capitals for a font with no lowercase, and a letter the face cannot draw is left out, as the fit would refuse it. Every
    *  curve is a cubic (a TrueType quadratic raised exactly). Lines are a capital and the fit's own gap apart unless the editor gives a gap (a factor of the size). */
   function charmEditText(text, fontKey, sizePt, o) {
+    if (window.CharmNestCeText) return window.CharmNestCeText.textToPaths(text, fontKey, sizePt, o);   // (CE TEXT, 28 Oct 2026: every script, right to left, emoji as outlines, fonts loaded on demand: charm-nest-ce-text.js)
     o = o || {};
     const set = fontSetOf(fontKey) || (F_.Regular ? F_ : null); if (!set || !set.Regular) return { subpaths: [], bbox: null };
     const size = +sizePt > 0 ? +sizePt : 10, font = (size * G.capPerEm(set.Regular) * MM < CHARM_EDIT_SEMI_MM && set.Semibold) || set.Regular, id = set === F_ ? O.DEFAULT_FONT : set.id;
@@ -11327,6 +11376,7 @@ const Engrave = window.Engrave = (() => {
     // every rebuild of the card. Without the picker or its data the button is not offered.
     { const eb = ta && card.querySelector(".pvWords [data-emoji]"); if (eb && !(window.CNEmojiPicker && window.CNEmojiPicker.attach({ textarea: ta, button: eb, key: "words:" + job.key }))) eb.remove(); }   // (only this box's own button: the panel's Emoji button is the panel's)
     const backHost = card.querySelector(".backHost");
+    const held = wordsJob && ["ready", "fitting"].includes(job.state) && canFit(job) ? heldDrawing(job) : (HELD.delete(job), null), dj = held || job;   // (REFIT: the drawing it had, while it is fitted again)
     let mounted = [0, 0], mountedBelow = -1, raf = 0, framed = null;
     const syncBoth = () => {
       if (!ears) return;
@@ -11400,7 +11450,7 @@ const Engrave = window.Engrave = (() => {
     const mountBack = () => {
       if (disposed) return;
       try {
-      if (wordsJob || !job.view || !backHost.isConnected) return;
+      if ((wordsJob && !held) || !dj.view || !backHost.isConnected) return;
       const r = backHost.getBoundingClientRect();
       // side by side, the box says how big; stacked on a narrow screen the box has no height of its own, so a little
       // over half the window is the ceiling and the charm keeps its shape either way. The charm's own shape is fitted into the
@@ -11415,10 +11465,10 @@ const Engrave = window.Engrave = (() => {
       if (Math.abs(px0[0] - mounted[0]) < 12 && Math.abs(px0[1] - mounted[1]) < 12 && Math.abs(below - mountedBelow) < 4) return;
       mounted = px0; mountedBelow = below; backHost.textContent = "";
       // the drawing's shape does not depend on its size: a small drawing of it says whether a wide piece clears the block (a piece beside no block is not asked)
-      const full = [side(bw + strip), px0[1]], wide = !!strip && takesStrip(renderBack(job, [64, 64], { editable: true, hatch: false, include: framed })._sizePt, px0, full, r.height, below);
+      const full = [side(bw + strip), px0[1]], wide = !!strip && takesStrip(renderBack(dj, [64, 64], { editable: true, hatch: false, include: framed })._sizePt, px0, full, r.height, below);
       const px = wide ? full : px0;
       pm.classList.toggle("egWide", wide);
-      const bc = renderBack(job, px, { grid: true, editable: true, include: framed, draft: panelOn }); framed = bc._map.bb; bc.tabIndex = -1; bc.style.outline = "none"; bc.title = job.fit && job.fit.artOnly ? `no words: the charm editor's parts are this ${fw}'s engraving` : "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys move them 0.05 mm, 1 mm with Shift · cut-outs and holes stay clear"; backHost.appendChild(bc); wire(bc); markShown(job); syncBoth(); if (panelOn) draftNote(card, DRAFTS.get(job.key));
+      const bc = (held && heldCanvas(job, px)) || renderBack(dj, px, { grid: true, editable: true, include: framed, draft: panelOn && !held }); framed = bc._map.bb; bc.tabIndex = -1; bc.style.outline = "none"; bc.title = job.fit && job.fit.artOnly ? `no words: the charm editor's parts are this ${fw}'s engraving` : "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys move them 0.05 mm, 1 mm with Shift · cut-outs and holes stay clear"; backHost.appendChild(bc); if (held) { heldOn(backHost, bc, job, px); return; } wire(bc); markShown(job); syncBoth(); if (panelOn) draftNote(card, DRAFTS.get(job.key));
       frontPeekToggle(backHost, bc);   // FRONTART: a BACK whose design has art on its front gets the quiet "Show front" switch beside the grid's label (a front draws its art always)
       try { charmEditButton(backHost, bc, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }   // CHARM EDIT: the quiet "Edit charm" pill after them (and the last save's note under it): the piece's own artwork in the charm editor (never at the drawing's cost)
       bc._reframe = () => { if (raf || disposed || bc.classList.contains("drag")) return; mounted = [0, 0]; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); };
@@ -11460,6 +11510,7 @@ const Engrave = window.Engrave = (() => {
     const oo = card.querySelector("[data-open-order]"); if (oo) oo.onclick = e => { e.stopPropagation(); const rid = String(r.order.receiptId); if (typeof window.openOrderFrom === "function") openOrderFrom(oo, rid, { row: r.key && !job.editingBack ? { key: r.key } : null, poolId: job.copies[0] }); else OrderWin.openOrder(rid, { from: oo }); };
     const sealHistory=CNEngravingSeals.html(job);if(sealHistory)card.querySelector(".pvApproval")?.insertAdjacentHTML("beforeend",sealHistory);
     const approvalBusy = () => !!(job._approvalTask || job._backTask || job.approvalPreparing || job.stamping || job.backSaving);
+    { const w0 = APPROVE_WHY.get(job.key); if (w0 && Date.now() - w0.at < 20000) approveSay(job, w0.text, card); }   // (APPROVEFIX: why the last press did not approve, on a card drawn again just after it)
     /* The switch follows its pieces while the card is judged (a disc's words read, a placement prepared behind this one): only the switch is drawn again, in place, the card is not touched. */
     card._switchSync = pieces => {
       const sw = card.querySelector(".egSwitchStack, .egEarSwitch"); if (!sw || !pieces || !PSW()) return;   // (the stack: the piece switch with the Front | Back switch beneath it, one block)
@@ -11468,8 +11519,10 @@ const Engrave = window.Engrave = (() => {
       sw.replaceWith(next); card._switchHtml = next.outerHTML; next.querySelectorAll("[data-a]").forEach(b => { b.onclick = () => cardAction(b.dataset.a, b); });
     };
     const cardAction = (a, b, noGuard) => {
-      if (items().get(job.key) !== job) return;
+      const approving = a === "approve" || a === "approveBoth" || a === "approveFaces";
+      if (items().get(job.key) !== job) { if (approving) approveRefused(job, "stale"); return; }   // (APPROVEFIX: never a press that does nothing without a word)
       if (approvalBusy()) {
+        if (approving) approveSay(job, job.backSaving || job._backTask ? "Still saving this placement's file. Press Approve again in a moment." : "Still approving this placement…", card, true);
         if (["close", "prev", "next", "ear", "piece"].includes(a) && !card._afterApproval) {
           // Close/Escape may arrive during export verification, before the stamp
           // starts. Keep the edit attached until its whole approval has settled.
@@ -11607,6 +11660,41 @@ const Engrave = window.Engrave = (() => {
     if (w.focus) w.opened = w.focus;
     return Object.assign(EG, w, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) });
   }
+  /* REFIT · NEVER BLANK (Paul, 28 Oct 2026, CALENDAR_86188: "When I clicked save button, my changes made in the Charm Editor were not saved and did not show up in the UI after pressing the Save
+     button ... Everything must be immediate and responsive"). The edit was saved; artChanged below sends the face to be fitted again and that took its drawing away, so the work area stood empty
+     for the 2.7 s the fit took. The drawing the face had is kept (HELD) and drawn, dimmed, with a small "Fitting…" in its corner, until the new fit lands and takes its place in one frame: the words
+     where they were, the art as it is now (the edit just saved, in the same frame: the cut line is the same, so the piece is turned the same way). It is only looked at: never moved or approved. */
+  const HELD = new WeakMap();   // job -> { view, mask, fit, at } it was drawn with when an artwork edit sent it to be fitted again
+  function holdDrawing(j) { if (j && j.view && j.mask && j.fit) HELD.set(j, { view: j.view, mask: j.mask, fit: j.fit, at: Date.now() }); }
+  /** What the work area of `job` draws while it is fitted again: a stand-in for the job (its own fields, the held view, mask and fit), or null when nothing is held or a newer fit has landed. */
+  function heldDrawing(job) {
+    const h = job && HELD.get(job); if (!h) return null;
+    if (job.fitAt && job.fitAt > h.at) { HELD.delete(job); return null; }
+    let ch = null; try { ch = charmFor(job); } catch (_) { ch = null; }
+    if (h.stand && h.charm === ch) return h.stand;   // (one stand-in for each charm the piece has had since: the pictures made of it are kept by its view)
+    let view = h.view;
+    try {
+      const ob = ch && ch.outline && ch.outline.bbox;
+      if (ob && Math.abs((ob[0] + ob[2]) / 2 - view.cx) < 1e-6 && Math.abs((ob[1] + ob[3]) / 2 - view.cy) < 1e-6 && !(ch.artEdit && ch.artEdit.front && ch.artEdit.front.cut))
+        view = Object.assign({}, view, { dropped: ch.members.filter(m => m !== ch.outline && !G.isCutLine(m)) });   // (backView's own split: what is not the cut is the art)
+    } catch (_) { view = h.view; }
+    h.charm = ch; h.bc = null; h.stand = Object.assign(Object.create(job), { view, mask: h.mask, fit: h.fit });
+    return h.stand;
+  }
+  window.CNEngraveHeld = heldDrawing;   // (the card's Front / Back pictures draw it too while the face is fitted again: charm-nest-engrave-preview.js heldOf)
+  /** The held drawing already made for `job` at this size (the card is drawn again as the face goes from waiting to being fitted: the same picture is moved over, not drawn twice), or null. */
+  const heldCanvas = (job, px) => { const h = HELD.get(job), bc = h && h.bc; return bc && bc._heldPx === px.join("x") ? bc : null; };
+  /** The held drawing `bc` on the work area `host` of `job`: still, dimmed, "Fitting…" in its top-right corner; the Edit charm pill and the save's note as on any drawing. */
+  function heldOn(host, bc, job, px) {
+    const h = HELD.get(job); if (h) { h.bc = bc; bc._heldPx = px.join("x"); }
+    if (!document.getElementById("egRefitCss")) { const st = document.createElement("style"); st.id = "egRefitCss"; st.textContent = ".backHost{position:relative}.backHost canvas.egHeld{opacity:.55}.egRefitCue{position:absolute;display:inline-flex;align-items:center;gap:6px;padding:2px 9px 2px 6px;border-radius:999px;background:rgba(255,255,255,.92);border:1px solid var(--line,#e4ddd0);font:11.5px/1.4 var(--sans,system-ui);color:var(--ink70,#5b554c);pointer-events:none;z-index:1;white-space:nowrap}.egRefitCue .owSpin{width:11px;height:11px;flex-basis:11px}"; (document.head || document.documentElement).appendChild(st); }
+    bc._editable = false; bc._paint(); bc.classList.add("egHeld"); bc.style.cursor = "progress";   // (no box and no handles: nothing here can be moved)
+    bc.title = "Fitting the words again around the new artwork: this is the drawing as it was, the new one takes its place in a moment";
+    const cue = document.createElement("span"); cue.className = "egRefitCue"; cue.setAttribute("role", "status"); cue.innerHTML = '<span class="owSpin" aria-hidden="true"></span>Fitting…';
+    cue.style.right = "8px"; cue.style.top = "8px"; host.appendChild(cue);
+    requestAnimationFrame(() => { if (cue.isConnected && bc.isConnected && bc.offsetWidth) { cue.style.right = ""; cue.style.left = Math.round(Math.max(bc.offsetLeft + 8, bc.offsetLeft + bc.offsetWidth - cue.offsetWidth - 8)) + "px"; cue.style.top = Math.round(bc.offsetTop + 8) + "px"; } });   // (in the drawing's own top-right corner, placed as the Edit charm pill is: in the frame after, no layout in the middle of drawing the card)
+    try { charmEditButton(host, bc, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }
+  }
   /* ART EDIT (Paul, 27 Oct 2026): a person changed the artwork of ONE face of a piece (charm-nest-art-edit.js save). The words on that face were fitted around the old drawing (the
      front's mask keeps them off the master's own art), so they are fitted again on the new one: a face already approved is approved again, in the plain words restoreWritten says when
      a charm's face changed under its words ("This charm's front changed since the words were approved — fit the words again"). Its approved file is withdrawn (revokeBacks: that face's
@@ -11633,11 +11721,12 @@ const Engrave = window.Engrave = (() => {
         toWords(j, `Say what to engrave on the ${face}`); n++; continue;
       }
       if (["approved", "written"].includes(j.state) || j.approvedAt) {
-        revokeBacks(j);
+        revokeBacks(j); holdDrawing(j);   // (REFIT: drawn, dimmed, until the new fit lands)
         Object.assign(j, { state: "ready", view: null, mask: null, fit: null, writtenFit: null, verify: null, approvedBy: null, approvedAt: null, reason: said });
         if (j.row && j.row.engrave) Object.assign(j.row.engrave, { state: "ready", approved: false, reason: said });
         n++;
       } else if (j.view || j.mask || j.fit) {
+        holdDrawing(j);
         Object.assign(j, { view: null, mask: null, fit: null, verify: null });
         if (["review", "blocked", "fitting"].includes(j.state)) { j.state = "ready"; if (j.row && j.row.engrave) j.row.engrave.state = "ready"; }
         n++;
