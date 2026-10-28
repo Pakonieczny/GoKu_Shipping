@@ -10123,8 +10123,8 @@ const Engrave = window.Engrave = (() => {
     // (the tab is drawn again at every fit and approval: the list is asked again when the library says it changed, else at most every 2 s)
     // (no list yet, or another library on the page since: asked again at once, it costs nothing)
     const L = window.CharmNestCeLibrary, D = window.CharmNestDesigns, src = cdFn(L, "recent") ? L : cdFn(D, "search") ? D : null;
-    if (cdSig && src === cdSrc && performance.now() - cdAt < 2000) return;
-    cdAt = performance.now(); cdSrc = src;
+    if (cdSig && src === cdSrc && Date.now() - cdAt < 2000) return;   // (Date, not performance: the tab's code also runs where only the language's own globals are, engrave-ui-faces)
+    cdAt = Date.now(); cdSrc = src;
     let got = null;
     try { got = cdFn(L, "recent") ? L.recent(4) : cdFn(D, "search") ? D.search("", { limit: 8 }) : null; } catch (_) { got = null; }
     if (got && typeof got.then === "function") got.then(paintRecent, () => {}); else paintRecent(got);
