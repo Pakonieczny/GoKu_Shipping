@@ -30,7 +30,7 @@ No model name anywhere else. Brites Ads excluded. Never rm -rf variable paths.
 - int/live-check.cjs: 7 pages load clean. Live verify = sha256 of each changed served file vs `git show origin/main:<f>`, then live-check.
 - If agents hang holding slots (load ~0, waits > 5 min): find holders: for f in slot1 slot2 slot3: ino=$(stat -c %i $SP/locks/$f); grep ":$ino " /proc/locks → pid → ps --ppid. Kill the idle test, tell its agent.
 
-## Live on main: f58a37a = Phase 3 outbox (presses paint at once; zero lost writes; sibling tabs told at once; flowApply + hold/place engines stay awaited) — pushed 10:2x, live verify running; on top of 0eee2c3 Phase 2 (verified live).
+## Live on main: 278a085 (10:35 UTC) = monogram/order-window first-look fix on top of f58a37a Phase 3 (verified live), 0eee2c3 Phase 2. EVERYTHING HANDED BACK IS SHIPPED AND VERIFIED LIVE. No agents running.
 - 89f2819 Manual Control instant · b2608ff navigation rounds 2+3, Charm Editor Save fix (Saving at once, sheet files in background),
   bar necklaces FRONT by default (BARFRONT) · 077f21c Approve never silent / never stuck · d58eea9 Design & Engrave batch 1: editor
   extension points + live readouts + Ctrl/Alt centre resize + smart guides (feedback), Blend/Warp/Distort (warp), image trace (trace).
@@ -85,7 +85,9 @@ board-live-extra.json with the new agent ids.
 
 ## (earlier) Phase 2 handed back 08:50 (claude/local-sync c07cea4; calls/min 1 tab Orders 36→20, 2 tabs 77→24, tab+windows 86→33; other computer's change in 1–2 s). Sent back for: bumpRev best-effort + revision split by kind (Firestore ~1 write/s per doc), own writes broadcast at once to sibling tabs (library-realtime ≤0.5 s), complete-realtime (fails on main too). Ship after.
 - Phase 3 agent ae248b1326745d816 started 08:52 on claude/local-outbox (wt-outbox) from claude/local-sync.
-- monogram-seal fails on main since Phase 2 (2 checks: order window + another computer's monogram seal). Sent to ac1971b04ea413b37 → claude/fix-mono-seal-feed.
+- Live-check page timeouts explained: shipping/sorting/etsy-mail load materialize from cdnjs; through this container's proxy the request sometimes stalls ~30 s and returns without CORP → COEP blocks it (M is not defined). Intermittent, environment-only (curl shows cdnjs sends CORP cross-origin), not from our changes.
+- monogram-seal fix handed back: claude/fix-mono-seal-feed 278a085 (Phase 2 gap: a write between the window's read and the feed's first look was missed; '@<age>' first look). Lead check running.
+- (old) monogram-seal fails on main since Phase 2 (2 checks: order window + another computer's monogram seal). Sent to ac1971b04ea413b37 → claude/fix-mono-seal-feed.
 ## Remaining: Phase 2 sync worker (ac1971b04ea413b37, claude/local-sync) (nav-6 shipped 09:05). Then Phase 3 (outbox, optimistic writes), then Phase 5 needs Paul (Firestore rule + vendored SDK).
 - a41a92d9950823b21 now on claude/eff-inbox-chart: 'Sent per day' chart is a black block when empty.
 - Phase 2 agent ac1971b04ea413b37 started 07:03 on claude/local-sync (wt-sync) from claude/local-store.
