@@ -108,6 +108,12 @@
     if (!r.ok || j.error) throw new Error(j.error || "HTTP " + r.status);
     return j;
   }
+  /* NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): a delivered batch leaves the disk at the next idle moment (one rewrite for every batch
+     delivered meanwhile), not in the frame its answer lands in: re-reading and rewriting the outbox there was ~50 ms of every order window opened and tab switched to while events
+     went out. A delivered event still on the disk if the page closes first is sent again by the next page and kept once (the server keeps an event once, by its id). */
+  let ackIdle = 0;
+  const saveIdle = () => { if (ackIdle) return; const run = () => { ackIdle = 0; save(); }; ackIdle = typeof requestIdleCallback === "function" ? requestIdleCallback(run, { timeout: 3000 }) : setTimeout(run, 250); };
+  try { window.addEventListener("pagehide", () => { if (!ackIdle) return; try { if (typeof cancelIdleCallback === "function") cancelIdleCallback(ackIdle); clearTimeout(ackIdle); } catch (_) {} ackIdle = 0; save(); }); } catch (_) {}
   function schedule(ms) { clearTimeout(timer); due = Date.now() + ms; timer = setTimeout(() => { timer = 0; flush(); }, ms); }
   async function flush() {
     const first = sending ? null : box.find(mine); if (!first) return;
@@ -122,7 +128,7 @@
     try {
       if (cfg.mode === "station") await post("firebaseOrders", { timeline: batch }, sb);
       else await post("charmNestLibrary", { op: "timelineAdd", events: batch, sandbox: sb }, sb);
-      const done = new Set(batch); box = box.filter(ev => !done.has(ev)); batch.forEach(ev => sent.add(keyOf(ev))); save(); backoff = 1000;
+      const done = new Set(batch); box = box.filter(ev => !done.has(ev)); batch.forEach(ev => sent.add(keyOf(ev))); saveIdle(); backoff = 1000;
       // (only the newest delivered keys can still be on the disk, which keeps 500: a long session's memory stays bounded)
       if (sent.size > 3000) { let n = sent.size - 2000; for (const k of sent) { if (n-- <= 0) break; sent.delete(k); } }
       if (box.some(mine)) schedule(50);
