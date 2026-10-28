@@ -194,7 +194,8 @@
   /** The Orders list draws the row, then calls this (for kept rows too: it only adds what is missing and repaints the state). */
   function mount(node, row) {
     try {
-      if (!node || !row || row.state === "gone" || !api.ready()) { const old = node && node.querySelector && node.querySelector(".revSendBtn"); if (old && !api.ready()) old.remove(); return; }
+      // (CUSTOMORDERS, 28 Oct 2026: a custom piece of no order, CUSTOM-<yyyymmdd>-<n>, is no Etsy order the Review record can name: it has no Hold Order)
+      if (!node || !row || row.state === "gone" || !api.ready() || (row.custom && row.order && row.order.orderless)) { const old = node && node.querySelector && node.querySelector(".revSendBtn"); if (old && (!api.ready() || (row && row.custom))) old.remove(); return; }
       const acts = node.querySelector(".rowActions"); if (!acts) return;
       subscribe();
       const rid = String(row.order.receiptId);

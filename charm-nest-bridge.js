@@ -1498,6 +1498,10 @@ const Views = window.Views = (() => {
 /* ═══ 18 · Orders — pulled through the station, read deterministically ══════ */
 const Orders = window.Orders = (() => {
   const rowsOf = () => B.orders.rows;
+  /* CUSTOMORDERS (Paul, 28 Oct 2026: a custom charm "must still have all the same abilities and features that a regular order has ... see it in the orders tab in the list view"): what the list
+     SHOWS is the pull's lines and one row per custom piece's line (charm-nest-custom-orders.js); everything that works on the pull (the Etsy check, the intake, Review, the run's lines) reads rowsOf() only. */
+  const customRows = () => { try { const C = window.CustomOrders; return C && C.rows ? C.rows() : []; } catch (e) { console.warn("[orders] custom rows", e); return []; } };
+  const listRows = () => { const extra = customRows(); return extra.length ? rowsOf().concat(extra) : rowsOf(); };
   function markStale() { B.orders.stale = true; render(); }
   async function loadMaps(force, ttl) {
     if (!S.cloud.ok) return;
@@ -2175,7 +2179,7 @@ const Orders = window.Orders = (() => {
   function visibleRows() {
     // (PERF, Oct 2026: each row's activity time is worked out once for this sort, and the date range and direction read once, not per row)
     const q = OV.q.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean), times = new Map(), act = CNListActivity.state("orders");
-    return rowsOf().filter(r => {
+    return listRows().filter(r => {
       if (r.state === "gone") return false;
       if (OV.metal && (r.material || "none") !== OV.metal) return false;
       if (OV.form && ((r.spec && r.spec.form) || "none") !== OV.form) return false;
@@ -2427,7 +2431,7 @@ const Orders = window.Orders = (() => {
      marks) once at the top; under it each piece as the row it always was (its pictures, design, sheet, jewellery and options, state, seals, Qty). A press on a piece opens the order
      window on that piece (it is the one picked in "Its pieces"); a press on the top opens the order. An order that shows one line is drawn exactly as before. */
   const groupsOf = rows => {
-    const OG = window.CharmNestOrderGroup, at = new Map(rowsOf().map((r, i) => [r, i]));
+    const OG = window.CharmNestOrderGroup, at = new Map(listRows().map((r, i) => [r, i]));
     return OG ? OG.groupRows(rows, r => at.get(r)) : rows.map(r => ({ rid: String(r.order.receiptId), rows: [r] }));
   };
   /** What the list says of one line (a row, or a piece of a grouped order), worked out once. */
@@ -2571,7 +2575,7 @@ const Orders = window.Orders = (() => {
   const FIRST_ROWS = (host, cards) => cards ? 12 : Math.max(3, Math.ceil((host.clientHeight || 800) / 190) + 1);   // (a list row is ~200 px: 4 in the 800 px list of a 900 px screen, so 6; read after the list's scroll place, so nothing is laid out for it)
   let fillAsked = 0, filling = false, showing = false;   // (showing: the drawing is the tab's being shown, shown)
   function walkRows() {
-    const rows = rowsOf(), sig = JSON.stringify([rows.length, OV.pile, OV.q, OV.metal, OV.form, OV.eng, OV.act, OV.sort, OV.desc, CNListActivity.key("orders")]);
+    const rows = rowsOf(), sig = JSON.stringify([rows.length, window.CustomOrders ? CustomOrders.version() + ":" + customRows().length : 0, OV.pile, OV.q, OV.metal, OV.form, OV.eng, OV.act, OV.sort, OV.desc, CNListActivity.key("orders")]);
     if (walkMemo && walkMemo.rows === rows && walkMemo.sig === sig && Date.now() - walkMemo.at < 5000) return walkMemo.list.filter(r => r.state !== "gone");
     const list = groupsOf(visibleRows()).flatMap(g => g.rows);
     walkMemo = { rows, sig, at: Date.now(), list };
@@ -2591,7 +2595,7 @@ const Orders = window.Orders = (() => {
     const at = host.scrollTop;                                             // a run writing to the list must not scroll it away
     const rows = visibleRows();
     paintCount(rows);                                                      // (the live count and the charms, FILTERBAR: whatever drew this, the bar says what the list holds)
-    const alive=new Set(rowsOf().map(r=>r.key));for(const key of orderNodes.keys())if(!alive.has(key))orderNodes.delete(key);
+    const alive=new Set(listRows().map(r=>r.key));for(const key of orderNodes.keys())if(!alive.has(key))orderNodes.delete(key);
     // (the Cancelled list is the sheet window script's: searched with this tab's search box, paged down to what "Show" asked for)
     if (OV.pile === "cancelled") { drawnOn = ""; listKey = "cancelled"; if (window.Cancelled) Cancelled.renderInto(host, () => { const v = document.getElementById("ordersView"); if (v && v.querySelector("#ordChips")) renderHead(v); }, { q: OV.q, focus: cxFocus, live: () => OV.pile === "cancelled" && host.isConnected, clear: () => { OV.q = ""; const box = document.getElementById("ordQ"); if (box) box.value = ""; renderBody(); } }); else host.innerHTML = '<div class="libEmpty">The cancelled orders open with the sheet window script.</div>'; return; }
     const nextKey=listSig();   // (what the bar can change: a change of any resets the list to its first 48)
@@ -2603,7 +2607,7 @@ const Orders = window.Orders = (() => {
     let list=host.querySelector('#ordItems');if(!list){host.innerHTML='<div id="ordItems"></div>';list=host.firstElementChild;}list.className=cards?'ordCards':'ordList';
     // an empty pile says so in the list itself, so the last row out is still seen going (and the words come in softly)
     const wanted=[],mounts=[],pairs=[],rebuilt=[];let shown=[],groupTotal=0;
-    if (!rowsOf().length && (window.Sandbox?.held?.() || window.Sandbox?.pulling?.())) {
+    if (!listRows().length && (window.Sandbox?.held?.() || window.Sandbox?.pulling?.())) {
       // a cleaned sandbox waits for Start: the calm line and the one button that begins the replay (turning Auto on or Pull orders do too)
       const n = blank("held", '<span class="sbWait"></span><button class="btn gold sm" type="button" data-sb-start>Start</button>', n => { const go = n.querySelector("[data-sb-start]"); go.onclick = () => { go.disabled = true; Sandbox.start().catch(err => { toast(err.message, "bad", 7000); go.disabled = false; }); }; });
       const sb = n.querySelector(".sbWait"), t = Sandbox.heldText(); if (sb.textContent !== t) sb.textContent = t;
@@ -2611,7 +2615,7 @@ const Orders = window.Orders = (() => {
       { const go = n.querySelector("[data-sb-start]"), busy = Sandbox.pulling() || ""; if ((go.dataset.busy || "") !== busy) { go.dataset.busy = busy; go.disabled = !!busy; if (busy) { const sp = el("span", "spin"); sp.setAttribute("aria-hidden", "true"); go.setAttribute("aria-busy", "true"); go.replaceChildren(sp, document.createTextNode(busy === "pull" ? `Pulling the ${Sandbox.want()} newest orders…` : "Starting…")); } else { go.removeAttribute("aria-busy"); go.replaceChildren(document.createTextNode("Start")); } } }
       wanted.push(n);
     }
-    else if (!rowsOf().length) wanted.push(blank("none", '<span>Nothing pulled yet — press <b>Pull orders</b> above.</span>'));   // one line: .libEmpty stacks its children
+    else if (!listRows().length) wanted.push(blank("none", '<span>Nothing pulled yet — press <b>Pull orders</b> above.</span>'));   // one line: .libEmpty stacks its children
     else if (!rows.length) wanted.push(blank("filters", 'Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button>', n => { n.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.act = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; render(); }; }));
     else {
     let lastDay=null;
@@ -3003,7 +3007,7 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, walkRows, shown, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, askTable, releaseStampOf, releaseSealHtml, releaseAway, _kept: () => readSaid.size };
+  return { view: () => OV, walkRows, shown, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, listRows, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, askTable, releaseStampOf, releaseSealHtml, releaseAway, _kept: () => readSaid.size };
 })();
 
 /* ═══ 18b · the page is the version that was deployed (MASTER4, Paul 15 Oct 2026) ══════════════════════════════
@@ -9807,14 +9811,12 @@ const Engrave = window.Engrave = (() => {
       + ".rvItem .rh>.egCharmEdit svg{width:19px;height:19px;flex:none}.rvItem .rh>.egCharmEdit:hover{background:#94703a;border-color:#94703a;color:#fff;opacity:1}.rvItem .rh>.egCharmEdit:focus-visible{outline:2px solid var(--ink,#1c1a17);outline-offset:2px}.rvItem .rh>.egCharmEdit~.x{margin-left:0}.egCharmEdit[aria-busy=true]{opacity:.65;cursor:progress}"
       + ".egArtNote{position:absolute;left:0;top:0;display:block;padding:3px 9px;border-radius:10px;background:rgba(255,255,255,.94);border:1px solid var(--line,#e4ddd0);font:11.5px/1.4 var(--sans,system-ui);color:var(--ink70,#5b554c);z-index:1;cursor:pointer;white-space:normal}"
       + ".egArtNote.bad{color:#8a3a26;border-color:#e2c4b8}"
-      // (DESIGN & ENGRAVE: the Charm Designer's bar at the top of the tab, charmDesignerBar; the order window's button is styled by the page, .owCharmEdit)
-      + "#engraveView>.cdBar{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;margin:0 0 10px;padding:7px 10px 7px 12px;background:var(--card,#fff);border:1px solid var(--line,#e4ddd0);border-left:4px solid var(--gold,#a9823f);border-radius:10px;min-width:0;flex:none}"
-      + ".cdBar .cdHd{display:inline-flex;align-items:center;gap:8px;min-width:0;color:var(--ink,#1c1a17)}.cdBar .cdHd svg{width:19px;height:19px;flex:none;color:var(--gold,#a9823f)}.cdBar .cdHd b{font:600 15.5px/1.1 var(--serif,Georgia,serif);white-space:nowrap}.cdBar .cdHd small{font:11.5px/1.2 var(--sans,system-ui);color:var(--ink45,#938c80);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}"
-      + ".cdBar .cdActs{display:inline-flex;gap:6px;flex:none}.cdBar .cdActs .btn{display:inline-flex;align-items:center;gap:6px}.cdBar .cdActs svg{width:14px;height:14px}.cdBar [aria-busy=true]{opacity:.65;cursor:progress}"
-      + ".cdBar .cdRecent{display:flex;align-items:center;gap:6px;min-width:0;flex:1 1 220px;overflow:hidden}.cdBar .cdRecent>i{font:700 9.5px var(--mono,monospace);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45,#938c80);font-style:normal;flex:none}"
-      + ".cdBar .cdChip{display:inline-flex;align-items:center;gap:6px;max-width:200px;min-width:0;flex:none;border:1px solid var(--line,#e4ddd0);background:var(--card,#fff);border-radius:999px;padding:2px 11px 2px 3px;font:600 11.5px/1.3 var(--sans,system-ui);color:var(--ink70,#5b554c);cursor:pointer}"
-      + ".cdBar .cdChip:hover{background:var(--card2,#f7f3ea);color:var(--ink,#1c1a17);border-color:var(--goldLine,#e3d3a6)}.cdBar .cdChip img,.cdBar .cdChip .ph{width:24px;height:24px;border-radius:50%;object-fit:contain;background:#fff;border:1px solid var(--line2,#efe9dd);flex:none}.cdBar .cdChip .ph{display:grid;place-items:center;background:var(--goldSoft,#f0e6cd);border-color:var(--goldLine,#e3d3a6);color:#7a5a1d;font:700 11px/1 var(--serif,Georgia,serif)}.cdBar .cdChip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}"
-      + ".cdBar .cdNone{font:11.5px var(--sans,system-ui);color:var(--ink45,#938c80);white-space:nowrap}@media(max-width:1180px){.cdBar .cdHd small{display:none}}";
+      // (DESIGNBTN, Paul 28 Oct 2026: "Remove this entire menu from the UI" ... "Add a new button called 'Charm Editor' that opens the Design a Charm Modal" ... "Make sure the button has a nice hover state and it's visible and easy to click/interact with":
+      //  the Charm Designer's bar at the top of the tab is gone; one gold button at the right end of the tab's own bar, charmEditorButton; the order window's button is styled by the page, .owCharmEdit)
+      + ".btn.egDesignBtn{flex:none;display:inline-flex;align-items:center;gap:8px;margin-left:auto;min-height:36px;padding:7px 16px 7px 12px;border-radius:9px;font:650 13.5px/1.2 var(--sans,system-ui);letter-spacing:.005em;white-space:nowrap;box-shadow:0 3px 10px rgba(169,130,63,.28);transition:background-color .15s,border-color .15s,color .15s,box-shadow .15s,transform .08s}"
+      + ".btn.egDesignBtn svg{width:18px;height:18px;flex:none}.btn.egDesignBtn:hover:not(:disabled){background:#94703a;border-color:#94703a;color:#fff;opacity:1;box-shadow:0 5px 16px rgba(169,130,63,.42)}.btn.egDesignBtn:active:not(:disabled){transform:translateY(1px);box-shadow:0 2px 6px rgba(169,130,63,.3)}"
+      + ".btn.egDesignBtn:focus-visible{outline:2px solid var(--ink,#1c1a17);outline-offset:2px}.btn.egDesignBtn[aria-busy=true]{opacity:.65;cursor:progress}.btn.egDesignBtn:disabled{box-shadow:none}"
+      + "@media(prefers-reduced-motion:reduce){.btn.egDesignBtn{transition:none}}";
     (document.head || document.documentElement).appendChild(s);
   }
   /** The piece `x` can open in the charm editor with its charm on this page: { poolIds, charm, row, job, from, say } (charmEditPiece), or null: no editor or art module here, a saved back opened
@@ -10008,7 +10010,8 @@ const Engrave = window.Engrave = (() => {
       for (const it of list || []) {
         if (!it) continue;
         const off = !!(hid || it.hidden);   // (hidden in the editor, or in a hidden group: not engraved, so the laser does what the person sees; a cut line hidden is still the piece's outline)
-        if (it.kind === "group") { walk(it.children, Mx.mul(P, isM(it.matrix) ? it.matrix : Mx.I), gid || String(it.id), off); continue; }
+        // (REOPEN, Paul 28 Oct 2026: a group that names itself (`group`: a traced image's, charm-nest-ce-image.js, its picture's id, settings and anchor) gives its leaves that name)
+        if (it.kind === "group") { walk(it.children, Mx.mul(P, isM(it.matrix) ? it.matrix : Mx.I), gid || String(typeof it.group === "string" && it.group ? it.group : it.id).slice(0, 64), off); continue; }
         if (off && it.role !== "cut") continue;
         if (skip && skip.has(String(it.id))) continue;   // (CETEXT: the card's own words handed in and not changed: they stay the card's, never a part of the drawing)
         const leaf = Object.assign({}, it, { id: String(it.id) });
@@ -10185,74 +10188,35 @@ const Engrave = window.Engrave = (() => {
   }
   /** The shared design log (charm-nest-design-log.js, every step by employee): one call, never in the way. */
   function charmEditLog(kind, data) { try { if (window.CNDesignLog && CNDesignLog.event) CNDesignLog.event(kind, data); } catch (_) { /* the log is a courtesy here */ } }
-  /* ── DESIGN & ENGRAVE · the Charm Designer (Paul, 28 Oct 2026: "Since this is all part of the back engraving tab, I would suggest we rename the tab "Design & Engrave". And the Charm Editor will be
-     its own entity within that new updated tab that will be accessible from the back engraving modal and vice versa from the charm editor back into the back engraving modal") ──
-     A bar at the top of the tab, its own part of it: New design and Open charm… (charm-nest-ce-masters.js: a blank charm, or any charm of the master library, in the editor) and the designs made
-     last (the design library: charm-nest-ce-library.js, else charm-nest-designs.js's local index), one press each. It is ONE node through every drawing of the tab (renderView puts it back first),
-     so a press is never lost to a redraw; nothing here reads the network, and the recent designs are drawn again only when they change. A module that is not on the page leaves its button off. */
-  let cdBarEl = null, cdSig = null, cdAt = 0, cdSrc = null;
-  const cdWatched = new WeakSet();   // (the libraries whose onChange the bar listens to: each once, whichever loads first or later)
+  /* ── DESIGN & ENGRAVE · the Charm Editor button (DESIGNBTN, Paul 28 Oct 2026: "Remove this entire menu from the UI" ... "Add a new button called 'Charm Editor' that opens the Design a Charm
+     Modal" ... "Make sure the button has a nice hover state and it's visible and easy to click/interact with"): the Charm Designer's bar that stood at the top of the tab (New design, Open charm…
+     and the recent designs) is gone, and its space with it; in its place ONE gold button at the right end of the tab's own bar (Placements / Approved, the search, the date and the sort), its
+     pen nib and two words. It opens the "Design a charm" modal on its New design side (charm-nest-ce-masters.js newDesign: the outline to start from; its other side is the charm library), as
+     the bar's New design did, with the way back to this tab. The recent designs are still the editor's own (charm-nest-ce-library.js recent / openDesign: its Recent shelf).
+     It is ONE node through every drawing of the tab (the bar is drawn again with each render, the button put back last), so a press is never lost to a redraw; off while the module is not on the page. */
+  let cdBtnEl = null;
   const cdFn = (o, k) => !!(o && typeof o[k] === "function");
-  function charmDesignerBar(v) {
-    if (!v) return null;
+  function charmEditorButton(host) {
+    if (!host) return null;
     charmEditCss();
-    if (!cdBarEl) {
-      const el = document.createElement("div"); el.className = "cdBar"; el.id = "cdBar"; el.setAttribute("role", "region"); el.setAttribute("aria-label", "Charm Designer");
-      el.innerHTML = `<span class="cdHd">${CHARM_EDIT_ICON}<b>Charm Designer</b><small>design a new charm, or open any charm to change it</small></span>`
-        + `<span class="cdActs"><button type="button" class="btn gold sm" data-cd="new"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New design</button>`
-        + `<button type="button" class="btn ghost sm" data-cd="open"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>Open charm…</button></span>`
-        + `<span class="cdRecent" role="group" aria-label="Recent designs" hidden></span>`;
-      el.addEventListener("click", e => {
-        const b = e.target.closest("[data-cd]"); if (!b || b.disabled || b.getAttribute("aria-busy") === "true") return;
-        const M = window.CharmNestCeMasters, L = window.CharmNestCeLibrary, how = b.dataset.cd;
-        // (each opens the editor over this tab, which closing it shows again: the way back says so)
-        const o = { from: "designerBar", back: { label: "Back to Design & Engrave", title: "Back to the Design & Engrave tab" } };
-        const go = (f, what) => { b.setAttribute("aria-busy", "true"); Promise.resolve().then(f).catch(err => toast(`${what}: ${(err && err.message) || err}`, "bad", 6000)).finally(() => b.removeAttribute("aria-busy")); };
-        if (how === "new" && cdFn(M, "newDesign")) { charmEditLog("designerNew", { from: "designerBar" }); go(() => M.newDesign(o), "New design"); }
-        else if (how === "open" && cdFn(M, "openPicker")) { charmEditLog("designerOpen", { from: "designerBar" }); go(() => M.openPicker(o), "Open charm"); }
-        else if (how === "recent") {
-          const id = b.dataset.id, ver = b.dataset.ver ? (Number.isFinite(+b.dataset.ver) ? +b.dataset.ver : b.dataset.ver) : undefined;
-          const f = cdFn(L, "openDesign") ? () => L.openDesign(id, ver, o) : cdFn(L, "open") ? () => L.open(id, ver, o) : cdFn(M, "openDesign") ? () => M.openDesign(id, ver, o) : null;
-          charmEditLog("designOpen", { designId: id, version: ver == null ? null : ver, from: "designerBar" });
-          if (f) go(f, "Open design"); else toast("The design library is still loading: open it from the Charm Editor", "", 5000);
-        }
+    if (!cdBtnEl) {
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn gold egDesignBtn"; b.id = "egDesignBtn"; b.dataset.cd = "new";
+      b.innerHTML = `${CHARM_EDIT_ICON}<span>Charm Editor</span>`;
+      b.addEventListener("click", () => {
+        const M = window.CharmNestCeMasters; if (b.disabled || b.getAttribute("aria-busy") === "true" || !cdFn(M, "newDesign")) return;
+        // (the editor opens over this tab, which closing it shows again: the way back says so)
+        const o = { from: "charmEditorButton", back: { label: "Back to Design & Engrave", title: "Back to the Design & Engrave tab" } };
+        charmEditLog("designerNew", { from: "charmEditorButton" });
+        b.setAttribute("aria-busy", "true");
+        Promise.resolve().then(() => M.newDesign(o)).catch(err => toast(`Charm Editor: ${(err && err.message) || err}`, "bad", 6000)).finally(() => b.removeAttribute("aria-busy"));
       });
-      cdBarEl = el;
+      cdBtnEl = b;
     }
-    paintDesigner();
-    if (v.firstElementChild !== cdBarEl) v.insertBefore(cdBarEl, v.firstChild);
-    for (const lib of [window.CharmNestCeLibrary, window.CharmNestDesigns]) if (cdFn(lib, "onChange") && !cdWatched.has(lib)) { cdWatched.add(lib); try { lib.onChange(() => { cdSig = null; if (cdBarEl && cdBarEl.isConnected) paintDesigner(); }); } catch (_) { /* asked again at the next drawing */ } }
-    return cdBarEl;
-  }
-  function paintDesigner() {
-    const el = cdBarEl; if (!el) return;
-    const M = window.CharmNestCeMasters, nb = el.querySelector('[data-cd="new"]'), ob = el.querySelector('[data-cd="open"]');
-    const wait = "The Charm Designer is still loading";
-    nb.disabled = !cdFn(M, "newDesign"); nb.title = nb.disabled ? wait : "A new charm of your own design, from a blank outline, in the Charm Editor";
-    ob.disabled = !cdFn(M, "openPicker"); ob.title = ob.disabled ? wait : "Search every charm in the master library and open one in the Charm Editor, with full control";
-    // (the tab is drawn again at every fit and approval: the list is asked again when the library says it changed, else at most every 2 s)
-    // (no list yet, or another library on the page since: asked again at once, it costs nothing)
-    const L = window.CharmNestCeLibrary, D = window.CharmNestDesigns, src = cdFn(L, "recent") ? L : cdFn(D, "search") ? D : null;
-    if (cdSig && src === cdSrc && Date.now() - cdAt < 2000) return;   // (Date, not performance: the tab's code also runs where only the language's own globals are, engrave-ui-faces)
-    cdAt = Date.now(); cdSrc = src;
-    let got = null;
-    try { got = cdFn(L, "recent") ? L.recent(4) : cdFn(D, "search") ? D.search("", { limit: 8 }) : null; } catch (_) { got = null; }
-    if (got && typeof got.then === "function") got.then(paintRecent, () => {}); else paintRecent(got);
-  }
-  /** The designs made last (newest first, four), one chip each: its picture, its name; its order or "Custom · no order", who and when in its tip. Nothing at all when no library is on the page. */
-  function paintRecent(got) {
-    const host = cdBarEl && cdBarEl.querySelector(".cdRecent"); if (!host) return;
-    const list = Array.isArray(got) ? got : got && Array.isArray(got.designs) ? got.designs : null;
-    const rows = (list || []).filter(d => d && d.id != null).slice().sort((a, b) => (+b.at || 0) - (+a.at || 0)).slice(0, 4);
-    const sig = list ? JSON.stringify(rows.map(d => [d.id, d.version, d.name, d.customName, d.thumbUrl, d.at])) : "";
-    if (sig === cdSig) return; cdSig = sig;
-    host.hidden = !list;
-    if (!list) { host.innerHTML = ""; return; }
-    const when = at => { const d = new Date(+at || 0); return +at > 0 ? d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""; };
-    host.innerHTML = "<i>Recent</i>" + (rows.length ? rows.map(d => {
-      const name = String(d.name || d.customName || d.id), tip = [name + (d.version != null ? ` · v${d.version}` : ""), d.orderId && !/^CUSTOM-/.test(String(d.orderId)) ? `order ${d.orderId}` : "Custom · no order", d.by ? `by ${d.by}` : "", when(d.at)].filter(Boolean).join(" · ");
-      return `<button type="button" class="cdChip" data-cd="recent" data-id="${esc(d.id)}" data-ver="${esc(d.version == null ? "" : d.version)}" title="${esc(tip)}">${d.thumbUrl ? `<img alt="" loading="lazy" src="${esc(d.thumbUrl)}">` : `<b class="ph" aria-hidden="true">${esc(name.charAt(0).toUpperCase())}</b>`}<span>${esc(name)}</span></button>`;
-    }).join("") : '<span class="cdNone">No designs yet: New design starts one</span>');
+    const on = cdFn(window.CharmNestCeMasters, "newDesign");
+    cdBtnEl.disabled = !on; cdBtnEl.title = on ? "Design a charm: start from the charm library or a new outline, in the Charm Editor (saved as a design)" : "The Charm Editor is still loading";
+    const bar = host.querySelector(":scope > .egBar") || host;   // (the tab's own bar; the preview's failure note when the tab could not be drawn)
+    if (bar.lastElementChild !== cdBtnEl) bar.appendChild(cdBtnEl);
+    return cdBtnEl;
   }
   /* DESIGN MODE (Paul, 28 Oct 2026: "search and open any charm existing in our charm repository and have full control over manipulating that charm" ... "designing custom charms"): the charm
      editor opened on a DESIGN, not on a piece: the engraving fonts and their outlines as a piece's open has them, every layer free (nothing locked unless the person locks it). Nothing here reads
@@ -10968,7 +10932,7 @@ const Engrave = window.Engrave = (() => {
   function renderChrome(v, queue) {
     const jobs = CNListActivity.select(activityScope(), [...items().values()].filter(j => j.row.state !== "gone"));
     activityTools(v);
-    charmDesignerBar(v);   // (DESIGN & ENGRAVE: the Charm Designer's bar, first in the tab: the same node, put back after a rebuild)
+    charmEditorButton(v);   // (DESIGNBTN, Paul 28 Oct 2026: the Charm Editor button, last in the tab's bar: the same node, put back after a rebuild)
     renderWorking(v, jobs);
     syncEgFind(v);
     const qrows = rowsIn(queue, queueUniverse()), counts = rowCountsOf(qrows);
@@ -11183,7 +11147,7 @@ const Engrave = window.Engrave = (() => {
         disposeCards();
         v.innerHTML = `<div class="libEmpty" role="alert"><b>This engraving preview could not open.</b><p>Your sheets and decisions are kept.</p><p>${esc(error.message)}</p><button class="btn ghost sm" data-eg-retry>Retry preview</button><button class="btn ghost sm" data-eg-list>Placements</button></div>`;
         v.querySelector("[data-eg-retry]").onclick = render;
-        try { charmDesignerBar(v); } catch (_) { /* the designer waits for the next drawing */ }   // (DESIGN & ENGRAVE: the Charm Designer stays in reach when the engraving preview fails)
+        try { charmEditorButton(v.querySelector(".libEmpty")); } catch (_) { /* the button waits for the next drawing */ }   // (DESIGNBTN: the Charm Editor stays in reach when the engraving preview fails, beside Retry)
         v.querySelector("[data-eg-list]").onclick = () => { EG.list = true; EG.tab = "place"; EG.chosen = true; render(); };
       }
       console.error("Engrave preview could not render", error);
@@ -11253,7 +11217,7 @@ const Engrave = window.Engrave = (() => {
       <div class="egPane grow"><div class="rvList" id="egQueue"></div>
         <div class="egNext" id="egNext"></div></div>`;
     activityTools(v);
-    charmDesignerBar(v);   // (DESIGN & ENGRAVE: the Charm Designer's bar, first in the tab: the same node, put back after a rebuild)
+    charmEditorButton(v);   // (DESIGNBTN, Paul 28 Oct 2026: the Charm Editor button, last in the tab's bar: the same node, put back after a rebuild)
     renderWorking(v, jobs);
     // a tab pressed shows what it holds softly (a quick fade), rather than at a blink
     v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { const was = EG.tab; EG.tab = b.dataset.tab; EG.chosen = true; EG.list = true; render(); const p = was !== EG.tab && MO() && document.querySelector("#engraveView .egPane:not([hidden])"); if (p) p.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: "ease-out" }); });   // (APPTAB: a chip shows its list, whatever card was in front)
@@ -20983,7 +20947,9 @@ const OrderWin = window.OrderWin = (() => {
   }
   // (NAV, 28 Oct 2026: the fonts loaded so far: a measure kept from before a font came in is made again, inkTo and grow)
   let inkFonts = 0; try { document.fonts && document.fonts.addEventListener && document.fonts.addEventListener("loadingdone", () => { inkFonts++; }); } catch (_) {}
-  const inPull = key => Orders.rows().find(r => r.key === key) || null;
+  // (CUSTOMORDERS, Paul 28 Oct 2026: the window shows a custom piece's line as any order's: Orders.listRows is the pull's lines and the custom pieces' rows, charm-nest-custom-orders.js)
+  const shownRows = () => (Orders.listRows ? Orders.listRows() : Orders.rows()) || [];
+  const inPull = key => shownRows().find(r => r.key === key) || null;
   const rowOf = key => inPull(key) || (W.row && W.row.key === key ? W.row : null);
   const me = () => employeeName() || "";
   const VIEWS = ["info", "timeline", "sheet"];
@@ -20991,7 +20957,7 @@ const OrderWin = window.OrderWin = (() => {
   const still = () => { try { return window.Motion && Motion.reduced ? Motion.reduced() : matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (_) { return false; } };
   const tryDo = f => { try { return f(); } catch (e) { console.warn("order view:", e); return null; } };
   // the lines of the order on screen: the pull's, or those read from the records
-  const linesOf = r => { const rid = String(r.order.receiptId); const pulled = (Orders.rows() || []).filter(x => String(x.order.receiptId) === rid && x.state !== "gone"); return pulled.length ? pulled : (W.rows && W.rows.some(x => x === r) ? W.rows : [r]); };
+  const linesOf = r => { const rid = String(r.order.receiptId); const pulled = shownRows().filter(x => String(x.order.receiptId) === rid && x.state !== "gone"); return pulled.length ? pulled : (W.rows && W.rows.some(x => x === r) ? W.rows : [r]); };
 
   /* The two pictures at the left of the Overview (the Etsy listing photo and the vector design) zoom and pan where they lie, in
      their own frames (charm-nest-zoompan.js: the click-to-zoom of the lists and Review): a click zooms in centred on the point
@@ -21477,7 +21443,7 @@ const OrderWin = window.OrderWin = (() => {
   const SEAL_ALIAS = { releaseHold: "release", button: "complete", orderComplete: "complete", cancelled: "cancel", orderCancelled: "cancel", cancelOrder: "cancel", sentToSheet: "sheet", sendToSheet: "sheet", review: "hold", sendToReview: "hold", sentToReview: "hold", holdOrder: "hold", onHold: "hold", qr: "print", labelPrinted: "print" };
   const SEAL_SKIP = new Set(["engraveApproved", "engravePlain", "monogramApproved"]);   // (drawn on the window's Engraving cards, beside their own Approve)
   const sealKindOf = k => { k = String(k || ""); return SEAL_ALIAS[k] || k; };
-  const ridDigits = v => String(v == null ? "" : v).replace(/\D/g, "");
+  const ridDigits = v => { const s0 = String(v == null ? "" : v).trim(); return window.CustomOrders && CustomOrders.isCustom(s0) ? s0 : s0.replace(/\D/g, ""); };   // (CUSTOMORDERS: CUSTOM-<yyyymmdd>-<n> is an order's number too)
   /** Every seal the order has collected, oldest first: [{ kind, at, by, id, label, how, n }]. */
   function winSealsOf(rid) {
     rid = ridDigits(rid); if (!rid) return [];
@@ -21555,9 +21521,10 @@ const OrderWin = window.OrderWin = (() => {
   /* (HOLDSTAYS, 28 Oct 2026: a release that moves nothing ends at once, and the window is painted again two or three times in the next moments: the seal pressed at the first paint was gone
      before its stamp came down, so the stamp was heard and never seen.) The stamp comes down once the paints have settled, on the seal the window shows then. */
   function stampSoon(kind, since) {
-    const key = kind + ":" + since; (W.relWaiting || (W.relWaiting = new Map())).set(key, { kind, since });
+    const key = kind + ":" + since, rid = W.rid; (W.relWaiting || (W.relWaiting = new Map())).set(key, { kind, since });
     setTimeout(() => {
       W.relWaiting.delete(key);
+      if (!W.dlg || !W.dlg.open || W.closing || W.rid !== rid) return;   // (a window closed, or on another order, meanwhile: no stamp on a window going away)
       // (the seal's time can move between paints, the press's own moment first and the saved one after: the newest seal of its kind since the press is the one)
       const ns = W.dlg ? [...W.dlg.querySelectorAll(`[data-ow-btn-seals] [data-seal-kind="${kind}"]`)].filter(x => (+x.dataset.sealAt || 0) >= since - 1000) : [];
       const n = ns.sort((x, y) => (+y.dataset.sealAt || 0) - (+x.dataset.sealAt || 0))[0], f = n && n.querySelector(".seal");
@@ -21625,6 +21592,9 @@ const OrderWin = window.OrderWin = (() => {
     // (ENGENT: Etsy hands the customer's words HTML-escaped; they are read decoded here and escaped again when drawn, so "Mom&#39;s" reads "Mom's" and "&lt;b&gt;" stays text)
     const words = x => O.decodeEntities(O.visible(x)).trim();
     const pers = (sp.personalization || r.line.personalization || []).map(words).filter(Boolean), bm = words(sp.buyerMessage);
+    // (CUSTOMORDERS, Paul 28 Oct 2026: a custom piece sent from the Charm Editor says what it is, as an order's line says what was bought: its name, its design and who sent it)
+    const cu = r.custom && sp.custom;
+    if (cu) said.push(["Custom piece", [cu.name || "no name", cu.orderless ? "no order" : "", cu.designId ? `design ${cu.designId} v${cu.version || 1}` : "", cu.widthMm != null && cu.heightMm != null ? `${(+cu.widthMm).toFixed(1)} × ${(+cu.heightMm).toFixed(1)} mm` : "", cu.by ? "sent by " + cu.by : ""].filter(Boolean).join(" · ")]);
     if (pers.length) said.push(["Personalisation", pers.join("\n")]);
     if (bm) said.push(["Buyer message", bm]);
     const gm = words(r.order.giftMessage);
@@ -24144,13 +24114,15 @@ const OrderWin = window.OrderWin = (() => {
     // the page when the caller looks for it, and the plate is not drawn again until that slide has landed)
     if (window.Seal?.busy?.()) await window.Seal.whenIdle();
     wire(); if (!W.dlg) return;
-    rid = String(rid || "").replace(/\D/g, ""); if (!rid) return;
+    { const r0 = String(rid || "").trim(); rid = window.CustomOrders && CustomOrders.isCustom(r0) ? r0 : r0.replace(/\D/g, ""); } if (!rid) return;   // (CUSTOMORDERS: a custom piece's own order number, CUSTOM-<yyyymmdd>-<n>)
+    // (a custom piece's order not yet known on this page: its pool rows are read first, then it opens as any order shown in the list)
+    if (window.CustomOrders && CustomOrders.isCustom(rid) && !CustomOrders.rowsOf(rid).length) await CustomOrders.fetch(rid);
     // (back: called once as this view goes back into `from`, which it does even after Previous or Next, giveBack)
     if (typeof opts.back === "function") W.ret = { fn: opts.back, from: opts.from || null };
     const o = Object.assign({ walk: false }, opts); if (opts.keepFrom) delete o.from; delete o.back;
     // (a search passes the line it found: that line of the pull, else the order's first; an order whose lines are all
     // gone from the pull, cancelled or no longer open, shows those lines as they are)
-    const ofRid = (Orders.rows() || []).filter(r => String(r.order.receiptId) === rid), live = ofRid.filter(r => r.state !== "gone");
+    const ofRid = shownRows().filter(r => String(r.order.receiptId) === rid), live = ofRid.filter(r => r.state !== "gone");
     const pulled = live.length ? live : ofRid;
     // (the piece asked for: the line named, else the line that holds the pool id named (a copy's id starts with its line's key), else the order's first;
     // Paul, 5 Oct, round 3: every place that opens the order shows the piece it was pressed for, with that piece's own back engraving)
@@ -24171,6 +24143,8 @@ const OrderWin = window.OrderWin = (() => {
     show(stub, Object.assign({}, o, { view: o.view && o.view !== "sheet" ? o.view : o.view === "sheet" ? "sheet" : "info" }));
     let rows = null, failed = null;
     try { rows = await lookUp(rid, say); } catch (e) { failed = e; console.warn("order view: look-up", e); }
+    // (CUSTOMORDERS: the order's custom pieces sent from the Charm Editor are lines of it too, which no run's records hold)
+    { const extra = window.CustomOrders ? tryDo(() => CustomOrders.rowsOf(rid)) || [] : []; if (extra.length) rows = (rows || []).concat(extra.filter(x => !(rows || []).some(y => y.key === x.key))); }
     // (drawn once the view has landed, never into it mid-flight; a view going back meanwhile is left to go)
     await landed();
     await window.Seal?.whenIdle?.();

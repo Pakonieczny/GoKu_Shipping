@@ -84,6 +84,7 @@
  *                          bar while enabled; menu: false keeps it to its key. key: 'Mod+Shift+O', 'Alt+P', 'P' (Mod is ⌘ on a Mac, Ctrl elsewhere; the editor's own
  *                          keys win).
  *                          context: false keeps it out of the right-click menu (the Object menu still lists it)
+ *                          dbl: true runs it on a double-click of a part with the Select tool when it is enabled for it (the part double-clicked is selected first)
  *   CharmEditor.beforeDuplicate(ctx, ev) -> true   ⌘D asks it first and duplicates only when it did not use the key (charm-nest-ce-ops.js: Transform Again after a
  *                          transform with a copy, the lead's keymap of 28 Oct 2026)
  *   CharmEditor.importers  [{ id, accept: ['.png', 'image/', ...], title, run(ctx, file, info) -> Promise }]
@@ -3126,8 +3127,11 @@
       const [x, y] = fromClient(e.clientX, e.clientY);
       const t = hitAt(x, y, { deep: true });
       if (!t) return;
-      if (t.kind === 'text') { setSel([t.id]); openEditor(t.id); }
-      else if (!S.sel.includes(t.id)) setSel([t.id]);
+      if (t.kind === 'text') { setSel([t.id]); openEditor(t.id); return; }
+      if (!S.sel.includes(t.id)) setSel([t.id]);
+      // (REOPEN, Paul 28 Oct 2026: "I can't seem to bring up the image vector popup modal after the initial Import process") a command that answers a double-click
+      // (dbl: true; charm-nest-ce-image.js Re-trace on a traced image) runs on what was double-clicked, when it is enabled for it
+      const xd = X.commands.find(c => c.c.dbl && xEnabled(c)); if (xd) xRun(xd.id);
     }
 
     /* ── menus: the studio's wireDrops (J 18674-18857): placed by script, a rail flyout opens sideways, four ways in for a rail tool (the corner, a press and hold,

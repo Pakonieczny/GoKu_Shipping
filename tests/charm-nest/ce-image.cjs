@@ -4,6 +4,8 @@
 //   A  (node) the pure parts: a turn and a flip carry the crop with them; the prep (auto-levels, gamma, invert, median, unsharp, the line-art threshold under uneven light); the suggested
 //      level count; the box inside an outline that keeps off a hole; the trace laid out as one group of greys; and the record: encode → apply keeps a grey part grey (fillRGB, no hatchBlue),
 //      artOps writes its grey, decode and itemsOf give it back, while a hatched part with no mark is blue exactly as before
+//   (REOPEN, 28 Oct 2026) A11 the group's name keeps source, settings and anchor through a save; B8b the property bar's Re-trace and a double-click; B16 opened again flat, the
+//      picture from this computer (IndexedDB), ONE group in the parts' place; B17 the picture nowhere: the step asks for it
 //   B  the real sorter page over the repo's fake site (_engraveRealWorld.cjs, offline, made-up names) with the calendar charm (_artCalendar.cjs): Edit charm; a PNG made in the page DROPPED on the
 //      work area opens the Image step (split preview: original | greyscale | vector); its suggestion, levels, tone, turn, flip, crop, background removal, line art and the "more" filters,
 //      each change measured in main-thread ms; Place → one group of grey paths fitted inside the outline; moved, sized and turned as any group; Re-trace (the Object menu) with 2 levels where it
@@ -104,12 +106,35 @@ async function partA(kit) {
   const segs = ed.members.filter(s => s.artGrey), plain = ed.members.find(s => s.artMemberId === 'w1');
   const ops = P.artOps(ed.members, null);
   check(`A8 encode keeps each grey part grey (${greyRec.map(e => e.fill[0]).join(', ')}: artGrey, even-odd) and apply makes it a grey FILL (fillRGB, no blue hatching), which artOps writes as its grey; a hatched part with no mark is blue as before`,
-    greyRec.length === 3 && greyRec.every(e => e.role === 'hatch' && e.even && e.fill[0] === e.fill[1] && e.fill[1] === e.fill[2] && e.group === 'imgRec') && segs.length === 3 && segs.every(s => !s.hatchBlue && s.fill && !s.stroke && s.fillRGB[0] === s.fillRGB[2] && s.manufacturingRole === 'hatch' && /f\*$/.test(s.paintOp))
+    greyRec.length === 3 && greyRec.every(e => e.role === 'hatch' && e.even && e.fill[0] === e.fill[1] && e.fill[1] === e.fill[2] && IM.parseCode(e.group).src === 'imgRec') && segs.length === 3 && segs.every(s => !s.hatchBlue && s.fill && !s.stroke && s.fillRGB[0] === s.fillRGB[2] && s.manufacturingRole === 'hatch' && /f\*$/.test(s.paintOp))
       && greyRec.every(e => { const v = String(Math.round(e.fill[0] * 1000) / 1000); return ops.includes(`${v} ${v} ${v} rg`); }) && !!plain && plain.hatchBlue && !plain.artGrey && rec.added.find(e => e.id === 'w1').fill.join() === '0,0,1' && /q 0 0 1 rg/.test(ops),
     JSON.stringify({ greyRec: greyRec.map(e => [e.id, e.fill, e.artGrey]), segs: segs.map(s => [s.artMemberId, s.fillRGB, s.hatchBlue]), plain: plain && [plain.hatchBlue, plain.fillRGB] }));
   const back = AE.decode(Object.assign({ at: 1 }, rec), cb, view), shown = AE.itemsOf(ed, view, 'front').filter(i => i.artGrey);
   check('A9 opened again the greys come back grey: decode and itemsOf give each part its grey and its mark (and the group\'s id, for Re-trace)',
-    back.added.filter(i => i.artGrey).length === 3 && shown.length === 3 && shown.every(i => i.fill[0] === i.fill[2] && i.group === 'imgRec' && i.role === 'hatch'), JSON.stringify(shown.map(i => [i.id, i.fill, i.group])));
+    back.added.filter(i => i.artGrey).length === 3 && shown.length === 3 && shown.every(i => i.fill[0] === i.fill[2] && IM.parseCode(i.group).src === 'imgRec' && i.role === 'hatch'), JSON.stringify(shown.map(i => [i.id, i.fill, i.group])));
+  // REOPEN (Paul, 28 Oct 2026: "I can't seem to bring up the image vector popup modal after the initial Import process"): the group's `group` name keeps its source's id,
+  // its settings and three anchor points; a piece saved with the group moved, turned 15° and scaled, opened again (its parts flat), gives back the settings, and the
+  // anchor says where the picture is now to within a thousandth of a point
+  {
+    const sett = IM.norm({ levels: 3, detail: 0.73, smooth: 0.2, despeckle: 4, gamma: 1.4, brightness: -0.12, contrast: 0.3, crop: [0.1, 0.05, 0.9, 0.95], rot: 90, flipH: true, mode: 'grey' });
+    const box = [cx - 15, cy - 7.5, cx + 15, cy + 7.5], g2 = IM.buildGroup(tr, box, { src: 'imgRe', settings: sett, name: 'logo.png' }), code = IM.parseCode(g2.group);
+    const Wt = M.mul(M.tr(3, -2), M.about(M.mul(M.rotM(15), [1.2, 0, 0, 0.9, 0, 0]), cx, cy));
+    const moved = Object.assign({}, g2, { children: g2.children.map(ch => M.composeInto(ch, Wt, geo)) });
+    const out2 = M.exportItems(M.prepIn(items, ['cut']).concat([moved]), geo), rec2 = AE.encode(M.diffFace(M.exportItems(M.prepIn(items, ['cut']), geo), out2), { charm: cb, view, face: 'front', placed: true });
+    const flat = AE.itemsOf(AE.apply(cb, Object.assign({ at: 1, by: 'Test' }, rec2), 'front'), view, 'front'), ix = M.indexTree(flat, geo), part = flat.find(i => i.artGrey);
+    const ctx = { model: M, geo, items: () => flat, selection: () => [part.id], entry: id => { const e = ix.get(id); return e ? { it: e.it, P: e.P, parent: e.parent } : null; } };
+    const set = IM.traceSet(ctx), pb = set && IM.placedBy(ctx, set.anchor, set.parts);
+    const want = [[box[0], box[1]], [box[2], box[1]], [box[2], box[3]]].map(p => M.ap(Wt, p[0], p[1])), k = Math.min(30 / tr.width, 15 / tr.height);
+    // (the placing box is the picture's own box at its scale: the trace fills it in width or height)
+    const pic = [[0, 0], [tr.width * k, 0], [tr.width * k, tr.height * k]].map(p => [p[0] + (30 - tr.width * k) / 2 + box[0], p[1] + (15 - tr.height * k) / 2 + box[1]]).map(p => M.ap(Wt, p[0], p[1]));
+    const got = pb && [[0, 0], [pb.box[2], 0], [pb.box[2], pb.box[3]]].map(p => M.ap(pb.W, p[0], p[1]));
+    const off = got ? Math.max(...got.map((p, i) => Math.hypot(p[0] - pic[i][0], p[1] - pic[i][1]))) : Infinity;
+    const keys = ['levels', 'detail', 'smooth', 'despeckle', 'gamma', 'brightness', 'contrast', 'rot', 'flipH', 'mode'];
+    check(`A11 REOPEN: the group's name (${g2.group.length} characters, "${g2.group.slice(0, 24)}…") keeps its source, settings and anchor; saved moved, turned 15° and scaled, opened again flat (${set && set.kind}, ${set && set.ids.length} parts), the settings come back and the anchor puts the picture where it is to ${off.toFixed(4)} pt`,
+      g2.group.length <= 64 && /^[A-Za-z0-9_.:-]+$/.test(g2.group) && code.src === 'imgRe' && keys.every(k2 => code.settings[k2] === sett[k2]) && JSON.stringify(code.settings.crop) === JSON.stringify(sett.crop)
+        && !!set && set.kind === 'flat' && set.src === 'imgRe' && set.ids.length === g2.children.length && keys.every(k2 => set.settings[k2] === sett[k2]) && off < 0.01 && rec2.added.every(e => e.group === g2.group),
+      JSON.stringify({ code, set: set && { kind: set.kind, ids: set.ids, src: set.src }, got, pic, want }));
+  }
   // served: the page loads it after the editor (with a cache token) and the build ships it
   const fs = require('node:fs'), html = fs.readFileSync(path.join(ROOT, 'charm-nest-1.html'), 'utf8'), build = fs.readFileSync(path.join(ROOT, 'scripts/build-public.cjs'), 'utf8');
   const at = html.indexOf('src="charm-nest-ce-image.js?v='), edAt = html.indexOf('src="charm-nest-charm-editor.js?v=');
@@ -137,7 +162,7 @@ async function partB(kit) {
   R.EXPECT_JOBS.cal = 2;
   const w = await R.world({ shots });
   if (!w) { console.log('SKIP no playwright-core'); return; }
-  const page = w.page, st = w.srv.st, Q = '#egQueue .rvItem[data-kind=placement]';
+  const page = w.page, st = w.srv.st, Q = '#egQueue .rvItem[data-kind=placement]', IMcode = g => kit.IM.parseCode(g).src;
   try {
     const made = await R.build(w, ['cal']);
     const PID = made.cal.poolIds[0];
@@ -154,7 +179,7 @@ async function partB(kit) {
       ]);
     });
     await R.openEngraveDetail(w, 'cal', { face: 'front' }); await R.settle(page, 700);
-    await page.click(Q + ' .egCharmEdit');
+    await page.$eval(Q + ' .egCharmEdit', b => b.click());   // (a click on the button itself: the tab's name bar (Laser or Design) may lie over it at this window size)
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page); await settleP(page);
     const head = await page.evaluate(() => { const b = document.querySelector('.ce-root [data-act="import"]'); return { has: !!b && !b.hidden, title: b && b.title, accept: (CharmEditor.importers || []).map(i => i.id + ':' + i.accept.join(' ')), trace: !!(window.CharmNestTrace && CharmNestTrace.posterise && CharmNestTrace.trace) }; });
     const mine = head.accept.find(a => a.startsWith('image:')) || '';
@@ -255,6 +280,21 @@ async function partB(kit) {
         && pl.kids.every((k, i) => !i || k.fill[0] < pl.kids[i - 1].fill[0]) && pl.kids[pl.kids.length - 1].fill[0] === 0 && pl.fills.join() === pl.kids.map(k => css(k.fill[0])).join()
         && inside && centred && pl.trace.src === pl.id && pl.trace.levels === 4 && !!pl.layer, JSON.stringify(pl));
 
+    // REPEAT (Paul, 28 Oct 2026: "The image vector Modal sometimes does not produce repeatable results"): what Place put on the charm is exactly what the rule makes
+    // of the picture and the settings, in the workers twice and on the page's own thread once (placeAsync · placeAsync · placeSync, laid into the same box)
+    const rep = await page.evaluate(async id => {
+      const IMx = CharmNestCeImage, E = CharmEditor.current, g = E.items().find(i => i.id === id), src = IMx.sources().get(g.trace.src), st0 = IMx.norm(g.trace), box = g.trace.box;
+      const mm = Math.max(box[2] - box[0], box[3] - box[1]) * 25.4 / 72, kept = IMx.keptPixels(src, st0);
+      const a = await IMx.placeAsync(kept, st0, mm), b = await IMx.placeAsync(kept, st0, mm), c = IMx.placeSync(kept, st0, mm);
+      const lay = r => JSON.stringify(IMx.buildGroup(r.res, box, { id, src: g.trace.src, settings: st0 }).children.map(ch => ch.subpaths));
+      // (the group keeps its box to 1/10000 pt: what Place laid out is compared to that, the three made here exactly with each other)
+      const nums = s => s.match(/-?[\d.]+(e-?\d+)?/g).map(Number), pa = nums(JSON.stringify(g.children.map(ch => ch.subpaths))), la = nums(lay(a));
+      const off = pa.length === la.length ? Math.max(...pa.map((v, i) => Math.abs(v - la[i]))) : Infinity;
+      return { same: lay(a) === lay(b) && lay(b) === lay(c) && off < 0.002, off, worker: !!a.res.worker, nodes: [a.res.nodes, b.res.nodes, c.res.nodes], n: pa.length };
+    }, pl.id);
+    check(`B7c the same picture and settings give the same vector: Place's group equals placeAsync twice (in the Worker: ${rep.worker}) and placeSync on the page, point for point (${rep.nodes.join(' / ')} nodes; Place's group within ${rep.off} pt of them)`,
+      rep.same && rep.worker && rep.nodes.every(n => n === rep.nodes[0]), JSON.stringify(rep));
+
     /* ── an ordinary group: moved, sized, turned ── */
     for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight');
     await typeField(page, 'w', (((pl.gb[2] - pl.gb[0]) / PT) * 0.8).toFixed(2));
@@ -266,6 +306,18 @@ async function partB(kit) {
     const mv = await placed(pl.id);
     check(`B8 then an ordinary group: nudged, sized to 80 % with W and turned 15° (its parts at ${mv.rot && mv.rot.map(r => +r.toFixed(3)).join(', ')}°), still one group of ${mv.kids}`,
       mv.kind === 'group' && mv.kids === pl.kids.length && mv.rot.every(r => Math.abs(r - 15) < 1e-6), JSON.stringify(mv));
+    // REOPEN (Paul, 28 Oct 2026: "I can't seem to bring up the image vector popup modal after the initial Import process"): the traced group selected puts Re-trace on the
+    // property bar, and a double-click on one of its greys opens the step on it
+    const bar = await page.evaluate(() => { const b = document.querySelector('.ce-root .ce-xbar [data-xcmd="imageRetrace"]'); return b ? { shown: !document.querySelector('.ce-root .ce-xbar').hidden && b.offsetWidth > 0, title: b.title } : null; });
+    const blackAt = await page.evaluate(id => { const E = CharmEditor.current, g = E.items().find(i => i.id === id), k = g.children.find(c => c.fill[0] === 0), b = E.box(k.id); return E.clientOf((b[0] + b[2]) / 2, (b[1] + b[3]) / 2); }, pl.id);
+    await page.keyboard.press('Escape'); await settleP(page);
+    await page.mouse.dblclick(blackAt.x, blackAt.y);
+    await page.waitForSelector('.ce-root .cei .cei__card', { timeout: 20000 }); await previewDone(page);
+    const dbl = await page.evaluate(() => ({ title: document.querySelector('.cei__head h3').textContent, levels: CharmNestCeImage.current().settings().levels }));
+    await page.click('.cei [data-do="cancel"]'); await page.waitForFunction(() => !document.querySelector('.cei'), null, { timeout: 20000 }); await settleP(page);
+    await page.evaluate(id => CharmEditor.current.ctx.select([id]), pl.id); await settleP(page);
+    check(`B8b the traced group selected shows Re-trace on the property bar ("${bar && bar.title}"); a double-click on its black opens the step on it ("${dbl.title}", ${dbl.levels} levels)`,
+      !!bar && bar.shown && /Re-trace/.test(bar.title) && dbl.title === 'Re-trace image' && dbl.levels === 4, JSON.stringify({ bar, dbl, blackAt }));
 
     /* ── RE-TRACE: two levels, where it stands now ── */
     const h0 = await page.evaluate(() => CharmEditor.current.history().undo);
@@ -325,7 +377,7 @@ async function partB(kit) {
       JSON.stringify(sheet));
 
     /* ── opened again: the greys come back grey, and Re-trace still knows their picture ── */
-    await page.click(Q + ' .egCharmEdit');
+    await page.$eval(Q + ' .egCharmEdit', b => b.click());   // (a click on the button itself: the tab's name bar (Laser or Design) may lie over it at this window size)
     await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page);
     const re = await page.evaluate(() => {
       const E = CharmEditor.current, gs = E.items().filter(i => i.artGrey);
@@ -335,6 +387,35 @@ async function partB(kit) {
     });
     check(`B14 opened again, the ${re.n} grey parts come back grey (drawn ${[...new Set(re.css)].join(' · ')}), each with its image's group, and Re-trace is offered on them`,
       re.n === greys.length && re.groups === 2 && re.css.every((f, i) => f === css(re.fills[i])) && re.fills.some(g => g > 0) && re.retrace, JSON.stringify(re));
+    // REOPEN after a save: the parts are flat; this page's copy of the picture forgotten (as after a reload), the one kept on this computer (IndexedDB) is used: the
+    // step opens with the settings the parts' group name keeps, and Place puts ONE group where the parts were, in their place
+    const flat0 = await page.evaluate(() => {
+      const E = CharmEditor.current, gs = E.items().filter(i => i.artGrey), wide = id => { const d = E.box(id); return d ? d[2] - d[0] : 0; };
+      const top = gs.slice().sort((a, b) => wide(b.id) - wide(a.id))[0], big = gs.filter(i => i.group === top.group);
+      let b = null; for (const i of big) { const d = E.box(i.id); b = b ? [Math.min(b[0], d[0]), Math.min(b[1], d[1]), Math.max(b[2], d[2]), Math.max(b[3], d[3])] : d; }
+      CharmNestCeImage.sources().clear(); E.ctx.select([big[0].id]);
+      return { ids: big.map(i => i.id), group: big[0].group, box: b, n: E.items().length, bar: !!document.querySelector('.ce-root .ce-xbar [data-xcmd="imageRetrace"]') };
+    });
+    await settleP(page);
+    await page.click('.ce-root .ce-xbar [data-xcmd="imageRetrace"]');
+    await page.waitForSelector('.ce-root .cei .cei__card', { timeout: 20000 }); await previewDone(page);
+    const rf = await page.evaluate(() => ({ name: document.querySelector('.cei [data-name]').textContent, st: CharmNestCeImage.current().settings(), where: document.querySelector('.cei [data-where]').textContent }));
+    await page.click('.cei [data-do="place"]'); await page.waitForFunction(() => !document.querySelector('.cei'), null, { timeout: 60000 }); await settleP(page);
+    const flat1 = await page.evaluate(ids => { const E = CharmEditor.current, sel = E.selection(), g = E.items().find(i => i.id === sel[0]); return { left: E.items().filter(i => ids.includes(i.id)).length, kind: g && g.kind, kids: g && g.children.length, box: g && E.box(g.id), n: E.items().length, group: g && g.group }; }, flat0.ids);
+    const boxOff = flat1.box ? Math.max(...flat1.box.map((v, i) => Math.abs(v - flat0.box[i]))) : Infinity;
+    check(`B16 opened again (flat parts), with this page's copy of the picture gone: Re-trace on the bar finds it on this computer (${rf.name}), with its settings (${rf.st.levels} levels, crop ${rf.st.crop && rf.st.crop.map(v => v.toFixed(2)).join(',')}), and Place puts ONE group of ${flat1.kids} greys in the parts' place (their box to ${boxOff.toFixed(3)} pt)`,
+      flat0.bar && /^logo\.png/.test(rf.name) && rf.st.levels === 4 && !!rf.st.crop && flat1.left === 0 && flat1.kind === 'group' && flat1.kids === flat0.ids.length && flat1.n === flat0.n - flat0.ids.length + 1 && boxOff < 0.15 && IMcode(flat1.group) === IMcode(flat0.group),
+      JSON.stringify({ flat0, rf, flat1 }));
+    // and with the picture on neither: the step says so, keeps the settings and asks for the file
+    await page.evaluate(() => new Promise(r => { CharmNestCeImage.sources().clear(); const q = indexedDB.deleteDatabase('cn-ce-image'); q.onsuccess = q.onerror = q.onblocked = () => r(); }));
+    await page.evaluate(() => { const E = CharmEditor.current, p = E.items().find(i => i.artGrey && i.kind !== 'group'); E.ctx.select([p.id]); });
+    await settleP(page);
+    await page.click('.ce-root .ce-xbar [data-xcmd="imageRetrace"]');
+    await page.waitForSelector('.ce-root .cei .cei__card', { timeout: 20000 }); await settleP(page);
+    const miss = await page.evaluate(() => ({ note: document.querySelector('.cei [data-note]').textContent, pick: !!document.querySelector('.cei [data-do="pick"]'), place: document.querySelector('.cei [data-do="place"]').disabled, levels: CharmNestCeImage.current().settings().levels }));
+    await page.click('.cei [data-do="cancel"]'); await page.waitForFunction(() => !document.querySelector('.cei'), null, { timeout: 20000 });
+    check(`B17 the picture on neither this page nor this computer: the step says so ("${miss.note.slice(0, 70)}…"), offers to choose it again, keeps its ${miss.levels} levels and holds Place until it is chosen`,
+      /not on this computer/.test(miss.note) && miss.pick && miss.place && miss.levels === 4, JSON.stringify(miss));
     await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
     check('B15 no page error', w.errors.length === 0, JSON.stringify(w.errors).slice(0, 400));
   } finally { await w.close(); }

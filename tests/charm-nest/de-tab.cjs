@@ -5,9 +5,9 @@
 // The real sorter page over the repo's fake site (_engraveRealWorld.cjs: the real intake, pool, classifier and fit; offline, made-up names), a front + back necklace ("both") and a stud earring
 // pair that is never engraved ("earrings"):
 //   T1  the tab reads "Design & Engrave" where the bar has room and "Design" where it has not; its mode and its link stay "engrave" (#engrave)
-//   T2  the Charm Designer bar is the first thing in the tab, the same node through the tab's redraws: New design and Open charm… call charm-nest-ce-masters.js (stand-ins here), off
-//       while it is not on the page; the recent designs come from the design library (charm-nest-designs.js; a stand-in charm-nest-ce-library.js wins), newest first, four at most, a
-//       save shows at once, and a press opens one; every press is logged
+//   T2  (DESIGNBTN, Paul 28 Oct 2026: "Remove this entire menu from the UI" ... "Add a new button called 'Charm Editor' that opens the Design a Charm Modal") the Charm Designer bar
+//       that stood first in the tab is gone; the "Charm Editor" button is the last thing in the tab's own bar, at its right end, the same node through the tab's redraws: gold, 36 px or
+//       more, a darker hover and a keyboard outline, whole on a 390 px phone; pressed, it calls charm-nest-ce-masters.js newDesign (a stand-in, then the real "Design a charm" modal), logged
 //   T3  the engraving card's "Open in Charm Editor": one big gold button in the card's head beside its ×
 //   T4  a piece that is NOT engraved opens in the editor from its order window ("Open in Charm Editor" under the vector design): "piece 1 of 2 · no engraving", "Back to order"; a line drawn and
 //       Save keep it for that piece (Charm_Pool_Art: who, what) and say so under the button; Back to order leaves the order window as it was; a piece on no sheet of this page opens from its master
@@ -42,41 +42,69 @@ const R = require('./_engraveRealWorld.cjs');
     check(`T1 the tab reads "${wide.shown}" (${wide.w} px) at 1440 px and "${narrow.shown}" (${narrow.w} px) at 1100 px; its mode and link stay engrave (${wide.hash}); "Engraving" is gone from it`,
       wide.shown === 'Design & Engrave' && narrow.shown === 'Design' && wide.mode === 'engrave' && wide.hash === '#engrave' && !/Engraving/.test(wide.text), JSON.stringify({ wide, narrow }));
 
-    /* ── T2 · the Charm Designer bar ── */
+    /* ── T2 · the Charm Editor button (DESIGNBTN, Paul 28 Oct 2026: "Remove this entire menu from the UI" ... "Add a new button called 'Charm Editor' that opens the Design a Charm Modal") ── */
     await page.evaluate(() => {
       window.__log = []; window.CNDesignLog = { event: (kind, data) => window.__log.push([kind, data]) };
-      window.__calls = [];
+      window.__calls = []; window.__realM = window.CharmNestCeMasters; delete window.CharmNestCeMasters;   // (the real module is put back for T2e)
       Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render();
     });
     await settle(300);
-    const off = await page.evaluate(() => { const b = document.getElementById('cdBar'), r = b && b.querySelector('.cdRecent'); return b ? { first: b.parentElement.id === 'engraveView' && b.parentElement.firstElementChild === b, masters: !!window.CharmNestCeMasters, newOff: b.querySelector('[data-cd="new"]').disabled, openOff: b.querySelector('[data-cd="open"]').disabled, lib: !!window.CharmNestDesigns, recent: r.hidden ? null : r.textContent.trim() } : null; });
-    check(`T2a the Charm Designer bar is the first thing in the tab; with no charm-nest-ce-masters.js on the page its two buttons are off; the design library (${off && off.lib ? 'charm-nest-designs.js' : 'none'}) gives the recent list: "${off && off.recent}"`,
-      off && off.first && (off.masters || (off.newOff && off.openOff)) && (off.lib ? /^Recent/.test(off.recent || '') : off.recent === null), JSON.stringify(off));
-    const now = Date.now();
-    await page.evaluate(now => {
-      const designs = [
-        { id: 'd1', name: 'Oak leaf', version: 2, at: now - 50000, by: 'Ana Test', orderId: '4290000103', thumbUrl: '' },
-        { id: 'd2', name: 'Fix tag', version: 1, at: now - 1000, by: 'Ben Test', orderId: 'CUSTOM-20261028-1', customName: 'Fix tag' },
-        { id: 'd3', name: 'Moon', version: 4, at: now - 9000, by: 'Ana Test' },
-        { id: 'd4', name: 'Sun', version: 1, at: now - 30000, by: 'Ana Test' },
-        { id: 'd5', name: 'Old star', version: 1, at: now - 900000, by: 'Ana Test' }];
-      let fn = null;
-      window.CharmNestCeLibrary = { recent: () => designs.slice(), onChange: f => { fn = f; }, __add: d => { designs.push(d); if (fn) fn(); } };   // (charm-nest-ce-library.js, a stand-in: its recent designs win over the index)
-      window.CharmNestCeMasters = { newDesign: o => { window.__calls.push(['new', o && o.from, o && o.back && o.back.label]); }, openPicker: o => { window.__calls.push(['open', o && o.from]); }, openDesign: (id, v) => { window.__calls.push(['design', id, v]); } };
+    const off = await page.evaluate(() => { const v = document.getElementById('engraveView'), eb = v.querySelector(':scope > .egBar'), b = document.getElementById('egDesignBtn'); return { bar: !!document.getElementById('cdBar') || !!document.querySelector('.cdBar'), words: /Charm Designer|design a new charm|Open charm|RECENT/i.test(v.textContent), first: v.firstElementChild === eb, last: !!b && eb.lastElementChild === b, disabled: !!b && b.disabled, title: b && b.title }; });
+    check('T2a the Charm Designer bar is gone (no bar, none of its words, the tab\'s own bar first in the tab); the Charm Editor button is last in that bar, off while charm-nest-ce-masters.js is not on the page',
+      !off.bar && !off.words && off.first && off.last && off.disabled && /still loading/.test(off.title || ''), JSON.stringify(off));
+    await page.evaluate(() => {
+      window.CharmNestCeMasters = { newDesign: o => { window.__calls.push(['new', o && o.from, o && o.back && o.back.label]); }, openPicker: o => { window.__calls.push(['open', o && o.from]); }, openDesign: (id, v) => { window.__calls.push(['design', id, v]); } };   // (a stand-in)
       Engrave.render();
-    }, now);
+    });
     await settle(300);
-    const bar = await page.evaluate(() => { const b = document.getElementById('cdBar'), r = b.getBoundingClientRect(), eb = document.querySelector('#engraveView .egBar').getBoundingClientRect(); return { title: b.querySelector('.cdHd b').textContent, h: Math.round(r.height), above: r.bottom <= eb.top + 1, newOn: !b.querySelector('[data-cd="new"]').disabled, openOn: !b.querySelector('[data-cd="open"]').disabled, chips: [...b.querySelectorAll('.cdChip span')].map(c => c.textContent.trim()), tips: [...b.querySelectorAll('.cdChip')].map(c => c.title) }; });
-    await R.shot(w, 'DE-1-designer-bar');
-    check(`T2b the bar says "${bar.title}", ${bar.h} px tall, above the tab's own bar; New design and Open charm… are on; the recent designs newest first, four: ${bar.chips.join(', ')}`,
-      bar.title === 'Charm Designer' && bar.h <= 56 && bar.above && bar.newOn && bar.openOn && bar.chips.join('|') === 'Fix tag|Moon|Sun|Oak leaf' && /Custom · no order/.test(bar.tips[0]) && /order 4290000103/.test(bar.tips[3]) && /by Ana Test/.test(bar.tips[1]), JSON.stringify(bar));
-    const node0 = await page.evaluateHandle(() => document.getElementById('cdBar'));
+    const geo = () => page.evaluate(() => {
+      const b = document.getElementById('egDesignBtn'), eb = document.querySelector('#engraveView > .egBar'), r = b.getBoundingClientRect(), e = eb.getBoundingClientRect(), t = eb.querySelector('.egTab[data-tab="place"]').getBoundingClientRect(), cs = getComputedStyle(b), ecs = getComputedStyle(eb);
+      return { text: b.textContent.trim(), icon: !!b.querySelector('svg'), on: !b.disabled, w: Math.round(r.width), h: Math.round(r.height), font: parseFloat(cs.fontSize), bg: cs.backgroundColor, cursor: cs.cursor, left: Math.round(r.left), right: Math.round(r.right), barRight: Math.round(e.right - parseFloat(ecs.paddingRight)), oneRow: Math.abs((r.top + r.bottom) / 2 - (t.top + t.bottom) / 2) <= 8, lines: Math.round(b.querySelector('span').getBoundingClientRect().height / (parseFloat(cs.lineHeight) || 16)), vw: document.documentElement.clientWidth, sw: document.documentElement.scrollWidth, barOver: eb.scrollWidth - eb.clientWidth };
+    });
+    const g = await geo();
+    await R.shot(w, 'DE-1-charm-editor-button');
+    await page.hover('#egDesignBtn'); await settle(250);
+    const hov = await page.evaluate(() => { const cs = getComputedStyle(document.getElementById('egDesignBtn')); return { bg: cs.backgroundColor, color: cs.color, shadow: cs.boxShadow }; });
+    { const e = await page.evaluate(() => { const r = document.querySelector('#engraveView > .egBar').getBoundingClientRect(); return { x: Math.max(0, r.left - 8), y: Math.max(0, r.top - 8), width: Math.min(r.width + 16, document.documentElement.clientWidth), height: r.height + 16 }; }); await R.shot(w, 'DE-1b-charm-editor-hover', { clip: e }); }
+    await page.mouse.move(5, 5); await page.focus('#egQ'); await page.keyboard.press('Shift');
+    const foc = await page.evaluate(() => { const b = document.getElementById('egDesignBtn'); b.focus(); const cs = getComputedStyle(b); return { fv: b.matches(':focus-visible'), outline: cs.outlineStyle + ' ' + cs.outlineWidth }; });
+    await page.evaluate(() => document.getElementById('egDesignBtn').blur());
+    check(`T2b the "${g.text}" button (${g.w}x${g.h} px, ${g.font} px words, the pen nib) is gold, on, at the right end of the tab's bar on the Placements / Approved row (right edge ${g.right}, the bar's ${g.barRight}); hovered it darkens (${hov.bg}, white words), focused from the keyboard it is outlined (${foc.outline})`,
+      g.text === 'Charm Editor' && g.icon && g.on && g.h >= 36 && g.font >= 13 && g.bg === 'rgb(169, 130, 63)' && g.cursor === 'pointer' && Math.abs(g.right - g.barRight) <= 2 && g.oneRow && g.lines <= 1 && g.barOver <= 1 && g.sw <= g.vw + 1
+        && hov.bg === 'rgb(148, 112, 58)' && hov.color === 'rgb(255, 255, 255)' && hov.shadow !== 'none' && foc.fv && /^solid 2px$/.test(foc.outline), JSON.stringify({ g, hov, foc }));
+    const node0 = await page.evaluateHandle(() => document.getElementById('egDesignBtn'));
     await page.evaluate(() => { Engrave.restoreView({ tab: 'approved', list: true, chosen: true, focus: null }); Engrave.render(); Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render(); });
-    await page.click('#cdBar [data-cd="new"]'); await page.click('#cdBar [data-cd="open"]'); await page.click('#cdBar .cdChip[data-id="d3"]'); await settle(100);
-    await page.evaluate(now => { CharmNestCeLibrary.__add({ id: 'd6', name: 'Brand new', version: 1, at: now, by: 'Cy Test' }); }, now + 10);
-    const after = await page.evaluate(n0 => ({ same: document.getElementById('cdBar') === n0, first: document.querySelector('#engraveView').firstElementChild === n0, calls: window.__calls, chips: [...document.querySelectorAll('#cdBar .cdChip span')].map(c => c.textContent.trim()), log: window.__log.map(l => l[0] + ':' + (l[1].action || l[1].designId || '')) }), node0);
-    check('T2c the bar is the same node after the tab is drawn again (Approved, then Placements); New design, Open charm… and a recent design call the designer (with the way back), each logged; a design saved shows at once',
-      after.same && after.first && JSON.stringify(after.calls) === JSON.stringify([['new', 'designerBar', 'Back to Design & Engrave'], ['open', 'designerBar'], ['design', 'd3', 4]]) && after.chips[0] === 'Brand new' && after.chips.length === 4 && after.log.join() === 'designerNew:,designerOpen:,designOpen:d3', JSON.stringify(after));
+    await page.click('#egDesignBtn'); await settle(100);
+    const after = await page.evaluate(n0 => ({ same: document.getElementById('egDesignBtn') === n0, last: document.querySelector('#engraveView > .egBar').lastElementChild === n0, n: document.querySelectorAll('#egDesignBtn, .egDesignBtn').length, calls: window.__calls, log: window.__log.map(l => l[0] + ':' + (l[1].from || '')) }), node0);
+    check('T2c the button is the same node after the tab is drawn again (Approved, then Placements), still last in its bar; pressed, it opens the "Design a charm" modal on its New design side (newDesign, with the way back), logged',
+      after.same && after.last && after.n === 1 && JSON.stringify(after.calls) === JSON.stringify([['new', 'charmEditorButton', 'Back to Design & Engrave']]) && after.log.join() === 'designerNew:charmEditorButton', JSON.stringify(after));
+    // a phone (390 px): the bar wraps, the button keeps its size and stays on the screen, the page never scrolls sideways
+    // (the left rail is put away first, as a phone has it: engrave-approved-tab.cjs; put back after)
+    await page.setViewportSize({ width: 390, height: 844 }); await settle(500);
+    const railed = await page.evaluate(() => !document.getElementById('app').classList.contains('railOff'));
+    if (railed) { await page.click('#btnRail').catch(() => {}); await settle(500); }
+    const ph = await geo();
+    await R.shot(w, 'DE-1c-charm-editor-390');
+    await page.setViewportSize({ width: 1440, height: 900 }); await settle(400);
+    if (railed && await page.evaluate(() => document.getElementById('app').classList.contains('railOff'))) { await page.click('#btnRail').catch(() => {}); await settle(400); }
+    check(`T2d at 390 px the button (${ph.w}x${ph.h} px, ${ph.left}..${ph.right}) is whole on the screen (${ph.vw} px), on one line, and the page does not scroll sideways (${ph.sw} px)`,
+      ph.h >= 36 && ph.left >= 0 && ph.right <= ph.vw && ph.lines <= 1 && ph.sw <= ph.vw + 1, JSON.stringify(ph));
+    // the real module: the button opens the real "Design a charm" modal, on New design
+    await page.evaluate(() => { window.CharmNestCeMasters = window.__realM; Engrave.render(); });
+    await settle(200);
+    const real = await page.evaluate(() => !!window.CharmNestCeMasters && !document.getElementById('egDesignBtn').disabled);
+    let modal = null;
+    if (real) {
+      await page.click('#egDesignBtn');
+      await page.waitForSelector('.cem-root [data-panel="new"]:not([hidden])', { timeout: 15000 }).catch(() => {}); await settle(300);
+      modal = await page.evaluate(() => { const r = document.querySelector('.cem-root'); return r ? { title: (r.querySelector('.cem-id h2') || {}).textContent, eyebrow: (r.querySelector('.cem-eyebrow') || {}).textContent, tabs: [...r.querySelectorAll('.cem-seg [data-pane]')].map(b => b.textContent.trim()), newOpen: !!r.querySelector('[data-panel="new"]:not([hidden])'), shapes: [...r.querySelectorAll('.cem-shape span')].map(s => s.textContent.trim()), busy: document.getElementById('egDesignBtn').getAttribute('aria-busy') } : null; });
+      await R.shot(w, 'DE-1d-design-a-charm-modal');
+      await page.click('.cem-root .cem-x'); await settle(400);
+      modal.closed = await page.evaluate(() => !document.querySelector('.cem-root .cem-win') && !document.getElementById('egDesignBtn').hasAttribute('aria-busy'));
+    }
+    await page.mouse.move(5, 5);   // (the pointer off the page's buttons: T3 reads the card button's colour, not its hover)
+    check(`T2e with the real charm-nest-ce-masters.js the button opens "${modal && modal.title}" (${modal && modal.tabs.join(' / ')}) on New design: ${modal && modal.shapes.join(', ')}; closed, the button is free again`,
+      real && modal && modal.title === 'Design a charm' && /From the charm library, or a new one/i.test(modal.eyebrow) && modal.tabs.join('|') === 'From the library|New design' && modal.newOpen && modal.shapes.join('|') === 'Circle|Rounded rectangle|Heart|Tag|Your own outline' && modal.busy === 'true' && modal.closed, JSON.stringify({ real, modal }));
 
     /* ── T3 · the card's button ── */
     await R.openEngraveDetail(w, 'both', { face: 'back' }); await settle(800);

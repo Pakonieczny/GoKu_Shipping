@@ -2138,6 +2138,17 @@ async function op_poolGet(b) {
    id, so it is named everywhere by it and by the person's name for it. Its pool ids are <order>_<yyyymmdd><nnnn>_<copy>: an order's piece keeps the order's number in front, as every
    pool id does, and never takes the id of one of the order's own lines. The same requestId (a retry, a reply lost on the way) is given the same number and the same rows. */
 const CUSTOM_PIECE_METALS = new Set(["gold", "silver", "rose", "gold10k", "gold14k"]);
+const CUSTOM_ORDER_ID = /^CUSTOM-\d{8}-\d{1,6}$/;
+/* CUSTOMORDERS (Paul, 28 Oct 2026: "Custom made charm, even though it's not attached to an existing order must still have all the same abilities and features that a regular order has. This
+   means that I need to be able to see it in the orders tab in the list view. It needs to be searchable and the detailed order view needs to work for it just like any other order"): the
+   custom pieces sent from the Charm Editor (op_customPiecePut's pool rows, custom true), newest first, so every computer lists them. One single-field query; read only. b.since (ms) keeps
+   only the rows sent since then; b.limit, at most 1000. */
+async function op_customPieceList(b) {
+  const since = num(b && b.since) || 0, lim = Math.max(1, Math.min(1000, num(b && b.limit) || 500));
+  const snap = await col(POOL).where("custom", "==", true).limit(1000).get();
+  const rows = snap.docs.map(d => msRow(d.data())).filter(r => !since || (+r.orderDate || +r.createdAt || 0) >= since).sort((x, y) => (+y.orderDate || +y.createdAt || 0) - (+x.orderDate || +x.createdAt || 0)).slice(0, lim);
+  return { ok: true, pools: rows };
+}
 async function op_customPiecePut(b) {
   const p = b && b.piece && typeof b.piece === "object" && !Array.isArray(b.piece) ? b.piece : null; if (!p) return { error: "no piece", status: 400 };
   const by = str(b.by || p.by, 80).trim(), req = str(b.requestId, 80), metal = str(p.metal, 12), qty = Math.floor(+p.quantity);
@@ -2185,7 +2196,8 @@ const PIECE_SHEET_FIELDS = ["id", "sheetId", "metal", "metalLabel", "fileBase", 
    holds) answers `unchanged` without the payload when nothing moved. */
 async function op_getOrderPieces(b) {
   const sheetIds = (Array.isArray(b.sheetIds) ? b.sheetIds : []).filter(isId).slice(0, 40);
-  const ids = [...new Set((Array.isArray(b.orderIds) ? b.orderIds : [b.orderId]).map(x => String(x == null ? "" : x).replace(/\D/g, "")).filter(x => /^\d{4,20}$/.test(x)))].slice(0, 40);
+  // (CUSTOMORDERS, Paul 28 Oct 2026: a custom piece that belongs to no order is an order of its own, CUSTOM-<yyyymmdd>-<n>: its pieces are read like any order's)
+  const ids = [...new Set((Array.isArray(b.orderIds) ? b.orderIds : [b.orderId]).map(x => { const v = String(x == null ? "" : x).trim(); return CUSTOM_ORDER_ID.test(v) ? v : v.replace(/\D/g, ""); }).filter(x => /^\d{4,20}$/.test(x) || CUSTOM_ORDER_ID.test(x)))].slice(0, 40);
   if (!ids.length && !sheetIds.length) return { error: "orderId required" };
   const ifRev = /^[0-9a-f]{12}$/.test(String(b.ifRev || "")) ? String(b.ifRev) : "";
   /* FC3 (cost): the page asks every 2.5 s, and the answer used to be made from every pool row and sheet of up to 30 orders (about
@@ -4702,7 +4714,9 @@ const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneL
   cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
   listingSkus: op_listingSkus, aliasGet: op_aliasGet, aliasPut: op_aliasPut, listingKindPut: op_listingKindPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
   customSheetGet: op_customSheetGet, customSheetPut: op_customSheetPut, customGet: op_customGet, customPut: op_customPut, reviewMarkPut: op_reviewMarkPut, reviewMarkOpen: op_reviewMarkOpen, customReopen: op_customReopen, customDelete: op_customReopen };
-OPS.customPiecePut = op_customPiecePut;   // CUSTOMPOOL (Paul, 28 Oct 2026): a design sent to a sheet becomes its pool rows; an orderless piece is numbered CUSTOM-<yyyymmdd>-<n>
+OPS.customPiecePut = op_customPiecePut;
+OPS.customPieceList = op_customPieceList;   // CUSTOMORDERS (Paul, 28 Oct 2026): the custom pieces, so each is listed, found and opened as an order
+NO_GEN_BUMP.add("customPieceList");   // CUSTOMPOOL (Paul, 28 Oct 2026): a design sent to a sheet becomes its pool rows; an orderless piece is numbered CUSTOM-<yyyymmdd>-<n>
 /* ART EDIT (Paul, 27 Oct 2026): one piece's own artwork, kept beside it (op_artPut above). artPut writes the piece's record, its pool row's artEdit stamp and its sheet's filesOwed;
    artGet and artList only read the documents named (they move no counter). */
 Object.assign(OPS, { artPut: op_artPut, artGet: op_artGet, artList: op_artList }); NO_GEN_BUMP.add("artGet"); NO_GEN_BUMP.add("artList");
