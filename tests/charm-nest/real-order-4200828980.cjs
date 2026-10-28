@@ -190,8 +190,8 @@ const say = (r, extra) => { const c = vm.createContext(Object.assign({ window: {
 const rowOf = (sp, extra) => Object.assign({ key: 'k', spec: sp, line: line(), order: ORDER, engrave: null }, extra || {});
 await t('7 the order window says the engraving at once: "Back engraving", the words, the font, the sides chosen and "Waiting for the Engrave tab"; "1 side" says no engraving; a plain default back, a person\'s "no engraving" and an Engrave record keep what they had', () => {
   const sp = read(), s = say(rowOf(sp)); assert.equal(s.chip, 'Back engraving');
-  assert.equal(s.html, '<span>Back: Georgia Ben Cora Smith / October 26 2020<br>Font: Typewriter → Crimson Text<br>2 sides chosen: the design&#39;s own art is the front<br>Waiting for the Engrave tab</span>');
-  const j = say(rowOf(sp, { engrave: { needed: false, state: 'none' } })); assert.ok(!/Waiting for the Engrave tab/.test(j.html), 'a record exists: it is not waiting');
+  assert.equal(s.html, '<span>Back: Georgia Ben Cora Smith / October 26 2020<br>Font: Typewriter → Crimson Text<br>2 sides chosen: the design&#39;s own art is the front<br>Waiting for the Design &amp; Engrave tab</span>');
+  const j = say(rowOf(sp, { engrave: { needed: false, state: 'none' } })); assert.ok(!/Waiting for the Design &amp; Engrave tab/.test(j.html), 'a record exists: it is not waiting');
   const one = read({ variations: [V('Birth Flower', 'Marigold', '514', '209'), V(SIDES, 'Gold - 18" - 1 side', '513', '101')] }), o = say(rowOf(one, { engrave: { needed: false, state: 'none', approved: true } }));
   assert.equal(o.chip, 'No engraving'); assert.match(o.html, /No engraving<br>1 side chosen: only the design&#39;s own art is engraved<br>Buyer chose 1 side; words not engraved: /);
   const none = say(rowOf(read({ variations: [V('Birth Flower', 'Marigold', '514', '209')], personalization: [] }))); assert.equal(none, null, 'nothing read, nothing said');

@@ -220,14 +220,14 @@
    * The very button the order window's card had before round 1 (charm-nest-engraving-seals.js panel(): `btn ghost sm egOpen`, `btn gold` while the words are unclear, "Fix in Engraving →",
    * "View in Engraving →" once the piece is decided, "Opening Engraving…" with the small spinner while it opens). One per card, in the order window only (the Engrave tab's own card has none: it
    * is already there). It opens the piece through the card's onOpen, i.e. EngraveLink.open({ rid, key, poolId, piece, face }). The two thumbnails stay a second, quieter way in. */
-  const OPEN_WORD = { fix: 'Fix in Engraving', view: 'View in Engraving', busy: 'Opening Engraving…' };
+  const OPEN_WORD = { fix: 'Fix in Design & Engrave', view: 'View in Design & Engrave', busy: 'Opening Design & Engrave…' };
   /** What the button does for this piece: the face it opens (the one that needs a person most, else the first shown), its wording, and whether it can open now (else why not). */
   function openOf(piece) {
     const shown = ['front', 'back'].filter(f => piece.faces && piece.faces[f]);
     const face = shown.reduce((a, f) => (!a || (RANK[piece.faces[f].state] || 0) > (RANK[piece.faces[a].state] || 0) ? f : a), '') || 'front';
     const L = root && root.EngraveLink, E = root && root.Engrave, line = lineOf(piece.row);
     // (ENGPRE, Paul 13 Oct: "a charm does not have to be placed on that sheet for it to be approved/updated": a piece on hold, waiting, pulled or on no sheet yet is opened like any other, its job is made at once, Engrave.early; only the reasons below keep the button off)
-    const why = line && line.state === 'gone' ? 'This order has left the pull' : root && root.document && !(L && L.open) && !(E && E.restoreView) ? 'Engraving is not ready' : '';   // (the model alone, with no page, has nothing to wait for)
+    const why = line && line.state === 'gone' ? 'This order has left the pull' : root && root.document && !(L && L.open) && !(E && E.restoreView) ? 'Design & Engrave is not ready' : '';   // (the model alone, with no page, has nothing to wait for)
     return { face, done: piece.state === 'approved' || piece.state === 'plain', words: piece.state === 'words', ok: !why, why };
   }
   function openHtml(piece) {
@@ -438,7 +438,7 @@
     };
     for (const fe of el.querySelectorAll('.engFace')) {
       const face = fe.dataset.face, th = fe.querySelector('.engThumb'); if (!th) continue;
-      th.setAttribute('aria-label', btn ? `${faceTitle(face)} engraving of ${piece.title}: open in Engraving` : `${faceTitle(face)} engraving of ${piece.title}`);
+      th.setAttribute('aria-label', btn ? `${faceTitle(face)} engraving of ${piece.title}: open in Design & Engrave` : `${faceTitle(face)} engraving of ${piece.title}`);
       th.addEventListener('click', () => press(face, th));
     }
     if (btn) btn.addEventListener('click', () => press(btn.dataset.face || openOf(piece).face, btn));

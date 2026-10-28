@@ -2828,6 +2828,9 @@
       page.pushOperators(cm(T), cm(R), cm(M), setFillingRgbColor(0, 0, 0), setStrokingRgbColor(0, 0, 0));
       for (const s of artBack) {
         if (s.stroke && !s.fill) page.pushOperators(setLineWidth(s.lwPt || 0.25));
+        // (Design & Engrave, 28 Oct 2026: a traced image's grey part keeps its grey, so the operator gives each grey its own power; every other part is the words' black)
+        const grey = s.artGrey && s.fill && Array.isArray(s.fillRGB) && s.fillRGB.length >= 3 ? s.fillRGB : null;
+        if (grey) page.pushOperators(setFillingRgbColor(grey[0], grey[1], grey[2]));
         for (const sub of s.subpaths) for (const o of sub) {
           if (o[0] === "m") page.pushOperators(moveTo(o[1][0], o[1][1]));
           else if (o[0] === "l") page.pushOperators(lineTo(o[1][0], o[1][1]));
@@ -2835,6 +2838,7 @@
           else if (o[0] === "h") page.pushOperators(closePath());
         }
         page.pushOperators(s.fill ? PDFOperator.of(String(s.paintOp || "").endsWith("*") ? PDFOperatorNames.FillEvenOdd : PDFOperatorNames.FillNonZero) : stroke());
+        if (grey) page.pushOperators(setFillingRgbColor(0, 0, 0));
       }
     }
     page.pushOperators(popGraphicsState(), endMarkedContent());
@@ -3299,6 +3303,7 @@
      drawn again carry `artRedraw` (removed parts are gone from its members, changed ones carry their new geometry, new ones are added), and the group of the master they were drawn in
      is out of the copied bytes (dropIndices). buildSheet writes those parts here, after the copied bytes, in the charm's own points as the master's parts are:
        · a part the hatching rule reads as hatching (hatchBlue) is a BLUE fill, exactly as hatchCopies writes a black fill of the master (black line art: the area its line covers);
+       · a traced image's part (artGrey, Design & Engrave 28 Oct 2026) is never hatchBlue: it is written below in its own grey fill, one laser layer a grey;
        · every other part is painted as it is drawn (a red line engraving, a black cut hairline);
        · each in its master layer (CUT, ENGRAVE, HATCH ...), found by name and named from this piece's own Resources (artLayerKeys), so the .ai and the DXF name it as the master does. ── */
   /** The layer keys an edited piece's form names for its redrawn parts. The master's layers are found by name in the source's resources (its page, or the forms it draws) and only READ:
