@@ -103,10 +103,13 @@ const tickGap = page => page.evaluate(() => {
     await page.keyboard.press('Escape'); await page.keyboard.press('r'); await settle(page);
     const a = { x: Math.round(stageR.l + stageR.w * 0.2), y: Math.round(stageR.t + stageR.h * 0.3) }, b = { x: a.x + 87, y: a.y + 53 };
     await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 6 }); await settle(page);
-    const marks = [['x', a.x - rxR.l], ['x', b.x - rxR.l], ['y', a.y - ryR.t], ['y', b.y - ryR.t]];
-    const gold = []; for (const [w, p] of marks) { let hit = false; for (const d of [-1, 0, 1]) if (isGold(await rulerPx(page, w, Math.round(p) + d, 4))) hit = true; gold.push(hit); }
+    // (the draft as drawn: the smart guides may have put its corners a pixel or two from the hand)
+    const d = await page.evaluate(() => { const r = document.querySelector('.ce-ui .u-draft').getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; });
+    const marks = [['x', d.l - rxR.l], ['x', d.r - rxR.l], ['y', d.t - ryR.t], ['y', d.b - ryR.t]];
+    const gold = []; for (const [w, p] of marks) { let hit = false; for (const dd of [-1, 0, 1]) if (isGold(await rulerPx(page, w, Math.round(p) + dd, 4))) hit = true; gold.push(hit); }
     await page.keyboard.press('Escape'); await page.mouse.up(); await page.keyboard.press('v'); await settle(page);
-    assert.deepEqual(gold, [true, true, true, true]);
+    await clickAt(page, await edge('day-2-3', 0.3));   // (the selection the next step expects)
+    assert.deepEqual(gold, [true, true, true, true], JSON.stringify(d));
   });
   await step('1.2 the cursor is tracked on both rulers', async () => {
     await page.keyboard.press('Escape'); await settle(page);
