@@ -100,7 +100,7 @@ const tickGap = page => page.evaluate(() => {
     return `marks x ${m0.x0}–${m0.x1}, y ${m0.y0}–${m0.y1} px; after 1 mm: x ${m1.x0}`;
   });
   await step('1.1b while a rectangle is being drawn, its growing extent is what the rulers mark', async () => {
-    await page.keyboard.press('Escape'); await page.keyboard.press('r'); await settle(page);
+    await page.keyboard.press('Escape'); await page.keyboard.press('m'); await settle(page);
     const a = { x: Math.round(stageR.l + stageR.w * 0.2), y: Math.round(stageR.t + stageR.h * 0.3) }, b = { x: a.x + 87, y: a.y + 53 };
     await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 6 }); await settle(page);
     // (the draft as drawn: the smart guides may have put its corners a pixel or two from the hand)
@@ -249,7 +249,7 @@ const tickGap = page => page.evaluate(() => {
     assert.ok(near(Math.max((c.x - a.x) / stageR.w, (c.y - a.y) / stageR.h), 0.8, 0.02) || (await C(page)).zoom >= 6399.9, 'the heart fills 80 %: ' + ((c.x - a.x) / stageR.w).toFixed(3) + ' ' + ((c.y - a.y) / stageR.h).toFixed(3));
     const z1 = (await C(page)).zoom;
     await page.keyboard.press('v'); await page.keyboard.press('Control+0'); await settle(page);
-    await clickAt(page, await edge('day-0-6', 0.5)); await page.keyboard.press('Control+2'); await settle(page);
+    await clickAt(page, await edge('day-0-6', 0.5)); await page.keyboard.press('Shift+Digit2'); await settle(page);
     const sb = await box(page, 'day-0-6'), a2 = await clientOf(page, sb[0], sb[1]), c2 = await clientOf(page, sb[2], sb[3]);
     assert.ok(near(Math.max((c2.x - a2.x) / stageR.w, (c2.y - a2.y) / stageR.h), 0.6, 0.02) && near((a2.x + c2.x) / 2, stageR.l + stageR.w / 2, 1.5), 'the selection at 60 %, centred');
     return `part ${Math.round(z1)}%, selection ${Math.round((await C(page)).zoom)}%`;

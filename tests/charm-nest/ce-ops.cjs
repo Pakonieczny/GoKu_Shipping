@@ -229,11 +229,11 @@ console.log(`ce-ops node: ${n} checks passed`);
     });
     let united = null;
     await step('W2 two overlapping rectangles drawn with the mouse, both selected, Unite from the Pathfinder flyout on the property bar: ONE shape, their union\'s area (0.1 %), one undo step, ⌘Z gives both back', async () => {
-      await page.keyboard.press('r');
+      await page.keyboard.press('m');
       const a = await client(5, 12), b = await client(11, 16), c2 = await client(8, 14), d2 = await client(14, 18);
       await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 6 }); await page.mouse.up(); await settle();
       const r1 = (await C(c => c.selection()))[0];
-      await page.keyboard.press('r');
+      await page.keyboard.press('m');
       await page.mouse.move(c2.x, c2.y); await page.mouse.down(); await page.mouse.move(d2.x, d2.y, { steps: 6 }); await page.mouse.up(); await settle();
       const r2 = (await C(c => c.selection()))[0];
       await page.keyboard.down('Shift'); const e1 = await client(5, 13); await page.mouse.click(e1.x, e1.y); await page.keyboard.up('Shift'); await settle();

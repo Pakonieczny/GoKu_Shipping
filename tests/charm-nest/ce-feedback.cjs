@@ -172,7 +172,7 @@ function registerExtensions() {
       assert.equal(await page.evaluate(() => CharmEditor.current.history().undo), h0 + 2);
       const hb = await page.evaluate(() => CharmEditor.current.box('heart-fill')), c = await ptClient(page, (hb[0] + hb[2]) / 2, (hb[1] + hb[3]) / 2);
       await page.mouse.click(c.x, c.y, { button: 'right' }); await settle(page);
-      const ctxm = await page.evaluate(() => [...document.querySelectorAll('.ce-ctx [data-xcmd]')].map(b => b.dataset.xcmd));
+      const ctxm = await page.evaluate(() => [...document.querySelectorAll('.ce-ctx > [data-xcmd]')].map(b => b.dataset.xcmd));
       assert.deepEqual(ctxm, ['xnudge'], 'the right-click menu lists only what can be done');
       await page.keyboard.press('Escape'); await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z'); await settle(page);
     });
@@ -266,7 +266,7 @@ function registerExtensions() {
     let rid = null;
     await step('1.1 drawing a rectangle: the chip beside it says W × H and X / Y / W / H follow every frame (they stayed blank); it is drawn where the hand went', async () => {
       if (await snapOn(page)) await page.click('.ce-snapb');   // (exact sizes here: snapping has a part of its own)
-      await page.keyboard.press('r'); await settle(page);
+      await page.keyboard.press('m'); await settle(page);   // (the Rectangle: M, as Illustrator's keys have it)
       const before = await fields(page);
       assert.equal(before.w, null, 'nothing selected: no size yet');
       const a = await mmClient(page, 3.5, 27.0), b = await mmClient(page, 9.5, 28.4);
@@ -293,7 +293,7 @@ function registerExtensions() {
       console.log(`         mid-drag: chip "${midChip}", fields X ${midF.x} Y ${midF.y} W ${midF.w} H ${midF.h}; at the end "${endChip}"`);
     });
     await step('1.2 a line says its length and angle; a polygon its sides (↑ while dragging adds one); Esc mid-drag leaves nothing and the fields as they were', async () => {
-      await page.keyboard.press('l'); await settle(page);
+      await page.keyboard.press('Backslash'); await settle(page);   // (the Line Segment: \, as Illustrator's keys have it; L is the Ellipse)
       const a = await mmClient(page, 12, 27.2), b = await mmClient(page, 16, 28.2);
       await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 8 });
       const lc = await chip(page);
@@ -483,7 +483,7 @@ function registerExtensions() {
       assert.equal(await page.evaluate(() => document.querySelectorAll('.ce-items path').length), 301);
       const P = (x, y) => mmClient(page, x, y);
       await gesture(page, '300 parts · hover', async () => { const a = await P(2, 2), b = await P(37, 36); await page.mouse.move(a.x, a.y); await page.mouse.move(b.x, b.y, { steps: 60 }); await settle(page); });
-      await page.keyboard.press('r');
+      await page.keyboard.press('m');
       await gesture(page, '300 parts · draw', async () => { const a = await P(5, 6), b = await P(25, 30); await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 40 }); await page.mouse.up(); await settle(page); });
       await page.keyboard.press('Control+z'); await page.evaluate(() => CharmEditor.current.ctx.select(['p150'])); await settle(page);
       const b = await page.evaluate(() => CharmEditor.current.box('p150')), c = await ptClient(page, (b[0] + b[2]) / 2, (b[1] + b[3]) / 2);
