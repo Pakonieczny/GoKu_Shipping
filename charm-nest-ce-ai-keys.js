@@ -102,6 +102,8 @@
       if (!spring) { const s = safe(() => w.st(), null); if (s && s.tool !== 'zoom') { spring = { prev: s.tool }; w.act('tool', 'zoom'); } }
       return true;
     }
+    // a letter typed while a menu is open is not a tool's (Illustrator's menus take no tool keys): it goes nowhere
+    if (!mod && !e.altKey && k.length === 1 && k !== ' ' && w.root && w.root.querySelector('.ce-menu:not([hidden])')) { e.preventDefault(); return true; }
     for (const { e: en, k: kk, cat } of keyed()) {
       if (!a.matches(kk, e)) continue;
       if (kk.key === 'Tab' && !workFocused(e, w)) return false;
@@ -238,7 +240,9 @@
     const a = A(); if (!a) return [];
     mac = mac == null ? isMac() : !!mac;
     const has = id => !w || BUILTIN.includes(id) || safe(() => w.x.hasTool(id), false);
-    const lab = e => (typeof e.label === 'function' ? (w ? safe(() => e.label(w), '') : '') : e.menuLabel || e.label) || e.id;
+    // (a name that follows the state in the menus, Show / Hide Rulers, is listed once by both names, as Illustrator's dialog lists them)
+    const STATIC = { 'view.outline': 'Outline / Preview', 'view.rulers': 'Show / Hide Rulers', 'view.guides': 'Show / Hide Guides', 'view.grid': 'Show / Hide Grid', 'file.back': 'Close and Return' };
+    const lab = e => STATIC[e.id] || (typeof e.label === 'function' ? (w ? safe(() => e.label(w), '') : '') : e.menuLabel || e.label) || e.id;
     const kt = e => (e.keyText ? (e.key === 'Delete' ? (mac ? '⌫' : 'Del') : e.key === 'Enter' ? (mac ? '↩' : 'Enter') : e.keyText) : (e.key || e.sheetKey) ? keyLabel(e.key || e.sheetKey, mac) : '');
     const avail = e => !(e.x && w && !w.x.has(e.x)) && !(e.when && w && !safe(() => e.when(w), false));
     const rows = [];
