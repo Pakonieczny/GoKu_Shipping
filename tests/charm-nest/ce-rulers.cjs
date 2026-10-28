@@ -344,6 +344,7 @@ const tickGap = page => page.evaluate(() => {
     const pan = async () => { await page.keyboard.down(' '); await page.mouse.move(c.x, c.y); await page.mouse.down(); const r = await frames(60, i => page.mouse.move(c.x + Math.sin(i / 6) * 160, c.y + Math.cos(i / 7) * 110)); await page.mouse.up(); await page.keyboard.up(' '); return r; };
     const zoomW = async () => { await page.mouse.move(c.x + 40, c.y - 30); return frames(40, i => page.mouse.wheel(0, i % 20 < 10 ? -100 : 100)); };
     await page.evaluate(() => window.CharmEditor.current.setZoom(800)); await settle(page);
+    const rest = await frames(20, async () => {});   // (a frame with nothing to do: what the measuring itself costs)
     const pan0 = await pan(), zoom0 = await zoomW();
     await page.keyboard.press('Control+a'); await settle(page);
     const nSel = (await C(page)).sel.length;
@@ -353,7 +354,7 @@ const tickGap = page => page.evaluate(() => {
       assert.ok(nPaths >= 300, 'paths ' + nPaths); assert.ok(nSel >= 299, 'selected ' + nSel);
       assert.ok(pan0.p90 < 16 && pan1.p90 < 16, `pan: ${fmt(pan0)} / ${fmt(pan1)}`);
       assert.ok(pan0.over <= 3 && pan1.over <= 3, 'frames over budget');
-      return `pan, none selected: ${fmt(pan0)} · all selected: ${fmt(pan1)}`;
+      return `pan, none selected: ${fmt(pan0)} · all selected: ${fmt(pan1)} · a frame with nothing to do: ${rest.med.toFixed(2)} ms`;
     });
     await step('5.2 and every frame of a wheel zoom on it too', async () => {
       assert.ok(zoom0.p90 < 16 && zoom1.p90 < 16, `zoom: ${fmt(zoom0)} / ${fmt(zoom1)}`);
