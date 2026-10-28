@@ -1,22 +1,29 @@
 /* charm-nest-ce-trace.js — IMAGE TRACE for the Charm Editor: a picture made into smooth filled vector paths, greyscale with black as the base (TRACE, Paul,
  * 28 Oct 2026: "All images must be converted to a vector format while keeping the quality of the image and the colour should be a greyscale using the black as
- * base"; items 12 and 13; the lead's D2: the image is made grey, posterised into N levels (default 4, 1–8; 1 = a plain black / white threshold), each level traced
+ * base"; items 12 and 13; the lead's D2: the image is made grey, posterised into N levels (default 4, 1–16; 1 = a plain black / white threshold), each level traced
  * to smooth filled paths, black the darkest level, white no ink, each level keeping its grey so the laser operator gives each grey its own power).
  * The import UI (charm-nest-ce-image.js) calls it; this file draws nothing and saves nothing. It loads in the page (window.CharmNestTrace), in its own Worker made
  * from a Blob URL of this same file's code (no second served file), and in node (module.exports, for the tests).
  *
  *   CharmNestTrace.trace(src, opts) -> Promise<result>     src: ImageData | { data, width, height } (RGBA, RGB or one grey channel, 0..255)
- *     opts.levels 4          1..8 inked greys; white is never inked
+ *     opts.levels 4          1..16 inked greys (TRACEHQ, 28 Oct 2026: 8 before); white is never inked
  *     opts.detail 0.5        0..1, how closely the curves keep to the pixels: Potrace's opttolerance 0.4 · 0.2 · 0.1 at 0 · 0.5 · 1; under 0.25 a median denoise
  *     opts.smooth 0.5        0..1, corners or curves: Potrace's alphamax 0 · 1.0 · 1.333 at 0 · 0.5 · 1 (0 = a polygon, 1 = no corner anywhere)
  *     opts.despeckle 2       specks of up to this many pixels AT 20 px/mm (0.0025 mm² each, so 2 = 0.005 mm², Potrace's turdsize 2) are merged into what
  *                            surrounds them; opts.despeckleMm2 says it in mm² on the charm and wins when given (the lead, 28 Oct 2026: "despeckle measured in mm²")
- *     opts.pxPerMm 20        the source's pixels per mm as placed on the charm. The trace works at workPxPerMm (20 px/mm, ~500 ppi: a fibre laser's hatch pitch
- *                            is 0.02–0.05 mm, so finer buys nothing): a bigger source is averaged down to it, and never past maxSide 2048 a side. A smaller
- *                            one is traced as it is: enlarging it first (bicubic, as a raster engrave wants) was measured on 28 Oct 2026 to make no truer
- *                            outline (IoU against the drawn shape 0.990 either way) and 3–4 times the nodes, its stair-steps enlarged into features
+ *     opts.pxPerMm 20        the source's pixels per mm as placed on the charm. The trace works at workPxPerMm ('auto': 20 px/mm up to Detail 0.5, rising to
+ *                            40 at Detail 1, i.e. 0.05 to 0.025 mm, a fibre laser's hatch pitch): a bigger source is averaged down to it IN LINEAR LIGHT, never past
+ *                            maxSide (4096) a side. A smaller grey picture is traced as it is (enlarging greys was measured on 28 Oct 2026 to make no truer
+ *                            outline and 3–4 times the nodes). BLACK ONLY (lineArt, or levels 1) is the exception: never made smaller than it came, and a small
+ *                            drawing ENLARGED a whole 2–3 × toward three times the working pitch (opts.upscale: a number, or false), see LINE ART below
+ *     opts.smoothing 'auto'  the edge-preserving (bilateral) smoothing a photo's levels are cut from: reach 0.6 px at Detail 1 to 2 px at Detail 0, greys within
+ *                            3.5–8.5 % averaged; none for flat art or line art; a number 0..1 says it
+ *     opts.lineArt false     black only from a drawing: enlarged and cut by COVERAGE (below); opts.thresholds [t] moves its cut (the Image step's Brightness)
+ *     opts.budget null       { bytes, ops, layerBytes }: what a piece's record can hold (charm-nest-ce-image.js BUDGET); the trace keeps to it itself (BUDGET below)
+ *                            and throws an Error with .overBudget when even its last step is more
  *     opts.invert, contrast, brightness, gamma, autoLevels, sharpen, denoise, adaptive   the grey() steps below, under the same names
- *     opts.thresholds        'otsu' (default: multi-level Otsu, so every level holds real area) | 'even' | [t0 < t1 < …] N numbers 0..1 (from posterise())
+ *     opts.thresholds        'auto' (default: black only at the half; a photo by 'tone'; flat art by 'otsu') | 'tone' (each pixel to the band whose fixed grey k / N is
+ *                            nearest its own: cuts at (k + ½) / N) | 'otsu' (multi-level Otsu, so every level holds real area) | 'even' | [t0 < t1 < …] N numbers 0..1
  *     opts.stack false       true: each layer is its whole nested mask (Inkscape's "stack scans"; the lighter ones must then be drawn underneath)
  *     opts.onProgress(p)     0..1, on the page's thread;   opts.signal   an AbortSignal
  *   result { width, height, layers:[{ grey, level, subpaths, nodes, areaPx }], levels, thresholds, greys, suggestLevels, content, midtones, nodes, scale, ms, worker }
@@ -29,13 +36,20 @@
  *   CharmNestTrace.posterise(src, opts) -> { image, width, height, thresholds, greys, suggestLevels, content, midtones }   the levels as they will be traced,
  *                                      small and quick (opts.maxSide 512, a few ms) for a live preview under a slider; pass its thresholds to trace()
  *   CharmNestTrace.suggest(src) -> { levels, content, midtones }
- *   CharmNestTrace.traceSync(src, opts) -> result                the same trace at once on this thread (node and the tests)
+ *   CharmNestTrace.traceSync(src, opts) -> result                the same trace at once on this thread (node and the tests): the same generator the Worker
+ *                                      runs straight through and the page runs in slices, so all three give the same paths (tests/charm-nest/ce-trace-quality.cjs (c))
+ *   CharmNestTrace.plan(w, h, opts) -> { W, H, up, pxPerMm }     the working size, so the Image step makes its picture that size itself
+ *   result.work { width, height, pxPerMm, speckPx, merged, smoothing, simplified, shrunk, passes, bytes }   how it was traced (the budget's steps taken)
  *
  * THE GREY (what every laser prep guide does, in this order): luminance 0.299 R + 0.587 G + 0.114 B, a transparent part on white (no ink); auto-levels (0.5 %
  * clipped at each end: the darkest becomes black, the base); gamma (a number, or 'auto' to centre the histogram); brightness and contrast (-1..1); an unsharp
  * mask of radius 0.05 mm ('auto': amount 1.5 on a photo only, softened under 1 % grey; on flat art it would ring every edge into a false band); a 3 × 3 median
  * ('auto': on a photo, or at detail under 0.25); invert. adaptive: true divides by the local background first (a window an eighth of the image), for a phone
- * photo of handwriting under uneven light (LightBurn's "sketch" trace). Then the levels: multi-level Otsu on the histogram (or the caller's thresholds).
+ * photo of handwriting under uneven light (LightBurn's "sketch" trace). Then (a photo) the bilateral smoothing, and the levels: by tone, Otsu or the caller's cuts.
+ * (TRACEHQ, Paul 28 Oct 2026: "with Levels 8, Detail 100, Smoothness 100, Despeckle 0 a 5000×5000 photo still comes out blotchy/posterised with lost facial detail".
+ * Measured with tests/charm-nest/ce-trace-quality.cjs, a 5000 px photo-like picture placed 30 mm: the old Place traced it at 20 px a mm, found it more than a
+ * piece's record holds (1.9 MB against 450 KB: film grain made into tens of thousands of islands) and traced it again at 0.72 × twice: 311 px across, blurred grey
+ * error 11.6 / 255. Now: 1200 px across, the grain smoothed away and the budget met by the steps below, blurred grey error 9.4; the defaults 18.1 → 14.1.)
  * suggestLevels comes from the mid-tone share (20–80 % grey) after auto-levels (the studio's test, J 14835): under 15 % line art, else an illustration when
  * six of 64 tones hold 60 % of the picture, else a photo.
  *
@@ -46,6 +60,20 @@
  * works on the levels, so the masks stay nested: a speck (up to the despeckle area) and a SEAM (a band under 1.5 pixels wide between a darker and a lighter
  * level: an antialiased edge, which would engrave as a hairline ring round every shape) join the level they border most. Measured (circles in four greys,
  * supersampled 4 × 4): the bands overlap on 0.007 % of the ink, in slivers under a fifth of a pixel, and add up to M_(N-1) within 0.02 %.
+ *
+ * THE BUDGET (TRACEHQ): a piece's record holds 600 KB of paths (charmNestLibrary.js ART_MAX; the Image step asks 450 KB of it), about 9 000 Béziers for the
+ * whole picture. When what is traced passes it, the work stops and is done again a step simpler (SIMPLIFY: a wider, more tolerant bilateral smoothing, bigger
+ * specks merged, looser curves), going straight to the step its overshoot calls for; only past the last step is the working picture made smaller (by what the
+ * overshoot says, the bytes going about as the pitch to the 0.85), and made a little bigger again once when that guess left it far under. Measured on a 5000 ×
+ * 2500 photo at 8 levels: at the same bytes, a sharper picture smoothed more kept more of the face than a smaller one, up to a 4 px smoothing, and not past it.
+ *
+ * LINE ART (LINEART, Paul 28 Oct 2026: "the Line Art option produces very poor results even when I import perfect black and white line images"): black only is
+ * cut from the antialiased grey, not from a local-mean threshold (that is the Image step's, for a page lit unevenly). The drawing is enlarged s × (2–3, whole:
+ * bicubic) and cut by COVERAGE (coverageG): each of its own pixels inks as much of its s × s block as it is dark, the darkest of the enlarged grey first, and
+ * the cut between blocks drawn smoothly; a block all paper or all ink is that, so a square's corner stays square. A line 0.8 px wide falling across two
+ * pixels (60 % grey each: past no half threshold) is kept, and a 1 px gap between two lines stays open. Measured on a 600 × 450 drawing placed 30 mm, against
+ * the drawing itself at 8 ×: IoU 0.765 → 0.947, the 1 and 1.5 px gaps 0 % → 100 % open, the edge 0.30 → 0.04 px off on average (1.75 → 0.25 at the 99th
+ * percentile); a lone disc's edge keeps to its circle within 0.14 px (0.55 at its own pixels), in about 34 curves.
  *
  * THE TRACE is written here from Peter Selinger's paper "Potrace: a polygon-based tracing algorithm" (2003; no code taken from potrace, which is GPL): each
  * border followed along the pixel edges (dark pixels kept joined at a corner, the same in every mask); the straight runs (a run is straight when no four
@@ -61,7 +89,8 @@
  * Worker it runs on the page in slices of under 8 ms (each step of the work is a generator that yields every ~32 k pixels or so many path points). cancel()
  * stops the Worker at once. tests/charm-nest/ce-trace.cjs measures it (28 Oct 2026, this machine under load): a 1-megapixel photo at 4 levels in ~0.3–0.5 s in
  * node, ~0.6 s through the browser's Worker with no long task on the page; IoU of the result drawn back against the masks it was traced from 0.97–0.99 on
- * that photo, over 0.99 on drawn art. */
+ * that photo, over 0.99 on drawn art. The 5000 px photo at Levels 8, Detail 100 (2400 px as the page keeps it, 1200 working): Place ~2.3 s in node, the
+ * trace ~1.8 s of it (its budget's steps included); a 600 × 450 drawing as line art ~0.3–0.5 s. */
 (function (root, factory) {
   const api = factory(root, false);
   if (typeof module === 'object' && module.exports) module.exports = api; else if (api) root.CharmNestTrace = api;
