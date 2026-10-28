@@ -1485,10 +1485,10 @@ const Views = window.Views = (() => {
   function onShow(mode) {
     if (mode === "design") { const host = designHost(); if (!document.getElementById("dsFrame")) DesignLink.mount(host); else Dock.setHost(host); DesignLink.renderConsole(); }
     Dock.schedule();
-    if (mode === "orders") Orders.renderNow();
+    if (mode === "orders") { if (Orders.shown) Orders.shown(); else Orders.renderNow(); }   // (NAV, 28 Oct 2026: as it was drawn when nothing changed, and drawn again at idle)
     if (mode === "master") Master.render();
     if (mode === "engrave") Engrave.render();
-    if (mode === "review") Review.render();
+    if (mode === "review") { if (Review.shown) Review.shown(); else Review.render(); }   // (NAV, 28 Oct 2026: as drawn when nothing changed, drawn again at idle)
     // the Review tab follows the cloud while it is on screen (ReviewLive); another tab is brought up to date once as it is shown
     try { window.ReviewLive?.shown?.(mode); } catch (_) {}
   }
@@ -2335,6 +2335,9 @@ const Orders = window.Orders = (() => {
   const pillOf = (p, rid) => Object.assign(() => document.querySelector(PILL(p)) || document.querySelector(ORDERS_TAB), { ordRid: rid });
   const acted = new Map();                                        // receipt id → { t, win, lit }: what a person acted on
   const mine = rid => { const a = acted.get(String(rid)); return !!a && Date.now() - a.t < 10000; };
+  let drawnAt = 0, drawVer = -1, wantDraw = true, drawnSig = "";   // (NAV, 28 Oct 2026: what the tab last drew and when: shown)
+  /** What the bar can change (pile, search, filters, sort, view, range): the list drawn is the list asked for while this is the same (renderBody, shown). */
+  const listSig = () => JSON.stringify([OV.pile,OV.q,OV.metal,OV.form,OV.eng,OV.act,OV.sort,OV.desc,viewMode(),CNListActivity.key("orders")]);
   let drawnOn = "", drawnLimit = 0;                               // the pile and view last drawn on screen ("" hidden since)
   /** Once, when the tab is built: which order a person acts on (a row's own button, or anything in the order window
    *  opened on it), and the tab being hidden (shown again, it is drawn at once). */
@@ -2557,7 +2560,19 @@ const Orders = window.Orders = (() => {
     env.mounts.push([node, first, "review"]);
     return node;
   }
+  /* NAV (28 Oct 2026, Paul: "Order Details … at near real-time speed"): the order window's Back and Next walk the list in the order it is drawn, and each press filtered and sorted every line
+     again (~40 ms on 1,300 lines). The walk is kept while the list it was made from is the same (the same rows, search, filters, sort and range) for a few seconds, and let go whenever the
+     list is drawn again (renderBody); a line gone meanwhile is stepped over. */
+  let walkMemo = null;
+  function walkRows() {
+    const rows = rowsOf(), sig = JSON.stringify([rows.length, OV.pile, OV.q, OV.metal, OV.form, OV.eng, OV.act, OV.sort, OV.desc, CNListActivity.key("orders")]);
+    if (walkMemo && walkMemo.rows === rows && walkMemo.sig === sig && Date.now() - walkMemo.at < 5000) return walkMemo.list.filter(r => r.state !== "gone");
+    const list = groupsOf(visibleRows()).flatMap(g => g.rows);
+    walkMemo = { rows, sig, at: Date.now(), list };
+    return list;
+  }
   function renderBody() {
+    walkMemo = null;
     if(window.Seal?.defer('orders-list',renderBody) || window.CharmNestInteraction?.defer('orders-list',renderBody))return;
     const host = document.getElementById("ordBody"); if (!host) return;
     // the order window open over the list: the list is drawn when it closes, so what was done in it is seen going where
@@ -2573,7 +2588,7 @@ const Orders = window.Orders = (() => {
     const alive=new Set(rowsOf().map(r=>r.key));for(const key of orderNodes.keys())if(!alive.has(key))orderNodes.delete(key);
     // (the Cancelled list is the sheet window script's: searched with this tab's search box, paged down to what "Show" asked for)
     if (OV.pile === "cancelled") { drawnOn = ""; listKey = "cancelled"; if (window.Cancelled) Cancelled.renderInto(host, () => { const v = document.getElementById("ordersView"); if (v && v.querySelector("#ordChips")) renderHead(v); }, { q: OV.q, focus: cxFocus, live: () => OV.pile === "cancelled" && host.isConnected, clear: () => { OV.q = ""; const box = document.getElementById("ordQ"); if (box) box.value = ""; renderBody(); } }); else host.innerHTML = '<div class="libEmpty">The cancelled orders open with the sheet window script.</div>'; return; }
-    const nextKey=JSON.stringify([OV.pile,OV.q,OV.metal,OV.form,OV.eng,OV.act,OV.sort,OV.desc,viewMode(),CNListActivity.key("orders")]);   // (what the bar can change: a change of any resets the list to its first 48)
+    const nextKey=listSig();   // (what the bar can change: a change of any resets the list to its first 48)
     if(nextKey!==listKey){OV.limit=48;listKey=nextKey;}
     const anchor=at>0?[...host.querySelectorAll('[data-key]')].find(n=>n.getBoundingClientRect().bottom>host.getBoundingClientRect().top):null;
     const anchorKey=anchor?.dataset.key, anchorTop=anchor?.getBoundingClientRect().top;
@@ -2641,8 +2656,12 @@ const Orders = window.Orders = (() => {
     for (const [node, pair] of pairs) node.querySelector('.comparePair')?.replaceWith(pair);
     for (const [node, r, only] of mounts) { if (only !== "review") { ListMedia.mount(node, r); try { Review.fixMount(node, r); } catch (_) {} } if (only !== "media" && window.ReviewSend) ReviewSend.mount(node, r); }   // (a grouped order's pieces mount their pictures, its one card mounts the button; Send to Review: the one button under Qty · Ship by, charm-nest-review-send.js; it draws nothing until the Review mark API is there)
     ListMedia.more(list,groupTotal||rows.length,shown.length,()=>{OV.limit=(OV.limit || 48)+48;renderBody();});
+    // NAV (28 Oct 2026, Paul: "keep the API calls to the bare minimum"): the designs of the page of rows just drawn are asked for together at the next idle moment (one masterGetMany:
+    // Master.fetchEntry groups what is asked within a frame), where each row asked for its own as a scroll brought it near (47 reads for one scroll); what is known or asked is not asked again
+    { const skus = [...new Set(shown.flatMap(g => g.rows).map(r => String((r.spec && r.spec.designSku) || "").toUpperCase()).filter(Boolean))];
+      if (skus.length && window.Master && Master.fetchEntry) (typeof requestIdleCallback === "function" ? requestIdleCallback : f => setTimeout(f, 60))(() => { for (const k of skus) if (!Master.entryFor(k)) Master.fetchEntry(k).catch(() => {}); }, { timeout: 400 }); }
     settle();
-    drawnOn = onScreen() ? nextKey : ""; drawnLimit = OV.limit;
+    drawnOn = onScreen() ? nextKey : ""; drawnLimit = OV.limit; if (drawnOn) drawnSig = nextKey;   // (drawnSig: kept while hidden, NAV shown)
     // what a person changed that stays in this pile (Release hold under Open Orders, Send now) is marked where it is
     if (same) { const now = rebuilt.filter(n => { const a = acted.get(n.dataset.rid); return a && !a.lit && mine(n.dataset.rid); }); for (const n of now) { lit(n); acted.get(n.dataset.rid).lit = true; } }
   }
@@ -2743,8 +2762,8 @@ const Orders = window.Orders = (() => {
     // Filters: a panel of chip groups under the button (a bottom sheet on a phone); a press on a chip narrows the list at once
     const fbtn = v.querySelector("#ordFiltersBtn"), fpop = v.querySelector("#ordFiltersPop");
     ordFp = CNListActivity.popover({ trigger: fbtn, panel: fpop, sheet: true, sheetMax: 640, focus: p => p.querySelector('.ordChip[aria-pressed=true]:not([data-v=""])') || p.querySelector(".ordChip") });
-    fbtn.onclick = () => ordFp.toggle();
-    fbtn.addEventListener("keydown", e => { if (e.key === "ArrowDown") { e.preventDefault(); ordFp.open(); } });
+    fbtn.onclick = () => { if (!ordFp.isOpen) actFlush(); ordFp.toggle(); };   // (NAV: the Needs action counts are made now if they were left for an idle moment)
+    fbtn.addEventListener("keydown", e => { if (e.key === "ArrowDown") { e.preventDefault(); actFlush(); ordFp.open(); } });
     fpop.addEventListener("click", e => {
       const chip = e.target.closest(".ordChip");
       if (chip) { const f = chip.dataset.f, val = chip.dataset.v || null; narrow(fbtn, () => { if (f === "act" && val) OV.act = actToggle(actNow(), val); else OV[f] = OV[f] === val ? null : val; }); return; }   // (RQFILTER: the two action chips switch on and off one by one, "Any" lets go)
@@ -2835,6 +2854,20 @@ const Orders = window.Orders = (() => {
     const clear = pop.querySelector("[data-clear]"); if (clear) clear.disabled = !n;
     if (cx && ordFp && ordFp.isOpen) ordFp.close(false);
   }
+  /* NAV (28 Oct 2026): the Needs action counts of the last drawing (actLast), the drawing waiting for fresh ones (actWant) and the filter arguments it was drawn with (actArgs) */
+  let actLast = null, actWant = null, actArgs = null, actIdle = 0;
+  const idleSoon = f => typeof requestIdleCallback === "function" ? requestIdleCallback(f, { timeout: 400 }) : setTimeout(f, 60);
+  const clearActIdle = () => { if (actIdle) { if (typeof cancelIdleCallback === "function") cancelIdleCallback(actIdle); clearTimeout(actIdle); } actIdle = 0; actWant = null; };
+  function actCount(all) {
+    const act = { hold: 0, qr: 0, either: 0 }; { const am = openActions(true), on = { hold: new Set(), qr: new Set(), either: new Set() }; for (const r of all) { const a = am.get(r.key); if (!a) continue; const id = String(r.order.receiptId); if (a.hold) on.hold.add(id); if (a.qr) on.qr.add(id); if (a.hold || a.qr) on.either.add(id); } act.hold = on.hold.size; act.qr = on.qr.size; act.either = on.either.size; }
+    return actLast = act;
+  }
+  /** The counts left for an idle moment, made now; the Filters panel drawn with them when they differ from what it shows. */
+  function actFlush() {
+    const w = actWant; clearActIdle(); if (!w || !actArgs) return;
+    const was = JSON.stringify(actArgs.act), act = actCount(w.all);
+    if (JSON.stringify(act) !== was) { actArgs = Object.assign({}, actArgs, { act }); try { renderFilters(w.v, actArgs); } catch (e) { console.warn("[orders] filters", e && e.message); } }
+  }
   /** Update totals and filters without rebuilding the search field. */
   function renderHead(v) {
     const all = rowsOf().filter(r=>r.state!=="gone"), totals=orderTotals(all);
@@ -2863,7 +2896,11 @@ const Orders = window.Orders = (() => {
     const engN = all.filter(r => r.engrave && r.engrave.needed).length;
     // (RQFILTER: what the lines wait on, read afresh for this drawing; the list below asks for the same answer and gets it)
     // (orders, not lines: a Release Hold or a Print QR label is an order's, and the chip then says what the list will count, "3 of 7 orders")
-    const act = { hold: 0, qr: 0, either: 0 }; { const am = openActions(true), on = { hold: new Set(), qr: new Set(), either: new Set() }; for (const r of all) { const a = am.get(r.key); if (!a) continue; const id = String(r.order.receiptId); if (a.hold) on.hold.add(id); if (a.qr) on.qr.add(id); if (a.hold || a.qr) on.either.add(id); } act.hold = on.hold.size; act.qr = on.qr.size; act.either = on.either.size; }
+    // NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): the counts ask every line where its pieces are (placeNow, ~140 ms on 1,300 lines) and show only
+    // in the Filters panel. While the panel is shut and the filter is not in force they are made at the next idle moment (or when the panel opens: actFlush), not in the tab switch's frame
+    let act;
+    if (actNow() || (ordFp && ordFp.isOpen) || !actLast) { act = actCount(all); clearActIdle(); }
+    else { actMemo = null; act = actLast; actWant = { v, all }; if (!actIdle) actIdle = idleSoon(actFlush); }
     const cxN = window.Cancelled ? Cancelled.count() : 0;
     // (Cancelled is always there, Paul 28 Sep A5: every cancelled order, Etsy's and a person's, whatever the pull holds)
     const pills = v.querySelector("#ordChips"), pillsHtml = chip(!OV.pile,"","Open Orders",totals.orders,"","Distinct open order numbers, across all materials")
@@ -2878,7 +2915,8 @@ const Orders = window.Orders = (() => {
       if (had.size && window.Motion && !Motion.reduced() && onScreen()) for (const b of pills.querySelectorAll("[data-pile]")) if (!had.has(b.dataset.pile)) b.animate([{ opacity: 0, transform: "scale(.6)" }, { opacity: 1, transform: "none" }], { duration: 560, easing: "cubic-bezier(.3,1.3,.5,1)" });
     }
     // Material and engraved are the Filters panel's chip groups (and the gold chips under the bar while one is in force)
-    renderFilters(v, { metals, byMetal, engN, act, orders: totals.orders, allN: all.length });
+    actArgs = { metals, byMetal, engN, act, orders: totals.orders, allN: all.length };
+    renderFilters(v, actArgs);
     renderActive(v);
     // another pile slides in softly from the side it lies on (pills left to right), so a switch is seen as one; the tab that was pressed shows the busy state until the list is drawn
     v.querySelectorAll("[data-pile]").forEach(b => b.onclick = () => {
@@ -2898,7 +2936,23 @@ const Orders = window.Orders = (() => {
      it was shown is drawn in full even if it is hidden by the frame, as it was when it was drawn at once. */
   let bodyWanted = false;
   const onScreen = () => { const v = document.getElementById("ordersView"); return !!v && !v.classList.contains("hidden"); };
+  /* NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): what the tab last drew, when, and whether anything has asked for a drawing since (shown) */
+  const piecesVer = () => { try { return window.OrderPieces && OrderPieces.version ? OrderPieces.version() : -1; } catch (_) { return -1; } };
+  /** The Orders tab shown again: drawn as it was when nothing asked for a drawing since it was drawn (under 10 s ago, the same answer of where the pieces are), and drawn again at the next
+   *  idle moment (so a time or an order that moved without a notice is put right at once, after the frame); else drawn now, as before. */
+  function shown() {
+    const v = document.getElementById("ordersView");
+    if (!(v && v.dataset.built && drawnAt)) return renderNow();
+    const same = !wantDraw && Date.now() - drawnAt < 10000 && drawVer === piecesVer();
+    // (round 3: a list asked to be drawn again while it was hidden, under a minute ago and with the same search, filters, sort and range on screen, is shown as it was in this frame
+    //  and drawn again in the next one, so the tab comes up at once and what changed comes in a frame later; a different list, or one drawn longer ago, is drawn now as before)
+    if (!same && !(Date.now() - drawnAt < 60000 && drawnSig && drawnSig === listSig())) return renderNow();
+    tabCount();
+    if (same) (typeof requestIdleCallback === "function" ? requestIdleCallback : f => setTimeout(f, 60))(() => { if (onScreen()) renderNow(); }, { timeout: 1000 });
+    else requestAnimationFrame(() => setTimeout(() => { if (onScreen()) renderNow(); }, 0));
+  }
   function render() {
+    wantDraw = true;
     if(window.Seal?.defer('orders-view',render))return;
     if (!window.CNFrame) return renderNow();
     if (onScreen()) bodyWanted = true;
@@ -2912,15 +2966,17 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), wanted = bodyWanted; bodyWanted = false;
     if (!v || (v.classList.contains("hidden") && !wanted)) { tabCount(); return; }
     if (!v.dataset.built) { v.dataset.built = "1"; buildHead(v); }
+    wantDraw = false; drawVer = piecesVer();
     renderHead(v);
     renderBody();
     tabCount();
+    drawnAt = Date.now();
   }
   // The list says where each piece is from the ONE answer (placeNow: OrderPieces -> PiecePlacement), so it is drawn again when a read lands that changed it: the list had no
   // such listener, and said "1/5 pooled" for a piece the cloud had put on a sheet, and nothing for one it had put on hold, until the next Etsy check (Paul, 5 Oct).
-  try { if (window.OrderPieces && OrderPieces.subscribe) OrderPieces.subscribe(() => { if (onScreen()) render(); }); } catch (_) { /* drawn when next shown */ }
+  try { if (window.OrderPieces && OrderPieces.subscribe) OrderPieces.subscribe(() => { if (onScreen()) render(); else wantDraw = true; }); } catch (_) { /* drawn when next shown */ }
   // (RQFILTER, Paul 19 Oct 2026: a Send to Review, or an order taken out of Review, changes which orders have a Release Hold to press: the Needs action filter and its counts are drawn again then; the Review mark's own event, nothing is read)
-  try { document.addEventListener("cn-review-mark", () => { if (onScreen()) render(); }); } catch (_) { /* drawn with the next change */ }
+  try { document.addEventListener("cn-review-mark", () => { if (onScreen()) render(); else wantDraw = true; }); } catch (_) { /* drawn with the next change */ }
   /** The Orders tab's count (open orders). A change while the station is in use (an order in, an order gone) shows as a
    *  soft ring round the number, not a jump: a line put on hold or released stays an open order and leaves it as it is. */
   function tabCount() {
@@ -2938,7 +2994,7 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, walkRows: () => groupsOf(visibleRows()).flatMap(g => g.rows), showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, askTable, releaseStampOf, releaseSealHtml, releaseAway, _kept: () => readSaid.size };
+  return { view: () => OV, walkRows, shown, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, askTable, releaseStampOf, releaseSealHtml, releaseAway, _kept: () => readSaid.size };
 })();
 
 /* ═══ 18b · the page is the version that was deployed (MASTER4, Paul 15 Oct 2026) ══════════════════════════════
@@ -3149,6 +3205,21 @@ const Master = window.Master = (() => {
      added or read in again): opening one order asked masterGet four times for it. A read on its way is shared; a failed
      read is not remembered. */
   const missing = new Map(), asking = new Map(), MISS_MS = 300000;
+  /* NAV (28 Oct 2026, Paul: "keep the API calls to the bare minimum"): the SKUs asked for within one frame (the rows a scroll brings in: 47 reads for one scroll of the Orders list at
+     800 orders) are read together, one masterGetMany (the same entries masterGet answers: no `bare`); a SKU asked for alone is read as before. → { entry } per SKU */
+  let entryWant = null;
+  function askEntry(sku) {
+    if (!entryWant) {
+      entryWant = new Map();
+      setTimeout(() => {
+        const want = entryWant; entryWant = null; const skus = [...want.keys()];
+        if (skus.length === 1) { const w = want.get(skus[0]); api("charmNestLibrary", { op: "masterGet", sku: skus[0] }).then(w.ok, w.no); return; }
+        (async () => { for (let i = 0; i < skus.length; i += 300) { const part = skus.slice(i, i + 300); try { const got = await api("charmNestLibrary", { op: "masterGetMany", skus: part }), es = (got && got.entries) || {}; for (const k of part) want.get(k).ok({ entry: es[k] || null }); } catch (e) { for (const k of part) want.get(k).no(e); } } })();
+      }, 16);
+    }
+    let w = entryWant.get(sku); if (!w) { w = {}; w.p = new Promise((ok, no) => { w.ok = ok; w.no = no; }); entryWant.set(sku, w); }
+    return w.p;
+  }
   const libSig = () => { try { return JSON.stringify(B.master.index || null) + "|" + B.master.entries.size; } catch (_) { return ""; } };
   async function fetchEntry(sku) {
     sku = String(sku || "").toUpperCase(); if (!sku) return null;
@@ -3159,7 +3230,7 @@ const Master = window.Master = (() => {
     if (m && m.map === B.master.entries && m.sig === libSig() && Date.now() - m.at < MISS_MS) return m.entry;
     if (asking.has(sku)) return asking.get(sku);
     const p = (async () => {
-      const r = await api("charmNestLibrary", { op: "masterGet", sku });
+      const r = await askEntry(sku);
       if (r.entry) { B.master.entries.set(sku, r.entry); missing.delete(sku); }
       else { missing.set(sku, { at: Date.now(), map: B.master.entries, sig: libSig(), entry: r.entry }); while (missing.size > 500) missing.delete(missing.keys().next().value); }
       return r.entry;
@@ -4476,9 +4547,14 @@ const Pool = window.Pool = (() => {
   }
   const pickedIn = rid => { const M = window.CharmNestReviewMark, i = M && typeof M.info === "function" ? M.info(rid) : null; return !!(i && i.state === "done" && i.how === "pick"); };
   /** The orders whose Review was answered by a pick and whose piece on a sheet still carries the old drawing (see drawingDiffers). */
+  // NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): every card of a Library drawing asks this (ReviewHold.swaps), and each ask read every line
+  // of the pull (~500 ms of a metal chip's press at 800 open orders); the answer is kept for the rest of the task (nothing it reads changes inside one), a copy to each caller
+  let swapMemo = null;
   function swapRids() {
+    if (swapMemo) return new Set(swapMemo);
     const out = new Set(); try { for (const row of B.orders.rows || []) { const rid = row && row.order && String(row.order.receiptId); if (rid && !out.has(rid) && pickedIn(rid) && drawingDiffers(row)) out.add(rid); } } catch (_) {}
-    return out;
+    swapMemo = out; Promise.resolve().then(() => { swapMemo = null; });
+    return new Set(out);
   }
   const swapWaits = rid => { rid = String(rid || ""); try { return !!rid && pickedIn(rid) && (B.orders.rows || []).some(row => row && row.order && String(row.order.receiptId) === rid && drawingDiffers(row)); } catch (_) { return false; } };
   function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); delete k.frontAt; delete k.manual; return k; }   // (a copy never carries another order's place in the queue, nor a size a person gave another piece by hand: Manual Control)
@@ -9111,27 +9187,64 @@ const Engrave = window.Engrave = (() => {
     if(recovered)Session.schedule();
     return recovered;
   }
+  /* APPROVEFIX (Paul, 28 Oct 2026, order 4212020155: "The 'Approve' button is not working after I made adjustments to this charm's engraving."): a press on Approve ends in one of two things, the placement
+     approved or ONE plain line in the card, under the button, that says why not (approveSay; the toast as before). It used to end in silence in a dozen places (cardAction while busy, approve() while a
+     task was held, approveOnce's own checks), and every wait of an approval (the fit of new words, a sign-in, the back file, the workspace save, the stamp) could hold job._approvalTask and approvalPreparing
+     for good: that press never ended, every later press was dropped without a word, and the card, drawn again by any adjustment, showed a live green Approve. Each wait now has a time limit (approveWithin,
+     as STUCKSPIN's within: the wait itself goes on, the approval lets go and says so). Nothing of the placement is reset by a press that does not approve: the words stay where they were moved. */
+  const APPROVE_MS = { fit: 60000, sign: 300000, file: 90000, save: 30000, stamp: 8000 };
+  const approveWithin = (p, ms, why) => new Promise((res, rej) => { const t = setTimeout(() => rej(Object.assign(new Error(why), { stuck: true })), ms * Math.max(0.001, +window.CN_SPIN_SCALE || 1)); Promise.resolve(p).then(v => { clearTimeout(t); res(v); }, e => { clearTimeout(t); rej(e); }); });   // (CN_SPIN_SCALE: a test's clock; 1 on the page)
+  /** The line under the card's Approve that says why the press did not approve ('' takes it away). Kept in memory, by the job's key, for a card of it drawn again within 20 s (a "still approving" line is not). */
+  const APPROVE_WHY = new Map();
+  function approveSay(job, text, card, passing) {
+    try {
+      text = String(text || "").trim(); const was = APPROVE_WHY.get(job.key);
+      for (const [k, v] of APPROVE_WHY) if (Date.now() - v.at > 20000) APPROVE_WHY.delete(k);
+      if (text && !passing) { if (!was || was.text !== text) APPROVE_WHY.set(job.key, { text, at: Date.now() }); } else APPROVE_WHY.delete(job.key);
+      const c = card || (EG.card && EG.card.isConnected && EG.cardKey === job.key ? EG.card : null), host = c && c.querySelector(".pvApproval"); if (!host) return;
+      let n = host.querySelector(".egApproveWhy");
+      if (!text) { if (n) n.remove(); return; }
+      if (!n) { n = document.createElement("div"); n.className = "egApproveWhy"; n.setAttribute("role", "status"); host.appendChild(n); }
+      if (n.textContent !== text) n.textContent = text;
+    } catch (_) { /* the toast still says it */ }
+  }
+  const notApproved = (job, text, ms) => { approveSay(job, text); toast(text, "bad", ms || 7000); };
+  /** Why this job cannot be approved now ('' = it can): what approveOnce used to return on without a word. */
+  function approveBlocked(job, owner, pendingFit) {
+    if (owner.get(job.key) !== job) return "stale";
+    if (job.row?.state === "gone") return "Not approved: this order is no longer in the run.";
+    if (job.stamping || job.backSaving || job.approvalPreparing) return "Still approving this placement…";
+    if (job.state === "review" || job.state === "fitting" && pendingFit) return "";
+    return "Not approved: " + ({ fitting: "the words are still being placed. Approve once they are drawn.", ready: "the words are waiting to be placed on the charm. Approve once they are drawn.", classify: "the words are being read again. Approve once they are placed.", reclassify: "the words are being read again. Approve once they are placed.", words: "the words need a decision first.", blocked: "the words need a decision first.", approved: "it is approved already.", written: "it is approved and saved already.", skipped: "it is cut plain.", none: "it has no engraving." }[job.state] || `this placement is ${job.state || "not ready"}.`);
+  }
+  /** Says why, and when the card in front is not the card of the job as it is now (another object, another state), draws it again. */
+  function approveRefused(job, why) {
+    const stale = why === "stale";
+    approveSay(job, stale ? "This card was out of date: it is drawn again. Look at it, then press Approve." : why, null, /^Still/.test(why));
+    if (stale || !["review"].includes(job.state)) { if (EG.cardKey === job.key) { focusOn(job.key); EG.card = null; EG.cardKey = null; } render(); }
+  }
   async function approve(job, by, button) {
-    if(job._approvalTask)return;
+    if(job._approvalTask){approveSay(job,"Still approving this placement…",null,true);return;}   // (APPROVEFIX: every wait of the task has a time limit, so this ends)
     const task=approveOnce(job,by,button);job._approvalTask=task;
     try{return await task;}finally{if(job._approvalTask===task)delete job._approvalTask;}
   }
   async function approveOnce(job, by, button) {
     const owner=items(),row=job.row,pendingFit=fitTasks.get(job);
-    if(owner.get(job.key)!==job || row?.state==="gone" || job.state!=="review" && !(job.state==="fitting" && pendingFit) || job.stamping || job.backSaving || job.approvalPreparing) return;
+    { const why=approveBlocked(job,owner,pendingFit); if(why){approveRefused(job,why);return;} approveSay(job,""); }
     if(neverEngraves(row) && !job.approvalIntent){setNone(job,neverWhy(row));Orders.render();render();return;}   // (NO EARRING IS EVER ENGRAVED: an old open card is put away, nothing is approved)
     if(job.approvalIntent){recoverApprovals();if(job.state==="approved")await saveBacks(job);return;}
     if(pendingFit){
       // A can arrive while new words still wait for fonts or the fitting worker.
       // Keep the duplicate task lock, let that fit finish without preparation
       // flags blocking it, and verify only its latest resulting geometry.
-      try{await pendingFit;}catch(e){
-        if(items()===owner && owner.get(job.key)===job && job.row===row && row.state!=="gone" && !["approved","written","skipped","none"].includes(job.state))toast(`Not approved: the engraving preview could not finish (${e.message}). Refit the words before approving.`,"bad",7000);
+      try{await approveWithin(pendingFit,APPROVE_MS.fit,"the words were not placed within a minute");}catch(e){
+        if(items()===owner && owner.get(job.key)===job && job.row===row && row.state!=="gone" && !["approved","written","skipped","none"].includes(job.state))notApproved(job,`Not approved: the engraving preview could not finish (${e.message}). Refit the words before approving.`);
+        else approveSay(job,"Not approved: the placement changed while its words were placed. Look at it, then press Approve.");
         return;
       }
-      if(items()!==owner || owner.get(job.key)!==job || job.row!==row || row.state==="gone" || job.state!=="review" || job.stamping || job.backSaving || job.approvalPreparing)return;
+      { const why=items()!==owner || job.row!==row ? "stale" : approveBlocked(job,owner,null); if(why){approveRefused(job,why);return;} }
     }
-    if(EG.cardKey === job.key && EG.card?._previewFailed) { toast("Refit the words to restore the preview before approving.", "bad"); return; }
+    if(EG.cardKey === job.key && EG.card?._previewFailed) { notApproved(job, "Not approved: refit the words to restore the preview before approving.", 4000); return; }
     if(EG.cardKey===job.key) EG.card?._flushSpacing?.();
     const approvalButton=(button?.isConnected===false ? null : button) || (EG.cardKey===job.key ? EG.card?.querySelector('[data-a="approve"]') : null);
     const wasDisabled=!!approvalButton?.disabled;
@@ -9142,47 +9255,48 @@ const Engrave = window.Engrave = (() => {
       clearTimeout(EG.card?._wordsTimer);
       const text=EG.card?.querySelector('[data-f="words"]')?.value.trim();
       const bare=text === "" && typeof faceHasEditorArt === "function" && faceHasEditorArt(job);   // (EDITOR WORDS: an empty words box on a face the charm editor drew is that face's engraving, not a missing one)
-      if(text === "" && !bare) { toast("Type the words first", "bad"); return; }
+      if(text === "" && !bare) { notApproved(job, "Not approved: type the words first.", 4000); return; }
       if(text != null) delete EG.drafts?.[job.key];
-      if(bare) { if(!(job.fit && job.fit.artOnly)) { by = by || employeeName() || await needEmployee("Kept with this approval and its seal."); if (!by) return; if(!clearWords(job, by)) { toast("Not approved: this face's drawing could not be read", "bad"); return; } } }
+      if(bare) { if(!(job.fit && job.fit.artOnly)) { by = by || employeeName() || await approveWithin(needEmployee("Kept with this approval and its seal."), APPROVE_MS.sign, "").catch(() => ""); if (!by) { approveSay(job, "Not approved: nobody is signed in. Sign in, then press Approve."); return; } if(!clearWords(job, by)) { notApproved(job, "Not approved: this face's drawing could not be read", 4000); return; } } }
       else if(text != null && text!==(job.lineInput || job.lines).join("\n")) {
         job.text=text;job.lineInput=text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
         // placed somewhere new, the words are shown before anyone approves them
-        job.lines=job.lineInput.slice();if(!(await fitNewWords(job)))return;
+        job.lines=job.lineInput.slice();if(!(await approveWithin(fitNewWords(job),APPROVE_MS.fit,"").catch(()=>false))){approveSay(job,"Not approved: the new words are being placed. Look at them, then press Approve.");return;}
       }
     }
-    if (job.backSaving) return;
-    by = by || employeeName() || await needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: button });   // (SIGNIN, 27 Oct 2026: asked under Approve; put away, a note says why)
-    if (!by) return;
+    if (job.backSaving) { approveSay(job, "Still saving this placement's file. Press Approve again in a moment.", null, true); return; }
+    by = by || employeeName() || await approveWithin(needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: button }), APPROVE_MS.sign, "").catch(() => "");   // (SIGNIN, 27 Oct 2026: asked under Approve; put away, a note says why)
+    if (!by) { approveSay(job, "Not approved: nobody is signed in. Sign in, then press Approve."); return; }
     // says which step is missing (it read "Nothing verified to approve" whatever the reason)
-    if (!job.fit || !job.verify || !job.verify.geometry.ok) { toast(!job.fit ? "Not approved: the words are not placed on the charm yet" : !job.verify ? "Not approved: the placement is still being checked" : "Not approved: the placement failed its check · move or resize the words first", "bad"); return; }
+    if (!job.fit || !job.verify || !job.verify.geometry.ok) { notApproved(job, !job.fit ? "Not approved: the words are not placed on the charm yet" : !job.verify ? "Not approved: the placement is still being checked" : "Not approved: the placement failed its check · move or resize the words first", 4000); return; }
     const approvedAt=Date.now();let prepared;
-    try{prepared=await prepareApproval(job,by,approvedAt);}catch(e){toast(`Not approved: ${e.message}`,"bad",7000);return;}
-    if(job.row?.state==="gone" || typeof items==="function" && items().get(job.key)!==job)return;
-    if(job.fit!==prepared.fit || job.view!==prepared.view){toast("The placement changed while it was checked. Review it before approving.","bad");return;}
+    try{prepared=await approveWithin(prepareApproval(job,by,approvedAt),APPROVE_MS.file,`the ${faceWord(job)} file was not made in ${Math.round(APPROVE_MS.file/1000)} seconds. Press Approve to try again`);}catch(e){notApproved(job,`Not approved: ${e.message}`);return;}
+    if(job.row?.state==="gone" || typeof items==="function" && items().get(job.key)!==job){approveRefused(job,job.row?.state==="gone" ? "Not approved: this order is no longer in the run." : "stale");return;}
+    if(job.fit!==prepared.fit || job.view!==prepared.view){notApproved(job,"Not approved: the placement changed while it was checked. Review it before approving.",4000);return;}
     job.approvalIntent={phase:"verified",at:approvedAt,by,text:job.text};
     if(typeof Session!=="undefined"){
-      try {Session.schedule();if(await Session.flushNow?.()===false)throw new Error("Workspace checkpoint did not complete");}
-      catch(e){delete job.approvalIntent;toast("Approval could not be saved on this browser. Keep this view open and retry once workspace saving recovers.","bad",7000);return;}
+      try {Session.schedule();if(await approveWithin(Session.flushNow?.(),APPROVE_MS.save,"the workspace save did not answer")===false)throw new Error("Workspace checkpoint did not complete");}
+      catch(e){delete job.approvalIntent;notApproved(job,`Not approved: the approval could not be saved on this browser${e && e.stuck ? " (the workspace save did not answer in " + Math.round(APPROVE_MS.save / 1000) + " seconds)" : ""}. Your changes are kept: press Approve to try again.`);return;}
     }
     CNEngravingSeals.keep(job);
     const seal=CNEngravingSeals.add(job,"engraveApproved",by,approvedAt);
     // Publish the new state only after the wooden press, ink and lift finish. Pollers must not advance early.
-    job.stamping=true;try{await CNEngravingSeals.press(approvalButton,seal);}finally{job.stamping=false;}
-    if(job.fit!==prepared.fit || job.view!==prepared.view){toast("The placement changed while it was approved. Review the current words.","bad");delete job.approvalIntent;return;}
-    settleApproval(job);
+    job.stamping=true;try{await approveWithin(CNEngravingSeals.press(approvalButton,seal),APPROVE_MS.stamp,"").catch(()=>{});}finally{job.stamping=false;}   // (APPROVEFIX: the stamp is the picture of the approval, never what holds it up)
+    if(job.fit!==prepared.fit || job.view!==prepared.view){notApproved(job,"Not approved: the placement changed while it was approved. Review the current words.",4000);delete job.approvalIntent;return;}
+    if(!settleApproval(job)){notApproved(job,"Not approved: the placement changed while it was approved. Look at it, then press Approve again.",4000);return;}
+    approveSay(job,"");   // (APPROVEFIX: it used to go on as if approved, and the card came back with Approve)
     // ENGPRE: approved before its piece was pooled: the run's record of the line keeps the approval (one coalesced save), the back file follows once the piece is on a sheet
     if(unplacedPre(job) && job.state==="approved" && B.run){try{B.run.lines=Object.fromEntries(Orders.rows().map(Orders.lineRecord));RunCtl.save(B.run).catch(()=>{});}catch(_){}}
     // the person pressed Approve and the approval stands: engraving approved for this line's pieces (once per press)
     if(job.state==="approved")try{humanAct("complete",{orderId:String(job.row.order.receiptId),line:String(job.row.line.transactionId||""),sku:String(job.row.spec&&job.row.spec.designSku||""),parts:(job.copies||[]).length||1,detail:(isFront(job) ? "front " : "") + "engraving approved"});}catch(_){}
     job.approvalPreparing=false;
-    if(typeof Session!=="undefined"){Session.schedule();await Session.flushNow?.();}
+    if(typeof Session!=="undefined"){Session.schedule();await approveWithin(Session.flushNow?.(),APPROVE_MS.save,"").catch(()=>{});}   // (the approval is checkpointed already: this save only carries what followed)
     if (EG.opened === job.key) EG.opened = null;   // (NODECIDED: the card of a piece just approved moves on to the next piece; the approved piece is in the list, its seals on its row)
     for(const show of [()=>goes(job,{to:EG_TAB("approved")}),()=>Review.remove("eng:"+job.key),()=>agent({engrave:true},"ENGRAVE",`${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.artOnly ? "the charm editor's parts, no words" : `${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""}`})`),render,()=>Orders.render()])try{show();}catch(e){console.warn("Engraving approval view",e);}
     await saveBacks(job);
     } finally {
       job.approvalPreparing=false;
-      if(approvalButton){approvalButton.removeAttribute?.("aria-busy");approvalButton.textContent="Approved";if(job.state==="review")approvalButton.disabled=wasDisabled;}
+      if(approvalButton){approvalButton.removeAttribute?.("aria-busy");approvalButton.textContent=job.state==="review" ? "Approve" : "Approved";if(job.state==="review")approvalButton.disabled=wasDisabled;}   // (APPROVEFIX: a press that did not approve leaves "Approve", never a live "Approved")
       if(job.state==="review")render();
     }
   }
@@ -9577,12 +9691,15 @@ const Engrave = window.Engrave = (() => {
     });
     host.appendChild(lab);
     // beside the grid's label, in the drawing's own top-left corner (the canvas sits in the middle of the work area); under it when the drawing is too narrow for both
-    if (bc.offsetWidth && bc.width) {
+    // NAV (28 Oct 2026, Paul: "Engraving etc... at near real-time speed"): placed in the frame that shows it, before it is painted: measured in the middle of drawing the card, each
+    // measure laid out the whole page (twice a card, with Edit charm's below), at every Back and Next
+    requestAnimationFrame(() => {
+      if (!lab.isConnected || !bc.isConnected || !(bc.offsetWidth && bc.width)) return;
       const s = bc.offsetWidth / bc.width, g = bc._gridLabel || { x: 6, y: 6, w: 50, h: 11 };
       let left = bc.offsetLeft + (g.x + g.w + 8) * s, top = bc.offsetTop + Math.max(2, (g.y + g.h / 2) * s - lab.offsetHeight / 2);
       if (left + lab.offsetWidth > bc.offsetLeft + bc.offsetWidth - 4) { left = bc.offsetLeft + g.x * s; top = bc.offsetTop + (g.y + g.h + 4) * s; }
       lab.style.left = Math.round(left) + "px"; lab.style.top = Math.round(top) + "px";
-    }
+    });
     return lab;
   }
   /* ── CHARM EDIT · the piece's own artwork in the charm editor (Paul, 27 Oct 2026: "In the Engraving Modal ... The user also needs full control similar to Adobe illustrator ... over each
@@ -9625,12 +9742,13 @@ const Engrave = window.Engrave = (() => {
     host.appendChild(b);
     // beside the grid's label in the drawing's own top-left corner, after "Show front" when a back has it; under them when the drawing is too narrow
     if (!bc) { b.style.left = "8px"; b.style.top = "8px"; }
-    else if (bc.offsetWidth && bc.width) {
+    else requestAnimationFrame(() => {   // (NAV, 28 Oct 2026: placed in the frame that shows it, after "Show front" is: frontPeekToggle)
+      if (!b.isConnected || !bc.isConnected || !(bc.offsetWidth && bc.width)) return;
       const s = bc.offsetWidth / bc.width, g = bc._gridLabel || gridLabelBox(bc.getContext("2d"), bc.width), peek = host.querySelector(".egFrontPeek");
       let left = peek ? peek.offsetLeft + peek.offsetWidth + 6 : bc.offsetLeft + (g.x + g.w + 8) * s, top = peek ? peek.offsetTop : bc.offsetTop + Math.max(2, (g.y + g.h / 2) * s - b.offsetHeight / 2);
       if (left + b.offsetWidth > bc.offsetLeft + bc.offsetWidth - 4) { left = bc.offsetLeft + g.x * s; top = (peek ? peek.offsetTop + peek.offsetHeight : bc.offsetTop + (g.y + g.h) * s) + 4; }
       b.style.left = Math.round(left) + "px"; b.style.top = Math.round(top) + "px";
-    }
+    });
     charmEditNoteOn(host, job);
     return b;
   }
@@ -9779,6 +9897,7 @@ const Engrave = window.Engrave = (() => {
       catch (e) { for (const r of (e && e.refused) || [{ id: "", why: (e && e.message) || String(e) }]) refused.push(`${w.face === "back" ? "Back · " : ""}${r.id ? charmEditPart(res.faces, r.id) + ": " : ""}${r.why}`); }
     }
     if (refused.length) { const u = [...new Set(refused)]; charmEditSay(job, `Not saved · ${u.slice(0, 3).join(" · ")}${u.length > 3 ? ` · and ${u.length - 3} more` : ""}`, true); return null; }
+    charmEditSay(job, `Saving the ${todo.length > 1 ? "front and back" : todo[0].face} artwork…`, false);   // (Paul, 28 Oct 2026: said the moment Save is pressed; the drawing follows as soon as the cloud has it)
     const done = [], records = {};
     try {
       for (const w of todo) for (const pid of t.poolIds) { const info = await AE.save(pid, w.face, w.changes, { charm: Pool.charmOf(pid) || charm, view: views[w.face], by, placed: !!Pool.sheetOf(pid) }); if (pid === poolId) records[w.face] = info && info.record; done.push(w.face); }
@@ -11357,6 +11476,7 @@ const Engrave = window.Engrave = (() => {
     const oo = card.querySelector("[data-open-order]"); if (oo) oo.onclick = e => { e.stopPropagation(); const rid = String(r.order.receiptId); if (typeof window.openOrderFrom === "function") openOrderFrom(oo, rid, { row: r.key && !job.editingBack ? { key: r.key } : null, poolId: job.copies[0] }); else OrderWin.openOrder(rid, { from: oo }); };
     const sealHistory=CNEngravingSeals.html(job);if(sealHistory)card.querySelector(".pvApproval")?.insertAdjacentHTML("beforeend",sealHistory);
     const approvalBusy = () => !!(job._approvalTask || job._backTask || job.approvalPreparing || job.stamping || job.backSaving);
+    { const w0 = APPROVE_WHY.get(job.key); if (w0 && Date.now() - w0.at < 20000) approveSay(job, w0.text, card); }   // (APPROVEFIX: why the last press did not approve, on a card drawn again just after it)
     /* The switch follows its pieces while the card is judged (a disc's words read, a placement prepared behind this one): only the switch is drawn again, in place, the card is not touched. */
     card._switchSync = pieces => {
       const sw = card.querySelector(".egSwitchStack, .egEarSwitch"); if (!sw || !pieces || !PSW()) return;   // (the stack: the piece switch with the Front | Back switch beneath it, one block)
@@ -11365,8 +11485,10 @@ const Engrave = window.Engrave = (() => {
       sw.replaceWith(next); card._switchHtml = next.outerHTML; next.querySelectorAll("[data-a]").forEach(b => { b.onclick = () => cardAction(b.dataset.a, b); });
     };
     const cardAction = (a, b, noGuard) => {
-      if (items().get(job.key) !== job) return;
+      const approving = a === "approve" || a === "approveBoth" || a === "approveFaces";
+      if (items().get(job.key) !== job) { if (approving) approveRefused(job, "stale"); return; }   // (APPROVEFIX: never a press that does nothing without a word)
       if (approvalBusy()) {
+        if (approving) approveSay(job, job.backSaving || job._backTask ? "Still saving this placement's file. Press Approve again in a moment." : "Still approving this placement…", card, true);
         if (["close", "prev", "next", "ear", "piece"].includes(a) && !card._afterApproval) {
           // Close/Escape may arrive during export verification, before the stamp
           // starts. Keep the edit attached until its whole approval has settled.
@@ -18934,11 +19056,23 @@ const Review = window.Review = (() => {
     settledRows.set(d, node); return node;
   }
   /** opts.still: laid out as it stands, nothing glides (the Send to Sheet tour, home: the list is still out of sight). */
+  /* NAV (28 Oct 2026, Paul: "move between Tabs, Lists and Modals … at near real-time speed"): whether anything asked for a drawing while the tab was hidden, and when it was last drawn (shown) */
+  let rvWant = true, rvDrawnAt = 0, rvVer = -1;
+  const rvPiecesVer = () => { try { return window.OrderPieces && OrderPieces.version ? OrderPieces.version() : -1; } catch (_) { return -1; } };
+  /** The Review tab shown again: as it was drawn when nothing asked for a drawing since (under 10 s ago, the same answer of where the pieces are), drawn again at the next idle moment;
+   *  else drawn now, as before. */
+  function shown() {
+    const v = document.getElementById("reviewView");
+    if (rvWant || !v || !v.firstChild || Date.now() - rvDrawnAt >= 10000 || rvVer !== rvPiecesVer()) return render();
+    LiveStrip.render();
+    (typeof requestIdleCallback === "function" ? requestIdleCallback : f => setTimeout(f, 60))(() => { const x = document.getElementById("reviewView"); if (x && !x.classList.contains("hidden")) render(); }, { timeout: 1000 });
+  }
   function render(opts) {
     opts = opts && typeof opts === "object" && !(opts instanceof Event) ? opts : {};
     if(window.Seal?.defer('review-view',()=>render(opts)))return;
     if(!opts.still&&window.CharmNestInteraction?.defer('review-view',render))return;
-    const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
+    const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) { rvWant = true; return; }
+    rvWant = false; rvVer = rvPiecesVer(); rvDrawnAt = Date.now();
     try { CustomSheet.prune(); } catch (_) {}
     const active=v.contains(document.activeElement)?document.activeElement:null;
     // the old Decided chip, and the Decided segment, are Resolved now; a filter on a kind that has no chip lets go (RVRESOLVED)
@@ -19139,7 +19273,7 @@ const Review = window.Review = (() => {
   let lastPlace='';
   const placeSig=()=>{try{return items().filter(it=>mine(it) && !isNotice(it)).map(it=>rowsOf(it).map(r=>{const p=window.PiecePlacement?.ofRow?.(r);return r.key+':'+(p?p.state:'');}).join(',')).join('|');}catch(_){return '';}};
   try{window.OrderPieces?.subscribe?.(()=>{if(S.mode!=='review' || document.hidden)return;const sig=placeSig();if(sig===lastPlace)return;lastPlace=sig;render({still:true});});}catch(_){/* drawn when next shown */}
-  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
+  return { view: () => RV, settled: () => settled, items, count, openCount, openOrders, mkeyOf, add, remove, render, shown, card, cardIn, fillSimilar: fillMarkSlots, offerFor: row => similarOffer(row, {}, [row]), leaveCard, problemText, syncOrderItems, focus, showCard, showHeld, repool, relinkMaps, relinkNow, relinkPending: () => relinkWait.size, remadeRepaint, relinkFlow, relinkOverride, redrawNoted, redrawLater, redrawNow, redrawPending: () => redrawWait.size, heldRecheckLater: heldLater, heldRecheckNow, fixOffer, fixCharm, fixPicker, fixMount, editSkuOffer, editSku, editSkuOnce, editSkuChoices, editSkuScope, customItemFor, sentItemFor, isDecided, actFor, pieceItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }), inPlaceRefile };   // (inPlaceRefile: GOLDEDIT, Paul 27 Oct 2026, the sheet window's change by hand of a 10K / 14K sheet in a released set)
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -20232,6 +20366,18 @@ const OrderWin = window.OrderWin = (() => {
     // them), and the side the last switch came from
     pieces: [], piece: null, pieceDir: 0 };
   const byId = id => document.getElementById(id);
+  /* NAV (28 Oct 2026, Paul: "Order Details … at near real-time speed"): the window body's own movements (Back / Next, a swap), newest last, as asking the element for them would list them:
+     cancelled and waited on from here, where each ask (getAnimations) made the browser work out every style of the page first, once per Back or Next. A movement that ended leaves the
+     list unless it holds its last frame (fill forwards), as it would leave the element's own. */
+  const bodyMoves = [];
+  const bodyMovesNow = () => bodyMoves.slice();
+  function bodyMove(el, frames, o) {
+    const a = el.animate(frames, o), drop = () => { const i = bodyMoves.indexOf(a); if (i >= 0) bodyMoves.splice(i, 1); };
+    bodyMoves.push(a); a.finished.then(() => { if (!/^(forwards|both)$/.test(String((o && o.fill) || ""))) drop(); }, drop);
+    return a;
+  }
+  // (NAV, 28 Oct 2026: the fonts loaded so far: a measure kept from before a font came in is made again, inkTo and grow)
+  let inkFonts = 0; try { document.fonts && document.fonts.addEventListener && document.fonts.addEventListener("loadingdone", () => { inkFonts++; }); } catch (_) {}
   const inPull = key => Orders.rows().find(r => r.key === key) || null;
   const rowOf = key => inPull(key) || (W.row && W.row.key === key ? W.row : null);
   const me = () => employeeName() || "";
@@ -20400,8 +20546,12 @@ const OrderWin = window.OrderWin = (() => {
     byId("owSend").disabled = !input.value.trim() && !W.tray.length;
     // a box not on screen (the window still closed, the Customer tab in front) has no height to read: it keeps its own
     // until it is shown, and is sized then
+    // NAV (28 Oct 2026): an empty box is as tall as the empty box measured last at this width (each measure is a layout of the whole page, once or twice per opening)
+    const emptyKey = [innerWidth, devicePixelRatio, inkFonts].join("|");
+    if (!input.value && W.emptyH && W.emptyKey === emptyKey) { if (input.style.height !== W.emptyH) input.style.height = W.emptyH; return; }
     if (!input.offsetParent) { input.style.height = ""; return; }
     input.style.height = "auto"; input.style.height = Math.min(120, input.scrollHeight) + "px";
+    if (!input.value) { W.emptyH = input.style.height; W.emptyKey = emptyKey; }
   }
   /** Each order keeps its own draft and its own images: another order opened (Next, Previous, the list) never takes them. */
   function stashTray() {
@@ -20495,9 +20645,12 @@ const OrderWin = window.OrderWin = (() => {
     const key = TeamMail.drawKey(rid, up);
     if (key === W.painted) return;
     W.painted = key;
-    const stick = !keep || t.scrollHeight - t.scrollTop - t.clientHeight < 48, at = t.scrollTop;
+    const stick = !keep || t.scrollHeight - t.scrollTop - t.clientHeight < 48, at = keep ? t.scrollTop : 0;
     t.innerHTML = TeamMail.html(rid, up);
-    t.scrollTop = stick ? t.scrollHeight : at;
+    // NAV (28 Oct 2026, Paul: "Order Details … at near real-time speed"): the thread is put at its end (or back where it was) in the frame that shows it, once for every drawing of the
+    // turn, not at each drawing: reading its height there laid out the whole page, three and four times per order window opened (the read starting, the read answered, the window's own)
+    if (!t._stick) requestAnimationFrame(() => { const w = t._stick; t._stick = null; if (w) t.scrollTop = w.stick ? t.scrollHeight : w.at; });
+    t._stick = { stick, at };
     if (stick) t.querySelectorAll("img").forEach(img => { if (!img.complete) img.addEventListener("load", () => { t.scrollTop = t.scrollHeight; }, { once: true }); });
   }
   /** The live line at the right end of the tab row ("Updated live · last change Mon 12:44 PM · Paul"), where the Skip switch
@@ -22066,10 +22219,16 @@ const OrderWin = window.OrderWin = (() => {
   /* ── the views: Overview, Timeline, Sheet; the old one leaves sideways and the new one comes in from the other side ── */
   // (the underline moves by transform, never by left/width, which laid the header out again every frame; a fresh opening
   // puts it in place at once, under the header coming in)
+  // NAV (28 Oct 2026, Paul: "Order Details … at near real-time speed"): the ink under the tab in front stands where it stood when the same tab, with the same tab words, was last measured at
+  // this window width (the tabs do not move from order to order): it is measured again only when one of those changed, each measure being a layout of the whole page (two per opening)
   function inkTo(now) {
+    if (!W.dlg.open) return;   // (a closed window has nothing laid out to measure: the opening measures it)
     const b = W.dlg.querySelector(`.owTabsV [data-ow-view="${W.view}"]`), ink = W.dlg.querySelector(".owInk"); if (!b || !ink) return;
+    const row = b.closest(".owTabsV"), key = [W.view, row ? row.textContent : b.textContent, innerWidth, inkFonts, devicePixelRatio].join("|");   // (the words of every tab: one before it that grew moves it)
+    if (ink._inkKey === key && ink.style.transform) return;
     if (now) ink.style.transition = "none";
     ink.style.transform = `translateX(${b.offsetLeft + 6}px) scaleX(${Math.max(0, b.offsetWidth - 12) / 100})`;
+    ink._inkKey = key;
     if (now) { getComputedStyle(ink).transform; ink.style.transition = ""; }
   }
   /* the order's two conversations (Paul, 29 Sep 01:04: "I don't see the message history for the emails or their
@@ -22866,7 +23025,7 @@ const OrderWin = window.OrderWin = (() => {
     try { go(); } finally { faceSet(face); }
     // (an order read from the records first: its panel says so from the first frame, not the one left)
     if (W.view === "sheet" && SV.rid !== W.rid) tryDo(() => { paintPanel(null); sheetShow(); });
-    const a = W.dlg.querySelector(".owBody").getAnimations().slice(-1)[0];
+    const a = bodyMovesNow().slice(-1)[0];
     if (a) a.finished.then(end, end); else end();
     setTimeout(end, 700);
   }
@@ -22896,7 +23055,7 @@ const OrderWin = window.OrderWin = (() => {
     const body = W.dlg.querySelector(".owBody");
     const go = () => openOrder(rid, { view: o.view, keepFrom: true, sheetId: o.sheetId, poolId: o.poolId, highlight: o.highlight });
     if (still() || !body) return go();
-    body.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: "ease-in", fill: "forwards" }).finished.then(() => { go(); body.getAnimations().forEach(a => a.cancel()); body.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: EASE }); }, () => go());
+    bodyMove(body, [{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: "ease-in", fill: "forwards" }).finished.then(() => { go(); bodyMovesNow().forEach(a => a.cancel()); bodyMove(body, [{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: EASE }); }, () => go());
   }
   /** Front | Back: the plate turns to its edge, is drawn from behind, and turns back — one turn at a time (Motion.turner):
       a second press while it turns is taken up by that turn, and it ends on the side asked for last. */
@@ -23171,7 +23330,7 @@ const OrderWin = window.OrderWin = (() => {
       if (opts.back) { W.dlg.classList.add("owGrow"); if (!still()) { const a = W.dlg.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease" }); W.anims.push(a); flight(a); } }
       else growIn(W.from);
     } else if (opts.view && opts.view !== W.view) setView(opts.view, { noLoad: true });
-    else if (opts.dir && !still()) { const b = W.dlg.querySelector(".owBody"); b.getAnimations().forEach(a => a.cancel()); b.animate([{ opacity: .2, transform: `translateX(${opts.dir * 14}px)` }, { opacity: 1, transform: "none" }], { duration: 280, easing: EASE }); }
+    else if (opts.dir && !still()) { const b = W.dlg.querySelector(".owBody"); bodyMovesNow().forEach(a => a.cancel()); bodyMove(b, [{ opacity: .2, transform: `translateX(${opts.dir * 14}px)` }, { opacity: 1, transform: "none" }], { duration: 280, easing: EASE }); }
     if (other) mountRail(rid);
     if (W.view === "timeline") mountFull();
     if (W.view === "sheet" && !r.loading) { if (opts.sheetAt != null) { const pending = sheetShow(), epoch = SV.epoch; pending.then(() => { if (W.key === key && W.rid === rid && SV.epoch === epoch && W.dlg.open && !W.closing && W.view === "sheet" && SV.list && SV.at !== opts.sheetAt && SV.list[opts.sheetAt]) { SV.at = opts.sheetAt; sheetDraw(); } }); } else sheetShow(opts.sheetId, opts.poolId); }
@@ -25563,6 +25722,22 @@ const Upkeep = window.Upkeep = (() => {
      note     a piece whose edit could not be put on it (its master was drawn again since) is said on the log
    The hooks where a piece is made from the master again (a recall: restoreRunSheets and Recall.rebuild, a back opened from a saved sheet, a line pooled again, the placement's picture, a
    checkpoint) call CharmNestArtEdit.piece / sync themselves. ── */
+/** A sheet's files written again after an artwork edit, in the background: one write at a time per sheet, and once more when another edit came in during it (two copies of a piece saved
+ *  together, a second save). → Promise<boolean> (true: written and saved; its record no longer owes its files). */
+const ART_SHEET_WRITES = new WeakMap();
+function artSheetWrite(sh) {
+  const cur = ART_SHEET_WRITES.get(sh); if (cur) { cur.again = true; return cur.run; }
+  const st = { again: false };
+  st.run = (async () => {
+    let ok = false;
+    do { st.again = false; ok = await Promise.resolve(window.writeAsPlaced(sh)).catch(e => { console.warn("artwork edit: sheet write", e); return false; }); } while (st.again && !sh.roseCutAt && !sh.laserDoneAt && allSheets().includes(sh));
+    if (ok && sh.sheetId) api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, filesOwed: null } }, { quiet: true }).catch(() => {});   // (its record no longer owes its files)
+    return ok;
+  })().finally(() => ART_SHEET_WRITES.delete(sh));
+  ART_SHEET_WRITES.set(sh, st);
+  return st.run;
+}
+window.artSheetWrite = artSheetWrite;   // (tests wait for it)
 if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
   api: (fn, body, opts) => api(fn, body, opts),
   who: () => { try { return employeeName() || ""; } catch (_) { return ""; } },
@@ -25592,8 +25767,10 @@ if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
     if (!sh || sh.roseCutAt || sh.laserDoneAt) return;
     sh.dirty = true;
     if (!sh.outputs || typeof window.writeAsPlaced !== "function") return;   // (a sheet not written yet writes the edit with its first files)
-    const ok = await Promise.resolve(window.writeAsPlaced(sh)).catch(e => { console.warn("artwork edit: sheet write", e); return false; });
-    if (ok && sh.sheetId) api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, filesOwed: null } }, { quiet: true }).catch(() => {});   // (its record no longer owes its files)
+    // (Paul, 28 Oct 2026: "my changes made in the Charm Editor were not saved and did not show up in the UI after pressing the Save button ... Everything must be immediate and responsive")
+    // the sheet's files are written again on their own, its card saying so as for any write: the save, the engraving card and the editor never wait for them (a whole sheet written again took
+    // 10–30 s, and longer while the sheet was busy, and the card showed the old drawing all that time)
+    artSheetWrite(sh);
   },
   note: (poolId, face, n) => agent({ pool: true }, "warn", `${poolId}: its own ${face} artwork edit was not put on the piece${n && n.by ? ` (made by ${n.by})` : ""}: ${(n && (n.why || (n.refused[0] && n.refused[0].why))) || "it could not be read"}`)
 });
