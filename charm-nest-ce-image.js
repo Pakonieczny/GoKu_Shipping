@@ -7,11 +7,11 @@
    C 1134-1145, its range controls, C 6200-6247, its magic eraser and tolerance, S 2262-2265): turn 90° either way, flip, crop, take the background away (a click floods the area round it
    to white: white is never engraved); the Photoshop prep every laser guide does, in its order (the lead's research, 28 Oct 2026, §4.2): luminance, a 3 × 3 median (denoise), an unsharp
    mask (sharpen), auto-levels (0.5 % clipped at each end), gamma, brightness and contrast, invert; and the trace itself: greys or LINE ART (a local-mean threshold, Bradley's, for phone
-   photos of handwriting and signatures in uneven light), levels (1-8, 4 to start; 1 is plain black; the picture's own suggestion offered beside it), detail, smoothness, despeckle. The
+   photos of handwriting and signatures in uneven light), levels (1-16, 4 to start; 1 is plain black; the picture's own suggestion offered beside it), detail, smoothness, despeckle. The
    panel says plainly that a photo becomes a posterised, stencil-like engraving in N greys. The preview is split in three, original | greyscale | vector (drag the two dividers, or show one
    whole): the greyscale is made here at once on every change (a copy at most 560 px: the filters kept between tone changes, which are one lookup table, about a millisecond), the vector
    from a copy at most 280 px traced in CharmNestTrace's worker (charm-nest-ce-trace.js), the newest asked for as soon as the last is back, so a slider dragged never queues up work.
-   PLACE traces the image at the charm's own scale (24 px a mm, 1400 px at most) in the worker with a progress bar and puts it on the charm as ONE group: a filled path per grey level,
+   PLACE traces the image at the charm's own scale (CharmNestTrace's working pitch: 20 px a mm, up to 40 at Detail 100) in the worker with a progress bar and puts it on the charm as ONE group: a filled path per grey level,
    role hatch, fill [g, g, g] (black the darkest, white not engraved; the trace's fixed greys, k / N for band k of N, so a grey is the same laser layer from job to job), marked
    `artGrey` so the grey stays grey in the editor, in the piece's record (charm-nest-art-edit.js), on the server
    (charmNestLibrary.js artPut) and in the laser's file (charm-nest-pdf.js artOps), so the operator gives each grey its own power (the lead's D2). It is centred and fitted inside the
@@ -19,6 +19,20 @@
    scaled, turned, ungrouped, edited. The group keeps what it was made from (`trace`: the settings, and the source by id in this page's memory), so RE-TRACE (the Object menu) opens
    the Image step again with those settings and puts the new trace exactly where the old one is now, moved, scaled and turned as it is. A saved piece's parts come back flat with the
    group's id (their `group`), and Re-trace finds the source by it while this page holds it.
+   (REPEAT, Paul 28 Oct 2026: "The image vector Modal sometimes does not produce repeatable results") What Place traces is made from the picture as kept, at its own
+   pixels (keptPixels: turned, flipped and cropped to whole pixels, nothing resampled by the canvas), the settings and the placed size alone (placePlan /
+   placePixels: shrunk in linear light to the trace's working size, then prepGrey), in the prep worker, then traced in CharmNestTrace's: placeAsync, and
+   placeSync the same steps on one thread for node. It used to take the vector preview's thresholds when the preview had caught up and work out its own when it
+   had not, so the same settings gave two vectors; now the preview and Place cut their levels by the same rule (the trace's), and a preview result of
+   settings since changed is never drawn.
+   (REOPEN, Paul 28 Oct 2026: "I can't seem to bring up the image vector popup modal after the initial Import process") Re-trace was only in the Object menu, and only
+   while this page still held the picture; a piece saved and opened again lost the settings (its record keeps no `trace`), and the design library drops it
+   too. Now the command is on the property bar whenever a traced image is selected and runs on a double-click (the editor's commands' dbl), on the group, a
+   part, a group made round it, or the parts a save gave back flat. The group's `group` name (which a piece's record keeps on every part, and the design
+   library on the group) holds the source's id, the settings and three anchor points of its black, so the step opens with the settings and Place puts the new
+   trace exactly where the old one is; the picture is kept on this computer too (IndexedDB, PNG), and where it is on neither the step says so and asks for it.
+   (LINEART) Line art is cut at the drawing's own half and enlarged by the trace (coverage); the local-mean threshold only for a page lit unevenly (Light: auto
+   finds it from how much the paper's grey wanders across the picture, or Even / Uneven). Levels go to 16 (TRACEHQ).
    What a piece's record can hold is kept to (charmNestLibrary.js ART_MAX: a path at most 200 KB, an edit at most 60 000 operators and 600 KB): a trace over that is made again smaller,
    and said so.
 
@@ -819,8 +833,9 @@
       </div>
     </div>
     <div class="cei__sec"><b>Trace</b>
-      <div class="ce-seg" role="tablist" aria-label="Trace as"><button type="button" data-tmode="grey" role="tab">Greys</button><button type="button" data-tmode="line" role="tab" title="For photos of handwriting and signatures, and line art lit unevenly: ink wherever the picture is darker than around it">Line art</button></div>
-      ${sl('levels', 'Levels', 1, 8, 1, st.levels, st.levels)}
+      <div class="ce-seg" role="tablist" aria-label="Trace as"><button type="button" data-tmode="grey" role="tab">Greys</button><button type="button" data-tmode="line" role="tab" title="Black only, for drawings, logos, handwriting and signatures: cut at the drawing's own half and traced at up to three times its pixels, so thin lines and the gaps between them stay">Line art</button></div>
+      <div class="ce-seg" data-adaptrow role="tablist" aria-label="The paper's light" hidden title="Uneven: a local threshold, for a phone photo of a page lit from one side (ink wherever the picture is darker than around it). Auto: chosen from how much the paper's own grey wanders"><button type="button" data-adapt="auto" role="tab">Light: auto</button><button type="button" data-adapt="even" role="tab">Even</button><button type="button" data-adapt="uneven" role="tab">Uneven</button></div>
+      ${sl('levels', 'Levels', 1, MAX_LEVELS, 1, st.levels, st.levels)}
       <div class="cei__sug" data-sug hidden></div>
       ${sl('detail', 'Detail', 0, 100, 1, 50, 50)}
       ${sl('smooth', 'Smoothness', 0, 100, 1, 50, 50)}
@@ -945,7 +960,7 @@
       const n = levelsOf(st), pts = (s ? ` <b>${s.ops.toLocaleString('en')}</b> points in the preview.` : '')
         + (s && busy.length ? ` <b>Busy:</b> about ${busy[0].nodes.toLocaleString('en')} points in ${greyName(busy[0].grey).toLowerCase()} at this size (over ${BUSY_NODES.toLocaleString('en')} a level engraves slowly): place it smaller, raise Despeckle, lower Detail or use fewer levels.` : '');
       $('[data-note]').innerHTML = st.mode === 'line'
-        ? `<b>Line art:</b> black only, inked wherever the picture is darker than the paper round it, for handwriting and signatures photographed in uneven light.${pts}`
+        ? `<b>Line art:</b> black only, the drawing cut at its own half and traced at up to three times its pixels, so thin lines and the gaps between them stay${lastPrep && lastPrep.adaptive ? '; the paper is lit unevenly, so the ink is found against the paper round it' : ''}.${pts}`
         : n === 1 ? `<b>Black only:</b> everything darker than the middle grey is engraved, the rest is left.${pts}`
           : `A photo becomes a <b>posterised, stencil-like engraving in ${n} greys</b>, not a photograph: black engraves deepest, white is not engraved, and each grey is a laser layer of its own.${pts}`;
     }
@@ -1061,6 +1076,8 @@
       if (t.dataset.mode) { if (tool) setTool(null); setMode(t.dataset.mode); return; }
       if (t.dataset.into) { useSel = t.dataset.into === 'selection'; where(); return; }
       if (t.dataset.tmode) { st = norm(Object.assign({}, st, { mode: t.dataset.tmode })); sync(); greyNow('mode'); note(null); traceSoon(); return; }
+      // (LINEART) the paper's light: auto (from the picture), even (a global cut at the half, enlarged: a drawing or a scan) or uneven (the local threshold)
+      if (t.dataset.adapt) { st = norm(Object.assign({}, st, { adaptive: t.dataset.adapt === 'auto' ? 'auto' : t.dataset.adapt === 'uneven' })); sync(); greyNow('mode'); note(null); traceSoon(); return; }
       if (t.dataset.tog) { const k = t.dataset.tog; st = norm(Object.assign({}, st, { [k]: k === 'auto' ? !st.auto : !st[k] })); sync(); greyNow(k); traceSoon(); return; }
       const a = t.dataset.do; if (!a) return;
       if (a === 'cancel') { if (placing) cancelPlace(); else finish(null); }
@@ -1078,6 +1095,8 @@
       for (const k of Object.keys(val)) { const inp = $(`[data-k="${k}"]`), out = $(`[data-o="${k}"]`); if (inp) inp.value = String(Math.round(val[k])); if (out) out.textContent = k === 'gamma' ? st.gamma.toFixed(2) : String(Math.round(val[k])); }
       for (const k of ['invert', 'auto', 'denoise']) { const b = $(`[data-tog="${k}"]`), on = !!st[k]; b.classList.toggle('is-on', on); b.setAttribute('aria-pressed', String(on)); }
       $$('button[data-tmode]').forEach(b => b.classList.toggle('is-on', b.dataset.tmode === st.mode));
+      $('[data-adaptrow]').hidden = st.mode !== 'line';
+      $$('button[data-adapt]').forEach(b => b.classList.toggle('is-on', b.dataset.adapt === (st.adaptive === 'auto' ? 'auto' : st.adaptive ? 'uneven' : 'even')));
       const lv = $('[data-sl="levels"]'); lv.classList.toggle('is-off', st.mode === 'line'); $('[data-k="levels"]').disabled = st.mode === 'line';
       if (st.mode === 'line') $('[data-o="levels"]').textContent = '1';
     }

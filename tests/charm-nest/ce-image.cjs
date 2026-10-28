@@ -253,10 +253,16 @@ async function partB(kit) {
     // line art: black only
     await page.click('.cei [data-tmode="line"]'); await previewDone(page);
     const gL = await vecGreys(page), noteL = await page.evaluate(() => document.querySelector('.cei [data-note]').textContent);
+    // (LINEART, 28 Oct 2026) in line art the paper's light is offered (auto, even, uneven); the Levels slider goes to 16 (TRACEHQ)
+    const lightL = await page.evaluate(() => ({ shown: !document.querySelector('.cei [data-adaptrow]').hidden, on: (document.querySelector('.cei [data-adapt].is-on') || {}).dataset, max: document.querySelector('.cei [data-k="levels"]').max }));
+    await page.click('.cei [data-adapt="uneven"]'); await previewDone(page);
+    const unevenSt = await page.evaluate(() => CharmNestCeImage.current().settings().adaptive);
+    await page.click('.cei [data-adapt="auto"]'); await previewDone(page);
     await page.click('.cei [data-tmode="grey"]'); await previewDone(page);
     await R.shot(w, 'CEI-2-adjusted');
-    check(`B6 the background clicked away takes the light band off the engraving (${gE.length} greys) and Restore puts it back (${gR.length}); Line art traces black only (${gL.join(' ')})`,
-      gE.length === g0.length - 1 && gE.includes('rgb(0,0,0)') && restoreOn && gR.length === g0.length && gL.join() === 'rgb(0,0,0)' && /^Line art:/.test(noteL), JSON.stringify({ gE, gR, gL, noteL }));
+    check(`B6 the background clicked away takes the light band off the engraving (${gE.length} greys) and Restore puts it back (${gR.length}); Line art traces black only (${gL.join(' ')}), with the paper's light offered (auto · even · uneven) and Levels up to ${lightL.max}`,
+      gE.length === g0.length - 1 && gE.includes('rgb(0,0,0)') && restoreOn && gR.length === g0.length && gL.join() === 'rgb(0,0,0)' && /^Line art:/.test(noteL)
+        && lightL.shown && lightL.on && lightL.on.adapt === 'auto' && lightL.max === '16' && unevenSt === true, JSON.stringify({ gE, gR, gL, noteL, lightL, unevenSt }));
 
     /* ── PLACE ── */
     const thr0 = await page.evaluate(() => CharmNestCeImage.current().thresholds());
