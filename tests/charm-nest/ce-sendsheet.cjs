@@ -77,9 +77,9 @@ async function partB() {
   const srv = await start({ receipts: [] });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   try {
-    // the history of the order a fix fixes: the order approved by Ana M, its engraving approved by Bea, placed by the run
+    // the history of the order a fix fixes: the order approved by Marco R., its engraving approved by Bea, placed by the run
     const t0 = Date.now() - 86400000, post = body => fetch(`${srv.sorterOrigin}/.netlify/functions/charmNestLibrary`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
-    const seeded = await post({ op: 'timelineAdd', events: [{ orderId: FIXED, type: 'decided', by: 'Ana M', at: t0, id: 'd1', text: 'Approved' }, { orderId: FIXED, type: 'engraveApproved', by: 'Bea', at: t0 + 60000, id: 'e1', text: 'Engraving approved' }, { orderId: FIXED, type: 'placed', by: '', at: t0 + 90000, id: 'p1', text: 'On sheet' }] });
+    const seeded = await post({ op: 'timelineAdd', events: [{ orderId: FIXED, type: 'decided', by: 'Marco R.', at: t0, id: 'd1', text: 'Approved' }, { orderId: FIXED, type: 'engraveApproved', by: 'Bea', at: t0 + 60000, id: 'e1', text: 'Engraving approved' }, { orderId: FIXED, type: 'placed', by: '', at: t0 + 90000, id: 'p1', text: 'On sheet' }] });
     assert(!seeded.error, 'the history is seeded: ' + JSON.stringify(seeded));
     const context = await browser.newContext({ viewport: { width: 1440, height: 950 } });
     await context.route(u => !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u.href), r => (/fonts\.googleapis|fonts\.gstatic/.test(r.request().url()) ? r.fulfill({ status: 200, contentType: 'text/css', body: '' }) : r.abort()));
@@ -97,11 +97,12 @@ async function partB() {
       // stand-ins for the design library and the pool's custom side (the designs and custompool workstreams), and what was logged
       const real = { designs: !!window.CharmNestDesigns, pool: typeof Pool.addCustomPiece === 'function', log: !!window.CNDesignLog };
       window.__puts = []; window.__pool = []; window.__logs = [];
-      if (real.designs) { const put0 = CharmNestDesigns.put.bind(CharmNestDesigns); CharmNestDesigns.put = (d, o) => { __puts.push(JSON.parse(JSON.stringify(d))); return put0(d, o); }; }
+      // (each put recorded with what the library answered: its id, version and hash)
+      if (real.designs) { const put0 = CharmNestDesigns.put.bind(CharmNestDesigns); CharmNestDesigns.put = (d, o) => { const rec = JSON.parse(JSON.stringify(d)); __puts.push(rec); return put0(d, o).then(r => { rec.id = r.id; rec.version = r.version; rec.hash = r.hash; return r; }); }; }
       else {
         const store = new Map(), subs = []; let n = 0;
         window.CharmNestDesigns = {
-          async put(d) { __puts.push(JSON.parse(JSON.stringify(d))); const id = d.id || 'DSG' + (++n), v = ((store.get(id) || {}).version || 0) + 1, rec = Object.assign({}, d, { id, version: v, hash: 'h-' + id + '-' + v, at: Date.now() }); store.set(id, rec); subs.forEach(f => f()); return { id, version: v, hash: rec.hash, at: rec.at }; },
+          async put(d) { const id = d.id || 'DSG' + (++n), v = ((store.get(id) || {}).version || 0) + 1, rec = Object.assign({}, d, { id, version: v, hash: 'h-' + id + '-' + v, at: Date.now() }); __puts.push(JSON.parse(JSON.stringify(rec))); store.set(id, rec); subs.forEach(f => f()); return { id, version: v, hash: rec.hash, at: rec.at }; },
           async get(id) { const r = store.get(id); return r ? { design: JSON.parse(JSON.stringify(r)) } : null; },
           search: q => [...store.values()].filter(r => String(r.orderId || '').includes(q) || String(r.name).toLowerCase().includes(String(q).toLowerCase())),
           list: async () => ({ designs: [...store.values()] }), onChange: f => subs.push(f) };
@@ -153,7 +154,7 @@ async function partB() {
       Math.abs(parseFloat(m1.w) - (wMm + 2.4)) < 0.01 && Math.abs(parseFloat(m1.h) - (hMm + 2.4)) < 0.01 && m1.dim.replace(/\s/g, '') === `${wMm.toFixed(2)}×${hMm.toFixed(2)}mm`, `${m1.w} × ${m1.h} · "${m1.dim}"`);
     check('B5 nothing is sent before the metal is picked: Send says why', m1.dis === 'true' && /metal/i.test(m1.why), m1.why);
     const pickMs = await page.evaluate(() => { const t = performance.now(); document.querySelector('dialog.cpDlg [data-cp-metal="silver"]').click(); return performance.now() - t; });
-    const goes = await page.evaluate(() => ({ goes: document.querySelector('dialog.cpDlg [data-cp-goes]').textContent, send: document.querySelector('dialog.cpDlg [data-cp-send]').textContent, dis: document.querySelector('dialog.cpDlg [data-cp-send]').getAttribute('aria-disabled'), fill: !!document.querySelector('dialog.cpDlg [data-cp-plate] linearGradient') }));
+    const goes = await page.evaluate(() => ({ goes: document.querySelector('dialog.cpDlg [data-cp-goes]').textContent, send: document.querySelector('dialog.cpDlg [data-cp-send]').textContent, dis: document.querySelector('dialog.cpDlg [data-cp-send]').getAttribute('aria-disabled'), fill: (document.querySelector('dialog.cpDlg [data-cp-plate] stop[data-t="1"]') || { getAttribute: () => '' }).getAttribute('stop-color') === '#8d95a0' }));
     check('B6 SS picked: the sheet it goes onto is named ("a new SS sheet" while no SS sheet is open), the piece is drawn in silver, Send names it too; the press paints in one frame',
       /Goes onto a new SS sheet/.test(goes.goes) && goes.send === 'Send to a new SS sheet' && goes.dis === 'false' && goes.fill && pickMs < 16, `"${goes.goes}" · ${pickMs.toFixed(1)} ms`);
     await page.click('dialog.cpDlg [data-cp-send]');
@@ -162,7 +163,7 @@ async function partB() {
     const s1 = await page.evaluate(() => ({ poolIds: __poolOut[0], pool: __pool, logs: __logs.map(e => ({ kind: e.kind, orderId: e.orderId || null, customId: e.customId || null, designId: e.designId, version: e.version, metal: e.metal, quantity: e.quantity, by: e.by, fix: e.fix || e.fixes || null, customName: e.customName || null })) }));
     const c1 = s1.pool[0] || {}, sent1 = s1.logs.filter(e => e.kind === 'customPieceSent');
     check('B7 Send: the pool is asked for ONE handmade custom piece of that design version on SS, for that order, under the person signed in',
-      s1.pool.length === 1 && c1.metal === 'silver' && c1.orderId === CUSTOM && c1.quantity === 1 && c1.handmade === true && c1.designId === put.id && c1.version === 1 && c1.hash && c1.design && c1.design.faces && c1.by === 'Test Operator' && !c1.fixes,
+      s1.pool.length === 1 && c1.metal === 'silver' && c1.orderId === CUSTOM && c1.quantity === 1 && c1.handmade === true && c1.designId === put.id && c1.version === 1 && c1.hash === put.hash && c1.design && c1.design.faces && c1.by === 'Test Operator' && !c1.fixes,
       JSON.stringify({ metal: c1.metal, orderId: c1.orderId, designId: c1.designId, version: c1.version, hash: c1.hash }));
     check('B8 one customPieceSent event for the send (the design log writes the order\'s timeline from it), and the designer\'s open and save logged under the person',
       sent1.length === 1 && sent1[0].orderId === CUSTOM && sent1[0].metal === 'silver' && s1.logs.some(e => e.kind === 'editorOpen' && e.orderId === CUSTOM) && s1.logs.some(e => e.kind === 'editorSave' && e.designId === put.id), s1.logs.map(e => e.kind).join(', '));
@@ -196,8 +197,8 @@ async function partB() {
     await page.waitForFunction(() => { const i = document.querySelector('dialog.cpDlg [data-cp-causer]'); return i && i.value; }, null, { timeout: 15000 });
     const cause = await page.evaluate(() => { const d = document.querySelector('dialog.cpDlg'); return { value: d.querySelector('[data-cp-causer]').value, why: (d.querySelector('.cpWhyL') || {}).textContent || '', cands: [...d.querySelectorAll('[data-cp-causer-pick]')].map(b => b.dataset.cpCauserPick), picked: d.querySelector('[data-cp-fixed]').textContent }; });
     check('B10 no order: named, "Fix a mistake", the order it fixes found by its number (buyer shown); who made the mistake is read from that order\'s history and suggested (Bea approved its engraving), the others named there offered',
-      m2.attach === 'none' && !m2.hasThis && hit.includes('Noor Haddad') && cause.picked.includes(FIXED) && cause.value === 'Bea' && /approved the engraving/.test(cause.why) && cause.cands.includes('Ana M'), `${cause.why} · offered ${cause.cands.join(', ')} · search ${typeMs} ms`);
-    await page.click('dialog.cpDlg [data-cp-causer-pick="Ana M"]');
+      m2.attach === 'none' && !m2.hasThis && hit.includes('Noor Haddad') && cause.picked.includes(FIXED) && cause.value === 'Bea' && /approved the engraving/.test(cause.why) && cause.cands.includes('Marco R.'), `${cause.why} · offered ${cause.cands.join(', ')} · search ${typeMs} ms`);
+    await page.click('dialog.cpDlg [data-cp-causer-pick="Marco R."]');
     await page.click('dialog.cpDlg [data-cp-metal="gold"]');
     await page.click('dialog.cpDlg [data-cp-qty="1"]');
     const f2 = await page.evaluate(() => ({ causer: document.querySelector('dialog.cpDlg [data-cp-causer]').value, send: document.querySelector('dialog.cpDlg [data-cp-send]').textContent, n: document.querySelector('dialog.cpDlg [data-cp-n]').textContent }));
@@ -206,16 +207,16 @@ async function partB() {
     const out2 = await page.evaluate(() => window.__p2);
     const s2 = await page.evaluate(() => ({ pool: __pool[1], log: __logs.filter(e => e.kind === 'customPieceSent').slice(-1)[0] }));
     const p2 = s2.pool || {}, l2 = s2.log || {}, fx = l2.fix || l2.fixes || {};
-    check('B11 the person changed who it was to Ana M; Send: the pool gets an orderless named piece × 2 on GF, the reason, and the fix naming both people (the suggestion kept beside the choice)',
-      f2.causer === 'Ana M' && f2.n === '2' && /GF/.test(f2.send) && p2.orderId === null && p2.customName === 'Replacement flower for Noor' && p2.quantity === 2 && p2.metal === 'gold' && p2.reason === 'fix' && p2.handmade === true
-      && p2.fixes && p2.fixes.orderId === FIXED && p2.fixes.causedBy === 'Ana M' && p2.fixes.suggested === 'Bea' && p2.by === 'Test Operator' && /^CUSTOM-\d{8}-\d+$/.test(out2.orderId || ''),
+    check('B11 the person changed who it was to Marco R.; Send: the pool gets an orderless named piece × 2 on GF, the reason, and the fix naming both people (the suggestion kept beside the choice)',
+      f2.causer === 'Marco R.' && f2.n === '2' && /GF/.test(f2.send) && p2.orderId === null && p2.customName === 'Replacement flower for Noor' && p2.quantity === 2 && p2.metal === 'gold' && p2.reason === 'fix' && p2.handmade === true
+      && p2.fixes && p2.fixes.orderId === FIXED && p2.fixes.causedBy === 'Marco R.' && p2.fixes.suggested === 'Bea' && p2.by === 'Test Operator' && /^CUSTOM-\d{8}-\d+$/.test(out2.orderId || ''),
       `"${f2.send}" → ${out2.orderId} ${JSON.stringify(out2.poolIds)}`);
-    check('B12 its customPieceSent event carries the piece\'s own number and name, who fixed it and whose mistake it was', l2.customId === out2.orderId && l2.customName === 'Replacement flower for Noor' && fx.causedBy === 'Ana M' && fx.suggested === 'Bea' && fx.orderId === FIXED && l2.by === 'Test Operator', JSON.stringify(fx));
+    check('B12 its customPieceSent event carries the piece\'s own number and name, who fixed it and whose mistake it was', l2.customId === out2.orderId && l2.customName === 'Replacement flower for Noor' && fx.causedBy === 'Marco R.' && fx.suggested === 'Bea' && fx.orderId === FIXED && l2.by === 'Test Operator', JSON.stringify(fx));
     // the fixed order's timeline says it (charm-nest-design-log.js, through the order timeline's outbox)
     let tl = null;
     if (stand.log) {
       await page.evaluate(() => CNDesignLog.flush());
-      for (let i = 0; i < 40 && !tl; i++) { const j = await post({ op: 'timelineGet', orderId: FIXED }); tl = (j.events || []).find(e => e.type === 'designSent' && /mistake by Ana M/.test(e.text || '')) || null; if (!tl) await new Promise(r => setTimeout(r, 250)); }
+      for (let i = 0; i < 40 && !tl; i++) { const j = await post({ op: 'timelineGet', orderId: FIXED }); tl = (j.events || []).find(e => e.type === 'designSent' && /mistake by Marco R./.test(e.text || '')) || null; if (!tl) await new Promise(r => setTimeout(r, 250)); }
       check('B13 the order it fixes has it on its timeline: who sent the fix and whose mistake it was', !!tl && tl.by === 'Test Operator', tl ? tl.text : 'no event');
     }
 

@@ -144,6 +144,14 @@
   const hex = c => { const m = /^#?([0-9a-f]{6})$/i.exec(String(c || '')); if (!m) return [200, 200, 200]; const v = parseInt(m[1], 16); return [v >> 16 & 255, v >> 8 & 255, v & 255]; };
   const mix = (c, t, k) => { const a = hex(c), b = hex(t); return '#' + a.map((v, i) => Math.round(v + (b[i] - v) * k).toString(16).padStart(2, '0')).join(''); };
   let gid = 0;
+  /** The plate's tones: light, the metal, deep, and its edge; no metal yet: white paper and the ink's edge. */
+  const tones = mc => (mc ? [mix(mc, '#ffffff', 0.55), mc, mix(mc, '#000000', 0.18), mix(mc, '#000000', 0.42)] : ['#ffffff', '#fbfaf7', '#f1ede5', '#1c1a17']);
+  /** A picture drawn by previewSvg put in another metal, in place (no path drawn again). */
+  function tint(svg, metal) {
+    if (!svg) return; const t = tones(metal ? colourOf(metal) : '');
+    for (const st of svg.querySelectorAll('stop[data-t]')) st.setAttribute('stop-color', t[+st.dataset.t]);
+    const cut = svg.querySelector('[data-cp-cut]'); if (cut) cut.setAttribute('stroke', t[3]);
+  }
   /** The design drawn as an SVG at its EXACT size (CSS millimetres, so 1 mm on the screen is 1 mm of the piece at 100% zoom), on the metal it goes on
    *  when one is given: its cut outline filled with that metal, its engraving dark on it (each grey of a traced image kept, D2). o.fitMm [w, h]: the room
    *  it has; a design bigger than that is drawn smaller and says by how much (scale). o.px: a thumbnail of that many pixels instead.
@@ -159,9 +167,10 @@
     else { const fit = o.fitMm || [58, 46]; scale = Math.min(1, fit[0] / wMm, fit[1] / hMm); w = +(wMm * scale).toFixed(3) + 'mm'; h = +(hMm * scale).toFixed(3) + 'mm'; }
     const mc = o.metal ? colourOf(o.metal) : '', id = 'cpG' + (++gid), cut = L.filter(l => l.role === 'cut'), ink = L.filter(l => l.role !== 'cut'), INK = '#2b2620';
     let defs = '', body = '';
-    if (cut.length) {
-      if (mc) defs = `<defs><linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${mix(mc, '#ffffff', 0.55)}"/><stop offset=".55" stop-color="${mc}"/><stop offset="1" stop-color="${mix(mc, '#000000', 0.18)}"/></linearGradient></defs>`;
-      body += `<path d="${dOf([].concat(...cut.map(l => l.subs)))}" fill="${mc ? `url(#${id})` : '#fff'}" fill-rule="evenodd" stroke="${mc ? mix(mc, '#000000', 0.42) : '#1c1a17'}" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+    if (cut.length) {   // (the body in the metal: three stops and an edge, recoloured in place when another metal is picked, tint)
+      const t = tones(mc);
+      defs = `<defs><linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" data-t="0" stop-color="${t[0]}"/><stop offset=".55" data-t="1" stop-color="${t[1]}"/><stop offset="1" data-t="2" stop-color="${t[2]}"/></linearGradient></defs>`;
+      body += `<path data-cp-cut d="${dOf([].concat(...cut.map(l => l.subs)))}" fill="url(#${id})" fill-rule="evenodd" stroke="${t[3]}" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
     }
     for (const l of ink) {
       const op = l.grey == null ? 0.9 : Math.max(0.08, 1 - l.grey);
@@ -516,9 +525,9 @@
     }
     function paintMetal() {
       for (const b of dlg.querySelectorAll('[data-cp-metal]')) { const on = b.dataset.cpMetal === st.metal; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)); }
-      const g = goesNow(), box = q('[data-cp-goes]');
+      const g = st.goes = st.metal ? goesNow() : null, box = q('[data-cp-goes]');
       box.innerHTML = !st.metal ? '<span>Pick the metal: the piece goes onto the next open sheet of it</span>' : `${ARROW}<span>Goes onto ${g.fresh ? `<b class="new">${esc(g.name)}</b>` : `<b>${esc(g.name)}</b>`}${st.qty > 1 ? ` · ${plural(st.qty, 'piece')}` : ''}</span>`;
-      if (st.design) paintDesign();     // (the piece is drawn in the metal it goes on)
+      tint(q('[data-cp-plate] svg'), st.metal);     // (the piece is drawn in the metal it goes on)
     }
     const orderNow = () => (st.attach === 'this' && st.ctx ? st.ctx.rid : st.attach === 'other' && st.other ? st.other.rid : null);
     const goesNow = () => goesOnto(st.metal, orderNow());
@@ -535,7 +544,7 @@
       return '';
     }
     function sync() {
-      const why = st.err || whyNot(), b = q('[data-cp-send]'), w = q('[data-cp-why]'), g = st.metal ? goesNow() : null;
+      const why = st.err || whyNot(), b = q('[data-cp-send]'), w = q('[data-cp-why]'), g = st.metal ? st.goes || (st.goes = goesNow()) : null;
       w.textContent = st.busy ? '' : why; w.classList.toggle('bad', !!st.err);
       b.setAttribute('aria-disabled', String(!!whyNot() || st.busy)); b.disabled = st.busy;
       b.innerHTML = st.busy ? '<span class="cpSpin"></span>Sending…' : esc(`Send ${st.qty > 1 ? st.qty + ' ' : ''}to ${g ? g.name : 'sheet'}`);
@@ -566,7 +575,7 @@
       const by = who() || await askWho('Kept with this custom piece: who sent it, and when.', 'send this piece to a sheet');
       if (!by || !M || M.st !== st) return;
       st.busy = true; st.err = ''; sync();
-      const g = goesNow(), orderId = orderNow(), none = st.attach === 'none';
+      const g = st.goes = goesNow(), orderId = orderNow(), none = st.attach === 'none';
       try {
         const out = await send({ designId: st.designId, version: st.version, design: st.design, metal: st.metal, quantity: st.qty, orderId, customName: none ? st.name.trim() : '', reason: none ? st.reason : null,
           fixes: none && st.reason === 'fix' && st.fix ? { orderId: st.fix.rid, poolId: st.fix.poolId, lineKey: st.fix.lineKey, causedBy: st.causedBy.trim(), suggested: st.cause ? st.cause.suggested : '' } : null, by, sheet: g.name });
