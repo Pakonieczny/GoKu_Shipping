@@ -107,11 +107,11 @@ async function partA(kit) {
   const job = { view, mask: m1, fit: null, __charm: c2 };
   const opsOf = cv => JSON.stringify(cv.ops), steps = cv => cv.ops.map(o => o[0]);
   const ed = withArt.renderBack(job, [400, 400], { grid: true, editable: true });
-  const lays = ed.ops.filter(o => o[0] === 'drawImage' && o[2].globalAlpha === withArt.FRONT_ART_ALPHA.front).map(o => made.get(o[1][0].canvas));
+  const lays = ed.ops.filter(o => o[0] === 'drawImage' && o[2].globalAlpha === withArt.FRONT_ART_ALPHA.own).map(o => made.get(o[1][0].canvas));   // (OWNART, 28 Oct 2026: a person's own parts at full strength)
   const lay = lays.find(c => c.ops.some(o => o[0] === 'fill')), fills = lay ? lay.ops.filter(o => o[0] === 'fill') : [], strokes = lay ? lay.ops.filter(o => o[0] === 'stroke') : [];
   const layAt = ed.ops.findIndex(o => o[0] === 'drawImage' && lay && o[1][0].canvas === lay.id), cutAt = ed.ops.findIndex((o, i) => i > layAt && o[0] === 'stroke' && o[2].strokeStyle === '#000');
   const first = lay && lay.ops.find(o => o[0] === 'moveTo'), want = ed._map.tx(...G.transformSeg(G.transformSeg(c2.artBack[0], view.M), view.R).subpaths[0][0][1]);
-  check('A7 the work area (editable) draws the back\'s parts as a front draws its art: a layer laid on at .5, hatched parts in the hatch blue, lines in the line red, under the cut line, through the view\'s own frame',
+  check('A7 the work area (editable) draws the back\'s parts as a front draws its art: a layer laid on at full strength (they are all the person\'s own), hatched parts in the hatch blue, lines in the line red, under the cut line, through the view\'s own frame',
     ed._backArt.length === 4 && !!lay && fills.length === 2 && fills.every(o => o[2].fillStyle === withArt.FRONT_INK.hatch) && strokes.length === 2 && strokes.every(o => o[2].strokeStyle === withArt.FRONT_INK.line) && layAt >= 0 && cutAt > layAt && near(first[1], want, 1e-6),
     JSON.stringify({ art: ed._backArt.length, fills: fills.length, strokes: strokes.length, layAt, cutAt, first: first && first[1], want }));
   const pic = withArt.renderBack(job, 500, { grid: false, hatch: false }), inked = pic.ops.filter(o => (o[0] === 'fill' && o[2].fillStyle === '#111') || (o[0] === 'stroke' && o[2].strokeStyle === '#111'));
