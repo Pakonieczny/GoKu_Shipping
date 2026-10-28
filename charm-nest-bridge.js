@@ -20482,11 +20482,35 @@ const TeamMail = window.TeamMail = (() => {
   // ── the outbox ──
   const outbox = () => get(LS_O, []);
   const newId = () => Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
-  const pending = rid => outbox().filter(x => x.rid === String(rid));
+  /* OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"; plan: phase 3): with this computer's outbox (charm-nest-store.js mutate, the page's world), a message is kept there
+     (IndexedDB, strictly) and sent by the computer's drain in its own wire format (firebaseOrders, ?sandbox=1 in the sandbox, { orderNumber, newMessage, employeeName, clientMessageId,
+     imageUrl? }: the record writes it once, by its id); refused, it comes back here with the record's words, shown on the message with Retry, as before. What this browser's own outbox
+     (localStorage) still holds, and a page without the outbox, go as before. */
+  const boxSt = () => { const x = window.CharmNestStore; return x && typeof x.mutate === "function" && typeof x.world === "function" && x.world() === (WORKSPACE_SANDBOX ? "sandbox" : "production") ? x : null; };
+  const kept = rid => { const x = boxSt(); if (!x || typeof x.pending !== "function") return []; return x.pending(e => e.op === "teamMessage" && e.args && (!rid || String(e.args.orderNumber) === String(rid))).map(e => ({ id: e.args.clientMessageId, rid: String(e.args.orderNumber), text: e.args.newMessage === "Image attachment" && e.args.imageUrl ? "" : e.args.newMessage, who: e.args.employeeName, imageUrl: e.args.imageUrl || null, at: e.at, tries: e.tries || 0, next: e.nextAt || undefined })); };
+  const pending = rid => outbox().filter(x => x.rid === String(rid)).concat(kept(rid));
   function queue(rid, text, who, imageUrl) {
     const x = { id: newId(), rid: String(rid), text: String(text || ""), who: String(who || "Staff"), imageUrl: imageUrl || null, at: Date.now(), tries: 0 };
+    const St = boxSt();
+    if (St && !T.wiping) {
+      const body = { orderNumber: x.rid, newMessage: x.text || "Image attachment", employeeName: x.who, clientMessageId: x.id }; if (x.imageUrl) body.imageUrl = x.imageUrl;
+      const h = St.mutate({ entity: "m:" + x.rid, fn: "firebaseOrders" + (WORKSPACE_SANDBOX ? "?sandbox=1" : ""), op: "teamMessage", raw: true, args: body, label: `Team message on order ${x.rid}`, by: x.who });
+      if (h && h.k) {
+        changed(x.rid);
+        h.done.then(() => sent(x), e => { put(LS_O, outbox().concat([Object.assign({}, x, { error: String((e && e.message) || e || "refused") })])); changed(x.rid); });
+        return x;
+      }
+    }
     put(LS_O, outbox().concat([x])); changed(x.rid); flush();
     return x;
+  }
+  /** A message the record has: shown as sent at once in every view of the thread, then read again for the server's own time. */
+  function sent(x) {
+    const th = TH.get(x.rid);
+    if (th && !th.list.some(m => m.id === "c-" + x.id)) { th.list = th.list.concat([{ id: "c-" + x.id, senderName: x.who, text: x.text, imageUrl: x.imageUrl, at: Date.now(), local: true, sandbox: WORKSPACE_SANDBOX || undefined }]); setTimeout(() => load(x.rid), 300); }
+    health(true); changed(x.rid, x);
+    // the station keeps a copy of each thread's last few messages for its cards: it reads this one again
+    try { if (DesignLink.up() && (DesignLink.state()?.commands || []).includes("chat.touched")) DesignLink.call("chat.touched", { receiptId: x.rid }, { quiet: true }).catch(() => {}); } catch (_) {}
   }
   function drop(id) { const x = outbox().find(y => y.id === id); put(LS_O, outbox().filter(y => y.id !== id)); if (x) changed(x.rid); return x || null; }
   function retry(id) { const all = outbox(), x = all.find(y => y.id === id); if (!x) return; delete x.error; delete x.next; put(LS_O, all); changed(x.rid); flush(); }

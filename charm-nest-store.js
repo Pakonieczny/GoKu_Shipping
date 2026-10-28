@@ -50,10 +50,11 @@
    changes feed (charm-nest-sync-worker.js drain), with its mutation id (mid), so a press sent twice (the page closed mid-request, the network dropped) is
    written once (netlify/functions/_charmNestMutations.js). The cloud's answer is the truth: a refusal comes back in the cloud's own words to where it was
    pressed (handle.done rejects; a press made before a reload is said in a toast), and a press another person's later change overwrote is said too.
-     mutate({ entity, op, args, fn?, fields?, merge?, batch?, after?, job?, label, by }) → { mid, k, done }   kept now, sent soon; done: the answer (rejects
+     mutate({ entity, op, args, fn?, fields?, merge?, batch?, after?, job?, raw?, label, by }) → { mid, k, done }   kept now, sent soon; done: the answer (rejects
                                                   with the refusal, e.refused). fields: a pending press of the same entity and fields is replaced (the newest
                                                   wins before anything is sent); merge: one of the same entity has its args merged; batch: several sent as one
-                                                  request (timelineAdd: their events joined); after: sent once that mid is answered; job: not sent, run by the
+                                                  request (timelineAdd: their events joined); raw: args sent as they are (another function's own format, no op
+                                                  or mid: TeamMail's message, idempotent by its own id); after: sent once that mid is answered; job: not sent, run by the
                                                   page (pending(job) lists them; finish(k) ends one)
      pending(filter?) → [entry]                   what this computer has not had answered (memory; the disk's at start)
      outbox() → Promise<[entry]>                  every entry on the disk (every tab's), oldest first: what the drain sends
@@ -511,18 +512,27 @@
   const boxPost = m => { if (channel) { try { channel.postMessage(m); } catch (_) {} } };
   // (k: sortable by time across the tabs of this computer, unique to this tab: '<ms base36>-<tab>-<n>')
   function nextK() { const t = Math.max(Date.now(), lastMs); lastMs = t; return t.toString(36).padStart(9, '0') + '-' + tab + '-' + (++boxN).toString(36); }
-  /** Written to the disk now, strictly (the browser says written once it is on the disk); false when there is no disk (memory and a small journal keep it). */
-  async function boxWrite(rows, dels) {
-    if (!canWrite()) return false;
-    const db = await records(true); if (!db) return journal();
-    return new Promise(res => {
-      try {
-        const t = db.transaction('outbox', 'readwrite', { durability: 'strict' }), s = t.objectStore('outbox');
-        for (const r of rows || []) s.put(r);
-        for (const k of dels || []) s.delete(k);
-        t.oncomplete = () => res(true); t.onerror = t.onabort = () => { console.warn('local store: outbox write', t.error); res(journal()); };
-      } catch (e) { console.warn('local store: outbox write', e); res(journal()); }
-    });
+  /** Written to the disk now, strictly (the browser says written once it is on the disk); false when there is no disk (memory and a small journal keep it). Every write
+      of one task goes in ONE transaction, at the task's end (a microtask: before the page can be left; a burst of timeline steps is one write, not one each). */
+  let boxRows = new Map(), boxDels = new Set(), boxP = null;
+  function boxWrite(rows, dels) {
+    if (!canWrite()) return Promise.resolve(false);
+    for (const r of rows || []) { boxRows.set(r.k, r); boxDels.delete(r.k); }
+    for (const k of dels || []) { boxRows.delete(k); boxDels.add(k); }
+    if (boxP) return boxP;
+    return (boxP = new Promise(res => (typeof queueMicrotask === 'function' ? queueMicrotask : f => Promise.resolve().then(f))(() => res()))
+      .then(async () => {
+        const put = [...boxRows.values()], del = [...boxDels]; boxRows = new Map(); boxDels = new Set(); boxP = null;
+        const db = await records(true); if (!db) return journal();
+        return new Promise(res => {
+          try {
+            const t = db.transaction('outbox', 'readwrite', { durability: 'strict' }), s = t.objectStore('outbox');
+            for (const r of put) s.put(r);
+            for (const k of del) s.delete(k);
+            t.oncomplete = () => res(true); t.onerror = t.onabort = () => { console.warn('local store: outbox write', t.error); res(journal()); };
+          } catch (e) { console.warn('local store: outbox write', e); res(journal()); }
+        });
+      }));
   }
   // (no disk: what this tab has not had answered is kept in localStorage too, so a reload of THIS page still sends it; read back at start when there is no disk)
   const JKEY = () => 'cn.outbox.' + world;
@@ -555,7 +565,7 @@
       return { mid: twin.mid, k: twin.k, done };
     }
     const k = nextK(), e = { k, mid: 'm' + (world === 'sandbox' ? 's' : 'p') + '-' + k, world, tab, entity, fn: m.fn || 'charmNestLibrary', op: m.op || '', args: m.args || {}, fields,
-      merge: !!m.merge, batch: m.batch || '', after: m.after || '', job: m.job || '', label: String(m.label || '').slice(0, 200), by: String(m.by || '').slice(0, 80), at: now, state: 'pending', tries: 0, nextAt: 0 };
+      merge: !!m.merge, batch: m.batch || '', after: m.after || '', job: m.job || '', raw: !!m.raw, label: String(m.label || '').slice(0, 200), by: String(m.by || '').slice(0, 80), at: now, state: 'pending', tries: 0, nextAt: 0 };
     box.set(k, e); waiters.set(e.mid, this_);
     boxWrite([e], []);   // (the transaction starts in this task: on the disk within milliseconds, strict)
     boxPost({ t: 'box:mut', e }); mutTell({ t: 'mut', e });
@@ -606,14 +616,15 @@
   const acked = new Map();          // entity → [{ fields, by, at, label }]
   function remember(e, answer) {
     if (!e || !e.entity || !e.fields || !e.fields.length) return;
-    const l = (acked.get(e.entity) || []).filter(x => Date.now() - x.at < 900000); l.push({ fields: e.fields.slice(), by: e.by, at: Date.now(), label: e.label, told: new Set() }); acked.set(e.entity, l.slice(-20));
+    const l = (acked.get(e.entity) || []).filter(x => Date.now() - x.at < 900000); l.push({ fields: e.fields.slice(), by: e.by, mid: e.mid, at: Date.now(), label: e.label }); acked.set(e.entity, l.slice(-20));
   }
   const toldLost = new Set();
   /** A record of entity read now: the fields this computer wrote that another person wrote after it, told once each. → [{ field, by, at, label }] */
   function lostIn(entity, rec) {
     const l = acked.get(entity), w = rec && rec._w; if (!l || !w || typeof w !== 'object') return [];
     const out = [];
-    for (const a of l) for (const f of a.fields) { const x = w[f]; if (!x || !x.by || x.by === a.by || !(+x.at > a.at - 2000)) continue; const key = entity + '|' + f + '|' + x.at; if (toldLost.has(key)) continue; toldLost.add(key); out.push({ field: f, by: x.by, at: +x.at, label: a.label, entity }); }
+    // (the write that stands on a field is another press than this computer's (its mid), made after this one was answered (2 s for two clocks): this one lost)
+    for (const a of l) for (const f of a.fields) { const x = w[f]; if (!x || !x.by || (x.mid && x.mid === a.mid) || !(+x.at > a.at - 2000)) continue; const key = entity + '|' + f + '|' + x.at; if (toldLost.has(key)) continue; toldLost.add(key); out.push({ field: f, by: String(x.by).replace(/_/g, ' '), at: +x.at, label: a.label, entity }); }
     if (out.length) mutTell({ t: 'lost', entity, lost: out });
     return out;
   }

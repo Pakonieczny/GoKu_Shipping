@@ -194,6 +194,55 @@ const part = p => !ONLY || ONLY.split(',').includes(p);
         say(`D · follow-up reads in 4 s: a direct write ${direct.length} (${[...new Set(direct.map(c => c.op))].join(', ') || 'none'}; the feed asked ${directFeed}×), a press from the outbox 0 (the feed's answer naming it skipped as this computer's own: ${st1.ownSkipped})`);
       }
     }
+    if (part('E')) {
+      /* ── E · Hold Order and Release Hold (the order window), every function 3 s late: each paints in the frame it is pressed in; the mark goes from the outbox, once; a refusal is said under the button ── */
+      const RW = require('./_reviewSendWorld.cjs'), w = await RW.open('production');
+      if (!w) console.log('  - E skipped: no playwright-core');
+      else try {
+        const page = w.page, lst = w.srv.st;
+        await RW.addOrders(w, ['sheeted', 'mate']);
+        const sh = await RW.seedSheet(w, { id: 'sh-ob-e1', orders: ['sheeted', 'mate'] });
+        const rid = RW.ORDERS.sheeted.rid, key = RW.keyOf('sheeted'), pid = RW.poolIdOf('sheeted');
+        await page.evaluate(() => CN.setMode('orders')); await page.evaluate(k => OrderWin.open(k), key);
+        const rb = `#owPcSum .revSendBtn[data-rev-host][data-rid="${rid}"]`;
+        await page.waitForSelector(rb, { timeout: 20000 });
+        // (a stand-in hold engine that answers at once: this part measures the press and the outbox, not the sheets' take-off, which tests/charm-nest/hold-order-progress.cjs drives)
+        await page.evaluate(({ pid, label }) => { const real = window.OrderHold; window.__realHold = real; window.OrderHold = Object.assign({}, real, { plan: async r => ({ rid: r, canHold: true, pieces: [{ poolId: pid, state: 'onSheet', sheetLabel: label }], sheets: [], fills: [], stays: [] }), run: async (r, o) => { for (const row of Orders.rows()) if (String(row.order.receiptId) === r) { row.poolIds = []; row.state = 'held'; row.hold = row.reason = 'Taken off ' + label; } if (o && o.onStep) o.onStep({ type: 'done', at: Date.now() }); return { ok: true, held: true, steps: [] }; } }); }, { pid, label: sh.name });
+        const fnCalls = []; page.on('request', q => { if (/\/\.netlify\/functions\//.test(q.url())) { let b = {}; try { b = JSON.parse(q.postData() || '{}'); } catch (_) {} fnCalls.push({ t: Date.now(), op: b.op || '', action: b.action || '', mid: b.mid || '' }); } });
+        await page.route(/\/\.netlify\/functions\//, async q => { await sleep(3000); return q.continue().catch(() => {}); });
+        const pressPaint = (sel, probe) => page.evaluate(([sel, probe]) => new Promise(res => { const b = document.querySelector(sel); const on = e => { const ev = e.timeStamp; requestAnimationFrame(() => { let shows; try { shows = (0, eval)(probe); } catch (x) { shows = 'threw: ' + x.message; } res({ ms: +(performance.now() - ev).toFixed(2), shows }); }); }; b.addEventListener('click', on, { capture: true, once: true }); b.click(); }), [sel, probe]);
+        // E1 · Hold Order
+        const t0 = Date.now();
+        const hold = await pressPaint(rb, `CharmNestReviewMark.isMarked('${rid}') && !!document.querySelector('#orderWin .revSendProg')`);
+        assert(hold.ms < 16 && hold.shows === true, `Hold Order paints in the frame it is pressed in: ${JSON.stringify(hold)}`);
+        await until(() => lst.doc('Charm_Custom_Orders', rid + '_review') && lst.doc('Charm_Custom_Orders', rid + '_review').review && lst.doc('Charm_Custom_Orders', rid + '_review').review.state === 'open', 20000, 'the mark reached the cloud');
+        await sleep(4500);
+        const marks = fnCalls.filter(c => c.op === 'reviewMarkPut' && c.action === 'mark'), reads = fnCalls.filter(c => c.t > t0 && /^(customGet|laserStatus|getOrderPieces|cancelList|timelineGet)$/.test(c.op));
+        assert(marks.length === 1 && marks[0].mid, 'the mark went from the outbox, once, with its mid: ' + JSON.stringify(marks));
+        console.log(`  ok   E1 · Hold Order: ${hold.ms} ms from the press to the paint (< 16 ms; held and its bar shown in that frame, every function 3 s late); the mark sent once from the outbox (${marks[0].mid}); reads after it in 4.5 s: ${reads.length} (${[...new Set(reads.map(c => c.op))].join(', ') || 'none'}: the feed's and the window's own)`);
+        // E2 · Release Hold in the order window
+        await page.evaluate(() => { window.OrderHold = window.__realHold; });
+        const relSel = '#orderWin [data-rel-hold]:not([aria-disabled="true"])';
+        await page.waitForFunction(s => { const b = document.querySelector(s); return b && b.getBoundingClientRect().width > 0; }, relSel, { timeout: 30000 });
+        const rel = await pressPaint(relSel, `(() => { const b = document.querySelector('#orderWin [data-rel-hold]'); return { busy: !!b && (b.disabled || b.getAttribute('aria-busy') === 'true' || /Releasing/.test(b.textContent)), sealExpected: true, released: !!(window.CharmNestReviewMark && CharmNestReviewMark.released('${rid}')) }; })()`);
+        assert(rel.ms < 16, `Release Hold paints in the frame it is pressed in: ${JSON.stringify(rel)}`);
+        console.log(`  ok   E2 · Release Hold in the order window: ${rel.ms} ms from the press to the paint (< 16 ms; that frame: ${JSON.stringify(rel.shows)}), its placement on the sheets as before (the server's rules, awaited behind the press)`);
+        await page.unroute(/\/\.netlify\/functions\//);
+        await sleep(3000);
+        // E3 · a refusal: the cloud says no to a Hold Order; the order is not held, and the words are under the button
+        const rid2 = RW.ORDERS.mate.rid, key2 = RW.keyOf('mate');
+        await page.evaluate(() => { if (OrderWin.isOpen()) OrderWin.close(); }); await sleep(400);
+        await page.evaluate(k => OrderWin.open(k), key2);
+        const rb2 = `#owPcSum .revSendBtn[data-rev-host][data-rid="${rid2}"]`;
+        await page.waitForSelector(rb2, { timeout: 20000 });
+        await page.route(/\/\.netlify\/functions\/charmNestLibrary/, async q => (/reviewMarkPut/.test(q.request().postData() || '') ? q.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'This order was cancelled on another computer' }) }) : q.continue()));
+        await page.click(rb2);
+        const said = await until(() => page.evaluate(r => { const m = [...document.querySelectorAll('#orderWin .revSendMsg, #orderWin [role=status], #orderWin [role=alert], .toast')].map(n => n.textContent).join(' | '); return !CharmNestReviewMark.isMarked(r) && /cancelled on another computer/.test(m) ? m : null; }, rid2), 20000, 'the refusal said where it was pressed');
+        await page.unroute(/\/\.netlify\/functions\/charmNestLibrary/);
+        console.log(`  ok   E3 · a Hold Order the cloud refused: not held, and said under the button: "${(said.match(/Not held[^|]*/) || [said])[0].trim().slice(0, 110)}"`);
+        assert.deepEqual(w.errors || [], [], 'no page errors: ' + (w.errors || []).join(' | '));
+      } finally { await w.close(); }
+    }
     console.log('\nall outbox checks passed');
   } catch (e) { console.error(e); process.exitCode = 1; }
   finally { if (browser) await browser.close().catch(() => {}); srv.close && srv.close(); }

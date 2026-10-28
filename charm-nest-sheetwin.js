@@ -2309,6 +2309,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if ((rec.label?.files || []).length || !(rec.placements || []).length || !rec.verification?.ok) return null;
     return { kind: "own", note: "Not in an open set", title: "Make a QR label of the orders on this sheet, saved beside its files" };
   }
+  /** OUTBOX: a field patch of a sheet's record, kept in this computer's outbox (charm-nest-store.js mutate) with what it saw in those fields (base: the later change wins, and says whom it
+      overwrote) and sent from there with its mutation id; → the cloud's answer (rejects with the refusal in the cloud's words). Without the outbox, the plain write. */
+  function patchSheet(id, fields, base, label) {
+    const St = window.CharmNestStore;
+    if (!St || typeof St.mutate !== "function") return api("charmNestLibrary", { op: "putSheet", sheet: Object.assign({ id }, fields) }, { quiet: true });
+    const by = whoAmI() || "";
+    return St.mutate({ entity: "s:" + id, op: "putSheet", args: { sheet: Object.assign({ id }, fields), base, by }, fields: Object.keys(fields), label, by }).done.then(ans => {
+      if (ans && ans.overwrote && ans.overwrote.length) { const w = ans.overwrote[0]; tryDo(() => toast(`${w.by || "Someone"} changed this sheet's ${w.field === "releaseFull" ? "release" : w.field} ${agoWords(w.at)} — your change was kept.`, "", 7000)); }
+      return ans;
+    });
+  }
   async function makeLabel(btn) {
     const plan = labelPlan(), id = W.id, rec = W.rec; if (!plan) return;
     const sh = allSheets().find(p => p.sheetId === id), run = window.B && B.run;
@@ -2339,11 +2350,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     let undo = null;
     try {
       if (plan.kind === "release") {
-        const topup = sh.topup && !sh.topup.closedAt ? sh.topup : null;
+        const topup = sh.topup && !sh.topup.closedAt ? sh.topup : null, topWas = topup ? JSON.parse(JSON.stringify(topup)) : (sh.topup || null);
         const wasFull = !!sh.releaseFull;       // (a sheet that was full already stays full when it cannot join: pressing this must never un-complete it, Paul 12 Oct)
         sh.releaseFull = true; if (topup) { topup.closedAt = nowT(); topup.byHand = true; }
-        undo = () => { if (!sh.draft || wasFull) return; sh.releaseFull = false; if (topup) { delete topup.closedAt; delete topup.byHand; } api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: false, topup: sh.topup || null } }, { quiet: true }).catch(() => {}); };
-        await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: true, topup: sh.topup || null } }, { quiet: true });
+        /* OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"; plan: phase 3, labels and releaseFull): the release mark is drawn at once and kept in this computer's outbox
+           (a field patch with what it saw: the later change wins and the person whose change lost is told). The label itself waits for the mark's answer: the set it joins is numbered and
+           its rules checked on the server (setAllocate, R12), never on a guess. Undone, the same patch goes back (a press still waiting in the outbox is simply replaced). */
+        const markRelease = (on, top) => patchSheet(sh.sheetId, { releaseFull: on, topup: top || null }, { releaseFull: on ? wasFull : true, topup: on ? topWas : (sh.topup || null) }, on ? `Release ${sheetName(sh)}` : `${sheetName(sh)} back to filling`);
+        undo = () => { if (!sh.draft || wasFull) return; sh.releaseFull = false; if (topup) { delete topup.closedAt; delete topup.byHand; } markRelease(false, sh.topup).catch(() => {}); };
+        await markRelease(true, sh.topup);
         await Gate.assemble(run);
         if (sh.draft) throw new Error(reason());
         agent({ metal: sh.metal, run: sh.runId }, "POOL", `${sheetName(sh)} released by hand at ${fmt.pct(sh.density || 0)} full, with its QR label for ${new Set(sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(ridOf)).size} orders`);
@@ -2377,7 +2392,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       files.push({ path: up.path, url: up.url, sheet: name, part: i + 1, parts: parts.length, orders: slice, payload, ecc: png.ecc, label });
     }
     const made = { files, orders: ids, own: true, at: Date.now() };
-    await api("charmNestLibrary", { op: "putSheet", sheet: { id: rec.id, label: made } });
+    await patchSheet(rec.id, { label: made }, { label: rec.label || null }, `${name}: its own QR label`);   // (OUTBOX: from the outbox, as the release mark is)
     if (sh) sh.label = made;
     window.SheetEvents?.qrLabel({ sheetId: rec.id, sheet: nameOf(rec), setId: "", metal: rec.metal }, ids, files, { own: true, by: whoAmI() });
     agent({ metal: rec.metal, run: rec.runId || null }, "cloud", `${name}: QR label made by hand for its ${ids.length} order${ids.length === 1 ? "" : "s"} (not in an open set)`);

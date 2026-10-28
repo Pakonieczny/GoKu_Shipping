@@ -137,6 +137,12 @@
       try { console.warn("[OrderTimeline] not sent yet, retrying:", e.message); } catch (_) {}
     } finally { sending = false; }
   }
+  /* OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"; plan: phase 3): in the sorter, with this computer's outbox (charm-nest-store.js mutate, the page's world),
+     an event is kept there (IndexedDB, written strictly, every event of one task in one write) and sent by the computer's drain (charm-nest-sync-worker.js), consecutive events in one
+     request of the SAME wire format as here: { op: "timelineAdd", events: [...] } (≤ 50 events, ≤ 48 KB; the server keeps an event once, by its id). The station pages, and a sorter
+     page whose outbox is not there (or not its world yet), keep this file's own outbox in localStorage, as before; what that one holds is still sent from here. */
+  const St = () => { const x = window.CharmNestStore; return cfg.mode === "sorter" && x && typeof x.mutate === "function" && typeof x.world === "function" && x.world() === (cfg.sandbox ? "sandbox" : "production") ? x : null; };
+  const storeEvents = id => { const x = St(); if (!x || typeof x.pending !== "function") return []; const out = []; for (const e of x.pending(m => m.op === "timelineAdd")) for (const ev of (e.args && e.args.events) || []) if (!id || ev.orderId === id) out.push(ev); return out; };
   /** Records one event. Returns the event (as queued) or null when it is not one. */
   function record(e) {
     try {
@@ -149,6 +155,7 @@
       ev.id = String(e.id || `${at}-${Math.random().toString(36).slice(2, 8)}`);
       // kept as plain JSON: details that are not (a circular object) are left out here, where they stopped the outbox for good
       try { ev = JSON.parse(JSON.stringify(ev)); } catch (_) { ev.data = null; ev = JSON.parse(JSON.stringify(ev)); }
+      { const x = St(); if (x) { const h = x.mutate({ entity: "o:" + orderId, op: "timelineAdd", args: { events: [ev] }, batch: "timelineAdd", label: `A step on order ${orderId}`, by: ev.by || "" }); if (h && h.k) { for (const fn of listeners) { try { fn(ev); } catch (_) {} } return ev; } } }   // (OUTBOX)
       box.push(ev); if (box.length > KEEP) box = bound(box, KEEP);   // (a server refusing for days: memory stays bounded)
       // (a send already due sooner is not put off: events a scanner records less than a second apart were never sent
       //  while it kept on, and past KEEP the oldest were dropped)
@@ -175,7 +182,7 @@
     // (by the server's own key, orderId~type~cleaned id: an id with a space or "/" is stored cleaned, and two types may share one)
     const known = new Set((j.events || []).map(x => x.id && x.id.split("~").slice(1).join("~")));
     const keyIn = ev => `${ev.type}~${String(ev.id).slice(0, 120).replace(/[^\w.:-]/g, "_")}`;
-    for (const ev of box) if (ev.orderId === id && !!ev.sandbox === !!cfg.sandbox && !known.has(keyIn(ev))) (j.events = j.events || []).push(Object.assign({ pending: true }, ev));
+    for (const ev of box.concat(storeEvents(id))) if (ev.orderId === id && !!ev.sandbox === !!cfg.sandbox && !known.has(keyIn(ev))) (j.events = j.events || []).push(Object.assign({ pending: true }, ev));
     (j.events || []).sort((a, b) => a.at - b.at);
     return j;
   }
@@ -199,9 +206,9 @@
   window.OrderTimeline = {
     TYPES, STATION_TYPES,
     config(o) { Object.assign(cfg, o || {}); return Object.assign({}, cfg); },
-    record, flush, get, cancelCheck,
+    record, flush() { try { if (St() && window.CNSync && CNSync.drain) CNSync.drain(); } catch (_) {} return flush(); }, get, cancelCheck,
     onRecord(fn) { listeners.add(fn); return () => listeners.delete(fn); },
-    pending() { return box.length; },
+    pending() { return box.length + storeEvents("").length; },
     /** A sandbox reset (sandbox true): that store's events still waiting, this page's and every other page's on the disk,
         go with the records it cleared; sent afterwards they would land on the replay of the same real order numbers */
     discard(sandbox) { const keep = ev => !!ev.sandbox !== !!sandbox; box = box.filter(keep); try { localStorage.setItem(OUTBOX, JSON.stringify(disk().filter(keep))); } catch (_) {} return box.length; }

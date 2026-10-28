@@ -4097,6 +4097,16 @@ try { if (window.CharmNestStore) CharmNestStore.init({ world: WORKSPACE_SANDBOX 
    (charm-nest-sync-worker.js): one tab asks what moved, every tab hears it, and the Library, the placement feed, the Review feed, the order window and the sheet window
    read only what they show that moved, where each kept a timer of its own. Asked only while the cloud answers. */
 try { if (window.CNSync) CNSync.start({ world: WORKSPACE_SANDBOX ? "sandbox" : "production", api: (fn, body, opts) => api(fn, body, opts), enabled: () => S.cloud.ok === true && !(window.CNWipe && CNWipe.active) }); } catch (e) { console.warn("changes feed", e); }
+/* OUTBOX (Paul, 28 Oct 2026: "nothing he presses may wait for the cloud"; his decision: "the later change wins and the person whose change lost is told"): a press this computer kept and the cloud
+   refused is said where it was pressed (the press's own code); one whose place is gone (pressed before a reload, or in a tab since closed) is said here, in the cloud's words. A press of
+   this computer that another person's LATER change overwrote is said when the record that shows it is read (charm-nest-store.js lostIn). */
+try {
+  if (window.CharmNestStore && CharmNestStore.onMutation) CharmNestStore.onMutation(ev => {
+    if (!ev) return;
+    if (ev.t === "fail" && !ev.here && ev.local && ev.e) toast(`${ev.e.label || "A change made on this computer"} was not saved: ${String(ev.error || "the cloud said no").replace(/\.$/, "")}.`, "bad", 12000);
+    else if (ev.t === "lost" && Array.isArray(ev.lost)) for (const l of ev.lost.slice(0, 3)) { const secs = Math.max(0, Math.round((Date.now() - l.at) / 1000)); toast(`${l.by} changed ${l.label ? l.label.charAt(0).toLowerCase() + l.label.slice(1) : "what you changed"} after you (${secs < 60 ? secs + " s" : Math.round(secs / 60) + " min"} ago) — their change was kept.`, "", 10000); }
+  });
+} catch (e) { console.warn("outbox notices", e); }
 /* The sandbox order stream plays the shop's day faster than real time: each check the sorter makes moves its clock ten
    simulated minutes, and between checks it runs at the chosen speed, never past the next check. The day (set numbers,
    folders, run dates) and the due dates follow it; nesting searches keep their real seconds. Anywhere else, and
@@ -8673,7 +8683,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="order-timeline.js?v=20261007-fc4-advoff1-ms1-cost18-perf1-nv2"></script>
+<script src="order-timeline.js?v=20261007-fc4-advoff1-ms1-cost18-perf1-nv2-ob1"></script>
 <!-- How long each person is signed in here, and what they did (station-session.js, station-activity.js). The sorter has no
      personal login: the person is the name it keeps (cn.employee: the account chip's sign-in, or typed at the first approval, label
      or decision), the same name every seal it stamps, and the framed Design Station, carry. -->

@@ -335,6 +335,7 @@
   function bodyOf(group) {
     const h = group[0];
     if (h.batch === 'timelineAdd') return { op: 'timelineAdd', events: group.flatMap(e => (e.args && Array.isArray(e.args.events) ? e.args.events : [])) };   // (the timeline's own wire format: its events carry their ids, kept once by the server)
+    if (h.raw) return Object.assign({}, h.args || {});   // (a press of another function kept in its own wire format: TeamMail's message to firebaseOrders, idempotent by its own id)
     return Object.assign({}, h.args || {}, { op: h.op, mid: h.mid });
   }
   // (a refusal is the cloud's own answer in words: a 4xx with its JSON; a 409 "being written already", a 401, a 5xx, a timeout or no network is no answer yet)
