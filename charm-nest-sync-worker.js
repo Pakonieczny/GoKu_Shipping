@@ -23,9 +23,10 @@
 
    CNSync (window; module.exports in tests)
      start({ world, api, enabled })   api(fn, body, opts) the page's; enabled() false while the cloud is not answering (nothing is asked)
-     follow({ name, kinds, wants(key), active(), since(), read(why, keys) }) → { live(), dirty(), resume(), stop() }
+     follow({ name, kinds, wild, wants(key), active(), since(), read(why, keys) }) → { live(), dirty(), resume(), stop() }
                                       a surface's subscription. kinds: the first letters of the names it reads ('s' sheets, 't' sets, 'r' runs, 'c' custom
-                                      records, 'p' where an order's pieces are, 'x' cancels, 'o' timelines, 'm' designs, 'a' learned maps); wants(key): this
+                                      records, 'p' where an order's pieces are, 'x' cancels, 'o' timelines, 'm' designs, 'a' learned maps); wild: the kinds whose
+                                      '<kind>:*' (some of it, not known which) concerns it (all of its kinds unless said); wants(key): this
                                       name is one it shows; active(): it is on screen now (else it is read when it is: resume); since(): when its own last read
                                       began (a read that began after the leader's question has what it named: nothing more is asked); read(why, keys, at):
                                       why 'keys' | 'reset' | 'verify' | 'dirty', at: when the leader asked (what was written before it is named)
@@ -220,7 +221,7 @@
 
   /* ── a surface's subscription ── */
   function follow(spec) {
-    const kinds = new Set(String(spec.kinds || '').split('').filter(k => KIND.test(k)));
+    const kinds = new Set(String(spec.kinds || '').split('').filter(k => KIND.test(k))), wild = new Set(String(spec.wild == null ? spec.kinds || '' : spec.wild).split(''));
     let dirty = null, gone = false;
     const active = () => safe(() => (spec.active ? !!spec.active() : visible()), false);
     const run = (why, keys, at) => { stats.reads++; safe(() => spec.read(why, keys, at)); };
@@ -228,7 +229,7 @@
       take(keys, reset, verify, at) {
         if (gone) return;
         let hit = reset || verify || keys.has('*'), mine = [];
-        if (!hit) for (const k of keys) { if (!kinds.has(k[0])) continue; if (k.endsWith(':*') || safe(() => (spec.wants ? !!spec.wants(k) : true), true)) { hit = true; mine.push(k); } }
+        if (!hit) for (const k of keys) { if (!kinds.has(k[0])) continue; if (k.endsWith(':*') ? wild.has(k[0]) : safe(() => (spec.wants ? !!spec.wants(k) : true), true)) { hit = true; mine.push(k); } }
         if (!hit) return;
         const why = reset ? 'reset' : verify ? 'verify' : 'keys';
         // (its own read began after the leader's question: it holds what that answer named)

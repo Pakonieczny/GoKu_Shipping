@@ -12505,6 +12505,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
        window drawing, that was a third of a second and more before the request could leave (an IntersectionObserver now keeps them, a new card is still measured once). A read
        for a person's own write asks for the cards the loop's last read asked for (the person is working on a card that is in view; the loop's next read looks again). */
     const {ids,setIds}=(local && live.view && live.view.ids.length && Date.now()-live.viewAt<10000)?live.view:(live.view=shown(),live.viewAt=Date.now(),live.view);
+    if(!local && sync && sync.dirty()){live.inResume=true;try{sync.resume();}finally{live.inResume=false;}}   // (FEED: named while the Library was not on screen: read now it is)
     const feedWant=live.feedWant;live.feedWant=false;
     if(!local && !feedWant && synced() && live.revs && ids.every(id=>records.has(id) && Object.prototype.hasOwnProperty.call(live.revs,'s:'+id)) && setIds.every(id=>Object.prototype.hasOwnProperty.call(live.revs,'t:'+id)) && Date.now()-live.verifiedAt<NET){live.looks=(live.looks || 0)+1;live.end=Date.now();scheduleNext();return;}   // (FEED: every card in view read, nothing named since: a look, no call)
     live.start=Date.now();
@@ -12623,7 +12624,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     if(sync || !window.CNSync || typeof window.CNSync.follow!=='function')return;
     sync=window.CNSync.follow({name:'library',kinds:'strc',active:liveOn,since:()=>live.start,
       wants:k=>!live.revs || Object.prototype.hasOwnProperty.call(live.revs,k),
-      read:why=>{if(!liveOn())return;if(why==='verify' || why==='reset')live.verifiedAt=0;live.feedWant=true;readSoon(false);}});
+      read:why=>{if(!liveOn())return;if(why==='verify' || why==='reset')live.verifiedAt=0;live.feedWant=true;if(!live.inResume)readSoon(false);}});
   };
   feedFollow();
   /** The orders of the sheet cards on screen (the placement feed reads where their pieces are, so the Library's lists and chips follow a hold or a take-off made elsewhere). */

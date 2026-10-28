@@ -262,7 +262,7 @@
   root.addEventListener("online", back); root.addEventListener("cn-cloud-back", back);
 
   /** Start the loop when a surface that needs it has come on screen since it last stopped (the search box or the order window opened over a tab that does not follow); the placement feed asks every few seconds. */
-  const ensure = () => { if (!st.dead && !st.timer && !st.busy && live()) schedule(); };
+  const ensure = () => { if (sync && sync.dirty() && sync.resume()) return; if (!st.dead && !st.timer && !st.busy && live()) schedule(); };   // (FEED: a record named while nothing here watched is read once something does)
   channel();   // (listening for the other tabs of this computer from the start)
   // FEED: a custom record named by the changes feed is read now (one read for any number of them); quiet unless the Review tab is on screen, as a poll is
   const follow = () => {

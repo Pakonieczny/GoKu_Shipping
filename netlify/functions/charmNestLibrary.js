@@ -4403,7 +4403,7 @@ const orderIdOf = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30
    there is never lost: see _orderCancel.js (a person's stays over a later Etsy detection, which only adds etsyStatus). */
 async function op_cancelPut(b) {
   const id = orderIdOf(b.orderId); if (!id) return { error: "orderId required" };
-  feedTouch(["x:" + id]);   // (FEED: its cancel record; the Library's revision moves for it as before, '*')
+  feedTouch(["x:" + id, "o:" + id]);   // (FEED: its cancel record and its timeline; the Library's revision moves for it as before, '*')
   const r = b.record && typeof b.record === "object" ? b.record : {}, who = str(b.by || "operator", 80);
   // at: the moment the person pressed Cancel (the page's clock, within the last day), else now (Paul, 29 Sep 00:26)
   const pressed = num(b.at), now = Date.now(), at = pressed > now - 864e5 && pressed <= now + 6e4 ? Math.min(Math.round(pressed), now) : now;

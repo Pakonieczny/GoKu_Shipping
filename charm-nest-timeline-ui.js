@@ -1531,16 +1531,17 @@
     const IDLE_K = POLL_IDLE / POLL_OPEN;
     /* FEED (Paul, 28 Oct 2026: "every press and every window to feel like a native app, and fewer cloud calls"): while this computer's changes feed answers
        (charm-nest-sync-worker.js), the window asks nothing every few seconds. The feed names this order's timeline (o:, and its Order_Rev, which every
-       writer raises: a station's scan, a Team message, a cancel), its pieces (p:), its cancel (x:) and its custom records (c:); the window asks its question
-       once when it does (with the full digest: what moved may be a record Order_Rev is not raised for), and every FULL_EVERY anyway. Without the feed it polls
-       as before. */
+       writer raises: a station's scan, a Team message, a cancel) and its cancel (x:); its pieces and its custom records reach it as before (the placement
+       feed's and the Review feed's reads of them poke it). The window asks its question once when it does (with the full digest), and every FULL_EVERY
+       anyway. Without the feed it polls as before. */
     let sync = null, unwatch = null;
     const synced = () => !!(sync && sync.live());
     const pace = () => { if (synced()) return Math.max(IDLE_K, fullEvery() / POLL_OPEN); const idle = Date.now() - Math.max(lastTouch, F.moved); if (idle >= IDLE_MS) return IDLE_K; return idle < ACTIVE_MS && focused() ? 1 : POLL_QUIET / POLL_OPEN; };
     const feedOn = () => {
       const C = root.CNSync; if (sync || !id || !C || typeof C.follow !== "function") return;
-      sync = C.follow({ name: "timeline:" + id, kinds: "opxc", active: () => !F.dead && subs.size > 0 && seen(), since: () => F.began,
-        wants: k => (k[0] === "c" ? k.slice(2).split("_")[0] : k.slice(2)) === id,
+      // (its pieces and custom records reach it as before: the placement feed's read of this order (OrderPieces → poke) and the Review feed's (UI.poke); a p:* or x:* is theirs to read)
+      sync = C.follow({ name: "timeline:" + id, kinds: "ox", wild: "o", active: () => !F.dead && subs.size > 0 && seen(), since: () => F.began,
+        wants: k => k.slice(2) === id,
         read: () => { if (F.dead || !subs.size) return; F.moved = Date.now(); F.verifyNext = true; if (F.loading) { F.dirty = true; return; } arm(Math.max(0, F.began + gap - Date.now())); } });
       unwatch = C.watchOrder ? C.watchOrder(id) : null;
     };
