@@ -171,7 +171,10 @@ async function partB() {
     const ta = page.locator(Q + ' .engp .engpWords[data-face="front"]');
     await ta.click(); await page.keyboard.press('Control+a'); await page.keyboard.type('October'); await settleP(page);
     await page.click(Q + ' [data-engp="save"]'); await settleP(page);
+    // (ENGWHY: a Save that overrides the system's reading asks why, one press; a Save with consequences asks to confirm)
+    if (await page.locator(Q + ' [data-engp="why"]').count()) { await page.locator(Q + ' [data-engp="why"]').first().click(); await settleP(page); }
     if (await page.locator(Q + ' [data-engp="saveYes"]').count()) await page.click(Q + ' [data-engp="saveYes"]');
+    const panel8 = await page.evaluate(q => { const c = document.querySelector(q), t = c && c.querySelector('.engp .engpWords[data-face="front"]'), sv = c && c.querySelector('[data-engp="save"]'); return { typed: t ? t.value : null, save: sv ? (sv.disabled ? 'disabled' : 'on') : 'none', err: ((c && c.querySelector('.engp .engpErr')) || {}).textContent || '' }; }, Q);
     await page.waitForFunction(id => { const j = [...Engrave.items().values()].find(x => x.face === 'front' && (x.copies || []).includes(id)), f = __refit.frames, i = f.findIndex(x => x.drawn === 'real' && x.state === 'review'); return j && j.fit && /OCTOBER/i.test((j.fit.lines || []).join(' ')) && i >= 0 && f.length > i + 4; }, PID, { timeout: 60000, polling: 100 }).catch(() => {});
     const L2 = await page.evaluate(() => { __refit.stop = true; return __refit; }), f2 = L2.frames;
     const words = await page.evaluate(id => { const j = [...Engrave.items().values()].find(x => x.face === 'front' && (x.copies || []).includes(id)); return { lines: j.fit ? j.fit.lines : null, state: j.state }; }, PID);
@@ -180,7 +183,7 @@ async function partB() {
     const long2 = L2.long.filter(x => x[0] >= L2.t0).reduce((a, x) => Math.max(a, x[1]), 0), fit2 = L2.fits.filter(x => x.back).map(x => Math.round(x.back - x.sent));
     console.log(`   new words: ${JSON.stringify(runs2)}; the worker's fits ${JSON.stringify(fit2)} ms; the longest main-thread task ${Math.round(long2)} ms`);
     check(`B8 new words for the front from the panel ("${(words.lines || []).join(' ')}"): from Save until they are drawn (${end2 >= 0 ? Math.round(f2[end2].t - L2.t0) : -1} ms) no frame is blank (${held2.length} held, dimmed, "Fitting…"), and nothing is placed on the page's own thread (${L2.searches} searches)`,
-      !!words.lines && /OCTOBER/i.test(words.lines.join(' ')) && end2 > 0 && blank2.length === 0 && held2.every(x => x.cue && !x.box) && L2.searches === 0, JSON.stringify({ words, end2, blank: blank2.length, held: held2.length, searches: L2.searches, runs2 }));
+      !!words.lines && /OCTOBER/i.test(words.lines.join(' ')) && end2 > 0 && blank2.length === 0 && held2.every(x => x.cue && !x.box) && L2.searches === 0, JSON.stringify({ words, end2, blank: blank2.length, held: held2.length, searches: L2.searches, runs2, panel8 }));
     // B9 · words with no job fit to read: their picture is placed in the fit worker, as the page's own code places them
     const q = await page.evaluate(async rid => {
       const row = Orders.rows().find(r => r.order && String(r.order.receiptId) === rid), P = window.CharmNestEngravePreview, R = window.CNEngraveRefit, G = window.CharmNestGeom, out = { calls: 0, searches: 0 };
