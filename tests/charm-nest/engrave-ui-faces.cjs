@@ -100,7 +100,7 @@ function makePage(src, o) {
     esc: v => String(v ?? '').replace(/[&<>"']/g, x => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[x])),
     toast: m => toasts.push(String(m)), allSheets: () => [], refreshAllCards() {}, Session: { schedule() {} }, agent() {}, getComputedStyle: () => ({ flexGrow: '0' }), employeeName: () => 'Paul', humanAct() {}, TL: { rec() {}, line() {} }, ...bare });
   const pmStart = src.indexOf('function purchaseMarkup('); vm.runInContext(src.slice(pmStart, src.indexOf('\n}\n', pmStart) + 3), c);
-  const BACK_CALL = 'const bc = renderBack(job, px, { grid: true, editable: true, include: framed, draft: panelOn });';
+  const BACK_CALL = 'const bc = (held && heldCanvas(job, px)) || renderBack(dj, px, { grid: true, editable: true, include: framed, draft: panelOn && !held });';
   let moduleSrc = src.slice(src.indexOf('const Engrave = window.Engrave ='), src.indexOf('/* ═══ 22 · Sets'));
   assert.ok(moduleSrc.includes(BACK_CALL), 'the editor draws its back here (the test stands a plain canvas in for the drawing machinery)');
   moduleSrc = moduleSrc.replace(BACK_CALL, 'const bc = standInBack();');
@@ -160,7 +160,12 @@ function facedPage(o) {
 /* the markup the page drew for the BACK-ONLY lines before faces existed: SHA-1 (12 hex) of the normalised markup of each surface, captured from the unchanged page (origin/main at 59c294c) with
    `node tests/charm-nest/engrave-ui-faces.cjs --capture <path to a charm-nest-bridge.js>` (the card without the empty hidden slot the setup editor mounts into; see SETUP_SLOT).
    Re-captured on 16 Oct 2026 from origin/main 3a4e42f0 (the page BEFORE NODECIDED): the older hashes had gone stale (purchaseMarkup's option titles, the work area's controls), so these pins now say "a piece still to approve draws its row and its card exactly as it did before the Decided view was removed".
-   The six card pins were captured again on 18 Oct 2026 (HDRMETA) from origin/main 688d321 with HDR_META taken out, the same way: the new page draws exactly those cards. */
+   The six card pins were captured again on 18 Oct 2026 (HDRMETA) from origin/main 688d321 with HDR_META taken out, the same way: the new page draws exactly those cards.
+   And again on 28 Oct 2026 (git bisect from c98bec1, which passed): the cards' markup differs from that capture in exactly these lines, each a rule change, nothing else (diffed line by line):
+     · "line" said as "piece" (Paul, 5 Oct 2026; 1a4c805, 75b62fd): the counter's title "an earring piece's Left and Right are one placement", the ear switch's label "... ear of this piece" (pair, ears)
+     · MOVEKEYS (Paul, 27 Oct 2026; 892140f): the drawing takes the focus (tabindex -1, no outline) and its title says "arrow keys move them 0.05 mm, 1 mm with Shift" (every card)
+   Two more changes of the page broke the test's own stand-ins, not the page: REFIT (Paul, 28 Oct 2026; c638443) draws the held drawing while a face is fitted again (BACK_CALL below follows its
+   line), and APPROVEFIX (Paul, 28 Oct 2026; e3bc858) times every wait of an approval (approveWithin: the approval slice's sandbox needs setTimeout). */
 const SETUP_SLOT = /<section class="pvSec pvSetup"[^>]*>.*?<\/section>/;
 /* HDRMETA (Paul, 18 Oct 2026: "Remove 'Thin Strokes', 'charm', '5x8.5' text from the UI."): the card's head no longer draws the size · kind line under the order number or the THIN STROKES chip. Both are taken out of
    the card's markup before it is hashed (on the unchanged page they are there, on the new page they never are), so the pins still say "everything else in the card is byte for byte what it was"; 5d proves they are gone. */
@@ -171,17 +176,17 @@ const HDR_META = /<span class="sub">[^<]*<\/span>|<span class="small" title="the
 const REDRAWN = new Set(['row:tag', 'row:ears', 'row:discs', 'row:pair', 'row:neck']);
 const GOLDEN = {
   'row:tag': 'd3bca07bc601',
-  'card:tag': 'bf9f3e28597a',
+  'card:tag': 'd7eb33493002',
   'row:ears': '135eef145959',
-  'card:ears': '3394a2547059',
+  'card:ears': '7de246345ee9',
   'row:discs': 'f3db36e29c63',
-  'card:discs': '6095d865d46c',
+  'card:discs': '3293e711c368',
   'row:pend': 'e8d992610875',
-  'card:pend': 'cf9cef9e4b56',
+  'card:pend': 'f11270e9fb4b',
   'row:pair': 'd3f2f66d7381',
-  'card:pair': '031569d1bdc7',
+  'card:pair': 'beb7e806a147',
   'row:neck': '5afec64f788f',
-  'card:neck': '201d96e29a04',
+  'card:neck': '9406600de889',
 };
 
 /** Every surface a line draws with its back job only: its row in the list and its editor card (the Decided row is gone: NODECIDED). */
@@ -384,7 +389,7 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
     const mk = (slot, face, lines) => { const j = Object.assign({ key: Faces.jobKey(parent.key, slot, face), rowKey: slot ? parent.key : undefined, slot: slot || undefined, groupKey: '', state: 'review', lines, text: lines.join('\n'), copies: Sides.idsOfSlot(CTX, parent, slot), engraveRec: { needed: true, state: 'review', approved: false }, backs: [] }, face === 'front' ? { face: 'front' } : {}, readyFit()); if (!slot) { delete j.slot; delete j.rowKey; } j.view = { cx: 0, cy: 0, cutMembers: [] }; j.fit.glyphs = []; j.row = Sides.sideRow(CTX, parent, slot, j); return j; };
     const list = []; slots.forEach((sl, i) => { const fw = opts.front ? opts.front[i] || opts.front[0] : ['W']; const bw = opts.back ? opts.back[i] || opts.back[0] : ['1']; if (!opts.noFront) list.push(mk(sl, 'front', fw)); list.push(mk(sl, 'back', bw)); });
     for (const j of list) jobsA.set(j.key, j); Sides.linkParent(CTX, parent, list);
-    const ctx = { window: win, Date, Promise, Map, Set, WeakMap, Array, Object, String, Number, JSON, Math, console, PT: 72 / 25.4, P: { buildBackFile: async () => ({ bytes: new Uint8Array([1]) }) }, S: { settings: {} }, B: { pool: { rows: pool } },
+    const ctx = { window: win, Date, Promise, Map, Set, WeakMap, Array, Object, String, Number, JSON, Math, console, setTimeout, clearTimeout, PT: 72 / 25.4, P: { buildBackFile: async () => ({ bytes: new Uint8Array([1]) }) }, S: { settings: {} }, B: { pool: { rows: pool } },
       charmFor: () => ({ sourceId: 'source' }), sheetFor: () => ({ sheetId: 'sheet-1' }), sourceOf: () => ({ parsed: {} }), fitOpts: () => ({ lineGap: .18 }), fontIdOf: () => 'source-sans-3', verifyBackFile: async () => ({ ok: true }), EG: { cardKey: null, card: null, drafts: {} },
       CNListActivity: Activity, CNEngravingSeals: Object.assign({}, Seals, { press: async () => {} }), employeeName: () => 'Paul', needEmployee: async () => { names.push('asked'); return 'Paul'; }, Review: { remove(k) { removed.push(k); } }, Orders: { render() {}, rows: () => [] }, goes(j) { moved.push(j.key); },   // (Orders: the page's global the approval redraws; without it each approval logged "Orders is not defined")
       EG_TAB: () => '',
