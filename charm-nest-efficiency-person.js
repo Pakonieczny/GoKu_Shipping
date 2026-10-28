@@ -430,7 +430,7 @@
     const last = cal.filter(c => c.signedMs > 0 || c.lastOut || c.firstIn).pop(), lastSeen = last ? (last.lastOut || last.firstIn) : null;
     return { name: String(r.name || req.name || ""), found: r.found !== false, spellings: A(r.spellings).map(String), mode: String(r.mode || ""), range: r.range, from: isDay(r.from) ? r.from : req.from, to: isDay(r.to) ? r.to : req.to, days: num(r.days), today: isDay(r.today) ? r.today : "", live: !!r.live, prev: r.prev && r.prev.from ? { from: String(r.prev.from), to: String(r.prev.to), days: num(r.prev.days) } : null,
       granularity: r.granularity === "week" ? "week" : "day", trackingStart: isDay(r.trackingStart) ? r.trackingStart : "", firstDay: isDay(r.firstDay) ? r.firstDay : "", eventWindow: r.eventWindow && r.eventWindow.from ? r.eventWindow : null, rules: r.rules || {},
-      src, welding, series, hours, stations, cal, att: r.attendance || null, attNote, issues, contact, cannotTell: A(r.cannotTell).filter(c => c && c.text).map(c => ({ topic: String(c.topic || ""), text: String(c.text) })), notes: A(r.notes).map(String).filter(Boolean), partial: !!r.partial, errors: A(r.errors).map(String), now: num(r.now), lastSeen, lastStation: "" };
+      design: designOf(r.design), src, welding, series, hours, stations, cal, att: r.attendance || null, attNote, issues, contact, cannotTell: A(r.cannotTell).filter(c => c && c.text).map(c => ({ topic: String(c.topic || ""), text: String(c.text) })), notes: A(r.notes).map(String).filter(Boolean), partial: !!r.partial, errors: A(r.errors).map(String), now: num(r.now), lastSeen, lastStation: "" };
   }
   /** `personOrders` (E4's shape; E8's list reads it itself, this is the page's own small list until that module is in the page). */
   function normOrders(r) {
@@ -633,6 +633,38 @@
     const un = r.unknown && typeof r.unknown === "object" ? { replies: num(r.unknown.replies), messages: num(r.unknown.messages) } : null;
     return { found: r.found !== false, name: String(r.name || req.name || ""), from: isDay(r.from) ? r.from : req.from || "", to: isDay(r.to) ? r.to : req.to || "", days: num(r.days), today: isDay(r.today) ? r.today : "", live: !!r.live, prev: r.prev && r.prev.from ? { from: String(r.prev.from), to: String(r.prev.to), days: num(r.prev.days) } : null,
       granularity: r.granularity === "week" ? "week" : "day", knownFrom: isDay(r.knownFrom) ? r.knownFrom : "", src, series, hours, per, unknown: un && (un.replies || un.messages) ? un : null, notes: A(r.notes).map(String).filter(Boolean), partial: !!r.partial, errors: A(r.errors).map(String), now: num(r.now) };
+  }
+
+  /* ════════════ CUSTOM PIECES (Design & Engrave 34 to 37 and D7; Paul, 28 Oct 2026: "all of this must be tracked by employee, and I need to know when employees are
+   *  commissioning custom pieces, especially when they don't belong to an order that way we can correctly track our rates and who creates the errors and who is
+   *  creating the solutions") ════════════
+   *  The person's design work in the period, in a section of its own: the People row's own line ("2 custom pieces (2 no order) · 1 fix · 1 design save"), from the
+   *  design counters op person sends with the rest of the period (`design`, the rollups it reads anyway: nothing more is read for it); the mistakes put down to
+   *  this person (fix pieces that name them: the order, who fixed it, and beside the orders they worked, the rate); and every custom piece they sent, with its
+   *  order or the red "Custom · no order" tag and its name. The pieces and the mistakes are op custom with this person's name over the page's own window: one
+   *  Design_Log read on the server, kept 5 s and while nothing was written. Asked when the window changes, when the person's own design counters move, and
+   *  every 30 s while the window reaches today and the page is in sight (2 minutes for a past window). Hidden for somebody with no design work and no mistake. */
+  options.designMs = 30000; options.designShow = 30;
+  const METAL = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
+  /** op person's `design` (the design log's counters of the window), or null when there was none. */
+  const designOf = d => (d && typeof d === "object" ? { opened: nz(d.opened), saved: nz(d.saved), imported: nz(d.imported), custom: nz(d.custom), orderless: nz(d.orderless), fixes: nz(d.fixes) } : null);
+  /** The People row's own words (charm-nest-efficiency.js designLine): custom pieces sent, the ones with no order flagged, fixes, then the editor's saves; null when there was none. */
+  function designLine(d) {
+    if (!d) return null; const bits = [];
+    if (d.custom > 0) bits.push(`${nf(d.custom)} custom ${d.custom === 1 ? "piece" : "pieces"}${d.orderless > 0 ? ` (${nf(d.orderless)} no order)` : ""}`);
+    if (d.fixes > 0) bits.push(`${nf(d.fixes)} ${d.fixes === 1 ? "fix" : "fixes"}`);
+    if (d.saved > 0) bits.push(`${nf(d.saved)} design ${d.saved === 1 ? "save" : "saves"}`);
+    if (!bits.length && d.opened + d.imported > 0) bits.push(`Charm Editor ${nf(d.opened + d.imported)}×`);
+    return bits.length ? { text: bits.join(" · "), flag: d.orderless > 0, title: "Design work logged in these days: custom pieces sent to a sheet (with no order flagged), fix pieces, designs saved." } : null;
+  }
+  /** op custom with a name: the pieces this person sent (newest first), the mistakes put down to them, their counts. Every field is optional. */
+  function normDl(r) {
+    r = r && typeof r === "object" ? r : {};
+    const s = v => String(v == null ? "" : v), rid = v => s(v).replace(/\D/g, ""), me = A(r.people)[0] || {};
+    const pieces = A(r.pieces).filter(p => p && p.id).map(p => ({ id: s(p.id), at: nz(p.at), day: isDay(p.day) ? p.day : "", orderId: rid(p.orderId), customId: s(p.customId), customName: s(p.customName), reason: s(p.reason), name: s(p.name || p.sku || p.designId), version: num(p.version), metal: s(p.metal), quantity: Math.max(1, nz(p.quantity)),
+      fix: p.fix && typeof p.fix === "object" ? { orderId: rid(p.fix.orderId), customId: s(p.fix.customId), causedBy: s(p.fix.causedBy), suggested: s(p.fix.suggested), changed: !!p.fix.changed } : null }));
+    const mistakes = A(r.mistakes).filter(m => m && m.id).map(m => ({ id: s(m.id), at: nz(m.at), day: isDay(m.day) ? m.day : "", by: s(m.by), orderId: rid(m.orderId), customId: s(m.customId), piece: s(m.piece), suggested: s(m.suggested), changed: !!m.changed }));
+    return { from: isDay(r.from) ? r.from : "", to: isDay(r.to) ? r.to : "", pieces, mistakes, person: { sent: nz(me.sent), orderless: nz(me.orderless), fixes: nz(me.fixes), caused: nz(me.caused) }, notes: A(r.notes).map(String).filter(Boolean), partial: !!r.partial };
   }
 
   /* ════════════ the page ════════════ */
@@ -904,6 +936,116 @@
       requestAnimationFrame(() => e.top.querySelectorAll(".efpTRb i").forEach(x => { x.style.width = x.dataset.w + "%"; }));
     }
 
+    /* ── CUSTOM PIECES (Design & Engrave): the section after Issues and rates; its read is op custom with this person's name (see the block above mount) ── */
+    S.dl = { r: null, key: "", busy: false, err: "", unsupported: false, fails: 0, gen: 0, at: 0, cache: new Map(), ds: "", dsKey: "", all: false, ctl: null };
+    T.dl = 0; T.dlTick = 0; POLL.dl = () => fetchDl(true);
+    function dlStyle() {
+      if (doc.getElementById("efpDlStyle")) return;
+      const s = doc.createElement("style"); s.id = "efpDlStyle";
+      s.textContent = `
+.efpDl{display:grid;min-width:0}
+.efpLabel .efpDlLr{order:2;letter-spacing:0;text-transform:none;font-weight:500;font-size:11.5px}
+.efpDlBusy{order:3;display:inline-flex;align-items:center;gap:7px;color:var(--ink45);font-size:11.5px;letter-spacing:0;text-transform:none;font-weight:500;opacity:0;transition:opacity .2s;min-width:0}.efpDlBusy.on{opacity:1}
+.efpDlC{display:grid;min-width:0}
+.efpDlHead{display:grid;gap:6px;padding:12px 18px 11px}
+.efpDlLine{font:650 13px/1.4 var(--sans);color:var(--ink);overflow-wrap:anywhere}.efpDlLine.flag{color:var(--clay,#a5523a)}
+.efpDlMis{display:grid;gap:3px;font-size:12px;color:var(--ink70)}.efpDlMis:empty{display:none}.efpDlMis b{font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}.efpDlMis b.flag{color:var(--clay,#a5523a)}
+.efpDlList{display:grid;border-top:1px solid var(--line2)}.efpDlList:empty{display:none}
+.efpDlR{display:grid;grid-template-columns:84px minmax(0,1fr);gap:4px 12px;padding:9px 18px;border-top:1px solid var(--line2);align-items:start}.efpDlR:first-child{border-top:0}
+.efpDlR.no{box-shadow:inset 3px 0 0 var(--clay,#a5523a)}
+.efpDlW{font-size:11.5px;color:var(--ink45);font-variant-numeric:tabular-nums;line-height:1.35}
+.efpDlWhat{display:grid;gap:3px;min-width:0;font-size:12.5px}.efpDlWhat b{font-weight:650}
+.efpDlSub{font-size:11.5px;color:var(--ink70);overflow-wrap:anywhere}
+.efpDlTag{display:inline-block;font:700 9.5px var(--mono);letter-spacing:.04em;padding:2px 6px;border-radius:4px;text-transform:uppercase;vertical-align:1px;margin-right:6px}
+.efpDlTag.no{background:var(--clay,#a5523a);color:#fff}.efpDlTag.fix{background:var(--goldSoft);color:#7a5a1d}.efpDlTag.m{background:var(--card2);border:1px solid var(--line);color:var(--ink70);margin:0}
+.efpDlOrd{border:0;background:transparent;padding:0;font:650 11.5px var(--mono);color:var(--gold);cursor:pointer}.efpDlOrd:hover{text-decoration:underline}.efpDlOrd:focus-visible{outline:2px solid var(--gold);outline-offset:1px;border-radius:3px}
+.efpDlId{font:500 11px var(--mono);color:var(--ink45)}
+.efpDlNone{padding:12px 18px;color:var(--ink45);font-size:12px}
+.efpDlMore{justify-self:start;margin:2px 0 8px 12px;border:0;background:transparent;color:var(--gold);font:700 11.5px var(--sans);padding:4px 6px;border-radius:6px;cursor:pointer}.efpDlMore:hover{background:var(--goldSoft)}
+.efpDlFoot{padding:8px 18px 10px;border-top:1px solid var(--line2)}
+@container efp (max-width:640px){.efpDlHead{padding:10px 12px}.efpDlR{grid-template-columns:minmax(0,1fr);padding:9px 12px}.efpDlNone,.efpDlFoot{padding-left:12px;padding-right:12px}}`;
+      doc.head.appendChild(s);
+    }
+    /** The section, once: after Issues and rates (who made a mistake and who fixed it sit with the page's other quality figures), before the Inbox. */
+    function dlBuild() {
+      dlStyle();
+      const sec = el("section", "efpDl hidden"); sec.setAttribute("aria-label", "Custom pieces");
+      sec.innerHTML = `<div class="efpLabel"><span>Custom pieces</span><b class="efpDlN"></b><span class="efpDlLr"></span><span class="efpDlBusy" role="status"><span class="spin" aria-hidden="true"></span><span class="efpDlBusyT"></span></span></div>
+<div class="efpCard efpDlC"><div class="efpDlHead"><div class="efpDlLine"></div><div class="efpDlMis"></div></div><div class="efpDlList"></div><div class="efpHow efpDlFoot hidden"></div></div>`;
+      const at = root0.querySelector(".efpIn"); if (at && at.parentNode) at.parentNode.insertBefore(sec, at); else E.body.appendChild(sec);
+      const q = s => sec.querySelector(s);
+      E.dl = { sec, n: q(".efpDlN"), lr: q(".efpDlLr"), busy: q(".efpDlBusy"), busyT: q(".efpDlBusyT"), card: q(".efpDlC"), line: q(".efpDlLine"), mis: q(".efpDlMis"), list: q(".efpDlList"), foot: q(".efpDlFoot") };
+      sec.addEventListener("click", e => { const b = e.target.closest && e.target.closest("[data-dlall]"); if (b) { S.dl.all = !S.dl.all; E.dl.list._sig = ""; paintDl(); } });
+      T.dlTick = setInterval(() => { const D = S.dl; if (S.dead || S.locked || D.unsupported) return; if (visible() && !T.dl && !D.busy) schedule("dl", Math.max(200, D.at + dlWait() - Date.now())); }, 1000);   // (shown again after a pause: the read that was due)
+    }
+    const dlReq = () => { const p = period(); return { op: "custom", name: S.name, range: S.range === "custom" ? { from: p.from, to: p.to } : S.range, day: S.range === "custom" ? p.to : S.anchor }; };
+    const dlWait = () => (S.dl.fails ? backoff(S.dl.fails) : period().to >= today() ? options.designMs : options.designMs * 4);
+    /** The window changed (or the page opened): a stored answer is shown at once and made fresh when it is older than 4 s. */
+    function dlGo() {
+      if (!E.dl) return; const D = S.dl, key = reqKey(), hit = D.cache.get(key); D.all = false;
+      if (hit) { D.r = hit.r; D.key = key; D.at = hit.at; D.err = ""; }
+      paintDl(); if (D.unsupported) return;
+      if (!hit || Date.now() - hit.at > 4000) fetchDl(false); else schedule("dl", dlWait());
+    }
+    async function fetchDl(poll) {
+      clearTimeout(T.dl); T.dl = 0; const D = S.dl; if (S.dead || S.locked || !E.dl || D.unsupported) return; if (poll && (!visible() || D.busy)) return;
+      if (D.ctl) { try { D.ctl.abort(); } catch (_) {} }
+      const key = reqKey(), gen = ++D.gen; D.busy = true; D.ctl = root.AbortController ? new AbortController() : null; paintDl();
+      try {
+        const r = await call(dlReq(), D.ctl && D.ctl.signal); if (gen !== D.gen || S.dead) return;
+        const R = normDl(r); D.cache.set(key, { r: R, at: Date.now() }); while (D.cache.size > options.cacheMax) D.cache.delete(D.cache.keys().next().value);
+        D.r = R; D.key = key; D.err = ""; D.fails = 0; D.at = Date.now();
+      } catch (e) {
+        if (gen !== D.gen || S.dead || (e && e.name === "AbortError")) return;
+        if (isAuth(e)) { lockOut(e); return; }
+        if ((e && (e.status === 404 || e.status === 405)) || (e && e.status === 400 && /unknown op|bad op/i.test(String(e.serverError || e.message)))) { D.unsupported = true; D.err = ""; }   // (a service without op custom: the line alone, from op person)
+        else { D.err = String((e && e.message) || e).slice(0, 160); D.fails++; D.at = Date.now(); }
+      } finally { if (gen === D.gen) { D.busy = false; D.ctl = null; paintDl(); if (!S.locked && !S.dead && !D.unsupported) schedule("dl", dlWait()); } }
+    }
+    /** A new answer of op person: when the person's own design counters moved (a piece sent, a fix, a save), the pieces are asked again at once. */
+    function dlSeen(M) {
+      if (!E.dl) return; const D = S.dl, key = reqKey(), ds = JSON.stringify(M.design);
+      const moved = D.dsKey === key && D.ds !== ds; D.ds = ds; D.dsKey = key;
+      paintDl(); if (moved && !D.unsupported && !D.busy) fetchDl(false);
+    }
+    function dlRefresh() { const D = S.dl; D.cache.clear(); D.unsupported = false; D.fails = 0; fetchDl(false); }
+    /** The line, the mistakes and the pieces; nothing is drawn again while none of it changed. */
+    function paintDl() {
+      const e = E.dl; if (!e) return; const D = S.dl, M = S.M, R = D.r && D.key === reqKey() ? D.r : null, td = today();
+      const d = M && M.design, mine = R && R.person;
+      // the line: the People row's own words from op person's counters (a period whose pieces were read but whose counters say nothing: the pieces' own count)
+      const ln = designLine(d) || (mine && mine.sent ? designLine({ custom: mine.sent, orderless: mine.orderless, fixes: mine.fixes, saved: 0, opened: 0, imported: 0 }) : null);
+      const caused = mine ? mine.caused : 0, show = !!ln || caused > 0 || !!(R && R.pieces.length);
+      e.sec.classList.toggle("hidden", !show); if (!show) return;
+      const stale = D.busy && !R; e.busy.classList.toggle("on", stale); setText(e.busyT, stale ? "Reading the pieces…" : "");
+      setText(e.lr, periodLabel(S.range, period(), td)); setText(e.n, d && d.custom > 0 ? nf(d.custom) : mine && mine.sent ? nf(mine.sent) : "");
+      setText(e.line, ln ? ln.text : "No custom pieces sent in this period"); e.line.classList.toggle("flag", !!(ln && ln.flag)); e.line.title = ln ? ln.title + " The pieces are listed below." : "";
+      const multi = !!(R && R.from && R.from !== R.to), when = (at, day) => `${at ? esc(clock(at)) : ""}${multi && day ? `<br>${esc(dayLbl(day))}` : ""}`;
+      const ord = id => `<button type="button" class="efpDlOrd" data-order="${esc(id)}" title="Open this order">${esc(id)}</button>`;
+      // the mistakes put down to this person, beside the orders they worked (op person's figure, the period's own)
+      const orders = M ? kv(M, "kpis.orders") : null;
+      let mis = "";
+      if (R) {
+        mis = caused > 0 ? `<div>Mistakes made <b class="flag">${nf(caused)}</b>${orders > 0 ? ` · ${(Math.round(caused / orders * 1000) / 10).toString()}% of ${nf(orders)} orders worked` : ""}</div>` + R.mistakes.slice(0, 12).map(m => `<div class="efpDlSub">${m.orderId ? `Order ${ord(m.orderId)}` : esc(m.customId || "An earlier piece")} · fixed by <b>${esc(m.by || "someone")}</b>${m.piece ? ` with “${esc(m.piece)}”` : ""}${m.at ? ` · ${esc(stamp(m.at, td))}` : ""}${m.changed && m.suggested ? ` (the order's history said ${esc(m.suggested)})` : ""}</div>`).join("") + (R.mistakes.length > 12 ? `<div class="efpDlSub">+${nf(R.mistakes.length - 12)} more</div>` : "")
+          : `<div>Mistakes made <b>0</b> · none put down to ${esc(S.name)} in this period</div>`;
+      } else if (D.err) mis = `<div>The custom pieces could not be read just now. Trying again.</div>`;
+      if (e.mis._h !== mis) { e.mis._h = mis; e.mis.innerHTML = mis; }
+      // every custom piece they sent: its order, or the red "Custom · no order" tag with its name
+      const all = R ? R.pieces : [], few = options.designShow, list = D.all ? all : all.slice(0, few), sig = JSON.stringify([R ? list.map(p => p.id) : null, all.length, D.all, multi, !!ln]);
+      if (e.list._sig !== sig) {
+        e.list._sig = sig;
+        e.list.innerHTML = !R ? "" : !all.length ? `<div class="efpDlNone">No custom piece was sent by ${esc(S.name)} in this period.</div>` : list.map(p => {
+          const metal = METAL[p.metal] || "", design = `${p.name || "Custom piece"}${p.version ? ` v${p.version}` : ""}`;
+          const order = p.orderId ? `Order ${ord(p.orderId)}${p.customName ? ` · ${esc(p.customName)}` : ""}` : `<span class="efpDlTag no">Custom · no order</span>${p.customName ? `<b>${esc(p.customName)}</b>` : ""}${p.customId ? ` <span class="efpDlId">${esc(p.customId)}</span>` : ""}`;
+          const fx = p.fix ? `<div class="efpDlSub"><span class="efpDlTag fix">Fix</span>Fixes ${p.fix.orderId ? `order ${ord(p.fix.orderId)}` : esc(p.fix.customId || "an earlier piece")} · ${p.fix.causedBy ? `mistake by <b>${esc(p.fix.causedBy)}</b>` : "mistake not put down to anyone"}${p.fix.changed && p.fix.suggested ? ` (the order's history said ${esc(p.fix.suggested)})` : ""}</div>` : "";
+          return `<div class="efpDlR${p.orderId ? "" : " no"}" data-id="${esc(p.id)}"><span class="efpDlW">${when(p.at, p.day)}</span><div class="efpDlWhat"><div>${order}</div><div class="efpDlSub">${esc(design)}${metal ? ` · <span class="efpDlTag m">${metal}</span>` : ""}${p.quantity > 1 ? ` × ${nf(p.quantity)}` : ""}</div>${p.reason ? `<div class="efpDlSub">Reason: ${esc(p.reason)}</div>` : ""}${fx}</div></div>`;
+        }).join("") + (all.length > few ? `<button type="button" class="efpDlMore" data-dlall aria-expanded="${!!D.all}">${D.all ? `Show the newest ${few}` : `Show all ${nf(all.length)}`}</button>` : "");
+      }
+      const notes = R ? R.notes.slice() : []; if (R && R.partial && !notes.length) notes.push("Part of the custom pieces could not be read just now.");
+      if (R && D.err) notes.push("Not updated just now: these are the pieces last read.");
+      const fs = notes.join(" "); setText(e.foot, fs); e.foot.classList.toggle("hidden", !fs);
+    }
+
     /* ── build once; everything after updates in place ── */
     const CHEV = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3 5 8l5 5"/></svg>`;
     const SEARCH = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>`;
@@ -990,6 +1132,7 @@
         wt: chart("bars", q('[data-c="wt"] .efpCh'), { height: 170, name: "Welding station: time by task", stack: true }), wm: chart("bars", q('[data-c="wm"] .efpCh'), { height: 170, name: "Orders matched" }) };
       mini = { rate: miniTip(E.rates), shift: miniTip(E.shiftH) };
       inboxBuild(q);
+      dlBuild();
       setText(E.name, S.name); setText(E.av, initials(S.name)); E.av.dataset.t = String(tint(S.name));
       root0.addEventListener("click", onClick); root0.addEventListener("submit", onSubmit);
       E.find.addEventListener("input", onSearchInput); E.find.addEventListener("keydown", e => { if (e.key === "Escape" && E.find.value) { e.preventDefault(); E.find.value = ""; onSearchInput(); } });
@@ -1320,6 +1463,7 @@
       S.M = M; S.at = at || Date.now(); E.wait.classList.add("hidden"); E.body.classList.remove("hidden"); E.body.classList.remove("dim"); if (!S.locked) E.msg.classList.add("hidden");
       render(M, first);
       if (laserH) laserH.repaint();
+      dlSeen(M);
     }
     async function fetchRange(gen, poll) {
       clearTimeout(T.range); T.range = 0; if (S.dead || S.locked) return; if (poll && (!visible() || S.busy)) return;
@@ -1358,6 +1502,7 @@
       try { o.onState && o.onState({ range: S.range, day: S.anchor, from: period().from, to: period().to }); } catch (_) {}
       syncLaser();
       inboxGo();
+      dlGo();
       const key = reqKey(), hit = S.cache.get(key);
       if (hit) accept(hit.r, true, hit.at); else E.body.classList.add("dim");
       clearTimeout(T.cal); T.cal = 0; if (S.M) schedule("cal", hit ? 200 : 900);
@@ -1501,7 +1646,7 @@
       inboxEnd();
       if (root0.parentNode) root0.remove(); instances.delete(api);
     }
-    function refresh() { if (S.dead) return; if (laserH) laserH.refresh(); S.cache.clear(); S.gen++; S.fails = 0; fetchRange(S.gen, false); pollLive(); pollCal(); if (ordersH && typeof ordersH.refresh === "function") ordersH.refresh(); else loadOrders(true); if (matchedH && typeof matchedH.refresh === "function") matchedH.refresh(); }
+    function refresh() { if (S.dead) return; if (laserH) laserH.refresh(); S.cache.clear(); S.gen++; S.fails = 0; fetchRange(S.gen, false); pollLive(); pollCal(); if (ordersH && typeof ordersH.refresh === "function") ordersH.refresh(); else loadOrders(true); if (matchedH && typeof matchedH.refresh === "function") matchedH.refresh(); dlRefresh(); }
 
     build(); paintBar(); setText(E.waitT, `Reading ${S.name}'s history…`);
     if (!o.onBack) E.back.classList.add("hidden");
