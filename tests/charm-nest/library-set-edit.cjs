@@ -74,7 +74,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs',
     const all = () => new Map([...st.docs.entries()].map(([k, v]) => [k, JSON.stringify(v)])), before = all(), r = await edit(moves, extra);
     assert.equal(r.status, 409, what + ' → ' + JSON.stringify(r)); assert.match(r.error, re, what + ': ' + r.error);
     // (the handler moves its revision counters after every flowApply, refused or not: that is the handler's own rule for all ops, not this edit's)
-    const after = all(), changed = [...new Set([...before.keys(), ...after.keys()])].filter(k => before.get(k) !== after.get(k) && !k.startsWith('Charm_Nest_Rev/'));
+    const after = all(), changed = [...new Set([...before.keys(), ...after.keys()])].filter(k => before.get(k) !== after.get(k) && !k.startsWith('Charm_Nest_Rev/') && !k.startsWith('Charm_Nest_Push/')); // (PUSH, 28 Oct 2026: a refusal still raises the feed's revision documents above and, after them, the live-update counter Charm_Nest_Push/counter: a derived nudge, not data)
     assert.deepEqual(changed, [], what + ': a refusal writes no sheet, set, order note or seal');
     return r;
   };

@@ -104,7 +104,7 @@ const S = 'Charm_Nest_Sheets', SET = 'Charm_Nest_Sets', RUN = 'Charm_Nest_Runs';
   });
   const all = () => new Map([...st.docs.entries()].map(([k, v]) => [k, JSON.stringify(v)]));
   // a refusal (a plan with a need, or a refused step) writes no sheet, set, order note or seal; the handler's own revision counters are not records
-  const wrote = (before, after) => [...new Set([...before.keys(), ...after.keys()])].filter(k => before.get(k) !== after.get(k) && !k.startsWith('Charm_Nest_Rev/'));
+  const wrote = (before, after) => [...new Set([...before.keys(), ...after.keys()])].filter(k => before.get(k) !== after.get(k) && !k.startsWith('Charm_Nest_Rev/') && !k.startsWith('Charm_Nest_Push/')); // (PUSH, 28 Oct 2026: a refusal still raises the feed's revision documents above and, after them, the live-update counter Charm_Nest_Push/counter: a derived nudge, not data)
   const held = id => !!(recOf(id).laserHold && recOf(id).laserHold.at);
   const zoneBy = (zs, key) => zs.find(z => (key === 'progress' || key === 'laser' || key === 'completed') ? z.area === key : key === 'new' ? z.newSet : z.set === key);
   const refuses = async (what, item, to, key, re) => {

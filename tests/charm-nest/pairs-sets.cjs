@@ -145,7 +145,7 @@ const id = (r, t, n) => `${r}_${t}_${n}`;
     const refused = async (what, moves, re) => {
       const before = all(), r = await edit(moves);
       assert.equal(r.status, 409, what + ' → ' + JSON.stringify(r)); assert.match(r.error, re, what + ': ' + r.error);
-      const after = all(), changed = [...new Set([...before.keys(), ...after.keys()])].filter(k => before.get(k) !== after.get(k) && !k.startsWith('Charm_Nest_Rev/'));
+      const after = all(), changed = [...new Set([...before.keys(), ...after.keys()])].filter(k => before.get(k) !== after.get(k) && !k.startsWith('Charm_Nest_Rev/') && !k.startsWith('Charm_Nest_Push/')); // (PUSH, 28 Oct 2026: a refusal still raises the feed's revision documents above and, after them, the live-update counter Charm_Nest_Push/counter: a derived nudge, not data)
       assert.deepEqual(changed, [], what + ': a refusal writes nothing');
       return r;
     };

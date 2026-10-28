@@ -41,20 +41,25 @@ const say = s => console.log('  ' + s);
       const res = await Promise.all(done), span = Date.now() - t0, w = f.log.writes;
       assert(res.every(r => r.ok === true), 'every nudge of the burst is answered true');
       assert(w.length < 100 / 3, `100 nudges are a few writes, not 100: ${w.length}`);
-      assert(w.length <= Math.ceil(span / Push.GAP_MS) + 1, `no more than one write each gap (${Push.GAP_MS} ms): ${w.length} in ${span} ms`);
-      for (let i = 1; i < w.length; i++) assert(w[i].begin >= w[i - 1].end && w[i].begin - w[i - 1].begin >= Push.GAP_MS - 5, 'one write in the air at a time, a gap between their beginnings');
+      assert(w.length <= Math.ceil(span / 50) + 1, `at most one write per write-time (50 ms): ${w.length} in ${span} ms`);
+      for (let i = 1; i < w.length; i++) assert(w[i].begin >= w[i - 1].end, 'one write in the air at a time');
       res.forEach((r, i) => assert(w.some(x => x.begin >= issued[i] && x.end <= r.at), `nudge ${i} was answered by a write that began after it (the last nudge is never lost, nothing is left for a later request)`));
       assert(w.every(x => x.path === 'Charm_Nest_Push/counter' && x.opt.merge === true && Object.keys(x.data).sort().join() === 'at,n' && x.data.n.__inc === 1 && x.data.at.__ts), 'each write is { n: increment(1), at: server time } on the real world\'s counter, merged, and nothing else');
       say(`A · 100 nudges in ${span} ms → ${w.length} writes (${(w.length / (span / 1000)).toFixed(1)}/s), each answered by a write that began after it`);
     }
     {
-      // A2 · one after another (an instance's sequential requests): each waits out the gap, and nobody waits for nothing
+      // A2 · one after another (an instance's sequential requests) with a counter that answers fast: nobody waits for the counter's sake; with one that answers slowly (contention), the next waits out the cool-down
       const f = fake({ lat: 20 }), t0 = Date.now(); const first = Push.nudge(f, FV, ''); await first; const tFirst = Date.now() - t0;
       for (let i = 0; i < 6; i++) await Push.nudge(f, FV, '');
       const span = Date.now() - t0, w = f.log.writes;
       assert(tFirst < 150, 'the first nudge of a quiet spell is written at once: ' + tFirst + ' ms');
-      assert(w.length === 7 && span >= 6 * (Push.GAP_MS - 25), `a stream one after another is held to the gap: ${w.length} writes in ${span} ms`);
-      say(`A · 7 nudges one after another → ${w.length} writes in ${span} ms (the first at once, ${tFirst} ms; then one each ${Push.GAP_MS} ms)`);
+      assert(w.length === 7 && span < 450, `a fast counter: 7 nudges one after another are 7 writes with no waiting for the counter's sake: ${w.length} writes in ${span} ms`);
+      const g = fake({ lat: Push.SLOW_MS + 60 }), u0 = Date.now(); for (let i = 0; i < 4; i++) await Push.nudge(g, FV, '');
+      const gw = g.log.writes, uspan = Date.now() - u0;
+      assert(gw.length === 4 && gw.slice(1).every((x, i) => x.begin - gw[i].begin >= Push.COOL_MS - 5), `a slow counter (${Push.SLOW_MS + 60} ms a write): each begins at least ${Push.COOL_MS} ms after the one before: ${gw.slice(1).map((x, i) => x.begin - gw[i].begin).join('/')} ms`);
+      const h = fake({ lat: 20 }); await Push.nudge(h, FV, ''); const realNow = Date.now; Date.now = () => realNow() - 1100000; const tb = realNow(); await Push.nudge(h, FV, ''); Date.now = realNow;
+      assert(realNow() - tb < 400, 'a clock that jumps back (a test\'s virtual clock, an NTP step) never makes a nudge sleep: ' + (realNow() - tb) + ' ms');
+      say(`A · 7 nudges one after another on a fast counter → ${w.length} writes in ${span} ms (the first at once, ${tFirst} ms); on a slow one (${Push.SLOW_MS + 60} ms a write) each begins ${Push.COOL_MS}+ ms after the last; a clock jumping back by 18 minutes costs no wait`);
     }
     {
       // A3 · a refused write is tried again; two refusals are given up, never thrown; a hung one does not hold the nudges behind it
@@ -87,7 +92,7 @@ const say = s => console.log('  ' + s);
 
     /* ── B · through the real handler ── */
     const counter = prefix => st.doc(prefix + 'Charm_Nest_Push', 'counter');
-    await sleep(Push.GAP_MS + 20);
+    await sleep(Push.COOL_MS + 20);
     assert(!counter('') && !counter('Sandbox_'), 'nothing written before a write');
     let r = await call({ op: 'putSheet', sheet: { id: 'pending-sheet', note: 'w1', orders: ['3700000102'] } });
     assert.equal(r.status, 200); let c = counter('');
@@ -95,10 +100,10 @@ const say = s => console.log('  ' + s);
     assert.deepEqual(Object.keys(c).sort(), ['at', 'n'], 'the counter holds { n, at } and nothing else');
     assert(!JSON.stringify(c).match(/3700000102|pending-sheet|[spotxcmar]:/), 'no order id, sheet id or key in it');
     assert(!counter('Sandbox_'), 'the sandbox\'s counter is not touched by a production write');
-    await sleep(Push.GAP_MS + 20);
+    await sleep(Push.COOL_MS + 20);
     r = await call({ op: 'poolUpdate', poolIds: ['3700000101_12345_1'], patch: { note: 'y' } }); assert.equal(r.status, 200);
     assert.equal(counter('').n, 2, 'a second write: 2 (a count that only goes up)');
-    await sleep(Push.GAP_MS + 20);
+    await sleep(Push.COOL_MS + 20);
     const n0 = counter('').n, w0 = Push.stats.writes;
     r = await call({ op: 'listSheets', excludeDone: true }); assert.equal(r.status, 200);
     r = await call({ op: 'laserStatus', sheetIds: ['ready-sheet'] }); assert.equal(r.status, 200);
@@ -107,11 +112,11 @@ const say = s => console.log('  ' + s);
     r = await call({ op: 'putSheet', sandbox: true, sheet: { id: 'sb-sheet', note: 'sandbox' } }); assert.equal(r.status, 200);
     c = counter('Sandbox_'); assert(c && c.n === 1 && Object.keys(c).sort().join() === 'at,n', 'a sandbox write raises the sandbox\'s counter: ' + JSON.stringify(c));
     assert.equal(counter('').n, n0, 'and not the real one');
-    await sleep(Push.GAP_MS + 20);
+    await sleep(Push.COOL_MS + 20);
     r = await call({ op: 'timelineAdd', events: [{ orderId: '3700000100', type: 'note', at: Date.now(), by: 'Bea', text: 'a', id: 'push-1' }] });
     assert.equal(r.status, 200); assert.equal(counter('').n, n0 + 1, 'a timeline event (feed shard o) raises it');
     // a Team message raises an order's Order_Rev through _orderTimeline.touchNow (firebaseOrders): the counter follows it
-    await sleep(Push.GAP_MS + 20);
+    await sleep(Push.COOL_MS + 20);
     const Timeline = require(path.join(fnDir, '_orderTimeline.js')), FVr = st.admin.firestore.FieldValue, n1 = counter('').n;
     await Timeline.touchNow(db, FVr, ['3700000100'], '');
     assert(st.doc('Order_Rev', '3700000100').n > 0 && counter('').n === n1 + 1, 'a Team message\'s Order_Rev raise moves the counter');
@@ -121,7 +126,7 @@ const say = s => console.log('  ' + s);
 
     const col0 = db.collection, push = /Charm_Nest_Push/;
     // B3 · 30 writes at once, the counter taking 40 ms: each answer comes after a counter write that began after ITS shards were written
-    await sleep(Push.GAP_MS + 20);
+    await sleep(Push.COOL_MS + 20);
     db.collection = c => { if (push.test(c)) { const o = col0(c); return { doc: id => { const d = o.doc(id); return { set: async (data, opt) => { events.push({ k: 'cbegin', seq: ++seq }); await sleep(40); const x = await d.set(data, opt); events.push({ k: 'cend', seq: ++seq }); return x; } }; } }; } return col0(c); };
     let seq = 0; const events = [], shardSeq = new Map(), set0 = st.docs.set;
     st.docs.set = (k, v) => { const x = set0.call(st.docs, k, v); if (k === 'Charm_Nest_Rev/feed-o' && v && v.changed) for (const [name, n] of Object.entries(v.changed)) if (n === v.n && !shardSeq.has(name)) shardSeq.set(name, ++seq); return x; };
@@ -138,14 +143,14 @@ const say = s => console.log('  ' + s);
     say(`B · 30 writes at once over ${span} ms → ${writes} counter writes (${(writes / (span / 1000)).toFixed(1)}/s), every answer after a counter write that began after its own shards`);
 
     // B2 · the person's write never fails: the counter refuses every write, or hangs
-    await sleep(Push.GAP_MS + 20);
+    await sleep(Push.COOL_MS + 20);
     db.collection = c => { if (push.test(c)) return { doc: () => ({ set: async () => { throw new Error('UNAVAILABLE: the counter refuses (test)'); } }) }; return col0(c); };
     const f0 = Push.stats.failed, shards0 = st.doc('Charm_Nest_Rev', 'feed-p') ? st.doc('Charm_Nest_Rev', 'feed-p').n : 0;
     r = await call({ op: 'poolUpdate', poolIds: ['3700000101_12345_1'], patch: { note: 'refused' } });
     assert.equal(r.status, 200, 'the person\'s write answers 200 with the counter refusing'); assert(/p:3700000101/.test(r.headers['X-CN-Feed'] || ''), 'and still names what it wrote');
     assert(st.doc('Charm_Nest_Rev', 'feed-p').n > shards0, 'its shards are written'); assert(Push.stats.failed - f0 === 1, 'the counter failure is counted');
     db.collection = c => { if (push.test(c)) return { doc: () => ({ set: () => new Promise(() => {}) }) }; return col0(c); };
-    await sleep(Push.GAP_MS + 20);
+    await sleep(Push.COOL_MS + 20);
     r = await call({ op: 'poolUpdate', poolIds: ['3700000101_12345_1'], patch: { note: 'hung' } });
     assert.equal(r.status, 200, 'the counter hanging: still 200'); assert(r.ms <= 2500 + 400, `and within the existing cap (2.5 s): ${r.ms} ms`);
     db.collection = col0;

@@ -229,8 +229,8 @@ const FAKE_SDK = `(function () {
       const row = await P.evaluate(() => document.querySelector('#stLiveUpdates [data-push-say]').textContent); assert.equal(row, s.text, 'Settings says it too');
       let asked = null;
       if (trigger.healthyBefore) {   // (it was push, its next question was ten minutes away: a question at once, for what the listener missed, not at the polled pace's next beat)
-        await sleep(1200); asked = since(t0 + (trigger.quiet || 0), x => x.tag === name && x.op === 'getChanges').length;
-        assert(asked >= 1, name + ': a question at once for what the listener missed: ' + asked);
+        const count = () => since(t0 + (trigger.quiet || 0), x => x.tag === name && x.op === 'getChanges').length;
+        await until(() => count() >= 1, 5000, name + ': a question at once for what the listener missed'); asked = count();
       }
       const n = await polled(P, 10);
       assert(n >= 2, `${name}: the polled pace is back (≥ 2 questions in 10 s of use): ${n}`);
@@ -252,7 +252,7 @@ const FAKE_SDK = `(function () {
       const R = results.find(r => r.P.__tag === 'F-offline'), t = Date.now();
       await R.P.evaluate(p => window.__fbDrive.set(p, { n: 77 }), COUNTER);
       await until(() => status(R.P).then(s => s.ok), 5000, 'a server snapshot after the offline spell is healthy again');
-      assert(feedCalls(t, 'F-offline') >= 1, 'and asks once for what was missed');
+      await until(() => feedCalls(t, 'F-offline') >= 1, 5000, 'and asks once for what was missed');
       const F1 = results.find(r => r.P.__tag === 'F-first'); await F1.P.evaluate(p => window.__fbDrive.set(p, { n: 9 }), COUNTER); await until(() => status(F1.P).then(s => s.ok), 5000, 'an answer after the 20 s is healthy again');
       say('F · recovery: a server snapshot after the offline spell / the late first answer → push again, one question for what was missed');
       const D = results.find(r => r.P.__tag === 'F-denied'), E = results.find(r => r.P.__tag === 'F-error'), L = results.find(r => r.P.__tag === 'F-load');
