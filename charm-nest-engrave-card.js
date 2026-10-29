@@ -93,8 +93,11 @@
     o = o || {}; const never = !!o.never, P = root && root.CharmNestEngravePreview, Pos = root && root.CharmNestEngravePosition, out = { front: null, back: null };
     const stage = o.stage && typeof o.stage === 'object' ? o.stage : null;
     const want = stage ? facesOfMode(stage.mode) : setup && setup.faces ? setup.faces : null;   // (no setup at all: the jobs say)
+    // (NONEPLAIN 2, Paul 29 Oct 2026: None staged: the faces it takes away are still drawn, as the charm alone (no words, no placement), until Approve keeps it or a face is pressed again)
+    const plainStaged = stage && Array.isArray(stage.plain) ? stage.plain.filter(f => !want.includes(f)) : [];
     for (const face of ['front', 'back']) {
       if (face === 'back' && never) continue;                                   // (an earring never has a back slot, whatever a job says)
+      if (plainStaged.includes(face)) { out[face] = { face, key: jobKey(lineKey, slot, face), job: null, text: '', fontWord: null, fontId: null, position: null, state: 'plain', working: false, staged: true, none: true }; continue; }
       const job = (jobs || []).find(j => faceOf(j) === face) || null, w = setup && setup[face], st = stagedOf(stage, face);
       const plainJob = !!job && (job.state === 'none' || job.state === 'skipped');
       if (plainJob && !stage) continue;                                         // (cut plain by a person: that face is not engraved)

@@ -8213,8 +8213,8 @@ const Engrave = window.Engrave = (() => {
       const t = String(job.text || "").trim(), d = job.decision || {}, at = (how === "skipped" ? job.decidedAt : d.at) || Date.now();
       const dsc = discSay(job), of = dsc ? ` · ${dsc}` : "", fw = facedJob(job) ? (isFront(job) ? "Front " : "Back ") : "";   // (a line with a front names the face; every other line reads as it did)
       const why = how !== "skipped" && d.why ? ` (${String(d.why).slice(0, 80)})` : "";   // (ENGWHY: the person's reason for an override rides in this existing line; no extra write)
-      const text = how === "none" ? `No ${fw ? fw.toLowerCase() + "engraving" : "engraving"}${of} — decided by ${by}${why}` : how === "skipped" ? `${fw ? fw + "engraving" : "Engraving"} skipped${of} by ${by} — cut plain` : `${fw ? fw + "engraving" : "Engraving"} ${d.note === "edited" ? "edited" : "confirmed"}${of} by ${by}${why}${!t && d.artOnly ? ": no words, the charm editor's own art" : `: “${t.replace(/\n/g, " / ")}”`}`;   // (EDITOR WORDS: a face emptied of words on purpose says so)
-      TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null, ...(d.why && how !== "skipped" ? { why: String(d.why).slice(0, 80) } : {}), ...(isFront(job) ? { face: "front" } : {}) } });
+      const text = how === "removed" ? `${fw ? fw + "engraving" : "Engraving"} removed${of} by ${by}` : how === "none" ? `No ${fw ? fw.toLowerCase() + "engraving" : "engraving"}${of} — decided by ${by}${why}` : how === "skipped" ? `${fw ? fw + "engraving" : "Engraving"} skipped${of} by ${by} — cut plain` : `${fw ? fw + "engraving" : "Engraving"} ${d.note === "edited" ? "edited" : "confirmed"}${of} by ${by}${why}${!t && d.artOnly ? ": no words, the charm editor's own art" : `: “${t.replace(/\n/g, " / ")}”`}`;   // (EDITOR WORDS: a face emptied of words on purpose says so)
+      TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), ...(how === "removed" ? { poolId: (job.copies || [])[0] || null, ...(job.slot ? { slot: job.slot } : {}) } : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null, ...(d.why && how !== "skipped" ? { why: String(d.why).slice(0, 80) } : {}), ...(isFront(job) ? { face: "front" } : {}) } });
     } catch (_) {}
   }
   /* ── SETBAR-C · what the buyer typed, read by plain rules BEFORE any paid reader (charm-nest-engrave-read.js; Paul, 13 Oct 2026, order 4202291826: "16\"= 33*0'45\" N 96*45'53\" W (the asterisk is supposed to be the
@@ -9109,6 +9109,28 @@ const Engrave = window.Engrave = (() => {
     job.state = "skipped"; job.decidedAt=Date.now(); job.decidedBy=by; CNListActivity.touch(job.row,job.decidedAt); job.approvedBy = null; job.row.engrave = { ...job.row.engrave, needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; CNEngravingSeals.add(job,"engravePlain",by,job.decidedAt); wordsEvent(job, by, job.text, "skipped"); try { humanAct("note", { orderId: String(job.row.order.receiptId), line: String(job.row.line.transactionId || ""), detail: (isFront(job) ? "front " : "") + "engraving skipped (cut plain)" }); } catch (_) {} job.row.flag = `${isFront(job) ? "front " : ""}engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
     const saved = virtualJob(job) ? null : Pool.update(job.copies, isFront(job) ? { engraveFront: false, engraveFrontSkippedBy: by } : { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;   // (a skipped FRONT leaves the piece's back flags alone)
     if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
+  /* NONEPLAIN 2 (Paul, 29 Oct 2026, order 4213825625: "Once the user selects "None" and clicks the green "Approve" button, you will need to update ALL of the thumbnails and information including ALL required Sheets
+     ... There is no stamp needed for this, it simply reverts back to a normal order that has no extra engravings"): a face TAKEN AWAY by None + Approve. Not "cut plain" (skip: a decision with a seal): the face is no
+     engraving at all, as a piece that never had one. Its back file is withdrawn from every sheet (revokeBacks: the sheet's record, the cloud's, the back index drawn again), its approval and every seal of it go (the
+     rail's Engraved step goes with the line's state "none": no BACK ENGRAVING stamp), the piece's pool flag says not engraved, and the order timeline keeps ONE plain line, "Engraving removed by ...". The job stays
+     as "none" decided by that person (the intake never reads the buyer's words for it again: classifyOnce). Nothing is asked. */
+  async function takeAway(job, by) {
+    by = by || employeeName() || await needEmployee("Kept with this decision."); if (!by) return false;
+    const was = job.text, had = ["approved", "written"].includes(job.state) || +job.approvedAt > 0 || (job.backs || []).length || (job.stagedBacks || []).length;
+    if (had) revokeBacks(job);
+    if (EG.opened === job.key) EG.opened = null;
+    const at = Date.now(), why = `no ${facedJob(job) ? faceWord(job) + " " : ""}engraving — removed by ${by}`;
+    Object.assign(job, { state: "none", reason: why, fit: null, approvedBy: null, approvedAt: null, decidedAt: null, decidedBy: null, backs: [], stagedBacks: [], engravingSeals: [], decision: { by, at, none: true, removed: true } });
+    delete job.backPending; delete job.approvalIntent; delete job.writtenFit; delete job._backPreview;
+    job.row.engrave = { needed: false, state: "none", approved: true, reason: why, seals: [] };
+    Review.remove("eng:" + job.key); CNListActivity.touch(job.row, at);
+    wordsEvent(job, by, was, "removed");
+    try { humanAct("note", { orderId: String(job.row.order.receiptId), line: String(job.row.line.transactionId || ""), detail: (isFront(job) ? "front " : "") + "engraving removed (a regular order)" }); } catch (_) {}
+    const saved = virtualJob(job) ? null : Pool.update(job.copies, isFront(job) ? { engraveFront: false } : { engrave: false });
+    try { window.CharmNestMadeThumb?.changed("none", job.copies || []); } catch (_) { /* the list boxes look again at the next sweep */ }
+    await saved; RunCtl.poke();
+    return true;
+  }
   function sendBack(job, why) { if (neverEngraves(job.row) && NEVER_OPEN(job)) return setNone(job, neverWhy(job.row)); CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job);
     if (typeof faceHasEditorArt === "function" && !engravedWords(job).length && faceHasEditorArt(job) && artOnlyPlacement(job)) { render(); Orders.render(); return; }   // (EDITOR WORDS: a face the charm editor drew, with no words, goes back to its Approve, never to a words step it has nothing for)
     job.state = "words"; job.reason = why || `sent back from the placement review — a decision on the ${facedJob(job) ? faceWord(job) + " " : ""}words is needed`; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: job.reason }); render(); Orders.render(); }
@@ -9204,7 +9226,7 @@ const Engrave = window.Engrave = (() => {
       who: () => employeeName() || needEmployee("Kept with your change of what this piece engraves."),
       now: () => Date.now(), store: setupStore, jobsOf: line => jobsOf(line), ensureJobs: line => { raiseCandidate(line); const had = jobsOf(line), out = ensureJobs(line); for (const j of had) if (items().get(j.key) !== j) dropped.push(j.key); return out; },
       slots: line => { const S = SIDES(); if (!S) return [null]; try { return S.plan(sidesCtx, line, jobsOf(line)).slots || [null]; } catch (_) { return [null]; } },
-      remove: removeJob, skip: (job, by) => skip(job, by), reopen: reopenJob, reopenForEdit: job => reopenForEdit(job), seed: seedWords,
+      remove: removeJob, skip: (job, by) => skip(job, by), takeAway: (job, by) => takeAway(job, by), reopen: reopenJob, reopenForEdit: job => reopenForEdit(job), seed: seedWords,
       artOnly: job => faceHasEditorArt(job), clearWords: (job, by, why) => clearWords(job, by, why),   // (EDITOR WORDS: emptied words on a face the charm editor drew)
       setNone: (job, why, by, reason) => { const was = job.text; setNone(job, why); if (by) { job.decision = { by, at: Date.now(), none: true, ...(reason ? { why: reason } : {}) }; wordsEvent(job, by, was, "none"); } },
       changed: (line, res) => { try { if (res && Array.isArray(res.removed)) for (const k of dropped) if (!res.removed.includes(k)) res.removed.push(k); } catch (_) {} try { const S = SIDES(); if (S && line._engraveLinked) S.linkParent(sidesCtx, line, jobsOf(line)); } catch (_) {} try { Orders.render(); } catch (_) {} try { render(); } catch (_) {} try { Review.render(); } catch (_) {} try { if (window.OrderWin && OrderWin.isOpen && OrderWin.isOpen()) OrderWin.nudge(); } catch (_) {} try { RunCtl.poke(); } catch (_) {} }
@@ -9217,7 +9239,12 @@ const Engrave = window.Engrave = (() => {
     if (setupBusy.has(line.key)) return { ok: false, message: "The last change to this piece is still being saved." };
     setupBusy.add(line.key);
     const had = new Set(jobsOf(line).map(j => j.key));
-    try { const res = await CS.apply(line, patch, setupEnv()); if (res && res.ok && jobsOf(line).some(j => !had.has(j.key))) prepareLate(line).catch(() => {}); return res; } finally { setupBusy.delete(line.key); }   // (a face job THIS Save made is read and fitted now, beside everything else; a Save that made none touches nothing more than it did)
+    try {
+      const res = await CS.apply(line, patch, setupEnv()); if (res && res.ok && jobsOf(line).some(j => !had.has(j.key))) prepareLate(line).catch(() => {});
+      // (NONEPLAIN 2: None approved: the piece is a regular order now, said once, plainly; the tab moves on as after any Approve: the piece is in no list any more)
+      if (res && res.ok && patch && patch.mode === "none" && (res.none || []).length) { toast(`Order ${line.order.receiptId} · no engraving · now a regular order`, "ok", 6000); try { render(); Orders.render(); } catch (_) {} }
+      return res;
+    } finally { setupBusy.delete(line.key); }   // (a face job THIS Save made is read and fitted now, beside everything else; a Save that made none touches nothing more than it did)
   }
   /** NONEPLAIN (Paul, 29 Oct 2026: "I chose "None" for engraving and it still kept the engraving"): is a piece of this line CUT, so a decided face on it may no longer be taken away? The ONE rule a piece that may
    *  no longer change follows (replaceCutWhy: its sheet laser cut, a Rose Gold layout cut, inside a protected contour); a sheet in a set whose files are written, labelled or released is not cut, and its back is
@@ -9577,7 +9604,7 @@ const Engrave = window.Engrave = (() => {
   /** What the editable canvas of `job` draws in place of job.fit, or null when nothing differs from the committed fit. */
   function draftPaint(job) {
     const rec = DRAFTS.get(job.key); if (!rec) return null;
-    if (!draftable(job)) { DRAFTS.delete(job.key); return null; }
+    if (!draftable(job) && !(rec.fit && rec.fit.empty && approvedView(job))) { DRAFTS.delete(job.key); return null; }
     if (rec.sig !== draftSig(job)) draftCompute(job, rec);
     return rec.fit || null;
   }
@@ -9599,7 +9626,9 @@ const Engrave = window.Engrave = (() => {
     const job = items().get(String(jobKey == null ? "" : jobKey));
     if (!job) return { ok: false, why: "no job" };
     if (!staged || typeof staged !== "object") { const had = DRAFTS.delete(job.key); if (had) draftRepaint(job); return { ok: true, cleared: true }; }
-    if (!draftable(job)) { const had = DRAFTS.delete(job.key); if (had) draftRepaint(job); return { ok: false, why: "not placed" }; }
+    // (NONEPLAIN 2, Paul 29 Oct 2026: None staged on an APPROVED piece: its work area shows the charm alone too, until Approve keeps it or a face is pressed again; words typed on it stay the thumbnails' alone, as before)
+    const offFace = !!staged.mode && staged.mode !== "both" && staged.mode !== faceWord(job);
+    if (!draftable(job) && !(offFace && approvedView(job))) { const had = DRAFTS.delete(job.key); if (had) draftRepaint(job); return { ok: false, why: "not placed" }; }
     const rec = DRAFTS.get(job.key) || { token: 0 };
     rec.staged = { text: String(staged.text == null ? "" : staged.text), fontWord: String(staged.fontWord || ""), mode: staged.mode || "", position: staged.position || null };
     draftCompute(job, rec);

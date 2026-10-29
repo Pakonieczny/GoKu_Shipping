@@ -34,7 +34,10 @@
     // (the row of ONE face of a piece sees only that face's events: a front's `data.face` is 'front'; the line's own row sees them all, each seal says its face)
     const ownFace=row.parentRow ? (frontOf(row) ? e=>e.data?.face==='front' : e=>e.data?.face!=='front') : ()=>true;
     const mine=e=>ownFace(e) && (slot ? copies.has(e.data?.poolId) || e.type==='engraveChanged' && e.data?.slot===slot && e.lineKey===lineKey : e.lineKey===row.key || tx && String(e.transactionId)===tx || copies.has(e.data?.poolId));
-    return merge({seals:(events || []).filter(e=>(e.type==='engraveApproved' || e.type==='engraveChanged' && e.data?.how==='skipped') && (!e.orderId || String(e.orderId)===rid) && mine(e)).map(e=>{const s={id:e.id,how:e.type==='engraveApproved'?'engraveApproved':'engravePlain',at:+(e.type==='engraveChanged'?e.data?.decidedAt ?? e.at:e.at) || 0,by:e.by || ''};if(e.data?.face==='front')s.face='front';return s;})});
+    const own=(events || []).filter(e=>(!e.orderId || String(e.orderId)===rid) && mine(e)),atOf=e=>+(e.type==='engraveChanged'?e.data?.decidedAt ?? e.at:e.at) || 0,fc=e=>e.data?.face==='front'?'front':'back';
+    // NONEPLAIN 2 (Paul, 29 Oct 2026: "There is no stamp needed for this, it simply reverts back to a normal order"): an engraving taken away (None + Approve: engraveChanged, how "removed") ends that face's seals: an approval or a cut plain before it is no stamp any more
+    const gone={front:0,back:0};for(const e of own)if(e.type==='engraveChanged' && e.data?.how==='removed')gone[fc(e)]=Math.max(gone[fc(e)],+e.at || 0);
+    return merge({seals:own.filter(e=>(e.type==='engraveApproved' || e.type==='engraveChanged' && e.data?.how==='skipped') && (!gone[fc(e)] || atOf(e)>gone[fc(e)])).map(e=>{const s={id:e.id,how:e.type==='engraveApproved'?'engraveApproved':'engravePlain',at:atOf(e),by:e.by || ''};if(e.data?.face==='front')s.face='front';return s;})});
   }
   function add(job,how,by,at=Date.now()){keep(job);const front=frontOf(job),seal=front?{id:`${how}:front:${at}:${String(by).trim()}`,how,at,by,face:'front'}:{id:`${how}:${at}:${String(by).trim()}`,how,at,by};job.engravingSeals=merge(job,{seals:[seal]});if(job.row){job.row.engrave ||= {};job.row.engrave.seals=job.engravingSeals;}return seal;}
   const regularSize=()=>root?.Seal?.BASE_SIZE || 50;

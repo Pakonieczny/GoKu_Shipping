@@ -362,7 +362,8 @@
       else {
         const plainWhy = `no engraving - decided by ${by}`;
         if (!setup.faces.length) {
-          for (const j of jobs) { if (j.state === 'none' || j.state === 'skipped') continue; if (DECIDED.includes(j.state)) { await env.skip(j, by); res.plain.push(j.key); } else { env.setNone(j, plainWhy, by, whyText); res.none.push(j.key); } }
+          // (NONEPLAIN 2, Paul 29 Oct 2026: "There is no stamp needed for this, it simply reverts back to a normal order": None takes every face away, approved or cut plain before, with no seal: env.takeAway, where the page has it)
+          for (const j of jobs) { if (j.state === 'none' || (j.state === 'skipped' && !env.takeAway)) continue; if (env.takeAway) { if ((await env.takeAway(j, by)) !== false) res.none.push(j.key); } else if (DECIDED.includes(j.state)) { await env.skip(j, by); res.plain.push(j.key); } else { env.setNone(j, plainWhy, by, whyText); res.none.push(j.key); } }
         } else {
           for (const j of rc.drop) { env.remove(j); res.removed.push(j.key); }
           for (const j of rc.keep) { if (j.state === 'skipped' || j.state === 'none') continue; await env.skip(j, by); res.plain.push(j.key); }

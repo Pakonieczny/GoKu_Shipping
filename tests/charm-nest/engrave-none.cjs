@@ -1,17 +1,18 @@
-// NONEPLAIN (Paul, 29 Oct 2026, sandbox order 4213864833: "I chose "None" for engraving and it still kept the engraving even after pressing the "Approve" button. When the user chooses "None" for engraving than the
-// engraving must be completely removed and all Thumbnails must update in real-time to stop showing the need to add engraving. It just becomes a regular order with no extra engraving required. Also all sheets
-// that contain such an order where the user pressed "None" for engraving must also be updated in real-time to remove the offending engraving.")
-// On the real sorter page over the repo's fake site (_engraveRealWorld.cjs: offline, made-up names, nothing live), the order "back" (COMET, back "Name One"), its back APPROVED and WRITTEN to its sheet (the
-// back's file and record on the sheet, its back index), the line's state "written" (its set's files written: NOT cut):
-//   N1  a press on None in the card's face row keeps it at once: no "Cut it plain" row, the back job is cut plain (no job left to engrave, no fit pending, no approval pending), the person's override says none
-//   N2  the decision is kept with who made it: a "cut plain" seal on the job, the order timeline's "Engraving skipped by ... — cut plain" line
-//   N3  in the same tick, no reload: the Design & Engrave list no longer counts it as needing engraving; the piece's picture as made (charm-nest-made-thumb.js) is gone (its Vector design shows),
-//       though the cloud's picture of it engraved is still on its pool row
-//   N4  the sheet drops it: the back record leaves the sheet (this page's and the cloud's), the back's record is invalidated, the sheet's back index is cleared; the piece stays where it stood on the sheet
-//   N5  the order window (opened after, same page): no Engraving chip, the Vector design boxes show no made picture, the Engraving block shows no back to engrave
-//   N6  Approve with None selected (the A key, the card) resurrects nothing: the job stays cut plain, no new approval seal
-//   N7  a re-sync and an intake run (the job lost, the line read again from the order's personalisation) never bring it back: the job is "no engraving"
-//   N8  the work area's "No back engraving" (the card's own button) on another order removes that face the same way: the toggles say None, the sheet drops it, the made picture goes
+// NONEPLAIN (Paul, 29 Oct 2026, sandbox order 4213864833: "I chose "None" for engraving and it still kept the engraving even after pressing the "Approve" button ... It just becomes a regular order with no
+// extra engraving required. Also all sheets that contain such an order ... must also be updated in real-time to remove the offending engraving.") and NONEPLAIN 2 (Paul, 29 Oct 2026, order 4213825625: "When I
+// press none the actual order just abruptly disappears with no feedback ... if the user presses none maybe they want to change their mind and then press back or front again and then what? Once the user selects
+// "None" and clicks the green "Approve" button, you will need to update ALL of the thumbnails and information including ALL required Sheets ... There is no stamp needed for this, it simply reverts back to a
+// normal order that has no extra engravings. The thumbnails will ALL need to revert back to just showing the Charm vector file alone in the Thumbnail everywhere in the application.")
+// On the real sorter page over the repo's fake site (_engraveRealWorld.cjs: offline, made-up names, nothing live), the orders "back" and "back2" (COMET, back words), each back APPROVED and WRITTEN to the same
+// sheet (the back's file and record on the sheet, its back index), the line's state "written" (its set's files written: NOT cut):
+//   N1  None is STAGED only: nothing saved, the card stays, None pressed, the thumbnail and the work area show the charm alone, a line by Approve says what Approve will do, a green Approve is there
+//   N2  Back pressed again restores exactly what was there (words, approval), nothing saved
+//   N3  None again, then Approve (the A key): the engraving is taken away (no job to engrave, the person's override), NO seal and no stamp, one timeline line "Engraving removed by ...", a toast, the tab moves on
+//   N4  every picture is the charm alone (made-thumbs, list boxes), the rail has no Engraved step
+//   N5  the sheet drops it (here and in the cloud, the back record invalidated, the back index without it), the piece stays where it stood, the other order's back is kept
+//   N6  the order window (opened after, same page): no Engraving chip, the Vector design the charm alone, no Engraving block
+//   N7  a re-sync and an intake run never bring it back
+//   N8  the green Approve button with None staged does the same (the other order)
 //   N9  no page errors
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/engrave-none.cjs      (SHOTS=<dir> for screenshots)
 'use strict';
@@ -47,65 +48,82 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     // (the line's set's files are written: the line reads "written", as Paul's did; its sheet is NOT cut)
     await page.evaluate(rk => { B.orders.byKey.get(rk).state = 'written'; }, rowKey);
     const sheetId = w1 && w1.sheet;
-    const before = await page.evaluate(([p, sid]) => ({ made: !!CharmNestMadeThumb.forPiece(p), cloudMade: !!(B.pool.rows.get(p) || {}).made, onSheet: (Pool.sheetOf(p).backPool || []).some(b => b.poolId === p), index: !!Pool.sheetOf(p).backOutputs, place: JSON.stringify((Pool.sheetOf(p).placements || []).find(x => (Pool.sheetOf(p).charms.find(c => c.poolId === p) || {}).id === x.id)) }), [pid, sheetId]);
+    const before = await page.evaluate(p => ({ made: !!CharmNestMadeThumb.forPiece(p), cloudMade: !!(B.pool.rows.get(p) || {}).made, onSheet: (Pool.sheetOf(p).backPool || []).some(b => b.poolId === p), index: !!Pool.sheetOf(p).backOutputs, place: JSON.stringify((Pool.sheetOf(p).placements || []).find(x => (Pool.sheetOf(p).charms.find(c => c.poolId === p) || {}).id === x.id)) }), pid);
     console.log(`   before: ${JSON.stringify({ w1, w2, before })}`);
     check('N0 the back is approved and written to its sheet (record and back index), the piece has its picture as made', !!w1 && !!w2 && before.made && before.onSheet && before.index && before.cloudMade && (st.doc('Charm_Nest_Sheets', sheetId) || { backPool: [] }).backPool.some(b => b.poolId === pid), JSON.stringify({ w1, w2, before }));
-
     const owNow = rk => page.evaluate(rk => { const d = document.getElementById('orderWin'); return { chip: !!(d && d.querySelector('[data-owf-chip="engraving"]')), made: [...document.querySelectorAll('#owVector,[data-vector]')].filter(v => v._mvRow && v._mvRow.key === rk).map(v => (v.id || 'list') + ':' + (v.dataset.made || '')) }; }, rk);
     await R.openOrderWindow(w, 'back'); await until(async () => (await owNow(rowKey)).made.some(m => /^owVector:\d/.test(m)), 8000);
     const ow0 = await owNow(rowKey); await page.evaluate(() => { try { OrderWin.close(); } catch (_) { /* none */ } });
     check('N0 the order window shows the Engraving chip and the piece as made (front and back) before', ow0.chip && ow0.made.some(m => /^owVector:\d/.test(m)), JSON.stringify(ow0));
-    // ── N1 · None, pressed in the card ──
+
+    // ── N1 · None is only STAGED ──
     await R.openEngraveDetail(w, 'back', { face: 'back' }); await R.settle(page, 600);
-    await page.evaluate(() => { window.__noReload = 1; window.__tl = []; const L = CNTimeline.line; CNTimeline.line = function (row, type, o) { try { window.__tl.push({ type, text: o && o.text }); } catch (_) { /* none */ } return L.apply(this, arguments); }; });
-    const segs0 = await page.evaluate(q => [...document.querySelectorAll(q + ' .pvSetup .engpSeg')].map(b => b.dataset.mode + ':' + b.getAttribute('aria-pressed')).join(' '), Q);
+    await page.evaluate(() => {
+      window.__noReload = 1; window.__tl = []; window.__toasts = [];
+      const L = CNTimeline.line; CNTimeline.line = function (row, type, o) { try { window.__tl.push({ type, text: o && o.text }); } catch (_) { /* none */ } return L.apply(this, arguments); };
+      const T = window.toast; window.toast = function (msg) { try { window.__toasts.push(String(msg)); } catch (_) { /* none */ } return T.apply(this, arguments); };
+    });
+    const cardNow = k => page.evaluate(([q, k]) => {
+      const c = document.querySelector(q), th = f => { const t = c && c.querySelector(`.pvSetup .engFace[data-face="${f}"] .engThumb`); return t ? { pic: !!t.firstElementChild, words: [...t.querySelectorAll('.engpvText')].map(x => x.textContent).join('').trim() } : null; };
+      const d = Engrave.draftOf(k), calm = c && c.querySelector('[data-a="approved"]'), ap = c && c.querySelector('[data-a="approve"]');
+      return { key: c ? c.dataset.key : '', segs: c ? [...c.querySelectorAll('.pvSetup .engpSeg')].map(b => b.dataset.mode + ':' + b.getAttribute('aria-pressed')).join(' ') : '', back: th('back'), draft: d ? { empty: d.empty, lines: d.lines } : null,
+        hint: ((c && c.querySelector('.engpNoneHint')) || {}).textContent || '', approve: !!ap && !ap.disabled && !!ap.getClientRects().length, calm: !!calm && !!calm.getClientRects().length, confirm: !!(c && c.querySelector('.engpConfirm')), err: ((c && c.querySelector('.engpErr')) || {}).textContent || '' };
+    }, [Q, k]);
+    const job = k => page.evaluate(([k, rk]) => { const j = Engrave.items().get(k), row = B.orders.byKey.get(rk), sh = Pool.sheetOf(j.copies[0]); return { state: j.state, text: j.text, approvedAt: j.approvedAt || 0, ov: (j.row.parentRow || j.row).engravingOverride || null, seals: CNEngravingSeals.list(j).map(s => s.how), rowSeals: ((j.row.engrave || {}).seals || []).length, onSheet: (sh.backPool || []).some(b => b.poolId === j.copies[0]), pool: (B.pool.rows.get(j.copies[0]) || {}).engrave, made: !!CharmNestMadeThumb.forPiece(j.copies[0]) }; }, [k, rowKey]);
+    const c0 = await cardNow(key);
     await page.click(Q + ' .pvSetup .engpSeg[data-mode="none"]');
-    const tick = await page.evaluate(() => new Promise(res => requestAnimationFrame(() => requestAnimationFrame(() => res({ confirm: !!document.querySelector('.engpConfirm'), err: (document.querySelector('.engpErr') || {}).textContent || '' })))));
-    const cut = await until(() => page.evaluate(([k, rk]) => { const j = Engrave.items().get(k), row = B.orders.byKey.get(rk); return j && j.state === 'skipped' ? { state: j.state, fit: !!j.fit, approvedAt: j.approvedAt, ov: row.engravingOverride, pending: Engrave.pendingCount(), seals: CNEngravingSeals.list(j).map(s => s.how), engrave: row.engrave } : null; }, [key, rowKey]), 15000);
-    check('N1 None is kept at once: no "Cut it plain" row, no error', !tick.confirm && !tick.err, JSON.stringify({ segs0, tick }));
-    check('N1 the back is cut plain: no job to engrave, no approval pending; the person\'s override says none, with who', !!cut && !cut.approvedAt && cut.ov && cut.ov.mode === 'none' && cut.ov.by === 'Test Operator' && cut.engrave && cut.engrave.needed === false, JSON.stringify(cut));
-    const tl = await page.evaluate(() => window.__tl);
-    check('N2 the decision is kept with who made it: a "cut plain" seal and the timeline line', !!cut && cut.seals.includes('engravePlain') && cut.seals.includes('engraveApproved') && tl.some(e => e.type === 'engraveChanged' && /skipped by Test Operator/.test(e.text || '')), JSON.stringify({ seals: cut && cut.seals, tl }));
+    await R.settle(page, 400);
+    const c1 = await cardNow(key), j1 = await job(key);
+    check('N1 None is staged only: nothing is saved (the back stays approved and on its sheet, no override), no "Cut it plain" row, no error', j1.state === 'written' && !j1.ov && j1.onSheet && j1.made && !c1.confirm && !c1.err, JSON.stringify({ j1, c1 }));
+    check('N1 the card stays where it is, the None toggle pressed', c1.key === key && /none:true/.test(c1.segs) && /back:false/.test(c1.segs), JSON.stringify({ c0: c0.segs, c1 }));
+    check('N1 the Back thumbnail and the work area show the charm alone, no words', !!c1.back && c1.back.pic && !c1.back.words && !!c1.draft && c1.draft.empty, JSON.stringify({ back: c1.back, draft: c1.draft, was: c0.back }));
+    check('N1 a line by Approve says what Approve will do, and the green Approve is there (the piece was approved: its calm "Approved" makes way)', /No engraving · Approve to make this a regular order/.test(c1.hint) && c1.approve && !c1.calm, JSON.stringify(c1));
+    if (w.shots) await R.shot(w, 'none-staged').catch(() => {});
 
-    // ── N3 · the lists and the pictures, no reload ──
-    const lists = await until(() => page.evaluate(([p, k]) => {
-      const pm = CharmNestMadeThumb.forPiece(p), row = [...document.querySelectorAll('#egQueue [data-key]')].find(e => e.dataset.key === k);
-      return !pm ? { made: false, cloud: !!(B.pool.rows.get(p) || {}).made, pending: Engrave.pendingCount(), rows: Engrave.pendingRows(), rowText: row ? row.textContent.replace(/\s+/g, ' ').slice(0, 160) : '' } : null;
-    }, [pid, key]), 3000);
-    check('N3 the piece\'s picture as made is gone at once (its line shows the Vector design), though the cloud\'s engraved picture is still on its row', !!lists, JSON.stringify(lists));
-    check('N3 the Design & Engrave list counts nothing to engrave for it', !!lists && lists.pending === 0, JSON.stringify(lists));
-    const segs1 = await page.evaluate(([q, k]) => { CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: k }); Engrave.render(); return new Promise(r => setTimeout(() => r([...document.querySelectorAll(q + ' .pvSetup .engpSeg')].map(b => b.dataset.mode + ':' + b.getAttribute('aria-pressed')).join(' ')), 600)); }, [Q, key]);
-    check('N3 the card of the piece, opened again, shows None pressed (Back not)', /none:true/.test(segs1) && /back:false/.test(segs1), segs1);
+    // ── N2 · Back again: what was there comes back ──
+    await page.click(Q + ' .pvSetup .engpSeg[data-mode="back"]');
+    await R.settle(page, 500);
+    const c2 = await cardNow(key), j2 = await job(key);
+    check('N2 Back pressed again restores exactly what was there: Back pressed, its words on the thumbnail and in the work area, still approved, nothing saved', /back:true/.test(c2.segs) && /none:false/.test(c2.segs) && !!c2.back && /Name One/i.test(c2.back.words) && !(c2.draft && c2.draft.empty) && j2.state === 'written' && j2.approvedAt > 0 && !j2.ov && !c2.hint && c2.calm, JSON.stringify({ c2, j2 }));
 
-    // ── N4 · the sheet ──
-    // (the sheet holds the other order's back too: its back index is drawn again with that one alone)
+    // ── N3 · None again, then Approve (the A key) commits ──
+    await page.click(Q + ' .pvSetup .engpSeg[data-mode="none"]'); await R.settle(page, 300);
+    await page.evaluate(q => { const c = document.querySelector(q); if (!c.hasAttribute('tabindex')) c.setAttribute('tabindex', '-1'); c.focus(); }, Q);
+    await page.keyboard.press('a');
+    const done = await until(async () => { const j = await job(key); return j.state === 'none' ? j : null; }, 15000);
+    await R.settle(page, 400);
+    const tl = await page.evaluate(() => window.__tl), toasts = await page.evaluate(() => window.__toasts);
+    check('N3 Approve (the A key) with None staged takes the engraving away: no job to engrave, no approval, the person\'s override says none, with who', !!done && !done.approvedAt && done.ov && done.ov.mode === 'none' && done.ov.by === 'Test Operator', JSON.stringify(done));
+    check('N3 no stamp and no seal: no "cut plain" seal, the BACK ENGRAVING seal gone from the job and the line', !!done && done.seals.length === 0 && done.rowSeals === 0 && !tl.some(e => /skipped/.test(e.text || '')), JSON.stringify({ seals: done && done.seals, tl }));
+    check('N3 one plain timeline line with who did it: "Engraving removed by Test Operator"', tl.some(e => e.type === 'engraveChanged' && /ngraving removed by Test Operator/.test(e.text || '')), JSON.stringify(tl));
+    check('N3 clear feedback: "Order 4290000101 · no engraving · now a regular order"', toasts.some(t => /Order 4290000101 · no engraving · now a regular order/.test(t)), JSON.stringify(toasts));
+    const moved = await page.evaluate(([q, k]) => { const c = document.querySelector(q); return { card: c ? c.dataset.key : '', pending: Engrave.pendingCount(), listed: [...document.querySelectorAll('#egQueue [data-key]')].some(e => e.dataset.key === k) }; }, [Q, key]);
+    check('N3 the tab moves on as after any Approve, and the piece is in no list and counts nothing', moved.card !== key && !moved.listed && moved.pending === 0, JSON.stringify(moved));
+
+    // ── N4 · every picture: the charm alone ──
+    const pics = await until(() => page.evaluate(([p, rk]) => { const row = B.orders.byKey.get(rk); return !CharmNestMadeThumb.forPiece(p) && !CharmNestMadeThumb.forLine(row) ? { cloud: !!(B.pool.rows.get(p) || {}).made, boxes: [...document.querySelectorAll('[data-vector]')].filter(v => v._mvRow && v._mvRow.key === rk).map(v => v.dataset.made || '') } : null; }, [pid, rowKey]), 3000);
+    check('N4 the piece\'s picture as made is gone at once: every list box of the line shows the charm vector alone (no Front/Back split)', !!pics && pics.boxes.every(m => !m), JSON.stringify(pics));
+    const rail = await page.evaluate(rk => OrderTimelineUI.stagesFor(B.orders.byKey.get(rk)).map(s => s.k), rowKey);
+    check('N4 the order\'s rail has no Engraved step (no BACK ENGRAVING stamp)', !rail.includes('engraved'), JSON.stringify(rail));
+
+    // ── N5 · the sheet ──
     const sheet = await until(() => page.evaluate(p => { const sh = Pool.sheetOf(p); return !(sh.backPool || []).some(b => b.poolId === p) && sh.backOutputs && sh.backOutputs.count === (sh.backPool || []).length ? { here: (sh.backPool || []).length, index: sh.backOutputs.count, place: JSON.stringify((sh.placements || []).find(x => (sh.charms.find(c => c.poolId === p) || {}).id === x.id)) } : null; }, pid), 20000);
     const cloudSheet = await until(() => { const d = st.doc('Charm_Nest_Sheets', sheetId) || {}; return !(d.backPool || []).some(b => b.poolId === pid) && d.backOutputs && d.backOutputs.count === 1 ? d : null; }, 20000);
     const report = cloudSheet && cloudSheet.backOutputs.report && st.blobs.get(cloudSheet.backOutputs.report.path), listed = report ? JSON.parse(Buffer.from(report.buf).toString('utf8')).map(b => b.poolId) : null;
-    const rec = st.doc('Charm_Pool_Back', pid) || {};
-    check('N4 the sheet drops the back: its record leaves the sheet here and in the cloud, the back record is invalidated, the back index lists only the other order', !!sheet && !!cloudSheet && rec.invalidated === true && !!listed && !listed.includes(pid) && listed.length === 1, JSON.stringify({ sheet, cloud: cloudSheet && { backPool: (cloudSheet.backPool || []).map(b => b.poolId), backOutputs: cloudSheet.backOutputs }, listed, rec: { invalidated: rec.invalidated } }));
-    check('N4 the piece stays where it stood on the sheet', !!sheet && sheet.place === before.place, JSON.stringify({ was: before.place, now: sheet && sheet.place }));
-    check('N4 the other order\'s back on the same sheet is kept', await page.evaluate(k => { const j = Engrave.items().get(k); return j.state === 'written' && (Pool.sheetOf(j.copies[0]).backPool || []).some(b => b.poolId === j.copies[0]); }, made.back2.jobs[0].key));
+    const rec = st.doc('Charm_Pool_Back', pid) || {}, prow = await job(key);
+    check('N5 the sheet drops the back: off the sheet here and in the cloud, its record invalidated, the back index lists only the other order, the piece not engraved', !!sheet && !!cloudSheet && rec.invalidated === true && !!listed && !listed.includes(pid) && listed.length === 1 && prow.pool === false, JSON.stringify({ sheet, cloud: cloudSheet && { backPool: (cloudSheet.backPool || []).map(b => b.poolId), backOutputs: cloudSheet.backOutputs }, listed, rec: { invalidated: rec.invalidated }, pool: prow.pool }));
+    const other = await page.evaluate(k => { const j = Engrave.items().get(k); return j.state === 'written' && (Pool.sheetOf(j.copies[0]).backPool || []).some(b => b.poolId === j.copies[0]); }, made.back2.jobs[0].key);
+    check('N5 the piece stays where it stood on the sheet; the other order\'s back is kept', !!sheet && sheet.place === before.place && other, JSON.stringify({ was: before.place, now: sheet && sheet.place, other }));
 
-    // ── N5 · the order window, same page ──
+    // ── N6 · the order window, same page ──
     await R.openOrderWindow(w, 'back'); await R.settle(page, 800);
     const ow = await page.evaluate(rk => {
       const d = document.getElementById('orderWin'), eng = document.getElementById('owEng');
-      return { chip: !!(d && d.querySelector('[data-owf-chip="engraving"]')), made: [...document.querySelectorAll('#owVector,[data-vector]')].filter(v => v._mvRow && v._mvRow.key === rk).map(v => (v.id || 'list') + ':' + (v.dataset.made || '')), eng: eng ? { hidden: !!eng.hidden, cards: eng.querySelectorAll('.engCard').length, text: eng.textContent.replace(/\s+/g, ' ').slice(0, 300), back: [...eng.querySelectorAll('.engFace[data-face="back"]')].map(f => f.textContent.replace(/\s+/g, ' ').slice(0, 80)) } : null, noReload: window.__noReload === 1 };
+      return { chip: !!(d && d.querySelector('[data-owf-chip="engraving"]')), made: [...document.querySelectorAll('#owVector,[data-vector]')].filter(v => v._mvRow && v._mvRow.key === rk).map(v => (v.id || 'list') + ':' + (v.dataset.made || '')), eng: eng ? { hidden: !!eng.hidden, cards: eng.querySelectorAll('.engCard').length } : null, noReload: window.__noReload === 1 };
     }, rowKey);
-    console.log(`   order window: ${JSON.stringify(ow)}`);
-    check('N5 the order window has no Engraving chip (a regular order), no made picture in its Vector design boxes', !ow.chip && ow.made.some(m => /^owVector/.test(m)) && ow.made.every(m => !/:\d/.test(m)) && ow.noReload, JSON.stringify(ow));
-    check('N5 the order window\'s Engraving block asks for no back engraving', !ow.eng || ow.eng.hidden || !ow.eng.cards || !/Name One/.test(ow.eng.back.join(' ')), JSON.stringify(ow.eng));
+    check('N6 the order window: no Engraving chip, its Vector design the charm alone, no Engraving block; no reload', !ow.chip && ow.made.some(m => /^owVector/.test(m)) && ow.made.every(m => !/:\d/.test(m)) && (!ow.eng || ow.eng.hidden || !ow.eng.cards) && ow.noReload, JSON.stringify(ow));
     if (w.shots) await R.shot(w, 'none-order-window').catch(() => {});
     await page.evaluate(() => { try { OrderWin.close(); } catch (_) { /* none */ } });
-
-    // ── N6 · Approve with None selected ──
-    await page.evaluate(([k]) => { CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: k }); Engrave.render(); }, [key]); await R.settle(page, 700);
-    const card6 = await page.evaluate(q => { const c = document.querySelector(q); return c ? { key: c.dataset.key, approve: !!c.querySelector('[data-a="approve"]') } : null; }, Q);
-    if (card6 && card6.approve) await page.click(Q + ' [data-a="approve"]'); else await page.keyboard.press('a');
-    await R.settle(page, 1500);
-    const after6 = await page.evaluate(k => { const j = Engrave.items().get(k); return { state: j.state, approvedAt: j.approvedAt, seals: CNEngravingSeals.list(j).map(s => s.how) }; }, key);
-    check('N6 Approve with None selected resurrects nothing: still cut plain, no new approval seal', after6.state === 'skipped' && !after6.approvedAt && after6.seals.filter(s => s === 'engraveApproved').length === 1, JSON.stringify({ card6, after6 }));
 
     // ── N7 · a re-sync and an intake run ──
     const sync = await page.evaluate(async ([rk, k]) => {
@@ -115,18 +133,18 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
       // (the job lost, as a page that never held it: the line is read again from the order's own personalisation)
       Engrave.items().delete(k); row.spec = null; Orders.interpretAll(); Engrave.ensureJobs(row); try { await Engrave.classify(row); } catch (_) { /* below */ } await Engrave.fitAll();
       const rec = Orders.lineRecord ? Orders.lineRecord(row)[1] : null;
-      return { a, b: Engrave.jobsOf(row).map(j => j.key + ':' + j.state + ':' + (j.fit ? 'fit' : '')), ov: (rec && rec.engravingOverride) || row.engravingOverride, pending: Engrave.pendingCount() };
+      return { a, b: Engrave.jobsOf(row).map(j => j.key + ':' + j.state + ':' + (j.fit ? 'fit' : '')), ov: (rec && rec.engravingOverride) || row.engravingOverride, seals: ((rec && rec.engrave) || {}).seals || [], pending: Engrave.pendingCount() };
     }, [rowKey, key]);
-    check('N7 a re-sync and an intake run never bring the engraving back (the override is in the line\'s record)', sync.a.every(s => /:(skipped|none)$/.test(s)) && sync.b.every(s => /:(skipped|none):$/.test(s)) && sync.ov && sync.ov.mode === 'none' && sync.pending === 0, JSON.stringify(sync));
+    check('N7 a re-sync and an intake run never bring the engraving back (the override is in the line\'s record, no seal in it)', sync.a.every(s => /:none$/.test(s)) && sync.b.every(s => /:none:$/.test(s)) && sync.ov && sync.ov.mode === 'none' && sync.pending === 0 && !sync.seals.length, JSON.stringify(sync));
 
-    // ── N8 · "No back engraving" in the work area, on the other order ──
-    const key2 = made.back2.jobs[0].key, pid2 = made.back2.poolIds[0];
+    // ── N8 · the green Approve button does the same (the other order) ──
+    const key2 = made.back2.jobs[0].key;
     await R.openEngraveDetail(w, 'back2', { face: 'back' }); await R.settle(page, 600);
-    await page.click(Q + ' [data-a="skip"]');
-    const n8 = await until(() => page.evaluate(([k, p]) => { const j = Engrave.items().get(k), sh = Pool.sheetOf(p); return j.state === 'skipped' && !(sh.backPool || []).some(b => b.poolId === p) ? { made: !!CharmNestMadeThumb.forPiece(p), pending: Engrave.pendingCount() } : null; }, [key2, pid2]), 15000);
-    await page.evaluate(k => { CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: k }); Engrave.render(); }, key2); await R.settle(page, 700);
-    const segs8 = await page.evaluate(q => [...document.querySelectorAll(q + ' .pvSetup .engpSeg')].map(b => b.dataset.mode + ':' + b.getAttribute('aria-pressed')).join(' '), Q);
-    check('N8 "No back engraving" removes the face the same way: cut plain, off the sheet, no made picture, the toggles say None', !!n8 && !n8.made && /none:true/.test(segs8) && /back:false/.test(segs8), JSON.stringify({ n8, segs8 }));
+    await page.click(Q + ' .pvSetup .engpSeg[data-mode="none"]'); await R.settle(page, 300);
+    const c8 = await cardNow(key2);
+    await page.click(Q + ' [data-a="approve"]');
+    const d8 = await until(async () => { const j = await job(key2); return j.state === 'none' ? j : null; }, 15000);
+    check('N8 the green Approve button with None staged does the same: no engraving, no seal, off the sheet, the charm alone', !!d8 && !d8.seals.length && !d8.onSheet && !d8.made && /none:true/.test(c8.segs) && c8.approve, JSON.stringify({ c8, d8 }));
     if (w.shots) await R.shot(w, 'none-after').catch(() => {});
     check('N9 no page errors', errors.length === 0, errors.join(' | ').slice(0, 400));
   } catch (e) { console.error(e); check('ran', false, String(e && e.stack || e)); }

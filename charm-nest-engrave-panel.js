@@ -89,7 +89,7 @@
   function stageOf(key) {
     const d = DRAFTS.get(key); if (!d || !(d.dirty || d.posTouched)) return null;
     const x = f => ({ text: str(d.faces[f] && d.faces[f].text), font: str(d.faces[f] && d.faces[f].font) });
-    return { mode: d.mode, faces: { front: x('front'), back: x('back') } };
+    return { mode: d.mode, faces: { front: x('front'), back: x('back') }, ...(d.mode === 'none' && d.wasMode ? { plain: facesOf(d.wasMode) } : {}) };   // (NONEPLAIN 2: None staged: the faces it takes away are still drawn, as the charm alone)
   }
 
   function draftOf(vm, key) {
@@ -371,6 +371,7 @@
     const keepQuietly = d => {
       const S = Setup(), vm = tryDo(() => S.read(line, { slot: slot || undefined, jobs: jobs() }), null); if (!vm) return;
       const patch = tryDo(() => S.patchOf(vm, d), null); if (!hasPatch(patch)) return;
+      if (d.mode === 'none') return;   // (NONEPLAIN 2: None takes effect with Approve alone: a card left with None staged keeps the engraving it had)
       const cons = tryDo(() => S.consequences(vm.line, vm.jobs, nextSetupOf(vm, patch), vm.setup), null);
       if (!cons || cons.blocked || (cons.plain && cons.plain.length)) return;
       tryDo(() => Promise.resolve(opts.save ? opts.save(patch) : hostSave(line, Object.assign({}, patch, slot ? { slot } : {}))).catch(() => {}));
@@ -412,10 +413,28 @@
     const stagedNow = () => { const m = dead ? null : tryDo(() => model(), null); return !!m && !m.d.busy && hasPatch(Setup().patchOf(m.vm, m.d)); };
     const say = (card, text) => {
       const host = card && card.querySelector('.pvApproval'); if (!host) return;
-      let n = host.querySelector('.egApproveWhy');
+      let n = host.querySelector('.egApproveWhy:not(.engpNoneHint)');
       if (!text) { if (n && n.dataset.engp) n.remove(); return; }
       if (!n) { n = card.ownerDocument.createElement('div'); n.className = 'egApproveWhy'; n.setAttribute('role', 'status'); host.appendChild(n); }
       n.dataset.engp = '1'; if (n.textContent !== text) n.textContent = text;
+    };
+    /** NONEPLAIN 2: while None is staged, the card's green Approve is what keeps it, and says so in one line under it ("No engraving · Approve to make this a regular order"). A piece already approved
+     *  shows a calm "Approved" that cannot be pressed: a green Approve takes its place while None is staged (the press is caught here, approveAfterCommit), and the calm one is back when None is not. */
+    const NONE_HINT = 'No engraving · Approve to make this a regular order';
+    const noneGate = (vm, d) => {
+      const card = el.closest ? el.closest('.rvItem') : null, host = card && card.querySelector('.pvApproval'), doc = el.ownerDocument; if (!host) return;
+      const want = d.mode === 'none' && vm.mode !== 'none' && !!d.wasMode;
+      let b = host.querySelector('[data-engp-none]'), hint = host.querySelector('.engpNoneHint');
+      const calm = host.querySelector('[data-a="approved"]'), real = host.querySelector('[data-a="approve"]:not([data-engp-none])');
+      const quiet = [calm && (calm.closest('.egApproveWrap') || calm), host.querySelector('.egWrittenNote')].filter(Boolean);   // (the calm "Approved" and its "Saved to sheet" note make way while None is staged)
+      if (!want) { if (b) b.remove(); if (hint) hint.remove(); for (const q of quiet) if (q.dataset.engpHid) { q.style.display = ''; delete q.dataset.engpHid; } return; }
+      if (!real || real.disabled) {
+        if (!b) { b = doc.createElement('button'); b.type = 'button'; b.className = 'btn sage sm egApproveButton'; b.dataset.a = 'approve'; b.dataset.engpNone = '1'; b.title = 'no engraving on this piece: it becomes a regular order'; b.textContent = 'Approve'; host.insertBefore(b, host.firstChild); }
+        for (const q of quiet) if (!q.dataset.engpHid) { q.style.display = 'none'; q.dataset.engpHid = '1'; }
+      }
+      b = b || real; if (b) b.disabled = !!d.busy;
+      if (!hint) { hint = doc.createElement('div'); hint.className = 'egApproveWhy engpNoneHint'; hint.style.color = 'var(--ink70,#5b554c)'; hint.setAttribute('role', 'status'); host.appendChild(hint); }
+      if (hint.textContent !== NONE_HINT) hint.textContent = NONE_HINT;
     };
     const cardOf = jobKey => { if (gateCard && gateCard.isConnected) return gateCard; try { return el.ownerDocument.querySelector(`.rvItem[data-key="${(root.CSS && root.CSS.escape ? root.CSS.escape(jobKey) : jobKey)}"]`); } catch (_) { return null; } };
     const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -423,7 +442,8 @@
       const m = model(); if (!m) return;
       const jobKey = str(opts.job && opts.job.key) || str((faceJobOf(m.vm, m.d.face, slot) || {}).key);
       APPROVING.add(key); let pressed = false;
-      // (NONEPLAIN: Approve with None staged, or with the "Cut it plain" row showing, IS the go-ahead: the faces go, and there is nothing left to approve, so the press ends there; it never approves the old job)
+      // (NONEPLAIN 2: Approve (the button or the A key) with None staged IS the commit: every face goes, with no seal (Engrave.saveSetup -> takeAway), the page says so and moves on as after any Approve; nothing is
+      //  left to approve, so the press ends there and never approves the old job. With the "Cut it plain" row showing, Approve is the go-ahead too.)
       const noneNow = m.d.mode === 'none', goAhead = noneNow || m.d.confirm === 'save';
       try {
         say(cardOf(jobKey), noneNow ? '' : WAIT_WHY);
@@ -484,6 +504,7 @@
       hiDecorate(el, vm, d, slot);   // (ENGHILITE: the system's own choice stays marked)
       hookCard();
       noJob(vm, d);
+      noneGate(vm, d);
       const P = Prev(); if (P && P.warm && !draw.warmed) { draw.warmed = true; tryDo(() => P.warm()); }
       const want = fs || (d.focus && el.ownerDocument.activeElement === el.ownerDocument.body ? d.focus : null);
       restoreFocus(want);
@@ -535,14 +556,21 @@
       const { vm, d } = m, on = facesOf(d.mode);
       if (want !== 'none' && on.includes(want)) { if (!setFace(want)) d.face = want; show(want); return; }   // (engraved already: a press shows it, never takes it away)
       if (want === 'none' && d.mode === 'none') return;
-      setMode(vm, d, want === 'none' ? 'none' : on.length ? 'both' : want);
-      if (want !== 'none') d.face = want;
+      // NONEPLAIN 2 (Paul, 29 Oct 2026, order 4213825625: "When I press none the actual order just abruptly disappears with no feedback ... if the user presses none maybe they want to change their mind and then
+      // press back or front again and then what? ... This will only take effect when the User clicks "Approve" after selecting the "None" option"): None is STAGED, like typed words. Nothing is saved and the card
+      // stays: the None toggle is pressed, the thumbnails and the work area show the charm alone (stageOf: plain; Engrave.draftFit: no words), a line by Approve says what Approve will do (noneGate). Front or Back
+      // pressed again brings back exactly what was there (the draft never let go of the words, the font or the position; nothing was saved, so an approval is still an approval). Only Approve keeps it (approveAfterCommit).
+      if (want === 'none') { d.wasMode = d.mode; setMode(vm, d, 'none'); d.after = null; draw(); paintAll(vm, d); changed('mode', d.face); return; }
+      if (d.mode === 'none' && d.wasMode && facesOf(d.wasMode).includes(want)) {
+        d.mode = d.wasMode; d.wasMode = ''; d.confirm = ''; d.error = ''; d.face = want; draw(); paintAll(vm, d); changed('mode', d.face);
+        if (!hasPatch(Setup().patchOf(vm, d))) { show(want); return; }   // (what was saved: nothing to keep)
+        commit(m, false).then(r => { if (r && r.ok) show(want); }, () => {}); return;
+      }
+      setMode(vm, d, on.length ? 'both' : want);
+      d.face = want;
       draw(); paintAll(vm, d); changed('mode', d.face);
-      d.after = want === 'none' ? null : want;
-      // NONEPLAIN (Paul 29 Oct 2026: "I chose "None" for engraving and it still kept the engraving even after pressing the "Approve" button ... the engraving must be completely removed"): None IS the person's
-      // decision, kept at once: every face of the piece goes (an approved one cut plain, its seal kept, a "cut plain" seal and the timeline line added, its file withdrawn from every sheet). It used to stop at
-      // the "Cut it plain / Keep it as it is" row, which nothing but that row's own button ended: Approve did nothing, and leaving the card let the choice go, so the back stayed engraved.
-      commit(m, want === 'none').then(r => { if (r && r.ok && want !== 'none') show(want); }, () => {});
+      d.after = want;
+      commit(m, false).then(r => { if (r && r.ok) show(want); }, () => {});
     };
     const click = e => {
       const b = e.target && e.target.closest && e.target.closest('[data-engp]'); if (!b || !el.contains(b) || b.disabled || dead) return;
