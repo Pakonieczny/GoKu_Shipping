@@ -3,10 +3,10 @@
 // must not draw a second route to the same words, a second face switch, a reference picture of the other face, a "From the order" list, a "NN% sure" pill or the block titles. What a person has to decide or fix stays.
 // Real charm-nest-1.html in headless Chromium over the fake loopback site (bridge-server.cjs): no Etsy, no paid reading, no live write. Names are made up.
 //   1  a settled read (97%, personalisation box, no staff note), the detail at 1280x720: ABSENT: the "Words on the ..." box and its "Use these words", the "Front/Back . reference" picture (when the card's thumbnails are on
-//      the page), the "From the order" list, the "NN% sure" pill, every block title, the head's Front | Back switch; PRESENT: the panel (one words box, font, ONE Emoji button; no Save / Cancel since LIVEWORDS), Approve, "No engraving", the big picture, Open order
+//      the page), the "From the order" list, the "NN% sure" pill, every block title, the head's Front | Back switch; PRESENT: the panel (one words box, font, ONE Emoji button; no Save / Cancel since LIVEWORDS), Approve, the big picture, Open order (no "No engraving" button since NONEPRESS)
 //   2  the customer's own words are ALWAYS in the detail (ENGNOTE, Paul round 2 point 6: "I didn't ask for you to remove that"): ONE box titled "What the customer wrote" (charm-nest-engrave-said.js), settled read or not, a
 //      staff note or not; it holds no "Reading", no "Font", no "Decided by". Its own checks (every part, nothing when the customer wrote nothing, the approved piece's card, the Review tab) are in engrave-customer-note.cjs
-//   3  words still to decide (state words): ONE small "Engrave these words" button (the panel cannot confirm a read as it stands), the reason said once in the empty picture, one "No engraving" button
+//   3  words still to decide (state words): ONE small "Engrave these words" button (the panel cannot confirm a read as it stands), the reason said once in the empty picture, no "No engraving" button (NONEPRESS)
 //   4  the Review tab's placement card (no panel there) is untouched: its words box and its pill are still drawn
 //   5  an APPROVED piece (no Decided row or detail any more: its row opens this very card) draws the same minimal card: the words once, in the panel, no second route to them, no "Reading" / "Decided by" / percentage, a calm
 //      "Approved" where Approve was; its row in the one list says the words and carries the seals
@@ -87,7 +87,8 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     } else console.log('  (no CharmNestEngraveCard in this build: the reference picture and the big picture\'s title are still drawn until it lands — checks skipped; titles now: ' + JSON.stringify(d.titles) + ')');
     check(d.seg === 'None|Front|Back' && d.font === 1 && d.save === 0 && d.cancel === 0, 'the panel keeps the choices: ' + d.seg + ', one font drop-down, no Save, no Cancel (LIVEWORDS: Approve keeps the words)');
     check(d.emoji === 1, 'ONE Emoji button in the detail (the panel\'s; the old box\'s is gone with the box): ' + d.emoji);
-    check(d.approve === 1 && d.skip === 1 && /^No back engraving/.test(d.skipText) && d.backHost === 1 && d.openOrder === 1, 'Approve, the one "No engraving" button, the big picture and Open order stay: ' + JSON.stringify({ approve: d.approve, skip: d.skip, skipText: d.skipText, backHost: d.backHost, openOrder: d.openOrder }));
+    // (NONEPRESS, Paul 29 Oct 2026: "Remove this "No Engraving" button from the UI": the None toggle of the panel is the one way to no engraving)
+    check(d.approve === 1 && d.skip === 0 && d.backHost === 1 && d.openOrder === 1, 'Approve, the big picture and Open order stay; no "No engraving" button (the None toggle is the way): ' + JSON.stringify({ approve: d.approve, skip: d.skip, skipText: d.skipText, backHost: d.backHost, openOrder: d.openOrder }));
     if (shots) await page.screenshot({ path: path.join(shots, 'detail-settled.png') });
 
     // ── 2 · the customer's words are always there (ENGNOTE; the quiet box ENGTRIM kept for an uncertain read is this one box now, for every read) ──
@@ -105,7 +106,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     d = await detail({ state: 'words', reason: 'Say what to engrave on the back', fit: null, view: null }, {});
     check(d.use.length === 1 && d.use[0] === 'Engrave these words' && d.words === 0 && d.oldBox === 0 && d.textareas === 1, 'words still to decide: ONE small "Engrave these words" button and still no second words box: ' + JSON.stringify({ use: d.use, words: d.words, textareas: d.textareas }));
     check(d.noBack.length === 1 && d.noBack[0] === 'Say what to engrave on the back' && d.why === 0, 'the reason is said once, in the empty picture, not again under a box: ' + JSON.stringify({ noBack: d.noBack, why: d.why }));
-    check(d.skip === 1 && d.said === 1, 'one "No engraving" button (it used to be drawn twice), and the customer\'s own words in the one box');
+    check(d.skip === 0 && d.said === 1, 'no "No engraving" button (NONEPRESS: the None toggle is the way), and the customer\'s own words in the one box');
     d = await detail({ state: 'classify', fit: null, view: null, _lateTries: 3 }, {});   // (a front + back line's unread face is read free in the background (ENGFRONT prepareLate, "Preparing…"); three tries that moved it nowhere is a truly stopped read)
     check(d.noBack.length === 1 && /Processing stopped before these words were read\.$/.test(d.noBack[0]) && !/below/.test(d.noBack[0]), 'a stopped read says so without pointing at a box "below": "' + d.noBack[0] + '"');
     d = await detail({ state: 'fitting', fit: null, view: null }, {});

@@ -269,13 +269,13 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
     const tabs = [...sws[0].querySelectorAll('.egEarTab')]; assert.deepEqual(tabs.map(b => b.querySelector('.egPiece').textContent), ['FRONT', 'BACK']); assert.deepEqual(tabs.map(b => b.getAttribute('aria-pressed')), ['true', 'false']);
     assert.deepEqual(tabs.map(b => b.querySelector('.egEarWords').textContent), ['W', '1. 27. 24'], 'both faces\' words are on the switch');
     assert.equal(card.querySelector('.pvMain .pvH').textContent, 'Front · engraving'); assert.equal(card.querySelector('.wordsHead .lbl').textContent, 'Words on the front'); assert.equal(card.querySelector('[data-f="words"]').value, 'W');
-    assert.match(card.querySelector('[data-a="approve"]').title, /write the front file/); assert.match(card.querySelector('.ctl [data-a="skip"]').textContent, /^No front engraving/); assert.equal(card.querySelectorAll('.rh .reviewIdentity > .egPiece').length, 0, 'the switch replaces the tag');
+    assert.match(card.querySelector('[data-a="approve"]').title, /write the front file/); assert.equal(card.querySelector('.ctl [data-a="skip"]'), null, 'NONEPRESS: no "No front engraving" button (the None toggle is the way)'); assert.equal(card.querySelectorAll('.rh .reviewIdentity > .egPiece').length, 0, 'the switch replaces the tag');
     assert.match(card.querySelector('.pvOrder').textContent, /asks for both faces; the note is labelled front - W \/ back - 1\. 27\. 24/, 'the system\'s reading, in its one plain line, beside the buyer\'s words');
     const both = card.querySelector('[data-a="approveBoth"]'); assert.equal(both.textContent, 'Approve both faces'); assert.equal(both.disabled, true, 'not before the back has been on screen'); assert.match(both.title, /back placement first/); assert.equal(card.querySelector('[data-a="approveFaces"]'), null, 'a single piece has just the one press');
     // the Back
     tabs[1].click(); P.runFrames(); card = P.card(); assert.equal(card.dataset.key, made.tag[0].key); assert.equal(card.querySelector('.rh .kind').textContent, '1 of 6 · 0 done');
     assert.equal(card.querySelector('.pvMain .pvH').textContent, 'Back · engraving'); assert.equal(card.querySelector('.wordsHead .lbl').textContent, 'Words on the back'); assert.equal(card.querySelector('[data-f="words"]').value, '1. 27. 24');
-    assert.deepEqual([...card.querySelectorAll('.egEarTab')].map(b => b.getAttribute('aria-pressed')), ['false', 'true']); assert.match(card.querySelector('.ctl [data-a="skip"]').textContent, /^No back engraving/);
+    assert.deepEqual([...card.querySelectorAll('.egEarTab')].map(b => b.getAttribute('aria-pressed')), ['false', 'true']); assert.equal(card.querySelector('.ctl [data-a="skip"]'), null, 'NONEPRESS: no "No back engraving" button');
     const both2 = card.querySelector('[data-a="approveBoth"]'); assert.equal(both2.disabled, false, 'the front was on screen, the back is now'); assert.match(both2.title, /Front, then the Back/);
   });
   await t('2e an earring pair with a front and a back: two switches, Left | Right with Front | Back right beneath it; each ear and face is its own card with its own words and approval', () => {
@@ -330,8 +330,9 @@ const BACK_ONLY = ['pend', 'pair', 'neck'];
     card = P.open(fronts.tag[0].key); const n = press(card, 'next'); assert.ok(!n.dataset.key.startsWith(ROW.tag.key), 'the tag\'s back is not another step');
     card = P.open(made.ears[1].key); const p = press(card, 'prev'); assert.ok(!p.dataset.key.startsWith(ROW.ears.key), 'an ear is not another step');
   });
-  await t('2i skipping a face: "No front engraving" cuts only the front plain (a seal by the person), the back of the piece stays to do; the row tells it', async () => {
-    P.reset(); const card = P.open(fronts.tag[0].key); const b = card.querySelector('.ctl [data-a="skip"]'); b.click(); await new Promise(r => setImmediate(r)); await new Promise(r => setImmediate(r));
+  // (NONEPRESS, Paul 29 Oct 2026: "Remove this "No Engraving" button from the UI": the work area's button is gone; a face cut plain on its own (Engrave.skip) still reads as it did)
+  await t('2i a face cut plain (Engrave.skip): only the front plain (a seal by the person), the back of the piece stays to do; the row tells it', async () => {
+    P.reset(); P.open(fronts.tag[0].key); await E.skip(fronts.tag[0], 'Paul'); await new Promise(r => setImmediate(r)); await new Promise(r => setImmediate(r));
     assert.equal(fronts.tag[0].state, 'skipped'); assert.equal(made.tag[0].state, 'review', 'the back is untouched'); assert.ok(Seals.list(fronts.tag[0]).some(x => x.how === 'engravePlain' && x.face === 'front'), 'a plain seal, on the front');
     P.relink('tag'); P.showList(); const row = P.rowsOnPage().find(r => r.dataset.rid === RID_TAG); assert.ok(row, 'the line is ONE row of the list (its back is still to do, its front is cut plain)'); assert.equal(P.rowsOnPage().filter(r => r.dataset.rid === RID_TAG).length, 1);
     assert.deepEqual([...row.querySelectorAll('.egEar .egPiece')].map(n => n.textContent), ['FRONT', 'BACK'], 'both faces are told on the row, each on its own line'); assert.equal(row.querySelector('.egMode').textContent, 'Front + back');

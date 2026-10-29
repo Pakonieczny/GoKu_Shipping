@@ -470,7 +470,14 @@
       e.preventDefault(); e.stopImmediatePropagation(); approveAfterCommit(act || 'approve');
     };
     const blockClick = e => { const b = e.target && e.target.closest ? e.target.closest(GATE) : null; if (b && !b.disabled) stop(e, b.dataset.a); };
-    const blockKey = e => { if (e.key && e.key.toLowerCase() === 'a' && !e.metaKey && !e.ctrlKey && !e.altKey && e.target && e.target.closest && !e.target.closest('input,textarea,select,[contenteditable]')) stop(e, 'approve'); };
+    const blockKey = e => {
+      const k = e.key ? e.key.toLowerCase() : '', plain = !e.metaKey && !e.ctrlKey && !e.altKey && e.target && e.target.closest && !e.target.closest('input,textarea,select,[contenteditable]');
+      if (k === 'a' && plain) stop(e, 'approve');
+      // NONEPRESS (Paul, 29 Oct 2026: "Remove this "No Engraving" button from the UI"): the S key is the None toggle: it STAGES None (nothing is kept until Approve), on any piece, approved or not
+      else if (k === 's' && plain && !e.repeat) { e.preventDefault(); e.stopImmediatePropagation(); stageNone(); }
+    };
+    /** S, or a host: the None toggle pressed (staged only; Approve keeps it). false when this piece cannot be set to None here (busy, a line that never engraves). */
+    const stageNone = () => { if (dead) return false; const m = tryDo(() => model(), null); if (!m || m.d.busy || !modesFor(line).some(([x]) => x === 'none')) return false; pressMode(m, 'none'); return true; };
     const hookCard = () => {
       const card = el.closest ? el.closest('.rvItem') : null; if (!card || card === gateCard) return;
       if (gateCard) { gateCard.removeEventListener('click', blockClick, true); gateCard.removeEventListener('keydown', blockKey, true); }
@@ -624,7 +631,7 @@
     };
     /** Keep what is staged now, quietly (a test, a host that closes the card itself). -> Promise<{ ok, ... }> */
     const commitNow = () => { const m = dead ? null : model(); return m ? commit(m, false) : Promise.resolve({ ok: false }); };
-    return { draw, refresh: draw, setFace, beforeMove, moved, commit: commitNow, destroy() { dead = true; untrack(); sweepSoon(); for (const [t, f] of ev) el.removeEventListener(t, f); if (gateCard) { gateCard.removeEventListener('click', blockClick, true); gateCard.removeEventListener('keydown', blockKey, true); } }, paintAll: () => { const m = model(); if (m) paintAll(m.vm, m.d); } };
+    return { draw, refresh: draw, setFace, beforeMove, moved, commit: commitNow, stageNone, destroy() { dead = true; untrack(); sweepSoon(); for (const [t, f] of ev) el.removeEventListener(t, f); if (gateCard) { gateCard.removeEventListener('click', blockClick, true); gateCard.removeEventListener('keydown', blockKey, true); } }, paintAll: () => { const m = model(); if (m) paintAll(m.vm, m.d); } };
   }
 
   const BOUND = new WeakMap();

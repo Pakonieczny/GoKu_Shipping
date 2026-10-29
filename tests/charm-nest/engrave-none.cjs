@@ -5,9 +5,9 @@
 // normal order that has no extra engravings. The thumbnails will ALL need to revert back to just showing the Charm vector file alone in the Thumbnail everywhere in the application.")
 // On the real sorter page over the repo's fake site (_engraveRealWorld.cjs: offline, made-up names, nothing live), the orders "back" and "back2" (COMET, back words), each back APPROVED and WRITTEN to the same
 // sheet (the back's file and record on the sheet, its back index), the line's state "written" (its set's files written: NOT cut):
-//   N1  None is STAGED only: nothing saved, the card stays, None pressed, the thumbnail and the work area show the charm alone, a line by Approve says what Approve will do, a green Approve is there
+//   N1  None is STAGED only: nothing saved, the card stays, None pressed, the thumbnail and the work area show the charm alone, a line by Approve says what Approve will do, a green Approve is there; no "No engraving" button (NONEPRESS)
 //   N2  Back pressed again restores exactly what was there (words, approval), nothing saved
-//   N3  None again, then Approve (the A key): the engraving is taken away (no job to engrave, the person's override), NO seal and no stamp, one timeline line "Engraving removed by ...", a toast, the tab moves on
+//   N3  None again (the S key, the None toggle: staged only), then Approve (the A key): the engraving is taken away (no job to engrave, the person's override), NO seal and no stamp, one timeline line "Engraving removed by ...", a toast, the tab moves on
 //   N4  every picture is the charm alone (made-thumbs, list boxes), the rail has no Engraved step
 //   N5  the sheet drops it (here and in the cloud, the back record invalidated, the back index without it), the piece stays where it stood, the other order's back is kept
 //   N6  the order window (opened after, same page): no Engraving chip, the Vector design the charm alone, no Engraving block
@@ -76,6 +76,8 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     const c1 = await cardNow(key), j1 = await job(key);
     check('N1 None is staged only: nothing is saved (the back stays approved and on its sheet, no override), no "Cut it plain" row, no error', j1.state === 'written' && !j1.ov && j1.onSheet && j1.made && !c1.confirm && !c1.err, JSON.stringify({ j1, c1 }));
     check('N1 the card stays where it is, the None toggle pressed', c1.key === key && /none:true/.test(c1.segs) && /back:false/.test(c1.segs), JSON.stringify({ c0: c0.segs, c1 }));
+    const skipBtn = await page.evaluate(q => document.querySelectorAll(q + ' [data-a="skip"]').length, Q);
+    check('N1 the work area has no "No engraving" button (NONEPRESS: the None toggle is the way)', skipBtn === 0, String(skipBtn));
     check('N1 the Back thumbnail and the work area show the charm alone, no words', !!c1.back && c1.back.pic && !c1.back.words && !!c1.draft && c1.draft.empty, JSON.stringify({ back: c1.back, draft: c1.draft, was: c0.back }));
     check('N1 a line by Approve says what Approve will do, and the green Approve is there (the piece was approved: its calm "Approved" makes way)', /No engraving · Approve to make this a regular order/.test(c1.hint) && c1.approve && !c1.calm, JSON.stringify(c1));
     if (w.shots) await R.shot(w, 'none-staged').catch(() => {});
@@ -86,8 +88,11 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     const c2 = await cardNow(key), j2 = await job(key);
     check('N2 Back pressed again restores exactly what was there: Back pressed, its words on the thumbnail and in the work area, still approved, nothing saved', /back:true/.test(c2.segs) && /none:false/.test(c2.segs) && !!c2.back && /Name One/i.test(c2.back.words) && !(c2.draft && c2.draft.empty) && j2.state === 'written' && j2.approvedAt > 0 && !j2.ov && !c2.hint && c2.calm, JSON.stringify({ c2, j2 }));
 
-    // ── N3 · None again, then Approve (the A key) commits ──
-    await page.click(Q + ' .pvSetup .engpSeg[data-mode="none"]'); await R.settle(page, 300);
+    // ── N3 · None again (the S key: the None toggle), then Approve (the A key) commits ──
+    await page.evaluate(q => { const c = document.querySelector(q); if (!c.hasAttribute('tabindex')) c.setAttribute('tabindex', '-1'); c.focus(); }, Q);
+    await page.keyboard.press('s'); await R.settle(page, 400);
+    const c3 = await cardNow(key), j3 = await job(key);
+    check('N3 the S key is the None toggle: None staged only (pressed, the charm alone, the hint), nothing saved', /none:true/.test(c3.segs) && !!c3.draft && c3.draft.empty && /Approve to make this a regular order/.test(c3.hint) && j3.state === 'written' && !j3.ov && j3.seals.length === 1, JSON.stringify({ c3, j3 }));
     await page.evaluate(q => { const c = document.querySelector(q); if (!c.hasAttribute('tabindex')) c.setAttribute('tabindex', '-1'); c.focus(); }, Q);
     await page.keyboard.press('a');
     const done = await until(async () => { const j = await job(key); return j.state === 'none' ? j : null; }, 15000);
