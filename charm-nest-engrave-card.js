@@ -268,6 +268,15 @@
     const src = back && ((back.outputs && back.outputs.png && back.outputs.png.url) || back.png || back.preview);
     return src ? (o && o.imageUrl ? o.imageUrl(src) : src) : '';
   }
+  /** PICBUSY (Paul, 28 Oct 2026: "There must be feedback spinners everywhere"): the face's thumbnail is its piece's (data-made-pids): a Charm Editor save of the piece, or its words fitted again, puts
+   *  the Updating ring on it (charm-nest-pic-busy.js, found by ListMedia.busy), and a thumbnail drawn meanwhile has it at once. */
+  function busyOf(btn, piece, face) {
+    tryDo(() => {
+      const f = piece.faces[face], ids = ((f && f.job && f.job.copies) || piece.poolIds || []).map(String).filter(Boolean), B_ = root && root.CNPicBusy, MT = root && root.CharmNestMadeThumb;
+      if (!ids.length) return; btn.dataset.madePids = ids.join(' ');
+      if (B_) { if (MT && MT.isBusy && MT.isBusy(ids)) B_.on(btn, 'piece'); else B_.off(btn, 'piece'); }
+    });
+  }
   function thumbOf(btn, piece, face, o) {
     const f = piece.faces[face]; btn.replaceChildren(); if (!f) return;
     const P = root && root.CharmNestEngravePreview;
@@ -291,7 +300,7 @@
     }
   }
   function fill(card, piece, o) {
-    for (const face of ['front', 'back']) { const b = card.querySelector(`.engFace[data-face="${face}"] .engThumb`); if (b) thumbOf(b, piece, face, o); }
+    for (const face of ['front', 'back']) { const b = card.querySelector(`.engFace[data-face="${face}"] .engThumb`); if (b) { thumbOf(b, piece, face, o); busyOf(b, piece, face); } }
     tryDo(() => root.Seal && root.Seal.fitGroups && root.Seal.fitGroups(card));
   }
   /** Paints the live previews of a card (or of every card inside `scope`) again, once the card is in the page: the preview scales long words down to the box it finds, and a card is built before it has one. */

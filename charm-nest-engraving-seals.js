@@ -239,10 +239,23 @@
     }
     const slot=host.querySelector('[data-engraving-preview]');if(!slot)return;
     const job=e.job,img=e.back && (e.back.outputs?.png?.url || e.back.png || e.back.preview);
+    /* PICBUSY (Paul, 28 Oct 2026: "There must be feedback spinners everywhere. The user has to wait for the system to update"): a face that is being fitted again (a Charm Editor save), laid out again
+       (an approved face put away, its font loading) or read (the saved picture) says Updating (charm-nest-pic-busy.js) over what it shows meanwhile (the saved picture, or "Drawing the engraving…",
+       never an empty white box); the face as made takes its place the moment it can be drawn (looked at again after each change the page sees: CharmNestMadeThumb.onSweep), and the ring goes. */
+    const B_=root.CNPicBusy,MT=root.CharmNestMadeThumb;
+    const waiting=()=>{if(!job || (job.fit && job.view))return false;try{const R=root.CNEngraveRefit;if(R && R.busy && R.busy(job))return true;}catch(_){}return ['fitting','ready','classify','reclassify'].includes(job.state) || (!!job.writtenFit && ['approved','written'].includes(job.state));};
     // A fresh placement must use the current fit; an old approved thumbnail must not disguise edits.
-    {let cv=null;try{cv=madeOf(job,600);}catch(_){cv=null;}if(cv){cv.setAttribute('role','img');cv.setAttribute('aria-label',aboutFace('The full back engraving',faceOf(job)));slot.replaceChildren(cv);zoomPreview(slot,zoom,job,true);return;}}
-    if(img){const im=root.document.createElement('img');im.alt=aboutFace('The full approved back engraving',faceOf(job));im.crossOrigin='anonymous';im.src=imageUrl?imageUrl(img):img;slot.replaceChildren(im);zoomPreview(slot,zoom,job,false);return;}
-    slot.classList.add('egPvNone');slot.innerHTML=`<span class="by">${aboutFace('No preview here: see the back in Design & Engrave',faceOf(job))}</span>`;
+    const draw=()=>{let cv=null;try{cv=madeOf(job,600);}catch(_){cv=null;}if(!cv)return false;cv.setAttribute('role','img');cv.setAttribute('aria-label',aboutFace('The full back engraving',faceOf(job)));slot.classList.remove('egPvWait','egPvNone');slot.replaceChildren(cv);zoomPreview(slot,zoom,job,true);if(B_){B_.off(slot,'face');B_.off(slot,'img');B_.sync(slot);}return true;};
+    // (the piece's own: a Charm Editor save of it puts the ring on this picture too (ListMedia.busy finds it by data-made-pids), and the face is drawn again when the piece's drawing moved)
+    const pids=((job && job.copies) || []).map(String).filter(Boolean);
+    if(pids.length){slot.dataset.madePids=pids.join(' ');if(B_ && MT && MT.isBusy && MT.isBusy(pids))B_.on(slot,'piece');else if(B_)B_.off(slot,'piece');}
+    if(pids.length && MT && MT.onSweep){const stop=MT.onSweep(moved=>{if(!slot.isConnected){stop();return;}if((moved || []).some(id=>pids.includes(String(id))))draw();});}
+    if(draw())return;
+    const wait=waiting();
+    if(img){const im=root.document.createElement('img');im.alt=aboutFace('The full approved back engraving',faceOf(job));im.crossOrigin='anonymous';if(B_){B_.on(slot,'img');im.onload=im.onerror=()=>B_.off(slot,'img');}im.src=imageUrl?imageUrl(img):img;slot.replaceChildren(im);zoomPreview(slot,zoom,job,false);if(B_)B_.sync(slot);}
+    else if(wait){slot.classList.add('egPvWait');slot.innerHTML=`<span class="by">${aboutFace('Drawing the engraving…',faceOf(job))}</span>`;}
+    else{slot.classList.add('egPvNone');slot.innerHTML=`<span class="by">${aboutFace('No preview here: see the back in Design & Engrave',faceOf(job))}</span>`;return;}
+    if(wait && B_){B_.on(slot,'face');if(MT && MT.onSweep){let n=0;const stop=MT.onSweep(()=>{if(!slot.isConnected || ++n>60){stop();B_.off(slot,'face');return;}if(draw()){stop();return;}if(!waiting()){stop();B_.off(slot,'face');}});}}
   }
   async function press(button,stamp){
     if(!button || !root?.Seal)return;

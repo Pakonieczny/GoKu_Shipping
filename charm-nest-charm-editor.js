@@ -3830,10 +3830,11 @@
       abandon();
       const r = result();
       if (typeof opts.check === 'function') {
-        checking = true; const sb = $('[data-act="save"]'); if (sb) { sb.disabled = true; sb.setAttribute('aria-busy', 'true'); }
+        // (PICBUSY, Paul 28 Oct 2026: "There must be feedback spinners everywhere": Save says it is saving, with the app's ring, until the save is checked; the pictures elsewhere then say Updating until they are drawn)
+        checking = true; const sb = $('[data-act="save"]'), was = sb ? sb.innerHTML : ''; if (sb) { sb.disabled = true; sb.setAttribute('aria-busy', 'true'); sb.innerHTML = ((root.CNPicBusy && root.CNPicBusy.inline) ? root.CNPicBusy.inline() : '') + 'Saving…'; }
         let no = null;
         try { no = await opts.check(r); } catch (e) { no = { lines: [{ text: String((e && e.message) || e || 'the save could not be checked') }] }; }
-        finally { checking = false; if (sb) { sb.disabled = false; sb.removeAttribute('aria-busy'); } }
+        finally { checking = false; if (sb) { sb.disabled = false; sb.removeAttribute('aria-busy'); sb.innerHTML = was; } }
         if (finished) return;
         if (no && Array.isArray(no.lines) && no.lines.length) { wentBack = false; refuse(no); return; }
       }

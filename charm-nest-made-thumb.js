@@ -313,7 +313,7 @@
       COMPOSED.set(key, job); while (COMPOSED.size > 200) COMPOSED.delete(COMPOSED.keys().next().value);
       return job;
     };
-    return { key, load, pieces: ids.length, faces: picks.some(p => p && (p.kind === 'local' ? p.st.tiles.length > 1 : (p.made.faces || []).length > 1)) ? 'both' : 'one' };
+    return { key, load, pieces: ids.length, busy: busyAny(ids), faces: picks.some(p => p && (p.kind === 'local' ? p.st.tiles.length > 1 : (p.made.faces || []).length > 1)) ? 'both' : 'one' };
   }
   function plainUrl(poolId, box) {
     const st = { tiles: [{ face: 'front', job: null, words: null }], sig: 'plain|' + poolId + '|' + sigCharm(poolId) };
@@ -331,13 +331,15 @@
    *  cleared to white and the picture laid in it (contained, as the charm was), when the piece has one. → Promise<boolean>. The canvas remembers what it was asked for: an older answer paints nothing. */
   function paintInto(cv, poolId) {
     const m = poolId && doc && cv && cv.getContext ? forPiece(poolId) : null; if (!m) return Promise.resolve(false);
-    const ask = cv._madeAsk = {};
-    const t = Math.max(TILE, Math.min(1200, cv.height)), ar = cv.width / Math.max(1, cv.height);
-    return Promise.resolve(m.load({ tile: t, ar, px: t / 2 })).then(u => (u ? imageOf(u) : null)).then(im => {
+    if (cv._madeKey === m.key && cv.dataset.made === '1') return Promise.resolve(true);   // (painted with this very picture already: a look again changes nothing, and says nothing)
+    const ask = cv._madeAsk = {}; cv.dataset.madePid = String(poolId);   // (PICBUSY: found again when the piece moves: painted again, its box says Updating meanwhile: ListMedia.refresh / busy)
+    const t = Math.max(TILE, Math.min(1200, cv.height)), ar = cv.width / Math.max(1, cv.height), box = cv.parentElement || cv, B_ = root && root.CNPicBusy;
+    if (B_) B_.on(box, 'paint');   // (PICBUSY: Updating over the charm drawn alone until the piece as made is laid over it)
+    return Promise.resolve(m.load({ tile: t, ar, px: t / 2 })).then(u => (u ? imageOf(u) : null)).finally(() => { if (B_) B_.off(box, 'paint'); }).then(im => {
       if (!im || cv._madeAsk !== ask) return false;
       const ctx = cv.getContext('2d'), k = Math.min(cv.width / im.naturalWidth, cv.height / im.naturalHeight) * 0.92, w = im.naturalWidth * k, h = im.naturalHeight * k;
       ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height); ctx.drawImage(im, (cv.width - w) / 2, (cv.height - h) / 2, w, h); ctx.restore();
-      cv.dataset.made = '1'; return true;
+      cv.dataset.made = '1'; cv._madeKey = m.key; return true;
     }).catch(() => false);
   }
 
@@ -359,9 +361,9 @@
   function sweep() {
     sweepT = 0; IDX = null;
     const ids = new Set([...index().keys(), ...touched]); touched.clear();
-    const moved = [];
+    const moved = [], states = new Map();
     for (const id of ids) {
-      const st = stateOf(id), sig = st ? st.sig : '', prev = SIGS.get(id);
+      const st = stateOf(id), sig = st ? st.sig : '', prev = SIGS.get(id); states.set(id, st);
       if (prev === undefined) {
         SIGS.set(id, sig);
         if (!sig || isQuiet(id)) continue;
@@ -380,8 +382,37 @@
     }
     first = false;
     if (moved.length) { safe(() => host.refresh && host.refresh(moved)); }
+    busySweep(states, new Set(moved));
     while (SIGS.size > 6000) SIGS.delete(SIGS.keys().next().value);
+    for (const f of [...LISTEN]) safe(() => f(moved));
   }
+  /* ── PICBUSY (Paul, 28 Oct 2026: "There must be feedback spinners everywhere. The user has to wait for the system to update"): the boxes of a piece being saved (expect: from the press of the
+     Charm Editor's Save, or the moment a save lands) or fitted again (its face busy in the fit worker) say Updating (host.busy: charm-nest-pic-busy.js, the reason 'piece'), and stop saying it the moment
+     the piece's drawing moved (the box's own new picture then says it until it is painted: ListMedia watch, 'load'), the save failed (release) or nothing came of it (PENDING_MS). ── */
+  const PENDING = new Map(), HELD = new Set(), LISTEN = new Set(), PENDING_MS = 30000;
+  /** These pieces are being saved (opts.landed: their record has just landed: the next look lets go even when the drawing did not move, so an edit that changes nothing leaves no ring). */
+  function expect(ids, opts) {
+    const until = Date.now() + PENDING_MS, list = (ids || []).map(String).filter(Boolean); if (!list.length) return;
+    for (const id of list) { PENDING.set(id, { until, released: false, landed: !!(opts && opts.landed) }); HELD.add(id); }
+    safe(() => host.busy && host.busy(list, true));
+    setTimeout(() => changed('expect', list), PENDING_MS + 50);
+  }
+  function release(ids) { for (const id of (ids || []).map(String)) { const e = PENDING.get(id); if (e) e.released = true; } changed('release', ids); }
+  function busySweep(states, moved) {
+    const now = Date.now(), on = [], off = [];
+    for (const id of new Set([...states.keys(), ...PENDING.keys(), ...HELD])) {
+      const pe = PENDING.get(id);
+      if (pe && (moved.has(id) || pe.released || pe.landed || pe.until <= now)) PENDING.delete(id);
+      const st = states.has(id) ? states.get(id) : stateOf(id), hold = !!(st && st.busy) || PENDING.has(id);
+      if (hold) { on.push(id); HELD.add(id); } else if (HELD.has(id)) { off.push(id); HELD.delete(id); }
+    }
+    if (on.length) safe(() => host.busy && host.busy(on, true));
+    if (off.length) safe(() => host.busy && host.busy(off, false));
+  }
+  /** Whether any of these pieces is being saved or fitted again (a box drawn now says Updating at once). */
+  const busyAny = ids => (ids || []).some(id => HELD.has(String(id)));
+  /** Told after every look at what moved (the engraving cards' pictures that wait for a face to be fitted look again): → stop(). */
+  function onSweep(fn) { LISTEN.add(fn); return () => LISTEN.delete(fn); }
   /** The boxes on screen look again (the cloud's rows moved: OrderPieces told so). */
   function refreshSoon() { if (refreshT) return; refreshT = setTimeout(() => { refreshT = 0; safe(() => host.refresh && host.refresh(null)); changed('cloud'); }, REFRESH); }   // (MADEV: and a look at what the cloud's rows say of the pieces this page can draw)
 
@@ -431,5 +462,5 @@
   function state() { return Object.assign({ pending: pend.size, sending, sigs: SIGS.size, mine: mine.size, dev: dev() }, stats); }
   function setHost(h) { host = Object.assign({}, h || {}); IDX = null; return host; }
 
-  return { V, verOf, setHost, changed, adopt, refreshSoon, forLine, forPiece, paintInto, tileFor, boxOf, sigOf, stateOf, pictureOf, flush, state, host: () => host, _sweep: sweep };
+  return { V, verOf, setHost, changed, adopt, refreshSoon, forLine, forPiece, paintInto, tileFor, boxOf, expect, release, onSweep, isBusy: busyAny, sigOf, stateOf, pictureOf, flush, state, host: () => host, _sweep: sweep };
 });
