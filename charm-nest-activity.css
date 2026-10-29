@@ -515,7 +515,7 @@
 :is(.ordCards .ocard,.ordCards .ogPiece) .ordEngId .egEar .egEarSeal{grid-column:3;grid-row:1/3}
 /* (ROWALIGN: when any piece of a line has its seal, every piece's line is the seal's height, so the lines stay evenly spaced and each seal sits level with its own chip, words and state) */
 .egEars:has(.egEarSeal .seal)>.egEar{min-height:calc(var(--list-seal) + 4px)}
-:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEars:has(.egEarSeal .seal)>.egEar,:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId .egEars:has(.egEarSeal .seal)>.egEar{min-height:calc(var(--list-seal) + 4px)}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEars:has(.egEarSeal .seal)>.egEar,:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId .egEars:has(.egEarSeal .seal)>.egEar{min-height:28px}   /* (ROWSEAL2, Paul 29 Oct 2026: "This order card is still too tall, the vertical spacing between the options is too large": in a list row a line with a seal is the small seal's height, 28 px, not the full seal's 61) */
 /* ═══ RELUNDER (Paul, 19 Oct 2026: "Relocate the 'Release Hold' Seal/UI to be underneath the 'Send to Review' button. Leave enough space under the button so it does not look crowded") ═══
    The order's Release Hold seal is the last thing in the order's own column of an Orders row or card (charm-nest-bridge.js relSlotHtml), under Send to Review, 16 px clear of it. */
 .rowActions>.relSealSlot{display:flex;max-width:100%;min-width:0;margin-top:16px}
@@ -581,12 +581,12 @@
 
 /* ROWSEAL (Paul, 29 Oct 2026: "This card is needlessly too tall ... vertical separation between the back and front and other taxes as much to large there's no need for the card height to grow
    beyond this normal size unless there is an excessive amount of pieces in the given order."): a face's approval seal beside its line in a list row (the Design & Engrave list, the decided rows,
-   the Orders rows and cards) is drawn about 30 px across (60 % of its 50 px), and never makes its line (and so the row) taller: its box is the line's height and the seal stands in it scaled
+   the Orders rows and cards) is drawn about 28 px across (half of its 57 px), and never makes its line (and so the row) taller: its box is the line's height and the seal stands in it scaled
    from its right edge. The order window and the engraving card keep their full-size seals. */
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar .egEarSeal,
 :is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .egEar .egEarSeal{display:flex;align-items:center;justify-content:flex-end;height:24px;max-height:24px;overflow:visible;align-self:center}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar .egEarSeal>*,
-:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .egEar .egEarSeal>*{flex:none;transform:scale(.6);transform-origin:100% 50%;margin:0}
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .egEar .egEarSeal>*{flex:none;transform:scale(.5);transform-origin:100% 50%;margin:0}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar,
 :is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .egEar{min-height:24px;max-height:none}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEars{align-content:start}
