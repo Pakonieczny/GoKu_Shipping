@@ -812,16 +812,10 @@
     let b = node.querySelector('[data-cp-design]'), strip = node.querySelector('.cpStrip');
     if (!row || !acts || !needsDesign(row, it)) { if (b) b.remove(); if (strip) strip.remove(); return; }
     css();
-    const rid = String(row.order.receiptId), att = attachedOf(rid)[0] || null, busy = busyCards.has(rid);
-    if (!b) {
-      b = el('button', 'btn cnCeBtn cpOpenBtn'); b.type = 'button'; b.dataset.cpDesign = '';
-      b.addEventListener('click', ev => { ev.stopPropagation(); openDesigner(node._cpIt || it); });
-      const hint = acts.querySelector('.cuHint'); if (hint) acts.insertBefore(b, hint); else acts.appendChild(b);
-    }
-    const label = busy ? 'Opening the Charm Editor…' : att ? 'Edit Design' : 'Open in Charm Editor';
-    if (b.dataset.l !== label) { b.innerHTML = NIB + `<span>${esc(label)}</span>`; b.dataset.l = label; }
-    b.setAttribute('aria-busy', String(busy));
-    b.title = att ? `Open ${att.name} v${att.version} in the Charm Designer: a save is a new version, attached to this order` : 'Design this order\'s charm in the Charm Designer (start blank, from its dropped .ai / .dxf, or import one there); its Save is attached to this order and offers Send to sheet';
+    const rid = String(row.order.receiptId), att = attachedOf(rid)[0] || null;
+    // (NOCARDCE, Paul 29 Oct 2026: "Remove the "Open in Charm Editor" button from this list": the card's column has no Charm Editor button any more; the order opens in the Charm Editor
+    //  from its order window (Edit Design / Design Charm) or from the design attached to it, below)
+    if (b) b.remove();
     if (!att) { if (strip) strip.remove(); return; }
     if (!strip) { strip = el('div', 'cpStrip'); strip.setAttribute('role', 'group'); node.appendChild(strip); strip.addEventListener('click', ev => { ev.stopPropagation(); const t = ev.target; const a = attachedOf(rid)[0]; if (!a) return; if (t.closest('[data-cp-strip-send]')) open({ designId: a.id, version: a.version, orderId: rid }); else if (t.closest('[data-cp-strip-pic]')) openDesigner(node._cpIt || it); }); }
     const last = att.sends && att.sends[att.sends.length - 1];

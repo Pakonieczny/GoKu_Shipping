@@ -120,13 +120,12 @@ async function partB() {
     /* ── B1 · a custom order in the Charm Designer ── */
     await page.click('#reviewView .egTab[data-k="customOrder"]');
     const card = `#rvList > .reviewListRow[data-rid="${CUSTOM}"]`;
-    await page.waitForSelector(`${card} [data-cp-design]`);
-    await page.evaluate(sel => document.querySelector(sel).scrollIntoView({ block: 'center' }), `${card} [data-cp-design]`); await shot(page, '0-card');
-    const btn = await page.evaluate(sel => { const b = document.querySelector(sel); const r = b.getBoundingClientRect(); return { text: b.textContent.trim(), w: r.width, h: r.height, inCol: !!b.closest('.rowActions') }; }, `${card} [data-cp-design]`);
-    const regular = await page.evaluate(rid => !!document.querySelector(`#rvList > .reviewListRow[data-rid="${rid}"] [data-cp-design]`), FIXED);
-    check('B1 the Custom Orders card has "Open in Charm Editor" in its column (a regular order\'s card has none)', btn.text === 'Open in Charm Editor' && btn.inCol && btn.h >= 30 && !regular, `${Math.round(btn.w)}×${Math.round(btn.h)} px`);
+    await page.waitForSelector(card);
+    await page.evaluate(sel => document.querySelector(sel).scrollIntoView({ block: 'center' }), card); await shot(page, '0-card');
+    const noBtn = await page.evaluate(sel => !document.querySelector(sel + ' [data-cp-design]'), card);
+    check('B1 the Custom Orders card has no "Open in Charm Editor" button in its column (NOCARDCE, Paul 29 Oct 2026); the order opens in the Charm Designer from its order', noBtn, '');
     const tClick = Date.now();
-    await page.click(`${card} [data-cp-design]`);
+    await page.evaluate(rid => { const row = B.orders.rows.find(r => String(r.order.receiptId) === rid); window.__cpOpen = CharmNestCustomPiece.openDesigner(row); }, CUSTOM);   // (not awaited: it settles when the editor closes)
     await page.waitForFunction(() => window.CharmEditor.current && document.querySelector('.ce-root')).catch(async e => { console.log('  (diagnosis)', JSON.stringify(await page.evaluate(() => ({ toasts: [...document.querySelectorAll('#toasts .toast')].map(t => t.textContent), who: B.employee })))); throw e; });
     const opened = await page.evaluate(() => ({ title: document.querySelector('.ce-root .ce-id h2').textContent, sub: (document.querySelector('.ce-root .ce-eyebrow') || {}).textContent || '', items: CharmEditor.current.items().length, frame: CharmEditor.current.frame() }));
     check('B2 the Charm Designer opens on that order, blank (20 × 20 mm), titled with the order', opened.items === 0 && /4174476673/.test(opened.title + opened.sub) && Math.abs(opened.frame.wPt * MMPT - 20) < 1e-6, `"${opened.title}" · ${opened.sub} · ${Date.now() - tClick} ms`);
