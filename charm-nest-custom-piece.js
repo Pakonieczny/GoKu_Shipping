@@ -856,19 +856,10 @@
     if (l && out) l.sent = { id: saved.id, version: saved.version, out };
     return out;
   }
-  function editorButton(ctx) {
-    try {
-      const host = (ctx && ctx.root && ctx.root.querySelector ? ctx.root : null) || doc, save = host && host.querySelector('.ce-root [data-act="save"], [data-act="save"]'); if (!save || save.parentNode.querySelector('[data-cp-ce-send]')) return;
-      const b = doc.createElement('button'); b.type = 'button'; b.className = 'ce-btn ce-btn--ghost'; b.dataset.cpCeSend = ''; b.textContent = 'Send to sheet…';
-      b.title = 'Keep this design as a new version and put it on the next sheet of a metal you pick, marked handmade custom';
-      b.addEventListener('click', ev => { ev.stopPropagation(); fromEditor(ctx || {}); });
-      save.parentNode.insertBefore(b, save);
-    } catch (_) { /* the editor draws its own foot */ }
-  }
   function hookEditor() {
     const CE = root.CharmEditor; if (!CE || CE.__cpHooked) return; CE.__cpHooked = true;
     (CE.commands || (CE.commands = {})).sendToSheet = { title: 'Send to sheet…', group: 'Sheets', run: ctx => fromEditor(ctx), enabled: () => !!(root.CharmNestDesigns && root.Pool && typeof root.Pool.addCustomPiece === 'function') };
-    (CE.onOpen || (CE.onOpen = [])).push(ctx => editorButton(ctx));
+    // (NOCESEND, Paul 29 Oct 2026: "Remove the 'Send to Sheet' button from the Charm Editor": no button beside Save; Send to Sheet… stays a command, in File and the right-click menu)
   }
   if (doc) hookEditor();
 

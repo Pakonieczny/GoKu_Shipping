@@ -239,7 +239,7 @@ async function partB() {
     await page.waitForFunction(() => !document.querySelector('dialog.cpDlg'));
     const after = await page.evaluate(async () => ({ editor: !!CharmEditor.current, p3: await window.__p3 }));
     check('B14 "Send to sheet…" in the Charm Editor (its command, and a button beside Save) keeps the drawing as a version and opens the pop-up over the editor; letters, Backspace and Delete typed in it stay in it (the editor\'s tool and its selected part untouched); Esc puts the pop-up away, the editor stays',
-      sel0.cmd && foot && foot.nextToSave && sel0.sel.length === 1 && k.top && k.name === 'vr tes' && k.tool === sel0.tool && k.n === 1 && k.sel.length === 1 && k.last && k.last.name === 'HEART_1203' && !k.last.orderId && after.editor && after.p3 === null,
+      sel0.cmd && !foot && sel0.sel.length === 1 && k.top && k.name === 'vr tes' && k.tool === sel0.tool && k.n === 1 && k.sel.length === 1 && k.last && k.last.name === 'HEART_1203' && !k.last.orderId && after.editor && after.p3 === null,
       `typed "${k.name}", tool ${k.tool}, ${k.n} part, ${Math.abs(k.last.widthMm - 12).toFixed(4)} mm off a 12 mm heart`);
     await page.evaluate(() => document.querySelector('.ce-root [data-act="cancel"]').click());
     await page.waitForFunction(() => !CharmEditor.current);
