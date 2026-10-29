@@ -80,9 +80,9 @@ async function run(kit) {
     });
     const job = (rid, face) => page.evaluate(([rid, face]) => __ew.facts(__ew.jobOf(rid, face)), [rid, face]);
     const cardFacts = () => page.evaluate(() => __ew.cardFacts());
-    const why = () => page.evaluate(Q => { const f = document.querySelector(Q + ' [data-engp="why"]'); if (f) f.click(); return !!f; }, Q);
+    const why = () => Promise.resolve(false);   // (LIVEWORDS: no reason is asked any more)
     const setWords = text => page.evaluate(({ Q, text }) => { const t = document.querySelector(Q + ' .engpWords'), set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; t.focus(); set.call(t, text); t.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text })); }, { Q, text });
-    const savePanel = async () => { await page.click(Q + ' [data-engp="save"]'); await R.settle(page, 400); await why(); await R.settle(page, 600); };
+    const savePanel = async () => { await page.evaluate(Q => { const c = document.querySelector(Q); return c && c._pieceMount && c._pieceMount.panel.commit(); }, Q); await R.settle(page, 1000); };   // (LIVEWORDS: no Save button: kept as Approve keeps it first)
     const waitFor = async (fn, arg, ms = 120000) => { for (let t0 = Date.now(); Date.now() - t0 < ms; ) { if (await page.evaluate(fn, arg)) return true; await new Promise(r => setTimeout(r, 250)); } return false; };
     const sheets = await page.evaluate(() => { const out = []; for (const s of allSheets()) if (s.charms && s.charms.length) { if (!s.folderPath) s.folderPath = 'charmnest/sheets/' + s.sheetId; out.push({ sheetId: s.sheetId, poolIds: s.charms.map(x => x.poolId) }); } return out; });
     for (const s of sheets) st.put('Charm_Nest_Sheets', s.sheetId, { sheetId: s.sheetId, poolIds: s.poolIds, backPool: [] });
@@ -195,7 +195,8 @@ async function run(kit) {
         f0.pill && !f0.approve && f1.state === 'review' && f1.artOnly && f1.words === '' && f1c.approve && !f1c.approveOff && f1c.words === '' && /No words needed/.test(f1c.offer) && /No words needed on the front/.test(f1c.note),
         JSON.stringify({ f0, f1, f1c }));
       // the face switch offers, never fills in: None then Front leaves the drawn front's words box empty; on a front nobody drew it fills in the buyer's note, as it always did
-      const switchWords = async name => { await R.openEngraveDetail(w, name, { face: 'front' }); await R.settle(page, 700); await page.click(Q + ' .engpSeg[data-mode="none"]'); await R.settle(page, 300); await page.click(Q + ' .engpSeg[data-mode="front"]'); await R.settle(page, 300); const v = await page.evaluate(Q => (document.querySelector(Q + ' .engpWords') || {}).value, Q); await page.click(Q + ' [data-engp="cancel"]'); await R.settle(page, 300); return v; };
+      // (LIVEWORDS: None and Front are kept at once now, so the words a face is switched on with are read from the panel's own seeding, the very call a press makes, without changing the piece)
+      const switchWords = name => page.evaluate(key => { const row = B.orders.byKey.get(key), vm = CharmNestEngraveSetup.read(row, { jobs: Engrave.jobsOf(row) }); return CharmNestEngravePanel.seedText(vm, 'front', 'front'); }, made[name].key);
       const swFresh = await switchWords('fresh'), swPlain = await switchWords('plain');
       check('A10 the face switch (None, then Front) leaves the drawn front\'s words box empty; on a front with no art edit it fills in the buyer\'s note exactly as before', swFresh === '' && swPlain === 'Note: the date should be May 3, 2025. Thank you!', JSON.stringify({ swFresh, swPlain }));
 

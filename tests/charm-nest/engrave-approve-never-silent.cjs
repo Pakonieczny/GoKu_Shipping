@@ -40,7 +40,7 @@ const SCALE = 0.02;   // (CN_SPIN_SCALE while the wait hangs: the 30 s limit of 
       if (JSON.stringify((await facts(key)).centre) !== JSON.stringify(c0)) break;
     }
     const f = await facts(key);
-    check(`${tag}0 Paul's adjustments: the words moved in the work area, the panel's Save greyed and its Cancel live, a live Approve`, f.mine && f.state === 'review' && f.nudged && JSON.stringify(f.centre) !== JSON.stringify(c0) && f.save === false && f.cancel === true && f.approve && f.approve.live, JSON.stringify({ c0, f }));
+    check(`${tag}0 Paul's adjustments: the words moved in the work area, no Save / Cancel in the panel, a live Approve`, f.mine && f.state === 'review' && f.nudged && JSON.stringify(f.centre) !== JSON.stringify(c0) && f.save === null && f.cancel === null && f.approve && f.approve.live, JSON.stringify({ c0, f }));   // (LIVEWORDS: the panel has no Save and no Cancel)
     return f;
   }
   /** A wait of the approval that never comes back (the workspace save), a press, the reason in the card, then the same press approves once the wait is back. */
@@ -63,11 +63,11 @@ const SCALE = 0.02;   // (CN_SPIN_SCALE while the wait hangs: the 30 s limit of 
     await R.build(w, ['back', 'both']);
     await hangThenApprove('back', 'back', 'B');
     await hangThenApprove('both', 'front', 'F');   // (Paul, 28 Oct 2026: bar necklaces engrave on the FRONT by default: the same press on a front)
-    // the panel's gate: staged words dim Approve, and the card says why in words (not only in a tooltip); taken out again, Approve is live and the line is gone
+    // LIVEWORDS: staged words never dim Approve (a press keeps them first); taken out again, Approve is live and no line is there
     const key = await R.openEngraveDetail(w, 'both', { face: 'back' }); await R.settle(page, 600);
     await page.focus(`${Q} .engpWords`); await page.keyboard.press('End'); await page.keyboard.type('x'); await R.settle(page, 250);
     const g1 = await facts(key);
-    check('G1 words staged and not saved: Approve is dimmed and the card says why', g1.approve && !g1.approve.live && /Save or Cancel/.test(g1.why), JSON.stringify(g1));
+    check('G1 words staged: Approve stays live, no "Save or Cancel" line', g1.approve && g1.approve.live && !/Save or Cancel/.test(g1.why), JSON.stringify(g1));
     await page.keyboard.press('Backspace'); await R.settle(page, 250);
     const g2 = await facts(key);
     check('G2 the words put back: Approve is live and the line is gone', g2.approve && g2.approve.live && !g2.why, JSON.stringify(g2));

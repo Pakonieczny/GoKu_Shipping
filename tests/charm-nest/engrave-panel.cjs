@@ -1,11 +1,11 @@
 // ENGPANEL (engrave-ui-1012): the engraving panel of the Engrave tab's detail card (charm-nest-engrave-panel.js), in the REAL page (charm-nest-1.html, headless Chromium against the local fake site;
 // offline: no Etsy, no paid reading, no live write). Paul's image 7 / 9: the menu was a one-character-wide text box, a font drop-down on top of it, four choices on two rows, an "Undo my edit" button.
-//   1  the mode control is ONE row: None | Front | Back | Front + back (all four on the same line, at the real width of the Engrave detail's column)
-//   2  the text area is a normal width (>= 200px: computed in the real stylesheet), the font drop-down is under it and does not touch it; Save and Cancel are the only action buttons
+//   1  the face control is ONE row: None | Front | Back (LIVEWORDS, 29 Oct 2026: no "Front + back"; Front and Back are toggles, both pressed = both faces engraved)
+//   2  the text area is a normal width (>= 200px: computed in the real stylesheet), the font drop-down is under it and does not touch it; there is no Save and no Cancel (LIVEWORDS: Approve keeps the words)
 //   3  none of the old words: no "ENGRAVES", "The system read", "nothing in the listing", "Undo", no percentage
 //   4  an earring (spec.engraveNever) gets no panel, so it has no Back choice anywhere
 //   5  picking a face switches the editor; editing the Front never changes the Back (the draft, the saved override and the jobs)
-//   6  the position row acts on THAT face's job; Save and Cancel are off until something is staged; Cancel puts the position back (snapshot / restore)
+//   6  the position row acts on THAT face's job, at once (nothing to save or cancel)
 //   7  typing and picking a font repaint THAT face's thumbnail at once (before Save), never the other one
 //   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-panel.cjs
 const fs = require('fs'), path = require('path');
@@ -60,14 +60,14 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
         return { panel: r(p), segs: segs.map(s => ({ t: s.textContent.trim(), top: Math.round(r(s).t), right: Math.round(r(s).r) })), segBox: r(p.querySelector('.engpMode:not(.engpFaceSw)')), ta: r(ta), sel: r(sel),
           taW: parseFloat(getComputedStyle(ta).width), buttons: [...p.querySelectorAll('button')].map(b => b.textContent.trim()).filter(Boolean), text: p.textContent.replace(/\s+/g, ' ') };
       });
-      check(m.segs.map(s => s.t).join('|') === 'None|Front|Back|Front + back', `${w}px: the choices are None | Front | Back | Front + back: ${m.segs.map(s => s.t).join(' | ')}`);
-      check(new Set(m.segs.map(s => s.top)).size === 1 && m.segs.every(s => s.right <= Math.ceil(m.segBox.r)), `${w}px: all four on ONE row inside the control (tops ${m.segs.map(s => s.top)})`);
+      check(m.segs.map(s => s.t).join('|') === 'None|Front|Back', `${w}px: the choices are None | Front | Back (no Front + back): ${m.segs.map(s => s.t).join(' | ')}`);
+      check(new Set(m.segs.map(s => s.top)).size === 1 && m.segs.every(s => s.right <= Math.ceil(m.segBox.r)), `${w}px: all three on ONE row inside the control (tops ${m.segs.map(s => s.top)})`);
       check(m.panel.w >= 232 - 1, `${w}px: the panel is at least 232px wide: ${Math.round(m.panel.w)}px`);
       check(m.taW >= 200 && m.ta.w >= 200, `${w}px: the text area is a normal width: ${Math.round(m.ta.w)}px (computed ${Math.round(m.taW)})`);
       check(m.sel.t >= m.ta.b - 0.5 && m.sel.w >= 200, `${w}px: the font drop-down is under the text area, full width, touching nothing: select top ${Math.round(m.sel.t)} >= text bottom ${Math.round(m.ta.b)}, width ${Math.round(m.sel.w)}`);
       const acts = m.buttons.filter(b => !/^(None|Front|Back|Front \+ back|Emoji|Aα)$/.test(b));   // (Emoji and Aα, the other alphabets (ALPHAFIND, 28 Oct 2026), are Paul's own picker buttons, beside the words)
-      check(acts.join('|') === 'Save|Cancel', `${w}px: Save and Cancel are the only action buttons (besides the quiet Emoji and Aα buttons): ${acts.join(' | ')}`);
-      check(!/ENGRAVES|system read|nothing in the listing|Undo|sure|%/i.test(m.text), `${w}px: none of the old words in the panel: "${m.text.slice(0, 120)}"`);
+      check(acts.length === 0, `${w}px: no Save, no Cancel, no other action button (besides the quiet Emoji and Aα buttons): ${acts.join(' | ')}`);
+      check(!/ENGRAVES|system read|nothing in the listing|Undo|sure|%|Why change|Changed:/i.test(m.text), `${w}px: none of the old words in the panel: "${m.text.slice(0, 120)}"`);
       if (shots) await page.screenshot({ path: path.join(shots, `panel-${w}.png`) });
     }
     await page.setViewportSize({ width: 1280, height: 720 });
@@ -81,7 +81,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     }, KEY);
     check(ear.html === '' && ear.hidden && ear.modes === 0, 'an earring (spec.engraveNever) draws no panel at all, so it has no Back choice: ' + JSON.stringify(ear));
 
-    // ── a face nobody could place (an unlabelled "both") asks in one line; an approved face is NOT locked (NODECIDED): its words and font are open, one line says who approved it, Save waits for a change ──
+    // ── a face nobody could place (an unlabelled "both") asks in one line; an approved face is NOT locked (NODECIDED): its words and font are open, one line says who approved it ──
     const odd = await page.evaluate(KEY => {
       const row = B.orders.byKey.get(KEY), out = {}, slot = document.createElement('div'); document.body.appendChild(slot);
       const ask = Object.assign({}, row, { key: 'ask_1', spec: Object.assign({}, row.spec, { engraving: { v: 1, mode: 'both', source: 'note', textSource: 'unlabelled', needsPerson: true, confidence: 0.5, raw: 'Name One Name Two', front: null, back: null } }) });
@@ -90,27 +90,24 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       slot.textContent = ''; CharmNestEngravePanel.DRAFTS.clear();
       const j = Engrave.jobOf(row, null, 'back'), was = { state: j.state, by: j.approvedBy }; Object.assign(j, { state: 'approved', approvedBy: 'Name One' });
       CharmNestEngravePanel.mount(slot, row, { job: j, face: 'back' });
-      out.locked = { words: slot.querySelector('.engpWords').disabled, font: slot.querySelector('.engpFont').disabled, lock: (slot.querySelector('.engpLock') || {}).textContent || '', save: slot.querySelector('[data-engp=save]').disabled, words0: slot.querySelector('.engpWords').value };
+      out.locked = { words: slot.querySelector('.engpWords').disabled, font: slot.querySelector('.engpFont').disabled, lock: (slot.querySelector('.engpLock') || {}).textContent || '', save: !slot.querySelector('[data-engp=save]'), words0: slot.querySelector('.engpWords').value };
       Object.assign(j, { state: was.state, approvedBy: was.by }); slot.remove(); CharmNestEngravePanel.DRAFTS.clear(); return out;
     }, KEY);
     check(odd.ask.prompt && odd.ask.raw === 'Name One Name Two', 'words nobody could place: the panel asks in one line and shows the buyer\'s own words: ' + JSON.stringify(odd.ask));
-    check(!odd.locked.words && !odd.locked.font && odd.locked.lock === 'Approved by Name One' && odd.locked.save, 'an approved face is not locked: its words and font are open, ONE line says by whom, and Save waits for a change: ' + JSON.stringify(odd.locked));
+    check(!odd.locked.words && !odd.locked.font && odd.locked.lock === 'Approved by Name One' && odd.locked.save, 'an approved face is not locked: its words and font are open, ONE line says by whom, no Save button: ' + JSON.stringify(odd.locked));
 
-    // ── the Engrave detail itself: the Emoji button is there, and a staged edit stops Approve from approving the OLD words ──
+    // ── the Engrave detail itself: the Emoji button is there, and a staged edit never dims Approve (LIVEWORDS: Approve keeps the words first, engrave-live-words.cjs drives it on real drawings) ──
     await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: null }); Engrave.render(); });
     await page.waitForSelector('.pvSetup .engp .engpWords', { timeout: 20000 });
     const em = await page.evaluate(() => ({ btn: document.querySelectorAll('.pvSetup [data-emoji]').length, picker: !!window.CNEmojiPicker, approve: !!document.querySelector('[data-a=approve]') }));
     check(!em.picker || em.btn === 1, 'one quiet Emoji button beside the words (the page\'s own picker, attached to the panel\'s text box): ' + JSON.stringify(em));
     if (em.approve) {
-      const probe = () => page.evaluate(() => { const c = document.querySelector('.rvItem[data-kind=placement]'), t = c.querySelector('.pvH') || c.querySelector('.pvMain');   // (ENGTRIM: the big picture's title is gone when the card is on the page; any element of the card does as the key's target)
-      let hit = 0; const f = () => { hit++; }; t.addEventListener('keydown', f); t.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true })); t.removeEventListener('keydown', f); return { hit, dis: c.querySelector('[data-a=approve]').disabled, title: c.querySelector('[data-a=approve]').title }; });
+      const probe = () => page.evaluate(() => { const c = document.querySelector('.rvItem[data-kind=placement]'), b = c.querySelector('[data-a=approve]'); return { dis: b.disabled, title: b.title, why: [...c.querySelectorAll('.egApproveWhy')].map(n => n.textContent).join('|'), staged: !!c.querySelector('.engp[data-staged]') }; });
       const before = await probe();
       await page.fill('.pvSetup .engpWords', 'Name Three');
       const staged = await probe();
-      check(staged.dis && /Save or Cancel/.test(staged.title) && staged.hit === 0, 'with words staged and not saved, Approve is dimmed ("Save or Cancel the edit first") and the A key never reaches the card: ' + JSON.stringify(staged) + ' (before: ' + JSON.stringify({ hit: before.hit, dis: before.dis }) + ')');
-      await page.click('.pvSetup [data-engp=cancel]');
-      const after = await probe();
-      check(after.dis === before.dis && after.title === before.title && after.hit === before.hit, 'after Cancel Approve and the A key are as they were: ' + JSON.stringify({ hit: after.hit, dis: after.dis }));
+      check(staged.staged && staged.dis === before.dis && staged.title === before.title && !/Save or Cancel/.test(staged.title + staged.why), 'with words staged, Approve stays as it was (no "Save or Cancel the edit first"): ' + JSON.stringify(staged) + ' (before: ' + JSON.stringify(before) + ')');
+      await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); });   // (nothing approved here: the draft is let go without keeping it)
     }
 
     // ── 7a · in the Engrave detail itself, with the card's Front / Back thumbnails (when this build has the card): a click on a thumbnail picks the face the panel edits ──
@@ -133,7 +130,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     // ── 8 · two discs of one line (when the model has the per-piece override: ENGLINK): disc 2 is edited alone, its draft and its save never touch disc 1 ──
     const perPiece = await page.evaluate(() => !!(window.CharmNestEngraveFaces && CharmNestEngraveFaces.keyOf));
     if (perPiece) {
-      const disc = await page.evaluate(KEY => {
+      const disc = await page.evaluate(async KEY => {
         const row = B.orders.byKey.get(KEY), mk = (slot, text) => ({ key: KEY + '#' + slot, slot, row, state: 'review', text, lines: [text], fit: { centre: [0, 0], angle: 0, size: 10, weight: 'Regular' } }), jobs = [mk('D1', 'Name One'), mk('D2', 'Name Two')];
         const out = {}; let got = null;
         if (document.activeElement && document.activeElement.blur) document.activeElement.blur();   // (a textarea of the Engrave tab still has focus and a typed value: leaving it fires its native change event, which would make a line draft)
@@ -142,8 +139,9 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
         const h = CharmNestEngravePanel.mount(s, row, { jobs: () => jobs, job: jobs[1], face: 'back', save: async p => { got = p; return { ok: true }; } });
         const ta = s.querySelector('.engpWords'); out.text = ta && ta.value; out.disabled = !!(ta && ta.disabled); out.keys = [...CharmNestEngravePanel.DRAFTS.keys()];
         ta.value = 'Name Three'; ta.dispatchEvent(new Event('input', { bubbles: true }));
-        s.querySelector('[data-engp=save]').click();
-        out.asked = !!s.querySelector('.engpWhy'); s.querySelector('[data-engp=why]').click();   // (words that differ from the system's ask "Why change it?" first, ENGWHY: a quick button answers)
+        out.saveBtn = !!s.querySelector('[data-engp=save]');
+        await h.commit();   // (LIVEWORDS: what Approve does first, no question asked)
+        out.asked = !!s.querySelector('.engpWhy');
         out.patch = got && JSON.parse(JSON.stringify(got));
         out.override = got && JSON.parse(JSON.stringify(CharmNestEngraveSetup.buildOverride(row, got, 'Name One', 0)));
         // disc 1 has a draft of its own
@@ -153,7 +151,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
         h.destroy(); s.remove(); s1.remove(); CharmNestEngravePanel.DRAFTS.clear(); return out;
       }, KEY);
       check(disc.text === 'Name Two' && !disc.disabled && disc.keys.join() === KEY + '#D2', 'disc 2 shows its own words in an editable box and has its own draft: ' + JSON.stringify({ text: disc.text, keys: disc.keys }));
-      check(disc.patch && disc.patch.slot === 'D2' && disc.patch.back && disc.patch.back.text === 'Name Three' && !disc.patch.front && !disc.patch.mode, 'Save sends only disc 2\'s back words, marked with its slot: ' + JSON.stringify(disc.patch));
+      check(!disc.saveBtn && !disc.asked && disc.patch && disc.patch.slot === 'D2' && disc.patch.back && disc.patch.back.text === 'Name Three' && !disc.patch.front && !disc.patch.mode && !disc.patch.reason, 'keeping the words (no Save, no question) sends only disc 2\'s back words, marked with its slot: ' + JSON.stringify(disc.patch));
       check(disc.override && disc.override.pieces && disc.override.pieces.D2 && disc.override.pieces.D2.back.text === 'Name Three' && !disc.override.pieces.D1 && !disc.override.back, 'which becomes pieces.D2.back only: no disc 1 entry, no line-level words: ' + JSON.stringify(disc.override));
       check(disc.disc1 === 'Name One' && disc.keys2.length === 2, 'disc 1 shows its own words and its own draft: ' + JSON.stringify({ disc1: disc.disc1, keys: disc.keys2 }));
     } else console.log('  (no per-piece override in this build: the two-disc checks were skipped)');
@@ -194,10 +192,10 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     }, KEY);
     const S = '#__slot';
     const state = () => page.evaluate(KEY => { const s = document.getElementById('__slot'), p = s.querySelector('.engp'), row = B.orders.byKey.get(KEY); return { face: p && p.dataset.face, mode: p && p.dataset.mode, text: p && p.querySelector('.engpWords') ? p.querySelector('.engpWords').value : null,
-      save: p && p.querySelector('[data-engp=save]').disabled, cancel: p && p.querySelector('[data-engp=cancel]').disabled, w: p && p.querySelector('.engpWords') ? p.querySelector('.engpWords').getBoundingClientRect().width : 0,
-      seg: [...s.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg')].map(b => b.getAttribute('aria-checked') === 'true' ? b.textContent : '').join(''), ov: row.engravingOverride || null }; }, KEY);
+      staged: !!(p && p.dataset.staged), noSave: !!p && !p.querySelector('[data-engp=save],[data-engp=cancel]'), w: p && p.querySelector('.engpWords') ? p.querySelector('.engpWords').getBoundingClientRect().width : 0,
+      seg: [...s.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg')].map(b => b.getAttribute('aria-pressed') === 'true' ? b.textContent : '').join(''), ov: row.engravingOverride || null }; }, KEY);
     let st = await state();
-    check(st.face === 'back' && st.mode === 'both' && st.text === '1. 27. 24' && st.save && st.cancel, 'opens on the Back (the card\'s face) with its words; Save and Cancel are off until something is staged: ' + JSON.stringify({ face: st.face, text: st.text, save: st.save, cancel: st.cancel }));
+    check(st.face === 'back' && st.mode === 'both' && st.text === '1. 27. 24' && !st.staged && st.noSave && st.seg === 'FrontBack', 'opens on the Back (the card\'s face) with its words, Front and Back both pressed, nothing staged, no Save / Cancel: ' + JSON.stringify({ face: st.face, text: st.text, staged: st.staged, seg: st.seg }));
     check(st.w >= 200, 'the text area is ' + Math.round(st.w) + 'px wide in a 232px slot');
 
     await page.evaluate(() => __h.setFace('front'));
@@ -205,7 +203,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     check(st.face === 'front' && st.text === 'W', 'picking the Front switches the editor to the front words: ' + JSON.stringify({ face: st.face, text: st.text }));
     await page.fill(S + ' .engpWords', 'Name One'); await page.selectOption(S + ' .engpFont', { label: 'Pristina' });
     st = await state();
-    check(!st.save && !st.cancel, 'typing stages the edit: Save and Cancel turn on');
+    check(st.staged && st.noSave, 'typing stages the edit (nothing to press but Approve)');
     await page.evaluate(() => __h.setFace('back')); st = await state();
     check(st.face === 'back' && st.text === '1. 27. 24', 'the Back still has its own words: ' + JSON.stringify({ face: st.face, text: st.text }));
     await page.evaluate(() => __h.setFace('front')); st = await state();
@@ -228,7 +226,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     const lg = await page.evaluate(() => JSON.parse(JSON.stringify(__log)));
     check(lg.nudge.length === 2 && lg.nudge.every(n => n[0] === jobKeys.back) && lg.nudge[0][1] === 0.5 && lg.nudge[0][2] === 0 && lg.nudge[1][1] === 0 && lg.nudge[1][2] === 2, 'right = 0.5 mm, Shift + up = 2 mm, both on the BACK job only: ' + JSON.stringify(lg.nudge));
     check(lg.size.length === 1 && lg.size[0][1] === 0.95 && lg.centre.length === 1 && lg.size[0][0] === jobKeys.back, 'smaller = x0.95, centre: both on the back job');
-    check(lg.snap.length === 1 && lg.snap[0] === jobKeys.back, 'the back\'s placement was snapshotted once, right before the panel first moved it (the front was not touched): ' + JSON.stringify(lg.snap));
+    check(lg.snap.length === 0 && lg.restore.length === 0, 'a move is the job\'s at once: no snapshot to put it back, nothing to save or cancel: ' + JSON.stringify({ snap: lg.snap, restore: lg.restore }));
     // a refused move (no room) dims THAT button with a title, nothing else; a move that works gives the room back; a job that cannot move (approved) turns the whole row off
     await page.evaluate(() => { const P = CharmNestEngravePosition; P.nudge = (j, dx, dy) => { __log.nudge.push([j.key, dx, dy]); return { ok: false, why: 'no room' }; }; });
     await page.click(S + ' [data-act=left]');
@@ -241,22 +239,19 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     nr = await page.evaluate(() => [...document.querySelectorAll('#__slot .engpPb')].every(b => b.disabled));
     check(nr, 'a job that cannot move (approved, locked) has the whole position row off');
     await page.evaluate(() => { delete CharmNestEngravePosition.canMove; __h.draw(); });
-    await page.click(S + ' [data-engp=cancel]'); st = await state();
-    const lr = await page.evaluate(() => __log.restore.slice());
-    check(lr.length === 1 && lr[0][0] === jobKeys.back && lr[0][1] === jobKeys.back, 'Cancel put the moved face\'s position back with the snapshot of that job, and touched no other job: ' + JSON.stringify(lr));
-    check(st.save && st.cancel && st.text === '1. 27. 24' && st.mode === 'both' && !st.ov, 'and the words, font and mode are back to what was saved (nothing stored): ' + JSON.stringify({ text: st.text, mode: st.mode, ov: st.ov }));
+    await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); __h.draw(); }); st = await state();   // (the staged front words let go, as when nothing is approved and the draft is dropped)
+    check(st.text === '1. 27. 24' && st.mode === 'both' && !st.ov, 'nothing was stored by typing, picking a font or moving the words: ' + JSON.stringify({ text: st.text, mode: st.mode, ov: st.ov }));
 
-    // 5 · editing the Front and saving never changes the Back
+    // 5 · editing the Front and keeping it (what Approve does first) never changes the Back; no question is asked
     await page.evaluate(() => __h.setFace('front')); await page.fill(S + ' .engpWords', 'Name One');
-    await page.click(S + ' [data-engp=save]');
-    await page.click(S + ' [data-engp=why]');   // (the front words differ from the system's: "Why change it?", the first quick button answers; ENGWHY)
+    await page.evaluate(() => __h.commit());
     await page.waitForFunction(KEY => !!B.orders.byKey.get(KEY).engravingOverride, KEY, { timeout: 15000 });
     const after = await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY), ov = row.engravingOverride, f = Engrave.jobOf(row, null, 'front'), b = Engrave.jobOf(row, null, 'back'); return { ov, front: f && f.lines, back: b && b.lines, by: ov && ov.by, setupBack: CharmNestEngraveSetup.setupFor(row).back && CharmNestEngraveSetup.setupFor(row).back.text, setupFront: CharmNestEngraveSetup.setupFor(row).front && CharmNestEngraveSetup.setupFor(row).front.text }; }, KEY);
-    check(after.ov && after.ov.front && after.ov.front.text === 'Name One' && after.by === 'Test Operator' && !after.ov.back, 'saved as row.engravingOverride by the signed-in login: only the front is in it: ' + JSON.stringify(after.ov));
+    check(after.ov && after.ov.front && after.ov.front.text === 'Name One' && after.by === 'Test Operator' && !after.ov.back && !after.ov.reason, 'kept as row.engravingOverride by the signed-in login, no reason asked or stored: only the front is in it: ' + JSON.stringify(after.ov));
     check(after.back && after.back.join('/') === '1. 27. 24' && after.setupBack === '1. 27. 24', 'the Back job and the Back setup are as they were: ' + JSON.stringify({ back: after.back, setupBack: after.setupBack }));
     check(after.setupFront === 'Name One' && after.front && (after.front.length === 0 || after.front.join('/').toLowerCase() === 'name one'), 'the Front setup (and its job, once it has words) say Name One (the fit sets a caps-only font in capitals, as for every job): ' + JSON.stringify({ setup: after.setupFront, job: after.front }));
     await page.waitForTimeout(300); st = await state();
-    check(st.save && st.cancel, 'after Save nothing is staged any more');
+    check(!st.staged, 'once kept nothing is staged any more');
 
     // the page was never asked anything it must not be
     await page.evaluate(() => { window.CharmNestEngravePosition = __was.pos; window.CharmNestEngravePreview = __was.prev; });

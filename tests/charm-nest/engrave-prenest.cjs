@@ -260,23 +260,22 @@ async function main() {
       check('PN9 the Engrave detail of the held order: its own job under the key the line will have when it is pooled, the three lines in the box, the work area drawn, no Front box', 'pre',
         !!det && det.focus === H.key && jb.key === H.key && jb.face === 'back' && jb.hasFit && jb.hasView && det.words === 'Name One\nName Two\nDate One' && det.canvas && !det.front,
         det ? `focus ${det.focus}, job ${jb.key} ${jb.state} (fit ${jb.hasFit}, view ${jb.hasView}), the line's key is ${H.key}, words ${JSON.stringify(det.words)}, font box "${det.font}", work area ${det.canvas ? 'drawn' : 'MISSING'} (${JSON.stringify(det.size)}, ${det.ink === null ? 'ink not readable' : det.ink + ' inked px'}${det.canvas ? '' : ', says "' + det.waitText + '"'}), job settled ${JSON.stringify(fitted)}, front face ${det.front ? 'DRAWN' : 'not drawn'}` : 'the detail did not open, so there is nothing to look at');
-      // a staged edit: other words, Save, the reason prompt (ENGWHY) answered with its first quick button
+      // a staged edit: other words, kept as Approve keeps them first (LIVEWORDS: no Save button, no reason asked)
       let ed = null;
       if (det && det.words) {
         await page.evaluate(() => { const q = s => document.querySelector('#egQueue .rvItem[data-kind=placement] ' + s), t = q('.engpWords'), set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; t.focus(); set.call(t, 'Name One\nName Two\nDate Two'); t.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'x' })); t.dispatchEvent(new Event('keyup', { bubbles: true })); });
         await R.settle(page, 700);
-        const staged = await page.evaluate(() => { const b = document.querySelector('#egQueue .rvItem[data-kind=placement] [data-engp=save]'); return { save: !!b && !b.disabled, approveOff: !!document.querySelector('#egQueue .rvItem[data-kind=placement] [data-a=approve]:disabled') }; });
-        await page.evaluate(() => { const b = document.querySelector('#egQueue .rvItem[data-kind=placement] [data-engp=save]'); if (b) b.click(); });
+        const staged = await page.evaluate(() => ({ save: !!document.querySelector('#egQueue .rvItem[data-kind=placement] .engp[data-staged]'), approveOff: !!document.querySelector('#egQueue .rvItem[data-kind=placement] [data-a=approve]:disabled') }));
+        await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return c && c._pieceMount && c._pieceMount.panel.commit(); });
         await R.settle(page, 600);
-        const asked = await page.evaluate(() => !!document.querySelector('#egQueue .rvItem[data-kind=placement] .engpWhy [data-engp=why]'));
-        await page.evaluate(() => { const g = document.querySelector('#egQueue .rvItem[data-kind=placement] .engpWhy'), b = g && g.querySelector('[data-engp=why]'); if (b) b.click(); });
+        const asked = await page.evaluate(() => !!document.querySelector('#egQueue .rvItem[data-kind=placement] .engpWhy'));
         await R.settle(page, 1200);
         const after = await state(H.rid);
         ed = { staged, asked, after, docs: rows() };
       }
-      check('PN10 a staged edit on the held order is recorded without a sheet (Save, the reason asked and answered: the override and a timeline record are kept) and the order is still held', 'pre',
-        !!ed && ed.staged.save && ed.asked && !!ed.after.override && ed.after.override.text === 'Name One\nName Two\nDate Two' && !!ed.after.override.reason && ed.docs.some(k => /engraveChanged/.test(k)) && ed.after.state === 'pulled' && !!ed.after.hold && ed.after.poolRows === 0 && ed.after.onSheet === 0,
-        ed ? `Save enabled ${ed.staged.save}, reason asked ${ed.asked}, override ${JSON.stringify(ed.after.override)}, new records for this order in the fake site: ${JSON.stringify(ed.docs.map(k => k.split('/')[0] + '/…' + k.slice(-24)))}; row ${ed.after.state}, hold ${!!ed.after.hold}, pool rows ${ed.after.poolRows}, on a sheet ${ed.after.onSheet}` : 'no staged edit could be made: the detail did not open');
+      check('PN10 a staged edit on the held order is recorded without a sheet (kept with no question: the override and a timeline record are kept, no reason) and the order is still held', 'pre',
+        !!ed && ed.staged.save && !ed.asked && !!ed.after.override && ed.after.override.text === 'Name One\nName Two\nDate Two' && !ed.after.override.reason && ed.docs.some(k => /engraveChanged/.test(k)) && ed.after.state === 'pulled' && !!ed.after.hold && ed.after.poolRows === 0 && ed.after.onSheet === 0,
+        ed ? `staged ${ed.staged.save}, reason asked ${ed.asked}, override ${JSON.stringify(ed.after.override)}, new records for this order in the fake site: ${JSON.stringify(ed.docs.map(k => k.split('/')[0] + '/…' + k.slice(-24)))}; row ${ed.after.state}, hold ${!!ed.after.hold}, pool rows ${ed.after.poolRows}, on a sheet ${ed.after.onSheet}` : 'no staged edit could be made: the detail did not open');
       // the changed words are fitted again (under a heavy machine the fit worker can outrun its own limit: the page's own Retry is pressed, at most 4 times)
       let apr = null;
       if (ed) {
@@ -316,11 +315,10 @@ async function main() {
       await P.evaluate(() => { try { OrderWin.close(); } catch (_) {} Engrave.restoreView({ tab: 'place', focus: null, list: true, chosen: true, q: '', openDone: null }); CN.setMode('engrave'); Engrave.render(); }); await R.settle(P, 900);
       await R.openEngraveDetail(w, 'discTwin', { face: 'back' }); await R.settle(P, 900);
       const f0 = await look();
-      await click(QS + ' .engpSeg[data-mode="both"]'); await R.settle(P, 900);
+      await click(QS + ' .engpSeg[data-mode="front"]'); await R.settle(P, 900);   // (LIVEWORDS: the Front toggle engraves the front too, kept at once, and shows it)
       await click(QS + ' .engFace[data-face=front] .engThumb'); await R.settle(P, 900);
       await P.evaluate(() => { const t = document.querySelector('#egQueue .rvItem[data-kind=placement] .engpWords'); if (!t) return; const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; t.focus(); set.call(t, 'B'); t.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'B' })); t.dispatchEvent(new Event('keyup', { bubbles: true })); });
-      await R.settle(P, 700); await click(QS + ' [data-engp=save]'); await R.settle(P, 900);
-      await P.evaluate(() => { const g = document.querySelector('#egQueue .rvItem[data-kind=placement] .engpWhy'), b = g && g.querySelector('[data-engp=why]'); if (b) b.click(); }); await R.settle(P, 1500);
+      await R.settle(P, 700); await P.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return c && c._pieceMount && c._pieceMount.panel.commit(); }); await R.settle(P, 1500);
       // the front job is made now; it is given time to be read and fitted (the page's own Retry for a fit that outran its limit on a loaded machine)
       let jobs = [];
       for (let i = 0; i < 120; i++) {

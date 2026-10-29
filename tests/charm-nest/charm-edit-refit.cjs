@@ -179,9 +179,7 @@ async function partB() {
     await page.evaluate(() => { const L = window.__refit; L.frames = []; L.fits = []; L.long = []; L.searches = 0; L.stop = false; L.t0 = performance.now(); const probe = L.probe; const tick = () => { probe.style.width = probe.style.width === '2px' ? '1px' : '2px'; if (!L.stop) requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
     const ta = page.locator(Q + ' .engp .engpWords[data-face="front"]');
     await ta.click(); await page.keyboard.press('Control+a'); await page.keyboard.type('October'); await settleP(page);
-    await page.click(Q + ' [data-engp="save"]'); await settleP(page);
-    // (ENGWHY: a Save that overrides the system's reading asks why, one press; a Save with consequences asks to confirm)
-    if (await page.locator(Q + ' [data-engp="why"]').count()) { await page.locator(Q + ' [data-engp="why"]').first().click(); await settleP(page); }
+    await page.evaluate(q => { const c = document.querySelector(q); return c && c._pieceMount && c._pieceMount.panel.commit(); }, Q); await settleP(page);   // (LIVEWORDS: no Save, no reason: kept as Approve keeps it first; a change with consequences still asks to confirm)
     if (await page.locator(Q + ' [data-engp="saveYes"]').count()) await page.click(Q + ' [data-engp="saveYes"]');
     const panel8 = await page.evaluate(q => { const c = document.querySelector(q), t = c && c.querySelector('.engp .engpWords[data-face="front"]'), sv = c && c.querySelector('[data-engp="save"]'); return { typed: t ? t.value : null, save: sv ? (sv.disabled ? 'disabled' : 'on') : 'none', err: ((c && c.querySelector('.engp .engpErr')) || {}).textContent || '' }; }, Q);
     await page.waitForFunction(id => { const j = [...Engrave.items().values()].find(x => x.face === 'front' && (x.copies || []).includes(id)), f = __refit.frames, i = f.findIndex(x => x.drawn === 'real' && x.state === 'review'); return j && j.fit && /OCTOBER/i.test((j.fit.lines || []).join(' ')) && i >= 0 && f.length > i + 4; }, PID, { timeout: 60000, polling: 100 }).catch(() => {});

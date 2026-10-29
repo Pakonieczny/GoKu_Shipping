@@ -91,8 +91,7 @@ const SHOTS = process.env.SHOTS || '/tmp/dec/shots';
     // ═══ 4 · the first change: words -> needs Approve; Approve again -> a second, new seal; the first stays ═══
     const firstSeal = before.seals[0];
     await page.fill('#egQueue .rvItem .engpWords', 'Name Seven');
-    await page.evaluate(() => document.querySelector('#egQueue .rvItem [data-engp="save"]').click()); await settle(500);
-    if (await page.$('#egQueue .engpWhy .engpChip')) { await page.click('#egQueue .engpWhy .engpChip'); await settle(500); }
+    await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem'); return c && c._pieceMount && c._pieceMount.panel.commit(); }); await settle(500);   // (LIVEWORDS: no Save button: kept as Approve keeps them first)
     const changed = await waitState(backKey, ['review', 'words', 'ready', 'fitting'], 30000);
     const reviewed = await waitState(backKey, ['review'], 60000);
     note(reviewed && reviewed.state === 'review', 'changing the words put the approved piece back to "needs Approve" (state review)', JSON.stringify(reviewed && { state: reviewed.state, text: reviewed.text }));

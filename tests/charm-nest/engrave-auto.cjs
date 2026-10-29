@@ -214,7 +214,7 @@ async function pageChecks(chromium) {
         const first = a.faces[0] || 'back', h = P.mount(slot, row, { job: Engrave.jobOf(row, null, first), face: first });
         const p = slot.querySelector('.engp'); out.mounted = !!p;
         if (p) {
-          out.mode = (slot.querySelector('.engpMode:not(.engpFaceSw) .engpSeg[aria-checked=true]') || {}).dataset?.mode || null;
+          out.mode = p.dataset.mode || null;   // (LIVEWORDS: Front and Back are toggles; the panel says its mode)
           for (const f of a.faces) {
             h.setFace(f);
             const ta = slot.querySelector('.engpWords'), sel = slot.querySelector('.engpFont');
@@ -241,19 +241,17 @@ async function pageChecks(chromium) {
       if (piece) for (const f of a.faces) { const fc = piece.faces.find(x => x[0] === f); check(!!fc && fc[1] === a[f].text, `${r.name}: the card's ${f} words are the system's: "${fc && fc[1]}" vs "${a[f].text}"`); }
     }
 
-    // a staged edit that is cancelled puts the panel back on the system's choice; one that is only left behind (the card closed) is the panel's own draft: said, not failed (the panel's owner decides)
+    // a staged edit that is let go (LIVEWORDS: no Cancel; nothing approved, the draft dropped) puts the panel back on the system's choice
     const dr = await page.evaluate(async () => {
       const row = B.orders.rows.find(r => r.line.personalization && r.line.personalization[0] === '21' && r.line.sku === 'HOCKEY 1- STICKS' && !r.order.buyerMessage), P = CharmNestEngravePanel, S = CharmNestEngraveSetup, a = S.autoChoice(row), out = {};
       const open = () => { const slot = document.createElement('div'); document.body.appendChild(slot); const h = P.mount(slot, row, { job: Engrave.jobOf(row, null, 'back'), face: 'back' }); return { slot, h }; };
-      const look = slot => { const p = slot.querySelector('.engp'); return { mode: p.dataset.mode, text: (slot.querySelector('.engpWords') || {}).value, front: (P.DRAFTS.get(row.key) || { faces: {} }).faces.front && P.DRAFTS.get(row.key).faces.front.text }; };
+      const look = slot => { const p = slot.querySelector('.engp'); return { mode: p.dataset.mode, text: (slot.querySelector('.engpWords') || {}).value, staged: !!p.dataset.staged }; };
       P.DRAFTS.clear(); let { slot, h } = open(); out.first = look(slot);
-      slot.querySelector('[data-mode=both]').click(); h.setFace('front'); const ta = slot.querySelector('.engpWords'); ta.value = 'rr'; ta.dispatchEvent(new Event('input', { bubbles: true })); out.staged = look(slot);
-      slot.querySelector('[data-engp=cancel]').click(); out.cancelled = look(slot); h.destroy(); slot.remove();
-      P.DRAFTS.clear(); ({ slot, h } = open()); slot.querySelector('[data-mode=both]').click(); h.setFace('front'); const tb = slot.querySelector('.engpWords'); tb.value = 'rr'; tb.dispatchEvent(new Event('input', { bubbles: true })); h.destroy(); slot.remove();
-      ({ slot, h } = open()); out.reopened = look(slot); out.auto = { mode: a.mode, back: a.back.text }; h.destroy(); slot.remove(); P.DRAFTS.clear(); return out;
+      const ta = slot.querySelector('.engpWords'); ta.value = 'rr'; ta.dispatchEvent(new Event('input', { bubbles: true })); out.staged = look(slot);
+      P.DRAFTS.clear(); h.destroy(); slot.remove(); ({ slot, h } = open()); out.dropped = look(slot);
+      out.auto = { mode: a.mode, back: a.back.text }; h.destroy(); slot.remove(); P.DRAFTS.clear(); return out;
     });
-    check(dr.first.mode === dr.auto.mode && dr.first.text === dr.auto.back && dr.staged.mode === 'both' && dr.cancelled.mode === dr.auto.mode && dr.cancelled.text === dr.auto.back, 'Cancel puts the panel back on the system\'s choice: ' + JSON.stringify({ staged: dr.staged, cancelled: dr.cancelled }));
-    console.log('  note  an edit that is left unsaved and the panel closed comes back on the next open (the panel\'s module-level DRAFTS): ' + JSON.stringify(dr.reopened) + ' (system: ' + JSON.stringify(dr.auto) + ')');
+    check(dr.first.mode === dr.auto.mode && dr.first.text === dr.auto.back && dr.staged.staged && dr.staged.text === 'rr' && dr.dropped.mode === dr.auto.mode && dr.dropped.text === dr.auto.back && !dr.dropped.staged, 'a staged edit let go puts the panel back on the system\'s choice: ' + JSON.stringify({ staged: dr.staged, dropped: dr.dropped }));
 
     // a saved override wins after Save, autoChoice stays the system's, the card and the panel follow the person
     const ov = await page.evaluate(async () => {
@@ -264,7 +262,7 @@ async function pageChecks(chromium) {
       const after = JSON.parse(JSON.stringify(S.autoChoice(row)));
       P.DRAFTS.clear(); const slot = document.createElement('div'); document.body.appendChild(slot);
       const h = P.mount(slot, row, { job: Engrave.jobOf(row, null, 'front'), face: 'front' });
-      const sel = slot.querySelector('.engpFont'), out = { ok: !!(res && res.ok), same: JSON.stringify(before) === JSON.stringify(after), mode: (slot.querySelector('.engpSeg[aria-checked=true]') || {}).dataset?.mode, text: (slot.querySelector('.engpWords') || {}).value, font: sel ? S.fontIdOf(row, 'front', sel.value) : null, pristina: S.fontIdOf(row, 'front', 'Pristina') };
+      const sel = slot.querySelector('.engpFont'), out = { ok: !!(res && res.ok), same: JSON.stringify(before) === JSON.stringify(after), mode: (slot.querySelector('.engp') || {}).dataset?.mode, text: (slot.querySelector('.engpWords') || {}).value, font: sel ? S.fontIdOf(row, 'front', sel.value) : null, pristina: S.fontIdOf(row, 'front', 'Pristina') };
       const pc = C.piecesOf([row], {}); out.card = pc.map(p => ['front', 'back'].map(f => p.faces[f] && !p.faces[f].plain ? f + ':' + p.faces[f].text : null).filter(Boolean).join(' + '));
       out.override = row.engravingOverride && row.engravingOverride.mode;
       h.destroy && h.destroy(); slot.remove(); P.DRAFTS.clear(); return out;
@@ -273,15 +271,15 @@ async function pageChecks(chromium) {
     check(ov.mode === 'front' && ov.text === 'Name Two' && ov.font && ov.font === ov.pristina, 'after Save the panel opens on the person\'s choice (front, Name Two, Pristina): ' + JSON.stringify({ mode: ov.mode, text: ov.text, font: ov.font }));
     check(ov.card && ov.card.length === 1 && ov.card[0] === 'front:Name Two', 'and the card shows only the Front with the person\'s words: ' + JSON.stringify(ov.card));
 
-    // an approved face is NOT locked any more (NODECIDED): its words and font are open, ONE short line says who approved it, Save waits for a change (the order here is NOT approved in Paul's image: its grey button is the dimmed Approve)
+    // an approved face is NOT locked any more (NODECIDED): its words and font are open, ONE short line says who approved it, no Save (LIVEWORDS) (the order here is NOT approved in Paul's image: its grey button is the dimmed Approve)
     const lock = await page.evaluate(() => {
       const row = B.orders.rows.find(r => r.line.personalization && r.line.personalization[0] === '21' && r.line.sku === 'HOCKEY 1- STICKS'), P = CharmNestEngravePanel, job = Engrave.jobOf(row, null, 'back'), was = { state: job.state, by: job.approvedBy };
       Object.assign(job, { state: 'approved', approvedBy: 'Name One' });
       P.DRAFTS.clear(); const slot = document.createElement('div'); document.body.appendChild(slot); P.mount(slot, row, { job, face: 'back' });
-      const out = { words: slot.querySelector('.engpWords').disabled, font: slot.querySelector('.engpFont').disabled, pos: [...slot.querySelectorAll('.engpPb')].every(b => b.disabled), save: slot.querySelector('[data-engp=save]').disabled, locks: [...slot.querySelectorAll('.engpLock')].map(x => x.textContent), emoji: !!slot.querySelector('[data-emoji]') };
+      const out = { words: slot.querySelector('.engpWords').disabled, font: slot.querySelector('.engpFont').disabled, pos: [...slot.querySelectorAll('.engpPb')].every(b => b.disabled), save: !slot.querySelector('[data-engp=save]'), locks: [...slot.querySelectorAll('.engpLock')].map(x => x.textContent), emoji: !!slot.querySelector('[data-emoji]') };
       Object.assign(job, { state: was.state, approvedBy: was.by }); slot.remove(); P.DRAFTS.clear(); return out;
     });
-    check(!lock.words && !lock.font && lock.save && lock.locks.join('|') === 'Approved by Name One' && lock.emoji, 'an approved face: words and font are open and the Emoji button is there, Save waits for a change, ONE line says "Approved by Name One": ' + JSON.stringify(lock));
+    check(!lock.words && !lock.font && lock.save && lock.locks.join('|') === 'Approved by Name One' && lock.emoji, 'an approved face: words and font are open and the Emoji button is there, no Save button, ONE line says "Approved by Name One": ' + JSON.stringify(lock));
     check(errors.length === 0, 'no page error: ' + errors.slice(0, 2).join(' | '));
   } finally { await browser.close(); await srv.close(); }
 }
@@ -300,9 +298,9 @@ async function realChecks() {
       if (!jkey) return null;
       return w.page.evaluate(key => {
         const row = B.orders.byKey.get(key), S = CharmNestEngraveSetup, p = document.querySelector('.pvSetup .engp'); if (!p) return { panel: false };
-        const sel = p.querySelector('.engpFont'), ta = p.querySelector('.engpWords'), seg = p.querySelector('.engpMode:not(.engpFaceSw) .engpSeg[aria-checked=true]');
+        const sel = p.querySelector('.engpFont'), ta = p.querySelector('.engpWords');
         const faces = [...document.querySelectorAll('.pvSetup .engFace')].map(f => ({ face: f.dataset.face, empty: f.dataset.empty === '1', text: (f.querySelector('.engTxt') || {}).textContent || '', current: f.getAttribute('aria-current') === 'true', pic: !!f.querySelector('.engpv .engpvDraw canvas, .engpv .engpvDraw svg, .engpv .engpvDraw img') }));
-        return { panel: true, mode: seg && seg.dataset.mode, face: p.dataset.face, text: ta ? ta.value : null, fontId: sel ? S.fontIdOf(row, p.dataset.face, sel.value) : null, faces, save: p.querySelector('[data-engp=save]').disabled };
+        return { panel: true, mode: p.dataset.mode, face: p.dataset.face, text: ta ? ta.value : null, fontId: sel ? S.fontIdOf(row, p.dataset.face, sel.value) : null, faces, save: !p.dataset.staged };
       }, made[name].key);
     };
     // the card prints the cut's layout ("NAME / ONE" for Ace): the same words, in capitals, a slash between the lines
@@ -315,7 +313,7 @@ async function realChecks() {
         check(!!d && d.panel && d.mode === a.mode, `${name}/${f} (real detail): the panel opens on the system's mode (${a.mode}): ${d && d.mode}`);
         check(!!d && d.face === f && d.text === a[f].text, `${name}/${f}: the words open as the system's ("${a[f].text}"): "${d && d.text}"`);
         check(!!d && d.fontId === a[f].fontId, `${name}/${f}: the font opens as the system's (${a[f].fontId}): ${d && d.fontId}`);
-        check(!!d && d.save === true, `${name}/${f}: nothing is staged on open (Save is off)`);
+        check(!!d && d.save === true, `${name}/${f}: nothing is staged on open`);
         const shown = d ? d.faces.filter(x => !x.empty).map(x => x.face).join('+') : '';
         check(shown === a.faces.join('+'), `${name}/${f}: the card above the panel shows the faces the system chose (${a.faces.join('+')}): ${shown}`);
         check(!!d && d.faces.every(x => x.empty || run(x.text) === run(a[x.face].text)), `${name}/${f}: and each face's words are the system's (the card prints the cut's layout): ${d && JSON.stringify(d.faces.map(x => [x.face, x.text]))}`);
@@ -325,7 +323,7 @@ async function realChecks() {
       const card = await w.page.evaluate(() => [...document.querySelectorAll('#owEng .engCard')].map(c => ({ piece: c.dataset.piece, faces: [...c.querySelectorAll('.engFace')].map(f => ({ face: f.dataset.face, empty: f.dataset.empty === '1', text: (f.querySelector('.engTxt') || {}).textContent || '' })) })));
       check(card.length === 1 && card[0].faces.filter(x => !x.empty).map(x => x.face).join('+') === a.faces.join('+') && card[0].faces.every(x => x.empty || run(x.text) === run(a[x.face].text)), `${name} (real order window): one card with the faces and words the system chose: ${JSON.stringify(card.map(c => c.faces.map(x => x.empty ? x.face + ':-' : x.face + ':' + x.text)))}`);
     }
-    // the Engrave tab's Approve button tells the truth: "Approve" until the face is approved; dimmed (not relabelled) while an edit is waiting to be saved or cancelled
+    // the Engrave tab's Approve button tells the truth: "Approve" until the face is approved; LIVEWORDS: never dimmed by words being typed (Approve keeps them first)
     {
       await R.openEngraveDetail(w, 'back', { face: 'back' });
       const btn = () => w.page.evaluate(() => { const c = document.querySelector('.pvSetup') && document.querySelector('.pvSetup').closest('.rvItem'), b = c && c.querySelector('[data-a="approve"]'); return b ? { label: b.textContent.trim(), disabled: b.disabled, title: b.title } : null; });
@@ -333,10 +331,8 @@ async function realChecks() {
       check(!!open0 && open0.label === 'Approve' && open0.disabled === false, 'Engrave tab: an unapproved face\'s button reads "Approve" and works: ' + JSON.stringify(open0));
       await w.page.evaluate(() => { const ta = document.querySelector('.pvSetup .engpWords'); ta.value = ta.value + ' x'; ta.dispatchEvent(new Event('input', { bubbles: true })); });
       const staged = await btn();
-      check(!!staged && staged.label === 'Approve' && staged.disabled === true && /Save or Cancel the edit first/.test(staged.title), 'Engrave tab: with an edit waiting the button is dimmed, still "Approve", and says why on hover: ' + JSON.stringify(staged));
-      await w.page.evaluate(() => document.querySelector('.pvSetup [data-engp=cancel]').click());
-      const back0 = await btn();
-      check(!!back0 && back0.label === 'Approve' && back0.disabled === false, 'Engrave tab: Cancel brings the button back, "Approve": ' + JSON.stringify(back0));
+      check(!!staged && staged.label === 'Approve' && staged.disabled === false && !/Save or Cancel/.test(staged.title), 'Engrave tab: with words being typed the button stays "Approve" and live (it keeps the words first): ' + JSON.stringify(staged));
+      await w.page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (c && c._pieceMount) c._pieceMount.refresh(); else Engrave.render(); } });   // (nothing approved here: the typed words let go)
     }
     // counted discs: each disc its own words
     const dm = made.discs;

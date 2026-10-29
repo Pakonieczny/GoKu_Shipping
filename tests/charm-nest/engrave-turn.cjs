@@ -8,7 +8,7 @@
 //   B  typing a degree turns the WHOLE piece in the work area as you type (no Enter): the drawn charm (outline) and the engraving turn together by that angle about the charm's centre, the engraving keeps its size and its
 //      place ON the charm (checked on the geometry the page draws and on the canvas, not on the number)
 //   C  Enter / leaving the box settles the value (any integer is normalised to -179..180); Up / Down step 1 degree, Shift 15; the step buttons and a held button; garbage is ignored without losing the value
-//   D  Cancel puts the system's placement back exactly (the same view object, the same fit, the same canvas); Save asks "Why change it?" like any override and keeps the turn; Approve works after a turn
+//   D  LIVEWORDS (29 Oct 2026: no Save, no Cancel, no "Why change it?"): a turn is the piece's at once, nothing to save or cancel; 0 in the box is the system's own turn again; keeping the panel asks nothing and keeps the turn; Approve works after a turn
 //   E  what the turn changes downstream: the written laser file and the saved record read the turned orientation, and the engraving sits on the SAME metal of the charm as before the turn (the sheet views' engraveOn)
 //   F  a later fit (new words) keeps the person's orientation; a turn nobody asked for never happens
 //   G  the row: measured heights at 1024 / 1280 / 1356 / 1440 / 1920 (was 31.94 px, now 42.5 px = exactly 1.33 x; every control exactly 1.33 x its old size; 11 px type is 14.63 px), fits without sideways overflow, hover / focus ring / pressed / disabled / applied styles
@@ -270,46 +270,32 @@ const OLD_ROW_PX = 31.94;   // the row as it was on clean main (1280x720 and 144
       await page.evaluate(([k]) => Engrave.turnTo(Engrave.items().get(k), 0), [JK]);
     }
 
-    /* ═══ D · Cancel restores the system's placement exactly; Save keeps the turn and asks why; Approve works ═══ */
+    /* ═══ D · LIVEWORDS: a turn is the piece's at once (no Save, no Cancel, no reason); 0 is the system's turn again; Approve works ═══ */
     await R.openEngraveDetail(w, 'back', { face: 'back' });
-    // everything staged so far (all of section C) goes back with ONE Cancel, to the system's own placement, exactly
-    const cancelWas = await page.evaluate(() => document.querySelector('#egQueue [data-engp="cancel"]').disabled);
-    if (!cancelWas) { await page.click('#egQueue [data-engp="cancel"]'); await page.evaluate(() => __raf()); await page.waitForTimeout(150); }
-    const afterC = await page.evaluate(k => ({ sig: __sig(k), same: Engrave.items().get(k).view === window.__v00, turn: Engrave.turnOf(Engrave.items().get(k)) }), JK);
-    check(afterC.sig === sigStart && afterC.same, 'one Cancel after dozens of turns puts the system\'s own placement back, exactly (same view object, same engraving point for point)', 'cancel was ' + (cancelWas ? 'OFF' : 'on') + ', turn ' + afterC.turn + ', same view ' + afterC.same + (afterC.sig === sigStart ? '' : ', signature differs: ' + afterC.sig.slice(0, 150) + ' vs ' + sigStart.slice(0, 150)));
-    const base = await page.evaluate(k => ({ sig: __sig(k), view: (window.__v0 = Engrave.items().get(k).view, true), url: __canvas(k).url, saveOff: document.querySelector('#egQueue [data-engp="save"]').disabled, cancelOff: document.querySelector('#egQueue [data-engp="cancel"]').disabled }), JK);
-    check(base.saveOff && base.cancelOff, 'before any change Save and Cancel are off', 'save off ' + base.saveOff + ', cancel off ' + base.cancelOff);
+    await page.evaluate(([k]) => Engrave.turnTo(Engrave.items().get(k), 0), [JK]); await page.evaluate(() => __raf());
+    const base = await page.evaluate(k => ({ sig: __sig(k), url: __canvas(k).url, buttons: !!document.querySelector('#egQueue [data-engp="save"],#egQueue [data-engp="cancel"]') }), JK);
+    check(!base.buttons, 'the panel has no Save and no Cancel', JSON.stringify(base.buttons));
     await typeTurn('90'); await page.evaluate(() => __raf());
-    const staged = await page.evaluate(() => ({ saveOff: document.querySelector('#egQueue [data-engp="save"]').disabled, cancelOff: document.querySelector('#egQueue [data-engp="cancel"]').disabled, approve: [...document.querySelectorAll('#egQueue [data-a="approve"]')].map(b => b.disabled) }));
-    check(!staged.saveOff && !staged.cancelOff, 'after a turn the panel\'s Save and Cancel come on (a turn is a staged position change, like the Position buttons)', JSON.stringify(staged));
-    check(staged.approve.length === 1 && staged.approve[0] === false, 'Approve is not blocked by a turn (as for a Position move; only staged words, font or mode block it)', JSON.stringify(staged.approve));
+    const staged = await page.evaluate(() => ({ buttons: !!document.querySelector('#egQueue [data-engp="save"],#egQueue [data-engp="cancel"]'), why: !!document.querySelector('#egQueue .engpWhy'), approve: [...document.querySelectorAll('#egQueue [data-a="approve"]')].map(b => b.disabled) }));
+    check(!staged.buttons && !staged.why, 'a turn asks nothing and offers nothing to save or cancel (it is the piece\'s at once)', JSON.stringify(staged));
+    check(staged.approve.length === 1 && staged.approve[0] === false, 'Approve is not blocked by a turn', JSON.stringify(staged.approve));
     await shot('after-turn-90');
-    await page.click('#egQueue [data-engp="cancel"]'); await page.evaluate(() => __raf()); await page.waitForTimeout(150);
-    const cancelled = await page.evaluate(k => ({ sig: __sig(k), same: Engrave.items().get(k).view === window.__v0, url: __canvas(k).url, val: __box().value, turn: Engrave.turnOf(Engrave.items().get(k)) }), JK);
-    check(cancelled.sig === base.sig && cancelled.same, 'Cancel puts the system\'s placement back exactly: the same view, the same engraving, point for point', 'turn ' + cancelled.turn);
-    check(cancelled.url === base.url, 'and the work area draws the very same picture again (byte for byte)');
-    check(cancelled.val === '0', 'the box reads 0 again', cancelled.val);
-    // Save: the reason prompt, then the turn stays
+    await typeTurn('0'); await page.keyboard.press('Enter'); await page.evaluate(() => __raf()); await page.waitForTimeout(150);
+    const zero = await page.evaluate(k => ({ val: __box().value, turn: Engrave.turnOf(Engrave.items().get(k)) }), JK);
+    check(zero.val === '0' && zero.turn === 0, '0 in the box is the system\'s own turn again', JSON.stringify(zero));
+    // kept: the turn stays, nothing is asked
     await typeTurn('90'); await page.keyboard.press('Enter'); await page.evaluate(() => __raf());
     const turned90 = await page.evaluate(k => ({ sig: __sig(k), url: __canvas(k).url }), JK);
-    await page.click('#egQueue [data-engp="save"]'); await page.waitForSelector('#egQueue .engpWhy', { timeout: 5000 }).catch(() => {});
-    const asked = await page.evaluate(() => !!document.querySelector('#egQueue .engpWhy'));
-    check(asked, 'Save of a turn asks "Why change it?" like any override of the system\'s choice (the existing reason path)');
-    await page.click('#egQueue .engpChip[data-code="asked"]'); await page.waitForTimeout(500); await page.evaluate(() => __raf());
-    const saved = await page.evaluate(k => ({ sig: __sig(k), turn: Engrave.turnOf(Engrave.items().get(k)), why: document.querySelector('#egQueue .engpWhyLine') ? document.querySelector('#egQueue .engpWhyLine').textContent : '', saveOff: document.querySelector('#egQueue [data-engp="save"]').disabled, val: __box() && __box().value }), JK);
-    check(saved.sig === turned90.sig && saved.turn === 90, 'after Save the piece is still turned 90 and nothing else moved', 'turn ' + saved.turn);
-    check(saved.saveOff && /Customer asked/.test(saved.why), 'Save is off again and the line says the reason was recorded', saved.why);
-    // a new turn after the Save has its own Cancel back to the saved one
-    await typeTurn('120'); await page.keyboard.press('Enter'); await page.evaluate(() => __raf());
-    await page.click('#egQueue [data-engp="cancel"]'); await page.evaluate(() => __raf()); await page.waitForTimeout(100);
-    check((await page.evaluate(k => __sig(k), JK)) === turned90.sig && await val() === '90', 'Cancel after a Save goes back to the saved turn (90), not the system\'s', await val());
+    const res = await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return c && c._pieceMount && c._pieceMount.panel.commit(); });
+    await page.waitForTimeout(500); await page.evaluate(() => __raf());
+    const saved = await page.evaluate(k => ({ sig: __sig(k), turn: Engrave.turnOf(Engrave.items().get(k)), why: !!document.querySelector('#egQueue .engpWhy, #egQueue .engpWhyLine'), val: __box() && __box().value }), JK);
+    check(res && res.ok && saved.sig === turned90.sig && saved.turn === 90 && !saved.why, 'keeping the panel asks nothing: the piece is still turned 90 and nothing else moved', 'turn ' + saved.turn + ' ' + JSON.stringify(res));
 
     /* ═══ F · a later fit keeps the person's orientation ═══ */
     const preUp = (await shape(JK)).up;
     await page.fill('#egQueue .engpWords', 'Name Two'); await page.waitForTimeout(200);
     check((await shape(JK)).up === preUp, 'staging new words does not turn the piece back (the staged words are drawn on the turned piece)', 'up ' + (await shape(JK)).up);
-    await page.click('#egQueue [data-engp="save"]'); await page.waitForSelector('#egQueue .engpWhy', { timeout: 5000 }).catch(() => {});
-    if (await page.$('#egQueue .engpChip[data-code="typo"]')) await page.click('#egQueue .engpChip[data-code="typo"]');
+    await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return c && c._pieceMount && c._pieceMount.panel.commit(); });   // (LIVEWORDS: kept as Approve keeps them first, no question)
     await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && j.state === 'review' && j.fit && j.text === 'Name Two'; }, JK, { timeout: 30000 }).catch(() => {});
     await page.waitForTimeout(600); await page.evaluate(() => __raf());
     const refit = await page.evaluate(k => { const j = Engrave.items().get(k); return { text: j.text, up: j.view.upAngle, turn: Engrave.turnOf(j), turnUp: j.turnUp, ok: !!(j.fit && j.fit.ok !== false), state: j.state }; }, JK);
