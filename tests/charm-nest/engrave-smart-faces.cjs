@@ -3,10 +3,10 @@
 // modal and the detailed Order Modal popup". Run on the REAL-DRAWING world (_engraveRealWorld.cjs: the real page, real charm drawings, real Engrave jobs; offline, no Etsy, no paid call, nothing live).
 //   1  the order window card shows ONLY the faces the engraving needs: back-only -> the Back box; front-only -> the Front box; both -> two; none -> no card; earrings -> no card
 //      (no dashed empty slot, no "Front" over nothing, no data-empty markup; a one-face card keeps its height and its picture size)
-//   2  the Engrave detail shows the same faces, and the mode control changes them in the SAME tick: Front + back adds the second box, None removes the faces, Front / Back leave the one box,
-//      a single face is selected by itself, clicking a box selects that face
+//   2  the Engrave detail shows the same faces, and the face toggles change them in the SAME tick (LIVEWORDS, 29 Oct 2026: None | Front | Back, kept at once, no Save): Front on a back-only piece adds the
+//      second box (both faces), None removes the faces; a single face is selected by itself, clicking a box selects that face
 //   3  no stray text: a face that is not shown has no box and no text anywhere; the Front's draft never shows in the Back box (and the other way round); the words under a picture are the words typed
-//   4  the staged edit dies with its panel session: Cancel, Save, closing the detail, opening another piece; reopening the card shows what the system chose, never an old draft
+//   4  the staged edit ends with its panel session: closing the detail or opening another piece KEEPS the typed words quietly (LIVEWORDS: no Save, nothing typed is lost); a redraw keeps the edit
 //   5  the faces of an untouched card are exactly the system's choice (CharmNestEngraveSetup.autoChoice) for every order
 //   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-smart-faces.cjs [screenshotDir]
 'use strict';
@@ -83,8 +83,8 @@ const SHOTS = process.argv[2] || process.env.SHOTS || '';
       return { faces: faces.map(f => f.dataset.face), cur: faces.filter(f => f.getAttribute('aria-current') === 'true').map(f => f.dataset.face), labels: faces.map(f => f.querySelector('.engLbl').textContent), texts: faces.map(f => f.querySelector('.engTxt').textContent),
         thumbText: Object.fromEntries(faces.map(f => [f.dataset.face, (f.querySelector('.engpvText') || {}).textContent || ''])), text: c.textContent.replace(/\s+/g, ' ').trim(), name: (c.querySelector('.engName') || {}).textContent || '',
         dashed: [...c.querySelectorAll('.engThumb')].filter(t => getComputedStyle(t).borderStyle.includes('dashed')).length, emptyMarkup: c.querySelectorAll('[data-empty]').length,
-        mode: p ? (p.querySelector('.engpSeg[aria-checked=true]') || {}).dataset.mode : null, pface: p ? p.dataset.face : null, words: p && p.querySelector('.engpWords') ? p.querySelector('.engpWords').value : null,
-        save: p ? !p.querySelector('[data-engp=save]').disabled : null, cancel: p ? !p.querySelector('[data-engp=cancel]').disabled : null };
+        mode: p ? p.dataset.mode : null, pface: p ? p.dataset.face : null, words: p && p.querySelector('.engpWords') ? p.querySelector('.engpWords').value : null,
+        save: p ? !!p.dataset.staged : null, cancel: null };
     });
     const clickMode = m => page.evaluate(m => { const b = document.querySelector(`#egQueue .engp [data-engp=mode][data-mode=${m}]`); b.click();   // (ONE task: what the person would see the moment the press is handled)
       const c = document.querySelector('#egQueue .rvItem[data-kind=placement] .engCard'), faces = c ? [...c.querySelectorAll('.engFace')] : [];
@@ -95,60 +95,57 @@ const SHOTS = process.argv[2] || process.env.SHOTS || '';
     check(!!d && d.faces.join() === 'back' && d.cur.join() === 'back' && d.mode === 'back' && d.pface === 'back', `the Engrave detail of a back-only piece: only the Back box, selected by itself, the mode says Back: ${JSON.stringify(d && [d.faces, d.cur, d.mode])}`);
     check(!!d && d.dashed === 0 && d.emptyMarkup === 0 && !/Front/.test(d.text), 'the detail card: no dashed box and no "Front" over nothing');
     await shot('SMART-detail-back');
-    let r = await clickMode('both');
-    check(r.faces.join() === 'front,back', `Front + back pressed: the second box appears in the same tick: ${JSON.stringify(r.faces)}`);
-    d = await detail(); check(d.faces.join() === 'front,back' && d.cur.length === 1 && d.dashed === 0 && d.save, `both boxes, one selected (${d.cur}), none dashed, Save is on`);
-    await shot('SMART-detail-both-staged');
+    // (the page's own save path is stubbed here: it records what a press keeps and says ok; nothing is written, so the piece stays as saved)
+    await page.evaluate(() => { window.__saveWas = Engrave.saveSetup; window.__kept = []; Engrave.saveSetup = async (row, patch) => { __kept.push(JSON.parse(JSON.stringify(patch))); return { ok: true }; }; });
+    let r = await clickMode('front');
+    check(r.faces.join() === 'front,back' && r.cur.join() === 'front', `Front pressed on a back-only piece: the Front box appears in the same tick, selected: ${JSON.stringify(r)}`);
+    await R.settle(page, 300);
+    let kept = await page.evaluate(() => __kept.splice(0));
+    check(kept.length === 1 && kept[0].mode === 'both' && !kept[0].reason, `and it is kept at once (no Save, no reason): ${JSON.stringify(kept)}`);
+    await shot('SMART-detail-both-kept');
     r = await clickMode('none'); check(r.faces.length === 0 && r.hasCard && !/Front|Back/.test(r.text), `None pressed: the faces go in the same tick (the piece's name stays): ${JSON.stringify(r.faces)}`);
-    await shot('SMART-detail-none-staged');
-    r = await clickMode('front'); check(r.faces.join() === 'front' && r.cur.join() === 'front', `Front pressed: only the Front box, selected by itself: ${JSON.stringify(r)}`);
-    r = await clickMode('back'); check(r.faces.join() === 'back' && r.cur.join() === 'back', `Back pressed: only the Back box, selected by itself: ${JSON.stringify(r)}`);
-    r = await clickMode('both');
-    // a press on a box selects that face (and the panel edits it)
-    await page.click('#egQueue .engCard .engFace[data-face=front] .engThumb');
+    await R.settle(page, 300);
+    kept = await page.evaluate(() => __kept.splice(0));
+    check(kept.length === 1 && kept[0].mode === 'none', `and it is kept at once: ${JSON.stringify(kept)}`);
+    d = await detail(); check(d.faces.join() === 'back' && d.mode === 'back', `(the stub kept nothing: the card is back on what is saved: ${JSON.stringify([d.faces, d.mode])})`);
+    r = await clickMode('back'); check(r.faces.join() === 'back' && r.cur.join() === 'back', `Back pressed while engraved: it is only shown, the one Back box, selected: ${JSON.stringify(r)}`);
+    kept = await page.evaluate(() => __kept.splice(0));
+    check(kept.length === 0, `a press on an engraved face keeps nothing: ${JSON.stringify(kept)}`);
+    // a press on a box selects that face (and the panel edits it): the both-faces piece
+    await R.openEngraveDetail(w, 'both', { face: 'back' });
+    await page.click('#egQueue .engCard .engFace[data-face=front] .engThumb'); await R.settle(page, 500);
     d = await detail(); check(d.cur.join() === 'front' && d.pface === 'front', `a press on the Front box selects the Front (card ${d.cur}, panel ${d.pface})`);
-    await page.click('#egQueue .engCard .engFace[data-face=back] .engThumb');
+    await page.click('#egQueue .engCard .engFace[data-face=back] .engThumb'); await R.settle(page, 500);
     d = await detail(); check(d.cur.join() === 'back' && d.pface === 'back', `a press on the Back box selects the Back (card ${d.cur}, panel ${d.pface})`);
 
     /* 3 ── no stray text */
-    await page.click('#egQueue .engCard .engFace[data-face=front] .engThumb');
+    await page.click('#egQueue .engCard .engFace[data-face=front] .engThumb'); await R.settle(page, 500);
     await page.fill('#egQueue .engp .engpWords', 'rr');
     d = await detail();
-    check(d.thumbText.front === 'rr' && !/rr/.test(d.thumbText.back) && d.texts[0] === 'rr' && d.texts[1] !== 'rr', `typing "rr" on the Front shows in the Front only (picture ${JSON.stringify(d.thumbText.front)}, words under it ${JSON.stringify(d.texts[0])}) and never in the Back box (${JSON.stringify(d.thumbText.back)} / ${JSON.stringify(d.texts[1])})`);
-    r = await clickMode('back');
-    d = await detail(); check(d.faces.join() === 'back' && !/rr/.test(d.text) && !Object.values(d.thumbText).some(t => /rr/.test(t)), `Back pressed again: the Front box is gone and "rr" is nowhere on the card: ${JSON.stringify(d.faces)} "${d.text}"`);
-    await page.click('#egQueue .engp [data-engp=cancel]'); d = await detail();
-    check(d.faces.join() === 'back' && d.mode === 'back' && !d.save && !/rr/.test(d.text), `Cancel: the card and the panel are back on what is saved (Back only, Save off): ${JSON.stringify([d.faces, d.mode, d.save])}`);
+    check(/^rr$/i.test(d.thumbText.front) && !/rr/i.test(d.thumbText.back) && d.texts[0] === 'rr' && d.texts[1] !== 'rr',   // (this piece's font is Ace: its picture engraves capitals)
+ `typing "rr" on the Front shows in the Front only (picture ${JSON.stringify(d.thumbText.front)}, words under it ${JSON.stringify(d.texts[0])}) and never in the Back box (${JSON.stringify(d.thumbText.back)} / ${JSON.stringify(d.texts[1])})`);
     const drafts = () => page.evaluate(() => [...CharmNestEngravePanel.DRAFTS.entries()].filter(([k, d]) => d.dirty || d.posTouched).map(([k]) => k));   // (a staged edit: a clean draft is only the panel's copy of what is saved)
     const allDrafts = () => page.evaluate(() => [...CharmNestEngravePanel.DRAFTS.keys()]);
-    check((await drafts()).length === 0, 'Cancel ends the staged edit (no draft kept)');
 
-    /* 4 ── the staged edit dies with its panel session */
-    const stage = async () => { await clickMode('both'); await page.click('#egQueue .engCard .engFace[data-face=front] .engThumb'); await page.fill('#egQueue .engp .engpWords', 'rr'); };
-    await stage(); check((await drafts()).length === 1, 'a staged edit (Front + back, "rr" on the Front) is kept while the card is open');
+    /* 4 ── the staged edit and its panel session */
+    check((await drafts()).length === 1, 'a staged edit ("rr" on the Front) is kept while the card is open');
     // a redraw of the same card (the tab draws the detail again on every change) keeps it
     await page.evaluate(() => Engrave.render()); await R.settle(page, 400);
-    d = await detail(); check(d.mode === 'both' && d.faces.join() === 'front,back' && d.thumbText.front === 'rr', `the tab drawing the detail again does not lose the edit: ${JSON.stringify([d.mode, d.faces, d.thumbText.front])}`);
-    // closing the detail (the list) ends it
-    await page.evaluate(() => { Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render(); }); await R.settle(page, 700);
-    check((await allDrafts()).length === 0, `closing the detail ends the staged edit (and the panel's copy of the saved state): drafts ${JSON.stringify(await allDrafts())}`);
-    await R.openEngraveDetail(w, 'back', { face: 'back' }); d = await detail();
-    check(d.faces.join() === 'back' && d.mode === 'back' && !d.save && !/rr/.test(d.text) && d.words !== 'rr', `reopening the card shows what the system chose, not the old draft: ${JSON.stringify([d.faces, d.mode, d.save, d.words])}`);
-    // another piece opened ends it
-    await stage(); check((await drafts()).length === 1, 'staged again');
-    await R.openEngraveDetail(w, 'front', { face: 'front' }); await R.settle(page, 500);
-    check((await drafts()).length === 0, `opening another order's piece ends the staged edit: ${JSON.stringify(await drafts())}`);
-    d = await detail(); check(d.faces.join() === 'front' && d.mode === 'front' && !d.save, `the other piece opens on its own faces (Front only): ${JSON.stringify([d.faces, d.mode])}`);
-    await R.openEngraveDetail(w, 'back', { face: 'back' }); d = await detail();
-    check(d.faces.join() === 'back' && d.mode === 'back' && !/rr/.test(d.text), `back on the first piece: no old draft: ${JSON.stringify([d.faces, d.mode])}`);
+    d = await detail(); check(d.faces.join() === 'front,back' && /^rr$/i.test(d.thumbText.front), `the tab drawing the detail again does not lose the edit: ${JSON.stringify([d.mode, d.faces, d.thumbText.front])}`);
     // the other face of the SAME piece (the tab shows another job) is still the same session
-    await R.openEngraveDetail(w, 'both', { face: 'back' }); await clickMode('both'); await page.click('#egQueue .engCard .engFace[data-face=front] .engThumb'); await page.fill('#egQueue .engp .engpWords', 'rr');
-    await R.settle(page, 500); d = await detail(); check(d.cur.join() === 'front' && /^rr$/i.test(d.thumbText.front), `the two faces of one piece share one session while the other face's job is drawn: ${JSON.stringify([d.cur, d.thumbText])}`);
-    // Save (the page's own save path stubbed to say ok: nothing is written) ends it too
-    await page.evaluate(() => { window.__saveWas = Engrave.saveSetup; Engrave.saveSetup = async () => ({ ok: true }); });
-    await page.click('#egQueue .engp [data-engp=save]'); await R.settle(page, 300);
-    if (await page.$('#egQueue .engp [data-engp=why]')) { await page.click('#egQueue .engp [data-engp=why]'); await R.settle(page, 300); }   // (ENGWHY: a Save that overrides the system's choice asks why first; the first quick button answers)
-    check((await drafts()).length === 0, 'Save ends the staged edit');
+    await page.click('#egQueue .engCard .engFace[data-face=back] .engThumb'); await R.settle(page, 500);
+    d = await detail(); check(d.cur.join() === 'back' && /^rr$/i.test(d.thumbText.front), `the two faces of one piece share one session while the other face's job is drawn: ${JSON.stringify([d.cur, d.thumbText])}`);
+    // closing the detail (the list) ends it, and the typed words are KEPT quietly
+    await page.evaluate(() => { Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render(); }); await R.settle(page, 700);
+    kept = await page.evaluate(() => __kept.splice(0));
+    check((await allDrafts()).length === 0 && kept.length === 1 && kept[0].front && kept[0].front.text === 'rr' && !kept[0].reason, `closing the detail ends the staged edit and keeps the typed words (no question): drafts ${JSON.stringify(await allDrafts())}, kept ${JSON.stringify(kept)}`);
+    // another piece opened ends it the same way
+    await R.openEngraveDetail(w, 'both', { face: 'front' }); await page.fill('#egQueue .engp .engpWords', 'rr2');
+    check((await drafts()).length === 1, 'staged again');
+    await R.openEngraveDetail(w, 'front', { face: 'front' }); await R.settle(page, 500);
+    kept = await page.evaluate(() => __kept.splice(0));
+    check((await drafts()).length === 0 && kept.length === 1 && kept[0].front && kept[0].front.text === 'rr2', `opening another order's piece ends the staged edit and keeps its words: ${JSON.stringify(kept)}`);
+    d = await detail(); check(d.faces.join() === 'front' && d.mode === 'front' && !d.save, `the other piece opens on its own faces (Front only), nothing staged: ${JSON.stringify([d.faces, d.mode])}`);
     await page.evaluate(() => { Engrave.saveSetup = window.__saveWas; });
 
     /* 5 ── an untouched card is exactly the system's choice */

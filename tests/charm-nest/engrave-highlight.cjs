@@ -2,10 +2,10 @@
 // those selections." The engraving panel of the Engrave tab (charm-nest-engrave-panel.js) marks what the SYSTEM chose and keeps it marked when a person picks something else. REAL page, headless Chromium, offline fake site
 // (no Etsy, no paid reading, no live write). The real preview and position components are on the page (nothing is stubbed but CharmNestEngraveSetup.autoChoice in step 6, to prove it is the source of truth).
 //   1  untouched: the mark (a gold sparkle, title "Chosen by the system") is on the system's mode segment, on the system's font (its entry in the list and the select's tint) and on the shown face's words box (tinted)
-//   2  the person picks another mode: the selection (ring) moves, the mark does not (still one mark, on the system's segment)
+//   2  LIVEWORDS (29 Oct 2026): Front and Back are toggles (no "Front + back"): the system's "both" marks Front AND Back; a press on an engraved face only shows it (the marks and the selection stay)
 //   3  the person types other words / picks another font: the tint goes, the mark stays (ghost beside the closed font drop-down, on the words box), its title now says what the system chose; typing the system's words back brings the tint back
-//   4  the other face (the Front thumbnail) carries its own system words; Cancel brings every tint back; nothing disappears anywhere
-//   5  a saved override with a recorded reason (engravingOverride.reason): the selection is the person's, the marks are on the system's choice and their titles show the reason, read-only
+//   4  the other face (the Front thumbnail) carries its own system words; letting the draft go (no Cancel any more) brings every tint back; nothing disappears anywhere
+//   5  a saved override (even one with an old recorded reason): the selection is the person's, the marks are on the system's choice; no reason is shown any more (LIVEWORDS)
 //   6  the source of truth is CharmNestEngraveSetup.autoChoice when the page has it (a stub here); a face the system does not engrave has no words / font mark
 //   7  no new words: the marks hold no text, the panel's text is what it was, option texts are unchanged; the mode control is still ONE row at 232px and the marks take no room (widths equal with and without them)
 //   8  an approved face (open for a change since NODECIDED) keeps its marks; an earring draws no panel at all; no paid call, no page error
@@ -27,12 +27,14 @@ const MARKS_FN = sel => {
       const mk = h => { const k = h && h.querySelector(':scope > .engpSys'); return k ? { st: k.dataset.st, title: k.title, text: k.textContent } : null; };
       return {
         face: p.dataset.face, mode: p.dataset.mode, text: p.textContent.replace(/\s+/g, ' ').trim(),
-        seg: [...p.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg')].map(b => ({ m: b.dataset.mode, on: b.getAttribute('aria-checked') === 'true', sys: b.dataset.sys || '', title: b.title, mark: mk(b), bg: bg(b) })),
+        seg: [...p.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg')].map(b => ({ m: b.dataset.mode, on: b.getAttribute('aria-pressed') === 'true', sys: b.dataset.sys || '', title: b.title, mark: mk(b), bg: bg(b) })),
         words: { sys: box ? box.dataset.sys || '' : null, mark: mk(box), bg: bg(ta), value: ta && ta.value },
         font: { sys: fb ? fb.dataset.sys || '' : null, ghost: mk(fb), selTitle: s ? s.title : '', value: s && s.value, bg: bg(s), opts: s ? [...s.options].map(o => ({ v: o.value, text: o.text, label: o.label, star: !!o.dataset.sys })) : [] }
       };
 };
-const onlySeg = (m, mode) => m.seg.filter(s => s.mark).map(s => s.m).join() === mode && m.seg.filter(s => s.sys).map(s => s.m).join() === mode;
+const segsOf = mode => (mode === 'both' ? 'front,back' : mode);   // (LIVEWORDS: a mode is the toggles it presses / marks: "both" = Front and Back)
+const onlySeg = (m, mode) => m.seg.filter(s => s.mark).map(s => s.m).join() === segsOf(mode) && m.seg.filter(s => s.sys).map(s => s.m).join() === segsOf(mode);
+const pressed = (m, mode) => m.seg.filter(s => s.on).map(s => s.m).join() === segsOf(mode);
 const CARD_BG = 'rgb(255, 254, 251)';
 
 /** 9 · the REAL-DRAWING world (ENGLIVE: real charm drawings, real intake / pool / classifier / fit, real fonts, offline): on each real piece the marks are exactly the system's own choice (autoChoice), untouched; an override moves the selection, not the marks */
@@ -55,25 +57,24 @@ async function realWorld(check, shots) {
       await w.page.waitForSelector(`${PV} .engp .engpWords`, { timeout: 20000 });
       const m = await w.page.evaluate(MARKS_FN, PV), t = await truthOf(name, face, slot);
       check(m.face === face && t.shown === face, `9 ${tag}: the panel is on the ${face}`);
-      check(onlySeg(m, t.mode) && m.seg.find(s => s.m === t.mode).on && m.seg.every(s => !s.mark || s.mark.title === TITLE), `9 ${tag}: the mark and the tint are on the system's mode (${t.mode}), which is the selected one`);
+      check(onlySeg(m, t.mode) && pressed(m, t.mode) && m.seg.every(s => !s.mark || s.mark.title === TITLE), `9 ${tag}: the mark and the tint are on the system's mode (${t.mode}), which is the selected one`);
       check(t.text && m.words.sys === 'same' && m.words.mark && m.words.mark.title === TITLE && m.words.bg !== CARD_BG, `9 ${tag}: the words ("${(m.words.value || '').replace(/\n/g, ' / ')}" for the system's "${t.text}") carry the mark and the tint, untouched: ` + JSON.stringify({ sys: m.words.sys }));
       check(t.fontId && t.starId === t.fontId && m.font.opts.filter(o => o.star).length === 1 && m.font.sys === 'same' && !m.font.ghost, `9 ${tag}: the system's font (${t.fontId}) is the starred entry of the list and is selected: ` + JSON.stringify({ star: m.font.opts.filter(o => o.star).map(o => o.label), starId: t.starId }));
       if (name === 'discs') check(m.words.value === 'B', `9 ${tag}: disc 2's own words ("${m.words.value}") are marked, not the line's`);
       if (shots && (name === 'back' || name === 'both')) await R.shot(w, `HILITE-real-${name}-${face}-untouched`, { clip: CLIP });
     }
-    // an override in a real order: Back instead of Front + back, other words, another font: the ring and the words move, every mark stays
+    // an override in a real order: other words, another font on the Back: the words move, every mark stays
     await R.openEngraveDetail(w, 'both', { face: 'back' });
     await w.page.waitForSelector(`${PV} .engp .engpWords`, { timeout: 20000 });
-    await w.page.click(`${PV} [data-engp=mode][data-mode=back]`); await w.page.waitForSelector(`${PV} .engp[data-mode=back]`);
     await w.page.fill(`${PV} .engpWords`, 'Name Two'); await w.page.selectOption(`${PV} .engpFont`, 'Pristina');
     const o = await w.page.evaluate(MARKS_FN, PV);
-    check(o.seg.find(s => s.m === 'back').on && onlySeg(o, 'both') && o.words.sys === 'changed' && o.words.mark && /^Chosen by the system: NAME \/ ONE|^Chosen by the system: Name One/.test(o.words.mark.title) && o.font.sys === 'changed' && o.font.ghost && o.font.opts.filter(x => x.star).map(x => x.v).join() === '',
-      '9 both, overridden (Back, other words, Pristina): the ring moved, every mark stayed on the system\'s choice, with its titles: ' + JSON.stringify({ seg: o.seg.filter(s => s.mark).map(s => s.m), words: o.words.mark && o.words.mark.title, ghost: o.font.ghost && o.font.ghost.title }));
+    check(pressed(o, 'both') && onlySeg(o, 'both') && o.words.sys === 'changed' && o.words.mark && /^Chosen by the system: NAME \/ ONE|^Chosen by the system: Name One/.test(o.words.mark.title) && o.font.sys === 'changed' && o.font.ghost && o.font.opts.filter(x => x.star).map(x => x.v).join() === '',
+      '9 both, overridden (other words, Pristina): every mark stayed on the system\'s choice, with its titles: ' + JSON.stringify({ seg: o.seg.filter(s => s.mark).map(s => s.m), words: o.words.mark && o.words.mark.title, ghost: o.font.ghost && o.font.ghost.title }));
     if (shots) await R.shot(w, 'HILITE-real-both-back-overridden', { clip: CLIP });
-    await w.page.click(`${PV} [data-engp=cancel]`);
-    await w.page.waitForFunction(() => { const c = document.querySelector('.pvSetup [data-engp=cancel]'); return c && c.disabled; });
+    await w.page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (c && c._pieceMount) c._pieceMount.refresh(); else Engrave.render(); });   // (nothing approved: the draft let go)
+    await w.page.waitForFunction(() => { const p = document.querySelector('.pvSetup .engp'); return p && !p.dataset.staged; });
     const c = await w.page.evaluate(MARKS_FN, PV);
-    check(c.words.sys === 'same' && c.font.sys === 'same' && c.seg.find(s => s.m === 'both').on, '9 after Cancel the real order is the system\'s choice again, every tint back');
+    check(c.words.sys === 'same' && c.font.sys === 'same' && pressed(c, 'both'), '9 with the draft let go the real order is the system\'s choice again, every tint back: ' + JSON.stringify({ words: c.words, font: c.font.sys, seg: c.seg.map(x => [x.m, x.on]) }));
     check(w.errors.length === 0, '9 no page errors in the real world: ' + w.errors.join(' | ').slice(0, 300));
   } finally { await w.close(); }
 }
@@ -122,7 +123,7 @@ async function realWorld(check, shots) {
     await page.waitForSelector('.pvSetup .engp .engpWords', { timeout: 20000 });
     const PV = '.pvSetup';
     let m = await marks(PV);
-    check(m.mode === 'both' && onlySeg(m, 'both') && m.seg.every(s => !s.mark || (s.mark.title === TITLE && s.title === TITLE)) && m.seg.find(s => s.m === 'both').on, `1 untouched: the mark and the tint are on the system's mode (Front + back), selected, and nowhere else; title "${TITLE}"`);
+    check(m.mode === 'both' && onlySeg(m, 'both') && m.seg.every(s => !s.mark || (s.mark.title === TITLE && s.title === TITLE)) && pressed(m, 'both'), `1 untouched: the mark and the tint are on the system's faces (Front and Back), pressed, and nowhere else; title "${TITLE}"`);
     check(m.words.sys === 'same' && m.words.mark && m.words.mark.st === 'same' && m.words.mark.title === TITLE && m.words.bg !== CARD_BG, `1 untouched: the words box (the Back: "${m.words.value}") carries the mark and a quiet tint (${m.words.bg})`);
     const starred = m.font.opts.filter(o => o.star);
     check(starred.length === 1 && starred[0].v === '' && /^✦ /.test(starred[0].label) && starred[0].label.endsWith(starred[0].text) && m.font.sys === 'same' && m.font.selTitle === TITLE && m.font.bg !== CARD_BG && !m.font.ghost,
@@ -132,16 +133,12 @@ async function realWorld(check, shots) {
     check(!/✦/.test(m.text) && m.seg.every(s => !s.mark || s.mark.text === '') && !m.words.mark.text, `7 the marks hold no text of their own and the panel says only what it said: "${m.text.slice(0, 100)}"`);
     if (shots) await page.screenshot({ path: path.join(shots, 'HILITE-1-untouched.png'), clip: { x: 360, y: 120, width: 285, height: 440 } });
 
-    // 2 · another mode
+    // 2 · a press on an engraved face only shows it: the selection and the marks stay
     await page.click(`${PV} [data-engp=mode][data-mode=back]`);
-    await page.waitForSelector(`${PV} .engp[data-mode=back]`);
     m = await marks(PV);
-    check(m.seg.find(s => s.m === 'back').on && !m.seg.find(s => s.m === 'both').on && onlySeg(m, 'both') && m.seg.find(s => s.m === 'both').mark.title === TITLE,
-      '2 Back selected: the ring moved to Back, the mark and the tint stayed on Front + back (one mark, same title, no reason: none recorded)');
-    check(m.seg.find(s => s.m === 'back').bg !== m.seg.find(s => s.m === 'both').bg, '2 the selected change is not tinted (it is the person\'s), the system\'s is');
-    check(m.seg.length === 4 && m.seg.map(s => s.m).join() === 'none,front,back,both', '2 nothing disappeared: still the four choices');
-    await page.click(`${PV} [data-engp=mode][data-mode=both]`);
-    await page.waitForSelector(`${PV} .engp[data-mode=both]`);
+    check(m.mode === 'both' && pressed(m, 'both') && onlySeg(m, 'both') && m.seg.find(s => s.m === 'front').mark.title === TITLE, '2 Back pressed while engraved: it is shown, Front and Back stay pressed and marked (no reason, none asked)');
+    check(m.seg.find(s => s.m === 'none').bg !== m.seg.find(s => s.m === 'front').bg, '2 the system\'s faces are tinted, None is not');
+    check(m.seg.length === 3 && m.seg.map(s => s.m).join() === 'none,front,back', '2 the three choices, no "Front + back": ' + m.seg.map(s => s.m).join());
 
     // 3 · other words, another font
     await page.fill(`${PV} .engpWords`, 'Name Two');
@@ -157,10 +154,10 @@ async function realWorld(check, shots) {
     check(m.font.value === 'Pristina' && m.font.sys === 'changed' && m.font.bg === CARD_BG && m.font.ghost && m.font.ghost.st === 'changed' && m.font.ghost.title === `${TITLE}: ${lineFontText}` && m.font.opts.filter(o => o.star).map(o => o.v).join() === '',
       '3 another font picked: the tint went, a ghost mark sits beside the closed drop-down (title names the system\'s font), the system\'s entry is still starred in the list: ' + JSON.stringify({ sys: m.font.sys, ghost: m.font.ghost, star: m.font.opts.filter(o => o.star).map(o => o.label) }));
     check(m.font.opts.map(o => o.text).join('|') === optsBefore, '7 the options\' own texts are unchanged (the star is only in their display label)');
-    check(onlySeg(m, 'both') && m.seg.find(s => s.m === 'both').on, '3 the mode is untouched by a words or font change');
+    check(onlySeg(m, 'both') && pressed(m, 'both'), '3 the mode is untouched by a words or font change');
     if (shots) await page.screenshot({ path: path.join(shots, 'HILITE-2-font-changed.png'), clip: { x: 360, y: 120, width: 285, height: 440 } });
 
-    // 4 · the Front thumbnail: its own system words ("W"); then Cancel brings every tint back
+    // 4 · the Front thumbnail: its own system words ("W"); then letting the draft go brings every tint back
     const hasCard = await page.evaluate(() => !!document.querySelector('.pvSetup .engFace[data-face=front] .engThumb'));
     if (hasCard) {
       await page.click(`${PV} .engFace[data-face=front] .engThumb`);
@@ -169,10 +166,10 @@ async function realWorld(check, shots) {
       check(m.words.value === 'W' && m.words.sys === 'same' && m.words.mark && m.words.mark.title === TITLE && m.words.bg !== CARD_BG, '4 the Front\'s words box ("W") carries its own mark and tint');
       check(m.font.sys === 'same' && !m.font.ghost && m.font.value === '', '4 the Pristina staged on the Back is the Back\'s own: the Front\'s drop-down is still the system\'s font, tinted, no ghost: ' + JSON.stringify({ value: m.font.value, sys: m.font.sys }));
     } else console.log('  (no card thumbnails in this build: the Front step was skipped)');
-    await page.click(`${PV} [data-engp=cancel]`);
-    await page.waitForFunction(() => { const c = document.querySelector('.pvSetup [data-engp=cancel]'); return c && c.disabled; });
+    await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (c && c._pieceMount) c._pieceMount.refresh(); else Engrave.render(); });   // (LIVEWORDS: no Cancel; nothing approved, the draft let go)
+    await page.waitForFunction(() => { const p = document.querySelector('.pvSetup .engp'); return p && !p.dataset.staged; });
     m = await marks(PV);
-    check(m.mode === 'both' && onlySeg(m, 'both') && m.words.sys === 'same' && m.font.sys === 'same' && !m.font.ghost && m.font.opts.filter(o => o.star).length === 1, '4 after Cancel everything is the system\'s again: every tint is back, the marks never left');
+    check(m.mode === 'both' && onlySeg(m, 'both') && m.words.sys === 'same' && m.font.sys === 'same' && !m.font.ghost && m.font.opts.filter(o => o.star).length === 1, '4 with the draft let go everything is the system\'s again: every tint is back, the marks never left');
 
     // ── 5-8 · in a 232px slot (the narrowest the Engrave detail gives the panel), with a real preview ──
     await page.evaluate(() => { document.getElementById('__slot')?.remove(); const s = document.createElement('div'); s.id = '__slot'; s.style.cssText = 'position:fixed;left:20px;top:20px;width:232px;background:#fffefb;z-index:99999;max-height:96vh;overflow:auto'; document.body.appendChild(s); });
@@ -193,33 +190,27 @@ async function realWorld(check, shots) {
     await page.evaluate(() => { const p = document.querySelector('#__slot .engp'); p.querySelectorAll('.engpSys').forEach(k => k.remove()); p.querySelectorAll('[data-sys]').forEach(k => delete k.dataset.sys); });
     const without = await row232();
     check(withMarks.marks >= 2 && without.marks === 0, '7 the marks are really there to compare (mode + words; the font\'s star is in its list): ' + withMarks.marks + ' with, ' + without.marks + ' without');
-    check(withMarks.panelW >= 231 && new Set(withMarks.tops).size === 1 && withMarks.right <= withMarks.boxRight + 0.5, `7 at ${withMarks.panelW}px the four choices are still ONE row inside the control: tops ${withMarks.tops}, last right ${Math.round(withMarks.right)} <= ${Math.round(withMarks.boxRight)}`);
+    check(withMarks.panelW >= 231 && new Set(withMarks.tops).size === 1 && withMarks.right <= withMarks.boxRight + 0.5, `7 at ${withMarks.panelW}px the three choices are still ONE row inside the control: tops ${withMarks.tops}, last right ${Math.round(withMarks.right)} <= ${Math.round(withMarks.boxRight)}`);
     check(JSON.stringify(withMarks.w) === JSON.stringify(without.w), `7 the marks take no room: segment widths are the same with and without them: ${withMarks.w} / ${without.w}`);
     await mountSlot();
     if (shots) await page.screenshot({ path: path.join(shots, 'HILITE-3-232px-untouched.png'), clip: { x: 10, y: 10, width: 252, height: 330 } });
 
-    // 5 · a saved override with a recorded reason (ENGWHY's field): the selection is the person's, the marks are on the system's choice and say why
+    // 5 · a saved override carrying an old recorded reason (ENGWHY's field): the selection is the person's, the marks are on the system's choice; LIVEWORDS: no reason is shown
     await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back'); Object.assign(j, { text: 'Name Two', lines: ['Name Two'] }); row.engravingOverride = { mode: 'back', back: { text: 'Name Two', fontWord: 'Pristina' }, by: 'Name One', at: 1, reason: { code: 'asked', text: 'Customer asked in a message', by: 'Name One', at: 1 } }; }, KEY);
     await mountSlot();
     m = await marks(S);
-    const segBoth = m.seg.find(s => s.m === 'both'), segBack = m.seg.find(s => s.m === 'back');
-    check(segBack.on && !segBoth.on && onlySeg(m, 'both') && startsWith(segBoth.mark.title, `${TITLE}\n${REASON}`) && segBoth.title === segBoth.mark.title, '5 override Back saved with a reason: Back is selected, the mark stays on Front + back and its title shows the reason read-only: ' + JSON.stringify(segBoth.title));
-    check(m.words.value === 'Name Two' && m.words.sys === 'changed' && startsWith(m.words.mark.title, `${TITLE}: 1. 27. 24\n${REASON}`), '5 the words box shows the person\'s words, its mark names the system\'s words and the reason: ' + JSON.stringify(m.words.mark));
-    check(m.font.value === 'Pristina' && m.font.sys === 'changed' && m.font.ghost && m.font.ghost.title.startsWith(`${TITLE}: Ace\n${REASON}`) && m.font.opts.filter(o => o.star).map(o => o.v).join() === '', '5 the font: Pristina selected, the ghost names the system\'s font and the reason: ' + JSON.stringify(m.font.ghost));
+    const segFront = m.seg.find(s => s.m === 'front'), segBack = m.seg.find(s => s.m === 'back');
+    check(pressed(m, 'back') && onlySeg(m, 'both') && segFront.mark.title === TITLE && segFront.title === TITLE && !/Changed:/.test(m.text), '5 override Back saved: only Back is pressed, the marks stay on Front and Back, no reason anywhere: ' + JSON.stringify(segFront.title));
+    check(m.words.value === 'Name Two' && m.words.sys === 'changed' && m.words.mark.title === `${TITLE}: 1. 27. 24`, '5 the words box shows the person\'s words, its mark names the system\'s words (no reason): ' + JSON.stringify(m.words.mark));
+    check(m.font.value === 'Pristina' && m.font.sys === 'changed' && m.font.ghost && m.font.ghost.title === `${TITLE}: Ace` && m.font.opts.filter(o => o.star).map(o => o.v).join() === '', '5 the font: Pristina selected, the ghost names the system\'s font (no reason): ' + JSON.stringify(m.font.ghost));
+    void segBack;
     if (shots) await page.screenshot({ path: path.join(shots, 'HILITE-4-232px-overridden.png'), clip: { x: 10, y: 10, width: 252, height: 330 } });
-    // a code with no text still reads (the code, plainly); no reason at all: the plain title only
-    await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY); row.engravingOverride.reason = { code: 'misread', by: 'Name One', at: 1 }; }, KEY);
-    await mountSlot(); m = await marks(S);
-    check(/^Chosen by the system\nChanged: Misread( the note)? \u00b7 Name One/.test(m.seg.find(s => s.m === 'both').mark.title), '5 a reason with only a code reads in the button\'s words (ENGWHY\'s labels): ' + JSON.stringify(m.seg.find(s => s.m === 'both').mark.title));
-    await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY); delete row.engravingOverride.reason; }, KEY);
-    await mountSlot(); m = await marks(S);
-    check(m.seg.find(s => s.m === 'both').mark.title === TITLE && m.words.mark.title === `${TITLE}: 1. 27. 24`, '5 no recorded reason: the titles carry no reason line');
     await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back'); Object.assign(j, { text: '1. 27. 24', lines: ['1. 27. 24'] }); delete row.engravingOverride; }, KEY);
 
     // 6 · the source of truth is autoChoice (ENGAUTO) when the page has it: stubbed here: the system chose Front only, "Name Three", Pristina
     await page.evaluate(() => { const S = CharmNestEngraveSetup; window.__autoWas = S.autoChoice; S.autoChoice = () => ({ mode: 'front', faces: ['front'], front: { text: 'Name Three', lines: ['Name Three'], fontWord: 'Pristina', fontId: 'marck-script' }, back: null, position: 'auto' }); });
     await mountSlot(); m = await marks(S);
-    check(m.mode === 'both' && onlySeg(m, 'front') && m.seg.find(s => s.m === 'both').on && !m.seg.find(s => s.m === 'both').mark, '6 autoChoice says Front only: the mark is on Front (not selected), the person\'s/auto Front + back reading is just selected');
+    check(m.mode === 'both' && onlySeg(m, 'front') && pressed(m, 'both') && !m.seg.find(s => s.m === 'back').mark, '6 autoChoice says Front only: the mark is on Front only; the reading engraves both faces, so Front and Back are pressed');
     check(m.face === 'back' && m.words.sys === '' && !m.words.mark && !m.font.ghost && m.font.opts.every(o => !o.star), '6 the Back is not engraved by the system\'s choice: no words mark, no font mark on it');
     await page.evaluate(() => __h.setFace('front')); m = await marks(S);
     check(m.face === 'front' && m.words.sys === 'changed' && m.words.mark.title === `${TITLE}: Name Three` && m.font.opts.filter(o => o.star).map(o => o.v).join() === 'Pristina' && m.font.sys === 'changed' && m.font.ghost.title === `${TITLE}: Pristina`,

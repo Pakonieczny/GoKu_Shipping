@@ -11,12 +11,12 @@
 //  B  FONT: font A then font B in the panel's drop-down: in the SAME tick the work area's drawn glyph path changes, differs between the two fonts and from the committed one, is that installed font's own outline,
 //     and the canvas shows exactly that path
 //  C  TYPING: new words change the drawn path in the same tick, in the staged font
-//  D  MODE: a mode that does not engrave this face draws no engraving at once; the mode back to this face draws the staged words again
+//  D  MODE (the draft's own mode, Engrave.draftFit: LIVEWORDS keeps the panel's face toggles at once, so the API is driven directly): a mode that does not engrave this face draws no engraving at once; the mode back to this face draws the staged words again
 //  G  nothing leaves the page during the draft and nothing of it is on the job (no request, no cloud call, no paid look, job and laser file untouched)
 //  E  POSITION: a position button nudges the job at once and the staged words move with it
-//  F  CANCEL: the committed fit is drawn again, byte for byte (canvas, fit, the whole job, the laser file)
+//  F  LET GO (LIVEWORDS: no Cancel; the draft dropped, the moves put back with the position snapshot): the committed fit is drawn again, byte for byte (canvas, fit, the whole job, the laser file)
 //  H  a font that is still loading keeps the previous drawing and shows the small "Loading font" spinner; the draft is made as soon as it has loaded
-//  J  SAVE: the staged words in the staged font are what Save fits (same glyph shapes); the draft is gone after it
+//  J  KEEP (what Approve does first, LIVEWORDS: no Save button): the staged words in the staged font are what is fitted (same glyph shapes); the draft is gone after it
 //  I  a FRONT job drafts too, and the staged mode decides whether it is engraved
 //  K  the API never throws
 'use strict';
@@ -130,9 +130,11 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
 
     /* ═══ D · MODE ═══ */
     const modeTo = (key, m) => page.evaluate(({ key, m }) => {
-      const t0 = performance.now(); document.querySelector(`#egQueue .pvSetup .engp [data-engp=mode][data-mode=${m}]`).click();
+      const ta = document.querySelector('#egQueue .pvSetup .engp .engpWords'), sel = document.querySelector('#egQueue .pvSetup .engp .engpFont');
+      const t0 = performance.now(); Engrave.draftFit(key, { text: ta.value, fontWord: sel.value || '', mode: m });
       const out = __drawn(key); out.ms = performance.now() - t0; return out;
     }, { key, m });
+    const letGo = () => page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (c && c._pieceMount) { c._pieceMount.refresh(); c._pieceMount.panel.paintAll(); } });
     // the selection box (blue strokes) goes with the words: it is drawn around the engraving only
     const blue = url => page.evaluate(async u => { const im = new Image(); im.src = u; await im.decode(); const cv = document.createElement('canvas'); cv.width = im.width; cv.height = im.height; const c = cv.getContext('2d'); c.drawImage(im, 0, 0); const d = c.getImageData(0, 0, im.width, im.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 2] > 150 && d[i] < 120 && d[i + 1] < 170 && d[i + 2] - d[i] > 60) n++; return n; }, url);
     const d1 = await modeTo(JK, 'front');
@@ -158,6 +160,7 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
 
     /* ═══ E · POSITION ═══ */
     const MM = 72 / 25.4;
+    await page.evaluate(key => { window.__posSnap = CharmNestEngravePosition.snapshot(Engrave.items().get(key)); }, JK);   // (LIVEWORDS: a move is the job's at once; F puts it back with the position snapshot, as Cancel did)
     const move = act => page.evaluate(({ key, act }) => {
       const j = Engrave.items().get(key), before = j.fit.centre.slice(), d0 = Engrave.draftOf(key), t0 = performance.now();
       document.querySelector(`#egQueue .pvSetup .engp [data-act=${act}]`).click();
@@ -176,7 +179,8 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
 
     /* ═══ F · CANCEL ═══ */
     const cancel = await page.evaluate(async key => {
-      const t0 = performance.now(); document.querySelector('#egQueue .pvSetup .engp [data-engp=cancel]').click();
+      CharmNestEngravePosition.restore(Engrave.items().get(key), window.__posSnap);
+      const t0 = performance.now(); CharmNestEngravePanel.DRAFTS.clear(); { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); c._pieceMount.refresh(); c._pieceMount.panel.paintAll(); }
       const out = __drawn(key); out.ms = performance.now() - t0; out.job = __job(key); out.laser = await __laser(key); out.path = __path(Engrave.items().get(key).fit.glyphs);
       out.words = document.querySelector('#egQueue .pvSetup .engp .engpWords').value; out.font = document.querySelector('#egQueue .pvSetup .engp .engpFont').value; return out;
     }, JK);
@@ -206,7 +210,7 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
     const h2 = await page.evaluate(key => __drawn(key), JK);
     check(h2.draft.fontId === idT && h2.draft.lines.join(' ') === 'Name Four' && h2.sameAsPath === true && h2.note === '' && h2.canvas !== base.canvas, `H4 once ${idT} has loaded the staged words are drawn in it by themselves and the spinner is gone`);
     await page.unroute(heldFont).catch(() => {});
-    await page.evaluate(() => document.querySelector('#egQueue .pvSetup .engp [data-engp=cancel]').click());
+    await letGo();
     const afterH = await page.evaluate(async key => ({ draft: Engrave.draftOf(key), canvas: __cv().toDataURL(), laser: await __laser(key), job: __job(key) }), JK);
     check(afterH.draft === null && afterH.canvas === base.canvas && afterH.laser === base.laser && afterH.job === base.job, 'H5 Cancel after the loading case: the committed drawing, the job and the laser file are as at the start');
 
@@ -217,12 +221,10 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
       const d = Engrave.draftOf(key); return { lines: d.lines, fontId: d.fontId, size: d.size, angle: d.angle, centre: d.centre, glyphs: JSON.parse(JSON.stringify(d.glyphs)) };
     }, { key: JK });
     check(staging.lines.join(' ') === 'Name' && staging.fontId === idB, `J1 staged: "Name" in ${idB}`);
-    await page.evaluate(() => { document.querySelector('#egQueue .pvSetup .engp [data-engp=save]').click(); });
-    // (ENGWHY: a Save that changes what the system chose asks a quick reason first, in the panel: one press of a quick button saves)
-    await page.waitForSelector('#egQueue .pvSetup .engpWhy .engpChip', { timeout: 5000 }).then(() => page.evaluate(() => document.querySelector('#egQueue .pvSetup .engpWhy .engpChip').click())).catch(() => {});
+    await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return c._pieceMount.panel.commit(); });   // (LIVEWORDS: kept as Approve keeps it first, no question)
     await page.waitForFunction(({ key, id }) => { const j = Engrave.items().get(key); return j && j.state === 'review' && j.fit && j.fontKey === id && j.lines.join(' ') === 'Name'; }, { key: JK, id: idB }, { timeout: 150000 });
     await page.waitForSelector('#egQueue .backHost canvas', { timeout: 30000 });
-    await page.waitForFunction(() => { const s = document.querySelector('#egQueue .pvSetup .engp [data-engp=save]'); return !s || s.disabled; }, null, { timeout: 30000 }).catch(() => {});
+    await page.waitForFunction(() => { const p = document.querySelector('#egQueue .pvSetup .engp'); return !p || !p.dataset.staged; }, null, { timeout: 30000 }).catch(() => {});
     const levelShape = (glyphs, centre, angle, size) => { const a = -(angle || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a), out = []; for (const g of glyphs) for (const c of g.cmds) { if (c.type === 'Z') { out.push('Z'); continue; } for (const [x, y] of [[c.x, c.y], c.x1 != null ? [c.x1, c.y1] : null, c.x2 != null ? [c.x2, c.y2] : null].filter(Boolean)) { const dx = x - centre[0], dy = y - centre[1]; out.push([(dx * ca - dy * sa) / size, (dx * sa + dy * ca) / size]); } } return out; };
     const saved = await page.evaluate(key => { const j = Engrave.items().get(key); return { fontKey: j.fontKey, faceFontWord: j.faceFontWord, lines: j.fit.lines, draft: Engrave.draftOf(key), glyphs: JSON.parse(JSON.stringify(j.fit.glyphs)), centre: j.fit.centre, angle: j.fit.angle, size: j.fit.size, canvas: __cv().toDataURL() }; }, JK);
     check(saved.fontKey === idB && saved.faceFontWord === 'Angelina' && saved.draft === null, `J2 after Save the job is fitted in ${saved.fontKey} (the person's pick) and no draft is left`);
@@ -242,8 +244,9 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
     check(front2.draft && front2.draft.empty === true, 'I2 mode "Back" while this is the front: no front engraving is drawn');
     const front3 = await modeTo(FK, 'both');
     check(front3.draft && !front3.draft.empty && front3.draft.lines.join(' ') === 'Name Five', 'I3 mode "Front + back" draws the front\'s staged words');
-    const fcancel = await page.evaluate(async key => { document.querySelector('#egQueue .pvSetup .engp [data-engp=cancel]').click(); return { canvas: __cv().toDataURL(), laser: await __laser(key), job: __job(key), draft: Engrave.draftOf(key) }; }, FK);
-    check(fcancel.draft === null && fcancel.canvas === fb.canvas && fcancel.laser === fb.laser && fcancel.job === fb.job, 'I4 Cancel on the front: the committed front, its job and its laser file are byte-identical to before');
+    await letGo();
+    const fcancel = await page.evaluate(async key => { return { canvas: __cv().toDataURL(), laser: await __laser(key), job: __job(key), draft: Engrave.draftOf(key) }; }, FK);
+    check(fcancel.draft === null && fcancel.canvas === fb.canvas && fcancel.laser === fb.laser && fcancel.job === fb.job, 'I4 the draft let go on the front: the committed front, its job and its laser file are byte-identical to before');
 
     /* ═══ L · a drag in the work area while words are staged moves the STAGED words ═══ */
     await page.evaluate(async key => { await __shrink(key, 0.6); const ta = document.querySelector('#egQueue .pvSetup .engp .engpWords'); ta.value = 'Name Six'; ta.dispatchEvent(new Event('input', { bubbles: true })); }, FK);   // (room to move first, as in E)
@@ -262,7 +265,7 @@ const SHOT_DIR = process.env.WORK_SHOTS || (fs.existsSync('/mnt/project-files/pl
     const diff = (u, v) => page.evaluate(async ([a, b]) => { const load = u => new Promise(res => { const im = new Image(); im.onload = () => res(im); im.src = u; }); const [x, y] = [await load(a), await load(b)]; const g = im => { const c = document.createElement('canvas'); c.width = im.width; c.height = im.height; const t = c.getContext('2d'); t.drawImage(im, 0, 0); return t.getImageData(0, 0, c.width, c.height).data; }; const p = g(x), q = g(y); let n = 0; for (let i = 0; i < p.length; i += 4) if (Math.abs(p[i] - q[i]) + Math.abs(p[i + 1] - q[i + 1]) + Math.abs(p[i + 2] - q[i + 2]) > 60) n++; return n; }, [u, v]);
     const dMidBefore = await diff(mid, beforeDrag.canvas), dMidAfter = await diff(mid, afterDrag.canvas);
     check(afterDrag.lines.join(' ') === 'Name Six' && afterDrag.same === true && dMidBefore > 500 && dMidAfter < dMidBefore * 0.15, `L2 while the hand was still down the picture already showed the staged words moving, and it is the picture the drop leaves (${dMidBefore} pixels differ from before the drag, ${dMidAfter} from the drop's)`);
-    await page.evaluate(() => document.querySelector('#egQueue .pvSetup .engp [data-engp=cancel]').click());
+    await letGo();
 
     /* ═══ K · the API's edges ═══ */
     const edge = await page.evaluate(key => {

@@ -107,10 +107,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const typeAndSave = async words => {
       const typed = await page.evaluate(w => { const ta = document.querySelector('#egQueue .rvItem .engp .engpWords'); if (!ta) return false; ta.focus(); ta.value = w; ta.dispatchEvent(new Event('input', { bubbles: true })); return true; }, words);
       await settle(350);
-      const sv = await page.evaluate(() => { const b = document.querySelector('#egQueue [data-engp=save]'); if (!b) return 'none'; if (b.disabled) return 'disabled'; b.click(); return 'pressed'; });
+      // (LIVEWORDS: no Save button and no "Why change it?": the words are kept as Approve keeps them first)
+      const sv = await page.evaluate(async () => { const c = document.querySelector('#egQueue .rvItem'), p = c && c._pieceMount && c._pieceMount.panel; if (!p || !p.commit) return 'none'; const r = await p.commit(); return r && r.ok ? 'pressed' : 'refused'; });
       await settle(350);
-      // (changing words that were already there asks "Why change it?": one tap on a reason, the page's own flow)
-      const why = await page.evaluate(() => { const b = document.querySelector('#egQueue [data-engp="why"][data-code="asked"]'); if (!b) return false; b.click(); return true; });
+      const why = false;
       return { typed, save: sv, why };
     };
     // the height of the Engraving section and the place of the pieces list, watched on every animation frame: the window must not jump while a piece is approved
@@ -155,7 +155,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       let r = k2 ? await openDetail(k2) : null;
       note(!!r && r.key === k2 && r.words === 'Name One', 'piece 2 opens in the Engrave tab with the same words as piece 1 (Name One)', r && (r.key + ' / ' + r.words));
       if (r && r.key === k2) {
-        const ts = await typeAndSave('Name Two'); note(ts.typed && ts.save === 'pressed', 'the words box takes the new words and its Save is there to press', JSON.stringify(ts));
+        const ts = await typeAndSave('Name Two'); note(ts.typed && ts.save === 'pressed', 'the words box takes the new words and they are kept (no Save, no question)', JSON.stringify(ts));
         await until(k => { const j = Engrave.items().get(k); return !!j && /Name Two/.test((j.lines || []).join(' ') + ' ' + (j.text || '')) && !['classify', 'ready', 'fitting'].includes(j.state); }, 'piece 2 refitted', 40000, k2);
         if (process.env.PF_DEBUG) console.log('   DEBUG F3 after save:', JSON.stringify(await page.evaluate(k => { const j = Engrave.items().get(k), row = B.orders.byKey.get(k.replace(/#.*$/, '')); return { job: j && { state: j.state, text: j.text, lines: j.lines, seq: j.lineInput }, ov: row && row.engravingOverride, panel: (document.querySelector('#egQueue .engp .engpWords') || {}).value, saveDisabled: !!(document.querySelector('#egQueue [data-engp=save]') || {}).disabled, msg: (document.querySelector('#egQueue .engp') || { innerText: '' }).innerText.slice(0, 200) }; }, k2)));
         const after = await jobsOf('cg2'), a1 = after.find(j => j.key === k1), a2 = after.find(j => j.key === k2);
@@ -373,7 +373,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       note(!!b1 && !!b2 && b1.state === 'approved' && b2.state === 'approved' && b1.seals >= 1, 'both pieces of the x2 line are approved (from F4) with a seal each', JSON.stringify(before.map(j => [tailOf(j.key), j.state, j.seals])));
       if (r && r.key === k1 && b1 && b2) {
         const ts = await typeAndSave('Name Seven'); const edited = ts.typed && ts.save === 'pressed';
-        note(edited, 'an approved piece\'s words can be changed in place (the words box and its Save are there)', JSON.stringify(ts));
+        note(edited, 'an approved piece\'s words can be changed in place (the words box, kept with no Save)', JSON.stringify(ts));
         await until(k => { const j = Engrave.items().get(k); return !!j && /Name Seven/.test((j.lines || []).join(' ') + ' ' + (j.text || '')) && !['classify', 'ready', 'fitting'].includes(j.state); }, 'the edited piece refitted', 40000, k1);
         await settle(600);
         let mid = await jobsOf('cg2'), m1 = mid.find(j => j.key === k1), m2 = mid.find(j => j.key === k2);

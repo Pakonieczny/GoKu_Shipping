@@ -359,10 +359,11 @@ async function partDetail(w, made) {
   const pickDir = async () => {
     for (const dir of ['right', 'left', 'up', 'down', 'smaller']) {
       const before = (await detailFacts(page)).job;
+      await page.evaluate(() => { const j = Engrave.items().get(window.__rtJobKey); window.__dirSnap = j && window.CharmNestEngravePosition ? CharmNestEngravePosition.snapshot(j) : null; });   // (LIVEWORDS: no Cancel: the probe's move is put back with the position snapshot)
       const clicked = await page.evaluate(d => { const b = document.querySelector('#egQueue .rvItem[data-kind=placement] .engpPb[data-act="' + d + '"]'); if (!b || b.disabled) return false; b.click(); return true; }, dir);
       await R.settle(page, 250);
       const after = (await detailFacts(page)).job;
-      await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement] [data-engp=cancel]'); if (c && !c.disabled) c.click(); });
+      await page.evaluate(() => { const j = Engrave.items().get(window.__rtJobKey); if (j && window.__dirSnap) { CharmNestEngravePosition.restore(j, window.__dirSnap); try { Engrave.render(); } catch (_) {} } });
       await R.settle(page, 600);
       if (clicked && before && after && JSON.stringify(before.centre) !== JSON.stringify(after.centre)) return dir;
     }
@@ -379,15 +380,19 @@ async function partDetail(w, made) {
   check('H2 after another font is picked the system\'s choice stays marked (mode, font entry) and the change shows beside the closed list', 'hilite', hl2.open && hl2.marked.join() === 'back' && hl2.fontMark === 'changed' && hl2.fontSpark && hl2.fontLabels.length >= 1, `mode marked: ${JSON.stringify(hl2.marked)}, font box: ${hl2.fontMark}, sparkle beside the list: ${hl2.fontSpark}, system font entries marked: ${JSON.stringify(hl2.fontLabels)}, picked: "${hl2.selected}"`);
   await page.evaluate(() => window.__act.font('')); await R.settle(page, 500);
   const dir4 = await pickDir();
+  await page.evaluate(() => { const j = Engrave.items().get(window.__rtJobKey); window.__dirSnap = j && window.CharmNestEngravePosition ? CharmNestEngravePosition.snapshot(j) : null; });
   t = await trial(w, 'nudge', dir4);
   await evalChange('R4 nudging the position', t, { thumbs: ['back'], edit: 'back', work: 'moves', dir: dir4 });
-  await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement] [data-engp=cancel]'); if (c && !c.disabled) c.click(); }); await R.settle(page, 700);
+  await page.evaluate(() => { const j = Engrave.items().get(window.__rtJobKey); if (j && window.__dirSnap) { CharmNestEngravePosition.restore(j, window.__dirSnap); try { Engrave.render(); } catch (_) {} } }); await R.settle(page, 700);   // (LIVEWORDS: no Cancel: the move put back with its snapshot)
 
   // ── mode: faces follow the staged mode, live ──
   const faceNames = f => (f.faces || []).map(x => x.face).join('+') || 'none';
-  const modes = [['front', 'front'], ['both', 'front+back'], ['none', 'none'], ['back', 'back']];
+  // (LIVEWORDS: None | Front | Back are toggles kept at once; the save path is held here (a promise that never ends) so each press is seen staged, then let go: nothing is kept)
+  const modes = [['front', 'front+back'], ['none', 'none'], ['back', 'back']];
+  await page.evaluate(() => { window.__saveRt = Engrave.saveSetup; Engrave.saveSetup = () => new Promise(() => {}); });
   for (const [m, want] of modes) {
     t = await trial(w, 'mode', m);
+    await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (c && c._pieceMount) c._pieceMount.refresh(); else Engrave.render(); } }); await R.settle(page, 500);
     const got = faceNames(t.tick.facts);
     check(`R3 pressing "${m}": the card shows ${want} in the same tick`, 'smart', got === want, `faces on the card at the tick: ${got}; ${t.tick.facts.faces.filter(f => f.empty === '1').length} empty slot(s)`);
     for (const face of ['front', 'back']) if (t.tick.facts.faces.some(f => f.face === face)) {
@@ -395,10 +400,10 @@ async function partDetail(w, made) {
       check(`R3 pressing "${m}": the ${face} thumbnail has the charm drawing in it (same tick)`, 'thumb', cp.ok, cp.ev);
     }
   }
-  await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement] [data-engp=cancel]'); if (c && !c.disabled) c.click(); }); await R.settle(page, 700);
+  await page.evaluate(() => { Engrave.saveSetup = window.__saveRt; CharmNestEngravePanel.DRAFTS.clear(); { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (c && c._pieceMount) c._pieceMount.refresh(); else Engrave.render(); } }); await R.settle(page, 700);
 
-  // ── mode "Front + back" staged: BOTH thumbnails, and the edits of the back leave the front alone ──
-  await page.evaluate(() => window.__act.mode('both')); await R.settle(page, 900);
+  // ── Front pressed on the back-only piece (LIVEWORDS: kept at once, both faces engraved): BOTH thumbnails, and the edits of the back leave the front alone ──
+  await page.evaluate(() => window.__act.mode('front')); await R.settle(page, 2500);
   const both0 = await detailFacts(page);
   check('R5 with Front + back staged the card shows two faces, each with the charm', 'smart', faceNames(both0) === 'front+back', `faces ${faceNames(both0)}`);
   await page.evaluate(() => window.__act.face('back')); await R.settle(page, 500);
@@ -413,7 +418,8 @@ async function partDetail(w, made) {
   t = await trial(w, 'nudge', dir8);
   await evalChange('R8 (front + back) nudging the back', t, { thumbs: ['front', 'back'], edit: 'back', work: 'moves', dir: dir8 });
   await R.shot(w, 'LIVE-rt-detail-both-staged');
-  await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement] [data-engp=cancel]'); if (c && !c.disabled) c.click(); }); await R.settle(page, 700);
+  // (the piece put back to its back-only engraving for the parts below: the staged back edits let go, the front taken away through the page's own save path)
+  await page.evaluate(async key => { CharmNestEngravePanel.DRAFTS.clear(); await Engrave.saveSetup(B.orders.byKey.get(key), { mode: 'back' }); Engrave.render(); }, made.back.key); await R.settle(page, 900);
 
   // ── the front thumbnail shows the design's cut-outs and engraved art (the front-only and the front + back orders) ──
   for (const n of ['front', 'both']) {
@@ -473,38 +479,18 @@ async function partSaid(w, made) {
   }
 }
 
-/* ── part 4: overriding the system's choice asks for a reason first ─────────────────────────────────────────────────────────────────────────── */
+/* ── part 4 (LIVEWORDS, Paul 29 Oct 2026: "Remove the process that ask the user why ..."): overriding the system's choice asks NOTHING: the change is kept as Approve keeps it first, no reason recorded ── */
 async function partReason(w, made) {
   const page = w.page;
   await R.openEngraveDetail(w, 'back', { face: 'back' }); await R.settle(page, 900);
   await page.evaluate(() => window.__act.font('Pristina')); await R.settle(page, 500);
-  await page.evaluate(() => { const b = document.querySelector('#egQueue .rvItem[data-kind=placement] [data-engp=save]'); if (b) b.click(); });
-  await R.settle(page, 400);
-  const probe = () => page.evaluate(() => {
-    const vis = e => { const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0 && !e.closest('[hidden]'); };
-    const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (!c) return { found: false };
-    const row = B.orders.rows.find(r => r.order.receiptId === '4290000101'), ov = row && row.engravingOverride;
-    // the prompt: ENGWHY's published markup (.engpWhy with .engpChip buttons and a text input), else any visible group with 3-4 quick buttons and a small text box that is not the words box nor the mode / position rows
-    const groups = [...c.querySelectorAll('.engpWhy')].filter(vis);
-    const generic = groups.length ? [] : [...c.querySelectorAll('[data-engp=reason], [data-reason], .engpReason, [role=dialog], [role=group], form, div')].filter(vis).filter(e => !e.querySelector('.engpWords') && !e.matches('.engpMode, .engpPos, .engpRow, .engpActs'));
-    let best = null;
-    for (const e of groups.concat(generic)) {
-      const btns = [...e.querySelectorAll('button')].filter(vis).filter(b => !/^(save|cancel)$/i.test(b.textContent.trim()) && !b.matches('[data-engp=save],[data-engp=cancel],[data-engp=whySave],[data-engp=whyCancel],.engpSeg,.engpPb,.engpEmoji'));
-      const inputs = [...e.querySelectorAll('input[type=text], input:not([type]), textarea')].filter(vis).filter(i => !i.matches('.engpWords'));
-      if (btns.length >= 3 && btns.length <= 4 && inputs.length >= 1 && (!best || e.querySelectorAll('*').length < best.n)) best = { n: e.querySelectorAll('*').length, chips: btns.map(b => b.textContent.trim()), codes: btns.map(b => b.dataset.code || ''), inputs: inputs.length, cls: e.className };
-    }
-    return { found: true, prompt: best, saved: !!ov, reason: ov && ov.reason ? { code: ov.reason.code, text: ov.reason.text, by: ov.reason.by, at: !!ov.reason.at } : null, was: !!(ov && ov.was), text: c.querySelector('.engp') ? c.querySelector('.engp').innerText.replace(/\s+/g, ' ').slice(0, 200) : '' };
-  });
-  const p = await probe();
-  await R.shot(w, 'LIVE-rt-reason-prompt');
-  check('W1 changing the font and pressing Save asks for a reason first (3-4 quick buttons and a small text box), nothing saved yet', 'why', !!(p.prompt) && !p.saved, p.prompt ? `prompt with ${p.prompt.chips.length} quick buttons ${JSON.stringify(p.prompt.chips)} and ${p.prompt.inputs} text box(es); saved before the reason: ${p.saved}` : `no prompt; the choice was ${p.saved ? 'saved at once, with no reason asked' : 'not saved either'}; panel says: "${(p.text || '').slice(0, 120)}"`);
-  // answering with a quick button saves the choice with the reason recorded (the in-memory fake site only: nothing real is written)
-  let q = null;
-  if (p.prompt) {
-    await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'), g = c.querySelector('.engpWhy') || c; const b = [...g.querySelectorAll('button')].find(x => { const r = x.getBoundingClientRect(); return r.width > 0 && !x.matches('[data-engp=save],[data-engp=cancel],[data-engp=whySave],[data-engp=whyCancel],.engpSeg,.engpPb,.engpEmoji') && !/^(save|cancel)$/i.test(x.textContent.trim()); }); if (b) b.click(); });
-    await R.settle(page, 900); q = await probe();
-  }
-  check('W2 a quick button saves the changed font with the reason recorded (who, when, and what the system had chosen)', 'why', !!(q && q.saved && q.reason && q.reason.code && q.reason.by && q.reason.at && q.was), q ? `override saved ${q.saved}, reason ${JSON.stringify(q.reason)}, system's choice kept (was) ${q.was}` : 'there was no prompt to answer');
+  const ui = await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return { save: !!(c && c.querySelector('[data-engp=save],[data-engp=cancel]')) }; });
+  await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return c && c._pieceMount && c._pieceMount.panel.commit(); });
+  await R.settle(page, 900);
+  const q = await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'), row = B.orders.rows.find(r => r.order.receiptId === '4290000101'), ov = row && row.engravingOverride; return { prompt: !!(c && c.querySelector('.engpWhy')), saved: !!ov, font: ov && ov.back && ov.back.fontWord, reason: !!(ov && ov.reason), by: ov && ov.by }; });
+  await R.shot(w, 'LIVE-rt-no-reason');
+  check('W1 changing the font: no Save / Cancel, and keeping it asks no reason', 'why', !ui.save && !q.prompt, JSON.stringify({ ui, q }));
+  check('W2 the changed font is kept by the signed-in person, with no reason recorded', 'why', q.saved && q.font === 'Pristina' && !!q.by && !q.reason, JSON.stringify(q));
 }
 
 /* ── main ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── */

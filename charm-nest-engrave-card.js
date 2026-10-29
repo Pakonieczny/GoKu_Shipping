@@ -15,7 +15,7 @@
  *   CharmNestEngraveCard.fill(card, piece, o)  puts each face's picture into its thumbnail (CharmNestEngravePreview.render when it exists, else the app's own drawing: one place, thumbOf)
  *   CharmNestEngraveCard.sig(piece, o)       what the card shows, in a line (drawn again only when it changes)
  *   CharmNestEngraveCard.mountPiece(slot, { row, key, face, onPick(face), approve:false, nameOf }) -> { update({ face }), refresh(), destroy(), el }   the card in the Engrave tab's detail
- *       (a press on a face calls onPick(face) and navigates nowhere)
+ *       (a press on a face calls onPick(face), the host's face switch: LIVEWORDS, the thumbnails are the face switch of the work area)
  *   CharmNestEngraveCard.openOf(piece) / openHtml(piece)  the Engraving button (ENGBUTTON: `btn ghost sm egOpen`, "Fix in Engraving →" / "View in Engraving →"): the face it opens, its wording, can it open now
  *   CharmNestEngraveCard.stateOf(job) / facesOf(...)  the small pure parts
  * The words on the card: the piece name, "Front", "Back", the engraved text, "Approve" / "Approved", "Words to confirm" (a face whose words are not settled), "Preparing" (with its small
@@ -478,8 +478,9 @@
       const row = lineOf(ctx.row), F = Faces(), pk = ctx.key && F ? F.pieceKeyOf(ctx.key) : '';
       const ps = piecesOf([row], { nameOf: ctx.nameOf, isWorking: ctx.isWorking, stage: ctx.stage || null, keepEmpty: true, artFaces: ctx.artFaces }); return ps.find(p => p.pieceKey === pk) || ps.find(p => p.jobs.some(j => j.key === ctx.key)) || ps[0] || null;
     };
-    // (FACEVIEW: a press on a face shows it in the work area (ctx.onView); a face the Charm Editor drew on that nothing engraves is only shown, never picked for the words)
-    const o = () => ({ approve: false, current: ctx.face || '', onOpen: face => { const p = tryDo(find, null), art = !!(p && p.faces[face] && p.faces[face].art); if (ctx.onView) tryDo(() => ctx.onView(face)); if (art) { ctx.face = face; draw(true); } else if (ctx.onPick) tryDo(() => ctx.onPick(face)); return null; } });
+    // (FACEVIEW: a press on a face shows it in the work area; a face the Charm Editor drew on that nothing engraves is only shown, never picked for the words. LIVEWORDS: ONE call per press: onPick(face)
+    //  when the host has it (it marks the face, gives the words box that face and shows it in the work area: charm-nest-engrave-panel.js mountPiece), else onView(face) and the face is marked here)
+    const o = () => ({ approve: false, current: ctx.face || '', onOpen: face => { if (ctx.onPick) { tryDo(() => ctx.onPick(face)); return null; } if (ctx.onView) tryDo(() => ctx.onView(face)); ctx.face = face; draw(); return null; } });
     function draw(force) {
       if (gone) return; const p = find();
       if (!p) { last = ''; slot.replaceChildren(); el = null; return; }

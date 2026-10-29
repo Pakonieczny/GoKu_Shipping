@@ -49,8 +49,7 @@ const Q = '#egQueue .rvItem[data-kind=placement]';
     check('S0 the back card opens with a live Approve on a placement waiting for approval', f0.approve === 'live' && f0.card === BACK && f0.jobs[BACK] === 'review', JSON.stringify(f0));
     await page.evaluate(({ Q }) => { const t = document.querySelector(Q + ' .engpWords'), set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; t.focus(); set.call(t, '\uE123\uE124');   /* (no font has these: private-use code points. 漢字 was used until the Noto fallback, ENGFONT, engraved it: the placement then rightly stayed in review) */ t.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'x' })); }, { Q });
     await R.settle(page, 400);
-    await page.click(`${Q} [data-engp=save]`); await R.settle(page, 400);
-    const chip = await page.$(`${Q} [data-engp=why]`); if (chip) await chip.click();
+    await page.evaluate(Q => { const c = document.querySelector(Q); return c && c._pieceMount && c._pieceMount.panel.commit(); }, Q); await R.settle(page, 400);   // (LIVEWORDS: no Save button: the words kept as Approve keeps them first, no question)
     const left = await until(async () => { const f = await facts(); return f.jobs[BACK] !== 'review' ? f : null; }, 15000);
     await R.settle(page, 1200);
     const f1 = await facts();

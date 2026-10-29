@@ -74,9 +74,9 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
     await page.evaluate(k => { CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', chosen: true, list: false, focus: k }); Engrave.render(); }, KEY);   // (the card open, as a person opens it from the list)
     await page.waitForSelector('#egQueue .rvItem[data-kind=placement] .engp .engpWords');
     const sleep = ms => page.waitForTimeout(ms);
-    // (the Engrave detail has no words box of its own any more: the words are typed in the options panel, whose box carries the one Emoji button; typing there is staged until Save)
+    // (the Engrave detail has no words box of its own any more: the words are typed in the options panel, whose box carries the one Emoji button; typing there is staged until Approve keeps it)
     const ta = '#egQueue .engp .engpWords', btn = '#egQueue [data-emoji]', pop = '.emPop:not([hidden])';
-    const save = async () => { await page.evaluate(() => { document.querySelector('#egQueue [data-engp=save]').click(); const why = document.querySelector('#egQueue [data-engp=why]'); if (why) why.click(); }); };   // (a script click: the open picker sits over the button; words that differ from the system's ask "Why change it?" first: the first quick button answers)
+    const save = async () => { await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return c && c._pieceMount && c._pieceMount.panel.commit(); }); };   // (LIVEWORDS: no Save button; what Approve does first, keep the typed words, no question asked)
     const words = async () => {
       const r = await page.evaluate(sel => { const t = document.querySelector(sel); return t ? { v: t.value, s: t.selectionStart, e: t.selectionEnd, focus: document.activeElement === t } : null; }, ta);
       if (r) return r;
@@ -88,7 +88,7 @@ const agentResults = { engraveIntent: o => { const txt = String(o.messages[0].co
     const all = await itemsOf();
 
     // ── the button ──
-    const b0 = await page.evaluate(() => { const b = document.querySelector('#egQueue [data-emoji]'), w = document.querySelector('#egQueue .engp .engpBox'), u = document.querySelector('#egQueue [data-engp=cancel]'); const r = b.getBoundingClientRect(), wr = w.getBoundingClientRect(); return { text: b.textContent.trim(), cls: b.className, inBox: w.contains(b), fits: r.left >= wr.left - .5 && r.right <= wr.right + .5, h: Math.round(r.height), uh: Math.round(u.getBoundingClientRect().height), sans: getComputedStyle(b).fontFamily === getComputedStyle(u).fontFamily, oldBox: !!document.querySelector('#egQueue [data-f=words], #egQueue .pvWords') }; });
+    const b0 = await page.evaluate(() => { const b = document.querySelector('#egQueue [data-emoji]'), w = document.querySelector('#egQueue .engp .engpBox'), u = document.querySelector('#egQueue [data-a=prev]'); const r = b.getBoundingClientRect(), wr = w.getBoundingClientRect(); return { text: b.textContent.trim(), cls: b.className, inBox: w.contains(b), fits: r.left >= wr.left - .5 && r.right <= wr.right + .5, h: Math.round(r.height), uh: Math.round(u.getBoundingClientRect().height), sans: getComputedStyle(b).fontFamily === getComputedStyle(u).fontFamily, oldBox: !!document.querySelector('#egQueue [data-f=words], #egQueue .pvWords') }; });
     check(b0.text === 'Emoji' && /btn ghost xs/.test(b0.cls) && b0.inBox && b0.fits && !b0.oldBox, 'an "Emoji" button, ghost xs like the others, sits in the panel\'s words box (and there is no second words box) ' + JSON.stringify(b0));
     check(Math.abs(b0.h - b0.uh) <= 3 && b0.sans, 'it is the size and type of the existing xs buttons (' + b0.h + ' vs ' + b0.uh + ' px)');
 

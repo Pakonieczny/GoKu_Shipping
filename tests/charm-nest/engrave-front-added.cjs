@@ -24,7 +24,7 @@ const workFacts = page => page.evaluate(Q => {
   const vis = e => { if (!e) return false; const b = e.getBoundingClientRect(), st = getComputedStyle(e); return b.width > 0 && b.height > 0 && st.visibility !== 'hidden' && st.display !== 'none' && !e.closest('[hidden]'); };
   const c = document.querySelector(Q); if (!c) return { open: false, tab: (document.querySelector('#engraveView .egTab.on') || {}).textContent || '', list: !!document.querySelector('#egQueue .egPlacementList'), old: document.querySelectorAll('#egDone, .doneRow.open, .decidedRow').length };
   const host = c.querySelector('.backHost'), cv = host && host.querySelector('canvas'), faces = [...c.querySelectorAll('.engCard .engFace')].filter(vis).map(f => ({ face: f.dataset.face, current: f.hasAttribute('aria-current') }));
-  return { open: true, job: c.dataset.key, state: c.dataset.state, canvas: !!(cv && vis(cv)), text: host ? host.textContent.replace(/\s+/g, ' ').trim().slice(0, 160) : '', spin: !!(host && host.querySelector('.spin')),
+  return { open: true, job: c.dataset.key, state: c.dataset.state, canvas: !!(cv && vis(cv)), text: host ? (() => { const h = host.cloneNode(true); h.querySelectorAll('.egZoom, .egZoomMenu').forEach(n => n.remove()); return h.textContent.replace(/\s+/g, ' ').trim().slice(0, 160); })() : '',   // (ENGVIEW's zoom control is not a message) spin: !!(host && host.querySelector('.spin')),
     approve: !!(c.querySelector('[data-a="approve"]') && vis(c.querySelector('[data-a="approve"]'))), faces: faces.map(f => f.face).join('+'), current: (faces.find(f => f.current) || {}).face || null, words: (c.querySelector('.engpWords') || {}).value || '', mode: (c.querySelector('.engp') || { dataset: {} }).dataset.mode || null,
     why: [...c.querySelectorAll('.ctl .why')].map(x => x.textContent.trim()).join(' | ') };
 }, Q);
@@ -40,19 +40,18 @@ const watch = page => page.evaluate(() => {
 });
 const seen = page => page.evaluate(() => (window.__seen || []).filter((t, i, a) => t && a.indexOf(t) === i));
 
-/** the person adds the front in the Engrave detail: mode Front + back, the front words, Save (the "Why change it?" prompt, when it asks, is answered with its first quick reason) */
+/** the person adds the front in the Engrave detail: LIVEWORDS: a press on the Front toggle engraves the front too (kept at once, the front shown), then the front words are typed and kept (what Approve does first; no Save, no question) */
 async function addFront(w, name, text) {
   const page = w.page;
   await R.openEngraveDetail(w, name, { face: 'back' });
-  await page.evaluate(Q => { document.querySelector(Q + ' .engpSeg[data-mode="both"]').click(); }, Q); await R.settle(page, 400);
-  await press(page, 'front'); await R.settle(page, 400);
+  await page.evaluate(Q => { document.querySelector(Q + ' .engpSeg[data-mode="front"]').click(); }, Q); await R.settle(page, 400);
+  await until(() => page.evaluate(Q => { const p = document.querySelector(Q + ' .engp'); return !!p && p.dataset.face === 'front' && !p.querySelector('.engpWords').disabled; }, Q), 15000);
   const staged = await workFacts(page);
   await page.evaluate(({ Q, text }) => { const t = document.querySelector(Q + ' .engpWords'), set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; t.focus(); set.call(t, text); t.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text })); t.dispatchEvent(new Event('keyup', { bubbles: true })); }, { Q, text });
   await R.settle(page, 400);
   const mid = await workFacts(page);
   await watch(page);
-  await page.evaluate(Q => { document.querySelector(Q + ' [data-engp="save"]').click(); }, Q); await R.settle(page, 500);
-  await page.evaluate(Q => { const f = document.querySelector(Q + ' [data-engp="why"]'); if (f) f.click(); }, Q);
+  await page.evaluate(Q => { const c = document.querySelector(Q); return c && c._pieceMount && c._pieceMount.panel.commit(); }, Q); await R.settle(page, 500);
   return { staged, mid };
 }
 
@@ -69,9 +68,9 @@ async function addFront(w, name, text) {
 
     // ═══ P · Paul's flow: back fitted, add the front, press the Front thumbnail ═══
     const { staged, mid } = await addFront(w, 'back', 'B');
-    check('P1 front asked for, not saved yet: the work area does not go on drawing the BACK under the Front thumbnail: one plain line, no drawing, no Approve of the other face',
-      staged.current === 'front' && !staged.canvas && /Save to see the front engraving/.test(staged.text) && !staged.approve, JSON.stringify(staged));
-    check('P2 the line is still there while the front words are typed (nothing saved, nothing drawn from the back)', !mid.canvas && /Save to see the front/.test(mid.text) && mid.words === 'B', JSON.stringify(mid));
+    check('P1 a press on the Front toggle engraves the front at once (no Save): the Front is marked and shown, the work area never draws the BACK under it, no Approve of the other face',
+      staged.current === 'front' && staged.mode === 'both' && /~front$/.test(staged.job || '') && !staged.approve, JSON.stringify(staged));
+    check('P2 the front words are typed in the front\'s own box (nothing drawn from the back)', mid.words === 'B' && /~front$/.test(mid.job || ''), JSON.stringify(mid));
     await R.shot(w, 'FRONT-1-staged-unsaved');
     const fj = await until(async () => { const js = await jobsOf(page, key); const f = js.find(j => j.face === 'front'); return f && f.state === 'review' && f.fitted ? f : null; }, 90000);
     const sawNow = await seen(page);
@@ -100,7 +99,7 @@ async function addFront(w, name, text) {
     const b2 = await workFacts(page);
     const front2 = (await jobsOf(page, key)).find(j => j.face === 'front').centre;
     check('P8 front, back, front, back: the front keeps its move, the back keeps its unsaved words, both draw (no blank at any press)', JSON.stringify(front2) === JSON.stringify(front1) && b2.words === 'Name Two' && f2.canvas && b2.canvas, JSON.stringify({ front2, f2: [f2.current, f2.canvas, f2.words], b2: [b2.current, b2.canvas, b2.words] }));
-    await page.evaluate(Q => { const c = document.querySelector(Q + ' [data-engp="cancel"]'); if (c && !c.disabled) c.click(); }, Q); await R.settle(page, 500);
+    await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (c && c._pieceMount) c._pieceMount.refresh(); else Engrave.render(); } }); await R.settle(page, 500);   // (LIVEWORDS: no Cancel; the unsaved back words let go)
 
     // ═══ approvals: each face its own, one seal each, permanent; the card follows the other face after each ═══
     await press(page, 'front'); await R.settle(page, 500);
