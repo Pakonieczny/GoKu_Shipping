@@ -417,17 +417,66 @@
     // outline, whatever its size: counted as one it turned the whole design upside down (up 90 -> 270)
     const inMaterial = m => { try { const p = interiorPoint(flatten(m, 12)); let n = 0; for (const poly of outlinePolys) if (pointInPolys(p[0], p[1], [poly])) n++; return n % 2 === 1; } catch (_) { return true; } };
     const holes = charm.members.filter(m => m !== charm.outline && cut(m) && inMaterial(m));
-    if (!holes.length) return { angle: 90, hole: null, source: "drawn", centroid: [c.x, c.y] };
+    const drawn = { angle: 90, hole: null, source: "drawn", centroid: [c.x, c.y] };
+    if (!holes.length) return drawn;
     let best = null;
+    const cands = [];
     for (const h of holes) {
       const b = h.bbox; const size = (b[2] - b[0]) * (b[3] - b[1]);
-      const p = interiorPoint(flatten(h, 12));
+      const polys = flatten(h, 12), p = interiorPoint(polys);
       const edge = distToPolys(p[0], p[1], outlinePolys);
       const score = edge + Math.sqrt(size) * 0.25;                 // smallest cut-out nearest the outline edge
-      if (!best || score < best.score) best = { score, hole: h, p, edge, size };
+      const k = { score, hole: h, p, edge, size, polys };
+      cands.push(k); if (!best || score < best.score) best = k;
     }
-    const angle = Math.atan2(best.p[1] - c.y, best.p[0] - c.x) * 180 / Math.PI;
-    return { angle: ((angle % 360) + 360) % 360, hole: best.hole, source: "hole", centroid: [c.x, c.y] };
+    // (UPRIGHT2: the original pick, kept only for a decision made with it and nothing recorded: opts.holeRule 1)
+    const pick = opts.holeRule === 1 ? best : ringPick(cands, outlinePolys, charm.outline.bbox);
+    if (!pick) return drawn;
+    const angle = Math.atan2(pick.p[1] - c.y, pick.p[0] - c.x) * 180 / Math.PI;
+    // (UPRIGHT2: a hanging ring the master already draws at its top, within RING.snap° of straight up, says the master is drawn hanging: it is shown exactly as drawn, not tipped so the ring stands
+    //  straight over the centroid (the bird's ring sits 27° off: it was drawn, and its words fitted, tipped 27°))
+    if (opts.holeRule !== 1 && Math.abs(wrap180(angle - 90)) <= RING.snap) return { angle: 90, hole: pick.hole, source: "hole", centroid: [c.x, c.y], holeAngle: ((angle % 360) + 360) % 360 };
+    return { angle: ((angle % 360) + 360) % 360, hole: pick.hole, source: "hole", centroid: [c.x, c.y] };
+  }
+  /* UPRIGHT2 (Paul, 29 Oct 2026, the bird SILHOUETTE 34560: "Charms must always be shown right side up and only mirroring the Back/Front in the Horizontal direction"). The rule above took the
+     smallest cut-out nearest the outline's edge as the hanging hole, whatever its shape: on the bird that was the gap between its feet (a 0.71-round notch 2 pt from the edge) over the real jump
+     ring (a true circle in the loop at the top), so the untouched bird was drawn, and its words fitted, about 180° turned, upside down on both faces. Measured over 2,972 live masters: the jump
+     rings the library draws are true circles (round 0.999; 3.7 pt across, the HUGGIE loop 5.8 pt) in a thin loop of metal that wraps round them, and nearly all sit at the top of the master as
+     drawn. A cut-out is the hanging hole only when it is all of these:
+       · round:   4πA/P² >= RING.round (a circle 1, a hexagon 0.91, the bird's feet 0.71, a slot or a letter's counter less);
+       · ring-sized: radius RING.rMin..RING.rMax pt and at most RING.rel of the charm's area (no eye dot, no window of a frame);
+       · in a loop at the edge: the metal round it at most RING.wall pt thick, and the outline within a ring's reach of its centre over at least RING.wrap degrees (rays from its centre: a hoop
+         sticks out of the body; a round eye or a dot in the middle of the metal does not);
+       · on the upper side as drawn: within RING.side° of straight up (a ring the master draws BELOW the charm's centre is a loop of the design: a letter's tail, a lower eye).
+     Of those, the one highest on the master as drawn wins (then the original nearness to the edge). Two such rings on opposite sides at the same height (a link, a connector, a bar with a ring at
+     each end) is no single hanging hole. No hanging hole found: the master as drawn (90), never a guess. A ring within RING.snap° of straight up: the master is drawn hanging, shown exactly as
+     drawn (90); a ring further round (a side ring): the direction from the centroid to it, as before. A decision saved with the original rule and no angle recorded keeps it (opts.holeRule 1). */
+  const RING = { round: 0.95, rMin: 1, rMax: 6, rel: 0.2, wall: 2.6, wrap: 180, side: 100, top: 10, link: 1, snap: 45 };
+  function ringPick(cands, outlinePolys, ob) {
+    const ringArea = p => { let a = 0; for (let i = 0, j = p.length - 1; i < p.length; j = i++) a += p[j][0] * p[i][1] - p[i][0] * p[j][1]; return Math.abs(a) / 2; };
+    const per = p => { let s = 0; for (let i = 0, j = p.length - 1; i < p.length; j = i++) s += Math.hypot(p[i][0] - p[j][0], p[i][1] - p[j][1]); return s; };
+    const body = outlinePolys.reduce((m, p) => Math.max(m, ringArea(p)), 0), H = (ob[3] - ob[1]) || 1;
+    const c = polyCentroid(outlinePolys[0]);
+    // the outline's first crossing along a ray from (x, y)
+    const reach = (x, y, ux, uy) => { let t = Infinity; for (const p of outlinePolys) for (let i = 0, j = p.length - 1; i < p.length; j = i++) { const ax = p[j][0], ay = p[j][1], ex = p[i][0] - ax, ey = p[i][1] - ay, den = ux * ey - uy * ex; if (Math.abs(den) < 1e-12) continue; const wx = ax - x, wy = ay - y, tt = (wx * ey - wy * ex) / den, s = (wx * uy - wy * ux) / den; if (tt > 0 && s >= 0 && s <= 1 && tt < t) t = tt; } return t; };
+    const rings = [];
+    for (const k of cands) {
+      const big = k.polys.reduce((a, p) => (ringArea(p) > ringArea(a) ? p : a), k.polys[0]); if (!big || big.length < 3) continue;
+      const A = ringArea(big), P = per(big), r = Math.sqrt(A / Math.PI);
+      if (!(P > 0) || 4 * Math.PI * A / (P * P) < RING.round || r < RING.rMin || r > RING.rMax || !(body > 0) || A / body > RING.rel) continue;
+      let wall = Infinity; for (const q of big) wall = Math.min(wall, distToPolys(q[0], q[1], outlinePolys));
+      if (wall > RING.wall) continue;
+      const b = k.hole.bbox, cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2, lim = r + wall + Math.max(1.5, wall);
+      let wrap = 0; for (let d = 0; d < 360; d += 5) if (reach(cx, cy, Math.cos(d * Math.PI / 180), Math.sin(d * Math.PI / 180)) <= lim) wrap += 5;
+      if (wrap < RING.wrap) continue;
+      const dir = Math.atan2(k.p[1] - c.y, k.p[0] - c.x) * 180 / Math.PI, off = Math.abs(wrap180(dir - 90));
+      if (off > RING.side) continue;
+      rings.push(Object.assign({}, k, { dir, rank: k.score + RING.top * (1 - (cy - ob[1]) / H) }));
+    }
+    if (!rings.length) return null;
+    rings.sort((a, b) => a.rank - b.rank);
+    if (rings[1] && rings[1].rank - rings[0].rank <= RING.link && Math.abs(wrap180(rings[1].dir - rings[0].dir)) > 90) return null;   // (a link: a ring at each side)
+    return rings[0];
   }
 
   /* ═══ 3b · long charms lie flat (Paul, 9 Oct 2026) ═════════════════════
@@ -483,12 +532,13 @@
     let pick = null;
     // (the FRONT is drawn as the charm is, not turned over: the hanging hole is at base.angle, the long axis at ax.angle, so a turn of -axis lays it flat; the back is mirrored first)
     const front = opts.face === "front";
+    const hA = base.holeAngle != null ? base.holeAngle : base.angle;   // (UPRIGHT2: the ring's own direction, not the as-drawn 90 a ring at the top is shown at: which way a long charm lies is decided as before)
     for (const turn of front ? [-ax.angle, 180 - ax.angle] : [ax.angle, ax.angle - 180]) {
-      const score = base.hole ? Math.abs(wrap180(front ? base.angle + turn - 90 : 180 - base.angle + turn - 90)) : Math.abs(turn);
+      const score = base.hole ? Math.abs(wrap180(front ? hA + turn - 90 : 180 - hA + turn - 90)) : Math.abs(turn);
       if (!pick || score < pick.score - 1e-6 || (Math.abs(score - pick.score) <= 1e-6 && Math.abs(turn) < Math.abs(pick.turn) - 1e-9)) pick = { score, turn };
     }
     const up = ((90 - pick.turn) % 360 + 360) % 360;
-    return { angle: round3(up), hole: base.hole, source: "long", centroid: base.centroid, aspect: round3(ax.aspect), axis: ax.angle, holeAngle: base.hole ? base.angle : null };
+    return { angle: round3(up), hole: base.hole, source: "long", centroid: base.centroid, aspect: round3(ax.aspect), axis: ax.angle, holeAngle: base.hole ? hA : null };
   }
 
   /** The mark a placement's back view carries once it was made with the long-axis rule. */
@@ -507,7 +557,8 @@
     // ROTBAR (Paul, 13 Oct 2026): a person turned the WHOLE piece (charm and engraving, one body) in the work area's degree box: that up angle is theirs and stands for every later fit of this face (new words, a new font),
     // before the saved-back, moved-before-the-long-axis-rule and library rules below, which are all the SYSTEM's or an older decision (job.turnUp, charm-nest-bridge.js turnTo)
     if (p.turnUp != null && p.turnUp !== "" && Number.isFinite(+p.turnUp)) { o.upAngle = +p.turnUp; o.holeOnly = true; return o; }
-    if (p.editingBack) { const up = p.savedUp != null ? p.savedUp : p.charmUp; if (up != null) o.upAngle = +up; o.holeOnly = true; return o; }
+    // (UPRIGHT2: a saved or approved face with no angle recorded is turned by the hole rule it was decided with, never by the new one: its engraving is never turned)
+    if (p.editingBack) { const up = p.savedUp != null ? p.savedUp : p.charmUp; if (up != null) o.upAngle = +up; else o.holeRule = 1; o.holeOnly = true; return o; }
     if (p.nudged && !p.oriented && p.viewUp != null) { o.upAngle = +p.viewUp; o.holeOnly = true; return o; }
     if (p.face !== "front" && entry.upSource === "operator" && entry.upAngle != null) o.upAngle = +entry.upAngle;
     return o;
@@ -579,7 +630,7 @@
     };
     const detail = { filledArtwork: outline !== originalOutline, pixelDiff: diffFraction(B, front ? F : flipX(F)), areaF: area(F), areaB: area(B), dropped: dropped.length, cut: cutMembers.length };
     if (!Object.values(checks).every(Boolean)) throw new BackViewError(checks, { F, B, flipF: flipX(F), detail });
-    const up = opts.upAngle != null ? +opts.upAngle : upAngleOf(Object.assign({}, charm, {outline, members:cutMembers}), { isCut: cut, holeOnly: opts.holeOnly, face: opts.face }).angle;    // STEP 6
+    const up = opts.upAngle != null ? +opts.upAngle : upAngleOf(Object.assign({}, charm, {outline, members:cutMembers}), { isCut: cut, holeOnly: opts.holeOnly, face: opts.face, ...(opts.holeRule === 1 ? { holeRule: 1 } : {}) }).angle;    // STEP 6 (UPRIGHT2: holeRule 1, a saved decision's original hole rule)
     const angleDeg = 90 - up;
     const R = rotateAbout(cx, cy, angleDeg);
     const members = mirrored.map(m => transformSeg(m, R));

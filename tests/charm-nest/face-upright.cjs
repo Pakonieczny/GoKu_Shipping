@@ -116,8 +116,10 @@ const turnOf = m => { const det = m[0] * m[3] - m[1] * m[2], a = det < 0 ? -m[0]
     await R.settle(page, 600);
     const f1 = await faces(), r1 = relate(f1);
     check(`U4 the back turned 180° (${JSON.stringify(t)}; up ${f1.back.up.toFixed(3)}°): the Front box follows it, mirrored left-right: ${fmt(r1.BF)} (${r1.miss.toFixed(4)} pt)`, t.ok && hMirror(r1.BF) && r1.miss < 0.02, JSON.stringify({ t, BF: r1.BF, miss: r1.miss }));
-    check(`U4 ... and both faces stand right side up, as the master is drawn, within the system's own hole angle (back turned ${r1.backTurn.toFixed(2)}°, front ${r1.frontTurn.toFixed(2)}°; was ${r0.backTurn.toFixed(2)}° / ${r0.frontTurn.toFixed(2)}°)`,
-      Math.abs(r1.backTurn) < 5 && Math.abs(r1.frontTurn) < 5 && Math.abs(r1.backTurn - r1.frontTurn) < 1e-6, JSON.stringify(r1));
+    // (UPRIGHT2, Paul 29 Oct 2026: the system now stands the bird right side up by itself (face-upright-default.cjs), so the person's 180° turn here turns both faces 180° from it, together)
+    const w180 = d => Math.abs((((d % 360) + 540) % 360) - 180);
+    check(`U4 ... and both faces turn together, 180° from the system's (back turned ${r1.backTurn.toFixed(2)}°, front ${r1.frontTurn.toFixed(2)}°; was ${r0.backTurn.toFixed(2)}° / ${r0.frontTurn.toFixed(2)}°)`,
+      w180(r1.backTurn - r0.backTurn - 180) < 1e-6 && w180(r1.frontTurn - r0.frontTurn - 180) < 1e-6 && Math.abs(r1.backTurn - r1.frontTurn) < 1e-6, JSON.stringify(r1));
     await R.shot(w, 'UP-4-turned-card');
     const e1 = await editor('UP-4-editor-turned');
     check(`U4 the Charm Editor's Front face follows the turned back, mirrored left-right: ${fmt(e1.BF)}`, hMirror(e1.BF), JSON.stringify(e1));

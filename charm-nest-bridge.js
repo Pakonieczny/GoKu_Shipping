@@ -7835,7 +7835,8 @@ const Engrave = window.Engrave = (() => {
       await loadFonts(); if(!F_.ok) throw new Error("Engraving font is unavailable");
       await ensureJobFont(job);   // (the font the back was saved in, from its record: job.fontKey is set from it above)
       // (the FRONT of a piece is drawn as the charm is, not turned over: backView takes the face, and the keep-out is the master's FRONT KEEP-OUT layer; plans/front-back-1011/CONTRACT.md section 9)
-      job.view=G.backView(charm,{res:6,upAngle:saved.upAngle ?? charm.upAngle,holeOnly:true,solidBack:job.solidBack,...(face === "front" ? {face:"front"} : {})});
+      // (UPRIGHT2, Paul 29 Oct 2026: "Charms must always be shown right side up": a saved back with no angle recorded keeps the ORIGINAL hole rule it was decided with (holeRule 1), never the new one)
+      job.view=G.backView(charm,{res:6,upAngle:saved.upAngle ?? charm.upAngle,holeOnly:true,holeRule:1,solidBack:job.solidBack,...(face === "front" ? {face:"front"} : {})});
       job.mask=G.engraveMask(job.view,{marginMm:S.settings.engraveMarginMm,keepOut:(face === "front" ? charm.frontKeepOut : charm.backKeepOut) || [],...(face !== "front" && charm.artBack?.length ? {avoid:charm.artBack} : {})});   // (CHARM EDIT · BACK: see fitInput)
       const font=fontFor(saved.weight,job),layout=G.layoutLines(job.lines,font,saved.sizePt,job.lineGap,saved.angle || 0,saved.centre || [job.mask.cx,job.mask.cy]);
       const check=G.verifyInk(layout.cmds,job.mask);
