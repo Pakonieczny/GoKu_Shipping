@@ -118,16 +118,12 @@ const SHOTS = process.env.SHOTS || '/tmp/dec/shots';
     await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight'); await settle(500);
     const afterKeys = await stateOf(k1);
     note(afterKeys.state === 'approved' && afterKeys.centre === st1.centre, 'arrow keys on an approved piece do not move or reopen it (looking is safe)', afterKeys.state);
-    const posBtn = await page.$(`#egQueue .rvItem[data-key="${k1}"] .engpPb[data-act="right"]:not([disabled])`);
-    const posDump = await page.evaluate(k => { const c = document.querySelector(`#egQueue .rvItem[data-key="${k}"]`); const j = Engrave.items().get(k); return JSON.stringify({ card: c && c.dataset.state, bs: c ? [...c.querySelectorAll('.engpPb')].map(b => b.dataset.act + ':' + (b.disabled ? 'off:' + b.title : 'on')) : null, job: j && { s: j.state, fit: !!j.fit, mask: !!(j.mask && j.mask.bits), view: !!j.view, st: j.stamping, bk: j.backSaving, ap: j.approvalPreparing } }); }, k1);
-    note(!!posBtn, 'the position buttons of an approved piece are enabled', posDump);
-    if (posBtn) {   // (a move with no room is no change at all: it never reopens; the first direction that has room does)
-      for (const act of ['right', 'left', 'up', 'down', 'smaller', 'larger']) {
-        const b = await page.$(`#egQueue .rvItem[data-key="${k1}"] .engpPb[data-act="${act}"]:not([disabled])`); if (!b) continue;
-        await b.click(); await settle(500);
-        if ((await stateOf(k1)).state === 'review') break;
-        const still = await stateOf(k1); if (still.state === 'approved' && still.seals.length !== 1) break;
-      }
+    // (BIGPANEL, Paul 29 Oct 2026: the panel's Position buttons are gone: a move is made in the work area (a drag, Centre: Engrave.nudge, the same first change that reopens an approved piece))
+    const canMove = await page.evaluate(k => { const j = Engrave.items().get(k); return !!(j && j.fit && j.mask && !j.fit.artOnly); }, k1);
+    note(canMove, 'the approved piece keeps its placement, so the work area can move it');
+    for (const [dx, dy] of [[0.5, 0], [-0.5, 0], [0, 0.5], [0, -0.5]]) {   // (a move with no room is no change at all: it never reopens; the first direction that has room does)
+      await page.evaluate(([k, dx, dy]) => { Engrave.nudge(Engrave.items().get(k), dx, dy); Engrave.render(); }, [k1, dx, dy]); await settle(500);
+      if ((await stateOf(k1)).state === 'review') break;
     }
     const moved = await waitState(k1, ['review'], 20000);
     note(moved && moved.state === 'review' && moved.seals.length === 1 && moved.backs === 0, 'a position change put it back to "needs Approve" with its first seal kept', JSON.stringify(moved && { s: moved.state, seals: moved.seals.length, backs: moved.backs }));
@@ -148,8 +144,7 @@ const SHOTS = process.env.SHOTS || '/tmp/dec/shots';
     card = await cardOf();
     note(card && card.state === 'written' && card.calm && /Saved to sheet/.test(card.written), 'a piece Saved to sheet opens in the same card with one calm line about its file', JSON.stringify(card && { calm: card.calm, written: card.written }));
     const w0 = await stateOf(k2);
-    const rb = await page.$(`#egQueue .rvItem[data-key="${k2}"] .engpPb[data-act="up"]:not([disabled])`);
-    if (rb) { await rb.click(); await settle(600); }
+    const rb = await page.evaluate(k => { const j = Engrave.items().get(k); if (!j || !j.fit) return false; Engrave.nudge(j, 0, 0.5); Engrave.render(); return true; }, k2); await settle(600);   // (BIGPANEL: the work area's move, not a panel button)
     const w1 = await waitState(k2, ['review'], 30000);
     note(!!rb && w1 && w1.state === 'review' && w1.seals.length === w0.seals.length && w1.backs === 0, 'changing a saved piece reopens it for Approve (nothing blocks it: its back record is superseded, its seals stay)', JSON.stringify(w1 && { s: w1.state, backs: w1.backs, seals: w1.seals.length }));
     note(dialogs.length === 0, 'no confirm dialog stood in the way', dialogs.join(' | '));

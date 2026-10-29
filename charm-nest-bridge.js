@@ -9168,7 +9168,45 @@ const Engrave = window.Engrave = (() => {
   /** The placement can be changed now: under review, or approved (the first change reopens it). */
   const placeEditable = job => !!job && (job.state === "review" || approvedView(job));
   /** Called first by every change of a placement: an approved piece is reopened for it (true when the job may go on). */
-  const startEdit = job => !job || !["approved", "written"].includes(job.state) || reopenForEdit(job);
+  const startEdit = job => !job || !["approved", "written"].includes(job.state) || stageEdit(job);
+  /* STAGEALL (Paul, 29 Oct 2026: "if they choose to change something than the approved button needs to light up again, and it's not approved until the Approve button is pressed again by the user after any
+     updates, otherwise those updates to the engraving are discarded"): the first move, turn, size or line change made in the work area of an APPROVED piece is staged, not kept. The piece needs its Approve
+     (state review: the green Approve lights up), and what it was (its placement, its approval, its saved back files, its record) is kept beside it (job.stagedFrom, in the checkpoint too): nothing is withdrawn
+     from any sheet or the cloud. Approve writes the new placement and its file over the old one (backPut), as any approval does; leaving the piece without Approve puts it back exactly as it was
+     (discardStaged, at the next drawing of the tab). A piece that cannot keep its old placement in hand (busy, recalled, no placement here) is reopened as before (reopenForEdit). */
+  const STAGE_KEEP = ["state", "fit", "view", "mask", "lines", "text", "lineInput", "lineMode", "wantSize", "verify", "nudged", "claude", "turnUp", "upSystem", "lineGap", "splitIndex", "approvedAt", "approvedBy", "backs", "reason", "writtenFit", "backPending"];
+  function stageEdit(job) {
+    if (!job || !job.row || job.row.state === "gone" || decidedBusy(job) || recalledJob(job) || !(job.fit && job.view && job.mask)) return reopenForEdit(job);
+    const snap = {}; for (const k of STAGE_KEEP) snap[k] = job[k] === undefined ? null : job[k];
+    snap.engrave = job.row.engrave ? Object.assign({}, job.row.engrave) : null; snap.at = Date.now();
+    job.stagedFrom = snap;
+    CNListActivity.touch(job.row); CNListActivity.touch(job);
+    job.state = "review"; job.reason = null; job.approvedAt = null; job.backs = []; delete job.backPending;
+    job.row.engrave = { ...(job.row.engrave || {}), needed: true, state: "review", approved: false, text: job.text };
+    Review.remove("eng:" + job.key); Review.add({ kind: "placement", key: "eng:" + job.key, row: (job.row.parentRow || job.row), job, why: "changed after its approval — approve it again" });
+    try { Session.schedule(); } catch (_) {}
+    setTimeout(() => { try { render(); Orders.render(); } catch (_) { /* drawn with the next render */ } }, 0);
+    return true;
+  }
+  /** STAGEALL: every piece with a staged change that is not the piece in front (`focus`, a job, or null for none) goes back to what it was; a staged change that was approved since is settled (its old record goes). */
+  const pieceOfKey = k => String(k == null ? "" : k).replace(/~front$/, "");
+  function discardStaged(focus) {
+    const pk = focus && focus.key && !focus.mono ? pieceOfKey(focus.key) : null; let n = 0;
+    for (const j of items().values()) {
+      const sv = j.stagedFrom; if (!sv) continue;
+      if (j.approvalPreparing || j.stamping || j._approvalTask || j.backSaving) continue;
+      if (j.state !== "review") { delete j.stagedFrom; continue; }   // (approved since, or decided otherwise: nothing to put back)
+      if (pk && pieceOfKey(j.key) === pk) continue;
+      delete j.stagedFrom;
+      for (const k of STAGE_KEEP) { if (sv[k] === null || sv[k] === undefined) delete j[k]; else j[k] = sv[k]; }
+      if (sv.engrave) j.row.engrave = sv.engrave;
+      Review.remove("eng:" + j.key);
+      try { window.CharmNestMadeThumb?.changed("discard", j.copies || []); } catch (_) {}
+      n++;
+    }
+    if (n) { try { refreshBacks(); Orders.render(); } catch (_) { /* drawn with the next render */ } }
+    return n;
+  }
   /** A recalled set's sheet is rebuilt from the master files before one of its pieces can be changed (what a Reopen did first): the card offers it. */
   function rebuildRecalled(job) {
     if (!recalledJob(job)) return Promise.resolve(true);
@@ -11832,6 +11870,7 @@ const Engrave = window.Engrave = (() => {
       if (searching) { q.focus({ preventScroll: true }); q.setSelectionRange(searching.start, searching.end); } }
     {
       const q = v.querySelector("#egQueue");
+      discardStaged(wantList ? null : focus || null);   // (STAGEALL: a piece left with no Approve is as it was)
       if (wantList) {
         EG.card = null; EG.cardKey = null;
         q.innerHTML = '<div class="rvList egPlacementList"></div>';
@@ -12635,7 +12674,7 @@ const Engrave = window.Engrave = (() => {
     if (n) { try { Session.schedule(); render(); } catch (_) { /* drawn with the next render */ } }
     return n;
   }
-  return { viewFaceOf, setViewFace, showFace, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, cutWhy, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { viewFaceOf, setViewFace, showFace, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, cutWhy, discardStaged, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
    list of pieces, the Pieces counts and a monogram line's pieces (the same slots and piece keys: "<line>" for one piece, "<line>#C<u>" for several) read THIS. Added beside the Engrave object, not inside its return. */

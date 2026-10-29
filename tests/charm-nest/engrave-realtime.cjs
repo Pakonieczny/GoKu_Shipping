@@ -264,7 +264,7 @@ const ACTS = String.raw`(() => {
     type(text) { const t = q('.engpWords'); const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; t.focus(); set.call(t, text); t.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text })); t.dispatchEvent(new Event('keyup', { bubbles: true })); },
     font(word) { const s = q('.engpFont'); s.value = word; s.dispatchEvent(new Event('input', { bubbles: true })); s.dispatchEvent(new Event('change', { bubbles: true })); },
     mode(m) { q('.engpSeg[data-mode="' + m + '"]').click(); },
-    nudge(dir) { q('.engpPb[data-act="' + dir + '"]').click(); },
+    nudge(dir) { const d = { right: [0.5, 0], left: [-0.5, 0], up: [0, 0.5], down: [0, -0.5] }[dir] || [0.5, 0], j = Engrave.items().get(window.__rtJobKey); if (j) { Engrave.nudge(j, d[0], d[1]); Engrave.render(); } },   // (BIGPANEL: the panel has no position buttons: the work area's own move, as its arrow keys make it)
     face(f) { const b = q('.engCard .engFace[data-face="' + f + '"] .engThumb'); b.click(); }
   };
 })()`;
@@ -355,12 +355,12 @@ async function partDetail(w, made) {
     }
   };
 
-  // which position button has room to move the engraving on this charm? (found by pressing, then cancelled; the measured change below uses it)
+  // which way has room to move the engraving on this charm (the work area's move: BIGPANEL took the panel's buttons away)? (found by pressing, then cancelled; the measured change below uses it)
   const pickDir = async () => {
-    for (const dir of ['right', 'left', 'up', 'down', 'smaller']) {
+    for (const dir of ['right', 'left', 'up', 'down']) {
       const before = (await detailFacts(page)).job;
       await page.evaluate(() => { const j = Engrave.items().get(window.__rtJobKey); window.__dirSnap = j && window.CharmNestEngravePosition ? CharmNestEngravePosition.snapshot(j) : null; });   // (LIVEWORDS: no Cancel: the probe's move is put back with the position snapshot)
-      const clicked = await page.evaluate(d => { const b = document.querySelector('#egQueue .rvItem[data-kind=placement] .engpPb[data-act="' + d + '"]'); if (!b || b.disabled) return false; b.click(); return true; }, dir);
+      const clicked = await page.evaluate(d => { if (!Engrave.items().get(window.__rtJobKey)) return false; window.__act.nudge(d); return true; }, dir);
       await R.settle(page, 250);
       const after = (await detailFacts(page)).job;
       await page.evaluate(() => { const j = Engrave.items().get(window.__rtJobKey); if (j && window.__dirSnap) { CharmNestEngravePosition.restore(j, window.__dirSnap); try { Engrave.render(); } catch (_) {} } });

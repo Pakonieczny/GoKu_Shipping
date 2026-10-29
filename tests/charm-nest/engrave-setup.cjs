@@ -165,16 +165,15 @@ const job = (face, state, lines, extra = {}) => Object.assign({ key: F.jobKey(LK
     const env = fakeEnv(jobs), res = await S.apply(line, { mode: 'front' }, env);
     eq('cut plain, not removed', [res.plain, res.removed], [[F.jobKey(LK, null, 'back')], []]); eq('the job is still there', jobs.length, 2); eq('as skipped', jobs.find(j => j.face === 'back').state, 'skipped');
     ok('by the signed-in name', env.log.some(x => x[0] === 'skip' && x[2] === 'Ana_M'));
-    // the card asks first (inline, a second press)
+    // STAGEALL (Paul, 29 Oct 2026: "I don't ever want to see this warning"): the card never asks: Save keeps the choice at once
     const slot = fresh(); line.engravingOverride = undefined; delete line.engravingOverride; const saved = [];
     S.mount(slot, line, { jobs: () => [job('front', 'review', ['W']), job('back', 'approved', ['1. 27. 24'], { approvedBy: 'Cy' })], save: async p => { saved.push(p); return { ok: true }; } });
     slot.querySelector('[data-su=edit]').click();
     ok('the approved back\'s words are editable and the line says a change asks for a new approval', !slot.querySelector('textarea[data-face=back]').disabled && /approved by Cy: a change asks for a new approval/.test(text(slot)) && !/open it in Engraving to change it/.test(text(slot)));
-    slot.querySelector('[data-mode=front]').click(); slot.querySelector('[data-su=save]').click();
-    eq('first press only asks', saved.length, 0); ok('the question is a plain line in the card', /already approved by Cy/.test(text(slot)) && !doc.querySelector('dialog'));
-    ok('keep it as it is puts it away', (slot.querySelector('[data-su=keep]').click(), !slot.querySelector('[data-su=saveYes]')));
-    slot.querySelector('[data-su=save]').click(); slot.querySelector('[data-su=saveYes]').click(); await tick();
-    eq('second press saves', saved, [{ mode: 'front' }]);
+    slot.querySelector('[data-mode=front]').click();
+    ok('no warning and no explanation before Save', !/already approved by Cy/.test(text(slot)) && !slot.querySelector('[data-su=saveYes],[data-su=keep]') && !doc.querySelector('dialog'));
+    slot.querySelector('[data-su=save]').click(); await tick();
+    eq('one press saves', saved, [{ mode: 'front' }]);
   }
   { reset();
     // the front engine is not in the page yet: the choice is kept, no job is removed or cut

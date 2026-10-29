@@ -515,7 +515,7 @@
     }).join('');
     const prompt = vm.needsPerson && d.mode === vm.mode ? `<div class="egSuAsk" role="status">${esc(vm.prompt)}</div>${vm.raw ? `<div class="egSuRaw" aria-label="The buyer's own words">${esc(vm.raw)}</div>` : ''}` : '';
     const patch = patchOf(vm, d), dirty = hasPatch(patch), cons = dirty ? consequences(vm.line, vm.jobs, nextSetupOf(vm, patch), vm.setup) : null;
-    const lines = cons && !d.confirm ? cons.lines.filter(l => !/already (approved|approved and saved)/.test(l)) : [];
+    const lines = [];   // (STAGEALL, Paul 29 Oct 2026: "without any explanations": what a save does to the jobs is not told; a piece that cannot be changed still says so (warn))
     const warn = cons && cons.blocked ? `<div class="egSuErr" role="alert">${esc(cons.blocked)}</div>` : '';
     const why = vm.why || vm.from ? `<div class="egSuWhy">${esc(vm.edited ? vm.reading ? 'The system read: ' + vm.reading : '' : vm.why)}${!vm.edited && vm.from ? ` <small>${vm.why ? '· ' : ''}${esc(vm.from)}</small>` : ''}</div>` : '';
     return `<div class="egSuTop"><span class="egSuLbl">Engraves</span><span class="egEarSwitch egMany" role="group" aria-label="What this piece engraves">${tabs}</span>${statusHtml(d)}</div><div class="egSuEdit">${prompt}${faces}</div>${why}${lines.length ? `<div class="egSuNote">${lines.map(t => `<span>${esc(t)}</span>`).join('')}</div>` : ''}${warn}${confirmHtml(d)}<div class="egSuActs"><button type="button" class="btn gold xs" data-su="save"${dirty && !d.busy && !(cons && cons.blocked) ? '' : ' disabled'}>Save</button><button type="button" class="btn ghost xs" data-su="cancel"${dis}>Cancel</button></div>`;
@@ -600,7 +600,7 @@
         const patch = patchOf(vm, d); if (!hasPatch(patch)) { d.open = false; d.touchedOpen = true; draw(); return; }
         const cons = consequences(vm.line, vm.jobs, nextSetupOf(vm, patch), vm.setup);
         if (cons.blocked) { d.error = cons.blocked; draw(); return; }
-        if (a === 'save' && cons.plain.length) { d.confirm = 'save'; d.confirmLines = cons.lines.filter(l => /already/.test(l)); draw(); return; }
+        // (STAGEALL, Paul 29 Oct 2026: "I don't ever want to see this warning": Save keeps the choice, with no "Cut it plain" question)
         run(m, patch);
       } else if (a === 'keep') { d.confirm = ''; d.confirmLines = null; draw(); }
     };

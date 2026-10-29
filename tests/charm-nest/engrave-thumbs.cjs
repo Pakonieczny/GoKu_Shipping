@@ -204,11 +204,12 @@ function install() {
       return { front: txt('front'), back: txt('back') };
     });
     ok('the other face: typing lands in its own box, the first keeps its staged words: ' + JSON.stringify(other), other.front === 'ZZ' && other.back === 'Qq Zz');   // (the back is staged in Stylish: no capitals now)
-    // position: a move of the saved placement changes the box in the same tick
+    // position: a move of the saved placement changes the box in the same tick (BIGPANEL, 29 Oct 2026: the panel has no position buttons: the work area's move, as its arrow keys and a drag make it)
     const mv = await page.evaluate(async () => {
       document.querySelector('.engpCard .engFace[data-face="back"] .engThumb').click();
+      const card = document.querySelector('#egQueue .rvItem[data-kind=placement]'), j0 = card && Engrave.items().get(card.dataset.key), job = j0 && Engrave.jobsOf(j0.row).find(x => x.face !== 'front');
       const th = () => document.querySelector('.engpCard .engFace[data-face="back"] .engThumb .engpvText'), res = {};
-      for (const act of ['left', 'down', 'right', 'up']) { const b = document.querySelector(`.engp [data-act="${act}"]`); if (!b || b.disabled) continue; const before = th().getAttribute('style'); b.click(); const after = th().getAttribute('style'); if (before !== after) { res.act = act; res.before = before; res.after = after; break; } }
+      for (const [act, dx, dy] of [['left', -0.5, 0], ['down', 0, -0.5], ['right', 0.5, 0], ['up', 0, 0.5]]) { if (!job) break; const before = th().getAttribute('style'); Engrave.nudge(job, dx, dy); const after = th() && th().getAttribute('style'); if (before !== after) { res.act = act; res.before = before; res.after = after; break; } }
       return res;
     });
     ok('a position nudge moves the words on the thumbnail in the same tick (' + (mv.act || 'none moved') + ')', !!mv.act && mv.before !== mv.after && /left:/.test(mv.after));

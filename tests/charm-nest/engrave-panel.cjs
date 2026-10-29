@@ -5,7 +5,7 @@
 //   3  none of the old words: no "ENGRAVES", "The system read", "nothing in the listing", "Undo", no percentage
 //   4  an earring (spec.engraveNever) gets no panel, so it has no Back choice anywhere
 //   5  picking a face switches the editor; editing the Front never changes the Back (the draft, the saved override and the jobs)
-//   6  the position row acts on THAT face's job, at once (nothing to save or cancel)
+//   6  no Position row (BIGPANEL, 29 Oct 2026): the work area moves the words; a move made there repaints the panel's thumbnails
 //   7  typing and picking a font repaint THAT face's thumbnail at once (before Save), never the other one
 //   PW_DIR=/opt/node22/lib/node_modules/playwright/node_modules node tests/charm-nest/engrave-panel.cjs
 const fs = require('fs'), path = require('path');
@@ -178,7 +178,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       check(real.id && new RegExp('CNEng ' + real.id).test(real.fam.front || '') && !new RegExp('CNEng ' + real.id).test(real.fam.back || ''), 'and the picked font (Pristina -> ' + real.id + ') is the front thumbnail\'s font family, not the back\'s: ' + JSON.stringify(real.fam));
     } else console.log('  (no CharmNestEngravePreview in this build: live-preview check skipped)');
 
-    // ── 5-7 · faces, position and the live thumbnails, in a slot 232px wide ──
+    // ── 5-7 · faces, no position row and the live thumbnails, in a slot 232px wide ──
     await page.evaluate(KEY => {
       document.getElementById('__slot')?.remove(); const s = document.createElement('div'); s.id = '__slot'; s.style.cssText = 'position:fixed;left:20px;top:40px;width:232px;background:#fffefb;padding:0;z-index:99999;max-height:90vh;overflow:auto'; document.body.appendChild(s);
       const row = B.orders.byKey.get(KEY); delete row.engravingOverride; CharmNestEngravePanel.DRAFTS.clear();
@@ -216,29 +216,12 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     check(fontPick.length >= 1 && fontPick.every(([f]) => f === 'front'), 'picking a font repainted the front thumbnail in that font: ' + JSON.stringify(fontPick.map(x => [x[0], x[1].fontId])));
     check(!up.some(([f, p]) => f === 'back' && p.text === 'Name One'), 'the back thumbnail never showed the front words');
 
-    // 6 · position: acts on THAT face's job; Cancel puts it back
-    const jobKeys = await page.evaluate(KEY => ({ front: Engrave.jobOf(B.orders.byKey.get(KEY), null, 'front')?.key || null, back: Engrave.jobOf(B.orders.byKey.get(KEY), null, 'back')?.key || null }), KEY);
-    const posRow = await page.evaluate(() => [...document.querySelectorAll('#__slot .engpPb')].map(b => b.dataset.act + (b.disabled ? ':off' : '')).join(','));
-    // (the back job has a fit; the front job's placement is not made yet in this fixture, so its position buttons are off)
-    check(/left:off/.test(posRow) && /larger:off/.test(posRow), 'a face whose words are not fitted yet has its position buttons off: ' + posRow);
-    await page.evaluate(() => __h.setFace('back'));
-    await page.click(S + ' [data-act=right]'); await page.click(S + ' [data-act=up]', { modifiers: ['Shift'] }); await page.click(S + ' [data-act=smaller]'); await page.click(S + ' [data-act=centre]');
-    const lg = await page.evaluate(() => JSON.parse(JSON.stringify(__log)));
-    check(lg.nudge.length === 2 && lg.nudge.every(n => n[0] === jobKeys.back) && lg.nudge[0][1] === 0.5 && lg.nudge[0][2] === 0 && lg.nudge[1][1] === 0 && lg.nudge[1][2] === 2, 'right = 0.5 mm, Shift + up = 2 mm, both on the BACK job only: ' + JSON.stringify(lg.nudge));
-    check(lg.size.length === 1 && lg.size[0][1] === 0.95 && lg.centre.length === 1 && lg.size[0][0] === jobKeys.back, 'smaller = x0.95, centre: both on the back job');
-    check(lg.snap.length === 0 && lg.restore.length === 0, 'a move is the job\'s at once: no snapshot to put it back, nothing to save or cancel: ' + JSON.stringify({ snap: lg.snap, restore: lg.restore }));
-    // a refused move (no room) dims THAT button with a title, nothing else; a move that works gives the room back; a job that cannot move (approved) turns the whole row off
-    await page.evaluate(() => { const P = CharmNestEngravePosition; P.nudge = (j, dx, dy) => { __log.nudge.push([j.key, dx, dy]); return { ok: false, why: 'no room' }; }; });
-    await page.click(S + ' [data-act=left]');
-    let nr = await page.evaluate(() => { const b = document.querySelector('#__slot [data-act=left]'); return [b.disabled, b.title, document.querySelector('#__slot [data-act=right]').disabled]; });
-    check(nr[0] && /No room/.test(nr[1]) && !nr[2], 'no room: the left button is dimmed with its title, the others stay: ' + JSON.stringify(nr));
-    await page.click(S + ' [data-act=larger]');
-    nr = await page.evaluate(() => document.querySelector('#__slot [data-act=left]').disabled);
-    check(nr === false, 'a move that works gives the room back');
-    await page.evaluate(() => { CharmNestEngravePosition.canMove = () => false; __h.draw(); });
-    nr = await page.evaluate(() => [...document.querySelectorAll('#__slot .engpPb')].every(b => b.disabled));
-    check(nr, 'a job that cannot move (approved, locked) has the whole position row off');
-    await page.evaluate(() => { delete CharmNestEngravePosition.canMove; __h.draw(); });
+    // 6 · BIGPANEL (Paul, 29 Oct 2026: "remove the complete "Position" title and all of the below buttons completely"): no Position row in the panel; the words are moved in the work area (a drag, the arrow
+    //     keys, Centre), and a move made there still repaints the panel's thumbnails at once (the panel's moved(job) hook)
+    const posRow = await page.evaluate(() => ({ n: document.querySelectorAll('#__slot .engpPos, #__slot .engpPb, #__slot [data-engp="pos"]').length, word: /Position/i.test(document.querySelector('#__slot').textContent) }));
+    check(posRow.n === 0 && !posRow.word, 'no Position title and no position buttons in the panel: ' + JSON.stringify(posRow));
+    const mv = await page.evaluate(KEY => { const b = Engrave.jobOf(B.orders.byKey.get(KEY), null, 'back'), n0 = __log.update.length; const ok = __h.moved(b, 'position'); return { ok, painted: __log.update.length > n0 }; }, KEY);
+    check(mv.ok && mv.painted, 'a move made in the work area repaints the panel\'s thumbnails at once: ' + JSON.stringify(mv));
     await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); __h.draw(); }); st = await state();   // (the staged front words let go, as when nothing is approved and the draft is dropped)
     check(st.text === '1. 27. 24' && st.mode === 'both' && !st.ov, 'nothing was stored by typing, picking a font or moving the words: ' + JSON.stringify({ text: st.text, mode: st.mode, ov: st.ov }));
 

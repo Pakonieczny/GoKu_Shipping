@@ -12,6 +12,8 @@
 //   N5  the sheet drops it (here and in the cloud, the back record invalidated, the back index without it), the piece stays where it stood, the other order's back is kept
 //   N6  the order window (opened after, same page): no Engraving chip, the Vector design the charm alone, no Engraving block
 //   N7  a re-sync and an intake run never bring it back
+//   N7b STAGEALL (Paul, 29 Oct 2026: "it's not approved until the Approve button is pressed again ... otherwise those updates to the engraving are discarded"): on the other (approved) order, typing lights the green
+//       Approve and taking it back calms it; words and None staged then the card left: discarded; a move in the work area: staged (nothing withdrawn), discarded on leaving
 //   N8  the green Approve button with None staged does the same (the other order)
 //   N9  no page errors
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/engrave-none.cjs      (SHOTS=<dir> for screenshots)
@@ -67,7 +69,7 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
       const c = document.querySelector(q), th = f => { const t = c && c.querySelector(`.pvSetup .engFace[data-face="${f}"] .engThumb`); return t ? { pic: !!t.firstElementChild, words: [...t.querySelectorAll('.engpvText')].map(x => x.textContent).join('').trim() } : null; };
       const d = Engrave.draftOf(k), calm = c && c.querySelector('[data-a="approved"]'), ap = c && c.querySelector('[data-a="approve"]');
       return { key: c ? c.dataset.key : '', segs: c ? [...c.querySelectorAll('.pvSetup .engpSeg')].map(b => b.dataset.mode + ':' + b.getAttribute('aria-pressed')).join(' ') : '', back: th('back'), draft: d ? { empty: d.empty, lines: d.lines } : null,
-        hint: ((c && c.querySelector('.engpNoneHint')) || {}).textContent || '', approve: !!ap && !ap.disabled && !!ap.getClientRects().length, calm: !!calm && !!calm.getClientRects().length, confirm: !!(c && c.querySelector('.engpConfirm')), err: ((c && c.querySelector('.engpErr')) || {}).textContent || '' };
+        hint: c ? [...c.querySelectorAll('.engpNoneHint, .engpConfirm, .pvApproval .egApproveWhy')].map(n => n.textContent.trim()).filter(Boolean).join(' | ') : '', approve: !!ap && !ap.disabled && !!ap.getClientRects().length, calm: !!calm && !!calm.getClientRects().length, confirm: !!(c && c.querySelector('.engpConfirm')), err: ((c && c.querySelector('.engpErr')) || {}).textContent || '' };
     }, [Q, k]);
     const job = k => page.evaluate(([k, rk]) => { const j = Engrave.items().get(k), row = B.orders.byKey.get(rk), sh = Pool.sheetOf(j.copies[0]); return { state: j.state, text: j.text, approvedAt: j.approvedAt || 0, ov: (j.row.parentRow || j.row).engravingOverride || null, seals: CNEngravingSeals.list(j).map(s => s.how), rowSeals: ((j.row.engrave || {}).seals || []).length, onSheet: (sh.backPool || []).some(b => b.poolId === j.copies[0]), pool: (B.pool.rows.get(j.copies[0]) || {}).engrave, made: !!CharmNestMadeThumb.forPiece(j.copies[0]) }; }, [k, rowKey]);
     const c0 = await cardNow(key);
@@ -79,7 +81,7 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     const skipBtn = await page.evaluate(q => document.querySelectorAll(q + ' [data-a="skip"]').length, Q);
     check('N1 the work area has no "No engraving" button (NONEPRESS: the None toggle is the way)', skipBtn === 0, String(skipBtn));
     check('N1 the Back thumbnail and the work area show the charm alone, no words', !!c1.back && c1.back.pic && !c1.back.words && !!c1.draft && c1.draft.empty, JSON.stringify({ back: c1.back, draft: c1.draft, was: c0.back }));
-    check('N1 a line by Approve says what Approve will do, and the green Approve is there (the piece was approved: its calm "Approved" makes way)', /No engraving · Approve to make this a regular order/.test(c1.hint) && c1.approve && !c1.calm, JSON.stringify(c1));
+    check('N1 no explanation and no warning (STAGEALL: no hint, no "Cut it plain" row); the green Approve lights up (the piece was approved: its calm "Approved" makes way)', !c1.hint && !c1.confirm && c1.approve && !c1.calm, JSON.stringify(c1));
     if (w.shots) await R.shot(w, 'none-staged').catch(() => {});
 
     // ── N2 · Back again: what was there comes back ──
@@ -92,7 +94,7 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     await page.evaluate(q => { const c = document.querySelector(q); if (!c.hasAttribute('tabindex')) c.setAttribute('tabindex', '-1'); c.focus(); }, Q);
     await page.keyboard.press('s'); await R.settle(page, 400);
     const c3 = await cardNow(key), j3 = await job(key);
-    check('N3 the S key is the None toggle: None staged only (pressed, the charm alone, the hint), nothing saved', /none:true/.test(c3.segs) && !!c3.draft && c3.draft.empty && /Approve to make this a regular order/.test(c3.hint) && j3.state === 'written' && !j3.ov && j3.seals.length === 1, JSON.stringify({ c3, j3 }));
+    check('N3 the S key is the None toggle: None staged only (pressed, the charm alone, Approve lit, no line), nothing saved', /none:true/.test(c3.segs) && !!c3.draft && c3.draft.empty && !c3.hint && c3.approve && j3.state === 'written' && !j3.ov && j3.seals.length === 1, JSON.stringify({ c3, j3 }));
     await page.evaluate(q => { const c = document.querySelector(q); if (!c.hasAttribute('tabindex')) c.setAttribute('tabindex', '-1'); c.focus(); }, Q);
     await page.keyboard.press('a');
     const done = await until(async () => { const j = await job(key); return j.state === 'none' ? j : null; }, 15000);
@@ -142,8 +144,29 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     }, [rowKey, key]);
     check('N7 a re-sync and an intake run never bring the engraving back (the override is in the line\'s record, no seal in it)', sync.a.every(s => /:none$/.test(s)) && sync.b.every(s => /:none:$/.test(s)) && sync.ov && sync.ov.mode === 'none' && sync.pending === 0 && !sync.seals.length, JSON.stringify(sync));
 
+    // ── N7b · STAGEALL on the other order (approved, written): any change lights Approve, undoing it calms it, leaving the card discards it ──
+    const key2 = made.back2.jobs[0].key, pid2 = made.back2.poolIds[0];
+    const leaveAndBack = async k => { await page.evaluate(() => { Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render(); }); await R.settle(page, 500); await page.evaluate(k => { Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: k }); Engrave.render(); }, k); await R.settle(page, 700); };
+    await R.openEngraveDetail(w, 'back2', { face: 'back' }); await R.settle(page, 600);
+    const s0 = await cardNow(key2), b0 = await job(key2), centre0 = await page.evaluate(k => JSON.stringify(Engrave.items().get(k).fit.centre), key2);
+    await page.click(Q + ' .pvSetup .engpWords'); await page.keyboard.press('End'); await page.keyboard.type('X'); await R.settle(page, 300);
+    const s1 = await cardNow(key2);
+    await page.keyboard.press('Backspace'); await R.settle(page, 300);
+    const s2 = await cardNow(key2);
+    check('N7b typing on an approved piece lights the green Approve at once, no line; taking the letter back calms it again', s0.calm && !s0.approve && s1.approve && !s1.calm && !s1.hint && s2.calm && !s2.approve, JSON.stringify({ s0, s1, s2 }));
+    await page.click(Q + ' .pvSetup .engpWords'); await page.keyboard.press('End'); await page.keyboard.type('Y'); await page.click(Q + ' .pvSetup .engpSeg[data-mode="none"]'); await R.settle(page, 300);
+    await leaveAndBack(key2);
+    const s3 = await cardNow(key2), b3 = await job(key2), words3 = await page.evaluate(q => (document.querySelector(q + ' .pvSetup .engpWords') || {}).value || '', Q);
+    check('N7b leaving the card with words and None staged discards them: the piece is as approved (Back pressed, its words, no override), calm', b3.state === 'written' && b3.approvedAt === b0.approvedAt && !b3.ov && /back:true/.test(s3.segs) && /none:false/.test(s3.segs) && !/Y/.test(words3) && s3.calm && !s3.approve, JSON.stringify({ b3, s3, words3 }));
+    // a move in the work area of the approved piece is staged too: Approve lights up, its file stays on the sheet and in the cloud; leaving puts it back exactly
+    await page.evaluate(k => { const j = Engrave.items().get(k); for (const [dx, dy] of [[0.5, 0], [-0.5, 0], [0, 0.5], [0, -0.5]]) { Engrave.nudge(j, dx, dy); if (j.state === 'review') break; } }, key2); await R.settle(page, 500);
+    const m1 = await job(key2), c4 = await cardNow(key2), cloud4 = st.doc('Charm_Pool_Back', pid2) || {};
+    check('N7b a move of the approved piece lights Approve (needs Approve), nothing withdrawn: its file stays on the sheet and in the cloud', m1.state === 'review' && c4.approve && m1.onSheet && !cloud4.invalidated, JSON.stringify({ m1, c4: { approve: c4.approve }, invalidated: cloud4.invalidated }));
+    await leaveAndBack(key2);
+    const m2 = await job(key2), centre2 = await page.evaluate(k => JSON.stringify(Engrave.items().get(k).fit.centre), key2), c5 = await cardNow(key2);
+    check('N7b leaving without Approve puts the move back: approved as before, the same place, its file, calm', m2.state === 'written' && m2.approvedAt === b0.approvedAt && centre2 === centre0 && m2.onSheet && m2.seals.length === b0.seals.length && c5.calm, JSON.stringify({ m2, centre0, centre2, calm: c5.calm }));
+
     // ── N8 · the green Approve button does the same (the other order) ──
-    const key2 = made.back2.jobs[0].key;
     await R.openEngraveDetail(w, 'back2', { face: 'back' }); await R.settle(page, 600);
     await page.click(Q + ' .pvSetup .engpSeg[data-mode="none"]'); await R.settle(page, 300);
     const c8 = await cardNow(key2);

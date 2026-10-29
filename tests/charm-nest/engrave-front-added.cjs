@@ -40,7 +40,7 @@ const watch = page => page.evaluate(() => {
 });
 const seen = page => page.evaluate(() => (window.__seen || []).filter((t, i, a) => t && a.indexOf(t) === i));
 
-/** the person adds the front in the Engrave detail: LIVEWORDS: a press on the Front toggle engraves the front too (kept at once, the front shown), then the front words are typed and kept (what Approve does first; no Save, no question) */
+/** the person adds the front in the Engrave detail: a press on the Front toggle stages the front (STAGEALL), the front words are typed, and the staged change is kept (what Approve does first; no Save, no question) */
 async function addFront(w, name, text) {
   const page = w.page;
   await R.openEngraveDetail(w, name, { face: 'back' });
@@ -68,9 +68,10 @@ async function addFront(w, name, text) {
 
     // ═══ P · Paul's flow: back fitted, add the front, press the Front thumbnail ═══
     const { staged, mid } = await addFront(w, 'back', 'B');
-    check('P1 a press on the Front toggle engraves the front at once (no Save): the Front is marked and shown, the work area never draws the BACK under it, no Approve of the other face',
-      staged.current === 'front' && staged.mode === 'both' && /~front$/.test(staged.job || '') && !staged.approve, JSON.stringify(staged));
-    check('P2 the front words are typed in the front\'s own box (nothing drawn from the back)', mid.words === 'B' && /~front$/.test(mid.job || ''), JSON.stringify(mid));
+    // (STAGEALL, Paul 29 Oct 2026: "it's not approved until the Approve button is pressed again": a press on the Front toggle STAGES the front; it is made when the staged change is kept: Approve, or here the panel's commit)
+    check('P1 a press on the Front toggle stages the front: the Front is marked and edited, nothing is made or saved yet (no front job), no Approve of the other face',
+      staged.current === 'front' && staged.mode === 'both' && !/~front$/.test(staged.job || '') && !staged.approve, JSON.stringify({ staged }));
+    check('P2 the front words are typed in the front\'s own box', mid.words === 'B', JSON.stringify(mid));
     await R.shot(w, 'FRONT-1-staged-unsaved');
     const fj = await until(async () => { const js = await jobsOf(page, key); const f = js.find(j => j.face === 'front'); return f && f.state === 'review' && f.fitted ? f : null; }, 90000);
     const sawNow = await seen(page);
@@ -88,7 +89,7 @@ async function addFront(w, name, text) {
     // switching back and forth keeps each face's edit: a moved front, a staged (unsaved) back text
     await press(page, 'front'); await R.settle(page, 500);
     const front0 = (await jobsOf(page, key)).find(j => j.face === 'front').centre;
-    await page.evaluate(Q => document.querySelector(Q + ' .engpPb[data-act="right"]').click(), Q); await R.settle(page, 700);
+    await page.evaluate(Q => { const k = document.querySelector(Q).dataset.key; Engrave.nudge(Engrave.items().get(k), 0.5, 0); Engrave.render(); }, Q); await R.settle(page, 700);   // (BIGPANEL: the work area moves the words; the panel has no position buttons)
     const front1 = (await jobsOf(page, key)).find(j => j.face === 'front').centre;
     check('P7 the front is moved on its own (its position changed, the back\'s did not)', JSON.stringify(front1) !== JSON.stringify(front0) && JSON.stringify((await jobsOf(page, key)).find(j => j.face === 'back').centre) === JSON.stringify(back0.centre), JSON.stringify([front0, front1]));
     await press(page, 'back'); await R.settle(page, 500);

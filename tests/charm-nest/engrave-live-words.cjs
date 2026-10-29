@@ -78,6 +78,15 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     check('L6 Approve with words staged: the front is approved with the NEW words', !!done && /X/i.test(done.text || ''), JSON.stringify(done) + ' ' + why);
     check('L6 the words were kept with no question: in the override, no reason recorded', !!done && done.ov && done.ov.front && /X/i.test(done.ov.front.text || '') && !done.ov.reason, JSON.stringify(done && done.ov));
     if (w.shots) await R.shot(w, 'live-words-approved').catch(() => {});
+    // L8 · STAGEALL (Paul, 29 Oct 2026: "it's not approved until the Approve button is pressed again ... otherwise those updates to the engraving are discarded"): words typed and the card left with no Approve are
+    //      discarded (never kept quietly): the job and the override are as approved, and the box shows the approved words when the card is opened again
+    const kept8 = await page.evaluate(([key, fk]) => { const row = B.orders.byKey.get(key), j = Engrave.jobsOf(row).find(x => x.key === fk); return { text: j.text, state: j.state, ov: JSON.stringify(row.engravingOverride || null) }; }, [made.both.key, keys.front]);
+    await page.evaluate(fk => { Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: fk }); Engrave.render(); }, keys.front); await R.settle(page, 700);
+    await page.click(Q + ' .pvSetup .engpWords'); await page.keyboard.press('End'); await page.keyboard.type('ZZ'); await R.settle(page, 300);
+    await page.evaluate(() => { Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render(); }); await R.settle(page, 900);
+    await page.evaluate(fk => { Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: fk }); Engrave.render(); }, keys.front); await R.settle(page, 700);
+    const left = await page.evaluate(([q, key, fk]) => { const row = B.orders.byKey.get(key), j = Engrave.jobsOf(row).find(x => x.key === fk); return { text: j.text, state: j.state, ov: JSON.stringify(row.engravingOverride || null), box: (document.querySelector(q + ' .pvSetup .engpWords') || {}).value || '' }; }, [Q, made.both.key, keys.front]);
+    check('L8 words typed and the card left with no Approve are discarded: the job, the override and the box are as approved', left.text === kept8.text && left.state === kept8.state && left.ov === kept8.ov && !/ZZ/.test(left.box), JSON.stringify({ kept8, left }));
     check('L7 no page errors', errors.length === 0, errors.join(' | ').slice(0, 400));
   } catch (e) { console.error(e); check('ran', false, String(e && e.stack || e)); }
   finally { await w.close(); }

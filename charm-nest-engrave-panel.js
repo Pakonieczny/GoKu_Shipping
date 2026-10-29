@@ -11,13 +11,13 @@
  * ONE column, 232px minimum, always open, nothing explained in words:
  *   None | Front | Back                   one row of toggles: which faces are ENGRAVED (an earring / never line draws nothing at all: CharmNestEngraveFaces.neverOf; a front-only line offers None | Front).
  *                                         A press on a face that is not engraved engraves it too (Front while the Back is engraved = both faces, the old "Front + back") and SHOWS it; a press on a face that is
- *                                         engraved shows it (never takes it away: "No back engraving" in the work area cuts one face plain, None takes every face away). Each press is kept at once (no Save).
+ *                                         engraved shows it (never takes it away: None takes every face away). Each press is STAGED (STAGEALL, 29 Oct 2026): Approve keeps it, leaving the card discards it.
  *   [words]                               a full-width text area (2 rows, grows to 4, then scrolls) for the face shown
  *   [font]                                a full-width drop-down (never beside the words, so it cannot overlap them); each option in its own font once the preview loaded it
- *   Position  < ^ v > centre - +          acts at once on THAT face's job (CharmNestEngravePosition)
+ *   (no Position row: BIGPANEL, Paul 29 Oct 2026, "remove the complete "Position" title and all of the below buttons completely": the words are moved in the work area (drag, the arrow keys, Centre))
  * There is no Save, no Cancel and no "Why change it?": a typed letter is drawn at once on that face's thumbnail (CharmNestEngravePreview.update) and, a frame later, in the work area (Engrave.draftFit); the green
- * Approve of the card writes the words (the panel catches the press, saves the staged words through Engrave.saveSetup, waits for them to be fitted, then presses Approve again). Words staged and never approved are
- * saved quietly when the piece's card is left. Who changed the words is still recorded (seedWords: the job's decision and the order timeline's "Engraving edited by ..." line), nothing is asked.
+ * Approve of the card writes the words (the panel catches the press, saves the staged words through Engrave.saveSetup, waits for them to be fitted, then presses Approve again). Anything staged and never approved is
+ * DISCARDED when the piece's card is left (STAGEALL); on an approved piece the green Approve lights up while anything is staged. Who changed the words is still recorded (seedWords: the job's decision and the order timeline's "Engraving edited by ..." line), nothing is asked.
  * The face shown is chosen by the Front / Back thumbnails above the panel (CharmNestEngraveCard.mountPiece, `onPick`), by the face buttons, or `setFace(face)`; the work area follows through
  * Engrave.showFace(job, face, { animate: true }) when the page has it. Every draft belongs to ONE piece: its key is the piece key `<lineKey>[#slot]`, and inside it each face has its own words and font, so the
  * Front never changes the Back, disc 1 never shares a draft with disc 2.
@@ -73,6 +73,8 @@
   let sweepT = 0, watching = null;
   const isLive = key => { const set = LIVE.get(key); if (!set) return false; for (const b of set) if (b.el && b.el.isConnected) return true; return false; };
   /** Forget the staged edit of every piece that has no panel on the page; `except` is the piece being opened. */
+  // STAGEALL (Paul, 29 Oct 2026: "it's not approved until the Approve button is pressed again by the user after any updates, otherwise those updates to the engraving are discarded"): a piece left with no Approve
+  // loses what was staged on it (words, font, None / Front / Back): nothing is kept quietly any more, and the work area's draft of each of its faces goes with it.
   function sweep(except) { for (const k of [...DRAFTS.keys()]) if (k !== except && !isLive(k)) { const d = DRAFTS.get(k); DRAFTS.delete(k); if (d && typeof d.flush === 'function' && !d.busy) tryDo(() => d.flush()); } }
   const sweepSoon = () => { try { clearTimeout(sweepT); sweepT = setTimeout(() => sweep(), GRACE); } catch (_) { /* a missed sweep ends at the next opening */ } };
   /** One observer on the Engrave tab's own view: every drawing of it (a card gone, a list, another piece) wakes one quiet sweep. Nothing is read or written. */
@@ -221,8 +223,7 @@
 .engpSeg[data-sys][aria-checked=true],.engpSeg[data-sys][aria-pressed=true]{background:var(--goldSoft,#f0e6cd);box-shadow:0 0 0 1px rgba(28,26,23,.42)}
 .engpSeg>.engpSys{position:absolute;top:-4px;right:-3px;width:12px;height:12px;pointer-events:none}
 .engpSeg>.engpSys svg{width:9px;height:9px}
-.engpBox[data-sys]>.engpWords{padding-right:24px}
-.engpBox>.engpSys{position:absolute;top:4px;right:5px}
+.engpBox>.engpSys{position:absolute;top:8px;right:66px}
 .engpBox[data-sys=same]>.engpWords{background:var(--goldSoft,#f0e6cd);background:color-mix(in srgb,var(--goldSoft,#f0e6cd) 60%,var(--card,#fffefb))}
 .engpFontBox{display:block;position:relative;min-width:0}
 .engpFontBox>.engpSys{position:absolute;top:50%;right:30px;transform:translateY(-50%)}
@@ -262,25 +263,13 @@
   }
 
   /* ── the markup ────────────────────────────────────────────────────────────── */
-  const ICON = {
-    left: '<path d="M10 3 5 8l5 5"/>', right: '<path d="m6 3 5 5-5 5"/>', up: '<path d="m3 10 5-5 5 5"/>', down: '<path d="m3 6 5 5 5-5"/>',
-    centre: '<circle cx="8" cy="8" r="2.2"/><path d="M8 2v2.2M8 11.8V14M2 8h2.2M11.8 8H14"/>', smaller: '<path d="M4 8h8"/>', larger: '<path d="M4 8h8M8 4v8"/>'
-  };
-  const POS_BUTTONS = [['left', 'Move left'], ['up', 'Move up'], ['down', 'Move down'], ['right', 'Move right'], ['centre', 'Centre'], ['smaller', 'Smaller'], ['larger', 'Larger']];
-  const posButton = (k, t, off) => `<button type="button" class="engpPb" data-engp="pos" data-act="${k}" title="${esc(off || t)}" aria-label="${esc(t)}"${off ? ' disabled' : ''}><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg></button>`;
-  const NOFIT = 'Placed once the words are fitted', NOROOM = 'No room that way';
 
   function faceHtml(vm, d, face, id, slot) {
     const cur = vm.rows.find(r => r.face === face), x = d.faces[face] || { text: '', font: '' }, locked = !!(cur && cur.locked), per = !!(cur && cur.perPiece), dis = d.busy ? ' disabled' : '';
-    const words = `<div class="engpBox"><textarea class="engpWords" id="${id}" data-engp="words" data-face="${face}" rows="2" placeholder="Words for the ${face}" aria-label="${cap1(face)} words"${locked || per || d.busy ? ' disabled' : ''}>${esc(per ? '' : x.text)}</textarea>${locked || per ? '' : `<span class="engpTools"><button type="button" class="btn ghost xs engpAlpha emBtn" data-alpha${d.busy ? ' disabled' : ''} title="Other alphabets: letters, words and phrases in Greek, Hebrew, Arabic, Chinese, Japanese, Korean, Latin and more, found by their English" aria-label="Other alphabets">Aα</button><button type="button" class="btn ghost xs engpEmoji emBtn" data-emoji${d.busy ? ' disabled' : ''} title="Choose an emoji the laser can engrave and put it in the words">Emoji</button></span>`}</div>`;
+    const words = `<div class="engpBox"><textarea class="engpWords" id="${id}" data-engp="words" data-face="${face}" rows="3" placeholder="Words for the ${face}" aria-label="${cap1(face)} words"${locked || per || d.busy ? ' disabled' : ''}>${esc(per ? '' : x.text)}</textarea>${locked || per ? '' : `<span class="engpTools"><button type="button" class="btn ghost xs engpAlpha emBtn" data-alpha${d.busy ? ' disabled' : ''} title="Other alphabets: letters, words and phrases in Greek, Hebrew, Arabic, Chinese, Japanese, Korean, Latin and more, found by their English" aria-label="Other alphabets">Aα</button><button type="button" class="btn ghost xs engpEmoji emBtn" data-emoji${d.busy ? ' disabled' : ''} title="Choose an emoji the laser can engrave and put it in the words">Emoji</button></span>`}</div>`;
     const font = `<select class="engpFont" data-engp="font" data-face="${face}" aria-label="${cap1(face)} font"${locked || d.busy ? ' disabled' : ''}>${fontOptions(vm, x.font)}</select>`;
-    const job = faceJobOf(vm, face, slot), P = Pos();
-    const can = !job || locked ? false : P && P.canMove ? tryDo(() => P.canMove(job), false) : !!(job.fit && job.state === 'review');
-    const off = job && job.fit && job.fit.artOnly ? 'No words to move' : locked || (job && !can && job.state && job.state !== 'review' && job.state !== 'approved' && job.state !== 'written') ? 'Approved: nothing moves' : !can ? NOFIT : '';   // (EDITOR WORDS: a face engraved by the charm editor's parts alone has no words to move)   // (NODECIDED: an approved piece's position buttons work: the first press reopens it for Approve)
-    const stuck = (job && d.noRoom && d.noRoom[job.key]) || {};
-    const pos = P ? `<div class="engpPos"><span class="engpLbl">Position</span><span class="engpRow" role="group" aria-label="${cap1(face)} position">${POS_BUTTONS.map(([k, t]) => posButton(k, t, d.busy ? NOFIT : off || (stuck[k] ? NOROOM : ''))).join('')}</span></div>` : '';
     const lock = cur && cur.decided ? `<div class="engpLock" role="status">${cur.lockState === 'skipped' ? 'Cut plain' : cur.lockState === 'written' ? 'Saved to sheet' : 'Approved'}${cur.lockBy ? ' by ' + esc(cur.lockBy) : ''}</div>` : per ? `<div class="engpLock" role="status">Differs per piece</div>` : '';
-    return `<div class="engpFace" data-face="${face}">${words}${font}${pos}${lock}</div>`;
+    return `<div class="engpFace" data-face="${face}">${words}${font}${lock}</div>`;
   }
   /** The panel for a view model (`vm` = CharmNestEngraveSetup.read) and its staged edit (`d`). ctx: { slot } */
   function html(vm, d, ctx) {
@@ -299,10 +288,9 @@
     const cons = dirty ? S.consequences(vm.line, vm.jobs, nextSetupOf(vm, patch), vm.setup) : null;
     const warn = cons && cons.blocked ? `<div class="engpErr" role="alert">${esc(cons.blocked)}</div>` : '';
     const err = d.error ? `<div class="engpErr" role="alert">${esc(d.error)}</div>` : '';
-    const confirm = d.confirm && d.confirmLines && d.confirmLines.length ? `<div class="engpConfirm" role="status">${d.confirmLines.map(t => `<span>${esc(t)}</span>`).join('')}<span class="engpActs"><button type="button" class="btn gold xs" data-engp="saveYes"${dis}>Cut it plain</button><button type="button" class="btn ghost xs" data-engp="keep">Keep it as it is</button></span></div>` : '';
     const spin = d.busy ? `<span class="engpStat" role="status"><span class="owSpin" aria-hidden="true"></span>${esc(d.busy)}</span>` : '';
     const acts = spin ? `<div class="engpActs">${spin}</div>` : '';   // (LIVEWORDS: no Save, no Cancel, no reason: only the small spinner while a change is kept)
-    return `<div class="engp" data-key="${esc(d.key)}" data-mode="${esc(d.mode)}" data-face="${esc(face)}"${staged ? ' data-staged="1"' : ''} role="group" aria-label="Engraving">${seg}${sw}${face ? faceHtml(vm, d, face, id, slot) : ''}${ask}${warn}${err}${confirm}${acts}</div>`;
+    return `<div class="engp" data-key="${esc(d.key)}" data-mode="${esc(d.mode)}" data-face="${esc(face)}"${staged ? ' data-staged="1"' : ''} role="group" aria-label="Engraving">${seg}${sw}${face ? faceHtml(vm, d, face, id, slot) : ''}${ask}${warn}${err}${acts}</div>`;
   }
 
   /* ── the look ──────────────────────────────────────────────────────────────── */
@@ -314,26 +302,23 @@
 .engpCard .engFaces[data-n="1"] .engFace{display:flex}
 .engpCard .engFaces[data-n="1"] .engLbl{order:-1}
 .engpCard .engFaces[data-n="1"] .engTxt{display:block;white-space:nowrap;font-size:12px;line-height:14px}
-.engpMode{display:flex;flex-wrap:nowrap;gap:2px;padding:2px;min-width:0;border:1px solid var(--line,#e4ddd0);border-radius:9px;background:var(--paper2,#ebe5d9)}
-.engpSeg{flex:1 1 auto;min-width:0;white-space:nowrap;padding:5px 8px;border:0;border-radius:7px;background:transparent;font:600 11px var(--sans,system-ui);color:inherit;cursor:pointer}
+.engpMode{display:flex;flex-wrap:nowrap;gap:3px;padding:3px;min-width:0;border:1px solid var(--line,#e4ddd0);border-radius:10px;background:var(--paper2,#ebe5d9)}
+.engpSeg{flex:1 1 0;min-width:0;min-height:40px;white-space:nowrap;padding:6px 10px;border:0;border-radius:8px;background:transparent;font:600 13.5px var(--sans,system-ui);color:inherit;cursor:pointer}
 .engpSeg[aria-checked=true],.engpSeg[aria-pressed=true]{background:var(--card,#fffefb);box-shadow:0 0 0 1px rgba(28,26,23,.42)}
 .engpSeg[data-shown]{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:3px}
 .engpSeg:disabled{opacity:.55;cursor:default}
-@container (max-width:239px){.engpSeg{padding:5px 4px;font-size:10.5px}}
-.engpFace{display:grid;gap:8px;min-width:0}
+@container (max-width:239px){.engpSeg{padding:6px 4px;font-size:13px}}
+.engpFace{display:grid;gap:10px;min-width:0}
 .engpWords,.engpFont{display:block;width:100%;min-width:0;box-sizing:border-box;border:1px solid var(--line,#e4ddd0);border-radius:8px;background:var(--card,#fffefb);color:inherit}
 .engpBox{position:relative;min-width:0}
-.engpWords{min-height:64px;resize:none;padding:6px 8px 26px;font:13px/1.4 var(--sans,system-ui);overflow-y:auto}
-.engpEmoji{position:absolute;right:5px;bottom:5px;padding:2px 8px}
-.engpTools{position:absolute;right:5px;bottom:5px;display:flex;gap:4px}.engpTools>.engpEmoji,.engpTools>.engpAlpha{position:static}.engpAlpha{font-weight:600}
-.engpFont{padding:6px 8px;font:13px var(--sans,system-ui)}
+/* BIGPANEL (Paul, 29 Oct 2026: "Enlarge this yellow shaded areas including the text box and buttons and remove the complete "Position" title and all of the below buttons ... does not overpower the other
+   surrounding UI"): the toggles 40 px, the words 17 px with three lines in view, Aα and Emoji 34 px stacked in the box's right edge (beside the words, never over them; the ✦ of ENGHILITE between them and the words), the font picker 44 px; the Position
+   row is gone, and its room pays for the rest: the column is no taller than it was. */
+.engpWords{min-height:86px;resize:none;padding:8px 80px 8px 11px;font:17px/1.3 var(--sans,system-ui);overflow-y:auto}
+.engpEmoji{position:absolute;right:6px;top:6px;padding:2px 8px}
+.engpTools{position:absolute;right:6px;top:6px;display:flex;flex-direction:column;align-items:stretch;gap:5px;width:58px}.engpTools>.engpEmoji,.engpTools>.engpAlpha{position:static;min-height:34px;margin:0;padding:0 8px;font-size:13px;border-radius:8px}.engpAlpha{font-weight:600}
+.engpFont{min-height:44px;padding:8px 11px;font:15px var(--sans,system-ui);border-radius:9px}
 .engpWords:disabled,.engpFont:disabled{background:var(--paper2,#ebe5d9);color:var(--ink70,#5b554c)}
-.engpPos{display:grid;gap:4px}
-.engpLbl{font:600 10.5px var(--sans,system-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--ink45,#938c80)}
-.engpRow{display:flex;gap:4px;min-width:0}
-.engpPb{flex:0 0 28px;width:28px;height:28px;padding:0;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line,#e4ddd0);border-radius:7px;background:var(--card,#fffefb);color:inherit;cursor:pointer}
-.engpPb:hover:not(:disabled){background:var(--paper2,#ebe5d9)}
-.engpPb:disabled{opacity:.4;cursor:default}
 .engpLock{font-size:11.5px;color:var(--ink45,#938c80)}
 .engpAsk{font-size:12px;font-weight:600;color:var(--clay,#b0563f)}
 .engpOffer{font-size:12px;line-height:1.4;color:var(--ink70,#5b554c)}
@@ -367,14 +352,9 @@
       if (!d.flush) d.flush = () => keepQuietly(d);
       return { vm, d };
     };
-    /** The draft ended with no Approve (the card was left): what was typed is kept, quietly, unless keeping it would cut an approved face plain or the line cannot take it (then it is let go, as before). */
+    /** STAGEALL: the draft ended with no Approve (the card was left): it is DISCARDED (Paul: "otherwise those updates to the engraving are discarded"); the work area stops drawing it. Nothing is saved. */
     const keepQuietly = d => {
-      const S = Setup(), vm = tryDo(() => S.read(line, { slot: slot || undefined, jobs: jobs() }), null); if (!vm) return;
-      const patch = tryDo(() => S.patchOf(vm, d), null); if (!hasPatch(patch)) return;
-      if (d.mode === 'none') return;   // (NONEPLAIN 2: None takes effect with Approve alone: a card left with None staged keeps the engraving it had)
-      const cons = tryDo(() => S.consequences(vm.line, vm.jobs, nextSetupOf(vm, patch), vm.setup), null);
-      if (!cons || cons.blocked || (cons.plain && cons.plain.length)) return;
-      tryDo(() => Promise.resolve(opts.save ? opts.save(patch) : hostSave(line, Object.assign({}, patch, slot ? { slot } : {}))).catch(() => {}));
+      const E = Eng(); for (const k of d.drafted || []) tryDo(() => { if (typeof opts.onDraft === 'function') opts.onDraft(k, null); else if (E && E.draftFit) E.draftFit(k, null); });
     };
     const focusState = () => { const a = el.ownerDocument.activeElement; if (!a || !el.contains(a) || !a.dataset || !a.dataset.engp) return null; return { engp: a.dataset.engp, face: a.dataset.face || '', mode: a.dataset.mode || '', act: a.dataset.act || '', start: a.selectionStart, end: a.selectionEnd }; };
     const restoreFocus = want => {
@@ -389,6 +369,7 @@
       try {
         const job = faceJobOf(vm, face, slot); if (!job || !job.key) return;
         const x = d.faces[face] || { text: '', font: '' }, staged = hasPatch(Setup().patchOf(vm, d)) ? { mode: d.mode, face, text: x.text, fontWord: x.font || '' } : null;
+        if (staged) (d.drafted || (d.drafted = new Set())).add(job.key);
         if (typeof opts.onDraft === 'function') opts.onDraft(job.key, staged); else { const E = Eng(); if (E && E.draftFit) E.draftFit(job.key, staged); }
       } catch (_) { /* the work area keeps what it drew */ }
     };
@@ -418,23 +399,22 @@
       if (!n) { n = card.ownerDocument.createElement('div'); n.className = 'egApproveWhy'; n.setAttribute('role', 'status'); host.appendChild(n); }
       n.dataset.engp = '1'; if (n.textContent !== text) n.textContent = text;
     };
-    /** NONEPLAIN 2: while None is staged, the card's green Approve is what keeps it, and says so in one line under it ("No engraving · Approve to make this a regular order"). A piece already approved
-     *  shows a calm "Approved" that cannot be pressed: a green Approve takes its place while None is staged (the press is caught here, approveAfterCommit), and the calm one is back when None is not. */
-    const NONE_HINT = 'No engraving · Approve to make this a regular order';
-    const noneGate = (vm, d) => {
+    /** STAGEALL (Paul, 29 Oct 2026: "if they choose to change something than the approved button needs to light up again"): while anything is staged on an approved piece (None, Front, Back, words, a font), its calm
+     *  "Approved" makes way for the green Approve (the press is caught here: approveAfterCommit keeps what is staged and approves it); the calm one is back the moment nothing is staged (None, then Back again).
+     *  No line explains anything (Paul: "The user is allowed to choose none front or back without any explanations"). */
+    const stageGate = (vm, d) => {
       const card = el.closest ? el.closest('.rvItem') : null, host = card && card.querySelector('.pvApproval'), doc = el.ownerDocument; if (!host) return;
-      const want = d.mode === 'none' && vm.mode !== 'none' && !!d.wasMode;
-      let b = host.querySelector('[data-engp-none]'), hint = host.querySelector('.engpNoneHint');
+      const want = !dead && hasPatch(tryDo(() => Setup().patchOf(vm, d), {}));
+      let b = host.querySelector('[data-engp-none]');
       const calm = host.querySelector('[data-a="approved"]'), real = host.querySelector('[data-a="approve"]:not([data-engp-none])');
-      const quiet = [calm && (calm.closest('.egApproveWrap') || calm), host.querySelector('.egWrittenNote')].filter(Boolean);   // (the calm "Approved" and its "Saved to sheet" note make way while None is staged)
-      if (!want) { if (b) b.remove(); if (hint) hint.remove(); for (const q of quiet) if (q.dataset.engpHid) { q.style.display = ''; delete q.dataset.engpHid; } return; }
-      if (!real || real.disabled) {
-        if (!b) { b = doc.createElement('button'); b.type = 'button'; b.className = 'btn sage sm egApproveButton'; b.dataset.a = 'approve'; b.dataset.engpNone = '1'; b.title = 'no engraving on this piece: it becomes a regular order'; b.textContent = 'Approve'; host.insertBefore(b, host.firstChild); }
+      const quiet = [calm && (calm.closest('.egApproveWrap') || calm), host.querySelector('.egWrittenNote')].filter(Boolean);   // (the calm "Approved" and its "Saved to sheet" note make way while something is staged)
+      for (const n of host.querySelectorAll('.engpNoneHint')) n.remove();
+      if (!want) { if (b) b.remove(); for (const q of quiet) if (q.dataset.engpHid) { q.style.display = ''; delete q.dataset.engpHid; } return; }
+      if (calm && (!real || real.disabled)) {   // (only an approved piece: a piece whose own Approve is off for its own reason keeps it off)
+        if (!b) { b = doc.createElement('button'); b.type = 'button'; b.className = 'btn sage sm egApproveButton'; b.dataset.a = 'approve'; b.dataset.engpNone = '1'; b.title = 'approve this change'; b.textContent = 'Approve'; host.insertBefore(b, host.firstChild); }
         for (const q of quiet) if (!q.dataset.engpHid) { q.style.display = 'none'; q.dataset.engpHid = '1'; }
       }
       b = b || real; if (b) b.disabled = !!d.busy;
-      if (!hint) { hint = doc.createElement('div'); hint.className = 'egApproveWhy engpNoneHint'; hint.style.color = 'var(--ink70,#5b554c)'; hint.setAttribute('role', 'status'); host.appendChild(hint); }
-      if (hint.textContent !== NONE_HINT) hint.textContent = NONE_HINT;
     };
     const cardOf = jobKey => { if (gateCard && gateCard.isConnected) return gateCard; try { return el.ownerDocument.querySelector(`.rvItem[data-key="${(root.CSS && root.CSS.escape ? root.CSS.escape(jobKey) : jobKey)}"]`); } catch (_) { return null; } };
     const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -444,11 +424,11 @@
       APPROVING.add(key); let pressed = false;
       // (NONEPLAIN 2: Approve (the button or the A key) with None staged IS the commit: every face goes, with no seal (Engrave.saveSetup -> takeAway), the page says so and moves on as after any Approve; nothing is
       //  left to approve, so the press ends there and never approves the old job. With the "Cut it plain" row showing, Approve is the go-ahead too.)
-      const noneNow = m.d.mode === 'none', goAhead = noneNow || m.d.confirm === 'save';
+      const noneNow = m.d.mode === 'none';
       try {
         say(cardOf(jobKey), noneNow ? '' : WAIT_WHY);
-        const res = await commit(m, goAhead);
-        if (!res || !res.ok) { if (!(res && (res.confirm || res.cancelled))) say(cardOf(jobKey), 'Not approved: ' + str((res && res.message) || 'the new words were not kept') .replace(/^Not saved:\s*/, '')); return; }
+        const res = await commit(m);
+        if (!res || !res.ok) { if (!(res && res.cancelled)) say(cardOf(jobKey), 'Not approved: ' + str((res && res.message) || 'the new words were not kept') .replace(/^Not saved:\s*/, '')); return; }
         if (noneNow) return;
         const E = Eng(), until = Date.now() + 60000 * Math.max(0.001, +(root && root.CN_SPIN_SCALE) || 1);
         const jobNow = () => tryDo(() => ((E && E.jobsOf ? E.jobsOf(line) : jobs()) || []).find(j => j && j.key === jobKey), null);
@@ -459,6 +439,7 @@
         await wait(0);   // (the card of the fitted words is drawn first)
         const card = cardOf(jobKey), b = card && (card.querySelector(`[data-a="${act}"]`) || card.querySelector('[data-a="approve"]'));
         if (b && !b.disabled) { APPROVING.delete(key); say(card, ''); pressed = true; b.click(); }
+        else if (j && ['approved', 'written'].includes(j.state)) say(card, '');   // (STAGEALL: the face shown kept its approval (a face added has its own Approve on its own card): nothing to say)
         else say(card, j && j.state === 'review' ? 'Not approved: look at the new words, then press Approve.' : 'Not approved: the new words are still being placed. Press Approve once they are drawn.');
       } finally { if (!pressed) APPROVING.delete(key); }
     };
@@ -511,7 +492,7 @@
       hiDecorate(el, vm, d, slot);   // (ENGHILITE: the system's own choice stays marked)
       hookCard();
       noJob(vm, d);
-      noneGate(vm, d);
+      stageGate(vm, d);
       const P = Prev(); if (P && P.warm && !draw.warmed) { draw.warmed = true; tryDo(() => P.warm()); }
       const want = fs || (d.focus && el.ownerDocument.activeElement === el.ownerDocument.body ? d.focus : null);
       restoreFocus(want);
@@ -548,36 +529,28 @@
       done(m, res);
       return res || { ok: false };
     };
-    /** LIVEWORDS: KEEP what is staged (words, fonts, the faces engraved), with no question: the one save path (Engrave.saveSetup). A change that would cut an approved face plain says so first
-     *  (the "Cut it plain" / "Keep it as it is" row); a change the line cannot take is said and the faces engraved go back to what is kept. -> { ok, same?, confirm?, message? } */
-    const commit = async (m, confirmed) => {
+    /** LIVEWORDS / STAGEALL: KEEP what is staged (words, fonts, the faces engraved), with no question and no warning (Paul, 29 Oct 2026: "I don't ever want to see this warning"): the one save path
+     *  (Engrave.saveSetup), called by Approve alone. A change the line cannot take (a piece already cut) is said and the faces engraved go back to what is kept. -> { ok, same?, message? } */
+    const commit = async m => {
       const { vm, d } = m, S = Setup(), patch = S.patchOf(vm, d);
       if (!hasPatch(patch)) return { ok: true, same: true };
       const cons = S.consequences(vm.line, vm.jobs, nextSetupOf(vm, patch), vm.setup);
       if (cons && cons.blocked) { d.error = cons.blocked; if (d.mode !== vm.mode) { d.mode = vm.mode; const on = facesOf(d.mode); if (!on.includes(d.face)) d.face = on[0] || d.face; } draw(); paintAll(vm, d); return { ok: false, message: cons.blocked }; }
-      if (!confirmed && cons && cons.plain.length) { d.confirm = 'save'; d.confirmLines = cons.lines.filter(l => /already/.test(l)); draw(); return { ok: false, confirm: true }; }
       return run(m, patch);
     };
-    /** The faces engraved change (None / Front / Back): kept at once; the face pressed is shown once it is kept. */
+    /** The faces engraved change (None / Front / Back): STAGED, like typed words (STAGEALL, Paul 29 Oct 2026: "The user is allowed to choose none front or back without any explanations ... it's not approved until the
+     *  Approve button is pressed again"): the toggle and the previews change at once, Approve keeps it, leaving the card lets it go. NONEPLAIN 2: None shows the charm alone; Front or Back pressed again brings back
+     *  exactly what was there (nothing was saved, so an approval is still an approval). */
     const pressMode = (m, want) => {
       const { vm, d } = m, on = facesOf(d.mode);
       if (want !== 'none' && on.includes(want)) { if (!setFace(want)) d.face = want; show(want); return; }   // (engraved already: a press shows it, never takes it away)
       if (want === 'none' && d.mode === 'none') return;
-      // NONEPLAIN 2 (Paul, 29 Oct 2026, order 4213825625: "When I press none the actual order just abruptly disappears with no feedback ... if the user presses none maybe they want to change their mind and then
-      // press back or front again and then what? ... This will only take effect when the User clicks "Approve" after selecting the "None" option"): None is STAGED, like typed words. Nothing is saved and the card
-      // stays: the None toggle is pressed, the thumbnails and the work area show the charm alone (stageOf: plain; Engrave.draftFit: no words), a line by Approve says what Approve will do (noneGate). Front or Back
-      // pressed again brings back exactly what was there (the draft never let go of the words, the font or the position; nothing was saved, so an approval is still an approval). Only Approve keeps it (approveAfterCommit).
-      if (want === 'none') { d.wasMode = d.mode; setMode(vm, d, 'none'); d.after = null; draw(); paintAll(vm, d); changed('mode', d.face); return; }
-      if (d.mode === 'none' && d.wasMode && facesOf(d.wasMode).includes(want)) {
-        d.mode = d.wasMode; d.wasMode = ''; d.confirm = ''; d.error = ''; d.face = want; draw(); paintAll(vm, d); changed('mode', d.face);
-        if (!hasPatch(Setup().patchOf(vm, d))) { show(want); return; }   // (what was saved: nothing to keep)
-        commit(m, false).then(r => { if (r && r.ok) show(want); }, () => {}); return;
-      }
-      setMode(vm, d, on.length ? 'both' : want);
-      d.face = want;
+      d.error = '';
+      if (want === 'none') { d.wasMode = d.mode; setMode(vm, d, 'none'); }
+      else if (d.mode === 'none' && d.wasMode && facesOf(d.wasMode).includes(want)) { d.mode = d.wasMode; d.wasMode = ''; d.face = want; }
+      else { setMode(vm, d, on.length ? 'both' : want); d.face = want; }
       draw(); paintAll(vm, d); changed('mode', d.face);
-      d.after = want;
-      commit(m, false).then(r => { if (r && r.ok) show(want); }, () => {});
+      if (want !== 'none' && faceJobOf(vm, want, slot)) show(want);
     };
     const click = e => {
       const b = e.target && e.target.closest && e.target.closest('[data-engp]'); if (!b || !el.contains(b) || b.disabled || dead) return;
@@ -585,21 +558,6 @@
       if (d.busy) return;
       if (a === 'face') { setFace(b.dataset.face); show(b.dataset.face); }
       else if (a === 'mode') pressMode(m, b.dataset.mode);
-      else if (a === 'keep') { d.confirm = ''; d.confirmLines = null; if (d.mode !== vm.mode) { d.mode = vm.mode; const on = facesOf(d.mode); if (!on.includes(d.face)) d.face = on[0] || d.face; } draw(); paintAll(vm, d); changed('mode', d.face); }
-      else if (a === 'saveYes') { const f = d.after; commit(m, true).then(r => { if (r && r.ok && f) show(f); }, () => {}); }
-      else if (a === 'pos') {
-        const P = Pos(), job = faceJobOf(vm, d.face, slot); if (!P || !job || !job.fit) return;
-        const step = e.shiftKey ? 2 : 0.5, act = b.dataset.act;
-        let r = null;
-        if (act === 'left') r = P.nudge(job, -step, 0); else if (act === 'right') r = P.nudge(job, step, 0);
-        else if (act === 'up') r = P.nudge(job, 0, step); else if (act === 'down') r = P.nudge(job, 0, -step);
-        else if (act === 'centre') r = P.centre(job); else if (act === 'smaller') r = P.size(job, 0.95); else if (act === 'larger') r = P.size(job, 1.05);
-        // no room (refused, or stopped at the edge of the safe area): that button looks off, with its title; any other move that works gives the room back
-        const stuck = !!r && (r.ok === false || r.clamped === true);
-        if (stuck) d.noRoom[job.key] = { [act]: true }; else delete d.noRoom[job.key];
-        if (r && r.ok === false) { draw(); return; }          // (the text stays; the page already said so)
-        d.moved[job.key] = true; draw(); paintAll(vm, d); changed('position', d.face);   // (LIVEWORDS: a move is the job's at once; nothing to save or cancel)
-      }
     };
     const input = e => {
       const t = e.target; if (!t || !t.dataset || !t.dataset.engp || dead) return;
@@ -612,6 +570,7 @@
       if (t.dataset.engp === 'font' && t.tagName === 'SELECT') t.style.fontFamily = (t.selectedOptions[0] && t.selectedOptions[0].style.fontFamily) || '';
       const p = el.querySelector('.engp'); if (p) { if (hasPatch(Setup().patchOf(vm, d))) p.dataset.staged = '1'; else delete p.dataset.staged; }
       hiDecorate(el, vm, d, slot);   // (ENGHILITE: the tint follows the staged words / font; the marks stay)
+      stageGate(vm, d);   // (STAGEALL: Approve lights up with the first letter, and goes calm again when the words are as approved)
       paint(vm, d, f); changed(t.dataset.engp, f);   // (LIVEWORDS: the face's thumbnail at once, the work area's draft in the same tick: Engrave.draftFit)
     };
     const key_ = e => {
@@ -630,7 +589,7 @@
       d.moved[job.key] = true; d.noRoom = {}; draw(); paintAll(vm, d); changed(kind || 'position', d.face); return true;
     };
     /** Keep what is staged now, quietly (a test, a host that closes the card itself). -> Promise<{ ok, ... }> */
-    const commitNow = () => { const m = dead ? null : model(); return m ? commit(m, false) : Promise.resolve({ ok: false }); };
+    const commitNow = () => { const m = dead ? null : model(); return m ? commit(m) : Promise.resolve({ ok: false }); };
     return { draw, refresh: draw, setFace, beforeMove, moved, commit: commitNow, stageNone, destroy() { dead = true; untrack(); sweepSoon(); for (const [t, f] of ev) el.removeEventListener(t, f); if (gateCard) { gateCard.removeEventListener('click', blockClick, true); gateCard.removeEventListener('keydown', blockKey, true); } }, paintAll: () => { const m = model(); if (m) paintAll(m.vm, m.d); } };
   }
 

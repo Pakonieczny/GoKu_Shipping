@@ -159,7 +159,7 @@ const root = path.join(__dirname, '../..');
     const d1 = await page.evaluate(() => { const k = document.querySelector('#egQueue .rvItem'); return { key: k.dataset.key, state: k.dataset.state, tick: !!k.querySelector('.egApproved[data-a="approved"][disabled]'), approve: !!k.querySelector('[data-a="approve"]'), job: Engrave.items().get('4175370240_1#D1').state }; });
     check(c.key === keyOf('4175370240', 'D1') && d1.state === 'approved' && d1.tick && !d1.approve && d1.job === 'approved', `a click on the approved disc's line opens Disc 1's own card, approved, a calm tick and no Approve; looking changes nothing: ${JSON.stringify(d1)}`);
     // the first change of the approved disc puts ONLY that disc back to "needs Approve"
-    await page.evaluate(() => document.querySelector('#egQueue .rvItem .engpPb[data-act="right"]').click());
+    await page.evaluate(() => Engrave.nudge(Engrave.items().get('4175370240_1#D1'), 0.5, 0));   // (BIGPANEL: the panel has no position buttons; a move in the work area, as a drag or Centre makes it)
     await page.waitForFunction(() => Engrave.items().get('4175370240_1#D1').state === 'review', null, { timeout: 15000 }); await settle();
     const st = await page.evaluate(() => ({ d1: Engrave.items().get('4175370240_1#D1').state, d2: Engrave.items().get('4175370240_1#D2').state, approve: !!document.querySelector('#egQueue .rvItem [data-a="approve"]') }));
     check(st.d1 === 'review' && st.d2 === 'review' && st.approve, `a nudge of the approved Disc 1 puts it back to "needs Approve" (Approve is back on its card): ${JSON.stringify(st)}`);
