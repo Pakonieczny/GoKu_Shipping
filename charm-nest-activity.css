@@ -578,3 +578,15 @@
 @container (max-width:800px){.doneRow:is(.placementRow,.decidedRow,.workRow){--thumb-size:96px}}
 @container (max-width:600px){.ordList .doneRow.orderListRow,.ordList .doneRow.orderListRow:has(>.egPlacementSeals:not(:empty)){--thumb-size:76px}}
 @container (max-width:500px){.doneRow:is(.placementRow,.decidedRow,.workRow){--thumb-size:76px}}
+
+/* ROWSEAL (Paul, 29 Oct 2026: "This card is needlessly too tall ... vertical separation between the back and front and other taxes as much to large there's no need for the card height to grow
+   beyond this normal size unless there is an excessive amount of pieces in the given order."): a face's approval seal beside its line in a list row (the Design & Engrave list, the decided rows,
+   the Orders rows and cards) is drawn about 30 px across (60 % of its 50 px), and never makes its line (and so the row) taller: its box is the line's height and the seal stands in it scaled
+   from its right edge. The order window and the engraving card keep their full-size seals. */
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar .egEarSeal,
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .egEar .egEarSeal{display:flex;align-items:center;justify-content:flex-end;height:24px;max-height:24px;overflow:visible;align-self:center}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar .egEarSeal>*,
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .egEar .egEarSeal>*{flex:none;transform:scale(.6);transform-origin:100% 50%;margin:0}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar,
+:is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .egEar{min-height:24px;max-height:none}
+:is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEars{align-content:start}
