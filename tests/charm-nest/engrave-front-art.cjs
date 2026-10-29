@@ -232,24 +232,25 @@ async function partB() {
     const b1 = await page.evaluate(() => { const cv = __fa.cv(), job = Engrave.items().get(__fa.card().dataset.key);
       return { face: job.face || 'back', art: cv._frontArt.length, front: cv._frontFace, show: cv._showFront, toggle: !!__fa.toggle(), peek: !!document.querySelector('.egFrontPeek'), pix: __fa.pix(cv) }; });
     check('B5 the back: none of the front\'s art is drawn on it (no "Show front"), and a piece whose front has its own placement has no Front | Back switch (its front is its own card)', b1.face === 'back' && b1.art === 0 && !b1.front && !b1.show && !b1.toggle && !b1.peek && b1.pix.red === 0, JSON.stringify(b1));
-    // B6 · a back whose front is engraved by no job (the disc: a flower on its front, words on its back): the Front | Back switch, on Back, the back drawn as the back
+    // B6 · a back whose front is engraved by no job (the disc: a flower on its front, words on its back): the back drawn as the back. (ENGVIEW, Paul 29 Oct 2026: "Remove the "Back" and "Front" toggle from
+    // this place. Instead the user can now click on the actual back and front thumbnail": no switch on the grid; its front is shown with Engrave.showFace, what the card's thumbnails call)
     await R.openEngraveDetail(w, 'discTwin', { face: 'back' }); await R.settle(page, 900);
-    const d1 = await page.evaluate(() => { const cv = __fa.cv(), t = __fa.toggle(), r = t && t.getBoundingClientRect(), c = cv.getBoundingClientRect();
-      return { art: cv._frontArt.length, front: cv._frontFace, sw: t ? [...t.querySelectorAll('[data-fv]')].map(b => b.dataset.fv + (b.getAttribute('aria-pressed') === 'true' ? '*' : '')).join(' ') : '', pos: r && [Math.round(r.left - c.left), Math.round(r.top - c.top), Math.round(r.right - c.left)], cw: c.width, pix: __fa.pix(cv) }; });
-    check('B6 the disc\'s back (its front a design with art, engraved by no job): a small Front | Back switch in the drawing\'s top-left corner beside the grid\'s label, on Back; the back draws no art', d1.sw === 'front back*' && d1.art === 0 && !d1.front && d1.pix.red === 0 && d1.pos[0] > 30 && d1.pos[1] >= 0 && d1.pos[1] < 30 && d1.pos[2] < d1.cw, JSON.stringify(d1));
+    const d1 = await page.evaluate(() => { const cv = __fa.cv();
+      return { art: cv._frontArt.length, front: cv._frontFace, toggle: !!__fa.toggle(), pix: __fa.pix(cv) }; });
+    check('B6 the disc\'s back (its front a design with art, engraved by no job): no switch on the grid, the back draws no art', !d1.toggle && d1.art === 0 && !d1.front && d1.pix.red === 0, JSON.stringify(d1));
     // B7 · Front: the front as the front, its flower as vectors (muted, never mirrored); the words stay the back's; Back again: the back
-    await page.click(Q + ' .backHost .egFaceView [data-fv="front"]'); await R.settle(page, 500);
+    await page.evaluate(() => Engrave.showFace(Engrave.items().get(__fa.card().dataset.key), 'front', { animate: false })); await R.settle(page, 500);
     const d2 = await page.evaluate(() => { const cv = __fa.cv(), job = Engrave.items().get(__fa.card().dataset.key); window.__rec = []; cv._paint(); window.__rec = null;
       const live = Pool.charmOf(job.copies[0]), v = cv._frontArt.length && CharmNestGeom.backView(live, CharmNestGeom.viewOptionsFor({ charmUp: live.upAngle, entry: Master.entryFor(job.row.spec.designSku) || {}, face: 'front' }));
-      return { viewFace: cv._viewFace, front: cv._frontFace, art: cv._frontArt.length, unmirrored: !!v && JSON.stringify(v.M) === '[1,0,0,1,0,0]', pix: __fa.pix(cv), sw: [...__fa.toggle().querySelectorAll('[data-fv]')].map(b => b.dataset.fv + (b.getAttribute('aria-pressed') === 'true' ? '*' : '')).join(' '), approve: !!document.querySelector('#egQueue .rvItem[data-kind=placement] [data-a="approve"]') }; });
+      return { viewFace: cv._viewFace, front: cv._frontFace, art: cv._frontArt.length, unmirrored: !!v && JSON.stringify(v.M) === '[1,0,0,1,0,0]', pix: __fa.pix(cv), sw: !!__fa.toggle(), approve: !!document.querySelector('#egQueue .rvItem[data-kind=placement] [data-a="approve"]') }; });
     await R.shot(w, 'FA-disc-front-view');
-    await page.click(Q + ' .backHost .egFaceView [data-fv="back"]'); await R.settle(page, 500);
+    await page.evaluate(() => Engrave.showFace(Engrave.items().get(__fa.card().dataset.key), 'back', { animate: false })); await R.settle(page, 500);
     const d3 = await page.evaluate(() => { const cv = __fa.cv(); return { viewFace: cv._viewFace || null, front: cv._frontFace, art: cv._frontArt.length, pix: __fa.pix(cv) }; });
-    check('B7 Front in the switch: the disc\'s FRONT as the front (its flower drawn, in red, not mirrored), the switch on Front, Approve still the back\'s; Back again: the back, no art',
-      d2.viewFace === 'front' && d2.front && d2.art > 10 && d2.unmirrored && d2.pix.red > 50 && d2.sw === 'front* back' && d2.approve && !d3.viewFace && !d3.front && d3.art === 0 && d3.pix.red === 0, JSON.stringify({ d2, d3 }));
+    check('B7 the Front shown (showFace): the disc\'s FRONT as the front (its flower drawn, in red, not mirrored), no switch, Approve still the back\'s; Back again: the back, no art',
+      d2.viewFace === 'front' && d2.front && d2.art > 10 && d2.unmirrored && d2.pix.red > 50 && !d2.sw && d2.approve && !d3.viewFace && !d3.front && d3.art === 0 && d3.pix.red === 0, JSON.stringify({ d2, d3 }));
     // B8 · the mini tag (a front and a back job): no switch on either face
     await R.openEngraveDetail(w, 'tag', { face: 'back' }); await R.settle(page, 700);
-    const t1 = await page.evaluate(() => { const cv = __fa.cv(); return { art: cv._frontArt.length, toggle: !!__fa.toggle(), text: cv.parentElement.textContent.trim() }; });
+    const t1 = await page.evaluate(() => { const cv = __fa.cv(); return { art: cv._frontArt.length, toggle: !!__fa.toggle(), text: [...cv.parentElement.childNodes].filter(n => !(n.classList && n.classList.contains('egZoom'))).map(n => n.textContent).join('').trim() }; });   // (the zoom box's own words aside, ENGVIEW)
     check('B8 the mini tag (its front and its back each a job): no switch, nothing of the front on the back', t1.art === 0 && !t1.toggle && t1.text === '', JSON.stringify({ t1 }));
     await R.openEngraveDetail(w, 'both', { face: 'back' }); await R.settle(page, 700);
 

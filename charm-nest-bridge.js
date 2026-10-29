@@ -9571,8 +9571,7 @@ const Engrave = window.Engrave = (() => {
     const bc = c.querySelector(".backHost canvas"); if (bc && bc._paint) bc._paint();
     const rec = DRAFTS.get(job.key), none = !!(rec && rec.fit && rec.fit.empty), f = rec && rec.fit && !none ? rec.fit : job.fit, cap = c.querySelector("[data-cap]");
     if (cap && f && Number.isFinite(f.capMm)) cap.textContent = capText(f);
-    const rh = c.querySelector(".reviewIdentity") || c.querySelector(".rh");   // (the SMALL chip says what is drawn, as refresh() keeps it; HDRMETA: never a THIN STROKES chip)
-    if (rh && f) { rh.querySelectorAll(".small").forEach(n => n.remove()); if (!none && f.small) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>`); }
+    // (CAPCHIP, Paul 29 Oct 2026: "Remove the "SMALL cap. 1.22" text and function from this UI": the head draws no SMALL chip; the fit still measures fit.small and saves it with the placement)
     draftNote(c, rec);
   }
   /** THE ONE CALL of the panel (onDraft): the staged edit of ONE face job, drawn in the work area at once. staged = { text, fontWord, mode, position? } (the panel's own words for that face: the textarea, the font
@@ -9620,7 +9619,7 @@ const Engrave = window.Engrave = (() => {
     for (const m of view.members || []) for (const poly of G.flatten(m, 16)) for (const q of poly) { const d = Math.hypot(q[0] - view.cx, q[1] - view.cy); if (d > r) r = d; }
     r = (r || 36) + 4.5 * PT; STEADY_REACH.set(view, r); return r;
   }
-  function renderBack(job, px, { grid = false, hatch = true, editable = false, include = null, draft = false, made = false, steady = false } = {}) {
+  function renderBack(job, px, { grid = false, hatch = true, editable = false, include = null, draft = false, made = false, steady = false, zoom = null, label = null } = {}) {
     if (editable) freshMask(job);
     const view = job.view, mask = job.mask, fit = job.fit; const cv = document.createElement("canvas"); cv._editable = editable; cv._draft = !!draft;
     const handles = view.members.reduce((a, s) => [Math.min(a[0], s.bbox[0]), Math.min(a[1], s.bbox[1]), Math.max(a[2], s.bbox[2]), Math.max(a[3], s.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
@@ -9639,12 +9638,21 @@ const Engrave = window.Engrave = (() => {
     // that holds the piece at ANY turn (steadyReach: its farthest point from that centre, and room for the words' box and handle). So a turn, a resize of the words or the other face draws the
     // charm turned inside the same grid: the same size, the same place, the same millimetres. Only the view on the screen: the view, the fit and every file are as before
     const steadyNow = box && steady && Number.isFinite(+view.cx) && Number.isFinite(+view.cy);
-    if (steadyNow) { const r = steadyReach(view), k0 = Math.min(px[0], px[1]) / (2 * r), hw = px[0] / (2 * k0), hh = px[1] / (2 * k0); bb = [view.cx - hw, view.cy - hh, view.cx + hw, view.cy + hh]; pad = 0; }
+    // (ENGVIEW, 29 Oct 2026: `zoom` { z, c } is the view inside that same grid: z times the steady scale about the point c (pt), the work area's zoom and pan; the box, the view, the fit and every file are untouched)
+    let steadyFit = null;
+    if (steadyNow) { const r = steadyReach(view), k0 = Math.min(px[0], px[1]) / (2 * r), z = zoom && zoom.z > 0 && Number.isFinite(zoom.z) ? zoom.z : 1, c = zoom && Array.isArray(zoom.c) && zoom.c.length === 2 && zoom.c.every(Number.isFinite) ? zoom.c : [view.cx, view.cy], kz = k0 * z, hw = px[0] / (2 * kz), hh = px[1] / (2 * kz); bb = [c[0] - hw, c[1] - hh, c[0] + hw, c[1] + hh]; pad = 0; steadyFit = { k0, z, c: c.slice(), cx: +view.cx, cy: +view.cy }; }
     const w = bb[2] - bb[0] + 2 * pad, h = bb[3] - bb[1] + 2 * pad; const k = box ? Math.min(px[0] / w, px[1] / h) : px / Math.max(w, h);
-    cv.width = Math.round(w * k); cv.height = Math.round(h * k); cv._sizePt = {w,h}; cv._steady = !!steadyNow; const ctx = cv.getContext("2d");
+    cv.width = Math.round(w * k); cv.height = Math.round(h * k); cv._sizePt = {w,h}; cv._steady = !!steadyNow; cv._steadyFit = steadyFit; const ctx = cv.getContext("2d");
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
     const tx = (x, y) => [(x - bb[0] + pad) * k, (bb[3] + pad - y) * k];
-    if (grid) { ctx.strokeStyle = "rgba(0,0,0,.09)"; ctx.lineWidth = 1; const x0 = Math.floor((bb[0] - pad) * MM), x1 = Math.ceil((bb[2] + pad) * MM); for (let mm = x0; mm <= x1; mm++) { const p = tx(mm * PT, 0); ctx.beginPath(); ctx.moveTo(p[0], 0); ctx.lineTo(p[0], cv.height); ctx.stroke(); } const y0 = Math.floor((bb[1] - pad) * MM), y1 = Math.ceil((bb[3] + pad) * MM); for (let mm = y0; mm <= y1; mm++) { const p = tx(0, mm * PT); ctx.beginPath(); ctx.moveTo(0, p[1]); ctx.lineTo(cv.width, p[1]); ctx.stroke(); } ctx.save(); ctx.fillStyle = "rgba(0,0,0,.4)"; ctx.font = `${Math.round(Math.max(10, Math.min(15, cv.width / 55)))}px sans-serif`; ctx.textBaseline = "top"; ctx.fillText("1 mm grid", 6, 6); ctx.restore(); }   // hung from the top edge: a large preview's label was cut off; sized by the canvas, not the charm (a small charm's big zoom wrote it at 24 px)
+    if (grid) {
+      // (ENGVIEW: zoomed in, tenths of a millimetre too once they are 6 px apart, as the Charm Editor's grid; zoomed far out, every 5 mm)
+      const pxmm = k * PT, lines = (stepMm, style) => { const st = stepMm * PT, a = Math.floor((bb[0] - pad) / st), b = Math.ceil((bb[2] + pad) / st), c = Math.floor((bb[1] - pad) / st), d = Math.ceil((bb[3] + pad) / st); if (b - a > 3000 || d - c > 3000) return; ctx.strokeStyle = style; ctx.lineWidth = 1; for (let n = a; n <= b; n++) { const p = tx(n * st, 0); ctx.beginPath(); ctx.moveTo(p[0], 0); ctx.lineTo(p[0], cv.height); ctx.stroke(); } for (let n = c; n <= d; n++) { const p = tx(0, n * st); ctx.beginPath(); ctx.moveTo(0, p[1]); ctx.lineTo(cv.width, p[1]); ctx.stroke(); } };
+      if (steadyNow && pxmm * 0.1 >= 6) lines(0.1, "rgba(0,0,0,.045)");
+      lines(steadyNow && pxmm < 3 ? 5 : 1, "rgba(0,0,0,.09)");
+      const at = Array.isArray(label) ? label : [6, 6];
+      ctx.save(); ctx.fillStyle = "rgba(0,0,0,.4)"; ctx.font = `${Math.round(Math.max(10, Math.min(15, cv.width / 55)))}px sans-serif`; ctx.textBaseline = "top"; ctx.fillText("1 mm grid", at[0], at[1]); ctx.restore();
+    }   // hung from the top edge: a large preview's label was cut off; sized by the canvas, not the charm (a small charm's big zoom wrote it at 24 px)   // hung from the top edge: a large preview's label was cut off; sized by the canvas, not the charm (a small charm's big zoom wrote it at 24 px)
     if (hatch && mask) { // the eroded mask as a light tint: where text may go
       const img = ctx.createImageData(cv.width, cv.height); const d = img.data;
       for (let py = 0; py < cv.height; py++) for (let pxx = 0; pxx < cv.width; pxx++) { const x = bb[0] - pad + pxx / k, y = bb[3] + pad - py / k; if (G.at(mask, x, y)) { const i = (py * cv.width + pxx) * 4; d[i] = 231; d[i + 1] = 237; d[i + 2] = 223; d[i + 3] = 255; } }
@@ -9654,12 +9662,13 @@ const Engrave = window.Engrave = (() => {
     base.getContext("2d").drawImage(cv, 0, 0);
     /* FRONTART (Paul, 27 Oct 2026: "In the Engraving Modal the User sometimes needs to be able to see the engraving on the front of a given charm"). Only the editor's work area (editable) draws the
        design's own art: on a FRONT it is always there, muted, over the grid and the tint and under the cut line and the words. (FACEVIEW, Paul 28 Oct 2026: "When viewing the back, the front's art must
-       not be drawn mirrored on top as if it were the back": a BACK draws only what the back carries, its cut lines, the parts added to it and its words; the front is seen as the front, faceViewSwitch.)
+       not be drawn mirrored on top as if it were the back": a BACK draws only what the back carries, its cut lines, the parts added to it and its words; the front is seen as the front, showFace.)
        The pictures written with a piece (the approval .png, the look) are not editable and never draw it; the engraving card's preview (`made`, MADEPV: renderMade) draws it as the work area does. Display only: job.view, job.mask and job.fit are read, never changed. */
     const onFront = view.face === "front", art = (editable || made) && onFront ? frontArtOf(view) : [];   // (MADEPV: `made`, the cards' picture of the face as it is made, renderMade)
     cv._frontArt = art; cv._frontFace = onFront; cv._showFront = false;
     if (art.length) frontArtOn(ctx, art, tx, k, cv.width, cv.height, FRONT_ART_ALPHA.front);
-    if (grid) cv._gridLabel = gridLabelBox(ctx, cv.width);   // (where the Front | Back switch sits: just after the grid's own label)
+    if (grid) cv._gridLabel = gridLabelBox(ctx, cv.width, label);
+    { const d = drawnBounds(view.members) || handles; cv._zero = [d[0], d[3]]; }   // (ENGVIEW: the rulers' zero, the piece's top-left as drawn)
     // CHARM EDIT · BACK (27 Oct 2026): what a person added to this BACK is engraved by the back's own file with the words, so every picture of the back draws it where the file puts it (backArtOf):
     // the work area as a front draws its art (the laser's colours, muted), the pictures written with the piece in the words' ink, as the file engraves it; under the cut line and the words
     const added = onFront ? [] : backArtOf(job), ownArt = g => { if (!added.length) return; if (editable) frontArtOn(g, added, tx, k, cv.width, cv.height, FRONT_ART_ALPHA.own); else backArtInk(g, added, tx, k); };   // (OWNART: every part added to a back is the person's own: full strength)
@@ -9819,15 +9828,16 @@ const Engrave = window.Engrave = (() => {
     ctx.restore();
   }
   /** Where renderBack wrote "1 mm grid" (canvas px): { x, y, w, h }. */
-  function gridLabelBox(ctx, width) {
+  function gridLabelBox(ctx, width, at) {
     const size = Math.round(Math.max(10, Math.min(15, width / 55)));   // (as renderBack sizes it)
     let w = 0; try { ctx.save(); ctx.font = `${size}px sans-serif`; const m = ctx.measureText("1 mm grid"); w = m && m.width || 0; ctx.restore(); } catch (_) { w = 0; }
-    return { x: 6, y: 6, w: w || size * 4.6, h: size };
+    const p = Array.isArray(at) ? at : [6, 6];
+    return { x: p[0], y: p[1], w: w || size * 4.6, h: size };
   }
   /* FACEVIEW (Paul, 28 Oct 2026: "Engravings and cut-lines should always be visible in the engraving mode when viewing the front of a given charm … Definitely all of the work and updates to a given charm
      performed in the Charm Editor must 100% be showing and visible in the engraving modal"). The work area draws the face it shows as THAT face: every cut line, the master's engraving on it, every part
      the Charm Editor added or changed there, and the words fitted on it. The old "Show front" laid the front's art over the BACK, mirrored, as if it were the back's: gone. In its place, beside the grid's
-     label, one small Front | Back switch, on a piece whose other face has no engraving of its own (a face that has one is its own card): it shows the other face as it is cut and engraved, view only, while
+     label, one small Front | Back switch (ENGVIEW, 29 Oct 2026: now the card's own Front / Back thumbnails, showFace), on a piece whose other face has no engraving of its own (a face that has one is its own card): it shows the other face as it is cut and engraved, view only, while
      the Approve block stays the face's being approved. A save of the Charm Editor that changed only that other face shows it at once (openCharmEditorOnce), and the card's own thumbnails show it too
      (charm-nest-engrave-card.js artFaces). In memory only, per job: nothing of it travels with a job, a record or a file. */
   const FACE_VIEW = new Map();   // job key -> the other face, while the work area shows it
@@ -9861,9 +9871,9 @@ const Engrave = window.Engrave = (() => {
     return { view: got[face], charm: live };
   }
   /** The work area's drawing of the OTHER face of `job`'s piece (view only): renderBack over that face's view, no words, no handles. null when it cannot be drawn. */
-  function renderFaceView(job, face, px) {
+  function renderFaceView(job, face, px, zoom) {
     const fv = faceViewOf(job, face); if (!fv || !fv.view) return null;
-    const cv = renderBack({ key: job.key + "~" + face, view: fv.view, mask: null, fit: null, copies: job.copies, row: job.row, _viewCharm: fv.charm }, px, { grid: true, hatch: false, editable: true, steady: true });   // (STEADYGRID: the same grid as the job's own face)
+    const cv = renderBack({ key: job.key + "~" + face, view: fv.view, mask: null, fit: null, copies: job.copies, row: job.row, _viewCharm: fv.charm }, px, { grid: true, hatch: false, editable: true, steady: true, zoom, label: WORK_LABEL });   // (STEADYGRID: the same grid as the job's own face)
     cv._editable = false; cv._viewFace = face;
     return cv;
   }
@@ -9894,33 +9904,246 @@ const Engrave = window.Engrave = (() => {
     const j = madeJobOf(job); if (!j || !j.view || !j.fit) return null;
     try { const cv = renderBack(j, px, { grid: false, hatch: false, made: true }); cv._made = true; return cv; } catch (e) { console.warn("engraving card: the face as made", e); return null; }
   }
-  function faceViewCss() {
-    if (document.getElementById("egFaceViewCss")) return;
-    const s = document.createElement("style"); s.id = "egFaceViewCss";
-    s.textContent = ".backHost{position:relative}.egFaceView{position:absolute;left:0;top:0;display:inline-flex;align-items:center;padding:1px;border-radius:999px;background:rgba(255,255,255,.92);border:1px solid var(--line,#e4ddd0);z-index:1}"
-      + ".egFaceView button{appearance:none;border:0;background:transparent;font:600 11px/1.3 var(--sans,system-ui);color:var(--ink70,#5b554c);padding:1px 9px;border-radius:999px;cursor:pointer}.egFaceView button[aria-pressed=true]{background:var(--ink,#2a2724);color:#fff;cursor:default}"
-      + ".egFaceView button:not([aria-pressed=true]):hover{color:var(--ink,#2a2724);background:rgba(0,0,0,.05)}.egFaceView button:focus-visible{outline:2px solid #5a6f8a;outline-offset:1px}.egFaceView .egFaceViewNote{font:11px/1.3 var(--sans,system-ui);color:var(--ink45,#8b857b);padding:0 8px 0 4px;white-space:nowrap}";
+  /* ── ENGVIEW · the work area's view (Paul, 29 Oct 2026, Design & Engrave) ──
+     FLIP ("5. Remove the "Back" and "Front" toggle from this place. Instead the user can now click on the actual back and front thumbnail ... The switch between back and front needs to be animated in
+     the same way as we currently do for the Sheets when transitioning between back and front views"): the grid's own Front | Back switch is gone. showFace(job, face) shows a face of the piece in the
+     work area: the face being engraved, the other face as it is cut and engraved (view only, FACEVIEW above), or the other face's own engraving card; the card's Front / Back thumbnails call it. The
+     work area turns as the sheets do (Motion.turner, the sheets' own Front | Back turn: to its edge, drawn from the side asked for, round again; at once with reduced motion); a face already shown
+     is left as it is.
+     ZOOM ("7. There is no zoom/Pan functionality in the engraving preview. Look at how we handle that in the charm editor and add the exact same functionality. Also add the same dynamic X, Y Rulers
+     that adapt to the real size as the user zooms in/out"): the Charm Editor's own view parts (CharmEditor.view: its wheel rule, Illustrator's ladder of zooms and its presets, its rulers' painting)
+     inside the STEADYGRID. The grid's box never changes: the zoom is the view inside it, drawn afresh at every step (renderBack's zoom), never a picture scaled. The wheel zooms about the pointer (a
+     pinch or a ⌘-wheel too; a two-finger scroll pans a zoomed view), ⌘ + / − go up and down the ladder, ⌘ 0 is the steady fit, ⌘ 1 actual size, the zoom box has the editor's presets; Space-drag, the
+     middle button and the Hand pan. Rulers along the grid's top and left, in millimetres from the piece's top-left, ticks and numbers from the editor's 1-2-5 ladder, the words' extent and the cursor
+     marked on them. View only: the fit, the placement, Approve and every file are as before; the words drag at every zoom (the canvas's map carries it). In memory only, per job and face shown. ── */
+  const WORK_ZOOM = new Map();   // job key + "|" + face -> { z (× the steady fit), c: [x, y] pt (the view's centre) }
+  const WORK_RULE = 16;          // the rulers' depth, px (the editor's)
+  const WORK_LABEL = [WORK_RULE + 6, WORK_RULE + 5];   // where the grid's "1 mm grid" is written: clear of the rulers
+  const WV = { space: false, hand: false, over: null, turn: null, face: null, still: false, keys: false };
+  const CEV = () => (window.CharmEditor && window.CharmEditor.view) || null;
+  const workZoomKey = (job, face) => (job && job.key) + "|" + (face || faceOf(job));
+  /** The zoom of `job`'s work area on `face` ({ z, c } for renderBack), or null at the steady fit. */
+  const workZoomOf = (job, face) => WORK_ZOOM.get(workZoomKey(job, face)) || null;
+  function workViewCss() {
+    if (document.getElementById("egWorkViewCss")) return;
+    const s = document.createElement("style"); s.id = "egWorkViewCss";
+    s.textContent = ".backHost{position:relative}.backHost.egFlipping{pointer-events:none}"
+      + ".egRule{position:absolute;display:block;margin:0;padding:0;pointer-events:none;background:rgba(247,245,240,.96);z-index:1}.egRuleX{border-bottom:1px solid var(--line,#e4ddd0)}.egRuleY{border-right:1px solid var(--line,#e4ddd0)}"
+      + ".egRuleC{position:absolute;pointer-events:none;background:rgb(247,245,240);border-right:1px solid var(--line,#e4ddd0);border-bottom:1px solid var(--line,#e4ddd0);box-sizing:border-box;z-index:1}"
+      + ".egZoom{position:absolute;display:inline-flex;align-items:center;gap:1px;padding:2px;border-radius:9px;background:rgba(255,255,255,.96);border:1px solid var(--line,#e4ddd0);box-shadow:0 2px 8px rgba(20,16,10,.08);z-index:2;font:600 11.5px/1 var(--sans,system-ui);color:var(--ink70,#5b554c)}"
+      + ".egZoom button{appearance:none;display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 5px;margin:0;border:0;border-radius:7px;background:transparent;color:inherit;font:inherit;cursor:pointer}"
+      + ".egZoom button:hover{background:rgba(0,0,0,.06);color:var(--ink,#2a2724)}.egZoom button:focus-visible{outline:2px solid var(--gold,#a9823f);outline-offset:1px}.egZoom button[aria-pressed=true]{background:var(--ink,#2a2724);color:#fff}"
+      + ".egZoom svg{width:15px;height:15px;display:block}.egZoom [data-ez=menu]{min-width:50px;font-variant-numeric:tabular-nums}"
+      + ".egZoomMenu{position:absolute;right:0;bottom:calc(100% + 4px);min-width:176px;display:grid;padding:4px;border-radius:10px;background:#fff;border:1px solid var(--line,#e4ddd0);box-shadow:0 8px 24px rgba(20,16,10,.16)}.egZoomMenu[hidden]{display:none}"
+      + ".egZoomMenu button{justify-content:space-between;width:100%;height:26px;font-weight:500;gap:14px}.egZoomMenu em{font-style:normal;color:var(--ink45,#8b857b)}.egZoomMenu hr{border:0;border-top:1px solid var(--line,#e4ddd0);margin:3px 2px}"
+      + ".egZoomMenu label{display:flex;align-items:center;gap:4px;margin:2px 2px 4px;padding:0 6px;height:26px;border:1px solid var(--line,#e4ddd0);border-radius:7px}.egZoomMenu input{flex:1;min-width:0;width:60px;border:0;outline:none;background:none;font:inherit;text-align:right}"
+      + ".backHost.egPanReady canvas,.backHost.egPanReady{cursor:grab!important}.backHost.egPanning canvas,.backHost.egPanning{cursor:grabbing!important}";
     (document.head || document.documentElement).appendChild(s);
   }
-  /** The Front | Back switch of `job`'s work area (canvas `bc` in `host`), or null when the piece's other face has its own engraving (its own card) or cannot be drawn. */
-  function faceViewSwitch(host, bc, job, card) {
-    const other = host && bc ? otherFaceOf(job) : null; if (!other) return null;
-    faceViewCss();
-    const shown = viewFaceOf(job), own = faceOf(job), el = document.createElement("span"); el.className = "egFaceView"; el.setAttribute("role", "group"); el.setAttribute("aria-label", "Face shown in the work area");
-    el.innerHTML = ["front", "back"].map(f => `<button type="button" data-fv="${f}" aria-pressed="${f === shown}" title="${f === own ? `The ${f}: its engraving, to place and approve` : `The ${f} as it is cut and engraved, with every part the Charm Editor put on it (view only: the engraving is on the ${own})`}">${f === "front" ? "Front" : "Back"}</button>`).join("")
-      + (shown !== own ? `<span class="egFaceViewNote">view only</span>` : "");
-    el.addEventListener("mousedown", e => e.preventDefault());   // (the card's keys keep the focus they had)
-    el.addEventListener("click", e => { const b = e.target.closest("[data-fv]"); if (!b || b.getAttribute("aria-pressed") === "true") return; e.stopPropagation(); setViewFace(job, b.dataset.fv, card); });
-    host.appendChild(el);
-    // (beside the grid's label, in the drawing's own top-left corner; under it when the drawing is too narrow for both: where "Show front" stood)
-    requestAnimationFrame(() => {
-      if (!el.isConnected || !bc.isConnected || !(bc.offsetWidth && bc.width)) return;
-      const s = bc.offsetWidth / bc.width, g = bc._gridLabel || { x: 6, y: 6, w: 50, h: 11 };
-      let left = bc.offsetLeft + (g.x + g.w + 8) * s, top = bc.offsetTop + Math.max(2, (g.y + g.h / 2) * s - el.offsetHeight / 2);
-      if (left + el.offsetWidth > bc.offsetLeft + bc.offsetWidth - 4) { left = bc.offsetLeft + g.x * s; top = bc.offsetTop + (g.y + g.h + 4) * s; }
-      el.style.left = Math.round(left) + "px"; el.style.top = Math.round(top) + "px";
+  const ZOOM_ICON = { hand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12V6.5a1.5 1.5 0 0 1 3 0V11"/><path d="M11 10.5V5a1.5 1.5 0 0 1 3 0v5.5"/><path d="M14 10.5V6.5a1.5 1.5 0 0 1 3 0V14a6 6 0 0 1-6 6h-.6a5 5 0 0 1-3.9-1.9L4 14.6a1.5 1.5 0 0 1 2.3-1.9L8 14.5"/></svg>',
+    fit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/></svg>' };
+  /** The view of a work area now: { z, c } (the steady fit: z 1 about the piece's turning point). */
+  function workState(ez) { const f = ez.bc._steadyFit, z = WORK_ZOOM.get(workZoomKey(ez.job, ez.face)); return z ? { z: z.z, c: z.c.slice() } : { z: 1, c: [f.cx, f.cy] }; }
+  /** CSS px a pt at zoom `z` of `ez`'s grid. */
+  const workK = (ez, z) => { const bc = ez.bc; return ez.bc._steadyFit.k0 * z * ((bc.offsetWidth || bc.width) / bc.width); };
+  const workPct = ez => { const V = CEV(); return workK(ez, workState(ez).z) / (V ? V.PX100 : 96 / 72) * 100; };
+  /** The view set to zoom `z` about centre `c` (pt), within the editor's limits (25 % … 6400 %, true size) and with its centre kept on the grid of the steady fit; drawn at the next frame. */
+  function workSet(ez, z, c) {
+    const bc = ez.bc, f = bc && bc._steadyFit; if (!f) return;
+    const V = CEV(), PX = V ? V.PX100 : 96 / 72, k1 = workK(ez, 1);
+    z = Math.min((V ? V.ZMAX : 64) * PX / k1, Math.max((V ? V.ZMIN : 0.25) * PX / k1, z));
+    const hw0 = bc.width / (2 * f.k0), hh0 = bc.height / (2 * f.k0);
+    c = [Math.min(f.cx + hw0, Math.max(f.cx - hw0, c[0])), Math.min(f.cy + hh0, Math.max(f.cy - hh0, c[1]))];
+    const key = workZoomKey(ez.job, ez.face);
+    if (Math.abs(z - 1) < 1e-6 && Math.hypot(c[0] - f.cx, c[1] - f.cy) < 1e-6) WORK_ZOOM.delete(key);
+    else { WORK_ZOOM.delete(key); WORK_ZOOM.set(key, { z, c }); while (WORK_ZOOM.size > 24) WORK_ZOOM.delete(WORK_ZOOM.keys().next().value); }
+    ez.redraw();
+  }
+  /** Zoom to `z` keeping the point under (clientX, clientY) where it is (the editor's zoomAtStage). */
+  function workZoomAt(ez, clientX, clientY, z) {
+    const bc = ez.bc, r = bc.getBoundingClientRect(); if (!r.width) return;
+    const st = workState(ez), V = CEV(), PX = V ? V.PX100 : 96 / 72, k1 = workK(ez, 1);
+    z = Math.min((V ? V.ZMAX : 64) * PX / k1, Math.max((V ? V.ZMIN : 0.25) * PX / k1, z));
+    const sx = clientX - r.left, sy = clientY - r.top, W = r.width, H = r.height, k = workK(ez, st.z), kz = workK(ez, z);
+    const px = st.c[0] - W / (2 * k) + sx / k, py = st.c[1] + H / (2 * k) - sy / k;   // (the point under the pointer, pt: y up)
+    workSet(ez, z, [px + W / (2 * kz) - sx / kz, py - H / (2 * kz) + sy / kz]);
+  }
+  /** The view moved by (dx, dy) screen px (a pan: the drawing follows the hand). */
+  function workPanBy(ez, dx, dy, from) { const st = from || workState(ez), k = workK(ez, st.z); workSet(ez, st.z, [st.c[0] - dx / k, st.c[1] + dy / k]); }
+  /** The zoom box's and the keys' commands: "fit" (⌘0, the steady fit), "100" (⌘1), "in" / "out" (⌘ + / −, the ladder), or a percent. */
+  function workZoomCmd(ez, cmd) {
+    if (!ez || !ez.bc || !ez.bc._steadyFit) return false;
+    const V = CEV(), st = workState(ez), PX = V ? V.PX100 : 96 / 72, k1 = workK(ez, 1);
+    if (cmd === "fit") { WORK_ZOOM.delete(workZoomKey(ez.job, ez.face)); ez.redraw(); return true; }
+    const pct = cmd === "100" ? 100 : cmd === "in" || cmd === "out" ? (V ? V.stepZoom(workPct(ez), cmd === "in" ? 1 : -1) : workPct(ez) * (cmd === "in" ? 1.5 : 1 / 1.5)) : +cmd;
+    if (!(pct > 0)) return false;
+    workSet(ez, pct / 100 * PX / k1, st.c); return true;
+  }
+  /** The rulers painted for the view now (the editor's paintRuler): the cursor and the words' extent on both. */
+  function paintWorkRulers(ez) {
+    ez.ruleRaf = 0;
+    const V = CEV(), bc = ez.bc, R = ez.rulers; if (!V || !R || !bc || !bc.isConnected || !bc._map || !bc._zero || !bc.offsetWidth) return;
+    const s = bc.offsetWidth / bc.width, pxmm = bc._map.k * s * PT, o = bc._map.tx(bc._zero[0], bc._zero[1]), dpr = Math.min(2, window.devicePixelRatio || 1), b = bc._box;
+    const font = "400 9px " + (getComputedStyle(bc).fontFamily || "sans-serif");
+    const one = (cv, vertical) => {
+      const len = vertical ? bc.offsetHeight - WORK_RULE : bc.offsetWidth - WORK_RULE, thick = WORK_RULE; if (len < 4) return;
+      if (cv.width !== Math.round((vertical ? thick : len) * dpr) || cv.height !== Math.round((vertical ? len : thick) * dpr)) { cv.width = Math.max(1, Math.round((vertical ? thick : len) * dpr)); cv.height = Math.max(1, Math.round((vertical ? len : thick) * dpr)); }
+      const c = cv.getContext("2d"); if (!c) return;
+      c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, vertical ? thick : len, vertical ? len : thick); c.font = font; c.textBaseline = "top";
+      const at = v => v * s - WORK_RULE, ax = vertical ? 1 : 0, sel = b ? [Math.min(...b.corners.map(p => p[ax])), Math.max(...b.corners.map(p => p[ax]))].map(at) : null;
+      const cur = ez.cursor ? (vertical ? ez.cursor[1] - cv.getBoundingClientRect().top : ez.cursor[0] - cv.getBoundingClientRect().left) : null;
+      V.paintRuler(c, { vertical, len, thick, origin: at(o[ax]), pxmm, ink: "#2a2724", muted: "#8b857b", hair: "#a8a297", live: "#2680eb", sel, cursor: cur });
+    };
+    one(R.x, false); one(R.y, true);
+    R.x.dataset.pxmm = R.y.dataset.pxmm = String(Math.round(pxmm * 1000) / 1000);
+  }
+  const queueWorkRulers = ez => { if (ez && !ez.ruleRaf) ez.ruleRaf = requestAnimationFrame(() => paintWorkRulers(ez)); };
+  /** The open card's work area that keys and the wheel speak to (the pointer over it, or the focus in the card), or null. */
+  function activeWork(e) {
+    const c = EG.card && EG.card.isConnected ? EG.card : null, host = c && c.querySelector(".backHost"), ez = host && host._ez; if (!ez || !ez.bc || !ez.bc.isConnected) return null;
+    const t = e && e.target; if (t && t.matches && t.matches("input, textarea, select, [contenteditable], [contenteditable] *")) return null;
+    return WV.over === host || (document.activeElement && c.contains(document.activeElement)) ? ez : null;
+  }
+  const panReady = host => host.classList.toggle("egPanReady", !!(WV.space || WV.hand));
+  /** The keys of the work area, once a page: ⌘ + / − / 0 / 1 as in the Charm Editor, and Space held to pan. */
+  function workKeys() {
+    if (WV.keys) return; WV.keys = true;
+    window.addEventListener("keydown", e => {
+      const ez = activeWork(e); if (!ez) return;
+      const mod = e.metaKey || e.ctrlKey, k = e.key;
+      if (mod && !e.altKey) {
+        const cmd = k === "0" || e.code === "Digit0" || e.code === "Numpad0" ? "fit" : k === "1" || e.code === "Digit1" || e.code === "Numpad1" ? "100" : k === "=" || k === "+" || e.code === "NumpadAdd" ? "in" : k === "-" || k === "_" || e.code === "NumpadSubtract" ? "out" : null;
+        if (cmd) { e.preventDefault(); e.stopPropagation(); workZoomCmd(ez, cmd); }
+        return;
+      }
+      if ((k === " " || e.code === "Space") && !e.altKey && (WV.over === ez.host || document.activeElement === ez.bc)) { e.preventDefault(); e.stopPropagation(); if (!WV.space) { WV.space = true; panReady(ez.host); } }
+    }, true);
+    const up = () => { if (!WV.space) return; WV.space = false; const c = EG.card, h = c && c.querySelector(".backHost"); if (h) panReady(h); };
+    window.addEventListener("keyup", e => { if (e.key === " " || e.code === "Space") up(); }, true);
+    window.addEventListener("blur", up);
+  }
+  /** The gestures of a work area's box, once per box (it outlives every drawing in it): the wheel, a pinch, Space / middle-button / Hand drags, the cursor on the rulers. */
+  function wireWork(host) {
+    if (host._ezWired) return; host._ezWired = true;
+    const ezOf = () => { const ez = host._ez; return ez && ez.bc && ez.bc.isConnected && ez.bc._steadyFit && !host.classList.contains("egFlipping") ? ez : null; };
+    const onGrid = (ez, e) => { const r = ez.bc.getBoundingClientRect(); return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom; };
+    host.addEventListener("pointerenter", () => { WV.over = host; });
+    host.addEventListener("pointerleave", () => { if (WV.over === host) WV.over = null; const ez = host._ez; if (ez && ez.cursor) { ez.cursor = null; queueWorkRulers(ez); } });
+    host.addEventListener("pointermove", e => {
+      const ez = host._ez; if (!ez) return;
+      if (ez.pan && e.pointerId === ez.pan.id) { workPanBy(ez, e.clientX - ez.pan.x, e.clientY - ez.pan.y, ez.pan.st); return; }
+      ez.cursor = [e.clientX, e.clientY]; queueWorkRulers(ez);
     });
-    return el;
+    host.addEventListener("pointerdown", e => {
+      const ez = ezOf(); if (!ez || !onGrid(ez, e) || (e.target.closest && e.target.closest(".egZoom, .egArtNote, .engwNote"))) return;   // (the zoom box's own buttons are pressed, never panned)
+      if (!(e.button === 1 || (e.button === 0 && (WV.space || WV.hand)))) return;
+      e.preventDefault(); e.stopPropagation();   // (the press pans: the words under it are not taken)
+      try { host.setPointerCapture(e.pointerId); } catch (_) { /* the moves still come while the pointer is over the box */ }
+      ez.pan = { id: e.pointerId, x: e.clientX, y: e.clientY, st: workState(ez) }; host.classList.add("egPanning");
+    }, true);
+    host.addEventListener("mousedown", e => { if (e.button === 1 && host._ez && host._ez.bc && onGrid(host._ez, e)) e.preventDefault(); });   // (no autoscroll from the middle button)
+    const end = e => { const ez = host._ez; if (!ez || !ez.pan || (e && e.pointerId !== ez.pan.id)) return; ez.pan = null; host.classList.remove("egPanning"); };
+    host.addEventListener("pointerup", end, true); host.addEventListener("pointercancel", end, true); host.addEventListener("lostpointercapture", end);
+    host.addEventListener("wheel", e => {
+      const ez = ezOf(), V = CEV(); if (!ez || !V || !onGrid(ez, e) || ez.bc.classList.contains("drag")) return;
+      const w = V.wheelOf(e), st = workState(ez);
+      if (w.zoom) { e.preventDefault(); workZoomAt(ez, e.clientX, e.clientY, st.z * w.zoom); return; }
+      if (st.z <= 1 + 1e-6) return;   // (at the fit a two-finger scroll is the page's own: the card scrolls as it did)
+      e.preventDefault(); workPanBy(ez, -w.pan[0], -w.pan[1]);
+    }, { passive: false });
+    let gz = null;   // (Safari pinches with gestures)
+    host.addEventListener("gesturestart", e => { const ez = ezOf(); if (!ez) return; e.preventDefault(); gz = workState(ez).z; });
+    host.addEventListener("gesturechange", e => { const ez = ezOf(); if (!ez || gz == null || !Number.isFinite(e.scale)) return; e.preventDefault(); workZoomAt(ez, e.clientX, e.clientY, gz * e.scale); });
+    host.addEventListener("gestureend", e => { e.preventDefault(); gz = null; });
+  }
+  /** The rulers and the zoom box on the grid `bc` just drawn in `host` (of `job`, showing `face`), and its gestures. */
+  function workViewOn(host, bc, job, face, card) {
+    if (!host || !bc || !bc._steadyFit) return null;
+    workViewCss(); workKeys(); wireWork(host);
+    const prev = host._ez, ez = { host, bc, job, face, card, cursor: prev && prev.cursor || null, pan: prev && prev.job === job && prev.face === face ? prev.pan : null, ruleRaf: 0, raf: 0 };
+    ez.redraw = () => {
+      if (ez.raf) return;
+      ez.raf = requestAnimationFrame(() => {
+        ez.raf = 0; if (host._ez !== ez || !card || !card._remountWork || !host.isConnected) return;
+        const had = document.activeElement === ez.bc; card._remountWork();
+        const nb = host.querySelector(":scope > canvas"); if (had && nb && nb !== ez.bc) { try { nb.focus({ preventScroll: true }); } catch (_) { /* the card keeps its keys */ } }
+      });
+    };
+    host._ez = ez;
+    const L = bc.offsetLeft, T = bc.offsetTop, W = bc.offsetWidth, H = bc.offsetHeight;
+    const rx = document.createElement("canvas"), ry = document.createElement("canvas"), rc = document.createElement("div");
+    rx.className = "egRule egRuleX"; ry.className = "egRule egRuleY"; rc.className = "egRuleC";
+    for (const r of [rx, ry, rc]) r.setAttribute("aria-hidden", "true");
+    Object.assign(rx.style, { left: L + WORK_RULE + "px", top: T + "px", width: W - WORK_RULE + "px", height: WORK_RULE + "px" });
+    Object.assign(ry.style, { left: L + "px", top: T + WORK_RULE + "px", width: WORK_RULE + "px", height: H - WORK_RULE + "px" });
+    Object.assign(rc.style, { left: L + "px", top: T + "px", width: WORK_RULE + "px", height: WORK_RULE + "px" });
+    rx.title = ry.title = "millimetres from the piece's top-left";
+    host.append(rx, ry, rc); ez.rulers = { x: rx, y: ry };
+    // the zoom box: the Hand, out, the zoom (its menu: typed, the ladder's steps, Fit, Actual Size, the presets), in, and the fit (⌘0) in the grid's bottom-right corner
+    const V = CEV(), mk = keys => keys.replace("Mod", /Mac|iP(hone|ad)/.test(navigator.platform || "") ? "⌘" : "Ctrl+");
+    const zb = document.createElement("div"); zb.className = "egZoom"; zb.setAttribute("role", "toolbar"); zb.setAttribute("aria-label", "Zoom and pan the work area");
+    zb.innerHTML = `<button type="button" data-ez="hand" aria-pressed="${WV.hand}" title="Hand: drag to move around (or hold Space, or drag with the middle button)" aria-label="Hand">${ZOOM_ICON.hand}</button>`
+      + `<button type="button" data-ez="out" title="Zoom out (${mk("Mod")}−)" aria-label="Zoom out">−</button>`
+      + `<button type="button" data-ez="menu" aria-haspopup="menu" aria-expanded="false" title="Zoom · the wheel zooms about the pointer" aria-label="Zoom"><span data-ezread>${V ? V.fmtZoom(workPct(ez)) : ""}</span></button>`
+      + `<button type="button" data-ez="in" title="Zoom in (${mk("Mod")}+)" aria-label="Zoom in">+</button>`
+      + `<button type="button" data-ez="fit" title="Fit the piece in the grid (${mk("Mod")}0)" aria-label="Fit">${ZOOM_ICON.fit}</button>`
+      + `<div class="egZoomMenu" role="menu" hidden><label title="Type a zoom and press Enter"><input data-eztype inputmode="decimal" autocomplete="off" spellcheck="false" aria-label="Zoom, percent"><em>%</em></label>`
+      + `<button type="button" data-ezz="in" role="menuitem">Zoom In<em>${mk("Mod")}+</em></button><button type="button" data-ezz="out" role="menuitem">Zoom Out<em>${mk("Mod")}−</em></button>`
+      + `<button type="button" data-ezz="fit" role="menuitem">Fit in Grid<em>${mk("Mod")}0</em></button><button type="button" data-ezz="100" role="menuitem">Actual Size<em>${mk("Mod")}1</em></button><hr>`
+      + ((V && V.ZOOM_PRESETS) || []).map(z => `<button type="button" data-ezz="${z}" role="menuitem">${z}%</button>`).join("") + `</div>`;
+    const menu = zb.querySelector(".egZoomMenu"), mb = zb.querySelector('[data-ez="menu"]'), typed = zb.querySelector("[data-eztype]");
+    const shut = () => { menu.hidden = true; mb.setAttribute("aria-expanded", "false"); };
+    zb.addEventListener("pointerdown", e => e.stopPropagation(), true);
+    zb.addEventListener("mousedown", e => { if (e.target !== typed) e.preventDefault(); });   // (the card's keys keep the focus they had)
+    zb.addEventListener("click", e => {
+      e.stopPropagation();
+      const z = e.target.closest("[data-ezz]"); if (z) { shut(); workZoomCmd(host._ez, z.dataset.ezz); return; }
+      const b = e.target.closest("[data-ez]"); if (!b) return;
+      if (b.dataset.ez === "menu") { const open = menu.hidden; menu.hidden = !open; mb.setAttribute("aria-expanded", String(open)); if (open) typed.value = String(Math.round(workPct(ez))); return; }
+      if (b.dataset.ez === "hand") { WV.hand = !WV.hand; b.setAttribute("aria-pressed", String(WV.hand)); panReady(host); return; }
+      shut(); workZoomCmd(host._ez, b.dataset.ez);
+    });
+    typed.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); const v = parseFloat(typed.value); if (v > 0) { shut(); workZoomCmd(host._ez, String(v)); } } else if (e.key === "Escape") { e.preventDefault(); shut(); } });
+    host.appendChild(zb);
+    zb.style.left = Math.round(L + W - zb.offsetWidth - 8) + "px"; zb.style.top = Math.round(T + H - zb.offsetHeight - 8) + "px";
+    panReady(host);
+    // the rulers follow every painting of the drawing (a drag of the words, a draft, a refresh)
+    const p0 = bc._paint; if (typeof p0 === "function" && !p0._ez) { const p1 = function () { const r = p0.apply(this, arguments); queueWorkRulers(host._ez); return r; }; p1._ez = true; bc._paint = p1; }
+    paintWorkRulers(ez);
+    return ez;
+  }
+  /** The open card's job when it is `job`'s piece (the card shows that piece now), else null. */
+  function cardJobOf(job) {
+    const c = EG.card && EG.card.isConnected ? EG.card : null, cj = c && EG.cardKey ? items().get(EG.cardKey) : null; if (!cj || !job) return null;
+    if (cj === job) return cj;
+    const a = (cj.copies || [])[0], b = (job.copies || [])[0]; if (a && b && String(a) === String(b)) return cj;
+    const F = UIFACES(); return F && F.pieceKeyOf && F.pieceKeyOf(cj.key) === F.pieceKeyOf(job.key) ? cj : null;
+  }
+  /** The face shown at once (the edge of the turn): the open card's own face, its other face (view only), or the other face's own card (the panel's own way to it, as a press on the thumbnail did). */
+  function showFaceNow(face) {
+    const c = EG.card && EG.card.isConnected ? EG.card : null, j = c && EG.cardKey ? items().get(EG.cardKey) : null; if (!j) return;
+    if (face === faceOf(j) || face === otherFaceOf(j)) setViewFace(j, face, c);
+    const pm = c._pieceMount;
+    if (pm && pm.setFace && pm.panel) { try { pm.setFace(face); } catch (e) { console.warn("engraving: the panel's face", e); } return; }
+    const pid = (j.copies || [])[0], other = face !== faceOf(j) && pid ? jobsOfPiece(pid)[face] : null;
+    if (other && other !== j) { restoreEngraveView({ focus: other.key }); render(); }
+  }
+  /** Shows `face` ("front" | "back") of `job`'s piece (a job or its key) in the work area, turning it as the sheets turn (o.animate false: at once). A face already shown: nothing happens.
+   *  -> { ok, face, same? } (ok false: the piece has no such face to show). */
+  function showFace(x, face, o) {
+    o = o || {}; face = face === "front" || face === "back" ? face : null;
+    const job0 = typeof x === "string" ? items().get(x) : x; if (!face || !job0) return { ok: false, face: null, why: "no such piece or face" };
+    const j = cardJobOf(job0), busy = !!(WV.turn && WV.turn.busy());
+    if (!j) { if (face === faceOf(job0) || face === otherFaceOf(job0)) setViewFace(job0, face, null); return { ok: true, face: viewFaceOf(job0), shown: false }; }   // (not on screen: its next drawing shows it)
+    const pid = (j.copies || [])[0], reach = face === faceOf(j) || face === otherFaceOf(j) || !!(pid && jobsOfPiece(pid)[face]);
+    if (!busy) WV.face = viewFaceOf(j);
+    if (!reach) return { ok: false, face: WV.face, why: `this piece has no ${face} to show` };
+    if (!busy && face === WV.face) return { ok: true, face, same: true };
+    WV.still = o.animate === false;
+    if (!WV.turn && window.Motion && Motion.turner) WV.turn = Motion.turner({ el: () => { const c = EG.card; return c && c.isConnected ? c.querySelector(".backHost") : null; }, shown: () => WV.face, paint: f => { WV.face = f; showFaceNow(f); }, still: () => WV.still, persp: "perspective(1400px) ", cls: "egFlipping" });
+    if (!WV.turn) { WV.face = face; showFaceNow(face); return { ok: true, face }; }
+    WV.turn.ask(face);
+    return { ok: true, face };
   }
   /* ── CHARM EDIT · the piece's own artwork in the charm editor (Paul, 27 Oct 2026: "In the Engraving Modal ... The user also needs full control similar to Adobe illustrator ... over each
      individual layer contained on any charm ... add a date inside a given Calendar day square and be able to update the Month name located on top of the Calendar charm ... this is already a
@@ -11404,7 +11627,6 @@ const Engrave = window.Engrave = (() => {
     // (EDITFOLLOW, Paul 29 Oct 2026: "not all of the visible vector thumbnails got updated correctly": the card's Front / Back boxes are drawn again with the work area, from the job as it is now
     //  (they were drawn while the face was fitted again, with the placement it had, and nothing drew them again when the new placement landed))
     { const pm = c._pieceMount; if (pm && pm.card && pm.card.update) { try { pm.card.update(); } catch (_) { /* the boxes follow at the next look at what moved */ } } }
-    { const strip = c.querySelector(".engSetWrap"); if (strip) { try { window.CharmNestEngraveCard?.repaint?.(strip); } catch (_) { /* the set's bars follow at the next drawing */ } } }   // (a set's bars side by side: painted again from the job as it is now)
     const cap = c.querySelector("[data-cap]"); if (cap) cap.textContent = capText(f);
     const tn = c.querySelector('input[data-a="turn"]'); if (tn && document.activeElement !== tn) tn.value = String(turnOf(job));   // (ROTBAR: the one degree box is the turn of the whole piece)
     const sl = c.querySelector('input[data-a="resize"]');
@@ -11414,10 +11636,6 @@ const Engrave = window.Engrave = (() => {
     // line spacing means something only with two lines or more: it shows when a refit wraps the words, and hides again
     if(spacing){const pct=Math.round(fitOpts(job).lineGap/.18*100);spacing.value=pct;c.querySelector('[data-spacing]').textContent=pct+'%';const group=spacing.closest('.spacingControl');group.style.setProperty('--spacing',pct/100);group.hidden=(job.lines || []).length<2;}
     const nums = c.querySelector(".pvNums dd"); if (nums) nums.textContent = `${f.size.toFixed(2)} pt · cap ${f.capMm.toFixed(2)} mm · ${f.weight}${f.angle ? ` · ${f.angle}°` : ""}`;
-    const rh = c.querySelector(".reviewIdentity") || c.querySelector(".rh"); if (rh) {
-      rh.querySelectorAll(".small").forEach(n => n.remove());
-      if (f.small) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>`);
-    }
     const cl = c.querySelector(".claude"); if (cl) cl.remove();
     LiveStrip.render();
   }
@@ -11782,6 +12000,8 @@ const Engrave = window.Engrave = (() => {
     // "Worth a look" note: "Remove this info/note from all UI in the app"): Claude's own questions from reading the order (job.questions, and the
     // "Ask" button that put one in the message box) are no longer listed here; the reader still stores them and they still send the words to a person
     const wants = [];
+    // (PICROW, Paul 29 Oct 2026: the row of a set's bar pictures above the work area is gone; its one calm line, a set whose layout the buyer asked for, is said here with what to check with the buyer)
+    { const ln = window.CharmNestEngraveCard && CharmNestEngraveCard.layoutNoteOf ? (() => { try { return CharmNestEngraveCard.layoutNoteOf(job.row); } catch (_) { return ""; } })() : ""; if (ln) wants.push(ln); }
     if (requests.side && !["back", "unspecified", ...(isFrontJob(job) ? ["front"] : [])].includes(requests.side)) wants.push(`Requested side: ${requests.side}`);
     // BFFONT: a font the message names that is not ours is engraved in the nearest installed one (spec.fontText, job.fontSubstituted): the buyer's words stay beside it, said once
     const msgFont = sp.fontText && sp.fontText.asked ? String(sp.fontText.asked).toLowerCase() : "";
@@ -11808,7 +12028,7 @@ const Engrave = window.Engrave = (() => {
     // HDRMETA (Paul, 18 Oct 2026, of the detail head "9 OF 9 · 9 DONE | ‹ Back | Next › | 4195215444  5X8.5 · charm  [Open order ↗]  THIN STROKES": "Remove 'Thin Strokes', 'charm', '5x8.5'
     // text from the UI."): the head keeps the counter, Back / Next, the order number, the piece / face tag, Open order and the SMALL chip; the size · kind · copies line under the number and the THIN STROKES chip are
     // never drawn (refit() and refresh() no longer put the chip back). job.fit.thin is still measured and still saved with the placement (rec.thin); only the words on screen are gone.
-    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a piece's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? ` (an order's ${countedNouns(ears)} are one placement: Back and Next go through every ${countedNoun(ears)})` : " (an earring piece's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span>${ears ? earSwitchHtml(job, ears, panelOn) : faced ? (panelOn ? "" : faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`)) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().pieceTag(job, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
+    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a piece's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? ` (an order's ${countedNouns(ears)} are one placement: Back and Next go through every ${countedNoun(ears)})` : " (an earring piece's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span>${ears ? earSwitchHtml(job, ears, panelOn) : faced ? (panelOn ? "" : faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`)) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().pieceTag(job, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain">${byCard ? "" : `<h4 class="pvH">${cap1(fw)} · engraving</h4>`}<div class="pvApproval">${appView || keptView ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton egApproved" data-a="approved" disabled aria-disabled="true" title="approved — change anything and press Approve again: it gets a new seal">Approved</button></span>${job.state === "written" ? `<span class="egWrittenNote hint">Saved to sheet · approving again replaces its file</span>` : ""}` : f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the ${fw} file">Approve</button></span>` : ""}${f && !wordsJob && ears && !appView ? approveBothHtml(ears, job) : ""}</div><div class="backHost"></div></div>
         <div class="ctl">${!f && !wordsJob && panelOn && job.reason ? `<span class="why" role="status">${esc(isFrontJob(job) ? String(job.reason).replace(/\bback area\b/, "front area") : job.reason)}</span>` : ""}${f && !wordsJob && f.artOnly ? `<span class="egArtOnly" role="status" style="font-size:11.5px;color:var(--ink70,#5b554c)">No words: the charm editor's parts are this ${fw}'s engraving</span>` : ""}${f && !wordsJob && !f.artOnly ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="egTurn" role="group" aria-label="Turn the whole charm and its engraving" title="Turn the whole charm and its engraving together, in degrees. Counter-clockwise is plus. 0 is where the system placed it."><button type="button" class="egTurnStep" data-a="turnStep" data-step="-1" title="Turn 1° clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree clockwise">↷</button><label class="egTurnField"><input type="number" data-a="turn" inputmode="numeric" min="-360" max="360" step="1" value="${turnOf(job)}" aria-label="Turn the whole charm and its engraving, in degrees"><span class="egTurnDeg" aria-hidden="true">°</span></label><button type="button" class="egTurnStep" data-a="turnStep" data-step="1" title="Turn 1° counter-clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree counter-clockwise">↶</button></span>` : ""}
@@ -11826,9 +12046,9 @@ const Engrave = window.Engrave = (() => {
         <section class="pvMail"></section></div>`;
     // ENGAPPROVE: the guide's one calm line has its place right under the header; it is empty and hidden until a press would leave this order with a piece not approved (charm-nest-engrave-guide.js)
     if (ctx) { card.querySelector(".rh")?.insertAdjacentHTML("afterend", '<div class="egGuide" hidden></div>'); try { window.CharmNestEngraveGuide?.mount(card, String(r.order.receiptId), UIFACES() ? UIFACES().pieceKeyOf(job.key) : job.key); } catch (_) {} }
-    // SETBAR (Paul, 13 Oct 2026: "see both bar charms side-by-side ... manipulate each one"): a line that is a SET of different designs shows both bars, at one scale, above the work area, with the chain each hangs on; a press on one is the
-    // press of the piece switch (data-a="ear": the wiring below handles it). Any other line draws nothing here.
-    if (ctx) { try { const C = window.CharmNestEngraveCard, strip = C && C.setStrip ? C.setStrip(job.row, { key: job.key, face: faceOfJob(job), isWorking }) : null, pm = card.querySelector(".pvMain"); if (strip && pm) { pm.insertBefore(strip, pm.firstChild); card._setStrip = strip; requestAnimationFrame(() => { try { C.repaint(strip); } catch (_) {} }); } } catch (e) { console.warn("set strip:", e); } }
+    // SETBAR (Paul, 13 Oct 2026: "see both bar charms side-by-side"): the row of the set's bars above the work area is gone (PICROW, Paul 29 Oct 2026: "We also have a duplicate way to select pieces in
+    // a multi-charm order ... For now simply remove the visual bar images and just let the user choose using the existing toggle. This will also solve the overlapping issue with the "Open in Charm
+    // Editor" button"): the piece chips in the head choose the bar. (CharmNestEngraveCard.setStrip stays, unused here.)
     const charm = job.copies.length ? charmFor(job) : null;
 
     if (byCard) { /* the card's Front / Back thumbnails are the pictures of the piece: no reference picture */ }
@@ -12035,15 +12255,15 @@ const Engrave = window.Engrave = (() => {
       pm.classList.toggle("egWide", wide);
       // (FACEVIEW, Paul 28 Oct 2026: the piece's other face, chosen with the Front | Back switch or shown by a save of the Charm Editor that changed it: drawn as that face, view only; the words and
       //  the Approve block stay the face's being approved)
-      const vf = viewFaceOf(job), ov = vf !== faceOf(job) ? renderFaceView(job, vf, px) : null;
+      const vf = viewFaceOf(job), ov = vf !== faceOf(job) ? renderFaceView(job, vf, px, workZoomOf(job, vf)) : null;
       if (ov) {
         framed = null; ov.tabIndex = -1; ov.style.outline = "none"; ov.title = `the ${vf} of this piece as it is cut and engraved, with every part the Charm Editor put on it · view only: the engraving to approve is on the ${fw}`;
-        backHost.appendChild(ov); faceViewSwitch(backHost, ov, job, card);
+        backHost.appendChild(ov); workViewOn(backHost, ov, job, vf, card);   // (ENGVIEW: its rulers and zoom; the face is chosen with the card's thumbnails, showFace)
         try { charmEditButton(backHost, ov, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }
         return;
       }
-      const bc = (held && heldCanvas(job, px)) || renderBack(dj, px, { grid: true, editable: true, include: framed, draft: panelOn && !held, steady: true }); framed = bc._map.bb; bc.tabIndex = -1; bc.style.outline = "none"; bc.title = job.fit && job.fit.artOnly ? `no words: the charm editor's parts are this ${fw}'s engraving` : "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys move them 0.05 mm, 1 mm with Shift · cut-outs and holes stay clear"; backHost.appendChild(bc); if (held) { heldOn(backHost, bc, job, px); return; } wire(bc); markShown(job); syncBoth(); if (panelOn) draftNote(card, DRAFTS.get(job.key));
-      faceViewSwitch(backHost, bc, job, card);   // FACEVIEW: the piece's other face (when it has no engraving of its own), seen as that face; "Show front" laid the front mirrored over the back
+      const bc = (held && heldCanvas(job, px)) || renderBack(dj, px, { grid: true, editable: true, include: framed, draft: panelOn && !held, steady: true, zoom: held ? null : workZoomOf(job, faceOf(job)), label: WORK_LABEL }); framed = bc._map.bb; bc.tabIndex = -1; bc.style.outline = "none"; bc.title = job.fit && job.fit.artOnly ? `no words: the charm editor's parts are this ${fw}'s engraving` : "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys move them 0.05 mm, 1 mm with Shift · cut-outs and holes stay clear"; backHost.appendChild(bc); if (held) { heldOn(backHost, bc, job, px); return; } wire(bc); markShown(job); syncBoth(); if (panelOn) draftNote(card, DRAFTS.get(job.key));
+      workViewOn(backHost, bc, job, faceOf(job), card);   // ENGVIEW: the rulers and the zoom of the grid (FACEVIEW's other face is chosen with the card's Front / Back thumbnails: showFace)
       try { charmEditButton(backHost, bc, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }   // CHARM EDIT: the quiet "Edit charm" pill after them (and the last save's note under it): the piece's own artwork in the charm editor (never at the drawing's cost)
       bc._reframe = () => { if (raf || disposed || bc.classList.contains("drag")) return; mounted = [0, 0]; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); };
       } catch (error) {
@@ -12116,7 +12336,8 @@ const Engrave = window.Engrave = (() => {
       if (a === "approve") approve(job, undefined, b);
       else if (a === "approveBoth") approveRow(job, card.querySelector('[data-a="approve"]'));
       else if (a === "approveFaces") approveRow(job, card.querySelector('[data-a="approve"]'), "piece");
-      else if (a === "ear") { const other = items().get(b && b.dataset.ear); if (other && other !== job) { goes(job, { enter: "fade", quick: true }, card); focusOn(other.key); EG.card = null; EG.cardKey = null; render(); } }
+      else if (a === "ear") { const pick = items().get(b && b.dataset.ear), same = pick && pick.slot !== job.slot && faceOf(pick) !== faceOf(job) ? jobsOf(job.row).find(j => sameSlot(j, pick) && faceOf(j) === faceOf(job)) : null, other = same || pick;   // (PICROW, 29 Oct 2026: the piece chips are the one way to another piece; like the bar pictures they replace, they keep the face shown when that piece has it)
+        if (other && other !== job) { goes(job, { enter: "fade", quick: true }, card); focusOn(other.key); EG.card = null; EG.cardKey = null; render(); } }
       else if (a === "piece") { const to = b && b.dataset.piece; if (to && to !== pieceKeyOfJob(job)) openPiece(ridOfJob(job), to, undefined, { card }); }   // (ENGPIECES: the header strip of an order's pieces)
       else if (a === "centre") centreText(job);
       else if (a === "close") {
@@ -12333,7 +12554,7 @@ const Engrave = window.Engrave = (() => {
     if (n) { try { Session.schedule(); render(); } catch (_) { /* drawn with the next render */ } }
     return n;
   }
-  return { viewFaceOf, setViewFace, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { viewFaceOf, setViewFace, showFace, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
    list of pieces, the Pieces counts and a monogram line's pieces (the same slots and piece keys: "<line>" for one piece, "<line>#C<u>" for several) read THIS. Added beside the Engrave object, not inside its return. */

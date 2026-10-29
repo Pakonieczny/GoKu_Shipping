@@ -70,7 +70,7 @@ const DETAIL = () => {
   const strip = [...c.querySelectorAll('.pvMain .engSet .engSetPc')].map(b => ({ piece: b.dataset.piece, ear: b.dataset.ear || '', label: txt(b.querySelector('.engSetLbl')), len: txt(b.querySelector('.engSetLen')), pressed: b.getAttribute('aria-pressed') === 'true', canvas: !!b.querySelector('.engSetPic canvas'), frame: frame(b.querySelector('.engSetPic')), box: (() => { const r = b.getBoundingClientRect(); return { l: r.left, r: r.right }; })() }));
   const card = c.querySelector('.pvSetup .engCard'), approve = c.querySelector('.pvApproval [data-a=approve]'), pa = c.querySelector('.pvApproval').getBoundingClientRect(), st = c.querySelector('.pvMain .engSet');
   return {
-    key: c.dataset.key, sub: txt(c.querySelector('.reviewIdentity .sub')), meta: !!c.querySelector('.rh .sub'), tabs, strip, note: txt(c.querySelector('.pvMain .engSetNote')), stripBox: st ? (() => { const r = st.getBoundingClientRect(); return { l: r.left, r: r.right }; })() : null, approveBox: { l: pa.left, r: pa.right },
+    key: c.dataset.key, sub: txt(c.querySelector('.reviewIdentity .sub')), meta: !!c.querySelector('.rh .sub'), tabs, strip, note: [...c.querySelectorAll('.pvMain .engSetNote, .pvCheck .want')].map(txt).find(t => /a person decides/.test(t)) || '', stripBox: st ? (() => { const r = st.getBoundingClientRect(); return { l: r.left, r: r.right }; })() : null, approveBox: { l: pa.left, r: pa.right },
     cardTitle: card ? txt(card.querySelector('.engName')) : '', cardThumbs: card ? [...card.querySelectorAll('.engFace')].map(f => ({ face: f.dataset.face, frame: frame(f.querySelector('.engThumb')) })) : [],
     approve: !!approve && !approve.disabled, texts: txt(c).length, turn: (c.querySelector('input[data-a=turn]') || {}).value, bothBars: [...c.querySelectorAll('button')].map(b => txt(b)).filter(t => /both bars|all bars|approve all|both pieces/i.test(t)),
     counter: txt(c.querySelector('.reviewProgress .kind')), canvasW: (c.querySelector('.backHost canvas') || {}).width || 0
@@ -110,20 +110,18 @@ const settle = (page, ms = 700) => R.settle(page, ms);
     note(d && d.tabs.length === 2 && d.tabs.map(t => t.chip).join('|') === 'LARGE BAR · 18″|SMALL BAR · 16″', 'the piece switch names the bars and the chain each hangs on, not "Disc 1 of 2"', d && d.tabs.map(t => t.chip).join('|'));
     // HDRMETA (Paul, 18 Oct 2026: "Remove 'Thin Strokes', 'charm', '5x8.5' text from the UI."): the head no longer draws the design · kind · size line under the order number; the card's own title names the bar
     note(d && !d.meta && d.cardTitle === 'BAR 1548 · 18″', 'the large bar\'s detail says its own design (card "BAR 1548 · 18″"; no meta line in the head, HDRMETA)', d && (d.sub + ' / ' + d.cardTitle));
-    note(d && d.strip.length === 2 && d.strip.map(s => s.label + ' ' + s.len).join('|') === 'Large bar 18″|Small bar 16″', 'both bars are shown side by side above the work area, each with its chain length: the thinner (small) bar on the shorter chain', d && d.strip.map(s => s.label + ' ' + s.len).join('|'));
-    note(d && d.strip.length === 2 && d.strip.every(s => s.canvas) && d.strip[0]?.pressed && !d.strip[1]?.pressed, 'both bars are drawn (their real geometry) and the one being edited is marked', d && d.strip.map(s => s.pressed + ':' + s.canvas).join(' '));
-    const f0 = d && d.strip[0]?.frame, f1 = d && d.strip[1]?.frame, pad = 0.04 * 25.9, expectH = (3.9 + 2 * pad) / (4.9 + 2 * pad);
-    note(!!f0 && !!f1 && near(f1.w, f0.w, 0.04) && near(f1.h / f0.h, expectH, 0.05), 'drawn at ONE scale: the same length, the thinner bar visibly thinner by 3.9 / 4.9', f0 && f1 && `w ${f0.w.toFixed(1)}/${f1.w.toFixed(1)} h ratio ${(f1.h / f0.h).toFixed(3)} want ${expectH.toFixed(3)}`);
-    note(!!d && !!d.stripBox && (d.stripBox.r <= d.approveBox.l + 1 || d.stripBox.l >= d.approveBox.r - 1), 'the strip never sits under the Approve block', d && JSON.stringify([d.stripBox, d.approveBox]));
+    // PICROW (Paul, 29 Oct 2026: "We also have a duplicate way to select pieces in a multi-charm order ... For now simply remove the visual bar images and just let the user choose using the existing toggle"):
+    // the row of bar pictures above the work area is gone; the piece switch in the head is the one way to choose a bar
+    note(d && d.strip.length === 0 && !d.stripBox, 'no row of bar pictures above the work area: the piece switch in the head chooses the bar (PICROW)', d && JSON.stringify(d.strip));
     note(!!d && d.note === '' && d.bothBars.length === 0, 'no layout note unless the line is flagged, and no press that approves both bars at once', d && JSON.stringify([d.note, d.bothBars]));
     note(!!d && d.cardThumbs.map(t => t.face).join() === 'front,back', 'the panel card has the shown bar\'s Front and Back thumbnails (the face picker)', d && d.cardThumbs.map(t => t.face).join());
     if (shots) await R.shot(w, 'setbar-detail-large');
 
     // ═══ B · the small bar: one press on its picture, the whole detail follows (header, card, degree box on THAT bar) ═══
-    await page.evaluate(k => document.querySelector('#egQueue .engSet .engSetPc[data-piece$="#D2"]').click(), keyOf('bars'));
+    await page.evaluate(() => [...document.querySelectorAll('#egQueue .reviewIdentity .egEarSwitch:not(.egFaces) .egEarTab')].find(b => /SMALL BAR/.test(b.textContent)).click());
     await settle(page, 1100);
     d = await page.evaluate(`(${DETAIL})()`);
-    note(!!d && /#D2$/.test(d.key || '') && d.tabs[1]?.pressed && d.strip[1]?.pressed && !d.strip[0]?.pressed, 'a press on the small bar\'s picture shows the small bar (switch and strip agree)', d && d.key);
+    note(!!d && /#D2$/.test(d.key || '') && d.tabs[1]?.pressed && !d.tabs[0]?.pressed && d.strip.length === 0, 'a press on the small bar\'s chip in the head shows the small bar', d && d.key);
     note(!!d && !d.meta && d.cardTitle === 'SKINNY 0191 · 16″', 'its card says "SKINNY 0191 · 16″" (not the line\'s first design; no meta line in the head, HDRMETA)', d && (d.sub + ' / ' + d.cardTitle));
     note(!!d && d.cardThumbs.length === 2 && d.cardThumbs.every(t => t.frame), 'the small bar\'s Front and Back are drawn in the panel card', d && JSON.stringify(d.cardThumbs));
     const ANG = () => page.evaluate(() => Object.fromEntries([...Engrave.items().values()].filter(j => j.row.order.receiptId === '4290000151').map(j => [j.key.replace(/^\d+_\d+/, ''), j.fit ? Math.round((j.fit.angle || 0) * 10) / 10 : null])));
@@ -168,7 +166,7 @@ const settle = (page, ms = 700) => R.settle(page, ms);
     await page.evaluate(() => { window.__FLAG = true; });
     await R.openEngraveDetail(w, 'bars', { face: 'back', slot: 'D2' }); await settle(page, 900);
     d = await page.evaluate(`(${DETAIL})()`);
-    note(!!d && /a person decides which bar hangs on which chain/.test(d.note) && d.strip.length === 2 && d.strip.every(s => s.len === ''), 'a line flagged "layout requested" says in ONE calm line that a person decides, and shows no chain on either bar until then', d && JSON.stringify([d.note, d.strip.map(s => s.len)]));
+    note(!!d && /a person decides which bar hangs on which chain/.test(d.note) && d.strip.length === 0, 'a line flagged "layout requested" says in ONE calm line, with what to check with the buyer, that a person decides', d && JSON.stringify([d.note, d.strip.length]));
     await page.evaluate(() => { window.__FLAG = false; });
 
     // ═══ E · the order window ═══
@@ -187,6 +185,7 @@ const settle = (page, ms = 700) => R.settle(page, ms);
     note(o.cards.length === 2 && o.cards.map(c => c.title).join('|') === 'BAR 1548 · 18″|SKINNY 0191 · 16″', 'the Engraving section has one card per bar, each named by its own design and chain (not "BAR 1548 + SKINNY 0191 · Disc n")', o.cards.map(c => c.title).join('|'));
     note(o.cards.every(c => c.approve && c.faces === 'front+back') && o.buttons.length === 0, 'each bar\'s card has its OWN Approve and both faces; no button approves both bars', JSON.stringify(o.cards.map(c => [c.approve, c.faces])) + JSON.stringify(o.buttons));
     const ca = o.cards[0].frames[0], cb = o.cards[1].frames[0];
+    const expectH = (3.9 + 2 * 0.04 * 25.9) / (4.9 + 2 * 0.04 * 25.9);   // (the thinner bar by 3.9 / 4.9, with the drawing's 4 % margin)
     note(!!ca && !!cb && near(cb.w, ca.w, 0.05) && near(cb.h / ca.h, expectH, 0.06), 'the two cards draw their bars at one scale (the thinner bar thinner)', ca && cb && `h ratio ${(cb.h / ca.h).toFixed(3)} want ${expectH.toFixed(3)}`);
     note(o.subs.join('|') === 'Large bar · 18″|Small bar · 16″', 'Its pieces lists the bars by name and chain, not "Piece 1 of 2"', o.subs.join('|'));
     note(o.note === '', 'no layout note on an ordinary set', o.note);
@@ -221,7 +220,7 @@ const settle = (page, ms = 700) => R.settle(page, ms);
     await R.openEngraveDetail(w, 'barsWide', { face: 'back', slot: 'D2' }); await settle(page, 1200);
     d = await page.evaluate(`(${DETAIL})()`);
     const ratio = 25.9 / 50;
-    note(!!d && d.strip.length === 2 && !!d.strip[0]?.frame && !!d.strip[1]?.frame && near(d.strip[1].frame.w / d.strip[0].frame.w, ratio, 0.06), 'a 50 mm bar and a 25.9 mm bar are drawn in the strip in their true proportion (width ratio 0.518)', d && d.strip[0]?.frame && d.strip[1]?.frame && (d.strip[1].frame.w / d.strip[0].frame.w).toFixed(3));
+    note(!!d && d.strip.length === 0, 'the wide set has no row of bar pictures either (PICROW)', d && JSON.stringify(d.strip));
     note(!!d && d.cardThumbs.length === 1 && !!d.cardThumbs[0].frame && near(+d.cardThumbs[0].frame.rel, ratio, 0.03), 'the small bar\'s thumbnail in the panel is that fraction of the box', d && JSON.stringify(d.cardThumbs));
     await R.openOrderWindow(w, 'barsWide'); await settle(page, 900);
     o = await page.evaluate(`(${OWIN})()`);
