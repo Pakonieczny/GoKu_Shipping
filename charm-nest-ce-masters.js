@@ -24,6 +24,8 @@
  *   openDesign(d, o) a saved design opened again (CharmNestDesigns.get's design, or its id and o.version: read with get(…, { open: true }), which tells the log): its Save makes the
  *                     next version of the same design.
  *   openNew(d, o)  a design made elsewhere and not saved yet (the vector import's "Open as a new design": source { kind: 'import', file, type }) opened as a new design.
+ *   closeEditor()  -> Promise<boolean>   the editor up now closed through its own Cancel (asked first when there are changes): true when it is gone (EDITTARGET: the order window's
+ *                     Edit Design and a piece's open make way with it)
  *   On any of them: o.orderId / o.customName ride with the design (a custom order's design: charm-nest-custom-piece.js); o.back ({ label, title, run }) is the editor's way
  *   back (CharmEditor opts.back: the Design & Engrave tab's "Back to Design & Engrave"); o.from (a word: "charmEditorButton", the tab's Charm Editor button, DESIGNBTN) goes with the open to the log.
  *
@@ -884,7 +886,8 @@
   const api = {
     search, load, count, picture, onChange: fn => { if (typeof fn === 'function') listeners.add(fn); return () => listeners.delete(fn); },
     open, openPicker, newDesign, openDesign, openNew,
-    current: () => (session ? { name: session.start.name, source: Object.assign({}, session.start.source), designId: session.start.id || null, version: session.start.version || null, orderId: session.start.orderId || null } : null),
+    closeEditor,   // (EDITTARGET, Paul 29 Oct 2026: every other way into the editor makes way the same: the editor up now closed through its own Cancel, which asks first)
+    current:() => (session ? { name: session.start.name, source: Object.assign({}, session.start.source), designId: session.start.id || null, version: session.start.version || null, orderId: session.start.orderId || null } : null),
     model: { startSpec, startWhy, startFace, outlineSP, holeFor, masterFace, backFace, cutOutlines, cutBox, designOf, changed, indexOf, rank, norm, newStart, SHAPES, WALL_MM, HOLE_MM, HEART_CLEFT },
     version: 1
   };

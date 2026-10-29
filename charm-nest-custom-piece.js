@@ -293,12 +293,18 @@
     const s = summaryOf(d, extra); if (had) { s.sends = had.sends; if ((+had.version || 0) > s.version) return had; }
     m.set(d.id, s); repaint(rid); return s;
   }
-  /** The designs attached to an order, newest first: those saved or sent here, and those the library's index says (each at its latest version). */
+  /* EDITTARGET (Paul 29 Oct 2026: "When I click the "Edit Design" button on a given order the Charm Editor does not update to open the Charm/Order currently selected"; order 4211572095, a bird,
+     opened "ZODIAC_CONSTE_GEM-7", a piece of order 4213879228). A piece's own design (pc-<poolId>, source.poolId: the version of a piece the bridge keeps with each Charm Editor save of it) belongs
+     to the order its piece is of, and a pool id starts with its order's number: one kept here under ANOTHER order (a send whose order was typed in the pop-up, a save while another order's design
+     was in the editor) is never that order's: never its button's words, never what its Edit Design opens. */
+  const piecePool = d => { const s = d && d.source && d.source.kind === 'piece' ? String(d.source.poolId || '') : '', m = /^pc-(.+)$/.exec(String((d && d.id) || '')); return s || (m ? m[1] : ''); };
+  const ownPool = (rid, pid) => !!rid && !!pid && String(pid).startsWith(String(rid) + '_');
+  /** The designs attached to an order, newest first: those saved or sent here, and those the library's index says (each at its latest version); another order's piece never (EDITTARGET). */
   function attachedOf(rid) {
     rid = String(rid || ''); if (!rid) return [];
     const out = new Map(attached.get(rid) || []);
     for (const d of indexed(rid)) { const had = out.get(d.id); if (!had || (+d.version || 0) > (+had.version || 0)) out.set(d.id, Object.assign(summaryOf(d), had ? { sends: had.sends } : {})); }
-    return [...out.values()].sort((a, b) => (+b.at || 0) - (+a.at || 0));
+    return [...out.values()].filter(a => { const p = piecePool(a); return !p || ownPool(rid, p); }).sort((a, b) => (+b.at || 0) - (+a.at || 0));
   }
 
   /* ═══ 6 · the send ═══ */
@@ -688,18 +694,35 @@
      made a new design version the piece never carries (its laser file is made from its own artwork record). A design that is a piece of this order now opens THAT PIECE, exactly as its engraving
      card's "Open in Charm Editor" opens it: the drawing with every part the editor saved on it, each face's words as the editable text the card hands in (CETEXT), its Save kept for the piece (and as
      the design's next version, by the bridge), and Send to sheet… beside Save as on every open. Any other design attached (a custom order's own) opens in design mode as before. */
-  function pieceDesignOf(x) {
+  /* EDITTARGET: the piece Edit Design opens is the one the order window has chosen NOW (on its Sheet tab the charm picked on the sheet, else the line picked in "Its pieces"), of the order it
+     shows, with that piece's own design when it has one; `prefer` is its pool id ('' for none: the order's newest piece design, as before). */
+  function pieceDesignOf(x, prefer) {
     const row = rowsOf(x)[0]; if (!row || !row.order) return null;
-    const rid = String(row.order.receiptId), att = attachedOf(rid)[0] || null; if (!att) return null;
-    const m = /^pc-(.+)$/.exec(String(att.id || '')), src = att.source && att.source.kind === 'piece' ? String(att.source.poolId || '') : '', pid = src || (m ? m[1] : '');
-    if (!pid) return null;
-    const own = r => r && r.order && String(r.order.receiptId) === rid && (r.poolIds || []).map(String).includes(pid);
-    const line = own(row) ? row : rowsAll().find(own) || rowsOf(x).find(own) || null;
-    return line ? { rid, poolId: pid, row: line, att } : null;
+    const rid = String(row.order.receiptId), list = attachedOf(rid), att0 = list[0] || null; if (!att0 || !piecePool(att0)) return null;
+    const lineOf = pid => { const own = r => r && r.order && String(r.order.receiptId) === rid && (r.poolIds || []).map(String).includes(pid); return own(row) ? row : rowsAll().find(own) || rowsOf(x).find(own) || null; };
+    const want = ownPool(rid, prefer) ? String(prefer) : '', wl = want ? lineOf(want) : null;
+    if (wl) return { rid, poolId: want, row: wl, att: list.find(a => piecePool(a) === want) || null };
+    const pid = piecePool(att0), line = lineOf(pid);
+    return line ? { rid, poolId: pid, row: line, att: att0 } : null;
   }
-  async function openPiece(pc) {
+  /** The piece of order `rid` the order window has chosen now (EDITTARGET): on its Sheet tab the charm picked on the sheet, else the line picked in "Its pieces" (its first copy); '' for none. */
+  function chosenPiece(rid, row) {
+    const W = root.OrderWin; let w = null; try { w = W && typeof W.where === 'function' ? W.where() : null; } catch (_) { w = null; }
+    if (!w || String(w.rid || '') !== String(rid)) return '';
+    if (w.view === 'sheet' && ownPool(rid, w.focus)) return String(w.focus);
+    const line = w.piece ? (row && row.key === w.piece ? row : rowsAll().find(r => r && r.key === w.piece)) : null, ids = line ? (line.poolIds || []).map(String).filter(id => ownPool(rid, id)) : [];
+    return ids[0] || '';
+  }
+  /** EDITTARGET: the Charm Editor open now (another charm, another order) closed through its own Cancel first, as charm-nest-ce-masters.js closeEditor does (it asks before changes are thrown
+   *  away; "Keep editing" keeps it) → whether it is gone. */
+  function makeWay() {
+    const CE = root.CharmEditor; if (!CE || !CE.current) return Promise.resolve(true);
+    const Ms = root.CharmNestCeMasters; return Ms && typeof Ms.closeEditor === 'function' ? Promise.resolve(Ms.closeEditor()).then(v => !!v && !CE.current, () => false) : Promise.resolve(false);
+  }
+  async function openPiece(pc, tok) {
     const E = root.Engrave, CE = root.CharmEditor;
-    if (CE && CE.current) { say('The Charm Editor is already open'); return null; }
+    if (CE && CE.current && !(await makeWay())) { if (CE.current) say('The Charm Editor is already open'); return null; }
+    if (tok && tok.gone) return null;   // (EDITTARGET: another piece was asked for meanwhile)
     const W = root.OrderWin, inWin = !!(W && typeof W.isOpen === 'function' && W.isOpen());
     // (what a save says: under the order window's own "Open in Charm Editor" when it is in view, a toast would be under that window; else a toast)
     const note = () => { try { const f = doc && doc.getElementById('owVector'), n = f && f.closest('figure'); return n ? n.querySelector('.owCharmEditNote') : null; } catch (_) { return null; } };
@@ -708,20 +731,27 @@
     try { return await E.openCharmEditor({ row: pc.row, poolId: pc.poolId, from: inWin ? 'orderWindow' : 'piece', say: tell }); }
     finally { busyCards.delete(pc.rid); repaint(pc.rid); }
   }
+  /* EDITTARGET: one open at a time FOR WHAT IS ASKED. It was one open at a time, full stop: a press while an earlier open was still on its way (the master read, the fonts: seconds on the live
+     site) or still in the editor was handed THAT open, so Edit Design on the next order put the editor up on the charm asked for before. Now the same piece (or custom order) asked again is that
+     open; another one is opened, the earlier one gives way (it opens nothing), and an editor already up on another charm is closed through its own Cancel first. */
   function openDesigner(x, o) {
-    if (designing) return designing;
-    const pc = root.Engrave && typeof root.Engrave.openCharmEditor === 'function' && root.CharmNestArtEdit ? pieceDesignOf(x) : null;
-    if (pc) {
-      designing = openPiece(pc).catch(e => { console.warn('[custom piece] Charm Editor (piece):', e); say(`Charm Editor: ${String((e && e.message) || e).slice(0, 160)}`, 'bad', 7000); return null; }).finally(() => { designing = null; });
-      return designing;
-    }
-    designing = designOnce(x, o || {}).catch(e => { console.warn('[custom piece] Charm Designer:', e); say(`Charm Designer: ${String((e && e.message) || e).slice(0, 160)}`, 'bad', 7000); return null; }).finally(() => { designing = null; });
-    return designing;
+    o = o || {};
+    const pc = root.Engrave && typeof root.Engrave.openCharmEditor === 'function' && root.CharmNestArtEdit ? pieceDesignOf(x, o.poolId) : null, row = rowsOf(x)[0];
+    const key = pc ? 'pc|' + pc.poolId : 'd|' + (row && row.order ? String(row.order.receiptId) : '');
+    if (designing && designing.key === key) return designing.p;
+    if (designing) designing.tok.gone = true;
+    const d = { key, tok: { gone: false }, p: null };
+    d.p = (pc ? openPiece(pc, d.tok).catch(e => { console.warn('[custom piece] Charm Editor (piece):', e); say(`Charm Editor: ${String((e && e.message) || e).slice(0, 160)}`, 'bad', 7000); return null; })
+      : designOnce(x, o, d.tok).catch(e => { console.warn('[custom piece] Charm Designer:', e); say(`Charm Designer: ${String((e && e.message) || e).slice(0, 160)}`, 'bad', 7000); return null; }))
+      .finally(() => { if (designing === d) designing = null; });
+    designing = d;
+    return d.p;
   }
-  async function designOnce(x, o) {
+  async function designOnce(x, o, tok) {
     const CE = root.CharmEditor;
     if (!CE || typeof CE.open !== 'function') { say('The Charm Designer is not loaded on this page — reload it', 'bad'); return null; }
-    if (CE.current) { say('The Charm Designer is already open'); return null; }
+    if (CE.current && !(await makeWay())) { if (CE.current) say('The Charm Designer is already open'); return null; }   // (EDITTARGET: another charm's editor closed through its own Cancel first)
+    if (tok && tok.gone) return null;
     const row = rowsOf(x)[0]; if (!row) return null;
     const rid = String(row.order.receiptId), info = orderInfo(rid);
     const by = who() || await askWho('Kept with the design you make for this order.', 'design this custom order'); if (!by) return null;
@@ -736,6 +766,7 @@
       const blank = !faces; if (blank) faces = { front: blankFace() };
       const name = (att && att.name) || (base && base.name) || `${info.sku || 'Custom'} · ${rid}`;
       const T = await textEngine(faces);
+      if ((tok && tok.gone) || CE.current) return null;   // (EDITTARGET: another order was asked for meanwhile, or an editor opened under us: this one gives way)
       log('editorOpen', { orderId: rid, sku: info.sku, designId: base ? base.id : undefined, version: base ? base.version : undefined, name, file: source.file, by });
       const l = live = { orderId: rid, design: base, name, source, saved: null, sent: null };
       let res;
@@ -743,7 +774,7 @@
         res = await CE.open({ title: name, subtitle: `Custom order ${rid}${info.buyer ? ' · ' + info.buyer : ''}${info.label ? ' · ' + info.label : ''} · Save, then send it to a sheet`, faces, startFace: 'front',
           fonts: T.fonts, textToPaths: T.text, lockRoles: blank ? [] : ['cut'],
           design: { id: base ? base.id : null, version: base ? base.version : null, name, orderId: rid, source }, orderId: rid });   // (design, orderId: what the design library's own hooks read)
-      } finally { live = null; }
+      } finally { if (live === l) live = null; }
       if (!res) return null;
       busyCards.delete(rid); repaint(rid);
       const saved = await saveResult(res, { base: l.saved || base, orderId: rid, name, source, by, from });
@@ -836,7 +867,22 @@
     const rid = String(r.order.receiptId), att = attachedOf(rid)[0];
     b.hidden = false; b.innerHTML = NIB + `<span>${att ? 'Edit Design' : 'Design Charm'}</span>`;   // (CEBTN, Paul 28 Oct 2026: "allow the name of the button to stay as edit design ... capitalize the word 'Edit Design'": the same button everywhere, its words by where it stands)
     b.title = att ? `${att.name} v${att.version} is attached to this order: open it in the Charm Designer` : 'Design this custom order\'s charm in the Charm Designer';
-    b.onclick = () => { const R = root.Review; let it = null; try { it = R && typeof R.customItemFor === 'function' ? R.customItemFor(r.key, r) : null; } catch (_) { it = null; } openDesigner(it || { rows: [r], row: r }); };
+    // (EDITTARGET, Paul 29 Oct 2026: "the Charm Editor does not update to open the Charm/Order currently selected": a press opens what the window shows AT THE PRESS: its line now (a button left
+    //  from an earlier paint is painted again for it first), the piece chosen now (the charm picked on its Sheet tab, the piece picked in "Its pieces"), and a card of THIS order only)
+    b.onclick = () => {
+      const cur = shownRow(r); if (!cur) { try { root.OrderWin.paint(); } catch (_) {} return; }
+      if (cur !== r) { orderWin(cur, at); if (!b.hidden && b.onclick) b.onclick(); return; }
+      const R = root.Review; let it = null; try { it = R && typeof R.customItemFor === 'function' ? R.customItemFor(r.key, r) : null; } catch (_) { it = null; }
+      if (it && !rowsOf(it).slice(0, 1).some(x => String(x.order.receiptId) === rid)) it = null;
+      openDesigner(it || { rows: [r], row: r }, { poolId: chosenPiece(rid, r) });
+    };
+  }
+  /** The line the order window shows now (EDITTARGET): `r` when it still is; else that line from the pull; null when it cannot be told here (the window is painted again then). */
+  function shownRow(r) {
+    const W = root.OrderWin; let k = null; try { k = W && typeof W.key === 'function' ? W.key() : null; } catch (_) { k = null; }
+    if (!k || k === r.key) return r;
+    let all = []; try { all = root.Orders && typeof root.Orders.listRows === 'function' ? root.Orders.listRows() || [] : rowsAll(); } catch (_) { all = rowsAll(); }
+    return all.find(x => x && x.key === k) || rowsAll().find(x => x && x.key === k) || null;
   }
 
   /* ── the Charm Editor: "Send to sheet…" (item 17: any charm opened there, a master too, sent to the next sheet of a metal, handmade custom) ── */

@@ -10494,14 +10494,28 @@ const Engrave = window.Engrave = (() => {
      (and the fit it starts) and approves what the save left, saying so at once. One promise per piece while its save runs. */
   const ART_SAVES = new Map();   // poolId -> Promise (settles when the editor's save of that piece, its refit included, is over)
   const charmEditSaving = job => { for (const id of (job && job.copies) || []) { const p = ART_SAVES.get(String(id)); if (p) return p; } return null; };
+  /* EDITTARGET (Paul 29 Oct 2026: "When I click the "Edit Design" button on a given order the Charm Editor does not update to open the Charm/Order currently selected ... also ... in the Sheet
+     view ... clicking on different charms on the Sheet and then clicking "Edit Design""): one open at a time FOR THE PIECE ASKED. It was one open at a time, full stop: a press while the open of
+     another piece was still on its way (its master read, its fonts: seconds on the live site) was handed that open, and the editor came up on the charm asked for before (order 4211572095's Edit
+     Design showed ZODIAC_CONSTE_GEM-7 of order 4213879228). The same piece asked again is that open; another piece is opened, the earlier one gives way (it opens nothing), and an editor already
+     up on another charm is closed through its own Cancel first (it asks before changes are thrown away; "Keep editing" keeps it, and nothing else opens). */
   /** CHARM EDIT: the piece `x` names in the charm editor, and what comes back saved for it. `x`: an engraving job (its card's button) or a piece of any order, engraved or not (ITEM 30,
    *  charmEditPiece). → { saved: [faces], records } | null (put away, nothing changed, or not saved: the note says why). */
   function openCharmEditor(x) {
-    if (charmEditOpen) return charmEditOpen;
-    charmEditOpen = openCharmEditorOnce(x).finally(() => { charmEditOpen = null; });
-    return charmEditOpen;
+    const t0 = charmEditPiece(x), want = t0 ? t0.poolIds.join(",") : "";
+    if (charmEditOpen && (!want || charmEditOpen.want === want)) return charmEditOpen.p;
+    if (charmEditOpen) charmEditOpen.tok.gone = true;
+    const o = { want, tok: { gone: false }, p: null };
+    o.p = openCharmEditorOnce(x, o.tok).finally(() => { if (charmEditOpen === o) charmEditOpen = null; });
+    charmEditOpen = o;
+    return o.p;
   }
-  async function openCharmEditorOnce(x) {
+  /** EDITTARGET: the editor up now closed through its own Cancel (charm-nest-ce-masters.js closeEditor: it asks first when there are changes) → whether it is gone. */
+  function charmEditMakeWay() {
+    const CE = window.CharmEditor; if (!CE || !CE.current) return Promise.resolve(true);
+    const Ms = window.CharmNestCeMasters; return Ms && typeof Ms.closeEditor === "function" ? Promise.resolve(Ms.closeEditor()).then(v => !!v && !CE.current, () => false) : Promise.resolve(false);
+  }
+  async function openCharmEditorOnce(x, tok) {
     const AE = window.CharmNestArtEdit, CE = window.CharmEditor;
     if (!AE || !CE || !charmEditPiece(x)) return null;
     const by = employeeName() || await needEmployee("Kept with this charm's artwork edit.", { action: "edit this charm's artwork" }); if (!by) return null;   // (SIGNIN, 27 Oct 2026: put away, a note says why)
@@ -10533,6 +10547,10 @@ const Engrave = window.Engrave = (() => {
     let wentBack = false, savingArt = null;
     const back = job ? { label: "Back to engraving", title: "Back to this piece's engraving card in Design & Engrave", run: () => { wentBack = true; } }
       : t.from === "orderWindow" ? { label: "Back to order", title: `Back to order ${order}`, run: () => { wentBack = true; } } : null;
+    // (EDITTARGET: another piece asked for meanwhile: this open gives way; an editor up on another charm is closed through its own Cancel first)
+    if (tok && tok.gone) return null;
+    if (CE.current && !(await charmEditMakeWay())) { if (CE.current) charmEditTell(t, "The Charm Editor is open on another charm: save or cancel it first", true); return null; }
+    if (tok && tok.gone) return null;
     charmEditLog("editorOpen", { poolId, orderId: order || null, sku, by, from: t.from, engraved: !!job });   // (Design & Engrave, Paul 28 Oct 2026: "all of this must be tracked by employee": charm-nest-design-log.js)
     // (opened over a modal window, the order window: the editor is put in it, as the top layer covers the page's body; the window's Esc is the editor's while it is open)
     const host = [...document.querySelectorAll("dialog[open]")].filter(d => { try { return d.matches(":modal"); } catch (_) { return true; } }).pop() || null, keepOpen = e => e.preventDefault();
