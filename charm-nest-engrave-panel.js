@@ -49,6 +49,7 @@
   const tryDo = (f, d) => { try { return f(); } catch (_) { return d; } };
   const MODES = [['none', 'None'], ['front', 'Front'], ['back', 'Back']];   // (LIVEWORDS: no "Front + back" choice: Front and Back are toggles, both pressed = both faces engraved, mode 'both')
   const facesOf = mode => (mode === 'both' ? ['front', 'back'] : mode === 'front' ? ['front'] : mode === 'back' ? ['back'] : []);
+  const faceOf = j => { const F = Faces(); return F && F.faceOf ? F.faceOf(j) : (j && j.face === 'front' ? 'front' : 'back'); };
   const hasPatch = p => !!(p && (p.mode || p.front !== undefined || p.back !== undefined));
   const slotOfJob = j => { if (!j) return null; const F = Faces(); return j.slot || (F && j.key ? F.parseKey(j.key).slot : null) || null; };
   const pieceKeyOf = (line, slot) => str(line && line.key) + (slot ? '#' + slot : '');
@@ -355,6 +356,7 @@
     /** STAGEALL: the draft ended with no Approve (the card was left): it is DISCARDED (Paul: "otherwise those updates to the engraving are discarded"); the work area stops drawing it. Nothing is saved. */
     const keepQuietly = d => {
       const E = Eng(); for (const k of d.drafted || []) tryDo(() => { if (typeof opts.onDraft === 'function') opts.onDraft(k, null); else if (E && E.draftFit) E.draftFit(k, null); });
+      if (E && E.stageFace && opts.job && opts.job.key) tryDo(() => E.stageFace(opts.job.key, null, null));   // (FRONTSTAGE: a staged face shown in the work area goes with the discarded draft)
     };
     const focusState = () => { const a = el.ownerDocument.activeElement; if (!a || !el.contains(a) || !a.dataset || !a.dataset.engp) return null; return { engp: a.dataset.engp, face: a.dataset.face || '', mode: a.dataset.mode || '', act: a.dataset.act || '', start: a.selectionStart, end: a.selectionEnd }; };
     const restoreFocus = want => {
@@ -373,9 +375,19 @@
         if (typeof opts.onDraft === 'function') opts.onDraft(job.key, staged); else { const E = Eng(); if (E && E.draftFit) E.draftFit(job.key, staged); }
       } catch (_) { /* the work area keeps what it drew */ }
     };
+    /** FRONTSTAGE: the face being edited is staged on and has no job yet: the work area shows that face with its staged words (Engrave.stageFace); anything else takes such a showing away. -> shown */
+    const stagedOut = (vm, d) => {
+      const E = Eng(), cj = opts.job; if (!E || typeof E.stageFace !== 'function' || !cj || !cj.key) return false;
+      const f = d.face, on = !dead && DRAFTS.get(key) === d && facesOf(d.mode).includes(f) && faceJobOf(vm, f, slot) === null && !!vm.rows.length;
+      if (!on) { tryDo(() => E.stageFace(cj.key, null, null)); return false; }
+      const x = d.faces[f] || { text: '', font: '' };
+      const r = tryDo(() => E.stageFace(cj.key, f, { text: x.text, fontWord: x.font || '' }), null);
+      return !!(r && r.ok);
+    };
     /** What a face's thumbnail shows right now: the staged words and font, the face's own position. */
     const paint = (vm, d, face) => {
       draftOut(vm, d, face);
+      if (face === d.face) stagedOut(vm, d);
       const P = Prev(); if (!P || !P.update) return;
       const host = opts.thumb ? tryDo(() => opts.thumb(face), null) : tryDo(() => (opts.scope || el.ownerDocument).querySelector(`.engFace[data-face="${face}"] .engThumb`), null);
       if (!host) return;
@@ -425,12 +437,21 @@
       // (NONEPLAIN 2: Approve (the button or the A key) with None staged IS the commit: every face goes, with no seal (Engrave.saveSetup -> takeAway), the page says so and moves on as after any Approve; nothing is
       //  left to approve, so the press ends there and never approves the old job. With the "Cut it plain" row showing, Approve is the go-ahead too.)
       const noneNow = m.d.mode === 'none';
+      const newFace = !noneNow && facesOf(m.d.mode).includes(m.d.face) && faceJobOf(m.vm, m.d.face, slot) === null ? m.d.face : null;   // (FRONTSTAGE: the face edited was staged on and has no job yet)
       try {
         say(cardOf(jobKey), noneNow ? '' : WAIT_WHY);
         const res = await commit(m);
         if (!res || !res.ok) { if (!(res && res.cancelled)) say(cardOf(jobKey), 'Not approved: ' + str((res && res.message) || 'the new words were not kept') .replace(/^Not saved:\s*/, '')); return; }
         if (noneNow) return;
         const E = Eng(), until = Date.now() + 60000 * Math.max(0.001, +(root && root.CN_SPIN_SCALE) || 1);
+        // (FRONTSTAGE: the staged face is made now: its own card is opened once its words are fitted, for its own Approve; the other face's approval is never pressed for it)
+        if (newFace) {
+          const nj = () => tryDo(() => ((E && E.jobsOf ? E.jobsOf(line) : jobs()) || []).find(j => j && faceOf(j) === newFace && (slotOfJob(j) || null) === (slot || null)), null);
+          let j2 = nj(); while (Date.now() < until && !(j2 && (j2.state === 'review' && j2.fit || ['words', 'blocked'].includes(j2.state)))) { await wait(60); j2 = nj(); }
+          say(cardOf(jobKey), '');
+          if (j2 && E && E.restoreView && E.render) tryDo(() => { E.restoreView({ tab: 'place', list: false, chosen: true, focus: j2.key }); E.render(); });
+          return;
+        }
         const jobNow = () => tryDo(() => ((E && E.jobsOf ? E.jobsOf(line) : jobs()) || []).find(j => j && j.key === jobKey), null);
         let j = jobNow();
         const settled = x => (x.state === 'review' && x.fit && !(E && E.isWorking && tryDo(() => E.isWorking(x), false))) || ['words', 'blocked', 'approved', 'written', 'skipped', 'none'].includes(x.state)
@@ -469,7 +490,9 @@
     const noJob = (vm, d) => {
       const card = el.closest ? el.closest('.rvItem') : null, host = card ? card.querySelector('.backHost') : null; if (!card || !host) return;
       const job = facesOf(d.mode).includes(d.face) ? faceJobOf(vm, d.face, slot) : undefined, old = host.querySelector('.engpNoJob');
-      const want = job === null ? (d.busy ? `Preparing the ${d.face} engraving…` : `The ${d.face} engraving is being prepared.`) : job && job.state === 'none' ? `No ${d.face} engraving.` : '';
+      // (FRONTSTAGE, Paul 29 Oct 2026, "without any explanations": a face staged on that has no job yet is SHOWN in the work area with its staged words (stagedOut), never "being prepared")
+      const shown = job === null && !d.busy && stagedOut(vm, d);
+      const want = job === null ? (shown ? '' : d.busy ? `Preparing the ${d.face} engraving…` : '') : job && job.state === 'none' ? `No ${d.face} engraving.` : '';
       if (!want) { if (old) old.remove(); delete card.dataset.engpNojob; return; }
       card.dataset.engpNojob = d.face;
       const box = old || host.appendChild(el.ownerDocument.createElement('div'));

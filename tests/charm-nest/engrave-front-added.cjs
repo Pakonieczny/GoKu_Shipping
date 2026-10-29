@@ -26,7 +26,8 @@ const workFacts = page => page.evaluate(Q => {
   const host = c.querySelector('.backHost'), cv = host && host.querySelector('canvas'), faces = [...c.querySelectorAll('.engCard .engFace')].filter(vis).map(f => ({ face: f.dataset.face, current: f.hasAttribute('aria-current') }));
   return { open: true, job: c.dataset.key, state: c.dataset.state, canvas: !!(cv && vis(cv)), text: host ? (() => { const h = host.cloneNode(true); h.querySelectorAll('.egZoom, .egZoomMenu').forEach(n => n.remove()); return h.textContent.replace(/\s+/g, ' ').trim().slice(0, 160); })() : '',   // (ENGVIEW's zoom control is not a message) spin: !!(host && host.querySelector('.spin')),
     approve: !!(c.querySelector('[data-a="approve"]') && vis(c.querySelector('[data-a="approve"]'))), faces: faces.map(f => f.face).join('+'), current: (faces.find(f => f.current) || {}).face || null, words: (c.querySelector('.engpWords') || {}).value || '', mode: (c.querySelector('.engp') || { dataset: {} }).dataset.mode || null,
-    why: [...c.querySelectorAll('.ctl .why')].map(x => x.textContent.trim()).join(' | ') };
+    why: [...c.querySelectorAll('.ctl .why')].map(x => x.textContent.trim()).join(' | '),
+    staged: !!(cv && cv._staged), viewFace: cv ? cv._viewFace || null : null, ink: cv ? (() => { try { const g = cv.getContext('2d'), d = g.getImageData(0, 0, cv.width, cv.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 60 && d[i + 1] < 60 && d[i + 2] < 60 && d[i + 3] > 200) n++; return n; } catch (_) { return -1; } })() : -1 };
 }, Q);
 const jobsOf = (page, key) => page.evaluate(key => Engrave.jobsOf(B.orders.byKey.get(key)).map(j => ({ key: j.key, face: j.face === 'front' ? 'front' : 'back', state: j.state, text: j.text, fitted: !!(j.fit && ((j.fit.glyphs && j.fit.glyphs.length) || j.fit.cmds)), hasView: !!j.view, hasMask: !!j.mask, reason: j.reason || '',
   centre: j.fit && j.fit.centre ? j.fit.centre.map(v => Math.round(v * 1000) / 1000) : null, geometry: !!(j.verify && j.verify.geometry && j.verify.geometry.ok), seals: (j.engravingSeals || []).filter(s => s.how === 'engraveApproved').length, by: j.approvedBy || '' })), key);
@@ -60,7 +61,8 @@ async function addFront(w, name, text) {
   if (!w) { console.log('SKIP no playwright-core'); return; }
   const page = w.page;
   try {
-    const made = await R.build(w, ['back', 'refAnna', 'refMarck', 'both']);
+    R.ORDERS.stageT = Object.assign({}, R.ORDERS.back, { rid: '4290000151', listing: '1890000151', buyer: 'Name Thirteen' }); R.EXPECT_JOBS.stageT = 1;
+    const made = await R.build(w, ['back', 'refAnna', 'refMarck', 'both', 'stageT']);
     const key = made.back.key, anna = made.refAnna.key, marck = made.refMarck.key, bothKey = made.both.key;
     counting = true;
     const j00 = made.back.jobs;
@@ -69,9 +71,11 @@ async function addFront(w, name, text) {
     // ═══ P · Paul's flow: back fitted, add the front, press the Front thumbnail ═══
     const { staged, mid } = await addFront(w, 'back', 'B');
     // (STAGEALL, Paul 29 Oct 2026: "it's not approved until the Approve button is pressed again": a press on the Front toggle STAGES the front; it is made when the staged change is kept: Approve, or here the panel's commit)
-    check('P1 a press on the Front toggle stages the front: the Front is marked and edited, nothing is made or saved yet (no front job), no Approve of the other face',
-      staged.current === 'front' && staged.mode === 'both' && !/~front$/.test(staged.job || '') && !staged.approve, JSON.stringify({ staged }));
-    check('P2 the front words are typed in the front\'s own box', mid.words === 'B', JSON.stringify(mid));
+    check('P1 a press on the Front toggle stages the front: the Front is marked and edited, nothing is made or saved yet (no front job); Approve is there to keep it',
+      staged.current === 'front' && staged.mode === 'both' && !/~front$/.test(staged.job || '') && staged.approve, JSON.stringify({ staged }));
+    // (FRONTSTAGE, Paul 29 Oct 2026, "without any explanations": the staged front is SHOWN, never "being prepared": the charm's front, and the words typed fitted on it as a draft)
+    check('P1b the work area shows the staged front at once (the charm\'s front, no "being prepared" line)', staged.canvas && staged.staged && staged.viewFace === 'front' && !/being prepared/i.test(staged.text), JSON.stringify(staged));
+    check('P2 the front words are typed in the front\'s own box and drawn on the staged front in the work area (more ink than the bare front)', mid.words === 'B' && mid.staged && mid.viewFace === 'front' && mid.ink > staged.ink + 20 && !/being prepared/i.test(mid.text), JSON.stringify({ mid, bare: staged.ink }));
     await R.shot(w, 'FRONT-1-staged-unsaved');
     const fj = await until(async () => { const js = await jobsOf(page, key); const f = js.find(j => j.face === 'front'); return f && f.state === 'review' && f.fitted ? f : null; }, 90000);
     const sawNow = await seen(page);
@@ -161,6 +165,16 @@ async function addFront(w, name, text) {
     check('S1 a faced line read again and opened: both faces are read from the setup and fitted by themselves (front W, back Name One), the front is drawn', s0.every(j => j.state === 'classify') && !!s1 && s1.find(j => j.face === 'front').text === 'W' && /NAME|Name/i.test(s1.find(j => j.face === 'back').text) && sw.canvas && /~front$/.test(sw.job || ''), JSON.stringify({ s0: s0.map(j => j.state), s1: s1 && s1.map(j => [j.face, j.state, j.text]), sw: [sw.job, sw.canvas, sw.text] }));
     check('S2 "Processing stopped" never showed there (the work area said Preparing, or drew)', !sseen.some(t => /Processing stopped/i.test(t)), JSON.stringify(sseen));
 
+    // ═══ T · FRONTSTAGE: Approve (the A key) with the staged front keeps it: the front is made and fitted, its own card opens for its own Approve; the back's approval is never pressed for it ═══
+    const tKey = made.stageT.key;
+    await R.openEngraveDetail(w, 'stageT', { face: 'back' });
+    await page.evaluate(Q => document.querySelector(Q + ' .engpSeg[data-mode="front"]').click(), Q); await R.settle(page, 400);
+    await page.evaluate(Q => { const t = document.querySelector(Q + ' .engpWords'), set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; t.focus(); set.call(t, 'T'); t.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'T' })); }, Q); await R.settle(page, 400);
+    const t0 = await workFacts(page);
+    await page.evaluate(Q => { const c = document.querySelector(Q); if (!c.hasAttribute('tabindex')) c.setAttribute('tabindex', '-1'); c.focus(); }, Q); await page.keyboard.press('a');
+    const tf = await until(async () => { const js = await jobsOf(page, tKey), f = js.find(j => j.face === 'front'), w1 = await workFacts(page); return f && f.state === 'review' && f.fitted && w1.open && /~front$/.test(w1.job || '') ? { f, b: js.find(j => j.face === 'back'), w1 } : null; }, 90000);
+    check('T1 the staged front is shown with its words before Approve, and Approve makes it: fitted, its own card in front for its own Approve; the back is not approved by it',
+      t0.staged && t0.viewFace === 'front' && !!tf && tf.b.state === 'review' && tf.f.text.toUpperCase() === 'T', JSON.stringify({ t0: { staged: t0.staged, viewFace: t0.viewFace, ink: t0.ink }, tf }));
     check('Z1 no model call (reading, review or any other) was made by any of this: the front takes its words from the setup', modelCalls === 0, 'calls after the world was built: ' + modelCalls);
     check('Z2 no page error', w.errors.length === 0, JSON.stringify(w.errors).slice(0, 300));
   } finally { console.log = realLog; await w.close(); }
