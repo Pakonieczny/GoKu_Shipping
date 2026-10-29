@@ -487,7 +487,16 @@
       const n = card(p, o()); if (el && el.isConnected) el.replaceWith(n); else slot.replaceChildren(n); el = n; repaint(n);
     }
     draw(true);
-    return { get el() { return el; }, update(patch) { const staged = !!patch && Object.prototype.hasOwnProperty.call(patch, 'stage'); if (patch) Object.assign(ctx, patch); draw(staged); }, refresh() { draw(true); }, destroy() { gone = true; slot.replaceChildren(); el = null; },
+    // (EDITFOLLOW, Paul 29 Oct 2026: "When I updated this charm in the Charm Editor and then returned to the Engraving modal, not all of the visible vector thumbnails got updated correctly": the
+    //  Front box kept the placement the face had while it was fitted again. The piece's drawing moved (its art saved, its words fitted again and placed: CharmNestMadeThumb's look at what moved),
+    //  so its boxes are drawn again from what is saved now)
+    const MT = root && root.CharmNestMadeThumb, unsweep = MT && MT.onSweep ? MT.onSweep(moved => {
+      if (gone || !slot.isConnected) { if (unsweep) unsweep(); return; }
+      if (!(moved || []).length) return;
+      const p = tryDo(find, null), ids = p ? new Set([...(p.poolIds || []), ...(p.jobs || []).flatMap(j => (j && j.copies) || [])].map(String)) : null;
+      if (ids && moved.some(id => ids.has(String(id)))) draw(true);
+    }) : null;
+    return { get el() { return el; }, update(patch) { const staged = !!patch && Object.prototype.hasOwnProperty.call(patch, 'stage'); if (patch) Object.assign(ctx, patch); draw(staged); }, refresh() { draw(true); }, destroy() { gone = true; if (unsweep) unsweep(); slot.replaceChildren(); el = null; },
       thumb: face => (el ? el.querySelector(`.engFace[data-face="${face}"] .engThumb`) : null),
       faces: () => (el ? [...el.querySelectorAll('.engFace')].map(f => f.dataset.face) : []),
       label(face, text) { const t = el && el.querySelector(`.engFace[data-face="${face}"] .engTxt`); if (!t) return; const w = linesText(text); t.className = 'engTxt'; t.textContent = w.join(' / '); if (w.length) t.title = w.join('\n'); else t.removeAttribute('title'); } };

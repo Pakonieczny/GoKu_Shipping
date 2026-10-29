@@ -11379,6 +11379,10 @@ const Engrave = window.Engrave = (() => {
     if (!c || !c.isConnected || EG.cardKey !== job.key) { render(); return; }
     const f = job.fit; if (!f) { render(); return; }
     const bc = c.querySelector(".backHost canvas"); if (bc && bc._paint) { bc._paint(); markShown(job); c._syncBoth?.(); }
+    // (EDITFOLLOW, Paul 29 Oct 2026: "not all of the visible vector thumbnails got updated correctly": the card's Front / Back boxes are drawn again with the work area, from the job as it is now
+    //  (they were drawn while the face was fitted again, with the placement it had, and nothing drew them again when the new placement landed))
+    { const pm = c._pieceMount; if (pm && pm.card && pm.card.update) { try { pm.card.update(); } catch (_) { /* the boxes follow at the next look at what moved */ } } }
+    { const strip = c.querySelector(".engSetWrap"); if (strip) { try { window.CharmNestEngraveCard?.repaint?.(strip); } catch (_) { /* the set's bars follow at the next drawing */ } } }   // (a set's bars side by side: painted again from the job as it is now)
     const cap = c.querySelector("[data-cap]"); if (cap) cap.textContent = capText(f);
     const tn = c.querySelector('input[data-a="turn"]'); if (tn && document.activeElement !== tn) tn.value = String(turnOf(job));   // (ROTBAR: the one degree box is the turn of the whole piece)
     const sl = c.querySelector('input[data-a="resize"]');
