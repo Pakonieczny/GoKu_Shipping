@@ -9612,7 +9612,15 @@ const Engrave = window.Engrave = (() => {
       job.mask = mask; if (job.verify && !job.fit.artOnly) job.verify = { geometry: G.verifyInk(job.fit.cmds, mask), at: Date.now() };
     } catch (_) { /* the area it had stands */ }
   }
-  function renderBack(job, px, { grid = false, hatch = true, editable = false, include = null, draft = false, made = false } = {}) {
+  /** STEADYGRID: how far the piece reaches from the point it turns about (the view's cx, cy), pt: its farthest cut-line point (a turn or a mirror about that point keeps every distance, so this
+   *  is the same at every turn and on both faces), and 4.5 pt more for the words' box and its turning handle. Kept per view. */
+  const STEADY_REACH = new WeakMap();
+  function steadyReach(view) {
+    let r = STEADY_REACH.get(view); if (r) return r; r = 0;
+    for (const m of view.members || []) for (const poly of G.flatten(m, 16)) for (const q of poly) { const d = Math.hypot(q[0] - view.cx, q[1] - view.cy); if (d > r) r = d; }
+    r = (r || 36) + 4.5 * PT; STEADY_REACH.set(view, r); return r;
+  }
+  function renderBack(job, px, { grid = false, hatch = true, editable = false, include = null, draft = false, made = false, steady = false } = {}) {
     if (editable) freshMask(job);
     const view = job.view, mask = job.mask, fit = job.fit; const cv = document.createElement("canvas"); cv._editable = editable; cv._draft = !!draft;
     const handles = view.members.reduce((a, s) => [Math.min(a[0], s.bbox[0]), Math.min(a[1], s.bbox[1]), Math.max(a[2], s.bbox[2]), Math.max(a[3], s.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
@@ -9625,8 +9633,15 @@ const Engrave = window.Engrave = (() => {
     let bb = handles;
     const join = (a, b) => b ? [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])] : a;
     if (box) bb = join(join(drawnBounds(view.members) || handles, editable && boxReach(fit)), include);
-    const pad = (box ? 1 : 3) * PT; const w = bb[2] - bb[0] + 2 * pad, h = bb[3] - bb[1] + 2 * pad; const k = box ? Math.min(px[0] / w, px[1] / h) : px / Math.max(w, h);
-    cv.width = Math.round(w * k); cv.height = Math.round(h * k); cv._sizePt = {w,h}; const ctx = cv.getContext("2d");
+    let pad = (box ? 1 : 3) * PT;
+    // STEADYGRID (Paul, 28 Oct 2026: "The grid should be static and only the charm inside the grid should rotate. The grid should also be always in the same place and also be the same full size"):
+    // the work area (steady) is the box itself, px wide and high, centred on the point the piece turns about (the view's cx, cy: every turn and both faces turn and mirror about it), at the scale
+    // that holds the piece at ANY turn (steadyReach: its farthest point from that centre, and room for the words' box and handle). So a turn, a resize of the words or the other face draws the
+    // charm turned inside the same grid: the same size, the same place, the same millimetres. Only the view on the screen: the view, the fit and every file are as before
+    const steadyNow = box && steady && Number.isFinite(+view.cx) && Number.isFinite(+view.cy);
+    if (steadyNow) { const r = steadyReach(view), k0 = Math.min(px[0], px[1]) / (2 * r), hw = px[0] / (2 * k0), hh = px[1] / (2 * k0); bb = [view.cx - hw, view.cy - hh, view.cx + hw, view.cy + hh]; pad = 0; }
+    const w = bb[2] - bb[0] + 2 * pad, h = bb[3] - bb[1] + 2 * pad; const k = box ? Math.min(px[0] / w, px[1] / h) : px / Math.max(w, h);
+    cv.width = Math.round(w * k); cv.height = Math.round(h * k); cv._sizePt = {w,h}; cv._steady = !!steadyNow; const ctx = cv.getContext("2d");
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
     const tx = (x, y) => [(x - bb[0] + pad) * k, (bb[3] + pad - y) * k];
     if (grid) { ctx.strokeStyle = "rgba(0,0,0,.09)"; ctx.lineWidth = 1; const x0 = Math.floor((bb[0] - pad) * MM), x1 = Math.ceil((bb[2] + pad) * MM); for (let mm = x0; mm <= x1; mm++) { const p = tx(mm * PT, 0); ctx.beginPath(); ctx.moveTo(p[0], 0); ctx.lineTo(p[0], cv.height); ctx.stroke(); } const y0 = Math.floor((bb[1] - pad) * MM), y1 = Math.ceil((bb[3] + pad) * MM); for (let mm = y0; mm <= y1; mm++) { const p = tx(0, mm * PT); ctx.beginPath(); ctx.moveTo(0, p[1]); ctx.lineTo(cv.width, p[1]); ctx.stroke(); } ctx.save(); ctx.fillStyle = "rgba(0,0,0,.4)"; ctx.font = `${Math.round(Math.max(10, Math.min(15, cv.width / 55)))}px sans-serif`; ctx.textBaseline = "top"; ctx.fillText("1 mm grid", 6, 6); ctx.restore(); }   // hung from the top edge: a large preview's label was cut off; sized by the canvas, not the charm (a small charm's big zoom wrote it at 24 px)
@@ -9702,7 +9717,7 @@ const Engrave = window.Engrave = (() => {
         cv._box = { box, corners: pts, rotate: hp, centrePx: tx(centre[0], centre[1]) };
         // framed with the box where it was drawn first: a move or a turn that takes a corner or the handle past the edge
         // frames the preview again (the editor's canvas sets _reframe; never while a hand is still dragging)
-        if (!prov && cv._reframe && [...pts, hp].some(p => p[0] < 0 || p[1] < 0 || p[0] > cv.width || p[1] > cv.height)) cv._reframe();
+        if (!prov && cv._reframe && !cv._steady && [...pts, hp].some(p => p[0] < 0 || p[1] < 0 || p[0] > cv.width || p[1] > cv.height)) cv._reframe();
       }
     };
     cv._map = { bb, pad, k, tx, base, outline, inv: (px, py) => [bb[0] - pad + px / k, bb[3] + pad - py / k] };
@@ -9848,7 +9863,7 @@ const Engrave = window.Engrave = (() => {
   /** The work area's drawing of the OTHER face of `job`'s piece (view only): renderBack over that face's view, no words, no handles. null when it cannot be drawn. */
   function renderFaceView(job, face, px) {
     const fv = faceViewOf(job, face); if (!fv || !fv.view) return null;
-    const cv = renderBack({ key: job.key + "~" + face, view: fv.view, mask: null, fit: null, copies: job.copies, row: job.row, _viewCharm: fv.charm }, px, { grid: true, hatch: false, editable: true });
+    const cv = renderBack({ key: job.key + "~" + face, view: fv.view, mask: null, fit: null, copies: job.copies, row: job.row, _viewCharm: fv.charm }, px, { grid: true, hatch: false, editable: true, steady: true });   // (STEADYGRID: the same grid as the job's own face)
     cv._editable = false; cv._viewFace = face;
     return cv;
   }
@@ -11648,18 +11663,8 @@ const Engrave = window.Engrave = (() => {
     });
     show(msgTab, false);
   }
-  /* The Approved block sits at the top right of the work area and holds back a strip of it (.pvMain pads 181 px) for the work area's whole height, so a
-     wide bar was drawn in the 381 px left of the strip with 300 px of empty frame above and below it (Paul, 10 Oct: "squished"). A piece clearly wider than tall
-     takes the strip as well when, drawn at the width that gives and centred in the work area (the canvas is centred, charm-nest-1.html), it sits clear below the
-     block: the card then wears .egWide and the strip is given back. pt = the drawing's size (renderBack's _sizePt), beside = the box beside the strip, to = the box
-     with the strip, host = the work area's height, below = how far down the block reaches from the work area's top. Every other piece (round, upright, squarish,
-     or one that would touch the block) is drawn exactly as before. */
-  const WIDE_PIECE = 1.5, BLOCK_AIR = 8;
-  function takesStrip(pt, beside, to, host, below) {
-    if (!pt || !(pt.w >= WIDE_PIECE * pt.h)) return false;
-    const dims = box => { const k = Math.min(box[0] / pt.w, box[1] / pt.h); return [Math.round(pt.w * k), Math.round(pt.h * k)]; }, was = dims(beside), now = dims(to);
-    return now[0] >= was[0] + 12 && (host - (now[1] + 2)) / 2 >= below + BLOCK_AIR;      // (+2: the canvas's border)
-  }
+  /* (STEADYGRID, 28 Oct 2026: the wide rule by the piece's shape (takesStrip, Paul 10 Oct: "squished") is mountBack's by the grid's own size now: the piece turns inside the grid, so its
+     shape at one turn never decides it) */
   /** The Left | Right switch of a row's editor, and the "Disc 1 | Disc 2 | Disc 3" switch of a counted line's: one button for each piece (its tag, its words, where it stands; a disc also its font by name),
    *  the one shown pressed. Drawn by the ONE shared component (charm-nest-piece-switch.js: the order window, the sheet window and the pop-ups draw the very same control). Presentation only: each piece is
    *  its own card, with its own words, fit and approval. */
@@ -11985,16 +11990,22 @@ const Engrave = window.Engrave = (() => {
       // box, so a tall charm takes the whole height and a wide one the whole width (it used to be the square that fits)
       const stacked = getComputedStyle(backHost).flexGrow === "0";
       const side = v => Math.round(Math.min(1400, Math.max(200, v - 4)));
-      // the Approved block (top right) holds back its column of the work area, which .pvMain pads for the block's whole height; a wide piece may take that
-      // column back when it sits clear below the block (takesStrip). The box is measured from the whole work area, so what the card wears does not change it.
-      const pm = backHost.parentElement, blk = stacked ? null : card.querySelector(".pvApproval"), br = blk && blk.getBoundingClientRect();
-      const strip = br && br.width > 0 && br.height > 0 ? br.width : 0, below = strip ? br.bottom - r.top : 0, bw = strip ? pm.getBoundingClientRect().width - strip : r.width;
-      const px0 = [side(bw || 320), side(stacked ? (window.innerHeight || 700) * 0.55 : r.height || 320)];
-      if (Math.abs(px0[0] - mounted[0]) < 12 && Math.abs(px0[1] - mounted[1]) < 12 && Math.abs(below - mountedBelow) < 4) return;
-      mounted = px0; mountedBelow = below; backHost.textContent = "";
-      // the drawing's shape does not depend on its size: a small drawing of it says whether a wide piece clears the block (a piece beside no block is not asked)
-      const full = [side(bw + strip), px0[1]], wide = !!strip && takesStrip(renderBack(dj, [64, 64], { editable: true, hatch: false, include: framed })._sizePt, px0, full, r.height, below);
-      const px = wide ? full : px0;
+      /* STEADYGRID (Paul, 28 Oct 2026: "When I rotate the entire charm, the grid gets resized, and due to that resizing it goes behind the button on the top, left hand corner … The grid should be static
+         and only the charm inside the grid should rotate. The grid should also be always in the same place and also be the same full size"). The grid IS the work area's box: its size and place are
+         decided by the card alone, never by the piece's turn, its words or the face shown (renderBack steady: the charm turns inside it, at one scale for every turn). It starts under the band the
+         card's top holds: the "Open in Charm Editor" button at the top left (placed first, so it is measured) and, when the grid takes the Approve block's column too, the block. That column is taken
+         (.egWide) when the grid is larger so: the piece turns inside a circle, so the larger of the two boxes' smaller sides wins, whatever its shape. */
+      try { charmEditButton(backHost, null, job); } catch (_) { /* the band stays the block's */ }
+      const pm = backHost.parentElement, pr = pm.getBoundingClientRect(), ceb = pm.querySelector(":scope > .egCharmEdit"), cr = ceb && ceb.getBoundingClientRect();
+      const blk = stacked ? null : card.querySelector(".pvApproval"), br = blk && blk.getBoundingClientRect();
+      const strip = br && br.width > 0 && br.height > 0 ? br.width : 0, hostTop = r.top;
+      const ceBand = cr && cr.height > 0 ? Math.max(0, Math.round(cr.bottom - hostTop + 8)) : 0, apBand = strip ? Math.max(ceBand, Math.round(br.bottom - hostTop + 8)) : ceBand;
+      const H = stacked ? (window.innerHeight || 700) * 0.55 + ceBand : r.height || 320;
+      const NOTE = 48, beside = [side((strip ? pr.width - strip : r.width) || 320), side(H - ceBand - NOTE)], full = [side(pr.width), side(H - apBand - NOTE)];   // (NOTE: room under the grid for the last save's note, two lines of it, never over the art)
+      const wide = !!strip && Math.min(full[0], full[1]) > Math.min(beside[0], beside[1]) + 12, px = wide ? full : beside, band = wide ? apBand : ceBand;
+      if (Math.abs(px[0] - mounted[0]) < 12 && Math.abs(px[1] - mounted[1]) < 12 && Math.abs(band - mountedBelow) < 4) return;
+      mounted = px; mountedBelow = band; backHost.textContent = "";
+      backHost.style.paddingTop = band + "px"; backHost.style.paddingBottom = NOTE + "px"; backHost.style.boxSizing = "border-box";
       pm.classList.toggle("egWide", wide);
       // (FACEVIEW, Paul 28 Oct 2026: the piece's other face, chosen with the Front | Back switch or shown by a save of the Charm Editor that changed it: drawn as that face, view only; the words and
       //  the Approve block stay the face's being approved)
@@ -12005,7 +12016,7 @@ const Engrave = window.Engrave = (() => {
         try { charmEditButton(backHost, ov, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }
         return;
       }
-      const bc = (held && heldCanvas(job, px)) || renderBack(dj, px, { grid: true, editable: true, include: framed, draft: panelOn && !held }); framed = bc._map.bb; bc.tabIndex = -1; bc.style.outline = "none"; bc.title = job.fit && job.fit.artOnly ? `no words: the charm editor's parts are this ${fw}'s engraving` : "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys move them 0.05 mm, 1 mm with Shift · cut-outs and holes stay clear"; backHost.appendChild(bc); if (held) { heldOn(backHost, bc, job, px); return; } wire(bc); markShown(job); syncBoth(); if (panelOn) draftNote(card, DRAFTS.get(job.key));
+      const bc = (held && heldCanvas(job, px)) || renderBack(dj, px, { grid: true, editable: true, include: framed, draft: panelOn && !held, steady: true }); framed = bc._map.bb; bc.tabIndex = -1; bc.style.outline = "none"; bc.title = job.fit && job.fit.artOnly ? `no words: the charm editor's parts are this ${fw}'s engraving` : "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys move them 0.05 mm, 1 mm with Shift · cut-outs and holes stay clear"; backHost.appendChild(bc); if (held) { heldOn(backHost, bc, job, px); return; } wire(bc); markShown(job); syncBoth(); if (panelOn) draftNote(card, DRAFTS.get(job.key));
       faceViewSwitch(backHost, bc, job, card);   // FACEVIEW: the piece's other face (when it has no engraving of its own), seen as that face; "Show front" laid the front mirrored over the back
       try { charmEditButton(backHost, bc, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }   // CHARM EDIT: the quiet "Edit charm" pill after them (and the last save's note under it): the piece's own artwork in the charm editor (never at the drawing's cost)
       bc._reframe = () => { if (raf || disposed || bc.classList.contains("drag")) return; mounted = [0, 0]; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); };
