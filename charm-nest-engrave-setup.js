@@ -245,13 +245,19 @@
     });
     const e = readingOf(line) || {}, pct = Math.round((+setup.confidence || 0) * 100);
     const src = setup.edited ? 'person' : setup.source, srcText = (SRC[src] || (() => ''))(setup.option || e.option);
+    // NONEPLAIN (Paul 29 Oct 2026: "When the user chooses "None" for engraving than the engraving must be completely removed ... It just becomes a regular order with no extra engraving required"): a face a PERSON took
+    // away on this piece (cut plain: the card's "No back engraving", or set to no engraving by a person) is not engraved, whatever the line's setup still names: the faces engraved (vm.mode) say so, so the
+    // None | Front | Back toggles and every reader of the mode follow the jobs. A face the system itself put away (the reader found no words) stays as it always read.
+    const offByPerson = j => j.state === 'skipped' || (j.state === 'none' && !!(j.decision && j.decision.none));
+    const off = rows.filter(r => r.jobs.length && r.jobs.every(offByPerson)).map(r => r.face), onFaces = setup.faces.filter(f => !off.includes(f));
+    const mode = off.length ? (onFaces.length === 2 ? 'both' : onFaces[0] || 'none') : setup.mode;
     return { ok: true, line, key: line.key, slot, pieceKey: F.pieceKeyOf(F.keyOf(line, 'back', slot)), jobKeys: { front: F.keyOf(line, 'front', slot), back: F.keyOf(line, 'back', slot) },
-      setup, base, mode: setup.mode, modeLabel: F.modeLabel(setup.mode), rows, jobs, pieceJobs, lineFont, edited: setup.edited, pieceEdited: !!setup.pieceEdited, by: setup.by, at: setup.at,
+      setup, base, mode, off, modeLabel: F.modeLabel(mode), rows, jobs, pieceJobs, lineFont, edited: setup.edited, pieceEdited: !!setup.pieceEdited, by: setup.by, at: setup.at,
       why: setup.edited ? `Set by ${setup.by || 'a person'}${setup.at ? ' on ' + new Date(setup.at).toLocaleDateString() : ''}` : shownWhy(setup.why),
       reading: setup.edited ? F.describe(base) : '', from: setup.edited ? '' : srcText ? `from ${srcText}${pct > 0 && setup.source !== 'default' ? ` · ${pct}% sure` : ''}` : (setup.source === 'default' ? 'nothing in the listing or the note says otherwise' : ''),
       raw: rawOf(line), needsPerson: setup.needsPerson, textSource: setup.textSource,
       prompt: setup.needsPerson ? (setup.mode === 'both' ? 'Say which words go on the front and which on the back' : `Say which words go on the ${setup.faces[0] || 'charm'}`) : '',
-      cut: CUT.includes(line.state), sig: JSON.stringify([slot, setup.mode, rows.map(r => [r.text, r.fontWord, r.decided, r.lockState, r.perPiece]), setup.edited, setup.pieceEdited, setup.needsPerson, CUT.includes(line.state)]) };
+      cut: CUT.includes(line.state), sig: JSON.stringify([slot, setup.mode, mode, rows.map(r => [r.text, r.fontWord, r.decided, r.lockState, r.perPiece]), setup.edited, setup.pieceEdited, setup.needsPerson, CUT.includes(line.state)]) };
   }
 
   /* ── the override ───────────────────────────────────────────────────────────── */
@@ -285,12 +291,20 @@
   }
 
   /* ── what a save does ──────────────────────────────────────────────────────── */
+  /** NONEPLAIN (Paul 29 Oct 2026: None "still kept the engraving"): is the piece CUT by the laser, so a decided face on it stays as it is? '' when it is not. The page's ONE rule for a piece that may no longer change
+   *  (Engrave.cutWhy: its sheet laser cut, a Rose Gold layout cut, ... replaceCutWhy) when the page has it: a line whose set's files are written ("written"), labelled or released is NOT cut, and its engraving changes
+   *  (its sheet drops the back). Without the page (node) the line's state says it, as it always did. */
+  function cutWhyOf(line, jobs) {
+    const E = root && root.Engrave;
+    if (E && typeof E.cutWhy === 'function') { try { return str(E.cutWhy(line, jobs)); } catch (_) { /* the line's state below */ } }
+    return line && CUT.includes(line.state) ? 'cut' : '';
+  }
   /** The jobs a change of setup (`prev` -> `next`) removes (undecided), cuts plain (decided), opens again (cut plain / no engraving, asked for again) and the faces that get a new placement. */
   function consequences(line, jobs, next, prev) {
     const F = Faces(), list = (jobs || []).filter(Boolean), out = { remove: [], plain: [], reopen: [], add: [], none: [], lines: [], blocked: '' };
     if (!next) return out;
     const decidedWas = j => DECIDED.includes(j.state) && j.state !== 'none';
-    if (line && CUT.includes(line.state) && list.some(j => faceOfJob(j) && !next.faces.includes(faceOfJob(j)) && decidedWas(j))) out.blocked = 'This piece is already cut: an engraving that is decided on it can no longer be changed here.';
+    if (line && list.some(j => faceOfJob(j) && !next.faces.includes(faceOfJob(j)) && decidedWas(j))) { const cw = cutWhyOf(line, list); if (cw) out.blocked = `This piece is already cut${cw === 'cut' ? '' : ' (' + cw + ')'}: an engraving that is decided on it can no longer be changed here.`; }
     if (!next.faces.length) {
       for (const j of list) (decidedWas(j) ? (j.state === 'skipped' ? [] : out.plain) : j.state === 'none' ? [] : out.none).push(j);
     } else {
@@ -352,7 +366,9 @@
         } else {
           for (const j of rc.drop) { env.remove(j); res.removed.push(j.key); }
           for (const j of rc.keep) { if (j.state === 'skipped' || j.state === 'none') continue; await env.skip(j, by); res.plain.push(j.key); }
-          for (const j of env.jobsOf(line)) if (setup.faces.includes(faceOfJob(j)) && !before.faces.includes(faceOfJob(j)) && (j.state === 'none' || j.state === 'skipped') && !CUT.includes(line.state)) { env.reopen(j); res.reopened.push(j.key); }
+          // (NONEPLAIN: a face a person took away on this piece is not engraved (read: vm.mode), so the person's mode asking for it again opens it again, on this piece alone, though the line's setup still named it)
+          const asked = F.MODES.includes(patch && patch.mode) ? setup.faces : [], only0 = patch && patch.slot && SLOT_RX.test(String(patch.slot)) ? String(patch.slot) : null, cutNow = cutWhyOf(line, jobs);
+          for (const j of env.jobsOf(line)) if (setup.faces.includes(faceOfJob(j)) && (!before.faces.includes(faceOfJob(j)) || (asked.includes(faceOfJob(j)) && (!only0 || slotOfJob(j) === only0))) && (j.state === 'none' || j.state === 'skipped') && !cutNow) { env.reopen(j); res.reopened.push(j.key); }
         }
       }
       // an undecided face job the setup still asks for whose words differ from the person's words takes them (no paid reading; also while a new face is still pending, since nothing is removed or cut here);

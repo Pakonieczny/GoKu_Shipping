@@ -8946,7 +8946,8 @@ const Engrave = window.Engrave = (() => {
     CNEngravingSeals.keep(job);
     const unwritten = unplacedPre(job) && !(job.backs || []).length && !(job.stagedBacks || []).length && job.state !== "written";   // (ENGPRE: approved before its piece was on a sheet: no back record exists to withdraw)
     job.approvedAt = null; job.backs = []; delete job._backPreview; delete job.writtenFit; delete job._shelveTried;
-    for (const sh of allSheets()) sh.backPool = (sh.backPool || []).filter(b=>!(job.copies.includes(b.poolId) && faceOf(b) === faceOf(job)));   // (this job's face alone: the other face of the piece keeps its record)
+    for (const sh of allSheets()) { const had = (sh.backPool || []).length; sh.backPool = (sh.backPool || []).filter(b=>!(job.copies.includes(b.poolId) && faceOf(b) === faceOf(job)));   // (this job's face alone: the other face of the piece keeps its record)
+      if (sh.backPool.length !== had && !sh.recalled && !(+sh.laserDoneAt > 0) && !sh.roseCutAt && typeof scheduleBackOutputs === "function") scheduleBackOutputs(sh); }   // (NONEPLAIN, Paul 29 Oct 2026: "all sheets that contain such an order ... must also be updated in real-time to remove the offending engraving": the sheet's back index and report are drawn again without it)
     refreshBacks();
     if(unwritten)return;   // (the cloud's invalidation would write a record for a piece that never had one)
     const invalidate=()=>api("charmNestLibrary", {op:"backInvalidate", poolIds:job.copies, ...(isFront(job) ? {face:"front"} : {})});
@@ -9217,6 +9218,22 @@ const Engrave = window.Engrave = (() => {
     setupBusy.add(line.key);
     const had = new Set(jobsOf(line).map(j => j.key));
     try { const res = await CS.apply(line, patch, setupEnv()); if (res && res.ok && jobsOf(line).some(j => !had.has(j.key))) prepareLate(line).catch(() => {}); return res; } finally { setupBusy.delete(line.key); }   // (a face job THIS Save made is read and fitted now, beside everything else; a Save that made none touches nothing more than it did)
+  }
+  /** NONEPLAIN (Paul, 29 Oct 2026: "I chose "None" for engraving and it still kept the engraving"): is a piece of this line CUT, so a decided face on it may no longer be taken away? The ONE rule a piece that may
+   *  no longer change follows (replaceCutWhy: its sheet laser cut, a Rose Gold layout cut, inside a protected contour); a sheet in a set whose files are written, labelled or released is not cut, and its back is
+   *  withdrawn like any other (the line's state "written" said "already cut" and refused None on a draft sheet: order 4213864833). A piece on no sheet of this page reads its sheet's Library record; with
+   *  neither, a line committed at the station is taken as cut. → '' (it may change) or the reason, in a few words (CharmNestEngraveSetup.consequences says it). */
+  function cutWhy(row, jobs) {
+    const line = lineOf(row); if (!line) return "";
+    const ids = new Set([...(line.poolIds || []), ...((jobs || jobsOf(line)) || []).flatMap(j => (j && j.copies) || [])]);
+    let seen = false;
+    for (const id of ids) {
+      const sh = window.Pool && Pool.sheetOf ? Pool.sheetOf(id) : null;
+      if (sh && !sh.recalled) { seen = true; const w = typeof replaceCutWhy === "function" ? replaceCutWhy(sh, new Set([id])) : ""; if (w) return w; continue; }
+      const p = B.pool.rows.get(id), rec = p && p.sheetId ? ((S.library && S.library.rows) || []).find(r => r && r.id === p.sheetId) : null;
+      if (rec) { seen = true; if (+rec.laserDoneAt > 0) return "laser cut"; if (rec.roseCutAt) return "cut"; }
+    }
+    return !seen && line.state === "committed" ? "committed at the station" : "";
   }
   /* A FACE ADDED AFTER INTAKE (ENGFRONT, 13 Oct 2026; Paul: "I added the front engraving on this order, but when I click the Front thumbnail the preview work area goes blank"). The Save makes the new face's job (ensureJobs) in
      state "classify", and CharmNestEngraveSetup.apply leaves a job in that state for "the run will read it" (it takes its words from the setup itself): but a line that is not in a run's pass (the run is over, the line is not
@@ -11085,8 +11102,9 @@ const Engrave = window.Engrave = (() => {
     for (const sh of allSheets()) { const nb = (sh.backPool || []).filter(b => !isFront(b)).length, nf = (sh.backPool || []).length - nb; if (!sh.recalled && (nb || nf) && ((nb && (!sh.backOutputs || sh.backOutputs.count !== nb)) || (nf && (!sh.frontOutputs || sh.frontOutputs.count !== nf))) && !sh._backIndexTimer && !sh._backIndexRun) scheduleBackOutputs(sh); }
   }
   async function sheetBackOutputs(sh) {
-    if (!S.cloud.ok || !sh.folderPath || !(sh.backPool || []).length) return;
-    const all = sh.backPool.slice(), backs = all.filter(b => !isFront(b)), when = at => at ? new Date(at).toLocaleString() : "";
+    if (!S.cloud.ok || !sh.folderPath) return;
+    if (!(sh.backPool || []).length && !sh.backOutputs && !sh.frontOutputs) return;   // (NONEPLAIN: a sheet whose last record was taken away still has its old index to clear, below)
+    const all = (sh.backPool || []).slice(), backs = all.filter(b => !isFront(b)), when = at => at ? new Date(at).toLocaleString() : "";
     // the BACK index and report: exactly what they always were (back/back-index.pdf, back/back-report.json); a sheet with fronts also has front/front-index.pdf and front/front-report.json (CharmNestExport.faceOutputs)
     if (backs.length) {
       const items = await Promise.all(backs.map(async b => ({
@@ -11100,8 +11118,10 @@ const Engrave = window.Engrave = (() => {
     }
     const fronts = all.filter(isFront), EX = window.CharmNestExport;
     if (fronts.length && EX && EX.faceOutputs) sh.frontOutputs = (await EX.faceOutputs(sh, "front", { assetBytes: u => CharmNestAssets.bytes(u), upload: uploadBytes, pairWord: b => (window.CharmNestPairLabels ? CharmNestPairLabels.backWord(b) : ""), earWord: slot => (SIDES() ? SIDES().earOf(slot) : "") })) || sh.frontOutputs;
+    // (NONEPLAIN: a face the sheet no longer has any record of (its last back, or its last front, taken away) has no index: its old one is not left on the record)
+    const dropB = !backs.length && !!sh.backOutputs, dropF = !fronts.length && !!sh.frontOutputs; if (dropB) sh.backOutputs = null; if (dropF) sh.frontOutputs = null;
     // the record is written in turn with the run's own sheet saves, which carry backOutputs (and frontOutputs) too
-    if (sh.sheetId) { const put = () => api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, ...(backs.length ? { backOutputs: sh.backOutputs } : {}), ...(fronts.length && sh.frontOutputs ? { frontOutputs: sh.frontOutputs } : {}) } }), ops = window.CharmNestOperations; await (ops ? ops.run({ key: "back-index:" + sh.sheetId, label: "Saving back index", resources: ["production:" + (sh.runId || sh.sheetId)] }, put) : put()).catch(() => {}); }
+    if (sh.sheetId) { const put = () => api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, ...(backs.length || dropB ? { backOutputs: sh.backOutputs } : {}), ...((fronts.length && sh.frontOutputs) || dropF ? { frontOutputs: sh.frontOutputs } : {}) } }), ops = window.CharmNestOperations; await (ops ? ops.run({ key: "back-index:" + sh.sheetId, label: "Saving back index", resources: ["production:" + (sh.runId || sh.sheetId)] }, put) : put()).catch(() => {}); }
   }
 
   /* ── the Engraving tab ── */
@@ -12586,7 +12606,7 @@ const Engrave = window.Engrave = (() => {
     if (n) { try { Session.schedule(); render(); } catch (_) { /* drawn with the next render */ } }
     return n;
   }
-  return { viewFaceOf, setViewFace, showFace, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { viewFaceOf, setViewFace, showFace, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, cutWhy, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
    list of pieces, the Pieces counts and a monogram line's pieces (the same slots and piece keys: "<line>" for one piece, "<line>#C<u>" for several) read THIS. Added beside the Engrave object, not inside its return. */
@@ -21965,7 +21985,10 @@ const OrderWin = window.OrderWin = (() => {
     cell("Title", r.line.title || "—", { wide: 1 });
     // the glance: what matters at a glance, and for each the card it opens
     const quiet = /cancel|gone|complete/i.test(st[1]) || r.state === "gone";   // (a cancelled or finished order is told its date, never alarmed by it)
-    const engMode = tryDo(() => window.CharmNestEngraveFaces && CharmNestEngraveFaces.setupOf(r).mode) || "", news = tryDo(() => window.CustomerMail && CustomerMail.tabNews && CustomerMail.tabNews(rid)) || null;
+    // NONEPLAIN (Paul, 29 Oct 2026: "It just becomes a regular order with no extra engraving required"): a line whose every face a person took away (None, cut plain) has no Engraving chip at the glance; its
+    // history (the approval seal, the "cut plain" seal, who decided) stays in the Details' Engraving cell
+    const engOff = hasEng && !!tryDo(() => { const js = window.Engrave && Engrave.jobsOf ? Engrave.jobsOf(r) : []; return js.length ? js.every(j => j.state === "none" || j.state === "skipped") : !!(r.engrave && r.engrave.needed === false && ["none", "skipped"].includes(r.engrave.state)); });
+    const engMode = tryDo(() => window.CharmNestEngraveFaces && CharmNestEngraveFaces.setupOf(r).mode) || "", news =tryDo(() => window.CustomerMail && CustomerMail.tabNews && CustomerMail.tabNews(rid)) || null;
     const bm = O.visible(sp.buyerMessage).trim(), gm = O.visible(r.order.giftMessage).trim();   // (the customer's own words, in full in "What the customer wrote": the card shows them again)
     const counted = tryDo(() => O.countedPieces(r)) || null;
     return {
@@ -21977,7 +22000,7 @@ const OrderWin = window.OrderWin = (() => {
       metal: { label: r.material ? labelOf(r.material) : (sp.materialLabel || ""), none: !r.material && !sp.materialLabel, color: r.material ? colorOf(r.material) : "", choices: bought.map((o, i) => [o, views[i]]).filter(([o]) => /metal|material/i.test(o.name || "")).map(([, v]) => ({ name: v.label, value: v.text })) },
       qty: { n: qn, pieces: sides.length, pair: sides.length > 0, mismatched: sides.length > 0 && !!ListMedia.pairRow(r), counted: counted ? Object.assign({ total: counted.total, noun: counted.noun }, counted.companion ? { counted: counted.counted, companion: { noun: counted.companion.noun, n: counted.companion.n } } : {}, counted.nouns ? { nouns: counted.nouns } : {}) : null, notes: pnotes },   // (BROKENHEART: "2 halves")
       custom: sp.special ? { label: sp.special.label, note: [sp.special.read && !sp.special.decided ? `Claude ${Math.round((+sp.special.read.confidence || 0) * 100)}% sure` : "", sp.special.why || ""].filter(Boolean).join(" · ") } : sp.customDone ? { label: "Custom: " + (sp.customDone.category || "completed"), note: "" } : null,
-      engraving: hasEng ? { chip: engMode === "both" ? "Front + back" : engMode === "front" ? "Front only" : "Engraving", html: engHtml, approved: !!(r.engrave && r.engrave.approved) } : mono ? { chip: "Monogram", title: "Monogram", html: mono.html, approved: mono.approved } : read ? { chip: read.chip, html: read.html, approved: false } : null,
+      engraving: engOff ? null : hasEng ? { chip: engMode === "both" ? "Front + back" : engMode === "front" ? "Front only" : "Engraving", html: engHtml, approved: !!(r.engrave && r.engrave.approved) } : mono ? { chip: "Monogram", title: "Monogram", html: mono.html, approved: mono.approved } : read ? { chip: read.chip, html: read.html, approved: false } : null,
       message: bm || gm || (news && (news.unread || news.bad)) ? { buyer: bm, gift: gm, unread: news && news.unread ? 1 : 0, bad: !!(news && news.bad) } : null,
       listing: { id: String(r.line.listingId || ""), title: String(r.line.title || "") },
       state: stageText(st[1]) ? null : { tone: st[0] || "neutral", text: st[1], sheet: sheetCell || "" }   // (no pill for a numbered stage; an exception keeps its pill and its card)

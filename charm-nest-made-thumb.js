@@ -217,10 +217,18 @@
   const mine = new Set();                       // pieces changed on this page (their picture is this page's until the cloud has it)
   /** MADEV (Paul, 28 Oct 2026: "The thumbnails are missing all of the labels"): the drawing a cloud picture was made by (made.v; one sent before the version was kept is 1). */
   const verOf = m => (m && Number.isFinite(+m.v) && +m.v >= 1 ? Math.floor(+m.v) : 1);
+  /** NONEPLAIN (Paul, 29 Oct 2026: "When the user chooses "None" for engraving ... all Thumbnails must update in real-time to stop showing the need to add engraving"): this page holds the piece's engraving
+   *  and every face of it is taken away (cut plain, or no engraving), and its charm has no edit of its own: it is a plain piece, so the cloud's picture of it as engraved (still on its pool row until the
+   *  clear sent from here lands) is never shown: its line shows the Vector design, in the same tick. */
+  function plainNow(poolId) {
+    const pj = jobsOf(poolId), js = [pj.front, pj.back].filter(Boolean), charm = safe(() => host.charmOf && host.charmOf(poolId), null);
+    return !!charm && js.length > 0 && js.every(j => j.state === 'none' || j.state === 'skipped') && !editKey(charm, 'front') && !editKey(charm, 'back') && !backAdds(charm);
+  }
   /** Which picture a piece shows: { kind: 'local', sig, st, made } | { kind: 'cloud', made } | null. A cloud picture drawn by an older drawing than this page's never wins over this page's own. */
   function pick(poolId) {
     const st = stateOf(poolId), made = cloudOf(poolId);
     if (st && (!made || verOf(made) < V || made.sig === st.sig || mine.has(poolId) || made.dev === dev())) return { kind: 'local', sig: st.sig, st, made };
+    if (made && !st && plainNow(poolId)) return null;
     if (made) return { kind: 'cloud', made };
     return null;
   }
