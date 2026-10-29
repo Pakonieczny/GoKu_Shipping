@@ -212,9 +212,9 @@ function install() {
       return res;
     });
     ok('a position nudge moves the words on the thumbnail in the same tick (' + (mv.act || 'none moved') + ')', !!mv.act && mv.before !== mv.after && /left:/.test(mv.after));
-    // mode: leaving only the back leaves the front without words (ENGSMART removes its box)
-    const md = await page.evaluate(() => { const b = document.querySelector('.engp [data-engp="mode"][data-mode="back"]'); if (b) b.click(); const t = document.querySelector('.engpCard .engFace[data-face="front"] .engThumb .engpvText'); return { clicked: !!b, frontText: t ? t.textContent : null, backText: (document.querySelector('.engpCard .engFace[data-face="back"] .engThumb .engpvText') || {}).textContent }; });
-    ok('a mode change reaches the boxes in the same tick: the front has no words (or no box), the back keeps its own', md.clicked && (md.frontText === null || md.frontText === '') && !!md.backText);
+    // mode (LIVEWORDS, 29 Oct 2026: None | Front | Back are toggles): a press on the engraved Back only shows it, in the same tick: the panel edits the back, both boxes keep their words
+    const md = await page.evaluate(() => { document.querySelector('.engpCard .engFace[data-face="front"] .engThumb').click(); const b = document.querySelector('.engp [data-engp="mode"][data-mode="back"]'); if (b) b.click(); const t = document.querySelector('.engpCard .engFace[data-face="front"] .engThumb .engpvText'); return { clicked: !!b, face: (document.querySelector('.engp') || {}).dataset?.face, cur: (document.querySelector('.engpCard .engFace[aria-current=true]') || {}).dataset?.face, frontText: t ? t.textContent : null, backText: (document.querySelector('.engpCard .engFace[data-face="back"] .engThumb .engpvText') || {}).textContent }; });
+    ok('a press on the engraved Back shows it in the same tick (panel and mark on the back) and takes nothing away: ' + JSON.stringify(md), md.clicked && md.face === 'back' && md.cur === 'back' && !!md.frontText && !!md.backText);
     ok('typing, a font pick and a face pick made no request (the charm is drawn from the page\'s own geometry; fonts are files of this site): ' + JSON.stringify(typedRequests), typedRequests.length === 0);
 
     /* ── F · a line with NO pool item and NO job (held, never nested): the design's master drawing, the back turned over, the words inside the engravable area ── */

@@ -493,6 +493,7 @@
       const m = model(); if (!m || !['front', 'back'].includes(face) || modesFor(line).length === 0) return false;
       const { vm, d } = m;
       if (!facesOf(d.mode).includes(face)) return false;   // (a face the engraving does not need has no words to edit; the Front / Back toggles engrave it)
+      { const cur = el.querySelector('.engp'); if (d.face === face && cur && cur.dataset.face === face) return true; }   // (already this face: nothing is drawn again, so a box being typed in keeps its caret, e.g. when Engrave.showFace's turn lands after the press already switched the panel)
       d.face = face; d.focus = null; draw(); paintAll(vm, d);
       try { if (typeof opts.onFace === 'function') opts.onFace(face); } catch (_) { /* the host's own */ }
       return true;
@@ -564,6 +565,7 @@
       if (t.dataset.engp === 'words') { if (e.type === 'change' || !t.isConnected) return; x.text = t.value;   // (every letter arrives as an input; a words box's own "change" fires when it loses the focus, also when a redraw takes it away, and carries nothing new)
         growBox(t); } else if (t.dataset.engp === 'font') { if (x.font === t.value || !t.isConnected) return; x.font = t.value; } else return;
       d.dirty = true; d.confirm = ''; d.error = ''; d.noRoom = {};
+      if (t.selectionStart != null) d.focus = { engp: t.dataset.engp, face: f, mode: '', act: '', start: t.selectionStart, end: t.selectionEnd };   // (the caret as it is now: a card drawn again under the typing (the other face's own card opening) gives it back here)
       if (t.dataset.engp === 'font' && t.tagName === 'SELECT') t.style.fontFamily = (t.selectedOptions[0] && t.selectedOptions[0].style.fontFamily) || '';
       const p = el.querySelector('.engp'); if (p) { if (hasPatch(Setup().patchOf(vm, d))) p.dataset.staged = '1'; else delete p.dataset.staged; }
       hiDecorate(el, vm, d, slot);   // (ENGHILITE: the tint follows the staged words / font; the marks stay)
@@ -641,10 +643,11 @@
         if (typeof o.onView === 'function') tryDo(() => o.onView(f));
         jobNav(f);
       };
-      /** A press on a thumbnail: that thumbnail is marked at once, the panel edits that face (a face nothing engraves keeps the panel where it is), the work area shows it. */
+      /** A press on a thumbnail: that thumbnail is marked and the panel edits that face at once (a face nothing engraves keeps the panel where it is); the work area turns to it. */
       const pick = f => {
-        if (hasShow()) { if (card && card.update) tryDo(() => card.update({ face: f })); }   // (the panel follows when Engrave.showFace's turn lands: setFace below)
-        else if (!(panel && tryDo(() => panel.setFace(f), false)) && card && card.update) tryDo(() => card.update({ face: f }));
+        // (the panel's face, words box, font and position switch in THIS tick, so typing right after the press lands in that face's box; the work area's turn is only the animation)
+        if (panel) tryDo(() => panel.setFace(f));
+        if (card && card.update) tryDo(() => card.update({ face: f }));   // (marked: drawn again only when the mark moved)
         navigate(f);
       };
       // (FACEVIEW, Paul 28 Oct 2026: the card also shows a face the Charm Editor drew on that nothing engraves (o.artFaces); ENGSMART: a face nothing engraves is not drawn, so a piece engraved on both

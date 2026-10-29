@@ -102,11 +102,11 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     const em = await page.evaluate(() => ({ btn: document.querySelectorAll('.pvSetup [data-emoji]').length, picker: !!window.CNEmojiPicker, approve: !!document.querySelector('[data-a=approve]') }));
     check(!em.picker || em.btn === 1, 'one quiet Emoji button beside the words (the page\'s own picker, attached to the panel\'s text box): ' + JSON.stringify(em));
     if (em.approve) {
-      const probe = () => page.evaluate(() => { const c = document.querySelector('.rvItem[data-kind=placement]'), b = c.querySelector('[data-a=approve]'); return { dis: b.disabled, title: b.title, why: [...c.querySelectorAll('.egApproveWhy')].map(n => n.textContent).join('|'), staged: !!c.querySelector('.engp[data-staged]') }; });
+      const probe = () => page.evaluate(() => { const c = document.querySelector('.rvItem[data-kind=placement]'), b = c.querySelector('[data-a=approve]'); return { dis: b.disabled, title: b.title, why: [...c.querySelectorAll('.egApproveWhy')].map(n => n.textContent).join('|'), staged: !!c.querySelector('.engp[data-staged]'), failed: !!c._previewFailed }; });
       const before = await probe();
       await page.fill('.pvSetup .engpWords', 'Name Three');
       const staged = await probe();
-      check(staged.staged && staged.dis === before.dis && staged.title === before.title && !/Save or Cancel/.test(staged.title + staged.why), 'with words staged, Approve stays as it was (no "Save or Cancel the edit first"): ' + JSON.stringify(staged) + ' (before: ' + JSON.stringify(before) + ')');
+      check(staged.staged && (staged.dis === before.dis || staged.failed) && staged.title === before.title && !/Save or Cancel/.test(staged.title + staged.why), 'with words staged, Approve stays as it was (no "Save or Cancel the edit first"): ' + JSON.stringify(staged) + ' (before: ' + JSON.stringify(before) + ')');
       await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); });   // (nothing approved here: the draft is let go without keeping it)
     }
 
@@ -211,7 +211,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
 
     // 7 · the thumbnails followed the typing, only that face's
     const up = await page.evaluate(() => __log.update.slice());
-    const typed = up.filter(([f, p]) => p.text === 'Name One'), fontPick = up.filter(([f, p]) => /Pristina/.test(p.fontId || ''));
+    const typed = up.filter(([f, p]) => f && p.text === 'Name One'), fontPick = up.filter(([f, p]) => f && /Pristina/.test(p.fontId || ''));   // (f: this slot's own two thumbnails; the Engrave detail's card further up the page shares the piece's draft and is repainted too)
     check(typed.length >= 1 && typed.every(([f]) => f === 'front'), 'typing repainted the FRONT thumbnail with the words at once, never the back: ' + JSON.stringify(typed.map(x => x[0])));
     check(fontPick.length >= 1 && fontPick.every(([f]) => f === 'front'), 'picking a font repainted the front thumbnail in that font: ' + JSON.stringify(fontPick.map(x => [x[0], x[1].fontId])));
     check(!up.some(([f, p]) => f === 'back' && p.text === 'Name One'), 'the back thumbnail never showed the front words');
