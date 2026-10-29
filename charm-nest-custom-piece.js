@@ -699,11 +699,25 @@
   function pieceDesignOf(x, prefer) {
     const row = rowsOf(x)[0]; if (!row || !row.order) return null;
     const rid = String(row.order.receiptId), list = attachedOf(rid), att0 = list[0] || null; if (!att0 || !piecePool(att0)) return null;
-    const lineOf = pid => { const own = r => r && r.order && String(r.order.receiptId) === rid && (r.poolIds || []).map(String).includes(pid); return own(row) ? row : rowsAll().find(own) || rowsOf(x).find(own) || null; };
+    const lineOf = pid => pieceLineOf(x, row, rid, pid);
     const want = ownPool(rid, prefer) ? String(prefer) : '', wl = want ? lineOf(want) : null;
     if (wl) return { rid, poolId: want, row: wl, att: list.find(a => piecePool(a) === want) || null };
     const pid = piecePool(att0), line = lineOf(pid);
     return line ? { rid, poolId: pid, row: line, att: att0 } : null;
+  }
+  /** The line of order `rid` that holds the piece `pid` (`row` first, then the pull, then what `x` names), or null. */
+  function pieceLineOf(x, row, rid, pid) {
+    const own = r => r && r.order && String(r.order.receiptId) === rid && (r.poolIds || []).map(String).includes(pid);
+    return own(row) ? row : rowsAll().find(own) || rowsOf(x).find(own) || null;
+  }
+  /* OWHEAD (Paul 29 Oct 2026: "Add the already existing 'Edit Design' button" to the order window's header, on every order): an order with no design of its own (a plain catalog charm) opens
+     the piece the window has chosen NOW (EDITTARGET: chosenPiece, `prefer`), else the line's first piece, through the piece path, Engrave.openCharmEditor, as its engraving card does; null when the
+     line has no piece in the pool yet (nothing an edit could be kept on). */
+  function plainPieceOf(x, prefer) {
+    const row = rowsOf(x)[0]; if (!row || !row.order) return null;
+    const rid = String(row.order.receiptId), want = ownPool(rid, prefer) ? String(prefer) : ((row.poolIds || []).map(String).find(id => ownPool(rid, id)) || '');
+    const line = want ? pieceLineOf(x, row, rid, want) : null;
+    return line ? { rid, poolId: want, row: line, att: null } : null;
   }
   /** The piece of order `rid` the order window has chosen now (EDITTARGET): on its Sheet tab the charm picked on the sheet, else the line picked in "Its pieces" (its first copy); '' for none. */
   function chosenPiece(rid, row) {
@@ -736,7 +750,10 @@
      open; another one is opened, the earlier one gives way (it opens nothing), and an editor already up on another charm is closed through its own Cancel first. */
   function openDesigner(x, o) {
     o = o || {};
-    const pc = root.Engrave && typeof root.Engrave.openCharmEditor === 'function' && root.CharmNestArtEdit ? pieceDesignOf(x, o.poolId) : null, row = rowsOf(x)[0];
+    const can = !!(root.Engrave && typeof root.Engrave.openCharmEditor === 'function' && root.CharmNestArtEdit);
+    // (OWHEAD, Paul 29 Oct 2026: o.piece, a plain order's Edit Design: its piece through the piece path, never a new custom design)
+    const pc = can ? (pieceDesignOf(x, o.poolId) || (o.piece ? plainPieceOf(x, o.poolId) : null)) : null, row = rowsOf(x)[0];
+    if (o.piece && !pc) { say(can ? 'This piece is not in the pool yet: it cannot be opened in the Charm Editor' : 'The Charm Editor is not loaded on this page — reload it', 'bad', 5000); return Promise.resolve(null); }
     const key = pc ? 'pc|' + pc.poolId : 'd|' + (row && row.order ? String(row.order.receiptId) : '');
     if (designing && designing.key === key) return designing.p;
     if (designing) designing.tok.gone = true;
@@ -857,16 +874,19 @@
       + `<span class="dim">${last ? `<span class="ok">On ${esc(last.sheet || codeOf(last.metal) + ' sheet')} × ${last.quantity}</span> · sent by ${esc(last.by)} · ${esc(when(last.at))}` : `Attached${att.by ? ' by ' + esc(att.by) : ''}${att.at ? ' · ' + esc(when(att.at)) : ''} · not on a sheet yet`}</span></span>`
       + `<button type="button" class="btn ${last ? 'ghost' : 'gold'} sm" data-cp-strip-send title="Choose the metal and send this design to its next sheet, marked handmade custom">${last ? 'Send again…' : 'Send to sheet…'}</button>`;
   }
-  /** The order window's header (OrderWin paint): "Charm Designer" beside its Send to Sheet for a custom order that takes a design. */
+  /** The order window's header (OrderWin paint): Edit Design, left of the × (`at`), beside its Send to Sheet. A custom order that takes a design: "Design Charm" until it has one, then
+   *  "Edit Design", in design mode; OWHEAD (Paul 29 Oct 2026: "Add the already existing 'Edit Design' button", on every order): any other order, a plain catalog charm, "Edit Design" opens
+   *  the piece chosen now in the Charm Editor through the piece path (plainPieceOf). */
   function orderWin(r, at) {
     if (!doc) return;
     let b = doc.getElementById('owCpDesign');
-    if (!r || !at || !at.parentNode || !r.order || !(needsDesign(r) || attachedOf(String(r.order.receiptId)).length)) { if (b) b.hidden = true; return; }
+    if (!r || !at || !at.parentNode || !r.order) { if (b) b.hidden = true; return; }
     css();
-    if (!b) { b = el('button', 'btn cnCeBtn cpOwBtn'); b.type = 'button'; b.id = 'owCpDesign'; at.before(b); }
-    const rid = String(r.order.receiptId), att = attachedOf(rid)[0];
-    b.hidden = false; b.innerHTML = NIB + `<span>${att ? 'Edit Design' : 'Design Charm'}</span>`;   // (CEBTN, Paul 28 Oct 2026: "allow the name of the button to stay as edit design ... capitalize the word 'Edit Design'": the same button everywhere, its words by where it stands)
-    b.title = att ? `${att.name} v${att.version} is attached to this order: open it in the Charm Designer` : 'Design this custom order\'s charm in the Charm Designer';
+    if (!b) { b = el('button', 'btn cnCeBtn cpOwBtn'); b.type = 'button'; b.id = 'owCpDesign'; }
+    if (b.parentNode !== at.parentNode || b.nextElementSibling !== at) at.before(b);   // (OWHEAD: a button left beside the walk by an older page goes where it stands now)
+    const rid = String(r.order.receiptId), att = attachedOf(rid)[0], plain = !att && !needsDesign(r);
+    b.hidden = false; b.innerHTML = NIB + `<span>${att || plain ? 'Edit Design' : 'Design Charm'}</span>`;   // (CEBTN, Paul 28 Oct 2026: "allow the name of the button to stay as edit design ... capitalize the word 'Edit Design'": the same button everywhere, its words by where it stands)
+    b.title = att ? `${att.name} v${att.version} is attached to this order: open it in the Charm Designer` : plain ? 'Open this piece in the Charm Editor: its front and back, saved for this piece only' : 'Design this custom order\'s charm in the Charm Designer';
     // (EDITTARGET, Paul 29 Oct 2026: "the Charm Editor does not update to open the Charm/Order currently selected": a press opens what the window shows AT THE PRESS: its line now (a button left
     //  from an earlier paint is painted again for it first), the piece chosen now (the charm picked on its Sheet tab, the piece picked in "Its pieces"), and a card of THIS order only)
     b.onclick = () => {
@@ -874,7 +894,8 @@
       if (cur !== r) { orderWin(cur, at); if (!b.hidden && b.onclick) b.onclick(); return; }
       const R = root.Review; let it = null; try { it = R && typeof R.customItemFor === 'function' ? R.customItemFor(r.key, r) : null; } catch (_) { it = null; }
       if (it && !rowsOf(it).slice(0, 1).some(x => String(x.order.receiptId) === rid)) it = null;
-      openDesigner(it || { rows: [r], row: r }, { poolId: chosenPiece(rid, r) });
+      const plainNow = !attachedOf(rid)[0] && !needsDesign(r);   // (OWHEAD: what the order is AT THE PRESS: a design attached since the paint opens that)
+      openDesigner(it || { rows: [r], row: r }, { poolId: chosenPiece(rid, r), piece: plainNow });
     };
   }
   /** The line the order window shows now (EDITTARGET): `r` when it still is; else that line from the pull; null when it cannot be told here (the window is painted again then). */

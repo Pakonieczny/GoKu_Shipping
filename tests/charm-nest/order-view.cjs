@@ -72,20 +72,19 @@ async function main() {
     assert.deepEqual(v1.tabs, ['Team internal', 'Customer on Etsy']); assert.equal(v1.dialogs, 1, 'one window');
     if (shots) await page.screenshot({ path: path.join(shots, 'order-view-overview.png') });
 
-    // 1b · no "Skip this Order" switch in the window (Paul, 5 Oct: removed from every order window), and the live line ("Updated live ·
-    //      last change …") stands where it was, at the right end of the tab row: right-aligned at 1440 and at 390 px, whole (not clipped),
-    //      on the row's own middle line, the row 38 px high either way
-    await page.waitForFunction(() => document.getElementById('owLive').textContent.length > 5, null, { timeout: 15000 });
-    const liveAt = () => page.evaluate(() => { const nav = document.querySelector('.owTabsV'), l = document.getElementById('owLive'), n = nav.getBoundingClientRect(), rg = document.createRange(); rg.selectNodeContents(l); const t = rg.getBoundingClientRect();
-      return { skipText: /skip this order|cut nothing for it/i.test(document.getElementById('orderWin').textContent), skipEl: !!document.querySelector('#owSkip, #owSkipBox, .owSkip, .owSw'), text: l.textContent,
-        right: Math.round(n.right - 12 - t.right), mid: Math.round(Math.abs((t.top + t.bottom) / 2 - (n.top + n.bottom - 1) / 2) * 10) / 10, whole: l.scrollWidth <= l.clientWidth + 1 && l.scrollHeight <= l.clientHeight + 1, inside: t.left >= 0 && t.right <= innerWidth, navH: Math.round(n.height) }; });
+    // 1b · no "Skip this Order" switch in the window (Paul, 5 Oct: removed from every order window), and no live line ("Updated live · last change …": OWHEAD, Paul 29 Oct 2026, "Remove the
+    //      current text UI completely"): the walk (‹ N of M ›) stands where it stood, at the right end of the tab row: right-aligned at 1440 and at 390 px, inside the screen, on the row's own
+    //      middle line, the row 38 px high either way
+    const navAt = () => page.evaluate(() => { const nav = document.querySelector('.owTabsV'), g = document.getElementById('owNav'), n = nav.getBoundingClientRect(), t = g.getBoundingClientRect();
+      return { skipText: /skip this order|cut nothing for it/i.test(document.getElementById('orderWin').textContent), skipEl: !!document.querySelector('#owSkip, #owSkipBox, .owSkip, .owSw'), live: !!document.getElementById('owLive') || /updated live|last change/i.test(document.getElementById('orderWin').innerText),
+        inRow: g.parentElement === nav && !g.hidden, right: Math.round(n.right - 12 - t.right), mid: Math.round(Math.abs((t.top + t.bottom) / 2 - (n.top + n.bottom - 1) / 2) * 10) / 10, inside: t.left >= 0 && t.right <= innerWidth, navH: Math.round(n.height) }; });
     for (const w of [1440, 390]) {
       if (w !== 1440) { await page.setViewportSize({ width: w, height: 844 }); await new Promise(r => setTimeout(r, 400)); }
-      const lv = await liveAt();
+      const lv = await navAt();
       assert(!lv.skipText && !lv.skipEl, `no Skip this Order text or #owSkip in the order window at ${w}: ${JSON.stringify(lv)}`);
-      assert.match(lv.text, /^Updated live · last change .+/); assert.equal(lv.right, 0, `#owLive is right-aligned at ${w}: ${JSON.stringify(lv)}`);
-      assert(lv.whole && lv.inside && lv.mid <= 1 && lv.navH === 38, `#owLive is whole, inside the screen and on the row's middle at ${w}: ${JSON.stringify(lv)}`);
-      if (shots) await page.screenshot({ path: path.join(shots, `order-view-live-line-${w}.png`), clip: { x: 0, y: 0, width: w, height: 130 } });
+      assert(!lv.live, `no "Updated live · last change" line at ${w}`); assert(lv.inRow && lv.right === 0, `#owNav is at the right end of the tab row at ${w}: ${JSON.stringify(lv)}`);
+      assert(lv.inside && lv.mid <= 1 && lv.navH === 38, `#owNav is inside the screen and on the row's middle at ${w}: ${JSON.stringify(lv)}`);
+      if (shots) await page.screenshot({ path: path.join(shots, `order-view-walk-${w}.png`), clip: { x: 0, y: 0, width: w, height: 130 } });
     }
     await page.setViewportSize({ width: 1440, height: 900 }); await new Promise(r => setTimeout(r, 400));
 

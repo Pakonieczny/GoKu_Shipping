@@ -3,8 +3,8 @@
 // of order 4213879228). The real sorter page over the repo's fake site (_engraveRealWorld.cjs: the real intake, pool, classifier and fit; offline, made-up names, nothing real written), three
 // engraved orders: A (a comet necklace), B (a cat necklace, front and back) and C (a necklace of three discs), all on one sheet:
 //   E0  A's and C's pieces saved in the Charm Editor from their engraving cards: each piece's own design (pc-<poolId>) is in the design library under its own order
-//   E1  B, with no design of its own, has no Edit Design; A's piece design kept here under B (a send whose order was typed in, a save with another order's design in the editor) does not give B
-//       an "Edit Design" either, and is never what B opens
+//   E1  B, with no design of its own, has Edit Design all the same (OWHEAD, Paul 29 Oct 2026: on every order), and it opens B's own piece; A's piece design kept here under B (a send whose order
+//       was typed in, a save with another order's design in the editor) is never one of B's designs, and never what B opens
 //   E2  B's own piece saved too: A's window → Edit Design opens A; the window moved to B → Edit Design opens B, never A
 //   E3  the open still on its way (the master read and the fonts take seconds on the live site): Edit Design on A, the window moved to B at once, Edit Design on B: the editor comes up on B, and A
 //       never comes up after it (it was handed A's open before)
@@ -71,8 +71,10 @@ const R = require('./_engraveRealWorld.cjs');
     await page.evaluate(({ rid, pid }) => { const T = CharmNestCustomPiece._t, d = { id: 'pc-' + pid, version: 1, name: 'COMET_9427', widthMm: 10, heightMm: 10, source: { kind: 'piece', poolId: pid }, at: Date.now() }; T.attached.set(rid, new Map([[d.id, Object.assign({ sends: [] }, d)]])); OrderWin.paint(); }, { rid: B.rid, pid: A.poolIds[0] });
     await settle(400);
     const b1b = await button(), att1 = await page.evaluate(rid => CharmNestCustomPiece.attachedOf(rid).map(a => a.id), B.rid);
-    check(`E1 B with no design of its own: no Edit Design (${b1.shown ? '"' + b1.text + '"' : 'none'}); A's piece design kept here under B: still none (${b1b.shown ? '"' + b1b.text + '"' : 'none'}), and B's designs are [${att1.join(', ')}]`,
-      b1.rid === B.rid && !b1.shown && !b1b.shown && att1.length === 0, JSON.stringify({ b1, b1b, att1 }));
+    // (OWHEAD, Paul 29 Oct 2026: "Add the already existing 'Edit Design' button": every order has it; B's, with no design of its own, opens B's piece, never A's)
+    await press(); const e1 = await editorUp(); await closeEditor();
+    check(`E1 B with no design of its own: Edit Design all the same (${b1.shown ? '"' + b1.text + '"' : 'none'}); A's piece design kept here under B: still "${b1b.text}", B's designs are [${att1.join(', ')}], and it opens "${e1 && e1.title}" (${e1 && e1.sub}), never A's`,
+      b1.rid === B.rid && b1.shown && b1.text === 'Edit Design' && b1b.shown && b1b.text === 'Edit Design' && att1.length === 0 && !!e1 && e1.title === 'SCHRODINGER CAT 2' && e1.sub.startsWith(`order ${B.rid} ·`), JSON.stringify({ b1, b1b, att1, e1 }));
     await page.evaluate(rid => CharmNestCustomPiece._t.attached.delete(rid), B.rid);
     await page.evaluate(() => { try { OrderWin.close(); } catch (_) {} }); await settle(300);
     await saveFromCard('both'); const dB = await designed(B.rid);

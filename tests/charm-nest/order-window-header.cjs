@@ -91,7 +91,7 @@ const WORDS = { [key(R1, 1)]: 'Test', [key(R2, 1)]: 'Test', [key(R3, 1)]: 'One',
     const measure = () => page.evaluate(() => {
       const R = e => { if (!e) return null; const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height }; };
       const q = s => document.querySelector(s), qa = s => [...document.querySelectorAll(s)];
-      const head = q('#orderWin .owHead'), title = q('#owTitle'), rail = q('#owRail'), right = q('#orderWin .owRight'), close = q('#owClose'), prev = q('#owPrev'), next = q('#owNext'), pos = q('#owPos');
+      const head = q('#orderWin .owHead'), title = q('#owTitle'), rail = q('#owRail'), right = q('#orderWin .owRight'), close = q('#owClose'), prev = q('#owPrev'), next = q('#owNext'), pos = q('#owPos'), edit = q('#owCpDesign');
       const stamps = qa('#owRail .tlStop .tlSeal').map(e => e.offsetWidth), labels = qa('#owRail .tlStop > span').map(e => parseFloat(getComputedStyle(e).fontSize));
       const stops = qa('#owRail .tlStop');
       const hs = head && head.getBoundingClientRect();
@@ -107,7 +107,7 @@ const WORDS = { [key(R1, 1)]: 'Test', [key(R2, 1)]: 'Test', [key(R3, 1)]: 'One',
         dlgSW: q('#orderWin').scrollWidth, dlgCW: q('#orderWin').clientWidth,
         ids: { owSub: !!q('#owSub'), owNow: !!q('#owNow'), owMetal: !!q('#owMetal'), pill: !!q('#orderWin .owHead .pill, #orderWin .owHead .owNow'), subClass: !!q('#orderWin .owSub') },
         headText: head ? head.innerText.replace(/\s+/g, ' ').trim() : '', title: title ? title.textContent.trim() : '', labelledby: q('#orderWin').getAttribute('aria-labelledby'),
-        titleBox: R(title), railBox: R(rail), rightBox: R(right), closeBox: R(close), prevBox: R(prev), nextBox: R(next), posBox: R(pos), headBox: R(head), railDisplay: rail ? getComputedStyle(rail).display : '',
+        titleBox: R(title), railBox: R(rail), rightBox: R(right), closeBox: R(close), editBox: R(edit), prevBox: R(prev), nextBox: R(next), posBox: R(pos), headBox: R(head), railDisplay: rail ? getComputedStyle(rail).display : '',
         stamps, labels, stopBoxes: stops.map(R), stopSw: stops.map(s => s.scrollWidth - s.clientWidth),
         railLabelClipped: stops.some(s => { const sp = s.querySelector(':scope > span'); return sp && sp.scrollWidth > sp.clientWidth + 1; }),
         trackH: (() => { const t = q('#owRail .tlTrack'); return t ? t.getBoundingClientRect().height : 0; })(),
@@ -134,7 +134,7 @@ const WORDS = { [key(R1, 1)]: 'Test', [key(R2, 1)]: 'Test', [key(R3, 1)]: 'One',
     if (shots) { await page.screenshot({ path: path.join(shots, 'w1440-order.png') }); await page.locator('#orderWin .owHead').screenshot({ path: path.join(shots, 'w1440-head.png') }); await page.locator('#owEngSec').screenshot({ path: path.join(shots, 'w1440-engraving.png') }).catch(() => {}); if (await page.$('#owNowCard:not([hidden])')) await page.locator('#owNowCard').screenshot({ path: path.join(shots, 'w1440-banner.png') }); }
     // — 3 · the header: the number, the rail, the walk controls; no subtitle, no chips
     check(m.title === 'Order ' + R1 && !m.ids.owSub && !m.ids.subClass && !m.ids.owNow && !m.ids.owMetal && !m.ids.pill, 'the header has no subtitle line and no state or metal chip (no #owSub, #owNow, #owMetal, no pill): ' + JSON.stringify(m.ids));
-    check(!/Mandy|piece|ship by|approved|\bSS\b/i.test(m.headText), 'the header says nothing but the number (and the walk controls): "' + m.headText + '"');
+    check(!/Mandy|piece|ship by|approved|\bSS\b/i.test(m.headText), 'the header says nothing but the number (and its controls): "' + m.headText + '"');
     check(m.labelledby === 'owTitle' && m.title === 'Order ' + R1, 'the dialog is named by its title: aria-labelledby="' + m.labelledby + '" → "' + m.title + '"');
     check(/Mandy Bellamy/.test(m.meta) && /Oct 25/.test(m.meta), 'the buyer and the ship-by date are in the Overview chip strip: "' + m.meta.slice(0, 160) + '"');
     check(/2 pieces|Its pieces|Piece/i.test(m.pcSum + ' ' + m.meta) || m.pcSum.length > 0, 'the pieces are listed on the Overview ("' + m.pcSum.slice(0, 80) + '")');
@@ -146,7 +146,8 @@ const WORDS = { [key(R1, 1)]: 'Test', [key(R2, 1)]: 'Test', [key(R3, 1)]: 'One',
     check(rb.l - tb.r >= 20 && rb.l - tb.r <= 40 && rr.l - rb.r >= 20 && rr.l - rb.r <= 40, `the rail fills the header from the number to the controls, with 28 px of air each side: ${(rb.l - tb.r).toFixed(1)} / ${(rr.l - rb.r).toFixed(1)} px; ${rb.w.toFixed(0)} px wide (was at most 860)`);
     check(rb.w > 860, 'the rail is wider than the 860 px it was held to: ' + rb.w.toFixed(0));
     const cy = r => (r.t + r.b) / 2;
-    check(near(cy(rb), cy(hd), 2) && near(cy(m.closeBox), cy(hd), 2) && near(cy(m.prevBox), cy(hd), 2) && near(cy(tb), cy(hd), 3), `the rail, the number, Previous, Next and Close share the header's centre line: ${[rb, tb, m.prevBox, m.closeBox].map(r => cy(r).toFixed(1)).join(', ')} (header ${cy(hd).toFixed(1)})`);
+    // (OWHEAD, Paul 29 Oct 2026: the header's controls are Edit Design and Close; Previous and Next are at the right end of the tab row: tests/charm-nest/ow-header.cjs)
+    check(near(cy(rb), cy(hd), 2) && near(cy(m.closeBox), cy(hd), 2) && near(cy(m.editBox), cy(hd), 2) && near(cy(tb), cy(hd), 3), `the rail, the number, Edit Design and Close share the header's centre line: ${[rb, tb, m.editBox, m.closeBox].map(r => cy(r).toFixed(1)).join(', ')} (header ${cy(hd).toFixed(1)})`);
     check(m.stopBoxes.every(b => b.t >= rb.t - 1 && b.b <= rb.b + 1) && m.stopBoxes.every((b, i, a) => !i || near(b.t, a[0].t, 1)), 'one row: every step is inside the rail, on one line');
     check(!m.railLabelClipped, 'no step name is cut off at 1440');
     check(m.trackH >= 2.5, 'the track is thicker: ' + m.trackH + ' px');

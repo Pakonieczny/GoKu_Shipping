@@ -89,7 +89,7 @@ const ORDERS = [order(RID), order(FAIL)], Seal_PREPARED = '#65737f';
     // the order window (Paul, 26 Oct 2026): no "Sent to Sheet" button + seal in its header, no Seals row; the seal is still the order's (the window's own reader has it)
     const ow = async () => {
       const key = await page.evaluate(rid => { const row = Orders.rows().find(x => String(x.order.receiptId) === rid); OrderWin.open(row.key); return row.key; }, RID);
-      await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && !!document.querySelector('#orderWin .owHead #owPos'), key, { timeout: 20000 });
+      await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && !!document.querySelector('#orderWin .owHead #owCpDesign'), key, { timeout: 20000 });   // (OWHEAD, 29 Oct 2026: the header is painted: its Edit Design, on every order; the walk is in the tab row now)
       await page.waitForTimeout(1200);
       return page.evaluate(() => {
         const head = document.querySelector('#orderWin .owHead'), send = document.getElementById('owSendSheet');

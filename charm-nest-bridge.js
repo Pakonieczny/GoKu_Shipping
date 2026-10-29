@@ -21848,24 +21848,8 @@ const OrderWin = window.OrderWin = (() => {
     t._stick = { stick, at };
     if (stick) t.querySelectorAll("img").forEach(img => { if (!img.complete) img.addEventListener("load", () => { t.scrollTop = t.scrollHeight; }, { once: true }); });
   }
-  /** The live line at the right end of the tab row ("Updated live · last change Mon 12:44 PM · Paul"), where the Skip switch
-   *  used to stand: right-aligned, and when the row is short it breaks only between its parts (each part is kept whole),
-   *  never in the middle of a time or a name. Its text reads as ever; it is redrawn only when it reads differently. */
-  function paintLive(live, e) {
-    const when = e ? shopWhen(e.at) : "", by = e && e.by ? String(e.by) : "", key = e ? when + "␟" + by : "";
-    if (live._key === key) return;
-    live._key = key; live.textContent = "";
-    if (!e) return;
-    const parts = ["Updated live ·", "last change", when + (by ? " ·" : "")]; if (by) parts.push(by);
-    parts.forEach((t, i) => {
-      if (i) live.appendChild(document.createTextNode(" "));
-      const s = document.createElement("span");
-      // ("Updated" steps aside on a phone, where the row has little room: "Live · last change …"; the text itself is unchanged)
-      if (i === 0) { const lead = document.createElement("span"); lead.className = "lead"; lead.textContent = "Updated "; s.appendChild(lead); s.appendChild(document.createTextNode("live ·")); }
-      else s.textContent = t;
-      live.appendChild(s);
-    });
-  }
+  /* (OWHEAD, Paul 29 Oct 2026: "Remove the current text UI completely to make room for the navigation chevrons and counter": the live line at the right end of the tab row, "Updated live · last change
+     Mon 12:44 PM · Paul" (paintLive), is gone, and the walk (‹ N of M ›) stands there. The order's timeline is read as before: the Timeline tab's count and the head card follow it.) */
   /** The Team tab's dot: something new from another station while the Customer tab is in front. */
   function paintTeamDot() {
     const dot = byId("owTabTeam")?.querySelector(".owDot"); if (!dot) return;
@@ -21896,8 +21880,9 @@ const OrderWin = window.OrderWin = (() => {
     if (i >= 0) { W.at = i; W.listed = r.key; }
     const on = W.walk && list.length > 0 && (i >= 0 || W.listed === r.key);
     const pos = byId("owPos"); if (pos) pos.textContent = on && i >= 0 ? (i + 1) + " of " + list.length : "";
-    const pv = byId("owPrev"), nx = byId("owNext");
+    const pv = byId("owPrev"), nx = byId("owNext"), nav = byId("owNav");
     pv.hidden = nx.hidden = !on; pv.disabled = i >= 0 ? i <= 0 : W.at <= 0; nx.disabled = i >= 0 ? i >= list.length - 1 : W.at >= list.length;
+    if (nav) nav.hidden = !on;   // (OWHEAD, Paul 29 Oct 2026: the walk is at the right end of the tab row, its own group: no room taken while the window walks no list)
   }
   /** The "Engraving" cell of the facts grid: the line's state and words, and the seals. A counted-disc line says it disc by disc ("Disc 1 · J · Approved" / "Disc 2 · Q · Placement to check")
    *  with the seals of every disc, not of the one disc Engrave.jobOf gives; every other line exactly as it always read. `wait`: the word when the line has no state yet. */
@@ -22238,7 +22223,8 @@ const OrderWin = window.OrderWin = (() => {
     // from this UI and all detailed order modals"): the Back engraving card under the pictures says what the engraving waits
     // for and has its own way into Engraving. (#owFix stays in the page, empty: nothing draws in it.)
     paintSend(r);
-    tryDo(() => window.CharmNestCustomPiece && CharmNestCustomPiece.orderWin(r, byId("owPos")));   // (DESIGN & ENGRAVE, Paul 28 Oct 2026: a custom order opens in the Charm Designer from its order window too: charm-nest-custom-piece.js)
+    tryDo(() => window.CharmNestCustomPiece && CharmNestCustomPiece.orderWin(r, byId("owClose")));   // (DESIGN & ENGRAVE, Paul 28 Oct 2026: a custom order opens in the Charm Designer from its order window too: charm-nest-custom-piece.js;
+    //  OWHEAD, Paul 29 Oct 2026: "Add the already existing 'Edit Design' button": top right, left of the ×, on every order; the walk it stood beside is in the tab row now)
     paintNow(r);
     paintWho();
     tryDo(paintWinSeals);   // (SEALWIN, Paul 20 Oct 2026: every seal of the order, beside its button or in the Seals row)
@@ -22434,7 +22420,7 @@ const OrderWin = window.OrderWin = (() => {
     const it = inPull(r.key) && window.CustomSheet ? tryDo(() => Review.customItemFor(r.key) || Review.actFor(r.key)) : null, c = it ? tryDo(() => CustomSheet.cardOf(it)) : null;
     if (!(c && c.files.length && !c.sent && c.open && !c.why && !c.busy)) { if (b) b.hidden = true; paintSent(r, it); return; }
     paintSent(null);
-    if (!b) { const at = byId("owPos"); if (!at) return; b = el("button", "btn gold xs", "Send to Sheet"); b.type = "button"; b.id = "owSendSheet"; b.title = "Put every design on the next open sheet of its metal"; at.before(b); }
+    if (!b) { const at = byId("owCpDesign") || byId("owClose") || byId("owPos"); if (!at) return; b = el("button", "btn gold xs", "Send to Sheet"); b.type = "button"; b.id = "owSendSheet"; b.title = "Put every design on the next open sheet of its metal"; at.before(b); }   // (OWHEAD, Paul 29 Oct 2026: left of Edit Design, before the ×, as it stood before the walk moved to the tab row)
     b.hidden = false; b._it = it; b.disabled = false; if (b.textContent !== "Send to Sheet") b.textContent = "Send to Sheet";
     b.onclick = async () => {
       if (b._busy) return;
@@ -23374,7 +23360,6 @@ const OrderWin = window.OrderWin = (() => {
     // (the Sheet view's "no sheet" line follows the cancel record once it is read)
     const noSh = byId("owPlateWrap") && byId("owPlateWrap").querySelector(".owPlateNone[data-none]"); if (noSh) { const h = noSheetHtml(r); if (noSh._h !== h) { noSh._h = h; noSh.innerHTML = h; } }
     const count = byId("owTlCount"); if (count) count.textContent = W.events && W.evFor === String(r.order.receiptId) && W.events.length ? String(W.events.length) : "";
-    const live = byId("owLive"); if (live) paintLive(live, W.events && W.events.length ? W.events[W.events.length - 1] : null);
     paintPieceSum();
     paintSheetTab(r); sheetSettle(r);
     const card = byId("owNowCard"); if (!card) return;
