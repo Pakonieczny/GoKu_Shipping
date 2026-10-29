@@ -96,11 +96,12 @@ const turnOf = m => { const det = m[0] * m[3] - m[1] * m[2], a = det < 0 ? -m[0]
     /** The work area's Front (the switch over the grid), drawn: its canvas, and the face it says it shows. */
     const workFront = async name => {
       await R.openEngraveDetail(w, 'sil', { face: 'back' }); await R.settle(page, 600);
-      const has = await page.$(Q + ' .backHost .egFaceView [data-fv="front"]');
-      if (has) { await page.click(Q + ' .backHost .egFaceView [data-fv="front"]'); await R.settle(page, 500); }
+      // (ENGVIEW: the grid's switch is gone; the face is turned by Engrave.showFace, as the card's thumbnails do)
+      const has = await page.evaluate(Q => { const c = document.querySelector(Q), j = c && Engrave.items().get(c.dataset.key); return !!(j && typeof Engrave.showFace === 'function' && Engrave.showFace(j, 'front', { animate: false }).ok); }, Q);
+      if (has) await R.settle(page, 500);
       const o = await page.evaluate(Q => { const cv = document.querySelector(Q + ' .backHost canvas'); return cv ? { face: cv._viewFace || null, w: cv.width, h: cv.height } : null; }, Q);
       await R.shot(w, name);
-      if (has) { await page.click(Q + ' .backHost .egFaceView [data-fv="back"]'); await R.settle(page, 400); }
+      if (has) { await page.evaluate(Q => { const c = document.querySelector(Q), j = c && Engrave.items().get(c.dataset.key); if (j) Engrave.showFace(j, 'back', { animate: false }); }, Q); await R.settle(page, 400); }
       return { has: !!has, o };
     };
 
