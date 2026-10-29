@@ -165,8 +165,8 @@ async function partB(kit) {
     await R.shot(w, 'CE-2-editor-open');
     check('B4 Open in Charm Editor opens the editor on the front: CALENDAR, "order … · piece 1 of 1", every part a layer (outline, 3 month letters, 20 day squares), drawn as SVG paths',
       o0.face === 'front' && o0.n === 24 && o0.title === 'CALENDAR' && o0.sub === `order ${made.cal.rid} · piece 1 of 1` && o0.paths >= 24 && (o0.roles.match(/hatch/g) || []).length === 3 && (o0.roles.match(/line/g) || []).length === 20 && o0.back === 1, JSON.stringify(o0));
-    check('B5 the cut line is locked and says why (the piece is on a sheet); the fonts are the engraving drop-down\'s words, the piece\'s own first (Ace)',
-      o0.locked.length === 1 && o0.locked[0][0] === 'cut' && /on a sheet/.test(o0.locked[0][1]) && o0.fonts[0] === 'Ace' && ['Stylish', 'Pristina', 'Typewriter', 'Britannic Bold'].every(f => o0.fonts.includes(f)), JSON.stringify(o0.locked) + ' ' + o0.fonts.join(','));
+    check('B5 the cut line opens locked, named Outline (SHAREDSHAPE, 29 Oct 2026: on a sheet it changes too, its sheet checked again); the fonts are the engraving drop-down\'s words, the piece\'s own first (Ace)',
+      o0.locked.length === 1 && o0.locked[0][0] === 'cut' && o0.locked[0][1] === 'Outline' && o0.fonts[0] === 'Ace' && ['Stylish', 'Pristina', 'Typewriter', 'Britannic Bold'].every(f => o0.fonts.includes(f)), JSON.stringify(o0.locked) + ' ' + o0.fonts.join(','));
 
     /* ── the month: swept, deleted, SEPTEMBER typed and centred where MAY was ── */
     await page.evaluate(() => { const E = CharmEditor.current; for (const f of ['front', 'back']) for (const it of E.items(f).filter(i => i.source === 'engrave')) { if (E.face() !== f) continue; E.ctx.replaceItems({ [it.id]: Object.assign({}, it, { locked: true }) }); E.ctx.commit('lock the words'); } });   // (CETEXT, 28 Oct 2026: the card's own words are in the editor now; locked here, the clicks below that place new words land beside them, never on them (a lock is no change of the words))

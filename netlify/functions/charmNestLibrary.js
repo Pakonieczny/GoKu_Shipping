@@ -183,7 +183,7 @@ function slim(d) {
 /* The fields of a sheet record that its list entry (slim) and its laser readiness (Readiness.sheet) read, and the lists
    filter on. A list reads only these: the rest of a record (its charms with their outlines, its placements) is most of
    its up to 900 KB, and a list of 500 sheets used to read all of it to send none of it. */
-const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit", "releasedChange", "filesOwed", "_w"];   // (releasedChange: a set changed after it was released or approved for laser cutting, said on its Library card, Paul 27 Oct 2026)
+const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "previewAt", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "stepStamps", "stepState", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt", "laserHold", "manual", "manualEdit", "releasedChange", "filesOwed", "cutCheck", "_w"];   // (releasedChange: a set changed after it was released or approved for laser cutting, said on its Library card, Paul 27 Oct 2026)
 /** What the Library's live read (op_laserStatus) reads of a sheet: SLIM_SHEET, and the sheet's own number (readiness labels a sheet that is in no set by it). */
 const LASER_SHEET = SLIM_SHEET.filter(f => f !== "sources").concat(["seq", "sourcesLite"]);
 /** What decides whether a sheet is on the Library's Current list (op_listSheets with excludeDone): archived, completed, its set (filingRecords), the filters and the order. */
@@ -2763,8 +2763,10 @@ async function op_backList(b) {
    Who and when: `by` (a signed-in person, required as for an approval) and `at` (this server's clock). The piece's pool row says it has an edit (artEdit { front | back: at }), so a page
    that makes the piece again from the master (a reload, a recall, a checkpoint) reads a record only for a piece that has one: the pool rows are read anyway, nothing is read for the rest
    (Paul is careful of the Firestore bill).
-   A piece already on a saved sheet: its sheet record owes its files again (filesOwed, the word the sheet window's move uses), and a CUT LINE of it is not changed (a cut line is the shape the
-   nest packed: a new shape needs the piece taken off and nested again). A sheet already cut by the laser is never changed. ── */
+   A piece already on a saved sheet: its sheet record owes its files again (filesOwed, the word the sheet window's move uses). Its CUT LINE changes too (SHAREDSHAPE, Paul 29 Oct 2026: "Don't
+   block the person"); the sheet was nested with the old shape, so its record says so (cutCheck { poolId: { at, by } }) until the page has checked the new shape where the piece stands and
+   written the sheet again (putSheet { cutCheck: null }); a set with such a sheet is not released. A sheet already cut by the laser is never changed. The back's record never holds a part of the
+   drawing (its shape is the front record's). ── */
 const ART = "Charm_Pool_Art";
 const ART_FACES = new Set(["front", "back"]), ART_ROLES = new Set(["cut", "line", "hatch", "art"]), ART_KINDS = new Set(["path", "text"]);
 const ART_MEMBER = /^\d{1,5}-[0-9a-z]{1,13}$/, ART_ITEM = /^[A-Za-z0-9_.:-]{1,64}$/, ART_KEY = /^[0-9a-z]{1,13}$/;
@@ -2853,15 +2855,16 @@ async function op_artPut(b) {
     const sid = row.sheetId && !Placement.TAKE_OFF_STATES.has(row.state) ? str(row.sheetId, 80) : "", sheetRef = sid && isId(sid) ? col(SHEETS).doc(sid) : null;
     const sheet = sheetRef ? await tx.get(sheetRef).then(s => (s.exists ? s.data() : null)) : null, onSheet = !!sheet && !sheet.archived && Array.isArray(sheet.poolIds) && sheet.poolIds.map(String).includes(poolId);
     if (onSheet && (sheet.laserDoneAt || sheet.roseCutAt)) return { error: `${sheetLabel(sheet) || "Its sheet"} was already cut by the laser: this piece's artwork is no longer changed`, status: 409 };
-    // a cut line is the shape the sheet was nested with: on a piece on a sheet it stays as it was saved (the same cut edit sent again is no change)
-    const wasCut = (old && old.cutKey) || "", nowCut = clear ? "" : cutKey;
-    if (onSheet && nowCut !== wasCut) return { error: `A cut line is the shape ${sheetLabel(sheet) || "its sheet"} was nested with: it is not changed on a piece already on a sheet. Engraving can be changed; to change the cut, take the piece off its sheet and let it be nested again.`, status: 409, cutRefused: true };
+    // (SHAREDSHAPE, Paul 29 Oct 2026: "Don't block the person"): a piece on a sheet changes its cut line too. Its sheet was nested with the old shape, so the sheet says so (cutCheck: the piece,
+    // when, by whom) besides owing its files: the page checks the new shape where the piece stands before it writes the sheet again, and a sheet with a cut line not checked again goes to no
+    // laser (the same cut edit sent again is no change)
+    const wasCut = (old && old.cutKey) || "", nowCut = clear ? "" : cutKey, cutChanged = onSheet && nowCut !== wasCut;
     if (clear) { if (old) tx.delete(ref); }
     else tx.set(ref, Object.assign({ poolId, face, sku: str(row.sku, 60) || null, orderId: str(row.orderId || poolId.split("_")[0], 30), sheetId: onSheet ? sid : null }, art, { cutKey, by, at: now, edits: num(old && old.edits) + 1, updatedAt: FV.serverTimestamp() }, old ? { prev: { at: num(old.at), by: str(old.by, 80) } } : {}));
     // (the whole map is written: a merge keeps the pool row's other fields, and the other face's stamp is carried over by hand)
     tx.set(poolRef, { artEdit: Object.assign({}, row.artEdit && typeof row.artEdit === "object" ? row.artEdit : {}, { [face]: clear ? null : now }), updatedAt: FV.serverTimestamp() }, { merge: true });
-    if (onSheet) tx.set(sheetRef, { filesOwed: now, updatedAt: FV.serverTimestamp() }, { merge: true });
-    return { ok: true, key, art: clear ? null : Object.assign({ poolId, face }, art, { cutKey, by, at: now }), sheetId: onSheet ? sid : null, filesOwed: onSheet ? now : null };
+    if (onSheet) tx.set(sheetRef, Object.assign({ filesOwed: now, updatedAt: FV.serverTimestamp() }, cutChanged ? { cutCheck: Object.assign({}, sheet.cutCheck && typeof sheet.cutCheck === "object" ? sheet.cutCheck : {}, { [poolId]: { at: now, by } }) } : {}), { merge: true });
+    return { ok: true, key, art: clear ? null : Object.assign({ poolId, face }, art, { cutKey, by, at: now }), sheetId: onSheet ? sid : null, filesOwed: onSheet ? now : null, cutChanged };
   });
 }
 async function op_artGet(b) {

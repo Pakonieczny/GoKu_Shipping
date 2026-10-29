@@ -136,7 +136,9 @@ const sq = (x, y, w, h) => [[['m', [x, y]], ['l', [x + w, y]], ['l', [x + w, y +
   const refusal = (fn, re, m) => { let e = null; try { fn(); } catch (x) { e = x; } ok(e && Array.isArray(e.refused) && e.refused.some(r => re.test(r.why)), m + ': ' + (e ? JSON.stringify(e.refused) : 'not refused')); };
   refusal(() => AE.encode({ removed: [ids[0]] }, { charm: piece, view: front, face: 'front' }), /outline is the piece itself/, 'E the outline is never removed');
   refusal(() => AE.encode({ added: [{ id: 'far', role: 'hatch', subpaths: toItem(sq(base.bbox[2] + 5, base.bbox[1], 3, 3)) }] }, { charm: piece, view: front, face: 'front' }), /outside the piece's outline/, 'E an engraving off the metal');
-  refusal(() => AE.encode({ added: [{ id: 'hole', role: 'cut', subpaths: toItem(sq(cx - 1, cy - 1, 2, 2)) }] }, { charm: piece, view: front, face: 'front', placed: true }), /nested with/, 'E a new cut line on a piece already on a sheet');
+  // (SHAREDSHAPE, Paul 29 Oct 2026: "Don't block the person": a new cut line on a piece already on a sheet is kept, its record says cut; its sheet is checked again before it is written)
+  const cutPl = AE.encode({ added: [{ id: 'hole', role: 'cut', subpaths: toItem(sq(cx - 1, cy - 1, 2, 2)) }] }, { charm: piece, view: front, face: 'front', placed: true });
+  ok(cutPl.cut === true && cutPl.added.length === 1, 'E SHAREDSHAPE a new cut line on a piece already on a sheet: kept (its sheet is checked again), the record says cut');
   const cutOk = AE.encode({ added: [{ id: 'hole', role: 'cut', subpaths: toItem(sq(cx - 1, cy - 1, 2, 2)) }] }, { charm: piece, view: front, face: 'front', placed: false });
   ok(cutOk.cut === true && cutOk.added[0].stroke.join() === '0,0,0' && cutOk.added[0].fill === null, 'E ... but allowed on a piece not on a sheet yet: a black cut hairline, the record says cut');
   const edCut = AE.apply(piece, Object.assign({ at: 3 }, cutOk), 'front');
@@ -156,8 +158,16 @@ const sq = (x, y, w, h) => [[['m', [x, y]], ['l', [x + w, y]], ['l', [x + w, y +
     const one = Object.fromEntries(bItems.slice(0, 1).map(it => [it.id, { id: it.id, subpaths: mv(it.subpaths), tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 }]));
     if (bItems.length > 1) { const r1 = AE.encode({ changed: one, added: [{ id: 'words', role: 'line', stroke: '#ff0000', lwPt: 0.4, subpaths: mine }] }, { charm: piece, view: back, face: 'back' });
       const g1 = AE.decode(r1, piece, back).added[0].subpaths; near(Math.hypot(g1[0][0][1][0] - mine[0][0][1][0], g1[0][0][1][1] - mine[0][0][1][1]), 0, 1e-6, 'E LOCKSAVE ... one cut line moved alone is no common move: the words stay where they are'); } }
-  { let err = null, rec = null; try { rec = AE.encode({ changed: { [ids[0]]: { tx: 2 } }, removed: [] }, { charm: piece, view: front, face: 'front', placed: true }); } catch (x) { err = x; }
-    ok(!err && rec && !rec.changed[ids[0]] && !rec.cut, 'E LOCKSAVE a placed piece\'s outline (a kept cut line) handed back moved: the master\'s, no refusal: ' + (err ? JSON.stringify(err.refused) : '')); }
+  /* SHAREDSHAPE (Paul, 29 Oct 2026: "it's the same charm it's like the same coin with two different sides") */
+  { const cutIds = ids.filter((id, i) => AE.roleOf(base.members[i], base) === 'cut');
+    let err = null, rec = null; try { rec = AE.encode({ changed: Object.fromEntries(cutIds.map(id => [id, { tx: 2, ty: -1 }])), removed: [] }, { charm: piece, view: front, face: 'front', placed: true }); } catch (x) { err = x; }
+    ok(!err && rec && !Object.keys(rec.changed).length && !rec.cut, `E SHAREDSHAPE the whole shape (${cutIds.length} cut parts) moved as one body on a placed piece: the same coin, no change, no refusal: ` + (err ? JSON.stringify(err.refused) : ''));
+    err = null; rec = null; try { rec = AE.encode({ changed: { [ids[0]]: { sx: 1.05, sy: 1.05 } }, removed: [] }, { charm: piece, view: front, face: 'front', placed: true }); } catch (x) { err = x; }
+    ok(!err && rec && rec.changed[ids[0]] && rec.changed[ids[0]].role === 'cut' && rec.cut === true, 'E SHAREDSHAPE the outline made bigger on a placed piece: a new shape, kept (the record says cut, its sheet is checked again): ' + (err ? JSON.stringify(err.refused) : ''));
+    const big = AE.apply(piece, Object.assign({ at: 4 }, rec), 'front'), far = AE.encode({ changed: { [ids[0]]: { sx: 1.3, sy: 1.3 } }, added: [{ id: 'edge', role: 'hatch', subpaths: toItem(sq(base.bbox[2] + 0.5, (base.bbox[1] + base.bbox[3]) / 2, 0.5, 0.5)) }] }, { charm: piece, view: front, face: 'front' });
+    ok(big.artTrace === true && far.added.length === 1, 'E SHAREDSHAPE an engraving is on the metal of the outline the record draws (the new, bigger one), and the new shape is traced again');
+    err = null; rec = null; try { rec = AE.encode({ added: [{ id: 'hole2', role: 'cut', subpaths: AE.itemsOf(piece, back, 'back')[0].subpaths.slice(0, 1) }] }, { charm: piece, view: back, face: 'back' }); } catch (x) { err = x; }
+    ok(!err && rec && !rec.added.length && !rec.cut, 'E SHAREDSHAPE a cut-out handed back with the back is the front record\'s (the editor made it there too): left out of the back\'s, no refusal'); }
   refusal(() => AE.encode({ removed: ['999-zzz'] }, { charm: piece, view: front, face: 'front' }), /not in the piece's drawing/, 'E an id that is no part of this drawing');
   const stale = AE.apply(piece, Object.assign({}, saved, { baseKey: 'otherdraw' }), 'front');
   ok(stale.members === base.members && stale.artEdit.front.stale[0] === '*' && /drawn again/.test(stale.artEdit.front.why), 'E a record made on another drawing is not put on (the piece is the master\'s, and says why)');

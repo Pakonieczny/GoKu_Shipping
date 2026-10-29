@@ -4,13 +4,13 @@
         (bytes, parts, operators), a part removed and changed at once, a cut id that is neither, an edit of the back that is not an addition, a piece that is not pooled
      B  saved: the record (in the charm's own points, as strings: no array inside an array), who and when, the pool row's stamp (the other face's kept), read back by artGet and by artList
         (by keys or by pool ids and faces; only the documents asked for are read); a second save: the previous one named, the count; an edit made elsewhere since is refused (409)
-     C  a piece on a saved sheet: its sheet owes its files (filesOwed); a cut line is not changed on it (cutRefused) unless it is the same cut edit saved before it was nested; a sheet
+     C  a piece on a saved sheet: its sheet owes its files (filesOwed); its cut line changes too (SHAREDSHAPE, 29 Oct 2026) and the sheet then says it must be checked again (cutCheck); a sheet
         already cut by the laser is never changed; clear takes the edit off (the record gone, the stamp null)
      D  the sandbox: its own records (Sandbox_Charm_Pool_Art, Sandbox_ pool rows), production untouched and unseen
      E  reads move no counter (artGet / artList); a save raises the placement counter (it wrote a pool row)
      F  the page module (charm-nest-art-edit.js) against the same handler, with a stand-in for the page: save → the record, the pool row's stamp on the page, the piece's new charm on its
         sheet (swap), the face's engraving and the sheet's files (changed); a piece made from the master again (piece) reads its edit once and only when its pool row names one; a cut line
-        of a placed piece refused before anything is sent; after a checkpoint, sync makes again only the pieces whose pool row names an edit their charm does not carry
+        of a placed piece kept and the page told its cut changed; after a checkpoint, sync makes again only the pieces whose pool row names an edit their charm does not carry
    node tests/charm-nest/art-edit-server.cjs */
 'use strict';
 const assert = require('node:assert/strict'), path = require('node:path');
@@ -95,15 +95,18 @@ const nested = v => Array.isArray(v) ? v.some(x => Array.isArray(x) || nested(x)
     r = await put({}, { expectedAt: doc2.at }); const sh = st.doc('Charm_Nest_Sheets', SHEET);
     ok(r.status === 200 && r.body.sheetId === SHEET && r.body.filesOwed > 0 && sh.filesOwed === r.body.filesOwed && st.doc('Charm_Pool_Art', ID + '~front').sheetId === SHEET, 'C an engraving edit of a piece on a saved sheet: saved, and the sheet owes its files (filesOwed)');
     let at = st.doc('Charm_Pool_Art', ID + '~front').at;
-    r = await put({ added: [{ id: 'hole', role: 'cut', d: 'M1 1L2 1L2 2Z', stroke: [0, 0, 0], fill: null }] }, { expectedAt: at });
-    ok(r.status === 409 && r.body.cutRefused && /nested with/.test(r.body.error) && /take the piece off its sheet/.test(r.body.error), 'C a cut line on a piece on a sheet is refused, saying what a re-nest needs: ' + r.body.error);
-    r = await put({ removed: ['1-abc'], cutIds: ['1-abc'] }, { expectedAt: at }); ok(r.status === 409 && r.body.cutRefused, 'C a cut line removed: refused too');
+    // (SHAREDSHAPE, Paul 29 Oct 2026: "Don't block the person": a cut line of a piece on a sheet changes; its sheet owes its files and says it must be checked again (cutCheck) before it is written)
+    r = await put({ added: [{ id: 'hole', role: 'cut', d: 'M1 1L2 1L2 2Z', stroke: [0, 0, 0], fill: null }] }, { expectedAt: at }); let shc = st.doc('Charm_Nest_Sheets', SHEET);
+    ok(r.status === 200 && r.body.cutChanged === true && shc.cutCheck && shc.cutCheck[ID] && shc.cutCheck[ID].by === 'Ana_M' && shc.filesOwed === r.body.filesOwed, 'C SHAREDSHAPE a cut line added on a piece on a sheet: kept, the sheet marked to be checked again (cutCheck) and owing its files: ' + JSON.stringify(r.body).slice(0, 160));
+    at = st.doc('Charm_Pool_Art', ID + '~front').at;
+    r = await put({ removed: ['1-abc'], cutIds: ['1-abc'] }, { expectedAt: at }); ok(r.status === 200 && r.body.cutChanged === true, 'C SHAREDSHAPE ... a cut line removed: kept too, checked again');
+    at = st.doc('Charm_Pool_Art', ID + '~front').at;
     // (EDITSAVE, Paul 28 Oct 2026, order 4211572095) a cut line sent as changed whose path is still the master's own (`from`: the page's hash of the master part's path) is no change: kept out of the
     //  record and never refused; the same line really changed is refused as before
     { const D = 'M1 1L9 1L9 9Z', cut = d => ({ removed: ['1-abc'], changed: { '7-cut': { kind: 'path', role: 'cut', d, stroke: [0, 0, 0], fill: null, from: AE.fnvOf(D) } }, cutIds: ['7-cut'] });
       r = await put(cut(D), { expectedAt: at }); const kd = st.doc('Charm_Pool_Art', ID + '~front');
       ok(r.status === 200 && !kd.cut && !kd.cutIds.length && !('7-cut' in kd.changed) && !JSON.stringify(kd).includes('"from"'), 'C EDITSAVE: a cut line handed back unchanged (its path still the master\'s) is left out, and the save of a piece on a sheet is kept: ' + JSON.stringify(r.body).slice(0, 200));
-      at = kd.at; r = await put(cut('M1 1L9.5 1L9 9Z'), { expectedAt: at }); ok(r.status === 409 && r.body.cutRefused, 'C EDITSAVE: ... the same cut line really changed is still refused'); }
+      at = kd.at; r = await put(cut('M1 1L9.5 1L9 9Z'), { expectedAt: at }); ok(r.status === 200 && r.body.cutChanged === true && st.doc('Charm_Pool_Art', ID + '~front').cut === true, 'C EDITSAVE: ... the same cut line really changed is a change (kept, its sheet checked again)'); }
     // a cut edit saved BEFORE the piece was nested stands, and the same edit sent again is no change
     r = await call({ op: 'artPut', poolId: ID2, face: 'front', by: 'Ana_M', expectedAt: st.doc('Charm_Pool_Art', ID2 + '~front').at, art: art({ added: [{ id: 'hole', role: 'cut', d: 'M1 1L2 1L2 2Z', stroke: [0, 0, 0], fill: null }] }) });
     const cutDoc = st.doc('Charm_Pool_Art', ID2 + '~front'); ok(r.status === 200 && cutDoc.cut === true && /^[0-9a-f]{16}$/.test(cutDoc.cutKey), 'C a cut edit of a piece not on a sheet yet is kept (cut, cutKey)');
@@ -111,8 +114,8 @@ const nested = v => Array.isArray(v) ? v.some(x => Array.isArray(x) || nested(x)
     r = await call({ op: 'artPut', poolId: ID2, face: 'front', by: 'Ana_M', expectedAt: cutDoc.at, art: art({ removed: ['1-abc'], added: [{ id: 'hole', role: 'cut', d: 'M1 1L2 1L2 2Z', stroke: [0, 0, 0], fill: null }] }) });
     ok(r.status === 200, 'C ... once nested, its engraving still changes while the cut edit is sent again unchanged');
     r = await call({ op: 'artPut', poolId: ID2, face: 'front', by: 'Ana_M', expectedAt: st.doc('Charm_Pool_Art', ID2 + '~front').at, art: art({ added: [{ id: 'hole', role: 'cut', d: 'M1 1L3 1L3 3Z', stroke: [0, 0, 0], fill: null }] }) });
-    ok(r.status === 409 && r.body.cutRefused, 'C ... and a different cut is refused');
-    r = await call({ op: 'artPut', poolId: ID2, face: 'front', by: 'Ana_M', clear: true }); ok(r.status === 409 && r.body.cutRefused, 'C taking off an edit that changed the cut of a nested piece is refused as well');
+    ok(r.status === 200 && r.body.cutChanged === true && st.doc('Charm_Nest_Sheets', SHEET).cutCheck[ID2], 'C ... and a different cut is kept, the sheet marked for both pieces');
+    r = await call({ op: 'artPut', poolId: ID2, face: 'front', by: 'Ana_M', clear: true }); ok(r.status === 200 && r.body.cutChanged === true, 'C taking off an edit that changed the cut of a nested piece: kept, checked again');
     // the laser cut it
     st.put('Charm_Nest_Sheets', SHEET, { laserDoneAt: Date.now() }); at = st.doc('Charm_Pool_Art', ID + '~front').at;
     r = await put({}, { expectedAt: at }); ok(r.status === 409 && /already cut by the laser/.test(r.body.error) && st.doc('Charm_Pool_Art', ID + '~front').at === at, 'C a sheet already cut by the laser: refused, nothing changed: ' + r.body.error);
@@ -136,7 +139,7 @@ const nested = v => Array.isArray(v) ? v.some(x => Array.isArray(x) || nested(x)
     const gen = () => (st.doc('Charm_Nest_Rev', 'placement') || {}).n || 0, g0 = gen();
     await call({ op: 'artGet', poolId: ID2, face: 'front' }); await call({ op: 'artList', keys: [ID2 + '~front'] });
     eq(gen(), g0, 'E reads move no counter');
-    await call({ op: 'artPut', poolId: ID2, face: 'front', by: 'Ana_M', expectedAt: st.doc('Charm_Pool_Art', ID2 + '~front').at, art: art({ added: [{ id: 'hole', role: 'cut', d: 'M1 1L2 1L2 2Z', stroke: [0, 0, 0], fill: null }] }) });
+    await call({ op: 'artPut', poolId: ID2, face: 'front', by: 'Ana_M', expectedAt: (st.doc('Charm_Pool_Art', ID2 + '~front') || {}).at || 0, art: art({ added: [{ id: 'hole', role: 'cut', d: 'M1 1L2 1L2 2Z', stroke: [0, 0, 0], fill: null }] }) });   // (its edit was taken off in C)
     ok(gen() === g0 + 1, 'E a save raises the placement counter once (it wrote a pool row)');
 
     /* ── F · the page module, with a stand-in page ── */
@@ -163,10 +166,12 @@ const nested = v => Array.isArray(v) ? v.some(x => Array.isArray(x) || nested(x)
     ok(page.sheets[0].charms[0] !== live0 && page.sheets[0].charms[0] === saved.charm && saved.charm.id === live0.id && saved.charm.members.length === 24 - 3 + 1, 'F the sheet holds the piece\'s new charm, same id, its own parts');
     ok(live0.members === cb.members && cb.members.every(m => !m.artRedraw), 'F the master is untouched');
     eq(page.changes, [[PID, 'front', true, null]], 'F the page is told: the face\'s engraving and the sheet\'s files (changed)');
-    // a cut line of a placed piece: refused here, before anything is sent
-    const sent = page.reads.length; let refused = null;
-    try { await AE.save(PID2, 'front', { added: [{ id: 'hole', role: 'cut', subpaths: sq(dayBox[0] + 3, dayBox[1] + 3, 2, 2) }] }, { view }); } catch (e) { refused = e; }
-    ok(refused && refused.refused && /nested with/.test(refused.refused[0].why) && page.reads.length === sent, 'F a cut line of a placed piece is refused before anything is sent: ' + (refused && refused.message));
+    // a cut line of a placed piece (SHAREDSHAPE): sent and kept, the page told the cut changed (its sheet is checked again before it is written)
+    const PID3 = '4170000005_10050_1'; st.put('Charm_Pool', PID3, { poolId: PID3, orderId: '4170000005', sku: 'CALENDAR', state: 'pooled', sheetId: null });
+    const n3 = page.changes.length, PDF = global.CharmNestPDF, bs = PDF.buildSilhouettes; PDF.buildSilhouettes = async () => {};   // (its silhouette is traced again on a canvas: none in node)
+    let holed; try { holed = await AE.save(PID3, 'front', { added: [{ id: 'hole', role: 'cut', subpaths: sq(dayBox[0] + 3, dayBox[1] + 3, 2, 2) }] }, { view, charm: clone(PID3), placed: true }); } finally { PDF.buildSilhouettes = bs; }
+    ok(holed.record && holed.record.cut === true && holed.cut === true && page.changes.length === n3 + 1, 'F a cut line of a placed piece is kept, and the page is told its cut changed');
+    page.changes.length = n3;
     // the piece made from the master again (a reload, a recall): its pool row names the edit, read ONCE
     AE.forget(); page.reads.length = 0;
     const fresh = clone(PID), made = await AE.piece(fresh, PID, { poolId: PID, artEdit: { front: stored.at } });
@@ -188,6 +193,6 @@ const nested = v => Array.isArray(v) ? v.some(x => Array.isArray(x) || nested(x)
     // taken back to the master
     page.reads.length = 0; const cleared = await AE.clear(PID, 'front', {});
     ok(cleared.record === null && !st.doc('Charm_Pool_Art', PID + '~front') && JSON.stringify(page.sheets[0].charms[0].members) === JSON.stringify(cb.members) && !page.sheets[0].charms[0].artEdit && !page.sheets[0].charms[0].dropIndices && page.rows.get(PID).artEdit.front === null, 'F clear: the record gone, the piece the master\'s again, the stamp null');
-    console.log(`PASS ${n} checks: ART EDIT server — artPut / artGet / artList checked strictly, saved with who and when, the pool row's stamp, a sheet that owes its files, cut lines kept on a nested piece, the laser's sheet never changed, the sandbox apart, reads free of counters`);
+    console.log(`PASS ${n} checks: ART EDIT server — artPut / artGet / artList checked strictly, saved with who and when, the pool row's stamp, a sheet that owes its files, a nested piece's cut line changed and its sheet marked to be checked again, the laser's sheet never changed, the sandbox apart, reads free of counters`);
   } finally { srv.close(); }
 })().catch(e => { console.error(e); process.exit(1); });

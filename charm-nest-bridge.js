@@ -10058,15 +10058,15 @@ const Engrave = window.Engrave = (() => {
     const AE = window.CharmNestArtEdit, outlineId = AE.memberId(charm, charm.members.indexOf(charm.outline));
     const layers = AE.itemsOf(charm, view, face).filter(it => it && it.id != null && Array.isArray(it.subpaths) && it.subpaths.length).map(it => {
       const o = Object.assign({}, it, { kind: "path", source: it.origin === "added" ? "added" : "master" });
-      if (it.role === "cut") o.name = (it.id === outlineId ? "Outline" : "Cut line") + (placed ? " · kept: on a sheet" : "");   // (the module refuses a cut line changed on a piece already nested)
+      if (it.role === "cut") o.name = it.id === outlineId ? "Outline" : "Cut line";   // (SHAREDSHAPE, Paul 29 Oct 2026: a cut line of a piece on a sheet changes too; its sheet is checked again on Save)
       else if (it.text) o.name = it.text;
-      // (LOCKSAVE, Paul 28 Oct 2026: "I tried to save my changes … got this strange error … there was nothing wrong with this charm": what this face cannot change is the editor's `fixed`: it opens
-      //  locked and nothing in the editor changes it. On a back: every part of the master; on a piece already on a sheet: its cut lines)
-      if (it.origin !== "added" && (face === "back" || (placed && it.role === "cut"))) o.fixed = true;
       return o;
     });
     const out = layers.find(i => i.id === outlineId) || layers.find(i => i.role === "cut"), b = out ? window.CharmEditor.model.bboxOf(out.subpaths) : null;
-    return { face, unitPt: true, frame: b ? { x0: b[0], y0: b[1], wPt: b[2] - b[0], hPt: b[3] - b[1] } : null, items: layers };
+    // (SHAREDSHAPE, Paul 29 Oct 2026: "it's the same charm it's like the same coin with two different sides": each face says how its points stand on the charm (the view's frame, AE.frame: y down,
+    //  then the view undone), so the editor keeps ONE shape for both faces, the back's mirrored as the back always is)
+    const Mx = window.CharmEditor.model, fr = AE.frame(view), toCharm = Mx.mul(fr.Fi, [1, 0, 0, -1, 0, 0]);
+    return { face, unitPt: true, frame: b ? { x0: b[0], y0: b[1], wPt: b[2] - b[0], hPt: b[3] - b[1] } : null, items: layers, toCharm };
   }
   /* CETEXT (Paul, 28 Oct 2026: "When I press the 'Open in Charm Editor' button everything seems to be working correctly, however the text that is currently on the charm does not show up in the
      editor"). The editor was handed the piece's DRAWING only (charmEditDoc: the charm's own parts, AE.itemsOf); the words the card had fitted on a face live on that face's job (job.fit: the
@@ -10328,6 +10328,8 @@ const Engrave = window.Engrave = (() => {
         //  of the words is to leave it: the repair)
         if (!fix.length && ids.every(id => id === wid)) continue;
         const changes = charmEditChanges(charm, docs[face].items, r.faces[face].items, d, face, wid ? new Set([wid]) : null);
+        // (SHAREDSHAPE, Paul 29 Oct 2026: the back holds no part of the drawing: its shape, changed there or not, is the front's (the editor made it there too) and goes with the front's record)
+        if (face === "back") { changes.removed = []; changes.changed = {}; changes.added = changes.added.filter(a => a && a.role !== "cut"); }
         if (!(changes.removed.length + changes.added.length + Object.keys(changes.changed).length) && !(charm.artEdit && charm.artEdit[face])) continue;   // (EDITSAVE: nothing on this face for the piece to carry, and no edit of it to take off: no save of it)
         todo.push({ face, changes });
       }
@@ -10340,7 +10342,22 @@ const Engrave = window.Engrave = (() => {
       }
       return { todo, wordsNow, kept, refused, wordsTodo };
     };
-    const check = r => { let p; try { p = planOf(r); } catch (e) { return { lines: [{ text: `the edit could not be checked (${(e && e.message) || e})` }] }; } return p.refused.length ? { lines: p.refused } : null; };
+    const check = async r => {
+      let p; try { p = planOf(r); } catch (e) { return { lines: [{ text: `the edit could not be checked (${(e && e.message) || e})` }] }; }
+      if (p.refused.length) return { lines: p.refused };
+      // (SHAREDSHAPE, Paul 29 Oct 2026: a piece already on a sheet whose cut line changed: its new shape is checked where it stands BEFORE anything is sent (cutRecheck); one that would overlap
+      //  is said, and the person chooses: keep editing, or save anyway (the sheet then keeps its old files and goes to no set until the piece is moved clear))
+      const front = p.todo.find(w => w.face === "front"); if (!front) return null;
+      const lines = [];
+      for (const pid of t.poolIds) {
+        if (!Pool.sheetOf(pid)) continue;
+        const live = Pool.charmOf(pid) || charm; let rec = null; try { rec = AE.encode(front.changes, { charm: live, view: views.front, face: "front", placed: true }); } catch (_) { rec = null; }
+        if (!rec || !rec.cut) continue;
+        let cand = AE.apply(live, rec, "front"); try { const h = AE.host(); cand = await AE.ready(cand, h.parsedOf ? h.parsedOf(live) : null); } catch (_) { /* checked as drawn */ }
+        const chk = cutRecheck(pid, cand); if (chk && !chk.ok) lines.push({ face: "front", text: `${chk.name}: the new cut line ${chk.why}` });
+      }
+      return lines.length ? { title: "The cut line changed", lines, proceed: "Save anyway", text: "This piece is already on a sheet. Save anyway keeps your change: that sheet keeps its old files and goes to no set until the piece is moved clear in Manual Control or the sheet is nested again. Or keep editing the shape." } : null;
+    };
     const startFace = job && t.from === "card" ? faceOf(job) : "front";
     let res = null, again = null, todo = [], wordsNow = {}, kept = [], wordsTodo = [];
     const done = [], records = {};
@@ -10400,7 +10417,9 @@ const Engrave = window.Engrave = (() => {
         const j = pj[a.face], st = j ? j.state : "";
         return `The ${a.face} engraving now reads "${a.text}"${a.font ? ` in ${a.font}` : ""}${a.moved ? ", where you put it" : a.lost && wordsNow[a.face].place ? " (placed by the fit: they do not fit where you put them)" : ""}${st === "review" ? ": approve it" : ""}${a.unkept.length ? ` · ${cap(a.unkept.join(", "))}: the engraving sets its own` : ""}`;
       });
-      charmEditTell(t, [faces.length ? `${faces.length > 1 ? "Front and back" : faces[0] === "front" ? "Front" : "Back"} artwork saved for this piece` : "", ...wordsSaid, kept.length ? `The ${kept.join(" and ")} words are the engraving's: they stay on the card` : "", ...said, bare.length ? `No words needed on the ${bare.join(" or ")}: approve it as drawn` : ""].filter(Boolean).join(" · "), applied.some(a => a.kept));
+      // (SHAREDSHAPE: what the sheet's check of a changed cut line found, said with the save)
+      const cutSaid = []; for (const pid of t.poolIds) { const c = CUT_CHECKS.get(pid); if (!c) continue; CUT_CHECKS.delete(pid); cutSaid.push(c.ok ? `The cut line changed: ${c.name} was checked again and it still fits; its files are written again` : `The cut line changed: on ${c.name} it ${c.why}: that sheet keeps its old files and goes to no set until the piece is moved clear (Manual Control) or the sheet is nested again`); }
+      charmEditTell(t, [faces.length ? `${faces.length > 1 ? "Front and back" : faces[0] === "front" ? "Front" : "Back"} artwork saved for this piece` : "", ...[...new Set(cutSaid)], ...wordsSaid, kept.length ? `The ${kept.join(" and ")} words are the engraving's: they stay on the card` : "", ...said, bare.length ? `No words needed on the ${bare.join(" or ")}: approve it as drawn` : ""].filter(Boolean).join(" · "), applied.some(a => a.kept) || cutSaid.some(x => /keeps its old files/.test(x)));
       { const lost = refit.filter(j => j.keepLost).map(j => faceOf(j)); if (lost.length && job) charmEditSay(job, `${(ART_NOTES.get(job.key) || {}).text || "Artwork saved"} · The words no longer fit where they were placed on the ${lost.join(" and ")}: placed again, check them`, false); }   // (KEEP: said when the words could not stay)
       // a face that was not fitted again keeps its words and its mask (they stand on the cut line, which a piece on a sheet keeps), but the art it draws is the new one
       const live = Pool.charmOf(poolId);
@@ -13394,6 +13413,8 @@ const Sets = window.Sets = (() => {
     // (MCFREE, Paul 20 Oct 2026: charms placed by hand where they overlap never reach the laser silently: the set is held, and the sheet named, until they are moved clear)
     for (const sh of sheets) { const n = (sh => { let n = 0; try { n = (window.CNManual && typeof CNManual.conflicts === "function" && CNManual.conflicts(sh).n) || 0; } catch (_) {} const pairs = (sh && sh.verification && sh.verification.geom && sh.verification.geom.overlappingPairs) || []; return Math.max(n, new Set([].concat(...pairs)).size); })(sh); if (n) throw pendingRelease(`${sh.fileBase || "A sheet of this set"}: ${n} charms overlap (placed by hand in Manual Control). Move them clear before this set is committed or cut`); }
     if (sheets.some(sh => sh.runHold)) throw pendingRelease("A sheet in this set still needs attention");
+    // (SHAREDSHAPE, Paul 29 Oct 2026: a piece whose cut line changed after it was nested, and does not fit where it stands, holds its set until it is moved clear: never cut unchecked)
+    { const held = sheets.find(sh => typeof cutHeld === "function" && cutHeld(sh)); if (held) { const [pid, w] = Object.entries(held.cutCheck)[0]; throw pendingRelease(`${held.fileBase || "A sheet in this set"}: the cut line of ${pid} changed${w && w.why ? ` and ${w.why}` : ""}: move it clear in Manual Control, or nest the sheet again`); } }
     // Paul, 10 Oct: a set goes to the laser only with at least 1 completed GF sheet and 1 completed SS sheet (charm-nest-set-rules.js; a set committed before is never blocked)
     const principle = window.CharmNestSetRules && window.CharmNestSetRules.gate(set, sheets);
     if (principle && principle.applies && !principle.ok) throw pendingRelease(`${set.name || "This set"} ${principle.short}: a set needs at least 1 completed GF sheet and 1 completed SS sheet`);
@@ -26676,14 +26697,48 @@ function artSheetWrite(sh) {
   const st = { again: false };
   st.run = (async () => {
     let ok = false;
-    do { st.again = false; ok = await Promise.resolve(window.writeAsPlaced(sh)).catch(e => { console.warn("artwork edit: sheet write", e); return false; }); } while (st.again && !sh.roseCutAt && !sh.laserDoneAt && allSheets().includes(sh));
-    if (ok && sh.sheetId) api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, filesOwed: null } }, { quiet: true }).catch(() => {});   // (its record no longer owes its files)
+    do {
+      st.again = false;
+      if (cutHeld(sh)) return false;   // (SHAREDSHAPE: a changed cut line that does not fit where its piece stands is never written)
+      ok = await Promise.resolve(window.writeAsPlaced(sh)).catch(e => { console.warn("artwork edit: sheet write", e); return false; });
+    } while (st.again && !sh.roseCutAt && !sh.laserDoneAt && allSheets().includes(sh));
+    if (ok && sh.sheetId) api("charmNestLibrary", { op: "putSheet", sheet: Object.assign({ id: sh.sheetId, filesOwed: null }, cutHeld(sh) ? {} : { cutCheck: null }) }, { quiet: true }).catch(() => {});   // (its record no longer owes its files; its cut lines were checked again)
     return ok;
   })().finally(() => ART_SHEET_WRITES.delete(sh));
   ART_SHEET_WRITES.set(sh, st);
   return st.run;
 }
 window.artSheetWrite = artSheetWrite;   // (tests wait for it)
+/* SHAREDSHAPE (Paul, 29 Oct 2026: "if a user is changing anything on the back ... that has a cut out or a rotation or anything that would affect also the front view ... it's the same charm"; the lead: a
+   piece already on a sheet whose cut line changes "changes what the laser cuts and how it sits on the sheet. Don't block the person: allow it, then make the sheet/laser side consistent the safe
+   way the app already has ... never silently write a laser file with a changed cut line that wasn't re-checked"). The piece's new shape is checked where it stands on its sheet with the sheet
+   window's own check (CNManual.fitsSpot: the nest's grid with the shop's clearance and the sheet's inset, every other charm stamped where it stands, then the independent verifier; INPLACE's
+   check of a replaced piece). It fits: the sheet is written as it stands (artSheetWrite: writeAsPlaced, both verifiers). It does not: the sheet keeps its files, says why (sh.cutCheck), is
+   written by nobody's edit save and goes to no set (Sets.validateRelease) until the piece is moved clear in Manual Control or the sheet is nested again; the person is told, and the editor asked
+   them first ("Save anyway"). → null (not on a sheet of this page: its nest checks it) | { sh, ok, why, name } */
+function cutSheetName(sh) { try { return sh.fileBase || (window.CharmNestSheetName ? CharmNestSheetName.name(sh) : "") || "its sheet"; } catch (_) { return "its sheet"; } }
+function cutRecheck(poolId, charm) {
+  const sh = window.Pool && Pool.sheetOf ? Pool.sheetOf(poolId) : null; if (!sh || !charm || sh.roseCutAt || sh.laserDoneAt) return null;
+  const c = (sh.charms || []).find(x => x && x.poolId === poolId), p = c && (sh.placements || []).find(q => q.id === c.id); if (!p) return null;
+  const name = cutSheetName(sh), M = window.CNManual;
+  if (!M || typeof M.fitsSpot !== "function") return { sh, ok: false, name, why: "could not be checked (the layout check is not loaded in this page)" };
+  let r; try { r = M.fitsSpot(sh, Object.assign(charm, { id: c.id }), { cxPt: +p.cxPt, cyPt: +p.cyPt, angle: +p.angle || 0 }, { replace: true }); } catch (e) { r = { ok: false, reason: (e && e.message) || String(e) }; }
+  return { sh, ok: !!(r && r.ok), name, why: r && r.ok ? "" : String((r && r.reason) || "could not be checked").replace(/^No room there: /, "").replace(/^it /, "").replace(/\.$/, "") };
+}
+/** Is the sheet held by a changed cut line that does not fit where its piece stands? Each one is checked again as the sheet now stands (moved clear in Manual Control, nested again, the piece taken
+ *  off: no longer held). */
+function cutHeld(sh) {
+  if (!sh || !sh.cutCheck || typeof sh.cutCheck !== "object") return false;
+  for (const pid of Object.keys(sh.cutCheck)) {
+    const c = (sh.charms || []).find(x => x && x.poolId === pid), placed = c && (sh.placements || []).some(p => p.id === c.id);
+    if (!placed) { delete sh.cutCheck[pid]; continue; }
+    const chk = cutRecheck(pid, c); if (chk && chk.ok) delete sh.cutCheck[pid];
+  }
+  if (Object.keys(sh.cutCheck).length) return true;
+  delete sh.cutCheck; return false;
+}
+const CUT_CHECKS = new Map();   // poolId -> { name, ok, why } (the last check of a saved cut line: the editor's note reads it)
+window.cutRecheck = cutRecheck; window.cutHeld = cutHeld;   // (tests read them)
 if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
   api: (fn, body, opts) => api(fn, body, opts),
   who: () => { try { return employeeName() || ""; } catch (_) { return ""; } },
@@ -26714,6 +26769,17 @@ if (window.CharmNestArtEdit) window.CharmNestArtEdit.setHost({
     agent({ pool: true, ...(sh ? { metal: sh.metal } : {}) }, "info", `${poolId}: its own ${face} artwork ${rec ? `edited${rec.by ? " by " + rec.by : ""}` : "taken back to the master drawing"}${info && info.sync ? " (on another computer)" : ""}${n ? `; its ${face} engraving is fitted again and waits for Approve` : ""}${sh && sh.outputs ? `; ${sh.fileBase || "its sheet"} writes its files again` : ""}`);
     if (!sh || sh.roseCutAt || sh.laserDoneAt) return;
     sh.dirty = true;
+    // (SHAREDSHAPE, Paul 29 Oct 2026: its cut line changed: checked again where the piece stands before the sheet is written; a shape that does not fit holds the sheet's files and its set)
+    if (info && (info.cut || (rec && rec.cut))) {
+      const chk = cutRecheck(poolId, info.charm || Pool.charmOf(poolId));
+      if (chk) {
+        CUT_CHECKS.set(poolId, { name: chk.name, ok: chk.ok, why: chk.why });
+        const held = Object.assign({}, sh.cutCheck || {}); if (chk.ok) delete held[poolId]; else held[poolId] = { at: Date.now(), why: chk.why };
+        if (Object.keys(held).length) sh.cutCheck = held; else delete sh.cutCheck;
+        if (!chk.ok) { agent({ pool: true, metal: sh.metal }, "warn", `${poolId}: its cut line changed and ${chk.why} on ${chk.name}: the sheet keeps its files and goes to no set until the piece is moved clear (Manual Control) or the sheet is nested again`); Session.schedule(); try { renderCard(sh); } catch (_) { /* its card says it with the next paint */ } return; }
+      }
+    }
+    if (cutHeld(sh)) return;   // (another piece's changed cut line still holds this sheet)
     if (!sh.outputs || typeof window.writeAsPlaced !== "function") return;   // (a sheet not written yet writes the edit with its first files)
     // (Paul, 28 Oct 2026: "my changes made in the Charm Editor were not saved and did not show up in the UI after pressing the Save button ... Everything must be immediate and responsive")
     // the sheet's files are written again on their own, its card saying so as for any write: the save, the engraving card and the editor never wait for them (a whole sheet written again took

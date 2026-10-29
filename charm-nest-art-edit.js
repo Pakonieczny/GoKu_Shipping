@@ -27,7 +27,7 @@
      load / save / clear / piece / sync   the cloud (artGet / artList / artPut) and the page (the host the bridge sets: setHost).
 
    Roles (what the laser does with a part; the laser knows its pens by colour, charm-nest-geom.js pathRole):
-     cut    the cut line: a closed black hairline (a new shape: allowed only on a piece that is not on a sheet yet; see save)
+     cut    the cut line: a closed black hairline (the charm's SHAPE, one for both faces, kept by the front record (SHAREDSHAPE, 29 Oct 2026); on a piece already on a sheet it changes too and its sheet is checked again before it is written)
      line   a line engraving: a coloured stroke (red when the editor says no colour)
      hatch  a hatched area: a blue [0 0 1] fill, as every hatching of the masters
      art    the editor's word for "as drawn": a fill is hatched (blue), a stroke is a line (red). Words arrive as outlines: filled, so hatched.
@@ -223,6 +223,7 @@
     return c;
   }
   function outlinePolys(base) { const G = geom(); try { return base && base.outline && G ? G.flatten(base.outline, 12) : null; } catch (_) { return null; } }
+  function segPolys(seg) { const G = geom(); try { return seg && G ? G.flatten(seg, 12) : null; } catch (_) { return null; } }
   /** Every point of the path on the metal (inside the outline, or within half a point of its line). */
   function onMetal(subs, polys) {
     const G = geom(); if (!polys || !polys.length || !G) return true;
@@ -272,7 +273,9 @@
     const note = { at: +rec.at || 0, by: rec.by || null, key: recSig(rec), removed: 0, changed: 0, added: 0, refused: [], stale: [] };
     out.artEdit.front = note;
     if (rec.baseKey && rec.baseKey !== baseKeyOf(base)) { note.stale.push("*"); note.why = WHY.gone; return finish(out, base); }
-    const members = base.members || [], outlineAt = members.indexOf(base.outline), polys = outlinePolys(base), cutOk = rec.cut === true;
+    const members = base.members || [], outlineAt = members.indexOf(base.outline), cutOk = rec.cut === true;
+    // (SHAREDSHAPE: an engraving is on the metal of the outline this record draws, the new one when it changes it)
+    const oe = outlineAt >= 0 && rec.changed ? rec.changed[ids[outlineAt]] : null, oseg = oe && oe.role === "cut" ? segOf(oe, members[outlineAt], base) : null, polys = oseg ? segPolys(oseg) : outlinePolys(base);
     const no = (id, why) => note.refused.push({ id, why });
     const topOf = m => (!m || m.synthetic ? null : m.parent != null ? m.parent : m.index != null ? m.index : null);
     const remove = new Set(), change = new Map();
@@ -332,7 +335,7 @@
     out.artEdit.back = note;
     if (rec.baseKey && rec.baseKey !== baseKeyOf(base)) { note.stale.push("*"); note.why = WHY.gone; return finish(out, base); }
     for (const id of (rec.removed || []).concat(Object.keys(rec.changed || {}))) note.refused.push({ id, why: WHY.back });
-    const polys = outlinePolys(base), art = [];
+    const polys = outlinePolys(charm) || outlinePolys(base), art = [];   // (SHAREDSHAPE: the charm's outline as it stands, its front record's when that changed it)
     for (const e of rec.added || []) {
       const seg = segOf(e, null, base); if (!seg) { note.refused.push({ id: e.id, why: WHY.path }); continue; }
       if (seg.artRole === "cut") { note.refused.push({ id: e.id, why: WHY.back }); continue; }
@@ -406,10 +409,9 @@
     if ((+leaf.weightMm || 0) !== (+m.artWeightMm || 0)) return false;
     return leaf.even == null || !!leaf.even === String(m.paintOp || "").endsWith("*");
   }
-  /* LOCKSAVE (Paul, 28 Oct 2026: "I tried to save my changes in a charm editor, but then got this strange error, which I should not be seeing because there was nothing wrong with this charm":
-     "Back · Outline · kept: on a sheet: the back shows only the cut lines …"). What a face cannot change (every part of the master on a back; the cut lines of a piece already on a sheet) is the
-     master's whatever comes back for it: it is left out of the record and never refused. When it came back moved as ONE body (all those parts by one turn, scale or move: a Select All and a turn), the
-     person's own parts were moved with it, so that same move is taken off them: they stay where they were put ON the charm. */
+  /* LOCKSAVE (Paul, 28 Oct 2026: "I tried to save my changes in a charm editor, but then got this strange error, which I should not be seeing because there was nothing wrong with this charm"): what a
+     record does not keep is never a refusal. SHAREDSHAPE (Paul, 29 Oct 2026): the charm's shape is one, kept by the front record; the back hands its shape back with every save and it is left out;
+     a shape that only turned or moved as one body is the same coin, its turn and move taken off the face (see encode). */
   /** The points of two paths of the same operators, paired (null when the operators differ). */
   function pairPts(a, b) {
     if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return null; const out = [];
@@ -435,25 +437,34 @@
     ctx = ctx || {}; changes = changes || {};
     const face = faceKey(ctx.face); if (!face) throw new Error("an artwork edit is of the front or the back");
     const charm = ctx.charm; if (!charm || !Array.isArray(charm.members)) throw new Error("the piece's charm is not on this page");
-    const base = baseOf(charm), ids = memberIds(base), at = new Map(ids.map((id, i) => [id, i])), fr = frame(ctx.view), polys = outlinePolys(base);
+    const base = baseOf(charm), ids = memberIds(base), at = new Map(ids.map((id, i) => [id, i])), fr = frame(ctx.view);
     const rec = { v: VERSION, face, baseKey: baseKeyOf(base), removed: [], cutIds: [], changed: {}, added: [], cut: false }, refused = [];
     const no = (id, why) => refused.push({ id: String(id), why });
     // (an item sent with its move, scale or turn and no path of its own is moved from where the piece draws it NOW: an edit saved before stays the start of the next)
     const now = new Map(); for (const m of (charm.members || []).concat(charm.artBack || [])) if (m && m.artMemberId && isPath(m)) now.set(String(m.artMemberId), m);
     const ownOf = (id, m) => () => mapSubs(((now.get(String(id)) || m || {}).subpaths) || [], fr.toItem);
-    // (LOCKSAVE: what this face cannot change, taken from the master; its common move taken off the person's own parts)
-    const fixedAt = i => i != null && (face === "back" || (!!ctx.placed && roleOf(base.members[i], base) === "cut"));
+    // (SHAREDSHAPE, Paul 29 Oct 2026: "it's the same charm it's like the same coin with two different sides": the charm's SHAPE, its cut parts (the outline, its holes, its ring), is ONE and is kept
+    //  in the FRONT record whichever face it was changed on (the editor keeps both faces' shape the same, the back's mirrored): the back's record carries only the back's own parts, and the shape
+    //  handed back with the back is never refused (LOCKSAVE). A shape that only turned or moved as ONE body (every cut part by one turn and move) is the same coin: that turn and move is taken off
+    //  every part of the face, so what the person put on the charm stays where it is on the charm, and no cut line changed.)
+    const shapeAt = i => i != null && roleOf(base.members[i], base) === "cut";
     let Ti = null;
-    { const cuts = base.members.map((m, i) => i).filter(i => fixedAt(i) && isPath(base.members[i]) && roleOf(base.members[i], base) === "cut"), pairs = []; let all = cuts.length > 0;
+    { const cuts = base.members.map((m, i) => i).filter(i => shapeAt(i) && isPath(base.members[i])), pairs = []; let all = cuts.length > 0;
       for (const i of cuts) {
         const item = (changes.changed || {})[ids[i]], lv = item ? leavesOf(item, ownOf(ids[i], base.members[i])) : null, subs = lv && lv.length === 1 ? toSource(lv[0], fr) : null, pp = subs ? pairPts(base.members[i].subpaths, subs) : null;
         if (!pp) { all = false; break; } pairs.push(...pp);
       }
-      const fit = all ? fitAffine(pairs) : null;
-      if (fit && fit.miss < 0.02 && !fit.T.every((v, k) => Math.abs(v - ID[k]) < 1e-4)) Ti = inv(fit.T);
+      const fit = all ? fitAffine(pairs) : null, T = fit && fit.T;
+      if (fit && fit.miss < 0.02 && Math.abs(T[0] - T[3]) < 1e-4 && Math.abs(T[1] + T[2]) < 1e-4 && Math.abs(T[0] * T[0] + T[1] * T[1] - 1) < 1e-4 && !T.every((v, k) => Math.abs(v - ID[k]) < 1e-6)) Ti = inv(T);
     }
     const place = subs => (Ti && subs ? mapSubs(subs, q => ap(Ti, +q[0], +q[1])) : subs);
-    changes = { removed: (changes.removed || []).filter(id => !fixedAt(at.get(String(id)))), changed: Object.fromEntries(Object.entries(changes.changed || {}).filter(([id]) => !fixedAt(at.get(String(id))))), added: changes.added || [] };
+    // (the back's record holds no part of the drawing: its shape is the front record's, and the drawing's engraving is the front's; a turned coin's shape is the master's)
+    const notMine = id => { const i = at.get(String(id)); return face === "back" ? i != null : !!Ti && shapeAt(i); };
+    if (face === "back" || Ti) changes = { removed: (changes.removed || []).filter(id => !notMine(id)), changed: Object.fromEntries(Object.entries(changes.changed || {}).filter(([id]) => !notMine(id))), added: changes.added || [] };
+    // (the metal an engraving must be on: on the front, the outline this record draws (a new one when it changes it); on the back, the charm's as it now stands, its front record's)
+    let polys = face === "back" ? outlinePolys(charm) || outlinePolys(base) : outlinePolys(base);
+    { const oi = base.members.indexOf(base.outline), oc = face === "front" && oi >= 0 ? (changes.changed || {})[ids[oi]] : null, lv = oc ? leavesOf(oc, ownOf(ids[oi], base.outline)) : null;
+      const os = lv && lv.length === 1 && (lv[0].role || "cut") === "cut" ? place(toSource(lv[0], fr)) : null; if (os && okSubs(os)) polys = segPolys({ subpaths: os }) || polys; }
     for (const id of new Set((changes.removed || []).map(String))) {
       const i = at.get(id); if (i == null) { no(id, WHY.gone); continue; }
       if (face === "back") { no(id, WHY.back); continue; }
@@ -486,7 +497,7 @@
       if (seen.has(id) || at.has(id)) { no(id, "the id is used twice"); continue; } seen.add(id);
       const role = leaf.role || "art", subs = place(toSource(leaf, fr));
       if (!subs || !okSubs(subs)) { no(id, WHY.path); continue; }
-      if (face === "back" && role === "cut") { no(id, WHY.back); continue; }
+      if (face === "back" && role === "cut") continue;   // (SHAREDSHAPE: a cut-out made on the back is the charm's shape: the front's record keeps it, the editor made it there too)
       if (role !== "cut" && !onMetal(subs, polys)) { no(id, WHY.offMetal); continue; }
       const e = Object.assign({ id, kind: leaf.kind, role, d: toD(subs) }, paintRec(paintOf(role, leaf, null)), weightRec(leaf));
       if (leaf.text != null && leaf.text !== "") e.text = String(leaf.text).slice(0, 200);
@@ -494,7 +505,8 @@
       rec.added.push(e);
     }
     rec.cut = rec.cutIds.length > 0 || Object.values(rec.changed).some(e => e.role === "cut") || rec.added.some(e => e.role === "cut");
-    if (rec.cut && ctx.placed) no("cut", WHY.cutPlaced);
+    // (SHAREDSHAPE, Paul 29 Oct 2026: a piece already on a sheet changes its cut line too: "Don't block the person". Its sheet is checked again before it is written: the cloud marks it (cutCheck),
+    //  the page checks the new shape where the piece stands and writes the sheet only when it still fits)
     if (refused.length) throw Object.assign(new Error(refused.length === 1 ? `Not saved: ${refused[0].why}` : `Not saved: ${refused.length} parts cannot be kept as asked (${refused[0].why})`), { refused, artEdit: true });
     return rec;
   }

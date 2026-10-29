@@ -1,10 +1,12 @@
 // LOCKSAVE (Paul, 28 Oct 2026: "I tried to save my changes in a charm editor, but then got this strange error, which I should not be seeing because there was nothing wrong with this charm": a "Not
 // saved yet" dialog over the bird's BACK listing "Back · Outline · kept: on a sheet: the back shows only the cut lines …" and "Back · Cut line · kept …"). As in Illustrator, a locked part is never
-// selected and never moved; what a face cannot change (the back's master parts; a placed piece's cut lines) is marked `fixed` by the card, opens locked and stays exactly as it opened, whatever the
-// person does: and on Save it is never a refusal. On the real bird (fixtures/PERCHED_43564.ai, SILHOUETTE_34560) opened from its BACK card, the "Charm Maker" words on it:
+// selected and never moved, and on Save the back's shape is never a refusal. SHAREDSHAPE (Paul, 29 Oct 2026: "Now you made it so I can't unlock the charm layers ... the user must always be able to
+// unlock all the layers of any charm"): the locks are the person's, every one can be taken off and put on again. On the real bird (fixtures/PERCHED_43564.ai, SILHOUETTE_34560) opened from its BACK
+// card, the "Charm Maker" words on it, its cut lines locked as they open:
 //   L1 ⌘A          L2 Select ▸ All          L3 a marquee over the whole artboard          L4 the Layers panel's selection square on each locked row          L5 Select Inverse, Select Same
 //   L6 Next Object (first above, last below)   L7 a double-click on the cut line   L8 a script's ctx.select of every part: never a locked part selected, nothing locked moved by the nudge after it
-//   L9 Unlock All, a lock toggled in Layers, then ⌘A, a nudge and Align Left: the cut lines still locked, unselected and exactly where they were
+//   L9 the locks are the person's: the Layers lock column takes a cut line's lock off and puts it on again; Unlock All takes them all off, and ⌘A then selects the cut lines too; locked again
+//      in Layers, ⌘A, a nudge and Align Left leave them unselected and where they were
 //   L10 the words moved (⌘A and a nudge) and Save: saved, no refusal, the editor closed
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/ce-locked-select.cjs      (SHOTS=<dir> for screenshots)
 'use strict';
@@ -34,11 +36,11 @@ const settleP = page => page.evaluate(() => new Promise(r => requestAnimationFra
 
     /** Every part (deep): id, locked, fixed, its box; what is selected, and which of it is locked. */
     const look = () => page.evaluate(() => {
-      const E = CharmEditor.current, all = []; const walk = (l, lk) => l.forEach(i => { all.push({ id: i.id, role: i.role, locked: !!i.locked || lk, fixed: i.fixed === true, box: E.box(i.id) }); if (i.children) walk(i.children, lk || !!i.locked); }); walk(E.items(), false);
-      const sel = E.selection(); return { all, sel, bad: sel.filter(id => { const x = all.find(a => a.id === id); return !x || x.locked || x.fixed; }) };
+      const E = CharmEditor.current, all = []; const walk = (l, lk) => l.forEach(i => { all.push({ id: i.id, role: i.role, locked: !!i.locked || lk, fixed: i.role === 'cut', box: E.box(i.id) }); if (i.children) walk(i.children, lk || !!i.locked); }); walk(E.items(), false);
+      const sel = E.selection(); return { all, sel, bad: sel.filter(id => { const x = all.find(a => a.id === id); return !x || x.locked; }) };
     });
     const s0 = await look(), fixed = s0.all.filter(a => a.fixed), boxes0 = JSON.stringify(fixed.map(a => a.box));
-    check(`L0 the bird's back opens with its master parts fixed and locked (${fixed.map(a => a.role).join(', ')}), the words free (${s0.all.filter(a => !a.locked).map(a => a.role || a.id).join(', ')})`,
+    check(`L0 the bird's back opens with its cut lines locked (${fixed.map(a => a.role).join(', ')}), the words free (${s0.all.filter(a => !a.locked).map(a => a.role || a.id).join(', ')})`,
       fixed.length >= 1 && fixed.every(a => a.locked) && s0.all.some(a => !a.locked), JSON.stringify(s0.all));
     const unmoved = async () => JSON.stringify((await look()).all.filter(a => a.fixed).map(a => a.box)) === boxes0;
     const none = () => page.evaluate(() => CharmEditor.current.ai.act('deselect'));
@@ -77,10 +79,17 @@ const settleP = page => page.evaluate(() => new Promise(r => requestAnimationFra
     await path_('L8', "a script's ctx.select of every part", () => page.evaluate(() => CharmEditor.current.ctx.select(CharmEditor.current.items().map(i => i.id))));
 
     // L9 · Unlock All and a lock toggled: what the face cannot change stays locked, unselected and where it was
-    await page.evaluate(() => CharmEditor.current.ai.act('unlockAll')); await settleP(page);
-    await page.evaluate(() => { for (const x of document.querySelectorAll('.ce-root .ce-layer.is-locked [data-lact="lock"]')) x.click(); }); await settleP(page);
-    const s9 = await look();
-    check('L9 Unlock All and a lock toggled in Layers: the fixed parts still locked', s9.all.filter(a => a.fixed).length === fixed.length && s9.all.filter(a => a.fixed).every(a => a.locked), JSON.stringify(s9.all));
+    // (SHAREDSHAPE: the locks are the person's) one cut line's lock taken off in the Layers lock column, then put on again
+    const lockOf = id => page.evaluate(id => { const r = document.querySelector(`.ce-root .ce-layer[data-id="${CSS.escape(id)}"]`), b = r && r.querySelector('[data-lact="lock"]'); return { row: !!r, pressed: b ? b.getAttribute('aria-pressed') : null, locked: !!(CharmEditor.current.items().find(i => i.id === id) || {}).locked }; }, id);
+    const clickLock = id => page.evaluate(id => { const b = document.querySelector(`.ce-root .ce-layer[data-id="${CSS.escape(id)}"] [data-lact="lock"]`); if (b) b.click(); return !!b; }, id);
+    const c0 = fixed[0].id; await clickLock(c0); await settleP(page); const off1 = await lockOf(c0); await clickLock(c0); await settleP(page); const on1 = await lockOf(c0);
+    check(`L9 a cut line's lock taken off in the Layers lock column (${JSON.stringify(off1)}) and put on again (${JSON.stringify(on1)})`, off1.row && !off1.locked && off1.pressed === 'false' && on1.locked && on1.pressed === 'true', JSON.stringify({ off1, on1 }));
+    await none(); await page.evaluate(() => CharmEditor.current.ai.act('unlockAll')); await settleP(page);
+    const s9 = await look(); await stage(); await page.keyboard.press('ControlOrMeta+a'); await settleP(page); const all9 = await page.evaluate(() => CharmEditor.current.selection());
+    check(`L9 Unlock All takes every lock off (${s9.all.filter(a => a.locked).length} locked) and ⌘A then selects the cut lines too (${all9.length} selected)`, s9.all.every(a => !a.locked) && fixed.every(a => all9.includes(a.id)), JSON.stringify({ s9: s9.all, all9 }));
+    await none(); for (const a of fixed) await clickLock(a.id); await settleP(page);
+    const s9b = await look();
+    check('L9 ... and each locked again in Layers', s9b.all.filter(a => a.fixed).every(a => a.locked), JSON.stringify(s9b.all));
     await path_('L9', 'then ⌘A, a nudge and Align Left', async () => { await stage(); await page.keyboard.press('ControlOrMeta+a'); await nudge(); const k = await page.evaluate(() => Object.keys(CharmEditor.commands).find(k => /align.*left/i.test(k))); if (k) await cmd(k); });
 
     // L10 · the words moved and Save: no refusal
@@ -94,6 +103,6 @@ const settleP = page => page.evaluate(() => new Promise(r => requestAnimationFra
     check('errors on the page: none', !w.errors.length, JSON.stringify(w.errors).slice(0, 400));
   } finally { await w.close(); }
   const bad = RESULTS.filter(r => !r.ok);
-  console.log(bad.length ? `FAILED ${bad.length} of ${RESULTS.length}: ${bad.map(r => r.id).join(', ')}` : `PASS ${RESULTS.length} checks: LOCKSAVE — locked parts never selected or moved by any selection path, fixed parts stay as they opened through Unlock All, the back saves with no refusal`);
+  console.log(bad.length ? `FAILED ${bad.length} of ${RESULTS.length}: ${bad.map(r => r.id).join(', ')}` : `PASS ${RESULTS.length} checks: LOCKSAVE — locked parts never selected or moved by any selection path, every lock the person's to take off and put on (SHAREDSHAPE), the back saves with no refusal`);
   if (bad.length) process.exitCode = 1;
 })().catch(e => { console.error(e); process.exit(1); });

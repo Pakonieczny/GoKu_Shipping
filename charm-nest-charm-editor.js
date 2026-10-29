@@ -30,13 +30,18 @@
  *
  *     opts.check(result) -> Promise<null | { title?, text?, lines:[{ face?, id?, text }] }>   (EDITSAVE, Paul 28 Oct 2026: "the editor closed, nothing he did shows"): asked when Save is
  *                                    pressed, before the workspace closes; lines = what the caller cannot keep: the workspace stays open with all the work, the first part named selected
- *                                    on its face, and says each line plainly ("Not saved yet"). null: saved as before
+ *                                    on its face, and says each line plainly ("Not saved yet"). null: saved as before. proceed: 'Save anyway' (SHAREDSHAPE, 29 Oct 2026): a choice, not a
+ *                                    refusal: a second button that saves the work as it is
  *     opts.base                      { front?, back? } FaceDocs the changes are measured from (default: opts.faces): a save refused after the workspace closed is opened again with the
  *                                    work as faces and what it was opened on as base, so the changes are still changes;  opts.notice  { title?, text?, lines } said as the workspace opens
  *
- *   FaceDoc  { face:'front'|'back', unitPt:true, frame:{ x0, y0, wPt, hPt }, items:[Item] }      points, y down; the frame is the charm's bounding view (shown in mm)
+ *   FaceDoc  { face:'front'|'back', unitPt:true, frame:{ x0, y0, wPt, hPt }, items:[Item], toCharm? }      points, y down; the frame is the charm's bounding view (shown in mm)
+ *            toCharm [a,b,c,d,e,f]: this face's points -> the charm's own points (SHAREDSHAPE, Paul 29 Oct 2026: "it's like the same coin with two different sides"). When BOTH faces
+ *            say it, the cut parts (role 'cut': the outline, its holes, its ring: what is cut through the metal) are ONE shape: a cut part changed, added or removed on one face is
+ *            the same on the other at once, mirrored as the back always is; when the whole shape moves as one body (a turn, a move, a scale of all of it) the other face's
+ *            engravings move with it, as a coin's other side does. In the result a face whose shape only turned or moved as one body (a turned coin, no new shape) is handed
+ *            back as it stands on the charm: that turn and move taken off every part of it (see shapeTurn)
  *   Item     { id, kind:'path'|'text'|'group', role:'cut'|'line'|'hatch'|'art', source:'master'|'engrave'|'added', name, hidden, locked,
- *              fixed                                                     (LOCKSAVE, 28 Oct 2026: true = this face cannot change the part: it opens locked, is never selected, nothing changes it)
  *              subpaths:[[op,...],...], stroke, fill, lwPt,              (path; ops ["m",[x,y]] ["l",[x,y]] ["c",p1,p2,p3] ["h"])
  *              text, fontKey, sizePt, align, lineGap,                    (text)
  *              bold, italic, letterCase                                  (CETEXT, 28 Oct 2026: the text's style. bold: the family's heavier cut; italic: the letters slanted; letterCase
@@ -605,6 +610,62 @@
     return bare(retext(it, { subpaths: sp, weightMm: w1 }, geo));
   }
 
+  /* ═══ 4b · SHAREDSHAPE (Paul, 29 Oct 2026: "the user must always be able to unlock all the layers of any charm ... The back and front views must adapt simultaneously, so if a user is
+     changing anything on the back ... that has a cut out or a rotation or anything that would affect also the front view in the front view must naturally adapt an exact same way in real time
+     since it's the same charm it's like the same coin with two different sides"): the helpers; the workspace's shareShape uses them ═══ */
+  const isM6 = m => Array.isArray(m) && m.length === 6 && m.every(fin);
+  /** Every cut part of a tree (role 'cut', not words): id -> { it, P (its groups' matrix) }. */
+  function cutLeaves(list, geo) {
+    const out = new Map();
+    const rec = (l, P) => { for (const it of l || []) { if (!it) continue; if (it.kind === 'group') rec(it.children, mul(P, geo.matrix(it))); else if (it.role === 'cut' && it.kind !== 'text') out.set(it.id, { it, P }); } };
+    rec(list, I); return out;
+  }
+  /** A cut part's path as drawn (its own transform and its groups'), then under M. */
+  const drawnCut = (e, geo, M) => transformSubpaths(geo.raw(e.it).subpaths, mul(M || I, mul(e.P, geo.matrix(e.it))));
+  /** The points of two paths of the same operators, paired [[from, to]]; null when their operators differ (a path reshaped). */
+  function pairPts(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return null; const out = [];
+    for (let i = 0; i < a.length; i++) {
+      const p = a[i], q = b[i]; if (!Array.isArray(p) || !Array.isArray(q) || p.length !== q.length) return null;
+      for (let j = 0; j < p.length; j++) { const o = p[j], r = q[j]; if (!o || !r || o[0] !== r[0] || o.length !== r.length) return null; for (let k = 1; k < o.length; k++) out.push([o[k], r[k]]); }
+    }
+    return out;
+  }
+  /** The one affine map that takes every from to its to (least squares) and its worst miss in pt; null when the points do not pin one down. */
+  function fitMap(pairs) {
+    if (!pairs || pairs.length < 3) return null;
+    let sxx = 0, sxy = 0, syy = 0, sx = 0, sy = 0, n = 0; const bx = [0, 0, 0], by = [0, 0, 0];
+    for (const [a, b] of pairs) { const x = +a[0], y = +a[1]; sxx += x * x; sxy += x * y; syy += y * y; sx += x; sy += y; n++; bx[0] += x * b[0]; bx[1] += y * b[0]; bx[2] += b[0]; by[0] += x * b[1]; by[1] += y * b[1]; by[2] += b[1]; }
+    const A = [[sxx, sxy, sx], [sxy, syy, sy], [sx, sy, n]];
+    const solve = v => { const m = A.map((r, i) => r.concat(v[i])); for (let c = 0; c < 3; c++) { let pv = c; for (let r = c + 1; r < 3; r++) if (Math.abs(m[r][c]) > Math.abs(m[pv][c])) pv = r; if (Math.abs(m[pv][c]) < 1e-12) return null; [m[c], m[pv]] = [m[pv], m[c]]; for (let r = 0; r < 3; r++) if (r !== c) { const f = m[r][c] / m[c][c]; for (let k = c; k < 4; k++) m[r][k] -= f * m[c][k]; } } return [m[0][3] / m[0][0], m[1][3] / m[1][1], m[2][3] / m[2][2]]; };
+    const X = solve(bx), Y = solve(by); if (!X || !Y) return null;
+    const T = [X[0], Y[0], X[1], Y[1], X[2], Y[2]].map(v => (Math.abs(v) < 1e-12 ? 0 : v)); let miss = 0;
+    for (const [a, b] of pairs) { const q = ap(T, +a[0], +a[1]); miss = Math.max(miss, Math.hypot(q[0] - b[0], q[1] - b[1])); }
+    return { T, miss };
+  }
+  const SHAPE_MISS_PT = 0.02;
+  /** No move at all, to the fit's own rounding (a lock taken off makes new parts that stand where they stood). */
+  const nearI = T => Math.abs(T[0] - 1) < 1e-7 && Math.abs(T[1]) < 1e-7 && Math.abs(T[2]) < 1e-7 && Math.abs(T[3] - 1) < 1e-7 && Math.abs(T[4]) < 1e-6 && Math.abs(T[5]) < 1e-6;
+  /** A turn and a move, nothing else (no scale, no mirror). */
+  const isRigid = T => Math.abs(T[0] - T[3]) < 1e-4 && Math.abs(T[1] + T[2]) < 1e-4 && Math.abs(T[0] * T[0] + T[1] * T[1] - 1) < 1e-4;
+  /** The map the whole shape now stands in against was (both cutLeaves), when every cut part of it is still there and moved as one body; else null. */
+  function shapeMove(was, now, geo, M) {
+    if (!was.size || was.size !== now.size) return null;
+    const pairs = [];
+    for (const [id, w] of was) { const e = now.get(id); if (!e) return null; const pp = pairPts(drawnCut(w, geo), drawnCut(e, geo, M)); if (!pp) return null; for (const x of pp) pairs.push(x); }
+    const fit = fitMap(pairs);
+    return fit && fit.miss < SHAPE_MISS_PT && !nearI(fit.T) ? fit.T : null;
+  }
+  /** Every part of a tree but its cut parts moved by T on top of all it has (a coin's other side turned with it); the cut parts keep only their groups' transforms, pushed down. */
+  function followShape(list, T, geo, acc) {
+    acc = acc || I;
+    return (list || []).map(it => {
+      if (it.kind === 'group') { const G = mul(acc, geo.matrix(it)); return Object.assign({}, it, { tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, children: followShape(it.children || [], T, geo, G) }); }
+      if (it.role === 'cut' && it.kind !== 'text') return isI(acc) ? it : composeInto(it, acc, geo);
+      return composeInto(it, mul(T, acc), geo);
+    });
+  }
+
   /* ═══ 5 · the tree (immutable: every edit makes new arrays and objects where it changes, so a snapshot is a reference) ═══ */
   function walk(items, fn, parent, depth) {
     (items || []).forEach((it, i) => { fn(it, parent || null, i, depth || 0); if (it.kind === 'group') walk(it.children, fn, it, (depth || 0) + 1); });
@@ -869,7 +930,8 @@
       if (o.id == null || o.id === '') o.id = newId(); else o.id = String(o.id);
       if (o.kind !== 'text' && o.kind !== 'group') o.kind = 'path';
       if (!ROLES.includes(o.role)) o.role = o.kind === 'text' ? 'hatch' : 'art';
-      if ((lock.has(o.role) || o.fixed === true) && !o.locked) { o._autoLock = true; o._lockedIn = !!it.locked; o.locked = true; }   // (LOCKSAVE: a part the caller marks `fixed` opens locked too)
+      if (lock.has(o.role) && !o.locked) { o._autoLock = true; o._lockedIn = !!it.locked; o.locked = true; }
+      delete o.fixed;   // (SHAREDSHAPE, Paul 29 Oct 2026: "the user must always be able to unlock all the layers of any charm": no part is held by the editor; a lock is the person's to take off)
       if (o.kind === 'group') o.children = (it.children || []).map(rec).filter(Boolean);
       return o;
     };
@@ -1647,7 +1709,9 @@
       const fd = opts.faces && opts.faces[f]; if (!fd || typeof fd !== 'object') continue;
       const items = prepIn(fd.items, lockRoles), bd = opts.base && opts.base[f] && Array.isArray(opts.base[f].items) ? opts.base[f] : null;
       // (EDITSAVE: opts.base, the faces the changes are measured from when the work handed in is a save the cloud refused, opened again with everything the person made: its changes stay changes)
-      S.faces[f] = { face: f, frame: frameOf((bd && bd.frame) || fd.frame, items), items, base: bd ? prepIn(bd.items, lockRoles) : items, docIn: bd || fd };
+      S.faces[f] = { face: f, frame: frameOf((bd && bd.frame) || fd.frame, items), items, base: bd ? prepIn(bd.items, lockRoles) : items, docIn: bd || fd,
+        toCharm: isM6(fd.toCharm) ? fd.toCharm.slice() : bd && isM6(bd.toCharm) ? bd.toCharm.slice() : null };
+      S.faces[f]._cuts = cutLeaves(items, geo);
     }
     if (!S.faces.front && !S.faces.back) S.faces.front = { face: 'front', frame: { x0: 0, y0: 0, wPt: 72, hPt: 72 }, items: [], base: [], docIn: {} };
     S.face = S.faces[opts.startFace] ? opts.startFace : S.faces.front ? 'front' : 'back';
@@ -1932,21 +1996,59 @@
     const selEntries = () => S.sel.map(entry).filter(Boolean);
     const leavesOf = (it, out) => { out = out || []; if (it.kind === 'group') (it.children || []).forEach(c => leavesOf(c, out)); else out.push(it); return out; };
     const selLeaves = () => [].concat(...selEntries().map(e => leavesOf(e.it)));
-    /* LOCKSAVE (Paul, 28 Oct 2026: "I tried to save my changes in a charm editor, but then got this strange error, which I should not be seeing because there was nothing wrong with this charm":
-       the back's outline and cut line, "kept: on a sheet", refused on Save). A part the caller marks `fixed` (opts.faces: what this face cannot change: every part of the master on a back, the cut
-       lines of a piece already on a sheet) is never changed here, whatever reaches it: Unlock All, a lock toggled, a transform, an align, a field. Every new tree is checked against the face's
-       own opening (setItems): a fixed part that is not exactly as it opened is put back as it opened. And no locked part is ever selected (pickable), as Illustrator ignores locked objects. */
-    function keepFixed(next) {
-      const F = face(); let fx = F._fixed;
-      if (!fx) { fx = F._fixed = new Map(); walk(F.base, it => { if (it.fixed === true) fx.set(it.id, it); }); }
-      if (!fx.size) return next;
-      const back = new Map(); walk(next, it => { const was = fx.get(it.id); if (was && it !== was) back.set(it.id, was); });
-      return back.size ? replaceIn(next, back) : next;
+    /* LOCKSAVE (Paul, 28 Oct 2026): no locked part is ever selected (pickable), as Illustrator ignores locked objects: Select All, the marquee, a click, the Layers' selection square, Select Same,
+       Next Object, a script's select. SHAREDSHAPE (Paul, 29 Oct 2026: "Now you made it so I can't unlock the charm layers ... the user must always be able to unlock all the layers of any charm"):
+       the locks are the person's: unlocked, a part is selected and changed as any other. And the charm is ONE coin: every new tree of a face hands its shape to the other face (shareShape). */
+    function setItems(next) { face().items = next; shareShape(S.face); }
+    /** SHAREDSHAPE: the cut parts of face f that changed since it was last seen (moved, reshaped, added, removed) made the same on the other face, mirrored as that face is drawn (the
+     *  FaceDocs' toCharm); when the whole shape moved as one body, the other face's engravings move with it (followShape), as the other side of a coin. Its own undo step is this face's:
+     *  a snapshot holds both faces. */
+    function shareShape(f) {
+      const A = S.faces[f]; if (!A) return;
+      const now = cutLeaves(A.items, geo), was = A._cuts; A._cuts = now;
+      const g = f === 'front' ? 'back' : 'front', B = S.faces[g];
+      if (!B || !was || !A.toCharm || !B.toCharm) return;
+      const moved = [], gone = [];
+      for (const [id, e] of now) { const w = was.get(id); if (!w || w.it !== e.it || mkey(w.P) !== mkey(e.P)) moved.push(id); }
+      for (const id of was.keys()) if (!now.has(id)) gone.push(id);
+      if (!moved.length && !gone.length) return;
+      const toB = inv(B.toCharm); if (!toB) return;
+      const AB = mul(toB, A.toCharm);
+      let list = B.items, bc = cutLeaves(list, geo);
+      // the whole shape moved as one body: the other side's engravings go with it
+      if (!gone.length && moved.length === now.size && moved.every(id => was.has(id))) {
+        const T = shapeMove(bc, now, geo, AB);
+        if (T) { list = followShape(list, T, geo); bc = cutLeaves(list, geo); }
+      }
+      const repl = new Map(), add = [], have = new Set(); walk(list, it => have.add(it.id));
+      for (const id of moved) {
+        const a = now.get(id), b = bc.get(id), d = drawnCut(a, geo, AB);
+        const shape = P => ({ subpaths: transformSubpaths(d, inv(P) || I), tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, role: 'cut', stroke: a.it.stroke, fill: a.it.fill, lwPt: a.it.lwPt });
+        if (b) { const pp = pairPts(drawnCut(b, geo), d); if (pp && pp.every(([u, v]) => Math.abs(u[0] - v[0]) < 1e-6 && Math.abs(u[1] - v[1]) < 1e-6)) continue; repl.set(id, Object.assign({}, b.it, shape(b.P))); }   // (the same shape: nothing to change there)
+        else if (!have.has(id)) add.push(Object.assign({}, a.it, shape(I)));
+      }
+      for (const id of gone) if (bc.has(id)) repl.set(id, null);
+      if (repl.size) list = replaceIn(list, repl);
+      if (add.length) list = list.concat(add);
+      B.items = list; B._cuts = cutLeaves(list, geo);
     }
-    function setItems(next) { face().items = keepFixed(next); }
-    /** Can this part be selected: there, not locked, in no locked group, not fixed. */
-    const pickable = (ixm, id) => { const e = ixm.get(id); return !!e && !e.it.locked && e.it.fixed !== true && !e.anc.some(a => { const x = ixm.get(a); return !!(x && x.it.locked); }); };
-    function snapshot(f) { f = f || S.face; return { face: f, items: S.faces[f].items, sel: f === S.face ? S.sel.slice() : [] }; }
+    /** A face's work as it stands ON the charm: when its whole shape only turned or moved as one body (a turned coin, every cut part where it was relative to the others), that turn and move
+     *  is taken off every part of the face, so what the person put on the charm is where it is on the charm and the cut line is the charm's own (no new shape: nothing for a sheet to check). */
+    function shapeTurn(F) {
+      if (!F.toCharm || !Object.values(S.faces).every(x => x.toCharm)) return F.items;
+      const T = shapeMove(cutLeaves(F.base, geo), cutLeaves(F.items, geo), geo);
+      const Ti = T && isRigid(T) ? inv(T) : null;
+      return Ti ? F.items.map(it => pushDown(it, Ti, geo, I, true)) : F.items;
+    }
+    /** A snapshot's faces put back as they were (both faces: a shape change reaches the other one). */
+    function putBack(s) {
+      S.faces[s.face].items = s.items;
+      if (s.other && S.faces[s.other.face]) S.faces[s.other.face].items = s.other.items;
+      for (const F of Object.values(S.faces)) F._cuts = cutLeaves(F.items, geo);
+    }
+    /** Can this part be selected: there, not locked, in no locked group. */
+    const pickable = (ixm, id) => { const e = ixm.get(id); return !!e && !e.it.locked && !e.anc.some(a => { const x = ixm.get(a); return !!(x && x.it.locked); }); };
+    function snapshot(f) { f = f || S.face; const g = f === 'front' ? 'back' : 'front'; return { face: f, items: S.faces[f].items, sel: f === S.face ? S.sel.slice() : [], other: S.faces[g] ? { face: g, items: S.faces[g].items } : null }; }
     function pushUndo() { if (xPending) xCommit(); S.hist.push(snapshot()); S.nudgeAt = 0; syncHist(); }
     function setSel(ids) {
       S.autoSel = null;
@@ -2749,7 +2851,7 @@
     }
     function restore(s) {
       if (S.editing) closeEditor(true);
-      S.faces[s.face].items = s.items;
+      putBack(s);
       if (s.face !== S.face) { S.face = s.face; applyFaceView(); }
       ixFor = null; S.sel = (s.sel || []).filter(id => ix().has(id));
       refresh({ reveal: true });
@@ -3286,7 +3388,7 @@
       const g = S.g; if (!g) return;
       if (g.kind === 'tool') { S.g = null; S.xLive = null; xCommit(); renderUI(); return; }
       stage.classList.remove('is-busy');
-      if (g.live && g.items0 && g.kind !== 'pan' && g.kind !== 'pinch') { const s = S.hist.back.pop(); setItems(s && s.face === S.face ? s.items : g.items0); syncHist(); ixFor = null; render(); renderLayers(); syncProps(); }
+      if (g.live && g.items0 && g.kind !== 'pan' && g.kind !== 'pinch') { const s = S.hist.back.pop(); if (s && s.face === S.face) putBack(s); else setItems(g.items0); syncHist(); ixFor = null; render(); renderLayers(); syncProps(); }
       S.g = null; stage.classList.remove('is-panning'); renderUI();
       if (g.kind === 'draw') syncProps();   // (the fields showed the shape being drawn)
     }
@@ -3797,7 +3899,7 @@
       const faces = {}, changes = {};
       for (const f of ['front', 'back']) {
         const F = S.faces[f]; if (!F || !(opts.faces && opts.faces[f])) continue;
-        const out = exportItems(F.items, geo);
+        const out = exportItems(shapeTurn(F), geo);   // (SHAREDSHAPE: a turned coin is handed back as it stands on the charm)
         faces[f] = Object.assign({}, F.docIn, { face: f, unitPt: true, frame: Object.assign({}, F.frame), items: out });
         changes[f] = diffFace(exportItems(F.base, geo), out);
       }
@@ -3850,13 +3952,13 @@
         try { no = await opts.check(r); } catch (e) { no = { lines: [{ text: String((e && e.message) || e || 'the save could not be checked') }] }; }
         finally { checking = false; if (sb) { sb.disabled = false; sb.removeAttribute('aria-busy'); sb.innerHTML = was; } }
         if (finished) return;
-        if (no && Array.isArray(no.lines) && no.lines.length) { wentBack = false; refuse(no); return; }
+        if (no && Array.isArray(no.lines) && no.lines.length) { wentBack = false; refuse(no, r); return; }
       }
       finish(r);
     }
     /** What cannot be kept, said over the open workspace: { title?, text?, lines: [{ face?, id?, text }] }. The first part named is selected on its face (and the view goes to that face),
      *  so the person sees which one it is; nothing of the work changes. One button: Keep editing. */
-    function refuse(no) {
+    function refuse(no, r) {
       const lines = (no.lines || []).filter(l => l && l.text).slice(0, 8), first = lines.find(l => l.id != null && S.faces[l.face || S.face]);
       if (first) {
         const f = first.face && S.faces[first.face] ? first.face : S.face; if (f !== S.face) switchFace(f);
@@ -3867,10 +3969,11 @@
       const title = no.title || 'Not saved yet';
       box.innerHTML = `<div class="ce-ask__card" role="alertdialog" aria-modal="true" aria-label="${esc(title)}"><h3>${esc(title)}</h3>`
         + `<ul class="ce-refuse__list">${lines.map(l => `<li>${l.face ? `<b>${l.face === 'back' ? 'Back' : 'Front'}</b> · ` : ''}${esc(l.text)}</li>`).join('')}</ul>`
-        + `<p>${esc(no.text || 'Everything you made is still here. Change or delete what is listed, then press Save again.')}</p><div class="ce-ask__b"><button class="ce-btn ce-btn--ink" type="button" data-ask="yes">Keep editing</button></div></div>`;
+        + `<p>${esc(no.text || 'Everything you made is still here. Change or delete what is listed, then press Save again.')}</p><div class="ce-ask__b"><button class="ce-btn ce-btn--ink" type="button" data-ask="yes">Keep editing</button>${no.proceed && r ? `<button class="ce-btn ce-btn--gold" type="button" data-ask="go">${esc(String(no.proceed))}</button>` : ''}</div></div>`;
       win.appendChild(box);
       S.ask = { done: () => { if (!S.ask) return; S.ask = null; box.remove(); try { win.focus({ preventScroll: true }); } catch (e) { /* fine */ } } };
-      box.addEventListener('click', ev => { if (ev.target.closest('[data-ask]') || ev.target === box) S.ask.done(); });
+      // (SHAREDSHAPE, 29 Oct 2026: a check may offer a choice, no.proceed ("Save anyway"): the save goes on with the work as it is)
+      box.addEventListener('click', ev => { const b = ev.target.closest('[data-ask]'); if (b || ev.target === box) { S.ask.done(); if (b && b.dataset.ask === 'go' && no.proceed && r && !finished) finish(r); } });
       requestAnimationFrame(() => { const b = box.querySelector('[data-ask]'); if (b) b.focus(); });
     }
     let finished = false;
