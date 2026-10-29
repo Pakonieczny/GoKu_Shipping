@@ -218,20 +218,41 @@
       const outline = charm.outline, ob = outline.bbox; if (!ob || ob.length !== 4 || !ob.every(fin)) return null;
       const cut = charm.members.filter(m => m === outline || G.isCutLine(m)); if (!cut.includes(outline)) cut.unshift(outline);
       let upA = up;
-      if (!fin(upA)) { try { upA = G.upAngleOf(Object.assign({}, charm, { outline, members: cut }), face === 'front' ? { face: 'front' } : {}).angle; } catch (_) { upA = 90; } }
+      // (UPRIGHT, Paul 29 Oct 2026: "only mirroring the Back/Front in the Horizontal direction": a front turned by a rule of its own was not the back's mirror; it is the back as the system turns it, mirrored)
+      if (!fin(upA)) { try { upA = G.upAngleOf(Object.assign({}, charm, { outline, members: cut }), {}).angle; if (face === 'front') upA = pairUp(upA); } catch (_) { upA = 90; } }
       const cx = (ob[0] + ob[2]) / 2, cy = (ob[1] + ob[3]) / 2, M = face === 'front' ? null : G.mirrorX(cx), R = G.rotateAbout(cx, cy, 90 - upA);
       const T = s => G.transformSeg(M ? G.transformSeg(s, M) : s, R);
       const tcut = cut.map(T), box = unionBox(tcut); if (!box) return null;
       const art = face === 'front' ? charm.members.filter(m => !cut.includes(m) && isArt(m)).map(T) : (backAddsOf(charm) || []).filter(isArt).map(T);   // (the back: what a person added to it, CHARM EDIT · BACK)
-      return { kind: 'charm', face, box, outline: tcut[cut.indexOf(outline)], cut: tcut, art };
+      return { kind: 'charm', face, box, outline: tcut[cut.indexOf(outline)], cut: tcut, art, up: upA };
     });
   }
-  /** The pool's charm of a piece: the job's own copy, else the line's pool id (a counted line's disc N is its N-th). null without a pool (an order not yet on a sheet). */
-  function charmFor(o) {
-    const Pl = root && root.Pool; if (!Pl || typeof Pl.charmOf !== 'function') return null;
+  /* UPRIGHT (Paul, 29 Oct 2026, the bird SILHOUETTE 34560 of order 4211572095: "This charm flip to show Front/Back is incorrect. Charms must always be shown right side up and only mirroring the
+     Back/Front in the Horizontal direction"). A face with nothing fitted on it was drawn turned by a rule of its own, whatever turn its other face had: the back he had turned right side up beside
+     a front the system still turned 180°. It is now drawn as the exact left-right mirror of the other face as that face is drawn (its view, or its approved turn: a person's turn included),
+     charm-nest-geom.js pairedUp; a face with no other face fitted is the mirror of the back as the system turns it. The picture only: no fit, file or view of a job is made with it. */
+  const pairUp = up => { const G = GEO(); return G && typeof G.pairedUp === 'function' ? G.pairedUp(up) : (((180 - up) % 360) + 360) % 360; };
+  /** The up angle the other face of the piece is drawn at (the face `face` of `o` mirrors it), or null when that face has no view or approved turn on this page. */
+  function pairedUp(o, face) {
+    try {
+      const E = root && root.Engrave, id = pieceIdOf(o); if (!id || !E || typeof E.jobsOfPiece !== 'function') return null;
+      const sib = (E.jobsOfPiece(id) || {})[face === 'front' ? 'back' : 'front']; if (!sib) return null;
+      const v = sib.view || (heldOf(sib) || {}).view, w = sib.writtenFit;
+      const up = v && fin(+v.upAngle) ? +v.upAngle : w && fin(+w.upAngle) ? +w.upAngle : null;
+      return up == null ? null : pairUp(up);
+    } catch (_) { return null; }
+  }
+  /** The pool id of the piece `o` draws: the job's own copy, else the line's pool id (a counted line's disc N is its N-th). '' when there is none. */
+  function pieceIdOf(o) {
     const job = o && o.job, row = (o && o.row) || (job && job.row) || null, slot = (o && o.slot) || (job && job.slot) || '';
     let id = job && Array.isArray(job.copies) && job.copies.length ? job.copies[0] : '';
     if (!id && row && Array.isArray(row.poolIds) && row.poolIds.length) { const m = /^D(\d+)$/.exec(str(slot)); id = row.poolIds[m ? Math.min(+m[1] - 1, row.poolIds.length - 1) : 0]; }
+    return id || '';
+  }
+  /** The pool's charm of a piece (pieceIdOf). null without a pool (an order not yet on a sheet). */
+  function charmFor(o) {
+    const Pl = root && root.Pool; if (!Pl || typeof Pl.charmOf !== 'function') return null;
+    const id = pieceIdOf(o);
     try { return id ? Pl.charmOf(id) || null : null; } catch (_) { return null; }
   }
   /** The charm of a line that has NO pool item yet (held, waiting, never nested: Paul, 13 Oct, a held disc whose Back box showed the front art): the design's own master drawing, read the way the nester reads it
@@ -280,7 +301,9 @@
     const view = job && (job.view || (heldOf(job) || {}).view);
     if (view) { const f = face === 'back' ? frameOfViewWith(view, backAddsOf(charmFor(o))) : frameOfView(view); if (f) return f; }
     const charm = charmAny(o); if (!charm) return null;
-    const w = job && job.writtenFit, up = w && fin(+w.upAngle) ? +w.upAngle : (face === 'front' ? null : operatorUp(o.row || (job && job.row)));
+    // (UPRIGHT: its own approved turn, else the other face's mirror (pairedUp), else the library's typed angle (the back's: the front its mirror), else the rule)
+    const w = job && job.writtenFit, own = w && fin(+w.upAngle) ? +w.upAngle : null, sib = own == null ? pairedUp(o, face) : null, op = own == null && sib == null ? operatorUp(o.row || (job && job.row)) : null;
+    const up = own != null ? own : sib != null ? sib : op != null ? (face === 'front' ? pairUp(op) : op) : null;
     return frameOfCharm(charm, face, up);
   }
   const placeOf = (fit, box) => { const w = box[2] - box[0], h = box[3] - box[1]; return { x: (fit.centre[0] - box[0]) / w, y: 1 - (fit.centre[1] - box[1]) / h, size: (fin(+fit.size) ? +fit.size : 0) / h, angle: fin(+fit.angle) ? +fit.angle : 0 }; };
@@ -367,7 +390,7 @@
     let sf = []; try { sf = typeof font.scriptFonts === 'function' ? font.scriptFonts(a.lines.join('\n')) : []; } catch (_) { sf = []; }
     const input = {
       charm: { outline: ch.outline, members: ch.members, bbox: ch.bbox, widthPt: ch.widthPt, heightPt: ch.heightPt, upAngle: ch.upAngle }, face: a.face, lines: a.lines.slice(), opts, fontKey: a.id, ...(sf.length ? { scriptIds: sf.map(f => f.id) } : {}),
-      ...(a.job && a.job.view && a.job.mask ? { mask: a.job.mask } : { viewOptions: G.viewOptionsFor({ charmUp: ch.upAngle, entry, ...(a.face === 'front' ? { face: 'front' } : {}) }),
+      ...(a.job && a.job.view && a.job.mask ? { mask: a.job.mask } : { viewOptions: Object.assign(G.viewOptionsFor({ charmUp: ch.upAngle, entry, ...(a.face === 'front' ? { face: 'front' } : {}) }), fin(a.up) ? { upAngle: a.up, holeOnly: true } : {}),   // (UPRIGHT: placed in the very frame the box draws, frameFor's turn)
         maskOptions: Object.assign({ marginMm: s.engraveMarginMm, keepOut: (a.face === 'front' ? ch.frontKeepOut : ch.backKeepOut) || [] }, adds ? { avoid: adds } : {}) })
     };
     const take = out => { out = out || {}; rec.rect = out.rect || null; if (out.status === 'ready' && out.fit) { rec.fit = out.fit; rec.status = 'ready'; } else fail(out.why || 'none'); };
@@ -398,10 +421,11 @@
   function quickFit(o, id, lines, sub) {
     const charm = charmAny(o); if (!charm || !lines.length) return null;
     const job = o.job || null, face = job ? faceOfJob(job) : o.face === 'front' ? 'front' : 'back', row = o.row || (job && job.row) || null;
-    const key = ident(charm) + '|' + (job && job.view ? 'j' + ident(job.view) : '') + '|' + face + '|' + id + '|' + JSON.stringify(lines);
+    const F = job && job.view ? null : frameFor(o), up = F && F.kind === 'charm' && fin(F.up) ? F.up : null;   // (UPRIGHT: the turn the box draws this face at)
+    const key = ident(charm) + '|' + (job && job.view ? 'j' + ident(job.view) : '') + '|' + face + '|' + (up == null ? '' : 'u' + up) + '|' + id + '|' + JSON.stringify(lines);
     let rec = QF.get(key);
     if (!rec) {
-      rec = { key, status: 'loading', fit: null, rect: null, subs: new Set(), args: { charm, job, face, row, id, lines } }; QF.set(key, rec); QUEUE.push(rec);
+      rec = { key, status: 'loading', fit: null, rect: null, subs: new Set(), args: { charm, job, face, row, id, lines, up } }; QF.set(key, rec); QUEUE.push(rec);
       while (QF.size > 120) { const k = QF.keys().next().value; if (k === key) break; QF.delete(k); }
       quickPump();
     }

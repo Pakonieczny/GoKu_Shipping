@@ -512,6 +512,12 @@
     if (p.face !== "front" && entry.upSource === "operator" && entry.upAngle != null) o.upAngle = +entry.upAngle;
     return o;
   }
+  /* UPRIGHT (Paul, 29 Oct 2026, the bird SILHOUETTE 34560 of order 4211572095: "This charm flip to show Front/Back is incorrect. Charms must always be shown right side up and only mirroring the
+     Back/Front in the Horizontal direction"). A face with no view of its own (nothing fitted on it) was drawn turned by its OWN rule (upAngleOf), whatever turn the other face had: the back he
+     had turned right side up (ROTBAR) beside a front still turned 180° by the system, the same bird upside down. backView mirrors the back about the outline's centre line and turns both faces
+     about the same centre by 90 - up, so the other face is the exact left-right mirror of a face drawn at `up` when it is turned the other way: 90 - u' = -(90 - u), u' = 180 - u. For the view
+     on the screen only (the other face's pictures, its work area and the Charm Editor's face): a face's own fitted view, its fit and every file are never made with it. */
+  const pairedUp = up => (((180 - +up) % 360) + 360) % 360;
   /** An undecided placement fitted before the long-axis rule that nobody has moved: it is made again. */
   const orientStale = job => !!job && !job.editingBack && !job.nudged && job.orientVersion !== ORIENT && ["review", "blocked", "fitting"].includes(job.state);
 
@@ -1060,7 +1066,7 @@
 
   return { MM_PER_PT, PT_PER_MM, mul, ap, mirrorX, rotateAbout, translate, transformSeg, flatten, polyCentroid, pointInPolys, distToPolys, interiorPoint,
     makeFrame, emptyMask, cloneMask, rasterPolys, raster, area, flipX, diffFraction, at, distanceTransform, erode, subtract, rotateMask, largestRectangles,
-    pathRole, isCutLine, BackViewError, upAngleOf, holeUpAngle, longAxisOf, LONG_ASPECT, ORIENT, viewOptionsFor, orientStale, backView, engraveMask, CUT_LINE_PT, EDGE_MM, materialMask,
+    pathRole, isCutLine, BackViewError, upAngleOf, holeUpAngle, longAxisOf, LONG_ASPECT, ORIENT, viewOptionsFor, pairedUp, orientStale, backView, engraveMask, CUT_LINE_PT, EDGE_MM, materialMask,
     glyphCoverage, capPerEm, lineGlyphs, layoutLines, glyphPolys, rasterGlyphs, verifyInk, strokeMetrics, fitText, refitAt, defaultSize, sizeRange, SIZE_RULE, splitVariants, wrapLines, flowVariants, reflowAt, slideAt, fitMultiline,
     svgPathOf, svgPathOfCmds, silhouetteBits };
 });

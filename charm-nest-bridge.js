@@ -9867,8 +9867,9 @@ const Engrave = window.Engrave = (() => {
   function faceViewOf(job, face) {
     const pid = (job.copies || [])[0], live = pid ? Pool.charmOf(pid) : null; if (!charmEditUsable(live)) return null;
     let got = FACE_VIEWS.get(live); if (!got) FACE_VIEWS.set(live, got = {});
-    if (!got[face]) { const row = job.row || {}, sp = row.spec || {}; got[face] = charmEditView(pid, live, face, sp.designSku || (row.line && row.line.sku) || live.name); }
-    return { view: got[face], charm: live };
+    const row = job.row || {}, sp = row.spec || {}, sku = sp.designSku || (row.line && row.line.sku) || live.name, k = face + "|" + pairedUpOf(pid, live, face, sku);   // (UPRIGHT: one view per turn of the face shown: a turn of it turns this one the other way)
+    if (!got[k]) got[k] = charmEditView(pid, live, face, sku);
+    return { view: got[k], charm: live };
   }
   /** The work area's drawing of the OTHER face of `job`'s piece (view only): renderBack over that face's view, no words, no handles. null when it cannot be drawn. */
   function renderFaceView(job, face, px, zoom) {
@@ -10274,7 +10275,19 @@ const Engrave = window.Engrave = (() => {
   function charmEditView(poolId, charm, face, sku) {
     const j = jobsOfPiece(poolId)[face];
     if (j && j.view && Array.isArray(j.view.M) && (j.view.face === "front") === (face === "front") && charmFor(j) === charm) return j.view;
-    return G.backView(charm, G.viewOptionsFor({ charmUp: charm.upAngle, entry: Master.entryFor(sku) || {}, ...(face === "front" ? { face: "front" } : {}) }));
+    const up = pairedUpOf(poolId, charm, face, sku);   // (UPRIGHT: the other face's mirror, never a turn of its own)
+    return G.backView(charm, Object.assign(G.viewOptionsFor({ charmUp: charm.upAngle, entry: Master.entryFor(sku) || {}, ...(face === "front" ? { face: "front" } : {}) }), up != null ? { upAngle: up, holeOnly: true } : {}));
+  }
+  /** UPRIGHT (Paul, 29 Oct 2026: "Charms must always be shown right side up and only mirroring the Back/Front in the Horizontal direction"; charm-nest-geom.js pairedUp): the up angle a face of the
+   *  piece with no view of its own is drawn at, the exact left-right mirror of the other face as that face is drawn (its own view or its approved turn, a person's turn included), else, for the
+   *  front, of the back as the system turns it. null: the back with nothing on its front keeps its own rule. Display only: no face's fit or file is made with it. */
+  function pairedUpOf(poolId, charm, face, sku) {
+    const o = jobsOfPiece(poolId)[face === "front" ? "back" : "front"], w = o && o.writtenFit;
+    const up = o && charmFor(o) === charm ? (o.view && Number.isFinite(+o.view.upAngle) ? +o.view.upAngle : w && Number.isFinite(+w.upAngle) ? +w.upAngle : null) : null;
+    if (up != null) return G.pairedUp(up);
+    if (face !== "front") return null;
+    const bo = G.viewOptionsFor({ charmUp: charm.upAngle, entry: Master.entryFor(sku) || {} });
+    try { return G.pairedUp(bo.upAngle != null ? +bo.upAngle : G.backView(charm, bo).upAngle); } catch (_) { return null; }
   }
   /** One face of the piece as the editor takes it (a FaceDoc): each part of the charm on that face a layer, in the face's view (points, y down), framed by the outline. */
   function charmEditDoc(charm, view, face, placed) {
