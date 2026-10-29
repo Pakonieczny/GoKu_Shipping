@@ -5,7 +5,9 @@
      C  the editor's frame: view → charm points and back, for the front (turned) and the back (mirrored and turned); an item's own move, scale and turn about its box
      D  the calendar: the month name's letters removed, a new month name and a date (a group of digits) added inside a given day square, through the turned front view;
         roles and paint (hatching blue, its master layer), the group dropped from the copied bytes, the rest drawn again, a hash of its own, keep-outs kept, decode → encode round trip
-     E  refused, with the reason: the outline removed, a part off the metal, a cut line on a piece already on a sheet, a removal on the back; a record made on another drawing is not put on
+     E  refused, with the reason: the outline removed, a part off the metal, a new cut line on a piece already on a sheet; a record made on another drawing is not put on.
+        LOCKSAVE: what a face cannot change (the back's master parts, a placed piece's cut lines) is the master's, never refused, never in the record; moved as one body with the
+        person's own parts (a Select All and a turn), that common move is taken off the person's parts
      F  apply over an edited piece starts from the master again; a null record takes the edit off; the back's additions stay off the front's members
    node tests/charm-nest/art-edit-model.cjs */
 'use strict';
@@ -139,7 +141,23 @@ const sq = (x, y, w, h) => [[['m', [x, y]], ['l', [x + w, y]], ['l', [x + w, y +
   ok(cutOk.cut === true && cutOk.added[0].stroke.join() === '0,0,0' && cutOk.added[0].fill === null, 'E ... but allowed on a piece not on a sheet yet: a black cut hairline, the record says cut');
   const edCut = AE.apply(piece, Object.assign({ at: 3 }, cutOk), 'front');
   ok(edCut.artTrace === true && G.isCutLine(edCut.members.find(m => m.artMemberId === 'hole')), 'E such a piece is traced again before it is nested (artTrace), its new hole a cut line');
-  refusal(() => AE.encode({ removed: [ids[5]] }, { charm: piece, view: back, face: 'back' }), /back shows only the cut lines/, 'E a removal on the back');
+  /* LOCKSAVE (Paul, 28 Oct 2026: "I tried to save my changes in a charm editor, but then got this strange error … there was nothing wrong with this charm": "Back · Outline · kept: on a sheet …") */
+  const recBk = AE.encode({ removed: [ids[5]] }, { charm: piece, view: back, face: 'back' });
+  ok(recBk.removed.length === 0 && Object.keys(recBk.changed).length === 0 && !recBk.cut, 'E LOCKSAVE a back master part handed back as removed: taken from the master, no refusal, nothing in the record');
+  { const bItems = AE.itemsOf(piece, back, 'back').filter(it => it.origin === 'master'), th = 7 * Math.PI / 180, c = Math.cos(th), s0 = Math.sin(th), ox = 3, oy = -2;
+    const T = q => [c * q[0] - s0 * q[1] + ox, s0 * q[0] + c * q[1] + oy], mv = subs => subs.map(sp => sp.map(o => (o[0] === 'h' ? ['h'] : [o[0]].concat(o.slice(1).map(T)))));
+    const bfr = AE.frame(back), mine = sq(cx - 1, cy - 1, 2, 2).map(sp => sp.map(o => (o[0] === 'h' ? ['h'] : [o[0], bfr.toItem(o[1])])));
+    const changed = Object.fromEntries(bItems.map(it => [it.id, { id: it.id, subpaths: mv(it.subpaths), tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 }]));
+    let err = null, rec = null; try { rec = AE.encode({ changed, added: [{ id: 'words', role: 'line', stroke: '#ff0000', lwPt: 0.4, subpaths: mv(mine) }] }, { charm: piece, view: back, face: 'back' }); } catch (x) { err = x; }
+    ok(bItems.length > 0 && !err && rec && Object.keys(rec.changed).length === 0 && rec.added.length === 1, 'E LOCKSAVE the back\'s cut lines and the words turned and moved together (Select All): saved, no refusal: ' + (err ? JSON.stringify(err.refused) : ''));
+    const got = AE.decode(rec, piece, back).added[0].subpaths, want = mine; let miss = 0;
+    got.forEach((sp, i) => sp.forEach((o, j) => { if (o.length > 1) miss = Math.max(miss, Math.hypot(o[1][0] - want[i][j][1][0], o[1][1] - want[i][j][1][1])); }));
+    near(miss, 0, 0.01, 'E LOCKSAVE ... the words kept where they were put ON the charm (the common move taken off them)');
+    const one = Object.fromEntries(bItems.slice(0, 1).map(it => [it.id, { id: it.id, subpaths: mv(it.subpaths), tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 }]));
+    if (bItems.length > 1) { const r1 = AE.encode({ changed: one, added: [{ id: 'words', role: 'line', stroke: '#ff0000', lwPt: 0.4, subpaths: mine }] }, { charm: piece, view: back, face: 'back' });
+      const g1 = AE.decode(r1, piece, back).added[0].subpaths; near(Math.hypot(g1[0][0][1][0] - mine[0][0][1][0], g1[0][0][1][1] - mine[0][0][1][1]), 0, 1e-6, 'E LOCKSAVE ... one cut line moved alone is no common move: the words stay where they are'); } }
+  { let err = null, rec = null; try { rec = AE.encode({ changed: { [ids[0]]: { tx: 2 } }, removed: [] }, { charm: piece, view: front, face: 'front', placed: true }); } catch (x) { err = x; }
+    ok(!err && rec && !rec.changed[ids[0]] && !rec.cut, 'E LOCKSAVE a placed piece\'s outline (a kept cut line) handed back moved: the master\'s, no refusal: ' + (err ? JSON.stringify(err.refused) : '')); }
   refusal(() => AE.encode({ removed: ['999-zzz'] }, { charm: piece, view: front, face: 'front' }), /not in the piece's drawing/, 'E an id that is no part of this drawing');
   const stale = AE.apply(piece, Object.assign({}, saved, { baseKey: 'otherdraw' }), 'front');
   ok(stale.members === base.members && stale.artEdit.front.stale[0] === '*' && /drawn again/.test(stale.artEdit.front.why), 'E a record made on another drawing is not put on (the piece is the master\'s, and says why)');

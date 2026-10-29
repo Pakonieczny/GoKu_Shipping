@@ -10060,6 +10060,9 @@ const Engrave = window.Engrave = (() => {
       const o = Object.assign({}, it, { kind: "path", source: it.origin === "added" ? "added" : "master" });
       if (it.role === "cut") o.name = (it.id === outlineId ? "Outline" : "Cut line") + (placed ? " · kept: on a sheet" : "");   // (the module refuses a cut line changed on a piece already nested)
       else if (it.text) o.name = it.text;
+      // (LOCKSAVE, Paul 28 Oct 2026: "I tried to save my changes … got this strange error … there was nothing wrong with this charm": what this face cannot change is the editor's `fixed`: it opens
+      //  locked and nothing in the editor changes it. On a back: every part of the master; on a piece already on a sheet: its cut lines)
+      if (it.origin !== "added" && (face === "back" || (placed && it.role === "cut"))) o.fixed = true;
       return o;
     });
     const out = layers.find(i => i.id === outlineId) || layers.find(i => i.role === "cut"), b = out ? window.CharmEditor.model.bboxOf(out.subpaths) : null;

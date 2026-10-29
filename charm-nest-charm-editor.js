@@ -36,6 +36,7 @@
  *
  *   FaceDoc  { face:'front'|'back', unitPt:true, frame:{ x0, y0, wPt, hPt }, items:[Item] }      points, y down; the frame is the charm's bounding view (shown in mm)
  *   Item     { id, kind:'path'|'text'|'group', role:'cut'|'line'|'hatch'|'art', source:'master'|'engrave'|'added', name, hidden, locked,
+ *              fixed                                                     (LOCKSAVE, 28 Oct 2026: true = this face cannot change the part: it opens locked, is never selected, nothing changes it)
  *              subpaths:[[op,...],...], stroke, fill, lwPt,              (path; ops ["m",[x,y]] ["l",[x,y]] ["c",p1,p2,p3] ["h"])
  *              text, fontKey, sizePt, align, lineGap,                    (text)
  *              bold, italic, letterCase                                  (CETEXT, 28 Oct 2026: the text's style. bold: the family's heavier cut; italic: the letters slanted; letterCase
@@ -868,7 +869,7 @@
       if (o.id == null || o.id === '') o.id = newId(); else o.id = String(o.id);
       if (o.kind !== 'text' && o.kind !== 'group') o.kind = 'path';
       if (!ROLES.includes(o.role)) o.role = o.kind === 'text' ? 'hatch' : 'art';
-      if (lock.has(o.role) && !o.locked) { o._autoLock = true; o._lockedIn = !!it.locked; o.locked = true; }
+      if ((lock.has(o.role) || o.fixed === true) && !o.locked) { o._autoLock = true; o._lockedIn = !!it.locked; o.locked = true; }   // (LOCKSAVE: a part the caller marks `fixed` opens locked too)
       if (o.kind === 'group') o.children = (it.children || []).map(rec).filter(Boolean);
       return o;
     };
@@ -1931,13 +1932,26 @@
     const selEntries = () => S.sel.map(entry).filter(Boolean);
     const leavesOf = (it, out) => { out = out || []; if (it.kind === 'group') (it.children || []).forEach(c => leavesOf(c, out)); else out.push(it); return out; };
     const selLeaves = () => [].concat(...selEntries().map(e => leavesOf(e.it)));
-    function setItems(next) { face().items = next; }
+    /* LOCKSAVE (Paul, 28 Oct 2026: "I tried to save my changes in a charm editor, but then got this strange error, which I should not be seeing because there was nothing wrong with this charm":
+       the back's outline and cut line, "kept: on a sheet", refused on Save). A part the caller marks `fixed` (opts.faces: what this face cannot change: every part of the master on a back, the cut
+       lines of a piece already on a sheet) is never changed here, whatever reaches it: Unlock All, a lock toggled, a transform, an align, a field. Every new tree is checked against the face's
+       own opening (setItems): a fixed part that is not exactly as it opened is put back as it opened. And no locked part is ever selected (pickable), as Illustrator ignores locked objects. */
+    function keepFixed(next) {
+      const F = face(); let fx = F._fixed;
+      if (!fx) { fx = F._fixed = new Map(); walk(F.base, it => { if (it.fixed === true) fx.set(it.id, it); }); }
+      if (!fx.size) return next;
+      const back = new Map(); walk(next, it => { const was = fx.get(it.id); if (was && it !== was) back.set(it.id, was); });
+      return back.size ? replaceIn(next, back) : next;
+    }
+    function setItems(next) { face().items = keepFixed(next); }
+    /** Can this part be selected: there, not locked, in no locked group, not fixed. */
+    const pickable = (ixm, id) => { const e = ixm.get(id); return !!e && !e.it.locked && e.it.fixed !== true && !e.anc.some(a => { const x = ixm.get(a); return !!(x && x.it.locked); }); };
     function snapshot(f) { f = f || S.face; return { face: f, items: S.faces[f].items, sel: f === S.face ? S.sel.slice() : [] }; }
     function pushUndo() { if (xPending) xCommit(); S.hist.push(snapshot()); S.nudgeAt = 0; syncHist(); }
     function setSel(ids) {
       S.autoSel = null;
       const ixm = ix();
-      S.sel = topmost(ids.filter(id => ixm.has(id)), ixm);
+      S.sel = topmost(ids.filter(id => pickable(ixm, id)), ixm);   // (LOCKSAVE: never a locked part)
       S.flash = null; renderUI(); paintLayerSel(true); syncProps();
       xChanged();
     }
@@ -2731,7 +2745,7 @@
     /** One step of history and a new tree. */
     function commit(next, sel) {
       if (next === items()) { if (sel) setSel(sel); return; }
-      pushUndo(); setItems(next); ixFor = null; if (sel) S.sel = topmost(sel, ix()); refresh({ reveal: !!sel });
+      pushUndo(); setItems(next); ixFor = null; if (sel) { const ixm = ix(); S.sel = topmost(sel.filter(id => pickable(ixm, id)), ixm); } refresh({ reveal: !!sel });
     }
     function restore(s) {
       if (S.editing) closeEditor(true);
@@ -3299,7 +3313,7 @@
         g.x = x; g.y = y; if (!g.live && !far) return; g.live = true;
         const hit = touching(items(), [g.x0, g.y0, x, y], geo).map(it => it.id);
         const ids = g.add ? g.base.concat(hit.filter(id => !g.base.includes(id))) : hit;
-        S.sel = topmost(ids, ix()); renderUI(); paintLayerSel(); syncProps(); return;
+        const ixm = ix(); S.sel = topmost(ids.filter(id => pickable(ixm, id)), ixm); renderUI(); paintLayerSel(); syncProps(); return;
       }
       if (g.kind === 'draw') {
         if (!g.live && !far) return; g.live = true; busy('crosshair'); g.ev = evOf(e);
@@ -3890,7 +3904,7 @@
       if (S.editing) closeEditor();
       if (!xPending) xPending = snapshot();
       setItems(next); ixFor = null;
-      const ixm = ix(); S.sel = topmost((sel || S.sel).filter(id => ixm.has(id)), ixm);
+      const ixm = ix(); S.sel = topmost((sel || S.sel).filter(id => pickable(ixm, id)), ixm);
       render(); renderUI(); syncProps(); xStale = true;
     }
     /** The extensions' changes since the last step become ONE step of history (nothing changed: no step). */

@@ -62,12 +62,14 @@ async function partModel() {
   const Gm = M.mul(M.tr(-7, 3), M.mul(M.rotM(33), M.tr(7, -3))), Gi = M.inv(Gm), wrapped = {};
   for (const it of items) wrapped[it.id] = Object.assign({}, it, { matrix: M.mul(Gi, Gm).map(v => v + 1e-12) });
   const a = enc(plain, true), b = enc(wrapped, true);
-  // a real change is still a change: the hatch moved a millimetre off its place stays refused off the metal only when it leaves the metal, the cut line moved on a placed piece is refused
+  // a real change is still a change: the hatch moved a millimetre off its place stays refused off the metal only when it leaves the metal; the cut line moved on a placed piece is the master's,
+  // never refused (LOCKSAVE, Paul 28 Oct 2026: "… this strange error, which I should not be seeing because there was nothing wrong with this charm"): nothing of it in the record
   const hatch = items.find(i => i.role === 'hatch'), cut = items.find(i => i.role === 'cut' && i.name !== 'x');
-  const moved = enc({ [hatch.id]: Object.assign({}, hatch, { tx: 2.835 }), [cut.id]: Object.assign({}, cut, { tx: 2.835 }) }, true);
-  check(`A0 the bird's front (${items.length} parts: ${items.map(i => i.role).join(', ')}) handed back "changed" but untouched, as given and with its matrix written out again: no change in the record and nothing refused (it read "Hatched part … · Cut line: a cut line is the shape the sheet was nested with" for Paul); a part really moved is still a change (${moved.refused ? moved.refused.map(r => r.id === 'cut' ? 'cut line refused' : 'hatch ' + r.why.slice(0, 20)).join(', ') : 'kept'})`,
-    a.rec && !Object.keys(a.rec.changed).length && !a.rec.cut && b.rec && !Object.keys(b.rec.changed).length && !b.rec.cut && !!moved.refused && moved.refused.some(r => r.id === 'cut'),
-    JSON.stringify({ a: a.refused || Object.keys(a.rec.changed), b: b.refused || Object.keys(b.rec.changed), moved }).slice(0, 600));
+  const moved = enc({ [hatch.id]: Object.assign({}, hatch, { tx: 2.835 }), [cut.id]: Object.assign({}, cut, { tx: 2.835 }) }, true), cutOnly = enc({ [cut.id]: Object.assign({}, cut, { tx: 2.835 }) }, true);
+  check(`A0 the bird's front (${items.length} parts: ${items.map(i => i.role).join(', ')}) handed back "changed" but untouched, as given and with its matrix written out again: no change in the record and nothing refused (it read "Hatched part … · Cut line: a cut line is the shape the sheet was nested with" for Paul); a part really moved is still a change (${moved.refused ? moved.refused.map(r => r.id === 'cut' ? 'cut line refused' : 'hatch ' + r.why.slice(0, 20)).join(', ') : 'kept'}; the placed cut line moved alone: ${cutOnly.rec ? 'the master\'s, no refusal' : 'refused'})`,
+    a.rec && !Object.keys(a.rec.changed).length && !a.rec.cut && b.rec && !Object.keys(b.rec.changed).length && !b.rec.cut && !!moved.refused && moved.refused.some(r => r.id === hatch.id)
+      && !moved.refused.some(r => r.id === 'cut' || r.id === cut.id) && !!cutOnly.rec && !Object.keys(cutOnly.rec.changed).length && !cutOnly.rec.cut,
+    JSON.stringify({ a: a.refused || Object.keys(a.rec.changed), b: b.refused || Object.keys(b.rec.changed), moved, cutOnly }).slice(0, 600));
   delete global.window; delete global.self;
 }
 

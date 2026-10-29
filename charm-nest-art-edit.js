@@ -406,6 +406,29 @@
     if ((+leaf.weightMm || 0) !== (+m.artWeightMm || 0)) return false;
     return leaf.even == null || !!leaf.even === String(m.paintOp || "").endsWith("*");
   }
+  /* LOCKSAVE (Paul, 28 Oct 2026: "I tried to save my changes in a charm editor, but then got this strange error, which I should not be seeing because there was nothing wrong with this charm":
+     "Back · Outline · kept: on a sheet: the back shows only the cut lines …"). What a face cannot change (every part of the master on a back; the cut lines of a piece already on a sheet) is the
+     master's whatever comes back for it: it is left out of the record and never refused. When it came back moved as ONE body (all those parts by one turn, scale or move: a Select All and a turn), the
+     person's own parts were moved with it, so that same move is taken off them: they stay where they were put ON the charm. */
+  /** The points of two paths of the same operators, paired (null when the operators differ). */
+  function pairPts(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return null; const out = [];
+    for (let i = 0; i < a.length; i++) { const p = a[i], q = b[i]; if (!Array.isArray(p) || !Array.isArray(q) || p.length !== q.length) return null;
+      for (let j = 0; j < p.length; j++) { const o = p[j], r = q[j]; if (!o || !r || o[0] !== r[0] || o.length !== r.length) return null; for (let k = 1; k < o.length; k++) out.push([o[k], r[k]]); } }
+    return out;
+  }
+  /** The affine map that takes the points from (pairs [from, to]) to their place, least squares, with its worst miss (pt); null when they do not pin one down. */
+  function fitAffine(pairs) {
+    if (!pairs || pairs.length < 3) return null;
+    let sxx = 0, sxy = 0, syy = 0, sx = 0, sy = 0, n = 0; const bx = [0, 0, 0], by = [0, 0, 0];
+    for (const [a, b] of pairs) { const x = +a[0], y = +a[1]; sxx += x * x; sxy += x * y; syy += y * y; sx += x; sy += y; n++; bx[0] += x * b[0]; bx[1] += y * b[0]; bx[2] += b[0]; by[0] += x * b[1]; by[1] += y * b[1]; by[2] += b[1]; }
+    const A = [[sxx, sxy, sx], [sxy, syy, sy], [sx, sy, n]];
+    const solve = v => { const m = A.map((r, i) => r.concat(v[i])); for (let c = 0; c < 3; c++) { let piv = c; for (let r = c + 1; r < 3; r++) if (Math.abs(m[r][c]) > Math.abs(m[piv][c])) piv = r; if (Math.abs(m[piv][c]) < 1e-12) return null; [m[c], m[piv]] = [m[piv], m[c]]; for (let r = 0; r < 3; r++) if (r !== c) { const f = m[r][c] / m[c][c]; for (let k = c; k < 4; k++) m[r][k] -= f * m[c][k]; } } return [m[0][3] / m[0][0], m[1][3] / m[1][1], m[2][3] / m[2][2]]; };
+    const X = solve(bx), Y = solve(by); if (!X || !Y) return null;
+    const T = [X[0], Y[0], X[1], Y[1], X[2], Y[2]]; let miss = 0;
+    for (const [a, b] of pairs) { const q = ap(T, +a[0], +a[1]); miss = Math.max(miss, Math.hypot(q[0] - b[0], q[1] - b[1])); }
+    return { T, miss };
+  }
   /** The record to save for one face of one piece, from the editor's changes. Throws { refused: [{ id, why }] } when any part cannot be kept as asked: nothing is half saved.
    *  ctx = { charm (the piece's charm on the page, edited or not), view (the face's view the editor drew: job.view), face, placed (the piece is on a sheet) } */
   function encode(changes, ctx) {
@@ -418,6 +441,19 @@
     // (an item sent with its move, scale or turn and no path of its own is moved from where the piece draws it NOW: an edit saved before stays the start of the next)
     const now = new Map(); for (const m of (charm.members || []).concat(charm.artBack || [])) if (m && m.artMemberId && isPath(m)) now.set(String(m.artMemberId), m);
     const ownOf = (id, m) => () => mapSubs(((now.get(String(id)) || m || {}).subpaths) || [], fr.toItem);
+    // (LOCKSAVE: what this face cannot change, taken from the master; its common move taken off the person's own parts)
+    const fixedAt = i => i != null && (face === "back" || (!!ctx.placed && roleOf(base.members[i], base) === "cut"));
+    let Ti = null;
+    { const cuts = base.members.map((m, i) => i).filter(i => fixedAt(i) && isPath(base.members[i]) && roleOf(base.members[i], base) === "cut"), pairs = []; let all = cuts.length > 0;
+      for (const i of cuts) {
+        const item = (changes.changed || {})[ids[i]], lv = item ? leavesOf(item, ownOf(ids[i], base.members[i])) : null, subs = lv && lv.length === 1 ? toSource(lv[0], fr) : null, pp = subs ? pairPts(base.members[i].subpaths, subs) : null;
+        if (!pp) { all = false; break; } pairs.push(...pp);
+      }
+      const fit = all ? fitAffine(pairs) : null;
+      if (fit && fit.miss < 0.02 && !fit.T.every((v, k) => Math.abs(v - ID[k]) < 1e-4)) Ti = inv(fit.T);
+    }
+    const place = subs => (Ti && subs ? mapSubs(subs, q => ap(Ti, +q[0], +q[1])) : subs);
+    changes = { removed: (changes.removed || []).filter(id => !fixedAt(at.get(String(id)))), changed: Object.fromEntries(Object.entries(changes.changed || {}).filter(([id]) => !fixedAt(at.get(String(id))))), added: changes.added || [] };
     for (const id of new Set((changes.removed || []).map(String))) {
       const i = at.get(id); if (i == null) { no(id, WHY.gone); continue; }
       if (face === "back") { no(id, WHY.back); continue; }
@@ -430,7 +466,7 @@
       if (rec.removed.includes(id)) { no(id, "it is removed and changed at once"); continue; }
       const back = face === "back", m = base.members[i]; if (!isPath(m)) { no(id, back ? WHY.back : WHY.notPath); continue; }
       const leaves = leavesOf(item, ownOf(id, m)); if (leaves.length !== 1) { no(id, back ? WHY.back : WHY.oneChange); continue; }
-      const leaf = leaves[0], was = roleOf(m, base), role = leaf.role || was, subs = toSource(leaf, fr);
+      const leaf = leaves[0], was = roleOf(m, base), role = leaf.role || was, subs = place(toSource(leaf, fr));
       if (!subs || !okSubs(subs)) { no(id, back ? WHY.back : WHY.path); continue; }
       if (role === was && sameSubs(subs, m.subpaths) && samePaint(leaf, m)) continue;   // (EDITSAVE: the master's own part, untouched: no change, never a refusal, on either face)
       if (back) { no(id, WHY.back); continue; }
@@ -448,7 +484,7 @@
     for (const item of changes.added || []) for (const leaf of leavesOf(item, item && item.id != null && now.has(String(item.id)) ? ownOf(item.id, null) : null)) {
       const id = String(leaf.id || ""); if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(id)) { no(id || "?", "a new part needs a short id (letters, digits, _ . : -)"); continue; }
       if (seen.has(id) || at.has(id)) { no(id, "the id is used twice"); continue; } seen.add(id);
-      const role = leaf.role || "art", subs = toSource(leaf, fr);
+      const role = leaf.role || "art", subs = place(toSource(leaf, fr));
       if (!subs || !okSubs(subs)) { no(id, WHY.path); continue; }
       if (face === "back" && role === "cut") { no(id, WHY.back); continue; }
       if (role !== "cut" && !onMetal(subs, polys)) { no(id, WHY.offMetal); continue; }
