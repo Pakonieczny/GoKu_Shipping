@@ -1520,10 +1520,15 @@
       if (!els.length || reduced() || (o.still && o.still())) return o.paint(to);
       S.busy = true;
       const d = to === "back" ? 1 : -1, P = o.persp || "";
-      const edge = () => o.paint(S.want), done = () => { S.busy = false; if (S.want !== o.shown()) go(0); };
+      // (o.cls: a class the turning elements wear for the turn, so a page can style or tell the turn; ENGFLIP, 29 Oct 2026: the engraving work area turns as the sheets do)
+      const mark = (list, on) => { if (o.cls) for (const e of list) try { e.classList.toggle(o.cls, on); } catch (_) {} };
+      let turned = els; mark(els, true);
+      // (the side drawn at the edge may be a new element where the old one stood (the engraving work area is drawn afresh): the second half turns what o.el() gives THEN, the old ones when it gives none)
+      const edge = () => { o.paint(S.want); const now = [].concat((o.el && o.el()) || []).filter(e => e && e.isConnected && e.animate); mark(turned, false); turned = now.length ? now : els.filter(e => e.isConnected); mark(turned, true); return turned; };
+      const done = () => { mark(turned, false); S.busy = false; if (S.want !== o.shown()) go(0); };
       Promise.all(els.map((e, i) => e.animate([{ transform: P + "rotateY(0)" }, { transform: P + `rotateY(${90 * d}deg)` }],
         { duration: 300, delay: (delay || 0) + (o.delay ? o.delay(i) : 0), easing: "cubic-bezier(.4,0,1,1)" }).finished))
-        .then(() => { edge(); return Promise.all(els.filter(e => e.isConnected).map(e => e.animate([{ transform: P + `rotateY(${-90 * d}deg)` }, { transform: P + "rotateY(0)" }], { duration: 380, easing: "cubic-bezier(.2,.8,.2,1)" }).finished)); },
+        .then(() => Promise.all(edge().map(e => e.animate([{ transform: P + `rotateY(${-90 * d}deg)` }, { transform: P + "rotateY(0)" }], { duration: 380, easing: "cubic-bezier(.2,.8,.2,1)" }).finished)),
           () => edge())
         .catch(() => {}).then(done);
     };

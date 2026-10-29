@@ -3,9 +3,10 @@
 // in the same place and also be the same full size and then the user should be able to manipulate the charm inside the grid").
 // The real sorter page over the repo's fake site (_engraveRealWorld.cjs; offline, made-up names), on two real masters read from the live site (fixtures/PERCHED_43564.ai, the bird SILHOUETTE_34560,
 // engraved on its back; fixtures/TINY_BAR_7427.ai, the bar, engraved on its front), at 1440×900, 1280×800 and 1024×768:
-//   1  the work area's grid (its canvas) has the same size and place at every turn of the whole piece (0°, 35°, 90°, 180°, with the card's own turn), and for the other face (Front | Back)
+//   1  the work area's grid (its canvas) has the same size and place at every turn of the whole piece (0°, 35°, 90°, 180°, with the card's own turn), and for the other face (Engrave.showFace: ENGVIEW,
+//      29 Oct 2026, the grid's own Front | Back switch is gone; the card's thumbnails call showFace)
 //   2  the turned piece stays wholly inside the grid at every turn (every cut line's box and the words' box with its handle), and the mm grid is the same millimetres (one scale)
-//   3  the grid, its "1 mm grid" label and its Front | Back switch are never under the "Open in Charm Editor" button nor the Approve block
+//   3  the grid and its "1 mm grid" label are never under the "Open in Charm Editor" button nor the Approve block
 //   4  the words can still be dragged with the piece turned, and Approve (a real mouse press) still approves
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/engrave-work-grid.cjs      (SHOTS=<dir> for the screenshots)
 'use strict';
@@ -67,17 +68,17 @@ function seedWorld(R) {
           seen.every(s => s.ok && s.steady && same(s.grid, g0) && s.k === seen[0].k) && seen.map(s => s.turn).join() === '0,35,90,180', JSON.stringify(seen.map(s => [s.d, s.turn, s.grid, s.k, s.ok])));
         check(`2 ${at}: the turned piece is wholly inside the grid at every turn (its cut lines, and the words' box with its turning handle)`,
           seen.every(s => s.members.length && s.members.every(m => inside(m, s.grid)) && s.words.every(p => ptIn(p, s.grid))), JSON.stringify(seen.map(s => [s.d, s.members.filter(m => !inside(m, s.grid)), s.words.filter(p => !ptIn(p, s.grid))])));
-        check(`3 ${at}: the grid, its "1 mm grid" label and its Front | Back switch are clear of the "Open in Charm Editor" button and the Approve block at every turn`,
+        check(`3 ${at}: the grid and its "1 mm grid" label are clear of the "Open in Charm Editor" button and the Approve block at every turn`,
           seen.every(s => !!s.ce && !over(s.grid, s.ce) && !over(s.grid, s.ap) && !over(s.label, s.ce) && !over(s.sw, s.ce) && !over(s.sw, s.ap) && !over(s.label, s.ap) && (!s.sw || inside(s.sw, s.grid))),
           JSON.stringify(seen.map(s => ({ d: s.d, grid: s.grid, label: s.label, sw: s.sw, ce: s.ce, ap: s.ap }))));
         await R.shot(w, `GRID-${name}-${vw}x${vh}-180`);
-        // the other face (the bird's front, the bar's back: no job of their own), through the switch: the very same grid
-        if (seen[0].sw) {
-          const other = face === 'back' ? 'front' : 'back';
-          await page.click(Q + ` .backHost .egFaceView [data-fv="${other}"]`); await R.settle(page, 400);
+        // the other face (the bird's front, the bar's back: no job of their own), through Engrave.showFace (the card's thumbnails): the very same grid
+        const other = face === 'back' ? 'front' : 'back';
+        const shown = await page.evaluate(([Q, f]) => { const c = document.querySelector(Q); return Engrave.showFace(Engrave.items().get(c.dataset.key), f, { animate: false }); }, [Q, other]); await R.settle(page, 400);
+        if (shown && shown.ok) {
           const o = await look();
-          await page.click(Q + ` .backHost .egFaceView [data-fv="${face}"]`); await R.settle(page, 400);
-          check(`1b ${at}: the ${other} (the switch) is drawn in the same grid, the same size and place`, o.face === other && same(o.grid, g0) && o.k === seen[0].k, JSON.stringify({ o: [o.face, o.grid, o.k], g0 }));
+          await page.evaluate(([Q, f]) => { const c = document.querySelector(Q); Engrave.showFace(Engrave.items().get(c.dataset.key), f, { animate: false }); }, [Q, face]); await R.settle(page, 400);
+          check(`1b ${at}: the ${other} (showFace) is drawn in the same grid, the same size and place`, o.face === other && same(o.grid, g0) && o.k === seen[0].k, JSON.stringify({ o: [o.face, o.grid, o.k], g0 }));
         }
         await turn(0); await R.settle(page, 300);
       }

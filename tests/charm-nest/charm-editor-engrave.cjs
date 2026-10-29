@@ -142,7 +142,7 @@ async function partB(kit) {
       const peek = c.querySelector('.backHost .egFrontPeek'), pr = peek && peek.getBoundingClientRect(), over = (p, q) => !!(p && q && p.left < q.right && q.left < p.right && p.top < q.bottom && q.top < p.bottom);
       return { n: bs.length, all: document.querySelectorAll('.egCharmEdit').length, text: b && b.textContent.trim(), name: b && b.getAttribute('aria-label'), icon: !!(b && b.querySelector('svg')), inHead: !!(b && b.parentElement.matches('.pvMain')), level: (() => { const ap = c.querySelector('.pvApproval'), ar = ap && ap.getBoundingClientRect(); return !!(r && ar && Math.abs(r.top - ar.top) < 3); })(),
         besideX: !!(r && xr && Math.abs((r.top + r.bottom) / 2 - (xr.top + xr.bottom) / 2) < 12 && xr.left >= r.right - 1 && xr.left - r.right < 40), w: r && Math.round(r.width), h: r && Math.round(r.height), font: cs && parseFloat(cs.fontSize), bg: cs && cs.backgroundImage,
-        inWork: !!c.querySelector('.backHost .egCharmEdit'), inToolbar: !!(ctl && ctl.querySelector('.egCharmEdit')), overDrawing: over(r, cr), quiet: (c.querySelector('.backHost') || {}).textContent.trim(), peek: !!peek, overPeek: over(r, pr) };
+        inWork: !!c.querySelector('.backHost .egCharmEdit'), inToolbar: !!(ctl && ctl.querySelector('.egCharmEdit')), overDrawing: over(r, cr), quiet: [...((c.querySelector('.backHost') || {}).childNodes || [])].filter(n => !(n.classList && n.classList.contains('egZoom'))).map(n => n.textContent).join('').trim(),   /* (the zoom box's own words aside: ENGVIEW, 29 Oct 2026) */ peek: !!peek, overPeek: over(r, pr) };
     });
     const e0 = await entryOf();
     const entryShot = await R.shot(w, 'CE-1-entry-front');

@@ -169,7 +169,8 @@ function facedPage(o) {
 const SETUP_SLOT = /<section class="pvSec pvSetup"[^>]*>.*?<\/section>/;
 /* HDRMETA (Paul, 18 Oct 2026: "Remove 'Thin Strokes', 'charm', '5x8.5' text from the UI."): the card's head no longer draws the size · kind line under the order number or the THIN STROKES chip. Both are taken out of
    the card's markup before it is hashed (on the unchanged page they are there, on the new page they never are), so the pins still say "everything else in the card is byte for byte what it was"; 5d proves they are gone. */
-const HDR_META = /<span class="sub">[^<]*<\/span>|<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES<\/span>/g;
+// (CAPCHIP, Paul 29 Oct 2026: "Remove the "SMALL cap. 1.22" text and function from this UI": the head's SMALL · cap chip is never drawn either: taken out the same way)
+const HDR_META = /<span class="sub">[^<]*<\/span>|<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES<\/span>|<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap [0-9.]+ mm<\/span>/g;
 /* EGROW (Paul, 15 Oct 2026, "be clever in how you display and arrange this information ... a more minimalist approach"): a row of SEVERAL pieces (the ears of a pair, the discs of a necklace, the faces of a line) is now one line for each piece
    (a chip, its words, then ITS OWN state), no longer a block of words with a second block of states. Those rows' markup is no longer the one captured below, so their hashes are not compared
    (REDRAWN); a single piece's rows ('pend') and every editor card stay byte for byte, and 5b still demands that a page with the faces module and no front job draws every row exactly as a page without it. */

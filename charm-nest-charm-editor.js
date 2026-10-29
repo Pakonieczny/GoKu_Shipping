@@ -199,6 +199,90 @@
   let idSeq = 0;
   const newId = () => 'ce' + Date.now().toString(36) + (++idSeq).toString(36);
 
+  /* ═══ 0 · THE VIEW'S SHARED PARTS (ENGZOOM, Paul 29 Oct 2026, of the Design & Engrave work area: "There is no zoom/Pan functionality in the engraving preview. Look at how we handle that in the
+     charm editor and add the exact same functionality. Also add the same dynamic X, Y Rulers that adapt to the real size as the user zooms in/out"). The rulers' 1-2-5 ladder and their painting,
+     Illustrator's ladder of zooms, its presets and the wheel's rule live here, outside the workspace, so the engraving work area (charm-nest-bridge.js) zooms, pans and draws its rulers with this
+     very code (CharmEditor.view) and the workspace below uses it unchanged. ═══ */
+  const LADDER = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
+  /** The numbered step (the first at least 46 px apart) and its finest division still 5 px apart: tenths, fifths or halves (a 2 in quarters, so every mark falls on
+   *  a number a person would write), with a longer middle tick when the division is even. */
+  function ruleSteps(pxmm) {
+    let major = LADDER[LADDER.length - 1];
+    for (const s of LADDER) if (s * pxmm >= 46) { major = s; break; }
+    const lead = Math.round(major / Math.pow(10, Math.floor(Math.log10(major) + 1e-9)));
+    let n = 1;
+    for (const d of lead === 2 ? [10, 4, 2] : lead === 5 ? [10, 5] : [10, 5, 2]) if (major / d * pxmm >= 5) { n = d; break; }
+    return { major, n, minor: major / n, half: n % 2 === 0 ? n / 2 : 0 };
+  }
+  const ruleNum = u => String(+(Math.abs(u) < 1e-9 ? 0 : u).toFixed(3));
+  /* ⌘ + / − and a click of the Zoom tool go up and down Illustrator's own ladder of zooms, so a number on the box is always one a person would pick */
+  const ZLADDER = [25, 100 / 3, 50, 200 / 3, 100, 150, 200, 300, 400, 600, 800, 1200, 1600, 2400, 3200, 4800, 6400];
+  const ZOOM_PRESETS = [6400, 4000, 2000, 1000, 400, 200, 100, 50];
+  /** The next zoom (percent) up (dir > 0) or down the ladder from `p` percent. */
+  function stepZoom(p, dir) {
+    if (dir > 0) { for (const z of ZLADDER) if (z > p * 1.004) return z; return ZMAX * 100; }
+    for (let i = ZLADDER.length - 1; i >= 0; i--) if (ZLADDER[i] < p / 1.004) return ZLADDER[i];
+    return ZMIN * 100;
+  }
+  const fmtZoom = p => (p < 100 ? trim(p, 0) : String(Math.round(p))) + '%';
+  /** What a wheel event asks of the view (the studio, J 17201): a bare wheel zooms about the cursor, Shift pans across, ⌘ pans down; a trackpad's two-finger scroll
+   *  pans, its pinch arrives as Ctrl and zooms. -> { zoom: factor } | { pan: [dx, dy] } (screen px the view moves by). */
+  function wheelOf(e) {
+    if (e.ctrlKey) return { zoom: Math.pow(1.01, -clamp(e.deltaY, -60, 60)) };
+    const lineMode = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+    const dx = e.deltaX * lineMode, dy = e.deltaY * lineMode;
+    if (e.shiftKey) return { pan: [-(dy || dx), 0] };
+    if (e.metaKey) return { pan: [0, -dy] };
+    const wheelLike = e.deltaMode !== 0 || (Math.abs(e.deltaX) < 0.01 && fin(e.wheelDeltaY) && e.wheelDeltaY !== 0 && Math.abs(e.wheelDeltaY) % 120 === 0);
+    if (wheelLike) return { zoom: Math.pow(1.0018, -clamp(dy, -400, 400)) };
+    return { pan: [-dx, -dy] };
+  }
+  /** One ruler painted on its 2d context `c` (already scaled to CSS px): o = { vertical, len, thick (CSS px), origin (where the zero falls, px), pxmm (px per mm), ink, muted, hair, live,
+   *  sel ([a, b] px: the extent marked, or null), cursor (px or null), between(c, line) (drawn after the numbers and before the extent's edges: the workspace's guides) }. */
+  function paintRuler(c, o) {
+    const { vertical, len, thick, origin, pxmm } = o, st = ruleSteps(pxmm);
+    const line = (p, from, to) => { if (vertical) { c.moveTo(from, p); c.lineTo(to, p); } else { c.moveTo(p, from); c.lineTo(p, to); } };
+    // the extent: a band between its edges under the ticks, and over them (below) its edges full depth and its middle half depth (Illustrator marks the edges; the band reads at a glance)
+    const sel = o.sel, sa = sel ? sel[0] : 0, sbd = sel ? sel[1] : 0;
+    if (sel) {
+      const lo = Math.max(0, Math.min(sa, sbd)), hi = Math.min(len, Math.max(sa, sbd));
+      c.fillStyle = 'rgba(38,128,235,.18)';
+      if (hi >= lo) { if (vertical) c.fillRect(0, lo, thick, hi - lo); else c.fillRect(lo, 0, hi - lo, thick); }
+    }
+    // the ticks: each division short, the half longer, the numbered ones the full depth
+    const u0 = -origin / pxmm, u1 = (len - origin) / pxmm;
+    const i0 = Math.ceil(u0 / st.minor - 1e-6), i1 = Math.min(i0 + 4000, Math.floor(u1 / st.minor + 1e-6));
+    c.strokeStyle = o.hair; c.lineWidth = 1; c.beginPath();
+    for (let i = i0; i <= i1; i++) {
+      const p = Math.round(origin + i * st.minor * pxmm) + 0.5; if (p < 0 || p > len) continue;
+      const big = i % st.n === 0, mid = !big && st.half && i % st.half === 0;
+      const h = big ? thick - 1 : mid ? Math.min(7, thick * 0.4) : Math.min(4, thick * 0.24);
+      line(p, thick - h, thick - 1);
+    }
+    c.stroke();
+    // the numbers, on the numbered ticks; the zero in ink
+    const j0 = Math.ceil(u0 / st.major - 1e-6) - 1, j1 = Math.min(j0 + 400, Math.floor(u1 / st.major + 1e-6) + 1);
+    for (let j = j0; j <= j1; j++) {
+      const u = j * st.major, p = Math.round(origin + u * pxmm); if (p < -40 || p > len + 4) continue;
+      c.fillStyle = j === 0 ? o.ink : o.muted;
+      if (vertical) { c.save(); c.translate(1.5, p + 2); c.rotate(-Math.PI / 2); c.textAlign = 'right'; c.fillText(ruleNum(u), 0, 0); c.restore(); }
+      else { c.textAlign = 'left'; c.fillText(ruleNum(u), p + 2.5, 2); }
+    }
+    if (o.between) o.between(c, line);
+    if (sel) {
+      c.strokeStyle = o.live; c.lineWidth = 1; c.beginPath();
+      for (const p of [sa, sbd]) { const q = Math.round(p) + 0.5; if (q >= 0 && q <= len) line(q, 0, thick); }
+      const m = Math.round((sa + sbd) / 2) + 0.5; if (m >= 0 && m <= len) line(m, thick * 0.5, thick);
+      c.stroke();
+    }
+    // where the cursor is, right now (J 19275)
+    if (o.cursor != null) {
+      const p = Math.round(o.cursor) + 0.5;
+      if (p >= 0 && p <= len) { c.strokeStyle = o.live; c.lineWidth = 1; c.beginPath(); line(p, 0, thick); c.stroke(); }
+    }
+    return st;
+  }
+
   /* ═══ 1 · matrices (SVG order: [a,b,c,d,e,f] maps x,y to a·x + c·y + e, b·x + d·y + f) ═══ */
   const I = Object.freeze([1, 0, 0, 1, 0, 0]);
   const mul = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3],
@@ -1941,7 +2025,7 @@
         <button class="ce-item" type="button" data-zoom="100" role="menuitem">Actual Size<em>${esc(keyText('Mod+1'))}</em></button>
         <button class="ce-item" type="button" data-zoom="sel" role="menuitem">Zoom to Selection<em>${esc(keyText('Shift+2'))}</em></button>
         <div class="ce-menu__sep"></div>
-        ${[6400, 4000, 2000, 1000, 400, 200, 100, 50].map(z => `<button class="ce-item" type="button" data-zoom="${z}" role="menuitem">${z}%</button>`).join('')}
+        ${ZOOM_PRESETS.map(z => `<button class="ce-item" type="button" data-zoom="${z}" role="menuitem">${z}%</button>`).join('')}
       </div>
     </div>
     <div class="ce-abnav" role="group" aria-label="Artboard navigation">
@@ -2098,17 +2182,10 @@
     let lastStage = null;
     function zoomCmd(z) {
       if (z === 'fit') fit(); else if (z === '100') zoomTo(100); else if (z === 'sel') zoomToBox(selBox());
-      else if (z === 'in' || z === 'out') { const b = sb(); zoomAtStage(stepZoom(z === 'in' ? 1 : -1) / 100 * PX100, b.w / 2, b.h / 2); }
+      else if (z === 'in' || z === 'out') { const b = sb(); zoomAtStage(stepZoom(zoomPct(), z === 'in' ? 1 : -1) / 100 * PX100, b.w / 2, b.h / 2); }
       else if (fin(+z)) zoomTo(+z);
     }
-    /* ⌘ + / − and a click of the Zoom tool go up and down Illustrator's own ladder of zooms, so a number on the box is always one a person would pick */
-    const ZLADDER = [25, 100 / 3, 50, 200 / 3, 100, 150, 200, 300, 400, 600, 800, 1200, 1600, 2400, 3200, 4800, 6400];
-    function stepZoom(dir) {
-      const p = zoomPct();
-      if (dir > 0) { for (const z of ZLADDER) if (z > p * 1.004) return z; return ZMAX * 100; }
-      for (let i = ZLADDER.length - 1; i >= 0; i--) if (ZLADDER[i] < p / 1.004) return ZLADDER[i];
-      return ZMIN * 100;
-    }
+    /* (⌘ + / − and a click of the Zoom tool go up and down Illustrator's own ladder of zooms: stepZoom, section 0) */
     function applyView() {
       const b = sb(); if (b.w < 2 || b.h < 2) return;
       if (lastStage && (b.l !== lastStage.l || b.t !== lastStage.t)) { S.ox -= b.l - lastStage.l; S.oy -= b.t - lastStage.t; }
@@ -2130,7 +2207,6 @@
       for (const el of dtzEls) { const t = el.dataset.dtz === S.face ? ` @ ${zr} (${rootEl.classList.contains('cx-outline') ? 'Outline' : 'Preview'})` : ''; if (el.textContent !== t) el.textContent = t; }
       if (S.editing) placeEditor();
     }
-    const fmtZoom = p => (p < 100 ? trim(p, 0) : String(Math.round(p))) + '%';
     let viewK = 0, viewHair = '';
     /* A PAN SLIDES WHAT IS DRAWN (28 Oct 2026: smooth on a charm of hundreds of paths). While the hand pans (Space or the middle button and drag, the Hand, a
        two-finger scroll), the charm, its paper and grid and the overlays over them are moved as they are, on the compositor, instead of being drawn again on every
@@ -2185,18 +2261,7 @@
     /* ── the rulers (the studio's mkRulerDraw, J 19196-19291: one routine for both axes, drawn on a canvas, the cursor line) and what Illustrator's have that the
        studio's do not (Paul, 28 Oct 2026: "I also don't see a ruler like we have already in the charm studio"): the selection's extent marked on both, the guides
        on them, ticks in three heights from a 1-2-5 ladder that reaches 0.01 mm (tenths of a millimetre marked from about 1300 %), the numbers read from the zero point ── */
-    const LADDER = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
-    /** The numbered step (the first at least 46 px apart) and its finest division still 5 px apart: tenths, fifths or halves (a 2 in quarters, so every mark falls on
-     *  a number a person would write), with a longer middle tick when the division is even. */
-    function ruleSteps(pxmm) {
-      let major = LADDER[LADDER.length - 1];
-      for (const s of LADDER) if (s * pxmm >= 46) { major = s; break; }
-      const lead = Math.round(major / Math.pow(10, Math.floor(Math.log10(major) + 1e-9)));
-      let n = 1;
-      for (const d of lead === 2 ? [10, 4, 2] : lead === 5 ? [10, 5] : [10, 5, 2]) if (major / d * pxmm >= 5) { n = d; break; }
-      return { major, n, minor: major / n, half: n % 2 === 0 ? n / 2 : 0 };
-    }
-    const ruleNum = u => String(+(Math.abs(u) < 1e-9 ? 0 : u).toFixed(3));
+    /* (the ladder, its steps and the painting of one ruler: ruleSteps, paintRuler, section 0) */
     let ruleRaf = 0, cursor = null, ruleFont = '', ruleInk = null, selMemo = { its: null, key: '', b: null };
     const queueRulers = () => { if (!ruleRaf) ruleRaf = requestAnimationFrame(drawRulers); };
     /** The selection's box, worked out again only when the tree or the selection changes (the tree is immutable: the same array is the same drawing). */
@@ -2214,7 +2279,7 @@
       const pxmm = S.k * PT, ink = ruleInk.ink, muted = ruleInk.tick, hair = ruleInk.tick, liveC = ruleInk.live, guideC = '#19a6c6';
       // (what is being drawn is marked as it grows, a shape's draft or an extension tool's live box; otherwise the selection)
       const g0 = S.g, live = g0 && g0.kind === 'draw' && g0.live && g0.draft ? bboxOf(g0.draft) : S.xLive && Array.isArray(S.xLive.box) ? S.xLive.box : null;
-      const st = ruleSteps(pxmm), s = sb(), f = frame(), z = zeroPt(), sel = live || selExtent(), gl = S.showGuides ? guides() : [];
+      const s = sb(), f = frame(), z = zeroPt(), sel = live || selExtent(), gl = S.showGuides ? guides() : [];
       if (!ruleFont) ruleFont = '400 9px ' + (getComputedStyle(rootEl).fontFamily || 'sans-serif');
       corner.classList.toggle('is-moved', !!face().zero);
       const draw = (cv, vertical) => {
@@ -2228,54 +2293,19 @@
         // where a point of the charm (pt, on this ruler's axis) falls on the ruler, in the ruler's own px; the numbers count from the zero point
         const at = vertical ? (v => s.t - box.top + S.oy + (v - f.y0) * S.k) : (v => s.l - box.left + S.ox + (v - f.x0) * S.k);
         const origin = at(vertical ? z[1] : z[0]);
-        const line = (p, from, to) => { if (vertical) { c.moveTo(from, p); c.lineTo(to, p); } else { c.moveTo(p, from); c.lineTo(p, to); } };
-        // the selection's extent: a band between its edges under the ticks, and over them (below) its edges full depth and its middle half depth (Illustrator marks
-        // the edges; the band reads at a glance)
         const sa = sel ? at(vertical ? sel[1] : sel[0]) : 0, sbd = sel ? at(vertical ? sel[3] : sel[2]) : 0;
-        if (sel) {
-          const lo = Math.max(0, Math.min(sa, sbd)), hi = Math.min(len, Math.max(sa, sbd));
-          c.fillStyle = 'rgba(38,128,235,.18)';
-          if (hi >= lo) { if (vertical) c.fillRect(0, lo, thick, hi - lo); else c.fillRect(lo, 0, hi - lo, thick); }
-        }
-        // the ticks: each division short, the half longer, the numbered ones the full depth
-        const u0 = -origin / pxmm, u1 = (len - origin) / pxmm;
-        const i0 = Math.ceil(u0 / st.minor - 1e-6), i1 = Math.min(i0 + 4000, Math.floor(u1 / st.minor + 1e-6));
-        c.strokeStyle = hair; c.lineWidth = 1; c.beginPath();
-        for (let i = i0; i <= i1; i++) {
-          const p = Math.round(origin + i * st.minor * pxmm) + 0.5; if (p < 0 || p > len) continue;
-          const big = i % st.n === 0, mid = !big && st.half && i % st.half === 0;
-          const h = big ? thick - 1 : mid ? Math.min(7, thick * 0.4) : Math.min(4, thick * 0.24);
-          line(p, thick - h, thick - 1);
-        }
-        c.stroke();
-        // the numbers, on the numbered ticks; the zero in ink
-        const j0 = Math.ceil(u0 / st.major - 1e-6) - 1, j1 = Math.min(j0 + 400, Math.floor(u1 / st.major + 1e-6) + 1);
-        for (let j = j0; j <= j1; j++) {
-          const u = j * st.major, p = Math.round(origin + u * pxmm); if (p < -40 || p > len + 4) continue;
-          c.fillStyle = j === 0 ? ink : muted;
-          if (vertical) { c.save(); c.translate(1.5, p + 2); c.rotate(-Math.PI / 2); c.textAlign = 'right'; c.fillText(ruleNum(u), 0, 0); c.restore(); }
-          else { c.textAlign = 'left'; c.fillText(ruleNum(u), p + 2.5, 2); }
-        }
-        // the guides across this ruler: a small flag on its inner edge (the top ruler carries the upright guides, at their x)
-        c.fillStyle = guideC;
-        for (const g of gl) {
-          if (g.axis !== (vertical ? 'y' : 'x')) continue;
-          const p = Math.round(at(g.v)) + 0.5; if (p < -4 || p > len + 4) continue;
-          c.beginPath();
-          if (vertical) { c.moveTo(thick, p - 4); c.lineTo(thick - 5, p); c.lineTo(thick, p + 4); } else { c.moveTo(p - 4, thick); c.lineTo(p, thick - 5); c.lineTo(p + 4, thick); }
-          c.closePath(); c.fill();
-        }
-        if (sel) {
-          c.strokeStyle = liveC; c.lineWidth = 1; c.beginPath();
-          for (const p of [sa, sbd]) { const q = Math.round(p) + 0.5; if (q >= 0 && q <= len) line(q, 0, thick); }
-          const m = Math.round((sa + sbd) / 2) + 0.5; if (m >= 0 && m <= len) line(m, thick * 0.5, thick);
-          c.stroke();
-        }
-        // where the cursor is, right now (J 19275)
-        if (cursor) {
-          const p = Math.round(vertical ? cursor.y - box.top : cursor.x - box.left) + 0.5;
-          if (p >= 0 && p <= len) { c.strokeStyle = liveC; c.lineWidth = 1; c.beginPath(); line(p, 0, thick); c.stroke(); }
-        }
+        paintRuler(c, { vertical, len, thick, origin, pxmm, ink, muted, hair, live: liveC, sel: sel ? [sa, sbd] : null, cursor: cursor ? (vertical ? cursor.y - box.top : cursor.x - box.left) : null,
+          // the guides across this ruler: a small flag on its inner edge (the top ruler carries the upright guides, at their x)
+          between: c => {
+            c.fillStyle = guideC;
+            for (const g of gl) {
+              if (g.axis !== (vertical ? 'y' : 'x')) continue;
+              const p = Math.round(at(g.v)) + 0.5; if (p < -4 || p > len + 4) continue;
+              c.beginPath();
+              if (vertical) { c.moveTo(thick, p - 4); c.lineTo(thick - 5, p); c.lineTo(thick, p + 4); } else { c.moveTo(p - 4, thick); c.lineTo(p, thick - 5); c.lineTo(p + 4, thick); }
+              c.closePath(); c.fill();
+            }
+          } });
       };
       draw(rx, false); draw(ry, true);
     }
@@ -2398,7 +2428,7 @@
           if (g.live) {
             const a = fromClient(g.cx0, g.cy0), c = fromClient(g.cx, g.cy);
             zoomToBox([Math.min(a[0], c[0]), Math.min(a[1], c[1]), Math.max(a[0], c[0]), Math.max(a[1], c[1])], 1);
-          } else { const s = sb(); zoomAtStage(stepZoom(g.out ? -1 : 1) / 100 * PX100, g.cx0 - s.l, g.cy0 - s.t); }
+          } else { const s = sb(); zoomAtStage(stepZoom(zoomPct(), g.out ? -1 : 1) / 100 * PX100, g.cx0 - s.l, g.cy0 - s.t); }
         }
       }
       drawView(); queueRulers();
@@ -2506,7 +2536,7 @@
         const k = e.key;
         if (k === 'Enter') { e.preventDefault(); const v = numIn(zin.value); if (fin(v) && v > 0) zoomTo(v); backToWin(); }
         else if (k === 'Escape') { e.preventDefault(); backToWin(); }
-        else if (k === 'ArrowUp' || k === 'ArrowDown') { e.preventDefault(); zoomTo(stepZoom(k === 'ArrowUp' ? 1 : -1)); zin.value = trim(zoomPct(), zoomPct() < 100 ? 1 : 0); zin.select(); }
+        else if (k === 'ArrowUp' || k === 'ArrowDown') { e.preventDefault(); zoomTo(stepZoom(zoomPct(), k === 'ArrowUp' ? 1 : -1)); zin.value = trim(zoomPct(), zoomPct() < 100 ? 1 : 0); zin.select(); }
       };
     }
     /* the view's keys, heard after the editor's own (that one stops the page hearing them, not this): Z for the Zoom tool, ⌘; shows and hides the guides, Alt turns
@@ -3562,15 +3592,10 @@
       // (a scroll that pans is a pan in hand until it has been still for a moment: the view slides meanwhile, and is drawn afresh when it stops)
       const wheelPan = () => { clearTimeout(wheelPanT); wheelPanT = setTimeout(() => { wheelPanT = 0; if (slid) applyView(); }, 140); };
       const wheelZoom = () => { if (wheelPanT) { clearTimeout(wheelPanT); wheelPanT = 0; } };
-      if (e.ctrlKey) { wheelZoom(); zoomAtClient(e.clientX, e.clientY, Math.pow(1.01, -clamp(e.deltaY, -60, 60))); return; }
-      const lineMode = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
-      const dx = e.deltaX * lineMode, dy = e.deltaY * lineMode;
+      const w = wheelOf(e);   // (the rule itself is section 0's: the engraving work area zooms by it too)
+      if (w.zoom) { wheelZoom(); zoomAtClient(e.clientX, e.clientY, w.zoom); return; }
       S.fitted = false;
-      if (e.shiftKey) { wheelPan(); S.ox -= dy || dx; clampPan(); applyView(); return; }
-      if (e.metaKey) { wheelPan(); S.oy -= dy; clampPan(); applyView(); return; }
-      const wheelLike = e.deltaMode !== 0 || (Math.abs(e.deltaX) < 0.01 && fin(e.wheelDeltaY) && e.wheelDeltaY !== 0 && Math.abs(e.wheelDeltaY) % 120 === 0);
-      if (wheelLike) { wheelZoom(); zoomAtClient(e.clientX, e.clientY, Math.pow(1.0018, -clamp(dy, -400, 400))); return; }
-      wheelPan(); S.ox -= dx; S.oy -= dy; clampPan(); applyView();
+      wheelPan(); S.ox += w.pan[0]; S.oy += w.pan[1]; clampPan(); applyView();
     }
     function onDbl(e) {
       if (S.tool !== 'select') return;
@@ -4536,6 +4561,8 @@
   }
 
   const api = { open, model, builtinTextToPaths, current: null, version: 1 };
+  // (ENGZOOM, 29 Oct 2026: the view's shared parts, section 0: the Design & Engrave work area zooms, pans and draws its rulers with them)
+  api.view = Object.freeze({ PX100, ZMIN, ZMAX, PT, MM, LADDER, ZLADDER, ZOOM_PRESETS, ruleSteps, ruleNum, stepZoom, fmtZoom, wheelOf, paintRuler });
   // the extension points (see the header): empty lists the other files push onto; anything registered before this file loaded is taken in
   Object.assign(api, { tools: [], commands: {}, importers: [], panels: [], onOpen: [], onClose: [] });
   { const pre = root && root.CharmEditor;
