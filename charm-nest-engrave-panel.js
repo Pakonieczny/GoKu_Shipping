@@ -423,10 +423,13 @@
       const m = model(); if (!m) return;
       const jobKey = str(opts.job && opts.job.key) || str((faceJobOf(m.vm, m.d.face, slot) || {}).key);
       APPROVING.add(key); let pressed = false;
+      // (NONEPLAIN: Approve with None staged, or with the "Cut it plain" row showing, IS the go-ahead: the faces go, and there is nothing left to approve, so the press ends there; it never approves the old job)
+      const noneNow = m.d.mode === 'none', goAhead = noneNow || m.d.confirm === 'save';
       try {
-        say(cardOf(jobKey), WAIT_WHY);
-        const res = await commit(m, false);
+        say(cardOf(jobKey), noneNow ? '' : WAIT_WHY);
+        const res = await commit(m, goAhead);
         if (!res || !res.ok) { if (!(res && (res.confirm || res.cancelled))) say(cardOf(jobKey), 'Not approved: ' + str((res && res.message) || 'the new words were not kept') .replace(/^Not saved:\s*/, '')); return; }
+        if (noneNow) return;
         const E = Eng(), until = Date.now() + 60000 * Math.max(0.001, +(root && root.CN_SPIN_SCALE) || 1);
         const jobNow = () => tryDo(() => ((E && E.jobsOf ? E.jobsOf(line) : jobs()) || []).find(j => j && j.key === jobKey), null);
         let j = jobNow();
@@ -441,6 +444,8 @@
     };
     const stop = (e, act) => {
       if (APPROVING.has(key)) { e.preventDefault(); e.stopImmediatePropagation(); return; }   // (the approval that follows the new words is on its way)
+      // (NONEPLAIN: a change being kept right now (None, a face) is never overtaken by an Approve of the job as it was: the press waits for it and says so)
+      { const m = dead ? null : tryDo(() => model(), null); if (m && m.d.busy) { e.preventDefault(); e.stopImmediatePropagation(); say(gateCard, m.d.mode === 'none' ? 'No engraving is being kept · nothing to approve' : 'Your change is being kept · press Approve once it is drawn'); return; } }
       if (!stagedNow()) return;   // (nothing staged: the card approves as it always did)
       e.preventDefault(); e.stopImmediatePropagation(); approveAfterCommit(act || 'approve');
     };
@@ -534,7 +539,10 @@
       if (want !== 'none') d.face = want;
       draw(); paintAll(vm, d); changed('mode', d.face);
       d.after = want === 'none' ? null : want;
-      commit(m, false).then(r => { if (r && r.ok && want !== 'none') show(want); }, () => {});
+      // NONEPLAIN (Paul 29 Oct 2026: "I chose "None" for engraving and it still kept the engraving even after pressing the "Approve" button ... the engraving must be completely removed"): None IS the person's
+      // decision, kept at once: every face of the piece goes (an approved one cut plain, its seal kept, a "cut plain" seal and the timeline line added, its file withdrawn from every sheet). It used to stop at
+      // the "Cut it plain / Keep it as it is" row, which nothing but that row's own button ended: Approve did nothing, and leaving the card let the choice go, so the back stayed engraved.
+      commit(m, want === 'none').then(r => { if (r && r.ok && want !== 'none') show(want); }, () => {});
     };
     const click = e => {
       const b = e.target && e.target.closest && e.target.closest('[data-engp]'); if (!b || !el.contains(b) || b.disabled || dead) return;
