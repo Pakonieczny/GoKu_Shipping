@@ -9279,11 +9279,11 @@ const Engrave = window.Engrave = (() => {
     const had = new Set(jobsOf(line).map(j => j.key));
     try {
       const placed = stagedFacesOfLine(line);   // (FRONTSTAGE: where the person dragged the staged words of a face that had no job)
-      const res = await CS.apply(line, patch, setupEnv()); if (res && res.ok && jobsOf(line).some(j => !had.has(j.key))) prepareLate(line).then(() => {
-        for (const p of placed) { if (!p.centre || !p.view) continue; const nj = jobsOf(line).find(j => !had.has(j.key) && faceOf(j) === p.face); if (!nj || !nj.fit || !nj.view || nj.state !== "review") continue;
-          const same = Math.abs((nj.view.cx || 0) - (p.view.cx || 0)) < 0.01 && Math.abs((nj.view.cy || 0) - (p.view.cy || 0)) < 0.01 && Math.abs((nj.view.upAngle || 0) - (p.view.upAngle || 0)) < 0.01;
-          if (same && refit(nj, { centre: p.centre, angle: nj.fit.angle })) { nj.nudged = true; Session.schedule(); refresh(nj); } }
-      }).catch(() => {});
+      const res = await CS.apply(line, patch, setupEnv());
+      // (ONEAPPROVE: the place the person dragged the staged words to, as a point of the CHARM (whatever frame the preview drew it in), rides on the new face job: prepareLate moves the words there right
+      //  after their first fit, with the work area's own move (moveTo), before anything approves them)
+      if (res && res.ok) for (const p of placed) { if (!p.centre || !p.view) continue; const nj = jobsOf(line).find(j => !had.has(j.key) && faceOf(j) === p.face); if (nj) { const pc = charmPointOf(p.view, p.centre); if (pc) nj._placeAt = pc; } }
+      if (res && res.ok && jobsOf(line).some(j => !had.has(j.key))) prepareLate(line).catch(() => {});
       // (NONEPLAIN 2: None approved: the piece is a regular order now, said once, plainly; the tab moves on as after any Approve: the piece is in no list any more)
       if (res && res.ok && patch && patch.mode === "none" && (res.none || []).length) { toast(`Order ${line.order.receiptId} · no engraving · now a regular order`, "ok", 6000); try { render(); Orders.render(); } catch (_) {} }
       return res;
@@ -9327,7 +9327,10 @@ const Engrave = window.Engrave = (() => {
       try {
         for (let pass = 0; pass < 2 && items() === owner && jobsOf(line).some(j => OPENREAD.includes(j.state) && owner.get(j.key) === j) && facedSetup(line, jobsOf(line)); pass++) await classify(line);   // (only a line the setup itself reads (facedSetup, checked in this very tick: classifyOnce takes the same branch), so never the paid reader; joins a reading of the line already under way; the second pass takes what that one's list did not hold)
         for (const j of jobsOf(line)) if (items() === owner && owner.get(j.key) === j && !j.editingBack && j.state === "ready" && canFit(j) && !isWorking(j) && !j.approvalPreparing) await fitJob(j);
+        // (ONEAPPROVE: a face made from a staged preview takes the place its words were dragged to, by the work area's own move, in its own frame)
+        for (const j of jobsOf(line)) if (j._placeAt) { const pc = j._placeAt; delete j._placeAt; if (j.fit && j.view && j.state === "review" && !j.fit.artOnly) { const c = viewPointOf(j.view, pc); try { if (c && moveTo(j, c)) j.nudged = true; } catch (_) { /* the system's place stands */ } } }
       } catch (e) {
+        for (const j of jobsOf(line)) delete j._placeAt;
         if (items() === owner) for (const j of jobsOf(line)) if (OPENREAD.includes(j.state) && owner.get(j.key) === j) toWords(j, `These words could not be read (${e && e.message ? e.message : e}) — confirm them`);
       }
       return jobsOf(line);
@@ -9977,6 +9980,11 @@ const Engrave = window.Engrave = (() => {
      draft like typed words on a placed face (draftCompute's own pieces: the font file, capitals for a capitals-only font, G.reflowAt). The words can be dragged. Nothing is made, saved or sent: the job is
      made by Approve (CharmNestEngraveSetup.apply), and the place the person dragged the words to is given to it when it is laid out in the same frame (saveSetup). In memory only, per card job. */
   const STAGED_FACES = new Map();   // the card's job key -> { face, text, fontWord, centre, size, view, mask, loading }
+  /* ONEAPPROVE: a point of a view's frame as a point of the charm, and back (view = R . M of the charm: charm-nest-geom.js backView), so a place carries from one view of a face to another */
+  const invAff = m => { const d = m[0] * m[3] - m[1] * m[2]; if (!d) return null; return [m[3] / d, -m[1] / d, -m[2] / d, m[0] / d, (m[2] * m[5] - m[3] * m[4]) / d, (m[1] * m[4] - m[0] * m[5]) / d]; };
+  const apAff = (m, p) => [m[0] * p[0] + m[2] * p[1] + m[4], m[1] * p[0] + m[3] * p[1] + m[5]];
+  function charmPointOf(view, p) { try { const iR = invAff(view.R), iM = invAff(view.M); return iR && iM ? apAff(iM, apAff(iR, p)) : null; } catch (_) { return null; } }
+  function viewPointOf(view, p) { try { return apAff(view.R, apAff(view.M, p)); } catch (_) { return null; } }
   function stagedFaceFit(job, face, fv, rec) {
     const view = fv.view, charm = fv.charm, front = face === "front";
     if (!rec.mask || rec.view !== view) { rec.view = view; rec.centre = null; rec.mask = G.engraveMask(view, { marginMm: S.settings.engraveMarginMm, keepOut: (front ? charm.frontKeepOut : charm.backKeepOut) || [], ...(!front && charm.artBack?.length ? { avoid: charm.artBack } : {}) }); }

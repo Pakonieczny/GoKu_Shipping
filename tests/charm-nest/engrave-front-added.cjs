@@ -165,16 +165,22 @@ async function addFront(w, name, text) {
     check('S1 a faced line read again and opened: both faces are read from the setup and fitted by themselves (front W, back Name One), the front is drawn', s0.every(j => j.state === 'classify') && !!s1 && s1.find(j => j.face === 'front').text === 'W' && /NAME|Name/i.test(s1.find(j => j.face === 'back').text) && sw.canvas && /~front$/.test(sw.job || ''), JSON.stringify({ s0: s0.map(j => j.state), s1: s1 && s1.map(j => [j.face, j.state, j.text]), sw: [sw.job, sw.canvas, sw.text] }));
     check('S2 "Processing stopped" never showed there (the work area said Preparing, or drew)', !sseen.some(t => /Processing stopped/i.test(t)), JSON.stringify(sseen));
 
-    // ═══ T · FRONTSTAGE: Approve (the A key) with the staged front keeps it: the front is made and fitted, its own card opens for its own Approve; the back's approval is never pressed for it ═══
+    // ═══ T · ONEAPPROVE (Paul, 29 Oct 2026: the green Approve is the commit, one press is enough): the staged front, its words dragged left in the preview, then ONE press of A: the front is made, fitted, moved
+    //     to where the words were dragged (the work area's own move), and approved; the back keeps its state ═══
     const tKey = made.stageT.key;
     await R.openEngraveDetail(w, 'stageT', { face: 'back' });
     await page.evaluate(Q => document.querySelector(Q + ' .engpSeg[data-mode="front"]').click(), Q); await R.settle(page, 400);
-    await page.evaluate(Q => { const t = document.querySelector(Q + ' .engpWords'), set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; t.focus(); set.call(t, 'T'); t.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'T' })); }, Q); await R.settle(page, 400);
+    await page.evaluate(Q => { const t = document.querySelector(Q + ' .engpWords'), set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; t.focus(); set.call(t, 'T'); t.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'T' })); }, Q); await R.settle(page, 500);
     const t0 = await workFacts(page);
+    const box = await page.evaluate(Q => { const cv = document.querySelector(Q + ' .backHost canvas'), r = cv.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width }; }, Q);
+    await page.mouse.move(box.x, box.y); await page.mouse.down(); for (let k = 1; k <= 6; k++) { await page.mouse.move(box.x - k * box.w * 0.02, box.y, { steps: 1 }); await page.waitForTimeout(30); } await page.mouse.up(); await R.settle(page, 300);
+    const tBack0 = (await jobsOf(page, tKey)).find(j => j.face === 'back');
     await page.evaluate(Q => { const c = document.querySelector(Q); if (!c.hasAttribute('tabindex')) c.setAttribute('tabindex', '-1'); c.focus(); }, Q); await page.keyboard.press('a');
-    const tf = await until(async () => { const js = await jobsOf(page, tKey), f = js.find(j => j.face === 'front'), w1 = await workFacts(page); return f && f.state === 'review' && f.fitted && w1.open && /~front$/.test(w1.job || '') ? { f, b: js.find(j => j.face === 'back'), w1 } : null; }, 90000);
-    check('T1 the staged front is shown with its words before Approve, and Approve makes it: fitted, its own card in front for its own Approve; the back is not approved by it',
-      t0.staged && t0.viewFace === 'front' && !!tf && tf.b.state === 'review' && tf.f.text.toUpperCase() === 'T', JSON.stringify({ t0: { staged: t0.staged, viewFace: t0.viewFace, ink: t0.ink }, tf }));
+    const tf = await until(async () => { const js = await jobsOf(page, tKey), f = js.find(j => j.face === 'front'); return f && ['approved', 'written'].includes(f.state) ? { f, b: js.find(j => j.face === 'back') } : null; }, 120000);
+    const placedAt = await page.evaluate(k => { const row = B.orders.byKey.get(k), f = Engrave.jobsOf(row).find(j => j.face === 'front'); return f && f.fit && f.view ? { dx: f.fit.centre[0] - f.view.cx, nudged: !!f.nudged } : null; }, tKey);
+    check('T1 the staged front is shown with its words before Approve; ONE press of A makes it, fits it and approves it; the back keeps its state',
+      t0.staged && t0.viewFace === 'front' && !!tf && tf.b.state === tBack0.state && tf.f.text.toUpperCase() === 'T' && tf.f.seals === 1, JSON.stringify({ t0: { staged: t0.staged, viewFace: t0.viewFace }, tf, back0: tBack0.state }));
+    check('T2 the words are where they were dragged in the preview (moved by the work area\'s own move before the approval: left of the middle)', !!placedAt && placedAt.nudged && placedAt.dx < -1, JSON.stringify(placedAt));
     check('Z1 no model call (reading, review or any other) was made by any of this: the front takes its words from the setup', modelCalls === 0, 'calls after the world was built: ' + modelCalls);
     check('Z2 no page error', w.errors.length === 0, JSON.stringify(w.errors).slice(0, 300));
   } finally { console.log = realLog; await w.close(); }

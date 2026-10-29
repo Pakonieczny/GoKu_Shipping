@@ -438,19 +438,23 @@
       //  left to approve, so the press ends there and never approves the old job. With the "Cut it plain" row showing, Approve is the go-ahead too.)
       const noneNow = m.d.mode === 'none';
       const newFace = !noneNow && facesOf(m.d.mode).includes(m.d.face) && faceJobOf(m.vm, m.d.face, slot) === null ? m.d.face : null;   // (FRONTSTAGE: the face edited was staged on and has no job yet)
+      const otherTouched = !!newFace && (() => { const p = tryDo(() => Setup().patchOf(m.vm, m.d), {}) || {}, o = newFace === 'front' ? 'back' : 'front'; return p[o] !== undefined; })();   // (ONEAPPROVE: the other face changed in this press too)
       try {
         say(cardOf(jobKey), noneNow ? '' : WAIT_WHY);
         const res = await commit(m);
         if (!res || !res.ok) { if (!(res && res.cancelled)) say(cardOf(jobKey), 'Not approved: ' + str((res && res.message) || 'the new words were not kept') .replace(/^Not saved:\s*/, '')); return; }
         if (noneNow) return;
         const E = Eng(), until = Date.now() + 60000 * Math.max(0.001, +(root && root.CN_SPIN_SCALE) || 1);
-        // (FRONTSTAGE: the staged face is made now: its own card is opened once its words are fitted, for its own Approve; the other face's approval is never pressed for it)
+        // ONEAPPROVE (Paul, 29 Oct 2026: the green Approve is the commit: one press is enough): the staged face is made now, its words fitted and moved to where they were dragged (the job's _placeAt, by the
+        // bridge), and approved in this same press; the other face keeps its state unless this press changed it too (then it is approved as well, as below)
         if (newFace) {
           const nj = () => tryDo(() => ((E && E.jobsOf ? E.jobsOf(line) : jobs()) || []).find(j => j && faceOf(j) === newFace && (slotOfJob(j) || null) === (slot || null)), null);
-          let j2 = nj(); while (Date.now() < until && !(j2 && (j2.state === 'review' && j2.fit || ['words', 'blocked'].includes(j2.state)))) { await wait(60); j2 = nj(); }
+          const ready = x => !!x && x.state === 'review' && !!x.fit && !x._placeAt && !(E && E.isWorking && tryDo(() => E.isWorking(x), false));
+          let j2 = nj(); while (Date.now() < until && !(ready(j2) || (j2 && ['words', 'blocked'].includes(j2.state)))) { await wait(60); j2 = nj(); }
           say(cardOf(jobKey), '');
-          if (j2 && E && E.restoreView && E.render) tryDo(() => { E.restoreView({ tab: 'place', list: false, chosen: true, focus: j2.key }); E.render(); });
-          return;
+          if (ready(j2) && E && E.approve) { pressed = true; APPROVING.delete(key); await Promise.resolve(tryDo(() => E.approve(j2), null)).catch(() => {}); }
+          else if (j2 && E && E.restoreView && E.render) { tryDo(() => { E.restoreView({ tab: 'place', list: false, chosen: true, focus: j2.key }); E.render(); }); return; }   // (its words still need a person: its own card)
+          if (!otherTouched) return;
         }
         const jobNow = () => tryDo(() => ((E && E.jobsOf ? E.jobsOf(line) : jobs()) || []).find(j => j && j.key === jobKey), null);
         let j = jobNow();
