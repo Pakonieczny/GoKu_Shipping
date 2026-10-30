@@ -435,10 +435,10 @@
   const TYPED = { at: 0, key: '' };
   const TYPE_MS = 800;
   /* OWNINPUT (coordinator 30 Oct 2026, the input tracer: "While an approval's seal stamp is pressed ... this document-level capture listener swallows EVERY click and keydown on the page"; "Never
-   * swallow input inside the Engrave detail card's panel and work area"): what the panel tells the stamp's guard (Seal.ownInput) is its own. A press in the panel, the work area, a thumbnail or the
-   * panel's pickers, and on the card of a panel A (it presses Approve: queued), S (it stages None) or a key typed mid-word (it goes back into the box), never dismisses the card under the stamp.
+   * swallow input inside the Engrave detail card's panel and work area"): what the panel tells the stamp's guard (Seal.ownInput) is its own. A press in the panel or on its Approve, the work area, a thumbnail or
+   * the panel's pickers, and on the card of a panel A (it presses Approve: queued), S (it stages None) or a key typed mid-word (it goes back into the box), never dismisses the card under the stamp.
    * Escape, Next, Back, close, another card or row and the tabs are still held for the stamp. */
-  const OWN_SEL = '.engp, [data-engp], .backHost, [data-eng-thumb], .emPop, .cnAp';
+  const OWN_SEL = '.engp, [data-engp], [data-engp-approve], [data-engp-stamp], .backHost, [data-eng-thumb], .emPop, .cnAp';   // (the panel's Approve sits in the card's approval row, outside .engp)
   function ownInput(e) {
     const t = e && e.target; if (!t || !t.closest || e.type === 'keydown' && e.key === 'Escape') return false;
     if (t.closest(OWN_SEL)) return !(t.closest('.emPop, .cnAp') && !t.ownerDocument.querySelector('.engp'));   // (the pickers: while a panel is on the page)

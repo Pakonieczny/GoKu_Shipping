@@ -347,6 +347,27 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     check('J1 a capitals font, "Name Oneo" typed and approved: kept in the fit\'s form (NAME ONEO), and the card calm: "Approved", Approve not lit again', !!j0.font && !!jd && j2.approve && j2.approve.a === 'approved' && !j2.dirty, JSON.stringify({ j0, j1: { approve: j1.approve, dirty: j1.dirty }, jobs: jd || await jobsOf(KB), j2: { key: j2.key, approve: j2.approve, dirty: j2.dirty, words: j2.words } }));
     check('J2 the words box keeps the casing typed ("Name Oneo"), never the fit\'s capitals', j2.words && j2.words.value === 'Name Oneo', JSON.stringify(j2.words));
     await page.evaluate(() => { Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render(); }); await R.settle(page, 900);
+
+    /* ── K · OWNINPUT (coordinator, 30 Oct 2026, the input tracer: "41 input events in the 2 s after an Approve were killed" by the seal's page-wide guard): while a stamp is coming down, the panel's
+     *        own input goes through (a thumbnail, the words box and typing, Approve), and what would dismiss the card (Next) is still held ── */
+    await quiet(); await R.openEngraveDetail(w, 'back', { face: 'back' }); await R.settle(page, 700);
+    const k0 = await page.evaluate(() => {   // (a stamp held down 6 s: its seal waits for a running animation of its surface before it comes down)
+      const host = document.createElement('div'); host.style.cssText = 'position:fixed;right:0;bottom:0;width:40px;height:40px;pointer-events:none'; const seal = document.createElement('div'); seal.className = 'seal'; seal.style.cssText = 'width:40px;height:40px'; host.appendChild(seal); document.body.appendChild(host);   // (on the page and seen: a seal out of sight is not stamped)
+      host.animate([{ opacity: 1 }, { opacity: 0.99 }], { duration: 6000 });
+      window.__k = Seal.press(seal).catch(() => {}).then(() => host.remove());
+      return { busy: Seal.busy(), key: window.__card().dataset.key, words: window.__card().querySelector('.engp .engpWords').value };
+    });
+    await page.click(Q + ' [data-eng-thumb="front"]'); const k1 = await st();
+    await page.click(Q + ' [data-eng-thumb="back"]'); const k2 = await st();
+    await page.click(P + ' .engpWords'); await page.keyboard.press('End'); await page.keyboard.type('Q', { delay: 15 }); const k3 = await st();
+    await page.click(Q + ' [data-engp-approve]'); const k4 = await page.evaluate(k => ({ st: window.__st().approve, busy: CharmNestEngravePanel.busyOf(k) }), KB);
+    await page.click(Q + ' [data-a="next"]').catch(() => {}); const k5 = await page.evaluate(() => ({ key: (window.__card() || {}).dataset?.key, stillStamping: Seal.busy() }));
+    await page.evaluate(() => window.__k);
+    const kd = await until(async () => { const js = await jobsOf(KB), b = js.find(j => j.face === 'back'), s = await page.evaluate(k => CharmNestEngravePanel.busyOf(k), KB); return b && ['approved', 'written'].includes(b.state) && /ONEOQ/.test(b.text.replace(/\s+/g, '')) && !s.running && !s.pending && !s.committing ? js : null; }, 120000);
+    check('K1 under a stamp the panel\'s own input goes through: the thumbnails, the words box and a typed letter, Approve ("Approved ✓", its commit under way)', k0.busy && k5.stillStamping && k1.active === 'front' && k2.active === 'back' && /Q$/.test((k3.words || {}).value || '') && k4.st && /✓/.test(k4.st.text) && (k4.busy.committing || k4.busy.running), JSON.stringify({ k0, k1: k1.active, k2: k2.active, k3: k3.words, k4, k5 }));
+    check('K2 and what would take the card away (Next) is still held for the stamp', k5.key === k0.key, JSON.stringify({ k0: k0.key, k5 }));
+    check('K3 the press made under the stamp is kept and approved (the Back "…ONEOQ")', !!kd, JSON.stringify(kd || await jobsOf(KB)));
+    await quiet(); await page.evaluate(() => { Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render(); }); await R.settle(page, 900);
     check('Z no page errors', errors.length === 0, errors.join(' | ').slice(0, 600));
   } catch (e) { console.error(e); check('ran', false, String(e && e.stack || e)); }
   finally { await w.close(); }
