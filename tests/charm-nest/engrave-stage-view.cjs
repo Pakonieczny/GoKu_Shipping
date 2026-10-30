@@ -145,6 +145,29 @@ const FORBIDDEN = /Words to confirm|gives no words|being prepared|Engrave these 
     check('R3 no backlog: at most one turn running at a time, at most one fade, nothing left running', rapid.maxAnims <= 1 && rapid.ghosts <= 1 && rapid.anims === 0 && !rapid.flipping, JSON.stringify({ maxAnims: rapid.maxAnims, ghosts: rapid.ghosts, anims: rapid.anims, flipping: rapid.flipping }));
     await R.shot(w, 'STAGE-after-rapid');
 
+    // ═══ B · 60 random calls (choice, face, words) with the card drawn again now and then (Engrave.render, as the tab does at every change): the last state is what is drawn, every hook of it ═══
+    const burst = await page.evaluate(async Q => {
+      let seed = 7; const rnd = n => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+      const keyOf = () => document.querySelector(Q).dataset.key, job = () => Engrave.items().get(keyOf()), key = keyOf().replace(/~front$/, '');
+      const letters = 'aeinoRsvyL', words = { front: 'Ann', back: 'Ruby' }; let last = null, rebuilt = 0;
+      for (let i = 0; i < 60; i++) {
+        const k = rnd(10), face = rnd(2) ? 'front' : 'back';
+        if (k < 5) words[face] = (words[face] + letters[rnd(letters.length)]).slice(-7); else if (k === 5) words[face] = words[face].slice(0, -1);
+        const choice = ['both', 'both', 'front', 'back', 'none'][rnd(5)], active = k === 9 ? (face === 'front' ? 'back' : 'front') : face;
+        last = { key, choice, active, faces: { front: { text: words.front, font: '', pos: null }, back: { text: words.back, font: '', pos: null } } };
+        Engrave.showStage(job(), last);
+        if (rnd(7) === 0) { Engrave.render(); rebuilt++; }   // (the card drawn again in the middle of it)
+        if (rnd(3) === 0) await new Promise(r => setTimeout(r, rnd(12)));
+      }
+      await new Promise(r => setTimeout(r, 1000));
+      const h = document.querySelector(Q + ' .backHost'), th = f => { const b = document.querySelector(Q + ` [data-eng-thumb="${f}"]`), t = b && b.querySelector('.engpvText'); return b ? { cur: b.getAttribute('aria-current') === 'true', eng: b.dataset.engraved === '1', text: t && !t.hidden ? t.textContent : '' } : null; };
+      const on = f => last.choice === 'both' || last.choice === f;
+      return { last: { choice: last.choice, active: last.active, front: last.faces.front.text, back: last.faces.back.text }, rebuilt, face: h.dataset.face, words: h.dataset.words, el: !!h.querySelector(':scope > canvas, :scope > .egStagePv'), front: th('front'), back: th('back'),
+        want: { words: on(last.active) ? last.faces[last.active].text : '', front: on('front') ? last.faces.front.text : '', back: on('back') ? last.faces.back.text : '' } };
+    }, Q);
+    check(`B1 60 random calls with the card drawn again ${burst.rebuilt} times: the work area shows exactly the last state (its face and words)`, burst.el && burst.face === burst.last.active && low(burst.words) === low(burst.want.words), JSON.stringify(burst));
+    check('B2 and both thumbnails do too: the active one marked, each face engraved or plain as chosen, with its own words', !!burst.front && !!burst.back && burst.front.cur === (burst.last.active === 'front') && burst.back.cur === (burst.last.active === 'back') && burst.front.eng === (burst.last.choice === 'both' || burst.last.choice === 'front') && burst.back.eng === (burst.last.choice === 'both' || burst.last.choice === 'back') && low(burst.front.text) === low(burst.want.front) && low(burst.back.text) === low(burst.want.back), JSON.stringify(burst));
+
     // ═══ Z · zoom and rulers on a staged face that has no job ═══
     await show(stage('both', 'front', 'Ann', 'Ruby'));
     const z0 = await page.evaluate(Q => { const h = document.querySelector(Q + ' .backHost'), cv = h.querySelector(':scope > canvas'); return { zoom: !!h.querySelector('.egZoom'), rx: !!h.querySelector('.egRuleX'), ry: !!h.querySelector('.egRuleY'), k: cv && cv._map ? cv._map.k : 0, face: h.dataset.face }; }, Q);
