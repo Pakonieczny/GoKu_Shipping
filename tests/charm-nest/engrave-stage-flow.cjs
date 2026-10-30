@@ -729,8 +729,11 @@ if (require.main === module) (async () => {
         const allApproved = cFaces.length > 0 && cFaces.every(f => approvedish(c[f].state));
         const apOk = s.dirty ? !s.calm && !!s.approve && s.approve.enabled === (s.choice === 'none' || (fz.length > 0 && fz.every(f => NORM(stg && stg.words[f])))) : (allApproved ? !(s.approve && s.approve.enabled) && !!s.calm : true);
         check(`${tag}: Approve says what the state is (lit only when dirty with words on every engraved face, or None; calm Approved when nothing is staged on an approved piece)`, s.open && s.choice != null && apOk, J({ dirty: s.dirty, approve: s.approve, calm: s.calm, staged: stg, committed: c && [c.front && c.front.state, c.back && c.back.state] }));
-        const eqWords = !!c && !!stg && J(cFaces) === J(stg.faces) && stg.faces.every(f => c[f] && NORM(c[f].text) === NORM(stg.words[f])), eq = eqWords && stg.faces.every(f => approvedish(c[f].state));
-        check(`${tag}: ${must ? 'Approve was pressed after the last edit: committed equals staged (faces approved, words), nothing left dirty' : 'not dirty means committed equals staged (faces, words)'}`, must ? eq && !s.dirty : (s.dirty || eqWords),
+        const eqWords = !!c && !!stg && J(cFaces) === J(stg.faces) && stg.faces.every(f => c[f] && NORM(c[f].text) === NORM(stg.words[f]));
+        // (after a last lit press, the jobs must hold what was staged AT THE PRESS (the spec: "after Approve settles the committed state equals what was staged at the press"), not merely what the card shows now: a card that threw the staged state away looks consistent)
+        const eqPress = !!c && !!pressAt && J(cFaces) === J(pressAt.faces) && pressAt.faces.every(f => c[f] && NORM(c[f].text) === NORM(pressAt.words[f]) && approvedish(c[f].state));
+        const eq = must ? eqPress && eqWords : eqWords && stg.faces.every(f => approvedish(c[f].state));
+        check(`${tag}: ${must ? 'Approve was pressed after the last edit: committed equals what was staged at that press (faces approved, words), and the card shows it, not dirty' : 'not dirty means committed equals staged (faces, words)'}`, must ? eq && !s.dirty : (s.dirty || eqWords),
           J({ lastEdit, lastApprove: lastAp, dirty: s.dirty, approve: s.approve, calm: s.calm, staged: stg, committed: c && { front: c.front, back: c.back }, pressAt }));
       }
       const dup = !c || c.counts.front > 1 || c.counts.back > 1 || ['front', 'back'].some(f => c.sheet.filter(e => e.face === f).length > 1) || c.sheet.some(e => plainish(c[e.face]));
