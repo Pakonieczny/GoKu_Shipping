@@ -558,7 +558,10 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       const c0 = await committed(pk), face0 = s1.host && s1.host.face;
       await page.evaluate(pk => window.__stg.sample(pk, 1500), pk);
       const h = await page.evaluateHandle(pk => { const sc = window.__stg.scope(pk); return sc && [...sc.querySelectorAll('[data-a="approve"]')].find(window.__stg.vis); }, pk);
-      const ae = h.asElement(); if (ae) await ae.click({ force: true, timeout: 3000 }).catch(() => {});
+      const ae = h.asElement();
+      // (a disabled button gets no click event, so the press is marked by hand just before it)
+      await page.evaluate(() => { const o = window.__stg.samples; if (o && o.tClick == null) o.tClick = performance.now(); });
+      if (ae) await ae.click({ force: true, timeout: 3000 }).catch(() => {});
       await page.waitForFunction(() => window.__stg.samples.done, null, { timeout: 8000 }).catch(() => {});
       const sm = (await page.evaluate(() => window.__stg.samples.list)).filter(x => x.after);
       const c1 = await settle(pk, c => J([c.front, c.back]) === J([c0.front, c0.back]), 6000);
