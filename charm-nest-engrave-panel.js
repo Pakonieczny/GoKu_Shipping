@@ -334,7 +334,7 @@
 .engpMode{position:relative;display:flex;flex-wrap:nowrap;gap:3px;padding:3px;min-width:0;border:1px solid var(--line,#e4ddd0);border-radius:10px;background:var(--paper2,#ebe5d9)}
 .engpPill{position:absolute;top:3px;bottom:3px;left:3px;width:calc((100% - 6px - (var(--engp-n,4) - 1) * 3px) / var(--engp-n,4));border-radius:8px;background:var(--card,#fffefb);box-shadow:0 1px 2px rgba(28,26,23,.16),0 0 0 1px rgba(28,26,23,.30);transform:translateX(calc(var(--engp-i,0) * (100% + 3px)));transition:transform .18s cubic-bezier(.2,.75,.25,1),box-shadow .12s ease-out;pointer-events:none;z-index:0}
 .engpPill[hidden]{display:none}
-.engpSeg{position:relative;z-index:1;flex:1 1 0;min-width:0;min-height:40px;white-space:nowrap;overflow:hidden;text-overflow:clip;padding:6px 4px;border:0;border-radius:8px;background:transparent;font:600 13.5px var(--sans,system-ui);color:var(--ink70,#5b554c);cursor:pointer;transition:background-color .12s ease-out,color .12s ease-out,transform .08s ease-out}
+.engpSeg{position:relative;z-index:1;flex:1 1 0;min-width:0;min-height:40px;white-space:nowrap;padding:6px 4px;border:0;border-radius:8px;background:transparent;font:600 13.5px var(--sans,system-ui);color:var(--ink70,#5b554c);cursor:pointer;transition:background-color .12s ease-out,color .12s ease-out,transform .08s ease-out}
 .engpSeg[aria-pressed=true],.engpSeg[aria-checked=true]{color:var(--ink,#1c1a17)}
 .engpFaceSw .engpSeg[aria-checked=true]{background:var(--card,#fffefb);box-shadow:0 1px 2px rgba(28,26,23,.16),0 0 0 1px rgba(28,26,23,.30)}
 .engpSeg:disabled{opacity:.55;cursor:default}
@@ -394,7 +394,8 @@
     const { key, line, slot, snap } = ctx, E = Eng(), S = Setup();
     let res;
     try {
-      if (!E || typeof E.commitStage !== 'function' || !S) res = { ok: false, message: 'The engraving is not loaded yet.' };
+      if (typeof ctx.save === 'function') res = await ctx.save();
+      else if (!E || typeof E.commitStage !== 'function' || !S) res = { ok: false, message: 'The engraving is not loaded yet.' };
       else {
         const vm = S.read(line, { slot: slot || undefined, jobs: (E.jobsOf ? E.jobsOf(line) : []) || [] });
         const patch = vm ? S.patchOf(vm, { mode: snap.stage.choice, faces: snap.stage.faces }) : {};
@@ -405,7 +406,7 @@
     if (COMMITS.get(key) === snap) COMMITS.delete(key);
     const d = DRAFTS.get(key), clean = !!(res && res.ok) && d === snap.draft && d.seq === snap.seq && !COMMITS.has(key);
     if (clean) { d.touched = false; d.dirty = false; d.sig = ''; for (const f of FACES) d.faces[f].pos = null; }   // (what was staged is what is kept now: nothing is staged; the draft starts again from what is kept at the next look, on the face shown)
-    else if (!(res && res.ok) && !(res && res.cancelled)) toast(shortWhy(res && res.message));
+    else if (!(res && res.ok) && !(res && res.cancelled) && !(res && res.said)) toast(shortWhy(res && res.message));   // (one short toast; an approval that said why itself is not said twice)
     // (the pictures: what is kept, or what is staged on top of it now: never the state of the press. A binding draws from the draft as it is NOW: the sequence guard)
     const live = liveBindings(key);
     for (const b of live) tryDo(() => b.draw());
@@ -547,7 +548,14 @@
       const p = el.querySelector('.engp'); if (p) { p.dataset.choice = d.choice; p.dataset.mode = d.choice; }
     };
     /** "Front & Back" when it fits the column, else "Both" (SPEC: the four options fit the 382 px column at 40 px). */
-    const fitLabels = () => { const b = el.querySelector('.engpSeg[data-choice="both"]'); if (!b || !b.isConnected) return; if (b.textContent !== 'Front & Back') b.textContent = 'Front & Back'; if (b.scrollWidth > b.clientWidth + 1) b.textContent = 'Both'; };
+    const fitLabels = () => {
+      const b = el.querySelector('.engpSeg[data-choice="both"]'); if (!b || !b.isConnected || !b.clientWidth) return;
+      try {
+        const cs = doc.defaultView.getComputedStyle(b), room = b.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0), g = (fitLabels.cv || (fitLabels.cv = doc.createElement('canvas'))).getContext('2d');
+        g.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`; const want = g.measureText('Front & Back').width <= room - 2 ? 'Front & Back' : 'Both';
+        const t = [...b.childNodes].find(n => n.nodeType === 3); if (t) { if (t.nodeValue !== want) t.nodeValue = want; } else b.insertBefore(doc.createTextNode(want), b.firstChild);
+      } catch (_) { /* the words it has */ }
+    };
     const draw = () => {
       if (dead) return;
       const m = model(), fs = focusState();
@@ -580,7 +588,7 @@
     /** The active face (a thumbnail, the face switch, Engrave.showFace landing). Any face the piece has: one that is not engraved shows plain, and its words box waits empty. -> true when it moved */
     const setActive = (face, from) => {
       const m = model(); if (!m || !facesFor(line).includes(face)) return false;
-      const { d } = m; if (d.active === face) { const cur = el.querySelector('.engp'); if (cur && cur.dataset.active === face) return true; }
+      const { d } = m; if (d.active === face) { const cur = el.querySelector('.engp'); if (cur && cur.dataset.active === face) { if (from === 'thumb') paint('active', m); return true; } }
       d.active = face; d.focus = null; bump(d); draw(); paint('active', m);
       try { if (typeof opts.onFace === 'function') opts.onFace(face, from); } catch (_) { /* the host's own */ }
       changed('active', face);
@@ -641,7 +649,8 @@
       const m = dead ? null : model(); if (!m) return Promise.resolve({ ok: false }); const { vm, d } = m;
       if (!dirtyOf(vm, d, key)) return Promise.resolve({ ok: true, same: true });
       const snap = { seq: d.seq, draft: d, stage: { choice: d.choice, active: d.active, faces: cloneFaces(d.faces) } };
-      const run = (CHAINS.get(key) || Promise.resolve()).then(() => runCommit({ key, line, slot, snap, jobKey: me.jobKey || d.jobKey, keepOnly: true }));
+      const save = typeof opts.save === 'function' ? (() => { const patch = Setup().patchOf(vm, viewOf(d)); return () => opts.save(patch); })() : null;   // (a host's own save(patch): a test)
+      const run = (CHAINS.get(key) || Promise.resolve()).then(() => runCommit({ key, line, slot, snap, jobKey: me.jobKey || d.jobKey, keepOnly: true, save }));
       CHAINS.set(key, run.catch(() => {})); return run;
     };
     return { draw, refresh: draw, setFace: f => setActive(f, 'host'), setActive, beforeMove, moved, commit: commitNow, press, stageNone, stagePos: stagePosHere, paint: k => paint(k || 'refresh'), key,
@@ -701,7 +710,8 @@
       const jobNav = f => {
         if (staged()) return;   // (ENGSTAGE: the work area draws any face of the piece in this card: no other card is opened)
         const E = Eng(), other = E && E.jobsOf ? (E.jobsOf(line) || []).find(j => (slotOfJob(j) || null) === (slotOfJob(job) || null) && F && F.faceOf(j) === f) : null;
-        if (!other || other.key === job.key) return;
+        if (!other || other.key === job.key || ['none', 'skipped'].includes(other.state)) return;   // (a face taken away has no card of its own: the work area shows it plain here)
+        { const st = stage(); if (st && !facesOf(st.choice).includes(f)) return; }   // (a face not engraved in the stage: shown plain in this card)
         if (typeof o.refocus === 'function') tryDo(() => o.refocus(other));
         else if (['approved', 'written', 'skipped'].includes(other.state) && root.EngraveLink && root.EngraveLink.open) tryDo(() => { Promise.resolve(root.EngraveLink.open({ piece: other.key, face: f })).catch(() => {}); });
         else if (E.restoreView && E.render) tryDo(() => { E.restoreView({ focus: other.key }); E.render(); });

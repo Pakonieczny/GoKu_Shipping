@@ -9354,7 +9354,7 @@ const Engrave = window.Engrave = (() => {
     for (const f of on) {
       const j = jobs[f]; if (["approved", "written"].includes(j.state)) { approved.push(j.key); continue; }
       await approve(j, by, approved.length ? null : o.button);
-      if (!["approved", "written"].includes(j.state)) { const w = APPROVE_WHY.get(j.key); return { ok: false, message: (w && w.text) || `Not approved: the ${f} is still to approve.`, approved, failed: j.key }; }
+      if (!["approved", "written"].includes(j.state)) { const w = APPROVE_WHY.get(j.key); return { ok: false, message: (w && w.text) || `Not approved: the ${f} is still to approve.`, approved, failed: j.key, said: !!w }; }   // (said: the approval already told the person why)
       approved.push(j.key);
     }
     return { ok: true, approved };

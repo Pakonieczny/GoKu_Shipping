@@ -67,7 +67,7 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
         const b2 = document.querySelector('#egQueue .rvItem[data-kind=placement] .engp .engpChoice'), mid = getComputedStyle(b2.querySelector('.engpPill')).transitionDuration;
         await wait(320);
         const b3 = document.querySelector('#egQueue .rvItem[data-kind=placement] .engp .engpChoice'), pl = b3.querySelector('.engpPill'), seg = b3.querySelector(`[data-choice="${c}"]`), pr = pl.getBoundingClientRect(), sr = seg.getBoundingClientRect();
-        out.push({ c, pressed: [...b3.querySelectorAll('[aria-pressed=true]')].map(x => x.dataset.choice).join(), dx: Math.round(Math.abs(pr.left - sr.left)), dw: Math.round(Math.abs(pr.width - sr.width)), bg: getComputedStyle(pl).backgroundColor, segBg: getComputedStyle(seg).backgroundColor, dur: mid, h: Math.round(sr.height), over: seg.scrollWidth > seg.clientWidth + 1, label: seg.textContent });
+        out.push({ c, pressed: [...b3.querySelectorAll('[aria-pressed=true]')].map(x => x.dataset.choice).join(), dx: Math.round(Math.abs(pr.left - sr.left)), dw: Math.round(Math.abs(pr.width - sr.width)), bg: getComputedStyle(pl).backgroundColor, segBg: getComputedStyle(seg).backgroundColor, dur: mid, h: Math.round(sr.height), over: (() => { const t = [...seg.childNodes].find(n => n.nodeType === 3), r = document.createRange(); if (!t) return true; r.selectNodeContents(t); return r.getBoundingClientRect().width > seg.clientWidth - 2; })(), label: [...seg.childNodes].filter(n => n.nodeType === 3).map(n => n.nodeValue).join('').trim() });
       }
       return out;
     });

@@ -194,9 +194,9 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     const S = '#__slot';
     const state = () => page.evaluate(KEY => { const s = document.getElementById('__slot'), p = s.querySelector('.engp'), row = B.orders.byKey.get(KEY); return { face: p && p.dataset.face, mode: p && p.dataset.mode, text: p && p.querySelector('.engpWords') ? p.querySelector('.engpWords').value : null,
       staged: !!(p && p.dataset.staged), noSave: !!p && !p.querySelector('[data-engp=save],[data-engp=cancel]'), w: p && p.querySelector('.engpWords') ? p.querySelector('.engpWords').getBoundingClientRect().width : 0,
-      seg: [...s.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg')].map(b => b.getAttribute('aria-pressed') === 'true' ? b.textContent : '').join(''), ov: row.engravingOverride || null }; }, KEY);
+      seg: [...s.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg')].map(b => b.getAttribute('aria-pressed') === 'true' ? b.textContent.trim() : '').join(''), ov: row.engravingOverride || null }; }, KEY);
     let st = await state();
-    check(st.face === 'back' && st.mode === 'both' && st.text === '1. 27. 24' && !st.staged && st.noSave && st.seg === 'FrontBack', 'opens on the Back (the card\'s face) with its words, Front and Back both pressed, nothing staged, no Save / Cancel: ' + JSON.stringify({ face: st.face, text: st.text, staged: st.staged, seg: st.seg }));
+    check(st.face === 'back' && st.mode === 'both' && st.text === '1. 27. 24' && !st.staged && st.noSave && /^(Front & Back|Both)$/.test(st.seg), 'opens on the Back (the card\'s face) with its words, Front & Back pressed (ENGSTAGE: one option), nothing staged, no Save / Cancel: ' + JSON.stringify({ face: st.face, text: st.text, staged: st.staged, seg: st.seg }));
     check(st.w >= 200, 'the text area is ' + Math.round(st.w) + 'px wide in a 232px slot');
 
     await page.evaluate(() => __h.setFace('front'));
