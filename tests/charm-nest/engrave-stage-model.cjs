@@ -54,7 +54,7 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
   const typeInto = async (text, replace) => { await page.click(P + ' .engpWords'); if (replace) { await page.keyboard.press('Control+A'); await page.keyboard.press('Backspace'); } else await page.keyboard.press('End'); if (text) await page.keyboard.type(text, { delay: 15 }); await R.settle(page, 150); };
   const approvedAll = (key, faces) => until(async () => { const js = await jobsOf(key); return faces.every(f => js.some(j => j.face === f && ['approved', 'written'].includes(j.state))) ? js : null; }, 120000);
   try {
-    const made = await R.build(w, ['back', 'both']);
+    const made = await R.build(w, ['back', 'both', 'tag', 'front']);
     console.log(`   built: back ${JSON.stringify(made.back.jobs.map(j => [j.face, j.state, j.text]))} · both ${JSON.stringify(made.both.jobs.map(j => [j.face, j.state, j.text]))}`);
     const KB = made.back.key, KF = made.both.key;
 
@@ -235,13 +235,56 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
       return { presses, lit, st: P.stateOf(key) };
     }, KF);
     check('F1 a burst of options, words and presses: the last Approve is lit and taken; commits run under it', burst.lit && burst.presses.length >= 3 && burst.st && (burst.st.running || burst.st.pending || burst.st.committing), JSON.stringify(burst));
-    const drained = await until(() => page.evaluate(key => { const s = CharmNestEngravePanel.stateOf(key); return s && !s.running && !s.pending && !s.committing ? s : null; }, KF), 180000);
+    const drained = await until(() => page.evaluate(key => { const s = CharmNestEngravePanel.busyOf(key); return !s.running && !s.pending && !s.committing ? s : null; }, KF), 180000);
     await quiet();
     const fj = await jobsOf(KF), fb = fj.find(j => j.face === 'back'), ff = fj.find(j => j.face === 'front');
     check('F2 when nothing runs any more the LAST press is what is kept: the Back approved with "Last", the Front not engraved', !!drained && !!fb && ['approved', 'written'].includes(fb.state) && /^Last$/i.test(String(fb.text).trim()) && (!ff || ['none', 'skipped'].includes(ff.state)), JSON.stringify({ drained, jobs: fj }));
     if (!(await page.evaluate(key => !!CharmNestEngravePanel.stateOf(key), KF))) { await R.openEngraveDetail(w, 'both', { face: 'back' }); await R.settle(page, 700); }   // (the tab moved on after the Approve: the piece opened again)
     const truth = await page.evaluate(key => { const s = CharmNestEngravePanel.stateOf(key), c = window.__card(), p = c && c.querySelector('.engp'), b = c && c.querySelector('[data-engp-approve]'); return { s, dirtyAttr: !!(p && p.dataset.dirty), a: b && b.dataset.a, dis: b && b.disabled, busy: !!(b && b.getAttribute('aria-busy')) }; }, KF);
     check('F3 and the card says the truth: nothing staged against the jobs, the calm "Approved", nothing busy (or, when it differs from the jobs, a lit Approve)', truth.s && (truth.s.dirty ? truth.a === 'approve' && !truth.dis : truth.a === 'approved' && !truth.dirtyAttr) && !truth.busy, JSON.stringify(truth));
+    /* ── G · release blocker (A), S7 seed 3: a two-face piece approved, its Back moved (back to review) and its words changed, ONE Approve: BOTH faces approved, the card calm ── */
+    const KT = made.tag.key;
+    await quiet(); await R.openEngraveDetail(w, 'tag', { face: 'back' }); await R.settle(page, 700);
+    { const s0 = await st(); if (!(s0.approve && s0.approve.a === 'approved')) { if (s0.approve && s0.approve.a === 'approve' && !s0.approve.dis) await page.evaluate(() => window.__card().querySelector('[data-engp-approve]').click()); await approvedAll(KT, ['front', 'back']); } }
+    await quiet(); await R.openEngraveDetail(w, 'tag', { face: 'back' }); await R.settle(page, 700);
+    const g0 = await jobsOf(KT);
+    // the approved Back moved in the work area (its own move: it goes back to review, staged) and its words changed in the box, then ONE press
+    await page.evaluate(key => { const b = Engrave.jobsOf(B.orders.byKey.get(key)).find(j => j.face !== 'front'); Engrave.nudge(b, 0.3, 0); }, KT); await R.settle(page, 400);
+    const g1j = await jobsOf(KT);
+    await typeInto('1. 27. 25', true);
+    const g1 = await st();
+    await page.evaluate(() => window.__card().querySelector('[data-engp-approve]').click());
+    const g2 = await until(async () => { const js = await jobsOf(KT), s = await page.evaluate(k => CharmNestEngravePanel.busyOf(k), KT); return js.every(j => ['approved', 'written'].includes(j.state)) && !s.running && !s.pending && !s.committing ? js : null; }, 120000);
+    await quiet(); await R.openEngraveDetail(w, 'tag', { face: 'back' }); await R.settle(page, 700);
+    const g3 = await st();
+    check('G1 the approved two-face piece: its Back moved back to review, its words changed: Approve lit, the panel dirty', g0.every(j => ['approved', 'written'].includes(j.state)) && g1j.find(j => j.face === 'back').state === 'review' && g1.approve && g1.approve.a === 'approve' && !g1.approve.dis && g1.dirty, JSON.stringify({ g0, g1j, g1: { approve: g1.approve, dirty: g1.dirty } }));
+    check('G2 ONE Approve approves BOTH faces (the Back that went back to review included), with the new words', !!g2 && /1\. 27\. 25/.test(g2.find(j => j.face === 'back').text.replace(/\n/g, ' ')), JSON.stringify(g2 || await jobsOf(KT)));
+    check('G3 opened again: calm "Approved", nothing staged', g3.approve && g3.approve.a === 'approved' && !g3.dirty, JSON.stringify({ approve: g3.approve, dirty: g3.dirty }));
+    // and a face left unapproved under an approved one is never calm: the back moved again, nothing else
+    await page.evaluate(key => { const b = Engrave.jobsOf(B.orders.byKey.get(key)).find(j => j.face !== 'front'); Engrave.nudge(b, 0.3, 0); }, KT); await R.settle(page, 400);
+    const g4 = await st();
+    check('G4 an approved face beside one gone back to review: dirty, Approve lit (never the calm "Approved")', g4.dirty && g4.approve && g4.approve.a === 'approve' && !g4.approve.dis, JSON.stringify({ approve: g4.approve, dirty: g4.dirty, jobs: await jobsOf(KT) }));
+    await page.evaluate(() => { Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render(); }); await R.settle(page, 900);   // (left with no Approve: the move is put back)
+
+    /* ── H · release blocker (B), S7 seed 2: a burst of edits and presses with no waits on a piece under review; once idle the card is either calm with what is kept equal to what is staged, or Approve is lit ── */
+    const KR = made.front.key;
+    await quiet(); await R.openEngraveDetail(w, 'front', { face: 'front' }); await R.settle(page, 700);
+    const hb = await page.evaluate(async key => {
+      const card = () => window.__card(), opt = c => card().querySelector(`.engp [data-engp="choice"][data-choice="${c}"]`), ta = () => card().querySelector('.engp .engpWords'), ap = () => card().querySelector('[data-engp-approve]');
+      const type = v => { const t = ta(); if (!t) return; t.focus(); t.value = v; t.dispatchEvent(new Event('input', { bubbles: true })); };
+      const acts = ['t:ab', 'p', 'c:back', 't:yea', 'p', 't:yeaL', 'c:front', 'p', 't:yy', 'p', 'c:back', 't:ML', 'p', 't:yea', 'p'], did = [];
+      for (const a of acts) {
+        if (a === 'p') { const b = ap(); if (b && !b.disabled && b.dataset.a === 'approve') { b.click(); did.push('P'); } else did.push('-'); }
+        else if (a.startsWith('c:')) { const o = opt(a.slice(2)); if (o) o.click(); did.push(a); }
+        else { type(a.slice(2)); did.push(a); }
+      }
+      return { did, st: CharmNestEngravePanel.stateOf(key) };
+    }, KR);
+    const idle = await until(() => page.evaluate(key => { const s = CharmNestEngravePanel.busyOf(key); return !s.running && !s.pending && !s.committing ? s : null; }, KR), 180000);
+    await quiet();
+    if (!(await page.evaluate(key => !!CharmNestEngravePanel.stateOf(key), KR))) { const fc = ((await jobsOf(KR)).find(j => !['none', 'skipped'].includes(j.state)) || { face: 'front' }).face; await R.openEngraveDetail(w, 'front', { face: fc }); await R.settle(page, 700); }   // (the piece opened again on a face it engraves)
+    const h1 = await page.evaluate(key => { const s = CharmNestEngravePanel.stateOf(key), c = window.__card(), b = c && c.querySelector('[data-engp-approve]'); return { s, a: b && b.dataset.a, dis: b && b.disabled, text: b && b.textContent.trim(), jobs: Engrave.jobsOf(B.orders.byKey.get(key)).map(j => [j.face === 'front' ? 'front' : 'back', j.state, j.text]) }; }, KR);
+    check('H1 a burst of edits and presses with no waits: once idle, the card is calm with nothing staged, or Approve is lit (never "Approved ✓" with nothing running)', !!idle && h1.s && (h1.s.dirty ? (h1.a === 'approve' && !h1.dis) || h1.s.gate === 'need' : h1.a === 'approved') && !/✓/.test(h1.text || ''), JSON.stringify({ hb: hb.did.join(' '), h1 }));
     check('Z no page errors', errors.length === 0, errors.join(' | ').slice(0, 600));
   } catch (e) { console.error(e); check('ran', false, String(e && e.stack || e)); }
   finally { await w.close(); }

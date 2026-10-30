@@ -9194,7 +9194,7 @@ const Engrave = window.Engrave = (() => {
     const pk = focus && focus.key && !focus.mono ? pieceOfKey(focus.key) : null; let n = 0;
     for (const j of items().values()) {
       const sv = j.stagedFrom; if (!sv) continue;
-      if (j.approvalPreparing || j.stamping || j._approvalTask || j.backSaving) continue;
+      if (j.approvalPreparing || j.stamping || j._approvalTask || j.backSaving || j._stageCommit) continue;   // (ENGSTAGE: a face a commit is keeping right now is never put back under it)
       if (j.state !== "review") { delete j.stagedFrom; continue; }   // (approved since, or decided otherwise: nothing to put back)
       if (pk && pieceOfKey(j.key) === pk) continue;
       delete j.stagedFrom;
@@ -9303,7 +9303,13 @@ const Engrave = window.Engrave = (() => {
             are kept, nothing is approved: a host that closes the card itself, a test) }
        -> { ok, cancelled?, message?, none?, approved: [job keys], failed? } */
   const STAGE_MS = 90000;
+  /** The commit, its piece's jobs marked as being kept while it runs (_stageCommit: discardStaged leaves them, a tab drawn again meanwhile never puts back a face being approved). */
   async function commitStage(row, stage, o) {
+    const line = lineOf(row), slot = stage && stage.slot ? String(stage.slot) : null, mark = on => { try { for (const j of jobsOf(line)) if ((j.slot || null) === slot) { if (on) j._stageCommit = true; else delete j._stageCommit; } } catch (_) { /* nothing to mark */ } };
+    mark(true);
+    try { return await commitStageNow(row, stage, o, mark); } finally { mark(false); }
+  }
+  async function commitStageNow(row, stage, o, mark) {
     o = o || {};
     const line = lineOf(row), CS = window.CharmNestEngraveSetup;
     if (!CS || !line || !stage) return { ok: false, message: "The engraving is not loaded yet.", approved: [] };
@@ -9316,7 +9322,7 @@ const Engrave = window.Engrave = (() => {
     const by = employeeName() || await approveWithin(needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: stampAt() }), APPROVE_MS.sign, "").catch(() => "");
     step("signed");
     // (an approval of this piece still finishing (its back file, its save: the tail of an earlier Approve) is let finish first, so a change made on top of it is never refused or lost)
-    { const tail = () => jobsOf(line).some(j => (j.slot || null) === slot && (j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving)), by15 = Date.now() + 15000 * Math.max(0.001, +window.CN_SPIN_SCALE || 1); while (tail() && Date.now() < Math.min(until, by15)) { step("tail"); await wait(60); } }   // (at most 15 s: a file still being written for the sheets never holds a change back longer)
+    { const tail = () => jobsOf(line).some(j => (j.slot || null) === slot && (j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving)), by4 = Date.now() + 4000 * Math.max(0.001, +window.CN_SPIN_SCALE || 1); while (tail() && Date.now() < Math.min(until, by4)) await wait(60); }   // (at most 4 s: a file still being written for the sheets never holds a change back longer; an approval still running is said by the press that meets it)
     if (!by) return { ok: false, cancelled: true, message: "Nobody is signed in.", approved: [] };
     // (1) the faces, their words and fonts (and the place dragged on a face that has no job yet)
     const before = new Set(jobsOf(line).map(j => j.key)), patch = stage.patch && typeof stage.patch === "object" ? stage.patch : null;   // (a job made by this commit takes its dragged place as _placeAt; one that was there, placed or opened again, is moved below)
@@ -9335,7 +9341,7 @@ const Engrave = window.Engrave = (() => {
       const text = String((faces[f] && faces[f].text) || "").trim(); let why = "", seen = "";
       for (;;) {
         const j = mine(f);
-        { const now = j ? j.key + ":" + j.state + ":" + (j.fit ? 1 : 0) : ""; if (now !== seen || (j && (isWorking(j) || lateTasks.has(j) || fitTasks.get(j)))) { seen = now; step("face"); } }   // (a face moving on, or being read or fitted right now, is progress; this wait has its own limit)
+        { const now = j ? j.key + ":" + j.state + ":" + (j.fit ? 1 : 0) : ""; if (now !== seen) { seen = now; step("face"); } }   // (a face moving on is progress; this wait has its own limit)
         if (!j) { if (Date.now() > until) { why = `the ${f} could not be made here`; break; } await wait(60); continue; }
         jobs[f] = j;
         if (["approved", "written"].includes(j.state)) break;
@@ -9359,14 +9365,18 @@ const Engrave = window.Engrave = (() => {
     // (4) the approvals, Front before Back
     const approved = [];
     for (const f of on) {
-      const j = jobs[f]; if (["approved", "written"].includes(j.state)) { approved.push(j.key); continue; }
-      step("approve"); const ping = setInterval(() => step("approving"), 2000);   // (an approval's own waits each have their time limit: approveWithin)
+      const j = mine(f) || jobs[f]; if (!j) return { ok: false, message: `Not approved: the ${f} could not be made here.`, approved };
+      if (["approved", "written"].includes(j.state)) { approved.push(j.key); continue; }
+      step("approve");
       // (the face is approved the moment its state says so: the rest of the approval (its back file for the sheets, its save) goes on behind it, as after any Approve; the commit does not wait for it)
-      try { const task = Promise.resolve(approve(j, by, stampAt())).catch(() => {}); let done = false; task.then(() => { done = true; }); while (!done && !["approved", "written"].includes(j.state)) await Promise.race([task, wait(60)]); } finally { clearInterval(ping); } step("approved");   // (the stamp on the panel's own anchor: the live Approve is never the approval's button)
+      { const task = Promise.resolve(approve(j, by, stampAt())).catch(() => {}); let done = false; task.then(() => { done = true; }); while (!done && !["approved", "written"].includes(j.state)) await Promise.race([task, wait(60)]); }
+      step("approved");   // (the stamp on the panel's own anchor: the live Approve is never the approval's button)
       if (!["approved", "written"].includes(j.state)) { const w = APPROVE_WHY.get(j.key); return { ok: false, message: (w && w.text) || `Not approved: the ${f} is still to approve.`, approved, failed: j.key, said: !!w }; }   // (said: the approval already told the person why)
       approved.push(j.key);
     }
-    return { ok: true, approved };
+    // (every engraved face approved, read again now: a face that went back to review under the commit (approved before, its words changed) is never left behind with the card looking calm)
+    { const left = on.filter(f => { const j = mine(f); return !j || !["approved", "written"].includes(j.state); }); if (left.length) return { ok: false, message: `Not approved: the ${left.join(" and ")} ${left.length > 1 ? "are" : "is"} still to approve. Press Approve again.`, approved }; }
+    void mark; return { ok: true, approved };
   }
   Promise.resolve().then(() => { try { if (window.Engrave && !window.Engrave.commitStage) window.Engrave.commitStage = commitStage; } catch (_) { /* the panel says it cannot approve */ } });   // (ENGSTAGE: beside the Engrave object, not inside its return)
   /** NONEPLAIN (Paul, 29 Oct 2026: "I chose "None" for engraving and it still kept the engraving"): is a piece of this line CUT, so a decided face on it may no longer be taken away? The ONE rule a piece that may

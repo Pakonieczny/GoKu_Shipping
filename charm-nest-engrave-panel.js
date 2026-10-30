@@ -164,7 +164,11 @@
   /** Does the draft differ from what is kept: what the jobs and the setup hold NOW (read again at every look, a commit under way or not)? (coordinator, 30 Oct 2026: never against a press's snapshot) */
   function dirtyOf(vm, d, key) {
     void key; const S = Setup(); if (hasPatch(tryDo(() => S.patchOf(vm, viewOf(d)), null))) return true;
-    return facesOf(d.choice).some(f => posOk(d.faces[f] && d.faces[f].pos));
+    if (facesOf(d.choice).some(f => posOk(d.faces[f] && d.faces[f].pos))) return true;
+    // (coordinator, 30 Oct 2026: a piece with an approved face whose other engraved face is not approved (it went back to review: its words changed, it was moved) is staged, never calm: Approve stays lit for it)
+    const jobsOfFace = f => (vm.rows.find(r => r.face === f) || { jobs: [] }).jobs || [];
+    const ok = j => j.state === 'approved' || j.state === 'written';
+    return FACES.some(f => jobsOfFace(f).some(ok)) && facesOf(d.choice).some(f => jobsOfFace(f).some(j => !ok(j) && j.state !== 'none' && j.state !== 'skipped'));
   }
   /** Is the draft exactly the stage of a press (`st`: its choice, and the words, font and place of every face it engraves)? */
   function sameStage(d, st) {
@@ -180,7 +184,7 @@
   /** THE GATE of Approve: { st: 'approve' | 'need' (an engraved face has no words: faces) | 'blocked' (why) | 'busy' (a face is being read or placed) | 'approved' (calm) | 'ok' (the press is being kept: "Approved ✓") , dirty } */
   function gateOf(vm, d, key) {
     const c = COMMITS.get(key), dirty = dirtyOf(vm, d, key);
-    if (c && sameStage(d, c.stage)) return { st: 'ok', dirty };   // (the press of exactly this stage is being kept, or waits its turn: "Approved ✓"; data-dirty still says the jobs do not hold it yet)
+    if (c && sameStage(d, c.stage) && (RUNNING.has(key) || PENDING.has(key))) return { st: 'ok', dirty };   // (the press of exactly this stage is being kept, or waits its turn: "Approved ✓"; data-dirty still says the jobs do not hold it yet)
     const empty = emptyFaces(vm, d);
     if (dirty) {
       if (empty.length) return { st: 'need', faces: empty, dirty };
@@ -393,11 +397,11 @@
     const { key, line, slot, d } = ctx;
     const snap = { seq: d.seq, draft: d, stage: { choice: d.choice, active: d.active, faces: cloneFaces(d.faces) } };
     COMMITS.set(key, snap);
-    const E = Eng(); if (E && E.showStage && typeof E.showStage.flush === 'function') tryDo(() => E.showStage.flush());
-    for (const b of liveBindings(key)) tryDo(() => b.gate());   // ("Approved ✓", now)
     const job = { snap, line, slot, jobKey: ctx.jobKey };
-    if (RUNNING.has(key)) { PENDING.set(key, job); return true; }   // (kept right after the commit running now, from the jobs as they are then)
-    startRun(key, job);
+    if (RUNNING.has(key)) PENDING.set(key, job);   // (kept right after the commit running now, from the jobs as they are then)
+    else startRun(key, job);
+    const E = Eng(); if (E && E.showStage && typeof E.showStage.flush === 'function') tryDo(() => E.showStage.flush());
+    for (const b of liveBindings(key)) tryDo(() => b.gate());   // ("Approved ✓", now: its commit runs or waits)
     return true;
   }
   function startRun(key, job) {
@@ -415,7 +419,7 @@
   /* ENGSTAGE (coordinator, 30 Oct 2026: a 60-action burst left "Approved" stuck, aria-busy, with edits staged on top): a commit is never left pending. It reports each step it makes (o.step); 20 s with no step
    * (CN_SPIN_SCALE: a test's clock) ends the wait for it: Approve is given back with the staged state as it is and one short reason. The commit itself may still land later: the next commit of the piece waits for it
    * first (HUNG), so two never run at once. The stamp of an approval is pressed on the panel's own anchor beside the button (stampAt), never on the live button the person may be pressing again. */
-  const WATCH_MS = 20000;
+  const WATCH_MS = 8000;
   /** Every Approve of a piece and its stamp's anchor say busy no more, and Approve is drawn again from the gate (the end of a commit, kept or not). */
   function unbusy(key) {
     try { const doc = root && root.document; if (doc) for (const n of doc.querySelectorAll('[data-engp-stamp][aria-busy], [data-engp-approve][aria-busy]')) { const p = n.closest('.rvItem'), e = p && p.querySelector('.engp[data-key]'); if (!e || e.dataset.key === key) n.removeAttribute('aria-busy'); } } catch (_) { /* drawn below */ }
@@ -438,7 +442,9 @@
       }
       last = Date.now();
       const scale = Math.max(0.001, +(root && root.CN_SPIN_SCALE) || 1);
-      const dog = new Promise(r => { const tick = () => { if (settled) return; if (Date.now() - last >= WATCH_MS * scale) { r({ ok: false, hung: true, message: 'Not approved: it took too long. Press Approve to try again.' }); return; } timer = setTimeout(tick, Math.min(1000, WATCH_MS * scale / 4)); }; timer = setTimeout(tick, Math.min(1000, WATCH_MS * scale / 4)); });
+      const jobSig = () => tryDo(() => (((E && E.jobsOf ? E.jobsOf(line) : []) || []).map(j => [j.key, j.state, j.fit ? 1 : 0, +j.approvedAt || 0, j.approvalPreparing ? 1 : 0, j.stamping ? 1 : 0, j.backSaving ? 1 : 0, (j.backs || []).length].join(':')).join('|')), '');
+      let seen = jobSig();   // (progress: a step of the commit, or any change in the piece's jobs)
+      const dog = new Promise(r => { const tick = () => { if (settled) return; { const now = jobSig(); if (now !== seen) { seen = now; last = Date.now(); } } if (Date.now() - last >= WATCH_MS * scale) { r({ ok: false, hung: true, message: 'Not approved: it took too long. Press Approve to try again.' }); return; } timer = setTimeout(tick, Math.min(1000, WATCH_MS * scale / 4)); }; timer = setTimeout(tick, Math.min(1000, WATCH_MS * scale / 4)); });
       res = await Promise.race([work.then(v => v || { ok: false }, e => ({ ok: false, message: str(e && e.message ? e.message : e) })), dog]);
       settled = true; clearTimeout(timer);
       if (res && res.hung) { const h = work.catch(() => {}).then(() => { if (HUNG.get(key) === h) HUNG.delete(key); for (const b of liveBindings(key)) tryDo(() => b.draw()); unbusy(key); }); HUNG.set(key, h); }
@@ -742,6 +748,8 @@
     d.faces[face].pos = posOf(pos); d.seq = (d.seq || 0) + 1; d.touched = true; return true;
   }
   /** What a piece has staged, for a test or a host: { choice, active, dirty, gate, seq, committing } or null. */
+  /** Is a commit of a piece running or waiting? (with or without a draft on the page) */
+  const busyOf = key => ({ running: RUNNING.has(str(key)), pending: PENDING.has(str(key)), committing: COMMITS.has(str(key)) });
   function stateOf(key) {
     const d = DRAFTS.get(str(key)); if (!d) return null;
     const S = Setup(), vm = d.line && S ? tryDo(() => S.read(d.line, { slot: (str(key).split('#')[1]) || undefined }), null) : null, g = vm ? gateOf(vm, d, str(key)) : null;
@@ -810,5 +818,5 @@
     } catch (e) { if (typeof console !== 'undefined') console.warn('engraving panel slot', e); return none; }
   }
 
-  return { mount, mountPiece, html, bind, modesFor, choicesFor, seedText, stageOf, stateOf, stagePos, setActive, sweep, isLive, DRAFTS, COMMITS, MODES, CHOICES, gateOf, dirtyOf, hilite: { model: hiModel, decorate: hiDecorate, systemChoice, reasonLine, HI_TITLE } };
+  return { mount, mountPiece, html, bind, modesFor, choicesFor, seedText, stageOf, stateOf, busyOf, stagePos, setActive, sweep, isLive, DRAFTS, COMMITS, MODES, CHOICES, gateOf, dirtyOf, hilite: { model: hiModel, decorate: hiDecorate, systemChoice, reasonLine, HI_TITLE } };
 });
