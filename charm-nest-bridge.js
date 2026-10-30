@@ -10354,7 +10354,7 @@ const Engrave = window.Engrave = (() => {
   /** Where a staged place `pos` puts the words on `job`'s face: a point of its view's frame (pt), or null. */
   const svPlaceOf = (job, pos) => { const p = pos && pos.charm; return job && job.view && Array.isArray(p) ? viewPointOf(job.view, p) : null; };
   /** THE ONE CALL (see above) -> { ok, seq }. */
-  function svShowStage(x, stage) {
+  function svShowStage(x, stage, o) {
     const job = typeof x === "string" ? items().get(x) : x; if (!job || !job.key) return { ok: false, why: "no such piece" };
     // (a null stage is what is committed only when the panel holds no draft of the piece: while it does (a commit just ended, its draft clean or staged on top), the panel's own stage is drawn, so the
     //  work area and the thumbnails always equal the panel's choice, face and words, whatever was kept)
@@ -10368,8 +10368,30 @@ const Engrave = window.Engrave = (() => {
     //  shows it (no hop). More words typed before the next frame only mark the piece, and that frame paints the last state (the last state never dropped); a face or a choice changed is
     //  painted at once even then (a press is never a frame late), up to three times a frame)
     const shape = st ? st.choice + "|" + st.active : "", moved = shape !== rec.shape;
-    if (rec.flushing || (rec.hotN && !(moved && rec.hotN < 3))) svQueue(rec); else { rec.shape = shape; svFlush(rec); svHot(rec); }
+    rec.job = job;
+    // (o.thumb(face) -> element: a host's own thumbnails (a panel mounted with its own pictures): painted with the card's, from the same stage, as long as they are on the page)
+    if (o && typeof o.thumb === "function") (rec.hostThumbs || (rec.hostThumbs = new Set())).add(o.thumb);
+    if (rec.flushing || (rec.hotN >= 3 && !(moved && rec.hotN < 6))) svQueue(rec); else { rec.shape = shape; svFlush(rec); svHot(rec); }
     return { ok: true, seq: rec.seq };
+  }
+  /** A host's own thumbnails of the piece (showStage's o.thumb): each face's picture gets the face's staged words and font (none when the face is not engraved), else what is committed. A host
+   *  whose pictures are all off the page is let go. */
+  function svHostThumbs(rec) {
+    const P = window.CharmNestEngravePreview, job = rec.job; if (!rec.hostThumbs || !rec.hostThumbs.size || !P || typeof P.update !== "function" || !job || !job.row) return;
+    const st = rec.stage, line = lineOf(job.row), pid = (job.copies || [])[0], jobOfFace = f => (faceOf(job) === f ? job : (pid && jobsOfPiece(pid)[f]) || jobsOf(job.row).find(j => j !== job && !j.editingBack && sameSlot(j, job) && faceOf(j) === f) || null);
+    for (const fn of [...rec.hostThumbs]) {
+      let any = false;
+      for (const f of ["front", "back"]) {
+        let el = null; try { el = fn(f); } catch (_) { el = null; } if (!el || !el.isConnected) continue; any = true;
+        const fj = jobOfFace(f), live = fj && !["none", "skipped"].includes(fj.state) ? fj : null;
+        const text = st ? (svChoiceFaces(st.choice).includes(f) ? draftLines(st.faces[f].text).join("\n") : "") : live ? (live.lineInput && live.lineInput.length ? live.lineInput : live.lines || []).join("\n") : "";
+        const part = { text, face: f };
+        try { const id = P.fontIdOf ? P.fontIdOf(line, f, st ? st.faces[f].font : (live && live.faceFontWord) || "") : null; if (id) part.fontId = id; } catch (_) { /* its own font */ }
+        try { const pos = live && P.positionOf ? P.positionOf(live, { row: line, slot: job.slot }) : null; if (pos) part.position = { x: pos.x, y: pos.y, size: pos.size, angle: pos.angle }; } catch (_) { /* the middle */ }
+        try { P.update(el, part); } catch (_) { /* that picture keeps what it drew */ }
+      }
+      if (any) fn._svMiss = 0; else if ((fn._svMiss = (fn._svMiss || 0) + 1) > 30) rec.hostThumbs.delete(fn);   // (not on the page yet: kept a while; gone for good: let go)
+    }
   }
   /** The piece was painted in this frame: words typed until the next frame are painted by it (svQueue). */
   function svHot(rec) { rec.hotN = (rec.hotN || 0) + 1; if (!rec.hotRaf) rec.hotRaf = requestAnimationFrame(() => { rec.hotRaf = 0; rec.hotN = 0; }); }
@@ -10386,6 +10408,7 @@ const Engrave = window.Engrave = (() => {
     rec.flushing = true; const t0 = performance.now();
     try {
       try { if (window.CharmNestEngraveCard && CharmNestEngraveCard.paintStage) CharmNestEngraveCard.paintStage(rec.key); } catch (e) { console.warn("engraving: the stage's thumbnails", e); }
+      try { svHostThumbs(rec); } catch (e) { console.warn("engraving: a host's thumbnails", e); }
       const c = EG.card && EG.card.isConnected ? EG.card : null, t1 = performance.now();
       let reached = false;
       if (c && c._svWork && c._svPiece === rec.key) { try { c._svWork(rec); } catch (e) { console.warn("engraving: the stage's work area", e); } const h = c.querySelector(".backHost"); if (h) { h.dataset.paintMs = (t1 - t0).toFixed(1) + "+" + (performance.now() - t1).toFixed(1); reached = +h.dataset.stageSeq === rec.seq || !!SV_TURN.run; } }   // (what the paint cost: the thumbnails + the work area, ms)
