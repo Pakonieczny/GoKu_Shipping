@@ -9315,6 +9315,8 @@ const Engrave = window.Engrave = (() => {
     const stampAt = () => { try { const b = typeof o.button === "function" ? o.button() : o.button; return b && b.isConnected !== false ? b : null; } catch (_) { return null; } }, step = what => { try { if (typeof o.step === "function") o.step(what); } catch (_) { /* the panel's own */ } };
     const by = employeeName() || await approveWithin(needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: stampAt() }), APPROVE_MS.sign, "").catch(() => "");
     step("signed");
+    // (an approval of this piece still finishing (its back file, its save: the tail of an earlier Approve) is let finish first, so a change made on top of it is never refused or lost)
+    { const tail = () => jobsOf(line).some(j => (j.slot || null) === slot && (j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving)); while (tail() && Date.now() < until) { step("tail"); await wait(60); } }
     if (!by) return { ok: false, cancelled: true, message: "Nobody is signed in.", approved: [] };
     // (1) the faces, their words and fonts (and the place dragged on a face that has no job yet)
     const before = new Set(jobsOf(line).map(j => j.key)), patch = stage.patch && typeof stage.patch === "object" ? stage.patch : null;   // (a job made by this commit takes its dragged place as _placeAt; one that was there, placed or opened again, is moved below)
@@ -9359,7 +9361,8 @@ const Engrave = window.Engrave = (() => {
     for (const f of on) {
       const j = jobs[f]; if (["approved", "written"].includes(j.state)) { approved.push(j.key); continue; }
       step("approve"); const ping = setInterval(() => step("approving"), 2000);   // (an approval's own waits each have their time limit: approveWithin)
-      try { await approve(j, by, stampAt()); } finally { clearInterval(ping); } step("approved");   // (the stamp on the panel's own anchor: the live Approve is never the approval's button)
+      // (the face is approved the moment its state says so: the rest of the approval (its back file for the sheets, its save) goes on behind it, as after any Approve; the commit does not wait for it)
+      try { const task = Promise.resolve(approve(j, by, stampAt())).catch(() => {}); let done = false; task.then(() => { done = true; }); while (!done && !["approved", "written"].includes(j.state)) await Promise.race([task, wait(60)]); } finally { clearInterval(ping); } step("approved");   // (the stamp on the panel's own anchor: the live Approve is never the approval's button)
       if (!["approved", "written"].includes(j.state)) { const w = APPROVE_WHY.get(j.key); return { ok: false, message: (w && w.text) || `Not approved: the ${f} is still to approve.`, approved, failed: j.key, said: !!w }; }   // (said: the approval already told the person why)
       approved.push(j.key);
     }

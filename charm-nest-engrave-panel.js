@@ -394,7 +394,8 @@
     const E = Eng(); if (E && E.showStage && typeof E.showStage.flush === 'function') tryDo(() => E.showStage.flush());
     for (const b of liveBindings(key)) tryDo(() => b.gate());   // ("Approved ✓", now)
     const prev = CHAINS.get(key) || Promise.resolve();
-    const run = prev.then(() => runCommit({ key, line, slot, snap, jobKey: ctx.jobKey })).catch(e => { if (COMMITS.get(key) === snap) COMMITS.delete(key); toast(shortWhy(e && e.message ? e.message : e)); });
+    const go = () => runCommit({ key, line, slot, snap, jobKey: ctx.jobKey });
+    const run = prev.then(go, go).catch(e => { if (COMMITS.get(key) === snap) COMMITS.delete(key); unbusy(key); toast(shortWhy(e && e.message ? e.message : e)); });   // (a commit before it that failed in any way never holds this one back)
     CHAINS.set(key, run); run.then(() => { if (CHAINS.get(key) === run) CHAINS.delete(key); });
     void c; return true;
   }
@@ -402,6 +403,11 @@
    * (CN_SPIN_SCALE: a test's clock) ends the wait for it: Approve is given back with the staged state as it is and one short reason. The commit itself may still land later: the next commit of the piece waits for it
    * first (HUNG), so two never run at once. The stamp of an approval is pressed on the panel's own anchor beside the button (stampAt), never on the live button the person may be pressing again. */
   const WATCH_MS = 20000;
+  /** Every Approve of a piece and its stamp's anchor say busy no more, and Approve is drawn again from the gate (the end of a commit, kept or not). */
+  function unbusy(key) {
+    try { const doc = root && root.document; if (doc) for (const n of doc.querySelectorAll('[data-engp-stamp][aria-busy], [data-engp-approve][aria-busy]')) { const p = n.closest('.rvItem'), e = p && p.querySelector('.engp[data-key]'); if (!e || e.dataset.key === key) n.removeAttribute('aria-busy'); } } catch (_) { /* drawn below */ }
+    for (const b of liveBindings(key)) tryDo(() => { for (const n of [b.button(), b.stampAt()]) if (n) n.removeAttribute('aria-busy'); b.gate(); });
+  }
   const HUNG = new Map();      // piece key -> the commit still running after its watchdog let go of it
   async function runCommit(ctx) {
     const { key, line, slot, snap } = ctx, E = Eng(), S = Setup();
@@ -422,11 +428,11 @@
       const dog = new Promise(r => { const tick = () => { if (settled) return; if (Date.now() - last >= WATCH_MS * scale) { r({ ok: false, hung: true, message: 'Not approved: it took too long. Press Approve to try again.' }); return; } timer = setTimeout(tick, Math.min(1000, WATCH_MS * scale / 4)); }; timer = setTimeout(tick, Math.min(1000, WATCH_MS * scale / 4)); });
       res = await Promise.race([work.then(v => v || { ok: false }, e => ({ ok: false, message: str(e && e.message ? e.message : e) })), dog]);
       settled = true; clearTimeout(timer);
-      if (res && res.hung) { const h = work.catch(() => {}).then(() => { if (HUNG.get(key) === h) HUNG.delete(key); for (const b of liveBindings(key)) tryDo(() => b.draw()); }); HUNG.set(key, h); }
+      if (res && res.hung) { const h = work.catch(() => {}).then(() => { if (HUNG.get(key) === h) HUNG.delete(key); for (const b of liveBindings(key)) tryDo(() => b.draw()); unbusy(key); }); HUNG.set(key, h); }
     } catch (e) { res = { ok: false, message: str(e && e.message ? e.message : e) }; }
     finally {
       settled = true; if (COMMITS.get(key) === snap) COMMITS.delete(key);   // (the "Approved ✓" of this press ends here, whatever happened)
-      if (!COMMITS.has(key) && !HUNG.has(key)) for (const b of liveBindings(key)) tryDo(() => { for (const n of [b.button(), b.stampAt()]) if (n) n.removeAttribute('aria-busy'); });   // (nothing of the piece is being kept any more: nothing of it says busy)
+      unbusy(key);   // (nothing of this press says busy any more: its stamp's anchor and the button, then Approve drawn again)
     }
     const d = DRAFTS.get(key), clean = !!(res && res.ok) && d === snap.draft && d.seq === snap.seq && !COMMITS.has(key);
     if (clean) { d.touched = false; d.dirty = false; d.sig = ''; for (const f of FACES) d.faces[f].pos = null; }
@@ -691,7 +697,7 @@
       if (!dirtyOf(vm, d, key)) return Promise.resolve({ ok: true, same: true });
       const snap = { seq: d.seq, draft: d, stage: { choice: d.choice, active: d.active, faces: cloneFaces(d.faces) } };
       const save = typeof opts.save === 'function' ? (() => { const patch = Setup().patchOf(vm, viewOf(d)); return () => opts.save(patch); })() : null;   // (a host's own save(patch): a test)
-      const run = (CHAINS.get(key) || Promise.resolve()).then(() => runCommit({ key, line, slot, snap, jobKey: me.jobKey || d.jobKey, keepOnly: true, save }));
+      const go = () => runCommit({ key, line, slot, snap, jobKey: me.jobKey || d.jobKey, keepOnly: true, save }), run = (CHAINS.get(key) || Promise.resolve()).then(go, go);
       CHAINS.set(key, run.catch(() => {})); return run;
     };
     return { draw, refresh: draw, setFace: f => setActive(f, 'host'), setActive, beforeMove, moved, commit: commitNow, press, stageNone, stagePos: stagePosHere, paint: k => paint(k || 'refresh'), key,
