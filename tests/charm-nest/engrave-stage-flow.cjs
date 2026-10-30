@@ -6,13 +6,15 @@
 //
 // On the real sorter page over the repo's fake site (_engraveRealWorld.cjs: offline, real drawings, real fit, made-up names, nothing live), COMET necklaces engraved on the BACK only with the
 // words "Ruby" (the shape of Paul's order 4214051539, BALLETSHOES "Ruby" on the back), most of them approved first, plus the two-face SCHRODINGER CAT piece "both" (front "W", back "Name One"):
-//   S1  Paul's case 2: back "Ruby" approved, Front pressed: the work area shows the front at once (data-face=front), never empty, no forbidden text; "Mia" typed shows in the Front thumbnail
-//       and in .backHost data-words within one frame per keystroke; Approve lit; pressed: calm "Approved" within 100 ms; committed: the front approved with "Mia", the back removed or plain
+//   S1  Paul's case 2: back "Ruby" approved, Front pressed: the work area shows the front at once (data-face=front), never empty, no forbidden text; the words MOVE with the one engraved
+//       face (the lead's decision, 30 Oct: the front holds "Ruby"); "Mia" typed over them shows in the Front thumbnail and in .backHost data-words within one frame per keystroke;
+//       Approve lit; pressed: calm "Approved" within 100 ms; committed: the front approved with "Mia", the back removed or plain
 //   S2  Front & Back: front words and back words typed (switching by the thumbnails), both shown live; ONE Approve: both faces approved with the right words; card, list row and order window show both
 //   S3  item 3: an approved piece, Back -> None lights Approve at once; Next (no Approve) discards it; back on the piece: Back, calm Approved, the list row's status as before
 //   S4  item 1: each option gives exactly one aria-pressed="true"; the selected option has the same white pill whichever it is (None, Front, Back, Front & Back)
 //   S5  choice Back, the Front thumbnail clicked and a letter typed: the choice becomes Front & Back
-//   S6  Front with empty front words: Approve disabled, and no explanatory text
+//   S6  an added face with no words (Front & Back on the Ruby piece: the added front starts empty): Approve disabled, no explanatory text, a press on it anyway changes nothing;
+//       a front word typed lights Approve
 //   S7  fuzz: 60 random actions with no waits (options, thumbnails, keys, Backspace, Approve), 3 seeds (two with real input events, one as an in-page burst; a back-only and a two-face piece):
 //       after idle the UI equals its own data-choice / data-active, the thumbnails match the words box, committed equals staged after a last Approve, no duplicate jobs, no page errors
 //   S8  the median keystroke-to-paint latency over 30 keys is <= 16 ms (thumbnail .engpvText and .backHost data-stage-seq / data-words)
@@ -78,7 +80,7 @@ function installProbe(FORBIDDEN) {
       busy: !!sc.querySelector('[aria-busy="true"]') || p.getAttribute('aria-busy') === 'true', busyWhat: [...sc.querySelectorAll('[aria-busy="true"]')].map(e => (e.tagName + '.' + String(e.className).split(' ').join('.') + (e.dataset.engThumb ? '[data-eng-thumb=' + e.dataset.engThumb + ']' : '') + (e.dataset.a ? '[data-a=' + e.dataset.a + ']' : '')).slice(0, 60)).join(', ') || undefined }, S.approveState(sc));
   };
   /** the staged words of each face: the box for the active face, the thumbnails for the other */
-  S.staged = pk => { const s = S.snap(pk); if (!s.open) return null; const faces = s.choice === 'both' ? ['front', 'back'] : s.choice === 'front' || s.choice === 'back' ? [s.choice] : []; const words = {}; for (const f of faces) words[f] = f === s.active && s.box != null ? s.box : (s.thumbs[f] ? s.thumbs[f].words : ''); return { choice: s.choice, faces, words }; };
+  S.staged = pk => { const s = S.snap(pk); if (!s.open) return null; const faces = s.choice === 'both' ? ['front', 'back'] : s.choice === 'front' || s.choice === 'back' ? [s.choice] : []; const words = {}; for (const f of faces) words[f] = f === s.active && s.box != null ? s.box : (s.thumbs[f] ? s.thumbs[f].words : ''); return { choice: s.choice, faces, words, active: s.active, box: s.box }; };
   /** what the jobs hold for the piece (committed): each face's job, duplicates, the sheets' entries */
   S.committed = pk => {
     const lineKey = pk.split('#')[0], slot = pk.includes('#') ? pk.split('#')[1] : null, row = B.orders.byKey.get(lineKey); if (!row) return null;
@@ -396,7 +398,9 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       check('S1 none of "gives no words", "Engrave these words", "Words to confirm", "being prepared" (nor any forbidden text) in the card after Front', after.every(x => !x.forb.length) && !FORBIDDEN.some(f => NORM(s1text).includes(NORM(f))), J([...new Set(after.flatMap(x => x.forb))]));
       check('S1 Front alone is chosen: one pressed option (front), data-choice=front, data-active=front, the Back thumbnail plain, the Front thumbnail current', s1.open && J(s1.pressed) === '["front"]' && s1.choice === 'front' && s1.active === 'front' && s1.thumbs.back && !s1.thumbs.back.eng && !NORM(s1.thumbs.back.words) && s1.thumbs.front && s1.thumbs.front.cur,
         J({ pressed: s1.pressed, choice: s1.choice, active: s1.active, thumbs: s1.thumbs }));
-      const ty = await typeInto(pk, 'Mia');
+      // (the lead's decision, 30 Oct: switching the single engraved face MOVES the words: the buyer's "Ruby" goes to the front, the back is no longer engraved)
+      check('S1 the words move with the face: the front box, the Front thumbnail and the work area hold "Ruby"', NORM(s1.box) === 'ruby' && s1.thumbs.front && NORM(s1.thumbs.front.words) === 'ruby' && s1.host && NORM(s1.host.words) === 'ruby' && s1.host.face === 'front', J({ box: s1.box, thumbs: s1.thumbs, host: s1.host }));
+      const ty = await typeInto(pk, 'Mia', { replace: true });
       const ins = (ty.inputs || []).filter(x => x.pk === pk);
       check('S1 each keystroke of "Mia" is on the Front thumbnail (.engpvText) within one frame', ins.length === 3 && ins.every(x => x.okThumb && x.active === 'front'), J(ins));
       check('S1 each keystroke of "Mia" is in the work area (.backHost data-words, data-face=front) within one frame', ins.length === 3 && ins.every(x => x.okHost), J(ins));
@@ -536,28 +540,35 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
         ty.ok && s2.choice === 'both' && J(s2.pressed) === '["both"]' && s2.thumbs.front && s2.thumbs.front.eng && NORM(s2.thumbs.front.words) === 'j' && s2.thumbs.back && s2.thumbs.back.eng && NORM(s2.thumbs.back.words) === 'ruby', J({ choice: s2.choice, pressed: s2.pressed, thumbs: s2.thumbs, inputs: ty.inputs }));
     }
 
-    /* ════ S6 · Front with empty words: Approve disabled, nothing explained ════ */
+    /* ════ S6 · an added face with empty words: Approve disabled, nothing explained (the lead's decision, 30 Oct: Front & Back on the Ruby piece adds an EMPTY front) ════ */
     await phase('S6'); lap('S6');
     if (!want('S6')) { /* not asked for */ } else if (timeLeft() < 0) skipRest('S6'); else {
       const pk = pkOf('stUi');
       await toList(); await openPiece('stUi');
       const lines = () => page.evaluate(pk => { const sc = window.__stg.scope(pk); return sc ? (sc.innerText || '').split('\n').map(x => x.replace(/\s+/g, ' ').trim()).filter(Boolean) : []; }, pk);
       const l0 = await lines();
-      const f = await press(pk, 'choice', 'front'); await frames(2);
+      const f = await press(pk, 'choice', 'both'); await frames(2);
       const s1 = await snap(pk), l1 = await lines();
       const added = l1.filter(x => !l0.includes(x) && (x.match(/[A-Za-z]{2,}/g) || []).length >= 3);
-      check('S6 Front chosen with an empty front: data-choice=front, the box empty, Approve there but disabled, no calm Approved', f.ok && !f.legacy && s1.choice === 'front' && s1.box === '' && s1.approve && !s1.approve.enabled && !s1.calm, J({ f, choice: s1.choice, box: s1.box, approve: s1.approve, calm: s1.calm }));
+      check('S6 Front & Back on the Ruby piece adds an EMPTY front: data-choice=both, the Front thumbnail engraved with no words, the Back still "Ruby"; Approve there but disabled, no calm Approved',
+        f.ok && !f.legacy && s1.choice === 'both' && s1.thumbs.front && s1.thumbs.front.eng && !NORM(s1.thumbs.front.words) && s1.thumbs.back && NORM(s1.thumbs.back.words) === 'ruby' && s1.approve && !s1.approve.enabled && !s1.calm,
+        J({ f, choice: s1.choice, active: s1.active, box: s1.box, thumbs: s1.thumbs, approve: s1.approve, calm: s1.calm }));
       check('S6 no explanatory text appears (no new sentence in the card, no forbidden text)', !added.length && !FORBIDDEN.some(x => l1.join(' ').toLowerCase().includes(x.toLowerCase())), J(added));
-      // Paul's own press: Approve right after Front, no words typed. A disabled Approve does nothing: the card keeps drawing the front, says nothing, and nothing is committed
-      const c0 = await committed(pk);
+      // a press on the disabled Approve anyway (as Paul pressed it): nothing happens: the card keeps drawing the same face, says nothing, and nothing is committed
+      const c0 = await committed(pk), face0 = s1.host && s1.host.face;
       await page.evaluate(pk => window.__stg.sample(pk, 1500), pk);
       const h = await page.evaluateHandle(pk => { const sc = window.__stg.scope(pk); return sc && [...sc.querySelectorAll('[data-a="approve"]')].find(window.__stg.vis); }, pk);
       const ae = h.asElement(); if (ae) await ae.click({ force: true, timeout: 3000 }).catch(() => {});
       await page.waitForFunction(() => window.__stg.samples.done, null, { timeout: 8000 }).catch(() => {});
       const sm = (await page.evaluate(() => window.__stg.samples.list)).filter(x => x.after);
       const c1 = await settle(pk, c => J([c.front, c.back]) === J([c0.front, c0.back]), 6000);
-      check('S6 pressing Approve anyway (Paul\'s press: Front, no words, Approve) changes nothing: the card stays on the drawn front, no forbidden text, nothing committed', !!ae && sm.length > 0 && sm.every(x => x.open && x.canvas && x.face === 'front' && !x.forb.length) && J([c1.front, c1.back]) === J([c0.front, c0.back]),
-        J({ pressed: !!ae, odd: sm.filter(x => !(x.open && x.canvas && x.face === 'front' && !x.forb.length)).slice(0, 3), before: { front: c0.front, back: c0.back && c0.back.state }, after: { front: c1.front, back: c1.back && c1.back.state } }));
+      const fine = x => x.open && x.canvas && x.face === face0 && x.choice === 'both' && !x.forb.length;
+      check('S6 pressing the disabled Approve anyway changes nothing: the same face drawn, no forbidden text, nothing committed', !!ae && sm.length > 0 && sm.every(fine) && J([c1.front, c1.back]) === J([c0.front, c0.back]),
+        J({ pressed: !!ae, face0, odd: sm.filter(x => !fine(x)).slice(0, 3), before: { front: c0.front, back: c0.back && c0.back.state }, after: { front: c1.front, back: c1.back && c1.back.state } }));
+      // then a front word typed lights Approve (staged only; the piece is left, so nothing is kept)
+      const tf = await press(pk, 'thumb', 'front'); const ty = await typeInto(pk, 'Zoe');
+      const s2 = await snap(pk);
+      check('S6 a word typed on the empty front lights Approve', tf.ok && ty.ok && s2.choice === 'both' && s2.active === 'front' && NORM(s2.box) === 'zoe' && s2.approve && s2.approve.enabled && !s2.calm, J({ tf, choice: s2.choice, active: s2.active, box: s2.box, approve: s2.approve, calm: s2.calm }));
     }
 
     /* ════ S8 · keystroke to paint ════ */
@@ -611,8 +622,8 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       check(`S10 hover changes the background, border or shadow of every left-column control and of the lit Approve (hover:hover ${hoverMedia})`, !hb.length, hb.map(x => `${x.name}: ${why(x)}`).join(' | '));
       check('S10 keyboard focus (Tab) shows a visible ring on every one (outline >= 2 px, or a box-shadow ring)', !fb.length, fb.map(x => `${x.name}: ${fwhy(x)}`).join(' | '));
       check('S10 the cursor is a pointer on the clickable ones (thumbnails, options, Aα, Emoji, font picker, Approve)', !pb.length, pb.map(x => `${x.name}: ${x.missing ? 'missing' : (x.legacy ? 'no spec hook (old control), ' : '') + 'cursor ' + (x.hov && x.hov.cursor)}`).join(' | '));
-      // a disabled Approve (Front with empty words): no hover effect, no pointer
-      const f = await press(pk, 'choice', 'front'); await frames(1);
+      // a disabled Approve (Front & Back with an empty front, as S6): no hover effect, no pointer
+      const f = await press(pk, 'choice', 'both'); await frames(1);
       const dis = await page.evaluateHandle(pk => { const sc = window.__stg.scope(pk); return sc && [...sc.querySelectorAll('[data-a="approve"]')].find(b => window.__stg.vis(b) && (b.disabled || b.getAttribute('aria-disabled') === 'true')); }, pk);
       const de = dis.asElement();
       if (de) {
@@ -620,7 +631,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
         const r0 = await page.evaluate(e => window.__stg.styles(e)[0], de); await de.hover({ timeout: 3000, force: true }).catch(() => {}); await page.evaluate(e => window.__stg.settle(e, 600), de);
         const r1 = await page.evaluate(e => window.__stg.styles(e)[0], de);
         check('S10 a disabled Approve has no hover effect, no pointer cursor, and reduced opacity', r1.cursor !== 'pointer' && r0.bg === r1.bg && r0.bc === r1.bc && r0.bs === r1.bs && parseFloat(r0.opacity) < 1, J({ rest: r0, hover: r1 }));
-      } else check('S10 a disabled Approve has no hover effect, no pointer cursor, and reduced opacity', false, 'no disabled Approve after Front with empty words: ' + J({ f, approve: (await snap(pk)).approve }));
+      } else check('S10 a disabled Approve has no hover effect, no pointer cursor, and reduced opacity', false, 'no disabled Approve after Front & Back with an empty front: ' + J({ f, approve: (await snap(pk)).approve }));
       await page.mouse.move(neutral.x, neutral.y);
     }
 
