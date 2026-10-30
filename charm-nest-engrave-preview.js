@@ -368,6 +368,7 @@
    * is used) and reflowAt (the line breaks, every wrap tried at that size). Nothing is saved; the job's own fit, once there, replaces it. Deferred (one task at a time, never inside a paint) and kept
    * per charm, face, font and words. */
   const QF = new Map(), QUEUE = [];
+  const LASTPLACE = new Map();   // ENGSTAGE: a face's picture key -> the last place its words were fitted at (a picture drawn afresh while new words are placed starts there)
   let qBusy = false;
   const cfg = () => { try { return (typeof S !== 'undefined' && S && S.settings) || {}; } catch (_) { return {}; } };
   function quickRun(rec) {
@@ -568,7 +569,8 @@
       // st.live) never hides its words while their new place is worked out: they are drawn at once where the last words sat (else in the largest empty rectangle of the face, else in the middle,
       // scaled to the box), and move to their place when it arrives. A picture drawn for the first time still waits for its place (nothing is drawn across the whole charm).
       const rectPlace = rect => { const L0 = layoutOf({ lines: typed, capPerEm: capPerEm(id) }), chars = Math.max(1, ...typed.map(l => l.length)), em = Math.min(L0.totalH ? rect.hPt / L0.totalH : rect.hPt, rect.wPt / (0.6 * chars)); return placeOf({ centre: rect.centre, size: em, angle: 0 }, src.frame.box); };
-      const lastOf = () => (st.lastQp && st.lastKey === src.key ? Object.assign({}, st.lastQp, st.lastRect ? { size: rectPlace(st.lastRect).size } : {}) : st.lastRect && st.lastKey === src.key ? rectPlace(st.lastRect) : null);
+      const seen = st.lastKey === src.key ? { qp: st.lastQp, rect: st.lastRect } : LASTPLACE.get(src.key) || {};   // (this picture's last place, else the last place any picture of this face had)
+      const lastOf = () => (seen.qp ? Object.assign({}, seen.qp, seen.rect ? { size: rectPlace(seen.rect).size } : {}) : seen.rect ? rectPlace(seen.rect) : null);
       if (qf && qf.status === 'loading' && !(st.live && !coming)) {   // (a few milliseconds; a slow one shows a small labelled wait after a short while, nothing is drawn wrong meanwhile)
         N.root.dataset.state = 'fitting'; N.slot.hidden = true; N.text.hidden = true; N.text.textContent = ''; N.root.dataset.size = '';
         N.wait.hidden = false; N.wait.setAttribute('data-late', ''); N.wait.setAttribute('aria-label', 'Placing words'); N.wait.querySelector('.engpvWaitT').textContent = 'Placing words'; N.wait.removeAttribute('title');
@@ -576,6 +578,7 @@
       }
       const qp = qf && qf.status === 'ready' ? placeOf(qf.fit, src.frame.box) : qf && qf.status === 'loading' ? lastOf() : qf && qf.rect ? rectPlace(qf.rect) : null;
       if (qf && qf.status === 'ready') { st.lastQp = qp; st.lastRect = qf.rect || st.lastRect || null; st.lastKey = src.key; } else if (qf && qf.rect) { st.lastRect = qf.rect; st.lastKey = src.key; }
+      if (qf && qf.status !== 'loading' && st.lastKey === src.key) { LASTPLACE.delete(src.key); LASTPLACE.set(src.key, { qp: st.lastQp, rect: st.lastRect }); while (LASTPLACE.size > 120) LASTPLACE.delete(LASTPLACE.keys().next().value); }
       if (st.retry) { try { clearTimeout(st.retry); } catch (_) { /* gone */ } st.retry = 0; }
       if (!st.again) st.tries = 0; st.again = false;   // (a paint a person's edit made starts the count again; one this timer made goes on)
       if (src.kind === 'frame' && st.tries < 20 && draftPending(o, id, dr)) { st.tries++; st.retry = setTimeout(() => { st.retry = 0; if (el._engpv === st && el.isConnected) { st.again = true; paint(el); } }, 150); }
@@ -618,7 +621,7 @@
       if (!el || !el.ownerDocument || typeof el.replaceChildren !== 'function') return el || null;
       ensureCss(el.ownerDocument);
       const was = el._engpv, opts = Object.assign({}, o || {});
-      el._engpv = { opts, pos: o && o.position ? Object.assign({}, o.position) : null, nodes: was ? was.nodes : null, drawKey: was ? was.drawKey : '', seen: !!el.isConnected, fontId: '' };
+      el._engpv = { opts, pos: o && o.position ? Object.assign({}, o.position) : null, nodes: was ? was.nodes : null, drawKey: was ? was.drawKey : '', seen: !!el.isConnected, fontId: '', live: !!(o && o.instant) || !!(was && was.live) };   // (ENGSTAGE: o.instant, a picture being typed on: its words are drawn at once)
       LIVE.add(el); paint(el);
     } catch (e) { warn(e); }
     return el;

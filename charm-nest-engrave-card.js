@@ -307,7 +307,8 @@
     if (P && P.render) {
       // ENGTHUMB (round 2): the picture is the CHARM seen from this side (the job's own view, else the piece's pool charm; the front with the design's engraved art), the words laid on it where the job
       // puts them (the preview's own positionOf: the work area's frame). A face with no geometry at all keeps the saved picture of its approved file, else the line's Vector design (the preview's own fallbacks).
-      try { P.render(btn, { row: lineOf(piece.row), job: f.job, slot: piece.slot, text: f.text, fontId: f.fontId, fontWord: f.fontWord, position: P.positionOf ? P.positionOf(f.job, { row: lineOf(piece.row), slot: piece.slot }) : f.position, face, image: savedPicture(f.job, face, o), rel: piece.rel }); return; } catch (_) { btn.replaceChildren(); }
+      // (ENGSTAGE: the Engrave detail's thumbnails are typed on: `instant`, their words are drawn at once, a picture drawn afresh too; a face not engraved now is the plain charm)
+      try { P.render(btn, { row: lineOf(piece.row), job: f.job, slot: piece.slot, text: f.engraved === false ? '' : f.text, fontId: f.fontId, fontWord: f.fontWord, position: P.positionOf ? P.positionOf(f.job, { row: lineOf(piece.row), slot: piece.slot }) : f.position, face, image: savedPicture(f.job, face, o), rel: piece.rel, instant: !!o && o.approve === false }); return; } catch (_) { btn.replaceChildren(); }
     }
     const E = root && root.Engrave, job = f.job;
     // the placement as it is cut (the fitted words on the charm), when the job has one

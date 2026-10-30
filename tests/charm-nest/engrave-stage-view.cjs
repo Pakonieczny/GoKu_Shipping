@@ -79,34 +79,49 @@ const FORBIDDEN = /Words to confirm|gives no words|being prepared|Engrave these 
     const Soff = await look();
     check('S7 Back only but the front active (about to type on it): the plain front in the work area, the front thumbnail plain and marked', fine(Soff) && Soff.face === 'front' && Soff.words === '' && Soff.front.cur && !Soff.front.eng && !Soff.front.text && Soff.back.eng, JSON.stringify(Soff));
 
-    // ═══ K · a keystroke reaches the thumbnail and the work area in the first frame ═══
+    // ═══ K · a keystroke reaches the thumbnail and the work area at once: painted inside the call (no frame waited for), within one frame's time ═══
     // (the frame of this machine now, idle: ten frames with nothing to paint; a machine running other tests beside this one has longer frames, and a frame is what is asked)
     const idle = await page.evaluate(() => new Promise(res => { const ts = []; const f = t => { ts.push(t); if (ts.length < 11) requestAnimationFrame(f); else { const d = ts.slice(1).map((t, i) => t - ts[i]).sort((a, b) => a - b); res(d[Math.floor(d.length / 2)]); } }; requestAnimationFrame(f); }));
-    const FRAME = Math.max(34, 2.5 * idle);   // (a call made anywhere in a frame is painted by the next one: up to one frame of waiting, then the paint itself)
+    const FRAME = Math.max(16.7, idle);   // (one frame of this machine)
     const median = a => { const v = a.slice().sort((x, y) => x - y); return v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2; };   // (one keystroke that meets the garbage collector or a busy machine is not the rule)
     const keys = await page.evaluate(async Q => {
       const c = document.querySelector(Q), job = Engrave.items().get(c.dataset.key), key = c.dataset.key.replace(/~front$/, ''), out = [];
       for (const typed of ['R', 'Ru', 'Rub', 'Ruby']) {
         const t0 = performance.now(), r = Engrave.showStage(job, { key, choice: 'both', active: 'front', faces: { front: { text: typed, font: '', pos: null }, back: { text: 'Ruby', font: '', pos: null } } });
-        out.push(await new Promise(res => requestAnimationFrame(() => { const h = document.querySelector(Q + ' .backHost'), th = document.querySelector(Q + ' [data-eng-thumb="front"] .engpvText'); res({ typed, seq: r.seq, drawn: +h.dataset.stageSeq, cost: h.dataset.paintMs, words: h.dataset.words, thumb: th && !th.hidden ? th.textContent : '', ms: Math.round((performance.now() - t0) * 10) / 10 }); })));
-        await new Promise(res => setTimeout(res, 30));
+        { const h = document.querySelector(Q + ' .backHost'), th = document.querySelector(Q + ' [data-eng-thumb="front"] .engpvText'); out.push({ typed, seq: r.seq, drawn: +h.dataset.stageSeq, cost: h.dataset.paintMs, words: h.dataset.words, thumb: th && !th.hidden ? th.textContent : '', ms: Math.round((performance.now() - t0) * 10) / 10 }); }   // (read in the same task: nothing has run since the call)
+        await new Promise(res => setTimeout(res, 40));
       }
       return out;
     }, Q);
-    check('K1 every keystroke is on the front thumbnail AND in the work area in the first animation frame after the call', keys.every(k => k.drawn === k.seq && low(k.words) === low(k.typed) && low(k.thumb) === low(k.typed)), JSON.stringify(keys));
-    check(`K2 keystroke to paint within one frame (${keys.map(k => k.ms + ' [' + k.cost + ']').join(', ')} ms)`, median(keys.map(k => k.ms)) <= FRAME, JSON.stringify({ idle, FRAME, keys }));
+    check('K1 every keystroke is on the front thumbnail AND in the work area when the call returns (no frame, no hop)', keys.every(k => k.drawn === k.seq && low(k.words) === low(k.typed) && low(k.thumb) === low(k.typed)), JSON.stringify(keys));
+    check(`K2 keystroke to paint within one frame, ${FRAME.toFixed(1)} ms (${keys.map(k => k.ms + ' [' + k.cost + ']').join(', ')} ms)`, median(keys.map(k => k.ms)) <= FRAME, JSON.stringify({ idle, FRAME, keys }));
     // the same on the back, the face with its own fitted job (the staged words its draft)
     await show(stage('both', 'back', 'Ann', 'Ruby'));
     const keysB = await page.evaluate(async Q => {
       const c = document.querySelector(Q), job = Engrave.items().get(c.dataset.key), key = c.dataset.key.replace(/~front$/, ''), out = [];
       for (const typed of ['Rub', 'Ruby', 'Ruby J', 'Ruby Jo']) {
         const t0 = performance.now(), r = Engrave.showStage(job, { key, choice: 'both', active: 'back', faces: { front: { text: 'Ann', font: '', pos: null }, back: { text: typed, font: '', pos: null } } });
-        out.push(await new Promise(res => requestAnimationFrame(() => { const h = document.querySelector(Q + ' .backHost'), th = document.querySelector(Q + ' [data-eng-thumb="back"] .engpvText'), d = Engrave.draftOf(job.key); res({ typed, seq: r.seq, drawn: +h.dataset.stageSeq, cost: h.dataset.paintMs, words: h.dataset.words, draft: d ? d.lines.join(' ') : null, thumb: th && !th.hidden ? th.textContent : '', ms: Math.round((performance.now() - t0) * 10) / 10 }); })));
-        await new Promise(res => setTimeout(res, 30));
+        { const h = document.querySelector(Q + ' .backHost'), th = document.querySelector(Q + ' [data-eng-thumb="back"] .engpvText'), d = Engrave.draftOf(job.key); out.push({ typed, seq: r.seq, drawn: +h.dataset.stageSeq, cost: h.dataset.paintMs, words: h.dataset.words, draft: d ? d.lines.join(' ') : null, thumb: th && !th.hidden ? th.textContent : '', ms: Math.round((performance.now() - t0) * 10) / 10 }); }
+        await new Promise(res => setTimeout(res, 40));
       }
       return out;
     }, Q);
-    check(`K3 typing on the back (its own fitted job): the thumbnail, the work area and its draft follow in the first frame (${keysB.map(k => k.ms + ' [' + k.cost + ']').join(', ')} ms)`, keysB.every(k => k.drawn === k.seq && low(k.words) === low(k.typed) && low(k.thumb).replace(/\s+/g, ' ') === low(k.typed) && (low(k.draft) === low(k.typed) || (k.draft === null && low(k.typed) === 'ruby'))) && median(keysB.map(k => k.ms)) <= FRAME, JSON.stringify({ idle, FRAME, keysB }));   // ("Ruby" is the job's own words: its fitted drawing stands, no draft)
+    check(`K3 typing on the back (its own fitted job): the thumbnail, the work area and its draft follow when the call returns, within a frame (${keysB.map(k => k.ms + ' [' + k.cost + ']').join(', ')} ms)`, keysB.every(k => k.drawn === k.seq && low(k.words) === low(k.typed) && low(k.thumb).replace(/\s+/g, ' ') === low(k.typed) && (low(k.draft) === low(k.typed) || (k.draft === null && low(k.typed) === 'ruby'))) && median(keysB.map(k => k.ms)) <= FRAME, JSON.stringify({ idle, FRAME, keysB }));   // ("Ruby" is the job's own words: its fitted drawing stands, no draft)
+
+    // ═══ T · a face pressed right after a letter (the same frame): the work area is on the new face when the call returns; the card drawn again is never an empty work area ═══
+    const press = await page.evaluate(Q => {
+      const c = document.querySelector(Q), job = Engrave.items().get(c.dataset.key), key = c.dataset.key.replace(/~front$/, ''), h = () => document.querySelector(Q + ' .backHost');
+      const st = (active, f) => ({ key, choice: 'both', active, faces: { front: { text: f, font: '', pos: null }, back: { text: 'Ruby', font: '', pos: null } } });
+      Engrave.showStage(job, st('back', 'Ann')); const a = Engrave.showStage(job, st('front', 'Ann'));
+      const one = { seq: a.seq, drawn: +h().dataset.stageSeq, face: h().dataset.face, words: h().dataset.words, cur: (document.querySelector(Q + ' [data-eng-thumb][aria-current="true"]') || { dataset: {} }).dataset.engThumb };
+      Engrave.render();   // (the tab draws the detail afresh, as it does at each change: a commit landing after Approve)
+      const h2 = h(), el = h2 && h2.querySelector(':scope > canvas, :scope > .egStagePv');
+      const two = { face: h2 && h2.dataset.face, words: h2 && h2.dataset.words, el: !!el, w: el ? el.width || el.offsetWidth : 0 };
+      return { one, two };
+    }, Q);
+    check('T1 a face pressed in the same frame as a letter: the work area and the thumbnails are on it when the call returns', press.one.drawn === press.one.seq && press.one.face === 'front' && low(press.one.words) === 'ann' && press.one.cur === 'front', JSON.stringify(press.one));
+    check('T2 the card drawn again (Engrave.render) never shows an empty work area: the last drawing of that face holds its place until the new one is made', press.two.el && press.two.w > 0 && press.two.face === 'front' && low(press.two.words) === 'ann', JSON.stringify(press.two));
+    await R.settle(page, 400);
 
     // ═══ R · 30 rapid alternating calls: the last state wins, nothing older is painted after it, no backlog ═══
     const rapid = await page.evaluate(async Q => {
