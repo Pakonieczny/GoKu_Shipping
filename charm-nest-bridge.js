@@ -10001,7 +10001,7 @@ const Engrave = window.Engrave = (() => {
     }
     const lines = lines0.map(l => O.capsText(l, fid)), font = pinFont(set.Regular, { scriptFonts: typeof set.Regular.scriptFonts === "function" ? set.Regular.scriptFonts(lines.join("\n")) : [] });
     const pseudo = { mask, lineGap: job.lineGap }, h = mask.hPt || mask.h / mask.res, want = rec.size || fitOpts(pseudo).maxHeightFrac * h;
-    let f = null; try { f = G.reflowAt(lines, font, mask, { ...fitOpts(pseudo, true), measure: false }, { centre: rec.centre || maskCentroid(mask), angle: 0, size: want }, "auto"); } catch (_) { f = null; }   // (ENGSTAGE: drawn at every letter: no stroke measure, as a drag draws: the face's own fit measures it)
+    let f = null; try { f = G.reflowAt(lines, font, mask, { ...fitOpts(pseudo, true), measure: false }, { centre: rec.centre || mask._svCentroid || (mask._svCentroid = maskCentroid(mask)), angle: 0, size: want }, "auto"); } catch (_) { f = null; }   // (ENGSTAGE: drawn at every letter: no stroke measure, as a drag draws: the face's own fit measures it)
     return { mask, fit: f && f.ok ? f : null };
   }
   /** A drag of the staged words: they follow the pointer on that face's safe area (drawn again into the same canvas, every frame at most); nothing is kept but the place, in the staged record. */
