@@ -322,13 +322,17 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
   };
   const approvedish = s => ['approved', 'written'].includes(s);
   const plainish = c => !c || ['none', 'skipped'].includes(c.state);
+  /** idle: nothing busy and nothing on the card or in the jobs changing for 1.2 s. waitIdle.changing: what still changed at the end (for the evidence of a card that never holds still) */
+  const flat = (o, pre = '', out = {}) => { if (o && typeof o === 'object') { for (const k of Object.keys(o)) flat(o[k], pre ? pre + '.' + k : k, out); } else out[pre] = o; return out; };
   const waitIdle = async (pk, ms = 15000) => {
-    let last = '', same = 0; const t0 = Date.now();
+    let last = null, same = 0; const t0 = Date.now(), changing = {};
     for (;;) {
-      const v = await page.evaluate(pk => { const S = window.__stg, s = S.snap(pk), c = S.committed(pk); return { sig: JSON.stringify([s, c]), busy: !!(s.busy || (s.host && s.host.busy) || (c && c.working)) }; }, pk);
-      if (v.sig === last && !v.busy) same++; else same = 0; last = v.sig;
-      if (same >= 12) return true;
-      if (Date.now() - t0 > ms) return false;
+      const v = await page.evaluate(pk => { const S = window.__stg, s = S.snap(pk), c = S.committed(pk); return { s, c, busy: !!(s.busy || (s.host && s.host.busy) || (c && c.working)) }; }, pk);
+      const f = flat({ s: v.s, c: v.c }), diff = last ? Object.keys(Object.assign({}, f, last)).filter(k => J(f[k]) !== J(last[k])) : ['(first)'];
+      if (!diff.length && !v.busy) same++; else { same = 0; if (Date.now() - t0 > ms - 3000) for (const k of diff) changing[k] = J(f[k]).slice(0, 40); }
+      last = f;
+      if (same >= 12) { waitIdle.changing = null; return true; }
+      if (Date.now() - t0 > ms) { waitIdle.changing = changing; return false; }
       await new Promise(r => setTimeout(r, 100));
     }
   };
@@ -674,7 +678,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
           log.push(rec);
         }
       }
-      const idle = await waitIdle(pk, 12000);
+      const idle = await waitIdle(pk, 12000), stillChanging = waitIdle.changing;
       const hasCard = await page.evaluate(pk => Engrave.jobsOf(B.orders.byKey.get(pk.split('#')[0])).some(x => x.state !== 'none'), pk);
       if (hasCard && !(await page.evaluate(pk => !!window.__stg.panel(pk), pk))) { await openPiece(sd.name); await waitIdle(pk, 5000); }
       const s = await snap(pk), c = await committed(pk), stg = await page.evaluate(pk => window.__stg.staged(pk), pk);
@@ -685,7 +689,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       const cFaces = c ? ['front', 'back'].filter(f => c[f] && !plainish(c[f])) : [];
       if (cut) check(`${tag}: the 60 actions ran`, false, cut.why);
       check(`${tag}: no page errors`, !errs.length, errs.join(' | ').slice(0, 400));
-      check(`${tag}: idle reached (no busy state, nothing at work)`, idle, J({ busy: s.busy, busyWhat: s.busyWhat, host: s.host, working: c && c.working, approve: s.approve, calm: s.calm, dirty: s.dirty, jobs: c && [c.front && c.front.state, c.back && c.back.state] }));
+      check(`${tag}: idle reached (no busy state, nothing at work)`, idle, J({ stillChanging, busy: s.busy, busyWhat: s.busyWhat, host: s.host, working: c && c.working, approve: s.approve, calm: s.calm, dirty: s.dirty, jobs: c && [c.front && c.front.state, c.back && c.back.state] }));
       if (!hasCard) {
         // (None was approved during the run: the piece is a regular order, in no list and with no card, as after any None + Approve; what it holds must be exactly that)
         const ok = cFaces.length === 0 && !!pressAt && pressAt.choice === 'none';
