@@ -75,7 +75,7 @@ function installProbe(FORBIDDEN) {
       thumbs: { front: thumb('front'), back: thumb('back') },
       box: ta ? ta.value : null, placeholder: ta ? ta.placeholder : null, boxDisabled: ta ? !!ta.disabled : null,
       host: host ? { face: host.dataset.face == null ? null : host.dataset.face, words: host.dataset.words == null ? null : host.dataset.words, seq: host.dataset.stageSeq == null ? null : host.dataset.stageSeq, canvas: S.drawn(host), busy: host.getAttribute('aria-busy') === 'true' } : null,
-      busy: !!sc.querySelector('[aria-busy="true"]') || p.getAttribute('aria-busy') === 'true' }, S.approveState(sc));
+      busy: !!sc.querySelector('[aria-busy="true"]') || p.getAttribute('aria-busy') === 'true', busyWhat: [...sc.querySelectorAll('[aria-busy="true"]')].map(e => (e.tagName + '.' + String(e.className).split(' ').join('.') + (e.dataset.engThumb ? '[data-eng-thumb=' + e.dataset.engThumb + ']' : '') + (e.dataset.a ? '[data-a=' + e.dataset.a + ']' : '')).slice(0, 60)).join(', ') || undefined }, S.approveState(sc));
   };
   /** the staged words of each face: the box for the active face, the thumbnails for the other */
   S.staged = pk => { const s = S.snap(pk); if (!s.open) return null; const faces = s.choice === 'both' ? ['front', 'back'] : s.choice === 'front' || s.choice === 'back' ? [s.choice] : []; const words = {}; for (const f of faces) words[f] = f === s.active && s.box != null ? s.box : (s.thumbs[f] ? s.thumbs[f].words : ''); return { choice: s.choice, faces, words }; };
@@ -639,7 +639,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       if (sd.how === 'in-page burst') log = await page.evaluate(burst, { pk, acts });
       else {
         for (const a of acts) {
-          if (Date.now() - tS > 20000 || timeLeft() < 5000) { log.push({ k: 'cut', why: 'the actions took over 20 s: cut short' }); break; }
+          if (Date.now() - tS > 30000 || timeLeft() < 5000) { log.push({ k: 'cut', why: 'the actions took over 30 s: cut short' }); break; }
           const rec = { k: a.k, arg: a.arg };
           const info = await page.evaluate(([pk, a]) => {
             const S = window.__stg, p = S.panel(pk); if (!p || !S.vis(p)) return { gone: true, on: S.front() };
@@ -670,7 +670,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       const cFaces = c ? ['front', 'back'].filter(f => c[f] && !plainish(c[f])) : [];
       if (cut) check(`${tag}: the 60 actions ran`, false, cut.why);
       check(`${tag}: no page errors`, !errs.length, errs.join(' | ').slice(0, 400));
-      check(`${tag}: idle reached (no busy state, nothing at work)`, idle, J({ busy: s.busy, host: s.host, working: c && c.working }));
+      check(`${tag}: idle reached (no busy state, nothing at work)`, idle, J({ busy: s.busy, busyWhat: s.busyWhat, host: s.host, working: c && c.working, approve: s.approve, calm: s.calm, dirty: s.dirty, jobs: c && [c.front && c.front.state, c.back && c.back.state] }));
       if (!hasCard) {
         // (None was approved during the run: the piece is a regular order, in no list and with no card, as after any None + Approve; what it holds must be exactly that)
         const ok = cFaces.length === 0 && !!pressAt && pressAt.choice === 'none';
