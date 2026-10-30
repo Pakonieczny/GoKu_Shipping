@@ -218,6 +218,30 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     const e1s = await st(), e1 = e1f && e1s.approve && e1s.approve.a === 'approved' && !e1s.dirty ? { f: e1f, s: e1s } : null;
     check('E2 both land in turn: the face approved with the last words staged, the card calm "Approved", nothing staged, no busy Approve', !!e1 && busy === 0, JSON.stringify({ f: e1f && { text: e1f.text, state: e1f.state }, s: { approve: e1s.approve, dirty: e1s.dirty, key: e1s.key, words: e1s.words }, busy }));
     } else check('E2 both land in turn', false, 'the card of the piece did not open');
+    /* ── F · a burst with no waits (coordinator, 30 Oct 2026, S7 seed 2): stage, press, stage, press ... the LAST press is the one kept, and once nothing runs any more the card says the truth: staged = kept ── */
+    await quiet(); await R.openEngraveDetail(w, 'both', { face: 'back' }); await R.settle(page, 600);
+    const burst = await page.evaluate(async key => {
+      const P = CharmNestEngravePanel, card = () => window.__card(), opt = c => card().querySelector(`.engp [data-engp="choice"][data-choice="${c}"]`), ta = () => card().querySelector('.engp .engpWords'), ap = () => card().querySelector('[data-engp-approve]');
+      const type = v => { const t = ta(); t.focus(); t.value = v; t.dispatchEvent(new Event('input', { bubbles: true })); };
+      const seq = ['both', 'front', 'back', 'both', 'back', 'front', 'back', 'both', 'back', 'back'], presses = [];
+      for (let i = 0; i < seq.length; i++) {
+        opt(seq[i]).click();
+        if (seq[i] === 'both') { const t = window.__thumb(i % 2 ? 'front' : 'back'); if (t) t.click(); }
+        type('B' + i);
+        const b = ap(); if (b && !b.disabled && b.dataset.a === 'approve') { b.click(); presses.push(i); }
+        if (i % 3 === 2) await new Promise(r => setTimeout(r, 0));   // (now and then a task between: the commits start under the burst)
+      }
+      opt('back').click(); type('Last'); const b = ap(); const lit = !!b && !b.disabled; if (lit) b.click();
+      return { presses, lit, st: P.stateOf(key) };
+    }, KF);
+    check('F1 a burst of options, words and presses: the last Approve is lit and taken; commits run under it', burst.lit && burst.presses.length >= 3 && burst.st && (burst.st.running || burst.st.pending || burst.st.committing), JSON.stringify(burst));
+    const drained = await until(() => page.evaluate(key => { const s = CharmNestEngravePanel.stateOf(key); return s && !s.running && !s.pending && !s.committing ? s : null; }, KF), 180000);
+    await quiet();
+    const fj = await jobsOf(KF), fb = fj.find(j => j.face === 'back'), ff = fj.find(j => j.face === 'front');
+    check('F2 when nothing runs any more the LAST press is what is kept: the Back approved with "Last", the Front not engraved', !!drained && !!fb && ['approved', 'written'].includes(fb.state) && /^Last$/i.test(String(fb.text).trim()) && (!ff || ['none', 'skipped'].includes(ff.state)), JSON.stringify({ drained, jobs: fj }));
+    if (!(await page.evaluate(key => !!CharmNestEngravePanel.stateOf(key), KF))) { await R.openEngraveDetail(w, 'both', { face: 'back' }); await R.settle(page, 700); }   // (the tab moved on after the Approve: the piece opened again)
+    const truth = await page.evaluate(key => { const s = CharmNestEngravePanel.stateOf(key), c = window.__card(), p = c && c.querySelector('.engp'), b = c && c.querySelector('[data-engp-approve]'); return { s, dirtyAttr: !!(p && p.dataset.dirty), a: b && b.dataset.a, dis: b && b.disabled, busy: !!(b && b.getAttribute('aria-busy')) }; }, KF);
+    check('F3 and the card says the truth: nothing staged against the jobs, the calm "Approved", nothing busy (or, when it differs from the jobs, a lit Approve)', truth.s && (truth.s.dirty ? truth.a === 'approve' && !truth.dis : truth.a === 'approved' && !truth.dirtyAttr) && !truth.busy, JSON.stringify(truth));
     check('Z no page errors', errors.length === 0, errors.join(' | ').slice(0, 600));
   } catch (e) { console.error(e); check('ran', false, String(e && e.stack || e)); }
   finally { await w.close(); }

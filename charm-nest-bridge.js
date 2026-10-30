@@ -9316,7 +9316,7 @@ const Engrave = window.Engrave = (() => {
     const by = employeeName() || await approveWithin(needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: stampAt() }), APPROVE_MS.sign, "").catch(() => "");
     step("signed");
     // (an approval of this piece still finishing (its back file, its save: the tail of an earlier Approve) is let finish first, so a change made on top of it is never refused or lost)
-    { const tail = () => jobsOf(line).some(j => (j.slot || null) === slot && (j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving)); while (tail() && Date.now() < until) { step("tail"); await wait(60); } }
+    { const tail = () => jobsOf(line).some(j => (j.slot || null) === slot && (j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving)), by15 = Date.now() + 15000 * Math.max(0.001, +window.CN_SPIN_SCALE || 1); while (tail() && Date.now() < Math.min(until, by15)) { step("tail"); await wait(60); } }   // (at most 15 s: a file still being written for the sheets never holds a change back longer)
     if (!by) return { ok: false, cancelled: true, message: "Nobody is signed in.", approved: [] };
     // (1) the faces, their words and fonts (and the place dragged on a face that has no job yet)
     const before = new Set(jobsOf(line).map(j => j.key)), patch = stage.patch && typeof stage.patch === "object" ? stage.patch : null;   // (a job made by this commit takes its dragged place as _placeAt; one that was there, placed or opened again, is moved below)

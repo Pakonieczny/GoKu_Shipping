@@ -161,15 +161,15 @@
     return F.setupOf({ spec }, S.buildOverride(line, patch, 'x', 0), vm.slot || undefined);
   }
   const viewOf = d => ({ mode: d.choice, faces: d.faces });
-  /** Does the draft differ from what is kept (or, while an Approve is kept, from what it staged)? */
+  /** Does the draft differ from what is kept: what the jobs and the setup hold NOW (read again at every look, a commit under way or not)? (coordinator, 30 Oct 2026: never against a press's snapshot) */
   function dirtyOf(vm, d, key) {
-    const c = COMMITS.get(key);
-    if (c) {
-      const s = c.stage; if (d.choice !== s.choice) return true;
-      return facesOf(d.choice).some(f => normWords(d.faces[f].text) !== normWords(s.faces[f].text) || str(d.faces[f].font) !== str(s.faces[f].font) || !samePos(d.faces[f].pos, s.faces[f].pos));
-    }
-    const S = Setup(); if (hasPatch(tryDo(() => S.patchOf(vm, viewOf(d)), null))) return true;
+    void key; const S = Setup(); if (hasPatch(tryDo(() => S.patchOf(vm, viewOf(d)), null))) return true;
     return facesOf(d.choice).some(f => posOk(d.faces[f] && d.faces[f].pos));
+  }
+  /** Is the draft exactly the stage of a press (`st`: its choice, and the words, font and place of every face it engraves)? */
+  function sameStage(d, st) {
+    if (!st || d.choice !== st.choice) return false;
+    return facesOf(d.choice).every(f => normWords(d.faces[f].text) === normWords(st.faces[f].text) && str(d.faces[f].font) === str(st.faces[f].font) && samePos(d.faces[f].pos, st.faces[f].pos));
   }
   /** Is what is kept approved? Every face it engraves has its piece's job approved or saved to its sheet (None: a regular order, nothing to approve). */
   function keptApproved(vm) {
@@ -180,11 +180,11 @@
   /** THE GATE of Approve: { st: 'approve' | 'need' (an engraved face has no words: faces) | 'blocked' (why) | 'busy' (a face is being read or placed) | 'approved' (calm) | 'ok' (the press is being kept: "Approved ✓") , dirty } */
   function gateOf(vm, d, key) {
     const c = COMMITS.get(key), dirty = dirtyOf(vm, d, key);
-    if (c && !dirty) return { st: 'ok', dirty: false };
+    if (c && sameStage(d, c.stage)) return { st: 'ok', dirty };   // (the press of exactly this stage is being kept, or waits its turn: "Approved ✓"; data-dirty still says the jobs do not hold it yet)
     const empty = emptyFaces(vm, d);
     if (dirty) {
       if (empty.length) return { st: 'need', faces: empty, dirty };
-      if (!c) { const S = Setup(), patch = tryDo(() => S.patchOf(vm, viewOf(d)), {}); if (hasPatch(patch)) { const cons = tryDo(() => S.consequences(vm.line, vm.jobs, nextSetupOf(vm, patch), vm.setup), null); if (cons && cons.blocked) return { st: 'blocked', why: cons.blocked, dirty }; } }
+      { const S = Setup(), patch = tryDo(() => S.patchOf(vm, viewOf(d)), {}); if (hasPatch(patch)) { const cons = tryDo(() => S.consequences(vm.line, vm.jobs, nextSetupOf(vm, patch), vm.setup), null); if (cons && cons.blocked) return { st: 'blocked', why: cons.blocked, dirty }; } }
       return { st: 'approve', dirty };
     }
     if (keptApproved(vm)) return { st: 'approved', dirty: false };
@@ -387,17 +387,30 @@
   /* ── Approve: one press, at once (ENGSTAGE) ───────────────────────────────── */
   const liveBindings = key => [...(LIVE.get(key) || [])].filter(b => b.el && b.el.isConnected);
   /** The press: the staged state is what will be kept; "Approved ✓" is painted in this same frame and the commit runs behind it, after any commit of this piece still running. -> true when a commit was queued */
+  const RUNNING = new Set();   // piece keys whose commit runs now
+  const PENDING = new Map();   // piece key -> the press waiting for the running commit: the LATEST one (a press meanwhile replaces it)
   function pressCommit(ctx) {
-    const { key, line, slot, d } = ctx, c = COMMITS.get(key);
+    const { key, line, slot, d } = ctx;
     const snap = { seq: d.seq, draft: d, stage: { choice: d.choice, active: d.active, faces: cloneFaces(d.faces) } };
     COMMITS.set(key, snap);
     const E = Eng(); if (E && E.showStage && typeof E.showStage.flush === 'function') tryDo(() => E.showStage.flush());
     for (const b of liveBindings(key)) tryDo(() => b.gate());   // ("Approved ✓", now)
-    const prev = CHAINS.get(key) || Promise.resolve();
-    const go = () => runCommit({ key, line, slot, snap, jobKey: ctx.jobKey });
-    const run = prev.then(go, go).catch(e => { if (COMMITS.get(key) === snap) COMMITS.delete(key); unbusy(key); toast(shortWhy(e && e.message ? e.message : e)); });   // (a commit before it that failed in any way never holds this one back)
+    const job = { snap, line, slot, jobKey: ctx.jobKey };
+    if (RUNNING.has(key)) { PENDING.set(key, job); return true; }   // (kept right after the commit running now, from the jobs as they are then)
+    startRun(key, job);
+    return true;
+  }
+  function startRun(key, job) {
+    RUNNING.add(key);
+    const go = () => runCommit({ key, line: job.line, slot: job.slot, snap: job.snap, jobKey: job.jobKey });
+    const run = (CHAINS.get(key) || Promise.resolve()).then(go, go).catch(e => { toast(shortWhy(e && e.message ? e.message : e)); }).then(() => {   // (a commit before it that failed in any way never holds this one back)
+      RUNNING.delete(key);
+      const next = PENDING.get(key); PENDING.delete(key);
+      if (next) { startRun(key, next); return; }
+      if (COMMITS.get(key) === job.snap) COMMITS.delete(key);
+      unbusy(key);   // (the chain is drained: Approve is drawn from the jobs as they are now: lit when what is staged differs from them)
+    });
     CHAINS.set(key, run); run.then(() => { if (CHAINS.get(key) === run) CHAINS.delete(key); });
-    void c; return true;
   }
   /* ENGSTAGE (coordinator, 30 Oct 2026: a 60-action burst left "Approved" stuck, aria-busy, with edits staged on top): a commit is never left pending. It reports each step it makes (o.step); 20 s with no step
    * (CN_SPIN_SCALE: a test's clock) ends the wait for it: Approve is given back with the staged state as it is and one short reason. The commit itself may still land later: the next commit of the piece waits for it
@@ -431,10 +444,10 @@
       if (res && res.hung) { const h = work.catch(() => {}).then(() => { if (HUNG.get(key) === h) HUNG.delete(key); for (const b of liveBindings(key)) tryDo(() => b.draw()); unbusy(key); }); HUNG.set(key, h); }
     } catch (e) { res = { ok: false, message: str(e && e.message ? e.message : e) }; }
     finally {
-      settled = true; if (COMMITS.get(key) === snap) COMMITS.delete(key);   // (the "Approved ✓" of this press ends here, whatever happened)
+      settled = true; if (COMMITS.get(key) === snap && !PENDING.has(key)) COMMITS.delete(key);   // (the "Approved ✓" of this press ends here, whatever happened; a press waiting after it keeps its own)
       unbusy(key);   // (nothing of this press says busy any more: its stamp's anchor and the button, then Approve drawn again)
     }
-    const d = DRAFTS.get(key), clean = !!(res && res.ok) && d === snap.draft && d.seq === snap.seq && !COMMITS.has(key);
+    const d = DRAFTS.get(key), clean = !!(res && res.ok) && d === snap.draft && d.seq === snap.seq && !COMMITS.has(key) && !PENDING.has(key);
     if (clean) { d.touched = false; d.dirty = false; d.sig = ''; for (const f of FACES) d.faces[f].pos = null; }
     else if (res && res.ok && d === snap.draft) for (const f of FACES) if (posOk(d.faces[f].pos) && samePos(d.faces[f].pos, snap.stage.faces[f].pos)) d.faces[f].pos = null;   // (the place this commit kept is kept: only what differs from it stays staged)   // (what was staged is what is kept now: nothing is staged; the draft starts again from what is kept at the next look, on the face shown)
     else if (!(res && res.ok) && !(res && res.cancelled)) {
@@ -729,7 +742,7 @@
   function stateOf(key) {
     const d = DRAFTS.get(str(key)); if (!d) return null;
     const S = Setup(), vm = d.line && S ? tryDo(() => S.read(d.line, { slot: (str(key).split('#')[1]) || undefined }), null) : null, g = vm ? gateOf(vm, d, str(key)) : null;
-    return { choice: d.choice, active: d.active, seq: d.seq, dirty: !!(g && g.dirty), gate: g ? g.st : '', committing: COMMITS.has(str(key)), faces: cloneFaces(d.faces) };
+    return { choice: d.choice, active: d.active, seq: d.seq, dirty: !!(g && g.dirty), gate: g ? g.st : '', committing: COMMITS.has(str(key)), running: RUNNING.has(str(key)), pending: PENDING.has(str(key)), faces: cloneFaces(d.faces) };
   }
 
   /** A line's piece name, as the order window names it. */
