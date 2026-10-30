@@ -533,7 +533,7 @@
       m = m || (dead ? null : tryDo(() => model(), null)); if (!m) return;
       const { vm, d } = m, E = Eng(), st = stageFrom(d, line);
       if (typeof opts.onStage === 'function') tryDo(() => opts.onStage(st, kind));
-      if (E && typeof E.showStage === 'function') tryDo(() => E.showStage(opts.job || d.jobKey, st));   // (the card's own job, every change, approved pieces too: the thumbnails and the work area are stage-view's)
+      if (E && typeof E.showStage === 'function') tryDo(() => E.showStage(opts.job || d.jobKey, st, typeof opts.thumb === 'function' ? { thumb: opts.thumb } : undefined));   // (a host's own thumbnails: painted by showStage too)   // (the card's own job, every change, approved pieces too: the thumbnails and the work area are stage-view's)
       else legacy(vm, d, kind);
     };
     const paintLegacy = () => { const E = Eng(); if (E && typeof E.showStage === 'function') return; const m = dead ? null : tryDo(() => model(), null); if (m) legacy(m.vm, m.d, ''); };
