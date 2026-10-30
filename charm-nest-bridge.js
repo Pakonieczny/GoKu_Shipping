@@ -10435,7 +10435,7 @@ const Engrave = window.Engrave = (() => {
   function stageCss() {
     if (document.getElementById("egStageCss")) return;
     const s = document.createElement("style"); s.id = "egStageCss";
-    s.textContent = ".rvItem .backHost>.engpNoJob,.rvItem .backHost>.noBack.engpNoJob{display:none!important}"
+    s.textContent = ".rvItem .backHost>.engpNoJob,.rvItem .backHost>.noBack.engpNoJob{display:none!important}.rvItem[data-stage-own=\"0\"] .placeView>.ctl>*{visibility:hidden}"
       + ".egStagePv{display:block;box-sizing:border-box;margin:0 auto;background:#fff;border:1px solid var(--line,#e4ddd0);border-radius:10px;overflow:hidden}"
       + ".backHost .egZoom button{cursor:pointer;transition:background-color .12s ease,color .12s ease,box-shadow .12s ease,transform .08s ease}"
       + "@media (hover:hover){.backHost .egZoom button:hover{background:var(--goldSoft,#f6efdc);color:var(--ink,#2a2724);box-shadow:inset 0 0 0 1px var(--gold,#a9823f)}.backHost .egZoom button[aria-pressed=true]:hover{background:var(--ink,#2a2724);color:#fff}}"
@@ -12514,8 +12514,9 @@ const Engrave = window.Engrave = (() => {
     const seqNow = () => (STAGEV.get(stagePk) || {}).seq || 0;
     /** The words the card's own drawing shows now (a draft's, else the fitted ones). */
     const ownWords = () => { const d = DRAFTS.get(job.key), f = dj.fit; if (d && d.fit) return d.fit.empty ? [] : draftLines(d.staged && d.staged.text); return f && ((f.glyphs && f.glyphs.length) || f.cmds) && !f.artOnly ? draftLines((job.lineInput && job.lineInput.length ? job.lineInput : job.lines || []).join("\n")) : []; };
-    /** The hooks of the work area: the face drawn, the words drawn, the sequence of the state drawn. */
-    const stageHooks = (face, words, seq) => { backHost.dataset.face = face; backHost.dataset.words = (words || []).join("\n"); backHost.dataset.stageSeq = String(seq || 0); };
+    /** The hooks of the work area: the face drawn, the words drawn, the sequence of the state drawn. The card's own row of controls (Centre, Lines, the turn) acts on its own job: while the area
+     *  shows another face (`own` false) it is hidden, keeping its place, so nothing there moves a face that is not on screen. */
+    const stageHooks = (face, words, seq, own) => { backHost.dataset.face = face; backHost.dataset.words = (words || []).join("\n"); backHost.dataset.stageSeq = String(seq || 0); card.dataset.stageOwn = own === false ? "0" : "1"; };
     /** A face drawn from the piece's charm: its record (stagedFaceFit's), given the stage's words, font and place. */
     const stageFaceRec = (t, fv) => {
       const k = stagePk + "|" + t.face; let r = STAGE_FACES.get(k);
@@ -12570,7 +12571,7 @@ const Engrave = window.Engrave = (() => {
     };
     /** The same face drawn the same way: only what changed is painted (the draft, the staged words on the charm, the preview's words), in this frame. */
     const stageInPlace = (t, el) => {
-      if (!t) { if (el._paint) el._paint(); draftNote(card, DRAFTS.get(job.key)); stageHooks(viewFaceOf(job), ownWords(), seqNow()); return; }
+      if (!t) { if (el._paint) el._paint(); draftNote(card, DRAFTS.get(job.key)); stageHooks(viewFaceOf(job), ownWords(), seqNow(), viewFaceOf(job) === faceOf(job)); return; }
       if (t.kind === "job") {
         const rec = stageDraft(t.ja, t); if (el._paint) el._paint();
         if (t.ja === job) { const f = rec.fit && !rec.fit.empty ? rec.fit : job.fit, cap = card.querySelector("[data-cap]"); if (cap && f && Number.isFinite(f.capMm)) cap.textContent = capText(f); draftNote(card, rec); }
@@ -12579,7 +12580,7 @@ const Engrave = window.Engrave = (() => {
         else if (el._stageRedraw && el._stageFv) { stageFaceRec(t, el._stageFv); el._stageRedraw(); }
         else { card._remountWork(); return; }
       }
-      stageHooks(t.face, t.words, t.seq);
+      stageHooks(t.face, t.words, t.seq, t.kind === "held" || (t.kind === "job" && t.ja === job));
     };
     /** The stage painted on this card's work area (stageFlush, once a frame): in place when the face and the way it is drawn are the same, else drawn afresh, turned to the other face or
      *  cross-faded. A turn already on its way to it paints the latest state at its edge. */
@@ -12694,7 +12695,7 @@ const Engrave = window.Engrave = (() => {
       mounted = px; mountedBelow = band; backHost.textContent = "";
       backHost.style.paddingTop = band + "px"; backHost.style.paddingBottom = NOTE + "px"; backHost.style.boxSizing = "border-box";
       pm.classList.toggle("egWide", wide);
-      if (tgt && (tgt.kind === "view" || (tgt.kind === "job" && tgt.ja !== job))) { framed = null; stageDraw(tgt, px); stageHooks(tgt.face, tgt.words, tgt.seq); card._stageShape = tgt.shape; return; }
+      if (tgt && (tgt.kind === "view" || (tgt.kind === "job" && tgt.ja !== job))) { framed = null; stageDraw(tgt, px); stageHooks(tgt.face, tgt.words, tgt.seq, false); card._stageShape = tgt.shape; return; }
       if (tgt && tgt.kind === "job") stageDraft(job, tgt);   // (this card's own face: drawn below as ever, the staged words its draft)
       // (FACEVIEW, Paul 28 Oct 2026: the piece's other face, chosen with the Front | Back switch or shown by a save of the Charm Editor that changed it: drawn as that face, view only; the words and
       //  the Approve block stay the face's being approved)
@@ -12702,12 +12703,12 @@ const Engrave = window.Engrave = (() => {
       if (ov) {
         framed = null; ov.tabIndex = -1; ov.style.outline = "none"; ov.title = ov._staged ? `the ${vf} of this piece with the words staged for it · drag the words to move them` : `the ${vf} of this piece as it is cut and engraved, with every part the Charm Editor put on it · view only: the engraving to approve is on the ${fw}`;
         backHost.appendChild(ov); workViewOn(backHost, ov, job, vf, card);   // (ENGVIEW: its rulers and zoom; the face is chosen with the card's thumbnails, showFace)
-        stageHooks(vf, ov._staged ? draftLines((STAGED_FACES.get(job.key) || {}).text) : [], seqNow()); card._stageShape = "own|" + vf;
+        stageHooks(vf, ov._staged ? draftLines((STAGED_FACES.get(job.key) || {}).text) : [], seqNow(), false); card._stageShape = "own|" + vf;
         try { charmEditButton(backHost, ov, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }
         return;
       }
       const bc = (held && heldCanvas(job, px)) || renderBack(dj, px, { grid: true, editable: true, include: framed, draft: panelOn && !held, steady: true, zoom: held ? null : workZoomOf(job, faceOf(job)), label: WORK_LABEL }); framed = bc._map.bb; bc.tabIndex = -1; bc.style.outline = "none"; bc.title = job.fit && job.fit.artOnly ? `no words: the charm editor's parts are this ${fw}'s engraving` : "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys move them 0.05 mm, 1 mm with Shift · cut-outs and holes stay clear"; backHost.appendChild(bc);
-      stageHooks(faceOf(job), tgt ? tgt.words : held ? [] : ownWords(), tgt ? tgt.seq : seqNow()); card._stageShape = tgt ? tgt.shape : "own|" + faceOf(job);
+      stageHooks(faceOf(job), tgt ? tgt.words : held ? [] : ownWords(), tgt ? tgt.seq : seqNow(), true); card._stageShape = tgt ? tgt.shape : "own|" + faceOf(job);
       if (held) { heldOn(backHost, bc, job, px); return; } wire(bc); markShown(job); syncBoth(); if (panelOn) draftNote(card, DRAFTS.get(job.key));
       workViewOn(backHost, bc, job, faceOf(job), card);   // ENGVIEW: the rulers and the zoom of the grid (FACEVIEW's other face is chosen with the card's Front / Back thumbnails: showFace)
       try { charmEditButton(backHost, bc, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }   // CHARM EDIT: the quiet "Edit charm" pill after them (and the last save's note under it): the piece's own artwork in the charm editor (never at the drawing's cost)
@@ -12879,7 +12880,7 @@ const Engrave = window.Engrave = (() => {
     card.addEventListener("keydown", e => {
       if (wordsKey(e)) {
         const ctl = e.target && e.target.matches && e.target.matches("select, input[type=range]");
-        if (approvalBusy() || items().get(job.key) !== job || ["approved", "written"].includes(job.state)) { if (ctl) e.preventDefault(); return; }   // (looking at an approved piece is safe: the arrows do not reopen it)
+        if (approvalBusy() || items().get(job.key) !== job || ["approved", "written"].includes(job.state) || card.dataset.stageOwn === "0") { if (ctl) e.preventDefault(); return; }   // (looking at an approved piece is safe: the arrows do not reopen it; ENGSTAGE: nor do they move this job while the area shows another face)
         e.preventDefault(); if (!e.repeat) card._flushSpacing?.();
         const st = e.shiftKey ? MOVE_BIG_MM : MOVE_MM; nudge(job, e.key === "ArrowLeft" ? -st : e.key === "ArrowRight" ? st : 0, e.key === "ArrowUp" ? st : e.key === "ArrowDown" ? -st : 0); return;
       }

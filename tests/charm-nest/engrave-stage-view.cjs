@@ -39,7 +39,7 @@ const FORBIDDEN = /Words to confirm|gives no words|being prepared|Engrave these 
     const text = c.innerText.replace(/\s+/g, ' ');
     return { key: c.dataset.key, face: host && host.dataset.face, words: host && host.dataset.words, seq: host ? +host.dataset.stageSeq : -1, el: el ? (el.tagName === 'CANVAS' ? 'canvas' : 'pv') : null, size: r ? [Math.round(r.width), Math.round(r.height)] : null,
       ink: el && el.tagName === 'CANVAS' ? ink(el) : -1, viewFace: el ? el._viewFace || null : null, front: thumb('front'), back: thumb('back'), bad: (text.match(FORBIDDEN) || [])[0] || ((host && host.textContent.match(FORBIDDEN)) || [])[0] || '',
-      jobs: Engrave.jobsOf(Engrave.items().get(c.dataset.key).row).map(j => [j.face || 'back', j.state, j.text]), use: c.querySelectorAll('[data-a=usewords]').length, why: c.querySelectorAll('.ctl .why, .backHost .noBack').length, turning: host ? host.getAnimations().length : 0 };
+      own: c.dataset.stageOwn, ctl: (() => { const b = c.querySelector('.placeView > .ctl > *'); return b ? getComputedStyle(b).visibility : 'none'; })(), jobs: Engrave.jobsOf(Engrave.items().get(c.dataset.key).row).map(j => [j.face || 'back', j.state, j.text]), use: c.querySelectorAll('[data-a=usewords]').length, why: c.querySelectorAll('.ctl .why, .backHost .noBack').length, turning: host ? host.getAnimations().length : 0 };
   }, { Q, FORBIDDEN: FORBIDDEN.source });
   // one stage, painted (the call, then two frames and the turn's time)
   const stage = (choice, active, front, back) => ({ choice, active, faces: { front: { text: front || '', font: '', pos: null }, back: { text: back || '', font: '', pos: null } } });
@@ -68,13 +68,13 @@ const FORBIDDEN = /Words to confirm|gives no words|being prepared|Engrave these 
     await show(stage('front', 'front', 'Ann', 'Ruby'));
     const Sfront = await look();
     await R.shot(w, 'STAGE-front-Ann');
-    check('S4 Front "Ann" (no front job): the front thumbnail shows Ann, the work area the front of the charm with Ann fitted on it (more ink than the plain front)', fine(Sfront) && Sfront.face === 'front' && low(Sfront.words) === 'ann' && /ann/i.test(Sfront.front.text) && Sfront.front.eng && !Sfront.back.eng && Sfront.ink > SfrontPlain.ink + 20, JSON.stringify({ Sfront, plain: SfrontPlain.ink }));
+    check('S4 Front "Ann" (no front job): the front thumbnail shows Ann, the work area the front of the charm with Ann fitted on it (more ink than the plain front); the back\'s own controls are hidden meanwhile', fine(Sfront) && Sfront.face === 'front' && low(Sfront.words) === 'ann' && /ann/i.test(Sfront.front.text) && Sfront.front.eng && !Sfront.back.eng && Sfront.ink > SfrontPlain.ink + 20 && Sfront.own === '0' && Sfront.ctl !== 'visible', JSON.stringify({ Sfront, plain: SfrontPlain.ink }));
     await show(stage('both', 'front', 'Ann', 'Ruby'));
     const Sboth = await look();
     check('S5 Both, active front: both thumbnails engraved (Ann, Ruby), the work area the front with Ann', fine(Sboth) && Sboth.front.eng && Sboth.back.eng && /ann/i.test(Sboth.front.text) && /ruby/i.test(Sboth.back.text) && Sboth.face === 'front' && low(Sboth.words) === 'ann' && Sboth.front.cur && !Sboth.back.cur, JSON.stringify(Sboth));
     await show(stage('both', 'back', 'Ann', 'Ruby'));
     const Sboth2 = await look();
-    check('S6 Both, active back: the work area turned back to the back with Ruby; the thumbnails keep both words', fine(Sboth2) && Sboth2.face === 'back' && low(Sboth2.words) === 'ruby' && Sboth2.back.cur && /ann/i.test(Sboth2.front.text) && /ruby/i.test(Sboth2.back.text) && Sboth2.ink > Snone.ink + 20, JSON.stringify(Sboth2));
+    check('S6 Both, active back: the work area turned back to the back with Ruby; the thumbnails keep both words; the back\'s own controls (Centre, Lines, the turn) are back', fine(Sboth2) && Sboth2.own === '1' && Sboth2.ctl === 'visible' && Sboth2.face === 'back' && low(Sboth2.words) === 'ruby' && Sboth2.back.cur && /ann/i.test(Sboth2.front.text) && /ruby/i.test(Sboth2.back.text) && Sboth2.ink > Snone.ink + 20, JSON.stringify(Sboth2));
     await show(stage('back', 'front', '', 'Ruby'));
     const Soff = await look();
     check('S7 Back only but the front active (about to type on it): the plain front in the work area, the front thumbnail plain and marked', fine(Soff) && Soff.face === 'front' && Soff.words === '' && Soff.front.cur && !Soff.front.eng && !Soff.front.text && Soff.back.eng, JSON.stringify(Soff));
