@@ -706,7 +706,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
         check(`${tag}: Approve says what the state is (lit only when dirty with words on every engraved face, or None; calm Approved when nothing is staged on an approved piece)`, s.open && s.choice != null && apOk, J({ dirty: s.dirty, approve: s.approve, calm: s.calm, staged: stg, committed: c && [c.front && c.front.state, c.back && c.back.state] }));
         const eqWords = !!c && !!stg && J(cFaces) === J(stg.faces) && stg.faces.every(f => c[f] && NORM(c[f].text) === NORM(stg.words[f])), eq = eqWords && stg.faces.every(f => approvedish(c[f].state));
         check(`${tag}: ${must ? 'Approve was pressed after the last edit: committed equals staged (faces approved, words), nothing left dirty' : 'not dirty means committed equals staged (faces, words)'}`, must ? eq && !s.dirty : (s.dirty || eqWords),
-          J({ lastEdit, lastApprove: lastAp, dirty: s.dirty, staged: stg, committed: c && { front: c.front, back: c.back }, pressAt }));
+          J({ lastEdit, lastApprove: lastAp, dirty: s.dirty, approve: s.approve, calm: s.calm, staged: stg, committed: c && { front: c.front, back: c.back }, pressAt }));
       }
       const dup = !c || c.counts.front > 1 || c.counts.back > 1 || ['front', 'back'].some(f => c.sheet.filter(e => e.face === f).length > 1) || c.sheet.some(e => plainish(c[e.face]));
       check(`${tag}: no duplicate job for a face, no duplicate or orphan sheet entry`, !dup, J(c && { counts: c.counts, sheet: c.sheet, front: c.front && c.front.state, back: c.back && c.back.state }));
