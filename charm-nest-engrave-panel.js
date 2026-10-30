@@ -700,7 +700,7 @@
       if (samePos(x.pos, p) && !!x.pos === !!p) return true;
       x.pos = p; bump(d, true); drawGate(vm, d); paint('pos', m); changed('position', face); return true;
     };
-    me.stagePos = stagePosHere;
+    me.stagePos = stagePosHere; me.setActive = setActive;   // (ENGSTAGE: Engrave.showFace gives the active face to the panel: setActive below)
     /* ROTBAR: a turn of the WHOLE piece made with the work area's degree box is the job's at once; `moved` draws the thumbnails again. It changes no word, font or choice. */
     const beforeMove = job => !!(job && job.key && model());
     const moved = (job, kind) => { const m = model(); if (!m || !job || !job.key) return false; drawGate(m.vm, m.d); paint(kind || 'position', m); changed(kind || 'position', m.d.active); return true; };
@@ -732,6 +732,9 @@
     } catch (e) { if (typeof console !== 'undefined') console.warn('engraving panel', e); return none; }
   }
 
+  /** ENGSTAGE (stage-view): the active face of a piece, given from outside (Engrave.showFace): every live panel of the piece takes it as a press of the host would (its draft, the thumbnails' mark and the
+   *  work area follow through showStage). -> true when a panel took it (false: no panel of the piece on the page) */
+  function setActive(key, face) { let took = false; for (const b of liveBindings(str(key))) if (b.setActive && tryDo(() => b.setActive(face, 'host'), false)) took = true; return took; }
   /** A drag in the work area reports the face's staged place here (ENGSTAGE seam: pos = { charm: [x, y], centre: [x, y] } or null). -> true when a draft took it */
   function stagePos(key, face, pos) {
     for (const b of liveBindings(str(key))) if (b.stagePos) return !!tryDo(() => b.stagePos(face, pos), false);
@@ -807,5 +810,5 @@
     } catch (e) { if (typeof console !== 'undefined') console.warn('engraving panel slot', e); return none; }
   }
 
-  return { mount, mountPiece, html, bind, modesFor, choicesFor, seedText, stageOf, stateOf, stagePos, sweep, isLive, DRAFTS, COMMITS, MODES, CHOICES, gateOf, dirtyOf, hilite: { model: hiModel, decorate: hiDecorate, systemChoice, reasonLine, HI_TITLE } };
+  return { mount, mountPiece, html, bind, modesFor, choicesFor, seedText, stageOf, stateOf, stagePos, setActive, sweep, isLive, DRAFTS, COMMITS, MODES, CHOICES, gateOf, dirtyOf, hilite: { model: hiModel, decorate: hiDecorate, systemChoice, reasonLine, HI_TITLE } };
 });

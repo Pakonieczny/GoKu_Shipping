@@ -10377,7 +10377,12 @@ const Engrave = window.Engrave = (() => {
   function showFace(x, face, o) {
     o = o || {}; face = face === "front" || face === "back" ? face : null;
     const job0 = typeof x === "string" ? items().get(x) : x; if (!face || !job0) return { ok: false, face: null, why: "no such piece or face" };
-    { const sr = SV_STAGES.get(pieceKeyOfJob(job0)); if (sr && sr.stage) return { ok: true, face: sr.stage.active, same: face === sr.stage.active, staged: true }; }   // (ENGSTAGE: the stage's active face is the face shown; svShowStage turns the area)
+    // (ENGSTAGE: the active face has ONE owner, the panel: a live panel of the piece takes the face (its draft, the thumbnails' mark and the work area follow through Engrave.showStage, the area turns);
+    //  with no panel on the page, the work area's own switch below, as before)
+    { const pk = pieceKeyOfJob(job0), sr = SV_STAGES.get(pk), PNL = window.CharmNestEngravePanel;
+      if (sr && sr.stage && sr.stage.active === face && !SV_TURN.run) return { ok: true, face, same: true, staged: true };
+      if (PNL && typeof PNL.setActive === "function") { if (o.animate === false) SV_STILL_UNTIL = performance.now() + 80; let took = false; try { took = !!PNL.setActive(pk, face); } catch (_) { took = false; } if (took) return { ok: true, face, staged: true }; }
+      if (sr && sr.stage) return { ok: true, face: sr.stage.active, same: face === sr.stage.active, staged: true }; }
     const j = cardJobOf(job0), busy = !!(WV.turn && WV.turn.busy());
     if (!j) { if (face === faceOf(job0) || face === otherFaceOf(job0)) setViewFace(job0, face, null); return { ok: true, face: viewFaceOf(job0), shown: false }; }   // (not on screen: its next drawing shows it)
     const pid = (j.copies || [])[0], reach = face === faceOf(j) || face === otherFaceOf(j) || !!(pid && jobsOfPiece(pid)[face]);
@@ -10540,12 +10545,13 @@ const Engrave = window.Engrave = (() => {
      new drawing, turns to its edge with the area; there the copy goes and the area comes round on the new face (the sheets' own turn, Motion.turner's rotateY and perspective, quicker). A switch
      while it turns completes that turn at once (the copy goes, the area is flat) and turns again from what is drawn: never a queue of turns, never an old face, never a frame without a drawing. */
   const SV_TURN = { run: null };
+  let SV_STILL_UNTIL = 0;   // (Engrave.showFace(..., { animate: false }): the face switched at once, no turn)
   const SV_LAST = { pk: "", host: null };   // the work area last painted (its piece): a card drawn again starts from a copy of it
   function svTurn(host, to, paint) {
     const r0 = SV_TURN.run;
     if (r0) { SV_TURN.run = null; for (const a of r0.anims) { try { a.cancel(); } catch (_) { /* gone */ } } try { r0.ghost.remove(); r0.host.classList.remove("egFlipping"); } catch (_) { /* gone */ } }
     const old = host.querySelector(":scope > canvas"); let ghost = null, at = null;
-    if (old && old.width && old.offsetWidth && host.offsetWidth && svMotion(host)) {
+    if (old && old.width && old.offsetWidth && host.offsetWidth && svMotion(host) && performance.now() >= SV_STILL_UNTIL) {
       ghost = document.createElement("canvas"); ghost.width = old.width; ghost.height = old.height; at = [old.offsetLeft, old.offsetTop, old.offsetWidth, old.offsetHeight];
       try { ghost.getContext("2d").drawImage(old, 0, 0); } catch (_) { ghost = null; }
     }
