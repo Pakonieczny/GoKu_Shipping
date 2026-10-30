@@ -189,8 +189,9 @@ async function burst({ pk, acts }) {
     ta.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: ch === null ? 'deleteContentBackward' : 'insertText', data: ch }));
     ta.dispatchEvent(new KeyboardEvent('keyup', { key: k, bubbles: true }));
   };
+  const tb = performance.now();
   for (const a of acts) {
-    const rec = { k: a.k, arg: a.arg, on: S.front() };
+    const rec = { k: a.k, arg: a.arg, on: S.front(), t: Math.round(performance.now() - tb) };
     if (!S.panel(pk) || !S.vis(S.panel(pk))) {
       const row = B.orders.byKey.get(pk.split('#')[0]), j = Engrave.jobsOf(row).find(x => x.state !== 'none');
       if (!j) { log.push({ k: 'ended', why: 'the piece is a regular order now (None approved): no card to go back to' }); break; }
@@ -265,7 +266,8 @@ function fuzzActions(seed, n, lastApprove) {
 }
 const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : NaN; };
 
-(async () => {
+module.exports = { installProbe, burst, latency, fuzzActions, rng, FORBIDDEN, NORM };
+if (require.main === module) (async () => {
   const R = require('./_engraveRealWorld.cjs');
   // the fixtures: COMET necklaces engraved on the BACK only, words "Ruby" (Paul's BALLETSHOES order had "Ruby" on the back); made-up buyers and order numbers
   const ONE = { stRuby: '4290000301', stDuo: '4290000302', stKeep: '4290000303', stUi: '4290000304', stFz1: '4290000305', stFz2: '4290000306' };
@@ -659,7 +661,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       else {
         for (const a of acts) {
           if (Date.now() - tS > 30000 || timeLeft() < 5000) { log.push({ k: 'cut', why: 'the actions took over 30 s: cut short' }); break; }
-          const rec = { k: a.k, arg: a.arg };
+          const rec = { k: a.k, arg: a.arg, t: Date.now() - tS };
           const info = await page.evaluate(([pk, a]) => {
             const S = window.__stg, p = S.panel(pk); if (!p || !S.vis(p)) return { gone: true, on: S.front() };
             const kind = a.k === 'key' || a.k === 'bs' ? 'words' : a.k, el = S.target(pk, kind, a.arg); if (!el) return { missing: true };
@@ -673,6 +675,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
           }
           if (info.missing || ((a.k === 'key' || a.k === 'bs') && !info.enabled)) { rec.missing = true; log.push(rec); continue; }
           if (a.k === 'approve') { rec.enabled = info.enabled; rec.staged = info.staged; if (sd.keepCard && info.staged && info.staged.choice === 'none') { rec.enabled = false; rec.skipped = 'None staged'; log.push(rec); continue; } }
+          rec.x = Math.round(info.x); rec.y = Math.round(info.y); rec.focused = info.focused;
           if (a.k === 'key' || a.k === 'bs') { if (!info.focused) await page.mouse.click(info.x, info.y); await page.keyboard.press(a.k === 'bs' ? 'Backspace' : a.arg); }
           else await page.mouse.click(info.x, info.y);
           log.push(rec);
@@ -710,6 +713,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       }
       const dup = !c || c.counts.front > 1 || c.counts.back > 1 || ['front', 'back'].some(f => c.sheet.filter(e => e.face === f).length > 1) || c.sheet.some(e => plainish(c[e.face]));
       check(`${tag}: no duplicate job for a face, no duplicate or orphan sheet entry`, !dup, J(c && { counts: c.counts, sheet: c.sheet, front: c.front && c.front.state, back: c.back && c.back.state }));
+      if (process.env.STAGE_RECORD) { try { const fs = require('fs'), path = require('path'); fs.mkdirSync(process.env.STAGE_RECORD, { recursive: true }); const f = path.join(process.env.STAGE_RECORD, `seed${sd.seed}-${Date.now()}.json`); fs.writeFileSync(f, JSON.stringify({ seed: sd.seed, piece: sd.name, how: sd.how, keepCard: !!sd.keepCard, pk, acts, log, end: { snap: s, committed: c } }, null, 1)); console.log('   recorded ' + f); } catch (e) { console.log('   (record failed: ' + e.message + ')'); } }
       console.log(`   ${tag}: ${log.length} actions (${log.filter(a => a.k === 'approve' && a.enabled).length} lit Approve presses, ${log.filter(a => a.skipped).length} skipped with None staged, ${log.filter(a => a.reopen).length} reopenings, ${log.filter(a => a.missing).length} missing targets), ${Math.round((Date.now() - T0) / 1000)} s`);
     }
 
