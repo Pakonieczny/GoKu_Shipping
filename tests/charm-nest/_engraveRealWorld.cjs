@@ -234,6 +234,8 @@ async function openEngraveDetail(w, name, o = {}) {
     return j.key;
   }, { key, face: o.face || null, slot: o.slot || null });
   if (!jkey) return null;
+  // (ENGSTAGE, 30 Oct 2026: an approval lands before its seal stamp has come down; the tab's render waits for the stamp (Seal.defer), so the card asked for is drawn once the stamp is done)
+  await w.page.waitForFunction(() => !(window.Seal && Seal.busy && Seal.busy()), null, { timeout: 10000 }).catch(() => {});
   await w.page.waitForSelector('#egQueue .rvItem[data-kind=placement]', { timeout: 15000 }).catch(() => {});
   await settle(w.page, 700);
   return jkey;

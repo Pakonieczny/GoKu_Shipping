@@ -238,7 +238,8 @@
       const bare = mine.length > 0 && mine.every(j => j.fit && j.fit.artOnly);   // (EDITOR WORDS: a face engraved by the charm editor's parts alone shows no words, not the order's offer it did not take)
       let lines = perPiece || bare ? [] : distinct.length ? distinct[0].split('\n') : (w ? w.lines.slice() : []);
       // (the words the system or the person gave, not the fit's own line split and capitals: the panel opens on exactly the choice, and a font-only save never sends the cut's layout as "words")
-      if (!perPiece && !locked && distinct.length && w && w.lines && w.lines.length) { const fid = fontIdOf(line, face, w.fontWord, slot); if (runOf(lines, fid) === runOf(w.lines, fid)) lines = w.lines.slice(); }
+      // (CAPSWORDS, coordinator 30 Oct 2026: "keep their casing in the box": an approved face too, unless it was laid out by hand: "Name Oneo" kept, "NAME" / "ONEO" cut in Ace, the box opens on "Name Oneo")
+      if (!perPiece && (!locked || !mine.some(j => j.lineMode === 'preserve')) && distinct.length && w && w.lines && w.lines.length) { const fid = fontIdOf(line, face, w.fontWord, slot); if (runOf(lines, fid) === runOf(w.lines, fid)) lines = w.lines.slice(); }
       const by = locked ? str(locked.approvedBy || locked.decidedBy || (locked.decision && locked.decision.by)) : '';
       const ft = faceFont(line, w && w.fontWord);
       return { face, label: cap1(face), key: mine.length === 1 ? mine[0].key : (slot || !mine.length ? F.keyOf(line, face, slot) : ''), lines, text: lines.join('\n'), fontWord: (w && w.fontWord) || '', font: ft, perPiece, locked: false, decided: !!locked, lockState: locked ? locked.state : '', lockBy: by, state: mine.length ? mine.map(j => j.state)[0] : '', jobs: mine };
@@ -472,6 +473,15 @@
     return '';
   }
   const facesOf = mode => (mode === 'both' ? ['front', 'back'] : mode === 'front' ? ['front'] : mode === 'back' ? ['back'] : []);
+  /** CAPSWORDS (coordinator 30 Oct 2026: "The last press staged back "Name Oneo"; the commit wrote the job text "NAME\nONEO" (the fit's caps and line-broken form) ... the card ends dirty with Approve lit
+   *  again right after approving the same words"): are these the words a face keeps? Compared in the fit's own form: one run of words (the line split and the spaces the fit made are not a change), in
+   *  capitals for a capitals font (Ace). A face laid out by hand (lineMode "preserve") keeps its lines: there a line moved is a change. */
+  function sameKept(vm, face, text, fontWord) {
+    const cur = vm && vm.rows ? vm.rows.find(r => r.face === face) : null; if (!cur) return !linesOf(text).length;
+    if (linesOf(text).join('\n') === cur.text) return true;
+    const fid = fontIdOf(vm.line, face, fontWord || cur.fontWord || null, vm.slot || null), caps = v => linesOf(v).map(l => runOf(l, fid)).join('\n');
+    return (cur.jobs || []).some(j => j && j.lineMode === 'preserve') ? caps(text) === caps(cur.text) : runOf(text, fid) === runOf(cur.text, fid);
+  }
   function patchOf(vm, d) {
     const patch = {}; if (vm.slot) patch.slot = vm.slot;   // (one piece's edit says which piece: buildOverride / apply keep it to that piece)
     if (d.mode !== vm.mode) patch.mode = d.mode;
@@ -480,7 +490,7 @@
       if (cur && cur.locked) continue;
       if (!cur) { if (text || x.font) patch[f] = { text: x.text, fontWord: x.font || null }; continue; }
       if (cur.perPiece) { if ((x.font || '') !== cur.fontWord) patch[f] = { text: cur.text, fontWord: x.font || null }; continue; }
-      if (text !== cur.text || (x.font || '') !== cur.fontWord) patch[f] = { text: x.text, fontWord: x.font || null };
+      if ((x.font || '') !== cur.fontWord || !sameKept(vm, f, x.text, x.font)) patch[f] = { text: x.text, fontWord: x.font || null };   // (CAPSWORDS: the same words in the fit's form are no change)
     }
     return patch;
   }
@@ -646,5 +656,5 @@
   /** A short signature of what the control would show (hosts that cache their card draw it again when it changes). */
   const sig = (row, o) => { const vm = read(row, o); return vm ? vm.sig : ''; };
 
-  return { mount, html, bind, read, wants, sig, setupFor, buildOverride, consequences, apply, labelled, patchOf, fontChoices, derivedReading, autoChoice, diffFromAuto, fontIdOf, editorArtOn, DRAFTS, NOTES, MODE_TABS };
+  return { mount, html, bind, read, wants, sig, setupFor, buildOverride, consequences, apply, labelled, patchOf, sameKept, fontChoices, derivedReading, autoChoice, diffFromAuto, fontIdOf, editorArtOn, DRAFTS, NOTES, MODE_TABS };
 });

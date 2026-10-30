@@ -450,7 +450,15 @@
       });
     }
     // A second click, shortcut or pending redraw must never dismiss the surface under the stamp.
-    for(const type of ['click','keydown'])doc.addEventListener(type,e=>{if(busy()){e.preventDefault();e.stopImmediatePropagation();}},true);
+    /* ENGSTAGE (coordinator 30 Oct 2026, the input tracer: "41 input events in the 2 s after an Approve were killed there ... The staged front "EJ" and the last lit press were lost"): the guard is
+       kept for what dismisses or replaces the surface under the stamp (Next, Back, close, another card or row, a tab, Escape). It never takes typing (a letter, Backspace, Delete, the arrows, Home,
+       End, Enter in a text box), and a surface that says an input is its own (ownInput: the Engraving detail's panel and work area, whose presses only stage or queue) keeps it. */
+    const ownInputs=new Set();
+    function ownInput(fn){ownInputs.add(fn);return()=>ownInputs.delete(fn);}
+    const typing=e=>{const t=e.target,k=e.key || '';if(e.type!=='keydown' || e.ctrlKey || e.metaKey || e.altKey || !t || !t.closest || !t.closest('input,textarea,[contenteditable]:not([contenteditable="false"])'))return false;
+      return k.length===1 || /^(Backspace|Delete|ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Home|End)$/.test(k) || k==='Enter' && !!t.closest('textarea,[contenteditable]');};
+    const passes=e=>{if(typing(e))return true;for(const fn of ownInputs){try{if(fn(e))return true;}catch(_){}}return false;};
+    for(const type of ['click','keydown'])doc.addEventListener(type,e=>{if(busy() && !passes(e)){e.preventDefault();e.stopImmediatePropagation();}},true);
     const hash = s => { let h = 2166136261; for (const c of String(s)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
     /** Every seal of a record, oldest first: its stamps, or for a record from before them, what it kept. */
     function list(rec) {
@@ -1196,7 +1204,7 @@
         html(Object.assign({}, stamp, { scope: "sheet", owner: o.owner || stamp.owner || "" }), BASE_SIZE, "sheetProcessSeal cut" + (o.pending ? " pending" : "")) + `</span>`;
     }
     const labelOf = how => modelOf({ how: String(how || '') }).action;   // (SEALCANCEL: the words a seal of this kind says, e.g. labelOf('cancel') → 'ORDER CANCELLED')
-    return { list, html, row, svg, face, modelOf, labelOf, tool, sound:Sound, stampOn, press, pressPending, hasPrint, ofPiece, completionOf, pieceRow, titleOf, INK, FAMILY, BASE_SIZE, SHEET_SIZE, SHEET_GROW, SHEET_CAP, sheetCut, zoom, zoomScale, busy, whenIdle, defer, fit, fitGroups };
+    return { list, html, row, svg, face, modelOf, labelOf, tool, sound:Sound, stampOn, press, pressPending, hasPrint, ofPiece, completionOf, pieceRow, titleOf, INK, FAMILY, BASE_SIZE, SHEET_SIZE, SHEET_GROW, SHEET_CAP, sheetCut, zoom, zoomScale, busy, whenIdle, defer, ownInput, fit, fitGroups };
   })();
 
   /* ════ Pop-ups: every window grows out of what opened it, and goes back into it ════

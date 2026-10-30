@@ -80,6 +80,7 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     if (w.shots) await R.shot(w, 'live-words-approved').catch(() => {});
     // L8 · STAGEALL (Paul, 29 Oct 2026: "it's not approved until the Approve button is pressed again ... otherwise those updates to the engraving are discarded"): words typed and the card left with no Approve are
     //      discarded (never kept quietly): the job and the override are as approved, and the box shows the approved words when the card is opened again
+    await page.waitForFunction(() => !(window.Seal && Seal.busy()), null, { timeout: 10000 }).catch(() => {});   // (ENGSTAGE: the approval lands before its stamp has come down; the tab's renders wait for the stamp)
     const kept8 = await page.evaluate(([key, fk]) => { const row = B.orders.byKey.get(key), j = Engrave.jobsOf(row).find(x => x.key === fk); return { text: j.text, state: j.state, ov: JSON.stringify(row.engravingOverride || null) }; }, [made.both.key, keys.front]);
     await page.evaluate(fk => { Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: fk }); Engrave.render(); }, keys.front); await R.settle(page, 700);
     await page.click(Q + ' .pvSetup .engpWords'); await page.keyboard.press('End'); await page.keyboard.type('ZZ'); await R.settle(page, 300);

@@ -25,6 +25,9 @@
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/engrave-stage-flow.cjs     (exit 1 while any check is red; every line is PASS|FAIL id evidence)
 'use strict';
 const RESULTS = [];
+const INFOS = [];
+/** a measured line that is reported, never a FAIL (the coordinator's "report-only for now") */
+const info = (id, text) => { INFOS.push({ id, text }); console.log(`INFO  ${id}: ${text}`); };
 const check = (id, ok, evidence) => { RESULTS.push({ id, ok: !!ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${id}${ok ? '' : '  ' + String(evidence == null ? '' : evidence).slice(0, 1600)}`); };
 const J = x => { try { return JSON.stringify(x); } catch (_) { return String(x); } };
 const T0 = Date.now(), BUDGET = 170000;
@@ -189,8 +192,9 @@ async function burst({ pk, acts }) {
     ta.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: ch === null ? 'deleteContentBackward' : 'insertText', data: ch }));
     ta.dispatchEvent(new KeyboardEvent('keyup', { key: k, bubbles: true }));
   };
+  const tb = performance.now();
   for (const a of acts) {
-    const rec = { k: a.k, arg: a.arg, on: S.front() };
+    const rec = { k: a.k, arg: a.arg, on: S.front(), t: Math.round(performance.now() - tb) };
     if (!S.panel(pk) || !S.vis(S.panel(pk))) {
       const row = B.orders.byKey.get(pk.split('#')[0]), j = Engrave.jobsOf(row).find(x => x.state !== 'none');
       if (!j) { log.push({ k: 'ended', why: 'the piece is a regular order now (None approved): no card to go back to' }); break; }
@@ -265,7 +269,8 @@ function fuzzActions(seed, n, lastApprove) {
 }
 const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : NaN; };
 
-(async () => {
+module.exports = { installProbe, burst, latency, fuzzActions, rng, FORBIDDEN, NORM };
+if (require.main === module) (async () => {
   const R = require('./_engraveRealWorld.cjs');
   // the fixtures: COMET necklaces engraved on the BACK only, words "Ruby" (Paul's BALLETSHOES order had "Ruby" on the back); made-up buyers and order numbers
   const ONE = { stRuby: '4290000301', stDuo: '4290000302', stKeep: '4290000303', stUi: '4290000304', stFz1: '4290000305', stFz2: '4290000306' };
@@ -327,10 +332,12 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
   const waitIdle = async (pk, ms = 15000) => {
     let last = null, same = 0; const t0 = Date.now(), changing = {};
     for (;;) {
-      const v = await page.evaluate(pk => { const S = window.__stg, s = S.snap(pk), c = S.committed(pk); return { s, c, busy: !!(s.busy || (s.host && s.host.busy) || (c && c.working)) }; }, pk);
+      // (a commit still landing is not idle: the card calm and not dirty while a face it shows engraved is not approved yet, e.g. a queued second commit between its fit and its approval)
+      const v = await page.evaluate(pk => { const S = window.__stg, s = S.snap(pk), c = S.committed(pk), st = S.staged(pk), landing = !!(s.open && !s.dirty && s.calm && st && c && st.faces.some(f => !(c[f] && ['approved', 'written'].includes(c[f].state)))); return { s, c, landing, busy: !!(s.busy || (s.host && s.host.busy) || (c && c.working) || landing) }; }, pk);
       const f = flat({ s: v.s, c: v.c }), diff = last ? Object.keys(Object.assign({}, f, last)).filter(k => J(f[k]) !== J(last[k])) : ['(first)'];
       if (!diff.length && !v.busy) same++; else { same = 0; if (Date.now() - t0 > ms - 3000) for (const k of diff) changing[k] = String(J(f[k])).slice(0, 40); }
       last = f;
+      waitIdle.landing = v.landing;
       if (same >= 12) { waitIdle.changing = null; return true; }
       if (Date.now() - t0 > ms) { waitIdle.changing = changing; return false; }
       await new Promise(r => setTimeout(r, 100));
@@ -346,6 +353,16 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       await new Promise(r => setTimeout(r, 100));
     }
   };
+  /** ms from `t0` (Date.now at the press) until the jobs hold `faces` written (each with its words) and no other face engraved; null after 20 s */
+  const landing = async (pk, t0, faces, words) => {
+    for (;;) {
+      const c = await committed(pk);
+      if (c && ['front', 'back'].every(f => (faces.includes(f) ? c[f] && c[f].state === 'written' && (!words || NORM(c[f].text) === NORM(words[f])) : plainish(c[f])))) return Date.now() - t0;
+      if (Date.now() - t0 > 20000) return null;
+      await new Promise(r => setTimeout(r, 50));
+    }
+  };
+  const landInfo = (id, ms) => info(id, `last press to all faces written ${ms == null ? 'over 20 s' : ms + ' ms'} (target <= 4000 ms on an unloaded machine; load ${require('os').loadavg().map(x => Math.round(x * 10) / 10).join(' ')})`);
   const lap = id => console.log(`   -- ${id} at ${Math.round((Date.now() - T0) / 1000)} s`);
   /** the colour a person sees inside an option (a screenshot of it, read back in the page: a sliding pill drawn by a ::before counts): the per-channel median of 5 points clear of the label and the mark */
   const seenColour = async (pk, c) => {
@@ -412,7 +429,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       const s2 = await snap(pk);
       check('S1 Approve is lit (enabled) with "Mia" typed', s2.approve && s2.approve.enabled && !s2.calm && NORM(s2.box) === 'mia', J({ approve: s2.approve, calm: s2.calm, box: s2.box, dirty: s2.dirty }));
       await page.evaluate(pk => { window.__stg.armApprove(pk); window.__stg.sample(pk, 1500); }, pk);
-      const ap = await press(pk, 'approve');
+      const tPress1 = Date.now(), ap = await press(pk, 'approve');
       await page.waitForFunction(() => window.__stg.ap.done && window.__stg.samples.done, null, { timeout: 8000 }).catch(() => {});
       const at = await page.evaluate(() => ({ ap: window.__stg.ap, samples: window.__stg.samples.list.filter(x => x.after) }));
       const ms = at.ap.tCalm != null && at.ap.tClick != null ? Math.round(at.ap.tCalm - at.ap.tClick) : null;
@@ -420,6 +437,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       const shown = at.samples.filter(x => x.open);
       check('S1 after Approve the card is never an empty work area and never shows a forbidden text', shown.every(x => x.canvas && !x.forb.length), J(shown.filter(x => !x.canvas || x.forb.length).slice(0, 3)));
       const c1 = await settle(pk, c => c.front && approvedish(c.front.state) && NORM(c.front.text) === 'mia' && plainish(c.back));
+      landInfo('S1 (Front "Mia", the back taken away)', await landing(pk, tPress1, ['front'], { front: 'Mia' }));
       check('S1 committed: the front job exists, approved, with the words "Mia"', !!c1.front && approvedish(c1.front.state) && NORM(c1.front.text) === 'mia', J(c1.front));
       check('S1 committed: choice Front means the back is no longer engraved: its job removed or plain (none), not approved', plainish(c1.back) && !(c1.back && c1.back.approvedAt), J(c1.back));
       const c1s = (await until(async () => { const c = await committed(pk); return c && !c.sheet.some(e => e.face === 'back') ? c : null; }, 8000, 200)) || await committed(pk);
@@ -451,13 +469,14 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       check('S2 the Back thumbnail switches to the back; the back words show live on it and in the work area, key by key', tb.ok && i2.length === 3 && i2.every(x => x.okThumb && x.okHost && x.active === 'back'), J({ tb, i2 }));
       check('S2 both thumbnails show their own words at once (Front "Ava", Back "Leo"), still Front & Back', s2.choice === 'both' && s2.thumbs.front && NORM(s2.thumbs.front.words) === 'ava' && s2.thumbs.back && NORM(s2.thumbs.back.words) === 'leo', J({ choice: s2.choice, thumbs: s2.thumbs }));
       await page.evaluate(pk => window.__stg.armApprove(pk), pk);
-      const ap = await press(pk, 'approve');
+      const tPress2 = Date.now(), ap = await press(pk, 'approve');
       await page.waitForFunction(() => window.__stg.ap.done, null, { timeout: 5000 }).catch(() => {});
       const apT = await page.evaluate(() => window.__stg.ap);
       const ms = apT.tCalm != null && apT.tClick != null ? Math.round(apT.tCalm - apT.tClick) : null;
       check('S2 ONE Approve press: calm "Approved" within 100 ms', ap.ok && ms != null && ms <= 100, J({ press: ap, ms }));
       const want2 = c => c.front && c.back && approvedish(c.front.state) && approvedish(c.back.state) && NORM(c.front.text) === 'ava' && NORM(c.back.text) === 'leo';
       const c = await settle(pk, want2);
+      landInfo('S2 (Front "Ava" and Back "Leo", one press)', await landing(pk, tPress2, ['front', 'back'], { front: 'Ava', back: 'Leo' }));
       check('S2 committed: the front approved with "Ava" AND the back approved with "Leo", from the one press', !!c && want2(c), J(c));
       check('S2 one job per face, at most one sheet entry per face', c.counts.front <= 1 && c.counts.back <= 1 && ['front', 'back'].every(f => c.sheet.filter(e => e.face === f).length <= 1), J({ counts: c.counts, sheet: c.sheet }));
       await waitIdle(pk, 8000);
@@ -659,26 +678,32 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       else {
         for (const a of acts) {
           if (Date.now() - tS > 30000 || timeLeft() < 5000) { log.push({ k: 'cut', why: 'the actions took over 30 s: cut short' }); break; }
-          const rec = { k: a.k, arg: a.arg };
+          const rec = { k: a.k, arg: a.arg, t: Date.now() - tS };
           const info = await page.evaluate(([pk, a]) => {
             const S = window.__stg, p = S.panel(pk); if (!p || !S.vis(p)) return { gone: true, on: S.front() };
             const kind = a.k === 'key' || a.k === 'bs' ? 'words' : a.k, el = S.target(pk, kind, a.arg); if (!el) return { missing: true };
             if (el.scrollIntoViewIfNeeded) el.scrollIntoViewIfNeeded(false);
             const r = el.getBoundingClientRect(), enabled = !el.disabled && el.getAttribute('aria-disabled') !== 'true';
-            return { x: r.left + r.width / 2, y: r.top + Math.min(r.height / 2, 18), enabled, focused: document.activeElement === el, staged: a.k === 'approve' ? S.staged(pk) : undefined, legacy: S.legacy };
+            const hx = r.left + r.width / 2, hy = r.top + Math.min(r.height / 2, 18), top = document.elementFromPoint(hx, hy), hit = !!top && (el === top || el.contains(top)); const over = hit ? null : top ? (top.tagName + '.' + String(top.className || '').split(' ').slice(0, 2).join('.')).slice(0, 60) : 'nothing';
+            return { x: hx, y: hy, hit, over, enabled, focused: document.activeElement === el, staged: a.k === 'approve' ? S.staged(pk) : undefined, legacy: S.legacy };
           }, [pk, a]);
           if (info.gone) {
             if (!(await page.evaluate(pk => Engrave.jobsOf(B.orders.byKey.get(pk.split('#')[0])).some(x => x.state !== 'none'), pk))) { log.push({ k: 'ended', why: 'the piece is a regular order now (None approved): no card to go back to' }); break; }
             rec.reopen = info.on; await openPiece(sd.name); log.push(rec); continue;
           }
           if (info.missing || ((a.k === 'key' || a.k === 'bs') && !info.enabled)) { rec.missing = true; log.push(rec); continue; }
-          if (a.k === 'approve') { rec.enabled = info.enabled; rec.staged = info.staged; if (sd.keepCard && info.staged && info.staged.choice === 'none') { rec.enabled = false; rec.skipped = 'None staged'; log.push(rec); continue; } }
+          if (!info.hit) rec.blocked = info.over;   // (something else is on top where the mouse presses: the press does not reach the control)
+          if (a.k === 'approve') { rec.enabled = info.enabled && info.hit; rec.staged = info.staged; if (sd.keepCard && info.staged && info.staged.choice === 'none') { rec.enabled = false; rec.skipped = 'None staged'; log.push(rec); continue; } }
+          rec.x = Math.round(info.x); rec.y = Math.round(info.y); rec.focused = info.focused;
+          rec.at = Date.now();
           if (a.k === 'key' || a.k === 'bs') { if (!info.focused) await page.mouse.click(info.x, info.y); await page.keyboard.press(a.k === 'bs' ? 'Backspace' : a.arg); }
           else await page.mouse.click(info.x, info.y);
           log.push(rec);
         }
+        const lp = [...log].reverse().find(a => a.k === 'approve' && a.enabled), le = log.reduce((m, a, i) => (['choice', 'key', 'bs'].includes(a.k) && !a.missing ? i : m), -1);
+        if (lp && log.indexOf(lp) > le && lp.staged && lp.staged.faces.length) landInfo(`${tag}`, await landing(pk, lp.at, lp.staged.faces, lp.staged.words));
       }
-      const idle = await waitIdle(pk, 12000), stillChanging = waitIdle.changing;
+      const idle = await waitIdle(pk, 20000), stillChanging = waitIdle.changing, stillLanding = waitIdle.landing;   // (20 s: a queued second commit re-fits and re-approves; past that it is a stall)
       const hasCard = await page.evaluate(pk => Engrave.jobsOf(B.orders.byKey.get(pk.split('#')[0])).some(x => x.state !== 'none'), pk);
       if (hasCard && !(await page.evaluate(pk => !!window.__stg.panel(pk), pk))) { await openPiece(sd.name); await waitIdle(pk, 5000); }
       const s = await snap(pk), c = await committed(pk), stg = await page.evaluate(pk => window.__stg.staged(pk), pk);
@@ -689,7 +714,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       const cFaces = c ? ['front', 'back'].filter(f => c[f] && !plainish(c[f])) : [];
       if (cut) check(`${tag}: the 60 actions ran`, false, cut.why);
       check(`${tag}: no page errors`, !errs.length, errs.join(' | ').slice(0, 400));
-      check(`${tag}: idle reached (no busy state, nothing at work)`, idle, J({ stillChanging, busy: s.busy, busyWhat: s.busyWhat, host: s.host, working: c && c.working, approve: s.approve, calm: s.calm, dirty: s.dirty, jobs: c && [c.front && c.front.state, c.back && c.back.state] }));
+      check(`${tag}: idle reached (no busy state, nothing at work)`, idle, J({ stillChanging, stillLanding, busy: s.busy, busyWhat: s.busyWhat, host: s.host, working: c && c.working, approve: s.approve, calm: s.calm, dirty: s.dirty, jobs: c && [c.front && c.front.state, c.back && c.back.state] }));
       if (!hasCard) {
         // (None was approved during the run: the piece is a regular order, in no list and with no card, as after any None + Approve; what it holds must be exactly that)
         const ok = cFaces.length === 0 && !!pressAt && pressAt.choice === 'none';
@@ -704,13 +729,17 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
         const allApproved = cFaces.length > 0 && cFaces.every(f => approvedish(c[f].state));
         const apOk = s.dirty ? !s.calm && !!s.approve && s.approve.enabled === (s.choice === 'none' || (fz.length > 0 && fz.every(f => NORM(stg && stg.words[f])))) : (allApproved ? !(s.approve && s.approve.enabled) && !!s.calm : true);
         check(`${tag}: Approve says what the state is (lit only when dirty with words on every engraved face, or None; calm Approved when nothing is staged on an approved piece)`, s.open && s.choice != null && apOk, J({ dirty: s.dirty, approve: s.approve, calm: s.calm, staged: stg, committed: c && [c.front && c.front.state, c.back && c.back.state] }));
-        const eqWords = !!c && !!stg && J(cFaces) === J(stg.faces) && stg.faces.every(f => c[f] && NORM(c[f].text) === NORM(stg.words[f])), eq = eqWords && stg.faces.every(f => approvedish(c[f].state));
-        check(`${tag}: ${must ? 'Approve was pressed after the last edit: committed equals staged (faces approved, words), nothing left dirty' : 'not dirty means committed equals staged (faces, words)'}`, must ? eq && !s.dirty : (s.dirty || eqWords),
-          J({ lastEdit, lastApprove: lastAp, dirty: s.dirty, staged: stg, committed: c && { front: c.front, back: c.back }, pressAt }));
+        const eqWords = !!c && !!stg && J(cFaces) === J(stg.faces) && stg.faces.every(f => c[f] && NORM(c[f].text) === NORM(stg.words[f]));
+        // (after a last lit press, the jobs must hold what was staged AT THE PRESS (the spec: "after Approve settles the committed state equals what was staged at the press"), not merely what the card shows now: a card that threw the staged state away looks consistent)
+        const eqPress = !!c && !!pressAt && J(cFaces) === J(pressAt.faces) && pressAt.faces.every(f => c[f] && NORM(c[f].text) === NORM(pressAt.words[f]) && approvedish(c[f].state));
+        const eq = must ? eqPress && eqWords : eqWords && stg.faces.every(f => approvedish(c[f].state));
+        check(`${tag}: ${must ? 'Approve was pressed after the last edit: committed equals what was staged at that press (faces approved, words), and the card shows it, not dirty' : 'not dirty means committed equals staged (faces, words)'}`, must ? eq && !s.dirty : (s.dirty || eqWords),
+          J({ lastEdit, lastApprove: lastAp, dirty: s.dirty, approve: s.approve, calm: s.calm, staged: stg, committed: c && { front: c.front, back: c.back }, pressAt }));
       }
       const dup = !c || c.counts.front > 1 || c.counts.back > 1 || ['front', 'back'].some(f => c.sheet.filter(e => e.face === f).length > 1) || c.sheet.some(e => plainish(c[e.face]));
       check(`${tag}: no duplicate job for a face, no duplicate or orphan sheet entry`, !dup, J(c && { counts: c.counts, sheet: c.sheet, front: c.front && c.front.state, back: c.back && c.back.state }));
-      console.log(`   ${tag}: ${log.length} actions (${log.filter(a => a.k === 'approve' && a.enabled).length} lit Approve presses, ${log.filter(a => a.skipped).length} skipped with None staged, ${log.filter(a => a.reopen).length} reopenings, ${log.filter(a => a.missing).length} missing targets), ${Math.round((Date.now() - T0) / 1000)} s`);
+      if (process.env.STAGE_RECORD) { try { const fs = require('fs'), path = require('path'); fs.mkdirSync(process.env.STAGE_RECORD, { recursive: true }); const f = path.join(process.env.STAGE_RECORD, `seed${sd.seed}-${Date.now()}.json`); fs.writeFileSync(f, JSON.stringify({ seed: sd.seed, piece: sd.name, how: sd.how, keepCard: !!sd.keepCard, pk, acts, log, end: { snap: s, committed: c } }, null, 1)); console.log('   recorded ' + f); } catch (e) { console.log('   (record failed: ' + e.message + ')'); } }
+      console.log(`   ${tag}: ${log.length} actions (${log.filter(a => a.k === 'approve' && a.enabled).length} lit Approve presses, ${log.filter(a => a.blocked).length} presses covered by something else${log.some(a => a.blocked) ? ' (' + [...new Set(log.filter(a => a.blocked).map(a => a.blocked))].slice(0, 3).join(', ') + ')' : ''}, ${log.filter(a => a.skipped).length} skipped with None staged, ${log.filter(a => a.reopen).length} reopenings, ${log.filter(a => a.missing).length} missing targets), ${Math.round((Date.now() - T0) / 1000)} s`);
     }
 
     /* ════ S9 · forbidden texts, the whole run ════ */
@@ -720,6 +749,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
   } catch (e) { console.error(e); check('ran', false, String(e && e.stack || e)); }
   finally { await w.close(); }
   const bad = RESULTS.filter(r => !r.ok);
+  if (INFOS.length) console.log(`(${INFOS.length} report-only INFO lines above)`);
   console.log(`engrave-stage-flow: ${RESULTS.length - bad.length}/${RESULTS.length} passed in ${Math.round((Date.now() - T0) / 1000)} s` + (bad.length ? `, ${bad.length} failed` : ''));
   process.exit(bad.length ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

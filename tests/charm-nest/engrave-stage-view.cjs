@@ -10,6 +10,8 @@
 //   R1–R3  30 rapid alternating calls (the face switched each time, some within one frame, some a few ms apart): the last state is drawn, no older state is ever painted after a newer one, no
 //          backlog of turns or fades
 //   B1–B2  60 random calls with the card drawn again now and then, ten runs with ten seeds: the last state is drawn, every hook of it, both thumbnails too
+//   P1     painting never writes to a job (after the bursts, every job of the piece holds what it held)
+//   L1     a card the tab let go (EG.card released while its face is fitted again, the card still on screen) is still painted
 //   I1–I2  the idle check: a work area left on an older state, and a panel draft changed without a call, are painted with the newest state once the calls stop
 //   W1–W2  the front waiting for words with no placement (Paul's state after Front + Approve): the work area draws the plain front of the charm, no reason, no "Engrave these words"
 //   Z1     zoom and rulers (ENGVIEW) on a staged face with no job
@@ -149,6 +151,9 @@ const FORBIDDEN = /Words to confirm|gives no words|being prepared|Engrave these 
 
     // ═══ B · 60 random calls (choice, face, words) with the card drawn again now and then (Engrave.render, as the tab does at every change): the last state is what is drawn, every hook of it.
     //     Ten runs, each its own seed (Paul's stale work area came in about one run in three: ten in a row must all end right) ═══
+    // (what the piece's jobs hold: painting must never write to one (its place, size, turn, words, state, approval))
+    const jobsNow = () => page.evaluate(Q => { const c = document.querySelector(Q); return JSON.stringify(Engrave.jobsOf(Engrave.items().get(c.dataset.key).row).map(j => [j.key, j.state, j.approvedAt || 0, j.text, j.lines, j.wantSize, j.nudged, j.fit && [j.fit.centre, j.fit.size, j.fit.angle], j._placeAt || null])); }, Q);
+    const jobs0 = await jobsNow();
     for (const [run, seed0] of [7, 11, 2027, 31337, 4242, 99, 1234, 5555, 8086, 65537].entries()) {
     const burst = await page.evaluate(async ([Q, seed0]) => {
       let seed = seed0; const rnd = n => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
@@ -173,6 +178,9 @@ const FORBIDDEN = /Words to confirm|gives no words|being prepared|Engrave these 
     check(`B1 ${tagB}: after 60 random calls the work area shows exactly the last state (its face, its words, drawn from the newest sequence)`, burst.el && burst.seq === burst.newest && burst.face === burst.last.active && low(burst.words) === low(burst.want.words), JSON.stringify(burst));
     check(`B2 ${tagB}: both thumbnails do too: the active one marked, each face engraved or plain as chosen, with its own words`, !!burst.front && !!burst.back && burst.front.cur === (burst.last.active === 'front') && burst.back.cur === (burst.last.active === 'back') && burst.front.eng === (burst.last.choice === 'both' || burst.last.choice === 'front') && burst.back.eng === (burst.last.choice === 'both' || burst.last.choice === 'back') && low(burst.front.text) === low(burst.want.front) && low(burst.back.text) === low(burst.want.back), JSON.stringify(burst));
     }
+    await R.settle(page, 500);
+    const jobs1 = await jobsNow();
+    check('P1 painting never writes to a job: after the 600 calls, the card drawn again and the idle checks, every job of the piece holds exactly what it held (place, size, turn, words, state, approval)', jobs1 === jobs0, JSON.stringify({ before: jobs0, after: jobs1 }));
 
     // ═══ Z · zoom and rulers on a staged face that has no job ═══
     await show(stage('both', 'front', 'Ann', 'Ruby'));
@@ -240,6 +248,21 @@ const FORBIDDEN = /Words to confirm|gives no words|being prepared|Engrave these 
     }, Q);
     check('I2 the panel\'s draft changed without a call: the work area and the thumbnail take it once the calls stop (the back, "Zed")', i2.face === 'back' && low(i2.words) === 'zed' && i2.seq === i2.newest && /zed/i.test(i2.thumb), JSON.stringify(i2));
     await R.settle(page, 500);
+
+    // ═══ L · a card the tab let go (EG.card is released while its face is fitted again; the card stays on screen, panel and all, until the tab is drawn again): the stage still paints its work area ═══
+    const lg = await page.evaluate(async Q => {
+      const c = document.querySelector(Q), job = Engrave.items().get(c.dataset.key), key = c.dataset.key.replace(/~front$/, ''), CI = window.CharmNestInteraction; let held = 0;
+      window.CharmNestInteraction = Object.assign(Object.create(CI || null), { defer: () => (held++, true) });   // (the tab's redraw held back, as while a person is in the middle of something)
+      try {
+        await Engrave.fitJob(job);   // (fitJobOnce lets the card go: EG.card = null, the card stays)
+        Engrave.showStage(job, { key, choice: 'back', active: 'back', faces: { front: { text: '', font: '', pos: null }, back: { text: 'Rosa', font: '', pos: null } } });
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const h = c.querySelector('.backHost');
+        return { same: document.querySelector(Q) === c, on: c.isConnected, held, face: h.dataset.face, words: h.dataset.words, seq: +h.dataset.stageSeq, newest: Engrave.stageSeq(key) };
+      } finally { window.CharmNestInteraction = CI; Engrave.showStage(job, null); Engrave.render(); }
+    }, Q);
+    check('L1 a card the tab let go while its face is fitted again (still on screen, the redraw held back) is still painted: the back with "Rosa", the newest sequence', lg.same && lg.on && lg.held > 0 && lg.face === 'back' && low(lg.words) === 'rosa' && lg.seq === lg.newest, JSON.stringify(lg));
+    await R.settle(page, 900);
 
     // ═══ W · Paul's state after Front + Approve: a front job waiting for words, with no placement ═══
     const k2 = made.ruby2.key;

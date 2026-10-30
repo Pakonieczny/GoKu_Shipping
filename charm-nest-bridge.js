@@ -9333,6 +9333,9 @@ const Engrave = window.Engrave = (() => {
       if (!res || !res.ok) return { ok: false, cancelled: !!(res && res.cancelled), message: (res && res.message) || "The change was not kept.", approved: [] };
       step("kept");
     }
+    // (ENGSTAGE, coordinator 30 Oct 2026: "Only the last press approves and writes": a newer press waiting behind this commit takes it from here: no seal, no file, no stamp for a state already overtaken)
+    const overtaken = () => { try { return typeof o.overtaken === "function" && !!o.overtaken(); } catch (_) { return false; } };
+    if (overtaken() && on.length) return { ok: true, overtaken: true, approved: [] };
     if (!on.length) return { ok: true, none: true, approved: [] };
     if (o.approve === false) return { ok: true, kept: true, approved: [] };
     // (2) every engraved face read and fitted, with the staged words
@@ -9356,6 +9359,7 @@ const Engrave = window.Engrave = (() => {
       }
       if (why) return { ok: false, message: "Not approved: " + why.replace(/^(?:not approved:\s*)/i, ""), approved: [] };
     }
+    if (overtaken()) return { ok: true, overtaken: true, approved: [] };   // (the faces are kept and fitted: the newer press approves them, as it stages them)
     // (3) a place dragged on a face whose job was there before this commit (placed, or opened again)
     for (const f of on) {
       const p = faces[f] && faces[f].pos, j = jobs[f]; if (!p || !j || !before.has(j.key) || !j.fit || j.fit.artOnly) continue;
@@ -9369,7 +9373,7 @@ const Engrave = window.Engrave = (() => {
       if (["approved", "written"].includes(j.state)) { approved.push(j.key); continue; }
       step("approve");
       // (the face is approved the moment its state says so: the rest of the approval (its back file for the sheets, its save) goes on behind it, as after any Approve; the commit does not wait for it)
-      { const task = Promise.resolve(approve(j, by, stampAt())).catch(() => {}); let done = false; task.then(() => { done = true; }); while (!done && !["approved", "written"].includes(j.state)) await Promise.race([task, wait(60)]); }
+      { const task = Promise.resolve(approve(j, by, stampAt(), { quick: true })).catch(() => {}); let done = false; task.then(() => { done = true; }); while (!done && !["approved", "written"].includes(j.state)) await Promise.race([task, wait(60)]); }
       step("approved");   // (the stamp on the panel's own anchor: the live Approve is never the approval's button)
       if (!["approved", "written"].includes(j.state)) { const w = APPROVE_WHY.get(j.key); return { ok: false, message: (w && w.text) || `Not approved: the ${f} is still to approve.`, approved, failed: j.key, said: !!w }; }   // (said: the approval already told the person why)
       approved.push(j.key);
@@ -9534,12 +9538,12 @@ const Engrave = window.Engrave = (() => {
     try { agent({ engrave: true }, "warn", `${job.row?.order?.receiptId || job.key}: the approval stopped on an error (${msg})`); } catch (_) {}
     notApproved(job, `Not approved: something went wrong while approving (${msg}). Your changes are kept: press Approve to try again.`);
   }
-  async function approve(job, by, button) {
+  async function approve(job, by, button, o) {
     if(job._approvalTask){approveSay(job,"Still approving this placement…",null,true);return;}   // (APPROVEFIX: every wait of the task has a time limit, so this ends)
-    const task=approveOnce(job,by,button).catch(e=>approveThrew(job,e));job._approvalTask=task;   // (HELDREL: an approval that threw says so, never a silent press)
+    const task=approveOnce(job,by,button,o).catch(e=>approveThrew(job,e));job._approvalTask=task;   // (HELDREL: an approval that threw says so, never a silent press)
     try{return await task;}finally{if(job._approvalTask===task)delete job._approvalTask;}
   }
-  async function approveOnce(job, by, button) {
+  async function approveOnce(job, by, button, o) {
     { const art=typeof charmEditSaving==="function" ? charmEditSaving(job) : null;   // (APPROVE AFTER THE EDITOR: the Charm Editor's save of this piece is still under way: it is waited for, said at once, and what it left is approved)
       if(art){approveSay(job,"Saving this piece's artwork from the Charm Editor first · the approval follows",null,true);try{await approveWithin(art,APPROVE_MS.fit,"the artwork was not saved within a minute");}catch(e){notApproved(job,`Not approved: ${e.message}. Press Approve again once the card says the artwork is saved.`);return;}approveSay(job,"");return approveOnce(job,by,button);} }
     const owner=items(),row=job.row,pendingFit=fitTasks.get(job);
@@ -9595,7 +9599,10 @@ const Engrave = window.Engrave = (() => {
     CNEngravingSeals.keep(job);
     const seal=CNEngravingSeals.add(job,"engraveApproved",by,approvedAt);
     // Publish the new state only after the wooden press, ink and lift finish. Pollers must not advance early.
-    job.stamping=true;try{await approveWithin(CNEngravingSeals.press(approvalButton,seal),APPROVE_MS.stamp,"").catch(()=>{});}finally{job.stamping=false;}   // (APPROVEFIX: the stamp is the picture of the approval, never what holds it up)
+    // (ENGSTAGE, coordinator 30 Oct 2026: "Each approval spends 2.3-2.6 s between "fit done" and settleApproval": the wooden press's animation. An approval made by the panel's commit (o.quick: its
+    //  "Approved ✓" was painted at the press) publishes at once; the stamp comes down on its own, beside the button)
+    if(o && o.quick){Promise.resolve().then(()=>CNEngravingSeals.press(approvalButton,seal)).catch(()=>{});}
+    else{job.stamping=true;try{await approveWithin(CNEngravingSeals.press(approvalButton,seal),APPROVE_MS.stamp,"").catch(()=>{});}finally{job.stamping=false;}}   // (APPROVEFIX: the stamp is the picture of the approval, never what holds it up)
     if(job.fit!==prepared.fit || job.view!==prepared.view){notApproved(job,"Not approved: the placement changed while it was approved. Review the current words.",4000);delete job.approvalIntent;return;}
     if(!settleApproval(job)){notApproved(job,"Not approved: the placement changed while it was approved. Look at it, then press Approve again.",4000);return;}
     approveSay(job,"");   // (APPROVEFIX: it used to go on as if approved, and the card came back with Approve)
@@ -10424,6 +10431,20 @@ const Engrave = window.Engrave = (() => {
   const SV_STAGES = new Map();        // piece key -> { key, stage (normalised) | null, seq, raf, timer }
   const SV_FACES = new Map();   // piece key + "|" + face -> a face drawn from the charm: stagedFaceFit's record { face, text, fontWord, centre, size, view, mask, loading, onFont }
   let SV_SEQ = 0;
+  /* The cards drawn for a staged piece (placementCard with the panel): every one of them on the page is painted, whether or not the tab still calls it its card. EG.card is let go while a face is fitted
+     again (fitJobOnce) or reset, the card staying on screen, panel and all, until the tab is drawn again: a stage painted only on EG.card left that work area on an older state (S7 seed 2: the front
+     with "yy" under a box saying "eiAnsva") while its thumbnails, painted by piece, were right. */
+  const SV_CARDS = new Set();
+  /** The cards of piece `key` on the page now (`on`), and whether one is still being built (`pending`: made in the last 2 s, not on the page yet). Cards gone from the page are let go. */
+  function svCardsOf(key) {
+    const on = [], now = performance.now(); let pending = false;
+    for (const c of [...SV_CARDS]) {
+      if (c._svGone) { SV_CARDS.delete(c); continue; }
+      if (!c.isConnected) { if (c._svWasOn || now - (c._svBorn || 0) > 2000) SV_CARDS.delete(c); else if (c._svPiece === key) pending = true; continue; }
+      c._svWasOn = true; if (c._svPiece === key && c._svWork) on.push(c);
+    }
+    return { on, pending };
+  }
   const STAGE_ANIM = { fade: 120, out: 150, back: 210 };
   const SV_CHOICES = ["none", "front", "back", "both"];
   const svChoiceFaces = c => (c === "both" ? ["front", "back"] : c === "front" || c === "back" ? [c] : []);
@@ -10498,11 +10519,12 @@ const Engrave = window.Engrave = (() => {
   function svIdleArm(rec) { clearTimeout(rec.idleT); rec.idleT = setTimeout(() => svIdle(rec), 300); }
   function svIdle(rec) {
     rec.idleT = 0;
-    const PNL = window.CharmNestEngravePanel, job = rec.job, c = EG.card && EG.card.isConnected ? EG.card : null, pst = () => { let ps = null; try { ps = PNL && typeof PNL.stageOf === "function" ? PNL.stageOf(rec.key) : null; } catch (_) { ps = null; } return ps && typeof ps === "object" && ps.faces ? ps : null; };
-    if (SV_STAGES.get(rec.key) !== rec) { if (!SV_STAGES.has(rec.key) && c && c._svPiece === rec.key && job) { const ps = pst(); if (ps) { svShowStage.idleFixes++; svShowStage(job, ps); } } return; }   // (let go meanwhile while its card is still open: the panel's stage taken again)
-    if (rec.raf || rec.flushing || SV_TURN.run || (c && c.querySelector(".backHost canvas.drag"))) { svIdleArm(rec); return; }   // (a paint, a turn or a drag on its way: looked at after it)
+    const PNL = window.CharmNestEngravePanel, job = rec.job, cs = svCardsOf(rec.key).on, pst = () => { let ps = null; try { ps = PNL && typeof PNL.stageOf === "function" ? PNL.stageOf(rec.key) : null; } catch (_) { ps = null; } return ps && typeof ps === "object" && ps.faces ? ps : null; };
+    if (SV_STAGES.get(rec.key) !== rec) { if (!SV_STAGES.has(rec.key) && cs.length && job) { const ps = pst(); if (ps) { svShowStage.idleFixes++; svShowStage(job, ps); } } return; }   // (let go meanwhile while its card is still open: the panel's stage taken again)
+    if (rec.raf || rec.flushing || SV_TURN.run || cs.some(c => c.querySelector(".backHost canvas.drag"))) { svIdleArm(rec); return; }   // (a paint, a turn or a drag on its way: looked at after it)
     if (job && !rec.direct) { const ps = pst(), st = ps ? svNorm(ps, job) : null; if (st && svSig(st) !== svSig(rec.stage)) { rec.stage = st; rec.seq = ++SV_SEQ; rec.pseq = ps.seq; svShowStage.idleFixes++; } }
-    if (c && c._svPiece === rec.key && c._svExpect && c._remountWork) {
+    for (const c of cs) {
+      if (!c._svExpect || !c._remountWork) continue;
       const h = c.querySelector(".backHost"), want = c._svExpect();
       if (!h || h.dataset.face !== want.face || (want.words != null && (h.dataset.words || "") !== want.words) || +h.dataset.stageSeq !== rec.seq || !h.querySelector(":scope > canvas:not(.egSvHold), :scope > .egStagePv")) { svShowStage.idleFixes++; c._remountWork(); }
     }
@@ -10528,13 +10550,14 @@ const Engrave = window.Engrave = (() => {
     try {
       if (only === "thumbs") { thumbs(); return; }
       // (the work area first: its draft of a face with a job is what that face's thumbnail draws its lines from, Engrave.draftOf; then the thumbnails, in the same call)
-      const c = EG.card && EG.card.isConnected ? EG.card : null;
-      let reached = false, t1 = t0;
-      if (c && c._svWork && c._svPiece === rec.key) { try { c._svWork(rec); } catch (e) { console.warn("engraving: the stage's work area", e); } t1 = performance.now(); const h = c.querySelector(".backHost"); if (h) reached = +h.dataset.stageSeq === rec.seq || !!SV_TURN.run; }
+      const { on: cs, pending } = svCardsOf(rec.key);
+      let reached = cs.length > 0;
+      for (const c of cs) { try { c._svWork(rec); } catch (e) { console.warn("engraving: the stage's work area", e); } const h = c.querySelector(".backHost"); if (!h || (+h.dataset.stageSeq !== rec.seq && !SV_TURN.run)) reached = false; }
+      const t1 = performance.now();
       thumbs();
-      if (c) { const h = c.querySelector(".backHost"); if (h) h.dataset.paintMs = (performance.now() - t1).toFixed(1) + "+" + (t1 - t0).toFixed(1); }   // (what the paint cost, ms: the thumbnails + the work area)
-      // (the last state ALWAYS reaches the work area: the card of this piece being drawn again, or not on the page yet, is painted at the next frame, a few times at most)
-      const mine = !!EG.cardKey && svPieceKeyOf(EG.cardKey) === rec.key;
+      for (const c of cs) { const h = c.querySelector(".backHost"); if (h) h.dataset.paintMs = (performance.now() - t1).toFixed(1) + "+" + (t1 - t0).toFixed(1); }   // (what the paint cost, ms: the thumbnails + the work area)
+      // (the last state ALWAYS reaches the work area: a card of this piece being drawn again, or not on the page yet, is painted at the next frame, a few times at most)
+      const mine = pending || cs.length > 0 || (!!EG.cardKey && svPieceKeyOf(EG.cardKey) === rec.key);
       if (mine && !reached && (rec.retry = (rec.retry || 0) + 1) <= 20) Promise.resolve().then(() => svQueue(rec)); else if (reached) rec.retry = 0;
     } finally { rec.flushing = false; }
   }
@@ -12187,8 +12210,13 @@ const Engrave = window.Engrave = (() => {
   }
   const activityScope = () => "engrave-place";   // (NODECIDED: one list, one range and one sort)
   function activityTools(v) { CNListActivity.mount(v.querySelector(".ordBar"), activityScope(), () => { EG.focus=null; render(); }); }
+  /* ENGSTAGE (stage-view's trace, 30 Oct 2026: a refit set EG.card = null, its render() met an approval being stamped and was dropped: the tab sat on a card EG.card no longer pointed to, and the
+     card's own presses did nothing after the approval settled): a render that meets an approval under way is OWED, never dropped: exactly one render when no job is stamped or prepared any more. */
+  let renderOwed = 0;
+  const approvalUnderWay = () => [...items().values()].some(j => j.stamping || j.approvalPreparing);
+  function oweRender() { if (renderOwed) return; const again = () => { if (approvalUnderWay()) { renderOwed = setTimeout(again, 60); return; } renderOwed = 0; render(); }; renderOwed = setTimeout(again, 60); }
   function renderView() {
-    if([...items().values()].some(j=>j.stamping || j.approvalPreparing))return;
+    if (approvalUnderWay()) { oweRender(); return; }
     LiveStrip.render();
     const v = document.getElementById("engraveView");
     if (!previewRecovery && previewRecoveryTimer === null && [...items().values()].some(needsPreview))
@@ -12594,7 +12622,7 @@ const Engrave = window.Engrave = (() => {
     // what the system decided for this LINE (None / Front only / Back only / Front + back, each face's words and font), checked and edited right here: charm-nest-engrave-setup.js (one control for every card)
     // ENGSTAGE: the Design & Engrave card draws its piece's stage (Engrave.showStage): its work area (mountBack, _svWork below) and its thumbnails (CharmNestEngraveCard.paintStage). Opening a piece lets every other piece's stage go.
     const svPk = panelOn ? pieceKeyOfJob(job) : "";
-    if (panelOn) { svSweep(svPk); card._svPiece = svPk; svCss(); }
+    if (panelOn) { svSweep(svPk); card._svPiece = svPk; card._svBorn = performance.now(); SV_CARDS.add(card); svCss(); }
     { const su = card.querySelector("[data-engsetup]"); if (ctx && su && window.CharmNestEngravePanel) card._pieceMount = CharmNestEngravePanel.mountPiece(su, job, { view: viewFaceOf(job), onView: f => setViewFace(job, f, card), artFaces: pieceArtOn }); }   // (charm-nest-engrave-panel.js: the Front / Back thumbnails and the one panel, inline in the Engrave detail only; FACEVIEW: a face the Charm Editor drew on and nothing engraves is a thumbnail too, a press on it shows it in the work area)
     if (wordsJob) { const bh = card.querySelector(".backHost"); if (readsFree(job) && !preparingNow(job)) setTimeout(() => prepareLate(job.row).catch(() => {}), 0);   // (a press on a face that nobody has started reading starts it: prepareLate)
       const busy = (["ready", "fitting"].includes(job.state) && canFit(job)) || (OPENREAD.includes(job.state) && (preparingNow(job) || readsFree(job)));
@@ -12703,7 +12731,7 @@ const Engrave = window.Engrave = (() => {
       if (!r.mask || r.view !== fv.view) { r.text = ""; stagedFaceFit(job, t.face, fv, r); }   // (its safe area first: a place given below is kept)
       r.text = t.words.join("\n"); r.fontWord = t.x.font || ""; r._seq = t.seq;
       if (t.x.pos) { const c = viewPointOf(fv.view, t.x.pos.charm); if (c) r.centre = c; } else if (window.CharmNestEngravePanel && CharmNestEngravePanel.stagePos) r.centre = null;   // (no stagePos on the page: a drag made here keeps its place)
-      r.onFont = () => { const sr = SV_STAGES.get(svPk); if (sr && sr.stage) svQueue(sr); else if (EG.card === card && card.isConnected && card._remountWork) card._remountWork(); };
+      r.onFont = () => { const sr = SV_STAGES.get(svPk); if (sr && sr.stage) svQueue(sr); else if (!disposed && card.isConnected && card._remountWork) card._remountWork(); };
       return r;
     };
     /** A drag of the staged words on another face's placed job drawn here: they follow the pointer as its draft (a frame at most), the place let go at is the stage's. */
@@ -12915,7 +12943,7 @@ const Engrave = window.Engrave = (() => {
     };
     raf = requestAnimationFrame(() => { raf = 0; mountBack(); });
     card._remountWork = () => { if (disposed) return; if (raf) { cancelAnimationFrame(raf); raf = 0; } framed = null; mounted = [0, 0]; mountedBelow = -1; mountBack(); };   // (ROTBAR: the piece was turned, so the work area draws another view: framed again round it, at once)
-    card._dispose = () => { disposed = true; cancelAnimationFrame(raf); card._ro?.disconnect(); card._turnDispose?.(); };
+    card._dispose = () => { disposed = true; card._svGone = true; SV_CARDS.delete(card); cancelAnimationFrame(raf); card._ro?.disconnect(); card._turnDispose?.(); };
     if (window.ResizeObserver) { const ro = new ResizeObserver(() => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); }); ro.observe(backHost); const ap = card.querySelector(".pvApproval"); if (ap) ro.observe(ap); card._ro = ro; }
     const spacing = card.querySelector('[data-a="spacing"]');
     if(spacing) {
