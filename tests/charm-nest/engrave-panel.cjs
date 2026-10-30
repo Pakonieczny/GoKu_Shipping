@@ -107,7 +107,8 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       const before = await probe();
       await page.fill('.pvSetup .engpWords', 'Name Three');
       const staged = await probe();
-      check(staged.staged && (staged.dis === before.dis || staged.failed) && staged.title === before.title && !/Save or Cancel/.test(staged.title + staged.why), 'with words staged, Approve stays as it was (no "Save or Cancel the edit first"): ' + JSON.stringify(staged) + ' (before: ' + JSON.stringify(before) + ')');
+      // (ENGSTAGE: words staged light Approve (green, live): a piece that waited, off, while its face was being placed, is approvable with the person's words)
+      check(staged.staged && (staged.dis === before.dis || staged.failed || !staged.dis) && !/Save or Cancel/.test(staged.title + staged.why), 'with words staged, Approve is live or as it was, never "Save or Cancel the edit first": ' + JSON.stringify(staged) + ' (before: ' + JSON.stringify(before) + ')');
       await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); });   // (nothing approved here: the draft is let go without keeping it)
     }
 

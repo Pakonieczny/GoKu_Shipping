@@ -197,8 +197,9 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     check('D3 no double jobs: one job per face of the piece', ['front', 'back'].every(f => dj.filter(j => j.face === f).length <= 1), JSON.stringify(dj));
     /* ── E · edits staged while a commit runs, then Approve again: both land in turn, and the card ends calm (never a stuck "Approved", never aria-busy) ── */
     await quiet();
-    await openKey((await jobsOf(KB)).find(j => j.face === 'front').key);
+    await R.openEngraveDetail(w, 'both', { face: 'back' }); await R.settle(page, 600);   // (the two-face order, its Back approved by D)
     const e0 = await page.evaluate(async () => {
+      if (!window.__card() || !window.__card().querySelector('.engp .engpWords')) return { none: true };
       const c = window.__card(), ta = () => window.__card().querySelector('.engp .engpWords'), b = () => window.__card().querySelector('[data-engp-approve]'), type = v => { const t = ta(); t.focus(); t.value = v; t.dispatchEvent(new Event('input', { bubbles: true })); };
       const face = ta().dataset.face, start = ta().value;
       type(start + 'X'); b().click();
@@ -208,12 +209,14 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
       b().click(); void c;
       return { face, start, during, relit };
     });
-    check('E1 a press, edits staged on top while it is kept: Approve lights up again for them, and a second press is taken', /✓/.test(e0.during.text) && e0.relit.a === 'approve' && !e0.relit.dis && e0.relit.dirty, JSON.stringify(e0));
-    const e1f = await until(async () => { const f = (await jobsOf(KB)).find(j => j.face === e0.face); return f && ['approved', 'written'].includes(f.state) && /XY$/i.test(f.text) ? f : null; }, 150000);
+    check('E1 a press, edits staged on top while it is kept: Approve lights up again for them, and a second press is taken', !e0.none && /✓/.test(e0.during.text) && e0.relit.a === 'approve' && !e0.relit.dis && e0.relit.dirty, JSON.stringify(e0));
+    if (!e0.none) {
+    const e1f = await until(async () => { const f = (await jobsOf(KF)).find(j => j.face === e0.face); return f && ['approved', 'written'].includes(f.state) && /XY$/i.test(f.text) ? f : null; }, 150000);
     const busy = await page.evaluate(() => [...document.querySelectorAll('#egQueue [data-engp-approve][aria-busy="true"]')].length);
-    await openKey((await jobsOf(KB)).find(j => j.face === e0.face).key);
+    await quiet(); await R.openEngraveDetail(w, 'both', { face: e0.face }); await R.settle(page, 600);
     const e1s = await st(), e1 = e1f && e1s.approve && e1s.approve.a === 'approved' && !e1s.dirty ? { f: e1f, s: e1s } : null;
     check('E2 both land in turn: the face approved with the last words staged, the card calm "Approved", nothing staged, no busy Approve', !!e1 && busy === 0, JSON.stringify({ f: e1f && { text: e1f.text, state: e1f.state }, s: { approve: e1s.approve, dirty: e1s.dirty, key: e1s.key, words: e1s.words }, busy }));
+    } else check('E2 both land in turn', false, 'the card of the piece did not open');
     check('Z no page errors', errors.length === 0, errors.join(' | ').slice(0, 600));
   } catch (e) { console.error(e); check('ran', false, String(e && e.stack || e)); }
   finally { await w.close(); }
