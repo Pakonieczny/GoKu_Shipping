@@ -9299,7 +9299,8 @@ const Engrave = window.Engrave = (() => {
      on it (moveTo, at Engrave.stagePlaceOf's centre); (4) every engraved face not approved yet is approved, Front before Back (approve: its seal, its file, the sheets and the made thumbnails, as any approval).
      A step that fails stops there and says why: what was approved stays approved, what was not stays to approve, never wrong.
        stage: { choice: none|front|back|both, slot, faces: { front: { text, font, pos }, back }, patch (CharmNestEngraveSetup.patchOf: what differs from what is kept) }
-       o: { button (the stamp's place), approve: false (step 1 only: the staged faces and words are kept, nothing is approved: a host that closes the card itself, a test) }
+       o: { button (the stamp's place: an element, or a function giving the one on the page now), step() (called at every step made: the panel's watchdog), approve: false (step 1 only: the staged faces and words
+            are kept, nothing is approved: a host that closes the card itself, a test) }
        -> { ok, cancelled?, message?, none?, approved: [job keys], failed? } */
   const STAGE_MS = 90000;
   async function commitStage(row, stage, o) {
@@ -9311,7 +9312,9 @@ const Engrave = window.Engrave = (() => {
     const slot = stage.slot ? String(stage.slot) : null, on = choice === "both" ? ["front", "back"] : choice === "none" ? [] : [choice], faces = stage.faces || {};
     const until = Date.now() + STAGE_MS * Math.max(0.001, +window.CN_SPIN_SCALE || 1), wait = ms => new Promise(r => setTimeout(r, ms));
     const mine = f => jobsOf(line).find(j => faceOf(j) === f && (j.slot || null) === slot) || null;
-    const by = employeeName() || await approveWithin(needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: o.button }), APPROVE_MS.sign, "").catch(() => "");
+    const stampAt = () => { try { const b = typeof o.button === "function" ? o.button() : o.button; return b && b.isConnected !== false ? b : null; } catch (_) { return null; } }, step = what => { try { if (typeof o.step === "function") o.step(what); } catch (_) { /* the panel's own */ } };
+    const by = employeeName() || await approveWithin(needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: stampAt() }), APPROVE_MS.sign, "").catch(() => "");
+    step("signed");
     if (!by) return { ok: false, cancelled: true, message: "Nobody is signed in.", approved: [] };
     // (1) the faces, their words and fonts (and the place dragged on a face that has no job yet)
     const before = new Set(jobsOf(line).map(j => j.key)), patch = stage.patch && typeof stage.patch === "object" ? stage.patch : null;   // (a job made by this commit takes its dragged place as _placeAt; one that was there, placed or opened again, is moved below)
@@ -9320,15 +9323,17 @@ const Engrave = window.Engrave = (() => {
       const places = {}; for (const f of on) { const p = faces[f] && faces[f].pos; if (p && Array.isArray(p.charm)) places[f] = p.charm; }
       const res = await saveSetup(line, Object.assign({}, patch, slot ? { slot } : {}), { places });
       if (!res || !res.ok) return { ok: false, cancelled: !!(res && res.cancelled), message: (res && res.message) || "The change was not kept.", approved: [] };
+      step("kept");
     }
     if (!on.length) return { ok: true, none: true, approved: [] };
     if (o.approve === false) return { ok: true, kept: true, approved: [] };
     // (2) every engraved face read and fitted, with the staged words
     const decided = new Set(), fitting = new Set(), jobs = {};
     for (const f of on) {
-      const text = String((faces[f] && faces[f].text) || "").trim(); let why = "";
+      const text = String((faces[f] && faces[f].text) || "").trim(); let why = "", seen = "";
       for (;;) {
         const j = mine(f);
+        { const now = j ? j.key + ":" + j.state + ":" + (j.fit ? 1 : 0) : ""; if (now !== seen || (j && (isWorking(j) || lateTasks.has(j) || fitTasks.get(j)))) { seen = now; step("face"); } }   // (a face moving on, or being read or fitted right now, is progress; this wait has its own limit)
         if (!j) { if (Date.now() > until) { why = `the ${f} could not be made here`; break; } await wait(60); continue; }
         jobs[f] = j;
         if (["approved", "written"].includes(j.state)) break;
@@ -9353,7 +9358,8 @@ const Engrave = window.Engrave = (() => {
     const approved = [];
     for (const f of on) {
       const j = jobs[f]; if (["approved", "written"].includes(j.state)) { approved.push(j.key); continue; }
-      await approve(j, by, approved.length ? null : o.button);
+      step("approve"); const ping = setInterval(() => step("approving"), 2000);   // (an approval's own waits each have their time limit: approveWithin)
+      try { await approve(j, by, stampAt()); } finally { clearInterval(ping); } step("approved");   // (the stamp on the panel's own anchor: the live Approve is never the approval's button)
       if (!["approved", "written"].includes(j.state)) { const w = APPROVE_WHY.get(j.key); return { ok: false, message: (w && w.text) || `Not approved: the ${f} is still to approve.`, approved, failed: j.key, said: !!w }; }   // (said: the approval already told the person why)
       approved.push(j.key);
     }

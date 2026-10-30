@@ -140,17 +140,19 @@
     }
     return '';
   }
-  /** The choice changes: a face it engraves that has no words yet starts with its words (Paul's case: Back "Ruby", Front pressed: the front gets "Ruby", the words the order gives); two faces never end on the same
-   *  words one of them only copied from the other. */
+  /** The choice changes. Front or Back alone: that face keeps its words, or starts with the words the order gives it (the line's own, the buyer's labelled words, else the other face's: Paul's case, Back "Ruby",
+   *  Front pressed: the front gets "Ruby"); words taken from the other face MOVE (that face, no longer engraved, is left with none). Front & Back: a face added starts empty unless the buyer labelled words for
+   *  it; a face that has its words keeps them (None, then Front & Back again, brings back what was there). */
   function setChoice(vm, d, choice) {
-    d.choice = choice; d.error = '';
+    const S = Setup(); d.choice = choice; d.error = '';
     for (const f of facesOf(choice)) {
-      const x = d.faces[f] || (d.faces[f] = { text: '', font: '', pos: null });
+      const x = d.faces[f] || (d.faces[f] = { text: '', font: '', pos: null }), of = f === 'front' ? 'back' : 'front', o = d.faces[of] || (d.faces[of] = { text: '', font: '', pos: null });
       if (str(x.text).trim()) continue;
-      const t = seedText(vm, f, choice), o = d.faces[f === 'front' ? 'back' : 'front'];
-      x.text = t; d.copied[f] = !!t && !vm.rows.find(r => r.face === f && r.text) && normWords(t) === normWords(o && o.text);
+      if (choice === 'both') { const lab = tryDo(() => S.labelled(vm.raw), null); x.text = lab && lab[f] ? lab[f].join('\n') : ''; d.copied[f] = false; continue; }
+      const own = vm.rows.find(r => r.face === f && r.text), t = seedText(vm, f, choice);
+      x.text = t; d.copied[f] = !!t && !own && normWords(t) === normWords(o.text);
+      if (d.copied[f]) { o.text = ''; d.copied[of] = false; }   // (moved: the face left behind keeps no copy of them)
     }
-    if (choice === 'both') for (const f of FACES) { const o = d.faces[f === 'front' ? 'back' : 'front']; if (d.copied[f] && normWords(d.faces[f].text) === normWords(o.text)) { d.faces[f].text = ''; d.copied[f] = false; } }
   }
   /** What a save would make of the piece's setup (for the consequences). */
   function nextSetupOf(vm, patch) {
@@ -371,6 +373,7 @@
 .pvApproval .engpApprove{transition:background-color .12s ease-out,border-color .12s ease-out,color .12s ease-out,opacity .12s ease-out,transform .08s ease-out}
 .pvApproval .engpApprove:disabled{cursor:default}
 .pvApproval .engpApprove[data-gate=need]:disabled,.pvApproval .engpApprove[data-gate=blocked]:disabled,.pvApproval .engpApprove[data-gate=busy]:disabled{opacity:.5}
+.pvApproval .engpApproveWrap{position:relative}.engpStampAt{position:absolute;inset:0;visibility:hidden;pointer-events:none;overflow:hidden;font-size:0}
 .engpTick{display:inline-block;margin-left:6px;transform-origin:50% 60%;animation:engpTick .32s cubic-bezier(.2,.9,.3,1.3) both}
 @keyframes engpTick{0%{opacity:0;transform:scale(.4)}100%{opacity:1;transform:scale(1)}}
 @media (prefers-reduced-motion:reduce){.engpPill{transition:box-shadow .12s ease-out}.engpSeg:not(:disabled):active,.engpTools>button:not(:disabled):active,.pvApproval .engpApprove:not(:disabled):active{transform:none}.engpTick{animation:none}.engp[data-need] .engpWords,[data-engp-need] :is([data-eng-thumb],.engThumb){animation:none}}`;
@@ -395,22 +398,36 @@
     CHAINS.set(key, run); run.then(() => { if (CHAINS.get(key) === run) CHAINS.delete(key); });
     void c; return true;
   }
+  /* ENGSTAGE (coordinator, 30 Oct 2026: a 60-action burst left "Approved" stuck, aria-busy, with edits staged on top): a commit is never left pending. It reports each step it makes (o.step); 20 s with no step
+   * (CN_SPIN_SCALE: a test's clock) ends the wait for it: Approve is given back with the staged state as it is and one short reason. The commit itself may still land later: the next commit of the piece waits for it
+   * first (HUNG), so two never run at once. The stamp of an approval is pressed on the panel's own anchor beside the button (stampAt), never on the live button the person may be pressing again. */
+  const WATCH_MS = 20000;
+  const HUNG = new Map();      // piece key -> the commit still running after its watchdog let go of it
   async function runCommit(ctx) {
     const { key, line, slot, snap } = ctx, E = Eng(), S = Setup();
-    let res;
+    let res, settled = false, last = Date.now(), timer = 0;
     try {
-      if (typeof ctx.save === 'function') res = await ctx.save();
-      else if (!E || typeof E.commitStage !== 'function' || !S) res = { ok: false, message: 'The engraving is not loaded yet.' };
+      { const h = HUNG.get(key); if (h) { await Promise.race([h, new Promise(r => setTimeout(r, 90000 * Math.max(0.001, +(root && root.CN_SPIN_SCALE) || 1)))]); if (HUNG.get(key) === h) HUNG.delete(key); } }
+      let work;
+      if (typeof ctx.save === 'function') work = Promise.resolve().then(() => ctx.save());
+      else if (!E || typeof E.commitStage !== 'function' || !S) work = Promise.resolve({ ok: false, message: 'The engraving is not loaded yet.' });
       else {
         const vm = S.read(line, { slot: slot || undefined, jobs: (E.jobsOf ? E.jobsOf(line) : []) || [] });
         const patch = vm ? S.patchOf(vm, { mode: snap.stage.choice, faces: snap.stage.faces }) : {};
-        const button = (liveBindings(key).map(b => b.button()).find(Boolean)) || null;
-        res = await E.commitStage(line, { choice: snap.stage.choice, slot, faces: snap.stage.faces, patch }, ctx.keepOnly ? { button, approve: false } : { button });
+        const button = () => (liveBindings(key).map(b => b.stampAt()).find(Boolean)) || null;
+        work = Promise.resolve().then(() => E.commitStage(line, { choice: snap.stage.choice, slot, faces: snap.stage.faces, patch }, Object.assign({ button, step: () => { last = Date.now(); } }, ctx.keepOnly ? { approve: false } : {})));
       }
+      last = Date.now();
+      const scale = Math.max(0.001, +(root && root.CN_SPIN_SCALE) || 1);
+      const dog = new Promise(r => { const tick = () => { if (settled) return; if (Date.now() - last >= WATCH_MS * scale) { r({ ok: false, hung: true, message: 'Not approved: it took too long. Press Approve to try again.' }); return; } timer = setTimeout(tick, Math.min(1000, WATCH_MS * scale / 4)); }; timer = setTimeout(tick, Math.min(1000, WATCH_MS * scale / 4)); });
+      res = await Promise.race([work.then(v => v || { ok: false }, e => ({ ok: false, message: str(e && e.message ? e.message : e) })), dog]);
+      settled = true; clearTimeout(timer);
+      if (res && res.hung) { const h = work.catch(() => {}).then(() => { if (HUNG.get(key) === h) HUNG.delete(key); for (const b of liveBindings(key)) tryDo(() => b.draw()); }); HUNG.set(key, h); }
     } catch (e) { res = { ok: false, message: str(e && e.message ? e.message : e) }; }
-    if (COMMITS.get(key) === snap) COMMITS.delete(key);
+    finally { settled = true; if (COMMITS.get(key) === snap) COMMITS.delete(key); }   // (the "Approved ✓" of this press ends here, whatever happened)
     const d = DRAFTS.get(key), clean = !!(res && res.ok) && d === snap.draft && d.seq === snap.seq && !COMMITS.has(key);
-    if (clean) { d.touched = false; d.dirty = false; d.sig = ''; for (const f of FACES) d.faces[f].pos = null; }   // (what was staged is what is kept now: nothing is staged; the draft starts again from what is kept at the next look, on the face shown)
+    if (clean) { d.touched = false; d.dirty = false; d.sig = ''; for (const f of FACES) d.faces[f].pos = null; }
+    else if (res && res.ok && d === snap.draft) for (const f of FACES) if (posOk(d.faces[f].pos) && samePos(d.faces[f].pos, snap.stage.faces[f].pos)) d.faces[f].pos = null;   // (the place this commit kept is kept: only what differs from it stays staged)   // (what was staged is what is kept now: nothing is staged; the draft starts again from what is kept at the next look, on the face shown)
     else if (!(res && res.ok) && !(res && res.cancelled)) {
       if (!(res && res.said)) toast(shortWhy(res && res.message));   // (one short toast; an approval that said why itself is not said twice)
       const m = str(res && res.message).trim() || 'Not approved: try again.', dn = DRAFTS.get(key); if (dn) dn.why = /^Not approved/i.test(m) ? m : 'Not approved: ' + m.replace(/^Not saved:\s*/i, '');   // (APPROVEFIX: the card says it in words too, under Approve, until the next change or press)
@@ -453,8 +470,10 @@
     const focusState = () => { const a = doc.activeElement; if (!a || !el.contains(a) || !a.dataset || !a.dataset.engp) return null; return { engp: a.dataset.engp, face: a.dataset.face || '', choice: a.dataset.choice || '', start: a.selectionStart, end: a.selectionEnd }; };
     const restoreFocus = want => {
       if (!want || dead) return;
-      const sel = `[data-engp="${want.engp}"]${want.face ? `[data-face="${want.face}"]` : ''}${want.choice ? `[data-choice="${want.choice}"]` : ''}`, t = el.querySelector(sel);
-      if (t && !t.disabled && doc.activeElement !== t) { try { t.focus({ preventScroll: true }); if (want.start != null && t.setSelectionRange) t.setSelectionRange(want.start, want.end); } catch (_) { /* no caret to give back */ } }
+      const sel = `[data-engp="${want.engp}"]${want.face ? `[data-face="${want.face}"]` : ''}${want.choice ? `[data-choice="${want.choice}"]` : ''}`;
+      let t = el.querySelector(sel), moved = false;
+      if (!t && (want.engp === 'words' || want.engp === 'font')) { t = el.querySelector(`[data-engp="${want.engp}"]`); moved = !!t; }   // (the face changed under the box in focus: the new face's box takes it, the caret at its end)
+      if (t && !t.disabled && doc.activeElement !== t) { try { t.focus({ preventScroll: true }); if (t.setSelectionRange) { if (moved) { const n = str(t.value).length; t.setSelectionRange(n, n); } else if (want.start != null) t.setSelectionRange(want.start, want.end); } } catch (_) { /* no caret to give back */ } }
     };
 
     /* ── the pictures: ONE call (Engrave.showStage), else the old previews ── */
@@ -500,6 +519,7 @@
     const GATE = '[data-a="approve"],[data-a="approveBoth"],[data-a="approveFaces"]';
     const hostOf = () => { const card = el.closest ? el.closest('.rvItem') : null; return card ? card.querySelector('.pvApproval') : null; };
     const button = () => { const h = hostOf(); const b = h && h.querySelector('[data-engp-approve]'); return b && b.isConnected ? b : null; };
+    const stampAt = () => { const h = hostOf(); const a = h && h.querySelector('[data-engp-stamp]'); return a && a.isConnected ? a : null; };
     /** The Approve of the card, drawn from the gate: green Approve / off with the gold pulse / calm "Approved" / "Approved ✓" the moment it was pressed. The card's own approval buttons make way for it. */
     const drawGate = (vm, d) => {
       const g = gateOf(vm, d, key), p = el.querySelector('.engp'), scope = opts.scope || el.parentElement;
@@ -516,6 +536,8 @@
         if (!why) { if (n) n.remove(); } else { if (n) n.dataset.engp = '1'; if (!n) { n = doc.createElement('div'); n.className = 'egApproveWhy'; n.dataset.engp = '1'; n.setAttribute('role', 'status'); host.appendChild(n); } if (n.textContent !== why) n.textContent = why; } }
       let b = host.querySelector('[data-engp-approve]');
       if (!b) { const w = doc.createElement('span'); w.className = 'egApproveWrap engpApproveWrap'; b = doc.createElement('button'); b.type = 'button'; b.dataset.engpApprove = '1'; w.appendChild(b); host.insertBefore(w, host.firstChild); }
+      if (b.parentElement && !b.parentElement.querySelector(':scope > [data-engp-stamp]')) { const a = doc.createElement('span'); a.className = 'engpStampAt'; a.dataset.engpStamp = '1'; a.setAttribute('aria-hidden', 'true'); b.after(a); }   // (the approval's stamp is pressed here, never on the button itself)
+      if (b.hasAttribute('aria-busy')) b.removeAttribute('aria-busy');
       const calm = g.st === 'approved' || g.st === 'ok', want = g.st === 'ok' ? 'Approved ✓' : calm ? 'Approved' : 'Approve';
       b.className = 'btn sage sm egApproveButton engpApprove' + (calm ? ' egApproved' : '');
       b.dataset.a = calm ? 'approved' : 'approve'; b.dataset.gate = g.st;
@@ -589,7 +611,7 @@
       restoreFocus(want);
       if (want && !el.isConnected) Promise.resolve().then(() => restoreFocus(want));   // (a card is built before it is put in the page)
     };
-    me.draw = draw; me.gate = gate; me.button = button; me.paint = kind => paint(kind); me.paintLegacy = paintLegacy;
+    me.draw = draw; me.gate = gate; me.button = button; me.stampAt = stampAt; me.paint = kind => paint(kind); me.paintLegacy = paintLegacy;
     const redrawLive = () => { const set = LIVE.get(key); for (const b of [...(set || [])]) { if (b !== me && b.el && !b.el.isConnected) { set.delete(b); continue; } tryDo(() => b.draw()); } };
     const changed = (kind, face) => { try { if (typeof opts.onChange === 'function') opts.onChange({ face, kind, key }); } catch (_) { /* the host's own */ } };
 
@@ -599,7 +621,11 @@
     const setActive = (face, from) => {
       const m = model(); if (!m || !facesFor(line).includes(face)) return false;
       const { d } = m; if (d.active === face) { const cur = el.querySelector('.engp'); if (cur && cur.dataset.active === face) { if (from === 'thumb') paint('active', m); return true; } }
-      d.active = face; d.focus = null; bump(d); draw(); paint('active', m);
+      d.active = face; bump(d);
+      if (from === 'thumb') d.focus = { engp: 'words', face, choice: '', start: null, end: null }; else d.focus = null;   // (a thumbnail pressed: the words box of that face takes the caret, so typing goes there at once)
+      draw();
+      if (from === 'thumb') { const ta = el.querySelector('.engpWords'); if (ta && !ta.disabled && doc.activeElement !== ta) tryDo(() => { ta.focus({ preventScroll: true }); const n = str(ta.value).length; ta.setSelectionRange(n, n); }); }
+      paint('active', m);
       try { if (typeof opts.onFace === 'function') opts.onFace(face, from); } catch (_) { /* the host's own */ }
       changed('active', face);
       return true;
