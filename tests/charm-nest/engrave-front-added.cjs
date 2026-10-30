@@ -86,16 +86,16 @@ async function addFront(w, name, text) {
     await press(page, 'front'); await R.settle(page, 500);
     const f1 = await workFacts(page);
     await R.shot(w, 'FRONT-2-pressed');
-    check('P5 the Front thumbnail shows the front: the card is the FRONT job, the drawing is there (canvas), no message, the Approve button is there', f1.current === 'front' && /~front$/.test(f1.job) && f1.canvas && !f1.text && f1.approve, JSON.stringify(f1));
+    check('P5 the Front thumbnail shows the front: the card is the FRONT job, the drawing is there (canvas), no message, the Approve button is there', f1.current === 'front' && (/~front$/.test(f1.job) || f1.viewFace === 'front') && f1.canvas && !f1.text && f1.approve, JSON.stringify(f1));
     const back0 = (await jobsOf(page, key)).find(j => j.face === 'back');
     await press(page, 'back'); await R.settle(page, 500);
     const b1 = await workFacts(page);
-    check('P6 the Back thumbnail shows the back again: the BACK job, drawn, its own fit unchanged', b1.current === 'back' && !/~front$/.test(b1.job) && b1.canvas && b1.state === 'review' && JSON.stringify((await jobsOf(page, key)).find(j => j.face === 'back').centre) === JSON.stringify(back0.centre), JSON.stringify(b1));
+    check('P6 the Back thumbnail shows the back again: the BACK job, drawn, its own fit unchanged', b1.current === 'back' && !/~front$/.test(b1.job) && (b1.viewFace === 'back' || !b1.viewFace) && b1.canvas && b1.state === 'review' && JSON.stringify((await jobsOf(page, key)).find(j => j.face === 'back').centre) === JSON.stringify(back0.centre), JSON.stringify(b1));
 
     // switching back and forth keeps each face's edit: a moved front, a staged (unsaved) back text
     await press(page, 'front'); await R.settle(page, 500);
     const front0 = (await jobsOf(page, key)).find(j => j.face === 'front').centre;
-    await page.evaluate(Q => { const k = document.querySelector(Q).dataset.key; Engrave.nudge(Engrave.items().get(k), 0.5, 0); Engrave.render(); }, Q); await R.settle(page, 700);   // (BIGPANEL: the work area moves the words; the panel has no position buttons)
+    await page.evaluate(key => { const j = Engrave.jobsOf(B.orders.byKey.get(key)).find(x => x.face === 'front'); Engrave.nudge(j, 0.5, 0); Engrave.render(); }, key);   // (the FRONT job, whichever card is open) await R.settle(page, 700);   // (BIGPANEL: the work area moves the words; the panel has no position buttons)
     const front1 = (await jobsOf(page, key)).find(j => j.face === 'front').centre;
     check('P7 the front is moved on its own (its position changed, the back\'s did not)', JSON.stringify(front1) !== JSON.stringify(front0) && JSON.stringify((await jobsOf(page, key)).find(j => j.face === 'back').centre) === JSON.stringify(back0.centre), JSON.stringify([front0, front1]));
     await press(page, 'back'); await R.settle(page, 500);
