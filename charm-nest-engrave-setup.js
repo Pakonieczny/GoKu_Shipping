@@ -366,7 +366,9 @@
           for (const j of jobs) { if (j.state === 'none' || (j.state === 'skipped' && !env.takeAway)) continue; if (env.takeAway) { if ((await env.takeAway(j, by)) !== false) res.none.push(j.key); } else if (DECIDED.includes(j.state)) { await env.skip(j, by); res.plain.push(j.key); } else { env.setNone(j, plainWhy, by, whyText); res.none.push(j.key); } }
         } else {
           for (const j of rc.drop) { env.remove(j); res.removed.push(j.key); }
-          for (const j of rc.keep) { if (j.state === 'skipped' || j.state === 'none') continue; await env.skip(j, by); res.plain.push(j.key); }
+          // ENGSTAGE (Paul 30 Oct 2026: "the system will revert to previous state of engraving"): a decided face the person's choice no longer engraves (Back approved, then Front + Approve) is TAKEN AWAY as None
+          // takes it (env.takeAway: no seal, no stamp, its file withdrawn from the sheets, the timeline's "Engraving removed by ..."), never cut plain with a seal; a page without it cuts it plain as before
+          for (const j of rc.keep) { if (j.state === 'skipped' || j.state === 'none') continue; if (env.takeAway) { if ((await env.takeAway(j, by)) !== false) res.none.push(j.key); } else { await env.skip(j, by); res.plain.push(j.key); } }
           // (NONEPLAIN: a face a person took away on this piece is not engraved (read: vm.mode), so the person's mode asking for it again opens it again, on this piece alone, though the line's setup still named it)
           const asked = F.MODES.includes(patch && patch.mode) ? setup.faces : [], only0 = patch && patch.slot && SLOT_RX.test(String(patch.slot)) ? String(patch.slot) : null, cutNow = cutWhyOf(line, jobs);
           for (const j of env.jobsOf(line)) if (setup.faces.includes(faceOfJob(j)) && (!before.faces.includes(faceOfJob(j)) || (asked.includes(faceOfJob(j)) && (!only0 || slotOfJob(j) === only0))) && (j.state === 'none' || j.state === 'skipped') && !cutNow) { env.reopen(j); res.reopened.push(j.key); }
@@ -393,6 +395,8 @@
         }
         if (!seed) continue;
         if (wasDecided && !touched) continue;
+        // ENGSTAGE (Paul 30 Oct 2026: no "Words to confirm" after Front + Approve): a face opened again by this choice, or left waiting for a person's words, takes the person's words now, even the same words it had
+        if (seed.lines && seed.lines.length && (res.reopened.includes(j.key) || (touched && ['words', 'blocked'].includes(j.state))) && !wasDecided) { await env.seed(j, Object.assign({}, seed, { by, ...(whyText ? { why: whyText } : {}) })); res.seeded.push(j.key); continue; }
         // a face the person did not touch keeps its job when the words are the same words however the fit laid them out ("NAME" / "ONE" in capitals is "Name One");
         // a face the person edited re-seeds when the words, or the font picked for this face, differ from the job's
         if (touched ? (sameWords(j, seed) && str(j.faceFontWord) === str(seed.fontWord)) : (sameWords(j, seed) || runOf(wordsOfJob(j), fontIdOf(line, face, j.faceFontWord || seed.fontWord || null, at)) === runOf(seed.lines, fontIdOf(line, face, seed.fontWord || j.faceFontWord || null, at)))) continue;
