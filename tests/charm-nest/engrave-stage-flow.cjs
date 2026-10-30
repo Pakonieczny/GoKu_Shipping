@@ -673,6 +673,8 @@ if (require.main === module) (async () => {
       lap(tag);
       const pk = pkOf(sd.name), errs0 = errors.length, acts = fuzzActions(1000 + sd.seed * 7919, 60, sd.lastApprove);
       await toList(); await openPiece(sd.name);
+      await page.evaluate(pk => { const S = window.__stg, sc = S.scope(pk); return sc && S.calmAnims(sc, 1500); }, pk).catch(() => {});   // (the card's entrance (it grows out of its row) ends before the first press)
+      if (process.env.STAGE_TRACE) await page.evaluate(require('./engrave-stage-repro.cjs').installTracer, pk);   // (STAGE_TRACE=1: engrave-stage-repro's tracer on this seed's piece; its lines go into the STAGE_RECORD file)
       let log = []; const tS = Date.now();
       if (sd.how === 'in-page burst') log = await page.evaluate(burst, { pk, acts });
       else {
@@ -738,7 +740,7 @@ if (require.main === module) (async () => {
       }
       const dup = !c || c.counts.front > 1 || c.counts.back > 1 || ['front', 'back'].some(f => c.sheet.filter(e => e.face === f).length > 1) || c.sheet.some(e => plainish(c[e.face]));
       check(`${tag}: no duplicate job for a face, no duplicate or orphan sheet entry`, !dup, J(c && { counts: c.counts, sheet: c.sheet, front: c.front && c.front.state, back: c.back && c.back.state }));
-      if (process.env.STAGE_RECORD) { try { const fs = require('fs'), path = require('path'); fs.mkdirSync(process.env.STAGE_RECORD, { recursive: true }); const f = path.join(process.env.STAGE_RECORD, `seed${sd.seed}-${Date.now()}.json`); fs.writeFileSync(f, JSON.stringify({ seed: sd.seed, piece: sd.name, how: sd.how, keepCard: !!sd.keepCard, pk, acts, log, end: { snap: s, committed: c } }, null, 1)); console.log('   recorded ' + f); } catch (e) { console.log('   (record failed: ' + e.message + ')'); } }
+      if (process.env.STAGE_RECORD) { try { const fs = require('fs'), path = require('path'); fs.mkdirSync(process.env.STAGE_RECORD, { recursive: true }); const f = path.join(process.env.STAGE_RECORD, `seed${sd.seed}-${Date.now()}.json`); const trace = process.env.STAGE_TRACE ? await page.evaluate(() => (window.__trace || {}).lines || []).catch(() => []) : undefined; fs.writeFileSync(f, JSON.stringify({ seed: sd.seed, piece: sd.name, how: sd.how, keepCard: !!sd.keepCard, pk, acts, log, end: { snap: s, committed: c }, trace }, null, 1)); console.log('   recorded ' + f); } catch (e) { console.log('   (record failed: ' + e.message + ')'); } }
       console.log(`   ${tag}: ${log.length} actions (${log.filter(a => a.k === 'approve' && a.enabled).length} lit Approve presses, ${log.filter(a => a.blocked).length} presses covered by something else${log.some(a => a.blocked) ? ' (' + [...new Set(log.filter(a => a.blocked).map(a => a.blocked))].slice(0, 3).join(', ') + ')' : ''}, ${log.filter(a => a.skipped).length} skipped with None staged, ${log.filter(a => a.reopen).length} reopenings, ${log.filter(a => a.missing).length} missing targets), ${Math.round((Date.now() - T0) / 1000)} s`);
     }
 

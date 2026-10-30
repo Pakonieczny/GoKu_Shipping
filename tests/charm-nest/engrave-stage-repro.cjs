@@ -77,7 +77,8 @@ function installTracer(lineKey) {
   return true;
 }
 
-(async () => {
+module.exports = { installTracer };
+if (require.main === module) (async () => {
   const rec = process.argv[2] ? JSON.parse(fs.readFileSync(process.argv[2], 'utf8')) : null;
   const seeds = rec ? [rec.seed] : (process.env.REPRO_SEEDS || '1,3').split(',').map(Number);
   const tries = rec ? 1 : +(process.env.REPRO_TRIES || 3);
@@ -104,6 +105,7 @@ function installTracer(lineKey) {
       await page.evaluate(key => { const row = B.orders.byKey.get(key), jobs = Engrave.jobsOf(row), live = jobs.filter(x => x.state !== 'none'), j = live.find(x => x.face !== 'front') || live[0] || jobs[0]; try { OrderWin.close(); } catch (_) { /* none */ } CN.setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: j.key }); Engrave.render(); }, key);
       await page.waitForFunction(pk => { const S = window.__stg, p = S.panel(pk); return !!p && S.vis(p); }, key, { timeout: 8000, polling: 'raf' }).catch(() => {});
       await page.waitForFunction(pk => { const S = window.__stg, sc = S.scope(pk), h = sc && sc.querySelector('.backHost'); return !!(h && h.querySelector('canvas')); }, key, { timeout: 3000, polling: 'raf' }).catch(() => {});
+      await page.evaluate(pk => { const S = window.__stg, sc = S.scope(pk); return sc && S.calmAnims(sc, 1500); }, key).catch(() => {});   // (the card's entrance (it grows out of its row) ends before the first press)
     };
     // the seed-1 pieces start approved and written, as stFz1 does in the suite
     for (const [sd, n] of names) if (sd !== 3) {
