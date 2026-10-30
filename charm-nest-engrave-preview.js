@@ -368,6 +368,7 @@
    * is used) and reflowAt (the line breaks, every wrap tried at that size). Nothing is saved; the job's own fit, once there, replaces it. Deferred (one task at a time, never inside a paint) and kept
    * per charm, face, font and words. */
   const QF = new Map(), QUEUE = [];
+  const LASTPLACE = new Map();   // ENGSTAGE: a face's picture key -> the last place its words were fitted at (a picture drawn afresh while new words are placed starts there)
   let qBusy = false;
   const cfg = () => { try { return (typeof S !== 'undefined' && S && S.settings) || {}; } catch (_) { return {}; } };
   function quickRun(rec) {
@@ -458,6 +459,7 @@
 .engpvBox{position:absolute;inset:0;container-type:size;pointer-events:none}
 .engpvText{position:absolute;margin:0;white-space:pre;text-align:center;color:var(--ink,#1c1a17);transform-origin:50% 50%;pointer-events:none}
 .engpvText[hidden]{display:block;visibility:hidden}
+.engpvGhost{position:absolute;margin:0;white-space:pre;text-align:center;color:var(--ink,#1c1a17);transform-origin:50% 50%;pointer-events:none}
 .engpv[data-held="1"] .engpvText{opacity:.55}
 .engpvSlot{position:absolute;transform-origin:50% 50%;box-sizing:border-box;border:1px dashed var(--ink45,#938c80);opacity:.7;pointer-events:none}
 .engpvWait{position:absolute;right:4px;bottom:3px;display:inline-flex;align-items:center;gap:5px;max-width:calc(100% - 8px);padding:1px 6px;border-radius:999px;background:var(--card,#fffefb);font:10px var(--sans,system-ui);color:var(--ink70,#5b554c);white-space:nowrap;overflow:hidden}
@@ -505,8 +507,30 @@
     return st.nodes;
   }
 
-  /** Repaints `el` from its state, synchronously. */
+  /* ENGSTAGE (Paul, 30 Oct 2026: "everything should run beautifully with tasteful quick and easy to understand, transitions and animations"): words that appear on a picture fade in, words that go
+     (the face made plain, None) fade out, about 120 ms; words that only change (a letter typed) are drawn at once. A fade-out is a still copy of the words as they were (.engpvGhost, never .engpvText:
+     what the picture shows now is the only .engpvText), laid over and faded; a new change takes any fade still running away at once, so quick presses never queue. None with reduced motion. */
+  const FADE_MS = 120;
+  const motionOk = el => { try { return !!(el && el.isConnected && typeof el.animate === 'function' && !(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches)); } catch (_) { return false; } };
+  const wordsSnap = st => { const n = st && st.nodes; return n && n.text && !n.text.hidden && n.text.textContent ? { text: n.text.textContent, css: n.text.style.cssText } : null; };
+  function fadeWords(el, st, before) {
+    const n = st.nodes; if (!n || !n.layer) return;
+    for (const g of n.layer.querySelectorAll('.engpvGhost')) g.remove();
+    const now = !!(n.text && !n.text.hidden && n.text.textContent);
+    if (!!before === now || !motionOk(el)) return;
+    if (before) {
+      const g = el.ownerDocument.createElement('span'); g.className = 'engpvGhost'; g.setAttribute('aria-hidden', 'true'); g.textContent = before.text; g.style.cssText = before.css; n.layer.appendChild(g);
+      const end = () => g.remove(), a = g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: FADE_MS, easing: 'ease-out', fill: 'forwards' }); a.finished.then(end, end); setTimeout(end, FADE_MS * 4);
+    } else { for (const a of n.text.getAnimations ? n.text.getAnimations() : []) a.cancel(); n.text.animate([{ opacity: 0.4 }, { opacity: 1 }], { duration: FADE_MS, easing: 'ease-out' }); }   // (from .4, not 0: a letter typed is seen in the very frame it lands, the fade only softens it)
+  }
+  /** Repaints `el` from its state, synchronously (the words' fade in or out with it). */
   function paint(el) {
+    const st = el._engpv; if (!st) return;
+    const before = wordsSnap(st);
+    paintNow(el);
+    try { if (el._engpv === st) fadeWords(el, st, before); } catch (_) { /* drawn, unfaded */ }
+  }
+  function paintNow(el) {
     const st = el._engpv; if (!st) return;
     try {
       const o = st.opts, src = sourceOf(o), N = shell(el, st, src), id = idOf(o.fontId || fontIdOf(o.row, o.face, o.fontWord)), O = Orders();
@@ -541,12 +565,20 @@
       }
       if (st.qrec && st.qrec !== qf && st.qsub) st.qrec.subs.delete(st.qsub);
       st.qrec = qf;
-      if (qf && qf.status === 'loading') {   // (a few milliseconds; a slow one shows a small labelled wait after a short while, nothing is drawn wrong meanwhile)
+      // ENGSTAGE (Paul, 30 Oct 2026: "every letter typed into the text box immediately updates itself in BOTH the Thumbnail image and in the main charm preview"): a picture being typed on (an update,
+      // st.live) never hides its words while their new place is worked out: they are drawn at once where the last words sat (else in the largest empty rectangle of the face, else in the middle,
+      // scaled to the box), and move to their place when it arrives. A picture drawn for the first time still waits for its place (nothing is drawn across the whole charm).
+      const rectPlace = rect => { const L0 = layoutOf({ lines: typed, capPerEm: capPerEm(id) }), chars = Math.max(1, ...typed.map(l => l.length)), em = Math.min(L0.totalH ? rect.hPt / L0.totalH : rect.hPt, rect.wPt / (0.6 * chars)); return placeOf({ centre: rect.centre, size: em, angle: 0 }, src.frame.box); };
+      const seen = st.lastKey === src.key ? { qp: st.lastQp, rect: st.lastRect } : LASTPLACE.get(src.key) || {};   // (this picture's last place, else the last place any picture of this face had)
+      const lastOf = () => (seen.qp ? Object.assign({}, seen.qp, seen.rect ? { size: rectPlace(seen.rect).size } : {}) : seen.rect ? rectPlace(seen.rect) : null);
+      if (qf && qf.status === 'loading' && !(st.live && !coming)) {   // (a few milliseconds; a slow one shows a small labelled wait after a short while, nothing is drawn wrong meanwhile)
         N.root.dataset.state = 'fitting'; N.slot.hidden = true; N.text.hidden = true; N.text.textContent = ''; N.root.dataset.size = '';
         N.wait.hidden = false; N.wait.setAttribute('data-late', ''); N.wait.setAttribute('aria-label', 'Placing words'); N.wait.querySelector('.engpvWaitT').textContent = 'Placing words'; N.wait.removeAttribute('title');
         return;
       }
-      const qp = qf && qf.status === 'ready' ? placeOf(qf.fit, src.frame.box) : qf && qf.rect ? (() => { const L0 = layoutOf({ lines: typed, capPerEm: capPerEm(id) }), chars = Math.max(1, ...typed.map(l => l.length)), em = Math.min(L0.totalH ? qf.rect.hPt / L0.totalH : qf.rect.hPt, qf.rect.wPt / (0.6 * chars)); return placeOf({ centre: qf.rect.centre, size: em, angle: 0 }, src.frame.box); })() : null;
+      const qp = qf && qf.status === 'ready' ? placeOf(qf.fit, src.frame.box) : qf && qf.status === 'loading' ? lastOf() : qf && qf.rect ? rectPlace(qf.rect) : null;
+      if (qf && qf.status === 'ready') { st.lastQp = qp; st.lastRect = qf.rect || st.lastRect || null; st.lastKey = src.key; } else if (qf && qf.rect) { st.lastRect = qf.rect; st.lastKey = src.key; }
+      if (qf && qf.status !== 'loading' && st.lastKey === src.key) { LASTPLACE.delete(src.key); LASTPLACE.set(src.key, { qp: st.lastQp, rect: st.lastRect }); while (LASTPLACE.size > 120) LASTPLACE.delete(LASTPLACE.keys().next().value); }
       if (st.retry) { try { clearTimeout(st.retry); } catch (_) { /* gone */ } st.retry = 0; }
       if (!st.again) st.tries = 0; st.again = false;   // (a paint a person's edit made starts the count again; one this timer made goes on)
       if (src.kind === 'frame' && st.tries < 20 && draftPending(o, id, dr)) { st.tries++; st.retry = setTimeout(() => { st.retry = 0; if (el._engpv === st && el.isConnected) { st.again = true; paint(el); } }, 150); }
@@ -570,10 +602,10 @@
       const t = N.text;
       t.textContent = lines.join('\n');
       t.style.cssText = `${pos}font-family:${fontFamilyOf(id)};font-size:${(em * 100).toFixed(3)}cqh;line-height:${L.pitch.toFixed(4)};transform:translate(-50%,-50%) rotate(${-angle}deg) translateY(${(-drop).toFixed(4)}em)`;
-      t.hidden = status === 'loading';   // (no flash of the wrong font: the words appear when the font is ready; a font that cannot be had shows them in a serif)
+      t.hidden = status === 'loading' && !st.live;   // (no flash of the wrong font: the words appear when the font is ready; a font that cannot be had shows them in a serif. ENGSTAGE: a picture being typed on shows them at once, in the stand-in until the font is here)
       // words longer than the picture allows are scaled down to its box (about their own centre; the job fits them to the metal when it is saved)
       const bw = N.layer.clientWidth, bh = N.layer.clientHeight;
-      if (bw > 0 && bh > 0 && status !== 'loading') {
+      if (bw > 0 && bh > 0 && (status !== 'loading' || st.live)) {
         const a = angle * Math.PI / 180, w = t.offsetWidth, h = t.offsetHeight, ew = Math.abs(w * Math.cos(a)) + Math.abs(h * Math.sin(a)), eh = Math.abs(w * Math.sin(a)) + Math.abs(h * Math.cos(a));
         const k = Math.min(1, 0.94 * bw / Math.max(ew, 1e-6), 0.94 * bh / Math.max(eh, 1e-6));
         if (k < 0.999) t.style.transform = `translate(-50%,-50%) rotate(${-angle}deg) scale(${k.toFixed(4)}) translateY(${(-drop).toFixed(4)}em)`;
@@ -589,7 +621,7 @@
       if (!el || !el.ownerDocument || typeof el.replaceChildren !== 'function') return el || null;
       ensureCss(el.ownerDocument);
       const was = el._engpv, opts = Object.assign({}, o || {});
-      el._engpv = { opts, pos: o && o.position ? Object.assign({}, o.position) : null, nodes: was ? was.nodes : null, drawKey: was ? was.drawKey : '', seen: !!el.isConnected, fontId: '' };
+      el._engpv = { opts, pos: o && o.position ? Object.assign({}, o.position) : null, nodes: was ? was.nodes : null, drawKey: was ? was.drawKey : '', seen: !!el.isConnected, fontId: '', live: !!(o && o.instant) || !!(was && was.live) };   // (ENGSTAGE: o.instant, a picture being typed on: its words are drawn at once)
       LIVE.add(el); paint(el);
     } catch (e) { warn(e); }
     return el;
@@ -600,6 +632,7 @@
       if (!el._engpv) return render(el, partial);
       const st = el._engpv, p = partial || {};
       for (const k of KEYS) if (p[k] !== undefined) st.opts[k] = p[k];
+      st.live = true;   // (ENGSTAGE: being typed on: words are never hidden while their place is worked out)
       if (p.position === null) st.pos = null; else if (p.position) st.pos = Object.assign({}, st.pos || {}, p.position);
       if (p.size !== undefined && p.position === undefined && st.pos) delete st.pos.size;
       if (p.fontId !== undefined && p.fontWord === undefined && p.fontId) st.opts.fontWord = '';   // (an id given: the old word no longer says the font)

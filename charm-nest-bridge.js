@@ -9698,7 +9698,8 @@ const Engrave = window.Engrave = (() => {
     const lines0 = draftLines(st.text), on = !st.mode || st.mode === "both" || st.mode === fw;
     if (!on || !lines0.length) { rec.fit = { empty: true, glyphs: [], centre: job.fit.centre, angle: job.fit.angle || 0, size: job.fit.size, lines: [] }; rec.input = []; return rec; }   // (this face is not engraved in the staged mode, or has no words: nothing is cut on it)
     const id = draftFontId(job, st.fontWord), lines = lines0.map(l => O.capsText(l, id));
-    if ((id === (job.fontKey || O.DEFAULT_FONT)) && [job.lines, job.lineInput].some(l => Array.isArray(l) && l.join("\n") === lines.join("\n"))) { rec.fit = null; rec.input = null; return rec; }   // (the words and the font the face already has: the fitted drawing stands as it is)
+    const atFit = !(st.position && Array.isArray(st.position.centre)) || Math.hypot(st.position.centre[0] - job.fit.centre[0], st.position.centre[1] - job.fit.centre[1]) < 0.01;   // (ENGSTAGE: a staged place other than the job's is drawn there)
+    if (atFit && (id === (job.fontKey || O.DEFAULT_FONT)) && [job.lines, job.lineInput].some(l => Array.isArray(l) && l.join("\n") === lines.join("\n"))) { rec.fit = null; rec.input = null; return rec; }   // (the words and the font the face already has: the fitted drawing stands as it is)
     let set = draftSet(id);
     if (!set) {
       const known = FONT_SETS.get(id);
@@ -9721,7 +9722,7 @@ const Engrave = window.Engrave = (() => {
     }
     const sf = typeof set.Regular.scriptFonts === "function" ? set.Regular.scriptFonts(lines.join("\n")) : [];   // (WORLD: the staged words in script fonts are drawn with exactly those)
     const font = pinFont((job.fit.weight === "Semibold" && set.Semibold) || set.Regular, { scriptFonts: sf }), pos = st.position || {}, want = pos.size ?? job.wantSize ?? job.fit.size;
-    const f = G.reflowAt(lines, font, job.mask, fitOpts(job, true), { centre: pos.centre || job.fit.centre, angle: pos.angle ?? job.fit.angle, size: want }, "auto");   // (refit's own call: the stroke measure too, so SMALL / THIN STROKES say it before a Save)
+    const f = G.reflowAt(lines, font, job.mask, rec.svStage ? { ...fitOpts(job, true), measure: false } : fitOpts(job, true), { centre: pos.centre || job.fit.centre, angle: pos.angle ?? job.fit.angle, size: want }, "auto");   // (refit's own call: the stroke measure too, so SMALL / THIN STROKES say it before a Save)
     if (!f.ok) { rec.note = "No room for these words"; return rec; }
     f.atLimit = f.size < want - .005; f.weight = job.fit.weight;
     rec.fit = f; rec.input = lines; rec.font = font; rec.fontId = id;
@@ -9730,7 +9731,7 @@ const Engrave = window.Engrave = (() => {
   /** What the editable canvas of `job` draws in place of job.fit, or null when nothing differs from the committed fit. */
   function draftPaint(job) {
     const rec = DRAFTS.get(job.key); if (!rec) return null;
-    if (!draftable(job) && !(rec.fit && rec.fit.empty && approvedView(job))) { DRAFTS.delete(job.key); return null; }
+    if (!draftable(job) && !((rec.svStage || (rec.fit && rec.fit.empty)) && approvedView(job))) { DRAFTS.delete(job.key); return null; }   // (ENGSTAGE: a stage draws its words on an approved face too: rec.svStage)
     if (rec.sig !== draftSig(job)) draftCompute(job, rec);
     return rec.fit || null;
   }
@@ -9738,6 +9739,7 @@ const Engrave = window.Engrave = (() => {
   const draftSource = job => { const rec = job && job.key ? DRAFTS.get(job.key) : null; return rec && rec.fit && !rec.fit.empty && rec.input && rec.font && draftable(job) ? { lines: rec.input, font: rec.font } : null; };
   /** Draws the card in front again (the drawing, the cap-height readout, the status). */
   function draftRepaint(job) {
+    if (svRepaint(job)) return;   // (ENGSTAGE: a piece being staged is painted from its latest stage, whichever face's font arrived)
     const c = EG.card; if (!c || !c.isConnected || EG.cardKey !== job.key) return;
     const bc = c.querySelector(".backHost canvas"); if (bc && bc._paint) bc._paint();
     const rec = DRAFTS.get(job.key), none = !!(rec && rec.fit && rec.fit.empty), f = rec && rec.fit && !none ? rec.fit : job.fit, cap = c.querySelector("[data-cap]");
@@ -9751,6 +9753,7 @@ const Engrave = window.Engrave = (() => {
   function draftFit(jobKey, staged) {
     const job = items().get(String(jobKey == null ? "" : jobKey));
     if (!job) return { ok: false, why: "no job" };
+    if (svOwns(job)) return { ok: true, staged: true };   // (ENGSTAGE: a piece the panel stages (Engrave.showStage) is drawn from that stage alone)
     if (!staged || typeof staged !== "object") { const had = DRAFTS.delete(job.key); if (had) draftRepaint(job); return { ok: true, cleared: true }; }
     // (NONEPLAIN 2, Paul 29 Oct 2026: None staged on an APPROVED piece: its work area shows the charm alone too, until Approve keeps it or a face is pressed again; words typed on it stay the thumbnails' alone, as before)
     const offFace = !!staged.mode && staged.mode !== "both" && staged.mode !== faceWord(job);
@@ -10073,31 +10076,40 @@ const Engrave = window.Engrave = (() => {
     if (!fid) { try { fid = O.pieceFont(job.row && job.row.spec, pieceIndexOf(job), face).id; } catch (_) { fid = O.DEFAULT_FONT; } }
     const set = draftSet(fid);
     if (!set) {
-      if (rec.loading !== fid) { rec.loading = fid; Promise.resolve(fid === O.DEFAULT_FONT ? loadFonts() : loadFontSet(fid)).catch(() => {}).then(() => { rec.loading = ""; const c = EG.card; if (STAGED_FACES.get(job.key) === rec && c && c.isConnected && EG.cardKey === job.key && c._remountWork) c._remountWork(); }); }
+      if (rec.loading !== fid) { rec.loading = fid; Promise.resolve(fid === O.DEFAULT_FONT ? loadFonts() : loadFontSet(fid)).catch(() => {}).then(() => { rec.loading = ""; if (typeof rec.onFont === "function") { rec.onFont(); return; } const c = EG.card; if (STAGED_FACES.get(job.key) === rec && c && c.isConnected && EG.cardKey === job.key && c._remountWork) c._remountWork(); }); }   // (ENGSTAGE: a stage's face paints its LATEST state: rec.onFont)
       return { mask, fit: null };
     }
     const lines = lines0.map(l => O.capsText(l, fid)), font = pinFont(set.Regular, { scriptFonts: typeof set.Regular.scriptFonts === "function" ? set.Regular.scriptFonts(lines.join("\n")) : [] });
-    const pseudo = { mask, lineGap: job.lineGap }, h = mask.hPt || mask.h / mask.res, want = rec.size || fitOpts(pseudo).maxHeightFrac * h;
-    let f = null; try { f = G.reflowAt(lines, font, mask, fitOpts(pseudo, true), { centre: rec.centre || maskCentroid(mask), angle: 0, size: want }, "auto"); } catch (_) { f = null; }
+    const pseudo = { mask, lineGap: job.lineGap }, h = mask.hPt || mask.h / mask.res, fo = fitOpts(pseudo);
+    // (ENGSTAGE: the shop's own size rule for what is said (charm-nest-geom.js defaultSize, as the face's real fit and the thumbnails' quick place use it), so the words are drawn at the size the face will
+    //  have, and laid out at once (reflowAt finds them in place at that size; the largest size, tried first, was searched down at every letter))
+    let want = rec.size || 0;
+    if (!want) { try { const ch = fv.charm || {}, bw = ch.widthPt || (ch.bbox ? ch.bbox[2] - ch.bbox[0] : 0), bh = ch.heightPt || (ch.bbox ? ch.bbox[3] - ch.bbox[1] : 0), MMPT = 25.4 / 72; if (mask._svArea == null) mask._svArea = G.area(mask);
+      want = G.defaultSize(lines, fo.maxHeightFrac * h, { capPerEm: G.capPerEm(font), minCapMm: fo.minCapMm, charmMinMm: Math.min(bw, bh) * MMPT, charmMaxMm: Math.max(bw, bh) * MMPT, usableAreaMm2: mask._svArea / (mask.res * mask.res) * MMPT * MMPT, advanceOf: t => font.getAdvanceWidth(t, 1, { kerning: true }) }); } catch (_) { want = 0; } }
+    if (!(want > 0)) want = fo.maxHeightFrac * h;
+    let f = null; try { f = G.reflowAt(lines, font, mask, { ...fitOpts(pseudo, true), measure: false }, { centre: rec.centre || mask._svCentroid || (mask._svCentroid = maskCentroid(mask)), angle: 0, size: want }, "auto"); } catch (_) { f = null; }   // (ENGSTAGE: drawn at every letter: no stroke measure, as a drag draws: the face's own fit measures it)
     return { mask, fit: f && f.ok ? f : null };
   }
   /** A drag of the staged words: they follow the pointer on that face's safe area (drawn again into the same canvas, every frame at most); nothing is kept but the place, in the staged record. */
-  function stagedDrag(cv, job, face, fv, rec, draw) {
+  function stagedDrag(cv, job, face, fv, rec, draw, onEnd) {
     let start = null, raf = 0, last = null;
     const pt = e => { const r = cv.getBoundingClientRect(); return cv._map.inv((e.clientX - r.left) * (cv.width / r.width), (e.clientY - r.top) * (cv.height / r.height)); };
     cv.style.cursor = "move";
-    cv.addEventListener("pointerdown", e => { const sf = stagedFaceFit(job, face, fv, rec); if (!sf.fit || !cv._map) return; start = { p: pt(e), c: sf.fit.centre.slice() }; try { cv.setPointerCapture(e.pointerId); } catch (_) {} e.preventDefault(); });
+    const paintAt = () => { if (!last) return; rec.centre = last; if (typeof cv._svRedraw === "function") { cv._svRedraw(); return; } try { const nc = draw(), g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(nc, 0, 0, cv.width, cv.height); } catch (_) { /* the drawing it had stays */ } };   // (ENGSTAGE: a stage's face paints only its words, as typing does)
+    cv.addEventListener("pointerdown", e => { const sf = stagedFaceFit(job, face, fv, rec); if (!sf.fit || !cv._map) return; start = { p: pt(e), c: sf.fit.centre.slice() }; last = null; try { cv.setPointerCapture(e.pointerId); } catch (_) {} e.preventDefault(); });
     cv.addEventListener("pointermove", e => {
       if (!start) return; const p = pt(e); last = [start.c[0] + p[0] - start.p[0], start.c[1] + p[1] - start.p[1]];
-      if (raf) return; raf = requestAnimationFrame(() => { raf = 0; if (!last) return; rec.centre = last; try { const nc = draw(), g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(nc, 0, 0, cv.width, cv.height); } catch (_) { /* the drawing it had stays */ } });
+      if (raf) return; raf = requestAnimationFrame(() => { raf = 0; paintAt(); });
     });
-    const end = () => { start = null; };
+    // (ENGSTAGE: the place the words were let go at is the stage's: onEnd(centre), CharmNestEngravePanel.stagePos; a frame still waiting is painted first, so the last move is never dropped)
+    const end = e => { const was = start; start = null; if (raf) { cancelAnimationFrame(raf); raf = 0; paintAt(); } if (was && last && e && e.type === "pointerup" && typeof onEnd === "function") { try { onEnd(rec.centre.slice()); } catch (_) { /* the drawing keeps the place */ } } last = null; };
     cv.addEventListener("pointerup", end); cv.addEventListener("pointercancel", end);
   }
   /** FRONTSTAGE · THE ONE CALL of the panel: the staged words of a face of `jobKey`'s piece that has no job yet (staged = { text, fontWord }), shown in the work area at once; null takes it away (the face's
    *  staging ended: undone, kept by Approve, or the card left). -> { ok, cleared?, why? } */
   function stageFace(jobKey, face, staged) {
     const job = items().get(String(jobKey == null ? "" : jobKey)); if (!job) return { ok: false, why: "no job" };
+    if (svOwns(job)) return { ok: true, staged: true };   // (ENGSTAGE: Engrave.showStage draws a staged face, with or without a job)
     if (!staged || !face) { const had = STAGED_FACES.delete(job.key); if (had && FACE_VIEW.get(job.key)) setViewFace(job, faceOf(job)); return { ok: true, cleared: true }; }
     if (face !== otherFaceOf(job)) { STAGED_FACES.delete(job.key); return { ok: false, why: "the piece has that face already" }; }
     const rec = STAGED_FACES.get(job.key) || { face }; if (rec.face !== face) Object.assign(rec, { face, centre: null, size: null, view: null, mask: null });
@@ -10365,6 +10377,7 @@ const Engrave = window.Engrave = (() => {
   function showFace(x, face, o) {
     o = o || {}; face = face === "front" || face === "back" ? face : null;
     const job0 = typeof x === "string" ? items().get(x) : x; if (!face || !job0) return { ok: false, face: null, why: "no such piece or face" };
+    { const sr = SV_STAGES.get(pieceKeyOfJob(job0)); if (sr && sr.stage) return { ok: true, face: sr.stage.active, same: face === sr.stage.active, staged: true }; }   // (ENGSTAGE: the stage's active face is the face shown; svShowStage turns the area)
     const j = cardJobOf(job0), busy = !!(WV.turn && WV.turn.busy());
     if (!j) { if (face === faceOf(job0) || face === otherFaceOf(job0)) setViewFace(job0, face, null); return { ok: true, face: viewFaceOf(job0), shown: false }; }   // (not on screen: its next drawing shows it)
     const pid = (j.copies || [])[0], reach = face === faceOf(j) || face === otherFaceOf(j) || !!(pid && jobsOfPiece(pid)[face]);
@@ -10376,6 +10389,172 @@ const Engrave = window.Engrave = (() => {
     if (!WV.turn) { WV.face = face; showFaceNow(face); return { ok: true, face }; }
     WV.turn.ask(face);
     return { ok: true, face };
+  }
+  /* ── ENGSTAGE · the stage, drawn (Paul, 30 Oct 2026: "every letter typed into the text box immediately updates itself in BOTH the Thumbnail image and in the main charm preview in the middle of the
+     screen ... they should be able to toggle back and in between any of the four options and everything should be seamless and everything should run beautifully with tasteful quick and easy to
+     understand, transitions and animations ... users will be clicking here very quickly"; his BALLETSHOES "Ruby" card that, after Front and Approve, said "Words to confirm", showed an empty work area
+     with "The order gives no words for the front" and an "Engrave these words" button).
+     Engrave.showStage(job, stage) (svShowStage) is the panel's ONE call, made synchronously at every change: stage = { key, choice: none|front|back|both, active: front|back, faces: { front: { text, font, pos }, back } }
+     (font: the drop-down's word, '' the line's own; pos: where the words were dragged, { charm: [x, y] (their centre as a point of the CHARM, the frame of job._placeAt), centre: [x, y] (the same in the
+     frame drawn) } or null for the system's place). null: what is committed. Nothing is saved or sent: it is drawn. Both thumbnails (CharmNestEngraveCard.paintStage) and the work area are painted from
+     the LATEST state at the next animation frame: one paint a frame however fast the calls come, the last state always painted (a timer stands in for a frame that does not come). The work area always
+     draws the ACTIVE face, upright, with its staged words fitted, whether or not that face has a job:
+       · a face with a placed job (fitted: under review, or approved and drawn): that job's own drawing, the staged words its draft (draftCompute: the font file, reflowAt on its mask, at its place);
+       · a face with no placement (no job yet, or one waiting for words, being read or fitted): the piece's charm from that face (faceViewOf: UPRIGHT's left-right mirror of the other face), the staged
+         words fitted on its own safe area (stagedFaceFit);
+       · a piece with no charm on this page yet: the preview component's own picture of it (the master drawing) at the work area's size.
+     Not engraved in the choice, or no words: the plain face. Never an empty area, never a message. The active face switched: the area turns (rotateY, as the sheets turn), a switch during a turn
+     completes it at once (never a queue of turns); words appearing or going: a 120 ms cross-fade. Every async step (a font, a fit) paints the latest state, never the one it started from (the
+     piece's sequence number). Hooks: .backHost[data-face][data-words][data-stage-seq]: the face drawn, the staged words drawn (lines, newline-joined; '' plain), the sequence of the state drawn. ── */
+  const SV_STAGES = new Map();        // piece key -> { key, stage (normalised) | null, seq, raf, timer }
+  const SV_FACES = new Map();   // piece key + "|" + face -> a face drawn from the charm: stagedFaceFit's record { face, text, fontWord, centre, size, view, mask, loading, onFont }
+  let SV_SEQ = 0;
+  const STAGE_ANIM = { fade: 120, out: 150, back: 210 };
+  const SV_CHOICES = ["none", "front", "back", "both"];
+  const svChoiceFaces = c => (c === "both" ? ["front", "back"] : c === "front" || c === "back" ? [c] : []);
+  const svPieceKeyOf = k => { const F = UIFACES(); return F && F.pieceKeyOf ? F.pieceKeyOf(String(k)) : String(k).replace(/~front$/, ""); };
+  const svMotion = el => { try { return !!(el && el.isConnected && typeof el.animate === "function" && !matchMedia("(prefers-reduced-motion: reduce)").matches); } catch (_) { return false; } };
+  /** A stage in its one shape (the panel's, or the older { mode, faces }), or null. */
+  function svNorm(st, job) {
+    if (!st || typeof st !== "object") return null;
+    const choice = SV_CHOICES.includes(st.choice) ? st.choice : SV_CHOICES.includes(st.mode) ? st.mode : "none";
+    const fx = f => {
+      const x = st.faces && st.faces[f], o = x == null ? {} : typeof x === "string" ? { text: x } : x, p = o.pos;
+      const pos = p && Array.isArray(p.charm) && p.charm.length === 2 && p.charm.every(Number.isFinite) ? { charm: p.charm.slice(), centre: Array.isArray(p.centre) && p.centre.every(Number.isFinite) ? p.centre.slice() : null } : null;
+      return { text: String(o.text == null ? "" : o.text), font: String(o.font == null ? "" : o.font), pos };
+    };
+    const on = svChoiceFaces(choice), never = neverEngraves(job.row);
+    let active = st.active === "front" || st.active === "back" ? st.active : on[0] || faceOf(job); if (never) active = "front";
+    return { key: String(st.key || pieceKeyOfJob(job)), choice, active, faces: { front: fx("front"), back: fx("back") } };
+  }
+  /** Does a stage decide what `job`'s piece shows now? */
+  const svOwns = job => { const r = job && job.key ? SV_STAGES.get(pieceKeyOfJob(job)) : null; return !!(r && r.stage); };
+  /** The stage of a piece: the stage (normalised), null (what is committed is shown), undefined (Engrave.showStage never spoke of it). */
+  const svStageNow = key => { const r = SV_STAGES.get(String(key == null ? "" : key)); return r ? r.stage : undefined; };
+  /** Where a staged place `pos` puts the words on `job`'s face: a point of its view's frame (pt), or null. */
+  const svPlaceOf = (job, pos) => { const p = pos && pos.charm; return job && job.view && Array.isArray(p) ? viewPointOf(job.view, p) : null; };
+  /** THE ONE CALL (see above) -> { ok, seq }. */
+  function svShowStage(x, stage) {
+    const job = typeof x === "string" ? items().get(x) : x; if (!job || !job.key) return { ok: false, why: "no such piece" };
+    // (a null stage is what is committed only when the panel holds no draft of the piece: while it does (a commit just ended, its draft clean or staged on top), the panel's own stage is drawn, so the
+    //  work area and the thumbnails always equal the panel's choice, face and words, whatever was kept)
+    const key0 = stage && stage.key ? String(stage.key) : pieceKeyOfJob(job), PNL = window.CharmNestEngravePanel;
+    if (!stage && PNL && typeof PNL.stageOf === "function") { const ps = (() => { try { return PNL.stageOf(key0); } catch (_) { return null; } })(); if (ps && typeof ps === "object" && ps.faces) stage = ps; }
+    const st = svNorm(stage, job), key = st ? st.key : key0;
+    let rec = SV_STAGES.get(key); if (!rec) SV_STAGES.set(key, rec = { key, stage: null, seq: 0, raf: 0, timer: 0 });
+    rec.stage = st; rec.seq = ++SV_SEQ;
+    if (!st) svLetGo(key, true);   // (what is committed: the stage's drafts go now, the paint draws the jobs as they are)
+    // (Paul: "every letter typed into the text box immediately updates itself in BOTH the Thumbnail image and in the main charm preview": painted NOW, inside the call, so the frame the key lands in
+    //  shows it (no hop). More words typed before the next frame only mark the piece, and that frame paints the last state (the last state never dropped); a face or a choice changed is
+    //  painted at once even then (a press is never a frame late), up to three times a frame)
+    const shape = st ? st.choice + "|" + st.active : "", moved = shape !== rec.shape;
+    if (rec.flushing || (rec.hotN && !(moved && rec.hotN < 3))) svQueue(rec); else { rec.shape = shape; svFlush(rec); svHot(rec); }
+    return { ok: true, seq: rec.seq };
+  }
+  /** The piece was painted in this frame: words typed until the next frame are painted by it (svQueue). */
+  function svHot(rec) { rec.hotN = (rec.hotN || 0) + 1; if (!rec.hotRaf) rec.hotRaf = requestAnimationFrame(() => { rec.hotRaf = 0; rec.hotN = 0; }); }
+  /** One paint at the next frame (a timer stands in when no frame comes: a hidden tab). */
+  function svQueue(rec) {
+    if (rec.raf) return;
+    rec.raf = requestAnimationFrame(() => { rec.raf = 0; rec.shape = rec.stage ? rec.stage.choice + "|" + rec.stage.active : ""; svFlush(rec); svHot(rec); });
+    clearTimeout(rec.timer); rec.timer = setTimeout(() => { rec.timer = 0; if (rec.raf) { cancelAnimationFrame(rec.raf); rec.raf = 0; svFlush(rec); } }, 120);
+  }
+  /** Paints the piece's latest state: its thumbnails on every card of it, and the open card's work area when it is this piece's. */
+  function svFlush(rec) {
+    if (rec.raf) { cancelAnimationFrame(rec.raf); rec.raf = 0; } if (rec.timer) { clearTimeout(rec.timer); rec.timer = 0; }
+    if (SV_STAGES.get(rec.key) !== rec || rec.flushing) return;
+    rec.flushing = true; const t0 = performance.now();
+    try {
+      try { if (window.CharmNestEngraveCard && CharmNestEngraveCard.paintStage) CharmNestEngraveCard.paintStage(rec.key); } catch (e) { console.warn("engraving: the stage's thumbnails", e); }
+      const c = EG.card && EG.card.isConnected ? EG.card : null, t1 = performance.now();
+      let reached = false;
+      if (c && c._svWork && c._svPiece === rec.key) { try { c._svWork(rec); } catch (e) { console.warn("engraving: the stage's work area", e); } const h = c.querySelector(".backHost"); if (h) { h.dataset.paintMs = (t1 - t0).toFixed(1) + "+" + (performance.now() - t1).toFixed(1); reached = +h.dataset.stageSeq === rec.seq || !!SV_TURN.run; } }   // (what the paint cost: the thumbnails + the work area, ms)
+      // (the last state ALWAYS reaches the work area: the card of this piece being drawn again, or not on the page yet, is painted at the next frame, a few times at most)
+      const mine = !!EG.cardKey && svPieceKeyOf(EG.cardKey) === rec.key;
+      if (mine && !reached && (rec.retry = (rec.retry || 0) + 1) <= 20) Promise.resolve().then(() => svQueue(rec)); else if (reached) rec.retry = 0;
+    } finally { rec.flushing = false; }
+  }
+  /** Engrave.showStage.flush(key?): paints now what is waiting (every piece, or one), for a press that must see it (Approve) and for the tests. */
+  svShowStage.flush = key => { let n = 0; for (const rec of [...SV_STAGES.values()]) if (!key || rec.key === String(key)) { svFlush(rec); n++; } return n; };
+  /** A font or a fit arrived for a face of a staged piece: painted again from the latest state. -> true when the stage took it. */
+  function svRepaint(job) { const r = job && job.key ? SV_STAGES.get(pieceKeyOfJob(job)) : null; if (!r || !r.stage) return false; svQueue(r); return true; }
+  /** The stage's drafts of a piece go (its jobs' drafts made by the stage, its faces drawn from the charm); `keep` keeps the record itself (a null stage). */
+  function svLetGo(key, keep) {
+    for (const [jk, d] of [...DRAFTS]) if (d && d.svStage && svPieceKeyOf(jk) === key) DRAFTS.delete(jk);
+    for (const [k, r] of [...SV_FACES]) if (k.slice(0, k.lastIndexOf("|")) === key) { if (keep) { r.text = ""; r.centre = null; } else SV_FACES.delete(k); }   // (a null stage: the records stay, the drawings made from them hold the same object)
+    if (!keep) { const r = SV_STAGES.get(key); if (r) { if (r.raf) cancelAnimationFrame(r.raf); clearTimeout(r.timer); } SV_STAGES.delete(key); }
+  }
+  /** Every piece but `keep` loses its stage (another piece opened, the list shown): what was staged and not approved is never drawn again. */
+  function svSweep(keep) { for (const k of [...SV_STAGES.keys()]) if (k !== keep) svLetGo(k); }
+  /** The staged words of a face with a placed job, as that job's draft (draftCompute: never on the job itself). A place dragged here and not yet the stage's (no stagePos on the page) is kept. */
+  function svDraft(ja, t) {
+    const rec = DRAFTS.get(ja.key) || { token: 0 }, own = !!(window.CharmNestEngravePanel && CharmNestEngravePanel.stagePos); rec.svStage = true;
+    const at = t.x.pos ? svPlaceOf(ja, t.x.pos) : !own && rec.svDragged && rec.staged && rec.staged.position ? rec.staged.position.centre : null;
+    rec.staged = { text: t.words.join("\n"), fontWord: t.x.font || "", mode: t.eng ? "both" : "none", position: at ? { centre: at } : null };
+    if (t.x.pos || own) rec.svDragged = false;
+    rec.sig = draftSig(ja); draftCompute(ja, rec); DRAFTS.set(ja.key, rec);
+    return rec;
+  }
+  /** A drag let go in the work area: its place is the stage's (CharmNestEngravePanel.stagePos(key, face, pos), the panel's). */
+  function svPosOut(key, face, view, centre) {
+    const P = window.CharmNestEngravePanel; if (!P || typeof P.stagePos !== "function" || !view || !Array.isArray(centre)) return false;
+    const charm = charmPointOf(view, centre); if (!charm) return false;
+    try { P.stagePos(key, face, { charm, centre: centre.slice() }); return true; } catch (e) { console.warn("engraving: the staged place", e); return false; }
+  }
+  /** A cross-fade of the work area over `paint` (the drawing as it was, laid over and faded, 120 ms): words appearing or going. A fade still running is taken away at once. */
+  function svFade(host, paint) {
+    for (const g of host.querySelectorAll(":scope > .egStageGhost:not(.egTurnGhost)")) g.remove();
+    const old = host.querySelector(":scope > canvas"); let ghost = null;
+    if (old && old.width && old.offsetWidth && svMotion(host) && !old.classList.contains("drag") && !host.querySelector(":scope > .egTurnGhost")) { ghost = document.createElement("canvas"); ghost.width = old.width; ghost.height = old.height; try { ghost.getContext("2d").drawImage(old, 0, 0); } catch (_) { ghost = null; } }
+    paint();
+    const now = host.querySelector(":scope > canvas"); if (!ghost || !now || !now.isConnected || !now.offsetWidth) return;
+    ghost.className = "egStageGhost"; ghost.setAttribute("aria-hidden", "true");
+    Object.assign(ghost.style, { position: "absolute", left: now.offsetLeft + "px", top: now.offsetTop + "px", width: now.offsetWidth + "px", height: now.offsetHeight + "px", margin: "0", pointerEvents: "none" });
+    now.after(ghost);
+    const end = () => ghost.remove(); ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: STAGE_ANIM.fade, easing: "ease-out", fill: "forwards" }).finished.then(end, end); setTimeout(end, STAGE_ANIM.fade * 4);
+  }
+  /* The active face switched: the NEW face is drawn at once (the hooks, the drawing, a word typed next lands on it), and the turn is the picture's: the face as it was, a still copy laid over the
+     new drawing, turns to its edge with the area; there the copy goes and the area comes round on the new face (the sheets' own turn, Motion.turner's rotateY and perspective, quicker). A switch
+     while it turns completes that turn at once (the copy goes, the area is flat) and turns again from what is drawn: never a queue of turns, never an old face, never a frame without a drawing. */
+  const SV_TURN = { run: null };
+  const SV_LAST = { pk: "", host: null };   // the work area last painted (its piece): a card drawn again starts from a copy of it
+  function svTurn(host, to, paint) {
+    const r0 = SV_TURN.run;
+    if (r0) { SV_TURN.run = null; for (const a of r0.anims) { try { a.cancel(); } catch (_) { /* gone */ } } try { r0.ghost.remove(); r0.host.classList.remove("egFlipping"); } catch (_) { /* gone */ } }
+    const old = host.querySelector(":scope > canvas"); let ghost = null, at = null;
+    if (old && old.width && old.offsetWidth && host.offsetWidth && svMotion(host)) {
+      ghost = document.createElement("canvas"); ghost.width = old.width; ghost.height = old.height; at = [old.offsetLeft, old.offsetTop, old.offsetWidth, old.offsetHeight];
+      try { ghost.getContext("2d").drawImage(old, 0, 0); } catch (_) { ghost = null; }
+    }
+    paint();
+    if (!ghost || !host.isConnected) return;
+    ghost.className = "egStageGhost egTurnGhost"; ghost.setAttribute("aria-hidden", "true");
+    Object.assign(ghost.style, { position: "absolute", left: at[0] + "px", top: at[1] + "px", width: at[2] + "px", height: at[3] + "px", margin: "0", pointerEvents: "none", background: "#fff" });
+    const now = host.querySelector(":scope > canvas"); if (now) now.after(ghost); else host.appendChild(ghost);
+    const d = to === "back" ? 1 : -1, P = "perspective(1400px) ", run = { host, ghost, anims: [] };
+    SV_TURN.run = run; host.classList.add("egFlipping");
+    const done = () => { if (SV_TURN.run !== run) return; SV_TURN.run = null; ghost.remove(); host.classList.remove("egFlipping"); };
+    const a1 = host.animate([{ transform: P + "rotateY(0)" }, { transform: P + `rotateY(${90 * d}deg)` }], { duration: STAGE_ANIM.out, easing: "cubic-bezier(.4,0,1,1)" }); run.anims.push(a1);
+    a1.finished.then(() => {
+      if (SV_TURN.run !== run) return;
+      ghost.remove();
+      if (!host.isConnected) { done(); return; }
+      const a2 = host.animate([{ transform: P + `rotateY(${-90 * d}deg)` }, { transform: P + "rotateY(0)" }], { duration: STAGE_ANIM.back, easing: "cubic-bezier(.2,.8,.2,1)" }); run.anims.push(a2);
+      a2.finished.then(done, done);
+    }, () => { /* completed by a newer switch */ });
+  }
+  /** The stage's rules, once a page: the preview picture standing in for a piece with no charm here, and no line of words ever in the Design & Engrave work area (the panel's "Preparing the front
+   *  engraving…" / "No front engraving." included: the face is drawn instead). The zoom box's buttons (ENGVIEW) answer a hover, a press and the keyboard's focus as the thumbnails do. */
+  function svCss() {
+    if (document.getElementById("egStageCss")) return;
+    const s = document.createElement("style"); s.id = "egStageCss";
+    s.textContent = ".rvItem .backHost>.engpNoJob,.rvItem .backHost>.noBack.engpNoJob{display:none!important}.rvItem[data-sv-own=\"0\"] .placeView>.ctl>*{visibility:hidden}"
+      + ".egStagePv{display:block;box-sizing:border-box;margin:0 auto;background:#fff;border:1px solid var(--line,#e4ddd0);border-radius:10px;overflow:hidden}"
+      + ".backHost .egZoom button{cursor:pointer;transition:background-color .12s ease,color .12s ease,box-shadow .12s ease,transform .08s ease}"
+      + "@media (hover:hover){.backHost .egZoom button:hover{background:var(--goldSoft,#f6efdc);color:var(--ink,#2a2724);box-shadow:inset 0 0 0 1px var(--gold,#a9823f)}.backHost .egZoom button[aria-pressed=true]:hover{background:var(--ink,#2a2724);color:#fff}}"
+      + ".backHost .egZoom button:active{transform:translateY(1px) scale(.98)}.backHost .egZoom button:focus-visible{outline:2px solid var(--gold,#a9823f);outline-offset:2px}"
+      + "@media (prefers-reduced-motion:reduce){.backHost .egZoom button:active{transform:none}}";
+    (document.head || document.documentElement).appendChild(s);
   }
   /* ── CHARM EDIT · the piece's own artwork in the charm editor (Paul, 27 Oct 2026: "In the Engraving Modal ... The user also needs full control similar to Adobe illustrator ... over each
      individual layer contained on any charm ... add a date inside a given Calendar day square and be able to update the Month name located on top of the Calendar charm ... this is already a
@@ -11888,7 +12067,7 @@ const Engrave = window.Engrave = (() => {
     const c = EG.card;
     if (!c || !c.isConnected || EG.cardKey !== job.key) { render(); return; }
     const f = job.fit; if (!f) { render(); return; }
-    const bc = c.querySelector(".backHost canvas"); if (bc && bc._paint) { bc._paint(); markShown(job); c._syncBoth?.(); }
+    const bc = c.querySelector(".backHost canvas"); if (bc && bc._paint) { if (c._svWork) c._svWork(); else bc._paint(); markShown(job); c._syncBoth?.(); }   // (ENGSTAGE: the Design & Engrave card paints what it shows now: the stage, or the job as it is)
     // (EDITFOLLOW, Paul 29 Oct 2026: "not all of the visible vector thumbnails got updated correctly": the card's Front / Back boxes are drawn again with the work area, from the job as it is now
     //  (they were drawn while the face was fitted again, with the placement it had, and nothing drew them again when the new placement landed))
     { const pm = c._pieceMount; if (pm && pm.card && pm.card.update) { try { pm.card.update(); } catch (_) { /* the boxes follow at the next look at what moved */ } } }
@@ -12017,6 +12196,7 @@ const Engrave = window.Engrave = (() => {
     {
       const q = v.querySelector("#egQueue");
       discardStaged(wantList ? null : focus || null);   // (STAGEALL: a piece left with no Approve is as it was)
+      svSweep(!wantList && focus && !focus.mono ? pieceKeyOfJob(focus) : null);   // (ENGSTAGE: and its stage is never drawn again)
       if (wantList) {
         EG.card = null; EG.cardKey = null;
         q.innerHTML = '<div class="rvList egPlacementList"></div>';
@@ -12260,7 +12440,7 @@ const Engrave = window.Engrave = (() => {
     const row2 = (t, v) => v && v !== "—" ? `<dt>${t}</dt><dd>${esc(v)}</dd>` : "";
     const appView = approvedView(job);   // (NODECIDED: an approved / saved piece opens in this same card, drawn as a placement; its first change reopens it)
     const keptView = !appView && ["approved", "written"].includes(job.state) && !recalledJob(job);   // (approved, but its placement cannot be drawn here: the card still says Approved and shows the saved picture)
-    const wordsJob = job.state !== "review" && !appView, undecided = ["words", "blocked", "classify"].includes(job.state);   // (undecided: a person still has to settle the words)
+    const wordsJob = job.state !== "review" && !appView;   // (no placement drawn yet: words to settle, being read or fitted)
     const requests = job.requests || {};
     // what to check with the buyer: what the buyer asked for that the words alone do not carry. NOWORTH (Paul, 18 Oct 2026, of the reader's
     // "Worth a look" note: "Remove this info/note from all UI in the app"): Claude's own questions from reading the order (job.questions, and the
@@ -12297,12 +12477,12 @@ const Engrave = window.Engrave = (() => {
     card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided${ears ? (hasFrontIn(ears) ? " (a piece's faces are one placement: Back and Next go from piece to piece, the switches go between its faces)" : allDiscs(ears) ? ` (an order's ${countedNouns(ears)} are one placement: Back and Next go through every ${countedNoun(ears)})` : " (an earring piece's Left and Right are one placement)") : ""}">${counts.text}</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span>${ears ? earSwitchHtml(job, ears, panelOn) : faced ? (panelOn ? "" : faceChipHtml(job, `this card is the ${fw} engraving of this ${job.slot ? "piece" : "charm"} only: its own words, its own approval`)) : job.slot && SIDES() ? `<span class="egPiece" data-slot="${esc(job.slot)}" title="this card is the back engraving of this piece only: its own words, its own approval">${esc(SIDES().pieceTag(job, piecesIn(jobsOf(job.row))))}</span>` : ""}${window.OrderWin && /^\d+$/.test(String(r.order.receiptId || "")) ? `<button type="button" class="btn ghost xs" data-open-order title="open this order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button>` : ""}${conf}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain">${byCard ? "" : `<h4 class="pvH">${cap1(fw)} · engraving</h4>`}<div class="pvApproval">${appView || keptView ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton egApproved" data-a="approved" disabled aria-disabled="true" title="approved — change anything and press Approve again: it gets a new seal">Approved</button></span>${job.state === "written" ? `<span class="egWrittenNote hint">Saved to sheet · approving again replaces its file</span>` : ""}` : f && !wordsJob ? `<span class="egApproveWrap"><button class="btn sage sm egApproveButton" data-a="approve" title="this placement is right — approve it and write the ${fw} file">Approve</button></span>` : ""}${f && !wordsJob && ears && !appView ? approveBothHtml(ears, job) : ""}</div><div class="backHost"></div></div>
-        <div class="ctl">${!f && !wordsJob && panelOn && job.reason ? `<span class="why" role="status">${esc(isFrontJob(job) ? String(job.reason).replace(/\bback area\b/, "front area") : job.reason)}</span>` : ""}${f && !wordsJob && f.artOnly ? `<span class="egArtOnly" role="status" style="font-size:11.5px;color:var(--ink70,#5b554c)">No words: the charm editor's parts are this ${fw}'s engraving</span>` : ""}${f && !wordsJob && !f.artOnly ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="egTurn" role="group" aria-label="Turn the whole charm and its engraving" title="Turn the whole charm and its engraving together, in degrees. Counter-clockwise is plus. 0 is where the system placed it."><button type="button" class="egTurnStep" data-a="turnStep" data-step="-1" title="Turn 1° clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree clockwise">↷</button><label class="egTurnField"><input type="number" data-a="turn" inputmode="numeric" min="-360" max="360" step="1" value="${turnOf(job)}" aria-label="Turn the whole charm and its engraving, in degrees"><span class="egTurnDeg" aria-hidden="true">°</span></label><button type="button" class="egTurnStep" data-a="turnStep" data-step="1" title="Turn 1° counter-clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree counter-clockwise">↶</button></span>` : ""}
+        <div class="ctl">${f && !wordsJob && f.artOnly ? `<span class="egArtOnly" role="status" style="font-size:11.5px;color:var(--ink70,#5b554c)">No words: the charm editor's parts are this ${fw}'s engraving</span>` : ""}${f && !wordsJob && !f.artOnly ? `<button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${capText(f)}</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="egTurn" role="group" aria-label="Turn the whole charm and its engraving" title="Turn the whole charm and its engraving together, in degrees. Counter-clockwise is plus. 0 is where the system placed it."><button type="button" class="egTurnStep" data-a="turnStep" data-step="-1" title="Turn 1° clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree clockwise">↷</button><label class="egTurnField"><input type="number" data-a="turn" inputmode="numeric" min="-360" max="360" step="1" value="${turnOf(job)}" aria-label="Turn the whole charm and its engraving, in degrees"><span class="egTurnDeg" aria-hidden="true">°</span></label><button type="button" class="egTurnStep" data-a="turnStep" data-step="1" title="Turn 1° counter-clockwise (hold Shift: 15°)" aria-label="Turn the charm 1 degree counter-clockwise">↶</button></span>` : ""}
 </div>
         <div class="pvSide">
           ${said}<section class="pvSec pvSetup" data-engsetup hidden></section>
           ${byCard ? "" : `<section class="pvSec pvRef"><h4 class="pvH">${fw === "front" ? "Back" : "Front"} · reference</h4><div class="frontHost"></div></section>`}
-          ${panelOn ? (undecided ? `<div class="wordsActs"><button class="btn gold xs" data-a="usewords" title="settle these words and draw the placement">Engrave these words</button></div>` : "") : `<div class="pvWords"><div class="wordsHead"><span class="lbl">Words on the ${fw}</span><button type="button" class="btn ghost xs emBtn" data-alpha title="other alphabets: letters, words and phrases found by their English" aria-label="Other alphabets">Aα</button><button type="button" class="btn ghost xs emBtn" data-emoji title="choose an emoji the laser can engrave and put it in the words">Emoji</button></div><textarea data-f="words" rows="${Math.max(1, Math.min(4, (job.lines || []).length || 1))}" title="Line breaks are preserved. The preview updates after typing.">${esc((job.lineInput || job.lines || []).join("\n"))}</textarea>
+          ${panelOn ? "" : `<div class="pvWords"><div class="wordsHead"><span class="lbl">Words on the ${fw}</span><button type="button" class="btn ghost xs emBtn" data-alpha title="other alphabets: letters, words and phrases found by their English" aria-label="Other alphabets">Aα</button><button type="button" class="btn ghost xs emBtn" data-emoji title="choose an emoji the laser can engrave and put it in the words">Emoji</button></div><textarea data-f="words" rows="${Math.max(1, Math.min(4, (job.lines || []).length || 1))}" title="Line breaks are preserved. The preview updates after typing.">${esc((job.lineInput || job.lines || []).join("\n"))}</textarea>
             <div class="wordsActs"><button class="btn gold xs" data-a="usewords" title="${wordsJob ? "settle the words and draw the placement" : "re-fit the placement with these words"}">${wordsJob ? "Engrave these words" : "Use these words"}</button>${wordsJob ? `<button class="btn ghost xs" data-a="skip" title="cut this charm plain — nothing engraved on its ${fw}">${faced ? `No ${fw} engraving` : "No engraving"}</button>` : ""}</div>
             ${wordsJob || !f ? `<div class="why">${esc(job.reason || waitingReason(job))}</div>` : ""}</div>`}
           ${job.view?.detail?.filledArtwork ? `<div class="why">Filled artwork: inspect the ${fw} outline and cut-outs before approving.</div>` : ""}
@@ -12346,20 +12526,24 @@ const Engrave = window.Engrave = (() => {
     };
     card._stripSync();
     // what the system decided for this LINE (None / Front only / Back only / Front + back, each face's words and font), checked and edited right here: charm-nest-engrave-setup.js (one control for every card)
+    // ENGSTAGE: the Design & Engrave card draws its piece's stage (Engrave.showStage): its work area (mountBack, _svWork below) and its thumbnails (CharmNestEngraveCard.paintStage). Opening a piece lets every other piece's stage go.
+    const svPk = panelOn ? pieceKeyOfJob(job) : "";
+    if (panelOn) { svSweep(svPk); card._svPiece = svPk; svCss(); }
     { const su = card.querySelector("[data-engsetup]"); if (ctx && su && window.CharmNestEngravePanel) card._pieceMount = CharmNestEngravePanel.mountPiece(su, job, { view: viewFaceOf(job), onView: f => setViewFace(job, f, card), artFaces: pieceArtOn }); }   // (charm-nest-engrave-panel.js: the Front / Back thumbnails and the one panel, inline in the Engrave detail only; FACEVIEW: a face the Charm Editor drew on and nothing engraves is a thumbnail too, a press on it shows it in the work area)
     if (wordsJob) { const bh = card.querySelector(".backHost"); if (readsFree(job) && !preparingNow(job)) setTimeout(() => prepareLate(job.row).catch(() => {}), 0);   // (a press on a face that nobody has started reading starts it: prepareLate)
       const busy = (["ready", "fitting"].includes(job.state) && canFit(job)) || (OPENREAD.includes(job.state) && (preparingNow(job) || readsFree(job)));
-      bh.innerHTML = `<div class="noBack">${busy ? '<span class="spin" role="status" aria-label="Preparing"></span>' : ""}${esc(panelOn && undecided ? (job.reason || waitingReason(job, true)) : job.state === "blocked" ? (job.reason || "This preview needs attention — use the words to retry.") : waitingReason(job))}</div>`;
+      // (ENGSTAGE, Paul 30 Oct 2026: the Design & Engrave card never says why a face waits ("The order gives no words for the front", "being prepared"): its work area draws the face, mountBack below)
+      if (!panelOn) bh.innerHTML = `<div class="noBack">${busy ? '<span class="spin" role="status" aria-label="Preparing"></span>' : ""}${esc(job.state === "blocked" ? (job.reason || "This preview needs attention — use the words to retry.") : waitingReason(job))}</div>`;
       if (recalledJob(job) && ["approved", "written"].includes(job.state)) {   // (NODECIDED: a recalled set's piece is changed after its sheet is rebuilt from the master files, as a Reopen did first)
         bh.innerHTML = `<div class="noBack">This piece belongs to a recalled set. <button type="button" class="btn ghost sm" data-rebuild>Rebuild its sheet to change it</button></div>`;
         const rb = bh.querySelector("[data-rebuild]"); if (rb) rb.onclick = () => { rb.disabled = true; rb.textContent = "Rebuilding the sheet…"; rebuildRecalled(job).then(() => render()).catch(e => { rb.disabled = false; rb.textContent = "Rebuild its sheet to change it"; toast(`Could not rebuild the sheet: ${e.message}`, "bad", 7000); }); };
       }
       // an approved / saved piece whose placement cannot be drawn here is never an empty box: its saved picture is the preview, the panel's controls change it (the first change opens it for approval again)
-      else if (["approved", "written"].includes(job.state)) { const n = bh.querySelector(".noBack"); const pic = document.createElement("div"); pic.className = "egSavedPic"; pic.style.cssText = "display:flex;flex-direction:column;align-items:center;gap:8px;min-height:0;max-height:100%"; if (savedBackPicture(pic, job)) { if (n) pic.appendChild(n); bh.replaceChildren(pic); } }   // (no words box here: the reason the words box's line used to give is said once, in the empty picture)
+      else if (["approved", "written"].includes(job.state)) { const n = bh.querySelector(".noBack"); const pic = document.createElement("div"); pic.className = "egSavedPic"; pic.style.cssText = "display:flex;flex-direction:column;align-items:center;gap:8px;min-height:0;max-height:100%"; if (savedBackPicture(pic, job)) { card._svSavedPic = true; if (n) pic.appendChild(n); bh.replaceChildren(pic); } }   // (no words box here: the reason the words box's line used to give is said once, in the empty picture)
       else if (job.state === "words") { try { charmEditButton(bh, null, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); } } }   // (EDITOR WORDS, 27 Oct 2026: a face waiting for words can be drawn in the charm editor first; its parts then engrave it, no words needed)
     const ta = card.querySelector('[data-f="words"]'), use = card.querySelector('[data-a="usewords"]');
-    // (the Engrave tab draws no words box: "Engrave these words" settles what the panel's own box holds for this face, the Lines drop-down refits the words the job has)
-    const wordsNow = () => { const w = !ta && wordsJob ? card.querySelector(".engp .engpWords") : null; return ta ? ta.value : w && w.dataset.face === fw && w.value.trim() ? w.value : (job.lineInput || job.lines || []).join("\n"); };
+    // (ENGSTAGE: the Design & Engrave card has no "Engrave these words" (Paul, 30 Oct 2026: "completely remove the function and process and UI"): Approve keeps what is staged; the Lines drop-down refits the words the job has)
+    const wordsNow = () => (ta ? ta.value : (job.lineInput || job.lines || []).join("\n"));
     const applyWords = async (keepFocus = false) => {
       clearTimeout(card._wordsTimer);
       if (!card.isConnected || job.backSaving || job.approvalPreparing) return;
@@ -12381,7 +12565,6 @@ const Engrave = window.Engrave = (() => {
         }
       } catch (e) { toast(e.message, "bad"); }
       if (use) use.disabled = false;
-      if (!ta && panelOn && wordsJob) { try { CharmNestEngravePanel.DRAFTS.delete(pLine.key + (job.slot ? "#" + job.slot : "")); } catch (_) {} }   // (what the panel held is settled now: nothing stays staged)
       render();
       if (focused && EG.cardKey === job.key) {
         // back to the words, unless the person has moved on to another control meanwhile. When the rebuild already put
@@ -12422,6 +12605,120 @@ const Engrave = window.Engrave = (() => {
     //  Updating in its corner (charm-nest-pic-busy.js; ListMedia.busy finds it); while the words are fitted again the "Fitting…" cue says it instead)
     if (backHost && Array.isArray(job.copies) && job.copies.length) { try { const ids = job.copies.map(String); backHost.dataset.madePids = ids.join(" "); const B_ = window.CNPicBusy, MT = window.CharmNestMadeThumb; if (B_) { if (MT && MT.isBusy(ids)) B_.on(backHost, "piece"); else B_.off(backHost, "piece"); } } catch (_) { /* the work area as before */ } }
     const held = wordsJob && refitting(job) ? (holdDrawing(job), heldDrawing(job)) : (HELD.delete(job), null), dj = held || job;   // (REFIT: the drawing it had, while it is read and fitted again)
+    /* ENGSTAGE · what this card's work area draws (Engrave.showStage, above): the stage of its piece; with no stage, a face that has no placement yet is drawn as the charm with its own words (never an empty
+       area, never a reason). null: the card's own drawing of its placed job, as before. -> { st, seq, face, x (the face's staged { text, font, pos }), eng, words, ja (the job of that face), kind, shape } */
+    const svTarget = () => {
+      if (!panelOn) return null;
+      const rec = SV_STAGES.get(svPk); let st = rec && rec.stage;
+      if (!st) {
+        if (!wordsJob || held || recalledJob(job) || card._svSavedPic) return null;
+        const f = faceOf(job), none = { text: "", font: "", pos: null }, x = { text: (job.lineInput && job.lineInput.length ? job.lineInput : job.lines || []).join("\n"), font: job.faceFontWord || "", pos: null };
+        st = { key: svPk, choice: f, active: f, faces: { front: f === "front" ? x : none, back: f === "back" ? x : none } };
+      }
+      const A = st.active, x = st.faces[A] || { text: "", font: "", pos: null }, eng = svChoiceFaces(st.choice).includes(A), words = eng ? draftLines(x.text) : [];
+      const pid = (job.copies || [])[0], mine = A === faceOf(job);
+      const ja = mine ? job : (pid && jobsOfPiece(pid)[A]) || jobsOf(job.row).find(j => j !== job && !j.editingBack && sameSlot(j, job) && faceOf(j) === A) || null;
+      const placed = !!ja && !ja.editingBack && !!(ja.fit && ja.view && ja.mask) && (ja.state === "review" || approvedView(ja)) && !(mine && held);
+      const kind = mine && held ? "held" : placed ? "job" : "view";
+      return { st, seq: rec ? rec.seq : 0, face: A, x, eng, words, ja, kind, shape: kind + "|" + A + "|" + (placed ? ja.key : "") };
+    };
+    const svSeqNow = () => (SV_STAGES.get(svPk) || {}).seq || 0;
+    /** The words the card's own drawing shows now (a draft's, else the fitted ones). */
+    const svOwnWords = () => { const d = DRAFTS.get(job.key), f = dj.fit; if (d && d.fit) return d.fit.empty ? [] : draftLines(d.staged && d.staged.text); return f && ((f.glyphs && f.glyphs.length) || f.cmds) && !f.artOnly ? draftLines((job.lineInput && job.lineInput.length ? job.lineInput : job.lines || []).join("\n")) : []; };
+    /** The hooks of the work area: the face drawn, the words drawn, the sequence of the state drawn. The card's own row of controls (Centre, Lines, the turn) acts on its own job: while the area
+     *  shows another face (`own` false) it is hidden, keeping its place, so nothing there moves a face that is not on screen. */
+    const svHooks = (face, words, seq, own) => { SV_LAST.pk = svPk; SV_LAST.host = backHost; backHost.dataset.face = face; backHost.dataset.words = (words || []).join("\n"); backHost.dataset.stageSeq = String(seq || 0); card.dataset.svOwn = own === false ? "0" : "1"; };
+    /** A face drawn from the piece's charm: its record (stagedFaceFit's), given the stage's words, font and place. */
+    const svFaceRec = (t, fv) => {
+      const k = svPk + "|" + t.face; let r = SV_FACES.get(k);
+      if (!r) SV_FACES.set(k, r = { face: t.face, centre: null, size: null, view: null, mask: null });
+      if (!r.mask || r.view !== fv.view) { r.text = ""; stagedFaceFit(job, t.face, fv, r); }   // (its safe area first: a place given below is kept)
+      r.text = t.words.join("\n"); r.fontWord = t.x.font || "";
+      if (t.x.pos) { const c = viewPointOf(fv.view, t.x.pos.charm); if (c) r.centre = c; } else if (window.CharmNestEngravePanel && CharmNestEngravePanel.stagePos) r.centre = null;   // (no stagePos on the page: a drag made here keeps its place)
+      r.onFont = () => { const sr = SV_STAGES.get(svPk); if (sr && sr.stage) svQueue(sr); else if (EG.card === card && card.isConnected && card._remountWork) card._remountWork(); };
+      return r;
+    };
+    /** A drag of the staged words on another face's placed job drawn here: they follow the pointer as its draft (a frame at most), the place let go at is the stage's. */
+    const svJobDrag = (bc, ja, A) => {
+      let start = null, raf2 = 0, last = null;
+      const pt = e => { const r = bc.getBoundingClientRect(); return bc._map.inv((e.clientX - r.left) * (bc.width / r.width), (e.clientY - r.top) * (bc.height / r.height)); };
+      const paintAt = () => { const rec = DRAFTS.get(ja.key); if (!last || !rec || !rec.staged) return; rec.staged.position = { centre: last.slice() }; rec.svDragged = true; draftCompute(ja, rec); bc._paint(); };
+      bc.style.cursor = "move";
+      bc.addEventListener("pointerdown", e => { if (!bc._box || !bc._map) return; const f = draftPaint(ja) || ja.fit; if (!f || !f.centre) return; start = { p: pt(e), c: f.centre.slice() }; last = null; try { bc.setPointerCapture(e.pointerId); } catch (_) {} e.preventDefault(); });
+      bc.addEventListener("pointermove", e => { if (!start) return; const p = pt(e); last = [start.c[0] + p[0] - start.p[0], start.c[1] + p[1] - start.p[1]]; if (!raf2) raf2 = requestAnimationFrame(() => { raf2 = 0; paintAt(); }); });
+      const end = e => { const was = start; start = null; if (raf2) { cancelAnimationFrame(raf2); raf2 = 0; paintAt(); } if (was && last && e.type === "pointerup") svPosOut(svPk, A, ja.view, last); last = null; };
+      bc.addEventListener("pointerup", end); bc.addEventListener("pointercancel", end);
+    };
+    /** The work area for a target that is not this card's own placed job: another face's placed job (the staged words its draft), a face drawn from the piece's charm, or (no charm on this
+     *  page) the preview's own picture of the piece at the work area's size. -> the element drawn */
+    const svDraw = (t, px) => {
+      const A = t.face;
+      if (t.kind === "job") {
+        const ja = t.ja; svDraft(ja, t);
+        const bc = renderBack(ja, px, { grid: true, editable: true, draft: true, steady: true, zoom: workZoomOf(ja, A), label: WORK_LABEL });
+        bc.tabIndex = -1; bc.style.outline = "none"; bc._viewFace = A; bc._svJob = ja; bc.title = "drag the words to move them";
+        backHost.appendChild(bc); svJobDrag(bc, ja, A); markShown(ja); workViewOn(backHost, bc, ja, A, card);
+        try { charmEditButton(backHost, bc, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }
+        return bc;
+      }
+      let fv = null; try { fv = faceViewOf(job, A); } catch (_) { fv = null; }
+      if (fv && fv.view) {
+        const r = svFaceRec(t, fv);
+        const draw = () => { const sf = stagedFaceFit(job, A, fv, r); return renderBack({ key: job.key + "~" + A, view: fv.view, mask: sf.mask, fit: sf.fit, copies: job.copies, row: job.row, _viewCharm: fv.charm }, px, { grid: true, hatch: false, editable: true, steady: true, zoom: workZoomOf(job, A), label: WORK_LABEL }); };
+        const cv = draw(); cv._editable = false; cv._paint(); cv._viewFace = A; cv._staged = true; cv._svFv = fv; cv._svRec = r; cv.tabIndex = -1; cv.style.outline = "none";
+        { const base = cv._paint; cv._paint = prov => (prov ? base(prov) : cv._svRedraw()); }   // (painted again by anyone (a job's refresh, the rulers): from the record as it is NOW, never the words it was first drawn with)   // (drawn again at once with no box or handles: the staged words are moved, never sized or turned, until they are a job)
+        // (a letter typed: only the words are laid out again (reflowAt, a few ms) and painted over the face's still layers (the canvas's own _paint): the grid, the art and the cut line are not drawn again)
+        cv._svRedraw = () => { try { const sf = stagedFaceFit(job, A, fv, r), f = sf.fit; cv._paint(f && f.glyphs ? { glyphs: f.glyphs, centre: f.centre, angle: f.angle || 0 } : { glyphs: [] }); } catch (_) { try { const nc = draw(), g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(nc, 0, 0, cv.width, cv.height); } catch (_) { /* the drawing it had stays */ } } queueWorkRulers(backHost._ez); };
+        cv.title = t.words.length ? `the ${A} of this piece with the words staged for it · drag the words to move them` : `the ${A} of this piece`;
+        backHost.appendChild(cv);
+        stagedDrag(cv, job, A, fv, r, draw, centre => svPosOut(svPk, A, fv.view, centre));
+        workViewOn(backHost, cv, job, A, card);
+        try { charmEditButton(backHost, cv, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }
+        return cv;
+      }
+      const P = window.CharmNestEngravePreview, box = document.createElement("div"); box.className = "egStagePv"; box.style.width = px[0] + "px"; box.style.height = px[1] + "px";
+      backHost.appendChild(box);
+      if (P && P.render) P.render(box, { row: lineOf(job.row), job: t.ja || null, slot: job.slot || null, text: t.words.join("\n"), fontWord: t.x.font || "", face: A, position: null });
+      return box;
+    };
+    /** The same face drawn the same way: only what changed is painted (the draft, the staged words on the charm, the preview's words), in this frame. */
+    const svInPlace = (t, el) => {
+      if (!t) { if (el._paint) el._paint(); draftNote(card, DRAFTS.get(job.key)); svHooks(viewFaceOf(job), svOwnWords(), svSeqNow(), viewFaceOf(job) === faceOf(job)); return; }
+      if (t.kind === "job") {
+        const rec = svDraft(t.ja, t); if (el._paint) el._paint();
+        if (t.ja === job) { const f = rec.fit && !rec.fit.empty ? rec.fit : job.fit, cap = card.querySelector("[data-cap]"); if (cap && f && Number.isFinite(f.capMm)) cap.textContent = capText(f); draftNote(card, rec); }
+      } else if (t.kind === "view") {
+        if (el.classList.contains("egStagePv")) { const P = window.CharmNestEngravePreview; if (P && P.update) P.update(el, { text: t.words.join("\n"), fontWord: t.x.font || "", fontId: "" }); }
+        else if (el._svRedraw && el._svFv && svFaceRec(t, el._svFv) === el._svRec) el._svRedraw();
+        else { card._remountWork(); return; }
+      }
+      svHooks(t.face, t.words, t.seq, t.kind === "held" || (t.kind === "job" && t.ja === job));
+    };
+    /** The stage painted on this card's work area (svFlush, once a frame): in place when the face and the way it is drawn are the same, else drawn afresh, turned to the other face or
+     *  cross-faded. A turn already on its way to it paints the latest state at its edge. */
+    card._svWork = () => {
+      if (disposed || !backHost.isConnected) return;
+      const t = svTarget(), shape = t ? t.shape : "own|" + viewFaceOf(job), face = t ? t.face : viewFaceOf(job);
+      const el = backHost.querySelector(":scope > canvas, :scope > .egStagePv");
+      if (el && shape === card._svShape) {
+        const had = !!backHost.dataset.words, has = (t ? t.words : svOwnWords()).length > 0, go = () => svInPlace(t, el);
+        if (had !== has && t && t.kind !== "held") svFade(backHost, go); else go();
+        return;
+      }
+      const drawn = backHost.dataset.face || "", redo = () => card._remountWork();
+      if (drawn && face !== drawn) svTurn(backHost, face, redo); else svFade(backHost, redo);
+    };
+    // (a card drawn again: the tab draws the detail afresh at each change, a commit landing after Approve among them. Its work area starts as a still copy of this piece's last drawing when that is of
+    //  the face this card shows, until its own drawing is made (mountBack, the next frame): never a frame with an empty work area)
+    if (panelOn && !backHost.firstChild) { try {
+      const prev = SV_LAST.pk === svPk && SV_LAST.host !== backHost ? SV_LAST.host : null, old = prev && prev.querySelector(":scope > canvas"), t = svTarget(), face = t ? t.face : viewFaceOf(job);
+      if (old && old.width && old.height && prev.dataset.face === face && (t || ((!wordsJob || held) && dj.view))) {
+        const ph = document.createElement("canvas"); ph.width = old.width; ph.height = old.height; ph.getContext("2d").drawImage(old, 0, 0); ph.className = "egSvHold"; ph.setAttribute("aria-hidden", "true"); ph.style.cssText = old.style.cssText;
+        for (const k of ["paddingTop", "paddingBottom", "boxSizing"]) backHost.style[k] = prev.style[k];
+        if (prev.parentElement && prev.parentElement.classList.contains("egWide")) backHost.parentElement.classList.add("egWide");
+        backHost.appendChild(ph); svHooks(face, t ? t.words : svOwnWords(), t ? t.seq : svSeqNow(), t ? t.kind === "held" || (t.kind === "job" && t.ja === job) : face === faceOf(job));
+      }
+    } catch (_) { /* its own drawing comes in the next frame */ } }
     let mounted = [0, 0], mountedBelow = -1, raf = 0, framed = null;
     const syncBoth = () => {
       if (!ears) return;
@@ -12486,7 +12783,7 @@ const Engrave = window.Engrave = (() => {
         if (job.approvalPreparing || job.stamping || job.backSaving || !placeEditable(job)) { bc._paint(); return; }
         if (d.mode === "resize") { if (d.pendingSize != null) resize(job, d.pendingSize); else bc._paint(); }
         else if (d.mode === "rotate") { if (d.pendingAngle != null) rotateTo(job, d.pendingAngle); else bc._paint(); }
-        else if (d.pending) { if (!moveTo(job, d.pending)) { toast("No room there — kept the previous position", "bad"); bc._paint(); } }
+        else if (d.pending) { if (!moveTo(job, d.pending)) { toast("No room there — kept the previous position", "bad"); bc._paint(); } else if (panelOn && job.fit) svPosOut(svPk, faceOf(job), job.view, job.fit.centre); }   // (ENGSTAGE: the place is the stage's too)
         else bc._paint();
       });
       bc.addEventListener("pointercancel", () => { cancelAnimationFrame(flowFrame);flowFrame=0;drag = null; bc.classList.remove("drag"); refresh(job); });
@@ -12495,7 +12792,8 @@ const Engrave = window.Engrave = (() => {
     const mountBack = () => {
       if (disposed) return;
       try {
-      if ((wordsJob && !held) || !dj.view || !backHost.isConnected) return;
+      const tgt = svTarget();   // (ENGSTAGE: the stage's face, with or without a job; null: the card's own drawing)
+      if ((!tgt && ((wordsJob && !held) || !dj.view)) || !backHost.isConnected) return;
       const r = backHost.getBoundingClientRect();
       // side by side, the box says how big; stacked on a narrow screen the box has no height of its own, so a little
       // over half the window is the ceiling and the charm keeps its shape either way. The charm's own shape is fitted into the
@@ -12519,16 +12817,21 @@ const Engrave = window.Engrave = (() => {
       mounted = px; mountedBelow = band; backHost.textContent = "";
       backHost.style.paddingTop = band + "px"; backHost.style.paddingBottom = NOTE + "px"; backHost.style.boxSizing = "border-box";
       pm.classList.toggle("egWide", wide);
+      if (tgt && (tgt.kind === "view" || (tgt.kind === "job" && tgt.ja !== job))) { framed = null; svDraw(tgt, px); svHooks(tgt.face, tgt.words, tgt.seq, false); card._svShape = tgt.shape; return; }
+      if (tgt && tgt.kind === "job") svDraft(job, tgt);   // (this card's own face: drawn below as ever, the staged words its draft)
       // (FACEVIEW, Paul 28 Oct 2026: the piece's other face, chosen with the Front | Back switch or shown by a save of the Charm Editor that changed it: drawn as that face, view only; the words and
       //  the Approve block stay the face's being approved)
-      const vf = viewFaceOf(job), ov = vf !== faceOf(job) ? renderFaceView(job, vf, px, workZoomOf(job, vf)) : null;
+      const vf = tgt ? faceOf(job) : viewFaceOf(job), ov = vf !== faceOf(job) ? renderFaceView(job, vf, px, workZoomOf(job, vf)) : null;
       if (ov) {
         framed = null; ov.tabIndex = -1; ov.style.outline = "none"; ov.title = ov._staged ? `the ${vf} of this piece with the words staged for it · drag the words to move them` : `the ${vf} of this piece as it is cut and engraved, with every part the Charm Editor put on it · view only: the engraving to approve is on the ${fw}`;
         backHost.appendChild(ov); workViewOn(backHost, ov, job, vf, card);   // (ENGVIEW: its rulers and zoom; the face is chosen with the card's thumbnails, showFace)
+        svHooks(vf, ov._staged ? draftLines((STAGED_FACES.get(job.key) || {}).text) : [], svSeqNow(), false); card._svShape = "own|" + vf;
         try { charmEditButton(backHost, ov, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }
         return;
       }
-      const bc = (held && heldCanvas(job, px)) || renderBack(dj, px, { grid: true, editable: true, include: framed, draft: panelOn && !held, steady: true, zoom: held ? null : workZoomOf(job, faceOf(job)), label: WORK_LABEL }); framed = bc._map.bb; bc.tabIndex = -1; bc.style.outline = "none"; bc.title = job.fit && job.fit.artOnly ? `no words: the charm editor's parts are this ${fw}'s engraving` : "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys move them 0.05 mm, 1 mm with Shift · cut-outs and holes stay clear"; backHost.appendChild(bc); if (held) { heldOn(backHost, bc, job, px); return; } wire(bc); markShown(job); syncBoth(); if (panelOn) draftNote(card, DRAFTS.get(job.key));
+      const bc = (held && heldCanvas(job, px)) || renderBack(dj, px, { grid: true, editable: true, include: framed, draft: panelOn && !held, steady: true, zoom: held ? null : workZoomOf(job, faceOf(job)), label: WORK_LABEL }); framed = bc._map.bb; bc.tabIndex = -1; bc.style.outline = "none"; bc.title = job.fit && job.fit.artOnly ? `no words: the charm editor's parts are this ${fw}'s engraving` : "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys move them 0.05 mm, 1 mm with Shift · cut-outs and holes stay clear"; backHost.appendChild(bc);
+      svHooks(faceOf(job), tgt ? tgt.words : held ? [] : svOwnWords(), tgt ? tgt.seq : svSeqNow(), true); card._svShape = tgt ? tgt.shape : "own|" + faceOf(job);
+      if (held) { heldOn(backHost, bc, job, px); return; } wire(bc); markShown(job); syncBoth(); if (panelOn) draftNote(card, DRAFTS.get(job.key));
       workViewOn(backHost, bc, job, faceOf(job), card);   // ENGVIEW: the rulers and the zoom of the grid (FACEVIEW's other face is chosen with the card's Front / Back thumbnails: showFace)
       try { charmEditButton(backHost, bc, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }   // CHARM EDIT: the quiet "Edit charm" pill after them (and the last save's note under it): the piece's own artwork in the charm editor (never at the drawing's cost)
       bc._reframe = () => { if (raf || disposed || bc.classList.contains("drag")) return; mounted = [0, 0]; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); };
@@ -12699,7 +13002,7 @@ const Engrave = window.Engrave = (() => {
     card.addEventListener("keydown", e => {
       if (wordsKey(e)) {
         const ctl = e.target && e.target.matches && e.target.matches("select, input[type=range]");
-        if (approvalBusy() || items().get(job.key) !== job || ["approved", "written"].includes(job.state)) { if (ctl) e.preventDefault(); return; }   // (looking at an approved piece is safe: the arrows do not reopen it)
+        if (approvalBusy() || items().get(job.key) !== job || ["approved", "written"].includes(job.state) || card.dataset.svOwn === "0") { if (ctl) e.preventDefault(); return; }   // (looking at an approved piece is safe: the arrows do not reopen it; ENGSTAGE: nor do they move this job while the area shows another face)
         e.preventDefault(); if (!e.repeat) card._flushSpacing?.();
         const st = e.shiftKey ? MOVE_BIG_MM : MOVE_MM; nudge(job, e.key === "ArrowLeft" ? -st : e.key === "ArrowRight" ? st : 0, e.key === "ArrowUp" ? st : e.key === "ArrowDown" ? -st : 0); return;
       }
@@ -12820,7 +13123,7 @@ const Engrave = window.Engrave = (() => {
     if (n) { try { Session.schedule(); render(); } catch (_) { /* drawn with the next render */ } }
     return n;
   }
-  return { viewFaceOf, setViewFace, showFace, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, cutWhy, discardStaged, stageFace, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
+  return { viewFaceOf, setViewFace, showFace, showStage: svShowStage, stageNow: svStageNow, stageSeq: k => { const r = SV_STAGES.get(String(k == null ? "" : k)); return r ? r.seq : 0; }, stagePlaceOf: svPlaceOf, workZoomOf, workZoomCmd: cmd => { const c = EG.card && EG.card.isConnected ? EG.card : null, h = c && c.querySelector(".backHost"); return workZoomCmd(h && h._ez, cmd); }, listLine, openMonogram, monogramUI: () => MonoUI(), reopenForEdit, artChanged, faceHasEditorArt, openCharmEditor, rebuildRecalled, approvedView, monoItems: () => monoItemsNow(), tabItems, openPiece, loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => restoreEngraveView(v), loadFonts, ensureScriptFonts, retryScripts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, recoverApprovals, timelineApproved, nudge, hasPlacement, early, earlyAll, earlyWanted, shelveWritten, resize, rotateTo, turnTo, turnOf, repaintTurn, setLineSpacing, resplit, skip, sendBack, decideWords, saveSetup, cutWhy, discardStaged, stageFace, seedWords, draftFit, draftOf, faceOf, isFront, setupOf, applyEngraving, setFaces: applyEngraving, raiseCandidate, putAwayNever, neverEngraves, invalidate, render, fromRecall, placementCard, renderBack, renderMade, madeJobOf, renderFront, pendingCount, reviewedCount, pendingRows, reviewedRows, items, earOf: slot => (SIDES() && SIDES().earOf(slot)) || "", jobOf, jobsOf, pieceJobsOf, faceJobs, jobsOfPiece, pieceCountOf, jobForPool, jobForRecord, ensureJob, ensureJobs, dropLine, piecesOf, engravePoolsOf, engravePiecesOf, relinkAll, approveRow, faceModeOf, lineHasFront, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_, loadFontSet, fontSetFor: fontSetOf, fontForWeight: fontFor };
 })();
 /* PIECES (Paul, 16 Oct 2026): every piece of a line, engraved or not: [{ poolId, n, unit, within, slot, index, of, label, tag }] (charm-nest-engrave-sides.js pieceList, read through the page's own pool). The Order window's
    list of pieces, the Pieces counts and a monogram line's pieces (the same slots and piece keys: "<line>" for one piece, "<line>#C<u>" for several) read THIS. Added beside the Engrave object, not inside its return. */

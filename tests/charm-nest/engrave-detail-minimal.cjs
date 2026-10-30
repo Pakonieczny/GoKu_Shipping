@@ -6,7 +6,8 @@
 //      the page), the "From the order" list, the "NN% sure" pill, every block title, the head's Front | Back switch; PRESENT: the panel (one words box, font, ONE Emoji button; no Save / Cancel since LIVEWORDS), Approve, the big picture, Open order (no "No engraving" button since NONEPRESS)
 //   2  the customer's own words are ALWAYS in the detail (ENGNOTE, Paul round 2 point 6: "I didn't ask for you to remove that"): ONE box titled "What the customer wrote" (charm-nest-engrave-said.js), settled read or not, a
 //      staff note or not; it holds no "Reading", no "Font", no "Decided by". Its own checks (every part, nothing when the customer wrote nothing, the approved piece's card, the Review tab) are in engrave-customer-note.cjs
-//   3  words still to decide (state words): ONE small "Engrave these words" button (the panel cannot confirm a read as it stands), the reason said once in the empty picture, no "No engraving" button (NONEPRESS)
+//   3  words still to decide (state words): NO "Engrave these words" button and no reason anywhere (ENGSTAGE, Paul 30 Oct 2026: "completely remove the function and process and UI for "Engrave these words"";
+//      the work area draws the face instead, engrave-stage-view.cjs W1), no "No engraving" button (NONEPRESS)
 //   4  the Review tab's placement card (no panel there) is untouched: its words box and its pill are still drawn
 //   5  an APPROVED piece (no Decided row or detail any more: its row opens this very card) draws the same minimal card: the words once, in the panel, no second route to them, no "Reading" / "Decided by" / percentage, a calm
 //      "Approved" where Approve was; its row in the one list says the words and carries the seals
@@ -104,11 +105,11 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
 
     // ── 3 · words still to decide ──
     d = await detail({ state: 'words', reason: 'Say what to engrave on the back', fit: null, view: null }, {});
-    check(d.use.length === 1 && d.use[0] === 'Engrave these words' && d.words === 0 && d.oldBox === 0 && d.textareas === 1, 'words still to decide: ONE small "Engrave these words" button and still no second words box: ' + JSON.stringify({ use: d.use, words: d.words, textareas: d.textareas }));
-    check(d.noBack.length === 1 && d.noBack[0] === 'Say what to engrave on the back' && d.why === 0, 'the reason is said once, in the empty picture, not again under a box: ' + JSON.stringify({ noBack: d.noBack, why: d.why }));
+    check(d.use.length === 0 && !/Engrave these words/i.test(d.text) && d.words === 0 && d.oldBox === 0 && d.textareas === 1, 'words still to decide: no "Engrave these words" button (ENGSTAGE: Approve keeps the staged words) and still no second words box: ' + JSON.stringify({ use: d.use, words: d.words, textareas: d.textareas }));
+    check(d.noBack.length === 0 && d.why === 0 && !/Say what to engrave/.test(d.text), 'no reason anywhere on the card (ENGSTAGE: the work area draws the face, never a line about it): ' + JSON.stringify({ noBack: d.noBack, why: d.why }));
     check(d.skip === 0 && d.said === 1, 'no "No engraving" button (NONEPRESS: the None toggle is the way), and the customer\'s own words in the one box');
     d = await detail({ state: 'classify', fit: null, view: null, _lateTries: 3 }, {});   // (a front + back line's unread face is read free in the background (ENGFRONT prepareLate, "Preparing…"); three tries that moved it nowhere is a truly stopped read)
-    check(d.noBack.length === 1 && /Processing stopped before these words were read\.$/.test(d.noBack[0]) && !/below/.test(d.noBack[0]), 'a stopped read says so without pointing at a box "below": "' + d.noBack[0] + '"');
+    check(d.noBack.length === 0 && !/Processing stopped|below/.test(d.text), 'a stopped read: no line about it either (ENGSTAGE: the face is drawn): ' + JSON.stringify(d.noBack));
     d = await detail({ state: 'fitting', fit: null, view: null }, {});
     check(d.use.length === 0 && d.order === 0, 'a placement being prepared offers no confirm button and no "From the order" list');
 
