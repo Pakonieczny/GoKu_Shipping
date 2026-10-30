@@ -221,6 +221,7 @@ async function latency({ pk, n }) {
     const p = S.panel(pk); if (!p) { out.push({ gone: true }); continue; }
     const sc = S.scope(pk), ta = p.querySelector('.engpWords'); if (!ta || ta.disabled) { out.push({ noBox: true }); continue; }
     const h0 = sc.querySelector('.backHost'), seq0 = h0 && h0.dataset.stageSeq != null ? h0.dataset.stageSeq : null;
+    const th0 = (() => { const a0 = p.dataset.active, t = a0 && sc.querySelector(`[data-eng-thumb="${a0}"]`); return t ? S.norm(S.thumbWords(t)) : null; })();   // (the thumbnail must CHANGE to the new words: a stale one that already shows them, e.g. after a Backspace, does not count)
     if (document.activeElement !== ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(ta.value.length, ta.value.length); }
     const del = i % 2 === 1, ch = del ? null : letters[i], s = ta.selectionStart, e = ta.selectionEnd, v = ta.value;
     const nv = del ? (s === e ? v.slice(0, Math.max(0, s - 1)) + v.slice(e) : v.slice(0, s) + v.slice(e)) : v.slice(0, s) + ch + v.slice(e), at = del ? (s === e ? Math.max(0, s - 1) : s) : s + 1, want = S.norm(nv);
@@ -228,7 +229,7 @@ async function latency({ pk, n }) {
     const look = () => {
       const p3 = S.panel(pk), sc3 = p3 && S.scope(pk); if (!sc3) return;
       const act = p3.dataset.active, th = act && sc3.querySelector(`[data-eng-thumb="${act}"]`), h = sc3.querySelector('.backHost');
-      if (tThumb == null && th && S.norm(S.thumbWords(th)) === want) tThumb = performance.now() - t0;
+      if (tThumb == null && th) { const tw = S.norm(S.thumbWords(th)); if (tw === want && tw !== th0) tThumb = performance.now() - t0; }
       if (tHost == null && h && h.dataset.stageSeq != null && h.dataset.stageSeq !== seq0 && S.norm(h.dataset.words) === want) tHost = performance.now() - t0;
     };
     const mo = new MutationObserver(look); mo.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
