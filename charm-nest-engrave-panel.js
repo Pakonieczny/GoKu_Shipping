@@ -407,7 +407,7 @@
     const { key, line, slot, snap } = ctx, E = Eng(), S = Setup();
     let res, settled = false, last = Date.now(), timer = 0;
     try {
-      { const h = HUNG.get(key); if (h) { await Promise.race([h, new Promise(r => setTimeout(r, 90000 * Math.max(0.001, +(root && root.CN_SPIN_SCALE) || 1)))]); if (HUNG.get(key) === h) HUNG.delete(key); } }
+      { const h = HUNG.get(key); if (h) { await Promise.race([h, new Promise(r => setTimeout(r, WATCH_MS * Math.max(0.001, +(root && root.CN_SPIN_SCALE) || 1)))]); if (HUNG.get(key) === h) HUNG.delete(key); } }   // (the one let go is waited for, at most as long again)
       let work;
       if (typeof ctx.save === 'function') work = Promise.resolve().then(() => ctx.save());
       else if (!E || typeof E.commitStage !== 'function' || !S) work = Promise.resolve({ ok: false, message: 'The engraving is not loaded yet.' });
@@ -424,7 +424,10 @@
       settled = true; clearTimeout(timer);
       if (res && res.hung) { const h = work.catch(() => {}).then(() => { if (HUNG.get(key) === h) HUNG.delete(key); for (const b of liveBindings(key)) tryDo(() => b.draw()); }); HUNG.set(key, h); }
     } catch (e) { res = { ok: false, message: str(e && e.message ? e.message : e) }; }
-    finally { settled = true; if (COMMITS.get(key) === snap) COMMITS.delete(key); }   // (the "Approved ✓" of this press ends here, whatever happened)
+    finally {
+      settled = true; if (COMMITS.get(key) === snap) COMMITS.delete(key);   // (the "Approved ✓" of this press ends here, whatever happened)
+      if (!COMMITS.has(key) && !HUNG.has(key)) for (const b of liveBindings(key)) tryDo(() => { for (const n of [b.button(), b.stampAt()]) if (n) n.removeAttribute('aria-busy'); });   // (nothing of the piece is being kept any more: nothing of it says busy)
+    }
     const d = DRAFTS.get(key), clean = !!(res && res.ok) && d === snap.draft && d.seq === snap.seq && !COMMITS.has(key);
     if (clean) { d.touched = false; d.dirty = false; d.sig = ''; for (const f of FACES) d.faces[f].pos = null; }
     else if (res && res.ok && d === snap.draft) for (const f of FACES) if (posOk(d.faces[f].pos) && samePos(d.faces[f].pos, snap.stage.faces[f].pos)) d.faces[f].pos = null;   // (the place this commit kept is kept: only what differs from it stays staged)   // (what was staged is what is kept now: nothing is staged; the draft starts again from what is kept at the next look, on the face shown)
@@ -451,10 +454,11 @@
     sweep(key); watch(doc);   // (another piece was open before: its draft ends here)
     const track = () => { let set = LIVE.get(key); if (!set) LIVE.set(key, set = new Set()); for (const b of [...set]) if (b !== me && b.el && !b.el.isConnected) set.delete(b); set.add(me); };
     const untrack = () => { const set = LIVE.get(key); if (set) { set.delete(me); if (!set.size) LIVE.delete(key); } };
+    let adopted = false;   // (this binding took its card's face once: two panels of one piece (a card and a test's slot) never take the face from each other at every look)
     const model = () => {
       const S = Setup(), vm = S && S.read ? S.read(line, { slot: slot || undefined, jobs: jobs() }) : null; if (!vm) return null;
       const d = draftOf(vm, key, opts.face), shownKey = str(opts.job && opts.job.key);
-      if (shownKey && d.shown !== shownKey) { const first = !d.shown; d.shown = shownKey; if (opts.face && !first && facesFor(line).includes(opts.face)) d.active = opts.face; }   // (the card was drawn for another job of this piece: its face is the one shown)
+      if (!adopted) { adopted = true; if (shownKey && d.shown !== shownKey) { const first = !d.shown; d.shown = shownKey; if (opts.face && !first && facesFor(line).includes(opts.face)) d.active = opts.face; } }   // (the card was drawn for another job of this piece: its face is the one shown)
       if (!d.jobKey) d.jobKey = shownKey;
       if (!facesFor(line).includes(d.active)) d.active = facesFor(line)[0] || d.active;
       if (!d.flush) d.flush = () => discard(d);
@@ -538,6 +542,7 @@
       if (!b) { const w = doc.createElement('span'); w.className = 'egApproveWrap engpApproveWrap'; b = doc.createElement('button'); b.type = 'button'; b.dataset.engpApprove = '1'; w.appendChild(b); host.insertBefore(w, host.firstChild); }
       if (b.parentElement && !b.parentElement.querySelector(':scope > [data-engp-stamp]')) { const a = doc.createElement('span'); a.className = 'engpStampAt'; a.dataset.engpStamp = '1'; a.setAttribute('aria-hidden', 'true'); b.after(a); }   // (the approval's stamp is pressed here, never on the button itself)
       if (b.hasAttribute('aria-busy')) b.removeAttribute('aria-busy');
+      { const a = b.parentElement && b.parentElement.querySelector(':scope > [data-engp-stamp]'); if (a && a.hasAttribute('aria-busy') && !COMMITS.has(key) && !HUNG.has(key)) a.removeAttribute('aria-busy'); }   // (the stamp's anchor says busy only while an approval of this piece runs)
       const calm = g.st === 'approved' || g.st === 'ok', want = g.st === 'ok' ? 'Approved ✓' : calm ? 'Approved' : 'Approve';
       b.className = 'btn sage sm egApproveButton engpApprove' + (calm ? ' egApproved' : '');
       b.dataset.a = calm ? 'approved' : 'approve'; b.dataset.gate = g.st;

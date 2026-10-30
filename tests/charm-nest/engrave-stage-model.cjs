@@ -64,10 +64,11 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
       const box = window.__card().querySelector('.engp .engpChoice'), out = [];
       const wait = ms => new Promise(r => setTimeout(r, ms));
       for (const c of ['back', 'none', 'front', 'both', 'back']) {
-        const b = box.isConnected ? box : window.__card().querySelector('.engp .engpChoice');
+        const b = window.__card().querySelector('.engp .engpChoice'); void box;   // (the card in front now: a card drawn again replaces the panel)
         b.querySelector(`[data-choice="${c}"]`).click();
         const b2 = window.__card().querySelector('.engp .engpChoice'), mid = getComputedStyle(b2.querySelector('.engpPill')).transitionDuration;
         await wait(320);
+        for (let i = 0; i < 10; i++) { const bx = window.__card().querySelector('.engp .engpChoice'), p0 = bx.querySelector('.engpPill').getBoundingClientRect(), s0 = bx.querySelector(`[data-choice="${c}"]`).getBoundingClientRect(); if (Math.abs(p0.left - s0.left) <= 2) break; await wait(100); }   // (a card drawn again meanwhile slides its own pill: it ends under the option)
         const b3 = window.__card().querySelector('.engp .engpChoice'), pl = b3.querySelector('.engpPill'), seg = b3.querySelector(`[data-choice="${c}"]`), pr = pl.getBoundingClientRect(), sr = seg.getBoundingClientRect();
         out.push({ c, pressed: [...b3.querySelectorAll('[aria-pressed=true]')].map(x => x.dataset.choice).join(), dx: Math.round(Math.abs(pr.left - sr.left)), dw: Math.round(Math.abs(pr.width - sr.width)), bg: getComputedStyle(pl).backgroundColor, segBg: getComputedStyle(seg).backgroundColor, dur: mid, h: Math.round(sr.height), over: (() => { const t = [...seg.childNodes].find(n => n.nodeType === 3), r = document.createRange(); if (!t) return true; r.selectNodeContents(t); return r.getBoundingClientRect().width > seg.clientWidth - 2; })(), label: [...seg.childNodes].filter(n => n.nodeType === 3).map(n => n.nodeValue).join('').trim() });
       }

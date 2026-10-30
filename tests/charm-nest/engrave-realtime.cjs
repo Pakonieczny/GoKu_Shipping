@@ -224,7 +224,7 @@ const detailFacts = page => page.evaluate(() => {
   const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (!c) return { open: false };
   const faces = [...c.querySelectorAll('.engCard .engFace')].filter(vis).map(f => {
     const pv = f.querySelector('.engpv'), draw = f.querySelector('.engpvDraw'), txt = f.querySelector('.engpvText');
-    return { face: f.dataset.face, empty: f.dataset.empty, label: (f.querySelector('.engTxt') || {}).textContent || '', current: f.hasAttribute('aria-current'), drawKids: draw ? draw.children.length : -1, drawHtml: draw ? draw.innerHTML.length : -1,
+    return { face: f.dataset.face, engraved: !!f.querySelector('[data-eng-thumb][data-engraved]'), empty: f.dataset.empty, label: (f.querySelector('.engTxt') || {}).textContent || '', current: f.hasAttribute('aria-current'), drawKids: draw ? draw.children.length : -1, drawHtml: draw ? draw.innerHTML.length : -1,
       pvText: txt && !txt.hidden ? txt.textContent : null, pvFont: txt && !txt.hidden ? getComputedStyle(txt).fontFamily : null, imgs: f.querySelectorAll('.engThumb img, .engThumb canvas, .engThumb svg').length, pvState: pv && pv.dataset.state };
   });
   const cv = c.querySelector('.backHost canvas');
@@ -306,11 +306,12 @@ async function partDetail(w, made) {
   const sb = await shotB64(page, SEL.thumb('back')), sw = await shotB64(page, SEL.work);
   const cpB = await charmPic(sb, chRefs);
   check('S1 the detail opens on the system\'s choice: mode back, the customer\'s words, the chosen font', 'auto', start.open && start.mode === 'back' && start.words === 'Name One' && /stylish/i.test(String(start.fontLabel)), `mode ${start.mode}, words "${start.words}", font "${start.fontLabel}"`);
-  // (ENGSTAGE, Paul 30 Oct 2026: the card always draws both faces, a face that is not engraved drawn plain)
-  check('S1b a back-only necklace shows its Back and a plain Front on the card', 'smart', start.open && (start.faces || []).map(f => f.face).sort().join() === 'back,front', `faces shown ${JSON.stringify((start.faces || []).map(f => f.face))}`);
+  // (ENGSTAGE, Paul 30 Oct 2026, SPEC: "Both are always shown for a piece that can have both, and each is always drawn": the Back engraved and edited, the Front the plain charm)
+  { const fb = (start.faces || []).find(f => f.face === 'back'), ff = (start.faces || []).find(f => f.face === 'front');
+    check('S1b a back-only necklace shows both faces on the card: the Back engraved and edited, the Front the plain charm (no words)', 'smart', start.open && start.faces.length === 2 && !!fb && fb.engraved && fb.current && !!ff && !ff.engraved && !ff.pvText, `faces shown ${JSON.stringify((start.faces || []).map(f => [f.face, f.engraved, f.current, f.pvText]))}`); }
   const s2 = sw ? await rtw(page, 'textLook', sw, refImg.base.work, refImg.anna.work, plainWork) : null;
   check('S2 work area starts as the real charm with the engraving in the system\'s font (the instrument\'s own control)', 'world', TEXT_OK(s2), 'the work area\'s engraving against the app\'s own rendering of that order: ' + JSON.stringify(s2));
-  check('T0 the back thumbnail at rest has the charm drawing in it, not only text', 'thumb', cpB.ok, cpB.ev + `; engpvDraw children ${start.faces[0] ? start.faces[0].drawKids : '-'}`);
+  check('T0 the back thumbnail at rest has the charm drawing in it, not only text', 'thumb', cpB.ok, cpB.ev + `; engpvDraw children ${(start.faces || []).find(f => f.face === 'back') ? start.faces.find(f => f.face === 'back').drawKids : '-'}`);
 
   const hl0 = await hiliteFacts(page);
   check('H1 the system\'s own choice is marked while nothing is changed (its mode, its words, its font; a visible sparkle each)', 'hilite', hl0.open && hl0.marked.join() === 'back' && hl0.boxMark === 'same' && hl0.sparks >= 2 && hl0.fontLabels.length >= 1, `mode marked: ${JSON.stringify(hl0.marked)}, words box: ${hl0.boxMark}, visible sparkles: ${hl0.sparks}, system font entries marked: ${JSON.stringify(hl0.fontLabels)}`);
@@ -387,17 +388,17 @@ async function partDetail(w, made) {
   await page.evaluate(() => { const j = Engrave.items().get(window.__rtJobKey); if (j && window.__dirSnap) { CharmNestEngravePosition.restore(j, window.__dirSnap); try { Engrave.render(); } catch (_) {} } }); await R.settle(page, 700);   // (LIVEWORDS: no Cancel: the move put back with its snapshot)
 
   // ── mode: faces follow the staged mode, live ──
-  const faceNames = f => (f.faces || []).map(x => x.face).join('+') || 'none';
+  // (ENGSTAGE, Paul 30 Oct 2026: both faces are always drawn on the Engrave detail's card; the mode decides which are ENGRAVED (data-engraved), the others are the plain charm)
+  const faceNames = f => (f.faces || []).filter(x => x.engraved).map(x => x.face).join('+') || 'none';
   // (LIVEWORDS: None | Front | Back are toggles kept at once; the save path is held here (a promise that never ends) so each press is seen staged, then let go: nothing is kept)
-  const modes = [['front', 'front+back'], ['none', 'front+back'], ['back', 'front+back']];   // (ENGSTAGE: both faces are always drawn; the choice is the panel's (data-choice), the faces not engraved drawn plain)
+  const modes = [['front', 'front+back'], ['none', 'none'], ['back', 'back']];
   await page.evaluate(() => { window.__saveRt = Engrave.saveSetup; Engrave.saveSetup = () => new Promise(() => {}); });
   for (const [m, want] of modes) {
     t = await trial(w, 'mode', m);
-    const chose = await page.evaluate(() => (document.querySelector('#egQueue .rvItem[data-kind=placement] .engp') || { dataset: {} }).dataset.choice || '');
-    check(`R3 pressing "${m}": the panel's choice is ${m} in the same tick`, 'smart', chose === m, chose);
+    { const chose = await page.evaluate(() => (document.querySelector('#egQueue .rvItem[data-kind=placement] .engp') || { dataset: {} }).dataset.choice || ''); check(`R3 pressing "${m}": the panel's choice is ${m} in the same tick`, 'smart', chose === m, chose); }   // (ENGSTAGE: the four options: the panel's own staged choice)
     await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (c && c._pieceMount) c._pieceMount.refresh(); else Engrave.render(); } }); await R.settle(page, 500);
     const got = faceNames(t.tick.facts);
-    check(`R3 pressing "${m}": the card shows ${want} in the same tick`, 'smart', got === want, `faces on the card at the tick: ${got}; ${t.tick.facts.faces.filter(f => f.empty === '1').length} empty slot(s)`);
+    check(`R3 pressing "${m}": the card shows ${want} engraved in the same tick (both faces drawn)`, 'smart', got === want && t.tick.facts.faces.length === 2, `engraved faces on the card at the tick: ${got} of ${t.tick.facts.faces.map(f => f.face).join('+')}; ${t.tick.facts.faces.filter(f => f.empty === '1').length} empty slot(s)`);
     for (const face of ['front', 'back']) if (t.tick.facts.faces.some(f => f.face === face)) {
       const cp = await charmPic(t.tick[face], chRefs);
       check(`R3 pressing "${m}": the ${face} thumbnail has the charm drawing in it (same tick)`, 'thumb', cp.ok, cp.ev);
