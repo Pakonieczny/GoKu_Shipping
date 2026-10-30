@@ -10431,6 +10431,20 @@ const Engrave = window.Engrave = (() => {
   const SV_STAGES = new Map();        // piece key -> { key, stage (normalised) | null, seq, raf, timer }
   const SV_FACES = new Map();   // piece key + "|" + face -> a face drawn from the charm: stagedFaceFit's record { face, text, fontWord, centre, size, view, mask, loading, onFont }
   let SV_SEQ = 0;
+  /* The cards drawn for a staged piece (placementCard with the panel): every one of them on the page is painted, whether or not the tab still calls it its card. EG.card is let go while a face is fitted
+     again (fitJobOnce) or reset, the card staying on screen, panel and all, until the tab is drawn again: a stage painted only on EG.card left that work area on an older state (S7 seed 2: the front
+     with "yy" under a box saying "eiAnsva") while its thumbnails, painted by piece, were right. */
+  const SV_CARDS = new Set();
+  /** The cards of piece `key` on the page now (`on`), and whether one is still being built (`pending`: made in the last 2 s, not on the page yet). Cards gone from the page are let go. */
+  function svCardsOf(key) {
+    const on = [], now = performance.now(); let pending = false;
+    for (const c of [...SV_CARDS]) {
+      if (c._svGone) { SV_CARDS.delete(c); continue; }
+      if (!c.isConnected) { if (c._svWasOn || now - (c._svBorn || 0) > 2000) SV_CARDS.delete(c); else if (c._svPiece === key) pending = true; continue; }
+      c._svWasOn = true; if (c._svPiece === key && c._svWork) on.push(c);
+    }
+    return { on, pending };
+  }
   const STAGE_ANIM = { fade: 120, out: 150, back: 210 };
   const SV_CHOICES = ["none", "front", "back", "both"];
   const svChoiceFaces = c => (c === "both" ? ["front", "back"] : c === "front" || c === "back" ? [c] : []);
@@ -10505,11 +10519,12 @@ const Engrave = window.Engrave = (() => {
   function svIdleArm(rec) { clearTimeout(rec.idleT); rec.idleT = setTimeout(() => svIdle(rec), 300); }
   function svIdle(rec) {
     rec.idleT = 0;
-    const PNL = window.CharmNestEngravePanel, job = rec.job, c = EG.card && EG.card.isConnected ? EG.card : null, pst = () => { let ps = null; try { ps = PNL && typeof PNL.stageOf === "function" ? PNL.stageOf(rec.key) : null; } catch (_) { ps = null; } return ps && typeof ps === "object" && ps.faces ? ps : null; };
-    if (SV_STAGES.get(rec.key) !== rec) { if (!SV_STAGES.has(rec.key) && c && c._svPiece === rec.key && job) { const ps = pst(); if (ps) { svShowStage.idleFixes++; svShowStage(job, ps); } } return; }   // (let go meanwhile while its card is still open: the panel's stage taken again)
-    if (rec.raf || rec.flushing || SV_TURN.run || (c && c.querySelector(".backHost canvas.drag"))) { svIdleArm(rec); return; }   // (a paint, a turn or a drag on its way: looked at after it)
+    const PNL = window.CharmNestEngravePanel, job = rec.job, cs = svCardsOf(rec.key).on, pst = () => { let ps = null; try { ps = PNL && typeof PNL.stageOf === "function" ? PNL.stageOf(rec.key) : null; } catch (_) { ps = null; } return ps && typeof ps === "object" && ps.faces ? ps : null; };
+    if (SV_STAGES.get(rec.key) !== rec) { if (!SV_STAGES.has(rec.key) && cs.length && job) { const ps = pst(); if (ps) { svShowStage.idleFixes++; svShowStage(job, ps); } } return; }   // (let go meanwhile while its card is still open: the panel's stage taken again)
+    if (rec.raf || rec.flushing || SV_TURN.run || cs.some(c => c.querySelector(".backHost canvas.drag"))) { svIdleArm(rec); return; }   // (a paint, a turn or a drag on its way: looked at after it)
     if (job && !rec.direct) { const ps = pst(), st = ps ? svNorm(ps, job) : null; if (st && svSig(st) !== svSig(rec.stage)) { rec.stage = st; rec.seq = ++SV_SEQ; rec.pseq = ps.seq; svShowStage.idleFixes++; } }
-    if (c && c._svPiece === rec.key && c._svExpect && c._remountWork) {
+    for (const c of cs) {
+      if (!c._svExpect || !c._remountWork) continue;
       const h = c.querySelector(".backHost"), want = c._svExpect();
       if (!h || h.dataset.face !== want.face || (want.words != null && (h.dataset.words || "") !== want.words) || +h.dataset.stageSeq !== rec.seq || !h.querySelector(":scope > canvas:not(.egSvHold), :scope > .egStagePv")) { svShowStage.idleFixes++; c._remountWork(); }
     }
@@ -10535,13 +10550,14 @@ const Engrave = window.Engrave = (() => {
     try {
       if (only === "thumbs") { thumbs(); return; }
       // (the work area first: its draft of a face with a job is what that face's thumbnail draws its lines from, Engrave.draftOf; then the thumbnails, in the same call)
-      const c = EG.card && EG.card.isConnected ? EG.card : null;
-      let reached = false, t1 = t0;
-      if (c && c._svWork && c._svPiece === rec.key) { try { c._svWork(rec); } catch (e) { console.warn("engraving: the stage's work area", e); } t1 = performance.now(); const h = c.querySelector(".backHost"); if (h) reached = +h.dataset.stageSeq === rec.seq || !!SV_TURN.run; }
+      const { on: cs, pending } = svCardsOf(rec.key);
+      let reached = cs.length > 0;
+      for (const c of cs) { try { c._svWork(rec); } catch (e) { console.warn("engraving: the stage's work area", e); } const h = c.querySelector(".backHost"); if (!h || (+h.dataset.stageSeq !== rec.seq && !SV_TURN.run)) reached = false; }
+      const t1 = performance.now();
       thumbs();
-      if (c) { const h = c.querySelector(".backHost"); if (h) h.dataset.paintMs = (performance.now() - t1).toFixed(1) + "+" + (t1 - t0).toFixed(1); }   // (what the paint cost, ms: the thumbnails + the work area)
-      // (the last state ALWAYS reaches the work area: the card of this piece being drawn again, or not on the page yet, is painted at the next frame, a few times at most)
-      const mine = !!EG.cardKey && svPieceKeyOf(EG.cardKey) === rec.key;
+      for (const c of cs) { const h = c.querySelector(".backHost"); if (h) h.dataset.paintMs = (performance.now() - t1).toFixed(1) + "+" + (t1 - t0).toFixed(1); }   // (what the paint cost, ms: the thumbnails + the work area)
+      // (the last state ALWAYS reaches the work area: a card of this piece being drawn again, or not on the page yet, is painted at the next frame, a few times at most)
+      const mine = pending || cs.length > 0 || (!!EG.cardKey && svPieceKeyOf(EG.cardKey) === rec.key);
       if (mine && !reached && (rec.retry = (rec.retry || 0) + 1) <= 20) Promise.resolve().then(() => svQueue(rec)); else if (reached) rec.retry = 0;
     } finally { rec.flushing = false; }
   }
@@ -12606,7 +12622,7 @@ const Engrave = window.Engrave = (() => {
     // what the system decided for this LINE (None / Front only / Back only / Front + back, each face's words and font), checked and edited right here: charm-nest-engrave-setup.js (one control for every card)
     // ENGSTAGE: the Design & Engrave card draws its piece's stage (Engrave.showStage): its work area (mountBack, _svWork below) and its thumbnails (CharmNestEngraveCard.paintStage). Opening a piece lets every other piece's stage go.
     const svPk = panelOn ? pieceKeyOfJob(job) : "";
-    if (panelOn) { svSweep(svPk); card._svPiece = svPk; svCss(); }
+    if (panelOn) { svSweep(svPk); card._svPiece = svPk; card._svBorn = performance.now(); SV_CARDS.add(card); svCss(); }
     { const su = card.querySelector("[data-engsetup]"); if (ctx && su && window.CharmNestEngravePanel) card._pieceMount = CharmNestEngravePanel.mountPiece(su, job, { view: viewFaceOf(job), onView: f => setViewFace(job, f, card), artFaces: pieceArtOn }); }   // (charm-nest-engrave-panel.js: the Front / Back thumbnails and the one panel, inline in the Engrave detail only; FACEVIEW: a face the Charm Editor drew on and nothing engraves is a thumbnail too, a press on it shows it in the work area)
     if (wordsJob) { const bh = card.querySelector(".backHost"); if (readsFree(job) && !preparingNow(job)) setTimeout(() => prepareLate(job.row).catch(() => {}), 0);   // (a press on a face that nobody has started reading starts it: prepareLate)
       const busy = (["ready", "fitting"].includes(job.state) && canFit(job)) || (OPENREAD.includes(job.state) && (preparingNow(job) || readsFree(job)));
@@ -12715,7 +12731,7 @@ const Engrave = window.Engrave = (() => {
       if (!r.mask || r.view !== fv.view) { r.text = ""; stagedFaceFit(job, t.face, fv, r); }   // (its safe area first: a place given below is kept)
       r.text = t.words.join("\n"); r.fontWord = t.x.font || ""; r._seq = t.seq;
       if (t.x.pos) { const c = viewPointOf(fv.view, t.x.pos.charm); if (c) r.centre = c; } else if (window.CharmNestEngravePanel && CharmNestEngravePanel.stagePos) r.centre = null;   // (no stagePos on the page: a drag made here keeps its place)
-      r.onFont = () => { const sr = SV_STAGES.get(svPk); if (sr && sr.stage) svQueue(sr); else if (EG.card === card && card.isConnected && card._remountWork) card._remountWork(); };
+      r.onFont = () => { const sr = SV_STAGES.get(svPk); if (sr && sr.stage) svQueue(sr); else if (!disposed && card.isConnected && card._remountWork) card._remountWork(); };
       return r;
     };
     /** A drag of the staged words on another face's placed job drawn here: they follow the pointer as its draft (a frame at most), the place let go at is the stage's. */
@@ -12927,7 +12943,7 @@ const Engrave = window.Engrave = (() => {
     };
     raf = requestAnimationFrame(() => { raf = 0; mountBack(); });
     card._remountWork = () => { if (disposed) return; if (raf) { cancelAnimationFrame(raf); raf = 0; } framed = null; mounted = [0, 0]; mountedBelow = -1; mountBack(); };   // (ROTBAR: the piece was turned, so the work area draws another view: framed again round it, at once)
-    card._dispose = () => { disposed = true; cancelAnimationFrame(raf); card._ro?.disconnect(); card._turnDispose?.(); };
+    card._dispose = () => { disposed = true; card._svGone = true; SV_CARDS.delete(card); cancelAnimationFrame(raf); card._ro?.disconnect(); card._turnDispose?.(); };
     if (window.ResizeObserver) { const ro = new ResizeObserver(() => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); }); ro.observe(backHost); const ap = card.querySelector(".pvApproval"); if (ap) ro.observe(ap); card._ro = ro; }
     const spacing = card.querySelector('[data-a="spacing"]');
     if(spacing) {
