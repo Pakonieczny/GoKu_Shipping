@@ -56,7 +56,7 @@ function installTracer(lineKey) {
   const m = Engrave.items();
   if (!m.__tset) { const set = m.set.bind(m); m.set = (k, j) => { if (mine(j)) { wrap(j); T.lines.push({ t: now(), key: j.key, f: '(job made)', to: j.state, st: frames() }); } return set(k, j); }; m.__tset = true; }
   // calls into the Engrave API from outside the bridge (the panel, the card): name, first argument's key, time
-  for (const name of ['moveTo', 'approve', 'draftFit', 'saveSetup', 'commitStage', 'decideWords', 'showStage', 'showFace', 'fitJob', 'nudge', 'stagePos', 'approveRow', 'stageNow']) {
+  for (const name of ['moveTo', 'approve', 'draftFit', 'saveSetup', 'commitStage', 'decideWords', 'showFace', 'fitJob', 'nudge', 'stagePos', 'approveRow']) {   // (showStage / stageNow are paints and reads, called every frame: left out)
     const f = Engrave[name]; if (typeof f !== 'function' || f.__traced) continue;
     const w = function (...a) { const k = a[0] && (a[0].key || (typeof a[0] === 'string' ? a[0] : null) || (a[0].stage && a[0].stage.key)); if (!k || String(k).startsWith(lineKey)) T.lines.push({ t: now(), call: 'Engrave.' + name, arg: k || null, st: frames() }); return f.apply(this, a); };
     w.__traced = true; Engrave[name] = w;
@@ -137,8 +137,9 @@ function installTracer(lineKey) {
       while (Date.now() - tEnd < 12000) { c = await page.evaluate(pk => window.__stg.committed(pk), pk); const sig = J(c); same = sig === last && !c.working ? same + 1 : 0; last = sig; if (same >= 15) break; await new Promise(r => setTimeout(r, 100)); }
       const s = await page.evaluate(pk => window.__stg.snap(pk), pk);
       const lastLit = [...log].reverse().find(x => x.k === 'approve' && x.enabled), lastEdit = log.reduce((m, x) => (['choice', 'key', 'bs'].includes(x.k) && !x.missing ? x.i : m), -1);
-      const lost = lastLit && lastLit.i > lastEdit && lastLit.staged && lastLit.staged.faces.filter(f => !(c[f] && approvedish(c[f].state)));
-      const verdict = lost && lost.length ? `REPRODUCED: ${lost.join('+')} not approved after the last lit press (action ${lastLit.i}, staged ${J(lastLit.staged.words)})` : lastLit && lastLit.i > lastEdit ? 'not reproduced (every staged face approved)' : 'not applicable (an edit came after the last lit press)';
+      const stg = await page.evaluate(pk => window.__stg.staged(pk), pk);
+      const lost = s.open && !s.dirty && stg ? stg.faces.filter(f => !(c[f] && approvedish(c[f].state))) : [];
+      const verdict = lost.length ? `REPRODUCED: the card is not dirty (calm ${J(s.calm)}, Approve ${J(s.approve)}) yet ${lost.join('+')} is not approved (staged ${J(stg.words)}); last lit press: action ${lastLit ? lastLit.i : '-'}, last edit: action ${lastEdit}` : s.open ? `not reproduced (dirty ${s.dirty}, faces ${J(stg && stg.faces)})` : 'not applicable (the card is gone)';
       console.log(`   ${n} (seed ${sd}): ${verdict}; end: dirty ${s.dirty}, calm ${s.calm}, approve ${J(s.approve)}; committed front ${J(c.front && [c.front.state, c.front.text, c.front.approvedAt])}, back ${J(c.back && [c.back.state, c.back.text, c.back.approvedAt])}`);
       const tr = await page.evaluate(() => window.__trace);
       fs.mkdirSync(OUT, { recursive: true });
@@ -148,9 +149,9 @@ function installTracer(lineKey) {
       if (lost && lost.length) {
         found++;
         // the decisive lines: from the last lit press on, the press itself, the API calls, and every write to the face(s) that lost their approval
-        const pressT = (tr.lines.filter(x => x.executor && /LIT/.test(x.executor)).pop() || { t: 0 }).t;
+        // (the decisive lines: every lit press, every press that reached Approve, the commits, and the writes of state / approvedAt / text to the face(s) that lost their approval)
         const keys = lost.map(f => (f === 'front' ? pk + '~front' : pk));
-        for (const x of tr.lines.filter(x => x.t >= pressT - 1 && (x.executor || x.press || x.call || keys.includes(x.key)))) console.log('     ' + J(x).slice(0, 700));
+        for (const x of tr.lines.filter(x => (x.executor && /LIT/.test(x.executor)) || x.press === 'approve' || (x.call && /commitStage|approve|saveSetup/.test(x.call)) || (keys.includes(x.key) && ['state', 'approvedAt', 'text', '(job made)'].includes(x.f)))) console.log('     ' + J(Object.assign({}, x, { st: x.st && x.st.split(' < ').slice(0, 4).join(' < ') })).slice(0, 520));
       }
     }
   } catch (e) { console.error(e); }
