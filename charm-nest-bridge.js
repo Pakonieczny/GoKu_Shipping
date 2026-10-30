@@ -9642,7 +9642,7 @@ const Engrave = window.Engrave = (() => {
     }
     const sf = typeof set.Regular.scriptFonts === "function" ? set.Regular.scriptFonts(lines.join("\n")) : [];   // (WORLD: the staged words in script fonts are drawn with exactly those)
     const font = pinFont((job.fit.weight === "Semibold" && set.Semibold) || set.Regular, { scriptFonts: sf }), pos = st.position || {}, want = pos.size ?? job.wantSize ?? job.fit.size;
-    const f = G.reflowAt(lines, font, job.mask, fitOpts(job, true), { centre: pos.centre || job.fit.centre, angle: pos.angle ?? job.fit.angle, size: want }, "auto");   // (refit's own call: the stroke measure too, so SMALL / THIN STROKES say it before a Save)
+    const f = G.reflowAt(lines, font, job.mask, rec.svStage ? { ...fitOpts(job, true), measure: false } : fitOpts(job, true), { centre: pos.centre || job.fit.centre, angle: pos.angle ?? job.fit.angle, size: want }, "auto");   // (refit's own call: the stroke measure too, so SMALL / THIN STROKES say it before a Save)
     if (!f.ok) { rec.note = "No room for these words"; return rec; }
     f.atLimit = f.size < want - .005; f.weight = job.fit.weight;
     rec.fit = f; rec.input = lines; rec.font = font; rec.fontId = id;

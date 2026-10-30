@@ -388,7 +388,8 @@ async function partDetail(w, made) {
   await page.evaluate(() => { const j = Engrave.items().get(window.__rtJobKey); if (j && window.__dirSnap) { CharmNestEngravePosition.restore(j, window.__dirSnap); try { Engrave.render(); } catch (_) {} } }); await R.settle(page, 700);   // (LIVEWORDS: no Cancel: the move put back with its snapshot)
 
   // ── mode: faces follow the staged mode, live ──
-  const faceNames = f => (f.faces || []).map(x => x.face).join('+') || 'none';
+  // (ENGSTAGE, Paul 30 Oct 2026: both faces are always drawn on the Engrave detail's card; the mode decides which are ENGRAVED (data-engraved), the others are the plain charm)
+  const faceNames = f => (f.faces || []).filter(x => x.engraved).map(x => x.face).join('+') || 'none';
   // (LIVEWORDS: None | Front | Back are toggles kept at once; the save path is held here (a promise that never ends) so each press is seen staged, then let go: nothing is kept)
   const modes = [['front', 'front+back'], ['none', 'none'], ['back', 'back']];
   await page.evaluate(() => { window.__saveRt = Engrave.saveSetup; Engrave.saveSetup = () => new Promise(() => {}); });
@@ -396,7 +397,7 @@ async function partDetail(w, made) {
     t = await trial(w, 'mode', m);
     await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (c && c._pieceMount) c._pieceMount.refresh(); else Engrave.render(); } }); await R.settle(page, 500);
     const got = faceNames(t.tick.facts);
-    check(`R3 pressing "${m}": the card shows ${want} in the same tick`, 'smart', got === want, `faces on the card at the tick: ${got}; ${t.tick.facts.faces.filter(f => f.empty === '1').length} empty slot(s)`);
+    check(`R3 pressing "${m}": the card shows ${want} engraved in the same tick (both faces drawn)`, 'smart', got === want && t.tick.facts.faces.length === 2, `engraved faces on the card at the tick: ${got} of ${t.tick.facts.faces.map(f => f.face).join('+')}; ${t.tick.facts.faces.filter(f => f.empty === '1').length} empty slot(s)`);
     for (const face of ['front', 'back']) if (t.tick.facts.faces.some(f => f.face === face)) {
       const cp = await charmPic(t.tick[face], chRefs);
       check(`R3 pressing "${m}": the ${face} thumbnail has the charm drawing in it (same tick)`, 'thumb', cp.ok, cp.ev);

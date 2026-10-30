@@ -146,7 +146,7 @@ const SHOTS = process.argv[2] || process.env.SHOTS || '';
     await R.openEngraveDetail(w, 'front', { face: 'front' }); await R.settle(page, 500);
     kept = await page.evaluate(() => __kept.splice(0));
     check((await drafts()).length === 0 && kept.length === 1 && kept[0].front && kept[0].front.text === 'rr2', `opening another order's piece ends the staged edit and keeps its words: ${JSON.stringify(kept)}`);
-    d = await detail(); check(d.faces.join() === 'front' && d.mode === 'front' && !d.save, `the other piece opens on its own faces (Front only), nothing staged: ${JSON.stringify([d.faces, d.mode])}`);
+    d = await detail(); check(d.faces.join() === 'front,back' && d.cur.join() === 'front' && d.mode === 'front' && !d.save && !d.thumbText.back, `the other piece opens on its own face (Front, edited; the Back the plain charm: ENGSTAGE), nothing staged: ${JSON.stringify([d.faces, d.cur, d.mode, d.thumbText])}`);
     await page.evaluate(() => { Engrave.saveSetup = window.__saveWas; });
 
     /* 5 ── an untouched card is exactly the system's choice */
