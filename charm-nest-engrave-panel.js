@@ -439,13 +439,13 @@
    * the panel's pickers, and on the card of a panel A (it presses Approve: queued), S (it stages None) or a key typed mid-word (it goes back into the box), never dismisses the card under the stamp.
    * Escape, Next, Back, close, another card or row and the tabs are still held for the stamp. */
   const OWN_SEL = '.engp, [data-engp], [data-engp-approve], [data-engp-stamp], .backHost, [data-eng-thumb], .emPop, .cnAp';   // (the panel's Approve sits in the card's approval row, outside .engp)
+  // (coordinator 30 Oct 2026: "the guard must let through any click or key that lands inside the Engrave detail card (the whole card element, Approve included) ... Block only navigation away"): what takes the card away
+  const NAV_SEL = '[data-a="prev"], [data-a="next"], [data-a="close"], [data-a="ear"], [data-a="piece"], [data-a="skip"], [data-a="usewords"], [data-open-order], .egCharmEdit, .egPcTab, a[href]';
   function ownInput(e) {
     const t = e && e.target; if (!t || !t.closest || e.type === 'keydown' && e.key === 'Escape') return false;
     if (t.closest(OWN_SEL)) return !(t.closest('.emPop, .cnAp') && !t.ownerDocument.querySelector('.engp'));   // (the pickers: while a panel is on the page)
-    if (e.type !== 'keydown' || e.metaKey || e.ctrlKey || e.altKey) return false;
     const card = t.closest('.rvItem'), p = card && card.querySelector('.engp[data-key]'); if (!p) return false;
-    const k = (e.key || '').toLowerCase();
-    return (TYPED.key === p.dataset.key && Date.now() - TYPED.at < TYPE_MS) || (!e.repeat && (k === 'a' || k === 's'));
+    return !t.closest(NAV_SEL);   // (anything else in the card of a panel is its own: A presses Approve, S stages None, a key typed mid-word goes back into the box, the work area's tools)
   }
   let ownInputOn = false;
   const ownInputHook = () => { if (ownInputOn) return; const S = root && root.Seal; if (S && typeof S.ownInput === 'function') { ownInputOn = true; tryDo(() => S.ownInput(ownInput)); } };
@@ -484,6 +484,8 @@
       const m = str(res && res.message).trim() || 'Not approved: try again.', dn = DRAFTS.get(key); if (dn) dn.why = /^Not approved/i.test(m) ? m : 'Not approved: ' + m.replace(/^Not saved:\s*/i, '');   // (APPROVEFIX: the card says it in words too, under Approve, until the next change or press)
     }
     // (the pictures: what is kept, or what is staged on top of it now: never the state of the press. A binding draws from the draft as it is NOW: the sequence guard)
+    // (the card moves on to the next piece, as after any approval, only when nothing is staged on top of what this commit kept and no commit runs or waits: asked now, checked again when it fires)
+    if (res && res.ok && res.moveOn && E && typeof E.stageMoveOn === 'function') { const pk = res.moveOn; tryDo(() => E.stageMoveOn(pk, () => { const dn = DRAFTS.get(key); return !COMMITS.has(key) && !PENDING.has(key) && !RUNNING.has(key) && !HUNG.has(key) && !(dn && (dn.touched || dn.dirty)); })); }
     const live = liveBindings(key);
     for (const b of live) tryDo(() => b.draw());
     if (clean || !DRAFTS.has(key)) { if (E && typeof E.showStage === 'function') tryDo(() => E.showStage(ctx.jobKey || (live[0] && live[0].jobKey) || '', null)); for (const b of live) tryDo(() => b.paintLegacy()); }

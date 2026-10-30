@@ -368,6 +368,40 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     check('K2 and what would take the card away (Next) is still held for the stamp', k5.key === k0.key, JSON.stringify({ k0: k0.key, k5 }));
     check('K3 the press made under the stamp is kept and approved (the Back "…ONEOQ")', !!kd, JSON.stringify(kd || await jobsOf(KB)));
     await quiet(); await page.evaluate(() => { Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render(); }); await R.settle(page, 900);
+
+    /* ── L · coordinator, 30 Oct 2026 (suite c554e1a, STAGE_TRACE): the last lit Approve lost under the stamp, and the earlier commit's "move on", released when the stamp ended, leaving the card with new
+     *        edits staged. L1-L2: Approve, then an edit and the lit Approve again while the stamp comes down: the second commit happens. L3-L4: Approve, then typing while the stamp comes down: the card stays,
+     *        the edit is kept and Approve is lit ── */
+    const holdStamp = ms => page.evaluate(ms => {   // (a stamp held down: its seal waits for a running animation of its surface; the approvals' own stamps queue behind it)
+      const host = document.createElement('div'); host.style.cssText = 'position:fixed;right:0;bottom:0;width:40px;height:40px;pointer-events:none'; const seal = document.createElement('div'); seal.className = 'seal'; seal.style.cssText = 'width:40px;height:40px'; host.appendChild(seal); document.body.appendChild(host);
+      host.animate([{ opacity: 1 }, { opacity: 0.99 }], { duration: ms }); window.__hold = Seal.press(seal).catch(() => {}).then(() => host.remove()); return Seal.busy();
+    }, ms);
+    const commitDone = () => until(() => page.evaluate(k => { const s = CharmNestEngravePanel.busyOf(k); return !s.running && !s.pending && !s.committing; }, KT), 60000);
+    const backOf = async () => (await jobsOf(KT)).find(j => j.face === 'back');
+    await quiet(); await R.openEngraveDetail(w, 'tag', { face: 'back' }); await R.settle(page, 700);
+    const l0 = await st();
+    const lHeld = await holdStamp(7000);
+    await typeInto('X'); await page.click(Q + ' [data-engp-approve]');
+    await commitDone();
+    const l1 = { back: await backOf(), busy: await page.evaluate(() => Seal.busy()), st: await st() };
+    await typeInto('Y'); const l1b = await st(); await page.click(Q + ' [data-engp-approve]');
+    const l1c = { busy: await page.evaluate(() => Seal.busy()), st: (await st()).approve, run: await page.evaluate(k => CharmNestEngravePanel.busyOf(k), KT) };
+    await commitDone(); await page.evaluate(() => window.__hold); await quiet();
+    const l2 = await backOf();
+    check('L1 Approve, then an edit and the lit Approve pressed again while the stamp comes down: the second press goes through ("Approved ✓", its commit under way)', lHeld && l1.busy && /X$/.test(l1.back.text.replace(/\s+/g, '')) && l1b.approve && l1b.approve.a === 'approve' && l1c.busy && /✓/.test((l1c.st || {}).text || '') && (l1c.run.committing || l1c.run.running), JSON.stringify({ l0: l0.key, l1, l1b: { approve: l1b.approve, dirty: l1b.dirty, words: l1b.words }, l1c }));
+    check('L2 and the second commit happens: the Back approved with both edits ("…XY")', ['approved', 'written'].includes(l2.state) && /XY$/.test(l2.text.replace(/\s+/g, '')), JSON.stringify(l2));
+    await quiet(); { const s = await st(); if (s.key !== l0.key) { await R.openEngraveDetail(w, 'tag', { face: 'back' }); await R.settle(page, 700); } }
+    const l3h = await holdStamp(7000);
+    await typeInto('Z'); await page.click(Q + ' [data-engp-approve]');
+    await commitDone();
+    const l3a = { back: await backOf(), busy: await page.evaluate(() => Seal.busy()) };
+    await typeInto('W');
+    const l3b = { busy: await page.evaluate(() => Seal.busy()), st: await st() };
+    await page.evaluate(() => window.__hold); await until(() => page.evaluate(() => !Seal.busy()), 15000); await R.settle(page, 900);
+    const l4 = await st();
+    check('L3 Approve, then typing while the stamp comes down: the first press is kept, the letter typed under the stamp is in the box', l3h && l3a.busy && /Z$/.test(l3a.back.text.replace(/\s+/g, '')) && ['approved', 'written'].includes(l3a.back.state) && l3b.busy && /ZW$/.test(((l3b.st.words || {}).value || '').replace(/\s+/g, '')), JSON.stringify({ l3a, l3b: { busy: l3b.busy, words: l3b.st.words, approve: l3b.st.approve } }));
+    check('L4 once the stamp is done the card stays on the piece with the edit kept (staged) and Approve lit: the earlier commit\'s move on never takes it away', l4.key === l0.key && /ZW$/.test(((l4.words || {}).value || '').replace(/\s+/g, '')) && l4.approve && l4.approve.a === 'approve' && !l4.approve.dis && l4.dirty, JSON.stringify({ l0: l0.key, key: l4.key, words: l4.words, approve: l4.approve, dirty: l4.dirty }));
+    await quiet(); await page.evaluate(() => { Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render(); }); await R.settle(page, 900);
     check('Z no page errors', errors.length === 0, errors.join(' | ').slice(0, 600));
   } catch (e) { console.error(e); check('ran', false, String(e && e.stack || e)); }
   finally { await w.close(); }

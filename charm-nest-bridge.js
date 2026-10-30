@@ -9366,23 +9366,40 @@ const Engrave = window.Engrave = (() => {
       let c = null; try { const E = window.Engrave; c = E && typeof E.stagePlaceOf === "function" ? E.stagePlaceOf(j, p) : Array.isArray(p.charm) && j.view ? viewPointOf(j.view, p.charm) : null; } catch (_) { c = null; }
       if (c && j.fit.centre && Math.hypot(c[0] - j.fit.centre[0], c[1] - j.fit.centre[1]) > 1e-6) { try { if (moveTo(j, c)) j.nudged = true; } catch (_) { /* the place it has stands */ } }
     }
-    // (4) the approvals, Front before Back
-    const approved = [];
+    // (4) the approvals, Front before Back. The card in front, when it is this piece's, is held on it (EG.opened: a decided piece stays in front when it was opened): it moves on only when the panel asks
+    //     once the commit is over and nothing is staged on top of it (stageMoveOn: coordinator 30 Oct 2026, "move on ONLY if the piece's draft is clean")
+    const approved = [], pin = EG.focus && jobsOf(line).some(j => j.key === EG.focus && (j.slot || null) === slot) ? EG.focus : null;
+    if (pin) EG.opened = pin;
     for (const f of on) {
       const j = mine(f) || jobs[f]; if (!j) return { ok: false, message: `Not approved: the ${f} could not be made here.`, approved };
       if (["approved", "written"].includes(j.state)) { approved.push(j.key); continue; }
       step("approve");
       // (the face is approved the moment its state says so: the rest of the approval (its back file for the sheets, its save) goes on behind it, as after any Approve; the commit does not wait for it)
-      { const task = Promise.resolve(approve(j, by, stampAt(), { quick: true })).catch(() => {}); let done = false; task.then(() => { done = true; }); while (!done && !["approved", "written"].includes(j.state)) await Promise.race([task, wait(60)]); }
+      { const task = Promise.resolve(approve(j, by, stampAt(), { quick: true, moveOn: false })).catch(() => {}); let done = false; task.then(() => { done = true; }); while (!done && !["approved", "written"].includes(j.state)) await Promise.race([task, wait(60)]); }
       step("approved");   // (the stamp on the panel's own anchor: the live Approve is never the approval's button)
       if (!["approved", "written"].includes(j.state)) { const w = APPROVE_WHY.get(j.key); return { ok: false, message: (w && w.text) || `Not approved: the ${f} is still to approve.`, approved, failed: j.key, said: !!w }; }   // (said: the approval already told the person why)
       approved.push(j.key);
     }
     // (every engraved face approved, read again now: a face that went back to review under the commit (approved before, its words changed) is never left behind with the card looking calm)
     { const left = on.filter(f => { const j = mine(f); return !j || !["approved", "written"].includes(j.state); }); if (left.length) return { ok: false, message: `Not approved: the ${left.join(" and ")} ${left.length > 1 ? "are" : "is"} still to approve. Press Approve again.`, approved }; }
-    void mark; return { ok: true, approved };
+    void mark; return { ok: true, approved, moveOn: pin };
   }
-  Promise.resolve().then(() => { try { if (window.Engrave && !window.Engrave.commitStage) window.Engrave.commitStage = commitStage; } catch (_) { /* the panel says it cannot approve */ } });   // (ENGSTAGE: beside the Engrave object, not inside its return)
+  /** ENGSTAGE (coordinator 30 Oct 2026: "when a commit ends, move on ONLY if the piece's draft is clean (nothing staged on top, no commit waiting) ... A deferred move-on must re-check this at the moment it
+   *  would fire, not at the moment it was scheduled"): the card of a piece whose commit approved it moves on to the next piece, as an approval always did, once no stamp is coming down any more, and only if
+   *  `ok()` says so THEN (the panel: nothing staged, no commit running or waiting) and the card in front is still the very card it was (a piece opened again, Next or Back meanwhile: the person's
+   *  own move stands). */
+  function stageMoveOn(key, ok) {
+    const card0 = EG.card, cardKey0 = EG.cardKey;
+    const go = () => {
+      if (window.Seal?.busy?.()) { window.Seal.whenIdle().then(go); return; }
+      let yes = false; try { yes = !!ok(); } catch (_) { yes = false; } if (!yes) return;
+      if (!card0 || EG.card !== card0 || EG.cardKey !== cardKey0 || !card0.isConnected) return;
+      const job = items().get(key); if (!job || EG.opened !== key || EG.focus !== key || !["approved", "written"].includes(job.state)) return;
+      EG.opened = null; goes(job, { to: EG_TAB("approved") }); render();
+    };
+    go();
+  }
+  Promise.resolve().then(() => { try { if (window.Engrave && !window.Engrave.commitStage) window.Engrave.commitStage = commitStage; if (window.Engrave && !window.Engrave.stageMoveOn) window.Engrave.stageMoveOn = stageMoveOn; } catch (_) { /* the panel says it cannot approve */ } });   // (ENGSTAGE: beside the Engrave object, not inside its return)
   /** NONEPLAIN (Paul, 29 Oct 2026: "I chose "None" for engraving and it still kept the engraving"): is a piece of this line CUT, so a decided face on it may no longer be taken away? The ONE rule a piece that may
    *  no longer change follows (replaceCutWhy: its sheet laser cut, a Rose Gold layout cut, inside a protected contour); a sheet in a set whose files are written, labelled or released is not cut, and its back is
    *  withdrawn like any other (the line's state "written" said "already cut" and refused None on a draft sheet: order 4213864833). A piece on no sheet of this page reads its sheet's Library record; with
@@ -9612,8 +9629,11 @@ const Engrave = window.Engrave = (() => {
     if(job.state==="approved")try{humanAct("complete",{orderId:String(job.row.order.receiptId),line:String(job.row.line.transactionId||""),sku:String(job.row.spec&&job.row.spec.designSku||""),parts:(job.copies||[]).length||1,detail:(isFront(job) ? "front " : "") + "engraving approved"});}catch(_){}
     job.approvalPreparing=false;
     if(typeof Session!=="undefined"){Session.schedule();await approveWithin(Session.flushNow?.(),APPROVE_MS.save,"").catch(()=>{});}   // (the approval is checkpointed already: this save only carries what followed)
-    if (EG.opened === job.key) EG.opened = null;   // (NODECIDED: the card of a piece just approved moves on to the next piece; the approved piece is in the list, its seals on its row)
-    for(const show of [()=>goes(job,{to:EG_TAB("approved")}),()=>Review.remove("eng:"+job.key),()=>agent({engrave:true},"ENGRAVE",`${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.artOnly ? "the charm editor's parts, no words" : `${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""}`})`),render,()=>Orders.render()])try{show();}catch(e){console.warn("Engraving approval view",e);}
+    // (ENGSTAGE, coordinator 30 Oct 2026: "The previous commit's "move on" throws away newer staged edits": an approval made by the panel's commit (o.moveOn false) leaves the card where it is; the panel
+    //  asks for the move once its commit is over and nothing is staged on top of it (stageMoveOn))
+    const moveOn = !(o && o.moveOn === false);
+    if (moveOn && EG.opened === job.key) EG.opened = null;   // (NODECIDED: the card of a piece just approved moves on to the next piece; the approved piece is in the list, its seals on its row)
+    for(const show of [()=>{if(moveOn)goes(job,{to:EG_TAB("approved")});},()=>Review.remove("eng:"+job.key),()=>agent({engrave:true},"ENGRAVE",`${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.artOnly ? "the charm editor's parts, no words" : `${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""}`})`),render,()=>Orders.render()])try{show();}catch(e){console.warn("Engraving approval view",e);}
     await saveBacks(job);
     } finally {
       job.approvalPreparing=false;
