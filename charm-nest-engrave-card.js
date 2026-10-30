@@ -521,10 +521,17 @@
     for (const h of [...set]) { if (set.size <= 8) break; if (h.where() !== 'live') set.delete(h); }
     if (!set.size) MOUNTS.delete(String(pieceKey));
     // (a card still being built is painted at the next frame, once it is on the page: a stage given while the tab draws the card (the panel's own first paint, a reopened piece) is never lost)
-    if (pending && !REPAINT.has(String(pieceKey)) && root && typeof root.requestAnimationFrame === 'function') { REPAINT.add(String(pieceKey)); root.requestAnimationFrame(() => { REPAINT.delete(String(pieceKey)); paintStage(pieceKey); }); }
+    // (a few frames at most: a card built and never put on the page is let go then)
+    const k = String(pieceKey);
+    if (!pending) REPAINT.delete(k);
+    else {
+      const t = REPAINT.get(k) || { n: 0, asked: false }; REPAINT.set(k, t);
+      if (t.n >= 30 || !root || typeof root.requestAnimationFrame !== 'function') { for (const h of [...set]) if (h.where() === 'pending') set.delete(h); REPAINT.delete(k); }
+      else if (!t.asked) { t.asked = true; t.n++; root.requestAnimationFrame(() => { t.asked = false; paintStage(pieceKey); }); }
+    }
     return n;
   }
-  const REPAINT = new Set();
+  const REPAINT = new Map();   // piece key -> { n: frames tried for a card still being built, asked }
   function mountPiece(slot, ctx) {
     css(); ctx = Object.assign({}, ctx); let el = null, last = '', gone = false, wasLive = false;
     const pkOf = () => { const F = Faces(); return ctx.key && F ? F.pieceKeyOf(ctx.key) : ''; };

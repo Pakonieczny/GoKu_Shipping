@@ -10356,7 +10356,11 @@ const Engrave = window.Engrave = (() => {
   /** THE ONE CALL (see above) -> { ok, seq }. */
   function svShowStage(x, stage) {
     const job = typeof x === "string" ? items().get(x) : x; if (!job || !job.key) return { ok: false, why: "no such piece" };
-    const st = svNorm(stage, job), key = st ? st.key : pieceKeyOfJob(job);
+    // (a null stage is what is committed only when the panel holds no draft of the piece: while it does (a commit just ended, its draft clean or staged on top), the panel's own stage is drawn, so the
+    //  work area and the thumbnails always equal the panel's choice, face and words, whatever was kept)
+    const key0 = stage && stage.key ? String(stage.key) : pieceKeyOfJob(job), PNL = window.CharmNestEngravePanel;
+    if (!stage && PNL && typeof PNL.stageOf === "function") { const ps = (() => { try { return PNL.stageOf(key0); } catch (_) { return null; } })(); if (ps && typeof ps === "object" && ps.faces) stage = ps; }
+    const st = svNorm(stage, job), key = st ? st.key : key0;
     let rec = SV_STAGES.get(key); if (!rec) SV_STAGES.set(key, rec = { key, stage: null, seq: 0, raf: 0, timer: 0 });
     rec.stage = st; rec.seq = ++SV_SEQ;
     if (!st) svLetGo(key, true);   // (what is committed: the stage's drafts go now, the paint draws the jobs as they are)
@@ -11983,7 +11987,7 @@ const Engrave = window.Engrave = (() => {
     const c = EG.card;
     if (!c || !c.isConnected || EG.cardKey !== job.key) { render(); return; }
     const f = job.fit; if (!f) { render(); return; }
-    const bc = c.querySelector(".backHost canvas"); if (bc && bc._paint) { bc._paint(); markShown(job); c._syncBoth?.(); }
+    const bc = c.querySelector(".backHost canvas"); if (bc && bc._paint) { if (c._svWork) c._svWork(); else bc._paint(); markShown(job); c._syncBoth?.(); }   // (ENGSTAGE: the Design & Engrave card paints what it shows now: the stage, or the job as it is)
     // (EDITFOLLOW, Paul 29 Oct 2026: "not all of the visible vector thumbnails got updated correctly": the card's Front / Back boxes are drawn again with the work area, from the job as it is now
     //  (they were drawn while the face was fitted again, with the placement it had, and nothing drew them again when the new placement landed))
     { const pm = c._pieceMount; if (pm && pm.card && pm.card.update) { try { pm.card.update(); } catch (_) { /* the boxes follow at the next look at what moved */ } } }
@@ -12581,7 +12585,8 @@ const Engrave = window.Engrave = (() => {
       if (fv && fv.view) {
         const r = svFaceRec(t, fv);
         const draw = () => { const sf = stagedFaceFit(job, A, fv, r); return renderBack({ key: job.key + "~" + A, view: fv.view, mask: sf.mask, fit: sf.fit, copies: job.copies, row: job.row, _viewCharm: fv.charm }, px, { grid: true, hatch: false, editable: true, steady: true, zoom: workZoomOf(job, A), label: WORK_LABEL }); };
-        const cv = draw(); cv._editable = false; cv._paint(); cv._viewFace = A; cv._staged = true; cv._svFv = fv; cv._svRec = r; cv.tabIndex = -1; cv.style.outline = "none";   // (drawn again at once with no box or handles: the staged words are moved, never sized or turned, until they are a job)
+        const cv = draw(); cv._editable = false; cv._paint(); cv._viewFace = A; cv._staged = true; cv._svFv = fv; cv._svRec = r; cv.tabIndex = -1; cv.style.outline = "none";
+        { const base = cv._paint; cv._paint = prov => (prov ? base(prov) : cv._svRedraw()); }   // (painted again by anyone (a job's refresh, the rulers): from the record as it is NOW, never the words it was first drawn with)   // (drawn again at once with no box or handles: the staged words are moved, never sized or turned, until they are a job)
         // (a letter typed: only the words are laid out again (reflowAt, a few ms) and painted over the face's still layers (the canvas's own _paint): the grid, the art and the cut line are not drawn again)
         cv._svRedraw = () => { try { const sf = stagedFaceFit(job, A, fv, r), f = sf.fit; cv._paint(f && f.glyphs ? { glyphs: f.glyphs, centre: f.centre, angle: f.angle || 0 } : { glyphs: [] }); } catch (_) { try { const nc = draw(), g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(nc, 0, 0, cv.width, cv.height); } catch (_) { /* the drawing it had stays */ } } queueWorkRulers(backHost._ez); };
         cv.title = t.words.length ? `the ${A} of this piece with the words staged for it · drag the words to move them` : `the ${A} of this piece`;
