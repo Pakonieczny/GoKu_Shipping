@@ -514,14 +514,25 @@
   const MOUNTS = new Map();   // piece key -> Set of mounted cards (their handles)
   function paintStage(pieceKey, stage) {
     const set = MOUNTS.get(String(pieceKey)); let n = 0; if (!set) return 0;
-    for (const h of [...set]) { if (!h.live()) { set.delete(h); continue; } if (h.paintStage(stage)) n++; }   // (a card no longer on the page is let go: it was built again or left)
+    // (a card that was on the page and is no longer is let go: it was built again or left. A card still being built (Engrave paints in the very call the panel makes while the tab draws the card)
+    //  is kept and painted once it is on the page: it already drew the stage it was made with)
+    let pending = false;
+    for (const h of [...set]) { const at = h.where(); if (at === 'gone') { set.delete(h); continue; } if (at === 'pending') { pending = true; continue; } if (h.paintStage(stage)) n++; }
+    for (const h of [...set]) { if (set.size <= 8) break; if (h.where() !== 'live') set.delete(h); }
     if (!set.size) MOUNTS.delete(String(pieceKey));
+    // (a card still being built is painted at the next frame, once it is on the page: a stage given while the tab draws the card (the panel's own first paint, a reopened piece) is never lost)
+    if (pending && !REPAINT.has(String(pieceKey)) && root && typeof root.requestAnimationFrame === 'function') { REPAINT.add(String(pieceKey)); root.requestAnimationFrame(() => { REPAINT.delete(String(pieceKey)); paintStage(pieceKey); }); }
     return n;
   }
+  const REPAINT = new Set();
   function mountPiece(slot, ctx) {
-    css(); ctx = Object.assign({}, ctx); let el = null, last = '', gone = false;
+    css(); ctx = Object.assign({}, ctx); let el = null, last = '', gone = false, wasLive = false;
     const pkOf = () => { const F = Faces(); return ctx.key && F ? F.pieceKeyOf(ctx.key) : ''; };
-    const stageNow = () => { const E = root && root.Engrave, s = E && typeof E.stageNow === 'function' ? tryDo(() => E.stageNow(pkOf()), undefined) : undefined; return s === undefined ? ctx.stage || null : s && typeof s === 'object' ? s : null; };   // (null from Engrave: what is committed)
+    // (which stage is the newer: the host's own (ctx.stage, given at the mount or an update) or Engrave's (showStage, numbered): Engrave's once a showStage came after the host's, its null meaning
+    //  what is committed; else the host's. So a card built while the tab draws (a reopened piece) starts from the panel's stage, and every showStage after it, the last one null included, wins)
+    const seqNow = () => { const E = root && root.Engrave; return E && typeof E.stageSeq === 'function' ? +tryDo(() => E.stageSeq(pkOf()), 0) || 0 : 0; };
+    const stageNow = () => { const E = root && root.Engrave, s = E && typeof E.stageNow === 'function' ? tryDo(() => E.stageNow(pkOf()), undefined) : undefined; if (s === undefined || (ctx.stageAt != null && seqNow() <= ctx.stageAt)) return ctx.stage || null; return s && typeof s === 'object' ? s : null; };
+    if (Object.prototype.hasOwnProperty.call(ctx, 'stage')) ctx.stageAt = seqNow();
     const find = () => {
       const row = lineOf(ctx.row), pk = pkOf();
       const ps = piecesOf([row], { nameOf: ctx.nameOf, isWorking: ctx.isWorking, stage: stageNow(), keepEmpty: true, artFaces: ctx.artFaces, both: ctx.both !== false }); return ps.find(p => p.pieceKey === pk) || ps.find(p => p.jobs.some(j => j.key === ctx.key)) || ps[0] || null;
@@ -551,7 +562,7 @@
      *  words and font on its picture and under it; the card is built again only when the faces it shows changed. -> true when painted. */
     function paintStage(stage) {
       if (gone) return false;
-      if (stage !== undefined) ctx.stage = stage;
+      if (stage !== undefined) { ctx.stage = stage; ctx.stageAt = seqNow(); }
       const s0 = stageNow(); if (s0 && (s0.active === 'front' || s0.active === 'back')) ctx.face = s0.active;
       const p = tryDo(find, null); if (!p) { draw(true); return true; }
       const shown = ['front', 'back'].filter(f => p.faces[f]), P = root && root.CharmNestEngravePreview;
@@ -570,9 +581,9 @@
       el.dataset.state = p.state; last = sig(p, o());
       return true;
     }
-    const h = { get el() { return el; }, update(patch) { const staged = !!patch && Object.prototype.hasOwnProperty.call(patch, 'stage'); if (patch) Object.assign(ctx, patch); draw(staged); }, refresh() { draw(true); },
+    const h = { get el() { return el; }, update(patch) { const staged = !!patch && Object.prototype.hasOwnProperty.call(patch, 'stage'); if (patch) Object.assign(ctx, patch); if (staged) ctx.stageAt = seqNow(); draw(staged); }, refresh() { draw(true); },
       destroy() { gone = true; if (unsweep) unsweep(); slot.replaceChildren(); el = null; const set = MOUNTS.get(mk); if (set) { set.delete(h); if (!set.size) MOUNTS.delete(mk); } },
-      paintStage, key: () => pkOf(), live: () => !gone && slot.isConnected,
+      paintStage, key: () => pkOf(), where: () => (gone ? 'gone' : slot.isConnected ? ((wasLive = true), 'live') : wasLive ? 'gone' : 'pending'),
       thumb: face => (el ? el.querySelector(`.engFace[data-face="${face}"] .engThumb`) : null),
       faces: () => (el ? [...el.querySelectorAll('.engFace')].map(f => f.dataset.face) : []),
       label(face, text) { const t = el && el.querySelector(`.engFace[data-face="${face}"] .engTxt`); if (!t) return; const w = linesText(text); t.className = 'engTxt'; t.textContent = w.join(' / '); if (w.length) t.title = w.join('\n'); else t.removeAttribute('title'); } };
