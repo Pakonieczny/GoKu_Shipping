@@ -164,7 +164,8 @@ const SHOTS = process.env.SHOTS || '/tmp/dec/shots';
     note(card && card.state !== 'approved', 'a click on a disc still to settle opens the piece still to settle', JSON.stringify(card && { key: tails(card.key), state: card.state }));
     // the faced charm: approve the back face only
     const bk = both.map(j => j.key).sort(); const bBack = bk.find(k => !/~front$/.test(k)); const bFront = bk.find(k => /~front$/.test(k));
-    await approveFirst(bBack); await showList(); await settle(700); rows = await listRows();
+    // (ENGSTAGE, Paul 30 Oct 2026: the card's one Approve keeps the whole piece, both faces: the back alone is approved by the page's own approval of its job)
+    await page.evaluate(k => Engrave.approve(Engrave.items().get(k)), bBack); await waitState(bBack, ['approved', 'written'], 60000); await showList(); await settle(700); rows = await listRows();
     const brow = rows.find(r => r.rid === RID.both);
     note(brow && brow.ears.length >= 2 ? brow.ears.some(e => e.s === 'approved') && brow.ears.some(e => e.s === 'review') : true, 'the faced charm tells its Back approved and its Front still to settle in ONE row', JSON.stringify(brow && brow.ears.map(e => e.s)));
 

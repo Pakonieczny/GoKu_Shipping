@@ -60,12 +60,12 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
         return { panel: r(p), segs: segs.map(s => ({ t: s.textContent.trim(), top: Math.round(r(s).t), right: Math.round(r(s).r) })), segBox: r(p.querySelector('.engpMode:not(.engpFaceSw)')), ta: r(ta), sel: r(sel),
           taW: parseFloat(getComputedStyle(ta).width), buttons: [...p.querySelectorAll('button')].map(b => b.textContent.trim()).filter(Boolean), text: p.textContent.replace(/\s+/g, ' ') };
       });
-      check(m.segs.map(s => s.t).join('|') === 'None|Front|Back', `${w}px: the choices are None | Front | Back (no Front + back): ${m.segs.map(s => s.t).join(' | ')}`);
-      check(new Set(m.segs.map(s => s.top)).size === 1 && m.segs.every(s => s.right <= Math.ceil(m.segBox.r)), `${w}px: all three on ONE row inside the control (tops ${m.segs.map(s => s.top)})`);
+      check(/^None\|Front\|Back\|(Front & Back|Both)$/.test(m.segs.map(s => s.t).join('|')), `${w}px: the choices are None | Front | Back | Front & Back (ENGSTAGE, Paul 30 Oct 2026; "Both" when the column is narrow): ${m.segs.map(s => s.t).join(' | ')}`);
+      check(new Set(m.segs.map(s => s.top)).size === 1 && m.segs.every(s => s.right <= Math.ceil(m.segBox.r)), `${w}px: all four on ONE row inside the control (tops ${m.segs.map(s => s.top)})`);
       check(m.panel.w >= 232 - 1, `${w}px: the panel is at least 232px wide: ${Math.round(m.panel.w)}px`);
       check(m.taW >= 200 && m.ta.w >= 200, `${w}px: the text area is a normal width: ${Math.round(m.ta.w)}px (computed ${Math.round(m.taW)})`);
       check(m.sel.t >= m.ta.b - 0.5 && m.sel.w >= 200, `${w}px: the font drop-down is under the text area, full width, touching nothing: select top ${Math.round(m.sel.t)} >= text bottom ${Math.round(m.ta.b)}, width ${Math.round(m.sel.w)}`);
-      const acts = m.buttons.filter(b => !/^(None|Front|Back|Front \+ back|Emoji|Aα)$/.test(b));   // (Emoji and Aα, the other alphabets (ALPHAFIND, 28 Oct 2026), are Paul's own picker buttons, beside the words)
+      const acts = m.buttons.filter(b => !/^(None|Front|Back|Front & Back|Both|Emoji|Aα)$/.test(b));   // (Emoji and Aα, the other alphabets (ALPHAFIND, 28 Oct 2026), are Paul's own picker buttons, beside the words)
       check(acts.length === 0, `${w}px: no Save, no Cancel, no other action button (besides the quiet Emoji and Aα buttons): ${acts.join(' | ')}`);
       check(!/ENGRAVES|system read|nothing in the listing|Undo|sure|%|Why change|Changed:/i.test(m.text), `${w}px: none of the old words in the panel: "${m.text.slice(0, 120)}"`);
       if (shots) await page.screenshot({ path: path.join(shots, `panel-${w}.png`) });
@@ -93,8 +93,9 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       out.locked = { words: slot.querySelector('.engpWords').disabled, font: slot.querySelector('.engpFont').disabled, lock: (slot.querySelector('.engpLock') || {}).textContent || '', save: !slot.querySelector('[data-engp=save]'), words0: slot.querySelector('.engpWords').value };
       Object.assign(j, { state: was.state, approvedBy: was.by }); slot.remove(); CharmNestEngravePanel.DRAFTS.clear(); return out;
     }, KEY);
-    check(odd.ask.prompt && odd.ask.raw === 'Name One Name Two', 'words nobody could place: the panel asks in one line and shows the buyer\'s own words: ' + JSON.stringify(odd.ask));
-    check(!odd.locked.words && !odd.locked.font && odd.locked.lock === 'Approved by Name One' && odd.locked.save, 'an approved face is not locked: its words and font are open, ONE line says by whom, no Save button: ' + JSON.stringify(odd.locked));
+    // (ENGSTAGE, Paul 30 Oct 2026: "no reason line ... anywhere, ever": an engraved face with no words is said by Approve, off, and a soft gold pulse on its words box; the calm "Approved" says a face is approved)
+    check(!odd.ask.prompt && !odd.ask.raw, 'words nobody could place: no line asks for them in the panel (the empty face pulses, Approve waits): ' + JSON.stringify(odd.ask));
+    check(!odd.locked.words && !odd.locked.font && odd.locked.lock === '' && odd.locked.save, 'an approved face is not locked: its words and font are open, no line under them, no Save button: ' + JSON.stringify(odd.locked));
 
     // ── the Engrave detail itself: the Emoji button is there, and a staged edit never dims Approve (LIVEWORDS: Approve keeps the words first, engrave-live-words.cjs drives it on real drawings) ──
     await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: null }); Engrave.render(); });
@@ -106,7 +107,8 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       const before = await probe();
       await page.fill('.pvSetup .engpWords', 'Name Three');
       const staged = await probe();
-      check(staged.staged && (staged.dis === before.dis || staged.failed) && staged.title === before.title && !/Save or Cancel/.test(staged.title + staged.why), 'with words staged, Approve stays as it was (no "Save or Cancel the edit first"): ' + JSON.stringify(staged) + ' (before: ' + JSON.stringify(before) + ')');
+      // (ENGSTAGE: words staged light Approve (green, live): a piece that waited, off, while its face was being placed, is approvable with the person's words)
+      check(staged.staged && (staged.dis === before.dis || staged.failed || !staged.dis) && !/Save or Cancel/.test(staged.title + staged.why), 'with words staged, Approve is live or as it was, never "Save or Cancel the edit first": ' + JSON.stringify(staged) + ' (before: ' + JSON.stringify(before) + ')');
       await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); });   // (nothing approved here: the draft is let go without keeping it)
     }
 
@@ -193,9 +195,9 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     const S = '#__slot';
     const state = () => page.evaluate(KEY => { const s = document.getElementById('__slot'), p = s.querySelector('.engp'), row = B.orders.byKey.get(KEY); return { face: p && p.dataset.face, mode: p && p.dataset.mode, text: p && p.querySelector('.engpWords') ? p.querySelector('.engpWords').value : null,
       staged: !!(p && p.dataset.staged), noSave: !!p && !p.querySelector('[data-engp=save],[data-engp=cancel]'), w: p && p.querySelector('.engpWords') ? p.querySelector('.engpWords').getBoundingClientRect().width : 0,
-      seg: [...s.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg')].map(b => b.getAttribute('aria-pressed') === 'true' ? b.textContent : '').join(''), ov: row.engravingOverride || null }; }, KEY);
+      seg: [...s.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg')].map(b => b.getAttribute('aria-pressed') === 'true' ? b.textContent.trim() : '').join(''), ov: row.engravingOverride || null }; }, KEY);
     let st = await state();
-    check(st.face === 'back' && st.mode === 'both' && st.text === '1. 27. 24' && !st.staged && st.noSave && st.seg === 'FrontBack', 'opens on the Back (the card\'s face) with its words, Front and Back both pressed, nothing staged, no Save / Cancel: ' + JSON.stringify({ face: st.face, text: st.text, staged: st.staged, seg: st.seg }));
+    check(st.face === 'back' && st.mode === 'both' && st.text === '1. 27. 24' && !st.staged && st.noSave && /^(Front & Back|Both)$/.test(st.seg), 'opens on the Back (the card\'s face) with its words, Front & Back pressed (ENGSTAGE: one option), nothing staged, no Save / Cancel: ' + JSON.stringify({ face: st.face, text: st.text, staged: st.staged, seg: st.seg }));
     check(st.w >= 200, 'the text area is ' + Math.round(st.w) + 'px wide in a 232px slot');
 
     await page.evaluate(() => __h.setFace('front'));

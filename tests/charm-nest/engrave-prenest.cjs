@@ -257,8 +257,9 @@ async function main() {
         return { words: c && c.querySelector('.engpWords') && c.querySelector('.engpWords').value, font: fontEl ? String(fontEl.value || '').trim() : null, canvas: !!cv && cv.width > 0 && r.width >= 150 && r.height >= 150 && (ink === null || ink > 200), ink, size: r && [Math.round(r.width), Math.round(r.height)], waitText: c ? (c.querySelector('.backHost') || c).innerText.replace(/\s+/g, ' ').slice(0, 80) : '', front: !!(c && c.querySelector('.engFace[data-face=front]')), approve: !!(c && c.querySelector('[data-a=approve]')), focus: Engrave.view().focus || null };
       }) : null;
       const stD = await state(H.rid), jb = stD.jobs[0] || {};
-      check('PN9 the Engrave detail of the held order: its own job under the key the line will have when it is pooled, the three lines in the box, the work area drawn, no Front box', 'pre',
-        !!det && det.focus === H.key && jb.key === H.key && jb.face === 'back' && jb.hasFit && jb.hasView && det.words === 'Name One\nName Two\nDate One' && det.canvas && !det.front,
+      // (ENGSTAGE, Paul 30 Oct 2026: the card always draws both faces; the Front, not engraved, is drawn plain)
+      check('PN9 the Engrave detail of the held order: its own job under the key the line will have when it is pooled, the three lines in the box, the work area drawn', 'pre',
+        !!det && det.focus === H.key && jb.key === H.key && jb.face === 'back' && jb.hasFit && jb.hasView && det.words === 'Name One\nName Two\nDate One' && det.canvas,
         det ? `focus ${det.focus}, job ${jb.key} ${jb.state} (fit ${jb.hasFit}, view ${jb.hasView}), the line's key is ${H.key}, words ${JSON.stringify(det.words)}, font box "${det.font}", work area ${det.canvas ? 'drawn' : 'MISSING'} (${JSON.stringify(det.size)}, ${det.ink === null ? 'ink not readable' : det.ink + ' inked px'}${det.canvas ? '' : ', says "' + det.waitText + '"'}), job settled ${JSON.stringify(fitted)}, front face ${det.front ? 'DRAWN' : 'not drawn'}` : 'the detail did not open, so there is nothing to look at');
       // a staged edit: other words, kept as Approve keeps them first (LIVEWORDS: no Save button, no reason asked)
       let ed = null;
@@ -315,7 +316,7 @@ async function main() {
       await P.evaluate(() => { try { OrderWin.close(); } catch (_) {} Engrave.restoreView({ tab: 'place', focus: null, list: true, chosen: true, q: '', openDone: null }); CN.setMode('engrave'); Engrave.render(); }); await R.settle(P, 900);
       await R.openEngraveDetail(w, 'discTwin', { face: 'back' }); await R.settle(P, 900);
       const f0 = await look();
-      await click(QS + ' .engpSeg[data-mode="front"]'); await R.settle(P, 900);   // (LIVEWORDS: the Front toggle engraves the front too, kept at once, and shows it)
+      await click(QS + ' .engpSeg[data-mode="both"]'); await R.settle(P, 900);   // (ENGSTAGE, Paul 30 Oct 2026: Front & Back engraves the front beside the back; the Front option alone would mean the front only)
       await click(QS + ' .engFace[data-face=front] .engThumb'); await R.settle(P, 900);
       await P.evaluate(() => { const t = document.querySelector('#egQueue .rvItem[data-kind=placement] .engpWords'); if (!t) return; const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; t.focus(); set.call(t, 'B'); t.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'B' })); t.dispatchEvent(new Event('keyup', { bubbles: true })); });
       await R.settle(P, 700); await P.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return c && c._pieceMount && c._pieceMount.panel.commit(); }); await R.settle(P, 1500);

@@ -63,6 +63,8 @@ const SCALE = 0.02;   // (CN_SPIN_SCALE while the wait hangs: the 30 s limit of 
     await R.build(w, ['back', 'both']);
     await hangThenApprove('back', 'back', 'B');
     await hangThenApprove('both', 'front', 'F');   // (Paul, 28 Oct 2026: bar necklaces engrave on the FRONT by default: the same press on a front)
+    // (ENGSTAGE, Paul 30 Oct 2026: the one Approve keeps the whole piece: its back is approved too; that approval's tail (its file, the tab moving on) is let finish before the piece is opened again)
+    await until(() => page.evaluate(() => !(window.CharmNestEngravePanel && CharmNestEngravePanel.COMMITS.size) && ![...Engrave.items().values()].some(j => j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving)), 60000); await R.settle(page, 600);
     // LIVEWORDS: staged words never dim Approve (a press keeps them first); taken out again, Approve is live and no line is there
     const key = await R.openEngraveDetail(w, 'both', { face: 'back' }); await R.settle(page, 600);
     await page.focus(`${Q} .engpWords`); await page.keyboard.press('End'); await page.keyboard.type('x'); await R.settle(page, 250);
@@ -70,7 +72,8 @@ const SCALE = 0.02;   // (CN_SPIN_SCALE while the wait hangs: the 30 s limit of 
     check('G1 words staged: Approve stays live, no "Save or Cancel" line', g1.approve && g1.approve.live && !/Save or Cancel/.test(g1.why), JSON.stringify(g1));
     await page.keyboard.press('Backspace'); await R.settle(page, 250);
     const g2 = await facts(key);
-    check('G2 the words put back: Approve is live and the line is gone', g2.approve && g2.approve.live && !g2.why, JSON.stringify(g2));
+    // (ENGSTAGE: the words put back on a piece the one press approved: nothing is staged, so Approve is the calm "Approved" again, or live on a piece still to approve)
+    check('G2 the words put back: Approve is as before the letter (calm on an approved piece, live otherwise) and the line is gone', (g2.approve ? g2.approve.live : !!(await page.evaluate(Q => document.querySelector(Q + ' [data-a="approved"]'), Q))) && !g2.why, JSON.stringify(g2));
   } catch (e) { check('run', false, String(e && e.stack || e).split('\n').slice(0, 3).join(' | ')); }
   check('no page error', w.errors.length === 0, w.errors.slice(0, 2).join(' | '));
   await w.close();

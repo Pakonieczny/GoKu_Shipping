@@ -76,7 +76,9 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     // open the Engrave detail on the piece's back job after `patch` is applied to the job, `spec` to its reading and `line` to its Etsy line, and read what the detail draws, in one go
     const detail = ({ patch, spec, line }) => page.evaluate(async ({ KEY, patch, spec, line }) => {
       const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back'), was = {}, wasSpec = {}, wasLine = {};
-      for (const k of Object.keys(patch || {})) { was[k] = j[k]; j[k] = patch[k]; }
+      // (ENGSTAGE, Paul 30 Oct 2026: the calm "Approved" is the PIECE's: an approved patch is put on every face of the piece)
+      const all = patch && patch.state === 'approved' ? Engrave.jobsOf(row).filter(x => (x.slot || null) === (j.slot || null)) : [j], wasAll = all.map(x => { const o = {}; for (const k of Object.keys(patch || {})) { o[k] = x[k]; x[k] = patch[k]; } return o; });
+      for (const k of Object.keys(patch || {})) was[k] = wasAll[all.indexOf(j)][k];
       for (const k of Object.keys(spec || {})) { wasSpec[k] = row.spec[k]; row.spec[k] = spec[k]; }
       for (const k of Object.keys(line || {})) { wasLine[k] = row.line[k]; row.line[k] = line[k]; }
       setMode('engrave'); Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: j.key }); Engrave.render();
@@ -87,7 +89,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
         labels: box ? [...box.querySelectorAll('.lbl')].map(l => l.textContent) : [], boxes: box ? box.querySelectorAll('.owSaid').length : 0, injected: box ? box.querySelectorAll('.owSaid b, .owSaid i, .owSaid img, .owSaid script').length : -1,
         order: q('.pvOrder'), words: q('.pvWords'), oldBox: q('textarea[data-f=words]'), use: q('[data-a=usewords]'), conf: q('.rh .conf'), ref: q('.pvRef'), mainTitle: q('.pvMain > .pvH'), checkTitle: q('.pvCheck .pvH'), orderTitle: q('.pvOrder .pvH'), faceSw: q('.rh .egFaces'),
         titles: [...(c ? c.querySelectorAll('h4.pvH') : [])].map(h => h.textContent.trim()), thumbs: q('.engFace .engThumb'), emoji: q('[data-emoji]'), approve: q('[data-a=approve]'), seg: [...(c ? c.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg') : [])].map(b => b.textContent.trim()).join('|') };
-      for (const k of Object.keys(was)) j[k] = was[k]; for (const k of Object.keys(wasSpec)) row.spec[k] = wasSpec[k]; for (const k of Object.keys(wasLine)) row.line[k] = wasLine[k];
+      all.forEach((x, i) => { for (const k of Object.keys(wasAll[i])) x[k] = wasAll[i][k]; }); for (const k of Object.keys(wasSpec)) row.spec[k] = wasSpec[k]; for (const k of Object.keys(wasLine)) row.line[k] = wasLine[k];
       return JSON.parse(JSON.stringify(out));
     }, { KEY, patch, spec, line });
     const shot = async name => { if (shots) await page.screenshot({ path: path.join(shots, name + '.png') }); };
@@ -121,7 +123,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     check(d.words === 0 && d.oldBox === 0 && d.use === 0 && !/Words on the|Use these words|Engrave these words/i.test(d.text), 'no second "Words on the back" box, no "Use these words"');
     check(d.ref === 0 && !/reference/i.test(d.text) && d.mainTitle === 0 && d.checkTitle === 0 && d.faceSw === 0, 'no reference picture, no big picture title, no "To check with the buyer" title, no head Front | Back switch');
     check(d.titles.join('|') === 'What the customer wrote', 'the box\'s is the ONLY block title on the detail: ' + JSON.stringify(d.titles));
-    check(d.emoji === 1 && d.approve === 1 && d.seg === 'None|Front|Back|Front + back' && d.thumbs === 2, 'the panel, the card\'s two pictures, one Emoji button and Approve are all still there');
+    check(d.emoji === 1 && d.approve === 1 && /^None\|Front\|Back\|(Front & Back|Both)$/.test(d.seg) && d.thumbs === 2, 'the panel, the card\'s two pictures, one Emoji button and Approve are all still there');
 
     // ── 3 · the customer wrote and chose nothing: no box; a part left empty is not drawn ──
     const NONE = { patch: {}, spec: { personalization: [], buyerMessage: '', staffNote: '' }, line: { variations: METAL, personalization: [] } };

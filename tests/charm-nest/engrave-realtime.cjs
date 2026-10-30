@@ -238,7 +238,7 @@ const detailFacts = page => page.evaluate(() => {
 const hiliteFacts = page => page.evaluate(() => {
   const vis = e => { if (!e) return false; const b = e.getBoundingClientRect(), st = getComputedStyle(e); return b.width > 0 && b.height > 0 && st.visibility !== 'hidden' && st.display !== 'none' && +st.opacity > 0 && !e.closest('[hidden]'); };
   const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (!c) return { open: false };
-  const segs = [...c.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg[data-engp=mode]')], marked = segs.filter(x => x.hasAttribute('data-sys')).map(x => x.dataset.mode);
+  const segs = [...c.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg[data-engp=mode], .engpMode:not(.engpFaceSw) .engpSeg[data-engp=choice]')], marked = segs.filter(x => x.hasAttribute('data-sys')).map(x => x.dataset.mode);
   const sparks = [...c.querySelectorAll('.engpSys')].filter(vis), box = c.querySelector('.engpBox'), fb = c.querySelector('.engpFontBox');
   return { open: true, marked, sparks: sparks.length, boxMark: box ? box.getAttribute('data-sys') : null, fontMark: fb ? fb.getAttribute('data-sys') : null, fontSpark: !!(fb && [...fb.querySelectorAll('.engpSys')].some(vis)), fontLabels: [...c.querySelectorAll('.engpFont option')].filter(o => o.hasAttribute('data-sys')).map(o => o.label || o.textContent), selected: (c.querySelector('.engpFont') || {}).value };
 });

@@ -86,7 +86,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       check(d.ref === 0 && !/reference/i.test(d.text), 'no "Front . reference" picture: the card\'s Front and Back thumbnails (' + d.thumbs + ') are the pictures of the piece');
       check(d.thumbs === 2 && d.engCard === 1 && d.mainTitle === 0, 'the card is on the page with its two thumbnails and the big picture has no title of its own: ' + JSON.stringify({ thumbs: d.thumbs, cards: d.engCard, mainTitle: d.mainTitle }));
     } else console.log('  (no CharmNestEngraveCard in this build: the reference picture and the big picture\'s title are still drawn until it lands — checks skipped; titles now: ' + JSON.stringify(d.titles) + ')');
-    check(d.seg === 'None|Front|Back' && d.font === 1 && d.save === 0 && d.cancel === 0, 'the panel keeps the choices: ' + d.seg + ', one font drop-down, no Save, no Cancel (LIVEWORDS: Approve keeps the words)');
+    check(/^None\|Front\|Back\|(Front & Back|Both)$/.test(d.seg) && d.font === 1 && d.save === 0 && d.cancel === 0, 'the panel keeps the choices: ' + d.seg + ', one font drop-down, no Save, no Cancel (LIVEWORDS: Approve keeps the words)');
     check(d.emoji === 1, 'ONE Emoji button in the detail (the panel\'s; the old box\'s is gone with the box): ' + d.emoji);
     // (NONEPRESS, Paul 29 Oct 2026: "Remove this "No Engraving" button from the UI": the None toggle of the panel is the one way to no engraving)
     check(d.approve === 1 && d.skip === 0 && d.backHost === 1 && d.openOrder === 1, 'Approve, the big picture and Open order stay; no "No engraving" button (the None toggle is the way): ' + JSON.stringify({ approve: d.approve, skip: d.skip, skipText: d.skipText, backHost: d.backHost, openOrder: d.openOrder }));
@@ -120,6 +120,9 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
     // ── 5 · an approved piece: its row opens this same minimal card; the row says the words and carries the seals ──
     const dd = await page.evaluate(async KEY => {
       const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back'), was = { state: j.state, by: j.approvedBy, at: j.approvedAt, decision: j.decision };
+      // (ENGSTAGE, Paul 30 Oct 2026: the calm "Approved" is the PIECE's: every face of it approved)
+      const others = Engrave.jobsOf(row).filter(x => x !== j && (x.slot || null) === (j.slot || null)).map(x => [x, { state: x.state, approvedBy: x.approvedBy, approvedAt: x.approvedAt }]);
+      for (const [x] of others) Object.assign(x, { state: 'approved', approvedBy: 'Name One', approvedAt: Date.now() - 60e3 });
       Object.assign(j, { state: 'approved', approvedBy: 'Name One', approvedAt: Date.now() - 60e3, decision: { by: 'Name One', at: Date.now() - 60e3, text: j.text } });
       setMode('engrave'); Engrave.restoreView({ list: true, chosen: true, focus: null, q: '' }); Engrave.render();
       // (a front + back line is ONE row whose ears tell each face: it opens the face still to settle, the approved back is one of its ears, data-jobs)
@@ -128,7 +131,7 @@ const ORDER = { receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * 86400, up
       Engrave.restoreView({ list: false, chosen: true, focus: j.key }); Engrave.render();
       const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'), q = s => c ? c.querySelectorAll(s).length : -1;
       const card = { has: !!c && c.dataset.key === j.key && c.dataset.state === 'approved', text: c ? c.innerText.replace(/\s+/g, ' ') : '', panel: q('.engp'), panelWords: q('.engp .engpWords'), textareas: q('textarea:not(.owCompLine textarea):not(.cmLine textarea)'), words: q('.pvWords'), oldBox: q('textarea[data-f=words]'), use: q('[data-a=usewords]'), conf: q('.rh .conf'), tick: q('.pvApproval .egApproved[data-a=approved][disabled]'), approve: q('[data-a=approve]'), skip: q('[data-a=skip]'), titles: [...(c ? c.querySelectorAll('h4.pvH') : [])].map(h => h.textContent.trim()), seals: q('.pvApproval .seal') };
-      Object.assign(j, was); Engrave.render();
+      Object.assign(j, was); for (const [x, w0] of others) Object.assign(x, w0); Engrave.render();
       return { rowOut, card };
     }, KEY);
     check(dd.rowOut.row && dd.rowOut.words === '1. 27. 24' && dd.rowOut.seals >= 1 && /Approved/.test(dd.rowOut.stage) && dd.rowOut.old === 0, 'the approved piece\'s row in the one list says the words and carries the seals (no Decided row anywhere): ' + JSON.stringify(dd.rowOut));

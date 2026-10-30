@@ -7,6 +7,8 @@
 //
 // LIVEWORDS (Paul, 29 Oct 2026: "Remove the process that ask the user ... to click save"): there is no gate any more: Approve keeps staged words first, so the panel never dims or retitles a card's Approve
 // buttons. What this test still guards: with words staged and the face switched, the card's Approve and "Approve both faces" are exactly what the card says with nothing staged.
+// ENGSTAGE (Paul, 30 Oct 2026: one Approve keeps the whole piece, its faces approved Front before Back): there is no "Approve both faces" any more; the guard is the ONE Approve: live with the edit staged, live
+// after the face is switched, live when the draft is let go, and never covered.
 //
 // Offline only: the REAL page over the repo's fake site with the real drawings (tests/charm-nest/_engraveRealWorld.cjs), made-up words, no Etsy, no paid call, no live write.
 //   PW_DIR=/opt/node-tools/node_modules node tests/charm-nest/engrave-gate-stale.cjs
@@ -31,29 +33,29 @@ let R; try { R = require('./_engraveRealWorld.cjs'); } catch (e) { console.log('
     await R.openEngraveDetail(w, 'both', { face: 'back' });
     await page.evaluate(() => CharmNestEngravePanel.DRAFTS.clear());
     const b0 = await btns();
-    check(b0.approveBoth && b0.approveBoth.dis === true && /Look at the front placement first/.test(b0.approveBoth.title), 'the back card, nothing staged: "Approve both faces" waits for the front to be seen', JSON.stringify(b0.approveBoth));
+    check(!b0.approveBoth && b0.approve && b0.approve.dis === false, 'the back card, nothing staged: one Approve (it keeps the whole piece), no "Approve both faces"', JSON.stringify(b0));
     // the case: words staged on the back, the front picture pressed, then the draft let go
     await R.openEngraveDetail(w, 'both', { face: 'back' });
     await page.evaluate(() => CharmNestEngravePanel.DRAFTS.clear());
     await page.evaluate(() => { const ta = document.querySelector('.engp .engpWords'); ta.value = ta.value + ' z'; ta.dispatchEvent(new Event('input', { bubbles: true })); });
     const g0 = await btns();
     check(g0.approve.dis === false && !GATE.test(g0.approve.title) && !g0.approve.was, 'words staged: Approve is NOT dimmed (it keeps the words first), no "Save or Cancel"', JSON.stringify(g0.approve));
-    await page.click('.pvSetup .engFace[data-face=front]'); await R.settle(page, 1500);
+    await page.evaluate(() => { const t = document.querySelector('.pvSetup [data-eng-thumb=front]') || document.querySelector('.pvSetup .engFace[data-face=front] .engThumb'); if (t) t.click(); }); await R.settle(page, 1500);
     const g1 = await btns();
     check(g1.face === 'front' && g1.approve.dis === false && !GATE.test(g1.approve.title) && !g1.approve.was, 'the front card is drawn with the edit still staged: its Approve is as the card has it', JSON.stringify(g1.approve));
     await page.evaluate(() => CharmNestEngravePanel.DRAFTS.clear()); await R.settle(page, 500);
     const g2 = await btns();
-    check(g2.approve.dis === false && !g2.approve.was && /approve it/.test(g2.approve.title), 'Approve is as the card had it', JSON.stringify(g2.approve));
+    check(g2.approve.dis === false && !g2.approve.was && /approve/i.test(g2.approve.title), 'Approve is as the card had it', JSON.stringify(g2.approve));
     // and nothing covers it: a press at its centre lands on the button itself (a press would approve both faces of the fake order: not made here)
-    const hit = await page.evaluate(() => { const b = document.querySelector('#egQueue .rvItem [data-a="approveBoth"]'); b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(), t = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return !!(t && t.closest('[data-a="approveBoth"]')); });
-    check(hit, 'a press at the centre of "Approve both faces" lands on the button');
+    const hit = await page.evaluate(() => { const b = document.querySelector('#egQueue .rvItem [data-a="approve"]'); b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(), t = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return !!(t && t.closest('[data-a="approve"]')); });
+    check(hit, 'a press at the centre of Approve lands on the button');
     // the reference: the same front card visited with NOTHING staged (the back was on screen, now the front is)
     await R.openEngraveDetail(w, 'both', { face: 'back' });
     await page.evaluate(() => CharmNestEngravePanel.DRAFTS.clear());
-    await page.click('.pvSetup .engFace[data-face=front]'); await R.settle(page, 1500);
+    await page.evaluate(() => { const t = document.querySelector('.pvSetup [data-eng-thumb=front]') || document.querySelector('.pvSetup .engFace[data-face=front] .engThumb'); if (t) t.click(); }); await R.settle(page, 1500);
     const ref = await btns();
-    check(ref.face === 'front' && ref.approveBoth && ref.approveBoth.dis === false && ref.approve.dis === false, 'the front card, nothing staged: Approve and "Approve both faces" are on (both placements have been on screen)', JSON.stringify(ref));
-    check(g2.approveBoth.dis === ref.approveBoth.dis && g2.approveBoth.title === ref.approveBoth.title && !g2.approveBoth.was, '"Approve both faces" is exactly what the same card says with nothing staged (on, "Both placements have been on screen"), not the old "Look at the front placement first"', JSON.stringify({ after: g2.approveBoth, reference: ref.approveBoth }));
+    check(ref.face === 'front' && !ref.approveBoth && ref.approve.dis === false, 'the front shown, nothing staged: the one Approve is on', JSON.stringify(ref));
+    check(g2.approve.dis === ref.approve.dis && g2.approve.title === ref.approve.title && !g2.approve.was, 'Approve is exactly what the same card says with nothing staged', JSON.stringify({ after: g2.approve, reference: ref.approve }));
     check(w.errors.length === 0, 'no page errors', JSON.stringify(w.errors).slice(0, 300));
   } catch (e) { fails++; console.log('  FAIL threw: ' + (e && e.stack || e)); }
   finally { await w.close(); }

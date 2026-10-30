@@ -9271,24 +9271,104 @@ const Engrave = window.Engrave = (() => {
     };
   }
   /** Save the choice (patch: { mode?, front?, back? }): see CharmNestEngraveSetup.apply. Resolves { ok, cancelled?, message?, pending?, removed, plain, none, reopened, seeded, added }. */
-  async function saveSetup(row, patch) {
+  async function saveSetup(row, patch, o) {
     const CS = window.CharmNestEngraveSetup, line = lineOf(row);
     if (!CS || !line) return { ok: false, message: "The engraving setup is not loaded yet." };
     if (setupBusy.has(line.key)) return { ok: false, message: "The last change to this piece is still being saved." };
     setupBusy.add(line.key);
-    const had = new Set(jobsOf(line).map(j => j.key));
+    const had = new Set(jobsOf(line).map(j => j.key)), places = (o && o.places) || {}, slot0 = patch && patch.slot ? String(patch.slot) : null;
     try {
       const placed = stagedFacesOfLine(line);   // (FRONTSTAGE: where the person dragged the staged words of a face that had no job)
       const res = await CS.apply(line, patch, setupEnv());
       // (ONEAPPROVE: the place the person dragged the staged words to, as a point of the CHARM (whatever frame the preview drew it in), rides on the new face job: prepareLate moves the words there right
       //  after their first fit, with the work area's own move (moveTo), before anything approves them)
       if (res && res.ok) for (const p of placed) { if (!p.centre || !p.view) continue; const nj = jobsOf(line).find(j => !had.has(j.key) && faceOf(j) === p.face); if (nj) { const pc = charmPointOf(p.view, p.centre); if (pc) nj._placeAt = pc; } }
+      // (ENGSTAGE: the panel's own staged place of a face, o.places[face] = a point of the charm (CharmNestEngravePanel.stagePos's pos.charm), wins: the same _placeAt, on the new job of that face and piece)
+      if (res && res.ok) for (const f of ["front", "back"]) { const pc = places[f]; if (!Array.isArray(pc) || pc.length < 2 || !pc.every(Number.isFinite)) continue; const nj = jobsOf(line).find(j => !had.has(j.key) && faceOf(j) === f && (!slot0 || (j.slot || null) === slot0)); if (nj) nj._placeAt = [pc[0], pc[1]]; }
       if (res && res.ok && jobsOf(line).some(j => !had.has(j.key))) prepareLate(line).catch(() => {});
       // (NONEPLAIN 2: None approved: the piece is a regular order now, said once, plainly; the tab moves on as after any Approve: the piece is in no list any more)
       if (res && res.ok && patch && patch.mode === "none" && (res.none || []).length) { toast(`Order ${line.order.receiptId} · no engraving · now a regular order`, "ok", 6000); try { render(); Orders.render(); } catch (_) {} }
       return res;
     } finally { setupBusy.delete(line.key); }   // (a face job THIS Save made is read and fitted now, beside everything else; a Save that made none touches nothing more than it did)
   }
+  /* ENGSTAGE (Paul, 30 Oct 2026: "When I selected "Front" and pressed "Approve" then I got this empty screen with no front charm preview and no "Approved" button ... users will be clicking here very quickly and
+     clicking the approved button and expecting things to happen immediately"): THE ONE COMMIT of a piece's staged engraving (the panel's draft, charm-nest-engrave-panel.js), made by its one Approve press and
+     serialized per piece by the panel. It makes what is kept equal what was staged, in this order, so nothing is ever half kept: (1) the faces engraved, their words and fonts (saveSetup: a face newly engraved
+     gets its job WITH the staged words, a face no longer engraved is taken away with no seal (NONEPLAIN), changed words are fitted again, a place dragged on a face that had no job rides on its new job:
+     ONEAPPROVE's _placeAt); (2) every engraved face is read and fitted (a face left waiting for words takes the staged ones: decideWords, never "Words to confirm"); (3) a place dragged on a placed face is put
+     on it (moveTo, at Engrave.stagePlaceOf's centre); (4) every engraved face not approved yet is approved, Front before Back (approve: its seal, its file, the sheets and the made thumbnails, as any approval).
+     A step that fails stops there and says why: what was approved stays approved, what was not stays to approve, never wrong.
+       stage: { choice: none|front|back|both, slot, faces: { front: { text, font, pos }, back }, patch (CharmNestEngraveSetup.patchOf: what differs from what is kept) }
+       o: { button (the stamp's place: an element, or a function giving the one on the page now), step() (called at every step made: the panel's watchdog), approve: false (step 1 only: the staged faces and words
+            are kept, nothing is approved: a host that closes the card itself, a test) }
+       -> { ok, cancelled?, message?, none?, approved: [job keys], failed? } */
+  const STAGE_MS = 90000;
+  async function commitStage(row, stage, o) {
+    o = o || {};
+    const line = lineOf(row), CS = window.CharmNestEngraveSetup;
+    if (!CS || !line || !stage) return { ok: false, message: "The engraving is not loaded yet.", approved: [] };
+    if (line.state === "gone") return { ok: false, message: "This order is no longer in the run.", approved: [] };
+    const choice = ["none", "front", "back", "both"].includes(stage.choice) ? stage.choice : null; if (!choice) return { ok: false, message: "Nothing is chosen to approve.", approved: [] };
+    const slot = stage.slot ? String(stage.slot) : null, on = choice === "both" ? ["front", "back"] : choice === "none" ? [] : [choice], faces = stage.faces || {};
+    const until = Date.now() + STAGE_MS * Math.max(0.001, +window.CN_SPIN_SCALE || 1), wait = ms => new Promise(r => setTimeout(r, ms));
+    const mine = f => jobsOf(line).find(j => faceOf(j) === f && (j.slot || null) === slot) || null;
+    const stampAt = () => { try { const b = typeof o.button === "function" ? o.button() : o.button; return b && b.isConnected !== false ? b : null; } catch (_) { return null; } }, step = what => { try { if (typeof o.step === "function") o.step(what); } catch (_) { /* the panel's own */ } };
+    const by = employeeName() || await approveWithin(needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: stampAt() }), APPROVE_MS.sign, "").catch(() => "");
+    step("signed");
+    // (an approval of this piece still finishing (its back file, its save: the tail of an earlier Approve) is let finish first, so a change made on top of it is never refused or lost)
+    { const tail = () => jobsOf(line).some(j => (j.slot || null) === slot && (j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving)), by15 = Date.now() + 15000 * Math.max(0.001, +window.CN_SPIN_SCALE || 1); while (tail() && Date.now() < Math.min(until, by15)) { step("tail"); await wait(60); } }   // (at most 15 s: a file still being written for the sheets never holds a change back longer)
+    if (!by) return { ok: false, cancelled: true, message: "Nobody is signed in.", approved: [] };
+    // (1) the faces, their words and fonts (and the place dragged on a face that has no job yet)
+    const before = new Set(jobsOf(line).map(j => j.key)), patch = stage.patch && typeof stage.patch === "object" ? stage.patch : null;   // (a job made by this commit takes its dragged place as _placeAt; one that was there, placed or opened again, is moved below)
+    if (patch && (patch.mode || patch.front !== undefined || patch.back !== undefined)) {
+      while (setupBusy.has(line.key) && Date.now() < until) await wait(40);   // (another piece of this line is being kept: this one follows it)
+      const places = {}; for (const f of on) { const p = faces[f] && faces[f].pos; if (p && Array.isArray(p.charm)) places[f] = p.charm; }
+      const res = await saveSetup(line, Object.assign({}, patch, slot ? { slot } : {}), { places });
+      if (!res || !res.ok) return { ok: false, cancelled: !!(res && res.cancelled), message: (res && res.message) || "The change was not kept.", approved: [] };
+      step("kept");
+    }
+    if (!on.length) return { ok: true, none: true, approved: [] };
+    if (o.approve === false) return { ok: true, kept: true, approved: [] };
+    // (2) every engraved face read and fitted, with the staged words
+    const decided = new Set(), fitting = new Set(), jobs = {};
+    for (const f of on) {
+      const text = String((faces[f] && faces[f].text) || "").trim(); let why = "", seen = "";
+      for (;;) {
+        const j = mine(f);
+        { const now = j ? j.key + ":" + j.state + ":" + (j.fit ? 1 : 0) : ""; if (now !== seen || (j && (isWorking(j) || lateTasks.has(j) || fitTasks.get(j)))) { seen = now; step("face"); } }   // (a face moving on, or being read or fitted right now, is progress; this wait has its own limit)
+        if (!j) { if (Date.now() > until) { why = `the ${f} could not be made here`; break; } await wait(60); continue; }
+        jobs[f] = j;
+        if (["approved", "written"].includes(j.state)) break;
+        if (j.state === "review" && j.fit && j._placeAt && !lateTasks.has(j) && !isWorking(j)) { const pc = j._placeAt; delete j._placeAt; if (j.view && !j.fit.artOnly) { const c = viewPointOf(j.view, pc); try { if (c && moveTo(j, c)) j.nudged = true; } catch (_) { /* the system's place stands */ } } }   // (fitted by another path than prepareLate: the dragged place is put on it here)
+        if (j.state === "review" && j.fit && !isWorking(j) && !lateTasks.has(j) && !j._placeAt && !fitTasks.get(j)) break;
+        if (["words", "blocked"].includes(j.state)) { if (!text || decided.has(j)) { why = j.reason || `the ${f} words need a decision`; break; } decided.add(j); await decideWords(j, { text, by, note: "edited" }); continue; }
+        if (["none", "skipped"].includes(j.state)) { why = `the ${f} is not engraved`; break; }
+        if (OPENREAD.includes(j.state) && !preparingNow(j) && readsFree(j)) prepareLate(line).catch(() => {});
+        else if (j.state === "ready" && !isWorking(j) && !lateTasks.has(j) && !fitTasks.get(j)) { if (!canFit(j)) { why = `the ${f} words wait for the piece's sheet`; break; } if (!fitting.has(j)) { fitting.add(j); fitJob(j).catch(() => {}); } }
+        if (Date.now() > until) { why = `the ${f} words were not placed in time`; break; }
+        await wait(60);
+      }
+      if (why) return { ok: false, message: "Not approved: " + why.replace(/^(?:not approved:\s*)/i, ""), approved: [] };
+    }
+    // (3) a place dragged on a face whose job was there before this commit (placed, or opened again)
+    for (const f of on) {
+      const p = faces[f] && faces[f].pos, j = jobs[f]; if (!p || !j || !before.has(j.key) || !j.fit || j.fit.artOnly) continue;
+      let c = null; try { const E = window.Engrave; c = E && typeof E.stagePlaceOf === "function" ? E.stagePlaceOf(j, p) : Array.isArray(p.charm) && j.view ? viewPointOf(j.view, p.charm) : null; } catch (_) { c = null; }
+      if (c && j.fit.centre && Math.hypot(c[0] - j.fit.centre[0], c[1] - j.fit.centre[1]) > 1e-6) { try { if (moveTo(j, c)) j.nudged = true; } catch (_) { /* the place it has stands */ } }
+    }
+    // (4) the approvals, Front before Back
+    const approved = [];
+    for (const f of on) {
+      const j = jobs[f]; if (["approved", "written"].includes(j.state)) { approved.push(j.key); continue; }
+      step("approve"); const ping = setInterval(() => step("approving"), 2000);   // (an approval's own waits each have their time limit: approveWithin)
+      // (the face is approved the moment its state says so: the rest of the approval (its back file for the sheets, its save) goes on behind it, as after any Approve; the commit does not wait for it)
+      try { const task = Promise.resolve(approve(j, by, stampAt())).catch(() => {}); let done = false; task.then(() => { done = true; }); while (!done && !["approved", "written"].includes(j.state)) await Promise.race([task, wait(60)]); } finally { clearInterval(ping); } step("approved");   // (the stamp on the panel's own anchor: the live Approve is never the approval's button)
+      if (!["approved", "written"].includes(j.state)) { const w = APPROVE_WHY.get(j.key); return { ok: false, message: (w && w.text) || `Not approved: the ${f} is still to approve.`, approved, failed: j.key, said: !!w }; }   // (said: the approval already told the person why)
+      approved.push(j.key);
+    }
+    return { ok: true, approved };
+  }
+  Promise.resolve().then(() => { try { if (window.Engrave && !window.Engrave.commitStage) window.Engrave.commitStage = commitStage; } catch (_) { /* the panel says it cannot approve */ } });   // (ENGSTAGE: beside the Engrave object, not inside its return)
   /** NONEPLAIN (Paul, 29 Oct 2026: "I chose "None" for engraving and it still kept the engraving"): is a piece of this line CUT, so a decided face on it may no longer be taken away? The ONE rule a piece that may
    *  no longer change follows (replaceCutWhy: its sheet laser cut, a Rose Gold layout cut, inside a protected contour); a sheet in a set whose files are written, labelled or released is not cut, and its back is
    *  withdrawn like any other (the line's state "written" said "already cut" and refused None on a draft sheet: order 4213864833). A piece on no sheet of this page reads its sheet's Library record; with

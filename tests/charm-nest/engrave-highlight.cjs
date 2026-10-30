@@ -2,7 +2,8 @@
 // those selections." The engraving panel of the Engrave tab (charm-nest-engrave-panel.js) marks what the SYSTEM chose and keeps it marked when a person picks something else. REAL page, headless Chromium, offline fake site
 // (no Etsy, no paid reading, no live write). The real preview and position components are on the page (nothing is stubbed but CharmNestEngraveSetup.autoChoice in step 6, to prove it is the source of truth).
 //   1  untouched: the mark (a gold sparkle, title "Chosen by the system") is on the system's mode segment, on the system's font (its entry in the list and the select's tint) and on the shown face's words box (tinted)
-//   2  LIVEWORDS (29 Oct 2026): Front and Back are toggles (no "Front + back"): the system's "both" marks Front AND Back; a press on an engraved face only shows it (the marks and the selection stay)
+//   2  ENGSTAGE (Paul, 30 Oct 2026): four options, None | Front | Back | Front & Back: the system's "both" marks Front & Back; a press on a face's thumbnail only shows it (the marks and the selection stay); no option is tinted
+//      (the one white pill is the selection: "the white selection background on each button does not work on the "Back" button")
 //   3  the person types other words / picks another font: the tint goes, the mark stays (ghost beside the closed font drop-down, on the words box), its title now says what the system chose; typing the system's words back brings the tint back
 //   4  the other face (the Front thumbnail) carries its own system words; letting the draft go (no Cancel any more) brings every tint back; nothing disappears anywhere
 //   5  a saved override (even one with an old recorded reason): the selection is the person's, the marks are on the system's choice; no reason is shown any more (LIVEWORDS)
@@ -32,7 +33,7 @@ const MARKS_FN = sel => {
         font: { sys: fb ? fb.dataset.sys || '' : null, ghost: mk(fb), selTitle: s ? s.title : '', value: s && s.value, bg: bg(s), opts: s ? [...s.options].map(o => ({ v: o.value, text: o.text, label: o.label, star: !!o.dataset.sys })) : [] }
       };
 };
-const segsOf = mode => (mode === 'both' ? 'front,back' : mode);   // (LIVEWORDS: a mode is the toggles it presses / marks: "both" = Front and Back)
+const segsOf = mode => mode;   // (ENGSTAGE: one option per choice, "both" is Front & Back)
 const onlySeg = (m, mode) => m.seg.filter(s => s.mark).map(s => s.m).join() === segsOf(mode) && m.seg.filter(s => s.sys).map(s => s.m).join() === segsOf(mode);
 const pressed = (m, mode) => m.seg.filter(s => s.on).map(s => s.m).join() === segsOf(mode);
 const CARD_BG = 'rgb(255, 254, 251)';
@@ -128,17 +129,17 @@ async function realWorld(check, shots) {
     const starred = m.font.opts.filter(o => o.star);
     check(starred.length === 1 && starred[0].v === '' && /^✦ /.test(starred[0].label) && starred[0].label.endsWith(starred[0].text) && m.font.sys === 'same' && m.font.selTitle === TITLE && m.font.bg !== CARD_BG && !m.font.ghost,
       `1 untouched: the font drop-down: the system's font (the line's own, "${starred[0] && starred[0].text}") is starred in the list, selected, tinted, with no ghost: ` + JSON.stringify({ star: starred, sys: m.font.sys }));
-    check(m.seg.filter(s => !s.sys).every(s => s.bg !== m.seg.find(x => x.sys).bg), '1 the tint is only on the system\'s segment');
+    check(m.seg.every(s => s.bg === m.seg[0].bg), '1 no option is tinted (the system\'s is marked with the star only; the white pill is the selection, the same on every option): ' + JSON.stringify(m.seg.map(s => [s.m, s.bg])));
     const textBefore = m.text, optsBefore = m.font.opts.map(o => o.text).join('|');
     check(!/✦/.test(m.text) && m.seg.every(s => !s.mark || s.mark.text === '') && !m.words.mark.text, `7 the marks hold no text of their own and the panel says only what it said: "${m.text.slice(0, 100)}"`);
     if (shots) await page.screenshot({ path: path.join(shots, 'HILITE-1-untouched.png'), clip: { x: 360, y: 120, width: 285, height: 440 } });
 
-    // 2 · a press on an engraved face only shows it: the selection and the marks stay
-    await page.click(`${PV} [data-engp=mode][data-mode=back]`);
+    // 2 · a press on an engraved face's thumbnail only shows it: the selection and the marks stay
+    await page.evaluate(PV => { const t = document.querySelector(PV + ' [data-eng-thumb=back]') || document.querySelector(PV + ' .engFace[data-face=back] .engThumb'); if (t) t.click(); }, PV);
     m = await marks(PV);
-    check(m.mode === 'both' && pressed(m, 'both') && onlySeg(m, 'both') && m.seg.find(s => s.m === 'front').mark.title === TITLE, '2 Back pressed while engraved: it is shown, Front and Back stay pressed and marked (no reason, none asked)');
-    check(m.seg.find(s => s.m === 'none').bg !== m.seg.find(s => s.m === 'front').bg, '2 the system\'s faces are tinted, None is not');
-    check(m.seg.length === 3 && m.seg.map(s => s.m).join() === 'none,front,back', '2 the three choices, no "Front + back": ' + m.seg.map(s => s.m).join());
+    check(m.mode === 'both' && pressed(m, 'both') && onlySeg(m, 'both') && m.seg.find(s => s.m === 'both').mark.title === TITLE, '2 the Back shown while engraved: Front & Back stays pressed and marked (no reason, none asked)');
+    check(m.seg.find(s => s.m === 'none').bg === m.seg.find(s => s.m === 'back').bg, '2 no option is tinted, Back included');
+    check(m.seg.length === 4 && m.seg.map(s => s.m).join() === 'none,front,back,both', '2 the four choices: ' + m.seg.map(s => s.m).join());
 
     // 3 · other words, another font
     await page.fill(`${PV} .engpWords`, 'Name Two');
@@ -152,7 +153,7 @@ async function realWorld(check, shots) {
     m = await marks(PV);
     const lineFontText = starred[0].text;
     check(m.font.value === 'Pristina' && m.font.sys === 'changed' && m.font.bg === CARD_BG && m.font.ghost && m.font.ghost.st === 'changed' && m.font.ghost.title === `${TITLE}: ${lineFontText}` && m.font.opts.filter(o => o.star).map(o => o.v).join() === '',
-      '3 another font picked: the tint went, a ghost mark sits beside the closed drop-down (title names the system\'s font), the system\'s entry is still starred in the list: ' + JSON.stringify({ sys: m.font.sys, ghost: m.font.ghost, star: m.font.opts.filter(o => o.star).map(o => o.label) }));
+      '3 another font picked: the tint went, a ghost mark sits beside the closed drop-down (title names the system\'s font), the system\'s entry is still starred in the list: ' + JSON.stringify({ value: m.font.value, bg: m.font.bg, sys: m.font.sys, ghost: m.font.ghost, star: m.font.opts.filter(o => o.star).map(o => [o.v, o.label]) }));
     check(m.font.opts.map(o => o.text).join('|') === optsBefore, '7 the options\' own texts are unchanged (the star is only in their display label)');
     check(onlySeg(m, 'both') && pressed(m, 'both'), '3 the mode is untouched by a words or font change');
     if (shots) await page.screenshot({ path: path.join(shots, 'HILITE-2-font-changed.png'), clip: { x: 360, y: 120, width: 285, height: 440 } });
@@ -199,8 +200,8 @@ async function realWorld(check, shots) {
     await page.evaluate(KEY => { const row = B.orders.byKey.get(KEY), j = Engrave.jobOf(row, null, 'back'); Object.assign(j, { text: 'Name Two', lines: ['Name Two'] }); row.engravingOverride = { mode: 'back', back: { text: 'Name Two', fontWord: 'Pristina' }, by: 'Name One', at: 1, reason: { code: 'asked', text: 'Customer asked in a message', by: 'Name One', at: 1 } }; }, KEY);
     await mountSlot();
     m = await marks(S);
-    const segFront = m.seg.find(s => s.m === 'front'), segBack = m.seg.find(s => s.m === 'back');
-    check(pressed(m, 'back') && onlySeg(m, 'both') && segFront.mark.title === TITLE && segFront.title === TITLE && !/Changed:/.test(m.text), '5 override Back saved: only Back is pressed, the marks stay on Front and Back, no reason anywhere: ' + JSON.stringify(segFront.title));
+    const segFront = m.seg.find(s => s.m === 'both'), segBack = m.seg.find(s => s.m === 'back');
+    check(pressed(m, 'back') && onlySeg(m, 'both') && segFront.mark.title === TITLE && segFront.title === TITLE && !/Changed:/.test(m.text), '5 override Back saved: only Back is pressed, the mark stays on Front & Back, no reason anywhere: ' + JSON.stringify(segFront.title));
     check(m.words.value === 'Name Two' && m.words.sys === 'changed' && m.words.mark.title === `${TITLE}: 1. 27. 24`, '5 the words box shows the person\'s words, its mark names the system\'s words (no reason): ' + JSON.stringify(m.words.mark));
     check(m.font.value === 'Pristina' && m.font.sys === 'changed' && m.font.ghost && m.font.ghost.title === `${TITLE}: Ace` && m.font.opts.filter(o => o.star).map(o => o.v).join() === '', '5 the font: Pristina selected, the ghost names the system\'s font (no reason): ' + JSON.stringify(m.font.ghost));
     void segBack;

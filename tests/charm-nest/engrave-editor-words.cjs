@@ -134,8 +134,9 @@ async function run(kit) {
       await R.openEngraveDetail(w, 'paul', { face: 'front' }); await R.settle(page, 800);
       const a1 = await cardFacts();
       await R.shot(w, 'EW-0-front-waiting-for-words-edit-charm-pill');
-      check('A1 the front with no words waits for them as before (no Approve, the panel asks "Say which words go on the front"), and its card holds the "Open in Charm Editor" button, so the charm can be drawn before any words are given',
-        !a1.approve && !a1.canvas && /Say which words go on the front/.test(a1.ask) && !a1.offer && a1.pill, JSON.stringify(a1));
+      // (ENGSTAGE, Paul 30 Oct 2026: "no warnings or explanations in the card": no line asks for the words; Approve is there, off, while the engraved front has none)
+      check('A1 the front with no words waits for them as before (Approve off, no line asks for them), and its card holds the "Open in Charm Editor" button, so the charm can be drawn before any words are given',
+        (!a1.approve || a1.approveOff) && !a1.canvas && !a1.ask && !a1.offer && a1.pill, JSON.stringify(a1));
 
       /* ── Paul's own path: words "test", then the charm editor ── */
       await setWords('test'); await savePanel();
@@ -159,8 +160,8 @@ async function run(kit) {
       await R.openEngraveDetail(w, 'paul', { face: 'front' }); await R.settle(page, 900);
       const a4 = await job(RID, 'front'), a4c = await cardFacts();
       await R.shot(w, 'EW-2-paul-words-emptied');
-      check('A4 the words box emptied and saved: no words on the front (no letters, no transform box), its work area still draws NOVEMBER and 21, the bottom row says the editor\'s parts are its engraving, Approve is offered, and the panel says words are optional (it does not ask for them)',
-        a4.state === 'review' && a4.artOnly && a4.words === '' && a4.verify && a4c.approve && !a4c.approveOff && a4c.canvas && !a4c.box && a4c.art > 20 && /charm editor's parts are this front's engraving/.test(a4c.ctl) && !a4c.centreBtn && a4c.words === '' && /No words needed/.test(a4c.offer) && !a4c.ask,
+      check('A4 the words box emptied and saved: no words on the front (no letters, no transform box), its work area still draws NOVEMBER and 21, the bottom row says the editor\'s parts are its engraving, Approve is offered, and nothing asks for words (Approve is live)',
+        a4.state === 'review' && a4.artOnly && a4.words === '' && a4.verify && a4c.approve && !a4c.approveOff && a4c.canvas && !a4c.box && a4c.art > 20 && /charm editor's parts are this front's engraving/.test(a4c.ctl) && !a4c.centreBtn && a4c.words === '' && !a4c.offer && !a4c.ask,   // (ENGSTAGE: no line says the words are optional: Approve is simply live)
         JSON.stringify({ a4, a4c }));
 
       /* ── Approve ── */
@@ -191,8 +192,8 @@ async function run(kit) {
       await R.openEngraveDetail(w, 'fresh', { face: 'front' }); await R.settle(page, 900);
       const f1 = await job(made.fresh.rid, 'front'), f1c = await cardFacts();
       await R.shot(w, 'EW-4-fresh-front-drawn-no-words-asked');
-      check('A9 a front still waiting for words, drawn in the editor from its empty work area (21 in a day square): it is placed as drawn and waits for Approve; the buyer\'s note is not put in as words, the panel says they are optional, the work area\'s note says none are needed',
-        f0.pill && !f0.approve && f1.state === 'review' && f1.artOnly && f1.words === '' && f1c.approve && !f1c.approveOff && f1c.words === '' && /No words needed/.test(f1c.offer) && /No words needed on the front/.test(f1c.note),
+      check('A9 a front still waiting for words, drawn in the editor from its empty work area (21 in a day square): it is placed as drawn and waits for Approve; the buyer\'s note is not put in as words, nothing asks for them, the work area\'s note says none are needed',
+        f0.pill && (!f0.approve || f0.approveOff) && f1.state === 'review' && f1.artOnly && f1.words === '' && f1c.approve && !f1c.approveOff && f1c.words === '' && !f1c.offer && /No words needed on the front/.test(f1c.note),
         JSON.stringify({ f0, f1, f1c }));
       // the face switch offers, never fills in: None then Front leaves the drawn front's words box empty; on a front nobody drew it fills in the buyer's note, as it always did
       // (LIVEWORDS: None and Front are kept at once now, so the words a face is switched on with are read from the panel's own seeding, the very call a press makes, without changing the piece)
@@ -203,7 +204,7 @@ async function run(kit) {
       /* ── a front with no art edit and no words: exactly as before ── */
       await R.openEngraveDetail(w, 'plain', { face: 'front' }); await R.settle(page, 700);
       const p0 = await job(made.plain.rid, 'front'), p0c = await cardFacts();
-      check('A11 the front nobody drew still waits for its words: "words", no Approve, the panel asks for them, no offer line', p0.state === 'words' && !p0.fit && !p0c.approve && /Say which words go on the front/.test(p0c.ask) && !p0c.offer, JSON.stringify({ p0, p0c }));
+      check('A11 the front nobody drew still waits for its words: "words", Approve off while its box is empty, no line asks, no offer line', p0.state === 'words' && !p0.fit && (!p0c.approve || p0c.approveOff || !!p0c.words) && !p0c.ask && !p0c.offer, JSON.stringify({ p0, p0c }));
     }
 
     if (ONLY !== 'A') {
