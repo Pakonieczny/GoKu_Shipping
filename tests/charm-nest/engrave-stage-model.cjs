@@ -285,6 +285,48 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     if (!(await page.evaluate(key => !!CharmNestEngravePanel.stateOf(key), KR))) { const fc = ((await jobsOf(KR)).find(j => !['none', 'skipped'].includes(j.state)) || { face: 'front' }).face; await R.openEngraveDetail(w, 'front', { face: fc }); await R.settle(page, 700); }   // (the piece opened again on a face it engraves)
     const h1 = await page.evaluate(key => { const s = CharmNestEngravePanel.stateOf(key), c = window.__card(), b = c && c.querySelector('[data-engp-approve]'); return { s, a: b && b.dataset.a, dis: b && b.disabled, text: b && b.textContent.trim(), jobs: Engrave.jobsOf(B.orders.byKey.get(key)).map(j => [j.face === 'front' ? 'front' : 'back', j.state, j.text]) }; }, KR);
     check('H1 a burst of edits and presses with no waits: once idle, the card is calm with nothing staged, or Approve is lit (never "Approved ✓" with nothing running)', !!idle && h1.s && (h1.s.dirty ? (h1.a === 'approve' && !h1.dis) || h1.s.gate === 'need' : h1.a === 'approved') && !/✓/.test(h1.text || ''), JSON.stringify({ hb: hb.did.join(' '), h1 }));
+    /* ── I · release blocker (A), the trace's two causes (S7 seeds 1 and 3, real input) ──
+     *   I1-I2  a render met by an approval under way is owed, never dropped: the card is drawn again when the approval is done
+     *   I3-I5  typing fast: a rebuild gives the focus and the caret back to the words box; an "a" or "s" that lands on the card mid-word goes into the words, never approves or stages None */
+    await quiet(); await R.openEngraveDetail(w, 'tag', { face: 'back' }); await R.settle(page, 700);
+    const i1 = await page.evaluate(async key => {
+      const row = B.orders.byKey.get(key), j = Engrave.jobsOf(row).find(x => x.face !== 'front'), c0 = window.__card();
+      j.stamping = true;   // (an approval being stamped)
+      Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: j.key }); Engrave.render();   // (what a refit does: the card let go, a render asked for)
+      await new Promise(r => setTimeout(r, 150));
+      const c1 = window.__card();
+      j.stamping = false;   // (the approval done)
+      await new Promise(r => setTimeout(r, 400));
+      const c2 = window.__card();
+      return { heldWhileStamping: c1 === c0, drawnAfter: !!c2 && c2 !== c0 && c2.isConnected, key: c2 && c2.dataset.key };
+    }, KT);
+    check('I1 a render asked for while an approval is stamped waits for it (the card is not torn down under the stamp)', i1.heldWhileStamping, JSON.stringify(i1));
+    check('I2 and is never dropped: once the approval is done the card is drawn again', i1.drawnAfter, JSON.stringify(i1));
+    await R.settle(page, 400);
+    // typing on the Back, a rebuild of the card under the typing: the focus and the caret come back to the box
+    await page.click(P + ' .engpWords'); await page.keyboard.press('End'); await page.keyboard.type('xy', { delay: 20 });
+    const i3 = await page.evaluate(async key => {
+      const j = Engrave.jobsOf(B.orders.byKey.get(key)).find(x => x.face !== 'front');
+      Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: j.key }); Engrave.render();   // (the tab draws the card again under the typing: a new card, a new panel)
+      setTimeout(() => { const c = window.__card(); if (c) c.focus(); }, 30);   // (and takes the focus to the card, as the tab does 30 ms after a drawing when it can)
+      await new Promise(r => setTimeout(r, 160));
+      const a = document.activeElement, ta = window.__card() && window.__card().querySelector('.engp .engpWords');
+      return { inBox: !!ta && a === ta, caretAtEnd: !!ta && ta.selectionStart === ta.value.length, value: ta && ta.value };
+    }, KT);
+    check('I3 a rebuild under the typing gives the focus and the caret back to the words box', i3.inBox && i3.caretAtEnd && /xy$/.test(i3.value || ''), JSON.stringify(i3));
+    // the focus taken to the card itself mid-word: "a" and "s" typed at once go into the words, nothing is approved, None is not staged
+    const i4 = await page.evaluate(async key => {
+      const c = window.__card(), was = CharmNestEngravePanel.stateOf(key), ta = c.querySelector('.engp .engpWords');
+      ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift', bubbles: true }));   // (a key typed in the box this instant: the typing goes on)
+      c.focus();
+      return { focusOnCard: document.activeElement === c, choice: was && was.choice };
+    }, KT);
+    await page.keyboard.type('as', { delay: 15 });
+    await R.settle(page, 150);
+    const i5 = await page.evaluate(key => { const s = CharmNestEngravePanel.stateOf(key), b = CharmNestEngravePanel.busyOf(key), ta = window.__card() && window.__card().querySelector('.engp .engpWords'); return { choice: s && s.choice, committing: b.committing || b.running, value: ta && ta.value, inBox: document.activeElement === ta }; }, KT);
+    check('I4 "a" and "s" typed mid-word while the card had the focus: nothing approved, None not staged', i4.focusOnCard && !i5.committing && i5.choice === i4.choice && i5.choice !== 'none', JSON.stringify({ i4, i5 }));
+    check('I5 and the two letters are in the words, typed where the caret was', /xyas$/.test(i5.value || '') && i5.inBox, JSON.stringify(i5));
+    await page.evaluate(() => { Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render(); }); await R.settle(page, 900);   // (left with no Approve: discarded)
     check('Z no page errors', errors.length === 0, errors.join(' | ').slice(0, 600));
   } catch (e) { console.error(e); check('ran', false, String(e && e.stack || e)); }
   finally { await w.close(); }

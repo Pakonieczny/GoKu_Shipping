@@ -9333,6 +9333,9 @@ const Engrave = window.Engrave = (() => {
       if (!res || !res.ok) return { ok: false, cancelled: !!(res && res.cancelled), message: (res && res.message) || "The change was not kept.", approved: [] };
       step("kept");
     }
+    // (ENGSTAGE, coordinator 30 Oct 2026: "Only the last press approves and writes": a newer press waiting behind this commit takes it from here: no seal, no file, no stamp for a state already overtaken)
+    const overtaken = () => { try { return typeof o.overtaken === "function" && !!o.overtaken(); } catch (_) { return false; } };
+    if (overtaken() && on.length) return { ok: true, overtaken: true, approved: [] };
     if (!on.length) return { ok: true, none: true, approved: [] };
     if (o.approve === false) return { ok: true, kept: true, approved: [] };
     // (2) every engraved face read and fitted, with the staged words
@@ -9356,6 +9359,7 @@ const Engrave = window.Engrave = (() => {
       }
       if (why) return { ok: false, message: "Not approved: " + why.replace(/^(?:not approved:\s*)/i, ""), approved: [] };
     }
+    if (overtaken()) return { ok: true, overtaken: true, approved: [] };   // (the faces are kept and fitted: the newer press approves them, as it stages them)
     // (3) a place dragged on a face whose job was there before this commit (placed, or opened again)
     for (const f of on) {
       const p = faces[f] && faces[f].pos, j = jobs[f]; if (!p || !j || !before.has(j.key) || !j.fit || j.fit.artOnly) continue;
@@ -9369,7 +9373,7 @@ const Engrave = window.Engrave = (() => {
       if (["approved", "written"].includes(j.state)) { approved.push(j.key); continue; }
       step("approve");
       // (the face is approved the moment its state says so: the rest of the approval (its back file for the sheets, its save) goes on behind it, as after any Approve; the commit does not wait for it)
-      { const task = Promise.resolve(approve(j, by, stampAt())).catch(() => {}); let done = false; task.then(() => { done = true; }); while (!done && !["approved", "written"].includes(j.state)) await Promise.race([task, wait(60)]); }
+      { const task = Promise.resolve(approve(j, by, stampAt(), { quick: true })).catch(() => {}); let done = false; task.then(() => { done = true; }); while (!done && !["approved", "written"].includes(j.state)) await Promise.race([task, wait(60)]); }
       step("approved");   // (the stamp on the panel's own anchor: the live Approve is never the approval's button)
       if (!["approved", "written"].includes(j.state)) { const w = APPROVE_WHY.get(j.key); return { ok: false, message: (w && w.text) || `Not approved: the ${f} is still to approve.`, approved, failed: j.key, said: !!w }; }   // (said: the approval already told the person why)
       approved.push(j.key);
@@ -9534,12 +9538,12 @@ const Engrave = window.Engrave = (() => {
     try { agent({ engrave: true }, "warn", `${job.row?.order?.receiptId || job.key}: the approval stopped on an error (${msg})`); } catch (_) {}
     notApproved(job, `Not approved: something went wrong while approving (${msg}). Your changes are kept: press Approve to try again.`);
   }
-  async function approve(job, by, button) {
+  async function approve(job, by, button, o) {
     if(job._approvalTask){approveSay(job,"Still approving this placement…",null,true);return;}   // (APPROVEFIX: every wait of the task has a time limit, so this ends)
-    const task=approveOnce(job,by,button).catch(e=>approveThrew(job,e));job._approvalTask=task;   // (HELDREL: an approval that threw says so, never a silent press)
+    const task=approveOnce(job,by,button,o).catch(e=>approveThrew(job,e));job._approvalTask=task;   // (HELDREL: an approval that threw says so, never a silent press)
     try{return await task;}finally{if(job._approvalTask===task)delete job._approvalTask;}
   }
-  async function approveOnce(job, by, button) {
+  async function approveOnce(job, by, button, o) {
     { const art=typeof charmEditSaving==="function" ? charmEditSaving(job) : null;   // (APPROVE AFTER THE EDITOR: the Charm Editor's save of this piece is still under way: it is waited for, said at once, and what it left is approved)
       if(art){approveSay(job,"Saving this piece's artwork from the Charm Editor first · the approval follows",null,true);try{await approveWithin(art,APPROVE_MS.fit,"the artwork was not saved within a minute");}catch(e){notApproved(job,`Not approved: ${e.message}. Press Approve again once the card says the artwork is saved.`);return;}approveSay(job,"");return approveOnce(job,by,button);} }
     const owner=items(),row=job.row,pendingFit=fitTasks.get(job);
@@ -9595,7 +9599,10 @@ const Engrave = window.Engrave = (() => {
     CNEngravingSeals.keep(job);
     const seal=CNEngravingSeals.add(job,"engraveApproved",by,approvedAt);
     // Publish the new state only after the wooden press, ink and lift finish. Pollers must not advance early.
-    job.stamping=true;try{await approveWithin(CNEngravingSeals.press(approvalButton,seal),APPROVE_MS.stamp,"").catch(()=>{});}finally{job.stamping=false;}   // (APPROVEFIX: the stamp is the picture of the approval, never what holds it up)
+    // (ENGSTAGE, coordinator 30 Oct 2026: "Each approval spends 2.3-2.6 s between "fit done" and settleApproval": the wooden press's animation. An approval made by the panel's commit (o.quick: its
+    //  "Approved ✓" was painted at the press) publishes at once; the stamp comes down on its own, beside the button)
+    if(o && o.quick){Promise.resolve().then(()=>CNEngravingSeals.press(approvalButton,seal)).catch(()=>{});}
+    else{job.stamping=true;try{await approveWithin(CNEngravingSeals.press(approvalButton,seal),APPROVE_MS.stamp,"").catch(()=>{});}finally{job.stamping=false;}}   // (APPROVEFIX: the stamp is the picture of the approval, never what holds it up)
     if(job.fit!==prepared.fit || job.view!==prepared.view){notApproved(job,"Not approved: the placement changed while it was approved. Review the current words.",4000);delete job.approvalIntent;return;}
     if(!settleApproval(job)){notApproved(job,"Not approved: the placement changed while it was approved. Look at it, then press Approve again.",4000);return;}
     approveSay(job,"");   // (APPROVEFIX: it used to go on as if approved, and the card came back with Approve)
@@ -12187,8 +12194,13 @@ const Engrave = window.Engrave = (() => {
   }
   const activityScope = () => "engrave-place";   // (NODECIDED: one list, one range and one sort)
   function activityTools(v) { CNListActivity.mount(v.querySelector(".ordBar"), activityScope(), () => { EG.focus=null; render(); }); }
+  /* ENGSTAGE (stage-view's trace, 30 Oct 2026: a refit set EG.card = null, its render() met an approval being stamped and was dropped: the tab sat on a card EG.card no longer pointed to, and the
+     card's own presses did nothing after the approval settled): a render that meets an approval under way is OWED, never dropped: exactly one render when no job is stamped or prepared any more. */
+  let renderOwed = 0;
+  const approvalUnderWay = () => [...items().values()].some(j => j.stamping || j.approvalPreparing);
+  function oweRender() { if (renderOwed) return; const again = () => { if (approvalUnderWay()) { renderOwed = setTimeout(again, 60); return; } renderOwed = 0; render(); }; renderOwed = setTimeout(again, 60); }
   function renderView() {
-    if([...items().values()].some(j=>j.stamping || j.approvalPreparing))return;
+    if (approvalUnderWay()) { oweRender(); return; }
     LiveStrip.render();
     const v = document.getElementById("engraveView");
     if (!previewRecovery && previewRecoveryTimer === null && [...items().values()].some(needsPreview))
