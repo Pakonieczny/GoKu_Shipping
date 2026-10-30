@@ -121,11 +121,13 @@ function installTracer(lineKey) {
           if (el.scrollIntoViewIfNeeded) el.scrollIntoViewIfNeeded(false);
           const r = el.getBoundingClientRect(), enabled = !el.disabled && el.getAttribute('aria-disabled') !== 'true';
           if (a.k === 'approve' && window.__trace) window.__trace.lines.push({ t: Math.round((performance.now() - window.__trace.t0) * 10) / 10, executor: 'approve press ' + (enabled ? 'LIT' : 'not lit'), staged: S.staged(pk) });
-          return { x: r.left + r.width / 2, y: r.top + Math.min(r.height / 2, 18), enabled, focused: document.activeElement === el, staged: a.k === 'approve' ? S.staged(pk) : undefined };
+          const hx = r.left + r.width / 2, hy = r.top + Math.min(r.height / 2, 18), top = document.elementFromPoint(hx, hy), hit = !!top && (el === top || el.contains(top)); const over = hit ? null : top ? (top.tagName + '.' + String(top.className || '').split(' ').slice(0, 2).join('.')).slice(0, 60) : 'nothing';
+          return { x: hx, y: hy, hit, over, enabled, focused: document.activeElement === el, staged: a.k === 'approve' ? S.staged(pk) : undefined };
         }, [pk, a]);
         if (info.gone) { r1.gone = true; log.push(r1); await openPiece(pk); continue; }
         if (info.missing || ((a.k === 'key' || a.k === 'bs') && !info.enabled)) { r1.missing = true; log.push(r1); continue; }
-        if (a.k === 'approve') { r1.enabled = info.enabled; r1.staged = info.staged; if (info.staged && info.staged.choice === 'none') { r1.enabled = false; r1.skipped = true; log.push(r1); continue; } }
+        if (!info.hit) r1.blocked = info.over;   // (something else is on top where the mouse presses: the press does not reach the control)
+        if (a.k === 'approve') { r1.enabled = info.enabled && info.hit; r1.staged = info.staged; if (info.staged && info.staged.choice === 'none') { r1.enabled = false; r1.skipped = true; log.push(r1); continue; } }
         if (a.k === 'key' || a.k === 'bs') { if (!info.focused) await page.mouse.click(info.x, info.y); await page.keyboard.press(a.k === 'bs' ? 'Backspace' : a.arg); }
         else await page.mouse.click(info.x, info.y);
         log.push(r1);
