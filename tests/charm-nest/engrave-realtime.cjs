@@ -224,7 +224,7 @@ const detailFacts = page => page.evaluate(() => {
   const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (!c) return { open: false };
   const faces = [...c.querySelectorAll('.engCard .engFace')].filter(vis).map(f => {
     const pv = f.querySelector('.engpv'), draw = f.querySelector('.engpvDraw'), txt = f.querySelector('.engpvText');
-    return { face: f.dataset.face, empty: f.dataset.empty, label: (f.querySelector('.engTxt') || {}).textContent || '', current: f.hasAttribute('aria-current'), drawKids: draw ? draw.children.length : -1, drawHtml: draw ? draw.innerHTML.length : -1,
+    return { face: f.dataset.face, engraved: !!f.querySelector('[data-eng-thumb][data-engraved]'), empty: f.dataset.empty, label: (f.querySelector('.engTxt') || {}).textContent || '', current: f.hasAttribute('aria-current'), drawKids: draw ? draw.children.length : -1, drawHtml: draw ? draw.innerHTML.length : -1,
       pvText: txt && !txt.hidden ? txt.textContent : null, pvFont: txt && !txt.hidden ? getComputedStyle(txt).fontFamily : null, imgs: f.querySelectorAll('.engThumb img, .engThumb canvas, .engThumb svg').length, pvState: pv && pv.dataset.state };
   });
   const cv = c.querySelector('.backHost canvas');
@@ -306,10 +306,12 @@ async function partDetail(w, made) {
   const sb = await shotB64(page, SEL.thumb('back')), sw = await shotB64(page, SEL.work);
   const cpB = await charmPic(sb, chRefs);
   check('S1 the detail opens on the system\'s choice: mode back, the customer\'s words, the chosen font', 'auto', start.open && start.mode === 'back' && start.words === 'Name One' && /stylish/i.test(String(start.fontLabel)), `mode ${start.mode}, words "${start.words}", font "${start.fontLabel}"`);
-  check('S1b a back-only necklace shows only the Back face on the card', 'smart', start.open && start.faces.length === 1 && start.faces[0].face === 'back', `faces shown ${JSON.stringify((start.faces || []).map(f => f.face))}`);
+  // (ENGSTAGE, Paul 30 Oct 2026, SPEC: "Both are always shown for a piece that can have both, and each is always drawn": the Back engraved and edited, the Front the plain charm)
+  { const fb = (start.faces || []).find(f => f.face === 'back'), ff = (start.faces || []).find(f => f.face === 'front');
+    check('S1b a back-only necklace shows both faces on the card: the Back engraved and edited, the Front the plain charm (no words)', 'smart', start.open && start.faces.length === 2 && !!fb && fb.engraved && fb.current && !!ff && !ff.engraved && !ff.pvText, `faces shown ${JSON.stringify((start.faces || []).map(f => [f.face, f.engraved, f.current, f.pvText]))}`); }
   const s2 = sw ? await rtw(page, 'textLook', sw, refImg.base.work, refImg.anna.work, plainWork) : null;
   check('S2 work area starts as the real charm with the engraving in the system\'s font (the instrument\'s own control)', 'world', TEXT_OK(s2), 'the work area\'s engraving against the app\'s own rendering of that order: ' + JSON.stringify(s2));
-  check('T0 the back thumbnail at rest has the charm drawing in it, not only text', 'thumb', cpB.ok, cpB.ev + `; engpvDraw children ${start.faces[0] ? start.faces[0].drawKids : '-'}`);
+  check('T0 the back thumbnail at rest has the charm drawing in it, not only text', 'thumb', cpB.ok, cpB.ev + `; engpvDraw children ${(start.faces || []).find(f => f.face === 'back') ? start.faces.find(f => f.face === 'back').drawKids : '-'}`);
 
   const hl0 = await hiliteFacts(page);
   check('H1 the system\'s own choice is marked while nothing is changed (its mode, its words, its font; a visible sparkle each)', 'hilite', hl0.open && hl0.marked.join() === 'back' && hl0.boxMark === 'same' && hl0.sparks >= 2 && hl0.fontLabels.length >= 1, `mode marked: ${JSON.stringify(hl0.marked)}, words box: ${hl0.boxMark}, visible sparkles: ${hl0.sparks}, system font entries marked: ${JSON.stringify(hl0.fontLabels)}`);

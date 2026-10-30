@@ -92,8 +92,9 @@ const SHOTS = process.argv[2] || process.env.SHOTS || '';
     const keyOfPiece = k => page.evaluate(k => k, k);
     await R.openEngraveDetail(w, 'back', { face: 'back' });
     let d = await detail();
-    check(!!d && d.faces.join() === 'back' && d.cur.join() === 'back' && d.mode === 'back' && d.pface === 'back', `the Engrave detail of a back-only piece: only the Back box, selected by itself, the mode says Back: ${JSON.stringify(d && [d.faces, d.cur, d.mode])}`);
-    check(!!d && d.dashed === 0 && d.emptyMarkup === 0 && !/Front/.test(d.text), 'the detail card: no dashed box and no "Front" over nothing');
+    // (ENGSTAGE, Paul 30 Oct 2026, SPEC: "Both are always shown for a piece that can have both, and each is always drawn": the Engrave detail draws the Front too, as the plain charm; the order window's cards keep ENGSMART above)
+    check(!!d && d.faces.join() === 'front,back' && d.cur.join() === 'back' && d.mode === 'back' && d.pface === 'back' && !d.thumbText.front, `the Engrave detail of a back-only piece: both boxes, the Back selected, the Front the plain charm (no words), the mode says Back: ${JSON.stringify(d && [d.faces, d.cur, d.mode, d.thumbText])}`);
+    check(!!d && d.dashed === 0 && d.emptyMarkup === 0 && !/Words to confirm/.test(d.text), 'the detail card: no dashed box, no empty-slot markup, no caption about a face');
     await shot('SMART-detail-back');
     // (the page's own save path is stubbed here: it records what a press keeps and says ok; nothing is written, so the piece stays as saved)
     await page.evaluate(() => { window.__saveWas = Engrave.saveSetup; window.__kept = []; Engrave.saveSetup = async (row, patch) => { __kept.push(JSON.parse(JSON.stringify(patch))); return { ok: true }; }; });
@@ -103,12 +104,12 @@ const SHOTS = process.argv[2] || process.env.SHOTS || '';
     let kept = await page.evaluate(() => __kept.splice(0));
     check(kept.length === 1 && kept[0].mode === 'both' && !kept[0].reason, `and it is kept at once (no Save, no reason): ${JSON.stringify(kept)}`);
     await shot('SMART-detail-both-kept');
-    r = await clickMode('none'); check(r.faces.length === 0 && r.hasCard && !/Front|Back/.test(r.text), `None pressed: the faces go in the same tick (the piece's name stays): ${JSON.stringify(r.faces)}`);
+    r = await clickMode('none'); check(r.faces.join() === 'front,back' && r.hasCard, `None pressed: both faces stay drawn, as the plain charm (ENGSTAGE): ${JSON.stringify(r.faces)}`);
     await R.settle(page, 300);
     kept = await page.evaluate(() => __kept.splice(0));
     check(kept.length === 1 && kept[0].mode === 'none', `and it is kept at once: ${JSON.stringify(kept)}`);
-    d = await detail(); check(d.faces.join() === 'back' && d.mode === 'back', `(the stub kept nothing: the card is back on what is saved: ${JSON.stringify([d.faces, d.mode])})`);
-    r = await clickMode('back'); check(r.faces.join() === 'back' && r.cur.join() === 'back', `Back pressed while engraved: it is only shown, the one Back box, selected: ${JSON.stringify(r)}`);
+    d = await detail(); check(d.faces.join() === 'front,back' && d.mode === 'back', `(the stub kept nothing: the card is back on what is saved: ${JSON.stringify([d.faces, d.mode])})`);
+    r = await clickMode('back'); check(r.faces.join() === 'front,back' && r.cur.join() === 'back', `Back pressed while engraved: it is only shown, the Back box selected: ${JSON.stringify(r)}`);
     kept = await page.evaluate(() => __kept.splice(0));
     check(kept.length === 0, `a press on an engraved face keeps nothing: ${JSON.stringify(kept)}`);
     // a press on a box selects that face (and the panel edits it): the both-faces piece
