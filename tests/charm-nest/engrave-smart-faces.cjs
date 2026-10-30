@@ -86,7 +86,7 @@ const SHOTS = process.argv[2] || process.env.SHOTS || '';
         mode: p ? p.dataset.mode : null, pface: p ? p.dataset.face : null, words: p && p.querySelector('.engpWords') ? p.querySelector('.engpWords').value : null,
         save: p ? !!p.dataset.staged : null, cancel: null };
     });
-    const clickMode = m => page.evaluate(m => { const b = document.querySelector(`#egQueue .engp [data-engp=mode][data-mode=${m}]`); b.click();   // (ONE task: what the person would see the moment the press is handled)
+    const clickMode = m => page.evaluate(m => { const b = document.querySelector(`#egQueue .engp [data-engp=mode][data-mode=${m}], #egQueue .engp [data-engp=choice][data-choice=${m}]`); b.click();   /* (ENGSTAGE: the four options are data-engp=choice) */   // (ONE task: what the person would see the moment the press is handled)
       const c = document.querySelector('#egQueue .rvItem[data-kind=placement] .engCard'), faces = c ? [...c.querySelectorAll('.engFace')] : [];
       return { faces: faces.map(f => f.dataset.face), cur: faces.filter(f => f.getAttribute('aria-current') === 'true').map(f => f.dataset.face), hasCard: !!c, text: c ? c.textContent.replace(/\s+/g, ' ') : '' }; }, m);
     const keyOfPiece = k => page.evaluate(k => k, k);
