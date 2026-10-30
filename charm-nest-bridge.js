@@ -10377,7 +10377,12 @@ const Engrave = window.Engrave = (() => {
   function showFace(x, face, o) {
     o = o || {}; face = face === "front" || face === "back" ? face : null;
     const job0 = typeof x === "string" ? items().get(x) : x; if (!face || !job0) return { ok: false, face: null, why: "no such piece or face" };
-    { const sr = SV_STAGES.get(pieceKeyOfJob(job0)); if (sr && sr.stage) return { ok: true, face: sr.stage.active, same: face === sr.stage.active, staged: true }; }   // (ENGSTAGE: the stage's active face is the face shown; svShowStage turns the area)
+    // (ENGSTAGE: the active face has ONE owner, the panel: a live panel of the piece takes the face (its draft, the thumbnails' mark and the work area follow through Engrave.showStage, the area turns);
+    //  with no panel on the page, the work area's own switch below, as before)
+    { const pk = pieceKeyOfJob(job0), sr = SV_STAGES.get(pk), PNL = window.CharmNestEngravePanel;
+      if (sr && sr.stage && sr.stage.active === face && !SV_TURN.run) return { ok: true, face, same: true, staged: true };
+      if (PNL && typeof PNL.setActive === "function") { if (o.animate === false) SV_STILL_UNTIL = performance.now() + 80; let took = false; try { took = !!PNL.setActive(pk, face); } catch (_) { took = false; } if (took) return { ok: true, face, staged: true }; }
+      if (sr && sr.stage) return { ok: true, face: sr.stage.active, same: face === sr.stage.active, staged: true }; }
     const j = cardJobOf(job0), busy = !!(WV.turn && WV.turn.busy());
     if (!j) { if (face === faceOf(job0) || face === otherFaceOf(job0)) setViewFace(job0, face, null); return { ok: true, face: viewFaceOf(job0), shown: false }; }   // (not on screen: its next drawing shows it)
     const pid = (j.copies || [])[0], reach = face === faceOf(j) || face === otherFaceOf(j) || !!(pid && jobsOfPiece(pid)[face]);
@@ -10434,7 +10439,7 @@ const Engrave = window.Engrave = (() => {
   /** Where a staged place `pos` puts the words on `job`'s face: a point of its view's frame (pt), or null. */
   const svPlaceOf = (job, pos) => { const p = pos && pos.charm; return job && job.view && Array.isArray(p) ? viewPointOf(job.view, p) : null; };
   /** THE ONE CALL (see above) -> { ok, seq }. */
-  function svShowStage(x, stage) {
+  function svShowStage(x, stage, o) {
     const job = typeof x === "string" ? items().get(x) : x; if (!job || !job.key) return { ok: false, why: "no such piece" };
     // (a null stage is what is committed only when the panel holds no draft of the piece: while it does (a commit just ended, its draft clean or staged on top), the panel's own stage is drawn, so the
     //  work area and the thumbnails always equal the panel's choice, face and words, whatever was kept)
@@ -10448,8 +10453,32 @@ const Engrave = window.Engrave = (() => {
     //  shows it (no hop). More words typed before the next frame only mark the piece, and that frame paints the last state (the last state never dropped); a face or a choice changed is
     //  painted at once even then (a press is never a frame late), up to three times a frame)
     const shape = st ? st.choice + "|" + st.active : "", moved = shape !== rec.shape;
-    if (rec.flushing || (rec.hotN && !(moved && rec.hotN < 3))) svQueue(rec); else { rec.shape = shape; svFlush(rec); svHot(rec); }
+    rec.job = job;
+    // (o.thumb(face) -> element: a host's own thumbnails (a panel mounted with its own pictures): painted with the card's, from the same stage, as long as they are on the page)
+    if (o && typeof o.thumb === "function") (rec.hostThumbs || (rec.hostThumbs = new Set())).add(o.thumb);
+    // (the thumbnails are painted in every call: a few DOM writes; the work area at most a few times a frame, the rest at the next frame)
+    if (rec.flushing) svQueue(rec); else if (rec.hotN >= 3 && !(moved && rec.hotN < 6)) { svFlush(rec, "thumbs"); svQueue(rec); } else { rec.shape = shape; svFlush(rec); svHot(rec); }
     return { ok: true, seq: rec.seq };
+  }
+  /** A host's own thumbnails of the piece (showStage's o.thumb): each face's picture gets the face's staged words and font (none when the face is not engraved), else what is committed. A host
+   *  whose pictures are all off the page is let go. */
+  function svHostThumbs(rec) {
+    const P = window.CharmNestEngravePreview, job = rec.job; if (!rec.hostThumbs || !rec.hostThumbs.size || !P || typeof P.update !== "function" || !job || !job.row) return;
+    const st = rec.stage, line = lineOf(job.row), pid = (job.copies || [])[0], jobOfFace = f => (faceOf(job) === f ? job : (pid && jobsOfPiece(pid)[f]) || jobsOf(job.row).find(j => j !== job && !j.editingBack && sameSlot(j, job) && faceOf(j) === f) || null);
+    for (const fn of [...rec.hostThumbs]) {
+      let any = false;
+      for (const f of ["front", "back"]) {
+        let el = null; try { el = fn(f); } catch (_) { el = null; } if (!el || !el.isConnected) continue; any = true;
+        if (el.closest && el.closest(".engCard [data-eng-thumb], .engCard")) continue;   // (the card's own thumbnails: CharmNestEngraveCard.paintStage paints them)
+        const fj = jobOfFace(f), live = fj && !["none", "skipped"].includes(fj.state) ? fj : null;
+        const text = st ? (svChoiceFaces(st.choice).includes(f) ? draftLines(st.faces[f].text).join("\n") : "") : live ? (live.lineInput && live.lineInput.length ? live.lineInput : live.lines || []).join("\n") : "";
+        const part = { text, face: f };
+        try { const id = P.fontIdOf ? P.fontIdOf(line, f, st ? st.faces[f].font : (live && live.faceFontWord) || "") : null; if (id) part.fontId = id; } catch (_) { /* its own font */ }
+        try { const pos = live && P.positionOf ? P.positionOf(live, { row: line, slot: job.slot }) : null; if (pos) part.position = { x: pos.x, y: pos.y, size: pos.size, angle: pos.angle }; } catch (_) { /* the middle */ }
+        try { P.update(el, part); } catch (_) { /* that picture keeps what it drew */ }
+      }
+      if (any) fn._svMiss = 0; else if ((fn._svMiss = (fn._svMiss || 0) + 1) > 30) rec.hostThumbs.delete(fn);   // (not on the page yet: kept a while; gone for good: let go)
+    }
   }
   /** The piece was painted in this frame: words typed until the next frame are painted by it (svQueue). */
   function svHot(rec) { rec.hotN = (rec.hotN || 0) + 1; if (!rec.hotRaf) rec.hotRaf = requestAnimationFrame(() => { rec.hotRaf = 0; rec.hotN = 0; }); }
@@ -10460,15 +10489,22 @@ const Engrave = window.Engrave = (() => {
     clearTimeout(rec.timer); rec.timer = setTimeout(() => { rec.timer = 0; if (rec.raf) { cancelAnimationFrame(rec.raf); rec.raf = 0; svFlush(rec); } }, 120);
   }
   /** Paints the piece's latest state: its thumbnails on every card of it, and the open card's work area when it is this piece's. */
-  function svFlush(rec) {
-    if (rec.raf) { cancelAnimationFrame(rec.raf); rec.raf = 0; } if (rec.timer) { clearTimeout(rec.timer); rec.timer = 0; }
+  function svFlush(rec, only) {
+    if (only !== "thumbs") { if (rec.raf) { cancelAnimationFrame(rec.raf); rec.raf = 0; } if (rec.timer) { clearTimeout(rec.timer); rec.timer = 0; } }
     if (SV_STAGES.get(rec.key) !== rec || rec.flushing) return;
     rec.flushing = true; const t0 = performance.now();
-    try {
+    const thumbs = () => {
       try { if (window.CharmNestEngraveCard && CharmNestEngraveCard.paintStage) CharmNestEngraveCard.paintStage(rec.key); } catch (e) { console.warn("engraving: the stage's thumbnails", e); }
-      const c = EG.card && EG.card.isConnected ? EG.card : null, t1 = performance.now();
-      let reached = false;
-      if (c && c._svWork && c._svPiece === rec.key) { try { c._svWork(rec); } catch (e) { console.warn("engraving: the stage's work area", e); } const h = c.querySelector(".backHost"); if (h) { h.dataset.paintMs = (t1 - t0).toFixed(1) + "+" + (performance.now() - t1).toFixed(1); reached = +h.dataset.stageSeq === rec.seq || !!SV_TURN.run; } }   // (what the paint cost: the thumbnails + the work area, ms)
+      try { svHostThumbs(rec); } catch (e) { console.warn("engraving: a host's thumbnails", e); }
+    };
+    try {
+      if (only === "thumbs") { thumbs(); return; }
+      // (the work area first: its draft of a face with a job is what that face's thumbnail draws its lines from, Engrave.draftOf; then the thumbnails, in the same call)
+      const c = EG.card && EG.card.isConnected ? EG.card : null;
+      let reached = false, t1 = t0;
+      if (c && c._svWork && c._svPiece === rec.key) { try { c._svWork(rec); } catch (e) { console.warn("engraving: the stage's work area", e); } t1 = performance.now(); const h = c.querySelector(".backHost"); if (h) reached = +h.dataset.stageSeq === rec.seq || !!SV_TURN.run; }
+      thumbs();
+      if (c) { const h = c.querySelector(".backHost"); if (h) h.dataset.paintMs = (performance.now() - t1).toFixed(1) + "+" + (t1 - t0).toFixed(1); }   // (what the paint cost, ms: the thumbnails + the work area)
       // (the last state ALWAYS reaches the work area: the card of this piece being drawn again, or not on the page yet, is painted at the next frame, a few times at most)
       const mine = !!EG.cardKey && svPieceKeyOf(EG.cardKey) === rec.key;
       if (mine && !reached && (rec.retry = (rec.retry || 0) + 1) <= 20) Promise.resolve().then(() => svQueue(rec)); else if (reached) rec.retry = 0;
@@ -10517,12 +10553,13 @@ const Engrave = window.Engrave = (() => {
      new drawing, turns to its edge with the area; there the copy goes and the area comes round on the new face (the sheets' own turn, Motion.turner's rotateY and perspective, quicker). A switch
      while it turns completes that turn at once (the copy goes, the area is flat) and turns again from what is drawn: never a queue of turns, never an old face, never a frame without a drawing. */
   const SV_TURN = { run: null };
+  let SV_STILL_UNTIL = 0;   // (Engrave.showFace(..., { animate: false }): the face switched at once, no turn)
   const SV_LAST = { pk: "", host: null };   // the work area last painted (its piece): a card drawn again starts from a copy of it
   function svTurn(host, to, paint) {
     const r0 = SV_TURN.run;
     if (r0) { SV_TURN.run = null; for (const a of r0.anims) { try { a.cancel(); } catch (_) { /* gone */ } } try { r0.ghost.remove(); r0.host.classList.remove("egFlipping"); } catch (_) { /* gone */ } }
     const old = host.querySelector(":scope > canvas"); let ghost = null, at = null;
-    if (old && old.width && old.offsetWidth && host.offsetWidth && svMotion(host)) {
+    if (old && old.width && old.offsetWidth && host.offsetWidth && svMotion(host) && performance.now() >= SV_STILL_UNTIL) {
       ghost = document.createElement("canvas"); ghost.width = old.width; ghost.height = old.height; at = [old.offsetLeft, old.offsetTop, old.offsetWidth, old.offsetHeight];
       try { ghost.getContext("2d").drawImage(old, 0, 0); } catch (_) { ghost = null; }
     }
