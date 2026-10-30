@@ -238,7 +238,7 @@ const detailFacts = page => page.evaluate(() => {
 const hiliteFacts = page => page.evaluate(() => {
   const vis = e => { if (!e) return false; const b = e.getBoundingClientRect(), st = getComputedStyle(e); return b.width > 0 && b.height > 0 && st.visibility !== 'hidden' && st.display !== 'none' && +st.opacity > 0 && !e.closest('[hidden]'); };
   const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (!c) return { open: false };
-  const segs = [...c.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg[data-engp=mode]')], marked = segs.filter(x => x.hasAttribute('data-sys')).map(x => x.dataset.mode);
+  const segs = [...c.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg[data-engp=mode], .engpMode:not(.engpFaceSw) .engpSeg[data-engp=choice]')], marked = segs.filter(x => x.hasAttribute('data-sys')).map(x => x.dataset.mode);
   const sparks = [...c.querySelectorAll('.engpSys')].filter(vis), box = c.querySelector('.engpBox'), fb = c.querySelector('.engpFontBox');
   return { open: true, marked, sparks: sparks.length, boxMark: box ? box.getAttribute('data-sys') : null, fontMark: fb ? fb.getAttribute('data-sys') : null, fontSpark: !!(fb && [...fb.querySelectorAll('.engpSys')].some(vis)), fontLabels: [...c.querySelectorAll('.engpFont option')].filter(o => o.hasAttribute('data-sys')).map(o => o.label || o.textContent), selected: (c.querySelector('.engpFont') || {}).value };
 });
@@ -306,7 +306,8 @@ async function partDetail(w, made) {
   const sb = await shotB64(page, SEL.thumb('back')), sw = await shotB64(page, SEL.work);
   const cpB = await charmPic(sb, chRefs);
   check('S1 the detail opens on the system\'s choice: mode back, the customer\'s words, the chosen font', 'auto', start.open && start.mode === 'back' && start.words === 'Name One' && /stylish/i.test(String(start.fontLabel)), `mode ${start.mode}, words "${start.words}", font "${start.fontLabel}"`);
-  check('S1b a back-only necklace shows only the Back face on the card', 'smart', start.open && start.faces.length === 1 && start.faces[0].face === 'back', `faces shown ${JSON.stringify((start.faces || []).map(f => f.face))}`);
+  // (ENGSTAGE, Paul 30 Oct 2026: the card always draws both faces, a face that is not engraved drawn plain)
+  check('S1b a back-only necklace shows its Back and a plain Front on the card', 'smart', start.open && (start.faces || []).map(f => f.face).sort().join() === 'back,front', `faces shown ${JSON.stringify((start.faces || []).map(f => f.face))}`);
   const s2 = sw ? await rtw(page, 'textLook', sw, refImg.base.work, refImg.anna.work, plainWork) : null;
   check('S2 work area starts as the real charm with the engraving in the system\'s font (the instrument\'s own control)', 'world', TEXT_OK(s2), 'the work area\'s engraving against the app\'s own rendering of that order: ' + JSON.stringify(s2));
   check('T0 the back thumbnail at rest has the charm drawing in it, not only text', 'thumb', cpB.ok, cpB.ev + `; engpvDraw children ${start.faces[0] ? start.faces[0].drawKids : '-'}`);
@@ -388,10 +389,12 @@ async function partDetail(w, made) {
   // ── mode: faces follow the staged mode, live ──
   const faceNames = f => (f.faces || []).map(x => x.face).join('+') || 'none';
   // (LIVEWORDS: None | Front | Back are toggles kept at once; the save path is held here (a promise that never ends) so each press is seen staged, then let go: nothing is kept)
-  const modes = [['front', 'front+back'], ['none', 'none'], ['back', 'back']];
+  const modes = [['front', 'front+back'], ['none', 'front+back'], ['back', 'front+back']];   // (ENGSTAGE: both faces are always drawn; the choice is the panel's (data-choice), the faces not engraved drawn plain)
   await page.evaluate(() => { window.__saveRt = Engrave.saveSetup; Engrave.saveSetup = () => new Promise(() => {}); });
   for (const [m, want] of modes) {
     t = await trial(w, 'mode', m);
+    const chose = await page.evaluate(() => (document.querySelector('#egQueue .rvItem[data-kind=placement] .engp') || { dataset: {} }).dataset.choice || '');
+    check(`R3 pressing "${m}": the panel's choice is ${m} in the same tick`, 'smart', chose === m, chose);
     await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (c && c._pieceMount) c._pieceMount.refresh(); else Engrave.render(); } }); await R.settle(page, 500);
     const got = faceNames(t.tick.facts);
     check(`R3 pressing "${m}": the card shows ${want} in the same tick`, 'smart', got === want, `faces on the card at the tick: ${got}; ${t.tick.facts.faces.filter(f => f.empty === '1').length} empty slot(s)`);
