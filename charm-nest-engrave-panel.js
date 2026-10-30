@@ -646,7 +646,7 @@
     };
     const input = e => {
       const t = e.target; if (!t || !t.dataset || !t.dataset.engp || dead) return;
-      const m = model(); if (!m) return; const { vm, d } = m, f = t.dataset.face; if (!f) return;
+      const m = model(); if (!m) return; const { vm, d } = m, f = FACES.includes(d.active) ? d.active : t.dataset.face; if (!f) return;   // (the face the keystroke is for is the draft's active face, read now: the box on screen is always that face's)
       const x = d.faces[f] || (d.faces[f] = { text: '', font: '', pos: null });
       if (t.dataset.engp === 'words') {
         if (e.type === 'change' || !t.isConnected) return;   // (every letter arrives as an input; the box's own "change" carries nothing new)
