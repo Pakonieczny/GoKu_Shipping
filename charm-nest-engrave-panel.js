@@ -175,7 +175,7 @@
   }
   /** The engraved faces with no words (a face the charm editor drew needs none; a line's face whose words differ per piece is each piece's). */
   const emptyFaces = (vm, d) => facesOf(d.choice).filter(f => !linesOf(d.faces[f] && d.faces[f].text).length && !artOn(vm, f) && !(vm.rows.find(r => r.face === f) || {}).perPiece);
-  /** THE GATE of Approve: { st: 'approve' | 'need' (an engraved face has no words: faces) | 'blocked' (why) | 'approved' (calm) | 'ok' (the press is being kept: "Approved ✓") , dirty } */
+  /** THE GATE of Approve: { st: 'approve' | 'need' (an engraved face has no words: faces) | 'blocked' (why) | 'busy' (a face is being read or placed) | 'approved' (calm) | 'ok' (the press is being kept: "Approved ✓") , dirty } */
   function gateOf(vm, d, key) {
     const c = COMMITS.get(key), dirty = dirtyOf(vm, d, key);
     if (c && !dirty) return { st: 'ok', dirty: false };
@@ -186,6 +186,9 @@
       return { st: 'approve', dirty };
     }
     if (keptApproved(vm)) return { st: 'approved', dirty: false };
+    // (nothing staged and a face of the piece is being read or placed (the order changed, words just kept), or holds words the laser cannot engrave: Approve waits, off, until the card is drawn again for it)
+    const pj = facesOf(d.choice).flatMap(f => (vm.rows.find(r => r.face === f) || { jobs: [] }).jobs || []);
+    if (pj.some(j => ['classify', 'reclassify', 'ready', 'fitting'].includes(j.state) || j.state === 'blocked' || (j.state === 'words' && j.missing && j.missing.length))) return { st: 'busy', dirty: false };
     return empty.length ? { st: 'need', faces: empty, dirty: false } : { st: 'approve', dirty: false };
   }
 
@@ -367,7 +370,7 @@
 /* ENGSTAGE: the panel's one Approve in the card head: green while something is staged, calm "Approved" when nothing is, "Approved ✓" the moment it is pressed */
 .pvApproval .engpApprove{transition:background-color .12s ease-out,border-color .12s ease-out,color .12s ease-out,opacity .12s ease-out,transform .08s ease-out}
 .pvApproval .engpApprove:disabled{cursor:default}
-.pvApproval .engpApprove[data-gate=need]:disabled,.pvApproval .engpApprove[data-gate=blocked]:disabled{opacity:.5}
+.pvApproval .engpApprove[data-gate=need]:disabled,.pvApproval .engpApprove[data-gate=blocked]:disabled,.pvApproval .engpApprove[data-gate=busy]:disabled{opacity:.5}
 .engpTick{display:inline-block;margin-left:6px;transform-origin:50% 60%;animation:engpTick .32s cubic-bezier(.2,.9,.3,1.3) both}
 @keyframes engpTick{0%{opacity:0;transform:scale(.4)}100%{opacity:1;transform:scale(1)}}
 @media (prefers-reduced-motion:reduce){.engpPill{transition:box-shadow .12s ease-out}.engpSeg:not(:disabled):active,.engpTools>button:not(:disabled):active,.pvApproval .engpApprove:not(:disabled):active{transform:none}.engpTick{animation:none}.engp[data-need] .engpWords,[data-engp-need] :is([data-eng-thumb],.engThumb){animation:none}}`;
@@ -517,7 +520,7 @@
       b.className = 'btn sage sm egApproveButton engpApprove' + (calm ? ' egApproved' : '');
       b.dataset.a = calm ? 'approved' : 'approve'; b.dataset.gate = g.st;
       b.disabled = g.st !== 'approve'; b.setAttribute('aria-disabled', String(b.disabled));
-      b.title = g.st === 'approve' ? 'Approve this engraving' : g.st === 'need' ? '' : g.st === 'blocked' ? g.why : 'Approved: change anything and press Approve again';
+      b.title = g.st === 'approve' ? 'Approve this engraving' : g.st === 'blocked' ? g.why : calm ? 'Approved: change anything and press Approve again' : '';
       if (b.textContent !== want) b.innerHTML = g.st === 'ok' ? 'Approved<span class="engpTick" aria-hidden="true">✓</span>' : want;
       return g;
     };

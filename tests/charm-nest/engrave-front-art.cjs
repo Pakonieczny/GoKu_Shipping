@@ -263,7 +263,7 @@ async function partB() {
     const sheets = await page.evaluate(() => { const out = []; for (const s of allSheets()) if (s.charms && s.charms.length) { if (!s.folderPath) s.folderPath = 'charmnest/sheets/' + s.sheetId; out.push({ sheetId: s.sheetId, poolIds: [...new Set([...Engrave.items().values()].flatMap(j => j.copies || []))] }); } return out; });
     for (const s of sheets) w.srv.st.put('Charm_Nest_Sheets', s.sheetId, { sheetId: s.sheetId, poolIds: s.poolIds, backPool: [] });
     await page.evaluate(Q => { const b = document.querySelector(Q + ' .engCard .engFace[data-face="front"] .engThumb'); if (b) b.click(); }, Q); await R.settle(page, 700);
-    const pressed = await page.evaluate(Q => { const b = document.querySelector(Q + ' [data-a="approveBoth"]:not([disabled]), ' + Q + ' [data-a="approveFaces"]:not([disabled])'); if (b) b.click(); return !!b; }, Q);
+    const pressed = await page.evaluate(Q => { const b = document.querySelector(Q + ' [data-a="approve"]:not([disabled])'); if (b) b.click(); return !!b; }, Q);   // (ENGSTAGE, Paul 30 Oct 2026: the one Approve keeps the whole piece: both faces, Front before Back)
     const poolIds = snap[0].copies;
     const want = poolIds.flatMap(p => [p, p + '~front']);
     const t0 = Date.now(); while (Date.now() - t0 < 120000 && !want.every(id => w.srv.st.doc('Charm_Pool_Back', id))) await new Promise(r => setTimeout(r, 400));

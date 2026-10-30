@@ -27,8 +27,10 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
   // (the page's helpers: the state of the card in front, the jobs of an order, a thumbnail of the card: the SPEC's [data-eng-thumb], else the card's own face box)
   await page.addInitScript(() => {});
   await page.evaluate(() => {
+    // (the card in front: never the copy the tab's motion leaves flying for a moment, .mGhost)
+    window.__card = () => [...document.querySelectorAll('#egQueue .rvItem[data-kind=placement]')].find(c => !c.closest('.mGhost') && !c.classList.contains('mCopy')) || null;
     window.__st = () => {
-      const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'), p = c && c.querySelector('.engp'), b = c && c.querySelector('[data-engp-approve]');
+      const c = window.__card(), p = c && c.querySelector('.engp'), b = c && c.querySelector('[data-engp-approve]');
       const thumb = f => c && (c.querySelector(`[data-eng-thumb="${f}"]`) || c.querySelector(`.engFace[data-face="${f}"]`));
       const t = f => { const n = thumb(f); return n ? { cur: n.getAttribute('aria-current') === 'true' || !!n.closest('[aria-current="true"]'), eng: n.dataset.engraved || '', text: [...n.querySelectorAll('.engpvText')].map(x => x.textContent).join('|') } : null; };
       return { key: c ? c.dataset.key : '', state: c ? c.dataset.state : '', panel: !!p, choice: p ? p.dataset.choice : '', active: p ? p.dataset.active : '', dirty: !!(p && p.dataset.dirty), need: p ? p.dataset.need || '' : '',
@@ -38,7 +40,7 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
         front: t('front'), back: t('back'), text: c ? c.textContent : '' };
     };
     window.__jobs = key => { const row = B.orders.byKey.get(key); return Engrave.jobsOf(row).map(j => ({ key: j.key, face: j.face === 'front' ? 'front' : 'back', state: j.state, text: j.text, seals: (j.engravingSeals || []).length, removed: !!(j.decision && j.decision.removed), fit: !!j.fit })); };
-    window.__thumb = f => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return c && (c.querySelector(`[data-eng-thumb="${f}"]`) || c.querySelector(`.engFace[data-face="${f}"] .engThumb`) || c.querySelector(`.engFace[data-face="${f}"]`)); };
+    window.__thumb = f => { const c = window.__card(); return c && (c.querySelector(`[data-eng-thumb="${f}"]`) || c.querySelector(`.engFace[data-face="${f}"] .engThumb`) || c.querySelector(`.engFace[data-face="${f}"]`)); };
   });
   const st = () => page.evaluate(() => window.__st());
   const jobsOf = key => page.evaluate(k => window.__jobs(k), key);
@@ -46,7 +48,7 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
   // (a piece by its job key: the page's own way to one piece of an order (Engrave.openPiece), a decided one included; else the view focused on it)
   // (an Approve's tail, its file and the tab moving on, is let finish before a piece is opened: the tab moving on after it would take the card away again)
   const quiet = () => until(() => page.evaluate(() => !CharmNestEngravePanel.COMMITS.size && ![...Engrave.items().values()].some(j => j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving)), 60000).then(() => R.settle(page, 600));
-  const openKey = async jk => { await quiet(); for (let i = 0; i < 3; i++) { await openKey1(jk); if (await page.evaluate(k => (document.querySelector('#egQueue .rvItem[data-kind=placement]') || {}).dataset?.key === k, jk)) return true; } return false; };
+  const openKey = async jk => { await quiet(); for (let i = 0; i < 3; i++) { await openKey1(jk); if (await page.evaluate(k => (window.__card() || {}).dataset?.key === k, jk)) return true; } return false; };
   const openKey1 = async jk => { const ok = await page.evaluate(k => { CN.setMode('engrave'); const j = Engrave.items().get(k); if (!j) return false; const rid = String(j.row.order.receiptId), pk = window.CharmNestEngraveFaces ? CharmNestEngraveFaces.pieceKeyOf(k) : k.replace(/~front$/, ''); let moved = false; try { moved = Engrave.openPiece ? Engrave.openPiece(rid, pk, j.face === 'front' ? 'front' : 'back') : false; } catch (_) { moved = false; } if (!moved) { Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: k, pin: null }); Engrave.render(); } return true; }, jk); await R.settle(page, 700); return ok; };
   const clickThumb = f => page.evaluate(f => { const n = window.__thumb(f); if (n) n.click(); return !!n; }, f);
   const typeInto = async (text, replace) => { await page.click(P + ' .engpWords'); if (replace) { await page.keyboard.press('Control+A'); await page.keyboard.press('Backspace'); } else await page.keyboard.press('End'); if (text) await page.keyboard.type(text, { delay: 15 }); await R.settle(page, 150); };
@@ -59,14 +61,14 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     /* ── P · the four options and the one pill ── */
     await open('both', 'front');
     const pill = await page.evaluate(async () => {
-      const box = document.querySelector('#egQueue .rvItem[data-kind=placement] .engp .engpChoice'), out = [];
+      const box = window.__card().querySelector('.engp .engpChoice'), out = [];
       const wait = ms => new Promise(r => setTimeout(r, ms));
       for (const c of ['back', 'none', 'front', 'both', 'back']) {
-        const b = box.isConnected ? box : document.querySelector('#egQueue .rvItem[data-kind=placement] .engp .engpChoice');
+        const b = box.isConnected ? box : window.__card().querySelector('.engp .engpChoice');
         b.querySelector(`[data-choice="${c}"]`).click();
-        const b2 = document.querySelector('#egQueue .rvItem[data-kind=placement] .engp .engpChoice'), mid = getComputedStyle(b2.querySelector('.engpPill')).transitionDuration;
+        const b2 = window.__card().querySelector('.engp .engpChoice'), mid = getComputedStyle(b2.querySelector('.engpPill')).transitionDuration;
         await wait(320);
-        const b3 = document.querySelector('#egQueue .rvItem[data-kind=placement] .engp .engpChoice'), pl = b3.querySelector('.engpPill'), seg = b3.querySelector(`[data-choice="${c}"]`), pr = pl.getBoundingClientRect(), sr = seg.getBoundingClientRect();
+        const b3 = window.__card().querySelector('.engp .engpChoice'), pl = b3.querySelector('.engpPill'), seg = b3.querySelector(`[data-choice="${c}"]`), pr = pl.getBoundingClientRect(), sr = seg.getBoundingClientRect();
         out.push({ c, pressed: [...b3.querySelectorAll('[aria-pressed=true]')].map(x => x.dataset.choice).join(), dx: Math.round(Math.abs(pr.left - sr.left)), dw: Math.round(Math.abs(pr.width - sr.width)), bg: getComputedStyle(pl).backgroundColor, segBg: getComputedStyle(seg).backgroundColor, dur: mid, h: Math.round(sr.height), over: (() => { const t = [...seg.childNodes].find(n => n.nodeType === 3), r = document.createRange(); if (!t) return true; r.selectNodeContents(t); return r.getBoundingClientRect().width > seg.clientWidth - 2; })(), label: [...seg.childNodes].filter(n => n.nodeType === 3).map(n => n.nodeValue).join('').trim() });
       }
       return out;
@@ -91,8 +93,8 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     }
     const hovOk = n => hov[n] && !hov[n].missing && hov[n].before !== hov[n].after && /pointer|text|auto/.test(hov[n].cursor) && hov[n].foc.fv && /^solid 2px$/.test(hov[n].foc.outline) && hov[n].foc.off === '2px';
     check('H1 hover changes the fill or the border of the options, the words box, Aα, Emoji and the font picker; keyboard focus gives each a 2 px gold ring 2 px out', ['option', 'words', 'font'].every(hovOk) && ['alpha', 'emoji'].every(n => hov[n].missing || hovOk(n)), JSON.stringify(hov));
-    const apHov = await page.evaluate(() => { const b = document.querySelector('#egQueue .rvItem[data-kind=placement] [data-engp-approve]'); return b ? { dis: b.disabled, bg: getComputedStyle(b).backgroundColor } : null; });
-    if (apHov && !apHov.dis) { await page.hover(Q + ' [data-engp-approve]'); await R.settle(page, 220); const a2 = await page.evaluate(() => { const b = document.querySelector('#egQueue .rvItem[data-kind=placement] [data-engp-approve]'); return getComputedStyle(b).backgroundColor; }); await page.mouse.move(2, 2); check('H1 hover darkens the green Approve', a2 !== apHov.bg, JSON.stringify({ apHov, a2 })); }
+    const apHov = await page.evaluate(() => { const b = window.__card().querySelector('[data-engp-approve]'); return b ? { dis: b.disabled, bg: getComputedStyle(b).backgroundColor } : null; });
+    if (apHov && !apHov.dis) { await page.hover(Q + ' [data-engp-approve]'); await R.settle(page, 220); const a2 = await page.evaluate(() => { const b = window.__card().querySelector('[data-engp-approve]'); return getComputedStyle(b).backgroundColor; }); await page.mouse.move(2, 2); check('H1 hover darkens the green Approve', a2 !== apHov.bg, JSON.stringify({ apHov, a2 })); }
     else check('H1 Approve is green and live after a change (for its hover)', false, JSON.stringify(apHov));
     const press = await page.evaluate(() => { const s = [...document.styleSheets].map(x => { try { return [...x.cssRules].map(r => r.cssText).join('\n'); } catch (_) { return ''; } }).join('\n'); return { opt: /\.engpSeg:not\(:disabled\):active\s*\{[^}]*scale\(0?\.98\)/.test(s), tools: /translateY\(1px\)/.test(s), reduced: /prefers-reduced-motion/.test(s) }; });
     check('H1 pressed: the options scale to .98, the tools and Approve press 1 px down; reduced motion drops the movement', press.opt && press.tools && press.reduced, JSON.stringify(press));
@@ -117,13 +119,13 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     check('A2 Front pressed: Front selected and shown, its words "Ruby" (the order\'s words), Approve green at once', a2.choice === 'front' && a2.active === 'front' && a2.pressed.join() === 'front' && a2.words && a2.words.value === 'Ruby' && a2.words.face === 'front' && a2.approve && a2.approve.a === 'approve' && !a2.approve.dis && a2.dirty, JSON.stringify(a2).slice(0, 700));
     if (w.shots) await R.shot(w, 'stage-A2-front-staged').catch(() => {});
     // the press, and what the card shows in the same frame
-    const a3 = await page.evaluate(() => { const b = document.querySelector('#egQueue .rvItem[data-kind=placement] [data-engp-approve]'); b.click(); return { a: b.dataset.a, dis: b.disabled, text: b.textContent.trim() }; });
+    const a3 = await page.evaluate(() => { const b = window.__card().querySelector('[data-engp-approve]'); b.click(); return { a: b.dataset.a, dis: b.disabled, text: b.textContent.trim() }; });
     check('A3 Approve pressed: "Approved ✓" in the same frame (calm, off)', a3.a === 'approved' && a3.dis && /Approved\s*✓/.test(a3.text), JSON.stringify(a3));
     // while it is kept: the card in front is never empty and never asks for words; the front job never waits for words
     const bad = [], seen = new Set(); let frontJob = null;
     const t0 = Date.now();
     while (Date.now() - t0 < 120000) {
-      const s = await page.evaluate(k => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); return { key: c ? c.dataset.key : '', panel: !!(c && c.querySelector('.engp')), ap: !!(c && c.querySelector('[data-engp-approve]')), text: c ? c.textContent : '', jobs: window.__jobs(k) }; }, KB);
+      const s = await page.evaluate(k => { const c = window.__card(); return { key: c ? c.dataset.key : '', panel: !!(c && c.querySelector('.engp')), ap: !!(c && c.querySelector('[data-engp-approve]')), text: c ? c.textContent : '', jobs: window.__jobs(k) }; }, KB);
       const fj = s.jobs.find(j => j.face === 'front'); if (fj) { seen.add(fj.state); frontJob = fj; }
       if (s.key && s.key.startsWith(KB) && (!s.panel || !s.ap)) bad.push('empty:' + s.key);
       if (s.key && s.key.startsWith(KB) && /Words to confirm|Engrave these words|gives no words/i.test(s.text)) bad.push('words:' + s.key);
@@ -178,13 +180,13 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
 
     /* ── D · rapid presses, then Approve three times ── */
     const rapid = await page.evaluate(async () => {
-      const q = '#egQueue .rvItem[data-kind=placement]', opt = c => document.querySelector(`${q} .engp [data-engp="choice"][data-choice="${c}"]`), tick = () => new Promise(r => requestAnimationFrame(r));
+      const q = '#egQueue .rvItem[data-kind=placement]', opt = c => window.__card().querySelector(`.engp [data-engp="choice"][data-choice="${c}"]`), tick = () => new Promise(r => requestAnimationFrame(r));
       for (const c of ['none', 'front', 'back', 'both', 'none', 'back', 'front', 'both', 'back']) { opt(c).click(); if (c === 'both') { const t = window.__thumb('front'); if (t) t.click(); const t2 = window.__thumb('back'); if (t2) t2.click(); } }
       await tick();
-      const ta = document.querySelector(`${q} .engp .engpWords`); ta.focus(); ta.value = 'Fast'; ta.dispatchEvent(new Event('input', { bubbles: true }));
-      const b = document.querySelector(`${q} [data-engp-approve]`), s0 = { choice: document.querySelector(`${q} .engp`).dataset.choice, face: ta.dataset.face, a: b.dataset.a, dis: b.disabled };
+      const ta = window.__card().querySelector('.engp .engpWords'); ta.focus(); ta.value = 'Fast'; ta.dispatchEvent(new Event('input', { bubbles: true }));
+      const b = window.__card().querySelector('[data-engp-approve]'), s0 = { choice: window.__card().querySelector('.engp').dataset.choice, face: ta.dataset.face, a: b.dataset.a, dis: b.disabled };
       b.click(); const s1 = { a: b.dataset.a, text: b.textContent.trim() };
-      b.click(); document.querySelector(`${q}`).dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+      b.click(); window.__card().dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
       return { s0, s1 };
     });
     check('D1 after rapid presses the staged state is exactly the last one (Back, "Fast"); Approve pressed shows "Approved ✓" at once', rapid.s0.choice === 'back' && rapid.s0.face === 'back' && rapid.s0.a === 'approve' && !rapid.s0.dis && rapid.s1.a === 'approved' && /✓/.test(rapid.s1.text), JSON.stringify(rapid));

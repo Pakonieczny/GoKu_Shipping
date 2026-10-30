@@ -108,7 +108,7 @@ async function partB() {
     const wf2 = await workFacts(page), j1 = await jobsOf(page, key);
     check('B5 front, back, front: the front is drawn again, its place unchanged', wf2.canvas && wf2.box && JSON.stringify(j1.find(j => j.face === 'front').centre) === JSON.stringify(f0.centre), JSON.stringify({ wf2: [wf2.current, wf2.canvas, wf2.box], centre: [f0.centre, j1.find(j => j.face === 'front').centre] }));
     // Approve both faces: one seal for each, permanent
-    const both = await page.evaluate(Q => { const b = document.querySelector(Q + ' [data-a="approveBoth"], ' + Q + ' [data-a="approveFaces"]'); if (b) b.click(); return !!b; }, Q);
+    const both = await page.evaluate(Q => { const b = document.querySelector(Q + ' [data-a="approve"]'); if (b) b.click(); return !!b; }, Q);   // (ENGSTAGE, Paul 30 Oct 2026: the one Approve keeps the whole piece: both faces, one seal each)
     await until(async () => (await jobsOf(page, key)).every(j => ['approved', 'written'].includes(j.state)), 90000);
     await R.settle(page, 800);
     const j2 = await jobsOf(page, key);

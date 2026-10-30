@@ -143,14 +143,13 @@ const fails = [], note = (ok, what, more) => { console.log((ok ? '  PASS ' : '  
     const jobKeyFull = t => RID.three + '_' + t;
     note(first === frontKey || first === backKey, 'the detail shows one face of piece 3', first);
     const firstFace = first === frontKey ? 'front' : 'back', otherKey = firstFace === 'front' ? backKey : frontKey;
+    // (ENGSTAGE, Paul 30 Oct 2026: the one Approve keeps the whole PIECE: its Front, then its Back, each with its own seal; never another piece)
+    note(!/Approve all|discs left|both ears/i.test((await DETAIL() || {}).all || ''), 'no press that approves several pieces is offered', (await DETAIL() || {}).all);
     await approveInDetail(jobKeyFull(first));
-    d = await DETAIL(); s = await ST();
-    note(d && d.key === otherKey, 'one face of piece 3 approved: the detail goes to the OTHER face of the same piece first', first + ' -> ' + (d && d.key));
-    note(!/Approve all|discs left|both ears/i.test(d ? d.all : ''), 'no press that approves several pieces is offered', d && d.all);
-    note((s.pcs[RID.three] || []).slice(-1)[0] && /to-approve$/.test(s.pcs[RID.three].slice(-1)[0]), 'piece 3 is not done while one face waits', (s.pcs[RID.three] || []).join(' '));
-    if (!d || d.key !== otherKey) await openDetail(jobKeyFull(otherKey));
-    await approveInDetail(jobKeyFull(otherKey));
+    await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && ['approved', 'written'].includes(j.state); }, jobKeyFull(otherKey), { timeout: 60000 }).catch(() => {}); await R.settle(page, 2000);
     s = await ST();
+    note(s.jobs[RID.three] && ['approved', 'written'].includes(s.jobs[RID.three][first]) && ['approved', 'written'].includes(s.jobs[RID.three][otherKey]), 'one Approve on piece 3 approves both of its faces (the piece), and nothing of another piece', JSON.stringify(s.jobs[RID.three]));
+    void otherKey;
     note((s.pcs[RID.three] || []).every(x => /:approved$/.test(x)), 'both faces approved: all three pieces approved, the order is done', (s.pcs[RID.three] || []).join(' '));
     d = await DETAIL();
     note(!d || d.key !== tails(k3a) && d.key !== tails(k3b) && d.key !== tails(k3c), 'with nothing left in the order the queue goes on to another order as it always did', JSON.stringify(d && { key: d.key }));
