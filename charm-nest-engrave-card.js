@@ -549,6 +549,8 @@
       const n = card(p, o()); if (el && el.isConnected) el.replaceWith(n); else slot.replaceChildren(n); el = n; repaint(n);
     }
     draw(true);
+    // (ENGSTAGE: the fonts of both faces are fetched now, so the first letter typed on a face is drawn in its own font)
+    tryDo(() => { const p = find(), P = root && root.CharmNestEngravePreview; if (p && P && P.ensure) for (const f of ['front', 'back']) if (p.faces[f] && p.faces[f].fontId) P.ensure(p.faces[f].fontId); });
     // (EDITFOLLOW, Paul 29 Oct 2026: "When I updated this charm in the Charm Editor and then returned to the Engraving modal, not all of the visible vector thumbnails got updated correctly": the
     //  Front box kept the placement the face had while it was fitted again. The piece's drawing moved (its art saved, its words fitted again and placed: CharmNestMadeThumb's look at what moved),
     //  so its boxes are drawn again from what is saved now)

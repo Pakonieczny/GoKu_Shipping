@@ -390,11 +390,12 @@ async function partDetail(w, made) {
   // ── mode: faces follow the staged mode, live ──
   // (ENGSTAGE, Paul 30 Oct 2026: both faces are always drawn on the Engrave detail's card; the mode decides which are ENGRAVED (data-engraved), the others are the plain charm)
   const faceNames = f => (f.faces || []).filter(x => x.engraved).map(x => x.face).join('+') || 'none';
-  // (LIVEWORDS: None | Front | Back are toggles kept at once; the save path is held here (a promise that never ends) so each press is seen staged, then let go: nothing is kept)
-  const modes = [['front', 'front+back'], ['none', 'none'], ['back', 'back']];
+  // (ENGSTAGE, Paul 30 Oct 2026: the four options None | Front | Back | Front & Back: Front is the front ONLY; the save path is held here (a promise that never ends) so each press is seen staged, then let go: nothing is kept)
+  const modes = [['front', 'front'], ['none', 'none'], ['back', 'back']];
   await page.evaluate(() => { window.__saveRt = Engrave.saveSetup; Engrave.saveSetup = () => new Promise(() => {}); });
   for (const [m, want] of modes) {
     t = await trial(w, 'mode', m);
+    { const chose = await page.evaluate(() => (document.querySelector('#egQueue .rvItem[data-kind=placement] .engp') || { dataset: {} }).dataset.choice || ''); check(`R3 pressing "${m}": the panel's choice is ${m} in the same tick`, 'smart', chose === m, chose); }   // (ENGSTAGE: the four options: the panel's own staged choice)
     await page.evaluate(() => { CharmNestEngravePanel.DRAFTS.clear(); { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (c && c._pieceMount) c._pieceMount.refresh(); else Engrave.render(); } }); await R.settle(page, 500);
     const got = faceNames(t.tick.facts);
     check(`R3 pressing "${m}": the card shows ${want} engraved in the same tick (both faces drawn)`, 'smart', got === want && t.tick.facts.faces.length === 2, `engraved faces on the card at the tick: ${got} of ${t.tick.facts.faces.map(f => f.face).join('+')}; ${t.tick.facts.faces.filter(f => f.empty === '1').length} empty slot(s)`);

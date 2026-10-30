@@ -10383,7 +10383,11 @@ const Engrave = window.Engrave = (() => {
     try {
       try { if (window.CharmNestEngraveCard && CharmNestEngraveCard.paintStage) CharmNestEngraveCard.paintStage(rec.key); } catch (e) { console.warn("engraving: the stage's thumbnails", e); }
       const c = EG.card && EG.card.isConnected ? EG.card : null, t1 = performance.now();
-      if (c && c._svWork && c._svPiece === rec.key) { try { c._svWork(rec); } catch (e) { console.warn("engraving: the stage's work area", e); } const h = c.querySelector(".backHost"); if (h) h.dataset.paintMs = (t1 - t0).toFixed(1) + "+" + (performance.now() - t1).toFixed(1); }   // (what the paint cost: the thumbnails + the work area, ms)
+      let reached = false;
+      if (c && c._svWork && c._svPiece === rec.key) { try { c._svWork(rec); } catch (e) { console.warn("engraving: the stage's work area", e); } const h = c.querySelector(".backHost"); if (h) { h.dataset.paintMs = (t1 - t0).toFixed(1) + "+" + (performance.now() - t1).toFixed(1); reached = +h.dataset.stageSeq === rec.seq || !!SV_TURN.run; } }   // (what the paint cost: the thumbnails + the work area, ms)
+      // (the last state ALWAYS reaches the work area: the card of this piece being drawn again, or not on the page yet, is painted at the next frame, a few times at most)
+      const mine = !!EG.cardKey && svPieceKeyOf(EG.cardKey) === rec.key;
+      if (mine && !reached && (rec.retry = (rec.retry || 0) + 1) <= 20) Promise.resolve().then(() => svQueue(rec)); else if (reached) rec.retry = 0;
     } finally { rec.flushing = false; }
   }
   /** Engrave.showStage.flush(key?): paints now what is waiting (every piece, or one), for a press that must see it (Approve) and for the tests. */
@@ -10393,7 +10397,7 @@ const Engrave = window.Engrave = (() => {
   /** The stage's drafts of a piece go (its jobs' drafts made by the stage, its faces drawn from the charm); `keep` keeps the record itself (a null stage). */
   function svLetGo(key, keep) {
     for (const [jk, d] of [...DRAFTS]) if (d && d.svStage && svPieceKeyOf(jk) === key) DRAFTS.delete(jk);
-    for (const k of [...SV_FACES.keys()]) if (k.slice(0, k.lastIndexOf("|")) === key) SV_FACES.delete(k);
+    for (const [k, r] of [...SV_FACES]) if (k.slice(0, k.lastIndexOf("|")) === key) { if (keep) { r.text = ""; r.centre = null; } else SV_FACES.delete(k); }   // (a null stage: the records stay, the drawings made from them hold the same object)
     if (!keep) { const r = SV_STAGES.get(key); if (r) { if (r.raf) cancelAnimationFrame(r.raf); clearTimeout(r.timer); } SV_STAGES.delete(key); }
   }
   /** Every piece but `keep` loses its stage (another piece opened, the list shown): what was staged and not approved is never drawn again. */
@@ -12577,7 +12581,7 @@ const Engrave = window.Engrave = (() => {
       if (fv && fv.view) {
         const r = svFaceRec(t, fv);
         const draw = () => { const sf = stagedFaceFit(job, A, fv, r); return renderBack({ key: job.key + "~" + A, view: fv.view, mask: sf.mask, fit: sf.fit, copies: job.copies, row: job.row, _viewCharm: fv.charm }, px, { grid: true, hatch: false, editable: true, steady: true, zoom: workZoomOf(job, A), label: WORK_LABEL }); };
-        const cv = draw(); cv._editable = false; cv._paint(); cv._viewFace = A; cv._staged = true; cv._svFv = fv; cv.tabIndex = -1; cv.style.outline = "none";   // (drawn again at once with no box or handles: the staged words are moved, never sized or turned, until they are a job)
+        const cv = draw(); cv._editable = false; cv._paint(); cv._viewFace = A; cv._staged = true; cv._svFv = fv; cv._svRec = r; cv.tabIndex = -1; cv.style.outline = "none";   // (drawn again at once with no box or handles: the staged words are moved, never sized or turned, until they are a job)
         // (a letter typed: only the words are laid out again (reflowAt, a few ms) and painted over the face's still layers (the canvas's own _paint): the grid, the art and the cut line are not drawn again)
         cv._svRedraw = () => { try { const sf = stagedFaceFit(job, A, fv, r), f = sf.fit; cv._paint(f && f.glyphs ? { glyphs: f.glyphs, centre: f.centre, angle: f.angle || 0 } : { glyphs: [] }); } catch (_) { try { const nc = draw(), g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(nc, 0, 0, cv.width, cv.height); } catch (_) { /* the drawing it had stays */ } } queueWorkRulers(backHost._ez); };
         cv.title = t.words.length ? `the ${A} of this piece with the words staged for it · drag the words to move them` : `the ${A} of this piece`;
@@ -12600,7 +12604,7 @@ const Engrave = window.Engrave = (() => {
         if (t.ja === job) { const f = rec.fit && !rec.fit.empty ? rec.fit : job.fit, cap = card.querySelector("[data-cap]"); if (cap && f && Number.isFinite(f.capMm)) cap.textContent = capText(f); draftNote(card, rec); }
       } else if (t.kind === "view") {
         if (el.classList.contains("egStagePv")) { const P = window.CharmNestEngravePreview; if (P && P.update) P.update(el, { text: t.words.join("\n"), fontWord: t.x.font || "", fontId: "" }); }
-        else if (el._svRedraw && el._svFv) { svFaceRec(t, el._svFv); el._svRedraw(); }
+        else if (el._svRedraw && el._svFv && svFaceRec(t, el._svFv) === el._svRec) el._svRedraw();
         else { card._remountWork(); return; }
       }
       svHooks(t.face, t.words, t.seq, t.kind === "held" || (t.kind === "job" && t.ja === job));
@@ -12623,7 +12627,7 @@ const Engrave = window.Engrave = (() => {
     //  the face this card shows, until its own drawing is made (mountBack, the next frame): never a frame with an empty work area)
     if (panelOn && !backHost.firstChild) { try {
       const prev = SV_LAST.pk === svPk && SV_LAST.host !== backHost ? SV_LAST.host : null, old = prev && prev.querySelector(":scope > canvas"), t = svTarget(), face = t ? t.face : viewFaceOf(job);
-      if (old && old.width && old.height && prev.dataset.face === face) {
+      if (old && old.width && old.height && prev.dataset.face === face && (t || ((!wordsJob || held) && dj.view))) {
         const ph = document.createElement("canvas"); ph.width = old.width; ph.height = old.height; ph.getContext("2d").drawImage(old, 0, 0); ph.className = "egSvHold"; ph.setAttribute("aria-hidden", "true"); ph.style.cssText = old.style.cssText;
         for (const k of ["paddingTop", "paddingBottom", "boxSizing"]) backHost.style[k] = prev.style[k];
         if (prev.parentElement && prev.parentElement.classList.contains("egWide")) backHost.parentElement.classList.add("egWide");

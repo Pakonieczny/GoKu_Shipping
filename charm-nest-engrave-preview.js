@@ -521,7 +521,7 @@
     if (before) {
       const g = el.ownerDocument.createElement('span'); g.className = 'engpvGhost'; g.setAttribute('aria-hidden', 'true'); g.textContent = before.text; g.style.cssText = before.css; n.layer.appendChild(g);
       const end = () => g.remove(), a = g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: FADE_MS, easing: 'ease-out', fill: 'forwards' }); a.finished.then(end, end); setTimeout(end, FADE_MS * 4);
-    } else { for (const a of n.text.getAnimations ? n.text.getAnimations() : []) a.cancel(); n.text.animate([{ opacity: 0 }, { opacity: 1 }], { duration: FADE_MS, easing: 'ease-out' }); }
+    } else { for (const a of n.text.getAnimations ? n.text.getAnimations() : []) a.cancel(); n.text.animate([{ opacity: 0.4 }, { opacity: 1 }], { duration: FADE_MS, easing: 'ease-out' }); }   // (from .4, not 0: a letter typed is seen in the very frame it lands, the fade only softens it)
   }
   /** Repaints `el` from its state, synchronously (the words' fade in or out with it). */
   function paint(el) {
@@ -602,10 +602,10 @@
       const t = N.text;
       t.textContent = lines.join('\n');
       t.style.cssText = `${pos}font-family:${fontFamilyOf(id)};font-size:${(em * 100).toFixed(3)}cqh;line-height:${L.pitch.toFixed(4)};transform:translate(-50%,-50%) rotate(${-angle}deg) translateY(${(-drop).toFixed(4)}em)`;
-      t.hidden = status === 'loading';   // (no flash of the wrong font: the words appear when the font is ready; a font that cannot be had shows them in a serif)
+      t.hidden = status === 'loading' && !st.live;   // (no flash of the wrong font: the words appear when the font is ready; a font that cannot be had shows them in a serif. ENGSTAGE: a picture being typed on shows them at once, in the stand-in until the font is here)
       // words longer than the picture allows are scaled down to its box (about their own centre; the job fits them to the metal when it is saved)
       const bw = N.layer.clientWidth, bh = N.layer.clientHeight;
-      if (bw > 0 && bh > 0 && status !== 'loading') {
+      if (bw > 0 && bh > 0 && (status !== 'loading' || st.live)) {
         const a = angle * Math.PI / 180, w = t.offsetWidth, h = t.offsetHeight, ew = Math.abs(w * Math.cos(a)) + Math.abs(h * Math.sin(a)), eh = Math.abs(w * Math.sin(a)) + Math.abs(h * Math.cos(a));
         const k = Math.min(1, 0.94 * bw / Math.max(ew, 1e-6), 0.94 * bh / Math.max(eh, 1e-6));
         if (k < 0.999) t.style.transform = `translate(-50%,-50%) rotate(${-angle}deg) scale(${k.toFixed(4)}) translateY(${(-drop).toFixed(4)}em)`;
