@@ -18,8 +18,9 @@
  *       (a press on a face calls onPick(face), the host's face switch: LIVEWORDS, the thumbnails are the face switch of the work area)
  *   CharmNestEngraveCard.openOf(piece) / openHtml(piece)  the Engraving button (ENGBUTTON: `btn ghost sm egOpen`, "Fix in Engraving →" / "View in Engraving →"): the face it opens, its wording, can it open now
  *   CharmNestEngraveCard.stateOf(job) / facesOf(...)  the small pure parts
- * The words on the card: the piece name, "Front", "Back", the engraved text, "Approve" / "Approved", "Words to confirm" (a face whose words are not settled), "Preparing" (with its small
- * spinner, while a face is being fitted) and the one failure line of an approval that did not go through. Everything else lives in the Engrave tab. Loads in the page and in node. */
+ *   CharmNestEngraveCard.paintStage(pieceKey) -> n   (ENGSTAGE) paints Engrave.showStage's staged state on every detail card of that piece, in place (Engrave calls it once a frame)
+ * The words on the card: the piece name, "Front", "Back", the engraved text, "Approve" / "Approved", "Preparing" (with its small spinner, while a face is being fitted: the order window's card
+ * only) and the one failure line of an approval that did not go through; "Words to confirm" is the dot's own label, never a caption (ENGSTAGE). Everything else lives in the Engrave tab. Loads in the page and in node. */
 (function (root, factory) {
   const api = factory(root);
   if (typeof module === 'object' && module.exports) module.exports = api; else root.CharmNestEngraveCard = api;
