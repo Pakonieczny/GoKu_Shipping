@@ -108,12 +108,12 @@
   function draftOf(vm, key, face) {
     let d = DRAFTS.get(key);
     let sv = null;
-    if (d && d.sig !== vm.sig && !COMMITS.has(key) && !d.touched) { const keep = d.active; sv = { svStage: d.svStage, svDragged: d.svDragged }; d = null; face = keep || face; }   // (svStage / svDragged: stage-view's own fields on the draft, carried over)   // (what the piece says changed under a draft nobody changed: start again from it, on the face shown)
+    if (d && d.sig !== vm.sig && !COMMITS.has(key) && !d.touched) { const keep = d.active; sv = { svStage: d.svStage, svDragged: d.svDragged, why: d.why }; d = null; face = keep || face; }   // (svStage / svDragged: stage-view's own fields on the draft, carried over)   // (what the piece says changed under a draft nobody changed: start again from it, on the face shown)
     if (!d) {
       d = { key, sig: vm.sig, line: vm.line, choice: vm.mode, active: '', faces: {}, seq: 0, touched: false, dirty: false, pillAt: null, copied: {}, error: '', focus: null, shown: '', jobKey: '' };
       for (const f of FACES) { const r = vm.rows.find(x => x.face === f); d.faces[f] = { text: r ? r.text : '', font: r ? r.fontWord : '', pos: null }; }
       d.active = firstActive(vm, d, face);
-      if (sv) for (const k of ['svStage', 'svDragged']) if (sv[k] !== undefined) d[k] = sv[k];
+      if (sv) for (const k of ['svStage', 'svDragged', 'why']) if (sv[k] !== undefined) d[k] = sv[k];   // (and why the last Approve did not approve: said until the next change or press)
       DRAFTS.set(key, d);
     }
     return d;
@@ -449,7 +449,7 @@
     }
     const d = DRAFTS.get(key), clean = !!(res && res.ok) && d === snap.draft && d.seq === snap.seq && !COMMITS.has(key) && !PENDING.has(key);
     if (clean) { d.touched = false; d.dirty = false; d.sig = ''; for (const f of FACES) d.faces[f].pos = null; }
-    else if (res && res.ok && d === snap.draft) for (const f of FACES) if (posOk(d.faces[f].pos) && samePos(d.faces[f].pos, snap.stage.faces[f].pos)) d.faces[f].pos = null;   // (the place this commit kept is kept: only what differs from it stays staged)   // (what was staged is what is kept now: nothing is staged; the draft starts again from what is kept at the next look, on the face shown)
+    else if (res && res.ok && d === snap.draft) { for (const f of FACES) if (posOk(d.faces[f].pos) && samePos(d.faces[f].pos, snap.stage.faces[f].pos)) d.faces[f].pos = null; }   // (the place this commit kept is kept: only what differs from it stays staged)   // (what was staged is what is kept now: nothing is staged; the draft starts again from what is kept at the next look, on the face shown)
     else if (!(res && res.ok) && !(res && res.cancelled)) {
       if (!(res && res.said)) toast(shortWhy(res && res.message));   // (one short toast; an approval that said why itself is not said twice)
       const m = str(res && res.message).trim() || 'Not approved: try again.', dn = DRAFTS.get(key); if (dn) dn.why = /^Not approved/i.test(m) ? m : 'Not approved: ' + m.replace(/^Not saved:\s*/i, '');   // (APPROVEFIX: the card says it in words too, under Approve, until the next change or press)
