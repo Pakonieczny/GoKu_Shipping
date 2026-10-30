@@ -329,10 +329,12 @@ if (require.main === module) (async () => {
   const waitIdle = async (pk, ms = 15000) => {
     let last = null, same = 0; const t0 = Date.now(), changing = {};
     for (;;) {
-      const v = await page.evaluate(pk => { const S = window.__stg, s = S.snap(pk), c = S.committed(pk); return { s, c, busy: !!(s.busy || (s.host && s.host.busy) || (c && c.working)) }; }, pk);
+      // (a commit still landing is not idle: the card calm and not dirty while a face it shows engraved is not approved yet, e.g. a queued second commit between its fit and its approval)
+      const v = await page.evaluate(pk => { const S = window.__stg, s = S.snap(pk), c = S.committed(pk), st = S.staged(pk), landing = !!(s.open && !s.dirty && s.calm && st && c && st.faces.some(f => !(c[f] && ['approved', 'written'].includes(c[f].state)))); return { s, c, landing, busy: !!(s.busy || (s.host && s.host.busy) || (c && c.working) || landing) }; }, pk);
       const f = flat({ s: v.s, c: v.c }), diff = last ? Object.keys(Object.assign({}, f, last)).filter(k => J(f[k]) !== J(last[k])) : ['(first)'];
       if (!diff.length && !v.busy) same++; else { same = 0; if (Date.now() - t0 > ms - 3000) for (const k of diff) changing[k] = String(J(f[k])).slice(0, 40); }
       last = f;
+      waitIdle.landing = v.landing;
       if (same >= 12) { waitIdle.changing = null; return true; }
       if (Date.now() - t0 > ms) { waitIdle.changing = changing; return false; }
       await new Promise(r => setTimeout(r, 100));
@@ -683,7 +685,7 @@ if (require.main === module) (async () => {
           log.push(rec);
         }
       }
-      const idle = await waitIdle(pk, 12000), stillChanging = waitIdle.changing;
+      const idle = await waitIdle(pk, 20000), stillChanging = waitIdle.changing, stillLanding = waitIdle.landing;   // (20 s: a queued second commit re-fits and re-approves; past that it is a stall)
       const hasCard = await page.evaluate(pk => Engrave.jobsOf(B.orders.byKey.get(pk.split('#')[0])).some(x => x.state !== 'none'), pk);
       if (hasCard && !(await page.evaluate(pk => !!window.__stg.panel(pk), pk))) { await openPiece(sd.name); await waitIdle(pk, 5000); }
       const s = await snap(pk), c = await committed(pk), stg = await page.evaluate(pk => window.__stg.staged(pk), pk);
@@ -694,7 +696,7 @@ if (require.main === module) (async () => {
       const cFaces = c ? ['front', 'back'].filter(f => c[f] && !plainish(c[f])) : [];
       if (cut) check(`${tag}: the 60 actions ran`, false, cut.why);
       check(`${tag}: no page errors`, !errs.length, errs.join(' | ').slice(0, 400));
-      check(`${tag}: idle reached (no busy state, nothing at work)`, idle, J({ stillChanging, busy: s.busy, busyWhat: s.busyWhat, host: s.host, working: c && c.working, approve: s.approve, calm: s.calm, dirty: s.dirty, jobs: c && [c.front && c.front.state, c.back && c.back.state] }));
+      check(`${tag}: idle reached (no busy state, nothing at work)`, idle, J({ stillChanging, stillLanding, busy: s.busy, busyWhat: s.busyWhat, host: s.host, working: c && c.working, approve: s.approve, calm: s.calm, dirty: s.dirty, jobs: c && [c.front && c.front.state, c.back && c.back.state] }));
       if (!hasCard) {
         // (None was approved during the run: the piece is a regular order, in no list and with no card, as after any None + Approve; what it holds must be exactly that)
         const ok = cFaces.length === 0 && !!pressAt && pressAt.choice === 'none';
