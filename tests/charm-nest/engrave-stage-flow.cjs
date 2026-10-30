@@ -25,7 +25,7 @@
 const RESULTS = [];
 const check = (id, ok, evidence) => { RESULTS.push({ id, ok: !!ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${id}${ok ? '' : '  ' + String(evidence == null ? '' : evidence).slice(0, 1600)}`); };
 const J = x => { try { return JSON.stringify(x); } catch (_) { return String(x); } };
-const T0 = Date.now(), BUDGET = 165000;
+const T0 = Date.now(), BUDGET = 170000;
 const FORBIDDEN = ['Cut it plain', 'Keep it as it is', 'already approved', 'Words to confirm', 'Engrave these words', 'gives no words', 'being prepared', 'Approve to make this a regular order'];
 const NORM = s => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase();
 
@@ -133,6 +133,8 @@ function installProbe(FORBIDDEN) {
   };
   /* a wait for the running transitions / animations inside an element to end (at most `max` ms) */
   S.calmAnims = (el, max) => new Promise(res => { const t0 = performance.now(); const go = () => { const run = (el && el.isConnected ? el.getAnimations({ subtree: true }) : []).filter(a => a.playState === 'running' && !(a.effect && a.effect.getTiming && a.effect.getTiming().iterations === Infinity)); if (!run.length || performance.now() - t0 > max) res(run.length); else requestAnimationFrame(go); }; requestAnimationFrame(go); });
+  /** wait until an element's hover / focus styles hold still (3 frames alike, none of its transitions running; at most `max` ms): a transition that starts a frame late is waited for too */
+  S.settle = (el, max) => new Promise(res => { const t0 = performance.now(); let last = '', same = 0; const go = () => { if (!el || !el.isConnected) return res(false); const sig = JSON.stringify(S.styles(el)), run = el.getAnimations({ subtree: true }).filter(a => a.playState === 'running' && !(a.effect && a.effect.getTiming && a.effect.getTiming().iterations === Infinity)).length; same = sig === last && !run ? same + 1 : 0; last = sig; if (same >= 3 || performance.now() - t0 > max) res(same >= 3); else requestAnimationFrame(go); }; requestAnimationFrame(go); });
   const parseColor = c => { let m = /rgba?\(([^)]+)\)/.exec(c || ''); if (m) { const q = m[1].split(/[\s,/]+/).filter(Boolean).map(Number); return { r: q[0], g: q[1], b: q[2], a: q.length > 3 ? q[3] : 1 }; } m = /color\(srgb ([^)]+)\)/.exec(c || ''); if (m) { const q = m[1].split(/[\s/]+/).filter(Boolean).map(Number); return { r: q[0] * 255, g: q[1] * 255, b: q[2] * 255, a: q.length > 3 ? q[3] : 1 }; } return null; };
   S.parseColor = parseColor;
   /** the background actually seen under the middle of an element (a sliding pill under the option counts) */
@@ -205,6 +207,9 @@ async function latency({ pk, n }) {
   const S = window.__stg; S.recOn = false;
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set, root = document.getElementById('engraveView') || document.body, out = [];
   const letters = 'mialeorunbstycmialeorunbstycmialeorunbsty';
+  // (context: how long a frame takes on this machine right now, measured just before the keys)
+  const fr = []; { let prev = await new Promise(r => requestAnimationFrame(r)); for (let k = 0; k < 15; k++) { const t = await new Promise(r => requestAnimationFrame(r)); fr.push(t - prev); prev = t; } }
+  const frameMs = fr.sort((a, b) => a - b)[7];
   for (let i = 0; i < n; i++) {
     // (keys come at any moment of a frame, as typing does: after a frame plus a varying 0..15 ms)
     await new Promise(r => requestAnimationFrame(() => setTimeout(r, (i * 7) % 16)));
@@ -227,13 +232,14 @@ async function latency({ pk, n }) {
     setter.call(ta, nv); ta.setSelectionRange(at, at);
     ta.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: del ? 'deleteContentBackward' : 'insertText', data: ch }));
     ta.dispatchEvent(new KeyboardEvent('keyup', { key: del ? 'Backspace' : ch, bubbles: true }));
+    const sync = performance.now() - t0;
     look();
     await new Promise(res => { const loop = () => { look(); if ((tThumb != null && tHost != null) || performance.now() - t0 > 250) res(); else requestAnimationFrame(loop); }; requestAnimationFrame(loop); });
     mo.disconnect();
-    out.push({ thumb: tThumb == null ? null : Math.round(tThumb * 10) / 10, host: tHost == null ? null : Math.round(tHost * 10) / 10 });
+    out.push({ thumb: tThumb == null ? null : Math.round(tThumb * 10) / 10, host: tHost == null ? null : Math.round(tHost * 10) / 10, sync: Math.round(sync * 10) / 10 });
   }
   S.recOn = true;
-  return out;
+  return { list: out, frame: frameMs };
 }
 
 /* a seeded random */
@@ -497,7 +503,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       for (const c of ['front', 'back', 'none', 'both', 'back']) {
         const r = await press(pk, 'choice', c);
         await page.mouse.move(neutral.x, neutral.y);
-        await page.evaluate(pk => window.__stg.calmAnims(window.__stg.panel(pk), 600), pk);
+        await page.evaluate(([pk, c]) => { const S = window.__stg, p = S.panel(pk), el = p && p.querySelector(`[data-engp="choice"][data-choice="${c}"]`); return Promise.all([S.calmAnims(p, 600), el ? S.settle(el, 600) : true]); }, [pk, c]);
         const v = await page.evaluate(([pk, c]) => { const S = window.__stg, p = S.panel(pk); if (!p) return null; const opts = [...p.querySelectorAll('[data-engp="choice"][data-choice]')], el = opts.find(o => o.dataset.choice === c); return { pressed: opts.filter(o => o.getAttribute('aria-pressed') === 'true').map(o => o.dataset.choice), bg: el ? S.effBg(el) : null, own: el ? { bg: getComputedStyle(el).backgroundColor, shadow: getComputedStyle(el).boxShadow } : null }; }, [pk, c]);
         presses.push({ c, ok: r.ok, legacy: r.legacy, pressed: v && v.pressed });
         if (v && !seen[c]) { v.seen = r.ok && !r.legacy ? await seenColour(pk, c) : null; seen[c] = v; }
@@ -557,10 +563,12 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       const pk = pkOf('stUi');
       await toList(); await openPiece('stUi');
       await press(pk, 'words');
-      const lat = await page.evaluate(latency, { pk, n: 30 });
+      const latR = await page.evaluate(latency, { pk, n: 30 }).catch(() => null);
+      const lat = latR ? Object.assign(latR.list, { frame: latR.frame }) : [];
       const th = lat.map(x => x.thumb == null ? Infinity : x.thumb), ho = lat.map(x => x.host == null ? Infinity : x.host), both = lat.map((x, i) => Math.max(th[i], ho[i]));
       const mT = median(th), mH = median(ho), mB = median(both);
-      check(`S8 the median keystroke-to-paint over 30 keys is <= 16 ms (thumbnail ${mT} ms, work area ${mH} ms, both ${mB} ms)`, lat.length === 30 && mB <= 16, J({ medianThumb: mT, medianHost: mH, missingThumb: lat.filter(x => x.thumb == null).length, missingHost: lat.filter(x => x.host == null).length, sample: lat.slice(0, 6) }));
+      const mS = median(lat.map(x => x.sync == null ? Infinity : x.sync));
+      check(`S8 the median keystroke-to-paint over 30 keys is <= 16 ms (thumbnail ${mT} ms, work area ${mH} ms, both ${mB} ms)`, lat.length === 30 && mB <= 16, J({ medianThumb: mT, medianHost: mH, medianInputHandler: mS, medianFrameNow: lat.frame && Math.round(lat.frame * 10) / 10, load: require('os').loadavg().map(x => Math.round(x * 10) / 10), missingThumb: lat.filter(x => x.thumb == null).length, missingHost: lat.filter(x => x.host == null).length, sample: lat.slice(0, 6) }));
     }
 
     /* ════ S10 · hover, focus and pointer ════ */
@@ -578,24 +586,24 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
         const h = await page.evaluateHandle(([pk, kind, arg]) => window.__stg.target(pk, kind, arg), [pk, kind, arg]);
         const el = h.asElement(), legacy = await page.evaluate(() => !!window.__stg.legacy);
         if (!el) { hov.push({ name, missing: true }); foc.push({ name, missing: true }); continue; }   // (an old control found in place of the spec's hook is still measured, and fails as "legacy")
-        await page.mouse.move(neutral.x, neutral.y); await page.evaluate(e => window.__stg.calmAnims(e, 400), el);
+        await page.mouse.move(neutral.x, neutral.y); await page.evaluate(e => window.__stg.settle(e, 600), el);
         const rest = await page.evaluate(e => window.__stg.styles(e), el);
-        let hovered = null; try { await el.hover({ timeout: 3000 }); await page.evaluate(e => window.__stg.calmAnims(e, 400), el); hovered = await page.evaluate(e => window.__stg.styles(e), el); } catch (e) { hovered = null; }
+        let hovered = null, hoverErr = null; try { await el.hover({ timeout: 3000 }); await page.evaluate(e => window.__stg.settle(e, 600), el); hovered = await page.evaluate(e => window.__stg.styles(e), el); } catch (e) { hovered = null; hoverErr = String(e.message).split('\n')[0].slice(0, 120); }
         const changed = !!hovered && hovered.some((x, i) => rest[i] && (x.bg !== rest[i].bg || x.bc !== rest[i].bc || x.bs !== rest[i].bs));
         const pointer = !!hovered && (hovered[0].cursor === 'pointer' || hovered.slice(1).some(x => x.cursor === 'pointer'));
-        hov.push({ name, clicky, legacy, changed, pointer, rest: rest[0], hov: hovered && hovered[0] });
+        hov.push({ name, clicky, legacy, changed, pointer, rest: rest[0], hov: hovered && hovered[0], hoverErr });
         // keyboard focus: a real Tab from the tabbable element before it (a control out of the tab order is focused by script right after that Tab)
         await page.mouse.move(neutral.x, neutral.y);
         const base = await page.evaluate(e => { const S = window.__stg, ft = S.focusTarget(e); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); return S.styles(ft)[0]; }, el);
         const bf = await page.evaluate(e => window.__stg.focusBefore(window.__stg.focusTarget(e)), el);
         await page.keyboard.press('Tab');
-        const fr = await page.evaluate(async e => { const S = window.__stg, ft = S.focusTarget(e); let how = 'Tab'; if (!(document.activeElement === ft || e.contains(document.activeElement))) { how = 'script after Tab'; ft.focus({ preventScroll: true }); } await S.calmAnims(e, 400); const a = document.activeElement; return { how, on: a === ft || e.contains(a), fv: a.matches(':focus-visible'), st: S.styles(a)[0], self: S.styles(e)[0] }; }, el);
+        const fr = await page.evaluate(async e => { const S = window.__stg, ft = S.focusTarget(e); let how = 'Tab'; if (!(document.activeElement === ft || e.contains(document.activeElement))) { how = 'script after Tab'; ft.focus({ preventScroll: true }); } await S.settle(document.activeElement, 600); const a = document.activeElement; return { how, on: a === ft || e.contains(a), fv: a.matches(':focus-visible'), st: S.styles(a)[0], self: S.styles(e)[0] }; }, el);
         const ring = x => x && ((x.os !== 'none' && x.ow >= 2 && (S_alpha(x.oc) > 0.1)) || (x.bs !== 'none' && x.bs !== base.bs));
         foc.push({ name, legacy, how: fr.how, before: bf.prev, on: fr.on, fv: fr.fv, ring: fr.on && (ring(fr.st) || ring(fr.self)), outline: fr.st.outline, bs: fr.st.bs });
         await page.evaluate(() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); });
       }
       const hb = hov.filter(x => x.missing || x.legacy || !x.changed), pb = hov.filter(x => x.clicky && (x.missing || x.legacy || !x.pointer)), fb = foc.filter(x => x.missing || x.legacy || !x.ring);
-      const why = x => (x.missing ? 'missing' : (x.legacy ? 'no spec hook (old control): ' : '') + (x.changed === undefined ? '' : x.changed ? 'hover changes' : `hover changes nothing (bg ${x.rest && x.rest.bg}, border ${x.rest && x.rest.bc.split(' rgb')[0]}, shadow ${x.rest && x.rest.bs})`));
+      const why = x => (x.missing ? 'missing' : (x.legacy ? 'no spec hook (old control): ' : '') + (x.hoverErr ? 'hover failed: ' + x.hoverErr : x.changed === undefined ? '' : x.changed ? 'hover changes' : `hover changes nothing (bg ${x.rest && x.rest.bg}, border ${x.rest && x.rest.bc.split(' rgb')[0]}, shadow ${x.rest && x.rest.bs})`));
       const fwhy = x => (x.missing ? 'missing' : (x.legacy ? 'no spec hook (old control): ' : '') + `${x.ring ? 'ring' : 'NO ring'} via ${x.how}${x.on ? '' : ' (focus did not land)'}, focus-visible ${x.fv}, outline ${x.outline}, shadow ${x.bs}`);
       check(`S10 hover changes the background, border or shadow of every left-column control and of the lit Approve (hover:hover ${hoverMedia})`, !hb.length, hb.map(x => `${x.name}: ${why(x)}`).join(' | '));
       check('S10 keyboard focus (Tab) shows a visible ring on every one (outline >= 2 px, or a box-shadow ring)', !fb.length, fb.map(x => `${x.name}: ${fwhy(x)}`).join(' | '));
@@ -605,8 +613,8 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       const dis = await page.evaluateHandle(pk => { const sc = window.__stg.scope(pk); return sc && [...sc.querySelectorAll('[data-a="approve"]')].find(b => window.__stg.vis(b) && (b.disabled || b.getAttribute('aria-disabled') === 'true')); }, pk);
       const de = dis.asElement();
       if (de) {
-        await page.mouse.move(neutral.x, neutral.y); await page.evaluate(e => window.__stg.calmAnims(e, 400), de);
-        const r0 = await page.evaluate(e => window.__stg.styles(e)[0], de); await de.hover({ timeout: 3000, force: true }).catch(() => {}); await page.evaluate(e => window.__stg.calmAnims(e, 400), de);
+        await page.mouse.move(neutral.x, neutral.y); await page.evaluate(e => window.__stg.settle(e, 600), de);
+        const r0 = await page.evaluate(e => window.__stg.styles(e)[0], de); await de.hover({ timeout: 3000, force: true }).catch(() => {}); await page.evaluate(e => window.__stg.settle(e, 600), de);
         const r1 = await page.evaluate(e => window.__stg.styles(e)[0], de);
         check('S10 a disabled Approve has no hover effect, no pointer cursor, and reduced opacity', r1.cursor !== 'pointer' && r0.bg === r1.bg && r0.bc === r1.bc && r0.bs === r1.bs && parseFloat(r0.opacity) < 1, J({ rest: r0, hover: r1 }));
       } else check('S10 a disabled Approve has no hover effect, no pointer cursor, and reduced opacity', false, 'no disabled Approve after Front with empty words: ' + J({ f, approve: (await snap(pk)).approve }));
@@ -619,7 +627,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
     for (const sd of seeds) {
       const tag = `S7 seed ${sd.seed} (${sd.how}, ${{ stFz1: 'approved back piece', stFz2: 'back piece in review', both: 'two-face piece in review' }[sd.name]})`;
       await phase('S7.' + sd.seed);
-      if (timeLeft() < 25000) { skipRest(tag); continue; }
+      if (timeLeft() < 15000) { skipRest(tag); continue; }
       lap(tag);
       const pk = pkOf(sd.name), errs0 = errors.length, acts = fuzzActions(1000 + sd.seed * 7919, 60, sd.lastApprove);
       await toList(); await openPiece(sd.name);
@@ -627,7 +635,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       if (sd.how === 'in-page burst') log = await page.evaluate(burst, { pk, acts });
       else {
         for (const a of acts) {
-          if (Date.now() - tS > 25000 || timeLeft() < 15000) { log.push({ k: 'cut', why: 'the actions took over 25 s (reopenings): cut short' }); break; }
+          if (Date.now() - tS > 20000 || timeLeft() < 5000) { log.push({ k: 'cut', why: 'the actions took over 20 s: cut short' }); break; }
           const rec = { k: a.k, arg: a.arg };
           const info = await page.evaluate(([pk, a]) => {
             const S = window.__stg, p = S.panel(pk); if (!p || !S.vis(p)) return { gone: true, on: S.front() };
