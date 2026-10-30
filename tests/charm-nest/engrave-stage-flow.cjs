@@ -329,7 +329,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
     for (;;) {
       const v = await page.evaluate(pk => { const S = window.__stg, s = S.snap(pk), c = S.committed(pk); return { s, c, busy: !!(s.busy || (s.host && s.host.busy) || (c && c.working)) }; }, pk);
       const f = flat({ s: v.s, c: v.c }), diff = last ? Object.keys(Object.assign({}, f, last)).filter(k => J(f[k]) !== J(last[k])) : ['(first)'];
-      if (!diff.length && !v.busy) same++; else { same = 0; if (Date.now() - t0 > ms - 3000) for (const k of diff) changing[k] = J(f[k]).slice(0, 40); }
+      if (!diff.length && !v.busy) same++; else { same = 0; if (Date.now() - t0 > ms - 3000) for (const k of diff) changing[k] = String(J(f[k])).slice(0, 40); }
       last = f;
       if (same >= 12) { waitIdle.changing = null; return true; }
       if (Date.now() - t0 > ms) { waitIdle.changing = changing; return false; }
