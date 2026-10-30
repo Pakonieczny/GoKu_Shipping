@@ -520,7 +520,7 @@
       m = m || (dead ? null : tryDo(() => model(), null)); if (!m) return;
       const { vm, d } = m, E = Eng(), st = stageFrom(d, line);
       if (typeof opts.onStage === 'function') tryDo(() => opts.onStage(st, kind));
-      if (E && typeof E.showStage === 'function') { tryDo(() => E.showStage(opts.job || d.jobKey, st)); if (typeof opts.thumb === 'function' && !opts.byCard) for (const f of FACES) thumbOut(vm, d, f); }   // (a host's own thumbnails, not the card's: painted here too)
+      if (E && typeof E.showStage === 'function') tryDo(() => E.showStage(opts.job || d.jobKey, st));   // (the card's own job, every change, approved pieces too: the thumbnails and the work area are stage-view's)
       else legacy(vm, d, kind);
     };
     const paintLegacy = () => { const E = Eng(); if (E && typeof E.showStage === 'function') return; const m = dead ? null : tryDo(() => model(), null); if (m) legacy(m.vm, m.d, ''); };
@@ -784,7 +784,7 @@
         lastShape = shape; tryDo(() => card.update({ face: st ? st.active : face, stage: st }));
       };
       panel = mount(panelHost, line, {
-        job, face: o.view || face, scope: slot, faceSwitch: !card, byCard: true, onDraft: o.onDraft, onVisible: v => { slot.hidden = !v && !card; }, thumb: f => (card && card.thumb ? card.thumb(f) : null), show: navigate,
+        job, face: o.view || face, scope: slot, faceSwitch: !card, onDraft: o.onDraft, onVisible: v => { slot.hidden = !v && !card; }, thumb: f => (card && card.thumb ? card.thumb(f) : null), show: navigate,
         onStage: (st, kind) => follow(st, kind),
         onFace: f => { if (typeof o.onFace === 'function') tryDo(() => o.onFace(f)); },
         onChange: ev => { if (typeof o.onChange === 'function') tryDo(() => o.onChange(ev)); }
