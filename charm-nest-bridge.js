@@ -10009,7 +10009,7 @@ const Engrave = window.Engrave = (() => {
     let start = null, raf = 0, last = null;
     const pt = e => { const r = cv.getBoundingClientRect(); return cv._map.inv((e.clientX - r.left) * (cv.width / r.width), (e.clientY - r.top) * (cv.height / r.height)); };
     cv.style.cursor = "move";
-    const paintAt = () => { if (!last) return; rec.centre = last; try { const nc = draw(), g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(nc, 0, 0, cv.width, cv.height); } catch (_) { /* the drawing it had stays */ } };
+    const paintAt = () => { if (!last) return; rec.centre = last; if (typeof cv._stageRedraw === "function") { cv._stageRedraw(); return; } try { const nc = draw(), g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(nc, 0, 0, cv.width, cv.height); } catch (_) { /* the drawing it had stays */ } };   // (ENGSTAGE: a stage's face paints only its words, as typing does)
     cv.addEventListener("pointerdown", e => { const sf = stagedFaceFit(job, face, fv, rec); if (!sf.fit || !cv._map) return; start = { p: pt(e), c: sf.fit.centre.slice() }; last = null; try { cv.setPointerCapture(e.pointerId); } catch (_) {} e.preventDefault(); });
     cv.addEventListener("pointermove", e => {
       if (!start) return; const p = pt(e); last = [start.c[0] + p[0] - start.p[0], start.c[1] + p[1] - start.p[1]];
@@ -12553,7 +12553,7 @@ const Engrave = window.Engrave = (() => {
       if (fv && fv.view) {
         const r = stageFaceRec(t, fv);
         const draw = () => { const sf = stagedFaceFit(job, A, fv, r); return renderBack({ key: job.key + "~" + A, view: fv.view, mask: sf.mask, fit: sf.fit, copies: job.copies, row: job.row, _viewCharm: fv.charm }, px, { grid: true, hatch: false, editable: true, steady: true, zoom: workZoomOf(job, A), label: WORK_LABEL }); };
-        const cv = draw(); cv._editable = false; cv._viewFace = A; cv._staged = true; cv._stageFv = fv; cv.tabIndex = -1; cv.style.outline = "none";
+        const cv = draw(); cv._editable = false; cv._paint(); cv._viewFace = A; cv._staged = true; cv._stageFv = fv; cv.tabIndex = -1; cv.style.outline = "none";   // (drawn again at once with no box or handles: the staged words are moved, never sized or turned, until they are a job)
         // (a letter typed: only the words are laid out again (reflowAt, a few ms) and painted over the face's still layers (the canvas's own _paint): the grid, the art and the cut line are not drawn again)
         cv._stageRedraw = () => { try { const sf = stagedFaceFit(job, A, fv, r), f = sf.fit; cv._paint(f && f.glyphs ? { glyphs: f.glyphs, centre: f.centre, angle: f.angle || 0 } : { glyphs: [] }); } catch (_) { try { const nc = draw(), g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(nc, 0, 0, cv.width, cv.height); } catch (_) { /* the drawing it had stays */ } } queueWorkRulers(backHost._ez); };
         cv.title = t.words.length ? `the ${A} of this piece with the words staged for it · drag the words to move them` : `the ${A} of this piece`;
