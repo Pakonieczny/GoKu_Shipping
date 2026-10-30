@@ -519,7 +519,7 @@
   function mountPiece(slot, ctx) {
     css(); ctx = Object.assign({}, ctx); let el = null, last = '', gone = false;
     const pkOf = () => { const F = Faces(); return ctx.key && F ? F.pieceKeyOf(ctx.key) : ''; };
-    const stageNow = () => { const E = root && root.Engrave, s = E && typeof E.stageNow === 'function' ? tryDo(() => E.stageNow(pkOf()), null) : null; return s && typeof s === 'object' ? s : ctx.stage || null; };
+    const stageNow = () => { const E = root && root.Engrave, s = E && typeof E.stageNow === 'function' ? tryDo(() => E.stageNow(pkOf()), undefined) : undefined; return s === undefined ? ctx.stage || null : s && typeof s === 'object' ? s : null; };   // (null from Engrave: what is committed)
     const find = () => {
       const row = lineOf(ctx.row), pk = pkOf();
       const ps = piecesOf([row], { nameOf: ctx.nameOf, isWorking: ctx.isWorking, stage: stageNow(), keepEmpty: true, artFaces: ctx.artFaces, both: ctx.both !== false }); return ps.find(p => p.pieceKey === pk) || ps.find(p => p.jobs.some(j => j.key === ctx.key)) || ps[0] || null;

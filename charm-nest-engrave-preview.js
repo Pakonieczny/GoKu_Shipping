@@ -564,12 +564,18 @@
       }
       if (st.qrec && st.qrec !== qf && st.qsub) st.qrec.subs.delete(st.qsub);
       st.qrec = qf;
-      if (qf && qf.status === 'loading') {   // (a few milliseconds; a slow one shows a small labelled wait after a short while, nothing is drawn wrong meanwhile)
+      // ENGSTAGE (Paul, 30 Oct 2026: "every letter typed into the text box immediately updates itself in BOTH the Thumbnail image and in the main charm preview"): a picture being typed on (an update,
+      // st.live) never hides its words while their new place is worked out: they are drawn at once where the last words sat (else in the largest empty rectangle of the face, else in the middle,
+      // scaled to the box), and move to their place when it arrives. A picture drawn for the first time still waits for its place (nothing is drawn across the whole charm).
+      const rectPlace = rect => { const L0 = layoutOf({ lines: typed, capPerEm: capPerEm(id) }), chars = Math.max(1, ...typed.map(l => l.length)), em = Math.min(L0.totalH ? rect.hPt / L0.totalH : rect.hPt, rect.wPt / (0.6 * chars)); return placeOf({ centre: rect.centre, size: em, angle: 0 }, src.frame.box); };
+      const lastOf = () => (st.lastQp && st.lastKey === src.key ? Object.assign({}, st.lastQp, st.lastRect ? { size: rectPlace(st.lastRect).size } : {}) : st.lastRect && st.lastKey === src.key ? rectPlace(st.lastRect) : null);
+      if (qf && qf.status === 'loading' && !(st.live && !coming)) {   // (a few milliseconds; a slow one shows a small labelled wait after a short while, nothing is drawn wrong meanwhile)
         N.root.dataset.state = 'fitting'; N.slot.hidden = true; N.text.hidden = true; N.text.textContent = ''; N.root.dataset.size = '';
         N.wait.hidden = false; N.wait.setAttribute('data-late', ''); N.wait.setAttribute('aria-label', 'Placing words'); N.wait.querySelector('.engpvWaitT').textContent = 'Placing words'; N.wait.removeAttribute('title');
         return;
       }
-      const qp = qf && qf.status === 'ready' ? placeOf(qf.fit, src.frame.box) : qf && qf.rect ? (() => { const L0 = layoutOf({ lines: typed, capPerEm: capPerEm(id) }), chars = Math.max(1, ...typed.map(l => l.length)), em = Math.min(L0.totalH ? qf.rect.hPt / L0.totalH : qf.rect.hPt, qf.rect.wPt / (0.6 * chars)); return placeOf({ centre: qf.rect.centre, size: em, angle: 0 }, src.frame.box); })() : null;
+      const qp = qf && qf.status === 'ready' ? placeOf(qf.fit, src.frame.box) : qf && qf.status === 'loading' ? lastOf() : qf && qf.rect ? rectPlace(qf.rect) : null;
+      if (qf && qf.status === 'ready') { st.lastQp = qp; st.lastRect = qf.rect || st.lastRect || null; st.lastKey = src.key; } else if (qf && qf.rect) { st.lastRect = qf.rect; st.lastKey = src.key; }
       if (st.retry) { try { clearTimeout(st.retry); } catch (_) { /* gone */ } st.retry = 0; }
       if (!st.again) st.tries = 0; st.again = false;   // (a paint a person's edit made starts the count again; one this timer made goes on)
       if (src.kind === 'frame' && st.tries < 20 && draftPending(o, id, dr)) { st.tries++; st.retry = setTimeout(() => { st.retry = 0; if (el._engpv === st && el.isConnected) { st.again = true; paint(el); } }, 150); }
@@ -623,6 +629,7 @@
       if (!el._engpv) return render(el, partial);
       const st = el._engpv, p = partial || {};
       for (const k of KEYS) if (p[k] !== undefined) st.opts[k] = p[k];
+      st.live = true;   // (ENGSTAGE: being typed on: words are never hidden while their place is worked out)
       if (p.position === null) st.pos = null; else if (p.position) st.pos = Object.assign({}, st.pos || {}, p.position);
       if (p.size !== undefined && p.position === undefined && st.pos) delete st.pos.size;
       if (p.fontId !== undefined && p.fontWord === undefined && p.fontId) st.opts.fontWord = '';   // (an id given: the old word no longer says the font)

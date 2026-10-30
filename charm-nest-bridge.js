@@ -10001,7 +10001,7 @@ const Engrave = window.Engrave = (() => {
     }
     const lines = lines0.map(l => O.capsText(l, fid)), font = pinFont(set.Regular, { scriptFonts: typeof set.Regular.scriptFonts === "function" ? set.Regular.scriptFonts(lines.join("\n")) : [] });
     const pseudo = { mask, lineGap: job.lineGap }, h = mask.hPt || mask.h / mask.res, want = rec.size || fitOpts(pseudo).maxHeightFrac * h;
-    let f = null; try { f = G.reflowAt(lines, font, mask, fitOpts(pseudo, true), { centre: rec.centre || maskCentroid(mask), angle: 0, size: want }, "auto"); } catch (_) { f = null; }
+    let f = null; try { f = G.reflowAt(lines, font, mask, { ...fitOpts(pseudo, true), measure: false }, { centre: rec.centre || maskCentroid(mask), angle: 0, size: want }, "auto"); } catch (_) { f = null; }   // (ENGSTAGE: drawn at every letter: no stroke measure, as a drag draws: the face's own fit measures it)
     return { mask, fit: f && f.ok ? f : null };
   }
   /** A drag of the staged words: they follow the pointer on that face's safe area (drawn again into the same canvas, every frame at most); nothing is kept but the place, in the staged record. */
@@ -10367,9 +10367,10 @@ const Engrave = window.Engrave = (() => {
   function stageFlush(rec) {
     if (rec.raf) { cancelAnimationFrame(rec.raf); rec.raf = 0; } if (rec.timer) { clearTimeout(rec.timer); rec.timer = 0; }
     if (STAGEV.get(rec.key) !== rec) return;
+    const t0 = performance.now();
     try { if (window.CharmNestEngraveCard && CharmNestEngraveCard.paintStage) CharmNestEngraveCard.paintStage(rec.key); } catch (e) { console.warn("engraving: the stage's thumbnails", e); }
-    const c = EG.card && EG.card.isConnected ? EG.card : null;
-    if (c && c._stageWork && c._stagePiece === rec.key) { try { c._stageWork(rec); } catch (e) { console.warn("engraving: the stage's work area", e); } }
+    const c = EG.card && EG.card.isConnected ? EG.card : null, t1 = performance.now();
+    if (c && c._stageWork && c._stagePiece === rec.key) { try { c._stageWork(rec); } catch (e) { console.warn("engraving: the stage's work area", e); } const h = c.querySelector(".backHost"); if (h) h.dataset.paintMs = (t1 - t0).toFixed(1) + "+" + (performance.now() - t1).toFixed(1); }   // (what the paint cost: the thumbnails + the work area, ms)
   }
   /** showStage.flush(key?): paints now what is waiting (every piece, or one), for a press that must see it (Approve) and for the tests. */
   showStage.flush = key => { let n = 0; for (const rec of [...STAGEV.values()]) if (!key || rec.key === String(key)) { stageFlush(rec); n++; } return n; };
@@ -12553,7 +12554,8 @@ const Engrave = window.Engrave = (() => {
         const r = stageFaceRec(t, fv);
         const draw = () => { const sf = stagedFaceFit(job, A, fv, r); return renderBack({ key: job.key + "~" + A, view: fv.view, mask: sf.mask, fit: sf.fit, copies: job.copies, row: job.row, _viewCharm: fv.charm }, px, { grid: true, hatch: false, editable: true, steady: true, zoom: workZoomOf(job, A), label: WORK_LABEL }); };
         const cv = draw(); cv._editable = false; cv._viewFace = A; cv._staged = true; cv._stageFv = fv; cv.tabIndex = -1; cv.style.outline = "none";
-        cv._stageRedraw = () => { try { const nc = draw(), g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(nc, 0, 0, cv.width, cv.height); } catch (_) { /* the drawing it had stays */ } queueWorkRulers(backHost._ez); };
+        // (a letter typed: only the words are laid out again (reflowAt, a few ms) and painted over the face's still layers (the canvas's own _paint): the grid, the art and the cut line are not drawn again)
+        cv._stageRedraw = () => { try { const sf = stagedFaceFit(job, A, fv, r), f = sf.fit; cv._paint(f && f.glyphs ? { glyphs: f.glyphs, centre: f.centre, angle: f.angle || 0 } : { glyphs: [] }); } catch (_) { try { const nc = draw(), g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(nc, 0, 0, cv.width, cv.height); } catch (_) { /* the drawing it had stays */ } } queueWorkRulers(backHost._ez); };
         cv.title = t.words.length ? `the ${A} of this piece with the words staged for it · drag the words to move them` : `the ${A} of this piece`;
         backHost.appendChild(cv);
         stagedDrag(cv, job, A, fv, r, draw, centre => stagePosOut(stagePk, A, fv.view, centre));
