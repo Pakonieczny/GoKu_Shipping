@@ -63,6 +63,10 @@ function installTracer(lineKey) {
   }
   const P = window.CharmNestEngravePanel;
   if (P) for (const name of ['stagePos', 'commit', 'restore']) { const f = P[name]; if (typeof f === 'function' && !f.__traced) { const w = function (...a) { T.lines.push({ t: now(), call: 'Panel.' + name, arg: typeof a[0] === 'string' ? a[0] : null, st: frames() }); return f.apply(this, a); }; w.__traced = true; P[name] = w; } }
+  { let lastSig = '';
+    const look = () => { const p = [...document.querySelectorAll('.engp[data-key]')].find(x => x.dataset.key === lineKey), sc = p && p.closest('.rvItem'); if (!sc) return; const calm = [...sc.querySelectorAll('[data-a="approved"]')].filter(b => b.getClientRects().length).map(b => b.textContent.trim()).join('|'), lit = [...sc.querySelectorAll('[data-a="approve"]')].filter(b => b.getClientRects().length).map(b => (b.disabled ? 'off:' : 'lit:') + b.textContent.trim()).join('|'), sig = `calm=${calm} approve=${lit} dirty=${p.dataset.dirty === '1'} choice=${p.dataset.choice}`; if (sig !== lastSig) { lastSig = sig; T.lines.push({ t: now(), card: sig }); } };
+    new MutationObserver(look).observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true, attributeFilter: ['data-dirty', 'data-choice', 'disabled', 'hidden', 'class'] }); look(); }
+  if (typeof window.toast === 'function' && !window.toast.__traced) { const t0 = window.toast; window.toast = function (m) { T.lines.push({ t: now(), toast: String(m).slice(0, 120) }); return t0.apply(this, arguments); }; window.toast.__traced = true; }
   document.addEventListener('click', e => { const b = e.target && e.target.closest && e.target.closest('[data-a="approve"],[data-engp="choice"],[data-eng-thumb]'); if (!b) return; const p = document.querySelector('.engp[data-key]'); T.lines.push({ t: now(), press: b.dataset.a ? b.dataset.a : b.dataset.engThumb ? 'thumb:' + b.dataset.engThumb : 'choice:' + b.dataset.choice, disabled: !!b.disabled, choice: p && p.dataset.choice, dirty: p && p.dataset.dirty === '1' }); }, true);
   return true;
 }
@@ -134,7 +138,8 @@ function installTracer(lineKey) {
       }
       // the end: 12 s for the commit to land, then what the jobs hold against what was staged at the last lit press
       const tEnd = Date.now(); let c = null, last = '', same = 0;
-      while (Date.now() - tEnd < 12000) { c = await page.evaluate(pk => window.__stg.committed(pk), pk); const sig = J(c); same = sig === last && !c.working ? same + 1 : 0; last = sig; if (same >= 15) break; await new Promise(r => setTimeout(r, 100)); }
+      while (Date.now() - tEnd < 20000) { const v = await page.evaluate(pk => ({ c: window.__stg.committed(pk), s: window.__stg.snap(pk) }), pk); c = v.c; const sig = J([c, v.s.calm, v.s.dirty, v.s.approve]); same = sig === last && !c.working && !/✓/.test(v.s.calm || '') ? same + 1 : 0; last = sig; if (same >= 15) break; await new Promise(r => setTimeout(r, 100)); }
+      console.log(`   ${n}: the end held still ${Math.round((Date.now() - tEnd) / 100) / 10} s after the last action`);
       const s = await page.evaluate(pk => window.__stg.snap(pk), pk);
       const lastLit = [...log].reverse().find(x => x.k === 'approve' && x.enabled), lastEdit = log.reduce((m, x) => (['choice', 'key', 'bs'].includes(x.k) && !x.missing ? x.i : m), -1);
       const stg = await page.evaluate(pk => window.__stg.staged(pk), pk);
@@ -151,7 +156,7 @@ function installTracer(lineKey) {
         // the decisive lines: from the last lit press on, the press itself, the API calls, and every write to the face(s) that lost their approval
         // (the decisive lines: every lit press, every press that reached Approve, the commits, and the writes of state / approvedAt / text to the face(s) that lost their approval)
         const keys = lost.map(f => (f === 'front' ? pk + '~front' : pk));
-        for (const x of tr.lines.filter(x => (x.executor && /LIT/.test(x.executor)) || x.press === 'approve' || (x.call && /commitStage|approve|saveSetup/.test(x.call)) || (keys.includes(x.key) && ['state', 'approvedAt', 'text', '(job made)'].includes(x.f)))) console.log('     ' + J(Object.assign({}, x, { st: x.st && x.st.split(' < ').slice(0, 4).join(' < ') })).slice(0, 520));
+        for (const x of tr.lines.filter(x => (x.executor && /LIT/.test(x.executor)) || x.press === 'approve' || x.card || x.toast || (x.call && /commitStage|approve|saveSetup/.test(x.call)) || (keys.includes(x.key) && ['state', 'approvedAt', 'text', '(job made)'].includes(x.f)))) console.log('     ' + J(Object.assign({}, x, { st: x.st && x.st.split(' < ').slice(0, 4).join(' < ') })).slice(0, 520));
       }
     }
   } catch (e) { console.error(e); }
