@@ -25,6 +25,9 @@
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/engrave-stage-flow.cjs     (exit 1 while any check is red; every line is PASS|FAIL id evidence)
 'use strict';
 const RESULTS = [];
+const INFOS = [];
+/** a measured line that is reported, never a FAIL (the coordinator's "report-only for now") */
+const info = (id, text) => { INFOS.push({ id, text }); console.log(`INFO  ${id}: ${text}`); };
 const check = (id, ok, evidence) => { RESULTS.push({ id, ok: !!ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${id}${ok ? '' : '  ' + String(evidence == null ? '' : evidence).slice(0, 1600)}`); };
 const J = x => { try { return JSON.stringify(x); } catch (_) { return String(x); } };
 const T0 = Date.now(), BUDGET = 170000;
@@ -350,6 +353,16 @@ if (require.main === module) (async () => {
       await new Promise(r => setTimeout(r, 100));
     }
   };
+  /** ms from `t0` (Date.now at the press) until the jobs hold `faces` written (each with its words) and no other face engraved; null after 20 s */
+  const landing = async (pk, t0, faces, words) => {
+    for (;;) {
+      const c = await committed(pk);
+      if (c && ['front', 'back'].every(f => (faces.includes(f) ? c[f] && c[f].state === 'written' && (!words || NORM(c[f].text) === NORM(words[f])) : plainish(c[f])))) return Date.now() - t0;
+      if (Date.now() - t0 > 20000) return null;
+      await new Promise(r => setTimeout(r, 50));
+    }
+  };
+  const landInfo = (id, ms) => info(id, `last press to all faces written ${ms == null ? 'over 20 s' : ms + ' ms'} (target <= 4000 ms on an unloaded machine; load ${require('os').loadavg().map(x => Math.round(x * 10) / 10).join(' ')})`);
   const lap = id => console.log(`   -- ${id} at ${Math.round((Date.now() - T0) / 1000)} s`);
   /** the colour a person sees inside an option (a screenshot of it, read back in the page: a sliding pill drawn by a ::before counts): the per-channel median of 5 points clear of the label and the mark */
   const seenColour = async (pk, c) => {
@@ -416,7 +429,7 @@ if (require.main === module) (async () => {
       const s2 = await snap(pk);
       check('S1 Approve is lit (enabled) with "Mia" typed', s2.approve && s2.approve.enabled && !s2.calm && NORM(s2.box) === 'mia', J({ approve: s2.approve, calm: s2.calm, box: s2.box, dirty: s2.dirty }));
       await page.evaluate(pk => { window.__stg.armApprove(pk); window.__stg.sample(pk, 1500); }, pk);
-      const ap = await press(pk, 'approve');
+      const tPress1 = Date.now(), ap = await press(pk, 'approve');
       await page.waitForFunction(() => window.__stg.ap.done && window.__stg.samples.done, null, { timeout: 8000 }).catch(() => {});
       const at = await page.evaluate(() => ({ ap: window.__stg.ap, samples: window.__stg.samples.list.filter(x => x.after) }));
       const ms = at.ap.tCalm != null && at.ap.tClick != null ? Math.round(at.ap.tCalm - at.ap.tClick) : null;
@@ -424,6 +437,7 @@ if (require.main === module) (async () => {
       const shown = at.samples.filter(x => x.open);
       check('S1 after Approve the card is never an empty work area and never shows a forbidden text', shown.every(x => x.canvas && !x.forb.length), J(shown.filter(x => !x.canvas || x.forb.length).slice(0, 3)));
       const c1 = await settle(pk, c => c.front && approvedish(c.front.state) && NORM(c.front.text) === 'mia' && plainish(c.back));
+      landInfo('S1 (Front "Mia", the back taken away)', await landing(pk, tPress1, ['front'], { front: 'Mia' }));
       check('S1 committed: the front job exists, approved, with the words "Mia"', !!c1.front && approvedish(c1.front.state) && NORM(c1.front.text) === 'mia', J(c1.front));
       check('S1 committed: choice Front means the back is no longer engraved: its job removed or plain (none), not approved', plainish(c1.back) && !(c1.back && c1.back.approvedAt), J(c1.back));
       const c1s = (await until(async () => { const c = await committed(pk); return c && !c.sheet.some(e => e.face === 'back') ? c : null; }, 8000, 200)) || await committed(pk);
@@ -455,13 +469,14 @@ if (require.main === module) (async () => {
       check('S2 the Back thumbnail switches to the back; the back words show live on it and in the work area, key by key', tb.ok && i2.length === 3 && i2.every(x => x.okThumb && x.okHost && x.active === 'back'), J({ tb, i2 }));
       check('S2 both thumbnails show their own words at once (Front "Ava", Back "Leo"), still Front & Back', s2.choice === 'both' && s2.thumbs.front && NORM(s2.thumbs.front.words) === 'ava' && s2.thumbs.back && NORM(s2.thumbs.back.words) === 'leo', J({ choice: s2.choice, thumbs: s2.thumbs }));
       await page.evaluate(pk => window.__stg.armApprove(pk), pk);
-      const ap = await press(pk, 'approve');
+      const tPress2 = Date.now(), ap = await press(pk, 'approve');
       await page.waitForFunction(() => window.__stg.ap.done, null, { timeout: 5000 }).catch(() => {});
       const apT = await page.evaluate(() => window.__stg.ap);
       const ms = apT.tCalm != null && apT.tClick != null ? Math.round(apT.tCalm - apT.tClick) : null;
       check('S2 ONE Approve press: calm "Approved" within 100 ms', ap.ok && ms != null && ms <= 100, J({ press: ap, ms }));
       const want2 = c => c.front && c.back && approvedish(c.front.state) && approvedish(c.back.state) && NORM(c.front.text) === 'ava' && NORM(c.back.text) === 'leo';
       const c = await settle(pk, want2);
+      landInfo('S2 (Front "Ava" and Back "Leo", one press)', await landing(pk, tPress2, ['front', 'back'], { front: 'Ava', back: 'Leo' }));
       check('S2 committed: the front approved with "Ava" AND the back approved with "Leo", from the one press', !!c && want2(c), J(c));
       check('S2 one job per face, at most one sheet entry per face', c.counts.front <= 1 && c.counts.back <= 1 && ['front', 'back'].every(f => c.sheet.filter(e => e.face === f).length <= 1), J({ counts: c.counts, sheet: c.sheet }));
       await waitIdle(pk, 8000);
@@ -680,10 +695,13 @@ if (require.main === module) (async () => {
           if (!info.hit) rec.blocked = info.over;   // (something else is on top where the mouse presses: the press does not reach the control)
           if (a.k === 'approve') { rec.enabled = info.enabled && info.hit; rec.staged = info.staged; if (sd.keepCard && info.staged && info.staged.choice === 'none') { rec.enabled = false; rec.skipped = 'None staged'; log.push(rec); continue; } }
           rec.x = Math.round(info.x); rec.y = Math.round(info.y); rec.focused = info.focused;
+          rec.at = Date.now();
           if (a.k === 'key' || a.k === 'bs') { if (!info.focused) await page.mouse.click(info.x, info.y); await page.keyboard.press(a.k === 'bs' ? 'Backspace' : a.arg); }
           else await page.mouse.click(info.x, info.y);
           log.push(rec);
         }
+        const lp = [...log].reverse().find(a => a.k === 'approve' && a.enabled), le = log.reduce((m, a, i) => (['choice', 'key', 'bs'].includes(a.k) && !a.missing ? i : m), -1);
+        if (lp && log.indexOf(lp) > le && lp.staged && lp.staged.faces.length) landInfo(`${tag}`, await landing(pk, lp.at, lp.staged.faces, lp.staged.words));
       }
       const idle = await waitIdle(pk, 20000), stillChanging = waitIdle.changing, stillLanding = waitIdle.landing;   // (20 s: a queued second commit re-fits and re-approves; past that it is a stall)
       const hasCard = await page.evaluate(pk => Engrave.jobsOf(B.orders.byKey.get(pk.split('#')[0])).some(x => x.state !== 'none'), pk);
@@ -728,6 +746,7 @@ if (require.main === module) (async () => {
   } catch (e) { console.error(e); check('ran', false, String(e && e.stack || e)); }
   finally { await w.close(); }
   const bad = RESULTS.filter(r => !r.ok);
+  if (INFOS.length) console.log(`(${INFOS.length} report-only INFO lines above)`);
   console.log(`engrave-stage-flow: ${RESULTS.length - bad.length}/${RESULTS.length} passed in ${Math.round((Date.now() - T0) / 1000)} s` + (bad.length ? `, ${bad.length} failed` : ''));
   process.exit(bad.length ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });
