@@ -26,6 +26,7 @@ const RESULTS = [];
 const check = (id, ok, evidence) => { RESULTS.push({ id, ok: !!ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${id}${ok ? '' : '  ' + String(evidence == null ? '' : evidence).slice(0, 1600)}`); };
 const J = x => { try { return JSON.stringify(x); } catch (_) { return String(x); } };
 const T0 = Date.now(), BUDGET = 170000;
+const ONLY = (process.env.STAGE_ONLY || '').split(',').map(x => x.trim()).filter(Boolean), want = id => !ONLY.length || ONLY.includes(id);   // (STAGE_ONLY=S1,S10: only those scenarios, for a quick look)
 const FORBIDDEN = ['Cut it plain', 'Keep it as it is', 'already approved', 'Words to confirm', 'Engrave these words', 'gives no words', 'being prepared', 'Approve to make this a regular order'];
 const NORM = s => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase();
 
@@ -147,8 +148,10 @@ function installProbe(FORBIDDEN) {
   S.styles = el => {
     const probes = [el, ...el.querySelectorAll('button,[role=button],.engThumb')];
     const r = el.getBoundingClientRect();
-    for (const e of document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2)) { if (probes.includes(e) || e.contains(el)) continue; const p = el.closest('.engp'); if (p && p.contains(e)) probes.push(e); break; }
-    return probes.map(e => { const cs = getComputedStyle(e); return { who: e === el ? 'self' : String(e.className || e.tagName).slice(0, 30), bg: cs.backgroundColor, bc: [cs.borderTopColor, cs.borderRightColor, cs.borderBottomColor, cs.borderLeftColor].join(' '), bs: cs.boxShadow, cursor: cs.cursor, outline: [cs.outlineStyle, cs.outlineWidth, cs.outlineColor].join(' '), ow: parseFloat(cs.outlineWidth) || 0, os: cs.outlineStyle, oc: cs.outlineColor, transform: cs.transform, opacity: cs.opacity }; });
+    // (a sliding pill under a choice option is its own element, usually pointer-events:none, so hit testing never finds it: any element of the option's group that lies under the option's middle is probed too, in DOM order)
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2, grp = el.matches('[data-engp="choice"]') ? el.parentElement : null;
+    if (grp) for (const e of grp.querySelectorAll('*')) { if (e === el || el.contains(e) || e.contains(el) || e.matches('[data-engp="choice"]') || e.closest('[data-engp="choice"]')) continue; const q = e.getBoundingClientRect(); if (q.width > 0 && q.height > 0 && cx >= q.left && cx <= q.right && cy >= q.top && cy <= q.bottom) probes.push(e); }
+    return probes.map(e => { const cs = getComputedStyle(e); return { who: e === el ? 'self' : String(e.className || e.tagName).slice(0, 30), bg: cs.backgroundColor, bc: [cs.borderTopColor, cs.borderRightColor, cs.borderBottomColor, cs.borderLeftColor].join(' '), bs: cs.boxShadow, cursor: cs.cursor, outline: [cs.outlineStyle, cs.outlineWidth, cs.outlineColor].join(' '), ow: parseFloat(cs.outlineWidth) || 0, os: cs.outlineStyle, oc: cs.outlineColor, transform: cs.transform, opacity: cs.opacity, hover: e.matches(':hover'), attrs: e === el ? [...e.attributes].filter(a => /^(aria-|data-|disabled|class)/.test(a.name)).map(a => a.name + '=' + a.value).join(' ').slice(0, 160) : undefined }; });
   };
   const FOCUSABLE = 'button:not([disabled]),textarea:not([disabled]),select:not([disabled]),input:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])';
   S.focusTarget = el => (el.matches(FOCUSABLE) || el.tabIndex >= 0 ? el : el.querySelector(FOCUSABLE) || el);
@@ -374,7 +377,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
 
     /* ════ S1 · Paul's case 2 ════ */
     await phase('S1'); lap('S1');
-    {
+    if (want('S1')) {
       const pk = pkOf('stRuby');
       await openPiece('stRuby');
       const s0 = await snap(pk);
@@ -420,7 +423,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
 
     /* ════ S2 · Front & Back ════ */
     await phase('S2'); lap('S2');
-    if (timeLeft() < 0) skipRest('S2'); else {
+    if (!want('S2')) { /* not asked for */ } else if (timeLeft() < 0) skipRest('S2'); else {
       const pk = pkOf('stDuo');
       await openPiece('stDuo');
       const b = await press(pk, 'choice', 'both');
@@ -466,7 +469,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
 
     /* ════ S3 · item 3: a changed choice re-lights Approve; leaving discards it ════ */
     await phase('S3'); lap('S3');
-    if (timeLeft() < 0) skipRest('S3'); else {
+    if (!want('S3')) { /* not asked for */ } else if (timeLeft() < 0) skipRest('S3'); else {
       const pk = pkOf('stKeep'), rid = made.stKeep.rid;
       await toList();
       const row0 = await rowStatus(rid), c0 = await committed(pk);
@@ -496,7 +499,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
 
     /* ════ S4 · item 1: one pressed option, the same white pill on each ════ */
     await phase('S4'); lap('S4');
-    if (timeLeft() < 0) skipRest('S4'); else {
+    if (!want('S4')) { /* not asked for */ } else if (timeLeft() < 0) skipRest('S4'); else {
       const pk = pkOf('stUi');
       await openPiece('stUi');
       const seen = {}, presses = [];
@@ -519,7 +522,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
 
     /* ════ S5 · typing on a plain face adds it ════ */
     await phase('S5'); lap('S5');
-    if (timeLeft() < 0) skipRest('S5'); else {
+    if (!want('S5')) { /* not asked for */ } else if (timeLeft() < 0) skipRest('S5'); else {
       const pk = pkOf('stUi');
       await toList(); await openPiece('stUi');
       const s0 = await snap(pk);
@@ -535,7 +538,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
 
     /* ════ S6 · Front with empty words: Approve disabled, nothing explained ════ */
     await phase('S6'); lap('S6');
-    if (timeLeft() < 0) skipRest('S6'); else {
+    if (!want('S6')) { /* not asked for */ } else if (timeLeft() < 0) skipRest('S6'); else {
       const pk = pkOf('stUi');
       await toList(); await openPiece('stUi');
       const lines = () => page.evaluate(pk => { const sc = window.__stg.scope(pk); return sc ? (sc.innerText || '').split('\n').map(x => x.replace(/\s+/g, ' ').trim()).filter(Boolean) : []; }, pk);
@@ -559,7 +562,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
 
     /* ════ S8 · keystroke to paint ════ */
     await phase('S8'); lap('S8');
-    if (timeLeft() < 0) skipRest('S8'); else {
+    if (!want('S8')) { /* not asked for */ } else if (timeLeft() < 0) skipRest('S8'); else {
       const pk = pkOf('stUi');
       await toList(); await openPiece('stUi');
       await press(pk, 'words');
@@ -573,7 +576,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
 
     /* ════ S10 · hover, focus and pointer ════ */
     await phase('S10'); lap('S10');
-    if (timeLeft() < 0) skipRest('S10'); else {
+    if (!want('S10')) { /* not asked for */ } else if (timeLeft() < 0) skipRest('S10'); else {
       const pk = pkOf('stUi');
       await toList(); await openPiece('stUi');
       await typeInto(pk, 'Z');   // (Approve lit)
@@ -603,7 +606,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
         await page.evaluate(() => { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); });
       }
       const hb = hov.filter(x => x.missing || x.legacy || !x.changed), pb = hov.filter(x => x.clicky && (x.missing || x.legacy || !x.pointer)), fb = foc.filter(x => x.missing || x.legacy || !x.ring);
-      const why = x => (x.missing ? 'missing' : (x.legacy ? 'no spec hook (old control): ' : '') + (x.hoverErr ? 'hover failed: ' + x.hoverErr : x.changed === undefined ? '' : x.changed ? 'hover changes' : `hover changes nothing (bg ${x.rest && x.rest.bg}, border ${x.rest && x.rest.bc.split(' rgb')[0]}, shadow ${x.rest && x.rest.bs})`));
+      const why = x => (x.missing ? 'missing' : (x.legacy ? 'no spec hook (old control): ' : '') + (x.hoverErr ? 'hover failed: ' + x.hoverErr : x.changed === undefined ? '' : x.changed ? 'hover changes' : `hover changes nothing (bg ${x.rest && x.rest.bg}, border ${x.rest && x.rest.bc.split(' rgb')[0]}, shadow ${x.rest && x.rest.bs}; :hover ${x.hov && x.hov.hover}; ${x.hov && x.hov.attrs})`));
       const fwhy = x => (x.missing ? 'missing' : (x.legacy ? 'no spec hook (old control): ' : '') + `${x.ring ? 'ring' : 'NO ring'} via ${x.how}${x.on ? '' : ' (focus did not land)'}, focus-visible ${x.fv}, outline ${x.outline}, shadow ${x.bs}`);
       check(`S10 hover changes the background, border or shadow of every left-column control and of the lit Approve (hover:hover ${hoverMedia})`, !hb.length, hb.map(x => `${x.name}: ${why(x)}`).join(' | '));
       check('S10 keyboard focus (Tab) shows a visible ring on every one (outline >= 2 px, or a box-shadow ring)', !fb.length, fb.map(x => `${x.name}: ${fwhy(x)}`).join(' | '));
@@ -628,6 +631,7 @@ const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length
       const tag = `S7 seed ${sd.seed} (${sd.how}, ${{ stFz1: 'approved back piece', stFz2: 'back piece in review', both: 'two-face piece in review' }[sd.name]})`;
       await phase('S7.' + sd.seed);
       if (timeLeft() < 15000) { skipRest(tag); continue; }
+      if (!want('S7')) continue;
       lap(tag);
       const pk = pkOf(sd.name), errs0 = errors.length, acts = fuzzActions(1000 + sd.seed * 7919, 60, sd.lastApprove);
       await toList(); await openPiece(sd.name);
