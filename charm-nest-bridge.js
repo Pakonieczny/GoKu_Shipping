@@ -10463,7 +10463,7 @@ const Engrave = window.Engrave = (() => {
     //  shows it (no hop). More words typed before the next frame only mark the piece, and that frame paints the last state (the last state never dropped); a face or a choice changed is
     //  painted at once even then (a press is never a frame late), up to three times a frame)
     const shape = st ? st.choice + "|" + st.active : "", moved = shape !== rec.shape;
-    rec.job = job;
+    rec.job = job; rec.direct = !!st && stage.seq == null; rec.pseq = st ? stage.seq : null; svIdleArm(rec);
     // (o.thumb(face) -> element: a host's own thumbnails (a panel mounted with its own pictures): painted with the card's, from the same stage, as long as they are on the page)
     if (o && typeof o.thumb === "function") (rec.hostThumbs || (rec.hostThumbs = new Set())).add(o.thumb);
     // (the thumbnails are painted in every call: a few DOM writes; the work area at most a few times a frame, the rest at the next frame)
@@ -10489,6 +10489,24 @@ const Engrave = window.Engrave = (() => {
       }
       if (any) fn._svMiss = 0; else if ((fn._svMiss = (fn._svMiss || 0) + 1) > 30) rec.hostThumbs.delete(fn);   // (not on the page yet: kept a while; gone for good: let go)
     }
+  }
+  /* The idle check (Paul's stale work area after a burst of presses and keys): 300 ms after the last call for a piece, what is on screen is compared with the newest state, and painted once more when
+     it is not that: the work area (its face, its words, the sequence it was drawn from, a drawing of its own) and the thumbnails. The newest state is the panel's own (CharmNestEngravePanel.stageOf)
+     when the panel made the stage (its stages carry the draft's seq): a draft the panel changed without a call (a commit landing, a draft made again) is taken here. A stage given by another host
+     (no seq) is never replaced by the panel's. svShowStage.idleFixes counts the repaints it made. */
+  const svSig = s => (s ? JSON.stringify([s.choice, s.active, ...["front", "back"].map(f => [s.faces[f].text, s.faces[f].font, s.faces[f].pos && s.faces[f].pos.charm])]) : "");
+  function svIdleArm(rec) { clearTimeout(rec.idleT); rec.idleT = setTimeout(() => svIdle(rec), 300); }
+  function svIdle(rec) {
+    rec.idleT = 0;
+    const PNL = window.CharmNestEngravePanel, job = rec.job, c = EG.card && EG.card.isConnected ? EG.card : null, pst = () => { let ps = null; try { ps = PNL && typeof PNL.stageOf === "function" ? PNL.stageOf(rec.key) : null; } catch (_) { ps = null; } return ps && typeof ps === "object" && ps.faces ? ps : null; };
+    if (SV_STAGES.get(rec.key) !== rec) { if (!SV_STAGES.has(rec.key) && c && c._svPiece === rec.key && job) { const ps = pst(); if (ps) { svShowStage.idleFixes++; svShowStage(job, ps); } } return; }   // (let go meanwhile while its card is still open: the panel's stage taken again)
+    if (rec.raf || rec.flushing || SV_TURN.run || (c && c.querySelector(".backHost canvas.drag"))) { svIdleArm(rec); return; }   // (a paint, a turn or a drag on its way: looked at after it)
+    if (job && !rec.direct) { const ps = pst(), st = ps ? svNorm(ps, job) : null; if (st && svSig(st) !== svSig(rec.stage)) { rec.stage = st; rec.seq = ++SV_SEQ; rec.pseq = ps.seq; svShowStage.idleFixes++; } }
+    if (c && c._svPiece === rec.key && c._svExpect && c._remountWork) {
+      const h = c.querySelector(".backHost"), want = c._svExpect();
+      if (!h || h.dataset.face !== want.face || (want.words != null && (h.dataset.words || "") !== want.words) || +h.dataset.stageSeq !== rec.seq || !h.querySelector(":scope > canvas:not(.egSvHold), :scope > .egStagePv")) { svShowStage.idleFixes++; c._remountWork(); }
+    }
+    svFlush(rec, "thumbs");
   }
   /** The piece was painted in this frame: words typed until the next frame are painted by it (svQueue). */
   function svHot(rec) { rec.hotN = (rec.hotN || 0) + 1; if (!rec.hotRaf) rec.hotRaf = requestAnimationFrame(() => { rec.hotRaf = 0; rec.hotN = 0; }); }
@@ -10521,6 +10539,7 @@ const Engrave = window.Engrave = (() => {
     } finally { rec.flushing = false; }
   }
   /** Engrave.showStage.flush(key?): paints now what is waiting (every piece, or one), for a press that must see it (Approve) and for the tests. */
+  svShowStage.idleFixes = 0;
   svShowStage.flush = key => { let n = 0; for (const rec of [...SV_STAGES.values()]) if (!key || rec.key === String(key)) { svFlush(rec); n++; } return n; };
   /** A font or a fit arrived for a face of a staged piece: painted again from the latest state. -> true when the stage took it. */
   function svRepaint(job) { const r = job && job.key ? SV_STAGES.get(pieceKeyOfJob(job)) : null; if (!r || !r.stage) return false; svQueue(r); return true; }
@@ -10528,7 +10547,7 @@ const Engrave = window.Engrave = (() => {
   function svLetGo(key, keep) {
     for (const [jk, d] of [...DRAFTS]) if (d && d.svStage && svPieceKeyOf(jk) === key) DRAFTS.delete(jk);
     for (const [k, r] of [...SV_FACES]) if (k.slice(0, k.lastIndexOf("|")) === key) { if (keep) { r.text = ""; r.centre = null; } else SV_FACES.delete(k); }   // (a null stage: the records stay, the drawings made from them hold the same object)
-    if (!keep) { const r = SV_STAGES.get(key); if (r) { if (r.raf) cancelAnimationFrame(r.raf); clearTimeout(r.timer); } SV_STAGES.delete(key); }
+    if (!keep) { const r = SV_STAGES.get(key); if (r) { if (r.raf) cancelAnimationFrame(r.raf); clearTimeout(r.timer); } SV_STAGES.delete(key); }   // (its idle check still runs once: a piece whose card is still open takes the panel's stage again)
   }
   /** Every piece but `keep` loses its stage (another piece opened, the list shown): what was staged and not approved is never drawn again. */
   function svSweep(keep) { for (const k of [...SV_STAGES.keys()]) if (k !== keep) svLetGo(k); }
@@ -12674,13 +12693,15 @@ const Engrave = window.Engrave = (() => {
     const svOwnWords = () => { const d = DRAFTS.get(job.key), f = dj.fit; if (d && d.fit) return d.fit.empty ? [] : draftLines(d.staged && d.staged.text); return f && ((f.glyphs && f.glyphs.length) || f.cmds) && !f.artOnly ? draftLines((job.lineInput && job.lineInput.length ? job.lineInput : job.lines || []).join("\n")) : []; };
     /** The hooks of the work area: the face drawn, the words drawn, the sequence of the state drawn. The card's own row of controls (Centre, Lines, the turn) acts on its own job: while the area
      *  shows another face (`own` false) it is hidden, keeping its place, so nothing there moves a face that is not on screen. */
-    const svHooks = (face, words, seq, own) => { SV_LAST.pk = svPk; SV_LAST.host = backHost; backHost.dataset.face = face; backHost.dataset.words = (words || []).join("\n"); backHost.dataset.stageSeq = String(seq || 0); card.dataset.svOwn = own === false ? "0" : "1"; };
+    const svHooks = (face, words, seq, own) => {
+      { const r = SV_STAGES.get(svPk); if (r && (seq || 0) !== r.seq && (r.stage || seq)) { svQueue(r); return; } }   // (built from a state that is no longer the newest of the piece: nothing written, the newest is painted at the next frame)
+      SV_LAST.pk = svPk; SV_LAST.host = backHost; backHost.dataset.face = face; backHost.dataset.words = (words || []).join("\n"); backHost.dataset.stageSeq = String(seq || 0); card.dataset.svOwn = own === false ? "0" : "1"; };
     /** A face drawn from the piece's charm: its record (stagedFaceFit's), given the stage's words, font and place. */
     const svFaceRec = (t, fv) => {
       const k = svPk + "|" + t.face; let r = SV_FACES.get(k);
       if (!r) SV_FACES.set(k, r = { face: t.face, centre: null, size: null, view: null, mask: null });
       if (!r.mask || r.view !== fv.view) { r.text = ""; stagedFaceFit(job, t.face, fv, r); }   // (its safe area first: a place given below is kept)
-      r.text = t.words.join("\n"); r.fontWord = t.x.font || "";
+      r.text = t.words.join("\n"); r.fontWord = t.x.font || ""; r._seq = t.seq;
       if (t.x.pos) { const c = viewPointOf(fv.view, t.x.pos.charm); if (c) r.centre = c; } else if (window.CharmNestEngravePanel && CharmNestEngravePanel.stagePos) r.centre = null;   // (no stagePos on the page: a drag made here keeps its place)
       r.onFont = () => { const sr = SV_STAGES.get(svPk); if (sr && sr.stage) svQueue(sr); else if (EG.card === card && card.isConnected && card._remountWork) card._remountWork(); };
       return r;
@@ -12715,7 +12736,7 @@ const Engrave = window.Engrave = (() => {
         const cv = draw(); cv._editable = false; cv._paint(); cv._viewFace = A; cv._staged = true; cv._svFv = fv; cv._svRec = r; cv.tabIndex = -1; cv.style.outline = "none";
         { const base = cv._paint; cv._paint = prov => (prov ? base(prov) : cv._svRedraw()); }   // (painted again by anyone (a job's refresh, the rulers): from the record as it is NOW, never the words it was first drawn with)   // (drawn again at once with no box or handles: the staged words are moved, never sized or turned, until they are a job)
         // (a letter typed: only the words are laid out again (reflowAt, a few ms) and painted over the face's still layers (the canvas's own _paint): the grid, the art and the cut line are not drawn again)
-        cv._svRedraw = () => { try { const sf = stagedFaceFit(job, A, fv, r), f = sf.fit; cv._paint(f && f.glyphs ? { glyphs: f.glyphs, centre: f.centre, angle: f.angle || 0 } : { glyphs: [] }); } catch (_) { try { const nc = draw(), g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(nc, 0, 0, cv.width, cv.height); } catch (_) { /* the drawing it had stays */ } } queueWorkRulers(backHost._ez); };
+        cv._svRedraw = () => { { const sr = SV_STAGES.get(svPk); if (sr && sr.stage && r._seq !== sr.seq) { svQueue(sr); return; } } try { const sf = stagedFaceFit(job, A, fv, r), f = sf.fit; cv._paint(f && f.glyphs ? { glyphs: f.glyphs, centre: f.centre, angle: f.angle || 0 } : { glyphs: [] }); } catch (_) { try { const nc = draw(), g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height); g.drawImage(nc, 0, 0, cv.width, cv.height); } catch (_) { /* the drawing it had stays */ } } queueWorkRulers(backHost._ez); };
         cv.title = t.words.length ? `the ${A} of this piece with the words staged for it · drag the words to move them` : `the ${A} of this piece`;
         backHost.appendChild(cv);
         stagedDrag(cv, job, A, fv, r, draw, centre => svPosOut(svPk, A, fv.view, centre));
@@ -12741,6 +12762,8 @@ const Engrave = window.Engrave = (() => {
       }
       svHooks(t.face, t.words, t.seq, t.kind === "held" || (t.kind === "job" && t.ja === job));
     };
+    /** What the work area must show now (the idle check compares): { face, words } (the target's face and words; the card's own drawing with no target: its face, any words). */
+    card._svExpect = () => { const t = svTarget(); return t ? { face: t.face, words: t.words.join("\n") } : { face: viewFaceOf(job), words: null }; };
     /** The stage painted on this card's work area (svFlush, once a frame): in place when the face and the way it is drawn are the same, else drawn afresh, turned to the other face or
      *  cross-faded. A turn already on its way to it paints the latest state at its edge. */
     card._svWork = () => {

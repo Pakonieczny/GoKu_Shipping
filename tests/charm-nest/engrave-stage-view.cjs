@@ -9,6 +9,8 @@
 //   K1     every keystroke ("R", "Ru", "Rub", "Ruby" on the front) is on the thumbnail AND the work area in the first animation frame after the call (performance.now + requestAnimationFrame)
 //   R1–R3  30 rapid alternating calls (the face switched each time, some within one frame, some a few ms apart): the last state is drawn, no older state is ever painted after a newer one, no
 //          backlog of turns or fades
+//   B1–B2  60 random calls with the card drawn again now and then, ten runs with ten seeds: the last state is drawn, every hook of it, both thumbnails too
+//   I1–I2  the idle check: a work area left on an older state, and a panel draft changed without a call, are painted with the newest state once the calls stop
 //   W1–W2  the front waiting for words with no placement (Paul's state after Front + Approve): the work area draws the plain front of the charm, no reason, no "Engrave these words"
 //   Z1     zoom and rulers (ENGVIEW) on a staged face with no job
 //   H1–H2  the thumbnails' hover (border toward gold, a pixel's lift, a shadow) and keyboard focus (a 2 px gold ring, 2 px out)
@@ -145,11 +147,13 @@ const FORBIDDEN = /Words to confirm|gives no words|being prepared|Engrave these 
     check('R3 no backlog: at most one turn running at a time, at most one fade, nothing left running', rapid.maxAnims <= 1 && rapid.ghosts <= 1 && rapid.anims === 0 && !rapid.flipping, JSON.stringify({ maxAnims: rapid.maxAnims, ghosts: rapid.ghosts, anims: rapid.anims, flipping: rapid.flipping }));
     await R.shot(w, 'STAGE-after-rapid');
 
-    // ═══ B · 60 random calls (choice, face, words) with the card drawn again now and then (Engrave.render, as the tab does at every change): the last state is what is drawn, every hook of it ═══
-    const burst = await page.evaluate(async Q => {
-      let seed = 7; const rnd = n => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+    // ═══ B · 60 random calls (choice, face, words) with the card drawn again now and then (Engrave.render, as the tab does at every change): the last state is what is drawn, every hook of it.
+    //     Ten runs, each its own seed (Paul's stale work area came in about one run in three: ten in a row must all end right) ═══
+    for (const [run, seed0] of [7, 11, 2027, 31337, 4242, 99, 1234, 5555, 8086, 65537].entries()) {
+    const burst = await page.evaluate(async ([Q, seed0]) => {
+      let seed = seed0; const rnd = n => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
       const keyOf = () => document.querySelector(Q).dataset.key, job = () => Engrave.items().get(keyOf()), key = keyOf().replace(/~front$/, '');
-      const letters = 'aeinoRsvyL', words = { front: 'Ann', back: 'Ruby' }; let last = null, rebuilt = 0;
+      const letters = 'aeinoRsvyL', words = { front: 'Ann', back: 'Ruby' }; let last = null, rebuilt = 0; const fixes0 = Engrave.showStage.idleFixes || 0;
       for (let i = 0; i < 60; i++) {
         const k = rnd(10), face = rnd(2) ? 'front' : 'back';
         if (k < 5) words[face] = (words[face] + letters[rnd(letters.length)]).slice(-7); else if (k === 5) words[face] = words[face].slice(0, -1);
@@ -162,11 +166,13 @@ const FORBIDDEN = /Words to confirm|gives no words|being prepared|Engrave these 
       await new Promise(r => setTimeout(r, 1000));
       const h = document.querySelector(Q + ' .backHost'), th = f => { const b = document.querySelector(Q + ` [data-eng-thumb="${f}"]`), t = b && b.querySelector('.engpvText'); return b ? { cur: b.getAttribute('aria-current') === 'true', eng: b.dataset.engraved === '1', text: t && !t.hidden ? t.textContent : '' } : null; };
       const on = f => last.choice === 'both' || last.choice === f;
-      return { last: { choice: last.choice, active: last.active, front: last.faces.front.text, back: last.faces.back.text }, rebuilt, face: h.dataset.face, words: h.dataset.words, el: !!h.querySelector(':scope > canvas, :scope > .egStagePv'), front: th('front'), back: th('back'),
+      return { last: { choice: last.choice, active: last.active, front: last.faces.front.text, back: last.faces.back.text }, rebuilt, idleFixes: (Engrave.showStage.idleFixes || 0) - fixes0, face: h.dataset.face, words: h.dataset.words, seq: +h.dataset.stageSeq, newest: Engrave.stageSeq(key), el: !!h.querySelector(':scope > canvas:not(.egSvHold), :scope > .egStagePv'), front: th('front'), back: th('back'),
         want: { words: on(last.active) ? last.faces[last.active].text : '', front: on('front') ? last.faces.front.text : '', back: on('back') ? last.faces.back.text : '' } };
-    }, Q);
-    check(`B1 60 random calls with the card drawn again ${burst.rebuilt} times: the work area shows exactly the last state (its face and words)`, burst.el && burst.face === burst.last.active && low(burst.words) === low(burst.want.words), JSON.stringify(burst));
-    check('B2 and both thumbnails do too: the active one marked, each face engraved or plain as chosen, with its own words', !!burst.front && !!burst.back && burst.front.cur === (burst.last.active === 'front') && burst.back.cur === (burst.last.active === 'back') && burst.front.eng === (burst.last.choice === 'both' || burst.last.choice === 'front') && burst.back.eng === (burst.last.choice === 'both' || burst.last.choice === 'back') && low(burst.front.text) === low(burst.want.front) && low(burst.back.text) === low(burst.want.back), JSON.stringify(burst));
+    }, [Q, seed0]);
+    const tagB = `run ${run + 1}/10 (seed ${seed0}, the card drawn again ${burst.rebuilt} times, ${burst.idleFixes} idle repaints)`;
+    check(`B1 ${tagB}: after 60 random calls the work area shows exactly the last state (its face, its words, drawn from the newest sequence)`, burst.el && burst.seq === burst.newest && burst.face === burst.last.active && low(burst.words) === low(burst.want.words), JSON.stringify(burst));
+    check(`B2 ${tagB}: both thumbnails do too: the active one marked, each face engraved or plain as chosen, with its own words`, !!burst.front && !!burst.back && burst.front.cur === (burst.last.active === 'front') && burst.back.cur === (burst.last.active === 'back') && burst.front.eng === (burst.last.choice === 'both' || burst.last.choice === 'front') && burst.back.eng === (burst.last.choice === 'both' || burst.last.choice === 'back') && low(burst.front.text) === low(burst.want.front) && low(burst.back.text) === low(burst.want.back), JSON.stringify(burst));
+    }
 
     // ═══ Z · zoom and rulers on a staged face that has no job ═══
     await show(stage('both', 'front', 'Ann', 'Ruby'));
@@ -209,6 +215,31 @@ const FORBIDDEN = /Words to confirm|gives no words|being prepared|Engrave these 
     await show(null);
     const Lc = await look();
     check('C1 showStage(job, null): the committed state again (the back with Ruby, the front plain)', fine(Lc) && Lc.face === 'back' && low(Lc.words) === 'ruby' && Lc.back.eng && !Lc.front.eng && /ruby/i.test(Lc.back.text) && !Lc.front.text, JSON.stringify(Lc));
+
+    // ═══ I · the idle check: 300 ms after the last call, what is on screen is the newest state, whatever went wrong in between ═══
+    const i1 = await page.evaluate(async Q => {
+      const c = document.querySelector(Q), job = Engrave.items().get(c.dataset.key), key = c.dataset.key.replace(/~front$/, ''), f0 = Engrave.showStage.idleFixes;
+      Engrave.showStage(job, { key, choice: 'both', active: 'front', faces: { front: { text: 'Mia', font: '', pos: null }, back: { text: 'Ruby', font: '', pos: null } } });
+      const h = c.querySelector('.backHost'); h.dataset.words = 'yy'; h.dataset.stageSeq = '1'; h.dataset.face = 'back';   // (a write that went wrong: an older state's face, words and sequence left on the work area)
+      await new Promise(r => setTimeout(r, 1100));
+      const h2 = c.querySelector('.backHost');
+      return { face: h2.dataset.face, words: h2.dataset.words, seq: +h2.dataset.stageSeq, newest: Engrave.stageSeq(key), fixes: Engrave.showStage.idleFixes - f0, el: !!h2.querySelector(':scope > canvas:not(.egSvHold)') };
+    }, Q);
+    check('I1 a work area left showing an older state (back, "yy", an old sequence) is painted again with the newest one once the calls stop (the front, "Mia")', i1.face === 'front' && low(i1.words) === 'mia' && i1.seq === i1.newest && i1.fixes >= 1 && i1.el, JSON.stringify(i1));
+    const i2 = await page.evaluate(async Q => {
+      const P = window.CharmNestEngravePanel, c = document.querySelector(Q), job = Engrave.items().get(c.dataset.key), key = c.dataset.key.replace(/~front$/, ''), d = P && P.DRAFTS && P.DRAFTS.get(key);
+      if (!d || typeof P.stageOf !== 'function') return { noDraft: true, keys: P && P.DRAFTS ? [...P.DRAFTS.keys()] : null };
+      const was = JSON.parse(JSON.stringify({ choice: d.choice, active: d.active, faces: d.faces }));
+      Engrave.showStage(job, P.stageOf(key));   // (the panel's own call: its stage carries the draft's seq)
+      d.faces.back.text = 'Zed'; d.choice = 'back'; d.active = 'back'; d.seq = (d.seq || 0) + 1;   // (then its draft changes with no call: a commit landing, a draft made again)
+      await new Promise(r => setTimeout(r, 1100));
+      const h = c.querySelector('.backHost'), t = c.querySelector('[data-eng-thumb="back"] .engpvText');
+      const out = { face: h.dataset.face, words: h.dataset.words, seq: +h.dataset.stageSeq, newest: Engrave.stageSeq(key), thumb: t && !t.hidden ? t.textContent : '' };
+      Object.assign(d, was); d.seq += 1; Engrave.showStage(job, null);   // (the draft as it was)
+      return out;
+    }, Q);
+    check('I2 the panel\'s draft changed without a call: the work area and the thumbnail take it once the calls stop (the back, "Zed")', i2.face === 'back' && low(i2.words) === 'zed' && i2.seq === i2.newest && /zed/i.test(i2.thumb), JSON.stringify(i2));
+    await R.settle(page, 500);
 
     // ═══ W · Paul's state after Front + Approve: a front job waiting for words, with no placement ═══
     const k2 = made.ruby2.key;
