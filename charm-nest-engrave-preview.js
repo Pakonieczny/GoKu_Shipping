@@ -458,6 +458,7 @@
 .engpvBox{position:absolute;inset:0;container-type:size;pointer-events:none}
 .engpvText{position:absolute;margin:0;white-space:pre;text-align:center;color:var(--ink,#1c1a17);transform-origin:50% 50%;pointer-events:none}
 .engpvText[hidden]{display:block;visibility:hidden}
+.engpvGhost{position:absolute;margin:0;white-space:pre;text-align:center;color:var(--ink,#1c1a17);transform-origin:50% 50%;pointer-events:none}
 .engpv[data-held="1"] .engpvText{opacity:.55}
 .engpvSlot{position:absolute;transform-origin:50% 50%;box-sizing:border-box;border:1px dashed var(--ink45,#938c80);opacity:.7;pointer-events:none}
 .engpvWait{position:absolute;right:4px;bottom:3px;display:inline-flex;align-items:center;gap:5px;max-width:calc(100% - 8px);padding:1px 6px;border-radius:999px;background:var(--card,#fffefb);font:10px var(--sans,system-ui);color:var(--ink70,#5b554c);white-space:nowrap;overflow:hidden}
@@ -505,8 +506,30 @@
     return st.nodes;
   }
 
-  /** Repaints `el` from its state, synchronously. */
+  /* ENGSTAGE (Paul, 30 Oct 2026: "everything should run beautifully with tasteful quick and easy to understand, transitions and animations"): words that appear on a picture fade in, words that go
+     (the face made plain, None) fade out, about 120 ms; words that only change (a letter typed) are drawn at once. A fade-out is a still copy of the words as they were (.engpvGhost, never .engpvText:
+     what the picture shows now is the only .engpvText), laid over and faded; a new change takes any fade still running away at once, so quick presses never queue. None with reduced motion. */
+  const FADE_MS = 120;
+  const motionOk = el => { try { return !!(el && el.isConnected && typeof el.animate === 'function' && !(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches)); } catch (_) { return false; } };
+  const wordsSnap = st => { const n = st && st.nodes; return n && n.text && !n.text.hidden && n.text.textContent ? { text: n.text.textContent, css: n.text.style.cssText } : null; };
+  function fadeWords(el, st, before) {
+    const n = st.nodes; if (!n || !n.layer) return;
+    for (const g of n.layer.querySelectorAll('.engpvGhost')) g.remove();
+    const now = !!(n.text && !n.text.hidden && n.text.textContent);
+    if (!!before === now || !motionOk(el)) return;
+    if (before) {
+      const g = el.ownerDocument.createElement('span'); g.className = 'engpvGhost'; g.setAttribute('aria-hidden', 'true'); g.textContent = before.text; g.style.cssText = before.css; n.layer.appendChild(g);
+      const end = () => g.remove(), a = g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: FADE_MS, easing: 'ease-out', fill: 'forwards' }); a.finished.then(end, end); setTimeout(end, FADE_MS * 4);
+    } else { for (const a of n.text.getAnimations ? n.text.getAnimations() : []) a.cancel(); n.text.animate([{ opacity: 0 }, { opacity: 1 }], { duration: FADE_MS, easing: 'ease-out' }); }
+  }
+  /** Repaints `el` from its state, synchronously (the words' fade in or out with it). */
   function paint(el) {
+    const st = el._engpv; if (!st) return;
+    const before = wordsSnap(st);
+    paintNow(el);
+    try { if (el._engpv === st) fadeWords(el, st, before); } catch (_) { /* drawn, unfaded */ }
+  }
+  function paintNow(el) {
     const st = el._engpv; if (!st) return;
     try {
       const o = st.opts, src = sourceOf(o), N = shell(el, st, src), id = idOf(o.fontId || fontIdOf(o.row, o.face, o.fontWord)), O = Orders();

@@ -85,6 +85,8 @@
   };
 
   const facesOfMode = m => (m === 'both' ? ['front', 'back'] : m === 'front' ? ['front'] : m === 'back' ? ['back'] : []);
+  /** ENGSTAGE (Paul, 30 Oct 2026): the staged choice of a stage, in either shape: the panel's { choice: none|front|back|both, active, faces } (Engrave.showStage's) or the older { mode, faces }. */
+  const modeOfStage = s => (s && typeof s === 'object' ? String(s.choice || s.mode || 'none') : '');
   const stagedOf = (stage, face) => { const x = stage && stage.faces && stage.faces[face]; return x == null ? null : typeof x === 'string' ? { text: x, font: '' } : { text: String(x.text == null ? '' : x.text), font: String(x.font == null ? '' : x.font) }; };
   /** The faces of one piece, ONLY the ones the engraving needs. `jobs`: the piece's jobs (any face); `setup`: the line's setup (the faces it asks for, with the words it has); `o.stage`: a mode a person has
    *  staged and not saved (it replaces the setup: the faces that mode asks for, with the words and font typed so far). A face nobody asks for is null (and is not drawn); the one exception is a face that has a
@@ -92,7 +94,7 @@
   function facesOf(lineKey, slot, jobs, setup, o) {
     o = o || {}; const never = !!o.never, P = root && root.CharmNestEngravePreview, Pos = root && root.CharmNestEngravePosition, out = { front: null, back: null };
     const stage = o.stage && typeof o.stage === 'object' ? o.stage : null;
-    const want = stage ? facesOfMode(stage.mode) : setup && setup.faces ? setup.faces : null;   // (no setup at all: the jobs say)
+    const want = stage ? facesOfMode(modeOfStage(stage)) : setup && setup.faces ? setup.faces : null;   // (no setup at all: the jobs say)
     // (NONEPLAIN 2, Paul 29 Oct 2026: None staged: the faces it takes away are still drawn, as the charm alone (no words, no placement), until Approve keeps it or a face is pressed again)
     const plainStaged = stage && Array.isArray(stage.plain) ? stage.plain.filter(f => !want.includes(f)) : [];
     for (const face of ['front', 'back']) {
@@ -111,7 +113,20 @@
       out[face] = { face, key: job ? job.key : jobKey(lineKey, slot, face), job: live, text, fontWord,
         fontId: P && P.fontIdOf ? tryDo(() => P.fontIdOf(lineOf(row) || row, face, fontWord), null) : null,
         position: live && Pos && Pos.of ? tryDo(() => Pos.of(live), null) : null,
-        state: live ? stateOf(live, o) : stage ? 'plain' : 'busy', working: !!(live && o.isWorking && tryDo(() => o.isWorking(live), false)), staged: !live && !!stage };
+        state: live ? stateOf(live, o) : stage ? 'plain' : 'busy', working: !!(live && o.isWorking && tryDo(() => o.isWorking(live), false)), staged: !live && !!stage, engraved: true };
+    }
+    // ENGSTAGE (Paul, 30 Oct 2026: "they should be able to toggle back and in between any of the four options"; SPEC: "Both are always shown for a piece that can have both, and each is always
+    // drawn"): the Engrave detail's card (o.both) draws BOTH faces of a piece that can have both (never an earring's back, nor a front-only line's back). A face not engraved now is the plain charm
+    // face: its picture with no words (its own job's view when it has one, else the piece's charm, UPRIGHT's mirror), `engraved` false; a press on it makes it the face edited, like any face.
+    if (o.both) {
+      const only = !!(o.row && o.row.spec && o.row.spec.engraveFrontOnly);
+      for (const face of ['front', 'back']) {
+        if (out[face] || (face === 'back' && (never || only)) || (never && face === 'front')) { if (out[face] && out[face].none) out[face].engraved = false; continue; }
+        const job = (jobs || []).find(j => faceOf(j) === face) || null, live = job && job.state !== 'none' && job.state !== 'skipped' ? job : null, st = stagedOf(stage, face), w = setup && setup[face];
+        const fontWord = (st && st.font) || (live && live.faceFontWord) || (w && w.fontWord) || null;
+        out[face] = { face, key: job ? job.key : jobKey(lineKey, slot, face), job: live, text: '', fontWord, fontId: P && P.fontIdOf ? tryDo(() => P.fontIdOf(lineOf(o.row) || o.row, face, fontWord), null) : null,
+          position: null, state: 'plain', working: false, staged: !!stage, plain: true, engraved: false };
+      }
     }
     // FACEVIEW (Paul, 28 Oct 2026: "all of the work and updates to a given charm performed in the Charm Editor must 100% be showing and visible in the engraving modal"): a face nothing engraves that
     // the Charm Editor drew on (o.artFaces(jobs, face): the Engrave detail's card only) is shown too, as `art`: its picture (the piece's own charm from that side, the editor's parts on it), no words, no
@@ -204,15 +219,19 @@
     return shown.includes(o.current) ? o.current : shown.length === 1 ? shown[0] : '';
   }
   /** One face that the engraving needs: its picture, its title and its words. There is no markup for a face that is not engraved (no empty slot). */
-  function faceHtml(piece, face, cur) {
-    const f = piece.faces[face], key = f.key;
+  /* ENGSTAGE (Paul, 30 Oct 2026, the card that said "Words to confirm" under the Front of BALLETSHOES "Ruby"): no face of a card carries a caption about its state ("Words to confirm" is gone
+     everywhere; the Engrave detail's card says nothing but the words, not even "Preparing"). The Engrave detail's thumbnails (o.approve === false) are the stage's own hooks: the button is
+     [data-eng-thumb=front|back], aria-current on the face edited, data-engraved="1" when the face is engraved in the staged choice. */
+  const wordsHtml = f => { const one = f.text.split('\n').join(' / '); return `<span class="engTxt" title="${esc(f.text)}"${f.fontId && root && root.CharmNestEngravePreview && root.CharmNestEngravePreview.fontFamilyOf ? ` style="font-family:${esc(tryDo(() => root.CharmNestEngravePreview.fontFamilyOf(f.fontId), ''))}"` : ''}>${esc(one)}</span>`; };
+  function faceHtml(piece, face, cur, o) {
+    const f = piece.faces[face], key = f.key, detail = !!o && o.approve === false, on = cur === face;
+    const hook = detail ? ` data-eng-thumb="${face}"${on ? ' aria-current="true"' : ''}${f.engraved !== false && !f.art ? ' data-engraved="1"' : ''}` : '';
     let txt;
-    if (f.art) return `<div class="engFace" data-face="${face}" data-key="${esc(key)}" data-art="1"${cur === face ? ' aria-current="true"' : ''}><button type="button" class="engThumb" data-e="open" aria-label="${faceTitle(face)}: the Charm Editor's art, show it"></button><span class="engLbl">${faceTitle(face)}</span><span class="engTxt engCue">Charm Editor art</span></div>`;   // (FACEVIEW)
-    if (f.state === 'busy' && !f.text) txt = '<span class="engTxt engCue"><span class="owSpin" aria-hidden="true"></span>Preparing</span>';
-    else if (f.state === 'words' && !f.text) txt = '<span class="engTxt engCue">Words to confirm</span>';
-    else if (f.text) { const one = f.text.split('\n').join(' / '); txt = `<span class="engTxt" title="${esc(f.text)}"${f.fontId && root && root.CharmNestEngravePreview && root.CharmNestEngravePreview.fontFamilyOf ? ` style="font-family:${esc(tryDo(() => root.CharmNestEngravePreview.fontFamilyOf(f.fontId), ''))}"` : ''}>${esc(one)}</span>`; }
+    if (f.art) return `<div class="engFace" data-face="${face}" data-key="${esc(key)}" data-art="1"${on ? ' aria-current="true"' : ''}><button type="button" class="engThumb" data-e="open"${hook} aria-label="${faceTitle(face)}: the Charm Editor's art, show it"></button><span class="engLbl">${faceTitle(face)}</span><span class="engTxt engCue">Charm Editor art</span></div>`;   // (FACEVIEW)
+    if (f.text && f.engraved !== false) txt = wordsHtml(f);
+    else if (f.state === 'busy' && !detail) txt = '<span class="engTxt engCue"><span class="owSpin" aria-hidden="true"></span>Preparing</span>';
     else txt = '<span class="engTxt"></span>';
-    return `<div class="engFace" data-face="${face}" data-key="${esc(key)}"${cur === face ? ' aria-current="true"' : ''}><button type="button" class="engThumb" data-e="open" aria-label="${faceTitle(face)} engraving: open"></button><span class="engLbl">${faceTitle(face)}</span>${txt}</div>`;
+    return `<div class="engFace" data-face="${face}" data-key="${esc(key)}"${on ? ' aria-current="true"' : ''}${f.engraved === false ? ' data-plain="1"' : ''}><button type="button" class="engThumb" data-e="open"${hook} aria-label="${faceTitle(face)} engraving: open"></button><span class="engLbl">${faceTitle(face)}</span>${txt}</div>`;
   }
   /** The Approve block, in the card's header row (a card of 207px is 170px tall, not 210): one small Approve button while a face waits for approval (disabled, with a title, until every placement is ready;
    *  an empty small seal row waits beside it, the seal is pressed on it); once the piece is approved its seals, small, in the button's place. Nothing else. */
@@ -251,14 +270,15 @@
     const act = o.approve === false ? '' : actHtml(piece, o);
     // (ENGPICK: a card of an order of several lines is that piece's: the dot is its METAL's, as on the "Its pieces" list, and the metal's code stays after the name when the name gives way; the state is said by the button, the seals and the words below)
     const mt = piece.many && piece.metal && piece.metalColor ? piece : null;
-    const dot = `<i class="engDot" data-s="${esc(piece.state)}"${mt ? ` data-metal="${esc(piece.metalKey)}" style="--mc:${esc(piece.metalColor)}"` : ''} role="img" aria-label="${esc(word)}" title="${esc(word)}"></i>`;
+    // (ENGSTAGE: the Engrave detail's dot is the metal's mark only: no state said in words there, "Words to confirm" included)
+    const dot = `<i class="engDot" data-s="${esc(piece.state)}"${mt ? ` data-metal="${esc(piece.metalKey)}" style="--mc:${esc(piece.metalColor)}"` : ''}${o.approve === false ? ' aria-hidden="true"' : ` role="img" aria-label="${esc(word)}" title="${esc(word)}"`}></i>`;
     const head = mt && piece.name && String(piece.title).startsWith(piece.name) ? piece.name : '', tail = head ? String(piece.title).slice(head.length) : '';
     // (PIECES: a piece with a number of its own, "Piece 1 of 2": its name and metal on the first line, the number as a small tag under it, never cut off by the Approve button)
     const tagged = piece.tag && String(piece.title).endsWith(piece.tag) ? String(piece.title).slice(0, piece.title.length - piece.tag.length).replace(/\s*·\s*$/, '') : null;
     const nm = tagged != null ? `<span class="engNm">${esc(tagged)}</span><span class="engPc">${esc(piece.tag)}</span>` : head && tail ? `<span class="engNm">${esc(head)}</span><span class="engTail">${esc(tail)}</span>` : esc(piece.title);
     return `<article class="engCard" data-piece="${esc(piece.pieceKey)}" data-state="${esc(piece.state)}" data-rid="${esc(piece.rid)}" data-key="${esc(piece.lineKey)}"${mt ? ` data-metal="${esc(piece.metalKey)}"` : ''}${piece.slot ? ` data-slot="${esc(piece.slot)}"` : ''}>`
       + `<header class="engHd">${dot}<b class="engName${tagged != null ? ' engTagged' : ''}" title="${esc(piece.title)}">${nm}</b>${act ? `<span class="engAct">${act}</span>` : ''}</header>`
-      + (shown.length ? `<div class="engFaces" data-n="${shown.length}">${shown.map(f => faceHtml(piece, f, cur)).join('')}</div>` : '')
+      + (shown.length ? `<div class="engFaces" data-n="${shown.length}">${shown.map(f => faceHtml(piece, f, cur, o)).join('')}</div>` : '')
       + (o.approve === false ? '' : openHtml(piece))
       + '<div class="engFail" role="alert" hidden></div></article>';
   }
@@ -406,6 +426,16 @@
     + '.engCard{gap:3px;padding:6px 7px}@container engc (max-width:215px){.engFaces{grid-template-columns:repeat(2,minmax(0,80px));justify-content:space-between}.engThumb{max-width:80px}}'
     + '@container engc (max-width:150px){.engCard .egOpen{padding:0 4px;font-size:11px}.engCard .egOpen span[aria-hidden]{display:none}.engCard .egOpen[aria-busy=true]{height:auto;min-height:22px;padding:3px 4px;line-height:1.15;white-space:normal;text-align:center}}'   // (a card of 122px, the 1024px window: "Fix in Engraving" on one line without its arrow; while it opens the words may take two lines)
     + '@media (prefers-reduced-motion:reduce){.engThumb{transition:none}.engThumb:active{transform:none}}';
+  /* ENGSTAGE · the Engrave detail's Front / Back thumbnails (Paul, 30 Oct 2026: "Also the hover states for everything here are inadequate"): on a pointer that hovers, the border warms toward the gold,
+     the box lifts a pixel with a soft shadow, ~120 ms; a press sinks it (scale .98, a pixel down, ~80 ms); the keyboard's focus is a 2 px gold ring 2 px out, never removed; the face edited keeps its
+     gold ring. A face not engraved (data-engraved absent) says so by its plain picture alone; its name is quieter. Reduced motion keeps the colours and drops every transform. */
+  const T = '.engCard .engThumb[data-eng-thumb]';
+  const STAGE_CSS = `${T}{cursor:pointer;transition:transform .12s ease,border-color .12s ease,box-shadow .12s ease,background-color .12s ease,outline-color .12s ease}`
+    + `@media (hover:hover){${T}${NOPE}:hover{border-color:var(--gold,#a9823f);background-color:#fffdf8;box-shadow:0 4px 12px rgba(20,16,10,.14);transform:translateY(-1px)}}`
+    + `${T}${NOPE}:active{transform:translateY(1px) scale(.98);box-shadow:none;transition-duration:.08s}`
+    + `${T}:focus-visible{outline:2px solid var(--gold,#a9823f);outline-offset:2px}.engCard .engFace[aria-current=true] ${T.slice(9)}:focus-visible{outline-offset:2px}`
+    + '.engCard .engFace .engLbl{transition:color .12s ease}.engCard .engFace[data-plain] .engLbl{color:var(--ink70,#5b554c)}'
+    + `@media (prefers-reduced-motion:reduce){${T},${T}:hover,${T}:active{transform:none!important}}`;
   /** The button's states, for every place that draws the button (once per page, at load; the card's own rules go in with the first card). */
   function openCss() {
     const d = root && root.document; if (!d || !d.head || d.getElementById('engOpenCss')) return;
@@ -413,7 +443,7 @@
   }
   function css() {
     const d = root && root.document; if (!d || d.getElementById('engCardCss')) return;
-    openCss(); const s = d.createElement('style'); s.id = 'engCardCss'; s.textContent = CSS + BTN_CSS + SET_CSS; (d.head || d.documentElement).appendChild(s);
+    openCss(); const s = d.createElement('style'); s.id = 'engCardCss'; s.textContent = CSS + BTN_CSS + SET_CSS + STAGE_CSS; (d.head || d.documentElement).appendChild(s);
   }
 
   /** The wait of an opening, said on the card: the Engraving button turns into "Opening Engraving…" with the small spinner (it stays where it is, focus kept, and presses are ignored), and the
@@ -475,15 +505,30 @@
   /** The card in the Engrave tab's detail: the same markup, no Approve; the face shown carries aria-current (a card of one face selects it by itself); a press on a face calls onPick(face).
    *  `stage` (what the panel has staged and not saved: { mode, faces: { front: { text, font }, back } } or null) decides which faces the card draws, so the faces follow the mode control at once; None
    *  keeps the piece's header and draws no face (keepEmpty). `update({ face, stage })`; a new `stage` redraws at once. `label(face, text)` puts the words being typed under that face's picture. */
+  /* ENGSTAGE (Paul, 30 Oct 2026: "every letter typed into the text box immediately updates itself in BOTH the Thumbnail image and in the main charm preview"): the detail's card draws the STAGED state
+     (Engrave.showStage's: Engrave.stageNow(pieceKey), else the host's ctx.stage, else what is committed). Both faces of a piece that can have both are drawn (ctx.both, on by default here). A keystroke
+     is painted in place (paintStage: the thumbnails' words and font through CharmNestEngravePreview.update, the marks moved), the card is built again only when its faces change. MOUNTS: the live cards
+     of each piece, so Engrave.showStage reaches them whoever built them. */
+  const MOUNTS = new Map();   // piece key -> Set of mounted cards (their handles)
+  function paintStage(pieceKey, stage) {
+    const set = MOUNTS.get(String(pieceKey)); let n = 0; if (!set) return 0;
+    for (const h of [...set]) { if (!h.live()) { set.delete(h); continue; } if (h.paintStage(stage)) n++; }   // (a card no longer on the page is let go: it was built again or left)
+    if (!set.size) MOUNTS.delete(String(pieceKey));
+    return n;
+  }
   function mountPiece(slot, ctx) {
     css(); ctx = Object.assign({}, ctx); let el = null, last = '', gone = false;
+    const pkOf = () => { const F = Faces(); return ctx.key && F ? F.pieceKeyOf(ctx.key) : ''; };
+    const stageNow = () => { const E = root && root.Engrave, s = E && typeof E.stageNow === 'function' ? tryDo(() => E.stageNow(pkOf()), null) : null; return s && typeof s === 'object' ? s : ctx.stage || null; };
     const find = () => {
-      const row = lineOf(ctx.row), F = Faces(), pk = ctx.key && F ? F.pieceKeyOf(ctx.key) : '';
-      const ps = piecesOf([row], { nameOf: ctx.nameOf, isWorking: ctx.isWorking, stage: ctx.stage || null, keepEmpty: true, artFaces: ctx.artFaces }); return ps.find(p => p.pieceKey === pk) || ps.find(p => p.jobs.some(j => j.key === ctx.key)) || ps[0] || null;
+      const row = lineOf(ctx.row), pk = pkOf();
+      const ps = piecesOf([row], { nameOf: ctx.nameOf, isWorking: ctx.isWorking, stage: stageNow(), keepEmpty: true, artFaces: ctx.artFaces, both: ctx.both !== false }); return ps.find(p => p.pieceKey === pk) || ps.find(p => p.jobs.some(j => j.key === ctx.key)) || ps[0] || null;
     };
+    /** The face edited: the stage's active face, else the host's. */
+    const curFace = () => { const s = stageNow(); return s && (s.active === 'front' || s.active === 'back') ? s.active : ctx.face || ''; };
     // (FACEVIEW: a press on a face shows it in the work area; a face the Charm Editor drew on that nothing engraves is only shown, never picked for the words. LIVEWORDS: ONE call per press: onPick(face)
     //  when the host has it (it marks the face, gives the words box that face and shows it in the work area: charm-nest-engrave-panel.js mountPiece), else onView(face) and the face is marked here)
-    const o = () => ({ approve: false, current: ctx.face || '', onOpen: face => { if (ctx.onPick) { tryDo(() => ctx.onPick(face)); return null; } if (ctx.onView) tryDo(() => ctx.onView(face)); ctx.face = face; draw(); return null; } });
+    const o = () => ({ approve: false, current: curFace(), onOpen: face => { if (ctx.onPick) { tryDo(() => ctx.onPick(face)); return null; } if (ctx.onView) tryDo(() => ctx.onView(face)); ctx.face = face; draw(); return null; } });
     function draw(force) {
       if (gone) return; const p = find();
       if (!p) { last = ''; slot.replaceChildren(); el = null; return; }
@@ -500,12 +545,40 @@
       const p = tryDo(find, null), ids = p ? new Set([...(p.poolIds || []), ...(p.jobs || []).flatMap(j => (j && j.copies) || [])].map(String)) : null;
       if (ids && moved.some(id => ids.has(String(id)))) draw(true);
     }) : null;
-    return { get el() { return el; }, update(patch) { const staged = !!patch && Object.prototype.hasOwnProperty.call(patch, 'stage'); if (patch) Object.assign(ctx, patch); draw(staged); }, refresh() { draw(true); }, destroy() { gone = true; if (unsweep) unsweep(); slot.replaceChildren(); el = null; },
+    /** ENGSTAGE: the staged state painted on the card as it stands (`stage` given: it is the host's too; undefined: Engrave.stageNow's). In place: each face's mark (aria-current, data-engraved), its
+     *  words and font on its picture and under it; the card is built again only when the faces it shows changed. -> true when painted. */
+    function paintStage(stage) {
+      if (gone) return false;
+      if (stage !== undefined) ctx.stage = stage;
+      const s0 = stageNow(); if (s0 && (s0.active === 'front' || s0.active === 'back')) ctx.face = s0.active;
+      const p = tryDo(find, null); if (!p) { draw(true); return true; }
+      const shown = ['front', 'back'].filter(f => p.faces[f]), P = root && root.CharmNestEngravePreview;
+      if (!el || !el.isConnected || el.dataset.piece !== p.pieceKey || shown.join() !== [...el.querySelectorAll('.engFace')].map(n => n.dataset.face).join() || shown.some(f => p.faces[f].art) || !P || !P.update) { draw(true); return true; }
+      const cur = currentOf(p, o());
+      for (const f of shown) {
+        const x = p.faces[f], fe = el.querySelector(`.engFace[data-face="${f}"]`), btn = fe && fe.querySelector('.engThumb'); if (!btn) continue;
+        const on = cur === f, eng = x.engraved !== false, text = eng ? x.text : '';
+        fe.dataset.key = x.key; if (on) { fe.setAttribute('aria-current', 'true'); btn.setAttribute('aria-current', 'true'); } else { fe.removeAttribute('aria-current'); btn.removeAttribute('aria-current'); }
+        if (eng) { btn.dataset.engraved = '1'; delete fe.dataset.plain; } else { delete btn.dataset.engraved; fe.dataset.plain = '1'; }
+        tryDo(() => P.update(btn, { text, fontId: x.fontId || '', fontWord: x.fontWord || '', job: x.job || null, face: f, position: P.positionOf ? P.positionOf(x.job, { row: lineOf(p.row), slot: p.slot }) : x.position }));
+        const t = fe.querySelector('.engTxt');
+        if (t) { const w = linesText(text); t.className = 'engTxt'; t.textContent = w.join(' / '); if (w.length) t.title = w.join('\n'); else t.removeAttribute('title'); t.style.fontFamily = w.length && x.fontId && P.fontFamilyOf ? tryDo(() => P.fontFamilyOf(x.fontId), '') : ''; }
+      }
+      const dot = el.querySelector('.engDot'); if (dot) dot.dataset.s = p.state;
+      el.dataset.state = p.state; last = sig(p, o());
+      return true;
+    }
+    const h = { get el() { return el; }, update(patch) { const staged = !!patch && Object.prototype.hasOwnProperty.call(patch, 'stage'); if (patch) Object.assign(ctx, patch); draw(staged); }, refresh() { draw(true); },
+      destroy() { gone = true; if (unsweep) unsweep(); slot.replaceChildren(); el = null; const set = MOUNTS.get(mk); if (set) { set.delete(h); if (!set.size) MOUNTS.delete(mk); } },
+      paintStage, key: () => pkOf(), live: () => !gone && slot.isConnected,
       thumb: face => (el ? el.querySelector(`.engFace[data-face="${face}"] .engThumb`) : null),
       faces: () => (el ? [...el.querySelectorAll('.engFace')].map(f => f.dataset.face) : []),
       label(face, text) { const t = el && el.querySelector(`.engFace[data-face="${face}"] .engTxt`); if (!t) return; const w = linesText(text); t.className = 'engTxt'; t.textContent = w.join(' / '); if (w.length) t.title = w.join('\n'); else t.removeAttribute('title'); } };
+    // (MOUNTS: a card of the same piece built again leaves this one behind: forgotten once it is off the page)
+    const mk = pkOf(); { let set = MOUNTS.get(mk); if (!set) MOUNTS.set(mk, set = new Set()); set.add(h); }
+    return h;
   }
 
   openCss();
-  return { piecesOf, facesOf, stateOf, html, fill, card, sig, mountPiece, thumbOf, repaint, sealsOf, css, WORD, openOf, openHtml, OPEN_WORD, metalOf, lineCountOf, setStrip, layoutNoteOf, relOfSet, LAYOUT_NOTE };
+  return { piecesOf, facesOf, stateOf, html, fill, card, sig, mountPiece, paintStage, thumbOf, repaint, sealsOf, css, WORD, openOf, openHtml, OPEN_WORD, metalOf, lineCountOf, setStrip, layoutNoteOf, relOfSet, LAYOUT_NOTE };
 });
