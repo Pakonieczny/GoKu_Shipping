@@ -399,7 +399,7 @@
         const vm = S.read(line, { slot: slot || undefined, jobs: (E.jobsOf ? E.jobsOf(line) : []) || [] });
         const patch = vm ? S.patchOf(vm, { mode: snap.stage.choice, faces: snap.stage.faces }) : {};
         const button = (liveBindings(key).map(b => b.button()).find(Boolean)) || null;
-        res = await E.commitStage(line, { choice: snap.stage.choice, slot, faces: snap.stage.faces, patch }, { button });
+        res = await E.commitStage(line, { choice: snap.stage.choice, slot, faces: snap.stage.faces, patch }, ctx.keepOnly ? { button, approve: false } : { button });
       }
     } catch (e) { res = { ok: false, message: str(e && e.message ? e.message : e) }; }
     if (COMMITS.get(key) === snap) COMMITS.delete(key);
@@ -636,8 +636,14 @@
     /* ROTBAR: a turn of the WHOLE piece made with the work area's degree box is the job's at once; `moved` draws the thumbnails again. It changes no word, font or choice. */
     const beforeMove = job => !!(job && job.key && model());
     const moved = (job, kind) => { const m = model(); if (!m || !job || !job.key) return false; drawGate(m.vm, m.d); paint(kind || 'position', m); changed(kind || 'position', m.d.active); return true; };
-    /** Keep what is staged now (a test, a host that closes the card itself). -> Promise<{ ok, ... }> */
-    const commitNow = () => { const m = dead ? null : model(); if (!m) return Promise.resolve({ ok: false }); if (!press()) return Promise.resolve({ ok: !dirtyOf(m.vm, m.d, key), same: true }); return CHAINS.get(key) || Promise.resolve({ ok: true }); };
+    /** Keep what is staged now WITHOUT approving it (a test, a host that closes the card itself): the faces, their words and fonts (Engrave.commitStage, approve: false), on this piece's chain. -> Promise<{ ok, ... }> */
+    const commitNow = () => {
+      const m = dead ? null : model(); if (!m) return Promise.resolve({ ok: false }); const { vm, d } = m;
+      if (!dirtyOf(vm, d, key)) return Promise.resolve({ ok: true, same: true });
+      const snap = { seq: d.seq, draft: d, stage: { choice: d.choice, active: d.active, faces: cloneFaces(d.faces) } };
+      const run = (CHAINS.get(key) || Promise.resolve()).then(() => runCommit({ key, line, slot, snap, jobKey: me.jobKey || d.jobKey, keepOnly: true }));
+      CHAINS.set(key, run.catch(() => {})); return run;
+    };
     return { draw, refresh: draw, setFace: f => setActive(f, 'host'), setActive, beforeMove, moved, commit: commitNow, press, stageNone, stagePos: stagePosHere, paint: k => paint(k || 'refresh'), key,
       destroy() { dead = true; untrack(); sweepSoon(); for (const [t, f] of ev) el.removeEventListener(t, f); if (gateCard) { gateCard.removeEventListener('click', blockClick, true); gateCard.removeEventListener('keydown', blockKey, true); } },
       paintAll: () => paint('refresh') };

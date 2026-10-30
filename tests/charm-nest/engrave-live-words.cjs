@@ -3,11 +3,11 @@
 // engraving changes including asking the user to click save ... As soon as the user types a letter into the text box, that letter must immediately appear in all charm vector preview images and main
 // Engraving preview in real-time. The user just needs to press the green approve when done typing").
 // On the real sorter page over the repo's fake site (_engraveRealWorld.cjs: offline, made-up names), the order "both" (front "W", back "Name One", both faces fitted for real):
-//   L1  the face buttons are None | Front | Back (no "Front + back"), Front and Back both pressed (both faces engraved); no Save, no Cancel, no "Why change it?", no "Changed: ..." line
+//   L1  ENGSTAGE (Paul, 30 Oct 2026: "a clean and elegant solution to choose both Back & Front"): the options are None | Front | Back | Front & Back, Front & Back the one pressed (both faces engraved); no Save, no Cancel, no "Why change it?", no "Changed: ..." line
 //   L2  the card shows BOTH faces as thumbnails (a picture each), the face shown marked
 //   L3  a typed letter is on the face's thumbnail and in the work area's drawing within two frames, nothing pressed
 //   L4  a click on the Back thumbnail shows the back in the work area (the card of the back's job, or Engrave.showFace's own turn) and marks the Back thumbnail
-//   L5  a press on the Front face button shows the front again
+//   L5  a press on the Front thumbnail shows the front again (ENGSTAGE: the Front OPTION would mean "the front only"; the thumbnails choose the face shown)
 //   L6  Approve with the words still staged: the new words are kept (no question asked), fitted, and approved: the front job approved with the new words, no reason recorded
 //   L7  nothing erred
 //   PW_DIR=<playwright node_modules> node tests/charm-nest/engrave-live-words.cjs      (SHOTS=<dir> for screenshots)
@@ -34,11 +34,11 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     // L1 · the controls
     const ui = await page.evaluate(q => {
       const c = document.querySelector(q), p = c && c.querySelector('.pvSetup .engp');
-      const segs = p ? [...p.querySelectorAll('.engpMode:not(.engpFaceSw) .engpSeg')].map(b => [b.textContent.trim(), b.getAttribute('aria-pressed')]) : [];
+      const segs = p ? [...p.querySelectorAll('.engpChoice .engpSeg[data-engp="choice"]')].map(b => [b.dataset.choice, b.getAttribute('aria-pressed')]) : [];
       const acts = p ? [...p.querySelectorAll('button')].map(b => b.textContent.trim()).filter(t => /^(Save|Cancel)$/.test(t)) : [];
       return { segs, acts, why: !!(c && c.querySelector('.engpWhy,.engpWhyLine')), changed: /Changed:/.test(c ? c.textContent : '') };
     }, Q);
-    check('L1 None | Front | Back toggles, both faces pressed', ui.segs.map(s => s[0]).join('|') === 'None|Front|Back' && ui.segs[1][1] === 'true' && ui.segs[2][1] === 'true' && ui.segs[0][1] === 'false', JSON.stringify(ui.segs));
+    check('L1 None | Front | Back | Front & Back, Front & Back pressed (both faces engraved), one option pressed', ui.segs.map(s => s[0]).join('|') === 'none|front|back|both' && ui.segs.filter(s => s[1] === 'true').map(s => s[0]).join() === 'both', JSON.stringify(ui.segs));
     check('L1 no Save, no Cancel, no reason prompt, no "Changed:" line', !ui.acts.length && !ui.why && !ui.changed, JSON.stringify(ui));
 
     // L2 · both thumbnails
@@ -64,10 +64,10 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     const kept = await page.evaluate(q => [...document.querySelectorAll(q + ' .pvSetup .engFace[data-face="front"] .engpvText')].map(t => t.textContent).join(''), Q);
     check('L4 the staged front words stay on the Front thumbnail while the back is shown', /X/i.test(kept), kept);
 
-    // L5 · the Front face button shows the front
-    await page.click(Q + ' .pvSetup .engpSeg[data-mode="front"]');
-    const toFront = await until(async () => (await shownKey()) === keys.front, 8000);
-    check('L5 a press on the Front face button shows the front in the work area', !!toFront, await shownKey());
+    // L5 · the Front thumbnail shows the front
+    await page.evaluate(q => { const c = document.querySelector(q), t = c && (c.querySelector('[data-eng-thumb="front"]') || c.querySelector('.pvSetup .engFace[data-face="front"] .engThumb')); if (t) t.click(); }, Q);
+    const toFront = await until(async () => { const k = await shownKey(); const v = await page.evaluate(q => { const c = document.querySelector(q), h = c && c.querySelector('.backHost'), cv = h && h.querySelector('canvas'); return (h && h.dataset.face) || (cv && cv._viewFace) || ''; }, Q); const a = await page.evaluate(q => (document.querySelector(q + ' .engp') || {}).dataset?.active || '', Q); return (k === keys.front || v === 'front') && a === 'front'; }, 8000);
+    check('L5 a press on the Front thumbnail shows the front in the work area', !!toFront, await shownKey());
     const still = await page.evaluate(q => document.querySelector(q + ' .pvSetup .engpWords')?.value || '', Q);
     check('L5 the typed words are still in the box', /X$/.test(still), still);
 

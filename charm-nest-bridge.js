@@ -9298,7 +9298,8 @@ const Engrave = window.Engrave = (() => {
      ONEAPPROVE's _placeAt); (2) every engraved face is read and fitted (a face left waiting for words takes the staged ones: decideWords, never "Words to confirm"); (3) a place dragged on a placed face is put
      on it (moveTo, at Engrave.stagePlaceOf's centre); (4) every engraved face not approved yet is approved, Front before Back (approve: its seal, its file, the sheets and the made thumbnails, as any approval).
      A step that fails stops there and says why: what was approved stays approved, what was not stays to approve, never wrong.
-       stage: { choice: none|front|back|both, slot, faces: { front: { text, font, pos }, back }, patch (CharmNestEngraveSetup.patchOf: what differs from what is kept) }   o: { button (the stamp's place) }
+       stage: { choice: none|front|back|both, slot, faces: { front: { text, font, pos }, back }, patch (CharmNestEngraveSetup.patchOf: what differs from what is kept) }
+       o: { button (the stamp's place), approve: false (step 1 only: the staged faces and words are kept, nothing is approved: a host that closes the card itself, a test) }
        -> { ok, cancelled?, message?, none?, approved: [job keys], failed? } */
   const STAGE_MS = 90000;
   async function commitStage(row, stage, o) {
@@ -9321,6 +9322,7 @@ const Engrave = window.Engrave = (() => {
       if (!res || !res.ok) return { ok: false, cancelled: !!(res && res.cancelled), message: (res && res.message) || "The change was not kept.", approved: [] };
     }
     if (!on.length) return { ok: true, none: true, approved: [] };
+    if (o.approve === false) return { ok: true, kept: true, approved: [] };
     // (2) every engraved face read and fitted, with the staged words
     const decided = new Set(), fitting = new Set(), jobs = {};
     for (const f of on) {
