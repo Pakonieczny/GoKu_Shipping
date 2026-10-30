@@ -153,7 +153,7 @@ async function realWorld(check, shots) {
     m = await marks(PV);
     const lineFontText = starred[0].text;
     check(m.font.value === 'Pristina' && m.font.sys === 'changed' && m.font.bg === CARD_BG && m.font.ghost && m.font.ghost.st === 'changed' && m.font.ghost.title === `${TITLE}: ${lineFontText}` && m.font.opts.filter(o => o.star).map(o => o.v).join() === '',
-      '3 another font picked: the tint went, a ghost mark sits beside the closed drop-down (title names the system\'s font), the system\'s entry is still starred in the list: ' + JSON.stringify({ sys: m.font.sys, ghost: m.font.ghost, star: m.font.opts.filter(o => o.star).map(o => o.label) }));
+      '3 another font picked: the tint went, a ghost mark sits beside the closed drop-down (title names the system\'s font), the system\'s entry is still starred in the list: ' + JSON.stringify({ value: m.font.value, bg: m.font.bg, sys: m.font.sys, ghost: m.font.ghost, star: m.font.opts.filter(o => o.star).map(o => [o.v, o.label]) }));
     check(m.font.opts.map(o => o.text).join('|') === optsBefore, '7 the options\' own texts are unchanged (the star is only in their display label)');
     check(onlySeg(m, 'both') && pressed(m, 'both'), '3 the mode is untouched by a words or font change');
     if (shots) await page.screenshot({ path: path.join(shots, 'HILITE-2-font-changed.png'), clip: { x: 360, y: 120, width: 285, height: 440 } });

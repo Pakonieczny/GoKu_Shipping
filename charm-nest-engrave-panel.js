@@ -107,11 +107,13 @@
 
   function draftOf(vm, key, face) {
     let d = DRAFTS.get(key);
-    if (d && d.sig !== vm.sig && !COMMITS.has(key) && !d.touched) { const keep = d.active; d = null; face = keep || face; }   // (what the piece says changed under a draft nobody changed: start again from it, on the face shown)
+    let sv = null;
+    if (d && d.sig !== vm.sig && !COMMITS.has(key) && !d.touched) { const keep = d.active; sv = { svStage: d.svStage, svDragged: d.svDragged }; d = null; face = keep || face; }   // (svStage / svDragged: stage-view's own fields on the draft, carried over)   // (what the piece says changed under a draft nobody changed: start again from it, on the face shown)
     if (!d) {
       d = { key, sig: vm.sig, line: vm.line, choice: vm.mode, active: '', faces: {}, seq: 0, touched: false, dirty: false, pillAt: null, copied: {}, error: '', focus: null, shown: '', jobKey: '' };
       for (const f of FACES) { const r = vm.rows.find(x => x.face === f); d.faces[f] = { text: r ? r.text : '', font: r ? r.fontWord : '', pos: null }; }
       d.active = firstActive(vm, d, face);
+      if (sv) for (const k of ['svStage', 'svDragged']) if (sv[k] !== undefined) d[k] = sv[k];
       DRAFTS.set(key, d);
     }
     return d;
@@ -340,14 +342,14 @@
 .engpSeg:disabled{opacity:.55;cursor:default}
 @media (hover:hover){.engpSeg:not(:disabled):not([aria-pressed=true]):not([aria-checked=true]):hover{background:rgba(28,26,23,.07);color:var(--ink,#1c1a17)}
 .engpChoice:has(.engpSeg[aria-pressed=true]:hover) .engpPill{box-shadow:0 2px 6px rgba(28,26,23,.22),0 0 0 1px rgba(28,26,23,.38)}
-.engpWords:not(:disabled):hover,.engpFont:not(:disabled):hover{border-color:var(--engpHover);background:var(--card2,#faf7f1)}
+.engpWords:not(:disabled):hover,.engpFont:not(:disabled):hover{border-color:var(--engpHover);background:var(--card2,#faf7f1);transition:border-color .12s ease-out,background-color .12s ease-out}
 .engpTools>button:not(:disabled):hover{background:var(--paper2,#ebe5d9);border-color:var(--engpHover)}
 .pvApproval .engpApprove:not(:disabled):hover{background:#52694e;border-color:#52694e}}
 .engpSeg:not(:disabled):active{transform:scale(.98)}
 .engpTools>button:not(:disabled):active,.pvApproval .engpApprove:not(:disabled):active{transform:translateY(1px)}
 .engp :is(.engpSeg,.engpWords,.engpFont,.engpTools>button):focus-visible,.pvApproval .engpApprove:focus-visible{outline:2px solid var(--engpGold,#a9823f);outline-offset:2px}
 .engpFace{display:grid;gap:10px;min-width:0}
-.engpWords,.engpFont{display:block;width:100%;min-width:0;box-sizing:border-box;border:1px solid var(--line,#e4ddd0);border-radius:8px;background:var(--card,#fffefb);color:inherit;transition:border-color .12s ease-out,background-color .12s ease-out,box-shadow .12s ease-out}
+.engpWords,.engpFont{display:block;width:100%;min-width:0;box-sizing:border-box;border:1px solid var(--line,#e4ddd0);border-radius:8px;background:var(--card,#fffefb);color:inherit;transition:border-color .12s ease-out,box-shadow .12s ease-out}   /* (the fill fades only into a hover: the system's tint follows a typed letter at once) */
 .engpFont{cursor:pointer}
 .engpBox{position:relative;min-width:0}
 /* BIGPANEL (Paul, 29 Oct 2026): the options 40 px, the words 17 px with three lines in view, Aα and Emoji 34 px stacked in the box's right edge, the font picker 44 px; no Position row. */
