@@ -108,10 +108,14 @@
   function draftOf(vm, key, face) {
     let d = DRAFTS.get(key);
     let sv = null;
-    if (d && d.sig !== vm.sig && !COMMITS.has(key) && !d.touched) { const keep = d.active; sv = { svStage: d.svStage, svDragged: d.svDragged, why: d.why }; d = null; face = keep || face; }   // (svStage / svDragged: stage-view's own fields on the draft, carried over)   // (what the piece says changed under a draft nobody changed: start again from it, on the face shown)
+    let typed = null;
+    if (d && d.sig !== vm.sig && !COMMITS.has(key) && !d.touched) { const keep = d.active; sv = { svStage: d.svStage, svDragged: d.svDragged, why: d.why }; typed = d.faces; d = null; face = keep || face; }   // (svStage / svDragged: stage-view's own fields on the draft, carried over)   // (what the piece says changed under a draft nobody changed: start again from it, on the face shown)
     if (!d) {
       d = { key, sig: vm.sig, line: vm.line, choice: vm.mode, active: '', faces: {}, seq: 0, touched: false, dirty: false, pillAt: null, copied: {}, error: '', focus: null, shown: '', jobKey: '' };
       for (const f of FACES) { const r = vm.rows.find(x => x.face === f); d.faces[f] = { text: r ? r.text : '', font: r ? r.fontWord : '', pos: null }; }
+      // (CAPSWORDS, coordinator 30 Oct 2026: "never replace the box's contents with the job's normalized text while the card is open": the words as the person typed them stay in the box when they are
+      //  the words kept (an approval of "Name Oneo" keeps "NAME" / "ONEO" in Ace: the box keeps "Name Oneo"))
+      if (typed) { const S = Setup(); for (const f of FACES) { const t = typed[f] && str(typed[f].text), r = vm.rows.find(x => x.face === f); if (t && r && r.text && t !== r.text && S && S.sameKept && tryDo(() => S.sameKept(vm, f, t, r.fontWord), false)) d.faces[f].text = t; } }
       d.active = firstActive(vm, d, face);
       if (sv) for (const k of ['svStage', 'svDragged', 'why']) if (sv[k] !== undefined) d[k] = sv[k];   // (and why the last Approve did not approve: said until the next change or press)
       DRAFTS.set(key, d);
@@ -425,11 +429,26 @@
     try { const doc = root && root.document; if (doc) for (const n of doc.querySelectorAll('[data-engp-stamp][aria-busy], [data-engp-approve][aria-busy]')) { const p = n.closest('.rvItem'), e = p && p.querySelector('.engp[data-key]'); if (!e || e.dataset.key === key) n.removeAttribute('aria-busy'); } } catch (_) { /* drawn below */ }
     for (const b of liveBindings(key)) tryDo(() => { for (const n of [b.button(), b.stampAt()]) if (n) n.removeAttribute('aria-busy'); b.gate(); });
   }
-  const HUNG = new Map();
+  const HUNG = new Map();   // piece key -> the commit still running after its watchdog let go of it
   /* KEYS (stage-view's trace, 30 Oct 2026: "A fast typist's "a" or "s" can then approve or skip mid-word"): the moment a key was last typed in a words box. For 800 ms after it a key that lands on the card
    * (a rebuild took the focus from the box) goes back into the box, never to the card's own shortcuts (A approves, S stages None, the arrows move the words). */
   const TYPED = { at: 0, key: '' };
-  const TYPE_MS = 800;      // piece key -> the commit still running after its watchdog let go of it
+  const TYPE_MS = 800;
+  /* OWNINPUT (coordinator 30 Oct 2026, the input tracer: "While an approval's seal stamp is pressed ... this document-level capture listener swallows EVERY click and keydown on the page"; "Never
+   * swallow input inside the Engrave detail card's panel and work area"): what the panel tells the stamp's guard (Seal.ownInput) is its own. A press in the panel, the work area, a thumbnail or the
+   * panel's pickers, and on the card of a panel A (it presses Approve: queued), S (it stages None) or a key typed mid-word (it goes back into the box), never dismisses the card under the stamp.
+   * Escape, Next, Back, close, another card or row and the tabs are still held for the stamp. */
+  const OWN_SEL = '.engp, [data-engp], .backHost, [data-eng-thumb], .emPop, .cnAp';
+  function ownInput(e) {
+    const t = e && e.target; if (!t || !t.closest || e.type === 'keydown' && e.key === 'Escape') return false;
+    if (t.closest(OWN_SEL)) return !(t.closest('.emPop, .cnAp') && !t.ownerDocument.querySelector('.engp'));   // (the pickers: while a panel is on the page)
+    if (e.type !== 'keydown' || e.metaKey || e.ctrlKey || e.altKey) return false;
+    const card = t.closest('.rvItem'), p = card && card.querySelector('.engp[data-key]'); if (!p) return false;
+    const k = (e.key || '').toLowerCase();
+    return (TYPED.key === p.dataset.key && Date.now() - TYPED.at < TYPE_MS) || (!e.repeat && (k === 'a' || k === 's'));
+  }
+  let ownInputOn = false;
+  const ownInputHook = () => { if (ownInputOn) return; const S = root && root.Seal; if (S && typeof S.ownInput === 'function') { ownInputOn = true; tryDo(() => S.ownInput(ownInput)); } };
   async function runCommit(ctx) {
     const { key, line, slot, snap } = ctx, E = Eng(), S = Setup();
     let res, settled = false, last = Date.now(), timer = 0;
@@ -475,7 +494,7 @@
   /* ── wiring ────────────────────────────────────────────────────────────────── */
   /** Wire the panel inside `el` for the piece of `line`. */
   function bind(el, line, opts) {
-    ensureCss(el.ownerDocument);
+    ensureCss(el.ownerDocument); ownInputHook();
     let dead = false, gateCard = null;
     const doc = el.ownerDocument, slot = opts.slot !== undefined ? opts.slot : opts.job ? slotOfJob(opts.job) : null, key = pieceKeyOf(line, slot);
     const jobs = () => (opts.jobs ? opts.jobs() : (Eng() && Eng().jobsOf ? Eng().jobsOf(line) : [])) || [];
@@ -725,7 +744,11 @@
       if (t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.tagName === 'INPUT') e.stopPropagation();   // (the card's own keys, S and A, are for the card, not for words)
     };
     const focusin = e => { const t = e.target; if (!t || !t.dataset || !t.dataset.engp || dead) return; const m = model(); if (m) m.d.focus = { engp: t.dataset.engp, face: t.dataset.face || '', choice: t.dataset.choice || '', start: t.selectionStart, end: t.selectionEnd }; };
-    const focusout = e => { if (e.relatedTarget) { const m = model(); if (m) m.d.focus = null; } };
+    const focusout = e => {
+      if (!e.relatedTarget) return;
+      if (e.relatedTarget === (el.closest ? el.closest('.rvItem') : null) && TYPED.key === key && Date.now() - TYPED.at < 4 * TYPE_MS) return;   // (KEYS: the tab took the focus to the card mid-typing: the box keeps its claim, a rebuild gives it back)
+      const m = model(); if (m) m.d.focus = null;
+    };
     const ev = [['click', click], ['input', input], ['change', input], ['keydown', key_], ['focusin', focusin], ['focusout', focusout]];
     for (const [t, f] of ev) el.addEventListener(t, f);
     /** A drag in the work area: the face's staged place (pos = { charm: [x, y], centre? } or null). */

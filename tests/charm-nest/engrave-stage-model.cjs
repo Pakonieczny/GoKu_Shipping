@@ -47,7 +47,7 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
   const open = async (name, face) => { await R.openEngraveDetail(w, name, { face }); await R.settle(page, 500); };
   // (a piece by its job key: the page's own way to one piece of an order (Engrave.openPiece), a decided one included; else the view focused on it)
   // (an Approve's tail, its file and the tab moving on, is let finish before a piece is opened: the tab moving on after it would take the card away again)
-  const quiet = () => until(() => page.evaluate(() => !CharmNestEngravePanel.COMMITS.size && ![...Engrave.items().values()].some(j => j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving)), 60000).then(() => R.settle(page, 600));
+  const quiet = () => until(() => page.evaluate(() => !CharmNestEngravePanel.COMMITS.size && !(window.Seal && Seal.busy()) && ![...Engrave.items().values()].some(j => j._approvalTask || j._backTask || j.approvalPreparing || j.stamping || j.backSaving)), 60000).then(() => R.settle(page, 600));
   const openKey = async jk => { await quiet(); for (let i = 0; i < 3; i++) { await openKey1(jk); if (await page.evaluate(k => (window.__card() || {}).dataset?.key === k, jk)) return true; } return false; };
   const openKey1 = async jk => { const ok = await page.evaluate(k => { CN.setMode('engrave'); const j = Engrave.items().get(k); if (!j) return false; const rid = String(j.row.order.receiptId), pk = window.CharmNestEngraveFaces ? CharmNestEngraveFaces.pieceKeyOf(k) : k.replace(/~front$/, ''); let moved = false; try { moved = Engrave.openPiece ? Engrave.openPiece(rid, pk, j.face === 'front' ? 'front' : 'back') : false; } catch (_) { moved = false; } if (!moved) { Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: k, pin: null }); Engrave.render(); } return true; }, jk); await R.settle(page, 700); return ok; };
   const clickThumb = f => page.evaluate(f => { const n = window.__thumb(f); if (n) n.click(); return !!n; }, f);
@@ -163,7 +163,7 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     const c0 = await st();
     if (!(c0.approve && c0.approve.a === 'approved')) { await page.click(Q + ' [data-engp-approve]'); await approvedAll(KF, ['front', 'back']); await R.settle(page, 600); }
     const kept = await page.evaluate(k => ({ jobs: JSON.stringify(window.__jobs(k).map(j => [j.face, j.state, j.text])), ov: JSON.stringify(B.orders.byKey.get(k).engravingOverride || null) }), KF);
-    const rowNow = () => page.evaluate(rid => { Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render(); const v = document.getElementById('engraveView'); const r = [...v.querySelectorAll('#egQueue .placementRow')].find(n => n.textContent.includes(rid)); return r ? (r.dataset.state || '') + ' ' + r.textContent.replace(/\s+/g, ' ').trim().slice(0, 200) : ''; }, made.both.rid);
+    const rowNow = async () => (await quiet(), page.evaluate(rid => { Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render(); const v = document.getElementById('engraveView'); const r = [...v.querySelectorAll('#egQueue .placementRow')].find(n => n.textContent.includes(rid)); return r ? (r.dataset.state || '') + ' ' + r.textContent.replace(/\s+/g, ' ').trim().slice(0, 200) : ''; }, made.both.rid));   // (the tab's render waits for a stamp still coming down: quiet first)
     const row0 = await rowNow(); await R.settle(page, 600);
     await open('both', 'front');
     await page.click(P + ' .engp [data-engp="choice"][data-choice="none"]');
@@ -306,12 +306,13 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     // typing on the Back, a rebuild of the card under the typing: the focus and the caret come back to the box
     await page.click(P + ' .engpWords'); await page.keyboard.press('End'); await page.keyboard.type('xy', { delay: 20 });
     const i3 = await page.evaluate(async key => {
-      const j = Engrave.jobsOf(B.orders.byKey.get(key)).find(x => x.face !== 'front');
-      Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: j.key }); Engrave.render();   // (the tab draws the card again under the typing: a new card, a new panel)
+      const j = Engrave.jobsOf(B.orders.byKey.get(key)).find(x => x.face !== 'front'), c0 = window.__card();
+      Engrave.restoreView({ tab: 'place', list: false, chosen: true, focus: j.key }); Engrave.render();   // (the tab draws the card again under the typing: a new card, a new panel; it waits for the typing to pause first)
       setTimeout(() => { const c = window.__card(); if (c) c.focus(); }, 30);   // (and takes the focus to the card, as the tab does 30 ms after a drawing when it can)
+      for (let t = 0; t < 40 && window.__card() === c0; t++) await new Promise(r => setTimeout(r, 50));
       await new Promise(r => setTimeout(r, 160));
       const a = document.activeElement, ta = window.__card() && window.__card().querySelector('.engp .engpWords');
-      return { inBox: !!ta && a === ta, caretAtEnd: !!ta && ta.selectionStart === ta.value.length, value: ta && ta.value };
+      return { inBox: !!ta && a === ta, caretAtEnd: !!ta && ta.selectionStart === ta.value.length, value: ta && ta.value, rebuilt: window.__card() !== c0 };
     }, KT);
     check('I3 a rebuild under the typing gives the focus and the caret back to the words box', i3.inBox && i3.caretAtEnd && /xy$/.test(i3.value || ''), JSON.stringify(i3));
     // the focus taken to the card itself mid-word: "a" and "s" typed at once go into the words, nothing is approved, None is not staged
@@ -327,6 +328,25 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     check('I4 "a" and "s" typed mid-word while the card had the focus: nothing approved, None not staged', i4.focusOnCard && !i5.committing && i5.choice === i4.choice && i5.choice !== 'none', JSON.stringify({ i4, i5 }));
     check('I5 and the two letters are in the words, typed where the caret was', /xyas$/.test(i5.value || '') && i5.inBox, JSON.stringify(i5));
     await page.evaluate(() => { Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render(); }); await R.settle(page, 900);   // (left with no Approve: discarded)
+
+    /* ── J · CAPSWORDS (coordinator, 30 Oct 2026, seed 3: staged "Name Oneo", kept "NAME\nONEO"): a capitals font, mixed case typed, Approve: calm, Approve not lit again, the box keeps what was typed ── */
+    await quiet(); await R.openEngraveDetail(w, 'back', { face: 'back' }); await R.settle(page, 700);
+    const j0 = await page.evaluate(() => {
+      const O = window.CharmNestOrders, sel = window.__card().querySelector('.engp .engpFont'); if (!sel || !O) return { font: '' };
+      const o = [...sel.options].find(x => x.value && O.fontCaps(O.fontOfPhrase(x.value))); if (!o) return { font: '', options: [...sel.options].map(x => x.value) };
+      sel.value = o.value; sel.dispatchEvent(new Event('change', { bubbles: true })); return { font: o.value };
+    });
+    await R.settle(page, 200);
+    await typeInto('Name Oneo', true);
+    const j1 = await st();
+    if (j1.approve && j1.approve.a === 'approve' && !j1.approve.dis) await page.click(Q + ' [data-engp-approve]');
+    const jd = await until(async () => { const js = await jobsOf(KB), b = js.find(j => j.face === 'back'), s = await page.evaluate(k => CharmNestEngravePanel.busyOf(k), KB); return b && ['approved', 'written'].includes(b.state) && /NAME\s+ONEO/.test(b.text) && !s.running && !s.pending && !s.committing ? js : null; }, 120000);
+    await quiet();
+    let j2 = await st();
+    if (!j2.panel || !jd || j2.key !== jd.find(j => j.face === 'back').key) { await R.openEngraveDetail(w, 'back', { face: 'back' }); await R.settle(page, 700); j2 = await st(); }   // (the tab moved on after the approval: the piece opened again)
+    check('J1 a capitals font, "Name Oneo" typed and approved: kept in the fit\'s form (NAME ONEO), and the card calm: "Approved", Approve not lit again', !!j0.font && !!jd && j2.approve && j2.approve.a === 'approved' && !j2.dirty, JSON.stringify({ j0, j1: { approve: j1.approve, dirty: j1.dirty }, jobs: jd || await jobsOf(KB), j2: { key: j2.key, approve: j2.approve, dirty: j2.dirty, words: j2.words } }));
+    check('J2 the words box keeps the casing typed ("Name Oneo"), never the fit\'s capitals', j2.words && j2.words.value === 'Name Oneo', JSON.stringify(j2.words));
+    await page.evaluate(() => { Engrave.restoreView({ tab: 'place', list: true, chosen: true, focus: null }); Engrave.render(); }); await R.settle(page, 900);
     check('Z no page errors', errors.length === 0, errors.join(' | ').slice(0, 600));
   } catch (e) { console.error(e); check('ran', false, String(e && e.stack || e)); }
   finally { await w.close(); }
