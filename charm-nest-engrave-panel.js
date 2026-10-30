@@ -279,8 +279,8 @@
       const drop = host => { const k = host && host.querySelector(':scope > .engpSys'); if (k) k.remove(); };
       // the choice: the ✦ stays on the system's option whatever is selected (the pill is the selection)
       for (const seg of p.querySelectorAll('.engpChoice .engpSeg[data-engp="choice"]')) {
-        if (seg.dataset.choice === m.mode.sys) { seg.dataset.sys = m.mode.same ? 'same' : 'changed'; put(seg, 'same', HI_TITLE); }
-        else { delete seg.dataset.sys; drop(seg); }
+        if (seg.dataset.choice === m.mode.sys) { seg.dataset.sys = m.mode.same ? 'same' : 'changed'; seg.title = HI_TITLE; put(seg, 'same', HI_TITLE); }
+        else { delete seg.dataset.sys; drop(seg); seg.title = CHOICE_TITLE[seg.dataset.choice] || ''; }
       }
       const box = p.querySelector('.engpBox');
       if (box) {
@@ -406,7 +406,10 @@
     if (COMMITS.get(key) === snap) COMMITS.delete(key);
     const d = DRAFTS.get(key), clean = !!(res && res.ok) && d === snap.draft && d.seq === snap.seq && !COMMITS.has(key);
     if (clean) { d.touched = false; d.dirty = false; d.sig = ''; for (const f of FACES) d.faces[f].pos = null; }   // (what was staged is what is kept now: nothing is staged; the draft starts again from what is kept at the next look, on the face shown)
-    else if (!(res && res.ok) && !(res && res.cancelled) && !(res && res.said)) toast(shortWhy(res && res.message));   // (one short toast; an approval that said why itself is not said twice)
+    else if (!(res && res.ok) && !(res && res.cancelled)) {
+      if (!(res && res.said)) toast(shortWhy(res && res.message));   // (one short toast; an approval that said why itself is not said twice)
+      const m = str(res && res.message).trim() || 'Not approved: try again.', dn = DRAFTS.get(key); if (dn) dn.why = /^Not approved/i.test(m) ? m : 'Not approved: ' + m.replace(/^Not saved:\s*/i, '');   // (APPROVEFIX: the card says it in words too, under Approve, until the next change or press)
+    }
     // (the pictures: what is kept, or what is staged on top of it now: never the state of the press. A binding draws from the draft as it is NOW: the sequence guard)
     const live = liveBindings(key);
     for (const b of live) tryDo(() => b.draw());
@@ -502,8 +505,10 @@
       }
       if (scope && scope.dataset) { if (g.st === 'need') scope.dataset.engpNeed = g.faces.join(' '); else delete scope.dataset.engpNeed; }
       const host = hostOf(); if (!host) return g;
-      for (const n of host.querySelectorAll('[data-a="approve"]:not([data-engp-approve]),[data-a="approved"]:not([data-engp-approve]),[data-a="approveBoth"],[data-a="approveFaces"],.egWrittenNote')) { const w = n.parentElement && n.parentElement.classList.contains('egApproveWrap') && n.parentElement.children.length === 1 ? n.parentElement : n; w.remove(); }
-      for (const n of host.querySelectorAll('.egApproveWhy[data-engp]')) n.remove();
+      for (const n of host.querySelectorAll('[data-a="approve"]:not([data-engp-approve]),[data-a="approved"]:not([data-engp-approve]),[data-a="approveBoth"],[data-a="approveFaces"]')) { const w = n.parentElement && n.parentElement.classList.contains('egApproveWrap') && n.parentElement.children.length === 1 ? n.parentElement : n; w.remove(); }
+      for (const n of host.querySelectorAll('.egWrittenNote')) n.hidden = g.st !== 'approved';   // ("Saved to sheet": said only while nothing is staged)
+      { const why = g.st === 'approve' || g.st === 'need' ? str(d.why) : ''; let n = host.querySelector('.egApproveWhy[data-engp]') || (why ? host.querySelector('.egApproveWhy') : null);   // (the approval's own line, when it wrote one, is the same line: never two)
+        if (!why) { if (n) n.remove(); } else { if (n) n.dataset.engp = '1'; if (!n) { n = doc.createElement('div'); n.className = 'egApproveWhy'; n.dataset.engp = '1'; n.setAttribute('role', 'status'); host.appendChild(n); } if (n.textContent !== why) n.textContent = why; } }
       let b = host.querySelector('[data-engp-approve]');
       if (!b) { const w = doc.createElement('span'); w.className = 'egApproveWrap engpApproveWrap'; b = doc.createElement('button'); b.type = 'button'; b.dataset.engpApprove = '1'; w.appendChild(b); host.insertBefore(w, host.firstChild); }
       const calm = g.st === 'approved' || g.st === 'ok', want = g.st === 'ok' ? 'Approved ✓' : calm ? 'Approved' : 'Approve';
@@ -520,7 +525,7 @@
       if (dead) return false; const m = tryDo(() => model(), null); if (!m) return false; const { vm, d } = m;
       const g = gateOf(vm, d, key);
       if (g.st !== 'approve') { if (g.st === 'need') { const p = el.querySelector('.engp'); if (p) { delete p.dataset.need; void p.offsetWidth; p.dataset.need = g.faces.join(' '); } } return false; }   // (pressed while it is kept with nothing new: ignored)
-      return pressCommit({ key, line, slot, d, jobKey: me.jobKey || d.jobKey });
+      d.why = ''; return pressCommit({ key, line, slot, d, jobKey: me.jobKey || d.jobKey });
     };
     const stop = e => { e.preventDefault(); e.stopImmediatePropagation(); press(); };
     const blockClick = e => { const b = e.target && e.target.closest ? e.target.closest(GATE) : null; if (b && !b.disabled && b.closest('.rvItem') === gateCard) stop(e); };
@@ -584,7 +589,7 @@
     const changed = (kind, face) => { try { if (typeof opts.onChange === 'function') opts.onChange({ face, kind, key }); } catch (_) { /* the host's own */ } };
 
     /* ── the staged changes ── */
-    const bump = (d, touched) => { d.seq = (d.seq || 0) + 1; d.error = ''; if (touched) d.touched = true; };
+    const bump = (d, touched) => { d.seq = (d.seq || 0) + 1; d.error = ''; d.why = ''; if (touched) d.touched = true; };
     /** The active face (a thumbnail, the face switch, Engrave.showFace landing). Any face the piece has: one that is not engraved shows plain, and its words box waits empty. -> true when it moved */
     const setActive = (face, from) => {
       const m = model(); if (!m || !facesFor(line).includes(face)) return false;

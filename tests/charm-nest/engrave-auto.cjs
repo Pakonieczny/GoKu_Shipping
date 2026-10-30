@@ -279,7 +279,8 @@ async function pageChecks(chromium) {
       const out = { words: slot.querySelector('.engpWords').disabled, font: slot.querySelector('.engpFont').disabled, pos: [...slot.querySelectorAll('.engpPb')].every(b => b.disabled), save: !slot.querySelector('[data-engp=save]'), locks: [...slot.querySelectorAll('.engpLock')].map(x => x.textContent), emoji: !!slot.querySelector('[data-emoji]') };
       Object.assign(job, { state: was.state, approvedBy: was.by }); slot.remove(); P.DRAFTS.clear(); return out;
     });
-    check(!lock.words && !lock.font && lock.save && lock.locks.join('|') === 'Approved by Name One' && lock.emoji, 'an approved face: words and font are open and the Emoji button is there, no Save button, ONE line says "Approved by Name One": ' + JSON.stringify(lock));
+    // (ENGSTAGE, Paul 30 Oct 2026, "no warnings or explanations in the card": the calm "Approved" of the card says it; no line under the font)
+    check(!lock.words && !lock.font && lock.save && lock.locks.length === 0 && lock.emoji, 'an approved face: words and font are open and the Emoji button is there, no Save button, no line under them: ' + JSON.stringify(lock));
     check(errors.length === 0, 'no page error: ' + errors.slice(0, 2).join(' | '));
   } finally { await browser.close(); await srv.close(); }
 }
@@ -299,7 +300,8 @@ async function realChecks() {
       return w.page.evaluate(key => {
         const row = B.orders.byKey.get(key), S = CharmNestEngraveSetup, p = document.querySelector('.pvSetup .engp'); if (!p) return { panel: false };
         const sel = p.querySelector('.engpFont'), ta = p.querySelector('.engpWords');
-        const faces = [...document.querySelectorAll('.pvSetup .engFace')].map(f => ({ face: f.dataset.face, empty: f.dataset.empty === '1', text: (f.querySelector('.engTxt') || {}).textContent || '', current: f.getAttribute('aria-current') === 'true', pic: !!f.querySelector('.engpv .engpvDraw canvas, .engpv .engpvDraw svg, .engpv .engpvDraw img') }));
+        // (ENGSTAGE: the card draws both faces; a face that is not engraved is drawn plain: data-engraved, or no words under it)
+        const faces = [...document.querySelectorAll('.pvSetup .engFace')].map(f => ({ face: f.dataset.face, empty: f.dataset.empty === '1' || (f.hasAttribute('data-engraved') ? f.dataset.engraved !== '1' : (f.closest('[data-eng-thumb]') || f.querySelector('[data-eng-thumb]')) ? (f.querySelector('[data-eng-thumb]') || f.closest('[data-eng-thumb]')).dataset.engraved !== '1' : !((f.querySelector('.engTxt') || {}).textContent || '').trim()), text: (f.querySelector('.engTxt') || {}).textContent || '', current: f.getAttribute('aria-current') === 'true', pic: !!f.querySelector('.engpv .engpvDraw canvas, .engpv .engpvDraw svg, .engpv .engpvDraw img') }));
         return { panel: true, mode: p.dataset.mode, face: p.dataset.face, text: ta ? ta.value : null, fontId: sel ? S.fontIdOf(row, p.dataset.face, sel.value) : null, faces, save: !p.dataset.staged };
       }, made[name].key);
     };

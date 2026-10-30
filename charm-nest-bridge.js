@@ -9314,7 +9314,7 @@ const Engrave = window.Engrave = (() => {
     const by = employeeName() || await approveWithin(needEmployee("Kept with this approval and its seal.", { action: "approve this engraving", near: o.button }), APPROVE_MS.sign, "").catch(() => "");
     if (!by) return { ok: false, cancelled: true, message: "Nobody is signed in.", approved: [] };
     // (1) the faces, their words and fonts (and the place dragged on a face that has no job yet)
-    const had = new Set(on.filter(f => { const j = mine(f); return !!j && !!j.fit && !["none", "skipped"].includes(j.state); })), patch = stage.patch && typeof stage.patch === "object" ? stage.patch : null;
+    const before = new Set(jobsOf(line).map(j => j.key)), patch = stage.patch && typeof stage.patch === "object" ? stage.patch : null;   // (a job made by this commit takes its dragged place as _placeAt; one that was there, placed or opened again, is moved below)
     if (patch && (patch.mode || patch.front !== undefined || patch.back !== undefined)) {
       while (setupBusy.has(line.key) && Date.now() < until) await wait(40);   // (another piece of this line is being kept: this one follows it)
       const places = {}; for (const f of on) { const p = faces[f] && faces[f].pos; if (p && Array.isArray(p.charm)) places[f] = p.charm; }
@@ -9343,9 +9343,9 @@ const Engrave = window.Engrave = (() => {
       }
       if (why) return { ok: false, message: "Not approved: " + why.replace(/^(?:not approved:\s*)/i, ""), approved: [] };
     }
-    // (3) a place dragged on a face that was placed already
+    // (3) a place dragged on a face whose job was there before this commit (placed, or opened again)
     for (const f of on) {
-      const p = faces[f] && faces[f].pos, j = jobs[f]; if (!p || !had.has(f) || !j || !j.fit || j.fit.artOnly) continue;
+      const p = faces[f] && faces[f].pos, j = jobs[f]; if (!p || !j || !before.has(j.key) || !j.fit || j.fit.artOnly) continue;
       let c = null; try { const E = window.Engrave; c = E && typeof E.stagePlaceOf === "function" ? E.stagePlaceOf(j, p) : Array.isArray(p.charm) && j.view ? viewPointOf(j.view, p.charm) : null; } catch (_) { c = null; }
       if (c && j.fit.centre && Math.hypot(c[0] - j.fit.centre[0], c[1] - j.fit.centre[1]) > 1e-6) { try { if (moveTo(j, c)) j.nudged = true; } catch (_) { /* the place it has stands */ } }
     }
