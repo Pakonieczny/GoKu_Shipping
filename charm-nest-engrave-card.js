@@ -335,7 +335,7 @@
   const idOf = x => { if (!x || typeof x !== 'object' || !ids) return 0; let n = ids.get(x); if (!n) ids.set(x, n = ++idN); return n; };
   function sig(piece, o) {
     return JSON.stringify([piece.pieceKey, piece.title, piece.rel || 1, piece.metalKey || '', !!piece.many, piece.state, !!piece.never, piece.approve ? [piece.approve.ok, piece.approve.why, piece.approve.jobs.length] : 0, (piece.seals || []).map(s => s.id).join(','), currentOf(piece, o),
-      ['front', 'back'].map(f => { const x = piece.faces[f]; return x ? [x.state, x.artKey || '', !!x.staged, x.text, x.fontWord, x.fontId, x.position && [x.position.x, x.position.y, x.position.size, x.position.angle], idOf(x.job && x.job.fit), idOf(x.job && x.job.view), x.job && +x.job.approvedAt || 0, x.job && (x.job.backs || []).length] : 0; })]);
+      ['front', 'back'].map(f => { const x = piece.faces[f]; return x ? [x.state, x.artKey || '', !!x.staged, x.engraved !== false, x.text, x.fontWord, x.fontId, x.position && [x.position.x, x.position.y, x.position.size, x.position.angle], idOf(x.job && x.job.fit), idOf(x.job && x.job.view), x.job && +x.job.approvedAt || 0, x.job && (x.job.backs || []).length] : 0; })]);
   }
 
   /* ── the SET STRIP (SETBAR, Paul, 13 Oct 2026: "the user can see both bar charms side-by-side, and then be able to manipulate each one"; "the thinner bar always sits on the shorter chain") ──

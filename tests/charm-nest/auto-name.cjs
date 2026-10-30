@@ -4,9 +4,9 @@
 // over the fake site (bridge-server.cjs); the stations' door (firebaseOrders: sessions, events, the Admin question) is this test's own recorder.
 // Nothing leaves the machine, no PIN is typed, no paid model and no Etsy call. EVERY page has a `dialog` listener: any browser pop-up fails the test.
 //   A · the Engraving work, on a whole Auto set (the real run, like order-engraving-approve-real.cjs)
-//       signed in (the Admin): Engrave these words and Approve engraving go straight through, under the name, no bar, no pop-up
+//       signed in (the Admin): words kept by Approve (the A key: ENGSTAGE, Paul 30 Oct 2026, "Engrave these words" is gone) and Approve engraving go straight through, under the name, no bar, no pop-up
 //       nobody signed in: the inline bar (kind ask) opens asking for the Employee Number (EMPNUM, Paul 26 Oct 2026: masked, empty, no one-tap
-//       "Continue as <name>" any more); the number, and Engrave these words / Approve engraving go on by themselves (no second press) under the
+//       "Continue as <name>" any more); the number, and the words' Approve / Approve engraving go on by themselves (no second press) under the
 //       person the server names; Esc puts it away and the words typed stay as typed
 //       after an IDLE sign-out of a non-Admin (cause of the empty name: the name is cleared by the idle rule): the same, with the number
 //       CAUSE (reproduced): a name that is not the Admin's is cleared after 10 minutes without input; cn.lastEmployee keeps it for the panel's tile
@@ -116,15 +116,15 @@ async function partA(browser) {
   const asName = n => signInAs(page, srv, n);      // (EMPNUM: the person's Employee Number, never a name set by a script)
   const signOutName = () => page.evaluate(() => { try { localStorage.removeItem('cn.employee'); } catch (_) {} B.employee = ''; });
   const focusJob = async (k, rid) => { await page.evaluate(({ k, rid }) => { CN.setMode('engrave'); Engrave.restoreView(Object.assign({}, Engrave.view(), { tab: 'place', focus: k, list: false, chosen: true, q: rid, openDone: null })); Engrave.render(); }, { k, rid }); };
-  const useBtn = k => `#egQueue .rvItem[data-key="${k}"] [data-a=usewords]`;
-  const wordsBox = k => `#egQueue .rvItem[data-key="${k}"] .engp .engpWords`;   // (the Engrave detail has no words box of its own any more: the words are typed in the options panel, "Engrave these words" settles them)
+  const wordsBox = k => `#egQueue .rvItem[data-key="${k}"] .engp .engpWords`;   // (the Engrave detail has no words box of its own any more: the words are typed in the options panel)
   const apprBtn = k => `#egQueue .rvItem[data-key="${k}"] [data-a=approve]`;
+  // (ENGSTAGE, Paul 30 Oct 2026: "completely remove the function and process and UI for "Engrave these words"": the words typed are kept by Approve, here its key, A, on the card: the one commit)
+  const pressKeep = async k => { await page.evaluate(k => { const c = document.querySelector(`#egQueue .rvItem[data-key="${k}"]`); if (!c.hasAttribute('tabindex')) c.setAttribute('tabindex', '-1'); c.focus(); }, k); await page.keyboard.press('a'); };
   const pressUse = async (k, rid, words) => {
     await focusJob(k, rid);
-    await page.waitForSelector(useBtn(k), { timeout: 20000 });
     await page.waitForSelector(wordsBox(k), { timeout: 20000 });
     await page.fill(wordsBox(k), words);
-    await page.click(useBtn(k));
+    await pressKeep(k);
   };
   const states = await page.evaluate(() => Object.fromEntries([...Engrave.items().values()].map(j => [j.key, j.state])));
   check(['W1', 'W2', 'W3'].every(n => states[K[n]] === 'words') && ['C1', 'C2', 'C3', 'M', 'P'].every(n => states[K[n]] === 'review'), 'the real run reached the engraving review (3 words to decide, 5 to approve): ' + JSON.stringify(Object.fromEntries(Object.entries(states).map(([k, v]) => [k.slice(-4), v]))));
@@ -132,12 +132,12 @@ async function partA(browser) {
   check(p && p.state === 'review' && p.text === 'Eleyni' && !p.by, 'AUTOWORDS: a buyer\'s words with a message (a proposal) went on to Approve by themselves, nobody pressed "Engrave these words": ' + JSON.stringify(p));
 
   if (want('A')) {
-    console.log('· A1: signed in (the Admin): Engrave these words, Approve engraving, no bar, no pop-up');
+    console.log('· A1: signed in (the Admin): the words kept by Approve (A), Approve engraving, no bar, no pop-up');
     await asName(ADMIN); await page.waitForTimeout(600);
     check(await page.evaluate(() => CNRole.admin()), 'the Admin answer came from the door: ' + ADMIN + ' is the Admin (no Laser or Design question)');
     await pressUse(K.W1, R.W1, 'ROSA');
     await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && j.state !== 'words'; }, K.W1, { timeout: 40000 });
-    check(!(await bar()) && (await jobOf(K.W1)).by === ADMIN + '.', `Engrave these words: no bar, the decision names the person: ${JSON.stringify(await jobOf(K.W1))}`);
+    check(!(await bar()) && (await jobOf(K.W1)).by === ADMIN + '.', `the words kept by Approve: no bar, the decision names the person: ${JSON.stringify(await jobOf(K.W1))}`);
     await focusJob(K.C1, R.C1); await page.waitForFunction(s => { const b = document.querySelector(s); return b && !b.disabled; }, apprBtn(K.C1), { timeout: 40000 });
     await page.click(apprBtn(K.C1));
     await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && ['approved', 'written'].includes(j.state); }, K.C1, { timeout: 60000 });
@@ -151,7 +151,7 @@ async function partA(browser) {
     await pressUse(K.W2, R.W2, 'SARA');
     await page.waitForSelector('.cnNameBar[data-kind="ask"]', { timeout: 8000 });
     let b = await bar();
-    check(b && b.kind === 'ask' && numBar(b), 'Engrave these words with no name: the inline bar (kind ask) asks for the Employee Number (masked, empty, no "Continue as"): ' + JSON.stringify(b));
+    check(b && b.kind === 'ask' && numBar(b), 'the words kept with no name: the inline bar (kind ask) asks for the Employee Number (masked, empty, no "Continue as"): ' + JSON.stringify(b));
     check((await jobOf(K.W2)).state === 'words', 'nothing was decided before a name');
     await answerBar(page, srv, ADMIN);
     await page.waitForFunction(k => { const j = Engrave.items().get(k); return j && j.state !== 'words'; }, K.W2, { timeout: 40000 });
@@ -169,9 +169,9 @@ async function partA(browser) {
 
     console.log('· A3: Esc puts the bar away calmly: nothing decided, the words typed stay as typed');
     await signOutName();
-    await focusJob(K.W3, R.W3); await page.waitForSelector(useBtn(K.W3), { timeout: 20000 });
+    await focusJob(K.W3, R.W3); await page.waitForSelector(wordsBox(K.W3), { timeout: 20000 });
     await page.fill(wordsBox(K.W3), 'TYPED WORDS');
-    await page.click(useBtn(K.W3)); await page.waitForSelector('.cnNameBar[data-kind="ask"]', { timeout: 8000 });
+    await pressKeep(K.W3); await page.waitForSelector('.cnNameBar[data-kind="ask"]', { timeout: 8000 });
     // (the bar takes the keys a frame after it is drawn, as a person sees it: Esc pressed in the same instant went to the button under it)
     await page.waitForFunction(() => { const b = document.querySelector('.cnNameBar[data-kind="ask"]'); return !!b && b.contains(document.activeElement); }, null, { timeout: 4000 });
     await page.keyboard.press('Escape'); await page.waitForFunction(() => !document.querySelector('.cnNameBar'), null, { timeout: 4000 });
@@ -188,9 +188,9 @@ async function partA(browser) {
     await page.waitForFunction(() => !CNEmployee.name(), null, { timeout: 30000 }).catch(() => {});
     check(await page.evaluate(() => CNEmployee.name()) === '' && await page.evaluate(() => localStorage.getItem('cn.employee')) === null, 'after 10 minutes without input the idle sign-out cleared the name (the cause: a name that is not the Admin\'s)');
     check(await page.evaluate(() => localStorage.getItem('cn.lastEmployee')) === STAFF, 'cn.lastEmployee still has the name (the Account panel\'s tile)');
-    await focusJob(K.W3, R.W3); await page.waitForSelector(useBtn(K.W3), { timeout: 20000 });
+    await focusJob(K.W3, R.W3); await page.waitForSelector(wordsBox(K.W3), { timeout: 20000 });
     await page.fill(wordsBox(K.W3), 'UNA');
-    await page.click(useBtn(K.W3)); await page.waitForSelector('.cnNameBar[data-kind="ask"]', { timeout: 8000 });
+    await pressKeep(K.W3); await page.waitForSelector('.cnNameBar[data-kind="ask"]', { timeout: 8000 });
     b = await bar();
     check(b && b.kind === 'ask' && numBar(b), 'after the idle sign-out the next press shows the inline bar asking for the Employee Number (no "Continue as"): ' + JSON.stringify(b));
     await answerBar(page, srv, STAFF);

@@ -10416,7 +10416,7 @@ const Engrave = window.Engrave = (() => {
   const STAGE_TURN = { run: null };
   function stageTurn(host, to, shape, paint) {
     const r0 = STAGE_TURN.run;
-    if (r0) { STAGE_TURN.run = null; for (const a of r0.anims) { try { a.cancel(); } catch (_) { /* gone */ } } try { r0.host.classList.remove("egFlipping"); } catch (_) { /* gone */ } paint(); return; }
+    if (r0) { STAGE_TURN.run = null; for (const a of r0.anims) { try { a.cancel(); } catch (_) { /* gone */ } } try { r0.host.classList.remove("egFlipping"); } catch (_) { /* gone */ } if (r0.host === host && host.isConnected) { paint(); return; } }   // (a turn of a card since drawn again is only let go)
     if (!stageMotion(host) || !host.offsetWidth) { paint(); return; }
     const d = to === "back" ? 1 : -1, P = "perspective(1400px) ", run = { host, to, shape, anims: [], edge: false };
     STAGE_TURN.run = run; host.classList.add("egFlipping");
