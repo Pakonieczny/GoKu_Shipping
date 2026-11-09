@@ -298,6 +298,7 @@ const assets = [
   "charm-nest-efficiency-person.js",
   "charm-nest-design-log.js",
   "charm-nest-custom-piece.js",
+  "charm-nest-custom-done.js",
   "charm-nest-efficiency-custom.js",
   "charm-nest-sw.js",
   "charm-nest-check.html",

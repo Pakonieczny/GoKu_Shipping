@@ -17,7 +17,7 @@
    Where its rows come from, newest first: the pool rows this page holds (B.pool.rows: a piece sent here, kept with the workspace) and the cloud's list of custom pieces (op customPieceList,
    read once when first asked and again every few minutes while asked; one order read again by its id, op poolList, when it is opened and not known yet). Read only: nothing is written here.
 
-   window.CustomOrders = { rows(), rowsOf(rid), isCustom(rid), load(force), fetch(rid), version() } */
+   window.CustomOrders = { rows(), rowsOf(rid), isCustom(rid), load(force), fetch(rid), note(poolRows), version() }   (note, CPX1: rows this page just wrote, shown at once) */
 (function (root) {
   'use strict';
   if (!root || root.CustomOrders) return;
@@ -64,8 +64,13 @@
     r.poolIds = list.map(p => p.poolId).sort();
     r.material = r.metal = p0.material || null;
     r.arrivedAt = t;
-    r.state = !live.length ? 'gone' : placed.length === live.length ? 'nested' : 'pooled';
-    r.reason = !live.length ? 'taken off its sheet' : null;
+    // (CPX1, Paul 9 Nov 2026: a custom piece whose design was done in the Charm Editor on another piece of the order is COMPLETED there, not gone: its pool rows were taken off their
+    //  sheet with coveredBy { poolId, lineKey, name, designId, version, by, at } (charm-nest-custom-done.js); it is listed done, never as a piece still to cut)
+    const cov = list.map(p => (p && p.coveredBy && num(p.coveredBy.at) > 0 && !num(p.coveredBy.undoneAt) ? p.coveredBy : null)).find(Boolean) || null;
+    r.spec.custom.coveredBy = cov;
+    r.covered = cov;
+    r.state = cov && !live.length ? 'covered' : !live.length ? 'gone' : placed.length === live.length ? 'nested' : 'pooled';
+    r.reason = cov && !live.length ? `Completed in the Charm Editor · on ${cov.name || 'another piece'}` : !live.length ? 'taken off its sheet' : null;
     made.set(key, r);
     return r;
   }
@@ -101,9 +106,16 @@
     catch (e) { console.warn('[custom orders] order not read', rid, e && e.message); }
     return rowsOf(rid);
   }
+  /** CPX1: pool rows this page has just written (a Custom piece completed in the Charm Editor, or its Undo), taken at once so every view lists them as they are now. */
+  function note(list) {
+    let n = 0;
+    for (const p of list || []) { if (!p || !p.poolId) continue; const had = cloud.get(p.poolId) || {}; cloud.set(p.poolId, Object.assign({}, had, p, { custom: true, updatedAt: Math.max(num(had.updatedAt) + 1, num(p.updatedAt) || Date.now()) })); n++; }
+    if (n) { version++; memo = null; redraw(); }
+    return n;
+  }
   function redraw() {
     try { const v = document.getElementById('ordersView'); if (root.Orders && root.Orders.render && v && !v.classList.contains('hidden')) root.Orders.render(); } catch (_) {}
     try { if (root.OrderSearch && root.OrderSearch.rebuild && root.OrderSearch.isOpen && root.OrderSearch.isOpen()) root.OrderSearch.rebuild(); } catch (_) {}
   }
-  root.CustomOrders = { rows, rowsOf, isCustom, load, fetch, version: () => version, RID };
+  root.CustomOrders = { rows, rowsOf, isCustom, load, fetch, note, version: () => version, RID };
 })(typeof window !== 'undefined' ? window : globalThis);
