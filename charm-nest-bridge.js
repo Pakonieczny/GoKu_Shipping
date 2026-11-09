@@ -5133,19 +5133,21 @@ const Pool = window.Pool = (() => {
     if (run && sh.runId && sh.runId !== run.runId) return false;
     return true;
   }
-  /** Every piece of `list` into a spot of `spots` (one sheet), each spot once: [{ c, s, fit }] or null. Pieces already tried are stood on the sheet while the next is tried, then taken off again. */
-  function inPlaceAssign(sh, spots, list) {
+  /** Every piece of `list` into a spot of `spots` (one sheet), each spot once: [{ c, s, fit }] or null. Pieces already tried are stood on the sheet while the next is tried, then taken off again.
+   *  size (INPLACE SHRINK): every piece at that one uniform size (0.90 to 1; a pair or any line of several pieces is never at two sizes); absent: full size. */
+  function inPlaceAssign(sh, spots, list, size) {
     const M = window.CNManual; if (!M || !M.fitsSpot || list.length > spots.length) return null;
-    const used = new Set(), got = [];
-    const stand = (c, fit) => { sh.charms.push(c); sh.placements.push({ id: c.id, cxPt: fit.pose.cxPt, cyPt: fit.pose.cyPt, angle: fit.pose.angle, scale: fit.scale, wPt: fit.wPt, hPt: fit.hPt }); };
-    const lift = c => { sh.charms = sh.charms.filter(x => x !== c); sh.placements = sh.placements.filter(p => p.id !== c.id); };
+    const small = size != null && size < 1, used = new Set(), got = [], was = new Map();
+    // (a piece stood at a smaller size is stamped at that size while the next is tried: the check reads a charm's size from its manual mark, as Manual Control's resize does)
+    const stand = (c, fit) => { if (small) { was.set(c, c.manual); c.manual = Object.assign({}, c.manual || {}, { size: fit.size || size, fit: "inplace" }); } sh.charms.push(c); sh.placements.push({ id: c.id, cxPt: fit.pose.cxPt, cyPt: fit.pose.cyPt, angle: fit.pose.angle, scale: fit.scale, wPt: fit.wPt, hPt: fit.hPt }); };
+    const lift = c => { sh.charms = sh.charms.filter(x => x !== c); sh.placements = sh.placements.filter(p => p.id !== c.id); if (was.has(c)) { const m = was.get(c); if (m) c.manual = m; else delete c.manual; was.delete(c); } };
     const go = k => {
       if (k === list.length) return true;
       const c = list[k];
       for (const s of spots) {
         if (used.has(s)) continue;
         for (const angle of inPlaceAngles(s.angle)) {
-          let fit; try { fit = M.fitsSpot(sh, c, { cxPt: s.cxPt, cyPt: s.cyPt, angle }, { snapPt: INPLACE_NUDGE_PT, replace: true }); } catch (_) { fit = null; }
+          let fit; try { fit = M.fitsSpot(sh, c, { cxPt: s.cxPt, cyPt: s.cyPt, angle }, Object.assign({ snapPt: INPLACE_NUDGE_PT, replace: true }, small ? { size } : {})); } catch (_) { fit = null; }
           if (!fit || !fit.ok || !fit.pose) continue;
           used.add(s); got.push({ c, s, fit }); stand(c, fit);
           if (go(k + 1)) return true;
@@ -5157,6 +5159,21 @@ const Pool = window.Pool = (() => {
     const ok = go(0);
     for (const g of got) lift(g.c);   // (the caller places them for good)
     return ok ? got : null;
+  }
+  /* INPLACE SHRINK (Paul, 9 Nov 2026: "This has to be checked that the actual new piece fits in the same place as the old piece came off and if need be, it can be shrunk by up to 10% just to fill
+     it in such cases"). The old spot is tried twice before anything else: at full size (its spot, small nudges, the spot's angles), then, when that fails, the SAME spot again with the piece shrunk
+     uniformly in 1 % steps, 99 % down to 90 % and never smaller, the LARGEST size that fits winning. The check is the same (CNManual.fitsSpot: the clearance, the sheet's edge and inset, metal cut
+     away, a Rose Gold / 10K / 14K saved green line's charms), only the piece is smaller. A pair (Left and Right) or a line of several pieces is shrunk all by the same size or not at all. A custom
+     design sent at its exact size is never shrunk (CUSTOMPOOL). Only when both fail does the line go on to the next place (never shrunk there). */
+  const INPLACE_SHRINK_MIN = 0.90, INPLACE_SHRINK_STEP = 0.01;
+  const inPlaceSizes = () => { const out = []; for (let k = 1; ; k++) { const v = Math.round((1 - k * INPLACE_SHRINK_STEP) * 100) / 100; if (v < INPLACE_SHRINK_MIN - 1e-9) break; out.push(v); } return out; };
+  const inPlacePct = v => Math.round(v * 100) + "%";
+  /** The old spots of one sheet at full size, else at the largest size from 99 % down to 90 % that fits them: { got, size } or null. */
+  function inPlaceFit(sh, spots, list) {
+    const full = inPlaceAssign(sh, spots, list); if (full) return { got: full, size: 1 };
+    if (list.length > spots.length || list.some(c => c.frozen || (window.CharmNestCustomPool && typeof CharmNestCustomPool.sizeWhy === "function" && CharmNestCustomPool.sizeWhy(c)))) return null;
+    for (const size of inPlaceSizes()) { const got = inPlaceAssign(sh, spots, list, size); if (got) return { got, size }; }
+    return null;
   }
   /** The latest unfinished sheet of the metal for pieces that did not fit their old spot: the newest open sheet of the run with room for them (the intake's room rule); else a new sheet. */
   function inPlaceTarget(metal, run, list, info) {
@@ -5185,16 +5202,20 @@ const Pool = window.Pool = (() => {
     const bySheet = new Map(); for (const s of spots) (bySheet.get(s.sh) || bySheet.set(s.sh, []).get(s.sh)).push(s);
     for (const [sh, ss] of bySheet) {
       if (!inPlaceOpen(sh, run)) { res.why = res.why || "its sheet cannot change now"; continue; }
-      const got = inPlaceAssign(sh, ss, list);
-      if (!got) { res.why = list.length > ss.length ? `${list.length} new pieces for ${ss.length} old spot${ss.length === 1 ? "" : "s"}` : "the new design does not fit the old spot"; continue; }
+      const fitIn = inPlaceFit(sh, ss, list), got = fitIn && fitIn.got, size = fitIn ? fitIn.size : 1;
+      if (!got) { res.why = list.length > ss.length ? `${list.length} new pieces for ${ss.length} old spot${ss.length === 1 ? "" : "s"}` : `the new design does not fit the old spot, even shrunk to ${inPlacePct(INPLACE_SHRINK_MIN)}`; continue; }
+      const at = Date.now();
       for (const { c, s, fit } of got) {
         s.used = true;
         sh.charms.push(c);
         sh.placements.push({ id: c.id, cxPt: fit.pose.cxPt, cyPt: fit.pose.cyPt, angle: fit.pose.angle, scale: fit.scale, wPt: fit.wPt, hPt: fit.hPt });
-        c.inPlace = { at: Date.now(), was: s.poolId, sheetId: sh.sheetId || null };
+        c.inPlace = Object.assign({ at, was: s.poolId, sheetId: sh.sheetId || null }, size < 1 ? { size } : {});
+        // (INPLACE SHRINK: the size it is cut at is the piece's own, as Manual Control's resize keeps it: every write, nest, check, preview, thumbnail, label and the laser's files read it, and the
+        //  sheet's record keeps it on the charm (manual.size, fit "inplace"); the piece stays pinned in its old spot, as one placed by hand does)
+        if (size < 1) { c.manual = { by: "in place", at, size, fit: "inplace" }; c.pinned = { cxPt: fit.pose.cxPt, cyPt: fit.pose.cyPt, angle: fit.pose.angle, size }; delete c.arrivalPin; }
       }
-      res.placed = true; res.home = sh; res.to = sh; res.why = "";
-      agent({ metal, pool: true }, "POOL", `${row.order.receiptId} · the new piece${list.length === 1 ? "" : "s"} went into the old spot${got.length === 1 ? "" : "s"} on ${sheetName(sh)}: nothing else on it moved, no nest`);
+      res.placed = true; res.home = sh; res.to = sh; res.why = ""; if (size < 1) res.size = size;
+      agent({ metal, pool: true }, "POOL", `${row.order.receiptId} · the new piece${list.length === 1 ? "" : "s"} went back into the old spot${got.length === 1 ? "" : "s"} on ${sheetName(sh)}${size < 1 ? `, shrunk to ${inPlacePct(size)} to fit` : ""}: nothing else on it moved, no nest`);
       return { page: sh, placed: true };
     }
     const page = inPlaceTarget(metal, run, list, info);
@@ -19151,7 +19172,7 @@ const Review = window.Review = (() => {
   function inPlaceSettle(row) {
     const V = row && row._vacated; if (!V) return; delete row._vacated;
     const name = sh => (sh && (sh.fileBase || sheetName(sh))) || "a sheet";
-    const out = { at: V.at, results: (V.results || []).map(r => ({ metal: r.metal, placed: !!r.placed, home: name(r.home), homeId: (r.home && r.home.sheetId) || null, to: r.to ? name(r.to) : "", toId: (r.to && r.to.sheetId) || null, why: r.why || "", pieces: r.pieces })), writes: [], appended: [] };
+    const out = { at: V.at, results: (V.results || []).map(r => ({ metal: r.metal, placed: !!r.placed, home: name(r.home), homeId: (r.home && r.home.sheetId) || null, to: r.to ? name(r.to) : "", toId: (r.to && r.to.sheetId) || null, why: r.why || "", pieces: r.pieces, ...(r.size && r.size < 1 ? { size: r.size } : {}) })), writes: [], appended: [] };
     for (const sh of V.homes) {
       delete sh._inplaceHold; const asked = !!sh._inplaceAsked; delete sh._inplaceAsked;
       try {
@@ -19184,7 +19205,7 @@ const Review = window.Review = (() => {
     delete out.waits;
     row._inplaceLast = out;
     try {
-      for (const r of out.results) agent({ metal: r.metal, pool: true }, "POOL", `${row.order.receiptId} · ${r.placed ? `new piece placed in the old spot on ${r.home}` : `did not fit the old spot (spot left empty on ${r.home}) — added to ${r.to || "the next sheet"}`}; ${out.writes.length ? out.writes.join(", ") + " written as it stands (nothing moved, no nest)" : "no sheet nested again"}`);
+      for (const r of out.results) agent({ metal: r.metal, pool: true }, "POOL", `${row.order.receiptId} · ${r.placed ? `new piece placed in the old spot on ${r.home}${inPlaceShrunk(r)}` : `did not fit the old spot (spot left empty on ${r.home}) — added to ${r.to || "the next sheet"}`}; ${out.writes.length ? out.writes.join(", ") + " written as it stands (nothing moved, no nest)" : "no sheet nested again"}`);
     } catch (_) { /* a word only */ }
   }
   /* INPLACE (Paul, 20 Oct 2026) · a sheet written as it stands after a replaced piece came off it, when it is in a set: "a committed set whose sheet changed must have its files/labels rewritten",
@@ -19779,11 +19800,13 @@ const Review = window.Review = (() => {
   const relinkId = (row, c, part) => `${row.key}.lpick.${part ? part + "." : ""}${TL.hash(String(c.link && c.link.key) + "|" + c.to)}`;
   const relinkSay = (row, c, by, more) => TL.line(row, "interpreted", { id: relinkId(row, c, more.part), once: true, by, text: (c.override ? `Charm repository corrected by ${by || "a person"}: SKU ${c.to} now draws the new design (Save to the charm repository)${more.text ? " · " + more.text : ""}` : `Charm updated from listing pick by ${by || "a person"}: ${c.from ? c.from + " → " : "now "}${c.to}${more.text ? " · " + more.text : ""}`).slice(0, 200),
     data: { listingPick: true, sku: c.to, was: c.from || null, link: c.link ? c.link.key : null, via: c.link ? c.link.via : null, by: by || null, action: c.action, sheets: more.sheets || [] } });
+  /** INPLACE SHRINK (Paul, 9 Nov 2026): ", shrunk to 94% to fit" for a line's new pieces shrunk to go back into their old spot; "" at full size. */
+  const inPlaceShrunk = r => (r && r.size > 0 && r.size < 1 ? `, shrunk to ${Math.round(r.size * 100)}% to fit` : "");
   /** INPLACE (Paul, 20 Oct 2026): what became of a replaced line's new pieces, in a few words (row._inplaceLast, repoolLine's inPlaceSettle). */
   function inPlaceWords(ip, homes) {
     const rs = (ip && ip.results) || [];
     if (!rs.length) return `the old piece came off ${(homes || []).join(", ")}; the new one went on as any new piece does`;
-    return rs.map(r => r.placed ? `the new piece was placed in the old spot on ${r.home}, nothing else on it moved` : `the new piece did not fit the old spot (left empty on ${r.home}): added to ${r.to || "the next sheet"}, nothing on it moved`).join("; ");
+    return rs.map(r => r.placed ? `the new piece was placed in the old spot on ${r.home}${inPlaceShrunk(r)}, nothing else on it moved` : `the new piece did not fit the old spot (left empty on ${r.home}): added to ${r.to || "the next sheet"}, nothing on it moved`).join("; ");
   }
   /** One line made up again with the pick (see the block above). → { ok, retry, why } */
   async function relinkSwap(row, e, c, h) {
@@ -19906,7 +19929,7 @@ const Review = window.Review = (() => {
         else if (rs.length) {
           // (INPLACE: "Order R: new piece placed in the old spot on GF Sheet 1", or "Order R: did not fit the old spot (spot left empty on GF Sheet 1) — added to GF Sheet 4")
           tally.orders.add(k);
-          line(k, rs.map(r => r.placed ? `Order ${rid}: new piece placed in the old spot on ${r.home}` : `Order ${rid}: did not fit the old spot (spot left empty on ${r.home}) — added to ${r.to || "the next sheet"}`).join("; "), "done", `made from ${x.c.to}; nothing else on ${[...new Set(rs.map(r => r.home))].join(", ")} moved`);
+          line(k, rs.map(r => r.placed ? `Order ${rid}: new piece placed in the old spot on ${r.home}${inPlaceShrunk(r)}` : `Order ${rid}: did not fit the old spot (spot left empty on ${r.home}) — added to ${r.to || "the next sheet"}`).join("; "), "done", `made from ${x.c.to}; nothing else on ${[...new Set(rs.map(r => r.home))].join(", ")} moved`);
           for (const n of ip.writes || []) { const sh = rlSheet(n); if (sh) sheetDone(sh, "write"); }
           for (const r of rs) if (!r.placed && r.to) { const sh = (r.toId && allSheets().find(z => z.sheetId === r.toId)) || rlSheet(r.to); if (sh && !(ip.writes || []).includes(rlName(sh))) sheetDone(sh, "append"); }
         }
