@@ -46,7 +46,9 @@
   const SOURCES = new Set(["master", "import", "new", "piece", "design"]);
   /* What one version may hold (the cloud refuses more, and so does put before anything is sent). A version's faces up to INLINE bytes are kept in its record; up to
      `bytes` in Storage beside it (a traced photograph: D2's levels of smooth paths). Coordinates are points, y down, kept to a thousandth of a point (0.35 micron). */
-  const LIMITS = { bytes: 4000000, inline: 700000, items: 4000, depth: 8, ops: 300000, coord: 20000, name: 120, text: 400, extra: 16, sizeMm: 1000, sizeTolMm: 0.1, thumb: 98304, pathD: 16000 };
+  /* (TQ1, Paul 9 Nov 2026: a traced photograph placed at the detail its preview shows) bytes 4 → 10 MB and ops 300 000 → 450 000: one picture is at most 200 000 operators
+     (charm-nest-ce-image.js IMAGE_BUDGET), about 7 MB as path text; a version that big is sent gzipped (put: designGz, about a third) and read back by its link (get: facesUrl). */
+  const LIMITS = { bytes: 10000000, inline: 700000, items: 4000, depth: 8, ops: 450000, coord: 20000, name: 120, text: 400, extra: 16, sizeMm: 1000, sizeTolMm: 0.1, thumb: 98304, pathD: 16000, sendPlain: 1500000 };
   const ID = /^[A-Za-z0-9_.:~-]{1,64}$/, DESIGN_ID = /^[A-Za-z0-9_-]{4,64}$/, ORDER_ID = /^(?:\d{4,20}|CUSTOM-\d{8}-\d{1,5})$/, EXTRA = /^[A-Za-z][A-Za-z0-9_]{0,30}$/;
   const KNOWN = new Set(["id", "kind", "role", "source", "name", "hidden", "locked", "subpaths", "d", "children", "stroke", "fill", "lwPt", "weightMm", "even", "evenOdd", "fillRule",
     "text", "fontKey", "sizePt", "align", "lineGap", "tx", "ty", "sx", "sy", "rot", "matrix", "pivot", "bbox", "extra",
@@ -414,6 +416,16 @@
     const a = hostApi(); if (!a) throw new Error("the design library has no connection to the cloud on this page");
     return a("charmNestLibrary", body, Object.assign({ quiet: true }, opts || {}));
   }
+  /* (TQ1) gzip both ways (the browser's CompressionStream; node 18+ has it too), and bytes as base64 */
+  async function gzip(text) { return new Uint8Array(await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer()); }
+  async function gunzip(bytes) { return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text(); }
+  function base64(u8) { let s = ""; for (let i = 0; i < u8.length; i += 32768) s += String.fromCharCode.apply(null, u8.subarray(i, i + 32768)); return btoa(s); }
+  /** A big version's faces from its link (designGet's facesUrl): read through the same-origin asset door (CharmNestAssets), unzipped, made the editor's again. */
+  async function facesFrom(url) {
+    const A = root.CharmNestAssets;
+    const bytes = A && typeof A.bytes === "function" ? await A.bytes(url) : new Uint8Array(await (await fetch(url)).arrayBuffer());
+    return decodeFaces(JSON.parse(await gunzip(bytes)));
+  }
   const log = (kind, data) => { try { if (root.CNDesignLog && typeof root.CNDesignLog.event === "function") root.CNDesignLog.event(kind, data); } catch (_) { /* the log is never in the way */ } };
 
   /* ── where the index is kept between reloads: memory and localStorage here (useStore swaps it for charm-nest-store.js's in one call) ── */
@@ -520,6 +532,7 @@
     if (hit && !(opts && opts.history)) { if (opts && opts.open) logOpen(hit); return hit; }
     const r = await call({ op: "designGet", id: String(id), ...(v ? { version: v } : {}), ...(opts && opts.history ? { history: true } : {}) });
     if (!r || !r.design) return null;
+    if (!r.design.faces && r.design.facesUrl) { r.design.faces = await facesFrom(r.design.facesUrl); delete r.design.facesUrl; delete r.design.facesGz; }   // (TQ1: a version too big to answer inline)
     keepFull(r.design);
     if (opts && opts.open) logOpen(r.design);
     ensureLoaded(); if (upsert(rowOf(r.design))) { persist(); tell({ kind: "refresh" }); }
@@ -599,7 +612,13 @@
     const small = opsOf(d.faces) <= LOCAL_CHECK_OPS;
     if (small) { const c = clean(d, { stored: false }); if (c.error) throw Object.assign(new Error(c.error), { refused: true }); d = c.design; }
     let thumb = null; if (opts.thumb !== false) { try { thumb = await thumbPng(d.faces); } catch (e) { console.warn("design library: picture", e); } }
-    const r = await call({ op: "designPut", design: d, ...(thumb ? { thumb } : {}), by }, { label: "Saving the design to the library", background: true });
+    // (TQ1) a big design (a traced photograph) is sent gzipped, its faces as a version keeps them (path strings): a function call carries at most 6 MB
+    let body = { design: d };
+    if (!small) {
+      const text = JSON.stringify(Object.assign({}, d, { faces: encodeFaces(d.faces), facesStored: true }));
+      if (text.length > LIMITS.sendPlain) { await nextTask(); body = { designGz: base64(await gzip(text)) }; }
+    }
+    const r = await call(Object.assign({ op: "designPut" }, body, thumb ? { thumb } : {}, { by }), { label: "Saving the design to the library", background: true });
     if (!r || !r.id) throw new Error((r && r.error) || "the design was not saved");
     if (small) keepFull(Object.assign({}, d, r.row || {}, { id: r.id, version: r.version, at: r.at, hash: r.hash, by }));   // (a big one is read back when it is asked for: what is kept is what the cloud made of it)
     ensureLoaded();

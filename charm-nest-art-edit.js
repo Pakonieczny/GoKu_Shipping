@@ -537,6 +537,66 @@
   /* ── the page: cloud records, the pieces made again, a save ── */
   let host = {};
   const cache = new Map();   // recKey → { rec | null }
+
+  /* ── (TQ1, Paul 9 Nov 2026: "When I vectorize an image, it looks really good in a preview, but then when it gets applied to the actual charm, it looks like crap and it loses all
+     its fidelity") A traced photograph at the detail its preview shows is far more path than one record holds (charmNestLibrary.js ART_MAX: 200 KB a path, 600 KB the edit; a cat at
+     16 greys on a 10 mm charm is 4.2 MB), so the Image step used to simplify it into blobs to fit. Now its big paths travel beside the record: pack() takes the longest added
+     parts (never a cut line) out of the record until what stays is well within it, and sends them with the save as ONE gzipped file (artPut's blob: { v: 1, ds }); each part
+     taken out names its path there (bi). The cloud keeps the file in Storage by its own hash and the record names it (blob { key, url, … }). unpack() puts every path back,
+     reading the file through the asset door (CharmNestAssets) once per page (by its hash: it never changes), wherever a record comes in (load, put): so apply, the editor
+     opened again, the piece's thumbnail, the sheet window, the nest and the laser's .ai / .pdf / .dxf all see the whole of every path, exactly as before. ── */
+  const PACK = { keep: 150000, min: 4000 };   // (what stays in the record: at most 150 KB of path; a path of at most 4 KB always stays)
+  const BLOBS = new Map(); const BLOBS_MAX = 24;   // key → Promise<[d]>: the files this page has read (a hash never changes what it names)
+  async function gzip(text) { return new Uint8Array(await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer()); }
+  async function gunzip(bytes) { return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text(); }
+  function base64(u8) { let s = ""; for (let i = 0; i < u8.length; i += 32768) s += String.fromCharCode.apply(null, u8.subarray(i, i + 32768)); return btoa(s); }
+  async function sha32(text) {
+    const c = root && root.crypto && root.crypto.subtle;
+    if (c) { const d = new Uint8Array(await c.digest("SHA-256", new TextEncoder().encode(text))); let h = ""; for (let i = 0; i < 16; i++) h += d[i].toString(16).padStart(2, "0"); return h; }
+    return typeof require === "function" ? require("crypto").createHash("sha256").update(text).digest("hex").slice(0, 32) : null;
+  }
+  /** The record to send and the paths taken out of it: { art, blob (base64) | null, ds }. A record within PACK.keep is sent as it is. */
+  async function pack(art) {
+    if (!art) return { art, blob: null, ds: [] };
+    const big = (art.added || []).map((e, i) => ({ e, i, n: typeof e.d === "string" ? e.d.length : 0 })).filter(x => x.e.role !== "cut" && x.n > PACK.min);
+    let total = Object.values(art.changed || {}).concat(art.added || []).reduce((a, e) => a + (typeof e.d === "string" ? e.d.length : 0), 0);
+    if (total <= PACK.keep || !big.length) return { art, blob: null, ds: [] };
+    big.sort((a, b) => b.n - a.n || a.i - b.i);
+    const out = Object.assign({}, art, { added: art.added.slice() }), ds = [];
+    for (const x of big) {
+      if (total <= PACK.keep) break;
+      out.added[x.i] = Object.assign({}, x.e, { bi: ds.length }); delete out.added[x.i].d;
+      ds.push(x.e.d); total -= x.n;
+    }
+    return { art: out, blob: base64(await gzip(JSON.stringify({ v: 1, ds }))), ds };
+  }
+  /** The paths of a picture's file (blob { key, url }): read once, checked against its own hash. */
+  function blobPaths(b) {
+    const key = String((b && b.key) || "");
+    if (!/^[0-9a-f]{32}$/.test(key) || !b.url) return Promise.reject(new Error("the record names a picture's file it cannot be read from"));
+    let p = BLOBS.get(key);
+    if (!p) {
+      p = (async () => {
+        const A = (host && host.bytes) || (root && root.CharmNestAssets && typeof root.CharmNestAssets.bytes === "function" ? u => root.CharmNestAssets.bytes(u) : null);
+        const bytes = A ? await A(String(b.url)) : new Uint8Array(await (await fetch(String(b.url))).arrayBuffer());
+        const text = await gunzip(bytes), sha = await sha32(text);
+        if (sha && sha !== key) throw new Error("the picture's file is not the one the record names");
+        const j = JSON.parse(text); if (!j || !Array.isArray(j.ds)) throw new Error("the picture's file holds no paths");
+        return j.ds;
+      })();
+      p.catch(() => BLOBS.delete(key));
+      BLOBS.set(key, p); while (BLOBS.size > BLOBS_MAX) BLOBS.delete(BLOBS.keys().next().value);
+    }
+    return p;
+  }
+  /** A record with every path back in it (a copy; one without a file is itself). ds: the paths when this page has them (its own save). */
+  async function unpack(rec, ds) {
+    if (!rec || !rec.blob || !(rec.added || []).some(e => e && e.bi != null)) return rec;
+    if (ds && rec.blob.key) BLOBS.set(rec.blob.key, Promise.resolve(ds));
+    const all = ds || await blobPaths(rec.blob);
+    const added = rec.added.map(e => { if (!e || e.bi == null) return e; const d = all[e.bi]; if (typeof d !== "string") throw new Error(`part ${e.id}: its path is not in the picture's file`); const o = Object.assign({}, e, { d }); delete o.bi; return o; });
+    return Object.assign({}, rec, { added });
+  }
   const remember = (poolId, face, rec) => cache.set(recKey(poolId, face), { rec: rec || null });
   /** The faces the pool row says have an edit: { front: at, back: at } (0 when none). */
   const flagsOf = row => { const a = row && row.artEdit && typeof row.artEdit === "object" ? row.artEdit : {}; return { front: +a.front > 0 ? +a.front : 0, back: +a.back > 0 ? +a.back : 0 }; };
@@ -549,7 +609,8 @@
     for (let i = 0; i < keys.length; i += 200) {
       const part = keys.slice(i, i + 200), res = await host.api("charmNestLibrary", { op: "artList", keys: part }, { quiet: true });
       if (!res || res.error || !res.arts) throw new Error((res && res.error) || "the artwork edits could not be read");
-      for (const k of part) cache.set(k, { rec: res.arts[k] || null });
+      const recs = await Promise.all(part.map(k => unpack(res.arts[k] || null)));   // (TQ1: a picture's paths back in, before anything draws or cuts the piece)
+      part.forEach((k, j) => cache.set(k, { rec: recs[j] }));
     }
     return keys.length;
   }
@@ -631,10 +692,11 @@
     const had = cache.get(recKey(poolId, face)), row = host.rowOf ? host.rowOf(poolId) : null;
     const expectedAt = ctx.expectedAt != null ? +ctx.expectedAt || 0 : had ? (had.rec ? +had.rec.at || 0 : 0) : (charm && charm.artEdit && charm.artEdit[face] && +charm.artEdit[face].at) || flagsOf(row)[face] || 0;
     let res;
-    try { res = await host.api("charmNestLibrary", Object.assign({ op: "artPut", poolId, face, by, expectedAt }, art ? { art } : { clear: true })); }
+    const pk = await pack(art);   // (TQ1: a picture's big paths beside the record, gzipped)
+    try { res = await host.api("charmNestLibrary", Object.assign({ op: "artPut", poolId, face, by, expectedAt }, art ? { art: pk.art } : { clear: true }, pk.blob ? { blob: pk.blob } : {})); }
     catch (e) { const d = (e && e.data) || {}; throw Object.assign(new Error(d.error || (e && e.message) || "the artwork edit was not saved"), { conflict: !!d.conflict, cutRefused: !!d.cutRefused, ...(d.cutRefused ? { refused: [{ id: "cut", why: d.error }] } : {}) }); }
     if (!res || !res.ok) { const d = res || {}; throw Object.assign(new Error(d.error || "the artwork edit was not saved"), { conflict: !!d.conflict, cutRefused: !!d.cutRefused }); }
-    const rec = res.art || null;
+    const rec = await unpack(res.art || null, pk.ds.length ? pk.ds : null);
     remember(poolId, face, rec);
     if (host.flag) host.flag(poolId, face, rec ? rec.at : null);
     let applied = charm ? apply(charm, rec, face) : null;
@@ -649,5 +711,5 @@
   function setHost(h) { host = Object.assign({}, h || {}); return host; }
 
   return { VERSION, FACES, ROLES: [...ROLES], SUFFIX, WHY, recKey, frame, itemMatrix, toD, fromD, memberId, memberIds, baseKeyOf, baseOf, roleOf, paintOf, apply, encode, decode, itemsOf, sameSubs, fnvOf: fnv,
-    load, ready, piece, sync, save, clear, setHost, host: () => host, cached: (poolId, face) => { const c = cache.get(recKey(poolId, face)); return c ? c.rec : undefined; }, forget: () => cache.clear(), remember };
+    load, ready, piece, sync, save, clear, setHost, pack, unpack, PACK, host: () => host, cached: (poolId, face) => { const c = cache.get(recKey(poolId, face)); return c ? c.rec : undefined; }, forget: () => cache.clear(), remember };
 });

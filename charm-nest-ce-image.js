@@ -33,8 +33,10 @@
    trace exactly where the old one is; the picture is kept on this computer too (IndexedDB, PNG), and where it is on neither the step says so and asks for it.
    (LINEART) Line art is cut at the drawing's own half and enlarged by the trace (coverage); the local-mean threshold only for a page lit unevenly (Light: auto
    finds it from how much the paper's grey wanders across the picture, or Even / Uneven). Levels go to 16 (TRACEHQ).
-   What a piece's record can hold is kept to (charmNestLibrary.js ART_MAX: a path at most 200 KB, an edit at most 60 000 operators and 600 KB): a trace over that is made again smaller,
-   and said so.
+   (TQ1, Paul 9 Nov 2026: "it looks really good in a preview, but then when it gets applied to the actual charm ... it loses all its fidelity") A picture is no longer kept to what
+   ONE piece's record holds (600 KB of path, which smoothed a photograph into blobs): its paths are kept beside the record (charm-nest-art-edit.js pack, a file in Storage), and a
+   picture may be up to BUDGET (200 000 points). The Vector view is the trace at the placed size with Place's own settings and budget, so it shows what is engraved, and a
+   trace simplified to fit is said before Place ("Place on charm · simplified"), never after.
 
    (TRACESRC, Paul 28 Oct 2026: "When I Press Image Trace on an existing already vectorized image, it does not open the actual chosen image") the picture was kept
    only in the browser that traced it (IndexedDB, the newest two dozen), so on another computer, another browser, or once pruned, Re-trace had nothing to open.
@@ -61,9 +63,20 @@
   const MAX_LEVELS = 16;       // (TRACEHQ, Paul 28 Oct 2026: "I need the vectorized images to be very high quality": up to 16 greys, CharmNestTrace's own limit)
   const SRC_MAX = 2400;        // the source kept, px on its long side (a phone's photo is 4000: more than any charm can show)
   const SHOW_MAX = 560;        // the preview's original and greyscale, px
-  const PREVIEW_MAX = 280;     // the preview's vector: traced from this, px
+  const PREVIEW_MAX = 280;     // the preview's quick look: traced from this, px (only while the trace at the placed size, which is what is engraved, is on its way: see TQ1 below)
+  const QUICK_OVER = 600;      // (TQ1) a picture traced at more than this, px on its long side, is shown first as the quick look, then as placed; a smaller one goes straight to as placed
   const MARGIN_MM = 0.4;       // an image placed in the outline stays this far inside every cut line
-  const BUDGET = { layerBytes: 180000, ops: 40000, bytes: 450000 };
+  /* (TQ1, Paul 9 Nov 2026: "When I vectorize an image, it looks really good in a preview, but then when it gets applied to the actual charm, it looks like crap and it loses all its fidelity
+     and quality"; a cat at 16 greys, Detail 100, Smoothness 100, Despeckle 0, placed 7.47 × 9.96 mm). The preview was traced from 280 px with no limit; Place traced at the placed
+     size (40 px a mm) within what ONE piece's record holds (450 KB of path), and the full trace was 4.2 MB, so the trace smoothed it three steps (and Place could make the picture
+     0.6 × smaller up to three times): blotchy, posterised blobs, the fur and whiskers gone. Measured (tests/charm-nest/ce-trace-quality.cjs (d)): blurred grey error 4.47 placed against
+     the preview's 3.94, fine detail kept 0.77; now 1.81 and 0.91. The cause is gone, not hidden: the picture's paths are no longer kept inside the record (charm-nest-art-edit.js pack:
+     ONE file in Storage beside it, by its hash; charmNestLibrary.js ART_BLOB; the design library sends a version that big gzipped, charm-nest-designs.js), so a picture may be as big
+     as the laser and the page take: BUDGET, one picture at most 200 000 path operators (Béziers and lines; 7 MB as the record writes it, 2.5 MB in one grey). Measured on that cat
+     (115 000 operators): the laser's .pdf of its sheet written in about a second, and the editor draws it at once. Past the budget the trace is still simplified (smoothed, then made
+     smaller), but never silently: the Vector view is the trace AT THE PLACED SIZE with the same settings and budget as Place (one rule, placeAsync), so what it shows is what is
+     engraved, and a simplified one is said before Place, whose button then reads "Place on charm · simplified": the person chooses. */
+  const BUDGET = { layerBytes: 2500000, ops: 200000, bytes: 7000000 };
   const BUSY_NODES = 5000;     // a level over this many points is said to be busy (the trace's note: a photo gives 4-12 k a level at 20 px a mm; a smaller placed size cuts it)   // (charmNestLibrary.js ART_MAX: d 200 000, ops 60 000, bytes 600 000 for the whole edit; room left for the rest of it)
   const fin = v => typeof v === 'number' && Number.isFinite(v);
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -272,7 +285,7 @@
   const placePixels = (px, pl) => greyImage(pl.W < pl.w ? shrink(px, pl.w, pl.h, pl.W, pl.H) : px, pl.W, pl.H, Object.assign({}, pl.o, { forTrace: true }));
   function placeInput(px, w, h, o, longMm) { const pl = placePlan(w, h, o, longMm); return { grey: placePixels(px, pl), opts: pl.opts, work: [pl.W, pl.H] }; }
   /** Place on this thread, start to end (node and the tests; the page runs the same steps in its workers, placeAsync): → { res, size, fits, tries }. A trace more
-   *  than a piece can hold even simplified (CharmNestTrace throws overBudget) is made again from a picture 0.6 × smaller, at most three times. */
+   *  than a picture may be even simplified (CharmNestTrace throws overBudget) is made again from a picture 0.6 × smaller, at most three times (and said: tries). */
   function placeSync(src, settings, longMm) {
     const T = tracer(); let w = src.width, h = src.height, px = src.data;
     for (let tries = 0; ; tries++) {
@@ -285,12 +298,19 @@
       }
     }
   }
-  /** The same Place off the page's thread: the shrink and the prep in the prep worker, the trace in CharmNestTrace's. onProgress(p, text). → { res, size, fits, tries } */
-  async function placeAsync(src, settings, longMm, onProgress, alive) {
+  /** The same Place off the page's thread: the shrink and the prep in the prep worker, the trace in CharmNestTrace's. onProgress(p, text). → { res, size, fits, tries }
+   *  keep (TQ1, the preview at the placed size): { key } of the picture as kept; its shrink to the working size is kept in it and used again while only the settings that come
+   *  after the shrink change (the tone, the trace's own), so a slider is the prep and the trace, not the shrink of a 2400 px picture. The same pixels either way (shrink, then prepGrey). */
+  async function placeAsync(src, settings, longMm, onProgress, alive, keep) {
     const T = tracer(); let w = src.width, h = src.height, px = src.data;
     const ok = () => !alive || alive();
     for (let tries = 0; ; tries++) {
-      const pl = placePlan(w, h, settings, longMm), grey = await pixelsAsync(px, pl);
+      const pl = placePlan(w, h, settings, longMm), sk = keep && !tries && pl.W < pl.w ? keep.key + '>' + pl.W + 'x' + pl.H : '';
+      let grey;
+      if (sk) {
+        if (keep.shrunkKey !== sk) { keep.shrunk = await shrinkAsync(px, pl); keep.shrunkKey = sk; }
+        grey = await pixelsAsync(keep.shrunk, Object.assign({}, pl, { w: pl.W, h: pl.H }));   // (the prep in the worker too: the same pixels as placePixels, never a long task on the page)
+      } else grey = await pixelsAsync(px, pl);
       if (!ok()) return null;
       try {
         const res = await T.trace(grey, Object.assign({}, pl.opts, { onProgress: p => { if (onProgress && ok()) onProgress(tries ? 0.5 + p * 0.5 : p); } }));
@@ -315,7 +335,7 @@
   function prepWorker() {
     if (prepW !== null) return prepW || null;
     try {
-      const code = `const prepGrey = ${prepGrey.toString()};\nconst shrink = ${shrink.toString()};\nself.onmessage = e => { const m = e.data; try { if (m.W) { m.px = shrink(m.px, m.w, m.h, m.W, m.H); m.w = m.W; m.h = m.H; } const r = prepGrey(m.px, m.w, m.h, m.o), d = new Uint8ClampedArray(m.w * m.h * 4);`
+      const code = `const prepGrey = ${prepGrey.toString()};\nconst shrink = ${shrink.toString()};\nself.onmessage = e => { const m = e.data; try { if (m.W) { m.px = shrink(m.px, m.w, m.h, m.W, m.H); m.w = m.W; m.h = m.H; } if (m.only) { self.postMessage({ id: m.id, d: m.px }, [m.px.buffer]); return; } const r = prepGrey(m.px, m.w, m.h, m.o), d = new Uint8ClampedArray(m.w * m.h * 4);`
         + ` if (m.base) { self.postMessage({ id: m.id, d: r.g }, [r.g.buffer]); return; }`
         + ` for (let i = 0, p = 0; i < r.g.length; i++, p += 4) { d[p] = d[p + 1] = d[p + 2] = r.g[i]; d[p + 3] = 255; } self.postMessage({ id: m.id, d }, [d.buffer]); } catch (er) { self.postMessage({ id: m.id, error: String(er && er.message || er) }); } };`;
       prepW = new root.Worker(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
@@ -330,6 +350,13 @@
     if (!W) return Promise.resolve(placePixels(px, pl));
     const id = ++prepSeq, copy = px.slice();
     return new Promise((res, rej) => { prepWait.set(id, { res: d => res({ data: d, width: pl.W, height: pl.H }), rej }); W.postMessage(Object.assign({ id, px: copy, w: pl.w, h: pl.h, o: Object.assign({}, pl.o, { forTrace: true }) }, pl.W < pl.w ? { W: pl.W, H: pl.H } : {}), [copy.buffer]); });
+  }
+  /** (TQ1) The picture made its working size (shrink, linear light) off the page's thread when it can be: RGBA W × H. */
+  function shrinkAsync(px, pl) {
+    const W = root && root.Worker && root.Blob && root.URL ? prepWorker() : null;
+    if (!W) return Promise.resolve(shrink(px, pl.w, pl.h, pl.W, pl.H));
+    const id = ++prepSeq, copy = px.slice();
+    return new Promise((res, rej) => { prepWait.set(id, { res, rej }); W.postMessage({ id, px: copy, w: pl.w, h: pl.h, W: pl.W, H: pl.H, only: true, o: {} }, [copy.buffer]); });
   }
   /** The filtered base of a picture (its median and unsharp mask, no tone: prepGrey with the tone left as it is) off the page's thread; null when no worker can be made. */
   function baseAsync(px, w, h, o) {
@@ -918,7 +945,7 @@
 
   /* the one Image step on screen (null when none), and what the tests read: the main-thread milliseconds of each change, made and drawn */
   let live = null;
-  const stats = { inputMs: [], byKind: {}, previewTraces: 0, placeMs: 0, lastTrace: null };
+  const stats = { inputMs: [], byKind: {}, previewTraces: 0, placedPreviews: 0, lastPlaced: null, placeMs: 0, lastTrace: null };
   const took = (kind, ms) => { stats.inputMs.push(ms); if (stats.inputMs.length > 400) stats.inputMs.shift(); (stats.byKind[kind] || (stats.byKind[kind] = [])).push(ms); };
 
   /** THE IMAGE STEP over the editor. info.source: the decoded picture; o: the settings to start from; info.retrace / info.box / info.src: Re-trace's (the box the set stands in now).
@@ -1062,34 +1089,81 @@
     function traceSoon() {
       tWant++;
       if (!src || whole()) return;
+      if (shownAs === 'placed' && !pvNow()) { shownAs = 'stale'; lab(); }   // (TQ1: what is shown is no longer these settings' trace at the placed size)
+      placeBtn();
       if (!T) { const wt = $('[data-wait]'); wt.hidden = false; wt.textContent = 'Tracing is not on this page yet'; return; }
       if (!tRun) runPreview();
     }
-    /** The vector preview: the grey as shown, at most 280 px, traced in the worker; when it is back the newest settings are traced (never a queue), and a result of
-     *  settings since changed is never drawn over a newer one. (REPEAT, 28 Oct 2026: the preview no longer hands Place its thresholds: Place works everything out
-     *  from the picture and the settings alone, placeAsync, so a Place made before the preview caught up is the same as one made after; the levels are cut by the
-     *  same rule in both, CharmNestTrace's: tone for a photo, Otsu for flat art.) */
-    let prevThr = null;
+    /** The vector preview. (TQ1, Paul 9 Nov 2026: "it looks really good in a preview, but then when it gets applied to the actual charm ... it loses all its fidelity") It is
+     *  the trace AT THE PLACED SIZE: the picture as kept, its settings and its place, through placeAsync with Place's own budget, the very trace Place puts on the charm
+     *  (Place takes it as it is when nothing changed since), so what the Vector view shows is what is engraved, a simplification included. A picture traced at more than
+     *  QUICK_OVER px is shown first as a QUICK LOOK (the grey as shown, at most 280 px, traced with no budget), then as placed. The newest settings are traced when the last
+     *  are back (never a queue), and a result of settings since changed is never drawn over a newer one. (REPEAT, 28 Oct 2026: the preview no longer hands Place its
+     *  thresholds: Place works everything out from the picture and the settings alone, placeAsync; the levels are cut by the same rule in both.) */
+    let prevThr = null, pv = null, shownAs = '';   // pv: the trace at the placed size of the newest settings traced { key, out | null, err | null }
+    const keep = { key: '', px: null, shrunk: null, shrunkKey: '' };   // the picture as kept, and its shrink to the working size, while only the settings after them change
+    const longMmNow = () => (tgt ? Math.max(tgt.box[2] - tgt.box[0], tgt.box[3] - tgt.box[1]) * MM : 0);
+    /** What Place traces, as one key: the picture (its own id and edits), the settings, the size on the charm. */
+    const placeKey = () => (src && tgt ? JSON.stringify([src.kid || (src.kid = newId()), src.edits || 0, norm(st), +longMmNow().toFixed(4)]) : '');
+    const keptKey = () => [src.kid || (src.kid = newId()), src.edits || 0, st.rot, st.flipH, st.flipV, st.crop ? st.crop.join(',') : ''].join('|');
+    const simplifiedOf = out => !!(out && (out.tries > 0 || (out.res && out.res.work && (out.res.work.simplified || out.res.work.shrunk))));
+    const pvNow = () => (pv && pv.key && pv.key === placeKey() ? pv : null);
     function runPreview() {
-      const v = tWant, [w, h] = fitPx(cvG.width, cvG.height, PREVIEW_MAX), c = canvas(w, h), g = c.getContext('2d', RD);
-      g.imageSmoothingQuality = 'high'; g.drawImage(cvG, 0, 0, w, h);
-      const input = g.getImageData(0, 0, w, h), o = Object.assign({}, st), wt = $('[data-wait]');
-      wt.hidden = false; wt.textContent = 'Tracing…';
-      const t0 = now();
-      const mm = tgt ? Math.max(tgt.box[2] - tgt.box[0], tgt.box[3] - tgt.box[1]) * MM : 0, opts = traceOpts(o, mm > 0 ? Math.max(w, h) / mm : 20);
-      took('posterise', now() - t0);
-      tRun = Promise.resolve().then(() => T.trace(input, opts))
-        .then(res => { if (closed || !res) return; stats.previewTraces++; stats.lastTrace = { ms: Math.round(now() - t0), w: res.width, h: res.height }; prev = res; prevThr = { v, thresholds: res.thresholds.slice() }; if (v === tWant) drawVector(res); })
+      const v = tWant, wt = $('[data-wait]');
+      if (!tgt) where();
+      const quickFirst = fullPx() > QUICK_OVER && !pvNow();
+      wt.hidden = false; wt.textContent = quickFirst ? 'Tracing a quick look…' : 'Tracing at the placed size…';
+      tRun = (quickFirst ? runQuick(v) : Promise.resolve())
+        .then(() => { if (closed || v !== tWant || whole()) return null; wt.textContent = 'Tracing at the placed size…'; return runPlaced(v); })
         .catch(e => { if (!closed && !(e && (e.cancelled || e.name === 'AbortError'))) console.warn('image: preview trace', e); })
         .then(() => { tRun = null; if (closed) return; if (tWant !== v && !whole()) runPreview(); else wt.hidden = true; });
     }
-    function drawVector(res) {
+    function runQuick(v) {
+      const [w, h] = fitPx(cvG.width, cvG.height, PREVIEW_MAX), c = canvas(w, h), g = c.getContext('2d', RD);
+      g.imageSmoothingQuality = 'high'; g.drawImage(cvG, 0, 0, w, h);
+      const input = g.getImageData(0, 0, w, h), o = Object.assign({}, st);
+      const t0 = now();
+      const mm = longMmNow(), opts = traceOpts(o, mm > 0 ? Math.max(w, h) / mm : 20);
+      took('posterise', now() - t0);
+      return Promise.resolve().then(() => T.trace(input, opts))
+        .then(res => { if (closed || !res) return; stats.previewTraces++; stats.lastTrace = { ms: Math.round(now() - t0), w: res.width, h: res.height }; prev = res; prevThr = { v, thresholds: res.thresholds.slice() }; if (v === tWant) drawVector(res, 'quick'); });
+    }
+    /** (TQ1) The trace at the placed size, as Place makes it (placeAsync, its budget and all): kept as pv, drawn when its settings are still the newest. */
+    async function runPlaced(v) {
+      const key = placeKey(); if (!key) return;
+      if (pvNow()) { showPlaced(pv); return; }
+      const o = Object.assign({}, st), longMm = longMmNow(), kk = keptKey(), t0 = now();
+      if (keep.key !== kk) { keep.key = kk; keep.px = keptPixels(src, o); keep.shrunk = null; keep.shrunkKey = ''; }
+      let out = null, err = null;
+      try { out = await placeAsync(keep.px, o, longMm, null, () => !closed && v === tWant, keep); }
+      catch (e) { if (e && (e.cancelled || e.name === 'AbortError')) return; err = e; }
+      if (closed || (!out && !err)) return;   // (overtaken by newer settings: they are traced next)
+      pv = { key, out, err, ms: Math.round(now() - t0) };
+      if (out) { stats.previewTraces++; stats.lastTrace = { ms: pv.ms, w: out.res.width, h: out.res.height }; prevThr = { v, thresholds: out.res.thresholds.slice() }; }
+      stats.placedPreviews++; stats.lastPlaced = { ms: pv.ms, ops: out ? out.size.ops : null, simplified: simplifiedOf(out), over: !!err };
+      if (v === tWant && key === placeKey()) showPlaced(pv);
+    }
+    function showPlaced(r) {
+      if (r.out) { prev = r.out.res; drawVector(r.out.res, 'placed'); }
+      else { shownAs = 'placed'; lab(); note(null); }
+      placeBtn();
+    }
+    /** The Vector view's label: what it shows. */
+    function lab() { const l = $('.cei__lab[data-lab="2"]'); if (l) l.textContent = shownAs === 'placed' ? 'Vector · as engraved' : shownAs === 'quick' ? 'Vector · quick look' : 'Vector'; }
+    /** Place's button says what it will place: "… · simplified" when the trace at this size was simplified to fit, none when even that is too much. */
+    function placeBtn() {
+      const b = $('[data-do="place"]'), cur = pvNow(), simp = !!(cur && simplifiedOf(cur.out));
+      b.textContent = (info.retrace ? 'Re-trace' : 'Place on charm') + (simp ? ' · simplified' : '');
+      if (!placing && src) b.disabled = !!(cur && cur.err);
+    }
+    function drawVector(res, as) {
+      shownAs = as || ''; lab();
       svg.setAttribute('viewBox', `0 0 ${res.width} ${res.height}`);
       const layers = (res.layers || []).filter(L => L && L.subpaths && L.subpaths.length && +L.grey < 0.999).slice().sort((a, b) => b.grey - a.grey);
       svg.innerHTML = layers.map(L => `<path d="${dOf(L.subpaths)}" fill="${rgb(+L.grey)}"/>`).join('');
       $('[data-greys]').innerHTML = layers.slice().reverse().map(L => `<i style="background:${rgb(+L.grey)}" title="${esc(greyName(+L.grey))}"></i>`).join('');
-      // (a level's points on the charm, from the preview's: a border's points grow with the picture's size in pixels, so they are scaled to the size it will be traced at)
-      const k = fullPx() / Math.max(res.width, res.height, 1), nodesOf = L => (fin(+L.nodes) ? +L.nodes : (L.subpaths || []).reduce((a, sp) => a + sp.length, 0));
+      // (a level's points on the charm: the trace at the placed size says them; the quick look's are scaled to the size it will be traced at, a border's points growing with its pixels)
+      const k = as === 'placed' ? 1 : fullPx() / Math.max(res.width, res.height, 1), nodesOf = L => (fin(+L.nodes) ? +L.nodes : (L.subpaths || []).reduce((a, sp) => a + sp.length, 0));
       busy = layers.map(L => ({ grey: +L.grey, nodes: Math.round(nodesOf(L) * k) })).filter(x => x.nodes > BUSY_NODES).sort((a, b) => b.nodes - a.nodes);
       note(sizeOf(layers));
     }
@@ -1102,7 +1176,12 @@
     }
     /** What the trace makes of a picture, said plainly (the lead, 28 Oct 2026: "say plainly in the panel that a photo becomes a posterised (stencil-like) engraving in N greys"). */
     function note(s) {
-      const n = levelsOf(st), pts = (s ? ` <b>${s.ops.toLocaleString('en')}</b> points in the preview.` : '')
+      const cur = pvNow(), simp = !!(cur && simplifiedOf(cur.out)), mm = longMmNow().toFixed(1);
+      // (TQ1) what the Vector view is, and a simplification said before Place, never after: the person chooses
+      const as = cur && cur.err ? ` <b>Too detailed for one charm at ${mm} mm, even simplified</b> (one picture is at most ${BUDGET.ops.toLocaleString('en')} points): place it smaller, use fewer levels, lower Detail or raise Despeckle.`
+        : simp ? ` <b>Simplified to fit:</b> at ${mm} mm the full trace is more than one picture may be (${BUDGET.ops.toLocaleString('en')} points), so it was smoothed${cur.out.res.work && cur.out.res.work.shrunk || cur.out.tries ? ' and traced smaller' : ''}. The Vector view shows exactly what will be engraved: place it as it is, or keep every detail by placing it smaller or using fewer levels.`
+          : cur && shownAs === 'placed' ? ' The Vector view is the trace at its placed size: what you see is what is engraved.' : '';
+      const n = levelsOf(st), pts = (s ? ` <b>${s.ops.toLocaleString('en')}</b> points ${shownAs === 'placed' ? 'as engraved' : shownAs === 'quick' ? 'in the quick look' : 'in the preview'}.` : '') + as
         + (s && busy.length ? ` <b>Busy:</b> about ${busy[0].nodes.toLocaleString('en')} points in ${greyName(busy[0].grey).toLowerCase()} at this size (over ${BUSY_NODES.toLocaleString('en')} a level engraves slowly): place it smaller, raise Despeckle, lower Detail or use fewer levels.` : '');
       $('[data-note]').innerHTML = st.mode === 'line'
         ? `<b>Line art:</b> black only, the drawing cut at its own half and traced at up to three times its pixels, so thin lines and the gaps between them stay${lastPrep && lastPrep.adaptive ? '; the paper is lit unevenly, so the ink is found against the paper round it' : ''}.${pts}`
@@ -1268,15 +1347,20 @@
       const longMm = Math.max(box0[2] - box0[0], box0[3] - box0[1]) * MM;
       const upP = sourceBytes(src);   // (TRACESRC: what the cloud keeps of the picture and its name, made while it is traced)
       let res = null, size = null, smaller = false;
+      // (TQ1) the trace the Vector view shows, when it is of these very settings and size: placed as it is (the same trace Place would make: placeAsync, the same rule)
+      const key = placeKey(), seen = pvNow();
+      if (seen && seen.err) { placing = false; placeBtn(); note(null); return; }
       progress(0);
       try {
-        const out = await placeAsync(keptPixels(src, o2), o2, longMm, (p, text) => { if (token === placeToken) progress(p, text); }, () => token === placeToken && !closed);
+        const out = seen && seen.out ? seen.out : await placeAsync(keptPixels(src, o2), o2, longMm, (p, text) => { if (token === placeToken) progress(p, text); }, () => token === placeToken && !closed);
         if (!out || token !== placeToken || closed) return;
-        res = out.res; size = out.size; smaller = out.tries > 0 || !!(res.work && (res.work.simplified || res.work.shrunk));
+        res = out.res; size = out.size; smaller = simplifiedOf(out);
+        // (TQ1) never simplified silently: a trace simplified to fit that the Vector view has not shown yet is shown, and said, and Place waits for the person's own press
+        if (smaller && !(seen && seen.out === out)) { pv = { key, out, err: null, ms: Math.round(now() - t0) }; placing = false; progress(null); showPlaced(pv); return; }
       } catch (e) {
         if (token !== placeToken || closed) return;
-        placing = false; progress(null); $('[data-note]').innerHTML = /budget/.test(String(e && e.message)) ? '<b>Too detailed for one charm</b> even simplified: lower Detail or Levels, raise Despeckle, or place it smaller.'
-          : `<b>The picture was not traced:</b> ${esc(String((e && e.message) || e).slice(0, 160))}`; return;
+        if (/budget/.test(String(e && e.message))) { pv = { key, out: null, err: e }; placing = false; progress(null); showPlaced(pv); return; }
+        placing = false; progress(null); $('[data-note]').innerHTML = `<b>The picture was not traced:</b> ${esc(String((e && e.message) || e).slice(0, 160))}`; return;
       }
       if (!fits(size)) { placing = false; progress(null); $('[data-note]').innerHTML = `<b>Too detailed for one charm</b> (${size.ops.toLocaleString('en')} points): lower Detail, raise Despeckle or use fewer levels.`; return; }
       // (the group's id is its source's: a piece saved and opened again gives its parts back with it as their `group`, and Re-trace finds the picture by it)
@@ -1302,7 +1386,7 @@
       if (ro) ro.disconnect();
       box.remove(); live = null;
       try { const w = ctx.root && ctx.root.querySelector('.ce-win'); if (w) w.focus({ preventScroll: true }); } catch (e) { /* fine */ }
-      if (g && smaller && ctx.say) ctx.say('Placed · simplified to fit what one piece can hold', 4000);
+      if (g && smaller && ctx.say) ctx.say('Placed · simplified, as the Vector view showed', 4000);
       resolveStep(g || null);
     }
     async function swap(file, via) {

@@ -216,7 +216,7 @@ async function partB(kit) {
     const g0 = await vecGreys(page);
     await R.shot(w, 'CEI-1-image-step');
     check(`B2 a PNG dropped on the work area opens the Image step on it (${s0.name}): a split preview, ${s0.labs.join(' | ')}, the vector traced in the background (${g0.length} greys: ${g0.join(' ')}), nothing on the charm yet`,
-      /^logo\.png · 240 × 160 px$/.test(s0.name) && s0.mode === 'split' && s0.labs.join() === 'Original,Greyscale,Vector' && s0.inkO > 1000 && s0.inkG > 1000 && Math.abs(s0.ar - 1.5) < 0.03
+      /^logo\.png · 240 × 160 px$/.test(s0.name) && s0.mode === 'split' && s0.labs.join() === 'Original,Greyscale,Vector · as engraved' && s0.inkO > 1000 && s0.inkG > 1000 && Math.abs(s0.ar - 1.5) < 0.03
         && g0.length >= 3 && g0.length <= 4 && kOfN(g0.map(g01), 4) && g0[g0.length - 1] === 'rgb(0,0,0)' && s0.items === n0, JSON.stringify(Object.assign(s0, { g0 })));
     check(`B3 the panel says plainly what a photo becomes ("${s0.note.slice(0, 92)}…"), offers the picture's own level count ("${s0.sug.trim()}") and where it will go (${s0.where})`,
       /posterised, stencil-like engraving in 4 greys/.test(s0.note) && /Looks like an illustration: \d greys suggested/.test(s0.sug) && /centred in the charm's outline/.test(s0.where), JSON.stringify(s0));
@@ -457,10 +457,99 @@ async function partB(kit) {
   } finally { await w.close(); }
 }
 
+/* C (TQ1, Paul 9 Nov 2026: "When I vectorize an image, it looks really good in a preview, but then when it gets applied to the actual charm, it looks like crap and it loses all its fidelity").
+   A busy photograph-like picture (fur strokes) at Paul's settings (16 levels, Detail 100, Smoothness 100, Despeckle 0) in the calendar's outline (about 20 × 26 mm: more than one picture
+   may be at full detail): BEFORE Place the Vector view is the trace at the placed size, the panel says it was simplified and Place says so too; Place puts exactly that trace; the editor
+   still moves it at once; Save keeps its paths in a file beside the piece's record (the record itself small), and the page reading the record again from the cloud (through the asset door)
+   gets every path back, which the sheet's laser file then holds in full. */
+async function partC(kit) {
+  const R = require('./_engraveRealWorld.cjs');
+  const c = kit.cal.charm;
+  R.DESIGNS.CALENDAR = { file: 'CALENDAR.ai', make: () => Buffer.from(kit.cal.bytes), entry: { sku: 'CALENDAR', widthPt: +(c.bbox[2] - c.bbox[0]).toFixed(3), heightPt: +(c.bbox[3] - c.bbox[1]).toFixed(3), areaPt2: 4200, members: c.members.length, holes: 0, engravable: true, engravableBy: 'index', updatedAt: 1 } };
+  R.ORDERS.cal = Object.assign({}, R.ORDERS.both, { rid: '4290000131', sku: 'CALENDAR', title: 'Calendar Necklace, Personalized Month Calendar Charm', buyer: 'Name Eleven', personalization: ['front - W\nback - Name One'] });
+  R.EXPECT_JOBS.cal = 2;
+  const w = await R.world({ shots: process.env.SHOTS || '/tmp/ce-image-shots' });
+  if (!w) { console.log('SKIP no playwright-core'); return; }
+  const page = w.page, st = w.srv.st, Q = '#egQueue .rvItem[data-kind=placement]';
+  try {
+    const made = await R.build(w, ['cal']), PID = made.cal.poolIds[0];
+    await page.evaluate(() => new Promise(res => {
+      const W = 900, H = 1200, cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d');
+      let seed = 7; const rnd = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff);
+      const grd = g.createRadialGradient(W / 2, H * 0.55, 50, W / 2, H * 0.55, W * 0.6); grd.addColorStop(0, '#ddd'); grd.addColorStop(1, '#333'); g.fillStyle = grd; g.fillRect(0, 0, W, H);
+      for (let i = 0; i < 26000; i++) { const x = rnd() * W, y = rnd() * H, a = 1.2 + 0.6 * rnd(), L = 6 + 16 * rnd(), v = Math.round(255 * rnd()); g.strokeStyle = `rgba(${v},${v},${v},0.55)`; g.lineWidth = 0.6 + rnd(); g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * L, y + Math.sin(a) * L); g.stroke(); }
+      g.strokeStyle = '#fafafa'; g.lineWidth = 1.5; for (let k = 0; k < 12; k++) { const sd = k < 6 ? -1 : 1, y0 = H * (0.62 + (k % 6) * 0.015); g.beginPath(); g.moveTo(W / 2 + sd * 50, y0); g.quadraticCurveTo(W / 2 + sd * 250, y0 + 10, W / 2 + sd * 420, y0 + 40 * ((k % 6) - 2.5)); g.stroke(); }
+      cv.toBlob(b => { window.__tq1 = new File([b], 'cat.png', { type: 'image/png' }); res(); }, 'image/png');
+    }));
+    await R.openEngraveDetail(w, 'cal', { face: 'front' }); await R.settle(page, 700);
+    await page.$eval(Q + ' .egCharmEdit', b => b.click());
+    await page.waitForSelector('.ce-root .ce-items path', { timeout: 60000 }); await settleP(page); await settleP(page);
+    const n0 = await page.evaluate(() => CharmEditor.current.items().length);
+    await page.evaluate(() => {
+      const st = document.querySelector('.ce-root .ce-stage'), r = st.getBoundingClientRect(), dt = new DataTransfer(); dt.items.add(__tq1);
+      const at = { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, dataTransfer: dt };
+      st.dispatchEvent(new DragEvent('dragenter', at)); st.dispatchEvent(new DragEvent('dragover', at)); st.dispatchEvent(new DragEvent('drop', at));
+    });
+    await page.waitForSelector('.ce-root .cei .cei__card', { timeout: 20000 }); await previewDone(page);
+    // Paul's settings, as a person sets them (the sliders' own input events)
+    await page.evaluate(() => { for (const [k, v] of [['levels', 16], ['detail', 100], ['smooth', 100], ['despeckle', 0]]) { const el = document.querySelector(`.cei [data-k="${k}"]`); el.value = String(v); el.dispatchEvent(new Event('input', { bubbles: true })); } });
+    await page.waitForFunction(() => { const c = CharmNestCeImage.current(), s = CharmNestCeImage.stats(); return c && !c.working() && document.querySelector('.cei [data-wait]').hidden && s.lastPlaced; }, null, { timeout: 120000 });
+    const pre = await page.evaluate(n0 => {
+      const c = CharmNestCeImage.current(), p = c.preview(), s = CharmNestCeImage.stats();
+      return { note: document.querySelector('.cei [data-note]').textContent, btn: document.querySelector('.cei [data-do="place"]').textContent, lab: document.querySelector('.cei__lab[data-lab="2"]').textContent,
+        ops: CharmNestCeImage.sizeOf(p.layers).ops, last: s.lastPlaced, untouched: CharmEditor.current.items().length === n0, where: document.querySelector('.cei [data-where]').textContent };
+    }, n0);
+    await R.shot(w, 'CEI-C1-simplified-before-place');
+    check(`C1 BEFORE Place, at Paul's settings in ${pre.where.split(',')[0]}: the Vector view is the trace at the placed size ("${pre.lab}", ${pre.ops.toLocaleString('en')} points, ${pre.last.ms} ms), the panel says it was simplified ("${(pre.note.match(/Simplified to fit:[^.]*\./) || [''])[0]}") and the button "${pre.btn}"; nothing placed yet`,
+      pre.lab === 'Vector · as engraved' && /Simplified to fit:/.test(pre.note) && /exactly what will be engraved/.test(pre.note) && pre.btn === 'Place on charm · simplified' && pre.last.simplified && pre.ops <= kit.IM.BUDGET.ops && pre.untouched, JSON.stringify(pre));
+    await page.click('.cei [data-do="place"]');
+    await page.waitForFunction(() => !document.querySelector('.cei'), null, { timeout: 120000 }); await settleP(page);
+    const pl = await page.evaluate(() => {
+      const E = CharmEditor.current, its = E.items(), g = its[its.length - 1];
+      return { id: g.id, kind: g.kind, ops: CharmNestCeImage.sizeOf(g.children).ops, kids: g.children.length, ms: CharmNestCeImage.stats().placeMs };
+    });
+    check(`C2 Place puts exactly what the Vector view showed: ONE group of ${pl.kids} greys, ${pl.ops.toLocaleString('en')} points (the preview's ${pre.ops.toLocaleString('en')}), in ${pl.ms} ms (the preview's trace taken as it is)`,
+      pl.kind === 'group' && pl.ops === pre.ops && pl.kids >= 12, JSON.stringify(pl));
+    // the editor with that picture: a nudge of it, measured to the next painted frame
+    const nudge = await page.evaluate(async id => {
+      const E = CharmEditor.current; E.ctx.select([id]); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const t0 = performance.now(); window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return Math.round(performance.now() - t0);
+    }, pl.id);
+    await page.keyboard.press('Control+z'); await settleP(page);
+    check(`C3 the editor moves a ${pl.ops.toLocaleString('en')}-point picture to the next painted frame in ${nudge} ms`, nudge < 1500, String(nudge));
+    await page.click('.ce-root [data-act="save"]');
+    for (let t0 = Date.now(); Date.now() - t0 < 120000 && !st.doc('Charm_Pool_Art', PID + '~front'); ) await new Promise(r => setTimeout(r, 200));
+    await R.settle(page, 1200);
+    const rec = st.doc('Charm_Pool_Art', PID + '~front'), greys = rec ? rec.added.filter(e => e.artGrey) : [], file = rec && rec.blob ? st.blobs.get(rec.blob.path) : null;
+    const recBytes = rec ? Buffer.byteLength(JSON.stringify(rec)) : 0, inFile = greys.filter(e => Number.isInteger(e.bi) && e.d == null), inline = greys.filter(e => e.d != null);
+    const opsOf = d => (String(d).match(/[MLCZ]/g) || []).length, inlineOps = inline.reduce((a, e) => a + opsOf(e.d), 0);
+    check(`C4 Save: the record (${Math.round(recBytes / 1000)} KB) names the picture's file (${rec && rec.blob && rec.blob.path}, ${file ? Math.round(file.buf.length / 1000) : '?'} KB gzipped, ${rec && rec.blob && rec.blob.ops.toLocaleString('en')} operators): ${inFile.length} of its ${greys.length} grey parts keep their paths there, the ${inline.length} smallest (${inlineOps.toLocaleString('en')} operators) in the record`,
+      !!rec && !!file && /^charmnest\/art-blob\/[0-9a-f]{32}\.json\.gz$/.test(rec.blob.path) && recBytes < 600000 && greys.length === pl.kids && inFile.length >= 1 && inFile.length + inline.length === greys.length && rec.blob.ops + inlineOps === pl.ops,
+      JSON.stringify(rec && Object.assign({}, rec, { added: rec.added.map(e => [e.id, e.bi, e.d && e.d.length]) })));
+    await R.openEngraveDetail(w, 'cal', { face: 'front' }); await R.settle(page, 900);
+    // the record read again from the cloud as another computer reads it (artList, then its file through the asset door), and the sheet's laser file written from it
+    const back = await page.evaluate(async ([id, at]) => {
+      CharmNestArtEdit.forget();
+      await CharmNestArtEdit.load([{ poolId: id, face: 'front', at }]);
+      const r = CharmNestArtEdit.cached(id, 'front'), ops = d => (String(d).match(/[MLCZ]/g) || []).length;
+      const ch = Pool.charmOf(id), t0 = performance.now(), bytes = await CharmNestPDF.buildSheet({ sheet: { wPt: 120, hPt: 130 }, placements: [{ charm: ch, angle: 0, cxPt: 60, cyPt: 65, scale: 1 }], sources: new Map([[ch.sourceId, (sourceOf(ch.sourceId) || {}).parsed]]), title: 'image' });
+      const ms = Math.round(performance.now() - t0), p = await CharmNestPDF.parseSource(new Uint8Array(bytes), 'sheet.ai'), forms = p.segments.filter(s => s.kind === 'xobj');
+      const greyKids = forms.length ? forms[0].children.filter(k => k.kind === 'path' && k.fill && k.fillRGB[0] === k.fillRGB[1] && k.fillRGB[1] === k.fillRGB[2] && k.fillRGB[0] > 0.001 || (k.kind === 'path' && k.fill && k.fillRGB.join() === '0,0,0')) : [];
+      return { members: ch.members.length, memberGreys: ch.members.filter(m => m.artGrey).length, forms: forms.length, kids: forms.length ? forms[0].children.length : 0, parts: r.added.filter(e => e.artGrey).length, inRec: r.added.filter(e => e.artGrey).reduce((a, e) => a + ops(e.d), 0), noBi: r.added.every(e => e.bi == null),
+        sheetOps: greyKids.reduce((a, k) => a + k.subpaths.reduce((b, sp) => b + sp.length, 0), 0), bytes: bytes.length, ms };
+    }, [PID, rec.at]);
+    check(`C5 read back from the cloud, every path is whole again (${back.parts} parts, ${back.inRec.toLocaleString('en')} operators), and the sheet's laser file holds them in full (${back.sheetOps.toLocaleString('en')} operators in its grey fills; ${Math.round(back.bytes / 1000)} KB, written in ${back.ms} ms)`,
+      back.parts === pl.kids && back.noBi && back.inRec === pl.ops && back.sheetOps >= pl.ops * 0.99, JSON.stringify(back));
+    check('C6 no page error', w.errors.length === 0, JSON.stringify(w.errors).slice(0, 400));
+  } finally { await w.close(); }
+}
+
 (async () => {
   const kit = await nodeKit();
-  if (ONLY !== 'B') await partA(kit);
-  if (ONLY !== 'A') await partB(kit);
+  if (!ONLY || ONLY === 'A') await partA(kit);
+  if (!ONLY || ONLY === 'B') await partB(kit);
+  if (!ONLY || ONLY === 'C') await partC(kit);
   const bad = RESULTS.filter(r => !r.ok);
   console.log(`\n${RESULTS.length - bad.length}/${RESULTS.length} checks pass`);
   process.exit(bad.length ? 1 : 0);

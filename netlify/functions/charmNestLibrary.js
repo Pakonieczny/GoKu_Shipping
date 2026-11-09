@@ -2771,9 +2771,34 @@ const ART = "Charm_Pool_Art";
 const ART_FACES = new Set(["front", "back"]), ART_ROLES = new Set(["cut", "line", "hatch", "art"]), ART_KINDS = new Set(["path", "text"]);
 const ART_MEMBER = /^\d{1,5}-[0-9a-z]{1,13}$/, ART_ITEM = /^[A-Za-z0-9_.:-]{1,64}$/, ART_KEY = /^[0-9a-z]{1,13}$/;
 const ART_MAX = { bytes: 600000, removed: 2000, changed: 2000, added: 400, ops: 60000, d: 200000, coord: 20000, lwPt: 20, weightMm: 5, text: 200, list: 200 };
-/** The number of path operators in `d` (M x y · L x y · C x1 y1 x2 y2 x y · Z), or 0 when it is not a path this app writes: another letter, a number out of range, a path that does not start with M. */
-function artPathOps(d) {
-  if (typeof d !== "string" || !d || d.length > ART_MAX.d) return 0;
+/* (TQ1, Paul 9 Nov 2026: "When I vectorize an image, it looks really good in a preview, but then when it gets applied to the actual charm ... it loses all its fidelity and quality") A traced
+   photograph at the detail its preview shows is far more than one record holds (a cat at 16 greys, Detail 100, on a 10 mm charm: 115 000 path operators, 4.2 MB of path; the record holds
+   600 KB, so the Image step simplified it into blobs to fit). Its big paths are not kept in the record: the page sends them with the save, gzipped (blob: base64 of the gzip of
+   JSON { v: 1, ds: [d, …] }), each added part that is in it says which (bi: its index, no d of its own), and they are kept as ONE file in Storage named by its own SHA-256
+   (charmnest/[sandbox/]art-blob/<32 hex>.json.gz, never changed: the same paths are the same file, so a file is never deleted while a record might name it). The record names it
+   (blob { key, path, url, gz, n, ops }); the page reads it through charmNestAsset (the asset door) wherever it reads a record (charm-nest-art-edit.js load), so everything that draws the piece or
+   writes its laser file has the whole of every path. Every path in it is checked here as the record's own are (M L C Z, numbers within ±coord), within ART_BLOB: gz under one function call's
+   6 MB as base64; ops 250 000 (the Image step asks at most 200 000 for one picture, charm-nest-ce-image.js IMAGE_BUDGET: measured, its laser file is written in seconds). A cut line is never in it
+   (the cut key is made from the record's own paths). */
+const ART_BLOB = { gz: 4200000, json: 12000000, d: 4000000, ops: 250000, ds: 64 }, ART_BLOB_KEY = /^[0-9a-f]{32}$/;
+const artBlobPath = key => (PREFIX ? "charmnest/sandbox/art-blob/" : "charmnest/art-blob/") + key + ".json.gz";
+/** The paths a save sent beside its record: { ds, key, gz (the bytes as sent), n (the JSON's length) } | { error } | null (none sent). */
+function artBlobOf(b) {
+  if (b == null || b === "") return null;
+  const raw = String(b).replace(/^data:[a-z]+\/[a-z0-9.+-]+;base64,/i, "");
+  if (raw.length > Math.ceil(ART_BLOB.gz / 3) * 4 + 8) return { error: `the picture's paths are ${Math.ceil(raw.length * 0.75 / 1e6 * 10) / 10} MB gzipped; one piece keeps at most ${ART_BLOB.gz / 1e6} MB` };
+  let gz, text;
+  try { gz = Buffer.from(raw, "base64"); text = require("zlib").gunzipSync(gz, { maxOutputLength: ART_BLOB.json }).toString("utf8"); }
+  catch (_) { return { error: `the picture's paths are not a gzip of at most ${ART_BLOB.json / 1e6} MB` }; }
+  let j; try { j = JSON.parse(text); } catch (_) { return { error: "the picture's paths are not JSON" }; }
+  const ds = j && j.v === 1 && Array.isArray(j.ds) ? j.ds : null;
+  if (!ds || !ds.length || ds.length > ART_BLOB.ds || ds.some(d => typeof d !== "string")) return { error: `the picture's paths are { v: 1, ds: [1 to ${ART_BLOB.ds} path strings] }` };
+  return { ds, gz, n: text.length, key: require("crypto").createHash("sha256").update(text).digest("hex").slice(0, 32) };
+}
+/** The number of path operators in `d` (M x y · L x y · C x1 y1 x2 y2 x y · Z), or 0 when it is not a path this app writes: another letter, a number out of range, a path that does not start with M.
+ *  max: its longest (ART_MAX.d in a record, ART_BLOB.d in a picture's file). */
+function artPathOps(d, max) {
+  if (typeof d !== "string" || !d || d.length > (max || ART_MAX.d)) return 0;
   const tok = d.match(/[MLCZ]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|\S/g) || [], need = { M: 2, L: 2, C: 6, Z: 0 };
   let i = 0, ops = 0, started = false;
   while (i < tok.length) {
@@ -2788,14 +2813,20 @@ function artPathOps(d) {
 const artFnv = s => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(36); };
 /** A colour as [r, g, b] in 0..1, null for none, undefined when it is not a colour. */
 const artRgb = v => v == null || v === false ? null : Array.isArray(v) && v.length === 3 && v.every(x => typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= 1) ? v.map(x => Math.round(x * 1000) / 1000) : undefined;
-function artItem(x, keyId) {
+function artItem(x, keyId, blob) {
   const no = why => ({ error: `${keyId || (x && x.id) || "an item"}: ${why}` });
   if (!x || typeof x !== "object" || Array.isArray(x)) return no("not an item");
   const id = keyId || str(x.id, 64); if (!ART_ITEM.test(id)) return no("its id is not a short name");
   const role = String(x.role || ""); if (!ART_ROLES.has(role)) return no("its role must be cut, line, hatch or art");
   const kind = x.kind == null ? "path" : String(x.kind); if (!ART_KINDS.has(kind)) return no("its kind must be path or text (text as outlines)");
-  const ops = artPathOps(x.d); if (!ops) return no(`its path is not M / L / C / Z with numbers within ±${ART_MAX.coord} pt`);
-  const out = { id, kind, role, d: x.d };
+  // (TQ1) a big path kept in the picture's file: bi, its index there (an added part only, never a cut line); its operators count toward the file's, not the record's
+  const inBlob = x.bi != null && !keyId;
+  if (inBlob) {
+    if (!blob || !Number.isInteger(x.bi) || x.bi < 0 || x.bi >= blob.ds.length) return no("its path is in the picture's file (bi), but the save sent no such path");
+    if (role === "cut") return no("a cut line is kept in the record itself, never in the picture's file");
+  }
+  const ops = inBlob ? artPathOps(blob.ds[x.bi], ART_BLOB.d) : artPathOps(x.d); if (!ops) return no(`its path is not M / L / C / Z with numbers within ±${ART_MAX.coord} pt`);
+  const out = inBlob ? { id, kind, role, bi: x.bi } : { id, kind, role, d: x.d };
   if (keyId && x.keep === true) out.keep = true;
   else { const stroke = artRgb(x.stroke), fill = artRgb(x.fill); if (stroke === undefined || fill === undefined) return no("a colour is [r, g, b] from 0 to 1"); if (!stroke && !fill) return no("it is neither stroked nor filled"); out.stroke = stroke; out.fill = fill; }
   if (x.lwPt != null) { const lw = Number(x.lwPt); if (!Number.isFinite(lw) || lw < 0 || lw > ART_MAX.lwPt) return no(`its line width is 0 to ${ART_MAX.lwPt} pt`); out.lwPt = Math.round(lw * 1000) / 1000; }
@@ -2805,10 +2836,10 @@ function artItem(x, keyId) {
   if (x.group != null) { const g = str(x.group, 64); if (!ART_ITEM.test(g)) return no("its group is not a short name"); out.group = g; }
   // (Design & Engrave, 28 Oct 2026: a traced image's part keeps its own grey to the laser's file, so it says so: a grey fill [g, g, g] and no line)
   if (x.artGrey === true) { const f = out.fill; if (!f || out.stroke || Math.max(f[0], f[1], f[2]) - Math.min(f[0], f[1], f[2]) > 0.001) return no("a grey part is a grey fill [g, g, g] with no line"); out.artGrey = true; }
-  return { item: out, ops };
+  return { item: out, ops, blobOps: inBlob ? ops : 0 };
 }
-/** The record a page sent, checked whole: { art, cutKey } or { error }. */
-function cleanArt(a) {
+/** The record a page sent, checked whole: { art, cutKey } or { error }. blob: the paths sent beside it (artBlobOf), whose parts name them by bi. */
+function cleanArt(a, blob) {
   if (!a || typeof a !== "object" || Array.isArray(a)) return { error: "the artwork edit is missing" };
   const size = bytesOf(a); if (size > ART_MAX.bytes) return { error: `the artwork edit is ${Math.ceil(size / 1000)} KB; one piece's edit is at most ${ART_MAX.bytes / 1000} KB` };
   const baseKey = str(a.baseKey, 13); if (!ART_KEY.test(baseKey)) return { error: "the artwork edit does not say which master drawing it was made on (baseKey)" };
@@ -2827,14 +2858,17 @@ function cleanArt(a) {
   }
   const list = Array.isArray(a.added) ? a.added : []; if (list.length > ART_MAX.added) return { error: `added: at most ${ART_MAX.added} new parts on one piece` };
   const added = [], seen = new Set();
-  for (const x of list) { const r = artItem(x); if (r.error) return { error: "added " + r.error }; if (seen.has(r.item.id)) return { error: `added ${r.item.id}: the id is used twice` }; seen.add(r.item.id); added.push(r.item); ops += r.ops; }
+  let blobOps = 0; const used = new Set();
+  for (const x of list) { const r = artItem(x, null, blob); if (r.error) return { error: "added " + r.error }; if (seen.has(r.item.id)) return { error: `added ${r.item.id}: the id is used twice` }; seen.add(r.item.id); added.push(r.item); if (r.blobOps) { blobOps += r.blobOps; if (used.has(r.item.bi)) return { error: `added ${r.item.id}: two parts name one path of the picture's file` }; used.add(r.item.bi); } else ops += r.ops; }
   if (ops > ART_MAX.ops) return { error: `the artwork edit has ${ops} path operators; one piece's edit is at most ${ART_MAX.ops}` };
+  if (blob && used.size !== blob.ds.length) return { error: "the picture's file holds a path no part of the edit names" };
+  if (blobOps > ART_BLOB.ops) return { error: `the picture's paths have ${blobOps} operators; one piece keeps at most ${ART_BLOB.ops} (place it smaller, or use fewer levels)` };
   const cutIds = [...new Set(ids(a.cutIds))].filter(x => removed.includes(x) || Object.prototype.hasOwnProperty.call(changed, x) || !keys.includes(x));   // (EDITSAVE: a part left out above is no cut line changed)
   if (cutIds.some(x => !removed.includes(x) && !Object.prototype.hasOwnProperty.call(changed, x))) return { error: "cutIds names a part that is neither removed nor changed" };
   const cutItems = Object.keys(changed).filter(k => changed[k].role === "cut").map(k => [k, changed[k].d]).concat(added.filter(x => x.role === "cut").map(x => [x.id, x.d]));
   const cut = cutIds.length > 0 || cutItems.length > 0;
   const cutKey = cut ? require("crypto").createHash("sha256").update(JSON.stringify([cutIds.slice().sort(), cutItems.sort((p, q) => (p[0] < q[0] ? -1 : p[0] > q[0] ? 1 : 0))])).digest("hex").slice(0, 16) : "";
-  return { art: { v: 1, baseKey, removed, cutIds, changed, added, cut }, cutKey };
+  return { art: { v: 1, baseKey, removed, cutIds, changed, added, cut }, cutKey, blobOps };
 }
 const artOut = r => { if (!r) return null; const o = Object.assign({}, r); o.updatedAt = ms(o.updatedAt); return o; };
 async function op_artPut(b) {
@@ -2843,8 +2877,11 @@ async function op_artPut(b) {
   const by = str(b.by, 80).trim(); if (!by) return { error: "an artwork edit needs the name of the signed-in person who made it", status: 400 };
   const clear = b.clear === true; let art = null, cutKey = "";
   if (!clear) {
-    const c = cleanArt(b.art); if (c.error) return { error: c.error, status: 400 }; art = c.art; cutKey = c.cutKey;
+    const blob = artBlobOf(b.blob); if (blob && blob.error) return { error: blob.error, status: 400 };
+    const c = cleanArt(b.art, blob); if (c.error) return { error: c.error, status: 400 }; art = c.art; cutKey = c.cutKey;
     if (face === "back" && (art.removed.length || Object.keys(art.changed).length || art.cut)) return { error: "the back shows only the cut lines: on the back, parts are added; the drawing is changed on the front", status: 400 };
+    // (TQ1) the picture's paths kept before the record names them (a file named by its own bytes: one already there is the same paths, and is not written again)
+    if (blob) { const f = await designFile(artBlobPath(blob.key), blob.gz, "application/octet-stream"); art.blob = { key: blob.key, path: f.path, url: f.url, gz: blob.gz.length, n: blob.n, ops: c.blobOps }; }
   }
   const key = Faces.recKey(poolId, face), ref = col(ART).doc(key), poolRef = col(POOL).doc(poolId);
   return db.runTransaction(async tx => {
@@ -4896,9 +4933,22 @@ async function designFile(path, buf, contentType) {
   await bucket.file(path).save(buf, { resumable: false, contentType, metadata: { cacheControl: "public, max-age=31536000", metadata: { firebaseStorageDownloadTokens: token, uploadedBy: "charm-nest-designs" } } });
   return { path, url: designUrl(bucket.name, path, token) };
 }
+/* (TQ1, Paul 9 Nov 2026) a design holding a photograph traced at its full detail (a cat at 16 greys on a 10 mm charm: 4.2 MB of path) is more than one function call carries as JSON:
+   the page sends it gzipped (designGz: base64 of the gzip of the design's JSON, its faces as a version keeps them, path strings: Designs.encodeFaces), and a version that big is
+   answered by designGet with the link to its faces in Storage (facesUrl, read through charmNestAsset) rather than inline: an answer is at most 6 MB. */
+const DESIGN_WIRE = { gz: 4200000, inlineGet: 2500000 };
+function designOf(b) {
+  if (b.designGz == null || b.designGz === "") return b.design;
+  const raw = String(b.designGz);
+  if (raw.length > Math.ceil(DESIGN_WIRE.gz / 3) * 4 + 8) return { error: `the design is ${Math.ceil(raw.length * 0.75 / 1e5) / 10} MB gzipped; one save carries at most ${DESIGN_WIRE.gz / 1e6} MB` };
+  let d; try { d = JSON.parse(require("zlib").gunzipSync(Buffer.from(raw, "base64"), { maxOutputLength: Designs.LIMITS.bytes + 1000000 }).toString("utf8")); } catch (_) { return { error: "the design sent is not a gzip of its JSON" }; }
+  if (d && typeof d === "object" && d.facesStored === true) { delete d.facesStored; if (d.faces && typeof d.faces === "object") d.faces = Designs.decodeFaces(d.faces); }
+  return d;
+}
 async function op_designPut(b) {
   const by = str(b.by, 80).trim(); if (!by) return { error: "a design is saved with the name of the signed-in person who made it", status: 400 };
-  const c = Designs.clean(b.design); if (c.error) return { error: c.error, status: 400 };
+  const sent = designOf(b); if (sent && sent.error && !sent.faces) return { error: sent.error, status: 400 };
+  const c = Designs.clean(sent); if (c.error) return { error: c.error, status: 400 };
   const crypto = require("crypto"), d = c.design, hash = Designs.sha256Sync(Designs.canonical(d));
   const id = d.id || "d" + Date.now().toString(36) + crypto.randomBytes(3).toString("hex"), base = PREFIX ? "charmnest/sandbox/designs/" : "charmnest/designs/";
   let thumb = null;
@@ -4959,9 +5009,11 @@ async function op_designGet(b) {
   if (!v) { const s = await ref.get(); v = s.exists ? num((s.data() || {}).version) : 0; if (!v) return { design: null }; }
   const s = await ref.collection("versions").doc(String(v)).get(); if (!s.exists) return { design: null };
   const x = s.data() || {};
-  let stored = x.faces;
-  if (!stored && x.facesPath) { const [buf] = await admin.storage().bucket().file(String(x.facesPath)).download(); stored = JSON.parse(require("zlib").gunzipSync(buf).toString("utf8")); }
-  const design = { id, version: v, name: x.name, faces: Designs.decodeFaces(stored || {}), widthMm: x.widthMm, heightMm: x.heightMm, source: x.source || null, orderId: x.orderId || null, customName: x.customName || null, by: x.by, at: num(x.at), hash: x.hash, thumbUrl: x.thumbUrl || null };
+  let stored = x.faces, facesUrl = null;
+  // (TQ1) a version too big to answer inline: the link to its faces (the page reads and unzips them, CharmNestDesigns.get)
+  if (!stored && x.facesPath && num(x.bytes) > DESIGN_WIRE.inlineGet) { const f = await designFileAt(String(x.facesPath)); if (f) facesUrl = f.url; }
+  if (!stored && x.facesPath && !facesUrl) { const [buf] = await admin.storage().bucket().file(String(x.facesPath)).download(); stored = JSON.parse(require("zlib").gunzipSync(buf).toString("utf8")); }
+  const design = { id, version: v, name: x.name, faces: facesUrl ? null : Designs.decodeFaces(stored || {}), ...(facesUrl ? { facesUrl, facesGz: true } : {}), widthMm: x.widthMm, heightMm: x.heightMm, source: x.source || null, orderId: x.orderId || null, customName: x.customName || null, by: x.by, at: num(x.at), hash: x.hash, thumbUrl: x.thumbUrl || null };
   if (b.history !== true) return { design };
   const h = await ref.collection("versions").orderBy("version", "desc").limit(100).select(...DESIGN_HISTORY).get();
   return { design, history: h.docs.map(d => Object.fromEntries(DESIGN_HISTORY.map(k => [k, (d.data() || {})[k] === undefined ? null : (d.data() || {})[k]]))) };

@@ -10,6 +10,12 @@
 //       30 mm: IoU against the drawing itself at 8 × its pixels, the thin lines kept (the share of each one's middle inked), the gaps kept open, and how far the
 //       vector's edge is from the drawing's (mean and 99th percentile, in the drawing's pixels).
 //   (c) repeatability: the same picture and settings traced twice, by trace() and traceSync(), and through Place twice: the same paths, point for point.
+//   (d) (TQ1, Paul 9 Nov 2026: "When I vectorize an image, it looks really good in a preview, but then when it gets applied to the actual charm ... it loses all its fidelity")
+//       his case: a cat-like picture (1800 × 2400: fine fur strokes, eyes, whiskers 2 px wide) at Levels 16, Detail 100, Smoothness 100, Despeckle 0, placed 9.96 mm long:
+//       the quick look the page used to show (280 px, no budget) against what Place puts on the charm, both against the picture at the placed size (40 px a mm): the blurred
+//       grey error and the FINE DETAIL KEPT (the correlation of the detail finer than 3 px: fur and whiskers; posterised blobs keep none of it). Measured 9 Nov 2026:
+//       before (QUALITY_BEFORE, the 450 KB budget): Place simplified 3 steps, 6 990 operators, blurred 4.47, fine detail 0.765; the quick look 3.94 / 0.894.
+//       After: not simplified, 114 658 operators (4.2 MB of path, kept beside the piece's record), blurred 1.81, fine detail 0.913.
 //   node tests/charm-nest/ce-trace-quality.cjs        (QUALITY_BEFORE=<dir holding ce-trace.base.js and ce-image.base.js> measures the old code the same way;
 //                                                      SHOTS=<dir> writes the pictures and the vectors drawn back as PNG)
 'use strict';
@@ -259,7 +265,33 @@ function place(src, settings, longMm) {
   return { res, size, fits: IM.fits(size), px: res.width, placeMs: now() - t0, tries };
 }
 
-module.exports = { photo, drawing, down, render, reference, photoQuality, lineQuality, place, kept, png, raster };
+/** (TQ1) A cat-like picture, W × H RGBA: a light ground, an oval head shaded, 60 000 short fur strokes, two eyes with slit pupils, twelve whiskers 2 px wide, a little grain. */
+function cat(W, H) {
+  const d = new Uint8ClampedArray(W * H * 4); let seed = 7; const rnd = () => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) / 0x7fffffff);
+  const g = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const u = x / W, v = y / H, hx = (u - 0.5) / 0.42, hy = (v - 0.55) / 0.4, r = hx * hx + hy * hy; g[y * W + x] = r < 1 ? 0.55 + 0.25 * Math.sin(u * 9) * Math.cos(v * 7) - 0.2 * r : 0.85 - 0.2 * v; }
+  for (let s = 0; s < 60000; s++) {
+    const x0 = rnd() * W, y0 = rnd() * H, a = 1.2 + 0.6 * rnd() + (x0 / W - 0.5), L = 10 + 30 * rnd(), dv = (rnd() - 0.5) * 0.35, wd = 0.7 + rnd();
+    for (let t = 0; t < L; t += 0.5) { const x = Math.round(x0 + Math.cos(a) * t), y = Math.round(y0 + Math.sin(a) * t); for (let k = 0; k < wd; k++) { if (x >= 0 && x < W && y + k >= 0 && y + k < H) { const i = (y + k) * W + x; g[i] = Math.max(0, Math.min(1, g[i] + dv * 0.5)); } } }
+  }
+  for (const ex of [0.36, 0.64]) for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const dx = (x / W - ex) / 0.08, dy = (y / H - 0.45) / 0.05, r = dx * dx + dy * dy; if (r < 1) g[y * W + x] = Math.abs(dx) < 0.2 ? 0.02 : 0.75 - 0.4 * r; }
+  for (let k = 0; k < 12; k++) { const side = k < 6 ? -1 : 1, yy = 0.62 + (k % 6) * 0.015; for (let t = 0; t < 1; t += 0.0005) { const x = Math.round(W * (0.5 + side * (0.06 + 0.4 * t))), y = Math.round(H * (yy + (k % 6 - 2.5) * 0.02 * t + 0.03 * t * t)); for (let j = 0; j < 2; j++) if (y + j < H && x >= 0 && x < W) g[(y + j) * W + x] = 0.97; } }
+  for (let i = 0; i < W * H; i++) { const c = Math.round(255 * Math.max(0, Math.min(1, g[i] + (rnd() - 0.5) * 0.05))); d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = c; d[i * 4 + 3] = 255; }
+  return { data: d, width: W, height: H };
+}
+/** (TQ1) The detail finer than 3 px of a grey picture W × H (a blur of 0.7 px less a blur of 3 px): fur, whiskers, an eye's rim. */
+function fine(v, W, H) { const a = blur(v, W, H, 0.7), b = blur(v, W, H, 3), out = new Float32Array(v.length); for (let i = 0; i < v.length; i++) out[i] = a[i] - b[i]; return out; }
+/** (TQ1) Pearson's correlation of two equal-length arrays. */
+function corr(x, y) { let mx = 0, my = 0; for (let i = 0; i < x.length; i++) { mx += x[i]; my += y[i]; } mx /= x.length; my /= y.length; let sxy = 0, sx = 0, sy = 0; for (let i = 0; i < x.length; i++) { const a = x[i] - mx, b = y[i] - my; sxy += a * b; sx += a * a; sy += b * b; } return sxy / Math.sqrt(sx * sy || 1); }
+/** (TQ1) The quick look as the page made its whole preview before TQ1: the picture shown at most 560 px (the browser's drawImage: an average of the numbers), its grey drawn down to 280,
+ *  traced with no budget at 280 px over the placed size. */
+function quickLook(pic, settings, longMm) {
+  const fit = (w, h, m) => { const k = Math.min(1, m / Math.max(w, h)); return [Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k))]; };
+  const st = IM.norm(settings), [sw, sh] = fit(pic.width, pic.height, 560), show = down(pic, sw, sh, false), g560 = IM.greyImage(show.data, sw, sh, st), [pw, ph] = fit(sw, sh, 280), g280 = down(g560, pw, ph, false);
+  return T.traceSync(g280, IM.traceOpts(st, Math.max(pw, ph) / longMm));
+}
+
+module.exports = { photo, drawing, down, render, reference, photoQuality, lineQuality, place, kept, png, raster, cat, fine, corr, quickLook };
 if (require.main !== module) return;
 
 (async () => {
@@ -317,6 +349,19 @@ if (require.main !== module) return;
       assert.equal(crc(sync), crc(a.res), what + ': Place against its own input traced');
     }
     for (const l of out) say(l);
+  });
+  // (d) TQ1: Paul's cat at his settings and size, the quick look against what Place puts on the charm
+  await step('(d) Paul\'s case (TQ1): a cat-like picture at Levels 16, Detail 100, Smoothness 100, Despeckle 0, placed 9.96 mm: what is placed keeps the detail the preview shows', () => {
+    const S = { levels: 16, detail: 1, smooth: 1, despeckle: 0 }, MM9 = 9.96, cp = cat(1800, 2400), EW = 300, EH = 400, cref = reference(cp, EW, EH), fr = fine(cref, EW, EH);
+    const ql = quickLook(cp, S, MM9), qq = photoQuality(ql, cref, EW, EH), fq = corr(fr, fine(qq.grey, EW, EH));
+    const p = place(cp, S, MM9), qp = photoQuality(p.res, cref, EW, EH), fp = corr(fr, fine(qp.grey, EW, EH)), w = p.res.work;
+    say(`${tag}: the quick look (280 px, no budget) ${IM.sizeOf(ql.layers).ops} operators: blurred grey error ${qq.maeBlur.toFixed(2)} · fine detail kept ${fq.toFixed(3)}`);
+    say(`${tag}: Place traced at ${w ? w.width + ' × ' + w.height : p.px + ' px'}${w ? `, simplified ${w.simplified} steps, made smaller ${w.shrunk + (p.tries || 0)} times` : ''}, ${p.size.ops} operators (${(p.size.bytes / 1e6).toFixed(2)} MB), Place ${p.placeMs.toFixed(0)} ms: blurred grey error ${qp.maeBlur.toFixed(2)} · grey error ${qp.mae.toFixed(2)} · fine detail kept ${fp.toFixed(3)}`);
+    if (SHOTS) { png(path.join(SHOTS, 'cat-source.png'), cref, EW, EH); png(path.join(SHOTS, 'cat-quick.png'), qq.grey, EW, EH); png(path.join(SHOTS, `cat-placed-${tag}.png`), qp.grey, EW, EH); }
+    if (!BEFORE) {
+      assert.ok(p.fits && !w.simplified && !w.shrunk && !p.tries, 'placed at its full detail');
+      assert.ok(qp.maeBlur <= qq.maeBlur + 0.2 && fp >= fq - 0.02 && fp > 0.88, `placed ${qp.maeBlur} / ${fp} against the preview's ${qq.maeBlur} / ${fq}`);
+    }
   });
   console.log(`\n${results.length} passed, ${failures.length} failed`);
   if (failures.length) { console.log(failures.map(f => '  - ' + f).join('\n')); process.exit(1); }

@@ -61,8 +61,8 @@
  * level: an antialiased edge, which would engrave as a hairline ring round every shape) join the level they border most. Measured (circles in four greys,
  * supersampled 4 × 4): the bands overlap on 0.007 % of the ink, in slivers under a fifth of a pixel, and add up to M_(N-1) within 0.02 %.
  *
- * THE BUDGET (TRACEHQ): a piece's record holds 600 KB of paths (charmNestLibrary.js ART_MAX; the Image step asks 450 KB of it), about 9 000 Béziers for the
- * whole picture. When what is traced passes it, the work stops and is done again a step simpler (SIMPLIFY: a wider, more tolerant bilateral smoothing, bigger
+ * THE BUDGET (TRACEHQ): what the caller says one picture may be (opts.budget; the Image step's BUDGET: since TQ1, 9 Nov 2026, 200 000 path operators, its paths
+ * kept in a file beside the piece's record rather than in it, whose 450 KB smoothed a photograph into blobs). When what is traced passes it, the work stops and is done again a step simpler (SIMPLIFY: a wider, more tolerant bilateral smoothing, bigger
  * specks merged, looser curves), going straight to the step its overshoot calls for; only past the last step is the working picture made smaller (by what the
  * overshoot says, the bytes going about as the pitch to the 0.85), and made a little bigger again once when that guess left it far under. Measured on a 5000 ×
  * 2500 photo at 8 levels: at the same bytes, a sharper picture smoothed more kept more of the face than a smaller one, up to a 4 px smoothing, and not past it.

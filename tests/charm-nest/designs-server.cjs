@@ -82,9 +82,10 @@ const hashOf = d => sha(D.canonical(D.clean(d).design));
     await bad({ design: design({ widthMm: 21 }) }, /cut line measures 20 × 15 mm/, 'a size that is not its cut line\'s (D6)');
     await bad({ design: design({ source: { kind: 'stolen' } }) }, /source/, 'a source that is none');
     await bad({ design: design({ orderId: 'abc' }) }, /order number or CUSTOM/, 'an order that is none');
-    await bad({ design: design({ faces: { front: { face: 'front', items: [{ id: 'outline', kind: 'path', role: 'cut', subpaths: [rect(0, 0, W, H)] }, { id: 'many', kind: 'path', role: 'line', subpaths: [[['m', [0, 0]]].concat(Array.from({ length: 300001 }, (_, i) => ['l', [i % 50, 1]]))] }] } } }) }, /path operators/, '300 002 operators');
-    const huge = Array.from({ length: 72000 }, (_, i) => ['c', [12345.678 - i % 7, -12345.671], [12345.672, -12345.673], [12345.674, -12345.675]]);
-    await bad({ design: design({ faces: { front: { face: 'front', items: [{ id: 'outline', kind: 'path', role: 'cut', subpaths: [rect(0, 0, W, H)] }, { id: 'big', kind: 'path', role: 'line', subpaths: [[['m', [0, 0]]].concat(huge)] }] } } }) }, /KB; one version is at most 4000 KB/, 'a version of over 4 MB');
+    await bad({ design: design({ faces: { front: { face: 'front', items: [{ id: 'outline', kind: 'path', role: 'cut', subpaths: [rect(0, 0, W, H)] }, { id: 'many', kind: 'path', role: 'line', subpaths: [[['m', [0, 0]]].concat(Array.from({ length: D.LIMITS.ops + 1 }, (_, i) => ['l', [i % 50, 1]]))] }] } } }) }, /path operators/, (D.LIMITS.ops + 2) + ' operators');
+    // (TQ1, 9 Nov 2026: a version holds up to 10 MB, 450 000 operators: one traced photograph at its full detail; 170 000 curves of these numbers are over 10 MB)
+    const huge = Array.from({ length: 170000 }, (_, i) => ['c', [12345.678 - i % 7, -12345.671], [12345.672, -12345.673], [12345.674, -12345.675]]);
+    await bad({ design: design({ faces: { front: { face: 'front', items: [{ id: 'outline', kind: 'path', role: 'cut', subpaths: [rect(0, 0, W, H)] }, { id: 'big', kind: 'path', role: 'line', subpaths: [[['m', [0, 0]]].concat(huge)] }] } } }) }, new RegExp('KB; one version is at most ' + D.LIMITS.bytes / 1000 + ' KB'), 'a version of over ' + D.LIMITS.bytes / 1e6 + ' MB');
     await bad({ thumb: Buffer.from('GIF89a not a png').toString('base64') }, /PNG/, 'a picture that is no PNG');
     eq(docs(), 0, 'A nothing was written by any refusal');
 
