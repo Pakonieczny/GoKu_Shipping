@@ -3,7 +3,7 @@
 //   · the same listing is matched at the granularity the matcher reads a link at: listing + SKU (alias), or listing + the option value that gives the charm (option); another option value,
 //     another SKU or another listing is never touched
 //   · not made yet → "design"; pooled or on an open sheet → "swap"; cut / committed / released / protected contour → "flag" (held for a person only when this page holds the sheet and the line is
-//     not committed); in Review → "kept"; a person's own pick for the order wins; cancelled, gone, skipped → nothing
+//     not committed); in Review → "swap" (IPL2, Paul 9 Nov 2026: only a laser-cut sheet blocks); a person's own pick for the order wins; cancelled, gone, skipped → nothing
 //   · a second pass over the state after the swaps answers "none" for every line (idempotent)
 //   node tests/charm-nest/listing-pick-relink.cjs
 'use strict';
@@ -88,13 +88,13 @@ const decide = (rows, prev, next, w) => {
   eq([act(released.key), out[released.key].hold], ['flag', true], 'a piece on a sheet released to the laser: flagged and held (its set waits)');
   eq([act(contour.key), /protected Rose Gold contour/.test(out[contour.key].why)], ['flag', true], 'a piece inside a protected Rose Gold contour: flagged');
   eq([act(done.key), out[done.key].hold, out[done.key].to], ['flag', false, 'FEATHER_4102'], 'a committed line (cut, its set committed) is read on the side and TOLD, never held or changed');
-  eq(act(review.key), 'kept', 'an order in Review keeps its piece on its sheet (REVHOLD) until the Review is resolved');
+  eq(act(review.key), 'swap', 'an order in Review takes the picked charm too (IPL2, Paul 9 Nov 2026: only a laser-cut sheet blocks the exchange; its Review stays)');
   eq([act(own.key), /a person picked FEATHER_B/.test(out[own.key].why)], ['skip', true], 'a person\'s own pick for that order (another charm) wins over the listing\'s');
   eq(act(twin.key), 'none', 'a piece already the picked drawing under another name: nothing to do');
-  pass('A · the corrected order, the unpooled one and the nested one are updated; cut, released, contour and committed lines are flagged; Review, own pick, gone and another listing are left');
+  pass('A · the corrected order, the unpooled one and the nested one are updated; cut, released, contour and committed lines are flagged; own pick, gone and another listing are left; an order in Review is updated too (IPL2)');
 
   /* ── B · the second pass: after the swaps nothing is left to do ── */
-  for (const r of [picked, nested, pooledOnly]) w.pool.get(r.poolIds[0]).sku = 'FEATHER_4102';
+  for (const r of [picked, nested, pooledOnly, review]) w.pool.get(r.poolIds[0]).sku = 'FEATHER_4102';   // (IPL2: the order in Review was swapped too)
   const again = {}; for (const e of snap) again[e.key] = L.classify(e, w.h(AFTER));
   for (const r of [picked, fresh, nested, pooledOnly, twin]) ok(['none', 'design'].includes(again[r.key].action) && (r !== fresh || again[r.key].action === 'design'), `${r.key}: ${again[r.key].action}`);
   // a second sweep from the same maps (snapshot taken AFTER: the lines already read the pick) finds nothing at all
@@ -140,14 +140,14 @@ const decide = (rows, prev, next, w) => {
   asks.spec.problems = [{ kind: 'needsMaterial' }];
   const out = {}; for (const e of snap) out[e.key] = L.classify(e, w.h(AFTER));
   eq([out[skipped.key].action, out[noDesign.key].action], ['skip', 'skip'], 'a skipped line and a no-design line are left as they are');
-  eq([out[held.key].action, /held by a person/.test(out[held.key].why)], ['skip', true], 'a line a person holds with its piece still live is left to that person');
+  eq(out[held.key].action, 'swap', 'a line a person holds takes the picked charm too (IPL2: its hold stays on the line)');
   eq([out[asks.key].action, /question/.test(out[asks.key].why)], ['skip', true], 'a line that still asks a question is left to its question');
   eq([out[unknown.key].action, out[unknown.key].retry], ['skip', true], 'pieces the page has not read yet: asked again later, never guessed');
   // a held line whose pieces were taken off (abandoned): nothing to take off, it reads the pick and is made with it when released
   const heldOff = mk('4400000006', '46'); heldOff.hold = 'held'; w.pool.get(heldOff.poolIds[0]).state = 'abandoned';
   const s2 = L.snapshot([heldOff], BEFORE, AFTER, (r, m) => RL.linkOf(r, m)); read(heldOff, AFTER);
   eq(L.classify(s2[0], w.h(AFTER)).action, 'design', 'a held line whose pieces were taken off reads the new charm (it is made with it when released)');
-  pass('D · skipped, no design, held, asking and not-yet-read lines are never changed');
+  pass('D · skipped, no design, asking and not-yet-read lines are never changed; a held line takes the pick, its hold kept (IPL2)');
 }
 
 console.log(`listing-pick-relink: ${n} checks passed`);

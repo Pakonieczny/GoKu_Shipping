@@ -482,7 +482,9 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       const sr=sheets().doc(b.sheetId),sd=await tx.get(sr);
       if(!sd.exists)return {ok:true,changed:false,missing:true};
       const sheet=sd.data(),name=String((sheetLabel&&sheetLabel(sheet))||sheet.fileBase||'This sheet').slice(0,80);
-      if(!REOPEN_METALS.has(sheet.metal))throw new Error('Only a 10K or 14K Gold sheet changes after its green line');
+      // (IPL2, Paul 9 Nov 2026: "Unless the sheet has been laser cut, the update must be allowed to proceed": a charm REPLACED by an updated SKU or an updated charm from the repository (b.replace) sets
+      //  aside a Rose Gold sheet's green line too; a change by hand on Rose Gold stays refused, as before)
+      if(!REOPEN_METALS.has(sheet.metal)&&!(b.replace===true&&sheet.metal==='rose'))throw new Error('Only a 10K or 14K Gold sheet changes after its green line');
       const lasered=`${name} has been cut on the laser: its charms can no longer change`;
       if(+sheet.laserDoneAt>0)throw new Error(lasered);
       const set=id(sheet.setId)?await tx.get(col('Charm_Nest_Sets').doc(sheet.setId)):null;

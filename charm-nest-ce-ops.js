@@ -458,8 +458,8 @@
     const openSps = subpathsOfOperand(operand).filter(sub => !isClosed(sub) && (sub || []).length);
     const shape = subpathsOfOperand(operand).some(isClosed) ? shapeOf(tags, closedOnly(operand)) : [];
     const JT = join === 'round' ? L.JoinType.jtRound : join === 'bevel' ? L.JoinType.jtSquare : L.JoinType.jtMiter;
-    const co = new L.ClipperOffset(Math.max(1, num(miterLimit, 4)), ARC * SC);
-    bevelOn(co, L);
+    const ML = Math.max(1, num(miterLimit, 4)), co = new L.ClipperOffset(ML, ARC * SC);
+    bevelOn(co, L, ML);
     if (shape.length) co.AddPaths(shape.map(toInt), JT, L.EndType.etClosedPolygon);
     for (const sub of openSps) { const line = polylineOf(sub); if (line.length >= 2) co.AddPath(toInt(line), JT, join === 'round' ? L.EndType.etOpenRound : L.EndType.etOpenButt); }
     const out = new L.Paths();
@@ -471,12 +471,72 @@
   }
   /** Clipper squares a corner off at the offset's distance; a BEVEL joins the two offset edges straight across (its DoSquare with no slant). Used for 'bevel', and for a mitre past
    *  its limit, as Illustrator bevels it. Only this one ClipperOffset is changed. */
-  function bevelOn(co, L) {
+  function bevelOn(co, L, ML) {
+    // (OFS1: Clipper reads a Miter limit under 2 as 2; Illustrator's runs from 1 (every corner bevelled). A corner whose mitre reaches past ML × the offset is bevelled here, for any ML.)
+    if (ML > 0 && ML < 2) { const own = co.DoMiter; co.DoMiter = function (j, k, r) { if (r < 2 / (ML * ML) - 1e-12) this.DoSquare(j, k); else own.call(this, j, k, r); }; }
     co.DoSquare = function (j, k) {
       const R = L.ClipperOffset.Round, s = this.m_srcPoly[j], d = this.m_delta, nk = this.m_normals[k], nj = this.m_normals[j];
       this.m_destPoly.push(new L.IntPoint2(R(s.X + d * nk.X), R(s.Y + d * nk.Y)));
       this.m_destPoly.push(new L.IntPoint2(R(s.X + d * nj.X), R(s.Y + d * nj.Y)));
     };
+  }
+  /* ── OFS1 (Paul, 9 Nov 2026: "some designs are just too thin, and they need to be offset on the inside and outside perimeter and the user needs to be able to choose whether to
+     make it thinner or thicker"): what a filled region is made of, and its thinnest wall, so the Offset dialog can say what a thickening or a thinning leaves ── */
+  const isClosedSub = sub => (sub || []).some(op => op && op[0] === 'h');
+  /** Closed subpaths (even-odd, as the laser reads its cut lines) as one filled region on Clipper's grid: { paths (Clipper's), parts (outlines), holes, partPaths }. */
+  function regionOf(sps) {
+    grid();
+    const L = CL(), cl = new L.Clipper(), tree = new L.PolyTree();
+    const rings = (sps || []).filter(isClosedSub).map(polylineOf).filter(r => r.length >= 3);
+    if (!rings.length) return { paths: [], parts: 0, holes: 0, partPaths: [] };
+    cl.AddPaths(rings.map(toInt), L.PolyType.ptSubject, true);
+    cl.Execute(L.ClipType.ctUnion, tree, L.PolyFillType.pftEvenOdd, L.PolyFillType.pftEvenOdd);
+    let parts = 0, holes = 0; const partPaths = [];
+    const tiny = MIN_AREA * SC * SC;
+    const visit = node => { for (const ch of node.Childs()) { const a = Math.abs(L.Clipper.Area(ch.Contour())); if (a > tiny) { if (ch.IsHole()) holes++; else { parts++; partPaths.push(ch.Contour()); } } visit(ch); } };
+    visit(tree);
+    return { paths: L.Clipper.PolyTreeToPaths(tree), parts, holes, partPaths };
+  }
+  /** How many parts of `before` (a regionOf) have nothing of `after` over them: the parts a thinning made vanish. */
+  function vanishedParts(before, after) {
+    const L = CL(); let n = 0;
+    for (const p of before.partPaths) {
+      const cl = new L.Clipper(), out = new L.Paths();
+      cl.AddPath(p, L.PolyType.ptSubject, true); cl.AddPaths(after.paths, L.PolyType.ptClip, true);
+      cl.Execute(L.ClipType.ctIntersection, out, L.PolyFillType.pftNonZero, L.PolyFillType.pftNonZero);
+      if (!out.some(q => Math.abs(L.Clipper.Area(q)) > MIN_AREA * SC * SC)) n++;
+    }
+    return n;
+  }
+  /** THE THINNEST WALL of a filled region (closed subpaths, even-odd), pt, found as the laser check finds thin parts (charm-nest-ce-extras.js, thinSteps): a disc of
+   *  diameter w rolled inside the metal (a morphological opening) leaves out every bridge and wall thinner than w; the tip of a sharp corner is not a wall. The smallest w that
+   *  leaves out a bridge or a wall, by halving, to about 0.01 mm; null when nothing is thinner than capPt. */
+  function thinnestWall(sps, capPt) {
+    const reg = regionOf(sps); if (!reg.paths.length) return null;
+    const L = CL(), arc = 0.001 / MM * SC, eps = 0.02 / MM * SC, tinyMm2 = 0.002, mm2 = a => Math.abs(a) / (SC * SC) * MM * MM;
+    const off = (paths, d) => { const co = new L.ClipperOffset(2, arc), o = new L.Paths(); co.AddPaths(paths, L.JoinType.jtRound, L.EndType.etClosedPolygon); co.Execute(o, d); return o; };
+    const thinAt = w => {
+      const r = w / 2 * SC, opened = off(off(reg.paths, -r), r);
+      const cl = new L.Clipper(), tree = new L.PolyTree();
+      cl.AddPaths(reg.paths, L.PolyType.ptSubject, true); cl.AddPaths(opened, L.PolyType.ptClip, true);
+      cl.Execute(L.ClipType.ctDifference, tree, L.PolyFillType.pftNonZero, L.PolyFillType.pftNonZero);
+      const pieces = []; const visit = node => { for (const ch of node.Childs()) { if (!ch.IsHole()) pieces.push([ch.Contour()].concat(ch.Childs().filter(h => h.IsHole()).map(h => h.Contour()))); visit(ch); } };
+      visit(tree);
+      const wMm = w * MM;
+      for (const pc of pieces) {
+        const a = mm2(pc.reduce((s, p) => s + L.Clipper.Area(p), 0)); if (a < tinyMm2) continue;
+        const c2 = new L.Clipper(), touch = new L.Paths();
+        c2.AddPaths(off(pc, eps), L.PolyType.ptSubject, true); c2.AddPaths(opened, L.PolyType.ptClip, true);
+        c2.Execute(L.ClipType.ctIntersection, touch, L.PolyFillType.pftNonZero, L.PolyFillType.pftNonZero);
+        const n = touch.filter(p => mm2(L.Clipper.Area(p)) > 1e-5).length;
+        if (n >= 2 || a > wMm * 0.6) return true;   // (a bridge or a wall, or a long thin point; a corner's tip is neither)
+      }
+      return false;
+    };
+    if (!thinAt(capPt)) return null;
+    let lo = 0, hi = capPt;
+    for (let i = 0; i < 11; i++) { const mid = (lo + hi) / 2; if (thinAt(mid)) hi = mid; else lo = mid; }
+    return (lo + hi) / 2;
   }
   /** A subpath as one polyline of points, its curves cut into chords. */
   function polylineOf(sub) {
@@ -745,7 +805,7 @@
     return changed ? { subpaths: out, pieces, removed } : null;
   }
 
-  const kernel = { pathfinder, erase, offsetPath, outlineStroke, roundCorners, signedArea, filledArea, centroidOf, orientNested, reverseSub, fitPolyline, cubicPiece, segmentsOf, boxOfSps, FLAT, FIT };
+  const kernel = { pathfinder, erase, offsetPath, outlineStroke, roundCorners, signedArea, filledArea, centroidOf, orientNested, reverseSub, fitPolyline, cubicPiece, segmentsOf, boxOfSps, FLAT, FIT, regionOf, vanishedParts, thinnestWall };
 
   /* ═══ 2 · ON THE EDITOR'S ITEMS: (items, selection, ...) -> { items, sel } or { error }; pure, the editor's tree untouched (CharmEditor.model does the tree work) ═══ */
   const editorApi = () => (root && root.CharmEditor && root.CharmEditor.model ? root.CharmEditor : typeof require === 'function' ? (() => { try { return require('./charm-nest-charm-editor.js'); } catch (e) { return null; } })() : null);
@@ -756,7 +816,7 @@
   const leavesOf = (it, out) => { out = out || []; if (it.kind === 'group') (it.children || []).forEach(c => { if (!c.hidden) leavesOf(c, out); }); else out.push(it); return out; };
   // (what a new path made from an item keeps of it: its role, colours, line width and anything else it carries (layer ...); not its geometry, words or transform)
   const NOT_PAINT = new Set(['id', 'kind', 'subpaths', 'children', 'text', 'fontKey', 'sizePt', 'align', 'lineGap', 'weightMm', 'matrix', 'pivot', 'bbox', 'tx', 'ty', 'sx', 'sy', 'rot',
-    'evenOdd', 'even', 'fillRule', 'name', 'hidden', 'locked', 'source', 'group', 'changed', 'origin', 'editable']);
+    'evenOdd', 'even', 'fillRule', 'name', 'hidden', 'locked', 'source', 'group', 'changed', 'origin', 'editable', 'offsetFx']);
   function paintOf(it, M) {
     const leaf = it.kind === 'group' ? leavesOf(it)[0] || it : it, o = {};
     for (const k of Object.keys(leaf)) if (!NOT_PAINT.has(k) && k[0] !== '_') o[k] = leaf[k];
@@ -846,8 +906,13 @@
 
   /* ── Offset Path, the cut line round the art, Outline Stroke, compound paths, round corners ── */
   /** OFFSET PATH (o.mm, o.join 'round' | 'miter' | 'bevel', o.miter): a NEW path beside each selected thing, grown (or shrunk) by o.mm, just behind it (Illustrator's). With
-   *  o.contour, ONE cut line round all of it at o.mm (round corners, every hole filled, the parts made one), at the back: the laser-cut charm's outline. */
+   *  o.contour, ONE cut line round all of it at o.mm (round corners, every hole filled, the parts made one), at the back: the laser-cut charm's outline.
+   *  OFS1: o.mode 'replace' puts the offset IN PLACE of each selected thing (same id, same paint: a filled engraved shape made bolder or thinner); o.live keeps what it was made
+   *  from (offsetFx: { src, mm, join, miter }), so Effect ▸ Path ▸ Offset Path… opens on it again with its values and works from the original, not the offset (Illustrator's live
+   *  effect); Object ▸ Expand Appearance drops it. o.target 'charm': the charm itself (offsetCharm). */
   function offsetItems(items, sel, geo, o) {
+    if (o.target === 'charm') return offsetCharm(items, geo, o);
+    if (o.mode === 'replace' && !o.contour) return offsetInPlace(items, sel, geo, o);
     const M = MD(), pk = picked(items, sel, geo, M);
     if (!pk.entries.length) return { error: 'Select what to offset' };
     const d = num(+o.mm, 0) * PT;
@@ -872,6 +937,122 @@
     return { items: spliceIn(pk.items, map), sel: made };
   }
   const trimNum = (v, dp) => String(+(+v).toFixed(dp));
+  const inPoly = (p, pl) => { let w = false; for (let i = 0, j = pl.length - 1; i < pl.length; j = i++) { const a = pl[i], b = pl[j]; if ((a[1] > p[1]) !== (b[1] > p[1]) && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]) w = !w; } return w; };
+  const boxOfPl = pl => { let b = [Infinity, Infinity, -Infinity, -Infinity]; for (const p of pl) b = [Math.min(b[0], p[0]), Math.min(b[1], p[1]), Math.max(b[2], p[0]), Math.max(b[3], p[1])]; return b; };
+  const tightBoxOf = sps => { let b = null; for (const sub of sps || []) { const pl = polylineOf(sub); if (!pl.length) continue; const q = boxOfPl(pl); b = b ? [Math.min(b[0], q[0]), Math.min(b[1], q[1]), Math.max(b[2], q[2]), Math.max(b[3], q[3])] : q; } return b; };
+  const lockedIn = (ix, id) => { const e = ix.get(id); return !e || e.it.locked || e.anc.some(a => { const x = ix.get(a); return !!(x && x.it.locked); }); };
+  const fxOf = it => (it && it.offsetFx && Array.isArray(it.offsetFx.src) ? it.offsetFx : null);
+  const fxRecord = (o, src, extra) => Object.assign({ src, mm: +o.mm, join: o.join || 'miter', miter: num(+o.miter, 4) }, extra || {});
+  /** OFS1 · OFFSET PATH IN PLACE (Replace original; and the live effect): each selected thing becomes its own offset, the same id, paint and place in the stack. A thing that
+   *  is already a live offset is offset again from its original (Illustrator re-edits the effect, it does not offset the offset). -> { items, sel, gone: [names shrunk to nothing] } */
+  function offsetInPlace(items, sel, geo, o) {
+    const M = MD(), ix = M.indexTree(items, geo);
+    const ids = M.topmost((sel || []).map(String).filter(id => ix.has(id) && !lockedIn(ix, id)), ix);
+    if (!ids.length) return { error: 'Select what to offset' };
+    const d = num(+o.mm, 0) * PT;
+    if (Math.abs(d) < 1e-6 && !o.live) return { error: 'An offset of 0 mm is the path itself' };
+    const map = new Map(), made = [], gone = [];
+    for (const id of ids) {
+      const e = ix.get(id), it = e.it, W = M.mul(e.P, geo.matrix(it)), Pi = M.inv(e.P) || M.I, fx = it.kind === 'path' ? fxOf(it) : null;
+      let operand = fx ? { subpaths: M.transformSubpaths(fx.src, W), evenOdd: !!fx.evenOdd } : operandOf(e, geo, M);
+      if (operand.parts) operand = { subpaths: pathfinder([operand], 'unite').subpaths, evenOdd: false };
+      const sps = Math.abs(d) < 1e-6 ? operand.subpaths : offsetPath(operand, d, o.join || 'miter', num(+o.miter, 4), false, false);
+      if (!sps.length) { gone.push(nameOf(it)); continue; }
+      const n = Object.assign(newPath(paintOf(it, M), M.transformSubpaths(orientNested(sps), Pi), nameOf(it), M), { id: it.id, source: it.source || 'added', evenOdd: true });
+      delete n.shape; delete n.warp;   // (a blank's numbers and a warp's original no longer draw this path)
+      if (o.live) n.offsetFx = fxRecord(o, M.transformSubpaths(operand.subpaths, Pi), { evenOdd: !!operand.evenOdd });
+      map.set(it.id, [n]); made.push(n.id);
+    }
+    if (!made.length) return { error: 'Shrunk to nothing: try a smaller inset' };
+    return { items: spliceIn(items, map), sel: made, gone };
+  }
+
+  /* ── OFS1 · THE CHARM ITSELF made thicker or thinner: its cut lines (the outline and every hole, read even-odd as the laser cuts them) offset as one filled region, so the
+     outer perimeter moves out by the offset and every inner perimeter the other way: the walls grow (or shrink) on both sides. Its jump rings and ring-sized round holes keep
+     their size unless o.rings; engraved art is not touched; a cut line the person locked is left alone (the editor's own lock on cut lines is not a reason). ── */
+  const HOOP_PT = 13.6;   // (a hole this size or smaller, round, is a jump-ring hole: the laser check's own rule, charm-nest-ce-extras.js)
+  const minWallMm = () => { const X = root && root.CharmNestCeExtras; const v = X && X.LIMIT && +X.LIMIT.bridgeMm; return v > 0 ? v : 0.3; };
+  /** The charm's cut lines on a face, each closed subpath sorted into the body (offset) or kept (a jump ring, a ring hole). */
+  function charmCuts(items, geo, o) {
+    const M = MD(), ix = M.indexTree(items, geo), leaves = [], subs = [];
+    let personLocked = 0, open = 0;
+    for (const [id, e] of ix) {
+      const it = e.it; if (it.kind !== 'path' || it.role !== 'cut') continue;
+      const chain = e.anc.map(a => ix.get(a).it).concat(it);
+      if (chain.some(x => x.hidden)) continue;
+      if (chain.some(x => x.locked && !x._autoLock)) { personLocked++; continue; }
+      const face = M.outlinesOf(it, geo, e.P), closed = face.filter(isClosedSub);
+      open += face.length - closed.length;
+      const ring = !!(it.shape && it.shape.kind === 'bail') || /jump[\s-]*ring/i.test(String(it.name || ''));
+      const l = { id, e, it, face, ring, subs: [] }; leaves.push(l);
+      for (const sub of closed) { const pl = polylineOf(sub); if (pl.length < 3) continue; const s = { l, sub, pl, a: Math.abs(ringArea(pl)), box: boxOfPl(pl) }; l.subs.push(s); subs.push(s); }
+    }
+    for (const s of subs) {
+      const w = s.box[2] - s.box[0], h = s.box[3] - s.box[1];
+      s.hole = subs.some(t => t !== s && t.a > s.a && inPoly(s.pl[0], t.pl));
+      s.ringish = s.l.ring || (s.hole && Math.max(w, h) <= HOOP_PT && Math.abs(w - h) < 1);
+      s.keep = !o.rings && s.ringish;
+    }
+    return { leaves, subs, personLocked, open, rings: subs.filter(s => s.ringish).length };
+  }
+  /** Is there a charm to thicken here (a closed cut line, shown)? */
+  function hasCharm(items, geo) { try { return charmCuts(items, geo, {}).subs.some(s => !s.keep); } catch (e) { return false; } }
+  /** -> { items, sel: null, report } or { error }. report: { parts0, parts1, holes0, holes1, vanished, wallMm (null: nothing under 3 mm), minMm, grewMm, kept, personLocked } */
+  function offsetCharm(items, geo, o) {
+    const M = MD(), cc = charmCuts(items, geo, o);
+    const bodyLeaves = cc.leaves.filter(l => l.subs.some(s => !s.keep));
+    if (!bodyLeaves.length) return { error: cc.personLocked ? 'The charm\'s cut lines are locked: unlock them in Layers first' : 'This face has no closed cut line to offset' };
+    const d = num(+o.mm, 0) * PT;
+    if (Math.abs(d) < 1e-6 && !o.live) return { error: 'An offset of 0 mm is the charm itself' };
+    // the outline: the cut line holding the biggest ring; a live offset made here before is worked again from its original
+    let T = null, big = -1; for (const l of bodyLeaves) for (const s of l.subs) if (!s.keep && s.a > big) { big = s.a; T = l; }
+    const fx = fxOf(T.it) && T.it.offsetFx.charm ? T.it.offsetFx : null, W = M.mul(T.e.P, geo.matrix(T.it)), Pi = M.inv(T.e.P) || M.I;
+    const body = [].concat(fx ? M.transformSubpaths(fx.src, W) : [], ...bodyLeaves.filter(l => !(fx && l === T)).map(l => l.subs.filter(s => !s.keep).map(s => s.sub)));
+    const keepIn = [].concat(...bodyLeaves.map(l => l.subs.filter(s => s.keep).map(s => s.sub)));
+    let out = Math.abs(d) < 1e-6 ? body : offsetPath({ subpaths: body, evenOdd: true }, d, o.join || 'miter', num(+o.miter, 4), false, false);
+    if (out.length && keepIn.length) out = pathfinder([{ subpaths: out }, { subpaths: keepIn }], 'minus').subpaths;   // (the ring holes back, their very curves)
+    if (!out.length) return { error: 'Thinned to nothing: try a smaller inset' };
+    if (o.mode === 'add' && !o.live) {   // (Illustrator's standard: a new cut line beside the charm, at the back; the charm stays as it is)
+      const paint = { role: 'cut', stroke: true, fill: false, evenOdd: true }; if (T.it.lwPt != null) paint.lwPt = T.it.lwPt;
+      const made = newPath(paint, orientNested(out), `Charm · offset ${d > 0 ? '+' : '−'}${trimNum(Math.abs(+o.mm), 3)} mm`, M);
+      return { items: [made].concat(items), sel: [made.id] };
+    }
+    const nt = Object.assign({}, T.it, { subpaths: M.transformSubpaths(orientNested(out), Pi), tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, evenOdd: true });
+    for (const k of ['shape', 'warp', 'even', 'fillRule', 'matrix', 'pivot', 'bbox']) delete nt[k];
+    if (o.live) nt.offsetFx = fxRecord(o, M.transformSubpaths(body, Pi), { charm: true, rings: !!o.rings }); else delete nt.offsetFx;
+    const map = new Map([[T.id, [nt]]]); for (const l of bodyLeaves) if (l !== T) map.set(l.id, []);
+    // what it did: the parts and holes before and after, a part that vanished, the thinnest wall of the metal now (the kept rings and holes with it)
+    const before = regionOf([].concat(...cc.leaves.map(l => l.subs.map(s => s.sub))));
+    const nowSubs = out.concat(...cc.leaves.filter(l => !bodyLeaves.includes(l)).map(l => l.subs.map(s => s.sub)));
+    const after = regionOf(nowSubs), wall = o.noWall ? undefined : thinnestWall(nowSubs, 3 / MM), b0 = tightBoxOf(body), b1 = tightBoxOf(out);
+    const report = { parts0: before.parts, parts1: after.parts, holes0: before.holes, holes1: after.holes, vanished: vanishedParts(before, after), wallMm: wall === undefined ? undefined : wall == null ? null : wall * MM, now: nowSubs,
+      minMm: minWallMm(), grewMm: b0 && b1 ? ((b1[2] - b1[0]) - (b0[2] - b0[0])) / 2 * MM : 0, kept: cc.subs.filter(s => s.keep).length, rings: cc.rings, personLocked: cc.personLocked, outlineId: T.id };
+    return { items: spliceIn(items, map), sel: null, report };
+  }
+  /** The words a charm offset's report says: { text, warn }. */
+  function charmReport(r) {
+    if (!r) return { text: '', warn: false };
+    if (r.wallMm === undefined) { const w = thinnestWall(r.now, 3 / MM); r.wallMm = w == null ? null : w * MM; }   // (the preview measures it apart from the drawing)
+    const w = [], bits = [];
+    const wall = r.wallMm == null ? 'thinnest wall over 3 mm' : `thinnest wall ${trimNum(r.wallMm, 2)} mm`;
+    const under = r.wallMm != null && r.wallMm < r.minMm - 1e-9;
+    if (r.vanished) w.push(`${r.vanished} part${r.vanished === 1 ? '' : 's'} disappeared`);
+    if (under) w.push(`${wall[0].toUpperCase() + wall.slice(1)}: under the laser's ${trimNum(r.minMm, 2)} mm minimum`);
+    bits.push(under ? null : wall[0].toUpperCase() + wall.slice(1));
+    if (r.parts1 > r.parts0) bits.push(`now ${r.parts1} separate pieces`);
+    if (r.holes1 < r.holes0) bits.push(`${r.holes0 - r.holes1} hole${r.holes0 - r.holes1 === 1 ? '' : 's'} closed`);
+    if (r.kept) bits.push(`${r.kept} ring hole${r.kept === 1 ? '' : 's'} kept as ${r.kept === 1 ? 'it is' : 'they are'}`);
+    if (r.personLocked) bits.push(`${r.personLocked} locked cut line${r.personLocked === 1 ? '' : 's'} left alone`);
+    const text = (w.length ? '⚠ ' + w.join(' · ') + (bits.filter(Boolean).length ? ' · ' : '') : '') + bits.filter(Boolean).join(' · ');
+    return { text, warn: w.length > 0 };
+  }
+  /** EXPAND APPEARANCE: a live offset becomes a plain path (what it draws now stays; what it was made from is let go). */
+  function expandOffsetItems(items, ids, geo) {
+    const M = MD(), ix = M.indexTree(items, geo), map = new Map();
+    for (const id of ids || []) { const e = ix.get(String(id)); if (!e) continue; M.walk([e.it], it => { if (fxOf(it)) { const n = Object.assign({}, it); delete n.offsetFx; map.set(it.id, [n]); } }); }
+    if (!map.size) return { error: 'Nothing here has a live offset to expand' };
+    return { items: spliceIn(items, map), sel: null };
+  }
   const strokeRole = { line: 'hatch', art: 'art', hatch: 'hatch' };
   /** OUTLINE STROKE: every line of the selection (a Line engrave, an outlined Artwork, words engraved as a line) becomes the filled shape its width covers, engraved as a fill (a
    *  Line engrave becomes a Hatch engrave). A shape both filled and lined becomes a group of the two. Cut lines are left alone: a cut is a line by nature. */
@@ -1100,7 +1281,8 @@
     return transformItems(items, sel, geo, { dx: c[0] - (u[0] + u[2]) / 2, dy: c[1] - (u[1] + u[3]) / 2 }, {});
   }
   const ops = { pathfinderItems, pathfinderJob, placePathfinder, offsetItems, outlineStrokeItems, makeCompound, releaseCompound, roundCornerItems, alignItems, distributeItems,
-    transformItems, stepRepeatItems, matrixOf, centreOnCharm, selectSame, selectInverse, flagOthers, clearFlagAll, charmOutline, charmCentre, spliceIn };
+    transformItems, stepRepeatItems, matrixOf, centreOnCharm, selectSame, selectInverse, flagOthers, clearFlagAll, charmOutline, charmCentre, spliceIn,
+    offsetInPlace, offsetCharm, charmCuts, hasCharm, charmReport, expandOffsetItems, minWallMm };
 
   /* ═══ 3 · THE WORKSPACE: the commands (the head's Object menu, the right-click menu, keys), the Align and Pathfinder flyouts on the property bar, the value dialogs with a
      live preview drawn over the charm, the Worker for big booleans and ⌘D. Everything a command changes goes through ctx and is ONE undo step (the editor closes it when the
@@ -1164,7 +1346,8 @@
     flipV: SV('<path d="M3 12h18" stroke-dasharray="2 2"/><path d="M7 9 17 4v5Z"/><path d="M7 15l10 5v-5Z" fill="currentColor" fill-opacity=".3"/>'),
     rot90: SV('<path d="M6 8a8 8 0 0 1 13 4"/><path d="m19 7 .2 5-4.6-1.4"/><rect x="5" y="13" width="7" height="7"/>'),
     rot90l: SV('<path d="M18 8a8 8 0 0 0-13 4"/><path d="m5 7-.2 5 4.6-1.4"/><rect x="12" y="13" width="7" height="7"/>'),
-    offset: SV('<rect x="8" y="8" width="8" height="8" rx=".6"/><rect x="4" y="4" width="16" height="16" rx="3.2" stroke-dasharray="2.2 2.2"/>'),
+    // (OFS1: Illustrator's Offset Path glyph, a shape with its offset drawn round it at one distance: the shape filled, the offset a line concentric with it)
+    offset: SV('<path d="M9.5 8h5A1.5 1.5 0 0 1 16 9.5v5a1.5 1.5 0 0 1-1.5 1.5h-5A1.5 1.5 0 0 1 8 14.5v-5A1.5 1.5 0 0 1 9.5 8Z" fill="currentColor" fill-opacity=".45"/><path d="M8.5 3.5h7a5 5 0 0 1 5 5v7a5 5 0 0 1-5 5h-7a5 5 0 0 1-5-5v-7a5 5 0 0 1 5-5Z"/>'),
     cutline: SV('<path d="M12 7.5c1.5-2.5 5.5-2 5.5 1.3 0 2.6-3.2 4.6-5.5 6.7-2.3-2.1-5.5-4.1-5.5-6.7 0-3.3 4-3.8 5.5-1.3Z" fill="currentColor" fill-opacity=".35"/><path d="M12 4.2c2.8-3 9-2 9 3.8 0 4.6-5 7.6-9 11.2-4-3.6-9-6.6-9-11.2 0-5.8 6.2-6.8 9-3.8Z"/>'),
     outline: SV('<path d="M4 17 17 4"/><path d="M5 20 20 5" stroke-width="1"/><path d="M3 15 15 3" stroke-width="1"/>'),
     compound: SV('<rect x="3.5" y="3.5" width="17" height="17" rx="1" fill="currentColor" fill-opacity=".3"/><circle cx="12" cy="12" r="4.5" fill="#fff"/>'),
@@ -1218,6 +1401,18 @@
 .cops-card .ce-ask__b{ margin-top:14px; }
 .cops-card .ce-btn{ padding:10px 16px; letter-spacing:.2em !important; }
 .cops-preview{ position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; overflow:visible; }
+.cops-status{ font-size:11.5px; line-height:1.45; color:var(--muted); margin:10px 0 0; min-height:1.45em; }
+.cops-status.is-warn{ color:#f0a35e; font-weight:600; }
+.cops-f.is-off > span:first-child{ opacity:.5; } .cops-f.is-off .ce-num{ opacity:.5; }
+.cops-card .cops-f > span.cops-tick{ font-size:12px; font-weight:400; letter-spacing:0; text-transform:none; color:var(--ink); white-space:nowrap; }
+.cops-tick{ display:inline-flex; align-items:center; gap:7px; font-size:12px; color:var(--ink); cursor:default; user-select:none; white-space:nowrap; }
+.cops-spin{ display:inline-flex; flex-direction:column; margin-left:2px; flex:none; }
+.cops-spin button{ width:13px; height:10px; padding:0; border:0; background:none; color:var(--muted); cursor:default; position:relative; }
+.cops-spin button::after{ content:""; position:absolute; left:3px; top:3px; border-left:3.5px solid transparent; border-right:3.5px solid transparent; }
+.cops-spin button[data-dir="1"]::after{ border-bottom:4px solid currentColor; } .cops-spin button[data-dir="-1"]::after{ border-top:4px solid currentColor; }
+.cops-spin button:not(:disabled):hover{ color:var(--ink); }
+.ce-aimi__ic{ display:inline-flex; flex:none; width:14px; height:14px; margin-left:-2px; } .ce-aimi__ic svg{ width:14px; height:14px; }
+.aip-btn .cops-ic{ display:inline-flex; width:14px; height:14px; margin-right:5px; vertical-align:-3px; } .aip-btn .cops-ic svg{ width:14px; height:14px; }
 .cops-preview path{ fill:rgba(165,138,82,.16); stroke:#a58a52; stroke-width:1.25; stroke-dasharray:5 3; vector-effect:non-scaling-stroke; fill-rule:nonzero; }
 @media (max-width:640px){ .cops-modal.ce-ask{ padding:48px 8px 8px; justify-content:center; } .cops-fly{ width:min(292px,calc(100vw - 16px)); } }
 `;
@@ -1334,17 +1529,22 @@
 
   /* ── the value dialogs (Offset Path, the cut line round the art, Round Corners, Move / Rotate / Scale / Reflect, Step and Repeat): a card at the top right of the work area, the
      charm left in sight, the answer drawn over it while Preview is ticked; OK (or Enter) applies it as one step, Copy applies it to a copy, Esc or Cancel leaves the work as it was ── */
+  /** What a dialog remembers between visits to the page (Illustrator remembers its last Offset Path values): this computer's storage, never needed to work. */
+  const stored = key => { try { const o = JSON.parse((root.localStorage && root.localStorage.getItem(key)) || 'null'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } };
+  const store = (key, o) => { try { if (root.localStorage) root.localStorage.setItem(key, JSON.stringify(o)); } catch (e) { /* storage blocked: this visit only */ } };
   function numIn(v) { const x = parseFloat(String(v == null ? '' : v).replace(',', '.').replace(/−/g, '-')); return fin(x) ? x : NaN; }
   function dialog(ctx, spec) {
     return new Promise(done => {
       const win = ctx.root.querySelector('.ce-win') || ctx.root;
-      const vals = Object.assign({}, spec.values, memo.dlg[spec.id] || {});
+      const vals = Object.assign({}, spec.values, spec.persist ? stored(spec.persist) : {}, memo.dlg[spec.id] || {}, spec.force || {});
       let tab = spec.tabs ? (spec.tab || vals.__tab || spec.tabs[0][0]) : null;
       const box = doc.createElement('div'); box.className = 'ce-ask cops-modal'; box.tabIndex = -1;
       const card = doc.createElement('div'); card.className = 'cops-card'; card.tabIndex = -1; card.setAttribute('role', 'dialog'); card.setAttribute('aria-modal', 'true');
       box.appendChild(card); win.appendChild(box);
       const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('class', 'cops-preview'); svg.setAttribute('aria-hidden', 'true'); ctx.stage.appendChild(svg);
-      let previewOn = !!memo.dlg.__preview, raf = 0;
+      // (OFS1: a dialog may say its Preview starts ticked, as Illustrator's Offset Path does; it then remembers its own tick)
+      const prevKey = spec.previewDefault != null ? '__preview:' + spec.id : '__preview';
+      let previewOn = memo.dlg[prevKey] != null ? !!memo.dlg[prevKey] : spec.previewDefault != null ? !!spec.previewDefault : false, raf = 0;
       const fieldsOf = () => (typeof spec.fields === 'function' ? spec.fields(tab, vals) : spec.fields);
       const paint = () => {
         const fs = fieldsOf();
@@ -1353,21 +1553,28 @@
           + (spec.tabs ? `<div class="cops-tabs"><div class="ce-seg">${spec.tabs.map(([v, l]) => `<button type="button" data-dtab="${v}" class="${v === tab ? 'is-on' : ''}">${esc(l)}</button>`).join('')}</div></div>` : '')
           + fs.map(f => {
             if (f.type === 'seg') return `<div class="cops-f"><span>${esc(f.label)}</span><div class="ce-seg">${f.options.map(([v, l]) => `<button type="button" data-dseg="${f.id}" data-v="${esc(v)}" class="${String(vals[f.id]) === String(v) ? 'is-on' : ''}">${esc(l)}</button>`).join('')}</div></div>`;
-            return `<label class="cops-f"><span>${esc(f.label)}</span><span class="ce-num"><input data-dnum="${f.id}" inputmode="decimal" autocomplete="off" spellcheck="false" value="${esc(vals[f.id] == null ? '' : vals[f.id])}" aria-label="${esc(f.label)}"><i>${esc(f.unit || '')}</i></span></label>`;
+            if (f.type === 'check') return `<label class="cops-f cops-f--chk"${f.title ? ` title="${esc(f.title)}"` : ''}><span>${esc(f.label)}</span><span class="cops-tick"><input type="checkbox" data-dchk="${f.id}"${vals[f.id] === 'yes' ? ' checked' : ''}> ${esc(f.text || '')}</span></label>`;
+            return `<label class="cops-f${f.disabled ? ' is-off' : ''}"><span>${esc(f.label)}</span><span class="ce-num"><input data-dnum="${f.id}" inputmode="decimal" autocomplete="off" spellcheck="false" value="${esc(vals[f.id] == null ? '' : vals[f.id])}" aria-label="${esc(f.label)}"${f.disabled ? ' disabled' : ''}><i>${esc(f.unit || '')}</i>${f.spin ? `<span class="cops-spin"><button type="button" data-dspin="${f.id}" data-dir="1" tabindex="-1" aria-label="${esc(f.label)} up"${f.disabled ? ' disabled' : ''}></button><button type="button" data-dspin="${f.id}" data-dir="-1" tabindex="-1" aria-label="${esc(f.label)} down"${f.disabled ? ' disabled' : ''}></button></span>` : ''}</span></label>`;
           }).join('')
+          + (spec.status ? '<div class="cops-status" data-dstat aria-live="polite"></div>' : '')
           + (spec.preview ? `<label class="cops-check"><input type="checkbox" data-dprev${previewOn ? ' checked' : ''}> Preview on the charm</label>` : '')
           + `<div class="ce-ask__b"><button class="ce-btn ce-btn--ghost" type="button" data-db="cancel">Cancel</button>${spec.copy ? '<button class="ce-btn ce-btn--ghost" type="button" data-db="copy">Copy</button>' : ''}<button class="ce-btn ce-btn--ink" type="button" data-db="ok">${esc(spec.ok || 'OK')}</button></div>`;
         for (const el of card.querySelectorAll('input,button')) el.__ceKey = onKey;
         card.__ceKey = onKey; box.__ceKey = onKey;
       };
       const read = () => { for (const inp of card.querySelectorAll('[data-dnum]')) vals[inp.dataset.dnum] = inp.value; return vals; };
+      const showStatus = r => { const el = card.querySelector('[data-dstat]'); if (!el) return; const s = r && !r.error ? spec.status(r, vals, tab) : { text: r && r.error ? r.error : '', warn: !!(r && r.error) }; el.textContent = (s && s.text) || ''; el.classList.toggle('is-warn', !!(s && s.warn)); };
       const drawPreview = () => {
         raf = 0; svg.innerHTML = '';
-        if (!previewOn || !spec.preview) return;
+        if (!spec.preview) return;
+        if (!previewOn) { if (spec.status) { const el = card.querySelector('[data-dstat]'); if (el) { el.textContent = spec.statusOff || ''; el.classList.remove('is-warn'); } } return; }
         const t0 = Date.now();
-        let r = null; try { r = spec.result(read(), tab, false); } catch (e) { r = null; }
+        let r = null; try { r = spec.result(read(), tab, false, true); } catch (e) { r = null; }
+        const took = Date.now() - t0;
+        // (the drawing is timed apart from the status line's measure: the thinnest wall is worked out after it)
+        if (spec.status && took <= 150) { try { showStatus(r); } catch (e) { /* the line is a courtesy */ } }
         // (a preview that costs the page more than a blink is turned off for this time: the answer is still made by OK, in one go)
-        if (Date.now() - t0 > 150) { previewOn = false; const cb = card.querySelector('[data-dprev]'); if (cb) cb.checked = false; ctx.say('Preview is off for shapes this big: OK makes it', 3000); return; }
+        if (took > 150) { previewOn = false; const cb = card.querySelector('[data-dprev]'); if (cb) cb.checked = false; ctx.say('Preview is off for shapes this big: OK makes it', 3000); return; }
         if (!r || r.error || !r.items) return;
         const was = new Set(); MD().walk(ctx.items(), it => was.add(it));
         const M = MD(), ix = M.indexTree(r.items, ctx.geo), V = ctx.view();
@@ -1381,6 +1588,7 @@
         if (svg.parentNode) svg.parentNode.removeChild(svg);
         if (box.parentNode) box.parentNode.removeChild(box);
         memo.dlg[spec.id] = Object.assign({}, read(), { __tab: tab });
+        if (spec.persist && v) store(spec.persist, spec.persistKeys ? Object.fromEntries(spec.persistKeys.map(k => [k, vals[k]])) : vals);
         try { (ctx.root.querySelector('.ce-win') || ctx.root).focus({ preventScroll: true }); } catch (e) { /* fine */ }
         done(v);
       };
@@ -1405,13 +1613,72 @@
         const t = e.target;
         const tb = t.closest('[data-dtab]'); if (tb) { read(); tab = tb.dataset.dtab; paint(); queue(); const i = card.querySelector('[data-dnum]'); if (i) { i.focus(); i.select(); } return; }
         const sg = t.closest('[data-dseg]'); if (sg) { read(); vals[sg.dataset.dseg] = sg.dataset.v; paint(); queue(); return; }
-        if (t.closest('[data-dprev]')) { previewOn = !!t.closest('[data-dprev]').checked; memo.dlg.__preview = previewOn; queue(); return; }
+        const spn = t.closest('[data-dspin]');
+        if (spn) { e.preventDefault(); const inp = card.querySelector(`[data-dnum="${spn.dataset.dspin}"]`), f = fieldsOf().find(x => x.id === spn.dataset.dspin); if (inp && !inp.disabled) { const st = (f && f.step) || 0.1, v = numIn(inp.value); inp.value = String(+((fin(v) ? v : 0) + (+spn.dataset.dir) * st * (e.shiftKey ? 10 : 1)).toFixed(4)); read(); queue(); } return; }
+        const ck = t.closest('[data-dchk]'); if (ck) { read(); vals[ck.dataset.dchk] = ck.checked ? 'yes' : 'no'; queue(); return; }
+        if (t.closest('[data-dprev]')) { previewOn = !!t.closest('[data-dprev]').checked; memo.dlg[prevKey] = previewOn; queue(); return; }
         const b = t.closest('[data-db]'); if (!b) return;
         if (b.dataset.db === 'cancel') close(null); else commitWith(b.dataset.db === 'copy');
       });
       box.addEventListener('pointerdown', e => { if (e.target === box) { e.preventDefault(); close(null); } });
       paint(); queue();
       requestAnimationFrame(() => { const i = card.querySelector('[data-dnum]'); try { if (i) { i.focus(); i.select(); } else card.focus(); } catch (e) { /* fine */ } });
+    });
+  }
+  /* ── OFS1 · OFFSET PATH, as Illustrator's dialog (Object ▸ Path ▸ Offset Path…; Effect ▸ Path ▸ Offset Path…, the live one): Offset, Joins, Miter limit, Preview (ticked
+     at first), Cancel / OK; Enter is OK, Esc Cancel; the last values remembered. Ours adds what a charm needs: the charm itself as what is offset (its cut lines are locked, so
+     with nothing selected the charm is what Offset Path works on), Replace original or Add new path, the jump rings and ring holes kept, and the thinnest wall left. ── */
+  const OFS_KEY = 'ce.offsetPath';
+  /** A cut line shown on this face with a closed ring (no flattening: it is asked as the menus are drawn). */
+  function charmHere(ctx) { let yes = false; MD().walk(ctx.items(), it => { if (!yes && it.kind === 'path' && it.role === 'cut' && !it.hidden && (it.subpaths || []).some(isClosedSub)) yes = true; }); return yes; }
+  /** The things a live offset is on: in the selection, or the charm's outline when nothing is selected. */
+  function fxIds(ctx) {
+    const M = MD(), out = [];
+    if (nSel(ctx)) { for (const e of selEntries(ctx)) M.walk([e.it], it => { if (fxOf(it)) out.push(it.id); }); return out; }
+    M.walk(ctx.items(), it => { if (it.role === 'cut' && fxOf(it) && it.offsetFx.charm) out.push(it.id); });
+    return out;
+  }
+  function offsetDialog(ctx, live) {
+    const M = MD(), geo = ctx.geo, items0 = ctx.items(), ix = M.indexTree(items0, geo);
+    const selIds = ctx.selection().map(String).filter(id => ix.has(id) && !lockedIn(ix, id));
+    const leaves = [].concat(...selIds.map(id => leavesOf(ix.get(id).it)));
+    let cc = null; try { cc = charmCuts(items0, geo, {}); } catch (e) { cc = null; }
+    const charm = !!(cc && cc.subs.some(s => !s.keep));
+    if (!selIds.length && !charm) { ctx.say('Select what to offset', 2600); return Promise.resolve(false); }
+    const selCut = leaves.some(l => l.role === 'cut'), filled = leaves.some(l => l.role !== 'cut' && (l.kind === 'text' || M.paintFill(l)));
+    const force = { to: charm && (!selIds.length || selCut) ? 'charm' : 'sel' };
+    force.mode = live || force.to === 'charm' ? 'replace' : 'add';
+    // (the live effect opens on its own values: the selected thing's, or the charm's)
+    const fxIt = live ? (selIds.length === 1 ? (ix.get(selIds[0]).it.kind === 'path' ? fxOf(ix.get(selIds[0]).it) : null) : !selIds.length ? (fxIds(ctx).map(id => fxOf(ix.get(id) && ix.get(id).it))[0] || null) : null) : null;
+    if (fxIt) Object.assign(force, { mm: String(fxIt.mm), join: fxIt.join, miter: String(fxIt.miter) }, fxIt.charm ? { rings: fxIt.rings ? 'yes' : 'no' } : {});
+    const toOf = v => (charm && (v.to === 'charm' || !selIds.length) ? 'charm' : 'sel');
+    const modeOf = v => (live ? 'replace' : toOf(v) === 'charm' || filled || selCut ? v.mode : 'add');
+    const optsOf = v => {
+      const mm = numIn(v.mm), miter = numIn(v.miter);
+      if (!fin(mm)) return { error: 'How far, in mm?' };
+      if (!(miter >= 1 && miter <= 500)) return { error: 'A miter limit from 1 to 500' };
+      return { mm, join: v.join, miter, mode: modeOf(v), live, target: toOf(v) === 'charm' ? 'charm' : null, rings: v.rings === 'yes' };
+    };
+    return dialog(ctx, {
+      id: live ? 'offsetFx' : 'offset', title: 'Offset Path', preview: true, previewDefault: true, persist: OFS_KEY, persistKeys: ['mm', 'join', 'miter', 'rings'], force,
+      note: (tb, v) => toOf(v) === 'charm' && modeOf(v) === 'replace'
+        ? 'Thicker (+) or thinner (−): the charm\'s outer edge moves out by the offset and every hole in by it, so each wall changes by twice the offset.' + (live ? ' Live: open it again here to change it.' : '')
+        : live ? 'Each thing selected becomes its offset, kept live: open Effect ▸ Path ▸ Offset Path… on it again to change it.' : modeOf(v) === 'replace' ? 'Each thing selected becomes its own offset (a minus number: inset).' : 'A new path round each thing selected, this far out (a minus number: in). The original stays.',
+      values: { mm: '0.2', join: 'miter', miter: '4', rings: 'no', to: 'sel', mode: 'add' },
+      fields: (tb, v) => [{ id: 'mm', label: 'Offset', unit: 'mm', step: 0.05, spin: true },
+        { id: 'join', type: 'seg', label: 'Joins', options: [['miter', 'Miter'], ['round', 'Round'], ['bevel', 'Bevel']] },
+        { id: 'miter', label: 'Miter limit', unit: '×', step: 1, spin: true, disabled: v.join !== 'miter' }]
+        .concat(charm && selIds.length ? [{ id: 'to', type: 'seg', label: 'Apply to', options: [['charm', 'The charm'], ['sel', 'Selection']] }] : [])
+        .concat(!live && (toOf(v) === 'charm' || filled || selCut) ? [{ id: 'mode', type: 'seg', label: 'Result', options: [['replace', 'Replace original'], ['add', 'Add new path']] }] : [])
+        .concat(toOf(v) === 'charm' && modeOf(v) === 'replace' && cc && cc.rings ? [{ id: 'rings', type: 'check', label: 'Options', text: 'Include rings / holes', title: 'Off: the jump rings and ring-sized round holes keep their size. On: they are offset with the charm.' }] : []),
+      statusOff: charm ? 'Tick Preview to see the thinnest wall left' : '',
+      status: r => (r.report ? charmReport(r.report) : r.gone && r.gone.length ? { text: `⚠ ${r.gone.length} shrank to nothing and stay${r.gone.length === 1 ? 's' : ''} as ${r.gone.length === 1 ? 'it is' : 'they are'}`, warn: true } : { text: '', warn: false }),
+      result: (v, tb, copy, preview) => { const o = optsOf(v); if (o.error) return o; if (preview) o.noWall = true; return ops.offsetItems(ctx.items(), ctx.selection(), ctx.geo, o); }
+    }).then(a => {
+      if (!a || !land(ctx, a.r, live ? 'offsetEffect' : a.r.report ? 'offsetCharm' : 'offset')) return false;
+      const msg = a.r.report ? charmReport(a.r.report) : a.r.gone && a.r.gone.length ? { text: `${a.r.gone.length} shrank to nothing and stayed as before`, warn: true } : null;
+      if (msg && msg.text) ctx.say(msg.text, msg.warn ? 6000 : 3600);
+      return true;
     });
   }
   const PIVOTS = [['selection', 'Selection'], ['charm', 'Charm'], ['each', 'Each']];
@@ -1454,12 +1721,9 @@
     'ops.exclude': { title: 'Exclude', group: 'Pathfinder', icon: IC.exclude, enabled: two, context: false, run: ctx => runPathfinder(ctx, 'exclude') },
     'ops.divide': { title: 'Divide', group: 'Pathfinder', icon: IC.divide, enabled: two, context: false, run: ctx => runPathfinder(ctx, 'divide') },
     'ops.trim': { title: 'Trim', group: 'Pathfinder', icon: IC.trim, enabled: two, context: false, run: ctx => runPathfinder(ctx, 'trim') },
-    'ops.offset': { title: 'Offset Path…', group: 'Path', icon: IC.offset, enabled: any, run: ctx => dialog(ctx, {
-      id: 'offset', title: 'Offset Path', preview: true, note: 'A new path round each thing selected, this far out (a minus number: in). The original stays.',
-      values: { mm: '0.5', join: 'round', miter: '4' },
-      fields: (tb, v) => [{ id: 'mm', label: 'Offset', unit: 'mm', step: 0.05 }, { id: 'join', type: 'seg', label: 'Corners', options: [['round', 'Round'], ['miter', 'Miter'], ['bevel', 'Bevel']] }].concat(v.join === 'miter' ? [{ id: 'miter', label: 'Miter limit', unit: '×', step: 1 }] : []),
-      result: v => (fin(numIn(v.mm)) ? ops.offsetItems(ctx.items(), ctx.selection(), ctx.geo, { mm: numIn(v.mm), join: v.join, miter: numIn(v.miter) }) : { error: 'How far, in mm?' })
-    }).then(a => !!a && land(ctx, a.r, 'offset')) },
+    'ops.offset': { title: 'Offset Path…', group: 'Path', icon: IC.offset, enabled: ctx => any(ctx) || charmHere(ctx), run: ctx => offsetDialog(ctx, false) },
+    'ops.offsetFx': { title: 'Offset Path… (Effect)', group: 'Path', icon: IC.offset, context: false, enabled: ctx => any(ctx) || charmHere(ctx), run: ctx => offsetDialog(ctx, true) },
+    'ops.expandFx': { title: 'Expand Appearance', group: 'Path', icon: IC.offset, context: false, enabled: ctx => fxIds(ctx).length > 0, run: ctx => land(ctx, ops.expandOffsetItems(ctx.items(), fxIds(ctx), ctx.geo), 'expandAppearance') },
     'ops.contour': { title: 'Cut line round the art…', group: 'Path', icon: IC.cutline, enabled: any, run: ctx => dialog(ctx, {
       id: 'contour', title: 'Cut line round the art', ok: 'Make the cut line', preview: true, note: 'One cut line round everything selected, this far from it: round corners, every hole filled, the parts joined. The art stays.',
       values: { mm: '0.8' }, fields: [{ id: 'mm', label: 'Gap', unit: 'mm', step: 0.05 }],

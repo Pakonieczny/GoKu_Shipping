@@ -68,11 +68,11 @@ const settle = page => page.evaluate(() => new Promise(r => requestAnimationFram
     const mac = await page.evaluate(() => { const A = window.CharmEditor.ai; return [A.keyLabel('Mod+Alt+Shift+8', true), A.keyLabel('Mod+Shift+Z', true), A.keyLabel('Mod++', true), A.keyLabel('Mod+Alt+Shift+8', false), A.keyLabel('Shift+X', false)]; });
     assert.deepEqual(mac, ['⌥⇧⌘8', '⇧⌘Z', '⌘+', 'Alt+Shift+Ctrl+8', 'Shift+X']);
   });
-  await step('1.3 Object: Transform ▸ Arrange ▸ Align ▸ | Group Ungroup Lock ▸ Unlock All Hide ▸ Show All | Path ▸ Shape ▸ Blend ▸ Envelope Distort ▸ Image Trace ▸ | Clipping Mask ▸ Compound Path ▸ (our platform\'s in Illustrator\'s places)', async () => {
+  await step('1.3 Object: Transform ▸ Arrange ▸ Align ▸ | Group Ungroup Lock ▸ Unlock All Hide ▸ Show All | Expand Appearance | Path ▸ Shape ▸ Blend ▸ Envelope Distort ▸ Image Trace ▸ | Clipping Mask ▸ Compound Path ▸ (our platform\'s in Illustrator\'s places)', async () => {
     await clickPart(page, 'heart-fill');
     await menuOpen(page, 'Object');
     const r = await rows(page);
-    const want = ['Transform ▸', 'Arrange ▸', 'Align ▸', '-', 'Group [Ctrl+G] (off)', 'Ungroup [Shift+Ctrl+G] (off)', 'Lock ▸', 'Unlock All [Alt+Ctrl+2]', 'Hide ▸', 'Show All [Alt+Ctrl+3]', '-', 'Path ▸', 'Shape ▸', 'Blend ▸', 'Envelope Distort ▸', 'Image Trace ▸', '-', 'Clipping Mask ▸', 'Compound Path ▸'];
+    const want = ['Transform ▸', 'Arrange ▸', 'Align ▸', '-', 'Group [Ctrl+G] (off)', 'Ungroup [Shift+Ctrl+G] (off)', 'Lock ▸', 'Unlock All [Alt+Ctrl+2]', 'Hide ▸', 'Show All [Alt+Ctrl+3]', '-', 'Expand Appearance (off)', '-', 'Path ▸', 'Shape ▸', 'Blend ▸', 'Envelope Distort ▸', 'Image Trace ▸', '-', 'Clipping Mask ▸', 'Compound Path ▸'];
     assert.deepEqual(r.slice(0, want.length).map(x => x.replace(/ \(off\) ▸$/, ' ▸')), want);
     const tr = await subRows(page, 'Transform');
     for (const w of ['Transform Again [Ctrl+D] (off)', 'Move… [Shift+Ctrl+M]', 'Rotate…', 'Reflect…', 'Scale…', 'Flip Horizontal', 'Flip Vertical']) assert.ok(tr.includes(w), w + ' in ' + tr.join(' | '));

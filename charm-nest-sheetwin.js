@@ -1454,7 +1454,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         // (pairs: the ear a piece is, when the record says so; an old record says nothing and the window asks OrderPieces)
         // (amendment 2: every earring piece says its ear, and `mirror` when it is the mirror image of the drawn design; a record's own `pieceSides` map says the ear of a piece whose charm does not)
         side: c.side === "L" || c.side === "R" ? c.side : poolId && rec.pieceSides && (rec.pieceSides[poolId] === "L" || rec.pieceSides[poolId] === "R") ? rec.pieceSides[poolId] : null,
-        bodyIndex: c.bodyIndex, groupKey: c.groupKey || null, groupSize: c.groupSize || 0, mirror: c.mirror === true, custom: customOf(c) });
+        bodyIndex: c.bodyIndex, groupKey: c.groupKey || null, groupSize: c.groupSize || 0, mirror: c.mirror === true, custom: customOf(c), fit: inPlaceFitOf(c) });
     }
     return pieces;
   }
@@ -2530,7 +2530,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     renderMsgs(x, row);
     E.pieceScroll.scrollTop = 0;
   }
-  const mmOf = x => x.c ? `${fmt.mm(x.c.widthPt).replace(" mm", "")} × ${fmt.mm(x.c.heightPt)}` : `${fmt.mm(x.p.wPt).replace(" mm", "")} × ${fmt.mm(x.p.hPt)}`;
+  /** (INPLACE SHRINK, Paul 9 Nov 2026) The size a replaced piece was shrunk to so it went back into its old spot (0.90 to 0.99, the record's charm.manual { fit: "inplace", size }), else 0. */
+  function inPlaceFitOf(c) { const m = c && c.manual, v = c && c.inPlaceFit ? +c.inPlaceFit : m && m.fit === "inplace" && !c.frozen ? +m.size : 0; return v >= 0.9 - 1e-9 && v < 1 ? v : 0; }
+  // (INPLACE SHRINK: a piece shrunk to go back into its old spot says the size it is cut at, "94% · 16.9 × 12.0 mm")
+  const mmOf = x => { const f = x.fit || 0, k = f || 1, pre = f ? `${Math.round(f * 100)}% · ` : ""; return pre + (x.c ? `${fmt.mm(x.c.widthPt * k).replace(" mm", "")} × ${fmt.mm(x.c.heightPt * k)}` : `${fmt.mm(x.p.wPt).replace(" mm", "")} × ${fmt.mm(x.p.hPt)}`); };
   function drawThumb(cv, x) {
     const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
     const c = x.c; cv._bare = !c; if (!c) { if (x.thumb) { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => { if (!cv._bare) return; const s = Math.min(cv.width / im.width, cv.height / im.height) * .86; ctx.drawImage(im, (cv.width - im.width * s) / 2, (cv.height - im.height * s) / 2, im.width * s, im.height * s); }; im.src = cors(x.thumb); } return; }
@@ -6669,10 +6672,72 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const c = charmFor(sh, piece); if (!c) return { ok: false, why: "drawing", reason: "That charm is not in this sorter." };
       const lock = mcLocked(sh, c); if (lock) return { ok: false, why: c.bits ? "blocked" : "drawing", reason: lock };
       if (!pose || !Number.isFinite(+pose.cxPt) || !Number.isFinite(+pose.cyPt)) return { ok: false, why: "pose", reason: "No position was given." };
-      let r; try { r = mcCheck(mcGrid(sh, c.id, null), c, { cxPt: +pose.cxPt, cyPt: +pose.cyPt, angle: +pose.angle || 0, size: sizeOf(c) }, +opts.snapPt || 0, true); }
+      // (INPLACE SHRINK, Paul 9 Nov 2026: "if need be, it can be shrunk by up to 10% just to fill it": opts.size, 0.90 to 1, the uniform size the new piece is tried at in its old spot; never for a
+      //  custom design sent at its exact size (CUSTOMPOOL), never more than 10 %)
+      const want = opts.size == null ? null : +opts.size;
+      if (want != null && !(want >= 0.9 - 1e-9 && want <= 1 + 1e-9)) return { ok: false, why: "size", reason: "A replaced piece is shrunk by at most 10%." };
+      if (want != null && Math.abs(want - 1) > 1e-9 && (c.frozen || frozenWhy(c))) return { ok: false, why: "size", reason: frozenWhy(c) || "A custom design keeps its exact size." };
+      let r; try { r = mcCheck(mcGrid(sh, c.id, null), c, { cxPt: +pose.cxPt, cyPt: +pose.cyPt, angle: +pose.angle || 0, size: want != null ? want : sizeOf(c) }, +opts.snapPt || 0, true); }
       catch (e) { return { ok: false, why: "verify", reason: "The layout check could not be made here (" + e.message + ")." }; }
       if (!r.ok || !r.pose) return { ok: false, why: r.why, reason: r.reason };
-      return { ok: true, why: "", reason: "", pose: r.pose, wPt: r.v ? r.v.solid.w / 2 : +c.widthPt || 0, hPt: r.v ? r.v.solid.h / 2 : +c.heightPt || 0, scale: scaleOf(r.pose.size || 1) };
+      return { ok: true, why: "", reason: "", pose: r.pose, wPt: r.v ? r.v.solid.w / 2 : +c.widthPt || 0, hPt: r.v ? r.v.solid.h / 2 : +c.heightPt || 0, scale: scaleOf(r.pose.size || 1), size: r.pose.size || 1 };
+    },
+    /* IPL2 (Paul, 9 Nov 2026: "the new charm should first be attempted to be put on the sheet where it came from because otherwise there's a hole in that sheet"). When a replaced charm's new
+       piece does not fit its old spot, ANYWHERE free on the same sheet, with every other charm where it stands: the hole it left and all other free space, at each of `opts.angles` (default the
+       quarter turns), at its real size (never scaled). The same check as fitsSpot (the nest's collision grid with every other charm stamped from its outline, the sheet's inset, metal cut away and
+       a saved protected contour, then the independent verifier); the legal spot NEAREST to `near` (the old spot's centre) wins. → as fitsSpot, plus, when there is no room,
+       room: { wPt, hPt } (the largest free rectangle of the sheet, for the words) */
+    freeSpot(sheet, piece, near, opts = {}) {
+      const sh = typeof sheet === "string" ? allSheets().find(p => p.sheetId === sheet) || null : sheet || null;
+      if (!sh || !Array.isArray(sh.placements)) return { ok: false, why: "blocked", reason: "That sheet is not held in this sorter." };
+      if (+sh.laserDoneAt > 0 || sh.roseCutAt || sh.recalled || (typeof window.replaceCutWhy === "function" && window.replaceCutWhy(sh))) return { ok: false, why: "blocked", reason: "That sheet's layout can no longer change." };
+      if (sh._manualHold || (MC.on && MC.sh === sh)) return { ok: false, why: "blocked", reason: "A person is moving this sheet's charms by hand." };
+      const Sv = SV(); if (!Sv || !Sv.makeSheetGrid || !Sv.prepareVariant || !Sv.verify) return { ok: false, why: "blocked", reason: "The layout check is not loaded in this page." };
+      const c = charmFor(sh, piece); if (!c) return { ok: false, why: "drawing", reason: "That charm is not in this sorter." };
+      const lock = mcLocked(sh, c); if (lock) return { ok: false, why: c.bits ? "blocked" : "drawing", reason: lock };
+      let G; try { G = mcGrid(sh, c.id, null); } catch (e) { return { ok: false, why: "verify", reason: "The layout check could not be made here (" + e.message + ")." }; }
+      const g = G.grid, size = sizeOf(c), W = g.W, H = g.H;
+      if (!g.sat) g.buildSAT();   // (a box with too few free cells is passed over at once)
+      const vs = [], nx = near && Number.isFinite(+near.cxPt) ? +near.cxPt : W / 4, ny = near && Number.isFinite(+near.cyPt) ? +near.cyPt : H / 4;   // (no old spot: from the sheet's top left)
+      for (const a of (Array.isArray(opts.angles) && opts.angles.length ? opts.angles : [0, 90, 180, 270])) {
+        const angle = normDeg(a); if (vs.some(x => x.angle === angle)) continue;
+        const v = tryDo(() => mcVariant(c, angle, size, G.clearancePt)); if (!v) continue;
+        vs.push({ angle, v, ax: Math.round(nx * 2 - v.solid.cx), ay: Math.round(ny * 2 - v.solid.cy) });
+      }
+      if (!vs.length) return { ok: false, why: "drawing", reason: "This charm's outline could not be measured." };
+      const bad = new Set();
+      const fitsAt = (o, x, y) => {
+        const pm = o.v.fine.pm; if (x < 0 || y < 0 || x + pm.w > W || y + pm.h > H) return false;
+        if (pm.w * pm.h - g.boxSum(x, y, x + pm.w, y + pm.h) < pm.cells) return false;
+        return !bad.has(o.angle + ":" + x + ":" + y) && g.fits(pm, x, y);
+      };
+      // rings outward from the old spot (each angle from its own centre): the nearest legal spot of all angles
+      const nearest = () => {
+        let best = null; const R = Math.max(W, H);
+        for (let r = 0; r <= R; r++) {
+          if (best && r * r > best.d) break;
+          for (const o of vs) for (let dy = -r; dy <= r; dy++) {
+            const edge = Math.abs(dy) === r, step = edge ? 1 : 2 * r;
+            for (let dx = -r; dx <= r; dx += step || 1) {
+              const d = dx * dx + dy * dy; if (best && d >= best.d) continue;
+              if (fitsAt(o, o.ax + dx, o.ay + dy)) best = { o, x: o.ax + dx, y: o.ay + dy, d };
+            }
+          }
+        }
+        return best;
+      };
+      // (the grid holds each charm's mask with the shop's allowance: a spot hard against a neighbour can pass it and fail the verifier's pixels; the next nearest is asked, a few hundred at most)
+      const t0 = Date.now();
+      for (let k = 0; k < 400 && Date.now() - t0 < 4000; k++) {
+        const b = nearest(); if (!b) break;
+        const at = { cxPt: (b.x + b.o.v.solid.cx) / 2, cyPt: (b.y + b.o.v.solid.cy) / 2, angle: b.o.angle, size };
+        if (mcVerify(G, c, at).ok) return { ok: true, why: "", reason: "", pose: at, wPt: b.o.v.solid.w / 2, hPt: b.o.v.solid.h / 2, scale: scaleOf(size), movedPt: Math.sqrt(b.d) / 2 };
+        bad.add(b.o.angle + ":" + b.x + ":" + b.y);   // (the half-point grid said yes, the pixels no: the next nearest)
+      }
+      // no room: the largest free rectangle of the sheet, for the words ("largest free area 14×10 mm")
+      let room = { wPt: 0, hPt: 0 };
+      tryDo(() => { const t = new Sv.Grid(W, H); for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) t.free[y * W + x] = g.get(x, y) ? 0 : 1; const p = t.largestPocket(); room = { wPt: p.w / 2, hPt: p.h / 2 }; });
+      return { ok: false, why: "room", reason: "No room on the sheet for it.", room };
     },
     /* INPLACE: a sheet whose replaced piece came off written as it now stands, the way Manual Control's save writes a sheet (mcSave: a released sheet kept in its set while it is written, its QR
        label made again for the orders now on it), but with no nest at all: the page's writeAsPlaced (every charm where it is, no search). → Promise<boolean> */
@@ -6704,7 +6769,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     fromRecord(rc) {
       const m = rc && rc.manual; if (!m || typeof m !== "object") return null;
       const size = +m.size;
-      return Object.assign({ by: String(m.by || "").slice(0, 80), at: +m.at || 0 }, size >= MC_MIN && size <= MC_MAX && size !== 1 ? { size } : {});
+      // (INPLACE SHRINK: fit "inplace" says the size is the one a replaced piece was shrunk to, to go back into its old spot, not one a person gave it)
+      return Object.assign({ by: String(m.by || "").slice(0, 80), at: +m.at || 0 }, size >= MC_MIN && size <= MC_MAX && size !== 1 ? { size } : {}, m.fit === "inplace" ? { fit: "inplace" } : {});
     },
     // (for the tests: the window's state, a point of the sheet on the screen, and where the tool's handles are on the screen)
     _MC: MC,
@@ -6758,7 +6824,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return piecesOf(rec).filter(x => x.rid === String(rid)).map(x => x.poolId || x.id).sort().join(",");
   }
   const recOfPage = pg => ({ id: pg.sheetId || null, metal: pg.metal, sheetIndex: pg.sheetIndex || pg.page || 1, ...(pg.page ? { page: pg.page } : {}), ...(pg.draft !== undefined ? { draft: !!pg.draft } : {}), ...(pg.setId !== undefined ? { setId: pg.setId || null } : {}), placements: pg.placements || [], poolIds: (pg.charms || []).map(c => c.poolId).filter(Boolean), dirty: false,
-    charms: (pg.charms || []).map(c => ({ id: c.id, name: c.name || "", poolId: c.poolId || null, order: c.order != null ? String(c.order) : "", sku: (c.orderInfo && c.orderInfo.sku) || "", ...(c.oneBody != null && c.hash ? { hash: c.hash } : {}),
+    charms: (pg.charms || []).map(c => ({ id: c.id, name: c.name || "", poolId: c.poolId || null, order: c.order != null ? String(c.order) : "", sku: (c.orderInfo && c.orderInfo.sku) || "", ...(c.oneBody != null && c.hash ? { hash: c.hash } : {}), ...(inPlaceFitOf(c) ? { inPlaceFit: inPlaceFitOf(c) } : {}),   // (INPLACE SHRINK: the size it is cut at, for the window's facts)
       // (an earring pair's piece keeps its ear on the record this page makes of its own sheet, as the saved descriptor does)
       ...(c.side === "L" || c.side === "R" ? { side: c.side, mirror: c.mirror === true, ...(c.bodyIndex != null ? { bodyIndex: c.bodyIndex } : {}), ...(c.groupKey ? { groupKey: c.groupKey } : {}), ...(c.groupSize ? { groupSize: c.groupSize } : {}) } : {}) })) });
   async function attachGeom(x, g, rec) {
