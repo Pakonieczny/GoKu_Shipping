@@ -83,7 +83,7 @@ const root = path.join(__dirname, '../..');
     await openSheet('gold-mc-gf');
     assert.equal((await sw()).hidden, true, 'no Manual Control on a Gold-filled sheet');
     await openSheet('gold10k-mc-away');
-    let s = await sw(); assert.equal(s.hidden, false); assert.equal(s.disabled, 'true'); assert.match(s.why, /run is not open in this sorter/);
+    let s = await until(async () => { const v = await sw(); return /drawing could not be read in this page/.test(v.why) ? v : null; }, 8000, 'the switch on a record whose charm has no design'); assert.equal(s.hidden, false); assert.equal(s.disabled, 'true');   // (MCLIBRARY, 9 Nov 2026: a sheet with no run here is loaded from its record; this record's charm has no design to draw it from)
     await openSheet('gold14k-mc-lined');
     s = await sw(); assert.equal(s.hidden, false); assert.equal(s.disabled, 'true');
     await openSheet(S0.id);
@@ -313,9 +313,9 @@ const root = path.join(__dirname, '../..');
     console.log(`ok   5  off: "${done.title}" — B and C pinned where they were put (B at ${Math.round(sizeB * 100)} %, scale ${live.b.scale}), verified, the record holds it with manual {by: Tester, n: 2}, the claim given back; sheet log: "${log[0].replace(/^\S+ /, '')}"${tl.length ? `; ${tl.length} timeline step(s)` : ''}`);
     // the second computer reads the new layout, and may start now
     await B.page.evaluate(id => SheetWin.open(id), S0.id);
-    const bview = await until(() => B.page.evaluate(([id, b]) => { const W = SheetWin._W, x = W.rec && W.id === id && W.pieces.find(p => p.id === b); const s = document.querySelector('.sheetWin [data-r=manual]'); return x && s && !/another screen/.test(s.dataset.why || '') ? { at: [x.p.cxPt, x.p.cyPt, x.p.angle, x.p.scale], why: s.dataset.why } : null; }, [S0.id, cB]), 15000, 'the second computer\'s view');
+    const bview = await until(() => B.page.evaluate(([id, b]) => { const W = SheetWin._W, x = W.rec && W.id === id && W.pieces.find(p => p.id === b); const s = document.querySelector('.sheetWin [data-r=manual]'); return x && s && !(s.dataset.why || '') ? { at: [x.p.cxPt, x.p.cyPt, x.p.angle, x.p.scale], why: s.dataset.why || '' } : null; }, [S0.id, cB]), 15000, 'the second computer\'s view');
     assert(Math.abs(bview.at[0] - poseB.cxPt) < 1e-6 && Math.abs(bview.at[2] - poseB.angle) < 1e-6, 'the second computer draws B where it was put: ' + bview.at);
-    assert.match(bview.why, /run is not open in this sorter/, 'and is no longer told another screen holds it');
+    assert.equal(bview.why, '', 'and may start Manual Control there now, the sheet loaded from its record (MCLIBRARY, 9 Nov 2026), no longer told another screen holds it');
     await B.ctx.close();
 
     // the orders' timelines: one "moved" step per order whose pieces changed, under the person signed in (SheetEvents.adjusted, as the save calls it)
