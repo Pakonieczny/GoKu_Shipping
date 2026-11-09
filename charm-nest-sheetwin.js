@@ -4728,7 +4728,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // the list it was picked from may be minutes old: each piece must still be on the sheet it was listed on (the run
       // passes waiting charms on), and the order must not have been put on hold or cancelled since
       for (const s of spots) { const on = allSheets().filter(sh => sh.charms.includes(s.c)); if (on.length !== 1 || on[0] !== s.src) throw new Error(`order ${rid} went to another sheet meanwhile; pick again from the new list`); }
-      if (Cancelled.has(rid) || rowsOfOrder(rid).some(r => r.hold || ["held", "skipped", "gone"].includes(r.state))) throw new Error(`order ${rid} was put on hold or cancelled meanwhile`);
+      if (Cancelled.has(rid) || rowsOfOrder(rid).some(r => (o.hop ? false : r.hold || r.state === "held") || ["skipped", "gone"].includes(r.state))) throw new Error(`order ${rid} was ${o.hop ? "skipped or cancelled" : "put on hold or cancelled"} meanwhile`);   // (HANDMOVE, Paul 9 Nov 2026: a move by hand, o.hop, takes an order on hold too)
       // a pair moves whole: a piece of its group on a sheet that is neither a sheet it leaves nor this one would be left alone (checked again now: the sheets may have changed since the list was made)
       if (pairGuard(target)(k)) throw new Error(`order ${rid} has a pair with a piece on another sheet that cannot give it up, so it stays where it is`);
       { const why = pairHold(k, rowsOfOrder(rid), target); if (why) throw new Error(`order ${rid} stays where it is: ${why} (a pair or group is never moved in halves)`); }
@@ -4917,7 +4917,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const why = o.guard ? [src, target].map(sh => o.guard(sh)).find(Boolean) : ""; if (why) return { ok: false, why };
     if ([src, target].some(sh => sheetWorking(sh) || HOP.writing.has(sh))) return { ok: false, why: "a sheet is being nested or saved right now; try again once it has saved" };   // (HOP.writing: MOVEINSTANT, a sheet written as it stands in the background)
     for (const s of spots) { const on = allSheets().filter(sh => sh.charms.includes(s.c)); if (on.length !== 1 || on[0] !== src) return { ok: false, why: `order ${rid} went to another sheet meanwhile` }; }
-    if (Cancelled.has(rid) || rowsOfOrder(rid).some(r => r.hold || ["held", "skipped", "gone"].includes(r.state))) return { ok: false, why: `order ${rid} was put on hold or cancelled meanwhile` };
+    if (Cancelled.has(rid) || rowsOfOrder(rid).some(r => ["skipped", "gone"].includes(r.state))) return { ok: false, why: `order ${rid} was skipped or cancelled meanwhile` };   // (HANDMOVE, Paul 9 Nov 2026: an order on hold or in Review is moved by hand too)
     if (pairGuard(target)(k)) return { ok: false, why: `order ${rid} has a pair with a piece on another sheet that cannot give it up, so it stays where it is` };
     { const w = pairHold(k, rowsOfOrder(rid), target); if (w) return { ok: false, why: `order ${rid} stays where it is: ${w} (a pair or group is never moved in halves)` }; }
     // the room, as the sheet stands this instant: each pose through Manual Control's one check (its grid of the sheet is the one the hop's fit test
@@ -7511,6 +7511,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     moveIn: (k, spots, target, who, o) => moveIn(k, spots, target, who, Object.assign({}, o || {}, { hop: true })),
     // (MANUALHOP: the move made at once on the live sheets, its save in the background; hopState() for the tests)
     moveNow: (k, spots, target, who, o) => moveNow(k, spots, target, who, o || {}), hopState: () => ({ pending: HOP.pending, saving: HOP.pending > 0, owed: MC.on ? [...MC.owed].map(sh => sh.sheetId) : [], writing: HOP.writing.size }),   // (writing: MOVEINSTANT, the sheets written as they stand in the background)
+    // (OWEDFILES, Paul 9 Nov 2026: sheets whose record still owes its files after a reload, a move saved but the page closed before they were written: written as they stand now)
+    writeOwed: sheets => writeOwed(sheets, null, true),
     word: sh => sheetWord(sh.sheetId, sh.fileBase, sh), ridOf, rowsOfOrder, busy, sheetWorking, sentToStation, flow: () => (W.flow ? W.flow.title : ""),
     laserCut: sh => laserCut(sh), goldOpen: (list, o) => goldOpen(list, o || {}),   // (GOLDEDIT, Paul 27 Oct 2026: a 10K / 14K sheet's one lock, and its line given up before a move)
     cancelled: rid => { try { return Cancelled.has(String(rid)); } catch (_) { return false; } }, back: () => backFace(),
