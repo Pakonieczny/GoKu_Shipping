@@ -1585,7 +1585,8 @@ const Dock = window.Dock = (() => {
    (charm-nest-ce-masters.js newDesign: the outline to start from, or the charm library on its other side), the path both the old buttons took, and the Charm Editor from it, which opens in
    front of every window (CES1, charm-nest-charm-editor.js). One node a tab, put back after each redraw of its row; off while the module is not on the page. ── */
 const CharmEditorTabBtn = window.CharmEditorTabBtn = (() => {
-  const TABS = { nest: ["nestCeBtn", "Nest"], orders: ["ordCeBtn", "Orders"], engrave: ["egDesignBtn", "Design & Engrave"], review: ["rvCeBtn", "Review"], library: ["libCeBtn", "Library"] };
+  // CEB2 (Paul, 9 Nov 2026: "Remove the Charm Editor button from the Nest tab."): four tabs, Nest has none (and no header row made for it)
+  const TABS = { orders: ["ordCeBtn", "Orders"], engrave: ["egDesignBtn", "Design & Engrave"], review: ["rvCeBtn", "Review"], library: ["libCeBtn", "Library"] };
   const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5 6 12l2.8 6.5h6.4L18 12Z"/><path d="M12 3.5V11"/><circle cx="12" cy="12.6" r="1.5"/><path d="M8.8 21h6.4"/></svg>';   // (a pen nib: the studio's icon hand)
   const TIP = "Design a charm: start from the charm library or a new outline, in the Charm Editor (saved as a design)";
   const nodes = {};
@@ -1618,14 +1619,9 @@ const CharmEditorTabBtn = window.CharmEditorTabBtn = (() => {
     if (row.lastElementChild !== b) row.appendChild(b);
     return b;
   }
-  /** The rows of the tabs whose header row is the page's own (Nest's, made here; Library's), and Review's, drawn by Review. */
+  /** The rows of the tabs whose header row is the page's own (Library's), and Review's, drawn by Review. */
   function mountShown(mode) {
     try {
-      if (mode === "nest") {
-        let h = document.getElementById("nestCeHead"); const sh = document.getElementById("sheets");
-        if (!h && sh) { h = document.createElement("div"); h.className = "cnCeHead"; h.id = "nestCeHead"; sh.before(h); }
-        mount("nest", h);
-      }
       if (mode === "library") mount("library", document.querySelector("#libView .libBar"));
       if (mode === "review") mount("review", document.querySelector("#reviewView > .ordBar"));
     } catch (e) { console.warn("[charm editor button]", e); }

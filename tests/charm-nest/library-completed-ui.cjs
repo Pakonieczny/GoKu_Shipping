@@ -91,20 +91,17 @@ function seed(st, blobUrl) {
   await page.waitForFunction(() => window.CN && CN.S.cloud.ok === true && window.LibraryDone, null, { timeout: 60000 });
   // the Library opens on Sets (Paul, 29 Sep), drawn first: nothing of the Sheets list before it; the count is of sets
   await page.waitForSelector('#libBody .setCard', { timeout: 30000 });
-  assert.equal(await page.textContent('#libKind button.on'), 'Sets', 'the switch says Sets');
+  // (LBF1, Paul 9 Nov 2026: "remove this [Sheets | Sets] from the Library tab": no switch, the Library is always Sets)
+  assert.equal(await page.$('#libKind'), null, 'no Sheets | Sets switch');
   await page.waitForFunction(() => document.querySelector('#libDoneCount').textContent === '40', null, { timeout: 10000 });
   await page.waitForTimeout(300);
   assert.equal(await page.evaluate(() => [CN.S.library.kind, window.__sheetsSeen]).then(x => x.join()), 'sets,0', 'no Sheets list or its loading line before the sets');
-  ok.push('a fresh load opens the Library on Sets: the sets drawn first, the switch on Sets, the Completed count in sets');
-  // Sheets, once chosen, stays while a person goes to another tab and back (tabs keep their state)
-  await page.click('#libKind button[data-k=sheets]');
-  await page.waitForSelector('#libBody [data-laser-card="sheet"] .libCard', { timeout: 15000 });
+  ok.push('a fresh load opens the Library on Sets: the sets drawn first, no Sheets | Sets switch, the Completed count in sets');
+  // (LBF1: the Sets view stays the Sets view across a tab change; the Sheets list is never drawn)
   await page.evaluate(() => { CN.setMode('nest'); CN.setMode('library'); });
   await page.waitForTimeout(200);
-  assert.deepEqual(await page.evaluate(() => [CN.S.library.kind, document.querySelector('#libKind button.on').textContent, !!document.querySelector('#libBody [data-laser-card="sheet"]'), !!document.querySelector('#libBody .setCard')]), ['sheets', 'Sheets', true, false], 'Sheets is kept across tabs');
-  ok.push('Sheets chosen stays Sheets across a tab change');
+  assert.deepEqual(await page.evaluate(() => [CN.S.library.kind, !!document.querySelector('#libBody [data-laser-card="sheet"]'), !!document.querySelector('#libBody .setCard')]), ['sets', false, true], 'Sets across tabs');
   await page.waitForSelector('#libBody .libCard', { timeout: 30000 });
-  await page.waitForFunction(() => document.querySelector('#libDoneCount').textContent === '120', null, { timeout: 10000 });
   // one line of bar: the tabs no taller than the search, on its line, and nothing to scroll
   let b = await bar();
   assert(b.h < 46 && b.over <= 0 && b.tabs <= b.input + 1 && Math.abs(b.tabsTop + b.tabs / 2 - (b.inputTop + b.input / 2)) < 2, 'one line of bar at 1500: ' + JSON.stringify(b));
@@ -116,7 +113,7 @@ function seed(st, blobUrl) {
   //  seal a completed sheet shows is checked below, once a sheet of a set is marked and stays in place)
   const caps = await page.$$eval('#libBody .libCard .seal', ss => ss.map(x => Math.round(x.offsetWidth)));
   assert.deepEqual(caps, [], 'no seal on a Current card that is not completed (never LASER READY): ' + caps.slice(0, 12));
-  ok.push('Current lists only what is not completed; the tab counts 120 completed sheets; one line of bar at 1500; no seal on a sheet not yet laser cut');
+  ok.push('Current lists only what is not completed (every sheet, those in no set on their "Sheets" cards); the tab counts 40 completed sets; one line of bar at 1500; no seal on a sheet not yet laser cut');
   await shot('01-current-1500');
 
   // mark a sheet completed from its corner: it leaves, the count grows, the cloud records who and when; Undo brings it back
@@ -133,8 +130,9 @@ function seed(st, blobUrl) {
   // (Paul, 27 Sep: it leaves at once, a copy of it flies to the Completed tab, which counts it as it lands)
   await page.waitForFunction(id => !document.querySelector(`#libBody .libCard[data-id="${id}"]`), first, { timeout: 5000 });
   const flying = await page.evaluate(() => [document.querySelectorAll('#motionLayer .mGhost').length, document.querySelector('#libDoneCount').textContent]);
-  assert.deepEqual(flying, [1, '120'], 'a copy flies to the tab, which counts it as it lands: ' + flying);
-  await page.waitForFunction(() => document.querySelector('#libDoneCount').textContent === '121', null, { timeout: 5000 });
+  // (LBF1: the tab counts sets, and a sheet in no set is not one: the count stays; the sheet is in Completed's last group, "Sheets not in a set")
+  assert.deepEqual(flying, [1, '40'], 'a copy flies to the tab: ' + flying);
+  await until(() => done(first));
   assert(done(first) && st.doc(SHEETS, first).laserDoneBy === 'Tester', 'the mark is recorded with its name');
   assert.equal(await page.evaluate(id => CN.allSheets().some(p => p.sheetId === id) || LibraryDone.isDone({ id }), first), true);
   // one Undo: in the note under the Completed tab, once the copy has landed (no toast beside it)
@@ -147,7 +145,7 @@ function seed(st, blobUrl) {
   await shot('03-marked-undo-note');
   await page.click(`.mNote[data-ld="sheet:${first}"] .mNoteBtn`);
   await page.waitForFunction(id => !!document.querySelector(`#libBody .libCard[data-id="${id}"]`), first, { timeout: 5000 });
-  await page.waitForFunction(() => document.querySelector('#libDoneCount').textContent === '120', null, { timeout: 5000 });
+  assert.equal(await page.textContent('#libDoneCount'), '40');
   assert(!done(first) && !('laserDoneBy' in st.doc(SHEETS, first)), 'Undo takes the mark back in the cloud');
   await page.waitForFunction(() => !document.querySelector('#motionLayer .mGhost'), null, { timeout: 5000 });
   ok.push('a sheet marked from its corner flies to Completed (counted as it lands), is recorded with who and when; Undo in the note under the tab brings it back');
@@ -160,7 +158,6 @@ function seed(st, blobUrl) {
   ok.push('window.LibraryDone.mark sets laserDoneAt on the run page (LiveNest.closed) and takes it back');
 
   // Sets: a set marked completed marks every sheet of it
-  await tap('#libKind button[data-k=sets]');
   await page.waitForSelector('#libBody .setCard .ldMarkSet', { timeout: 15000 });
   await page.waitForFunction(() => document.querySelector('#libDoneCount').textContent === '40');
   await shot('04-current-sets-1500');
@@ -223,39 +220,34 @@ function seed(st, blobUrl) {
   await page.evaluate(async () => { if (window.SheetWin && SheetWin.isOpen()) { await SheetWin.close(); await new Promise(r => setTimeout(r, 250)); } else document.querySelector('#lsClose').click(); });
   ok.push('Completed: in the address (#library/completed) and remembered; newest first under "Today"; a set opens in place into its full card');
 
-  // Sheets in Completed: paged as the list scrolls, by day
-  await tap('#libKind button[data-k=sheets]');
-  await page.waitForSelector('#libDone .ldItem[data-kind=sheet]', { timeout: 10000 });
-  // (the sheet marked in the other set is still in Current with its set, which is not done: Completed counts and lists only what is filed)
-  const total = 120 + members.length;
-  await page.waitForFunction(n => document.querySelector('#libDoneCount').textContent === String(n), total);
-  const n0 = await page.$$eval('#libDone .ldItem[data-kind=sheet]', x => x.length);
-  assert.equal(n0, 60, 'the first page: ' + n0);
+  // (LBF1: no Sheets list in Completed: the Sets list, by day, to its end; the sheets in no set are its last group, "Sheets not in a set")
+  // Completed: by day, read as the list scrolls, to the end
+  const total = 41;
   const days = await page.$$eval('#libDone .ldDayHead', hs => hs.map(h => h.textContent));
   assert(days.length >= 10 && /^Today/.test(days[0]), 'by day: ' + days.slice(0, 3));
-  await shot('08-completed-sheets-1500');
-  const sticky = await page.evaluate(async () => { const s = document.querySelector('#stage'); s.scrollTop = 900; await new Promise(r => setTimeout(r, 120)); const t = s.getBoundingClientRect().top; return [...document.querySelectorAll('#libDone .ldDayHead')].some(x => { const r = x.getBoundingClientRect(); return r.top <= t + 1 && r.bottom > t + 12 && x.parentElement.getBoundingClientRect().top < t - 20; }); });
+  await shot('08-completed-sets-1500');
+  const sticky = await page.evaluate(async () => { const s = document.querySelector('#stage'); s.scrollTop = 900; await new Promise(r => setTimeout(r, 120)); const t = s.getBoundingClientRect().top; return [...document.querySelectorAll('#libDone .ldDayHead')].some(h => { const r = h.getBoundingClientRect(); return Math.abs(r.top - t) < 12 && h.closest('.ldDay').getBoundingClientRect().top < t - 20; }); });
   assert(sticky, 'the day heading stays at the top as its day scrolls');
   await page.evaluate(() => { const s = document.querySelector('#stage'); s.scrollTop = s.scrollHeight; });
-  await page.waitForFunction(() => document.querySelectorAll('#libDone .ldItem[data-kind=sheet]').length >= 120, null, { timeout: 10000 });
-  await page.evaluate(() => { const s = document.querySelector('#stage'); s.scrollTop = s.scrollHeight; });
-  await page.waitForFunction(() => /that is all/.test(document.querySelector('#libDone .ldMore').textContent), null, { timeout: 10000 });
-  const n1 = await page.$$eval('#libDone .ldItem[data-kind=sheet]', x => x.length);
-  assert.equal(n1, total, 'every completed sheet, a page at a time: ' + n1);
+  await page.waitForFunction(() => { const s = document.querySelector('#stage'); s.scrollTop = s.scrollHeight; return /that is all/.test(document.querySelector('#libDone .ldMore').textContent); }, null, { timeout: 15000, polling: 300 });
+  const n1 = await page.$$eval('#libDone .ldItem[data-kind=set]', x => x.length);
+  assert.equal(n1, total, 'every completed set, to the end: ' + n1);
   const imgs = await page.$$eval('#libDone .ldThumb img.on', x => x.length);
   assert(imgs > 0, 'thumbnails show');
-  ok.push('Completed sheets: a page of 60, the next as the list scrolls, to the end; sticky day headings; lazy thumbnails');
+  ok.push('Completed sets: read as the list scrolls, to the end; sticky day headings; lazy thumbnails');
   await page.evaluate(() => { document.querySelector('#stage').scrollTop = 0; });
 
-  // Move back from Completed: the row leaves, the sheet is back in Current
+  // Move back from Completed: the row leaves, the sheets are back in Current
+  // (LBF1: the Sets list: the set's own Reopen, where the Sheets list had each sheet's)
   const back = members[0];
-  await page.hover(`#libDone .ldItem[data-id="${back}"] .ldLine`);
+  await page.hover(`#libDone .ldItem[data-set="${setId}"] > .ldLine`);
   await shot('09-completed-row-hover');
-  await tap(`#libDone .ldItem[data-id="${back}"] .ldBack`);
-  await page.waitForFunction(id => !document.querySelector(`#libDone .ldItem[data-id="${id}"]`), back, { timeout: 5000 });
+  await tap(`#libDone .ldItem[data-set="${setId}"] > .ldLine .ldBack`);
+  await page.waitForFunction(id => !document.querySelector(`#libDone .ldItem[data-set="${id}"]`), setId, { timeout: 5000 });
+  await until(() => !done(back));
   assert(!done(back), 'moved back in the cloud');
   assert(!st.doc(SETS, setId).laserDoneAt, 'its set is not complete any more');
-  ok.push('Move back: the row leaves Completed, the sheet (and its set) are current again');
+  ok.push('Move back: the row leaves Completed, the set and its sheets are current again');
 
   // a listing searched in Completed: its sheets, however old
   // (a number shorter than 9 digits waits for Enter: every prefix of one being typed used to be looked up)
@@ -264,7 +256,8 @@ function seed(st, blobUrl) {
   await page.press('#libSearch', 'Enter');
   await page.waitForSelector('#libDone .ldFound', { timeout: 10000 });
   await page.waitForFunction(() => /1 completed sheet holds listing/.test(document.querySelector('#libDone .ldFound').textContent), null, { timeout: 10000 });
-  assert.deepEqual(await page.$$eval('#libDone .ldItem', x => x.map(e => e.dataset.id)), ['old30x1']);
+  // (LBF1: the Sets list shows the completed set that holds it, as the Sets view always did)
+  assert.deepEqual(await page.$$eval('#libDone .ldItem', x => x.map(e => e.dataset.set || e.dataset.id)), [st.doc(SHEETS, 'old30x1').setId]);
   await shot('10-completed-search-listing');
   // the same number in Current: nothing current holds it, and the line says where it is
   await tap('#libTab button[data-t=current]');
@@ -301,7 +294,6 @@ function seed(st, blobUrl) {
   await page.waitForSelector('#libDone .ldItem', { timeout: 10000 });
   b = await bar(); assert(b.h < 46 && b.over <= 130, 'one line of bar at 1280 in Completed: ' + JSON.stringify(b));
   await shot('13-completed-sheets-1280');
-  await tap('#libKind button[data-k=sets]');
   await page.waitForSelector('#libDone .ldItem[data-kind=set]', { timeout: 10000 });
   await tap('#libDone .ldItem[data-kind=set] .ldLine');
   await page.waitForSelector('#libDone .ldItem.open .ldPanelIn .setCard', { timeout: 10000 });
@@ -309,12 +301,10 @@ function seed(st, blobUrl) {
   ok.push('1280 × 800: one line of bar in both tabs');
 
   // a reload opens the tab it was on; the page opened afresh on #library opens the tab last used; Back / Forward follow
-  // (Sheets | Sets is not carried over: Sheets chosen before the reload, the page opens on Sets again)
-  await tap('#libKind button[data-k=sheets]');
-  await page.waitForSelector('#libDone .ldItem[data-kind=sheet]', { timeout: 10000 });
+  // (LBF1: no Sheets | Sets switch: a reload opens on Sets)
   await page.reload();
   await page.waitForFunction(() => window.LibraryDone && LibraryDone.tab() === 'done' && document.querySelector('#libDone .ldItem'), null, { timeout: 30000 });
-  assert.deepEqual(await page.evaluate(() => [CN.S.library.kind, document.querySelector('#libKind button.on').textContent]), ['sets', 'Sets'], 'a reload opens on Sets');
+  assert.deepEqual(await page.evaluate(() => [CN.S.library.kind, !!document.querySelector('#libKind')]), ['sets', false], 'a reload opens on Sets');
   await page.waitForSelector('#libDone .ldItem[data-kind=set]', { timeout: 10000 });
   await page.goto('about:blank');
   await page.goto(`${sorterOrigin}/charm-nest-1.html#library`);

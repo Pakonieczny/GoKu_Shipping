@@ -612,10 +612,8 @@
 .btn.cnCeBtn[aria-busy=true]{cursor:progress;opacity:.72}
 @media (prefers-reduced-motion:reduce){.btn.cnCeBtn,.btn.cnCeBtn::before,.btn.cnCeBtn svg{transition:none}.btn.cnCeBtn:hover:not(:disabled){transform:none}.btn.cnCeBtn:hover:not(:disabled) svg{transform:none}}
 /* CEB1 (Paul, 9 Nov 2026: "Place it exactly in the same place on all 5 main tabs just like it is in the Design & Engrave"): the Charm Editor button of the five main tabs (charm-nest-bridge.js
-   CharmEditorTabBtn), the last thing of each tab's header row at its right end, the Design & Engrave size (.cnCeBtn as it is). Nest has no row of its own: .cnCeHead is one, holding only it. */
+   CharmEditorTabBtn), the last thing of each tab's header row at its right end, the Design & Engrave size (.cnCeBtn as it is). CEB2 (Paul, 9 Nov 2026): not on Nest, and no header row there for it. */
 .btn.cnCeBtn.cnCeTabBtn{flex:none;margin-left:auto}
-.cnCeHead{display:flex;align-items:center;justify-content:flex-end;padding-bottom:5px;margin-bottom:5px;border-bottom:1px solid var(--line)}
-#app:not(.nestMode) .cnCeHead{display:none}
 /* the Library's and the Review's rows never wrap (they scroll sideways): the Library's search and its chips' swatches give the button its room, and on a window too narrow the button stays in view
    at the right end of either, the row scrolling under it */
 #libView .libBar>.cnCeTabBtn,#reviewView>.ordBar>.cnCeTabBtn{position:sticky;right:0;z-index:1}
@@ -666,3 +664,9 @@
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar,
 :is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .egEar{min-height:24px;max-height:none}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEars{align-content:start}
+/* LBF1 (Paul, 9 Nov 2026: the Library's metal pills and its Newest / Oldest first button "under a Filters pill button that expands the filters like the other tabs already do"): the Orders tab's
+   Filters button, panel and the gold chips under the bar (charm-nest-library.js paintFilters), where the pills stood; the chips are their own row under the Library's one-line bar */
+#libView .libFilters{display:inline-flex;flex:0 0 auto;min-width:0}
+#libView .libActive{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;padding:6px 0 2px}
+#libView .libActive[hidden]{display:none}
+@media(max-width:760px),(pointer:coarse){#libView .libFilters .cnBtn{height:40px;font-size:13px}}

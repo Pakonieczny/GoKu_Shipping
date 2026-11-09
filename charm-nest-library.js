@@ -52,7 +52,8 @@
     const bar = byId('libTab'); if (!bar) return;
     for (const b of bar.querySelectorAll('button[data-t]')) { const on = b.dataset.t === L.tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); b.tabIndex = on ? 0 : -1; }
     byId("libActivity")?.remove();
-    CNListActivity.mount(byId("libView").querySelector(".libBar"),"library",()=>{ if(L.tab==="done")showDone();else renderCurrent(); });
+    // (LBF1: the Newest / Oldest first button is the Filters pop-over's "Sort by" now: wireFilters)
+    paintFilters();
     fitPlaceholder();
     const view = byId('libView'); if (view) view.dataset.tab = L.tab;
   }
@@ -251,7 +252,8 @@
       for (const [k,st] of L.lists) if (st!==L.list || L.tab!=='done') dropList(k);
       if (!done && r.setId && r.setChanged && L.list && L.list.kind==='sets') removeRows(L.list,['set:'+r.setId]);
       if (!done) keepCurrent(r.sheetIds || ids);
-      if (L.tab==='done' && done && L.list) { expectRows([key,r.setId && r.setDone?'set:'+r.setId:''],'current'); freshen(L.list,true); }
+      if (L.tab==='done' && done && L.list && kind==='sheet' && !r.setId && L.list.kind==='sets') { dropList(L.list.key); showDone(); }   // (LBF1: a sheet in no set is in the list's last group, read again)
+      else if (L.tab==='done' && done && L.list) { expectRows([key,r.setId && r.setDone?'set:'+r.setId:''],'current'); freshen(L.list,true); }
       if (done && r.setId && !r.setDone) {
         toast(`${name} completed · stays with its unfinished set`,'ok',5000);
       } else if (!o.undo) undoNote(kind,id,done,r,name,ids,Date.now()+landed);
@@ -399,7 +401,8 @@
       }
       else for (const c of body.querySelectorAll(`.libCard[data-id="${CSS.escape(id)}"]`)) {
         const item = c.closest('.librarySheet') || c, set = item.closest('.setCard');
-        if (set && !isDone(set._laserSet)) { cards(body,'current'); partials(body); continue; }
+        // (a sheet of a set not done stays, with its seal; LBF1: a sheet on a "Sheets" card, in no set, leaves at once, as it did in the Sheets view)
+        if (set && set._laserSet && set._laserSet.setId && !isDone(set._laserSet)) { cards(body,'current'); partials(body); continue; }
         const left = set ? [...set.querySelectorAll('.librarySheet')].filter(x => x !== item && !gone.includes(x) && !x.dataset.leaving).length : 1;
         gone.push(left ? item : set);
       }
@@ -818,7 +821,8 @@
     const el = doc.createElement('div'); el.className = 'ldList';
     el.innerHTML = '<div class="ldRows"></div><div class="ldMore" aria-live="polite"></div>';
     return { key, kind, ...CNListActivity.state('library'), metal: metal === 'all' ? null : metal, q: q.startsWith('#') ? '' : q, find: q.startsWith('#') ? q.slice(1) : '', el, rowsEl: el.firstChild, moreEl: el.lastChild,
-      rows: [], byKey: new Map(), next: null, end: false, loading: false, error: null, empties: 0, scanned: 0, at: 0, seq: 0, pending: null, scroll: 0, dropped: false };
+      rows: [], byKey: new Map(), next: null, end: false, loading: false, error: null, empties: 0, scanned: 0, at: 0, seq: 0, pending: null, scroll: 0, dropped: false,
+      loose: false };   // (LBF1: the Sets list, once its sets are all read, goes on with the completed sheets that belong to no set: "Sheets not in a set", its last group)
   }
   function dropList(key) {
     const st = key && L.lists.get(key); if (!st) return;
@@ -882,12 +886,14 @@
         append(st, st.pending.splice(0, CHUNK));
         st.end = !st.pending.length; st.at = st.at || Date.now();
       } else {
-        const r = await api('charmNestLibrary', { op: 'laserDoneList', sort:'activity', direction:st.direction, range:st.range, kind: st.kind, limit: PAGE, cursor: st.next || undefined, metal: st.metal || undefined, q: st.q || undefined }, { quiet: true });
+        const loose = st.kind === 'sets' && st.loose;
+        const r = await api('charmNestLibrary', { op: 'laserDoneList', sort:'activity', direction:st.direction, range:st.range, kind: loose ? 'sheets' : st.kind, loose: loose || undefined, limit: PAGE, cursor: st.next || undefined, metal: st.metal || undefined, q: st.q || undefined }, { quiet: true });
         if (st.dropped) return;
         if (r.counts) setCounts(r.counts);
-        const fresh = (r.rows || []).filter(x => !st.byKey.has(rowKey(x)));
+        const fresh = (r.rows || []).filter(x => !st.byKey.has(rowKey(x)) && (!loose || isLoose(x)));
         append(st, fresh);
         st.next = r.next || null; st.end = !r.next; st.scanned += +r.scanned || 0;
+        if (st.end && st.kind === 'sets' && !loose) { st.loose = true; st.end = false; st.next = null; }   // (LBF1: the sets are all read: the sheets in no set next)
         st.empties = fresh.length ? 0 : st.empties + 1; st.at = st.at || Date.now();
       }
     } catch (e) { if (!st.dropped) st.error = e; }
@@ -922,7 +928,8 @@
     else if (st.error) html = `Could not load: ${esc(st.error.message)} <button type="button" class="btn ghost xs" data-ld-retry>Retry</button>`;
     else if (!st.rows.length && st.end) html = '';
     else if (st.rows.length >= MAX_ROWS) html = `The newest ${MAX_ROWS.toLocaleString()} are shown · search for an order, a listing or a date to find older ones`;
-    else if (st.end) html = st.find ? '' : `${plural(st.rows.length, 'completed ' + what)}${st.q || st.metal ? ' shown' : ''} · that is all`;
+    else if (st.end) { const n = st.kind === 'sets' ? st.rows.filter(r => r.kind === 'set').length : st.rows.length, nl = st.kind === 'sets' ? st.rows.length - n : 0;
+      html = st.find ? '' : `${plural(n, 'completed ' + what)}${nl ? ` · ${plural(nl, 'sheet')} not in a set` : ''}${st.q || st.metal ? ' shown' : ''} · that is all`; }
     else if (st.empties >= 8) html = `Nothing more in the ${st.scanned.toLocaleString()} read <button type="button" class="btn ghost xs" data-ld-more>Keep looking</button>`;
     if (m.innerHTML !== html) m.innerHTML = html;
     const empty = st.rowsEl.querySelector(':scope > .libEmpty');
@@ -974,7 +981,11 @@
       + `<span class="ldNums"><span><b>${+r.orders || 0}</b> ${r.orders === 1 ? 'order' : 'orders'}</span><span data-ld-pcs="${esc(r.id)}"><b>${+r.pieces || 0}</b> pcs</span><span><b>${pct(r.fill)}</b> full</span></span>`
       + who(r) + `<button type="button" class="ldBack" data-ld-back="sheet:${esc(r.id)}" title="Return to Laser cutting">Reopen</button>${ICON.chev}`+processHtml(r,'sheet:'+r.id,true)+'</div></div>';
   }
+  /** (LBF1) A completed sheet that belongs to no set (a Completed row: draft says draft or a solid left out of its set). */
+  const isLoose = r => !!r && r.kind !== 'set' && (!r.setId || !!r.draft);
+  const LOOSE_DAY = 'loose';
   function dayHead(day, kind) {
+    if (day === LOOSE_DAY) return `<section class="ldDay ldLoose" data-day="${LOOSE_DAY}"><h3 class="ldDayHead">Sheets not in a set<span>drafts, loose and cut sheets outside every set</span><i data-kind="sheet"></i></h3><div class="ldDayRows"></div></section>`;
     // (Today / Yesterday by the shop's day, the one the rows are grouped by (CNListActivity.day, America/Toronto): by this browser's own clock, a set
     //  finished at 8 pm in Toronto was filed under "Yesterday" anywhere east of it, from midnight there until midnight in Toronto)
     const A = window.CNListActivity, t = A ? A.day(Date.now()) : realDay(Date.now()), y = A ? A.day(Date.parse(t + 'T12:00:00Z') - 86400000) : realDay(Date.now() - 86400000), d = new Date(day + 'T12:00:00');
@@ -991,10 +1002,12 @@
   function append(st, list) {
     if (!list.length) return;
     st.rowsEl.querySelectorAll(':scope > .skel, :scope > .libEmpty').forEach(n => n.remove());
-    const groups = []; for (const r of list) { st.rows.push(r); st.byKey.set(rowKey(r), r); const day = CNListActivity.day(CNListActivity.at(r)) || 'undated'; const g = groups[groups.length - 1]; if (g && g.day === day) g.rows.push(r); else groups.push({ day, rows: [r] }); }
+    // (LBF1: a sheet in no set, in the Sets list, is under the one "Sheets not in a set" group at its end, not under a day)
+    const loose = st.kind === 'sets' && !st.find;
+    const groups = []; for (const r of list) { st.rows.push(r); st.byKey.set(rowKey(r), r); const day = loose && isLoose(r) ? LOOSE_DAY : CNListActivity.day(CNListActivity.at(r)) || 'undated'; const g = groups[groups.length - 1]; if (g && g.day === day) g.rows.push(r); else groups.push({ day, rows: [r] }); }
     for (const g of groups) {
-      let sec = st.rowsEl.lastElementChild;
-      if (!sec || sec.dataset.day !== g.day) { st.rowsEl.insertAdjacentHTML('beforeend', dayHead(g.day, st.kind === 'sets' ? 'set' : 'sheet')); sec = st.rowsEl.lastElementChild; }
+      let sec = g.day === LOOSE_DAY ? st.rowsEl.querySelector(`:scope > .ldDay[data-day="${LOOSE_DAY}"]`) || st.rowsEl.lastElementChild : st.rowsEl.lastElementChild;
+      if (!sec || sec.dataset.day !== g.day) { st.rowsEl.insertAdjacentHTML('beforeend', dayHead(g.day, st.kind === 'sets' && g.day !== LOOSE_DAY ? 'set' : 'sheet')); sec = st.rowsEl.lastElementChild; }
       sec.lastElementChild.insertAdjacentHTML('beforeend', g.rows.map(rowHtml).join(''));
       countDay(sec);
     }
@@ -1092,6 +1105,86 @@
     e.preventDefault(); openRow(e.target);
   }
 
+  /* ── the Filters pop-over (LBF1) ──
+     LBF1 (Paul, 9 Nov 2026, the Library's head: "remove this [Sheets | Sets] from the Library tab" and "consolidate this [the Oldest first button and the metal pills] under a Filters pill
+     button that expands the filters like the other tabs already do"). The Library is always the Sets view (its loose sheets are its "Sheets" cards, Sets.renderLibrary). The metal pills and
+     the Newest / Oldest first button are the two sections of the Orders tab's Filters panel, the same component (CNListActivity.popover, .cnBtn + .cnBadge, .ordFp, .ordChip, .ordAx):
+     "Metal" (All metals and the five metals, S.library.metal as the pills set it) and "Sort by" (Newest first / Oldest first, the "library" scope's direction as the button set it). The badge
+     counts what is not the default (a metal, Oldest first), and each is a gold chip under the bar while it is in force, one press lets it go. The same state, the same redraws as before. */
+  const LIB_METALS = [['gold', 'GF 14/20'], ['silver', 'SS'], ['rose', 'RG 14/20'], ['gold10k', '10K Gold'], ['gold14k', '14K Gold']];
+  const LIB_DIRS = [['desc', 'Newest first'], ['asc', 'Oldest first']];
+  const metalWord = m => (LIB_METALS.find(x => x[0] === m) || [m, m])[1];
+  let libFp = null;
+  /** A metal chosen: the tab on screen shows that metal (as the pills did). */
+  function chooseMetal(m) {
+    S.library.metal = m || 'all';
+    if (L.tab === 'done') show();
+    else if (window.Sets) Sets.renderLibrary(byId('libBody'), { reuse: true, filter: true });   // (filter: the same sets, another metal: Sets.renderLibrary shows the cards it has, NAV round 4)
+    else loadLibrary();
+  }
+  /** A direction chosen: the list is drawn in that order (as the Newest / Oldest first button did: the busy state on the control, then the redraw). */
+  function chooseDir(d, touch) {
+    if (CNListActivity.state('library').direction === d) return;
+    CNListActivity.set('library', { direction: d === 'asc' ? 'asc' : 'desc' });
+    CNListActivity.react(byId('libView') && byId('libView').querySelector('.libBar'), () => { if (L.tab === 'done') showDone(); else renderCurrent(); }, { touch });
+  }
+  /** The panel, the badge and the chips under the bar, from the state. */
+  function paintFilters() {
+    const btn = byId('libFiltersBtn'), pop = byId('libFiltersPop'), box = byId('libActive'); if (!btn || !pop) return;
+    if (!pop._built) {
+      pop._built = true;
+      const chip = (f, v, label, tip, def) => `<button type="button" class="ordChip" data-f="${f}" data-v="${esc(v)}" aria-pressed="false"${def ? ' data-def' : ''}${tip ? ` title="${esc(tip)}"` : ''}>${f === 'metal' && v ? `<i class="sw" data-metal="${esc(v)}"></i>` : ''}${esc(label)}</button>`;
+      pop.innerHTML = `<div class="ordFpHead"><b>Filters</b><button type="button" class="ordFpClear" data-clear>Clear</button></div><div class="ordFpBody">`
+        + `<section class="ordFg" data-fg="metal"><h4 id="libFg-metal">Metal</h4><div class="ordChipRow" role="group" aria-labelledby="libFg-metal">${chip('metal', '', 'All metals', 'Every metal')}${LIB_METALS.map(([m, w]) => chip('metal', m, w, 'Show only the ' + w + ' sheets and the sets that hold them')).join('')}</div></section>`
+        + `<section class="ordFg" data-fg="sort"><h4 id="libFg-sort">Sort by</h4><div class="ordChipRow" role="group" aria-labelledby="libFg-sort">${LIB_DIRS.map(([d, w], i) => chip('dir', d, w, 'Last activity, ' + w.toLowerCase(), i === 0)).join('')}</div></section>`
+        + `</div><div class="ordFpFoot"><button type="button" class="btn sm" data-done>Done</button></div>`;
+    }
+    const metal = S.library.metal && S.library.metal !== 'all' ? S.library.metal : '', dir = CNListActivity.state('library').direction;
+    for (const c of pop.querySelectorAll('.ordChip')) c.setAttribute('aria-pressed', String(c.dataset.f === 'metal' ? c.dataset.v === metal : c.dataset.v === dir));
+    const n = (metal ? 1 : 0) + (dir !== 'desc' ? 1 : 0), badge = btn.querySelector('.cnBadge');
+    badge.hidden = !n; badge.textContent = n || '';
+    if (n) btn.setAttribute('data-on', '1'); else btn.removeAttribute('data-on');
+    btn.setAttribute('aria-label', n ? `Filters, ${n} applied` : 'Filters');
+    const clear = pop.querySelector('[data-clear]'); if (clear) clear.disabled = !n;
+    if (!box) return;
+    const I = CNListActivity.icons, items = [];
+    if (metal) items.push(['metal', metalWord(metal), 'Metal']);
+    if (dir !== 'desc') items.push(['dir', LIB_DIRS.find(x => x[0] === dir)[1], 'Sort']);
+    const sig = JSON.stringify(items); if (box._sig === sig) return;
+    box._sig = sig; box.hidden = !items.length;
+    box.innerHTML = items.map(([k, label, what]) => `<button type="button" class="ordAx" data-ax="${k}" aria-label="Remove the filter: ${esc(what)}, ${esc(label)}" title="Remove: ${esc(label)}">${esc(label)}${I.x}</button>`).join('')
+      + (items.length > 1 ? `<button type="button" class="ordAxAll" data-ax-all>Clear all</button>` : '');
+  }
+  function wireFilters() {
+    const btn = byId('libFiltersBtn'), pop = byId('libFiltersPop'), box = byId('libActive'); if (!btn || !pop || btn._wired) return;
+    btn._wired = true;
+    if (!btn.querySelector('.cnIc')) btn.insertAdjacentHTML('afterbegin', CNListActivity.icons.filter);   // (the Orders tab's Filters icon)
+    libFp = CNListActivity.popover({ trigger: btn, panel: pop, sheet: true, sheetMax: 640, focus: p => p.querySelector('.ordChip[aria-pressed=true]:not([data-v=""]):not([data-def])') || p.querySelector('.ordChip') });   // (a choice in force, else the first chip)
+    btn.onclick = () => libFp.toggle();
+    btn.addEventListener('keydown', e => { if (e.key === 'ArrowDown') { e.preventDefault(); libFp.open(); } });
+    const after = () => paintFilters();
+    pop.addEventListener('click', e => {
+      const c = e.target.closest('.ordChip');
+      if (c) { if (c.dataset.f === 'metal') { if ((c.dataset.v || 'all') !== (S.library.metal || 'all')) chooseMetal(c.dataset.v); } else chooseDir(c.dataset.v, btn); after(); return; }
+      if (e.target.closest('[data-clear]')) { const m = S.library.metal && S.library.metal !== 'all'; if (m) chooseMetal('all'); chooseDir('desc', btn); after(); return; }
+      if (e.target.closest('[data-done]')) libFp.close(true);
+    });
+    pop.addEventListener('keydown', e => {   // arrows walk the chips; Enter or Space presses the one that has the focus; Esc is the popover's own (as on Orders)
+      if (!['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+      const chips = [...pop.querySelectorAll('.ordChip')], i = chips.indexOf(doc.activeElement); if (i < 0) return;
+      e.preventDefault(); chips[e.key === 'Home' ? 0 : e.key === 'End' ? chips.length - 1 : (i + (e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : -1) + chips.length) % chips.length].focus();
+    });
+    if (box) box.addEventListener('click', e => {
+      const b = e.target.closest('[data-ax],[data-ax-all]'); if (!b) return;
+      const all = b.hasAttribute('data-ax-all'), k = b.dataset.ax;
+      if ((all || k === 'metal') && S.library.metal && S.library.metal !== 'all') chooseMetal('all');
+      if (all || k === 'dir') chooseDir('desc', btn);
+      after();
+      if (doc.activeElement === doc.body || !byId('libView').contains(doc.activeElement)) (box.querySelector('[data-ax]') || btn).focus();   // the chip that had the focus is gone
+    });
+    paintFilters();
+  }
+
   /* ── bounded: what a station left on for days keeps ── */
   function upkeep() {
     const t = Date.now();
@@ -1111,6 +1204,8 @@
 
   function init() {
     const bar = byId('libTab'), body = byId('libBody'), done = byId('libDone'); if (!bar || !body || !done) return;
+    S.library.kind = 'sets';   // (LBF1: the Library is always the Sets view; nothing can choose Sheets now)
+    wireFilters();
     L.tab = readTab(); paintTabs(); panels();
     bar.addEventListener('click', e => { const b = e.target.closest('button[data-t]'); if (b) setTab(b.dataset.t); });
     bar.addEventListener('keydown', e => {
@@ -1127,8 +1222,7 @@
     done.addEventListener('load', e => { const i = e.target; if (i && i.tagName === 'IMG' && i.parentElement && i.parentElement.classList.contains('ldThumb')) i.classList.add('on'); }, true);
     done.addEventListener('error', e => { const i = e.target; if (i && i.tagName === 'IMG' && i.parentElement && i.parentElement.classList.contains('ldThumb')) i.remove(); }, true);
     stage().addEventListener('scroll', () => { if (S.mode === 'library') L.scroll[L.tab] = stage().scrollTop; }, { passive: true });
-    // the count follows Sheets | Sets, in either tab
-    for (const b of doc.querySelectorAll('#libKind button')) b.addEventListener('click', () => requestAnimationFrame(() => paintCount()));
+    // (LBF1: no Sheets | Sets switch: the count is the sets', in either tab)
     setInterval(upkeep, 60000);
     // the box's width changes with the window, the rail, the count on the tab: its words are fitted again
     { let queued = false; const fit = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; fitPlaceholder(); }); };
