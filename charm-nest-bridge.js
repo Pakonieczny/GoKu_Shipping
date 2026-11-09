@@ -398,6 +398,13 @@ const ListMedia = (() => {
   }
   /** MONOTHUMB: a monogram made (or changed) after its row was drawn shows at once in every Vector design box of that line on the page (the service tells, Engrave monoMoved). */
   function monoSweep(){ try{ for(const el of document.querySelectorAll('[data-vector],#owVector')){ const r=el._mvRow; if(r && !el.querySelector('.mwThumb'))monoInto(el,r); } }catch(_){ /* nothing shown */ } }
+  /** CES3: `host` drawn again, once, the moment it is laid out (a ResizeObserver: no timer, nothing while it stays hidden). Its picture "as made" is drawn to the box's own shape, which a
+   *  box that is not on screen does not have: the order window's Vector design came up in the 4:3 default inside its square box, and kept it, as nothing else drew it again. */
+  function drawWhenSized(host){
+    if(host._mvSized || typeof ResizeObserver!=='function')return;
+    const ro=new ResizeObserver(()=>{if(!host.isConnected){ro.disconnect();host._mvSized=null;return;}if(!host.getClientRects().length || !host.clientWidth)return;ro.disconnect();host._mvSized=null;if(host._mvRow)vectorInto(host,host._mvRow);});
+    host._mvSized=ro;ro.observe(host);
+  }
   function vectorInto(host,row) {
     if(host && row)host._mvRow=row;   // (MONOTHUMB: monoSweep finds the line of a box drawn before its monogram was made)
     if(host && row && monoInto(host,row))return;   // (MONOTHUMB, above)
@@ -407,6 +414,7 @@ const ListMedia = (() => {
     // the piece's pool row); every other line, the Vector design as before. Its box keeps the picture it shows until the new one is drawn (soft).
     // (BOXFIX, Paul 28 Oct 2026: "thumbnail preview boxes must be locked into the same size always": the box is the list's fixed size (charm-nest-activity.css); the picture is drawn to its shape, at the screen's density)
     let made=null;try{made=host && row && window.CharmNestMadeThumb ? window.CharmNestMadeThumb.forLine(row,host) : null;}catch(e){made=null;console.warn('made thumbnail',e);}
+    if(made && host && !host.getClientRects().length)drawWhenSized(host);   // (CES3: a box drawn while it is not on screen (the order window paints its Vector design before it is shown) has no size: its picture is made for the box's real shape once it has one)
     const was=jobs.get(host),soft=!!(was && String(was.key).startsWith('made:')) || !!made;
     // (the box says what it shows: its aria-label, which ListZoom's tooltip begins with; THUMBBIG)
     if(host){if(made){if(!host.dataset.vecLabel)host.dataset.vecLabel=host.getAttribute('aria-label') || 'Vector design';host.dataset.made=String(made.pieces || 1);host.setAttribute('aria-label',made.faces==='both'?'As it will be made · front and back':'As it will be made');}else if(host.dataset.made){delete host.dataset.made;host.setAttribute('aria-label',host.dataset.vecLabel || 'Vector design');}}
@@ -10989,6 +10997,95 @@ const Engrave = window.Engrave = (() => {
     const Mx = window.CharmEditor.model, fr = AE.frame(view), toCharm = Mx.mul(fr.Fi, [1, 0, 0, -1, 0, 0]);
     return { face, unitPt: true, frame: b ? { x0: b[0], y0: b[1], wPt: b[2] - b[0], hPt: b[3] - b[1] } : null, items: layers, toCharm };
   }
+  /* ARTHANDLES (CES3, Paul 9 Nov 2026: "when I add an image in the charm editor, and then I returned back to the engraving modal. All of the changes I made in the charm editor are not clickable
+     or editable in the engraving Modal ... If I add an image in the charm editor, then I should be able to click that image in the engraving modal and rotate, resize it, position it just like I
+     would with regular text engraving" ... "These features and options already exist in the charm editor, so why can't you just add them to the engraving modal"). The engraving card's work area
+     takes the parts the Charm Editor added to the face it draws (an image's greys as ONE part, by their group; a shape; a line), each clickable: the same box, corners and turning handle the words
+     have; drag to move, a corner to resize (about the middle), the handle to turn (snapping to the quarters). Let go: saved exactly as the Charm Editor saves a move of that part (charmEditChanges,
+     CharmNestArtEdit.save on every copy of the piece: the record, the sheet's files, the words fitted again round it, the pictures everywhere), so the editor opened next shows it where it was put. */
+  function wireArt(bc, job, dj) {
+    const AE = window.CharmNestArtEdit, Mx = window.CharmEditor && window.CharmEditor.model;
+    if (!AE || !Mx || !bc || !bc._map || !dj || !dj.view || !job || !(job.copies || []).length) return;
+    const face = faceOf(job), pid = String(job.copies[0]);
+    const charm = Pool.charmOf(pid) || charmFor(job); if (!charm || !Array.isArray(charm.members)) return;
+    let doc0 = null; try { doc0 = charmEditDoc(charm, dj.view, face, !!Pool.sheetOf(pid)); } catch (_) { return; }
+    // (the units: the parts the editor added (an image's greys share their group: one unit), never a cut line, never the master's own drawing)
+    const units = new Map();
+    for (const it of doc0.items) { if (!it || it.source !== "added" || it.role === "cut" || !(it.subpaths || []).length) continue; const k = it.group ? "g:" + it.group : "i:" + it.id; (units.get(k) || units.set(k, { key: k, items: [] }).get(k)).items.push(it); }
+    if (!units.size) return;
+    for (const u of units.values()) { let b = null; for (const it of u.items) { const q = Mx.bboxOf(it.subpaths); if (q) b = b ? [Math.min(b[0], q[0]), Math.min(b[1], q[1]), Math.max(b[2], q[2]), Math.max(b[3], q[3])] : q; } u.bb = b; u.c = b ? [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2] : null; }
+    const M = bc._map, toPx = p => M.tx(p[0], -p[1]), toIt = (px, py) => { const v = M.inv(px, py); return [v[0], -v[1]]; };
+    const local = e => { const r = bc.getBoundingClientRect(); return [(e.clientX - r.left) * bc.width / r.width, (e.clientY - r.top) * bc.height / r.height]; };
+    const xf = (t, c) => { const cs = Math.cos(t.rot), sn = Math.sin(t.rot); return [cs * t.s, sn * t.s, -sn * t.s, cs * t.s, c[0] + t.dx - (cs * t.s * c[0] - sn * t.s * c[1]), c[1] + t.dy - (sn * t.s * c[0] + cs * t.s * c[1])]; };
+    const apM = (m, p) => [m[0] * p[0] + m[2] * p[1] + m[4], m[1] * p[0] + m[3] * p[1] + m[5]];
+    let sel = null, drag = null;
+    const handles = (u, t) => {
+      const m = xf(t || { s: 1, rot: 0, dx: 0, dy: 0 }, u.c), b = u.bb, pad = 1.2 * PT;
+      const cs = [[b[0] - pad, b[1] - pad], [b[2] + pad, b[1] - pad], [b[2] + pad, b[3] + pad], [b[0] - pad, b[3] + pad]].map(p => toPx(apM(m, p)));
+      const top = apM(m, [(b[0] + b[2]) / 2, b[1] - pad]), up = apM(m, [(b[0] + b[2]) / 2, b[1] - pad - 2.4 * PT]);
+      return { corners: cs, topPx: toPx(top), rotPx: toPx(up), cPx: toPx(apM(m, u.c)) };
+    };
+    const base = bc._paint;
+    const overlay = () => {
+      if (!sel) return; const g = bc.getContext("2d"); if (!g) return;
+      const t = drag && drag.t, h = handles(sel, t);
+      g.save(); g.lineWidth = 1; g.strokeStyle = "rgba(38,110,190,.95)"; g.setLineDash([]);
+      if (t) { const m = xf(t, sel.c); g.beginPath(); for (const it of sel.items) for (const sp of it.subpaths) { let cur = null; for (const o of sp) { if (o[0] === "m") { cur = toPx(apM(m, o[1])); g.moveTo(cur[0], cur[1]); } else if (o[0] === "l") { cur = toPx(apM(m, o[1])); g.lineTo(cur[0], cur[1]); } else if (o[0] === "c") { const a = toPx(apM(m, o[1])), b = toPx(apM(m, o[2])), c = toPx(apM(m, o[3])); g.bezierCurveTo(a[0], a[1], b[0], b[1], c[0], c[1]); } else if (o[0] === "h") g.closePath(); } } g.fillStyle = "rgba(38,110,190,.18)"; g.fill("evenodd"); g.stroke(); }
+      g.beginPath(); h.corners.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]))); g.closePath(); g.stroke();
+      g.beginPath(); g.moveTo(h.topPx[0], h.topPx[1]); g.lineTo(h.rotPx[0], h.rotPx[1]); g.stroke();
+      g.fillStyle = "#fff"; for (const p of h.corners) { g.beginPath(); g.rect(p[0] - 4, p[1] - 4, 8, 8); g.fill(); g.stroke(); }
+      g.beginPath(); g.arc(h.rotPx[0], h.rotPx[1], 5, 0, Math.PI * 2); g.fill(); g.stroke(); g.restore();
+    };
+    bc._paint = function () { const r = base.apply(this, arguments); try { overlay(); } catch (_) { /* the drawing stands */ } return r; };
+    bc._artSel = () => (sel ? sel.items.map(i => String(i.id)) : []);
+    const near = (p, q, r) => Math.hypot(p[0] - q[0], p[1] - q[1]) <= r;
+    const hit = p => { const q = toIt(p[0], p[1]), pad = 0.4 * PT; let best = null; for (const u of units.values()) { const b = u.bb; if (b && q[0] >= b[0] - pad && q[0] <= b[2] + pad && q[1] >= b[1] - pad && q[1] <= b[3] + pad) { const a = (b[2] - b[0]) * (b[3] - b[1]); if (!best || a < best.a) best = { u, a }; } } return best && best.u; };
+    bc.addEventListener("pointerdown", e => {
+      if (e.button || job.approvalPreparing || job.stamping || job.backSaving) return;
+      const p = local(e);
+      let mode = null, u = null;
+      if (sel) { const h = handles(sel); if (near(p, h.rotPx, 10)) { mode = "rotate"; u = sel; } else if (h.corners.some(c => near(p, c, 9))) { mode = "resize"; u = sel; } }
+      if (!u) { u = hit(p); if (u) mode = "move"; }
+      // (the words keep their own handles: a press on the words' box is theirs)
+      const wb = bc._box, inPoly = (q, P) => { let o = false; for (let i = 0, j = P.length - 1; i < P.length; j = i++) if ((P[i][1] > q[1]) !== (P[j][1] > q[1]) && q[0] < (P[j][0] - P[i][0]) * (q[1] - P[i][1]) / (P[j][1] - P[i][1]) + P[i][0]) o = !o; return o; };
+      if (!mode || (mode === "move" && wb && (near(p, wb.rotate, 10) || wb.corners.some(c => near(p, c, 9)) || (inPoly(p, wb.corners) && Math.hypot(p[0] - wb.centrePx[0], p[1] - wb.centrePx[1]) < Math.hypot(p[0] - handles(u).cPx[0], p[1] - handles(u).cPx[1]))))) { if (sel) { sel = null; bc._paint(); } return; }   // (the words' handles are the words'; a press over both the words and a part goes to the one whose middle is nearer)
+      e.stopImmediatePropagation(); e.preventDefault(); try { bc.setPointerCapture(e.pointerId); } catch (_) { /* fine */ }
+      sel = u; const h = handles(u);
+      drag = { mode, p0: p, q0: toIt(p[0], p[1]), cPx: h.cPx, r0: Math.max(4, Math.hypot(p[0] - h.cPx[0], p[1] - h.cPx[1])), a0: Math.atan2(p[1] - h.cPx[1], p[0] - h.cPx[0]), t: { s: 1, rot: 0, dx: 0, dy: 0 }, moved: false };
+      bc.classList.add("drag"); bc._paint();
+    }, true);
+    bc.addEventListener("pointermove", e => {
+      const p = local(e);
+      if (!drag) { if (!bc.classList.contains("drag")) { const h = sel && handles(sel); if (h && near(p, h.rotPx, 10)) bc.style.cursor = "alias"; else if (h && h.corners.some(c => near(p, c, 9))) bc.style.cursor = "nwse-resize"; else if (hit(p)) bc.style.cursor = "move"; } return; }
+      e.stopImmediatePropagation();
+      if (drag.mode === "move") { const q = toIt(p[0], p[1]); drag.t.dx = q[0] - drag.q0[0]; drag.t.dy = q[1] - drag.q0[1]; }
+      else if (drag.mode === "resize") drag.t.s = Math.max(0.05, Math.hypot(p[0] - drag.cPx[0], p[1] - drag.cPx[1]) / drag.r0);
+      else { let a = (Math.atan2(p[1] - drag.cPx[1], p[0] - drag.cPx[0]) - drag.a0) * 180 / Math.PI; a = ((a % 360) + 360) % 360; for (const q of [0, 90, 180, 270, 360]) if (Math.abs(a - q) < 3) a = q % 360; drag.t.rot = a * Math.PI / 180; }
+      drag.moved = drag.moved || Math.hypot(p[0] - drag.p0[0], p[1] - drag.p0[1]) > 2; bc._paint();
+    }, true);
+    const end = async e => {
+      if (!drag) return; if (e) e.stopImmediatePropagation();
+      const d = drag; drag = null; bc.classList.remove("drag");
+      if (!d.moved || (d.t.s === 1 && !d.t.rot && !d.t.dx && !d.t.dy)) { bc._paint(); return; }
+      const m = xf(d.t, sel.c), changed = {}, ids = new Set(sel.items.map(i => String(i.id)));
+      const out = doc0.items.map(it => { if (!ids.has(String(it.id))) return it; const n = Object.assign({}, it, { matrix: m }); changed[String(it.id)] = n; return n; });
+      const by = employeeName() || await needEmployee("Kept with this charm's artwork edit.", { action: "move this part of the charm" }); if (!by) { bc._paint(); return; }
+      const t = { poolIds: job.copies.map(String), job, from: "card" };
+      try { window.CharmNestMadeThumb?.expect(t.poolIds); } catch (_) { /* PICBUSY */ }
+      charmEditSay(job, "Saving the artwork…", false);
+      try {
+        const ch = charmEditChanges(charm, doc0.items, out, { removed: [], changed, added: [] }, face, null);
+        for (const id of t.poolIds) await AE.save(id, face, ch, { charm: Pool.charmOf(id) || charm, view: dj.view, by, placed: !!Pool.sheetOf(id) });
+        charmEditLog("editorSave", { poolId: pid, poolIds: t.poolIds, orderId: job.row && job.row.order ? String(job.row.order.receiptId) : null, faces: [face], by, from: "engravingCard" });
+        charmEditSay(job, "Artwork saved for this piece", false);
+        charmEditEverywhere(t.poolIds, job.row && job.row.order ? String(job.row.order.receiptId) : "");
+      } catch (er) { try { window.CharmNestMadeThumb?.release(t.poolIds); } catch (_) { /* fine */ } charmEditSay(job, `Not saved · ${(er && er.message) || er}`, true); }
+      sel = null;
+      try { render(); } catch (_) { bc._paint(); }
+    };
+    bc.addEventListener("pointerup", end, true);
+    bc.addEventListener("pointercancel", () => { if (drag) { drag = null; bc.classList.remove("drag"); bc._paint(); } }, true);
+  }
   /* CETEXT (Paul, 28 Oct 2026: "When I press the 'Open in Charm Editor' button everything seems to be working correctly, however the text that is currently on the charm does not show up in the
      editor"). The editor was handed the piece's DRAWING only (charmEditDoc: the charm's own parts, AE.itemsOf); the words the card had fitted on a face live on that face's job (job.fit: the
      lines, the font, the size, the turn and the centre, in the job's own view), never in the charm, so they were nowhere in the editor. Each face whose job has fitted words now hands them in as
@@ -11054,6 +11151,35 @@ const Engrave = window.Engrave = (() => {
   /** TYPEWORDS: the words of a face whose job has words but no placement in this frame (a face still being fitted, a shelved face that could not be built again, the piece made from its master
    *  for its order in another frame): ONE Type of them all the same, in the job's font at its size (else a size the face holds), in the middle of the face. `placed: false`: where they stand
    *  is no place the person chose until they move them. null: no words. */
+  /** CES3: the engraving card's staged state of the piece `t` (its panel's draft: { choice, faces: { front: { text, font, pos }, back } }), or null when nothing is staged. */
+  function charmEditStage(t, pj) {
+    const keys = new Set(); for (const j of [pj && pj.front, pj && pj.back, t && t.job].filter(Boolean)) { try { keys.add(pieceKeyOfJob(j)); } catch (_) { /* none */ } }
+    const row = t && (t.row || (t.job && t.job.row)); if (row && row.key) { keys.add(String(row.key)); if (t.job && t.job.slot) keys.add(row.key + "#" + t.job.slot); }
+    const PNL = window.CharmNestEngravePanel, any = pj && (pj.front || pj.back) || (t && t.job) || null;
+    for (const k of keys) {
+      let st = null; try { st = svStageNow(k) || (PNL && typeof PNL.stageOf === "function" ? PNL.stageOf(k) : null); } catch (_) { st = null; }
+      if (st && typeof st === "object" && st.faces) return any ? svNorm(st, any) : { choice: st.choice || st.mode || "none", faces: { front: Object.assign({ text: "", font: "", pos: null }, st.faces.front), back: Object.assign({ text: "", font: "", pos: null }, st.faces.back) } };
+    }
+    return null;
+  }
+  /** CES3: the staged words are the job's own words (spaces, line breaks and letter case aside). */
+  const charmEditSameWords = (text, j) => { const n = x => String(x || "").replace(/\s+/g, "").toUpperCase(); return !!j && n(text) === n((j.lines && j.lines.length ? j.lines.join("\n") : j.text) || "") && !!(j.fit || j.writtenFit); };
+  /** CES3: the words staged in the engraving card (not approved yet) as ONE Type on the face: the staged font, at the staged place (else where the face's fit put its words, else the middle). */
+  function charmEditStagedWords(j, view, face, doc, sf) {
+    const lines = String(sf.text || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean); if (!lines.length) return null;
+    const Mx = window.CharmEditor && window.CharmEditor.model, eng = window.CharmNestCeText ? window.CharmNestCeText.textToPaths : charmEditText, fr = doc && doc.frame;
+    if (!Mx || !fr) return null;
+    const fontKey = sf.font || (j ? fontIdOf(j) : O.DEFAULT_FONT);
+    let size = +((j && j.fit && j.fit.size) || (j && j.writtenFit && j.writtenFit.size)) || 0;
+    if (!(size > 0)) size = Math.max(1.5, Math.min(fr.hPt * 0.3, fr.wPt / Math.max(4, lines.reduce((a, l) => Math.max(a, l.length), 0) * 0.6)));
+    const it = { id: CHARM_EDIT_WORDS + face + "-" + Date.now().toString(36), kind: "text", role: "hatch", source: "engrave", name: `Engraving (not approved yet) · ${lines.join(" ").slice(0, 40)}`, text: lines.join("\n"), fontKey,
+      sizePt: Math.round(size * 1e6) / 1e6, align: "center", tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, engraving: { job: j ? j.key : null, face, placed: false, staged: true } };
+    let b = null; try { const r = eng(it.text, fontKey, it.sizePt, { align: "center" }); b = r && Mx.bboxOf(r.subpaths || []); } catch (_) { b = null; }
+    const c = b ? [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2] : [0, 0];
+    let at = [fr.x0 + fr.wPt / 2, fr.y0 + fr.hPt / 2];
+    try { const p = j && charmEditSameView(j.view, view) ? (svPlaceOf(j, sf.pos) || (j.fit && Array.isArray(j.fit.centre) ? j.fit.centre : null)) : null; if (p && p.every(Number.isFinite)) at = [p[0], -p[1]]; } catch (_) { /* the middle */ }
+    return Object.assign(it, { tx: Math.round((at[0] - c[0]) * 1e9) / 1e9, ty: Math.round((at[1] - c[1]) * 1e9) / 1e9 });
+  }
   function charmEditWordsLoose(j, view, face, doc) {
     if (!j || !view || ["none", "skipped"].includes(j.state) || (j.fit && j.fit.artOnly)) return null;
     const pick = l => (Array.isArray(l) ? l : []).map(s => String(s == null ? "" : s).trim()).filter(Boolean);
@@ -11204,7 +11330,7 @@ const Engrave = window.Engrave = (() => {
     if (charmEditOpen && (!want || charmEditOpen.want === want)) { try { window.CharmEditor?.raise?.(); } catch (_) { /* CES1: the editor already up on this piece is brought in front of every window */ } return charmEditOpen.p; }
     if (charmEditOpen) charmEditOpen.tok.gone = true;
     const o = { want, tok: { gone: false }, p: null };
-    o.p = openCharmEditorOnce(x, o.tok).finally(() => { if (charmEditOpen === o) charmEditOpen = null; });
+    o.p = openCharmEditorOnce(x, o.tok).finally(() => { if (charmEditOpen === o) charmEditOpen = null; if (!o.tok.after && !(window.CharmEditor && CharmEditor.current)) { try { CharmEditor.release && CharmEditor.release(); } catch (_) { /* CES3: nothing opened in the held workspace's place */ } } });
     charmEditOpen = o;
     return o.p;
   }
@@ -11233,21 +11359,24 @@ const Engrave = window.Engrave = (() => {
   /** CES1: the card after a piece's Save (charm-nest-ce-masters.js afterPiece): what was kept, then Done, Keep editing (the piece again), Back to engraving (from its order), Replace on the
    *  order… (the piece made again from this drawing, a fix of it). Not over another charm asked for meanwhile ("Save and switch", another Edit Design), nor after "Save and go back". */
   function charmEditAfter(x, t, tok, res, o) {
-    const Ms = window.CharmNestCeMasters; if (!Ms || typeof Ms.afterPiece !== "function" || !res || res.switched || (o && o.wentBack) || (tok && tok.gone)) return;
-    if (window.CharmEditor && CharmEditor.current) return;   // (an editor is up again: the card's line said it)
+    const Ms = window.CharmNestCeMasters; if (!Ms || typeof Ms.afterPiece !== "function" || !res || res.switched || (o && o.wentBack) || (tok && tok.gone)) return false;
+    if (window.CharmEditor && CharmEditor.current) return false;   // (an editor is up again: the card's line said it)
+    const letGo = () => { try { window.CharmEditor?.release?.(); } catch (_) { /* CES3: the held workspace goes once every window after Save is answered */ } };
     const poolId = t.poolIds[0], row = t.row || (t.job && t.job.row) || null, rid = row && row.order ? String(row.order.receiptId) : "";
     const all = ((row && row.poolIds) || []).map(String), at = Math.max(0, all.indexOf(poolId)), sku = (row && row.spec && row.spec.designSku) || (row && row.line && row.line.sku) || (t.charm && t.charm.name) || "This piece";
     const C = window.CharmNestCustomPiece, canReplace = !!(rid && C && typeof C.open === "function" && window.Pool && typeof Pool.addCustomPiece === "function");
     const back = t.job && t.from !== "card" ? { label: "Back to engraving", title: "This piece's engraving card in Design & Engrave" } : null;
     // (CES2, Paul 9 Nov 2026: "I want the pop-up to open on every Save": the Send to sheet pop-up opens over the card at once, set as a fix of this piece; a save that failed in part does not open it)
     const designOf = () => Promise.resolve(o.design).then(d => d && d.id ? d : (window.CharmNestDesigns ? (CharmNestDesigns.rows() || []).find(r => r && r.id === "pc-" + poolId) || null : null));
-    const over = canReplace && !o.partial ? () => designOf().then(d => d ? C.open({ poolId, designId: d.id, version: d.version, after: true }) : null) : null;
+    const over = canReplace && !o.partial ? () => designOf().then(d => d ? C.open({ orderId: rid, designId: d.id, version: d.version, after: true }) : null) : null;
     Promise.resolve(Ms.afterPiece({ title: o.title, name: sku, where: `${rid ? `order ${rid} · ` : ""}piece ${at + 1} of ${Math.max(1, all.length)}`, lines: o.lines, bad: !!o.bad, back, replace: canReplace ? {} : null, over }))
       .then(c => {
-        if (c === "again") setTimeout(() => { openCharmEditor(x).catch(e => toast(`Charm Editor: ${(e && e.message) || e}`, "bad", 6000)); }, 0);
-        else if (c === "back") charmEditBack(t);
-        else if (c === "replace") Promise.resolve(o.design).then(d => C.open(Object.assign({ poolId }, d && d.id ? { designId: d.id, version: d.version } : { designId: "pc-" + poolId }))).catch(e => toast(`Replace on the order: ${(e && e.message) || e}`, "bad", 6000));
-      }, () => { /* put away */ });
+        if (c === "again") { try { window.CharmEditor?.release?.("Opening this piece again…"); } catch (_) { /* fine */ } setTimeout(() => { openCharmEditor(x).catch(e => { letGo(); toast(`Charm Editor: ${(e && e.message) || e}`, "bad", 6000); }); }, 0); }
+        else if (c === "back") { letGo(); charmEditBack(t); }
+        else if (c === "replace") Promise.resolve(o.design).then(d => C.open(Object.assign({ orderId: rid, fromEditor: true }, d && d.id ? { designId: d.id, version: d.version } : { designId: "pc-" + poolId }))).catch(e => toast(`Replace on the order: ${(e && e.message) || e}`, "bad", 6000)).finally(letGo);
+        else letGo();
+      }, letGo);
+    return true;
   }
   async function openCharmEditorOnce(x, tok) {
     const AE = window.CharmNestArtEdit, CE = window.CharmEditor;
@@ -11266,7 +11395,23 @@ const Engrave = window.Engrave = (() => {
     for (const face of ["front", "back"]) { views[face] = charmEditView(poolId, charm, face, sku); docs[face] = charmEditDoc(charm, views[face], face, placed); }
     // (CETEXT, Paul 28 Oct 2026: "the text that is currently on the charm does not show up in the editor": the words each face's job has fitted, as an editable text on that face, on top;
     //  TYPEWORDS: a face with words and no placement in this frame hands them in all the same, in the middle of the face)
-    { const pj = jobsOfPiece(poolId); for (const face of ["front", "back"]) { let w = null; try { w = charmEditWords(pj[face], views[face], face) || charmEditWordsLoose(pj[face], views[face], face, docs[face]); } catch (e) { console.warn("charm edit: the words", e); } if (w) { docs[face].items.push(w); words[face] = { id: w.id, job: pj[face], item: w }; } } }
+    const stagedOnly = new Set();   // (CES3: words staged in the engraving card for a face with no job yet: shown, never kept as drawing)
+    { const pj = jobsOfPiece(poolId), stg = charmEditStage(t, pj);
+      for (const face of ["front", "back"]) {
+        let w = null;
+        // (CES3, Paul 9 Nov 2026: "every change made in the engraving modal is immediately visible [in] the charm editor even when the approve button has not been pressed yet": the card's
+        //  staged choice and words (CharmNestEngravePanel's draft) are handed in over what the jobs keep: a face staged as not engraved has no words; staged words that are not the job's are
+        //  the words the editor shows, in the staged font, at the staged place)
+        const on = stg ? svChoiceFaces(stg.choice).includes(face) : null, sf = stg && stg.faces[face];
+        try {
+          if (on === false) w = null;
+          else if (on && sf && sf.text.trim() && !charmEditSameWords(sf.text, pj[face])) w = charmEditStagedWords(pj[face], views[face], face, docs[face], sf);
+          else w = charmEditWords(pj[face], views[face], face) || charmEditWordsLoose(pj[face], views[face], face, docs[face]);
+        } catch (e) { console.warn("charm edit: the words", e); }
+        if (!w) continue;
+        docs[face].items.push(w);
+        if (pj[face]) words[face] = { id: w.id, job: pj[face], item: w }; else stagedOnly.add(String(w.id));
+      } }
     // (TYPEWORDS: the words an earlier save left in the drawing as outlines, sorted by the rule of charm-nest-ce-words.js before the editor opens; nothing is written until Save)
     let repair = { fix: { front: [], back: [] }, said: [] };
     try { repair = await charmEditRepair(poolId, docs, words, job); } catch (e) { console.warn("charm edit: the outlined words", e); }
@@ -11301,8 +11446,9 @@ const Engrave = window.Engrave = (() => {
         const ids = [...d.removed, ...Object.keys(d.changed), ...d.added.map(a => a && a.id)].map(String);
         // (TYPEWORDS: the engraving's words are never a part of the drawing, changed or not: they go to the job, below. A face whose drawing nothing changed is not saved, unless an outline copy
         //  of the words is to leave it: the repair)
-        if (!fix.length && ids.every(id => id === wid)) continue;
-        const changes = charmEditChanges(charm, docs[face].items, r.faces[face].items, d, face, wid ? new Set([wid]) : null);
+        if (!fix.length && ids.every(id => id === wid || stagedOnly.has(id))) continue;
+        const skip = new Set([wid, ...stagedOnly].filter(Boolean));
+        const changes = charmEditChanges(charm, docs[face].items, r.faces[face].items, d, face, skip.size ? skip : null);
         // (SHAREDSHAPE, Paul 29 Oct 2026: the back holds no part of the drawing: its shape, changed there or not, is the front's (the editor made it there too) and goes with the front's record)
         if (face === "back") { changes.removed = []; changes.changed = {}; changes.added = changes.added.filter(a => a && a.role !== "cut"); }
         if (!(changes.removed.length + changes.added.length + Object.keys(changes.changed).length) && !(charm.artEdit && charm.artEdit[face])) continue;   // (EDITSAVE: nothing on this face for the piece to carry, and no edit of it to take off: no save of it)
@@ -11334,20 +11480,20 @@ const Engrave = window.Engrave = (() => {
       return lines.length ? { title: "The cut line changed", lines, proceed: "Save anyway", text: "This piece is already on a sheet. Save anyway keeps your change: that sheet keeps its old files and goes to no set until the piece is moved clear in Manual Control or the sheet is nested again. Or keep editing the shape." } : null;
     };
     const startFace = job && t.from === "card" ? faceOf(job) : "front";
-    let res = null, again = null, todo = [], wordsNow = {}, kept = [], wordsTodo = [];
+    let res = null, again = null, todo = [], wordsNow = {}, kept = [], wordsTodo = [], afterShown = false;
     const done = [], records = {};
     try {
       for (;;) {
         if (host) host.addEventListener("cancel", keepOpen);
         // (TYPEWORDS: what the repair found is said over the work as it opens: a line, not a dialog)
         if (!again && repair.said.length) setTimeout(() => { try { const cur = CE.current; if (cur && cur.ctx && typeof cur.ctx.say === "function") cur.ctx.say([...new Set(repair.said)].join(" · "), 9000); } catch (_) { /* the Layers say it too */ } }, 60);
-        try { res = await CE.open(Object.assign({ title: sku, subtitle, faces: again ? again.faces : docs, startFace: again ? again.face : startFace, fonts, textToPaths: charmEditText, lockRoles: ["cut"], back, host, check }, again ? { base: docs, notice: again.notice } : {})); }   // (CETEXT: the words open unselected, as everything does: a picture imported first goes into the charm's outline, not into the words' box; a click on them shows their controls)
+        try { res = await CE.open(Object.assign({ title: sku, subtitle, faces: again ? again.faces : docs, startFace: again ? again.face : startFace, fonts, textToPaths: charmEditText, lockRoles: ["cut"], back, host, check, hold: true }, again ? { base: docs, notice: again.notice } : {})); }   // (CETEXT: the words open unselected, as everything does: a picture imported first goes into the charm's outline, not into the words' box; a click on them shows their controls)
         finally { if (host) setTimeout(() => host.removeEventListener("cancel", keepOpen), 0); }
         if (!res) return null;   // (Cancel, the ×, Esc, Back with nothing kept: nothing is written)
         const p = planOf(res); todo = p.todo; wordsNow = p.wordsNow; kept = p.kept; wordsTodo = p.wordsTodo;
         if (!todo.length && !wordsTodo.length) {
           if (kept.length && job) charmEditTell(t, `The ${kept.join(" and ")} words are the engraving's: they stay on the card · to engrave none, empty its words box or press No engraving`, false);
-          charmEditAfter(x, t, tok, res, { wentBack, title: "Saved · nothing changed", lines: [kept.length ? `The ${kept.join(" and ")} words are the engraving's: they stay on the card` : "Nothing in the drawing changed, so nothing new was kept for this piece."] });   // (CES1: the card after every Save)
+          afterShown = charmEditAfter(x, t, tok, res, { wentBack, title: "Saved · nothing changed", lines: [kept.length ? `The ${kept.join(" and ")} words are the engraving's: they stay on the card` : "Nothing in the drawing changed, so nothing new was kept for this piece."] });   // (CES1: the card after every Save)
           return null;
         }
         if (p.refused.length) { wentBack = false; again = { faces: res.faces, face: p.refused[0].face, notice: { lines: p.refused } }; continue; }   // (the check said yes and the plan now says no: the editor again, never a save lost)
@@ -11364,7 +11510,7 @@ const Engrave = window.Engrave = (() => {
             charmEditTell(t, `Saved the ${[...new Set(done)].join(" and ")} only · Not saved · ${why}`, true);
             charmEditLog("editorSave", { poolId, poolIds: t.poolIds, orderId: order || null, sku, faces: [...new Set(done)], by, from: t.from });
             charmEditEverywhere(t.poolIds, order);   // (CES1: every view of this piece follows what was kept)
-            charmEditAfter(x, t, tok, res, { wentBack, bad: true, partial: true, title: "Saved in part", lines: [`The ${[...new Set(done)].join(" and ")} is saved; the rest is not: ${why}`, "Keep editing opens this piece again, as saved, to save the rest."] });
+            afterShown = charmEditAfter(x, t, tok, res, { wentBack, bad: true, partial: true, title: "Saved in part", lines: [`The ${[...new Set(done)].join(" and ")} is saved; the rest is not: ${why}`, "Keep editing opens this piece again, as saved, to save the rest."] });
             return { saved: [...new Set(done)], records };
           }
           // (CES1: a "Save and switch": another charm is in the editor now; this save's failure is said, the editor is not taken from the charm asked for)
@@ -11418,9 +11564,9 @@ const Engrave = window.Engrave = (() => {
       for (const j of jobs) { const own = faceOf(j), other = faces.find(f => f !== own), want = faces.includes(own) || !other ? own : otherFaceOf(j) === other ? other : own; if (want !== viewFaceOf(j) || want !== own) setViewFace(j, want); }   // (the other face shown is drawn again from the new charm)
       try { render(); } catch (_) { /* drawn with the next render */ }
       charmEditEverywhere(t.poolIds, order);   // (CES1: every view of this piece and its order shows the save at once)
-      charmEditAfter(x, t, tok, res, { wentBack, design: designP, bad: savedBad, title: faces.length ? "Saved" : "Saved · the words", lines: savedLines });   // (CES1: the card after every Save)
+      afterShown = charmEditAfter(x, t, tok, res, { wentBack, design: designP, bad: savedBad, title: faces.length ? "Saved" : "Saved · the words", lines: savedLines });   // (CES1: the card after every Save)
       return { saved: faces, records };
-    } finally { if (savingArt) { for (const id of t.poolIds) if (ART_SAVES.get(String(id)) === savingArt) ART_SAVES.delete(String(id)); savingArt.end(); } if (wentBack) charmEditBack(t); }
+    } finally { if (tok) tok.after = afterShown; if (savingArt) { for (const id of t.poolIds) if (ART_SAVES.get(String(id)) === savingArt) ART_SAVES.delete(String(id)); savingArt.end(); } if (wentBack) charmEditBack(t); }
   }
   /* EDITDESIGN (Paul, 28 Oct 2026, order 4203083230: "When I press the 'Edit Design' button ... the engraving text is not present in the Charm ... when I enter the Charm Editor from the Engraving Modal
      the text appears correctly"). The words are handed in from the face's job (charmEditWords: its fit, in its own view); a WRITTEN face whose placement the upkeep let go of (shelveWritten) has
@@ -13162,7 +13308,7 @@ const Engrave = window.Engrave = (() => {
       }
       const bc = (held && heldCanvas(job, px)) || renderBack(dj, px, { grid: true, editable: true, include: framed, draft: panelOn && !held, steady: true, zoom: held ? null : workZoomOf(job, faceOf(job)), label: WORK_LABEL }); framed = bc._map.bb; bc.tabIndex = -1; bc.style.outline = "none"; bc.title = job.fit && job.fit.artOnly ? `no words: the charm editor's parts are this ${fw}'s engraving` : "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys move them 0.05 mm, 1 mm with Shift · cut-outs and holes stay clear"; backHost.appendChild(bc);
       svHooks(faceOf(job), tgt ? tgt.words : held ? [] : svOwnWords(), tgt ? tgt.seq : svSeqNow(), true); card._svShape = tgt ? tgt.shape : "own|" + faceOf(job);
-      if (held) { heldOn(backHost, bc, job, px); return; } wire(bc); markShown(job); syncBoth(); if (panelOn) draftNote(card, DRAFTS.get(job.key));
+      if (held) { heldOn(backHost, bc, job, px); return; } wire(bc); try { wireArt(bc, job, dj); } catch (e) { console.warn("engraving: the Charm Editor's parts", e); } markShown(job); syncBoth(); if (panelOn) draftNote(card, DRAFTS.get(job.key));
       workViewOn(backHost, bc, job, faceOf(job), card);   // ENGVIEW: the rulers and the zoom of the grid (FACEVIEW's other face is chosen with the card's Front / Back thumbnails: showFace)
       try { charmEditButton(backHost, bc, job); } catch (e) { console.warn("charm edit: the Edit charm pill", e); }   // CHARM EDIT: the quiet "Edit charm" pill after them (and the last save's note under it): the piece's own artwork in the charm editor (never at the drawing's cost)
       bc._reframe = () => { if (raf || disposed || bc.classList.contains("drag")) return; mounted = [0, 0]; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); };

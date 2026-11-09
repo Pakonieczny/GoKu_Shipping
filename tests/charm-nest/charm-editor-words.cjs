@@ -224,7 +224,7 @@ async function partBCD() {
       await page.evaluate(() => { const AE = window.CharmNestArtEdit, real = AE.save; window.__slowSave = { real }; AE.save = (...a) => new Promise(r => setTimeout(r, 2500)).then(() => real.apply(AE, a)); });
       const puts3 = artPuts();
       await page.click('.ce-root [data-act="save"]');
-      await page.waitForFunction(() => { const n = document.querySelector('#egQueue .rvItem[data-kind=placement] .egArtNote'); return !document.querySelector('.ce-root') && n && /^Saving/.test(n.textContent); }, null, { timeout: 10000 }).catch(() => {});
+      await page.waitForFunction(() => { const n = document.querySelector('#egQueue .rvItem[data-kind=placement] .egArtNote'); return (!document.querySelector('.ce-root') || !!document.querySelector('.ce-root .ce-hold')) && n && /^Saving/.test(n.textContent); }, null, { timeout: 10000 }).catch(() => {});   // (CES3: the saved editor stays on screen with its progress bar until the windows after Save are answered; the press under it is made as the card's own button would)
       const tP = Date.now(), pE = await approveNow();
       const said = await page.waitForFunction(() => { const n = document.querySelector('#egQueue .rvItem[data-kind=placement] .egApproveWhy'); return n ? n.textContent : false; }, null, { timeout: 2000 }).then(h => h.jsonValue()).catch(() => '');
       const sayMs = Date.now() - tP, putsAtSay = artPuts();

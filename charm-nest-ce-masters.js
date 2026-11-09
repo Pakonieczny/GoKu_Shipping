@@ -522,19 +522,20 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
     const token = {}, my = ++opened; session = { token, start };
     if (liveCard && liveCard.token !== token) liveCard.drop();
     const mine = () => !!session && session.token === token, drop = () => { if (mine()) session = null; };
-    if (!(await closeEditor())) { drop(); note(''); return null; }   // (the person kept the charm they were editing)
+    const letGo = () => { try { if (E.release) E.release(); } catch (_) { /* fine */ } };   // (CES3: a held workspace from the last Save goes when nothing opens in its place)
+    if (!(await closeEditor())) { drop(); note(''); letGo(); return null; }   // (the person kept the charm they were editing)
     // the fonts: the text module's (charm-nest-ce-text.js prepare: every engraving font, and the script fonts the words already in the faces need, loaded first), else the bridge's
     const host = root.CharmEditDesign, TX = root.CharmNestCeText;
     let fonts = null, textToPaths = host && typeof host.textToPaths === 'function' ? host.textToPaths : null;
     if (TX && typeof TX.prepare === 'function') { note('Opening the editor…'); try { const p = await TX.prepare({ faces: start.faces }); if (p) { fonts = p.fonts; if (typeof p.textToPaths === 'function') textToPaths = p.textToPaths; } } catch (e) { console.warn('masters: fonts', e); } }
     if (!fonts && host && typeof host.fonts === 'function') { note('Opening the editor…'); try { fonts = await host.fonts(); } catch (e) { console.warn('masters: fonts', e); } }
-    if (!mine() || E.current) { drop(); return null; }   // (another design was asked for meanwhile, or an editor opened under us)
+    if (!mine() || E.current) { drop(); if (!E.current) letGo(); return null; }   // (another design was asked for meanwhile, or an editor opened under us)
     note('');
     const opts = Object.assign({ title: start.title || start.name, subtitle: start.subtitle || '', faces: start.faces, startFace: 'front', lockRoles: [] },
-      Array.isArray(fonts) && fonts.length ? { fonts } : {}, textToPaths ? { textToPaths } : {}, start.back ? { back: Object.assign({}, start.back) } : {});   // (the way back: the editor's head, CharmEditor opts.back)
+      Array.isArray(fonts) && fonts.length ? { fonts } : {}, textToPaths ? { textToPaths } : {}, start.back ? { back: Object.assign({}, start.back) } : {}, { hold: true });   // (CES3 hold: the workspace stays under the windows after Save)   // (the way back: the editor's head, CharmEditor opts.back)
     let shown;
     try { shown = E.open(opts); }
-    catch (e) { drop(); note(`The charm editor could not open · ${(e && e.message) || e}`, true); return null; }
+    catch (e) { drop(); letGo(); note(`The charm editor could not open · ${(e && e.message) || e}`, true); return null; }
     if (start.log !== false) log('designOpen', Object.assign({ name: start.name, by }, start.log || {}, start.id ? { designId: start.id, version: start.version } : {}, start.orderId ? { orderId: start.orderId } : {}, start.from ? { from: start.from } : {}));
     let res;
     try { res = await shown; } catch (e) { drop(); note(`The charm editor could not open · ${(e && e.message) || e}`, true); return null; }
@@ -557,10 +558,11 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
       catch (e) { fail((e && e.message) || String(e)); got = null; }
     }
     if (got && design.source && design.source.kind === 'master' && design.source.sku) remember(design.source.sku);
-    if (!card || moved()) { if (card) card.drop(); if (got && res.switched) note(`“${design.name}” saved · version ${got.version}`); return got ? { designId: got.id, version: got.version } : null; }   // (the next design is open, or on its way)
+    const letGo = () => { const E = root && root.CharmEditor; try { if (E && E.release) E.release(); } catch (_) { /* fine */ } };   // (CES3: the held workspace goes once every window after Save is answered)
+    if (!card || moved()) { if (card) card.drop(); letGo(); if (got && res.switched) note(`“${design.name}” saved · version ${got.version}`); return got ? { designId: got.id, version: got.version } : null; }   // (the next design is open, or on its way)
     if (!got) {
       const again = await card.choice();
-      if (again !== 'again') return null;
+      if (again !== 'again') { letGo(); return null; }
       return edit(Object.assign({}, start, { faces: facesAgain(design) }), by);
     }
     card.done(design, got);
@@ -569,8 +571,9 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
     if (next === 'again') return edit(Object.assign({}, start, { id: got.id, version: got.version, faces: facesAgain(design), subtitle: subtitleFor(Object.assign({}, start, { id: got.id, version: got.version })) }), by);
     if (next === 'send') {
       const C = root.CharmNestCustomPiece;
-      if (C && typeof C.open === 'function') { try { await C.open(Object.assign({ designId: got.id, version: got.version }, design.orderId ? { orderId: design.orderId } : {})); } catch (e) { note(`Send to sheet · ${(e && e.message) || e}`, true); } }
+      if (C && typeof C.open === 'function') { try { await C.open(Object.assign({ designId: got.id, version: got.version, fromEditor: true }, design.orderId ? { orderId: design.orderId } : {})); } catch (e) { note(`Send to sheet · ${(e && e.message) || e}`, true); } }
     }
+    letGo();
     return { designId: got.id, version: got.version };
   }
   /** The faces a design opens with again: its front as saved, its back with the guide made afresh from that front. */

@@ -397,7 +397,7 @@
   function orderInfo(rid) {
     rid = String(rid || '');
     const rows = rowsAll().filter(r => r && r.order && String(r.order.receiptId) === rid && r.state !== 'gone'), r = rows[0], sp = r && r.spec, x = sp && sp.special;
-    return { rid, rows, buyer: (r && r.order.buyer && r.order.buyer.name) || '', label: x ? x.label || 'Custom order' : (r && r.line && r.line.title) || '', sku: (sp && sp.designSku) || (r && r.line && r.line.sku) || '', metal: metalKey(sp && sp.material) };
+    return { rid, rows, custom: !!x, buyer: (r && r.order.buyer && r.order.buyer.name) || '', label: x ? x.label || 'Custom order' : (r && r.line && r.line.title) || '', sku: (sp && sp.designSku) || (r && r.line && r.line.sku) || '', metal: metalKey(sp && sp.material) };
   }
   /** Orders a person types: the order search's index (every order this page knows, its number or its buyer), else the lines of the pull. */
   function findOrders(q, max = 8) {
@@ -453,7 +453,11 @@
       metal: (ctx && ctx.metal) || '', qty: Math.max(1, Math.min(99, Math.floor(+o.quantity || 1))), busy: false, err: '' };
     if (o.poolId && !ctx) { const rid = String(o.poolId).split('_')[0], pc = piecesOf(rid).find(p => p.poolId === String(o.poolId)); st.fix = { rid, poolId: String(o.poolId), lineKey: pc ? pc.lineKey : null, label: pc ? pc.label : '' }; }
     const dlg = el('dialog', 'cpDlg'); dlg.id = 'cpDlg'; dlg.setAttribute('aria-labelledby', 'cpT'); if (o.after) dlg.dataset.cpAfter = '1';   // (CES2: opened by itself after a Save in the Charm Editor)
-    const ord = ctx ? `<button type="button" class="cpOpt" data-cp-attach="this" role="radio"><span class="cpDot"></span><span class="cpOptT"><b>This custom order</b><span><span class="mono">${esc(ctx.rid)}</span>${ctx.buyer ? ' · ' + esc(ctx.buyer) : ''}${ctx.label ? ' · ' + esc(ctx.label) : ''}${ctx.sku ? ' · ' + esc(ctx.sku) : ''}</span></span></button>` : '';
+    /* CES3 (Paul, 9 Nov 2026: "Please remove this from the charm editor pop-up. This is no longer needed" (the Name, Why it is made, the order or piece it fixes, Original mistake by) ... "I'm not
+       seeing an option to stay with this order ... that should be the default option"): opened from the Charm Editor (after its Save, or its Send to sheet… command) the pop-up asks only where it
+       goes (this order, first and chosen, another order, or no order), the metal and how many; a piece with no order is named after its design. */
+    const simple = !!(o.after || o.fromEditor); st.simple = simple;
+    const ord = ctx ? `<button type="button" class="cpOpt" data-cp-attach="this" role="radio"><span class="cpDot"></span><span class="cpOptT"><b>This ${ctx.custom ? 'custom ' : ''}order</b><span><span class="mono">${esc(ctx.rid)}</span>${ctx.buyer ? ' · ' + esc(ctx.buyer) : ''}${ctx.label ? ' · ' + esc(ctx.label) : ''}${ctx.sku ? ' · ' + esc(ctx.sku) : ''}</span></span></button>` : '';
     dlg.innerHTML = `<div class="dlg">
 <div class="dlgHead"><div class="cpHd"><h3 id="cpT">Send to sheet</h3><span class="sub">The piece is cut exactly as designed, on the next sheet of the metal you pick</span></div>
   <div class="right"><span class="cpTag" title="Every piece sent from here is marked handmade custom on its sheet and in its files"><i></i>Handmade custom</span><button type="button" class="cpX" data-cp-close aria-label="Close">×</button></div></div>
@@ -468,9 +472,9 @@
       <button type="button" class="cpOpt" data-cp-attach="other" role="radio"><span class="cpDot"></span><span class="cpOptT"><b>Another order</b><span>Find it by its order number or its buyer</span></span></button>
       <div class="cpSub" data-cp-sub="other" hidden><input class="cpIn" data-cp-q type="search" autocomplete="off" spellcheck="false" placeholder="Order number or buyer" aria-label="Order number or buyer"><div class="cpHits" data-cp-hits role="listbox"></div><div data-cp-other></div></div>
       <button type="button" class="cpOpt" data-cp-attach="none" role="radio"><span class="cpDot"></span><span class="cpOptT"><b>No order</b><span>A piece of its own: forgotten, a fix, a sample</span></span></button>
-      <div class="cpSub" data-cp-sub="none" hidden>
-        <label class="cpLbl">Name <i>required: what it is, so it is easy to pick out on the sheet</i><input class="cpIn" data-cp-name maxlength="60" autocomplete="off" placeholder="e.g. Replacement heart for Emma"></label>
-        <div class="cpLbl">Why it is made<div class="cpChips" data-cp-reasons role="radiogroup" aria-label="Why it is made">${REASONS.map(([k, t, s]) => `<button type="button" class="cpChip" data-cp-reason="${k}" role="radio" title="${esc(s)}">${esc(t)}</button>`).join('')}</div></div>
+      <div class="cpSub" data-cp-sub="none" hidden>${simple ? `<div class="cpHint">Named after its design on the sheet.</div>` : ''}
+        <label class="cpLbl"${simple ? ' hidden' : ''}>Name <i>required: what it is, so it is easy to pick out on the sheet</i><input class="cpIn" data-cp-name maxlength="60" autocomplete="off" placeholder="e.g. Replacement heart for Emma"></label>
+        <div class="cpLbl"${simple ? ' hidden' : ''}>Why it is made<div class="cpChips" data-cp-reasons role="radiogroup" aria-label="Why it is made">${REASONS.map(([k, t, s]) => `<button type="button" class="cpChip" data-cp-reason="${k}" role="radio" title="${esc(s)}">${esc(t)}</button>`).join('')}</div></div>
         <div class="cpSub" data-cp-fix hidden style="margin:0">
           <div class="cpLbl">The order or piece it fixes<input class="cpIn" data-cp-fq type="search" autocomplete="off" spellcheck="false" placeholder="Order number or buyer" aria-label="The order it fixes"></div>
           <div class="cpHits" data-cp-fhits role="listbox"></div><div data-cp-fixed></div><div data-cp-cause></div>
@@ -546,7 +550,7 @@
       if (st.loadErr) return 'The design could not be read';
       if (!st.design) return 'Reading the design…';
       if (st.attach === 'other' && !st.other) return 'Find the order to attach it to';
-      if (st.attach === 'none') {
+      if (st.attach === 'none' && !st.simple) {
         if (!st.name.trim()) return 'Name the piece';
         if (!st.reason) return 'Say why it is made';
         if (st.reason === 'fix' && !st.fix) return 'Pick the order or piece it fixes';
@@ -588,7 +592,7 @@
       st.busy = true; st.err = ''; sync();
       const g = st.goes = goesNow(), orderId = orderNow(), none = st.attach === 'none';
       try {
-        const out = await send({ designId: st.designId, version: st.version, design: st.design, metal: st.metal, quantity: st.qty, orderId, customName: none ? st.name.trim() : '', reason: none ? st.reason : null,
+        const out = await send({ designId: st.designId, version: st.version, design: st.design, metal: st.metal, quantity: st.qty, orderId, customName: none ? (st.name.trim() || (st.simple && st.design && String(st.design.name || '').slice(0, 60)) || (st.simple ? 'Custom piece' : '')) : '', reason: none ? st.reason || null : null,
           fixes: none && st.reason === 'fix' && st.fix ? { orderId: st.fix.rid, poolId: st.fix.poolId, lineKey: st.fix.lineKey, causedBy: st.causedBy.trim(), suggested: st.cause ? st.cause.suggested : '' } : null, by, sheet: g.name });
         // (the custom order this was designed for: its line is released from Review once its piece is on, as the card's own Release Hold does it: CustomPrint, its record, its seal, its step
         //  on the timeline; custompool's piece is an extra piece of the order and settles nothing by itself)
@@ -644,7 +648,7 @@
     all();
     if (st.fix) loadCause();
     try { dlg.showModal(); } catch (_) { dlg.setAttribute('open', ''); }
-    requestAnimationFrame(() => { try { (st.attach === 'none' ? q('[data-cp-name]') : q(st.metal ? '[data-cp-send]' : '[data-cp-metal]')).focus({ preventScroll: true }); } catch (_) {} });
+    requestAnimationFrame(() => { try { (st.attach === 'none' && !simple ? q('[data-cp-name]') : q(st.metal ? '[data-cp-send]' : '[data-cp-metal]')).focus({ preventScroll: true }); } catch (_) {} });
     M.openMs = now() - t0;
     // the design: in hand (just saved), kept from before, or read once from the library
     designOf(st.designId, st.version, o.design).then(d => { if (!M || M.st !== st) return; st.design = d; st.version = +d.version || st.version; paintDesign(); sync(); },
@@ -790,15 +794,18 @@
       try {
         res = await CE.open({ title: name, subtitle: `Custom order ${rid}${info.buyer ? ' · ' + info.buyer : ''}${info.label ? ' · ' + info.label : ''} · Save, then send it to a sheet`, faces, startFace: 'front',
           fonts: T.fonts, textToPaths: T.text, lockRoles: blank ? [] : ['cut'],
-          design: { id: base ? base.id : null, version: base ? base.version : null, name, orderId: rid, source }, orderId: rid });   // (design, orderId: what the design library's own hooks read)
+          design: { id: base ? base.id : null, version: base ? base.version : null, name, orderId: rid, source }, orderId: rid, hold: true });   // (CES3 hold: the workspace stays under the pop-up after Save)   // (design, orderId: what the design library's own hooks read)
       } finally { if (live === l) live = null; }
       if (!res) return null;
       busyCards.delete(rid); repaint(rid);
-      const saved = await saveResult(res, { base: l.saved || base, orderId: rid, name, source, by, from });
-      if (!saved) return null;
-      // (sent from inside the designer already, and nothing changed since: the pop-up is not offered a second time)
-      if (l.sent && l.sent.id === saved.id && l.sent.version === saved.version) return l.sent.out;
-      return open({ designId: saved.id, version: saved.version, orderId: rid, design: saved.design });
+      const letGo = () => { try { CE.release && CE.release(); } catch (_) { /* CES3: the held workspace goes once the pop-up is answered */ } };
+      try {
+        const saved = await saveResult(res, { base: l.saved || base, orderId: rid, name, source, by, from });
+        if (!saved) return null;
+        // (sent from inside the designer already, and nothing changed since: the pop-up is not offered a second time)
+        if (l.sent && l.sent.id === saved.id && l.sent.version === saved.version) return l.sent.out;
+        return await open({ designId: saved.id, version: saved.version, orderId: rid, design: saved.design, fromEditor: true });
+      } finally { letGo(); }
     } finally { busyCards.delete(rid); repaint(rid); }
   }
   /* The editor says a drawn shape's paint as true / false ("the role's own pen"); the design library keeps a colour. Each true is written as the pen the laser gives
@@ -919,7 +926,7 @@
     catch (e) { say(`Not kept: ${String((e && e.message) || e).slice(0, 160)}`, 'bad', 7000); return null; }
     if (!saved) return null;
     const l = live; if (l) l.saved = saved.design;
-    const out = await open({ designId: saved.id, version: saved.version, orderId, design: saved.design });
+    const out = await open({ designId: saved.id, version: saved.version, orderId, design: saved.design, fromEditor: true });
     if (l && out) l.sent = { id: saved.id, version: saved.version, out };
     return out;
   }
