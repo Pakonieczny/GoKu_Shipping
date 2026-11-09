@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Charm Sorter connections check</title>
+<title>Brites Manager connections check</title>
 <meta name="robots" content="noindex">
 <style>
   :root{--paper:#f3f0ea;--card:#fffefb;--card2:#faf7f1;--ink:#1c1a17;--ink70:#5b554c;--ink45:#938c80;--line:#e4ddd0;--velvet:#221f1b;--gold:#caa861;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--serif:"Iowan Old Style",Georgia,serif}
@@ -42,7 +42,7 @@
 </head>
 <body>
 <header>
-  <h1>Charm Sorter <i>⇄</i> Design Station · connections check</h1>
+  <h1>Brites Manager <i>⇄</i> Design Station · connections check</h1>
   <div class="sum" id="summary"><span class="spin"></span> running…</div>
   <div class="legend">A green row means the thing answered this request. It does not mean a run will succeed: a person's decisions, Etsy's data and the master file are separate matters. A grey row was never attempted and is never counted as a pass. Nothing here writes data unless <b>write</b> is on, and then only probe rows and a probe object that are removed again.</div>
 </header>
@@ -105,7 +105,7 @@ function render() {
 }
 function report() {
   const s = { ok: rows.filter(r => r.status === "ok").length, fail: rows.filter(r => r.status === "fail").length, warn: rows.filter(r => r.status === "warn").length, skip: rows.filter(r => r.status === "skip").length };
-  const lines = [`Charm Sorter ⇄ Design Station connections check`, `${s.ok} reached · ${s.fail} failed · ${s.warn} need attention · ${s.skip} not attempted`, `sorter ${location.origin} · station ${dsOrigin} · ${new Date().toISOString()} · options ${Object.entries(OPT).filter(([, v]) => v).map(([k]) => k).join(",") || "none"}`, ""];
+  const lines = [`Brites Manager ⇄ Design Station connections check`, `${s.ok} reached · ${s.fail} failed · ${s.warn} need attention · ${s.skip} not attempted`, `sorter ${location.origin} · station ${dsOrigin} · ${new Date().toISOString()} · options ${Object.entries(OPT).filter(([, v]) => v).map(([k]) => k).join(",") || "none"}`, ""];
   let g = null; for (const r of rows) { if (r.group !== g) { g = r.group; lines.push(g); } lines.push(`${ICON[r.status]}\t${r.name}\t${r.value}${r.note ? " — " + r.note : ""}${r.ms != null ? ` (${r.ms} ms)` : ""}`); }
   return lines.join("\n");
 }

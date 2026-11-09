@@ -406,7 +406,7 @@ async function linkWaiting(threadId, thread) {
 
 // ─── sending ─────────────────────────────────────────────────────────────────
 
-const senderLabel = name => "Charm Sorter · " + String(name || "staff").slice(0, 60);
+const senderLabel = name => "Brites Manager · " + String(name || "staff").slice(0, 60);
 function friendlyFailure(code, error) {
   switch (code) {
     case "QUEUED_EXPIRED": return "Not sent: the inbox's Etsy helper did not pick it up within 30 minutes. Is a browser with the extension open?";
@@ -1155,7 +1155,7 @@ async function pairStart(body) {
   const code = crypto.randomBytes(18).toString("base64url");
   await db.collection(COLL.pairs).doc(sha(pairId)).set({
     codeHash: sha(code), status: "pending", createdAtMs: now, expiresAtMs: now + PAIR_TTL_MS,
-    label: cleanText(body.label, 80) || "Charm Sorter"
+    label: cleanText(body.label, 80) || "Brites Manager"
   });
   return { pairId, code, expiresAtMs: now + PAIR_TTL_MS, inboxUrl: INBOX_URL + "#pair=" + code };
 }
@@ -1170,7 +1170,7 @@ async function pairInfo(code) {
   const doc = await pairFind(code);
   if (!doc) return { found: false };
   const d = doc.data();
-  return { found: true, status: d.expiresAtMs < Date.now() ? "expired" : d.status, label: d.label || "Charm Sorter", createdAtMs: d.createdAtMs, expiresAtMs: d.expiresAtMs };
+  return { found: true, status: d.expiresAtMs < Date.now() ? "expired" : d.status, label: d.label || "Brites Manager", createdAtMs: d.createdAtMs, expiresAtMs: d.expiresAtMs };
 }
 async function pairAnswer(code, session, approve) {
   const doc = await pairFind(code);
@@ -1204,7 +1204,7 @@ async function pairClaim(body) {
     if (d.status !== "approved") return;
     const key = crypto.randomBytes(32).toString("base64url");
     tx.set(db.collection(COLL.stations).doc(sha(key)), {
-      username: d.username, displayName: d.displayName || d.username, label: d.label || "Charm Sorter",
+      username: d.username, displayName: d.displayName || d.username, label: d.label || "Brites Manager",
       createdAtMs: Date.now(), lastSeenAtMs: Date.now()
     });
     tx.delete(ref);

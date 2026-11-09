@@ -140,7 +140,7 @@
   function seals(stepKey, ctx) {
     try {
       const key = keyOf(stepKey), c = key ? readCtx(ctx) : null; if (!c) return [];
-      if (HAND[key]) return handSeals(c, key).map(s => ({ id: String(s.id || ''), type: HAND[key], at: +s.at || 0, by: String(s.by || ''), person: String(s.by || '').trim(), station: '', place: 'Charm Sorter', sheet: '' }));
+      if (HAND[key]) return handSeals(c, key).map(s => ({ id: String(s.id || ''), type: HAND[key], at: +s.at || 0, by: String(s.by || ''), person: String(s.by || '').trim(), station: '', place: 'Brites Manager', sheet: '' }));
       return eventsOf(c, key).map(e => dataOf(c, e));
     } catch (e) { warn('seals', e); return []; }
   }
@@ -216,7 +216,7 @@
     const html = typeof S.compactRow === 'function' ? S.compactRow(lead, more, size) : S.row({ stamps: [lead], prints: lead.how === 'print' ? lead.n || 0 : 0 }, { size });
     if (!html) return null;
     const w = wrap(key, 'done', all.length); w.insertAdjacentHTML('beforeend', html);
-    if (caption) { const t = captionOf({ person: String(lead.by || '').trim(), by: String(lead.by || ''), place: 'Charm Sorter', sheet: '', at: +lead.at || 0 }); if (t) { const by = node('span', 'pgBy'); by.textContent = t; w.append(by); } }
+    if (caption) { const t = captionOf({ person: String(lead.by || '').trim(), by: String(lead.by || ''), place: 'Brites Manager', sheet: '', at: +lead.at || 0 }); if (t) { const by = node('span', 'pgBy'); by.textContent = t; w.append(by); } }
     return w;
   }
 

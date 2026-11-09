@@ -114,7 +114,7 @@
     if (M.pair && M.pair.expiresAtMs > Date.now() + 30000) { openInbox(M.pair.url); return; }
     try {
       const who = window.B && B.employee ? " · " + B.employee : "";
-      const r = await call("pair_start", { label: "Charm Sorter, " + browserName() + who }, { key: null });
+      const r = await call("pair_start", { label: "Brites Manager, " + browserName() + who }, { key: null });
       M.pair = { pairId: r.pairId, expiresAtMs: r.expiresAtMs, url: r.inboxUrl };
       try { sessionStorage.setItem(PAIR, JSON.stringify(M.pair)); } catch (_) {}
       openInbox(r.inboxUrl);

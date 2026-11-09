@@ -98,7 +98,7 @@ const FRAME_OWN = 'Frame Fran';          // the name the station's own browser s
     await page.evaluate(() => CNAccount.close && CNAccount.close());
     const g = await frame.evaluate(() => { const ok = DsName.need('Print labels'); const b = document.getElementById('dsNameGate'), i = document.getElementById('dsNameInput'); return { ok, shown: !!b && !b.hidden, inputShown: !!i && !i.hidden && i.offsetParent !== null, text: b ? b.textContent : '' }; });
     assert.strictEqual(g.ok, false, 'nobody signed in: the action waits');
-    assert(g.shown && !g.inputShown && /Charm Sorter/.test(g.text), 'the gate points to the sorter and has no field to type another person: ' + JSON.stringify(g));
+    assert(g.shown && !g.inputShown && /Brites Manager/.test(g.text), 'the gate points to the sorter and has no field to type another person: ' + JSON.stringify(g));
     assert.strictEqual(await frame.evaluate(() => { const i = document.getElementById('dsNameInput'); i.value = 'Typed Person'; i.dispatchEvent(new Event('blur')); return localStorage.getItem('employee_name'); }), null, 'the gate\'s field never signs a different person in while the sorter drives');
     await page.waitForSelector('#cnAcctPanel', { timeout: 10000 });
     await signInAs(page, srv, 'dana  d');

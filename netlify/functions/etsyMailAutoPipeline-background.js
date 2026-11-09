@@ -2516,7 +2516,7 @@ exports.handler = async (event) => {
     if (veto.vetoed) {
       fallbackReason = "deterministic veto: " + veto.reasons.join("; ");
     } else if (productionHold) {
-      fallbackReason = "a Charm Sorter production question is open in this conversation";
+      fallbackReason = "a Brites Manager production question is open in this conversation";
     } else if (ks.disabled) {
       fallbackReason = "kill-switch active; not auto-sending";
     } else if (dryRun) {

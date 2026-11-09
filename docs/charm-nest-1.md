@@ -1,4 +1,6 @@
-# Charm Nesting Station 1 — `charm-nest-1.html`
+# Brites Manager — `charm-nest-1.html`
+
+Brites Manager (formerly Brites Charm Nest / Charm Sorter). Renamed 9 Nov 2026 everywhere a person sees the name; the URL, file names, code identifiers and data keys keep their old `charm-nest` / `charmNest` / `Charm_Nest_*` names.
 
 Production URL: `https://brites-charm-sorter.goldenspike.app` (redirect in `netlify.toml` → `/charm-nest-1.html`).
 
