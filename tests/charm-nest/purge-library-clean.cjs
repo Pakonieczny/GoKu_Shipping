@@ -192,7 +192,9 @@ async function scenario(browser, button) {
   const a2 = await lib({ op: 'setAllocate', day: DAY, runId: 'run-20261027-2', group: 'dispatch' });
   await lib({ op: 'putSheet', sheet: Object.assign(sheetOf('sb-gf-new', 'gold', 'GF_Oct.27.26_Set-1_Sheet-1', ['4173300099'], 1), { runId: 'run-20261027-2', setId: a2.setId }) });
   await lib({ op: 'setUpdate', setId: a2.setId, patch: { runId: 'run-20261027-2', day: DAY, seq: a2.seq, name: 'Set-' + a2.seq, sheetIds: ['sb-gf-new'], materials: ['gold'], status: 'open' } });
-  const next = await reads(A), viewNext = await setsView(A);
+  // (the page's own refresh that the reload started can land after these writes and draw the Library as it read it a moment before: the view is asked again until it settles, up to 15 s; a real tab draws it on its next refresh)
+  const next = await reads(A); let viewNext = await setsView(A);
+  for (let i = 0; i < 10 && viewNext.cards !== 1; i++) { await new Promise(r => setTimeout(r, 1500)); viewNext = await setsView(A); }
   ok(a2.setId === SET1 && a2.seq === 1, 'the next run\'s first set of the same simulated day is Set-1 again: ' + JSON.stringify(a2));
   ok(JSON.stringify(next.sheets) === JSON.stringify(['sb-gf-new']) && JSON.stringify(next.setSheets) === JSON.stringify(['sb-gf-new']), 'and it holds only its own new sheet, no old one: ' + JSON.stringify(next));
   ok(viewNext.cards === 1, 'the Library draws that one set: ' + JSON.stringify(viewNext));
