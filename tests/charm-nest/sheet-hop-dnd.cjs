@@ -519,6 +519,47 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     } catch (e) { fail('9 · hand-over with unsaved moves', e); if (process.env.DEBUG) console.log(await page.evaluate(() => ({ flows: window.__flows, work: SheetWin.hopKit.W.work && { t: SheetWin.hopKit.W.work.title, s: SheetWin.hopKit.W.work.state, n: SheetWin.hopKit.W.work.note, st: SheetWin.hopKit.W.work.steps.map(x => [x.text, x.state, x.detail]) } }))); }
     await closePops();
 
+    /* 11 · HANDMOVE (Paul, 9 Nov 2026: only the laser's mark stops a person's own change): an order on hold and an order in Review are moved by hand, their hold and Review kept;
+       a 10K / 14K sheet waiting greyed in its set (Gate.goldWaitHome) gives an order that also has a piece on a third sheet, with no "tie" refusal (a known split, said on the set) */
+    try {
+      await openSheet('k14-1'); await until(() => page.evaluate(() => !SheetWin.hopKit.W.flow && !SheetWin.hopKit.hopState().writing), 60000, 'nothing being written'); await manual(true);
+      const h50 = idOf(R(50), 60), r52 = idOf(R(52), 62), s53 = idOf(R(53), 63), HOLD = 'Held by Pat: check the engraving';
+      // the order rows the move reads (this world holds none): R50 held by a person, R52 in Review
+      await page.evaluate(({ HOLD }) => { const orig = Orders.rows; window.__rowsOrig = orig; const extra = [
+        { key: 'h50', order: { receiptId: '4180000050' }, line: {}, state: 'held', hold: HOLD, reason: HOLD, poolIds: ['4180000050_6000000060_1'], problems: [] },
+        { key: 'r52', order: { receiptId: '4180000052' }, line: {}, state: 'pooled', hold: null, poolIds: ['4180000052_6000000062_1'], problems: [] }];
+        window.__extraRows = extra; Orders.rows = () => orig().concat(extra); }, { HOLD });
+      const hopNow = (sheetId, poolId, side, pt) => page.evaluate(([sid, id, side, pt]) => { const pg = CN.allSheets().find(p => p.sheetId === sid), c = pg.charms.find(z => z.poolId === id); return SheetHop.hopPiece(pg, c, side, pt); }, [sheetId, poolId, side, pt]);
+      // (a) the order on hold: moved to 14K Draft 2, its hold kept
+      assert.equal(await hopNow('k14-1', h50, 'next', cell(3, 1)), true, 'the held order is moved: ' + await popText());
+      await settled(); await closePops();
+      await until(() => (rec('k14-2').poolIds || []).includes(h50) && pool(h50).sheetId === 'k14-2', 20000, 'the held order saved on 14K Draft 2');
+      assert(!(rec('k14-1').poolIds || []).includes(h50), 'off 14K Draft 1');
+      assert.deepEqual(await page.evaluate(() => [window.__extraRows[0].hold, window.__extraRows[0].state]), [HOLD, 'held'], 'its hold stays on the line');
+      // (b) the order in Review: moved back to 14K Draft 1, still in Review
+      await page.evaluate(async () => { await CharmNestReviewMark.mark('4180000052', { by: 'Pat' }); });
+      assert(await page.evaluate(() => CharmNestReviewHold.inReview('4180000052')), 'R52 is in Review');
+      await openSheet('k14-2'); await until(() => page.evaluate(() => !SheetWin.hopKit.W.flow && !SheetWin.hopKit.hopState().writing), 60000, 'nothing being written'); await manual(true);
+      assert.equal(await hopNow('k14-2', r52, 'prev', cell(4, 1)), true, 'the order in Review is moved: ' + await popText());
+      await settled(); await closePops();
+      await until(() => (rec('k14-1').poolIds || []).includes(r52) && pool(r52).sheetId === 'k14-1', 20000, 'the order in Review saved on 14K Draft 1');
+      assert(await page.evaluate(() => CharmNestReviewHold.inReview('4180000052')), 'it stays in Review');
+      // (c) an order with a piece on a third sheet (GF Sheet 1): refused between two sheets that wait for no set ...
+      await page.evaluate(() => { B.pool.rows.set('4180000053_6000000099_1', { poolId: '4180000053_6000000099_1', orderId: '4180000053', sheetId: 'gf-1', sheetName: 'GF Draft 1', state: 'placed', material: 'gold', runId: 'run-hop-1' }); });
+      const tie = await page.evaluate(id => { const a = CN.allSheets().find(p => p.sheetId === 'k14-2'), b = CN.allSheets().find(p => p.sheetId === 'k14-1'), c = a.charms.find(z => z.poolId === id); return SheetHop.unitRefusal(SheetHop.unitOf(a, c, b), a, b); }, s53);
+      assert(/also has pieces on GF Draft 1: moving it to 14K Draft 1 would tie/.test(tie), 'the tie rule, as before: ' + tie);
+      // ... and moved when its sheet waits greyed in its set: the order then spans two sets, a known split
+      await page.evaluate(() => { window.__gw = Gate.goldWaitHome; Gate.goldWaitHome = sh => (sh && sh.sheetId === 'k14-2' ? { setId: 'set-wait', name: 'Set 1' } : null); });
+      assert.equal(await hopNow('k14-2', s53, 'prev', cell(5, 1)), true, 'the waiting sheet gives the order: ' + await popText());
+      await settled(); await closePops();
+      await until(() => (rec('k14-1').poolIds || []).includes(s53) && pool(s53).sheetId === 'k14-1', 20000, 'saved on 14K Draft 1');
+      await page.evaluate(() => { Gate.goldWaitHome = window.__gw; B.pool.rows.delete('4180000053_6000000099_1'); Orders.rows = window.__rowsOrig; });
+      await manual(false);
+      for (const id of [h50, r52, s53]) assert.equal(st.list(SHEETS).filter(d => (d.poolIds || []).includes(id)).length, 1, `${id} is on one saved sheet`);
+      pass('11 · moved by hand whatever its state but cut (HANDMOVE): an order on hold (its hold kept), an order in Review (still in Review); a waiting 14K sheet gives an order that has a piece on a third sheet (no tie refusal), which two sheets that wait for no set still refuse');
+    } catch (e) { fail('11 · hold, Review and a waiting sheet', e); }
+    await closePops();
+
     /* 10 · after a reload */
     try {
       await oneEach('before the reload');
