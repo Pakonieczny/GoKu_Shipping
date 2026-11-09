@@ -15,7 +15,7 @@
  *  the body is the number set's: on NECKLACE_CHARM-7 the hole's lowest point is 0.19 pt above the flat top of the 7, on
  *  NECKLACE_CHARM-7 (HUGGIE) it touches it (0.01 pt); the ring's lower part overlaps the body and is welded into one cut outline.
  *
- *  The huggie set's letters are made smaller, about 6–7 mm by shape (Paul, 9 Nov 2026; HUGGIE_SIZE below); the necklace set keeps the source size.
+ *  Each letter is scaled whole to Paul's sizes, without its hoop (SIZES below): necklace 11–12 mm, huggie 6–7 mm by shape; the hoops keep their fixed sizes.
  *  Where on the letter: centred on the letter's visual top. A letter with an ascender (b d f h k l t) or a dot (i j) carries it on the
  *  top of that stem or dot (its own top); every other letter at the centre of its box, at the height of the letter's own top there
  *  (the two arms of u v w x y are bridged by the ring). A ring that would come nearer than 0.5 pt to a counter (the hole of an a, e,
@@ -96,21 +96,32 @@ function placeHoop(ch, outlineSubpaths, fillRule, kind) {
     const s = under.length ? under.reduce((a, b) => (b[1] - b[0] < a[1] - a[0] ? b : a)) : tops;
     cx = (s[0] + s[1]) / 2; rule = DOT.has(ch) ? "on the dot" : "on the top of the stem";
   } else { cx = (x0 + x1) / 2; rule = "centre of the letter"; }
-  const top = topOver(material, cx - H.hole, cx + H.hole);
-  if (!Number.isFinite(top)) throw new Error(`${ch}: no material under the hoop`);
-  // checks: the ring never comes near a counter (where it would, it is lifted just enough, never moved sideways); the ring and the letter share a real joint
-  const counterGapAt = y => { const ring = circlePts(cx, y, H.outer); return counters.length ? Math.min(...counters.map(c => V.boolean([c], [ring], "intersection").length ? 0 : Math.max(0, distToPolys(cx, y, [c]) - H.outer))) : Infinity; };
-  let cy = top + H.hole + H.gap, lifted = 0;
-  while (counterGapAt(cy) < COUNTER_CLEAR_PT && lifted < 1.5) { cy += 0.01; lifted += 0.01; }
-  const counterGap = counterGapAt(cy);
-  if (counterGap < COUNTER_CLEAR_PT) throw new Error(`${ch} (${kind}): the hoop would come ${counterGap.toFixed(2)} pt from a counter`);
-  if (lifted) rule += `, lifted ${lifted.toFixed(2)} pt to keep ${COUNTER_CLEAR_PT} pt of metal over the counter`;
-  const ring = circlePts(cx, cy, H.outer);
-  const joint = V.boolean(material, [ring], "intersection").filter(p => !p.hole);
-  const jb = joint.length ? bboxOf(joint.map(p => p.points)) : null, jointW = jb ? jb[2] - jb[0] : 0;
-  if (jointW < MIN_JOINT_PT) throw new Error(`${ch} (${kind}): the hoop touches the letter over only ${jointW.toFixed(2)} pt`);
-  const holeHitsLetter = V.boolean(material, [circlePts(cx, cy, H.hole)], "intersection").reduce((v, p) => v + Math.abs(area(p.points)), 0);
-  return { cx, cy, rule, top, checks: { counterGapPt: Number.isFinite(counterGap) ? +counterGap.toFixed(3) : null, liftedPt: +lifted.toFixed(2), jointPt: +jointW.toFixed(3), holeOverLetterPt2: +holeHitsLetter.toFixed(4), ringAboveTopPt: +(cy + H.outer - y1).toFixed(3) } };
+  // the ring at cx: { cx, cy, rule, top, checks } or { fail } (a counter it cannot clear, or too small a joint)
+  const at = (cx, rule) => {
+    const top = topOver(material, cx - H.hole, cx + H.hole);
+    if (!Number.isFinite(top)) return { fail: `${ch} (${kind}): no material under the hoop` };
+    // checks: the ring never comes near a counter (where it would, it is lifted just enough); the ring and the letter share a real joint
+    const counterGapAt = y => { const ring = circlePts(cx, y, H.outer); return counters.length ? Math.min(...counters.map(c => V.boolean([c], [ring], "intersection").length ? 0 : Math.max(0, distToPolys(cx, y, [c]) - H.outer))) : Infinity; };
+    let cy = top + H.hole + H.gap, lifted = 0;
+    while (counterGapAt(cy) < COUNTER_CLEAR_PT && lifted < 1.5) { cy += 0.01; lifted += 0.01; }
+    const counterGap = counterGapAt(cy);
+    if (counterGap < COUNTER_CLEAR_PT) return { fail: `${ch} (${kind}): the hoop would come ${counterGap.toFixed(2)} pt from a counter` };
+    if (lifted) rule += `, lifted ${lifted.toFixed(2)} pt to keep ${COUNTER_CLEAR_PT} pt of metal over the counter`;
+    const ring = circlePts(cx, cy, H.outer);
+    const joint = V.boolean(material, [ring], "intersection").filter(p => !p.hole);
+    const jb = joint.length ? bboxOf(joint.map(p => p.points)) : null, jointW = jb ? jb[2] - jb[0] : 0;
+    if (jointW < MIN_JOINT_PT) return { fail: `${ch} (${kind}): the hoop touches the letter over only ${jointW.toFixed(2)} pt` };
+    const holeHitsLetter = V.boolean(material, [circlePts(cx, cy, H.hole)], "intersection").reduce((v, p) => v + Math.abs(area(p.points)), 0);
+    return { cx, cy, rule, top, checks: { counterGapPt: Number.isFinite(counterGap) ? +counterGap.toFixed(3) : null, liftedPt: +lifted.toFixed(2), jointPt: +jointW.toFixed(3), holeOverLetterPt2: +holeHitsLetter.toFixed(4), ringAboveTopPt: +(cy + H.outer - y1).toFixed(3) } };
+  };
+  let r = at(cx, rule);
+  // the centre has too little metal under the ring (the r, once large: its stem and its arm with a gap between): the nearest top of the letter's own metal that holds it
+  if (r.fail) {
+    const tops = intervalsAt(polys, y1 - 1).map(t => (t[0] + t[1]) / 2).sort((p, q) => Math.abs(p - cx) - Math.abs(q - cx));
+    for (const c of tops) { const t = at(c, `on the nearest top of the letter (the centre has too little metal under the hoop), ${(c - cx).toFixed(1)} pt from the centre`); if (!t.fail) { r = t; break; } }
+  }
+  if (r.fail) throw new Error(r.fail);
+  return r;
 }
 
 const num = n => (+n).toFixed(4);
@@ -128,17 +139,19 @@ async function readLetter(file) {
   return { subpaths: o.subpaths, fill: !!o.fill, stroke: !!o.stroke, paintOp: o.paintOp, rule: o.fill && !even ? "nonzero" : "evenodd", bbox: bboxOf(o.subpaths.map(sp => V.flatten(sp).points)) };
 }
 
-/* THE HUGGIE SIZE (Paul, 9 Nov 2026, while this was being made: "shrink the size of the huggie charm versions to be approximately 6-7mm depending on shape").
-   The huggie set's LETTER (not its hoop: the hoop keeps the shop's huggie size, as NECKLACE_CHARM-n (HUGGIE) does) is drawn with its longest side at
-     7 mm for a letter with an ascender, a descender or a dot (b d f g h i j k l p q t y) and the wide m w; 6 mm for every other (a c e n o r s u v x z),
-   scaled the same way across and up (the letter's shape and its counters stay as they are), never made larger, and left as it is when it is within 1 % already.
-   The necklace set keeps the source size. */
-const HUGGIE_SIZE = Object.freeze({ compactMm: 6, longMm: 7, long: "bdfghijklpqtymw" });
-function huggieScale(L, ch) {
-  const w = L.bbox[2] - L.bbox[0], h = L.bbox[3] - L.bbox[1], long = Math.max(w, h);
-  const tall = HUGGIE_SIZE.long.includes(ch), want = (tall ? HUGGIE_SIZE.longMm : HUGGIE_SIZE.compactMm) * MM;
-  const scale = long <= want * 1.01 ? 1 : want / long;
-  return { scale, fromMm: +(long / MM).toFixed(2), toMm: +(long * scale / MM).toFixed(2), rule: `${tall ? "tall or wide" : "compact"} letter: longest side ${(long / MM).toFixed(1)} mm${scale < 1 ? ` → ${(long * scale / MM).toFixed(1)} mm` : " (kept)"}` };
+/* THE SIZES (Paul, 9 Nov 2026: "the necklace charms need to be closer to 11-12 mm in size excluding the hoop and the huggy charms need to be 6-7mm in size excluding the hoop";
+   "make sure the hoop of the huggie charm hoops size stays constant while the charm shrinks").
+   Each LETTER (never its hoop: the hoops keep the shop's sizes, as NECKLACE_CHARM-n and NECKLACE_CHARM-n (HUGGIE) do) is scaled whole, the same way across and up (its shape and
+   its counters stay as they are), so its longest side is
+     necklace: 11 mm for a compact letter (a c e n o r s u v x z), 12 mm for one with an ascender, a descender or a dot (b d f g h i j k l p q t y) and the wide m w;
+     huggie:    6 mm compact, 7 mm tall or wide;
+   a letter already within 1 % of its size is left as it is. */
+const SIZES = Object.freeze({ necklace: Object.freeze({ compactMm: 11, longMm: 12 }), huggie: Object.freeze({ compactMm: 6, longMm: 7 }), long: "bdfghijklpqtymw" });
+function sizeScale(L, ch, kind) {
+  const w = L.bbox[2] - L.bbox[0], h = L.bbox[3] - L.bbox[1], long = Math.max(w, h), S = SIZES[kind];
+  const tall = SIZES.long.includes(ch), want = (tall ? S.longMm : S.compactMm) * MM;
+  const scale = Math.abs(long - want) <= want * 0.01 ? 1 : want / long;
+  return { scale, fromMm: +(long / MM).toFixed(2), toMm: +(long * scale / MM).toFixed(2), rule: `${tall ? "tall or wide" : "compact"} letter: longest side ${(long / MM).toFixed(1)} mm${scale !== 1 ? ` → ${(long * scale / MM).toFixed(1)} mm` : " (kept)"}` };
 }
 /** The letter scaled about its own bottom-left corner (every point, curves included: a uniform scale keeps them exact). */
 function scaleLetter(L, k) {
@@ -155,7 +168,7 @@ async function buildSheet(letters, outFile) {
   const page = doc.addPage([W, H]); const ops = [], labels = [], placed = [];
   for (const kind of ["necklace", "huggie"]) {
     letters.forEach((L0, n) => {
-      const ch = LETTERS[n], sz = kind === "huggie" ? huggieScale(L0, ch) : { scale: 1, fromMm: null, toMm: null, rule: "" }, L = sz.scale === 1 ? L0 : scaleLetter(L0, sz.scale);
+      const ch = LETTERS[n], sz = sizeScale(L0, ch, kind), L = sz.scale === 1 ? L0 : scaleLetter(L0, sz.scale);
       const hp = placeHoop(ch, L.subpaths, L.rule, kind), Hh = HOOPS[kind];
       const row = (kind === "necklace" ? 0 : 2) + Math.floor(n / COLS), col = n % COLS;
       const slotX = MARGIN + col * PITCH_X + PITCH_X / 2, baseY = H - MARGIN - row * PITCH_Y - PITCH_Y + 16;   // the letter's bottom sits 16 pt above the slot's foot
@@ -188,8 +201,8 @@ function contactSheet(rec, placed, srcMeta, cut) {
   const url = p => p.split("/").map(encodeURIComponent).join("/");
   const mm = pt => (pt * 25.4 / 72).toFixed(1);
   const byS = new Map(rec.entries.map(e => [e.sku, e])), byP = new Map(placed.map(x => [x.sku, x]));
-  const say = x => { const c = x.checks, w = []; if (x.size && x.scale < 1) w.push(`letter made smaller: ${x.size.fromMm.toFixed(1)} → ${x.size.toMm.toFixed(1)} mm`); if (c.liftedPt) w.push(`ring lifted ${c.liftedPt} pt off the counter`); if (c.specksFilled.length) w.push(`${c.specksFilled.length === 1 ? "a speck" : c.specksFilled.length + " specks"} under the ring filled (${c.specksFilled.map(s => s.areaPt2 + " pt²").join(", ")})`); if (c.windows.length) w.push("the ring closes the top of the letter's own gap (a window)"); return w.join("; "); };
-  const card = (sku, kind) => { const e = byS.get(sku), x = byP.get(sku); const k = cut.get(sku); return `<figure class="c"><img src="files/${url(e.thumbPath)}" alt="${esc(sku)}" loading="lazy"><figcaption><b>${esc(sku)}</b><span>${mm(k[0])} × ${mm(k[1])} mm cut · ${kind} · ${e.holes} hole${e.holes === 1 ? "" : "s"} cut</span>${say(x) ? `<i>${esc(say(x))}</i>` : ""}</figcaption></figure>`; };
+  const say = x => { const c = x.checks, w = []; if (x.size && x.scale !== 1) w.push(`letter ${x.scale > 1 ? "made larger" : "made smaller"}: ${x.size.fromMm.toFixed(1)} → ${x.size.toMm.toFixed(1)} mm`); if (c.liftedPt) w.push(`ring lifted ${c.liftedPt} pt off the counter`); if (c.specksFilled.length) w.push(`${c.specksFilled.length === 1 ? "a speck" : c.specksFilled.length + " specks"} under the ring filled (${c.specksFilled.map(s => s.areaPt2 + " pt²").join(", ")})`); if (c.windows.length) w.push("the ring closes the top of the letter's own gap (a window)"); return w.join("; "); };
+  const card = (sku, kind) => { const e = byS.get(sku), x = byP.get(sku); const k = cut.get(sku); return `<figure class="c"><img src="files/${url(e.thumbPath)}" alt="${esc(sku)}" loading="lazy"><figcaption><b>${esc(sku)}</b><span><b>${mm(e.bodyPt[0])} × ${mm(e.bodyPt[1])} mm</b> without the hoop (${mm(k[0])} × ${mm(k[1])} mm with it) · ${kind} · ${e.holes} hole${e.holes === 1 ? "" : "s"} cut</span>${say(x) ? `<i>${esc(say(x))}</i>` : ""}</figcaption></figure>`; };
   const rows = [];
   for (let n = 0; n < 26; n++) {
     const s = srcMeta[n];
@@ -213,19 +226,19 @@ ol{margin:8px 0 14px;padding-left:22px}li{margin:3px 0}code{font:12px ui-monospa
 @media (max-width:640px){.r{grid-template-columns:repeat(3,minmax(0,1fr))}.r h2{grid-column:1/-1}}
 </style></head><body><main>
 <h1>Letter charms with hoops: 26 necklace + 26 huggie</h1>
-<p>Sizes are the cut outline (the library's own size figure adds the drawing's pen width, which was heavier in some source files: the letters themselves are the same).</p>
-<p>Each source letter from the charm repo (<code>LETTER_EARRING-0 … 25</code>, a … z) with its two new charms. The letter is copied as it is (same outline); the necklace set keeps its size, the huggie set's letter is made smaller, about 6 mm (a c e n o r s u v x z) to 7 mm (b d f g h i j k l p q t y, m w) on its longest side, as you asked (one already that size is kept). Only the hoop is added, at the top centre (on the stem of b d f h k l t, on the dot of i j), welded into one cut outline, its hole cut.</p>
+<p>Every size is the letter alone, <b>without the hoop</b> (the size with the hoop is in brackets). The Library card shows the same.</p>
+<p>Each source letter from the charm repo (<code>LETTER_EARRING-0 … 25</code>, a … z) with its two new charms. Each letter keeps its own outline and is scaled whole, without its hoop, to your sizes: <b>necklace 11 mm</b> (a c e n o r s u v x z) or <b>12 mm</b> (b d f g h i j k l p q t y, m w) on its longest side; <b>huggie 6 mm</b> or <b>7 mm</b> by the same rule. The hoops keep their fixed sizes. Only the hoop is added, at the top centre (on the stem of b d f h k l t, on the dot of i j), welded into one cut outline, its hole cut.</p>
 <div class="keys"><span><b>Necklace ring</b>: Ø ${mm(HOOPS.necklace.outer * 2)} mm, hole ${mm(HOOPS.necklace.hole * 2)} mm (as <code>NECKLACE_CHARM-7</code>)</span><span><b>Huggie hoop</b>: Ø ${mm(HOOPS.huggie.outer * 2)} mm, hole ${mm(HOOPS.huggie.hole * 2)} mm (as <code>NECKLACE_CHARM-7 (HUGGIE)</code>)</span><span><b>SKUs</b>: <code>LETTER_NECKLACE-n</code> and <code>LETTER_NECKLACE-n (HUGGIE)</code>, a = 0 … z = 25 (the shop's twin naming)</span></div>
-<p><b>To add them to the charm repo</b> (nothing is in the repo until you do this):</p>
-<ol><li>Open the Brites Charm Sorter, open the <b>Workspace</b> menu (top right) and choose <b>Master files</b>.</li><li>Under <b>＋ Add a master file</b>, on the line “New charms ready: Letter charms with hoops”, press <b>Add these charms to the repo</b>.</li><li>Read the line and press <b>Yes, add them</b>.</li><li>Type the repo password in the lock window.</li><li>Wait for “Done: 52 charms added to the charm repo”. Pressing again says “Already there”.</li></ol>
+<p><b>To put them in the charm repo</b> (they replace the first, wrongly sized drawings of the same SKUs):</p>
+<ol><li>Open the Brites Charm Sorter, open the <b>Workspace</b> menu (top right) and choose <b>Master files</b>.</li><li>Under <b>＋ Add a master file</b>, on the line “New charms ready: Letter charms with hoops”, press <b>Add these charms to the repo</b>.</li><li>Read the line and press <b>Yes, add them</b>.</li><li>Type the repo password in the lock window.</li><li>Wait for “Done”. Pressing again says “Already there”.</li></ol>
 ${rows.join("\n")}
 </main></body></html>
 `;
 }
 
 async function main(argv, log = console.log) {
-  const a = { src: "", out: "" };
-  for (let i = 2; i < argv.length; i++) { if (argv[i] === "--src") a.src = argv[++i]; else if (argv[i] === "--out") a.out = argv[++i]; }
+  const a = { src: "", out: "", replaces: [] };
+  for (let i = 2; i < argv.length; i++) { if (argv[i] === "--src") a.src = argv[++i]; else if (argv[i] === "--out") a.out = argv[++i]; else if (argv[i] === "--replaces") a.replaces.push(argv[++i]); }   // (--replaces: the master hash of an earlier version of this sheet whose entries these replace)
   if (!a.src || !a.out) throw new Error("usage: node scripts/make-letter-hoops.cjs --src <folder with 0.ai … 25.ai> --out <folder>");
   fs.mkdirSync(a.out, { recursive: true });
   const letters = []; for (let n = 0; n < 26; n++) { const f = [path.join(a.src, `${n}.ai`), path.join(a.src, `LETTER_EARRING-${n}.ai`)].find(x => fs.existsSync(x)); if (!f) throw new Error(`no source file for LETTER_EARRING-${n}`); letters.push(await readLetter(f)); }
@@ -236,12 +249,14 @@ async function main(argv, log = console.log) {
   // the app's own indexer stages straight into the folder: files/charmnest/master/<SKU>.ai|.png and records.json (what was there before is replaced)
   fs.rmSync(path.join(a.out, "files"), { recursive: true, force: true }); fs.rmSync(path.join(a.out, "records.json"), { force: true });
   const work = path.join(a.out, ".work");
-  const rep = await IM.main(["node", "index-master", sheet, "--out-dir", a.out, "--max-mm", "0", "--no-pairs", "--work-dir", work], l => log("  " + l));
+  const rep = await IM.main(["node", "index-master", sheet, "--out-dir", a.out, "--max-mm", "0", "--no-pairs", "--work-dir", work].concat(a.replaces.flatMap(h => ["--replaces", h])), l => log("  " + l));
   fs.rmSync(work, { recursive: true, force: true });
   if (rep.unlabelled && rep.unlabelled.length) throw new Error(`${rep.unlabelled.length} charm(s) of the sheet were not read under their SKU`);
   const recFile = path.join(a.out, "records.json"), rec = JSON.parse(fs.readFileSync(recFile, "utf8"));
   if (rec.entries.length !== 52 || (rec.blocked || []).length) throw new Error(`the indexer staged ${rec.entries.length} entries, ${(rec.blocked || []).length} blocked`);
   // the order Paul reads them in (a…z necklace, then a…z huggie), and the sheet's page for the upload history
+  // each entry's size WITHOUT its hoop (bodyPt [w, h], the letter's cut box): the Library card shows it (Paul: "only include the actual charm and not the hoop")
+  for (const e of rec.entries) { const x = placed.find(y => y.sku.toUpperCase() === e.sku.toUpperCase()); e.bodyPt = x.letterPt.slice(); }
   const order = placed.map(x => x.sku.toUpperCase()); rec.entries.sort((x, y) => order.indexOf(x.sku.toUpperCase()) - order.indexOf(y.sku.toUpperCase()));
   const parsed = await P.parseSource(new Uint8Array(fs.readFileSync(sheet)), path.basename(sheet));
   rec.sheet = { file: path.basename(sheet), pageW: +parsed.pageW.toFixed(3), pageH: +parsed.pageH.toFixed(3) };
@@ -257,5 +272,5 @@ async function main(argv, log = console.log) {
   if (srcMeta && srcMeta.length === 26) fs.writeFileSync(path.join(a.out, "contact-sheet.html"), contactSheet(rec, placed, srcMeta, cut));
   return { rep, placed, sheet, rec };
 }
-module.exports = { main, placeHoop, HOOPS, LETTERS, intervalsAt, HUGGIE_SIZE, huggieScale, scaleLetter };
+module.exports = { main, placeHoop, HOOPS, LETTERS, intervalsAt, SIZES, sizeScale, scaleLetter };
 if (require.main === module) main(process.argv).catch(e => { console.error("make-letter-hoops:", e.message); process.exit(1); });

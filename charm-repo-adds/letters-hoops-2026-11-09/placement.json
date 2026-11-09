@@ -19,24 +19,28 @@
    "letter": "a",
    "kind": "necklace",
    "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "scale": 1.833453,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm → 11.0 mm",
+    "fromMm": 6,
+    "toMm": 11
+   },
    "hoop": {
-    "cx": 8.503,
-    "cy": 18.184,
+    "cx": 15.591,
+    "cy": 31.646,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    17.007,
-    16.152
+    31.181,
+    29.615
    ],
    "checks": {
-    "counterGapPt": 8.143,
+    "counterGapPt": 15.941,
     "liftedPt": 0,
-    "jointPt": 4.451,
+    "jointPt": 4.614,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.281,
+    "ringAboveTopPt": 5.28,
     "specksFilled": [],
     "windows": []
    }
@@ -47,24 +51,28 @@
    "letter": "b",
    "kind": "necklace",
    "rule": "on the top of the stem",
-   "scale": 1,
-   "size": null,
+   "scale": 1.504256,
+   "size": {
+    "rule": "tall or wide letter: longest side 8.0 mm → 12.0 mm",
+    "fromMm": 7.98,
+    "toMm": 12
+   },
    "hoop": {
-    "cx": 4.724,
-    "cy": 24.544,
+    "cx": 5.559,
+    "cy": 35.616,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    17.008,
-    22.613
+    25.584,
+    34.016
    ],
    "checks": {
-    "counterGapPt": 10.68,
+    "counterGapPt": 16.966,
     "liftedPt": 0,
-    "jointPt": 4.704,
+    "jointPt": 4.708,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.18,
+    "ringAboveTopPt": 4.849,
     "specksFilled": [],
     "windows": []
    }
@@ -75,24 +83,28 @@
    "letter": "c",
    "kind": "necklace",
    "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "scale": 1.833428,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm → 11.0 mm",
+    "fromMm": 6,
+    "toMm": 11
+   },
    "hoop": {
-    "cx": 7.415,
-    "cy": 18.963,
+    "cx": 13.595,
+    "cy": 32.856,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    14.83,
-    17.007
+    27.19,
+    31.181
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 4.053,
+    "jointPt": 4.056,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.205,
+    "ringAboveTopPt": 4.924,
     "specksFilled": [],
     "windows": []
    }
@@ -103,24 +115,28 @@
    "letter": "d",
    "kind": "necklace",
    "rule": "on the top of the stem",
-   "scale": 1,
-   "size": null,
+   "scale": 1.500077,
+   "size": {
+    "rule": "tall or wide letter: longest side 8.0 mm → 12.0 mm",
+    "fromMm": 8,
+    "toMm": 12
+   },
    "hoop": {
-    "cx": 12.388,
-    "cy": 24.632,
+    "cx": 16.775,
+    "cy": 35.606,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    16.759,
-    22.676
+    25.14,
+    34.016
    ],
    "checks": {
-    "counterGapPt": 10.324,
+    "counterGapPt": 15.394,
     "liftedPt": 0,
-    "jointPt": 4.65,
+    "jointPt": 4.665,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.205,
+    "ringAboveTopPt": 4.839,
     "specksFilled": [],
     "windows": []
    }
@@ -131,24 +147,28 @@
    "letter": "e",
    "kind": "necklace",
    "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "scale": 1.833425,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm → 11.0 mm",
+    "fromMm": 6,
+    "toMm": 11
+   },
    "hoop": {
-    "cx": 8.114,
-    "cy": 19.039,
+    "cx": 14.875,
+    "cy": 33.202,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    16.227,
-    17.007
+    29.751,
+    31.181
    ],
    "checks": {
-    "counterGapPt": 1.869,
+    "counterGapPt": 4.432,
     "liftedPt": 0,
-    "jointPt": 4.513,
+    "jointPt": 4.6,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.281,
+    "ringAboveTopPt": 5.27,
     "specksFilled": [],
     "windows": []
    }
@@ -159,24 +179,28 @@
    "letter": "f",
    "kind": "necklace",
    "rule": "on the top of the stem",
-   "scale": 1,
-   "size": null,
+   "scale": 1.714331,
+   "size": {
+    "rule": "tall or wide letter: longest side 7.0 mm → 12.0 mm",
+    "fromMm": 7,
+    "toMm": 12
+   },
    "hoop": {
-    "cx": 8.912,
-    "cy": 21.874,
+    "cx": 12.598,
+    "cy": 36.044,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    11.688,
-    19.842
+    20.037,
+    34.016
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 4.449,
+    "jointPt": 4.186,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.281,
+    "ringAboveTopPt": 5.277,
     "specksFilled": [],
     "windows": []
    }
@@ -187,22 +211,26 @@
    "letter": "g",
    "kind": "necklace",
    "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "scale": 1.714393,
+   "size": {
+    "rule": "tall or wide letter: longest side 7.0 mm → 12.0 mm",
+    "fromMm": 7,
+    "toMm": 12
+   },
    "hoop": {
-    "cx": 7.487,
-    "cy": 21.873,
+    "cx": 12.835,
+    "cy": 36.051,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    14.973,
-    19.841
+    25.67,
+    34.016
    ],
    "checks": {
-    "counterGapPt": 0.794,
+    "counterGapPt": 2.236,
     "liftedPt": 0,
-    "jointPt": 4.674,
+    "jointPt": 4.837,
     "holeOverLetterPt2": 0,
     "ringAboveTopPt": 5.281,
     "specksFilled": [],
@@ -215,24 +243,28 @@
    "letter": "h",
    "kind": "necklace",
    "rule": "on the top of the stem",
-   "scale": 1,
-   "size": null,
+   "scale": 1.714331,
+   "size": {
+    "rule": "tall or wide letter: longest side 7.0 mm → 12.0 mm",
+    "fromMm": 7,
+    "toMm": 12
+   },
    "hoop": {
-    "cx": 4.143,
-    "cy": 21.807,
+    "cx": 5.582,
+    "cy": 35.6,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    16.038,
-    19.842
+    27.494,
+    34.016
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 4.492,
+    "jointPt": 4.692,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.214,
+    "ringAboveTopPt": 4.833,
     "specksFilled": [],
     "windows": []
    }
@@ -243,22 +275,26 @@
    "letter": "i",
    "kind": "necklace",
    "rule": "on the dot",
-   "scale": 1,
-   "size": null,
+   "scale": 1.714418,
+   "size": {
+    "rule": "tall or wide letter: longest side 7.0 mm → 12.0 mm",
+    "fromMm": 7,
+    "toMm": 12
+   },
    "hoop": {
-    "cx": 4.501,
-    "cy": 21.873,
+    "cx": 7.754,
+    "cy": 36.048,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    9.265,
-    19.841
+    15.884,
+    34.016
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 3.753,
+    "jointPt": 4.224,
     "holeOverLetterPt2": 0,
     "ringAboveTopPt": 5.281,
     "specksFilled": [],
@@ -271,22 +307,26 @@
    "letter": "j",
    "kind": "necklace",
    "rule": "on the dot",
-   "scale": 1,
-   "size": null,
+   "scale": 1.333291,
+   "size": {
+    "rule": "tall or wide letter: longest side 9.0 mm → 12.0 mm",
+    "fromMm": 9,
+    "toMm": 12
+   },
    "hoop": {
-    "cx": 4.704,
-    "cy": 27.545,
+    "cx": 6.292,
+    "cy": 36.048,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    8.178,
-    25.513
+    10.903,
+    34.016
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 3.672,
+    "jointPt": 3.974,
     "holeOverLetterPt2": 0,
     "ringAboveTopPt": 5.281,
     "specksFilled": [],
@@ -299,24 +339,28 @@
    "letter": "k",
    "kind": "necklace",
    "rule": "on the top of the stem",
-   "scale": 1,
-   "size": null,
+   "scale": 1.714244,
+   "size": {
+    "rule": "tall or wide letter: longest side 7.0 mm → 12.0 mm",
+    "fromMm": 7,
+    "toMm": 12
+   },
    "hoop": {
-    "cx": 4.116,
-    "cy": 21.805,
+    "cx": 5.539,
+    "cy": 35.543,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    15.726,
-    19.843
+    26.958,
+    34.016
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 4.368,
+    "jointPt": 4.623,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.211,
+    "ringAboveTopPt": 4.776,
     "specksFilled": [],
     "windows": []
    }
@@ -327,24 +371,28 @@
    "letter": "l",
    "kind": "necklace",
    "rule": "on the top of the stem",
-   "scale": 1,
-   "size": null,
+   "scale": 1.499945,
+   "size": {
+    "rule": "tall or wide letter: longest side 8.0 mm → 12.0 mm",
+    "fromMm": 8,
+    "toMm": 12
+   },
    "hoop": {
-    "cx": 4.886,
-    "cy": 24.632,
+    "cx": 5.689,
+    "cy": 35.622,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    9.309,
-    22.678
+    13.963,
+    34.016
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 4.661,
+    "jointPt": 4.671,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.203,
+    "ringAboveTopPt": 4.855,
     "specksFilled": [],
     "windows": []
    }
@@ -355,24 +403,28 @@
    "letter": "m",
    "kind": "necklace",
    "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "scale": 1.500011,
+   "size": {
+    "rule": "tall or wide letter: longest side 8.0 mm → 12.0 mm",
+    "fromMm": 8,
+    "toMm": 12
+   },
    "hoop": {
-    "cx": 11.339,
-    "cy": 14.582,
+    "cx": 17.008,
+    "cy": 20.859,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    22.677,
-    12.55
+    34.016,
+    18.826
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 3.462,
+    "jointPt": 3.623,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.281,
+    "ringAboveTopPt": 5.28,
     "specksFilled": [],
     "windows": []
    }
@@ -383,31 +435,29 @@
    "letter": "n",
    "kind": "necklace",
    "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "scale": 1.83332,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm → 11.0 mm",
+    "fromMm": 6,
+    "toMm": 11
+   },
    "hoop": {
-    "cx": 8.504,
-    "cy": 15.452,
+    "cx": 15.591,
+    "cy": 26.039,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    17.008,
-    13.6
+    31.181,
+    24.933
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 5.274,
+    "jointPt": 3.231,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.101,
-    "specksFilled": [
-     {
-      "areaPt2": 0.92,
-      "wPt": 1.59,
-      "hPt": 1.43
-     }
-    ],
+    "ringAboveTopPt": 4.355,
+    "specksFilled": [],
     "windows": []
    }
   },
@@ -417,24 +467,28 @@
    "letter": "o",
    "kind": "necklace",
    "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "scale": 1.83332,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm → 11.0 mm",
+    "fromMm": 6,
+    "toMm": 11
+   },
    "hoop": {
-    "cx": 8.504,
-    "cy": 18.131,
+    "cx": 15.591,
+    "cy": 31.544,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    17.008,
-    16.099
+    31.181,
+    29.515
    ],
    "checks": {
-    "counterGapPt": 1.515,
+    "counterGapPt": 3.789,
     "liftedPt": 0,
-    "jointPt": 4.612,
+    "jointPt": 4.75,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.281,
+    "ringAboveTopPt": 5.278,
     "specksFilled": [],
     "windows": []
    }
@@ -445,29 +499,33 @@
    "letter": "p",
    "kind": "necklace",
    "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "scale": 1.714331,
+   "size": {
+    "rule": "tall or wide letter: longest side 7.0 mm → 12.0 mm",
+    "fromMm": 7,
+    "toMm": 12
+   },
    "hoop": {
-    "cx": 7.632,
-    "cy": 21.874,
+    "cx": 13.083,
+    "cy": 35.124,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    15.263,
-    19.842
+    26.166,
+    34.016
    ],
    "checks": {
-    "counterGapPt": 2.265,
+    "counterGapPt": 3.853,
     "liftedPt": 0,
-    "jointPt": 4.875,
+    "jointPt": 5.839,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.281,
+    "ringAboveTopPt": 4.357,
     "specksFilled": [
      {
-      "areaPt2": 0.49,
-      "wPt": 1.27,
-      "hPt": 0.86
+      "areaPt2": 1.83,
+      "wPt": 2.26,
+      "hPt": 2.3
      }
     ],
     "windows": []
@@ -479,24 +537,28 @@
    "letter": "q",
    "kind": "necklace",
    "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "scale": 1.714244,
+   "size": {
+    "rule": "tall or wide letter: longest side 7.0 mm → 12.0 mm",
+    "fromMm": 7,
+    "toMm": 12
+   },
    "hoop": {
-    "cx": 7.335,
-    "cy": 21.508,
+    "cx": 12.573,
+    "cy": 35.418,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    14.669,
-    19.843
+    25.146,
+    34.016
    ],
    "checks": {
-    "counterGapPt": 1.562,
+    "counterGapPt": 3.543,
     "liftedPt": 0,
-    "jointPt": 4.33,
+    "jointPt": 4.457,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 4.914,
+    "ringAboveTopPt": 4.651,
     "specksFilled": [],
     "windows": []
    }
@@ -506,25 +568,29 @@
    "source": "LETTER_EARRING-17",
    "letter": "r",
    "kind": "necklace",
-   "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "rule": "on the nearest top of the letter (the centre has too little metal under the hoop), -4.0 pt from the centre",
+   "scale": 1.83332,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm → 11.0 mm",
+    "fromMm": 6,
+    "toMm": 11
+   },
    "hoop": {
-    "cx": 8.015,
-    "cy": 18.79,
+    "cx": 10.645,
+    "cy": 32.63,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    16.03,
-    17.008
+    29.388,
+    31.181
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 2.135,
+    "jointPt": 4.819,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.031,
+    "ringAboveTopPt": 4.698,
     "specksFilled": [],
     "windows": []
    }
@@ -535,24 +601,28 @@
    "letter": "s",
    "kind": "necklace",
    "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "scale": 1.83348,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm → 11.0 mm",
+    "fromMm": 6,
+    "toMm": 11
+   },
    "hoop": {
-    "cx": 7.073,
-    "cy": 19.038,
+    "cx": 12.969,
+    "cy": 33.149,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    14.147,
-    17.007
+    25.938,
+    31.181
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 4.518,
+    "jointPt": 4.59,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.281,
+    "ringAboveTopPt": 5.217,
     "specksFilled": [],
     "windows": []
    }
@@ -563,24 +633,28 @@
    "letter": "t",
    "kind": "necklace",
    "rule": "on the top of the stem",
-   "scale": 1,
-   "size": null,
+   "scale": 1.714431,
+   "size": {
+    "rule": "tall or wide letter: longest side 7.0 mm → 12.0 mm",
+    "fromMm": 7,
+    "toMm": 12
+   },
    "hoop": {
-    "cx": 5.251,
-    "cy": 21.558,
+    "cx": 9.21,
+    "cy": 35.138,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    13.051,
-    19.841
+    22.375,
+    34.016
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 3.88,
+    "jointPt": 3.896,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 4.966,
+    "ringAboveTopPt": 4.372,
     "specksFilled": [],
     "windows": []
    }
@@ -591,32 +665,30 @@
    "letter": "u",
    "kind": "necklace",
    "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "scale": 1.571391,
+   "size": {
+    "rule": "compact letter: longest side 7.0 mm → 11.0 mm",
+    "fromMm": 7,
+    "toMm": 11
+   },
    "hoop": {
-    "cx": 9.921,
-    "cy": 18.697,
+    "cx": 15.591,
+    "cy": 28.219,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    19.843,
-    16.701
+    31.181,
+    26.244
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 5.09,
+    "jointPt": 2.617,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.245,
+    "ringAboveTopPt": 5.224,
     "specksFilled": [],
-    "windows": [
-     {
-      "areaPt2": 41.7,
-      "wPt": 4.12,
-      "hPt": 12.28
-     }
-    ]
+    "windows": []
    }
   },
   {
@@ -625,32 +697,30 @@
    "letter": "v",
    "kind": "necklace",
    "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "scale": 1.83332,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm → 11.0 mm",
+    "fromMm": 6,
+    "toMm": 11
+   },
    "hoop": {
-    "cx": 8.504,
-    "cy": 16.87,
+    "cx": 15.591,
+    "cy": 29.235,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    17.008,
-    14.838
+    31.181,
+    27.203
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 5.066,
+    "jointPt": 2.861,
     "holeOverLetterPt2": 0,
     "ringAboveTopPt": 5.281,
     "specksFilled": [],
-    "windows": [
-     {
-      "areaPt2": 21.11,
-      "wPt": 4.31,
-      "hPt": 9.71
-     }
-    ]
+    "windows": []
    }
   },
   {
@@ -659,24 +729,28 @@
    "letter": "w",
    "kind": "necklace",
    "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "scale": 1.500011,
+   "size": {
+    "rule": "tall or wide letter: longest side 8.0 mm → 12.0 mm",
+    "fromMm": 8,
+    "toMm": 12
+   },
    "hoop": {
-    "cx": 11.338,
-    "cy": 14.56,
+    "cx": 17.008,
+    "cy": 20.816,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    22.677,
-    13.819
+    34.016,
+    20.729
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 4.035,
+    "jointPt": 4.549,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 3.99,
+    "ringAboveTopPt": 3.336,
     "specksFilled": [],
     "windows": []
    }
@@ -687,32 +761,30 @@
    "letter": "x",
    "kind": "necklace",
    "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "scale": 1.83332,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm → 11.0 mm",
+    "fromMm": 6,
+    "toMm": 11
+   },
    "hoop": {
-    "cx": 8.504,
-    "cy": 16.429,
+    "cx": 15.591,
+    "cy": 28.426,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    17.008,
-    14.397
+    31.181,
+    26.394
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 5.066,
+    "jointPt": 3.703,
     "holeOverLetterPt2": 0,
     "ringAboveTopPt": 5.281,
     "specksFilled": [],
-    "windows": [
-     {
-      "areaPt2": 8.26,
-      "wPt": 3.83,
-      "hPt": 4.83
-     }
-    ]
+    "windows": []
    }
   },
   {
@@ -721,32 +793,30 @@
    "letter": "y",
    "kind": "necklace",
    "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "scale": 1.499945,
+   "size": {
+    "rule": "tall or wide letter: longest side 8.0 mm → 12.0 mm",
+    "fromMm": 8,
+    "toMm": 12
+   },
    "hoop": {
-    "cx": 8.289,
-    "cy": 24.71,
+    "cx": 12.433,
+    "cy": 36.048,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    16.578,
-    22.678
+    24.866,
+    34.016
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
-    "jointPt": 5.066,
+    "jointPt": 2.898,
     "holeOverLetterPt2": 0,
     "ringAboveTopPt": 5.281,
     "specksFilled": [],
-    "windows": [
-     {
-      "areaPt2": 19.97,
-      "wPt": 4.32,
-      "hPt": 9.33
-     }
-    ]
+    "windows": []
    }
   },
   {
@@ -755,24 +825,28 @@
    "letter": "z",
    "kind": "necklace",
    "rule": "centre of the letter",
-   "scale": 1,
-   "size": null,
+   "scale": 1.83332,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm → 11.0 mm",
+    "fromMm": 6,
+    "toMm": 11
+   },
    "hoop": {
-    "cx": 8.504,
-    "cy": 18.349,
+    "cx": 15.591,
+    "cy": 31.937,
     "outerPt": 6.498,
     "holePt": 3.684
    },
    "letterPt": [
-    17.008,
-    16.343
+    31.181,
+    29.962
    ],
    "checks": {
     "counterGapPt": null,
     "liftedPt": 0,
     "jointPt": 5.05,
     "holeOverLetterPt2": 0,
-    "ringAboveTopPt": 5.255,
+    "ringAboveTopPt": 5.224,
     "specksFilled": [],
     "windows": []
    }

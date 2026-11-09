@@ -21,7 +21,7 @@ let n = 0; const ok = (c, m) => { assert(c, m); n++; console.log('  ok  ' + m); 
 global.fetch = () => { throw new Error('a network request in an offline test'); };
 
 const queue = RA.normalize(JSON.parse(fs.readFileSync(path.join(root, 'charm-repo-adds/queue.json'), 'utf8')), { all: true });
-ok(!RA.normalize(JSON.parse(fs.readFileSync(path.join(root, 'charm-repo-adds/queue.json'), 'utf8'))).some(a => a.id === 'letters-hoops-2026-11-09'), 'the letters add is marked done (Paul pressed it): it is no longer offered');
+ok(RA.normalize({ adds: [{ id: 'x', folder: 'charm-repo-adds/x', done: 'yes' }] }).length === 0 && RA.normalize({ adds: [{ id: 'x', folder: 'charm-repo-adds/x', done: 'yes' }] }, { all: true }).length === 1, 'an add marked done is no longer offered');
 const add = queue.find(a => a.id === 'letters-hoops-2026-11-09');
 ok(queue.length >= 1 && add && add.folder === 'charm-repo-adds/letters-hoops-2026-11-09' && add.sheet && add.contact, 'the queue names the letters add');
 const rec = RA.checkRecords(JSON.parse(fs.readFileSync(path.join(root, add.folder, add.records), 'utf8')));
@@ -72,7 +72,7 @@ const reset = () => { Fk.store.clear(); blobs.clear(); calls.length = 0; served.
   /* 2 · the first press */
   reset();
   r = await RA.run(o(), add);
-  ok(r.state === 'done' && r.added === 52 && /^Done: 52 charms added to the charm repo\. All 52 of Letter charms with hoops/.test(r.text), 'the first press: ' + r.text);
+  ok(r.state === 'done' && r.added === 52 && r.text.startsWith('Done: 52 charms added to the charm repo. All 52 of ' + add.title), 'the first press: ' + r.text);
   ok(asked === 1, 'the password was asked once');
   const ix = indexed().map(k => Fk.store.get(k));
   ok(ix.length === 52 && ix.every(e => e.masterHash === rec.masterHash && e.masterName === 'LETTER-HOOPS_2026-1109.ai' && e.hashSource === 'local' && !e.blocked), '52 index entries, all from this master sheet, none blocked');
@@ -94,7 +94,7 @@ const reset = () => { Fk.store.clear(); blobs.clear(); calls.length = 0; served.
   /* 3 · the second press: Already there, nothing written */
   const before = { blobs: blobs.size, writes: Fk.writes.length }; calls.length = 0; served.length = 0;
   r = await RA.run(o(), add);
-  ok(r.state === 'already' && r.text === 'Already there: all 52 charms of Letter charms with hoops (26 necklace + 26 huggie, a–z) are in the charm repo. Nothing was written.', 'the second press: ' + r.text);
+  ok(r.state === 'already' && r.text === `Already there: all 52 charms of ${add.title} are in the charm repo. Nothing was written.`, 'the second press: ' + r.text);
   ok(blobs.size === before.blobs && Fk.writes.length === before.writes && JSON.stringify(calls) === '["masterGetMany"]', 'and nothing was stored or written (one free read)');
 
   /* 4 · a SKU another master file holds: stop before anything is written */
@@ -118,6 +118,21 @@ const reset = () => { Fk.store.clear(); blobs.clear(); calls.length = 0; served.
   await Master.putIndex(db, FV, { entries: rec.entries.slice(0, 20).map(e => Object.assign({}, e, { aiUrl: 'u', thumbUrl: 'u' })), masterHash: rec.masterHash, masterName: rec.masterName, hashSource: 'local' });
   r = await RA.run(o(), add);
   ok(r.state === 'done' && r.added === 32 && /^Done: 32 charms added to the charm repo \(20 were already there\)\./.test(r.text) && uploads === 65, 'twenty already there: only the other 32 are stored and written, 64 files and the sheet (' + r.text + ')');
+
+  /* 7 · the resized version replaces the first version's 52 entries (records.json replaces: its master hash), and only those */
+  ok(Array.isArray(rec.replaces) && rec.replaces.length === 1 && /^[0-9a-f]{64}$/.test(rec.replaces[0]) && rec.replaces[0] !== rec.masterHash, 'the records name the earlier sheet they replace');
+  reset();
+  await Master.putIndex(db, FV, { entries: rec.entries.map(e => Object.assign({}, e, { widthPt: e.widthPt / 2, aiUrl: 'u', thumbUrl: 'u', bodyPt: undefined })), masterHash: rec.replaces[0], masterName: 'LETTER-HOOPS_2026-1109.ai', hashSource: 'local' });
+  r = await RA.run(o(), add);
+  ok(r.state === 'done' && r.replaced === 52 && r.text.startsWith('Done: 52 charms replaced with the new drawings. All 52 of '), 'the earlier 52 are replaced: ' + r.text);
+  { const ix2 = indexed().map(k => Fk.store.get(k)); ok(ix2.length === 52 && ix2.every(e => e.masterHash === rec.masterHash && !e.conflict && !e.blocked && Array.isArray(e.bodyPt)), 'every entry is now the new drawing, with its size without the hoop, no conflict'); }
+  ok(Master.slimEntry(Fk.store.get(Master.INDEX + '/LETTER_NECKLACE-10 (HUGGIE)')).bodyPt.every(v => v * 25.4 / 72 <= 8), 'the record the page reads carries the size without the hoop (k huggie: at most 8 mm)');
+  r = await RA.run(o(), add);
+  ok(r.state === 'already', 'pressing again: Already there');
+  reset();
+  await Master.putIndex(db, FV, { entries: [Object.assign({}, rec.entries[5], { aiUrl: 'u', thumbUrl: 'u' })], masterHash: 'e'.repeat(64), masterName: 'ANOTHER.ai', hashSource: 'browser' });
+  r = await RA.run(o(), add);
+  ok(r.state === 'stop' && /is already in the repo from another file/.test(r.text) && !blobs.size, 'a SKU of ANOTHER file still stops the press: nothing written');
 
   console.log(`repo-adds-upload: ${n} checks passed`);
 })().catch(e => { console.error(e); process.exit(1); });

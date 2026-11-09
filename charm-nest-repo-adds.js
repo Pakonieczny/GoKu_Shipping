@@ -10,7 +10,7 @@
  *  one plain confirm; "Yes" asks the repo password ONCE (the lock's own dialog: the password is never seen here, only the lock's token is
  *  used and never put in a URL), then the page does what the Master tab does for a master file, with these committed files:
  *    1. reads the library for the add's SKUs (masterGetMany: free). A SKU another master file already holds stops the press before anything is
- *       written (nothing is ever replaced here). All of them already there from this add: "Already there", nothing is sent.
+ *       written; only a new version of the same add (records.json `replaces`: the earlier sheet's master hash) replaces that sheet's own entries. All of them already there from this add: "Already there", nothing is sent.
  *    2. stores each missing SKU's .ai and picture under charmnest/master/ (charmNestOutput: the upload unlock), the master sheet under
  *       charmnest/master/files/, then masterPutIndex (the missing entries only, newest: false) and masterPutFile (the upload history);
  *    3. reads the library back and says how many landed. A closed tab loses nothing: press again, what is there is skipped.
@@ -90,9 +90,12 @@
     let have;
     try { say("Looking in the library for these SKUs…"); have = await held(o, skus); }
     catch (e) { return { state: "stop", text: "Nothing was added: the library could not be read (" + (e.message || e) + "). Press again.", added: 0 }; }
-    const other = skus.filter(s => have.has(s) && have.get(s).masterHash !== rec.masterHash);
+    // a new version of an add (records.json `replaces`: the master hash of the earlier sheet, LETTERS-HOOPS resized on 9 Nov 2026) takes over the entries THAT sheet wrote; any other file's never
+    const earlier = new Set((Array.isArray(rec.replaces) ? rec.replaces : []).map(String).filter(h => HASH.test(h)));
+    const other = skus.filter(s => have.has(s) && have.get(s).masterHash !== rec.masterHash && !earlier.has(have.get(s).masterHash));
     if (other.length) return { state: "stop", text: `Nothing was added: ${other.slice(0, 6).join(", ")}${other.length > 6 ? ` and ${other.length - 6} more` : ""} ${other.length === 1 ? "is" : "are"} already in the repo from another file, and this press never replaces a charm.`, added: 0, other };
-    const missing = entries.filter(e => !have.has(up(e.sku)));
+    const missing = entries.filter(e => !have.has(up(e.sku)) || have.get(up(e.sku)).masterHash !== rec.masterHash);
+    const replacing = missing.filter(e => have.has(up(e.sku))).length;
     if (!missing.length) return { state: "already", text: `Already there: all ${plural(n, "charm")} of ${add.title} are in the charm repo. Nothing was written.`, added: 0 };
     const by = (() => { try { return typeof o.who === "function" ? String(o.who() || "").trim() || null : null; } catch (_) { return null; } })();
     // the files: each missing SKU's .ai and picture, four at a time (the server names the stored file; its answer is what the entry keeps)
@@ -119,9 +122,9 @@
     let r;
     try {
       say("Writing the charm library index…");
-      r = await o.repoApi("upload", ask, { op: "masterPutIndex", entries: sent, masterHash: rec.masterHash, masterPath: sheet ? sheet.path : null, masterName: rec.masterName, hashSource: "local", replaces: [], newest: false, by });
+      r = await o.repoApi("upload", ask, { op: "masterPutIndex", entries: sent, masterHash: rec.masterHash, masterPath: sheet ? sheet.path : null, masterName: rec.masterName, hashSource: "local", replaces: [...earlier], newest: false, by });
       const s = rec.sheet || {};
-      await o.repoApi("upload", ask, { op: "masterPutFile", file: { masterHash: rec.masterHash, path: sheet ? sheet.path : null, url: sheet ? sheet.url || null : null, name: rec.masterName, charms: n, labelled: n, held: n - missing.length, unlabelled: [], orphans: [], duplicates: [], undecodable: 0, blocked: [], skus, indexedBy: "local-indexer", by, pageW: s.pageW || null, pageH: s.pageH || null } });
+      await o.repoApi("upload", ask, { op: "masterPutFile", file: { masterHash: rec.masterHash, path: sheet ? sheet.path : null, url: sheet ? sheet.url || null : null, name: rec.masterName, charms: n, labelled: n, held: n - missing.length, unlabelled: [], orphans: [], duplicates: [], undecodable: 0, blocked: [], skus, indexedBy: "local-indexer", by, pageW: s.pageW || null, pageH: s.pageH || null, replaces: [...earlier] } });
     } catch (e) {
       if (e && e.cancelled) return { state: "stop", text: "The files are stored but the index was not written: the repo stayed locked. Press again to finish.", added: 0 };
       return { state: "stop", text: `The files are stored but the index may not be written (${e.message || e}). Press again to finish: what is there is skipped.`, added: 0 };
@@ -130,7 +133,7 @@
     let after = new Map(); try { after = await held(o, skus); } catch (_) { /* said below */ }
     const landed = skus.filter(s => after.has(s) && after.get(s).masterHash === rec.masterHash).length;
     const refused = [].concat((r && r.rejected) || [], (r && r.blocked) || [], (r && r.pairKept) || []).map(x => x && x.sku).filter(Boolean);
-    if (landed === n) return { state: "done", text: `Done: ${plural(missing.length, "charm")} added to the charm repo${missing.length < n ? ` (${n - missing.length} were already there)` : ""}. All ${n} of ${add.title} are in the Library now.`, added: missing.length };
+    if (landed === n) return { state: "done", text: replacing ? `Done: ${plural(replacing, "charm")} replaced with the new drawings${missing.length > replacing ? `, ${missing.length - replacing} added` : ""}. All ${n} of ${add.title} are in the Library now.` : `Done: ${plural(missing.length, "charm")} added to the charm repo${missing.length < n ? ` (${n - missing.length} were already there)` : ""}. All ${n} of ${add.title} are in the Library now.`, added: missing.length, replaced: replacing };
     return { state: "stop", text: `${landed} of ${n} are in the repo now${refused.length ? `; the library refused ${refused.slice(0, 6).join(", ")}` : ""}. Press again to add the rest.`, added: Math.max(0, landed - (n - missing.length)) };
   }
 
@@ -177,7 +180,7 @@
         card.append(head, row, sayEl); box.appendChild(card);
         let busy = false;
         const show = (text, kind, spin) => { sayEl.className = "raSay" + (kind ? " " + kind : ""); sayEl.textContent = ""; if (spin) sayEl.append(el("span", "spin")); sayEl.append(text || ""); };
-        go.onclick = () => { if (busy) return; go.hidden = true; yes.hidden = no.hidden = false; show("These charms will be added to the charm repo, each with its picture. A charm already in the repo is never replaced; one already added is skipped. You will be asked for the repo password once.", ""); try { yes.focus({ preventScroll: true }); } catch (_) { /* a convenience */ } };
+        go.onclick = () => { if (busy) return; go.hidden = true; yes.hidden = no.hidden = false; show("These charms will be put in the charm repo, each with its picture. Only their own earlier drawings are replaced, never another charm; one already there is skipped. You will be asked for the repo password once.", ""); try { yes.focus({ preventScroll: true }); } catch (_) { /* a convenience */ } };
         no.onclick = () => { if (busy) return; go.hidden = false; yes.hidden = no.hidden = true; show("", ""); };
         yes.onclick = async () => {
           if (busy) return; busy = true; yes.hidden = no.hidden = true; go.hidden = false; go.disabled = true; show("Asking for the repo password once…", "", true);

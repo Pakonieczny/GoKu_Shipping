@@ -3,14 +3,14 @@
   "adds": [
     {
       "id": "letters-hoops-2026-11-09",
-      "title": "Letter charms with hoops (26 necklace + 26 huggie, a–z)",
+      "title": "Letter charms with hoops, resized (necklace 11–12 mm, huggie 6–7 mm, a–z)",
       "folder": "charm-repo-adds/letters-hoops-2026-11-09",
       "records": "records.json",
       "sheet": "LETTER-HOOPS_2026-1109.ai",
       "contact": "contact-sheet.html",
       "askedAt": "2026-11-09",
-      "made": "node scripts/make-letter-hoops.cjs --src charm-repo-adds/letters-hoops-2026-11-09/source --out charm-repo-adds/letters-hoops-2026-11-09",
-      "done": "2026-11-09: Paul pressed it; all 52 are in the Charm Repo (LETTER-HOOPS_2026-1109.ai)"
+      "made": "node scripts/make-letter-hoops.cjs --src charm-repo-adds/letters-hoops-2026-11-09/source --out charm-repo-adds/letters-hoops-2026-11-09 --replaces 655631a6597156ebedc11309d019eb1509af0b5d70df6fc7e55920876964ccf7",
+      "note": "9 Nov 2026: the first version (pressed by Paul) had the necklace letters at the source size; this one replaces those 52 entries."
     }
   ]
 }

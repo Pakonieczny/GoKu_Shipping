@@ -2,7 +2,7 @@
 // back with the app's own parser and geometry (charm-nest-pdf.js, charm-nest-vector.js) and checked against the 26 source letters committed beside them.
 // It proves, for every one of the 52 per-SKU files:
 //   · it is ONE charm, ONE closed cut outline, nothing loose (a second weld, integrateRings, finds no hoop left to join), the hoop's hole is a cut line;
-//   · the huggie set's letter is 6 mm (a c e n o r s u v x z) or 7 mm (b d f g h i j k l p q t y m w) on its longest side, scaled whole, never larger (Paul, 9 Nov 2026); the necklace set's is the source size;
+//   · each letter, without its hoop, is scaled whole to Paul's size (9 Nov 2026): necklace 11 mm (a c e n o r s u v x z) or 12 mm (b d f g h i j k l p q t y m w), huggie 6 or 7 mm; the hoops keep their size;
 //   · its metal is exactly the source letter (scaled, for a huggie) + the reference ring (necklace Ø 6.5 pt / hole 3.684 pt, huggie Ø 9.354 / 5.844, as NECKLACE_CHARM-n and
 //     NECKLACE_CHARM-n (HUGGIE) carry them) − the ring's hole, plus only the specks placement.json lists as filled: the letter keeps its size and outline;
 //   · the ring sits at the letter's top (its hole just above the letter's own top under it), at least 0.5 pt from every counter, and shares a real joint with it;
@@ -78,14 +78,14 @@ const signedPolys = r => r.map(p => p.points);
     // the metal, laid over the source letter: the letter + the ring − its hole (+ the specks placement.json says were filled)
     const s = src[i], h = ringHole[0];
     const dx = h.cx - pl.hoop.cx - s.bb[0], dy = h.cy - pl.hoop.cy - s.bb[1];
-    // (the huggie set's letter is scaled about its own bottom-left corner to 6 or 7 mm, placement.json `scale`; the necklace set's is the source's, scale 1)
+    // (each letter is scaled about its own bottom-left corner, placement.json `scale`, to Paul's size without the hoop: necklace 11 / 12 mm, huggie 6 / 7 mm, by its shape)
     const k = pl.scale;
-    ok(huggie ? k > 0 && k <= 1 : k === 1, `${what}: ${huggie ? 'scale ' + k : 'the source size'}`);
+    ok(k > 0, `${what}: scale ${k}`);
     const letter = signedPolys(s.metal).map(p => p.map(q => [s.bb[0] + (q[0] - s.bb[0]) * k + dx, s.bb[1] + (q[1] - s.bb[1]) * k + dy]));
-    if (huggie) {
-      const lw = (s.bb[2] - s.bb[0]) * k, lh = (s.bb[3] - s.bb[1]) * k, longMm = Math.max(lw, lh) * 25.4 / 72, want = 'bdfghijklpqtymw'.includes(L[i]) ? 7 : 6;
-      ok(Math.abs(longMm - want) < 0.1 || (k === 1 && longMm < want * 1.01), `${what}: the letter's longest side is ${longMm.toFixed(2)} mm (${want} mm for its shape)`);
-    }
+    { const lw = (s.bb[2] - s.bb[0]) * k, lh = (s.bb[3] - s.bb[1]) * k, longMm = Math.max(lw, lh) * 25.4 / 72, tall = 'bdfghijklpqtymw'.includes(L[i]), want = huggie ? (tall ? 7 : 6) : (tall ? 12 : 11);
+      ok(Array.isArray(e.bodyPt) && Math.abs(e.bodyPt[0] - lw) < 0.01 && Math.abs(e.bodyPt[1] - lh) < 0.01, `${what}: the record says its size without the hoop (bodyPt ${e.bodyPt && e.bodyPt.map(v => (v * 25.4 / 72).toFixed(1)).join(' × ')} mm)`);
+      if (huggie) ok(longMm <= 8, `${what}: a huggie letter is never over 8 mm (Paul)`);
+      ok(Math.abs(longMm - want) <= want * 0.011, `${what}: the letter, without its hoop, is ${longMm.toFixed(2)} mm on its longest side (${want} mm for its shape)`); }
     const letterRegion = V.boolean(letter, [], 'union', 'evenodd');
     let expect = V.boolean(letterRegion.map(p => p.points), [circ(h.cx, h.cy, H.outer)], 'union', 'evenodd', 'nonzero');
     const holesNow = expect.filter(p => p.hole), counters = V.boolean(letter, [], 'union', 'evenodd').filter(p => p.hole).map(p => p.points);
@@ -112,7 +112,8 @@ const signedPolys = r => r.map(p => p.points);
     ok(dCounter >= 0.49, `${what}: the ring keeps ${Number.isFinite(dCounter) ? dCounter.toFixed(2) : 'all'} pt of metal from every counter`);
     // the ring's centre: on the stem or dot of b d f h k l t i j, else the centre of the letter
     const letterBox = bbox(V.boolean(letter, [], 'union', 'evenodd').filter(p => !p.hole).map(p => p.points));
-    if (!'bdfhkltij'.includes(L[i])) ok(Math.abs(h.cx - (letterBox[0] + letterBox[2]) / 2) < 0.01, `${what}: centred on the letter`);
+    if (/nearest top/.test(pl.rule)) ok(h.cx > letterBox[0] && h.cx < letterBox[2], `${what}: on the nearest top of its metal (the centre has none to hold the hoop)`);
+    else if (!'bdfhkltij'.includes(L[i])) ok(Math.abs(h.cx - (letterBox[0] + letterBox[2]) / 2) < 0.01, `${what}: centred on the letter`);
     else ok(h.cx > letterBox[0] && h.cx < letterBox[2] && /stem|dot/.test(pl.rule), `${what}: on its ${pl.rule.includes('dot') ? 'dot' : 'stem'}`);
   }
   console.log(`letter-hoops: ${n} checks passed`);

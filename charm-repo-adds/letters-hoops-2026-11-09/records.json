@@ -1,18 +1,20 @@
 {
- "masterHash": "655631a6597156ebedc11309d019eb1509af0b5d70df6fc7e55920876964ccf7",
+ "masterHash": "3c26ee04aded99ad1a13439eefa04dfd92a94c35b2592fa2c0440873bdac321b",
  "masterName": "LETTER-HOOPS_2026-1109.ai",
  "hashSource": "local",
- "replaces": [],
+ "replaces": [
+  "655631a6597156ebedc11309d019eb1509af0b5d70df6fc7e55920876964ccf7"
+ ],
  "only": null,
  "entries": [
   {
    "sku": "LETTER_NECKLACE-0",
    "size": null,
    "readerV": 5,
-   "charmHash": "0cbea97f",
-   "widthPt": 19.256770000000003,
-   "heightPt": 23.683299999999974,
-   "areaPt2": 218.58333333333334,
+   "charmHash": "66f7d6f3",
+   "widthPt": 33.431140000000006,
+   "heightPt": 37.14499999999998,
+   "areaPt2": 664.8055555555555,
    "members": 3,
    "holes": 2,
    "engravable": false,
@@ -26,16 +28,20 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    31.181,
+    29.615
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-1",
    "size": null,
    "readerV": 5,
-   "charmHash": "9dab2974",
-   "widthPt": 19.25799999999998,
-   "heightPt": 30.04309999999998,
-   "areaPt2": 269.0833333333333,
+   "charmHash": "29f0c73d",
+   "widthPt": 27.834400000000016,
+   "heightPt": 41.115200000000016,
+   "areaPt2": 568.6666666666666,
    "members": 3,
    "holes": 2,
    "engravable": false,
@@ -49,21 +55,25 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    25.584,
+    34.016
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-2",
    "size": null,
    "readerV": 5,
-   "charmHash": "5eeb6295",
-   "widthPt": 17.08000000000004,
-   "heightPt": 24.46199999999999,
-   "areaPt2": 171.33333333333334,
+   "charmHash": "7c12ef4c",
+   "widthPt": 29.43979999999999,
+   "heightPt": 38.3553,
+   "areaPt2": 504.22222222222223,
    "members": 2,
    "holes": 1,
    "engravable": false,
-   "upAngle": 179.708,
-   "upSource": "long",
+   "upAngle": 90,
+   "upSource": "hole",
    "aiPath": "charmnest/master/LETTER_NECKLACE-2.ai",
    "aiUrl": "",
    "thumbPath": "charmnest/master/LETTER_NECKLACE-2.png",
@@ -72,20 +82,24 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    27.19,
+    31.181
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-3",
    "size": null,
    "readerV": 5,
-   "charmHash": "eb88b1fa",
-   "widthPt": 19.009000000000015,
-   "heightPt": 30.130800000000022,
-   "areaPt2": 277.22222222222223,
+   "charmHash": "cafdc5f0",
+   "widthPt": 27.389800000000037,
+   "heightPt": 41.10480000000001,
+   "areaPt2": 587.25,
    "members": 3,
    "holes": 2,
    "engravable": false,
-   "upAngle": 177.082,
+   "upAngle": 174.986,
    "upSource": "long",
    "aiPath": "charmnest/master/LETTER_NECKLACE-3.ai",
    "aiUrl": "",
@@ -95,16 +109,20 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    25.14,
+    34.016
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-4",
    "size": null,
    "readerV": 5,
-   "charmHash": "1ad4739d",
-   "widthPt": 18.476999999999975,
-   "heightPt": 24.53800000000001,
-   "areaPt2": 228.88888888888889,
+   "charmHash": "a927bae3",
+   "widthPt": 32.000999999999976,
+   "heightPt": 38.70139999999998,
+   "areaPt2": 699.1666666666666,
    "members": 3,
    "holes": 2,
    "engravable": false,
@@ -118,20 +136,24 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    29.751,
+    31.181
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-5",
    "size": null,
    "readerV": 5,
-   "charmHash": "2af97093",
-   "widthPt": 14.410900000000083,
-   "heightPt": 27.37299999999999,
-   "areaPt2": 152.41666666666666,
+   "charmHash": "bae5a84c",
+   "widthPt": 22.287000000000035,
+   "heightPt": 41.54259999999999,
+   "areaPt2": 391.25,
    "members": 2,
    "holes": 1,
    "engravable": false,
-   "upAngle": 187.897,
+   "upAngle": 187.523,
    "upSource": "long",
    "aiPath": "charmnest/master/LETTER_NECKLACE-5.ai",
    "aiUrl": "",
@@ -141,16 +163,20 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    20.037,
+    34.016
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-6",
    "size": null,
    "readerV": 5,
-   "charmHash": "17003cfd",
-   "widthPt": 17.223299999999995,
-   "heightPt": 27.372299999999996,
-   "areaPt2": 242.33333333333334,
+   "charmHash": "a3cacf86",
+   "widthPt": 27.920119999999997,
+   "heightPt": 41.55020000000002,
+   "areaPt2": 656.9444444444445,
    "members": 4,
    "holes": 3,
    "engravable": false,
@@ -164,16 +190,20 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "slight"
+   "sym": "directional",
+   "bodyPt": [
+    25.67,
+    34.016
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-7",
    "size": null,
    "readerV": 5,
-   "charmHash": "2ad9eda2",
-   "widthPt": 18.28800000000001,
-   "heightPt": 27.306500000000028,
-   "areaPt2": 201.94444444444446,
+   "charmHash": "0f4bd4a2",
+   "widthPt": 29.74440000000004,
+   "heightPt": 41.09879999999998,
+   "areaPt2": 540.8055555555555,
    "members": 2,
    "holes": 1,
    "engravable": false,
@@ -187,16 +217,20 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    27.494,
+    34.016
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-8",
    "size": null,
    "readerV": 5,
-   "charmHash": "cfbb0928",
-   "widthPt": 11.5150000000001,
-   "heightPt": 27.372000000000014,
-   "areaPt2": 151.77777777777777,
+   "charmHash": "13767ba6",
+   "widthPt": 18.134000000000015,
+   "heightPt": 41.54669999999999,
+   "areaPt2": 387.3611111111111,
    "members": 2,
    "holes": 1,
    "engravable": false,
@@ -210,16 +244,20 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "symmetric"
+   "sym": "symmetric",
+   "bodyPt": [
+    15.884,
+    34.016
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-9",
    "size": null,
    "readerV": 5,
-   "charmHash": "4a05fa45",
-   "widthPt": 10.427649999999971,
-   "heightPt": 33.043600000000026,
-   "areaPt2": 155.97222222222223,
+   "charmHash": "06e6ed40",
+   "widthPt": 13.153230000000008,
+   "heightPt": 41.54669999999999,
+   "areaPt2": 252.69444444444446,
    "members": 2,
    "holes": 1,
    "engravable": false,
@@ -233,16 +271,20 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    10.903,
+    34.016
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-10",
    "size": null,
    "readerV": 5,
-   "charmHash": "97a2b133",
-   "widthPt": 17.976000000000113,
-   "heightPt": 27.3039,
-   "areaPt2": 196.91666666666666,
+   "charmHash": "dd307ae5",
+   "widthPt": 29.208200000000033,
+   "heightPt": 41.04219999999998,
+   "areaPt2": 518.0277777777778,
    "members": 2,
    "holes": 1,
    "engravable": false,
@@ -256,20 +298,24 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    26.958,
+    34.016
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-11",
    "size": null,
    "readerV": 5,
-   "charmHash": "0384f822",
-   "widthPt": 11.559000000000196,
-   "heightPt": 30.130999999999972,
-   "areaPt2": 164.94444444444446,
+   "charmHash": "69e5c0b4",
+   "widthPt": 16.213000000000193,
+   "heightPt": 41.120900000000006,
+   "areaPt2": 331.94444444444446,
    "members": 2,
    "holes": 1,
    "engravable": false,
-   "upAngle": 178.93,
+   "upAngle": 358.93,
    "upSource": "long",
    "aiPath": "charmnest/master/LETTER_NECKLACE-11.ai",
    "aiUrl": "",
@@ -279,21 +325,25 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "symmetric"
+   "sym": "slight",
+   "bodyPt": [
+    13.963,
+    34.016
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-12",
    "size": null,
    "readerV": 5,
-   "charmHash": "12712149",
-   "widthPt": 24.927000000000135,
-   "heightPt": 20.081399999999974,
-   "areaPt2": 225.13888888888889,
+   "charmHash": "5a291131",
+   "widthPt": 36.26580000000013,
+   "heightPt": 26.358000000000004,
+   "areaPt2": 470.27777777777777,
    "members": 2,
    "holes": 1,
    "engravable": false,
    "upAngle": 90,
-   "upSource": "hole",
+   "upSource": "long",
    "aiPath": "charmnest/master/LETTER_NECKLACE-12.ai",
    "aiUrl": "",
    "thumbPath": "charmnest/master/LETTER_NECKLACE-12.png",
@@ -302,16 +352,20 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "symmetric"
+   "sym": "symmetric",
+   "bodyPt": [
+    34.016,
+    18.826
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-13",
    "size": null,
    "readerV": 5,
-   "charmHash": "fc543c01",
-   "widthPt": 19.25800000000001,
-   "heightPt": 20.950800000000015,
-   "areaPt2": 189.47222222222223,
+   "charmHash": "c9780c8b",
+   "widthPt": 33.4312,
+   "heightPt": 31.537800000000004,
+   "areaPt2": 561.1944444444445,
    "members": 2,
    "holes": 1,
    "engravable": false,
@@ -325,16 +379,20 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "symmetric"
+   "sym": "slight",
+   "bodyPt": [
+    31.181,
+    24.933
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-14",
    "size": null,
    "readerV": 5,
-   "charmHash": "d201d18d",
-   "widthPt": 19.25799999999998,
-   "heightPt": 23.629999999999995,
-   "areaPt2": 249.86111111111111,
+   "charmHash": "91654fd2",
+   "widthPt": 33.43119999999999,
+   "heightPt": 37.04250000000002,
+   "areaPt2": 770.5277777777778,
    "members": 3,
    "holes": 2,
    "engravable": false,
@@ -348,16 +406,20 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "symmetric"
+   "sym": "symmetric",
+   "bodyPt": [
+    31.181,
+    29.515
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-15",
    "size": null,
    "readerV": 5,
-   "charmHash": "4151aae2",
-   "widthPt": 17.513000000000034,
-   "heightPt": 27.37299999999999,
-   "areaPt2": 233.44444444444446,
+   "charmHash": "2390ed59",
+   "widthPt": 28.41579999999999,
+   "heightPt": 40.6225,
+   "areaPt2": 627.9722222222222,
    "members": 3,
    "holes": 2,
    "engravable": false,
@@ -371,16 +433,20 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    26.166,
+    34.016
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-16",
    "size": null,
    "readerV": 5,
-   "charmHash": "06f8061b",
-   "widthPt": 16.918999999999983,
-   "heightPt": 27.006700000000023,
-   "areaPt2": 222.63888888888889,
+   "charmHash": "eeb536ca",
+   "widthPt": 27.39620000000002,
+   "heightPt": 40.917100000000005,
+   "areaPt2": 593.5555555555555,
    "members": 3,
    "holes": 2,
    "engravable": false,
@@ -394,16 +460,20 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    25.146,
+    34.016
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-17",
    "size": null,
    "readerV": 5,
-   "charmHash": "b0f20623",
-   "widthPt": 18.279999999999973,
-   "heightPt": 24.288999999999987,
-   "areaPt2": 190.19444444444446,
+   "charmHash": "7ea45420",
+   "widthPt": 31.638199999999983,
+   "heightPt": 38.12900000000002,
+   "areaPt2": 562.8611111111111,
    "members": 2,
    "holes": 1,
    "engravable": false,
@@ -417,21 +487,25 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    29.388,
+    31.181
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-18",
    "size": null,
    "readerV": 5,
-   "charmHash": "c9425300",
-   "widthPt": 16.396999999999935,
-   "heightPt": 24.537300000000016,
-   "areaPt2": 200.55555555555554,
+   "charmHash": "99c9f4bc",
+   "widthPt": 28.18820000000005,
+   "heightPt": 38.64789999999999,
+   "areaPt2": 603.9722222222222,
    "members": 2,
    "holes": 1,
    "engravable": false,
-   "upAngle": 177.04,
-   "upSource": "long",
+   "upAngle": 90,
+   "upSource": "hole",
    "aiPath": "charmnest/master/LETTER_NECKLACE-18.ai",
    "aiUrl": "",
    "thumbPath": "charmnest/master/LETTER_NECKLACE-18.png",
@@ -440,16 +514,20 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    25.938,
+    31.181
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-19",
    "size": null,
    "readerV": 5,
-   "charmHash": "b1d9982f",
-   "widthPt": 15.30099999999993,
-   "heightPt": 27.05734000000001,
-   "areaPt2": 170.02777777777777,
+   "charmHash": "04adc3aa",
+   "widthPt": 24.625,
+   "heightPt": 40.638870000000026,
+   "areaPt2": 439.8333333333333,
    "members": 2,
    "holes": 1,
    "engravable": false,
@@ -463,18 +541,22 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    22.375,
+    34.016
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-20",
    "size": null,
    "readerV": 5,
-   "charmHash": "74a18479",
-   "widthPt": 22.093000000000075,
-   "heightPt": 24.196000000000026,
-   "areaPt2": 296.94444444444446,
-   "members": 3,
-   "holes": 2,
+   "charmHash": "32ffb0c8",
+   "widthPt": 33.43119999999999,
+   "heightPt": 33.718200000000024,
+   "areaPt2": 581.1944444444445,
+   "members": 2,
+   "holes": 1,
    "engravable": false,
    "upAngle": 90,
    "upSource": "hole",
@@ -486,18 +568,22 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    31.181,
+    26.244
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-21",
    "size": null,
    "readerV": 5,
-   "charmHash": "000f7e08",
-   "widthPt": 19.258000000000038,
-   "heightPt": 22.369000000000028,
-   "areaPt2": 192.80555555555554,
-   "members": 3,
-   "holes": 2,
+   "charmHash": "795252d0",
+   "widthPt": 33.43119999999999,
+   "heightPt": 34.733799999999974,
+   "areaPt2": 503.6666666666667,
+   "members": 2,
+   "holes": 1,
    "engravable": false,
    "upAngle": 90,
    "upSource": "hole",
@@ -509,21 +595,25 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "symmetric"
+   "sym": "directional",
+   "bodyPt": [
+    31.181,
+    27.203
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-22",
    "size": null,
    "readerV": 5,
-   "charmHash": "7a4c15e5",
-   "widthPt": 24.926999999999907,
-   "heightPt": 20.058899999999994,
-   "areaPt2": 222.02777777777777,
+   "charmHash": "90def9cc",
+   "widthPt": 36.2657999999999,
+   "heightPt": 26.315099999999973,
+   "areaPt2": 460.44444444444446,
    "members": 2,
    "holes": 1,
    "engravable": false,
    "upAngle": 90,
-   "upSource": "hole",
+   "upSource": "long",
    "aiPath": "charmnest/master/LETTER_NECKLACE-22.ai",
    "aiUrl": "",
    "thumbPath": "charmnest/master/LETTER_NECKLACE-22.png",
@@ -532,18 +622,22 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "slight",
+   "bodyPt": [
+    34.016,
+    20.729
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-23",
    "size": null,
    "readerV": 5,
-   "charmHash": "b281c52a",
-   "widthPt": 19.25799999999981,
-   "heightPt": 21.927999999999997,
-   "areaPt2": 201.11111111111111,
-   "members": 3,
-   "holes": 2,
+   "charmHash": "64212170",
+   "widthPt": 33.43119999999999,
+   "heightPt": 33.92529999999999,
+   "areaPt2": 577.0555555555555,
+   "members": 2,
+   "holes": 1,
    "engravable": false,
    "upAngle": 90,
    "upSource": "hole",
@@ -555,18 +649,22 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "symmetric"
+   "sym": "directional",
+   "bodyPt": [
+    31.181,
+    26.394
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-24",
    "size": null,
    "readerV": 5,
-   "charmHash": "578a3834",
-   "widthPt": 18.827999999999975,
-   "heightPt": 30.209000000000003,
-   "areaPt2": 221.22222222222223,
-   "members": 3,
-   "holes": 2,
+   "charmHash": "191cf722",
+   "widthPt": 27.115999999999985,
+   "heightPt": 41.54680000000002,
+   "areaPt2": 414.4166666666667,
+   "members": 2,
+   "holes": 1,
    "engravable": false,
    "upAngle": 26.861,
    "upSource": "long",
@@ -578,16 +676,20 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    24.866,
+    34.016
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-25",
    "size": null,
    "readerV": 5,
-   "charmHash": "cc3831c0",
-   "widthPt": 19.25799999999981,
-   "heightPt": 23.847699999999975,
-   "areaPt2": 219.02777777777777,
+   "charmHash": "f7d7dec8",
+   "widthPt": 33.43119999999999,
+   "heightPt": 37.43630000000002,
+   "areaPt2": 669.3055555555555,
    "members": 2,
    "holes": 1,
    "engravable": false,
@@ -601,7 +703,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    31.181,
+    29.962
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-0 (HUGGIE)",
@@ -624,7 +730,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "slight"
+   "sym": "slight",
+   "bodyPt": [
+    17.007,
+    16.152
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-1 (HUGGIE)",
@@ -647,7 +757,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    14.924,
+    19.843
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-2 (HUGGIE)",
@@ -670,7 +784,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    14.83,
+    17.007
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-3 (HUGGIE)",
@@ -693,7 +811,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    14.665,
+    19.843
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-4 (HUGGIE)",
@@ -716,7 +838,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "slight"
+   "sym": "slight",
+   "bodyPt": [
+    16.227,
+    17.007
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-5 (HUGGIE)",
@@ -739,7 +865,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    11.688,
+    19.842
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-6 (HUGGIE)",
@@ -762,7 +892,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "slight"
+   "sym": "slight",
+   "bodyPt": [
+    14.973,
+    19.841
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-7 (HUGGIE)",
@@ -785,7 +919,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    16.038,
+    19.842
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-8 (HUGGIE)",
@@ -808,7 +946,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "symmetric"
+   "sym": "symmetric",
+   "bodyPt": [
+    9.265,
+    19.841
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-9 (HUGGIE)",
@@ -831,7 +973,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "slight"
+   "sym": "slight",
+   "bodyPt": [
+    6.36,
+    19.843
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-10 (HUGGIE)",
@@ -854,7 +1000,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    15.726,
+    19.843
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-11 (HUGGIE)",
@@ -877,7 +1027,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "symmetric"
+   "sym": "symmetric",
+   "bodyPt": [
+    8.145,
+    19.843
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-12 (HUGGIE)",
@@ -900,7 +1054,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "symmetric"
+   "sym": "symmetric",
+   "bodyPt": [
+    19.843,
+    10.982
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-13 (HUGGIE)",
@@ -923,7 +1081,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "symmetric"
+   "sym": "symmetric",
+   "bodyPt": [
+    17.008,
+    13.6
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-14 (HUGGIE)",
@@ -946,7 +1108,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "symmetric"
+   "sym": "symmetric",
+   "bodyPt": [
+    17.008,
+    16.099
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-15 (HUGGIE)",
@@ -969,7 +1135,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    15.263,
+    19.842
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-16 (HUGGIE)",
@@ -992,7 +1162,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    14.669,
+    19.843
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-17 (HUGGIE)",
@@ -1015,7 +1189,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    16.03,
+    17.008
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-18 (HUGGIE)",
@@ -1038,7 +1216,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    14.147,
+    17.007
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-19 (HUGGIE)",
@@ -1061,7 +1243,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    13.051,
+    19.841
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-20 (HUGGIE)",
@@ -1084,7 +1270,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    17.008,
+    14.315
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-21 (HUGGIE)",
@@ -1107,7 +1297,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "symmetric"
+   "sym": "symmetric",
+   "bodyPt": [
+    17.008,
+    14.838
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-22 (HUGGIE)",
@@ -1130,7 +1324,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    19.843,
+    12.092
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-23 (HUGGIE)",
@@ -1153,7 +1351,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "symmetric"
+   "sym": "symmetric",
+   "bodyPt": [
+    17.008,
+    14.397
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-24 (HUGGIE)",
@@ -1176,7 +1378,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "directional"
+   "sym": "directional",
+   "bodyPt": [
+    14.505,
+    19.843
+   ]
   },
   {
    "sku": "LETTER_NECKLACE-25 (HUGGIE)",
@@ -1199,7 +1405,11 @@
    "labelSource": "text",
    "confidence": 1,
    "blocked": null,
-   "sym": "slight"
+   "sym": "slight",
+   "bodyPt": [
+    17.008,
+    16.343
+   ]
   }
  ],
  "blocked": [],

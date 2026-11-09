@@ -52,12 +52,15 @@ function cleanFacings(v) {
     "symmetric" (the mirror image looks the same: nothing to decide), "slight", or "directional" (it differs: a person says which way it faces). Anything else is ignored. */
 function cleanSym(v) { return v === "symmetric" || v === "slight" || v === "directional" ? v : undefined; }
 
+/** [w, h] in points, both positive and finite (the charm's size without its hoop), else null. */
+function cleanBody(v) { return Array.isArray(v) && v.length === 2 && v.every(x => typeof x === "number" && isFinite(x) && x > 0 && x < 5000) ? [+v[0].toFixed(3), +v[1].toFixed(3)] : null; }
 function slimEntry(d) {
   if (!d) return null;
   const pair = cleanPair(d.pair), facing = cleanFacing(d.facing), facings = cleanFacings(d.facings), sym = cleanSym(d.sym);
   // (KEEPOVERRIDE, Paul 20 Oct 2026: a SKU the designs window's switch took from another charm says so, so every computer remakes the pieces cut from the old drawing: charm-nest-bridge.js redrawChanged)
   const ov = d.override && typeof d.override === "object" ? { audit: String(d.override.audit || ""), via: String(d.override.via || ""), by: String(d.override.by || ""), at: num(d.override.at) || null, from: d.override.from && typeof d.override.from === "object" ? { skus: Array.isArray(d.override.from.skus) ? d.override.from.skus.slice(0, 20).map(String) : [], charmHash: String(d.override.from.charmHash || ""), aiPath: String(d.override.from.aiPath || ""), retired: !!d.override.from.retired } : null } : null;
-  return { ...(ov ? { override: ov } : {}), ...(pair ? { pair } : {}), ...(facing ? { facing } : {}), ...(Array.isArray(facings) ? { facings } : {}), ...(sym ? { sym } : {}), sku: d.sku, masterHash: d.masterHash || null, masterPath: d.masterPath || null, masterName: d.masterName || null, charmHash: d.charmHash || null, widthPt: num(d.widthPt), heightPt: num(d.heightPt), areaPt2: num(d.areaPt2), members: num(d.members), holes: num(d.holes), readerV: num(d.readerV),
+  const body = cleanBody(d.bodyPt);
+  return { ...(ov ? { override: ov } : {}), ...(body ? { bodyPt: body } : {}), ...(pair ? { pair } : {}), ...(facing ? { facing } : {}), ...(Array.isArray(facings) ? { facings } : {}), ...(sym ? { sym } : {}), sku: d.sku, masterHash: d.masterHash || null, masterPath: d.masterPath || null, masterName: d.masterName || null, charmHash: d.charmHash || null, widthPt: num(d.widthPt), heightPt: num(d.heightPt), areaPt2: num(d.areaPt2), members: num(d.members), holes: num(d.holes), readerV: num(d.readerV),
     engravable: d.engravable !== false, engravableBy: d.engravableBy || null, upAngle: d.upAngle == null ? null : num(d.upAngle), upSource: d.upSource || null, backKeepOut: d.backKeepOut || [], aiPath: d.aiPath || null, thumbPath: d.thumbPath || null, aiUrl: d.aiUrl || null, thumbUrl: d.thumbUrl || null,
     sizes: d.sizes || null, blocked: d.blocked || null, conflict: d.conflict || null, sizeMoved: d.sizeMoved || null, labelSource: d.labelSource || "text", confirmedBy: d.confirmedBy || null, open: !!d.open, indexedAt: d.indexedAt && d.indexedAt.toMillis ? d.indexedAt.toMillis() : (num(d.indexedAtMs) || null), hashSource: d.hashSource || "browser" };
 }
@@ -124,8 +127,10 @@ async function putIndex(db, FV, body) {
     const pairOf = e => { const x = cleanPair(e.pair); return x === undefined ? {} : { pair: x === null ? FV.delete() : x }; };
     const facingOf = e => { const x = cleanFacing(e.facing); return x === undefined ? {} : { facing: x === null ? FV.delete() : x }; };
     const facingsOf = e => { const x = cleanFacings(e.facings); return x === undefined ? {} : { facings: x === null ? FV.delete() : x }; };   // (what the indexer read from a folded pair: the second body drawn as the mirror image of the first; a person's words stand over it)
+    // (LETTERS-HOOPS, Paul 9 Nov 2026: "update all the sizings to only include the actual charm and not the hoop": `bodyPt` [w, h] is the charm's cut size WITHOUT its hoop, sent only by an indexer that knows it; the Library card shows it)
+    const bodyOf = e => { const b = cleanBody(e.bodyPt); return b ? { bodyPt: b } : {}; };
     const symOf = e => { const x = cleanSym(e.sym); return x === undefined ? {} : { sym: x }; };   // (measured, not a person's word: a re-index writes it again)
-    const geom = e => Object.assign({ charmHash: str(e.charmHash, 80), widthPt: num(e.widthPt), heightPt: num(e.heightPt), areaPt2: num(e.areaPt2), members: num(e.members), holes: num(e.holes), aiPath: str(e.aiPath, 600), thumbPath: str(e.thumbPath, 600), aiUrl: str(e.aiUrl, 900), thumbUrl: str(e.thumbUrl, 900), open: !!e.open, labelSource: str(e.labelSource || "text", 20), confidence: e.confidence == null ? null : num(e.confidence), readerV: num(e.readerV) }, pairOf(e), facingOf(e), facingsOf(e), symOf(e));
+    const geom = e => Object.assign({ charmHash: str(e.charmHash, 80), widthPt: num(e.widthPt), heightPt: num(e.heightPt), areaPt2: num(e.areaPt2), members: num(e.members), holes: num(e.holes), aiPath: str(e.aiPath, 600), thumbPath: str(e.thumbPath, 600), aiUrl: str(e.aiUrl, 900), thumbUrl: str(e.thumbUrl, 900), open: !!e.open, labelSource: str(e.labelSource || "text", 20), confidence: e.confidence == null ? null : num(e.confidence), readerV: num(e.readerV) }, pairOf(e), facingOf(e), facingsOf(e), symOf(e), bodyOf(e));
     Object.assign(doc, geom(base));
     const sized = list.filter(e => e.size);
     if (sized.length) { doc.sizes = {}; for (const e of sized) doc.sizes[String(e.size).toUpperCase()] = geom(e); if (!list.find(e => !e.size)) { doc.charmHash = null; doc.aiPath = ""; doc.thumbPath = ""; doc.aiUrl = ""; doc.thumbUrl = ""; } }
@@ -188,4 +193,4 @@ async function putFile(db, FV, body) {
   return { ok: true, masterHash: hash };
 }
 
-module.exports = { INDEX, FILES, SHAPE, isSku, slimEntry, cleanPair, cleanFacing, cleanFacings, cleanSym, putIndex, putFile };
+module.exports = { INDEX, FILES, SHAPE, isSku, slimEntry, cleanBody, cleanPair, cleanFacing, cleanFacings, cleanSym, putIndex, putFile };
