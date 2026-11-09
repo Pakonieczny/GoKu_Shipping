@@ -11431,6 +11431,9 @@ const Engrave = window.Engrave = (() => {
     const ids = (poolIds || []).map(String).filter(Boolean); if (!ids.length) return;
     const tryDo = f => { try { f(); } catch (e) { console.warn("charm edit: views", e); } };
     tryDo(() => window.CharmNestMadeThumb?.changed("art", ids));
+    // (CES4, Paul 9 Nov 2026: "why can't you speed this up?": a Save is a finished change, not a run of moves: the piece's new picture goes to the cloud as soon as its look has been taken
+    //  (charm-nest-made-thumb.js sweep, 120 ms), not after its 1.5 to 6 s pause, so other computers show it a few seconds sooner; a face still being fitted again still waits for its words)
+    tryDo(() => setTimeout(() => { try { window.CharmNestMadeThumb?.flush(); } catch (_) { /* sent at its own pace */ } }, 250));
     tryDo(() => ListMedia.refresh(ids));
     tryDo(() => { for (const sh of allSheets()) if ((sh.charms || []).some(c => c && ids.includes(String(c.poolId)))) renderCard(sh); });
     tryDo(() => { if (window.OrderWin && OrderWin.isOpen && OrderWin.isOpen() && (!rid || String(OrderWin.rid ? OrderWin.rid() : "") === String(rid))) OrderWin.paint(); });
