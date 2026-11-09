@@ -220,7 +220,7 @@
   // The rest cannot fit it by area and simply continue. (A trial of every piece spends its few seconds on pieces that cannot go in.)
   function headFor(stock,charms,card){
     let usable=0;
-    try{const Sv=window.CharmNestSolver;if(Sv&&Sv.makeSheetGrid)usable=Sv.makeSheetGrid({wPt:stock.wPt,hPt:stock.hPt,insetPt:+S.settings.insetPt||0,remnant:JSON.parse(stock.profileJson)},+S.settings.clearancePt||0,2).usableCells/4;}catch(_){}
+    try{const Sv=window.CharmNestSolver;if(Sv&&Sv.makeSheetGrid)usable=Sv.makeSheetGrid({wPt:stock.wPt,hPt:stock.hPt,insetPt:+S.settings.insetPt||0,cornerPt:typeof C.cornerPt==='function'?C.cornerPt():0,remnant:JSON.parse(stock.profileJson)},+S.settings.clearancePt||0,2).usableCells/4;}catch(_){}
     if(!(usable>0))usable=(card&&card.areaMm2?card.areaMm2:0)/(MM*MM);
     if(!(usable>0))return charms;
     // whole orders only: the cut falls between orders, never inside one (the pieces of a pair stay together; the list keeps its own order)

@@ -2859,7 +2859,9 @@
    * Renders the written sheet once per charm layer with every other layer
    * hidden, at `res` px/pt, and checks: ink stays inside the sheet inset,
    * every charm layer has ink, and no two charm silhouettes overlap.
-   * spec = { wPt, hPt, insetPt, res, onProgress(done,total) }
+   * spec = { wPt, hPt, insetPt, res, onProgress(done,total), corners? }
+   * corners (CORNERS, 9 Nov 2026): the sheet's corner keep-out triangles, [{ x, y, sx, sy, c }] in points
+   * (CharmNestSolver.cornerTriangles): ink there counts as cornerPx, as ink in the inset does.
    */
   async function verifyRendered(bytes, spec) {
     const pdfjs = root.pdfjsLib;
@@ -2935,7 +2937,10 @@
       await new Promise(r => setTimeout(r, 0));
       return { X0, Y0, bw, bh, core };
     }
-    let overlapPx = 0, outsidePx = 0; const pairs = new Set(), empty = [], detail = {}, byName = new Map();
+    let overlapPx = 0, outsidePx = 0, cornerPx = 0; const pairs = new Set(), empty = [], detail = {}, byName = new Map(), cornerLayers = new Set();
+    // a pixel X, Y (res px a point) in a corner triangle: its cell nearest that corner is inside the triangle's long side
+    const tris = Array.isArray(spec.corners) ? spec.corners.filter(t => t && t.c > 0) : [];
+    const inCorner = (X, Y) => { for (const t of tris) { const u = ((t.sx > 0 ? X : X + 1) / res - t.x) * t.sx, v = ((t.sy > 0 ? Y : Y + 1) / res - t.y) * t.sy; if (u >= 0 && v >= 0 && u + v < t.c - 1e-9) return true; } return false; };
     for (let li = 0; li < charmLayers.length; li++) {
       const key = keyOf(charmLayers[li].name);
       let area = key ? cache.get(key) : null;
@@ -2949,6 +2954,7 @@
         if (!core[b]) continue;
         const X = X0 + x, Y = Y0 + y, i = Y * W + X;
         if (X < inset || Y < inset || X >= W - inset || Y >= H - inset) { outsidePx++; }
+        if (tris.length && inCorner(X, Y)) { cornerPx++; cornerLayers.add(charmLayers[li].name); }
         if (idGrid[i] >= 0) { overlapPx++; const pair = charmLayers[idGrid[i]].name + " ↔ " + charmLayers[li].name; pairs.add(pair); const d = detail[pair] || (detail[pair] = { px: 0, x0: 1e9, y0: 1e9, x1: -1, y1: -1 }); d.px++; if (X < d.x0) d.x0 = X; if (Y < d.y0) d.y0 = Y; if (X > d.x1) d.x1 = X; if (Y > d.y1) d.y1 = Y; }
         idGrid[i] = li;
       }
@@ -2957,7 +2963,7 @@
     if (cache) for (const k of [...cache.keys()]) if (!used.has(k)) cache.delete(k);   // only this sheet's current charms are kept
     try { doc.destroy(); } catch (_) { /* ignore */ }
     const overlapDetail = Object.fromEntries(Object.entries(detail).map(([k, d]) => [k, { px: d.px, boxPt: [d.x0, d.y0, d.x1, d.y1].map(v => +(v / res).toFixed(1)) }]));
-    const out = { ok: overlapPx === 0 && outsidePx === 0 && empty.length === 0, overlapPx, outsidePx, emptyLayers: empty, overlappingPairs: [...pairs], overlapDetail, layers: charmLayers.length, rendered: charmLayers.length - reused, res, erodePx };
+    const out = { ok: overlapPx === 0 && outsidePx === 0 && cornerPx === 0 && empty.length === 0, overlapPx, outsidePx, cornerPx, cornerLayers: [...cornerLayers], emptyLayers: empty, overlappingPairs: [...pairs], overlapDetail, layers: charmLayers.length, rendered: charmLayers.length - reused, res, erodePx };
     // (OVERLAPFIX, 25 Oct 2026) what each charm covers, by layer name, and the page in pixels: the overlap fixer (charm-nest-overlap-fix.js) plans its nudge on exactly these pixels.
     // Not enumerable: the verification saved with a sheet stays small.
     Object.defineProperty(out, 'areas', { value: byName, enumerable: false }); Object.defineProperty(out, 'page', { value: { W, H, inset }, enumerable: false });

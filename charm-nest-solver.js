@@ -237,7 +237,7 @@
   }
   Grid.prototype.set = function (x, y) { this.occ[y * this.words + (x >> 5)] |= (1 << (x & 31)) >>> 0; this.free[y * this.W + x] = 0; if (this.material) this.material.set(x, y); };
   Grid.prototype.get = function (x, y) { return (this.occ[y * this.words + (x >> 5)] >>> (x & 31)) & 1; };
-  Grid.prototype.clone = function () { const g = new Grid(this.W, this.H); g.occ.set(this.occ); g.free.set(this.free); if (this.sat) g.sat = this.sat.slice(); if (this.material) g.material = this.material.clone(); if (this.parts) g.parts = this.parts.slice(); g.walls = this.walls; g.materialOnly = this.materialOnly; g.remnant = this.remnant; return g; };
+  Grid.prototype.clone = function () { const g = new Grid(this.W, this.H); g.occ.set(this.occ); g.free.set(this.free); if (this.sat) g.sat = this.sat.slice(); if (this.material) g.material = this.material.clone(); if (this.parts) g.parts = this.parts.slice(); g.walls = this.walls; g.materialOnly = this.materialOnly; g.remnant = this.remnant; g.corners = this.corners; g.cornerOnly = this.cornerOnly; return g; };
   Grid.prototype.trackMaterial = function (owners = false) { this.walls = new Grid(this.W, this.H); this.walls.occ.set(this.occ); this.walls.materialOnly = true; this.material = new Grid(this.W, this.H); this.material.materialOnly = true; if (owners) this.parts = []; return this; };
   /** Legal position test: no overlap between the packed mask and the grid. */
   Grid.prototype.fits = function (pm, x, y) {
@@ -248,6 +248,16 @@
       const gi = (y + r) * gw + wx, mi = r * mw;
       for (let k = 0; k < wmax; k++) if (occ[gi + k] & v[mi + k]) return false;
     }
+    return (!this.remnant || !pm.outline || clearOfRemnant(this.remnant, pm.outline, x, y)) && (!this.corners || !pm.outline || clearOfCorners(this.corners, pm.outline, x, y));
+  };
+  /** (CORNERS) Whether the whole outline of an eroded mask at x, y comes into a corner keep-out (the words of a refusal). */
+  Grid.prototype.cornersBlock = function (pm, x, y) { return !!(this.corners && pm.outline && !clearOfCorners(this.corners, pm.outline, x, y)); };
+  /** (CORNERS) A pinned piece, a placement already made, is held to everything but the corner triangles: it keeps its spot (verify flags it). */
+  Grid.prototype.fitsPinned = function (pm, x, y) {
+    if (this.fits(pm, x, y)) return true;
+    const only = this.cornerOnly; if (!only || x < 0 || y < 0 || x + pm.w > this.W || y + pm.h > this.H) return false;
+    const v = pm.variants[x & 31], wx = x >> 5, gw = this.words, mw = pm.words, occ = this.occ, wmax = Math.min(mw, gw - wx);
+    for (let r = 0; r < pm.h; r++) { const gi = (y + r) * gw + wx, mi = r * mw; for (let k = 0; k < wmax; k++) if ((occ[gi + k] & ~only[gi + k]) & v[mi + k]) return false; }
     return !this.remnant || !pm.outline || clearOfRemnant(this.remnant, pm.outline, x, y);
   };
   /* Rose Gold stock that is already cut away is tested against the whole
@@ -264,8 +274,9 @@
   }
   function outlineEdges(bits, w, h, off) {
     const rows = new Int32Array(h).fill(NO_CELL), cols = new Int32Array(w).fill(NO_CELL);
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (bits[y * w + x]) { if (rows[y] === NO_CELL) rows[y] = x; if (cols[x] === NO_CELL) cols[x] = y; }
-    return { off, rows, cols };
+    const ends = new Int32Array(h).fill(NO_CELL);   // (CORNERS: the last filled cell of each row too, for the right-hand corners)
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (bits[y * w + x]) { if (rows[y] === NO_CELL) rows[y] = x; if (cols[x] === NO_CELL) cols[x] = y; ends[y] = x; }
+    return { off, rows, cols, ends };
   }
   // The eroded mask already keeps an ordinary edge `pad` from the removed stock, so its silhouette stays `pad` less the erosion away.
   function outlinePad(pad, erodeFine, res) { return Math.max(0, pad - erodeFine / res); }
@@ -274,6 +285,64 @@
     const f = rem.front, n = f.length, ox = x + u.off, oy = y + u.off;
     if (rem.axis === "x") { for (let r = 0; r < u.rows.length; r++) { const g = oy + r; if (g >= 0 && g < n && ox + u.rows[r] < f[g]) return false; } }
     else for (let c = 0; c < u.cols.length; c++) { const g = ox + c; if (g >= 0 && g < n && oy + u.cols[c] < f[g]) return false; }
+    return true;
+  }
+  /* ── CORNERS (Paul, 9 Nov 2026: "on the four corners of the sheet, I need you to leave a triangle shape area that is 1.5 x 1.5 mm in the X and Y direction") ──
+     At each corner of the PHYSICAL sheet (the stock's own corners, not the inset line) a right triangle whose legs run sheet.cornerPt along both edges (default
+     1.5 mm: CORNER_DEFAULT_PT; the page's Settings, beside the inset and clearance, and every job the page makes carries it) is kept out: no charm's outline, its clearance or anything cut or engraved goes in it. It is no
+     cut: only a keep-out, like metal already removed. A job without cornerPt (one made before the rule, a test of something else) has none. A piece pinned
+     where it stands (a placement already made) keeps its spot even in a corner: only new placements follow the rule, and verify() flags it (cornerPx, cornerIds). A remnant (Rose Gold, 10K, 14K) keeps it at each stock corner that is still metal. sheet.cornerFrame
+     {x, y, wPt, hPt}: the stock's rectangle in this sheet's frame, when the sheet checked is a part of it (Manual Control's local check); the sheet itself otherwise. */
+  const CORNER_DEFAULT_PT = 1.5 * 72 / 25.4;
+  function cornerLegPt(sheet) { const v = sheet ? sheet.cornerPt : null; return v == null || v === "" || !Number.isFinite(+v) ? 0 : Math.max(0, +v); }
+  /** The keep-out triangles: [{ x, y, sx, sy, c }], (x, y) the stock's corner, (sx, sy) the way into the sheet, c the legs (pt). */
+  function cornerTriangles(sheet) {
+    const c = cornerLegPt(sheet); if (!sheet || !(c > 0)) return [];
+    const f = sheet.cornerFrame || { x: 0, y: 0, wPt: +sheet.wPt, hPt: +sheet.hPt }, out = [], e = .01;
+    if (!(f.wPt > 0 && f.hPt > 0)) return [];
+    for (const [ix, iy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+      const x = f.x + ix * f.wPt, y = f.y + iy * f.hPt;
+      // (a corner already cut away is no metal: the cut keeps charms off it, and the stock has no corner there)
+      if (sheet.remnant && Rose.intersects(sheet.remnant, ix ? x - e : x, iy ? y - e : y, e, e)) continue;
+      out.push({ x, y, sx: ix ? -1 : 1, sy: iy ? -1 : 1, c });
+    }
+    return out;
+  }
+  /** Whether the box [x0,x1] × [y0,y1] (pt) comes into a corner triangle, or within pad of it. Only the stock's own area counts. */
+  function boxInCorner(tris, x0, y0, x1, y1, pad) {
+    for (const t of tris) {
+      const ua = (x0 - t.x) * t.sx, ub = (x1 - t.x) * t.sx, va = (y0 - t.y) * t.sy, vb = (y1 - t.y) * t.sy;
+      if (Math.max(ua, ub) <= 0 || Math.max(va, vb) <= 0) continue;   // (wholly off the stock on that side)
+      const u = Math.max(0, Math.min(ua, ub)), v = Math.max(0, Math.min(va, vb));
+      if (u + v < t.c - 1e-9) return true;
+      if (pad > 0) { const s = Math.max(0, Math.min(1, (v - u + t.c) / (2 * t.c))); if (Math.hypot(u - t.c * (1 - s), v - t.c * s) < pad - 1e-9) return true; }
+    }
+    return false;
+  }
+  /** Fill every cell of a grid (res cells a point) that comes within pad of a corner triangle, as wall. → the triangles stamped */
+  function stampCorners(grid, tris, res, pad) {
+    for (const t of tris) {
+      const r = t.c + pad, X0 = Math.max(0, Math.floor((t.sx > 0 ? t.x : t.x - r) * res)), X1 = Math.min(grid.W, Math.ceil((t.sx > 0 ? t.x + r : t.x) * res));
+      const Y0 = Math.max(0, Math.floor((t.sy > 0 ? t.y : t.y - r) * res)), Y1 = Math.min(grid.H, Math.ceil((t.sy > 0 ? t.y + r : t.y) * res));
+      for (let y = Y0; y < Y1; y++) for (let x = X0; x < X1; x++) if (boxInCorner([t], x / res, y / res, (x + 1) / res, (y + 1) / res, pad)) { grid.set(x, y); grid.free[y * grid.W + x] = 0; }
+    }
+    return tris;
+  }
+  // a grid's corners, kept on it for the outline test below (an eroded mask can lose a thin part that the whole outline still has: see remnantFront)
+  function gridCorners(tris, res) { return tris.length ? { tris, res, pad: .5 / res, reach: Math.max(...tris.map(t => t.c)) + 1 / res } : null; }
+  // half a cell more than the clearance asks: a cell of the grid is a position as near as half a cell to the outline the verifier draws
+  function cornerPadPt(halfGapCells, res) { return (halfGapCells + .5) / res; }
+  function clearOfCorners(cn, u, x, y) {
+    const res = cn.res, ox = x + u.off, oy = y + u.off, H = u.rows.length;
+    for (let r = 0; r < H; r++) {
+      const a = u.rows[r]; if (a === NO_CELL) continue;
+      const gy = (oy + r) / res, x0 = (ox + a) / res, x1 = (ox + u.ends[r] + 1) / res;
+      for (const t of cn.tris) {
+        if (Math.abs(gy - t.y) > cn.reach + 1 / res) continue;
+        const near = Math.abs(x0 - t.x) < Math.abs(x1 - t.x) ? x0 : x1 - 1 / res;   // the row's cell nearest that corner
+        if (boxInCorner([t], near, gy, near + 1 / res, gy + 1 / res, cn.pad)) return false;
+      }
+    }
     return true;
   }
   /** Count overlapping cells (used for coarse tolerance + contact scoring). */
@@ -650,6 +719,10 @@
       Rose.stamp(baseCoarse,job.sheet.remnant,coarseRes,pad);
       baseFine.remnant=remnantFront(job.sheet.remnant,fineRes,outlinePad(pad,erodeFine,fineRes),FW,FH);
     }
+    // CORNERS: the four corner triangles are wall, at both levels (and the whole outline of an eroded mask is held off them: Grid.fits)
+    { const tris = cornerTriangles(job.sheet), pre = tris.length ? baseFine.occ.slice() : null;
+      stampCorners(baseFine, tris, fineRes, cornerPadPt(halfGapFine, fineRes)); stampCorners(baseCoarse, tris, coarseRes, cornerPadPt(halfGapFine, fineRes)); baseFine.corners = gridCorners(tris, fineRes);
+      if (pre) { const only = new Uint32Array(pre.length); for (let i = 0; i < pre.length; i++) only[i] = (baseFine.occ[i] & ~pre[i]) >>> 0; baseFine.cornerOnly = only; } }
     // the inset band and cut stock, which the thickness of free space looks past (see THICK): a gap is thin between charms,
     // not against the sheet's edge or the cut line, so an empty corner is not a cheap place to put a charm
     const edgeFine = new Uint8Array(FW * FH);
@@ -930,7 +1003,7 @@
         if (!v) { valid = false; break; }
         const x = Math.round(pl.cxPt * fineRes - v.solid.cx), y = Math.round(pl.cyPt * fineRes - v.solid.cy);
         const grids = rebuildGrids(rec);
-        if (!grids.fine.fits(v.fine.pm,x,y)) { valid = false; break; }
+        if (!(p.pinned ? grids.fine.fitsPinned(v.fine.pm,x,y) : grids.fine.fits(v.fine.pm,x,y))) { valid = false; break; }
         ids.add(p.id); rec.push({p,v,x,y});
       }
       const rejects = prepared.filter(p => !ids.has(p.id));
@@ -1789,7 +1862,7 @@
       };
       const savedCells = off => { let n = 0; for (const e of movableFixed) if (off.has(e.placement.id)) { const r = savedRecs.get(e.placement.id) || savedEntry(e); if (r) n += r.v.cells; } return n; };
       // a light copy of a sheet grid for the questions below: occupied cells, free flags and the cut stock (what Grid.fits reads)
-      const liteOf = g => { const c = new Grid(FW, FH); c.occ.set(g.occ); c.free.set(g.free); c.remnant = g.remnant; return c; };
+      const liteOf = g => { const c = new Grid(FW, FH); c.occ.set(g.occ); c.free.set(g.free); c.remnant = g.remnant; c.corners = g.corners; c.cornerOnly = g.cornerOnly; return c; };
       const clearEntries = (g, list) => {
         for (const r of list) { const b = r.v.fine.bits, w = r.v.fine.w, h = r.v.fine.h; for (let rr = 0; rr < h; rr++) for (let cc = 0; cc < w; cc++) if (b[rr * w + cc]) { const gx = r.x + cc, gy = r.y + rr; g.occ[gy * g.words + (gx >> 5)] &= ~(1 << (gx & 31)); g.free[gy * FW + gx] = 1; } }
         return g;
@@ -2099,7 +2172,7 @@
         if (p.pinned) {
           const v = p.variants[0];
           const x = Math.round(p.pinned.cxPt * fineRes - v.solid.cx), y = Math.round(p.pinned.cyPt * fineRes - v.solid.cy);
-          if (fine.fits(v.fine.pm, x, y)) bestPos = { v, x, y, score: Infinity };
+          if (fine.fitsPinned(v.fine.pm, x, y)) bestPos = { v, x, y, score: Infinity };
           metrics.positions++;reportMetrics();
         } else {
           if(groupMoves[0]?.p.id===p.id){const proposed=groupMoves.shift();metrics.positions++;if(fine.fits(proposed.v.fine.pm,proposed.x,proposed.y))bestPos=proposed;else groupMoves=[];}
@@ -2824,8 +2897,9 @@
     const FW = Math.round(job.sheet.wPt * res), FH = Math.round(job.sheet.hPt * res);
     const ids = new Int16Array(FW * FH).fill(-1);
     const byId = new Map(job.pieces.map(p => [p.id, p]));
-    let overlapPx = 0, outsidePx = 0, removedPx = 0;
+    let overlapPx = 0, outsidePx = 0, removedPx = 0, cornerPx = 0; const cornerIds = [];
     if(job.sheet.remnant)Rose.validate(job.sheet.remnant,job.sheet.wPt,job.sheet.hPt);
+    const tris = cornerTriangles(job.sheet), reach = tris.length ? Math.max(...tris.map(t => t.c)) : 0;   // (CORNERS: the charm's own outline, whole, in no corner triangle)
     const locked=new Map([...(job.protectedRose?.placements||[]),...(job.lockedPlacements||[])].map(p=>[p.id,p]));
     let protectedMoved=0;
     if(job.protectedRose)Rose.validate(job.protectedRose.profile,job.sheet.wPt,job.sheet.hPt);
@@ -2843,6 +2917,14 @@
       if(remnant){
         const rx=Math.round(pl.cxPt*res-rot0.cx),ry=Math.round(pl.cyPt*res-rot0.cy);
         for(let y=0;y<rot0.h;y++)for(let x=0;x<rot0.w;x++)if(rot0.bits[y*rot0.w+x]&&Rose.intersects(remnant,(rx+x)/res,(ry+y)/res,1/res,1/res))removedPx++;
+      }
+      if (tris.length) {
+        const rx = Math.round(pl.cxPt * res - rot0.cx), ry = Math.round(pl.cyPt * res - rot0.cy), bx0 = rx / res, by0 = ry / res, bx1 = (rx + rot0.w) / res, by1 = (ry + rot0.h) / res;
+        if (tris.some(t => Math.min(Math.abs(bx0 - t.x), Math.abs(bx1 - t.x)) < reach + 1 || (bx0 <= t.x && bx1 >= t.x)) && tris.some(t => Math.min(Math.abs(by0 - t.y), Math.abs(by1 - t.y)) < reach + 1 || (by0 <= t.y && by1 >= t.y))) {
+          let n = 0;
+          for (let y = 0; y < rot0.h; y++) { const gy = (ry + y) / res; for (let x = 0; x < rot0.w; x++) if (rot0.bits[y * rot0.w + x] && boxInCorner(tris, (rx + x) / res, gy, (rx + x + 1) / res, gy + 1 / res, 0)) n++; }
+          if (n) { cornerPx += n; cornerIds.push(pl.id); }
+        }
       }
       const x0 = Math.round(pl.cxPt * res - rot.cx), y0 = Math.round(pl.cyPt * res - rot.cy);
       masks.push({ i, id: pl.id, bits: rot.bits, w: rot.w, h: rot.h, x0, y0 });
@@ -2862,8 +2944,8 @@
       minEdgePt = Math.min(minEdgePt, m.x0 / res, m.y0 / res, (FW - m.x0 - m.w) / res, (FH - m.y0 - m.h) / res);
     }
     return {
-      ok: overlapPx === 0 && outsidePx === 0 && removedPx === 0 && protectedMoved === 0,
-      overlapPx, outsidePx, removedPx, protectedMoved, res,
+      ok: overlapPx === 0 && outsidePx === 0 && removedPx === 0 && protectedMoved === 0 && cornerPx === 0,
+      overlapPx, outsidePx, removedPx, protectedMoved, res, cornerPx, cornerIds,
       overlappingPairs: [...pairs].map(s => s.split(":").map(n => placements[+n].id)),
       minGapPt: masks.length > 1 && near ? +minGapPt.toFixed(3) : null,
       minEdgePt: masks.length ? +minEdgePt.toFixed(3) : null,
@@ -2936,6 +3018,7 @@
     const g = new Grid(FW, FH);
     for (let y = 0; y < FH; y++) for (let x = 0; x < FW; x++) { if (x < wall || y < wall || x >= FW - wall || y >= FH - wall) g.set(x, y); else g.free[y * FW + x] = 1; }
     if(sheet.remnant){const pad=Math.max(insetPt,halfGap/fineRes);Rose.stamp(g,sheet.remnant,fineRes,pad);g.remnant=remnantFront(sheet.remnant,fineRes,outlinePad(pad,erodeFine,fineRes),FW,FH);}
+    { const tris = cornerTriangles(sheet); stampCorners(g, tris, fineRes, cornerPadPt(halfGap, fineRes)); g.corners = gridCorners(tris, fineRes); }   // (CORNERS)
     stampFixed(g,sheet.fixedPieces,clearancePt,fineRes);
     g.buildSAT(); g.fineRes = fineRes; g.usableCells = g.freeCells();
     return g;
@@ -3026,6 +3109,6 @@
     const overlap = off ? null : grid.overlap(v.fine.pm, x0, y0, 1e9);
     return { ok: false, x: x0, y: y0, off, overlapPt2: overlap == null ? null : overlap / (res * res) };
   }
-  const solverAPI = { sliverCells, SLIVER_MM, FIT_WEIGHTS, AROUND_MM, search, solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, withWriteShrink, shrinkUnion, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine, PROBES, SMALL_PROBES, probeVariants, smallProbeVariants, bitsFromBase64, pairFields, linkGroups, pairingOf, laidOutline, MATE_CAP_MM };
+  const solverAPI = { CORNER_DEFAULT_PT, cornerLegPt, cornerTriangles, boxInCorner, sliverCells, SLIVER_MM, FIT_WEIGHTS, AROUND_MM, search, solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, withWriteShrink, shrinkUnion, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine, PROBES, SMALL_PROBES, probeVariants, smallProbeVariants, bitsFromBase64, pairFields, linkGroups, pairingOf, laidOutline, MATE_CAP_MM };
   return solverAPI;
 });

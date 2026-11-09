@@ -1646,6 +1646,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     ctx.save(); ctx.translate(R, R);
     ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, .5 * k); ctx.strokeRect(.5, .5, Wp - 1, Hp - 1);
     const ins = (+S.settings.insetPt || 0) * k; ctx.setLineDash([4 * W.dpr, 4 * W.dpr]); ctx.strokeStyle = "rgba(147,140,128,.35)"; ctx.lineWidth = 1; ctx.strokeRect(ins, ins, Wp - 2 * ins, Hp - 2 * ins); ctx.setLineDash([]);
+    // (CORNERS: each corner's keep-out, its long side dashed like the inset; a corner of the metal already cut away has none)
+    if (typeof paintCorners === "function" && typeof cornerTris === "function" && W.st) tryDo(() => paintCorners(ctx, cornerTris(W.live || W.rec || {}, W.st), k, [4 * W.dpr, 4 * W.dpr]));
     ctx.restore();
   }
   function tx0(c) { const cx = c.centerPt[0], cy = c.centerPt[1], k = W.k; return (x, y) => [(x - cx) * k, (cy - y) * k]; }
@@ -5329,6 +5331,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      the sheet's own verifier passes it (the same verify, the same allowance). The nest's inset is for the charms it places itself; a saved sheet keeps every hand-placed charm where it is
      (its placements are locked). */
   const mcClr = () => Math.min(0, +S.settings.clearancePt || 0), MC_INSET = 0;
+  const mcCornerPt = () => (typeof cornerPtSetting === "function" ? cornerPtSetting() : 0);   // (CORNERS: the keep-out holds for hand placement too; buildJob's sheet carries it)
   /* NUDGE (Paul, 27 Oct 2026: "very fine positional adjustment movements using the 4 keyboard arrow keys ... and Shift + any of the 4 arrow keys would make large positional charm adjustment"):
      an arrow moves the charm in hand 0.05 mm, Shift + an arrow 1 mm */
   const MM_PT = 72 / 25.4, MC_NUDGE = 0.05 * MM_PT, MC_NUDGE_BIG = 1 * MM_PT;
@@ -5418,7 +5421,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** The sheet as the nest sees it, every placed charm but `exceptId` stamped where it stands (kept for the same layout: the cross-sheet drag asks often). */
   function mcGrid(sh, exceptId, poses) {
     const clr = mcClr(), prof = mcGuard(sh) && sh.roseProtected.profile;
-    const sig = JSON.stringify([sh.sheetId || sh.page, exceptId, clr, MC_INSET, prof ? 1 : 0, sh.roseStock && sh.roseStock.revision, sh.roseStock && sh.roseStock.profileJson ? String(sh.roseStock.profileJson).length : 0, (sh.roseStock && sh.roseStock.owner) || "", sh.placements.map(p => { const q = mcPoseOf(sh, p.id, poses); return q ? [p.id, q.cxPt, q.cyPt, q.angle, q.size] : p.id; }), sh.charms.length]);
+    const sig = JSON.stringify([sh.sheetId || sh.page, exceptId, clr, MC_INSET, mcCornerPt(), prof ? 1 : 0, sh.roseStock && sh.roseStock.revision, sh.roseStock && sh.roseStock.profileJson ? String(sh.roseStock.profileJson).length : 0, (sh.roseStock && sh.roseStock.owner) || "", sh.placements.map(p => { const q = mcPoseOf(sh, p.id, poses); return q ? [p.id, q.cxPt, q.cyPt, q.angle, q.size] : p.id; }), sh.charms.length]);
     const hit = MC.grids.get(sig); if (hit) return hit;
     // (MCINSTANT, 28 Oct 2026: the empty sheet kept (mcEdgeOf, GOLDEDIT's preCut and an earlier line's remnant as before), copied without its summed-area table: THE check asks fits() only)
     const E = mcEdgeOf(sh), sheet = E.sheet, edge = E.edge, grid = mcGridCopy(edge), others = [], byId = new Map(sh.charms.map(c => [c.id, c]));
@@ -5456,15 +5459,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         wPt = Math.min(G.sheet.wPt, Math.ceil(box[2])) - ox; hPt = Math.min(G.sheet.hPt, Math.ceil(box[3])) - oy;
         if (!(wPt > 0 && hPt > 0)) { ox = 0; oy = 0; wPt = G.sheet.wPt; hPt = G.sheet.hPt; }
       }
-      const job = { sheet: Object.assign({ wPt, hPt }, G.sheet.remnant ? { remnant: G.sheet.remnant } : {}), clearancePt: G.clearancePt, fineRes: 2, pieces: list.map(o => Object.assign({ id: o.id }, pieceOf(o.c, o.q.size))) };
+      // (CORNERS: the stock's corner keep-out, at the stock's own corners when only a part of it is checked)
+      const job = { sheet: Object.assign({ wPt, hPt }, G.sheet.remnant ? { remnant: G.sheet.remnant } : {}, G.sheet.cornerPt > 0 ? { cornerPt: G.sheet.cornerPt, cornerFrame: { x: -ox, y: -oy, wPt: G.sheet.wPt, hPt: G.sheet.hPt } } : {}), clearancePt: G.clearancePt, fineRes: 2, pieces: list.map(o => Object.assign({ id: o.id }, pieceOf(o.c, o.q.size))) };
       const r = SV().verify(job, list.map(o => ({ id: o.id, cxPt: o.q.cxPt - ox, cyPt: o.q.cyPt - oy, angle: o.q.angle })), 6, undefined, MC_VERIFY);
       // (the edge is read from the charm's own outline, whole: the shop's allowance lets two cut lines touch, never one run past the sheet's edge or into metal cut away)
       if (G.clearancePt < 0) {
         const e = SV().verify(Object.assign({}, job, { clearancePt: 0, pieces: [job.pieces[0]] }), [{ id: c.id, cxPt: at.cxPt - ox, cyPt: at.cyPt - oy, angle: at.angle }], 6, undefined, MC_VERIFY);
-        r.outsidePx = e.outsidePx; r.removedPx = e.removedPx; r.ok = !r.overlapPx && !e.outsidePx && !e.removedPx && !r.protectedMoved;
+        r.outsidePx = e.outsidePx; r.removedPx = e.removedPx; r.cornerPx = e.cornerPx; r.ok = !r.overlapPx && !e.outsidePx && !e.removedPx && !e.cornerPx && !r.protectedMoved;
       }
       if (r.ok) return { ok: true };
-      return { ok: false, edge: !!(r.outsidePx || r.removedPx), reason: r.outsidePx ? "No room there: it would run past the sheet's edge." : r.removedPx ? "No room there: it would go into metal already cut away." : `No room there: it would overlap ${(() => { const o = list.find(z => z.id !== c.id && (r.overlappingPairs || []).some(pr => pr.includes(z.id) && pr.includes(c.id))); const rid = o && ridOfC(o.c); return rid ? `order ${rid}'s charm` : "another charm"; })()}.` };
+      return { ok: false, edge: !!(r.outsidePx || r.removedPx || r.cornerPx), reason: r.outsidePx ? "No room there: it would run past the sheet's edge." : r.removedPx ? "No room there: it would go into metal already cut away." : r.cornerPx ? mcCornerWords(G.sheet) : `No room there: it would overlap ${(() => { const o = list.find(z => z.id !== c.id && (r.overlappingPairs || []).some(pr => pr.includes(z.id) && pr.includes(c.id))); const rid = o && ridOfC(o.c); return rid ? `order ${rid}'s charm` : "another charm"; })()}.` };
     } catch (e) { console.warn("sheet window: manual verify", e); return { ok: false, reason: "The layout check could not be made here (" + e.message + ")." }; }
   }
   /** THE check of one pose: the grid (no clearance, no margin: ZEROGAP), then the verifier (full: on letting go, a nudge, the colours and saving), which decides at the EXACT pose
@@ -5493,6 +5497,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       }
     }
     if (vr && !vr.ok) return { ok: false, why: vr.edge ? "edge" : "overlap", reason: vr.reason, pose: exact, v };
+    if (!G.edge.fits(v.fine.pm, x0, y0) && mcInCorner(G, v, x0, y0)) return { ok: false, why: "edge", reason: mcCornerWords(G.sheet), pose: exact, v };
     if (!G.edge.fits(v.fine.pm, x0, y0)) return { ok: false, why: "edge", reason: G.sheet.remnant ? "No room there: it would run past the sheet's edge or into metal already cut away." : "No room there: it would run past the sheet's edge.", pose: exact, v };
     return { ok: false, why: "overlap", reason: `No room there: it would overlap ${mcNear(G, exact)}.`, pose: exact, v };
   }
@@ -5505,6 +5510,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      checks are untouched: such a sheet is written as it stands and its own verifier flags it, and sheetClashes() keeps it out of every set and off the laser (the sheet's
      card, the stage's "N charms overlap", Sets.validateRelease and cannotJoin) until it is moved clear. ── */
   const mcFree = r => !!r && ["overlap", "edge", "verify"].includes(r.why);
+  /** (CORNERS, Paul 9 Nov 2026) The words for a pose that comes into a corner keep-out of the sheet, and whether the charm's grid mask at x0, y0 does (the sheet's grid without the corners passes it). */
+  const mcCornerWords = sheet => `No room there: it would go into the sheet corner's ${(((+(sheet && sheet.cornerPt) || 0) * 25.4 / 72)).toFixed(1)} mm keep-out triangle.`;
+  function mcInCorner(G, v, x0, y0) {
+    const Sv = SV(), tris = Sv && Sv.cornerTriangles ? Sv.cornerTriangles(G.sheet) : []; if (!tris.length) return false;
+    const b = v.fine.bits, w = v.fine.w, h = v.fine.h;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (b[y * w + x] && Sv.boxInCorner(tris, (x0 + x) / 2, (y0 + y) / 2, (x0 + x + 1) / 2, (y0 + y + 1) / 2, 0)) return true;
+    return !!(G.edge.cornersBlock && G.edge.cornersBlock(v.fine.pm, x0, y0));   // (an eroded mask clear of it, its whole outline not)
+  }
   const mcAsPut = q => ({ cxPt: +(+q.cxPt).toFixed(3), cyPt: +(+q.cyPt).toFixed(3), angle: normDeg(q.angle), size: clampSize(q.size == null ? 1 : q.size) });
   const mcFlagged = t => /^Verification flagged/.test(String(t || ""));
   const mcFlagOnly = sh => !!sh && mcFlagged(sh.problem) && (!sh.runHold || mcFlagged(sh.runHold));
@@ -5516,7 +5529,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function mcGridCopy(edge) {
     const g = Object.create(Object.getPrototypeOf(edge)), n = edge.W * edge.H;
     if (!MCFREE0 || MCFREE0.length < n) MCFREE0 = new Uint8Array(n);
-    Object.assign(g, { W: edge.W, H: edge.H, words: edge.words, occ: edge.occ.slice(), free: MCFREE0, remnant: edge.remnant, fineRes: 2 });
+    Object.assign(g, { W: edge.W, H: edge.H, words: edge.words, occ: edge.occ.slice(), free: MCFREE0, remnant: edge.remnant, corners: edge.corners, fineRes: 2 });
     return g;
   }
   /** The empty sheet as the nest sees it: its edge, inset and any metal cut away (kept for the same sheet). */
@@ -5524,7 +5537,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function mcEdgeOf(sh) {
     // (MCINSTANT, 28 Oct 2026: known by what makes it (its stock, metal cut away, an earlier line), so a check that finds it kept builds no job for the sheet)
     const prof = mcGuard(sh) && sh.roseProtected.profile, rs = sh.roseStock || null, st0 = typeof stockFor === "function" ? tryDo(() => stockFor(sh.metal, sh)) : null;
-    const sig = JSON.stringify([sh.sheetId || sh.page, sh.metal, mcClr(), MC_INSET, st0 ? [st0.wPt, st0.hPt] : 0, prof ? 1 : 0, rs && rs.revision, rs && rs.profileJson ? String(rs.profileJson).length : 0, (rs && rs.owner) || "", sh.roseCutAt || 0, (sh.roseHistory || []).length]);
+    const sig = JSON.stringify([sh.sheetId || sh.page, sh.metal, mcClr(), MC_INSET, mcCornerPt(), st0 ? [st0.wPt, st0.hPt] : 0, prof ? 1 : 0, rs && rs.revision, rs && rs.profileJson ? String(rs.profileJson).length : 0, (rs && rs.owner) || "", sh.roseCutAt || 0, (sh.roseHistory || []).length]);
     let E = MCE.get(sig); if (E) return E;
     const job = buildJob(sh), sheet = Object.assign(preCut(sh, job.sheet), { insetPt: MC_INSET });
     if (prof) sheet.remnant = prof;
@@ -5617,7 +5630,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** The sheet's charms left where they overlap (or run past the margin), as its placements stand (the save, the write): kept for the same layout. */
   const MCC = new WeakMap();
-  const mcClashSig = sh => JSON.stringify([mcClr(), MC_INSET, sh.placements.map(p => [p.id, +p.cxPt, +p.cyPt, +p.angle, +p.scale || 1]), sh.charms.map(c => [c.id, sizeOf(c), !!c.bits])]);
+  const mcClashSig = sh => JSON.stringify([mcClr(), MC_INSET, mcCornerPt(), sh.placements.map(p => [p.id, +p.cxPt, +p.cyPt, +p.angle, +p.scale || 1]), sh.charms.map(c => [c.id, sizeOf(c), !!c.bits])]);
   function mcSheetClash(sh) {
     if (!sh || !MANUAL_METALS.includes(sh.metal) || !Array.isArray(sh.placements) || !sh.placements.length) return [];
     const sig = mcClashSig(sh);
@@ -5922,7 +5935,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     try {
       if (typeof ensurePdfJs === "function") await ensurePdfJs();
       const clr = +S.settings.clearancePt || 0;
-      render = await Pd.verifyRendered(ai, { wPt: stock.wPt, hPt: stock.hPt, insetPt: 0, res: +S.settings.verifyRes || 6, erodePt: clr < 0 ? Math.round(-clr / 2 * 2) / 2 : 0, layerSigs: new Map(base.placements.map(p => [p.layerName, p.layerSig])) });
+      render = await Pd.verifyRendered(ai, { wPt: stock.wPt, hPt: stock.hPt, insetPt: 0, res: +S.settings.verifyRes || 6, erodePt: clr < 0 ? Math.round(-clr / 2 * 2) / 2 : 0, corners: typeof cornerTris === "function" ? tryDo(() => cornerTris(sh, stock)) || [] : [], layerSigs: new Map(base.placements.map(p => [p.layerName, p.layerSig])) });
     } catch (e) { render = { ok: false, error: String((e && e.message) || e) }; }
     const hand = (tryDo(() => mcSheetClash(sh)) || []).length;
     sh.verification = { ok: !!(render && render.ok) && !hand, render: render && { ok: !!render.ok, overlapPx: render.overlapPx || 0, outsidePx: render.outsidePx || 0, ...(render.error ? { error: render.error } : {}) }, geom: { ok: !hand, by: "manual" }, ...(hand ? { handOverlap: hand } : {}), minGapPt: rec.verification ? rec.verification.minGapPt : null, minEdgePt: rec.verification ? rec.verification.minEdgePt : null };

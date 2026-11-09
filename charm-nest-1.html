@@ -3839,7 +3839,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
     <div class="section">Geometry (measuring tool · solver option)</div>
     <div class="fieldRow3">
       <div class="field"><label>Clearance (mm)</label><input id="stClearance" type="number" step="0.01" min="-0.7" max="4.2"><div class="help">Gap between silhouettes. <b>Negative = aggressive:</b> outlines may touch and their strokes overlap by up to that much (−0.18 mm ≈ half a 0.3 mm cut line), bodies never more. 0 = touching. 0.33 pt fit the reference sheet; 1.5 pt did not.</div></div>
-      <div class="field"><label>Edge inset (mm)</label><input id="stInset" type="number" step="0.1" min="0" max="12.7"></div>
+      <div class="field"><label>Edge inset · corner keep-out (mm)</label><div class="fieldRow"><input id="stInset" type="number" step="0.1" min="0" max="12.7"><input id="stCorner" type="number" step="0.1" min="0" max="12.7"></div><div class="help">Corner keep-out: a triangle at each of the sheet's four corners, its two legs this long along the edges, that no charm, its clearance or any cut or engraving goes into (1.5 mm by default). New nests and placements follow it; a sheet already nested is flagged, not moved.</div></div>
       <div class="field"><label>Angle step (°)</label><select id="stAngle"><option value="2">2 (180 angles)</option><option value="5">5 (72 angles)</option><option value="10">10 (36 angles)</option></select><div class="help">For the learned search. Charms placed one at a time always turn in 2° steps.</div></div>
     </div>
     <div class="fieldRow3">
@@ -3934,10 +3934,10 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-operations.js?v=20261028-sw1"></script>
 <script src="charm-nest-rose.js?v=20261007-edges-gc1-gf1-sh29"></script>
 <script src="charm-nest-partial.js?v=20261007-ps4-fit75-pp1-cg1"></script>
-<script src="charm-nest-solver.js?v=20261009-unjam1-pair2-ln1-cg1-nestfront-nq1-ovf1-mi1"></script>
+<script src="charm-nest-solver.js?v=20261009-unjam1-pair2-ln1-cg1-nestfront-nq1-ovf1-mi1-crn1"></script>
 <script src="vendor/clipper-6.4.2.js?v=20261028-sw1"></script>
 <script src="charm-nest-vector.js?v=20261028-ops1-sw1"></script>
-<script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1-ml1-m2-m3-szf1-mfile1-mc1-bd1-ovf1-ae1-im1-bm1"></script>
+<script src="charm-nest-pdf.js?v=20261009-cutfill-gt1-bx2-hoops-col-rv71-pt1-plb2-bc2-pe2-bf1-bf2-bf3-as1-mi6-bf4-bb1-ba1-sx1-ba2-lv1-fb1-ef1-ml1-m2-m3-szf1-mfile1-mc1-bd1-ovf1-ae1-im1-bm1-crn1"></script>
 <script src="charm-nest-overlap-fix.js?v=20261025-ovf1"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom-vi1"></script>
 <script src="charm-nest-motion.js?v=20261007-cutseal1-fb1-ui2-hdr1-ms1-cost18-rh1-hp2-ro1-sc1-ss1-vis1-rs1-rel1-sg1-apx1-sw1-pf1-cw1-es1"></script>
@@ -4044,7 +4044,7 @@ const DEFAULTS = {
   rail: "md",
   stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
   nestFlow: "standard", learnedBudgetS: 600, learnedStallS: 300,
-  clearancePt: -0.5, insetPt: 1.5, angleStep: 10, budgetS: 180, seed: 1, freshSeed: true, serverAbove: 0, parallel: 0,
+  clearancePt: -0.5, insetPt: 1.5, cornerPt: 1.5 * 72 / 25.4 /* CORNERS: 1.5 mm, stored in pt like the inset */, angleStep: 10, budgetS: 180, seed: 1, freshSeed: true, serverAbove: 0, parallel: 0,
   minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", computePipeline: "cpu", aiRounds: 10, snapIn: 0.25, maxFill: 0.80, orderView: "list", v: 27,
   // Design Station bridge, orders, run (design doc §14)
   dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, pollOrders: "on", pollMinutes: 10, finalOptimizeCount: 85, optimizeAt: 85, etsyHourlyCap: 600, sandbox: "off",
@@ -5597,9 +5597,53 @@ async function settleTopups() {
     settlingTopups = false;
   }
 }
+/* CORNERS (Paul, 9 Nov 2026: "on the four corners of the sheet, I need you to leave a triangle shape area that is 1.5 x 1.5 mm in the X and Y direction"). The keep-out's legs (Settings,
+   beside the inset; stored in pt), and the sheet as the keep-out reads it: its stock and, on a sheet of a metal with a green line, the metal already cut away (a corner cut away has none).
+   The solver holds every nest and placement to it (CharmNestSolver.cornerTriangles); the sheet card flags a sheet already nested with a charm in it (cornerClash), and the
+   previews draw each triangle's long side as a faint dashed line, like the inset. */
+function tryCorner(sh) { try { return cornerClash(sh); } catch (_) { return []; } }
+function cornerPtSetting() { const v = S.settings.cornerPt; return v == null || v === "" || !Number.isFinite(+v) ? DEFAULTS.cornerPt : Math.max(0, +v); }
+function cornerSheet(sh, st) {
+  st = st || stockFor(sh.metal, sh); let remnant = null;
+  try { remnant = sh && sh.roseStock && sh.roseStock.profileJson ? JSON.parse(sh.roseStock.profileJson) : null; } catch (_) { remnant = null; }
+  return Object.assign({ wPt: +st.wPt, hPt: +st.hPt, cornerPt: cornerPtSetting() }, remnant && Math.abs(remnant.wPt - st.wPt) < .01 && Math.abs(remnant.hPt - st.hPt) < .01 ? { remnant } : {});
+}
+function cornerTris(sh, st) { try { return window.CharmNestSolver && CharmNestSolver.cornerTriangles ? CharmNestSolver.cornerTriangles(cornerSheet(sh, st)) : []; } catch (_) { return []; } }
+/** The four keep-out lines on a preview drawn in sheet points scaled by k (the hypotenuse of each triangle; the legs are the sheet's own edges). */
+function paintCorners(ctx, tris, k, dash) {
+  if (!tris || !tris.length) return;
+  ctx.save(); ctx.setLineDash(dash || [4, 4]); ctx.strokeStyle = "rgba(147,140,128,.55)"; ctx.lineWidth = 1; ctx.beginPath();
+  for (const t of tris) { ctx.moveTo((t.x + t.sx * t.c) * k, t.y * k); ctx.lineTo(t.x * k, (t.y + t.sy * t.c) * k); }
+  ctx.stroke(); ctx.restore();
+}
+/** The placed charms of a sheet already nested that lie in a corner keep-out, by their own outlines (the solver's verifier): [] when none, or for a sheet cut already.
+    Only the charms whose reach comes near a corner are drawn; kept for the same layout and setting. */
+const CORNER_SEEN = new WeakMap();
+function cornerClash(sh) {
+  if (!sh || !Array.isArray(sh.placements) || !sh.placements.length || sh.roseCutAt || +sh.laserDoneAt > 0 || !window.CharmNestSolver || !CharmNestSolver.verify) return [];
+  const st = stockFor(sh.metal, sh), tris = cornerTris(sh, st); if (!tris.length) return [];
+  const sizeOf = c => (typeof manualSize === "function" ? manualSize(c) : 1), byId = new Map((sh.charms || []).map(c => [c.id, c]));
+  const sig = JSON.stringify([st.wPt, st.hPt, cornerPtSetting(), sh.roseStock && sh.roseStock.revision, sh.placements.map(p => [p.id, +p.cxPt, +p.cyPt, +p.angle, +p.scale || 1, sizeOf(byId.get(p.id) || {})])]);
+  const hit = CORNER_SEEN.get(sh); if (hit && hit.sig === sig) return hit.ids;
+  const reach = Math.max(...tris.map(t => t.c)), near = [];
+  for (const p of sh.placements) {
+    const c = byId.get(p.id); if (!c || !c.bits || !c.w) continue;
+    const r = Math.hypot(+c.widthPt || 0, +c.heightPt || 0) / 2 * sizeOf(c) + 1;
+    if (tris.some(t => Math.abs(+p.cxPt - t.x) < r + reach && Math.abs(+p.cyPt - t.y) < r + reach)) near.push({ p, c });
+  }
+  let ids = [];
+  if (near.length) {
+    try {
+      const job = { sheet: cornerSheet(sh, st), clearancePt: 0, fineRes: 2, pieces: near.map(({ c }) => ({ id: c.id, w: c.w, h: c.h, scale: sizeOf(c) === 1 ? c.scale : c.scale / sizeOf(c), bits: c.bits })) };
+      ids = CharmNestSolver.verify(job, near.map(({ p }) => ({ id: p.id, cxPt: +p.cxPt, cyPt: +p.cyPt, angle: +p.angle || 0 })), 6, 0, { cache: true, noGap: true }).cornerIds || [];
+    } catch (e) { console.warn("corner check", e); ids = []; }
+  }
+  CORNER_SEEN.set(sh, { sig, ids });
+  return ids;
+}
 function usableArea(sh) {
   const st=stockFor(sh.metal,sh),inset=+S.settings.insetPt||0,clearance=+S.settings.clearancePt||0,ins=inset+Math.max(0,clearance)/2;
-  if(sh.roseStock?.profileJson){const key=[sh.roseStock.id,sh.roseStock.revision,inset,clearance].join(':');if(sh._roseUsableKey!==key){sh._roseUsable=CharmNestSolver.makeSheetGrid({...st,insetPt:inset,remnant:JSON.parse(sh.roseStock.profileJson)},clearance,2).usableCells/4;sh._roseUsableKey=key;}return sh._roseUsable;}
+  if(sh.roseStock?.profileJson){const key=[sh.roseStock.id,sh.roseStock.revision,inset,clearance,cornerPtSetting()].join(':');if(sh._roseUsableKey!==key){sh._roseUsable=CharmNestSolver.makeSheetGrid({...st,insetPt:inset,cornerPt:cornerPtSetting(),remnant:JSON.parse(sh.roseStock.profileJson)},clearance,2).usableCells/4;sh._roseUsableKey=key;}return sh._roseUsable;}
   return Math.max(0,st.wPt-2*ins)*Math.max(0,st.hPt-2*ins);
 }
 /** ρ_target: 25th percentile of achieved densities among the nearest shape-mix neighbours; seed 0.70. */
@@ -5680,7 +5724,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1-ovf1");
+    const w = new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1-ovf1-crn1");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     // (a worker file that could not be fetched, the network being away, reports an error with no words: it is named, so the sheet is not taken for one that was told nothing and the run knows to try again)
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message || "the sheet search could not start: its file could not be loaded (is the network down?)" }, idx);
@@ -5738,7 +5782,7 @@ function buildJob(sh) {
   const st = stockFor(sh.metal, sh), sizeOf = c => (typeof manualSize === "function" ? manualSize(c) : 1);   // (a test that slices buildJob out alone has no manualSize)
   const items = nestItems(sh), careful = carefulNest(sh);
   return {
-    sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, ...(sh.roseStock?.profileJson ? {remnant:JSON.parse(sh.roseStock.profileJson)} : {}) },
+    sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, cornerPt: cornerPtSetting(), ...(sh.roseStock?.profileJson ? {remnant:JSON.parse(sh.roseStock.profileJson)} : {}) },
     clearancePt: +S.settings.clearancePt || 0, writeScale: 1 /* (25 Oct 2026: nesting at the written size, CHARM_SCALE, made the append turns of a big file place 11 of 14 pieces on an 11 % sheet; off until that is fixed. The overlap the shrink can cause is cleared by fixOverlaps) */, angles: careful && angleSet().length < CAREFUL_ANGLES.length ? CAREFUL_ANGLES : angleSet(), fineRes: 2, coarseRes: 0.5,
     timeBudgetMs: sh.intakeBudgetMs || (+S.settings.budgetS || 180) * 1000, fullBudget: sh.intakePhase !== "fill", stallMs: 60 * 1000, maxTrials: sh.intakePhase === "fill" ? 2000 : 1000000, seed: sh.runSeed || +S.settings.seed || 1,
     // charms already on the sheet stay exactly where they are
@@ -5763,7 +5807,7 @@ function buildJob(sh) {
 }
 function packingKey(sh, items) {
   const st = stockFor(sh.metal, sh);
-  return JSON.stringify([st.wPt, st.hPt, sh.roseStock?.id, sh.roseStock?.revision, S.settings.clearancePt, S.settings.insetPt, S.settings.maxFill,
+  return JSON.stringify([st.wPt, st.hPt, sh.roseStock?.id, sh.roseStock?.revision, S.settings.clearancePt, S.settings.insetPt, S.settings.maxFill, cornerPtSetting(),
     items.map(c => c.mirror ? [c.id, c.hash, c.w, c.h, c.areaPt2, "mirror"] : [c.id, c.hash, c.w, c.h, c.areaPt2])]);   // (the Right of a pair has the Left's size and area, but is its mirror: a side change is a different packing)
 }
 function renderNestFlow() {
@@ -6069,7 +6113,7 @@ async function startAINest(sh, items) {
   const Sv = CharmNestSolver; const jobId = sh.jobId;
   const alive = () => sh.jobId === jobId && sh.status === "nesting";
   const byId = new Map(items.map(c => [c.id, c]));
-  const grid = Sv.makeSheetGrid({ wPt: st.wPt, hPt: st.hPt, insetPt: inset, ...(sh.roseStock?.profileJson ? {remnant:JSON.parse(sh.roseStock.profileJson)} : {}) }, clearance, 2);
+  const grid = Sv.makeSheetGrid({ wPt: st.wPt, hPt: st.hPt, insetPt: inset, cornerPt: cornerPtSetting(), ...(sh.roseStock?.profileJson ? {remnant:JSON.parse(sh.roseStock.profileJson)} : {}) }, clearance, 2);
   const variants = new Map();
   const variantFor = (c, angle) => { const key = c.id + "@" + angle; if (!variants.has(key)) variants.set(key, Sv.prepareVariant({ bits: c.bits, w: c.w, h: c.h, scale: c.scale }, angle, clearance, 2)); return variants.get(key); };
   const placedCells = () => sh.placements.reduce((n, p) => n + (variantFor(byId.get(p.id), p.angle)?.cells || 0), 0);
@@ -6473,10 +6517,10 @@ async function finishNest(sh, { result, error }) {
     {
       const allow = (+S.settings.clearancePt || 0) < 0 ? fmt.mm(-S.settings.clearancePt) + " stroke share" : "0";
       const pairs = geom.overlappingPairs.map(p => p.map(id => (byId.get(id) || {}).name || id).join("↔")).join("; ");
-      const renderMsg = render && !render.ok ? " · render: " + (render.error || (render.overlapPx + " px overlap, " + render.outsidePx + " px outside")) : "";
+      const renderMsg = render && !render.ok ? " · render: " + (render.error || (render.overlapPx + " px overlap, " + render.outsidePx + " px outside" + (render.cornerPx ? ", " + render.cornerPx + " px in a corner keep-out" : ""))) : "";
       agent({ metal: sh.metal }, sh.verification.ok ? "verify" : "warn", sh.verification.ok
-        ? "Verified twice: geometry at " + geom.res + " px/pt and the written file re-rendered layer by layer — no overlap beyond the allowed " + allow + ", nothing outside the sheet"
-        : "Verification flagged: " + (geom.error ? "geometry check did not run: " + geom.error : geom.overlapPx ? geom.overlapPx + " px overlap (" + pairs + ")" : "") + renderMsg + (sh.verification.handOverlap ? ` · ${sh.verification.handOverlap} charms placed by hand overlap or run past the sheet's margin (Manual Control)` : ""));
+        ? "Verified twice: geometry at " + geom.res + " px/pt and the written file re-rendered layer by layer — no overlap beyond the allowed " + allow + ", nothing outside the sheet or in its corners"
+        : "Verification flagged: " + (geom.error ? "geometry check did not run: " + geom.error : geom.overlapPx ? geom.overlapPx + " px overlap (" + pairs + ")" : "") + (geom.cornerPx ? ` · ${(geom.cornerIds || []).length || 1} charm${(geom.cornerIds || []).length === 1 ? "" : "s"} in a sheet corner's ${fmt.mm(cornerPtSetting())} keep-out (${(geom.cornerIds || []).map(id => (byId.get(id) || {}).name || id).join(", ")})` : "") + renderMsg + (sh.verification.handOverlap ? ` · ${sh.verification.handOverlap} charms placed by hand overlap or run past the sheet's margin (Manual Control)` : ""));
     }
     // (CUSTOMPOOL, Paul 28 Oct 2026: "You need to ensure the sanctity of the designed charm": the file of a sheet holding a custom design sent at its exact size is read back first; a piece
     //  written at another size or with other parts than its design's hash stops the save, loudly: charm-nest-custom-pool.js checkWritten)
@@ -6538,7 +6582,7 @@ function geomCheck(sh, masks) {
 }
 /** The written file re-rendered layer by layer (each charm's layer is rendered once while it stays as it is: layerSig; what it covers is kept with the sheet). */
 function renderCheck(sh, aiBytes, specBase, st, layerSigs, areas) {
-  return CharmNestPDF.verifyRendered(aiBytes, { wPt: st.wPt, hPt: st.hPt, insetPt: typeof handPlacedSheet === "function" && handPlacedSheet(sh) ? 0 : +S.settings.insetPt || 0, res: +S.settings.verifyRes || 6, erodePt: (+S.settings.clearancePt || 0) < 0 ? Math.round(-S.settings.clearancePt / 2 * 2) / 2 : 0, layerSigs, cache: areas, onProgress: (d, t) => { sh.stage = `Verifying · charm ${d}/${t} re-rendered from the output file`; renderProgress(sh); } });
+  return CharmNestPDF.verifyRendered(aiBytes, { wPt: st.wPt, hPt: st.hPt, insetPt: typeof handPlacedSheet === "function" && handPlacedSheet(sh) ? 0 : +S.settings.insetPt || 0, res: +S.settings.verifyRes || 6, erodePt: (+S.settings.clearancePt || 0) < 0 ? Math.round(-S.settings.clearancePt / 2 * 2) / 2 : 0, corners: cornerTris(sh, st), layerSigs, cache: areas, onProgress: (d, t) => { sh.stage = `Verifying · charm ${d}/${t} re-rendered from the output file`; renderProgress(sh); } });
 }
 /* OVERLAPFIX (Paul, 25 Oct 2026): "minor overlap between some charms on a sheet … cannot hold the sheet and the sheet must be auto fixed by the system by shrinking a given charm that is
    overlapping by the smallest possible amount and moving it over just slightly enough that the offending overlap gets resolved … The primary approach should be that a tiny readjustment
@@ -7612,6 +7656,8 @@ function renderCard(sh) {
   cl.innerHTML = sh.problem ? `<span class="bad">${esc(sh.problem)}</span>` : sh.outputs && !sh.cloud && !S.cloud.ok ? `<span class="bad">not saved — cloud offline</span>` : "";
   { const hn = window.LibraryReviewHold && sh.sheetId ? LibraryReviewHold.nestHtml(sh.sheetId) : ""; if (hn) cl.innerHTML += hn; }   // an order in the Review tab holds this sheet: one quiet line, its order number opens it there (charm-nest-library-review-hold.js)
   // INPLACE (Paul, 20 Oct 2026): a replaced charm changed this sheet after its set was released (committed at the station, its labels collected): said on the card until the laser cuts it (the bridge's inPlaceRefile)
+  // CORNERS: a sheet already nested with a charm in a corner keep-out is flagged here, never moved: the person decides (Manual Control, or Nest again)
+  { const cc = tryCorner(sh); if (cc.length) cl.innerHTML += `<span class="bad" data-corner-clash="${cc.length}" title="${esc(cc.map(id => (byId.get(id) || {}).name || id).join(", "))}">⚠ ${cc.length} charm${cc.length === 1 ? " sits" : "s sit"} in a sheet corner's ${esc(fmt.mm(cornerPtSetting()))} keep-out — move ${cc.length === 1 ? "it" : "them"} in Manual Control, or nest again</span>`; }
   if (sh.releasedChange && !(+sh.laserDoneAt > 0)) cl.innerHTML += `<span class="bad" data-released-change="${esc(sh.releasedChange.setId || "")}">⚠ ${esc(sh.releasedChange.word || `${sh.releasedChange.set || "Its set"} changed after it was released — re-send its files`)}</span>`;
   cl.classList.toggle("hidden", !cl.innerHTML);
   q("dxf").classList.toggle("hidden", q("dl").classList.contains("hidden"));
@@ -7769,6 +7815,7 @@ function paintPreview(cv, sh, clean, R) {
   const ins = (+S.settings.insetPt || 0) * k;
   ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
   if (!clean) { ctx.setLineDash([4, 4]); ctx.strokeStyle = "rgba(147,140,128,.35)"; ctx.lineWidth = 1; ctx.strokeRect(ins, ins, W - 2 * ins, H - 2 * ins); ctx.setLineDash([]); }
+  if (!clean) paintCorners(ctx, cornerTris(sh, st), k);   // (CORNERS: each corner's keep-out, its long side dashed)
   if(window.RoseStock && !sh._forClaude)RoseStock.paint(ctx,sh,k,"history");
   const byId = new Map(sh.charms.map(c => [c.id, c]));
   const sel = sh.selected;
@@ -8517,7 +8564,7 @@ function openSettingsNow(home) {
   };
   $$("#railSeg button").forEach(b => b.classList.toggle("on", b.dataset.v === s.rail));
   for (const m of METALS) { $(`#st${cap(m.key)}W`).value = +(s.stock[m.key][0] * 25.4).toFixed(1); $(`#st${cap(m.key)}H`).value = +(s.stock[m.key][1] * 25.4).toFixed(1); }   // shown in mm, stored in inches
-  $("#stClearance").value = +(s.clearancePt * MM_PER_PT).toFixed(2); $("#stInset").value = +(s.insetPt * MM_PER_PT).toFixed(2);   // shown in mm, stored in pt
+  $("#stClearance").value = +(s.clearancePt * MM_PER_PT).toFixed(2); $("#stInset").value = +(s.insetPt * MM_PER_PT).toFixed(2); $("#stCorner").value = +(cornerPtSetting() * MM_PER_PT).toFixed(2);   // shown in mm, stored in pt
   $("#stAngle").value = s.angleStep; $("#stBudget").value = s.budgetS; $("#stParallel").value = s.parallel || 0; $("#stSeed").value = s.seed; $("#stFreshSeed").checked = s.freshSeed !== false; $("#stServerAbove").value = s.serverAbove;
   // the page build, what the last reset did and what the sandbox holds now
   try { if (window.Sandbox && Sandbox.paintInfo) Sandbox.paintInfo(); } catch (_) {}
@@ -8579,7 +8626,7 @@ function openSettingsNow(home) {
   if (home && home.isConnected && window.Motion && Motion.from) Motion.from($("#dlgSettings"), home);
   openDlg($("#dlgSettings"));
 }
-const geomFields = () => METALS.flatMap(m => [`st${cap(m.key)}W`, `st${cap(m.key)}H`]).concat(["stClearance", "stInset", "stMaxFill"]);
+const geomFields = () => METALS.flatMap(m => [`st${cap(m.key)}W`, `st${cap(m.key)}H`]).concat(["stClearance", "stInset", "stCorner", "stMaxFill"]);
 const untouched = id => { const f = $("#" + id); return f.dataset.shown != null && f.value === f.dataset.shown; };
 let gpuComparison = null;
 function cancelGPUComparison() {
@@ -8595,7 +8642,7 @@ function compareGPUSpeed() {
   const sh=allSheets().filter(sh=>activeCharms(sh).length).sort((a,b)=>activeCharms(b).length-activeCharms(a).length)[0];
   const job=sh?buildJob(sh):null,id=uid();
   let worker;
-  try{worker=new Worker('charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1-ovf1');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
+  try{worker=new Worker('charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1-ovf1-crn1');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
   gpuComparison=worker;button.textContent="Cancel comparison";output.textContent="Checking GPU availability…";
   const finish=text=>{if(gpuComparison!==worker)return;output.textContent=text;button.textContent="Compare speed";worker.terminate();gpuComparison=null;};
   worker.onmessage=({data:m})=>{
@@ -8618,7 +8665,7 @@ function readSettings() {
   const s = S.settings, previousGeometry = JSON.stringify([s.stock,s.clearancePt,s.insetPt,s.maxFill]);
   s.rail = $("#railSeg button.on")?.dataset.v || "md";
   for (const m of METALS) s.stock[m.key] = [untouched(`st${cap(m.key)}W`) ? s.stock[m.key][0] : (+$(`#st${cap(m.key)}W`).value / 25.4) || DEFAULTS.stock[m.key][0], untouched(`st${cap(m.key)}H`) ? s.stock[m.key][1] : (+$(`#st${cap(m.key)}H`).value / 25.4) || DEFAULTS.stock[m.key][1]];
-  if (!untouched("stClearance")) s.clearancePt = Math.max(-2, Math.min(12, Math.round((+$("#stClearance").value || 0) / MM_PER_PT * 100) / 100)); if (!untouched("stInset")) s.insetPt = Math.max(0, Math.round((+$("#stInset").value || 0) / MM_PER_PT * 100) / 100); s.angleStep = [2,5,10].includes(+$("#stAngle").value) ? +$("#stAngle").value : 10; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.freshSeed = $("#stFreshSeed").checked; s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
+  if (!untouched("stClearance")) s.clearancePt = Math.max(-2, Math.min(12, Math.round((+$("#stClearance").value || 0) / MM_PER_PT * 100) / 100)); if (!untouched("stInset")) s.insetPt = Math.max(0, Math.round((+$("#stInset").value || 0) / MM_PER_PT * 100) / 100); if (!untouched("stCorner")) s.cornerPt = Math.max(0, Math.min(36, (+$("#stCorner").value || 0) / MM_PER_PT));   // (CORNERS: a change applies to new nests and placements; no sheet is nested again for it) s.angleStep = [2,5,10].includes(+$("#stAngle").value) ? +$("#stAngle").value : 10; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.freshSeed = $("#stFreshSeed").checked; s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
   s.pollOrders = $("#stPollOrders").value; s.pollMinutes = Math.max(10, Math.min(1440, +$("#stPollMinutes").value || 10));
   s.dsOrigin = ($("#stDsOrigin").value || DEFAULTS.dsOrigin).trim().replace(/\/+$/, ""); s.heartbeatS = Math.max(2, Math.min(60, +$("#stHeartbeatS").value || 5)); s.heartbeatMiss = Math.max(1, Math.min(10, Math.round(+$("#stHeartbeatMiss").value || 3))); s.autoCommit = $("#stAutoCommit").value; s.cadenceDays = Math.max(1, Math.min(14, Math.round(+$("#stCadenceDays").value || 2))); s.lateDays = Math.max(0, Math.min(14, Math.round(+$("#stLateDays").value ?? 2))); s.pullMode = $("#stPullMode").value; s.pullDueBy = $("#stPullDueBy").value || ""; s.pullCount = Math.max(1, Math.min(500, Math.round(+$("#stPullCount").value || 40))); s.autoEvery = Math.max(0, Math.min(1440, Math.round(+$("#stAutoEvery").value || 0))); if (s.autoEvery > 0 && s.autoEvery < 5) s.autoEvery = 5; s.etsyHourlyCap = Math.max(50, Math.min(5000, Math.round(+$("#stEtsyCap").value || 600))); { const was = s.sandbox === "on"; s.sandbox = $("#stSandbox").value === "on" ? "on" : "off"; if (was !== (s.sandbox === "on")) { saveSettings(); toast(`Sandbox ${s.sandbox === "on" ? "ON" : "off"} — reloading`, "ok", 3000); setTimeout(() => location.reload(), 600); } }
   s.sandboxStream = $("#stSbStream").value === "off" ? "off" : "on"; s.sandboxSpeed = Math.max(1, Math.min(1000, Math.round(+$("#stSbSpeed").value || 50))); s.sandboxSeed = Math.max(0, Math.min(2147483646, Math.round(+$("#stSbSeed").value || 0)));
@@ -8740,10 +8787,10 @@ async function boot() {
   const probeNow = () => { if (S.cloud.ok === false && !S.cloud.locked) cloudProbe(true); };
   window.addEventListener("online", probeNow); document.addEventListener("visibilitychange", () => { if (!document.hidden) probeNow(); });
   refreshAllCards(); updateTopSub();
-  window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, flushManualIntake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
+  window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, flushManualIntake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, cornerPt: cornerPtSetting, cornerClash, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
     activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log,
     RESUME_STAGE, heldForResume, resumeQueueChanged, dropResumeQueue, topupRoom, topupTakes, nospreadChunk, settleTopups,
-    solverWorker: () => new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1-ovf1") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
+    solverWorker: () => new Worker("charm-nest-worker.js?v=20261009-unjam1-pair2-cg1-nestfront-nq1-ovf1-crn1") };   // a one-off solver worker (the partial sheet trial pack, charm-nest-partial-nest.js)   // for tests, the console and charm-nest-bridge.js
   window.CharmNestOperations?.subscribe(()=>flushManualIntake());
 }
 boot();
@@ -8878,7 +8925,7 @@ try {
 } catch (_) {}
 </script>
 <script src="charm-nest-pair-remove.js?v=20261009-pr1-cg1-nk1"></script>
-<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-mseal1-fb1-ms3-cost18-strip1-id1-2b1-mc1-hp2-br1-ms1-bh1-nb1-mv1-wc5-rp1-oh1-sc1-st1-mc9-mi9b-sh29-gl1-en2-fr1-zg1-oos1-nf1-ged1-sp1-mi1-ls1-cp1-sy1-tab1-ob1-sg2-hc1-hc2-ce1-sb1-ts1-mcl1-ipl2-ipl3-hm1"></script>
+<script src="charm-nest-sheetwin.js?v=20261007-fc4b-fc3b-gc1-psw4-pe1-pr2-cg1-lf1-sn1-dm1-vf1-ko1-su1-eu3-egm1-rvl1-rh1-bk1-sp1-advcancel2-szf1-pv1-nd1-mseal1-fb1-ms3-cost18-strip1-id1-2b1-mc1-hp2-br1-ms1-bh1-nb1-mv1-wc5-rp1-oh1-sc1-st1-mc9-mi9b-sh29-gl1-en2-fr1-zg1-oos1-nf1-ged1-sp1-mi1-ls1-cp1-sy1-tab1-ob1-sg2-hc1-hc2-ce1-sb1-ts1-mcl1-ipl2-ipl3-hm1-crn1"></script>
 <!-- 10K / 14K: a charm dragged onto the next or previous sheet of its metal, in the sheet window's Manual Control (SheetHop; Paul, 18 Oct 2026) -->
 <script src="charm-nest-sheet-hop.js?v=20261018-hop1-hp2-mv1-mc9-mi9b-gk1-fr1-ged1-hm1"></script>
 <!-- Hold the whole order: the engine over the sheet window's own Take off and Fill the freed room (OrderHold.plan, run, status) -->
@@ -8893,9 +8940,9 @@ try {
 <!-- the send animation, the very same file the inbox runs (SendFlight): a sent customer message flies from its box into the thread -->
 <script src="send-flight.js?v=20261010-sf1"></script>
 <script src="charm-nest-mail.js?v=20261005-pv-seal-zp1-mr2-mq2-sf1-sm1-md1-ml1-ma1-cost18-wal1-ru2-nv3-nv6-bm1"></script>
-<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1-pf1-pp1-pn1-sn1-nestfront-setfix1-gk1-rl1-ged1-nv6-rgc1-ipl4"></script>
+<script src="charm-nest-rose-ui.js?v=20261005-rg3-opt1-sa5-gc3a-gc1-ps1-ps2-os1-pso1-psc1-cs1-pf1-pp1-pn1-sn1-nestfront-setfix1-gk1-rl1-ged1-nv6-rgc1-ipl4-crn1"></script>
 <script src="charm-nest-partial-data.js?v=20261007-opt1-sheets"></script>
-<script src="charm-nest-partial-nest.js?v=20261007-ps2c-fit75-pso1-psc1-pp1-cg1"></script>
+<script src="charm-nest-partial-nest.js?v=20261007-ps2c-fit75-pso1-psc1-pp1-cg1-crn1"></script>
 <script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1-gf1-pp1-sn1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done-plb2-ef1-gk1"></script>
 <script src="charm-nest-library.js?v=20261007-cutseal1-nm1-psw2-lo1-sn1-tz1-nv6"></script>
