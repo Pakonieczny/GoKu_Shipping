@@ -13,12 +13,12 @@
      changedListings(prev, next)                  → Set of listing ids whose alias record or option answers differ between two copies of the maps
      snapshot(rows, prev, next, linkOf)           → [{ key, row, from, was }] the live lines of those listings as they read BEFORE the new maps (from: the design; was: the link it was read by)
      classify(entry, h)                           → { action, why, to, from, link, fixed?, hold? } one line, as it reads NOW (after Orders.interpretAll with the new maps):
-         "skip"    not this pick's business: no link, the link did not move for it, not read by the link, a question open, a person's own pick for this order, finished, held
+         "skip"    not this pick's business: no link, the link did not move for it, not read by the link, a question open, a person's own pick for this order, finished
          "none"    already right (its pieces already carry the picked charm, under any of its names: another computer swapped them, or this one did)
          "design"  nothing made yet (or its pieces taken off): the line simply reads the new charm; no write but its timeline event
          "swap"    pieces pooled or on a sheet not cut (a draft, a formed, released or committed set): the old pieces come off in one commit and the line is made up again with the picked charm (Review.repool, repoolChanged)
-         "kept"    the order is in Review right now (REVHOLD keeps its piece on its sheet): left until the Review is resolved, then swapped
-         "flag"    a piece is laser cut (INPLACE, Paul 20 Oct 2026: only cut; fixedOf), or inside a cut Rose Gold / 10K / 14K green line: nothing is changed physically; a person is told (hold: the line is held for them)
+         (IPL2, Paul 9 Nov 2026: an order in Review and a line a person holds are swapped too, their hold kept: "kept" is no longer answered)
+         "flag"    a piece is laser cut (only the laser's mark, IPL2; fixedOf), or on a sheet this computer does not hold open: nothing is changed physically; a person is told (hold: the line is held for them)
      h = { maps, linkOf(row, maps), made(row) → [sku of each live piece] | null (not known), fixedOf(row) → [{ name, why, cut, local }], keepsPlace(row), ownPick(row) → sku | "",
            sameDesign(a, b), cancelled(row) }
    Idempotent by construction: the decision is read from what the line and its pieces ARE, never from a memory of what was done, so a second run over the same state answers "none".
@@ -77,9 +77,9 @@
     if (!ps.length) return res("none", "nothing is made yet: it is made from the new design", more({ from: to }));
     if (ps.every(p => freshFor(ov, p))) return res("none", "its pieces are cut from the new design already", more({ from: to }));
     const fixed = (h.fixedOf ? h.fixedOf(row0) : []) || [];
-    if (row0.state === "committed" || fixed.length) return res("flag", fixed.length ? fixed.map(f => `${f.why} on ${f.name}`).join(", ") : "its set is committed", more({ from, fixed, hold: row0.state !== "committed" && !row0.hold && fixed.some(f => f.local) }));
-    if (h.keepsPlace && h.keepsPlace(row0)) return res("kept", "the order is in Review: its piece stays on its sheet until the Review is resolved", more({ from }));
-    if (row0.hold) return res("skip", "the piece is held by a person", more({ from }));
+    // (IPL2, Paul 9 Nov 2026: "Nothing can block this unless the sheet has already been laser cut": a committed line whose sheet is not cut, an order in Review and a line a person holds are
+    //  exchanged too (its hold stays); only fixedOf, the laser's mark, flags it. Without a fixedOf a committed line is told, as before)
+    if ((row0.state === "committed" && !h.fixedOf) || fixed.length) return res("flag", fixed.length ? fixed.map(f => `${f.why} on ${f.name}`).join(", ") : "its set is committed", more({ from, fixed, hold: row0.state !== "committed" && !row0.hold && fixed.some(f => f.local) }));
     return res("swap", "its pieces are cut from the old drawing and are on an open sheet or pooled", more({ from }));
   }
   /** One line, read NOW (the new maps, its new spec), against the link it was read by before. See the header. */
@@ -111,8 +111,7 @@
     // (INPLACE, Paul 20 Oct 2026: a line in a committed set is no longer fixed by that alone: only a sheet the laser has CUT keeps its piece, as fixedOf says; the page's fixedOf also names a piece
     //  whose sheet this page does not hold. Without a fixedOf a committed line is told, as before.)
     if ((row0.state === "committed" && !h.fixedOf) || fixed.length) return res("flag", fixed.length ? fixed.map(f => `${f.why} on ${f.name}`).join(", ") : "its set is committed", { to, link, from: was, fixed, hold: row0.state !== "committed" && !row0.hold && fixed.some(f => f.local) });
-    if (h.keepsPlace && h.keepsPlace(row0)) return res("kept", "the order is in Review: its piece stays on its sheet until the Review is resolved", { to, link, from: was });
-    if (row0.hold) return res("skip", "the piece is held by a person", { to, link, from: was });
+    // (IPL2, Paul 9 Nov 2026: an order in Review and a line a person holds take the picked charm too; its hold stays)
     return res("swap", "its pieces are pooled or on an open sheet", { to, link, from: was });
   }
 
