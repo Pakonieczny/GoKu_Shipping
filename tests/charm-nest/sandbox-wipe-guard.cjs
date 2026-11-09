@@ -94,7 +94,6 @@ async function session(sb) {
   // (COST, Oct 2026: bridgeLog writes nothing any more; a session's log written before that is still there to be wiped)
   store.set(`${P}Design_Bridge/${SESSION}`, { sessionId: SESSION, by: 'paul', updatedAt: new Date() }); store.set(`${P}Design_Bridge/${SESSION}/log/l1`, { t: Date.now(), dir: 'cmd', type: 'ping' }); store.set(`${P}Design_Bridge/${SESSION}/log/l2`, { t: Date.now(), dir: 'evt', type: 'pong' });
   await L({ op: 'arrivalRecord', orders: [{ id: A, createTs: 1 }, { id: C, createTs: 1 }] });
-  await L({ op: 'arrivalRecord', orders: [{ id: A, createTs: Math.floor(Date.now() / 1000) - 60 }] });   // (SAL1: an order of today also counts in the sandbox's sales days, Sandbox_Charm_Nest_Order_Days)
   // ── sheets: saved, cut, hold/release, back records, pdf, an empty one archived, one deleted and the sandbox's restore of it ──
   await L({ op: 'putSheet', sheet: { id: SHEET, metal: 'gold', metalLabel: 'GF 14/20', day: DAY, status: 'complete', charmCount: 3, placedCount: 3, density: 0.71, runId: RUN, setId: SET, orders: [A, B], poolIds: [`${A}_10010_1`], outputs: { preview: { url: 'https://saved.example/p.png', path: `charmnest/${sb ? 'sandbox/' : ''}sheets/${DAY}/${SHEET}/${SHEET}.png` } }, names: 'anna' } });
   await L({ op: 'putSheet', sheet: { id: SHEET2, metal: 'silver', metalLabel: 'SS', day: DAY, status: 'partial', charmCount: 2, placedCount: 0, runId: RUN2, setId: SET, orders: [C] } });

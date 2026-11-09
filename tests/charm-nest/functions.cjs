@@ -314,7 +314,11 @@ const post = async (h, body, headers = {}) => h.handler({ httpMethod: 'POST', he
     arrivals = await post(lib, { op: 'arrivalRecord', orders: [{ id: '7101', createTs: nowS - 30 }] });
     assert.equal(JSON.stringify(store.get('Charm_Nest_Order_Days/recent').days), kept, 'the same receipt again changes nothing');
     const r2 = await post(lib, { op: 'getOrderDays' }); assert.equal(OD.summarize(r2.body.days, Date.now()).today.n, 2, 'one read gives the counts');
-    const r3 = await post(lib, { op: 'getOrderDays', sandbox: true }); assert.equal(OD.summarize(r3.body.days, Date.now()).today.n, 0, 'the sandbox has its own counts'); }
+    // SALSB (Paul, 9 Nov 2026): the sandbox shows the REAL shop's counts and never writes them
+    const r3 = await post(lib, { op: 'getOrderDays', sandbox: true }); assert.equal(OD.summarize(r3.body.days, Date.now()).today.n, 2, 'the sandbox shows the real shop\'s counts');
+    const sbA = await post(lib, { op: 'arrivalRecord', sandbox: true, orders: [{ id: '7199', createTs: nowS - 5 }] });
+    assert.equal(OD.summarize(sbA.body.days, Date.now()).today.n, 2, 'a sandbox order check answers with the real counts');
+    assert.ok(!store.get('Charm_Nest_Order_Days/recent').days[today].ids['7199'] && !store.has('Sandbox_Charm_Nest_Order_Days/recent'), 'and a sandbox order is counted nowhere'); }
 
   // Isolated solid nesting never implies selection, even if a caller supplies a stale set id.
   for(const metal of ['gold10k','gold14k']) {

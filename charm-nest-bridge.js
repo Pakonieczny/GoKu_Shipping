@@ -27671,10 +27671,12 @@ const Cleanups = window.Cleanups = (() => {
 const SalesDays = window.SalesDays = (() => {
   const D = () => window.CharmNestOrderDays;
   const MIN_GAP = 20000, FRESH_MS = 15 * 60000;
-  const key = () => "cn.orderDays." + (WORKSPACE_SANDBOX ? "sandbox" : "production");
+  // (SALSB, Paul 9 Nov 2026: "I actually want these numbers to be correct even in the sandbox": the real shop's counts on the real clock, in the sandbox too;
+  //  the sandbox's replayed orders are not added)
+  const key = () => "cn.orderDays.production";
   let doc = null, at = 0, reading = null, lastRead = 0, follow = null, dayT = 0, tickT = 0;
   try { const k = JSON.parse(localStorage.getItem(key()) || "null"); if (k && k.doc) { doc = k.doc; at = +k.at || 0; } } catch (_) {}
-  const now = () => { try { return window.Sandbox?.streaming?.() && window.SimClock ? SimClock.now() : Date.now(); } catch (_) { return Date.now(); } };
+  const now = () => Date.now();
   // (kept only when it holds a day, and never while the sandbox is being reset: a reset leaves no copy behind, charm-nest-sandbox-families.js localStorage:sandbox)
   const save = () => { try { if (window.CNWipe?.active || !doc || !Object.keys(doc.days || {}).length) return; localStorage.setItem(key(), JSON.stringify({ doc, at })); } catch (_) {} };
   /** The answer's days taken in (arrivalRecord's or getOrderDays'), and the head drawn again. */
@@ -27686,12 +27688,13 @@ const SalesDays = window.SalesDays = (() => {
     if (reading || !S.cloud?.ok) return reading;
     if (Date.now() - lastRead < MIN_GAP && why !== "first") { clearTimeout(read.t); read.t = setTimeout(() => read("later"), MIN_GAP - (Date.now() - lastRead)); return null; }
     lastRead = Date.now();
-    reading = api("charmNestLibrary", Object.assign({ op: "getOrderDays" }, WORKSPACE_SANDBOX && window.Sandbox?.streaming?.() ? { now: Math.round(now()) } : {}), { quiet: true })
+    reading = api("charmNestLibrary", { op: "getOrderDays" }, { quiet: true })
       .then(r => { if (r && r.days) take(r.days); }).catch(() => {}).finally(() => { reading = null; });
     return reading;
   }
   /** The orders this page holds (an arrival counts at once, before the cloud's copy has it): their receipt and creation time. */
   function held() {
+    if (WORKSPACE_SANDBOX) return [];   // (the sandbox's orders are replays, not sales)
     try {
       const out = new Map();
       for (const r of (window.Orders?.rows?.() || [])) { const o = r && r.order; if (o && o.receiptId != null && +o.createTs > 0 && !out.has(String(o.receiptId))) out.set(String(o.receiptId), { id: String(o.receiptId), createTs: +o.createTs }); }
@@ -27710,8 +27713,7 @@ const SalesDays = window.SalesDays = (() => {
   const SECS = [["today", "Today"], ["yday", "Yesterday"], ["week", "Last 7 days"]];
   /** The three sections, as the head is built (painted with numbers at once when they are known). */
   function html() {
-    const sb = WORKSPACE_SANDBOX ? `<span class="odSb" title="the sandbox's own orders, not the shop's">Sandbox</span>` : "";
-    return `<span class="ordDays" id="ordDays" role="group" aria-label="Orders placed, Toronto time">${sb}${SECS.map(([k, label]) => `<span class="odSec" data-k="${k}">${IC[k]}<span class="odLbl">${k === "week" ? '<span class="odLong">Last </span>7 days' : label}</span><b class="odN">–</b>${k === "today" ? '<span class="odDelta" hidden></span>' : ""}</span>`).join("")}</span>`;
+    return `<span class="ordDays" id="ordDays" role="group" aria-label="Orders placed, Toronto time">${SECS.map(([k, label]) => `<span class="odSec" data-k="${k}">${IC[k]}<span class="odLbl">${k === "week" ? '<span class="odLong">Last </span>7 days' : label}</span><b class="odN">–</b>${k === "today" ? '<span class="odDelta" hidden></span>' : ""}</span>`).join("")}</span>`;
   }
   function paint() {
     let box = document.getElementById("ordDays");
@@ -27720,7 +27722,7 @@ const SalesDays = window.SalesDays = (() => {
     else if (Date.now() - at > FRESH_MS && document.getElementById("ordersView") && !document.getElementById("ordersView").classList.contains("hidden")) read("stale");
     arm();
     const n = numbers(); if (!n) return;
-    const sb = WORKSPACE_SANDBOX ? "Sandbox: the sandbox's own orders.\n" : "", known = !!doc;
+    const sb = WORKSPACE_SANDBOX ? "The real shop's orders (the sandbox's replayed orders are not counted).\n" : "", known = !!doc;
     const cx = c => (c ? ` · includes ${c} cancelled` : "");
     const set = (k, value, title, delta) => {
       const sec = box.querySelector(`.odSec[data-k="${k}"]`); if (!sec) return;

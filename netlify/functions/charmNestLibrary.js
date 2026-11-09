@@ -73,7 +73,7 @@ const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(R
    picks the charm) is written to the SHARED store in the sandbox too, read back, and never reaches Reset or Purge. The sandbox and production
    read the same links. An answer the sandbox kept before that (its own copy) is still read, the later write of the two standing for a key. ── */
 let PREFIX = "";
-const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Remnants", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Pool_Art", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge", "Charm_Nest_Order_Days"]);
+const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Remnants", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Pool_Art", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
 const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
 const FV = admin.firestore.FieldValue;
 
@@ -3298,16 +3298,18 @@ async function op_arrivalRecord(b) {
   // computers (d:orderdays, the changes feed) so their heads move at once. Never the check's failure.
   let days = null;
   try {
-    const m = receipts.length ? await OrderDays.merge(db, PREFIX, receipts.map(o => ({ id: String(o.id), createTs: num(o.createTs) })), now) : null;
+    // (SALSB, Paul 9 Nov 2026: "I actually want these numbers to be correct even in the sandbox": the sandbox shows the REAL shop's counts and
+    //  never writes them; its replayed orders are not the shop's sales)
+    const m = receipts.length && !PREFIX ? await OrderDays.merge(db, "", receipts.map(o => ({ id: String(o.id), createTs: num(o.createTs) })), now) : null;
     if (m && m.ok && m.changed) revTouch(b, ["d:orderdays"]);
-    days = OrderDays.forAnswer(m && m.ok && m.doc ? m.doc : await OrderDays.read(db, PREFIX), now);
+    days = OrderDays.forAnswer(m && m.ok && m.doc ? m.doc : await OrderDays.read(db, ""), Date.now());
   } catch (e) { console.warn("[charmNestLibrary] order days not counted:", e && e.message); }
   return {ok:true,firstSeen,count24:day.data().count,count1:hour.data().count,at:now,days};
 }
 /** SAL1: the Orders head's day counts, one document read (the page's first look; afterwards the order check's answer and the changes feed carry them). */
 async function op_getOrderDays(b) {
-  const now = [true, 1, "1"].includes(b.sandbox) && num(b.now) > 0 ? num(b.now) : Date.now(), doc = await OrderDays.read(db, PREFIX);
-  return doc ? { ok: true, days: OrderDays.forAnswer(doc, now) } : { error: "the day counts could not be read" };
+  const doc = await OrderDays.read(db, "");   // (SALSB: the real shop's counts, in the sandbox too)
+  return doc ? { ok: true, days: OrderDays.forAnswer(doc, Date.now()) } : { error: "the day counts could not be read" };
 }
 // ── runs ──
 // The page keeps a run's record small (RunCtl.save): the lines of the orders it is done with go to its line archive, and

@@ -165,7 +165,9 @@
 /* the window the bar is in (the workspace beside the rail), not the screen */
 /* SAL1 (Paul, 9 Nov 2026): the Orders head's sales days where the charm total stood: Today, Yesterday and Last 7 days, one soft pill with hairline dividers between
    its three sections (charm-nest-bridge.js SalesDays); a line icon, the label, and the number large. It wraps as a whole under the piles where the workspace is narrower. */
-#ordBar .ordDays{display:inline-flex;flex:0 0 auto;flex-wrap:nowrap;align-items:center;min-height:30px;box-sizing:border-box;padding:0 3px;border:1px solid var(--line2);border-radius:10px;background:var(--card2);color:var(--ink70)}
+/* (SALSEP, Paul 9 Nov 2026: "there needs to be more of a visual break" between the counts and the order tabs at their left and the search at their right: a card of
+   its own, the page's card white on the paper, a full-strength edge and a soft shadow, with room on both sides) */
+#ordBar .ordDays{display:inline-flex;flex:0 0 auto;flex-wrap:nowrap;align-items:center;min-height:32px;box-sizing:border-box;margin:0 10px;padding:0 3px;border:1px solid var(--ink25);border-radius:10px;background:var(--card);box-shadow:0 1px 2px rgba(30,26,20,.06),0 2px 8px rgba(30,26,20,.05);color:var(--ink70)}
 #ordBar .ordDays .odSec{position:relative;display:inline-flex;align-items:center;gap:6px;padding:3px 11px;white-space:nowrap;font:12px var(--sans)}
 #ordBar .ordDays .odSec+.odSec::before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:1px;background:var(--line)}
 #ordBar .ordDays .odIc{flex:none;width:16px;height:16px;fill:none;stroke:var(--gold);stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
@@ -189,7 +191,7 @@
   #ordBar .ordDays .odLong,#ordBar .ordDays .odDelta{display:none}
 }
 @container workspace (min-width:641px) and (max-width:1099px){
-  #ordBar .ordDays{padding:0}
+  #ordBar .ordDays{padding:0;margin:0 6px}
   #ordBar .ordDays .odSec{column-gap:4px;padding:2px 6px}
   #ordBar .ordDays .odIc{width:14px;height:14px}
   #ordBar .ordDays .odLbl{letter-spacing:.02em}
@@ -200,7 +202,7 @@
 @container workspace (max-width:640px){
   #ordBar.ordCompact{gap:8px}
   #ordBar .ordSummary{flex:1 1 100%}
-  #ordBar .ordDays{flex:1 1 100%;flex-wrap:wrap;justify-content:space-between;padding:2px 3px}   /* (SAL1) a phone: the three sections share their own row, and wrap if even that is too narrow */
+  #ordBar .ordDays{flex:1 1 100%;flex-wrap:wrap;justify-content:space-between;margin:2px 0;padding:2px 3px}   /* (SAL1) a phone: the three sections share their own row, and wrap if even that is too narrow */
   #ordBar .ordDays .odSec{flex:1 1 auto;justify-content:center;padding:3px 8px}
   #ordBar .ordTools{flex:1 1 100%;flex-wrap:wrap;justify-content:flex-start}
   #ordBar .ordFind{flex:1 1 100%;max-width:none;min-width:0}   /* (CMP1) the search fills a row; Filters and the Charm Editor button are the row under it, the button at its right end */

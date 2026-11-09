@@ -234,7 +234,7 @@ const at = iso => Date.parse(iso), s = iso => Math.floor(at(iso) / 1000);
     const page = cron.indexOf('await writeReceiptBatch(receipts)'), merge = cron.indexOf('OrderDays.merge(db, "", receipts)');
     ok(page > 0 && merge > page, 'the receipt mirror counts every receipt of each page it reads already (no Etsy call of its own)');
     const fam = require(path.join(root, 'charm-nest-sandbox-families.js'));
-    ok(fam.server().some(f => f.key === 'Charm_Nest_Order_Days'), 'the sandbox\'s counter is a family its reset wipes');
+    ok(!fam.server().some(f => f.key === 'Charm_Nest_Order_Days') && /receipts\.length && !PREFIX/.test(ar), 'the sandbox writes no day counts of its own (SALSB: it shows the real shop\'s)');
     const worker = fs.readFileSync(path.join(root, 'charm-nest-sync-worker.js'), 'utf8');
     ok(/KIND = \/\^\[strcpxomad\*\]\$\//.test(worker) && /\[strcpxomad\]:/.test(worker), 'the changes feed carries d: names to the page');
   }
