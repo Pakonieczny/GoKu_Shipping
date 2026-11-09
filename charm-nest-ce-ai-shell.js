@@ -158,10 +158,11 @@
     { id: 'obj.hide', label: 'Selection', key: 'Mod+3', on: sel, run: act('hide'), sub: 'Hide' },
     xe('obj.hideOthers', 'ops.hideOthers', 'Everything Else', null, { sub: 'Hide' }),
     { id: 'obj.showAll', label: 'Show All', key: 'Mod+Alt+3', run: act('showAll') },
+    xe('obj.expandApp', 'ops.expandFx', 'Expand Appearance'),   // (OFS1: a live Offset Path made a plain path, as Illustrator's)
     xe('obj.join', 'pathJoin', 'Join', 'Mod+J', { sub: 'Path' }),
     xe('obj.close', 'pathClose', 'Close Path', null, { sub: 'Path' }),
     xe('obj.outline', 'ops.outline', 'Outline Stroke', null, { sub: 'Path' }),
-    xe('obj.offset', 'ops.offset', 'Offset Path…', null, { sub: 'Path' }),
+    xe('obj.offset', 'ops.offset', 'Offset Path…', null, { sub: 'Path', icon: true }),
     xe('obj.contour', 'ops.contour', 'Cut Line Round the Art…', null, { sub: 'Path' }),
     xe('obj.simplify', 'pathSimplify', 'Simplify…', null, { sub: 'Path' }),
     xe('obj.smooth', 'pathSmooth', 'Smooth', null, { sub: 'Path' }),
@@ -224,6 +225,7 @@
     xe('fx.exclude', 'ops.exclude', 'Exclude', null, { sub: 'Pathfinder' }),
     xe('fx.divide', 'ops.divide', 'Divide', null, { sub: 'Pathfinder' }),
     xe('fx.trim', 'ops.trim', 'Trim', null, { sub: 'Pathfinder' }),
+    xe('fx.offset', 'ops.offsetFx', 'Offset Path…', null, { sub: 'Path', icon: true }),   // (OFS1: Illustrator's Effect ▸ Path ▸ Offset Path…, live: it opens again on what it made)
     xe('fx.round', 'ops.round', 'Round Corners…', null, { sub: 'Stylize' }),
     xe('fx.warp', 'cw-warp', 'Warp…', null, { sub: 'Warp' })
   ]);
@@ -323,10 +325,10 @@
   const MENUS = [
     ['File', ['file.open', '-', 'file.close', 'file.back', 'file.save', '-', 'file.sendToSheet', '-', 'file.place']],
     ['Edit', ['edit.undo', 'edit.redo', '-', 'edit.cut', 'edit.copy', 'edit.paste', 'edit.pasteFront', 'edit.pasteBack', 'edit.pasteInPlace', 'edit.clear', 'edit.duplicate', '-', 'edit.shortcuts', S('Preferences')]],
-    ['Object', [S('Transform'), S('Arrange'), S('Align'), '-', 'obj.group', 'obj.ungroup', S('Lock'), 'obj.unlockAll', S('Hide'), 'obj.showAll', '-', S('Path'), S('Shape'), S('Blend'), S('Envelope Distort'), S('Image Trace'), '-', S('Clipping Mask'), S('Compound Path'), '-', { more: true }]],
+    ['Object', [S('Transform'), S('Arrange'), S('Align'), '-', 'obj.group', 'obj.ungroup', S('Lock'), 'obj.unlockAll', S('Hide'), 'obj.showAll', '-', 'obj.expandApp', '-', S('Path'), S('Shape'), S('Blend'), S('Envelope Distort'), S('Image Trace'), '-', S('Clipping Mask'), S('Compound Path'), '-', { more: true }]],
     ['Type', [S('Font'), S('Size'), S('Font Style'), '-', 'type.glyphs', '-', S('Type on a Path'), '-', S('Change Case'), S('Paragraph'), '-', 'type.edit']],
     ['Select', ['sel.all', 'sel.allBoard', 'sel.none', '-', 'sel.firstAbove', 'sel.nextAbove', 'sel.nextBelow', 'sel.lastBelow', '-', 'sel.inverse', '-', S('Same')]],
-    ['Effect', [S('Distort & Transform'), S('Pathfinder'), S('Stylize'), S('Warp')]],
+    ['Effect', [S('Distort & Transform'), S('Path'), S('Pathfinder'), S('Stylize'), S('Warp')]],
     ['View', ['view.outline', '-', 'view.check', '-', 'view.zoomIn', 'view.zoomOut', 'view.fit', 'view.fitAll', 'view.actual', 'view.zoomSel', '-', S('Screen Mode'), '-', S('Rulers'), '-', 'view.smart', S('Guides'), '-', 'view.grid', 'view.snapGrid']],
     ['Window', [{ window: true }]],
     ['Help', ['help.help', '-', 'help.shortcuts']]
@@ -425,7 +427,9 @@
       const e = it.e || {}, hook = e.ctx ? ` data-ctx="${esc(e.ctx)}"` : (e.x || it.xid) ? ` data-xcmd="${esc(e.x || it.xid)}"` : ` data-ai="${esc(it.id)}"${it.arg != null ? ` data-ai-arg="${esc(it.arg)}"` : ''}`;
       const role = it.chk == null ? 'menuitem' : 'menuitemcheckbox', chk = it.chk ? ' is-chk' : '';
       const style = it.family ? ` style="font-family:${esc(it.family)}"` : '';
-      h += `<button class="ce-item ce-aimi${off}${chk}" type="button" role="${role}"${it.chk == null ? '' : ` aria-checked="${it.chk}"`} tabindex="-1"${hook}${dis}><span class="ce-aimi__l"${style}>${esc(it.label)}</span>${it.key ? `<em>${esc(it.key)}</em>` : ''}</button>`;
+      // (OFS1: an entry marked icon shows its command's icon beside its name, as Offset Path does, so it is found at a glance)
+      const ico = e.icon && e.x ? (() => { const c = root && root.CharmEditor && root.CharmEditor.commands && root.CharmEditor.commands[e.x]; return c && typeof c.icon === 'string' && c.icon.startsWith('<svg') ? `<span class="ce-aimi__ic" aria-hidden="true">${c.icon}</span>` : ''; })() : '';
+      h += `<button class="ce-item ce-aimi${off}${chk}" type="button" role="${role}"${it.chk == null ? '' : ` aria-checked="${it.chk}"`} tabindex="-1"${hook}${dis}>${ico}<span class="ce-aimi__l"${style}>${esc(it.label)}</span>${it.key ? `<em>${esc(it.key)}</em>` : ''}</button>`;
     });
     return h;
   }

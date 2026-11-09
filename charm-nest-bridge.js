@@ -2201,7 +2201,7 @@ const Orders = window.Orders = (() => {
     }
     return out;
   }
-  const STATE_PILL = { pulled: ["neutral", "pulled"], waiting: ["info", "waiting"], noDesign: ["info", "no design"], pooled: ["info", "pooled"], nested: ["ok", "nested"], written: ["ok", "written"], labelled: ["ok", "labelled"], committed: ["ok", "complete"], unmatched: ["bad", "unmatched"], held: ["bad", "held"], contended: ["warn", "other run"], skipped: ["warn", "skipped"], gone: ["bad", "gone"], cancelled: ["bad", "cancelled"], oversize: ["bad", "oversize"] };
+  const STATE_PILL = { pulled: ["neutral", "pulled"], waiting: ["info", "waiting"], noDesign: ["info", "no design"], pooled: ["info", "pooled"], nested: ["ok", "nested"], written: ["ok", "written"], labelled: ["ok", "labelled"], committed: ["ok", "complete"], covered: ["ok", "done in editor"], unmatched: ["bad", "unmatched"], held: ["bad", "held"], contended: ["warn", "other run"], skipped: ["warn", "skipped"], gone: ["bad", "gone"], cancelled: ["bad", "cancelled"], oversize: ["bad", "oversize"] };
   function engravePill(r) { const e = r.engrave; if (!e) return r.spec && r.spec.engraveCandidate ? ["warn", "words?"] : ["neutral", "—"]; if (!e.needed) return ["neutral", e.state === "skipped" ? "skipped" : "no engraving"]; if (e.approved) return ["ok", "approved"]; if (e.state === "words") return ["warn", "words"]; if (e.state === "review") return ["warn", "review"]; if (e.state === "fitted") return ["info", "fitted"]; if (e.state === "blocked") return ["bad", "blocked"]; return ["info", e.state || "engrave"]; }
   /** The face(s) a line engraves, as one small chip beside its state: "Front + back" or "Front only". A back-only line (every line there was) has none, so the table reads as it always did. */
   function faceChip(r) {
@@ -11385,6 +11385,12 @@ const Engrave = window.Engrave = (() => {
     const removed = [...master].filter(id => !kept.has(id) && (was.has(id) || (face === "front" && !now.has(id))));
     return { removed, changed, added };
   }
+  /** CPX1: the words a face of the editor's result carries (its visible Type items, every line), "" when none. */
+  function charmEditTextOf(face) {
+    const out = [], look = (list, hid) => { for (const it of list || []) { if (!it || hid || it.hidden) continue; if (typeof it.text === "string" && it.text.trim() && (it.kind === "text" || it.role === "words" || !it.subpaths || it.kind === "type")) out.push(it.text.trim()); look(it.children, hid || it.hidden); } };
+    look(face && face.items, false);
+    return out.join("\n").slice(0, 400);
+  }
   /** The words of a part for a note: its text, its name, or what it is. */
   function charmEditPart(faces, id) {
     if (id === "cut") return "Cut line";
@@ -11455,7 +11461,11 @@ const Engrave = window.Engrave = (() => {
     // (CES2, Paul 9 Nov 2026: "I want the pop-up to open on every Save": the Send to sheet pop-up opens over the card at once, set as a fix of this piece; a save that failed in part does not open it)
     const designOf = () => Promise.resolve(o.design).then(d => d && d.id ? d : (window.CharmNestDesigns ? (CharmNestDesigns.rows() || []).find(r => r && r.id === "pc-" + poolId) || null : null));
     const over = canReplace && !o.partial ? () => designOf().then(d => d ? C.open({ orderId: rid, designId: d.id, version: d.version, after: true }) : null) : null;
-    Promise.resolve(Ms.afterPiece({ title: o.title, name: sku, where: `${rid ? `order ${rid} · ` : ""}piece ${at + 1} of ${Math.max(1, all.length)}`, lines: o.lines, bad: !!o.bad, back, replace: canReplace ? {} : null, over }))
+    // (CPX1, Paul 9 Nov 2026: the order's Custom portion still open, done here on this piece: the card offers to complete it, at its top: charm-nest-custom-done.js)
+    const customDone = rid && !o.partial ? { rid, savedKey: row && row.key ? String(row.key) : "", savedPoolIds: t.poolIds.slice(), sameOrder: true, back: back ? back.label : "",
+      cover: () => Promise.resolve(o.design).catch(() => null).then(g => ({ poolId, lineKey: row && row.key ? String(row.key) : "", name: sku, designId: (g && g.id) || "pc-" + poolId, version: (g && g.version) || null })),
+      onDone: r => customDoneSaid(r, rid) } : null;
+    Promise.resolve(Ms.afterPiece({ title: o.title, name: sku, where: `${rid ? `order ${rid} · ` : ""}piece ${at + 1} of ${Math.max(1, all.length)}`, lines: o.lines, bad: !!o.bad, back, replace: canReplace ? {} : null, over, customDone }))
       .then(c => {
         if (c === "again") { try { window.CharmEditor?.release?.("Opening this piece again…"); } catch (_) { /* fine */ } setTimeout(() => { openCharmEditor(x).catch(e => { letGo(); toast(`Charm Editor: ${(e && e.message) || e}`, "bad", 6000); }); }, 0); }
         else if (c === "back") { letGo(); charmEditBack(t); }
@@ -11463,6 +11473,15 @@ const Engrave = window.Engrave = (() => {
         else letGo();
       }, letGo);
     return true;
+  }
+  /** CPX1: the Custom portion completed from the card after a Save: said with an Undo for a while (the order window's row keeps its own Undo while this page can make it). */
+  function customDoneSaid(r, rid) {
+    const CD = window.CharmNestCustomDone; if (!r || !r.ok) return;
+    const names = (r.done || []).map(x => `“${x.name}”`).join(", "), el = toast(`Order ${rid}: the Custom ${r.done.length > 1 ? "pieces" : "piece"} ${names} completed in the Charm Editor · released from Review`, "", 20000);
+    if (!el || !CD || !r.token) return;
+    const b = document.createElement("button"); b.type = "button"; b.className = "btn ghost xs"; b.textContent = "Undo"; b.style.marginLeft = "8px";
+    b.onclick = e => { e.stopPropagation(); b.disabled = true; Promise.resolve(CD.undo(r.token)).then(u => { toast(u && u.ok ? `Order ${rid}: undone · ${(u.said || []).join(" · ")}` : `Undo: ${(u && u.why) || "not possible"}`, u && u.ok ? "" : "bad", 7000); if (el._go) el._go(); }, e2 => toast(`Undo: ${(e2 && e2.message) || e2}`, "bad", 7000)); };
+    const m = el.querySelector(".m"); if (m) m.after(b); else el.appendChild(b);
   }
   async function openCharmEditorOnce(x, tok) {
     const AE = window.CharmNestArtEdit, CE = window.CharmEditor;
@@ -11626,6 +11645,17 @@ const Engrave = window.Engrave = (() => {
       const applied = [];
       for (const f of wordsTodo) { try { applied.push(await charmEditWordsApply(words[f], wordsNow[f], f, views[f], by)); } catch (e) { console.warn("charm edit: the words", e); applied.push({ face: f, kept: true, why: (e && e.message) || String(e), unkept: [] }); } }
       pj = jobsOfPiece(poolId); jobs = [pj.front, pj.back].filter(Boolean);
+      // (CPX1, Paul 9 Nov 2026, order 4225890898: DOG 9667's back read "Haruki" from the Charm Editor while its card still said "NEEDS A DECISION · Words: Enter the requested inscription". Words the
+      //  editor put on a face whose engraving was still asking for them ANSWER that question: the face is engraved as drawn (art only, waiting for its Approve), the open Words card goes, and
+      //  the order's head card no longer asks (liveAsks: a line whose faces the editor drew asks no words))
+      try {
+        for (const j of jobs) {
+          const f = faceOf(j), said = charmEditTextOf(res.faces && res.faces[f]);
+          if (!said || j.state !== "words" || (j.decision && j.decision.text) || !faceHasEditorArt(j)) continue;
+          if (artOnlyPlacement(j)) { j.editorWords = said; j.wordsSource = "charmEditor"; agent({ engrave: true }, "ENGRAVE", `${order}: the ${f} words "${said.replace(/\n/g, " / ")}" were drawn in the Charm Editor by ${by}: the Words question is answered, the ${f} waits for Approve`); }
+        }
+        for (const j of jobs) if (j.state !== "words") { const it = (Review.items() || []).find(x => x && x.key === "eng:" + j.key); if (it && it.kind === "engraveWords") Review.remove(it.key); }
+      } catch (e) { console.warn("charm edit: the words question", e); }
       const bare = bare0.filter(f => !applied.some(a => a.face === f && !a.kept));
       const cap = s => s.charAt(0).toUpperCase() + s.slice(1), wordsSaid = applied.map(a => {
         if (a.kept) return `The ${a.face} words were not changed: ${a.why}`;
@@ -23667,7 +23697,8 @@ const OrderWin = window.OrderWin = (() => {
     refreshPlacement(r); W.placeDrawn = W.placeSig;   // (where each piece IS now, before the mounts draw: they ask for it, opts.placement)
     // PIECES (Paul, 16 Oct 2026): ONE line bought several times (order 4195059483: "2 pieces", one line x2) is not a list of pieces to pick from, but its rail must still wait for EVERY piece's engraving: the timeline is handed that one line
     // (only when the line has more than one piece with a back to approve; any other single-line order tells it nothing, as before)
-    const tlPs = ps.length || multi || r.loading || sibs.length !== 1 ? ps : (tryDo(() => piecesOf(sibs)) || []).filter(p => p && p.line && p.line.engravePools);
+    const tlPs0 = ps.length || multi || r.loading || sibs.length !== 1 ? ps : (tryDo(() => piecesOf(sibs)) || []).filter(p => p && p.line && p.line.engravePools);
+    const tlPs = tlPs0.length > 1 ? tlPs0.filter(p => !cdCovered(p.key)) : tlPs0;   // (CPX1: the order's stage never waits on a Custom piece completed in the Charm Editor)
     for (const m of [W.rail, W.tl]) if (m && m.setPieces) tryDo(() => m.setPieces(tlPs, W.piece, dir));
   }
   /** A piece chosen (null: all of them): the Overview shows that piece's line, and every view crosses over to it. */
@@ -23984,10 +24015,12 @@ const OrderWin = window.OrderWin = (() => {
   /** A piece of a counted line (an OrderPieces entry) as a scope piece, for pieceStatusOf: the sheet it is on, whether it waits, is completed by hand or not read yet. */
   const pcScopeOf = (c, line) => ({ key: line ? line.key : c.lineKey, nested: !!c.nested, hand: !!c.hand, loading: !c.nested && !c.hand && !!(c.loading || c.unsure), row: line && line.row || null, why: c.reason || "",
     sheets: c.nested ? [{ id: c.sheetId || null, page: null, label: c.sheetLabel || "", metal: c.metal || null, n: c.sheetNo, setId: c.setId || null, cut: c.state === "cut", pools: [String(c.poolId || c.key)] }] : [] });
+  /** CPX1: the cover of a Custom piece completed in the Charm Editor on another piece of its order (charm-nest-custom-done.js), by its line key, or null. */
+  const cdCovered = key => { const CD = window.CharmNestCustomDone; if (!CD || !key) return null; const r = rowOf(key) || (W.rows || []).find(x => x && x.key === key) || null; return r && r.custom ? tryDo(() => CD.coverOf(r)) : null; };
   /** What one order item is: { kind: "pair" | "counted" | "single", x (the line's summary), subs (its pieces: a pair's Left and Right, a counted line's discs), lead (the piece the row speaks for), step }. */
   function pcItemOf(x, ctx) {
     const OR = window.CharmNestOrderRows, p = x.p, lineScope = ctx.scope && ctx.scope.find(q => q.key === p.key) || null, STAGES = window.OrderTimelineUI.STAGES;
-    const stepOf = y => (y.D.hand ? STAGES.length - 1 : y.D.step);
+    const stepOf = y => (y.D.hand || cdCovered(y.p.key) ? STAGES.length - 1 : y.D.step);   // (CPX1: a Custom piece completed in the Charm Editor is done: the order never waits on it)
     if (p.sides && ctx.sideEach && p.sides.every(sp => ctx.sideEach.get(sp.key))) {
       const subs = p.sides.map(sp => ({ key: sp.key, side: sp.side, qty: sp.qty, mirror: !!sp.mirror, x: ctx.sideEach.get(sp.key), sp: lineScope && lineScope.sides && lineScope.sides.find(q => q.key === sp.key) || null }));
       const lead = subs[Math.max(0, OR.slowest(subs.map(q => ({ step: q.x.D.step, hand: !!q.x.D.hand }))))];
@@ -24127,6 +24160,12 @@ const OrderWin = window.OrderWin = (() => {
           `<div class="owPcDrawer" id="${drawer}" data-for="${esc(key)}" role="group" aria-label="${esc("Each piece of " + p.name)}" hidden><div class="owPcDrawerIn">${it.subs.map(q => pcSubHtml(it, q, rid, p.name)).join("")}</div></div>`;
       }
       const nm = `${pieceMetalTag(x.p)}<b>${esc(x.p.name)}</b>${pieceRest(x.p) ? " · " + esc(pieceRest(x.p)) : ""}`;
+      // (CPX1, Paul 9 Nov 2026: a Custom piece whose design was done in the Charm Editor on another piece of the order: done, with its seal and the piece that covered it, no dots, no "!")
+      const cv = cdCovered(x.p.key);
+      if (cv) {
+        const CD = window.CharmNestCustomDone, und = tryDo(() => CD.undoFor(rid, x.p.key)) || "", canShow = !!(cv.lineKey && ps.some(q => q.key === cv.lineKey));
+        return `<div class="owPcRow cdCovered${all ? "" : " solo"}" data-piece="${esc(x.p.key)}" role="group" aria-label="${esc(x.p.name + " · completed in the Charm Editor on " + cv.name)}">${dot}<button type="button" class="nm owPcName" title="Show only this piece">${nm}</button>${tryDo(() => CD.rowHtml(cv, { canShow, undo: und })) || ""}</div>`;
+      }
       const steps = pieceDotsHtml(x, rid);   // (the dots: a card for each, see pieceDotsHtml)
       // a piece that is in the Review tab has that card's own buttons (and seals) here, in place of its words: a press is a press
       // there; a piece in no card keeps its words
@@ -24152,6 +24191,11 @@ const OrderWin = window.OrderWin = (() => {
         `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${rel}${ctl.html}</span>${stSr}${steps}${tools}</div>`;
     }).join("");
     box.hidden = false; box.dataset.rid = rid; box.classList.toggle("hasTools", hasTools);
+    // (CPX1: a covered Custom piece's row: its covering piece's name shows that piece, its Undo takes the completion back while this page can)
+    if (!box._cdWired) { box._cdWired = true; tryDo(() => window.CharmNestCustomDone && CharmNestCustomDone.injectCss(document)); box.addEventListener("click", e => {
+      const sh = e.target.closest && e.target.closest("[data-cd-show]"); if (sh && box.contains(sh)) { e.stopPropagation(); selectPiece(sh.dataset.cdShow); return; }
+      const ub = e.target.closest && e.target.closest("[data-cd-undo]"); if (ub && box.contains(ub) && window.CharmNestCustomDone) { e.stopPropagation(); ub.disabled = true; Promise.resolve(CharmNestCustomDone.undo(ub.dataset.cdUndo)).then(u => toast(u && u.ok ? `Undone · ${(u.said || []).join(" · ")}` : `Undo: ${(u && u.why) || "not possible"}`, u && u.ok ? "" : "bad", 7000), er => toast(`Undo: ${(er && er.message) || er}`, "bad", 7000)); }
+    }, true); }
     // (RELWIRE, 27 Oct 2026: the rows drawn as before are kept, and a row whose buttons were drawn while its piece could not be wired yet (the window still opening) is wired now: its Release
     //  Hold had no press at all once the window was opened again on an order after another one, "hold A, hold B, open A again", and the drawing never changed after)
     if (box._h === html) { wireOwRel(box); box.querySelectorAll("[data-pc-act]:not([data-pc-wired])").forEach(h => wirePcAct(h, [])); markPieces(); return; }
@@ -24333,7 +24377,13 @@ const OrderWin = window.OrderWin = (() => {
     for (const x of [r].concat(tryDo(() => Orders.rows()) || [])) if (x && x.order && String(x.order.receiptId) === rid && x.spec && !x.loading && Array.isArray(x.spec.problems) && !mine.has(x.key)) mine.set(String(x.key), x);
     return { asks: (lineKey, kind) => {
       const x = mine.get(String(lineKey)); if (!x || x.state === "gone") return null;
-      if (kind === "engraveWords") return x.spec.engraveNever ? false : null;   // (a words question of a line that never engraves, an earring or a letter key, is no longer asked; for any other line the record stands as before)
+      if (kind === "engraveWords") {
+        if (x.spec.engraveNever) return false;   // (a words question of a line that never engraves, an earring or a letter key, is no longer asked; for any other line the record stands as before)
+        // (CPX1, Paul 9 Nov 2026: a line whose faces the Charm Editor drew, none of them asking for words now, was answered there: "Words: Enter the requested inscription" is not asked any more)
+        const js = tryDo(() => Engrave.jobsOf(x)) || [];
+        if (js.length && !js.some(j => j && ["words", "classify", "reclassify"].includes(j.state)) && js.some(j => j && (j.wordsSource === "charmEditor" || tryDo(() => Engrave.faceHasEditorArt(j))))) return false;
+        return null;
+      }
       const kinds = new Set([].concat(x.spec.problems, x.problems || []).map(p => p && p.kind));
       if (x.materialOverride) kinds.delete("needsMaterial");
       if (x.sizeOverride) kinds.delete("missingSize");

@@ -405,6 +405,18 @@
     return rep.poolIds.slice();
   }
 
+  /** CPX1 (charm-nest-custom-done.js Undo): pieces this page took off their sheet, put back on the next OPEN sheet of their metal as a sent piece is (sheetFor: the order's own sheet when it is
+   *  still open, never a cut, sent or closed one) and nested there. → the sheet's name, or '' when nothing was put back. */
+  function putBack(list, metal, rid) {
+    const CN = page_(); list = (list || []).filter(c => c && c.poolId);
+    if (!CN || !list.length || !METALS.includes(String(metal || list[0].metal || ""))) return "";
+    metal = String(metal || list[0].metal); const run = liveRun(), page = sheetFor(metal, run, rid ? String(rid) : "", list);
+    if (!page) return "";
+    placeOn(page, list, run);
+    try { root.Session && root.Session.schedule && root.Session.schedule(); } catch (_) { /* kept with the next checkpoint */ }
+    return (CN.labelOf ? CN.labelOf(metal) : metal) + (page.page ? ` sheet ${page.page}` : "");
+  }
+
   /* ── 8 · sanctity on the sheet (the page's nest and the sheet window call these) ── */
   /** Every frozen piece of a sheet written at its exact size (finishNest, after the shrink every other charm gets), and held there in the layout the sheet's check holds still (its
    *  saved placements, nestInitial: the geometry check reads a held charm at another size as moved). → how many were not at 100 %. */
@@ -451,7 +463,7 @@
     return uniq.length > 2 ? shown.concat([`+ ${uniq.length - 2} more custom piece${uniq.length - 2 === 1 ? "" : "s"} (no order)`]) : shown;
   }
 
-  const api = { ORDERLESS, orderless, isFrozen, frozenOf, partsOf, leavesOf, keyOf, hashOf, leafKeys, leafPens, inkAsMade, paintOf, pdfOf, readOf, writtenOf, sourceFor, addCustomPiece, holdSize, sizeWhy, checkWritten, shipIds, labelNotes, version: 1 };
+  const api = { ORDERLESS, orderless, isFrozen, frozenOf, partsOf, leavesOf, keyOf, hashOf, leafKeys, leafPens, inkAsMade, paintOf, pdfOf, readOf, writtenOf, sourceFor, addCustomPiece, putBack, holdSize, sizeWhy, checkWritten, shipIds, labelNotes, version: 1 };
   // (the contract's own door: Pool.addCustomPiece; the bridge's Pool is made before this file loads)
   if (root && root.Pool && !root.Pool.addCustomPiece) root.Pool.addCustomPiece = addCustomPiece;
   return api;
