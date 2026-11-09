@@ -1,0 +1,15 @@
+{
+  "what": "New charms made and checked in this repository, waiting for Paul's one press in Workspace > Master files (charm-nest-repo-adds.js). Each add is a folder: records.json (the entries masterPutIndex takes, staged by scripts/index-master.cjs), files/ (each SKU's .ai and picture), the master sheet and a contact sheet. A second press says Already there. No buyer data.",
+  "adds": [
+    {
+      "id": "letters-hoops-2026-11-09",
+      "title": "Letter charms with hoops (26 necklace + 26 huggie, a–z)",
+      "folder": "charm-repo-adds/letters-hoops-2026-11-09",
+      "records": "records.json",
+      "sheet": "LETTER-HOOPS_2026-1109.ai",
+      "contact": "contact-sheet.html",
+      "askedAt": "2026-11-09",
+      "made": "node scripts/make-letter-hoops.cjs --src charm-repo-adds/letters-hoops-2026-11-09/source --out charm-repo-adds/letters-hoops-2026-11-09"
+    }
+  ]
+}
