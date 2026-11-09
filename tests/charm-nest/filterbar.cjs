@@ -4,10 +4,11 @@
 //   1  the bar is one row at a wide window, never scrolls sideways at 1500 / 1024 / 760 / 400 / 320 px, and holds no <select> (the three selects, the date chips and both sort selects are gone)
 //   2  Filters: one button with a count badge; its panel holds Metal and Engraved as chip groups (no Kind: Paul, 18 Oct 2026) with every answer the old selects offered (and their counts); Esc closes it and gives the focus back; Clear
 //   3  a chip narrows the list at once: the live count ("12 of 48 orders"), the gold chip under the bar (one press removes it), the badge; Clear all
-//   4  the date menu (all five ranges, the one in force named on its button) and the sort control (all five keys, one arrow reverses the order, keys and direction really reorder the list)
-//   5  Cards | List (and S.settings.orderView), search with its ×, Esc in the box, Enter
+//   4  (CMP1, Paul 9 Nov 2026: "consolidate with the Anytime and last activity under the filters") Time and Sort by are sections of the Filters panel: all five ranges, all five keys and the
+//      direction under them; keys and direction really reorder the list; the badge and the chips under the bar count and show them
+//   5  (CMP1: "remove the option for list or card review") no Cards | List switch, the list always; search with its ×, Esc in the box, Enter
 //   6  the real-time feedback: a change shows aria-busy on the list, a spinner on the control that was touched and the new count BEFORE the list has been redrawn, and all of it ends
-//   7  the Cancelled pile steps the open-lines controls aside and keeps the date menu and the direction
+//   7  the Cancelled pile steps the open-lines filters aside and keeps Time and the direction (in Filters)
 //   8  phone width: every target is at least 40 px, the Filters panel is a bottom sheet inside the window, nothing overflows
 //   node tests/charm-nest/filterbar.cjs
 'use strict';
@@ -39,8 +40,8 @@ for (let i = 0; i < 40; i++) FIXTURES['x' + i] = { rid: String(4195100000 + i), 
     let s = await shape();
     check(s.rows === 1 && s.selects === 0 && s.page <= 0 && s.bar <= 1, '1500 px: one row, no select, no sideways scroll: ' + JSON.stringify(s));
     check(s.h <= 44, 'and it is slim: ' + s.h + ' px tall (it was a 33 px row that scrolled sideways under 2000 px)');
-    const ids = await page.evaluate(() => ['ordBar', 'ordQ', 'ordPull', 'ordChips', 'ordBody', 'ordSort', 'ordViewSeg', 'ordFiltersBtn', 'ordFiltersPop', 'ordCount', 'ordCharmTotal', 'ordActive'].filter(i => !document.getElementById(i)));
-    check(ids.length === 0, 'the ids the page and the tests use are all there (ordBar ordQ ordPull ordChips ordBody ordSort ordViewSeg + the new ones): missing ' + ids.join());
+    const ids = await page.evaluate(() => ['ordBar', 'ordQ', 'ordPull', 'ordChips', 'ordBody', 'ordFiltersBtn', 'ordFiltersPop', 'ordCount', 'ordCharmTotal', 'ordActive'].filter(i => !document.getElementById(i)));
+    check(ids.length === 0, 'the ids the page and the tests use are all there (ordBar ordQ ordPull ordChips ordBody + the new ones): missing ' + ids.join());
 
     // ═══ 2 · the Filters panel ═══
     const fb = '#ordFiltersBtn', pop = '#ordFiltersPop';
@@ -49,7 +50,7 @@ for (let i = 0; i < 40; i++) FIXTURES['x' + i] = { rid: String(4195100000 + i), 
     check(await page.locator(fb).getAttribute('aria-expanded') === 'true', 'a press opens it (aria-expanded)');
     const inPanel = await page.evaluate(() => { const p = document.getElementById('ordFiltersPop'); return { focus: p.contains(document.activeElement), groups: [...p.querySelectorAll('.ordFg h4')].map(h => h.textContent), metals: [...p.querySelectorAll('.ordChip[data-f="metal"]')].map(c => c.dataset.v + ':' + (c.querySelector('small') || {}).textContent), forms: [...p.querySelectorAll('.ordChip[data-f="form"]')].map(c => c.dataset.v + ':' + (c.querySelector('small') || {}).textContent), eng: [...p.querySelectorAll('.ordChip[data-f="eng"]')].map(c => c.dataset.v + ':' + (c.querySelector('small') || {}).textContent), done: p.querySelector('[data-done]').textContent, clearOff: p.querySelector('[data-clear]').disabled, inside: (r => r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight)(p.getBoundingClientRect()) }; });
     check(inPanel.focus, 'the focus goes into the panel');
-    check(inPanel.groups.join() === 'Metal,Engraved', 'the panel has Metal and Engraved, no Kind: ' + inPanel.groups);
+    check(inPanel.groups.join() === 'Metal,Engraved,Time,Sort by', 'the panel has Metal and Engraved (no Kind), then Time and Sort by (CMP1): ' + inPanel.groups);
     check(['gold', 'silver', 'rose', 'gold10k', 'gold14k'].every(m => inPanel.metals.some(x => x.startsWith(m + ':'))) && inPanel.metals[0].startsWith(':'), 'every metal the old select offered, with its count, and Any first: ' + inPanel.metals);
     check(inPanel.forms.length === 0, 'no Kind chips (Necklaces, Charms only, Huggies…): ' + inPanel.forms);
     const lines = await page.evaluate(() => Orders.rows().filter(r => r.state !== 'gone').length);
@@ -92,48 +93,44 @@ for (let i = 0; i < 40; i++) FIXTURES['x' + i] = { rid: String(4195100000 + i), 
     check(await page.evaluate(() => !Orders.view().metal), 'a chip that is on, pressed again, goes off');
     await page.keyboard.press('Escape'); await sleep(100);
 
-    // ═══ 4 · the date menu and the sort control ═══
-    const dateBtn = '#ordersView .cnDateBtn';
-    check(/Any time/.test(await page.textContent(dateBtn)), 'the date control says "Any time" while no range is in force');
-    await page.click(dateBtn); await page.waitForSelector('#ordersView .cnDate .cnMenu:not([hidden])');
-    const dm = await page.evaluate(() => ({ items: [...document.querySelectorAll('#ordersView .cnDate [data-range]')].map(b => b.dataset.range + '=' + b.textContent.trim()), checked: document.querySelector('#ordersView .cnDate [aria-checked=true]').dataset.range, focus: document.activeElement.dataset.range }));
-    check(dm.items.join() === 'all=Any time,today=Today,yesterday=Yesterday,7=Last 7 days,14=Last 14 days' && dm.checked === 'all' && dm.focus === 'all', 'the five ranges, the one in force ticked and focused: ' + dm.items);
-    await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter'); await sleep(600);
-    const yd = await page.evaluate(() => ({ range: CNListActivity.state('orders').range, label: document.querySelector('#ordersView .cnDateBtn').textContent.trim(), on: document.querySelector('#ordersView .cnDateBtn').hasAttribute('data-on'), chip: (document.querySelector('#ordActive [data-ax="range"]') || {}).textContent, focus: document.activeElement.className, closed: document.querySelector('#ordersView .cnDate .cnMenu').hidden }));
-    check(yd.range === 'yesterday' && yd.label === 'Yesterday' && yd.on && /Yesterday/.test(yd.chip || '') && yd.closed && /cnDateBtn/.test(yd.focus), 'arrow keys + Enter pick Yesterday: the button names it in gold, a chip under the bar, the menu closed, the focus back: ' + JSON.stringify(yd));
+    // ═══ 4 · Time and Sort by, in the Filters panel (CMP1, Paul 9 Nov 2026) ═══
+    check(await page.evaluate(() => !document.querySelector('#ordBar .cnDateBtn, #ordBar .cnSort, #ordBar [data-activity-tools], #ordSort')), 'no date menu and no sort control in the bar: they are in Filters');
+    await page.click(fb); await page.waitForSelector(pop + ':not([hidden])');
+    const dm = await page.evaluate(() => ({ items: [...document.querySelectorAll('#ordFiltersPop .ordChip[data-f="range"]')].map(b => (b.dataset.v || 'all') + '=' + b.textContent.trim()), on: document.querySelector('#ordFiltersPop .ordChip[data-f="range"][aria-pressed=true]').dataset.v }));
+    check(dm.items.join() === 'all=Any time,today=Today,yesterday=Yesterday,7=Last 7 days,14=Last 14 days' && dm.on === '', 'Time: the five ranges, Any time pressed: ' + dm.items);
+    await page.click(pop + ' .ordChip[data-f="range"][data-v="yesterday"]'); await sleep(600);
+    const yd = await page.evaluate(() => ({ range: CNListActivity.state('orders').range, pressed: document.querySelector('#ordFiltersPop .ordChip[data-f="range"][data-v="yesterday"]').getAttribute('aria-pressed'), badge: document.querySelector('#ordFiltersBtn .cnBadge').textContent, chip: (document.querySelector('#ordActive [data-ax="range"]') || {}).textContent, open: !document.getElementById('ordFiltersPop').hidden }));
+    check(yd.range === 'yesterday' && yd.pressed === 'true' && yd.badge === '1' && /Yesterday/.test(yd.chip || '') && yd.open, 'Yesterday: the range is in force, its chip pressed, the badge counts it, a chip under the bar names it, the panel stays open: ' + JSON.stringify(yd));
+    await page.keyboard.press('Escape'); await sleep(100);
     await page.click('#ordActive [data-ax="range"]'); await sleep(500);
-    check(await page.evaluate(() => CNListActivity.state('orders').range === 'all'), 'the range chip lets go of the range');
+    check(await page.evaluate(() => CNListActivity.state('orders').range === 'all' && document.querySelector('#ordFiltersBtn .cnBadge').hidden), 'the range chip lets go of the range (no badge)');
     // sort
-    await page.click('#ordSort'); await page.waitForSelector('#ordersView .cnSort .cnMenu:not([hidden])');
-    const keys = await page.evaluate(() => [...document.querySelectorAll('#ordersView [data-sortkey]')].map(b => b.dataset.sortkey + '=' + b.textContent.trim() + ':' + b.getAttribute('aria-checked')));
-    check(keys.join() === 'activity=Last activity:true,arrival=Order date:false,due=Ship-by date:false,order=Order number:false,state=State:false', 'the five sort keys: ' + keys);
-    await page.click('#ordersView [data-sortkey="order"]'); await sleep(600);
+    await page.click(fb); await page.waitForSelector(pop + ':not([hidden])');
+    const keys = await page.evaluate(() => [...document.querySelectorAll('#ordFiltersPop .ordChip[data-f="sort"]')].map(b => b.dataset.v + '=' + b.textContent.trim() + ':' + b.getAttribute('aria-pressed')));
+    check(keys.join() === 'activity=Last activity:true,arrival=Order date:false,due=Ship-by date:false,order=Order number:false,state=State:false', 'Sort by: the five keys: ' + keys);
+    const dirChip = d => pop + ` .ordChip[data-f="dir"][data-v="${d}"]`, dirOn = () => page.evaluate(() => { const c = document.querySelector('#ordFiltersPop .ordChip[data-f="dir"][aria-pressed=true]'); return c ? c.dataset.v + '=' + c.textContent.trim() : ''; });
+    await page.click(pop + ' .ordChip[data-f="sort"][data-v="order"]'); await sleep(600);
     const order = () => page.evaluate(() => Orders.walkRows().map(r => String(r.order.receiptId)).filter((x, i, a) => a.indexOf(x) === i));
     const o1 = await order(), asc = o1.slice().sort();
-    check(JSON.stringify(o1) === JSON.stringify(asc) && /Order number/.test(await page.textContent('#ordSort')), 'by Order number: lowest first, the button names the key');
-    const dirBtn = '#ordersView .cnDir';
-    check(await page.getAttribute(dirBtn, 'data-dir') === 'asc' && /Lowest number first/.test(await page.getAttribute(dirBtn, 'title')), 'and the arrow says ascending, in words, in its title');
-    await page.click(dirBtn); await sleep(600);
+    check(JSON.stringify(o1) === JSON.stringify(asc) && await dirOn() === 'asc=Lowest number first' && /Order number/.test(await page.textContent('#ordActive [data-ax="sort"]')), 'by Order number: lowest first, its direction says so in words, a chip under the bar names it');
+    await page.click(dirChip('desc')); await sleep(600);
     const o2 = await order();
-    check(JSON.stringify(o2) === JSON.stringify(asc.slice().reverse()) && await page.getAttribute(dirBtn, 'data-dir') === 'desc' && await page.evaluate(() => Orders.view().desc === true), 'the arrow reverses it: highest first (OV.desc)');
-    await page.click('#ordSort'); await page.click('#ordersView [data-sortkey="due"]'); await sleep(600);
+    check(JSON.stringify(o2) === JSON.stringify(asc.slice().reverse()) && await dirOn() === 'desc=Highest number first' && await page.evaluate(() => Orders.view().desc === true), 'the direction reverses it: highest first (OV.desc)');
+    await page.click(pop + ' .ordChip[data-f="sort"][data-v="due"]'); await sleep(600);
     const due = await page.evaluate(() => Orders.walkRows().map(r => r.order.shipBy || 0));
     check(due.every((x, i) => !i || due[i - 1] <= x) && await page.evaluate(() => Orders.view().sort === 'due' && Orders.view().desc === false), 'choosing another key starts it in its own direction: Ship-by, soonest first');
-    await page.click('#ordSort'); await page.click('#ordersView [data-sortkey="arrival"]'); await sleep(600);
+    await page.click(pop + ' .ordChip[data-f="sort"][data-v="arrival"]'); await sleep(600);
     check(await page.evaluate(() => Orders.view().sort === 'arrival' && !!document.querySelector('#ordItems .ordDay')), 'Order date sorts by arrival and draws its day headings');
-    await page.click('#ordSort'); await page.click('#ordersView [data-sortkey="state"]'); await sleep(500);
-    await page.click('#ordSort'); await page.click('#ordersView [data-sortkey="activity"]'); await sleep(500);
-    await page.click(dirBtn); await sleep(500);
-    check(await page.evaluate(() => CNListActivity.state('orders').direction === 'asc' && Orders.view().sort === 'activity'), 'on Last activity the arrow is the shared direction (oldest first)');
-    await page.click(dirBtn); await sleep(500);
-    check(await page.evaluate(() => CNListActivity.state('orders').direction === 'desc'), 'and back to newest first');
+    await page.click(pop + ' .ordChip[data-f="sort"][data-v="state"]'); await sleep(500);
+    await page.click(pop + ' .ordChip[data-f="sort"][data-v="activity"]'); await sleep(500);
+    await page.click(dirChip('asc')); await sleep(500);
+    check(await page.evaluate(() => CNListActivity.state('orders').direction === 'asc' && Orders.view().sort === 'activity' && document.querySelector('#ordFiltersBtn .cnBadge').textContent === '1'), 'on Last activity the direction is the shared one (oldest first), and the badge counts it');
+    await page.click(dirChip('desc')); await sleep(500);
+    check(await page.evaluate(() => CNListActivity.state('orders').direction === 'desc' && document.querySelector('#ordFiltersBtn .cnBadge').hidden), 'and back to newest first: the default, nothing counted');
+    await page.keyboard.press('Escape'); await sleep(100);
 
     // ═══ 5 · view, search ═══
-    await page.click('#ordViewSeg [data-view="cards"]'); await sleep(200);
-    const cv = await page.evaluate(() => ({ cards: !!document.querySelector('#ordItems.ordCards'), saved: CN.S.settings.orderView, on: document.querySelector('#ordViewSeg .on').dataset.view, pressed: document.querySelector('#ordViewSeg [data-view=cards]').getAttribute('aria-pressed') }));
-    check(cv.cards && cv.saved === 'cards' && cv.on === 'cards' && cv.pressed === 'true', 'Cards: drawn in the same breath, kept in Settings (orderView), the button pressed');
-    await page.click('#ordViewSeg [data-view="list"]'); await sleep(200);
-    check(await page.evaluate(() => !!document.querySelector('#ordItems.ordList') && CN.S.settings.orderView === 'list'), 'List likewise');
+    check(await page.evaluate(() => !document.getElementById('ordViewSeg') && !document.querySelector('#ordBar [data-view]') && !!document.querySelector('#ordItems.ordList')), 'no Cards | List switch: the Orders tab is always the list (CMP1)');
     await page.fill('#ordQ', '419510'); await sleep(40);
     const typing = await page.evaluate(() => ({ count: document.getElementById('ordCount').textContent, busy: document.getElementById('ordBody').getAttribute('aria-busy'), spin: !!document.querySelector('#ordFind .spin'), x: !document.getElementById('ordFindX').hidden, rows: document.querySelectorAll('#ordItems > *').length }));
     check(/^\d+ of \d+ orders$/.test(typing.count) && typing.busy === 'true' && typing.spin && typing.x, 'typing: the count is new, the box shows the spinner and its ×, the list is busy (40 ms in: "' + typing.count + '")');
@@ -150,10 +147,12 @@ for (let i = 0; i < 40; i++) FIXTURES['x' + i] = { rid: String(4195100000 + i), 
 
     // ═══ 7 · the Cancelled pile ═══
     await page.click('#ordChips [data-pile="cancelled"]'); await sleep(600);
-    const cx = await page.evaluate(() => { const vis = sel => { const n = document.querySelector(sel); return !!n && n.getClientRects().length > 0; }; return { cls: document.getElementById('ordBar').className, filters: vis('#ordFiltersBtn'), view: vis('#ordViewSeg'), sortKey: vis('#ordSort'), date: vis('#ordersView .cnDateBtn'), dir: vis('#ordersView .cnDir'), dirText: document.querySelector('#ordersView .cnDir').textContent.trim(), ph: document.getElementById('ordQ').placeholder, sortEl: !!document.getElementById('ordSort') }; });
-    check(/onCx/.test(cx.cls) && !cx.filters && !cx.view && !cx.sortKey && cx.sortEl && cx.date && cx.dir && /first/.test(cx.dirText) && /buyer/.test(cx.ph), 'Cancelled: Filters, Cards | List and the sort key step aside; the date menu and the direction stay (' + cx.dirText + '): ' + JSON.stringify(cx));
+    await page.click('#ordFiltersBtn'); await sleep(300);
+    const cx = await page.evaluate(() => { const vis = sel => { const n = document.querySelector(sel); return !!n && n.getClientRects().length > 0; }, p = document.getElementById('ordFiltersPop'); return { cls: document.getElementById('ordBar').className, filters: vis('#ordFiltersBtn'), groups: [...p.querySelectorAll('.ordFg h4')].map(h => h.textContent).join(), keys: p.querySelectorAll('.ordChip[data-f="sort"]').length, range: p.querySelectorAll('.ordChip[data-f="range"]').length, dirText: [...p.querySelectorAll('.ordChip[data-f="dir"]')].map(c => c.textContent.trim()).join('/'), ph: document.getElementById('ordQ').placeholder }; });
+    check(/onCx/.test(cx.cls) && cx.filters && cx.groups === 'Time,Sort by' && cx.keys === 0 && cx.range === 5 && /first/.test(cx.dirText) && /buyer/.test(cx.ph), 'Cancelled: the open-lines filters and the sort keys step aside; Time and the direction stay in Filters (' + cx.dirText + '): ' + JSON.stringify(cx));
+    await page.keyboard.press('Escape'); await sleep(100);
     await page.click('#ordChips [data-pile=""]'); await sleep(500);
-    check(await page.evaluate(() => document.getElementById('ordFiltersBtn').getClientRects().length > 0 && document.getElementById('ordSort').getClientRects().length > 0), 'and Open Orders brings them back');
+    check(await page.evaluate(() => document.getElementById('ordFiltersBtn').getClientRects().length > 0 && document.querySelectorAll('#ordFiltersPop .ordChip[data-f="sort"]').length === 5), 'and Open Orders brings them back');
     // ═══ 9 · the other tabs get the same two small controls (the shared component: CNListActivity.mount) ═══
     for (const [mode, hasDate] of [['engrave', true], ['review', true], ['library', false], ['charms', true], ['master', true]]) {
       await page.evaluate(m => CN.setMode(m), mode); await sleep(900);
@@ -194,11 +193,7 @@ for (let i = 0; i < 40; i++) FIXTURES['x' + i] = { rid: String(4195100000 + i), 
       if (width <= 640) check(pr.sheet && pr.scrim, width + ' px: it is a bottom sheet with a scrim');
       if (touch) check(pr.minChip >= 40, width + ' px: its chips and buttons are at least 40 px: ' + pr.minChip);
       await v.page.keyboard.press('Escape'); await v.page.waitForTimeout(200);
-      if (touch) {   // the date and sort menus on a phone: inside the window, items 44 px
-        await v.page.click('#ordersView .cnDateBtn'); await v.page.waitForTimeout(250);
-        const dm2 = await v.page.evaluate(() => { const p = document.querySelector('#ordersView .cnDate .cnMenu'), r = p.getBoundingClientRect(); return { inside: r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight, item: Math.round(p.querySelector('[data-range]').getBoundingClientRect().height) }; });
-        check(dm2.inside && dm2.item >= 40, width + ' px: the date menu is inside the window with ' + dm2.item + ' px items');
-        await v.page.keyboard.press('Escape');
+      if (touch) {   // (CMP1: Time and Sort by are the panel's own chips on a phone too, 40 px and more: checked with the panel above)
         // another tab's bar scrolls sideways on a phone: its menu must still open in full, over the list, not clipped by the bar
         await v.page.evaluate(() => CN.setMode('review')); await v.page.waitForTimeout(800);
         await v.page.click('#reviewView .cnDateBtn'); await v.page.waitForTimeout(300);
