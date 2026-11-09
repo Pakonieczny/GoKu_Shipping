@@ -15,6 +15,7 @@ let issueKinds = null; try { issueKinds = require("./_activityKinds"); } catch (
 const loginName = (issueKinds && issueKinds.loginName) || (n => n);   // (the one login name of a person with two records, "Anna" -> "Ana_M": _activityKinds.js)
 const deviceNo = (issueKinds && issueKinds.deviceNo) || (() => "");   // (the numbered stations' desk, "assembly-2": see _activityKinds.js)
 const ACTIONS = new Set(["scan", "reject", "complete", "print", "undo", "error", "note", "matched"]);   // matched: one scan of an order at the Welding station's Matching task (never a completion)
+let Work = null; try { Work = require("./_stationWork"); } catch (_) {}   // (Start → Complete Order: the rollup's `work` map; without the file the rollup is as before)
 const UNATTRIBUTED = (issueKinds && issueKinds.UNATTRIBUTED) || "Unattributed", TASKS = (issueKinds && issueKinds.TASKS) || ["welding", "matching"];
 const ROLES = ["laser", "design"];
 const MAX_BATCH = 50, MAX_EVENT_BYTES = 600, MAX_BODY_CHARS = 40000;
@@ -79,6 +80,7 @@ function clean(e, now, prefix) {
   if (task) doc.task = task;
   if (role) doc.role = role;
   if (unattributed) { doc.unattributed = true; if (!task) doc.task = "matching"; }
+  if (action === "complete" && e.workMs != null && e.workMs !== "" && Number.isFinite(Number(e.workMs))) doc.workMs = int(e.workMs, 0, 86400000);   // (a Complete Order press: opened to Complete, station-work.js)
   if (prefix) doc.sandbox = true;
   return { doc, scrubbed };
 }
@@ -165,6 +167,16 @@ function rollupPatch(FV, prev, day, person, evs, prefix) {
     out.devices = {};
     for (const k of Object.keys(desks)) out.devices[k] = Object.assign(incs(FV, desks[k]), { lastAt: Math.max(deskLast[k] || 0, Number(prev.devices && prev.devices[k] && prev.devices[k].lastAt) || 0) });
   }
+  // Complete Order (station-work.js; _stationWork.js): the presses with their pieces and times, the orders opened and the orders completed
+  if (Work) try {
+    const w = Work.patch(prev.work, evs), work = {};
+    for (const [s, x] of Object.entries(w)) {
+      const o = {}; for (const c of Work.COUNTERS) if (x[c]) o[c] = FV.increment(x[c]);
+      for (const m of ["v", "w", "dur"]) if (x[m]) o[m] = x[m];
+      work[s] = o;
+    }
+    if (Object.keys(work).length) out.work = work;
+  } catch (_) {}
   if (prefix) out.sandbox = true;
   // ixv: every event of this day was counted with the x_* counters (a day that began before they existed is left without it, so the reader shows dashes, not zeros)
   if (issueKinds && (!prev.events || prev.ixv === 1)) out.ixv = 1;

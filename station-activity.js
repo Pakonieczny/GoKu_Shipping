@@ -3,7 +3,9 @@
  *  Contract: plans/employee-efficiency/contract.md. Loaded after station-session.js, which says who is signed in.
  *
  *    window.StationActivity && StationActivity.log("scan" | "reject" | "complete" | "print" | "undo" | "error" | "note",
- *        { orderId, line, sku, parts, orders, detail })          → true when queued, false when not
+ *        { orderId, line, sku, parts, orders, detail, workMs? })   → true when queued, false when not
+ *        (workMs, Paul 9 Nov 2026: a Complete Order press at Welding, Assembly or Shipping is `complete` with the time from the order being opened at the
+ *         station to the press, station-work.js. A scan never completes anything.)
  *    StationActivity.matched({ orderId, at?, scanId?, detail? }) → the Welding station's scanner app: one order QR matched (see "matched" below;
  *                               log("matched", …) is the same call). StationActivity.matcher() → who a scan would be credited to now, or null.
  *    StationActivity.flush()    → Promise (sends what is queued now)
@@ -121,6 +123,7 @@
         at: now, seq, sincePrevMs: int(now - base, 0, GAP_CAP)
       };
       if (w.sandbox) ev.sandbox = true;
+      if (action === "complete" && o.workMs != null && Number.isFinite(Number(o.workMs))) ev.workMs = int(o.workMs, 0, 86400000);   // (a Complete Order press: opened to Complete)
       if (w.role === "laser" || w.role === "design") ev.role = w.role;          // (the Sorter app: the role the person chose at sign-in; the station above is that role too)
       // the server takes at most 600 bytes an event: the optional text goes first
       for (const k of ["detail", "sku", "line"]) {

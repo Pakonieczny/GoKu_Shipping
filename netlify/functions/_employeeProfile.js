@@ -92,6 +92,7 @@ function pairPiecesOf(rid, t, q) {
   } catch (_) { return null; }
 }
 function make(K) {
+  let WORK = null; try { WORK = require("./_stationWork"); } catch (_) {}      // (Start → Complete Order at Welding, Assembly and Shipping: the rollups' `work` map)
   const KIND = K.KIND || { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed", echoScans: () => new Set() };      // (the Welding station is not counted in throughput: see _activityKinds.js)
   const { COL, LIM, ms, num, r1, zeros, digits, cleanName, okName, okStation, niceName, bestForm, nameKeyOf, canonOf, scrub, validDay, addDays,
     nyDay, nyMidnight, clip, covered, spanOf, cached, readRollups, readEventsStart, eventRow, col, json, safe, tmpl, KEYS } = K;
@@ -193,7 +194,8 @@ function make(K) {
       if (x.person === KIND.UNATTRIBUTED) continue;                       // (a matched scan made with nobody in Matching has no person: the Stations board counts it)
       const P = get(x.person); if (!P || !validDay(x.day) || x.day < from || x.day > to) continue;
       const pd = pdOf(P, x.day); pd.hasEvents = true; pd.events += Math.max(0, num(x.events));
-      const form = String(x.person); pd.forms.add(form); P.forms.add(form);              // (the exact stored name: what a Station_Activity query must match)
+      const form = String(x.person); pd.forms.add(form); P.forms.add(form);
+      if (WORK && x.work && typeof x.work === "object") pd.work = WORK.merge(pd.work, x.work);   // (Start → Complete Order of the day, _stationWork.js)              // (the exact stored name: what a Station_Activity query must match)
       for (const [st0, v0] of Object.entries(x.stations && typeof x.stations === "object" ? x.stations : {})) {
         if (!okStation(st0) || !v0 || typeof v0 !== "object") continue;
         const st = displayStation(st0);                                // (counters stored under "sorter" or "qr" add to Sorting)
@@ -524,6 +526,7 @@ function make(K) {
     }
     const dx = {}; for (const d of A.days) if (d.pd && d.pd.dx) for (const [k, n] of Object.entries(d.pd.dx)) dx[k] = (dx[k] || 0) + n;
     const design = designTotals(dx); if (design) out.design = design;     // (only when there was design work in the window: every other answer reads exactly as before)
+    if (WORK) { let wa = null; for (const d of A.days) if (d.pd && d.pd.work) wa = WORK.mergeAcc(wa, d.pd.work); const w = wa ? WORK.rows(wa) : []; if (w.length) out.work = w; }   // (Start → Complete Order per station in the window)
     if (prof.errors.length || prof.capped.length) { out.partial = true; if (prof.errors.length) out.errors = [...new Set(prof.errors)].slice(0, 12); }
     return out;
   }

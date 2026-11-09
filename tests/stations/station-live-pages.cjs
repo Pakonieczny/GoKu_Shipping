@@ -4,10 +4,10 @@
 // real station-session.js and station-activity.js. Every /.netlify/functions call is a fake in this file (the sorter uses the
 // test server of tests/charm-nest/bridge-server.cjs) and every other host is aborted: nothing real is touched or written.
 //   WELD      · nobody signed in: nothing · a scan shows the order at once with a piece for each stud line (not the necklace) and
-//               the buyer, then "Welded" · a no-stud and a cancelled order never stay on the board · a phone scan is credited to
+//               the buyer; Complete Order ends it · a no-stud and a cancelled order never stay on the board · a phone scan is credited to
 //               the desktop's person · the next scan replaces the last (one order at a time)
 //   ASSEMBLY  · nobody signed in: nothing · a scan shows the order with all its lines · a message or picture to the Team keeps
-//               it, a flag too · the first Team stamp (QA1, Done, QA 2) ends it · a phone scan is credited to the desktop's
+//               it, a flag too, and a Team stamp (a message) · Complete Order ends it · a phone scan is credited to the desktop's
 //               person · a cancelled order never stays · a stamp that failed to send does not end it
 //   SORTER    · no name: nothing, and no name is asked for · an open order window is the sorter's current order (once, however
 //               often it is drawn); Complete Order ends it and a repaint does not bring it back; closing it ends it; a laser
@@ -209,9 +209,10 @@ async function main() {
       await page.waitForFunction(() => window.StationActivity.who(), null, { timeout: 10000 });
       await wait(300);
 
-      await check('weld: a typed scan shows the order at once, a Left and a Right piece for each stud pair (not the necklace), the buyer, then "Welded"', async () => {
+      // (Paul, 9 Nov 2026: the scan shows the order in hand; the Complete Order button ends it: station-work.js)
+      await check('weld: a typed scan shows the order at once, a Left and a Right piece for each stud pair (not the necklace), the buyer; Complete Order ends it', async () => {
         await open(O.MIXED);
-        await until(() => works(O.MIXED).some(l => l.order.note === 'Welded'), 'the welded note');
+        await until(() => works(O.MIXED).length, 'the scan'); await wait(900);
         const first = works(O.MIXED)[0], last = works(O.MIXED).pop();
         for (const l of works(O.MIXED)) { assert.equal(l.person, WHO); assert.equal(l.station, 'welding'); assert.equal(l.device, 'weld-1'); assert(!l.sandbox); assert.equal(l._q, ''); }
         assert.equal(first.order.note, '', 'the scan is shown before the outcome is known');
@@ -225,6 +226,9 @@ async function main() {
         assert.equal(first.order.scannedAt, last.order.scannedAt, 'one scan time, however often it is told');
         assert(Math.abs(last.order.scannedAt - Date.now()) < 30000, 'the scan time is now');
         assert.deepEqual(workingNow(here()).map(([k, o]) => [k, o.rid]), [['welding__weld-1__' + WHO, O.MIXED]]);
+        await page.evaluate(() => document.getElementById('completeOrderBtn').click());
+        await until(() => here().some(l => l.event === 'idle' && l.ended && l.ended.rid === O.MIXED), 'Complete Order ends it');
+        assert.deepEqual(workingNow(here()), []);
       });
       await check('weld: an order with no stud earrings never stays on the board', async () => {
         await open(O.NOSTUD);
@@ -237,7 +241,7 @@ async function main() {
         await open(O.STUD);
         await until(() => works(O.STUD).length, 'the typed stud order');
         await open(O.PHONE, 'phone', 'Brites_Orders/weld-scan-1');
-        await until(() => works(O.PHONE).some(l => l.order.note === 'Welded'), 'the phone-scanned order');
+        await until(() => works(O.PHONE).length, 'the phone-scanned order');
         assert.equal(works(O.PHONE)[0].person, WHO, 'the desktop\'s signed-in person');
         const now = workingNow(here());
         assert.deepEqual(now.map(([k, o]) => [k, o.rid]), [['welding__weld-1__' + WHO, O.PHONE]], JSON.stringify(now));
@@ -283,7 +287,7 @@ async function main() {
       await page.waitForFunction(() => (window.__fbSnaps['Brites_Orders/assembly-scan-1'] || []).length > 0);
       await wait(300);
 
-      await check('assembly: a scan shows the order at once with every line; a message, a flag and a picture keep it; the first stamp ends it', async () => {
+      await check('assembly: a scan shows the order at once with every line; a message, a flag, a picture and a Team stamp keep it; Complete Order ends it', async () => {
         await open(O.TWO);
         await until(() => works(O.TWO).length, 'the scan');
         const w1 = works(O.TWO)[0];
@@ -303,19 +307,22 @@ async function main() {
         await wait(400);
         assert.equal(idled(O.TWO).length, 0, 'a message, a flag and a picture do not end it');
         assert.deepEqual(workingNow(here()).map(([, o]) => o.rid), [O.TWO]);
-        await send('QA1');
-        await until(() => idled(O.TWO).length, 'the stamp ends it');
+        await send('QA1'); await wait(400);
+        assert.equal(idled(O.TWO).length, 0, 'a Team stamp is a message: it does not end it');
+        await page.evaluate(() => document.getElementById('completeOrderBtn').click());
+        await until(() => idled(O.TWO).length, 'Complete Order ends it');
         assert.deepEqual(workingNow(here()), []);
         assert.equal(await page.evaluate(() => StationActivity.current().length), 0);
       });
-      await check('assembly: a phone scan is credited to the desktop\'s person; "QA 2" (a second person\'s stamp) ends it too', async () => {
+      await check('assembly: a phone scan is credited to the desktop\'s person; Complete Order ends it', async () => {
         await open(O.ONE, 'phone', 'Brites_Orders/assembly-scan-1');
         await until(() => works(O.ONE).length, 'the phone scan');
         assert.equal(works(O.ONE)[0].person, WHO);
         assert.deepEqual(works(O.ONE)[0].order.pieces.map(p => [p.label, p.sku]), [['Solo Charm', 'SOLO-9'], ['Solo Charm', 'SOLO-9'], ['Solo Charm', 'SOLO-9']]);
         assert.equal(works(O.ONE)[0].order.pieceCount, 3); assert.equal(works(O.ONE)[0].order.note, 'phone scan');
-        await send('QA 2');
-        await until(() => idled(O.ONE).length, 'the QA 2 stamp ends it');
+        await send('QA 2'); await wait(300);
+        await page.evaluate(() => document.getElementById('completeOrderBtn').click());
+        await until(() => idled(O.ONE).length, 'Complete Order ends it');
         assert.deepEqual(workingNow(here()), []);
       });
       await check('assembly: a stamp that failed to send does not end it; the next order replaces it', async () => {

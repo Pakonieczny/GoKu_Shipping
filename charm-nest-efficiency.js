@@ -163,7 +163,7 @@
       if (!x.secPerScan && x.activeMin >= 1 && x.scans) x.secPerScan = x.activeMin * 60 / x.scans;
       const devices = (Array.isArray(p.devices) ? p.devices : []).filter(d => d && deskKey(String(d.station || ""), d.device)).map(d => ({ station: String(d.station), device: deskKey(String(d.station), d.device), minutes: N(d.minutes), parts: N(d.parts), scans: N(d.scans), orders: N(d.orders) }));   // (the desks this person was signed in at: "assembly-2" ...)
       const nowDevices = [...new Set((Array.isArray(p.nowDevices) ? p.nowDevices : []).map(String).filter(k => DESK_RE.test(k)))];
-      return { name: String(p.name), on: p.status === "on", inDay: p.inDay ? String(p.inDay) : "", firstIn: T(p.firstIn), lastOut: T(p.lastOut), onSince: T(p.onSince), nowAt: foldKeys(p.nowAt), nowDevices, devices, source: String(p.source || ""), stations, t: x, perHour: hours24(p.perHour), orders, noThroughput: weldOnly(p, stations) };
+      return { name: String(p.name), on: p.status === "on", inDay: p.inDay ? String(p.inDay) : "", firstIn: T(p.firstIn), lastOut: T(p.lastOut), onSince: T(p.onSince), nowAt: foldKeys(p.nowAt), nowDevices, devices, source: String(p.source || ""), stations, t: x, perHour: hours24(p.perHour), orders, noThroughput: weldOnly(p, stations), work: Array.isArray(p.work) ? p.work.filter(w => w && w.station) : [] };
     });
     const b = r.business || {}, bt = b.totals || {};
     const here = new Set(people.map(p => p.name.toLowerCase()));
@@ -192,7 +192,7 @@
     return {
       day: String(r.day || ""), days: N(r.days) || 1, now: N(r.now), cursor: r.cursor == null ? "" : String(r.cursor), delta: !!r.delta, people, everyone: people.concat(absent),   // (everyone: the people with something, then the roster's others "not signed in"; People and its roster list this, every count and total reads `people`)
       deskPending: (Array.isArray(r.deskPending) ? r.deskPending : []).map(String).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).slice(0, 31),   // (days in view whose rollups still lack their desk numbers: asked for once each, see deskFix)
-      biz: { unattributed: uo && (uo.parts > 0 || uo.scans > 0 || uo.orders > 0 || uo.matched > 0) ? uo : null, parts, scans: bt.scans == null ? sumP("scans") : N(bt.scans), orders: bt.orders == null ? sumP("orders") : N(bt.orders), people: bt.people == null ? people.length : N(bt.people), on: people.filter(p => p.on).length, rate: activeMin >= 1 ? parts / (activeMin / 60) : 0, hours: hoursAll, stations: stRows,
+      biz: { work: Array.isArray(b.work) ? b.work.filter(w => w && w.station) : [], unattributed: uo && (uo.parts > 0 || uo.scans > 0 || uo.orders > 0 || uo.matched > 0) ? uo : null, parts, scans: bt.scans == null ? sumP("scans") : N(bt.scans), orders: bt.orders == null ? sumP("orders") : N(bt.orders), people: bt.people == null ? people.length : N(bt.people), on: people.filter(p => p.on).length, rate: activeMin >= 1 ? parts / (activeMin / 60) : 0, hours: hoursAll, stations: stRows,
         trend: (Array.isArray(b.trend) ? b.trend : []).filter(d => d && d.day).map(d => ({ day: String(d.day), parts: N(d.parts), orders: N(d.orders), people: N(d.people), source: String(d.source || "") })) },
       feed, sources: r.sources || {}, notes: (Array.isArray(r.notes) ? r.notes : []).map(String).filter(Boolean), partial: !!r.partial, errors: Array.isArray(r.errors) ? r.errors : []
     };
@@ -666,6 +666,7 @@
     <div><div class="efLabel">Now working on <b class="efWkC"></b></div><div class="efCard"><div class="efWkList"></div></div></div>
   </section>
   <section aria-label="Stations"><div class="efLabel">Stations</div><div class="efCard efStations"></div></section>
+  <section aria-label="Completed with Complete Order"><div class="efLabel">Completed with Complete Order</div><div class="efCard efWorkDone"></div></section>
   <section aria-label="People"><div class="efLabel">People <b class="efPN"></b><form class="efFind" autocomplete="off"><input inputmode="numeric" name="eforder" aria-label="Trace an order: who worked it, where and for how long" placeholder="Trace an order" autocomplete="off" spellcheck="false"><button type="submit" class="efIcon" aria-label="Trace this order">›</button></form></div>
   <div class="efCard efOView hidden" aria-label="Order trace"><div class="efOVH"><b class="efOVT"></b><button type="button" class="efOVopen" data-order="">Open order</button><button type="button" class="efIcon efOVx" data-find-close aria-label="Close the trace">✕</button></div><div class="efOxb"></div></div>
   <div class="efCard"><div class="efPH" aria-hidden="true"><span>Person</span><span>Stations</span><span>Pieces</span><span>Scanned</span><span>Orders</span><span>Per hr</span><span>Per scan</span><span class="efPHs">By hour</span><span>Active</span></div><div class="efPeople"></div></div></section>
@@ -682,7 +683,7 @@
       key: host.querySelector(".efKey"), keyIn: host.querySelector(".efKey input"), keyErr: host.querySelector(".efKeyErr"), keyBtn: host.querySelector(".efKey .btn"), wait: host.querySelector(".efWait"), waitT: host.querySelector(".efWaitT"), body: host.querySelector(".efBody"), note: host.querySelector(".efNote"),
       kpi: Object.fromEntries([...host.querySelectorAll(".efKpi")].map(k => [k.dataset.k, k])), gHours: host.querySelector('[data-g="hours"]'), gTrend: host.querySelector('[data-g="trend"]'), gp: host.querySelector(".efGP"),
       find: host.querySelector(".efFind"), findIn: host.querySelector(".efFind input"), ov: host.querySelector(".efOView"), ovT: host.querySelector(".efOVT"), ovOpen: host.querySelector(".efOVopen"), ovBox: host.querySelector(".efOView .efOxb"),
-      stations: host.querySelector(".efStations"), people: host.querySelector(".efPeople"), pn: host.querySelector(".efPN"), feedBtn: host.querySelector(".efFeedBtn"), feedWrap: host.querySelector(".efFeedWrap"), feed: host.querySelector(".efFeed"), fc: host.querySelector(".efFC"),
+      stations: host.querySelector(".efStations"), workDone: host.querySelector(".efWorkDone"), people: host.querySelector(".efPeople"), pn: host.querySelector(".efPN"), feedBtn: host.querySelector(".efFeedBtn"), feedWrap: host.querySelector(".efFeedWrap"), feed: host.querySelector(".efFeed"), fc: host.querySelector(".efFC"),
       tabsBar: host.querySelector(".efTabsBar"), ink: host.querySelector(".efInk"), hint: host.querySelector(".efHint"),
       siGrid: host.querySelector(".efSiGrid"), siC: host.querySelector(".efSiC"), wkList: host.querySelector(".efWkList"), wkC: host.querySelector(".efWkC"),
       pages: { overview: host.querySelector("#efPgOverview"), stations: host.querySelector("#efPgStations"), people: host.querySelector("#efPgPeople"), person: host.querySelector("#efPgPerson"), custom: host.querySelector("#efPgCustom") },
@@ -1046,7 +1047,15 @@
     host.toggleAttribute("data-nofig", M.sources.events === false && !M.sources.seals && !M.people.some(p => p.t.parts || p.t.scans || p.t.orders));
     host.toggleAttribute("data-noparts", M.sources.events === false && !M.nofig);   // history from seals: orders and scans only, no columns of dashes for parts
     host.setAttribute("data-range", M.days > 1 ? "n" : "1"); paintDay(); paintLive();
-    renderKpis(M, first); renderGraph(M); renderStations(M, first); renderPeople(M, first); renderFeed(M); renderNote(M);
+    renderKpis(M, first); renderGraph(M); renderStations(M, first); renderWorkDone(M); renderPeople(M, first); renderFeed(M); renderNote(M);
+  }
+  /** Start → Complete Order at Welding, Assembly and Shipping (Paul, 9 Nov 2026): per person and station, and an "All" line per station (charm-nest-efficiency-work.js) */
+  function renderWorkDone(M) {
+    try {
+      if (!E.workDone || !root.EfficiencyWork) return;
+      const rows = []; for (const p of M.people) for (const w of p.work || []) rows.push(Object.assign({ name: p.name }, w));
+      root.EfficiencyWork.render(E.workDone, rows, { people: true, all: M.biz.work || [], empty: M.days > 1 ? "No order was completed with Complete Order in these days." : "No order has been completed with Complete Order on this day yet." });
+    } catch (e) { try { console.warn("[efficiency] Complete Order table:", e && e.message); } catch (_) {} }
   }
   function renderNote(M) {
     let lines = M.notes.slice();

@@ -8370,8 +8370,8 @@ let effWanted = 0, effWantedHash = "";
    page loads them now, once the server has said it is his (or his tab is asked for). They mount themselves on #efficiencyView
    when they arrive (charm-nest-efficiency.js), the tab already shown included; another person signing in later is put away by
    the console's own watch, as before. The tokens are the ones the tags had, in the tags' order. */
-const EFF_FILES = ["charm-nest-efficiency-charts.js?v=20261006-efc4-pb1", "charm-nest-efficiency-stations.js?v=20261006-es11-fx1-sb1-dk1-ps1-rlp2-cost18", "charm-nest-efficiency.js?v=20261006-ef17-fx1-sb1-dk1-wh1-ma1-cost18-dl1",
-  "charm-nest-efficiency-orders.js?v=20261006-eo6-in2-rlp2-cost18", "charm-nest-efficiency-laser.js?v=20261006-int2-cost18", "charm-nest-efficiency-person.js?v=20261006-ep14-ad4-cost18-dl2",
+const EFF_FILES = ["charm-nest-efficiency-charts.js?v=20261006-efc4-pb1", "charm-nest-efficiency-work.js?v=20261109-sco1", "charm-nest-efficiency-stations.js?v=20261006-es11-fx1-sb1-dk1-ps1-rlp2-cost18", "charm-nest-efficiency.js?v=20261006-ef17-fx1-sb1-dk1-wh1-ma1-cost18-dl1-sco1",
+  "charm-nest-efficiency-orders.js?v=20261006-eo6-in2-rlp2-cost18", "charm-nest-efficiency-laser.js?v=20261006-int2-cost18", "charm-nest-efficiency-person.js?v=20261006-ep14-ad4-cost18-dl2-sco1",
   "charm-nest-efficiency-custom.js?v=20261028-dl1-ic1"];   // (Design & Engrave, Paul 28 Oct 2026: the Custom pieces tab, op custom)
 let effLoading = null;
 const loadEfficiency = () => effLoading ||= cnLoadScript(...EFF_FILES).catch(e => { effLoading = null; console.warn("Employee efficiency", e); toast("Employee efficiency did not load: " + e.message, "bad", 6000); return false; });
@@ -8729,7 +8729,7 @@ boot();
      personal login: the person is the name it keeps (cn.employee: the account chip's sign-in, or typed at the first approval, label
      or decision), the same name every seal it stamps, and the framed Design Station, carry. -->
 <script src="station-session.js?v=20261006-st3-acct1"></script>
-<script src="station-activity.js?v=20261009-ps1-as1-adv3-ew1-stx1-ag1"></script>
+<script src="station-activity.js?v=20261009-ps1-as1-adv3-ew1-stx1-ag1-sco1"></script>
 <!-- DESIGN LOG (Design & Engrave, Paul 28 Oct 2026: "all of this must be tracked by employee"): CNDesignLog.event(kind, data), the one call every design step makes; it hands each burst to station-activity.js (CNAct), the order timeline and, for custom pieces, Design_Log (charm-nest-design-log.js) -->
 <script src="charm-nest-design-log.js?v=20261028-dl1"></script>
 <!-- how long each cut sheet took the Laser person (charm-nest-laser-time.js; R7): the page's own count, sent with the completion; the server decides and stores it -->

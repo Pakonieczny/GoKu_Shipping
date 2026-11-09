@@ -4,8 +4,8 @@
 //       more than 100 events is refused, a flood from one sender is slowed (429), oversized details are cut
 //   2 · weld-1.html with the real station module:
 //       · a cancel check slower than 2.5 s: the scan goes on, and the late "cancelled" still raises the alert
-//       · Complete Order on an order never scanned here: the guard asks the server, raises the alert, Stop sends nothing
-//       · an order cancelled after its scan said "clear": Complete Order a minute later asks again and stops
+//       · Complete Order on an order never scanned here: the guard asks the server, raises the alert, Stop welds nothing
+//       · an order cancelled after its scan said "clear": Complete Order a minute later asks again and stops (nothing welded)
 //       · a 200 answer that is not an answer does not count as "clear" and does not wipe a known cancel
 //   NODE_PATH=$(npm root -g) PW_DIR=$(npm root -g)/playwright/node_modules CHROMIUM=… node tests/stations/adv-stations.cjs
 'use strict';
@@ -119,7 +119,6 @@ async function station() {
     const enter = async id => { await page.fill('#etsyOrderNumber', id); await page.focus('#etsyOrderNumber'); await page.keyboard.press('Enter'); };
     const alertFor = id => page.evaluate(id => StationTimeline.alertOpen() && document.querySelector('.sttl-alert').innerText.includes('Order ' + id), id);
     const understood = async () => { await wait(500); await page.click('.sttl-ok'); await page.waitForFunction(() => !document.querySelector('.sttl-alert'), null, { timeout: 3000 }); };
-    const complete = () => page.evaluate(() => { document.getElementById('trackingNumberInput').value = '9400100000000000000000'; document.getElementById('carrierSelect').value = 'usps'; document.getElementById('completeOrderBtn').click(); });
 
     // a slow check (3.5 s): the scan goes on unchecked, and the late "cancelled" still raises the alert
     await enter(LATE);
@@ -131,21 +130,25 @@ async function station() {
     await until(() => ev('cancelAlert', LATE), 'Understood recorded');
     assert.strictEqual(ev('cancelAlert', LATE).by, 'Tess Welder'); assert.strictEqual(ev('cancelAlert', LATE).data.how, 'button');
 
-    // Complete Order on an order never scanned here (typed, no Enter): the guard asks, the alert shows, Stop sends nothing
+    // (Paul, 9 Nov 2026: a scan only opens the order; the Complete Order button welds it, after the guard: station-work.js)
+    const complete = () => page.evaluate(() => document.getElementById('completeOrderBtn').click());
+    // Complete Order on an order never scanned here (typed, no Enter): the guard asks the server, the alert shows, Stop welds nothing
     await page.fill('#etsyOrderNumber', NOSCAN);
     await complete(); await complete();                      // a double click
     await until(() => alertFor(NOSCAN), 'the alert from the guard');
     await page.waitForSelector('.sttl-alert .sttl-guard', { timeout: 3000 });
     assert.strictEqual(await page.evaluate(() => document.querySelectorAll('.sttl-bar, .sttl-guard').length), 1, 'one question, inside the alert');
     await page.click('.sttl-guard .sttl-btn.stop'); await wait(300);
-    assert.strictEqual(st.completes, 0, 'a cancelled order is not completed on Etsy');
+    assert(!ev('welded', NOSCAN), 'a cancelled order is not welded');
+    assert.strictEqual(st.completes, 0, 'nothing is completed on Etsy');
     await understood();
 
-    // cancelled after its scan said clear: a minute later Complete Order asks again
+    // cancelled after its scan said clear: a minute and a half later Complete Order asks again and stops; nothing is welded
     st.cancelled.delete(AFTER);
     await enter(AFTER);
-    await until(() => ev('scan', AFTER) && ev('welded', AFTER), 'the clear scan');
+    await until(() => ev('scan', AFTER), 'the clear scan');
     assert.strictEqual(ev('scan', AFTER).data.check, 'clear');
+    assert(!ev('welded', AFTER), 'a scan never welds');
     st.cancelled.add(AFTER);
     await page.evaluate(() => { const real = Date.now.bind(Date); Date.now = () => real() + 90000; });
     await complete();
@@ -153,6 +156,7 @@ async function station() {
     await page.waitForSelector('.sttl-alert .sttl-guard', { timeout: 3000 });
     await page.click('.sttl-guard .sttl-btn.stop'); await wait(300);
     assert.strictEqual(st.completes, 0, 'not completed');
+    assert(!ev('welded', AFTER), 'not welded');
     await understood();
 
     // a known cancel, then a 200 answer that is no answer: still cancelled, still the alert

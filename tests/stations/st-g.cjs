@@ -1,6 +1,6 @@
 // Station tracking, part G (Paul, 28 Sep 23:51): the Assembly stations record `assembled` with the person signed in on the
-// station's own PIN login when the assembly step is completed: the Team's done stamp ("QA1", "Done", "Assembled") sent from
-// the station's chat. Runs assembly-1.html with the real order-timeline.js and station-timeline.js; Firebase, Materialize
+// station's own PIN login when the assembly step is completed: since Paul, 9 Nov 2026, the Complete Order button (station-work.js);
+// the Team's stamp ("QA1", "Done", "Assembled") sent from the station's chat is a message and stamps nothing. Runs assembly-1.html with the real order-timeline.js and station-timeline.js; Firebase, Materialize
 // and the Netlify functions are fakes, and every request that is not to 127.0.0.1 is aborted.
 //   NODE_PATH=$(npm root -g) PW_DIR=$(npm root -g)/playwright/node_modules CHROMIUM=... node tests/stations/st-g.cjs
 const http = require('http'), fs = require('fs'), path = require('path'), assert = require('assert/strict');
@@ -77,28 +77,32 @@ async function main() {
     };
     await page.fill('#etsyOrderNumber', '3812345678');
 
-    await check('an ordinary chat message is not a completion', async () => {
-      await send('please check the chain length');
+    // (Paul, 9 Nov 2026) the Team stamp is a message; the Complete Order button records assembled (station-work.js)
+    const work = async () => { await page.click('#completeOrderBtn'); await page.waitForTimeout(500); };
+    await check('an ordinary chat message and the Team stamp "QA1" are not a completion', async () => {
+      await send('please check the chain length'); await send('QA1');
+      await page.waitForTimeout(300);
       assert.equal((await events('assembled')).length, 0);
     });
-    await check('the Team stamp "QA1" records assembled by the signed-in person, at Assembly, with a stable id', async () => {
-      await send('QA1');
+    await check('Complete Order records assembled by the signed-in person, at Assembly, with a stable id', async () => {
+      await work();
       const [e] = await events('assembled');
       assert(e, 'no assembled event');
       assert.equal(e.by, 'Marco R.'); assert.equal(e.station, 'assembly'); assert.equal(e.device, 'assembly-1');
       assert.equal(e.orderId, '3812345678');
       assert.match(e.id, /^assembly-1-3812345678-assembled-\d+$/);
-      assert.deepEqual(e.data, { message: 'QA1' });
+      assert.deepEqual(e.data, { via: 'completeOrder' });
     });
-    await check('the same stamp again within the minute keeps the same id (one seal)', async () => {
-      await send('QA1 done');
+    await check('the same order completed again within the minute keeps the same id (one seal)', async () => {
+      await page.waitForTimeout(3200); await work();                      // (a press a moment after the last is the same double-click)
       const all = await events('assembled');
       assert.equal(all.length, 2); assert.equal(all[1].id, all[0].id);
     });
-    await check('after Sign Out a stamp says "not signed in": by "" and signedIn false, never the last name', async () => {
+    await check('after Sign Out Complete Order says "not signed in": by "" and signedIn false, never the last name', async () => {
       await page.evaluate(() => document.getElementById('signOutBtn').click());
       await page.fill('#etsyOrderNumber', '3812345679');
       await send('Done');
+      await page.evaluate(() => document.getElementById('completeOrderBtn').click()); await page.waitForTimeout(500);
       const e = (await events('assembled')).pop();
       assert.equal(e.orderId, '3812345679'); assert.equal(e.by, ''); assert.equal(e.data.signedIn, false);
     });

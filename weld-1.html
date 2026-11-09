@@ -565,8 +565,7 @@
     #ccBatchName,
     #ccCreateBatchBtn,
     #pasteTrackingBtn,
-    #trackingNumberInput,
-    #completeOrderBtn {
+    #trackingNumberInput {
       display: none !important;
     }
 
@@ -1099,9 +1098,9 @@
        the session carries the name only. At midnight (New York) the PIN box comes back; the order, the fields and the chat
        stay on screen. -->
   <script src="station-session.js?v=20261006-st3-acct1"></script>
-  <script src="station-activity.js?v=20261009-ps1-as1-adv3-ew1-stx1-ag1"></script>
+  <script src="station-activity.js?v=20261009-ps1-as1-adv3-ew1-stx1-ag1-sco1"></script>
   <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-ew1-szf1-szr1-bf1"></script>
-  <script src="station-live-order.js?v=20261009-ps1-as1-adv3-ew1-stx1-ag1"></script>
+  <script src="station-live-order.js?v=20261009-ps1-as1-adv3-ew1-stx1-ag1-sco1"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
   <script src="station-scan-queue.js?v=20261007-fr1"></script>
   <script>
@@ -1192,6 +1191,7 @@
   <!-- Order timeline: every scan here is recorded (who, when) and a cancelled order raises the full-screen alert -->
   <script src="order-timeline.js?v=20261007-fc4-perf1-ob1"></script>
   <script src="station-timeline.js?v=20261006-int1-asm1"></script>
+  <script src="station-work.js?v=20261109-sco1"></script><!-- Complete Order (Paul, 9 Nov 2026): only the button completes an order; a scan only opens it -->
   <script>
     /* Who welds: the person signed in with this station's 6-digit PIN login (Brites_Orders/"Employee Numbers"), by the
        name the login stored. Never the typed "Employee Name" field (a guess) and never an earlier person: the timeline
@@ -1331,10 +1331,10 @@
       try {
         const id = weldId(orderNumber), p = weldPieces(orderData);
         if (!id) return weldAct("error", { detail: "typed text is not an order number" });   // no digits: nothing to weld, and the timeline has no order to seal
-        /* a scan from the phone scanner app is recorded by the scan queue as ONE `matched` event (credited by StationSession.who(): the
-           Matching person, or nobody); this page does not also log its own plain `scan` for it, and never a `matched` itself. A number
-           typed or pasted at the desk is still a plain `scan`. */
-        if (how !== "scan") weldAct("scan", { orderId: id, parts: p.parts, detail: String(how || "typed") + (weldCounted.has(id) ? " · again" : "") });
+        /* A scan only OPENS the order (Paul, 9 Nov 2026): one plain `scan`, the phone's too ("phone scan"); never `matched`, never a completion.
+           The order is welded only by the Complete Order button (station-work.js, weldComplete below). */
+        weldAct("scan", { orderId: id, parts: p.parts, detail: (how === "scan" ? "phone scan" : String(how || "typed")) + (weldCounted.has(id) ? " · again" : "") });
+        if (!weldCounted.has(id)) { weldCounted.set(id, Date.now()); if (weldCounted.size > 500) weldCounted.delete(weldCounted.keys().next().value); weldSaveCounted(); }
         weldLive(id, orderData, "");
       } catch (_) {}
     }
@@ -1344,20 +1344,30 @@
         if (!id) return;                                // (reported once, at the scan)
         if (res && res.cancelled) { weldLiveEnd(id); return weldAct("reject", { orderId: id, detail: "cancelled order" }); }
         const why = weldRefusal(orderData);               // the same test the seal uses: no seal, one `reject`
-        if (why) { weldLiveEnd(id); return weldAct("reject", { orderId: id, detail: why }); }
-        weldLive(id, orderData, "Welded");
+        if (why) { weldLiveEnd(id); weldTell(why); return weldAct("reject", { orderId: id, detail: why }); }   // (the one plain line, said when the order is opened: the scan no longer welds)
         if (look === "failed") weldAct("error", { orderId: id, detail: "Etsy order lookup failed" });   // (a category only: Etsy's own words are never sent)
-        if (weldCounted.has(id)) return;                // the same order scanned again: already counted
-        weldCounted.set(id, Date.now());
-        if (weldCounted.size > 500) weldCounted.delete(weldCounted.keys().next().value);
-        weldSaveCounted();
-        weldAct("complete", { orderId: id, parts: p.parts, orders: 1,
-          detail: look === "failed" ? "not checked: Etsy lookup failed" : p.lines ? `${p.studs} of ${p.lines} pieces are studs` : "no piece detail" });
+        /* no `complete` here any more (Paul, 9 Nov 2026): a scan only opens the order; the Complete Order button completes it (weldComplete) */
       } catch (_) {}
+    }
+    /* Complete Order (station-work.js; Paul, 9 Nov 2026: "as long as the user doesn't press complete that order never gets completed").
+       The receipts this page read, so Complete Order can stamp the stud lines without asking Etsy again (the newest 30). */
+    const weldReceipts = new Map();
+    function weldKeep(id, d) { try { id = weldId(id); if (!id || !d || typeof d !== "object") return; weldReceipts.delete(id); weldReceipts.set(id, d); if (weldReceipts.size > 30) weldReceipts.delete(weldReceipts.keys().next().value); } catch (_) {} }
+    /* Complete Order at Welding: the `welded` seal by weldDone's own rule (one per stud line on a mixed order); an order Etsy does not know, or one with no
+       stud earrings, is not welded (the button says why). Never posts anything to Etsy. */
+    function weldComplete(orderId) {
+      const id = weldId(orderId), d = weldReceipts.get(id) || null;
+      const why = weldRefusal(d);
+      if (why) return { ok: false, message: why === "no stud earrings on this order" ? "No stud earrings on this order, so it is not marked Welded." : "Etsy does not know this order, so it is not marked Welded." };   // (canStart already refuses both)
+      weldDone(id, d);
+      const p = weldPieces(d);
+      return { ok: true, parts: p.parts, detail: weldLookup(d) === "failed" ? "not checked: Etsy lookup failed" : p.lines ? `${p.studs} of ${p.lines} pieces are studs` : "" };
     }
     try {
       StationTimeline.init({ station: "welding", device: "weld-1", getEmployee: weldSignedIn, exact: true });
     } catch (_) {}
+    /* Complete Order (station-work.js): the page's Complete Order button stamps `welded` on the order on screen; a scan only opens it */
+    try { window.StationWork && StationWork.init({ station: "welding", device: "weld-1", label: "Welding", complete: id => weldComplete(id) }); } catch (_) {}
   </script>
 
   <script>
@@ -3096,17 +3106,18 @@ function metalToBadge(label){
         if (!orderNumber) return;
 
         const orderData = await pullEtsyOrderDetails(orderNumber);
-        try { weldActivityScan(orderNumber, orderData, stHow); } catch (_) {}     // employee efficiency: the scan, once the order is read
+        weldKeep(orderNumber, orderData);
+        try { weldActivityScan(orderNumber, orderData, stHow); } catch (_) {}     // employee efficiency: the scan (the order opened), once the order is read
         /* Order timeline: record the scan (who, where, how) and check for a cancel; a cancelled order raises the alert.
-           Not awaited, so the order loads as before. The weld station has no "weld done" button, so a scan here is the weld
-           (weldDone: who, and the stud lines). */
+           Not awaited, so the order loads as before. A scan only OPENS the order (Paul, 9 Nov 2026): it is welded by the Complete Order button. */
         try {
           if (window.StationTimeline) {
             StationTimeline.scanned(orderNumber, { how: stHow, extra: { etsyStatus: (orderData && orderData.status) || "" } })
-              .then(r => { if (r && !r.cancelled) weldDone(orderNumber, orderData); weldActivityOutcome(orderNumber, orderData, r); })
+              .then(r => { weldActivityOutcome(orderNumber, orderData, r); })
               .catch(() => {});
           } else weldActivityOutcome(orderNumber, orderData, null);
         } catch (_) {}
+        try { window.StationWork && StationWork.viewed(orderNumber, { parts: weldPieces(orderData).parts }); } catch (_) {}   // (when it was opened: the time to Complete Order)
         await loadShipToAddress(orderNumber);
         await loadGiftMessage(orderNumber);
 
@@ -3359,71 +3370,21 @@ function metalToBadge(label){
     }
 
     /* =========================================================
-     *  Complete Order – POST tracking to Etsy (via Netlify)
+     *  Complete Order (Paul, 9 Nov 2026): the Welding station never posts tracking to Etsy and never completes anything on Etsy.
+     *  The page's Complete Order button (the same one as Shipping's, now shown here) completes the order on screen: the `welded` seal
+     *  by weldDone's rule and one `complete` for the person signed in (station-work.js). A scan never completes anything.
      * =======================================================*/
-    const completeBtn = document.getElementById("completeOrderBtn");
-    const trackingInp = document.getElementById("trackingNumberInput");
-    const carrierSel  = document.getElementById("carrierSelect");
-
-    if (completeBtn) {
-      /* one Complete at a time: the button is disabled at once and a press while the post is under way is ignored, so
-         a double-click never completes the order on Etsy twice; it comes back when Etsy has answered */
-      let completeBusy = false;
-      completeBtn.addEventListener("click", async () => {
-        if (completeBusy) return;
-        completeBusy = true; completeBtn.disabled = true;
-        try { await completeOrder(); } finally { completeBusy = false; completeBtn.disabled = false; }
+    (function () {
+      const completeBtn = document.getElementById("completeOrderBtn");
+      if (!completeBtn) return;
+      let busy = false;                            // one press at a time: a double-click completes once
+      completeBtn.addEventListener("click", async ev => {
+        ev.preventDefault(); if (busy) return;
+        busy = true; completeBtn.disabled = true;
+        try { if (window.StationWork) await StationWork.complete(document.getElementById("etsyOrderNumber").value.trim()); } catch (_) {}
+        finally { busy = false; completeBtn.disabled = false; }
       });
-      async function completeOrder() {
-        const receiptId = document.getElementById("etsyOrderNumber").value.trim();
-        const tracking  = (trackingInp.value || "").trim();
-        const carrier   = carrierSel.value;          // "chitchats" | "usps"
-
-        if (!receiptId) { M.toast({ html: "Enter order #"   }); return; }
-        if (!tracking)  { M.toast({ html: "Enter tracking #" }); return; }
-        if (!carrier)   { M.toast({ html: "Choose carrier"  }); return; }
-
-        /* a cancelled order asks "Do it anyway?" first (order timeline) */
-        try {
-          if (window.StationTimeline && !(await StationTimeline.guard(receiptId, { action: "Complete Order", anchor: completeBtn }))) return;
-        } catch (_) {}
-
-        /* helper → perform one POST via resilient apiFetch */
-        const postTracking = () =>
-          apiFetch("/trackOrderProxy", {
-            method : "POST",
-            headers: { "Content-Type": "application/json" },
-            body   : JSON.stringify({ receiptId, tracking, carrier })
-          });
-
-        try {
-          let resp         = await postTracking();
-          let payload      = await resp.text();              // Etsy proxy returns raw text
-          let errMsg       = "";
-
-          /* ── forbidden (403) usually means missing shipping permission scope ── */
-          if (resp.status === 403) {
-            errMsg = "Forbidden – Etsy says this action isn’t allowed.";
-          } else if (!resp.ok) {
-            /* try to JSON-parse any error payload, else show raw text */
-          try   { errMsg = JSON.parse(payload).error || "Server error"; }
-          catch (e) { errMsg = payload || "Server error"; }
-          }
-
-          if (errMsg) throw new Error(errMsg);
-
-          /* 🎉 success */
-          M.toast({ html: "Etsy order marked complete 🎉" });
-          try { window.StationTimeline && StationTimeline.did("etsyCompleted", receiptId, "Completed on Etsy at Welding", { carrier, tracking }); } catch (_) {}
-          trackingInp.value        = "";
-          carrierSel.selectedIndex = 0;
-
-        } catch (err) {
-          console.error(err);
-          M.toast({ html: "Not completed on Etsy yet (" + err.message + "). Nothing was lost — press Complete Order to try again." });
-        }
-      }
-    }
+    })();
 
     async function updateImageGrid(data){
       var items = [];
@@ -4003,6 +3964,7 @@ function metalToBadge(label){
       if (!scanQueue && window.StationScanQueue){
         scanQueue = StationScanQueue.create({
           device: "weld-1",
+          matched: false,                         // (Paul, 9 Nov 2026: a phone scan only opens the order, recorded by the page as a plain scan; never a `matched` credit)
           signedIn: () => window.isEmployeeLoggedIn === true,
           run: processScannedOrder,
           /* the red CANCELLED alert is up: the waiting scans load once Understood is clicked */

@@ -292,7 +292,8 @@ async function run(browser, origin, n, mode) {
     assert.strictEqual(by('scan')[1].sku, 'SKU-ONE');
     assert.strictEqual(by('scan')[0].sku || '', '', 'two skus: none is claimed');
     assert.deepStrictEqual(by('print').map(e => e.detail), ['Chit Chats label', 'reprint']);
-    assert(/^Etsy order completed/.test(by('complete')[0].detail));
+    assert(/^Complete Order · Etsy order completed/.test(by('complete')[0].detail), by('complete')[0].detail);   // (Paul, 9 Nov 2026: the Complete Order press, station-work.js)
+    assert(by('complete').every(e => e.workMs >= 0), 'with the time since the order was opened here');
     assert(/Complete on Etsy: failed \(HTTP 500\)/.test(by('error')[1].detail), 'a category and the status only: ' + by('error')[1].detail);
     assert(!JSON.stringify(activity).includes('Main St'), 'a raw error message (it may carry an address) is never sent');
     assert.strictEqual(by('complete').reduce((s, e) => s + (e.orders || 0), 0), 2, 'two orders completed');

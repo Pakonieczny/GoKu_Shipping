@@ -30,7 +30,9 @@ const { CORS, parseBody, num } = require("./_charmNestAuth");
 const admin = require("./firebaseAdmin");
 const { displayStation } = require("./_activityKinds");      // ONE Sorting station: the stored keys "sorter" and "qr" are SHOWN as "sorting" (history keeps its keys; only a read folds them)
 const db = admin.firestore();
-const Rev = require("./_employeeRev");                              // the employee data revision (FC5): a poll that finds it unmoved keeps what it read (see _employeeRev.js)
+const Rev = require("./_employeeRev");
+/* Start → Complete Order at Welding, Assembly and Shipping (Paul, 9 Nov 2026): the rollups' `work` map read per person and station (_stationWork.js); no read is added */
+let WORK = null; try { WORK = require("./_stationWork"); } catch (_) {}                              // the employee data revision (FC5): a poll that finds it unmoved keeps what it read (see _employeeRev.js)
 /* The Welding station is not counted in throughput (Paul, 6 Oct 2026): KIND.readStationCounters / throughput are the one rule (see _activityKinds.js). Without the file nothing is left out. */
 let KIND = null; try { KIND = require("./_activityKinds"); } catch (_) {}
 if (!KIND) KIND = { throughput: () => true, readStationCounters: (st, v) => v, UNATTRIBUTED: "Unattributed", isMatched: () => false, echoScans: () => new Set() };
@@ -401,6 +403,7 @@ async function assemble(ctx, winFrom, toDay) {
       eventDays.add(x.day);
       if (DESK.pending(x)) (info.deskDays || (info.deskDays = new Set())).add(x.day);                 // (a day whose rollup still has events no desk accounts for: the overview tells the console, once, see deskPending)
       const pd = P.pd(person, x.day); pd.src = "events";
+      if (WORK && x.work && typeof x.work === "object") pd.work = WORK.merge(pd.work, x.work);   // (Start → Complete Order: the person's completions, times, looks and stops of the day)
       for (const [st0, v0] of Object.entries(x.stations && typeof x.stations === "object" ? x.stations : {})) {
         if (!okStation(st0) || !v0 || typeof v0 !== "object") continue;    // (a station called "constructor" is not a station)
         const st = displayStation(st0);                                    // (counters stored under "sorter" or "qr" add to Sorting)
@@ -553,7 +556,8 @@ function summarize(pds) {
   // the desks of the numbered stations (Assembly 1..4, Shipping 1..3): time signed in at each (sessions, any day), and what the desk's own counters say (events written since desks were told apart)
   const devices = Object.keys(dv).map(dk => ({ station: dk.split("-")[0], device: dk, minutes: r1(dv[dk].ms / 60000), parts: dv[dk].parts, scans: dv[dk].scans, orders: dv[dk].ids.size + dv[dk].short }))
     .sort((x, y) => y.minutes - x.minutes || y.parts - x.parts || (x.device < y.device ? -1 : 1));
-  return { stations, totals, perHour: hours.map(shown), hs, ids, source, hasAny: hasAny || signed > 0, weldOnly: !tpAct && ntAct, devices, dv };
+  let wacc = null; if (WORK) for (const pd of pds) if (pd.work) wacc = WORK.mergeAcc(wacc, pd.work);
+  return { stations, totals, perHour: hours.map(shown), hs, ids, source, hasAny: hasAny || signed > 0, weldOnly: !tpAct && ntAct, devices, dv, wacc, work: wacc ? WORK.rows(wacc) : [] };
 }
 
 /* ── overview ── */
@@ -593,6 +597,7 @@ async function buildOverview(ctx, day, days, withTrend, withRoster) {
   }
   const allIds = new Map(), stIds = {}, stNow = {}, perStationHours = {}, dvTot = {}, devNow = {};   // (dvTot: per desk over everybody; devNow: who is signed in at each desk now)
   let src = { events: false, seals: false, sessions: false };
+  let bizWork = null;                                                    // (Start → Complete Order over everybody: business.work)
   const seen = new Set();                                                 // the people (keys) with anything in the range: the roster's other names are listed as not signed in
   for (const P of asm.P.people.values()) {
     const pds = rangeDays.map(d => P.days.get(d)).filter(Boolean), S = summarize(pds);
@@ -609,8 +614,9 @@ async function buildOverview(ctx, day, days, withTrend, withRoster) {
     const nowDevices = [...new Set(live.map(s => s.device).filter(Boolean))];
     for (const dk of nowDevices) (devNow[dk] || (devNow[dk] = [])).push(name);
     for (const [dk, t] of Object.entries(S.dv)) { const x = dvTot[dk] || (dvTot[dk] = { parts: 0, scans: 0, short: 0, ids: new Set() }); x.parts += t.parts; x.scans += t.scans; x.short += t.short; t.ids.forEach(i => x.ids.add(i)); }
+    if (S.wacc) bizWork = WORK.mergeAcc(bizWork, S.wacc);
     people.push(Object.assign({ name, status: live.length ? "on" : "out", firstIn: inPd ? inPd.firstIn : null, lastOut: live.length || !inPd || !inPd.lastOut ? null : inPd.lastOut,
-      onSince: live.length ? Math.min(...live.map(s => s.start)) : null, inDay: inPd ? inPd.day : null, nowAt, nowDevices, devices: S.devices, source: S.source, stations: S.stations, totals: S.totals, perHour: S.perHour, orders }, S.weldOnly ? { noThroughput: true } : {}));   // (noThroughput: worked at the Welding station only: no pieces or orders to count, shown as a dash with the time on task and the matched count)
+      onSince: live.length ? Math.min(...live.map(s => s.start)) : null, inDay: inPd ? inPd.day : null, nowAt, nowDevices, devices: S.devices, source: S.source, stations: S.stations, totals: S.totals, perHour: S.perHour, orders }, S.weldOnly ? { noThroughput: true } : {}, withRoster && S.work.length ? { work: S.work } : {}));   // (noThroughput: worked at the Welding station only: no pieces or orders to count, shown as a dash with the time on task and the matched count)
   }
   people.sort((a, b) => (a.status === "on" ? 0 : 1) - (b.status === "on" ? 0 : 1) || b.totals.parts - a.totals.parts || a.name.localeCompare(b.name));
   // the business: summed over EVERYBODY, then the list is cut (the totals must not lose the people the list does not show)
@@ -672,6 +678,7 @@ async function buildOverview(ctx, day, days, withTrend, withRoster) {
   const partial = !src.events || info.errors.length > 0 || info.capped.length > 0;
   const unTotal = { parts: 0, scans: 0, orders: unExtraAll, matched: 0 }; for (const [st, t] of un) { unTotal.parts += t.parts; unTotal.scans += t.scans; unTotal.matched += t.matched; if (KIND.throughput(st) && st !== "inbox") unTotal.orders += t.ids.size; }
   const business = { totals, perHour, stations: stationList, trend };
+  if (bizWork && withRoster) { const w = WORK.rows(bizWork); if (w.length) business.work = w; }     // (per station, everybody: Complete Order presses, times, looks and stops; the console's own `roster: true` request only, so the plain answer keeps its pinned shape)
   if (withRoster && (unTotal.parts > 0 || unTotal.scans > 0 || unTotal.orders > 0 || unTotal.matched > 0)) business.unattributed = unTotal;      // (the whole line nobody is credited with: the People list shows it as a row)
   const oldest = addDays(ctx.today, -DESK.MAX_DAYS), deskPending = [...(info.deskDays || [])].filter(d => d >= from && d <= day && d >= oldest).sort().reverse();   // (days in view that still lack their desk numbers, newest first; never one the op would refuse)
   return { now: ctx.now, cursor: cursorOf(events), deskPending, people, absent: withRoster ? absent : undefined, business,
@@ -721,6 +728,7 @@ async function opPerson(ctx, body) {
   if (info.capped.length) notes.push("Some lists were cut at their size limit: " + [...new Set(info.capped)].join(", ") + ".");
   const partial = info.errors.length > 0 || info.capped.length > 0;
   const out = { ok: true, now: ctx.now, name: P ? displayName(P) : niceName(name), from, to, days: rows, totals: S.totals, sources: src, notes };
+  if (S.work.length) out.work = S.work;                                  // (Start → Complete Order per station: completions, pieces, average and median time, viewed only, stops with reasons)
   if (partial) { out.partial = true; if (info.errors.length) out.errors = info.errors; }
   return json(200, out);
 }

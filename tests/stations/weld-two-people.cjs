@@ -345,21 +345,27 @@ async function weld(browser, base) {
   assert.strictEqual(await page.inputValue('#etsyOrderNumber'), '3521000123');
   assert.strictEqual(await signOutShown(), true, 'Tess is here twice (two chips) and alone: Sign Out ends only her');
 
-  // Ray comes back under Matching: a phone scan is credited to him (Matching), the welded seal names the Welding person (Tess)
+  // Ray comes back under Matching: a phone scan is credited to him (Matching), the welded seal (Complete Order) names the Welding person (Tess)
   await addPerson(P2, 'matching');
   await wait2(() => ev('start', 'Ray Matcher', 'matching').length === 2, 'Ray\'s second Matching session');
   assert.notStrictEqual(ev('start', 'Ray Matcher', 'matching')[0].id, ev('start', 'Ray Matcher', 'matching')[1].id, 'a new session, a new id');
   assert.strictEqual(await page.evaluate(() => StationSession.who().person), 'Ray Matcher');
   assert.strictEqual(await page.evaluate(() => weldSignedIn()), 'Tess Welder');
   await page.evaluate(() => { const cbs = window.__fbSnaps['Brites_Orders/weld-scan-1']; cbs[cbs.length - 1]({ exists: true, data: () => ({ 'Order Number': '3522000011' }) }); });
-  await wait2(async () => { await page.evaluate(() => window.StationActivity.flush()); return st.events.some(e => e.orderId === '3522000011') && st.timeline.some(e => e.type === 'welded' && e.orderId === '3522000011'); }, 'the scan\'s events and its welded seal', 20000);
+  // (Paul, 9 Nov 2026) the scan only opens the order: one plain scan, no matched credit, no seal; the Complete Order button welds it (station-work.js)
+  await wait2(async () => { await page.evaluate(() => window.StationActivity.flush()); return st.events.some(e => e.orderId === '3522000011'); }, 'the scan\'s events', 20000);
+  await page.waitForFunction(() => document.getElementById('etsyOrderNumber').value === '3522000011', null, { timeout: 8000 }); await wait(800);
+  assert(!st.timeline.some(e => e.type === 'welded' && e.orderId === '3522000011'), 'a scan never welds');
+  await page.evaluate(() => document.getElementById('completeOrderBtn').click()); await wait(500);
+  await wait2(async () => { await page.evaluate(() => { window.StationActivity.flush(); window.OrderTimeline && OrderTimeline.flush(); }); return st.timeline.some(e => e.type === 'welded' && e.orderId === '3522000011') && st.events.some(e => e.orderId === '3522000011' && e.action === 'complete'); }, 'the welded seal at Complete Order', 20000);
   const scanEvents = st.events.filter(e => e.orderId === '3522000011');
-  assert(scanEvents.length > 0 && scanEvents.every(e => e.person === 'Ray Matcher'), 'the scan is credited to the Matching person: ' + JSON.stringify(scanEvents.map(e => e.action + ':' + e.person)));
-  assert.strictEqual(scanEvents.filter(e => e.action === 'matched').length, 1, 'one matched event for a phone scan (the scan queue writes it)');
-  assert.strictEqual(scanEvents.filter(e => e.action === 'scan').length, 0, 'the page logs no plain scan of its own for a phone scan');
+  assert(scanEvents.length > 0 && scanEvents.every(e => e.person === 'Ray Matcher'), 'the events are credited to the Matching person (StationSession.who): ' + JSON.stringify(scanEvents.map(e => e.action + ':' + e.person)));
+  assert.strictEqual(scanEvents.filter(e => e.action === 'matched').length, 0, 'no matched credit for a phone scan');
+  assert.strictEqual(scanEvents.filter(e => e.action === 'scan').length, 1, 'one plain scan');
   assert(st.timeline.filter(e => e.type === 'welded' && e.orderId === '3522000011').every(e => e.by === 'Tess Welder'), 'the welded seal names the Welding person');
 
   // a double tap must not sign out the chip that moved under the finger
+  await wait(800);                                                                      // (Ray's own sign-out above was a moment ago: a tap within 700 ms of it is part of that double tap)
   const box = await page.locator('#weldRoster .weld-chip[data-name="Ray Matcher"][data-task="matching"]').boundingBox();
   const endsBefore = ev('end').length;
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);

@@ -430,7 +430,7 @@
     const last = cal.filter(c => c.signedMs > 0 || c.lastOut || c.firstIn).pop(), lastSeen = last ? (last.lastOut || last.firstIn) : null;
     return { name: String(r.name || req.name || ""), found: r.found !== false, spellings: A(r.spellings).map(String), mode: String(r.mode || ""), range: r.range, from: isDay(r.from) ? r.from : req.from, to: isDay(r.to) ? r.to : req.to, days: num(r.days), today: isDay(r.today) ? r.today : "", live: !!r.live, prev: r.prev && r.prev.from ? { from: String(r.prev.from), to: String(r.prev.to), days: num(r.prev.days) } : null,
       granularity: r.granularity === "week" ? "week" : "day", trackingStart: isDay(r.trackingStart) ? r.trackingStart : "", firstDay: isDay(r.firstDay) ? r.firstDay : "", eventWindow: r.eventWindow && r.eventWindow.from ? r.eventWindow : null, rules: r.rules || {},
-      design: designOf(r.design), src, welding, series, hours, stations, cal, att: r.attendance || null, attNote, issues, contact, cannotTell: A(r.cannotTell).filter(c => c && c.text).map(c => ({ topic: String(c.topic || ""), text: String(c.text) })), notes: A(r.notes).map(String).filter(Boolean), partial: !!r.partial, errors: A(r.errors).map(String), now: num(r.now), lastSeen, lastStation: "" };
+      design: designOf(r.design), work: A(r.work).filter(w => w && w.station), src, welding, series, hours, stations, cal, att: r.attendance || null, attNote, issues, contact, cannotTell: A(r.cannotTell).filter(c => c && c.text).map(c => ({ topic: String(c.topic || ""), text: String(c.text) })), notes: A(r.notes).map(String).filter(Boolean), partial: !!r.partial, errors: A(r.errors).map(String), now: num(r.now), lastSeen, lastStation: "" };
   }
   /** `personOrders` (E4's shape; E8's list reads it itself, this is the page's own small list until that module is in the page). */
   function normOrders(r) {
@@ -1066,6 +1066,7 @@
 <div class="efpBody hidden">
   <div class="efpNote hidden" role="status"></div>
   <div class="efpKGroups"></div>
+  <section class="efpWorkS hidden" aria-label="Completed with Complete Order"><div class="efpLabel">Completed with Complete Order</div><div class="efpCard efpWorkDone"></div></section>
   <section aria-label="Over time"><div class="efpLabel">Over time</div>
     <div class="efpCard efpChart" data-c="tp"><div class="efpCH"><span class="efpCT">Throughput</span><span class="seg efpTog" role="group" aria-label="Measure"><button type="button" data-metric="parts">Pieces</button><button type="button" data-metric="scans">Scans</button><button type="button" data-metric="orders">Orders</button><button type="button" data-metric="perActiveHour">Per hour</button></span><span class="efpCP"></span></div><div class="efpCh"></div></div></section>
   <div class="efpGrid g2">
@@ -1111,7 +1112,7 @@
 <div class="efpHC" role="tooltip"></div>`;
       const q = s => root0.querySelector(s);
       Object.assign(E, { back: q(".efpBack"), av: q(".efpAv"), name: q(".efpName"), where: q(".efpWhere"), chips: q(".efpChips"), live: q(".efpLive"), liveT: q(".efpLiveT"), bar: q(".efpBar"), day: q(".efpDay"), prev: q('[data-nav="-1"]'), next: q('[data-nav="1"]'), today: q(".efpToday"),
-        custom: q(".efpCustom"), busy: q(".efpBusy"), busyT: q(".efpBusyT"), msg: q(".efpMsg"), wait: q(".efpWait"), waitT: q(".efpWaitT"), nowS: q(".efpNowS"), now: q(".efpNow"), body: q(".efpBody"), note: q(".efpNote"), kg: q(".efpKGroups"),
+        custom: q(".efpCustom"), busy: q(".efpBusy"), busyT: q(".efpBusyT"), msg: q(".efpMsg"), wait: q(".efpWait"), waitT: q(".efpWaitT"), nowS: q(".efpNowS"), now: q(".efpNow"), workS: q(".efpWorkS"), workDone: q(".efpWorkDone"), body: q(".efpBody"), note: q(".efpNote"), kg: q(".efpKGroups"),
         hc: q(".efpHC"), tpP: q('[data-c="tp"] .efpCP'), calP: q('[data-c="cal"] .efpCP'), mixP: q('[data-c="mix"] .efpCP'), heatP: q('[data-c="heat"] .efpCP'), shiftP: q('[data-c="shift"] .efpCP'), calH: q(".efpCalH"), calNote: q(".efpCalNote"), mixH: q(".efpMixH"), heatH: q(".efpHeatH"), shiftH: q(".efpShiftH"), iN: q(".efpIN"), is: q(".efpIs"), rates: q(".efpRates"),
         oN: q(".efpON"), find: q(".efpSearch input"), clear: q("[data-clear]"), st: q(".efpFind .efpSt"), ol: q(".efpOl"), more: q(".efpMore"), heat: q('[data-c="heat"]'), cSp: q('[data-c="sp"]'), cTm: q('[data-c="tm"]'), cShift: q('[data-c="shift"]'), wc: q(".efpWC"), wtP: q('[data-c="wt"] .efpCP'), wmP: q('[data-c="wm"] .efpCP'), wo: q(".efpWO"), woN: q(".efpWON"), woLr: q(".efpWR"), woHost: q(".efpWOrders"), ordersHost: q(".efpOrdersHost"), ordersOwn: q(".efpOrdersOwn"), cannot: q(".efpCannot"), lr: q(".efpLr"), oAll: q("[data-orders-all]") });
       E.k = {};
@@ -1417,7 +1418,16 @@
     }
     function render(M, first) {
       const B = buckets(M, today(), now()); paintBar(); renderHead(); renderNote(M); renderKpis(M, B, first); renderCharts(M, B); renderWelding(M, B); renderCal(); renderMix(M); renderHeat(M, B); renderIssues(M); renderRates(M); syncMatched(M); paintLive();
-      renderInbox(M, B);
+      renderInbox(M, B); renderWorkDone(M);
+    }
+    /* Start → Complete Order at Welding, Assembly and Shipping (Paul, 9 Nov 2026): this person's completions, times, looks and stops per station */
+    function renderWorkDone(M) {
+      try {
+        if (!E.workS || !window.EfficiencyWork) return;
+        const rows = M.work || [];
+        E.workS.classList.toggle("hidden", !rows.length);
+        if (rows.length) window.EfficiencyWork.render(E.workDone, rows, { people: false });
+      } catch (e) { console.warn("[efficiency person] Complete Order table:", e && e.message); }
     }
 
     /* ── the live card: the order in this person's hands right now ── */

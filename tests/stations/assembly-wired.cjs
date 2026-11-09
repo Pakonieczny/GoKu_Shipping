@@ -215,6 +215,8 @@ async function main() {
       await d.page.waitForFunction(() => document.getElementById('britesMsgInput').value === '', null, { timeout: 6000 }).catch(() => {});
       await wait(200);
     };
+    /* (Paul, 9 Nov 2026) a Team stamp is a message; the page's Complete Order button completes the order on screen (station-work.js) */
+    const finish = async d => { await d.page.click('#completeOrderBtn', { timeout: 6000 }); await wait(700); };
     const signIn = async (d, pin) => {
       await d.page.evaluate(() => { const i = document.getElementById('employeeNumberInput'); i.dataset.raw = ''; i.value = ''; });
       await d.page.focus('#employeeNumberInput');
@@ -298,12 +300,13 @@ async function main() {
         assert(st.devices.some(x => x.device === dev && x.state === 'working' && x.person === A), 'device row: ' + JSON.stringify(st.devices));
       });
 
-      /* the first Team stamp ("Done") completes the order the person has in hand: one completion, the live order ends */
-      await send(d, 'Done'); await flush(d);
-      await check(`${tag}: Done is the completion of the typed order (order id, person, 3 pieces, 1 order) and the live order ends at the stamp`, async () => {
+      /* the Team stamp ("Done") is a message; Complete Order completes the order the person has in hand: one completion, the live order ends */
+      await send(d, 'Done'); await finish(d); await flush(d);
+      await check(`${tag}: Complete Order is the completion of the typed order (order id, person, 3 pieces, 1 order, its time) and the live order ends at it`, async () => {
         const c = await until(async () => { const l = (await eventsOf(dev)).filter(e => e.action === 'complete' && e.orderId === O.TWO); return l.length && l; }, 'the completion');
-        assert.equal(c.length, 1); assert.equal(c[0].person, A); assert.equal(c[0].orders, 1); assert.equal(c[0].parts, UNITS(O.TWO)); assert.match(c[0].detail, /^Team stamp Done/);
-        const lv = await until(async () => { const l = await liveDoc(dev, A); return l && l.state === 'idle' && l; }, 'the live order to end at the stamp');
+        assert.equal(c.length, 1); assert.equal(c[0].person, A); assert.equal(c[0].orders, 1); assert.equal(c[0].parts, UNITS(O.TWO)); assert.match(c[0].detail, /^Complete Order/); assert(c[0].workMs >= 0, 'workMs is stored');
+        assert.deepEqual((await eventsOf(dev)).filter(e => e.orderId === O.TWO && e.action === 'note').map(e => e.detail), ['Team stamp: Done'], 'the stamp is a note');
+        const lv = await until(async () => { const l = await liveDoc(dev, A); return l && l.state === 'idle' && l; }, 'the live order to end at Complete Order');
         assert.equal(lv.last.rid, O.TWO);
       });
 
@@ -322,20 +325,20 @@ async function main() {
       });
 
       /* 5 · the other stamps: "Assembled" completes the phone-scanned order, "QA1" a third order; later stamps for an order are notes, QA 2 is a check */
-      await send(d, 'Assembled');
+      await send(d, 'Assembled'); await finish(d);
       await typed(d, O.QA2);
-      await send(d, 'QA1'); await send(d, 'Done'); await send(d, 'QA 2');
+      await send(d, 'QA1'); await finish(d); await send(d, 'Done'); await send(d, 'QA 2');
       await flush(d);
-      await check(`${tag}: Assembled and QA1 each complete their own order once; Done and QA 2 after the first stamp are notes (QA 2: a check, never a second completion)`, async () => {
+      await check(`${tag}: Complete Order completes each order once; the stamps (Assembled, QA1, Done) are notes and QA 2 a check, never a completion`, async () => {
         const ev = await until(async () => { const e = await eventsOf(dev); return e.filter(x => x.action === 'complete').length >= 3 && e.filter(x => x.action === 'note' && x.orderId === O.QA2).length >= 2 && e; }, 'three completions');
         const cP = ev.filter(e => e.action === 'complete' && e.orderId === O.PHONE); assert.equal(cP.length, 1);
-        assert.equal(cP[0].person, A); assert.equal(cP[0].orders, 1); assert.equal(cP[0].parts, 3); assert.equal(cP[0].sku, 'SOLO-' + n); assert.match(cP[0].detail, /^Team stamp Assembled/);
+        assert.equal(cP[0].person, A); assert.equal(cP[0].orders, 1); assert.equal(cP[0].parts, 3); assert.match(cP[0].detail, /^Complete Order/);
         const c2 = ev.filter(e => e.action === 'complete' && e.orderId === O.QA2); assert.equal(c2.length, 1);
-        assert.equal(c2[0].person, A); assert.equal(c2[0].orders, 1); assert.equal(c2[0].parts, 2); assert.match(c2[0].detail, /^Team stamp QA1/);
+        assert.equal(c2[0].person, A); assert.equal(c2[0].orders, 1); assert.equal(c2[0].parts, 2); assert.match(c2[0].detail, /^Complete Order/);
         const notes = ev.filter(e => e.action === 'note' && e.orderId === O.QA2).map(e => e.detail).sort();
-        assert.deepEqual(notes, ['QA 2 check', 'stamp again: Done']);
+        assert.deepEqual(notes, ['QA 2 check', 'Team stamp: Done', 'Team stamp: QA1']);
         assert.equal(ev.filter(e => e.action === 'complete').length, 3, 'exactly three orders were completed');
-        const lv = await until(async () => { const l = await liveDoc(dev, A); return l && l.state === 'idle' && l; }, 'the live order to end at the stamp');
+        const lv = await until(async () => { const l = await liveDoc(dev, A); return l && l.state === 'idle' && l; }, 'the live order to end at Complete Order');
         assert.equal(lv.last.rid, O.QA2);
         // the Assembled seal on the order timeline names the person (the in-memory Firestore has no batched writes, so what is checked is what the page SENT to the timeline door)
         await d.page.evaluate(() => window.OrderTimeline.flush());
@@ -372,6 +375,14 @@ async function main() {
         assert.equal(pst.parts, ex.parts, 'person view pieces'); assert.equal(pst.orders, row.orders, 'person view orders'); assert.equal(pst.completes, ex.completed);
         assert.equal(pv.kpis.parts.value, ex.parts); assert.equal(pv.kpis.scans.value, ex.scans); assert.equal(pv.kpis.ordersCompleted.value, ex.completed);
         assert.equal(pv.kpis.orders.value, ex.touched, 'person view: distinct orders worked');
+        // Complete Order (Paul, 9 Nov 2026): the console's Overview (roster) and the person view carry it per station
+        const ovr = await B.ask({ op: 'overview', roster: true }); const pr = ovr.people.find(x => x.name === A);
+        const w = (pr.work || []).find(x => x.station === 'assembly'); assert(w, 'no Complete Order row: ' + JSON.stringify(pr.work));
+        assert.equal(w.completed, ex.completed, 'Complete Order presses'); assert.equal(w.pieces, ex.parts, 'pieces completed');
+        assert(w.avgMin != null && w.medianMin != null && w.avgMin >= 0, 'times: ' + JSON.stringify(w));
+        assert.equal(w.viewedOnly, ex.touched - ex.completed, 'orders opened and never completed');
+        const pw = (pv.work || []).find(x => x.station === 'assembly'); assert(pw && pw.completed === ex.completed, 'person view: ' + JSON.stringify(pv.work));
+        assert(Array.isArray(ovr.business.work) && ovr.business.work.some(x => x.station === 'assembly'), 'the business line');
       });
     }
     if (stations.length) await check('the live board, the Overview and the sum of the people agree on the assembly station (pieces, scans, orders)', async () => {

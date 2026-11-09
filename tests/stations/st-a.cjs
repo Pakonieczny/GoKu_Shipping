@@ -1,8 +1,9 @@
 // Station tracking, part A (Welding): weld-1.html records `welded` with the person signed in on its own PIN login, in
 // headless Chromium with Firebase, Materialize and every function stubbed here: no request leaves the machine.
-//   · a stud order typed in: one `welded` for the order, by the signed-in person, stable id device-order-type-minute
-//   · the phone scanner (weld-scan-1 relay) with an order mixing studs and a necklace: one `welded` per stud line
-//   · signed out: `by: ""` and data.signedIn = false; never the earlier person, never the typed name field
+//   (Paul, 9 Nov 2026: a scan only opens the order; the Complete Order button welds it: station-work.js)
+//   · a stud order typed in: the scan seals nothing; Complete Order: one `welded` for the order, by the signed-in person, stable id device-order-type-minute
+//   · the phone scanner (weld-scan-1 relay) with an order mixing studs and a necklace: Complete Order seals one `welded` per stud line
+//   · signed out: the scan says `by: ""` (never the earlier person, never the typed name field), and welds nothing
 //   NODE_PATH=$(npm root -g) PW_DIR=$(npm root -g)/playwright/node_modules CHROMIUM=… node tests/stations/st-a.cjs
 'use strict';
 const fs = require('fs'), path = require('path'), assert = require('assert');
@@ -87,10 +88,16 @@ const all = (type, id) => st.events.filter(e => e.type === type && e.orderId ===
   await page.waitForFunction(() => window.StationTimeline && window.OrderTimeline && window.__snaps && window.__snaps.some(s => s.id === 'weld-scan-1'), null, { timeout: 15000 });
   const enter = async id => { await page.fill('#etsyOrderNumber', id); await page.focus('#etsyOrderNumber'); await page.keyboard.press('Enter'); };
 
-  // 1 · a stud order typed in: one welded for the order, by the PIN login's name, stable id
+  // (Paul, 9 Nov 2026) a scan only opens the order; the Complete Order button welds it (station-work.js)
+  const work = async () => { await page.click('#completeOrderBtn'); await wait(500); await page.evaluate(() => OrderTimeline.flush()); };
+  // 1 · a stud order typed in: the scan seals nothing; Complete Order: one welded for the order, by the PIN login's name, stable id
   await enter(STUD);
-  await until(() => all('scan', STUD).length && all('welded', STUD).length, 'the stud order\'s scan and weld');
+  await until(() => all('scan', STUD).length, 'the stud order\'s scan');
   await wait(1200);
+  assert.strictEqual(all('welded', STUD).length, 0, 'a scan never welds');
+  await work();
+  await until(() => all('welded', STUD).length, 'the weld at Complete Order');
+  await wait(600);
   const w1 = all('welded', STUD);
   assert.strictEqual(w1.length, 1, 'one welded for a stud order');
   assert.strictEqual(w1[0].by, 'Marco R.', 'by the person signed in with the PIN login');
@@ -102,6 +109,10 @@ const all = (type, id) => st.events.filter(e => e.type === type && e.orderId ===
 
   // 2 · the phone scanner relays an order of two stud lines and a necklace: one welded per stud line, none for the necklace
   await page.evaluate(id => { const s = window.__snaps.find(x => x.id === 'weld-scan-1'); s.cb({ exists: true, data: () => ({ 'Order Number': id }) }); }, MIXED);
+  await until(() => all('scan', MIXED).length, 'the phone scan');
+  await page.waitForFunction(id => document.getElementById('etsyOrderNumber').value === id, MIXED, { timeout: 8000 }); await wait(800);
+  assert.strictEqual(all('welded', MIXED).length, 0, 'a phone scan never welds');
+  await work();
   await until(() => all('welded', MIXED).length >= 2, 'the stud lines\' welds');
   await wait(1200);
   const w2 = all('welded', MIXED);
@@ -110,15 +121,15 @@ const all = (type, id) => st.events.filter(e => e.type === type && e.orderId ===
   assert.strictEqual(new Set(w2.map(e => e.id)).size, 2, 'a distinct stable id per line');
   assert.strictEqual(all('scan', MIXED)[0].data.how, 'scan', 'the phone relay is a scan');
 
-  // 3 · signed out, a name typed in the Employee Name field: the weld says not signed in, never Marco nor the typed name
+  // 3 · signed out, a name typed in the Employee Name field: the scan says nobody, never Marco nor the typed name, and welds nothing
   await page.click('#signOutBtn');
   await page.evaluate(() => { document.getElementById('employeeName').value = 'Typed Guess'; });   // (the name field is hidden on the Welding page now: the roster chips replace it)
   await enter(NOBODY);
-  await until(() => all('welded', NOBODY).length, 'the weld with nobody signed in');
-  const w3 = all('welded', NOBODY)[0], s3 = all('scan', NOBODY)[0];
-  assert.strictEqual(w3.by, '', 'nobody signed in: by is empty: ' + JSON.stringify(w3));
-  assert.strictEqual(w3.data.signedIn, false, 'and says so');
+  await until(() => all('scan', NOBODY).length, 'the scan with nobody signed in');
+  const s3 = all('scan', NOBODY)[0];
   assert.strictEqual(s3.by, '', 'the scan is not the earlier person either');
+  await wait(800); await page.evaluate(() => OrderTimeline.flush()); await wait(300);
+  assert.strictEqual(all('welded', NOBODY).length, 0, 'a scan never welds');
 
   assert.deepStrictEqual(ours, [], 'no page errors from the weld wiring');
   await browser.close();
