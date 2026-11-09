@@ -246,8 +246,6 @@ dialog.repoDlg{width:min(400px,94vw)}
 [data-repo]{--repoShut:url("${padlock(SHUT, "black")}");--repoOpen:url("${padlock(OPEN, "black")}")}
 .btn[data-repo]::after{content:"";display:inline-block;width:9px;height:10px;margin-left:6px;vertical-align:-1px;background:currentColor;opacity:.5;-webkit-mask:var(--repoShut) center/contain no-repeat;mask:var(--repoShut) center/contain no-repeat}
 .btn[data-repo].repoOpen::after{-webkit-mask-image:var(--repoOpen);mask-image:var(--repoOpen);opacity:.38}
-input[data-repo]{padding-right:18px!important;background-repeat:no-repeat;background-position:right 5px center;background-size:8px 9px;background-image:url("${padlock(SHUT, "#9a9486")}")}
-input[data-repo].repoOpen{background-image:url("${padlock(OPEN, "#9a9486")}")}
 input[data-repo].repoLocked,select[data-repo].repoLocked{border-style:dashed!important}
 `;
   function css() { try { if (!doc || doc.getElementById("cnRepoLockCss")) return; const s = doc.createElement("style"); s.id = "cnRepoLockCss"; s.textContent = CSS; doc.head.appendChild(s); } catch (_) { /* unstyled, still works */ } }

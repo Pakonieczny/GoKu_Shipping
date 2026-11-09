@@ -22,6 +22,9 @@ const SHOTS = process.env.SHOTS_DIR || '';
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 950 }, timezoneId: 'UTC', locale: 'en-US' });
   const outside = [];
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1|localhost)/, r => { outside.push(r.request().url()); return r.abort(); });
+  // (the letters add is marked done since Paul's press of 9 Nov 2026: the page is served the queue as it was before it, to show the press; and once as it is now, to show the line is gone)
+  let queueNow = false;
+  await ctx.route(/\/charm-repo-adds\/queue\.json/, r => { const q = JSON.parse(fs.readFileSync(path.join(root, 'charm-repo-adds/queue.json'), 'utf8')); if (!queueNow) for (const a of q.adds) delete a.done; return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(q) }); });
   const lib = [];
   await ctx.route(/\/\.netlify\/functions\/(charmNestLibrary|charmNestOutput)$/, async route => { let b = {}; try { b = route.request().postDataJSON() || {}; } catch (_) {} lib.push({ fn: route.request().url().split('/').pop(), op: b.op }); return route.fallback(); });
   await ctx.addInitScript(() => { try { localStorage.setItem('cn.employee', 'Paul K'); } catch (_) {} window.confirm = () => true; window.prompt = () => 'Paul K'; window.alert = () => {}; });
@@ -74,6 +77,10 @@ const SHOTS = process.env.SHOTS_DIR || '';
   await page.waitForFunction(() => /^Already there/.test((document.querySelector('#mAdds .raSay') || {}).textContent || ''), null, { timeout: 30000 });
   ok(/^Already there: all 52 charms of Letter charms with hoops \(26 necklace \+ 26 huggie, a–z\) are in the charm repo\. Nothing was written\.$/.test(await page.textContent('#mAdds .raSay')), 'the second press says "Already there"');
   ok(!lib.slice(before).some(x => x.op === 'masterPutIndex' || x.op === 'masterPutFile' || x.fn === 'charmNestOutput'), 'and writes nothing');
+  // the queue as committed now (the letters add done): after a reload the line is gone
+  queueNow = true; await page.reload(); await page.waitForFunction(() => window.CN && window.CharmNestRepoAdds && CN.S.cloud.ok !== null, null, { timeout: 60000 });
+  await page.evaluate(() => CN.setMode('master')); await page.waitForSelector('#mAdd', { timeout: 30000 }); await page.waitForTimeout(1500);
+  ok(await page.evaluate(() => document.querySelectorAll('#mAdds .raBox').length) === 0, 'with the add marked done, the line is gone from Master files');
   ok(!outside.length, 'no request left this computer (' + outside.length + ')');
   ok(!errors.length, 'no page error' + (errors.length ? ': ' + errors.join(' | ') : ''));
   await browser.close(); await srv.close();
