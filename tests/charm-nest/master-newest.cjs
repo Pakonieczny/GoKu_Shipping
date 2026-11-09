@@ -23,7 +23,7 @@ const libSkus = st => st.list('Charm_Master_Index').map(e => e._id).sort();
   // the standard size (charm-nest-pdf.js fitCharmSize) would draw every body here at 11.5 mm; this test is about the drawing as drawn (B is drawn larger in the newer file), so the rule is off (its own test: master-beady-1023.cjs)
   await page.evaluate(() => { CN.S.settings.charmMaxMm = 0; });
   const job = () => page.evaluate(() => { const j = [...B.master.jobs.values()].pop(); return { state: j.state, error: j.error || null, written: j.written, held: j.held, replaced: (j.replaced || []).map(x => ({ sku: x.sku, from: x.from, fromMm: x.fromMm, toMm: x.toMm, differs: x.differs, by: x.by })), heldList: (j.heldList || []).map(x => x.sku), conflicts: (j.conflicts || []).map(x => x.sku), pairKept: (j.pairKept || []).concat(j.kept || []).map(x => x.sku), log: j.log }; });
-  const card = text => page.evaluate(t => { const d = [...document.querySelectorAll('#mJobs details.noteBox')].find(x => x.textContent.includes(t)); return d ? d.textContent : ''; }, text);
+  const card = text => page.evaluate(t => { const d = [...document.querySelectorAll('#mJobs .noteBox')].find(x => x.textContent.includes(t)); return d ? d.textContent : ''; }, text);
   const wipe = async () => { for (const k of [...st.docs.keys()]) if (/^Charm_Master_(Index|Files)\//.test(k)) st.docs.delete(k); await page.evaluate(() => { B.master.jobs.clear(); return Master.load(true); }); };
   try {
     // 1 · the older file: A, B, and P drawn as a pair (two touching bodies under one label)
@@ -53,12 +53,12 @@ const libSkus = st => st.list('Charm_Master_Index').map(e => e._id).sort();
     ok(c && c.masterName === 'SKUs_CORRECTED.ai', 'C is added');
     ok(JSON.stringify(a) === JSON.stringify(aBefore) && Buffer.compare(Buffer.from(st.blobs.get(a.aiPath).buf), aBytes) === 0, 'A, which the newer file does not carry, is untouched (its entry and its design file)');
     ok(p.masterHash === oldHash && p.pair && p.pair.bodies === 2 && p.aiPath === pBefore.aiPath && p.widthPt === pBefore.widthPt && j.heldList.includes('PAIR_P_3'), 'P, held as a pair, is not overwritten by a drawing of one body: ' + JSON.stringify({ m: p.masterName, pair: p.pair, held: j.heldList }));
-    { const hc = await card('left as they are'); ok(/PAIR_P_3 — from OLD MASTER\.ai.*held as a pair, and this sheet draws one body: kept/.test(hc) && /never overwritten by a drawing of one body/.test(hc) && j.log.some(l => /holds as a pair are drawn with one body on this sheet.*PAIR_P_3/.test(l)), 'and the card and the run name it: ' + hc); }
+    { const hc = await card('already in the library'); ok(/PAIR_P_3 — from OLD MASTER\.ai.*held as a pair, and this sheet draws one body: kept/.test(hc) && /never overwritten by a drawing of one body/.test(hc) && j.log.some(l => /holds as a pair are drawn with one body on this sheet.*PAIR_P_3/.test(l)), 'and the card and the run name it: ' + hc); }
     ok(libSkus(st).join() === 'ALPHA_A_1,BRAVO_B_2,CHARLIE_C_4,PAIR_P_3', 'one entry per SKU, nothing duplicated: ' + libSkus(st));
     ok(j.replaced.length === 1 && j.replaced[0].sku === 'BRAVO_B_2' && j.replaced[0].from === 'OLD MASTER.ai' && j.replaced[0].differs, 'the run lists B as replaced, at a different size: ' + JSON.stringify(j.replaced));
     const rc = await card('replaced with this file');
     ok(/1 SKU line\(s\) replaced with this file's drawings \(1 at a different size\)/.test(rc) && /BRAVO_B_2 — OLD MASTER\.ai.* → SKUs_CORRECTED\.ai — 1\d\.\d × 1\d\.\d mm → 2\d\.\d × 2\d\.\d mm/.test(rc) && /Added by Tester/.test(rc), 'the card says it, old file → new file, old size → new size: ' + rc);
-    ok(!/left as they are/.test(r.card) || !/BRAVO_B_2/.test(await card('left as they are')), 'and B is not listed as left as it is');
+    ok(!/already in the library/.test(r.card) || !/BRAVO_B_2/.test(await card('already in the library')), 'and B is not listed as left as it is');
     { const fo = st.list('Charm_Master_Files').find(f => f.name === 'OLD MASTER.ai'), fn = st.list('Charm_Master_Files').find(f => f.name === 'SKUs_CORRECTED.ai');
       ok(fo.skus.slice().sort().join() === 'ALPHA_A_1,PAIR_P_3' && fo.movedOut && fo.movedOut.skus.join() === 'BRAVO_B_2' && fo.movedOut.by === 'Tester', 'the older file\'s upload-history record no longer lists B, and says where it went: ' + JSON.stringify({ skus: fo.skus, moved: fo.movedOut }));
       ok(fn.skus.slice().sort().join() === 'BRAVO_B_2,CHARLIE_C_4' && fn.by === 'Tester', 'the newer file\'s record lists what it holds and who added it: ' + JSON.stringify({ skus: fn.skus, by: fn.by })); }
@@ -68,7 +68,7 @@ const libSkus = st => st.list('Charm_Master_Index').map(e => e._id).sort();
     r = await br.upload(newer, 'SKUs_CORRECTED.ai'); j = await job();
     ok(j.state === 'done' && j.written === 0 && j.replaced.length === 0 && st.blobs.size === blobs && putsBefore() === puts, 'adding the newer file again writes and uploads nothing: ' + JSON.stringify({ w: j.written, rep: j.replaced, puts: putsBefore() - puts }));
     ok(JSON.stringify(st.list('Charm_Master_Index')) === snap, 'and every entry is as it was');
-    ok(j.heldList.slice().sort().join() === 'BRAVO_B_2,CHARLIE_C_4,PAIR_P_3' && /3 SKU line\(s\) already in the library, left as they are/.test(await card('left as they are')), 'its SKUs (and the pair it leaves) are listed as left as they are: ' + JSON.stringify(j.heldList));
+    ok(j.heldList.slice().sort().join() === 'BRAVO_B_2,CHARLIE_C_4,PAIR_P_3' && /3 already in the library: kept as they are/.test(await card('already in the library')), 'its SKUs (and the pair it leaves) are listed as left as they are: ' + JSON.stringify(j.heldList));
 
     // 3 · a design saved from an order is never replaced by a master file
     await wipe();
@@ -86,10 +86,10 @@ const libSkus = st => st.list('Charm_Master_Index').map(e => e._id).sort();
     const bKeep = JSON.stringify(st.doc('Charm_Master_Index', 'BRAVO_B_2'));
     r = await br.upload(newer, 'SKUs_CORRECTED.ai', { held: 'keep' }); j = await job();
     ok(j.state === 'done' && JSON.stringify(st.doc('Charm_Master_Index', 'BRAVO_B_2')) === bKeep && st.doc('Charm_Master_Index', 'CHARLIE_C_4') && j.replaced.length === 0 && j.heldList.includes('BRAVO_B_2'), 'with "keep the library\'s drawings" B is left as it is and C is added: ' + JSON.stringify({ rep: j.replaced, held: j.heldList }));
-    ok(/To replace them with this file's drawings, choose “replace with this file's drawings” under SKUs already held/.test(await card('left as they are')), 'and the card says how to replace it');
+    ok(/To draw them again from this file, choose “replace with this file's drawings” under SKUs already held/.test(await card('already in the library')), 'and the card says how to replace it');
     await page.evaluate(() => { const sel = document.querySelector('#mHeld'); sel.value = 'newest'; sel.onchange(); });
     r = await br.upload(newer, 'SKUs_CORRECTED.ai'); j = await job();
-    ok(j.state === 'done' && st.doc('Charm_Master_Index', 'BRAVO_B_2').masterName === 'SKUs_CORRECTED.ai' && j.replaced.map(x => x.sku).join() === 'BRAVO_B_2', 'the same file added again with the default replaces it: ' + JSON.stringify(j.replaced));
+    ok(j.state === 'done' && st.doc('Charm_Master_Index', 'BRAVO_B_2').masterName === 'SKUs_CORRECTED.ai' && j.replaced.map(x => x.sku).join() === 'BRAVO_B_2', 'the same file added again with “replace with this file\'s drawings” replaces it: ' + JSON.stringify(j.replaced));
 
     // 5 · the server rule alone
     { const Master = require('../../netlify/functions/_charmNestMaster.js');

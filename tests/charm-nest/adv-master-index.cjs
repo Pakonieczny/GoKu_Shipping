@@ -1,7 +1,7 @@
 // ADV-MASTER (Paul, 15 Oct 2026: "a final test before I push everything to production ... resilient against lost internet connections, interruptions and unexpected user behaviour").
 // The Master tab's indexing, attacked like a clumsy offline user would. Headless Chromium over the in-memory stand-in of the site (tests/charm-nest/bridge-server.cjs); nothing leaves this machine.
 // Each scenario answers "what is lost, duplicated, stuck or wrong?":
-//   1 · two master files dropped TOGETHER that share a SKU: they are indexed one after the other and the second, the newer (MASTERNEW, Paul 18 Oct 2026), replaces it (said, old file → new file), nothing is blocked as a clash, nothing duplicated;
+//   1 · two master files dropped TOGETHER that share a SKU, with "replace with this file's drawings" chosen (KEEPHELD, 9 Nov 2026: "keep" is the page's default): they are indexed one after the other and the second, the newer (MASTERNEW, Paul 18 Oct 2026), replaces it (said, old file → new file), nothing is blocked as a clash, nothing duplicated;
 //   2 · a charm with two SKU lines, one held by another master: rebuilt whole, the other master superseded, nothing blocked, that master's other SKUs untouched;
 //   3 · the internet drops in the middle of the design-file uploads: the run says failed, NOTHING is in the index (no SKU without its file), no page error, the same file dropped again builds all of it once;
 //   4 · the page is closed / reloaded while the index write is on its way (the server stored it, the answer never arrived): the SKUs are in, the upload-history record is not; dropping the file again writes the record and builds nothing twice;
@@ -36,6 +36,8 @@ const grid12 = () => scene({ page: [420, 300], bodies: names12.map((_, i) => ({ 
     const fA = await scene({ page: [420, 300], bodies: [{ shape: 'house', x: 60, y: 150, w: 45, h: 45, ink: A }, { shape: 'blob', x: 200, y: 150, w: 45, h: 45, ink: C }], labels: [{ text: 'SHARED_1', cx: 82.5, top: 149 }, { text: 'A_ONLY_1', cx: 222.5, top: 149 }] });
     const fB = await scene({ page: [420, 300], bodies: [{ shape: 'notch', x: 60, y: 150, w: 55, h: 50, ink: B }, { shape: 'house', x: 200, y: 150, w: 45, h: 45, ink: B }], labels: [{ text: 'SHARED_1', cx: 87.5, top: 149 }, { text: 'B_ONLY_1', cx: 222.5, top: 149 }] });
     await page.evaluate(() => B.master.jobs.clear());
+    // (KEEPHELD, Paul 9 Nov 2026: the page starts at "keep the library's drawings"; replacing a held SKU is the person's choice, made here as a person makes it)
+    await page.evaluate(() => { const sel = document.querySelector('#mHeld'); sel.value = 'newest'; sel.onchange(); });
     await page.evaluate(async fs => {   // (the picker takes one file; several arrive only by dropping them on the tab)
       const dt = new DataTransfer();
       for (const [name, b64] of fs) { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); dt.items.add(new File([u], name, { type: 'application/pdf' })); }

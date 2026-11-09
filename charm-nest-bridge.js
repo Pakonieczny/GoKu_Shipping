@@ -3380,8 +3380,11 @@ const Master = window.Master = (() => {
   /* MASTERNEW (Paul, 18 Oct 2026: "This is the updated file. Any existing/duplicated SKUs must be removed in favour of the new file. Please update the system."): the NEWEST file wins. A SKU the library holds from
      ANOTHER master file is re-indexed from the file being added (its drawing, size, bodies, holes; the person-set fields stay, putIndex merges) and is listed on the card as replaced, old file → new file;
      a SKU this same file wrote is left as it is (adding the same file again changes nothing), and so is a design saved from an order (KEEP R4) and a pair the drawing shows one body of (pairKept).
-     "keep" is the old default (every SKU already held keeps the library's drawing) and "all" the old "re-index SKUs already held" tick (every charm rebuilt, this file's own too). A reload starts at "newest". */
-  let heldMode = "newest";
+     "keep" is the old default (every SKU already held keeps the library's drawing) and "all" the old "re-index SKUs already held" tick (every charm rebuilt, this file's own too).
+     KEEPHELD (Paul, 9 Nov 2026: "I like to keep my original sizes of the charms if they do exist. If the charm already exists, then it doesn't need to be updated."): "keep" is the default again, and a reload
+     starts at it. Adding a master file never changes a SKU the library holds: its record, drawing and size stay, and only the SKUs it does not hold are added. A held SKU is drawn again only when a
+     person chooses it for that file under "SKUs already held" ("replace with this file's drawings" or "rebuild every charm"). */
+  let heldMode = "keep";
   const HELD_MODES = ["newest", "keep", "all"];
   /* The Charm Repo is locked for everything that adds, removes, changes or hands out a charm file (Paul, 11 Oct 2026): ONE password
      dialog (charm-nest-repo-lock.js), the token it returns rides in `repoToken` on the protected calls, and looking, searching and
@@ -3592,9 +3595,32 @@ const Master = window.Master = (() => {
    *  without a SKU (a row the pair layer may build into one design) keeps the size drawn. all: the sheet's charms; targets: the ones to size. Returns [{ sku, r }] for the run's note. Called BEFORE integrateRings. */
   function standardSize(all, targets) {
     if (!P.fitCharmSize) return [];
+    const o = sizeRuleOf(all);
+    return targets.map(c => ({ sku: c.sku, r: P.fitCharmSize(c, Object.assign({}, o, { sized: !!c.skuSize || (c.extraSkus || []).some(x => x.size) })) }));
+  }
+  /** The standard size's setting for a sheet: { maxMm, longRatio, skip } (skip: the bodies of a row with a body without a SKU, which keep the size drawn). */
+  function sizeRuleOf(all) {
     const maxMm = S.settings.charmMaxMm == null ? P.SIZE_RULE.maxMm : +S.settings.charmMaxMm, longRatio = +S.settings.charmLongRatio || P.SIZE_RULE.longRatio, skip = new Set();
     try { for (const row of window.CharmNestPair.rowsOf(all)) if (row.some(x => !x.sku)) for (const x of row) skip.add(x.index); } catch (_) {}
-    return targets.map(c => ({ sku: c.sku, r: P.fitCharmSize(c, { maxMm, longRatio, skip, sized: !!c.skuSize || (c.extraSkus || []).some(x => x.size) }) }));
+    return { maxMm, longRatio, skip };
+  }
+  /** KEEPSIZE (Paul, 9 Nov 2026: 1,900 held SKUs listed as "drawn a different size", VIKING_NECKLACE_CHARM-0 "10.9 × 11 mm, the library holds 11.8 × 13.8 mm"): the size the library would record for a
+   *  charm of this sheet, [w, h] in pt, so a held design is compared with what the indexer makes of it and not with its bare outline. The library's widthPt × heightPt is the traced silhouette's box
+   *  (buildSilhouettes): every member of the charm, its jump ring included, plus half the widest stroke and 1 pt on each side, after the standard size (fitCharmSize: a body over 11.5 mm is drawn at
+   *  11.5 mm, its ring at its own size). The outline's own box leaves out the ring and the margin (about 1 mm narrower and 3 mm shorter with a ring on top) and an oversized body is not yet resized
+   *  (BEADED_32028: 16.7 × 14.8 mm drawn, 12 × 14.4 mm held). Read on a copy: the sheet's charm is not changed. rule: sizeRuleOf(the sheet's charms). */
+  function sheetSizeOf(c, rule) {
+    if (!c || !c.outline) return null;
+    let k = c;
+    if (P.fitCharmSize && rule && !c.sizeXform) {
+      try {
+        const copy = Object.assign({}, c, { members: (c.members || []).slice(), extras: Array.isArray(c.extras) ? c.extras.slice() : c.extras, bbox: Array.isArray(c.bbox) ? c.bbox.slice() : c.bbox, dropIndices: c.dropIndices ? new Set(c.dropIndices) : c.dropIndices });
+        P.fitCharmSize(copy, Object.assign({}, rule, { sized: !!c.skuSize || (c.extraSkus || []).some(x => x.size) })); k = copy;
+      } catch (_) { k = c; }
+    }
+    const b = Array.isArray(k.bbox) ? k.bbox : k.outline && k.outline.bbox; if (!b) return null;
+    const pad = Math.max((+k.strokePt || 0) / 2, ...(k.members || []).map(m => (+(m && m.lwPt) || 0) / 2)) + 1;
+    return [b[2] - b[0] + 2 * pad, b[3] - b[1] + 2 * pad];
   }
   function looksLikeMaster(parsed, charms) {
     const pat = skuRegex(), gap = (+S.settings.labelGapMm || 6.4) * PT;
@@ -3700,21 +3726,27 @@ const Master = window.Master = (() => {
       let held = 0;
       // a SKU is held when the library has it and, for a line that names a size, has that size ("ALPHA_1 · M" is new beside a held "ALPHA_1 · S")
       // ...and a design this FILE's earlier indexing wrote with an older reader is not held: the reader has improved since (a plug drawn into the Circle, a hoop welded), and the file is the proof it is the same design
-      let older = 0; const heldList = [];
+      // (KEEPHELD, 9 Nov 2026: under "keep", the default, a line held from an older reader stays as it is too: adding a file never changes a held SKU; "rebuild every charm" builds it again)
+      let older = 0; const heldList = [], olderKept = new Set();
       const holds = l => {
         const e = known.get(String(l.sku || "").toUpperCase()); if (!e) return false;
         const sz = l.size ? e.sizes && e.sizes[String(l.size).toUpperCase()] : null; if (l.size && !sz) return false;
         // a record with no design file behind it is no design held (a stub another feature wrote, a patch for a SKU that was never indexed): the sheet builds it
         if (!((sz || e).aiPath || (!l.size && Object.values(e.sizes || {}).some(z => z && z.aiPath)))) return false;
-        if (e.masterHash === masterHash && (+((sz || e).readerV) || 0) < P.READER_VERSION) { older++; return false; }
+        if (e.masterHash === masterHash && (+((sz || e).readerV) || 0) < P.READER_VERSION) { if (mode === "keep") { olderKept.add(String(l.sku).toUpperCase()); return true; } older++; return false; }
         return true;
       };
       // a design the library holds WRONG is built again without a tick: held as ONE body of a pair this sheet draws as two (ACORN_4721), or held without the letter this sheet sets inside it (HEARTKEY_NECKLACE_A…Z) (charm-nest-pair.js staleHeld)
-      const staleOf = (() => { try { const Pr = window.CharmNestPair; return Pr && Pr.staleHeld ? Pr.staleHeld(g.charms.filter(c => c.mergedInto == null), c => { const x = lab.labels.get(c.index); return x ? [x].concat(x.extra || []).map(y => ({ sku: y.sku, size: y.size, bbox: y.bbox })) : []; }, known, P.LETTERS_READER_VERSION) : new Map(); } catch (_) { return new Map(); } })();
+      // (KEEPHELD: under "keep" it is not built again, it is named on the card: staleKept)
+      const staleAll = (() => { try { const Pr = window.CharmNestPair; return Pr && Pr.staleHeld ? Pr.staleHeld(g.charms.filter(c => c.mergedInto == null), c => { const x = lab.labels.get(c.index); return x ? [x].concat(x.extra || []).map(y => ({ sku: y.sku, size: y.size, bbox: y.bbox })) : []; }, known, P.LETTERS_READER_VERSION) : new Map(); } catch (_) { return new Map(); } })();
+      const staleOf = mode === "keep" ? new Map() : staleAll, staleKept = mode === "keep" ? staleAll : new Map();
       // a held line, as the card lists it: whose it is (the master file it came from and when), and whether this sheet draws it a different size (the library's version may be another drawing, not this file's)
+      // (KEEPSIZE: this sheet's size is the one the indexer would record, sheetSizeOf: the ring, the margin and the standard size counted as the library counts them, not the bare outline's box)
+      const sizeRule = sizeRuleOf(g.charms), sheetSize = new Map();
       const lineOf = (l, c) => {
-        const e = known.get(String(l.sku || "").toUpperCase()), sz = l.size && e.sizes ? e.sizes[String(l.size).toUpperCase()] : null, g = sz || e, b = c.outline && c.outline.bbox;
-        const mine = b ? [b[2] - b[0], b[3] - b[1]] : null, theirs = [+g.widthPt || 0, +g.heightPt || 0];
+        const e = known.get(String(l.sku || "").toUpperCase()), sz = l.size && e.sizes ? e.sizes[String(l.size).toUpperCase()] : null, g = sz || e;
+        if (!sheetSize.has(c.index)) sheetSize.set(c.index, sheetSizeOf(c, sizeRule));
+        const mine = sheetSize.get(c.index), theirs = [+g.widthPt || 0, +g.heightPt || 0];
         const differs = !!(mine && theirs[0] && !e.pair && (Math.abs(mine[0] - theirs[0]) > 0.08 * Math.max(mine[0], theirs[0]) + 4 || Math.abs(mine[1] - theirs[1]) > 0.08 * Math.max(mine[1], theirs[1]) + 4));
         return { sku: l.sku, size: l.size || null, from: e.masterHash === masterHash ? "this file" : (e.masterName || String(e.masterHash || "").slice(0, 8) || "another file"), fromHash: e.masterHash || null, at: e.indexedAt || null, differs, sheetMm: mine && [+(mine[0] * MM).toFixed(1), +(mine[1] * MM).toFixed(1)], libraryMm: theirs[0] ? [+(theirs[0] * MM).toFixed(1), +(theirs[1] * MM).toFixed(1)] : null };
       };
@@ -3731,10 +3763,19 @@ const Master = window.Master = (() => {
           for (const l of lines) { const e = known.get(String(l.sku || "").toUpperCase()); heldList.push(Object.assign(lineOf(l, c), mode !== "keep" && pairHeld.has(c.index) && e.masterHash !== masterHash ? { pairKept: true } : {}, savedHere(e) ? { saved: true } : {})); }
           continue;
         }
+        // KEEPHELD: under "keep" a charm with a new line is built for its NEW lines only; its held lines keep the library's record, drawing and size, and are listed as kept
+        if (mode === "keep" && !all) {
+          const keepSet = new Set();
+          for (const l of lines) if (holds(l)) { keepSet.add(String(l.sku).toUpperCase() + "|" + String(l.size || "").toUpperCase()); heldList.push(lineOf(l, c)); }
+          if (keepSet.size) c.keepLines = keepSet;
+          continue;
+        }
         // rebuilt whole: the master they came from is superseded (it no longer blocks them as a clash), and each held line of another file is a replacement the card names. A design saved from an order is not superseded: the library keeps it and says so (putIndex keepSaved).
         for (const l of lines) { const e = known.get(String(l.sku || "").toUpperCase()); if (!e || !e.masterHash || e.masterHash === masterHash || savedHere(e)) continue; supersede.add(e.masterHash); if (holds(l)) replacing.push(Object.assign(lineOf(l, c), { charm: c.index })); }
       }
-      job.held = held; job.supersede = [...supersede]; job.older = older; job.heldList = heldList; job.replacing = replacing;
+      job.held = held; job.supersede = [...supersede]; job.older = older; job.heldList = heldList; job.replacing = replacing; job.olderKept = olderKept.size;
+      job.staleKept = [...staleKept].map(([i, w]) => ({ sku: w.skus[0], kind: w.kind }));
+      if (staleKept.size) say("MASTER", `${staleKept.size} design(s) the library holds look incomplete beside this sheet (${[...staleKept].slice(0, 8).map(([i, w]) => `${w.skus[0]}: ${w.kind === "pair" ? "held as one body of a pair" : "held without the letter set inside it"}`).join(", ")}${staleKept.size > 8 ? " …" : ""}): kept as they are; choose “rebuild every charm” under SKUs already held to build them again`);
       if (staleOf.size && !all) say("MASTER", `${staleOf.size} design(s) the library already holds are built again, because it holds them wrong: ${[...staleOf].slice(0, 8).map(([i, w]) => `${w.skus[0]} (${w.kind === "pair" ? "held as one body of a pair" : "held without the letter set inside it"})`).join(", ")}${staleOf.size > 8 ? " …" : ""}`);
       if (older && !all) say("MASTER", `${older} SKU line(s) of this file were indexed by an older reader and are built again with the current one`);
       if (replacing.length) say("MASTER", `${replacing.length} SKU line(s) the library holds from an older master file are built again from this file, the newest (the card lists what replaced them): ${replacing.slice(0, 8).map(x => `${x.sku}${x.size ? " · " + x.size : ""} (from ${x.from})`).join(", ")}${replacing.length > 8 ? " …" : ""}`);
@@ -3874,9 +3915,11 @@ const Master = window.Master = (() => {
     // replaced the file under the other two (their stored download links died and their tile read "Preview unavailable"). The rebuilt SKU takes a file of its own; the others keep the file they had.
     const heldBy = new Map(); for (const [sk, e] of B.master.entries) for (const pth of [e.aiPath, e.thumbPath].concat(Object.values(e.sizes || {}).flatMap(z => [z && z.aiPath, z && z.thumbPath]))) { const st = stemOf(pth); if (!st) continue; if (!heldBy.has(st)) heldBy.set(st, new Set()); heldBy.get(st).add(String(sk).toUpperCase()); }
     const taken = new Set(), keyOf = new Map();
+    // (KEEPHELD: a held line of a charm built for its new lines only, c0.keepLines, keeps its file: the file is named after the first NEW line, and the held lines are not "this charm's" to write over)
+    const keptLine = (c0, x) => !!(c0.keepLines && c0.keepLines.has(up(x.sku) + "|" + String(x.size || "").toUpperCase()));
     for (const c0 of live.slice().sort((a, b) => a.index - b.index)) {
-      const p0 = [{ sku: c0.sku, size: c0.skuSize }].concat((c0.extraSkus || []).map(x => ({ sku: x.sku, size: x.size }))).find(x => nameOk(x.sku)); if (!p0) continue;
-      const base = p0.size ? `${p0.sku}__${p0.size}` : p0.sku; let key = base; const holders = heldBy.get(safeKey(key)), mine = new Set([{ sku: c0.sku }].concat(c0.extraSkus || []).map(x => up(x.sku)));
+      const p0 = [{ sku: c0.sku, size: c0.skuSize }].concat((c0.extraSkus || []).map(x => ({ sku: x.sku, size: x.size }))).find(x => nameOk(x.sku) && !keptLine(c0, x)); if (!p0) continue;
+      const base = p0.size ? `${p0.sku}__${p0.size}` : p0.sku; let key = base; const holders = heldBy.get(safeKey(key)), mine = new Set([{ sku: c0.sku, size: c0.skuSize }].concat(c0.extraSkus || []).filter(x => !keptLine(c0, x)).map(x => up(x.sku)));
       if (taken.has(safeKey(key)) || (holders && [...holders].some(h => !mine.has(h)))) key = `${base}__${c0.index}`;
       taken.add(safeKey(key)); keyOf.set(c0.index, key);
     }
@@ -3885,7 +3928,7 @@ const Master = window.Master = (() => {
       // a name the library cannot hold is refused here and said, before anything is uploaded: its file would otherwise replace the file of the SKU its name is cleaned to ("HASH#1" → HASH_1.ai)
       const lines = [{ sku: c0.sku, size: c0.skuSize }].concat((c0.extraSkus || []).map(x => ({ sku: x.sku, size: x.size })));
       for (const x of lines) if (!nameOk(x.sku)) refusedHere.push({ sku: x.sku, reason: "not a name the library can hold (2 to 61 characters: letters, digits, space and _ . , ' & ( ) + -)" });
-      const good = lines.filter(x => nameOk(x.sku)); if (!good.length) { job.progress = `written ${++n}/${live.length}`; return; }
+      const good = lines.filter(x => nameOk(x.sku) && !keptLine(c0, x)); if (!good.length) { job.progress = `written ${++n}/${live.length}`; return; }   // (KEEPHELD: a held line of this charm is not written)
       const prim = good[0], extras = good.slice(1);
       const pm = pairs.fold.get(c0.index);                              // set only for a design built from a row of bodies: its silhouette, picture, file and readings are the whole design's
       let c = c0;
@@ -4147,10 +4190,10 @@ const Master = window.Master = (() => {
     const v = document.getElementById("masterView"); if (!v || v.classList.contains("hidden")) return;
     if (!v.dataset.built) {
       v.dataset.built = "1";
-      v.innerHTML = `<div class="masterHead"><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><button class="btn gold sm" id="mAdd" data-repo="upload" title="index another master .ai into the charm library (asks for your password)">＋ Add a master file</button><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:5px 10px;font-size:12px"><label style="display:flex;gap:5px;align-items:center;font-size:11px" title="Replace (the default): a SKU the library holds from an older master file is re-indexed from the file you add, the newest; this file's own SKUs and designs saved from an order stay as they are. Keep: every SKU already held keeps the library's drawing. Rebuild: every charm on the sheet is rebuilt, this file's own too.">SKUs already held <select id="mHeld" style="font-size:11px"><option value="newest">replace with this file's drawings</option><option value="keep">keep the library's drawings</option><option value="all">rebuild every charm, this file's too</option></select></label><span class="pill neutral" id="mCount"></span><span id="mBulk"></span></div>
-        <details class="noteBox"><summary>How a master file is read</summary>Drop a master file here, or press Add. Each charm in it has its SKU as text directly under it (within ${S.settings.labelGapMm} mm, centred under the outline). A SKU is one design whatever colour it is ordered in; the material comes from the order. Labels are never part of the charm. Two different bodies touching under ONE label (a left and a right) are one design, built from both. Unlabelled charms, orphan labels and duplicates are listed in red, each with where it sits; a SKU present in two masters is blocked until fixed. A name written above a charm that has its own SKU under it is a title, not a SKU. A letter set inside a design whose SKU ends in that letter is welded into the design's cut line as an outline. A SKU the library holds from an OLDER master file is re-indexed from the file you add — the newest file wins, nothing stays duplicated — and the card lists each one, old file → new file, old size → new size; what a person set on it (angle, engravable, pair and facing) is kept. A SKU held as a pair is not overwritten by a drawing of one body, and a design saved from an order is never replaced. A SKU this same file wrote is left as it is, unless the library holds it wrong (one body of a pair this sheet draws as two, or a design without its letter): that is built again. Add the same file again and only what is missing is built.</details>
+      v.innerHTML = `<div class="masterHead"><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><button class="btn gold sm" id="mAdd" data-repo="upload" title="index another master .ai into the charm library (asks for your password)">＋ Add a master file</button><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:5px 10px;font-size:12px"><label style="display:flex;gap:5px;align-items:center;font-size:11px" title="Keep (the default): every SKU already in the library keeps its record, drawing and size; only the SKUs it does not hold are added. Replace: a SKU the library holds from an older master file is re-indexed from the file you add; this file's own SKUs and designs saved from an order stay as they are. Rebuild: every charm on the sheet is rebuilt, this file's own too.">SKUs already held <select id="mHeld" style="font-size:11px"><option value="keep">keep the library's drawings</option><option value="newest">replace with this file's drawings</option><option value="all">rebuild every charm, this file's too</option></select></label><span class="pill neutral" id="mCount"></span><span id="mBulk"></span></div>
+        <details class="noteBox"><summary>How a master file is read</summary>Drop a master file here, or press Add. Each charm in it has its SKU as text directly under it (within ${S.settings.labelGapMm} mm, centred under the outline). A SKU is one design whatever colour it is ordered in; the material comes from the order. Labels are never part of the charm. Two different bodies touching under ONE label (a left and a right) are one design, built from both. Unlabelled charms, orphan labels and duplicates are listed in red, each with where it sits; a SKU present in two masters is blocked until fixed. A name written above a charm that has its own SKU under it is a title, not a SKU. A letter set inside a design whose SKU ends in that letter is welded into the design's cut line as an outline. A SKU the library already holds keeps its record, drawing and size: only the SKUs it does not hold are added, and the card counts the rest as kept. To draw held SKUs again from the file you add, choose “replace with this file's drawings” (a SKU held from an OLDER master file is re-indexed from this one, and the card lists each one, old file → new file, old size → new size; what a person set on it, angle, engravable, pair and facing, is kept) or “rebuild every charm” under SKUs already held, before adding the file. A SKU held as a pair is not overwritten by a drawing of one body, and a design saved from an order is never replaced. Add the same file again and only what is missing is built.</details>
         <div id="mAdds"></div><div id="mJobs" style="display:grid;gap:10px"></div><details class="noteBox masterHist" id="mHist"><summary id="mHistSum">Upload history</summary><div id="mFiles" style="display:grid;gap:10px"></div></details><div class="section">Indexed SKUs</div><div class="skuGrid" id="mGrid"></div>`;
-      { const sel = v.querySelector("#mHeld"); sel.value = heldMode; sel.onchange = () => { heldMode = HELD_MODES.includes(sel.value) ? sel.value : "newest"; toast(heldMode === "all" ? "every charm on the next sheet will be rebuilt" : heldMode === "keep" ? "SKUs already in the library keep their drawings" : "SKUs held from an older master file are replaced with the next file's drawings", "ok"); }; }
+      { const sel = v.querySelector("#mHeld"); sel.value = heldMode; sel.onchange = () => { heldMode = HELD_MODES.includes(sel.value) ? sel.value : "keep"; toast(heldMode === "all" ? "every charm on the next sheet will be rebuilt" : heldMode === "keep" ? "SKUs already in the library keep their drawings" : "SKUs held from an older master file are replaced with the next file's drawings", "ok"); }; }
       // the file goes where it is dropped: on this tab it is a master for the library
       ["dragenter", "dragover"].forEach(ev => v.addEventListener(ev, e => { if (!(e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files"))) return; e.preventDefault(); e.stopPropagation(); v.classList.add("dragOver"); e.dataTransfer.dropEffect = "copy"; }));
       ["dragleave", "drop"].forEach(ev => v.addEventListener(ev, () => v.classList.remove("dragOver")));
@@ -4204,14 +4247,21 @@ const Master = window.Master = (() => {
         card.appendChild(d);
       }
       // what the run left as it was, and whose it is: a SKU the library already holds is not built again, and "19 written, 14 held" must say which 14 and from which file
+      // KEEPHELD (Paul, 9 Nov 2026: 1,900 held lines each listed with a size in red): ONE calm line, the list folded behind "Show the N kept" with no size on it; a size this sheet draws differently is
+      // no problem (the library's is kept) and is one quiet line inside the fold. What needs a person (no SKU, a SKU drawn twice, refused, not landed ...) stays in the box above.
       if ((job.heldList || []).length) {
-        const hl = job.heldList, diff = hl.filter(x => x.differs), keep = job.heldMode === "keep", saved = hl.some(x => x.saved), pairs = hl.some(x => x.pairKept), mine = !keep && hl.every(x => x.from === "this file");
-        const d = el("details", "noteBox");
-        d.innerHTML = `<summary>${hl.length} SKU line(s) already in the library${mine ? " from this file" : ""}, left as they are${diff.length ? ` · <b style="color:#8a3a26">${diff.length} drawn a different size on this sheet</b>` : ""}</summary>`
-          + hl.map(x => `<div>${esc(x.sku)}${x.size ? " · " + esc(x.size) : ""} — from ${esc(x.from)}${x.at ? ", " + esc(when(x.at)) : ""}${x.pairKept ? " — <b>held as a pair, and this sheet draws one body: kept</b>" : x.saved ? " — a design saved from an order" : ""}${x.differs && x.sheetMm && x.libraryMm ? ` — <b>this sheet draws it ${x.sheetMm.join(" × ")} mm, the library holds ${x.libraryMm.join(" × ")} mm</b>` : ""}</div>`).join("")
-          + (keep ? `<div style="margin-top:6px">To replace them with this file's drawings, choose “replace with this file's drawings” under SKUs already held and add the file again.</div>` : "")
+        const hl = job.heldList, diff = hl.filter(x => x.differs), keep = job.heldMode === "keep", saved = hl.some(x => x.saved), pairs = hl.some(x => x.pairKept), num = v => Number(v || 0).toLocaleString("en-US");
+        const added = Math.max(0, (+job.written || 0) - (job.replaced || []).length), sk = job.staleKept || [];
+        const d = el("div", "noteBox");
+        d.innerHTML = `<div>${num(hl.length)} already in the library: kept as they are${job.state === "done" ? ` · ${num(added)} new added` : ""}</div>`
+          + (sk.length ? `<div style="margin-top:4px">${num(sk.length)} of them look incomplete beside this sheet (${sk.slice(0, 8).map(x => `${esc(x.sku)}: ${x.kind === "pair" ? "held as one body of a pair" : "held without the letter set inside it"}`).join(", ")}${sk.length > 8 ? " …" : ""}): kept; to build them again choose “rebuild every charm” under SKUs already held and add the file again.</div>` : "")
+          + `<details style="margin-top:4px"><summary style="cursor:pointer">Show the ${num(hl.length)} kept</summary>`
+          + hl.map(x => `<div>${esc(x.sku)}${x.size ? " · " + esc(x.size) : ""} — from ${esc(x.from)}${x.at ? ", " + esc(when(x.at)) : ""}${x.pairKept ? " — held as a pair, and this sheet draws one body: kept" : x.saved ? " — a design saved from an order" : ""}</div>`).join("")
+          + (diff.length ? `<div style="margin-top:6px">Sizes differ on this sheet for ${num(diff.length)} of them (kept the library's).</div>` : "")
+          + (keep ? `<div style="margin-top:6px">To draw them again from this file, choose “replace with this file's drawings” under SKUs already held and add the file again (“rebuild every charm” rebuilds this file's own too).</div>` : "")
           + (pairs ? `<div style="margin-top:6px">A SKU the library holds as a pair is never overwritten by a drawing of one body: draw both bodies under its label, or make it one charm in the Library first.</div>` : "")
-          + (saved ? `<div style="margin-top:6px">A design saved from an order is never replaced by a master file.</div>` : "");
+          + (saved ? `<div style="margin-top:6px">A design saved from an order is never replaced by a master file.</div>` : "")
+          + `</details>`;
         card.appendChild(d);
       }
       const pending = (job.vision || []).filter(x => !x.confirmed);
