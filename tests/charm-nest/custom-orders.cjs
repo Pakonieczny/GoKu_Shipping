@@ -219,7 +219,7 @@ async function browserChecks() {
     assert.equal(tabN[0], '' + openAll, 'the Review tab shows Open\'s count: ' + JSON.stringify(tabN) + ' vs ' + openAll);
     assert.deepEqual(seg.b, ['Open' + openAll, 'Resolved0']); assert(openAll >= 6, 'Open counts everything that waits: ' + JSON.stringify(seg));   // (the segment reads Resolved, RVRESOLVED: Paul, 18 Oct 2026)
     const barH = await page.evaluate(() => document.querySelector('#reviewView .ordBar').getBoundingClientRect().height);
-    assert(barH < 40, 'the bar stays one line: ' + barH);
+    assert(barH < 46, 'the bar stays one line: ' + barH); /* (CEB1: the Charm Editor button, 38 px, is last in this row now) */
     // a click on the card opens the order window, which asks nothing (Paul, 29 Sep 01:01: no decision box in Review or
     // in any window): the card's buttons deal with it
     await page.click('#rvList .reviewListRow[data-rid="4174476673"] .engravingIdentity');

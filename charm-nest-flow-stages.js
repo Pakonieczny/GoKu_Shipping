@@ -20,16 +20,26 @@
    list per workspace). An order whose later scans were never seen here stays at Laser cut; a step with nothing learned shows "—", never a guess.
    Shipped and Completed are the Completed pile's own orders (CNCompleted: shipped by a station or a label, and marked Completed on Etsy).
 
+   CNT1 (Paul, 9 Nov 2026: "Numbers in the left hand pull out menu don't match the totals on the right hand main page."): ONE count per step, in ORDERS, that the rail's row, its chip,
+   the top nav badge and the Orders list under the row's filter all read (Orders.flowNow):
+     · every OPEN order (Open Orders: not shipped, not cancelled) stands on exactly one of the open steps (Order in … Packed), so those rows add up to Open Orders;
+     · Completed is the Completed pile itself (CNCompleted: shipped / etsyCompleted), every entry of it, so the row says what the Completed tab says. An order whose pieces were all
+       completed by hand is made, not shipped: it is an open order, at the step learned for it, else Assembled (it no longer reads "Completed" while the Completed tab has none);
+     · In review / On hold: the order is on the Review tab's Open list (c.reviewOrder, by order), or a line of it is held or unmatched. It comes first: a person must decide;
+     · Design & engrave: the Design & Engrave tab has engraving still to settle for it (c.engraving, by order), or a line has no design yet;
+     · Packed (the Timeline's "Packed", Shipping lane): packed or its shipping label printed, not marked shipped yet. Once marked shipped it is in the Completed pile.
+
    API
      STAGES                    [{ id, label, lane, words }] in the flow's order
      lineRank(row, c)          pure: the line's place in STAGES (0-9), "hand", or null (not counted)
      orderRank(rows, c, rid)   pure: the order's place (its slowest line; the steps after the laser learned for it)
-     count(rows, c)            pure: { counts: { id: n }, byRid: Map(rid → id), learned: { id: n } }
+     count(rows, c, done)      pure: { counts: { id: orders }, byRid: Map(rid → id) }; rows: the open orders' lines; done: the Completed pile's list
      learnEvents(rid, events)  keeps the furthest step after the laser the events show; true when it moved on
      learned(rid)              the step learned for an order (5-9), else 0
      world(name)               'production' | 'sandbox'
      hook()                    the OrderTimeline reads and records, learned from (done once, by itself)
-   c (the page's answers): { place(row) → PiecePlacement | null, held(row), review(row), cut(row, place), nested(row), learned(rid), shipped(rid) → "shipped" | "etsyCompleted" | "" }
+   c (the page's answers): { place(row) → PiecePlacement | null, held(row), review(row), cut(row, place), nested(row), learned(rid),
+                             reviewOrder(rid) (CNT1: on the Review tab's Open list), engraving(rid) (CNT1: the Design & Engrave tab has engraving to settle for it) }
 */
 (function (root) {
   'use strict';
@@ -46,14 +56,15 @@
     { id: 'sorted', label: 'Sorted', lane: 'sorting', words: 'Scanned at Sorting', station: true },
     { id: 'welded', label: 'Welded', lane: 'welding', words: 'Scanned at Welding (stud earrings)', station: true },
     { id: 'assembled', label: 'Assembled', lane: 'assembly', words: 'Scanned at Assembly', station: true },
-    { id: 'shipped', label: 'Shipped', lane: 'shipping', words: 'Packed, label printed and shipped', station: true },
-    { id: 'completed', label: 'Completed', lane: 'etsy', words: 'Completed on Etsy' }
+    { id: 'packed', label: 'Packed', lane: 'shipping', words: 'Packed or its shipping label printed, not marked shipped yet', station: true },
+    { id: 'completed', label: 'Completed', lane: 'etsy', words: 'Shipped (at the shipping station, by a label, or on Etsy): the Completed tab' }
   ];
   const AT = Object.fromEntries(STAGES.map((s, i) => [s.id, i]));
-  const SORTED = AT.sorted, CUT = AT.cut, REVIEW = AT.review;
+  const SORTED = AT.sorted, CUT = AT.cut, REVIEW = AT.review, DESIGN = AT.design, PACKED = AT.packed;
   // the station events after the laser, as the Timeline ranks them (whereOf's RANK: sorted 4, welded 5, assembled 6, packed / label printed 7, shipped 8, completed on Etsy 9)
-  const LATE = { sorted: AT.sorted, welded: AT.welded, assembled: AT.assembled, packed: AT.shipped, shipped: AT.shipped, etsyCompleted: AT.completed };
-  const late = e => { if (!e || !e.type) return 0; if (e.type === 'labelPrinted') return String(e.station || '') === 'shipping' ? AT.shipped : 0; return LATE[e.type] || 0; };
+  // (CNT1: an open order goes no further than Packed: once shipped (or completed on Etsy) it is the Completed pile's, and leaves the open orders)
+  const LATE = { sorted: AT.sorted, welded: AT.welded, assembled: AT.assembled, packed: PACKED, shipped: PACKED, etsyCompleted: PACKED };
+  const late = e => { if (!e || !e.type) return 0; if (e.type === 'labelPrinted') return String(e.station || '') === 'shipping' ? PACKED : 0; return LATE[e.type] || 0; };
 
   const digits = v => { const s = String(v == null ? '' : v).trim(); return /^CUSTOM-/i.test(s) ? s : s.replace(/\D/g, ''); };
   const ask = (f, ...a) => { try { return typeof f === 'function' ? f(...a) : undefined; } catch (_) { return undefined; } };
@@ -75,21 +86,28 @@
   function orderRank(rows, c, rid) {
     const ranks = (rows || []).map(r => lineRank(r, c)).filter(x => x != null);
     if (!ranks.length) return null;
-    const live = ranks.filter(x => x !== 'hand');
-    if (!live.length) return AT.completed;                                     // (every piece completed by hand)
-    const slow = Math.min(...live), was = +ask(c.learned, rid) || 0;
+    // (CNT1: a person must decide first: the Review tab's Open list has the order, or a line of it is held / unmatched)
+    if (ask(c.reviewOrder, rid) || ranks.includes(REVIEW)) return REVIEW;
+    // (CNT1: the Design & Engrave tab has engraving still to settle for the order: it waits on that, wherever its pieces are)
+    if (ask(c.engraving, rid)) return DESIGN;
+    const live = ranks.filter(x => x !== 'hand'), was = Math.min(+ask(c.learned, rid) || 0, PACKED);
+    // (CNT1: every piece completed by hand: made, not shipped. An open order, at the step learned for it, else Assembled; never Completed, which is the Completed pile's)
+    if (!live.length) return Math.max(was, AT.assembled);
+    const slow = Math.min(...live);
     // (a station's scan is the order's, its QR label: once seen, the order is there, unless a piece of it is held or back in Review)
-    return was >= SORTED && slow !== REVIEW && was > slow ? was : slow;
+    return was >= SORTED && slow !== REVIEW && slow !== DESIGN && was > slow ? was : slow;
   }
-  /** The open orders on each step, and the shipped ones (the Completed pile) on Shipped and Completed. */
-  function count(rows, c, shippedList) {
+  /** The OPEN orders on each step (rows: the open orders' lines only), and every order of the Completed pile on Completed (completedList: CNCompleted.list()). */
+  function count(rows, c, completedList) {
     const counts = Object.fromEntries(STAGES.map(s => [s.id, 0])), byRid = new Map(), groups = new Map();
     for (const r of rows || []) { if (!r || !r.order) continue; const rid = String(r.order.receiptId); if (!groups.has(rid)) groups.set(rid, []); groups.get(rid).push(r); }
     for (const [rid, rs] of groups) {
       const k = orderRank(rs, c, rid); if (k == null) continue;
       const id = STAGES[k].id; counts[id]++; byRid.set(rid, id);
     }
-    for (const e of shippedList || []) { if (!e || !e.rid || groups.has(String(e.rid))) continue; counts[e.type === 'etsyCompleted' ? 'completed' : 'shipped']++; }
+    // (CNT1: Completed is the Completed tab, every order in it: the same list, so the same number)
+    const done = new Set(); for (const e of completedList || []) if (e && e.rid) done.add(String(e.rid));
+    counts.completed = done.size;
     return { counts, byRid };
   }
 

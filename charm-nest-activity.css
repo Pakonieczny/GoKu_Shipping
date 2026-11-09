@@ -71,8 +71,7 @@
 #ordBar .ordSummary{display:inline-flex;flex:0 1 auto;flex-wrap:wrap;align-items:center;gap:6px 8px;min-width:0;border:0;padding:0}
 #ordBar #ordChips{display:inline-flex;flex-wrap:nowrap;align-items:center;gap:6px}
 #ordBar .btn.sm,#ordBar .egTab{min-height:30px;box-sizing:border-box}
-#ordBar .btn.cnCeBtn.ordDesignBtn{flex:none;min-height:30px;box-sizing:border-box;padding:0 14px 0 11px;gap:6px}   /* ODB (Paul, 9 Nov 2026): the gold Design Studio button beside Pull orders, the bar's own height (its look is .cnCeBtn below) */
-#ordBar .btn.cnCeBtn.ordDesignBtn svg{width:16px;height:16px}
+/* (CEB1, Paul 9 Nov 2026: ODB's own smaller size for the Orders button is gone: it is the Charm Editor button of every main tab, .cnCeTabBtn below, the Design & Engrave tab's size) */
 #ordBar .egTab{padding:0 10px}
 #ordBar .ordCount{display:inline-flex;align-items:center;gap:6px;font:12px var(--sans);color:var(--ink70);white-space:nowrap}
 #ordBar .ordCount b{font:700 12px var(--mono);color:var(--ink)}
@@ -139,8 +138,8 @@
 #ordBody{transition:opacity .14s}
 #ordBody[aria-busy=true]{opacity:.55;pointer-events:none}
 .cnDim{transition:opacity .14s}.cnDim[aria-busy=true]{opacity:.55;pointer-events:none}
-/* CMP1 (Paul, 9 Nov 2026): Filters stays on Cancelled and Completed (Time and Sort by are in it); the Design Studio button is the last thing of the head, at its top right */
-#ordBar .ordTools>.ordDesignBtn{margin-left:4px}
+/* CMP1 (Paul, 9 Nov 2026): Filters stays on Cancelled and Completed (Time and Sort by are in it); the Charm Editor button (CEB1) is the last thing of the head, at its top right */
+#ordBar .ordTools>.cnCeTabBtn{margin-left:4px}
 .ordChip[data-def][aria-pressed=true]{background:var(--paper2);border-color:var(--ink25);color:var(--ink)}   /* the default sort, like "Any": in force, nothing narrowed */
 .ordFg [data-dir-row]{margin-top:6px}
 /* the Completed list (charm-nest-completed.js): one row an order, its SHIPPED seal at the right */
@@ -170,8 +169,8 @@
   #ordBar.ordCompact{gap:8px}
   #ordBar .ordSummary{flex:1 1 100%}
   #ordBar .ordTools{flex:1 1 100%;flex-wrap:wrap;justify-content:flex-start}
-  #ordBar .ordFind{flex:1 1 100%;max-width:none;min-width:0}   /* (CMP1) the search fills a row; Filters and Design Studio are the row under it, Design Studio at its right end */
-  #ordBar .ordTools>.ordDesignBtn{margin-left:auto}
+  #ordBar .ordFind{flex:1 1 100%;max-width:none;min-width:0}   /* (CMP1) the search fills a row; Filters and the Charm Editor button are the row under it, the button at its right end */
+  #ordBar .ordTools>.cnCeTabBtn{margin-left:auto}
   #ordBar #ordChips{flex-wrap:wrap;flex-shrink:1;row-gap:6px;min-width:0;max-width:100%}   /* (CMP1: three piles now; on the narrowest phones they wrap under Pull orders rather than run past the edge) */
   #ordBar .ordTools>.cnListTools{display:contents}
   #ordBar .cnDate{flex:0 1 auto}
@@ -188,7 +187,7 @@
   #ordBar .cnDate .cnBtn{padding:0 10px}
 }
 @media(max-width:760px),(pointer:coarse){
-  #ordBar .btn.sm,#ordBar .egTab,#ordBar .btn.cnCeBtn.ordDesignBtn{min-height:40px}
+  #ordBar .btn.sm,#ordBar .egTab{min-height:40px}
   #ordBar .egTab{padding:0 12px}
   #ordBar .cnBtn,#ordBar .ordFind{height:40px;font-size:13px}
   #ordBar .cnSplit .cnKey:not([hidden])~.cnDir{width:40px}
@@ -559,7 +558,7 @@
    to the charm editor. The button always looks the same and is roughly the same size")
    EVERY way into the Charm Editor is this one button: a white pill (the app's other buttons are square-cornered), a fine gold outline that shades from light to deep gold, the pen nib in gold and
    the words in ink, the same height and type everywhere. On hover the pill fills with deep ink from the outline in (a layer under the words that fades in), the words turn white and the nib
-   light gold and tips forward; pressed, it settles back. Placed by each place's own rule (.egCharmEdit, .egDesignBtn, .owCharmEdit, .cpOwBtn, .cpOpenBtn, .swCeBtn); styled only here. */
+   light gold and tips forward; pressed, it settles back. Placed by each place's own rule (.egCharmEdit, .cnCeTabBtn, .owCharmEdit, .cpOwBtn, .cpOpenBtn, .swCeBtn); styled only here. */
 .btn.cnCeBtn{position:relative;isolation:isolate;display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:38px;padding:0 18px 0 14px;border:1.5px solid transparent;border-radius:999px;
   background:linear-gradient(#fff,#fff) padding-box,linear-gradient(135deg,#e2cb95 0%,#a9823f 48%,#7f5f2b 72%,#d9be86 100%) border-box;color:#2a2219;font:600 13.5px/1.15 var(--sans);letter-spacing:.012em;
   white-space:nowrap;cursor:pointer;opacity:1;box-shadow:0 1px 1.5px rgba(70,50,20,.07),0 6px 16px -9px rgba(169,130,63,.55);
@@ -576,6 +575,16 @@
 .btn.cnCeBtn:disabled,.btn.cnCeBtn[aria-disabled=true]{opacity:.5;cursor:default;box-shadow:none}
 .btn.cnCeBtn[aria-busy=true]{cursor:progress;opacity:.72}
 @media (prefers-reduced-motion:reduce){.btn.cnCeBtn,.btn.cnCeBtn::before,.btn.cnCeBtn svg{transition:none}.btn.cnCeBtn:hover:not(:disabled){transform:none}.btn.cnCeBtn:hover:not(:disabled) svg{transform:none}}
+/* CEB1 (Paul, 9 Nov 2026: "Place it exactly in the same place on all 5 main tabs just like it is in the Design & Engrave"): the Charm Editor button of the five main tabs (charm-nest-bridge.js
+   CharmEditorTabBtn), the last thing of each tab's header row at its right end, the Design & Engrave size (.cnCeBtn as it is). Nest has no row of its own: .cnCeHead is one, holding only it. */
+.btn.cnCeBtn.cnCeTabBtn{flex:none;margin-left:auto}
+.cnCeHead{display:flex;align-items:center;justify-content:flex-end;padding-bottom:5px;margin-bottom:5px;border-bottom:1px solid var(--line)}
+#app:not(.nestMode) .cnCeHead{display:none}
+/* the Library's and the Review's rows never wrap (they scroll sideways): the Library's search and its chips' swatches give the button its room, and on a window too narrow the button stays in view
+   at the right end of either, the row scrolling under it */
+#libView .libBar>.cnCeTabBtn,#reviewView>.ordBar>.cnCeTabBtn{position:sticky;right:0;z-index:1}
+@media(max-width:760px),(pointer:coarse){.btn.cnCeBtn.cnCeTabBtn{min-height:40px}}   /* (a finger's 40 px, as every target of the Orders head has it: the same on all five tabs) */
+@container workspace (max-width:1370px){#libView .libBar input[type=search]{min-width:96px;flex-basis:110px}#libView .libBar .fchip .sw{display:none}}
 /* (the Engraving card's: at the top left of its work area, level with the Approve block at the top right, where the work area is empty; never over the drawing) */
 .pvMain>.btn.cnCeBtn.egCharmEdit{position:absolute;left:0;top:calc(var(--seal-base,50px) / 2);z-index:3;margin:0}
 
