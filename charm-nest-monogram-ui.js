@@ -985,9 +985,9 @@
       const seen = st.buyer.letters ? spaced(st.buyer.letters.join("")) : st.buyer.words;
       // (MONOLETTERS, Paul 17 Oct 2026: "the system did not use the buyer's requested letters": a card starts with the buyer's letters in the order they wrote them; one a person turned or swapped (the arrow moves the first letter to the end: A P V -> P V A) says what the buyer wrote, with one press to put them back)
       const differs = !!(st.buyer.letters && st.buyer.letters.join("") !== st.letters.join(""));
-      const says = seen ? `The buyer wrote <b>${esc(seen)}</b>${differs && !st.locked ? ` · <button type="button" class="mwLink" data-mw-buyer title="Put the buyer's letters back, in the order they wrote them">Use these</button>` : ""}` : "The buyer wrote nothing";
+      const says = seen ? `The buyer wrote <b>${esc(seen)}</b>${differs && !st.locked ? ` · <button type="button" class="mwLink" data-mw-buyer title="Put the buyer's letters back, in the order they wrote them">Use these</button>` : ""}` : "";   // (TW1, Paul 9 Nov 2026: no placeholder when the buyer wrote nothing: the line is hidden)
       if (R.says._shown !== says) { R.says.innerHTML = says; R.says._shown = says; }
-      R.says.hidden = st.message && st.message.kind === "letters" ? true : st.state !== "letters" && !(st.buyer.letters && st.buyer.letters.join("") !== st.letters.join(""));      // (an unreadable order's message says what the buyer wrote already; the order's own words stand in the strip above the widget, so the line is only for letters that differ from them)
+      R.says.hidden = !says || st.message && st.message.kind === "letters" ? true : st.state !== "letters" && !(st.buyer.letters && st.buyer.letters.join("") !== st.letters.join(""));      // (an unreadable order's message says what the buyer wrote already; the order's own words stand in the strip above the widget, so the line is only for letters that differ from them)
       // ONE size line
       const seg = []; if (st.sizeMm) { seg.push(`${mm1(st.sizeMm[0])} × ${mm1(st.sizeMm[1])} mm`); if (st.metal) seg.push(TONES[st.metal][2]); }
       if (st.fit && st.sizeMm) seg.push(st.fit.applied ? `scaled to the buyer’s ${mmTxt(st.fit.maxWidthMm)} mm` : `within the buyer’s ${mmTxt(st.fit.maxWidthMm)} mm`);

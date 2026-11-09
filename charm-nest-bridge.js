@@ -34,6 +34,9 @@ function earPairRow(row) {
 }
 /** What an earring pair line's quantity says besides the number (Paul, 10 Oct 2026: counts that say pairs and pieces truthfully): one pair is " · Left + Right"; q pairs are q Left and q Right. */
 const pairFactOf = q => (+q > 1 ? ` · ${+q} pairs, Left + Right each` : " · Left + Right");
+/* TW1 (Paul, 9 Nov 2026: "If there's no personalization, don't say the word "none" or "no personalization""): filler the buyer or Etsy put where words go ("none", "N/A", "Not requested on this item.",
+   "no personalisation": CharmNestEngravePieceWords.isNoWords) is no words: a row, card or window shows nothing for it. DISPLAY ONLY: the line's data is untouched. */
+function noWordsShown(t) { const x = String(t == null ? "" : t).trim(); if (!x) return true; try { const W = window.CharmNestEngravePieceWords; return !!(W && W.isNoWords && W.isNoWords(x)); } catch (_) { return false; } }
 function purchaseMarkup(row) {
   const detail=O.purchaseDetails(row.line,row.spec),views=O.optionViews(detail.options,row.line);   // (OPTTIDY: the options as text a person reads; the original is the hover)
   return `<div class="purchaseType"><span class="purchaseLabel">Jewellery</span><strong>${esc(detail.type)}</strong>${typeof ListMedia !== "undefined" && ListMedia.pairRow(row) ? `<span class="purchasePair">Mismatched pair: Left + Right</span>` : ""}</div><div class="purchaseChoices"><span class="purchaseLabel">Selected options</span>${views.length ? `<dl>${views.map(v=>`<div${v.changed ? ` title="${esc(v.was)}"` : ""}><dt>${esc(v.label || "Option")}</dt><dd>${esc(v.text)}</dd></div>`).join("")}</dl>` : '<span class="purchaseMissing">Selections unavailable</span>'}</div>`;
@@ -2348,7 +2351,11 @@ const Orders = window.Orders = (() => {
     return { cls: d < today0 ? "bad" : d <= tomorrow0 ? "warn" : "", txt, late: d < today0, soon: d <= tomorrow0 };
   }
   const shipTxt = r => r.order.shipBy ? shipDay.format(new Date(r.order.shipBy * 1000)) : "—";
-  const wordsOf = sp => (sp.personalization || []).join(" / ") || sp.buyerMessage || "";
+  /* TW1 (Paul, 9 Nov 2026: "If there's no personalization, don't say the word "none" or "no personalization""): what the buyer wrote, as a list row says it; filler the buyer or Etsy put in the box
+     ("none", "N/A", "Not requested on this item.", "no personalisation": CharmNestEngravePieceWords.isNoWords) is no words, so the row says nothing for it. DISPLAY ONLY: the line's data is untouched. */
+  const wordsOf = sp => (sp.personalization || []).filter(t => !noWordsShown(t)).join(" / ") || (noWordsShown(sp.buyerMessage) ? "" : String(sp.buyerMessage)) || "";
+  /** TW1: the class of a row's one line of words: the buyer's words bold (ordSaidText), the listing title regular and muted (ordTitle). */
+  const excerptCls = label => label === "Personalisation" ? "ordSaidText" : "ordTitle";
   /** The Left and the Right of an earring pair that do not sit together, said by side: "Left GF Sheet 1 · Right SS Sheet 1" ("not on a sheet yet" for an ear on none); '' for any other line and for a pair on one sheet. */
   function earsWhere(r) {
     try {
@@ -2577,7 +2584,7 @@ const Orders = window.Orders = (() => {
   function lineIdHtml(r, e, o) {
     const sp = r.spec || {}, where = o.where, whereText = where ? [where.set, where.sheet].filter(Boolean).join(" · ") : "", sku = esc(sp.designSku || r.line.sku || "No SKU");
     const head = `<div class="engravingOrder">${o.num ? `<b class="mono onum">${esc(r.order.receiptId)}</b>` : ""}<span class="sku mono">${sku}</span>${e ? e.mode : ""}</div>`;
-    const body = e ? `<span class="purchaseLabel">${esc(e.label)}</span>${e.words}` : o.said ? "" : `<span class="purchaseLabel">${o.label}</span><span class="rowExcerpt" title="${esc(o.text)}">${esc(o.text)}</span>`;
+    const body = e ? `<span class="purchaseLabel">${esc(e.label)}</span>${e.words}` : o.said || !o.text ? "" : `<span class="purchaseLabel">${o.label}</span><span class="rowExcerpt ${excerptCls(o.label)}" title="${esc(o.text)}">${esc(o.text)}</span>`;
     return `<div class="engravingIdentity${e ? " ordEngId" : ""}">${o.num ? '<span class="queueLabel">Order</span>' : ""}${head}${body}${whereText ? `<span class="rowExcerpt dim ordWhere">${esc(whereText)}</span>` : ""}</div>`;
   }
   /** The seals cell of a line: the order's Release Hold seal (a single-line order's), then the line's engraving / monogram seals, one chip + seal per piece and face. */
@@ -2602,7 +2609,7 @@ const Orders = window.Orders = (() => {
     const OG = window.CharmNestOrderGroup, rows = g.rows, first = rows[0], rid = String(first.order.receiptId), V = rows.map(lineView);
     for (const v of V) v.e = engLine(v.r);
     const held = V.filter(v => v.held), due = V[0].due, mail = V[0].mail, team = V[0].team, attn = V.some(v => v.attn), rel = releaseStampOf(rows), sealM = cardSeals(rows), trav = travelSlot(rows);
-    const label = v => wordsOf(v.sp) ? "Personalisation" : "Item", text = v => wordsOf(v.sp) || v.r.line.title || "No title";
+    const label = v => wordsOf(v.sp) ? "Personalisation" : "Item", text = v => wordsOf(v.sp) || v.r.line.title || "";
     const said = OG.sameOf(V.map(v => label(v) + "|" + text(v)));   // (what every piece says alike is said once at the top, else on each piece)
     const total = rows.reduce((n, r) => n + (O.pieceCountOf(r) || 1), 0);   // (CANCELREVIEW, Paul 20 Oct 2026: no Cancel Order in Orders; it is on the held order's card in Review)
     const stamp = JSON.stringify(["group", cards, first.order, due, date, mail, team, relSig(rel), sealM ? sealM.sig : "", trav.sig, V.map(v => [v.r.key, v.r.line, v.r.spec, v.r.state, v.st, v.r.hold, v.held, v.r.wait, v.why, v.where, v.seals && CustomPrint.sealSig(v.sealRec), v.fc[1], v.e ? v.e.sig : ""])]);
@@ -2622,7 +2629,7 @@ const Orders = window.Orders = (() => {
       + ListMedia.pair(v.r) + lineIdHtml(v.r, v.e, { num: false, said, label: label(v), text: text(v), where: v.where })
       + `<div class="purchaseSummary">${purchaseMarkup(v.r)}</div>${lineSealsHtml(v.r, v.e, null)}<div class="rowActions">${v.shown ? `<span class="ost ${v.shown[0]}">${esc(v.shown[1])}</span>` : ""}${v.fc[1] && !v.e ? `<span class="ost ${v.fc[0]} engFaces" title="${v.fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${v.fc[1]}</span>` : ""}${v.seals}<span class="rowFacts">Qty ${qtyOf(v)}${earPairRow(v.r) ? pairFactOf(qtyOf(v)) : O.countedFact(v.r)}</span>${v.why ? `<span class="rowExcerpt reviewReason" title="${esc(v.why)}">${esc(v.why)}</span>` : ""}${v.gateBtn}</div></div>`;
     node.innerHTML = `<div class="ogHead"><div class="engravingIdentity ogId"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(rid)}</b><span class="groupScope">${OG.countWord(total)}</span></div></div>`
-      + (said ? `<div class="engravingIdentity ogSaid"><span class="purchaseLabel">${label(V[0])}</span><span class="rowExcerpt" title="${esc(text(V[0]))}">${esc(text(V[0]))}</span></div>` : "")
+      + (said && text(V[0]) ? `<div class="engravingIdentity ogSaid"><span class="purchaseLabel">${label(V[0])}</span><span class="rowExcerpt ${excerptCls(label(V[0]))}" title="${esc(text(V[0]))}">${esc(text(V[0]))}</span></div>` : "")
       + `<div class="rowActions ogActs">${team ? TeamMail.mark(first) : ""}${mail && mail !== "null" ? CustomerMail.badge(rid) : ""}<span class="rowFacts"><span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${held.length ? relHoldHtml() : ""}${trav.html}${relSlotHtml(rel)}</div></div>`
       + `<div class="ogPieces">${V.map(piece).join("")}</div>`;
     const number = node.querySelector(".onum"); if (number) { const time = el("span", "orderTime"); time.textContent = date.time; time.title = date.label; number.appendChild(time); }
@@ -2718,7 +2725,7 @@ const Orders = window.Orders = (() => {
       node.setAttribute("role","button"); node.tabIndex=0; node.dataset.m = m; node.dataset.key = r.key; node.dataset.mkey = "ord:" + r.key;
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
-      const identity=lineIdHtml(r, e, { num: true, label: wordsOf(sp) ? "Personalisation" : "Item", text: wordsOf(sp) || r.line.title || "No title", where });
+      const identity=lineIdHtml(r, e, { num: true, label: wordsOf(sp) ? "Personalisation" : "Item", text: wordsOf(sp) || r.line.title || "", where });
       node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div>${lineSealsHtml(r, e, null)}<div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}${shown ? `<span class="ost ${shown[0]}">${esc(shown[1])}</span>` : ""}${fc[1] && !e ? `<span class="ost ${fc[0]} engFaces" title="${fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${fc[1]}</span>` : ""}${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? pairFactOf(qty) : O.countedFact(r)} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? relHoldHtml() : ''}${trav.html}${gateBtn}${relSlotHtml(rel)}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
       // (the order view grows out of the row that was clicked)
@@ -23374,18 +23381,21 @@ const OrderWin = window.OrderWin = (() => {
     // a line read before the placeholder cleanup (CharmNestOrders.visible) shows clean too
     // (ENGENT: Etsy hands the customer's words HTML-escaped; they are read decoded here and escaped again when drawn, so "Mom&#39;s" reads "Mom's" and "&lt;b&gt;" stays text)
     const words = x => O.decodeEntities(O.visible(x)).trim();
-    const pers = (sp.personalization || r.line.personalization || []).map(words).filter(Boolean), bm = words(sp.buyerMessage);
+    const pers = (sp.personalization || r.line.personalization || []).map(words).filter(t => !noWordsShown(t)), bm = noWordsShown(words(sp.buyerMessage)) ? "" : words(sp.buyerMessage);   // (TW1: filler is no words)
     // (CUSTOMORDERS, Paul 28 Oct 2026: a custom piece sent from the Charm Editor says what it is, as an order's line says what was bought: its name, its design and who sent it)
     const cu = r.custom && sp.custom;
     if (cu) said.push(["Custom piece", [cu.name || "no name", cu.orderless ? "no order" : "", cu.designId ? `design ${cu.designId} v${cu.version || 1}` : "", cu.widthMm != null && cu.heightMm != null ? `${(+cu.widthMm).toFixed(1)} × ${(+cu.heightMm).toFixed(1)} mm` : "", cu.by ? "sent by " + cu.by : ""].filter(Boolean).join(" · ")]);
     if (pers.length) said.push(["Personalisation", pers.join("\n")]);
     if (bm) said.push(["Buyer message", bm]);
-    const gm = words(r.order.giftMessage);
+    const gm = noWordsShown(words(r.order.giftMessage)) ? "" : words(r.order.giftMessage);
     if (gm) said.push(["Gift message", gm]);
     // the team's messages are in the Team tab beside this, in full: not repeated here among what the customer wrote
     const notes = byId("owNotes");
     notes.className = said.length ? "owSaid" : "owSaid none";
-    notes.innerHTML = said.length ? said.map(([k, v2]) => `<span class="lbl">${esc(k)}</span>${esc(v2)}`).join("") : r.loading ? '<span class="owSk" aria-hidden="true"></span><span class="owSk short" aria-hidden="true"></span>' : r.said || "— the customer wrote nothing —";
+    // (TW1, Paul 9 Nov 2026: the buyer's own words bold, nothing else; and when they wrote nothing the whole "What the customer wrote" field is hidden: no "— the customer wrote nothing —")
+    const buyerSaid = k => k === "Personalisation" || k === "Buyer message" || k === "Gift message";
+    notes.innerHTML = said.length ? said.map(([k, v2]) => `<span class="lbl">${esc(k)}</span>${buyerSaid(k) ? `<b class="owSaidT">${esc(v2)}</b>` : esc(v2)}`).join("") : r.loading ? '<span class="owSk" aria-hidden="true"></span><span class="owSk short" aria-hidden="true"></span>' : r.said || "";
+    { const field = notes.closest(".owField"); if (field) field.hidden = !said.length && !r.loading && !r.said; }
     if (r.loading) notes.setAttribute("aria-label", "Reading the order…"); else notes.removeAttribute("aria-label");
     const again = notes.querySelector("[data-ow-retry]"); if (again) again.onclick = () => openOrder(String(r.order.receiptId), { view: W.view, keepFrom: true, highlight: W.hl || undefined });
     // the facts: a glance line, a card for each, and the Details drop-down with the whole grid (charm-nest-order-facts.js; factsOf says what it holds)
