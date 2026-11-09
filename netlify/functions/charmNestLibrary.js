@@ -3839,7 +3839,10 @@ async function op_laserDone(b) {
   }), "laser done");
   return Object.assign(res, { counts: await doneCounts({ fresh: !raised }) });
 }
-/** A page of what the laser has done, newest first: sheets, or sets with a summary of their sheets (kind: "sets"). A
+/* LBF1 (Paul, 9 Nov 2026: the Library has no Sheets | Sets switch now, it is always Sets): the Completed Sets list ends with the completed sheets that belong to no set (a draft, a loose
+   or a cut sheet outside every set, a 14K / 10K solid left out of its set), asked as kind "sheets" with `loose`. A sheet is in a set as the Library groups it (charm-nest-orders.js libraryGroup). */
+const inASet = d => !!(d.setId && !d.draft && d.solidIncluded !== false);
+/** A page of what the laser has done, newest first: sheets, or sets with a summary of their sheets (kind: "sets"); sheets with `loose`: only those in no set (LBF1). A
     cursor ({ at, skip }) is where the last page stopped: the records completed at or before `at`, past the first `skip`
     of those completed at `at` itself (a set's sheets are marked in the same moment). A search (q) and a metal are applied
     as the records are read, and one call reads at most DONE_SCAN of them: a rare match is found page after page, never
@@ -3868,6 +3871,7 @@ async function op_laserDoneList(b) {
         if (d.archived) { if (repair.length < 20) repair.push([docs[i].id, d, t]); continue; }
         if (!Readiness.filed(filing[i])) continue;
         if ((metal && d.metal !== metal) || (q && !foldText(sheetHay(docs[i].id, d)).includes(q))) continue;
+        if (b.loose && inASet(d)) continue;   // (LBF1: loose, the sheets that belong to no set only)
         rows.push(doneSheetRow(docs[i].id, d));
       } else {
         const list = members.get(docs[i].id); if (!list) continue;
@@ -3909,6 +3913,7 @@ async function activityDoneList(b) {
       if(!num(d.laserDoneAt) || d.archived || !Activity.matches(d,b.range))continue;
       if(kind==='sheets'){
         if(!Readiness.filed(filing[i]) || (metal && d.metal!==metal) || (q && !foldText(sheetHay(doc.id,d)).includes(q)))continue;
+        if(b.loose && inASet(d))continue;   // (LBF1: loose, the sheets that belong to no set only)
         rows.push(doneSheetRow(doc.id,d));
       }else{
         const list=members.get(doc.id)||[];

@@ -666,3 +666,9 @@
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEar,
 :is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .egEar{min-height:24px;max-height:none}
 :is(.egPlacementList,#egDone) .doneRow:is(.placementRow,.decidedRow) .egEars{align-content:start}
+/* LBF1 (Paul, 9 Nov 2026: the Library's metal pills and its Newest / Oldest first button "under a Filters pill button that expands the filters like the other tabs already do"): the Orders tab's
+   Filters button, panel and the gold chips under the bar (charm-nest-library.js paintFilters), where the pills stood; the chips are their own row under the Library's one-line bar */
+#libView .libFilters{display:inline-flex;flex:0 0 auto;min-width:0}
+#libView .libActive{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;padding:6px 0 2px}
+#libView .libActive[hidden]{display:none}
+@media(max-width:760px),(pointer:coarse){#libView .libFilters .cnBtn{height:40px;font-size:13px}}

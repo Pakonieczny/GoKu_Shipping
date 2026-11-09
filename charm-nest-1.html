@@ -3785,14 +3785,10 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
         <div class="libBar">
           <span class="libTabs" id="libTab" role="tablist" aria-label="Library"><button type="button" role="tab" class="on" aria-selected="true" aria-controls="libBody" data-t="current">Current</button><button type="button" role="tab" aria-selected="false" aria-controls="libDone" data-t="done" title="Sheets and sets the laser has cut">Completed<b class="cnt" id="libDoneCount" aria-label="completed"></b></button></span>
           <input type="search" id="libSearch" placeholder="Search current · order, listing, SKU" aria-label="Search the Library" title="An order or a listing number, a SKU, a file name or a date">
-          <span class="libFilterGroup"><button class="fchip on" data-m="all">All<span class="lng"> metals</span></button>
-          <button class="fchip" data-m="gold"><i class="sw"></i>GF<span class="lng"> 14/20</span></button>
-          <button class="fchip" data-m="silver"><i class="sw"></i>SS</button>
-          <button class="fchip" data-m="rose"><i class="sw"></i>RG<span class="lng"> 14/20</span></button>
-          <button class="fchip" data-m="gold10k"><i class="sw"></i>10K<span class="lng"> Gold</span></button>
-          <button class="fchip" data-m="gold14k"><i class="sw"></i>14K<span class="lng"> Gold</span></button></span>
-          <span class="seg" id="libKind"><button type="button" data-k="sheets">Sheets</button><button type="button" class="on" data-k="sets">Sets</button></span>
+          <!-- LBF1 (Paul, 9 Nov 2026): no Sheets | Sets switch (the Library is always Sets); the metal pills and the sort are the Filters pop-over, the Orders tab's own (charm-nest-library.js filters) -->
+          <span class="ordFilters libFilters" id="libFilters"><button type="button" class="cnBtn" id="libFiltersBtn" aria-haspopup="dialog" aria-expanded="false" aria-controls="libFiltersPop" title="narrow the Library by metal, and choose its order"><span class="cnLbl">Filters</span><b class="cnBadge" hidden></b></button><div class="cnPop ordFp" id="libFiltersPop" role="dialog" aria-label="Filters" hidden></div></span>
         </div>
+        <div class="ordActive libActive" id="libActive" role="group" aria-label="What narrows the Library" hidden></div>
         <div id="libBody" role="tabpanel"><div class="libEmpty">Loading sets…</div></div>
         <div id="libDone" role="tabpanel" hidden></div>
       </div>
@@ -8700,9 +8696,8 @@ async function boot() {
   const tabNamed = m => { try { return !!$(`.topbar button[data-mode="${CSS.escape(m)}"]`); } catch (_) { return false; } };
   window.addEventListener("popstate", () => { const m = (location.hash || "").slice(1).split("/")[0]; window.LibraryDone?.fromHash(); if (m && m !== S.mode && tabNamed(m)) setMode(m); });
   { const m = (location.hash || "").slice(1).split("/")[0]; if (m && tabNamed(m)) setMode(m); }
-  $$("#libKind button").forEach(b => b.onclick = () => { $$("#libKind button").forEach(x => x.classList.toggle("on", x === b)); S.library.kind = b.dataset.k; loadLibrary(); });
   $("#rpClose").onclick = () => closeDlg($("#dlgReport")); $("#lsClose").onclick = () => closeDlg($("#dlgSheet"));
-  $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; if (window.LibraryDone && LibraryDone.tab() === "done") LibraryDone.show(); else if (S.library.kind === "sets" && window.Sets) Sets.renderLibrary($("#libBody"), { reuse: true, filter: true }); else loadLibrary(); });   // (filter: the same sets, another metal: Sets.renderLibrary shows the cards it has, NAV round 4)
+  // (LBF1: the metal chips and the Sheets | Sets switch are gone from the bar: the metal and the order are the Filters pop-over, charm-nest-library.js)
   // (a search in either tab is debounced, and a number is looked up as an order and as a listing: charm-nest-library.js)
   $("#libSearch").oninput = () => (window.LibraryDone ? LibraryDone.input() : S.library.kind === "sets" ? Sets.renderLibrary($("#libBody"), { reuse: true }) : renderLibrary());
   // the two search boxes on adjacent tabs must behave the same: type and it searches, and the native × clears it.

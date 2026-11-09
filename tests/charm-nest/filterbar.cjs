@@ -156,6 +156,12 @@ for (let i = 0; i < 40; i++) FIXTURES['x' + i] = { rid: String(4195100000 + i), 
     // ═══ 9 · the other tabs get the same two small controls (the shared component: CNListActivity.mount) ═══
     for (const [mode, hasDate] of [['engrave', true], ['review', true], ['library', false], ['charms', true], ['master', true]]) {
       await page.evaluate(m => CN.setMode(m), mode); await sleep(900);
+      // (LBF1, Paul 9 Nov 2026: the Library's sort button is the "Sort by" section of its Filters pop-over, the Orders tab's component; tests/charm-nest/library-filterbar.cjs proves it whole)
+      if (mode === 'library') {
+        const lb = await page.evaluate(() => ({ tools: [...document.querySelectorAll('#libView .cnListTools')].length, btn: !!document.querySelector('#libView #libFiltersBtn.cnBtn .cnBadge'), pop: !!document.querySelector('#libView #libFiltersPop.cnPop.ordFp') }));
+        check(lb.tools === 0 && lb.btn && lb.pop, 'library: no separate sort button; the Orders tab\'s Filters button and pop-over instead: ' + JSON.stringify(lb));
+        continue;
+      }
       const t = await page.evaluate(() => { const tl = [...document.querySelectorAll('.cnListTools')].find(x => x.getClientRects().length); if (!tl) return null; return { scope: tl.dataset.activityTools, selects: tl.querySelectorAll('select').length, date: !!tl.querySelector('.cnDateBtn'), chips: tl.querySelectorAll('.cnDatePresets').length, dir: !!tl.querySelector('.cnDir'), items: tl.querySelectorAll('[data-range]').length, w: Math.round(tl.getBoundingClientRect().width) }; });
       check(!!t && t.selects === 0 && t.chips === 0 && t.dir && t.date === hasDate && t.items === (hasDate ? 5 : 0), mode + ': the tools are ' + (hasDate ? 'one date menu and one sort button' : 'the one sort button (a list with no date range)') + ': ' + JSON.stringify(t));
       if (!t) continue;
