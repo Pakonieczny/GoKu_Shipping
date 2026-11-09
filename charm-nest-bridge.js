@@ -8768,6 +8768,17 @@ const Engrave = window.Engrave = (() => {
     const ownPieces = !!(setup.edited && setup.pieces && row.engravingOverride && row.engravingOverride.pieces);   // (a person gave a piece its own words)
     return jobs.some(isFront) || setup.faces.includes("front") || (setup.faces.includes("back") && (setup.back || ownPieces) && (setup.edited || setup.sides)) || setup.needsPerson ? setup : null;
   }
+  /** SETWORDS: the intake's own default-face reading (a bar's front, a listing's face: spec.engraving source "profile") of a line of several pieces that could not give each piece its words, with no person's word on it and
+   *  no listing profile of its own (PIECE_LISTINGS reads its pieces itself): its words are read by the rules (readByRules) and the usual path, its face stays the one the rule gave. */
+  function unsplitDefault(row, jobs, setup) {
+    const line = lineRowOf(row), sp = line && line.spec, e = sp && sp.engraving;
+    if (!e || e.source !== "profile" || setup.edited || !(jobs.length > 1) || row.engravingOverride || (line && line.engravingOverride)) return false;
+    try { if (O.pieceListing && O.pieceListing(line.line)) return false; } catch (_) { return false; }
+    if (e.needsPerson && !e.pieces) return true;
+    // (a SET, a line that names two chain lengths, whose words carry chain-length or Left / Right labels: the splitter gave them out in order, but no bar of a set is "left" and a length belongs to its chain: the rules decide, as before)
+    const R = READER(), rd = personalRead(row); let lens = []; try { lens = R ? R.lengthsOfLine(line.line) : []; } catch (_) { lens = []; }
+    return lens.length > 1 && !!(rd && rd.labelled && rd.pieces.some(p => p.kind === "length" || p.kind === "side"));
+  }
   /** engraveCandidate is the intake's word about WORDS ("something is written to engrave"). A line the buyer asked to engrave on a face without writing any (the intake's reading: needsPerson, "nowords"), or
    *  that a person set up with faces, is raised here so a person is asked rather than the line being cut plain. Custom, add-on and no-design lines are never raised. In memory only: it is read again on every pull. */
   function raiseCandidate(row) {
@@ -8841,7 +8852,11 @@ const Engrave = window.Engrave = (() => {
     // "1 side" on a design with its own front art (the intake's reading, no person's word against it): only the art is engraved, the buyer's words are not; the card says so, nothing is paid for or asked
     if (said && !said.edited && said.mode === "none" && said.sides && !said.needsPerson) { for (const j of jobs) setNone(j, said.why || "1 side: only the design's own art is engraved"); return job; }
     // a line with a front (or a person's own words for a face, or a reading marked for a person): each face job takes its words from the line's setup, no paid reading (charm-nest-engrave-faces.js)
-    const faceSetup = facedSetup(row, jobs); if (faceSetup) return classifyFaces(row, jobs, faceSetup);
+    // SETWORDS (Paul, 9 Nov 2026; tests/charm-nest/engrave-read-world.cjs): BARFRONT (28 Oct) gives every bar necklace the FRONT, the set of 2 bars of listing 532401548 too. Its default reading hands a line of several pieces
+    // to the pieces' splitter, which knows no chain lengths: "16\"= 33*0'45\" N … (the asterisk is …) 18\"= Ginger" waited whole, asterisks and note to the shop included, for a person to split by hand. The bar rule
+    // decides the FACE; the WORDS of such a line (the intake's default reading, unsplit, no person's word, no listing profile of its own) are read here as before BARFRONT: per chain length, notes out, ° for *, BLANK / ENGRAVED, a layout asked for.
+    const faceSetup = facedSetup(row, jobs), setWords = !!faceSetup && unsplitDefault(row, jobs, faceSetup);
+    if (faceSetup && !setWords) return classifyFaces(row, jobs, faceSetup);
     // SETBAR-C: the buyer's words read by plain rules before any paid reader: a label per piece (16"= ... 18"= ...), a note to the shop left out, an asterisk that is a degree sign, a different layout asked for, BLANK / ENGRAVED
     if (await readByRules(row, jobs)) return job;
     // Etsy offers engraving on these designs; legacy catalog estimates are not eligibility rules.
