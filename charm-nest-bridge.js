@@ -1120,6 +1120,9 @@ const Ladder = window.Ladder = (() => {
   ];
   const WORD = { running: ["Running", "go"], review: ["Waiting on you", "wait"], paused: ["Paused", "wait"], stopped: ["Stopped", "stop"], processed: ["Processing complete", "wait"], complete: ["Done", "go"] };
   const wordOf = r => r.status === "processed" && r.arrivalBusy ? ["Adding new orders", "go"] : WORD[r.status] || ["Running", "go"];   // as the banner says it
+  // (FLW1: the run's state in the short words of the status line; a run that is no longer moving is the "Last run")
+  const SHORT = { running: "running", review: "waiting on you", paused: "paused", stopped: "stopped", processed: "complete", complete: "done" };
+  const live = r => !!r && (r.arrivalBusy || ["running", "review", "paused", "stopped"].includes(r.status));
   const mount = () => document.getElementById("ladder");
   /** Which of the seven the run is standing on, and which of them is waiting on a person. */
   function shape() {
@@ -1130,36 +1133,80 @@ const Ladder = window.Ladder = (() => {
     return { r, idx, here, revN, engN };
   }
   const render = () => CNFrame.later("ladder", now);   // once a frame (CNFrame); the strip draws it with itself
+  /* FLW1 (Paul, 9 Nov 2026: "Also, this list does not match the actual process flow so make sure it matches"): the rail lists the production flow, the order Timeline's steps in its
+     order and words (charm-nest-flow-stages.js, CNFlow), each with the open orders standing at it (the order where its slowest piece is) and a press that shows them on Orders.
+     The Review and Engraving queues sit beside their steps. The nesting run's own seven steps are no longer what is run: the run is ONE status line under the list
+     ("Last run · set-… · complete"), its steps and their counts in the line's hover and, pressed open, as the buttons they always were (each still goes to its tab). */
+  let runOpen = false, flowAsk = 0;
+  const peek = () => { try { return window.Orders && Orders.flowPeek ? Orders.flowPeek() : null; } catch (_) { return null; } };
+  /** The counts are worked out at an idle moment, at most every 1.5 s (placeNow over every line), and the list drawn again when they change. */
+  function flowSoon() {
+    if (flowAsk || !window.CNFlow || !window.Orders || !Orders.flowNow) return;
+    const go = () => { flowAsk = 0; const was = peek(), wasSig = was ? JSON.stringify(was.counts) : ""; const f = Orders.flowNow(); if (f && JSON.stringify(f.counts) !== wasSig) render(); };
+    flowAsk = typeof requestIdleCallback === "function" ? requestIdleCallback(go, { timeout: 1200 }) : setTimeout(go, 250);
+  }
+  const STATION_ROWS = new Set(["sorted", "welded", "assembled"]);
+  const nOf = (f, id) => f && f.counts ? f.counts[id] || 0 : null;
+  function flowHtml(revN, engN) {
+    const F = window.CNFlow; if (!F) return "";
+    const f = peek(); if (!f || Date.now() - f.at > 1500) flowSoon();
+    const UI = window.OrderTimelineUI, icon = lane => UI && UI.laneIcon ? UI.laneIcon(lane) : "";
+    const ov = window.Orders && Orders.view ? Orders.view() : {}, onOrders = typeof S !== "undefined" && !!S && S.mode === "orders";
+    return `<div class="ldFlow" role="list" aria-label="Production flow: open orders at each step">` + F.STAGES.map(s => {
+      const n = nOf(f, s.id), unknown = STATION_ROWS.has(s.id) && !n;
+      const c = n == null ? "" : unknown ? "—" : String(n);
+      const more = s.id === "cut" ? " An order whose later scans this page has not seen stays here." : STATION_ROWS.has(s.id) ? " Learned from the order timelines this page has opened (no extra reads): an order whose scans were not seen here stays at Laser cut." : s.id === "shipped" || s.id === "completed" ? " Listed under Completed on Orders." : "";
+      const title = `${s.label} — ${s.words}.${n == null ? "" : unknown ? " Not known here." : ` ${n} order${n === 1 ? "" : "s"}.`}${more}`;
+      const chip = s.id === "review" && revN ? `<button class="ldChip warn" data-tab="review" title="decisions a person must make">Review<b>${revN}</b></button>`
+        : s.id === "design" && engN ? `<button class="ldChip info" data-tab="engrave" title="engraving still to be settled">Engraving<b>${engN}</b></button>` : "";
+      const on = ov && ov.stage === s.id && onOrders;
+      return `<div class="ldRow ldF${s.station ? " stn" : ""}${on ? " on" : ""}${n ? "" : " zero"}" role="listitem" data-stage="${s.id}">`
+        + `<button type="button" class="ldGo" data-stage-go="${s.id}" title="${esc(title)}" aria-label="${esc(`${s.label}: ${c || "not counted yet"}`)}"><i class="ic" data-lane="${s.lane}">${icon(s.lane)}</i><span class="n">${esc(s.label)}</span><span class="c">${esc(c)}</span></button>${chip}</div>`;
+    }).join("") + `</div>`;
+  }
+  /** The old run's steps, each with its count and its tab (the details of the status line). */
+  function stepsHtml(r, here) {
+    return `<div class="ldRows">` + STEPS.map((s, i) => {
+      const state = ["complete", "processed"].includes(r.status) || i < here ? "done" : i === here ? (r.status === "stopped" ? "stop" : "now") : "todo";
+      const c = s.count() || "";
+      return `<button class="ldRow ldStep${state === "now" ? " now" : ""}" data-tab="${s.tab}" title="${esc(s.label)}${c ? " — " + esc(c) : ""}"><i class="g ${state}"></i><span class="n">${esc(s.label)}</span><span class="c">${esc(c)}</span></button>`;
+    }).join("") + `</div>`;
+  }
   function now() {
     CNFrame.cancel("ladder");
     const host = mount(); if (!host) return;
     const { r, here, revN, engN } = shape();
+    const chips = !window.CNFlow && (revN || engN) ? `<div class="ldWaits">${revN ? `<button class="ldChip warn" data-tab="review" title="decisions a person must make">Review<b>${revN}</b></button>` : ""}${engN ? `<button class="ldChip info" data-tab="engrave" title="engraving still to be settled">Engraving<b>${engN}</b></button>` : ""}</div>` : "";
+    let run;
     if (!r) {
-      // no run: the ladder still answers "what is here" — the library, the pull, and what the library is missing
+      // no run: the line still answers "what is here" — the library, the pull, and what the library is missing
       const pulled = Orders.rows().filter(x => x.state !== "gone").reduce((m, x) => m + lineTotal(x), 0);
       const miss = Master.missingCount ? Master.missingCount() : 0;
-      host.innerHTML = `<div class="ldBand ldIdle"><b>No run open</b><span>${B.master.entries.size} SKU${B.master.entries.size === 1 ? "" : "s"} in the library</span></div>`
+      run = `<details class="ldRun ld-idle${miss ? " ldWarn" : ""}"${runOpen ? " open" : ""}><summary title="No run open · ${B.master.entries.size} SKU${B.master.entries.size === 1 ? "" : "s"} in the library"><i class="g todo"></i><span>No run open · ${B.master.entries.size} SKU${B.master.entries.size === 1 ? "" : "s"}${miss ? ` · ${miss} missing` : ""}</span></summary>`
         + `<div class="ldRows">`
         + `<button class="ldRow" data-tab="orders" title="the orders on the cards"><i class="g ${pulled ? "done" : "todo"}"></i><span class="n">Orders</span><span class="c">${pulled ? `${pulled} piece${pulled === 1 ? "" : "s"} pulled` : "nothing pulled"}</span></button>`
         + (miss ? `<button class="ldRow wait" data-tab="master" title="SKUs the orders want that no master file holds"><i class="g stop"></i><span class="n">Library</span><span class="c">${miss} SKU${miss === 1 ? "" : "s"} missing</span></button>` : "")
-        + `</div>`;
-      wire(host); return;
+        + `</div></details>`;
+    } else {
+      const [word, tone] = wordOf(r), step = here >= 0 ? STEPS[here] : null, stepC = step ? step.count() : "";
+      const set = r.setId || r.day || "", lead = live(r) ? "Run" : "Last run", short = r.status === "processed" && r.arrivalBusy ? "adding new orders" : SHORT[r.status] || "running";
+      const detail = `${word} · ${set}${r.runId ? ` · run ${r.runId}` : ""}${step ? ` · ${step.label}${stepC ? " " + stepC : ""}` : ""}` + STEPS.map(s => { const c = s.count(); return c ? `\n${s.label}: ${c}` : ""; }).join("");
+      const waiting = r.status === "review" && (revN || engN);
+      run = `<details class="ldRun ld-${tone}${waiting ? " ldWarn" : ""}"${runOpen ? " open" : ""}><summary title="${esc(detail)}"><i class="g ${tone === "stop" ? "stop" : live(r) ? "now" : "done"}"></i><span>${esc(lead)} · ${esc(set)} · ${esc(short)}${live(r) && step && r.status !== "processed" ? ` — ${esc(step.label)}${stepC ? " " + esc(stepC) : ""}` : ""}</span></summary>`
+        + stepsHtml(r, here) + `</details>`;
     }
-    const [word, tone] = wordOf(r);
-    const waitRow = r.status === "review" ? (engN ? "engrave" : "pull") : null;
-    host.innerHTML = `<div class="ldBand ld-${tone}" title="run ${esc(r.runId)}"><b>${esc(word)}</b><span>${esc(r.setId || r.day || "")}</span></div>`
-      + `<div class="ldRows">` + STEPS.map((s, i) => {
-        const state = ["complete","processed"].includes(r.status) || i < here ? "done" : i === here ? (r.status === "stopped" ? "stop" : "now") : "todo";
-        const waiting = (s.waits && s.waits()) || (s.id === waitRow && revN);
-        const c = s.count() || "";
-        return `<button class="ldRow${waiting ? " wait" : ""}${state === "now" ? " now" : ""}" data-tab="${s.tab}" title="${esc(s.label)}${c ? " — " + esc(c) : ""}"><i class="g ${state}"></i><span class="n">${esc(s.label)}</span><span class="c">${esc(c)}</span></button>`;
-      }).join("") + `</div>`
-      + (revN || engN ? `<div class="ldWaits">${revN ? `<button class="ldChip warn" data-tab="review" title="decisions a person must make">Review<b>${revN}</b></button>` : ""}${engN ? `<button class="ldChip info" data-tab="engrave" title="engraving still to be settled">Engraving<b>${engN}</b></button>` : ""}</div>` : "");
+    host.innerHTML = flowHtml(revN, engN) + chips + run;
     wire(host);
   }
   function wire(host) {
     host.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { setMode(b.dataset.tab); if (b.dataset.tab === "engrave" && window.Engrave) Engrave.render(); });
+    host.querySelectorAll("[data-stage-go]").forEach(b => b.onclick = () => { setMode("orders"); if (window.Orders && Orders.showStage) Orders.showStage(b.dataset.stageGo); render(); });
+    const d = host.querySelector ? host.querySelector(".ldRun") : null; if (d) d.addEventListener("toggle", () => { runOpen = d.open; });
   }
+  // (what the flow is made of moved: a step learned after the laser, an order shipped)
+  try { if (window.CNFlow && CNFlow.onChange) CNFlow.onChange(() => { if (window.Orders && Orders.flowStale) Orders.flowStale(); render(); }); } catch (_) {}
+  // (charm-nest-completed.js loads after this file: its 'cn-order-shipped' is heard instead of its onChange)
+  try { document.addEventListener("cn-order-shipped", () => { if (window.Orders && Orders.flowStale) Orders.flowStale(); render(); }); } catch (_) {}
   return { render, now, STEPS, word: r => wordOf(r)[0] };
 })();
 
@@ -2212,7 +2259,7 @@ const Orders = window.Orders = (() => {
     let mode = ""; try { mode = F.setupOf(r).mode; } catch (_) { /* a line the model cannot read has no chip */ }
     return mode === "both" ? ["info", "Front + back"] : mode === "front" ? ["info", "Front only"] : ["", ""];
   }
-  const OV = { pile: null, metal: null, form: null, eng: null, act: null, q: "", view: null, sort: "activity", desc: false, limit:48 };   // what the tab is showing right now   (act: RQFILTER, null | "hold" | "qr" | "both")
+  const OV = { pile: null, metal: null, form: null, eng: null, act: null, stage: null, q: "", view: null, sort: "activity", desc: false, limit:48 };   // what the tab is showing right now   (act: RQFILTER, null | "hold" | "qr" | "both")
   // (CMP1, Paul 9 Nov 2026: "remove the option for list or card review since it's not needed anymore": the Orders tab is always the list; a saved orderView / OV.view of "cards" is ignored)
   const viewMode = () => "list";
   /* CMP1 (Paul, 9 Nov 2026): a shipped order is no open order: it leaves Open Orders (its rows, its count, the tab's count) and is listed under Completed (charm-nest-completed.js, CNCompleted:
@@ -2222,6 +2269,32 @@ const Orders = window.Orders = (() => {
   const shippedRid = rid => { try { cmpWorld(); return !!(window.CNCompleted && CNCompleted.has(rid)); } catch (_) { return false; } };
   const shippedRow = r => !!r && !!r.order && shippedRid(r.order.receiptId);
   const openRow = r => r.state !== "gone" && !shippedRow(r);
+  /* FLW1 (Paul, 9 Nov 2026: "this list does not match the actual process flow so make sure it matches"): where each open order stands in the production flow, the rail's list
+     (charm-nest-flow-stages.js, CNFlow: the Timeline's steps, the order where its slowest piece is) and the Orders list's stage filter (OV.stage). Every answer comes from what this page
+     already holds: the lines, their placement (placeNow, heldNow), the sheets' cut records, the Review cards, and the steps after the laser learned from timelines already read. Nothing is
+     read for it; worked out at most once every 1.5 s (placeNow over every line is the cost). */
+  let flowMemo = null;
+  function flowCtx() {
+    const byId = new Map(); for (const sh of allSheets()) if (sh && sh.sheetId) byId.set(sh.sheetId, sh);
+    const rev = new Set();
+    for (const it of (B.review && B.review.items) || []) {
+      const k = String((it && it.key) || ""); if (!it || it.done || k.startsWith("eng:") || k.startsWith("held:")) continue;
+      for (const r of (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : [])) if (r && r.key) rev.add(r.key);
+    }
+    const cutSheet = x => { if (!x) return false; if (x.cut) return true; const sh = x.id && byId.get(x.id); if (!sh) return false; const w = replaceCutWhy(sh); return w === "laser cut" || w === "cut"; };
+    return { place: placeNow, held: heldNow, nested: nestedRow, review: r => rev.has(r.key),
+      cut: (r, pl) => { const on = pl && pl.sheets ? pl.sheets : []; return on.length > 0 && on.every(cutSheet); },
+      learned: rid => window.CNFlow ? CNFlow.learned(rid) : 0 };
+  }
+  /** { counts: { stage id: orders }, byRid: Map(order → stage id), at }, or null without CNFlow. maxAge: how old an answer may be (ms). */
+  function flowNow(maxAge) {
+    const F = window.CNFlow; if (!F) return null;
+    if (flowMemo && Date.now() - flowMemo.at < (maxAge == null ? 1500 : maxAge)) return flowMemo;
+    cmpWorld(); try { F.world(WORKSPACE_SANDBOX ? "sandbox" : "production"); } catch (_) {}
+    let out; try { out = F.count(rowsOf().filter(openRow), flowCtx(), window.CNCompleted ? CNCompleted.list() : []); } catch (e) { console.warn("[flow]", e && e.message); return flowMemo; }
+    out.at = Date.now(); return (flowMemo = out);
+  }
+  const stageWord = id => { const s = window.CNFlow && CNFlow.STAGES.find(x => x.id === id); return s ? s.label : String(id || ""); };
   /** What the order search reads on a line, lower case, Etsy's entities decoded (&#39; → '). Kept per line object. */
   const findCache = new WeakMap();
   function findText(r) {
@@ -2236,9 +2309,10 @@ const Orders = window.Orders = (() => {
   /** The lines the filters leave, in ship-by order. */
   function visibleRows() {
     // (PERF, Oct 2026: each row's activity time is worked out once for this sort, and the date range and direction read once, not per row)
-    const q = OV.q.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean), times = new Map(), act = CNListActivity.state("orders");
+    const q = OV.q.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean), times = new Map(), act = CNListActivity.state("orders"), flow = OV.stage ? flowNow() : null;
     return listRows().filter(r => {
       if (r.state === "gone" || shippedRow(r)) return false;   // (CMP1: a shipped order is under Completed)
+      if (OV.stage && flow && flow.byRid.get(String(r.order.receiptId)) !== OV.stage) return false;   // (FLW1: a step of the rail's flow pressed)
       if (OV.metal && (r.material || "none") !== OV.metal) return false;
       if (OV.form && ((r.spec && r.spec.form) || "none") !== OV.form) return false;
       if (OV.eng) { const needs = !!(r.engrave && r.engrave.needed); if (OV.eng === "yes" ? !needs : needs) return false; }
@@ -2404,7 +2478,7 @@ const Orders = window.Orders = (() => {
   const mine = rid => { const a = acted.get(String(rid)); return !!a && Date.now() - a.t < 10000; };
   let drawnAt = 0, drawVer = -1, wantDraw = true, drawnSig = "";   // (NAV, 28 Oct 2026: what the tab last drew and when: shown)
   /** What the bar can change (pile, search, filters, sort, view, range): the list drawn is the list asked for while this is the same (renderBody, shown). */
-  const listSig = () => JSON.stringify([OV.pile,OV.q,OV.metal,OV.form,OV.eng,OV.act,OV.sort,OV.desc,viewMode(),CNListActivity.key("orders")]);
+  const listSig = () => JSON.stringify([OV.pile,OV.q,OV.metal,OV.form,OV.eng,OV.act,OV.stage,OV.sort,OV.desc,viewMode(),CNListActivity.key("orders")]);
   let drawnOn = "", drawnLimit = 0;                               // the pile and view last drawn on screen ("" hidden since)
   /** Once, when the tab is built: which order a person acts on (a row's own button, or anything in the order window
    *  opened on it), and the tab being hidden (shown again, it is drawn at once). */
@@ -2658,7 +2732,7 @@ const Orders = window.Orders = (() => {
   const FIRST_ROWS = (host, cards) => cards ? 12 : Math.max(3, Math.ceil((host.clientHeight || 800) / 190) + 1);   // (a list row is ~200 px: 4 in the 800 px list of a 900 px screen, so 6; read after the list's scroll place, so nothing is laid out for it)
   let fillAsked = 0, filling = false, showing = false;   // (showing: the drawing is the tab's being shown, shown)
   function walkRows() {
-    const rows = rowsOf(), sig = JSON.stringify([rows.length, window.CustomOrders ? CustomOrders.version() + ":" + customRows().length : 0, OV.pile, OV.q, OV.metal, OV.form, OV.eng, OV.act, OV.sort, OV.desc, CNListActivity.key("orders")]);
+    const rows = rowsOf(), sig = JSON.stringify([rows.length, window.CustomOrders ? CustomOrders.version() + ":" + customRows().length : 0, OV.pile, OV.q, OV.metal, OV.form, OV.eng, OV.act, OV.stage, OV.sort, OV.desc, CNListActivity.key("orders")]);
     if (walkMemo && walkMemo.rows === rows && walkMemo.sig === sig && Date.now() - walkMemo.at < 5000) return walkMemo.list.filter(r => r.state !== "gone");
     const list = groupsOf(visibleRows()).flatMap(g => g.rows);
     walkMemo = { rows, sig, at: Date.now(), list };
@@ -2703,7 +2777,7 @@ const Orders = window.Orders = (() => {
       wanted.push(n);
     }
     else if (!listRows().length) wanted.push(blank("none", '<span>Nothing pulled yet — press <b>Pull orders</b> above.</span>'));   // one line: .libEmpty stacks its children
-    else if (!rows.length) wanted.push(blank("filters", 'Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button>', n => { n.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.act = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; render(); }; }));
+    else if (!rows.length) wanted.push(blank("filters", 'Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button>', n => { n.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.act = null; OV.stage = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; render(); }; }));
     else {
     let lastDay=null;
     // (ONE ORDER, ONE ROW, 13 Oct 2026: the lines of one order stand together where its first line stood; a group of one is a row as it always was)
@@ -2872,7 +2946,7 @@ const Orders = window.Orders = (() => {
         else if (f === "sort") { if (val && val !== sortKey()) { OV.sort = val; OV.desc = false; } }   // (CMP1: Sort by, each key in its own natural direction first)
         else if (f === "dir") { if (val) setSortDir(val); }
         else if (f === "act" && val) OV.act = actToggle(actNow(), val); else OV[f] = OV[f] === val ? null : val; }); return; }   // (RQFILTER: the two action chips switch on and off one by one, "Any" lets go)
-      if (e.target.closest("[data-clear]")) { narrow(fbtn, () => { if (OV.pile !== "cancelled" && OV.pile !== "completed") OV.metal = OV.form = OV.eng = OV.act = null; CNListActivity.set("orders", { range: "all" }); resetSort(); }); return; }
+      if (e.target.closest("[data-clear]")) { narrow(fbtn, () => { if (OV.pile !== "cancelled" && OV.pile !== "completed") OV.metal = OV.form = OV.eng = OV.act = OV.stage = null; CNListActivity.set("orders", { range: "all" }); resetSort(); }); return; }
       if (e.target.closest("[data-done]")) ordFp.close(true);
     });
     fpop.addEventListener("keydown", e => {   // arrows walk the chips; Enter or Space presses the one that has the focus; Esc is the popover's own
@@ -2885,7 +2959,7 @@ const Orders = window.Orders = (() => {
       const b = e.target.closest("[data-ax],[data-ax-all]"); if (!b) return;
       const k = b.dataset.ax, touch = fbtn;
       narrow(touch, () => {
-        if (b.hasAttribute("data-ax-all")) { OV.metal = OV.form = OV.eng = OV.act = null; OV.q = ""; q.value = ""; CNListActivity.set("orders", { range: "all" }); resetSort(); }
+        if (b.hasAttribute("data-ax-all")) { OV.metal = OV.form = OV.eng = OV.act = OV.stage = null; OV.q = ""; q.value = ""; CNListActivity.set("orders", { range: "all" }); resetSort(); }
         else if (k === "range") CNListActivity.set("orders", { range: "all" });
         else if (k === "sort") resetSort();
         else OV[k] = null;
@@ -2939,6 +3013,7 @@ const Orders = window.Orders = (() => {
       if (OV.metal) items.push(["metal", OV.metal === "none" ? "No material" : labelOf(OV.metal), "Material"]);
       if (OV.eng) items.push(["eng", OV.eng === "yes" ? "Engraved" : "Not engraved", "Engraving"]);
       if (actNow()) items.push(["act", ACT_WORDS[actNow()], "Needs action"]);   // (RQFILTER)
+      if (OV.stage) items.push(["stage", stageWord(OV.stage), "Stage"]);   // (FLW1: the step of the rail's flow pressed)
     }
     const range = CNListActivity.state("orders").range;
     if (range !== "all") items.push(["range", CNListActivity.rangeLabel(range), "Time"]);
@@ -2947,6 +3022,7 @@ const Orders = window.Orders = (() => {
     const sig = JSON.stringify([items, items.length + (OV.q.trim() ? 1 : 0) > 1]);
     if (box._sig === sig) return;
     box._sig = sig; box.hidden = !items.length;
+    if (window.Ladder) Ladder.render();   // (FLW1: the rail's step that is shown here is marked, and unmarked when its chip is let go)
     box.innerHTML = items.map(([k, label, what]) => `<button type="button" class="ordAx" data-ax="${k}" aria-label="Remove the filter: ${esc(what)}, ${esc(label)}" title="Remove: ${esc(label)}">${esc(label)}${I.x}</button>`).join("")
       + (items.length + (OV.q.trim() ? 1 : 0) > 1 ? `<button type="button" class="ordAxAll" data-ax-all>Clear all</button>` : "");
   }
@@ -2991,7 +3067,7 @@ const Orders = window.Orders = (() => {
         : f === "act" ? (val ? (val === "both" ? actNow() === "both" : actHas(actNow(), val)) : !actNow()) : val ? OV[f] === val : !OV[f];   // (RQFILTER: Release Hold and Print QR are both pressed while the combined chip is)
       c.setAttribute("aria-pressed", String(on));
     }
-    const n = (cx ? 0 : [OV.metal, OV.form, OV.eng, actNow()].filter(Boolean).length) + (range !== "all" ? 1 : 0) + (sortIsDefault() ? 0 : 1);
+    const n = (cx ? 0 : [OV.metal, OV.form, OV.eng, actNow(), OV.stage].filter(Boolean).length) + (range !== "all" ? 1 : 0) + (sortIsDefault() ? 0 : 1);
     badge.hidden = !n; badge.textContent = n || "";
     if (n) btn.setAttribute("data-on", "1"); else btn.removeAttribute("data-on");
     btn.setAttribute("aria-label", n ? `Filters, ${n} applied` : "Filters");
@@ -3137,11 +3213,18 @@ const Orders = window.Orders = (() => {
    *  (NOHOLDPILE, Paul 20 Oct 2026: there is no On hold pile: "hold" opens Review at the held order, Review.showHeld) */
   function showPile(pile, q) {
     if (pile === "hold") { if (window.Review && Review.showHeld) Review.showHeld(q); return; }
-    OV.pile = pile === "cancelled" || pile === "completed" ? pile : null; OV.metal = OV.form = OV.eng = OV.act = null; OV.q = q ? String(q) : "";
+    OV.pile = pile === "cancelled" || pile === "completed" ? pile : null; OV.metal = OV.form = OV.eng = OV.act = OV.stage = null; OV.q = q ? String(q) : "";
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, walkRows, shown, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, listRows, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, askTable, releaseStampOf, releaseSealHtml, releaseAway, _kept: () => readSaid.size };
+  /** FLW1: the Orders list at one step of the flow (the rail's rows): the open orders standing there; Shipped and Completed are the Completed pile. */
+  function showStage(id) {
+    if (id === "shipped" || id === "completed") { showPile("completed"); return; }
+    OV.pile = null; OV.stage = id || null; OV.q = ""; flowMemo = null;
+    const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = "";
+    render();
+  }
+  return { view: () => OV, walkRows, shown, showPile, showStage, flowNow, flowPeek: () => flowMemo, flowStale: () => { if (flowMemo) flowMemo.at = 0; }, openRow, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, listRows, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, askTable, releaseStampOf, releaseSealHtml, releaseAway, _kept: () => readSaid.size };
 })();
 
 /* ═══ 18b · the page is the version that was deployed (MASTER4, Paul 15 Oct 2026) ══════════════════════════════
@@ -4252,6 +4335,18 @@ function replaceCutWhy(sh, ids) {
   return "";
 }
 window.replaceCutWhy = replaceCutWhy;
+/* IPL2 (Paul, 9 Nov 2026: "Unless the sheet has been laser cut, the update must be allowed to proceed, and the charm must be allowed to be exchanged for the correct one if the user chose an
+   updated SKU or an updated charm from the repository. Nothing can block this unless the sheet has already been laser cut!"). For a REPLACED charm only the laser's mark keeps the old piece: the
+   Library's "Laser done" on the sheet or on its set. A Rose Gold / 10K / 14K green line, drawn or its cut recorded, is set aside first (Review's inPlaceReopen: RoseStock.reopen) and drawn again
+   after. A sheet only shown here from its record (recalled) has no pieces on this page to exchange: it is named, as before. → "" or the reason. (replaceCutWhy stays for everything else.) */
+function replaceLaserWhy(sh) {
+  if (!sh) return "";
+  if (+sh.laserDoneAt > 0) return "laser cut";
+  try { if (window.Sets && sh.runId && Sets.ofRun(sh.runId).some(s => +s.laserDoneAt > 0 && (s.sheetIds || []).includes(sh.sheetId))) return "laser cut"; } catch (_) { /* no sets read yet */ }
+  if (sh.recalled) return "recalled from the library (its pieces are not open here)";
+  return "";
+}
+window.replaceLaserWhy = replaceLaserWhy;
 /** DUPID (27 Oct 2026): each placement of a SAVED sheet record with the charm it stands for, [{ p, c }] (CharmNestPoolPieces.placedCharms: of two pieces of an older sheet that share one id, the one the
  *  record's own poolIds names, else the last, as the record was written). */
 function placedOfRecord(d) {
@@ -4683,7 +4778,7 @@ const Pool = window.Pool = (() => {
       if (set ? made.length === expect.length && made.every((s, i) => s === expect[i]) : made.length > 0 && made.every(s => O.sameDesign(s, want[0], k => Master.entryFor(k)))) return;   // (already made as the link says: for one design, every piece is that drawing, under whichever of its names)
       if (one && (!made.length || made.some(s => !s))) return;   // (nothing made yet: the line is simply made up from the link; a piece whose record names no design is not guessed at)
       const ids = new Set(row.poolIds || []);
-      const fixed = allSheets().filter(sh => replaceCutWhy(sh, ids) && sh.charms.some(c => ids.has(c.poolId)));   // (INPLACE, Paul 20 Oct 2026: only a sheet the laser has CUT keeps its old piece; a draft, a full sheet, a formed, released or committed set's sheet gives it up and takes the new one in its spot, replaceCutWhy) // (PICKFULL, Paul 19 Oct 2026: a sheet that is only FULL (releaseFull) but still a draft, waiting for its set, has gone nowhere: its old pieces come off and the picked charm goes in; only a sheet out of draft, cut, committed, recalled or with its own QR label is left as it is)
+      const fixed = allSheets().filter(sh => replaceLaserWhy(sh) && sh.charms.some(c => ids.has(c.poolId)));   // (IPL2: laser cut only) (INPLACE, Paul 20 Oct 2026: only a sheet the laser has CUT keeps its old piece; a draft, a full sheet, a formed, released or committed set's sheet gives it up and takes the new one in its spot, replaceCutWhy) // (PICKFULL, Paul 19 Oct 2026: a sheet that is only FULL (releaseFull) but still a draft, waiting for its set, has gone nowhere: its old pieces come off and the picked charm goes in; only a sheet out of draft, cut, committed, recalled or with its own QR label is left as it is)
       if (fixed.length) {
         if (!setToldFixed.has(row.key)) {
           setToldFixed.add(row.key); const where = fixed.map(sh => sh.fileBase || sh.sheetId).join(", ");
@@ -5140,7 +5235,6 @@ const Pool = window.Pool = (() => {
   function inPlaceShut(sh, run) {
     if (!sh || !allSheets().includes(sh)) return "it is no longer on this page";
     const cut = replaceCutWhy(sh); if (cut) return cut;
-    if (sh.cardinalPull) return "it was pulled to another set";
     if (sh._manualHold) return "a person is moving its charms by hand";
     if (ipBusy(sh)) return "it is being arranged or saved right now";
     if (run && sh.runId && sh.runId !== run.runId) return "it belongs to another run";
@@ -13116,6 +13210,7 @@ const Engrave = window.Engrave = (() => {
     const msgFont = sp.fontText && sp.fontText.asked ? String(sp.fontText.asked).toLowerCase() : "";
     if (requests.font && !(job.fontFromNote && job.fontMapped) && String(requests.font).toLowerCase() !== msgFont) wants.push(`Requested font: ${requests.font}${job.fontSubstituted && job.fontName ? ` (engraved in ${job.fontName}, the nearest${O.fontStyleLabel(job.fontStyle) ? " " + O.fontStyleLabel(job.fontStyle) : ""} font we have)` : ""}`);
     { const dis = sp.fontText && sp.fontText.differs ? O.fontDisagree(sp) : ""; if (dis) wants.push(dis); }
+    if (sp.engraveLimit && (sp.engraveLimit.over || sp.engraveLimit.metalDiffers) && sp.engraveLimit.line) wants.push(sp.engraveLimit.line);   // (ENGLIMIT: words longer than the limit the buyer paid for are said beside the words, never held)
     for (const a of (sp.fontText && sp.fontText.asks) || []) wants.push(a.charAt(0).toUpperCase() + a.slice(1));
     for (const a of (sp.fontText && sp.fontText.also) || []) wants.push(`The message names another font too: ${a}`);
     // the font a drop-down chose (spec.font, charm-nest-orders.js fontRead): one the app has is shown as "Font: Stylish → Playwrite US Trad" under From the order; a font the app does not have
@@ -16947,7 +17042,7 @@ const CustomSheet = window.CustomSheet = (() => {
   // (INPLACE, Paul 20 Oct 2026: "Unless a sheet has been marked as fully completed and laser cut then that charm needs to come off that particular sheet": only a piece on a sheet the laser has CUT is locked,
   //  replaceCutWhy; a sheet in a formed, released or committed set not cut yet takes the dropped design in the old piece's spot, or leaves it empty and the new piece goes to the latest unfinished sheet, Pool's
   //  inPlaceAttach. A line committed at the station takes designs only while every piece of it is on a sheet this page holds.)
-  const lockedOnSheet = r => { const ids = new Set((r && r.poolIds) || []); if (!ids.size) return false; try { return allSheets().some(sh => sh.charms.some(c => ids.has(c.poolId)) && !!replaceCutWhy(sh, ids)) || (r.state === "committed" && ![...ids].every(id => allSheets().some(sh => sh.charms.some(c => c.poolId === id)))); } catch (_) { return true; } };
+  const lockedOnSheet = r => { const ids = new Set((r && r.poolIds) || []); if (!ids.size) return false; try { return allSheets().some(sh => sh.charms.some(c => ids.has(c.poolId)) && !!replaceLaserWhy(sh)) || (r.state === "committed" && ![...ids].every(id => allSheets().some(sh => sh.charms.some(c => c.poolId === id)))); } catch (_) { return true; } };
   const openLines = it => linesOf(it).filter(r => !(r.spec && r.spec.customDone) && r.state !== "skipped" && !(r.state === "committed" && !(r.poolIds || []).length) && !lockedOnSheet(r));
   const defaultMetal = it => { const r = linesOf(it)[0], m = r && r.spec && r.spec.material; return metalOf(m) ? m : null; };
   const defaultQty = it => Math.max(1, linesOf(it).reduce((n, r) => n + ((r.spec && r.spec.quantity) || 1), 0));
@@ -19183,18 +19278,18 @@ const Review = window.Review = (() => {
     // (INPLACE, Paul 20 Oct 2026: "Unless a sheet has been marked as fully completed and laser cut then that charm needs to come off that particular sheet and be re-added to the same sheet if it
     //  fits, and if it doesn't then add it to the next unfinished sheet." A sheet released to the laser, in a formed set or in a committed set not cut yet is no longer fixed here: its piece comes
     //  off, the new one goes into its spot or the spot stays empty (Pool's inPlaceAttach), the sheet is written as it stands and its set's files written again, inPlaceRefile; replaceCutWhy)
-    const fixedSheets=allSheets().filter(sh=>replaceCutWhy(sh,old0) && sh.charms.some(c=>old0.has(c.poolId)));
+    const fixedSheets=allSheets().filter(sh=>replaceLaserWhy(sh) && sh.charms.some(c=>old0.has(c.poolId)));   // (IPL2: only the laser's mark)
     if(row.repoolChanged && fixedSheets.length){
       row.changePending=false;row.repoolChanged=false;row.state="held";
       // (LISTPICK: a listing pick that found the sheet cut between its look and this turn says so in its own words)
-      row.hold=row.reason=`${row._relink ? `The listing's charm is now ${row._relink.sku} (picked by ${row._relink.by || "a person"}), but this piece was` : "Etsy changed this piece after it was"} cut on ${fixedSheets.map(sh=>sh.fileBase || sheetName(sh)).join(", ")} (${[...new Set(fixedSheets.map(sh=>replaceCutWhy(sh,old0)))].join(", ")}) — make the change by hand, then release it (the piece on that sheet is kept) or skip it`;
+      row.hold=row.reason=`${row._relink ? `The listing's charm is now ${row._relink.sku} (picked by ${row._relink.by || "a person"}), but this piece was` : "Etsy changed this piece after it was"} cut on ${fixedSheets.map(sh=>sh.fileBase || sheetName(sh)).join(", ")} (${[...new Set(fixedSheets.map(sh=>replaceLaserWhy(sh)))].join(", ")}) — make the change by hand, then release it (the piece on that sheet is kept) or skip it`;
       add({kind:"heldOrder",key:"held:"+row.order.receiptId,rid:row.order.receiptId,why:`${row.order.receiptId} held — ${row.hold}`,line:row.key});
       agent({run:B.run?.runId},"warn",`${row.order.receiptId}: ${row.hold}`);
       syncOrderItems();Orders.render();RunCtl.poke();return;
     }
     // REVHOLD: an order in Review keeps its place on its sheet. Accepting the new order leaves its pieces where they are, with the drawing they have
     // (nothing swaps a drawing in place): never lifted, never nested again, and a piece cut or released was left alone above.
-    if(row.repoolChanged && Pool.keepsPlace(row) && !row.replaceByDesign){   // (REVDROP: designs a person dropped on the order's Review card and sent replace its pieces even while it is in Review: that send IS the person's answer)
+    if(row.repoolChanged && Pool.keepsPlace(row) && !row.replaceByDesign && !row.userSwap){   // (IPL2: an updated SKU or charm a person chose, userSwap, is exchanged in Review too)   // (REVDROP: designs a person dropped on the order's Review card and sent replace its pieces even while it is in Review: that send IS the person's answer)
       
       row.repoolChanged=false;
       const kept="Kept on its sheet with its old drawing: the order is held in Review";   // (HOLDORDER, Paul 20 Oct 2026: the Hold Order button's words; was "sent to Review")
@@ -19221,6 +19316,17 @@ const Review = window.Review = (() => {
       // (LISTPICK: the sheets the old pieces leave are the line's home: its new pieces try that vacant space first, attachPool; a sheet that cannot take them passes them on, overflowToNextSheet)
       // (INPLACE, Paul 20 Oct 2026: a sheet still being written in place for another line of this send is written first: its pieces come off the sheet as saved)
       await inPlaceWait(allSheets().filter(sh=>sh.charms.some(c=>old.has(c.poolId))));
+      // (IPL2, Paul 9 Nov 2026: nothing but the laser's mark stops the exchange: a sheet being arranged or saved, or held in Manual Control, is waited for; a green line is set aside first)
+      { const on=allSheets().filter(sh=>sh.charms.some(c=>old.has(c.poolId)));
+        await inPlaceIdle(on);
+        const lineWhy=await inPlaceReopen(on,row);
+        if(lineWhy){
+          row.changePending=false;row.repoolChanged=false;delete row.userSwap;row.state="held";
+          row.hold=row.reason=`The new piece could not replace the old one yet: ${lineWhy} — try it again, or make the change by hand`;
+          add({kind:"heldOrder",key:"held:"+row.order.receiptId,rid:row.order.receiptId,why:`${row.order.receiptId} held — ${row.hold}`,line:row.key});
+          agent({run:B.run?.runId},"warn",`${row.order.receiptId}: ${row.hold}`);
+          syncOrderItems();Orders.render();RunCtl.poke();return;
+        } }
       const homes=[],spots=[],held=[];
       for(const sh of allSheets())if(sh.charms.some(c=>old.has(c.poolId))){
         homes.push(sh);Gate.keep(sh);
@@ -19240,23 +19346,41 @@ const Review = window.Review = (() => {
       for(const id of old)B.pool.rows.delete(id);
       row.poolIds=[];row.repoolChanged=false;
     }
+    const keptHold = row.userSwap && row.hold ? String(row.hold) : null; delete row.userSwap;   // (IPL2: a line a person holds keeps its hold; only its piece is exchanged)
     try {
     row.changePending=false; row.problems = []; row.state = "pulled"; row.reason = null; row.hold = null; Orders.interpretAll(); if (row.problems.length) { Orders.render(); return; } if (B.run && O.stepIndex(B.run.step) >= O.stepIndex("pool")) { try { await Pool.poolAdd(row, B.run); } catch (e) { row.state = "held"; row.reason = e.message; } if (row.state === "pooled" && row.spec.engraveCandidate) Engrave.classify(row).catch(() => {}); }
-    } finally { inPlaceSettle(row); }
+    } finally { inPlaceSettle(row); if (keptHold && !row.hold && ["pooled", "pulled"].includes(row.state)) { row.hold = row.reason = keptHold; row.state = "held"; } }
     syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); if (OrderWin.isOpen()) OrderWin.paint(); RunCtl.poke(); }
   /* INPLACE (Paul, 20 Oct 2026) · the sheets a replaced line's old pieces left, once its new pieces joined (Pool's inPlaceAttach: in the old spots, or on the latest unfinished sheet): each is
      written AS IT STANDS (CNManual.writeInPlace: the page's writeAsPlaced, no nest search, every charm where it is; its QR label made again), with the new piece in the old spot or the spot
      empty. A sheet that now has a charm waiting (it is itself the latest unfinished sheet the new pieces were appended to) is written by its append-only nest instead, which moves nothing
      already on it. What happened is kept on the line for the progress panel and the timeline (row._inplaceLast). Never throws. */
-  /** IPL2: why a sheet a replaced piece came off cannot be held for its new piece ("" when it can): busy, held by a person, cut, recalled, or a Rose Gold / 10K / 14K sheet with its green line. */
+  /** IPL2: why a sheet a replaced piece came off cannot be held for its new piece right now ("" when it can): busy, or held in Manual Control (inPlaceIdle waits for both first). */
   const inPlaceHoldsWhy = sh => ["nesting", "finishing", "queued"].includes(sh.status) || sh._operationStarting || sh._learnedStarting || (sh.persisted && !sh.persistedDone && !sh.problem) ? "it is being arranged or saved right now"
-    : sh._manualHold ? "a person is moving its charms by hand" : sh.roseCutAt ? "cut" : sh.laserDoneAt ? "laser cut" : sh.recalled ? "recalled from the library"
-    : (sh.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(sh.metal))) && (sh.rosePlan || sh.roseProtected) ? `its ${typeof CharmNestRose !== "undefined" && CharmNestRose.cutWord ? CharmNestRose.cutWord(sh.metal) : "Rose Gold"} green line is drawn around its charms` : "";
+    : sh._manualHold ? "a person is moving its charms by hand" : "";   // (IPL2: a cut is caught before, replaceLaserWhy; a green line is set aside, inPlaceReopen)
   /** IPL2: where a replaced line's new piece went and why, for the progress panel and the log ("new piece placed in the old spot on GF Sheet 1", "new piece on GF Sheet 1 beside its old spot …",
    *  "did not fit the old spot (spot left empty on GF Sheet 1) — GF Sheet 1 had no room for the new 18 mm design (…): moved to …"). */
   /** INPLACE SHRINK (Paul, 9 Nov 2026): ", shrunk to 94% to fit" for a line's new pieces shrunk to go back into their old spot; "" at full size. */
   const inPlaceShrunk = r => (r && r.size > 0 && r.size < 1 ? `, shrunk to ${Math.round(r.size * 100)}% to fit` : "");
   const ipSay = r => r.placed && r.where !== "beside" ? `new piece placed in the old spot on ${r.home}${inPlaceShrunk(r)}` : r.placed ? `new piece ${r.say || `on ${r.home} beside its old spot`}` : `did not fit the old spot (spot left empty on ${r.home}) — ${r.say || `added to ${r.to || "the next sheet"}`}`;
+  /** IPL2: a sheet being arranged or saved, or held in Manual Control, is waited for (two minutes at most) before a replaced piece comes off it: never a reason to send the new piece elsewhere. */
+  async function inPlaceIdle(pages) {
+    const busy = sh => !!inPlaceHoldsWhy(sh), t0 = Date.now();
+    while (pages.some(busy) && Date.now() - t0 < 120000) await new Promise(r => setTimeout(r, 500));
+  }
+  /** IPL2: the green line of each Rose Gold / 10K / 14K sheet a replaced piece is on, drawn or its cut recorded, set aside before the piece comes off (RoseStock.reopen, on the server first:
+   *  refused only for the laser's mark, or when the leftover that cut made is already cut or used by another sheet); drawn again once the sheet is written (inPlaceSettle). → "" or why not. */
+  async function inPlaceReopen(pages, row) {
+    for (const sh of pages) {
+      if (!(sh.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(sh.metal)))) continue;
+      if (!(sh.rosePlan || sh.roseProtected || sh.rosePlanHash || sh.roseCutAt || sh.sheetId)) continue;
+      const name = sh.fileBase || sheetName(sh);
+      if (!window.RoseStock || typeof RoseStock.reopen !== "function") return `${name}'s green line cannot be set aside in this page (reload it)`;
+      try { const r = await RoseStock.reopen(sh, { by: employeeName() || undefined, force: true, replace: true }); if (r && r.changed) agent({ metal: sh.metal, pool: true }, "warn", `${row.order.receiptId} · ${name}: its green line${r.cut ? " (its recorded cut)" : ""} was set aside so its charm can be exchanged; it is drawn again for the sheet as it now stands${r.cut ? ", and its cut is approved again by Cut Sheet" : ""}`); }
+      catch (e) { return `${name}: ${String((e && e.message) || e).replace(/\.$/, "")}`; }
+    }
+    return "";
+  }
   async function inPlaceWait(pages) {
     const t0 = Date.now();
     for (const sh of pages) while (sh._inplaceWrite && Date.now() - t0 < 120000) { try { await sh._inplaceWrite; } catch (_) { /* written or not, its pieces are what it holds */ } }
@@ -19270,6 +19394,7 @@ const Review = window.Review = (() => {
       try {
         if (!allSheets().includes(sh)) continue;
         const waiting = activeCharms(sh).some(c => !sh.placements.some(p => p.id === c.id));
+        if (sh.roseRedraw) sh.roseRedraw.written = true;   // (IPL2: a green line set aside for the exchange is drawn again once the sheet is saved: RoseStock.redraw waits for that)
         if (waiting || !sh.placements.length) {
           if (waiting) { out.appended.push(name(sh)); sh._keepPlaced = true; }
           Orders.keepRest(sh);
@@ -19280,7 +19405,8 @@ const Review = window.Review = (() => {
         const M = window.CNManual, go = M && M.writeInPlace ? M.writeInPlace(sh) : typeof window.writeAsPlaced === "function" ? window.writeAsPlaced(sh) : Promise.resolve(false);
         // (then its set: a set already released or committed has its files written again and says it changed, inPlaceRefile)
         const p = Promise.resolve(go).catch(e => { console.warn("[inplace] write", e && e.message); return false; })
-          .then(ok => inPlaceRefile(sh, row, ok).catch(e => { console.warn("[inplace] set files", e && e.message); }).then(() => ok));
+          .then(ok => inPlaceRefile(sh, row, ok).catch(e => { console.warn("[inplace] set files", e && e.message); }).then(() => ok))
+          .then(ok => { if (ok && sh.roseRedraw && window.RoseStock && typeof RoseStock.redraw === "function") return Promise.resolve(RoseStock.redraw(sh)).catch(e => console.warn("[inplace] green line", e && e.message)).then(() => ok); return ok; });
         sh._inplaceWrite = p; p.then(() => { if (sh._inplaceWrite === p) delete sh._inplaceWrite; });
         out.waits = (out.waits || []).concat([p]);
       } catch (e) { console.warn("[inplace] settle", e && e.message); }
@@ -19867,12 +19993,12 @@ const Review = window.Review = (() => {
     for (const sh of allSheets()) {
       if (!sh.charms.some(c => ids.has(c.poolId))) continue;
       for (const c of sh.charms) if (ids.has(c.poolId)) seen.add(c.poolId);
-      const why = replaceCutWhy(sh, ids);
+      const why = replaceLaserWhy(sh);   // (IPL2: only the laser's mark)
       if (why) out.push({ name: sh.fileBase || sheetName(sh), why, cut: true, local: true, sheetId: sh.sheetId || null });
     }
     for (const id of ids) {
       if (seen.has(id)) continue; const p = B.pool.rows.get(id); if (!p || RELINK_TAKEN.has(p.state)) continue;
-      if (["committed", "written", "engraved", "labelled"].includes(p.state) || p.sheetId) out.push({ name: p.sheetName || p.sheetId || "a saved sheet", why: p.state === "committed" ? "committed" : "on a sheet this computer does not hold open", cut: p.state === "committed", local: false, sheetId: p.sheetId || null });
+      if (["committed", "written", "engraved", "labelled"].includes(p.state) || p.sheetId) out.push({ name: p.sheetName || p.sheetId || "a saved sheet", why: "on a sheet this computer does not hold open", cut: false, local: false, sheetId: p.sheetId || null });
     }
     return out;
   }
@@ -19917,7 +20043,7 @@ const Review = window.Review = (() => {
         if (live.length && live.every(p => (c.override ? relinkLib().freshFor(c.override, p) : h.sameDesign(p.sku, c.to)))) {   /* (KEEPOVERRIDE: a moved SKU is made up elsewhere when its pieces are cut from the new design) */ for (const id of ids) if (cloud[id]) B.pool.rows.set(id, Object.assign({}, B.pool.rows.get(id), cloud[id])); why = "made up elsewhere"; return false; }
       }
       homes = on.map(sh => sh.fileBase || sheetName(sh));
-      r.repoolChanged = true; r.changePending = true; r._relink = { sku: c.to, by, at: Date.now(), from: c.from };
+      r.repoolChanged = true; r.changePending = true; r.userSwap = true; r._relink = { sku: c.to, by, at: Date.now(), from: c.from };
       went = true; return true;
     });
     if (!went) return { ok: !/^retry:/.test(why) && why !== "another run holds its pieces", retry: /^retry:/.test(why), why };
@@ -20221,8 +20347,6 @@ const Review = window.Review = (() => {
       const ids = new Set(r.poolIds || []);
       if (!L.pieces.some(p => ids.has(p.poolId))) { why = "the order no longer holds those pieces"; return false; }
       if (relinkFixed(r).length) { why = "retry: a piece of it is laser cut now"; return false; }   // (INPLACE, Paul 20 Oct 2026: only a cut sheet keeps its piece; a committed set's sheet not cut yet changes)
-      if (Pool.keepsPlace && Pool.keepsPlace(r)) { why = "retry: the order is in Review"; return false; }
-      if (r.hold) { why = "the piece is held by a person"; return false; }
       const on = allSheets().filter(sh => sh.charms.some(x => ids.has(x.poolId)));
       // (a sheet being arranged or saved keeps its pieces until it is done: taken off in the middle, its layout came back with them)
       if (on.some(redrawBusy)) { why = "retry: a sheet is being arranged"; return false; }
@@ -20237,7 +20361,7 @@ const Review = window.Review = (() => {
       homes = on.map(sh => sh.fileBase || sheetName(sh));
       // the engraving fitted to the old outline is asked again, as repoolLine's "design changed" rule does for a line made up as another drawing
       try { if (r.engrave && (r.engrave.needed || (r.spec && r.spec.engraveCandidate))) { r.engrave.invalidatedBy = "design changed"; r.engrave.approved = false; r.engrave.state = "reclassify"; Engrave.invalidate(r, "design changed"); } } catch (_) {}
-      r.repoolChanged = true; r.changePending = true;
+      r.repoolChanged = true; r.changePending = true; r.userSwap = true;   // (IPL2: a person's update in the charm repository: exchanged in Review too)
       went = true; return true;
     });
     if (!went) return { ok: !/^retry:/.test(why) && why !== "another run holds its pieces", retry: /^retry:/.test(why), why };
@@ -20293,16 +20417,7 @@ const Review = window.Review = (() => {
         if (fixed.every(f => !f.local && !f.cut)) continue;   // (its sheet is open on another computer: that page makes it up again)
         redrawFlag(row, L, fixed); out.flagged.push(L); continue;
       }
-      if (Pool.keepsPlace && Pool.keepsPlace(row)) {
-        TL.line(row, "interpreted", { id: redrawId(row, L, "kept"), once: true, text: `${redrawName(L)} draws another design now: its piece stays on its sheet while the order is in Review, and is made again from the new drawing when the Review is resolved`.slice(0, 200), data: { redraw: true, sku: L.sku, size: L.size || null, to: L.to, action: "kept" } });
-        retrySku.add(L.sku); out.kept.push(L); continue;
-      }
-      if (row.hold) {
-        redrawDone.add(done); row.redrawNote = { sku: L.sku, size: L.size || null, to: L.to, at: Date.now(), where: "", how: "held" };
-        agent({ metal: row.spec && row.spec.material, pool: true }, "warn", `${row.order.receiptId} · ${redrawName(L)} draws another design now, but the piece is held by a person: its piece is the older drawing until it is made again`);
-        TL.line(row, "interpreted", { id: redrawId(row, L, "held"), once: true, text: `${redrawName(L)} draws another design now, but this piece is on hold: its piece is the older drawing until it is made again`.slice(0, 200), data: { redraw: true, sku: L.sku, size: L.size || null, to: L.to, action: "held" } });
-        out.held.push(L); continue;
-      }
+      // (IPL2, Paul 9 Nov 2026: an order in Review, or a line a person holds, takes the new drawing too: "Nothing can block this unless the sheet has already been laser cut"; its hold stays)
       let r; try { r = await redrawSwap(row, L); } catch (err) { r = { ok: false, retry: true, why: (err && err.message) || String(err) }; }
       if (r.ok) { redrawDone.add(done); out.swapped.push(Object.assign({}, L, { homes: r.homes || [], made: !!r.made })); }
       else if (r.retry) retrySku.add(L.sku);
@@ -23166,6 +23281,7 @@ const OrderWin = window.OrderWin = (() => {
     cell("Ship by", tryDo(() => Orders.shipTxt(r)) || "—");
     if (sp.form) cell("Form", sp.form); if (sp.size) cell("Size", sp.size);
     if (sp.chain) { const ch = tryDo(() => O.optionView("Chain", sp.chain, { title: r.line.title })); cell("Chain", ch ? ch.text : sp.chain, ch && ch.changed ? { raw: O.shownText(sp.chain) } : null); }   // (OPTTIDY: a chain read from a fused option "16"&18"·Set·ANGELINA" is said as "16" & 18" · Angelina"; the original is the hover)
+    if (sp.engraveLimit && sp.engraveLimit.line) cell("Engraving limit", sp.engraveLimit.line);   // (ENGLIMIT, Paul 9 Nov 2026: "Number of Characters: GOLD 1-3 Characters" is the words limit, read against the engraving: "Up to 3 characters · engraving “D (cross) E” = 3 characters ✓")
     // the engraving: the line's state and words, its seals (an approval made elsewhere is merged in by paintNow: W.engHist)
     const hist = W.engHist && W.engHist.key === r.key ? W.engHist.html : "";
     const seals = r.engrave ? CNEngravingSeals.list(r.engrave).length : 0, hasEng = !!(hist || (r.engrave && (r.engrave.needed || seals)));

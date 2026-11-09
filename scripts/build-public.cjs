@@ -226,6 +226,7 @@ const assets = [
   "charm-nest-rail-tip.js",
   "charm-nest-piece-seals.js",
   "charm-nest-completed.js",
+  "charm-nest-flow-stages.js",
   "charm-nest-cancel-ui.js",
   "charm-nest-review-send.js",
   "charm-nest-shared-orders-modal.js",
