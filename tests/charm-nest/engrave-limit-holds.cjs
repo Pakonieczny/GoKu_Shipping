@@ -2,8 +2,9 @@
 //   · listing 531495758 "TINY Gold Bar Necklace, Engraved Horizontal Bar Necklace, …", SKU TINY_5758, GF, "Number of Characters: GOLD 1-3 Characters", personalisation "D (cross) E".
 //     It was held: option "Number of Characters: GOLD 1-3 Characters" not mapped — Etsy keeps one SKU (TINY_5758) for every choice of this listing: map this option once.
 //     Root cause: nameKind read "Number of …" as a COUNT (FALSEHOLD never passes a count) and valueKind read neither the metal nor the character range, so the option fell to the one-SKU question.
-//   · TINY_5758 is in no master file (the live master index, read 9 Nov 2026: no SKU holds "5758" but RUNNING_57581). The open option question hid that ("an unknown SKU waits while an option is unanswered"):
-//     with the option read, the line says the real reason, "not in any master file", and nothing is matched by guesswork.
+//   · TINY_5758 is in no master file (the live master index, read 9 Nov 2026: no SKU holds "5758" but RUNNING_57581); the open option question hid that. Paul: "This is the tiny bar", the repo's
+//     TINY_4758 drawing: listing 531495758 is pinned to it (PINNED_LISTING_DESIGNS). A SKU of another listing in no master file still says "not in any master file", nothing is matched by guesswork.
+//   · "D (cross) E": the bracketed sign name is the cross ✝ in the words (SYMWORD, charm-nest-engrave-read.js fixSymbols; tests/charm-nest/symbol-words.cjs).
 // The real reader (charm-nest-orders.js interpretLine), offline: no browser, no network, no Etsy call.
 //   node tests/charm-nest/engrave-limit-holds.cjs
 'use strict';
@@ -33,23 +34,25 @@ const WITH = world([SKU, 'TINY_4758']), LIVE = world(['TINY_4758', 'TINY_7557', 
 for (const tables of [ONE_SKU, {}]) {
   const tag = Object.keys(tables).length ? 'with Etsy\'s one-SKU table' : 'with no table', sp = read(bar(), ctxOf(WITH, tables));
   eq(kinds(sp), [], `${tag}: nothing asked (no "Number of Characters … not mapped"): ${JSON.stringify(sp.problems)}`);
-  eq([sp.designSku, sp.material, sp.pieceCount], [SKU, 'gold', 1], `${tag}: TINY_5758, GF, one bar`);
+  eq([sp.designSku, sp.material, sp.pieceCount], ['TINY_4758', 'gold', 1], `${tag}: the tiny bar TINY_4758 (listing pinned), GF, one bar`);
   eq(sp.options[0].mapped, { field: 'ignore', value: null, source: 'rule:engrave-limit' }, `${tag}: the option is the words limit, never a design`);
   const L = sp.engraveLimit;
   eq([L.min, L.max, L.unit, L.metal, L.used, L.over, !!L.metalDiffers], [1, 3, 'character', 'gold', 3, false, false], `${tag}: up to 3 characters, gold, "D (cross) E" is 3`);
-  ok(L.line === 'Up to 3 characters · engraving “D (cross) E” = 3 characters (a bracketed symbol word counts as one sign) ✓', `${tag}: the line says the check: ${L.line}`);
+  ok(L.line === 'Up to 3 characters · engraving “D ✝ E” = 3 characters ✓', `${tag}: the line says the check: ${L.line}`);
+  eq([sp.engraving.front.text, sp.engraving.front.lines], ['D ✝ E', ['D ✝ E']], `${tag}: the front reads D ✝ E`);
 }
-pass('4218451815: "Number of Characters: GOLD 1-3 Characters" on TINY_5758 is never asked; "Up to 3 characters · engraving “D (cross) E” = 3 characters ✓"');
+pass('4218451815: "Number of Characters: GOLD 1-3 Characters" is never asked; "Up to 3 characters · engraving “D ✝ E” = 3 characters ✓"');
 
-/* ── 2 · the live master (no TINY_5758): the one real reason is said, nothing is matched by guesswork ── */
-{ const sp = read(bar(), ctxOf(LIVE, ONE_SKU)), un = (sp.problems || []).filter(p => p.kind === 'unmatchedSku');
-  ok(!asks(sp).length, 'no option question once the limit is read');
-  ok(un.length === 1 && un[0].sku === SKU && un[0].reason === 'not in any master file', 'the line says TINY_5758 is in no master file (the "!" on the SKU and "No vector available"): ' + JSON.stringify(sp.problems));
-  ok(sp.designSku === SKU, 'TINY_5758 stays the SKU: no near SKU (TINY_4758) is put in its place');
+/* ── 2 · the live master (no TINY_5758): the listing is pinned to the tiny bar Paul named, TINY_4758; another listing's unknown SKU still says so ── */
+{ const sp = read(bar(), ctxOf(LIVE, ONE_SKU));
+  eq(kinds(sp), [], 'order 4218451815 on the live master: nothing asked, nothing held: ' + JSON.stringify(sp.problems));
+  eq([sp.designSku, sp.skuSource, O.pinnedDesign(LID)], ['TINY_4758', 'alias', 'TINY_4758'], 'listing 531495758 is the tiny bar TINY_4758 (pinned): the SKU tag and the Vector design have a charm');
+  const other = read(bar({ listingId: '1234567890' }), ctxOf(LIVE, { 1234567890: { at: Date.now(), n: 6, uni: SKU } })), un = other.problems.filter(p => p.kind === 'unmatchedSku');
+  ok(un.length === 1 && un[0].sku === SKU && un[0].reason === 'not in any master file' && other.designSku === SKU, 'TINY_5758 on any other listing: "not in any master file", no look-alike: ' + JSON.stringify(other.problems));
   // before ENGLIMIT this was hidden behind the option question: an open option still hides it (a real design option may pick the charm)
-  const design = read(bar({ variations: [{ name: 'Animal', value: 'Cat' }] }), ctxOf(LIVE, ONE_SKU));
+  const design = read(bar({ listingId: '1234567890', variations: [{ name: 'Animal', value: 'Cat' }] }), ctxOf(LIVE, { 1234567890: { at: Date.now(), n: 6, uni: SKU } }));
   ok(asks(design).length === 1 && !design.problems.some(p => p.kind === 'unmatchedSku'), 'a real design option still asks first, as before'); }
-pass('with the live master (no TINY_5758): "not in any master file" is the line\'s one reason; no look-alike is matched');
+pass('with the live master: listing 531495758 is pinned to TINY_4758; TINY_5758 elsewhere still says "not in any master file"');
 
 /* ── 3 · the other ways a shop writes the limit: never a design, never a count, read as the limit ── */
 for (const [name, value, want] of [
@@ -99,8 +102,8 @@ pass('an engraving longer than the paid limit (or a metal that disagrees) is one
   ok(O.staleQuestionHold(held), 'the stored "Options: … not mapped" hold is released on its next reading');
   ok(!O.staleQuestionHold(Object.assign({}, held, { hold: 'held by Paul' })), 'a person\'s hold stays');
   const live = read(bar(), ctxOf(LIVE, ONE_SKU));
-  ok(!O.staleQuestionHold(Object.assign({}, held, { spec: live })), 'with no TINY_5758 in the master the line stays held, now for the real reason'); }
-pass('a line held only for the limit option is released; one whose SKU is in no master stays held for that');
+  ok(O.staleQuestionHold(Object.assign({}, held, { spec: live })), 'on the live master (TINY_4758 pinned) the held line is released too'); }
+pass('a line held only for the limit option is released on its next reading');
 
 /* ── 7 · the page shows the check, and the cache tokens carry -fh4 ── */
 { const bridge = fs.readFileSync(path.join(__dirname, '../../charm-nest-bridge.js'), 'utf8'), html = fs.readFileSync(path.join(__dirname, '../../charm-nest-1.html'), 'utf8');
