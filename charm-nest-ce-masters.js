@@ -566,8 +566,11 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
       return edit(Object.assign({}, start, { faces: facesAgain(design) }), by);
     }
     card.done(design, got);
-    { const C = root.CharmNestCustomPiece; if (C && typeof C.open === 'function' && !design.noCut) card.over(() => C.open(Object.assign({ designId: got.id, version: got.version, after: true }, design.orderId ? { orderId: design.orderId } : {}))); }   // (CES2: the pop-up on every Save)
-    const next = await card.choice();
+    // (CPX1: a design saved for an order whose Custom portion is still open: the same choice at the top of the card, not ticked (the design is not one of the order's pieces), and no pop-up over it)
+    const cd = design.orderId ? customBlock(card, { rid: design.orderId, sameOrder: false, cover: { poolId: '', lineKey: '', name: design.name, designId: got.id, version: got.version } }) : null;
+    { const C = root.CharmNestCustomPiece; if (!cd && C && typeof C.open === 'function' && !design.noCut) card.over(() => C.open(Object.assign({ designId: got.id, version: got.version, after: true }, design.orderId ? { orderId: design.orderId } : {}))); }   // (CES2: the pop-up on every Save)
+    let next = await card.choice();
+    if (cd) next = await cd.settle(next);
     if (next === 'again') return edit(Object.assign({}, start, { id: got.id, version: got.version, faces: facesAgain(design), subtitle: subtitleFor(Object.assign({}, start, { id: got.id, version: got.version })) }), by);
     if (next === 'send') {
       const C = root.CharmNestCustomPiece;
@@ -630,6 +633,11 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
       },
       /** CES1: any other card: a title, its lines (HTML, already escaped) and its buttons [[choice, class, words, disabled?, title?]]; one is chosen with choice(). */
       show(title, lines, list, bad) { h.textContent = title; para(lines, bad); buttons(list); },
+      /** CPX1: a block put first in the card, above its title (the Custom portion of the order: charm-nest-custom-done.js) → the block's element. */
+      top(html) { const old = card.querySelector('[data-cem-top]'); if (old) old.remove(); if (!html) return null; const d = doc.createElement('div'); d.setAttribute('data-cem-top', ''); d.innerHTML = html; card.insertBefore(d, h); return d; },
+      /** CPX1: a button's words changed in place (Done says what it also does). */
+      label(c, text, title) { const b = bar.querySelector(`[data-c="${c}"]`); if (b) { b.textContent = text; if (title != null) b.title = title; } },
+      el: card,
       /** CES2 (Paul, 9 Nov 2026: "I want the pop-up to open on every Save to give users the options that this pop-up modal provides"): the Send to sheet pop-up opened over the card at once
        *  (openFn → its promise); sent, and the card goes with it; closed without sending, the card stays under it with its own choices (Done, Keep editing …). */
       over(openFn) { Promise.resolve().then(openFn).then(out => { if (out && !picked) choose('gone'); }, e => note(`Send to sheet · ${(e && e.message) || e}`, true)); },
@@ -655,8 +663,38 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
     if (o.back && o.back.label) list.push(['back', 'cem-btn--ghost', String(o.back.label), false, o.back.title ? String(o.back.title) : '']);
     if (o.replace) list.push(['replace', 'cem-btn--gold', 'Replace on the order…', !!o.replace.disabled, o.replace.title ? String(o.replace.title) : 'Make this piece again from the drawing as saved: handmade custom, on the next sheet of the metal you pick, as a fix of this piece']);
     card.show(o.title || 'Saved', lines, list, !!o.bad);
-    if (typeof o.over === 'function') card.over(o.over);   // (CES2: the Send to sheet pop-up over the card on every Save)
-    return card.choice();
+    const cd = customBlock(card, o.customDone);
+    if (typeof o.over === 'function' && !cd) card.over(o.over);   // (CES2: the Send to sheet pop-up over the card on every Save; CPX1: not over the Custom portion's choice, which must be seen: Replace on the order… still opens it)
+    return card.choice().then(c => (cd ? cd.settle(c) : c));
+  }
+  /* CPX1 (Paul, 9 Nov 2026, order 4225890898: "Once a user completes an order using the editor inside the pop-up modal there needs to be an option that also completes the Custom portion of a
+     given order ... This needs to be clearly visible and not hidden somewhere in that modal ... it will release any custom order from being held for review"): the saved piece's order has a
+     Custom portion still open (an Etsy custom line held in Review, a custom piece on a sheet): the card says so FIRST, above its title, one tick per portion with its name, size and picture
+     (charm-nest-custom-done.js blockHtml), ticked at first only for exactly one portion of the same order. Done (or Back to …) with a tick completes them as one action; Keep editing and
+     Replace leave them; nothing is ever done without that press. A refusal (a sheet already cut, approved or sent) is said on the card, which stays, the tick off. */
+  function customBlock(card, x) {
+    const CD = root.CharmNestCustomDone;
+    if (!x || !x.rid || !CD || typeof CD.openOf !== 'function') return null;
+    let items = []; try { items = CD.openOf(x.rid, { savedKey: x.savedKey, savedPoolIds: x.savedPoolIds }) || []; } catch (e) { console.warn('[charm editor] custom portion', e); items = []; }
+    if (!items.length) return null;
+    try { CD.injectCss(doc); } catch (_) { /* drawn plain */ }
+    const node = card.top(CD.blockHtml(items, { rid: x.rid, ticked: CD.ticked(items, { sameOrder: x.sameOrder !== false }) }));
+    if (!node) return null;
+    const w = CD.wire(node, items, { onChange: n => { card.label('done', n ? `Done · complete Custom` : 'Done', n ? 'Done, and the Custom portion ticked above is completed: off its sheet, released from Review' : ''); if (x.back) card.label('back', n ? `${x.back} · complete Custom` : x.back); } });
+    return {
+      /** The choice made: Done / Back with a tick completes the ticked portions (the card waits for it); anything else leaves them. */
+      async settle(c) {
+        const picked = c === 'done' || c === 'back' ? w.picked() : [];
+        if (!picked.length) return c;
+        let by = ''; try { by = await who('complete the Custom piece'); } catch (_) { by = ''; }
+        if (!by) { note('The Custom piece was not completed: nobody is signed in', true); return c; }
+        let r; try { const cover = typeof x.cover === 'function' ? await x.cover() : x.cover; r = await CD.complete({ rid: x.rid, items: picked, cover, by }); } catch (e) { r = { ok: false, why: (e && e.message) || String(e) }; }
+        if (!r || !r.ok) { note(`The Custom piece was not completed · ${(r && r.why) || 'it could not be done'}`, true); if (typeof x.onRefused === 'function') try { x.onRefused(r); } catch (_) { /* said */ } return c; }
+        if (typeof x.onDone === 'function') try { x.onDone(r); } catch (_) { /* said */ }
+        return c;
+      },
+      items
+    };
   }
 
   /* ── opening a master ── */
