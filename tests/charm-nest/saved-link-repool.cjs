@@ -46,7 +46,9 @@ const read = (over, aliases) => { const line = lineOf(over); return { line, spec
     w.entries[TWIN].aiPath = w.entries[NEW].aiPath;   // (one drawing, two names, as the library keeps it)
     w.c.Review = { add: it => reviews.push(it) }; w.c.B.review = { items: reviews }; w.c.Sets = { ofRun: () => [] }; w.c.Gate = { modern: () => false };
     // (INPLACE, Paul 20 Oct 2026: the Pool asks the bridge's replaceCutWhy which sheets may change: the real one, from the same source)
-    { const src = keyWorld.src, i = src.indexOf('function replaceCutWhy(sh, ids) {'), j = src.indexOf('window.replaceCutWhy = replaceCutWhy;', i); assert(i > 0 && j > i, 'replaceCutWhy is where the test expects it'); require('vm').runInContext(src.slice(i, j), w.c); }
+    { const src = keyWorld.src, i = src.indexOf('function replaceCutWhy(sh, ids) {'), j = src.indexOf('window.replaceCutWhy = replaceCutWhy;', i); assert(i > 0 && j > i, 'replaceCutWhy is where the test expects it'); require('vm').runInContext(src.slice(i, j), w.c);
+      // (IPL2: and replaceLaserWhy, the one check a REPLACED charm asks: only the laser's mark)
+      const k = src.indexOf('function replaceLaserWhy(sh) {'), l = src.indexOf('window.replaceLaserWhy = replaceLaserWhy;', k); assert(k > 0 && l > k, 'replaceLaserWhy is where the test expects it'); require('vm').runInContext(src.slice(k, l), w.c); }
     w.c.TL = { line: (row, type, o) => { timeline.push({ type, o }); return true; }, hash: s => String(s).length.toString(36) };
     return Object.assign(w, { reviews, timeline });
   };
@@ -68,7 +70,10 @@ const read = (over, aliases) => { const line = lineOf(over); return { line, spec
     w.Pool.pinPooled(row); eq(w.reviews.length, 1, 'quantity 2: one card'); ok(/as 2 pieces: the old CELESTIAL3-COMET comes off/.test(w.reviews[0].why), 'it says 2 pieces and names the old design once: ' + w.reviews[0].why); }
   // never on a sheet the laser has cut, or one recalled from the library: left as it was, said once in the log and once on the timeline
   // (INPLACE, Paul 20 Oct 2026: "Unless a sheet has been marked as fully completed and laser cut then that charm needs to come off that particular sheet": a full sheet changes, below)
-  for (const [what, set] of [['laser cut', sh => { sh.laserDoneAt = 1; }], ['recalled', sh => { sh.recalled = true; }], ['cut', sh => { sh.roseCutAt = 1; }]]) {
+  // (IPL2, Paul 9 Nov 2026: "Nothing can block this unless the sheet has already been laser cut": a recorded green-line cut alone is no lock any more; its line is set aside for the exchange)
+  { const w = worldOf(), row = rowOf(), id = pooledBefore(w, row); w.pages.gold.charms.push({ poolId: id }); w.pages.gold.fileBase = 'SS Draft 1'; w.pages.gold.roseCutAt = 1;
+    w.Pool.pinPooled(row); eq(w.reviews.length, 1, 'a piece on a sheet whose green line cut is only recorded (not laser cut) is offered for the exchange'); }
+  for (const [what, set] of [['laser cut', sh => { sh.laserDoneAt = 1; }], ['recalled', sh => { sh.recalled = true; }]]) {
     const w = worldOf(), row = rowOf(), id = pooledBefore(w, row); w.pages.gold.charms.push({ poolId: id }); w.pages.gold.fileBase = 'SS Draft 1'; set(w.pages.gold);
     w.Pool.pinPooled(row); w.Pool.pinPooled(row);
     eq([row.changePending || false, row.repoolChanged || false, w.reviews.length], [false, false, 0], `a piece on a sheet ${what} is left as it was: no flag, no card`);
