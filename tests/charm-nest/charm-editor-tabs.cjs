@@ -1,8 +1,10 @@
 // CEB1 (Paul, 9 Nov 2026): "1. Rename the Design Studio button to the Charm Editor button and name. 2. Resize the new renamed button to be the same size as the Charm Editor button. 3. I noticed
 // that the Charm Editor button doesn't exist in the Review tab. Place it exactly in the same place on all 5 main tabs just like it is in the Design & Engrave."
+// CEB2 (Paul, 9 Nov 2026): "Remove the Charm Editor button from the Nest tab." So: on the four other tabs as CEB1 put it; on Nest none, and no header row left for it (0  below).
 // ONE "Charm Editor" button (charm-nest-bridge.js CharmEditorTabBtn, charm-nest-activity.css .cnCeTabBtn over the .cnCeBtn look) on Nest, Orders, Design & Engrave, Review and Library.
 // The REAL page over the repo's fake site (_orderFactsWorld.cjs: offline, made-up orders, no Etsy, no paid AI, nothing live). What it proves:
-//   1  at 1400 px each of the five tabs has exactly ONE visible "Charm Editor" button, the same class, words, aria-label and tooltip, the last thing of the tab's header row, and the same box
+//   0  on Nest: no Charm Editor button in the page's DOM for Nest, no #nestCeHead / .cnCeHead row, the sheet card (#sheets) with nothing put before it for the button
+//   1  at 1400 px each of the four tabs has exactly ONE visible "Charm Editor" button, the same class, words, aria-label and tooltip, the last thing of the tab's header row, and the same box
 //      (size, right and top offset from the content area) as the Design & Engrave tab's, within 1 px
 //   2  no "Design Studio" anywhere in the page's words, tooltips or labels, on any of the five tabs
 //   3  it is the same node, still last in its row, after each tab is drawn again (Orders, Design & Engrave, Review re-rendered; Library's Completed / Sheets switched; Nest left and shown again)
@@ -15,8 +17,8 @@
 const { world, seed } = require('./_orderFactsWorld.cjs');
 const fails = []; let nCheck = 0;
 const check = (ok, msg, ev) => { nCheck++; if (!ok) fails.push(msg); console.log((ok ? '  ✓ ' : '  ✗ ') + msg + (ok || !ev ? '' : '  ' + ev)); };
-const TABS = ['nest', 'orders', 'engrave', 'review', 'library'];
-const ROW = { nest: '#nestCeHead', orders: '#ordTools', engrave: '#engraveView > .egBar', review: '#reviewView > .ordBar', library: '#libView .libBar' };
+const TABS = ['orders', 'engrave', 'review', 'library'];
+const ROW = { orders: '#ordTools', engrave: '#engraveView > .egBar', review: '#reviewView > .ordBar', library: '#libView .libBar' };
 
 const show = async (page, m, narrow) => {
   await page.evaluate(m => CN.setMode(m), m);
@@ -44,6 +46,16 @@ const fmt = x => `${x.w.toFixed(1)}×${x.h.toFixed(1)} px, ${x.right.toFixed(1)}
   try {
     await seed(page, ['single', 'pairMatching', 'engraved']);
     await page.waitForTimeout(500);
+
+    /* 0 · not on Nest */
+    const nestNone = async () => { await show(page, 'nest'); return page.evaluate(() => {
+      const sh = document.getElementById('sheets'), prev = sh && sh.previousElementSibling;
+      const vis = [...document.querySelectorAll('button')].filter(b => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0 && /charm editor/i.test(b.textContent) && b.closest('#stage') && !b.closest('dialog,.cem-root,.hidden'); });
+      return { visible: vis.length, nestBtn: !!document.querySelector('#nestCeBtn,.cnCeTabBtn[data-ce-tab="nest"]'), head: !!document.querySelector('#nestCeHead,.cnCeHead'), sheets: !!sh,
+        before: prev ? (prev.id || prev.className || prev.tagName) : null, beforeHasBtn: !!(prev && prev.querySelector && prev.querySelector('.cnCeTabBtn')) };
+    }); };
+    const n0 = await nestNone();
+    check(n0.sheets && n0.visible === 0 && !n0.nestBtn && !n0.head && !n0.beforeHasBtn, '0 Nest: no Charm Editor button and no header row for it; the sheet card is the top of the tab', JSON.stringify(n0));
 
     /* 1 · one button, the same, in the same place */
     const at = {}, nodes = {};
@@ -87,8 +99,9 @@ const fmt = x => `${x.w.toFixed(1)}×${x.h.toFixed(1)} px, ${x.right.toFixed(1)}
       const a = await look(page, m);
       again[m].box = a.box; again[m].one = a.n === 1;
     }
-    check(TABS.every(m => again[m].same && again[m].one && near(again[m].box, ref.box)) && again.nest.n === 5,
-      '3 each tab keeps the same node, last in its row, in the same place, after it is drawn again (5 buttons in the page, one a tab)', JSON.stringify(again));
+    const n3 = await nestNone();
+    check(TABS.every(m => again[m].same && again[m].one && near(again[m].box, ref.box)) && TABS.every(m => again[m].n === 4) && n3.visible === 0 && !n3.nestBtn && !n3.head,
+      '3 each tab keeps the same node, last in its row, in the same place, after it is drawn again (4 buttons in the page, one a tab; still none on Nest after the round)', JSON.stringify({ again, n3 }));
 
     /* 4 · the press on each tab */
     await page.evaluate(() => {
@@ -98,7 +111,7 @@ const fmt = x => `${x.w.toFixed(1)}×${x.h.toFixed(1)} px, ${x.right.toFixed(1)}
     });
     for (const m of TABS) { await show(page, m); await page.click(`.cnCeTabBtn[data-ce-tab="${m}"]`); await page.waitForTimeout(150); }
     const pr = await page.evaluate(() => ({ calls: window.__calls, log: window.__log }));
-    const want = [['charmEditorButton', 'nest', 'Back to Nest'], ['charmEditorButton', 'orders', 'Back to Orders'], ['charmEditorButton', 'engrave', 'Back to Design & Engrave'], ['charmEditorButton', 'review', 'Back to Review'], ['charmEditorButton', 'library', 'Back to Library']];
+    const want = [['charmEditorButton', 'orders', 'Back to Orders'], ['charmEditorButton', 'engrave', 'Back to Design & Engrave'], ['charmEditorButton', 'review', 'Back to Review'], ['charmEditorButton', 'library', 'Back to Library']];
     check(JSON.stringify(pr.calls) === JSON.stringify(want) && JSON.stringify(pr.log) === JSON.stringify(TABS.map(m => ['designerNew', 'charmEditorButton', m])),
       '4 pressed on each tab, it opens "Design a charm" on New design once (newDesign from "charmEditorButton", the way back to that tab), logged designerNew with its tab', JSON.stringify(pr));
     await page.evaluate(() => { window.CharmNestCeMasters = window.__realM; });
@@ -137,6 +150,8 @@ const fmt = x => `${x.w.toFixed(1)}×${x.h.toFixed(1)} px, ${x.right.toFixed(1)}
     await seed(p.page, ['single', 'pairMatching', 'engraved']); await p.page.waitForTimeout(400);
     const ph = {};
     for (const m of TABS) { await show(p.page, m, true); const a = await look(p.page, m); ph[m] = { n: a.n, left: a.left && +a.left.toFixed(1), right: a.rightPx && +a.rightPx.toFixed(1), h: a.box && a.box.h, hscroll: a.hscroll }; }
+    await show(p.page, 'nest', true); const phNest = await look(p.page, 'nest');
+    check(phNest.n === 0, '6 at 390 px Nest has no Charm Editor button', JSON.stringify(phNest));
     check(TABS.every(m => ph[m].n === 1 && ph[m].left >= 0 && ph[m].right <= 390 && Math.abs(ph[m].h - 40) <= 1 && !ph[m].hscroll),
       '6 at 390 px the button is whole on the screen on every tab (40 px tall: a finger target, the same on every tab), and the page does not scroll sideways', JSON.stringify(ph));
     check(!p.errors.length, '6 no page errors on the phone: ' + p.errors.join(' | '));
