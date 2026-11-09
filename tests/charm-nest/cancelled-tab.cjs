@@ -81,7 +81,7 @@ const FILLER = Array.from({ length: 227 }, (_, i) => ({ orderId: String(42000000
     assert(cxIn >= 10, 'the rows come in with a soft slide and fade: ' + cxIn);
     c0 = await chip();
     assert(c0.on && c0.n === '230', 'the tab counts every cancelled order: ' + JSON.stringify(c0));
-    const bar = await page.evaluate(() => ({ cls: document.getElementById('ordBar').className, ph: document.getElementById('ordQ').placeholder, sort: document.getElementById('ordSort').getClientRects().length }));
+    const bar = await page.evaluate(() => ({ cls: document.getElementById('ordBar').className, ph: document.getElementById('ordQ').placeholder, sort: document.querySelectorAll('#ordBar .cnSort, #ordSort').length }));   // (CMP1, 9 Nov 2026: the sort is in the Filters panel now, never in the bar)
     assert(/onCx/.test(bar.cls) && /buyer/.test(bar.ph) && bar.sort === 0, 'on Cancelled the search reads order, buyer, SKU and the open-lines controls step aside: ' + JSON.stringify(bar));
     const row = rid => page.evaluate(rid => { const n = [...document.querySelectorAll('#ordBody .cxRow')].find(x => x.dataset.rid === rid); if (!n) return null; return { i: [...n.parentElement.children].indexOf(n), id: n.querySelector('.cxId').textContent.replace(/\s+/g, ' ').trim(), what: n.querySelector('.cxWhat').textContent, badge: n.querySelector('.cxBadge').textContent, time: n.querySelector('time').textContent, reason: n.querySelector('.cxReason').textContent, fates: [...n.querySelectorAll('.cxFates span')].map(s => s.className + ':' + s.textContent), restore: !!n.querySelector('[data-cx=restore]'), open: n.classList.contains('open') }; }, rid);
     const a = await row(ETSY.orderId), p = await row(PERSON.orderId), o = await row(OLD_ETSY.orderId);

@@ -82,7 +82,7 @@
 #ordBar .ordTools{display:flex;flex:1 1 580px;flex-wrap:nowrap;align-items:center;justify-content:flex-end;gap:8px;min-width:0}
 #ordBar .ordTools>.cnListTools{gap:8px}
 #ordBar .cnBtn{height:30px}
-#ordBar .ordFind{position:relative;display:flex;flex:1 1 200px;align-items:center;gap:7px;min-width:140px;max-width:440px;height:30px;box-sizing:border-box;padding:0 3px 0 10px;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--ink45);cursor:text;transition:border-color .12s,box-shadow .12s}
+#ordBar .ordFind{position:relative;display:flex;flex:0 1 240px;align-items:center;gap:7px;min-width:140px;max-width:260px;height:30px;box-sizing:border-box;padding:0 3px 0 10px;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--ink45);cursor:text;transition:border-color .12s,box-shadow .12s}
 #ordBar .ordFind:hover{border-color:var(--ink25)}
 #ordBar .ordFind:focus-within{border-color:var(--gold);box-shadow:0 0 0 3px var(--goldSoft)}
 #ordBar .ordFind .ordSearch{flex:1 1 auto;width:100%;min-width:0;max-width:none;height:100%;margin:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;color:var(--ink);font:12.5px var(--sans);text-overflow:ellipsis}
@@ -139,7 +139,30 @@
 #ordBody{transition:opacity .14s}
 #ordBody[aria-busy=true]{opacity:.55;pointer-events:none}
 .cnDim{transition:opacity .14s}.cnDim[aria-busy=true]{opacity:.55;pointer-events:none}
-#ordBar.onCx #ordFilters,#ordBar.onCx #ordViewSeg{display:none}
+/* CMP1 (Paul, 9 Nov 2026): Filters stays on Cancelled and Completed (Time and Sort by are in it); the Design Studio button is the last thing of the head, at its top right */
+#ordBar .ordTools>.ordDesignBtn{margin-left:4px}
+.ordChip[data-def][aria-pressed=true]{background:var(--paper2);border-color:var(--ink25);color:var(--ink)}   /* the default sort, like "Any": in force, nothing narrowed */
+.ordFg [data-dir-row]{margin-top:6px}
+/* the Completed list (charm-nest-completed.js): one row an order, its SHIPPED seal at the right */
+.cmpWrap{display:grid;gap:8px;padding:2px 0 10px}
+.cmpSum{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:18px;padding:0 4px;font:11.5px var(--sans);color:var(--ink45)}
+.cmpSum b{font:700 12px var(--mono);color:var(--ink70)}
+.cmpList{display:grid;gap:5px}
+.cmpRow{position:relative;display:grid;grid-template-columns:minmax(130px,200px) minmax(0,1.6fr) auto minmax(150px,auto);gap:14px;align-items:center;min-height:62px;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:6px 12px 6px 16px;font-size:12.5px;cursor:pointer;transition:transform .13s ease,border-color .13s ease,box-shadow .17s ease}
+.cmpRow::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:var(--sage);opacity:.75}
+.cmpRow:hover,.cmpRow:focus-visible{transform:translateY(-1px);border-color:var(--ink45);box-shadow:var(--hoverLift);outline:none}
+.cmpId{display:grid;line-height:1.3;min-width:0}.cmpId b{font:700 13px var(--mono);color:var(--ink)}
+.cmpBuyer{font:11.5px var(--sans);color:var(--ink45);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmpWhat{display:grid;gap:2px;min-width:0}.cmpWhat .rowExcerpt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmpMore{font:11px var(--sans);color:var(--ink45)}
+.cmpFacts{display:flex;align-items:center;gap:8px;white-space:nowrap}
+.cmpSealCell{display:flex;align-items:center;justify-content:flex-end;min-width:0}
+.cmpEmpty small{max-width:52ch;font-size:11.5px;line-height:1.5;color:var(--ink45)}
+.cmpFoot{display:flex;justify-content:center}.cmpFoot:empty{display:none}
+.cxToken.cmpTok,.mGhost>.cxToken.cmpTok{border-color:var(--sage);color:#2f5e45}
+#orderWin .owShipSeal{display:inline-flex;flex:none;align-items:center}
+@container workspace (max-width:900px){.cmpRow{grid-template-columns:minmax(0,1fr) auto}.cmpWhat,.cmpFacts{grid-column:1}.cmpSealCell{grid-column:2;grid-row:1 / span 3}}
+@media(prefers-reduced-motion:reduce){.cmpRow{transition:none}}
 /* the window the bar is in (the workspace beside the rail), not the screen */
 @container workspace (max-width:1179px){#ordCharmTotal{display:none}}
 @container workspace (max-width:1000px){#ordChips .ordLong{display:none}}
@@ -147,7 +170,9 @@
   #ordBar.ordCompact{gap:8px}
   #ordBar .ordSummary{flex:1 1 100%}
   #ordBar .ordTools{flex:1 1 100%;flex-wrap:wrap;justify-content:flex-start}
-  #ordBar .ordFind{flex:1 1 calc(100% - 118px);max-width:none;min-width:0}   /* the search and Filters (with its badge) fill the row; the date, the sort and the view are the row under it */
+  #ordBar .ordFind{flex:1 1 100%;max-width:none;min-width:0}   /* (CMP1) the search fills a row; Filters and Design Studio are the row under it, Design Studio at its right end */
+  #ordBar .ordTools>.ordDesignBtn{margin-left:auto}
+  #ordBar #ordChips{flex-wrap:wrap;flex-shrink:1;row-gap:6px;min-width:0;max-width:100%}   /* (CMP1: three piles now; on the narrowest phones they wrap under Pull orders rather than run past the edge) */
   #ordBar .ordTools>.cnListTools{display:contents}
   #ordBar .cnDate{flex:0 1 auto}
   #ordBar .cnSort{flex:1 1 0;min-width:124px}

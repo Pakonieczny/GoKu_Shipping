@@ -210,8 +210,9 @@ const count = (s, re) => (String(s).match(re) || []).length;
     await R.shot(w, 'order-card-seals-list');
     await page.evaluate(() => { Orders.view().view = 'cards'; Orders.render(); });
     await R.settle(page, 900);
-    const cardsMode = await verify('cards mode');
-    check(Object.values(cardsMode).some(x => /\bocard\b/.test(x.cls)), 'cards mode really drew cards (.ocard)');
+    const cardsMode = await verify('a saved cards view');
+    // (CMP1, Paul 9 Nov 2026: "remove the option for list or card review since it's not needed anymore": a saved "cards" view is ignored, the Orders tab draws its rows; the seals are checked again on them)
+    check(Object.values(cardsMode).every(x => !/\bocard\b/.test(x.cls)), 'a saved cards view is ignored: the Orders tab draws the list (no .ocard)');
     await R.shot(w, 'order-card-seals-cards');
     // ── live: the card is repainted when the data changes, through the existing repaint (Orders.render) ──
     await page.evaluate(({ rid }) => { window.__renders = 0; const rows = Orders.rows().filter(r => r.order.receiptId === rid); __approve(Engrave.jobsOf(rows[0])[0], 'Fay Test', Date.now()); Orders.render(); }, { rid: RID('front') });

@@ -1,12 +1,12 @@
 // ODB (Paul, 9 Nov 2026: "The 'Design Studio' button is missing from the Orders tab"): a gold "Design Studio" button in the Orders tab's own bar, beside Pull orders, that opens the
 // "Design a charm" modal (charm-nest-ce-masters.js newDesign), the open path of the Design & Engrave tab's Charm Editor button, logged with from "ordersDesignStudio".
 // The REAL page over the repo's fake site (_orderFactsWorld.cjs: offline, made-up orders, no Etsy, nothing live). What it proves:
-//   1  the button is in #ordBar right after Pull orders, says "Design Studio" with the pen nib, has the gold look (.cnCeBtn), is on, and the bar stays one slim row at 1500 px
+//   1  the button is in #ordBar, the last control at its top right (CMP1, Paul 9 Nov 2026: it was right after Pull orders), says "Design Studio" with the pen nib, has the gold look (.cnCeBtn), is on, and the bar stays one slim row at 1500 px
 //   2  hover fills it (white words), a keyboard focus outlines it, a press settles it (the .cnCeBtn states)
-//   3  it is the same node, still beside Pull orders, after the list is drawn again (render, renderNow, a search, Cancelled and back)
+//   3  it is the same node, still last at the top right, after the list is drawn again (render, renderNow, a search, Cancelled and back)
 //   4  pressed (a stand-in module), it calls newDesign once with from "ordersDesignStudio" and the way back "Back to Orders", logged designerNew:ordersDesignStudio
 //   5  with the real charm-nest-ce-masters.js it opens the "Design a charm" modal on its New design side
-//   6  the Sandbox workspace (settings sandbox "on", the page reloaded): the button is there beside Pull orders, on, and opens the modal too
+//   6  the Sandbox workspace (settings sandbox "on", the page reloaded): the button is there at the top right, on, and opens the modal too
 //   PW_DIR=<dir holding playwright-core> CHROMIUM=<chrome> node tests/charm-nest/orders-design-studio.cjs
 'use strict';
 const { world, seed } = require('./_orderFactsWorld.cjs');
@@ -17,7 +17,7 @@ const where = page => page.evaluate(() => {
   const b = document.getElementById('ordDesignBtn'), pull = document.getElementById('ordPull'), bar = document.getElementById('ordBar');
   if (!b) return { there: false };
   const r = b.getBoundingClientRect(), cs = getComputedStyle(b);
-  return { there: true, n: document.querySelectorAll('#ordDesignBtn,.ordDesignBtn').length, inBar: bar.contains(b), afterPull: pull.nextElementSibling === b, text: b.textContent.trim(), icon: !!b.querySelector('svg'), on: !b.disabled,
+  return { there: true, n: document.querySelectorAll('#ordDesignBtn,.ordDesignBtn').length, inBar: bar.contains(b), afterPull: document.getElementById('ordTools').lastElementChild === b,   /* (CMP1, Paul 9 Nov 2026: the button moved to the top right corner, the last control of the head) */ text: b.textContent.trim(), icon: !!b.querySelector('svg'), on: !b.disabled,
     cls: b.className, shown: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none', h: Math.round(r.height), bg: cs.backgroundImage, radius: parseFloat(cs.borderRadius), cursor: cs.cursor,
     barH: Math.round(bar.getBoundingClientRect().height), level: Math.abs((r.top + r.bottom) / 2 - (pull.getBoundingClientRect().top + pull.getBoundingClientRect().bottom) / 2) <= 4 };
 });
@@ -46,7 +46,7 @@ const realModal = async page => {
     /* 1 · there, gold, beside Pull orders */
     const a = await where(page);
     check(a.there && a.n === 1 && a.inBar && a.afterPull && a.text === 'Design Studio' && a.icon && a.on && a.shown && /\bcnCeBtn\b/.test(a.cls) && /linear-gradient\(rgb\(255, 255, 255\)/.test(a.bg) && a.radius > 100 && a.cursor === 'pointer' && a.level && a.barH <= 44,
-      `1 the "${a.text}" button is in the Orders bar right after Pull orders, gold (.cnCeBtn), on, level with Pull orders, ${a.h} px; the bar stays slim (${a.barH} px)`, JSON.stringify(a));
+      `1 the "${a.text}" button is in the Orders bar, last at its top right (CMP1), gold (.cnCeBtn), on, level with Pull orders, ${a.h} px; the bar stays slim (${a.barH} px)`, JSON.stringify(a));
 
     /* 2 · hover, focus, pressed */
     await page.hover('#ordDesignBtn'); await page.waitForTimeout(350);
@@ -66,8 +66,8 @@ const realModal = async page => {
     const cx = await where(page);
     await page.evaluate(() => Orders.showPile('')); await page.waitForTimeout(500);
     await page.evaluate(() => { Orders.render(); Orders.renderNow(); }); await page.waitForTimeout(300);
-    const same = await page.evaluate(n => n === document.getElementById('ordDesignBtn') && document.getElementById('ordPull').nextElementSibling === n && document.querySelectorAll('#ordDesignBtn').length === 1, n0);
-    check(same && cx.there && cx.afterPull && cx.shown, '3 the same node, still right after Pull orders, after the list is drawn again (render, renderNow, a search, Cancelled and back); shown on Cancelled too', JSON.stringify({ same, cx }));
+    const same = await page.evaluate(n => n === document.getElementById('ordDesignBtn') && document.getElementById('ordTools').lastElementChild === n && document.querySelectorAll('#ordDesignBtn').length === 1, n0);
+    check(same && cx.there && cx.afterPull && cx.shown, '3 the same node, still last at the top right of the head, after the list is drawn again (render, renderNow, a search, Cancelled and back); shown on Cancelled too', JSON.stringify({ same, cx }));
 
     /* 4 · the press: newDesign with from ordersDesignStudio, logged */
     await page.evaluate(() => {
@@ -95,7 +95,7 @@ const realModal = async page => {
     const s1 = await where(page);
     const sReal = await realModal(page);
     check(sb.on && s1.there && s1.n === 1 && s1.afterPull && s1.shown && s1.on && s1.text === 'Design Studio' && !!sReal.m && sReal.m.newOpen,
-      `6 Sandbox workspace (${JSON.stringify(sb)}): the button is beside Pull orders, on, and opens the "Design a charm" modal`, JSON.stringify({ sb, s1, sReal }));
+      `6 Sandbox workspace (${JSON.stringify(sb)}): the button is at the top right of the head, on, and opens the "Design a charm" modal`, JSON.stringify({ sb, s1, sReal }));
   } catch (e) { check(false, 'the test itself failed: ' + (e && e.stack || e)); }
   await w.close();
   console.log(fails.length ? `\nFAIL: ${fails.length} of ${nCheck}\n - ` + fails.join('\n - ') : `\nALL ${nCheck} PASS`);
