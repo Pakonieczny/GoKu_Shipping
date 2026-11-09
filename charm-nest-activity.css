@@ -71,6 +71,8 @@
 #ordBar .ordSummary{display:inline-flex;flex:0 1 auto;flex-wrap:wrap;align-items:center;gap:6px 8px;min-width:0;border:0;padding:0}
 #ordBar #ordChips{display:inline-flex;flex-wrap:nowrap;align-items:center;gap:6px}
 #ordBar .btn.sm,#ordBar .egTab{min-height:30px;box-sizing:border-box}
+#ordBar .btn.cnCeBtn.ordDesignBtn{flex:none;min-height:30px;box-sizing:border-box;padding:0 14px 0 11px;gap:6px}   /* ODB (Paul, 9 Nov 2026): the gold Design Studio button beside Pull orders, the bar's own height (its look is .cnCeBtn below) */
+#ordBar .btn.cnCeBtn.ordDesignBtn svg{width:16px;height:16px}
 #ordBar .egTab{padding:0 10px}
 #ordBar .ordCount{display:inline-flex;align-items:center;gap:6px;font:12px var(--sans);color:var(--ink70);white-space:nowrap}
 #ordBar .ordCount b{font:700 12px var(--mono);color:var(--ink)}
@@ -161,7 +163,7 @@
   #ordBar .cnDate .cnBtn{padding:0 10px}
 }
 @media(max-width:760px),(pointer:coarse){
-  #ordBar .btn.sm,#ordBar .egTab{min-height:40px}
+  #ordBar .btn.sm,#ordBar .egTab,#ordBar .btn.cnCeBtn.ordDesignBtn{min-height:40px}
   #ordBar .egTab{padding:0 12px}
   #ordBar .cnBtn,#ordBar .ordFind{height:40px;font-size:13px}
   #ordBar .cnSplit .cnKey:not([hidden])~.cnDir{width:40px}
