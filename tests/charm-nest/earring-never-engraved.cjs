@@ -194,7 +194,7 @@ await t('5 readiness says "no engraving, nothing to approve" for the earring and
 const bridgeSrc = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
 const cut = (from, to) => { const a = bridgeSrc.indexOf(from), b = bridgeSrc.indexOf(to, a); assert.ok(a > 0 && b > a, 'slice ' + from.trim().slice(0, 40)); return bridgeSrc.slice(a, b); };
 const SLICE_A = cut('  const SIDES = ', '  function setNone(job'), SLICE_B = cut('  function setNone(job', '  async function decideWords(job'), SLICE_C = cut("  /** The line's effective engraving setup", '  let previewRecovery');
-const SLICE_D = cut('  function sendBack(job', "  /* ── the line's engraving SETUP"), SLICE_E = cut('  function reopenJob(job)', '  /** A person\'s words for an existing, undecided job'), SLICE_F = cut('  async function approveOnce(job, by, button) {', '  async function saveBacks(job)');
+const SLICE_D = cut('  function sendBack(job', "  /* ── the line's engraving SETUP"), SLICE_E = cut('  function reopenJob(job)', '  /** A person\'s words for an existing, undecided job'), SLICE_F = cut('  const APPROVE_MS = ', '  async function saveBacks(job)');
 const W = PF.world({ orders: [{ rid: PF.rid(1), lines: [{ n: 10, kind: 'pair', on: 'sh-gf1' }] }, { rid: PF.rid(2), lines: [{ n: 20, kind: 'single', on: 'sh-gf1' }] }] });
 // a row of the fixture world carrying a spec the real intake made (its design, count and pair stay the fixture's, so the piece plan is the world's)
 const rowOf = (ord, n, line, c) => {
@@ -205,7 +205,7 @@ function harness(rows) {
   const jobs = new Map(), asked = [], reviewAdds = [], reviewRemoves = [], events = [], pool = new Map(W.pool.map(p => [p.poolId, p])), byKey = new Map(rows.map(r => [r.key, r])), api = [];
   const win = { CharmNestEngraveSides: Sides, CharmNestPair: Pair, CharmNestEngraveFaces: Faces };
   const c = {
-    window: win, items: () => jobs, B: { pool: { rows: pool }, orders: { byKey }, run: null }, fitTasks: new Map(), toast() {},
+    window: win, EG: { card: null, cardKey: null }, items: () => jobs, B: { pool: { rows: pool }, orders: { byKey }, run: null }, fitTasks: new Map(), toast() {},
     Pool: { charmOf: id => { const r = pool.get(id); return r ? PF.charmOf(r.sku) : null; }, update: async () => { } }, Master: { entryFor: sku => PF.entryOf(sku) }, CNEngravingSeals: Seals, DECIDED: ['approved', 'written', 'skipped'],
     O: { FINISHED_LINE: new Set(['committed', 'gone', 'cancelled']), engravingNote: null }, S: { settings: { engraveConfidence: .65 } },
     render() {}, agent() {}, Date, Promise, Map, Set, WeakMap, Array, Object, String, Number, JSON, Math, RegExp, Error,
