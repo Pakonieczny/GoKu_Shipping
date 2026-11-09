@@ -218,9 +218,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     assert(s.anims > 5 && s.props.every(p => ['transform', 'opacity'].includes(p)), 'only transform and opacity animate: ' + JSON.stringify(s.props));
     const note = await page.evaluate(() => { const n = document.querySelector('.mNote'); return n ? { text: n.querySelector('.mNoteT').textContent, btns: [...n.querySelectorAll('.mNoteBtn')].map(b => b.textContent) } : null; });
     assert(note && note.text === 'Order 4174601819 cancelled — it\'s in Orders › Cancelled', 'the note says where: ' + JSON.stringify(note)); assert.deepEqual(note.btns, ['Undo', 'Show']);
-    await page.waitForFunction(o => Review.openCount() === o - 1 && document.getElementById('tabReviewN').textContent === String(o - 1), c0.open, { timeout: 5000 }).catch(() => {});
-    const c1 = await counts(page);
-    assert.equal(c1.open, c0.open - 1, `Review's count drops: ${JSON.stringify(c0)} → ${JSON.stringify(c1)}`); assert.equal(c1.tab, String(c0.open - 1), 'the Review tab says so'); assert.equal(c1.seg, String(c0.open - 1), 'and Open says so');
+    // (CNT1, Paul 9 Nov 2026: the nav's Review badge says ORDERS, the rail's In review / On hold and its chip (Orders.flowNow): one order with two cards is one; its count drops by the order cancelled)
+    await page.waitForFunction(o => Review.openCount() === o - 1 && document.getElementById('tabReviewN').textContent === String(Review.openOrders().size), c0.open, { timeout: 5000 }).catch(() => {});
+    const c1 = await counts(page), ordersNow = await page.evaluate(() => Review.openOrders().size);
+    assert.equal(c1.open, c0.open - 1, `Review's count drops: ${JSON.stringify(c0)} → ${JSON.stringify(c1)}`); assert.equal(c1.tab, String(ordersNow), 'the Review tab says so, in orders'); assert.equal(+c0.tab - 1, ordersNow, 'one order fewer'); assert.equal(c1.seg, String(c0.open - 1), 'and Open says so');
     await shot(page, '3-note');
   });
 
