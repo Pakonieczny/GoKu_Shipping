@@ -8,8 +8,9 @@
 //   the same as a plain scan of the data; the filters (Mine, Order, No order, Today, Week) match the same scan
 // 3 scrolling: wheel and scrollbar jumps from the top to the end of 3,000 designs, every scroll's work under 30 ms, the elements stay ~30; a fast pass asks for no pictures;
 //   once it stops, the pictures on screen arrive
-// 4 drag a design onto the charm: one group, centred where it was let go, its geometry exactly the design's, its cut line left out (the charm has one), one undo step; ⊕ puts
-//   one in the middle
+// 4 drag a design onto the charm: one group, centred where it was let go, its geometry exactly the design's, the WHOLE design (LIB1, 9 Nov 2026: its cut line engraved as a
+//   visible line, never a second cut; the charm's own cut line unchanged), at most half the work area (scaled down, never up), one undo step; ⊕ puts one in the middle;
+//   a drop near the edge is kept inside the work area
 // 5 open a design with unsaved changes: Cancel stays; Keep and open hands the old session's result back and opens the design; Leave them hands back null
 // 6 a design's versions: the list, newest first; an older one opened
 // 7 Recent; the charm library (search, open, drag a master); the list view; the phone width; no key reached the page; no error
@@ -92,9 +93,10 @@ const STANDINS = `(function () {
   window.CharmNestDesigns.setHost({ api, who: () => 'Paul', sandbox: false });
 
   const masters = Array.from({ length: 500 }, (_, i) => ({ sku: 'SKU' + i, name: 'SKU' + i, thumbUrl: pic('M' + i), widthMm: 18, heightMm: 18, file: 'master-' + i + '.ai' }));
-  const mfront = sku => ({ face: 'front', unitPt: true, frame: { x0: 0, y0: 0, wPt: 18 * PT, hPt: 18 * PT }, items: [
-    { id: sku + '-cut', kind: 'path', role: 'cut', name: 'Cut', stroke: [0, 0, 0], fill: null, lwPt: 0.25, subpaths: circle(9, 9, 8.5) },
-    { id: sku + '-dot', kind: 'path', role: 'hatch', name: 'Dot', stroke: null, fill: [0, 0, 0], subpaths: circle(9, 9, 2) } ] });
+  // (SKU7 is a small charm, 4 mm across: placed, it keeps its size)
+  const mfront = sku => { const R = sku === 'SKU7' ? 2 : 8.5; return { face: 'front', unitPt: true, frame: { x0: 0, y0: 0, wPt: 18 * PT, hPt: 18 * PT }, items: [
+    { id: sku + '-cut', kind: 'path', role: 'cut', name: 'Outline', stroke: [0, 0, 0], fill: null, lwPt: 0.25, subpaths: circle(9, 9, R) },
+    { id: sku + '-dot', kind: 'path', role: 'hatch', name: 'Dot', stroke: null, fill: [0, 0, 0], subpaths: circle(9, 9, R / 4) } ] }; };
   // (as charm-nest-ce-masters.js: the editor opened on the design or master in design mode; its Save put as a version through the design library)
   const edit = (title, faces, design) => CharmEditor.open({ title, subtitle: 'design mode', faces, fonts: window.fixture.fonts, startFace: 'front', lockRoles: [] })
     .then(res => { calls.lastEdit = { title, res }; if (res) return window.CharmNestDesigns.put(Object.assign({}, design, { faces: res.faces })); return null; });
@@ -279,14 +281,16 @@ const STANDINS = `(function () {
     });
 
     let undo0 = 0;
-    await step('4 · drag a design onto the charm: one group where it was let go, the design\'s exact geometry, its cut line left out, one undo step', async () => {
+    await step('4 · drag a design onto the charm: the WHOLE design (its cut line an engraved line, the charm\'s own cut unchanged), at most half the work area, where it was let go, one undo step', async () => {
       await reset(page); await settle(page);
       await page.evaluate(() => { document.querySelector('.cel-list').scrollTop = 0; });
       await settle(page); await wait(150);
       undo0 = await page.evaluate(() => CharmEditor.current.history().undo);
       const n0 = await page.evaluate(() => CharmEditor.current.items().length);
+      const cuts = () => page.evaluate(() => JSON.stringify(CharmEditor.current.items().filter(i => i.role === 'cut')));
+      const cut0 = await cuts();
       const a = await cellAt(page, 0), b = await stageMid(page);
-      const drop = { x: b.x - 60, y: b.y + 40 };
+      const drop = { x: b.x - 25, y: b.y + 20 };
       await page.mouse.move(a.x, a.y); await page.mouse.down();
       await page.mouse.move(a.x - 20, a.y, { steps: 3 });
       const ghost = await page.evaluate(() => !!document.querySelector('.cel-ghost'));
@@ -298,20 +302,30 @@ const STANDINS = `(function () {
       assert.ok(ghost, 'a ghost follows the hand'); assert.ok(lit, 'the work area lights up under it');
       const r = await page.evaluate(d => {
         const C = CharmEditor.current, its = C.items(), g = its[its.length - 1], bx = C.box(g.id), at = C.ptOf(d.x, d.y);
-        return { g: { kind: g.kind, name: g.name, n: g.children.length, roles: g.children.map(c => c.role), sx: g.sx, sy: g.sy, rot: g.rot, design: [g.designId, g.designVersion], sq: g.children.find(c => c.name === 'Square').subpaths },
-          c: [(bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2], at, sel: C.selection(), undo: C.history().undo };
+        const f = C.frame();
+        // (every part is drawn: an element shown, painted with a stroke or a fill)
+        const seen = g.children.map(ch => { const el = document.querySelector(`.ce-art [data-id="${ch.id}"]`); if (!el) return { name: ch.name, el: false }; const cs = getComputedStyle(el), r = el.getBoundingClientRect();
+          return { name: ch.name, el: true, shown: cs.display !== 'none' && r.width > 0 && r.height > 0, inked: (cs.stroke !== 'none' && parseFloat(cs.strokeWidth) > 0) || cs.fill !== 'none' }; });
+        return { g: { kind: g.kind, name: g.name, n: g.children.length, roles: g.children.map(c => c.role), names: g.children.map(c => c.name), hid: g.children.some(c => c.hidden), sx: g.sx, sy: g.sy, rot: g.rot, design: [g.designId, g.designVersion], sq: g.children.find(c => c.name === 'Square').subpaths },
+          c: [(bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2], at, w: bx[2] - bx[0], h: bx[3] - bx[1], half: Math.min(f.wPt, f.hPt) / 2, f, seen, sel: C.selection(), undo: C.history().undo };
       }, drop);
       const want = await page.evaluate(() => window.CharmNestDesigns.get('dz00000', 1).then(d => d.faces.front.items.find(i => i.name === 'Square').subpaths));
       assert.equal(r.g.kind, 'group'); assert.equal(r.g.name, 'Heart 0 · v1');
-      assert.equal(r.g.n, 3, 'square, ring and words (the cut line left out)'); assert.ok(!r.g.roles.includes('cut'));
+      assert.equal(r.g.n, 4, 'the cut line (engraved), square, ring and words: the whole design');
+      assert.ok(!r.g.roles.includes('cut'), 'no second cut line: ' + r.g.roles); assert.deepEqual(r.g.roles, ['line', 'hatch', 'line', 'hatch']);
+      assert.equal(r.g.names[0], 'Cut · engraved'); assert.equal(r.g.hid, false);
+      for (const x of r.seen) assert.ok(x.el && x.shown && x.inked, 'drawn on the charm: ' + JSON.stringify(x));
+      assert.equal(await cuts(), cut0, 'the charm\'s own cut line is unchanged');
       assert.deepEqual(r.g.sq, want, 'the geometry is the design\'s own, not redrawn');
-      assert.equal(r.g.sx, 1); assert.equal(r.g.sy, 1); assert.equal(r.g.rot, 0);
+      assert.ok(r.g.sx < 1 && r.g.sx === r.g.sy, 'scaled down evenly: ' + r.g.sx); assert.equal(r.g.rot, 0);
+      assert.ok(Math.max(r.w, r.h) <= r.half + 0.01, `at most half the work area: ${(Math.max(r.w, r.h) / 72 * 25.4).toFixed(2)} mm vs ${(r.half / 72 * 25.4).toFixed(2)} mm`);
+      assert.ok(Math.max(r.w, r.h) >= r.half - 0.01, 'and no smaller than it needs to be');
       assert.deepEqual(r.g.design, ['dz00000', 1]);
       assert.ok(Math.abs(r.c[0] - r.at[0]) < 0.5 && Math.abs(r.c[1] - r.at[1]) < 0.5, `centred where it was let go: ${r.c.map(v => v.toFixed(2))} vs ${r.at.map(v => v.toFixed(2))}`);
       assert.equal(r.undo, undo0 + 1, 'one undo step');
       assert.equal(r.sel.length, 1, 'the group is selected');
       const said = await page.evaluate(() => document.querySelector('.ce-say') ? document.querySelector('.ce-say').textContent : '');
-      assert.match(said, /cut line was left out/);
+      assert.match(said, /outline is engraved as a line/); assert.match(said, /half the work area/);
       console.log(`         placed "${r.g.name}" (${r.g.n} parts) at ${r.c.map(v => v.toFixed(2)).join(', ')} pt; said: "${said}"`);
       await shot(page, 'lib-3-placed.png');
       // one undo takes it away, one redo puts it back
@@ -329,9 +343,34 @@ const STANDINS = `(function () {
       await page.mouse.move(c.x, c.y); await settle(page);
       await page.evaluate(() => { const c = [...document.querySelectorAll('.cel-cell:not(.is-free)')].find(x => +x.dataset.i === 1); c.querySelector('.cel-b--place').click(); });
       await page.waitForFunction(n => CharmEditor.current.items().length === n + 1, n0, { timeout: 3000 });
-      const r = await page.evaluate(() => { const C = CharmEditor.current, its = C.items(), g = its[its.length - 1], b = C.box(g.id), f = C.frame(); return { name: g.name, c: [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2], m: [f.x0 + f.wPt / 2, f.y0 + f.hPt / 2] }; });
-      assert.equal(r.name, 'Star 1 · v2');
+      const r = await page.evaluate(() => { const C = CharmEditor.current, its = C.items(), g = its[its.length - 1], b = C.box(g.id), f = C.frame(); return { name: g.name, n: g.children.length, c: [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2], m: [f.x0 + f.wPt / 2, f.y0 + f.hPt / 2], big: Math.max(b[2] - b[0], b[3] - b[1]), half: Math.min(f.wPt, f.hPt) / 2 }; });
+      assert.equal(r.name, 'Star 1 · v2'); assert.equal(r.n, 4, 'the whole design');
       assert.ok(Math.abs(r.c[0] - r.m[0]) < 0.5 && Math.abs(r.c[1] - r.m[1]) < 0.5, 'in the middle');
+      assert.ok(r.big <= r.half + 0.01, 'at most half the work area');
+    });
+
+    await step('4 · a small master keeps its size (never scaled up); a drop at the edge is kept inside the work area; one undo step each', async () => {
+      const C0 = () => page.evaluate(() => ({ n: CharmEditor.current.items().length, undo: CharmEditor.current.history().undo }));
+      let a = await C0();
+      await page.evaluate(() => window.CharmNestCeLibrary.place(window.CharmNestCeLibrary.masterRow({ sku: 'SKU7' }), 0, null));
+      await page.waitForFunction(n => CharmEditor.current.items().length === n + 1, a.n, { timeout: 3000 });
+      let r = await page.evaluate(() => { const C = CharmEditor.current, its = C.items(), g = its[its.length - 1], b = C.box(g.id), f = C.frame();
+        return { sx: g.sx, roles: g.children.map(c => c.role), w: (b[2] - b[0]) / 72 * 25.4, c: [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2], m: [f.x0 + f.wPt / 2, f.y0 + f.hPt / 2], undo: C.history().undo }; });
+      assert.equal(r.sx, 1, 'not scaled up'); assert.ok(Math.abs(r.w - 4) < 0.05, 'its own 4 mm: ' + r.w); assert.deepEqual(r.roles, ['line', 'hatch']);
+      assert.ok(Math.abs(r.c[0] - r.m[0]) < 0.5 && Math.abs(r.c[1] - r.m[1]) < 0.5, 'centred');
+      assert.equal(r.undo, a.undo + 1, 'one undo step');
+      // dropped at the work area's top-left corner: the whole group stays on the white artboard
+      a = await C0();
+      const corner = await page.evaluate(() => { const p = document.querySelector('.ce-paper').getBoundingClientRect(); return [p.left + 3, p.top + 3]; });
+      await page.evaluate(c => window.CharmNestCeLibrary.place(window.CharmNestCeLibrary.masterRow({ sku: 'SKU12' }), 0, c), corner);
+      await page.waitForFunction(n => CharmEditor.current.items().length === n + 1, a.n, { timeout: 3000 });
+      r = await page.evaluate(() => { const C = CharmEditor.current, its = C.items(), g = its[its.length - 1], b = C.box(g.id), f = C.frame(); return { b, f, undo: C.history().undo }; });
+      assert.ok(r.b[0] >= r.f.x0 - 0.01 && r.b[1] >= r.f.y0 - 0.01 && r.b[2] <= r.f.x0 + r.f.wPt + 0.01 && r.b[3] <= r.f.y0 + r.f.hPt + 0.01, 'inside the work area: ' + r.b.map(v => v.toFixed(1)));
+      assert.ok(Math.abs(r.b[0] - r.f.x0) < 0.05 && Math.abs(r.b[1] - r.f.y0) < 0.05, 'as near the drop point as it fits');
+      assert.equal(r.undo, a.undo + 1, 'one undo step');
+      await page.evaluate(() => document.querySelector('.ce-win').focus());
+      await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z'); await settle(page);
+      assert.equal(await page.evaluate(() => CharmEditor.current.items().length), a.n - 1, 'two undos take both away');
     });
 
     await step('5 · open a design with unsaved changes: Cancel stays, nothing opened', async () => {
@@ -406,7 +445,9 @@ const STANDINS = `(function () {
       await page.click('.cel-tab[data-t="recent"]'); await settle(page);
       const s = await st(page);
       assert.equal(s.tab, 'recent');
-      assert.deepEqual(s.keys.slice(0, 5), ['d:dz00003', 'd:dz00004', 'd:dz00002', 'd:dz00001', 'd:dz00000']);
+      // (the two masters placed in step 4 are in it too, newest first among the designs)
+      assert.deepEqual(s.keys.filter(k => k.startsWith('d:')).slice(0, 5), ['d:dz00003', 'd:dz00004', 'd:dz00002', 'd:dz00001', 'd:dz00000']);
+      assert.ok(s.keys.includes('m:SKU7') && s.keys.includes('m:SKU12'), 'the masters placed are in Recent');
       const sub = await page.evaluate(() => document.querySelector('.cel-cell[data-i="0"] .cel-s2').textContent);
       assert.match(sub, /^opened /);
     });
@@ -419,13 +460,13 @@ const STANDINS = `(function () {
       await page.keyboard.type('sku12');
       s = await st(page);
       assert.equal(s.n, 11, 'SKU12 and SKU120 … SKU129'); assert.equal(s.keys[0], 'm:SKU12');
-      // drag the first onto the charm (the editor holds design dz00003 v1, which has its cut line: the master's is left out)
+      // drag the first onto the charm (the editor holds design dz00003 v1, which has its cut line: the master's outline comes as an engraved line, not a second cut)
       const n0 = await page.evaluate(() => CharmEditor.current.items().length);
       const a = await cellAt(page, 0), b = await stageMid(page);
       await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 12 }); await page.mouse.up();
       await page.waitForFunction(n => CharmEditor.current.items().length === n + 1, n0, { timeout: 3000 });
-      const g = await page.evaluate(() => { const its = CharmEditor.current.items(); const g = its[its.length - 1]; return { name: g.name, n: g.children.length, sku: g.masterSku }; });
-      assert.deepEqual(g, { name: 'SKU12', n: 1, sku: 'SKU12' });
+      const g = await page.evaluate(() => { const its = CharmEditor.current.items(); const g = its[its.length - 1]; return { name: g.name, n: g.children.length, sku: g.masterSku, roles: g.children.map(c => c.role), cuts: its.filter(i => i.role === 'cut').length }; });
+      assert.deepEqual(g, { name: 'SKU12', n: 2, sku: 'SKU12', roles: ['line', 'hatch'], cuts: 1 });
       // open it: the charm has a change, Keep and open saves it as a version of dz00003 through the masters module's own save
       const c = await cellAt(page, 0);
       await page.mouse.click(c.x, c.y);
