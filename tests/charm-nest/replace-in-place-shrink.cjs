@@ -5,7 +5,7 @@
 //   GF Sheet 1 (a draft): a row of 60 pt squares, each order's old piece in a room 60.1 pt wide between two fillers (Q's second room is 66 pt)      GF Sheet 2: the latest unfinished draft
 //   (a) A → 5 % larger (63 pt): not at full size, so the SAME old spot again shrunk: about 95 %, every other charm exactly where it was, no nest; the line note says "shrunk to 95% to fit"
 //   (b) B → 9 % larger: about 91 %
-//   (c) C → 15 % larger: never shrunk (it would need 87 %): it goes on at FULL size, not in its old spot
+//   (c) C → 15 % larger: never shrunk (it would need 87 %): it goes on at FULL size, not in its old spot (IPL2: free space on its own sheet first)
 //   (d) E → the same size: stays at 100 %, no size on it
 //   (e) Q, a pair (Left, Right) → 5 % larger: both pieces shrunk by the SAME size (one room would take a piece at full size), or none
 //   (f) the size reaches the record (placement.scale, the charm's manual { size, fit: "inplace" }), a reload (fromRecord), the laser export (sheetSpec), the sheet's preview / thumbnail,
@@ -185,7 +185,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
       // (the order line's note, on its timeline: "the new piece was placed in the old spot on GF Sheet 1, shrunk to 95% to fit")
       await until(() => st.list('Order_Timeline').some(e => e._id.startsWith(A + '~') && (e.text || '').includes(`shrunk to ${pct} to fit`)), 5000, async () => 'A\'s line note: ' + JSON.stringify(st.list('Order_Timeline').filter(e => e._id.startsWith(A + '~')).map(e => e.text)));
       const log = await agentSays(page, A);
-      assert(log.some(t => /went back into the old spot on .*sheet 1, shrunk/.test(t) && t.includes(`shrunk to ${pct} to fit`)) && log.some(t => t.includes(`new piece placed in the old spot on GF Sheet 1, shrunk to ${pct} to fit`)), 'the agent log says it: ' + JSON.stringify(log));
+      assert(log.some(t => /went back into the old spot on .*sheet 1, shrunk/i.test(t) && t.includes(`shrunk to ${pct} to fit`)) && log.some(t => t.includes(`new piece placed in the old spot on GF Sheet 1, shrunk to ${pct} to fit`)), 'the agent log says it: ' + JSON.stringify(log));
       // (the saved record: placement.scale and the charm's manual size, "inplace")
       const rec = st.doc(SHEETS, 'ips-gold-1'), rc = rec.charms.find(x => x.poolId === idA), rp = rec.placements.find(p => p.id === rc.id);
       assert(rc.manual && rc.manual.fit === 'inplace' && near(rc.manual.size, a[5], 1e-9), 'the saved charm carries its size: ' + JSON.stringify(rc));
@@ -209,7 +209,7 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
       assert(!c[4] || near(c[4], S0, 1e-9), 'its scale is the plain written shrink (or not written yet): ' + c[4]);
       assert(!Object.values(L['ips-gold-1']).some(([x, y]) => Math.abs(x - at('C')) < 20 && Math.abs(y - CY) < 20), 'C\'s old spot is left empty');
       for (const [id, v] of Object.entries(Lb['ips-gold-1'])) if (id !== idC) assert.deepEqual(L['ips-gold-1'][id], v, `${id} on GF Sheet 1 did not move`);
-      assert(fl.lines.some(([s, t]) => s === 'done' && t.startsWith(`Order ${C}: did not fit the old spot`) && !/shrunk/.test(t)), 'the panel: it did not fit its old spot, nothing said of a shrink: ' + JSON.stringify(fl.lines));
+      assert(fl.lines.some(([s, t]) => s === 'done' && (t.startsWith(`Order ${C}: did not fit the old spot`) || t.startsWith(`Order ${C}: new piece on GF Sheet 1 beside its old spot`)) && !/shrunk/.test(t)), 'the panel: it did not fit its old spot (IPL2: beside it on its own sheet, or the next sheet), nothing said of a shrink: ' + JSON.stringify(fl.lines));
       assert(!st.list('Order_Timeline').some(e => e._id.startsWith(C + '~') && /shrunk/.test(e.text || '')), 'its line note says nothing of a shrink');
       pass(`(c) a redraw 15% larger is NOT shrunk (it would need 87%): it leaves its old spot empty and goes on at full size (${where})`); }
 

@@ -2201,7 +2201,7 @@ const Orders = window.Orders = (() => {
     }
     return out;
   }
-  const STATE_PILL = { pulled: ["neutral", "pulled"], waiting: ["info", "waiting"], noDesign: ["info", "no design"], pooled: ["info", "pooled"], nested: ["ok", "nested"], written: ["ok", "written"], labelled: ["ok", "labelled"], committed: ["ok", "complete"], unmatched: ["bad", "unmatched"], held: ["bad", "held"], contended: ["warn", "other run"], skipped: ["warn", "skipped"], gone: ["bad", "gone"], cancelled: ["bad", "cancelled"], oversize: ["bad", "oversize"] };
+  const STATE_PILL = { pulled: ["neutral", "pulled"], waiting: ["info", "waiting"], noDesign: ["info", "no design"], pooled: ["info", "pooled"], nested: ["ok", "nested"], written: ["ok", "written"], labelled: ["ok", "labelled"], committed: ["ok", "complete"], covered: ["ok", "done in editor"], unmatched: ["bad", "unmatched"], held: ["bad", "held"], contended: ["warn", "other run"], skipped: ["warn", "skipped"], gone: ["bad", "gone"], cancelled: ["bad", "cancelled"], oversize: ["bad", "oversize"] };
   function engravePill(r) { const e = r.engrave; if (!e) return r.spec && r.spec.engraveCandidate ? ["warn", "words?"] : ["neutral", "—"]; if (!e.needed) return ["neutral", e.state === "skipped" ? "skipped" : "no engraving"]; if (e.approved) return ["ok", "approved"]; if (e.state === "words") return ["warn", "words"]; if (e.state === "review") return ["warn", "review"]; if (e.state === "fitted") return ["info", "fitted"]; if (e.state === "blocked") return ["bad", "blocked"]; return ["info", e.state || "engrave"]; }
   /** The face(s) a line engraves, as one small chip beside its state: "Front + back" or "Front only". A back-only line (every line there was) has none, so the table reads as it always did. */
   function faceChip(r) {
@@ -5128,10 +5128,43 @@ const Pool = window.Pool = (() => {
   const ipBusy = sh => ["nesting", "finishing", "queued"].includes(sh.status) || !!sh._operationStarting || !!sh._learnedStarting || !!(sh.persisted && !sh.persistedDone && !sh.problem);
   /** A sheet that may take a new piece into an old spot: still on this page, its run's, NOT CUT (replaceCutWhy: a draft, a full sheet, a sheet in a formed, released or committed set all may; a
    *  Rose Gold / 10K / 14K sheet with a green line is left to its own rules), not held by a person or pulled to another set, not busy. */
-  function inPlaceOpen(sh, run) {
-    if (!sh || !allSheets().includes(sh) || replaceCutWhy(sh) || sh.cardinalPull || sh._manualHold || ipBusy(sh)) return false;
-    if (run && sh.runId && sh.runId !== run.runId) return false;
-    return true;
+  function inPlaceOpen(sh, run) { return !inPlaceShut(sh, run); }
+  /** IPL2: why a sheet cannot take a replaced piece back now, in a few words ("" when it can). */
+  function inPlaceShut(sh, run) {
+    if (!sh || !allSheets().includes(sh)) return "it is no longer on this page";
+    const cut = replaceCutWhy(sh); if (cut) return cut;
+    if (sh.cardinalPull) return "it was pulled to another set";
+    if (sh._manualHold) return "a person is moving its charms by hand";
+    if (ipBusy(sh)) return "it is being arranged or saved right now";
+    if (run && sh.runId && sh.runId !== run.runId) return "it belongs to another run";
+    return "";
+  }
+  /* IPL2 (Paul, 9 Nov 2026: "the new charm should first be attempted to be put on the sheet where it came from because otherwise there's a hole in that sheet. Why do you automatically put it on
+     the new sheet?"). A replaced line's new pieces are tried, in this order: 1. their old spots (inPlaceAssign, as before); 2. ANYWHERE free on the same sheet, every other charm where it stands:
+     the hole they left and all other free space, at every angle the old spot is tried at, at their real size (CNManual.freeSpot: the same check, the legal spot nearest the old one wins);
+     3. the latest unfinished sheet of the metal with room (inPlaceTarget); 4. only then a new sheet. The sheet's state is as before (inPlaceShut: a draft, a full sheet, a sheet in a formed,
+     released or committed set all take their piece back; a cut or busy one does not, and the line says why). */
+  const ipMm = pt => { const v = (+pt || 0) * 25.4 / 72; return v < 10 ? Math.round(v * 10) / 10 : Math.round(v); };
+  const ipName = sh => (sh && (sh.fileBase || sheetName(sh))) || "a sheet";
+  /** Every piece of `list` anywhere free on `sh` (IPL2 step 2), each near its own old spot, the ones found stood on the sheet while the next is looked for. → { got: [{ c, s, fit }] } or { why } */
+  function inPlaceAnywhere(sh, spots, list) {
+    const M = window.CNManual; if (!M || typeof M.freeSpot !== "function") return { why: "the layout check is not loaded in this page" };
+    const got = [], lift = c => { sh.charms = sh.charms.filter(x => x !== c); sh.placements = sh.placements.filter(p => p.id !== c.id); };
+    let why = "";
+    for (let k = 0; k < list.length; k++) {
+      const c = list[k], s = spots[Math.min(k, spots.length - 1)];
+      let fit; try { fit = M.freeSpot(sh, c, { cxPt: s.cxPt, cyPt: s.cyPt }, { angles: inPlaceAngles(s.angle) }); } catch (e) { fit = { ok: false, why: "verify", reason: (e && e.message) || String(e) }; }
+      if (!fit || !fit.ok || !fit.pose) {
+        const big = list.reduce((b, x) => (+x.widthPt || 0) * (+x.heightPt || 0) > (+b.widthPt || 0) * (+b.heightPt || 0) ? x : b, c), w = Math.max(+big.widthPt || 0, +big.heightPt || 0), h = Math.min(+big.widthPt || 0, +big.heightPt || 0);
+        const room = fit && fit.room, n = list.length;
+        why = fit && fit.why === "room" ? `${ipName(sh)} had no room for the new ${ipMm(w)} mm design${n > 1 ? ` (${n} pieces)` : ""} (needs ${ipMm(w)}×${ipMm(h)} mm${room ? `, largest free area ${ipMm(Math.max(room.wPt, room.hPt))}×${ipMm(Math.min(room.wPt, room.hPt))} mm` : ""})`
+          : `${ipName(sh)} could not be checked for room (${String((fit && fit.reason) || "no answer").replace(/\.$/, "")})`;
+        break;
+      }
+      got.push({ c, s, fit }); sh.charms.push(c); sh.placements.push({ id: c.id, cxPt: fit.pose.cxPt, cyPt: fit.pose.cyPt, angle: fit.pose.angle, scale: fit.scale, wPt: fit.wPt, hPt: fit.hPt });
+    }
+    for (const g of got) lift(g.c);   // (the caller places them for good)
+    return got.length === list.length ? { got } : { why: why || "no room" };
   }
   /** Every piece of `list` into a spot of `spots` (one sheet), each spot once: [{ c, s, fit }] or null. Pieces already tried are stood on the sheet while the next is tried, then taken off again.
    *  size (INPLACE SHRINK): every piece at that one uniform size (0.90 to 1; a pair or any line of several pieces is never at two sizes); absent: full size. */
@@ -5190,37 +5223,50 @@ const Pool = window.Pool = (() => {
       let home = null; try { home = LN.orderHome(metal, run, oids[0], { skip: list }); } finally { held.forEach((p, i) => { p._inplaceHold = keep[i]; }); }
       if (home) { if (typeof LN.reopenHome === "function") { const h = home._inplaceHold; delete home._inplaceHold; try { LN.reopenHome(home, oids[0]); } finally { if (h) home._inplaceHold = h; } } return home; }
     }
-    for (const p of pagesOf(metal).slice().reverse()) if (p.charms.length && mine(p) && fits(p) && room(p)) return p;
+    // (IPL2, Paul 9 Nov 2026: and the new piece really fits there with nothing on it moving: its append moves nothing, so a sheet the intake's count calls roomy but with no place for this shape
+    //  is passed over; only when no sheet has room is a new one made)
+    const big = list.reduce((b, x) => (+x.widthPt || 0) * (+x.heightPt || 0) > (+b.widthPt || 0) * (+b.heightPt || 0) ? x : b, list[0]);
+    const shape = p => { const M = window.CNManual; if (!M || typeof M.freeSpot !== "function" || !big || !big.bits) return true; let r = null; try { r = M.freeSpot(p, big, null, { angles: [0, 90, 180, 270] }); } catch (_) { r = null; } return !r || r.ok || r.why !== "room"; };
+    for (const p of pagesOf(metal).slice().reverse()) if (p.charms.length && mine(p) && fits(p) && room(p) && shape(p)) return p;
     return pagesOf(metal).slice().reverse().find(p => !p.charms.length && mine(p)) || addPage(metal);
   }
   /** A replaced line's new pieces of one metal (see the block above). → null when the line left no spot of that metal; else { page, placed } (placed: they are ON the page, in old spots). */
   function inPlaceAttach(row, run, metal, list, info) {
     const V = row._vacated; if (!V || !(V.spots || []).length || !list.length) return null;
     const spots = V.spots.filter(s => s.metal === metal && !s.used && allSheets().includes(s.sh)); if (!spots.length) return null;
-    const res = { metal, pieces: list.map(c => c.poolId), placed: false, home: spots[0].sh, to: null, why: "" };
+    const res = { metal, pieces: list.map(c => c.poolId), placed: false, where: "", home: spots[0].sh, to: null, why: "", say: "" };
     (V.results || (V.results = [])).push(res);
     const bySheet = new Map(); for (const s of spots) (bySheet.get(s.sh) || bySheet.set(s.sh, []).get(s.sh)).push(s);
+    const n = list.length, pieces = n === 1 ? "piece" : n + " pieces", whys = [];
     for (const [sh, ss] of bySheet) {
-      if (!inPlaceOpen(sh, run)) { res.why = res.why || "its sheet cannot change now"; continue; }
-      const fitIn = inPlaceFit(sh, ss, list), got = fitIn && fitIn.got, size = fitIn ? fitIn.size : 1;
-      if (!got) { res.why = list.length > ss.length ? `${list.length} new pieces for ${ss.length} old spot${ss.length === 1 ? "" : "s"}` : `the new design does not fit the old spot, even shrunk to ${inPlacePct(INPLACE_SHRINK_MIN)}`; continue; }
+      const shut = inPlaceShut(sh, run);
+      if (shut) { whys.push(`${ipName(sh)} cannot change now (${shut})`); continue; }
+      // 1 · the old spots: at full size, then (INPLACE SHRINK) the SAME spots with the pieces shrunk by one size, 99 % down to 90 %
+      const fitIn = list.length <= ss.length ? inPlaceFit(sh, ss, list) : null;
+      let got = fitIn && fitIn.got, where = "spot", size = fitIn ? fitIn.size : 1;
+      // 2 · IPL2: anywhere free on the same sheet, nothing else on it moving (at full size, never shrunk)
+      if (!got) { size = 1; const any = inPlaceAnywhere(sh, ss, list); if (any.got) { got = any.got; where = "beside"; } else { whys.push(any.why); continue; } }
       const at = Date.now();
       for (const { c, s, fit } of got) {
         s.used = true;
         sh.charms.push(c);
         sh.placements.push({ id: c.id, cxPt: fit.pose.cxPt, cyPt: fit.pose.cyPt, angle: fit.pose.angle, scale: fit.scale, wPt: fit.wPt, hPt: fit.hPt });
-        c.inPlace = Object.assign({ at, was: s.poolId, sheetId: sh.sheetId || null }, size < 1 ? { size } : {});
+        c.inPlace = Object.assign({ at, was: s.poolId, sheetId: sh.sheetId || null, where }, size < 1 ? { size } : {});
         // (INPLACE SHRINK: the size it is cut at is the piece's own, as Manual Control's resize keeps it: every write, nest, check, preview, thumbnail, label and the laser's files read it, and the
         //  sheet's record keeps it on the charm (manual.size, fit "inplace"); the piece stays pinned in its old spot, as one placed by hand does)
         if (size < 1) { c.manual = { by: "in place", at, size, fit: "inplace" }; c.pinned = { cxPt: fit.pose.cxPt, cyPt: fit.pose.cyPt, angle: fit.pose.angle, size }; delete c.arrivalPin; }
       }
-      res.placed = true; res.home = sh; res.to = sh; res.why = ""; if (size < 1) res.size = size;
-      agent({ metal, pool: true }, "POOL", `${row.order.receiptId} · the new piece${list.length === 1 ? "" : "s"} went back into the old spot${got.length === 1 ? "" : "s"} on ${sheetName(sh)}${size < 1 ? `, shrunk to ${inPlacePct(size)} to fit` : ""}: nothing else on it moved, no nest`);
+      const shrunk = size < 1 ? `, shrunk to ${inPlacePct(size)} to fit` : "";
+      res.placed = true; res.where = where; res.home = sh; res.to = sh; res.why = ""; if (size < 1) res.size = size;
+      res.say = where === "spot" ? `back in its old spot on ${ipName(sh)}${shrunk}` : `on ${ipName(sh)} beside its old spot (the new design did not fit the old spot itself)`;
+      agent({ metal, pool: true }, "POOL", `${row.order.receiptId} · the new ${pieces} ${where === "spot" ? `went back into the old spot${got.length === 1 ? "" : "s"} on ${ipName(sh)}${shrunk}` : `did not fit the old spot, so ${n === 1 ? "it went" : "they went"} on ${ipName(sh)} beside it, in its free space`}: nothing else on it moved, no nest`);
       return { page: sh, placed: true };
     }
-    const page = inPlaceTarget(metal, run, list, info);
-    res.to = page;
-    agent({ metal, pool: true }, "POOL", `${row.order.receiptId} · the new piece${list.length === 1 ? "" : "s"} did not fit the old spot (${res.why || "no room"}): the spot stays empty on ${sheetName(res.home)}; added to ${page === res.home ? "the same sheet, the latest unfinished one" : "the latest unfinished sheet"} without moving its charms`);
+    // 3 · the latest unfinished sheet of the metal with room; 4 · only then a new sheet (inPlaceTarget)
+    const was = pagesOf(metal).length, page = inPlaceTarget(metal, run, list, info), fresh = pagesOf(metal).length > was;
+    res.to = page; res.where = "moved"; res.why = whys.join("; ") || "no room";
+    res.say = `${res.why}: ${page === res.home ? `added to ${ipName(page)} again as the latest unfinished sheet` : `moved to ${fresh ? "a new sheet" : "the latest unfinished sheet"}, ${ipName(page)}`}${fresh ? " (no other sheet of this metal had room)" : ""}`;
+    agent({ metal, pool: true }, "POOL", `${row.order.receiptId} · the new ${pieces}: ${res.say}; the old spot stays empty on ${ipName(res.home)}, nothing on either sheet moved`);
     return { page, placed: false };
   }
   /** The recorded line joins its sheet. A line a live run already holds (a pool row the record refused) is skipped. */
@@ -11406,6 +11452,12 @@ const Engrave = window.Engrave = (() => {
     const removed = [...master].filter(id => !kept.has(id) && (was.has(id) || (face === "front" && !now.has(id))));
     return { removed, changed, added };
   }
+  /** CPX1: the words a face of the editor's result carries (its visible Type items, every line), "" when none. */
+  function charmEditTextOf(face) {
+    const out = [], look = (list, hid) => { for (const it of list || []) { if (!it || hid || it.hidden) continue; if (typeof it.text === "string" && it.text.trim() && (it.kind === "text" || it.role === "words" || !it.subpaths || it.kind === "type")) out.push(it.text.trim()); look(it.children, hid || it.hidden); } };
+    look(face && face.items, false);
+    return out.join("\n").slice(0, 400);
+  }
   /** The words of a part for a note: its text, its name, or what it is. */
   function charmEditPart(faces, id) {
     if (id === "cut") return "Cut line";
@@ -11476,7 +11528,11 @@ const Engrave = window.Engrave = (() => {
     // (CES2, Paul 9 Nov 2026: "I want the pop-up to open on every Save": the Send to sheet pop-up opens over the card at once, set as a fix of this piece; a save that failed in part does not open it)
     const designOf = () => Promise.resolve(o.design).then(d => d && d.id ? d : (window.CharmNestDesigns ? (CharmNestDesigns.rows() || []).find(r => r && r.id === "pc-" + poolId) || null : null));
     const over = canReplace && !o.partial ? () => designOf().then(d => d ? C.open({ orderId: rid, designId: d.id, version: d.version, after: true }) : null) : null;
-    Promise.resolve(Ms.afterPiece({ title: o.title, name: sku, where: `${rid ? `order ${rid} · ` : ""}piece ${at + 1} of ${Math.max(1, all.length)}`, lines: o.lines, bad: !!o.bad, back, replace: canReplace ? {} : null, over }))
+    // (CPX1, Paul 9 Nov 2026: the order's Custom portion still open, done here on this piece: the card offers to complete it, at its top: charm-nest-custom-done.js)
+    const customDone = rid && !o.partial ? { rid, savedKey: row && row.key ? String(row.key) : "", savedPoolIds: t.poolIds.slice(), sameOrder: true, back: back ? back.label : "",
+      cover: () => Promise.resolve(o.design).catch(() => null).then(g => ({ poolId, lineKey: row && row.key ? String(row.key) : "", name: sku, designId: (g && g.id) || "pc-" + poolId, version: (g && g.version) || null })),
+      onDone: r => customDoneSaid(r, rid) } : null;
+    Promise.resolve(Ms.afterPiece({ title: o.title, name: sku, where: `${rid ? `order ${rid} · ` : ""}piece ${at + 1} of ${Math.max(1, all.length)}`, lines: o.lines, bad: !!o.bad, back, replace: canReplace ? {} : null, over, customDone }))
       .then(c => {
         if (c === "again") { try { window.CharmEditor?.release?.("Opening this piece again…"); } catch (_) { /* fine */ } setTimeout(() => { openCharmEditor(x).catch(e => { letGo(); toast(`Charm Editor: ${(e && e.message) || e}`, "bad", 6000); }); }, 0); }
         else if (c === "back") { letGo(); charmEditBack(t); }
@@ -11484,6 +11540,15 @@ const Engrave = window.Engrave = (() => {
         else letGo();
       }, letGo);
     return true;
+  }
+  /** CPX1: the Custom portion completed from the card after a Save: said with an Undo for a while (the order window's row keeps its own Undo while this page can make it). */
+  function customDoneSaid(r, rid) {
+    const CD = window.CharmNestCustomDone; if (!r || !r.ok) return;
+    const names = (r.done || []).map(x => `“${x.name}”`).join(", "), el = toast(`Order ${rid}: the Custom ${r.done.length > 1 ? "pieces" : "piece"} ${names} completed in the Charm Editor · released from Review`, "", 20000);
+    if (!el || !CD || !r.token) return;
+    const b = document.createElement("button"); b.type = "button"; b.className = "btn ghost xs"; b.textContent = "Undo"; b.style.marginLeft = "8px";
+    b.onclick = e => { e.stopPropagation(); b.disabled = true; Promise.resolve(CD.undo(r.token)).then(u => { toast(u && u.ok ? `Order ${rid}: undone · ${(u.said || []).join(" · ")}` : `Undo: ${(u && u.why) || "not possible"}`, u && u.ok ? "" : "bad", 7000); if (el._go) el._go(); }, e2 => toast(`Undo: ${(e2 && e2.message) || e2}`, "bad", 7000)); };
+    const m = el.querySelector(".m"); if (m) m.after(b); else el.appendChild(b);
   }
   async function openCharmEditorOnce(x, tok) {
     const AE = window.CharmNestArtEdit, CE = window.CharmEditor;
@@ -11647,6 +11712,17 @@ const Engrave = window.Engrave = (() => {
       const applied = [];
       for (const f of wordsTodo) { try { applied.push(await charmEditWordsApply(words[f], wordsNow[f], f, views[f], by)); } catch (e) { console.warn("charm edit: the words", e); applied.push({ face: f, kept: true, why: (e && e.message) || String(e), unkept: [] }); } }
       pj = jobsOfPiece(poolId); jobs = [pj.front, pj.back].filter(Boolean);
+      // (CPX1, Paul 9 Nov 2026, order 4225890898: DOG 9667's back read "Haruki" from the Charm Editor while its card still said "NEEDS A DECISION · Words: Enter the requested inscription". Words the
+      //  editor put on a face whose engraving was still asking for them ANSWER that question: the face is engraved as drawn (art only, waiting for its Approve), the open Words card goes, and
+      //  the order's head card no longer asks (liveAsks: a line whose faces the editor drew asks no words))
+      try {
+        for (const j of jobs) {
+          const f = faceOf(j), said = charmEditTextOf(res.faces && res.faces[f]);
+          if (!said || j.state !== "words" || (j.decision && j.decision.text) || !faceHasEditorArt(j)) continue;
+          if (artOnlyPlacement(j)) { j.editorWords = said; j.wordsSource = "charmEditor"; agent({ engrave: true }, "ENGRAVE", `${order}: the ${f} words "${said.replace(/\n/g, " / ")}" were drawn in the Charm Editor by ${by}: the Words question is answered, the ${f} waits for Approve`); }
+        }
+        for (const j of jobs) if (j.state !== "words") { const it = (Review.items() || []).find(x => x && x.key === "eng:" + j.key); if (it && it.kind === "engraveWords") Review.remove(it.key); }
+      } catch (e) { console.warn("charm edit: the words question", e); }
       const bare = bare0.filter(f => !applied.some(a => a.face === f && !a.kept));
       const cap = s => s.charAt(0).toUpperCase() + s.slice(1), wordsSaid = applied.map(a => {
         if (a.kept) return `The ${a.face} words were not changed: ${a.why}`;
@@ -19145,9 +19221,10 @@ const Review = window.Review = (() => {
         const at=sh.placements.filter(pl=>sh.charms.some(c=>c.id===pl.id && old.has(c.poolId)));
         for(const pl of at){const c=sh.charms.find(x=>x.id===pl.id);spots.push({sh,metal:sh.metal,id:pl.id,poolId:c.poolId,cxPt:+pl.cxPt,cyPt:+pl.cyPt,angle:+pl.angle || 0});}
         sh.charms=sh.charms.filter(c=>!old.has(c.poolId));sh.placements=sh.placements.filter(pl=>sh.charms.some(c=>c.id===pl.id));
-        if(at.length && inPlaceHolds(sh)){   // (a sheet the replaced line was alone on is held too: its new piece goes back into that spot when it fits)
+        const shut=at.length?inPlaceHoldsWhy(sh):"";
+        if(at.length && !shut){   // (a sheet the replaced line was alone on is held too: its new piece goes back into that spot when it fits)
          sh._inplaceHold=true;held.push(sh);renderCard(sh);}
-        else Orders.keepRest(sh);
+        else { Orders.keepRest(sh); if(shut){ const w=`${row.order.receiptId} · the new piece cannot go back onto ${sh.fileBase || sheetName(sh)} (${shut}): it goes on as any new piece does`; agent({metal:sh.metal,pool:true},"warn",w); } }
       }
       if(row._relink)row._relink.homes=homes;
       row._vacated=held.length?{spots:spots.filter(x=>held.includes(x.sh)),homes:held,results:[],at:Date.now(),committed:row.state==="committed"}:null;   // (committed: the line's set was committed at the station; it is again once its new pieces are back on that set's sheets, inPlaceSettle)
@@ -19164,7 +19241,15 @@ const Review = window.Review = (() => {
      written AS IT STANDS (CNManual.writeInPlace: the page's writeAsPlaced, no nest search, every charm where it is; its QR label made again), with the new piece in the old spot or the spot
      empty. A sheet that now has a charm waiting (it is itself the latest unfinished sheet the new pieces were appended to) is written by its append-only nest instead, which moves nothing
      already on it. What happened is kept on the line for the progress panel and the timeline (row._inplaceLast). Never throws. */
-  const inPlaceHolds = sh => !["nesting", "finishing", "queued"].includes(sh.status) && !sh._operationStarting && !sh._learnedStarting && !(sh.persisted && !sh.persistedDone && !sh.problem) && !sh._manualHold && !sh.roseCutAt && !sh.laserDoneAt && !sh.recalled && !((sh.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(sh.metal))) && (sh.rosePlan || sh.roseProtected));
+  /** IPL2: why a sheet a replaced piece came off cannot be held for its new piece ("" when it can): busy, held by a person, cut, recalled, or a Rose Gold / 10K / 14K sheet with its green line. */
+  const inPlaceHoldsWhy = sh => ["nesting", "finishing", "queued"].includes(sh.status) || sh._operationStarting || sh._learnedStarting || (sh.persisted && !sh.persistedDone && !sh.problem) ? "it is being arranged or saved right now"
+    : sh._manualHold ? "a person is moving its charms by hand" : sh.roseCutAt ? "cut" : sh.laserDoneAt ? "laser cut" : sh.recalled ? "recalled from the library"
+    : (sh.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(sh.metal))) && (sh.rosePlan || sh.roseProtected) ? `its ${typeof CharmNestRose !== "undefined" && CharmNestRose.cutWord ? CharmNestRose.cutWord(sh.metal) : "Rose Gold"} green line is drawn around its charms` : "";
+  /** IPL2: where a replaced line's new piece went and why, for the progress panel and the log ("new piece placed in the old spot on GF Sheet 1", "new piece on GF Sheet 1 beside its old spot …",
+   *  "did not fit the old spot (spot left empty on GF Sheet 1) — GF Sheet 1 had no room for the new 18 mm design (…): moved to …"). */
+  /** INPLACE SHRINK (Paul, 9 Nov 2026): ", shrunk to 94% to fit" for a line's new pieces shrunk to go back into their old spot; "" at full size. */
+  const inPlaceShrunk = r => (r && r.size > 0 && r.size < 1 ? `, shrunk to ${Math.round(r.size * 100)}% to fit` : "");
+  const ipSay = r => r.placed && r.where !== "beside" ? `new piece placed in the old spot on ${r.home}${inPlaceShrunk(r)}` : r.placed ? `new piece ${r.say || `on ${r.home} beside its old spot`}` : `did not fit the old spot (spot left empty on ${r.home}) — ${r.say || `added to ${r.to || "the next sheet"}`}`;
   async function inPlaceWait(pages) {
     const t0 = Date.now();
     for (const sh of pages) while (sh._inplaceWrite && Date.now() - t0 < 120000) { try { await sh._inplaceWrite; } catch (_) { /* written or not, its pieces are what it holds */ } }
@@ -19172,7 +19257,7 @@ const Review = window.Review = (() => {
   function inPlaceSettle(row) {
     const V = row && row._vacated; if (!V) return; delete row._vacated;
     const name = sh => (sh && (sh.fileBase || sheetName(sh))) || "a sheet";
-    const out = { at: V.at, results: (V.results || []).map(r => ({ metal: r.metal, placed: !!r.placed, home: name(r.home), homeId: (r.home && r.home.sheetId) || null, to: r.to ? name(r.to) : "", toId: (r.to && r.to.sheetId) || null, why: r.why || "", pieces: r.pieces, ...(r.size && r.size < 1 ? { size: r.size } : {}) })), writes: [], appended: [] };
+    const out = { at: V.at, results: (V.results || []).map(r => ({ metal: r.metal, placed: !!r.placed, where: r.where || (r.placed ? "spot" : "moved"), say: r.say || "", home: name(r.home), homeId: (r.home && r.home.sheetId) || null, to: r.to ? name(r.to) : "", toId: (r.to && r.to.sheetId) || null, why: r.why || "", pieces: r.pieces, ...(r.size && r.size < 1 ? { size: r.size } : {}) })), writes: [], appended: [] };
     for (const sh of V.homes) {
       delete sh._inplaceHold; const asked = !!sh._inplaceAsked; delete sh._inplaceAsked;
       try {
@@ -19205,7 +19290,7 @@ const Review = window.Review = (() => {
     delete out.waits;
     row._inplaceLast = out;
     try {
-      for (const r of out.results) agent({ metal: r.metal, pool: true }, "POOL", `${row.order.receiptId} · ${r.placed ? `new piece placed in the old spot on ${r.home}${inPlaceShrunk(r)}` : `did not fit the old spot (spot left empty on ${r.home}) — added to ${r.to || "the next sheet"}`}; ${out.writes.length ? out.writes.join(", ") + " written as it stands (nothing moved, no nest)" : "no sheet nested again"}`);
+      for (const r of out.results) agent({ metal: r.metal, pool: true }, "POOL", `${row.order.receiptId} · ${ipSay(r)}; ${out.writes.length ? out.writes.join(", ") + " written as it stands (nothing moved, no nest)" : "no sheet nested again"}`);
     } catch (_) { /* a word only */ }
   }
   /* INPLACE (Paul, 20 Oct 2026) · a sheet written as it stands after a replaced piece came off it, when it is in a set: "a committed set whose sheet changed must have its files/labels rewritten",
@@ -19800,13 +19885,11 @@ const Review = window.Review = (() => {
   const relinkId = (row, c, part) => `${row.key}.lpick.${part ? part + "." : ""}${TL.hash(String(c.link && c.link.key) + "|" + c.to)}`;
   const relinkSay = (row, c, by, more) => TL.line(row, "interpreted", { id: relinkId(row, c, more.part), once: true, by, text: (c.override ? `Charm repository corrected by ${by || "a person"}: SKU ${c.to} now draws the new design (Save to the charm repository)${more.text ? " · " + more.text : ""}` : `Charm updated from listing pick by ${by || "a person"}: ${c.from ? c.from + " → " : "now "}${c.to}${more.text ? " · " + more.text : ""}`).slice(0, 200),
     data: { listingPick: true, sku: c.to, was: c.from || null, link: c.link ? c.link.key : null, via: c.link ? c.link.via : null, by: by || null, action: c.action, sheets: more.sheets || [] } });
-  /** INPLACE SHRINK (Paul, 9 Nov 2026): ", shrunk to 94% to fit" for a line's new pieces shrunk to go back into their old spot; "" at full size. */
-  const inPlaceShrunk = r => (r && r.size > 0 && r.size < 1 ? `, shrunk to ${Math.round(r.size * 100)}% to fit` : "");
   /** INPLACE (Paul, 20 Oct 2026): what became of a replaced line's new pieces, in a few words (row._inplaceLast, repoolLine's inPlaceSettle). */
   function inPlaceWords(ip, homes) {
     const rs = (ip && ip.results) || [];
     if (!rs.length) return `the old piece came off ${(homes || []).join(", ")}; the new one went on as any new piece does`;
-    return rs.map(r => r.placed ? `the new piece was placed in the old spot on ${r.home}${inPlaceShrunk(r)}, nothing else on it moved` : `the new piece did not fit the old spot (left empty on ${r.home}): added to ${r.to || "the next sheet"}, nothing on it moved`).join("; ");
+    return rs.map(r => r.placed && r.where !== "beside" ? `the new piece was placed in the old spot on ${r.home}${inPlaceShrunk(r)}, nothing else on it moved` : r.placed ? `the new piece went ${r.say || "on " + r.home + " beside its old spot"}, nothing else on it moved` : `the new piece did not fit the old spot (left empty on ${r.home}): ${r.say || "added to " + (r.to || "the next sheet")}, nothing on it moved`).join("; ");
   }
   /** One line made up again with the pick (see the block above). → { ok, retry, why } */
   async function relinkSwap(row, e, c, h) {
@@ -19929,7 +20012,7 @@ const Review = window.Review = (() => {
         else if (rs.length) {
           // (INPLACE: "Order R: new piece placed in the old spot on GF Sheet 1", or "Order R: did not fit the old spot (spot left empty on GF Sheet 1) — added to GF Sheet 4")
           tally.orders.add(k);
-          line(k, rs.map(r => r.placed ? `Order ${rid}: new piece placed in the old spot on ${r.home}${inPlaceShrunk(r)}` : `Order ${rid}: did not fit the old spot (spot left empty on ${r.home}) — added to ${r.to || "the next sheet"}`).join("; "), "done", `made from ${x.c.to}; nothing else on ${[...new Set(rs.map(r => r.home))].join(", ")} moved`);
+          line(k, rs.map(r => `Order ${rid}: ${ipSay(r)}`).join("; "), "done", `made from ${x.c.to}; nothing else on ${[...new Set(rs.map(r => r.home))].join(", ")} moved`);
           for (const n of ip.writes || []) { const sh = rlSheet(n); if (sh) sheetDone(sh, "write"); }
           for (const r of rs) if (!r.placed && r.to) { const sh = (r.toId && allSheets().find(z => z.sheetId === r.toId)) || rlSheet(r.to); if (sh && !(ip.writes || []).includes(rlName(sh))) sheetDone(sh, "append"); }
         }
@@ -23690,7 +23773,8 @@ const OrderWin = window.OrderWin = (() => {
     refreshPlacement(r); W.placeDrawn = W.placeSig;   // (where each piece IS now, before the mounts draw: they ask for it, opts.placement)
     // PIECES (Paul, 16 Oct 2026): ONE line bought several times (order 4195059483: "2 pieces", one line x2) is not a list of pieces to pick from, but its rail must still wait for EVERY piece's engraving: the timeline is handed that one line
     // (only when the line has more than one piece with a back to approve; any other single-line order tells it nothing, as before)
-    const tlPs = ps.length || multi || r.loading || sibs.length !== 1 ? ps : (tryDo(() => piecesOf(sibs)) || []).filter(p => p && p.line && p.line.engravePools);
+    const tlPs0 = ps.length || multi || r.loading || sibs.length !== 1 ? ps : (tryDo(() => piecesOf(sibs)) || []).filter(p => p && p.line && p.line.engravePools);
+    const tlPs = tlPs0.length > 1 ? tlPs0.filter(p => !cdCovered(p.key)) : tlPs0;   // (CPX1: the order's stage never waits on a Custom piece completed in the Charm Editor)
     for (const m of [W.rail, W.tl]) if (m && m.setPieces) tryDo(() => m.setPieces(tlPs, W.piece, dir));
   }
   /** A piece chosen (null: all of them): the Overview shows that piece's line, and every view crosses over to it. */
@@ -24007,10 +24091,12 @@ const OrderWin = window.OrderWin = (() => {
   /** A piece of a counted line (an OrderPieces entry) as a scope piece, for pieceStatusOf: the sheet it is on, whether it waits, is completed by hand or not read yet. */
   const pcScopeOf = (c, line) => ({ key: line ? line.key : c.lineKey, nested: !!c.nested, hand: !!c.hand, loading: !c.nested && !c.hand && !!(c.loading || c.unsure), row: line && line.row || null, why: c.reason || "",
     sheets: c.nested ? [{ id: c.sheetId || null, page: null, label: c.sheetLabel || "", metal: c.metal || null, n: c.sheetNo, setId: c.setId || null, cut: c.state === "cut", pools: [String(c.poolId || c.key)] }] : [] });
+  /** CPX1: the cover of a Custom piece completed in the Charm Editor on another piece of its order (charm-nest-custom-done.js), by its line key, or null. */
+  const cdCovered = key => { const CD = window.CharmNestCustomDone; if (!CD || !key) return null; const r = rowOf(key) || (W.rows || []).find(x => x && x.key === key) || null; return r && r.custom ? tryDo(() => CD.coverOf(r)) : null; };
   /** What one order item is: { kind: "pair" | "counted" | "single", x (the line's summary), subs (its pieces: a pair's Left and Right, a counted line's discs), lead (the piece the row speaks for), step }. */
   function pcItemOf(x, ctx) {
     const OR = window.CharmNestOrderRows, p = x.p, lineScope = ctx.scope && ctx.scope.find(q => q.key === p.key) || null, STAGES = window.OrderTimelineUI.STAGES;
-    const stepOf = y => (y.D.hand ? STAGES.length - 1 : y.D.step);
+    const stepOf = y => (y.D.hand || cdCovered(y.p.key) ? STAGES.length - 1 : y.D.step);   // (CPX1: a Custom piece completed in the Charm Editor is done: the order never waits on it)
     if (p.sides && ctx.sideEach && p.sides.every(sp => ctx.sideEach.get(sp.key))) {
       const subs = p.sides.map(sp => ({ key: sp.key, side: sp.side, qty: sp.qty, mirror: !!sp.mirror, x: ctx.sideEach.get(sp.key), sp: lineScope && lineScope.sides && lineScope.sides.find(q => q.key === sp.key) || null }));
       const lead = subs[Math.max(0, OR.slowest(subs.map(q => ({ step: q.x.D.step, hand: !!q.x.D.hand }))))];
@@ -24150,6 +24236,12 @@ const OrderWin = window.OrderWin = (() => {
           `<div class="owPcDrawer" id="${drawer}" data-for="${esc(key)}" role="group" aria-label="${esc("Each piece of " + p.name)}" hidden><div class="owPcDrawerIn">${it.subs.map(q => pcSubHtml(it, q, rid, p.name)).join("")}</div></div>`;
       }
       const nm = `${pieceMetalTag(x.p)}<b>${esc(x.p.name)}</b>${pieceRest(x.p) ? " · " + esc(pieceRest(x.p)) : ""}`;
+      // (CPX1, Paul 9 Nov 2026: a Custom piece whose design was done in the Charm Editor on another piece of the order: done, with its seal and the piece that covered it, no dots, no "!")
+      const cv = cdCovered(x.p.key);
+      if (cv) {
+        const CD = window.CharmNestCustomDone, und = tryDo(() => CD.undoFor(rid, x.p.key)) || "", canShow = !!(cv.lineKey && ps.some(q => q.key === cv.lineKey));
+        return `<div class="owPcRow cdCovered${all ? "" : " solo"}" data-piece="${esc(x.p.key)}" role="group" aria-label="${esc(x.p.name + " · completed in the Charm Editor on " + cv.name)}">${dot}<button type="button" class="nm owPcName" title="Show only this piece">${nm}</button>${tryDo(() => CD.rowHtml(cv, { canShow, undo: und })) || ""}</div>`;
+      }
       const steps = pieceDotsHtml(x, rid);   // (the dots: a card for each, see pieceDotsHtml)
       // a piece that is in the Review tab has that card's own buttons (and seals) here, in place of its words: a press is a press
       // there; a piece in no card keeps its words
@@ -24175,6 +24267,11 @@ const OrderWin = window.OrderWin = (() => {
         `<span class="pcAct" data-pc-act="${esc(x.p.key)}">${rel}${ctl.html}</span>${stSr}${steps}${tools}</div>`;
     }).join("");
     box.hidden = false; box.dataset.rid = rid; box.classList.toggle("hasTools", hasTools);
+    // (CPX1: a covered Custom piece's row: its covering piece's name shows that piece, its Undo takes the completion back while this page can)
+    if (!box._cdWired) { box._cdWired = true; tryDo(() => window.CharmNestCustomDone && CharmNestCustomDone.injectCss(document)); box.addEventListener("click", e => {
+      const sh = e.target.closest && e.target.closest("[data-cd-show]"); if (sh && box.contains(sh)) { e.stopPropagation(); selectPiece(sh.dataset.cdShow); return; }
+      const ub = e.target.closest && e.target.closest("[data-cd-undo]"); if (ub && box.contains(ub) && window.CharmNestCustomDone) { e.stopPropagation(); ub.disabled = true; Promise.resolve(CharmNestCustomDone.undo(ub.dataset.cdUndo)).then(u => toast(u && u.ok ? `Undone · ${(u.said || []).join(" · ")}` : `Undo: ${(u && u.why) || "not possible"}`, u && u.ok ? "" : "bad", 7000), er => toast(`Undo: ${(er && er.message) || er}`, "bad", 7000)); }
+    }, true); }
     // (RELWIRE, 27 Oct 2026: the rows drawn as before are kept, and a row whose buttons were drawn while its piece could not be wired yet (the window still opening) is wired now: its Release
     //  Hold had no press at all once the window was opened again on an order after another one, "hold A, hold B, open A again", and the drawing never changed after)
     if (box._h === html) { wireOwRel(box); box.querySelectorAll("[data-pc-act]:not([data-pc-wired])").forEach(h => wirePcAct(h, [])); markPieces(); return; }
@@ -24356,7 +24453,13 @@ const OrderWin = window.OrderWin = (() => {
     for (const x of [r].concat(tryDo(() => Orders.rows()) || [])) if (x && x.order && String(x.order.receiptId) === rid && x.spec && !x.loading && Array.isArray(x.spec.problems) && !mine.has(x.key)) mine.set(String(x.key), x);
     return { asks: (lineKey, kind) => {
       const x = mine.get(String(lineKey)); if (!x || x.state === "gone") return null;
-      if (kind === "engraveWords") return x.spec.engraveNever ? false : null;   // (a words question of a line that never engraves, an earring or a letter key, is no longer asked; for any other line the record stands as before)
+      if (kind === "engraveWords") {
+        if (x.spec.engraveNever) return false;   // (a words question of a line that never engraves, an earring or a letter key, is no longer asked; for any other line the record stands as before)
+        // (CPX1, Paul 9 Nov 2026: a line whose faces the Charm Editor drew, none of them asking for words now, was answered there: "Words: Enter the requested inscription" is not asked any more)
+        const js = tryDo(() => Engrave.jobsOf(x)) || [];
+        if (js.length && !js.some(j => j && ["words", "classify", "reclassify"].includes(j.state)) && js.some(j => j && (j.wordsSource === "charmEditor" || tryDo(() => Engrave.faceHasEditorArt(j))))) return false;
+        return null;
+      }
       const kinds = new Set([].concat(x.spec.problems, x.problems || []).map(p => p && p.kind));
       if (x.materialOverride) kinds.delete("needsMaterial");
       if (x.sizeOverride) kinds.delete("missingSize");
