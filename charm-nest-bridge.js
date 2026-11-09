@@ -1549,6 +1549,61 @@ const Dock = window.Dock = (() => {
   return { ensure, setHost, layout, schedule, mode: () => D.mode, _D: D };
 })();
 
+/* ── CEB1 (Paul, 9 Nov 2026: "Rename the Design Studio button to the Charm Editor button and name ... Resize the new renamed button to be the same size as the Charm Editor button ... the
+   Charm Editor button doesn't exist in the Review tab. Place it exactly in the same place on all 5 main tabs just like it is in the Design & Engrave"): ONE "Charm Editor" button, the Design &
+   Engrave tab's own (DESIGNBTN), on each of the five main tabs (Nest, Orders, Design & Engrave, Review, Library): the same function, the same class (.cnCeTabBtn over the .cnCeBtn look,
+   charm-nest-activity.css), the same words, tooltip and aria-label, the last thing of the tab's header row at its top right. A press opens the "Design a charm" modal on its New design side
+   (charm-nest-ce-masters.js newDesign: the outline to start from, or the charm library on its other side), the path both the old buttons took, and the Charm Editor from it, which opens in
+   front of every window (CES1, charm-nest-charm-editor.js). One node a tab, put back after each redraw of its row; off while the module is not on the page. ── */
+const CharmEditorTabBtn = window.CharmEditorTabBtn = (() => {
+  const TABS = { nest: ["nestCeBtn", "Nest"], orders: ["ordCeBtn", "Orders"], engrave: ["egDesignBtn", "Design & Engrave"], review: ["rvCeBtn", "Review"], library: ["libCeBtn", "Library"] };
+  const ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5 6 12l2.8 6.5h6.4L18 12Z"/><path d="M12 3.5V11"/><circle cx="12" cy="12.6" r="1.5"/><path d="M8.8 21h6.4"/></svg>';   // (a pen nib: the studio's icon hand)
+  const TIP = "Design a charm: start from the charm library or a new outline, in the Charm Editor (saved as a design)";
+  const nodes = {};
+  const can = () => { const M = window.CharmNestCeMasters; return !!(M && typeof M.newDesign === "function"); };
+  function press(b, tab) {
+    const M = window.CharmNestCeMasters; if (b.disabled || b.getAttribute("aria-busy") === "true" || !can()) return;
+    // (the editor opens over this tab, which closing it shows again: the way back says so)
+    const o = { from: "charmEditorButton", tab, back: { label: `Back to ${TABS[tab][1]}`, title: `Back to the ${TABS[tab][1]} tab` } };
+    try { if (window.CNDesignLog && CNDesignLog.event) CNDesignLog.event("designerNew", { from: "charmEditorButton", tab }); } catch (_) { /* the log is a courtesy here */ }
+    b.setAttribute("aria-busy", "true");
+    Promise.resolve().then(() => M.newDesign(o)).catch(err => { try { toast(`Charm Editor: ${(err && err.message) || err}`, "bad", 6000); } catch (_) { console.warn("[charm editor]", err); } }).finally(() => b.removeAttribute("aria-busy"));
+  }
+  /** The tab's button (made once), its state now. */
+  function node(tab) {
+    if (!TABS[tab]) return null;
+    let b = nodes[tab];
+    if (!b) {
+      b = nodes[tab] = document.createElement("button"); b.type = "button"; b.className = "btn cnCeBtn cnCeTabBtn"; b.id = TABS[tab][0]; b.dataset.ceTab = tab;
+      if (tab === "engrave") b.classList.add("egDesignBtn"), b.dataset.cd = "new";
+      b.innerHTML = `${ICON}<span>Charm Editor</span>`; b.setAttribute("aria-label", "Charm Editor");
+      b.addEventListener("click", () => press(b, tab));
+    }
+    const on = can(); b.disabled = !on; b.title = on ? TIP : "The Charm Editor is still loading";
+    return b;
+  }
+  /** Put the tab's button last in `row` (its header row), where it stays through each redraw: called after each one. */
+  function mount(tab, row) {
+    if (!row) return null;
+    const b = node(tab); if (!b) return null;
+    if (row.lastElementChild !== b) row.appendChild(b);
+    return b;
+  }
+  /** The rows of the tabs whose header row is the page's own (Nest's, made here; Library's), and Review's, drawn by Review. */
+  function mountShown(mode) {
+    try {
+      if (mode === "nest") {
+        let h = document.getElementById("nestCeHead"); const sh = document.getElementById("sheets");
+        if (!h && sh) { h = document.createElement("div"); h.className = "cnCeHead"; h.id = "nestCeHead"; sh.before(h); }
+        mount("nest", h);
+      }
+      if (mode === "library") mount("library", document.querySelector("#libView .libBar"));
+      if (mode === "review") mount("review", document.querySelector("#reviewView > .ordBar"));
+    } catch (e) { console.warn("[charm editor button]", e); }
+  }
+  return { node, mount, mountShown, TABS };
+})();
+
 /* ── the tabs' hosts ── */
 const Views = window.Views = (() => {
   function designHost() {
@@ -1588,6 +1643,7 @@ const Views = window.Views = (() => {
     if (mode === "review") { if (Review.shown) Review.shown(); else Review.render(); }   // (NAV, 28 Oct 2026: as drawn when nothing changed, drawn again at idle)
     // the Review tab follows the cloud while it is on screen (ReviewLive); another tab is brought up to date once as it is shown
     try { window.ReviewLive?.shown?.(mode); } catch (_) {}
+    CharmEditorTabBtn.mountShown(mode);   // (CEB1: the Charm Editor button at the top right of the tab shown)
   }
   return { designHost, onShow };
 })();
@@ -2913,7 +2969,7 @@ const Orders = window.Orders = (() => {
   }
   let ordFp = null;   // the Filters panel's popover
   function buildHead(v) {
-    // One slim row: Pull orders, the piles and the count at the left; the search, Filters (with Time and Sort by in it) and Design Studio at the right, in the top right corner (CMP1; wraps on a phone).
+    // One slim row: Pull orders, the piles and the count at the left; the search, Filters (with Time and Sort by in it) and the Charm Editor button (CEB1) at the right, in the top right corner (CMP1; wraps on a phone).
     const I = ordIcons();
     v.innerHTML = `<div class="ordHead">
         <div class="ordBar ordCompact" id="ordBar">
@@ -2980,30 +3036,13 @@ const Orders = window.Orders = (() => {
     Sandbox.mountPanel(v);
     watch(v);
   }
-  /* (CMP1, Paul 9 Nov 2026: "Relocate the "design studio" button to the top right hand corner of the "Order" tab list view": the same node now stands LAST in the head, at the far right end of
-     the tools after Filters, put back there after each redraw; its look and what it does are unchanged.)
-     ODB (Paul, 9 Nov 2026: "The 'Design Studio' button is missing from the Orders tab"): a gold "Design Studio" button beside Pull orders that opens the "Design a charm" modal on its New design
-     side, the open path of the Design & Engrave tab's Charm Editor button (charm-nest-ce-masters.js newDesign, logged as designerNew), with the way back to this tab. The same look (.cnCeBtn,
-     charm-nest-activity.css: gold outline, hover / focus / pressed states). ONE node, put back beside Pull orders whenever the head is drawn, in the Real and the Sandbox workspaces alike. */
-  let odBtnEl = null;
+  /* (CMP1, Paul 9 Nov 2026: "Relocate the "design studio" button to the top right hand corner of the "Order" tab list view": the last thing of the head, at the far right end of the tools
+     after Filters, put back there after each redraw.)
+     CEB1 (Paul, 9 Nov 2026): it is the Charm Editor button of every main tab now (CharmEditorTabBtn: the Design & Engrave tab's own, its size, words and press); ODB's own "Design Studio" button
+     and its own smaller look are gone. ONE node, put back whenever the head is drawn, in the Real and the Sandbox workspaces alike. */
   function ordDesignStudio(v) {
     const tools = v && v.querySelector("#ordTools"); if (!tools) return null;
-    if (!odBtnEl) {
-      const b = document.createElement("button"); b.type = "button"; b.className = "btn cnCeBtn ordDesignBtn"; b.id = "ordDesignBtn";
-      b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5 6 12l2.8 6.5h6.4L18 12Z"/><path d="M12 3.5V11"/><circle cx="12" cy="12.6" r="1.5"/><path d="M8.8 21h6.4"/></svg><span>Design Studio</span>';   // (the Charm Editor button's pen nib)
-      b.addEventListener("click", () => {
-        const M = window.CharmNestCeMasters; if (b.disabled || b.getAttribute("aria-busy") === "true" || !M || typeof M.newDesign !== "function") return;
-        const o = { from: "ordersDesignStudio", back: { label: "Back to Orders", title: "Back to the Orders tab" } };
-        try { if (window.CNDesignLog && CNDesignLog.event) CNDesignLog.event("designerNew", { from: "ordersDesignStudio" }); } catch (_) { /* the log is a courtesy here */ }
-        b.setAttribute("aria-busy", "true");
-        Promise.resolve().then(() => M.newDesign(o)).catch(err => toast(`Design Studio: ${(err && err.message) || err}`, "bad", 6000)).finally(() => b.removeAttribute("aria-busy"));
-      });
-      odBtnEl = b;
-    }
-    const on = !!(window.CharmNestCeMasters && typeof window.CharmNestCeMasters.newDesign === "function");
-    odBtnEl.disabled = !on; odBtnEl.title = on ? "Design a charm: start from the charm library or a new outline, in the Charm Editor (saved as a design)" : "The Charm Editor is still loading";
-    if (tools.lastElementChild !== odBtnEl) tools.appendChild(odBtnEl);
-    return odBtnEl;
+    return CharmEditorTabBtn.mount("orders", tools);
   }
   /** The chips under the bar for what narrows the list (not the search: it has its own ×): material, engraved, and the date range; none, and the row is not there. */
   function renderActive(v) {
@@ -3098,7 +3137,7 @@ const Orders = window.Orders = (() => {
     const running = B.run && !["complete", "stopped"].includes(B.run.status);
     const pull = v.querySelector("#ordPull");
     pull.disabled = !!running;
-    ordDesignStudio(v);   // (ODB: the Design Studio button: the same node, put back after a redraw; CMP1: last in the head, at its top right)
+    ordDesignStudio(v);   // (CEB1: the Charm Editor button: the same node, put back after a redraw; CMP1: last in the head, at its top right)
     // between arrivals there is no Stop to press: say what the run is doing with the lines instead
     pull.title = !running ? "refresh open orders using the pull rule in Settings" : B.run.status === "processed" ? "the open run holds these pieces · new orders join it as they arrive" : "a run is open — stop it first, or its pieces would be replaced under it";
     // the search box always shows the search the list is narrowed by: the sheet window's "In Orders" set it before the
@@ -11114,9 +11153,8 @@ const Engrave = window.Engrave = (() => {
     s.textContent = ".backHost{position:relative}.pvApproval{z-index:3}"   // (CEBTN: the button's look and place are charm-nest-activity.css .cnCeBtn, as every way into the Charm Editor)
       + ".egArtNote{position:absolute;left:0;top:0;display:block;padding:3px 9px;border-radius:10px;background:rgba(255,255,255,.94);border:1px solid var(--line,#e4ddd0);font:11.5px/1.4 var(--sans,system-ui);color:var(--ink70,#5b554c);z-index:1;cursor:pointer;white-space:normal}"
       + ".egArtNote.bad{color:#8a3a26;border-color:#e2c4b8}"
-      // (DESIGNBTN, Paul 28 Oct 2026: "Remove this entire menu from the UI" ... "Add a new button called 'Charm Editor' that opens the Design a Charm Modal" ... "Make sure the button has a nice hover state and it's visible and easy to click/interact with":
-      //  the Charm Designer's bar at the top of the tab is gone; one gold button at the right end of the tab's own bar, charmEditorButton; the order window's button is styled by the page, .owCharmEdit)
-      + ".btn.cnCeBtn.egDesignBtn{flex:none;margin-left:auto}";
+      // (DESIGNBTN, Paul 28 Oct 2026: one gold button at the right end of the tab's own bar, charmEditorButton; CEB1: its place is charm-nest-activity.css .cnCeTabBtn, as on every main tab)
+      ;
     (document.head || document.documentElement).appendChild(s);
   }
   /** The piece `x` can open in the charm editor with its charm on this page: { poolIds, charm, row, job, from, say } (charmEditPiece), or null: no editor or art module here, a saved back opened
@@ -11907,30 +11945,13 @@ const Engrave = window.Engrave = (() => {
      and the recent designs) is gone, and its space with it; in its place ONE gold button at the right end of the tab's own bar (Placements / Approved, the search, the date and the sort), its
      pen nib and two words. It opens the "Design a charm" modal on its New design side (charm-nest-ce-masters.js newDesign: the outline to start from; its other side is the charm library), as
      the bar's New design did, with the way back to this tab. The recent designs are still the editor's own (charm-nest-ce-library.js recent / openDesign: its Recent shelf).
-     It is ONE node through every drawing of the tab (the bar is drawn again with each render, the button put back last), so a press is never lost to a redraw; off while the module is not on the page. */
-  let cdBtnEl = null;
-  const cdFn = (o, k) => !!(o && typeof o[k] === "function");
+     It is ONE node through every drawing of the tab (the bar is drawn again with each render, the button put back last), so a press is never lost to a redraw; off while the module is not on the page.
+     CEB1 (Paul, 9 Nov 2026): this button is the Charm Editor button of all five main tabs now: CharmEditorTabBtn (its node, its press, its words), the same in each tab's header row. */
   function charmEditorButton(host) {
     if (!host) return null;
     charmEditCss();
-    if (!cdBtnEl) {
-      const b = document.createElement("button"); b.type = "button"; b.className = "btn cnCeBtn egDesignBtn"; b.id = "egDesignBtn"; b.dataset.cd = "new";
-      b.innerHTML = `${CHARM_EDIT_ICON}<span>Charm Editor</span>`;
-      b.addEventListener("click", () => {
-        const M = window.CharmNestCeMasters; if (b.disabled || b.getAttribute("aria-busy") === "true" || !cdFn(M, "newDesign")) return;
-        // (the editor opens over this tab, which closing it shows again: the way back says so)
-        const o = { from: "charmEditorButton", back: { label: "Back to Design & Engrave", title: "Back to the Design & Engrave tab" } };
-        charmEditLog("designerNew", { from: "charmEditorButton" });
-        b.setAttribute("aria-busy", "true");
-        Promise.resolve().then(() => M.newDesign(o)).catch(err => toast(`Charm Editor: ${(err && err.message) || err}`, "bad", 6000)).finally(() => b.removeAttribute("aria-busy"));
-      });
-      cdBtnEl = b;
-    }
-    const on = cdFn(window.CharmNestCeMasters, "newDesign");
-    cdBtnEl.disabled = !on; cdBtnEl.title = on ? "Design a charm: start from the charm library or a new outline, in the Charm Editor (saved as a design)" : "The Charm Editor is still loading";
     const bar = host.querySelector(":scope > .egBar") || host;   // (the tab's own bar; the preview's failure note when the tab could not be drawn)
-    if (bar.lastElementChild !== cdBtnEl) bar.appendChild(cdBtnEl);
-    return cdBtnEl;
+    return CharmEditorTabBtn.mount("engrave", bar);
   }
   /* DESIGN MODE (Paul, 28 Oct 2026: "search and open any charm existing in our charm repository and have full control over manipulating that charm" ... "designing custom charms"): the charm
      editor opened on a DESIGN, not on a piece: the engraving fonts and their outlines as a piece's open has them, every layer free (nothing locked unless the person locks it). Nothing here reads
@@ -21621,6 +21642,7 @@ const Review = window.Review = (() => {
     if(keptTools)v.querySelector('.ordBar .cnOrderFind').after(keptTools);   // (the date menu and its open popover survive a redraw)
     CNListActivity.mount(v.querySelector(".ordBar"),scope,()=>render({still:true}));
     if(keptFind)v.querySelector('#rvOrderFind').closest('label').replaceWith(keptFind);
+    CharmEditorTabBtn.mount('review', v.querySelector('.ordBar'));   // (CEB1: the Charm Editor button, last in the tab's header row at its top right: the same node, put back after each redraw)
     const find=v.querySelector('#rvOrderFind');find.value=RV.q || '';
     find.oninput=()=>{RV.q=find.value;render({still:true});};
     // (no name pill here: every decision is recorded under the person of the account chip in the top bar, the one place to see and switch who is signed in; Paul, 18 Oct 2026: "I should not be seeing my name logged in and also again my name")

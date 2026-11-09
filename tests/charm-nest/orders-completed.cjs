@@ -2,15 +2,15 @@
 //   "consolidate with the Anytime and last activity under the filters, remove the option for list or card review ... Add a new tab called "Completed" where orders that have been marked as
 //    shipped automatically get placed ... Each completed order must contain a shipped seal. Relocate the "design studio" button to the top right hand corner of the "Order" tab list view."
 // The REAL page over the repo's fake site (_orderFactsWorld.cjs: offline, made-up orders, no Etsy, nothing live). What it proves:
-//   1  the bar: Pull orders · Open Orders · Completed · Cancelled · charms … search · Filters · Design Studio; no Any time / Last activity / ↓ / Cards|List outside Filters; one slim row at 1400 px
+//   1  the bar: Pull orders · Open Orders · Completed · Cancelled · charms … search · Filters · Charm Editor (CEB1, Paul 9 Nov 2026: the Design Studio button renamed, the Design & Engrave size); no Any time / Last activity / ↓ / Cards|List outside Filters; one slim row at 1400 px
 //   2  Filters holds "Time" and "Sort by": a range and a sort chosen there narrow / order the list, the badge counts them, the gold chips under the bar show them and let go of them; Clear lets go
-//   3  Design Studio is the last control of the head (its top right), the same node after redraws, gold, and still opens "Design a charm"
+//   3  the Charm Editor button (CEB1) is the last control of the head (its top right), the same node after redraws, gold, and still opens "Design a charm"
 //   4  a saved "cards" view is ignored: the list is drawn as rows
 //   5  an order Etsy shipped (the orders check found it gone, reason "shipped") leaves Open Orders and its count (the pile and the tab), and is listed under Completed with its count
 //   6  an order with a recorded shipped event (a shipping station's scan, read through the timeline the page already reads) moves too; its seal names the person who shipped it
 //   7  every Completed row has a SHIPPED seal (the Etsy-only one says "Etsy"); a rested / clicked seal grows (Seal.zoom); the order window of a completed order shows the seal
 //   8  an order that ships while Completed is on screen is stamped (the wooden press on its seal)
-//   9  a phone (390 px): the head wraps, nothing scrolls sideways, Design Studio still at the right end
+//   9  a phone (390 px): the head wraps, nothing scrolls sideways, the Charm Editor button still at the right end
 //   PW_DIR=<dir holding playwright-core> CHROMIUM=<chrome> node tests/charm-nest/orders-completed.cjs
 'use strict';
 const { world, seed, FIXTURES } = require('./_orderFactsWorld.cjs');
@@ -20,7 +20,7 @@ const check = (ok, msg, ev) => { nCheck++; if (!ok) fails.push(msg); console.log
 const head = page => page.evaluate(() => {
   const bar = document.getElementById('ordBar'), pop = document.getElementById('ordFiltersPop');
   const outside = sel => [...bar.querySelectorAll(sel)].filter(n => !pop.contains(n)).length;
-  const tools = document.getElementById('ordTools'), ds = document.getElementById('ordDesignBtn');
+  const tools = document.getElementById('ordTools'), ds = document.getElementById('ordCeBtn');
   const vis = n => { const r = n.getBoundingClientRect(), cs = getComputedStyle(n); return r.width > 0 && r.height > 0 && cs.display !== 'none' && cs.visibility !== 'hidden'; };
   const controls = [...bar.querySelectorAll('button,label.ordFind')].filter(n => !pop.contains(n) && !n.closest('#ordActive') && !n.closest('.ordFind') && vis(n));
   const dsR = ds && ds.getBoundingClientRect(), right = Math.max(...controls.map(n => n.getBoundingClientRect().right));
@@ -49,7 +49,8 @@ const cmpRows = page => page.evaluate(() => [...document.querySelectorAll('#ordB
     /* 1 · the bar */
     const h = await head(page);
     check(h.dates === 0 && h.sorts === 0 && h.views === 0 && h.tools === 0, `1 no Any time, Last activity, ↓ or Cards|List in the bar outside Filters (date ${h.dates}, sort ${h.sorts}, view ${h.views}, tools ${h.tools})`, JSON.stringify(h));
-    check(JSON.stringify(h.piles) === JSON.stringify(['', 'completed', 'cancelled']) && h.rows === 1 && h.barH <= 44 && h.findW <= 262 && h.findW >= 140,
+    check(JSON.stringify(h.piles) === JSON.stringify(['', 'completed', 'cancelled']) && h.rows === 1 && h.barH <= 48 &&   /* (CEB1: the Charm Editor button is the Design & Engrave size now, 38 px, the bar 38 + its 8 px foot + its line) */
+      h.findW <= 262 && h.findW >= 140,
       `1 the piles read Open Orders · Completed · Cancelled; the head is one slim row at 1400 px (${h.barH} px; search ${h.findW} px): ${h.order}`, JSON.stringify(h));
 
     /* 2 · Time and Sort by inside Filters */
@@ -82,20 +83,20 @@ const cmpRows = page => page.evaluate(() => [...document.querySelectorAll('#ordB
     check(f.range === 'all' && f.badge === 0 && !f.ax.length, `2 Clear lets go of the range too (badge ${f.badge})`, JSON.stringify(f));
     await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 
-    /* 3 · Design Studio at the top right, the same node, still opens Design a charm */
-    const n0 = await page.evaluateHandle(() => document.getElementById('ordDesignBtn'));
+    /* 3 · the Charm Editor button at the top right, the same node, still opens Design a charm */
+    const n0 = await page.evaluateHandle(() => document.getElementById('ordCeBtn'));
     await page.evaluate(() => { Orders.render(); Orders.renderNow(); Orders.showPile('cancelled'); }); await page.waitForTimeout(400);
     await page.evaluate(() => Orders.showPile('')); await page.waitForTimeout(400);
     const h3 = await head(page);
-    const ds = await page.evaluate(n => { const b = document.getElementById('ordDesignBtn'); return { same: b === n, gold: /\bcnCeBtn\b/.test(b.className), on: !b.disabled, text: b.textContent.trim() }; }, n0);
+    const ds = await page.evaluate(n => { const b = document.getElementById('ordCeBtn'); return { same: b === n, gold: /\bcnCeBtn\b/.test(b.className), on: !b.disabled, text: b.textContent.trim() }; }, n0);
     await page.evaluate(() => { window.__calls = []; window.__realM = window.CharmNestCeMasters; window.CharmNestCeMasters = { newDesign: o => window.__calls.push([o && o.from, o && o.back && o.back.label]) }; });
-    await page.click('#ordDesignBtn'); await page.waitForTimeout(200);
+    await page.click('#ordCeBtn'); await page.waitForTimeout(200);
     const calls = await page.evaluate(() => window.__calls);
-    await page.evaluate(() => { window.CharmNestCeMasters = window.__realM; document.getElementById('ordDesignBtn').click(); }); await page.waitForTimeout(700);
+    await page.evaluate(() => { window.CharmNestCeMasters = window.__realM; document.getElementById('ordCeBtn').click(); }); await page.waitForTimeout(700);
     const modal = await page.evaluate(() => { const w = document.querySelector('.cem-win'); return w ? [...w.querySelectorAll('.cem-seg button')].map(x => x.textContent.trim()) : null; });
     await page.keyboard.press('Escape'); await page.waitForTimeout(400);
-    check(h3.dsLast && h3.dsRight && ds.same && ds.gold && ds.on && ds.text === 'Design Studio', `3 "Design Studio" is the last control of the head, at its right end (the same gold node after redraws and a pile switch)`, JSON.stringify({ h3, ds }));
-    check(JSON.stringify(calls) === JSON.stringify([['ordersDesignStudio', 'Back to Orders']]) && !!modal && modal.length >= 2, `3 pressed, it still opens "Design a charm" (${(modal || []).join(' / ')})`, JSON.stringify({ calls, modal }));
+    check(h3.dsLast && h3.dsRight && ds.same && ds.gold && ds.on && ds.text === 'Charm Editor', `3 "Charm Editor" is the last control of the head, at its right end (the same gold node after redraws and a pile switch)`, JSON.stringify({ h3, ds }));
+    check(JSON.stringify(calls) === JSON.stringify([['charmEditorButton', 'Back to Orders']]) && !!modal && modal.length >= 2, `3 pressed, it still opens "Design a charm" (${(modal || []).join(' / ')})`, JSON.stringify({ calls, modal }));
 
     /* 4 · a saved cards view is ignored */
     await page.evaluate(() => { CN.S.settings.orderView = 'cards'; Orders.view().view = 'cards'; Orders.renderNow(); }); await page.waitForTimeout(300);
@@ -155,7 +156,7 @@ const cmpRows = page => page.evaluate(() => [...document.querySelectorAll('#ordB
     // (the rail folded away, as a phone has it: completed-seals-review-orders.cjs folds it the same way)
     await p.page.evaluate(() => { if (!document.getElementById('app').classList.contains('railOff')) document.getElementById('btnRail').click(); }); await p.page.waitForTimeout(700);
     const hp = await head(p.page);
-    check(!hp.overflow && hp.dsLast && hp.dsRight && hp.findW >= 250, `9 at 390 px the head wraps cleanly (${hp.rows} rows, ${hp.barH} px; the search ${hp.findW} px), nothing scrolls sideways, Design Studio at the right end`, JSON.stringify(hp));
+    check(!hp.overflow && hp.dsLast && hp.dsRight && hp.findW >= 250, `9 at 390 px the head wraps cleanly (${hp.rows} rows, ${hp.barH} px; the search ${hp.findW} px), nothing scrolls sideways, the Charm Editor button at the right end`, JSON.stringify(hp));
     check(!p.errors.length, '9 no page errors on the phone: ' + p.errors.join(' | '));
   } catch (e) { fails.push(e.message); console.error(e); }
   finally { await p.close(); }

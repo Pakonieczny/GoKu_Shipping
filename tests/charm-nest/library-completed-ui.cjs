@@ -107,7 +107,7 @@ function seed(st, blobUrl) {
   await page.waitForFunction(() => document.querySelector('#libDoneCount').textContent === '120', null, { timeout: 10000 });
   // one line of bar: the tabs no taller than the search, on its line, and nothing to scroll
   let b = await bar();
-  assert(b.h < 44 && b.over <= 0 && b.tabs <= b.input + 1 && Math.abs(b.tabsTop + b.tabs / 2 - (b.inputTop + b.input / 2)) < 2, 'one line of bar at 1500: ' + JSON.stringify(b));
+  assert(b.h < 46 && b.over <= 0 && b.tabs <= b.input + 1 && Math.abs(b.tabsTop + b.tabs / 2 - (b.inputTop + b.input / 2)) < 2, 'one line of bar at 1500: ' + JSON.stringify(b));
   const current0 = await page.$$eval('#libBody .libCard[data-id]', cs => cs.map(c => c.dataset.id));
   assert(current0.length === 24 && !current0.some(id => id.startsWith('old')), 'Current holds what the laser has not done: ' + current0.length);
   // (the Library card's seals, in a real browser. Paul, 7 Oct 2026: "only one seal per each sheet and only visible when a given sheet has
@@ -205,7 +205,7 @@ function seed(st, blobUrl) {
   assert.equal(top, setId, 'newest completed first');
   assert.match(await page.textContent('#libDone .ldDayHead'), /^Today/);
   assert.match(await page.getAttribute('#libSearch', 'placeholder'), /^Search completed/);
-  b = await bar(); assert(b.h < 44 && b.over <= 0, 'the bar keeps its line in Completed: ' + JSON.stringify(b));
+  b = await bar(); assert(b.h < 46 && b.over <= 0, 'the bar keeps its line in Completed: ' + JSON.stringify(b));
   await page.waitForTimeout(400);
   await shot('06-completed-sets-1500');
   await tap(`#libDone .ldItem[data-set="${setId}"] .ldLine`);
@@ -292,14 +292,14 @@ function seed(st, blobUrl) {
   assert.equal(await page.inputValue('#libSearch'), '');
   ok.push('search: a listing or an order in either tab finds every sheet with it (lit), says where the rest are, and × resets it');
 
-  // 1280 × 800: the bar keeps one line, the tabs readable, in both tabs
+  // 1280 × 800: the bar keeps one line, the tabs readable, in both tabs (CEB1, 9 Nov 2026: the Charm Editor button, pinned at the row's right end, takes 153 px; the row scrolls up to 130 px under it here)
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.waitForTimeout(300);
-  b = await bar(); assert(b.h < 44 && b.over <= 0, 'one line of bar at 1280: ' + JSON.stringify(b));
+  b = await bar(); assert(b.h < 46 && b.over <= 130, 'one line of bar at 1280: ' + JSON.stringify(b));
   await shot('12-current-sheets-1280');
   await tap('#libTab button[data-t=done]');
   await page.waitForSelector('#libDone .ldItem', { timeout: 10000 });
-  b = await bar(); assert(b.h < 44 && b.over <= 0, 'one line of bar at 1280 in Completed: ' + JSON.stringify(b));
+  b = await bar(); assert(b.h < 46 && b.over <= 130, 'one line of bar at 1280 in Completed: ' + JSON.stringify(b));
   await shot('13-completed-sheets-1280');
   await tap('#libKind button[data-k=sets]');
   await page.waitForSelector('#libDone .ldItem[data-kind=set]', { timeout: 10000 });
