@@ -10,7 +10,7 @@
  *   Recent         what was opened or placed from here on this computer, newest first (kept in this browser only: a convenience, never a record)
  * Search as you type over a local index (name, SKU, order number, employee, version, id; every word must be found, a leading # is ignored), five filters (Mine, Order,
  * No order, Today, Week), tiles or a list, a click opens a design (asking first whether to keep unsaved changes), a drag puts it on the charm being edited as ONE
- * group at the size it was made, the ⊕ puts it in the middle, and the clock shows a design's versions (click one to open it, drag one onto the charm).
+ * group (the whole charm: its outline and holes engraved as lines; at most half the work area, never scaled up), the ⊕ puts it in the middle, and the clock shows a design's versions (click one to open it, drag one onto the charm).
  *
  * WHAT CAME FROM THE STUDIO (the drawing studio's dock, LIBRARY: J 19330-19420, 20700-20990, 21640-21760; S 2666-2730; C 4357-4482, 5543-5560, 6115-6136):
  *   · one source, derived and memoised: the list is DERIVED from the data the page already holds (the designs module's local copy), rebuilt only when its signature
@@ -594,7 +594,7 @@
     const c = doc.createElement('div');
     c.className = 'cel-cell is-free'; c.setAttribute('role', 'option');
     c.innerHTML = '<span class="cel-pic"><i class="cel-ph"></i><img alt="" decoding="async" draggable="false"></span><span class="cel-tx"><b class="cel-nm"></b><span class="cel-s1"></span><span class="cel-s2"></span></span>'
-      + `<i class="cel-v"></i><button class="cel-b cel-b--place" type="button" data-cel="place" tabindex="-1" title="Put it in the middle of the charm (or drag it there)" aria-label="Put it on the charm">${IC.place}</button>`
+      + `<i class="cel-v"></i><button class="cel-b cel-b--place" type="button" data-cel="place" tabindex="-1" title="Put the whole charm in the middle of this one, at most half the work area (or drag it there)" aria-label="Put it on the charm">${IC.place}</button>`
       + `<button class="cel-b cel-b--hist" type="button" data-cel="hist" tabindex="-1" title="Versions" aria-label="Versions">${IC.clock}</button>`;
     c._img = c.querySelector('img'); c._ph = c.querySelector('.cel-ph'); c._nm = c.querySelector('.cel-nm'); c._s1 = c.querySelector('.cel-s1'); c._s2 = c.querySelector('.cel-s2'); c._v = c.querySelector('.cel-v');
     c._key = ''; c._pk = ''; c._i = -1;
@@ -819,7 +819,7 @@
     return !!(hit && st.contains(hit));
   }
 
-  /* ═══ 6 · placing a design on the charm: ONE group, at the size it was made ═══ */
+  /* ═══ 6 · placing a design on the charm: ONE group, the whole charm, at most half the work area ═══ */
   /** A master's drawing as faces: the masters module's own (faces), else the same reading of it the masters module makes when it opens one (the entry, its first size,
    *  Pool.masterCharm's one copy per page, model.masterFace). */
   async function mastersFaces(sku) {
@@ -842,10 +842,34 @@
     if (it.kind === 'group') o.children = (it.children || []).map(strip);
     return o;
   }
+  /** Its cut parts as ENGRAVED LINES (LIB1, Paul 9 Nov 2026: "it doesn't actually add the outline. It only adds the engraving and hatching"): a placed charm's outline and holes
+   *  are drawn on the charm it is put on, never cut through it (a second cut line would compete with the charm's own), so each becomes a line engraving (stroked, the laser's
+   *  line width) named as what it was. Its groups are followed; the back's guide (seen-from-the-back cut lines, never saved) is left out. */
+  const ENGRAVED = { Outline: 'Outline · engraved', 'Cut line': 'Cut line · engraved', Cut: 'Cut · engraved' };
+  function engraveCuts(list) {
+    const out = []; let n = 0;
+    for (const it of list || []) {
+      if (!it || it.guide) continue;
+      if (it.kind === 'group') { const r = engraveCuts(it.children); n += r.n; if (r.items.length) out.push(Object.assign({}, it, { role: it.role === 'cut' ? 'line' : it.role, children: r.items })); continue; }
+      if (it.role !== 'cut') { out.push(it); continue; }
+      const o = Object.assign({}, it, { role: 'line', name: ENGRAVED[it.name] || `${it.name || 'Cut line'} · engraved`, stroke: [1, 0, 0], fill: null, hidden: false, locked: false });
+      delete o.lwPt; delete o.layer; n++;   // (the laser's line width; the layer is the engrave one its role picks, never the master's CUT)
+      out.push(o);
+    }
+    return { items: out, n };
+  }
+  /** The scale that keeps a placed charm at most HALF the work area (LIB1: "no more than 50% of the visible white work area"): its larger side at most half the artboard's
+   *  smaller side; a charm already smaller keeps its size (never scaled up). */
+  const PLACE_MAX = 0.5;
+  function fitScale(bb, fr) {
+    if (!bb || !fr || !(fr.wPt > 0) || !(fr.hPt > 0)) return 1;
+    const big = Math.max(bb[2] - bb[0], bb[3] - bb[1]), room = PLACE_MAX * Math.min(fr.wPt, fr.hPt);
+    return big > room && big > 0 ? room / big : 1;
+  }
   /**
-   * The design's drawing for the face being edited (its back when the back is being edited and it has one, else its front), as one new group centred where it was let
-   * go (the middle of the charm for the ⊕). Its size is the size it was made: nothing is scaled. When the charm already has its own cut line, the design's cut line is
-   * left out (a second outline would cut the charm through) and the line over the work area says so.
+   * The design's drawing for the face being edited (its back when the back is being edited and it has one, else its front), as one new group: the WHOLE charm (its outline
+   * and holes engraved as lines, its engraving and hatch as they are; LIB1), no larger than half the work area, centred on the charm (the ⊕) or where it was let go, kept
+   * inside the work area. One undo step; the Transform panel shows its new size as for any selection.
    */
   async function placeRow(row, version, client) {
     const s = S; if (!s) return;
@@ -857,11 +881,8 @@
     if (S !== s) return;
     const face = typeof ctx.face === 'function' ? ctx.face() : 'front';
     const fd = (face === 'back' && faces.back) || faces.front || faces.back;
-    let kids = (fd && fd.items || []).filter(Boolean);
-    const here = typeof ctx.items === 'function' ? ctx.items() : [];
-    const hasCut = list => list.some(it => it.role === 'cut' || (it.kind === 'group' && hasCut(it.children || [])));
-    let leftOut = 0;
-    if (hasCut(here)) { const k2 = kids.filter(it => it.role !== 'cut'); leftOut = kids.length - k2.length; kids = k2; }
+    const eng = engraveCuts((fd && fd.items || []).filter(Boolean));
+    const kids = eng.items;
     if (!kids.length) { sayLine(`“${name}” has nothing to place on this side.`); return; }
     // its box as drawn (the editor's own geometry when it is given, so words are measured with the editor's font engine)
     let bb = null;
@@ -874,15 +895,22 @@
       bb = un(bb, b);
     }
     const fr = typeof ctx.frame === 'function' ? ctx.frame() : null;
+    const k = fitScale(bb, fr);
     let at = client && typeof ctx.pointOf === 'function' ? ctx.pointOf(client[0], client[1]) : null;
     if (!at) at = fr ? [fr.x0 + fr.wPt / 2, fr.y0 + fr.hPt / 2] : [0, 0];
+    // (kept inside the work area: its scaled box never hangs over the artboard's edge)
+    if (fr && bb) {
+      const hw = (bb[2] - bb[0]) * k / 2, hh = (bb[3] - bb[1]) * k / 2, keep = (p, lo, hi, h) => (hi - lo >= 2 * h ? Math.min(Math.max(p, lo + h), hi - h) : (lo + hi) / 2);
+      at = [keep(at[0], fr.x0, fr.x0 + fr.wPt, hw), keep(at[1], fr.y0, fr.y0 + fr.hPt, hh)];
+    }
     const c = bb ? [(bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2] : at;
-    const roles = {}; kids.forEach(k => { roles[k.role] = (roles[k.role] || 0) + 1; });
+    const roles = {}; kids.forEach(k2 => { roles[k2.role] = (roles[k2.role] || 0) + 1; });
     const role = Object.keys(roles).sort((p, q) => roles[q] - roles[p])[0] || 'art';
     const reid = model.reid || (x => x);
+    const sk = +k.toFixed(6);
     const g = {
       kind: 'group', role, source: 'added', name: row.kind === 'master' ? name : `${name} · v${v}`, hidden: false, locked: false,
-      tx: +(at[0] - c[0]).toFixed(6), ty: +(at[1] - c[1]).toFixed(6), sx: 1, sy: 1, rot: 0,
+      tx: +(at[0] - c[0]).toFixed(6), ty: +(at[1] - c[1]).toFixed(6), sx: sk, sy: sk, rot: 0,
       children: kids.map(it => reid(strip(it))),
       // (where it came from, as plain values: they travel with the part into the design library and the laser files' records)
       ...(row.kind === 'master' ? { masterSku: row.sku } : { designId: row.id, designVersion: v })
@@ -892,8 +920,9 @@
     catch (err) { sayLine(`Not placed · ${(err && err.message) || err}`); return; }
     if (Array.isArray(ids) && ids.length && typeof ctx.select === 'function') { try { ctx.select(ids); } catch (_) { /* fine */ } }
     recentPush(row, v, 'placed');
-    log('designPlace', { designId: row.kind === 'design' ? row.id : null, version: row.kind === 'design' ? v : null, sku: row.sku || null, face, by: me() });
-    sayLine(`Placed “${name}”${row.kind === 'design' ? ` (v${v})` : ''} as one group${leftOut ? ' · its cut line was left out: this charm has its own' : ''}`);
+    log('designPlace', { designId: row.kind === 'design' ? row.id : null, version: row.kind === 'design' ? v : null, sku: row.sku || null, face, scale: sk, by: me() });
+    const mm = bb ? ` · ${+((bb[2] - bb[0]) * k * 25.4 / 72).toFixed(2)} × ${+((bb[3] - bb[1]) * k * 25.4 / 72).toFixed(2)} mm` : '';
+    sayLine(`Placed “${name}”${row.kind === 'design' ? ` (v${v})` : ''} as one group${mm}${k < 1 ? `, ${Math.round(k * 100)}% to fit half the work area` : ''}${eng.n ? ' · its outline is engraved as a line, not cut' : ''}`);
   }
   function sayLine(t) {
     const ctx = S && S.ctx;
