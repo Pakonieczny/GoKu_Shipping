@@ -2850,8 +2850,32 @@ const Orders = window.Orders = (() => {
         pullClick = pull(null).catch(e => { toast(e.message, "bad", 7000); agent({ bridge: true }, "warn", e.message); }).finally(() => { pullClick = null; go.removeAttribute("aria-busy"); });
       };
     }
+    ordDesignStudio(v);
     Sandbox.mountPanel(v);
     watch(v);
+  }
+  /* ODB (Paul, 9 Nov 2026: "The 'Design Studio' button is missing from the Orders tab"): a gold "Design Studio" button beside Pull orders that opens the "Design a charm" modal on its New design
+     side, the open path of the Design & Engrave tab's Charm Editor button (charm-nest-ce-masters.js newDesign, logged as designerNew), with the way back to this tab. The same look (.cnCeBtn,
+     charm-nest-activity.css: gold outline, hover / focus / pressed states). ONE node, put back beside Pull orders whenever the head is drawn, in the Real and the Sandbox workspaces alike. */
+  let odBtnEl = null;
+  function ordDesignStudio(v) {
+    const pull = v && v.querySelector("#ordPull"); if (!pull) return null;
+    if (!odBtnEl) {
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn cnCeBtn ordDesignBtn"; b.id = "ordDesignBtn";
+      b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5 6 12l2.8 6.5h6.4L18 12Z"/><path d="M12 3.5V11"/><circle cx="12" cy="12.6" r="1.5"/><path d="M8.8 21h6.4"/></svg><span>Design Studio</span>';   // (the Charm Editor button's pen nib)
+      b.addEventListener("click", () => {
+        const M = window.CharmNestCeMasters; if (b.disabled || b.getAttribute("aria-busy") === "true" || !M || typeof M.newDesign !== "function") return;
+        const o = { from: "ordersDesignStudio", back: { label: "Back to Orders", title: "Back to the Orders tab" } };
+        try { if (window.CNDesignLog && CNDesignLog.event) CNDesignLog.event("designerNew", { from: "ordersDesignStudio" }); } catch (_) { /* the log is a courtesy here */ }
+        b.setAttribute("aria-busy", "true");
+        Promise.resolve().then(() => M.newDesign(o)).catch(err => toast(`Design Studio: ${(err && err.message) || err}`, "bad", 6000)).finally(() => b.removeAttribute("aria-busy"));
+      });
+      odBtnEl = b;
+    }
+    const on = !!(window.CharmNestCeMasters && typeof window.CharmNestCeMasters.newDesign === "function");
+    odBtnEl.disabled = !on; odBtnEl.title = on ? "Design a charm: start from the charm library or a new outline, in the Charm Editor (saved as a design)" : "The Charm Editor is still loading";
+    if (pull.nextElementSibling !== odBtnEl) pull.after(odBtnEl);
+    return odBtnEl;
   }
   /** The chips under the bar for what narrows the list (not the search: it has its own ×): material, engraved, and the date range; none, and the row is not there. */
   function renderActive(v) {
@@ -2928,6 +2952,7 @@ const Orders = window.Orders = (() => {
     const running = B.run && !["complete", "stopped"].includes(B.run.status);
     const pull = v.querySelector("#ordPull");
     pull.disabled = !!running;
+    ordDesignStudio(v);   // (ODB: the Design Studio button, beside Pull orders: the same node, put back after a redraw)
     // between arrivals there is no Stop to press: say what the run is doing with the lines instead
     pull.title = !running ? "refresh open orders using the pull rule in Settings" : B.run.status === "processed" ? "the open run holds these pieces · new orders join it as they arrive" : "a run is open — stop it first, or its pieces would be replaced under it";
     // the search box always shows the search the list is narrowed by: the sheet window's "In Orders" set it before the
