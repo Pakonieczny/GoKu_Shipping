@@ -27590,7 +27590,8 @@ const SalesDays = window.SalesDays = (() => {
   let doc = null, at = 0, reading = null, lastRead = 0, follow = null, dayT = 0, tickT = 0;
   try { const k = JSON.parse(localStorage.getItem(key()) || "null"); if (k && k.doc) { doc = k.doc; at = +k.at || 0; } } catch (_) {}
   const now = () => { try { return window.Sandbox?.streaming?.() && window.SimClock ? SimClock.now() : Date.now(); } catch (_) { return Date.now(); } };
-  const save = () => { try { localStorage.setItem(key(), JSON.stringify({ doc, at })); } catch (_) {} };
+  // (kept only when it holds a day, and never while the sandbox is being reset: a reset leaves no copy behind, charm-nest-sandbox-families.js localStorage:sandbox)
+  const save = () => { try { if (window.CNWipe?.active || !doc || !Object.keys(doc.days || {}).length) return; localStorage.setItem(key(), JSON.stringify({ doc, at })); } catch (_) {} };
   /** The answer's days taken in (arrivalRecord's or getOrderDays'), and the head drawn again. */
   function take(days) {
     if (!days || typeof days !== "object" || !days.days) return;
