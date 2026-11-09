@@ -1379,9 +1379,104 @@
     return true;
   }
 
+  /* ═══ THE ERASER (CES3, Paul, 9 Nov 2026: "I'm also not seeing the erase option in the left-hand menu inside the charm editor. I need to be able to erase portions of a vectorized image or
+     any vectorized part of a charm" ... "Make sure this option reflects the exact icon and functionality of Adobe illustrator" ... "they must be in the left-hand menu"). Illustrator's Eraser
+     (⇧E), a button of its own in the Tools panel: drag across the work and what the swath covers is taken out of the shapes under it, as one undo step; with something selected only the
+     selection is erased (Illustrator's rule), else every unlocked, visible shape under the swath. [ and ] make it smaller and bigger (shown as the circle under the pointer); Alt-drag erases a
+     rectangle (Illustrator's marquee erase). Curves stay curves: the swath is Outline Stroke of the drag, taken away by Minus Front (the Pathfinder's own kernel). Words are not erased
+     (Create Outlines first, as in Illustrator); a line with no area (an open stroke) is cut with the Scissors. ═══ */
+  const ERASE = { KEY: 'ce.eraser', MIN_MM: 0.1, MAX_MM: 20, DEF_MM: 1 };
+  let eraseMm = (() => { try { const v = +(root.localStorage && root.localStorage.getItem(ERASE.KEY)); return fin(v) && v >= ERASE.MIN_MM && v <= ERASE.MAX_MM ? v : ERASE.DEF_MM; } catch (_) { return ERASE.DEF_MM; } })();
+  const ES = new WeakMap();   // ctx -> { pts, at, rect }
+  const esOf = ctx => ES.get(ctx) || ES.set(ctx, { pts: null, at: null, rect: false }).get(ctx);
+  const closedSub = sub => (sub || []).some(op => op && op[0] === 'h');
+  /** What the eraser can take from: the leaves (paths) under the swath box, unlocked and shown (their groups too), within the selection when there is one. */
+  function eraseTargets(ctx, box) {
+    const M = MD(), geo = ctx.geo, items = ctx.items(), ix = M.indexTree(items, geo), sel = new Set(ctx.selection());
+    const out = [], words = [], open = [];
+    for (const [id, e] of ix) {
+      const it = e.it; if (it.kind === 'group') continue;
+      const chain = e.anc.map(a => ix.get(a).it).concat(it);
+      if (chain.some(x => x.hidden || x.locked)) continue;
+      if (sel.size && !chain.some(x => sel.has(x.id))) continue;
+      let b = null; try { b = geo.drawn(it, e.P); } catch (_) { b = null; }
+      if (!b || b[2] < box[0] || b[0] > box[2] || b[3] < box[1] || b[1] > box[3]) continue;
+      if (it.kind === 'text') { words.push(id); continue; }
+      if (!(it.subpaths || []).length) continue;
+      if (!(it.subpaths || []).every(closedSub) && !it.fill) { open.push(id); continue; }
+      out.push(id);
+    }
+    return { ids: out, words, open };
+  }
+  /** The swath taken out of the targets → { items, n } (n: shapes changed) or null. */
+  function eraseWith(ctx, swath) {
+    const M = MD(), geo = ctx.geo;
+    let box = null; for (const sp of swath) for (const op of sp) for (const q of op.slice(1)) if (Array.isArray(q)) box = box ? [Math.min(box[0], q[0]), Math.min(box[1], q[1]), Math.max(box[2], q[0]), Math.max(box[3], q[1])] : [q[0], q[1], q[0], q[1]];
+    if (!box) return null;
+    const tg = eraseTargets(ctx, box);
+    if (!tg.ids.length) { ctx.say(tg.words.length ? 'Words are not erased: Type > Create Outlines (⇧⌘O) first, as in Illustrator' : tg.open.length ? 'An open line has no area to erase: cut it with the Scissors (C)' : 'Nothing to erase there (locked or hidden parts are never erased)', 3200); return null; }
+    const pk = picked(ctx.items(), tg.ids, geo, M), map = new Map(); let n = 0;
+    for (const e of pk.entries) {
+      const it = e.it; if (it.kind === 'group' || it.kind === 'text') continue;
+      const op = operandOf(e, geo, M), even = evenOf(it);
+      let r; try { r = kernel.pathfinder([op, { subpaths: swath }], 'minus'); } catch (er) { continue; }
+      const before = filledArea(op.subpaths, even), after = r && r.subpaths ? filledArea(r.subpaths, even) : before;
+      if (!(Math.abs(before - after) > Math.max(1e-6, before * 1e-6))) continue;
+      n++;
+      if (!r.subpaths.length) { map.set(it.id, []); continue; }
+      const made = Object.assign(newPath(paintOf(it, M), r.subpaths, nameOf(it), M), { id: it.id, source: it.source || 'added' }, even ? { evenOdd: true } : {});
+      map.set(it.id, [made]);
+    }
+    if (!n) { ctx.say('Nothing to erase there', 2000); return null; }
+    return { items: spliceIn(pk.items, map), n };
+  }
+  const ptsSub = pts => [[['m', pts[0]]].concat(pts.slice(1).map(q => ['l', q]))];
+  const rectSub = (a, b) => [[['m', [Math.min(a[0], b[0]), Math.min(a[1], b[1])]], ['l', [Math.max(a[0], b[0]), Math.min(a[1], b[1])]], ['l', [Math.max(a[0], b[0]), Math.max(a[1], b[1])]], ['l', [Math.min(a[0], b[0]), Math.max(a[1], b[1])]], ['h']]];
+  const pxPt = ctx => { const V = ctx.view(); return Math.hypot(V[0], V[1]) || 1; };
+  const eraser = {
+    id: 'eraser', title: 'Eraser', key: 'Shift+E', cursor: 'crosshair',
+    icon: SV('<path d="M13.6 4.6a1.6 1.6 0 0 1 2.3 0l3.5 3.5a1.6 1.6 0 0 1 0 2.3L11 18.8H6.6l-2.2-2.2a1.6 1.6 0 0 1 0-2.3Z"/><path d="m9.2 9 5.8 5.8"/><path d="M11 18.8h8.6"/>'),
+    tip: 'Erase', hint: 'Drag across a shape to erase that part of it · [ and ] change the size · Alt-drag erases a rectangle · with something selected, only it is erased',
+    onArm(ctx) { ctx.say(`Eraser · ${trimNum(eraseMm, 2)} mm · [ smaller · ] bigger`, 1800); },
+    onDown(ctx, ev, p) { if (ev.button) return; const st = esOf(ctx); st.pts = [[p.x, p.y]]; st.rect = !!ev.altKey; st.at = [p.x, p.y]; ctx.redraw(); },
+    onMove(ctx, ev, p) {
+      const st = esOf(ctx); st.at = [p.x, p.y];
+      if (st.pts && (ev.buttons & 1)) { const l = st.pts[st.pts.length - 1]; if (st.rect) st.pts = [st.pts[0], [p.x, p.y]]; else if (Math.hypot(p.x - l[0], p.y - l[1]) * pxPt(ctx) >= 1.5) st.pts.push([p.x, p.y]); }
+      ctx.redraw();
+    },
+    onUp(ctx) {
+      const st = esOf(ctx), pts = st.pts, rect = st.rect; st.pts = null; st.rect = false;
+      if (!pts) return;
+      let swath;
+      try {
+        if (rect) { if (pts.length < 2) { ctx.redraw(); return; } swath = rectSub(pts[0], pts[1]); }
+        else { const w = eraseMm * PT, line = pts.length > 1 ? pts : [pts[0], [pts[0][0] + 1e-3, pts[0][1]]]; swath = kernel.outlineStroke(ptsSub(line), w); }
+      } catch (er) { ctx.say('The Eraser needs the page\'s geometry: reload the page', 3200); return; }
+      const r = swath && swath.length ? eraseWith(ctx, swath) : null;
+      if (r) { applyTree(ctx, r.items, null); ctx.commit('Eraser'); log('editorOp', { op: 'eraser', face: ctx.face(), n: r.n }); }
+      ctx.redraw();
+    },
+    onKey(ctx, ev) {
+      if (ev.key !== '[' && ev.key !== ']') return false;
+      const step = eraseMm < 1 ? 0.1 : eraseMm < 5 ? 0.5 : 1;
+      eraseMm = clamp(+(eraseMm + (ev.key === ']' ? step : -step)).toFixed(2), ERASE.MIN_MM, ERASE.MAX_MM);
+      try { if (root.localStorage) root.localStorage.setItem(ERASE.KEY, String(eraseMm)); } catch (_) { /* per computer */ }
+      ctx.say(`Eraser · ${trimNum(eraseMm, 2)} mm`, 1200); ctx.redraw(); ev.preventDefault(); return true;
+    },
+    overlay(ctx) {
+      const st = esOf(ctx), k = pxPt(ctx), r = Math.max(2, eraseMm * PT * k / 2);
+      let h = '';
+      if (st.pts && st.rect && st.pts.length > 1) { const a = ctx.stageOf(st.pts[0][0], st.pts[0][1]), b = ctx.stageOf(st.pts[1][0], st.pts[1][1]); h += `<rect x="${Math.min(a[0], b[0]).toFixed(1)}" y="${Math.min(a[1], b[1]).toFixed(1)}" width="${Math.abs(b[0] - a[0]).toFixed(1)}" height="${Math.abs(b[1] - a[1]).toFixed(1)}" fill="rgba(255,255,255,.35)" stroke="#378ef0" stroke-dasharray="3 2"/>`; }
+      else if (st.pts) h += `<path d="${st.pts.map((q, i) => { const s = ctx.stageOf(q[0], q[1]); return (i ? 'L' : 'M') + s[0].toFixed(1) + ' ' + s[1].toFixed(1); }).join('')}" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="${(2 * r).toFixed(1)}" stroke-linecap="round" stroke-linejoin="round"/>`;
+      if (st.at) { const s = ctx.stageOf(st.at[0], st.at[1]); h += `<circle cx="${s[0].toFixed(1)}" cy="${s[1].toFixed(1)}" r="${r.toFixed(1)}" fill="none" stroke="#000" stroke-width="1"/><circle cx="${s[0].toFixed(1)}" cy="${s[1].toFixed(1)}" r="${(r + 1).toFixed(1)}" fill="none" stroke="#fff" stroke-width="1"/>`; }
+      return h;
+    }
+  };
+
   function install() {
     if (!doc) return;
     const CE = root.CharmEditor || (root.CharmEditor = {});
+    { const T = Array.isArray(CE.tools) ? CE.tools : (CE.tools = []); if (!T.some(t => t && t.id === 'eraser')) T.push(eraser); }   // (CES3: the Eraser, its own button in the Tools panel)
     CE.commands = CE.commands && typeof CE.commands === 'object' ? CE.commands : {};
     for (const id of Object.keys(commands)) if (!CE.commands[id]) CE.commands[id] = commands[id];
     CE.beforeDuplicate = beforeDuplicate;
@@ -1400,5 +1495,5 @@
     (CE.onClose = Array.isArray(CE.onClose) ? CE.onClose : []).push(ctx => { closeFly(); last = null; if (ctx && ctx.__opsOff) ctx.__opsOff(); });
   }
 
-  return { kernel, ops, commands, install, again: beforeDuplicate, MM, PT };
+  return { kernel, ops, commands, install, again: beforeDuplicate, MM, PT, eraser, eraseWith, eraseSize: () => eraseMm };
 });

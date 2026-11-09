@@ -398,6 +398,13 @@ const ListMedia = (() => {
   }
   /** MONOTHUMB: a monogram made (or changed) after its row was drawn shows at once in every Vector design box of that line on the page (the service tells, Engrave monoMoved). */
   function monoSweep(){ try{ for(const el of document.querySelectorAll('[data-vector],#owVector')){ const r=el._mvRow; if(r && !el.querySelector('.mwThumb'))monoInto(el,r); } }catch(_){ /* nothing shown */ } }
+  /** CES3: `host` drawn again, once, the moment it is laid out (a ResizeObserver: no timer, nothing while it stays hidden). Its picture "as made" is drawn to the box's own shape, which a
+   *  box that is not on screen does not have: the order window's Vector design came up in the 4:3 default inside its square box, and kept it, as nothing else drew it again. */
+  function drawWhenSized(host){
+    if(host._mvSized || typeof ResizeObserver!=='function')return;
+    const ro=new ResizeObserver(()=>{if(!host.isConnected){ro.disconnect();host._mvSized=null;return;}if(!host.getClientRects().length || !host.clientWidth)return;ro.disconnect();host._mvSized=null;if(host._mvRow)vectorInto(host,host._mvRow);});
+    host._mvSized=ro;ro.observe(host);
+  }
   function vectorInto(host,row) {
     if(host && row)host._mvRow=row;   // (MONOTHUMB: monoSweep finds the line of a box drawn before its monogram was made)
     if(host && row && monoInto(host,row))return;   // (MONOTHUMB, above)
@@ -407,6 +414,7 @@ const ListMedia = (() => {
     // the piece's pool row); every other line, the Vector design as before. Its box keeps the picture it shows until the new one is drawn (soft).
     // (BOXFIX, Paul 28 Oct 2026: "thumbnail preview boxes must be locked into the same size always": the box is the list's fixed size (charm-nest-activity.css); the picture is drawn to its shape, at the screen's density)
     let made=null;try{made=host && row && window.CharmNestMadeThumb ? window.CharmNestMadeThumb.forLine(row,host) : null;}catch(e){made=null;console.warn('made thumbnail',e);}
+    if(made && host && !host.getClientRects().length)drawWhenSized(host);   // (CES3: a box drawn while it is not on screen (the order window paints its Vector design before it is shown) has no size: its picture is made for the box's real shape once it has one)
     const was=jobs.get(host),soft=!!(was && String(was.key).startsWith('made:')) || !!made;
     // (the box says what it shows: its aria-label, which ListZoom's tooltip begins with; THUMBBIG)
     if(host){if(made){if(!host.dataset.vecLabel)host.dataset.vecLabel=host.getAttribute('aria-label') || 'Vector design';host.dataset.made=String(made.pieces || 1);host.setAttribute('aria-label',made.faces==='both'?'As it will be made · front and back':'As it will be made');}else if(host.dataset.made){delete host.dataset.made;host.setAttribute('aria-label',host.dataset.vecLabel || 'Vector design');}}
@@ -10999,6 +11007,35 @@ const Engrave = window.Engrave = (() => {
   /** TYPEWORDS: the words of a face whose job has words but no placement in this frame (a face still being fitted, a shelved face that could not be built again, the piece made from its master
    *  for its order in another frame): ONE Type of them all the same, in the job's font at its size (else a size the face holds), in the middle of the face. `placed: false`: where they stand
    *  is no place the person chose until they move them. null: no words. */
+  /** CES3: the engraving card's staged state of the piece `t` (its panel's draft: { choice, faces: { front: { text, font, pos }, back } }), or null when nothing is staged. */
+  function charmEditStage(t, pj) {
+    const keys = new Set(); for (const j of [pj && pj.front, pj && pj.back, t && t.job].filter(Boolean)) { try { keys.add(pieceKeyOfJob(j)); } catch (_) { /* none */ } }
+    const row = t && (t.row || (t.job && t.job.row)); if (row && row.key) { keys.add(String(row.key)); if (t.job && t.job.slot) keys.add(row.key + "#" + t.job.slot); }
+    const PNL = window.CharmNestEngravePanel, any = pj && (pj.front || pj.back) || (t && t.job) || null;
+    for (const k of keys) {
+      let st = null; try { st = svStageNow(k) || (PNL && typeof PNL.stageOf === "function" ? PNL.stageOf(k) : null); } catch (_) { st = null; }
+      if (st && typeof st === "object" && st.faces) return any ? svNorm(st, any) : { choice: st.choice || st.mode || "none", faces: { front: Object.assign({ text: "", font: "", pos: null }, st.faces.front), back: Object.assign({ text: "", font: "", pos: null }, st.faces.back) } };
+    }
+    return null;
+  }
+  /** CES3: the staged words are the job's own words (spaces, line breaks and letter case aside). */
+  const charmEditSameWords = (text, j) => { const n = x => String(x || "").replace(/\s+/g, "").toUpperCase(); return !!j && n(text) === n((j.lines && j.lines.length ? j.lines.join("\n") : j.text) || "") && !!(j.fit || j.writtenFit); };
+  /** CES3: the words staged in the engraving card (not approved yet) as ONE Type on the face: the staged font, at the staged place (else where the face's fit put its words, else the middle). */
+  function charmEditStagedWords(j, view, face, doc, sf) {
+    const lines = String(sf.text || "").split(/\r?\n/).map(x => x.trim()).filter(Boolean); if (!lines.length) return null;
+    const Mx = window.CharmEditor && window.CharmEditor.model, eng = window.CharmNestCeText ? window.CharmNestCeText.textToPaths : charmEditText, fr = doc && doc.frame;
+    if (!Mx || !fr) return null;
+    const fontKey = sf.font || (j ? fontIdOf(j) : O.DEFAULT_FONT);
+    let size = +((j && j.fit && j.fit.size) || (j && j.writtenFit && j.writtenFit.size)) || 0;
+    if (!(size > 0)) size = Math.max(1.5, Math.min(fr.hPt * 0.3, fr.wPt / Math.max(4, lines.reduce((a, l) => Math.max(a, l.length), 0) * 0.6)));
+    const it = { id: CHARM_EDIT_WORDS + face + "-" + Date.now().toString(36), kind: "text", role: "hatch", source: "engrave", name: `Engraving (not approved yet) · ${lines.join(" ").slice(0, 40)}`, text: lines.join("\n"), fontKey,
+      sizePt: Math.round(size * 1e6) / 1e6, align: "center", tx: 0, ty: 0, sx: 1, sy: 1, rot: 0, engraving: { job: j ? j.key : null, face, placed: false, staged: true } };
+    let b = null; try { const r = eng(it.text, fontKey, it.sizePt, { align: "center" }); b = r && Mx.bboxOf(r.subpaths || []); } catch (_) { b = null; }
+    const c = b ? [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2] : [0, 0];
+    let at = [fr.x0 + fr.wPt / 2, fr.y0 + fr.hPt / 2];
+    try { const p = j && charmEditSameView(j.view, view) ? (svPlaceOf(j, sf.pos) || (j.fit && Array.isArray(j.fit.centre) ? j.fit.centre : null)) : null; if (p && p.every(Number.isFinite)) at = [p[0], -p[1]]; } catch (_) { /* the middle */ }
+    return Object.assign(it, { tx: Math.round((at[0] - c[0]) * 1e9) / 1e9, ty: Math.round((at[1] - c[1]) * 1e9) / 1e9 });
+  }
   function charmEditWordsLoose(j, view, face, doc) {
     if (!j || !view || ["none", "skipped"].includes(j.state) || (j.fit && j.fit.artOnly)) return null;
     const pick = l => (Array.isArray(l) ? l : []).map(s => String(s == null ? "" : s).trim()).filter(Boolean);
@@ -11149,7 +11186,7 @@ const Engrave = window.Engrave = (() => {
     if (charmEditOpen && (!want || charmEditOpen.want === want)) { try { window.CharmEditor?.raise?.(); } catch (_) { /* CES1: the editor already up on this piece is brought in front of every window */ } return charmEditOpen.p; }
     if (charmEditOpen) charmEditOpen.tok.gone = true;
     const o = { want, tok: { gone: false }, p: null };
-    o.p = openCharmEditorOnce(x, o.tok).finally(() => { if (charmEditOpen === o) charmEditOpen = null; });
+    o.p = openCharmEditorOnce(x, o.tok).finally(() => { if (charmEditOpen === o) charmEditOpen = null; if (!o.tok.after && !(window.CharmEditor && CharmEditor.current)) { try { CharmEditor.release && CharmEditor.release(); } catch (_) { /* CES3: nothing opened in the held workspace's place */ } } });
     charmEditOpen = o;
     return o.p;
   }
@@ -11178,21 +11215,24 @@ const Engrave = window.Engrave = (() => {
   /** CES1: the card after a piece's Save (charm-nest-ce-masters.js afterPiece): what was kept, then Done, Keep editing (the piece again), Back to engraving (from its order), Replace on the
    *  order… (the piece made again from this drawing, a fix of it). Not over another charm asked for meanwhile ("Save and switch", another Edit Design), nor after "Save and go back". */
   function charmEditAfter(x, t, tok, res, o) {
-    const Ms = window.CharmNestCeMasters; if (!Ms || typeof Ms.afterPiece !== "function" || !res || res.switched || (o && o.wentBack) || (tok && tok.gone)) return;
-    if (window.CharmEditor && CharmEditor.current) return;   // (an editor is up again: the card's line said it)
+    const Ms = window.CharmNestCeMasters; if (!Ms || typeof Ms.afterPiece !== "function" || !res || res.switched || (o && o.wentBack) || (tok && tok.gone)) return false;
+    if (window.CharmEditor && CharmEditor.current) return false;   // (an editor is up again: the card's line said it)
+    const letGo = () => { try { window.CharmEditor?.release?.(); } catch (_) { /* CES3: the held workspace goes once every window after Save is answered */ } };
     const poolId = t.poolIds[0], row = t.row || (t.job && t.job.row) || null, rid = row && row.order ? String(row.order.receiptId) : "";
     const all = ((row && row.poolIds) || []).map(String), at = Math.max(0, all.indexOf(poolId)), sku = (row && row.spec && row.spec.designSku) || (row && row.line && row.line.sku) || (t.charm && t.charm.name) || "This piece";
     const C = window.CharmNestCustomPiece, canReplace = !!(rid && C && typeof C.open === "function" && window.Pool && typeof Pool.addCustomPiece === "function");
     const back = t.job && t.from !== "card" ? { label: "Back to engraving", title: "This piece's engraving card in Design & Engrave" } : null;
     // (CES2, Paul 9 Nov 2026: "I want the pop-up to open on every Save": the Send to sheet pop-up opens over the card at once, set as a fix of this piece; a save that failed in part does not open it)
     const designOf = () => Promise.resolve(o.design).then(d => d && d.id ? d : (window.CharmNestDesigns ? (CharmNestDesigns.rows() || []).find(r => r && r.id === "pc-" + poolId) || null : null));
-    const over = canReplace && !o.partial ? () => designOf().then(d => d ? C.open({ poolId, designId: d.id, version: d.version, after: true }) : null) : null;
+    const over = canReplace && !o.partial ? () => designOf().then(d => d ? C.open({ orderId: rid, designId: d.id, version: d.version, after: true }) : null) : null;
     Promise.resolve(Ms.afterPiece({ title: o.title, name: sku, where: `${rid ? `order ${rid} · ` : ""}piece ${at + 1} of ${Math.max(1, all.length)}`, lines: o.lines, bad: !!o.bad, back, replace: canReplace ? {} : null, over }))
       .then(c => {
-        if (c === "again") setTimeout(() => { openCharmEditor(x).catch(e => toast(`Charm Editor: ${(e && e.message) || e}`, "bad", 6000)); }, 0);
-        else if (c === "back") charmEditBack(t);
-        else if (c === "replace") Promise.resolve(o.design).then(d => C.open(Object.assign({ poolId }, d && d.id ? { designId: d.id, version: d.version } : { designId: "pc-" + poolId }))).catch(e => toast(`Replace on the order: ${(e && e.message) || e}`, "bad", 6000));
-      }, () => { /* put away */ });
+        if (c === "again") { try { window.CharmEditor?.release?.("Opening this piece again…"); } catch (_) { /* fine */ } setTimeout(() => { openCharmEditor(x).catch(e => { letGo(); toast(`Charm Editor: ${(e && e.message) || e}`, "bad", 6000); }); }, 0); }
+        else if (c === "back") { letGo(); charmEditBack(t); }
+        else if (c === "replace") Promise.resolve(o.design).then(d => C.open(Object.assign({ orderId: rid, fromEditor: true }, d && d.id ? { designId: d.id, version: d.version } : { designId: "pc-" + poolId }))).catch(e => toast(`Replace on the order: ${(e && e.message) || e}`, "bad", 6000)).finally(letGo);
+        else letGo();
+      }, letGo);
+    return true;
   }
   async function openCharmEditorOnce(x, tok) {
     const AE = window.CharmNestArtEdit, CE = window.CharmEditor;
@@ -11211,7 +11251,23 @@ const Engrave = window.Engrave = (() => {
     for (const face of ["front", "back"]) { views[face] = charmEditView(poolId, charm, face, sku); docs[face] = charmEditDoc(charm, views[face], face, placed); }
     // (CETEXT, Paul 28 Oct 2026: "the text that is currently on the charm does not show up in the editor": the words each face's job has fitted, as an editable text on that face, on top;
     //  TYPEWORDS: a face with words and no placement in this frame hands them in all the same, in the middle of the face)
-    { const pj = jobsOfPiece(poolId); for (const face of ["front", "back"]) { let w = null; try { w = charmEditWords(pj[face], views[face], face) || charmEditWordsLoose(pj[face], views[face], face, docs[face]); } catch (e) { console.warn("charm edit: the words", e); } if (w) { docs[face].items.push(w); words[face] = { id: w.id, job: pj[face], item: w }; } } }
+    const stagedOnly = new Set();   // (CES3: words staged in the engraving card for a face with no job yet: shown, never kept as drawing)
+    { const pj = jobsOfPiece(poolId), stg = charmEditStage(t, pj);
+      for (const face of ["front", "back"]) {
+        let w = null;
+        // (CES3, Paul 9 Nov 2026: "every change made in the engraving modal is immediately visible [in] the charm editor even when the approve button has not been pressed yet": the card's
+        //  staged choice and words (CharmNestEngravePanel's draft) are handed in over what the jobs keep: a face staged as not engraved has no words; staged words that are not the job's are
+        //  the words the editor shows, in the staged font, at the staged place)
+        const on = stg ? svChoiceFaces(stg.choice).includes(face) : null, sf = stg && stg.faces[face];
+        try {
+          if (on === false) w = null;
+          else if (on && sf && sf.text.trim() && !charmEditSameWords(sf.text, pj[face])) w = charmEditStagedWords(pj[face], views[face], face, docs[face], sf);
+          else w = charmEditWords(pj[face], views[face], face) || charmEditWordsLoose(pj[face], views[face], face, docs[face]);
+        } catch (e) { console.warn("charm edit: the words", e); }
+        if (!w) continue;
+        docs[face].items.push(w);
+        if (pj[face]) words[face] = { id: w.id, job: pj[face], item: w }; else stagedOnly.add(String(w.id));
+      } }
     // (TYPEWORDS: the words an earlier save left in the drawing as outlines, sorted by the rule of charm-nest-ce-words.js before the editor opens; nothing is written until Save)
     let repair = { fix: { front: [], back: [] }, said: [] };
     try { repair = await charmEditRepair(poolId, docs, words, job); } catch (e) { console.warn("charm edit: the outlined words", e); }
@@ -11246,8 +11302,9 @@ const Engrave = window.Engrave = (() => {
         const ids = [...d.removed, ...Object.keys(d.changed), ...d.added.map(a => a && a.id)].map(String);
         // (TYPEWORDS: the engraving's words are never a part of the drawing, changed or not: they go to the job, below. A face whose drawing nothing changed is not saved, unless an outline copy
         //  of the words is to leave it: the repair)
-        if (!fix.length && ids.every(id => id === wid)) continue;
-        const changes = charmEditChanges(charm, docs[face].items, r.faces[face].items, d, face, wid ? new Set([wid]) : null);
+        if (!fix.length && ids.every(id => id === wid || stagedOnly.has(id))) continue;
+        const skip = new Set([wid, ...stagedOnly].filter(Boolean));
+        const changes = charmEditChanges(charm, docs[face].items, r.faces[face].items, d, face, skip.size ? skip : null);
         // (SHAREDSHAPE, Paul 29 Oct 2026: the back holds no part of the drawing: its shape, changed there or not, is the front's (the editor made it there too) and goes with the front's record)
         if (face === "back") { changes.removed = []; changes.changed = {}; changes.added = changes.added.filter(a => a && a.role !== "cut"); }
         if (!(changes.removed.length + changes.added.length + Object.keys(changes.changed).length) && !(charm.artEdit && charm.artEdit[face])) continue;   // (EDITSAVE: nothing on this face for the piece to carry, and no edit of it to take off: no save of it)
@@ -11279,20 +11336,20 @@ const Engrave = window.Engrave = (() => {
       return lines.length ? { title: "The cut line changed", lines, proceed: "Save anyway", text: "This piece is already on a sheet. Save anyway keeps your change: that sheet keeps its old files and goes to no set until the piece is moved clear in Manual Control or the sheet is nested again. Or keep editing the shape." } : null;
     };
     const startFace = job && t.from === "card" ? faceOf(job) : "front";
-    let res = null, again = null, todo = [], wordsNow = {}, kept = [], wordsTodo = [];
+    let res = null, again = null, todo = [], wordsNow = {}, kept = [], wordsTodo = [], afterShown = false;
     const done = [], records = {};
     try {
       for (;;) {
         if (host) host.addEventListener("cancel", keepOpen);
         // (TYPEWORDS: what the repair found is said over the work as it opens: a line, not a dialog)
         if (!again && repair.said.length) setTimeout(() => { try { const cur = CE.current; if (cur && cur.ctx && typeof cur.ctx.say === "function") cur.ctx.say([...new Set(repair.said)].join(" · "), 9000); } catch (_) { /* the Layers say it too */ } }, 60);
-        try { res = await CE.open(Object.assign({ title: sku, subtitle, faces: again ? again.faces : docs, startFace: again ? again.face : startFace, fonts, textToPaths: charmEditText, lockRoles: ["cut"], back, host, check }, again ? { base: docs, notice: again.notice } : {})); }   // (CETEXT: the words open unselected, as everything does: a picture imported first goes into the charm's outline, not into the words' box; a click on them shows their controls)
+        try { res = await CE.open(Object.assign({ title: sku, subtitle, faces: again ? again.faces : docs, startFace: again ? again.face : startFace, fonts, textToPaths: charmEditText, lockRoles: ["cut"], back, host, check, hold: true }, again ? { base: docs, notice: again.notice } : {})); }   // (CETEXT: the words open unselected, as everything does: a picture imported first goes into the charm's outline, not into the words' box; a click on them shows their controls)
         finally { if (host) setTimeout(() => host.removeEventListener("cancel", keepOpen), 0); }
         if (!res) return null;   // (Cancel, the ×, Esc, Back with nothing kept: nothing is written)
         const p = planOf(res); todo = p.todo; wordsNow = p.wordsNow; kept = p.kept; wordsTodo = p.wordsTodo;
         if (!todo.length && !wordsTodo.length) {
           if (kept.length && job) charmEditTell(t, `The ${kept.join(" and ")} words are the engraving's: they stay on the card · to engrave none, empty its words box or press No engraving`, false);
-          charmEditAfter(x, t, tok, res, { wentBack, title: "Saved · nothing changed", lines: [kept.length ? `The ${kept.join(" and ")} words are the engraving's: they stay on the card` : "Nothing in the drawing changed, so nothing new was kept for this piece."] });   // (CES1: the card after every Save)
+          afterShown = charmEditAfter(x, t, tok, res, { wentBack, title: "Saved · nothing changed", lines: [kept.length ? `The ${kept.join(" and ")} words are the engraving's: they stay on the card` : "Nothing in the drawing changed, so nothing new was kept for this piece."] });   // (CES1: the card after every Save)
           return null;
         }
         if (p.refused.length) { wentBack = false; again = { faces: res.faces, face: p.refused[0].face, notice: { lines: p.refused } }; continue; }   // (the check said yes and the plan now says no: the editor again, never a save lost)
@@ -11309,7 +11366,7 @@ const Engrave = window.Engrave = (() => {
             charmEditTell(t, `Saved the ${[...new Set(done)].join(" and ")} only · Not saved · ${why}`, true);
             charmEditLog("editorSave", { poolId, poolIds: t.poolIds, orderId: order || null, sku, faces: [...new Set(done)], by, from: t.from });
             charmEditEverywhere(t.poolIds, order);   // (CES1: every view of this piece follows what was kept)
-            charmEditAfter(x, t, tok, res, { wentBack, bad: true, partial: true, title: "Saved in part", lines: [`The ${[...new Set(done)].join(" and ")} is saved; the rest is not: ${why}`, "Keep editing opens this piece again, as saved, to save the rest."] });
+            afterShown = charmEditAfter(x, t, tok, res, { wentBack, bad: true, partial: true, title: "Saved in part", lines: [`The ${[...new Set(done)].join(" and ")} is saved; the rest is not: ${why}`, "Keep editing opens this piece again, as saved, to save the rest."] });
             return { saved: [...new Set(done)], records };
           }
           // (CES1: a "Save and switch": another charm is in the editor now; this save's failure is said, the editor is not taken from the charm asked for)
@@ -11363,9 +11420,9 @@ const Engrave = window.Engrave = (() => {
       for (const j of jobs) { const own = faceOf(j), other = faces.find(f => f !== own), want = faces.includes(own) || !other ? own : otherFaceOf(j) === other ? other : own; if (want !== viewFaceOf(j) || want !== own) setViewFace(j, want); }   // (the other face shown is drawn again from the new charm)
       try { render(); } catch (_) { /* drawn with the next render */ }
       charmEditEverywhere(t.poolIds, order);   // (CES1: every view of this piece and its order shows the save at once)
-      charmEditAfter(x, t, tok, res, { wentBack, design: designP, bad: savedBad, title: faces.length ? "Saved" : "Saved · the words", lines: savedLines });   // (CES1: the card after every Save)
+      afterShown = charmEditAfter(x, t, tok, res, { wentBack, design: designP, bad: savedBad, title: faces.length ? "Saved" : "Saved · the words", lines: savedLines });   // (CES1: the card after every Save)
       return { saved: faces, records };
-    } finally { if (savingArt) { for (const id of t.poolIds) if (ART_SAVES.get(String(id)) === savingArt) ART_SAVES.delete(String(id)); savingArt.end(); } if (wentBack) charmEditBack(t); }
+    } finally { if (tok) tok.after = afterShown; if (savingArt) { for (const id of t.poolIds) if (ART_SAVES.get(String(id)) === savingArt) ART_SAVES.delete(String(id)); savingArt.end(); } if (wentBack) charmEditBack(t); }
   }
   /* EDITDESIGN (Paul, 28 Oct 2026, order 4203083230: "When I press the 'Edit Design' button ... the engraving text is not present in the Charm ... when I enter the Charm Editor from the Engraving Modal
      the text appears correctly"). The words are handed in from the face's job (charmEditWords: its fit, in its own view); a WRITTEN face whose placement the upkeep let go of (shelveWritten) has
