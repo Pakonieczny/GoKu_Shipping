@@ -4877,7 +4877,7 @@ const Pool = window.Pool = (() => {
       charm.order = row.order.receiptId; charm.orderDate = +row.order.createTs || 0; charm.arrivedAt = row.arrivedAt || 0; charm.orderInfo = { receiptId: row.order.receiptId, transactionId: row.line.transactionId, sku: ear.sku, copy, quantity: count, form: sp.form, size: sp.size };
       charm.poolId = poolId; charm.metal = sp.material; charm.lineKey = row.key; charm.pinned = null; charm.excluded = false; if (+row.frontAt > 0) charm.frontAt = +row.frontAt; else delete charm.frontAt;
       if (mine) Object.assign(charm, mine);   // side, mirror, bodyIndex, groupKey, groupSize: only a piece of an earring pair carries them (a counted necklace's pieces: groupKey and groupSize)
-      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: row.order.receiptId, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: ear.sku, material: sp.material, size: sp.size || null, form: sp.form || null, chain: sp.chain || null, copy, quantity: count, charmHash: charm.hash, masterHash: ear.entry.masterHash || null, aiPath: sizeEntry(ear.entry, sp.size).aiPath, engrave: !!(row.engrave && row.engrave.needed) && !(byBody && byBody.blank[copy - 1]), state: "ready", lineKey: row.key, updateTs: row.order.updateTs, ...(mine || {}) });
+      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: row.order.receiptId, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, ...(+row.frontAt > 0 ? { frontAt: +row.frontAt } : {}), transactionId: row.line.transactionId, sku: ear.sku, material: sp.material, size: sp.size || null, form: sp.form || null, chain: sp.chain || null, ...(Array.isArray(sp.optionNotes) && sp.optionNotes.length ? { optionNote: sp.optionNotes.join(" · ").slice(0, 240) } : {}), copy, quantity: count, charmHash: charm.hash, masterHash: ear.entry.masterHash || null, aiPath: sizeEntry(ear.entry, sp.size).aiPath, engrave: !!(row.engrave && row.engrave.needed) && !(byBody && byBody.blank[copy - 1]), state: "ready", lineKey: row.key, updateTs: row.order.updateTs, ...(mine || {}) });
       // (ART EDIT, Paul 27 Oct 2026: a line pooled again keeps the pool ids it had; a piece whose own artwork was edited, its pool row says so, is made with that edit: charm-nest-art-edit.js piece)
       charms.push(typeof CharmNestArtEdit !== "undefined" ? await CharmNestArtEdit.piece(charm, poolId, B.pool.rows.get(poolId)) : charm);
     }
@@ -20699,8 +20699,8 @@ const Review = window.Review = (() => {
       const cands = guess ? [] : optionCharms(p, r), designFirst = !guess && cands.length > 0;
       c.innerHTML = head("Needs mapping", `${O.shownText(p.optionName)}: ${O.shownText(p.optionValue)}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
         `${p.note ? `<div class="why">${esc(p.note)}</div>` : p.letter ? `<div class="why">${esc(p.letter.why)}</div>` : ""}<div class="ask">What does this option decide?</div>
-        <div class="fixes pick">${CHOICES.map(([v, f, lbl]) => `<button class="btn ${v === guess ? "gold" : "ghost"} sm" data-pick="${v}" data-field="${f}">${lbl}</button>`).join("")}<button class="btn ${designFirst ? "gold" : "ghost"} sm" data-a="design" title="each value of this option is its own charm (a zodiac sign, a birthstone…)">The charm itself…</button><button class="btn ghost sm" data-a="ignore" title="it changes nothing about what gets made">Nothing — ignore it</button><button class="btn ghost sm" data-a="other">Something else…</button></div>
-        <div class="fixes design${designFirst ? "" : " hidden"}"><span class="dsFor">“${esc(p.optionValue)}” on listing ${esc(p.listingId)} is</span>${cands.map(x => `<button class="btn ghost sm dsPick" data-dsku="${esc(x.sku)}" title="${esc(x.why ? x.why + " · " : "")}use ${esc(x.sku)} from the master index">${Master.pictureTag(Master.entryFor(x.sku))}${esc(x.sku)}</button>`).join("")}<input list="cnMasterSkus" data-f="dsku" placeholder="${cands.length ? "or another charm…" : "pick the charm from the master index…"}"><button class="btn gold sm" data-a="dsku">Use this charm</button></div>
+        <div class="fixes pick">${CHOICES.map(([v, f, lbl]) => `<button class="btn ${v === guess ? "gold" : "ghost"} sm" data-pick="${v}" data-field="${f}">${lbl}</button>`).join("")}<button class="btn ${designFirst ? "gold" : "ghost"} sm" data-a="design" title="each value of this option is its own charm (a zodiac sign, a birthstone…)">The charm itself…</button><button class="btn ghost sm" data-a="ignore" title="it changes nothing about what gets made">Nothing — ignore it</button>${p.oneSku ? `<button class="btn ghost sm" data-a="ignoreAll" title="Etsy keeps one SKU (${esc(p.oneSku)}) for every choice of this listing: “${esc(O.shownText(p.optionName))}” never changes the charm, whatever the buyer picks (every choice, a new one too); every order held on it alone goes back in line">This option never changes the charm (all choices)</button>` : ""}<button class="btn ghost sm" data-a="other">Something else…</button></div>
+        <div class="fixes design${designFirst ? "" : " hidden"}"><span class="dsFor">“${esc(p.optionValue)}” on listing ${esc(p.listingId)} is</span>${cands.map(x => `<button class="btn ghost sm dsPick" data-dsku="${esc(x.sku)}" title="${esc(x.why ? x.why + " · " : "")}use ${esc(x.sku)} from the master index">${Master.pictureTag(Master.entryFor(x.sku))}${esc(x.sku)}</button>`).join("")}<input list="cnMasterSkus" data-f="dsku" placeholder="${cands.length ? "or another charm…" : "pick the charm from the master index…"}"><button class="btn gold sm" data-a="dsku">Use this charm</button><label class="scopeOne" title="the charm is kept for every value of “${esc(O.shownText(p.optionName))}” on listing ${esc(p.listingId)}, a new value too"><input type="checkbox" data-f="allv"> Same answer for every value of this option</label></div>
         <div class="fixes other hidden"><select data-f="field"><option value="form">form</option><option value="size">size</option><option value="chain">chain length</option></select><input data-f="val" placeholder="the value to remember"><button class="btn gold sm" data-a="map">Remember it</button></div>
         ${lids.length > 1 ? `<label class="scopeOne"><input type="checkbox" data-f="one"> only for listing ${esc(p.listingId)} — otherwise all ${lids.length} are mapped together</label>` : ""}`;
       Master.mountPictures(c);
@@ -20726,10 +20726,11 @@ const Review = window.Review = (() => {
         const sku = String(k || "").trim().toUpperCase(); if (!sku) return;
         if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; }
         const who = by(); if (!who) return;
-        savedLink(await api("charmNestLibrary", { op: "optionMapPut", listingId: p.listingId, optionName: p.optionName, optionValue: p.optionValue, map: { field: "design", value: sku }, by: who }));
-        answered(it, "decided", `Use this charm: ${sku}`, { option: p.optionName, value: p.optionValue, field: "design", sku, listing: String(p.listingId) }, who);
+        const allv = !!(c.querySelector("[data-f=allv]") || {}).checked;   // (FALSEHOLD 2: "Same answer for every value of this option": kept under the value "*", O.OPTION_ALL)
+        savedLink(await api("charmNestLibrary", { op: "optionMapPut", listingId: p.listingId, optionName: p.optionName, optionValue: allv ? O.OPTION_ALL : p.optionValue, map: { field: "design", value: sku }, by: who }));
+        answered(it, "decided", allv ? `Use this charm for every value of “${p.optionName}”: ${sku}` : `Use this charm: ${sku}`, { option: p.optionName, value: allv ? O.OPTION_ALL : p.optionValue, field: "design", sku, listing: String(p.listingId) }, who);
         await Orders.loadMaps(true);
-        toast(`“${p.optionValue}” → ${sku} · remembered for listing ${p.listingId}`, "ok");
+        toast(allv ? `every value of “${p.optionName}” → ${sku} · remembered for listing ${p.listingId}` : `“${p.optionValue}” → ${sku} · remembered for listing ${p.listingId}`, "ok");
         linkHolds(rowsOf(it), sku); pickedMarks(rowsOf(it), sku, who);
         await relinkNow().catch(() => null);   // (LISTPICK: the open orders with this option value made up again with the pick)
         for (const rr of Orders.rows()) if (String(rr.line.listingId) === String(p.listingId) && rr.problems.length) await repool(rr);
@@ -20739,6 +20740,20 @@ const Review = window.Review = (() => {
       c.querySelector("[data-a=dsku]").onclick = () => pickCharm(c.querySelector("[data-f=dsku]").value);
       bindNeeds(c, "map", "val");
       c.querySelector("[data-a=map]").onclick = () => { const val = c.querySelector("[data-f=val]").value.trim(); if (!val) return; put(c.querySelector("[data-f=field]").value, val); };
+      /* FALSEHOLD 2 (Paul, 9 Nov 2026, order 4215861378: "Please fix this once and for all"): on a listing whose one SKU is every choice's, the option is answered ONCE for all its values (Charm_Option_Map
+         {listing}.map[option]["*"] = ignore, O.OPTION_ALL), a value never seen too; then every open order of the listing held on that option alone is read again at once (O.heldOnOption → repool, the
+         existing release path: a line whose reading no longer asks goes back in line). */
+      const ia = c.querySelector("[data-a=ignoreAll]");
+      if (ia) ia.onclick = saving(c, async () => {
+        const who = by(); if (!who) return; const ids = oneOnly() ? [String(p.listingId)] : lids;
+        for (const lid of ids) await api("charmNestLibrary", { op: "optionMapPut", listingId: lid, optionName: p.optionName, optionValue: O.OPTION_ALL, map: { field: "ignore" }, by: who });
+        answered(it, "decided", `“${p.optionName}” never changes the charm (all choices)`, { option: p.optionName, value: O.OPTION_ALL, field: "ignore" }, who);
+        await Orders.loadMaps(true);
+        const held = O.heldOnOption(Orders.rows(), ids, p.optionName);
+        toast(`“${O.shownText(p.optionName)}” never changes the charm · remembered for ${ids.length === 1 ? "listing " + ids[0] : ids.length + " listings"}${held.length ? ` · ${held.length} held order line${held.length === 1 ? "" : "s"} back in line` : ""}`, "ok");
+        await repoolAll(it);
+        for (const rr of held) if (!rowsOf(it).includes(rr)) await repool(rr);
+      });
       c.querySelector("[data-a=ignore]").onclick = saving(c, async () => { const who = by(); if (!who) return; for (const lid of (oneOnly() ? [String(p.listingId)] : lids)) await api("charmNestLibrary", { op: "optionMapPut", listingId: lid, optionName: p.optionName, optionValue: p.optionValue, map: { field: "ignore" }, by: who }); answered(it, "decided", `“${p.optionValue}” changes nothing (ignored)`, { option: p.optionName, value: p.optionValue, field: "ignore" }, who); await Orders.loadMaps(true); await repoolAll(it); });
     } else if (it.kind === "unmatchedSku" || it.kind === "blockedSku") {
       const skus = [...B.master.entries.keys()].sort();
@@ -23052,7 +23067,8 @@ const OrderWin = window.OrderWin = (() => {
     if (sheetCell) cell("Sheet", sheetCell);
     cell("Ship by", tryDo(() => Orders.shipTxt(r)) || "—");
     if (sp.form) cell("Form", sp.form); if (sp.size) cell("Size", sp.size);
-    if (sp.chain) { const ch = tryDo(() => O.optionView("Chain", sp.chain, { title: r.line.title })); cell("Chain", ch ? ch.text : sp.chain, ch && ch.changed ? { raw: O.shownText(sp.chain) } : null); }   // (OPTTIDY: a chain read from a fused option "16"&18"·Set·ANGELINA" is said as "16" & 18" · Angelina"; the original is the hover)
+    if (sp.chain) { const ch = tryDo(() => O.optionView("Chain", sp.chain, { title: r.line.title })); cell("Chain", ch ? ch.text : sp.chain, ch && ch.changed ? { raw: O.shownText(sp.chain) } : null); }
+    if (Array.isArray(sp.optionNotes) && sp.optionNotes.length) cell("Note", sp.optionNotes.join(" · "), { wide: 1 });   // (FALSEHOLD 2: "Wine Choice: Combo 1 red 1 white · does not change the charm")   // (OPTTIDY: a chain read from a fused option "16"&18"·Set·ANGELINA" is said as "16" & 18" · Angelina"; the original is the hover)
     // the engraving: the line's state and words, its seals (an approval made elsewhere is merged in by paintNow: W.engHist)
     const hist = W.engHist && W.engHist.key === r.key ? W.engHist.html : "";
     const seals = r.engrave ? CNEngravingSeals.list(r.engrave).length : 0, hasEng = !!(hist || (r.engrave && (r.engrave.needed || seals)));
