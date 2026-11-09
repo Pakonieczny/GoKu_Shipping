@@ -347,7 +347,7 @@
      shipping label stays with Shipped. The Charm Sorter's lie on the Office lane, the Sorting station's on Sorting.
      Drawn with the card's own seal (charm-nest-motion.js Seal.svg) where the page has it. ── */
   const PRINT_MS = 3 * 60 * 1000;
-  const PRINT_WHERE = { charm: "Charm Sorter", sorting: "Sorting station", qr: "QR station", design: "Design Station" };
+  const PRINT_WHERE = { charm: "Brites Manager", sorting: "Sorting station", qr: "QR station", design: "Design Station" };
   const isPrint = e => !!e && (e.type === "sealPrinted" || (e.type === "labelPrinted" && labelStepOf(e) === "sorted"));
   const printPlace = e => e.type === "sealPrinted" || e.station === "sorter" || e.device === "charm-nest-1" || (!!e.data && e.data.label === "custom") ? "charm" : e.station || "other";
   const sameHand = (a, b) => !a.by || !b.by || String(a.by).trim().toLowerCase() === String(b.by).trim().toLowerCase();

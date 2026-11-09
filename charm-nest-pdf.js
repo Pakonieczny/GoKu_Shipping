@@ -2563,7 +2563,7 @@
   async function buildSheet(spec) {
     const { PDFDocument, PDFName, PDFString, PDFDict, PDFRef, rgb, StandardFonts, pushGraphicsState, popGraphicsState, concatTransformationMatrix, drawObject, endMarkedContent, PDFArray } = L();
     const out = await PDFDocument.create();
-    out.setTitle(spec.title || "Charm sheet"); out.setProducer("Brites Charm Nesting Station"); out.setCreator("Brites Charm Nesting Station");
+    out.setTitle(spec.title || "Charm sheet"); out.setProducer("Brites Manager"); out.setCreator("Brites Manager");
     const page = out.addPage([spec.sheet.wPt, spec.sheet.hPt]);
     page.node.normalize();
     const res = page.node.Resources();
@@ -2759,7 +2759,7 @@
     const pw = bb[2] - bb[0] + 2 * pad + lw, ph = bb[3] - bb[1] + 2 * pad + lw;
     const T = [1, 0, 0, 1, pad + lw / 2 - bb[0], pad + lw / 2 - bb[1]];
     const out = await PDFDocument.create();
-    out.setTitle(spec.title || (isFront ? "Front" : "Back")); out.setProducer("Brites Charm Nesting Station"); out.setCreator("Brites Charm Nesting Station");
+    out.setTitle(spec.title || (isFront ? "Front" : "Back")); out.setProducer("Brites Manager"); out.setCreator("Brites Manager");
     const page = out.addPage([pw, ph]); page.node.normalize();
     const res = page.node.Resources(); const props = out.context.obj({}); res.set(PDFName.of("Properties"), props);
     const ocgRefs = [];

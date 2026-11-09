@@ -191,7 +191,7 @@
     const PL = root && root.PDFLib; if (!PL) throw new Error("the PDF library is not loaded");
     const { PDFDocument, PDFName, PDFString } = PL;
     const doc = await PDFDocument.create();
-    doc.setTitle(title || "Custom design"); doc.setProducer("Brites Charm Nesting Station"); doc.setCreator("Brites Charm Nesting Station · Design & Engrave");
+    doc.setTitle(title || "Custom design"); doc.setProducer("Brites Manager"); doc.setCreator("Brites Manager · Design & Engrave");
     const page = doc.addPage([L.page.wPt, L.page.hPt]);
     page.node.normalize();
     const props = doc.context.obj({}), refs = [], tags = {};

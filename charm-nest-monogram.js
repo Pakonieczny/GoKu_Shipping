@@ -1648,7 +1648,7 @@
     ops.push('Q');
     page.node.set(PDFName.of('Contents'), doc.context.obj([doc.context.register(doc.context.flateStream(ops.join('\n') + '\n'))]));
     const title = o && o.title != null ? String(o.title).slice(0, 200) : 'Monogram';
-    doc.setTitle(title); doc.setProducer('Charm Nest monogram'); doc.setCreator('Charm Nest monogram');
+    doc.setTitle(title); doc.setProducer('Brites Manager monogram'); doc.setCreator('Brites Manager monogram');
     return await doc.save({ useObjectStreams: false });
   }
 

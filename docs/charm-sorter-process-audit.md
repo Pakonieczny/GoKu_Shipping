@@ -1,4 +1,4 @@
-# Charm Sorter process audit: a simulated day of 100 Etsy orders
+# Brites Manager (formerly Charm Sorter) process audit: a simulated day of 100 Etsy orders
 
 Date: 2026-09-23. Scope: Etsy intake at the Design Station, the Charm Sorter's Auto run (pull, claim, pool, plan, nest, checkpoint, engrave, revalidate, labels, commit, complete), the set release rules, and the server functions behind them. Rose Gold charm picking on partial sheets was handled separately in the "Better charm picks for partial sheets" thread and was not changed here.
 

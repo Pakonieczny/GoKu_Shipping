@@ -102,7 +102,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
       return { key: b.dataset.key, lane: lane && lane.dataset.lane, say: b.getAttribute('aria-label') };
     }), PRINTS);
     let d = await drawn();
-    assert.deepEqual(d.map(x => [x.lane, (/Print Nº \d · [\w ]*\w/.exec(x.say) || [''])[0]]), [['office', 'Print Nº 1 · Charm Sorter'], ['office', 'Print Nº 2 · Charm Sorter'], ['sorting', 'Print Nº 1 · Sorting station']], JSON.stringify(d));
+    assert.deepEqual(d.map(x => [x.lane, (/Print Nº \d · [\w ]*\w/.exec(x.say) || [''])[0]]), [['office', 'Print Nº 1 · Brites Manager'], ['office', 'Print Nº 2 · Brites Manager'], ['sorting', 'Print Nº 1 · Sorting station']], JSON.stringify(d));
     assert(!d.some(x => /shipping-1/.test(x.key)), 'a shipping label stays with Shipped: no QR seal');
     const count = await page.$eval('#owTlCount', c => c.textContent);
     assert.equal(count, String(mine().length), `the Timeline tab still counts the recorded steps (${count} of ${mine().length})`);
@@ -110,15 +110,15 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     await page.hover(`#owTimeline .tlSt[data-key="${d[1].key}"]`); await page.waitForTimeout(1100);
     const hov = await page.evaluate(key => { const S = document.querySelector(`#owTimeline .tlSt[data-key="${key}"]`), X = [...document.querySelectorAll('#owTimeline .tlExp, .tlExp')].find(x => getComputedStyle(x).display === 'block'); return { grown: !!S.dataset.sealZoom, copy: !!document.querySelector('.tlLoupe,.tlNowZoom,.sealLens'), face: [...S.querySelectorAll('text')].map(t => t.textContent).join(' '), aria: S.getAttribute('aria-label') || '', card: X ? X.textContent : '' }; }, d[1].key);
     assert(hov.grown && !hov.copy, 'the print seal itself has grown'); assert.match(hov.face, /QR LABEL PRINTED/); assert.doesNotMatch(hov.face, /PAUL/, 'no signer on the face'); assert.match(hov.aria, /Print Nº 2/); assert.match(hov.aria, /paul/i);
-    assert.match(hov.card, /QR label printed · Print Nº 2 · Charm Sorter/); assert.match(hov.card, /[A-Z]{3} \d{1,2}:\d{2} [AP]M · [Pp]aul/);
+    assert.match(hov.card, /QR label printed · Print Nº 2 · Brites Manager/); assert.match(hov.card, /[A-Z]{3} \d{1,2}:\d{2} [AP]M · [Pp]aul/);
     await shot(page, 'timeline-prints-1-hover');
     await page.mouse.move(5, 5);
     await page.click(`#owTimeline .tlSt[data-key="${d[0].key}"]`); await page.waitForTimeout(400);
     // (a click only grows the seal now: the detail pane that used to say the same under the chart went on 5 Oct 2026; the number, who and where are its accessible name and the card)
     const det = await page.evaluate(() => ({ pane: document.querySelectorAll('#owTimeline .tlDetail, #owTimeline .tlBig').length, grown: [...document.querySelectorAll('[data-seal-zoom]')].map(g => (g.closest('[data-key]') || g).dataset.key) }));
     assert.deepEqual(det, { pane: 0, grown: [d[0].key] }, 'a click on a print seal grows it and opens no detail: ' + JSON.stringify(det));
-    assert.match(d[0].say, /QR label printed · Print Nº 1 · Charm Sorter/); assert.match(d[0].say, /paul/i);
-    console.log(`  ✓ Timeline: 3 print seals (Charm Sorter Nº 1, Nº 2 on Office; Sorting station Nº 1 on Sorting), none for the shipping label; rest says the number, time, who and where, a click grows the seal and opens no detail; the tab still says ${count}`);
+    assert.match(d[0].say, /QR label printed · Print Nº 1 · Brites Manager/); assert.match(d[0].say, /paul/i);
+    console.log(`  ✓ Timeline: 3 print seals (Brites Manager Nº 1, Nº 2 on Office; Sorting station Nº 1 on Sorting), none for the shipping label; rest says the number, time, who and where, a click grows the seal and opens no detail; the tab still says ${count}`);
 
     // 5 · a third print from the order window: a new seal, the others stay
     await page.click('[data-ow-view="info"]');
@@ -130,7 +130,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     await page.waitForTimeout(900);
     const d2 = await drawn();
     for (const x of d) assert(d2.some(y => y.key === x.key), 'no seal goes: ' + x.key);
-    assert.match(d2.find(y => !d.some(x => x.key === y.key)).say, /Print Nº 3 · Charm Sorter/);
+    assert.match(d2.find(y => !d.some(x => x.key === y.key)).say, /Print Nº 3 · Brites Manager/);
     await shot(page, 'timeline-prints-2-reprint');
     assert.deepEqual(errors, [], 'no page errors');
     console.log('  ✓ a print from the order window adds Nº 3; every earlier seal stays');

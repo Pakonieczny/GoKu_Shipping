@@ -188,7 +188,7 @@ async function buildSheet(letters, outFile) {
   page.node.set(PDFName.of("Contents"), doc.context.obj([ref]));
   const size = 5;
   for (const l of labels) { const w = font.widthOfTextAtSize(l.text, size); page.drawText(l.text, { x: l.x - w / 2, y: l.y - size * 0.75, size, font, color: rgb(0.1, 0.1, 0.1) }); }
-  doc.setTitle("LETTER HOOPS 2026-11-09"); doc.setProducer("Brites Charm Nesting Station"); doc.setCreator("scripts/make-letter-hoops.cjs");
+  doc.setTitle("LETTER HOOPS 2026-11-09"); doc.setProducer("Brites Manager"); doc.setCreator("scripts/make-letter-hoops.cjs");
   doc.setCreationDate(new Date("2026-11-09T00:00:00Z")); doc.setModificationDate(new Date("2026-11-09T00:00:00Z"));   // (fixed: the same letters make the same file, the same hash)
   const bytes = await doc.save({ useObjectStreams: false });
   fs.writeFileSync(outFile, bytes);
@@ -230,7 +230,7 @@ ol{margin:8px 0 14px;padding-left:22px}li{margin:3px 0}code{font:12px ui-monospa
 <p>Each source letter from the charm repo (<code>LETTER_EARRING-0 … 25</code>, a … z) with its two new charms. Each letter keeps its own outline and is scaled whole, without its hoop, to your sizes: <b>necklace 11 mm</b> (a c e n o r s u v x z) or <b>12 mm</b> (b d f g h i j k l p q t y, m w) on its longest side; <b>huggie 6 mm</b> or <b>7 mm</b> by the same rule. The hoops keep their fixed sizes. Only the hoop is added, at the top centre (on the stem of b d f h k l t, on the dot of i j), welded into one cut outline, its hole cut.</p>
 <div class="keys"><span><b>Necklace ring</b>: Ø ${mm(HOOPS.necklace.outer * 2)} mm, hole ${mm(HOOPS.necklace.hole * 2)} mm (as <code>NECKLACE_CHARM-7</code>)</span><span><b>Huggie hoop</b>: Ø ${mm(HOOPS.huggie.outer * 2)} mm, hole ${mm(HOOPS.huggie.hole * 2)} mm (as <code>NECKLACE_CHARM-7 (HUGGIE)</code>)</span><span><b>SKUs</b>: <code>LETTER_NECKLACE-n</code> and <code>LETTER_NECKLACE-n (HUGGIE)</code>, a = 0 … z = 25 (the shop's twin naming)</span></div>
 <p><b>To put them in the charm repo</b> (they replace the first, wrongly sized drawings of the same SKUs):</p>
-<ol><li>Open the Brites Charm Sorter, open the <b>Workspace</b> menu (top right) and choose <b>Master files</b>.</li><li>Under <b>＋ Add a master file</b>, on the line “New charms ready: Letter charms with hoops”, press <b>Add these charms to the repo</b>.</li><li>Read the line and press <b>Yes, add them</b>.</li><li>Type the repo password in the lock window.</li><li>Wait for “Done”. Pressing again says “Already there”.</li></ol>
+<ol><li>Open Brites Manager, open the <b>Workspace</b> menu (top right) and choose <b>Master files</b>.</li><li>Under <b>＋ Add a master file</b>, on the line “New charms ready: Letter charms with hoops”, press <b>Add these charms to the repo</b>.</li><li>Read the line and press <b>Yes, add them</b>.</li><li>Type the repo password in the lock window.</li><li>Wait for “Done”. Pressing again says “Already there”.</li></ol>
 ${rows.join("\n")}
 </main></body></html>
 `;

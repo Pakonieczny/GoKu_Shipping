@@ -175,7 +175,7 @@
     }
     const out = await L.PDFDocument.create();
     const page = out.addPage([front.pageW,inputs.length ? y+rowH+SPACE : front.pageH]);
-    out.setTitle(sheet.fileBase || 'Charm production sheet');out.setProducer('Brites Charm Nesting Station');
+    out.setTitle(sheet.fileBase || 'Charm production sheet');out.setProducer('Brites Manager');
     async function place(parsed, x, y, scale, prefix) {
       const [copy] = await out.copyPages(parsed.doc,[0]);
       // copyPages preserves the page's OCG resource references. Register those
