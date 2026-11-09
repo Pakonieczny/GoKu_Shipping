@@ -11,13 +11,38 @@
    create_timestamp replaces it when the receipt is next mirrored; charm-nest-order-days.js counts a receipt once whichever came first). The same
    receipt sent twice changes nothing the second time (the day document is keyed by receipt id).
 
-   The signing secret is read from the environment, ETSY_WEBHOOK_SECRET, which Paul adds in Netlify after registering the URL in Etsy's developer
-   portal. Without it every delivery is refused (503): nothing is ever written from an unsigned request.
+   WHERE THE SIGNING SECRET LIVES (Paul, 9 Nov 2026: "put this environmental variable as part of my existing Firebase infrastructure"; an extra
+   Netlify env var pushed the functions past AWS Lambda's 4 KB environment limit and every deploy failed): Firestore, read with the admin SDK only,
+       EtsyApi_Config/webhook   field signingSecret (string, "whsec_…", pasted by Paul from Etsy's developer portal)
+   EtsyApi_Config is the server-only Etsy API collection (_etsyApiUsage.js, _etsyImageCache.js); no page reads it, and the published Firestore rules must
+   deny it to browsers. The value is cached in memory for SECRET_TTL_MS per warm function (a missing one for MISSING_TTL_MS, so a newly pasted secret is
+   picked up within a minute); ETSY_WEBHOOK_SECRET from the environment is only a fallback when the document has none. It is never logged, never returned.
+   With no secret anywhere every delivery is refused (503): nothing is ever written from an unsigned request.
 
-   handle(event, { db, OrderDays, bump, secret?, now? }) → a Netlify response. verify(...) is exported for the tests. */
+   handle(event, { db, OrderDays, bump, secret?, now? }) → a Netlify response. verify(...) and loadSecret(...) are exported for the tests. */
 "use strict";
 const crypto = require("crypto");
 const TOLERANCE_S = 5 * 60;
+const SECRET_COLL = "EtsyApi_Config", SECRET_DOC = "webhook", SECRET_FIELD = "signingSecret";
+const SECRET_TTL_MS = 10 * 60 * 1000, MISSING_TTL_MS = 60 * 1000;
+let _secret = null;   // { value, at, ttl } — this warm function's copy; never leaves the process
+
+/** The signing secret: EtsyApi_Config/webhook.signingSecret (admin SDK), else ETSY_WEBHOOK_SECRET, else "". A failed read is not cached. */
+async function loadSecret(db, nowMs) {
+  const now = nowMs || Date.now();
+  if (_secret && now - _secret.at < _secret.ttl) return _secret.value;
+  let fromDoc = "", readOk = false;
+  try {
+    const snap = await db.collection(SECRET_COLL).doc(SECRET_DOC).get();
+    const v = snap && snap.exists ? (snap.data() || {})[SECRET_FIELD] : "";
+    fromDoc = typeof v === "string" ? v.trim() : "";
+    readOk = true;
+  } catch (_) { /* Firestore unreachable: the env fallback below, and ask again next time */ }
+  const value = fromDoc || String(process.env.ETSY_WEBHOOK_SECRET || "").trim();
+  _secret = readOk ? { value, at: now, ttl: value ? SECRET_TTL_MS : MISSING_TTL_MS } : null;
+  return value;
+}
+function _forgetSecret() { _secret = null; }   // tests only
 
 const json = (statusCode, body) => ({ statusCode, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }, body: JSON.stringify(body) });
 function header(event, name) {
@@ -53,8 +78,8 @@ function receiptOf(p) {
 }
 async function handle(event, deps) {
   if (event.httpMethod !== "POST") return json(405, { error: "POST only" });
-  const secret = deps.secret != null ? deps.secret : process.env.ETSY_WEBHOOK_SECRET || "";
-  if (!secret) return json(503, { error: "the webhook's signing secret is not set (ETSY_WEBHOOK_SECRET)" });
+  const secret = deps.secret != null ? deps.secret : await loadSecret(deps.db, deps.now ? deps.now() : Date.now());
+  if (!secret) return json(503, { error: `the webhook's signing secret is not set (Firestore ${SECRET_COLL}/${SECRET_DOC}.${SECRET_FIELD})` });
   const body = event.body ? (event.isBase64Encoded ? Buffer.from(event.body, "base64").toString("utf8") : String(event.body)) : "";
   const id = header(event, "webhook-id"), timestamp = header(event, "webhook-timestamp"), signature = header(event, "webhook-signature");
   const nowMs = deps.now ? deps.now() : Date.now();
@@ -71,4 +96,4 @@ async function handle(event, deps) {
   if (m.changed && deps.bump) { try { await deps.bump(); } catch (_) { /* the next order check carries it */ } }
   return json(200, { ok: true, receipt: rid, counted: !!m.changed });
 }
-module.exports = { handle, verify, receiptOf };
+module.exports = { handle, verify, receiptOf, loadSecret, _forgetSecret, SECRET_PATH: `${SECRET_COLL}/${SECRET_DOC}` };

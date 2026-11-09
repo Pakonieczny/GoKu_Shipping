@@ -111,6 +111,59 @@ const at = iso => Date.parse(iso), s = iso => Math.floor(at(iso) / 1000);
     r = await Hook.handle(ev(), Object.assign({}, deps, { secret: undefined }));
     if (was != null) process.env.ETSY_WEBHOOK_SECRET = was;
     ok(r.statusCode === 503 && db.st.writes === 1, 'with no signing secret set, nothing is accepted');
+    // the secret from Firestore (EtsyApi_Config/webhook.signingSecret, admin SDK), the env only as a fallback, never in a response or a log line
+    {
+      const logged = [], keep = {};
+      for (const k of ['log', 'info', 'warn', 'error', 'debug']) { keep[k] = console[k]; console[k] = (...a) => logged.push(a.map(String).join(' ')); }
+      const wasEnv = process.env.ETSY_WEBHOOK_SECRET; delete process.env.ETSY_WEBHOOK_SECRET;
+      const seen = [];
+      try {
+        const b2 = JSON.stringify({ event_type: 'order.paid', resource_url: 'https://openapi.etsy.com/v3/application/shops/123/receipts/4199990101', shop_id: 123 });
+        const db2 = fakeDb(); db2.store.set('EtsyApi_Config/webhook', { signingSecret: ' ' + secret + ' ' });
+        const d2 = { db: db2, OrderDays: D, now: () => nowMs };
+        Hook._forgetSecret();
+        r = await Hook.handle(ev({ body: b2, sig: sign('msg_1', ts, b2) }), d2); seen.push(r);
+        ok(r.statusCode === 200 && JSON.parse(r.body).counted === true, 'a delivery signed with the secret kept in Firestore is accepted: ' + r.body);
+        ok(Hook.SECRET_PATH === 'EtsyApi_Config/webhook', 'the secret lives in EtsyApi_Config/webhook');
+        const reads = db2.st.reads;
+        r = await Hook.handle(ev({ body: b2, sig: sign('msg_1', ts, b2) }), d2); seen.push(r);
+        ok(r.statusCode === 200 && db2.st.reads === reads + 1, 'a warm function reads the secret once (the second delivery reads only the day document)');
+        const ts11 = String(Number(ts) + 11 * 60), r1 = db2.st.reads;
+        r = await Hook.handle(ev({ body: b2, ts: ts11, sig: sign('msg_1', ts11, b2) }), Object.assign({}, d2, { now: () => nowMs + 11 * 60 * 1000 })); seen.push(r);
+        ok(r.statusCode === 200 && db2.st.reads === r1 + 2, 'after ten minutes the document is read again (secret + day document)');
+        r = await Hook.handle(ev({ body: b2, sig: sign('msg_1', ts, b2, crypto.randomBytes(24)) }), d2); seen.push(r);
+        ok(r.statusCode === 401, 'with the Firestore secret, another key is still refused');
+        // the env fallback: no document, the env set
+        const db3 = fakeDb(); process.env.ETSY_WEBHOOK_SECRET = secret; Hook._forgetSecret();
+        r = await Hook.handle(ev(), { db: db3, OrderDays: D, now: () => nowMs }); seen.push(r);
+        ok(r.statusCode === 200 && JSON.parse(r.body).ok === true, 'with no Firestore secret, ETSY_WEBHOOK_SECRET still works as a fallback');
+        // the document wins over the env
+        const db4 = fakeDb(); db4.store.set('EtsyApi_Config/webhook', { signingSecret: 'whsec_' + crypto.randomBytes(24).toString('base64') }); Hook._forgetSecret();
+        r = await Hook.handle(ev(), { db: db4, OrderDays: D, now: () => nowMs }); seen.push(r);
+        ok(r.statusCode === 401, 'the Firestore secret takes precedence over the env');
+        // Firestore unreachable: the env fallback, and the failure is not cached
+        const dbErr = { collection: () => ({ doc: () => ({ get: async () => { throw new Error('offline'); } }) }), runTransaction: db3.runTransaction };
+        Hook._forgetSecret();
+        r = await Hook.handle(ev(), { db: dbErr, OrderDays: D, now: () => nowMs }); seen.push(r);
+        ok(r.statusCode === 200, 'a failed Firestore read falls back to the env: ' + r.body);
+        // nowhere: refused
+        delete process.env.ETSY_WEBHOOK_SECRET; Hook._forgetSecret();
+        const db5 = fakeDb();
+        r = await Hook.handle(ev(), { db: db5, OrderDays: D, now: () => nowMs }); seen.push(r);
+        ok(r.statusCode === 503 && db5.st.writes === 0 && /EtsyApi_Config\/webhook\.signingSecret/.test(r.body), 'no secret in Firestore or the env: refused (503), nothing written: ' + r.body);
+        db5.store.set('EtsyApi_Config/webhook', { signingSecret: secret });
+        r = await Hook.handle(ev(), { db: db5, OrderDays: D, now: () => nowMs + 61 * 1000 }); seen.push(r);
+        ok(r.statusCode === 200, 'a secret pasted after a refusal is picked up within a minute');
+        r = await Hook.handle({ httpMethod: 'POST', body: 'x', headers: {} }, { db: db5, OrderDays: D, now: () => nowMs + 62 * 1000 }); seen.push(r);
+      } finally {
+        for (const k of Object.keys(keep)) console[k] = keep[k];
+        if (wasEnv != null) process.env.ETSY_WEBHOOK_SECRET = wasEnv; else delete process.env.ETSY_WEBHOOK_SECRET;
+        Hook._forgetSecret();
+      }
+      const raw = secret.replace(/^whsec_/, '');
+      const leaks = seen.concat(logged).map(x => typeof x === 'string' ? x : JSON.stringify(x)).filter(t => t.includes(raw) || t.includes(key.toString('hex')));
+      ok(leaks.length === 0, 'the secret is in no response and no log line');
+    }
     r = await Hook.handle(Object.assign(ev(), { httpMethod: 'GET' }), deps);
     ok(r.statusCode === 405, 'POST only');
     const other = JSON.stringify({ event_type: 'listing.updated', resource_url: 'x', shop_id: 123 });
