@@ -355,6 +355,7 @@
     if (S.open) close(false);
     S.key = key; S.ta = ta; S.btn = btn; S.sel = { s: ta.selectionStart || 0, e: ta.selectionEnd || 0 };
     build(); index(); S.q = ''; S.el.input.value = ''; S.recent = loadRecent(); S.act = -1; S.gone = 0;
+    { const host = (ta.closest && ta.closest('dialog.ce-layer[open]')) || ta.ownerDocument.body; if (S.pop.parentNode !== host) host.appendChild(S.pop); }   // (CES1: over the Charm Editor's words box the picker goes in the editor's own top-layer dialog, in front and live)
     S.open = true; S.pop.hidden = false;
     if (S.fontState === 'failed') S.fontState = 'idle';   // (a font that did not load is asked for again each time the picker opens)
     btn.setAttribute('aria-expanded', 'true'); btn.classList.add('on');

@@ -411,6 +411,11 @@
 .cem-note{ position:fixed; left:50%; bottom:22px; transform:translateX(-50%); z-index:2147482600; max-width:min(560px,calc(100vw - 32px)); padding:9px 16px; background:var(--ink,#1c1d1d); color:#fff;
   font:600 12px/1.45 'Nunito Sans','Helvetica Neue',Helvetica,Arial,sans-serif; letter-spacing:.02em; box-shadow:0 14px 34px rgba(28,29,29,.25); pointer-events:auto; cursor:default; }
 .cem-note.is-bad{ background:#8a3a26; cursor:pointer; }
+/* CES1: the picker and the card after Save each in a top-layer dialog of their own, shown last: over the order window, the sheet window or any window open; the note in the top layer too */
+dialog.cem-layer.cem-layer{ position:fixed; inset:0; width:100%; height:100%; max-width:none; max-height:none; margin:0; padding:0; border:0; background:transparent; color:inherit; overflow:visible; outline:none;
+  box-shadow:none; border-radius:0; transform:none; opacity:1; animation:none !important; transition:none !important; }
+dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:none; animation:none !important; }
+.cem-note[popover]{ inset:auto; left:50%; bottom:22px; margin:0; border:0; width:auto; height:auto; overflow:visible; }
 @media (max-width:720px){
   .cem-root{ padding:0; }
   .cem-win{ width:100%; height:100%; padding:10px 10px; }
@@ -441,23 +446,50 @@
     free: SV('<path d="M12 20.5 6 13.8l2.2-7L12 4l3.8 2.8 2.2 7Z"/><circle cx="12" cy="11.6" r="1.5"/><path d="M12 20.5v-7.4"/>')
   };
 
+  /* CES1 (Paul, 9 Nov 2026: "there should be a popup modal with specific options ... This modal already exists but does not always show up"): the card after Save, and the picker, were put in the
+     page's body; a modal <dialog> open over the page (the order window the editor was opened from, a sheet window, a set preview) is in the top layer, over the body whatever its z-index, so the
+     card came up BEHIND it, out of sight, and its Save seemed to end with nothing. Each is now put in a dialog of its own, shown modally last: in front of every window open. */
+  const canModal = () => !!doc && typeof doc.createElement('dialog').showModal === 'function';
+  /** `wrap` (a full-window overlay) put in front of everything → its remover. */
+  function mountTop(wrap) {
+    if (canModal()) {
+      const d = doc.createElement('dialog'); d.className = 'cem-layer'; d.setAttribute('aria-label', wrap.getAttribute('aria-label') || 'Charm Editor');
+      d.appendChild(wrap); doc.body.appendChild(d);
+      try {
+        d.showModal();
+        d.addEventListener('cancel', e => e.preventDefault());   // (Esc is the card's and the picker's own key)
+        return () => { if (wrap.parentNode) wrap.parentNode.removeChild(wrap); try { if (d.open) d.close(); } catch (_) { /* fine */ } d.remove(); };
+      } catch (_) { d.remove(); }
+    }
+    doc.body.appendChild(wrap);
+    return () => { if (wrap.parentNode) wrap.parentNode.removeChild(wrap); };
+  }
+  /** A status line in the top layer (a manual popover, shown again last so it is over a window opened since) or, without popovers, on the body as before. */
+  function showTop(el) { if (typeof el.showPopover !== 'function') return; try { if (!el.popover) el.popover = 'manual'; if (el.matches(':popover-open')) el.hidePopover(); el.showPopover(); } catch (_) { /* on the body as before */ } }
+  function hideTop(el) { try { if (el && typeof el.hidePopover === 'function' && el.popover && el.matches(':popover-open')) el.hidePopover(); } catch (_) { /* fine */ } }
+
   /* ── a short line on the page while a master is read (the library panel inside the editor has no window of its own to say it in) ── */
   let noteEl = null, noteTimer = 0;
   function note(text, bad) {
     if (!doc) return;
     clearTimeout(noteTimer);
-    if (!text) { if (noteEl) { noteEl.remove(); noteEl = null; } return; }
+    if (!text) { if (noteEl) { hideTop(noteEl); noteEl.remove(); noteEl = null; } return; }
     injectCss();
     if (!noteEl) { noteEl = doc.createElement('div'); noteEl.className = 'cem-note'; noteEl.setAttribute('role', 'status'); noteEl.addEventListener('click', () => { if (noteEl && noteEl.classList.contains('is-bad')) note(''); }); }
     noteEl.textContent = text; noteEl.classList.toggle('is-bad', !!bad); noteEl.title = bad ? 'Click to put this away' : '';
-    if (!noteEl.isConnected) doc.body.appendChild(noteEl);
+    // (CES1: said in front of everything: inside the Charm Editor's own top-layer dialog while it is open (it stays clickable there), else in the top layer itself, over any window open)
+    const ed = doc.querySelector('dialog.ce-layer[open]');
+    if (ed) { if (noteEl.parentNode !== ed) { hideTop(noteEl); noteEl.removeAttribute('popover'); ed.appendChild(noteEl); } }   // (a hidden popover is not drawn: inside the editor it is a plain line)
+    else { if (noteEl.parentNode !== doc.body) doc.body.appendChild(noteEl); showTop(noteEl); }
     if (bad) noteTimer = setTimeout(() => note(''), 9000);
   }
 
   /** The editor that is open now closed through its own Cancel (it asks before throwing changes away). → true when it is gone, false when the person kept editing. */
-  function closeEditor() {
+  function closeEditor(o) {
     const E = root && root.CharmEditor;
     if (!E || !E.current) return Promise.resolve(true);
+    // (CES1, Paul 9 Nov 2026: another charm asked for while the editor is open: nothing changed, it closes at once; changes: "Save and switch", "Discard and switch" or "Cancel", asked over the work)
+    if (typeof E.current.requestSwitch === 'function') return Promise.resolve(E.current.requestSwitch(o || {})).then(v => !!v && !E.current, () => false);
     const rootEl = doc.querySelector('.ce-root'), btn = rootEl && rootEl.querySelector('[data-act="cancel"]');
     if (!btn) return Promise.resolve(!E.current);
     return new Promise(res => {
@@ -514,7 +546,7 @@
    *  `moved()`: another design was asked for since this one opened (the design library's "Keep and open"): kept the same, with no card; a failure is said in the page's note. */
   async function saved(start, res, by, moved) {
     const M = model(), design = designOf(res, start, by, M), D = root.CharmNestDesigns;
-    const quiet = moved(), card = quiet ? null : cardOpen();
+    const quiet = moved() || !!res.switched, card = quiet ? null : cardOpen();   // (CES1 switched: a "Save and switch": the charm asked for is opening, the save is said in the note)
     const fail = why => { if (card && !moved()) card.fail(why); else { if (card) card.drop(); note(`“${design.name}” was not kept · ${why}`, true); } };
     let got = null;
     if (start.id && start.version && !changed(res, M)) got = { id: start.id, version: start.version, same: true };
@@ -525,7 +557,7 @@
       catch (e) { fail((e && e.message) || String(e)); got = null; }
     }
     if (got && design.source && design.source.kind === 'master' && design.source.sku) remember(design.source.sku);
-    if (!card || moved()) { if (card) card.drop(); return got ? { designId: got.id, version: got.version } : null; }   // (the next design is open, or on its way)
+    if (!card || moved()) { if (card) card.drop(); if (got && res.switched) note(`“${design.name}” saved · version ${got.version}`); return got ? { designId: got.id, version: got.version } : null; }   // (the next design is open, or on its way)
     if (!got) {
       const again = await card.choice();
       if (again !== 'again') return null;
@@ -563,13 +595,13 @@
   function cardOpen() {
     injectCss();
     const prev = doc.activeElement, wrap = doc.createElement('div');
-    wrap.className = 'cem-root cem-root--card';
+    wrap.className = 'cem-root cem-root--card'; wrap.setAttribute('aria-label', 'Saved');
     wrap.innerHTML = '<div class="cem-card" role="alertdialog" aria-modal="true" aria-label="Design saved" tabindex="-1"><h3>Saving…</h3><p>The design is being kept in the design library.</p><div class="cem-card__b"></div></div>';
-    doc.body.appendChild(wrap);
+    const unmount = mountTop(wrap);   // (CES1: in front of every window open)
     const card = wrap.querySelector('.cem-card'), h = card.querySelector('h3'), bar = card.querySelector('.cem-card__b');
     let pick = null, picked = null;
     const choose = v => {
-      if (picked) return; picked = v; wrap.remove(); root.removeEventListener('keydown', onKey, true);
+      if (picked) return; picked = v; unmount(); root.removeEventListener('keydown', onKey, true);
       if (liveCard === me) liveCard = null;
       if (v !== 'gone') { try { if (prev && prev.focus && prev.isConnected) prev.focus({ preventScroll: true }); } catch (_) { /* fine */ } }   // (put away for the next design: its editor keeps the keys)
       if (pick) pick(v);
@@ -592,9 +624,31 @@
         buttons([['done', 'cem-btn--ghost', 'Done'], ['again', 'cem-btn--ink', 'Keep editing'],
           ['send', 'cem-btn--gold', 'Send to sheet', !canSend, d.noCut ? 'A design goes on a sheet once it has its outline (a Cut line)' : !canSend ? 'Send to sheet comes with the custom piece window, which is not on this page yet' : 'Choose the metal and the order (or a name), and it goes on the next sheet of that metal']]);
       },
+      /** CES1: any other card: a title, its lines (HTML, already escaped) and its buttons [[choice, class, words, disabled?, title?]]; one is chosen with choice(). */
+      show(title, lines, list, bad) { h.textContent = title; para(lines, bad); buttons(list); },
       choice() { return picked ? Promise.resolve(picked) : new Promise(r => { pick = r; }); },
       drop: me.drop
     };
+  }
+
+  /* CES1 (Paul, 9 Nov 2026: "there should be a popup modal with specific options presented to the user that are relevant to that particular piece/order"): a PIECE saved in the Charm Editor (the
+     bridge's piece path: the order window's Edit Design, the engraving card's Open in Charm Editor, the Edit charm pill) ended with a line on its card or a toast, never this window: now the same
+     card comes after every save of a piece, with the choices that piece has. */
+  /** o = { title, name, where, lines: [text], bad, back: { label, title } | null, replace: { title } | null }
+   *  → Promise<'done' | 'again' | 'back' | 'replace'>: Done; Keep editing (this piece in the editor again); Back to engraving / Back to order (o.back); Replace on the order… (o.replace: the
+   *  piece made again from this drawing, handmade custom, on the next sheet of the metal picked, as a fix of this piece). */
+  function afterPiece(o) {
+    o = o || {};
+    if (!doc) return Promise.resolve('done');
+    injectCss();
+    if (liveCard) liveCard.drop();
+    const card = cardOpen();
+    const lines = [`<b>${esc(o.name || 'This piece')}</b>${o.where ? ' · ' + esc(o.where) : ''}`].concat((o.lines || []).filter(Boolean).map(esc));
+    const list = [['done', 'cem-btn--ghost', 'Done'], ['again', 'cem-btn--ink', 'Keep editing', false, 'This piece in the Charm Editor again, as saved']];
+    if (o.back && o.back.label) list.push(['back', 'cem-btn--ghost', String(o.back.label), false, o.back.title ? String(o.back.title) : '']);
+    if (o.replace) list.push(['replace', 'cem-btn--gold', 'Replace on the order…', !!o.replace.disabled, o.replace.title ? String(o.replace.title) : 'Make this piece again from the drawing as saved: handmade custom, on the next sheet of the metal you pick, as a fix of this piece']);
+    card.show(o.title || 'Saved', lines, list, !!o.bad);
+    return card.choice();
   }
 
   /* ── opening a master ── */
@@ -620,6 +674,8 @@
     o = o || {};
     const key = String(sku || '').trim().toUpperCase(); if (!key) return Promise.resolve(null);
     if (opening && opening.key === key) return opening.p;
+    // (CES1: the master already in the editor, asked again: the editor is brought in front of every window, nothing else opens)
+    { const E = root && root.CharmEditor, src = session && session.start && session.start.source; if (E && E.current && src && src.kind === 'master' && !session.start.id && String(src.sku || '').toUpperCase() === key && (!o.size || o.size === src.size) && typeof E.raise === 'function') { E.raise(); return Promise.resolve(null); } }
     const me = { key, p: null }, done = () => { if (opening === me) opening = null; };
     opening = me;
     me.p = counted(async handed => {
@@ -723,7 +779,8 @@
     <div class="cem-actions"><button class="cem-btn cem-btn--ghost" type="button" data-act="close">Cancel</button><button class="cem-btn cem-btn--gold" type="button" data-act="start" hidden>Start designing</button></div>
   </footer>
 </div>`;
-    doc.body.appendChild(wrap);
+    wrap.setAttribute('aria-label', 'Design a charm');
+    const unmount = mountTop(wrap);   // (CES1: in front of every window open)
     const $ = s => wrap.querySelector(s), $$ = s => Array.from(wrap.querySelectorAll(s));
     const grid = $('.cem-grid'), q = $('[data-cf="q"]'), cnt = $('[data-count]'), more = $('.cem-more'), hint = $('[data-hint]'), startB = $('[data-act="start"]');
     const fW = $('[data-cf="w"]'), fH = $('[data-cf="h"]'), fHole = $('[data-cf="hole"]'), fDia = $('[data-cf="dia"]'), fName = $('[data-cf="name"]'), prevSvg = $('[data-prev]'), dims = $('[data-dims]'), why = $('[data-why]');
@@ -731,7 +788,7 @@
     const result = new Promise(r => { resolve = r; });
     const close = v => {
       if (!wrap.isConnected) return;
-      wrap.remove(); root.removeEventListener('keydown', onKey, true); listeners.delete(onLib);
+      unmount(); root.removeEventListener('keydown', onKey, true); listeners.delete(onLib);
       try { if (picMount) picMount.stop(); } catch (_) { /* fine */ }
       if (picker && picker.wrap === wrap) picker = null;
       if (v == null) { try { if (prev && prev.focus && prev.isConnected) prev.focus({ preventScroll: true }); } catch (_) { /* fine */ } resolve(null); }
@@ -886,6 +943,7 @@
   const api = {
     search, load, count, picture, onChange: fn => { if (typeof fn === 'function') listeners.add(fn); return () => listeners.delete(fn); },
     open, openPicker, newDesign, openDesign, openNew,
+    afterPiece,    // (CES1: the card after a piece's save, charm-nest-bridge.js)
     closeEditor,   // (EDITTARGET, Paul 29 Oct 2026: every other way into the editor makes way the same: the editor up now closed through its own Cancel, which asks first)
     current:() => (session ? { name: session.start.name, source: Object.assign({}, session.start.source), designId: session.start.id || null, version: session.start.version || null, orderId: session.start.orderId || null } : null),
     model: { startSpec, startWhy, startFace, outlineSP, holeFor, masterFace, backFace, cutOutlines, cutBox, designOf, changed, indexOf, rank, norm, newStart, SHAPES, WALL_MM, HOLE_MM, HEART_CLEFT },

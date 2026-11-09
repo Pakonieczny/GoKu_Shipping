@@ -421,12 +421,15 @@
   }
   function watchEditor() {
     const r = doc.querySelector('.ce-root'); if (!r) return;
+    if (r.parentNode && r.parentNode !== doc.body) watch(r.parentNode);   // (CES1: the editor's own top-layer dialog)
     watch(r); const w = r.querySelector('.ce-win'); watch(w);
     const st = r.querySelector('.ce-stage'); if (st && st.parentNode) watch(st.parentNode);
   }
   function onMutations(list) {
     for (const m of list) for (const n of m.addedNodes) {
       if (n.nodeType !== 1) continue;
+      // (CES1: the editor, its card after Save and the picker are each put in a top-layer <dialog> of their own: what is put in one is watched as what is put in the body)
+      if (n.tagName === 'DIALOG' && n.classList && (n.classList.contains('ce-layer') || n.classList.contains('cem-layer'))) { watch(n); const r = n.querySelector(':scope > .ce-root'); if (r) { watch(r); watch(r.querySelector('.ce-win')); const st = r.querySelector('.ce-stage'); if (st && st.parentNode) watch(st.parentNode); } continue; }
       if (kindOf(n)) dress(n);
       if (n.classList && n.classList.contains('ce-root')) { watch(n); watch(n.querySelector('.ce-win')); const st = n.querySelector('.ce-stage'); if (st && st.parentNode) watch(st.parentNode); }
       else if (n.classList && n.classList.contains('ce-win')) watch(n);

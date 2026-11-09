@@ -755,7 +755,7 @@
     const pc = can ? (pieceDesignOf(x, o.poolId) || (o.piece ? plainPieceOf(x, o.poolId) : null)) : null, row = rowsOf(x)[0];
     if (o.piece && !pc) { say(can ? 'This piece is not in the pool yet: it cannot be opened in the Charm Editor' : 'The Charm Editor is not loaded on this page — reload it', 'bad', 5000); return Promise.resolve(null); }
     const key = pc ? 'pc|' + pc.poolId : 'd|' + (row && row.order ? String(row.order.receiptId) : '');
-    if (designing && designing.key === key) return designing.p;
+    if (designing && designing.key === key) { try { root.CharmEditor && root.CharmEditor.raise && root.CharmEditor.raise(); } catch (_) { /* CES1: the editor already up on this is brought in front of every window */ } return designing.p; }
     if (designing) designing.tok.gone = true;
     const d = { key, tok: { gone: false }, p: null };
     d.p = (pc ? openPiece(pc, d.tok).catch(e => { console.warn('[custom piece] Charm Editor (piece):', e); say(`Charm Editor: ${String((e && e.message) || e).slice(0, 160)}`, 'bad', 7000); return null; })
@@ -931,7 +931,7 @@
   if (doc) hookEditor();
 
   return {
-    open, send, openDesigner, wire, orderWin, attachedOf, needsDesign, goesOnto, fromEditor,
+    open, send, openDesigner, wire, orderWin, attachedOf, needsDesign, goesOnto, fromEditor, repaint,   // (CES1 repaint: an order's cards drawn again after a save of one of its pieces)
     isOpen: () => !!M, current: () => (M ? { st: M.st, openMs: M.openMs } : null),
     REASONS, METALS,
     _t: { leavesOf, sizeOf, previewSvg, culprits, pickSheet, customIdOf, needsDesign, findOrders, piecesOf, saveResult, designs, attached }

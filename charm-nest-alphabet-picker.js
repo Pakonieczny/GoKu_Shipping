@@ -179,6 +179,7 @@
     if (!S.pop) build();
     if (S.open) close(false);
     S.open = true; S.key = key || ''; S.ta = ta; S.btn = btn; S.sel = { s: ta.selectionStart || 0, e: ta.selectionEnd || 0 };
+    { const host = (ta.closest && ta.closest('dialog.ce-layer[open]')) || ta.ownerDocument.body; if (S.pop.parentNode !== host) host.appendChild(S.pop); }   // (CES1: over the Charm Editor's words box the picker goes in the editor's own top-layer dialog, in front and live)
     btn.setAttribute('aria-expanded', 'true'); btn.classList.add('on');
     S.pop.hidden = false; draw(); place();
     const q = S.pop.querySelector('.cnAp__q'); q.value = S.q; q.focus({ preventScroll: true }); q.select();

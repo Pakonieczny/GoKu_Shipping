@@ -1224,6 +1224,10 @@
   }
 
   const CSS = `
+/* CES1: the editor's own top-layer dialog (shown modally last, over every window open): no box of its own, the workspace inside draws everything */
+dialog.ce-layer.ce-layer{ position:fixed; inset:0; width:100%; height:100%; max-width:none; max-height:none; margin:0; padding:0; border:0; background:transparent; color:inherit; overflow:visible; outline:none;
+  box-shadow:none; border-radius:0; transform:none; opacity:1; animation:none !important; transition:none !important; }
+dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none; animation:none !important; }
 .ce-root{
   --ink:#1c1d1d; --paper:#fff; --band:#faf9f7; --hair:#e6e4e0; --muted:#6d6a66; --gold:#a58a52; --gold-lt:#cdb98a;
   --hov:#f2eee4; --hov-line:#c6bfaf; --press:#e6dfcd; --on-hov:#33342f;
@@ -2060,7 +2064,23 @@
   <div class="ce-menu ce-ctx" role="menu" hidden></div>
   <button class="ce-scrx" type="button" data-act="screen0" title="Back to Normal Screen Mode (F)">Exit Full Screen</button>
 </div>`;
-    (opts.host && opts.host.isConnected ? opts.host : doc.body).appendChild(rootEl);   // (opts.host: inside a modal dialog open over the page, which covers the body)
+    /* CES1 (Paul, 9 Nov 2026: "sometimes when I click the 'Edit Design' button to open the Charm Editor, it opens somewhere in the background, and it's not immediately visible until I close some
+       other pop-ups"). A modal <dialog> open over the page (the order window, the sheet window, an engraving or a set preview) sits in the top layer, over anything in the body whatever its z-index;
+       the workspace was put in the body (the Design & Engrave tab's, the library's, the custom order's opens) or in the LAST open dialog in the page's order (the piece's open), which is not always
+       the one on top. The workspace is now put in a dialog of its own, shown modally LAST: it is the top of the top layer, over every window open, and has the keys at once. A page with no modal
+       dialogs (node, an old browser) puts it in opts.host or the body as before. */
+    let layer = null;
+    if (typeof doc.createElement('dialog').showModal === 'function') {
+      layer = doc.createElement('dialog'); layer.className = 'ce-layer'; layer.setAttribute('aria-label', title);
+      layer.appendChild(rootEl); doc.body.appendChild(layer);
+      try { layer.showModal(); } catch (e) { layer.remove(); layer = null; }
+    }
+    if (!layer) (opts.host && opts.host.isConnected ? opts.host : doc.body).appendChild(rootEl);   // (opts.host: inside a modal dialog open over the page, which covers the body)
+    if (layer) {
+      // (Esc is the editor's own key (onKey); the dialog's cancel never closes the workspace, and a close from outside (another script, the browser's own close request) puts it back on top)
+      layer.addEventListener('cancel', e => e.preventDefault());
+      layer.addEventListener('close', () => { if (!finished && layer.isConnected) { try { layer.showModal(); win.focus({ preventScroll: true }); } catch (e) { /* gone meanwhile */ } } });
+    }
     doc.documentElement.style.overflow = 'hidden';
     const $ = s => rootEl.querySelector(s), $$ = s => Array.from(rootEl.querySelectorAll(s));
     const win = $('.ce-win'), stage = $('.ce-stage'), art = $('.ce-art'), gridG = $('.ce-grid'), itemsG = $('.ce-items'), ui = $('.ce-ui'), paper = $('.ce-paper');
@@ -3820,7 +3840,7 @@
     const aiKeys = () => (root.CharmEditorAiKeys && typeof root.CharmEditorAiKeys.key === 'function' ? root.CharmEditorAiKeys : null);
     const aiW = () => (api.current && api.current.ai && typeof api.current.ai.st === 'function' ? api.current.ai : null);
     // (CE TEXT, 28 Oct 2026: a key pressed in a popover over the editor that is not the editor's own, the emoji picker of the words box, is that popover's: its arrows, Enter and Esc)
-    const notOurs = e => { const t = e.target; return !!(t && t.nodeType === 1 && t !== doc.body && t !== doc.documentElement && !rootEl.contains(t)); };
+    const notOurs = e => { const t = e.target; return !!(t && t.nodeType === 1 && t !== doc.body && t !== doc.documentElement && t !== layer && !rootEl.contains(t)); };   // (CES1: the editor's own dialog is the editor's)
     function onKey(e) {
       if (!rootEl.isConnected) return;
       if (notOurs(e)) return;
@@ -3949,6 +3969,30 @@
       const yes = await ask({ title: 'Leave without saving?', text: 'The changes you made to this charm will be lost. Nothing is kept until you press Save.', yes: 'Discard changes', no: 'Keep editing' });
       if (yes) finish(null);
     }
+    /** CES1: the workspace brought in front of every window open now (its dialog shown modally again, last) and given the keys: Edit Design pressed while it is already open. */
+    function raise() {
+      if (finished) return false;
+      if (layer && layer.isConnected) { try { const keep = layer.open; if (keep) { layer.close(); } layer.showModal(); } catch (e) { /* shown as it stands */ } }
+      else if (rootEl.parentNode && rootEl.parentNode.lastElementChild !== rootEl) rootEl.parentNode.appendChild(rootEl);
+      try { const t = S.editing && S.editing.ta && S.editing.ta.isConnected ? S.editing.ta : S.ask ? rootEl.querySelector('.ce-ask [data-ask]') : win; (t || win).focus({ preventScroll: true }); } catch (e) { /* fine */ }
+      return true;
+    }
+    /** CES1 (Paul, 9 Nov 2026: "if it is already [open] and not given order or piece, then that particular piece or order must open in the charm editor"): another charm is asked for while this one
+     *  is open. Nothing changed: the workspace closes at once. Changes: asked over the work: "Save and switch" (saved as Save saves, the caller's own check first: a save it refuses keeps the
+     *  workspace open), "Discard and switch", or "Cancel" (nothing else opens). o.what names what is asked for. → Promise<true when the workspace is gone>. */
+    async function requestSwitch(o) {
+      o = o || {};
+      if (finished) return true;
+      raise();
+      if (S.ask) return false;
+      if (S.editing) closeEditor();
+      abandon();
+      if (!dirty()) { finish(null); return true; }
+      const a = await ask({ title: 'Switch to another charm?', text: `You have changes to this charm that are not saved.${o.what ? ` ${o.what} is waiting to open.` : ''} Save them first, or leave them.`, yes: 'Discard and switch', no: 'Cancel', alt: 'Save and switch' });
+      if (a === 'alt') { switching = true; try { await save(); } finally { switching = false; } return finished; }
+      if (a === true) { finish(null); return true; }
+      return false;
+    }
     /** opts.back pressed: closed as Cancel closes (asked first when there are changes; "Save and go back" saves), then the caller's run. */
     async function requestBack() {
       if (S.ask || !back) return;
@@ -3964,7 +4008,7 @@
     /* EDITSAVE (Paul, 28 Oct 2026, order 4211572095: "The editor closed, nothing he did shows on the card", the card saying "Not saved · …" after the work was gone): the caller's
        opts.check(result) is asked BEFORE the workspace closes. A save it would refuse leaves the editor open, everything the person made still in it, and says plainly which part and why
        (refuse); only a save it would keep closes the workspace. */
-    let checking = false;
+    let checking = false, switching = false;   // (CES1 switching: a "Save and switch": the result says so, so the caller's after-save window does not come up over the charm asked for next)
     async function save() {
       if (S.ask || checking || finished) return;
       if (S.editing) closeEditor();
@@ -3979,6 +4023,7 @@
         if (finished) return;
         if (no && Array.isArray(no.lines) && no.lines.length) { wentBack = false; refuse(no, r); return; }
       }
+      if (switching) r.switched = true;
       finish(r);
     }
     /** What cannot be kept, said over the open workspace: { title?, text?, lines: [{ face?, id?, text }] }. The first part named is selected on its face (and the view goes to that face),
@@ -4013,6 +4058,7 @@
       xClose(v);
       if (ro) ro.disconnect();
       if (rootEl.parentNode) rootEl.parentNode.removeChild(rootEl);
+      if (layer) { try { if (layer.open) layer.close(); } catch (e) { /* fine */ } layer.remove(); }   // (CES1: the editor's own top-layer dialog goes with it)
       doc.documentElement.style.overflow = prevOverflow;
       try { if (prevFocus && prevFocus.focus) prevFocus.focus({ preventScroll: true }); } catch (e) { /* the page moved on */ }
       done(v);
@@ -4556,11 +4602,15 @@
       // (28 Oct 2026, the design library, charm-nest-ce-library.js: it asks "keep your changes?" itself, closes this session as chosen (kept: exactly as Save; left: as
       //  Cancel, nothing asked again) and opens the editor on another design with the same fonts, font engine and locks)
       opts,
-      end: keep => { if (S.ask) return; if (keep) save(); else { if (S.editing) closeEditor(true); abandon(); finish(null); } }
+      end: keep => { if (S.ask) return; if (keep) save(); else { if (S.editing) closeEditor(true); abandon(); finish(null); } },
+      raise: () => raise(),
+      requestSwitch: o => requestSwitch(o)
     };
   }
 
   const api = { open, model, builtinTextToPaths, current: null, version: 1 };
+  /** CES1: the workspace open now brought in front of every window and given the keys → whether one is open. */
+  api.raise = () => !!(live && typeof live.raise === 'function' && live.raise());
   // (ENGZOOM, 29 Oct 2026: the view's shared parts, section 0: the Design & Engrave work area zooms, pans and draws its rulers with them)
   api.view = Object.freeze({ PX100, ZMIN, ZMAX, PT, MM, LADDER, ZLADDER, ZOOM_PRESETS, ruleSteps, ruleNum, stepZoom, fmtZoom, wheelOf, paintRuler });
   // the extension points (see the header): empty lists the other files push onto; anything registered before this file loaded is taken in

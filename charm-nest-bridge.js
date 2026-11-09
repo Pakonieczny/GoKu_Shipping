@@ -11144,7 +11144,7 @@ const Engrave = window.Engrave = (() => {
    *  charmEditPiece). → { saved: [faces], records } | null (put away, nothing changed, or not saved: the note says why). */
   function openCharmEditor(x) {
     const t0 = charmEditPiece(x), want = t0 ? t0.poolIds.join(",") : "";
-    if (charmEditOpen && (!want || charmEditOpen.want === want)) return charmEditOpen.p;
+    if (charmEditOpen && (!want || charmEditOpen.want === want)) { try { window.CharmEditor?.raise?.(); } catch (_) { /* CES1: the editor already up on this piece is brought in front of every window */ } return charmEditOpen.p; }
     if (charmEditOpen) charmEditOpen.tok.gone = true;
     const o = { want, tok: { gone: false }, p: null };
     o.p = openCharmEditorOnce(x, o.tok).finally(() => { if (charmEditOpen === o) charmEditOpen = null; });
@@ -11155,6 +11155,39 @@ const Engrave = window.Engrave = (() => {
   function charmEditMakeWay() {
     const CE = window.CharmEditor; if (!CE || !CE.current) return Promise.resolve(true);
     const Ms = window.CharmNestCeMasters; return Ms && typeof Ms.closeEditor === "function" ? Promise.resolve(Ms.closeEditor()).then(v => !!v && !CE.current, () => false) : Promise.resolve(false);
+  }
+  /* CES1 (Paul, 9 Nov 2026: "the system does not update the actual order info and thumbnails throughout the application to instantly reflect the changes made in the Charm editor everywhere in
+     the app"). A piece's save told the list boxes (THUMBSYNC: the made pictures, once the sweep saw the drawing move) and drew the Design & Engrave tab again; the order window's own panels (its
+     header, its Engraving card, Its pieces), the sheet cards, an open sheet window and the Review and Orders cards kept what they had drawn until something else painted them. Now a save tells
+     every view of the piece on this screen at once, through the paths that already draw them (liveRefresh's set, the made pictures, the list boxes), and nothing is read from the cloud for it:
+     other screens follow through the made picture's pool row and the changes feed as before. */
+  function charmEditEverywhere(poolIds, rid) {
+    const ids = (poolIds || []).map(String).filter(Boolean); if (!ids.length) return;
+    const tryDo = f => { try { f(); } catch (e) { console.warn("charm edit: views", e); } };
+    tryDo(() => window.CharmNestMadeThumb?.changed("art", ids));
+    tryDo(() => ListMedia.refresh(ids));
+    tryDo(() => { for (const sh of allSheets()) if ((sh.charms || []).some(c => c && ids.includes(String(c.poolId)))) renderCard(sh); });
+    tryDo(() => { if (window.OrderWin && OrderWin.isOpen && OrderWin.isOpen() && (!rid || String(OrderWin.rid ? OrderWin.rid() : "") === String(rid))) OrderWin.paint(); });
+    tryDo(() => { if (window.SheetWin && SheetWin.isOpen && SheetWin.isOpen() && SheetWin.current) { const sid = SheetWin.current(), sh = allSheets().find(p => p.sheetId === sid); if (sh && (sh.charms || []).some(c => c && ids.includes(String(c.poolId)))) SheetWin.open(sid, { keepWork: true }); } });
+    tryDo(() => { if (S.mode === "review" && window.Review && typeof Review.render === "function") Review.render(); });   // (the Review cards in view; the list boxes elsewhere are ListMedia's, above)
+    tryDo(() => { if (rid && window.CharmNestCustomPiece && typeof CharmNestCustomPiece.repaint === "function") CharmNestCustomPiece.repaint(rid); });
+    tryDo(() => document.dispatchEvent(new CustomEvent("cn-charm-saved", { detail: { poolIds: ids, orderId: rid || null } })));
+  }
+  /** CES1: the card after a piece's Save (charm-nest-ce-masters.js afterPiece): what was kept, then Done, Keep editing (the piece again), Back to engraving (from its order), Replace on the
+   *  order… (the piece made again from this drawing, a fix of it). Not over another charm asked for meanwhile ("Save and switch", another Edit Design), nor after "Save and go back". */
+  function charmEditAfter(x, t, tok, res, o) {
+    const Ms = window.CharmNestCeMasters; if (!Ms || typeof Ms.afterPiece !== "function" || !res || res.switched || (o && o.wentBack) || (tok && tok.gone)) return;
+    if (window.CharmEditor && CharmEditor.current) return;   // (an editor is up again: the card's line said it)
+    const poolId = t.poolIds[0], row = t.row || (t.job && t.job.row) || null, rid = row && row.order ? String(row.order.receiptId) : "";
+    const all = ((row && row.poolIds) || []).map(String), at = Math.max(0, all.indexOf(poolId)), sku = (row && row.spec && row.spec.designSku) || (row && row.line && row.line.sku) || (t.charm && t.charm.name) || "This piece";
+    const C = window.CharmNestCustomPiece, canReplace = !!(rid && C && typeof C.open === "function" && window.Pool && typeof Pool.addCustomPiece === "function");
+    const back = t.job && t.from !== "card" ? { label: "Back to engraving", title: "This piece's engraving card in Design & Engrave" } : null;
+    Promise.resolve(Ms.afterPiece({ title: o.title, name: sku, where: `${rid ? `order ${rid} · ` : ""}piece ${at + 1} of ${Math.max(1, all.length)}`, lines: o.lines, bad: !!o.bad, back, replace: canReplace ? {} : null }))
+      .then(c => {
+        if (c === "again") setTimeout(() => { openCharmEditor(x).catch(e => toast(`Charm Editor: ${(e && e.message) || e}`, "bad", 6000)); }, 0);
+        else if (c === "back") charmEditBack(t);
+        else if (c === "replace") Promise.resolve(o.design).then(d => C.open(Object.assign({ poolId }, d && d.id ? { designId: d.id, version: d.version } : { designId: "pc-" + poolId }))).catch(e => toast(`Replace on the order: ${(e && e.message) || e}`, "bad", 6000));
+      }, () => { /* put away */ });
   }
   async function openCharmEditorOnce(x, tok) {
     const AE = window.CharmNestArtEdit, CE = window.CharmEditor;
@@ -11252,7 +11285,11 @@ const Engrave = window.Engrave = (() => {
         finally { if (host) setTimeout(() => host.removeEventListener("cancel", keepOpen), 0); }
         if (!res) return null;   // (Cancel, the ×, Esc, Back with nothing kept: nothing is written)
         const p = planOf(res); todo = p.todo; wordsNow = p.wordsNow; kept = p.kept; wordsTodo = p.wordsTodo;
-        if (!todo.length && !wordsTodo.length) { if (kept.length && job) charmEditTell(t, `The ${kept.join(" and ")} words are the engraving's: they stay on the card · to engrave none, empty its words box or press No engraving`, false); return null; }
+        if (!todo.length && !wordsTodo.length) {
+          if (kept.length && job) charmEditTell(t, `The ${kept.join(" and ")} words are the engraving's: they stay on the card · to engrave none, empty its words box or press No engraving`, false);
+          charmEditAfter(x, t, tok, res, { wentBack, title: "Saved · nothing changed", lines: [kept.length ? `The ${kept.join(" and ")} words are the engraving's: they stay on the card` : "Nothing in the drawing changed, so nothing new was kept for this piece."] });   // (CES1: the card after every Save)
+          return null;
+        }
         if (p.refused.length) { wentBack = false; again = { faces: res.faces, face: p.refused[0].face, notice: { lines: p.refused } }; continue; }   // (the check said yes and the plan now says no: the editor again, never a save lost)
         { let end; const pr = new Promise(r => { end = r; }); pr.end = end; for (const id of t.poolIds) ART_SAVES.set(String(id), pr); savingArt = pr; }   // (APPROVE AFTER THE EDITOR: an Approve waits for this save, the words given back to the engraving with it)
         charmEditTell(t, todo.length ? `Saving the ${todo.length > 1 ? "front and back" : todo[0].face} artwork…` : `Saving the ${wordsTodo.join(" and ")} words…`, false);   // (Paul, 28 Oct 2026: said the moment Save is pressed; the drawing follows as soon as the cloud has it)
@@ -11266,8 +11303,12 @@ const Engrave = window.Engrave = (() => {
           if (done.length) {
             charmEditTell(t, `Saved the ${[...new Set(done)].join(" and ")} only · Not saved · ${why}`, true);
             charmEditLog("editorSave", { poolId, poolIds: t.poolIds, orderId: order || null, sku, faces: [...new Set(done)], by, from: t.from });
+            charmEditEverywhere(t.poolIds, order);   // (CES1: every view of this piece follows what was kept)
+            charmEditAfter(x, t, tok, res, { wentBack, bad: true, title: "Saved in part", lines: [`The ${[...new Set(done)].join(" and ")} is saved; the rest is not: ${why}`, "Keep editing opens this piece again, as saved, to save the rest."] });
             return { saved: [...new Set(done)], records };
           }
+          // (CES1: a "Save and switch": another charm is in the editor now; this save's failure is said, the editor is not taken from the charm asked for)
+          if (res.switched && window.CharmEditor && CharmEditor.current) { charmEditTell(t, `Not saved · ${why} · open this piece again to save it`, true); return null; }
           // (nothing saved: the editor opens again on the work as it was and says why; the card says it too)
           charmEditTell(t, `Not saved · ${why} · the Charm Editor is open again with your work`, true);
           for (const id of t.poolIds) if (ART_SAVES.get(String(id)) === savingArt) ART_SAVES.delete(String(id));
@@ -11279,7 +11320,7 @@ const Engrave = window.Engrave = (() => {
       }
       // DESIGNS (Paul, 28 Oct 2026: "this repository must grow with every new update or change to any charm using the charm editor"): the piece as saved is also a new version of its design
       // in the design library (charm-nest-designs.js), one design per piece (pc-<poolId>), its size its cut line's: one call of its own after the piece's save, never in its way
-      if (window.CharmNestDesigns) window.CharmNestDesigns.put({ id: "pc-" + poolId, name: sku, faces: res.faces, source: { kind: "piece", poolId, sku }, orderId: order || null, by }).catch(e => { console.warn("charm edit: design library", e); agent({ pool: true }, "warn", `${poolId}: its artwork is saved; the design library did not keep this version: ${(e && e.message) || e}`); });
+      const designP = window.CharmNestDesigns ? window.CharmNestDesigns.put({ id: "pc-" + poolId, name: sku, faces: res.faces, source: { kind: "piece", poolId, sku }, orderId: order || null, by }).catch(e => { console.warn("charm edit: design library", e); agent({ pool: true }, "warn", `${poolId}: its artwork is saved; the design library did not keep this version: ${(e && e.message) || e}`); return null; }) : Promise.resolve(null);
       // what the save did to the piece's engraving: an approved face is approved again (artChanged's own words), and every face whose drawing changed is fitted again around it, so the work area
       // draws the new art at once
       let pj = jobsOfPiece(poolId), jobs = [pj.front, pj.back].filter(Boolean);
@@ -11301,7 +11342,8 @@ const Engrave = window.Engrave = (() => {
       });
       // (SHAREDSHAPE: what the sheet's check of a changed cut line found, said with the save)
       const cutSaid = []; for (const pid of t.poolIds) { const c = CUT_CHECKS.get(pid); if (!c) continue; CUT_CHECKS.delete(pid); cutSaid.push(c.ok ? `The cut line changed: ${c.name} was checked again and it still fits; its files are written again` : `The cut line changed: on ${c.name} it ${c.why}: that sheet keeps its old files and goes to no set until the piece is moved clear (Manual Control) or the sheet is nested again`); }
-      charmEditTell(t, [faces.length ? `${faces.length > 1 ? "Front and back" : faces[0] === "front" ? "Front" : "Back"} artwork saved for this piece` : "", ...[...new Set(cutSaid)], ...wordsSaid, kept.length ? `The ${kept.join(" and ")} words are the engraving's: they stay on the card` : "", ...said, bare.length ? `No words needed on the ${bare.join(" or ")}: approve it as drawn` : ""].filter(Boolean).join(" · "), applied.some(a => a.kept) || cutSaid.some(x => /keeps its old files/.test(x)));
+      const savedLines = [faces.length ? `${faces.length > 1 ? "Front and back" : faces[0] === "front" ? "Front" : "Back"} artwork saved for this piece` : "", ...[...new Set(cutSaid)], ...wordsSaid, kept.length ? `The ${kept.join(" and ")} words are the engraving's: they stay on the card` : "", ...said, bare.length ? `No words needed on the ${bare.join(" or ")}: approve it as drawn` : ""].filter(Boolean), savedBad = applied.some(a => a.kept) || cutSaid.some(x => /keeps its old files/.test(x));
+      charmEditTell(t, savedLines.join(" · "), savedBad);
       { const lost = refit.filter(j => j.keepLost).map(j => faceOf(j)); if (lost.length && job) charmEditSay(job, `${(ART_NOTES.get(job.key) || {}).text || "Artwork saved"} · The words no longer fit where they were placed on the ${lost.join(" and ")}: placed again, check them`, false); }   // (KEEP: said when the words could not stay)
       // a face that was not fitted again keeps its words and its mask (they stand on the cut line, which a piece on a sheet keeps), but the art it draws is the new one
       const live = Pool.charmOf(poolId);
@@ -11315,6 +11357,8 @@ const Engrave = window.Engrave = (() => {
       //  (setViewFace draws the card in front again at once: render() keeps a card whose engraving did not change, and its work area with it)
       for (const j of jobs) { const own = faceOf(j), other = faces.find(f => f !== own), want = faces.includes(own) || !other ? own : otherFaceOf(j) === other ? other : own; if (want !== viewFaceOf(j) || want !== own) setViewFace(j, want); }   // (the other face shown is drawn again from the new charm)
       try { render(); } catch (_) { /* drawn with the next render */ }
+      charmEditEverywhere(t.poolIds, order);   // (CES1: every view of this piece and its order shows the save at once)
+      charmEditAfter(x, t, tok, res, { wentBack, design: designP, bad: savedBad, title: faces.length ? "Saved" : "Saved · the words", lines: savedLines });   // (CES1: the card after every Save)
       return { saved: faces, records };
     } finally { if (savingArt) { for (const id of t.poolIds) if (ART_SAVES.get(String(id)) === savingArt) ART_SAVES.delete(String(id)); savingArt.end(); } if (wentBack) charmEditBack(t); }
   }
@@ -27846,6 +27890,17 @@ async function bootBridge() {
   document.getElementById("btnRunMode").onclick = () => { const auto = S.settings.runMode !== "auto"; if (auto && !confirm("Auto mode: the sorter connects to the Design Station, pulls the latest orders by the date rule, nests, fits engraving, saves labels and marks the orders complete — continuing past items that need review or approval. Only ready work is released. Turn Auto on?")) return; RunCtl.setMode(auto ? "auto" : "manual"); };
   Orders.loadMaps().catch(() => {}); Master.load().catch(() => {});
   Engrave.loadFonts().catch(() => {});
+  /* CES1 (Paul, 9 Nov 2026: a save in the Charm Editor shown "everywhere in the app" at once): a DESIGN saved (a custom order's, a master opened as a design, one saved in another tab of this
+     computer: the design library's own onChange, no read) draws again the order window showing its order and the order pictures that show designs; a piece's own design (pc-) is told by its save */
+  try {
+    const D = window.CharmNestDesigns;
+    if (D && typeof D.onChange === "function") D.onChange(ev => {
+      if (!ev || (ev.kind === "put" && ev.row && /^pc-/.test(String(ev.row.id || "")))) return;
+      const rid = ev.row && ev.row.orderId ? String(ev.row.orderId) : "";
+      try { if (OrderWin.isOpen() && (!rid || String(OrderWin.rid()) === rid)) OrderWin.paint(); } catch (_) { /* drawn with its next paint */ }
+      try { for (const el of document.querySelectorAll("[data-pc-thumb]")) if (el._pcRedo && el.isConnected) el._pcRedo(); } catch (_) { /* drawn with the next list */ }
+    });
+  } catch (e) { console.warn("design library: views", e); }
   Kin.mount();
   // Direct #engrave navigation can happen before the bridge exists. Paint it
   // now instead of leaving an empty pane throughout checkpoint reconstruction.

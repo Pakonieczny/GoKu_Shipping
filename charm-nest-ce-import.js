@@ -844,7 +844,7 @@
       const rootEl = doc.createElement('div'); rootEl.className = 'cei-root';
       rootEl.innerHTML = `<div class="cei-card" role="dialog" aria-modal="true" tabindex="-1" aria-label="Import ${esc(o.name)}"><div class="cei-eye">Import vector</div><h3>${esc(o.name)}</h3>
         <div class="cei-size">Reading the drawing…</div><div class="cei-wait" role="progressbar" aria-label="Reading"></div><div class="cei-foot"><button class="cei-btn cei-btn--ghost" type="button" data-a="cancel">Cancel</button></div></div>`;
-      doc.body.appendChild(rootEl);
+      (doc.querySelector('dialog.ce-layer[open]') || doc.body).appendChild(rootEl);   // (CES1: over the Charm Editor, which is in its own top-layer dialog: the picker goes in it, in front and live)
       const card = rootEl.querySelector('.cei-card');
       let done = false, R = null, view = null, groups = [], chosen = null;
       const finish = v => {

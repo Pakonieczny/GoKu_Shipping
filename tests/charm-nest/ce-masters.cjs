@@ -310,7 +310,7 @@ async function partB() {
     await waitFor(page, () => !(window.CharmEditor && CharmEditor.current));
     const b7b = await page.evaluate(async () => ({ m: await window.__m, puts: window.__puts, cur: CharmNestCeMasters.current() }));
     check(`B7 from inside a changed editor, a master asks first ("${asked}"); Discard, and COMET_9427 is in the editor (${b7.n} layers, none locked) while the heart's session ended unsaved; Cancel on the untouched master closes it, nothing saved`,
-      asked === 'Leave without saving?' && b7.h === null && b7.n > 0 && b7.locked === 0 && b7.cur && b7.cur.source.sku === 'COMET_9427' && b7b.m === null && b7b.puts === 6 && b7b.cur === null, JSON.stringify({ b7, b7b }));
+      asked === 'Switch to another charm?' && b7.h === null && b7.n > 0 && b7.locked === 0 && b7.cur && b7.cur.source.sku === 'COMET_9427' && b7b.m === null && b7b.puts === 6 && b7b.cur === null, JSON.stringify({ b7, b7b }));
 
     /* ── B9 the Design & Engrave tab's Charm Editor button (DESIGNBTN, Paul 28 Oct 2026: it replaced the Charm Designer bar; openDesign stays for any caller): newDesign(o) and openDesign(id, version, o) with o.back: the editor's head shows the way back; pressed with nothing
        changed, it leaves and nothing is saved; o.from goes to the log ── */

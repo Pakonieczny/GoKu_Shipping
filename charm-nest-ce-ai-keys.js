@@ -359,7 +359,7 @@
       const done = w.modal(box, () => {});
       closeFn = ok => { done(!!ok); cleanup(); };
     } else {
-      doc.body.appendChild(box);
+      (doc.querySelector('dialog.ce-layer[open]') || doc.body).appendChild(box);   // (CES1: in front of the Charm Editor's own top-layer dialog)
       const onEsc = ev => { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeFn(false); } };
       root.addEventListener('keydown', onEsc, true);
       closeFn = () => { root.removeEventListener('keydown', onEsc, true); cleanup(); };

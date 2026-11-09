@@ -39,6 +39,9 @@ async function world(opts = {}) {
   page.on('console', m => { if (m.type() === 'warning' && /^order view:/.test(m.text())) warns.push(m.text()); });   // (OrderWin's tryDo swallows an error with this warning: none may)
   page.setDefaultTimeout(30000);
   page.on('pageerror', e => { errors.push(e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 4).join(' | ')); });
+  // (CES1, 9 Nov 2026: a piece's Save in the Charm Editor now ends with its card over the page (Done / Keep editing / Replace on the order…). A check written before it that goes on clicking the
+  //  page has the card put away with Done when it is in the way of that click, as a person would; a check of the card itself opens its world with { keepCards: true })
+  if (!opts.keepCards && typeof page.addLocatorHandler === 'function') await page.addLocatorHandler(page.locator('.cem-card:has([data-c="done"]):not(:has([data-c="send"]))').first(), async () => { await page.evaluate(() => { const b = document.querySelector('.cem-card [data-c="done"]'); if (b) b.click(); }); }, { noWaitAfter: true });
   await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
   await page.waitForFunction(needFacts => window.CN && window.Orders && window.OrderWin && (window.OrderFacts || !needFacts) && CN.S.cloud.ok === true, opts.facts !== false, { timeout: 60000 });
   return { srv, browser, context, page, errors, warns, async close() { await browser.close(); await srv.close(); } };

@@ -87,6 +87,9 @@ const until = async (f, ms) => { const t0 = Date.now(); for (;;) { const v = awa
     await R.settle(page, 600);
     const fr = await page.evaluate(() => { __fr.stop = true; return { t0: __fr.t0, frames: __fr.frames.filter(f => f.t >= __fr.t0) }; });
     const now1 = await page.evaluate(([sel, pid]) => ({ th: __ef.thumb(document.querySelector(sel)), fresh: __ef.fresh(document.querySelector(sel), pid) }), [TH, PID]);
+    // (CES1: the card after Save is over the page: Done puts it away before the screen is compared)
+    await until(() => page.evaluate(() => !!document.querySelector('.cem-card [data-c="done"]')), 10000);
+    await page.evaluate(() => { const b = document.querySelector('.cem-card [data-c="done"]'); if (b) b.click(); }); await R.settle(page, 200);
     // pixel for pixel: the Front box and the fresh drawing beside it, each as the screen shows it
     const shotA = await page.locator(TH).first().screenshot(), shotB = await page.locator('#efFresh').screenshot();
     const px = await page.evaluate(async ([a, b]) => {
