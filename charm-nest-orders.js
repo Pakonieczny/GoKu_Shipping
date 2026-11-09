@@ -533,9 +533,91 @@
      size in mm, a number of sides, a face, an alignment, a price, a count of bars / discs), is never a design option: it is never asked about as one. A value whose only part is a metal word or a font word is
      not enough on its own ("Rose" is also a flower, "Ace" a card): it takes the name, or another part beside it. → { kinds, byName, byValue, length, size, font } or null when the option may pick a design. */
   const ND_SPLIT_NAME = /\s*(?:[\/\\•·&+,|;]|\band\b|\bwith\b)\s*/i, ND_SPLIT_VALUE = /\s*[\/\\•·&+,|;]\s*|\s+(?:[-–—]|and)\s+/i;
+  /* ═══ ENGLIMIT (Paul, 9 Nov 2026, order 4218451815, listing 531495758 "TINY Gold Bar Necklace", SKU TINY_5758, "Number of Characters: GOLD 1-3 Characters", personalisation "D (cross) E"):
+     "the 1-3 characters [is] just for how many characters can be added as engraving to the bar." The line was held "option … not mapped — Etsy keeps one SKU (TINY_5758) for every choice of this listing".
+     WHY: nameKind read "Number of …" as a COUNT, and FALSEHOLD never passes a count (how many pieces is a real question); valueKind read neither the metal nor the character range in "GOLD 1-3 Characters", so
+     the value was unread too, and the option fell through to the generic one-SKU question. THE RULE: an option that only sets how much ENGRAVING the piece takes (a number of characters / letters / initials /
+     lines of text, as a range "1-3 Characters", a ceiling "Up to 3 letters", "Max 10 characters", or one "1 initial", "2 lines") is a words limit, never a design option and never a count of pieces: it never holds.
+     A metal word beside it ("GOLD 1-3 Characters") and a price are read too. A bare "3 letters" / "Number of Initials: 3" stays the count question it always was (three initial discs, or three letters on one?);
+     a value that a listing's own table ties to its own SKU is still that SKU's (the SKU rule comes first). The limit is a CHECK: spec.engraveLimit says it on the line, and a longer engraving is a note, never a hold.
+     → { min, max (0 = no ceiling), unit: "character" | "letter" | "initial" | "line", metal: "gold" | "silver" | "rose" | "", text } or null. */
+  const LIMIT_NAME = /\b(?:characters?|chars?|(?:number|no\.?|#|count|amount)\s+of\s+(?:letters?|initials?|lines?|characters?)|how\s+many\s+(?:letters?|initials?|lines?|characters?|chars?)|(?:letters?|initials?|lines?|characters?)\s+(?:count|limit|max(?:imum)?|allowed)|max(?:imum)?\s+(?:letters?|initials?|lines?|characters?)|lines?\s+of\s+(?:text|engraving)|text\s+lines?|engraving\s+(?:length|limit|size|lines?))\b/i;
+  const LIMIT_UNIT_NAME = /\b(?:letters?|initials?|lines?|characters?|chars?)\b/i;
+  const LIMIT_N = "(\\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)", LIMIT_U = "(characters?|chars?|letters?|initials?|lines?(?:\\s+of\\s+(?:text|engraving))?)";
+  const LIMIT_FORMS = [
+    ["upto", new RegExp("(?:^|[^\\p{L}\\p{N}])(?:up\\s*to|upto|max(?:imum)?\\.?|no\\s+more\\s+than|at\\s+most|\u2264|<=)\\s*:?\\s*" + LIMIT_N + "\\s*" + LIMIT_U + "?(?![\\p{L}\\p{N}])", "iu")],
+    ["range", new RegExp("(?:^|[^\\p{L}\\p{N}])" + LIMIT_N + "\\s*(?:-|\u2013|\u2014|~|to)\\s*" + LIMIT_N + "\\s*" + LIMIT_U + "?(?![\\p{L}\\p{N}])", "iu")],
+    ["plus", new RegExp("(?:^|[^\\p{L}\\p{N}])" + LIMIT_N + "\\s*\\+\\s*" + LIMIT_U + "(?![\\p{L}\\p{N}])", "iu")],
+    ["max", new RegExp("(?:^|[^\\p{L}\\p{N}])" + LIMIT_N + "\\s*" + LIMIT_U + "\\s*(?:max(?:imum)?|or\\s+(?:less|fewer|under)|and\\s+under|limit)(?![\\p{L}\\p{N}])", "iu")],
+    ["n", new RegExp("(?:^|[^\\p{L}\\p{N}])" + LIMIT_N + "\\s*" + LIMIT_U + "(?![\\p{L}\\p{N}])", "iu")],
+    ["bare", new RegExp("^\\s*" + LIMIT_N + "\\s*$", "iu")]
+  ];
+  const LIMIT_FILLER = /^(?:engrav\w*|text|of|total|only|per|side|piece|bar|front|back|personali[sz]\w*|custom|max(?:imum)?|limit|allowed|filled|fill|plated|sterling|solid|karat|\d{1,2}kt?|\d{1,2}k|yellow|white|metal|and|with|price|usd|chain|necklace|tiny|mini|small)$/i;
+  const limitNum = s => { s = String(s || "").toLowerCase(); return /^\d+$/.test(s) ? +s : NUMWORDS[s] || 0; };
+  const limitUnit = s => { s = String(s || "").toLowerCase(); return /^char/.test(s) ? "character" : /^letter/.test(s) ? "letter" : /^initial/.test(s) ? "initial" : /^line/.test(s) ? "line" : ""; };
+  /** One value (or one part of a value) as an engraving limit, read with the option's NAME (which may carry the unit and says it is a limit: "Number of Characters"); null when it is not one. */
+  function limitValue(value, name) {
+    const nm = decodeEntities(String(name == null ? "" : name)), byName = LIMIT_NAME.test(nm);
+    const t = shownText(value).normalize("NFKC").replace(PIECE_PRICE, " ").replace(/[$€£]\s*\d+(?:[.,]\d{1,2})?/g, " ").replace(/\brose[\s-]*gold\b/gi, "rosegold").replace(/\s+/g, " ").trim(); if (!t || t.length > 60) return null;
+    for (const [form, rx] of LIMIT_FORMS) {
+      const m = rx.exec(t); if (!m) continue;
+      if (form === "bare" && !byName) return null;
+      const a = limitNum(m[1]), b = form === "range" ? limitNum(m[2]) : 0, u = limitUnit(form === "range" ? m[3] : form === "bare" ? "" : m[2]) || (byName ? limitUnit((LIMIT_UNIT_NAME.exec(nm) || [])[0]) : "");
+      if (!a || !u || (form === "range" && !(b > a))) return null;
+      // (the rest of the value: only metal words, a price, and the plain words a shop writes beside a limit; anything else means the value says more than a limit)
+      const rest = (t.slice(0, m.index) + " " + t.slice(m.index + m[0].length)).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+      let metal = "";
+      for (const w of rest) { const mw = pieceMetalOf(w); if (mw) { if (metal && metal !== mw) return null; metal = mw; continue; } if (!LIMIT_FILLER.test(w)) return null; }
+      // a bare count of letters / initials ("3 letters", "Number of Initials: 3") may be as many separate pieces: it stays the count question; one, a ceiling or a range is a limit
+      const n = form === "range" ? b : a;
+      if ((u === "letter" || u === "initial") && (form === "n" || form === "bare") && a > 1 && !/\b(?:limit|max(?:imum)?|allowed|engrav\w*)\b/i.test(nm)) return null;
+      // (no limit word in the name: only a value that cannot be a count of pieces, characters or lines of text, or a ceiling / range, is read alone)
+      if (!byName && form === "n" && !(u === "character" || u === "line" || (a === 1 && LIMIT_UNIT_NAME.test(nm)))) return null;
+      return { min: form === "range" ? a : form === "plus" ? a : 1, max: form === "plus" ? 0 : n, unit: u, metal, form, text: clip(optionText(value), 60) };
+    }
+    return null;
+  }
+  /** What ONE option says about an engraving limit (ENGLIMIT, above): the whole value (whole: true), else exactly one of its parts ("Stylish • 1-3 characters", whole: false); null when it says none. */
+  function engraveLimitRead(name, value) {
+    const nm = decodeEntities(String(name == null ? "" : name)), v = decodeEntities(String(value == null ? "" : value)).replace(/&quot;/g, "\"").trim();
+    if (!v || isPersonalisation(nm)) return null;
+    const whole = limitValue(v, nm); if (whole) return Object.assign(whole, { name: optionText(nm), value: optionText(v), whole: true });
+    const parts = v.split(ND_SPLIT_VALUE).map(s => s.trim()).filter(Boolean).map(p => limitValue(p, nm)).filter(Boolean);
+    return parts.length === 1 ? Object.assign(parts[0], { name: optionText(nm), value: optionText(v), whole: false }) : null;
+  }
+  /** The symbol words a buyer types in brackets for a sign ("D (cross) E", "(heart)"): counted as ONE character each by the limit check. The app has no table that turns them into the sign itself:
+   *  the words are engraved as typed until a person changes them (the Engrave tab's emoji picker holds the signs the laser can cut). */
+  const LIMIT_SYMBOL_WORD = /\(\s*(?:cross|heart|hearts|star|stars|infinity|moon|sun|paw|paw\s*print|flower|clover|shamrock|anchor|music\s*note|note|butterfly|dove|leaf|smiley|smile|diamond|plus|dot|arrow|halo|crown|horseshoe|feather|tree|wave|bolt|lightning|peace|ampersand|and)\s*(?:symbol|sign|emoji|icon)?\s*\)/giu;
+  /** How long an engraving is in the unit of its limit: characters (no spaces; a bracketed symbol word is one sign; an emoji one), letters / initials (letters and digits), lines. */
+  function limitLength(text, unit) {
+    const s = String(text == null ? "" : text).replace(/\r/g, "");
+    if (unit === "line") return s.split("\n").filter(l => l.trim()).length;
+    const t = s.replace(LIMIT_SYMBOL_WORD, "\u2020");
+    const seg = typeof Intl !== "undefined" && Intl.Segmenter ? [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(t)].map(x => x.segment) : Array.from(t);
+    return seg.filter(g => unit === "character" ? !/^\s+$/u.test(g) : /[\p{L}\p{N}]/u.test(g)).length;
+  }
+  const limitWords = (n, unit) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+  /** The limit check of a line (spec.engraveLimit): the limit the buyer paid for, read against the words that are engraved. A longer engraving is said (over), never held. */
+  function engraveLimitCheck(spec, lim) {
+    const e = spec && spec.engraving, faces = e && (e.front || e.back) ? [e.front, e.back].filter(f => f && String(f.text || "").trim()).map(f => String(f.text)) : [];
+    const words = faces.length ? faces : (spec && spec.personalization || []).length ? [spec.personalization.join("\n")] : [];
+    const ceiling = lim.max ? (lim.min > 1 ? `${lim.min}-${limitWords(lim.max, lim.unit)}` : `Up to ${limitWords(lim.max, lim.unit)}`) : `${limitWords(lim.min, lim.unit)} or more`;
+    const out = { option: `${lim.name}: ${lim.value}`, min: lim.min, max: lim.max, unit: lim.unit, metal: lim.metal || "", used: 0, over: false, words: "", line: "" };
+    const metalOk = !lim.metal || !spec || !spec.material || (lim.metal === "gold" ? /^gold/.test(spec.material) : spec.material === lim.metal);
+    const metalSay = metalOk ? "" : ` · the option says ${lim.metal}, the line is ${CARD_TAG[spec.material] || spec.material}: check the metal`;
+    if (!metalOk) out.metalDiffers = true;
+    if (!words.length) { out.line = `${ceiling} · no engraving written${metalSay}`; return out; }
+    const shown = words.map(w => clip(w.replace(/\s*\n+\s*/g, " / "), 50)).join(" | "), used = Math.max(...words.map(w => limitLength(w, lim.unit)));
+    const sym = words.some(w => { LIMIT_SYMBOL_WORD.lastIndex = 0; return LIMIT_SYMBOL_WORD.test(w); }) ? " (a bracketed symbol word counts as one sign)" : "";
+    Object.assign(out, { used, words: shown, over: !!lim.max && used > lim.max });
+    out.line = out.over ? `${ceiling} · engraving “${shown}” = ${limitWords(used, lim.unit)}${sym}: longer than the ${limitWords(lim.max, lim.unit)} the buyer paid for${metalSay}`
+      : `${ceiling} · engraving “${shown}” = ${limitWords(used, lim.unit)}${sym} \u2713${metalSay}`;
+    return out;
+  }
   function nameKind(part) {
     const s = String(part || "").replace(/[?:!*()"]+/g, " ").replace(/\s+/g, " ").trim(); if (!s) return "filler";
     if (/^(?:choose|choice|select|pick|your|the|a|option|options|please)$/i.test(s)) return "filler";
+    if (LIMIT_NAME.test(s)) return "limit";   // (ENGLIMIT: "Number of Characters", "Engraving length": a words limit, before the count and the length below)
     if (FONT_NAME.test(s)) return "font";
     if (/\b(?:chains?|lengths?|extenders?)\b/i.test(s)) return "length";
     if (/\b(?:sizes?|diameters?|dimensions?)\b|\bmm\b/i.test(s)) return "size";
@@ -555,6 +637,7 @@
     if (/^(?:front|back|both|both sides|front only|back only|front side|back side|[12]\s*sides?|one side|two sides|single sided|double sided|no engraving)$/i.test(s)) return "face";
     if (ALIGN_WORD.test(s)) return "align";
     if (NO_FONT.test(fontKey(s)) || fontOfWord(s)) return "font";
+    if (limitValue(s, "")) return "limit";   // (ENGLIMIT: "1-3 Characters", "GOLD 1-3 Characters", "Up to 3 letters")
     if (s.split(/[^\p{L}\p{N}]+/u).filter(Boolean).every(w => SPEC_METAL_WORD.test(w.toLowerCase()) || SPEC_FILLER_WORD.test(w.toLowerCase()))) return "metal";
     return "";
   }
@@ -563,12 +646,12 @@
     const nk = n.split(ND_SPLIT_NAME).map(nameKind).filter(k => k !== "filler"), vparts = v.split(ND_SPLIT_VALUE).map(s => s.trim()).filter(Boolean), vk = vparts.map(valueKind).filter(k => k !== "filler");
     // (the value must say what the name does: every part read, or, under a font name, a part taken as the font asked for; "CUSTOM · (add note)" is a request to read the note, never answered here)
     const unread = vparts.filter(p => !valueKind(p)), seeNote = /\b(?:custom|note|other|see|message|special|request|different|personali[sz]ed?)\b/i;
-    const byName = nk.length > 0 && nk.every(Boolean) && (!unread.length || (nk.includes("font") && unread.length === 1 && !seeNote.test(unread[0])));
-    const strong = vk.some(k => ["length", "size", "price", "count", "face", "align"].includes(k));
+    const byName = nk.length > 0 && nk.every(Boolean) && (!unread.length || (nk.includes("font") && unread.length === 1 && !seeNote.test(unread[0]))) && (!nk.includes("limit") || vk.includes("limit"));   // (ENGLIMIT: a limit's name takes a limit in the value: "Character: Mickey" is a design)
+    const strong = vk.some(k => ["length", "size", "price", "count", "face", "align", "limit"].includes(k));
     const byValue = vk.length > 0 && vk.every(Boolean) && (strong || vk.length >= 2) && !vk.every(k => k === "metal");
     if (!byName && !byValue) return null;
     const at = k => vparts.find(p => valueKind(p) === k) || "";
-    return { kinds: [...new Set(byName ? nk : vk)], byName, byValue, length: at("length"), size: at("size"), font: at("font") };
+    return { kinds: [...new Set(byName ? nk : vk)], byName, byValue, length: at("length"), size: at("size"), font: at("font"), limit: at("limit") };
   }
   /** What a line keeps of a font reading (spec.font). `id` is the installed font ("" = the app falls back to Source Sans 3 and says "Requested font"). */
   const fontSpecOf = (fr, source) => Object.assign({ asked: fr.asked, id: fr.id || "", name: fr.name || "", source }, fr.align ? { align: fr.align } : {}, fr.listing ? { listing: true } : {});
@@ -2056,6 +2139,7 @@
   function optionCount(name, value) {
     const nm = String(name || ""), val = String(value || "").trim();
     if (!val || isPersonalisation(nm) || isPriceOption(nm)) return null;
+    if (engraveLimitRead(nm, val)) return null;   // (ENGLIMIT: "Number of Characters: GOLD 1-3 Characters", "Up to 3 letters": how much is engraved, never how many pieces)
     // 1 · the value names a number of something ("2 Disc", "3 discs • gold", "Silver • 2 symbols", "1-5 Character-SILVER")
     let hits = countsIn(val.replace(SAFE_NUM, " "));
     const lens = hits.filter(h => h.cls === "length");
@@ -4464,6 +4548,7 @@
       let mapped = hit ? Object.assign({ field: hit.field, value: hit.value, source: hit.source }, hit.engrave ? { engrave: hit.engrave } : {}) : null;
       // a font option (Font: Stylish, Fonts: 16"/ Typewriter): read once; a person's answer for the FONT alone ("typewriter") serves every length it comes with
       const fr = fontRead(name, value, fx), fh = fr ? null : fontHidden(name, value, fx);
+      const lim = engraveLimitRead(name, value); if (lim && !spec.engraveLimit) spec.engraveLimit = lim;   // (ENGLIMIT: the line's engraving limit, whatever else the option says; checked at the end)
       if (!mapped && fr && fr.asked !== value) { const h = optionLookup(ctx.optionMaps, line.listingId, name, fr.asked); if (h) mapped = { field: h.field, value: h.value, source: h.source }; }
       // the drop-down value that says "2 symbols" and leaves the signs to the note ("2 symbols-leave note"): once the note's two signs are two charms, the option is answered by them
       if (!mapped && members && members.source === "signs" && members.byNote && name === members.optionName && value === members.optionValue) mapped = { field: "design", value: members.members[0].sku, source: "rule:signs-in-note" };
@@ -4488,6 +4573,8 @@
         else if (!viaPick && tied(v)) mapped = { field: "design", value: sku, source: "sku" };
         // a Mini Tag choice: the tag number is the shape, the master's design of that shape is the charm (tagOptionRead), the bracket's words the engraving (spec.tagOption)
         else if (tagPick && v === tagPick.variation) mapped = { field: "design", value: tagPick.sku, source: "rule:tag-shape" };
+        // ENGLIMIT (Paul, 9 Nov 2026, order 4218451815): "Number of Characters: GOLD 1-3 Characters" sets how much is engraved, never which charm: answered here, read as the line's limit check (spec.engraveLimit)
+        else if (!fr && lim && lim.whole) mapped = { field: "ignore", value: null, source: "rule:engrave-limit" };   // (a limit beside a font or a length, "Stylish • 1-3 characters", is read whole below: nonDesignOption's "limit" kind)
         // a font option names an app font exactly: it answers itself (never a look-alike); any other font waits below with its one plain line, unless FONT_RULES lets it through
         else if (fr && fr.none) mapped = { field: "font", value: null, source: "rule:no-font" };
         else if (fr && fr.id) mapped = { field: "font", value: fr.id, source: fr.listing ? "rule:font-listing" : "rule:font" };
@@ -4743,6 +4830,8 @@
       spec.designSku = null; spec.skuSource = null; spec.sources.sku = null;
       problems.unshift({ kind: "unmatchedSku", reason, sku: spec.boughtSku, listingId: String(line.listingId || ""), title: line.title || "", formHold: true, generic: String(line.listingId || "?"), lineForm: lf.form, designForm: df.form, siblings: [] });
     }
+    // ENGLIMIT: the engraving limit the buyer paid for, read against the words that are engraved: one plain line on the line, a longer engraving said (never held)
+    if (spec.engraveLimit) { try { spec.engraveLimit = engraveLimitCheck(spec, spec.engraveLimit); } catch (_) { delete spec.engraveLimit; } }
     return spec;
   }
   /** A line held (or unmatched) because of a question its fresh reading no longer raises: true when it may go back to the intake. `prev` is the spec it was read as before (the question it
@@ -5113,7 +5202,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { sizeFit, sizeMmOf, SIZE_PAD_PT, questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, tidyOption, optionView, optionViews, shownText, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, PINNED_LISTING_DESIGNS, pinnedDesign, PINNED_HUGGIE_SETS, pinnedHuggieSet, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, nonDesignOption, staleShared, familyNumberSays, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, PIECE_LISTINGS, pieceListing, pieceValueRead, pieceOptionOf, pieceSlots, pieceExtra, profileDesignOf, pieceBodiesOf, piecesFixed, pieceFacesRead, pieceNouns, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, SET_RULES, SET_LAYOUT_OPT, setRuleOf, setLengthsOf, setEngravedOf, barLengthOf, setLayoutAskOf, setPiecesOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { engraveLimitRead, engraveLimitCheck, limitLength, sizeFit, sizeMmOf, SIZE_PAD_PT, questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, tidyOption, optionView, optionViews, shownText, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, PINNED_LISTING_DESIGNS, pinnedDesign, PINNED_HUGGIE_SETS, pinnedHuggieSet, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, nonDesignOption, staleShared, familyNumberSays, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, PIECE_LISTINGS, pieceListing, pieceValueRead, pieceOptionOf, pieceSlots, pieceExtra, profileDesignOf, pieceBodiesOf, piecesFixed, pieceFacesRead, pieceNouns, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, SET_RULES, SET_LAYOUT_OPT, setRuleOf, setLengthsOf, setEngravedOf, barLengthOf, setLayoutAskOf, setPiecesOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY, earringNeverBackEngraves, EAR_NEVER_WHY, letterDesignNeverEngraves, LETTER_NEVER_WHY,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,

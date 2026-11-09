@@ -13012,6 +13012,7 @@ const Engrave = window.Engrave = (() => {
     const msgFont = sp.fontText && sp.fontText.asked ? String(sp.fontText.asked).toLowerCase() : "";
     if (requests.font && !(job.fontFromNote && job.fontMapped) && String(requests.font).toLowerCase() !== msgFont) wants.push(`Requested font: ${requests.font}${job.fontSubstituted && job.fontName ? ` (engraved in ${job.fontName}, the nearest${O.fontStyleLabel(job.fontStyle) ? " " + O.fontStyleLabel(job.fontStyle) : ""} font we have)` : ""}`);
     { const dis = sp.fontText && sp.fontText.differs ? O.fontDisagree(sp) : ""; if (dis) wants.push(dis); }
+    if (sp.engraveLimit && (sp.engraveLimit.over || sp.engraveLimit.metalDiffers) && sp.engraveLimit.line) wants.push(sp.engraveLimit.line);   // (ENGLIMIT: words longer than the limit the buyer paid for are said beside the words, never held)
     for (const a of (sp.fontText && sp.fontText.asks) || []) wants.push(a.charAt(0).toUpperCase() + a.slice(1));
     for (const a of (sp.fontText && sp.fontText.also) || []) wants.push(`The message names another font too: ${a}`);
     // the font a drop-down chose (spec.font, charm-nest-orders.js fontRead): one the app has is shown as "Font: Stylish → Playwrite US Trad" under From the order; a font the app does not have
@@ -23053,6 +23054,7 @@ const OrderWin = window.OrderWin = (() => {
     cell("Ship by", tryDo(() => Orders.shipTxt(r)) || "—");
     if (sp.form) cell("Form", sp.form); if (sp.size) cell("Size", sp.size);
     if (sp.chain) { const ch = tryDo(() => O.optionView("Chain", sp.chain, { title: r.line.title })); cell("Chain", ch ? ch.text : sp.chain, ch && ch.changed ? { raw: O.shownText(sp.chain) } : null); }   // (OPTTIDY: a chain read from a fused option "16"&18"·Set·ANGELINA" is said as "16" & 18" · Angelina"; the original is the hover)
+    if (sp.engraveLimit && sp.engraveLimit.line) cell("Engraving limit", sp.engraveLimit.line);   // (ENGLIMIT, Paul 9 Nov 2026: "Number of Characters: GOLD 1-3 Characters" is the words limit, read against the engraving: "Up to 3 characters · engraving “D (cross) E” = 3 characters ✓")
     // the engraving: the line's state and words, its seals (an approval made elsewhere is merged in by paintNow: W.engHist)
     const hist = W.engHist && W.engHist.key === r.key ? W.engHist.html : "";
     const seals = r.engrave ? CNEngravingSeals.list(r.engrave).length : 0, hasEng = !!(hist || (r.engrave && (r.engrave.needed || seals)));
