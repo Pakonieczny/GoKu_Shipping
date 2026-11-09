@@ -22,7 +22,8 @@ const unmatched = sp => (sp.problems || []).some(p => p.kind === 'unmatchedSku')
   ok(sp.designSku === 'BEADY DOVE 4' && sp.skuSource === 'alias', 'order 4200443660 (listing 1816178147, Etsy SKU "DOVE 4"): read as BEADY DOVE 4, as a saved answer: ' + JSON.stringify({ d: sp.designSku, s: sp.skuSource }));
   ok(!unmatched(sp) && !sp.special, 'no unknown-SKU question, and it is an ordinary charm line (not a special kind)');
   ok(O.pinnedDesign('1816178147') === 'BEADY DOVE 4' && O.pinnedDesign(1816178147) === 'BEADY DOVE 4' && O.pinnedDesign(' 1816178147 ') === 'BEADY DOVE 4', 'the table answers for the listing number however it is written');
-  ok(JSON.stringify(O.PINNED_LISTING_DESIGNS) === JSON.stringify({ '1816178147': 'BEADY DOVE 4', '1819190283': 'BEADY SQUIRREL3' }), 'the table holds these two listings and nothing else');
+  // (ENGLIMIT, Paul 9 Nov 2026, order 4218451815: listing 531495758 "TINY Gold Bar Necklace", Etsy SKU TINY_5758 in no master file, is the tiny bar TINY_4758)
+  ok(JSON.stringify(O.PINNED_LISTING_DESIGNS) === JSON.stringify({ '531495758': 'TINY_4758', '1816178147': 'BEADY DOVE 4', '1819190283': 'BEADY SQUIRREL3' }), 'the table holds these three listings and nothing else');
 }
 // whatever the transaction carries
 for (const sku of ['DOVE 4 WITH BRANCH', 'DOVE 4 — DISC', 'BEADY DOVE 4', 'NOT_A_DESIGN_1', 'dove 4', '']) {

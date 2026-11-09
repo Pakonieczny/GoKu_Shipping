@@ -1684,7 +1684,9 @@
      other. To take a listing out of this table, delete its line: the saved answers of Charm_Sku_Aliases then rule again. */
   /* Paul, 16 Oct 2026, order 4192064411, listing 1819190283 "Squirrel Charm Necklace Woodland Animal Charm Add On Charm ...", Etsy SKU "SQUIRREL3 W/ NUT" (in no master file, so the line waited as an unknown SKU): the listing is the charm
      the repo holds as BEADY SQUIRREL3 (the squirrel with its acorn and its ring), pinned the same way. */
-  const PINNED_LISTING_DESIGNS = { "1816178147": "BEADY DOVE 4", "1819190283": "BEADY SQUIRREL3" };
+  /* Paul, 9 Nov 2026, order 4218451815, listing 531495758 "TINY Gold Bar Necklace, Engraved Horizontal Bar Necklace …", Etsy SKU "TINY_5758" (in no master file: the SKU tag said "!" and the Vector design
+     "No vector available"): "This is the tiny bar", the repo's ADD-ON drawing TINY_4758 (15.9 × 3.9 mm, 2 holes; TINY_7557 and TINY GOLD BAR_0090 are the same drawing), pinned the same way. */
+  const PINNED_LISTING_DESIGNS = { "1816178147": "BEADY DOVE 4", "1819190283": "BEADY SQUIRREL3", "531495758": "TINY_4758" };
   /* PINNED HUGGIE SETS (Paul, 17 Oct 2026, order 4192003305, a charm-only listing, Charm Type "Huggie CHARM SET", Etsy SKU "OCTOPUS 2" read as "OCTOPUS 2 (HUGGIE)", in no master file: "The Huggie Set option for this charm
      only listing needs to be associated with SKU from our charm repo" ... "Here is the Etsy listing SKU for the Huggie Octopus earrings: Huggie Hoops- Octopus2"). The huggie set of a SKU named here is the library's design named
      for it WHATEVER spelling of the dash, the case or the spaces the library holds (the master's own spelling is found by the loose key), as a person's own answer (source "alias"). Keyed by the loose key of the SKU
@@ -2076,6 +2078,7 @@
      one design (BEE + HIVE, WOLF + MOON) keep today's one piece holding both. The intake has no geometry, so it asks the shared module about the master entry alone (alikeDesign: the four SKUs
      measured, or an entry that says `pair.alike`); the bridge asks again with the traced design when it makes the piece and calls solo() below when the geometry says one body. */
   const pairModule = () => { try { const g = typeof self !== "undefined" ? self : typeof globalThis !== "undefined" ? globalThis : null; if (g && g.CharmNestPair) return g.CharmNestPair; if (typeof require === "function") return require("./charm-nest-pair.js"); } catch (_) { /* the page without the module: the old words */ } return null; };
+  const readerModule = () => { try { const g = typeof self !== "undefined" ? self : typeof globalThis !== "undefined" ? globalThis : null; if (g && g.CharmNestEngraveRead) return g.CharmNestEngraveRead; if (typeof require === "function") return require("./charm-nest-engrave-read.js"); } catch (_) { /* the page without the reader: the words as typed */ } return null; };
   const alikeKnown = o => { try { const M = pairModule(); return !!(M && typeof M.alikeDesign === "function" && M.alikeDesign(Object.assign({ sku: o && o.sku }, (o && o.entry) || {})) === true); } catch (_) { return false; } };
   const ONE_WORDS = (index, count, why) => `the design draws ${count || 2} bodies (${why || "a left and a right charm"}) but the piece is not an earring pair: made as ONE charm, the ${index === 1 ? "right" : "left"} body only, no Left or Right, nothing duplicated or mirrored`;
   /** A design a person named as ONE body (CharmNestPair.onlyBodyOf, the WOLF: Paul, 13 Oct 2026), by the master entry alone: { index, words, ... } or null. */
@@ -4860,6 +4863,9 @@
       spec.designSku = null; spec.skuSource = null; spec.sources.sku = null;
       problems.unshift({ kind: "unmatchedSku", reason, sku: spec.boughtSku, listingId: String(line.listingId || ""), title: line.title || "", formHold: true, generic: String(line.listingId || "?"), lineForm: lf.form, designForm: df.form, siblings: [] });
     }
+    // SYMWORD (Paul, 9 Nov 2026, order 4218451815): a sign the buyer wrote as a bracketed name ("D (cross) E") is the sign in the faces' words ("D ✝ E"), as the engraving reader reads it (charm-nest-engrave-read.js fixSymbols)
+    { const R = readerModule(); if (R && R.fixSymbols && spec.engraving) for (const k of ["front", "back"]) { const f = spec.engraving[k]; if (!f || typeof f.text !== "string") continue;
+        const fs = R.fixSymbols(f.text); if (!fs.count) continue; f.text = fs.text; if (Array.isArray(f.lines)) f.lines = f.lines.map(l => R.fixSymbols(l).text); f.signs = fs.signs; } }
     // ENGLIMIT: the engraving limit the buyer paid for, read against the words that are engraved: one plain line on the line, a longer engraving said (never held)
     if (spec.engraveLimit) { try { spec.engraveLimit = engraveLimitCheck(spec, spec.engraveLimit); } catch (_) { delete spec.engraveLimit; } }
     return spec;

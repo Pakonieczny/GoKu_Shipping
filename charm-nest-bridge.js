@@ -8936,7 +8936,7 @@ const Engrave = window.Engrave = (() => {
       // (BFFONT: a line that is only a font request - "Typewriter font" - is not a word to engrave; the font itself is spec.fontText)
       const fr0 = typeof O !== "undefined" && O.fontReadText ? O.fontReadText(sp.personalization.join("\n"), { cueOnly: true }) : { changed: false, lines: [] };
       job.text = fr0.changed && fr0.lines.length ? fr0.lines.join("\n") : sp.personalization.join("\n"); job.lines = fr0.changed && fr0.lines.length ? fr0.lines : sp.personalization.slice(); job.source = "personalization"; job.confidence = 0; job.questions = [`Claude was unavailable (${(r && (r.skipped || r.error)) || "no answer"}) — confirm the words`]; job.requests = { side: "back", font: null, handwriting: false, image: false };
-      { const R = READER(); if (R && job.lines.length) { const fd = R.fixDegrees(job.lines.join("\n")); if (fd.count) { job.lines = fd.text.split("\n"); job.text = fd.text; } } }   // (SETBAR-C: the buyer's asterisk in a coordinate is the degree sign here too)
+      { const R = READER(); if (R && job.lines.length) { const fd = R.fixDegrees(job.lines.join("\n")); if (fd.count) { job.lines = fd.text.split("\n"); job.text = fd.text; } const fs = R.fixSymbols ? R.fixSymbols(job.lines.join("\n")) : null; if (fs && fs.count) { job.lines = fs.text.split("\n"); job.text = fs.text; } } }   // (SETBAR-C: the buyer's asterisk in a coordinate is the degree sign here too)
       return job.lines.length ? setReady(job) : toWords(job, "Enter the requested inscription");
     }
     if (job.slot && !(SIDES() && SIDES().isCopy(job.slot)) && Array.isArray(r.pieces) && r.pieces.length) {
@@ -8950,7 +8950,7 @@ const Engrave = window.Engrave = (() => {
       .find(lines=>lines.length && lines.join(" ").replace(/\s+/g," ")===job.text.replace(/\s+/g," ").trim());
     if(originalLines) {job.lines=originalLines;job.text=originalLines.join("\n");}
     // SETBAR-C: the reader copies the buyer's words verbatim, asterisk and all: an asterisk standing for the degree sign inside a coordinate ("33*0'45\" N") is the degree sign (charm-nest-engrave-read.js fixDegrees; nothing else is touched)
-    { const R = READER(); if (R && job.lines.length) { const fd = R.fixDegrees(job.lines.join("\n")); if (fd.count) { job.lines = fd.text.split("\n"); job.text = fd.text; } } }
+    { const R = READER(); if (R && job.lines.length) { const fd = R.fixDegrees(job.lines.join("\n")); if (fd.count) { job.lines = fd.text.split("\n"); job.text = fd.text; } const fs = R.fixSymbols ? R.fixSymbols(job.lines.join("\n")) : null; if (fs && fs.count) { job.lines = fs.text.split("\n"); job.text = fs.text; } } }
     // BFFONT: a line of the reading that is only a font request ("Typewriter font") is never engraved; its font is read from the order's own words (spec.fontText) and, when the reader named none, from the request itself
     { const fr = typeof O !== "undefined" && O.fontReadText ? O.fontReadText(job.lines.join("\n"), { cueOnly: true }) : { changed: false, lines: [], requests: [] };
       if (fr.changed && fr.lines.length) { const ask = fr.requests.find(q => q.asked); job.lines = fr.lines; job.text = fr.lines.join("\n"); if (ask && !(job.requests && job.requests.font)) job.requests = Object.assign({}, job.requests, { font: ask.asked }); } }

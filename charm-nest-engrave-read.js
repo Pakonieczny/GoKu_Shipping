@@ -22,6 +22,7 @@
  *     }
  *   say(reading)                       one plain line of what was read, split, left out and fixed (the card's reason line)
  *   fixDegrees(text) -> { text, count } the asterisk-as-degree rule alone (also run on a model's answer, which copies the buyer's asterisk)
+ *   fixSymbols(text) -> { text, count, signs } a bracketed sign name as the sign: "D (cross) E" -> "D ✝ E" (SYMWORD; also run on a model's answer and on the intake's face words)
  *   lengthsOf(text|[text])             the necklace lengths a value names: '16"&18"·Set·ANGELINA' -> [16, 18]; '18"& 20"·Set·COMIC' -> [18, 20]; '16"' -> [16]
  *   lengthsOfLine(line)                the lengths of a set from the options of an Etsy line (the "Necklace Length·FONT" option)
  *   decide(o)                          the engraving yes / no / ask of a line: { engrave:'yes'|'no'|'ask', token:'ENGRAVED'|'BLANK'|'', why }  o: { options:[{name,value}], words:boolean, note:boolean (a message asks for engraving), anyNote:boolean (anything is written in a message / note) }
@@ -78,6 +79,30 @@
     let s = str(text), count = 0;
     for (const rx of DEG) s = s.replace(rx, (m, d) => { count++; return d + '\u00b0'; });
     return { text: s, count };
+  }
+
+  /* ── a sign written as a word (SYMWORD, Paul 9 Nov 2026, order 4218451815: "D (cross) E" on a TINY bar is a D, a cross, an E) ───────────────────────────────────────
+   * A buyer who cannot type a sign writes its name in brackets: "(cross)", "[heart]", "{star}", "(cross symbol)", "(infinity sign)". Such a bracket, whole, is that sign, engraved as the sign. ONE table of data:
+   * each sign is drawn by DejaVu Sans, the engraver's symbol fallback (CharmNestText, `fallbacks`), so it engraves in every font the app has (tests/charm-nest/symbol-words.cjs checks the font file). A name
+   * not in the table, a word outside brackets ("Cross Family", "my heart") and a bracket with other words in it ("(cross on the back)") stay exactly as the buyer typed them. */
+  const SYMBOL_WORDS = [
+    ['\u271D', /^(?:latin\s+|christian\s+|small\s+|tiny\s+|little\s+)?(?:cross|crucifix)$/],
+    ['\u2665', /^(?:heart|love\s+heart|filled\s+heart|solid\s+heart|black\s+heart)$/], ['\u2661', /^(?:open|outline|hollow|empty|white)\s+heart$/],
+    ['\u2605', /^(?:star|filled\s+star|solid\s+star)$/], ['\u2606', /^(?:open|outline|hollow|empty|white)\s+star$/],
+    ['\u221E', /^(?:infinity|infinity\s+loop|forever)$/], ['\u263E', /^(?:moon|crescent|crescent\s+moon|half\s+moon)$/], ['\u2600', /^sun$/],
+    ['\u266A', /^(?:music|music(?:al)?\s+note|note)$/], ['\u266B', /^music(?:al)?\s+notes$/], ['\u2693', /^anchor$/], ['\u262E', /^peace(?:\s+sign)?$/],
+    ['\u273F', /^(?:flower|daisy)$/], ['\u2618', /^shamrock$/], ['\u2663', /^clover$/], ['\u2721', /^(?:star\s+of\s+david|jewish\s+star|magen\s+david)$/],
+    ['\u262F', /^yin\s*yang$/], ['\u26A1', /^(?:lightning(?:\s+bolt)?|bolt)$/], ['\u2708', /^(?:plane|airplane|aeroplane)$/], ['\u2640', /^female$/], ['\u2642', /^male$/]
+  ];
+  const SYMBOL_BRACKET = /[(\[{]\s*([A-Za-z][A-Za-z ]{1,28}?)\s*[)\]}]/g;
+  /** "D (cross) E" -> { text: "D ✝ E", count: 1, signs: [{ word: "(cross)", sign: "✝" }] }: every bracketed sign name in the table is the sign; nothing else is touched. */
+  function fixSymbols(text) {
+    const signs = [];
+    const t = str(text).replace(SYMBOL_BRACKET, (m, w) => {
+      const k = w.toLowerCase().replace(/\s+/g, ' ').replace(/\s+(?:symbol|sign|emoji|icon|shape)$/, '').trim(), hit = SYMBOL_WORDS.find(x => x[1].test(k));
+      if (!hit) return m; signs.push({ word: m, sign: hit[0] }); return hit[0];
+    });
+    return { text: t, count: signs.length, signs };
   }
 
   /* ── what talks to the shop (2) ────────────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -232,7 +257,9 @@
     const out = { raw, labelled: false, pieces: [], whole: '', lines: [], dropped: [], fixes: [], layoutRequest: false, layoutNote: '', unsure: false, unsureWhy: '', changed: false, lengths };
     if (!raw) return out;
     const lay = layoutClause(raw); if (lay) { out.layoutRequest = true; out.layoutNote = clip(lay, 200); }
-    let s = peelBrackets(raw, out);
+    // SYMWORD: a bracketed sign name is the sign, read before the brackets that talk to the shop are taken out ("(heart symbol)" would otherwise be read as a note)
+    const sy = fixSymbols(raw); if (sy.count) out.fixes.push({ kind: 'symbol', count: sy.count, signs: sy.signs });
+    let s = peelBrackets(sy.text, out);
     // the labels (on the text with the notes taken out, so a note can never hide or fake one)
     const labels = findLabels(s, lengths);
     const finish = (words, extra) => {
@@ -275,6 +302,8 @@
     else if (r.changed && r.whole) bits.push(`Read “${clip(r.whole.replace(/\n/g, ' / '), 80)}”`);
     const deg = r.fixes.filter(f => f.kind === 'degree').reduce((a, f) => a + f.count, 0);
     if (deg) bits.push(`${deg === 1 ? 'an asterisk' : deg + ' asterisks'} read as the degree sign °`);
+    const sym = r.fixes.filter(f => f.kind === 'symbol').reduce((a, f) => a.concat(f.signs || []), []);
+    if (sym.length) bits.push(sym.map(x => `“${x.word}” read as the sign ${x.sign}`).join(', '));
     if (r.dropped.length) bits.push('left out as a note to the shop: ' + r.dropped.map(d => `“${clip(d.text, 160)}”`).join(', '));
     if (r.layoutRequest) bits.push(`the buyer asks for a different layout (“${clip(r.layoutNote, 90)}”)`);
     return bits.join('; ');
@@ -374,5 +403,5 @@
     return out.length ? out : null;
   }
 
-  return Object.assign(api, { readPersonalisation, say, wordings, fixDegrees, lengthsOf, lengthsOfLine, decide, noteAsksEngraving, layoutClause, assign, slotsOf, clean, decode });
+  return Object.assign(api, { readPersonalisation, say, wordings, fixDegrees, fixSymbols, SYMBOL_WORDS, lengthsOf, lengthsOfLine, decide, noteAsksEngraving, layoutClause, assign, slotsOf, clean, decode });
 });
