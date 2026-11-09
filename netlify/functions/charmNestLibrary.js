@@ -73,7 +73,7 @@ const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(R
    picks the charm) is written to the SHARED store in the sandbox too, read back, and never reaches Reset or Purge. The sandbox and production
    read the same links. An answer the sandbox kept before that (its own copy) is still read, the later write of the two standing for a key. ── */
 let PREFIX = "";
-const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Remnants", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Pool_Art", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
+const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Remnants", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Pool_Art", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge", "Charm_Nest_Order_Days"]);
 const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
 const FV = admin.firestore.FieldValue;
 
@@ -666,7 +666,7 @@ const REV_CAP = 1000, REV_TOUCHED = Symbol("revTouched");   // (FEED, 28 Oct 202
    '<kind>:*' says "some of this kind, not known which" (an op that may move placements and names no order is p:*, as the placement counter moves for it);
    '*' stays "not known at all". The Library's readers ask about their own kinds only (revQuiet, localAsk): a pool row moving costs them one read more, never
    a full answer. One bumpRev per op, with every name it touched. */
-const FEED_KEY = /^(?:[strcpxoma]:(?:[\w\-]{4,80}|\*)|\*)$/;
+const FEED_KEY = /^(?:[strcpxomad]:(?:[\w\-]{4,80}|\*)|\*)$/;
 let FEED_TOUCHED = new Set(), PLACE_QUIET = false;   // (PLACE_QUIET, OUTBOX: this request wrote nothing a placement answer reads: a sheet's own field patch, op_putSheet)   // (names touched by code that has no request body at hand, stamp's events: emptied at every request, as DONE_TOUCH)
 const feedTouch = keys => { for (const k of keys || []) if (FEED_KEY.test(String(k))) FEED_TOUCHED.add(String(k)); };
 /** The orders of pool ids ("rid_tid_copy") and receipt ids, named p:<order> (at most 300; more is p:*). */
@@ -2240,7 +2240,8 @@ const NO_GEN_BUMP = new Set(["ping", "laserStatus", "flowState", "getOrderPieces
   "runPut", "runArchive", "releasePut", "arrivalRecord", "putCharms", "renameCharm", "putShapeGuidance", "putCalibration", "aliasPut", "listingKindPut", "noDesignPut", "noDesignDelete", "optionMapPut",
   "sandboxCancel", "sandboxPut", "sandboxPullOrders", "sandboxPullLimitSet", "sandboxReset", "sandboxStream"]);   // (FC3b: the four sandbox ops write only Sandbox_ records and the sandbox's own meta, whatever the request says, so they never touch what a production placement answer is made from)
 ["customSaveGet", "customSaveCommit", "customSavePending", "customSaveIntent"].forEach(op => NO_GEN_BUMP.add(op));   // (the save writes a master entry, an alias and its own record: nothing a placement answer is made from)
-NO_GEN_BUMP.add("getMany");   // (LOCAL: several records read in one call, see LOCAL_READS; read only)
+NO_GEN_BUMP.add("getMany");
+NO_GEN_BUMP.add("getOrderDays");   // (SAL1: the Orders head's day counts; read only)   // (LOCAL: several records read in one call, see LOCAL_READS; read only)
 ["changes", "getChanges"].forEach(op => NO_GEN_BUMP.add(op));   // (FEED: what moved since a count, see op_changes; read only. getChanges is the name the page sends: a read by every read rule the page and its checks know, get…)
 NO_GEN_BUMP.add("manualClaim");
 NO_GEN_BUMP.add("sheetLayoutPatch");   // (OUTBOX: Manual Control's poses on one sheet: where a piece is (its sheet) never changes with it, so no placement answer moves)   // (Manual Control's claim writes the sheet record's manualEdit alone: nothing a placement answer is made from)
@@ -2337,6 +2338,7 @@ async function op_sandboxPullOrders(b) {
     password's token first (_charmNestRepoAuth.js LIBRARY: need "modify"); the server then holds the number to 10..1000. Reading it is free: sandboxStatus. */
 async function op_sandboxPullLimitSet(b) { return SandboxPull.setLimit(b); }
 const Families = require("../../charm-nest-sandbox-families.js");   // the ONE list of what a sandbox run leaves behind: the status below, the wipe after it and tests/charm-nest/sandbox-wipe-guard.cjs all read it
+const OrderDays = require("../../charm-nest-order-days.js");   // SAL1: the Orders head's Today / Yesterday / Last 7 days (one small document, Charm_Nest_Order_Days/recent)
 /** The id that ends a prefix range: "olsb_" → "olsb`" (the character after the last one), as the wipe has always asked it. */
 const idAfter = p => p.slice(0, -1) + String.fromCharCode(p.charCodeAt(p.length - 1) + 1);
 /** One count for EVERY server family of the registry (0 included), read-only: an aggregation count() of each Sandbox_ collection
@@ -3291,7 +3293,21 @@ async function op_arrivalRecord(b) {
   // ago (it plays days in hours; far past any order it still lists, and as long as the sorter keeps its own), production's
   // over 180 days ago (a TTL policy on expireAt, if one is switched on, does the same)
   await collection.where("firstSeenAt", "<", now - ([true, 1, "1"].includes(b.sandbox) ? 45 : 180) * 86400000).limit(200).get().then(s => { if (s.empty) return; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); return batch.commit(); }).catch(e => console.warn("[charmNestLibrary] old arrivals not deleted:", e.message));
-  return {ok:true,firstSeen,count24:day.data().count,count1:hour.data().count,at:now};
+  // SAL1 (Paul, 9 Nov 2026): the Orders head's Today / Yesterday / Last 7 days ride on this check: its receipts go into the day counts (one transaction, a write
+  // only when one of them is new there), and the counts come back with the answer, so the page asks nothing more. A receipt new there is named to the other
+  // computers (d:orderdays, the changes feed) so their heads move at once. Never the check's failure.
+  let days = null;
+  try {
+    const m = receipts.length ? await OrderDays.merge(db, PREFIX, receipts.map(o => ({ id: String(o.id), createTs: num(o.createTs) })), now) : null;
+    if (m && m.ok && m.changed) revTouch(b, ["d:orderdays"]);
+    days = OrderDays.forAnswer(m && m.ok && m.doc ? m.doc : await OrderDays.read(db, PREFIX), now);
+  } catch (e) { console.warn("[charmNestLibrary] order days not counted:", e && e.message); }
+  return {ok:true,firstSeen,count24:day.data().count,count1:hour.data().count,at:now,days};
+}
+/** SAL1: the Orders head's day counts, one document read (the page's first look; afterwards the order check's answer and the changes feed carry them). */
+async function op_getOrderDays(b) {
+  const now = [true, 1, "1"].includes(b.sandbox) && num(b.now) > 0 ? num(b.now) : Date.now(), doc = await OrderDays.read(db, PREFIX);
+  return doc ? { ok: true, days: OrderDays.forAnswer(doc, now) } : { error: "the day counts could not be read" };
 }
 // ── runs ──
 // The page keeps a run's record small (RunCtl.save): the lines of the orders it is done with go to its line archive, and
@@ -4878,7 +4894,7 @@ function cancelCopy(r) {
   if (!fits()) for (const k of Object.keys(x)) if (!["orderId", "by", "why", "at", "source", "etsyStatus", "etsyAt"].includes(k)) delete x[k];
   return x;
 }
-const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, sheetLayoutPatch: op_sheetLayoutPatch, manualClaim: op_manualClaim, listSheets: op_listSheets, getSheet: op_getSheet, getMany: op_getMany, changes: op_changes, getChanges: op_changes, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
+const OPS = { ...RoseStock, ...Remnants.ops, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, getOrderDays: op_getOrderDays, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, sheetLayoutPatch: op_sheetLayoutPatch, manualClaim: op_manualClaim, listSheets: op_listSheets, getSheet: op_getSheet, getMany: op_getMany, changes: op_changes, getChanges: op_changes, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, masterRemoveSkus: op_masterRemoveSkus, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxPullOrders: op_sandboxPullOrders, sandboxPullLimitSet: op_sandboxPullLimitSet, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
@@ -5610,6 +5626,8 @@ exports.ops = OPS;   // the connections check runs the same queries the app runs
 exports.feedStats = feedStats;   // (FEED: bumpRev's counts, for the contention test)
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: require("./_charmNestAuth").CORS, body: "" };
+  // SAL1: Etsy's order.paid webhook (no passcode: Etsy signs it instead; _etsyOrderWebhook.js verifies the signature before anything is read or written)
+  if ((event.queryStringParameters || {}).hook === "etsy-order") return require("./_etsyOrderWebhook").handle(event, { db, OrderDays, bump: async () => { PREFIX = ""; FEED_TOUCHED = new Set(); return feedBump(["d:orderdays"]); } });
   const body = event.httpMethod === "GET" ? Object.assign({}, event.queryStringParameters || {}) : parseBody(event);
   const denied = gate(event, body); if (denied) return denied;
   // (Paul, 9 Oct 2026: Anna and Ana_M are one person. Whoever the sorter says is on duty, a new record keeps the one login name, Ana_M: _activityKinds.js loginName; no read, nothing stored is changed)

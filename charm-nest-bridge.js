@@ -2891,18 +2891,18 @@ const Orders = window.Orders = (() => {
     CNListActivity.react(ordBar(), () => { renderBody(); return waitCx(); }, Object.assign({ touch, list: "#ordBody" }, o));
   }
   let ordBase = { orders: 0 };   // the orders in the pile, whatever narrows them: the "of 48" in "12 of 48 orders"
-  /** The live count of what the list shows, and the charms in it. "12 of 48 orders" the moment anything narrows the list (the pile tab says 48 while nothing does); also the Filters panel's button. */
+  /** The live count of what the list shows. "12 of 48 orders" the moment anything narrows the list (the pile tab says 48 while nothing does); also the Filters panel's button. */
   function paintCount(rows) {
     const v = document.getElementById("ordersView"), cnt = v && v.querySelector("#ordCount"); if (!cnt) return;
     syncFind(v);
-    const ct = v.querySelector("#ordCharmTotal"), done = v.querySelector("#ordFiltersPop [data-done]"), cx = OV.pile === "cancelled" || OV.pile === "completed";
-    if (cx) { cnt.removeAttribute("data-on"); cnt.textContent = ""; if (done) done.textContent = "Done"; if (ct) { ct.innerHTML = `<b>${ordBase.charms || 0}</b> charms`; ct.title = "Charm quantity across the open orders; chain-only and packaging items are excluded"; } return; }   // (the Cancelled list counts itself: its own line says how many)
+    // (SAL1, Paul 9 Nov 2026: "Remove the 1221 Charms text from the UI": the charm total is gone from the bar; the sales days stand in its place, SalesDays)
+    const done = v.querySelector("#ordFiltersPop [data-done]"), cx = OV.pile === "cancelled" || OV.pile === "completed";
+    if (cx) { cnt.removeAttribute("data-on"); cnt.textContent = ""; if (done) done.textContent = "Done"; return; }   // (the Cancelled list counts itself: its own line says how many)
     const t = orderTotals(rows), narrowed = !!(OV.metal || OV.form || OV.eng || actNow() || OV.q.trim() || CNListActivity.state("orders").range !== "all"), of = Math.max(ordBase.orders, t.orders);
     cnt.classList.toggle("none", narrowed && !t.orders);
     cnt.innerHTML = narrowed ? `<b>${t.orders}</b> of ${of} order${of === 1 ? "" : "s"}` : `<b>${t.orders}</b> order${t.orders === 1 ? "" : "s"}`;
     if (narrowed) cnt.setAttribute("data-on", "1"); else cnt.removeAttribute("data-on");
     cnt.title = narrowed ? "What the search and the filters leave, of the orders in this list" : "";
-    if (ct) { ct.innerHTML = `<b>${t.charms}</b> charms`; ct.title = "Charm quantity across the orders shown; chain-only and packaging items are excluded"; }
     if (done) done.textContent = t.orders ? `Show ${t.orders} order${t.orders === 1 ? "" : "s"}` : "No orders match";
   }
   /** The search box's × and its gold edge, from what the list is searched by. */
@@ -2917,7 +2917,7 @@ const Orders = window.Orders = (() => {
     const I = ordIcons();
     v.innerHTML = `<div class="ordHead">
         <div class="ordBar ordCompact" id="ordBar">
-          <span class="controlGroup ordSummary"><button class="btn sm" id="ordPull">Pull orders</button><span class="chips" id="ordChips"></span><span class="ordCount" id="ordCount" role="status" aria-live="polite"></span><span class="charmTotal" id="ordCharmTotal"></span></span>
+          <span class="controlGroup ordSummary"><button class="btn sm" id="ordPull">Pull orders</button><span class="chips" id="ordChips"></span><span class="ordCount" id="ordCount" role="status" aria-live="polite"></span>${window.SalesDays ? SalesDays.html() : ""}</span>
           <span class="ordTools" id="ordTools">
             <label class="ordFind" id="ordFind">${I.search}<input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" aria-label="Search the orders" autocomplete="off" spellcheck="false" enterkeyhint="search" title="search the order number, the SKU, the title and everything the customer or the shop wrote"><button type="button" class="ordFindX" id="ordFindX" aria-label="Clear the search" title="Clear the search" hidden>${I.x}</button></label>
             <span class="ordFilters" id="ordFilters"><button type="button" class="cnBtn" id="ordFiltersBtn" aria-haspopup="dialog" aria-expanded="false" aria-controls="ordFiltersPop" title="narrow the list by material, engraving and time, and choose its order">${I.filter}<span class="cnLbl">Filters</span><b class="cnBadge" hidden></b></button><div class="cnPop ordFp" id="ordFiltersPop" role="dialog" aria-label="Filters" hidden></div></span>
@@ -3106,8 +3106,8 @@ const Orders = window.Orders = (() => {
     // showing me two orders in the orders tab where it says 360")
     { const q = v.querySelector("#ordQ"); if (q && q.value !== OV.q && document.activeElement !== q) q.value = OV.q; syncFind(v); }
     // (the live count and the charms are drawn with the list: paintCount, from renderBody; what is known here is the size of the pile)
-    ordBase = { orders: totals.orders, charms: totals.charms };
-    { const charmTotal = v.querySelector("#ordCharmTotal"); if (charmTotal && !charmTotal.firstChild) { charmTotal.innerHTML = `<b>${totals.charms}</b> charms`; charmTotal.title = "Charm quantity across the orders shown; chain-only and packaging items are excluded"; } }
+    ordBase = { orders: totals.orders };
+    try { window.SalesDays?.paint(); } catch (_) { /* the counts are drawn with their next answer */ }
     const byMetal = {}; for (const r of all) { const m = r.material || "none"; byMetal[m] = (byMetal[m] || 0) + 1; }
     const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${label === "Open Orders" ? '<span>Open<span class="ordLong"> Orders</span></span>' : esc(label)}<b class="${cls}">${n}</b></button>`;
     const metals = ["gold", "silver", "rose", "gold10k", "gold14k", "none"].filter(m => byMetal[m] || OV.metal === m);
@@ -27574,6 +27574,104 @@ const Cleanups = window.Cleanups = (() => {
   return { check, seen, removed, apply: (sh, rec) => apply(sh, rec) };
 })();
 
+/* SAL1 (Paul, 9 Nov 2026): the Orders head's three sales numbers where "1221 charms" stood: Today (since 00:00 Toronto, live), Yesterday (the previous Toronto
+   day) and Last 7 days (the seven Toronto days ending today, today included), each the count of DISTINCT Etsy receipts by their creation time.
+   "Make sure you're not pinging Etsy very often": NO Etsy call is made for them. They come from one small cloud document (charm-nest-order-days.js) which the
+   app's existing Etsy reads fill (the receipt mirror: every receipt of the shop, any status; the order check: the open orders) and, once Paul has registered it,
+   Etsy's own order.paid webhook. The page reads it:
+     · in the order check's answer (arrivalRecord, which this page makes anyway: nothing more is asked),
+     · once when the head is first drawn without a recent copy (getOrderDays, one document read),
+     · when the changes feed names it (d:orderdays: another computer's check or the webhook added an order; one read, at most every MIN_GAP),
+   and adds the orders it holds itself (an arrival counts the moment it lands). Midnight in Toronto turns the day over on this page's clock, with no read. */
+const SalesDays = window.SalesDays = (() => {
+  const D = () => window.CharmNestOrderDays;
+  const MIN_GAP = 20000, FRESH_MS = 15 * 60000;
+  const key = () => "cn.orderDays." + (WORKSPACE_SANDBOX ? "sandbox" : "production");
+  let doc = null, at = 0, reading = null, lastRead = 0, follow = null, dayT = 0, tickT = 0;
+  try { const k = JSON.parse(localStorage.getItem(key()) || "null"); if (k && k.doc) { doc = k.doc; at = +k.at || 0; } } catch (_) {}
+  const now = () => { try { return window.Sandbox?.streaming?.() && window.SimClock ? SimClock.now() : Date.now(); } catch (_) { return Date.now(); } };
+  const save = () => { try { localStorage.setItem(key(), JSON.stringify({ doc, at })); } catch (_) {} };
+  /** The answer's days taken in (arrivalRecord's or getOrderDays'), and the head drawn again. */
+  function take(days) {
+    if (!days || typeof days !== "object" || !days.days) return;
+    doc = days; at = Date.now(); save(); paint();
+  }
+  async function read(why) {
+    if (reading || !S.cloud?.ok) return reading;
+    if (Date.now() - lastRead < MIN_GAP && why !== "first") { clearTimeout(read.t); read.t = setTimeout(() => read("later"), MIN_GAP - (Date.now() - lastRead)); return null; }
+    lastRead = Date.now();
+    reading = api("charmNestLibrary", Object.assign({ op: "getOrderDays" }, WORKSPACE_SANDBOX && window.Sandbox?.streaming?.() ? { now: Math.round(now()) } : {}), { quiet: true })
+      .then(r => { if (r && r.days) take(r.days); }).catch(() => {}).finally(() => { reading = null; });
+    return reading;
+  }
+  /** The orders this page holds (an arrival counts at once, before the cloud's copy has it): their receipt and creation time. */
+  function held() {
+    try {
+      const out = new Map();
+      for (const r of (window.Orders?.rows?.() || [])) { const o = r && r.order; if (o && o.receiptId != null && +o.createTs > 0 && !out.has(String(o.receiptId))) out.set(String(o.receiptId), { id: String(o.receiptId), createTs: +o.createTs }); }
+      return [...out.values()];
+    } catch (_) { return []; }
+  }
+  function numbers() { const d = D(); if (!d) return null; return d.summarize(doc || {}, now(), held()); }
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const day = date => { try { const [y, m, dd] = date.split("-").map(Number); return new Date(Date.UTC(y, m - 1, dd, 12)).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }); } catch (_) { return date; } };
+  // the icons: thin line drawings in the bar's own stroke (16 px, currentColor), one for each question
+  const IC = {
+    today: '<svg class="odIc" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.9"/><path d="M8 1.6v1.6M8 12.8v1.6M1.6 8h1.6M12.8 8h1.6M3.5 3.5l1.1 1.1M11.4 11.4l1.1 1.1M3.5 12.5l1.1-1.1M11.4 4.6l1.1-1.1"/></svg>',
+    yday: '<svg class="odIc" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2"/><path d="M2 6.5h12M5.2 1.8v2.4M10.8 1.8v2.4"/><path d="M10.4 10.2H6.2M7.8 8.6 6.2 10.2l1.6 1.6"/></svg>',
+    week: '<svg class="odIc" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 14h12"/><path d="M3 12V9.5M4.7 12V7.5M6.4 12V10M8.1 12V6M9.8 12V8.5M11.5 12V5M13.2 12V7"/></svg>'
+  };
+  const SECS = [["today", "Today"], ["yday", "Yesterday"], ["week", "Last 7 days"]];
+  /** The three sections, as the head is built (painted with numbers at once when they are known). */
+  function html() {
+    const sb = WORKSPACE_SANDBOX ? `<span class="odSb" title="the sandbox's own orders, not the shop's">Sandbox</span>` : "";
+    return `<span class="ordDays" id="ordDays" role="group" aria-label="Orders placed, Toronto time">${sb}${SECS.map(([k, label]) => `<span class="odSec" data-k="${k}">${IC[k]}<span class="odLbl">${k === "week" ? '<span class="odLong">Last </span>7 days' : label}</span><b class="odN">–</b>${k === "today" ? '<span class="odDelta" hidden></span>' : ""}</span>`).join("")}</span>`;
+  }
+  function paint() {
+    let box = document.getElementById("ordDays");
+    if (!box) { const cnt = document.getElementById("ordCount"); if (!cnt) return; cnt.insertAdjacentHTML("afterend", html()); box = document.getElementById("ordDays"); if (!box) return; }   // (a head built before this file's end had no place for them)
+    if (!doc) read("first");
+    else if (Date.now() - at > FRESH_MS && document.getElementById("ordersView") && !document.getElementById("ordersView").classList.contains("hidden")) read("stale");
+    arm();
+    const n = numbers(); if (!n) return;
+    const sb = WORKSPACE_SANDBOX ? "Sandbox: the sandbox's own orders.\n" : "", known = !!doc;
+    const cx = c => (c ? ` · includes ${c} cancelled` : "");
+    const set = (k, value, title, delta) => {
+      const sec = box.querySelector(`.odSec[data-k="${k}"]`); if (!sec) return;
+      const b = sec.querySelector(".odN"), txt = known ? String(value) : "–";
+      if (b.textContent !== txt) { b.textContent = txt; if (known && sec.dataset.shown) { sec.classList.remove("odBump"); void sec.offsetWidth; sec.classList.add("odBump"); } }
+      sec.dataset.shown = "1";
+      sec.title = sb + title + (known ? "" : "\n(not read yet)");
+      sec.setAttribute("aria-label", `${SECS.find(x => x[0] === k)[1]}: ${known ? value : "not read yet"}`);
+      const d = sec.querySelector(".odDelta");
+      if (d) { if (delta == null || !known) d.hidden = true; else { d.hidden = false; d.textContent = delta > 0 ? `+${delta}` : delta < 0 ? `−${-delta}` : "±0"; d.dataset.dir = delta > 0 ? "up" : delta < 0 ? "down" : "flat"; } }
+    };
+    const through = new Date(now()).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", timeZone: "America/Toronto" });
+    const delta = n.today.n - n.yesterday.sameTime;
+    set("today", n.today.n, `${plural(n.today.n, "order")} placed today (${day(n.today.date)}) since 12:00 AM Toronto time, so far${cx(n.today.cx)}.\nYesterday by ${through}: ${n.yesterday.sameTime} (${delta >= 0 ? "+" : "−"}${Math.abs(delta)} today).\nResets at midnight Toronto time.`, delta);
+    set("yday", n.yesterday.n, `${plural(n.yesterday.n, "order")} placed yesterday, ${day(n.yesterday.date)} (Toronto time)${cx(n.yesterday.cx)}.`);
+    set("week", n.week.n, `${plural(n.week.n, "order")} placed in the last 7 days, ${day(n.week.from)} – ${day(n.week.to)}, today included (Toronto time)${cx(n.week.cx)}.`);
+    box.title = `Etsy orders (distinct receipts, by the time each was placed; cancelled ones count as placed), from the order checks this app already makes: no extra Etsy calls.${doc && doc.at ? "\nLast counted " + new Date(doc.at).toLocaleTimeString() : ""}`;
+  }
+  /** Midnight in Toronto turns the day over (a timer to the next one, re-armed with each drawing), and Today's "by this time yesterday" moves with the
+      clock (a drawing a minute while the Orders tab is shown). Neither reads anything. */
+  function arm() {
+    const d = D(); if (!d) return;
+    clearTimeout(dayT);
+    const left = Math.max(1000, (86400 - d.secOfDay(now())) * 1000 + 1500);
+    dayT = setTimeout(paint, Math.min(left, 3600000));   // (an hour at most: a DST night or a sandbox clock that jumps is caught at the next)
+    if (!tickT) tickT = setInterval(() => { if (!document.hidden && document.getElementById("ordDays")?.isConnected) paint(); }, 60000);
+    if (!follow && window.CNSync && typeof CNSync.follow === "function") {
+      try {
+        follow = CNSync.follow({ name: "orderdays", kinds: "d", wild: "d",
+          active: () => { const v = document.getElementById("ordersView"); return !!v && !v.classList.contains("hidden"); },
+          read: why => { if (why === "verify") return; read(why); } });   // (verify: the ten-minute net — the order check's answer already carries the counts)
+      } catch (_) { follow = null; }
+    }
+  }
+  return { take, read, paint, html, numbers, state: () => ({ doc, at, lastRead }) };
+})();
+
 /* Import cadence is independent of run completion. The cloud ledger counts receipt IDs, not API calls. */
 const Arrivals = window.Arrivals = (() => {
   const storageKey = () => "cn.arrivals." + (WORKSPACE_SANDBOX ? "sandbox" : "production");
@@ -27623,7 +27721,7 @@ const Arrivals = window.Arrivals = (() => {
     let stamps = Object.fromEntries(ids.map(id => [id, at(id) || when]));
     if (S.cloud.ok) {
       const r = await api("charmNestLibrary", Object.assign({ op: "arrivalRecord", orders: orders.filter(o=>!state.recorded?.[String(o.receiptId)]).map(o => ({ id: String(o.receiptId), createTs: +o.createTs || 0 })) }, simAt ? { now: simAt } : {}), { quiet: true });
-      stamps = {...stamps,...r.firstSeen}; state.recorded ||= {}; for(const id of Object.keys(r.firstSeen || {}))state.recorded[id]=true; state.count24 = r.count24; state.count1 = r.count1;
+      stamps = {...stamps,...r.firstSeen}; try { window.SalesDays?.take(r.days); } catch (_) {} state.recorded ||= {}; for(const id of Object.keys(r.firstSeen || {}))state.recorded[id]=true; state.count24 = r.count24; state.count1 = r.count1;
     }
     const fresh = ids.filter(id => !at(id));
     Object.assign(state.seen, stamps); state.lastAdded = fresh.length;

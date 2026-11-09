@@ -148,6 +148,10 @@ const FV = admin.firestore.FieldValue;
 // timeout, no time left) keeps their receipt ids in a small backlog document,
 // which the next run retries first from the receipts stored here (no Etsy
 // call); CANCEL_SAVE_MS of the budget is kept for writing that backlog.
+// SAL1: the Orders head's day counts (charm-nest-order-days.js), fed from the pages this mirror reads anyway.
+let OrderDays = null;
+try { OrderDays = require("../../charm-nest-order-days.js"); }
+catch (e) { console.warn("[mirror-cron] order day counts off (helper did not load):", e && e.message); }
 let OrderCancel = null;
 try { OrderCancel = require("./_orderCancel"); }
 catch (e) { console.warn("[mirror-cron] cancel records off (helper did not load):", e && e.message); }
@@ -668,6 +672,7 @@ exports.handler = meter.wrapHandler(async () => {
       }
     }
   } catch (_) { /* never into the mirror */ }
+  let orderDaysMoved = false;   // (SAL1: this run added a receipt to the day counts)
   let customerRebuild = { attempted: 0, updated: 0, skipped: 0, errors: [], missingIndexFallbackCount: 0 };
 
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -713,6 +718,11 @@ exports.handler = meter.wrapHandler(async () => {
       console.error(`[mirror-cron] batch write failed at page ${page}:`, e.message);
       break;
     }
+
+    // SAL1 (Paul, 9 Nov 2026): the Orders head's Today / Yesterday / Last 7 days are counted from this same page: every receipt of the shop, any
+    // status, by its create_timestamp in Toronto (charm-nest-order-days.js; one small document, one transaction, written only when a receipt is new
+    // there or its cancel changed). No Etsy call of its own, and never the mirror's failure.
+    if (OrderDays) { try { const od = await OrderDays.merge(db, "", receipts); if (!od.ok) console.warn("[mirror-cron] order days not counted:", od.error); else if (od.changed) orderDaysMoved = true; } catch (_) { /* never into the mirror */ } }
 
     // Charm Nest: the cancelled receipts of this page become cancel records
     // (never throws; see noteEtsyCancels). Once its time for this run is used
@@ -770,6 +780,20 @@ exports.handler = meter.wrapHandler(async () => {
   // min_last_modified excludes anything we already processed. Etsy's
   // min_last_modified is inclusive, so without the +1 we'd re-fetch
   // every newest receipt indefinitely.
+  // SAL1: the day counts start whole. Once (the mirror's own state remembers it, so no read is spent asking), the last days' receipts are taken from this
+  // mirror's Firestore copy (EtsyMail_Receipts, by created_timestamp: one query of about ten days of receipts, no Etsy call), so Yesterday and Last 7 days
+  // are true from the first day rather than filling up over a week. A failure tries again next run; it is never the mirror's.
+  let orderDaysSeededAt = null;
+  if (OrderDays && outcome === "ok" && !(mirrorCfg && mirrorCfg.orderDaysSeededAt) && Date.now() - invocationStartMs < RUN_BUDGET_MS) {
+    try {
+      const since = OrderDays.windowStartSec(Date.now());
+      const snap = await db.collection("EtsyMail_Receipts").where("created_timestamp", ">=", since).select("receipt_id", "created_timestamp", "status").get();
+      const od = await OrderDays.merge(db, "", snap.docs.map(d => d.data()), Date.now(), { seededAt: Date.now() });
+      if (od.ok) { orderDaysSeededAt = Date.now(); orderDaysMoved = orderDaysMoved || od.changed; console.log(`[mirror-cron] order day counts seeded from ${snap.size} mirrored receipts`); }
+      else console.warn("[mirror-cron] order day counts not seeded:", od.error);
+    } catch (e) { console.warn("[mirror-cron] order day counts not seeded:", e && e.message); }
+  }
+
   if (outcome === "ok" && changedBuyerIds.size) {
     customerRebuild = await rebuildCustomersForChangedBuyers(changedBuyerIds, invocationStartMs);
     if (customerRebuild.errors.length) {
@@ -813,7 +837,8 @@ exports.handler = meter.wrapHandler(async () => {
     lastCustomerRebuildUpdated  : customerRebuild.updated,
     lastCustomerRebuildSkipped  : customerRebuild.skipped,
     lastCustomerRebuildErrorCount: customerRebuild.errors.length,
-    lastCustomerRebuildMissingIndexFallbackCount: customerRebuild.missingIndexFallbackCount
+    lastCustomerRebuildMissingIndexFallbackCount: customerRebuild.missingIndexFallbackCount,
+    ...(orderDaysSeededAt ? { orderDaysSeededAt } : {})   // (SAL1: the day counts were filled from the mirror once; never again)
   };
   try {
     await db.doc(MIRROR_STATE_PATH).set(statePatch, { merge: true });
@@ -836,6 +861,7 @@ exports.handler = meter.wrapHandler(async () => {
     customerRebuildMissingIndexFallbackCount: customerRebuild.missingIndexFallbackCount,
     customerRebuildErrors   : customerRebuild.errors.slice(0, 10),
     etsyCancels,
+    orderDaysMoved,
     errorMsg          : lastErrorMsg,
     endedAt           : FV.serverTimestamp()
   });

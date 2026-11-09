@@ -104,6 +104,7 @@ const assets = [
   "send-flight.js",
   "charm-nest-clock.js",
   "charm-nest-sandbox-families.js",
+  "charm-nest-order-days.js",
   "charm-nest-sandbox-browser.js",
   "charm-nest-compute-worker.js",
   "charm-nest-pdf.js",

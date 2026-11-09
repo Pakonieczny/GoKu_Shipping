@@ -305,6 +305,16 @@ const post = async (h, body, headers = {}) => h.handler({ httpMethod: 'POST', he
   assert.equal(arrivals.body.count24,1); assert.equal(arrivals.body.count1,0);
   arrivals = await post(lib, { op:'arrivalRecord', sandbox:true, orders:[{id:'7001',createTs:123}] });
   assert.equal(arrivals.body.count24,1); assert.equal(arrivals.body.count1,1,'sandbox has its own ledger');
+  // SAL1: the order check carries the Orders head's day counts (distinct receipts by their Toronto creation day), written once per new receipt
+  { const nowS = Math.floor(Date.now() / 1000), OD = require('../../charm-nest-order-days.js'), today = OD.dateOf(Date.now());
+    arrivals = await post(lib, { op: 'arrivalRecord', orders: [{ id: '7101', createTs: nowS - 30 }, { id: '7101', createTs: nowS - 30 }, { id: '7102', createTs: nowS - 60 }] });
+    assert.deepEqual(Object.keys(arrivals.body.days.days[today].ids).sort(), ['7101', '7102'], 'the order check answers with the day counts');
+    assert.equal(OD.summarize(arrivals.body.days, Date.now()).today.n, 2);
+    const kept = JSON.stringify(store.get('Charm_Nest_Order_Days/recent').days);
+    arrivals = await post(lib, { op: 'arrivalRecord', orders: [{ id: '7101', createTs: nowS - 30 }] });
+    assert.equal(JSON.stringify(store.get('Charm_Nest_Order_Days/recent').days), kept, 'the same receipt again changes nothing');
+    const r2 = await post(lib, { op: 'getOrderDays' }); assert.equal(OD.summarize(r2.body.days, Date.now()).today.n, 2, 'one read gives the counts');
+    const r3 = await post(lib, { op: 'getOrderDays', sandbox: true }); assert.equal(OD.summarize(r3.body.days, Date.now()).today.n, 0, 'the sandbox has its own counts'); }
 
   // Isolated solid nesting never implies selection, even if a caller supplies a stale set id.
   for(const metal of ['gold10k','gold14k']) {

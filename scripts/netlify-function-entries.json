@@ -384,6 +384,7 @@
     "googleAdsVersionSnapshots.js",
     "googleAdsVideoUpload.js",
     "index.js",
-    "usps.js"
+    "usps.js",
+    "_etsyOrderWebhook.js"
   ]
 }

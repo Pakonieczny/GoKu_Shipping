@@ -40,7 +40,7 @@ for (let i = 0; i < 40; i++) FIXTURES['x' + i] = { rid: String(4195100000 + i), 
     let s = await shape();
     check(s.rows === 1 && s.selects === 0 && s.page <= 0 && s.bar <= 1, '1500 px: one row, no select, no sideways scroll: ' + JSON.stringify(s));
     check(s.h <= 44, 'and it is slim: ' + s.h + ' px tall (it was a 33 px row that scrolled sideways under 2000 px)');
-    const ids = await page.evaluate(() => ['ordBar', 'ordQ', 'ordPull', 'ordChips', 'ordBody', 'ordFiltersBtn', 'ordFiltersPop', 'ordCount', 'ordCharmTotal', 'ordActive'].filter(i => !document.getElementById(i)));
+    const ids = await page.evaluate(() => ['ordBar', 'ordQ', 'ordPull', 'ordChips', 'ordBody', 'ordFiltersBtn', 'ordFiltersPop', 'ordCount', 'ordDays', 'ordActive'].filter(i => !document.getElementById(i)));
     check(ids.length === 0, 'the ids the page and the tests use are all there (ordBar ordQ ordPull ordChips ordBody + the new ones): missing ' + ids.join());
 
     // ═══ 2 · the Filters panel ═══

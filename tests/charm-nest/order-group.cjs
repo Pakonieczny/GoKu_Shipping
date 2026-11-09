@@ -19,7 +19,7 @@ async function run(mode) {
   tag = mode === 'sandbox' ? '[sandbox] ' : '';
   const { page } = w, O = G.ORDERS, K = G.keyOf;
   const entry = async rid => (await G.entries(page)).find(e => e.rid === rid);
-  const chips = () => page.evaluate(() => ({ open: document.querySelector('#ordChips [data-pile=""] b')?.textContent, hold: document.querySelector('#ordChips [data-pile="hold"] b')?.textContent || null, tab: document.getElementById('tabOrdersN')?.textContent, charms: document.getElementById('ordCharmTotal')?.textContent.replace(/\s+/g, ' ').trim() }));
+  const chips = () => page.evaluate(() => ({ open: document.querySelector('#ordChips [data-pile=""] b')?.textContent, hold: document.querySelector('#ordChips [data-pile="hold"] b')?.textContent || null, tab: document.getElementById('tabOrdersN')?.textContent, charms: document.getElementById('ordCharmTotal') ? 'present' : 'gone' }));
   const closeWin = async () => { await page.evaluate(() => { const d = document.getElementById('orderWin'); if (d && d.open) d.close(); }); await page.waitForFunction(() => !document.getElementById('orderWin')?.open); };
   try {
     const names = ['twoPiece', 'three', 'single', 'pair', 'pairOnly', 'twoMore'];
@@ -71,7 +71,7 @@ async function run(mode) {
 
     // 7. counts unchanged: distinct orders, the tab, the charms (pieces)
     const c = await chips();
-    ok('7 the counts are the orders and pieces they always were: Open Orders 6, the tab 6, 14 charms', c.open === '6' && c.tab === '6' && /^14 charms/.test(c.charms), JSON.stringify(c));
+    ok('7 the counts are the orders they always were: Open Orders 6, the tab 6; the charm total is gone from the bar (SAL1, Paul 9 Nov 2026)', c.open === '6' && c.tab === '6' && c.charms === 'gone', JSON.stringify(c));
 
     // 8. a press on each piece opens the order window on THAT piece; the top opens the order
     const pick = async key => {
