@@ -784,10 +784,11 @@ exports.handler = meter.wrapHandler(async () => {
   // mirror's Firestore copy (EtsyMail_Receipts, by created_timestamp: one query of about ten days of receipts, no Etsy call), so Yesterday and Last 7 days
   // are true from the first day rather than filling up over a week. A failure tries again next run; it is never the mirror's.
   let orderDaysSeededAt = null;
-  if (OrderDays && outcome === "ok" && !(mirrorCfg && mirrorCfg.orderDaysSeededAt) && Date.now() - invocationStartMs < RUN_BUDGET_MS) {
+  // (on a quiet run only, one page at most: a catch-up keeps its whole budget for Etsy's pages, and the seed waits for the next run)
+  if (OrderDays && outcome === "ok" && pagesFetched <= 1 && !(mirrorCfg && mirrorCfg.orderDaysSeededAt) && Date.now() - invocationStartMs < RUN_BUDGET_MS) {
     try {
       const since = OrderDays.windowStartSec(Date.now());
-      const snap = await db.collection("EtsyMail_Receipts").where("created_timestamp", ">=", since).select("receipt_id", "created_timestamp", "status").get();
+      const snap = await db.collection("EtsyMail_Receipts").where("created_timestamp", ">=", since).orderBy("created_timestamp", "desc").limit(3000).select("receipt_id", "created_timestamp", "status").get();
       const od = await OrderDays.merge(db, "", snap.docs.map(d => d.data()), Date.now(), { seededAt: Date.now() });
       if (od.ok) { orderDaysSeededAt = Date.now(); orderDaysMoved = orderDaysMoved || od.changed; console.log(`[mirror-cron] order day counts seeded from ${snap.size} mirrored receipts`); }
       else console.warn("[mirror-cron] order day counts not seeded:", od.error);
