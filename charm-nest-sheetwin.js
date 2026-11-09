@@ -1527,6 +1527,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       else { const base = g.charms[x.index] && (!x.hash || g.charms[x.index].hash === x.hash) ? g.charms[x.index] : g.charms.find(c => c.hash === x.hash); if (base) x.c = Object.assign({}, base, { id: x.id, name: x.name }); }
     }
     if (failed.length) toast(`${failed.length} design${failed.length === 1 ? "" : "s"} could not be read (${failed.slice(0, 3).join(", ")}); ${failed.length === 1 ? "it shows" : "they show"} as outlines`, "bad", 7000);
+    // (MCLIBRARY: a sheet Manual Control holds from its record keeps its own charms, the ones it checks and saves, through a read of the window)
+    if (MC.sh && MC.sh._standalone && MC.sh.sheetId === W.id && (MC.on || MC.claiming)) { const own = new Map(MC.sh.charms.map(c => [c.id, c])); for (const x of W.pieces) if (own.has(x.id)) x.c = own.get(x.id); }
     geometryReady(tok);
   }
   /** The charm to draw THIS piece from (amendment 2: left and right earrings are mirror images). A piece that carries an ear and a body (an earring pair's piece, matching or mismatched)
@@ -1588,6 +1590,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     dropSnap(true);
     paintFx();
     tryDo(() => { const live = mcLive(); if (live && !(MC.on && MC.sh === live)) mcWarm(live); });   // (MCINSTANT: a 10K / 14K sheet's checks made while it sits idle, so Manual Control starts at once)
+    if (!MC.claiming) tryDo(mcButton);   // (MCLIBRARY: the switch says at once what the drawn sheet allows, a sheet loaded from its record included)
   }
 
   /* ── the plate: base (the charms as the Nest draws them) and fx (hover, focus, links, marks) ── */
@@ -5337,7 +5340,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const normDeg = a => { const v = (((+a || 0) % 360) + 360) % 360; return Math.round(v * 1000) / 1000 % 360; };
   const clampSize = v => Math.max(MC_MIN, Math.min(MC_MAX, Math.round((+v || 1) * 100) / 100));
   const mcChanged = (a, b) => !a || !b || Math.abs(a.cxPt - b.cxPt) > 1e-3 || Math.abs(a.cyPt - b.cyPt) > 1e-3 || Math.abs(normDeg(a.angle) - normDeg(b.angle)) > 1e-3 || Math.abs((a.size || 1) - (b.size || 1)) > 1e-4;
-  const mcLive = () => (W.id ? allSheets().find(p => p.sheetId === W.id) || null : null);
+  // (MCLIBRARY, Paul 9 Nov 2026: Manual Control on any 10K / 14K sheet not cut on the laser, from ANY screen: the run's own live sheet where this sorter holds it, else the sheet loaded from
+  //  its saved record (mcStandalone), so a sheet opened from the Library, on a station without its run, after the run closed, or recalled onto the cards, is moved by hand all the same)
+  const mcLive = () => (W.id ? mcRunSheet(W.id) || mcStandalone() : null);
   const mcApproved = sh => { const sets = (window.Sets && Sets.ofRun && Sets.ofRun(sh.runId)) || []; return !!(+sh.laserDoneAt > 0 || sh.laserSetPending || sh.processReady || sets.some(s => (s.sheetIds || []).includes(sh.sheetId) && (s.committedAt || s.processReady || +s.laserDoneAt > 0 || s.laserSetPending))); };
   /* GOLDEDIT (Paul, 27 Oct 2026: "I already requested that the users should be able to add and remove charms from 10 K and 14 K gold sheets even after the green cut line has been approved and even
      after the entire sheet has been approved. This must be allowed to happen until such time a sheet has been cut on a laser and marked as cut by the user at which point a sheet is locked and could
@@ -5357,12 +5362,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (laserCut(sh, rec)) return LASER_CUT_WORDS;
     const lock = rec && rec.manualEdit;
     if (!o.saving && lock && lock.tab && lock.tab !== MC_TAB && Date.now() - (+lock.at || 0) < MC_STALE) return `${lock.by || "Someone"} is moving this sheet's charms by hand on another screen. One person at a time: try again once they are done.`;
-    if (!sh) return "This sheet's run is not open in this sorter. Its charms can be moved by hand where its run is open.";
+    if (!sh) return o.api ? "This sheet's run is not open in this sorter. Its charms can be moved by hand where its run is open." : mcStandWhy();   // (MCLIBRARY: the window loads it from its record)
     if (sh.recalled) return "This sheet was brought back from the Library: rebuild it first, then its charms can be moved by hand.";
     // (GOLDEDIT: its set approved for laser cutting, sent to the station or committed, and its green line, are no locks: the line is drawn again after the change, the set's card says it changed)
     if (!o.saving && (busy(sh) || sh._operationStarting || sh._learnedStarting || sh._rosePlanning || sh._roseLoading || sh._roseAction)) return "The sheet is being nested or saved right now. Try again once it has saved.";
     // (MCFREE, Paul 20 Oct 2026: a sheet the run holds only because its check flagged it, such as a charm placed by hand where it overlaps, can be taken again to move it clear)
-    if (!o.saving && sh.problem && !mcFlagOnly(sh)) return `The sheet has a problem to settle first: ${sh.problem}`;
+    // (MCLIBRARY: a problem and a write owed are settled by the press itself, mcToggle: the sheet is written again as it stands, then Manual Control starts)
+    if (!o.saving && sh.problem && !mcFlagOnly(sh)) return MC_PROBLEM + String(sh.problem).replace(/\.$/, "") + ". Press Manual Control to write it again as it stands (no charm moves) and start.";
     if (!o.saving && (sh.dirty || !sh.persistedDone)) return MC_OWED;
     if (!o.saving && HOP.writing.has(sh)) return "The sheet's files are being written in the background after the charms moved by hand. Try again in a moment.";   // (MOVEINSTANT, Paul 20 Oct 2026: writeOwed no longer holds the window)
     if (!o.saving && !o.api && W.flow) return "Another change in this window is still running. Try again once it is done.";
@@ -5727,7 +5733,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       : MC.claiming ? "Starting Manual Control…" : why || "Manual Control: move, turn and resize this sheet's charms by hand";
     // (written only when it changes: the window's flights watch that nothing in it is drawn again while they run)
     const put = (k, v) => { if (b.getAttribute(k) !== v) b.setAttribute(k, v); };
-    put("aria-pressed", String(MC.on)); put("aria-disabled", String(!!why || MC.claiming)); put("data-why", why); put("title", title);
+    put("aria-pressed", String(MC.on)); put("aria-disabled", String((!!why && !mcSettleable(why)) || MC.claiming)); put("data-why", why); put("title", title);
     // (MCINSTANT, 28 Oct 2026: a quiet, true word for what is not written yet, instead of a spinner: "· 2 unsaved", kept on this computer until Manual Control is turned off)
     { const n = MC.on && !MC.wait ? movedCount() : 0, u = n ? `· ${n} unsaved` : ""; if ((b.getAttribute("data-unsaved") || "") !== u) { if (u) b.setAttribute("data-unsaved", u); else b.removeAttribute("data-unsaved"); } }
     if (b.classList.contains("busy") !== MC.claiming) b.classList.toggle("busy", MC.claiming);
@@ -5788,20 +5794,185 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return n;
   }
 
-  const MC_OWED = "The sheet is waiting to be written again. Try again once it has saved.";
-  async function mcToggle() {
+  const MC_OWED = "This sheet was not written after its last change. Press Manual Control to write it now as it stands (no charm moves) and start.";
+  const MC_PROBLEM = "This sheet has a problem: ";
+  /** (MCLIBRARY) A refusal the press itself settles: the sheet written again as it stands (writeAsPlaced), then Manual Control starts. */
+  const mcSettleable = why => !!why && (why === MC_OWED || why.startsWith(MC_PROBLEM));
+  /* MCLIBRARY (Paul, 9 Nov 2026: "he is not allowed to use 'Manual Control' on 10K and 14K solid gold sheets ... do what you have to do to actually fix this. I can't have this problem").
+     Manual Control looked for the sheet only among the sheets of the run open on THIS screen (allSheets): opened from the Library, on a station without that run, after the run was closed,
+     or recalled onto the cards from a set (its pieces not on the page: "rebuild it first"), it said "This sheet's run is not open in this sorter" and never started. Paul's rule
+     (GOLDEDIT, 27 Oct 2026) is that a 10K / 14K sheet is edited by hand until the laser has cut it, nothing else.
+     Now, where this sorter holds no live sheet of it, the sheet is loaded from its saved record into a sheet of its own (mcStandalone): its charms with the drawings the window has just
+     read (the same objects the plate draws), its placements, its pins and hand marks, its stock and any metal already cut away, and its green line (RoseStock.restore, from the record and
+     its stock). Manual Control then works on it unchanged: the claim (manualClaim, one person at a time), move, turn, resize, MCFREE's red overlaps, the save as ONE patch
+     (sheetLayoutPatch, with a recorded green line cut set aside first: goldOpen), and its files written again from the record (mcWriteStandalone: the .ai, the labelled proof, the
+     re-rendered check, the report and the preview at the paths it had, its .pdf copied again), with no run needed. The laser's mark still refuses it, here and on the server. ── */
+  const STAND = { id: "", key: "", sh: null, ready: false, why: "", tries: 0, at: 0, tok: 0 };
+  /** The sheet of the run open on this screen, unless it is only a recalled card (its pieces are not on the page: its record is the sheet). */
+  function mcRunSheet(id) {
+    const p = allSheets().find(q => q.sheetId === id) || null;
+    return p && p.recalled && !(p.charms || []).length ? null : p;
+  }
+  /** Why Manual Control cannot start yet on a sheet this screen holds no live copy of (the window loads it from its record). */
+  function mcStandWhy() {
+    const rec = W.rec;
+    if (!rec || rec.id !== W.id) return "The sheet is still being read. Try again in a moment.";
+    if (!W.geom) return "The sheet's charms are still being drawn. Try again in a moment.";
+    return STAND.why || "The sheet is being made ready for Manual Control. Try again in a moment.";
+  }
+  /** The sheet loaded from its saved record (see above), once its stock and green line are read; null meanwhile (mcStandWhy says why). */
+  function mcStandalone() {
+    const rec = W.rec, id = W.id;
+    if (!rec || rec.id !== id || !MANUAL_METALS.includes(rec.metal)) return null;
+    // (the one Manual Control holds: kept while it is on, so the window read again meanwhile never changes the sheet under it)
+    if (MC.sh && MC.sh._standalone && MC.sh.sheetId === id && (MC.on || MC.claiming)) return MC.sh;
+    if (!W.geom) return null;
+    const shown = W.pieces.filter(x => !x.gone);
+    const key = id + "|" + layoutSig(rec) + "|" + [+rec.laserDoneAt || 0, rec.roseCutAt || 0, rec.rosePlanHash || "", rec.roseStockId || "", rec.roseRevision || 0].join(",");
+    if (STAND.id === id && STAND.key === key && STAND.sh && shown.every(x => STAND.sh.charms.includes(x.c))) {
+      if (STAND.ready) return STAND.sh;
+      // (a stock that could not be read is asked again, every 10 s at most, while the window is open)
+      if (!STAND.prep && STAND.why && Date.now() - STAND.at > 10000 && STAND.tries < 6) mcStandPrep(STAND.sh, rec);
+      return null;
+    }
+    const tok = ++STAND.tok;
+    Object.assign(STAND, { id, key, sh: null, ready: false, why: "", tries: 0, at: 0, prep: null });
+    if (!shown.length) { STAND.why = "No charm is placed on this sheet yet."; return null; }
+    const miss = shown.filter(x => !x.c || !x.c.bits || !x.c.w);
+    if (miss.length) { STAND.why = `${miss.length === 1 ? "One charm's drawing" : miss.length + " charms' drawings"} could not be read in this page, so ${miss.length === 1 ? "it" : "they"} cannot be checked. Close the sheet and open it again.`; return null; }
+    const recP = new Map((rec.placements || []).map(p => [p.id, p])), recC = new Map((rec.charms || []).map(c => [c.id, c])), srcs = new Map((rec.sources || []).map(s0 => [s0.id, s0]));
+    const charms = [], placements = [], srcOf = new Map();
+    for (const x of shown) {
+      const p = recP.get(x.id), rc = recC.get(x.id) || {}, c = x.c; if (!p) continue;
+      // (the window's own drawing of the piece, named as its record names it, with the pin and the size a person gave it by hand)
+      Object.assign(c, { id: x.id, poolId: rc.poolId || x.poolId || c.poolId || null, order: rc.order || c.order || x.rid || null, name: rc.name || x.name || c.name });
+      if (rc.lineKey) c.lineKey = rc.lineKey;
+      const man = window.CNManual && CNManual.fromRecord ? CNManual.fromRecord(rc) : null; if (man) c.manual = man; else delete c.manual;
+      if (rc.pinned && typeof rc.pinned === "object") c.pinned = Object.assign({}, rc.pinned); else delete c.pinned;
+      if (rc.frozen) c.frozen = rc.frozen;
+      charms.push(c); placements.push(Object.assign({}, p, { cxPt: +p.cxPt, cyPt: +p.cyPt, angle: +p.angle || 0, scale: +p.scale || 1, wPt: +p.wPt || c.widthPt || 10, hPt: +p.hPt || c.heightPt || 10 }));
+      if (x.sourceId && srcs.has(x.sourceId)) srcOf.set(x.id, srcs.get(x.sourceId));
+    }
+    const sh = { sheetId: id, metal: rec.metal, runId: rec.runId || null, fileBase: rec.fileBase || rec.folder || id, page: rec.page || 1, sheetIndex: rec.sheetIndex || null, setId: rec.setId || null, seq: rec.setSeq || null, setDay: rec.day || null,
+      draft: !!rec.draft, releaseFull: !!rec.releaseFull, processReady: !!rec.processReady, laserSetPending: !!rec.laserSetPending, laserDoneAt: +rec.laserDoneAt || null, label: rec.label || null,
+      charms, placements, rejects: [], backPool: [], log: [], status: "complete", persistedDone: true, persisted: Promise.resolve(), dirty: false, problem: null, verification: rec.verification || null,
+      keptStock: stockOf(rec), roseCutAt: rec.roseCutAt || null, rosePlanHash: rec.rosePlanHash || null, roseRevision: rec.roseRevision || 0,
+      _standalone: true, _rec: rec, _srcOf: srcOf };
+    STAND.sh = sh;
+    if (!rec.roseStockId && !rec.rosePlanJson && !rec.roseProtectedJson) { STAND.ready = true; return sh; }
+    mcStandPrep(sh, rec, tok);
+    return null;
+  }
+  /** Its stock (any metal already cut away) and its green line, read from its record and its stock (RoseStock.restore), before its charms are checked against them. */
+  function mcStandPrep(sh, rec, tok) {
+    tok = tok || STAND.tok; STAND.tries++; STAND.at = Date.now(); STAND.why = "Reading this sheet's saved stock and green line…";
+    const R = window.RoseStock;
+    const p = !rec.roseStockId ? Promise.resolve().then(() => { const parse = s0 => (s0 ? JSON.parse(s0) : null); sh.rosePlan = parse(rec.rosePlanJson); sh.roseProtected = parse(rec.roseProtectedJson); })
+      : R && typeof R.restore === "function" ? within(R.restore(sh, rec), 20000, "the cloud did not answer in 20 seconds") : Promise.reject(new Error("the green line's code is not loaded in this page; reload it"));
+    STAND.prep = p.then(() => { if (tok !== STAND.tok) return; STAND.ready = true; STAND.why = ""; },
+      e => { if (tok !== STAND.tok) return; STAND.why = `This sheet's saved stock could not be read (${String((e && e.message) || e).replace(/\.$/, "")}); it is asked again in a moment.`; })
+      .finally(() => { if (tok === STAND.tok) STAND.prep = null; if (W.dlg && W.dlg.open && !MC.claiming) tryDo(mcButton); });
+  }
+  /** The design files of a sheet loaded from its record, read with their PDF document (the writer copies each charm's own drawing from it): key -> parsed. Kept for the page (12). */
+  const MCDOC = new Map();
+  async function mcDocOf(key, srcRec, page) {
+    if (MCDOC.has(key)) return MCDOC.get(key);
+    const job = (async () => {
+      if (page && page.parsed && page.parsed.doc) return page.parsed;
+      const Pd = window.CharmNestPDF;
+      let bytes = page && page.bytes && (page.bytes.length || page.bytes.byteLength) ? page.bytes : null;
+      if (!bytes) {
+        const url = (srcRec && srcRec.url) || (page && page.cloud && page.cloud.url) || null, path = (srcRec && srcRec.path) || (page && page.cloud && page.cloud.path) || null;
+        if (!url && !path) throw new Error("its design file was never saved");
+        bytes = await CharmNestAssets.bytes(url || (await api("charmNestOutput", { op: "url", path })).url);
+      }
+      return Pd.parseSource(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes), (srcRec && srcRec.name) || (page && page.name) || "design.ai");
+    })().catch(e => { MCDOC.delete(key); throw e; });
+    MCDOC.set(key, job); if (MCDOC.size > 12) MCDOC.delete(MCDOC.keys().next().value);
+    return job;
+  }
+  /** A sheet loaded from its record written again as it now stands, with no run (the nest's own writer, sheetSpec as finishNest builds it): its .ai and labelled proof, the file
+   *  re-rendered layer by layer (the independent check) with Manual Control's own check of every charm, its report and preview, uploaded to the paths it had; its record told its new
+   *  files and verification; its .pdf copied again from the .ai when it had one; a set it was released in told it changed (releasedChange, as Review.inPlaceRefile says it). → true. */
+  async function mcWriteStandalone(sh, st, paint) {
+    st.state = "now"; st.detail = "written from its saved record (its run is not open on this screen)"; paint();
+    const Pd = window.CharmNestPDF, rec = (W.rec && W.rec.id === sh.sheetId ? W.rec : null) || sh._rec || {}, outs = rec.outputs || {};
+    if (!Pd || typeof Pd.buildSheet !== "function" || typeof Pd.parseSource !== "function" || typeof uploadBytes !== "function") throw new Error("the sheet writer is not loaded in this page; reload it");
+    const stock = (typeof stockFor === "function" ? tryDo(() => stockFor(sh.metal, sh)) : null) || stockOf(rec), byId = new Map(sh.charms.map(c => [c.id, c]));
+    const sources = new Map(), spec = [], pageSrc = id => (typeof sourceOf === "function" ? tryDo(() => sourceOf(id)) : null) || null;
+    for (const p of sh.placements) {
+      const c = byId.get(p.id); if (!c) throw new Error("a charm of the sheet is missing");
+      const srcRec = sh._srcOf && sh._srcOf.get(p.id), page = c.sourceId ? pageSrc(c.sourceId) : null, key = (page && c.sourceId) || (srcRec ? "rec:" + srcRec.id : c.sourceId);
+      if (!key) throw new Error(`${c.name || "a charm"}: its design file is not known`);
+      if (!sources.has(key)) { try { sources.set(key, await mcDocOf(key, srcRec, page)); } catch (e) { throw new Error(`${c.name || "a charm"}: its design could not be read (${String((e && e.message) || e).replace(/\.$/, "")})`); } }
+      spec.push({ charm: c.sourceId === key ? c : Object.assign({}, c, { sourceId: key }), angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, scale: p.scale || 1 });
+    }
+    const params = Object.assign({ seed: 1, clearancePt: +S.settings.clearancePt || 0 }, rec.params || {});
+    const base = { sheet: { wPt: stock.wPt, hPt: stock.hPt, strokeRGB: [1, 0, 0], strokePt: 0.5 }, placements: spec, sources, title: `${labelOf(sh.metal)} sheet ${sh.sheetId}`, meta: { sheetId: sh.sheetId, metal: sh.metal, seed: params.seed, clearancePt: params.clearancePt, charmScale: drawScale() } };
+    st.detail = "writing the .ai"; paint();
+    const ai = await Pd.buildSheet(base);
+    sh.placements.forEach((p, i) => { p.layerName = base.placements[i].layerName || p.layerName; p.name = (byId.get(p.id) || {}).name; });
+    const labelled = await Pd.buildSheet(Object.assign({}, base, { labelled: true, placements: base.placements.map(p => Object.assign({}, p)) }));
+    // the check: the written file re-rendered layer by layer (as every sheet's), and Manual Control's own check of every charm against its neighbours, the edge and any metal cut away
+    st.detail = "checking the written file"; paint();
+    let render = null;
+    try {
+      if (typeof ensurePdfJs === "function") await ensurePdfJs();
+      const clr = +S.settings.clearancePt || 0;
+      render = await Pd.verifyRendered(ai, { wPt: stock.wPt, hPt: stock.hPt, insetPt: 0, res: +S.settings.verifyRes || 6, erodePt: clr < 0 ? Math.round(-clr / 2 * 2) / 2 : 0, layerSigs: new Map(base.placements.map(p => [p.layerName, p.layerSig])) });
+    } catch (e) { render = { ok: false, error: String((e && e.message) || e) }; }
+    const hand = (tryDo(() => mcSheetClash(sh)) || []).length;
+    sh.verification = { ok: !!(render && render.ok) && !hand, render: render && { ok: !!render.ok, overlapPx: render.overlapPx || 0, outsidePx: render.outsidePx || 0, ...(render.error ? { error: render.error } : {}) }, geom: { ok: !hand, by: "manual" }, ...(hand ? { handOverlap: hand } : {}), minGapPt: rec.verification ? rec.verification.minGapPt : null, minEdgePt: rec.verification ? rec.verification.minEdgePt : null };
+    sh.outputs = { report: null };
+    let report = null;
+    try {
+      const placedPt2 = sh.charms.reduce((n, c) => n + (+c.areaPt2 || 0) * sizeOf(c) ** 2, 0), usablePt2 = +rec.usablePt2 || stock.wPt * stock.hPt;
+      report = typeof buildReport === "function" ? buildReport(sh, { params, endedBy: "kept", trials: 0, elapsedMs: 0, density: placedPt2 / usablePt2, usablePt2, freePt2: Math.max(0, usablePt2 - placedPt2), placedPt2, pocket: rec.pocket || null }, sh.charms) : null;
+    } catch (e) { console.warn("sheet window: standalone report", e); }
+    if (!report) report = { version: 1, sheetId: sh.sheetId, metal: sh.metal, createdAt: new Date().toISOString(), stock: { wPt: stock.wPt, hPt: stock.hPt }, endedBy: "kept", placements: sh.placements.map((p, i) => ({ n: i + 1, id: p.id, layer: p.layerName, name: (byId.get(p.id) || {}).name, angle: p.angle, scale: p.scale || 1, cxPt: +(+p.cxPt).toFixed(3), cyPt: +(+p.cyPt).toFixed(3) })), verification: sh.verification };
+    report.writtenBy = "manual-control-standalone";
+    let png = null; try { png = typeof previewPng === "function" ? await previewPng(sh) : null; } catch (_) { png = null; }
+    // the paths it had (its folder and name kept: a set's manifest and labels name them)
+    const name = sh.fileBase || rec.fileBase || sh.sheetId, dir = outs.ai && outs.ai.path ? String(outs.ai.path).replace(/\/[^/]*$/, "") : `charmnest/sheets/${rec.day || (typeof today === "function" ? today() : new Date().toISOString().slice(0, 10))}/${name}`;
+    const aiPath = outs.ai && outs.ai.path ? outs.ai.path : `${dir}/${name}.ai`;
+    st.detail = "uploading its files"; paint();
+    const up = async (path, bytes, type, label) => { let err = null; for (let t = 0; t < 3; t++) { try { const r = await uploadBytes(path, bytes, type, label); return { path: r.path, url: r.url }; } catch (e) { err = e; await pause(1500 * (t + 1)); } } throw err; };
+    const [aiOut, labOut, repOut, pvOut] = await Promise.all([
+      up(aiPath, ai, "application/illustrator", "Saving sheet .ai"),
+      up((outs.labelled && outs.labelled.path) || `${dir}/${name}_labelled.pdf`, labelled, "application/pdf", "Saving labelled proof"),
+      up((outs.report && outs.report.path) || `${dir}/${name}_nest-report.json`, new TextEncoder().encode(JSON.stringify(report, null, 1)), "application/json", "Saving report"),
+      png ? up((outs.preview && outs.preview.path) || `${dir}/preview.png`, png, "image/png", "Saving preview").catch(() => null) : Promise.resolve(null)
+    ]);
+    const outputs = Object.assign({}, outs, { ai: aiOut, labelled: labOut, report: repOut }, pvOut ? { preview: pvOut } : {});
+    const verif = { ok: sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render, ...(hand ? { handOverlap: hand } : {}) };
+    await api("charmNestLibrary", { op: "putSheet", sheet: Object.assign({ id: sh.sheetId, outputs, verification: verif, saving: false, filesOwed: null }, pvOut ? { preview: pvOut.url, previewAt: Date.now() } : {}) }, { quiet: true });
+    sh.cloud = { ai: aiOut.url, labelled: labOut.url, report: repOut.url, preview: pvOut ? pvOut.url : (outs.preview && outs.preview.url) || null };
+    if (outs.pdf) await api("charmNestLibrary", { op: "sheetPdf", id: sh.sheetId }, { quiet: true }).catch(e => console.warn("sheet window: .pdf", e));
+    // a set the sheet was released in (out of draft) says it changed, as Review.inPlaceRefile says it for a sheet of the run on screen
+    if (sh.setId && !sh.draft) {
+      const set = `Set ${rec.setSeq || ""}`.trim(), word = `${set} changed after it was released: ${sheetWord(sh.sheetId, sh.fileBase, sh)}'s charms were moved by hand — its files are written again`;
+      await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releasedChange: { setId: sh.setId, set, at: Date.now(), by: whoAmI() || null, orders: [], word } } }, { quiet: true }).catch(e => console.warn("sheet window: released mark", e));
+    }
+    st.state = "ok"; st.detail = sh.verification.ok ? "written and checked" : hand ? `${hand} charms overlap: the sheet stays flagged until they are moved clear` : "written; its check flagged it, see its report"; paint();
+    return true;
+  }
+  async function mcToggle(o0) {
     if (MC.claiming && !MC.on) return;   // (MOVEINSTANT 2: on, the toggle always ends it, even while a carried-to sheet is still being claimed)
     if (MC.on) return mcOff();
     const sh = mcLive(), why = mcBlock(sh, W.rec);
     // (STUCKSHEET, Paul 25 Oct 2026: "I can't seem to manipulate this sheet by switching it to manual control": a sheet owed a write, with nothing writing it, is written now AS IT
     //  STANDS (the page's writeAsPlaced: no search, every charm where it is), then Manual Control can be taken as usual)
-    if (why === MC_OWED && typeof window.writeAsPlaced === "function") {
-      MC.claiming = true; mcButton(); mcSay("This sheet was not written after its last change: writing it now as it stands (no charm moves)…", "");
+    // (MCLIBRARY, Paul 9 Nov 2026: a sheet with a problem left on it is settled the same way, and Manual Control starts by itself once it is written: one press)
+    if (sh && mcSettleable(why) && typeof window.writeAsPlaced === "function" && !(o0 && o0.settled)) {
+      // (a hold no Manual Control and no save of this page owns any more is let go: writeAsPlaced would otherwise wait for it for good)
+      if (!(MC.on && MC.sh === sh) && !(HOP.saving && HOP.saving.has(sh)) && !HOP.writing.has(sh) && !MCF.has(sh.sheetId)) { delete sh._manualHold; delete sh._manualAsked; }
+      MC.claiming = true; mcButton(); mcSay(why === MC_OWED ? "This sheet was not written after its last change: writing it now as it stands (no charm moves)…" : "Writing this sheet again as it stands (no charm moves) to settle its problem…", "");
       sh._byHand = true; let ok = false;
-      try { ok = !!(await window.writeAsPlaced(sh)); } catch (e) { console.warn("sheet window: owed write", e); }
+      try { ok = !!(await within(Promise.resolve(window.writeAsPlaced(sh)), 240000, "it was not written in four minutes")); } catch (e) { console.warn("sheet window: owed write", e); }
       MC.claiming = false; mcButton();
-      return ok ? mcSay("Written. Press Manual Control again to move its charms.", "ok")
-        : mcSay(sh.problem ? `It could not be written: ${sh.problem}` : "It is being written now; press Manual Control again once it has saved.", "bad");
+      if (ok && W.dlg && W.dlg.open && W.id === sh.sheetId && !mcBlock(mcLive(), W.rec)) return mcToggle({ settled: true });
+      return ok ? mcSay("Written. Press Manual Control to move its charms.", "ok")
+        : mcSay(sh.problem && !mcFlagOnly(sh) ? `It could not be written: ${sh.problem}` : "It is being written now; press Manual Control again once it has saved.", "bad");
     }
     if (why) return mcSay(why, "bad");
     const who = needName(() => mcToggle()); if (!who) return;
@@ -6227,6 +6398,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const st = o.files || stepOf(""), lb = o.labels || stepOf(""), paint = o.paint || (() => {});
       for (let t = 0; t < 4; t++) {
         try {
+          // (MCLIBRARY, Paul 9 Nov 2026: a sheet loaded from its record, its run not open on this screen, is written from that record: no run, no nest, no set look; moving charms
+          //  changes no order on it, so its QR label stands)
+          if (sh._standalone) {
+            await mcWriteStandalone(sh, st, paint);
+            lb.state = "ok"; lb.detail = "its orders did not change: its QR label stands"; paint();
+            if (o.jobK) tryDo(() => window.CharmNestStore.settle(o.jobK, { ok: true, answer: { files: true } }));
+            return true;
+          }
           // (STUCKSPIN, Paul 28 Oct 2026: the sheet's place in its set is taken from its record first (Gate.followSheet, nothing written; at most 15 s), so the write keeps it there)
           if (window.Gate && typeof Gate.followSheet === "function") await within(Gate.followSheet(sh, o.rec || (W.rec && W.rec.id === id ? W.rec : null)), 15000, "").catch(() => false);   // (the record as the patch's answer left it: no read)
           holdRelease([sh]);
@@ -6265,6 +6444,44 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
   }
   setInterval(() => tryDo(mcFilesResume), 10000);
+  /* MCLIBRARY (Paul, 9 Nov 2026): a 10K / 14K sheet of the run open HERE whose charms were moved by hand on another screen, where the sheet was loaded from its record (mcStandalone),
+     takes that layout as it was saved: each charm whose record carries a newer hand mark is put where it was put, pinned there, at its size, its green line and files as the record
+     now holds them. Without it this page would keep, and write again at its next save, the layout from before. Told by the computer's changes feed (CNSync, the sheet's name); one
+     read of that sheet, never while it is being written, held by Manual Control here, or owes a write of its own. */
+  let mcAdoptSync = null; const ADOPT = new Set();
+  function mcAdoptStart() {
+    if (mcAdoptSync || !window.CNSync || typeof window.CNSync.follow !== "function") return;
+    mcAdoptSync = window.CNSync.follow({ name: "mc-adopt", kinds: "s", wild: "", active: () => true, every: () => 0,
+      wants: k => { const id = String(k).slice(2), p = mcRunSheet(id); return !!p && MANUAL_METALS.includes(p.metal); },
+      read: (why, keys) => { if (!["keys", "wrote", "dirty"].includes(why)) return; for (const k of keys || []) tryDo(() => mcAdopt(String(k).slice(2))); } });
+  }
+  async function mcAdopt(id) {
+    const sh = mcRunSheet(id); if (!sh || !MANUAL_METALS.includes(sh.metal) || ADOPT.has(id) || ((MC.on || MC.claiming) && MC.sh === sh)) return 0;
+    ADOPT.add(id);
+    try {
+      const r = await api("charmNestLibrary", { op: "getSheet", id }, { quiet: true, timeoutMs: 12000 }), rec = r && r.sheet; if (!rec) return 0;
+      if (mcRunSheet(id) !== sh || busy(sh) || sh._operationStarting || HOP.writing.has(sh) || ((MC.on || MC.claiming) && MC.sh === sh) || MCF.has(id) || sh.dirty) return 0;
+      const recC = new Map((rec.charms || []).map(c => [c.id, c])), recP = new Map((rec.placements || []).map(p => [p.id, p]));
+      const newer = sh.charms.filter(c => { const rc = recC.get(c.id); return !!rc && !!rc.manual && +rc.manual.at > ((c.manual && +c.manual.at) || 0) && recP.has(c.id) && sh.placements.some(p => p.id === c.id); });
+      if (!newer.length) return 0;
+      for (const c of newer) {
+        const rc = recC.get(c.id), rp = recP.get(c.id), p = sh.placements.find(q => q.id === c.id);
+        Object.assign(p, { cxPt: +rp.cxPt, cyPt: +rp.cyPt, angle: +rp.angle || 0, scale: +rp.scale || p.scale || 1 }, +rp.wPt > 0 ? { wPt: +rp.wPt } : {}, +rp.hPt > 0 ? { hPt: +rp.hPt } : {});
+        const man = window.CNManual && CNManual.fromRecord ? CNManual.fromRecord(rc) : null; if (man) c.manual = man;
+        if (rc.pinned && typeof rc.pinned === "object") { c.pinned = Object.assign({}, rc.pinned); delete c.arrivalPin; }
+      }
+      if (rec.roseStockId && window.RoseStock && typeof RoseStock.restore === "function" && ((rec.roseCutAt || null) !== (sh.roseCutAt || null) || (rec.rosePlanHash || null) !== (sh.rosePlanHash || null))) await within(RoseStock.restore(sh, rec), 20000, "the green line was not read").catch(e => console.warn("sheet window: adopt green line", e));
+      const o = rec.outputs || {}; sh.cloud = Object.assign({}, sh.cloud || {}, { ai: o.ai && o.ai.url, labelled: o.labelled && o.labelled.url, report: o.report && o.report.url, preview: o.preview && o.preview.url, pdf: o.pdf && o.pdf.url });
+      if (rec.verification) sh.verification = Object.assign({}, sh.verification || {}, rec.verification);
+      sh._written = null; MCC.delete(sh);
+      tryDo(() => log(sh, `${newer.length} charm(s) moved by hand on another screen (Manual Control, from the sheet's record): taken here as saved`));
+      tryDo(() => window.CN && CN.renderCard && CN.renderCard(sh)); tryDo(() => window.Session && Session.schedule());
+      if (W.dlg && W.dlg.open && W.id === id && !W.flow && !MC.on) tryDo(() => open2(id));
+      return newer.length;
+    } catch (e) { console.warn("sheet window: adopt", e); return 0; }
+    finally { ADOPT.delete(id); }
+  }
+  setInterval(() => tryDo(mcAdoptStart), 5000); setTimeout(() => tryDo(mcAdoptStart), 1500);
   async function mcSave(sh, edits, who, owed, o = {}) {
     // (MOVEINSTANT 2, Paul 20 Oct 2026: o.bg, the save of a sheet Manual Control carried on from (or the window left or closed): in the background, the "Saving…" / "Saved"
     //  chip by the plate and no steps panel; a failure is said in a toast. Manual Control's own toggle keeps its panel.)
@@ -6491,6 +6708,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     },
     // (for the tests: the window's state, a point of the sheet on the screen, and where the tool's handles are on the screen)
     _MC: MC,
+    _STAND: STAND, _live: () => mcLive(), _adopt: id => mcAdopt(id),   // (MCLIBRARY: the tests read the sheet loaded from its record)
     _client(xPt, yPt) { const cv = W.el.fx, r = cv.getBoundingClientRect(), s = cv.width / r.width; return [r.left + plateX(xPt) / s, r.top + (W.R + yPt * W.k) / s]; },
     // (MCFREE: the handles where they are drawn and taken, kept inside what can be seen of the stage; raw: where they would fall; vis: the stage's visible box; plate: the plate's)
     _tool() { const t = mcTool(); if (!t) return null; const r = W.el.fx.getBoundingClientRect(); return { centre: t.centre, knob: t.knob, corners: t.corners, raw: t.raw, vis: t.vis, plate: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } }; }
