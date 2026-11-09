@@ -15945,6 +15945,24 @@ const RunCtl = window.RunCtl = (() => {
     await saveSoft(rec); renderBanner();
     loop().catch(e => stop(e.message, "Fix the cause and press Resume."));
   }
+  /** OWEDFILES (Paul, 9 Nov 2026): the sheets a reload found owing their files (filesOwed on the record: a move between sheets, or a change by hand, saved before the page closed but its files,
+   *  QR label and set files never written). Each is written as it stands, every charm where it is (the sheet window's writeOwed: its files, its QR label, its green line drawn again, a released
+   *  set's files written again and its card told), once the page has settled; a sheet busy, held by a person or of another run waits and is looked at again (ten times at most). Never throws. */
+  function writeOwedLater(pages, runId, ms, tries) {
+    setTimeout(async () => {
+      try {
+        const live = pages.filter(sh => allSheets().includes(sh) && sh.sheetId && !(+sh.laserDoneAt > 0) && (!runId || sh.runId === runId));
+        const busy = sh => ["nesting", "finishing", "queued"].includes(sh.status) || sh._operationStarting || sh._learnedStarting || (sh.persisted && !sh.persistedDone) || sh._manualHold || sh.dirty;
+        const now = live.filter(sh => !busy(sh)), later = live.filter(busy);
+        if (later.length && (tries || 0) < 10) writeOwedLater(later, runId, 30000, (tries || 0) + 1);
+        if (!now.length) return;
+        const names = now.map(sh => sh.fileBase || sheetName(sh)).join(", ");
+        const K = window.SheetWin && window.SheetWin.hopKit;
+        const ok = K && typeof K.writeOwed === "function" ? await K.writeOwed(now) : (await Promise.all(now.map(sh => typeof artSheetWrite === "function" ? artSheetWrite(sh) : false))).every(Boolean);
+        agent({ run: runId }, ok ? "cloud" : "warn", `${names}: ${now.length === 1 ? "its" : "their"} last change by hand was saved, but the page closed before ${now.length === 1 ? "its" : "their"} files were written; ${ok ? `written again as ${now.length === 1 ? "it stands" : "they stand"} (files, QR label${now.length === 1 ? "" : "s"}, and a released set's files)` : "they could not all be written: see the sheet's card"}`);
+      } catch (e) { console.warn("[owed files]", e && e.message); }
+    }, ms || 0);
+  }
   async function restoreRunSheets(rec) {
     const setIds = [...new Set((rec.setIds || []).concat(rec.setId ? [rec.setId] : []))];
     const sets = [];
@@ -15959,6 +15977,7 @@ const RunCtl = window.RunCtl = (() => {
     for (const set of sets) Sets.byRun().set(Sets.keyOf(rec.runId, set.committedAt ? "committed:" + set.setId : set.group === "dispatch" && set !== newestOpen ? "closed:" + set.setId : set.group), set);
     const bySet = new Map(sets.map(x => [x.setId, x]));
     const ls = await api("charmNestLibrary", { op: "listSheets", limit: 500, runId: rec.runId }, { all: "sheets" });
+    const owedFiles = [];   // (OWEDFILES: the sheets whose record still owes its files)
 
     for (const slim of ls.sheets || []) {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: slim.id })).sheet; if (!d) continue;
@@ -15997,6 +16016,9 @@ const RunCtl = window.RunCtl = (() => {
       pg.status = d.status === "complete" ? "complete" : "partial"; pg.dirty = false; pg.verification = d.verification ? Object.assign({ ok: !!d.verification.ok, geom: { ok: !!d.verification.ok, res: 6, overlapPx: 0, outsidePx: 0, overlappingPairs: [] }, render: d.verification.render || null }, d.verification) : null; pg.endedBy = d.endedBy; pg.density = d.density; pg.liveInfo = { freePt2: d.freePt2, usablePt2: d.usablePt2, placedPt2: (d.usablePt2 || 0) - (d.freePt2 || 0), pocket: d.pocket, placed: pg.placements.length, total: pg.charms.length };
       pg.persisted = Promise.resolve();
       computeSaturation(pg); renderCard(pg);
+      // (OWEDFILES, Paul 9 Nov 2026: a change saved to this sheet's record whose files were not written before the page closed, a move between sheets with Manual Control still on: its record says
+      //  filesOwed. A draft is nested again below anyway; any other sheet, not laser cut, is written as it stands once the page has settled, writeOwedLater)
+      if (d.filesOwed && !pg.draft && pg.placements.length === (d.placements || []).length && !(+d.laserDoneAt > 0)) owedFiles.push(pg);
       for (const row of Orders.rows()) { if (!row.poolIds.length) continue; if (row.poolIds.every(pid => { const pool = B.pool.rows.get(pid); return pool && pool.setId && ["written", "engraved", "labelled", "committed"].includes(pool.state); })) row.state = "written"; else if (row.poolIds.some(pid => (d.poolIds || []).includes(pid))) row.state = "pooled"; }
       for (const b of pg.backPool) { const row = Orders.rows().find(x => x.poolIds.includes(b.poolId)); if (row) { const j = Engrave.jobForRecord(row, b); j.backSaving = false; j.state = "written"; j.text = b.text; j.lines = b.lines || String(b.text).split("\n"); j.approvedBy = b.approvedBy; j.approvedAt = b.approvedAt; j.backs.push(b); j.row.engrave = { needed: true, state: "written", approved: true, text: b.text, approvedBy:b.approvedBy,approvedAt:b.approvedAt,seals:CNEngravingSeals.merge(j,b) };CNEngravingSeals.keep(j); } }
       // Cloud-only recovery has file links, not the editable output bytes. A working
@@ -16012,6 +16034,7 @@ const RunCtl = window.RunCtl = (() => {
     // Saved rows without a recovered placement (for example, an unselected solid
     // material) still need their charms recreated on the queue.
     for (const row of Orders.rows()) if (row.poolIds.length && !row.poolIds.every(id => Pool.charmOf(id))) { row.state = "pulled"; row.poolIds = []; }
+    if (owedFiles.length) writeOwedLater(owedFiles, rec.runId, 15000);
     agent({ run: rec.runId }, "cloud", `Restored ${(ls.sheets || []).length} sheet(s) of ${sets.map(x => x.name).join(", ") || "the working run"} from their records`);
     return sets[0];
   }

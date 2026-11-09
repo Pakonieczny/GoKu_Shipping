@@ -24,7 +24,8 @@
        person resizes or moves them clear (the sheet joins no set until then). Only without the window's moveNow is it the old "Not enough space" pop-up.
    Guards (refused with a plain sentence, the charm flies back, nothing is written): another metal is never offered (10K to 10K, 14K to
    14K only); neither sheet may be nesting, finishing, queued or saving, cut on the laser, taken back from the Library, or of a run that is
-   finishing or committing; the source is never emptied (Merge sheets is for that); the order must not be on hold, cancelled or in Review.
+   finishing or committing; the source is never emptied (Merge sheets is for that); the order must not be cancelled, skipped or gone (HANDMOVE, Paul 9 Nov 2026:
+   an order on hold or in Review is moved by hand too, its hold and its Review kept).
    GOLDEDIT (Paul, 27 Oct 2026: "I should be able to manually control this sheet and adjust the charms and add and remove charms from any 10 K
    and 14 K gold sheet until such time that it has been marked as completed in the laser cutting process"): the laser's mark is the ONE lock.
    A green line (drawn, or its cut recorded by Cut Sheet), the sheet full and approved, in a set, its set approved for laser cutting or sent
@@ -217,8 +218,9 @@
     if (u.why) return u.why;
     const K = kit(), rid = u.rid, n = word(src), t = word(target);
     if (K.cancelled(rid)) return `Order ${rid} is cancelled`;
-    if (K.rowsOfOrder(rid).some(r => r.hold || ["held", "skipped", "gone"].includes(r.state))) return `Order ${rid} is on hold`;
-    if (tryDo(() => window.CharmNestReviewHold && CharmNestReviewHold.inReview(rid))) return `Order ${rid} is paused in Review`;
+    // (HANDMOVE, Paul 9 Nov 2026: only the laser's mark stops a person's own change: an order on hold or in Review is moved by hand too, its hold and its Review kept. A line skipped or
+    //  gone from Etsy has nothing to move)
+    if (K.rowsOfOrder(rid).some(r => ["skipped", "gone"].includes(r.state))) return `Order ${rid} is skipped or gone`;
     if (actives(src).length <= u.pieces.length) return `${n} would be left empty: a sheet is never emptied by a move (Merge sheets, in its Options, moves everything)`;
     // the cardinal rule: a move never ties a sheet to one it shares no order with yet
     // (Paul, 26 Oct 2026: "While the 14K or 10K sheet is waiting for user approval and green cut line, the users should be able to move charms (Manual toggle) in and out of that 10k/14k sheet without any
