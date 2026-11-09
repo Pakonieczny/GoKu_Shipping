@@ -148,7 +148,7 @@
     return { t, d };
   }
   /** One ring the booleans gave back, as a subpath with the input's own curves wherever its edges run along them. */
-  function rebuildRing(ring, tags) {
+  function rebuildRing(ring, tags, onCut) {   // (onCut(p, q): the Eraser's: true when the edge p-q lies on the brush's edge, which is then written as it is)
     const n = ring.length; if (n < 3) return null;
     const T = ring.map(p => tags.at.get(keyOf(p[0], p[1])) || null);
     const att = new Array(n);
@@ -181,12 +181,13 @@
         };
         best = tryFrom(A, ring[j], true) || tryFrom(B, ring[i], false);
       }
-      att[i] = best;
+      att[i] = best && onCut && onCut(ring[i], ring[j]) ? null : best;
     }
     // pass 2: an edge between two crossings (a sliver along one chord): the chord a neighbouring edge found for either end
     for (let i = 0; i < n; i++) {
       if (att[i]) continue;
       const j = (i + 1) % n;
+      if (onCut && onCut(ring[i], ring[j])) continue;
       for (const nb of [att[(i + n - 1) % n], att[j]]) {
         if (!nb) continue;
         const s = tags.segs[nb.s], tRef = nb === att[j] ? nb.ta : nb.tb, k = Math.min(s.n - 1, Math.floor(tRef * s.n));
@@ -207,8 +208,13 @@
       runs.push(a ? { s: a.s, ta: a.ta, tb: a.tb, lastAtt: a, from: i, to: (i + 1) % n } : { s: null, from: i, to: (i + 1) % n });
     }
     // the corners between runs: an input corner where it is one (exact), else where the run's own curve puts it
-    const runEnd = r => (r.s == null ? ring[r.to] : ptAt(tags.segs[r.s], r.tb));
-    const runStart = r => (r.s == null ? ring[r.from] : ptAt(tags.segs[r.s], r.ta));
+    // (the Eraser, onCut: where a straight run meets a run along an input curve, the corner is the curve's own point, never the polygon's: two grey bands that share
+    //  that curve, walking it in opposite directions, then end it at the very same point and meet exactly at the brush's edge)
+    const isCurve = r => !!r && r.s != null && tags.segs[r.s].c;
+    runs.forEach((r, k) => { r.ix = k; });
+    const nb = (r, d) => runs[(r.ix + d + runs.length) % runs.length];
+    const runEnd = r => (r.s != null ? ptAt(tags.segs[r.s], r.tb) : onCut && isCurve(nb(r, 1)) ? ptAt(tags.segs[nb(r, 1).s], nb(r, 1).ta) : ring[r.to]);
+    const runStart = r => (r.s != null ? ptAt(tags.segs[r.s], r.ta) : onCut && isCurve(nb(r, -1)) ? ptAt(tags.segs[nb(r, -1).s], nb(r, -1).tb) : ring[r.from]);
     const sp = [];
     let cur = runStart(runs[0]);
     sp.push(['m', cur]);
@@ -257,7 +263,7 @@
     return out;
   }
   const MIN_AREA = 1e-4;   // pt²: a piece smaller than a hundredth of a point square (1.3 µm²) is a sliver of rounding, not a shape
-  const rebuild = (rings, tags) => rings.filter(r => r.length >= 3 && Math.abs(ringArea(r)) > MIN_AREA).map(r => rebuildRing(r, tags)).filter(Boolean);
+  const rebuild = (rings, tags, onCut) => rings.filter(r => r.length >= 3 && Math.abs(ringArea(r)) > MIN_AREA).map(r => rebuildRing(r, tags, onCut)).filter(Boolean);
 
   /** PATHFINDER. operands: [{ subpaths, evenOdd }] from the BACK of the stack to the front (points). op: 'unite' | 'minus' | 'intersect' | 'exclude' | 'divide' | 'trim'.
    *  -> { subpaths } (unite, minus, intersect, exclude: one shape; empty subpaths when nothing is left)
@@ -617,7 +623,129 @@
     return out;
   }
 
-  const kernel = { pathfinder, offsetPath, outlineStroke, roundCorners, signedArea, filledArea, centroidOf, orientNested, reverseSub, fitPolyline, cubicPiece, segmentsOf, FLAT, FIT };
+  /* ── THE ERASER (charm-nest-ce-eraser.js; Paul, 9 Nov 2026: "I need the option to erase portions of a vectorized image. Adobe Illustrator has this option"): the area the
+     brush swept taken out of each target, as Illustrator's Eraser does. A filled target is boolean-subtracted (closed filled paths come back, a shape cut in two comes back as
+     two islands, holes stay holes, every curve the brush did not touch is the very same curve; the brush's edge is written as pieces of its own circles). A stroke-only
+     target (a line engraving) is cut where it runs under the brush: the pieces outside stay, open. An even-odd target (a traced image's grey band: thousands of rings)
+     sends through Clipper only its rings whose box meets the brush's; even-odd fill is the parity of the rings, so the rest stay as they are, untouched and exact, and the
+     bands, cut by one and the same brush shape, keep sharing their borders. ── */
+  const boxOfSps = sps => {
+    let b = null;
+    for (const sub of sps || []) for (const op of sub || []) for (let i = 1; i < (op ? op.length : 0); i++) {
+      const p = op[i]; if (!Array.isArray(p)) continue;
+      if (!b) b = [p[0], p[1], p[0], p[1]]; else { if (p[0] < b[0]) b[0] = p[0]; if (p[1] < b[1]) b[1] = p[1]; if (p[0] > b[2]) b[2] = p[0]; if (p[1] > b[3]) b[3] = p[1]; }
+    }
+    return b;
+  };
+  const boxesMeet = (a, b) => !!a && !!b && a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3];
+  /** targets [{ subpaths (face pt), evenOdd?, open? (stroke only: cut, not subtracted), step? (pt: how finely a line is walked, a third of the brush) }],
+   *  eraser: the brush's swept area as closed subpaths (overlapping rings, each filled; they are made one shape here).
+   *  -> per target: null (the brush missed it) | { subpaths, pieces: [subpaths, ...] (islands, or open pieces, one each), removed (pt² or pt of line) } */
+  let onCut = null;
+  function erase(targets, eraser) {
+    grid();
+    const esps = (eraser || []).filter(sub => Array.isArray(sub) && sub.length > 2).map(sub => (signedArea([sub]) < 0 ? reverseSub(sub) : sub));
+    const eb = boxOfSps(esps), none = () => (targets || []).map(() => null);
+    if (!eb) return none();
+    const eShape = bool('union', new Tags().rings(esps, FLAT), []);
+    if (!eShape.length) return none();
+    // an edge of the answer lies on the brush's edge when its middle does (within ON grid units): it is the brush's, never a curve of the target bridged across the brush
+    const eEdges = [];
+    for (const r of eShape) for (let i = 0; i < r.length; i++) { const a = r[i], b = r[(i + 1) % r.length]; eEdges.push([a[0], a[1], b[0], b[1], Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])]); }
+    const tolE = ON / SC;
+    onCut = (p, q) => {
+      const x = (p[0] + q[0]) / 2, y = (p[1] + q[1]) / 2;
+      for (const e of eEdges) {
+        if (x < e[4] - tolE || x > e[6] + tolE || y < e[5] - tolE || y > e[7] + tolE) continue;
+        const dx = e[2] - e[0], dy = e[3] - e[1], L = dx * dx + dy * dy, t = L ? clamp(((x - e[0]) * dx + (y - e[1]) * dy) / L, 0, 1) : 0;
+        if (Math.hypot(x - e[0] - t * dx, y - e[1] - t * dy) <= tolE) return true;
+      }
+      return false;
+    };
+    // (the brush's pieces' own boxes: a ring meets the brush only if it meets one of them, far tighter than the box of a long diagonal stroke)
+    const pb = esps.map(sub => boxOfSps([sub]));
+    const meets = b => { if (!boxesMeet(b, eb)) return false; for (const q of pb) if (boxesMeet(b, q)) return true; return false; };
+    return (targets || []).map(t => {
+      if (!t || !Array.isArray(t.subpaths) || !t.subpaths.length || !boxesMeet(boxOfSps(t.subpaths), eb)) return null;
+      return t.open ? eraseLines(t.subpaths, eShape, eb, t.step) : eraseArea(t, esps, eShape, meets);
+    });
+  }
+  function eraseArea(t, esps, eShape, meets) {
+    let keep = [], work = t.subpaths;
+    if (t.evenOdd && work.length > 1) { work = []; for (const sub of t.subpaths) (meets(boxOfSps([sub])) ? work : keep).push(sub); if (!work.length) return null; }
+    else if (!meets(boxOfSps(work))) return null;
+    // (only the target's corners are tagged: its own curves come back as curves; the brush's edge is written as its polygon, chords within 0.002 mm of it, the same
+    //  corners in every band it cuts, so two bands that meet at the brush's edge meet exactly. Pieces of the brush's circles were tried: where a sweep's band runs
+    //  tangent into a circle Clipper merges the near-collinear corners and the circle's arc then bulged into the brush, a sliver under two bands.)
+    const tags = new Tags();
+    const sh = bool('union', tags.rings(work, FLAT), [], t.evenOdd ? 'evenodd' : 'nonzero', 'nonzero');
+    const nodes = boolNodes('difference', sh, eShape, 'nonzero', 'nonzero');
+    const a0 = Math.abs(areaOfRings(sh)), a1 = Math.abs(areaOfRings(nodes.map(o => o.points)));
+    if (a0 - a1 <= MIN_AREA) return null;
+    const pieces = islands(nodes).map(isl => rebuild(isl, tags, onCut)).filter(sps => sps.length);
+    return { subpaths: keep.concat(...pieces), pieces: keep.length ? [keep.concat(...pieces)] : pieces, removed: a0 - a1 };
+  }
+  /** A stroke-only target cut by the brush: each segment walked (finer than a third of the brush), the crossings found by bisection on the curve itself, the pieces
+   *  outside kept as the exact pieces of their curves (de Casteljau); a closed path cut becomes open pieces, its last piece and its first one where they meet. */
+  function eraseLines(sps, shape, eb, step) {
+    const rb = shape.map(r => { let b = [Infinity, Infinity, -Infinity, -Infinity]; for (const p of r) { b = [Math.min(b[0], p[0]), Math.min(b[1], p[1]), Math.max(b[2], p[0]), Math.max(b[3], p[1])]; } return b; });
+    const inE = p => {
+      const x = p[0], y = p[1];
+      if (x < eb[0] || x > eb[2] || y < eb[1] || y > eb[3]) return false;
+      let w = false;
+      for (let q = 0; q < shape.length; q++) {
+        const b = rb[q]; if (y < b[1] || y > b[3] || x > b[2]) continue;
+        const r = shape[q];
+        for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const a = r[i], c = r[j]; if ((a[1] > y) !== (c[1] > y) && x < (c[0] - a[0]) * (y - a[1]) / (c[1] - a[1]) + a[0]) w = !w; }
+      }
+      return w;
+    };
+    const st = step > 0 ? step : Math.max(eb[2] - eb[0], eb[3] - eb[1]) / 64 || 1;
+    const out = [], pieces = []; let changed = false, removed = 0;
+    for (const sub of sps) {
+      const closed = (sub || []).some(op => op && op[0] === 'h');
+      const segs = segmentsOf([sub]).filter(s => !(s.closing && !closed));
+      if (!segs.length || !boxesMeet(boxOfSps([sub]), eb)) { out.push(sub); pieces.push([sub]); continue; }
+      const runs = []; let cur = null, any = false;
+      for (const s of segs) {
+        const len = s.c ? len2(sub2(s.p1, s.p0)) + len2(sub2(s.p2, s.p1)) + len2(sub2(s.p3, s.p2)) : len2(sub2(s.p3, s.p0));
+        const n = clamp(Math.max(chordsFor(s, FLAT), Math.ceil(len / st)), 1, 4096);
+        const cuts = [];
+        let tp = 0, ip = inE(ptAt(s, 0));
+        const inside0 = ip;
+        for (let k = 1; k <= n; k++) {
+          const t = k / n, ik = inE(ptAt(s, t));
+          if (ik !== ip) { let lo = tp, hi = t; for (let it = 0; it < 40; it++) { const m = (lo + hi) / 2; if (inE(ptAt(s, m)) === ip) lo = m; else hi = m; } cuts.push((lo + hi) / 2); }
+          tp = t; ip = ik;
+        }
+        let a = 0, inside = inside0;
+        for (const c of cuts.concat([1])) {
+          if (c - a > 1e-12) {
+            if (!inside) { if (!cur) { cur = []; runs.push(cur); } cur.push({ s, t0: a, t1: c }); }
+            else { any = true; cur = null; removed += len * (c - a); }
+          }
+          a = c; inside = !inside;
+        }
+      }
+      if (!any) { out.push(sub); pieces.push([sub]); continue; }
+      changed = true;
+      if (closed && runs.length > 1) {
+        const f = runs[0], l = runs[runs.length - 1];
+        if (f[0].s === segs[0] && f[0].t0 === 0 && l[l.length - 1].s === segs[segs.length - 1] && l[l.length - 1].t1 === 1) { runs[0] = l.concat(f); runs.pop(); }
+      }
+      for (const run of runs) {
+        const sp = [['m', ptAt(run[0].s, run[0].t0)]]; let L = 0;
+        for (const r of run) {
+          if (r.s.c) { const P = cubicPiece(r.s, r.t0, r.t1); sp.push(['c', P[1], P[2], P[3]]); L += len2(sub2(P[3], P[0])); }
+          else { const e = ptAt(r.s, r.t1); sp.push(['l', e]); L += len2(sub2(e, sp.length > 2 ? sp[sp.length - 2][sp[sp.length - 2].length - 1] : sp[0][1])); }
+        }
+        if (L > 1e-3) { out.push(sp); pieces.push([sp]); }
+      }
+    }
+    return changed ? { subpaths: out, pieces, removed } : null;
+  }
+
+  const kernel = { pathfinder, erase, offsetPath, outlineStroke, roundCorners, signedArea, filledArea, centroidOf, orientNested, reverseSub, fitPolyline, cubicPiece, segmentsOf, boxOfSps, FLAT, FIT };
 
   /* ═══ 2 · ON THE EDITOR'S ITEMS: (items, selection, ...) -> { items, sel } or { error }; pure, the editor's tree untouched (CharmEditor.model does the tree work) ═══ */
   const editorApi = () => (root && root.CharmEditor && root.CharmEditor.model ? root.CharmEditor : typeof require === 'function' ? (() => { try { return require('./charm-nest-charm-editor.js'); } catch (e) { return null; } })() : null);
@@ -1178,7 +1306,7 @@
       const abs = re => { const s = doc && Array.from(doc.scripts || []).find(x => re.test(x.src || '')); return s ? new URL(s.src, doc.baseURI).href : null; };
       const urls = [abs(/vendor\/clipper-6\.4\.2\.js/), abs(/charm-nest-vector\.js/), myUrl || abs(/charm-nest-ce-ops\.js/)];
       if (urls.some(u => !u) || !root.Worker || !root.Blob || !root.URL) { workerBad = true; return null; }
-      const src = `importScripts(${urls.map(u => JSON.stringify(u)).join(',')});\nself.onmessage = function (e) { var d = e.data; try { self.postMessage({ id: d.id, r: self.CharmEditorOps.kernel.pathfinder(d.operands, d.op) }); } catch (er) { self.postMessage({ id: d.id, error: String(er && er.message || er) }); } };`;
+      const src = `importScripts(${urls.map(u => JSON.stringify(u)).join(',')});\nself.onmessage = function (e) { var d = e.data; try { var K = self.CharmEditorOps.kernel; self.postMessage({ id: d.id, r: d.fn === 'erase' ? K.erase(d.targets, d.eraser) : K.pathfinder(d.operands, d.op) }); } catch (er) { self.postMessage({ id: d.id, error: String(er && er.message || er) }); } };`;
       worker = new root.Worker(root.URL.createObjectURL(new root.Blob([src], { type: 'text/javascript' })));
       worker.onmessage = e => { const w = wWaiting.get(e.data.id); if (!w) return; wWaiting.delete(e.data.id); if (e.data.error) w.no(new Error(e.data.error)); else w.ok(e.data.r); };
       worker.onerror = e => { workerBad = true; worker = null; for (const w of wWaiting.values()) w.no(new Error((e && e.message) || 'worker failed')); wWaiting.clear(); };
@@ -1186,6 +1314,8 @@
     return worker;
   }
   const inWorker = (operands, op) => new Promise((ok, no) => { const w = getWorker(); if (!w) { no(new Error('no worker')); return; } const id = ++wSeq; wWaiting.set(id, { ok, no }); w.postMessage({ id, operands, op }); });
+  /** The Eraser's boolean in the Worker (charm-nest-ce-eraser.js): resolves with kernel.erase's answer, rejects when there is no Worker (the caller runs it on the page). */
+  const eraseInWorker = (targets, eraser) => new Promise((ok, no) => { const w = getWorker(); if (!w) { no(new Error('no worker')); return; } const id = ++wSeq; wWaiting.set(id, { ok, no }); w.postMessage({ id, fn: 'erase', targets, eraser }); });
   async function runPathfinder(ctx, op) {
     const items0 = ctx.items(), job = ops.pathfinderJob(items0, ctx.selection(), op, ctx.geo);
     if (job.error) { ctx.say(job.error, 3200); return false; }
@@ -1400,5 +1530,5 @@
     (CE.onClose = Array.isArray(CE.onClose) ? CE.onClose : []).push(ctx => { closeFly(); last = null; if (ctx && ctx.__opsOff) ctx.__opsOff(); });
   }
 
-  return { kernel, ops, commands, install, again: beforeDuplicate, MM, PT };
+  return { kernel, ops, commands, install, again: beforeDuplicate, eraseInWorker: doc ? eraseInWorker : null, MM, PT };
 });
