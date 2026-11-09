@@ -1,0 +1,1661 @@
+{
+ "what": "Where each hoop went on its letter (pt, from the letter's own bottom-left), and the checks. scripts/make-letter-hoops.cjs",
+ "hoops": {
+  "necklace": {
+   "outer": 3.249,
+   "hole": 1.842,
+   "gap": 0.19
+  },
+  "huggie": {
+   "outer": 4.677,
+   "hole": 2.922,
+   "gap": 0.01
+  }
+ },
+ "charms": [
+  {
+   "sku": "LETTER_NECKLACE-0",
+   "source": "LETTER_EARRING-0",
+   "letter": "a",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 8.503,
+    "cy": 18.184,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    17.007,
+    16.152
+   ],
+   "checks": {
+    "counterGapPt": 8.143,
+    "liftedPt": 0,
+    "jointPt": 4.451,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.281,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-1",
+   "source": "LETTER_EARRING-1",
+   "letter": "b",
+   "kind": "necklace",
+   "rule": "on the top of the stem",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 4.724,
+    "cy": 24.544,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    17.008,
+    22.613
+   ],
+   "checks": {
+    "counterGapPt": 10.68,
+    "liftedPt": 0,
+    "jointPt": 4.704,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.18,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-2",
+   "source": "LETTER_EARRING-2",
+   "letter": "c",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 7.415,
+    "cy": 18.963,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    14.83,
+    17.007
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 4.053,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.205,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-3",
+   "source": "LETTER_EARRING-3",
+   "letter": "d",
+   "kind": "necklace",
+   "rule": "on the top of the stem",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 12.388,
+    "cy": 24.632,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    16.759,
+    22.676
+   ],
+   "checks": {
+    "counterGapPt": 10.324,
+    "liftedPt": 0,
+    "jointPt": 4.65,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.205,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-4",
+   "source": "LETTER_EARRING-4",
+   "letter": "e",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 8.114,
+    "cy": 19.039,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    16.227,
+    17.007
+   ],
+   "checks": {
+    "counterGapPt": 1.869,
+    "liftedPt": 0,
+    "jointPt": 4.513,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.281,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-5",
+   "source": "LETTER_EARRING-5",
+   "letter": "f",
+   "kind": "necklace",
+   "rule": "on the top of the stem",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 8.912,
+    "cy": 21.874,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    11.688,
+    19.842
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 4.449,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.281,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-6",
+   "source": "LETTER_EARRING-6",
+   "letter": "g",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 7.487,
+    "cy": 21.873,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    14.973,
+    19.841
+   ],
+   "checks": {
+    "counterGapPt": 0.794,
+    "liftedPt": 0,
+    "jointPt": 4.674,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.281,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-7",
+   "source": "LETTER_EARRING-7",
+   "letter": "h",
+   "kind": "necklace",
+   "rule": "on the top of the stem",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 4.143,
+    "cy": 21.807,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    16.038,
+    19.842
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 4.492,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.214,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-8",
+   "source": "LETTER_EARRING-8",
+   "letter": "i",
+   "kind": "necklace",
+   "rule": "on the dot",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 4.501,
+    "cy": 21.873,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    9.265,
+    19.841
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 3.753,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.281,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-9",
+   "source": "LETTER_EARRING-9",
+   "letter": "j",
+   "kind": "necklace",
+   "rule": "on the dot",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 4.704,
+    "cy": 27.545,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    8.178,
+    25.513
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 3.672,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.281,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-10",
+   "source": "LETTER_EARRING-10",
+   "letter": "k",
+   "kind": "necklace",
+   "rule": "on the top of the stem",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 4.116,
+    "cy": 21.805,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    15.726,
+    19.843
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 4.368,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.211,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-11",
+   "source": "LETTER_EARRING-11",
+   "letter": "l",
+   "kind": "necklace",
+   "rule": "on the top of the stem",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 4.886,
+    "cy": 24.632,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    9.309,
+    22.678
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 4.661,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.203,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-12",
+   "source": "LETTER_EARRING-12",
+   "letter": "m",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 11.339,
+    "cy": 14.582,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    22.677,
+    12.55
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 3.462,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.281,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-13",
+   "source": "LETTER_EARRING-13",
+   "letter": "n",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 8.504,
+    "cy": 15.452,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    17.008,
+    13.6
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 5.274,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.101,
+    "specksFilled": [
+     {
+      "areaPt2": 0.92,
+      "wPt": 1.59,
+      "hPt": 1.43
+     }
+    ],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-14",
+   "source": "LETTER_EARRING-14",
+   "letter": "o",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 8.504,
+    "cy": 18.131,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    17.008,
+    16.099
+   ],
+   "checks": {
+    "counterGapPt": 1.515,
+    "liftedPt": 0,
+    "jointPt": 4.612,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.281,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-15",
+   "source": "LETTER_EARRING-15",
+   "letter": "p",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 7.632,
+    "cy": 21.874,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    15.263,
+    19.842
+   ],
+   "checks": {
+    "counterGapPt": 2.265,
+    "liftedPt": 0,
+    "jointPt": 4.875,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.281,
+    "specksFilled": [
+     {
+      "areaPt2": 0.49,
+      "wPt": 1.27,
+      "hPt": 0.86
+     }
+    ],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-16",
+   "source": "LETTER_EARRING-16",
+   "letter": "q",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 7.335,
+    "cy": 21.508,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    14.669,
+    19.843
+   ],
+   "checks": {
+    "counterGapPt": 1.562,
+    "liftedPt": 0,
+    "jointPt": 4.33,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 4.914,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-17",
+   "source": "LETTER_EARRING-17",
+   "letter": "r",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 8.015,
+    "cy": 18.79,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    16.03,
+    17.008
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 2.135,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.031,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-18",
+   "source": "LETTER_EARRING-18",
+   "letter": "s",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 7.073,
+    "cy": 19.038,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    14.147,
+    17.007
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 4.518,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.281,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-19",
+   "source": "LETTER_EARRING-19",
+   "letter": "t",
+   "kind": "necklace",
+   "rule": "on the top of the stem",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 5.251,
+    "cy": 21.558,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    13.051,
+    19.841
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 3.88,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 4.966,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-20",
+   "source": "LETTER_EARRING-20",
+   "letter": "u",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 9.921,
+    "cy": 18.697,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    19.843,
+    16.701
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 5.09,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.245,
+    "specksFilled": [],
+    "windows": [
+     {
+      "areaPt2": 41.7,
+      "wPt": 4.12,
+      "hPt": 12.28
+     }
+    ]
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-21",
+   "source": "LETTER_EARRING-21",
+   "letter": "v",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 8.504,
+    "cy": 16.87,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    17.008,
+    14.838
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 5.066,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.281,
+    "specksFilled": [],
+    "windows": [
+     {
+      "areaPt2": 21.11,
+      "wPt": 4.31,
+      "hPt": 9.71
+     }
+    ]
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-22",
+   "source": "LETTER_EARRING-22",
+   "letter": "w",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 11.338,
+    "cy": 14.56,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    22.677,
+    13.819
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 4.035,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 3.99,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-23",
+   "source": "LETTER_EARRING-23",
+   "letter": "x",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 8.504,
+    "cy": 16.429,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    17.008,
+    14.397
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 5.066,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.281,
+    "specksFilled": [],
+    "windows": [
+     {
+      "areaPt2": 8.26,
+      "wPt": 3.83,
+      "hPt": 4.83
+     }
+    ]
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-24",
+   "source": "LETTER_EARRING-24",
+   "letter": "y",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 8.289,
+    "cy": 24.71,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    16.578,
+    22.678
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 5.066,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.281,
+    "specksFilled": [],
+    "windows": [
+     {
+      "areaPt2": 19.97,
+      "wPt": 4.32,
+      "hPt": 9.33
+     }
+    ]
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-25",
+   "source": "LETTER_EARRING-25",
+   "letter": "z",
+   "kind": "necklace",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": null,
+   "hoop": {
+    "cx": 8.504,
+    "cy": 18.349,
+    "outerPt": 6.498,
+    "holePt": 3.684
+   },
+   "letterPt": [
+    17.008,
+    16.343
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 5.05,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 5.255,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-0 (HUGGIE)",
+   "source": "LETTER_EARRING-0",
+   "letter": "a",
+   "kind": "huggie",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm (kept)",
+    "fromMm": 6,
+    "toMm": 6
+   },
+   "hoop": {
+    "cx": 8.503,
+    "cy": 19.084,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    17.007,
+    16.152
+   ],
+   "checks": {
+    "counterGapPt": 7.615,
+    "liftedPt": 0,
+    "jointPt": 6.101,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-1 (HUGGIE)",
+   "source": "LETTER_EARRING-1",
+   "letter": "b",
+   "kind": "huggie",
+   "rule": "on the top of the stem",
+   "scale": 0.877483,
+   "size": {
+    "rule": "tall or wide letter: longest side 8.0 mm → 7.0 mm",
+    "fromMm": 7.98,
+    "toMm": 7
+   },
+   "hoop": {
+    "cx": 4.139,
+    "cy": 22.775,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    14.924,
+    19.843
+   ],
+   "checks": {
+    "counterGapPt": 8.735,
+    "liftedPt": 0,
+    "jointPt": 5.462,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-2 (HUGGIE)",
+   "source": "LETTER_EARRING-2",
+   "letter": "c",
+   "kind": "huggie",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm (kept)",
+    "fromMm": 6,
+    "toMm": 6
+   },
+   "hoop": {
+    "cx": 7.415,
+    "cy": 19.934,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    14.83,
+    17.007
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 5.779,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.604,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-3 (HUGGIE)",
+   "source": "LETTER_EARRING-3",
+   "letter": "d",
+   "kind": "huggie",
+   "rule": "on the top of the stem",
+   "scale": 0.875045,
+   "size": {
+    "rule": "tall or wide letter: longest side 8.0 mm → 7.0 mm",
+    "fromMm": 8,
+    "toMm": 7
+   },
+   "hoop": {
+    "cx": 10.843,
+    "cy": 22.775,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    14.665,
+    19.843
+   ],
+   "checks": {
+    "counterGapPt": 8.385,
+    "liftedPt": 0,
+    "jointPt": 5.335,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-4 (HUGGIE)",
+   "source": "LETTER_EARRING-4",
+   "letter": "e",
+   "kind": "huggie",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm (kept)",
+    "fromMm": 6,
+    "toMm": 6
+   },
+   "hoop": {
+    "cx": 8.114,
+    "cy": 19.939,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    16.227,
+    17.007
+   ],
+   "checks": {
+    "counterGapPt": 1.34,
+    "liftedPt": 0,
+    "jointPt": 6.221,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-5 (HUGGIE)",
+   "source": "LETTER_EARRING-5",
+   "letter": "f",
+   "kind": "huggie",
+   "rule": "on the top of the stem",
+   "scale": 1,
+   "size": {
+    "rule": "tall or wide letter: longest side 7.0 mm (kept)",
+    "fromMm": 7,
+    "toMm": 7
+   },
+   "hoop": {
+    "cx": 8.912,
+    "cy": 22.774,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    11.688,
+    19.842
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 5.784,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-6 (HUGGIE)",
+   "source": "LETTER_EARRING-6",
+   "letter": "g",
+   "kind": "huggie",
+   "rule": "centre of the letter, lifted 0.24 pt to keep 0.5 pt of metal over the counter",
+   "scale": 1,
+   "size": {
+    "rule": "tall or wide letter: longest side 7.0 mm (kept)",
+    "fromMm": 7,
+    "toMm": 7
+   },
+   "hoop": {
+    "cx": 7.487,
+    "cy": 23.013,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    14.973,
+    19.841
+   ],
+   "checks": {
+    "counterGapPt": 0.505,
+    "liftedPt": 0.24,
+    "jointPt": 6.047,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.849,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-7 (HUGGIE)",
+   "source": "LETTER_EARRING-7",
+   "letter": "h",
+   "kind": "huggie",
+   "rule": "on the top of the stem",
+   "scale": 1,
+   "size": {
+    "rule": "tall or wide letter: longest side 7.0 mm (kept)",
+    "fromMm": 7,
+    "toMm": 7
+   },
+   "hoop": {
+    "cx": 4.143,
+    "cy": 22.774,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    16.038,
+    19.842
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 5.436,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-8 (HUGGIE)",
+   "source": "LETTER_EARRING-8",
+   "letter": "i",
+   "kind": "huggie",
+   "rule": "on the dot",
+   "scale": 1,
+   "size": {
+    "rule": "tall or wide letter: longest side 7.0 mm (kept)",
+    "fromMm": 7,
+    "toMm": 7
+   },
+   "hoop": {
+    "cx": 4.501,
+    "cy": 22.773,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    9.265,
+    19.841
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 4.768,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-9 (HUGGIE)",
+   "source": "LETTER_EARRING-9",
+   "letter": "j",
+   "kind": "huggie",
+   "rule": "on the dot",
+   "scale": 0.777753,
+   "size": {
+    "rule": "tall or wide letter: longest side 9.0 mm → 7.0 mm",
+    "fromMm": 9,
+    "toMm": 7
+   },
+   "hoop": {
+    "cx": 3.645,
+    "cy": 22.775,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    6.36,
+    19.843
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 3.997,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-10 (HUGGIE)",
+   "source": "LETTER_EARRING-10",
+   "letter": "k",
+   "kind": "huggie",
+   "rule": "on the top of the stem",
+   "scale": 1,
+   "size": {
+    "rule": "tall or wide letter: longest side 7.0 mm (kept)",
+    "fromMm": 7,
+    "toMm": 7
+   },
+   "hoop": {
+    "cx": 4.116,
+    "cy": 22.775,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    15.726,
+    19.843
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 5.286,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-11 (HUGGIE)",
+   "source": "LETTER_EARRING-11",
+   "letter": "l",
+   "kind": "huggie",
+   "rule": "on the top of the stem",
+   "scale": 0.874968,
+   "size": {
+    "rule": "tall or wide letter: longest side 8.0 mm → 7.0 mm",
+    "fromMm": 8,
+    "toMm": 7
+   },
+   "hoop": {
+    "cx": 4.274,
+    "cy": 22.775,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    8.145,
+    19.843
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 5.398,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-12 (HUGGIE)",
+   "source": "LETTER_EARRING-12",
+   "letter": "m",
+   "kind": "huggie",
+   "rule": "centre of the letter",
+   "scale": 0.875006,
+   "size": {
+    "rule": "tall or wide letter: longest side 8.0 mm → 7.0 mm",
+    "fromMm": 8,
+    "toMm": 7
+   },
+   "hoop": {
+    "cx": 9.921,
+    "cy": 13.914,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    19.843,
+    10.982
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 4.571,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-13 (HUGGIE)",
+   "source": "LETTER_EARRING-13",
+   "letter": "n",
+   "kind": "huggie",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm (kept)",
+    "fromMm": 6,
+    "toMm": 6
+   },
+   "hoop": {
+    "cx": 8.504,
+    "cy": 16.532,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    17.008,
+    13.6
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 7.089,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [
+     {
+      "areaPt2": 0.33,
+      "wPt": 0.96,
+      "hPt": 0.72
+     }
+    ],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-14 (HUGGIE)",
+   "source": "LETTER_EARRING-14",
+   "letter": "o",
+   "kind": "huggie",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm (kept)",
+    "fromMm": 6,
+    "toMm": 6
+   },
+   "hoop": {
+    "cx": 8.504,
+    "cy": 19.031,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    17.008,
+    16.099
+   ],
+   "checks": {
+    "counterGapPt": 0.987,
+    "liftedPt": 0,
+    "jointPt": 6.405,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-15 (HUGGIE)",
+   "source": "LETTER_EARRING-15",
+   "letter": "p",
+   "kind": "huggie",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": {
+    "rule": "tall or wide letter: longest side 7.0 mm (kept)",
+    "fromMm": 7,
+    "toMm": 7
+   },
+   "hoop": {
+    "cx": 7.632,
+    "cy": 22.774,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    15.263,
+    19.842
+   ],
+   "checks": {
+    "counterGapPt": 1.727,
+    "liftedPt": 0,
+    "jointPt": 7.004,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [
+     {
+      "areaPt2": 0.03,
+      "wPt": 0.33,
+      "hPt": 0.16
+     }
+    ],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-16 (HUGGIE)",
+   "source": "LETTER_EARRING-16",
+   "letter": "q",
+   "kind": "huggie",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": {
+    "rule": "tall or wide letter: longest side 7.0 mm (kept)",
+    "fromMm": 7,
+    "toMm": 7
+   },
+   "hoop": {
+    "cx": 7.335,
+    "cy": 22.408,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    14.669,
+    19.843
+   ],
+   "checks": {
+    "counterGapPt": 1.033,
+    "liftedPt": 0,
+    "jointPt": 7.131,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.242,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-17 (HUGGIE)",
+   "source": "LETTER_EARRING-17",
+   "letter": "r",
+   "kind": "huggie",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm (kept)",
+    "fromMm": 6,
+    "toMm": 6
+   },
+   "hoop": {
+    "cx": 8.015,
+    "cy": 19.69,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    16.03,
+    17.008
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 6.972,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.359,
+    "specksFilled": [
+     {
+      "areaPt2": 3.91,
+      "wPt": 2.75,
+      "hPt": 3.72
+     }
+    ],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-18 (HUGGIE)",
+   "source": "LETTER_EARRING-18",
+   "letter": "s",
+   "kind": "huggie",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm (kept)",
+    "fromMm": 6,
+    "toMm": 6
+   },
+   "hoop": {
+    "cx": 7.073,
+    "cy": 19.939,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    14.147,
+    17.007
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 6.367,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-19 (HUGGIE)",
+   "source": "LETTER_EARRING-19",
+   "letter": "t",
+   "kind": "huggie",
+   "rule": "on the top of the stem",
+   "scale": 1,
+   "size": {
+    "rule": "tall or wide letter: longest side 7.0 mm (kept)",
+    "fromMm": 7,
+    "toMm": 7
+   },
+   "hoop": {
+    "cx": 5.251,
+    "cy": 22.773,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    13.051,
+    19.841
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 4.324,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": []
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-20 (HUGGIE)",
+   "source": "LETTER_EARRING-20",
+   "letter": "u",
+   "kind": "huggie",
+   "rule": "centre of the letter",
+   "scale": 0.857122,
+   "size": {
+    "rule": "compact letter: longest side 7.0 mm → 6.0 mm",
+    "fromMm": 7,
+    "toMm": 6
+   },
+   "hoop": {
+    "cx": 8.504,
+    "cy": 17.247,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    17.008,
+    14.315
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 7.213,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": [
+     {
+      "areaPt2": 29.15,
+      "wPt": 3.53,
+      "hPt": 9.49
+     }
+    ]
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-21 (HUGGIE)",
+   "source": "LETTER_EARRING-21",
+   "letter": "v",
+   "kind": "huggie",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm (kept)",
+    "fromMm": 6,
+    "toMm": 6
+   },
+   "hoop": {
+    "cx": 8.504,
+    "cy": 17.77,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    17.008,
+    14.838
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 7.282,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": [
+     {
+      "areaPt2": 20.1,
+      "wPt": 4.31,
+      "hPt": 8.97
+     }
+    ]
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-22 (HUGGIE)",
+   "source": "LETTER_EARRING-22",
+   "letter": "w",
+   "kind": "huggie",
+   "rule": "centre of the letter",
+   "scale": 0.875006,
+   "size": {
+    "rule": "tall or wide letter: longest side 8.0 mm → 7.0 mm",
+    "fromMm": 8,
+    "toMm": 7
+   },
+   "hoop": {
+    "cx": 9.921,
+    "cy": 15.024,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    19.843,
+    12.092
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 5.964,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": [
+     {
+      "areaPt2": 11.42,
+      "wPt": 3.18,
+      "hPt": 7.72
+     }
+    ]
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-23 (HUGGIE)",
+   "source": "LETTER_EARRING-23",
+   "letter": "x",
+   "kind": "huggie",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm (kept)",
+    "fromMm": 6,
+    "toMm": 6
+   },
+   "hoop": {
+    "cx": 8.504,
+    "cy": 17.329,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    17.008,
+    14.397
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 7.282,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": [
+     {
+      "areaPt2": 7.16,
+      "wPt": 3.83,
+      "hPt": 3.95
+     }
+    ]
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-24 (HUGGIE)",
+   "source": "LETTER_EARRING-24",
+   "letter": "y",
+   "kind": "huggie",
+   "rule": "centre of the letter",
+   "scale": 0.874968,
+   "size": {
+    "rule": "tall or wide letter: longest side 8.0 mm → 7.0 mm",
+    "fromMm": 8,
+    "toMm": 7
+   },
+   "hoop": {
+    "cx": 7.253,
+    "cy": 22.775,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    14.505,
+    19.843
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 7.282,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.609,
+    "specksFilled": [],
+    "windows": [
+     {
+      "areaPt2": 14.25,
+      "wPt": 3.78,
+      "hPt": 7.28
+     }
+    ]
+   }
+  },
+  {
+   "sku": "LETTER_NECKLACE-25 (HUGGIE)",
+   "source": "LETTER_EARRING-25",
+   "letter": "z",
+   "kind": "huggie",
+   "rule": "centre of the letter",
+   "scale": 1,
+   "size": {
+    "rule": "compact letter: longest side 6.0 mm (kept)",
+    "fromMm": 6,
+    "toMm": 6
+   },
+   "hoop": {
+    "cx": 8.504,
+    "cy": 19.255,
+    "outerPt": 9.354,
+    "holePt": 5.844
+   },
+   "letterPt": [
+    17.008,
+    16.343
+   ],
+   "checks": {
+    "counterGapPt": null,
+    "liftedPt": 0,
+    "jointPt": 7.256,
+    "holeOverLetterPt2": 0,
+    "ringAboveTopPt": 7.589,
+    "specksFilled": [],
+    "windows": []
+   }
+  }
+ ]
+}

@@ -171,6 +171,8 @@ const assets = [
   "charm-nest-etsy-link.js",
   "charm-nest-etsy-batch.js",
   "charm-nest-etsy-queue.json",
+  "charm-nest-repo-adds.js",
+  "charm-repo-adds/queue.json",
   "charm-nest-zodiac-etsy.js",
   "charm-nest-backs.js",
   "charm-nest-engrave-faces.js",
@@ -331,4 +333,21 @@ for (const dir of optionalDirs) {
     optional++;
   }
 }
-console.log(`Prepared ${assets.length} public assets (+${optional} optional font files); server sources and configuration excluded.`);
+// LETTERS-HOOPS (9 Nov 2026): each folder charm-repo-adds/queue.json names (new charms waiting for Paul's one press, charm-nest-repo-adds.js) ships whole: its records,
+// its master sheet, its contact sheet, each SKU's .ai and picture, and the source letters. Only these kinds of file; a folder the queue does not name never ships.
+let repoAdds = 0;
+{
+  const q = JSON.parse(fs.readFileSync(path.join(root, "charm-repo-adds/queue.json"), "utf8"));
+  const walk = dir => fs.readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap(d => d.isDirectory() ? walk(path.join(dir, d.name)) : [path.join(dir, d.name)]);
+  for (const add of q.adds || []) {
+    const dir = String(add.folder || "");
+    if (!/^charm-repo-adds\/[A-Za-z0-9._-]+$/.test(dir)) throw new Error("charm-repo-adds/queue.json: bad folder " + dir);
+    for (const rel of walk(dir)) {
+      if (!/\.(?:ai|png|json|html)$/i.test(rel)) continue;
+      const data = fs.readFileSync(path.join(root, rel));
+      if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(data.toString())) throw new Error('Private key detected in public asset: ' + rel);
+      const target = path.join(output, rel); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, data); repoAdds++;
+    }
+  }
+}
+console.log(`Prepared ${assets.length} public assets (+${optional} optional font files, +${repoAdds} files of new charms for the repo); server sources and configuration excluded.`);

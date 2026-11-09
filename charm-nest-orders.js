@@ -2759,7 +2759,8 @@
          SKU every product of the listing shares, a product link to such a SKU): a listing-wide answer gives every buyer ONE charm whatever form or symbol they chose, and that is what made order 4202871419
          "CARDS 2 - (4 CARDS)" (and would make every Huggie set a necklace drawing, or every rune Uruz).
          (SKUPROFILE, 27 Oct 2026: on a row of FIXED entries, the cards, a person's link for the line's SKU, or a design they moved the listing's Etsy SKU to, stands for the line's form: charmOnlyAliasStands.) */
-  const CHARM_ONLY_RUNES_FUTHARK = Object.freeze(RUNE_NAMES.concat(RUNES_ABSENT));   // Fehu 0 … Jera 11, Eihwaz 12 … Othala 23: the standard Elder Futhark order (RUNES_ABSENT is listed in it)
+  const LETTER_CHOICE_NAMES = Object.freeze("abcdefghijklmnopqrstuvwxyz".split(""));   // (LETTERCHOICE, section 3c'''': a = 0 … z = 25, the place of LETTER_NECKLACE-n)
+  const CHARM_ONLY_RUNES_FUTHARK =Object.freeze(RUNE_NAMES.concat(RUNES_ABSENT));   // Fehu 0 … Jera 11, Eihwaz 12 … Othala 23: the standard Elder Futhark order (RUNES_ABSENT is listed in it)
   /* The necklace runes' base, in ONE place. The library writes them RUNE_NECKLACE_CHARM-0 … -23 (the real master read, tests/charm-nest/options-link-data.json). A member is found by masterSku: the master's exact
      spelling, else the one master SKU with the same loose key, so a library that writes RUNE_NECKLACE_CHARM_1 or Rune_Necklace_Charm-1 is found as well; a different NAME (not only punctuation) is changed here. */
   const CHARM_ONLY_RUNE_NECKLACE_BASE = "RUNE_NECKLACE_CHARM-";
@@ -2774,7 +2775,11 @@
       read: runesInText, skuRead: vikingRuneOfSku, ownSku: s => !!vikingRuneOfSku(s) }),
     Object.freeze({ id: "cards-charm-only", listings: Object.freeze(["1801964100"]), noun: "playing cards charm",
       necklace: Object.freeze({ sku: Object.freeze(["CARDS 1 - (2 CARDS)", "CARDS 1 - 2 CARDS", "PLAYING_0805"]) }), huggie: Object.freeze({ sku: Object.freeze(["CARDS 1 - (2 CARDS) (HUGGIE)"]) }),
-      ownSku: () => false })
+      ownSku: () => false }),
+    // LETTERCHOICE (Paul, 9 Nov 2026): the initial letter listing; a `letter` row is read by letterChoiceRead (section 3c'''', below), not by charmOnlyRead
+    Object.freeze({ id: "letter-charm-only", letter: true, listings: Object.freeze(["1871836213"]), noun: "letter", nouns: "letters", ask: "Which letter?",
+      necklace: Object.freeze({ base: "LETTER_NECKLACE-", names: LETTER_CHOICE_NAMES }), huggie: Object.freeze({ base: "LETTER_NECKLACE-", suffix: " (HUGGIE)", names: LETTER_CHOICE_NAMES }),
+      read: t => lettersInText(t).letters.map(l => ({ name: l, word: l })), skuRead: () => "", ownSku: s => !!letterMemberOf(s) })
   ]);
   const CHARM_ONLY_BY_LISTING = new Map(); for (const x of CHARM_ONLY_LISTINGS) for (const l of x.listings) CHARM_ONLY_BY_LISTING.set(String(l), x);
   /** The CHARM_ONLY_LISTINGS row a line falls under (its Etsy listing number), null for every other line. */
@@ -2870,6 +2875,113 @@
       return Object.assign(out, { hold: { kind: "missing", reason, missing: [chosen.name] }, note: reason });
     }
     out.note = `${capFirst(row.noun)}: ${chosen.name} (${sku}${huggie ? ", both ears" : ""}), from ${from}`;
+    return Object.assign(out, { pick: sku });
+  }
+
+  /* ═══ 3c'''' · LETTER CHOICE LISTINGS: the buyer picks ONE letter of the alphabet, as a necklace charm or a huggie set (LETTERCHOICE, Paul 9 Nov 2026) ═══
+     Paul: "For listing 1871836213 specifically user can also choose a letter of the alphabet on top of the existing options of Necklace and Huggie charm set options. Users will typically just leave one letter
+     in the notes from user section or personalization and the system must be smart enough to interpret that as the letter of the alphabet that the user is actually looking for … and then automatically match it
+     to the appropriate letter either as a huggie charm or necklace charm." Every product of the listing carries the one Etsy SKU "CHAPPARAL LOWERCASE" (no master design), so the letter can only come from what
+     the buyer chose or wrote. The listing is a row of CHARM_ONLY_LISTINGS with `letter: true` (data: TO ADD a listing, add its number to the row; TO UNDO, delete the row and the lines read as before). The
+     library holds the letters as LETTER_NECKLACE-0 … -25 (a … z, the necklace ring) and LETTER_NECKLACE-0 (HUGGIE) … -25 (HUGGIE) (the huggie hoop): the shop's twin pattern (NECKLACE_CHARM-7 and
+     NECKLACE_CHARM-7 (HUGGIE)), which formOfText reads as the huggie version (scripts/make-letter-hoops.cjs made them).
+       · THE FORM is what the buyer BOUGHT: the listing's own Necklace / Huggie option (a Huggie CHARM SET, an option value that says huggie, necklace or pendant, a person's saved answer for the option:
+         lineForm's option readings). The title, the SKU and a guess never decide it: none, both, or earrings (studs) waits ("Letter charm: … Necklace or Huggie?").
+       · THE LETTER comes from, in this order: (1) a drop-down that names a letter (an option named Letter / Initial …, or one whose value is one letter), else (2) the personalisation, else (3) the buyer's
+         note. The first that says anything decides; a later one that names a DIFFERENT single letter waits, never a guess. A text names a letter only when it is exactly ONE letter a–z, any case, with
+         nothing but quotes, brackets, punctuation, spaces and a few plain words around it ("b", "B", "letter b", " b. ", "B please", "(b)", "'b'", "Initial: B"). Two letters ("ab", "a and b"), another
+         word, a digit or a letter outside a–z ("é", "ж") waits with the buyer's own words quoted ("Letter charm: the note says “ab”, which letter?"). Nothing, "none" or "n/a" goes on to the next place.
+       · No exact match = no match: the member is the library's LETTER_NECKLACE-<n> of the form, its own spelling only; one the library does not hold yet WAITS ("… is not in the charm repo yet"), never
+         another letter's or the other form's drawing, and the line is read again when the library grows.
+       · The letter is the buyer's choice of charm, never words to engrave; a huggie is never engraved (3d); a necklace charm is one piece, never mirrored. A person's answer for this line (an option mapped
+         to a charm, a saved pair, a link under a letter member's own SKU) stands; an automatic match and a listing-wide saved answer are replaced (section 3c'''). */
+  const LETTER_FILLER = new Set(["letter", "letters", "initial", "initials", "alphabet", "please", "pls", "plz", "thanks", "thank", "you", "thx", "ty", "lowercase", "lower", "case", "uppercase", "upper", "capital", "small", "the", "charm", "just", "only"]);
+  const LETTER_NONE = /^(?:none|no|nothing|na|n\/a|n\.a\.?|-+|\.+|_+|\?+|nil|null)$/i;
+  /** What a text says about ONE letter: { letters: ["b"], empty, odd: "" | "word" | "latin" }. letters: the distinct single letters a–z it names (lower case); empty: it says nothing ("", "none", "n/a", "-");
+   *  odd: it holds more than letters and plain words (another word, a digit: "word"; a letter outside a–z: "latin"), and then it is not read as a letter at all. */
+  function lettersInText(text) {
+    const t = visible(text).normalize("NFKC").replace(/[\u00A0\u2000-\u200F\u2028-\u202F]/g, " ").trim();
+    const core = t.replace(/^[\s"'“”‘’«»`(\[{<]+|[\s"'“”‘’«»`)\]}>.,;:!?]+$/g, "").trim();
+    if (!core || LETTER_NONE.test(core)) return { letters: [], empty: true, odd: "" };
+    const toks = core.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    if (!toks.length) return { letters: [], empty: true, odd: "" };
+    const out = []; let odd = "";
+    for (const w of toks) {
+      const low = w.toLowerCase();
+      if (/[^a-z]/.test(low)) { odd = odd || (/\p{L}/u.test(low.replace(/[a-z0-9]/g, "")) ? "latin" : "word"); continue; }   // (a digit; an accented or non-Latin letter)
+      if (low.length === 1) { if (!out.includes(low)) out.push(low); continue; }
+      if (!LETTER_FILLER.has(low)) odd = odd || "word";
+    }
+    return odd ? { letters: [], empty: false, odd } : { letters: out, empty: !out.length, odd: "" };
+  }
+  /** The letter member a SKU is ("LETTER_NECKLACE-3", "Letter_Necklace-3 (HUGGIE)" → { n: 3, huggie }), else null. */
+  function letterMemberOf(sku) {
+    const u = upSku(sku), huggie = /\s*\(\s*HUGGIES?\s*\)\s*$/.test(u), m = /^LETTER[\s_-]*NECKLACE[\s_-]*(\d{1,2})$/.exec(u.replace(/\s*\(\s*HUGGIES?\s*\)\s*$/, ""));
+    return m && String(+m[1]) === m[1] && +m[1] <= 25 ? { n: +m[1], huggie } : null;
+  }
+  const LETTER_FORM_BY = new Set(["its Huggie CHARM SET option", "its option says necklace", "its option says huggie", "it has a necklace length option", "its option is the necklace charm"]);
+  const LETTER_NECK_WORD = /\b(?:neck(?:lace)?s?|pendants?)\b/i;
+  /** The form the buyer BOUGHT on a letter line, from its options only: "huggie" | "necklace", or { why } when the line says none, both, or earrings. */
+  function letterLineForm(line, lf) {
+    const said = new Set();
+    if (huggieSet(line)) said.add("huggie");
+    if (lf && LETTER_FORM_BY.has(lf.by) && (lf.form === "huggie" || lf.form === "necklace")) said.add(lf.form);
+    for (const v of (line && line.variations) || []) {
+      const nm = lvName(v), val = lvValue(v); if (!nm || !val || isMetalOption(nm) || isPersonalisation(nm)) continue;
+      if (HUGG_WORD.test(val)) said.add("huggie"); if (LETTER_NECK_WORD.test(val)) said.add("necklace");
+    }
+    if (said.size === 1) return [...said][0];
+    if (said.size > 1) return { why: "the options say both a necklace charm and a huggie set" };
+    if (lf && lf.form === "earring") return { why: "the line says earrings, and this listing's letters are a necklace charm or a huggie set" };
+    return { why: "the line does not say which (no Necklace / Huggie option)" };
+  }
+  const LETTER_CHOICE_NEVER_WHY = "The letter is the buyer's choice of charm, not words to engrave (the buyer chose no engraving)";
+  const LETTER_FROM_WORDS = { option: "the drop-down", box: "the personalisation", note: "the note" };
+  /** What a line of a letter row (CHARM_ONLY_LISTINGS, `letter: true`) reads as, in charmOnlyRead's shape: { profile, noun, family, form, symbols, textOnly, variation?, optionSku, pick? | hold?: { kind, reason,
+   *  missing? }, note, never? }. o: { me, loose, lf }. Pure: no request, no write. */
+  function letterChoiceRead(line, order, row, o) {
+    o = o || {}; const me = o.me, loose = o.loose; if (!row || !row.letter || !me) return null;
+    line = line || {};
+    const f = letterLineForm(line, o.lf), form = typeof f === "string" ? f : "", engraved = numberEngraveChosen(line);
+    const out = { profile: row.id, noun: row.noun, family: row.necklace.base, form: form || "unknown", symbols: [], textOnly: false, optionSku: "" };
+    const quote = t => `“${clip(t, 40)}”`;
+    const merge = rs => { rs = rs.filter(r => !r.empty); if (!rs.length) return { letters: [], empty: true, odd: "" }; const odd = (rs.find(r => r.odd) || {}).odd || ""; return odd ? { letters: [], empty: false, odd } : { letters: [...new Set(rs.flatMap(r => r.letters))], empty: false, odd: "" }; };
+    // the places the buyer can say the letter, in order
+    const places = [];
+    for (const v of line.variations || []) {
+      const nm = lvName(v), val = lvValue(v).trim(); if (!nm || !val || isPersonalisation(nm)) continue;
+      if (isMetalVariation(nm, val) || isSizeOption(nm, val) || isChainOption(nm) || isPriceOption(nm)) continue;
+      if (LETTER_NAME.test(nm) || letterIndex(val) >= 0) places.push({ from: "option", text: val, read: lettersInText(val), variation: v, optionName: nm });
+    }
+    const boxVals = (line.variations || []).filter(v => isPersonalisation(lvName(v))).map(v => lvValue(v));
+    const box = engraved ? [] : uniqStr([].concat(line.personalization || [], boxVals).map(t => visible(t).trim()).filter(Boolean));   // (an engraving the buyer chose: the box is the words to engrave)
+    if (box.length) places.push({ from: "box", text: box.join(" · "), read: merge(box.map(t => lettersInText(t))) });
+    const note = visible(line.buyerMessage || (order && order.buyerMessage) || "").trim();
+    if (note) places.push({ from: "note", text: note, read: lettersInText(note) });
+    const hold = (kind, reason, extra) => Object.assign(out, { hold: Object.assign({ kind, reason }, extra || {}), note: reason });
+    let chosen = null, at = -1;
+    for (let i = 0; i < places.length; i++) {
+      const P = places[i], r = P.read; if (r.empty) continue;
+      if (r.odd === "latin") return hold("which", `Letter charm: ${LETTER_FROM_WORDS[P.from]} says ${quote(P.text)}, not one of the letters a–z. Which letter?`);
+      if (r.odd || r.letters.length !== 1) return hold("which", `Letter charm: ${LETTER_FROM_WORDS[P.from]} says ${quote(P.text)}, which letter?`);
+      chosen = P; at = i; break;
+    }
+    if (!chosen) return hold("which", `Letter charm: the buyer did not say which letter (${box.length ? `the personalisation says ${quote(box.join(" · "))}` : "the personalisation is empty"}${note ? `, the note says ${quote(note)}` : ", no note"}). Which letter?`);
+    const L = chosen.read.letters[0];
+    for (const P of places.slice(at + 1)) if (!P.read.odd && P.read.letters.length === 1 && P.read.letters[0] !== L)   // (a later place naming another single letter: two answers, a person says)
+      return hold("which", `Letter charm: ${LETTER_FROM_WORDS[chosen.from]} says ${quote(chosen.text)} but ${LETTER_FROM_WORDS[P.from]} says ${quote(P.text)}, which letter?`);
+    out.symbols = [Object.assign({ name: L, from: chosen.from, word: L, text: chosen.text }, chosen.optionName ? { optionName: chosen.optionName } : {})];
+    out.textOnly = chosen.from === "box";
+    if (!form) return hold("which", `Letter charm: the letter is ${L} (${LETTER_FROM_WORDS[chosen.from]} says ${quote(chosen.text)}) but ${f.why}. Necklace or Huggie?`);
+    const ent = row[form], n = ent.names.indexOf(L), want = upSku(ent.base + n + (ent.suffix || ""));
+    const member = masterSku(want, me, loose) || "", mm = member ? letterMemberOf(member) : null;
+    const sku = mm && mm.n === n && mm.huggie === (form === "huggie") ? member : "";   // (the library's own spelling of exactly that member, nothing else)
+    out.symbols[0].sku = sku;
+    if (chosen.variation) { out.variation = chosen.variation; out.optionSku = sku; }
+    if (form === "huggie") out.never = { rule: "earring", form: "huggie", by: "its letter listing profile", why: EAR_NEVER_WHY };
+    else if (!engraved) out.never = { rule: "charm-only-choice", form: "necklace", by: "its letter listing profile", why: LETTER_CHOICE_NEVER_WHY };
+    if (!sku) return hold("missing", `Letter charm ${L} (${form === "huggie" ? "Huggie set" : "necklace charm"}): ${want} is not in the charm repo yet. The line waits here until the new letter charms are added (Workspace › Master files › Add these charms to the repo).`, { missing: [want] });
+    out.note = `Letter charm: ${L} (${sku}${form === "huggie" ? ", both ears" : ""}), from ${LETTER_FROM_WORDS[chosen.from]} ${quote(chosen.text)}`;
     return Object.assign(out, { pick: sku });
   }
 
@@ -4268,7 +4380,7 @@
         const cform = charmOnlyHuggie(line, lf) ? "huggie" : "necklace";
         const stands = skuSource === "alias" ? charmOnlyAliasStands(crow, line, set ? bought : upSku(line.sku), sku, ctx.aliases, cform, me, loose) : CHARM_ONLY_OWN_SKU.has(skuSource) && charmOnlyChosen(crow, line, sku, ctx.aliases, cform, me, loose);
         if (!stands) {
-          charmOnlyHit = charmOnlyRead(line, order, crow, { me, loose, lf, skus: [txSku, viaInventory && viaInventory.etsy, upSku(line.sku)] });
+          charmOnlyHit = crow.letter ? letterChoiceRead(line, order, crow, { me, loose, lf }) : charmOnlyRead(line, order, crow, { me, loose, lf, skus: [txSku, viaInventory && viaInventory.etsy, upSku(line.sku)] });
           if (charmOnlyHit) { charmOnlyHit.was = { sku: sku || "", source: skuSource || "" }; symbol = charmOnlyHit; members = null; }
         }
       }
@@ -5010,7 +5122,7 @@
     SIGN_ORDER, skuSign, sharedZodiac, signsInText, signsNamed, zodiacRead,
     SYMBOL_LISTINGS, symbolListing, symbolRead, symbolMember, runesInText, RUNE_NAMES, RUNES_ABSENT, LISTING_DESIGNS, listingDesign,
     NUMBER_LISTINGS, numberListing, numberRead, numberMemberOf, digitsInText, NUMBER_NEVER_WHY,
-    CHARM_ONLY_LISTINGS, CHARM_ONLY_RUNE_NECKLACE_BASE, charmOnlyListing, charmOnlyRead, vikingRuneOfSku, CHARM_ONLY_NEVER_WHY,
+    CHARM_ONLY_LISTINGS, CHARM_ONLY_RUNE_NECKLACE_BASE, charmOnlyListing, charmOnlyRead, vikingRuneOfSku, CHARM_ONLY_NEVER_WHY, letterChoiceRead, lettersInText, letterMemberOf, letterLineForm,
     barNecklace,   // (BARFRONT: the bar rule's own test of a line, for a restored line still on its back: charm-nest-engrave-bar-front.js)
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });
