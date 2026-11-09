@@ -4916,13 +4916,27 @@ const Pool = window.Pool = (() => {
     return out;
   }
   /** greenFits(page, orderId | [orderId], run, {skip}): may this green-line sheet take pieces of these orders (skip: pieces on their way elsewhere, not counted). */
+  /* (RGONE, Paul 9 Nov 2026: "There should never be just one piece on a rose gold sheet to be cut ... the system should never automatically do this and there should never be two partial rose gold sheets
+     in one set.") The live Sandbox Set-1 of 8 Nov: RG Sheet 1 (11 pieces) shared orders with GF Sheet 1; an order with SS Sheet 1 came next. GF 1 and SS 1 were both drafts that shared no order YET, so the
+     rule below refused it ("they could end in two sets"), the intake opened a NEW Rose Gold sheet for that one piece, both were cut automatically into Set 1 with GF 1 + SS 1: two partial RG sheets, one of
+     them holding one piece. Two drafts outside every set that are each still UNPAIRED (no order shared with any sheet of the other metal) and the same place in line (the n-th GF and the n-th SS sheet of
+     the run that are in no set) form the same set (SetRules.formAll: the earliest completed GF and SS units first), so the Rose Gold sheet takes the order and stays one sheet. */
+  function draftsMeet(g, s, run) {
+    const inRun = p => !(run && p.runId && p.runId !== run.runId) && !p.archived && !p.recalled, loose = p => !(p.setId && !p.draft);
+    const all = allSheets().filter(inRun), ordersOf = p => new Set((p.charms || []).map(orderOfCharm).filter(Boolean));
+    const paired = (p, otherMetal) => { const mine = ordersOf(p); return all.some(q => q.metal === otherMetal && (q.charms || []).some(c => mine.has(orderOfCharm(c)))); };
+    if (paired(g, "silver") || paired(s, "gold")) return false;
+    const rank = p => all.filter(q => q.metal === p.metal && loose(q)).indexOf(p);
+    const rg = rank(g); return rg >= 0 && rg === rank(s);
+  }
   function greenFits(page, orderId, run, o) {
     const skip = (o && o.skip) || null, add = partnerSheets([].concat(orderId), run, skip); if (!add.gold.size && !add.silver.size) return true;      // (an order with no GF / SS piece ties the sheet to nothing)
     const mine = partnerSheets(page.charms.filter(c => !(skip && skip.has(c))).map(orderOfCharm), run, skip);
     const gf = new Set([...mine.gold, ...add.gold]), ss = new Set([...mine.silver, ...add.silver]);
     if (gf.size > 1 || ss.size > 1) return false;
-    // (both partners in one set; or neither in a set yet and each the other's one partner, PAIR: they share an order, so they are one unit and one set. Two drafts that share nothing could end in two sets)
-    if (gf.size && ss.size) { const setOf = p => (p.setId && !p.draft ? p.setId : null), g = [...gf][0], s = [...ss][0], a = setOf(g), b = setOf(s); if (a !== b) return false; if (!a) { const og = new Set(g.charms.map(orderOfCharm).filter(Boolean)); if (!s.charms.some(c => og.has(orderOfCharm(c)))) return false; } }
+    // (both partners in one set; or neither in a set yet and each the other's one partner, PAIR: they share an order, so they are one unit and one set; or both still unpaired and the same place in
+    //  line, RGONE above. Two drafts that share nothing and are paired elsewhere could end in two sets)
+    if (gf.size && ss.size) { const setOf = p => (p.setId && !p.draft ? p.setId : null), g = [...gf][0], s = [...ss][0], a = setOf(g), b = setOf(s); if (a !== b) return false; if (!a) { const og = new Set(g.charms.map(orderOfCharm).filter(Boolean)); if (!s.charms.some(c => og.has(orderOfCharm(c))) && !draftsMeet(g, s, run)) return false; } }
     return true;
   }
   /* ═══ INPLACE · a replaced piece goes into the spot its old piece left, or that spot stays empty (Paul, 20 Oct 2026) ═══════════════════════════════════════════════════════════════════
@@ -6111,14 +6125,84 @@ const Gate = window.Gate = (() => {
      ("Approve & cut green line", SetRepair.cutPending). The server refuses an automatic cut of a 10K / 14K sheet as well (roseRecordCut, via 'auto'). */
   const autoCuts = m => m === "rose";
   const autoCutTried = new Map();
+  /* ═══ RGONE · ONE Rose Gold sheet per set (Paul, 9 Nov 2026: "There should never be just one piece on a rose gold sheet to be cut that's ridiculous and the system should never automatically do this and
+     there should never be two partial rose gold sheets in one set") ═══
+     The live Sandbox Set-1 of 8 Nov held RG Sheet 1 (11 pieces) AND RG Sheet 2 (1 piece): both had their ONE set in Set 1 (greenHomesOf) and the automatic cut cut each of them into it. Now, before any
+     automatic cut, the uncut Rose Gold sheets whose one set is the same set are made ONE sheet: the pieces of the smaller ones move, order by order, onto the one holding the most (the sheet window's own
+     verified move, SheetWin.holdKit.move, as UNPAIR moves a GF / SS order; the sheet left behind is written as it stands), and only that sheet is cut. While they move, none of them is cut.
+     A second Rose Gold sheet is never cut into a set that already holds a CUT Rose Gold sheet by itself: it waits, says so, and a person decides (its own Cut Sheet press still works). Only when the pieces
+     do not fit on the fuller sheet (it is full: no room) are both cut, since then the fuller one is not partial. */
+  const rgOneTried = new Map(), rgOneSay = new Map(); let rgOneRunning = false;
+  const rgPlaced = p => (p.placements || []).length, orderOfCharm = c => String(c && c.order != null ? c.order : "").split("/")[0];
+  /** The uncut Rose Gold sheets of the run grouped by their ONE set (greenHomesOf), and the Rose Gold sheets already cut into each set. */
+  function rgOneGroups(run, V, GH) {
+    const uncut = new Map(), cutIn = new Map(), add = (m, k, p) => { if (!m.has(k)) m.set(k, []); m.get(k).push(p); };
+    for (const p of allSheets().filter(p => p.runId === run.runId && p.metal === "rose" && !(+p.laserDoneAt > 0) && !p.recalled)) {
+      if (p.roseCutAt) { if (inSetNow(p)) add(cutIn, String(p.setId), p); continue; }
+      if (!rgPlaced(p)) continue;
+      const h = V && GH.get(V.idOf.get(p)); if (h && h.home) add(uncut, String(h.home), p);
+    }
+    for (const l of uncut.values()) l.sort((a, b) => rgPlaced(b) - rgPlaced(a) || (+a.page || 0) - (+b.page || 0));
+    return { uncut, cutIn };
+  }
+  /** Move the pieces of the smaller uncut Rose Gold sheets of one set onto the fullest one (one order at a time). true when something moved. */
+  async function rgOneMerge(run, home, list, setName) {
+    const SW = window.SheetWin, kit = SW && SW.holdKit; if (rgOneRunning || !kit || typeof kit.move !== "function") return false;
+    if ((kit.busy && kit.busy()) || committingRun(run)) { rgOneSay.set(home, `${setName}: its Rose Gold pieces go onto ONE sheet as soon as the change running in the sheet window is done`); return false; }
+    const target = list[0], busy = p => p._roseAction || p._autoCutting || p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || !p.persistedDone || p._manualHold || p.rosePlan || p.roseProtected;
+    if (busy(target)) return false;
+    const guard = sh => sh.roseCutAt || +sh.laserDoneAt > 0 || sh.recalled ? "it is cut" : sh._manualHold ? "it is being changed by hand" : "";
+    rgOneRunning = true; let did = false;
+    try {
+      for (const src of list.slice(1)) {
+        if (busy(src)) continue;
+        const orders = [...new Set(src.charms.filter(c => !c.excluded).map(orderOfCharm).filter(Boolean))];
+        for (const o of orders) {
+          const key = home + "|" + src.sheetId + "|" + o, last = rgOneTried.get(key); if (last && Date.now() - last.at < 60000) continue;
+          const pieces = src.charms.filter(c => orderOfCharm(c) === o); if (!pieces.length) continue;
+          rgOneTried.set(key, { at: Date.now() });
+          rgOneSay.set(home, `${setName}: its Rose Gold pieces go onto ONE sheet: order ${o} is moving from ${sheetNameOf(src)} to ${sheetNameOf(target)}`); liveRefresh(src);
+          try {
+            const ok = await kit.move({ rid: o, pieces: pieces.map(c => ({ c, src, placed: (src.placements || []).some(q => q.id === c.id) })) }, target, "Charm Nest (automatic)", { guard });
+            if (!ok) continue;
+            did = true;
+            try { agent({ run: run.runId, metal: "rose" }, "ok", `Order ${o}: its Rose Gold piece${pieces.length === 1 ? "" : "s"} moved from ${sheetNameOf(src)} to ${sheetNameOf(target)} automatically, so ${setName} has ONE Rose Gold sheet`); } catch (_) {}
+          } catch (e) {
+            const why = String(e && e.message || e), room = /room|space|fit/i.test(why);
+            rgOneTried.set(key, { at: Date.now(), room });
+            try { agent({ run: run.runId, metal: "rose" }, "warn", `Order ${o}: its Rose Gold piece${pieces.length === 1 ? "" : "s"} could not move from ${sheetNameOf(src)} to ${sheetNameOf(target)} yet (${why})`); } catch (_) {}
+          }
+        }
+      }
+    } finally { rgOneRunning = false; }
+    if (did) { rgOneSay.delete(home); try { await assemble(run); } catch (e) { console.warn("[Gate.rgOne] assemble", e && e.message); } liveRefresh(null); }
+    return did;
+  }
+  /** true when every order of the smaller sheets was tried and refused for want of room on the fullest one: then it is full, not partial, and both may be cut. */
+  const rgOneNoRoom = (home, list) => list.slice(1).every(src => src.charms.filter(c => !c.excluded).map(orderOfCharm).filter(Boolean).every(o => { const t = rgOneTried.get(home + "|" + src.sheetId + "|" + o); return t && t.room; }));
   function autoCut(run) {
     try {
       const RS = window.RoseStock; if (!RS || typeof RS.record !== "function" || !run || !modern(run.runId) || !S.cloud.ok) return;
       const SRa = window.CharmNestSetRules, sets = Sets.ofRun(run.runId).filter(st => !st.committedAt), V = cardinalView(run), GH = V ? greenHomesOf(V, run) : new Map();
       const approved = st => !!(st.committedAt || st.processReady || st.laserSetPending || st.laserDoneAt);
+      const RG1 = rgOneGroups(run, V, GH), merging = new Set();
       for (const p of allSheets().filter(p => p.runId === run.runId && goldFamily(p.metal) && autoCuts(p.metal) && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled)) {
         if (p._roseAction || p._rosePlanning || p._roseLoading || p._autoCutting || p.dirty || ["nesting", "finishing", "queued"].includes(p.status) || !p.persistedDone || !p.verification?.ok || !p.placements.length || p._manualHold) continue;
         const h = V && GH.get(V.idOf.get(p)); if (!h || !h.home) continue;                       // (no partner in a set yet: its set is not complete)
+        // (RGONE: one Rose Gold sheet per set. A set that already holds a cut Rose Gold sheet takes no second one by itself; several uncut ones of one set are made one sheet first, then that one is cut)
+        { const home = String(h.home), stName = (sets.find(x => x.setId === h.home) || {}).name || "its set", cutOther = (RG1.cutIn.get(home) || []).filter(q => q !== p), sibs = RG1.uncut.get(home) || [];
+          if (cutOther.length) {
+            p.autoCutWait = `${stName} already has ${sheetNameOf(cutOther[0])} cut: a set never takes two partial Rose Gold sheets by itself, so ${sheetNameOf(p)} is not cut automatically. Press its Cut Sheet to add it anyway, or move its pieces`;
+            if (!p._rgOneSaid) { p._rgOneSaid = true; try { agent({ run: run.runId, metal: p.metal }, "warn", `${sheetNameOf(p)}: not cut automatically: ${stName} already holds ${sheetNameOf(cutOther[0])} (one Rose Gold sheet per set)`); } catch (_) {} }
+            liveRefresh(p); continue;
+          }
+          if (sibs.length > 1 && !rgOneNoRoom(home, sibs)) {
+            p.autoCutWait = `${stName} has ${sibs.length} Rose Gold sheets (${sibs.map(q => `${sheetNameOf(q)}: ${rgPlaced(q)} piece${rgPlaced(q) === 1 ? "" : "s"}`).join(", ")}): their pieces go onto ${sheetNameOf(sibs[0])} first, then that one sheet is cut`;
+            if (!merging.has(home)) { merging.add(home); Promise.resolve().then(() => rgOneMerge(run, home, sibs, stName)).catch(e => console.warn("[Gate.rgOne]", e && e.message)); }
+            continue;
+          }
+          delete p._rgOneSaid;
+        }
         if (inSetNow(p) && p.setId !== h.home) continue;                                         // (in a set that is not its one set: it leaves it first, greenAway)
         if (!h.partners.some(i => { const q = V.page.get(i); return q && q.setId === h.home && !q.draft && SRa && SRa.isCompleted(q); })) continue;
         const st = sets.find(x => x.setId === h.home); if (!st || approved(st) || !SRa || !SRa.closed(membersOfSet(st))) continue;
