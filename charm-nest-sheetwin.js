@@ -6674,6 +6674,63 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (!r.ok || !r.pose) return { ok: false, why: r.why, reason: r.reason };
       return { ok: true, why: "", reason: "", pose: r.pose, wPt: r.v ? r.v.solid.w / 2 : +c.widthPt || 0, hPt: r.v ? r.v.solid.h / 2 : +c.heightPt || 0, scale: scaleOf(r.pose.size || 1) };
     },
+    /* IPL2 (Paul, 9 Nov 2026: "the new charm should first be attempted to be put on the sheet where it came from because otherwise there's a hole in that sheet"). When a replaced charm's new
+       piece does not fit its old spot, ANYWHERE free on the same sheet, with every other charm where it stands: the hole it left and all other free space, at each of `opts.angles` (default the
+       quarter turns), at its real size (never scaled). The same check as fitsSpot (the nest's collision grid with every other charm stamped from its outline, the sheet's inset, metal cut away and
+       a saved protected contour, then the independent verifier); the legal spot NEAREST to `near` (the old spot's centre) wins. → as fitsSpot, plus, when there is no room,
+       room: { wPt, hPt } (the largest free rectangle of the sheet, for the words) */
+    freeSpot(sheet, piece, near, opts = {}) {
+      const sh = typeof sheet === "string" ? allSheets().find(p => p.sheetId === sheet) || null : sheet || null;
+      if (!sh || !Array.isArray(sh.placements)) return { ok: false, why: "blocked", reason: "That sheet is not held in this sorter." };
+      if (+sh.laserDoneAt > 0 || sh.roseCutAt || sh.recalled || (typeof window.replaceCutWhy === "function" && window.replaceCutWhy(sh))) return { ok: false, why: "blocked", reason: "That sheet's layout can no longer change." };
+      if (sh._manualHold || (MC.on && MC.sh === sh)) return { ok: false, why: "blocked", reason: "A person is moving this sheet's charms by hand." };
+      const Sv = SV(); if (!Sv || !Sv.makeSheetGrid || !Sv.prepareVariant || !Sv.verify) return { ok: false, why: "blocked", reason: "The layout check is not loaded in this page." };
+      const c = charmFor(sh, piece); if (!c) return { ok: false, why: "drawing", reason: "That charm is not in this sorter." };
+      const lock = mcLocked(sh, c); if (lock) return { ok: false, why: c.bits ? "blocked" : "drawing", reason: lock };
+      let G; try { G = mcGrid(sh, c.id, null); } catch (e) { return { ok: false, why: "verify", reason: "The layout check could not be made here (" + e.message + ")." }; }
+      const g = G.grid, size = sizeOf(c), W = g.W, H = g.H;
+      if (!g.sat) g.buildSAT();   // (a box with too few free cells is passed over at once)
+      const vs = [], nx = near && Number.isFinite(+near.cxPt) ? +near.cxPt : W / 4, ny = near && Number.isFinite(+near.cyPt) ? +near.cyPt : H / 4;   // (no old spot: from the sheet's top left)
+      for (const a of (Array.isArray(opts.angles) && opts.angles.length ? opts.angles : [0, 90, 180, 270])) {
+        const angle = normDeg(a); if (vs.some(x => x.angle === angle)) continue;
+        const v = tryDo(() => mcVariant(c, angle, size, G.clearancePt)); if (!v) continue;
+        vs.push({ angle, v, ax: Math.round(nx * 2 - v.solid.cx), ay: Math.round(ny * 2 - v.solid.cy) });
+      }
+      if (!vs.length) return { ok: false, why: "drawing", reason: "This charm's outline could not be measured." };
+      const bad = new Set();
+      const fitsAt = (o, x, y) => {
+        const pm = o.v.fine.pm; if (x < 0 || y < 0 || x + pm.w > W || y + pm.h > H) return false;
+        if (pm.w * pm.h - g.boxSum(x, y, x + pm.w, y + pm.h) < pm.cells) return false;
+        return !bad.has(o.angle + ":" + x + ":" + y) && g.fits(pm, x, y);
+      };
+      // rings outward from the old spot (each angle from its own centre): the nearest legal spot of all angles
+      const nearest = () => {
+        let best = null; const R = Math.max(W, H);
+        for (let r = 0; r <= R; r++) {
+          if (best && r * r > best.d) break;
+          for (const o of vs) for (let dy = -r; dy <= r; dy++) {
+            const edge = Math.abs(dy) === r, step = edge ? 1 : 2 * r;
+            for (let dx = -r; dx <= r; dx += step || 1) {
+              const d = dx * dx + dy * dy; if (best && d >= best.d) continue;
+              if (fitsAt(o, o.ax + dx, o.ay + dy)) best = { o, x: o.ax + dx, y: o.ay + dy, d };
+            }
+          }
+        }
+        return best;
+      };
+      // (the grid holds each charm's mask with the shop's allowance: a spot hard against a neighbour can pass it and fail the verifier's pixels; the next nearest is asked, a few hundred at most)
+      const t0 = Date.now();
+      for (let k = 0; k < 400 && Date.now() - t0 < 4000; k++) {
+        const b = nearest(); if (!b) break;
+        const at = { cxPt: (b.x + b.o.v.solid.cx) / 2, cyPt: (b.y + b.o.v.solid.cy) / 2, angle: b.o.angle, size };
+        if (mcVerify(G, c, at).ok) return { ok: true, why: "", reason: "", pose: at, wPt: b.o.v.solid.w / 2, hPt: b.o.v.solid.h / 2, scale: scaleOf(size), movedPt: Math.sqrt(b.d) / 2 };
+        bad.add(b.o.angle + ":" + b.x + ":" + b.y);   // (the half-point grid said yes, the pixels no: the next nearest)
+      }
+      // no room: the largest free rectangle of the sheet, for the words ("largest free area 14×10 mm")
+      let room = { wPt: 0, hPt: 0 };
+      tryDo(() => { const t = new Sv.Grid(W, H); for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) t.free[y * W + x] = g.get(x, y) ? 0 : 1; const p = t.largestPocket(); room = { wPt: p.w / 2, hPt: p.h / 2 }; });
+      return { ok: false, why: "room", reason: "No room on the sheet for it.", room };
+    },
     /* INPLACE: a sheet whose replaced piece came off written as it now stands, the way Manual Control's save writes a sheet (mcSave: a released sheet kept in its set while it is written, its QR
        label made again for the orders now on it), but with no nest at all: the page's writeAsPlaced (every charm where it is, no search). → Promise<boolean> */
     async writeInPlace(sheet) {

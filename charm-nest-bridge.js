@@ -5128,10 +5128,43 @@ const Pool = window.Pool = (() => {
   const ipBusy = sh => ["nesting", "finishing", "queued"].includes(sh.status) || !!sh._operationStarting || !!sh._learnedStarting || !!(sh.persisted && !sh.persistedDone && !sh.problem);
   /** A sheet that may take a new piece into an old spot: still on this page, its run's, NOT CUT (replaceCutWhy: a draft, a full sheet, a sheet in a formed, released or committed set all may; a
    *  Rose Gold / 10K / 14K sheet with a green line is left to its own rules), not held by a person or pulled to another set, not busy. */
-  function inPlaceOpen(sh, run) {
-    if (!sh || !allSheets().includes(sh) || replaceCutWhy(sh) || sh.cardinalPull || sh._manualHold || ipBusy(sh)) return false;
-    if (run && sh.runId && sh.runId !== run.runId) return false;
-    return true;
+  function inPlaceOpen(sh, run) { return !inPlaceShut(sh, run); }
+  /** IPL2: why a sheet cannot take a replaced piece back now, in a few words ("" when it can). */
+  function inPlaceShut(sh, run) {
+    if (!sh || !allSheets().includes(sh)) return "it is no longer on this page";
+    const cut = replaceCutWhy(sh); if (cut) return cut;
+    if (sh.cardinalPull) return "it was pulled to another set";
+    if (sh._manualHold) return "a person is moving its charms by hand";
+    if (ipBusy(sh)) return "it is being arranged or saved right now";
+    if (run && sh.runId && sh.runId !== run.runId) return "it belongs to another run";
+    return "";
+  }
+  /* IPL2 (Paul, 9 Nov 2026: "the new charm should first be attempted to be put on the sheet where it came from because otherwise there's a hole in that sheet. Why do you automatically put it on
+     the new sheet?"). A replaced line's new pieces are tried, in this order: 1. their old spots (inPlaceAssign, as before); 2. ANYWHERE free on the same sheet, every other charm where it stands:
+     the hole they left and all other free space, at every angle the old spot is tried at, at their real size (CNManual.freeSpot: the same check, the legal spot nearest the old one wins);
+     3. the latest unfinished sheet of the metal with room (inPlaceTarget); 4. only then a new sheet. The sheet's state is as before (inPlaceShut: a draft, a full sheet, a sheet in a formed,
+     released or committed set all take their piece back; a cut or busy one does not, and the line says why). */
+  const ipMm = pt => { const v = (+pt || 0) * 25.4 / 72; return v < 10 ? Math.round(v * 10) / 10 : Math.round(v); };
+  const ipName = sh => (sh && (sh.fileBase || sheetName(sh))) || "a sheet";
+  /** Every piece of `list` anywhere free on `sh` (IPL2 step 2), each near its own old spot, the ones found stood on the sheet while the next is looked for. → { got: [{ c, s, fit }] } or { why } */
+  function inPlaceAnywhere(sh, spots, list) {
+    const M = window.CNManual; if (!M || typeof M.freeSpot !== "function") return { why: "the layout check is not loaded in this page" };
+    const got = [], lift = c => { sh.charms = sh.charms.filter(x => x !== c); sh.placements = sh.placements.filter(p => p.id !== c.id); };
+    let why = "";
+    for (let k = 0; k < list.length; k++) {
+      const c = list[k], s = spots[Math.min(k, spots.length - 1)];
+      let fit; try { fit = M.freeSpot(sh, c, { cxPt: s.cxPt, cyPt: s.cyPt }, { angles: inPlaceAngles(s.angle) }); } catch (e) { fit = { ok: false, why: "verify", reason: (e && e.message) || String(e) }; }
+      if (!fit || !fit.ok || !fit.pose) {
+        const big = list.reduce((b, x) => (+x.widthPt || 0) * (+x.heightPt || 0) > (+b.widthPt || 0) * (+b.heightPt || 0) ? x : b, c), w = Math.max(+big.widthPt || 0, +big.heightPt || 0), h = Math.min(+big.widthPt || 0, +big.heightPt || 0);
+        const room = fit && fit.room, n = list.length;
+        why = fit && fit.why === "room" ? `${ipName(sh)} had no room for the new ${ipMm(w)} mm design${n > 1 ? ` (${n} pieces)` : ""} (needs ${ipMm(w)}×${ipMm(h)} mm${room ? `, largest free area ${ipMm(Math.max(room.wPt, room.hPt))}×${ipMm(Math.min(room.wPt, room.hPt))} mm` : ""})`
+          : `${ipName(sh)} could not be checked for room (${String((fit && fit.reason) || "no answer").replace(/\.$/, "")})`;
+        break;
+      }
+      got.push({ c, s, fit }); sh.charms.push(c); sh.placements.push({ id: c.id, cxPt: fit.pose.cxPt, cyPt: fit.pose.cyPt, angle: fit.pose.angle, scale: fit.scale, wPt: fit.wPt, hPt: fit.hPt });
+    }
+    for (const g of got) lift(g.c);   // (the caller places them for good)
+    return got.length === list.length ? { got } : { why: why || "no room" };
   }
   /** Every piece of `list` into a spot of `spots` (one sheet), each spot once: [{ c, s, fit }] or null. Pieces already tried are stood on the sheet while the next is tried, then taken off again. */
   function inPlaceAssign(sh, spots, list) {
@@ -5173,33 +5206,44 @@ const Pool = window.Pool = (() => {
       let home = null; try { home = LN.orderHome(metal, run, oids[0], { skip: list }); } finally { held.forEach((p, i) => { p._inplaceHold = keep[i]; }); }
       if (home) { if (typeof LN.reopenHome === "function") { const h = home._inplaceHold; delete home._inplaceHold; try { LN.reopenHome(home, oids[0]); } finally { if (h) home._inplaceHold = h; } } return home; }
     }
-    for (const p of pagesOf(metal).slice().reverse()) if (p.charms.length && mine(p) && fits(p) && room(p)) return p;
+    // (IPL2, Paul 9 Nov 2026: and the new piece really fits there with nothing on it moving: its append moves nothing, so a sheet the intake's count calls roomy but with no place for this shape
+    //  is passed over; only when no sheet has room is a new one made)
+    const big = list.reduce((b, x) => (+x.widthPt || 0) * (+x.heightPt || 0) > (+b.widthPt || 0) * (+b.heightPt || 0) ? x : b, list[0]);
+    const shape = p => { const M = window.CNManual; if (!M || typeof M.freeSpot !== "function" || !big || !big.bits) return true; let r = null; try { r = M.freeSpot(p, big, null, { angles: [0, 90, 180, 270] }); } catch (_) { r = null; } return !r || r.ok || r.why !== "room"; };
+    for (const p of pagesOf(metal).slice().reverse()) if (p.charms.length && mine(p) && fits(p) && room(p) && shape(p)) return p;
     return pagesOf(metal).slice().reverse().find(p => !p.charms.length && mine(p)) || addPage(metal);
   }
   /** A replaced line's new pieces of one metal (see the block above). → null when the line left no spot of that metal; else { page, placed } (placed: they are ON the page, in old spots). */
   function inPlaceAttach(row, run, metal, list, info) {
     const V = row._vacated; if (!V || !(V.spots || []).length || !list.length) return null;
     const spots = V.spots.filter(s => s.metal === metal && !s.used && allSheets().includes(s.sh)); if (!spots.length) return null;
-    const res = { metal, pieces: list.map(c => c.poolId), placed: false, home: spots[0].sh, to: null, why: "" };
+    const res = { metal, pieces: list.map(c => c.poolId), placed: false, where: "", home: spots[0].sh, to: null, why: "", say: "" };
     (V.results || (V.results = [])).push(res);
     const bySheet = new Map(); for (const s of spots) (bySheet.get(s.sh) || bySheet.set(s.sh, []).get(s.sh)).push(s);
+    const n = list.length, pieces = n === 1 ? "piece" : n + " pieces", whys = [];
     for (const [sh, ss] of bySheet) {
-      if (!inPlaceOpen(sh, run)) { res.why = res.why || "its sheet cannot change now"; continue; }
-      const got = inPlaceAssign(sh, ss, list);
-      if (!got) { res.why = list.length > ss.length ? `${list.length} new pieces for ${ss.length} old spot${ss.length === 1 ? "" : "s"}` : "the new design does not fit the old spot"; continue; }
+      const shut = inPlaceShut(sh, run);
+      if (shut) { whys.push(`${ipName(sh)} cannot change now (${shut})`); continue; }
+      // 1 · the old spots
+      let got = list.length <= ss.length ? inPlaceAssign(sh, ss, list) : null, where = "spot";
+      // 2 · IPL2: anywhere free on the same sheet, nothing else on it moving
+      if (!got) { const any = inPlaceAnywhere(sh, ss, list); if (any.got) { got = any.got; where = "beside"; } else { whys.push(any.why); continue; } }
       for (const { c, s, fit } of got) {
         s.used = true;
         sh.charms.push(c);
         sh.placements.push({ id: c.id, cxPt: fit.pose.cxPt, cyPt: fit.pose.cyPt, angle: fit.pose.angle, scale: fit.scale, wPt: fit.wPt, hPt: fit.hPt });
-        c.inPlace = { at: Date.now(), was: s.poolId, sheetId: sh.sheetId || null };
+        c.inPlace = { at: Date.now(), was: s.poolId, sheetId: sh.sheetId || null, where };
       }
-      res.placed = true; res.home = sh; res.to = sh; res.why = "";
-      agent({ metal, pool: true }, "POOL", `${row.order.receiptId} · the new piece${list.length === 1 ? "" : "s"} went into the old spot${got.length === 1 ? "" : "s"} on ${sheetName(sh)}: nothing else on it moved, no nest`);
+      res.placed = true; res.where = where; res.home = sh; res.to = sh; res.why = "";
+      res.say = where === "spot" ? `back in its old spot on ${ipName(sh)}` : `on ${ipName(sh)} beside its old spot (the new design did not fit the old spot itself)`;
+      agent({ metal, pool: true }, "POOL", `${row.order.receiptId} · the new ${pieces} ${where === "spot" ? `went back into the old spot${got.length === 1 ? "" : "s"} on ${ipName(sh)}` : `did not fit the old spot, so ${n === 1 ? "it went" : "they went"} on ${ipName(sh)} beside it, in its free space`}: nothing else on it moved, no nest`);
       return { page: sh, placed: true };
     }
-    const page = inPlaceTarget(metal, run, list, info);
-    res.to = page;
-    agent({ metal, pool: true }, "POOL", `${row.order.receiptId} · the new piece${list.length === 1 ? "" : "s"} did not fit the old spot (${res.why || "no room"}): the spot stays empty on ${sheetName(res.home)}; added to ${page === res.home ? "the same sheet, the latest unfinished one" : "the latest unfinished sheet"} without moving its charms`);
+    // 3 · the latest unfinished sheet of the metal with room; 4 · only then a new sheet (inPlaceTarget)
+    const was = pagesOf(metal).length, page = inPlaceTarget(metal, run, list, info), fresh = pagesOf(metal).length > was;
+    res.to = page; res.where = "moved"; res.why = whys.join("; ") || "no room";
+    res.say = `${res.why}: ${page === res.home ? `added to ${ipName(page)} again as the latest unfinished sheet` : `moved to ${fresh ? "a new sheet" : "the latest unfinished sheet"}, ${ipName(page)}`}${fresh ? " (no other sheet of this metal had room)" : ""}`;
+    agent({ metal, pool: true }, "POOL", `${row.order.receiptId} · the new ${pieces}: ${res.say}; the old spot stays empty on ${ipName(res.home)}, nothing on either sheet moved`);
     return { page, placed: false };
   }
   /** The recorded line joins its sheet. A line a live run already holds (a pool row the record refused) is skipped. */
@@ -19124,9 +19168,10 @@ const Review = window.Review = (() => {
         const at=sh.placements.filter(pl=>sh.charms.some(c=>c.id===pl.id && old.has(c.poolId)));
         for(const pl of at){const c=sh.charms.find(x=>x.id===pl.id);spots.push({sh,metal:sh.metal,id:pl.id,poolId:c.poolId,cxPt:+pl.cxPt,cyPt:+pl.cyPt,angle:+pl.angle || 0});}
         sh.charms=sh.charms.filter(c=>!old.has(c.poolId));sh.placements=sh.placements.filter(pl=>sh.charms.some(c=>c.id===pl.id));
-        if(at.length && inPlaceHolds(sh)){   // (a sheet the replaced line was alone on is held too: its new piece goes back into that spot when it fits)
+        const shut=at.length?inPlaceHoldsWhy(sh):"";
+        if(at.length && !shut){   // (a sheet the replaced line was alone on is held too: its new piece goes back into that spot when it fits)
          sh._inplaceHold=true;held.push(sh);renderCard(sh);}
-        else Orders.keepRest(sh);
+        else { Orders.keepRest(sh); if(shut){ const w=`${row.order.receiptId} · the new piece cannot go back onto ${sh.fileBase || sheetName(sh)} (${shut}): it goes on as any new piece does`; agent({metal:sh.metal,pool:true},"warn",w); } }
       }
       if(row._relink)row._relink.homes=homes;
       row._vacated=held.length?{spots:spots.filter(x=>held.includes(x.sh)),homes:held,results:[],at:Date.now(),committed:row.state==="committed"}:null;   // (committed: the line's set was committed at the station; it is again once its new pieces are back on that set's sheets, inPlaceSettle)
@@ -19143,7 +19188,13 @@ const Review = window.Review = (() => {
      written AS IT STANDS (CNManual.writeInPlace: the page's writeAsPlaced, no nest search, every charm where it is; its QR label made again), with the new piece in the old spot or the spot
      empty. A sheet that now has a charm waiting (it is itself the latest unfinished sheet the new pieces were appended to) is written by its append-only nest instead, which moves nothing
      already on it. What happened is kept on the line for the progress panel and the timeline (row._inplaceLast). Never throws. */
-  const inPlaceHolds = sh => !["nesting", "finishing", "queued"].includes(sh.status) && !sh._operationStarting && !sh._learnedStarting && !(sh.persisted && !sh.persistedDone && !sh.problem) && !sh._manualHold && !sh.roseCutAt && !sh.laserDoneAt && !sh.recalled && !((sh.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(sh.metal))) && (sh.rosePlan || sh.roseProtected));
+  /** IPL2: why a sheet a replaced piece came off cannot be held for its new piece ("" when it can): busy, held by a person, cut, recalled, or a Rose Gold / 10K / 14K sheet with its green line. */
+  const inPlaceHoldsWhy = sh => ["nesting", "finishing", "queued"].includes(sh.status) || sh._operationStarting || sh._learnedStarting || (sh.persisted && !sh.persistedDone && !sh.problem) ? "it is being arranged or saved right now"
+    : sh._manualHold ? "a person is moving its charms by hand" : sh.roseCutAt ? "cut" : sh.laserDoneAt ? "laser cut" : sh.recalled ? "recalled from the library"
+    : (sh.metal === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(sh.metal))) && (sh.rosePlan || sh.roseProtected) ? `its ${typeof CharmNestRose !== "undefined" && CharmNestRose.cutWord ? CharmNestRose.cutWord(sh.metal) : "Rose Gold"} green line is drawn around its charms` : "";
+  /** IPL2: where a replaced line's new piece went and why, for the progress panel and the log ("new piece placed in the old spot on GF Sheet 1", "new piece on GF Sheet 1 beside its old spot …",
+   *  "did not fit the old spot (spot left empty on GF Sheet 1) — GF Sheet 1 had no room for the new 18 mm design (…): moved to …"). */
+  const ipSay = r => r.placed && r.where !== "beside" ? `new piece placed in the old spot on ${r.home}` : r.placed ? `new piece ${r.say || `on ${r.home} beside its old spot`}` : `did not fit the old spot (spot left empty on ${r.home}) — ${r.say || `added to ${r.to || "the next sheet"}`}`;
   async function inPlaceWait(pages) {
     const t0 = Date.now();
     for (const sh of pages) while (sh._inplaceWrite && Date.now() - t0 < 120000) { try { await sh._inplaceWrite; } catch (_) { /* written or not, its pieces are what it holds */ } }
@@ -19151,7 +19202,7 @@ const Review = window.Review = (() => {
   function inPlaceSettle(row) {
     const V = row && row._vacated; if (!V) return; delete row._vacated;
     const name = sh => (sh && (sh.fileBase || sheetName(sh))) || "a sheet";
-    const out = { at: V.at, results: (V.results || []).map(r => ({ metal: r.metal, placed: !!r.placed, home: name(r.home), homeId: (r.home && r.home.sheetId) || null, to: r.to ? name(r.to) : "", toId: (r.to && r.to.sheetId) || null, why: r.why || "", pieces: r.pieces })), writes: [], appended: [] };
+    const out = { at: V.at, results: (V.results || []).map(r => ({ metal: r.metal, placed: !!r.placed, where: r.where || (r.placed ? "spot" : "moved"), say: r.say || "", home: name(r.home), homeId: (r.home && r.home.sheetId) || null, to: r.to ? name(r.to) : "", toId: (r.to && r.to.sheetId) || null, why: r.why || "", pieces: r.pieces })), writes: [], appended: [] };
     for (const sh of V.homes) {
       delete sh._inplaceHold; const asked = !!sh._inplaceAsked; delete sh._inplaceAsked;
       try {
@@ -19184,7 +19235,7 @@ const Review = window.Review = (() => {
     delete out.waits;
     row._inplaceLast = out;
     try {
-      for (const r of out.results) agent({ metal: r.metal, pool: true }, "POOL", `${row.order.receiptId} · ${r.placed ? `new piece placed in the old spot on ${r.home}` : `did not fit the old spot (spot left empty on ${r.home}) — added to ${r.to || "the next sheet"}`}; ${out.writes.length ? out.writes.join(", ") + " written as it stands (nothing moved, no nest)" : "no sheet nested again"}`);
+      for (const r of out.results) agent({ metal: r.metal, pool: true }, "POOL", `${row.order.receiptId} · ${ipSay(r)}; ${out.writes.length ? out.writes.join(", ") + " written as it stands (nothing moved, no nest)" : "no sheet nested again"}`);
     } catch (_) { /* a word only */ }
   }
   /* INPLACE (Paul, 20 Oct 2026) · a sheet written as it stands after a replaced piece came off it, when it is in a set: "a committed set whose sheet changed must have its files/labels rewritten",
@@ -19783,7 +19834,7 @@ const Review = window.Review = (() => {
   function inPlaceWords(ip, homes) {
     const rs = (ip && ip.results) || [];
     if (!rs.length) return `the old piece came off ${(homes || []).join(", ")}; the new one went on as any new piece does`;
-    return rs.map(r => r.placed ? `the new piece was placed in the old spot on ${r.home}, nothing else on it moved` : `the new piece did not fit the old spot (left empty on ${r.home}): added to ${r.to || "the next sheet"}, nothing on it moved`).join("; ");
+    return rs.map(r => r.placed && r.where !== "beside" ? `the new piece was placed in the old spot on ${r.home}, nothing else on it moved` : r.placed ? `the new piece went ${r.say || "on " + r.home + " beside its old spot"}, nothing else on it moved` : `the new piece did not fit the old spot (left empty on ${r.home}): ${r.say || "added to " + (r.to || "the next sheet")}, nothing on it moved`).join("; ");
   }
   /** One line made up again with the pick (see the block above). → { ok, retry, why } */
   async function relinkSwap(row, e, c, h) {
@@ -19906,7 +19957,7 @@ const Review = window.Review = (() => {
         else if (rs.length) {
           // (INPLACE: "Order R: new piece placed in the old spot on GF Sheet 1", or "Order R: did not fit the old spot (spot left empty on GF Sheet 1) — added to GF Sheet 4")
           tally.orders.add(k);
-          line(k, rs.map(r => r.placed ? `Order ${rid}: new piece placed in the old spot on ${r.home}` : `Order ${rid}: did not fit the old spot (spot left empty on ${r.home}) — added to ${r.to || "the next sheet"}`).join("; "), "done", `made from ${x.c.to}; nothing else on ${[...new Set(rs.map(r => r.home))].join(", ")} moved`);
+          line(k, rs.map(r => `Order ${rid}: ${ipSay(r)}`).join("; "), "done", `made from ${x.c.to}; nothing else on ${[...new Set(rs.map(r => r.home))].join(", ")} moved`);
           for (const n of ip.writes || []) { const sh = rlSheet(n); if (sh) sheetDone(sh, "write"); }
           for (const r of rs) if (!r.placed && r.to) { const sh = (r.toId && allSheets().find(z => z.sheetId === r.toId)) || rlSheet(r.to); if (sh && !(ip.writes || []).includes(rlName(sh))) sheetDone(sh, "append"); }
         }
