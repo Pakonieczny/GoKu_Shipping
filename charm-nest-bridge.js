@@ -2487,7 +2487,7 @@ const Orders = window.Orders = (() => {
     const st = stateWords(r), shown = stageText(st[1]) ? null : st, due = dueOf(r), where = placeOf(r), fc = faceChip(r);
     const attn = r.problems.length || (["held", "unmatched", "oversize"].includes(r.state) && !(r.state === "held" && !r.hold && r.spec && r.spec.special && r.spec.special.monogram));   // (MONOROUTE: a monogram line waits in the Engraving tab, it is not "attention")
     const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
-    const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
+    const gateBtn = r.state === "waiting" && r.wait && r.wait.kind !== "green" ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
     const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = window.TeamMail ? TeamMail.stamp(r) : "";
     // the seals this piece's record keeps (Complete Order, each print; a reopened piece's too: they are for good), drawn small beside its state
     const sealRec=window.CustomPrint&&window.Seal?CustomPrint.recordOfRow(r):null,seals=sealRec?CustomPrint.sealsOfRow(r,28):"";
@@ -4974,6 +4974,73 @@ const Pool = window.Pool = (() => {
     if (gf.size && ss.size) { const setOf = p => (p.setId && !p.draft ? p.setId : null), g = [...gf][0], s = [...ss][0], a = setOf(g), b = setOf(s); if (a !== b) return false; if (!a) { const og = new Set(g.charms.map(orderOfCharm).filter(Boolean)); if (!s.charms.some(c => og.has(orderOfCharm(c))) && !draftsMeet(g, s, run)) return false; } }
     return true;
   }
+  /* ═══ RGC1 · one physical sheet at a time, continued past each green line (Paul, 9 Nov 2026: "after a cut line a sheet must continue to get filled with newer orders until the next cut line and so
+     forth until the sheet is done and then and only then should the automatic system go to a brand new clean sheet. The user still should be able to override that if necessary by adding a new Custom
+     sized sheet inside the options menu") ═══
+     The live Sandbox run of 8-9 Nov held four uncut Rose Gold drafts at once: Draft 3 on RG Sheet 1's leftover, Draft 4 on RG Sheet 2's leftover, Drafts 5 and 6 each on a brand-new physical sheet. Each
+     shared orders with another Gold Filled / Sterling Silver unit (GF 8 + SS 6, GF 9 + SS 7, GF 10): the intake met an order greenFits refused for the open layout and opened a NEW page for it, which
+     claimed a fresh sheet at its nest start (the leftovers were held by the other drafts). Now:
+       1. an order greenFits refuses for the open (uncut) automatic layout of its metal WAITS: no page is opened for it. Its line says "waits for the green line on RG Sheet N, then continues on its
+          leftover", and so does the layout's card;
+       2. once that layout is cut (RoseStock.record → greenResume), the waiting lines are placed again: the next layout is made ON THE LEFTOVER THAT CUT MADE (greenPage: the PartialNest chain's own
+          pending exact claim of that partial at its nest start, never "the first available"); what the leftover cannot hold (the solver's real fit, orders whole) overflows to a brand-new sheet;
+       3. a waiting order never stalls a set that is already formed: when its Gold Filled / Sterling Silver sheets are in a formed set and the open layout's are not, it does not wait (a new layout);
+       4. Paul's own choice stands: a metal set to "always a new sheet" in Options (Partial Sheet, PartialNest mode 'new') starts its new sheet as he set it, and a sheet he made or chose is used as made.
+     Rose Gold's open layout is cut by itself once its set is complete (Gate.autoCut); 10K and 14K wait for a person's Cut Sheet press, as always. */
+  const greenWaits = new Map();   // row.key -> { page, metal }: the open layout a waiting line waits for (memory only: after a reload the line is simply tried again)
+  const greenOpen = (p, run) => !!p && p.charms.length > 0 && (!run || !p.runId || p.runId === run.runId) && !p.roseCutAt && !p.recalled && !p.releaseFull && !(+p.laserDoneAt > 0);
+  const greenName = p => { try { if (window.CharmNestSheetName && typeof CharmNestSheetName.short === "function") return CharmNestSheetName.short(p); } catch (_) { /* the plain name below */ } return `${labelOf(p.metal)} Sheet ${p.page || "?"}`; };
+  /** Is this line still waiting for an open layout's green line? (false: it is due again) */
+  function greenHeld(row) {
+    if (!(row && row.state === "waiting" && row.wait && row.wait.kind === "green")) return false;
+    const w = greenWaits.get(row.key); return !!w && pagesOf(w.metal).includes(w.page) && greenOpen(w.page, null);
+  }
+  /** The leftover the newest green line of this metal made, still free (no uncut page holds it): { stock, partialId, from } | null. */
+  function greenLeftover(metal, except) {
+    const held = new Set(allSheets().filter(p => p !== except && !p.roseCutAt && p.roseStock && p.roseStock.id).map(p => p.roseStock.id));
+    // (a physical sheet cut more than once: only its newest cut's copy says what is left of it)
+    const last = new Map(); for (const p of pagesOf(metal)) if (p.roseCutAt && p.roseStock && p.roseStock.id) { const q = last.get(p.roseStock.id); if (!q || +p.roseStock.revision > +q.roseStock.revision) last.set(p.roseStock.id, p); }
+    const cut = [...last.values()].filter(p => +p.roseStock.revision >= 1 && p.roseStock.available !== false && !p.roseStock.owner && !held.has(p.roseStock.id))
+      .sort((a, b) => (+b.roseCutAt || 0) - (+a.roseCutAt || 0))[0];
+    return cut ? { stock: Object.assign({}, cut.roseStock), partialId: `${cut.roseStock.id}-${+cut.roseStock.revision}`, from: cut } : null;
+  }
+  /** The next page of a green-line metal: on the leftover its newest cut made (claimed exactly at its nest start), else as the nester makes it (a new sheet). */
+  function greenPage(metal, run) {
+    const pg = addPage(metal);
+    try {
+      const PN = window.PartialNest;
+      if (PN && typeof PN.mode === "function" && PN.mode(metal) === "new") return pg;   // (Paul's Options choice: always a brand new sheet at the size he set)
+      const left = greenLeftover(metal, pg); if (!left) return pg;
+      pg.roseStock = left.stock; pg._partialId = left.partialId; pg._partialPending = true; pg._partialChain = [];
+      if (run) pg.runId = run.runId;
+      try { agent({ metal, pool: true }, "nest", `${greenName(pg)} continues on the leftover of ${greenName(left.from)} (its green line was cut): one ${labelOf(metal)} physical sheet is used up before a new one is started`); } catch (_) { /* a note only */ }
+    } catch (e) { console.warn("[greenPage]", e && e.message); }
+    return pg;
+  }
+  /** After a green line is cut (RoseStock.record): the lines that waited for it are placed again, on the leftover the cut made. */
+  function greenResume(sh) {
+    if (!sh || !lineCuts(sh.metal)) return 0;
+    delete sh.greenWaitNote;
+    const rows = Orders.rows().filter(r => r.state === "waiting" && r.wait && r.wait.kind === "green" && r.wait.material === sh.metal);
+    if (!rows.length) return 0;
+    for (const r of rows) { greenWaits.delete(r.key); r.state = "pulled"; r.wait = null; r.reason = null; }
+    try { agent({ metal: sh.metal, pool: true }, "nest", `${greenName(sh)}: green line cut — ${rows.length} waiting line${rows.length === 1 ? "" : "s"} now continue${rows.length === 1 ? "s" : ""} on its leftover`); } catch (_) { /* a note only */ }
+    const run = B.run;
+    if (run && O.stepIndex(run.step) >= O.stepIndex("pool")) Promise.resolve().then(() => addAll(run)).catch(e => console.warn("[greenResume]", e && e.message));
+    try { Orders.render(); } catch (_) { /* drawn at the next look */ }
+    return rows.length;
+  }
+  /** Should this line wait for the open layout `was` instead of opening a page? (greenFits refused it there) */
+  function greenMustWait(was, rid, run, metal, list) {
+    if (!greenOpen(was, run)) return false;
+    // (3: a formed set never waits for it: its GF / SS sheets are in a formed set the open layout's are not in)
+    const formed = p => p.setId && !p.draft ? String(p.setId) : null, mine = partnerSheets([rid], run), theirs = partnerSheets(was.charms.map(orderOfCharm), run);
+    const mySets = new Set([...mine.gold, ...mine.silver].map(formed).filter(Boolean)), theirSets = new Set([...theirs.gold, ...theirs.silver].map(formed).filter(Boolean));
+    if ([...mySets].some(s => !theirSets.has(s))) return false;
+    // (the order's own sheet of this colour elsewhere, R16: it goes there, as before)
+    try { const LN = window.LiveNest; if (LN && typeof LN.orderHome === "function") { const home = LN.orderHome(metal, run, rid, { skip: list }); if (home && home !== was) return false; } } catch (_) { /* no home: it waits */ }
+    return true;
+  }
   /* ═══ INPLACE · a replaced piece goes into the spot its old piece left, or that spot stays empty (Paul, 20 Oct 2026) ═══════════════════════════════════════════════════════════════════
      Paul: "I just wanna make sure that you're not nesting the entire sheet because of one charm/charms change. If the new updated charm does not fit into the spot of the previously removed
      charm/charms then leave that particular spot empty and simply add the new charm/charms to the latest unfinished sheet."
@@ -5106,6 +5173,7 @@ const Pool = window.Pool = (() => {
     const byMetal = new Map(); for (const c of charms) { if (on.has(c.poolId)) continue; const m = prep.custom ? c.metal : sp.material; if (!byMetal.has(m)) byMetal.set(m, []); byMetal.get(m).push(c); }
     // the sheets that already hold other pieces of this line (a pair's other piece, a disc necklace's other discs): a late piece goes to them (rule R2)
     const matePages = on.size ? [...holding(on)] : [];
+    let waited = 0;   // (RGC1: lines of a green-line metal that wait for the open layout's green line)
     for (const [metal, list] of byMetal) {
       let info; try { info = typeof orderInfo === "function" ? orderInfo(row.order.receiptId, metal, list, batch, on) : undefined; } catch (e) { info = undefined; }   // (the policy never stops a line from joining its sheet: without what it needs the intake does what it did)
       // an order bigger than one sheet is cut into units that each fit one (NOSPREAD, Paul 17 Oct 2026, CN.nospreadChunk: the pieces keep their order, so its sheets are one unit for a set), before the intake looks for its sheet
@@ -5126,7 +5194,20 @@ const Pool = window.Pool = (() => {
       }
       if (!ip && lineCuts(metal) && !matePages.includes(page) && !greenFits(page, String(row.order.receiptId), run)) {   // (Decision 2: one GF and/or one SS partner sheet, in one set)
         const was = page, alt = pagesOf(metal).find(p => p !== was && !shut(p) && (!run || !p.runId || p.runId === run.runId) && greenFits(p, String(row.order.receiptId), run));
-        page = alt || addPage(metal);
+        // (RGC1, Paul 9 Nov 2026: one physical sheet at a time. With no other open layout that keeps the rule, the line WAITS for the open layout's green line and then continues on its leftover;
+        //  a page is opened for it only when there is no open layout to wait for, or when waiting would hold a formed set)
+        if (!alt && byMetal.size === 1 && greenMustWait(was, String(row.order.receiptId), run, metal, list)) {
+          const n = list.length, name = greenName(was);
+          greenWaits.set(row.key, { page: was, metal });
+          row.state = "waiting"; row.wait = { kind: "green", material: metal, sheetId: was.sheetId || null, page: was.page || null };
+          row.reason = `waits for the green line on ${name}, then continues on its leftover (one ${labelOf(metal)} sheet is filled at a time)`;
+          const waitingNow = Orders.rows().filter(r => r.state === "waiting" && r.wait && r.wait.kind === "green" && r.wait.material === metal && greenWaits.get(r.key) && greenWaits.get(r.key).page === was);
+          was.greenWaitNote = `${waitingNow.length} order line${waitingNow.length === 1 ? "" : "s"} wait${waitingNow.length === 1 ? "s" : ""} for this green line, then continue${waitingNow.length === 1 ? "s" : ""} on its leftover`;
+          try { agent({ metal, pool: true }, "nest", `Order ${row.order.receiptId}: its ${n} ${labelOf(metal)} piece${n === 1 ? "" : "s"} wait${n === 1 ? "s" : ""} for the green line on ${name}, then continue${n === 1 ? "s" : ""} on its leftover (${name} shares orders with another Gold Filled / Sterling Silver unit; one ${labelOf(metal)} sheet is filled at a time)`); } catch (_) { /* a note only */ }
+          try { renderCard(was); } catch (_) { /* drawn at the next look */ }
+          waited++; continue;
+        }
+        page = alt || greenPage(metal, run);
         try { agent({ metal, pool: true }, "nest", `Order ${row.order.receiptId}: its ${labelOf(metal)} piece goes on ${alt ? "another" : "a new"} ${labelOf(metal)} sheet, so that each ${labelOf(metal)} sheet shares orders with one Gold Filled and one Sterling Silver sheet of one set`); } catch (_) { /* a note only */ }
       }
       // (PAIR, Paul 26 Oct 2026: the mirror for Gold Filled and Sterling Silver: a sheet whose one partner of the other metal is this order's, or that has none yet. LiveNest.intakePage asks it already;
@@ -5147,7 +5228,7 @@ const Pool = window.Pool = (() => {
         const apart = pagesOf(metal).filter(p => p !== page && (!run || !p.runId || p.runId === run.runId) && !p.recalled && (p.charms || []).some(c => !list.includes(c) && !c.excluded && !c.chunk && orderOfCharm(c) === rid16));
         if (apart.length) try { agent({ metal, pool: true }, "warn", `Split order ${rid16} (a split of necessity: its other ${labelOf(metal)} pieces are on ${apart.map(p => p.page ? "sheet " + p.page : "a sheet").join(", ")}, which can take no more: cut, approved for laser cutting, sent or held) — both sheets must go in one set`); } catch (_) { /* a note only */ }
       }
-      if(!ip && ((run && page.runId && page.runId!==run.runId) || shut(page) && page !== back))page=addPage(metal);
+      if(!ip && ((run && page.runId && page.runId!==run.runId) || shut(page) && page !== back))page=lineCuts(metal) ? greenPage(metal, run) : addPage(metal);   // (RGC1: a green-line metal's next page continues on its newest cut's leftover)
       if (back && page === back && typeof LN16.reopenHome === "function") LN16.reopenHome(page, rid16);
       if (!(ip && ip.placed)) { S.sheets[metal].active=pagesOf(metal).indexOf(page);if(!page.el)window.CN?.showPage(metal,S.sheets[metal].active); }   // the card shows the page its buttons act on
       if (run) page.runId = run.runId;
@@ -5160,6 +5241,8 @@ const Pool = window.Pool = (() => {
       if (row.releasing && window.Gate?.keep) { Gate.keep(page); if (page.keepRelease) page.keepRelease.rid = String(row.order.receiptId); }   // (an order released from hold, OrderHold.release: a sheet already in its set keeps its set while it takes the order, from this moment: the set assembly would drop it while it nests)
       if(page.placements.length){page.intakeAppend=true;page.appendOnly=true;page.dirty=true;if(!['nesting','finishing','queued'].includes(page.status))page.status='ready';renderCard(page);}else sheetDirty(page);
     }
+    // (RGC1: a line whose pieces wait for the open layout's green line is not on a sheet yet: it stays waiting, said on its line, and is placed again once that line is cut, greenResume)
+    if (waited && waited === byMetal.size) { row.material = sp.material; delete row.poolTry; delete row.poolError; return; }
     for (const p of pools) if (!on.has(p.poolId) || !B.pool.rows.has(p.poolId)) B.pool.rows.set(p.poolId, saved.has(p.poolId) ? Object.assign({}, p, saved.get(p.poolId)) : p);
     row.poolIds = pools.map(p => p.poolId); row.state = "pooled"; row.material = sp.material; row.reason = null; delete row.poolTry; delete row.poolError;
     if (on.size) { agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: ${on.size === pools.length ? "already on a sheet" : `${on.size} of ${pools.length} pieces already on a sheet`} — not placed again`); if (on.size === pools.length) { settle(row); return; } }
@@ -5195,7 +5278,7 @@ const Pool = window.Pool = (() => {
       e ? [e.masterHash || "", e.updatedAt || 0, e.blocked || "", Object.keys(e.sizes || {}).sort().join(","), sizeEntry(e, sp.size)?.aiPath || ""] : B.master.entries.size,
       st ? [Math.round(st.wPt), Math.round(st.hPt)] : 0, +S.settings.insetPt || 0, +S.settings.maxFill || 0]);
   }
-  const due = row => ["pulled", "waiting"].includes(row.state) || row.poolTry !== trySig(row) || (row.poolError > 0 && Date.now() - row.poolError >= RETRY_MS);
+  const due = row => !greenHeld(row) && (["pulled", "waiting"].includes(row.state) || row.poolTry !== trySig(row) || (row.poolError > 0 && Date.now() - row.poolError >= RETRY_MS));   // (RGC1: a line waiting for an open layout's green line is not made up again until that line is cut: greenHeld)
   /* A failure that passes by itself (the cloud slow to answer, the edge's HTML "Inactivity Timeout" page, a 5xx or a
      gateway fault, the network gone for a moment) is no problem with the line. Holding the line over one left order
      4330132720 held with that page as its reason and nothing to lift it (25 Sep). Such a line stays pulled, in progress,
@@ -5430,7 +5513,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(ListMedia.oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig, greenFits, partnerSheets };
+  return { keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewIds, previewSig: trySig, greenFits, partnerSheets, greenPage, greenResume, greenHeld, greenLeftover };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -6875,7 +6958,7 @@ const Gate = window.Gate = (() => {
     const spin=inc.querySelector('[data-solid="busy"]');if(spin){spin.hidden=!working;const t=spin.querySelector('[data-solid="busy-text"]');if(t&&t.textContent!==working)t.textContent=working;}
     // (the line read aloud by a screen reader; the line a person sees is [data-solid="say"], drawn only by a refused press)
     const sr=inc.querySelector('[data-solid="status"]'),lineUp=inc.querySelector('[data-solid="say"]');
-    if(!(lineUp&&!lineUp.hidden))sr.textContent=R.membershipError?'Selection not saved':working||sh.autoCutWait||sh.setWait||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';   // (autoCutWait: Decision 2, its automatic Cut Sheet waits)
+    if(!(lineUp&&!lineUp.hidden))sr.textContent=R.membershipError?'Selection not saved':working||sh.autoCutWait||sh.greenWaitNote||sh.setWait||sh.cardinalHold||sh.cardinalPull||sh.cardinalNote||'';   // (autoCutWait: Decision 2, its automatic Cut Sheet waits)
     if(sh.el)sh.el.querySelector(".shHead").title=policy(sh,seq).reason;   // the same hover answer the Gold and Silver cards give
     const retry=inc.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
     retry.onclick=()=>changeMembership(m,picked(sh),sh).catch(()=>{});
@@ -7609,7 +7692,7 @@ const Gate = window.Gate = (() => {
     // the line belongs to an open run: what waits, waits for that run's next sheet. With no run open it says nothing.
     if (!B.run || ["complete", "stopped", "abandoned"].includes(B.run.status)) { el2.classList.add("hidden"); return; }
     const m = sh.metal, p = R.plan && R.plan.materials[m];
-    const waiting = Orders.rows().filter(r => r.state === "waiting" && r.wait && r.wait.material === m);
+    const waiting = Orders.rows().filter(r => r.state === "waiting" && r.wait && r.wait.kind !== "green" && r.wait.material === m);
     const pieces = waiting.reduce((n, r) => n + O.pieceCountOf(r), 0);
     let html = "", cls = "shGate";
     if (O_.SLOW_MATERIALS.has(m)) {
@@ -27469,7 +27552,8 @@ const LiveNest = window.LiveNest = (() => {
       const prim = S.sheets[m], pages = prim.pages.filter(p => p.runId === run.runId && !closed(p));
       if (pages.some(p => ["nesting", "finishing", "queued"].includes(p.status))) throw new Error("A sheet is still being written");
       const pick=intakePage(m, run);
-      const p = pick.runId && pick.runId!==run.runId || closed(pick) ? addPage(m) : pick;
+      const greenM = m === "rose" || (typeof CharmNestRose !== "undefined" && CharmNestRose.cuts(m)), nextPg = () => greenM && window.Pool && typeof window.Pool.greenPage === "function" ? window.Pool.greenPage(m, run) : addPage(m);   // (RGC1: a green-line metal continues on its newest cut's leftover)
+      const p = pick.runId && pick.runId!==run.runId || closed(pick) ? nextPg() : pick;
       if(p===pick)previousSheets.set(p,{placements:p.placements.slice(),intakeOptimized:p.intakeOptimized,intakeOptimizedCount:p.intakeOptimizedCount,density:p.density,liveInfo:p.liveInfo});
       // addPage inherits the primary page's run id; replace it before
       // Pool.addAll examines the newest page or it creates yet another page.

@@ -273,6 +273,8 @@
     // the efficiency record (station-activity.js, through charm-nest-laser-act.js): the person pressed Cut Sheet and the cut is recorded;
     // the pieces are the sheet's charms, one event for each order on it. Cutting is the Laser station's work, not the sorter's.
     try{window.CNLaserAct&&window.CNLaserAct.rose(sh);}catch(_){}
+    // (RGC1, Paul 9 Nov 2026: the order lines that waited for this green line are placed now, on the leftover this cut made: Pool.greenResume)
+    try{window.Pool&&typeof window.Pool.greenResume==='function'&&window.Pool.greenResume(sh);}catch(_){}
     try{window.PartialSheetsUI&&window.PartialSheetsUI.changed();}catch(_){}   // the partial sheet this cut saved: an open Partial Sheet panel reads its list again (charm-nest-partial-ui.js)
   }
   const inSet=sh=>!!sh.setId&&!sh.draft;
