@@ -1,5 +1,5 @@
 {
-  "what": "New charms made and checked in this repository, waiting for Paul's one press in Workspace > Master files (charm-nest-repo-adds.js). Each add is a folder: records.json (the entries masterPutIndex takes, staged by scripts/index-master.cjs), files/ (each SKU's .ai and picture), the master sheet and a contact sheet. A second press says Already there. No buyer data.",
+  "what": "New charms made and checked in this repository, waiting for Paul's one press in Workspace > Master files (charm-nest-repo-adds.js). Each add is a folder: records.json (the entries masterPutIndex takes, staged by scripts/index-master.cjs), files/ (each SKU's .ai and picture), the master sheet and a contact sheet. A second press says Already there. No buyer data. An add marked \"done\" is no longer offered (the line goes away); its folder stays as the record.",
   "adds": [
     {
       "id": "letters-hoops-2026-11-09",
@@ -9,7 +9,8 @@
       "sheet": "LETTER-HOOPS_2026-1109.ai",
       "contact": "contact-sheet.html",
       "askedAt": "2026-11-09",
-      "made": "node scripts/make-letter-hoops.cjs --src charm-repo-adds/letters-hoops-2026-11-09/source --out charm-repo-adds/letters-hoops-2026-11-09"
+      "made": "node scripts/make-letter-hoops.cjs --src charm-repo-adds/letters-hoops-2026-11-09/source --out charm-repo-adds/letters-hoops-2026-11-09",
+      "done": "2026-11-09: Paul pressed it; all 52 are in the Charm Repo (LETTER-HOOPS_2026-1109.ai)"
     }
   ]
 }

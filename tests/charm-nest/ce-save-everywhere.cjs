@@ -10,6 +10,8 @@
 //       editing opens the same piece again; every view is told at once: the order window painted again, the "cn-charm-saved" event for the piece
 //   C5  a save from the engraving card's "Open in Charm Editor": the card is in front too
 //   C6  the Design & Engrave "Charm Editor" button with the order window open: the "Design a charm" picker and the editor are in front; Save → the card "Saved · version 1" in front
+//   CES2 (Paul, 9 Nov 2026: "I want the pop-up to open on every Save"): after each Save above (C4, C5, C6) the Send to sheet pop-up opens by itself, in front, over the card; × closes it
+//       and the card is still there (C4p: for a piece it is set as a fix of that piece)
 //   C7  no page error
 //   PW_DIR=<playwright node_modules> CHROMIUM=<chrome> node tests/charm-nest/ce-save-everywhere.cjs      (SHOTS=<dir> for the screenshots)
 'use strict';
@@ -35,6 +37,14 @@ const R = require('./_engraveRealWorld.cjs');
     return { ok: !!hit && el.contains(hit), hit: hit ? (hit.id || hit.className || hit.tagName) + '' : null, keys: !!document.activeElement && el.contains(document.activeElement) };
   }, sel);
   const closeEditor = async () => { if (!(await editor())) return; await page.evaluate(() => document.querySelector('.ce-root [data-act="cancel"]').click()); await settle(200); await page.evaluate(() => { const y = document.querySelector('.ce-ask [data-ask="yes"]'); if (y) y.click(); }); await until(() => page.evaluate(() => !document.querySelector('.ce-root')), 15000); await settle(200); };
+  /** CES2: the Send to sheet pop-up opened by itself after Save: in front, its design drawn; then closed with × (nothing sent), the card left under it. */
+  const popup = async () => {
+    const up = await until(() => page.evaluate(() => { const d = document.querySelector('dialog.cpDlg[data-cp-after][open]'); return d && d.querySelector('[data-cp-plate] svg') ? { fix: !!d.querySelector('[data-cp-reason="fix"].on'), sendBtn: (d.querySelector('[data-cp-send]') || {}).textContent || '' } : null; }), 60000);
+    const f = up ? await inFront('dialog.cpDlg[data-cp-after] .dlg') : { ok: false };
+    await page.evaluate(() => { const b = document.querySelector('dialog.cpDlg[data-cp-after] [data-cp-close]'); if (b) b.click(); }); await settle(300);
+    const gone = await page.evaluate(() => !document.querySelector('dialog.cpDlg[open]'));
+    return { up: !!up, fix: !!(up && up.fix), front: f.ok, gone };
+  };
   const cardDone = async () => { await page.evaluate(() => { const b = document.querySelector('.cem-card [data-c="done"]'); if (b) b.click(); }); await settle(200); };
   const openWin = async key => {
     await page.evaluate(() => { CN.setMode('orders'); if (OrderWin.isOpen()) OrderWin.close(); });
@@ -98,6 +108,8 @@ const R = require('./_engraveRealWorld.cjs');
     const art1 = artOf(B.poolIds[0]);
     await page.click('.ce-root [data-act="save"]');
     const card4 = await until(() => page.evaluate(() => { const c = document.querySelector('.cem-card'); return c && c.querySelector('[data-c]') ? { h: c.querySelector('h3').textContent, t: c.textContent, b: [...c.querySelectorAll('[data-c]')].map(b => b.dataset.c + ':' + b.textContent.trim()) } : null; }), 60000);
+    const p4 = await popup();
+    check(`C4p the Send to sheet pop-up opens by itself after Save (${p4.up}), in front (${p4.front}), set as a fix of this piece (${p4.fix}); × closes it, nothing sent, the card stays (${p4.gone})`, p4.up && p4.front && p4.fix && p4.gone, JSON.stringify(p4));
     await settle(400); await R.shot(w, 'CES-C4-card');
     const c4f = await inFront('.cem-card'), told = await page.evaluate(() => ({ paints: window.__paints, saved: window.__saved, win: OrderWin.isOpen() }));
     check(`C4 a save from the order window's Edit Design (${artOf(B.poolIds[0]) - art1} artwork save): the card "${card4 && card4.h}" is in front of the order window (${c4f.ok}; the window still open: ${told.win}) with this piece's choices (${card4 && card4.b.join(' / ')}); every view told at once (the order window painted ${told.paints}×, cn-charm-saved ${JSON.stringify(told.saved)})`,
@@ -114,8 +126,9 @@ const R = require('./_engraveRealWorld.cjs');
     await editorUp(); await dot();
     await page.click('.ce-root [data-act="save"]');
     const card5 = await until(() => page.evaluate(() => { const c = document.querySelector('.cem-card'); return c && c.querySelector('[data-c]') ? { h: c.querySelector('h3').textContent, b: [...c.querySelectorAll('[data-c]')].map(b => b.dataset.c) } : null; }), 60000);
+    const p5 = await popup();
     await settle(300); const c5f = await inFront('.cem-card');
-    check(`C5 a save from the engraving card's Open in Charm Editor: the card "${card5 && card5.h}" is in front (${c5f.ok}) with ${card5 && card5.b.join(', ')}`, !!card5 && /^Saved/.test(card5.h) && c5f.ok && card5.b.includes('done'), JSON.stringify({ card5, c5f }));
+    check(`C5 a save from the engraving card's Open in Charm Editor: the card "${card5 && card5.h}" is in front (${c5f.ok}) with ${card5 && card5.b.join(', ')}`, !!card5 && /^Saved/.test(card5.h) && c5f.ok && card5.b.includes('done') && p5.up && p5.front && p5.gone, JSON.stringify({ card5, c5f, p5 }));
     await cardDone();
 
     /* ── C6 · the Design & Engrave Charm Editor button's way (a new design) with the order window open ── */
@@ -129,9 +142,10 @@ const R = require('./_engraveRealWorld.cjs');
     await dot();
     await page.click('.ce-root [data-act="save"]');
     const card6 = await until(() => page.evaluate(() => { const c = document.querySelector('.cem-card'); return c && /Saved · version/.test(c.querySelector('h3').textContent) ? c.querySelector('h3').textContent : null; }), 60000);
+    const p6 = await popup();
     await settle(300); const c6c = await inFront('.cem-card');
     await R.shot(w, 'CES-C6-card');
-    check(`C6 with the order window open, the Charm Editor button's way: the picker in front (${c6p.ok}), the editor in front (${c6e.ok}), Save → "${card6}" in front (${c6c.ok})`, c6p.ok && c6e.ok && !!card6 && c6c.ok, JSON.stringify({ c6p, c6e, card6, c6c }));
+    check(`C6 with the order window open, the Charm Editor button's way: the picker in front (${c6p.ok}), the editor in front (${c6e.ok}), Save → "${card6}" in front (${c6c.ok})`, c6p.ok && c6e.ok && !!card6 && c6c.ok && p6.up && p6.front && p6.gone, JSON.stringify({ c6p, c6e, card6, c6c, p6 }));
     await cardDone();
 
     check('C7 no page error', w.errors.length === 0, JSON.stringify(w.errors).slice(0, 400));

@@ -20,7 +20,8 @@ const FV = Fk.admin.firestore.FieldValue, db = Fk.db;
 let n = 0; const ok = (c, m) => { assert(c, m); n++; console.log('  ok  ' + m); };
 global.fetch = () => { throw new Error('a network request in an offline test'); };
 
-const queue = RA.normalize(JSON.parse(fs.readFileSync(path.join(root, 'charm-repo-adds/queue.json'), 'utf8')));
+const queue = RA.normalize(JSON.parse(fs.readFileSync(path.join(root, 'charm-repo-adds/queue.json'), 'utf8')), { all: true });
+ok(!RA.normalize(JSON.parse(fs.readFileSync(path.join(root, 'charm-repo-adds/queue.json'), 'utf8'))).some(a => a.id === 'letters-hoops-2026-11-09'), 'the letters add is marked done (Paul pressed it): it is no longer offered');
 const add = queue.find(a => a.id === 'letters-hoops-2026-11-09');
 ok(queue.length >= 1 && add && add.folder === 'charm-repo-adds/letters-hoops-2026-11-09' && add.sheet && add.contact, 'the queue names the letters add');
 const rec = RA.checkRecords(JSON.parse(fs.readFileSync(path.join(root, add.folder, add.records), 'utf8')));

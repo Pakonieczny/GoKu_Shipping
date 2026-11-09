@@ -17,7 +17,7 @@
  *  The committed list of adds is charm-repo-adds/queue.json. Everything is drawn with textContent.
  *
  *    CharmNestRepoAdds.attach(box, { repoApi, upBytes, api, toast, who })   the line, in the Master files tab (charm-nest-bridge.js)
- *    CharmNestRepoAdds.normalize(json)                                      the queue's adds: [{ id, title, folder, records, sheet, contact }]
+ *    CharmNestRepoAdds.normalize(json, { all })                             the queue's adds not marked done (all: every one): [{ id, title, folder, records, sheet, contact }]
  *    CharmNestRepoAdds.run(o, add)                                          one press after the password: { state: "done" | "already" | "stop", text, added }
  *  ═══════════════════════════════════════════════════════════════════════ */
 (function (root) {
@@ -29,8 +29,8 @@
   const up = s => String(s || "").trim().toUpperCase();
 
   /** The queue file → [{ id, title, folder, records, sheet, contact }] (an entry with a folder or file name outside charm-repo-adds/ is left out). */
-  function normalize(json) {
-    const arr = json && Array.isArray(json.adds) ? json.adds : [];
+  function normalize(json, o) {
+    const arr = json && Array.isArray(json.adds) ? json.adds.filter(x => (o && o.all) || !(x && x.done)) : [];   // (an add marked "done" in the queue is no longer offered: Paul, 9 Nov 2026, once the letters were in)
     const out = [], seen = new Set();
     for (const x of arr) {
       if (!x || typeof x !== "object") continue;

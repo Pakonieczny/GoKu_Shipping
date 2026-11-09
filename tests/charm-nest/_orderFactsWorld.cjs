@@ -42,6 +42,8 @@ async function world(opts = {}) {
   // (CES1, 9 Nov 2026: a piece's Save in the Charm Editor now ends with its card over the page (Done / Keep editing / Replace on the order…). A check written before it that goes on clicking the
   //  page has the card put away with Done when it is in the way of that click, as a person would; a check of the card itself opens its world with { keepCards: true })
   if (!opts.keepCards && typeof page.addLocatorHandler === 'function') await page.addLocatorHandler(page.locator('.cem-card:has([data-c="done"]):not(:has([data-c="send"]))').first(), async () => { await page.evaluate(() => { const b = document.querySelector('.cem-card [data-c="done"]'); if (b) b.click(); }); }, { noWaitAfter: true });
+  // (CES2: the Send to sheet pop-up then opens by itself over that card; such a check closes it (×) when it is in the way, as a person who sends nothing does)
+  if (!opts.keepCards && typeof page.addLocatorHandler === 'function') await page.addLocatorHandler(page.locator('dialog.cpDlg[data-cp-after][open]').first(), async () => { await page.evaluate(() => { const b = document.querySelector('dialog.cpDlg[data-cp-after] [data-cp-close]'); if (b) b.click(); }); }, { noWaitAfter: true });
   await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
   await page.waitForFunction(needFacts => window.CN && window.Orders && window.OrderWin && (window.OrderFacts || !needFacts) && CN.S.cloud.ok === true, opts.facts !== false, { timeout: 60000 });
   return { srv, browser, context, page, errors, warns, async close() { await browser.close(); await srv.close(); } };

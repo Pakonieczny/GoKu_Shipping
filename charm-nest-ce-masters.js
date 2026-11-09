@@ -564,6 +564,7 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
       return edit(Object.assign({}, start, { faces: facesAgain(design) }), by);
     }
     card.done(design, got);
+    { const C = root.CharmNestCustomPiece; if (C && typeof C.open === 'function' && !design.noCut) card.over(() => C.open(Object.assign({ designId: got.id, version: got.version, after: true }, design.orderId ? { orderId: design.orderId } : {}))); }   // (CES2: the pop-up on every Save)
     const next = await card.choice();
     if (next === 'again') return edit(Object.assign({}, start, { id: got.id, version: got.version, faces: facesAgain(design), subtitle: subtitleFor(Object.assign({}, start, { id: got.id, version: got.version })) }), by);
     if (next === 'send') {
@@ -608,7 +609,7 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
     };
     const me = { token: session && session.token, drop: () => choose('gone') };
     liveCard = me;
-    const onKey = e => { if (!wrap.isConnected) return; if (e.key === 'Escape' && bar.children.length) { e.preventDefault(); e.stopPropagation(); choose(bar.querySelector('[data-c="discard"]') ? 'discard' : 'done'); } };
+    const onKey = e => { if (!wrap.isConnected) return; if (e.target && e.target.closest && e.target.closest('dialog') && !wrap.contains(e.target)) return;   /* (CES2: a key in the Send to sheet pop-up over the card is the pop-up's) */ if (e.key === 'Escape' && bar.children.length) { e.preventDefault(); e.stopPropagation(); choose(bar.querySelector('[data-c="discard"]') ? 'discard' : 'done'); } };
     root.addEventListener('keydown', onKey, true);
     wrap.addEventListener('click', e => { const b = e.target.closest('[data-c]'); if (b && !b.disabled) choose(b.dataset.c); });
     const buttons = list => { bar.innerHTML = list.map(([c, cls, text, dis, title]) => `<button class="cem-btn ${cls}" type="button" data-c="${c}"${dis ? ' disabled' : ''}${title ? ` title="${esc(title)}"` : ''}>${esc(text)}</button>`).join(''); const last = bar.querySelector('button:not(:disabled):last-child') || bar.querySelector('button'); requestAnimationFrame(() => { try { (last || card).focus({ preventScroll: true }); } catch (_) { /* fine */ } }); };
@@ -626,6 +627,9 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
       },
       /** CES1: any other card: a title, its lines (HTML, already escaped) and its buttons [[choice, class, words, disabled?, title?]]; one is chosen with choice(). */
       show(title, lines, list, bad) { h.textContent = title; para(lines, bad); buttons(list); },
+      /** CES2 (Paul, 9 Nov 2026: "I want the pop-up to open on every Save to give users the options that this pop-up modal provides"): the Send to sheet pop-up opened over the card at once
+       *  (openFn → its promise); sent, and the card goes with it; closed without sending, the card stays under it with its own choices (Done, Keep editing …). */
+      over(openFn) { Promise.resolve().then(openFn).then(out => { if (out && !picked) choose('gone'); }, e => note(`Send to sheet · ${(e && e.message) || e}`, true)); },
       choice() { return picked ? Promise.resolve(picked) : new Promise(r => { pick = r; }); },
       drop: me.drop
     };
@@ -648,6 +652,7 @@ dialog.cem-layer.cem-layer::backdrop{ background:transparent; backdrop-filter:no
     if (o.back && o.back.label) list.push(['back', 'cem-btn--ghost', String(o.back.label), false, o.back.title ? String(o.back.title) : '']);
     if (o.replace) list.push(['replace', 'cem-btn--gold', 'Replace on the order…', !!o.replace.disabled, o.replace.title ? String(o.replace.title) : 'Make this piece again from the drawing as saved: handmade custom, on the next sheet of the metal you pick, as a fix of this piece']);
     card.show(o.title || 'Saved', lines, list, !!o.bad);
+    if (typeof o.over === 'function') card.over(o.over);   // (CES2: the Send to sheet pop-up over the card on every Save)
     return card.choice();
   }
 
