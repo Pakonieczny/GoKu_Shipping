@@ -1120,6 +1120,9 @@ const Ladder = window.Ladder = (() => {
   ];
   const WORD = { running: ["Running", "go"], review: ["Waiting on you", "wait"], paused: ["Paused", "wait"], stopped: ["Stopped", "stop"], processed: ["Processing complete", "wait"], complete: ["Done", "go"] };
   const wordOf = r => r.status === "processed" && r.arrivalBusy ? ["Adding new orders", "go"] : WORD[r.status] || ["Running", "go"];   // as the banner says it
+  // (FLW1: the run's state in the short words of the status line; a run that is no longer moving is the "Last run")
+  const SHORT = { running: "running", review: "waiting on you", paused: "paused", stopped: "stopped", processed: "complete", complete: "done" };
+  const live = r => !!r && (r.arrivalBusy || ["running", "review", "paused", "stopped"].includes(r.status));
   const mount = () => document.getElementById("ladder");
   /** Which of the seven the run is standing on, and which of them is waiting on a person. */
   function shape() {
@@ -1130,36 +1133,80 @@ const Ladder = window.Ladder = (() => {
     return { r, idx, here, revN, engN };
   }
   const render = () => CNFrame.later("ladder", now);   // once a frame (CNFrame); the strip draws it with itself
+  /* FLW1 (Paul, 9 Nov 2026: "Also, this list does not match the actual process flow so make sure it matches"): the rail lists the production flow, the order Timeline's steps in its
+     order and words (charm-nest-flow-stages.js, CNFlow), each with the open orders standing at it (the order where its slowest piece is) and a press that shows them on Orders.
+     The Review and Engraving queues sit beside their steps. The nesting run's own seven steps are no longer what is run: the run is ONE status line under the list
+     ("Last run · set-… · complete"), its steps and their counts in the line's hover and, pressed open, as the buttons they always were (each still goes to its tab). */
+  let runOpen = false, flowAsk = 0;
+  const peek = () => { try { return window.Orders && Orders.flowPeek ? Orders.flowPeek() : null; } catch (_) { return null; } };
+  /** The counts are worked out at an idle moment, at most every 1.5 s (placeNow over every line), and the list drawn again when they change. */
+  function flowSoon() {
+    if (flowAsk || !window.CNFlow || !window.Orders || !Orders.flowNow) return;
+    const go = () => { flowAsk = 0; const was = peek(), wasSig = was ? JSON.stringify(was.counts) : ""; const f = Orders.flowNow(); if (f && JSON.stringify(f.counts) !== wasSig) render(); };
+    flowAsk = typeof requestIdleCallback === "function" ? requestIdleCallback(go, { timeout: 1200 }) : setTimeout(go, 250);
+  }
+  const STATION_ROWS = new Set(["sorted", "welded", "assembled"]);
+  const nOf = (f, id) => f && f.counts ? f.counts[id] || 0 : null;
+  function flowHtml(revN, engN) {
+    const F = window.CNFlow; if (!F) return "";
+    const f = peek(); if (!f || Date.now() - f.at > 1500) flowSoon();
+    const UI = window.OrderTimelineUI, icon = lane => UI && UI.laneIcon ? UI.laneIcon(lane) : "";
+    const ov = window.Orders && Orders.view ? Orders.view() : {}, onOrders = typeof S !== "undefined" && !!S && S.mode === "orders";
+    return `<div class="ldFlow" role="list" aria-label="Production flow: open orders at each step">` + F.STAGES.map(s => {
+      const n = nOf(f, s.id), unknown = STATION_ROWS.has(s.id) && !n;
+      const c = n == null ? "" : unknown ? "—" : String(n);
+      const more = s.id === "cut" ? " An order whose later scans this page has not seen stays here." : STATION_ROWS.has(s.id) ? " Learned from the order timelines this page has opened (no extra reads): an order whose scans were not seen here stays at Laser cut." : s.id === "shipped" || s.id === "completed" ? " Listed under Completed on Orders." : "";
+      const title = `${s.label} — ${s.words}.${n == null ? "" : unknown ? " Not known here." : ` ${n} order${n === 1 ? "" : "s"}.`}${more}`;
+      const chip = s.id === "review" && revN ? `<button class="ldChip warn" data-tab="review" title="decisions a person must make">Review<b>${revN}</b></button>`
+        : s.id === "design" && engN ? `<button class="ldChip info" data-tab="engrave" title="engraving still to be settled">Engraving<b>${engN}</b></button>` : "";
+      const on = ov && ov.stage === s.id && onOrders;
+      return `<div class="ldRow ldF${s.station ? " stn" : ""}${on ? " on" : ""}${n ? "" : " zero"}" role="listitem" data-stage="${s.id}">`
+        + `<button type="button" class="ldGo" data-stage-go="${s.id}" title="${esc(title)}" aria-label="${esc(`${s.label}: ${c || "not counted yet"}`)}"><i class="ic" data-lane="${s.lane}">${icon(s.lane)}</i><span class="n">${esc(s.label)}</span><span class="c">${esc(c)}</span></button>${chip}</div>`;
+    }).join("") + `</div>`;
+  }
+  /** The old run's steps, each with its count and its tab (the details of the status line). */
+  function stepsHtml(r, here) {
+    return `<div class="ldRows">` + STEPS.map((s, i) => {
+      const state = ["complete", "processed"].includes(r.status) || i < here ? "done" : i === here ? (r.status === "stopped" ? "stop" : "now") : "todo";
+      const c = s.count() || "";
+      return `<button class="ldRow ldStep${state === "now" ? " now" : ""}" data-tab="${s.tab}" title="${esc(s.label)}${c ? " — " + esc(c) : ""}"><i class="g ${state}"></i><span class="n">${esc(s.label)}</span><span class="c">${esc(c)}</span></button>`;
+    }).join("") + `</div>`;
+  }
   function now() {
     CNFrame.cancel("ladder");
     const host = mount(); if (!host) return;
     const { r, here, revN, engN } = shape();
+    const chips = !window.CNFlow && (revN || engN) ? `<div class="ldWaits">${revN ? `<button class="ldChip warn" data-tab="review" title="decisions a person must make">Review<b>${revN}</b></button>` : ""}${engN ? `<button class="ldChip info" data-tab="engrave" title="engraving still to be settled">Engraving<b>${engN}</b></button>` : ""}</div>` : "";
+    let run;
     if (!r) {
-      // no run: the ladder still answers "what is here" — the library, the pull, and what the library is missing
+      // no run: the line still answers "what is here" — the library, the pull, and what the library is missing
       const pulled = Orders.rows().filter(x => x.state !== "gone").reduce((m, x) => m + lineTotal(x), 0);
       const miss = Master.missingCount ? Master.missingCount() : 0;
-      host.innerHTML = `<div class="ldBand ldIdle"><b>No run open</b><span>${B.master.entries.size} SKU${B.master.entries.size === 1 ? "" : "s"} in the library</span></div>`
+      run = `<details class="ldRun ld-idle${miss ? " ldWarn" : ""}"${runOpen ? " open" : ""}><summary title="No run open · ${B.master.entries.size} SKU${B.master.entries.size === 1 ? "" : "s"} in the library"><i class="g todo"></i><span>No run open · ${B.master.entries.size} SKU${B.master.entries.size === 1 ? "" : "s"}${miss ? ` · ${miss} missing` : ""}</span></summary>`
         + `<div class="ldRows">`
         + `<button class="ldRow" data-tab="orders" title="the orders on the cards"><i class="g ${pulled ? "done" : "todo"}"></i><span class="n">Orders</span><span class="c">${pulled ? `${pulled} piece${pulled === 1 ? "" : "s"} pulled` : "nothing pulled"}</span></button>`
         + (miss ? `<button class="ldRow wait" data-tab="master" title="SKUs the orders want that no master file holds"><i class="g stop"></i><span class="n">Library</span><span class="c">${miss} SKU${miss === 1 ? "" : "s"} missing</span></button>` : "")
-        + `</div>`;
-      wire(host); return;
+        + `</div></details>`;
+    } else {
+      const [word, tone] = wordOf(r), step = here >= 0 ? STEPS[here] : null, stepC = step ? step.count() : "";
+      const set = r.setId || r.day || "", lead = live(r) ? "Run" : "Last run", short = r.status === "processed" && r.arrivalBusy ? "adding new orders" : SHORT[r.status] || "running";
+      const detail = `${word} · ${set}${r.runId ? ` · run ${r.runId}` : ""}${step ? ` · ${step.label}${stepC ? " " + stepC : ""}` : ""}` + STEPS.map(s => { const c = s.count(); return c ? `\n${s.label}: ${c}` : ""; }).join("");
+      const waiting = r.status === "review" && (revN || engN);
+      run = `<details class="ldRun ld-${tone}${waiting ? " ldWarn" : ""}"${runOpen ? " open" : ""}><summary title="${esc(detail)}"><i class="g ${tone === "stop" ? "stop" : live(r) ? "now" : "done"}"></i><span>${esc(lead)} · ${esc(set)} · ${esc(short)}${live(r) && step && r.status !== "processed" ? ` — ${esc(step.label)}${stepC ? " " + esc(stepC) : ""}` : ""}</span></summary>`
+        + stepsHtml(r, here) + `</details>`;
     }
-    const [word, tone] = wordOf(r);
-    const waitRow = r.status === "review" ? (engN ? "engrave" : "pull") : null;
-    host.innerHTML = `<div class="ldBand ld-${tone}" title="run ${esc(r.runId)}"><b>${esc(word)}</b><span>${esc(r.setId || r.day || "")}</span></div>`
-      + `<div class="ldRows">` + STEPS.map((s, i) => {
-        const state = ["complete","processed"].includes(r.status) || i < here ? "done" : i === here ? (r.status === "stopped" ? "stop" : "now") : "todo";
-        const waiting = (s.waits && s.waits()) || (s.id === waitRow && revN);
-        const c = s.count() || "";
-        return `<button class="ldRow${waiting ? " wait" : ""}${state === "now" ? " now" : ""}" data-tab="${s.tab}" title="${esc(s.label)}${c ? " — " + esc(c) : ""}"><i class="g ${state}"></i><span class="n">${esc(s.label)}</span><span class="c">${esc(c)}</span></button>`;
-      }).join("") + `</div>`
-      + (revN || engN ? `<div class="ldWaits">${revN ? `<button class="ldChip warn" data-tab="review" title="decisions a person must make">Review<b>${revN}</b></button>` : ""}${engN ? `<button class="ldChip info" data-tab="engrave" title="engraving still to be settled">Engraving<b>${engN}</b></button>` : ""}</div>` : "");
+    host.innerHTML = flowHtml(revN, engN) + chips + run;
     wire(host);
   }
   function wire(host) {
     host.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { setMode(b.dataset.tab); if (b.dataset.tab === "engrave" && window.Engrave) Engrave.render(); });
+    host.querySelectorAll("[data-stage-go]").forEach(b => b.onclick = () => { setMode("orders"); if (window.Orders && Orders.showStage) Orders.showStage(b.dataset.stageGo); render(); });
+    const d = host.querySelector ? host.querySelector(".ldRun") : null; if (d) d.addEventListener("toggle", () => { runOpen = d.open; });
   }
+  // (what the flow is made of moved: a step learned after the laser, an order shipped)
+  try { if (window.CNFlow && CNFlow.onChange) CNFlow.onChange(() => { if (window.Orders && Orders.flowStale) Orders.flowStale(); render(); }); } catch (_) {}
+  // (charm-nest-completed.js loads after this file: its 'cn-order-shipped' is heard instead of its onChange)
+  try { document.addEventListener("cn-order-shipped", () => { if (window.Orders && Orders.flowStale) Orders.flowStale(); render(); }); } catch (_) {}
   return { render, now, STEPS, word: r => wordOf(r)[0] };
 })();
 
@@ -2212,7 +2259,7 @@ const Orders = window.Orders = (() => {
     let mode = ""; try { mode = F.setupOf(r).mode; } catch (_) { /* a line the model cannot read has no chip */ }
     return mode === "both" ? ["info", "Front + back"] : mode === "front" ? ["info", "Front only"] : ["", ""];
   }
-  const OV = { pile: null, metal: null, form: null, eng: null, act: null, q: "", view: null, sort: "activity", desc: false, limit:48 };   // what the tab is showing right now   (act: RQFILTER, null | "hold" | "qr" | "both")
+  const OV = { pile: null, metal: null, form: null, eng: null, act: null, stage: null, q: "", view: null, sort: "activity", desc: false, limit:48 };   // what the tab is showing right now   (act: RQFILTER, null | "hold" | "qr" | "both")
   // (CMP1, Paul 9 Nov 2026: "remove the option for list or card review since it's not needed anymore": the Orders tab is always the list; a saved orderView / OV.view of "cards" is ignored)
   const viewMode = () => "list";
   /* CMP1 (Paul, 9 Nov 2026): a shipped order is no open order: it leaves Open Orders (its rows, its count, the tab's count) and is listed under Completed (charm-nest-completed.js, CNCompleted:
@@ -2222,6 +2269,32 @@ const Orders = window.Orders = (() => {
   const shippedRid = rid => { try { cmpWorld(); return !!(window.CNCompleted && CNCompleted.has(rid)); } catch (_) { return false; } };
   const shippedRow = r => !!r && !!r.order && shippedRid(r.order.receiptId);
   const openRow = r => r.state !== "gone" && !shippedRow(r);
+  /* FLW1 (Paul, 9 Nov 2026: "this list does not match the actual process flow so make sure it matches"): where each open order stands in the production flow, the rail's list
+     (charm-nest-flow-stages.js, CNFlow: the Timeline's steps, the order where its slowest piece is) and the Orders list's stage filter (OV.stage). Every answer comes from what this page
+     already holds: the lines, their placement (placeNow, heldNow), the sheets' cut records, the Review cards, and the steps after the laser learned from timelines already read. Nothing is
+     read for it; worked out at most once every 1.5 s (placeNow over every line is the cost). */
+  let flowMemo = null;
+  function flowCtx() {
+    const byId = new Map(); for (const sh of allSheets()) if (sh && sh.sheetId) byId.set(sh.sheetId, sh);
+    const rev = new Set();
+    for (const it of (B.review && B.review.items) || []) {
+      const k = String((it && it.key) || ""); if (!it || it.done || k.startsWith("eng:") || k.startsWith("held:")) continue;
+      for (const r of (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : [])) if (r && r.key) rev.add(r.key);
+    }
+    const cutSheet = x => { if (!x) return false; if (x.cut) return true; const sh = x.id && byId.get(x.id); if (!sh) return false; const w = replaceCutWhy(sh); return w === "laser cut" || w === "cut"; };
+    return { place: placeNow, held: heldNow, nested: nestedRow, review: r => rev.has(r.key),
+      cut: (r, pl) => { const on = pl && pl.sheets ? pl.sheets : []; return on.length > 0 && on.every(cutSheet); },
+      learned: rid => window.CNFlow ? CNFlow.learned(rid) : 0 };
+  }
+  /** { counts: { stage id: orders }, byRid: Map(order → stage id), at }, or null without CNFlow. maxAge: how old an answer may be (ms). */
+  function flowNow(maxAge) {
+    const F = window.CNFlow; if (!F) return null;
+    if (flowMemo && Date.now() - flowMemo.at < (maxAge == null ? 1500 : maxAge)) return flowMemo;
+    cmpWorld(); try { F.world(WORKSPACE_SANDBOX ? "sandbox" : "production"); } catch (_) {}
+    let out; try { out = F.count(rowsOf().filter(openRow), flowCtx(), window.CNCompleted ? CNCompleted.list() : []); } catch (e) { console.warn("[flow]", e && e.message); return flowMemo; }
+    out.at = Date.now(); return (flowMemo = out);
+  }
+  const stageWord = id => { const s = window.CNFlow && CNFlow.STAGES.find(x => x.id === id); return s ? s.label : String(id || ""); };
   /** What the order search reads on a line, lower case, Etsy's entities decoded (&#39; → '). Kept per line object. */
   const findCache = new WeakMap();
   function findText(r) {
@@ -2236,9 +2309,10 @@ const Orders = window.Orders = (() => {
   /** The lines the filters leave, in ship-by order. */
   function visibleRows() {
     // (PERF, Oct 2026: each row's activity time is worked out once for this sort, and the date range and direction read once, not per row)
-    const q = OV.q.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean), times = new Map(), act = CNListActivity.state("orders");
+    const q = OV.q.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean), times = new Map(), act = CNListActivity.state("orders"), flow = OV.stage ? flowNow() : null;
     return listRows().filter(r => {
       if (r.state === "gone" || shippedRow(r)) return false;   // (CMP1: a shipped order is under Completed)
+      if (OV.stage && flow && flow.byRid.get(String(r.order.receiptId)) !== OV.stage) return false;   // (FLW1: a step of the rail's flow pressed)
       if (OV.metal && (r.material || "none") !== OV.metal) return false;
       if (OV.form && ((r.spec && r.spec.form) || "none") !== OV.form) return false;
       if (OV.eng) { const needs = !!(r.engrave && r.engrave.needed); if (OV.eng === "yes" ? !needs : needs) return false; }
@@ -2404,7 +2478,7 @@ const Orders = window.Orders = (() => {
   const mine = rid => { const a = acted.get(String(rid)); return !!a && Date.now() - a.t < 10000; };
   let drawnAt = 0, drawVer = -1, wantDraw = true, drawnSig = "";   // (NAV, 28 Oct 2026: what the tab last drew and when: shown)
   /** What the bar can change (pile, search, filters, sort, view, range): the list drawn is the list asked for while this is the same (renderBody, shown). */
-  const listSig = () => JSON.stringify([OV.pile,OV.q,OV.metal,OV.form,OV.eng,OV.act,OV.sort,OV.desc,viewMode(),CNListActivity.key("orders")]);
+  const listSig = () => JSON.stringify([OV.pile,OV.q,OV.metal,OV.form,OV.eng,OV.act,OV.stage,OV.sort,OV.desc,viewMode(),CNListActivity.key("orders")]);
   let drawnOn = "", drawnLimit = 0;                               // the pile and view last drawn on screen ("" hidden since)
   /** Once, when the tab is built: which order a person acts on (a row's own button, or anything in the order window
    *  opened on it), and the tab being hidden (shown again, it is drawn at once). */
@@ -2658,7 +2732,7 @@ const Orders = window.Orders = (() => {
   const FIRST_ROWS = (host, cards) => cards ? 12 : Math.max(3, Math.ceil((host.clientHeight || 800) / 190) + 1);   // (a list row is ~200 px: 4 in the 800 px list of a 900 px screen, so 6; read after the list's scroll place, so nothing is laid out for it)
   let fillAsked = 0, filling = false, showing = false;   // (showing: the drawing is the tab's being shown, shown)
   function walkRows() {
-    const rows = rowsOf(), sig = JSON.stringify([rows.length, window.CustomOrders ? CustomOrders.version() + ":" + customRows().length : 0, OV.pile, OV.q, OV.metal, OV.form, OV.eng, OV.act, OV.sort, OV.desc, CNListActivity.key("orders")]);
+    const rows = rowsOf(), sig = JSON.stringify([rows.length, window.CustomOrders ? CustomOrders.version() + ":" + customRows().length : 0, OV.pile, OV.q, OV.metal, OV.form, OV.eng, OV.act, OV.stage, OV.sort, OV.desc, CNListActivity.key("orders")]);
     if (walkMemo && walkMemo.rows === rows && walkMemo.sig === sig && Date.now() - walkMemo.at < 5000) return walkMemo.list.filter(r => r.state !== "gone");
     const list = groupsOf(visibleRows()).flatMap(g => g.rows);
     walkMemo = { rows, sig, at: Date.now(), list };
@@ -2703,7 +2777,7 @@ const Orders = window.Orders = (() => {
       wanted.push(n);
     }
     else if (!listRows().length) wanted.push(blank("none", '<span>Nothing pulled yet — press <b>Pull orders</b> above.</span>'));   // one line: .libEmpty stacks its children
-    else if (!rows.length) wanted.push(blank("filters", 'Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button>', n => { n.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.act = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; render(); }; }));
+    else if (!rows.length) wanted.push(blank("filters", 'Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button>', n => { n.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.act = null; OV.stage = null; OV.q = ""; CNListActivity.set("orders",{range:"all"}); const box = document.getElementById("ordQ"); if (box) box.value = ""; render(); }; }));
     else {
     let lastDay=null;
     // (ONE ORDER, ONE ROW, 13 Oct 2026: the lines of one order stand together where its first line stood; a group of one is a row as it always was)
@@ -2872,7 +2946,7 @@ const Orders = window.Orders = (() => {
         else if (f === "sort") { if (val && val !== sortKey()) { OV.sort = val; OV.desc = false; } }   // (CMP1: Sort by, each key in its own natural direction first)
         else if (f === "dir") { if (val) setSortDir(val); }
         else if (f === "act" && val) OV.act = actToggle(actNow(), val); else OV[f] = OV[f] === val ? null : val; }); return; }   // (RQFILTER: the two action chips switch on and off one by one, "Any" lets go)
-      if (e.target.closest("[data-clear]")) { narrow(fbtn, () => { if (OV.pile !== "cancelled" && OV.pile !== "completed") OV.metal = OV.form = OV.eng = OV.act = null; CNListActivity.set("orders", { range: "all" }); resetSort(); }); return; }
+      if (e.target.closest("[data-clear]")) { narrow(fbtn, () => { if (OV.pile !== "cancelled" && OV.pile !== "completed") OV.metal = OV.form = OV.eng = OV.act = OV.stage = null; CNListActivity.set("orders", { range: "all" }); resetSort(); }); return; }
       if (e.target.closest("[data-done]")) ordFp.close(true);
     });
     fpop.addEventListener("keydown", e => {   // arrows walk the chips; Enter or Space presses the one that has the focus; Esc is the popover's own
@@ -2885,7 +2959,7 @@ const Orders = window.Orders = (() => {
       const b = e.target.closest("[data-ax],[data-ax-all]"); if (!b) return;
       const k = b.dataset.ax, touch = fbtn;
       narrow(touch, () => {
-        if (b.hasAttribute("data-ax-all")) { OV.metal = OV.form = OV.eng = OV.act = null; OV.q = ""; q.value = ""; CNListActivity.set("orders", { range: "all" }); resetSort(); }
+        if (b.hasAttribute("data-ax-all")) { OV.metal = OV.form = OV.eng = OV.act = OV.stage = null; OV.q = ""; q.value = ""; CNListActivity.set("orders", { range: "all" }); resetSort(); }
         else if (k === "range") CNListActivity.set("orders", { range: "all" });
         else if (k === "sort") resetSort();
         else OV[k] = null;
@@ -2939,6 +3013,7 @@ const Orders = window.Orders = (() => {
       if (OV.metal) items.push(["metal", OV.metal === "none" ? "No material" : labelOf(OV.metal), "Material"]);
       if (OV.eng) items.push(["eng", OV.eng === "yes" ? "Engraved" : "Not engraved", "Engraving"]);
       if (actNow()) items.push(["act", ACT_WORDS[actNow()], "Needs action"]);   // (RQFILTER)
+      if (OV.stage) items.push(["stage", stageWord(OV.stage), "Stage"]);   // (FLW1: the step of the rail's flow pressed)
     }
     const range = CNListActivity.state("orders").range;
     if (range !== "all") items.push(["range", CNListActivity.rangeLabel(range), "Time"]);
@@ -2947,6 +3022,7 @@ const Orders = window.Orders = (() => {
     const sig = JSON.stringify([items, items.length + (OV.q.trim() ? 1 : 0) > 1]);
     if (box._sig === sig) return;
     box._sig = sig; box.hidden = !items.length;
+    if (window.Ladder) Ladder.render();   // (FLW1: the rail's step that is shown here is marked, and unmarked when its chip is let go)
     box.innerHTML = items.map(([k, label, what]) => `<button type="button" class="ordAx" data-ax="${k}" aria-label="Remove the filter: ${esc(what)}, ${esc(label)}" title="Remove: ${esc(label)}">${esc(label)}${I.x}</button>`).join("")
       + (items.length + (OV.q.trim() ? 1 : 0) > 1 ? `<button type="button" class="ordAxAll" data-ax-all>Clear all</button>` : "");
   }
@@ -2991,7 +3067,7 @@ const Orders = window.Orders = (() => {
         : f === "act" ? (val ? (val === "both" ? actNow() === "both" : actHas(actNow(), val)) : !actNow()) : val ? OV[f] === val : !OV[f];   // (RQFILTER: Release Hold and Print QR are both pressed while the combined chip is)
       c.setAttribute("aria-pressed", String(on));
     }
-    const n = (cx ? 0 : [OV.metal, OV.form, OV.eng, actNow()].filter(Boolean).length) + (range !== "all" ? 1 : 0) + (sortIsDefault() ? 0 : 1);
+    const n = (cx ? 0 : [OV.metal, OV.form, OV.eng, actNow(), OV.stage].filter(Boolean).length) + (range !== "all" ? 1 : 0) + (sortIsDefault() ? 0 : 1);
     badge.hidden = !n; badge.textContent = n || "";
     if (n) btn.setAttribute("data-on", "1"); else btn.removeAttribute("data-on");
     btn.setAttribute("aria-label", n ? `Filters, ${n} applied` : "Filters");
@@ -3137,11 +3213,18 @@ const Orders = window.Orders = (() => {
    *  (NOHOLDPILE, Paul 20 Oct 2026: there is no On hold pile: "hold" opens Review at the held order, Review.showHeld) */
   function showPile(pile, q) {
     if (pile === "hold") { if (window.Review && Review.showHeld) Review.showHeld(q); return; }
-    OV.pile = pile === "cancelled" || pile === "completed" ? pile : null; OV.metal = OV.form = OV.eng = OV.act = null; OV.q = q ? String(q) : "";
+    OV.pile = pile === "cancelled" || pile === "completed" ? pile : null; OV.metal = OV.form = OV.eng = OV.act = OV.stage = null; OV.q = q ? String(q) : "";
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, walkRows, shown, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, listRows, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, askTable, releaseStampOf, releaseSealHtml, releaseAway, _kept: () => readSaid.size };
+  /** FLW1: the Orders list at one step of the flow (the rail's rows): the open orders standing there; Shipped and Completed are the Completed pile. */
+  function showStage(id) {
+    if (id === "shipped" || id === "completed") { showPile("completed"); return; }
+    OV.pile = null; OV.stage = id || null; OV.q = ""; flowMemo = null;
+    const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = "";
+    render();
+  }
+  return { view: () => OV, walkRows, shown, showPile, showStage, flowNow, flowPeek: () => flowMemo, flowStale: () => { if (flowMemo) flowMemo.at = 0; }, openRow, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, takeCustom, customBase: () => customBase, interpretAll, tableNoteHtml, paintTableNotes, lineRecord, rowFromRecord, rows: rowsOf, listRows, visibleRows, placeOf, heldNow, imageFor, wantImage, shipTxt, statePill: stateWords, stageText, applyPullRule, ctx, keepRest, takeOffGone, askTable, releaseStampOf, releaseSealHtml, releaseAway, _kept: () => readSaid.size };
 })();
 
 /* ═══ 18b · the page is the version that was deployed (MASTER4, Paul 15 Oct 2026) ══════════════════════════════

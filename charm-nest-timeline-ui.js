@@ -2490,9 +2490,11 @@
   /** The icon of the lane an event belongs to (the station badge's disc), as SVG markup; "" for no event. */
   function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
 
+  /** The icon of a lane by its key ("etsy", "office", "sheet", "sorting", "welding", "assembly", "shipping"), as SVG markup: the rail's production flow (FLW1, charm-nest-flow-stages.js) draws its steps with them. */
+  const laneIcon = k => iconSvg((LANE[k] || LANE.office).ic);
   /** Something this order's timeline is made of moved (learnt from the page's cheap shared signals): the open feed of that order reads now, even slowed. How many feeds were woken. */
   const poke = orderId => { const id = digits(orderId); let n = 0; for (const F of [...feeds]) if (id && F.orderId === id && F.poke()) n++; return n; };
-  root.OrderTimelineUI = { mount, feed, poke, stampSvg, derive, stepDone, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn,
+  root.OrderTimelineUI = { mount, feed, poke, stampSvg, derive, stepDone, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, laneIcon, LANES, sealed, sealsOf, blockerOf, requirementsOf, explainOn,
     stepOf, labelStepOf, personOf, placeOf, opStepOf, whenOf, timeOf, handStepOf, handOf, handDoneOf, handLive, handSealOf, faceModel, titleOf, sideOfEvent };
   root.OrderTimelineUI.pollOpenMs = POLL_OPEN;   // how often the open order view's feed reads (tests may set another before it opens)
 })(typeof window !== "undefined" ? window : globalThis);
