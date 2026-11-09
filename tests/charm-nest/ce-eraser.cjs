@@ -263,12 +263,12 @@ async function partB(browser, base) {
     await settle();
   }
 
-  await step('B1 the Tools panel: the Eraser heads the Scissors group ("Eraser Tool (Shift+E)", Illustrator\'s eraser), the Scissors in its flyout; Shift+E arms it, C the Scissors, Esc goes back to Select', async () => {
-    const head = await page.evaluate(() => { const b = document.querySelector('.ce-rail .ce-tool[data-tool="eraser"]'); const d = b && b.closest('.ce-drop'); return b ? { label: b.getAttribute('aria-label'), menu: d ? [...d.querySelectorAll('.ce-menu [data-tool]')].map(x => x.dataset.tool) : [], svg: !!b.querySelector('svg') } : null; });
+  await step('B1 the Tools panel: the Eraser, its own button right after the Scissors ("Eraser Tool (Shift+E)", Illustrator\'s eraser); Shift+E arms it, C the Scissors, Esc goes back to Select', async () => {
+    const head = await page.evaluate(() => { const b = document.querySelector('.ce-rail .ce-tool[data-tool="eraser"]'); return b ? { label: b.getAttribute('aria-label'), inFly: !!b.closest('.ce-drop'), svg: !!b.querySelector('svg') } : null; });
     assert.ok(head, 'an Eraser button on the rail');
-    assert.equal(head.label, 'Eraser Tool (Shift+E)'); assert.deepEqual(head.menu, ['eraser', 'scissors']); assert.ok(head.svg);
+    assert.equal(head.label, 'Eraser Tool (Shift+E)'); assert.equal(head.inFly, false, 'its own button'); assert.ok(head.svg);
     const rail = await page.evaluate(() => [...document.querySelectorAll('.ce-rail .ce-tools > .ce-tool, .ce-rail .ce-tools > .ce-drop > .ce-tool')].map(b => b.dataset.tool));
-    assert.ok(rail.indexOf('eraser') === rail.indexOf('pencil') + 1, 'after the Pencil: ' + rail.join(','));
+    assert.ok(rail.indexOf('eraser') === rail.indexOf('scissors') + 1, 'right after the Scissors: ' + rail.join(','));
     await page.keyboard.press('Shift+E'); await settle(); assert.equal(await tool(), 'eraser');
     await page.keyboard.press('c'); await settle(); assert.equal(await tool(), 'scissors');
     await page.keyboard.press('Shift+E'); await settle(); assert.equal(await tool(), 'eraser');

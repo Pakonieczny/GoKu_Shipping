@@ -401,8 +401,9 @@ async function partC() {
 
   // C4. an automatic claim skips a leftover that cannot hold one whole order (a leftover for one piece, for a sheet of pairs)
   const profileOf = cut => JSON.stringify({ version: 1, wPt: 100, hPt: 50, axis: 'x', step: .5, values: Array(100).fill(cut) });
-  const addStock = (id, cut, ms) => store.set('Charm_Nest_Rose_Stock/' + id, { id, metal: 'rose', wPt: 100, hPt: 50, revision: 1, profileJson: profileOf(cut), owner: null, available: true, createdMs: ms });
-  addStock('rgs-onepiece', 70, 1); addStock('rgs-roomy', 10, 2);
+  // (RGC1, Paul 9 Nov 2026: the automatic choice takes the NEWEST leftover first, by its last cut; these two are the newest, the one-piece leftover first in line)
+  const addStock = (id, cut, ms, at) => store.set('Charm_Nest_Rose_Stock/' + id, { id, metal: 'rose', wPt: 100, hPt: 50, revision: 1, profileJson: profileOf(cut), owner: null, available: true, createdMs: ms, lastCutAt: at });
+  addStock('rgs-onepiece', 70, 1, Date.now() + 2e6); addStock('rgs-roomy', 10, 2, Date.now() + 1e6);
   const fit = { unit: 2, areaMm2: 61, minMm: 6.7, maxMm: 10.4 };
   assert.deepEqual([...[70, 10].map(c => RoseStock.fitCheck(fit)({ profileJson: profileOf(c) }))], [false, true], 'fitCheck: a leftover for one piece cannot take a pair, a roomy one can');
   assert.equal(RoseStock.fitCheck(undefined)({ profileJson: profileOf(70) }), true, 'no hint, no change'); assert.equal(RoseStock.fitCheck({ unit: 1 })({ profileJson: profileOf(70) }), true, 'single-piece orders: no change');
@@ -411,7 +412,7 @@ async function partC() {
   assert.equal(picky.stock.id, 'rgs-roomy', 'the sheet of pairs got the roomy leftover, not the first one on the list');
   assert.equal(store.get('Charm_Nest_Rose_Stock/rgs-onepiece').owner, null, 'and the one-piece leftover is still free for a single piece');
   const plainClaim = await api.roseClaim({ sheetId: 'sheet-c', wPt: 100, hPt: 50, metal: 'rose' });
-  assert.equal(plainClaim.stock.id, 'rgs-onepiece', 'without the hint, the first on the list as always');
+  assert.equal(plainClaim.stock.id, 'rgs-onepiece', 'without the hint, the first in line (the newest leftover) as always');
   // 10K / 14K: only a leftover that fits, and nothing else; a leftover that cannot hold a pair is no leftover for that sheet
   store.set('Charm_Nest_Rose_Stock/g14-onepiece', { id: 'g14-onepiece', metal: 'gold14k', wPt: 100, hPt: 50, revision: 1, profileJson: profileOf(70), owner: null, available: true, createdMs: 1 });
   const none = await api.roseClaim({ sheetId: 'sheet-g', wPt: 100, hPt: 50, metal: 'gold14k', onlyRemnant: true, fit });

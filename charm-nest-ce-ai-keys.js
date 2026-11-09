@@ -219,7 +219,7 @@
 
   /* ═══ 4 · the shortcuts as a table: every command, Illustrator's Tools list and menus ═══ */
   const TOOL_ORDER = ['select', 'direct', 'marquee', 'pen', 'anchorAdd', 'anchorDel', 'anchorConvert', 'text', 'line', 'rect', 'shape-rrect', 'ellipse', 'polygon', 'shape-star',
-    'shape-heart', 'shape-ring', 'shape-bail', 'pencil', 'eraser', 'scissors', 'tool.rotate', 'tool.reflect', 'tool.scale', 'cw-free', 'cw-persp', 'cw-blend', 'hand', 'zoom'];
+    'shape-heart', 'shape-ring', 'shape-bail', 'pencil', 'scissors', 'eraser', 'tool.rotate', 'tool.reflect', 'tool.scale', 'cw-free', 'cw-persp', 'cw-blend', 'hand', 'zoom'];
   const BUILTIN = ['select', 'marquee', 'text', 'line', 'rect', 'ellipse', 'polygon', 'hand', 'zoom'];
   const MOD_ROWS = mac => [
     ['Hand Tool (temporary)', 'Space', 'hold, then drag'],

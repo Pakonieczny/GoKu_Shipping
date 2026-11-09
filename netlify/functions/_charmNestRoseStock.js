@@ -169,7 +169,11 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       if(held.docs[0]&&held.docs[0].id!==b.stockId&&!b.swap)throw new Error('This sheet already holds another physical sheet. Give it back before choosing a partial sheet');
       stockId=b.stockId;
     }
-    if(!stockId&&!b.fresh){const available=(await roseList({metal})).stocks,room=fitCheck(b.fit);stockId=available.find(s=>Math.abs(s.wPt-b.wPt)<.01&&Math.abs(s.hPt-b.hPt)<.01&&room(s))?.id;}
+    // (RGC1, Paul 9 Nov 2026: one physical sheet is used up before a new one is started: the automatic choice takes the metal's NEWEST leftover with room (the one the last green line made),
+    //  then any other sheet on the list oldest first as before, and a brand-new sheet only when none fits. Every metal with a green line. A chosen sheet (stockId, exact) and fresh are as they were)
+    if(!stockId&&!b.fresh){const available=(await roseList({metal})).stocks,room=fitCheck(b.fit),left=s=>+s.revision>0||!!s.profileJson,cutAt=s=>+s.lastCutAt||0;
+      const order=available.filter(left).sort((x,y)=>cutAt(y)-cutAt(x)).concat(available.filter(s=>!left(s)));
+      stockId=order.find(s=>Math.abs(s.wPt-b.wPt)<.01&&Math.abs(s.hPt-b.hPt)<.01&&room(s))?.id;}
     // onlyRemnant (10K and 14K nest on a leftover when one fits, and otherwise claim nothing): no leftover, nothing is created or written
     if(b.onlyRemnant&&!stockId)return {stock:null,protectedJson:null};
     if(stockId&&!id(stockId))throw new Error('Invalid '+metalWord(metal)+' sheet');

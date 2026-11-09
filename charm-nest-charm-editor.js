@@ -1183,7 +1183,7 @@
     'shape-ring': SA('<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="4"/>'),
     'shape-bail': SA('<circle cx="12" cy="7.5" r="3.6"/><path d="M6 21v-5.5a6 6 0 0 1 12 0V21"/>'),
     pencil: SA('<path d="M4.5 19.5 5.6 15 15.8 4.8l3.4 3.4L9 18.4Z"/><path d="m13.8 6.8 3.4 3.4"/><path d="m5.6 15 3.4 3.4"/>'),
-    // (ER1, Paul 9 Nov 2026: Illustrator's Eraser, the head of the Scissors group: charm-nest-ce-eraser.js)
+    // (ER1, Paul 9 Nov 2026: Illustrator's Eraser, its own button after the Scissors (CES3's place): charm-nest-ce-eraser.js)
     eraser: SA('<path d="M14.6 4.1 20 9.5a1.4 1.4 0 0 1 0 2L11.6 19.9H7.4l-3.1-3.1a1.4 1.4 0 0 1 0-2Z"/><path d="m9 9.5 5.6 5.6"/><path d="M11.6 19.9h8.4"/>'),
     scissors: SA('<circle cx="6.5" cy="17" r="2.6"/><circle cx="17.5" cy="17" r="2.6"/><path d="M8.4 15.2 16.5 4.5M15.6 15.2 7.5 4.5"/>'),
     'cw-free': SA('<path d="M5.5 7.5 18 5l1 13.5-13.5 1Z" stroke-dasharray="2 1.5"/><rect x="4" y="6" width="3" height="3" fill="currentColor"/><rect x="16.5" y="3.5" width="3" height="3" fill="currentColor"/><rect x="17.5" y="17" width="3" height="3" fill="currentColor"/><rect x="4" y="18" width="3" height="3" fill="currentColor"/>'),
@@ -1207,7 +1207,7 @@
   });
   const TOOL_NAME = { select: 'Selection', marquee: 'Marquee Selection', text: 'Type', rect: 'Rectangle', ellipse: 'Ellipse', line: 'Line Segment', polygon: 'Polygon', hand: 'Hand', zoom: 'Zoom' };
   /** Where each tool sits in Illustrator's Tools panel: its slot (tools sharing a slot share a flyout) and the groups, a line between each. */
-  const AI_SLOT = { direct: 'direct', pen: 'pen', anchorAdd: 'pen', anchorDel: 'pen', anchorConvert: 'pen', pencil: 'pencil', eraser: 'scissors', scissors: 'scissors', 'cw-free': 'distort', 'cw-persp': 'distort', 'cw-blend': 'blend' };
+  const AI_SLOT = { direct: 'direct', pen: 'pen', anchorAdd: 'pen', anchorDel: 'pen', anchorConvert: 'pen', pencil: 'pencil', scissors: 'scissors', eraser: 'eraser', 'cw-free': 'distort', 'cw-persp': 'distort', 'cw-blend': 'blend' };
   const SHAPE_ORDER = ['rect', 'shape-rrect', 'ellipse', 'polygon', 'shape-star', 'shape-heart', 'shape-ring', 'shape-bail'];
   /** The person's Illustrator preferences (charm-nest-ce-ai-shell.js writes them: Edit ▸ Preferences ▸ User Interface): read here too, so the workspace opens in them. */
   function aiPrefs() {
@@ -1230,6 +1230,12 @@
 dialog.ce-layer.ce-layer{ position:fixed; inset:0; width:100%; height:100%; max-width:none; max-height:none; margin:0; padding:0; border:0; background:transparent; color:inherit; overflow:visible; outline:none;
   box-shadow:none; border-radius:0; transform:none; opacity:1; animation:none !important; transition:none !important; }
 dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none; animation:none !important; }
+.ce-hold{ position:absolute; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; background:rgba(20,20,20,.35); cursor:progress; }
+.ce-hold__card{ min-width:240px; padding:14px 18px; background:#2b2b2b; color:#efefef; border:1px solid #1a1a1a; box-shadow:0 10px 30px rgba(0,0,0,.4); font:600 13px/1.4 var(--ai-font,sans-serif); }
+.ce-hold__bar{ position:relative; height:4px; margin-top:10px; overflow:hidden; background:#4a4a4a; border-radius:2px; }
+.ce-hold__bar i{ position:absolute; top:0; bottom:0; left:-40%; width:40%; background:#378ef0; border-radius:2px; animation:ceHold 1s ease-in-out infinite; }
+@keyframes ceHold{ to{ left:100%; } }
+@media (prefers-reduced-motion: reduce){ .ce-hold__bar i{ animation-duration:2.4s; } }
 .ce-root{
   --ink:#1c1d1d; --paper:#fff; --band:#faf9f7; --hair:#e6e4e0; --muted:#6d6a66; --gold:#a58a52; --gold-lt:#cdb98a;
   --hov:#f2eee4; --hov-line:#c6bfaf; --press:#e6dfcd; --on-hov:#33342f;
@@ -1768,12 +1774,26 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
   const keyLabel = s => { if (root && root.CharmEditorAi && typeof root.CharmEditorAi.keyLabel === 'function') return root.CharmEditorAi.keyLabel(s); const k = parseKey(s); return k ? (k.alt ? '⌥' : '') + (k.shift ? '⇧' : '') + (k.mod ? '⌘' : '') + (k.key.length === 1 ? k.key.toUpperCase() : k.key) : ''; };
 
   let live = null;
+  /* CES3: a saved workspace held on screen (opts.hold) until the windows after its Save are answered: { root, layer, overflow, prevFocus } */
+  let heldGhost = null;
+  /** The held workspace let go (Done, the pop-up answered): it goes, and the page is as it was. `say`: a word on its progress bar instead (it stays). */
+  function release(say) {
+    const g = heldGhost; if (!g) return false;
+    if (typeof say === 'string') { try { const el = g.root.querySelector('[data-hold-say]'); if (el) el.textContent = say; } catch (e) { /* fine */ } return true; }
+    heldGhost = null;
+    if (g.root.parentNode) g.root.parentNode.removeChild(g.root);
+    if (g.layer) { try { if (g.layer.open) g.layer.close(); } catch (e) { /* fine */ } g.layer.remove(); }
+    if (!live) { doc.documentElement.style.overflow = g.overflow; try { if (g.prevFocus && g.prevFocus.isConnected && g.prevFocus.focus) g.prevFocus.focus({ preventScroll: true }); } catch (e) { /* fine */ } }
+    return true;
+  }
   function open(opts) {
     if (!doc || !doc.body) return Promise.reject(new Error('CharmEditor.open needs a page'));
     if (live) return Promise.reject(new Error('CharmEditor is already open'));
+    const ghost = heldGhost;
     return new Promise(resolve => {
       live = workspace(opts || {}, v => { live = null; api.current = null; resolve(v); });
       api.current = live;
+      if (ghost && heldGhost === ghost) { heldGhost = null; if (ghost.root.parentNode) ghost.root.parentNode.removeChild(ghost.root); if (ghost.layer) { try { if (ghost.layer.open) ghost.layer.close(); } catch (e) { /* fine */ } ghost.layer.remove(); } }   // (Keep editing: the next workspace takes the held one's place)
     });
   }
 
@@ -1872,7 +1892,8 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
       take('pen'), `<button class="ce-tool" type="button" data-tool="text" data-tip="text" aria-label="Type Tool (T)">${AIC.text}</button>`,
       `<button class="ce-tool" type="button" data-tool="line" data-tip="line" aria-label="Line Segment Tool (\\)">${AIC.line}</button>`,
       `<div class="ce-drop" data-drop="shapes"><button class="ce-tool ce-drop__b" type="button" data-tool="rect" data-shapes data-tip="rect" aria-label="Rectangle Tool (M), Ellipse Tool (L), Polygon Tool">${AIC.rect}</button><div class="ce-menu" role="menu" hidden>${shapesMenu}</div></div>`,
-      take('pencil'), take('scissors'), sep, take('distort'), take('blend'), sep,
+      take('pencil'), take('scissors'), take('eraser'), sep,   // (CES3: the Eraser, its own button beside the Scissors, as Illustrator's Tools panel shows it)
+      take('distort'), take('blend'), sep,
       `<button class="ce-tool" type="button" data-tool="hand" data-tip="hand" aria-label="Hand Tool (H, or hold Space)">${AIC.hand}</button>`,
       `<button class="ce-tool" type="button" data-tool="zoom" data-tip="zoom" aria-label="Zoom Tool (Z)">${AIC.zoom}</button>`
     ];
@@ -4059,10 +4080,18 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
       if (AIS) { try { AIS.closeAll(); } catch (e) { /* fine */ } AIS = null; }
       xClose(v);
       if (ro) ro.disconnect();
-      if (rootEl.parentNode) rootEl.parentNode.removeChild(rootEl);
-      if (layer) { try { if (layer.open) layer.close(); } catch (e) { /* fine */ } layer.remove(); }   // (CES1: the editor's own top-layer dialog goes with it)
-      doc.documentElement.style.overflow = prevOverflow;
-      try { if (prevFocus && prevFocus.focus) prevFocus.focus({ preventScroll: true }); } catch (e) { /* the page moved on */ }
+      /* CES3 (Paul, 9 Nov 2026: "the charm editor closes before any pop-ups appear ... Please ensure the editor stays open until all the selections/options have been chosen by the user from all
+         relevant popups ... If there needs to be a delay then add a quick progress bar"): opts.hold and a save: the workspace stays where it is, still and covered by a progress bar ("Saving…"),
+         under the windows that come after Save, until the caller lets it go (CharmEditor.release) or the next workspace opens in its place (Keep editing). */
+      if (opts.hold && v && !wentBack) {
+        try { const hb = doc.createElement('div'); hb.className = 'ce-hold'; hb.setAttribute('role', 'status'); hb.innerHTML = '<div class="ce-hold__card"><b data-hold-say>Saving…</b><div class="ce-hold__bar"><i></i></div></div>'; win.appendChild(hb); } catch (e) { /* the workspace as it was */ }
+        heldGhost = { root: rootEl, layer, overflow: prevOverflow, prevFocus };
+      } else {
+        if (rootEl.parentNode) rootEl.parentNode.removeChild(rootEl);
+        if (layer) { try { if (layer.open) layer.close(); } catch (e) { /* fine */ } layer.remove(); }   // (CES1: the editor's own top-layer dialog goes with it)
+      }
+      if (!heldGhost || heldGhost.root !== rootEl) doc.documentElement.style.overflow = prevOverflow;
+      if (!heldGhost || heldGhost.root !== rootEl) { try { if (prevFocus && prevFocus.focus) prevFocus.focus({ preventScroll: true }); } catch (e) { /* the page moved on */ } }
       done(v);
       if (wentBack && back && back.run) { try { back.run(v); } catch (e) { /* the caller's own */ } }
     }
@@ -4613,6 +4642,9 @@ dialog.ce-layer.ce-layer::backdrop{ background:transparent; backdrop-filter:none
   const api = { open, model, builtinTextToPaths, current: null, version: 1 };
   /** CES1: the workspace open now brought in front of every window and given the keys → whether one is open. */
   api.raise = () => !!(live && typeof live.raise === 'function' && live.raise());
+  /** CES3: the saved workspace held under the windows after its Save let go (or, with a string, its progress bar's word changed). */
+  api.release = release;
+  api.held = () => !!heldGhost;
   // (ENGZOOM, 29 Oct 2026: the view's shared parts, section 0: the Design & Engrave work area zooms, pans and draws its rulers with them)
   api.view = Object.freeze({ PX100, ZMIN, ZMAX, PT, MM, LADDER, ZLADDER, ZOOM_PRESETS, ruleSteps, ruleNum, stepZoom, fmtZoom, wheelOf, paintRuler });
   // the extension points (see the header): empty lists the other files push onto; anything registered before this file loaded is taken in

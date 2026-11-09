@@ -39,11 +39,18 @@ async function world(opts = {}) {
   page.on('console', m => { if (m.type() === 'warning' && /^order view:/.test(m.text())) warns.push(m.text()); });   // (OrderWin's tryDo swallows an error with this warning: none may)
   page.setDefaultTimeout(30000);
   page.on('pageerror', e => { errors.push(e.message); console.error('page error:', String(e.stack || e.message).split('\n').slice(0, 4).join(' | ')); });
-  // (CES1, 9 Nov 2026: a piece's Save in the Charm Editor now ends with its card over the page (Done / Keep editing / Replace on the order…). A check written before it that goes on clicking the
-  //  page has the card put away with Done when it is in the way of that click, as a person would; a check of the card itself opens its world with { keepCards: true })
-  if (!opts.keepCards && typeof page.addLocatorHandler === 'function') await page.addLocatorHandler(page.locator('.cem-card:has([data-c="done"]):not(:has([data-c="send"]))').first(), async () => { await page.evaluate(() => { const b = document.querySelector('.cem-card [data-c="done"]'); if (b) b.click(); }); }, { noWaitAfter: true });
-  // (CES2: the Send to sheet pop-up then opens by itself over that card; such a check closes it (×) when it is in the way, as a person who sends nothing does)
-  if (!opts.keepCards && typeof page.addLocatorHandler === 'function') await page.addLocatorHandler(page.locator('dialog.cpDlg[data-cp-after][open]').first(), async () => { await page.evaluate(() => { const b = document.querySelector('dialog.cpDlg[data-cp-after] [data-cp-close]'); if (b) b.click(); }); }, { noWaitAfter: true });
+  // (CES1-CES3, 9 Nov 2026: a Save in the Charm Editor now ends with windows over the held editor: a piece's card (Done / Keep editing / Replace on the order…) and the Send to sheet pop-up that
+  //  opens by itself over it. A check written before them answers them as a person who sends nothing does: × on that pop-up, Done on the piece's card; a check of those windows themselves opens
+  //  its world with { keepCards: true })
+  if (!opts.keepCards) await context.addInitScript(() => {
+    let due = 0;
+    const go = () => { due = 0;
+      const x = document.querySelector('dialog.cpDlg[data-cp-after][open] [data-cp-close]'); if (x) { x.click(); return; }
+      const c = [...document.querySelectorAll('.cem-card')].find(k => k.querySelector('[data-c="done"]') && !k.querySelector('[data-c="send"]')); if (c) c.querySelector('[data-c="done"]').click(); };
+    const look = () => { if (!due) due = setTimeout(go, 250); };
+    const start = () => new MutationObserver(look).observe(document.documentElement, { childList: true, subtree: true });
+    if (document.documentElement) start(); else document.addEventListener('DOMContentLoaded', start, { once: true });
+  });
   await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
   await page.waitForFunction(needFacts => window.CN && window.Orders && window.OrderWin && (window.OrderFacts || !needFacts) && CN.S.cloud.ok === true, opts.facts !== false, { timeout: 60000 });
   return { srv, browser, context, page, errors, warns, async close() { await browser.close(); await srv.close(); } };

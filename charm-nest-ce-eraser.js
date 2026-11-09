@@ -1,7 +1,7 @@
 /* charm-nest-ce-eraser.js — THE ERASER TOOL of the Charm Editor (Paul, 9 Nov 2026: "for the charm editor, I need the option to erase portions of a vectorized image.
  * Adobe Illustrator has this option so I need you to copy it and make it function the exact same way and add it to the left-hand side menu").
  *
- * Illustrator's Eraser Tool (Shift+E), in the Tools panel where Illustrator has it: the first tool of the Scissors group (Eraser, Scissors), its eraser icon, "Eraser Tool (Shift+E)".
+ * Illustrator's Eraser Tool (Shift+E), in the Tools panel on the left: its own button right after the Scissors (where CES3 put it, Paul: not hidden in a flyout), its eraser icon, "Eraser Tool (Shift+E)".
  *   Drag            erases along the stroke: the area the brush sweeps is taken out of the filled paths it touches (a boolean subtraction, CharmEditorOps.kernel.erase on the
  *                   repo's Clipper): what is left stays closed filled paths, a shape cut in two becomes two paths, holes stay holes, every curve the brush did not touch is
  *                   the same curve. A line engraving (a path drawn by its stroke alone) is cut where the brush crosses it, the pieces outside left as open paths.
@@ -546,7 +546,7 @@
     return box;
   }
 
-  /* ═══ 5 · REGISTERED with the editor's extension points: the tool (in the Scissors group, before the Scissors, as Illustrator's panel has it), its options ═══ */
+  /* ═══ 5 · REGISTERED with the editor's extension points: the tool (its own slot after the Scissors: AI_SLOT eraser), its options ═══ */
   function register(r) {
     if (!r || !r.document) return;
     const CE = r.CharmEditor || (r.CharmEditor = {});

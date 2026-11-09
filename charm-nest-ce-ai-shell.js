@@ -271,8 +271,8 @@
     { id: 'tool.rect', label: 'Rectangle Tool', key: 'M', run: w => w.act('tool', 'rect'), menu: false },
     { id: 'tool.ellipse', label: 'Ellipse Tool', key: 'L', run: w => w.act('tool', 'ellipse'), menu: false },
     { id: 'tool.marquee', label: 'Marquee Selection Tool', key: 'Q', run: w => w.act('tool', 'marquee'), menu: false },
+    { id: 'tool.eraser', label: 'Eraser Tool', key: 'Shift+E', run: w => w.act('tool', 'eraser'), menu: false },   // (CES3: Illustrator's ⇧E)
     { id: 'tool.free', label: 'Free Transform Tool (Free Distort)', key: 'E', run: w => (w.x.hasTool('cw-free') ? w.act('tool', 'cw-free') : w.act('say', 'Free Transform: drag the selection\'s handles (Ctrl or Alt: from the centre)')), menu: false },
-    { id: 'tool.eraser', label: 'Eraser Tool', key: 'Shift+E', run: w => (w.x.hasTool('eraser') ? w.act('tool', 'eraser') : w.act('say', 'The Eraser is not on this page')), menu: false },   // (ER1: before the old E of the Ellipse)
     { id: 'tool.rotate', label: 'Rotate', key: 'R', run: w => w.act('say', 'Rotate: drag just outside a corner of the selection (Shift: 15° steps), or Object ▸ Transform ▸ Rotate…'), menu: false, sheet: 'no Rotate tool: drag outside a corner, or Object ▸ Transform ▸ Rotate…' },
     { id: 'tool.reflect', label: 'Reflect', key: 'O', run: w => w.act('say', 'Reflect: Object ▸ Transform ▸ Reflect… or Flip Horizontal / Vertical'), menu: false, sheet: 'no Reflect tool: Object ▸ Transform ▸ Reflect…' },
     { id: 'tool.scale', label: 'Scale', key: 'S', run: w => w.act('say', 'Scale: drag a handle of the selection (Shift keeps the proportions), or Object ▸ Transform ▸ Scale…'), menu: false, sheet: 'no Scale tool: drag a handle, or Object ▸ Transform ▸ Scale…' },

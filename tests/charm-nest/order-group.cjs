@@ -126,11 +126,9 @@ async function run(mode) {
     await page.evaluate(k => { delete Orders.rows().find(r => r.key === k).hold; Orders.render(); }, K('twoPiece', 1));
     await page.waitForTimeout(300);
 
-    // 12. the cards view groups too: one full-width card, its pieces side by side, one button
-    await page.click('#ordViewSeg [data-view="cards"]'); await page.waitForSelector('#ordItems.ordCards .ordGroup');
-    const cards = await page.evaluate(rid => { const n = document.querySelector(`#ordItems.ordCards > [data-rid="${rid}"]`), r = n.getBoundingClientRect(), host = document.getElementById('ordItems').getBoundingClientRect(), ps = [...n.querySelectorAll('.ogPiece')].map(p => p.getBoundingClientRect()); return { full: Math.abs(r.width - host.width) < 2, side: ps.length === 2 && Math.abs(ps[0].top - ps[1].top) < 2 && ps[1].left > ps[0].left, btn: n.querySelectorAll('.revSendBtn').length }; }, O.twoPiece.rid);
-    ok('12 the cards view: the order is one full-width card, its two pieces side by side, one Hold Order', cards.full && cards.side && cards.btn === 1, JSON.stringify(cards));
-    await page.click('#ordViewSeg [data-view="list"]');
+    // 12. (CMP1, Paul 9 Nov 2026: "remove the option for list or card review since it's not needed anymore") there is no cards view: the grouped order stays one card of rows in the list
+    const listOnly = await page.evaluate(rid => ({ seg: !!document.getElementById('ordViewSeg'), list: !!document.querySelector('#ordItems.ordList'), group: !!document.querySelector(`#ordItems.ordList > .ordGroup[data-rid="${rid}"]`) }), O.twoPiece.rid);
+    ok('12 no Cards | List switch: the Orders tab is the list, the grouped order one card in it', !listOnly.seg && listOnly.list && listOnly.group, JSON.stringify(listOnly));
 
     // 13. a narrow screen: nothing spills out of the card and the page does not scroll sideways
     await page.setViewportSize({ width: 900, height: 800 }); await page.waitForTimeout(300);

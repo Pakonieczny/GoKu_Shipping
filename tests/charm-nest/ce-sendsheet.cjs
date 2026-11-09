@@ -231,15 +231,19 @@ async function partB() {
     const sel0 = await page.evaluate(() => ({ sel: CharmEditor.current.selection(), tool: CharmEditor.current.tool(), cmd: !!(CharmEditor.commands && CharmEditor.commands.sendToSheet) }));
     const foot = await page.evaluate(() => { const b = document.querySelector('.ce-root [data-cp-ce-send]'); return b ? { text: b.textContent, nextToSave: b.nextElementSibling && b.nextElementSibling.dataset.act === 'save' } : null; });
     await page.evaluate(() => { window.__p3 = CharmEditor.commands.sendToSheet.run(CharmEditor.current.ctx || {}); });
-    await page.waitForSelector('dialog.cpDlg[open] [data-cp-name]');
-    await page.waitForFunction(() => document.activeElement && document.activeElement.matches('dialog.cpDlg [data-cp-name]'));
+    // (CES3, Paul 9 Nov 2026: opened from the Charm Editor the pop-up has no Name / Why it is made / fix fields: the keys are checked in its order search instead)
+    await page.waitForSelector('dialog.cpDlg[open] [data-cp-attach="other"]');
+    const noName = await page.evaluate(() => { const n = document.querySelector('dialog.cpDlg [data-cp-name]'); return !n || !!n.closest('[hidden]') || !n.offsetParent; });
+    await page.click('dialog.cpDlg [data-cp-attach="other"]');
+    await page.waitForFunction(() => document.activeElement && document.activeElement.matches('dialog.cpDlg [data-cp-q]'));
     await page.keyboard.type('vr test'); await page.keyboard.press('Backspace'); await page.keyboard.press('Delete');
-    const k = await page.evaluate(() => ({ name: document.querySelector('dialog.cpDlg [data-cp-name]').value, tool: CharmEditor.current.tool(), n: CharmEditor.current.items().length, sel: CharmEditor.current.selection(), top: document.querySelector('dialog.cpDlg').matches(':modal'), puts: __puts.length, last: __puts[__puts.length - 1] }));
-    await page.keyboard.press('Escape');
+    const k = await page.evaluate(() => ({ name: document.querySelector('dialog.cpDlg [data-cp-q]').value, tool: CharmEditor.current.tool(), n: CharmEditor.current.items().length, sel: CharmEditor.current.selection(), top: document.querySelector('dialog.cpDlg').matches(':modal'), puts: __puts.length, last: __puts[__puts.length - 1] }));
+    await page.keyboard.press('Escape'); await settle(page);
+    if (await page.evaluate(() => !!document.querySelector('dialog.cpDlg'))) await page.keyboard.press('Escape');   // (a search box takes the first Esc to empty itself)
     await page.waitForFunction(() => !document.querySelector('dialog.cpDlg'));
     const after = await page.evaluate(async () => ({ editor: !!CharmEditor.current, p3: await window.__p3 }));
     check('B14 "Send to sheet…" in the Charm Editor (its command, and a button beside Save) keeps the drawing as a version and opens the pop-up over the editor; letters, Backspace and Delete typed in it stay in it (the editor\'s tool and its selected part untouched); Esc puts the pop-up away, the editor stays',
-      sel0.cmd && !foot && sel0.sel.length === 1 && k.top && k.name === 'vr tes' && k.tool === sel0.tool && k.n === 1 && k.sel.length === 1 && k.last && k.last.name === 'HEART_1203' && !k.last.orderId && after.editor && after.p3 === null,
+      noName && sel0.cmd && !foot && sel0.sel.length === 1 && k.top && k.name === 'vr tes' && k.tool === sel0.tool && k.n === 1 && k.sel.length === 1 && k.last && k.last.name === 'HEART_1203' && !k.last.orderId && after.editor && after.p3 === null,
       `typed "${k.name}", tool ${k.tool}, ${k.n} part, ${Math.abs(k.last.widthMm - 12).toFixed(4)} mm off a 12 mm heart`);
     await page.evaluate(() => document.querySelector('.ce-root [data-act="cancel"]').click());
     await page.waitForFunction(() => !CharmEditor.current);

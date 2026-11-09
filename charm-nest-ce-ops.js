@@ -1509,6 +1509,8 @@
     return true;
   }
 
+  /* (CES3's Eraser tool that stood here is charm-nest-ce-eraser.js's now, ER1, Paul 9 Nov 2026: one Eraser, its own button after the Scissors; its boolean is kernel.erase above) */
+
   function install() {
     if (!doc) return;
     const CE = root.CharmEditor || (root.CharmEditor = {});

@@ -150,12 +150,9 @@ const ok = (name, cond, extra) => { assert.ok(cond, name + (extra ? ' :: ' + ext
     ok('12 an order already in Review by itself: "In Review", a press opens that card and adds nothing', shown.calls === callsN && shown.shown.length === 1 && shown.shown[0][0] === 'ord:test-natural', JSON.stringify(shown));
     await page.evaluate(() => { __nat.length = 0; });
 
-    // 13. the cards view carries the same button, once per card
-    await page.click('#ordViewSeg [data-view="cards"]');
-    await page.waitForSelector('#ordItems.ordCards .revSendBtn');
-    const cards = await page.evaluate(() => [...document.querySelectorAll('#ordItems.ordCards > [data-rid]')].map(n => n.querySelectorAll('.revSendBtn').length));
-    ok('13 the cards view: one button on every card (an order of several lines is one card)', cards.length >= 3 && cards.every(n => n === 1), JSON.stringify(cards));
-    await page.click('#ordViewSeg [data-view="list"]');
+    // 13. (CMP1, Paul 9 Nov 2026: "remove the option for list or card review since it's not needed anymore") no cards view: the list carries the button, once per order
+    const listBtns = await page.evaluate(() => ({ seg: !!document.getElementById('ordViewSeg'), rows: [...document.querySelectorAll('#ordItems.ordList > [data-rid]')].map(n => n.querySelectorAll('.revSendBtn').length) }));
+    ok('13 no Cards | List switch; the list: one button on every order', !listBtns.seg && listBtns.rows.length >= 3 && listBtns.rows.every(n => n === 1), JSON.stringify(listBtns));
 
     // 14. narrow screen (the sorter's own layout at 900 px: the actions are a bar under the row): nothing spills out of the row, the page does not scroll sideways
     await page.setViewportSize({ width: 900, height: 780 });
