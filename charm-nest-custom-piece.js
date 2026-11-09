@@ -452,7 +452,7 @@
       name: '', reason: o.poolId && !ctx ? 'fix' : '', fix: null, fq: '', fhits: [], fhitAt: -1, cause: null, causeBusy: false, causedBy: '', causeEdited: false,
       metal: (ctx && ctx.metal) || '', qty: Math.max(1, Math.min(99, Math.floor(+o.quantity || 1))), busy: false, err: '' };
     if (o.poolId && !ctx) { const rid = String(o.poolId).split('_')[0], pc = piecesOf(rid).find(p => p.poolId === String(o.poolId)); st.fix = { rid, poolId: String(o.poolId), lineKey: pc ? pc.lineKey : null, label: pc ? pc.label : '' }; }
-    const dlg = el('dialog', 'cpDlg'); dlg.id = 'cpDlg'; dlg.setAttribute('aria-labelledby', 'cpT');
+    const dlg = el('dialog', 'cpDlg'); dlg.id = 'cpDlg'; dlg.setAttribute('aria-labelledby', 'cpT'); if (o.after) dlg.dataset.cpAfter = '1';   // (CES2: opened by itself after a Save in the Charm Editor)
     const ord = ctx ? `<button type="button" class="cpOpt" data-cp-attach="this" role="radio"><span class="cpDot"></span><span class="cpOptT"><b>This custom order</b><span><span class="mono">${esc(ctx.rid)}</span>${ctx.buyer ? ' · ' + esc(ctx.buyer) : ''}${ctx.label ? ' · ' + esc(ctx.label) : ''}${ctx.sku ? ' · ' + esc(ctx.sku) : ''}</span></span></button>` : '';
     dlg.innerHTML = `<div class="dlg">
 <div class="dlgHead"><div class="cpHd"><h3 id="cpT">Send to sheet</h3><span class="sub">The piece is cut exactly as designed, on the next sheet of the metal you pick</span></div>

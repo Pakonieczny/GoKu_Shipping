@@ -11184,7 +11184,10 @@ const Engrave = window.Engrave = (() => {
     const all = ((row && row.poolIds) || []).map(String), at = Math.max(0, all.indexOf(poolId)), sku = (row && row.spec && row.spec.designSku) || (row && row.line && row.line.sku) || (t.charm && t.charm.name) || "This piece";
     const C = window.CharmNestCustomPiece, canReplace = !!(rid && C && typeof C.open === "function" && window.Pool && typeof Pool.addCustomPiece === "function");
     const back = t.job && t.from !== "card" ? { label: "Back to engraving", title: "This piece's engraving card in Design & Engrave" } : null;
-    Promise.resolve(Ms.afterPiece({ title: o.title, name: sku, where: `${rid ? `order ${rid} · ` : ""}piece ${at + 1} of ${Math.max(1, all.length)}`, lines: o.lines, bad: !!o.bad, back, replace: canReplace ? {} : null }))
+    // (CES2, Paul 9 Nov 2026: "I want the pop-up to open on every Save": the Send to sheet pop-up opens over the card at once, set as a fix of this piece; a save that failed in part does not open it)
+    const designOf = () => Promise.resolve(o.design).then(d => d && d.id ? d : (window.CharmNestDesigns ? (CharmNestDesigns.rows() || []).find(r => r && r.id === "pc-" + poolId) || null : null));
+    const over = canReplace && !o.partial ? () => designOf().then(d => d ? C.open({ poolId, designId: d.id, version: d.version, after: true }) : null) : null;
+    Promise.resolve(Ms.afterPiece({ title: o.title, name: sku, where: `${rid ? `order ${rid} · ` : ""}piece ${at + 1} of ${Math.max(1, all.length)}`, lines: o.lines, bad: !!o.bad, back, replace: canReplace ? {} : null, over }))
       .then(c => {
         if (c === "again") setTimeout(() => { openCharmEditor(x).catch(e => toast(`Charm Editor: ${(e && e.message) || e}`, "bad", 6000)); }, 0);
         else if (c === "back") charmEditBack(t);
@@ -11306,7 +11309,7 @@ const Engrave = window.Engrave = (() => {
             charmEditTell(t, `Saved the ${[...new Set(done)].join(" and ")} only · Not saved · ${why}`, true);
             charmEditLog("editorSave", { poolId, poolIds: t.poolIds, orderId: order || null, sku, faces: [...new Set(done)], by, from: t.from });
             charmEditEverywhere(t.poolIds, order);   // (CES1: every view of this piece follows what was kept)
-            charmEditAfter(x, t, tok, res, { wentBack, bad: true, title: "Saved in part", lines: [`The ${[...new Set(done)].join(" and ")} is saved; the rest is not: ${why}`, "Keep editing opens this piece again, as saved, to save the rest."] });
+            charmEditAfter(x, t, tok, res, { wentBack, bad: true, partial: true, title: "Saved in part", lines: [`The ${[...new Set(done)].join(" and ")} is saved; the rest is not: ${why}`, "Keep editing opens this piece again, as saved, to save the rest."] });
             return { saved: [...new Set(done)], records };
           }
           // (CES1: a "Save and switch": another charm is in the editor now; this save's failure is said, the editor is not taken from the charm asked for)

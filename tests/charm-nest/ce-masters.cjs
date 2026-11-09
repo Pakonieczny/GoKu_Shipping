@@ -191,10 +191,10 @@ async function partB() {
     await waitFor(page, () => document.querySelector('.cem-card h3') && /Saved · version 2/.test(document.querySelector('.cem-card h3').textContent));
     await page.click('.cem-card [data-c="send"]');
     await settleP(page);
-    const b5 = await page.evaluate(async id => ({ puts: window.__puts, d: await CharmNestDesigns.get(id), sends: window.__sends, card: !!document.querySelector('.cem-card'), rows: CharmNestDesigns.rows().length }), ID1);
+    const b5 = await page.evaluate(async id => ({ puts: window.__puts, d: await CharmNestDesigns.get(id), sends: window.__sends.filter(o => !o.after), auto: window.__sends.filter(o => o.after).map(o => o.version), card: !!document.querySelector('.cem-card'), rows: CharmNestDesigns.rows().length }), ID1);   // (CES2: the pop-up also opens by itself after each Save, o.after: counted apart)
     const pick = await page.evaluate(() => window.__pick);
     check(`B5 Keep editing opens version 1 again (${r5.n} layers, none locked: "${r5.sub.slice(0, 40)}…"); a second petal deleted and Save makes version 2 of the SAME design; Send to sheet hands it on (${JSON.stringify(b5.sends[0])}); the picker's promise says what was made`,
-      r5.n === b3.n - 1 && r5.locked === 0 && /version 1/.test(r5.sub) && b5.puts === 2 && b5.rows === 1 && b5.d.id === ID1 && b5.d.version === 2 && b5.d.faces.front.items.length === b3.n - 2 && b5.sends.length === 1 && b5.sends[0].designId === ID1 && b5.sends[0].version === 2
+      r5.n === b3.n - 1 && r5.locked === 0 && /version 1/.test(r5.sub) && b5.puts === 2 && b5.rows === 1 && b5.d.id === ID1 && b5.d.version === 2 && b5.d.faces.front.items.length === b3.n - 2 && b5.sends.length === 1 && b5.auto.join() === '1,2' && b5.sends[0].designId === ID1 && b5.sends[0].version === 2
         && !b5.card && pick && pick.designId === ID1 && pick.version === 2, JSON.stringify({ puts: b5.puts, id: b5.d && b5.d.id, v: b5.d && b5.d.version, pick }));
 
     /* ── B6 a blank heart, 20 × 18 mm, with a jump ring hole ── */
