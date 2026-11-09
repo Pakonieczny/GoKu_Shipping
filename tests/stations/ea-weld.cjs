@@ -1,9 +1,10 @@
 // Employee efficiency, Welding: weld-1.html feeds StationActivity (station-activity.js) with what the welder does, in
 // headless Chromium with Firebase, Materialize and every function stubbed here: no request leaves the machine.
 //   · nobody signed in: a scan records no activity at all
-//   · PIN login (a fake PIN), then a typed stud order: `scan` (stud pieces) and `complete` (orders 1, parts) once each
-//   · the phone scanner relay (weld-scan-1) with a mixed order: ONE `matched` "phone scan" (the scan queue) and ONE `complete` for the order, no plain `scan`
-//   · the same order again: a `scan` ("again"), no second `complete`
+//   · (Paul, 9 Nov 2026) a scan only OPENS the order: `scan`, no seal, nothing added on screen; the page's Complete Order button: `complete` (orders 1,
+//     parts, workMs) and the `welded` seal (one per stud line), by the person; never a call to the Etsy tracking endpoint
+//   · the phone scanner relay (weld-scan-1): one plain `scan` "phone scan" (no `matched` credit)
+//   · the same order again: a `scan` ("again"), no second `complete`; Complete Order pressed again: a note
 //   · rejects: an unknown order, an order with no studs, a cancelled order: `scan` + `reject`, never `complete`
 //   · the order timeline agrees with the activity (Paul, 3 Oct 2026: "only stud earrings get welded"): a stud order is sealed
 //     `welded` once; an unknown order and a no-stud order are NOT sealed (one `reject` each, the `scan` seal stays, the no-stud
@@ -109,7 +110,7 @@ const seals = (order, type = 'welded') => st.events.filter(e => e.orderId === or
   });
   const page = await ctx.newPage(), ours = [];
   page.on('request', q => { st.reqs.push(q.method() + ' ' + q.url() + ' ' + (q.postData() || '')); });
-  page.on('pageerror', e => { if (/weld|station-timeline|station-activity|StationActivity|StationTimeline|OrderTimeline|order-timeline/.test(String(e.stack || e.message))) ours.push(e.message); });
+  page.on('pageerror', e => { if (/weld|station-work|StationWork|station-timeline|station-activity|StationActivity|StationTimeline|OrderTimeline|order-timeline/.test(String(e.stack || e.message))) ours.push(e.message); });
 
   await page.goto(ORIGIN + '/weld-1.html');
   await page.waitForFunction(() => window.StationTimeline && window.StationSession && window.StationActivity && window.__snaps, null, { timeout: 15000 });
@@ -132,37 +133,49 @@ const seals = (order, type = 'welded') => st.events.filter(e => e.orderId === or
   await page.click('#weldTaskMatching', { timeout: 10000 });          // the extra step: Welding or Matching? (scans are credited to Matching)
   const start = await until(() => st.sessions.find(s => s.event === 'start' && s.person === WHO), 'the sign-in session');
   assert.strictEqual(start.employeeId, '', 'the session carries the name, never the PIN');
+  // (Paul, 9 Nov 2026: a scan only OPENS the order; the page's Complete Order button welds it: station-work.js)
+  const press = async sel => { await page.click(sel, { timeout: 8000 }); await wait(300); };
+  assert(await page.isVisible('#completeOrderBtn'), 'the Complete Order button is shown at Welding');
   await enter(STUD);
-  await outcome(STUD, 'complete');
-  assert.deepStrictEqual(acts(STUD).map(e => e.action), ['scan', 'complete'], 'a typed stud order: one scan, one complete: ' + JSON.stringify(acts(STUD)));
-  const [s1, c1] = acts(STUD);
+  await until(async () => { await flush(); return acts(STUD, 'scan').length; }, 'the scan of ' + STUD); await wait(700); await flush();
+  assert.deepStrictEqual(acts(STUD).map(e => e.action), ['scan'], 'a typed stud order is only opened: one scan, nothing completed: ' + JSON.stringify(acts(STUD)));
+  const s1 = acts(STUD, 'scan')[0];
   assert.strictEqual(s1.parts, 4, 'the scan carries the stud pieces (2 pairs: 2 Left + 2 Right, Paul 9-10 Oct 2026)'); assert(/typed/.test(s1.detail), 'how: ' + s1.detail);
+  await tl();
+  assert.strictEqual(seals(STUD).length, 0, 'a scan never seals welded: ' + JSON.stringify(seals(STUD)));
+  assert.strictEqual(seals(STUD, 'scan').length, 1, 'it is scanned once');
+  assert.strictEqual(await page.locator('.swk, .swkStamp').count(), 0, 'no panel or pop-up of any kind');
+  await page.dblclick('#completeOrderBtn');                          // (a double-click completes once)
+  await outcome(STUD, 'complete');
+  assert.deepStrictEqual(acts(STUD).map(e => e.action), ['scan', 'complete'], 'scan, complete: ' + JSON.stringify(acts(STUD)));
+  const c1 = acts(STUD, 'complete')[0];
   assert.strictEqual(c1.parts, 4, 'the weld produced 4 pieces'); assert.strictEqual(c1.orders, 1, 'and finished the order once');
+  assert(/^Complete Order/.test(c1.detail) && Number.isFinite(c1.workMs) && c1.workMs >= 0, 'a Complete Order press with its time: ' + JSON.stringify(c1));
   await tl();                                                        // the timeline: a stud order is sealed welded once, by the person
-  assert.strictEqual(seals(STUD).length, 1, 'a stud order is sealed welded once: ' + JSON.stringify(seals(STUD)));
+  assert.strictEqual(seals(STUD).length, 1, 'Complete Order seals a stud order welded once: ' + JSON.stringify(seals(STUD)));
   assert.strictEqual(seals(STUD)[0].by, WHO, 'by the person signed in'); assert.strictEqual(seals(STUD)[0].station, 'welding');
-  assert.strictEqual(seals(STUD, 'scan').length, 1, 'and scanned once');
   assert.strictEqual(await noStudToasts(), 0, 'a stud order gets no "no stud earrings" line');
   for (const e of st.acts) {
     assert.strictEqual(e.person, WHO, 'who'); assert.strictEqual(e.station, 'welding'); assert.strictEqual(e.device, 'weld-1');
     assert.strictEqual(e.session, start.id, 'this sign-in session'); assert.strictEqual(e.computer, start.computerId, 'this computer');
   }
 
-  // 3 · the phone relay with studs (1 + 2 pairs: 6 pieces) and a necklace: one scan, one complete for the order
+  // 3 · the phone relay with studs (1 + 2 pairs: 6 pieces) and a necklace: a plain scan (no matched credit), then Complete Order
   await phone(MIXED);
-  await outcome(MIXED, 'complete');
-  // (stations round 2: a phone scan at the Welding station is ONE `matched` event, written by the scan queue and credited to the Matching person
-  //  here; the page logs no plain `scan` of its own for it. tests/stations/weld-scan-matched.cjs)
-  assert.deepStrictEqual(acts(MIXED).filter(e => e.action !== 'matched').map(e => e.action), ['complete'], 'ONE complete for a two-stud-line order, and no plain scan for a phone scan: ' + JSON.stringify(acts(MIXED)));
-  assert.deepStrictEqual(acts(MIXED, 'matched').map(e => [e.person, e.task, e.orders, e.parts, e.detail]), [[WHO, 'matching', 0, 0, 'phone scan']], 'and one matched, never a completion');
+  await until(async () => { await flush(); return acts(MIXED, 'scan').length; }, 'the phone scan'); await wait(700); await flush();
+  assert.deepStrictEqual(acts(MIXED).map(e => [e.action, e.detail]), [['scan', 'phone scan']], 'a phone scan is one plain scan, never matched or complete: ' + JSON.stringify(acts(MIXED)));
+  await press('#completeOrderBtn'); await outcome(MIXED, 'complete');
   assert.strictEqual(acts(MIXED, 'complete')[0].parts, 6, 'studs 1 + 2 pairs = 6 pieces (Left + Right per unit)'); assert.strictEqual(acts(MIXED, 'complete')[0].orders, 1);
   await tl();                                                        // the timeline: one welded per stud line, none for the necklace
   assert.deepStrictEqual(seals(MIXED).map(e => String(e.transactionId)).sort(), ['94201', '94203'], 'a mixed order seals its two stud lines only: ' + JSON.stringify(seals(MIXED)));
 
-  // 4 · the same order again: a scan, no second complete
+  // 4 · the same order again: a scan, no second complete; Complete Order pressed again: a note, never a second completion
   await enter(STUD);
   await until(async () => { await flush(); return acts(STUD, 'scan').length === 2; }, 'the second scan'); await wait(600); await flush();
   assert.strictEqual(acts(STUD, 'complete').length, 1, 'an order counts once'); assert(/again/.test(acts(STUD, 'scan')[1].detail));
+  await press('#completeOrderBtn');
+  await until(async () => { await flush(); return acts(STUD, 'note').some(e => /already completed/.test(e.detail)); }, 'the note for a second press');
+  assert.strictEqual(acts(STUD, 'complete').length, 1, 'still one completion');
 
   // 5 · rejects: unknown order, no studs on the order, cancelled order
   await enter(UNKNOWN); await outcome(UNKNOWN, 'reject');
@@ -192,14 +205,17 @@ const seals = (order, type = 'welded') => st.events.filter(e => e.orderId === or
   assert.strictEqual(await noStudToasts(), 1, 'no extra line on top of the alert');
   await page.click('.sttl-ok');                                      // Understood
 
-  // 6 · Etsy down: the scan, an error, and the order still counted (the weld is sealed as before)
-  await enter(DOWN); await outcome(DOWN, 'complete');
-  assert.deepStrictEqual(acts(DOWN).map(e => e.action), ['scan', 'error', 'complete'], 'Etsy down: scan, error, complete: ' + JSON.stringify(acts(DOWN)));
+  // 6 · Etsy down: the scan and an error; Start → Complete Order still welds it (the page cannot tell), with "not checked"
+  await enter(DOWN);
+  await until(async () => { await flush(); return acts(DOWN, 'error').length; }, 'the lookup error'); await wait(600); await flush();
+  assert.deepStrictEqual(acts(DOWN).map(e => e.action), ['scan', 'error'], 'Etsy down: scan, error, nothing completed: ' + JSON.stringify(acts(DOWN)));
   assert.strictEqual(acts(DOWN, 'error')[0].detail, 'Etsy order lookup failed', 'the error is a category only: Etsy\'s own words are never sent');
+  await press('#completeOrderBtn'); await outcome(DOWN, 'complete');
   assert(!JSON.stringify(st.acts).includes('Main St') && !JSON.stringify(st.acts).includes('Jane Doe'), 'nothing Etsy said reached the activity door');
   assert.strictEqual(acts(DOWN, 'complete')[0].parts, 0, 'pieces unknown'); assert(/not checked/.test(acts(DOWN, 'complete')[0].detail));
-  await tl();                                                        // the page cannot tell, so seal and activity both stand (as before)
-  assert.strictEqual(seals(DOWN).length, 1, 'Etsy down: the order is still sealed welded, as the activity counts it: ' + JSON.stringify(seals(DOWN)));
+  await tl();
+  assert.strictEqual(seals(DOWN).length, 1, 'Etsy down: Complete Order still seals it welded: ' + JSON.stringify(seals(DOWN)));
+  assert(!st.reqs.some(q => /trackOrderProxy/.test(q)), 'the Welding station never posts tracking to Etsy');
 
   // 7 · no duplicates anywhere, and the order the page logged them in
   const keys = st.acts.map(e => e.action + '|' + e.orderId + '|' + e.detail);
@@ -257,5 +273,5 @@ const seals = (order, type = 'welded') => st.events.filter(e => e.orderId === or
 
   assert.deepStrictEqual(ours, [], 'no page errors from the activity wiring');
   await browser.close();
-  console.log(`ea-weld: welding records scan / complete / reject / error with who, where and parts — all passed (${st.acts.length} events)`);
+  console.log(`ea-weld: welding records scan / Complete Order / reject / error with who, where and parts — all passed (${st.acts.length} events)`);
 })().catch(e => { console.error(e); process.exit(1); });

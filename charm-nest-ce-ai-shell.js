@@ -306,8 +306,8 @@
     'shape-ring': { name: 'Ring Tool', desc: 'Draw a ring blank' },
     'shape-bail': { name: 'Jump Ring Tool', desc: 'Add a jump ring' },
     pencil: { name: 'Pencil Tool', key: 'N', desc: 'Draw freeform paths' },
+    eraser: { name: 'Eraser Tool', key: 'Shift+E', desc: 'Drag to erase parts of paths ([ ] size; double-click: options)' },
     scissors: { name: 'Scissors Tool', key: 'C', desc: 'Cut a path at a point' },
-    eraser: { name: 'Eraser Tool', key: 'Shift+E', desc: 'Drag to erase parts of shapes ([ and ] change its size; Alt-drag erases a rectangle)' },   // (CES3)
     'cw-free': { name: 'Free Distort Tool', key: 'E', desc: 'Drag the corners to distort the selection' },
     'cw-persp': { name: 'Perspective Distort Tool', desc: 'Drag a corner to distort in perspective' },
     'cw-blend': { name: 'Blend Tool', key: 'W', desc: 'Click two objects to blend between them' },

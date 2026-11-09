@@ -1183,6 +1183,8 @@
     'shape-ring': SA('<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="4"/>'),
     'shape-bail': SA('<circle cx="12" cy="7.5" r="3.6"/><path d="M6 21v-5.5a6 6 0 0 1 12 0V21"/>'),
     pencil: SA('<path d="M4.5 19.5 5.6 15 15.8 4.8l3.4 3.4L9 18.4Z"/><path d="m13.8 6.8 3.4 3.4"/><path d="m5.6 15 3.4 3.4"/>'),
+    // (ER1, Paul 9 Nov 2026: Illustrator's Eraser, its own button after the Scissors (CES3's place): charm-nest-ce-eraser.js)
+    eraser: SA('<path d="M14.6 4.1 20 9.5a1.4 1.4 0 0 1 0 2L11.6 19.9H7.4l-3.1-3.1a1.4 1.4 0 0 1 0-2Z"/><path d="m9 9.5 5.6 5.6"/><path d="M11.6 19.9h8.4"/>'),
     scissors: SA('<circle cx="6.5" cy="17" r="2.6"/><circle cx="17.5" cy="17" r="2.6"/><path d="M8.4 15.2 16.5 4.5M15.6 15.2 7.5 4.5"/>'),
     'cw-free': SA('<path d="M5.5 7.5 18 5l1 13.5-13.5 1Z" stroke-dasharray="2 1.5"/><rect x="4" y="6" width="3" height="3" fill="currentColor"/><rect x="16.5" y="3.5" width="3" height="3" fill="currentColor"/><rect x="17.5" y="17" width="3" height="3" fill="currentColor"/><rect x="4" y="18" width="3" height="3" fill="currentColor"/>'),
     'cw-persp': SA('<path d="M8.5 6h7l4 12.5h-15Z"/><path d="M12 6v12.5M6.2 13h11.6" stroke-dasharray="1.6 1.4"/>'),

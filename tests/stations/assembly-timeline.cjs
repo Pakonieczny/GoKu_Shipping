@@ -1,8 +1,8 @@
 // Assembly stations and the order timeline (Paul, 28 Sep: A4, C5, C6). Opens assembly-1.html in headless Chromium with
 // Firebase, Materialize and the Netlify functions stubbed and a stub StationTimeline standing in for station-timeline.js,
 // then checks what the page tells the timeline: init once with its station and device, scanned() for a phone scan, a
-// typed number and a paste (with how each came in), did("assembled") for a Team stamp such as "QA1", and guard() plus
-// did("etsyCompleted") on Complete Order. Last, the page without station-timeline.js still loads a scanned order.
+// typed number and a paste (with how each came in), no did() for a Team stamp such as "QA1" (Paul, 9 Nov 2026: a message), and guard()
+// plus did("assembled") on Complete Order (station-work.js), never a tracking post to Etsy. Last, the page without station-timeline.js still loads a scanned order.
 // Every request that is not to 127.0.0.1 is answered by a stub or aborted; nothing live is contacted.
 //   NODE_PATH=$(npm root -g) PW_DIR=$(npm root -g)/playwright/node_modules CHROMIUM=... node tests/stations/assembly-timeline.cjs
 const http = require('http'), fs = require('fs'), path = require('path'), assert = require('assert/strict');
@@ -140,43 +140,38 @@ async function main() {
         const c = (await stCalls(h.page, 'scanned'))[2];
         assert.deepEqual(c.slice(1), ['3812345680', { how: 'paste', extra: { etsyStatus: 'Paid' } }]);
       });
-      await check('a Team stamp "QA1" sent from Assembly records assembled; an ordinary message does not', async () => {
+      // (Paul, 9 Nov 2026) the Team stamp is a message; "Start working on this order", then Complete Order stamps assembled (station-work.js); no Etsy post
+      await check('a Team stamp "QA1" is a message: no assembled, and neither is an ordinary message', async () => {
         await h.page.fill('#britesMsgInput', 'please check the chain length');
         await h.page.evaluate(() => document.getElementById('goScreenTwoBtn').click());
         await h.page.waitForFunction(() => document.getElementById('britesMsgInput').value === '', null, { timeout: 5000 });
-        assert.equal((await stCalls(h.page, 'did')).length, 0, 'no assembled for a normal message');
         await h.page.fill('#britesMsgInput', 'QA1');
         await h.page.evaluate(() => document.getElementById('goScreenTwoBtn').click());
-        await waitCall(h.page, 'did', 1, 'after sending QA1');
-        const [c] = await stCalls(h.page, 'did');
-        assert.deepEqual(c.slice(1), ['assembled', '3812345680', 'Assembled · QA1', { message: 'QA1' }]);
+        await h.page.waitForFunction(() => document.getElementById('britesMsgInput').value === '', null, { timeout: 5000 });
+        await h.page.waitForTimeout(300);
+        assert.equal((await stCalls(h.page, 'did')).length, 0, 'no assembled for a stamp or a message');
         assert.equal(h.calls.filter(x => x.fn === 'firebaseOrders' && x.method === 'POST' && x.body.newMessage).length, 2, 'both messages were still sent');
       });
-      await check('Complete Order: guard(id) first, then did("etsyCompleted", …) after Etsy accepts', async () => {
-        await h.page.evaluate(() => {
-          document.getElementById('trackingNumberInput').value = '9400111899223344556677';
-          document.getElementById('carrierSelect').value = 'usps';
-          document.getElementById('completeOrderBtn').click();
-        });
-        await waitCall(h.page, 'did', 2, 'after Complete Order');
+      await check('Complete Order: guard(id) first, then did("assembled", …); nothing is posted to Etsy', async () => {
+        assert(await h.page.isVisible('#completeOrderBtn'), 'the Complete Order button is shown at Assembly');
+        await h.page.click('#completeOrderBtn');
+        await waitCall(h.page, 'did', 1, 'after Complete Order');
         const guards = await stCalls(h.page, 'guard'), dids = await stCalls(h.page, 'did');
         assert.deepEqual(guards.map(g => g.slice(1)), [['3812345680', { action: 'Complete Order' }]]);
-        assert.deepEqual(dids[1].slice(1), ['etsyCompleted', '3812345680', 'Completed on Etsy · USPS 9400111899223344556677', { tracking: '9400111899223344556677', carrier: 'usps' }]);
+        assert.deepEqual(dids[0].slice(1), ['assembled', '3812345680', 'Assembled · Complete Order at Assembly 1', { via: 'completeOrder' }]);
         const order = await h.page.evaluate(() => window.__st.map(c => c[0]).slice(-2));
         assert.deepEqual(order, ['guard', 'did'], 'guard before the stamp');
-        assert.equal(h.calls.filter(x => x.fn === 'trackOrderProxy').length, 1, 'tracking was posted once');
+        await h.page.waitForTimeout(400);
+        assert.equal(h.calls.filter(x => x.fn === 'trackOrderProxy').length, 0, 'tracking is never posted from Assembly');
+        assert.equal((await stCalls(h.page, 'did')).length, 1, 'stamped once');
       });
-      await check('Complete Order on a cancelled order the operator backs out of: nothing is posted, nothing is stamped', async () => {
-        await h.page.evaluate(() => {
-          window.__guardAnswer = false;
-          document.getElementById('trackingNumberInput').value = '9400111899223344556688';
-          document.getElementById('carrierSelect').value = 'usps';
-          document.getElementById('completeOrderBtn').click();
-        });
+      await check('Complete Order on a cancelled order the operator backs out of: nothing is stamped, nothing is posted', async () => {
+        await h.page.waitForTimeout(3200);                                   // (a press a moment after the last is the same double-click)
+        await h.page.evaluate(() => { window.__guardAnswer = false; document.getElementById('completeOrderBtn').click(); });
         await waitCall(h.page, 'guard', 2, 'on the second Complete Order');
         await h.page.waitForTimeout(400);
-        assert.equal(h.calls.filter(x => x.fn === 'trackOrderProxy').length, 1, 'no second tracking post');
-        assert.equal((await stCalls(h.page, 'did')).length, 2, 'no second etsyCompleted');
+        assert.equal((await stCalls(h.page, 'did')).length, 1, 'no second assembled');
+        assert.equal(h.calls.filter(x => x.fn === 'trackOrderProxy').length, 0, 'nothing posted');
       });
       await check('no page error from the timeline wiring', async () => {
         const mine = h.errors.filter(m => /StationTimeline|stationHow|isAssemblyStamp|stName/.test(m));

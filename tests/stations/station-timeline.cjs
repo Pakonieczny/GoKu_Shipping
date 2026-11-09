@@ -1,8 +1,9 @@
 // The shared station module (station-timeline.js) on the real Welding station page (weld-1.html), in headless Chromium,
 // with Firebase, Materialize and every function stubbed here: no request leaves the machine.
-//   · a typed order and a relayed scan are recorded (who, station, device, how, stable id) and a clear order is "welded"
+//   · a typed order and a relayed scan are recorded (who, station, device, how, stable id); a clear order is "welded" by
+//     the Complete Order button (Paul, 9 Nov 2026: station-work.js), never by the scan
 //   · a cancelled order raises the full-screen alert; the guard asks inside it; a click on Understood records cancelAlert;
-//     afterwards Complete Order asks "Do it anyway?" and only a yes goes on (recorded, then etsyCompleted)
+//     afterwards Complete Order asks "Do it anyway?" and only a yes goes on (recorded, then welded despite the cancel; never Etsy)
 //   · a slow check and an offline page: no alert, no crash, the scan says it was not checked
 //   NODE_PATH=$(npm root -g) PW_DIR=$(npm root -g)/playwright/node_modules CHROMIUM=… node tests/stations/station-timeline.cjs
 'use strict';
@@ -88,9 +89,13 @@ const ev = (type, id) => st.events.find(e => e.type === type && e.orderId === id
   assert.deepStrictEqual(await page.evaluate(() => { const c = StationTimeline.config(); return [c.station, c.device]; }), ['welding', 'weld-1'], 'weld-1 initialises the station module');
   const enter = async id => { await page.fill('#etsyOrderNumber', id); await page.focus('#etsyOrderNumber'); await page.keyboard.press('Enter'); };
 
-  // 1 · a typed order that is not cancelled: scan (typed) + welded, no alert
+  // 1 · a typed order that is not cancelled: scan (typed), no alert; it is welded by the Complete Order button (Paul, 9 Nov 2026: station-work.js), never by the scan
   await enter(CLEAR);
-  await until(() => ev('scan', CLEAR) && ev('welded', CLEAR), 'the typed scan and the weld');
+  await until(() => ev('scan', CLEAR), 'the typed scan');
+  await wait(600); assert(!ev('welded', CLEAR), 'a scan never welds');
+  await page.click('#completeOrderBtn'); await wait(500);
+  await page.evaluate(() => OrderTimeline.flush());
+  await until(() => ev('welded', CLEAR), 'the weld at Complete Order');
   const s1 = ev('scan', CLEAR), minute = Math.floor(s1.at / 60000);
   assert.strictEqual(s1.by, 'Tess Welder', 'the scan is by the employee who signed in with the PIN');
   assert.strictEqual(s1.station, 'welding'); assert.strictEqual(s1.device, 'weld-1');
@@ -136,18 +141,22 @@ const ev = (type, id) => st.events.find(e => e.type === type && e.orderId === id
   assert.strictEqual(ev('cancelAlert', CANCELLED).by, 'Tess Welder'); assert.strictEqual(ev('cancelAlert', CANCELLED).data.how, 'button');
   assert(!ev('welded', CANCELLED), 'a cancelled order is not recorded as welded');
 
-  //   afterwards, Complete Order asks inline first: Stop → nothing sent; Do it anyway → sent, recorded
-  await page.evaluate(() => { document.getElementById('trackingNumberInput').value = '9400100000000000000000'; document.getElementById('carrierSelect').value = 'usps'; document.getElementById('completeOrderBtn').click(); });
+  //   afterwards, Complete Order asks inline first: Stop → nothing welded; Do it anyway → welded (recorded), saying it went ahead despite the cancel.
+  //   The Welding station never posts to Etsy.
+  await page.evaluate(() => document.getElementById('completeOrderBtn').click());
   await page.waitForSelector('.sttl-bar.in', { timeout: 3000 });
   if (process.env.SHOTS) { await wait(400); await page.screenshot({ path: path.join(process.env.SHOTS, 'bar.png') }); }
   await page.click('.sttl-bar .sttl-btn.stop'); await wait(400);
-  assert.strictEqual(st.completes, 0, 'Stop: the order is not completed');
+  await page.evaluate(() => OrderTimeline.flush()); await wait(200);
+  assert(!ev('welded', CANCELLED), 'Stop: the order is not welded');
   await page.evaluate(() => document.getElementById('completeOrderBtn').click());
   await page.waitForSelector('.sttl-bar.in', { timeout: 3000 });
-  await page.click('.sttl-bar .sttl-btn.go');
-  await until(() => st.completes === 1 && ev('etsyCompleted', CANCELLED) && ev('note', CANCELLED), 'Complete Order after Do it anyway');
-  assert.strictEqual(ev('etsyCompleted', CANCELLED).data.despiteCancel, true, 'the completion says it went ahead despite the cancel');
+  await page.click('.sttl-bar .sttl-btn.go'); await wait(500);
+  await page.evaluate(() => OrderTimeline.flush());
+  await until(() => ev('welded', CANCELLED) && ev('note', CANCELLED), 'Complete Order after Do it anyway');
+  assert.strictEqual(ev('welded', CANCELLED).data.despiteCancel, true, 'the weld says it went ahead despite the cancel');
   assert(/Complete Order/.test(ev('note', CANCELLED).text), 'the "do it anyway" is on the timeline');
+  assert.strictEqual(st.completes, 0, 'the Welding station never completes anything on Etsy');
   assert.strictEqual(await page.evaluate(id => StationTimeline.guard(id), CLEAR), true, 'a clear order is never asked');
 
   // 3 · a check that takes too long: not blocked (~2.5 s), no alert, the scan says so
@@ -155,7 +164,8 @@ const ev = (type, id) => st.events.find(e => e.type === type && e.orderId === id
   await until(() => ev('scan', SLOW), 'the slow scan', 12000);
   assert(Date.now() - t0 < 6000, 'the check gives up after about 2.5 s');
   assert.strictEqual(ev('scan', SLOW).data.check, 'unchecked'); assert.strictEqual(ev('scan', SLOW).data.checkNote, 'timeout');
-  assert(ev('welded', SLOW), 'the station goes on');
+  assert.strictEqual(await page.inputValue('#etsyOrderNumber'), SLOW, 'the station goes on: the order is on screen');
+  assert(!ev('welded', SLOW), 'and only opened');
 
   // 4 · offline: no alert, no crash; the scan waits in the outbox and says it was not checked
   await enter(OFF);

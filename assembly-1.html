@@ -472,8 +472,7 @@
     #ccBatchName,
     #ccCreateBatchBtn,
     #pasteTrackingBtn,
-    #trackingNumberInput,
-    #completeOrderBtn {
+    #trackingNumberInput {
       display: none !important;
     }
 
@@ -996,7 +995,7 @@
   <script src="station-session.js?v=20261006-st3-acct1"></script>
   <!-- Employee efficiency: each real action here (an order opened, the Team's done stamp, a flag, a failure) is one event with
        the person signed in, this station and the time (station-activity.js). Never a PIN. -->
-  <script src="station-activity.js?v=20261009-ps1-as1-adv3-ew1-stx1-ag1"></script>
+  <script src="station-activity.js?v=20261009-ps1-as1-adv3-ew1-stx1-ag1-sco1"></script>
   <!-- Phone scans that arrive while nobody is signed in wait here and load, in order, right after the next sign-in (station-scan-queue.js). -->
   <script src="station-scan-queue.js?v=20261007-fr1"></script>
   <script>
@@ -1028,7 +1027,7 @@
   <!-- The order in hand right now: the scan shows it on the console's live stations board with one piece per unit (and its size), so the card
        counts pieces and finds each design's picture; the first Team stamp ends it (station-live-order.js). Optional: without it the page tells the board itself. -->
   <script src="charm-nest-orders.js?v=20261005-pieces-hand1-rel1-vsku1-ew1-szf1-szr1-bf1"></script>
-  <script src="station-live-order.js?v=20261009-ps1-as1-adv3-ew1-stx1-ag1"></script>
+  <script src="station-live-order.js?v=20261009-ps1-as1-adv3-ew1-stx1-ag1-sco1"></script>
 
   <!-- jQuery & Materialize -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
@@ -1059,6 +1058,7 @@
 
   <!-- Order timeline: records this station's scans and steps, and shows the cancelled-order alert (optional: the page works without it) -->
   <script src="order-timeline.js?v=20261007-fc4-perf1-ob1"></script><script src="station-timeline.js?v=20261006-int1-asm1"></script>
+  <script src="station-work.js?v=20261109-sco1"></script><!-- Complete Order (Paul, 9 Nov 2026): only the button completes an order; a scan only opens it -->
 
   <script>
     /********** Global Variables **********/
@@ -2467,24 +2467,12 @@ function metalToBadge(label){
           String(text || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\bqa\s*(\d{1,2})\b/g, (m, d) => { n = Math.max(n, +d); return m; });
           return n;
         }
-        function actStamp(orderId, text) {          // the Team's done stamp: the first assembled stamp per person and order is the completion
+        function actStamp(orderId, text) {          // the Team's stamp: a message (Paul, 9 Nov 2026), never a completion: Complete Order completes the order
+          actLiveTouch();
           try {
             orderId = /^\d{6,}$/.test(orderId) ? orderId : "";
-            actLiveEnd(orderId);                    // the live board: the Team's stamp (any QA number) finishes this person's order
-            const who = actWho(), key = orderId + "|" + who, now = Date.now(), known = actLoaded.id === orderId;
-            if (!who) return;
-            /* A QA 2 (or later) stamp is a second person's check of work that QA1, Done or Assembled already finished: it is
-               that person's time and touch (a note, fixed words, no pieces, no order) and never a second completion, so the
-               shop's parts and orders are not counted twice. It does not use up their own first-stamp slot either. */
             const stage = actQaStage(text);
-            if (stage >= 2) { actLog("note", { orderId, detail: "QA " + stage + " check" }); return; }
-            const d = String(text).replace(/\s+/g, " ").slice(0, 40);
-            if (now - (actDone[key] || 0) < 12 * 3600e3) { actLog("note", { orderId, detail: "stamp again: " + d }); return; }
-            if (!actLog("complete", { orderId, sku: known ? actLoaded.sku : "", parts: known ? actLoaded.parts : 0, orders: 1, detail: "Team stamp " + d + (known ? "" : " (pieces unknown)") })) return;
-            actDone[key] = now;
-            const ks = Object.keys(actDone).sort((a, b) => actDone[a] - actDone[b]);
-            for (const k of ks.slice(0, Math.max(0, ks.length - 60))) delete actDone[k];
-            try { localStorage.setItem("assembly_activity_done", JSON.stringify(actDone)); } catch (_) {}
+            actLog("note", { orderId, detail: stage >= 2 ? "QA " + stage + " check" : "Team stamp: " + String(text).replace(/\s+/g, " ").slice(0, 40) });
           } catch (_) {}
         }
         function actImage(orderId, ok) {            // a photo dropped into the order chat: counted (or its failure), never the picture
@@ -2516,6 +2504,20 @@ function metalToBadge(label){
             }
           });
         } catch (err) { console.warn("Station timeline init failed:", err); }
+        /* Complete Order (station-work.js; Paul, 9 Nov 2026): the page's Complete Order button stamps `assembled` on the order on screen; a scan only
+           opens the order, and the Team chat stamp is a message again (it no longer completes anything). Never posts anything to Etsy. */
+        try {
+          const stName = (document.getElementById("titleShipping")?.value || "").trim();
+          window.StationWork && window.StationWork.init({
+            station: "assembly", device: stName.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "assembly", label: stName.replace(/_/g, " ") || "Assembly",
+            complete: id => {
+              const signedIn = !!actWho();
+              window.StationTimeline && window.StationTimeline.did("assembled", id, "Assembled · Complete Order at " + (stName.replace(/_/g, " ") || "Assembly"),
+                signedIn ? { via: "completeOrder" } : { via: "completeOrder", signedIn: false });
+              return { ok: true, parts: actLoaded.id === String(id) ? actLoaded.parts : 0 };
+            }
+          });
+        } catch (err) { console.warn("Station work init failed:", err); }
 
         // --- employee auto-restore + OAuth guard ---------------------------
         const oauthFlag  = localStorage.getItem("oauth_in_progress");
@@ -2796,7 +2798,7 @@ function metalToBadge(label){
 
         const orderData = await pullEtsyOrderDetails(orderNumber);       // null when the lookup failed
 
-        // Employee efficiency: one scan (pieces from the receipt just read, no extra Etsy call), an error when the lookup failed
+        // Employee efficiency: one scan (the order opened: pieces from the receipt just read, no extra Etsy call), an error when the lookup failed
         if (/^\d{6,}$/.test(orderNumber)) actScan(orderNumber, orderData, e.stationHow || "typed");
 
         // Order timeline: record the scan (station, operator, how it came in); a cancelled order gets the full-screen alert
@@ -2808,6 +2810,12 @@ function metalToBadge(label){
               .catch(err => console.warn("Station timeline scan failed:", err));
           }
         } catch (err) { console.warn("Station timeline scan failed:", err); }
+        // Complete Order (station-work.js): when the order was opened here (the time to Complete Order)
+        try {
+          let stParts = 0; const stList = orderData && Array.isArray(orderData.transactions) ? orderData.transactions : [];
+          try { stParts = window.StationLiveOrder && StationLiveOrder.units ? StationLiveOrder.units(stList) : stList.length; } catch (_) {}
+          if (/^\d{6,}$/.test(orderNumber)) window.StationWork && window.StationWork.viewed(orderNumber, { parts: stParts });
+        } catch (_) {}
         await loadShipToAddress(orderNumber);
         await loadGiftMessage(orderNumber);
 
@@ -3059,16 +3067,9 @@ function metalToBadge(label){
           const json = await resp.json();
           if (!resp.ok || !json.success) throw new Error(json.error || "Server error");
           newMsgInp.value = "";                // clear box on success
-          try {
-            if (window.StationTimeline && isAssemblyStamp(msgTxt)) {
-              /* the Assembled seal names who sent the stamp (the PIN login's name, via getEmployee); nobody signed in:
-                 by "" and signedIn false, so the seal says "not signed in" */
-              const signedIn = !!String(localStorage.getItem("employee_name") || "").trim();
-              window.StationTimeline.did("assembled", orderId, "Assembled · " + msgTxt,
-                signedIn ? { message: msgTxt } : { message: msgTxt, signedIn: false });
-            }
-          } catch (errTl) { console.warn("Station timeline failed:", errTl); }
-          if (isAssemblyStamp(msgTxt)) actStamp(orderId, msgTxt); else actMessage(orderId, msgTxt);   // employee efficiency: not tied to the seal
+          /* (Paul, 9 Nov 2026) the Team's stamp ("QA1", "Done", "Assembled") stays a message: it no longer stamps `assembled` or completes the order.
+             Complete Order does (station-work.js), so there is one way to complete an order here. */
+          if (isAssemblyStamp(msgTxt)) actStamp(orderId, msgTxt); else actMessage(orderId, msgTxt);   // employee efficiency: a note, never a completion
         } catch (err) {
           console.error("Send error:", err);
           actLog("error", { orderId: /^\d{6,}$/.test(orderId) ? orderId : "", detail: isAssemblyStamp(msgTxt) ? "Team stamp not sent" : "Team message not sent" });
@@ -3078,77 +3079,21 @@ function metalToBadge(label){
     }
 
     /* =========================================================
-     *  Complete Order – POST tracking to Etsy (via Netlify)
+     *  Complete Order (Paul, 9 Nov 2026): the Assembly station never posts tracking to Etsy and never completes anything on Etsy.
+     *  The page's Complete Order button (the same one as Shipping's, now shown here) completes the order on screen: the `assembled` seal
+     *  and one `complete` for the person signed in (station-work.js). A scan never completes anything.
      * =======================================================*/
-    const completeBtn = document.getElementById("completeOrderBtn");
-    const trackingInp = document.getElementById("trackingNumberInput");
-    const carrierSel  = document.getElementById("carrierSelect");
-
-    if (completeBtn) {
-      /* one Complete at a time: the button is disabled at once and a press while the post is under way is ignored, so
-         a double-click never completes the order on Etsy twice; it comes back when Etsy has answered */
-      let completeBusy = false;
-      completeBtn.addEventListener("click", async () => {
-        if (completeBusy) return;
-        completeBusy = true; completeBtn.disabled = true;
-        try { await completeOrder(); } finally { completeBusy = false; completeBtn.disabled = false; }
+    (function () {
+      const completeBtn = document.getElementById("completeOrderBtn");
+      if (!completeBtn) return;
+      let busy = false;                            // one press at a time: a double-click completes once
+      completeBtn.addEventListener("click", async ev => {
+        ev.preventDefault(); if (busy) return;
+        busy = true; completeBtn.disabled = true;
+        try { if (window.StationWork) await window.StationWork.complete(document.getElementById("etsyOrderNumber").value.trim()); } catch (_) {}
+        finally { busy = false; completeBtn.disabled = false; }
       });
-      async function completeOrder() {
-        const receiptId = document.getElementById("etsyOrderNumber").value.trim();
-        const tracking  = (trackingInp.value || "").trim();
-        const carrier   = carrierSel.value;          // "chitchats" | "usps"
-
-        if (!receiptId) { M.toast({ html: "Enter order #"   }); return; }
-        if (!tracking)  { M.toast({ html: "Enter tracking #" }); return; }
-        if (!carrier)   { M.toast({ html: "Choose carrier"  }); return; }
-
-        // Order timeline: a cancelled order asks before it is completed on Etsy
-        if (window.StationTimeline) {
-          let go = true;
-          try { go = (await window.StationTimeline.guard(receiptId, { action: "Complete Order" })) !== false; }
-          catch (errTl) { console.warn("Station timeline guard failed:", errTl); }
-          if (!go) return;
-        }
-
-        /* helper → perform one POST via resilient apiFetch */
-        const postTracking = () =>
-          apiFetch("/trackOrderProxy", {
-            method : "POST",
-            headers: { "Content-Type": "application/json" },
-            body   : JSON.stringify({ receiptId, tracking, carrier })
-          });
-
-        try {
-          let resp         = await postTracking();
-          let payload      = await resp.text();              // Etsy proxy returns raw text
-          let errMsg       = "";
-
-          /* ── forbidden (403) usually means missing shipping permission scope ── */
-          if (resp.status === 403) {
-            errMsg = "Forbidden – Etsy says this action isn’t allowed.";
-          } else if (!resp.ok) {
-            /* try to JSON-parse any error payload, else show raw text */
-          try   { errMsg = JSON.parse(payload).error || "Server error"; }
-          catch (e) { errMsg = payload || "Server error"; }
-          }
-
-          if (errMsg) throw new Error(errMsg);
-
-          /* 🎉 success */
-          M.toast({ html: "Etsy order marked complete 🎉" });
-          try {
-            window.StationTimeline && window.StationTimeline.did("etsyCompleted", receiptId,
-              "Completed on Etsy · " + (carrier === "usps" ? "USPS" : "Chit Chats") + " " + tracking, { tracking, carrier });
-          } catch (errTl) { console.warn("Station timeline failed:", errTl); }
-          trackingInp.value        = "";
-          carrierSel.selectedIndex = 0;
-
-        } catch (err) {
-          console.error(err);
-          M.toast({ html: "Not completed on Etsy yet (" + err.message + "). Nothing was lost — press Complete Order to try again." });
-        }
-      }
-    }
+    })();
 
     async function updateImageGrid(data){
       var items = [];

@@ -1,6 +1,6 @@
 // Adversarial (station leftovers): single-flight buttons and the phone relay behind the red alert, with the real module.
-//   1 · weld-1, assembly-1, shipping-1 (the three Complete Order variants): a double-click on Complete Order posts to
-//       Etsy once; the button is disabled at once and comes back after; a failure re-enables it with a calm message
+//   1 · shipping-1: a double-click on Complete Order posts to Etsy once; the button is disabled at once and comes back after; a failure
+//       re-enables it with a calm message. weld-1, assembly-1 (Paul, 9 Nov 2026): their copied button never posts to Etsy
 //   2 · weld-1: Buy & Print is single-flight too, even when other code re-enables the button mid-flight
 //   3 · weld-1: a phone scan relayed while the red CANCELLED alert is up keeps the focus on the alert, typed keys never
 //       reach the fields behind it, and the relayed order waits: after Understood the focus comes back and it loads
@@ -42,6 +42,13 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       // Shipping shows the button (a real double-click); Welding and Assembly keep it hidden, so two quick presses in code
       const press = () => page.evaluate(() => document.getElementById('completeOrderBtn').click());
       await fillIn();
+      if (file !== 'shipping-1.html') {          // (Paul, 9 Nov 2026) Welding and Assembly never post tracking to Etsy: the copied button is the station's own Complete Order
+        await page.evaluate(() => { const b = document.getElementById('completeOrderBtn'); b.click(); b.click(); });
+        await wait(1500);
+        assert.strictEqual(track.posts, 0, file + ': the Complete Order button never posts tracking to Etsy');
+        done.push(file + ': Complete Order never posts to Etsy');
+        return;
+      }
       if (await page.isVisible('#completeOrderBtn')) await page.dblclick('#completeOrderBtn');
       else await page.evaluate(() => { const b = document.getElementById('completeOrderBtn'); b.click(); b.click(); });
       assert.strictEqual(await disabled(), true, file + ': Complete Order is disabled at once');

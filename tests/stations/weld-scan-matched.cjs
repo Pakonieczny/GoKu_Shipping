@@ -474,7 +474,9 @@ async function main() {
     });
 
     /* ── 9: the real weld-1.html ── */
-    await check('9 the real weld-1.html hands the relay data to the queue: a restored login is credited, one matched per scan', async () => {
+    // (Paul, 9 Nov 2026) the real page no longer credits a phone scan as `matched`: it is a look, one plain `scan` "phone scan" credited to the person
+    // signed in (the queue is created with matched: false); the queue's own matched recording (checks 1 to 8) is unchanged for any page that asks for it
+    await check('9 the real weld-1.html hands the relay data to the queue: a restored login is credited, one plain scan per phone scan and no matched', async () => {
       const ctx = await newContext();
       await deskRoutes(ctx, async (u, b) => {
         const fn = u.pathname.split('/').pop();
@@ -502,13 +504,15 @@ async function main() {
       await deliver(payload(o1, { at, sent: Date.now() }));
       await page.waitForTimeout(300);
       await deliver(payload(o2));
-      await until(async () => { await page.evaluate(() => window.StationActivity.flush()); return matchedOf(o1).length && matchedOf(o2).length; }, 'both matched events on the real page', 20000);
+      const plainOf = o => [...docs.entries()].filter(([k, v]) => k.startsWith('Station_Activity/') && v.action === 'scan' && v.orderId === o).map(([, v]) => v);
+      await until(async () => { await page.evaluate(() => window.StationActivity.flush()); return plainOf(o1).length && plainOf(o2).length; }, 'both scans on the real page', 20000);
       await page.waitForTimeout(1500); await page.evaluate(() => window.StationActivity.flush()); await wait(200);
       for (const o of [o1, o2]) {
-        assert.equal(matchedOf(o).length, 1, 'one matched per scan: ' + o);
-        assert.equal(matchedOf(o)[0].person, 'Cleo M.'); assert.equal(matchedOf(o)[0].task, 'matching'); assert.equal(matchedOf(o)[0].device, 'weld-1');
+        assert.equal(plainOf(o).length, 1, 'one plain scan per phone scan: ' + o);
+        assert.equal(plainOf(o)[0].person, 'Cleo M.'); assert.equal(plainOf(o)[0].detail, 'phone scan'); assert.equal(plainOf(o)[0].device, 'weld-1');
+        assert.equal(matchedOf(o).length, 0, 'no matched credit: ' + o);
+        assert.equal([...docs.values()].filter(v => v && v.action === 'complete' && v.orderId === o).length, 0, 'a scan is never a completion');
       }
-      assert.ok(Math.abs(matchedOf(o1)[0].at - at) < 3000, 'the real scan time reaches the event');
       assert.equal(await page.evaluate(() => window.__sets.filter(s => s.path === 'Brites_Orders/weld-scan-1' && s.data && s.data['Order Number'] && s.data['Order Number'].__delete).length), 2, 'each scan is still cleared from the relay once');
       assert.equal(await page.evaluate(() => (window.__fbSnaps['Brites_Orders/weld-scan-1'] || []).length), 1, 'still one relay listener');
       await ctx.close();

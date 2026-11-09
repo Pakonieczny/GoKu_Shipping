@@ -107,11 +107,11 @@ async function scenario(browser, base, P) {
     await page.waitForFunction(() => window.isEmployeeLoggedIn === false, null, { timeout: 5000 });
   };
   const flush = () => page.evaluate(() => window.StationActivity.flush());
-  const scanAct = P.file === 'weld-1.html' ? 'matched' : 'scan';              // (a phone scan at the Welding station is one `matched` event written by the queue; the page logs no plain `scan` for it)
+  const scanAct = 'scan';              // (Paul, 9 Nov 2026: a phone scan at the Welding station is a look too: one plain `scan` from the page, never a `matched` credit)
   const scans = id => events.filter(e => e.device === P.device && e.action === scanAct && e.orderId === id);
   /* who a waiting scan is credited to: the person who processed it on the pages that log a plain scan; at the Welding station (the `matched` event) the person who was in Matching when it
      was SCANNED, so a scan that waited for a sign-in is unattributed, never whoever signed in afterwards (ST2, 6 Oct 2026; the order itself still loads under that person) */
-  const creditedTo = (e, name, why) => { if (P.file === 'weld-1.html') { assert.ok(e.unattributed === true && !e.person, 'the scan was made with nobody in Matching: unattributed, not ' + name + ': ' + JSON.stringify([e.person, e.unattributed])); } else assert.equal(e.person, name, why); };
+  const creditedTo = (e, name, why) => assert.equal(e.person, name, why);
   const note = () => page.evaluate(() => { const n = document.getElementById('stationScanQueueNote'); return n && n.style.display !== 'none' ? { text: n.textContent, role: n.getAttribute('role'), pe: getComputedStyle(n).pointerEvents } : null; });
   const stored = () => page.evaluate(k => sessionStorage.getItem(k), 'stationScanQueue.v1.' + P.device);
   const loaded = async id => { await until(async () => { await flush(); return scans(id).length >= 1; }, 'the scan of ' + id + ' on ' + P.device); };
@@ -234,7 +234,7 @@ async function main() {
       for (const [dev, relay] of copies) {
         const s = fs.readFileSync(path.join(root, dev + '.html'), 'utf8');
         assert.equal((s.match(/<script src="station-scan-queue\.js\?v=\d{8}-\w+"><\/script>/g) || []).length, 1, dev + ': script tag');   // (weld-1 loads the version that records the Welding station's scans as `matched`: tests/stations/weld-scan-matched.cjs)
-        assert.ok(s.includes(`device: "${dev}",\n          signedIn:`), dev + ': queue device');
+        assert.ok(new RegExp(`device: "${dev}",\\n(          matched: false,[^\\n]*\\n)?          signedIn:`).test(s), dev + ': queue device');
         assert.equal((s.match(new RegExp(`\\.doc\\("${relay}"\\)`, 'g')) || []).length, 2, dev + ': relay doc (listen + clear)');
         assert.equal((s.match(/\.doc\("(?:weld|assembly|shipping|design)-scan-\d+"\)/g) || []).length, 2, dev + ': no other relay');
         assert.ok(s.includes('startScannedOrderListener();\n        /* the phone-scan relay') || s.includes('        startScannedOrderListener();\n'), dev + ': attached at load');

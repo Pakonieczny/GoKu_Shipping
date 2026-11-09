@@ -111,6 +111,8 @@ async function main() {
       await page.waitForTimeout(700);           // the lookup, the cancel check and the grid
     };
     const flush = () => page.evaluate(() => window.StationActivity.flush());
+    /* (Paul, 9 Nov 2026) the Team stamps are messages; the page's Complete Order button completes the order on screen (station-work.js) */
+    const finish = async () => { await page.click('#completeOrderBtn', { timeout: 5000 }); await page.waitForTimeout(600); };
     const drop = async ok => {                  // a picture dropped into the order chat (the upload is a stub that works, or fails)
       await page.evaluate(async ok => {
         window.uploadViaResumable = async () => { if (!ok) throw new Error('storage down'); return 'http://127.0.0.1/x.png'; };
@@ -143,12 +145,15 @@ async function main() {
     await send('wrong chain, needs rework');                                  // a flag
     await send('QA1');                                                       // the completing stamp
     await send('Done');                                                      // a second stamp for the same order
+    await finish();                                                          // Complete Order: the completion
     await open(O_ONE, 'phone');                                              // from the phone scanner
     await send('Done');
+    await finish();
     await open(O_CANC);
     await page.evaluate(() => { const b = document.querySelector('.sttl-ok'); if (b) b.click(); });
     await open(O_GONE);
     await send('QA1').catch(() => {});                                       // (for O_GONE: a stamp with no loaded order)
+    await finish();
     await page.fill('#etsyOrderNumber', O_FAIL);
     await send('Done');                                                      // the Team message fails to send
     await open(O_QA2);                                                       // QA 2: a check of finished work is a note, never a second completion
@@ -157,7 +162,8 @@ async function main() {
     await send('QA1');                                                       // the first assembled stamp: the completion
     await send('QA 2');                                                      // a check after it: a note
     await send('QA3');                                                       // a later check: a note too
-    await send('Done 2');                                                    // (2 is only a number here, no QA stage): a stamp again, a note
+    await send('Done 2');                                                    // (2 is only a number here, no QA stage): a note
+    await finish();
     await drop(true); await drop(false);                                     // a picture to the Team (a note), one that fails (an error)
     await flush();
 
@@ -177,28 +183,28 @@ async function main() {
       const s = by('scan', O_ONE); assert.equal(s.length, 1);
       assert.equal(s[0].parts, 3); assert.equal(s[0].sku, 'SOLO-9'); assert.equal(s[0].detail, 'phone scan');
     });
-    await check('QA1 completes the order once: 1 order, 3 pieces; the later Done for the same order is a note, not a second completion', async () => {
+    await check('the Team stamps QA1 and Done are notes; Complete Order completes the order once: 1 order, 3 pieces, with its time', async () => {
       const c = by('complete', O_TWO); assert.equal(c.length, 1);
-      assert.equal(c[0].orders, 1); assert.equal(c[0].parts, 3); assert.match(c[0].detail, /^Team stamp QA1/);
-      const n = by('note', O_TWO).filter(e => /stamp again/.test(e.detail)); assert.equal(n.length, 1); assert.equal(n[0].orders, 0); assert.equal(n[0].parts, 0);
+      assert.equal(c[0].orders, 1); assert.equal(c[0].parts, 3); assert.match(c[0].detail, /^Complete Order/); assert(c[0].workMs >= 0, 'workMs');
+      const n = by('note', O_TWO).filter(e => /^Team stamp: /.test(e.detail)); assert.deepEqual(n.map(e => e.detail), ['Team stamp: QA1', 'Team stamp: Done']); assert.equal(n[0].orders, 0); assert.equal(n[0].parts, 0);
     });
-    await check('Done on the phone-scanned order completes it with its SKU and 3 pieces', async () => {
+    await check('the phone-scanned order is completed by Complete Order with its 3 pieces', async () => {
       const c = by('complete', O_ONE); assert.equal(c.length, 1);
-      assert.equal(c[0].orders, 1); assert.equal(c[0].parts, 3); assert.equal(c[0].sku, 'SOLO-9');
+      assert.equal(c[0].orders, 1); assert.equal(c[0].parts, 3);
     });
     await check('a plain message is a note and a rework message is a reject, neither with the message text', async () => {
       const notes = by('note', O_TWO).filter(e => e.detail === 'message to Team'); assert.equal(notes.length, 1);
       const rej = by('reject', O_TWO); assert.equal(rej.length, 1); assert.equal(rej[0].detail, 'flag to Team: wrong');
       for (const e of [...notes, ...rej]) assert(!/chain|rework/.test(e.detail.replace('flag to Team: wrong', '')), 'text leaked: ' + e.detail);
     });
-    await check('a QA 2 stamp is a note with fixed words, no pieces and no order, never a completion; QA1 still completes once, with its 2 pieces', async () => {
+    await check('a QA 2 stamp is a note with fixed words, no pieces and no order, never a completion; Complete Order completes once, with its 2 pieces', async () => {
       const notes = by('note', O_QA2).filter(e => /^QA \d+ check$/.test(e.detail));
       assert.deepEqual(notes.map(e => e.detail), ['QA 2 check', 'QA 2 check', 'QA 2 check', 'QA 3 check']);
       for (const n of notes) { assert.equal(n.parts, 0); assert.equal(n.orders, 0); assert.equal(n.sku, ''); }
       const c = by('complete', O_QA2); assert.equal(c.length, 1, JSON.stringify(c));
-      assert.equal(c[0].orders, 1); assert.equal(c[0].parts, 2); assert.match(c[0].detail, /^Team stamp QA1/);
-      assert.equal(mine().filter(e => e.action === 'complete' && /QA ?[2-9]/i.test(e.detail)).length, 0, 'no QA 2 completion anywhere');
-      const again = by('note', O_QA2).filter(e => /stamp again: Done 2/.test(e.detail)); assert.equal(again.length, 1);
+      assert.equal(c[0].orders, 1); assert.equal(c[0].parts, 2); assert.match(c[0].detail, /^Complete Order/);
+      assert.equal(mine().filter(e => e.action === 'complete' && /QA/i.test(e.detail)).length, 0, 'no stamp completion anywhere');
+      const again = by('note', O_QA2).filter(e => /Team stamp: Done 2/.test(e.detail)); assert.equal(again.length, 1);
       const total = mine().filter(e => e.action === 'complete' && e.orderId === O_QA2).reduce((s, e) => s + e.orders, 0); assert.equal(total, 1, 'the order is counted once');
     });
     await check('a picture to the Team is a note and a failed one an error, never the picture', async () => {
@@ -215,10 +221,10 @@ async function main() {
       const e2 = by('error', O_FAIL); assert.equal(e2.length, 1); assert.equal(e2[0].detail, 'Team stamp not sent');
       assert.equal(by('complete', O_FAIL).length, 0);
     });
-    await check('the stamp for an order whose lookup failed still completes it once (pieces unknown, 0)', async () => {
+    await check('Complete Order on an order whose lookup failed still completes it once (pieces unknown, 0)', async () => {
       const c = by('complete', O_GONE); assert.equal(c.length, 1); assert.equal(c[0].orders, 1); assert.equal(c[0].parts, 0);
-      assert.match(c[0].detail, /pieces unknown/);
     });
+    await check('the Assembly station never posts tracking to Etsy', async () => assert(!reqs.some(q => /trackOrderProxy/.test(q.url)), 'trackOrderProxy was called'));
 
     /* sign out: more scans and stamps send nothing */
     const before = mine().length;
@@ -237,7 +243,7 @@ async function main() {
       assert(!reqs.some(q => /employee/i.test(q.url)), 'the roster document was read');
       assert(reqs.some(q => /"activity"/.test(q.raw)), 'no activity request was made');
     });
-    await check('no page error from the activity wiring', async () => assert.deepEqual(errors.filter(m => /StationActivity|actLog|actScan|actStamp|actMessage|actDone|actLoaded/.test(m)), []));
+    await check('no page error from the activity wiring', async () => assert.deepEqual(errors.filter(m => /StationActivity|actLog|actScan|actStamp|actMessage|actDone|actLoaded|StationWork|station-work/.test(m)), []));
     if (errors.length) console.log('(page errors, not from this wiring:', errors.join(' | ').slice(0, 300) + ')');
     await context.close();
   } finally { await browser.close(); server.close(); }
