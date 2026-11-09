@@ -961,7 +961,7 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
   <main class="main">
     <div class="bridgeBanner hidden" id="bridgeBanner" role="status">
       <span class="bbDot"></span>
-      <span class="bbText" id="bridgeTitle">Controlled by Charm Sorter</span>
+      <span class="bbText" id="bridgeTitle">Controlled by Brites Manager</span>
       <span class="bbMeta" id="bridgeMeta">session — · 0 commands</span>
       <span class="bbTicker" id="bridgeTicker"></span>
       <button class="btn ghost xs" id="bridgeRelease" title="End remote control from this station">Release</button>
@@ -1133,7 +1133,7 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
       <div class="right"><span class="pill neutral" id="qrSummary">—</span></div>
     </div>
     <div class="dlgBody">
-      <div class="qrSorterNote hidden" id="qrSorterNote">Labels are produced and saved by the Charm Sorter, one per sheet, with the set. Nothing is printed from this station; the orders are marked complete when the sorter commits the set. The print route can be re-enabled in Settings.</div>
+      <div class="qrSorterNote hidden" id="qrSorterNote">Labels are produced and saved by Brites Manager, one per sheet, with the set. Nothing is printed from this station; the orders are marked complete when the sorter commits the set. The print route can be re-enabled in Settings.</div>
       <div class="qrNotes hidden" id="qrNotes"></div>
       <div class="qrGrid" id="qrPreviewGrid"></div>
     </div>
@@ -1516,10 +1516,10 @@ const DsName = (() => {
       if (host) { host.insertBefore(box, host.firstChild); box.classList.remove("float"); }
       else { document.body.appendChild(box); box.classList.add("float"); }
       const sorter = s != null;
-      lab.textContent = sorter ? "Sign in on the Charm Sorter" : "Set your name"; input.hidden = sorter;
+      lab.textContent = sorter ? "Sign in on Brites Manager" : "Set your name"; input.hidden = sorter;
       if (sorter) {
         // nobody is signed in there: no name is typed here; the sorter opens its own sign-in (the account chip), and its person comes back here
-        say(`Nobody is signed in on the Charm Sorter. Sign in with the name at the top of the sorter, then press ${what} again.`, false);
+        say(`Nobody is signed in on Brites Manager. Sign in with the name at the top of Brites Manager, then press ${what} again.`, false);
         try { Bridge.emit("employee.need", { action: what }); } catch (_) {}
         box.hidden = false;
       } else {
@@ -2586,7 +2586,7 @@ function connectForSorterBoot() {
   try { sessionStorage.setItem(CONNECT_FLAG, "1"); } catch (_) {}
   const signedIn = !!localStorage.getItem(TOKEN_KEYS.access) || !!localStorage.getItem(TOKEN_KEYS.refresh);
   if (signedIn && !new URLSearchParams(location.search).get("code")) { connectForSorterDone(); return; }
-  if (!signedIn) { setConn("bad", "Signing in for the Charm Sorter…"); setTimeout(() => startOAuth("sorter"), 300); }
+  if (!signedIn) { setConn("bad", "Signing in for Brites Manager…"); setTimeout(() => startOAuth("sorter"), 300); }
 }
 function connectForSorterDone() {
   let want = false; try { want = sessionStorage.getItem(CONNECT_FLAG) === "1"; } catch (_) {}
@@ -2600,7 +2600,7 @@ function connectForSorterDone() {
   try { localStorage.setItem(CONNECT_KEY, JSON.stringify(msg)); } catch (_) {}
   try { new BroadcastChannel("brites-design").postMessage(msg); } catch (_) {}
   try { if (window.opener && !window.opener.closed) { const targets = (typeof Bridge !== "undefined" && Bridge.ALLOWED ? [...Bridge.ALLOWED] : []).concat(/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(location.origin) ? ["*"] : []); for (const o of targets) { try { window.opener.postMessage(msg, o); } catch (_) {} } } } catch (_) {}
-  toast("Connected to Etsy for the Charm Sorter — this window closes", "ok", 3000);
+  toast("Connected to Etsy for Brites Manager — this window closes", "ok", 3000);
   setTimeout(() => { try { window.close(); } catch (_) {} }, 1500);
 }
 /* the framed copy: when the popup reports a sign-in on this origin, refresh the badge and tell the sorter */
@@ -2757,7 +2757,7 @@ function paintClaim(id, on, idx) {
   (idx ? (idx.get(String(id)) || []) : $$(`.orderRow[data-receipt='${cssEsc(id)}'], .tile[data-receipt='${cssEsc(id)}']`)).forEach(el => {
     el.classList.toggle("claimed", !!on);
     const c = rtClaims.get(String(id));
-    if (on && c) el.dataset.claim = `In a Charm Sorter run${c.run ? " · " + c.run : ""}`; else delete el.dataset.claim;
+    if (on && c) el.dataset.claim = `In a Brites Manager run${c.run ? " · " + c.run : ""}`; else delete el.dataset.claim;
   });
 }
 
@@ -5645,7 +5645,7 @@ const BritesChat = (() => {
   }
   function editWho() {
     // driven by the Charm Sorter (Paul, 18 Oct 2026): the person is the one signed in there; another name is never typed here
-    if (DsName.driven()) { if (DsName.need("Send")) toast(`Signed in on the Charm Sorter as ${meName()}. To switch person, use the name at the top of the sorter.`); paintWho(); return; }
+    if (DsName.driven()) { if (DsName.need("Send")) toast(`Signed in on Brites Manager as ${meName()}. To switch person, use the name at the top of Brites Manager.`); paintWho(); return; }
     if (el.who.dataset.editing === "1") return;
     el.who.dataset.editing = "1";
     const cur = meName();
@@ -6123,7 +6123,7 @@ const BritesChat = (() => {
   return {
     /** Post one internal message under a given sender name (the Charm Sorter posts as "Charm Sorter"). */
     async postAs(rid, text, sender, imageUrl, clientId) {
-      rid = String(rid || "").trim(); text = String(text || "").trim(); sender = String(sender || "Charm Sorter").trim();
+      rid = String(rid || "").trim(); text = String(text || "").trim(); sender = String(sender || "Brites Manager").trim();
       clientId = /^[\w-]{8,80}$/.test(String(clientId || "")) ? String(clientId) : null;
       if (!rid || (!text && !imageUrl)) throw new Error("receipt and text required");
       if (imageUrl) await directWrite(rid, { imageUrl: String(imageUrl), text: text || "Image attachment", senderName: sender, senderRole: "staff" }, clientId);
@@ -7459,7 +7459,7 @@ function buildSettingsUI() {
     { id:"autoHydrate", nm:"Read order details while scrolling", ds:"Pulls each order's items as its row nears the screen, so metal columns fill in as you go. Cached results are reused and never re-fetched.", sw:true },
     { id:"bgTopUp", nm:"Finish reading in the background", ds:"After the visible rows are done, quietly read the rest one at a time so the per-metal order totals and the overdue count are exact. Cached, so it only ever happens once per order.", sw:true },
     { id:"autoHeal", nm:"Repair blank metal counts", ds:"After a refresh, re-read any order whose metal columns came back empty.", sw:true },
-    { id:"labelsFromSorter", nm:"Labels come from the Charm Sorter", ds:"On: the sorter saves one QR label per sheet with the set and marks orders design-complete over the bridge; the Print labels button is hidden here. Off: the old print route (design-print-1.html) is back for this station.", sw:true },
+    { id:"labelsFromSorter", nm:"Labels come from Brites Manager", ds:"On: the sorter saves one QR label per sheet with the set and marks orders design-complete over the bridge; the Print labels button is hidden here. Off: the old print route (design-print-1.html) is back for this station.", sw:true },
   ];
 
   body.innerHTML = "";
@@ -7862,7 +7862,7 @@ const Bridge = (() => {
     b.classList.toggle("down", S.down);
     const fd = $("#bridgeFeed"); if (fd) fd.classList.toggle("hidden", !active() || !S.feed.length);
     const meta = $("#bridgeMeta"); if (meta) meta.textContent = `session ${(S.nonce || "").slice(0, 4)} · ${S.count} command${S.count === 1 ? "" : "s"}${S.last ? ` · last: ${S.last}` : ""}${S.dropped ? ` · ${S.dropped} dropped` : ""}`;
-    const t = $("#bridgeTitle"); if (t) t.textContent = S.down ? "Charm Sorter link lost" : "Controlled by Charm Sorter";
+    const t = $("#bridgeTitle"); if (t) t.textContent = S.down ? "Brites Manager link lost" : "Controlled by Brites Manager";
     if (text != null) { const tk = $("#bridgeTicker"); if (tk) tk.innerHTML = `<b>${esc(text)}</b>`; }
   }
   const esc = v => String(v ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -8091,9 +8091,9 @@ const Bridge = (() => {
       }
       S.nonce = ev.data.nonce; S.origin = ev.origin; S.master = ev.source; S.startedAt = Date.now(); S.count = 0; S.dropped = 0; S.previewed = null; S.down = false; S.lastPing = Date.now();
       S.sorterClientId = String(a.sorterClientId || ""); S.runId = a.runId ? String(a.runId) : null; S.sorterSelected = new Set(); rememberSorterSelection(); S.employee = null;   // (the sorter's person comes with its "employee" command, right after)
-      paintBanner(); ticker(`Remote control opened by the Charm Sorter${S.runId ? ` · run ${S.runId}` : ""}`);
+      paintBanner(); ticker(`Remote control opened by Brites Manager${S.runId ? ` · run ${S.runId}` : ""}`);
       S.feed = []; paintFeed();
-      Cursor.reset(); Cursor.act("banner", null, "Charm Sorter connected", { click: false }).catch(() => {});
+      Cursor.reset(); Cursor.act("banner", null, "Brites Manager connected", { click: false }).catch(() => {});
       return Object.assign(stateSnapshot(), { releasedFromPreviousSession: released, commands: Object.keys(CMDS) });
     },
     /** The person signed in to the Charm Sorter (Paul, 18 Oct 2026: "The user that is officially logged in must have all attributes and
@@ -8296,7 +8296,7 @@ const Bridge = (() => {
       if (text.trim()) staffNoteIDs.add(rid); else staffNoteIDs.delete(rid); notesCache.set(rid, text); staffNoteTexts.set(rid, text); markStaffNoteOrders();
       return { receiptId: rid, hasNote: !!text.trim() };
     },
-    async "chat.post"(a) { const rid = String(a.receiptId || ""); await Cursor.act("row", rid, `Post a chat message on ${rid}`); await BritesChat.postAs(rid, String(a.text || ""), a.sender || "Charm Sorter", a.imageUrl || null, a.clientId || null); msgCache.delete(rid); return { receiptId: rid }; },
+    async "chat.post"(a) { const rid = String(a.receiptId || ""); await Cursor.act("row", rid, `Post a chat message on ${rid}`); await BritesChat.postAs(rid, String(a.text || ""), a.sender || "Brites Manager", a.imageUrl || null, a.clientId || null); msgCache.delete(rid); return { receiptId: rid }; },
     /** The sorter wrote to an order's internal thread itself: what this station keeps about that thread is read again. */
     async "chat.touched"(a) { const rid = String(a.receiptId || ""); if (!rid) throw new Error("receiptId required"); msgCache.delete(rid); try { setMessageFlag(rid, true); } catch (_) {} return { receiptId: rid }; },
     async "chat.list"(a) { const rid = String(a.receiptId || ""); if (!rid) throw new Error("receiptId required"); return { receiptId: rid, messages: await BritesChat.listAll(rid, a.limit) }; },
@@ -8331,7 +8331,7 @@ const Bridge = (() => {
       await Cursor.act("print", null, `Mark ${commitIds.length} order${commitIds.length === 1 ? "" : "s"} design-complete (labels saved by the sorter)`);
       closeDlg($("#qrPreviewModal"));
       let completed = [];
-      if (commitIds.length) { const r = await commitCompletion(commitIds, { labels: a.labels, setId: a.labels.setId || a.setId || null, sheetIds: a.sheetIds || null, backCount: a.backCount == null ? null : a.backCount, runId: a.runId || S.runId || null, completedBy: a.completedBy || "Charm Sorter" }); completed = r.completed; }
+      if (commitIds.length) { const r = await commitCompletion(commitIds, { labels: a.labels, setId: a.labels.setId || a.setId || null, sheetIds: a.sheetIds || null, backCount: a.backCount == null ? null : a.backCount, runId: a.runId || S.runId || null, completedBy: a.completedBy || "Brites Manager" }); completed = r.completed; }
       S.previewed = null; pendingJobs = pendingLists = null; commitIds.forEach(id => S.sorterSelected.delete(id)); rememberSorterSelection();
       const result = { completed, refused };
       if (a.runId) rememberCommit(String(a.runId), ids, result);
@@ -8434,7 +8434,7 @@ const Bridge = (() => {
     emit("state", { ended: true, reason });
     S.master = null; S.origin = null; S.previewed = null; S.watch = false; S.down = false; S.employee = null;
     Cursor.reset(); S.feed = []; paintFeed();
-    paintBanner(); toast(`Charm Sorter released this station (${reason})`);
+    paintBanner(); toast(`Brites Manager released this station (${reason})`);
   }
   /* Heartbeat watch: three missed pings (15 s) mark the link down on the banner; a ping brings it back. A sorter
      waiting on a command it asked for — a pull of several hundred orders takes longer than that — is not a sorter that

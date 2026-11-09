@@ -225,7 +225,7 @@
   const STEP = [['engraveApproved', 'approved the engraving'], ['monogramApproved', 'approved the monogram'], ['engraveChanged', 'changed the engraving'], ['designSent', 'sent the design to the sheet'],
     ['designDropped', 'added the design'], ['customDecided', 'decided the custom order'], ['decided', 'approved the order'], ['placed', 'placed it on the sheet'], ['laserDone', 'cut it on the laser'],
     ['sorted', 'sorted it'], ['welded', 'welded it'], ['assembled', 'assembled it'], ['packed', 'packed it']];
-  const NOBODY = /^(|system|etsy|operator|someone|unknown|unattributed|charm sorter|sorter|auto|automatic|claude)$/i;
+  const NOBODY = /^(|system|etsy|operator|someone|unknown|unattributed|charm sorter|brites manager|charm nest|sorter|auto|automatic|claude)$/i;
   /** events: the order's timeline. → { suggested, why, candidates: [{ name, step, type, at }] }: the person of the step a mistake is most likely made
    *  at, latest first within a step (the engraving or the design a person approved, before placing and cutting). o.lineKey: that piece's steps only. */
   function culprits(events, o) {

@@ -1,4 +1,6 @@
-# Charm Sorter ⇄ Design Station bridge
+# Brites Manager ⇄ Design Station bridge
+
+("The Charm Sorter" below is Brites Manager, its former name.)
 
 Design and implementation document. Status: draft 4. Owner: production tooling.
 

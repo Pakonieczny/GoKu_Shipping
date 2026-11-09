@@ -13144,7 +13144,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       { id: "workshop", src: "S", tone: "amber", menu: "Workshop question",
         test : t => (Number(t.orderLinkOpen) || 0) > 0,
         label: () => "Workshop question",
-        why  : t => "A Charm Sorter question is open" + (t.orderLinkTitle ? " (" + t.orderLinkTitle + ")" : "")
+        why  : t => "A Brites Manager question is open" + (t.orderLinkTitle ? " (" + t.orderLinkTitle + ")" : "")
                   + ". The customer's answer goes back to the sorter, and AI replies wait." },
       { id: "rush", src: "S", tone: "amber", menu: "Rush",
         test : t => isActiveRush(t),
@@ -15717,7 +15717,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         // A Charm Sorter production question is open here: the answer goes
         // back to the sorter, and AI auto-replies wait while it is open.
         if ((t.orderLinkOpen || 0) > 0) {
-          badges.push(`<span class="em-badge production-q" title="${esc(t.orderLinkTitle || "Question from the Charm Sorter")} · the customer's answer goes back to the sorter; AI auto-replies wait while it is open">sorter question${t.orderLinkOpen > 1 ? " ×" + t.orderLinkOpen : ""}</span>`);
+          badges.push(`<span class="em-badge production-q" title="${esc(t.orderLinkTitle || "Question from Brites Manager")} · the customer's answer goes back to Brites Manager; AI auto-replies wait while it is open">sorter question${t.orderLinkOpen > 1 ? " ×" + t.orderLinkOpen : ""}</span>`);
         }
         if ((t.riskFlags || []).includes("image_attached")) {
           badges.push(`<span class="em-badge attachment">📎 image</span>`);
@@ -16089,7 +16089,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         const ov = document.createElement("div");
         ov.className = "em-modal-overlay em-pair";
         ov.innerHTML = `<div class="em-modal" role="dialog" aria-modal="true" aria-labelledby="emPairTitle">
-            <div class="em-modal-header"><h3 id="emPairTitle">Connect a Charm Sorter</h3><button type="button" class="em-modal-close" data-x aria-label="Close"><i class="material-icons">close</i></button></div>
+            <div class="em-modal-header"><h3 id="emPairTitle">Connect Brites Manager</h3><button type="button" class="em-modal-close" data-x aria-label="Close"><i class="material-icons">close</i></button></div>
             <div class="em-modal-body"><div class="em-modal-loading">Checking the request…</div></div>
           </div>`;
         document.body.appendChild(ov);
@@ -16108,7 +16108,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           if (!info || !info.found) return done("This connect request is no longer waiting: the sorter may already be connected. If it is not, " + again.charAt(0).toLowerCase() + again.slice(1));
           if (info.status !== "pending") return done(info.status === "approved" ? "This sorter is already connected." : "This connect request has ended. " + again);
           const me = (state.currentUser && (state.currentUser.displayName || state.currentUser.username)) || "you";
-          body.innerHTML = `<p class="em-pair-lead"><b>${esc(info.label || "A Charm Sorter")}</b> asks to write to customers through this inbox.</p>
+          body.innerHTML = `<p class="em-pair-lead"><b>${esc(info.label || "Brites Manager")}</b> asks to write to customers through this inbox.</p>
             <ul class="em-pair-list">
               <li>Its questions about orders go out on Etsy through this inbox, and are recorded as asked by ${esc(me)}.</li>
               <li>It sees only the replies to its own questions.</li>
@@ -16118,7 +16118,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           const answer = approve => {
             body.querySelectorAll("button").forEach(b => { b.disabled = true; });
             api("etsyMailOrderLink", { method: "POST", body: { op: "pair_answer", code, approve } })
-              .then(() => done(approve ? "Connected. You can go back to the Charm Sorter: it picks this up by itself." : "Declined. Nothing was connected."))
+              .then(() => done(approve ? "Connected. You can go back to Brites Manager: it picks this up by itself." : "Declined. Nothing was connected."))
               .catch(e => done("It did not go through: " + esc(e.message) + ". " + again));
           };
           body.querySelector("[data-yes]").onclick = () => answer(true);
@@ -16892,10 +16892,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         ` : ""}
 
         ${(t.orderLinkOpen || 0) > 0 ? `
-        <div class="em-orderlink-bar" title="Asked from the Charm Sorter. The customer's answer shows there as soon as this inbox reads it; AI auto-replies wait while the question is open.">
+        <div class="em-orderlink-bar" title="Asked from Brites Manager. The customer's answer shows there as soon as this inbox reads it; AI auto-replies wait while the question is open.">
           <i class="material-icons">precision_manufacturing</i>
-          <span><b>Production question${t.orderLinkOpen > 1 ? "s" : ""} open</b> · ${esc(t.orderLinkTitle || "from the Charm Sorter")}${(t.orderLinkReceipts || []).length ? ` · order ${esc(t.orderLinkReceipts.join(", "))}` : ""}</span>
-          <span class="em-orderlink-note">Answers go back to the Charm Sorter · AI auto-replies wait</span>
+          <span><b>Production question${t.orderLinkOpen > 1 ? "s" : ""} open</b> · ${esc(t.orderLinkTitle || "from Brites Manager")}${(t.orderLinkReceipts || []).length ? ` · order ${esc(t.orderLinkReceipts.join(", "))}` : ""}</span>
+          <span class="em-orderlink-note">Answers go back to Brites Manager · AI auto-replies wait</span>
         </div>` : ""}
 
         <div class="em-cust-panel collapsed" id="emCustPanel">

@@ -6504,7 +6504,7 @@ const Gate = window.Gate = (() => {
           rgOneTried.set(key, { at: Date.now() });
           rgOneSay.set(home, `${setName}: its Rose Gold pieces go onto ONE sheet: order ${o} is moving from ${sheetNameOf(src)} to ${sheetNameOf(target)}`); liveRefresh(src);
           try {
-            const ok = await kit.move({ rid: o, pieces: pieces.map(c => ({ c, src, placed: (src.placements || []).some(q => q.id === c.id) })) }, target, "Charm Nest (automatic)", { guard });
+            const ok = await kit.move({ rid: o, pieces: pieces.map(c => ({ c, src, placed: (src.placements || []).some(q => q.id === c.id) })) }, target, "Brites Manager (automatic)", { guard });
             if (!ok) continue;
             did = true;
             try { agent({ run: run.runId, metal: "rose" }, "ok", `Order ${o}: its Rose Gold piece${pieces.length === 1 ? "" : "s"} moved from ${sheetNameOf(src)} to ${sheetNameOf(target)} automatically, so ${setName} has ONE Rose Gold sheet`); } catch (_) {}
@@ -6552,7 +6552,7 @@ const Gate = window.Gate = (() => {
         const tried = { key, at: Date.now() }; autoCutTried.set(p.sheetId, tried);
         const was = { inSet: inSetNow(p), pick: p.solidPick };
         p._roseAction = true; p._autoCutting = true; p.autoMatched = st.setId;   // (its back engraving does not hold its join while the press runs: basePolicy; the set's Approve for laser cutting holds the set)
-        const by = (typeof stampWho === "function" && stampWho().by) || "Charm Nest (automatic)";
+        const by = (typeof stampWho === "function" && stampWho().by) || "Brites Manager (automatic)";
         const go = async () => {
           try { await RS.record(p, { by, via: "auto" }); }
           catch (e) {
@@ -6685,7 +6685,7 @@ const Gate = window.Gate = (() => {
         liveRefresh(x.from);
         const guard = sh => sh.roseCutAt || +sh.laserDoneAt > 0 || sh.recalled ? "it is cut" : Sets.ofRun(sh.runId).some(s => (s.committedAt || s.processReady || s.laserSetPending || s.laserDoneAt) && (s.sheetIds || []).includes(sh.sheetId)) ? "its set is approved or sent" : sh._manualHold ? "it is being changed by hand" : "";
         try {
-          const ok = await kit.move({ rid: x.orders[0], pieces: x.pieces.map(c => ({ c, src: x.from, placed: (x.from.placements || []).some(q => q.id === c.id) })) }, to, "Charm Nest (automatic)", { guard });
+          const ok = await kit.move({ rid: x.orders[0], pieces: x.pieces.map(c => ({ c, src: x.from, placed: (x.from.placements || []).some(q => q.id === c.id) })) }, to, "Brites Manager (automatic)", { guard });
           if (!ok) { unpairSay.set(x.set.setId, `${what} ${x.pieces.length === 1 ? "moves" : "move"} to ${name(to)} as soon as the change running in the sheet window is done`); continue; }
           did = true; unpairSay.delete(x.set.setId);
           try { agent({ run: run.runId, metal: x.metal }, "ok", `${what} moved to ${name(to)} automatically (one GF sheet and one SS sheet share an order); ${name(x.second)} leaves ${setName}`); } catch (_) {}
@@ -15096,7 +15096,7 @@ const Sets = window.Sets = (() => {
       // so it sees what was checked here: a set refused after the station commit leaves its orders done at the station
       // and the set open, and the run stopped at every later check.
       await RunCtl.save(run);
-      r = await DesignLink.call("complete.commit", { receiptIds: ids, labels, runId: run.runId, setId: set.setId, sheetIds: set.sheetIds, backCount: set.backCount || 0, completedBy: `Charm Sorter (${employeeName() || "operator"})` }, { timeoutMs: 180000 });
+      r = await DesignLink.call("complete.commit", { receiptIds: ids, labels, runId: run.runId, setId: set.setId, sheetIds: set.sheetIds, backCount: set.backCount || 0, completedBy: `Brites Manager (${employeeName() || "operator"})` }, { timeoutMs: 180000 });
     } else await RunCtl.save(run);   // (only orders the station already took: the server still checks the set against the run's lines)
     return record(set, ev, refused.concat(r.refused || []), [...took].concat(r.completed || []));
   }
@@ -15826,7 +15826,7 @@ const RunCtl = window.RunCtl = (() => {
   // (a passing failure again while Auto retries it is said on the banner only, not with a toast every few minutes all night)
   function stop(why, fix, at, kind) { const r = B.run; if (!r) return; kind = kind || kindOf(why); const retrying = auto.runId === r.runId && auto.step === r.step, again = retrying && auto.n > 0 && ["transient", "watchdog"].includes(kind); r.status = "stopped"; r.stoppedBy = why; r.fix = fix || null; r.at = at || null; r.stopKind = kind; r.errors.push({ t: Date.now(), why }); if (retrying) auto.next = Date.now() + AUTO_WAIT[Math.min(auto.n, AUTO_WAIT.length - 1)]; if (waiter && waiter.r === r) { const w = waiter; waiter = null; w.resolve(); } agent({ run: r.runId }, "warn", `Run stopped: ${why}${fix ? " — " + fix : ""}`);
     if (r.errors.length > 50) r.errors.splice(0, r.errors.length - 50);   // memory keeps the last fifty, as the record does (recordOf): a run left on for weeks kept every stop
-    if (why !== "stopped by the operator" && !again) { toast(`Run stopped: ${why}`, "bad", 8000); notifyPerson("Charm Sorter run stopped", why); }
+    if (why !== "stopped by the operator" && !again) { toast(`Run stopped: ${why}`, "bad", 8000); notifyPerson("Brites Manager run stopped", why); }
     window.CN?.resumeQueueChanged?.();   // the run's queued sheets start on Resume
     save(r).catch(() => {}); renderBanner(); }
   /** Stop on the banner. While new orders are going on (Adding new orders) the run's charm searches end at once as well,
@@ -15863,7 +15863,7 @@ const RunCtl = window.RunCtl = (() => {
       if (r !== B.run || r.status !== "stopped") { renderBanner(); return; }
     }
     // another tab of this browser carries this run on: two tabs would nest the same sheets and write the same records
-    if (!await holdsRun(r.runId)) { toast("Another Charm Sorter tab is carrying on with this run — close that tab to take it over here", "bad", 8000); return; }
+    if (!await holdsRun(r.runId)) { toast("Another Brites Manager tab is carrying on with this run — close that tab to take it over here", "bad", 8000); return; }
     if (r !== B.run || !["stopped", "paused", "processed"].includes(r.status)) return;
     const pendingStop=reviewStop(r);
     if(pendingStop)preservePendingSheets(r);
@@ -15922,7 +15922,7 @@ const RunCtl = window.RunCtl = (() => {
     if (rec.lineArchive) { const la = rec.lineArchive; rec.lineArchive = { parts: +la.parts || 0, at: la.at || null, base: { lines: +la.lines || 0, committed: +la.committed || 0, held: +la.held || 0, sheets: +la.sheets || 0 } }; }
     if (rec.status === "processed") { rec.step = "engrave"; rec.processingComplete = false; }
     const pendingStop=reviewStop(rec);
-    if (!await holdsRun(runId)) { toast("Another Charm Sorter tab is carrying on with this run — close that tab to take it over here", "bad", 8000); return; }
+    if (!await holdsRun(runId)) { toast("Another Brites Manager tab is carrying on with this run — close that tab to take it over here", "bad", 8000); return; }
     B.run = rec; rec.status = "running"; rec.stoppedBy = null; rec.fix = null;
     agent({ run: runId }, "DS", `Resuming ${runId} at step ${rec.step}`);
     if (O.stepIndex(rec.step) <= O.stepIndex("pool")) { rec.step = "pull"; }
@@ -19070,7 +19070,7 @@ const Review = window.Review = (() => {
   // (a regular line completed by hand from its own tab's card is kept under that tab's chip in Completed, by its record)
   const kindOfWords = w => { for (const [k, v] of Object.entries(KIND_WORDS)) if (v === w && k !== "customOrder") return k === "needsMaterial" ? "needsMapping" : k; return null; };
   const tabOf = it => it.kind === "needsMaterial" ? "needsMapping" : (it.kind === "customOrder" && it.done && it.record && !(it.row && it.row.spec && it.row.spec.special) && kindOfWords(it.record.category)) || it.kind;
-  function put(it) { const i = items().findIndex(x => x.key === it.key); const fresh = i < 0; if (fresh) { items().push(Object.assign({ t: Date.now() }, it)); asked(it); } else items()[i] = Object.assign(items()[i], it); if (fresh && B.run && ["review", "paused", "stopped"].includes(B.run.status)) notifyPerson("Charm Sorter needs a person", it.why || it.kind); }
+  function put(it) { const i = items().findIndex(x => x.key === it.key); const fresh = i < 0; if (fresh) { items().push(Object.assign({ t: Date.now() }, it)); asked(it); } else items()[i] = Object.assign(items()[i], it); if (fresh && B.run && ["review", "paused", "stopped"].includes(B.run.status)) notifyPerson("Brites Manager needs a person", it.why || it.kind); }
   // the list at once (a person may be working in it); the strip and the banner once a frame (CNFrame)
   function redraw() { render(); LiveStrip.render(); if (window.CNFrame) CNFrame.later("banner", RunCtl.renderBanner); else RunCtl.renderBanner(); }
   function add(it) { put(it); redraw(); }
@@ -21023,7 +21023,7 @@ const Review = window.Review = (() => {
       { const eb = c.querySelector("[data-emoji]"); if (eb && !(window.CNEmojiPicker && window.CNEmojiPicker.attach({ textarea: c.querySelector("[data-f=text]"), button: eb, key: "review:" + it.key }))) eb.remove(); }
       c.querySelector("[data-a=confirm]").onclick = () => Engrave.decideWords(j, { text: c.querySelector("[data-f=text]").value, note: c.querySelector("[data-f=text]").value.trim() !== (j.text || "").trim() ? "edited" : "confirmed" });
       const dr = c.querySelector("[data-a=drop]"); if (dr) dr.onclick = () => { let t = c.querySelector("[data-f=text]").value; for (const ch of miss) t = t.split(ch).join(""); c.querySelector("[data-f=text]").value = t.replace(/[ ]{2,}/g, " ").trim(); };
-      c.querySelector("[data-a=msg]").onclick = async () => { const who = by(); if (!who) return; const draft = prompt("Message to post in the order's internal chat (the station staff will contact the customer):", `${who}: please confirm the ${fw ? fl + " " : ""}engraving text for ${sp.designSku} — we read "${(j.text || "").replace(/\n/g, " / ")}"${miss.length ? `; the symbol ${miss.join(" ")} cannot be engraved exactly` : ""}.`); if (!draft) return; TeamMail.queue(r.order.receiptId, draft, "Charm Sorter"); toast("Posted to the order's Team messages", "ok"); };
+      c.querySelector("[data-a=msg]").onclick = async () => { const who = by(); if (!who) return; const draft = prompt("Message to post in the order's internal chat (the station staff will contact the customer):", `${who}: please confirm the ${fw ? fl + " " : ""}engraving text for ${sp.designSku} — we read "${(j.text || "").replace(/\n/g, " / ")}"${miss.length ? `; the symbol ${miss.join(" ")} cannot be engraved exactly` : ""}.`); if (!draft) return; TeamMail.queue(r.order.receiptId, draft, "Brites Manager"); toast("Posted to the order's Team messages", "ok"); };
       c.querySelector("[data-a=none]").onclick = () => Engrave.decideWords(j, { none: true });
       const fb = c.querySelector("[data-a=fonts]"); if (fb) fb.onclick = async () => { B.engrave.fonts.ok = false; B.engrave.fonts.error = null; await Engrave.loadFonts(); if (B.engrave.fonts.ok) { remove(it.key); await Engrave.setReady(j); RunCtl.poke(); } };
     } else if (it.kind === "flipFailed") {
@@ -28477,7 +28477,7 @@ async function bootBridge() {
      that tab kept (Paul, 15 Oct 2026: "unexpected user behaviour"). */
   if (recovered && !recoveryFailed && B.run && ["running", "review", "paused", "processed", "stopped"].includes(B.run.status) && !(await RunCtl.holdsRun(B.run.runId, 3000))) {
     recoveryFailed = true; Session.freeze(); RunCtl.takeOverWhenFree(B.run.runId);
-    toast("Another Charm Sorter tab is carrying on with this run, so this tab only shows it and changes nothing. Close the other tab, and this one takes the run over.", "bad", 15000);
+    toast("Another Brites Manager tab is carrying on with this run, so this tab only shows it and changes nothing. Close the other tab, and this one takes the run over.", "bad", 15000);
     agent({ run: B.run.runId }, "warn", "Another tab of this browser holds this run: this tab does not carry it on");
   }
   // a cleanup made in the cloud on a sheet this saved workspace still shows as it was goes on it first (Cleanups), before
