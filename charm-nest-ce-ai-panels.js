@@ -401,6 +401,8 @@
   const DIST_BTNS = () => `<div class="aip-ibs">${ib('data-aim="di:top"', IC.diT, 'Vertical Distribute Top')}${ib('data-aim="di:vcenter"', IC.diM, 'Vertical Distribute Center')}${ib('data-aim="di:bottom"', IC.diB, 'Vertical Distribute Bottom')}${ib('data-aim="di:left"', IC.diL, 'Horizontal Distribute Left')}${ib('data-aim="di:hcenter"', IC.diC, 'Horizontal Distribute Center')}${ib('data-aim="di:right"', IC.diR, 'Horizontal Distribute Right')}</div>`;
   const PF_SHAPE = [['ops.unite', IC.pfUnite, 'Unite'], ['ops.minus', IC.pfMinus, 'Minus Front'], ['ops.intersect', IC.pfIntersect, 'Intersect'], ['ops.exclude', IC.pfExclude, 'Exclude']];
   const PF_FIND = [['ops.divide', IC.pfDivide, 'Divide'], ['ops.trim', IC.pfTrim, 'Trim']];
+  /** OFS1: an extension command's own icon, small, before a Quick Actions button's words (Offset Path's: a shape with its offset round it). */
+  const xIcon = id => { const c = root && root.CharmEditor && root.CharmEditor.commands && root.CharmEditor.commands[id]; return c && typeof c.icon === 'string' && c.icon.startsWith('<svg') ? `<span class="cops-ic" aria-hidden="true">${c.icon}</span>` : ''; };
   const pfBtns = list => `<div class="aip-ibs">${list.map(([id, icon, t]) => ib(`data-aim="x:${id}"`, icon, t)).join('')}</div>`;
   const ALIGN_TO = { selection: 'Align to Selection', key: 'Align to Key Object', charm: 'Align to Artboard (the charm)', centre: "Align to the charm's centre of area" };
   const PT_PRESETS = [6, 7, 8, 9, 10, 11, 12, 14, 18, 21, 24, 36, 48, 60, 72];
@@ -429,7 +431,7 @@
       + sec('rulers', 'Rulers & Grids', `<div class="aip-ibs">${ib('data-aim="opt:grid" role="menuitemcheckbox"', IC.grid, 'Show Grid (the millimetre grid)')}</div>`)
       + sec('guides', 'Guides', `<div class="aip-ibs">${ib('data-aim="opt:showGuides" role="menuitemcheckbox"', IC.guides, 'Show Guides (⌘;)')}</div>`)
       + sec('snap', 'Snap Options', `<div class="aip-ibs">${ib('data-aim="opt:smart" role="menuitemcheckbox"', IC.smart, 'Smart Guides (⌘U)')}${ib('data-aim="opt:snapGrid" role="menuitemcheckbox"', IC.snapGrid, 'Snap to Grid')}${ib('data-aim="opt:snapGuides" role="menuitemcheckbox"', IC.snapGuides, 'Snap to Guides')}</div>`)
-      + sec('docqa', 'Quick Actions', `<div class="aip-qa"><button class="aip-btn" type="button" data-aim="zoom:fit" title="Fit Artboard in Window (⌘0)">Fit Artboard</button><button class="aip-btn" type="button" data-aim="unlockAll" title="Unlock All (⌥⌘2)">Unlock All</button><button class="aip-btn" type="button" data-aim="showAll" title="Show All (⌥⌘3)">Show All</button><button class="aip-btn" type="button" data-aim="x:cx.check" title="The laser check: what the laser cannot make">Laser Check</button></div>`);
+      + sec('docqa', 'Quick Actions', `<div class="aip-qa"><button class="aip-btn" type="button" data-aim="zoom:fit" title="Fit Artboard in Window (⌘0)">Fit Artboard</button><button class="aip-btn" type="button" data-aim="x:ops.offset" title="Offset Path: make the charm thicker or thinner (its outer edge and every hole)">${xIcon('ops.offset')}Offset Path…</button><button class="aip-btn" type="button" data-aim="unlockAll" title="Unlock All (⌥⌘2)">Unlock All</button><button class="aip-btn" type="button" data-aim="showAll" title="Show All (⌥⌘3)">Show All</button><button class="aip-btn" type="button" data-aim="x:cx.check" title="The laser check: what the laser cannot make">Laser Check</button></div>`);
     B.properties = mk('properties', `<div class="aip-pp"><div class="aip-kind" data-aip-kind>No Selection</div>`
       + sec('transform', 'Transform', tfHtml() + `<div class="aip-row">${field('r', IC.angle.replace('<svg', '<svg width="15" height="15"'), 'Rotate, degrees (↑ ↓ 1°, Shift 15°)')}<span style="flex:1 1 auto"></span>${ib('data-aim="x:ops.flipH"', IC.flipH, 'Flip Along Horizontal Axis (left to right)')}${ib('data-aim="x:ops.flipV"', IC.flipV, 'Flip Along Vertical Axis (top to bottom)')}</div>`, 'transform')
       + sec('appearance', 'Appearance', fillStroke, 'stroke')
@@ -707,7 +709,7 @@
     // Quick Actions: only what this page has, only what can run now
     const qa = [];
     if (I.n) {
-      const x = (id, label) => { if (D.xOn(id)) qa.push(`<button class="aip-btn" type="button" data-aim="x:${id}" title="${esc(label)}">${esc(label)}</button>`); };
+      const x = (id, label) => { if (D.xOn(id)) qa.push(`<button class="aip-btn" type="button" data-aim="x:${id}" title="${esc(label)}">${id === 'ops.offset' ? xIcon(id) : ''}${esc(label)}</button>`); };
       if (I.n >= 2) qa.push('<button class="aip-btn" type="button" data-aim="group" title="Group (⌘G)">Group</button>');
       if (I.es.some(e => e.it.kind === 'group')) qa.push('<button class="aip-btn" type="button" data-aim="ungroup" title="Ungroup (⇧⌘G)">Ungroup</button>');
       x('ops.offset', 'Offset Path…'); x('ops.outline', 'Outline Stroke'); x('cx.onPath', 'Type on a Path'); x('cx.offPath', 'Release Type on Path');
