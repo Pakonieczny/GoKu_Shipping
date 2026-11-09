@@ -190,7 +190,9 @@ const A = '9100000001', B = '9100000002';
       w.c.Review = { add: it => reviews.push(it) }; w.c.B.review = { items: reviews }; w.c.Sets = { ofRun: () => [] }; w.c.Gate = { modern: () => false };
       w.c.TL = { line: (row, type, o) => { timeline.push({ type, o }); return true; }, hash: x => String(x).length.toString(36) };
       // (INPLACE, Paul 20 Oct 2026: the Pool asks the bridge's replaceCutWhy which sheets may change: the real one, from the same source)
-      { const src = keyWorld.src, i = src.indexOf('function replaceCutWhy(sh, ids) {'), j = src.indexOf('window.replaceCutWhy = replaceCutWhy;', i); assert(i > 0 && j > i, 'replaceCutWhy is where the test expects it'); require('vm').runInContext(src.slice(i, j), w.c); }
+      { const src = keyWorld.src, i = src.indexOf('function replaceCutWhy(sh, ids) {'), j = src.indexOf('window.replaceCutWhy = replaceCutWhy;', i); assert(i > 0 && j > i, 'replaceCutWhy is where the test expects it'); require('vm').runInContext(src.slice(i, j), w.c);
+        // (IPL2: and replaceLaserWhy, the one check a REPLACED charm asks: only the laser's mark)
+        const k = src.indexOf('function replaceLaserWhy(sh) {'), l = src.indexOf('window.replaceLaserWhy = replaceLaserWhy;', k); assert(k > 0 && l > k, 'replaceLaserWhy is where the test expects it'); require('vm').runInContext(src.slice(k, l), w.c); }
       w.c.window.CharmNestReviewHold = H; return Object.assign(w, { reviews, timeline, toasts, calls });
     };
     const rowOf = () => { const spec = O.interpretLine({ receiptId: rid, updateTs: 1 }, line, ctx({ [LID]: { v: 2, bySku: { [OLD]: NEW }, by: 'X' } })); spec.material = 'gold'; return Object.assign(lineRow(rid, '5246703786', spec.designSku, 1, {}), { spec, line: { transactionId: line.transactionId, listingId: LID, sku: line.sku, title: TITLE } }); };

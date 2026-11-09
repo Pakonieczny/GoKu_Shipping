@@ -533,14 +533,96 @@
      size in mm, a number of sides, a face, an alignment, a price, a count of bars / discs), is never a design option: it is never asked about as one. A value whose only part is a metal word or a font word is
      not enough on its own ("Rose" is also a flower, "Ace" a card): it takes the name, or another part beside it. → { kinds, byName, byValue, length, size, font } or null when the option may pick a design. */
   const ND_SPLIT_NAME = /\s*(?:[\/\\•·&+,|;]|\band\b|\bwith\b)\s*/i, ND_SPLIT_VALUE = /\s*[\/\\•·&+,|;]\s*|\s+(?:[-–—]|and)\s+/i;
+  /* ═══ ENGLIMIT (Paul, 9 Nov 2026, order 4218451815, listing 531495758 "TINY Gold Bar Necklace", SKU TINY_5758, "Number of Characters: GOLD 1-3 Characters", personalisation "D (cross) E"):
+     "the 1-3 characters [is] just for how many characters can be added as engraving to the bar." The line was held "option … not mapped — Etsy keeps one SKU (TINY_5758) for every choice of this listing".
+     WHY: nameKind read "Number of …" as a COUNT, and FALSEHOLD never passes a count (how many pieces is a real question); valueKind read neither the metal nor the character range in "GOLD 1-3 Characters", so
+     the value was unread too, and the option fell through to the generic one-SKU question. THE RULE: an option that only sets how much ENGRAVING the piece takes (a number of characters / letters / initials /
+     lines of text, as a range "1-3 Characters", a ceiling "Up to 3 letters", "Max 10 characters", or one "1 initial", "2 lines") is a words limit, never a design option and never a count of pieces: it never holds.
+     A metal word beside it ("GOLD 1-3 Characters") and a price are read too. A bare "3 letters" / "Number of Initials: 3" stays the count question it always was (three initial discs, or three letters on one?);
+     a value that a listing's own table ties to its own SKU is still that SKU's (the SKU rule comes first). The limit is a CHECK: spec.engraveLimit says it on the line, and a longer engraving is a note, never a hold.
+     → { min, max (0 = no ceiling), unit: "character" | "letter" | "initial" | "line", metal: "gold" | "silver" | "rose" | "", text } or null. */
+  const LIMIT_NAME = /\b(?:characters?|chars?|(?:number|no\.?|#|count|amount)\s+of\s+(?:letters?|initials?|lines?|characters?)|how\s+many\s+(?:letters?|initials?|lines?|characters?|chars?)|(?:letters?|initials?|lines?|characters?)\s+(?:count|limit|max(?:imum)?|allowed)|max(?:imum)?\s+(?:letters?|initials?|lines?|characters?)|lines?\s+of\s+(?:text|engraving)|text\s+lines?|engraving\s+(?:length|limit|size|lines?))\b/i;
+  const LIMIT_UNIT_NAME = /\b(?:letters?|initials?|lines?|characters?|chars?)\b/i;
+  const LIMIT_N = "(\\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)", LIMIT_U = "(characters?|chars?|letters?|initials?|lines?(?:\\s+of\\s+(?:text|engraving))?)";
+  const LIMIT_FORMS = [
+    ["upto", new RegExp("(?:^|[^\\p{L}\\p{N}])(?:up\\s*to|upto|max(?:imum)?\\.?|no\\s+more\\s+than|at\\s+most|\u2264|<=)\\s*:?\\s*" + LIMIT_N + "\\s*" + LIMIT_U + "?(?![\\p{L}\\p{N}])", "iu")],
+    ["range", new RegExp("(?:^|[^\\p{L}\\p{N}])" + LIMIT_N + "\\s*(?:-|\u2013|\u2014|~|to)\\s*" + LIMIT_N + "\\s*" + LIMIT_U + "?(?![\\p{L}\\p{N}])", "iu")],
+    ["plus", new RegExp("(?:^|[^\\p{L}\\p{N}])" + LIMIT_N + "\\s*\\+\\s*" + LIMIT_U + "(?![\\p{L}\\p{N}])", "iu")],
+    ["max", new RegExp("(?:^|[^\\p{L}\\p{N}])" + LIMIT_N + "\\s*" + LIMIT_U + "\\s*(?:max(?:imum)?|or\\s+(?:less|fewer|under)|and\\s+under|limit)(?![\\p{L}\\p{N}])", "iu")],
+    ["n", new RegExp("(?:^|[^\\p{L}\\p{N}])" + LIMIT_N + "\\s*" + LIMIT_U + "(?![\\p{L}\\p{N}])", "iu")],
+    ["bare", new RegExp("^\\s*" + LIMIT_N + "\\s*$", "iu")]
+  ];
+  const LIMIT_FILLER = /^(?:engrav\w*|text|of|total|only|per|side|piece|bar|front|back|personali[sz]\w*|custom|max(?:imum)?|limit|allowed|filled|fill|plated|sterling|solid|karat|\d{1,2}kt?|\d{1,2}k|yellow|white|metal|and|with|price|usd|chain|necklace|tiny|mini|small)$/i;
+  const limitNum = s => { s = String(s || "").toLowerCase(); return /^\d+$/.test(s) ? +s : NUMWORDS[s] || 0; };
+  const limitUnit = s => { s = String(s || "").toLowerCase(); return /^char/.test(s) ? "character" : /^letter/.test(s) ? "letter" : /^initial/.test(s) ? "initial" : /^line/.test(s) ? "line" : ""; };
+  /** One value (or one part of a value) as an engraving limit, read with the option's NAME (which may carry the unit and says it is a limit: "Number of Characters"); null when it is not one. */
+  function limitValue(value, name) {
+    const nm = decodeEntities(String(name == null ? "" : name)), byName = LIMIT_NAME.test(nm);
+    const t = shownText(value).normalize("NFKC").replace(PIECE_PRICE, " ").replace(/[$€£]\s*\d+(?:[.,]\d{1,2})?/g, " ").replace(/\brose[\s-]*gold\b/gi, "rosegold").replace(/\s+/g, " ").trim(); if (!t || t.length > 60) return null;
+    for (const [form, rx] of LIMIT_FORMS) {
+      const m = rx.exec(t); if (!m) continue;
+      if (form === "bare" && !byName) return null;
+      const a = limitNum(m[1]), b = form === "range" ? limitNum(m[2]) : 0, u = limitUnit(form === "range" ? m[3] : form === "bare" ? "" : m[2]) || (byName ? limitUnit((LIMIT_UNIT_NAME.exec(nm) || [])[0]) : "");
+      if (!a || !u || (form === "range" && !(b > a))) return null;
+      // (the rest of the value: only metal words, a price, and the plain words a shop writes beside a limit; anything else means the value says more than a limit)
+      const rest = (t.slice(0, m.index) + " " + t.slice(m.index + m[0].length)).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+      let metal = "";
+      for (const w of rest) { const mw = pieceMetalOf(w); if (mw) { if (metal && metal !== mw) return null; metal = mw; continue; } if (!LIMIT_FILLER.test(w)) return null; }
+      // a bare count of letters / initials ("3 letters", "Number of Initials: 3") may be as many separate pieces: it stays the count question; one, a ceiling or a range is a limit
+      const n = form === "range" ? b : a;
+      if ((u === "letter" || u === "initial") && (form === "n" || form === "bare") && a > 1 && !/\b(?:limit|max(?:imum)?|allowed|engrav\w*)\b/i.test(nm)) return null;
+      // (no limit word in the name: only a value that cannot be a count of pieces, characters or lines of text, or a ceiling / range, is read alone)
+      if (!byName && form === "n" && !(u === "character" || u === "line" || (a === 1 && LIMIT_UNIT_NAME.test(nm)))) return null;
+      return { min: form === "range" ? a : form === "plus" ? a : 1, max: form === "plus" ? 0 : n, unit: u, metal, form, text: clip(optionText(value), 60) };
+    }
+    return null;
+  }
+  /** What ONE option says about an engraving limit (ENGLIMIT, above): the whole value (whole: true), else exactly one of its parts ("Stylish • 1-3 characters", whole: false); null when it says none. */
+  function engraveLimitRead(name, value) {
+    const nm = decodeEntities(String(name == null ? "" : name)), v = decodeEntities(String(value == null ? "" : value)).replace(/&quot;/g, "\"").trim();
+    if (!v || isPersonalisation(nm)) return null;
+    const whole = limitValue(v, nm); if (whole) return Object.assign(whole, { name: optionText(nm), value: optionText(v), whole: true });
+    const parts = v.split(ND_SPLIT_VALUE).map(s => s.trim()).filter(Boolean).map(p => limitValue(p, nm)).filter(Boolean);
+    return parts.length === 1 ? Object.assign(parts[0], { name: optionText(nm), value: optionText(v), whole: false }) : null;
+  }
+  /** The symbol words a buyer types in brackets for a sign ("D (cross) E", "(heart)"): counted as ONE character each by the limit check. The app has no table that turns them into the sign itself:
+   *  the words are engraved as typed until a person changes them (the Engrave tab's emoji picker holds the signs the laser can cut). */
+  const LIMIT_SYMBOL_WORD = /\(\s*(?:cross|heart|hearts|star|stars|infinity|moon|sun|paw|paw\s*print|flower|clover|shamrock|anchor|music\s*note|note|butterfly|dove|leaf|smiley|smile|diamond|plus|dot|arrow|halo|crown|horseshoe|feather|tree|wave|bolt|lightning|peace|ampersand|and)\s*(?:symbol|sign|emoji|icon)?\s*\)/giu;
+  /** How long an engraving is in the unit of its limit: characters (no spaces; a bracketed symbol word is one sign; an emoji one), letters / initials (letters and digits), lines. */
+  function limitLength(text, unit) {
+    const s = String(text == null ? "" : text).replace(/\r/g, "");
+    if (unit === "line") return s.split("\n").filter(l => l.trim()).length;
+    const t = s.replace(LIMIT_SYMBOL_WORD, "\u2020");
+    const seg = typeof Intl !== "undefined" && Intl.Segmenter ? [...new Intl.Segmenter("en", { granularity: "grapheme" }).segment(t)].map(x => x.segment) : Array.from(t);
+    return seg.filter(g => unit === "character" ? !/^\s+$/u.test(g) : /[\p{L}\p{N}]/u.test(g)).length;
+  }
+  const limitWords = (n, unit) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+  /** The limit check of a line (spec.engraveLimit): the limit the buyer paid for, read against the words that are engraved. A longer engraving is said (over), never held. */
+  function engraveLimitCheck(spec, lim) {
+    const e = spec && spec.engraving, faces = e && (e.front || e.back) ? [e.front, e.back].filter(f => f && String(f.text || "").trim()).map(f => String(f.text)) : [];
+    const words = faces.length ? faces : (spec && spec.personalization || []).length ? [spec.personalization.join("\n")] : [];
+    const ceiling = lim.max ? (lim.min > 1 ? `${lim.min}-${limitWords(lim.max, lim.unit)}` : `Up to ${limitWords(lim.max, lim.unit)}`) : `${limitWords(lim.min, lim.unit)} or more`;
+    const out = { option: `${lim.name}: ${lim.value}`, min: lim.min, max: lim.max, unit: lim.unit, metal: lim.metal || "", used: 0, over: false, words: "", line: "" };
+    const metalOk = !lim.metal || !spec || !spec.material || (lim.metal === "gold" ? /^gold/.test(spec.material) : spec.material === lim.metal);
+    const metalSay = metalOk ? "" : ` · the option says ${lim.metal}, the line is ${CARD_TAG[spec.material] || spec.material}: check the metal`;
+    if (!metalOk) out.metalDiffers = true;
+    if (!words.length) { out.line = `${ceiling} · no engraving written${metalSay}`; return out; }
+    const shown = words.map(w => clip(w.replace(/\s*\n+\s*/g, " / "), 50)).join(" | "), used = Math.max(...words.map(w => limitLength(w, lim.unit)));
+    const sym = words.some(w => { LIMIT_SYMBOL_WORD.lastIndex = 0; return LIMIT_SYMBOL_WORD.test(w); }) ? " (a bracketed symbol word counts as one sign)" : "";
+    Object.assign(out, { used, words: shown, over: !!lim.max && used > lim.max });
+    out.line = out.over ? `${ceiling} · engraving “${shown}” = ${limitWords(used, lim.unit)}${sym}: longer than the ${limitWords(lim.max, lim.unit)} the buyer paid for${metalSay}`
+      : `${ceiling} · engraving “${shown}” = ${limitWords(used, lim.unit)}${sym} \u2713${metalSay}`;
+    return out;
+  }
   function nameKind(part) {
     const s = String(part || "").replace(/[?:!*()"]+/g, " ").replace(/\s+/g, " ").trim(); if (!s) return "filler";
     if (/^(?:choose|choice|select|pick|your|the|a|option|options|please)$/i.test(s)) return "filler";
+    if (LIMIT_NAME.test(s)) return "limit";   // (ENGLIMIT: "Number of Characters", "Engraving length": a words limit, before the count and the length below)
     if (FONT_NAME.test(s)) return "font";
     if (/\b(?:chains?|lengths?|extenders?)\b/i.test(s)) return "length";
     if (/\b(?:sizes?|diameters?|dimensions?)\b|\bmm\b/i.test(s)) return "size";
     if (isMetalOption(s) || /\b(?:gold|silver|sterling|karat|plated|material)\b/i.test(s)) return "metal";
-    if (/\b(?:quantity|qty|count|how many|pieces?|pcs)\b|\b(?:number|no\.?)\s+of\b|#\s*(?:of\b|bars?\b|discs?\b|charms?\b)|^#/i.test(s)) return "count";
+    if (/\b(?:quantity|qty|count|how many|pieces?|pcs|single|pairs?|both)\b|\bset\s+of\s+(?:2|two)\b|\b(?:number|no\.?)\s+of\b|#\s*(?:of\b|bars?\b|discs?\b|charms?\b)|^#/i.test(s)) return "count";
     if (isPersonalisation(s) || /\b(?:engrav(?:e|ed|ing)s?|personali[sz]ed|custom (?:text|words?)|wording|text)\b/i.test(s)) return "words";
     if (/\b(?:sides?|faces?|front|back)\b/i.test(s)) return "face";
     if (/\balign(?:ed|ment)?\b|\bjustif/i.test(s)) return "align";
@@ -570,10 +652,11 @@
     if ((looksLikeLength(s) && !/^\s*\d+(?:\.\d+)?\s*$/.test(s)) || /^(?:chain|length)\s*:?\s*\d{1,2}(?:\.\d)?\s*(?:"|''|”|″|in\b|inch(?:es)?|cm\b)/i.test(s)) return "length";
     if (mmTokenOf(s)) return "size";
     if (/^\(?\s*[$€£]\s*\d+(?:[.,]\d{2})?\s*\)?$/.test(s)) return "price";
-    if (/^\d{1,2}\s*(?:bars?|discs?|charms?|pieces?|pcs)$/i.test(s)) return "count";
+    if (/^\d{1,2}\s*(?:bars?|discs?|charms?|pieces?|pcs)$/i.test(s) || PC_PAIR.test(s) || PC_SINGLE.test(s)) return "count";   // (PAIRCOUNT: Pair, Single earring, 1 pc, Set of 2)
     if (/^(?:front|back|both|both sides|front only|back only|front side|back side|[12]\s*sides?|one side|two sides|single sided|double sided|no engraving)$/i.test(s)) return "face";
     if (ALIGN_WORD.test(s)) return "align";
     if (NO_FONT.test(fontKey(s)) || fontOfWord(s)) return "font";
+    if (limitValue(s, "")) return "limit";   // (ENGLIMIT: "1-3 Characters", "GOLD 1-3 Characters", "Up to 3 letters")
     if (s.split(/[^\p{L}\p{N}]+/u).filter(Boolean).every(w => SPEC_METAL_WORD.test(w.toLowerCase()) || SPEC_FILLER_WORD.test(w.toLowerCase()))) return "metal";
     if (colourOf(s)) return "colour";
     return "";
@@ -583,12 +666,12 @@
     const nk = n.split(ND_SPLIT_NAME).map(nameKind).filter(k => k !== "filler"), vparts = v.split(ND_SPLIT_VALUE).map(s => s.trim()).filter(Boolean), vk = vparts.map(valueKind).filter(k => k !== "filler");
     // (the value must say what the name does: every part read, or, under a font name, a part taken as the font asked for; "CUSTOM · (add note)" is a request to read the note, never answered here)
     const unread = vparts.filter(p => !valueKind(p)), seeNote = /\b(?:custom|note|other|see|message|special|request|different|personali[sz]ed?)\b/i;
-    const byName = nk.length > 0 && nk.every(Boolean) && (!unread.length || (nk.includes("font") && unread.length === 1 && !seeNote.test(unread[0])));
-    const strong = vk.some(k => ["length", "size", "price", "count", "face", "align"].includes(k)) || vparts.some(p => valueKind(p) === "colour" && colourOf(p).strong);
+    const byName = nk.length > 0 && nk.every(Boolean) && (!unread.length || (nk.includes("font") && unread.length === 1 && !seeNote.test(unread[0]))) && (!nk.includes("limit") || vk.includes("limit"));   // (ENGLIMIT: a limit's name takes a limit in the value: "Character: Mickey" is a design)
+    const strong = vk.some(k => ["length", "size", "price", "count", "face", "align", "limit"].includes(k)) || vparts.some(p => valueKind(p) === "colour" && colourOf(p).strong);
     const byValue = vk.length > 0 && vk.every(Boolean) && (strong || vk.length >= 2) && !vk.every(k => k === "metal");
     if (!byName && !byValue) return null;
     const at = k => vparts.find(p => valueKind(p) === k) || "";
-    return { kinds: [...new Set(byName ? nk : vk)], byName, byValue, length: at("length"), size: at("size"), font: at("font") };
+    return { kinds: [...new Set(byName ? nk : vk)], byName, byValue, length: at("length"), size: at("size"), font: at("font"), limit: at("limit") };
   }
   /** What a line keeps of a font reading (spec.font). `id` is the installed font ("" = the app falls back to Source Sans 3 and says "Requested font"). */
   const fontSpecOf = (fr, source) => Object.assign({ asked: fr.asked, id: fr.id || "", name: fr.name || "", source }, fr.align ? { align: fr.align } : {}, fr.listing ? { listing: true } : {});
@@ -2137,6 +2220,7 @@
   function optionCount(name, value) {
     const nm = String(name || ""), val = String(value || "").trim();
     if (!val || isPersonalisation(nm) || isPriceOption(nm)) return null;
+    if (engraveLimitRead(nm, val)) return null;   // (ENGLIMIT: "Number of Characters: GOLD 1-3 Characters", "Up to 3 letters": how much is engraved, never how many pieces)
     // 1 · the value names a number of something ("2 Disc", "3 discs • gold", "Silver • 2 symbols", "1-5 Character-SILVER")
     let hits = countsIn(val.replace(SAFE_NUM, " "));
     const lens = hits.filter(h => h.cls === "length");
@@ -2188,7 +2272,7 @@
    *  asks: [{ name, value, guess, why, rule }], designs (n symbols/designs named, 0 = none), note }.
    *  A person's answer for that listing and option value ({ field: "count", value: "3" }) settles it (1 = "just one piece"). */
   function countRead(line, o) {
-    o = o || {}; const opts = [], asks = [], pl = pieceListing(line); let answered = 0, profiled = false;   // (BARS, Paul 19 Oct 2026: pl is the listing's profile, null for every other line)
+    o = o || {}; const opts = [], asks = [], pl = pieceListing(line); let answered = 0, profiled = false, pairSig = null;   // (BARS, Paul 19 Oct 2026: pl is the listing's profile, null for every other line)
     for (const v of (line && line.variations) || []) {
       const name = lvName(v), value = lvValue(v).trim(); if (!name || !value || isPersonalisation(name)) continue;
       const hit = optionLookup(o.optionMaps, line.listingId, name, value);
@@ -2199,13 +2283,16 @@
       // (BARS) the profile's own drop-down ("gold • 3 bars ($45.60)") is a count of separate pieces, certain: nothing to ask and no table of Etsy's to wait for
       const pr = own && !hit ? pieceValueRead(value, pl) : null;
       if (pr && pr.ok) { opts.push(Object.assign({ name, value, n: pr.n + extra, cls: "piece", rule: "count:profile", certain: true, ask: false, why: "", unit: pl.noun, text: value }, extra ? { counted: pr.n } : {})); continue; }
+      // (PAIRCOUNT, 9 Nov 2026: "Would you like a Single earring or a Pair?: Pair" / "Quantity: 2 pcs" on an earring line is the pair or one piece of it, read by lineSignals and pairInfo: never a count to ask about)
+      const pc = pairCountOf(name, value), ps = pc ? (pairSig || (pairSig = lineSignals(line))) : null;
+      if (pc && ps.soldBy === "option" && pc.single === (ps.soldAs === "single")) { opts.push({ name, value, n: pc.n, cls: "pair", rule: "count:pair", certain: true, ask: false, why: "", unit: pc.single ? "earring" : "earrings", text: value }); continue; }
       const c = optionCount(name, value); if (c) opts.push(Object.assign({ name, value }, c));
     }
     // (BROKENHEART, Paul 19 Oct 2026, order 4204452679: a row of FIXED pieces, the left half and the right half of the heart: every unit IS those pieces, certain, whatever the drop-down says (its drop-down, which Etsy names
     // "Personalization" and the loop above skips, names only the metal and the faces). Nothing to ask, no table of Etsy's to wait for.)
     const fixed = piecesFixed(pl);
     if (fixed) { profiled = true; const pv = pieceOptionOf(line, pl); opts.push({ name: pv ? pv.name : "Listing profile", value: pv ? pv.value : pl.id, n: fixed.length, cls: "piece", rule: "count:profile", certain: true, ask: false, why: "", unit: pl.noun, text: pv ? pv.value : pl.id, fixed: true }); }
-    const settled = opts.filter(c => c.certain && !c.answered && c.cls !== "design" && c.n > 1);
+    const settled = opts.filter(c => c.certain && !c.answered && c.cls !== "design" && c.cls !== "pair" && c.n > 1);
     const ns = [...new Set(settled.map(c => c.n))];
     const read = { n: answered || (ns.length === 1 ? ns[0] : 0), certain: !!answered || ns.length === 1, answered: !!answered, opts, asks, designs: 0, note: noteCountOf(line) };
     // the buyer's note names several pieces and no option gives a count: a person's answer for that wording (kept under the pseudo option "Buyer note"), else asked below
@@ -2233,6 +2320,23 @@
   const NAME_STRONG = /\b(?:ear[\s-]?rings?|earings?|studs?|huggies)\b|\b(?:left|right)\s+ears?\b/i, NAME_SKIP = /\b(?:add(?:s|ed|ing|itional)?|extra|upgrade|bonus|free|gift|also|include[sd]?|matching|optional|engrav\w*|text|message|note|inscription|initials?|names?)\b/i;
   const SKU_EAR = /(?:^|[^a-z0-9_])huggies?(?![a-z0-9_])|(?:^|[^a-z0-9])huggie[\s_-]*hoops?(?![a-z0-9])|^\s*hoops?\s*-|(?:^|[^a-z0-9])(?:earrings?|studs?)(?:[^a-z0-9]|$)|^\s*cust(?:om)?[\s_.-][hes][\s_.-]/i;   // the shop's own earring SKUs: "Huggie Hoops- X", "X (HUGGIE)", "X - HUGGIE", "HOOPS- X", an EARRING or STUD word, CUSTOM-H = huggies, -E and -S = earrings (see customKind); never "Huggie_3722" (a numbered design that happens to be named Huggie)
   const PAIR_ASK_TITLE = /\bpair\s+of\b|\b(?:a|one|1|matching|mismatched)\s+pair\b|\bset\s+of\s+(?:2|two)\b/i;
+  /* PAIRCOUNT (Paul, 9 Nov 2026, order 4213610315: CACTUS_4934 matched ✓, held "option "Would you like a Single earring or a Pair?: Pair" not mapped — Etsy keeps one SKU (CACTUS_4934) for every choice
+     of this listing": "This listing is correctly matched so it shouldn't be put on hold. Please fix this once and for all."). Single or Pair is a COUNT of the earring, never a design: Pair is the design as the
+     master has it (Left + Right), Single is one piece of it. lineSignals already read the value for the piece count, but no rule mapped the option, so it fell to the generic unmapped question.
+     → { n: 1 | 2, single, label ("Pair · 2 pieces" / "Single · 1 piece") } or null. A value that says it alone: Pair, A pair, Pair (2), Pair of earrings, 2 earrings, Single, Single earring, Single stud,
+     Single - Left, Just one, One earring. A value that needs the name to say it is a count (Single or Pair, Single/Pair, Quantity, Qty, How many, Pieces, Amount): Both, One, 1, 2, 1 pc, 2 pcs. */
+  const PC_NAME = /\bsingle\b|\bpairs?\b|\bboth\b|\bset\s+of\s+(?:2|two)\b|\bquantity\b|\bqty\b|\bhow\s+many\b|\bpieces?\b|\bpcs?\b|\bcount\b|\bamount\b/i;
+  const PC_EAR = "(?:ear[\\s-]?rings?|earings?|studs?|huggies?|hoops?|pieces?|pcs?)", PC_SIDE = "(?:\\s*[-–—,:(]*\\s*(?:the\\s+)?(?:left|right)(?:\\s+(?:ear|side|one|only))?\\s*\\)?)?";
+  const PC_PAIR = new RegExp("^(?:(?:a|one|1)\\s+)?pair(?:\\s+of\\s+(?:" + PC_EAR + "|(?:2|two)))?(?:\\s*\\(?\\s*(?:2|two)(?:\\s*" + PC_EAR + ")?\\s*\\)?)?(?:\\s*[-–—(]?\\s*(?:both|left\\s*(?:\\+|&|and)\\s*right)(?:\\s+ears?)?\\s*\\)?)?$|^(?:2|two)\\s*(?:x\\s*)?" + PC_EAR + "(?:\\s*\\(\\s*(?:a\\s+)?pair\\s*\\))?$|^both\\s+(?:ears?|earrings?|studs?)$|^set\\s+of\\s+(?:2|two)(?:\\s+" + PC_EAR + ")?$", "i");
+  const PC_SINGLE = new RegExp("^(?:(?:a|one|1|just\\s+(?:one|1|a)|only\\s+(?:one|1))\\s+)?(?:single|individual)(?:\\s+" + PC_EAR + ")?(?:\\s*\\(\\s*(?:1|one)(?:\\s*" + PC_EAR + ")?\\s*\\))?" + PC_SIDE + "$|^(?:just|only)\\s+(?:one|1)(?:\\s+" + PC_EAR + ")?" + PC_SIDE + "$|^(?:one|1)\\s*(?:x\\s*)?" + PC_EAR + PC_SIDE + "$", "i");
+  const PC_BARE = /^(?:(both)|(one|1)|(two|2))$/i, PC_NOT_NAME = /\b(?:size|length|width|height|diameter|thickness|gauge|font|colou?r|chain|metal|material|shape|letter|initial|symbol|sign|zodiac|birthstone|month)\b/i;   // (a bare number is a count only under a count's name; a size, a colour or a design pick is never one)
+  function pairCountOf(name, value) {
+    const nm = decodeEntities(String(name == null ? "" : name)), v = decodeEntities(String(value == null ? "" : value)).replace(/\(?\s*\+?\s*[$€£]\s*\d+(?:[.,]\d{1,2})?\s*\)?/g, " ").replace(/\s+/g, " ").replace(/^[\s"'.]+|[\s"'.!]+$/g, "").trim();
+    if (!v || isPersonalisation(nm) || PC_NOT_NAME.test(nm)) return null;
+    let n = PC_PAIR.test(v) ? 2 : PC_SINGLE.test(v) ? 1 : 0;
+    if (!n && PC_NAME.test(nm) && !NOT_COUNT_NAME.test(nm)) { const b = PC_BARE.exec(v); if (b) n = b[2] ? 1 : 2; }
+    return n ? { n, single: n === 1, label: n === 1 ? "Single · 1 piece" : "Pair · 2 pieces" } : null;
+  }
   const EARS_OPT = "Earrings in this listing's words";   // (the pseudo option a person's answer to "is this a pair of earrings?" is kept under; its value is the listing title: one answer per title; form = earrings / huggie, ignore = not earrings)
   /** What a line's own words say: { says (the listing, an option or a note says "mismatched" / two designs / left and right), signals[],
    *  soldAs ("pair" | "single" | null: earrings, studs, huggies are sold as a pair; an option or title that says Single is one),
@@ -2285,7 +2389,9 @@
     const PAIR_OPT = /\bpair\b|\b(?:2|two)\s+(?:earrings|studs|huggies|hoops)\b|\bset\s+of\s+(?:2|two)\b|\bboth\s+ears?\b/i;
     // an option whose whole value is an ear ("Left", "Right ear only", "Side: Left ear") on an earring line is a single earring for that ear, when it names only one
     const SIDE_ONLY = /^\s*(?:the\s+)?(left|right)(?:\s+(?:ear|earring|side|one|only))*\s*$/i, sidesOnly = new Set(opts.map(x => (SIDE_ONLY.exec(x) || [])[1]).filter(Boolean).map(x => x.toLowerCase()));
-    const optSingle = opts.some(x => SINGLE_TXT.test(x) || SINGLE_END.test(x) || (earAll && /\b(?:single|individual|solo)\b/i.test(x))) || (earAll && sidesOnly.size === 1), optPair = !optSingle && earAll && opts.some(x => PAIR_OPT.test(x));
+    // (PAIRCOUNT, 9 Nov 2026: a Single-or-Pair count option, "Quantity: 1 pc", "Single or Pair: Both", says it too, by its name and value: pairCountOf)
+    const pcs = earAll ? vars.filter(v => !isPersonalisation(v.name)).map(v => { const c = pairCountOf(v.name, v.value); return c ? Object.assign({ name: v.name, value: v.value }, c) : null; }).filter(Boolean) : [];
+    const optSingle = opts.some(x => SINGLE_TXT.test(x) || SINGLE_END.test(x) || (earAll && /\b(?:single|individual|solo)\b/i.test(x))) || (earAll && sidesOnly.size === 1) || pcs.some(c => c.single), optPair = !optSingle && earAll && (opts.some(x => PAIR_OPT.test(x)) || pcs.some(c => !c.single));
     const soldBy = optSingle || optPair ? "option" : TITLE_SINGLE(title) ? "title" : earAll ? "words" : null;
     const soldAs = optSingle ? "single" : optPair ? "pair" : TITLE_SINGLE(title) ? "single" : earAll ? "pair" : null;
     const side = singleSideOf(line), sideBy = side ? (singleSideOf(Object.assign({}, line, { personalization: [], buyerMessage: null, message_from_buyer: null, variations: (line.variations || []).filter(v => !isPersonalisation(lvName(v))) })) === side ? "listing" : "note") : null;   // (listing: the title or an option names the ear, so it is every unit's; note: the buyer's words)
@@ -2298,7 +2404,8 @@
       else if (key && HUGG.test(t0) && otherInTitle && !earAll) ask = { by: "title", value: key, why: `the title says “huggie” and also “${other.toLowerCase()}”: is this a pair of earrings (a Left and a Right)?` };
       else if (key && pairPhrase && !earAll && !otherInTitle) ask = { by: "pair", value: key, why: `“${clip(pairPhrase, 40)}” says a pair but names no earring: is this a pair of earrings (a Left and a Right)?` };
     }
-    return { says: signals.length > 0, signals: [...new Set(signals)], soldAs, soldBy, side, sideBy, discs: discsIn(line), ask, other: OTHER_PRODUCT.test(title), necklace: neckBought };
+    const pairCount = pcs.find(c => c.single === (soldAs === "single") && soldBy === "option") || null;   // (PAIRCOUNT: the option that said Single or Pair, for the line's own words)
+    return { says: signals.length > 0, signals: [...new Set(signals)], soldAs, soldBy, side, sideBy, discs: discsIn(line), ask, other: OTHER_PRODUCT.test(title), necklace: neckBought, pairCount };
   }
   /** Which ear a SINGLE earring is for, when the line names it: an option value ("Single - Left", "Right ear") or the buyer's note ("left ear
    *  only", "for my right ear"). Both ears named, or neither: null (unspecified: flagged, never guessed). */
@@ -3223,7 +3330,12 @@
     // what a person should see, plainly
     if (info.asks.some(a => a.rule === "ear:words")) info.notes.push("it waits until a person says whether this is a pair of earrings (" + askWords.why + ")");
     else if (earForm) info.notes.push("a person said this listing is " + (earForm === "huggie" ? "huggie hoops" : "a pair of earrings"));
-    if (info.single && !info.sideSaid) info.notes.push("single earring: the order does not say left or right");
+    // PAIRCOUNT (9 Nov 2026): the Single-or-Pair option says what it made, on the line: "Pair · 2 pieces" / "Single · 1 piece" and which piece
+    const pcSaid = sig.pairCount && sig.soldBy === "option" && info.soldAs === sig.soldAs ? sig.pairCount : null, pcWords = pcSaid ? `“${clip(pcSaid.name, 50)}: ${clip(pcSaid.value, 30)}”` : "";
+    if (pcSaid && !info.single && info.earring) info.notes.push(`Pair · 2 pieces (${pcWords}): the Left and the Right`);
+    const pcGuess = info.single && info.sideBy === "note" && +line.quantity > 1;   // (several singles and a note that names one ear: said below, never guessed)
+    if (pcSaid && info.single) info.notes.push(info.sideSaid && !pcGuess ? `Single · 1 piece (${pcWords}): the ${info.sideSaid === "L" ? "Left" : "Right"}, as the order says` : info.sideSaid ? `Single · 1 piece (${pcWords})` : `Single · 1 piece (${pcWords}): the master's first piece; the order names no ear`);
+    if (info.single && !info.sideSaid) { if (!pcSaid) info.notes.push("single earring: the order does not say left or right"); }
     else if (info.single && info.sideBy === "note" && +line.quantity > 1) info.notes.push(`${Math.round(+line.quantity)} single earrings and the buyer's note names one ear: which of them is which ear is not guessed`);
     if (info.second) info.notes.push(info.second.answered === "same" ? (info.second.by === "note" ? `the order says two different designs: ${info.second.why}` : "the order says two different designs: a person said the same design on both ears") : info.second.viaOption ? `waits for the second symbol's charm: ${info.second.why}` : "the order says two different designs but names one: it waits until a person names the second design or says it is the same on both ears");
     else if (sig.says && !info.mismatched) info.notes.push("the order says two different designs but is not an earring pair: nothing is changed");
@@ -4545,6 +4657,7 @@
       let mapped = hit ? Object.assign({ field: hit.field, value: hit.value, source: hit.source }, hit.engrave ? { engrave: hit.engrave } : {}) : null;
       // a font option (Font: Stylish, Fonts: 16"/ Typewriter): read once; a person's answer for the FONT alone ("typewriter") serves every length it comes with
       const fr = fontRead(name, value, fx), fh = fr ? null : fontHidden(name, value, fx);
+      const lim = engraveLimitRead(name, value); if (lim && !spec.engraveLimit) spec.engraveLimit = lim;   // (ENGLIMIT: the line's engraving limit, whatever else the option says; checked at the end)
       if (!mapped && fr && fr.asked !== value) { const h = optionLookup(ctx.optionMaps, line.listingId, name, fr.asked); if (h) mapped = { field: h.field, value: h.value, source: h.source }; }
       // the drop-down value that says "2 symbols" and leaves the signs to the note ("2 symbols-leave note"): once the note's two signs are two charms, the option is answered by them
       if (!mapped && members && members.source === "signs" && members.byNote && name === members.optionName && value === members.optionValue) mapped = { field: "design", value: members.members[0].sku, source: "rule:signs-in-note" };
@@ -4569,6 +4682,8 @@
         else if (!viaPick && tied(v)) mapped = { field: "design", value: sku, source: "sku" };
         // a Mini Tag choice: the tag number is the shape, the master's design of that shape is the charm (tagOptionRead), the bracket's words the engraving (spec.tagOption)
         else if (tagPick && v === tagPick.variation) mapped = { field: "design", value: tagPick.sku, source: "rule:tag-shape" };
+        // ENGLIMIT (Paul, 9 Nov 2026, order 4218451815): "Number of Characters: GOLD 1-3 Characters" sets how much is engraved, never which charm: answered here, read as the line's limit check (spec.engraveLimit)
+        else if (!fr && lim && lim.whole) mapped = { field: "ignore", value: null, source: "rule:engrave-limit" };   // (a limit beside a font or a length, "Stylish • 1-3 characters", is read whole below: nonDesignOption's "limit" kind)
         // a font option names an app font exactly: it answers itself (never a look-alike); any other font waits below with its one plain line, unless FONT_RULES lets it through
         else if (fr && fr.none) mapped = { field: "font", value: null, source: "rule:no-font" };
         else if (fr && fr.id) mapped = { field: "font", value: fr.id, source: fr.listing ? "rule:font-listing" : "rule:font" };
@@ -4576,6 +4691,8 @@
         // an option that names a number of separate pieces answers itself ("ROSEGOLD - 2 Disc"); one that may, but does not say of what
         // (letters, a range, "Set of 3"), is asked about below, once, in its own plain words, not as a generic unmapped option
         const cx = cr.opts.find(c => c.name === name && c.value === value);
+        // PAIRCOUNT (Paul, 9 Nov 2026, order 4213610315): Single or Pair on an earring line is the pair (2 pieces) or one piece of it (1): read, never asked (countRead: cls "pair")
+        if (!mapped && cx && cx.cls === "pair") mapped = { field: "count", value: String(cx.n), source: "rule:pair-count" };
         if (!mapped && cx && cx.ask) { spec.options.push({ name, value, mapped: null }); continue; }
         if (!mapped && cx && cx.certain && cx.n > 1 && cx.cls !== "design") mapped = { field: "count", value: String(cx.n), source: "rule:" + cx.rule };
         // "GOLD - 1 Disc" (one of the 15 choices of the 180-product disc listing) answers itself as ONE piece too: it used to fall to the generic "not mapped" hold (DISCREAD)
@@ -4674,6 +4791,8 @@
         const shared = mineOne || (!table && !!txSku && seenVerdict(ctx.seen, line.listingId, o.name, o.value, txSku) === "shared");
         if (!shared || (pl && pl.option && pl.option.test(decodeEntities(String(o.name || ""))))) continue;
         if (optionPicksDesign(ctx.optionMaps, line.listingId, o.name) || designLike(o.name, o.value, ctx, sku, line)) continue;
+        // (how many pieces, or which size, is a real question of its own, never passed here: "Single or Pair: Pair" on a necklace still asks; PAIRCOUNT reads the earring lines)
+        if (/\b(?:pairs?|singles?|sets?|both|qty|quantit(?:y|ies)|pieces?|pcs|counts?|how many|sizes?|mm|cm|inch(?:es)?|lengths?)\b/i.test(decodeEntities(String(o.name || "")) + " " + optionText(o.value))) continue;
         o.mapped = { field: "ignore", value: null, source: "rule:one-sku" };
         problems.splice(at, 1);
         optionNote(spec, o.name, o.value);
@@ -4845,6 +4964,8 @@
       spec.designSku = null; spec.skuSource = null; spec.sources.sku = null;
       problems.unshift({ kind: "unmatchedSku", reason, sku: spec.boughtSku, listingId: String(line.listingId || ""), title: line.title || "", formHold: true, generic: String(line.listingId || "?"), lineForm: lf.form, designForm: df.form, siblings: [] });
     }
+    // ENGLIMIT: the engraving limit the buyer paid for, read against the words that are engraved: one plain line on the line, a longer engraving said (never held)
+    if (spec.engraveLimit) { try { spec.engraveLimit = engraveLimitCheck(spec, spec.engraveLimit); } catch (_) { delete spec.engraveLimit; } }
     return spec;
   }
   /** A line held (or unmatched) because of a question its fresh reading no longer raises: true when it may go back to the intake. `prev` is the spec it was read as before (the question it
@@ -5215,7 +5336,7 @@
     }
     return [...groups].sort(([a],[b])=>a.localeCompare(b));
   }
-  return { sizeFit, sizeMmOf, SIZE_PAD_PT, questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, tidyOption, optionView, optionViews, shownText, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, PINNED_LISTING_DESIGNS, pinnedDesign, PINNED_HUGGIE_SETS, pinnedHuggieSet, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, nonDesignOption, staleShared, OPTION_ALL, optionPicksDesign, heldOnOption, oneSkuOf, designLike, colourOf, familyNumberSays, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, PIECE_LISTINGS, pieceListing, pieceValueRead, pieceOptionOf, pieceSlots, pieceExtra, profileDesignOf, pieceBodiesOf, piecesFixed, pieceFacesRead, pieceNouns, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, SET_RULES, SET_LAYOUT_OPT, setRuleOf, setLengthsOf, setEngravedOf, barLengthOf, setLayoutAskOf, setPiecesOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
+  return { engraveLimitRead, engraveLimitCheck, limitLength, sizeFit, sizeMmOf, SIZE_PAD_PT, pairCountOf, questionGone, staleQuestionHold, orderQuery, orderMatches, orderGroups, SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, tidyOption, optionView, optionViews, shownText, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, decodeEntities, decodeWords, rawWords, cleanLine, cleanOrders, cleanMaps, bySkuOf, optionLookup, isNoDesign, resolveSku, PINNED_LISTING_DESIGNS, pinnedDesign, PINNED_HUGGIE_SETS, pinnedHuggieSet, variationBase, genericSku, optionDesign, huggieSku, looseKey, masterSku, KNOWN_SKU_TYPOS, knownTypo, typoSku, inventorySku, tiesToOption, listingWide, linkViaKeys, linkedSku, skuIndexFamily, seenSkus, seenVerdict, metalSpecValue, nonDesignOption, staleShared, OPTION_ALL, optionPicksDesign, heldOnOption, oneSkuOf, designLike, colourOf, familyNumberSays, interpretLine, lineKey, poolId, PIECE_RULES, pieceCountOf, countedPieces, PIECE_LISTINGS, pieceListing, pieceValueRead, pieceOptionOf, pieceSlots, pieceExtra, profileDesignOf, pieceBodiesOf, piecesFixed, pieceFacesRead, pieceNouns, countedFact, piecesOf, sidesOf, kindFor, glue, solo, pinPieces, countRead, optionCount, noteCountOf, singleSideOf, lineSignals, lineMismatched, splitSkus, setDesignsOf, SET_RULES, SET_LAYOUT_OPT, setRuleOf, setLengthsOf, setEngravedOf, barLengthOf, setLayoutAskOf, setPiecesOf, pairMembers, signsOfText, signsOfLine, signValueSku, pairInfo, discsIn,
     engravingOf, engravingModeIn, engravingModeOfOption, faceParse, sidesOfValue, frontArtOf, SIDES_POLICY, earringNeverBackEngraves, EAR_NEVER_WHY, letterDesignNeverEngraves, LETTER_NEVER_WHY,
     ENGRAVING_FONTS, FONT_WORDS, FONT_STEMS, FONT_LISTINGS, DEFAULT_FONT, FONT_RULES, fontById, fontRead, fontHidden, fontInMetal, fontParts, isFontOption, fontOfWord, fontOfPhrase, fontListing, pieceFont, faceFontWord, fontCaps, capsText, fontLine, fontOfRecord, FONT_STYLES, fontDisagree, fontResolve, fontReadText, fontScanLine, fontTextOf, nearestFont, fontStyleLabel, damerau,
     orderPlacedAt, frontOf, byQueue, rankDate, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,

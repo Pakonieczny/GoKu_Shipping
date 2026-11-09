@@ -176,13 +176,13 @@
   const REOPENS=['gold10k','gold14k'];
   const linesIn=x=>x&&Array.isArray(x.lines)?x.lines.length:0;
   async function reopen(sh,o={}){
-    if(!sh||!REOPENS.includes(sh.metal)||+sh.laserDoneAt>0)return {changed:false};
+    if(!sh||!(REOPENS.includes(sh.metal)||(o.replace&&isRose(sh)))||+sh.laserDoneAt>0)return {changed:false};   // (o.replace: IPL2, a replaced charm: Rose Gold's line is set aside too)
     if(!(sh.rosePlan||sh.roseProtected||sh.rosePlanHash||sh.roseCutAt||o.force))return {changed:false};
     let who='';try{who=String(o.by||window.CNEmployee?.name?.()||window.B?.employee||'').trim();}catch(_){who=String(o.by||'').trim();}
     let r=null;
     if(sh.sheetId){
       if(!S.cloud.ok)throw new Error(`Reconnect to change the charms of this ${word(sh)} sheet`);
-      r=await C.api('charmNestLibrary',{op:'roseReopen',sheetId:sh.sheetId,by:who||undefined},{quiet:true});
+      r=await C.api('charmNestLibrary',{op:'roseReopen',sheetId:sh.sheetId,by:who||undefined,...(o.replace?{replace:true}:{})},{quiet:true});
       if(r&&r.error)throw new Error(r.error);
     }
     const line=Math.max(linesIn(sh.rosePlan),linesIn(sh.roseProtected),+(r&&r.lines)||0)>0,cut=!!sh.roseCutAt||!!(r&&r.cut),at=Date.now();

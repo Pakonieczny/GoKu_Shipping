@@ -467,7 +467,11 @@
 .ordList .doneRow.orderListRow .engravingOrder .onum{font:600 13px/1.4 var(--mono);color:var(--ink)}
 .ordList .doneRow.orderListRow .engravingOrder .sku{font:400 11.5px/1.4 var(--mono);color:var(--ink45);white-space:nowrap;overflow-wrap:normal}
 .ordList .doneRow.orderListRow>.engravingIdentity>.purchaseLabel{margin-top:9px;font:400 9.5px/1.3 var(--sans);letter-spacing:.09em;text-transform:uppercase;color:var(--ink45)}
-.ordList .doneRow.orderListRow>.engravingIdentity>.rowExcerpt{font:600 14px/1.4 var(--serif);color:var(--ink)}
+.ordList .doneRow.orderListRow>.engravingIdentity>.rowExcerpt{font:400 14px/1.4 var(--serif);color:var(--ink70)}
+/* TW1 (Paul, 9 Nov 2026: "The title of the charm listing should not be bold ... Only personalization and things that actually matter should be bold"): a row's listing title is regular, muted, two lines at most
+   (the whole title is its hover); the buyer's words in its place are the row's bold. Every list that draws them: the Orders rows and cards, a grouped order's head. */
+.rowExcerpt.ordTitle{font-weight:400;color:var(--ink70);-webkit-line-clamp:2}
+.rowExcerpt.ordSaidText,.ordList .doneRow.orderListRow>.engravingIdentity>.rowExcerpt.ordSaidText{font-weight:600;color:var(--ink)}
 .ordList .doneRow.orderListRow>.engravingIdentity>.rowExcerpt.ordWhere{font:400 11px/1.4 var(--sans);color:var(--ink45);margin-top:6px}
 /* -- the purchase line, the engraved words and their states, in an Orders row and card alike: exactly the Engraving row's -- */
 :is(.ordList .doneRow.orderListRow,.ordCards .ocard,.ordCards .ogPiece) .ordEngId>.w{grid-column:1;margin-top:2px}

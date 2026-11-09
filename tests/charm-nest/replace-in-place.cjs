@@ -9,14 +9,13 @@
 //   GF Sheet 4: in Set 1, COMMITTED at the station but NOT cut (M, its own listing · F5)
 //   (a) E → STAR_NEW, the same size: in E's old spot (same centre and angle), every other charm on every sheet exactly where it was, NO nest started at all, GF Sheet 1 written as it stands
 //   (c) Q (a pair) → HEART_NEW, the same size: both new pieces (Left and Right) in the two old spots, together; nothing else moves, no nest
-//   (b) A → MOON_BIG, too big for its spot: the spot is left EMPTY on GF Sheet 1 (written as it stands, nothing moved), the piece goes to the latest unfinished sheet, GF Sheet 3 (not the cut
-//       GF Sheet 2, not the committed set's GF Sheet 4), appended: its nest is append-only (every placement held, no "making room") and nothing on it moves; the progress panel says so, with no
-//       "nested again" line
+//   (b) A → MOON_BIG, too big for its spot (IPL2, Paul 9 Nov 2026): it stays on GF Sheet 1, beside the old spot in the sheet's free space, nothing else moves, no nest; GF Sheet 1 written as
+//       it stands (replace-in-place-ipl2.cjs has the sheet with no room: the latest unfinished sheet, then a new one)
 //   (e) D, the same listing as A, on the LASER-CUT GF Sheet 2: keeps its old piece where it is, nothing of it written, the sheet never started or written; the panel says so (a note)
 //   (d) M (on GF Sheet 4, a committed but uncut set) → COMET_NEW, the same size: its piece IS swapped, in the old spot, nothing else on the sheet moves, no nest; GF Sheet 4 written as it stands,
 //       Set 1's files written again (the sheet's QR label, the set's labels PDF / manifest / set.json), the line committed again; the panel and the sheet's card say "Set 1 changed after it
 //       was released — re-send its files"
-//   (c2) R (a pair, on GF Sheet 3) → RING_BIG, too big: both pieces go TOGETHER to the latest unfinished sheet, both old spots stay empty
+//   (c2) R (a pair, on GF Sheet 3) → RING_BIG, too big for the spots: both pieces stay TOGETHER on GF Sheet 3 beside them (IPL2)
 //   node tests/charm-nest/replace-in-place.cjs        (PW_DIR=<dir holding playwright-core>, CHROMIUM=<chrome>)
 'use strict';
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
@@ -196,30 +195,27 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     assert.equal(c.nests - c0.nests, 0, 'no nest was started for Q');
     pass('(c) a pair of stud earrings: both new pieces (Left and Right) go into the two old spots together; nothing else moves, no nest');
 
-    /* (b) too big for its spot: the spot left empty, the piece on the latest unfinished sheet, appended without moving anything */
+    /* (b) too big for its spot, room beside it on the same sheet (IPL2, Paul 9 Nov 2026): it stays on GF Sheet 1, beside the old spot, nothing else moves, no nest */
     c0 = await counts(page);
     const L2 = L;
     { const r = await fix(page, A, 'MOON_BIG'); assert(r.ok, 'A is relinked to MOON_BIG: ' + JSON.stringify(r)); }
     await until(() => settled(page), 30000, async () => 'A settled: ' + JSON.stringify({ fl: await flowLines(page), st: await page.evaluate(() => CN.S.sheets.gold.pages.map(p => [p.sheetId, p.status, !!p._inplaceHold, !!p._inplaceWrite])) }));
     L = await layout(page); c = await counts(page);
-    assert(!L['ip-gold-1'][idA], 'A is no longer on GF Sheet 1');
-    assert(!Object.values(L['ip-gold-1']).some(([x, y]) => Math.hypot(x - 136, y - 16) < 20), 'A\'s old spot on GF Sheet 1 is left empty: ' + JSON.stringify(L['ip-gold-1']));
-    assert.deepEqual(L['ip-gold-1'], without(L2, 'ip-gold-1', [idA]), 'every other charm on GF Sheet 1 is exactly where it was');
-    assert(L['ip-gold-3'][idA] && L['ip-gold-3'][idA][3] === 'MOON_BIG', 'A\'s new piece is on GF Sheet 3, the latest unfinished sheet: ' + JSON.stringify(L));
-    assert.deepEqual(without(L, 'ip-gold-3', [idA]), L2['ip-gold-3'], 'nothing already on GF Sheet 3 moved');
-    for (const sid of ['ip-gold-2', 'ip-gold-4']) assert.deepEqual(L[sid], L0[sid], `${sid} is untouched`);
-    const nB = await page.evaluate(n0 => (window.__nests || []).slice(n0), c0.nests), wB = await page.evaluate(n0 => (window.__writes || []).slice(n0), c0.writes);
-    assert.deepEqual(nB.map(x => x.sheetId), ['ip-gold-3'], 'one nest, of GF Sheet 3 alone (GF Sheet 1 is never nested): ' + JSON.stringify(nB));
-    assert(nB[0].appendOnly && nB[0].keepPlaced && nB[0].unjam === false && Object.keys(L2['ip-gold-3']).length === nB[0].locked.length, 'GF Sheet 3\'s nest is append-only: every placement held, no "making room": ' + JSON.stringify(nB[0]));
-    assert.deepEqual(wB.map(w => w.sheetId), ['ip-gold-1'], 'GF Sheet 1 was written as it stands, with the spot empty: ' + JSON.stringify(wB.map(w => w.sheetId)));
-    assert(!wB[0].charms.includes(idA), 'GF Sheet 1 was written without A');
-    assert(!st.doc(SHEETS, 'ip-gold-1').poolIds.includes(idA) && st.doc(SHEETS, 'ip-gold-3').poolIds.includes(idA), 'the saved sheets: A off GF Sheet 1, on GF Sheet 3');
+    assert(L['ip-gold-1'][idA] && L['ip-gold-1'][idA][3] === 'MOON_BIG', 'A\'s new piece stays on GF Sheet 1, its own sheet: ' + JSON.stringify(L));
+    assert(Math.hypot(L['ip-gold-1'][idA][0] - 136, L['ip-gold-1'][idA][1] - 16) > 2, 'not in the exact old spot (it is too big for it): ' + JSON.stringify(L['ip-gold-1'][idA]));
+    assert.deepEqual(without(L, 'ip-gold-1', [idA]), without(L2, 'ip-gold-1', [idA]), 'every other charm on GF Sheet 1 is exactly where it was');
+    for (const sid of ['ip-gold-2', 'ip-gold-3', 'ip-gold-4']) assert.deepEqual(L[sid], L2[sid], `${sid} is untouched`);
+    assert.equal(c.nests - c0.nests, 0, 'no nest was started: ' + JSON.stringify(await page.evaluate(n0 => (window.__nests || []).slice(n0), c0.nests)));
+    { const wB = await page.evaluate(n0 => (window.__writes || []).slice(n0), c0.writes);
+      assert.deepEqual(wB.map(w => w.sheetId), ['ip-gold-1'], 'GF Sheet 1 alone was written as it stands: ' + JSON.stringify(wB.map(w => w.sheetId)));
+      assert(wB[0].charms.includes(idA), 'GF Sheet 1 was written with A\'s new piece on it'); }
+    assert(st.doc(SHEETS, 'ip-gold-1').poolIds.includes(idA), 'the saved GF Sheet 1 lists A');
     const fl = await flowLines(page);
     const has = (state, re) => fl.lines.some(([s, t]) => s === state && re.test(t));
-    assert(has('done', new RegExp(`^Order ${A}: did not fit the old spot \\(spot left empty on GF Sheet 1\\) — added to GF Sheet 3`)), 'the panel: A did not fit, spot left empty, added to GF Sheet 3: ' + JSON.stringify(fl.lines));
-    assert(has('done', /^GF Sheet 1 files saved$/) && has('done', /^GF Sheet 3 files saved \(the new piece added; nothing on it moved\)$/), 'the panel: both sheets\' files saved: ' + JSON.stringify(fl.lines));
+    assert(has('done', new RegExp(`^Order ${A}: new piece on GF Sheet 1 beside its old spot`)), 'the panel: A on GF Sheet 1 beside its old spot: ' + JSON.stringify(fl.lines));
+    assert(has('done', /^GF Sheet 1 files saved$/), 'the panel: GF Sheet 1 files saved: ' + JSON.stringify(fl.lines));
     assert(!fl.lines.some(([, t]) => /nested again/.test(t)) && /none nested again/.test(fl.sum) && !fl.lines.some(([s]) => s === 'failed'), 'no "nested again" line, nothing failed: ' + JSON.stringify(fl));
-    pass('(b) a bigger new design that cannot fit: its old spot is left empty on GF Sheet 1 (written as it stands, nothing moved, never nested), the piece is appended to the latest unfinished sheet GF Sheet 3 (append-only, nothing on it moves); the panel says so with no "nested again" line');
+    pass('(b) a bigger new design that does not fit its old spot stays on its own sheet GF Sheet 1, beside the old spot in its free space (IPL2): nothing else moves, no nest, GF Sheet 1 written as it stands; the panel says "on GF Sheet 1 beside its old spot"');
 
     /* (e) the laser-cut sheet: untouched, with a note */
     assert.equal(st.calls.slice(w0).filter(x => /^(poolPut|poolUpdate)$/.test(String(x.op)) && JSON.stringify(x.body).includes(idD)).length, 0, 'no piece record of D (laser cut) is written');
@@ -260,19 +256,19 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
       assert(/re-send its files/.test(fl3.sum) && /none nested again/.test(fl3.sum) && !fl3.lines.some(([s]) => s === 'failed'), 'the summary says so, nothing failed: ' + JSON.stringify(fl3)); }
     pass('(d) a sheet in a committed but uncut set changes: the piece is swapped in its old spot (nothing else moves, no nest), the sheet written as it stands, Set 1\'s files written again, the line committed again, and the panel and the card say "Set 1 changed after it was released — re-send its files"');
 
-    /* (c2) a pair too big for its spots: both go together to the latest unfinished sheet, both spots left empty */
+    /* (c2) a pair too big for its spots, room for both beside them on their sheet (IPL2): both stay on GF Sheet 3, together, nothing already placed moves */
     c0 = await counts(page);
     const L3 = L;
     { const r = await fix(page, R, 'RING_BIG'); assert(r.ok, 'R is relinked: ' + JSON.stringify(r)); }
     await until(() => settled(page), 30000, async () => 'R settled: ' + JSON.stringify(await flowLines(page)));
-    L = await layout(page);
+    L = await layout(page); c = await counts(page);
     const whereR = [idR1, idR2].map(id => Object.keys(L).find(sid => L[sid][id]));
-    assert(whereR[0] && whereR[0] === whereR[1], 'R\'s two pieces are on one sheet, together: ' + JSON.stringify(whereR));
-    assert(![76, 106].some(x => Object.values(L['ip-gold-3']).some(([cx, cy]) => Math.hypot(cx - x, cy - 16) < 20)), 'R\'s two old spots on GF Sheet 3 are left empty: ' + JSON.stringify(L['ip-gold-3']));
+    assert.deepEqual(whereR, ['ip-gold-3', 'ip-gold-3'], 'R\'s two pieces are on GF Sheet 3, their own sheet, together: ' + JSON.stringify(whereR));
     for (const sid of Object.keys(L3)) for (const [id, at] of Object.entries(L3[sid])) if (![idR1, idR2].includes(id)) assert.deepEqual(L[sid][id], at, `${id} on ${sid} did not move`);
+    assert.equal(c.nests - c0.nests, 0, 'no nest was started for R');
     const fl2 = await flowLines(page);
-    assert(fl2.lines.some(([s, t]) => s === 'done' && new RegExp(`^Order ${R}: did not fit the old spot \\(spot left empty on GF Sheet 3\\) — added to GF Sheet 3`).test(t)), 'the panel: R did not fit its spots, added to the latest unfinished sheet (its own): ' + JSON.stringify(fl2.lines));
-    pass('(c2) a pair too big for its spots: both pieces go together to the latest unfinished sheet, nothing already placed moves');
+    assert(fl2.lines.some(([s, t]) => s === 'done' && new RegExp(`^Order ${R}: new piece on GF Sheet 3 beside its old spot`).test(t)), 'the panel: R beside its old spots on GF Sheet 3: ' + JSON.stringify(fl2.lines));
+    pass('(c2) a pair too big for its spots: both pieces stay together on their own sheet, beside the old spots; nothing already placed moves, no nest');
 
     assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
   } finally { await browser.close(); srv.close(); }

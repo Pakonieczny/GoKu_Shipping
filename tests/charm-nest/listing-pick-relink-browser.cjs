@@ -3,7 +3,7 @@
 // waiting pieces go into the next free cell, oldest order first, __cap[sheetId] limits how many one search places; what it cannot place moves on through the page's own overflowToNextSheet.
 //   Listing 1700000001, Etsy SKU "FEATHER" (the old drawing, an exact master match); the pick: FEATHER_4102, saved by the page's own REVLINK call (CharmNestReviewLink.save: aliasPut, read back).
 //   A 4201900041  the order Paul corrected, on the open GF Sheet 1          → its old piece comes off, the new one goes into its room on GF Sheet 1
-//   C 4204208130  the same listing, nested on GF Sheet 1                     → taken off; its new piece fits its old spot → placed there (INPLACE, Paul 20 Oct 2026: no nest, nothing
+//   C 4204208130  the same listing, nested on GF Sheet 1, in Review           → taken off even in Review (IPL2); its new piece fits its old spot → placed there (INPLACE: no nest, nothing
 //                                                                               else on GF Sheet 1 moves; a piece that does not fit its spot: replace-in-place.cjs)
 //   B 4201900042  the same listing, not pooled yet                           → reads FEATHER_4102, nothing written for it
 //   D 4204208131  the same listing, its piece CUT on GF Sheet 2              → flagged: held for a person, the Review's Held row, nothing physical changes
@@ -149,12 +149,12 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     assert.deepEqual(marked, { [A]: [true, true], [C]: [true, true] }, 'orders A and C are in Review, their pieces kept on GF Sheet 1 (REVHOLD)');
     const saved = await one.page.evaluate(async ({ A, NEW }) => { const row = B.orders.rows.find(r => r.order.receiptId === A); const r = await CharmNestReviewLink.pick(row, NEW, { by: 'Paul' }); return { ok: r.ok, via: r.via, key: r.key, resolved: !!(r.resolved && r.resolved.ok), info: CharmNestReviewMark.info(A).how }; }, { A, NEW });
     assert.deepEqual(saved, { ok: true, via: 'alias', key: `${LID}|${OLD}`, resolved: true, info: 'pick' }, 'the pick is kept for the listing and its SKU, and A\'s Review is resolved as a pick: ' + JSON.stringify(saved));
-    // nothing else is pressed: the sweep runs by itself. A (its Review answered by the pick) is made up again at once; C, still in Review, keeps its old piece where it is
-    await until(() => one.page.evaluate(A => { const s = CN.S.sheets.gold.pages.find(p => p.sheetId === 'lp-gold-1'); const c = s.charms.find(x => x.poolId === A + '_5100000001_1'); return c && c.sku === 'FEATHER_4102' && s.placements.some(pl => pl.id === c.id) && s.status === 'complete'; }, A), 30000, 'A placed on GF Sheet 1');
-    await sleep(500);
-    { const k = await one.page.evaluate(C => { const r = B.orders.rows.find(x => x.order.receiptId === C), s = CN.S.sheets.gold.pages.find(p => p.sheetId === 'lp-gold-1'); return { sku: r.spec.designSku, piece: (B.pool.rows.get(r.poolIds[0]) || {}).sku, on: s.charms.filter(c => c.poolId === r.poolIds[0]).map(c => c.sku), waiting: Review.relinkPending() }; }, C);
-      assert.deepEqual(k, { sku: NEW, piece: OLD, on: [OLD], waiting: 1 }, 'C, in Review, reads the pick but keeps its old piece on GF Sheet 1 until its Review is resolved: ' + JSON.stringify(k)); }
-    pass('an order still in Review keeps its piece on its sheet (REVHOLD) and waits; the corrected order is made up at once');
+    // nothing else is pressed: the sweep runs by itself. A (its Review answered by the pick) is made up again at once; C, still in Review, is made up again too (IPL2, Paul 9 Nov 2026:
+    // "Nothing can block this unless the sheet has already been laser cut"), once GF Sheet 1 is saved after A's exchange; its Review stays open
+    await until(() => one.page.evaluate(({ A, C }) => { const s = CN.S.sheets.gold.pages.find(p => p.sheetId === 'lp-gold-1'); const on = rid => { const c = s.charms.find(x => String(x.poolId).startsWith(rid + '_')); return c && c.sku === 'FEATHER_4102' && s.placements.some(pl => pl.id === c.id); }; return on(A) && on(C) && s.status === 'complete' && !s._inplaceWrite; }, { A, C }), 30000, 'A and C placed on GF Sheet 1 with the pick');
+    { const k = await one.page.evaluate(C => ({ inReview: Pool.keepsPlace(B.orders.rows.find(x => x.order.receiptId === C)), waiting: Review.relinkPending() }), C);
+      assert.deepEqual(k, { inReview: true, waiting: 0 }, 'C took the pick while its Review stays open: ' + JSON.stringify(k)); }
+    pass('an order still in Review takes the pick too (IPL2: only a laser-cut sheet blocks it), its Review left open; the corrected order is made up at once');
     // C's Review is answered ("Marked OK"): it is made up again by itself; its new piece fits the spot its old one left on GF Sheet 1 (INPLACE): placed there, GF Sheet 1 written as it stands, never nested
     const before1 = await one.page.evaluate(() => { const s = CN.S.sheets.gold.pages.find(p => p.sheetId === 'lp-gold-1'); return Object.fromEntries(s.placements.map(pl => [(s.charms.find(c => c.id === pl.id) || {}).poolId, [pl.cxPt, pl.cyPt, pl.angle]])); });
     const nests0 = await one.page.evaluate(() => (window.__nests || []).length);
@@ -202,10 +202,10 @@ let n = 0; const pass = m => { n++; console.log('  ✓ ' + m); };
     pass('B (not pooled) reads the pick with nothing written; D (cut) is held for a person with a plain reason and a Review Held row, its cut piece untouched; X untouched');
     // the timeline: one event per order, naming the pick and who
     await one.page.evaluate(async () => { try { OrderTimeline.flush && OrderTimeline.flush(); } catch (_) {} });
-    await until(async () => { await one.page.evaluate(() => { try { OrderTimeline.flush && OrderTimeline.flush(); } catch (_) {} }); const k = rid => st.list(TL).filter(e => e._id.startsWith(rid + '~') && /^Charm updated from listing pick by Paul/.test(e.text || '')).length; return [A, B_, D].every(rid => k(rid) >= 1) && k(C) >= 2; }, 20000, 'timeline events');
+    await until(async () => { await one.page.evaluate(() => { try { OrderTimeline.flush && OrderTimeline.flush(); } catch (_) {} }); const k = rid => st.list(TL).filter(e => e._id.startsWith(rid + '~') && /^Charm updated from listing pick by Paul/.test(e.text || '')).length; return [A, B_, D, C].every(rid => k(rid) >= 1); }, 20000, 'timeline events');
     const evs = rid => st.list(TL).filter(e => e._id.startsWith(rid + '~') && /^Charm updated from listing pick by Paul/.test(e.text || ''));
     for (const rid of [A, B_, D]) assert.equal(evs(rid).length, 1, `one event for ${rid}: ${JSON.stringify(evs(rid).map(e => e.text))}`);
-    assert.deepEqual(evs(C).map(e => /stays on its sheet while the order is in Review/.test(e.text) ? 'kept' : /the new piece was placed in the old spot on GF Sheet 1/.test(e.text) ? 'made' : e.text).sort(), ['kept', 'made'], 'C: kept while in Review, then made up again: ' + JSON.stringify(evs(C).map(e => e.text)));
+    assert.deepEqual(evs(C).map(e => /the new piece was placed in the old spot on GF Sheet 1/.test(e.text) ? 'made' : e.text), ['made'], 'C: made up again while in Review, once (IPL2): ' + JSON.stringify(evs(C).map(e => e.text)));
     assert(/FEATHER → FEATHER_4102 · the new piece was placed in the old spot on GF Sheet 1/.test(evs(A)[0].text) && evs(A)[0].by === 'Paul', 'A\'s event: ' + evs(A)[0].text);
     assert(/left as it was, a person must make it/.test(evs(D)[0].text), 'D\'s event says it was left: ' + evs(D)[0].text);
     assert.equal(st.list(TL).filter(e => e._id.startsWith(X + '~') && /listing pick/.test(e.text || '')).length, 0, 'X has no such event');
