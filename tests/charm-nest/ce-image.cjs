@@ -541,6 +541,21 @@ async function partC(kit) {
     }, [PID, rec.at]);
     check(`C5 read back from the cloud, every path is whole again (${back.parts} parts, ${back.inRec.toLocaleString('en')} operators), and the sheet's laser file holds them in full (${back.sheetOps.toLocaleString('en')} operators in its grey fills; ${Math.round(back.bytes / 1000)} KB, written in ${back.ms} ms)`,
       back.parts === pl.kids && back.noBi && back.inRec === pl.ops && back.sheetOps >= pl.ops * 0.99, JSON.stringify(back));
+    // (Paul, 9 Nov 2026: "that image must appear as part of the engraving thumbnails, and also on the sheets") the piece's picture as made (CharmNestMadeThumb), drawn here and kept in the cloud
+    // for the other computers' lists: the image in it, in its greys (the fur's many tones, not a few blobs)
+    const tones = async url => page.evaluate(async u => {
+      const im = new Image(); im.src = u; await im.decode(); const cv = document.createElement('canvas'); cv.width = im.naturalWidth; cv.height = im.naturalHeight;
+      const g = cv.getContext('2d'); g.drawImage(im, 0, 0); const d = g.getImageData(0, 0, cv.width, cv.height).data, seen = new Set(); let grey = 0;
+      for (let i = 0; i < d.length; i += 4) if (Math.abs(d[i] - d[i + 1]) < 6 && Math.abs(d[i + 1] - d[i + 2]) < 6 && d[i] > 20 && d[i] < 235) { grey++; seen.add(d[i] >> 3); }
+      return { w: cv.width, h: cv.height, grey, tones: seen.size };
+    }, url);
+    const localUrl = await page.evaluate(async id => { const f = CharmNestMadeThumb.forPiece(id); return f ? await f.load(600) : null; }, PID);
+    const local = localUrl ? await tones(localUrl) : null;
+    await page.evaluate(() => CharmNestMadeThumb.flush());
+    for (let t0 = Date.now(); Date.now() - t0 < 60000 && !((st.doc('Charm_Pool', PID) || {}).made || {}).path; ) await new Promise(r => setTimeout(r, 300));
+    const mrow = (st.doc('Charm_Pool', PID) || {}).made, mb = mrow && st.blobs.get(mrow.path), cloud = mb ? await tones('data:image/png;base64,' + mb.buf.toString('base64')) : null;
+    check(`C7 the engraving thumbnail shows the image: drawn here ${local && local.w + ' × ' + local.h} px with ${local && local.grey} grey pixels in ${local && local.tones} tones; kept in the cloud for the other computers (${mrow && mrow.path}, ${cloud && cloud.grey} grey pixels, ${cloud && cloud.tones} tones)`,
+      !!local && local.grey > 2000 && local.tones >= 12 && !!cloud && cloud.grey > 1000 && cloud.tones >= 12, JSON.stringify({ local, cloud, mrow }));
     check('C6 no page error', w.errors.length === 0, JSON.stringify(w.errors).slice(0, 400));
   } finally { await w.close(); }
 }
