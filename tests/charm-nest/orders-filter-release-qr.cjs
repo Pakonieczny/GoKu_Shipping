@@ -131,10 +131,10 @@ const NAMES = ['rqHeld', 'rqQr', 'rqBoth', 'rqMark', 'rqRel', 'rqPrn', 'rqPlain'
     // ═══ 4 · the piles ═══
     await press('hold'); await closePanel();
     // (NOHOLDPILE, Paul 20 Oct 2026: there is no On hold pile; the held orders stay in Open Orders under the filter)
-    check(await page.evaluate(() => !document.querySelector('#ordChips [data-pile="hold"]') && [...document.querySelectorAll('#ordChips [data-pile]')].map(b => b.dataset.pile).join() === ',cancelled'), 'the piles are Open Orders and Cancelled: no On hold chip');
+    check(await page.evaluate(() => !document.querySelector('#ordChips [data-pile="hold"]') && [...document.querySelectorAll('#ordChips [data-pile]')].map(b => b.dataset.pile).join() === ',completed,cancelled'), 'the piles are Open Orders, Completed (CMP1) and Cancelled: no On hold chip');
     check(sameSet(await rids(), ids('held', 'qr', 'both', 'marked')), 'the held orders stay in Open Orders, inside the Release Hold filter: ' + await rids());
     await page.click('#ordChips [data-pile="cancelled"]'); await sleep(700);
-    check(await page.evaluate(() => { const vis = sel => { const n = document.querySelector(sel); return !!n && n.getClientRects().length > 0; }; return !vis('#ordFiltersBtn') && !vis('#ordActive .ordAx'); }), 'the Cancelled pile steps the Filters button and its chip aside');
+    check(await page.evaluate(() => { const vis = sel => { const n = document.querySelector(sel); return !!n && n.getClientRects().length > 0; }; return !vis('#ordActive .ordAx') && !document.querySelector('#ordFiltersPop .ordChip[data-f="act"]'); }), 'the Cancelled pile steps the Needs action filter and its chip aside (Filters stays for Time and Sort by, CMP1)');
     await page.click('#ordChips [data-pile=""]'); await sleep(700);
     check(await page.evaluate(() => Orders.view().act) === 'hold' && sameSet(await rids(), ids('held', 'qr', 'both', 'marked')) && (await chipsNow()).join() === 'act=Release Hold', 'and Open Orders brings the filter back as it was');
 
@@ -179,7 +179,7 @@ const NAMES = ['rqHeld', 'rqQr', 'rqBoth', 'rqMark', 'rqRel', 'rqPrn', 'rqPlain'
 
     // ═══ 6 · a group that could only do nothing, and the saved view ═══
     const quiet = await page.evaluate(() => ({ wrapHidden: document.getElementById('ordFilters').hidden, groups: [...document.querySelectorAll('#ordFiltersPop .ordFg h4')].map(h => h.textContent) }));
-    check(!quiet.groups.includes('Needs action') && quiet.wrapHidden, 'nothing is open any more and nothing is on: the group is not drawn (it could only do nothing), and with no group left the Filters button is not drawn either: ' + JSON.stringify(quiet));
+    check(!quiet.groups.includes('Needs action') && !quiet.wrapHidden && quiet.groups.join() === 'Time,Sort by', 'nothing is open any more and nothing is on: the group is not drawn (it could only do nothing); Filters stays for Time and Sort by (CMP1): ' + JSON.stringify(quiet));
     await page.evaluate(() => { Orders.view().act = 'qr'; Orders.render(); }); await sleep(500);
     await openPanel();
     const kept = await page.evaluate(() => { const s = [...document.querySelectorAll('#ordFiltersPop .ordFg')].find(x => x.querySelector('h4').textContent === 'Needs action'); return s ? [...s.querySelectorAll('.ordChip')].map(c => (c.dataset.v || 'any') + ':' + c.getAttribute('aria-pressed')).join() : null; });
