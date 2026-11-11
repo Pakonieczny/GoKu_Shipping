@@ -5419,7 +5419,11 @@ function topupTakes(sh, pieces, order) {
   const NS = typeof nospread === "function" ? nospread() : null;
   if (NS && ["gold", "silver"].includes(sh.metal)) {
     if (!pieces || !pieces.length) return true;
-    const o = nospreadOrder(pieces, order), a = NS.admits(nospreadSheet(sh, new Set(pieces.map(c => c.id))), o, nospreadCfg());
+    // (ONEATATIME, Paul 11 Nov 2026: a production pull hands the intake every order at once (491 on 11 Nov; the sandbox's stream hands it a few at a time), and the room left was read
+    //  with every waiting piece counted as placed, so the batch was split over six Gold Filled drafts by estimate before one was nested, and the drafts were nested three orders at a time
+    //  in turn. Paul: one sheet at a time. A sheet still filling is judged by what is nested on it; its nest then passes on, whole, what does not fit (feedOn, overflowToNextSheet).
+    //  A sheet filling its gaps keeps the waiting pieces counted, as before.)
+    const o = nospreadOrder(pieces, order), a = NS.admits(nospreadSheet(sh, new Set(pieces.map(c => c.id)), { nestedOnly: !gapFilling(sh) }), o, nospreadCfg());
     if (!a.take) { nospreadSay(sh, pieces, o, a); nospreadPassed(sh, a); }
     return a.take;
   }
@@ -5438,9 +5442,9 @@ function topupTakes(sh, pieces, order) {
 function nospread() { return typeof CharmNestNoSpread !== "undefined" && S.settings.nospread !== "off" ? CharmNestNoSpread : null; }
 const nospreadCfg = () => ({ target: TOPUP.target, fitAtTarget: GAP_PACK, ...(S.settings.nospreadMargin != null && S.settings.nospreadMargin !== "" && Number.isFinite(+S.settings.nospreadMargin) ? { nearMargin: +S.settings.nospreadMargin } : {}) });
 /** The sheet as the policy reads it: what is seated, what is attached and waiting (reserved: it will take room), `skip` (a Set of charm ids) not counted: the order being asked about. */
-function nospreadSheet(sh, skip) {
+function nospreadSheet(sh, skip, o = {}) {
   const placed = new Set((sh.placements || []).map(p => p.id)); let placedPt2 = 0, pendingPt2 = 0;
-  for (const c of activeCharms(sh)) { if (skip && skip.has(c.id)) continue; const a = inflatedArea(c); if (placed.has(c.id)) placedPt2 += a; else pendingPt2 += a; }
+  for (const c of activeCharms(sh)) { if (skip && skip.has(c.id)) continue; const a = inflatedArea(c); if (placed.has(c.id)) placedPt2 += a; else if (!o.nestedOnly) pendingPt2 += a; }   // (ONEATATIME: nestedOnly, see topupTakes)
   return { usablePt2: usableArea(sh), placedPt2, pendingPt2, maxFill: +S.settings.maxFill || .8, gapFilling: gapFilling(sh) };
 }
 /** Says once per order and sheet, in the sheet's log, why an order was not put on it (the owner asks "why did this order go to the next sheet?"). */
