@@ -126,7 +126,7 @@
    * Top-level segments get byte ranges; nested (form XObject) paths are
    * returned in `inner` with `parent` = the index of their Do segment.
    */
-  function interpret(bytes, resolve, ctm0, depth, spacesIn, layersIn, fontsIn) {
+  function interpret(bytes, resolve, ctm0, depth, spacesIn, layersIn, fontsIn, clipsIn) {
     const ins = lex(bytes);
     const segs = [], inner = [];
     const fonts = fontsIn || {}; let fontName = null, textRaw = "", textStrs = [];
@@ -137,6 +137,10 @@
     let fill = [0, 0, 0], stroke = [0, 0, 0], lw = 1, fillSpace = "DeviceGray", strokeSpace = "DeviceGray";
     const spaces = spacesIn || {};
     let path = null, pathStart = -1, pendingClip = false, clipBox = null;
+    // CLIPS (Paul, 11 Nov 2026: "Export stopped: This artwork uses a clipping mask"). The clipping paths in force, outermost first, each { subpaths, rule }: saved and
+    // restored with q / Q and handed into a form, so every path, text and image segment says what hides part of it (seg.clips, absent when nothing does). The export
+    // cuts the art to them (charm-nest-export.js leaves); nothing else reads them.
+    let clips = clipsIn || [], clipRule = "nonzero";
     let inText = false, textStart = -1, tm = null, tlm = null, fontSize = 1, textPts = [], textChars = 0;
     let fsS = 1; const tst = { tc: 0, tw: 0, tz: 1, ts: 0, tr: 0 };   // (the text state a drawn glyph needs: signed size, character and word spacing, horizontal scale, rise, render mode; section 3c)
     let textPieces = [], piece = null;
@@ -151,8 +155,8 @@
       const { op, args } = ins[i];
       if ((inText || path) && STATE_OPS.has(op)) held.push(ins[i].start, ins[i].end);
       switch (op) {
-        case "q": stack.push({ ctm: ctm.slice(), fill, stroke, lw, fillSpace, strokeSpace, clipBox, txt: Object.assign({}, tst) }); break;
-        case "Q": { const s = stack.pop(); if (s) { ctm = s.ctm; fill = s.fill; stroke = s.stroke; lw = s.lw; fillSpace = s.fillSpace; strokeSpace = s.strokeSpace; clipBox = s.clipBox; if (s.txt) Object.assign(tst, s.txt); } break; }
+        case "q": stack.push({ ctm: ctm.slice(), fill, stroke, lw, fillSpace, strokeSpace, clipBox, clips, txt: Object.assign({}, tst) }); break;
+        case "Q": { const s = stack.pop(); if (s) { ctm = s.ctm; fill = s.fill; stroke = s.stroke; lw = s.lw; fillSpace = s.fillSpace; strokeSpace = s.strokeSpace; clipBox = s.clipBox; clips = s.clips || []; if (s.txt) Object.assign(tst, s.txt); } break; }
         case "Tc": tst.tc = +args[0] || 0; break;
         case "Tw": tst.tw = +args[0] || 0; break;
         case "Tz": tst.tz = (+args[0] || 100) / 100; break;
@@ -191,7 +195,7 @@
         case "BDC": { const tag = args[0] && args[0].name, pr = args[1]; const key = pr && pr.name; mc.push(tag === "OC" && key ? (layerNames[key] || key) : (pr && pr.dict && pr.dict.Title ? String(pr.dict.Title.str || pr.dict.Title) : null)); break; }
         case "BMC": mc.push(null); break;
         case "EMC": mc.pop(); break;
-        case "W": case "W*": pendingClip = true; break;
+        case "W": case "W*": pendingClip = true; clipRule = op === "W*" ? "evenodd" : "nonzero"; break;
         // ── painting ──
         case "S": case "s": case "f": case "F": case "f*": case "B": case "B*": case "b": case "b*": case "n": {
           if (!path) { pendingClip = false; break; }
@@ -208,7 +212,8 @@
           };
           if (held.length) seg.held = held;
           held = [];
-          if (pendingClip) clipBox = bbox;
+          if (clips.length && seg.kind === "path") seg.clips = clips;   // (the clip this op sets applies to what is painted after it)
+          if (pendingClip) { clipBox = bbox; clips = clips.concat([{ subpaths: seg.subpaths, rule: clipRule }]); }
           if (seg.kind === "clip") { seg.clipBox = bbox; }
           push(depth === 0 ? segs : inner, seg);
           path = null; pathStart = -1; pendingClip = false; break;
@@ -248,6 +253,7 @@
             const decoded = textStrs.every(t => t && t.ok) ? textStrs.map(t => t.text).join("") : null;
             const pieces = textPieces.length > 1 ? textPieces.map(p => { const d = p.strs.every(t => t && t.ok) ? p.strs.map(t => t.text).join("") : null; return { bbox: bboxOf(p.pts), chars: p.chars, str: d, raw: p.raw, font: p.font, undecodable: d == null && p.chars > 0 }; }) : null;
             const tseg = { kind: "text", start: textStart, end: ins[i].end, bbox, chars: textChars, fillRGB: fill.slice(), depth, str: decoded, raw: textRaw, font: fontName, undecodable: decoded == null && textChars > 0, pieces, held: held.length ? held : undefined };
+            if (clips.length) tseg.clips = clips;
             if (pieces) pieces.forEach((pc, k) => { const r = GLYPH_RUNS.get(textPieces[k]); if (r) GLYPH_RUNS.set(pc, r); });
             else if (textPieces.length === 1 && GLYPH_RUNS.has(textPieces[0])) GLYPH_RUNS.set(tseg, GLYPH_RUNS.get(textPieces[0]));
             push(depth === 0 ? segs : inner, tseg);
@@ -255,7 +261,7 @@
           held = [];
           inText = false; break;
         }
-        case "BI": push(depth === 0 ? segs : inner, { kind: "image", start: ins[i].start, end: ins[i].end, bbox: bboxOf([ap(ctm, 0, 0), ap(ctm, 1, 0), ap(ctm, 1, 1), ap(ctm, 0, 1)]), depth }); break;
+        case "BI": push(depth === 0 ? segs : inner, { kind: "image", start: ins[i].start, end: ins[i].end, bbox: bboxOf([ap(ctm, 0, 0), ap(ctm, 1, 0), ap(ctm, 1, 1), ap(ctm, 0, 1)]), depth, ...(clips.length ? { clips } : {}) }); break;
         case "sh": push(depth === 0 ? segs : inner, { kind: "shading", start: ins[i].start, end: ins[i].end, bbox: clipBox, depth }); break;
         case "Do": {
           const name = args[0] && args[0].name;
@@ -267,7 +273,7 @@
             const m = mul(x.matrix || [1, 0, 0, 1, 0, 0], ctm);
             if (x.bbox) seg.bbox = bboxOf([ap(m, x.bbox[0], x.bbox[1]), ap(m, x.bbox[2], x.bbox[1]), ap(m, x.bbox[2], x.bbox[3]), ap(m, x.bbox[0], x.bbox[3])]);
             // a form's own colour spaces (a Separation "All" cut line, say) must not fall back to the page's
-            const sub = interpret(x.bytes, x.resolve || resolve, m, depth + 1, x.spaces || spaces, x.layers || layerNames, x.fonts || fonts);
+            const sub = interpret(x.bytes, x.resolve || resolve, m, depth + 1, x.spaces || spaces, x.layers || layerNames, x.fonts || fonts, clips);
             for (const k of sub.segs.concat(sub.inner)) if (!k.layer) k.layer = seg.layer;
             // flatten grandchildren too: a form that only invokes another form still carries that form's paths
             const flat = (list) => list.flatMap(k => k.kind === "xobj" && k.children && k.children.length ? [k].concat(flat(k.children)) : [k]);

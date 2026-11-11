@@ -15,30 +15,86 @@
   const MM = 25.4 / 72, GAP = 10 / MM, SPACE = 3 / MM;
   const pdf = () => root.CharmNestPDF, lib = () => root.PDFLib;
   const union = (a,b) => !a ? b.slice() : [Math.min(a[0],b[0]),Math.min(a[1],b[1]),Math.max(a[2],b[2]),Math.max(a[3],b[3])];
+  /* CLIPS (Paul, 11 Nov 2026: the Library's .dxf stopped on "This artwork uses a clipping mask" for every full GF sheet of the day). A sheet draws each charm under the
+   * clips of its own drawing: the frame its file was written in, and the crop of a picture traced in the Charm Editor (layer IMG). The parser now says which clips are
+   * in force over each path (charm-nest-pdf.js interpret: seg.clips). A path that lies inside them is exported exactly as before; a path that crosses one is cut to it,
+   * as real geometry (a fill becomes the filled area that shows, a line becomes the pieces of it that show); a path wholly hidden by its clip is not exported, as it is
+   * not drawn. Nothing that shows is ever dropped, and no export stops for a clip. */
+  const clipCache = new WeakMap(), CLIP_TOL = 0.01;   // (pt: a point this close to a clip's edge is on it)
+  function clipShape(c) {
+    let k = clipCache.get(c); if (k) return k;
+    const polys = (c.subpaths || []).map(s => flatten(s).points).filter(p => p.length >= 3);
+    const box = polys.flat().reduce((a, p) => union(a, [p[0], p[1], p[0], p[1]]), null);
+    // (one convex outline: a path whose every point is inside it is inside it; any other clip (a hole, a dent, several outlines) is checked by cutting)
+    const q = polys.length === 1 ? polys[0] : null, sgn = q && q.map((a, i) => { const b = q[(i+1) % q.length], c2 = q[(i+2) % q.length]; return (b[0]-a[0])*(c2[1]-b[1]) - (b[1]-a[1])*(c2[0]-b[0]); });
+    const convex = !!q && (sgn.every(v => v >= -1e-9) || sgn.every(v => v <= 1e-9));
+    k = {polys, box, convex, rule: c.rule === 'evenodd' ? 'evenodd' : 'nonzero'}; clipCache.set(c, k); return k;
+  }
+  function inClip(k, p) {
+    if (!k.box || p[0] < k.box[0] - CLIP_TOL || p[0] > k.box[2] + CLIP_TOL || p[1] < k.box[1] - CLIP_TOL || p[1] > k.box[3] + CLIP_TOL) return false;
+    let w = 0, near = false;
+    for (const poly of k.polys) for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length], cr = (b[0]-a[0])*(p[1]-a[1]) - (b[1]-a[1])*(p[0]-a[0]);
+      if (a[1] <= p[1]) { if (b[1] > p[1] && cr > 0) w++; } else if (b[1] <= p[1] && cr < 0) w--;
+      if (!near) { const dx = b[0]-a[0], dy = b[1]-a[1], l = dx*dx + dy*dy, t = l ? Math.max(0, Math.min(1, ((p[0]-a[0])*dx + (p[1]-a[1])*dy) / l)) : 0; near = Math.hypot(p[0]-a[0]-t*dx, p[1]-a[1]-t*dy) <= CLIP_TOL; }
+    }
+    return near || (k.rule === 'evenodd' ? w % 2 !== 0 : w !== 0);
+  }
+  const subpathPts = path => (path.subpaths || []).map(s => flatten(s));
+  const boxOf = loops => loops.reduce((a, pts) => pts.reduce((b, p) => union(b, [p[0], p[1], p[0], p[1]]), a), null);
+  const V = {filled: p => vector().filled(p)};
+  /** The area a set of loops covers (by the nonzero rule, as Clipper returns them). */
+  const loopArea = loops => vector().boolean(loops, [], 'union').reduce((s, l) => { let a = 0; const q = l.points; for (let i = 0; i < q.length; i++) { const u = q[i], v = q[(i+1) % q.length]; a += u[0]*v[1] - v[0]*u[1]; } return s + Math.abs(a) / 2 * (l.hole ? -1 : 1); }, 0);
+  const toSub = (pts, closed) => [['m', pts[0]], ...pts.slice(1).map(p => ['l', p]), ...(closed ? [['h']] : [])];
+  /** The pieces of open lines that lie inside a clip (Clipper's open-path intersection). */
+  function clipLines(lines, k) {
+    const C = root.ClipperLib || (typeof require === 'function' ? require('./vendor/clipper-6.4.2.js') : null), S = vector().SCALE;
+    if (!C) throw new Error('Vector geometry library is unavailable. Refresh the page.');
+    const toInt = pts => pts.map(([x, y]) => ({X: Math.round(x * S), Y: Math.round(y * S)}));
+    const engine = new C.Clipper(), tree = new C.PolyTree();
+    for (const l of lines) if (l.length >= 2) engine.AddPath(toInt(l), C.PolyType.ptSubject, false);
+    engine.AddPaths(k.polys.map(toInt), C.PolyType.ptClip, true);
+    const rule = k.rule === 'evenodd' ? C.PolyFillType.pftEvenOdd : C.PolyFillType.pftNonZero;
+    if (!engine.Execute(C.ClipType.ctIntersection, tree, C.PolyFillType.pftNonZero, rule)) return [];
+    return C.Clipper.OpenPathsFromPolyTree(tree).map(p => p.map(q => [q.X / S, q.Y / S])).filter(p => p.length >= 2);
+  }
+  /** One path cut to the clips over it: [] when none of it shows, [path] (unchanged) when all of it does, else the parts that show. */
+  function clipPath(path) {
+    const ks = (path.clips || []).map(clipShape), {clips, ...plain} = path;
+    if (!ks.length) return [plain];
+    const flat = subpathPts(plain);
+    const inside = flat.every(f => f.points.every(p => ks.every(k => inClip(k, p))));
+    if (inside && ks.every(k => k.convex)) return [plain];
+    const out = []; let same = true;
+    if (plain.fill) {
+      let loops = flat.map(f => f.points).filter(p => p.length >= 3), rule = /\*/.test(plain.paintOp || '') ? 'evenodd' : 'nonzero';
+      for (const k of ks) { if (!loops.length) break; loops = vector().boolean(loops, k.polys, 'intersection', rule, k.rule).map(r => r.points); rule = 'nonzero'; }
+      loops = loops.filter(p => p.length >= 3);
+      const before = loopArea(V.filled(plain).map(l => l.points), 'nonzero'), after = loopArea(loops, 'nonzero');
+      if (Math.abs(before - after) > 1e-6 * Math.max(1, before)) same = false;
+      if (loops.length) out.push({...plain, stroke: false, paintOp: 'f', subpaths: loops.map(p => toSub(p, true)), closed: true, bbox: boxOf(loops), clipped: true});
+    }
+    if (plain.stroke) {
+      let lines = flat.filter(f => f.points.length >= 2).map(f => f.closed ? f.points.concat([f.points[0]]) : f.points);
+      const total = ls => ls.reduce((n, l) => n + l.slice(1).reduce((m, p, i) => m + Math.hypot(p[0]-l[i][0], p[1]-l[i][1]), 0), 0), before = total(lines);
+      for (const k of ks) { if (!lines.length) break; lines = clipLines(lines, k); }
+      if (Math.abs(before - total(lines)) > 1e-6 * Math.max(1, before)) same = false;
+      if (lines.length) out.push({...plain, fill: false, paintOp: 'S', subpaths: lines.map(p => toSub(p, false)), closed: false, bbox: boxOf(lines), clipped: true});
+    }
+    return same ? [plain] : out;   // (a clip that hides none of it: the path as drawn, curves and all)
+  }
   function leaves(parsed) {
-    const seen = new Set(), out = [], clips = [];
+    const seen = new Set(), out = [];
     function visit(s, parent) {
       if (seen.has(s)) return; seen.add(s);
       const layer = s.layer || parent || 'Artwork';
       if (s.kind === 'xobj' && s.children?.length) s.children.forEach(k => visit(k,layer));
-      else if (s.kind === 'path') out.push({...s, layer});
-      else if(s.kind === 'clip') clips.push(s);
-      else if(s.kind === 'noop') return;
-      else throw new Error(`Cannot export ${s.kind} on ${layer} to vector DXF. Outline text and remove raster artwork first.`);
+      else if (s.kind === 'path') out.push(...clipPath({...s, layer}));
+      else if (s.kind === 'clip' || s.kind === 'noop') return;
+      else if (s.kind === 'xobj' && !s.children?.length && !s.bbox) return;   // (an empty form draws nothing)
+      else throw new Error(`Cannot export ${s.kind === 'xobj' ? 'a picture (raster image)' : s.kind} on ${layer} to vector DXF. Outline text and trace or remove raster artwork first.`);
     }
     parsed.segments.forEach(s => visit(s));
-    // Illustrator commonly includes huge rectangular artboard clips. They do
-    // not change any ink. Accept only provably non-intersecting clips; never
-    // silently export geometry that the AI file hides behind a real mask.
-    const bounds=out.reduce((a,s)=>union(a,s.bbox),null);
-    for(const clip of clips) {
-      const sub=clip.subpaths?.[0]||[],pts=sub.filter(o=>o[0]!=='h').map(o=>o[1]);
-      const cross=(a,b,p)=>(b[0]-a[0])*(p[1]-a[1])-(b[1]-a[1])*(p[0]-a[0]);
-      const same=xs=>xs.every(x=>x>=-1e-6)||xs.every(x=>x<=1e-6);
-      const convex=clip.subpaths.length===1&&pts.length===4&&sub.every(o=>['m','l','h'].includes(o[0]))&&same(pts.map((p,i)=>cross(p,pts[(i+1)%4],pts[(i+2)%4])));
-      const corners=bounds?[[bounds[0],bounds[1]],[bounds[0],bounds[3]],[bounds[2],bounds[1]],[bounds[2],bounds[3]]]:[];
-      if(!convex||!corners.every(p=>same(pts.map((a,i)=>cross(a,pts[(i+1)%4],p)))))throw new Error('This artwork uses a clipping mask. Expand the clipped artwork before DXF export.');
-    }
     return out;
   }
   function productionPaths(parsed) {

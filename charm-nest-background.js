@@ -19,7 +19,7 @@
     function end(error,result){if(!current)return;const task=current;current=null;clearTimeout(task.timer);error?task.reject(error):task.resolve(result);setTimeout(pump,0);}
     function fail(error){worker?.terminate();worker=null;end(error instanceof Error?error:new Error(error?.message||'Background calculation stopped. Retry this item.'));}
     function pump(){if(current||!queue.length)return;current=queue.shift();try{
-      if(!worker){worker=new Worker('charm-nest-compute-worker.js?v=20261009-flat-cutfill-gt1-bx2-hoops-col-rv71-pt1-pt2-plb2-pt3-bc2-pe2-mi1-bf1-mi3-bf2-mi4-bf3-mi5-as1-mi6-bf4-mi7-pm8-pm9-cg1-bb1-rlp1-rlp3-ba1-sx1-ba2-lv1-lm1-fb1-ef1-fb2-ml1-mfile1-mw1-bh2-ae1-up2-bm1');const owner=worker;worker.onerror=e=>{if(owner===worker)fail(e);};worker.onmessageerror=()=>{if(owner===worker)fail(new Error('Unreadable background result'));};worker.onmessage=({data})=>{if(!current||data.id!==current.id)return;if(data.progress){current.progress?.(...data.progress);return;}end(data.error?new Error(data.error):null,data.result);};}
+      if(!worker){worker=new Worker('charm-nest-compute-worker.js?v=20261009-flat-cutfill-gt1-bx2-hoops-col-rv71-pt1-pt2-plb2-pt3-bc2-pe2-mi1-bf1-mi3-bf2-mi4-bf3-mi5-as1-mi6-bf4-mi7-pm8-pm9-cg1-bb1-rlp1-rlp3-ba1-sx1-ba2-lv1-lm1-fb1-ef1-fb2-ml1-mfile1-mw1-bh2-ae1-up2-bm1-clp1');const owner=worker;worker.onerror=e=>{if(owner===worker)fail(e);};worker.onmessageerror=()=>{if(owner===worker)fail(new Error('Unreadable background result'));};worker.onmessage=({data})=>{if(!current||data.id!==current.id)return;if(data.progress){current.progress?.(...data.progress);return;}end(data.error?new Error(data.error):null,data.result);};}
       current.timer=setTimeout(()=>fail(new Error('Background calculation timed out. Retry this item.')),120000);worker.postMessage({id:current.id,type:current.type,input:current.input});
     }catch(e){fail(e);}}
     return {run(type,input,progress){return new Promise((resolve,reject)=>{queue.push({id:++id,type,input,progress,resolve,reject});pump();});}};
@@ -41,10 +41,13 @@
   const E=root.CharmNestExport;
   // Parent-scale verification needs only each charm's identity, never its DOM,
   // rendered images, workers, masks or cached source document.
-  E.compose=(front,sheet,backs)=>{
-    const minimal={...sheet,charms:(sheet.charms||[]).map(c=>({id:c.id,poolId:c.poolId}))};
+  // (EXPORTFACES, 11 Nov 2026: the front engravings (4th argument) and each record's ear (side, groupKey) go to the worker too; they were dropped here, so a sheet
+  //  composed in the worker lost its FRONT layers and named no Left / Right on its BACK layers)
+  const rec=b=>Object.fromEntries(['poolId','bytes','face','side','groupKey'].filter(k=>b[k]!==undefined).map(k=>[k,b[k]]));
+  E.compose=(front,sheet,backs,fronts)=>{
+    const minimal={...sheet,charms:(sheet.charms||[]).map(c=>({id:c.id,poolId:c.poolId,...(c.side==='L'||c.side==='R'?{side:c.side}:{})}))};
     const data=Object.fromEntries(['id','sheetId','fileBase','metal','roseStockId','rosePlanJson','rosePlan','placements','charms'].filter(k=>minimal[k]!==undefined).map(k=>[k,minimal[k]]));
-    return geometry.run('compose',{front,sheet:data,backs:backs.map(b=>({poolId:b.poolId,bytes:b.bytes}))});
+    return geometry.run('compose',{front,sheet:data,backs:(backs||[]).map(rec),...(fronts&&fronts.length?{fronts:fronts.map(rec)}:{})});
   };
   E.productionDxf=bytes=>geometry.run('dxf',{bytes});
   // the engraved backs' index is a summary for people: drawn beside the thumbnails, never ahead of a sheet being finished
