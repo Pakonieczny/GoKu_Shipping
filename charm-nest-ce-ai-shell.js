@@ -162,7 +162,7 @@
     xe('obj.join', 'pathJoin', 'Join', 'Mod+J', { sub: 'Path' }),
     xe('obj.close', 'pathClose', 'Close Path', null, { sub: 'Path' }),
     xe('obj.outline', 'ops.outline', 'Outline Stroke', null, { sub: 'Path' }),
-    xe('obj.offset', 'ops.offset', 'Offset Path…', null, { sub: 'Path', icon: true }),
+    xe('obj.offset', 'ops.offset', 'Offset Path…', 'Mod+Alt+O', { sub: 'Path', icon: true }),   // (OFSKEY, Paul 11 Nov 2026: Illustrator gives Offset Path no default key, so the shortcut its users set themselves is given: ⌥⌘O / Alt+Ctrl+O, free in Illustrator and here)
     xe('obj.contour', 'ops.contour', 'Cut Line Round the Art…', null, { sub: 'Path' }),
     xe('obj.simplify', 'pathSimplify', 'Simplify…', null, { sub: 'Path' }),
     xe('obj.smooth', 'pathSmooth', 'Smooth', null, { sub: 'Path' }),
