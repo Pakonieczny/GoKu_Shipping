@@ -15956,6 +15956,38 @@ const RunCtl = window.RunCtl = (() => {
     const r=B.run;if(!reviewStop(r))return false;
     await resume();return true;
   }
+  /* ONESHEET (Paul, 11 Nov 2026: "Remove all the other sheets and just show one sheet for each colour until that sheet is full. There should be no other sheets in the
+     drop-down."). A production pull of 491 orders was spread over six Gold Filled drafts before any was nested (fixed at the intake: ONEATATIME). At Resume, a Gold Filled or
+     Sterling Silver colour of this run with more than one sheet still filling has them gathered onto its first one: every charm of the later ones (placed or waiting) moves
+     onto it, oldest orders first, with its approved backs; its own placed charms stay where they are; the later sheets go from the drop-down, and their saved records are
+     archived at the run's next checkpoint (LiveNest.finish), as Merge sheets does. The first sheet then fills, and only what does not fit opens the next sheet. A sheet that
+     cannot change is never touched: in a set, released full or filling its gaps, cut, recalled, held, saving or nesting, or in trouble. */
+  function gatherFilling(r) {
+    const LN = window.LiveNest, rank = c => (typeof orderRank === "function" ? orderRank(c) : 0);
+    for (const m of ["gold", "silver"]) {
+      const prim = S.sheets[m]; if (!prim) continue;
+      const free = p => p.runId === r.runId && p.charms.length > 0 && !(p.setId && !p.draft) && !p.releaseFull && !p.topup && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled && !p.problem && !p.runHold
+        && !["nesting", "finishing"].includes(p.status) && !(p.persisted && !p.persistedDone) && !p._operationStarting && !(LN && LN.closed && LN.closed(p));
+      const pages = prim.pages.filter(free); if (pages.length < 2) continue;
+      const t = pages[0], sources = pages.slice(1), moving = sources.flatMap(p => p.charms), pool = new Set(moving.map(c => c.poolId).filter(Boolean));
+      for (const c of moving) { c.pinned = null; delete c.arrivalPin; c.metal = m; }
+      t.charms = t.charms.concat(moving.slice().sort((a, b) => rank(a) - rank(b)));
+      // (the approved backs of every moving charm, gathered from all the sheets first and put on the first sheet once)
+      const backs = sources.flatMap(p => (p.backPool || []).filter(b => pool.has(b.poolId)));
+      if (backs.length) t.backPool = (t.backPool || []).filter(b => !pool.has(b.poolId)).concat(backs);
+      for (const p of sources) {
+        p.charms = []; p.placements = []; p.rejects = []; p.feedWait = null; p.backPool = [];
+        if (p.sheetId && p.cloud) (r.intakeRecovery ||= { retire: [], backs: [] }).retire.push(p.sheetId);
+        const key = p.sheetId || m + "-" + p.page; delete (r.sheetHolds || {})[key]; if (r.sheets) delete r.sheets[key];
+        S.nestQueue = (S.nestQueue || []).filter(x => x !== p);
+      }
+      for (const p of sources.slice().reverse()) removePage(p);
+      t.feedWait = null; t.rejects = []; t.movedOn = null; delete t.missRearranged;
+      t.intakeAppend = t.appendOnly = t.placements.length > 0; t.dirty = true; t.status = "ready";
+      agent({ metal: m, run: r.runId }, "nest", `${labelOf(m)}: ${sources.length} more sheet${sources.length === 1 ? "" : "s"} filling at once were gathered onto ${window.CharmNestSheetName ? CharmNestSheetName.short(t) : "Sheet " + t.page} (${moving.length} charm${moving.length === 1 ? "" : "s"}); it fills first, and the next sheet opens only for what does not fit`);
+      try { renderCard(t); } catch (_) { /* drawn at the next look */ }
+    }
+  }
   async function resume() {
     const r = B.run; if (!r || !["stopped", "paused", "processed"].includes(r.status)) return;
     // Stopped while new orders went on: that step winds down first (a few tenths of a second) so it cannot carry on
@@ -15973,6 +16005,7 @@ const RunCtl = window.RunCtl = (() => {
     const pendingStop=reviewStop(r);
     if(pendingStop)preservePendingSheets(r);
     await Gate.upgrade(r);
+    try { gatherFilling(r); } catch (e) { console.warn("gather", e); }   // (ONESHEET: one Gold Filled and one Silver sheet filling, before anything nests again)
     if (r.status === "processed") { r.step = "engrave"; r.processingComplete = false; }
     // a sheet the stop left queued (waiting for Resume) is nested again as well
     if (allSheets().some(pg => pg.runId === r.runId && !(pendingStop && pg.runHold) && (pg.problem || pg.dirty || ["ready", "idle", "queued"].includes(pg.status)) && pg.charms.length)) {
