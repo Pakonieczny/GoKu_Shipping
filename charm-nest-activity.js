@@ -56,6 +56,19 @@
      order is the last-activity order as before, and nothing is left between them when one group is empty. Display order only. */
   const isSet=x=>!!x && x.kind!=='sheet' && (x.kind==='set' || (!!x.setId && !x.standalone && !x.working));
   const compareBlocks=(a,b,direction)=>(isSet(a)?0:1)-(isSet(b)?0:1) || compare(a,b,direction);
+  /* SETORDER (Paul, 11 Nov 2026: "why does the order of the sets as they're displayed get reversed on the date changes the set should always be in the
+     same order for every date ... add a separation layer that's visible from date to date and then in each date there should be sets that are ordered the
+     same way"). In the Library's Laser cutting and In progress areas the actual sets go by their day (the newest day first; the oldest first when the list
+     is flipped) and, inside a day, always Set-1, Set-2, Set-3 ..., whichever was touched last (it was the last-activity order, so a set moved up each
+     time someone worked on it). The groups of loose sheets follow as before, in last-activity order. The Completed list keeps compareBlocks. */
+  const setDay=x=>{const d=String((x && x.day) || '');return /^\d{4}-\d{2}-\d{2}$/.test(d)?d:'';};
+  const setSeq=x=>{const n=x?+(x.seq!=null?x.seq:x.setSeq):NaN;return Number.isFinite(n)?n:Infinity;};
+  function compareSetDays(a,b,direction='desc'){
+    const da=setDay(a),db=setDay(b);
+    if(da!==db)return !da?1:!db?-1:(direction==='asc')===(da<db)?-1:1;   // (a set with no day after every dated one)
+    return (setSeq(a)-setSeq(b)) || identity(a).localeCompare(identity(b));   // (Infinity - Infinity is NaN: two with no number go by their id)
+  }
+  const compareDays=(a,b,direction,memo)=>(isSet(a)?0:1)-(isSet(b)?0:1) || (isSet(a)?compareSetDays(a,b,direction):compare(a,b,direction,memo));
   function state(scope){
     if(!loaded){loaded=true;try{Object.assign(states,JSON.parse(root?.localStorage?.getItem(KEY)||'{}'));}catch(_){} }
     const old=states[scope] || {};return states[scope]={range:scope==='library'?'all':presets.some(p=>p[0]===old.range)?old.range:'all',direction:old.direction==='asc'?'asc':'desc'};
@@ -64,6 +77,7 @@
   const key=scope=>{const s=state(scope);return s.range+':'+s.direction;};
   function select(scope,items,now=Date.now()){const s=state(scope),memo=new Map();return (items || []).filter(x=>matches(x,s.range,now)).slice().sort((a,b)=>compare(a,b,s.direction,memo));}
   function selectBlocks(scope,items,now=Date.now()){const s=state(scope),memo=new Map();return (items || []).filter(x=>matches(x,s.range,now)).slice().sort((a,b)=>(isSet(a)?0:1)-(isSet(b)?0:1) || compare(a,b,s.direction,memo));}   // (compareBlocks, each item timed once: select's memo, NAV round 5)
+  function selectDays(scope,items,now=Date.now()){const s=state(scope),memo=new Map();return (items || []).filter(x=>matches(x,s.range,now)).slice().sort((a,b)=>compareDays(a,b,s.direction,memo));}   // (SETORDER: the Library's two areas)
   function touch(value,t=Date.now()){if(value && typeof value==='object')value.activityAt=Math.max(ms(value.activityAt),ms(t));return value;}
   /* ═══ FILTERBAR (Paul, 17 Oct 2026: "This much is much too crowded. Consolidate this entire menu into the smallest and most efficient footprint ... real-time reactions with spinner/loader when waiting.") ═══
      The five date chips and the Newest/Oldest select were two rows of loose controls on every list that sorts by last activity. They are now two small controls: ONE date menu ("Any time ▾": the five ranges are its items,
@@ -246,5 +260,5 @@
     build(bar);paint(bar);
     return bar;
   }
-  return {ZONE,presets,ms,at,day,shift,dayStart,bounds,matches,compare,isSet,compareBlocks,state,set,key,select,selectBlocks,touch,mount,popover,menuKeys,working,react,icons:ICON,rangeLabel};
+  return {ZONE,presets,ms,at,day,shift,dayStart,bounds,matches,compare,isSet,compareBlocks,setDay,compareSetDays,compareDays,state,set,key,select,selectBlocks,selectDays,touch,mount,popover,menuKeys,working,react,icons:ICON,rangeLabel};
 });

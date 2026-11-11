@@ -715,6 +715,31 @@
     if(rh.length){const who=rh.length===1?'order '+rh[0].id:count(rh.length,'order')+' ('+rh.slice(0,2).map(x=>x.id).join(', ')+(rh.length>2?', and more':'')+')';return {step:'orders',stepLabel:stepName('orders'),why:rh.every(x=>x.swap)?`new drawing chosen, swap it on the sheet: ${who}`:`held in Review: ${who}`,counter:null,review:true};}
     return null;
   }
+  /* LASERNOTE (Paul, 11 Nov 2026: "verify ... that they actually appear correctly there there's nothing blocking them ... how the user is informed"). What still keeps a
+   * sheet out of Laser cutting that approveBlock leaves soft (above: the press does it, or lists it afterwards, so the button stays green): one plain line, or ''. The
+   * Approve button keeps its colour; the line beside it says what is still to come, so a card never sits In progress with a green button and no reason. Reads exactly
+   * what laserSheet reads (its stages), in the order a sheet goes through them; what approveBlock already says (engraving, layout being made, membership) is not repeated. */
+  function softGap(s){
+    s=s || {};
+    if(s.archived || +s.laserDoneAt>0 || approveBlock(s))return '';
+    const r=laserSheet(s),st=r.stages || {};
+    if(r.ready)return '';
+    if(held(s))return 'held back (Approve lifts the hold)';
+    if(!r.included)return '';
+    if(!st.layout)return lineMissing(s)?'green line not cut yet':!r.total?'no charms placed':s.status==='error'?'nesting stopped with an error':s.verification?.ok===false?'the layout check found a problem':'layout not checked yet';
+    if(!st.front)return 'cutting file not saved yet';
+    if(!st.backs){const E=engCounts(r);return `saving ${r.faces?'':'back '}files: ${Math.min(E.saved,E.required)} of ${E.required}`;}
+    if(!st.qr)return 'QR label not made yet';
+    if(!st.orders){const sid=s.id || s.sheetId,n=orderIds(s).filter(id=>forSheet(s.orderReadiness?.[id],sid,setOf(s),s.metal)?.ready!==true).length;return n>1?`${n} orders wait for their other pieces`:'an order waits for its other pieces';}
+    return '';
+  }
+  /** softNote(set, sheets): the first sheet of a set (in its own order) with a soft gap, as { sheetId, text } ("GF Sheet 1 · layout not checked yet, and 1 more"), or null. */
+  function softNote(set,sheets){
+    const st=set || {},idOf=x=>x.id || x.sheetId,live=[...new Map((sheets || []).filter(x=>x && !x.archived).map(x=>[idOf(x),x])).values()];
+    const order=[...new Set((Array.isArray(st.sheetIds) && st.sheetIds.length?st.sheetIds:[]).concat(live.map(idOf)))],gaps=[];
+    for(const i of order){const m=live.find(x=>idOf(x)===i);const g=m?softGap(m):'';if(g)gaps.push({sheetId:i,text:`${sheetLabel(m)} · ${g}`});}
+    return gaps.length?{sheetId:gaps[0].sheetId,text:gaps[0].text+(gaps.length>1?`, and ${gaps.length-1} more`:'')}:null;
+  }
   function setGate(set,sheets){
     const st=set || {},idOf=x=>x.id || x.sheetId;
     const raw=[...new Map((sheets || []).filter(Boolean).map(x=>[idOf(x),x])).values()],live=raw.filter(x=>!x.archived);
@@ -813,5 +838,5 @@
     if(!done && rules.applies && !rules.ok){e.nextText=sentence(rules.line);e.rules=rules;}
     return e;
   }
-  return {idsOf,orderIds,decisions,held,isHand,handOf,setRules,sheet,set,completedBefore,laserSheet,laserGroup,setGate,approveBlock,setOf,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,blockText,reviewReport,reviewHolds,filed,processStamps,STEP_LOG,STEPS_FROM,stepFacts,stepStamps,stepsRecord,stepTimes,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),stepKey,sheetLabel};
+  return {idsOf,orderIds,decisions,held,isHand,handOf,setRules,sheet,set,completedBefore,laserSheet,laserGroup,setGate,approveBlock,softGap,softNote,setOf,orderReports,forSheet,pieces,issues,copyIds,orderBlockers,blockText,reviewReport,reviewHolds,filed,processStamps,STEP_LOG,STEPS_FROM,stepFacts,stepStamps,stepsRecord,stepTimes,seal,counter,explain,lookup:names,STEPS:STEPS.map(([key,label])=>({key,label})),stepKey,sheetLabel};
 });

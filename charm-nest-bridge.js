@@ -14328,13 +14328,32 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
   }
   /** The cards of each area in their order (actual sets first, each by its last activity), and (areas) which area shows and which says it is empty: after every drawing, and when the
    *  Library shows its cards again for a metal chip (Sets.renderLibrary, NAV round 4) */
+  /* SETORDER (Paul, 11 Nov 2026: "add a separation layer that's visible from date to date and then in each date there should be sets that are ordered the same way"): the actual sets
+     of each area go by their day, Set-1, Set-2, Set-3 ... inside a day (CNListActivity.compareDays), and each day opens with a thin rule naming its date and how many sets it holds; the
+     loose sheets after the sets open with one too. A rule is a row of the list, never a card: only cards are sorted, and the rules are laid again only when the days change. */
+  const DAY_WORDS=new Intl.DateTimeFormat('en-US',{timeZone:'UTC',weekday:'short',month:'short',day:'numeric',year:'numeric'});
+  const dayWords=d=>{try{return DAY_WORDS.format(new Date(d+'T12:00:00Z'));}catch(_){return d;}};
+  const isDayRule=n=>n.classList.contains('laserDayRule');
+  function dayRule(k,n){
+    const r=document.createElement('div');r.className='laserDayRule';r.dataset.day=k;r.dataset.n=n;r.setAttribute('role','separator');
+    const words=k==='loose'?'Not in a set yet':k==='nodate'?'No date':dayWords(k),count=k==='loose'?'':`${n} set${n===1?'':'s'}`;
+    r.setAttribute('aria-label',count?`${words}, ${count}`:words);r.innerHTML=`<span>${esc(words)}</span>${count?`<em>${count}</em>`:''}`;
+    return r;
+  }
   function arrange(areas){
     if(!areas)for(const list of document.querySelectorAll('#libBody .laserAreaItems')){
       const value=card=>({...card._laserSet,sheets:(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean)});
-      const ordered=[...list.children].sort((a,b)=>CNListActivity.compareBlocks(value(a),value(b),CNListActivity.state('library').direction));   // (actual sets first, then the groups of loose sheets: charm-nest-activity.js)
-      ordered.forEach((card,i)=>{if(list.children[i]!==card)list.insertBefore(card,list.children[i] || null);});
+      const cards=[...list.children].filter(c=>!isDayRule(c)).sort((a,b)=>CNListActivity.compareDays(value(a),value(b),CNListActivity.state('library').direction));   // (actual sets first by day and number, then the groups of loose sheets: charm-nest-activity.js)
+      const keys=cards.map(c=>{const v=value(c);return CNListActivity.isSet(v)?(CNListActivity.setDay(v) || 'nodate'):'loose';}),count=new Map();
+      for(const k of keys)count.set(k,(count.get(k) || 0)+1);
+      const ruled=keys.some(k=>k!=='loose'),want=[];   // (a list of loose sheets alone has nothing to separate)
+      keys.forEach((k,i)=>{if(ruled && (!i || keys[i-1]!==k))want.push({day:k,n:count.get(k)});want.push(cards[i]);});
+      const have=[...list.children];
+      if(have.length===want.length && want.every((w,i)=>w.day?isDayRule(have[i]) && have[i].dataset.day===w.day && +have[i].dataset.n===w.n:have[i]===w))continue;   // (as it is: nothing moves)
+      for(const r of have)if(isDayRule(r))r.remove();
+      want.forEach((w,i)=>{const node=w.day?dayRule(w.day,w.n):w;if(list.children[i]!==node)list.insertBefore(node,list.children[i] || null);});
     }
-    else document.querySelectorAll('[data-laser-area]').forEach(area=>{const hasItems=!!area.querySelector('.laserAreaItems')?.children.length;area.hidden=area.dataset.laserArea!=='ready' && !hasItems;const empty=area.querySelector('.laserEmpty');if(empty)empty.hidden=hasItems;});
+    else document.querySelectorAll('[data-laser-area]').forEach(area=>{const hasItems=!!area.querySelector('.laserAreaItems > :not(.laserDayRule)');area.hidden=area.dataset.laserArea!=='ready' && !hasItems;const empty=area.querySelector('.laserEmpty');if(empty)empty.hidden=hasItems;});
   }
   function paint(only){
     if(live.checking)paintedWhileChecking=true;
@@ -14405,7 +14424,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     if(p.archived || p.laserDoneAt || R.laserSheet(p).ready)return null;
     const h=holdCase([p.id || p.sheetId]);if(h)return h;   // (an order in the Review tab holds this sheet: the line names it, charm-nest-library-review-hold.js)
     const b=R.approveBlock(p);
-    if(!b)return {why:''};
+    if(!b){const g=R.softGap?R.softGap(p):'';return g?{why:'',note:g.replace(/^./,c=>c.toUpperCase())}:{why:''};}   // (LASERNOTE: the button stays green; the line says what is still to come)
     if(b.step==='engraving'){const L=R.laserSheet(p),E=L.faces || L;return {why:`Waiting on ${plural(E.waiting,L.faces?'engraving':'back engraving')}`,quiet:true};}   // (a sheet with a front counts engravings, one per face)   // (quiet: the rail's current step and its '!' say it; the button only keeps it for a screen reader)
     return {why:b.why.replace(/^./,c=>c.toUpperCase())};
   }
@@ -14422,7 +14441,8 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
       const gate=R.setGate(st,recs.map(projected));
       // (SETFIX A, Paul 17 Oct 2026: a set that breaks the owner's rules is blocked here, never dead-ended: its grey line says what to press, and the press is offered right beside it, `fix`)
       const fix=gate.blockers[0]?.rule==='setBreaks' && gate.rules?.remedy && gate.rules.remedy.kind!=='backs' && window.SetRepair?.fix?gate.rules.remedy:null;   // (a back engraving to approve has no press here: the line says it)
-      return gate.ready?{why:'',set:true}:{why:gate.reason,set:true,blocker:gate.blockers[0]?.sheetId || '',...(fix?{fix}:{})};
+      if(gate.ready){const n=R.softNote?R.softNote(st,recs.map(projected)):null;return n?{why:'',set:true,note:n.text,blocker:n.sheetId}:{why:'',set:true};}   // (LASERNOTE: green, with what is still to come)
+      return {why:gate.reason,set:true,blocker:gate.blockers[0]?.sheetId || '',...(fix?{fix}:{})};
     }
     // (audit, 25 Oct 2026: a set of ONE sheet is still a set: uncommitted, it needs a completed GF and a completed SS sheet (R1), so its Approve is grey with the set's line; it was the sheet's own test only)
     if(ids.length===1){const g=R.setGate(st,recs.map(projected));if(g.rules?.applies && !g.rules.ok)return {why:g.reason,set:true,blocker:''};}
@@ -14455,7 +14475,7 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     // (the reason is a link when there is something to open: the '!' on the rail of the sheet it is about, which opens the issues panel)
     const key=approvalKey(box),busy=approving.has(key),about=c?.blocker || box._id,card=hostOf(box);
     const open=typeof window.LaserReview?.openChecklist==='function' && !!(box._kind==='set'?card.querySelector(`.flowBox[data-flow-for="sheet:${about}"] [data-issues-open]`):box.parentElement?.querySelector('.flowBox [data-issues-open]'));
-    const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',c?.quiet?1:0,open?1:0,about,box._name || '',(c?.hold || []).join(','),c?.fix?.button || ''].join('|');
+    const mode=!c?'done':busy?'busy':c.why?'blocked':'ready',sig=[mode,c?.why || '',c?.quiet?1:0,open?1:0,about,box._name || '',(c?.hold || []).join(','),c?.fix?.button || '',c?.note || ''].join('|');
     box._case=c;
     if(box.dataset.sig===sig)return;
     box.dataset.sig=sig;box.dataset.mode=mode;
@@ -14468,7 +14488,9 @@ i.flowDot::before{content:"";position:absolute;inset:-7px}
     btn.innerHTML=busy?'<i class="spin" aria-hidden="true"></i>Approving…':'Approve for laser cutting';
     why.id=reasonId;
     // (one order in Review holds it: the line opens that order in the Review tab; several: it opens the '!' list like every other reason)
-    why.innerHTML=mode!=='blocked' || c.quiet?'':c.hold?.length===1?`<button type="button" class="approveReason" data-approve-review="${esc(c.hold[0])}" title="${esc('Open order '+c.hold[0]+' in Review')}">${esc(c.why)}</button>`:open?`<button type="button" class="approveReason" data-approve-reason>${esc(c.why)}</button>`:`<span class="approveReason">${esc(c.why)}</span>`;
+    // (LASERNOTE, 11 Nov 2026: a green button on a card still In progress says what is still to come, so it never sits there with no reason; the press does what it can and lists the rest)
+    const note=mode==='ready' && c?.note?`Still to come: ${c.note}`:'';
+    why.innerHTML=note?(open?`<button type="button" class="approveReason approveNote" data-approve-reason>${esc(note)}</button>`:`<span class="approveReason approveNote">${esc(note)}</span>`):mode!=='blocked' || c.quiet?'':c.hold?.length===1?`<button type="button" class="approveReason" data-approve-review="${esc(c.hold[0])}" title="${esc('Open order '+c.hold[0]+' in Review')}">${esc(c.why)}</button>`:open?`<button type="button" class="approveReason" data-approve-reason>${esc(c.why)}</button>`:`<span class="approveReason">${esc(c.why)}</span>`;
     // (SETFIX A) the one press that puts the set right, beside the reason that names it ("Cut RG Sheet 16" / "Rebuild this set correctly"): never run by itself, it opens its own small window
     if(mode==='blocked' && c.fix)why.insertAdjacentHTML('beforeend',` <button type="button" class="btn sm approveFix" data-approve-fix="${esc(c.fix.kind)}">${esc(c.fix.button)}</button>`);
   }
@@ -15476,7 +15498,7 @@ const Sets = window.Sets = (() => {
       if (metal) sets = sets.filter(st => (st.materials || []).includes(metal));
       if (focus) sets = sets.filter(st => st.sheets.concat(st.goldPending || []).some(r => focus.test(r)));   // (a 10K / 14K sheet drawn greyed in a set is found with it)
       else if (q) sets = sets.filter(st => `${st.setId ? O.completedTitle(st) : st.name || ""} ${st.setId || ""} ${st.setId ? O.completionDay(st) : st.day || ""} ${st.runId || ""} ${Object.keys(st.orders || {}).join(" ")} ${(st.sheets || []).concat(st.goldPending || []).flatMap(r=>[r.fileBase,r.names,(r.listings || []).join(" "),...(r.backs || []).map(b=>b.text)]).join(" ")}`.toLowerCase().includes(q));
-      sets=CNListActivity.selectBlocks("library",sets);   // (actual sets before every group of loose sheets, each in last-activity order)
+      sets=CNListActivity.selectDays("library",sets);   // (actual sets by day, Set-1, Set-2 ... inside a day, before every group of loose sheets in last-activity order: SETORDER)
       // (NAV round 4: the cards on screen, and where each stands, before the body is emptied: shown again, or kept for the next chip)
       const shown = again ? new Map([...body.querySelectorAll(".laserAreaItems > .setCard")].filter(c => c._keptSt).map(c => { c._keptReady = !!c.closest('[data-laser-area="ready"]'); return [c._keptSt, c]; })) : null;
       const keepRest = () => { if (shown) for (const [st, c] of shown) { c._keptAt = LaserReview.owes(c) ? -1 : LaserReview.changes(); kept.cards.set(st, c); } kept.cache = _cache; kept.q = q; };   // (-1: it is painted again when it is back)

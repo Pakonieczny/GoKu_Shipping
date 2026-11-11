@@ -5331,7 +5331,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      the sheet's own verifier passes it (the same verify, the same allowance). The nest's inset is for the charms it places itself; a saved sheet keeps every hand-placed charm where it is
      (its placements are locked). */
   const mcClr = () => Math.min(0, +S.settings.clearancePt || 0), MC_INSET = 0;
-  const mcCornerPt = () => (typeof cornerPtSetting === "function" ? cornerPtSetting() : 0);   // (CORNERS: the keep-out holds for hand placement too; buildJob's sheet carries it)
+  const mcCornerPt = sh => (typeof cornerPtSetting === "function" ? cornerPtSetting(sh) : 0);   // (CORNERS: the keep-out holds for hand placement too; buildJob's sheet carries it. CRN2: none on a 10K or 14K sheet)
   /* NUDGE (Paul, 27 Oct 2026: "very fine positional adjustment movements using the 4 keyboard arrow keys ... and Shift + any of the 4 arrow keys would make large positional charm adjustment"):
      an arrow moves the charm in hand 0.05 mm, Shift + an arrow 1 mm */
   const MM_PT = 72 / 25.4, MC_NUDGE = 0.05 * MM_PT, MC_NUDGE_BIG = 1 * MM_PT;
@@ -5421,7 +5421,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** The sheet as the nest sees it, every placed charm but `exceptId` stamped where it stands (kept for the same layout: the cross-sheet drag asks often). */
   function mcGrid(sh, exceptId, poses) {
     const clr = mcClr(), prof = mcGuard(sh) && sh.roseProtected.profile;
-    const sig = JSON.stringify([sh.sheetId || sh.page, exceptId, clr, MC_INSET, mcCornerPt(), prof ? 1 : 0, sh.roseStock && sh.roseStock.revision, sh.roseStock && sh.roseStock.profileJson ? String(sh.roseStock.profileJson).length : 0, (sh.roseStock && sh.roseStock.owner) || "", sh.placements.map(p => { const q = mcPoseOf(sh, p.id, poses); return q ? [p.id, q.cxPt, q.cyPt, q.angle, q.size] : p.id; }), sh.charms.length]);
+    const sig = JSON.stringify([sh.sheetId || sh.page, exceptId, clr, MC_INSET, mcCornerPt(sh), prof ? 1 : 0, sh.roseStock && sh.roseStock.revision, sh.roseStock && sh.roseStock.profileJson ? String(sh.roseStock.profileJson).length : 0, (sh.roseStock && sh.roseStock.owner) || "", sh.placements.map(p => { const q = mcPoseOf(sh, p.id, poses); return q ? [p.id, q.cxPt, q.cyPt, q.angle, q.size] : p.id; }), sh.charms.length]);
     const hit = MC.grids.get(sig); if (hit) return hit;
     // (MCINSTANT, 28 Oct 2026: the empty sheet kept (mcEdgeOf, GOLDEDIT's preCut and an earlier line's remnant as before), copied without its summed-area table: THE check asks fits() only)
     const E = mcEdgeOf(sh), sheet = E.sheet, edge = E.edge, grid = mcGridCopy(edge), others = [], byId = new Map(sh.charms.map(c => [c.id, c]));
@@ -5537,7 +5537,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function mcEdgeOf(sh) {
     // (MCINSTANT, 28 Oct 2026: known by what makes it (its stock, metal cut away, an earlier line), so a check that finds it kept builds no job for the sheet)
     const prof = mcGuard(sh) && sh.roseProtected.profile, rs = sh.roseStock || null, st0 = typeof stockFor === "function" ? tryDo(() => stockFor(sh.metal, sh)) : null;
-    const sig = JSON.stringify([sh.sheetId || sh.page, sh.metal, mcClr(), MC_INSET, mcCornerPt(), st0 ? [st0.wPt, st0.hPt] : 0, prof ? 1 : 0, rs && rs.revision, rs && rs.profileJson ? String(rs.profileJson).length : 0, (rs && rs.owner) || "", sh.roseCutAt || 0, (sh.roseHistory || []).length]);
+    const sig = JSON.stringify([sh.sheetId || sh.page, sh.metal, mcClr(), MC_INSET, mcCornerPt(sh), st0 ? [st0.wPt, st0.hPt] : 0, prof ? 1 : 0, rs && rs.revision, rs && rs.profileJson ? String(rs.profileJson).length : 0, (rs && rs.owner) || "", sh.roseCutAt || 0, (sh.roseHistory || []).length]);
     let E = MCE.get(sig); if (E) return E;
     const job = buildJob(sh), sheet = Object.assign(preCut(sh, job.sheet), { insetPt: MC_INSET });
     if (prof) sheet.remnant = prof;
@@ -5630,7 +5630,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** The sheet's charms left where they overlap (or run past the margin), as its placements stand (the save, the write): kept for the same layout. */
   const MCC = new WeakMap();
-  const mcClashSig = sh => JSON.stringify([mcClr(), MC_INSET, mcCornerPt(), sh.placements.map(p => [p.id, +p.cxPt, +p.cyPt, +p.angle, +p.scale || 1]), sh.charms.map(c => [c.id, sizeOf(c), !!c.bits])]);
+  const mcClashSig = sh => JSON.stringify([mcClr(), MC_INSET, mcCornerPt(sh), sh.placements.map(p => [p.id, +p.cxPt, +p.cyPt, +p.angle, +p.scale || 1]), sh.charms.map(c => [c.id, sizeOf(c), !!c.bits])]);
   function mcSheetClash(sh) {
     if (!sh || !MANUAL_METALS.includes(sh.metal) || !Array.isArray(sh.placements) || !sh.placements.length) return [];
     const sig = mcClashSig(sh);

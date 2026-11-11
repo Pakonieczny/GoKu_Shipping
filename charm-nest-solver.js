@@ -1188,10 +1188,16 @@
         for (let y = 1; y <= FH; y++) { let row = 0; for (let x = 1; x <= FW; x++) { row += all.sh[(y - 1) * FW + x - 1]; valSATL[y * (FW + 1) + x] = valSATL[(y - 1) * (FW + 1) + x] + row; } }
         envelope();
       };
-      // how far the charms already reach along the sheet (the inset band is not a charm)
+      /* How far the charms already reach along the sheet: the block's front, past which each mm costs a whole strip (BLOCK_WEIGHTS).
+         Only charms count, never edgeFine: the inset band, the corner keep-outs or stock a green line already cut away.
+         (STR1, Paul 11 Nov 2026: a Rose Gold sheet "doesn't follow the rule of keeping things straight ... they should be added as straight
+         as practical while keeping things efficient". The far corners' keep-out triangles (CRN1, 9 Nov) reach past the inset, so they read as
+         a charm at the sheet's far end: the front was the whole sheet from the first charm, growth cost nothing, and charms spread to the far
+         edge on every sheet. And on a cut sheet the stock cut away read as charms, so every bay of a ragged old line was "behind the front" at
+         no cost, and new charms followed the old staircase instead of levelling it. Counting only charms, the deepest bays fill first.) */
       const reachOf = () => {
-        if (axisX) { for (let x = FW - wallFine - 1; x >= wallFine; x--) for (let y = wallFine; y < FH - wallFine; y++) if (fine.get(x, y)) return x + 1; }
-        else { for (let y = FH - wallFine - 1; y >= wallFine; y--) for (let x = wallFine; x < FW - wallFine; x++) if (fine.get(x, y)) return y + 1; }
+        if (axisX) { for (let x = FW - wallFine - 1; x >= wallFine; x--) for (let y = wallFine; y < FH - wallFine; y++) if (fine.get(x, y) && !edgeFine[y * FW + x]) return x + 1; }
+        else { for (let y = FH - wallFine - 1; y >= wallFine; y--) for (let x = wallFine; x < FW - wallFine; x++) if (fine.get(x, y) && !edgeFine[y * FW + x]) return y + 1; }
         return wallFine;
       };
       /** Occupied cells under a packed ring at (x, y); cells off the sheet count as occupied, each once. */

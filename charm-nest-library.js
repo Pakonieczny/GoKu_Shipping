@@ -113,16 +113,29 @@
     if (r.kind === 'set' || (r.setId && Array.isArray(r.sheetIds))) return 'set:' + r.setId;     // a set (its record, its row)
     const id = r.id || r.sheetId; return id ? 'sheet:' + id : r.setId ? 'set:' + r.setId : '';
   };
+  /* MARKSTALE (Paul, 11 Nov 2026: "Everything gets recorded correctly in the cloud ... how the users is informed of what is happening to each sheet"). A mark made on this
+     page stands in for its record only until the record catches up. A record written after the mark that says otherwise (another computer reopened the set, or completed
+     it) wins, and the mark goes. It held for 12 hours before: a set completed here and reopened on another computer showed in neither Current nor Completed here. A mark is
+     timed by the cloud's own `at` when it has one (cloud), else by this computer's clock, with MARK_SKEW_MS for the two clocks; a record carries its last write as updatedAt. */
+  const MARK_SKEW_MS = 5000;
+  // (a sheet's row may carry its set's last write as _setRev, "seconds.nanos": the cloud's filingRecords)
+  const revMs = v => { const [a, b] = String(v || '').split('.'); const t = (+a || 0) * 1000 + Math.floor((+b || 0) / 1e6); return t > 0 ? t : 0; };
+  function markOf(key, r, own, at) {
+    const m = L.marks.get(key); if (!m) return null;
+    const t = at != null ? at : +(r && r.updatedAt) || 0;
+    if (m.done !== own && t > 0 && t > (+m.at || m.t) + (m.cloud ? 0 : MARK_SKEW_MS)) { L.marks.delete(key); return null; }
+    return m;
+  }
   /** A sheet (a Library record, a run's page, a Completed row) or a set: marked on this page, or by its record. */
   function isDone(r) {
     if (!r) return false;
-    const m = L.marks.get(keyOf(r));
-    return m ? m.done : +(r.laserDoneAt || (r.kind ? r.at : 0)) > 0;       // (a Completed row says when as `at`)
+    const own = +(r.laserDoneAt || (r.kind ? r.at : 0)) > 0, m = markOf(keyOf(r), r, own);       // (a Completed row says when as `at`)
+    return m ? m.done : own;
   }
   function isFiled(r) {
     if (!isDone(r)) return false;
     if (!r.setId || r.kind === 'set' || Array.isArray(r.sheetIds) || r.draft || r.solidIncluded === false) return true;
-    const mark = L.marks.get('set:' + r.setId);
+    const mark = markOf('set:' + r.setId, r, !r.laserSetPending, Math.max(+r.updatedAt || 0, revMs(r._setRev)));   // (a sheet's record written after its set's mark says how its set stands now: MARKSTALE)
     return mark ? mark.done : !r.laserSetPending;
   }
   /** The cards of Current found once for a whole pass: canComplete asked each card's own question with a search of the whole list
@@ -153,7 +166,7 @@
     const sheets = group._laserSheets.map(recordOf).filter(Boolean);
     return group._laserSet ? LaserReview.group(group._laserSet,sheets).ready : sheets.length===1 && LaserReview.canCut(sheets[0]);
   }
-  function note(key, done, at, by) { L.marks.delete(key); L.marks.set(key, { done, at: at || null, by: by || null, t: Date.now() }); }
+  function note(key, done, at, by, cloud) { L.marks.delete(key); L.marks.set(key, { done, at: at || null, by: by || null, t: Date.now(), cloud: !!cloud }); }
   /** A run's pages that are these sheets: a sheet the laser has done is closed to more charms (layoutFixed, LiveNest). */
   function pages(ids, at) {
     if (typeof allSheets !== 'function' || !ids || !ids.length) return;
@@ -211,8 +224,9 @@
     const staff = window.CNEmployee || { name: () => '', ask: () => '' };
     let by = o.by || staff.name();
     if (done && !by) by = typeof staff.need === 'function' ? await staff.need('Kept with this completed mark.') : staff.ask();
-    if (done && !by) throw new Error('Say who marked it completed');
-    if (!S.cloud.ok) throw new Error('The cloud is offline');
+    // (LASEROFF, 11 Nov 2026: these two said nothing on screen: the press's catch only logs. Now they say why nothing was marked)
+    if (done && !by) { const message = 'Not marked completed: say who marked it'; toast(message, 'bad', 5000); throw new Error(message); }
+    if (!S.cloud.ok) { const message = `${done ? 'Not marked completed' : 'Not moved back'}: the cloud is offline. Nothing was changed; try again when it is back.`; toast(message, 'bad', 8000); throw new Error(message); }
     L.busy.add(key);
     const ids = kind === 'sheet' ? [id] : setSheets(id), name = o.name || nameOf(kind,id);
     try {
@@ -223,9 +237,9 @@
       // the efficiency record (station-activity.js, through charm-nest-laser-act.js): the laser operator's check, or taking it back (an undo).
       // It is the Laser station's work, not the sorter's: one event for each order on the sheets this mark changed, with the sheet and its charms
       try { window.CNLaserAct && window.CNLaserAct.cut(done, { name, ids: r.sheetIds && r.sheetIds.length ? r.sheetIds : ids, rec: recordOf }); } catch (_) {}
-      for (const x of r.sheetIds || []) note('sheet:' + x,done,t,r.by);
-      if (kind === 'set') note(key,done,t,r.by);
-      if (r.setId && r.setDone != null) note('set:' + r.setId,!!r.setDone,t,r.by);
+      for (const x of r.sheetIds || []) note('sheet:' + x,done,t,r.by,!!r.at);
+      if (kind === 'set') note(key,done,t,r.by,!!r.at);
+      if (r.setId && r.setDone != null) note('set:' + r.setId,!!r.setDone,t,r.by,!!r.at);
       pages(r.sheetIds || [],done?t:null); records(r.sheetIds || [],done?t:null);
       LaserReview.acceptProcess(r.process || []);
       for(const p of r.process || []){
