@@ -162,6 +162,14 @@
       : kind === 'set' ? [...root.querySelectorAll('.setCard')].find(c=>c._laserSet?.setId===id)
       : root.querySelector(`.libCard[data-id="${CSS.escape(id)}"]`);
     const group = card && (card.closest('[data-laser-card]') || card);
+    // (LASERLOOSE, Paul, 11 Nov 2026: a sheet on the "Sheets" or "14K / 10K Solid Sheets" card is in no set, and those cards hold unrelated sheets: it was judged
+    // by its whole card, so one unready neighbour kept a ready sheet from being marked. It is judged by itself now, as the cloud's laserDone judges it
+    // (Readiness.laserSheet). Its card sits In progress while any OTHER sheet on it is not ready, so the card only has to be in Laser cutting or In progress.)
+    const st = group && group._laserSet;
+    if (card && kind === 'sheet' && group._laserSheets && !(st && st.setId && !st.standalone && !st.working)) {
+      const r = card.closest('[data-laser-area]') ? recordOf(id) : null;
+      return !!r && LaserReview.canCut(r);
+    }
     if (!card || !card.closest('[data-laser-area="ready"]') || !group._laserSheets) return false;
     const sheets = group._laserSheets.map(recordOf).filter(Boolean);
     return group._laserSet ? LaserReview.group(group._laserSet,sheets).ready : sheets.length===1 && LaserReview.canCut(sheets[0]);
@@ -209,6 +217,25 @@
     return `${CODE[r.metal] ? CODE[r.metal] + ' ' : ''}Sheet ${r.sheetIndex || (typeof sheetNo === 'function' ? sheetNo(r) : 1)}`;
   }
 
+  /* LASERLATE (Paul, 11 Nov 2026: "how the users is informed of what is happening to each sheet"). The cloud commits a mark (op laserDone), then writes the orders'
+     timelines, the laser times and the Completed recount before it answers: a slow answer (the page's timeout, the edge's timeout page, a 5xx after the commit) was said
+     as "Not marked completed" though the mark was saved. A failure the cloud gave no yes or no to (api's e.transient; never a refusal in its own words, e.answered with a
+     4xx such as the 409 "Not ready for Laser cutting": that wrote nothing; nor a write held back unsent, e.wiping) reads the sheets once (laserStatus, quiet). When every
+     one reads as the mark wanted, it is said as saved, the view reads the cloud again and mark() answers as the cloud would have; otherwise null: the error stands. */
+  async function savedLate(kind, id, done, ids, name, e) {
+    if (!e || !e.transient || e.wiping || (e.answered && +e.status < 500) || !ids || !ids.length) return null;
+    let r; try { r = await api('charmNestLibrary', { op: 'laserStatus', sheetIds: ids }, { quiet: true }); } catch (_) { return null; }
+    const got = new Map(((r && r.sheets) || []).map(s => [s.id, s]));
+    if (!ids.every(x => got.has(x) && (+got.get(x).laserDoneAt > 0) === done)) return null;
+    const one = got.get(ids[0]), setId = kind === 'set' ? id : one.setId && !one.draft && one.solidIncluded !== false ? one.setId : null;
+    const set = setId && (r.sets || []).find(s => s.setId === setId);
+    // (the laser station's record of the work, as a mark answered in time keeps it: the operator's check, or its undo)
+    try { window.CNLaserAct && window.CNLaserAct.cut(done, { name, ids, rec: recordOf }); } catch (_) { /* a record of the work never stops the work */ }
+    toast(`${name} ${done ? 'marked completed' : 'is back in Laser cutting'} · the cloud answered late, the ${done ? 'mark' : 'change'} is saved`, 'ok', 8000);
+    Promise.resolve(reload([...new Set([kind + ':' + id, ...ids.map(x => 'sheet:' + x), setId ? 'set:' + setId : ''])].filter(Boolean))).catch(() => {});
+    return { ok: true, late: true, kind, id, done, at: done ? Math.max(...ids.map(x => +got.get(x).laserDoneAt)) : null, sheetIds: ids, setId, setDone: set ? +set.laserDoneAt > 0 : null };
+  }
+
   /* ── marking ── */
   /** Records laser completion, or undoes it, with who and when. A sheet keeps its
       place until the server confirms that every member of its set is completed. */
@@ -218,7 +245,11 @@
     const key = kind + ':' + id;
     if (L.busy.has(key)) return null;
     if (done && !canComplete(kind,id)) {
-      const message = 'Complete sheets from Laser cutting once every remaining sheet in the set is ready';
+      // (LASERWORDS, Paul, 11 Nov 2026: the refusal spoke of "the set" even for a whole set or a sheet in no set. Now it names what is waiting: the set, the sheet's set, or the sheet)
+      const rec = kind === 'sheet' ? recordOf(id) : null, SN = window.CharmNestSheetName, nm = o.name || nameOf(kind,id);
+      const withSet = !!rec && (SN && SN.inSet ? SN.inSet(rec) : !!rec.setId && !rec.draft);
+      const message = withSet ? `${nm} is cut with its set: mark it completed once the whole set is in Laser cutting`
+        : `${nm} is not in Laser cutting yet: mark it completed once ${kind === 'set' ? 'every sheet of it is' : 'it is'} ready`;
       toast(message,'bad',5000); throw new Error(message);
     }
     const staff = window.CNEmployee || { name: () => '', ask: () => '' };
@@ -253,10 +284,14 @@
       // Let the wooden tool land, ink the new seal and lift before the completed set travels away.
       await Promise.all([...L.presses]);
       let landed = 0;
+      const stays = staysWithSet(kind, r);
       if (done && r.setId) {
         if (r.setDone) landed=leave('set',r.setId,true,ids,r.setId);
         else { cards(byId('libBody'),'current'); partials(byId('libBody')); LaserReview.changed(); }
-      } else landed=leave(kind,id,done,ids,r.setId);
+      }
+      // (LASERSTAY, Paul, 11 Nov 2026: a sheet that stayed with its unfinished set never left Laser cutting: taking its mark off redraws it in place, with no flight in from Completed)
+      else if (stays) { cards(byId('libBody'),'current'); partials(byId('libBody')); LaserReview.changed(); }
+      else landed=leave(kind,id,done,ids,r.setId);
       if (r.counts) {
         // what is on its way to the Completed tab is counted as it lands there, where the count pulses (Paul, 27 Sep)
         const was = L.counts ? { ...L.counts } : null;
@@ -268,12 +303,19 @@
       if (!done) keepCurrent(r.sheetIds || ids);
       if (L.tab==='done' && done && L.list && kind==='sheet' && !r.setId && L.list.kind==='sets') { dropList(L.list.key); showDone(); }   // (LBF1: a sheet in no set is in the list's last group, read again)
       else if (L.tab==='done' && done && L.list) { expectRows([key,r.setId && r.setDone?'set:'+r.setId:''],'current'); freshen(L.list,true); }
-      if (done && r.setId && !r.setDone) {
+      // (LASERSTAY, Paul, 11 Nov 2026: a sheet that stays with its unfinished set had a toast with no Undo. Now it gets the same Undo note as every other mark,
+      //  under Current where it still is, and its undo says it stays there rather than "is back": it never left)
+      if (stays && o.undo) said(done?`${name} is completed again · it stays with its set until every sheet of the set is done`:`${name} is no longer marked completed · it stays in Laser cutting`,'current',[key]);
+      else if (done && r.setId && !r.setDone && !stays) {
         toast(`${name} completed · stays with its unfinished set`,'ok',5000);
       } else if (!o.undo) undoNote(kind,id,done,r,name,ids,Date.now()+landed);
       else said(done?`${name} is completed again`:`${name} is back in Laser cutting`,done?'done':'current',[key]);
       return r;
-    } catch(e) { toast(`${done?'Not marked completed':'Not moved back'}: ${e.message}`,'bad',8000); throw e; }
+    } catch(e) {
+      // (LASERLATE, Paul, 11 Nov 2026: a mark the cloud saved but answered late is said as saved, not as failed: savedLate reads its sheets once; the press stays busy meanwhile)
+      const late = await savedLate(kind, id, done, ids, name, e); if (late) return late;
+      toast(`${done?'Not marked completed':'Not moved back'}: ${e.message}`,'bad',8000); throw e;
+    }
     finally { L.busy.delete(key); }
   }
   /** "Sheet 2 marked completed · Undo", under the tab it went to, once it has landed there (Paul, 27 Sep 20:09-20:24:
@@ -281,7 +323,10 @@
       the toast says it as before. Undoing a set marks back only the sheets this mark changed. */
   function undoNote(kind, id, done, r, name, ids, landAt) {
     const setNote = kind === 'sheet' && r.setId && r.setChanged ? (r.setDone ? ' · its set is complete' : ' · its set is back in Laser cutting') : '';
-    const text = done ? `${name} marked completed${setNote}` : `${name} returned to Laser cutting${setNote}`;
+    // (LASERSTAY, Paul, 11 Nov 2026: a sheet that stays with its unfinished set is in Laser cutting before and after its mark: its note stands under Current and says so)
+    const stays = staysWithSet(kind, r);
+    const text = stays ? (done ? `${name} marked completed · it stays with its set until every sheet of the set is done` : `${name} is no longer marked completed · it stays in Laser cutting`)
+      : done ? `${name} marked completed${setNote}` : `${name} returned to Laser cutting${setNote}`;
     const undo = () => {
       if (kind === 'set' && done) {
         // (the set's sheets as they were when it was marked: its card has left since)
@@ -291,7 +336,7 @@
       }
       return mark(kind, id, !done, { undo: true, name }).catch(() => {});   // (its card may have left: the name it had)
     };
-    const tab = done ? 'done' : 'current', title = done ? 'Return it to Laser cutting' : 'Mark it completed again';
+    const tab = done && !stays ? 'done' : 'current', title = stays && done ? 'Take the completed mark off' : done ? 'Return it to Laser cutting' : 'Mark it completed again';
     const show = () => {
       const n = noteOn(tab, { text, actions: [{ label: 'Undo', fn: undo, title }], ms: 8000 });
       if (n) { n.dataset.ld = kind + ':' + id; return; }
@@ -304,6 +349,9 @@
     const wait = landAt - Date.now() + (landAt > Date.now() ? 260 : 0);
     if (wait > 0) setTimeout(show, wait); else show();
   }
+  /** (LASERSTAY, Paul, 11 Nov 2026) A sheet marked, or its mark taken off, whose set was not finished before and is not
+      after: it stays on its set card in Laser cutting all along, so nothing flies and its words say it stays. */
+  function staysWithSet(kind, r) { return kind === 'sheet' && !!(r && r.setId) && !r.setDone && !r.setChanged; }
   /** A note under a Library tab (the tab something went to, or its sign), or nothing when it cannot be seen there. */
   function noteOn(t, spec) {
     if (!window.Motion || S.mode !== 'library' || covered()) return null;
@@ -589,7 +637,8 @@
       if (!allowed) { if(b)b.remove(); continue; }
       if(!b){b=doc.createElement('button');b.type='button';b.className='ldMark';c.appendChild(b);}
       b.dataset.ld='sheet:'+c.dataset.id;b.dataset.done=done?'1':'0';b.innerHTML=done?ICON.undo:ICON.check;
-      b.title=done?'Undo sheet completion':'Mark completed · the laser has cut this sheet';b.setAttribute('aria-label',done?'Undo sheet completion':'Mark this sheet completed');
+      // (LASERWORDS, Paul, 11 Nov 2026: one word, Reopen, for taking the completed mark off, here, on the set button and in the Completed rows)
+      b.title=done?'Reopen sheet · back to Laser cutting':'Mark completed · the laser has cut this sheet';b.setAttribute('aria-label',done?'Reopen sheet · back to Laser cutting':'Mark this sheet completed');
     }
     for (const card of root.querySelectorAll('.setCard')) {
       const st=card._laserSet,head=card.querySelector(':scope > .sh');if(!head)continue;
@@ -600,7 +649,7 @@
       if(!b){b=doc.createElement('button');b.type='button';b.className='ldMark ldMarkSet';(head.querySelector('.nm') || head.firstChild).after(b);}
       b.dataset.ld='set:'+st.setId;b.dataset.done=done?'1':'0';
       b.innerHTML=(done?ICON.undo:ICON.check)+`<span>${done?'Reopen set':'Mark set completed'}</span>`;
-      b.title=done?'Return the set and its sheets to Laser cutting':'Confirm laser cutting is finished for every remaining sheet';
+      b.title=done?'Reopen set · back to Laser cutting (its orders stay as they are)':'Confirm laser cutting is finished for every remaining sheet';   // (LASERWORDS, Paul, 11 Nov 2026: Reopen, as on the sheet check; its orders are not reopened, unlike the set menu's Undo set)
     }
     if (window.LibraryDnd) window.LibraryDnd.decorate(root);   // the grip (drag, or Move to…) on each card: charm-nest-library-dnd.js
     if (window.LibraryEngraving) window.LibraryEngraving.decorate(root);   // the small show/hide of each sheet's back-engraving shelf: charm-nest-library-engraving.js
@@ -612,12 +661,20 @@
 
   /* ── counts on the tab ── */
   function setCounts(c) { if (!c) return; L.counts = { sheets: +c.sheets || 0, sets: +c.sets || 0 }; L.countsAt = Date.now(); paintCount(); }
+  /* LASERCOUNT (Paul, 11 Nov 2026): the number is the completed SETS, always (LBF1: the Library is always Sets), and says so: its title (hover) and aria-label are
+     "7 completed sets". The tab also lists, last, the older completed sheets in no set ("Sheets not in a set"), which the number never counted: the cloud counts
+     { sheets, sets } only (its sheets take in those of completed sets), so sets + loose sheets is not known without a new read. Once the list on screen, unfiltered,
+     is read to its end, the title adds those it holds: "· 3 sheets not in a set listed after them" (its footer counts them the same way). */
+  const looseListed = st => st && st.kind === 'sets' && st.end && !st.find && !st.q && !st.metal ? st.rows.filter(r => r.kind !== 'set').length : 0;
   function paintCount(pulse) {
     const n = byId('libDoneCount'); if (!n) return;
     // (what is still on its way to the tab is counted as it lands: bump)
-    const kind = S.library.kind === 'sets' ? 'sets' : 'sheets', v = L.counts ? Math.max(0, L.counts[kind] - (L.flying[kind] || 0)) : null;
-    n.textContent = v == null ? '' : v > 9999 ? Math.round(v / 1000) + 'k' : String(v);
-    n.setAttribute('aria-label', v == null ? 'completed' : `${v} completed ${kind}`);
+    const v = L.counts ? Math.max(0, L.counts.sets - (L.flying.sets || 0)) : null, nl = v == null ? 0 : looseListed(L.list);
+    const text = v == null ? '' : v > 9999 ? Math.round(v / 1000) + 'k' : String(v), says = v == null ? 'completed' : plural(v, 'completed set');
+    const title = v == null ? '' : says + (nl ? ` · ${plural(nl, 'sheet')} not in a set listed after them` : '');
+    if (n.textContent !== text) n.textContent = text;
+    if (n.getAttribute('aria-label') !== says) n.setAttribute('aria-label', says);
+    if (!title) n.removeAttribute('title'); else if (n.getAttribute('title') !== title) n.setAttribute('title', title);
     if (pulse && !reduced()) { n.classList.remove('pulse'); void n.offsetWidth; n.classList.add('pulse'); }
   }
   /** The count moves by d: at once, or `after` ms later, when what was marked comes down on the Completed tab (it pulses
@@ -946,6 +1003,7 @@
       html = st.find ? '' : `${plural(n, 'completed ' + what)}${nl ? ` · ${plural(nl, 'sheet')} not in a set` : ''}${st.q || st.metal ? ' shown' : ''} · that is all`; }
     else if (st.empties >= 8) html = `Nothing more in the ${st.scanned.toLocaleString()} read <button type="button" class="btn ghost xs" data-ld-more>Keep looking</button>`;
     if (m.innerHTML !== html) m.innerHTML = html;
+    if (st === L.list) paintCount();   // LASERCOUNT (Paul, 11 Nov 2026): the tab's title names the loose sheets once this list is read to its end, and follows its rows
     const empty = st.rowsEl.querySelector(':scope > .libEmpty');
     if (!st.rows.length && st.end && !st.loading && !st.error) {
       const text = st.find || st.q ? '' : st.metal ? `No completed ${esc(metalOf({ metal: st.metal }).label || st.metal)} ${what}s yet.` : `Nothing is completed yet. <b>Mark a ${what} completed in Laser cutting with the check at its corner once the laser has cut it.</b>`;
@@ -985,7 +1043,7 @@
         + `<span class="ldThumbs">${(sheets.length ? sheets.slice(0, 3) : [{}]).map(s => thumb(s.preview)).join('')}</span>`
         + `<span class="ldName"><b>Set ${esc(r.seq || '—')}</b><span class="sws">${mats.map(k => swatch(metalOf({ metal: k }), per.get(k) || 0)).join('')}</span><span class="ldDate" title="Set day">${esc(dayShort(r.day))}</span></span>`
         + `<span class="ldNums"><span><b>${sheets.length}</b> ${sheets.length === 1 ? 'sheet' : 'sheets'}</span><span><b>${+r.orders || 0}</b> orders</span><span data-ld-pcs="${esc((Array.isArray(r.sheetIds) && r.sheetIds.length ? r.sheetIds : sheets.map(s => s.id || s.sheetId)).filter(Boolean).slice(0, 12).join(','))}"><b>${+r.pieces || 0}</b> pcs</span><span><b>${pct(r.fill)}</b> full</span></span>`
-        + who(r) + `<button type="button" class="ldBack" data-ld-back="set:${esc(r.setId)}" title="Return the set and its sheets to Laser cutting">Reopen</button>${ICON.chev}`+'</div>'
+        + who(r) + `<button type="button" class="ldBack" data-ld-back="set:${esc(r.setId)}" title="Reopen set · back to Laser cutting">Reopen</button>${ICON.chev}`+'</div>'
         + '<div class="ldPanel"><div class="ldPanelIn"></div></div></div>';
     }
     const sn = !r.draft && r.setSeq ? r.setSeq : 0, cutWord = window.CharmNestSheetName ? window.CharmNestSheetName.short(Object.assign({}, r, { laserDoneAt: r.at || 1 })) : `Sheet ${r.sheetIndex || 1}`;   // (a row in Completed is a cut sheet: it keeps the number its file and label carry)
@@ -993,7 +1051,7 @@
       + thumb(r.preview)
       + `<span class="ldName">${swatch(metalOf(r), 0)}<b>${esc(cutWord)}</b>${sn ? `<span class="ldSet">Set ${esc(sn)}</span>` : ''}<span class="ldDate" title="Sheet day">${esc(dayShort(r.day))}</span></span>`
       + `<span class="ldNums"><span><b>${+r.orders || 0}</b> ${r.orders === 1 ? 'order' : 'orders'}</span><span data-ld-pcs="${esc(r.id)}"><b>${+r.pieces || 0}</b> pcs</span><span><b>${pct(r.fill)}</b> full</span></span>`
-      + who(r) + `<button type="button" class="ldBack" data-ld-back="sheet:${esc(r.id)}" title="Return to Laser cutting">Reopen</button>${ICON.chev}`+processHtml(r,'sheet:'+r.id,true)+'</div></div>';
+      + who(r) + `<button type="button" class="ldBack" data-ld-back="sheet:${esc(r.id)}" title="Reopen sheet · back to Laser cutting">Reopen</button>${ICON.chev}`+processHtml(r,'sheet:'+r.id,true)+'</div></div>';   // (LASERWORDS, Paul, 11 Nov 2026: both rows' Reopen titles use the cards' words)
   }
   /** (LBF1) A completed sheet that belongs to no set (a Completed row: draft says draft or a solid left out of its set). */
   const isLoose = r => !!r && r.kind !== 'set' && (!r.setId || !!r.draft);

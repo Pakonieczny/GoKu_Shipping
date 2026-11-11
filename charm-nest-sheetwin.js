@@ -1284,21 +1284,48 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (E.stateSeal) { const h = prelim ? null : sheetSeal(r); if (E.stateSeal._h !== h) { E.stateSeal._h = h; if (h !== null) E.stateSeal.innerHTML = h; } }
     // a sheet an order in the Review tab holds back says so, once, above its orders (charm-nest-library-review-hold.js); nothing until the record is read
     tryDo(() => { if (E.hold && window.LibraryReviewHold) window.LibraryReviewHold.paint(E.hold, prelim ? "" : (r.id || r.sheetId)); });
-    if (prelim) { E.state.className = "swState"; st.textContent = "…"; }
-    else {
-      const done = !!(r.laserDoneAt || (window.LibraryDone && LibraryDone.isDone && LibraryDone.isDone(r)));
-      const ready = !done && window.LaserReview && LaserReview.sheet(r).ready;
-      E.state.className = "swState" + (done ? " done" : ready ? " ready" : "");
-      st.textContent = done ? "Completed" : ready ? "Ready for laser" : (r.releaseFull || r.intakeFinalized) ? "Released" : "In progress";
-      // a sheet still filling is not cut yet: it can be marked completed once it is released (or taken back when it was)
-      E.done.hidden = !window.LibraryDone || !window.LibraryDone.mark || (!done && !LibraryDone.canComplete('sheet',r.id || r.sheetId));
-      E.done.textContent = done ? "Move back to current" : "Mark completed";
-      E.done.onclick = () => markDone(!done);
-      // the live stations board (employee console): a sheet that is ready for the laser, open here, is what the Laser station is on now
-      tryDo(() => { if (window.CNLive) { if (ready) CNLive.sheet(`${nameOf(r) || `${CODE[m] || labelOf(m)} Sheet ${sheetNoOf(r)}`}${sn ? ` · Set ${sn}` : ""}`); else CNLive.close("laser"); } });
-    }
+    if (prelim) { E.state.className = "swState"; st.textContent = "…"; E.state.title = ""; }
+    else laserState(r);
     if (!prelim || !W.setSheets.length) renderSheetChips();
     tryDo(mcButton);
+  }
+  /* LASERWIN (Paul, 11 Nov 2026): a sheet in a set is cut with the whole set. The window said "Ready for laser" from the sheet's own readiness while its set was still
+   * In progress in the Library (which moves a set to Laser cutting only when every sheet of it is ready: CharmNestReadiness.laserGroup, LibraryDone.canComplete). Now it says
+   * the set is not there yet. A sheet in no set, or a set this page cannot read (its record, or one of its sheets, not here), keeps the words it had. */
+  const SET_WAIT = "This sheet is ready · its set is not in Laser cutting yet (it is cut with the whole set)";
+  // (a sheet of the set, as this page holds it: the Library's record, its list, this computer's copy; none: the set cannot be read here)
+  const mateOf = sid => tryDo(() => window.LibraryDone && LibraryDone.recordOf && LibraryDone.recordOf(sid)) || (tryDo(() => S.library.rows) || []).find(x => x.id === sid)
+    || tryDo(() => { const St = window.CharmNestStore; return St ? St.get("sheets", sid) || St.get("sheetFull", sid) : null; }) || null;
+  /** True only when `r` is in a real set and that set, read here, is not ready as a whole. */
+  function setHolds(r) {
+    if (!r || !r.setId || r.draft || r.solidIncluded === false) return false;
+    const id = r.id || r.sheetId, LR = window.LaserReview, LD = window.LibraryDone, RD = window.CharmNestReadiness;
+    // (the Library has the set in Laser cutting: its own answer wins)
+    if (tryDo(() => LD && LD.canComplete && LD.canComplete("sheet", id)) || tryDo(() => LR && LR.canCut && LR.canCut(r))) return false;
+    const set = W.set && W.set.setId === r.setId ? W.set : null, ids = set && Array.isArray(set.sheetIds) ? set.sheetIds : [];
+    if (!ids.length || !RD || !RD.laserGroup) return false;
+    const sheets = ids.map(sid => sid === id ? r : mateOf(sid));
+    if (sheets.some(x => !x)) return false;
+    const g = tryDo(() => RD.laserGroup(set, sheets.map(s => LR && LR.projected ? LR.projected(s) : s)));
+    return !!g && g.ready === false;
+  }
+  /** The state pill, the Mark completed / Reopen sheet button and the live board, from the sheet's record (and its set, once read: loadSet draws it again). */
+  function laserState(r) {
+    const E = W.el, st = E.state.querySelector("span"), m = r.metal, sn = setNoOf(r);
+    const done = !!(r.laserDoneAt || (window.LibraryDone && LibraryDone.isDone && LibraryDone.isDone(r)));
+    const own = !done && !!window.LaserReview && LaserReview.sheet(r).ready;
+    const wait = own && setHolds(r), ready = own && !wait;   // (LASERWIN: ready on its own, its set not yet: not "Ready for laser")
+    E.state.className = "swState" + (done ? " done" : ready ? " ready" : "");
+    st.textContent = done ? "Completed" : ready ? "Ready for laser" : wait ? "Sheet ready · set not in Laser cutting yet" : (r.releaseFull || r.intakeFinalized) ? "Released" : "In progress";
+    E.state.title = wait ? SET_WAIT : "";
+    // a sheet still filling is not cut yet: it can be marked completed once it is released (or taken back when it was)
+    E.done.hidden = !window.LibraryDone || !window.LibraryDone.mark || (!done && !LibraryDone.canComplete('sheet',r.id || r.sheetId));
+    // (LASERWIN, Paul 11 Nov 2026: the Library calls it Reopen; this said "Move back to current")
+    E.done.textContent = done ? "Reopen sheet" : "Mark completed";
+    E.done.title = done ? "Reopen sheet · back to Laser cutting" : "";
+    E.done.onclick = () => markDone(!done);
+    // the live stations board (employee console): a sheet that is ready for the laser, open here, is what the Laser station is on now
+    tryDo(() => { if (window.CNLive) { if (ready) CNLive.sheet(`${nameOf(r) || `${CODE[m] || labelOf(m)} Sheet ${sheetNoOf(r)}`}${sn ? ` · Set ${sn}` : ""}`); else CNLive.close("laser"); } });
   }
   /** The sheet's own completion seal in the header, beside "Completed" (the Library's card and Completed row draw the same one, LASER CUT): the very
    *  same component (Seal.sheetCut, 72 px, zoom x1.8) and the very same rule (LibraryDone.cutStamp): ONE seal, the latest completion, only while the sheet
@@ -1311,7 +1338,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     } catch (e) { console.warn("sheet window: completed seal", e); return ""; }
   }
   async function markDone(done) {
-    const b = W.el.done, id = W.id; b.disabled = true; const was = b.textContent; b.innerHTML = `<span class="spin"></span>${done ? "Completing…" : "Moving back…"}`;
+    // LASERWIN (Paul, 11 Nov 2026): the Library's rule here too: a sheet whose set is not in Laser cutting is not marked; the same words as the header
+    if (done && W.rec && tryDo(() => LaserReview.sheet(W.rec).ready) && setHolds(W.rec)) { toast(SET_WAIT, "bad", 6000); tryDo(() => laserState(W.rec)); return; }
+    const b = W.el.done, id = W.id; b.disabled = true; const was = b.textContent; b.innerHTML = `<span class="spin"></span>${done ? "Completing…" : "Reopening…"}`;
     try {
       const result = await LibraryDone.mark("sheet", id, done, { via: "Sheet window" });
       if (W.id !== id) return;
@@ -1336,6 +1365,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (!set) { const r = await api("charmNestLibrary", { op: "setGet", setId: rec.setId }, { quiet: true }); set = r.set; }
       if (tok !== W.token || !set) return;
       W.set = set;
+      if (W.rec === rec) tryDo(() => laserState(rec));   // (LASERWIN, Paul 11 Nov 2026: the set is read now: the header says whether it is in Laser cutting)
       W.setSheets = (set.sheetIds || []).map(sid => sheetInfo(sid, set)).filter(Boolean)
         .sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || a.n - b.n);
       renderSheetChips(); if (W.sel) lightChips(W.sel.rid);

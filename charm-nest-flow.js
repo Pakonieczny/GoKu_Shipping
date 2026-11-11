@@ -1268,12 +1268,40 @@
       }
       lr.changed();
     };
+    /* (LASERDRAG, Paul, 11 Nov 2026: when the page's check below never passed, a drag to Completed was marked by the cloud's own check alone, and that check is
+       weaker: it cannot see a Review hold, the owner's set rules (setBreaks, setWaits, cardinalWait) or a sheet the open run is still changing. So a drag could
+       mark what the check button refuses.) The page's own reading of its records answers instead where the Library's list cannot (off screen, its Completed
+       tab open, a refresh not drawn yet): LaserReview.group over the set as its card drew it (with its rules) and the records as the page projects them
+       (Review holds, a live copy being changed), the same reading the check button's canComplete makes, without asking where the card stands. */
+    const readyInRecords = (kind, id, ld, lr) => {
+      try {
+        if (!lr || typeof lr.group !== 'function') return false;
+        const recOf = x => (ld && typeof ld.recordOf === 'function' && ld.recordOf(x)) || (hooks.rec ? hooks.rec(x) : null);
+        const own = cards().filter(c => kind === 'set' ? c._laserSet && c._laserSet.setId === id : (c._laserSheets || []).includes(id));
+        const c = own.find(x => x.closest && x.closest('#libBody')) || own[0];
+        if (c && c._laserSet) return !!lr.group(c._laserSet, (c._laserSheets || []).map(recOf).filter(Boolean)).ready;
+        if (kind === 'set' || typeof lr.canCut !== 'function') return false;      // (a set no card drew: its rules are not known here)
+        const r = recOf(id);
+        return !!r && !!lr.canCut(r);
+      } catch (_) { return false; }
+    };
+    // (LASERDRAG, Paul, 11 Nov 2026: the refusal says why in plain words, as the check button's does; the move's bar shows it and the card flies home)
+    const notReadyLine = (kind, id, ld) => {
+      let name = '', grouped = false, why = '';
+      try { name = ld && typeof ld.nameOf === 'function' ? String(ld.nameOf(kind, id) || '') : ''; } catch (_) { name = ''; }
+      try { grouped = kind === 'sheet' && (!!hooks.setOf({ kind, id }) || inSet(ld && typeof ld.recordOf === 'function' ? ld.recordOf(id) : null)); } catch (_) { grouped = false; }
+      try { why = String((typeof hooks.notReady === 'function' && hooks.notReady({ kind, id })) || '').trim(); } catch (_) { why = ''; }
+      const who = name || (kind === 'set' ? 'This set' : 'This sheet'), when = kind === 'set' ? 'every sheet of it is' : grouped ? 'every sheet of its set is' : 'it is';
+      return `Not marked completed: ${who} is not in Laser cutting yet. It can be marked once ${when} ready.${why ? ' ' + why.replace(/[.\s]+$/, '') + '.' : ''}`;
+    };
     hooks.mark = async (kind, id, done, o) => {
       const ld = LD(), lr = LR();
       // a sheet that has just become ready is placed in Laser cutting by the page's next refresh: LibraryDone.mark waits for that
       let shown = !done || (ld && ld.canComplete(kind, id));
       for (let i = 0; ld && !shown && i < 24; i++) { if (i === 0 && lr) { lr.changed(); if (lr.poll) lr.poll(true); } await hooks.wait(150); shown = ld.canComplete(kind, id); }
       if (ld && shown) return (await ld.mark(kind, id, done, { by: o && o.by, via: 'Library move' })) || { ok: true };
+      // (LASERDRAG, Paul, 11 Nov 2026: never the cloud's check alone: the page's records must say ready too, or nothing is marked)
+      if (ld && done && !readyInRecords(kind, id, ld, lr)) throw new Error(notReadyLine(kind, id, ld));
       const r = answer(await cloud({ op: 'laserDone', kind, id, done, by: (o && o.by) || undefined, stage: done ? 'laser' : undefined, device: 'charm-nest-1', via: 'Library move' }));
       await sync(r.process);
       try { if (root.CNLaserAct) root.CNLaserAct.cut(done, { name: ld && ld.nameOf ? ld.nameOf(kind, id) : '', ids: r.sheetIds && r.sheetIds.length ? r.sheetIds : [id], rec: ld && ld.recordOf }); } catch (_) { /* a record of the work never stops the work */ }
