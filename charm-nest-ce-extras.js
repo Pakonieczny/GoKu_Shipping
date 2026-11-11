@@ -87,6 +87,19 @@
   const RING = { std: { outPt: 6.5, holePt: 3.7, name: 'Standard ring' }, huggie: { outPt: 9.35, holePt: 5.85, name: 'Huggie ring' } };
   const ringKey = k => (RING[k] ? k : 'std');
   const bailSP = (cx, cy, k) => { const R = RING[ringKey(k)]; return M.ellipseSP(cx, cy, R.outPt / 2, R.outPt / 2).concat(M.ellipseSP(cx, cy, R.holePt / 2, R.holePt / 2)); };
+  /* HOOPS (Paul, 11 Nov 2026: the Ring Tool renamed "Necklace Hoop", 2.4 mm OD and 1.4 mm ID, and a new "Huggie Hoop", 3.4 mm OD and 2.2 mm ID; "This hoop must show up to the
+     user already in those exact dimensions and must be able to separate the inner circle from the outer circle ... the outer and inner circles are separate as part of the
+     same hoop"). A hoop is placed at its size (a click, or a drag to where it goes), never drawn to a size: ONE group named for the hoop holding TWO cut paths, "Outer circle"
+     and "Inner circle", each a circle of its own (select one with Direct Selection or in Layers, or Ungroup to part them). The Ring blank's numbers (SHAPES.ring) stay, so a
+     ring drawn before keeps its Wall on the bar. */
+  const HOOPS = { necklace: { title: 'Necklace Hoop', odMm: 2.4, idMm: 1.4 }, huggie: { title: 'Huggie Hoop', odMm: 3.4, idMm: 2.2 } };
+  /** A hoop centred on (cx, cy), pt: { kind: 'group', name, hoop, children: [outer circle, inner circle] }, both cut lines at the laser's width. */
+  function hoopItem(kind, cx, cy) {
+    const H = HOOPS[kind] || HOOPS.necklace, circle = (name, dMm) => ({ kind: 'path', role: 'cut', source: 'added', name, hidden: false, locked: false, stroke: true, fill: false,
+      lwPt: M.LW_LASER_PT, subpaths: M.ellipseSP(cx, cy, dMm * PT / 2, dMm * PT / 2), tx: 0, ty: 0, sx: 1, sy: 1, rot: 0 });
+    return { kind: 'group', role: 'cut', source: 'added', name: H.title, hoop: HOOPS[kind] ? kind : 'necklace', hidden: false, locked: false, tx: 0, ty: 0, sx: 1, sy: 1, rot: 0,
+      children: [circle('Outer circle', H.odMm), circle('Inner circle', H.idMm)] };
+  }
 
   /* each blank: what it is called, the role it is drawn in (a ring is cut, as the studio's; the others engraved along the line, as the editor's rectangle), the numbers it
      keeps, its own proportions (Shift) and how it is made in a box; s = the part's own scale, so a number in mm stays mm on the charm */
@@ -595,6 +608,8 @@
     star: SV('<path d="M12 3.2 14.6 8.9 20.6 9.5 16 13.6 17.3 19.6 12 16.5 6.7 19.6 8 13.6 3.4 9.5 9.4 8.9Z"/>'),
     heart: SV('<path d="M12 19.5S4.5 15 4.5 9.6A4.1 4.1 0 0 1 12 7.3a4.1 4.1 0 0 1 7.5 2.3c0 5.4-7.5 9.9-7.5 9.9Z"/>'),
     ring: SV('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/>'),
+    necklace: SV('<circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="3.8"/>'),
+    huggie: SV('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="5.5"/>'),
     bail: SV('<path d="M5.5 11.5h13v8.5h-13Z"/><circle cx="12" cy="7.3" r="3.6"/><circle cx="12" cy="7.3" r="1.5"/>'),
     clip: SV('<circle cx="12" cy="12" r="7.5"/><path d="M2.5 9h4M17.5 9h4M2.5 15h4M17.5 15h4" stroke-dasharray="1.6 1.6"/><path d="M6 9h12M6 15h12"/>'),
     unclip: SV('<circle cx="12" cy="12" r="7.5" stroke-dasharray="2.4 2"/><path d="M2.5 9h19M2.5 15h19"/>'),
@@ -732,6 +747,32 @@
       ctx.commit('Jump ring'); log('jumpRing', { face: ctx.face(), ring: k, welded: false }); ctx.setTool('select');
     }
   };
+  /** The Necklace Hoop and Huggie Hoop tools: a click places the hoop there at its size; a drag carries it to where the button is let go (snapped as anything drawn). */
+  function hoopTool(kind) {
+    const H = HOOPS[kind], at = (ctx, ev, p) => { let q = [p.x, p.y]; if (typeof ctx.snap === 'function') { try { const s = ctx.snap(p.x, p.y, ev); if (Array.isArray(s) && fin(s[0]) && fin(s[1])) q = s; } catch (e) { /* where the hand is */ } } return q; };
+    const put = (ctx, g, q) => {
+      const it = hoopItem(kind, q[0], q[1]);
+      if (!g.id) { g.id = ctx.addItems([it])[0]; return; }
+      const e = ctx.entry(g.id); if (!e) return;
+      const kids = (e.it.children || []).map((k, i) => Object.assign({}, k, { subpaths: it.children[i].subpaths }));
+      if (kids.length === 2) ctx.replaceItems({ [g.id]: Object.assign({}, e.it, { children: kids }) });
+    };
+    return {
+      id: 'shape-' + kind, title: H.title, flyout: 'shapes', icon: IC[kind], cursor: 'crosshair',
+      tip: `${H.title}: ${trim(H.odMm, 2)} mm outside, ${trim(H.idMm, 2)} mm inside`,
+      hint: `Click to place the ${H.title} (${trim(H.odMm, 2)} mm OD / ${trim(H.idMm, 2)} mm ID, cut) · drag to carry it · its outer and inner circles are separate paths in one group`,
+      onArm(ctx) { syncBar(ctx); }, onDisarm(ctx) { this.g = null; syncBar(ctx); },
+      onDown(ctx, ev, p) { if (!p || ev.button) return; this.g = { id: null }; put(ctx, this.g, at(ctx, ev, p)); },
+      onMove(ctx, ev, p) { const g = this.g; if (!g || !g.id || !p || !(ev.buttons & 1)) return; put(ctx, g, at(ctx, ev, p)); },
+      onUp(ctx, ev, p) {
+        let g = this.g; this.g = null;
+        if (!g && p) { g = { id: null }; put(ctx, g, at(ctx, ev, p)); } else if (g && g.id && p) put(ctx, g, at(ctx, ev, p));
+        if (!g || !g.id) return;
+        ctx.commit(H.title); log('hoop', { face: ctx.face(), hoop: kind, odMm: H.odMm, idMm: H.idMm }); ctx.setTool('select');
+      }
+    };
+  }
+  const hoopTools = ['necklace', 'huggie'].map(hoopTool);
 
   /* ── 6b · the bar: the blank's numbers, letter spacing, a text's place on its path ── */
   function buildBar(ctx) {
@@ -1042,9 +1083,9 @@
   }
 
   /* ── registering (the header's EXTENSION POINTS; the lists are read each time a workspace opens) ── */
-  const presets = ['rrect', 'star', 'heart', 'ring'].map(presetTool);
+  const presets = ['rrect', 'star', 'heart'].map(presetTool);   // (HOOPS, 11 Nov 2026: the Ring blank's tool is the Necklace Hoop now; SHAPES.ring stays for the rings drawn before)
   CE.tools = Array.isArray(CE.tools) ? CE.tools : [];
-  CE.tools.push(...presets, bailTool);
+  CE.tools.push(...presets, ...hoopTools, bailTool);
   CE.commands = CE.commands && typeof CE.commands === 'object' ? CE.commands : {};
   Object.assign(CE.commands, {
     'cx.clip': { title: 'Clip to the charm', group: 'Clipping mask', key: 'Mod+7', icon: IC.clip, enabled: ctx => hasCut(ctx) || ctx.selection().length >= 2, run: clipRun },
@@ -1060,7 +1101,7 @@
   CE.textLayout = textLayout;
 
   return {
-    ready: true, version: 1, RING, LIMIT, SHAPES, rrectSP, starUnit, HEART, fitTo, ringSP, bailSP, shapeItem, shapeOf, reshape, dragBox, topAt, sigOf,
+    ready: true, version: 1, RING, HOOPS, hoopItem, LIMIT, SHAPES, rrectSP, starUnit, HEART, fitTo, ringSP, bailSP, shapeItem, shapeOf, reshape, dragBox, topAt, sigOf,
     textLayout, letters, dStr, parseD, guideOf, orient, onPathItem, offPathItems, flipPatch, capOf, capBand,
     ringsOf, metalOf, thinParts, clipPlan, clipLeaf, releasePlan, checkSteps, checkFace, leavesOf, minCapMm,
     current: () => W

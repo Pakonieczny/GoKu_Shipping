@@ -1181,6 +1181,8 @@
     'shape-star': SA('<path d="m12 3.5 2.6 5.6 6 .7-4.5 4.1 1.2 6-5.3-3-5.3 3 1.2-6L3.4 9.8l6-.7Z"/>'),
     'shape-heart': SA('<path d="M12 19.5s-7.5-4.6-7.5-9.6A4 4 0 0 1 12 7.6a4 4 0 0 1 7.5 2.3c0 5-7.5 9.6-7.5 9.6Z"/>'),
     'shape-ring': SA('<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="4"/>'),
+    'shape-necklace': SA('<circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="3.8"/>'),   // (HOOPS, 11 Nov 2026: the Necklace Hoop, the small hoop; the Huggie Hoop, the large one)
+    'shape-huggie': SA('<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="5.5"/>'),
     'shape-bail': SA('<circle cx="12" cy="7.5" r="3.6"/><path d="M6 21v-5.5a6 6 0 0 1 12 0V21"/>'),
     pencil: SA('<path d="M4.5 19.5 5.6 15 15.8 4.8l3.4 3.4L9 18.4Z"/><path d="m13.8 6.8 3.4 3.4"/><path d="m5.6 15 3.4 3.4"/>'),
     // (ER1, Paul 9 Nov 2026: Illustrator's Eraser, its own button after the Scissors (CES3's place): charm-nest-ce-eraser.js)
@@ -1208,7 +1210,7 @@
   const TOOL_NAME = { select: 'Selection', marquee: 'Marquee Selection', text: 'Type', rect: 'Rectangle', ellipse: 'Ellipse', line: 'Line Segment', polygon: 'Polygon', hand: 'Hand', zoom: 'Zoom' };
   /** Where each tool sits in Illustrator's Tools panel: its slot (tools sharing a slot share a flyout) and the groups, a line between each. */
   const AI_SLOT = { direct: 'direct', pen: 'pen', anchorAdd: 'pen', anchorDel: 'pen', anchorConvert: 'pen', pencil: 'pencil', scissors: 'scissors', eraser: 'eraser', 'cw-free': 'distort', 'cw-persp': 'distort', 'cw-blend': 'blend' };
-  const SHAPE_ORDER = ['rect', 'shape-rrect', 'ellipse', 'polygon', 'shape-star', 'shape-heart', 'shape-ring', 'shape-bail'];
+  const SHAPE_ORDER = ['rect', 'shape-rrect', 'ellipse', 'polygon', 'shape-star', 'shape-heart', 'shape-necklace', 'shape-huggie', 'shape-bail'];
   /** The person's Illustrator preferences (charm-nest-ce-ai-shell.js writes them: Edit ▸ Preferences ▸ User Interface): read here too, so the workspace opens in them. */
   function aiPrefs() {
     let p = null; try { p = JSON.parse((root.localStorage && root.localStorage.getItem('ce.ai')) || 'null'); } catch (e) { p = null; }
