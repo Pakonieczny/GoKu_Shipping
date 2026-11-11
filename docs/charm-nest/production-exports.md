@@ -8,7 +8,7 @@ DXF is ASCII AutoCAD 2004 (AC1018), in millimetres (`$INSUNITS=4`). It retains n
 
 Import using 1:1 millimetres and colour recognition. Confirm pen mapping and hatch settings in the installed LaserStar/EZCAD version. SHEET and BACK CUT OUTLINE are reference geometry. DXF's format can store true colour and layer names, but the particular machine software determines how it maps them to pens. Actual Windows LaserStar import and machine marking cannot be certified by browser tests.
 
-Unsupported raster images, live text and intersecting clipping masks fail explicitly rather than silently dropping content. Illustrator's non-intersecting artboard clips are accepted after a geometric containment check. Original source artwork is retained for AI export.
+Unsupported raster images and live text fail explicitly rather than silently dropping content. Clipping masks are applied as real geometry (11 Nov 2026): the parser records the clips in force over each path, a path inside them is exported exactly as drawn, a path crossing one is cut to the part that shows (fills as the visible area, lines as the visible pieces), and a path wholly hidden by its clip is not exported. Original source artwork is retained for AI export. Front engravings and each record's ear (Left / Right) are passed to the background worker's compose (`charm-nest-background.js`), so worker-built files keep their FRONT and Left / Right layers. Validation: `node tests/charm-nest/export-clips.cjs`.
 
 References:
 
