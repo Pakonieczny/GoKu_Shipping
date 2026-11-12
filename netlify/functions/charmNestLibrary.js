@@ -3125,7 +3125,7 @@ async function op_setUpdate(b) {
       // Paul, 10 Oct: a set is completed (committed) only with at least 1 completed GF sheet and 1 completed SS sheet (charm-nest-set-rules.js; read from the records just read, no extra read);
       // a set already committed or completed is never refused afterwards
       const principle=Readiness.setRules(old.exists?old.data():{},records.filter(s=>s.setId===id));   // (the stored set: one already committed or completed is exempt)
-      if(principle.applies && !principle.ok)throw new Error(`Set cannot be completed: ${next.name || 'the set'} ${principle.short}. A set needs at least 1 completed GF sheet and 1 completed SS sheet.`);
+      if(principle.applies && !principle.ok)throw new Error(`Set cannot be completed: ${next.name || 'the set'} ${principle.short}. A set needs at least 1 completed GF sheet and 1 completed SS sheet, or 2 completed GF sheets.`);
       if(records.some(s=>s.setId!==id) || !Readiness.set(next,records).ready)throw new Error('Set cannot be completed: every sheet needs approved engraving, verified back files, front files and QR labels');
       // the cardinal rule (charm-nest-shared-orders.js): a set is completed only with every sheet that shares a multi-piece
       // order with one of its own, unless that sheet can no longer join (cut, or in a set already sent to the station)
