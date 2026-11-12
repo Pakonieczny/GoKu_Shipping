@@ -4948,6 +4948,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** The move, now: { ok } once it is on the live sheets (its save follows in the background), or { ok: false, why } with nothing changed.
    *  o.guard(sheet) as moveIn's; o.check() -> "" or why the cloud says another computer changed the sheets (run before anything is written). */
+  /* HOPDRAW (Paul, 12 Nov 2026: "when I move charms between sheets on the 14 K or the 10 K gold sheets, the sheet I'm removing it from doesn't get updated and the part I removed remains on the
+     original sheet and then I have to click on and off a few times for it to disappear"): both sheets of a move are drawn again the moment the move is made on the live sheets (their Nest cards,
+     the docks, the sheet pictures elsewhere), and again when its save ends (saved, or put back) */
+  function hopRedraw(sheets) {
+    for (const sh of sheets) { if (!sh) continue; tryDo(() => window.CN && CN.renderCard && CN.renderCard(sh)); tryDo(() => window.CN && CN.drawPreview && CN.drawPreview(sh)); }
+    tryDo(() => window.SheetHop && SheetHop.refresh && SheetHop.refresh(true)); tryDo(() => window.LivePreview && LivePreview.tick());
+    tryDo(() => window.Session && Session.schedule());
+  }
   function moveNow(k, spots, target, who, o = {}) {
     const rid = k.rid, ids = new Set(spots.map(s => s.c.poolId)), srcs = [...new Set(spots.map(s => s.src))], src = srcs[0];
     if (srcs.length !== 1 || src === target) return { ok: false, why: "the pieces are not on one other sheet" };
@@ -4994,6 +5002,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     HOP.pending++; hopChipNow();
     const job = { rid, ids, cids, src, target, who, spots, undo, check: o.check, failed: o.failed, held, at, recCharms, recPlacements };
     HOP.jobs.push(job);   // (MOVEINSTANT: any reading of A or B meanwhile is drawn with the move made, hopOverlay)
+    hopRedraw([src, target]);   // (HOPDRAW: the sheet it left shows it gone at once)
     HOP.chain = HOP.chain.then(() => hopSaveTry(job)).then(() => true, e => { console.warn("sheet window: move not saved", e); return false; }).then(ok => {
       HOP.pending--;
       if (ok) job.savedAt = Date.now(); else HOP.jobs = HOP.jobs.filter(x => x !== job);
@@ -5001,7 +5010,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       else if (HOP.chipState === "saving") hopChip("bad", "Not moved: the move could not be saved; the charm is back where it was");   // (STUCKSPIN 28 Oct 2026: a failure that put nothing on the chip never leaves it spinning)
       // (STUCKSPIN: the next move waits for these two sheets' write at most SPIN_MS; one that never comes back says so, and the moves after it are saved)
       if (ok && !job.held) return within(writeOwed([src, target], null, true), SPIN_MS + 60000, "the two sheets were not written in time").catch(e => { if (e && e.stuck && HOP.chipState === "saving") hopChip("bad", `Not saved yet: ${e.message}; every charm is still where it was put`); throw e; });   // (no Manual Control to end: the two sheets are written as they stand now)
-    }).catch(e => console.warn("sheet window: after a move", e));   // (the chain stays whole: the next move's save always runs)
+    }).catch(e => console.warn("sheet window: after a move", e)).then(() => hopRedraw([src, target]));   // (the chain stays whole: the next move's save always runs) (HOPDRAW: drawn again as saved)
     return { ok: true };
   }
   const sheetRec = id => api("charmNestLibrary", { op: "getSheet", id }, { quiet: true, timeoutMs: 12000 }).then(r => (r && r.sheet) || null);
