@@ -2570,11 +2570,32 @@ async function op_purgeHistory(b) {
      set is old from a previous test-run and which is new current run"). The sandbox page and every other tab of its browser are put down BEFORE the
      purge deletes anything (Sandbox.wipe, charm-nest-bridge.js): a page that kept running under the purge saved its sets and sheets straight back.
      So a wrong passcode or an open run is answered here, before any page is put down, and the purge itself follows once they are. */
-  if (b.check === true) return { ok: true, check: true };
-  const names = [RUNS, RUN_LINES, RUN_LIVE, SHEETS, SETS, POOL, BACK, COUNTERS, RELEASE, BRIDGE];
+  /* FRESHSTART (Paul, 11 Nov 2026, after a false start of the first real pull: "the historical library is still persistent and all the information about
+     these orders on the cloud is still persistent and I needed it wiped. I need a fresh clean start."). The purge also takes what the runs left
+     beside their own records: each order's first arrival (Charm_Nest_Arrivals: a re-pulled order is new again), a piece's own artwork edits
+     (Charm_Pool_Art: kept by pool id, which a re-pull gives back), the engraving jobs (Charm_Nest_Agent) and the nesting jobs (Charm_Nest_Jobs;
+     a Charm repo master job stays). And, only when the person says yes to the page's question, the custom-order records (stickers, completions,
+     Send to Sheet) made since the oldest run being purged: kept for good otherwise (Paul, 29 Sep). The order timeline stays: employee efficiency. */
+  const born = d => { if (d.createTime && typeof d.createTime.toMillis === "function") return d.createTime.toMillis(); const x = (d.data && d.data()) || {}; return ms(x.createdAt) || ms(x.startedAt) || num(x.updatedAtMs) || ms(x.updatedAt) || null; };
+  const runsSince = async () => { const s = await db.collection(RUNS).select("createdAt", "startedAt", "updatedAt").get(); let t = null; s.docs.forEach(d => { const v = born(d); if (v && (t == null || v < t)) t = v; }); return t; };
+  const customSince = async since => { const out = []; for (const c of [CUSTOM, CUSTOM_SHEET]) { const s = await db.collection(c).select("createdAt", "updatedAtMs").get(); s.docs.forEach(d => { const v = born(d); if (d.id !== "rev" && v && v >= since) out.push(d.ref); }); } return out; };
+  if (b.check === true) {
+    const since = await runsSince(), customs = since ? (await customSince(since)).length : 0;
+    return { ok: true, check: true, customs: since && customs ? { since, count: customs } : null };
+  }
+  const since = b.customs === true ? await runsSince() : null, customRefs = since ? await customSince(since) : [];
+  const names = [RUNS, RUN_LINES, RUN_LIVE, SHEETS, SETS, POOL, BACK, COUNTERS, RELEASE, BRIDGE, "Charm_Nest_Arrivals", ART, AGENT];
   const SUBS = { [BRIDGE]: ["log"] };
   const wipe = async q => { let n = 0; for (;;) { const s = await q.select().limit(300).get(); if (s.empty) break; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); n += s.size; if (s.size < 300) break; } return n; };
+  const drop = async refs => { for (let i = 0; i < refs.length; i += 300) { const batch = db.batch(); refs.slice(i, i + 300).forEach(r => batch.delete(r)); await batch.commit(); } return refs.length; };
   const docs = {};
+  // FRESHSTART: the nesting jobs (a Charm repo master job, kind "master", stays), then the custom-order records the person said may go
+  { const s = await db.collection(JOBS).select("kind").get(); docs[JOBS] = await drop(s.docs.filter(d => (d.data() || {}).kind !== "master").map(d => d.ref)); }
+  if (customRefs.length) {
+    docs[CUSTOM] = await drop(customRefs);
+    // an open page that holds the Send to Sheet revision reads it all again (a moved number its log does not cover)
+    try { const rv = db.collection(CUSTOM_SHEET).doc("rev"); if ((await rv.get()).exists) await rv.update({ n: FV.increment(1), log: [] }); } catch (e) { console.warn("[charmNestLibrary] Send to Sheet revision not moved after the purge:", (e && e.message) || e); }
+  }
   // production's own part, exactly as it was: its history families only (never its seals, custom orders or cancel records)
   for (const name of names) {
     const coll = db.collection(name);
