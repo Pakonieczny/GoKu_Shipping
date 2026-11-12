@@ -10626,7 +10626,9 @@ const Engrave = window.Engrave = (() => {
   }
   /** The other face of `job`'s piece as the work area draws it: { view, charm } (its views made once per charm: charmEditView, the view the Charm Editor edits it in), or null. */
   function faceViewOf(job, face) {
-    const pid = (job.copies || [])[0], live = pid ? Pool.charmOf(pid) : null; if (!charmEditUsable(live)) return null;
+    /* WORKPRE (Paul, 11 Nov 2026, order 4220952355: "the grid below is still missing and the options for that are usually available to control"): a piece not on a sheet yet has no drawn charm
+       (Pool.charmOf), so its face fell back to the preview's flat picture: no grid, no rulers, no controls. It is drawn on the charm it WILL have (Pool.previewCharmOf), as charmFor does. */
+    const pid = (job.copies || [])[0], drawn = pid ? Pool.charmOf(pid) : null, live = charmEditUsable(drawn) ? drawn : pid && Pool.previewCharmOf ? Pool.previewCharmOf(pid) : null; if (!charmEditUsable(live)) return null;
     let got = FACE_VIEWS.get(live); if (!got) FACE_VIEWS.set(live, got = {});
     const row = job.row || {}, sp = row.spec || {}, sku = sp.designSku || (row.line && row.line.sku) || live.name, k = face + "|" + pairedUpOf(pid, live, face, sku);   // (UPRIGHT: one view per turn of the face shown: a turn of it turns this one the other way)
     if (!got[k]) got[k] = charmEditView(pid, live, face, sku);
