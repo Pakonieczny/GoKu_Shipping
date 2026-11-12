@@ -198,6 +198,7 @@
     }
     if (!r.rid && !r.job) { say("There is no order to open in Design & Engrave.", "bad"); return false; }
     // (ENGCRASH: no job and none coming, or a job with nothing to engrave: nothing is closed and nothing is filtered, the reason is said where the person is)
+    if (!r.job && r.rid && !mayArrive(t, r.rid) && typeof E.ensureJobs === "function") { for (const x of linesOf(t, r.rid)) { try { E.ensureJobs(x); } catch (_) {} } r = resolve(t); }   // (FIXOPEN: a line the page holds no job for gets it now)
     if (r.job ? !r.tab : !mayArrive(t, r.rid)) return fallback(r.rid, r.job ? "none" : "missing", t);
     let waited = false;
     // (ENGPRE: a job made early that is still being read or fitted is waited for too, so the detail opens on the placement and not on its "Preparing" line)
@@ -207,11 +208,12 @@
       // (a line with no job yet is asked for its job now, before and independent of nesting and Hold: Engrave.early makes it on the charm the piece will have, pools and moves nothing)
       let made = !E.early;
       if (E.early) Promise.all(linesOf(t, r.rid).filter(x => !E.earlyWanted || E.earlyWanted(x)).map(x => E.early(x))).catch(() => {}).then(() => { made = true; });
-      const sp = spinner(`Finding the engraving for order ${r.rid}…`);
+      const sp = spinner(`Finding the engraving for order ${r.rid}…`); let forced = false;
       try {
         for (const end = Date.now() + WAIT_MS; Date.now() < end && my === seq;) {
           await sleep(STEP_MS); r = resolve(t);
           if (r.job && (made || !preparing(r.job))) break;   // (a job being made is waited for until it is read and fitted, within the same limit)
+          if (!r.job && made && !forced && typeof E.ensureJobs === "function") { forced = true; for (const x of linesOf(t, r.rid)) { try { E.ensureJobs(x); } catch (e) { console.warn("[EngraveLink] ensureJobs", e && e.message); } } try { E.render(); } catch (_) {} continue; }   // (FIXOPEN, Paul 12 Nov 2026: the Fix button spun and said nothing: the job the card speaks of is made here)
           if (!r.job && !mayArrive(t, r.rid, made)) break;   // (early settled with no job: only a reading still in flight is waited for)
         }
       } finally { sp.remove(); }

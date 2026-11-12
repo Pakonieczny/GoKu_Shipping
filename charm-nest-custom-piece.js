@@ -261,7 +261,7 @@
     const hit = designs.get(dkey(id, version)); if (hit && !(o && o.open)) return hit;
     const D = root.CharmNestDesigns; if (!D || typeof D.get !== 'function') throw new Error('the design library is not on this page — reload it');
     const r = await D.get(id, version, o && o.open ? { open: true } : undefined), d = r && r.design ? r.design : r;   // (open: the library logs it opened, designOpen)
-    if (!d || !d.faces) throw new Error('that design could not be read');
+    if (!d || !d.faces) throw new Error(d ? 'that design could not be read' : `design ${id}${version ? ' v' + version : ''} is not in the design library: press Save in the Charm Editor again`);
     return remember(Object.assign({ id, version }, d));
   }
   function subscribe() {

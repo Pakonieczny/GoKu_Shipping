@@ -10071,7 +10071,19 @@ const Engrave = window.Engrave = (() => {
     // (ENGSTAGE, coordinator 30 Oct 2026: "Only the last press approves and writes": a newer press waiting behind this commit takes it from here: no seal, no file, no stamp for a state already overtaken)
     const overtaken = () => { try { return typeof o.overtaken === "function" && !!o.overtaken(); } catch (_) { return false; } };
     if (overtaken() && on.length) return { ok: true, overtaken: true, approved: [] };
-    if (!on.length) return { ok: true, none: true, approved: [] };
+    if (!on.length) {
+      // (APPROVEALL, Paul 12 Nov 2026: "when I press approve in the engraving modal ... There's no seal that comes. There's no stamp"): None approved leaves the person's seal ("no engraving",
+      //  engravePlain) on every face it took off this piece, stamped where Approve was pressed; the piece is then a regular order (it leaves the Design & Engrave lists, said by the toast)
+      const at = Date.now(), gone = jobsOf(line).filter(j => (j.slot || null) === slot && j.state === "none"), SL = window.CNEngravingSeals;
+      for (const j of gone) { try { if (SL && typeof SL.add === "function") SL.add(j, "engravePlain", by, at); j.row.engrave = Object.assign({}, j.row.engrave || {}, { seals: (j.engravingSeals || []).slice() }); } catch (_) { /* the decision stands without its seal */ } }
+      const btn = stampAt();
+      if (gone.length && btn && window.Seal && typeof Seal.stampOn === "function" && window.Motion && typeof Motion.layer === "function") {
+        try { const host = document.createElement("div"); host.setAttribute("aria-hidden", "true"); host.style.cssText = "position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none"; Motion.layer(btn).appendChild(host);
+          await Promise.race([Promise.resolve(Seal.stampOn(host, { btn, stamp: { id: `engravePlain:${at}:${by}`, how: "engravePlain", at, by } })).catch(() => {}), wait(2500)]); } catch (_) { /* the seal is kept; only its stamp is not drawn */ }
+      }
+      try { Session.schedule(); Orders.render(); } catch (_) { /* drawn with the next render */ }
+      return { ok: true, none: true, approved: gone.map(j => j.key) };
+    }
     if (o.approve === false) return { ok: true, kept: true, approved: [] };
     // (2) every engraved face read and fitted, with the staged words
     const decided = new Set(), fitting = new Set(), jobs = {};
@@ -10085,14 +10097,16 @@ const Engrave = window.Engrave = (() => {
         if (["approved", "written"].includes(j.state)) break;
         if (j.state === "review" && j.fit && j._placeAt && !lateTasks.has(j) && !isWorking(j)) { const pc = j._placeAt; delete j._placeAt; if (j.view && !j.fit.artOnly) { const c = viewPointOf(j.view, pc); try { if (c && moveTo(j, c)) j.nudged = true; } catch (_) { /* the system's place stands */ } } }   // (fitted by another path than prepareLate: the dragged place is put on it here)
         if (j.state === "review" && j.fit && !isWorking(j) && !lateTasks.has(j) && !j._placeAt && !fitTasks.get(j)) break;
-        if (["words", "blocked"].includes(j.state)) { if (!text || decided.has(j)) { why = j.reason || `the ${f} words need a decision`; break; } decided.add(j); await decideWords(j, { text, by, note: "edited" }); continue; }
+        if (["words", "blocked"].includes(j.state)) { if (!text && !decided.has(j) && typeof faceHasEditorArt === "function" && !engravedWords(j).length && faceHasEditorArt(j) && artOnlyPlacement(j)) { decided.add(j); continue; }   /* (APPROVEALL, Paul 12 Nov 2026: "the approved button breaks on front or back or front and back options": a face the Charm Editor drew whose words were taken off is approved as drawn, never refused for words) */
+          const said = text || (j.state === "words" ? String(j.text || "").trim() : "");   /* (APPROVEALL: Approve on words shown and not retyped approves those words) */
+          if (!said || decided.has(j)) { why = j.reason || `the ${f} words need a decision`; break; } decided.add(j); await decideWords(j, { text: said, by, note: "edited" }); continue; }
         if (["none", "skipped"].includes(j.state)) { why = `the ${f} is not engraved`; break; }
         if (OPENREAD.includes(j.state) && !preparingNow(j) && readsFree(j)) prepareLate(line).catch(() => {});
         else if (j.state === "ready" && !isWorking(j) && !lateTasks.has(j) && !fitTasks.get(j)) { if (!canFit(j)) { why = `the ${f} words wait for the piece's sheet`; break; } if (!fitting.has(j)) { fitting.add(j); fitJob(j).catch(() => {}); } }
         if (Date.now() > until) { why = `the ${f} words were not placed in time`; break; }
         await wait(60);
       }
-      if (why) return { ok: false, message: "Not approved: " + why.replace(/^(?:not approved:\s*)/i, ""), approved: [] };
+      if (why) { try { toast("Not approved: " + why.replace(/^(?:not approved:\s*)/i, ""), "bad", 7000); } catch (_) {} return { ok: false, said: true, message: "Not approved: " + why.replace(/^(?:not approved:\s*)/i, ""), approved: [] }; }   // (APPROVEALL: said where the person is, never silent)
     }
     if (overtaken()) return { ok: true, overtaken: true, approved: [] };   // (the faces are kept and fitted: the newer press approves them, as it stages them)
     // (3) a place dragged on a face whose job was there before this commit (placed, or opened again)
@@ -11963,7 +11977,11 @@ const Engrave = window.Engrave = (() => {
     const C = window.CharmNestCustomPiece, canReplace = !!(rid && C && typeof C.open === "function" && window.Pool && typeof Pool.addCustomPiece === "function");
     const back = t.job && t.from !== "card" ? { label: "Back to engraving", title: "This piece's engraving card in Design & Engrave" } : null;
     // (CES2, Paul 9 Nov 2026: "I want the pop-up to open on every Save": the Send to sheet pop-up opens over the card at once, set as a fix of this piece; a save that failed in part does not open it)
-    const designOf = () => Promise.resolve(o.design).then(d => d && d.id ? d : (window.CharmNestDesigns ? (CharmNestDesigns.rows() || []).find(r => r && r.id === "pc-" + poolId) || null : null));
+    // (DESIGNFIX, Paul 12 Nov 2026: "I couldn't save the order couldn't send it ... didn't show it in a preview": a Save that changed nothing, or whose library save failed, left no pc-<poolId> design, so
+    //  Send to sheet opened on nothing ("The design could not be read"): the piece's drawing as the editor holds it is put in the library first, then the pop-up opens on it)
+    let madeDesign = null;
+    const designOf = () => Promise.resolve(o.design).catch(() => null).then(d => d && d.id ? d : (window.CharmNestDesigns ? ((CharmNestDesigns.rows() || []).find(r => r && r.id === "pc-" + poolId) || madeDesign
+      || (res && res.faces && typeof CharmNestDesigns.put === "function" ? (madeDesign = CharmNestDesigns.put({ id: "pc-" + poolId, name: sku, faces: res.faces, source: { kind: "piece", poolId, sku }, orderId: rid || null, by: employeeName() || undefined }).then(v => v && v.id ? v : (v && v.design && v.design.id ? v.design : null)).catch(e => { console.warn("charm edit: design library", e); madeDesign = null; return null; })) : null)) : null));
     const over = canReplace && !o.partial ? () => designOf().then(d => d ? C.open({ orderId: rid, designId: d.id, version: d.version, after: true }) : null) : null;
     // (CPX1, Paul 9 Nov 2026: the order's Custom portion still open, done here on this piece: the card offers to complete it, at its top: charm-nest-custom-done.js)
     const customDone = rid && !o.partial ? { rid, savedKey: row && row.key ? String(row.key) : "", savedPoolIds: t.poolIds.slice(), sameOrder: true, back: back ? back.label : "",
@@ -11973,7 +11991,7 @@ const Engrave = window.Engrave = (() => {
       .then(c => {
         if (c === "again") { try { window.CharmEditor?.release?.("Opening this piece again…"); } catch (_) { /* fine */ } setTimeout(() => { openCharmEditor(x).catch(e => { letGo(); toast(`Charm Editor: ${(e && e.message) || e}`, "bad", 6000); }); }, 0); }
         else if (c === "back") { letGo(); charmEditBack(t); }
-        else if (c === "replace") Promise.resolve(o.design).then(d => C.open(Object.assign({ orderId: rid, fromEditor: true }, d && d.id ? { designId: d.id, version: d.version } : { designId: "pc-" + poolId }))).catch(e => toast(`Replace on the order: ${(e && e.message) || e}`, "bad", 6000)).finally(letGo);
+        else if (c === "replace") designOf().then(d => d && d.id ? C.open({ orderId: rid, fromEditor: true, designId: d.id, version: d.version }) : toast("Replace on the order: this piece's drawing could not be kept in the design library. Press Save in the Charm Editor again.", "bad", 8000)).catch(e => toast(`Replace on the order: ${(e && e.message) || e}`, "bad", 6000)).finally(letGo);
         else letGo();
       }, letGo);
     return true;
