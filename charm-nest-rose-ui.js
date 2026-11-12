@@ -13,7 +13,7 @@
   const fingerprint=s=>JSON.stringify((s.placements||[]).map(p=>[p.id,+p.cxPt.toFixed(3),+p.cyPt.toFixed(3),p.angle,p.scale||1,p.hash||s.charms?.find(c=>c.id===p.id)?.hash||null]));
   const refresh=sh=>{window.Session?.schedule();if(sh.el){C.renderCard(sh);C.drawPreview(sh);}};
   const parse=s=>s?JSON.parse(s):null;
-  const decode=cuts=>cuts.map(c=>({...c,plan:parse(c.planJson)}));
+  const decode=cuts=>cuts.filter(c=>c&&!c.setAsideAt).map(c=>({...c,plan:parse(c.planJson)}));   // (ASIDE, Paul 12 Nov 2026: a cut set aside draws nothing grey: it is no part of the sheet's history)
   const when=at=>Number.isFinite(at)?new Date(at).toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):null;
   const stamp=at=>Number.isFinite(at)?`<time datetime="${new Date(at).toISOString()}">${esc(when(at))}</time>`:'<span class="roseUndated">Time not recorded</span>';
   const count=list=>{const n=list?.length||0;return n+' charm'+(n===1?'':'s');};
