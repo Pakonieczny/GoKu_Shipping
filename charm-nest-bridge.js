@@ -9855,12 +9855,15 @@ const Engrave = window.Engrave = (() => {
   async function takeAway(job, by) {
     by = by || employeeName() || await needEmployee("Kept with this decision."); if (!by) return false;
     const was = job.text, had = ["approved", "written"].includes(job.state) || +job.approvedAt > 0 || (job.backs || []).length || (job.stagedBacks || []).length;
+    // (SEALKEEP, Paul 12 Nov 2026: "I want it kept": the seals this face already carries (every earlier approval, each with its name and time) stay in its history when it is taken off; the newest seal is the
+    //  "no engraving" one None + Approve presses on top of them. Read BEFORE its approval is cleared: an approval known only from approvedAt becomes a seal here)
+    let keptSeals = []; try { keptSeals = CNEngravingSeals.keep(job) || []; } catch (_) { keptSeals = (job.engravingSeals || []).slice(); }
     if (had) revokeBacks(job);
     if (EG.opened === job.key) EG.opened = null;
     const at = Date.now(), why = `no ${facedJob(job) ? faceWord(job) + " " : ""}engraving — removed by ${by}`;
-    Object.assign(job, { state: "none", reason: why, fit: null, approvedBy: null, approvedAt: null, decidedAt: null, decidedBy: null, backs: [], stagedBacks: [], engravingSeals: [], decision: { by, at, none: true, removed: true } });
+    Object.assign(job, { state: "none", reason: why, fit: null, approvedBy: null, approvedAt: null, decidedAt: null, decidedBy: null, backs: [], stagedBacks: [], engravingSeals: keptSeals.slice(), decision: { by, at, none: true, removed: true } });
     delete job.backPending; delete job.approvalIntent; delete job.writtenFit; delete job._backPreview;
-    job.row.engrave = { needed: false, state: "none", approved: true, reason: why, seals: [] };
+    job.row.engrave = { needed: false, state: "none", approved: true, reason: why, seals: keptSeals.slice() };   // (SEALKEEP)
     Review.remove("eng:" + job.key); CNListActivity.touch(job.row, at);
     wordsEvent(job, by, was, "removed");
     try { humanAct("note", { orderId: String(job.row.order.receiptId), line: String(job.row.line.transactionId || ""), detail: (isFront(job) ? "front " : "") + "engraving removed (a regular order)" }); } catch (_) {}
