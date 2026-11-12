@@ -13,6 +13,8 @@
   const fingerprint=s=>JSON.stringify((s.placements||[]).map(p=>[p.id,+p.cxPt.toFixed(3),+p.cyPt.toFixed(3),p.angle,p.scale||1,p.hash||s.charms?.find(c=>c.id===p.id)?.hash||null]));
   const refresh=sh=>{window.Session?.schedule();if(sh.el){C.renderCard(sh);C.drawPreview(sh);}};
   const parse=s=>s?JSON.parse(s):null;
+  /* (SUPERSEDED, Paul 12 Nov 2026: "the greys are overlapping with the real ones") a sheet has ONE cut on its physical sheet: the newest. An older cut by the same sheet (cut, reopened, cut again) is no part of the sheet's history and draws nothing grey */
+  const current=h=>{const seen=new Set();return [...h].sort((x,y)=>(+y.revision||0)-(+x.revision||0)).filter(c=>{const k=c&&c.sheetId;if(!k)return true;if(seen.has(k))return false;seen.add(k);return true;});};
   const decode=cuts=>cuts.filter(c=>c&&!c.setAsideAt).map(c=>({...c,plan:parse(c.planJson)}));   // (ASIDE, Paul 12 Nov 2026: a cut set aside draws nothing grey: it is no part of the sheet's history)
   const when=at=>Number.isFinite(at)?new Date(at).toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):null;
   const stamp=at=>Number.isFinite(at)?`<time datetime="${new Date(at).toISOString()}">${esc(when(at))}</time>`:'<span class="roseUndated">Time not recorded</span>';
@@ -23,7 +25,7 @@
     // An already cut layout can display the full physical history. An active
     // reservation must keep its original revision until prepare checks it.
     if(!sh.roseStock||sh.roseCutAt)sh.roseStock=result.stock;
-    sh.roseHistory=older?[...(sh.roseHistory||[]),...decode(result.cuts)]:decode(result.cuts);
+    sh.roseHistory=current(older?[...(sh.roseHistory||[]),...decode(result.cuts)]:decode(result.cuts));
     sh.roseMore=result.more;sh._roseLoaded=true;
     // (a cut on the stock a sheet HOLDS is an old cut it set aside when it was moved onto the leftover that cut made: the stock is its seat again, not cut)
     const completed=result.stock&&result.stock.owner===sh.sheetId?null:sh.roseHistory.find(c=>c.sheetId===sh.sheetId);if(completed){sh.roseCutAt=completed.at;sh.roseStock=result.stock;}
@@ -32,7 +34,7 @@
   }
   async function restore(sh,rec){
     const result=await api('roseGet',{stockId:rec.roseStockId,metal:sh.metal});
-    sh.roseStock=result.stock;sh.roseHistory=decode(result.cuts);sh.roseMore=result.more;sh.roseCutAt=rec.roseCutAt||null;sh.roseRevision=rec.roseRevision;sh.rosePlan=parse(rec.rosePlanJson);sh.rosePlanHash=rec.rosePlanHash;sh.roseProtected=parse(rec.roseProtectedJson);sh._roseLoaded=true;
+    sh.roseStock=result.stock;sh.roseHistory=current(decode(result.cuts));sh.roseMore=result.more;sh.roseCutAt=rec.roseCutAt||null;sh.roseRevision=rec.roseRevision;sh.rosePlan=parse(rec.rosePlanJson);sh.rosePlanHash=rec.rosePlanHash;sh.roseProtected=parse(rec.roseProtectedJson);sh._roseLoaded=true;
     sh.roseReopened=!rec.roseCutAt&&rec.roseReopened&&rec.roseReopened.cut?rec.roseReopened:null;   // (a recorded cut set aside by a change by hand, not recorded again yet: said on the card, reopen below)
   }
   function protect(sh){
@@ -271,7 +273,7 @@
     }
     // (the cuts the stock already holds stay on the card: a sheet that was moved onto the leftover its own cut made cuts again, and both cuts are shown, each with its date;
     //  only a copy of THIS cut, a retry of the same press, is replaced)
-    sh.roseCutAt=r.cut.at;sh.roseStock=r.stock;sh.roseHistory=[...decode([r.cut]),...(sh.roseHistory||[]).filter(c=>c.revision!==r.cut.revision)];
+    sh.roseCutAt=r.cut.at;sh.roseStock=r.stock;sh.roseHistory=current([...decode([r.cut]),...(sh.roseHistory||[]).filter(c=>c.revision!==r.cut.revision)]);
     delete sh.roseReopened;delete sh.roseRedraw;   // (a cut set aside by a change by hand is recorded again: the card's note goes, nothing is owed)
     refresh(sh);C.toast(`Sheet cut · the next ${word(sh)} charms nest past this green line`,'ok');
     // a pair (or any order) with a piece on another sheet: said plainly once the cut is recorded (the cut and its record are permanent, nothing is blocked)
@@ -313,7 +315,7 @@
     slot.hidden=!cuttable;
     slot.innerHTML=cuttable?`<button class="btn ghost xs" data-rose="cut" ${busy?'disabled':''}>Cut Sheet</button>`:'';
     // (Paul, 27 Oct 2026: a 10K / 14K sheet's recorded green line cut set aside because its charms changed by hand, reopen: said here until its Cut Sheet press records it again)
-    const reopened=sh.roseReopened&&sh.roseReopened.cut&&!sh.roseCutAt&&!(+sh.laserDoneAt>0)?`<p class="roseError" role="note" data-rose-reopened>Its charms changed after its green line was approved${sh.roseReopened.cutAt&&when(+sh.roseReopened.cutAt)?` (${esc(when(+sh.roseReopened.cutAt))})`:''}: ${sh.roseRedraw&&sh.roseRedraw.line?'the line is drawn again for the charms as they now stand, then ':''}press Cut Sheet to approve its green line again.</p>`:'';
+    const reopened=sh.roseReopened&&sh.roseReopened.cut&&!sh.roseCutAt&&!sh.draft&&sh.setId&&!(+sh.laserDoneAt>0)?`<p class="roseError" role="note" data-rose-reopened>Its charms changed after its green line was approved${sh.roseReopened.cutAt&&when(+sh.roseReopened.cutAt)?` (${esc(when(+sh.roseReopened.cutAt))})`:''}: ${sh.roseRedraw&&sh.roseRedraw.line?'the line is drawn again for the charms as they now stand, then ':''}press Cut Sheet to approve its green line again.</p>`:'';
     host.innerHTML=`${busy?`<div class="help" role="status"><i class="spin"></i> ${busyWord}</div>`:''}${sh._roseError?`<p class="roseError" role="alert">${esc(sh._roseError)}</p>`:''}${reopened}${marks}`;
     host.classList.toggle('roseEmpty',!host.innerHTML);
     // a failure is shown once, where it happened (the alert under the button); a pop-up used to repeat it
