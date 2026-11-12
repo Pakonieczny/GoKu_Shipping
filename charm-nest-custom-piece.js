@@ -720,8 +720,10 @@
      line has no piece in the pool yet (nothing an edit could be kept on). */
   function plainPieceOf(x, prefer) {
     const row = rowsOf(x)[0]; if (!row || !row.order) return null;
-    const rid = String(row.order.receiptId), want = ownPool(rid, prefer) ? String(prefer) : ((row.poolIds || []).map(String).find(id => ownPool(rid, id)) || '');
-    const line = want ? pieceLineOf(x, row, rid, want) : null;
+    // (a piece not pooled yet (nesting paused, held, waiting) opens on the pool id it WILL get (Pool.previewIds, else <receipt>_<transaction>_1), its charm read from the master library as its engraving card's button does)
+    const rid = String(row.order.receiptId), P = root.Pool, pre = (row.poolIds || []).length ? '' : (((P && typeof P.previewIds === 'function' ? P.previewIds(row) : null) || []).map(String).find(id => ownPool(rid, id)) || (row.line && row.line.transactionId != null ? `${rid}_${row.line.transactionId}_1` : ''));
+    const want = ownPool(rid, prefer) ? String(prefer) : ((row.poolIds || []).map(String).find(id => ownPool(rid, id)) || pre);
+    const line = want ? (pieceLineOf(x, row, rid, want) || (want === pre ? row : null)) : null;
     return line ? { rid, poolId: want, row: line, att: null } : null;
   }
   /** The piece of order `rid` the order window has chosen now (EDITTARGET): on its Sheet tab the charm picked on the sheet, else the line picked in "Its pieces" (its first copy); '' for none. */

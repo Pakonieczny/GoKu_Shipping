@@ -5699,6 +5699,7 @@ const Pool = window.Pool = (() => {
      made by makePool itself and kept only in memory, so the line's engraving can be read, fitted, edited and approved before its pieces are pooled or nested, and whatever a Hold does to the line.
      Nothing is recorded or placed: no pool row, sheet or set is touched, the line's state, reason and problems are put back as they were, and the first copy never takes the shared master drawing (it
      is cloned like every other copy). The pool ids are the very ones pooling will give (O.poolId), so a job made on them is the job the pooled piece keeps. */
+  const previewKeep = new Set();   // (PREVIEWKEEP: the pieces whose preview is never let go: an engraved line's)
   const previews = new Map(), previewIdsOf = new Map(), previewSigs = new Map(), previewTasks = new Map(), PREVIEW_MAX = 600;
   async function preview(row) {
     row = (row && row.parentRow) || row;
@@ -5727,7 +5728,11 @@ const Pool = window.Pool = (() => {
     if (!prep || !prep.pools || !prep.pools.length) return none();
     const ids = [];
     prep.pools.forEach((pl, i) => { const c = prep.charms[i]; if (!pl.poolId || !c) return; ids.push(pl.poolId); previews.delete(pl.poolId); previews.set(pl.poolId, c); });
-    while (previews.size > PREVIEW_MAX) previews.delete(previews.keys().next().value);
+    /* PREVIEWKEEP (Paul, 12 Nov 2026: "missing the grid and the bottom options ... This should be universal", and "no charm ×13" on the bottom buttons): with nesting paused and ~480 orders pulled,
+       more than PREVIEW_MAX pieces had a preview, and the oldest were dropped, engraved ones too: their card lost its charm (no grid, no handles, every control said "no charm"). A piece whose line
+       is engraved keeps its preview; only the others are let go, oldest first. */
+    if (row.spec && row.spec.engraveCandidate) for (const id of ids) previewKeep.add(id);
+    if (previews.size > PREVIEW_MAX) for (const id of [...previews.keys()]) { if (previews.size <= PREVIEW_MAX) break; if (!previewKeep.has(id)) previews.delete(id); }
     previewIdsOf.set(row.key, ids);
     return ids;
   }
@@ -9469,8 +9474,11 @@ const Engrave = window.Engrave = (() => {
     // (unchanged since the last time: only the charm a reload let go is made again, so approving and editing work)
     const ids = row.poolIds || [], real = ids.length && Pool.charmOf(ids[0]);
     if (!real && !earlyHeld(row)) {
+      const designOf = j => { const c = Pool.previewCharmOf((j.copies || [])[0]), b = c && c.bbox; return c ? String(c.sku || "") + "|" + (b ? Math.round(b[2] - b[0]) + "x" + Math.round(b[3] - b[1]) : "") : ""; }, was = new Map(had.map(j => [j, designOf(j)]));
       await Pool.preview(row);
       if (items() !== owner || row.state === "gone") return [];
+      // (CHANGESKU: a line not nested yet made up as ANOTHER design (Change SKU, a listing pick): its jobs were fitted on the old preview charm; asked again and fitted on the new one, as repoolLine's "design changed" does for a pooled line)
+      if (had.some(j => j.pre && was.get(j) && designOf(j) && was.get(j) !== designOf(j))) { if (row.engrave) Object.assign(row.engrave, { invalidatedBy: "design changed", approved: false, state: "reclassify" }); invalidate(row, "design changed"); }
     }
     if (!had.length && !real && !Pool.previewIds(row).length) { earlySigs.set(row.key, sig); return []; }   // (no charm can be made for it: no job, no card to open)
     await loadFonts();
@@ -19550,6 +19558,8 @@ const Review = window.Review = (() => {
     try {
     row.changePending=false; row.problems = []; row.state = "pulled"; row.reason = null; row.hold = null; Orders.interpretAll(); if (row.problems.length) { Orders.render(); return; } if (B.run && O.stepIndex(B.run.step) >= O.stepIndex("pool")) { try { await Pool.poolAdd(row, B.run); } catch (e) { row.state = "held"; row.reason = e.message; } if (row.state === "pooled" && row.spec.engraveCandidate) Engrave.classify(row).catch(() => {}); }
     } finally { inPlaceSettle(row); if (keptHold && !row.hold && ["pooled", "pulled"].includes(row.state)) { row.hold = row.reason = keptHold; row.state = "held"; } }
+    // (CHANGESKU: a line still not pooled keeps its early engraving job (ENGPRE): made again on the charm the line reads now: Engrave.early previews it again and, when the design changed, asks its words again and fits them)
+    try { if (!(row.poolIds || []).length && Engrave.jobsOf(row).length) Engrave.early(row); } catch (_) { /* the next engraving pass makes it */ }
     syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); if (OrderWin.isOpen()) OrderWin.paint(); RunCtl.poke(); }
   /* INPLACE (Paul, 20 Oct 2026) · the sheets a replaced line's old pieces left, once its new pieces joined (Pool's inPlaceAttach: in the old spots, or on the latest unfinished sheet): each is
      written AS IT STANDS (CNManual.writeInPlace: the page's writeAsPlaced, no nest search, every charm where it is; its QR label made again), with the new piece in the old spot or the spot

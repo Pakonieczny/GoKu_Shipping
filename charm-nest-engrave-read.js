@@ -250,6 +250,21 @@
 
   const tidy = s => restore(str(s)).split('\n').map(l => l.replace(/[ \t]+/g, ' ').replace(/^(?:[\s,;|/&+:=]|[\u2013\u2014-]+(?=\s))+/, '').replace(/(?:[\s,;|/&+]|\band\b|\s[\u2013\u2014-]+)+$/i, '').trim()).filter(Boolean).join('\n');   // (a minus sign that belongs to a number, "-96.7", stays)
 
+  /* INTRO (order 4226903382: "Engrave the text using Bickham Script Pro 3 as a font. This is the text:    23.11.2025" was engraved whole): a phrase that NAMES the words ("this is the text:", "the text is",
+     "the words are", "the engraving should read", "the text:") after a request to the shop: what follows it is the inscription, the request before it a note (its font is the font reader's, spec.fontText).
+     Only when the request before it asks or names a font (or the phrase is "this is the text" / ends in a colon) and the words after it are short and ask nothing; otherwise the text is left as it was. */
+  const INTRO_RX = /(?:^|[\s.!?;:,])((?:(?:this|here)\s+is\s+|and\s+)?the\s+(?:text|words?|wording|inscription|engraving)\s*(?::|(?:is|are|should\s+(?:be|read|say)|(?:will\s+)?reads?|says?)\s*:?))\s*/gi;
+  function introWords(s, out) {
+    let m, last = null; INTRO_RX.lastIndex = 0;
+    while ((m = INTRO_RX.exec(s))) { last = m; if (!m[0].length) INTRO_RX.lastIndex++; }
+    if (!last) return s;
+    const at = last.index + last[0].indexOf(last[1]), lead = s.slice(0, at), rest = s.slice(last.index + last[0].length);
+    const plain = /^(?:this|here)\s+is\b/i.test(last[1]) || /:\s*$/.test(last[1]);
+    if (!rest.trim() || REQUEST_CUE.test(rest) || wordCount(rest) > 12) return s;
+    if (lead.trim() ? !(REQUEST_CUE.test(lead) || /\b(?:fonts?|typeface|lettering)\b/i.test(lead)) : !plain) return s;
+    out.dropped.push({ text: oneLine(restore(s.slice(0, last.index + last[0].length))), why: 'a request to the shop; the words follow it' });
+    return rest;
+  }
   function readPersonalisation(text, o) {
     o = o || {};
     const lengths = (Array.isArray(o.lengths) ? o.lengths : []).map(Number).filter(n => n > 0);
@@ -259,7 +274,7 @@
     const lay = layoutClause(raw); if (lay) { out.layoutRequest = true; out.layoutNote = clip(lay, 200); }
     // SYMWORD: a bracketed sign name is the sign, read before the brackets that talk to the shop are taken out ("(heart symbol)" would otherwise be read as a note)
     const sy = fixSymbols(raw); if (sy.count) out.fixes.push({ kind: 'symbol', count: sy.count, signs: sy.signs });
-    let s = peelBrackets(sy.text, out);
+    let s = introWords(peelBrackets(sy.text, out), out);
     // the labels (on the text with the notes taken out, so a note can never hide or fake one)
     const labels = findLabels(s, lengths);
     const finish = (words, extra) => {
