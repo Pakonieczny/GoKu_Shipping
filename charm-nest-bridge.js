@@ -2340,7 +2340,7 @@ const Orders = window.Orders = (() => {
     let mode = ""; try { mode = F.setupOf(r).mode; } catch (_) { /* a line the model cannot read has no chip */ }
     return mode === "both" ? ["info", "Front + back"] : mode === "front" ? ["info", "Front only"] : ["", ""];
   }
-  const OV = { pile: null, metal: null, form: null, eng: null, act: null, stage: null, q: "", view: null, sort: "activity", desc: false, limit:48 };   // what the tab is showing right now   (act: RQFILTER, null | "hold" | "qr" | "both")
+  const OV = { pile: null, metal: null, form: null, eng: null, act: null, stage: null, q: "", view: null, sort: null, desc: false, limit:48 };   // (ORDERDATE: sort null is the pile's own default, sortKey)   // what the tab is showing right now   (act: RQFILTER, null | "hold" | "qr" | "both")
   // (CMP1, Paul 9 Nov 2026: "remove the option for list or card review since it's not needed anymore": the Orders tab is always the list; a saved orderView / OV.view of "cards" is ignored)
   const viewMode = () => "list";
   /* CMP1 (Paul, 9 Nov 2026): a shipped order is no open order: it leaves Open Orders (its rows, its count, the tab's count) and is listed under Completed (charm-nest-completed.js, CNCompleted:
@@ -2404,7 +2404,7 @@ const Orders = window.Orders = (() => {
   /** The lines the filters leave, in ship-by order. */
   function visibleRows() {
     // (PERF, Oct 2026: each row's activity time is worked out once for this sort, and the date range and direction read once, not per row)
-    const q = OV.q.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean), times = new Map(), act = CNListActivity.state("orders"), flow = OV.stage ? flowNow() : null;
+    const q = OV.q.trim().toLowerCase(), words = q.split(/\s+/).filter(Boolean), times = new Map(), act = CNListActivity.state("orders"), flow = OV.stage ? flowNow() : null, sk = sortKey(), sd = sortDir();
     return listRows().filter(r => {
       if (!openRow(r)) return false;   // (CMP1: a shipped order is under Completed; CNT1: a cancelled one under Cancelled)
       if (OV.stage && flow && flow.byRid.get(String(r.order.receiptId)) !== OV.stage) return false;   // (FLW1: a step of the rail's flow pressed)
@@ -2417,13 +2417,16 @@ const Orders = window.Orders = (() => {
       const hay = findText(r);
       return words.every(w => hay.includes(w));
     }).filter(r => CNListActivity.matches(r, act.range)).sort((x, y) => {
-      if (OV.sort === "activity") return CNListActivity.compare(x,y,act.direction,times);
-      const k = OV.sort === "arrival" ? (O.orderPlacedAt(y) - O.orderPlacedAt(x)) : OV.sort === "order" ? String(x.order.receiptId).localeCompare(String(y.order.receiptId))
-        : OV.sort === "state" ? String(x.state).localeCompare(String(y.state))
+      // (ORDERDATE, Paul 11 Nov 2026: the key and direction the Filters panel shows, read once: sortKey / sortDir)
+      if (sk === "activity") return CNListActivity.compare(x,y,sd,times);
+      const k = sk === "arrival" ? (O.orderPlacedAt(x) - O.orderPlacedAt(y)) : sk === "order" ? String(x.order.receiptId).localeCompare(String(y.order.receiptId))
+        : sk === "state" ? String(x.state).localeCompare(String(y.state))
         : (x.order.shipBy || 0) - (y.order.shipBy || 0);
-      return (OV.desc ? -k : k) || String(x.order.receiptId).localeCompare(String(y.order.receiptId));
+      return (sd === "desc" ? -k : k) || String(x.order.receiptId).localeCompare(String(y.order.receiptId));
     });
   }
+  /** ORDERDATE (Paul, 11 Nov 2026: "beside each order number ... make it clearly visible the time the date that it was ordered ... clearly separate from the SKU"): the day and the time of the order, on a chip of its own. */
+  function orderedHtml(date) { return date && date.short ? `<i>Ordered</i><b>${esc(date.short)}</b><span>${esc(date.time)}</span>` : `<i>Ordered</i><b>${esc((date && date.label) || "date unknown")}</b>`; }
   function imageFor(r) { return ListMedia.peek(r.line.listingId); }
   function wantImage(lid) {
     return ListMedia.listing(lid).then(url=>{
@@ -2801,7 +2804,7 @@ const Orders = window.Orders = (() => {
       + (said && text(V[0]) ? `<div class="engravingIdentity ogSaid"><span class="purchaseLabel">${label(V[0])}</span><span class="rowExcerpt ${excerptCls(label(V[0]))}" title="${esc(text(V[0]))}">${esc(text(V[0]))}</span></div>` : "")
       + `<div class="rowActions ogActs">${team ? TeamMail.mark(first) : ""}${mail && mail !== "null" ? CustomerMail.badge(rid) : ""}<span class="rowFacts"><span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${held.length ? relHoldHtml() : ""}${trav.html}${relSlotHtml(rel)}</div></div>`
       + `<div class="ogPieces">${V.map(piece).join("")}</div>`;
-    const number = node.querySelector(".onum"); if (number) { const time = el("span", "orderTime"); time.textContent = date.time; time.title = date.label; number.appendChild(time); }
+    const number = node.querySelector(".onum"); if (number) { const time = el("span", "orderTime"); time.innerHTML = orderedHtml(date); time.title = "Ordered " + date.label + (date.time ? " at " + date.time : ""); number.appendChild(time); }
     // a press on a piece opens the order window on THAT piece (picked in "Its pieces"); a press on the top, the order
     for (const n of node.querySelectorAll(".ogPiece")) {
       const r = rows.find(x => x.key === n.dataset.key), go = () => OrderWin.open(r.key, { from: n, pick: true });
@@ -2881,10 +2884,10 @@ const Orders = window.Orders = (() => {
     if (showing && !filling && list.childElementCount === 0 && shown.length > FIRST_ROWS(host, cards)) { shown = shown.slice(0, FIRST_ROWS(host, cards)); if (!fillAsked) fillAsked = idleSoon(() => { fillAsked = 0; filling = true; try { renderBody(); } finally { filling = false; } }); }   // (round 5: the first screen now, the rest at idle)
     // a heading counts its day's orders in the list: counted only where headings are drawn, for the days on screen
     const dayCounts=new Map();
-    if(OV.sort==='arrival'){for(const g of shown)dayCounts.set(dayOf(g.rows[0]).key,new Set());for(const row of rows){const ids=dayCounts.get(dayOf(row).key);if(ids)ids.add(row.order.receiptId);}}
+    if(sortKey()==='arrival'){for(const g of shown)dayCounts.set(dayOf(g.rows[0]).key,new Set());for(const row of rows){const ids=dayCounts.get(dayOf(row).key);if(ids)ids.add(row.order.receiptId);}}
     for (const g of shown) {
       const r=g.rows[0],date=dayOf(r);
-      if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;heading.dataset.mkey='day:'+date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} order${dayCounts.get(date.key).size === 1 ? "" : "s"} · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;wanted.push(heading);lastDay=date.key;}
+      if(sortKey()==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;heading.dataset.mkey='day:'+date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} order${dayCounts.get(date.key).size === 1 ? "" : "s"} · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;wanted.push(heading);lastDay=date.key;}
       if (g.rows.length > 1) { wanted.push(groupNode(g, date, cards, { mounts, pairs, rebuilt })); continue; }
       const { sp, m, st, shown, due, where, fc, attn, why, gateBtn, mail, team, sealRec, seals, held, rel } = lineView(r), sealM = cardSeals(g.rows), e = engLine(r), trav = travelSlot(g.rows);
       const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,held,r.wait,why,where,due,date,mail,team,seals&&CustomPrint.sealSig(sealRec),fc[1],relSig(rel),sealM ? sealM.sig : "",trav.sig,e ? e.sig : ""]);
@@ -2896,7 +2899,7 @@ const Orders = window.Orders = (() => {
       const qty = sp.quantity || r.line.quantity || 1;
       const identity=lineIdHtml(r, e, { num: true, label: wordsOf(sp) ? "Personalisation" : "Item", text: wordsOf(sp) || r.line.title || "", where });
       node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div>${lineSealsHtml(r, e, null)}<div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}${shown ? `<span class="ost ${shown[0]}">${esc(shown[1])}</span>` : ""}${fc[1] && !e ? `<span class="ost ${fc[0]} engFaces" title="${fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${fc[1]}</span>` : ""}${seals}<span class="rowFacts">Qty ${qty}${earPairRow(r) ? pairFactOf(qty) : O.countedFact(r)} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${held ? relHoldHtml() : ''}${trav.html}${gateBtn}${relSlotHtml(rel)}</div>`;
-      const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
+      const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.innerHTML=orderedHtml(date);time.title="Ordered "+date.label+(date.time?" at "+date.time:"");number.appendChild(time);}
       // (the order view grows out of the row that was clicked)
       node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key, { from: node }); };
       node.onkeydown=e=>{if(e.target===node && (e.key==="Enter" || e.key===" ")){e.preventDefault();OrderWin.open(r.key, { from: node });}};
@@ -2959,17 +2962,23 @@ const Orders = window.Orders = (() => {
   const SORTS = [["activity", "Last activity", "Activity"], ["arrival", "Order date", "Ordered"], ["due", "Ship-by date", "Ship-by"], ["order", "Order number", "Order #"], ["state", "State", "State"]];   // (id, words, the short words a phone's one line has room for)
   const SORT_NATURAL = { activity: "desc", arrival: "desc", due: "asc", order: "asc", state: "asc" };   // the direction each key has until it is reversed (OV.desc; the activity key's own is the shared one)
   const SORT_WORDS = { activity: { desc: "Newest first", asc: "Oldest first" }, arrival: { desc: "Newest first", asc: "Oldest first" }, due: { asc: "Soonest first", desc: "Latest first" }, order: { asc: "Lowest number first", desc: "Highest number first" }, state: { asc: "A to Z", desc: "Z to A" } };
-  const sortKey = () => OV.pile === "cancelled" ? "activity" : OV.pile === "completed" ? (CMP_SORTS.some(k => k[0] === OV.sort) ? OV.sort : "activity") : (SORT_NATURAL[OV.sort] ? OV.sort : "activity");   // (the Cancelled pile is read newest or oldest first, by activity, and nothing else; Completed by its shipped time, order date or number)
-  const sortDir = () => { const k = sortKey(); if (k === "activity") return CNListActivity.state("orders").direction; const nat = SORT_NATURAL[k]; return OV.desc ? (nat === "asc" ? "desc" : "asc") : nat; };
+  /* ORDERDATE (Paul, 11 Nov 2026: "when I filter these by oldest first or newest first it actually doesn't filter correctly ... some of the orders need to be shipped by November 16 and some of them
+     November 12 November 13. It's all over the place."). The open orders were sorted by their last activity, and a fresh pull touches every order at once, so "Oldest first" was the order the pull
+     reached them in. The open orders now sort by the day they were ordered unless another key is picked, and Order date keeps its direction (Newest / Oldest first) the way Last activity does: the
+     "orders" scope's direction, kept on this computer. Completed (shipped time) and Cancelled keep last activity. */
+  const sortDefault = () => (OV.pile === "cancelled" || OV.pile === "completed" ? "activity" : "arrival");
+  const sharedDir = k => k === "activity" || k === "arrival";
+  const sortKey = () => OV.pile === "cancelled" ? "activity" : OV.pile === "completed" ? (CMP_SORTS.some(k => k[0] === OV.sort) ? OV.sort : "activity") : (SORT_NATURAL[OV.sort] ? OV.sort : "arrival");   // (the Cancelled pile is read newest or oldest first, by activity, and nothing else; Completed by its shipped time, order date or number)
+  const sortDir = () => { const k = sortKey(); if (sharedDir(k)) return CNListActivity.state("orders").direction; const nat = SORT_NATURAL[k]; return OV.desc ? (nat === "asc" ? "desc" : "asc") : nat; };
   /* CMP1 (Paul, 9 Nov 2026: "consolidate with the Anytime and last activity under the filters"): the date menu and the sort control are no longer in the bar. They are two sections of the Filters panel,
      "Time" (the five ranges) and "Sort by" (the keys, and the direction under them), drawn as the panel's chips; the state is the same (the activity range and direction of the "orders" scope, OV.sort,
      OV.desc). The Filters badge counts a range other than Any time and a sort other than the default (Last activity, newest first) too, and both are gold chips under the bar while they are in force. */
   const CMP_SORTS = [["activity", "Shipped date", "Shipped"], ["arrival", "Order date", "Ordered"], ["order", "Order number", "Order #"]];   // (the Completed pile: newest shipped first by default)
   const sortKeysNow = () => OV.pile === "cancelled" ? [] : OV.pile === "completed" ? CMP_SORTS : SORTS;
   const sortWordsOf = (k, d) => (k === "activity" && OV.pile === "completed" ? { desc: "Newest shipped first", asc: "Oldest shipped first" } : SORT_WORDS[k] || SORT_WORDS.activity)[d];
-  const sortIsDefault = () => sortKey() === "activity" && sortDir() === "desc";
-  function setSortDir(d) { const k = sortKey(); if (k === "activity") CNListActivity.set("orders", { direction: d === "asc" ? "asc" : "desc" }); else OV.desc = d !== SORT_NATURAL[k]; }
-  function resetSort() { OV.sort = "activity"; OV.desc = false; CNListActivity.set("orders", { direction: "desc" }); }
+  const sortIsDefault = () => sortKey() === sortDefault() && sortDir() === "desc";
+  function setSortDir(d) { const k = sortKey(); if (sharedDir(k)) CNListActivity.set("orders", { direction: d === "asc" ? "asc" : "desc" }); else OV.desc = d !== SORT_NATURAL[k]; }
+  function resetSort() { OV.sort = null; OV.desc = false; CNListActivity.set("orders", { direction: "desc" }); }
   const ordBar = () => document.getElementById("ordBar");
   const ordIcons = () => window.CNListActivity.icons;
   /** The Cancelled pile reads from the library: the busy state lasts until that read has landed (at most 20 s). */
@@ -11235,7 +11244,10 @@ const Engrave = window.Engrave = (() => {
   /** The "Open in Charm Editor" button of the card whose work area is `host` (of `job`; `bc` its canvas, none while the face waits for words), in the card's head beside its ×: ONE per card, the
    *  same node through every drawing of the work area (it follows the face in front), and the last save's note on the work area. Null when the piece cannot be opened here. */
   function charmEditButton(host, bc, job) {
-    if (!host || !charmEditTarget(job)) return null;   // (EDITOR WORDS, 27 Oct 2026: a face still waiting for words has no drawing (bc) yet; the button is on its card too, so the art can be drawn first and no words are needed to reach the editor)
+    /* CEALWAYS (Paul, 11 Nov 2026: "The 'Open in Charm Editor' button is missing from a lot of the orders in the engraving Modal ... that button must be always exposed and always visible"). It was
+       drawn only when the piece's charm was already drawn on this page (charmEditTarget: a pooled, nested piece), so with nesting paused most cards had none. Every engraving card has it now: the
+       press loads the charm from the master library when this page has not drawn it (charmEditLoad), and says on the card when it cannot. */
+    if (!host || !window.CharmEditor || !window.CharmNestArtEdit || !charmEditPiece(job)) return null;   // (EDITOR WORDS, 27 Oct 2026: a face still waiting for words has no drawing (bc) yet; the button is on its card too, so the art can be drawn first and no words are needed to reach the editor)
     charmEditCss();
     // (CEBTN, Paul 28 Oct 2026: "relocate the 'Open In Charm Editor' button": at the top left of the card's work area, level with Approve at its top right (charm-nest-activity.css))
     const card = host.closest ? host.closest(".rvItem") : null, main = host.closest ? host.closest(".pvMain") : null, head = card && card.querySelector(":scope > .rh"), at = main || head || host;
@@ -11751,7 +11763,7 @@ const Engrave = window.Engrave = (() => {
     const by = employeeName() || await needEmployee("Kept with this charm's artwork edit.", { action: "edit this charm's artwork" }); if (!by) return null;   // (SIGNIN, 27 Oct 2026: put away, a note says why)
     try { await AE.sync(); } catch (e) { console.warn("charm edit: artwork edits", e); }   // (an edit saved on another computer since is on the piece before it is opened)
     let t = null; try { t = await charmEditLoad(x); } catch (e) { const p = charmEditPiece(x); if (p) charmEditTell(p, `This piece's charm could not be read · ${(e && e.message) || e}`, true); return null; }
-    if (!t) { const p = charmEditPiece(x); if (p && p.from !== "card") charmEditTell(p, "This piece's charm drawing is not in the master library: it cannot be opened in the Charm Editor", true); return null; }
+    if (!t) { const p = charmEditPiece(x); if (p) charmEditTell(p, "This piece's charm drawing is not in the master library: it cannot be opened in the Charm Editor", true); return null; }   // (CEALWAYS: said on the card too, now that every card has the button)
     const job = t.job;
     if (t.poolIds.some(id => { const pj = jobsOfPiece(id); return [pj.front, pj.back].some(j => j && decidedBusy(j)); })) { toast("This piece's approval is still being saved · open the Charm Editor in a moment", "", 4000); return null; }
     const poolId = t.poolIds[0], charm = t.charm, row = t.row || (job && job.row) || null, sp = (row && row.spec) || {}, sku = sp.designSku || (row && row.line && row.line.sku) || charm.name || "Charm";
@@ -23111,11 +23123,13 @@ const OrderWin = window.OrderWin = (() => {
     wireZoom();
     // the buyer's message chip carries the Customer tab's own unread dot: it follows that dot (the mail module sets it as threads change)
     tryDo(() => { const dot = W.dlg.querySelector('[data-ow-tab="customer"] .owDot'); if (dot && window.MutationObserver) new MutationObserver(() => { const r = W.dlg.open && !W.closing && rowOf(W.key); if (r && !r.loading) paintFacts(r); }).observe(dot, { attributes: true, attributeFilter: ["hidden", "class"] }); });
-    byId("owSuggest").onclick = () => charmFix(false);   // (SKUCARD: the suggested charms, shown or put away; "Wrong charm?" of the Orders cards opens them)
+    /* SKUOPEN (Paul, 11 Nov 2026: "this option was blocked for some employees, I need you to unblock this and make sure that everyone can use all these options without restriction"): Copy, Suggest
+       and Change are never greyed out. Suggest with no similar charm in the repo opens Change's search of the whole repo; a piece that cannot be changed says why on the press (openEditSku). */
+    byId("owSuggest").onclick = () => { const r = W.key ? rowOf(W.key) : null; if (r && !r.loading && W.skuCh && String(W.skuCh.sig).startsWith(r.key + "|") && !W.skuCh.list.length) { openEditSku(); return; } charmFix(false); };   // (SKUCARD: the suggested charms, shown or put away; "Wrong charm?" of the Orders cards opens them)
     byId("owEditSku").onclick = () => openEditSku();   // (EDITSKU, Paul 26 Oct 2026)
     // (Copy says it on the button itself: a tick and "Copied" for a moment)
     byId("owCopy").onclick = async () => {
-      const b = byId("owCopy"), r = rowOf(W.key); const sku = r && ((r.spec && (O.setDesignsOf(r.spec) || []).join(" + ")) || (r.spec && r.spec.designSku) || r.line.sku); if (!sku) return;
+      const b = byId("owCopy"), r = rowOf(W.key); const sku = r && ((r.spec && (O.setDesignsOf(r.spec) || []).join(" + ")) || (r.spec && r.spec.designSku) || r.line.sku); if (!sku) { toast("This piece has no SKU to copy yet: use Change to give it one", "bad", 4000); return; }
       try { await navigator.clipboard.writeText(sku); } catch (_) { toast("Copy did not work: select the SKU and copy it", "bad", 3000); return; }
       const t = b.querySelector("span"); b.classList.add("done"); t.textContent = "Copied"; clearTimeout(b._done); b._done = setTimeout(() => { b.classList.remove("done"); t.textContent = "Copy"; }, 1600);
     };
@@ -23864,12 +23878,12 @@ const OrderWin = window.OrderWin = (() => {
     if (st === "linked") via.innerHTML = `${SKI.via}<span>Etsy</span><b>${esc(etsy)}</b>`;
     // the three buttons
     const eo = r.loading || !window.Review || !Review.editSkuOffer ? { ok: false, why: "the piece is not read yet" } : tryDo(() => Review.editSkuOffer(r)) || { ok: false };
-    const eb = byId("owEditSku"); eb.disabled = !eo.ok; eb.title = eo.ok ? `Change the SKU of listing ${eo.lid}: Etsy, the charm and the sheets together` : `Change SKU: ${eo.why || "not for this piece"}`;
+    const eb = byId("owEditSku"); eb.disabled = false; eb.dataset.offer = eo.ok ? "1" : "0"; eb.title = eo.ok ? `Change the SKU of listing ${eo.lid}: Etsy, the charm and the sheets together` : `Change SKU: ${eo.why || "not for this piece"}`;
     const sig = [r.key, design, etsy, B.master.entries.size, eo.ok].join("|");
     if (!W.skuCh || W.skuCh.sig !== sig) W.skuCh = { sig, list: eo.ok && Review.editSkuChoices ? (tryDo(() => Review.editSkuChoices(r)) || []) : [] };
     const choices = W.skuCh.list, sg = byId("owSuggest");
     byId("owSuggestN").textContent = choices.length ? String(choices.length) : "";
-    sg.disabled = !eo.ok || !choices.length; sg.title = !eo.ok ? `Suggest: ${eo.why || "not for this piece"}` : choices.length ? `${choices.length} similar charm${choices.length === 1 ? "" : "s"} in the repo` : "No similar charms found: use Change to search the repo";
+    sg.disabled = false; sg.title = !eo.ok ? `Suggest: ${eo.why || "not for this piece"}` : choices.length ? `${choices.length} similar charm${choices.length === 1 ? "" : "s"} in the repo` : "No similar charm found: press to search the whole repo";   // (SKUOPEN: never greyed out)
     // the tray: opened by Suggest, by "Wrong charm?", or at once for a line no charm matches
     if (W.sgKey !== r.key && !r.loading) { W.sgKey = r.key; W.sgOpen = (st === "none" && choices.length > 0) || W.sgWant === r.key; W.sgWant = null; }
     else if (W.sgWant === r.key) { W.sgOpen = true; W.sgWant = null; }

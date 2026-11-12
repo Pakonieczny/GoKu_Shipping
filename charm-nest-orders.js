@@ -5062,14 +5062,14 @@
   const dayFormats = new Map();
   function dayFormat(timeZone) {
     let f = dayFormats.get(timeZone);
-    if (!f) dayFormats.set(timeZone, f = { parts: new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}), label: new Intl.DateTimeFormat('en-CA',{timeZone,weekday:'long',year:'numeric',month:'long',day:'numeric'}), time: new Intl.DateTimeFormat('en-CA',{timeZone,hour:'numeric',minute:'2-digit',timeZoneName:'short'}) });
+    if (!f) dayFormats.set(timeZone, f = { parts: new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}), label: new Intl.DateTimeFormat('en-CA',{timeZone,weekday:'long',year:'numeric',month:'long',day:'numeric'}), short: new Intl.DateTimeFormat('en-US',{timeZone,weekday:'short',month:'short',day:'numeric',year:'numeric'}), time: new Intl.DateTimeFormat('en-CA',{timeZone,hour:'numeric',minute:'2-digit',timeZoneName:'short'}) });
     return f;
   }
   function orderDay(row, timeZone = "America/Toronto") {
     const at=orderPlacedAt(row);if(!at)return {key:"unknown",label:"Date unavailable",time:""};
     const f=dayFormat(timeZone),date=new Date(at),parts=f.parts.formatToParts(date);
     const get=k=>parts.find(p=>p.type===k).value;
-    return {key:`${get('year')}-${get('month')}-${get('day')}`,label:f.label.format(date),time:f.time.format(date)};
+    return {key:`${get('year')}-${get('month')}-${get('day')}`,label:f.label.format(date),short:f.short.format(date),time:f.time.format(date)};   // (short: "Tue, Nov 10, 2026", the Orders card's Ordered chip)
   }
   function intakePlan({count, area=0, capacity=0, threshold=85, pressure=0.85, budgetS=180, force=false, density=0, target=.74, optimized=false, append=false}) {
     const targetMet=density+1e-6>=target;
