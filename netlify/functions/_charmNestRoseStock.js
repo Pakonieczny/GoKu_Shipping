@@ -494,7 +494,35 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       if(set&&set.exists&&+set.data().laserDoneAt>0)throw new Error(lasered);
       const wasCut=!!sheet.roseCutAt;
       const linesOf=j=>{try{const g=parse(j);return g&&Array.isArray(g.lines)?g.lines.length:0;}catch(_){return 0;}},lines=Math.max(linesOf(sheet.rosePlanJson),linesOf(sheet.roseProtectedJson));
-      if(!wasCut&&!sheet.rosePlanJson&&!sheet.roseProtectedJson&&!sheet.rosePlanHash)return {ok:true,changed:false,lines:0,cut:null,stock:null};
+      /* ASIDE (Paul, 12 Nov 2026: RG Sheet 1's cut was set aside twice, and its physical sheet came back with its left part grey, "already used", though nothing was cut on the laser): a cut this
+         sheet set aside (its roseReseated entries with reopen) never counts again. The outline before a cut is the one the latest cut that still stands left (another sheet's cut of a leftover
+         included), or the whole sheet when none stands. */
+      const asideRevs=new Set((Array.isArray(sheet.roseReseated)?sheet.roseReseated:[]).filter(x=>x&&x.reopen&&x.cut&&x.cut.revision!=null&&Number.isFinite(+x.cut.revision)).map(x=>+x.cut.revision));
+      const priorOf=async(sref,rev)=>{
+        for(let r=rev-1;r>=1;r--){
+          const q=await tx.get(sref.collection('cuts').where('revision','==',r).limit(1)),c=q.docs[0]?q.docs[0].data():null;
+          if(asideRevs.has(r)&&(!c||c.sheetId===b.sheetId))continue;
+          const p=c?parse(c.planJson):null;
+          if(!p||!p.profile)throw new Error(`The outline ${name}'s physical sheet had before its green line was recorded could not be read: its charms stay as they are`);
+          return JSON.stringify(p.profile);
+        }
+        return null;
+      };
+      if(!wasCut&&!sheet.rosePlanJson&&!sheet.roseProtectedJson&&!sheet.rosePlanHash){
+        // (ASIDE) nothing drawn or cut: only the outline a set-aside cut left on its physical sheet is put right (the stock's last cut is this sheet's, and it was set aside)
+        const sid=id(sheet.roseStockId)?sheet.roseStockId:null;
+        if(sid){
+          const hr=stocks().doc(sid),hd=await tx.get(hr),hs=hd.exists?hd.data():null;
+          if(hs&&+hs.revision>=1&&hs.lastCutSheetId===b.sheetId&&asideRevs.has(+hs.revision)&&(!hs.owner||hs.owner===b.sheetId)){
+            const want=await priorOf(hr,+hs.revision);
+            if((hs.profileJson||null)!==want){
+              tx.update(hr,{profileJson:want,owner:b.sheetId,available:false,reopenedAt:at,reopenedBy:by,updatedAt:FV.serverTimestamp()});
+              return {ok:true,changed:true,healed:true,lines:0,cut:null,stock:{...hs,profileJson:want,owner:b.sheetId,available:false,updatedAt:null}};
+            }
+          }
+        }
+        return {ok:true,changed:false,lines:0,cut:null,stock:null};
+      }
       // (reads first: the stock the cut was recorded on, the leftover it made, the earlier cut's outline)
       let cut=null,stockOut=null,ref=null,rem=null,prior=null;
       if(wasCut){
@@ -509,11 +537,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
             const r=rem&&rem.exists?rem.data:null;
             if(r&&r.status==='inUse'&&r.inUseBySheetId&&r.inUseBySheetId!==b.sheetId)throw new Error(`The leftover sheet ${name}'s green line made is in use by ${r.inUseBySheetName||'another sheet'}: give it back first, then ${name}'s charms can change`);
             if(r&&r.status==='used'&&r.usedBySheetId&&r.usedBySheetId!==b.sheetId)throw new Error(`The leftover sheet ${name}'s green line made was used by ${r.usedBySheetName||'another sheet'}: its metal is that sheet's now, so ${name}'s charms stay as they are`);
-            if(cut.revision>1){
-              const q=await tx.get(ref.collection('cuts').where('revision','==',cut.revision-1).limit(1)),c=q.docs[0]?q.docs[0].data():null,p=c?parse(c.planJson):null;
-              if(!p||!p.profile)throw new Error(`The outline ${name}'s physical sheet had before its green line was recorded could not be read: its charms stay as they are`);
-              prior=JSON.stringify(p.profile);
-            }
+            if(cut.revision>1)prior=await priorOf(ref,cut.revision);   // (ASIDE: a cut set aside before is skipped)
             cut.leftover=`${ref.id}-${cut.revision}`;cut.how=r?(r.status==='available'?'discarded':'kept'):'none';
             stockOut={...stock,profileJson:prior,owner:b.sheetId,available:false,updatedAt:null};
           }else ref=null;
