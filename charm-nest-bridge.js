@@ -6672,8 +6672,72 @@ const Gate = window.Gate = (() => {
   }
   /** true when every order of the smaller sheets was tried and refused for want of room on the fullest one: then it is full, not partial, and both may be cut. */
   const rgOneNoRoom = (home, list) => list.slice(1).every(src => src.charms.filter(c => !c.excluded).map(orderOfCharm).filter(Boolean).every(o => { const t = rgOneTried.get(home + "|" + src.sheetId + "|" + o); return t && t.room; }));
+  /* ═══ RGCLEAR · a Rose Gold sheet's green line holds only its own set's orders (Paul, 12 Nov 2026: "This breaks the rule on this rose gold sheet. There are orders that belong to other sheets ...
+     This specific order should have been placed after the green cut line"; "The system must be smart enough to do this retroactively in order to clear a rose gold sheet to be put onto a given set, and the
+     noncomplying orders must be put beyond the green line and then ... that part of the sheet must be remastered to accommodate for the removed pieces ... the grey already used parts must not be renewed") ═══
+     Before the automatic cut of a Rose Gold sheet into its set, and again for a sheet already cut into an open set (retroactively, while the laser has not cut it and the set is not approved): an order whose
+     other pieces are on a sheet that is not in that set (another set, or a draft) is taken off the sheet (the sheet window's own verified take-off, held). A cut sheet's recorded cut is set aside first
+     (RoseStock.reopen). The sheet is then nested again on what is left of its physical sheet (the grey parts already used stay as they are: the nest only sees the stock's outline), and cut by the next
+     automatic try. Once its cut is recorded, the orders taken off are released: they nest past its green line, on the leftover of the same physical sheet, for their own set. */
+  const rgClearBusy = new Set();
+  function rgForeign(p, home) {
+    const prot = p.roseCutAt && p.roseProtected && Array.isArray(p.roseProtected.placements) ? new Set(p.roseProtected.placements.map(q => q.id)) : null;
+    const ids = prot || new Set((p.placements || []).map(q => q.id));
+    const orders = [...new Set((p.charms || []).filter(c => !c.excluded && ids.has(c.id)).map(orderOfCharm).filter(Boolean))];
+    return orders.filter(o => allSheets().some(q => q !== p && !q.recalled && (q.charms || []).some(c => !c.excluded && orderOfCharm(c) === o) && !(String(q.setId || "") === home && !q.draft)));
+  }
+  function rgClearStep(run, p, home, stName) {
+    const SW = window.SheetWin; if (!SW || typeof SW.takeOffOrder !== "function") return false;
+    if (rgClearBusy.has(p.sheetId)) return true;
+    const foreign = rgForeign(p, home); if (!foreign.length) return false;
+    rgClearBusy.add(p.sheetId);
+    const ow = foreign.length === 1 ? `order ${foreign[0]}` : `orders ${foreign.join(", ")}`;
+    p.autoCutWait = `${stName}: ${ow} ${foreign.length === 1 ? "has" : "have"} pieces in another set, so ${foreign.length === 1 ? "it goes" : "they go"} past the green line of ${sheetNameOf(p)}; the sheet is nested again, then cut`;
+    liveRefresh(p);
+    (async () => {
+      try {
+        if (p.roseCutAt) await window.RoseStock.reopen(p, { replace: true, force: true, by: "Brites Manager (automatic: orders of another set go past the green line)" });
+        for (const o of foreign) {
+          let r = null; try { r = await SW.takeOffOrder({ orderId: o, sheetId: p.sheetId, scope: "sheet", mode: "hold", by: "Brites Manager (automatic)", note: `Past the green line of ${sheetNameOf(p)}: its other pieces are in another set` }); } catch (e) { r = { error: String(e && e.message || e) }; }
+          const off = !(p.charms || []).some(c => !c.excluded && orderOfCharm(c) === o);
+          if (off) { (run.rgClearHeld || (run.rgClearHeld = {}))[o] = { sheetId: p.sheetId, at: Date.now() }; try { agent({ run: run.runId, metal: "rose" }, "ok", `Order ${o}: taken off ${sheetNameOf(p)} automatically; it goes past its green line, with its own set`); } catch (_) {} }
+          else { try { agent({ run: run.runId, metal: "rose" }, "warn", `Order ${o} could not come off ${sheetNameOf(p)} yet (${(r && r.error) || "another change is running"}); tried again shortly`); } catch (_) {} }
+        }
+        // the part of the physical sheet this cut uses is nested again from scratch, so the room the pieces left is filled (nothing pinned where it was)
+        for (const c of p.charms || []) { delete c.pinned; delete c.manual; }
+        delete p.nestInitial; delete p.runHold; p.problem = null;
+        if (!p.roseCutAt && typeof sheetDirty === "function") { sheetDirty(p); if (typeof startNest === "function") startNest(p); }
+        try { if (window.RunCtl && RunCtl.save) await RunCtl.save(run); } catch (_) {}
+      } catch (e) {
+        try { agent({ run: run.runId, metal: "rose" }, "warn", `${sheetNameOf(p)}: its orders of another set could not be taken off yet (${String(e && e.message || e)}); tried again shortly`); } catch (_) {}
+      } finally { setTimeout(() => rgClearBusy.delete(p.sheetId), 30000); delete p.autoCutWait; liveRefresh(p); }
+    })();
+    return true;
+  }
+  /** The orders RGCLEAR took off a Rose Gold sheet are released once that sheet's cut is recorded (or it is gone): they nest past its green line, for their own set. */
+  function rgClearRelease(run) {
+    const held = run && run.rgClearHeld, HU = window.HoldUI; if (!held || !HU || typeof HU.release !== "function") return;
+    for (const [o, x] of Object.entries(held)) {
+      if (!x || x.releasing) continue;
+      const p = allSheets().find(q => q.sheetId === x.sheetId);
+      if (p && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled && Date.now() - (+x.at || 0) < 6 * 3600000) continue;   // (it waits for the cut; never held more than 6 hours by this)
+      x.releasing = true;
+      Promise.resolve(HU.release(o)).then(r => { if (r && r.ok) { delete held[o]; try { agent({ run: run.runId, metal: "rose" }, "ok", `Order ${o}: released after the green line cut; it nests past the line`); } catch (_) {} try { if (window.RunCtl && RunCtl.save) RunCtl.save(run); } catch (_) {} } else x.releasing = false; })
+        .catch(() => { x.releasing = false; });
+    }
+  }
   function autoCut(run) {
     try {
+      // (RGCLEAR) released after their sheet's cut; and a sheet already cut into an open set that holds an order of another set inside its line is cleared, retroactively
+      try { rgClearRelease(run); } catch (e) { console.warn("[Gate.rgClear] release", e && e.message); }
+      try {
+        const setsNow = Sets.ofRun(run.runId).filter(st => !st.committedAt), appr = st => !!(st.committedAt || st.processReady || st.laserSetPending || st.laserDoneAt);
+        for (const p of allSheets().filter(p => p.runId === run.runId && p.metal === "rose" && p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled && inSetNow(p))) {
+          const st = setsNow.find(x => x.setId === p.setId); if (!st || appr(st)) continue;
+          if (p._roseAction || p._autoCutting || p._manualHold || ["nesting", "finishing", "queued"].includes(p.status)) continue;
+          rgClearStep(run, p, String(st.setId), st.name || "its set");
+        }
+      } catch (e) { console.warn("[Gate.rgClear] retro", e && e.message); }
       const RS = window.RoseStock; if (!RS || typeof RS.record !== "function" || !run || !modern(run.runId) || !S.cloud.ok) return;
       const SRa = window.CharmNestSetRules, sets = Sets.ofRun(run.runId).filter(st => !st.committedAt), V = cardinalView(run), GH = V ? greenHomesOf(V, run) : new Map();
       const approved = st => !!(st.committedAt || st.processReady || st.laserSetPending || st.laserDoneAt);
@@ -6700,6 +6764,7 @@ const Gate = window.Gate = (() => {
         if (inSetNow(p) && p.setId !== h.home) continue;                                         // (in a set that is not its one set: it leaves it first, greenAway)
         if (!h.partners.some(i => { const q = V.page.get(i); return q && q.setId === h.home && !q.draft && SRa && SRa.isCompleted(q); })) continue;
         const st = sets.find(x => x.setId === h.home); if (!st || approved(st) || !SRa || !SRa.closed(membersOfSet(st))) continue;
+        if (rgClearStep(run, p, String(st.setId), st.name || "its set")) continue;   // (RGCLEAR: its line holds only the orders of its own set)
         const key = p.sheetId + "|" + st.setId + "|" + (p.jobId || "") + "|" + Object.keys(p.backPool || {}).length + "|" + Object.keys(p.outputs || {}).sort().join(",") + "|" + (p.label ? 1 : 0), last = autoCutTried.get(p.sheetId);
         // (refused and nothing changed on the sheet: again in ten minutes, not at every look. Paul, 12 Nov 2026: a sheet that waits IN its set is not put in and taken out by a try any more, so it is tried
         //  again every minute: it is cut the moment its reasons clear, whichever sheet cleared them, e.g. a partner's piece now on a saved sheet)
