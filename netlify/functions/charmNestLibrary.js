@@ -3995,16 +3995,28 @@ async function legacyListingOrders(q, b) {
   }
   return out;
 }
+/* ORDERNOTE (Paul, 11 Nov 2026: a piece of no order is found by its identifying note "just like any other order number"): a search that is no number is a CUSTOM-<yyyymmdd>-<n> number or
+   words of a note: the pieces of no order whose note holds them (the pool's orderless rows, their note and number only) give the numbers the sheets are found by. -> [ids] (at most 30), or null. */
+async function customOrdersOf(q) {
+  const t = String(q || "").trim(); if (CUSTOM_ORDER_ID.test(t.toUpperCase())) return [t.toUpperCase()];
+  if (t.length < 3 || !/\p{L}/u.test(t)) return null;
+  const fold = s => String(s || "").toLowerCase().replace(/\s+/g, " ").trim(), want = fold(t), out = new Set();
+  const snap = await col(POOL).where("orderless", "==", true).select("orderId", "customName").limit(3000).get();
+  for (const d of snap.docs) { const x = d.data() || {}; if (x.orderId && x.customName && fold(x.customName).includes(want)) out.add(String(x.orderId)); if (out.size >= 30) break; }
+  return [...out];
+}
 async function op_findSheets(b) {
   const q = String(b.q == null ? "" : b.q).trim();
-  if (!/^\d{4,20}$/.test(q)) return { error: "Search for an order or a listing number" };
+  const keys = /^\d{4,20}$/.test(q) ? null : await customOrdersOf(q);   // (ORDERNOTE)
+  if (!/^\d{4,20}$/.test(q) && !keys) return { error: "Search for an order or a listing number, or a custom piece's note" };
   const forms = v => [String(v)].concat(Number.isSafeInteger(+v) ? [+v] : []), listed = (list, set) => (list || []).some(v => set.has(String(v)));
-  const found = new Map(), mine = new Set([q]);
+  const found = new Map(), mine = new Set(keys || [q]);
   const add = (docs, why, hit) => { for (const s of docs) { const d = s.data(); if (d.archived || !hit(d)) continue; const f = found.get(s.id) || { d, match: new Set() }; f.match.add(why); found.set(s.id, f); } };
-  const [byOrder, byListing] = await Promise.all([col(SHEETS).where("orders", "array-contains-any", forms(q)).limit(FIND_CAP.sheets).select(...SLIM_SHEET).get(), col(SHEETS).where("listings", "array-contains-any", forms(q)).limit(FIND_CAP.sheets).select(...SLIM_SHEET).get()]);
+  const none = { docs: [], size: 0 };
+  const [byOrder, byListing] = keys ? [keys.length ? await col(SHEETS).where("orders", "array-contains-any", keys).limit(FIND_CAP.sheets).select(...SLIM_SHEET).get() : none, none] : await Promise.all([col(SHEETS).where("orders", "array-contains-any", forms(q)).limit(FIND_CAP.sheets).select(...SLIM_SHEET).get(), col(SHEETS).where("listings", "array-contains-any", forms(q)).limit(FIND_CAP.sheets).select(...SLIM_SHEET).get()]);
   add(byOrder.docs, "order", d => listed(d.orders, mine)); add(byListing.docs, "listing", d => listed(d.listings, mine));
   let truncated = byOrder.size >= FIND_CAP.sheets || byListing.size >= FIND_CAP.sheets, fallback = null;
-  if (!byOrder.docs.some(s => listed(s.data().orders, mine)) && b.fallback !== false) {
+  if (!keys && !byOrder.docs.some(s => listed(s.data().orders, mine)) && b.fallback !== false) {
     const legacy = await legacyListingOrders(q, b), orders = [...legacy.orders], before = new Set(found.keys());
     fallback = { window: legacy.window, runs: legacy.runs, parts: legacy.parts, orders: orders.length, capped: legacy.capped, filled: 0 };
     for (let i = 0; i < orders.length && i < 600; i += 15) {
