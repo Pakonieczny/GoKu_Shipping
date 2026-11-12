@@ -2704,7 +2704,7 @@ const Orders = window.Orders = (() => {
     const st = stateWords(r), shown = stageText(st[1]) ? null : st, due = dueOf(r), where = placeOf(r), fc = faceChip(r);
     const attn = r.problems.length || (["held", "unmatched", "oversize"].includes(r.state) && !(r.state === "held" && !r.hold && r.spec && r.spec.special && r.spec.special.monogram));   // (MONOROUTE: a monogram line waits in the Engraving tab, it is not "attention")
     const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
-    const gateBtn = r.state === "waiting" && r.wait && r.wait.kind !== "green" ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
+    const gateBtn = r.state === "waiting" && r.wait && r.wait.kind !== "green" && r.wait.kind !== "pair" ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
     const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = window.TeamMail ? TeamMail.stamp(r) : "";
     // the seals this piece's record keeps (Complete Order, each print; a reopened piece's too: they are for good), drawn small beside its state
     const sealRec=window.CustomPrint&&window.Seal?CustomPrint.recordOfRow(r):null,seals=sealRec?CustomPrint.sealsOfRow(r,28):"";
@@ -5242,6 +5242,20 @@ const Pool = window.Pool = (() => {
        3. a waiting order never stalls a set that is already formed: when its Gold Filled / Sterling Silver sheets are in a formed set and the open layout's are not, it does not wait (a new layout);
        4. Paul's own choice stands: a metal set to "always a new sheet" in Options (Partial Sheet, PartialNest mode 'new') starts its new sheet as he set it, and a sheet he made or chose is used as made.
      Rose Gold's open layout is cut by itself once its set is complete (Gate.autoCut); 10K and 14K wait for a person's Cut Sheet press, as always. */
+  const pairWaits = new Map();   // (PAIRFIX) row.key -> { page, metal, at }: the Gold Filled / Sterling Silver sheet still filling that a line waits for (memory only: after a reload the line is tried again)
+  /** (PAIRFIX) The lines waiting for a Gold Filled / Sterling Silver sheet to fill go on once it no longer fills (full, in its set, held for good): placed again, onto the next sheet. */
+  function pairResume(run) {
+    if (!run || typeof Orders === "undefined") return 0;
+    const fill = m => (typeof fillingPage === "function" ? fillingPage(m) : null);
+    const rows = Orders.rows().filter(r => r.state === "waiting" && r.wait && r.wait.kind === "pair");
+    const due = rows.filter(r => { const w = pairWaits.get(r.key); return !w || !pagesOf(w.metal).includes(w.page) || fill(w.metal) !== w.page; });
+    if (!due.length) return 0;
+    for (const r of due) { pairWaits.delete(r.key); r.state = "pulled"; r.wait = null; r.reason = null; }
+    try { agent({ pool: true }, "nest", `${due.length} order line${due.length === 1 ? "" : "s"} that waited for the sheet still filling now go${due.length === 1 ? "es" : ""} on the next sheet`); } catch (_) { /* a note only */ }
+    if (O.stepIndex(run.step) >= O.stepIndex("pool")) Promise.resolve().then(() => addAll(run)).catch(e => console.warn("[pairResume]", e && e.message));
+    try { Orders.render(); } catch (_) { /* drawn at the next look */ }
+    return due.length;
+  }
   const greenWaits = new Map();   // row.key -> { page, metal }: the open layout a waiting line waits for (memory only: after a reload the line is simply tried again)
   const greenOpen = (p, run) => !!p && p.charms.length > 0 && (!run || !p.runId || p.runId === run.runId) && !p.roseCutAt && !p.recalled && !p.releaseFull && !(+p.laserDoneAt > 0);
   const greenName = p => { try { if (window.CharmNestSheetName && typeof CharmNestSheetName.short === "function") return CharmNestSheetName.short(p); } catch (_) { /* the plain name below */ } return `${labelOf(p.metal)} Sheet ${p.page || "?"}`; };
@@ -5504,7 +5518,7 @@ const Pool = window.Pool = (() => {
       if (info && window.CN?.nospreadChunk && !info.pieces.some(c => c.chunk)) window.CN.nospreadChunk(metal, info.pieces, info);
       // (INPLACE, Paul 20 Oct 2026: a replaced line's new pieces go into the spots its old ones left, or, when they do not fit there, onto the latest unfinished sheet: inPlaceAttach)
       const ip = row._vacated ? inPlaceAttach(row, run, metal, list, info) : null;
-      let page=ip ? ip.page : window.LiveNest ? LiveNest.intakePage(metal, run, row.order.receiptId, list, info) : pagesOf(metal).at(-1);
+      let page=ip ? ip.page : window.LiveNest ? LiveNest.intakePage(metal, run, row.order.receiptId, list, info, { wait: (metal === "gold" || metal === "silver") && byMetal.size === 1 }) : pagesOf(metal).at(-1);
       // (a sheet kept for this order's own release stays open to the rest of the order's pieces: the order goes on one sheet whole)
       const shut = p => { const k = row.releasing && p.keepRelease && p.keepRelease.rid === String(row.order.receiptId) ? p.keepRelease : null; if (k) p.keepRelease = null; try { return !!(window.LiveNest && LiveNest.closed(p)); } finally { if (k) p.keepRelease = k; } };
       // (the line's own sheet first, when it still takes pieces: the order's home sheet can be an earlier one, and a pair is never put half on each)
@@ -5540,7 +5554,19 @@ const Pool = window.Pool = (() => {
         if (!ip && (metal === "gold" || metal === "silver") && LN && typeof LN.pairFits === "function" && !matePages.includes(page) && !page.charms.some(c => orderOfCharm(c) === rid) && !LN.pairFits(page, [rid], run)) {
           const was = page, room = p => (!window.CN?.topupRoom || window.CN.topupRoom(p) > 0) && (!window.CN?.topupTakes || window.CN.topupTakes(p, list, info));
           const alt = pagesOf(metal).find(p => p !== was && p.charms.length && !shut(p) && (!run || !p.runId || p.runId === run.runId) && LN.pairFits(p, [rid], run) && room(p));
-          page = alt || addPage(metal);
+          // (PAIRFIX, Paul 12 Nov 2026: "one sheet at a time for everything". The sheet still filling is used only when it pairs; when it does not, a one-colour line WAITS for it to fill and
+          //  then goes on the next sheet (pairResume). A new sheet only when none is filling, or for a line of several colours)
+          const home16 = typeof LN.orderHome === "function" ? LN.orderHome(metal, run, rid, { skip: list }) : null;
+          const nx = alt || home16 || addPage(metal, { ok: p => LN.pairFits(p, [rid], run), wait: byMetal.size === 1 && S.settings.onesheet !== "off" });
+          if (!nx) {
+            const f = typeof fillingPage === "function" ? fillingPage(metal) : was, nm = greenName(f || was), other = metal === "gold" ? "Sterling Silver" : "Gold Filled";
+            pairWaits.set(row.key, { page: f || was, metal, at: Date.now() });
+            row.state = "waiting"; row.wait = { kind: "pair", material: metal, sheetId: (f || was).sheetId || null, page: (f || was).page || null };
+            row.reason = `waits for ${nm} to fill, then goes on the next ${labelOf(metal)} sheet (${nm} already shares its orders with another ${other} sheet; one ${labelOf(metal)} sheet is filled at a time)`;
+            try { agent({ metal, pool: true }, "nest", `Order ${rid}: its ${labelOf(metal)} piece${list.length === 1 ? "" : "s"} wait${list.length === 1 ? "s" : ""} for ${nm} to fill, then go${list.length === 1 ? "es" : ""} on the next sheet (one Gold Filled sheet and one Sterling Silver sheet share an order; one sheet at a time)`); } catch (_) { /* a note only */ }
+            waited++; continue;
+          }
+          page = nx;
           try { agent({ metal, pool: true }, "nest", `Order ${rid}: its ${labelOf(metal)} piece goes on ${alt ? "another" : "a new"} ${labelOf(metal)} sheet, so that one Gold Filled sheet and one Sterling Silver sheet share it`); } catch (_) { /* a note only */ }
         } }
       // (R16 HARD, Paul 26 Oct 2026: "sheets of the same colour cannot have cross-pollination of charms from a multi-charm/earring orders": the order's own sheet of this colour, where its other pieces are,
@@ -5552,7 +5578,7 @@ const Pool = window.Pool = (() => {
         const apart = pagesOf(metal).filter(p => p !== page && (!run || !p.runId || p.runId === run.runId) && !p.recalled && (p.charms || []).some(c => !list.includes(c) && !c.excluded && !c.chunk && orderOfCharm(c) === rid16));
         if (apart.length) try { agent({ metal, pool: true }, "warn", `Split order ${rid16} (a split of necessity: its other ${labelOf(metal)} pieces are on ${apart.map(p => p.page ? "sheet " + p.page : "a sheet").join(", ")}, which can take no more: cut, approved for laser cutting, sent or held) — both sheets must go in one set`); } catch (_) { /* a note only */ }
       }
-      if(!ip && ((run && page.runId && page.runId!==run.runId) || shut(page) && page !== back))page=lineCuts(metal) ? greenPage(metal, run) : addPage(metal);   // (RGC1: a green-line metal's next page continues on its newest cut's leftover)
+      if(!ip && ((run && page.runId && page.runId!==run.runId) || shut(page) && page !== back))page=lineCuts(metal) ? greenPage(metal, run) : addPage(metal, (metal === "gold" || metal === "silver") && LN16 && typeof LN16.pairFits === "function" ? { ok: p => LN16.pairFits(p, [rid16], run) } : {});   // (PAIRFIX: the sheet still filling only when it pairs) (RGC1: a green-line metal's next page continues on its newest cut's leftover)
       if (back && page === back && typeof LN16.reopenHome === "function") LN16.reopenHome(page, rid16);
       if (!(ip && ip.placed)) { S.sheets[metal].active=pagesOf(metal).indexOf(page);if(!page.el)window.CN?.showPage(metal,S.sheets[metal].active); }   // the card shows the page its buttons act on
       if (run) page.runId = run.runId;
@@ -5846,7 +5872,7 @@ const Pool = window.Pool = (() => {
     if (n === q && designMismatched(sp.designSku, sp.size) && !(Pair && Pair.plainLine && Pair.plainLine(pairLine(row))) && !(ListMedia.oneRow(row) >= 0)) n = 2 * q;
     return n;
   }
-  return { keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewSwap, previewIds, previewSig: trySig, greenFits, partnerSheets, greenPage, greenResume, greenHeld, greenLeftover };
+  return { pairResume, keptMaster, keptParse, warmKept: (path, hash) => keptBlob(path, hash).then(v => !!v), pinPooled, wholeHashes, designLoaded, forgetDrawing, drawingHashes, poolAdd, addAll, masterCharm, masterPreview, masterFront, masterTwo, masterSet, cloneCharm, update, charmOf, sheetOf, uniqueIds, holding, sizeEntry, sizeKeyOf, fitBytes, repairRecoveredGeometry, onSheets, keepsPlace, swapRids, swapWaits, settle, tryLater, recover, baseFor, ensureBase, soloBase, soloBodies, pieceOf, groupOf, pieceCountOf, designMismatched, preview, previewCharmOf, previewSwap, previewIds, previewSig: trySig, greenFits, partnerSheets, greenPage, greenResume, greenHeld, greenLeftover };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -6790,7 +6816,8 @@ const Gate = window.Gate = (() => {
         if (last && Date.now() - last.at < 60000) continue;
         if ((kit.busy && kit.busy()) || committingRun(run)) { unpairSay.set(x.set.setId, `${what} ${x.pieces.length === 1 ? "moves" : "move"} to ${x.to ? name(x.to) : "a new " + word + " sheet"} as soon as the change running in the sheet window is done`); continue; }
         unpairTried.set(key, { at: Date.now() });
-        const to = x.to || addPage(x.metal, { except: x.from }); if (!to.runId) to.runId = run.runId;   // (ONEFILL: the sheet still filling takes them; a new one only when none is)
+        const pfits = p => { const LN = window.LiveNest; return !LN || typeof LN.pairFits !== "function" || LN.pairFits(p, x.orders, run, { skip: new Set(x.pieces) }); };
+        const to = x.to || addPage(x.metal, { except: x.from, ok: pfits }); if (!to.runId) to.runId = run.runId;   // (ONEFILL: the sheet still filling takes them when it pairs (PAIRFIX); else a new one)
         unpairSay.set(x.set.setId, `${what} ${x.pieces.length === 1 ? "is" : "are"} being moved to ${name(to)} (one GF sheet and one SS sheet share an order), then ${name(x.second)} leaves ${setName}`);
         liveRefresh(x.from);
         const guard = sh => sh.roseCutAt || +sh.laserDoneAt > 0 || sh.recalled ? "it is cut" : Sets.ofRun(sh.runId).some(s => (s.committedAt || s.processReady || s.laserSetPending || s.laserDoneAt) && (s.sheetIds || []).includes(sh.sheetId)) ? "its set is approved or sent" : sh._manualHold ? "it is being changed by hand" : "";
@@ -16079,7 +16106,16 @@ const RunCtl = window.RunCtl = (() => {
         || (window.Gate && typeof Gate.holding === "function" && Gate.holding(p)) || (window.NestHold && typeof NestHold.block === "function" && NestHold.block(p))))) continue;
       const all = prim.pages.filter(free); if (all.length < 2) continue;
       // (ONEFILL: a sheet holding a piece already shown to have no room on the first is its rightful next sheet: it stays, so nothing goes back and forth)
-      const tk = all[0].sheetId || m + "-" + all[0].page, pages = [all[0], ...all.slice(1).filter(p => !p.charms.some(c => (c._missed || []).includes(tk)))]; if (pages.length < 2) continue;
+      const tk = all[0].sheetId || m + "-" + all[0].page, cands = all.slice(1).filter(p => !p.charms.some(c => (c._missed || []).includes(tk)));
+      // (PAIRFIX, Paul 12 Nov 2026: a sheet is gathered only when every order on it keeps the pairing rule with the first, together with the sheets gathered before it: one Gold Filled sheet and one
+      //  Sterling Silver sheet share an order. Gathering without it tied GF Sheets 1-4 and SS Sheets 1-2 into one set)
+      const oid = c => String(c && c.order != null ? c.order : "").split("/")[0], taken = [], ids = new Set();
+      for (const p of cands) {
+        const mine = new Set(p.charms.map(oid).filter(Boolean)), all2 = [...ids, ...mine], skip = new Set([...taken, p].flatMap(q => q.charms));
+        if (LN && typeof LN.pairFits === "function" && all2.length && !LN.pairFits(all[0], all2, r, { skip })) continue;
+        taken.push(p); for (const k of mine) ids.add(k);
+      }
+      const pages = [all[0], ...taken]; if (pages.length < 2) continue;
       const t = pages[0], sources = pages.slice(1), moving = sources.flatMap(p => p.charms), pool = new Set(moving.map(c => c.poolId).filter(Boolean));
       for (const c of moving) { c.pinned = null; delete c.arrivalPin; c.metal = m; }
       t.charms = t.charms.concat(moving.slice().sort((a, b) => rank(a) - rank(b)));
@@ -16108,6 +16144,7 @@ const RunCtl = window.RunCtl = (() => {
     try { if (window.CharmNestOperations && typeof CharmNestOperations.busy === "function" && CharmNestOperations.busy("production:" + r.runId)) return; } catch (_) { /* looked at again */ }
     gathering = true;
     try {
+      try { if (window.Pool && typeof Pool.pairResume === "function") Pool.pairResume(r); } catch (e) { console.warn("pair resume", e); }
       const got = gatherFilling(r, { live: true });
       if (got.length && r.status === "running") for (const t of got) { try { startNest(t); } catch (e) { console.warn("gather nest", e); } }
     } catch (e) { console.warn("gather", e); } finally { gathering = false; }
@@ -28250,7 +28287,7 @@ const LiveNest = window.LiveNest = (() => {
           if (rest.length === 1) { const h = rest[0]; if (closed(h) && !reopensHome(h, run, oid)) continue; reopenHome(h, oid); to = h; }
         }
         if (!to) to = pagesOf(q.metal).find(p => p !== q && (p.charms || []).length && (!run || !p.runId || p.runId === run.runId) && !closed(p) && !busyNow(p) && lineFits(p, [oid], run, { skip }) && roomy(p));
-        if (!to) to = addPage(q.metal, { except: q });   // (ONEFILL: the sheet still filling, else a new one)
+        if (!to) to = addPage(q.metal, { except: q, ok: p => lineFits(p, [oid], run, { skip }) });   // (ONEFILL: the sheet still filling when it keeps the pairing rule (PAIRFIX), else a new one)
         q.charms = q.charms.filter(c => !skip.has(c)); q.rejects = (q.rejects || []).filter(id => !loose.some(c => c.id === id)); if (Array.isArray(q.feedWait)) q.feedWait = q.feedWait.filter(id => !loose.some(c => c.id === id));
         for (const c of loose) { if (c.arrivalPin) { c.pinned = null; delete c.arrivalPin; } to.charms.push(c); }
         if (run && !to.runId) to.runId = run.runId;
@@ -28314,7 +28351,7 @@ const LiveNest = window.LiveNest = (() => {
      that misses its gaps moves on to the next sheet, and the earlier sheet stays first in line: once a newer page existed
      it used to be passed over for good, short of full, so it was never released and its orders, the oldest, never cut.
      Rose Gold keeps the newest sheet, where its green line is. */
-  function intakePage(m, run, orderId, pieces, order) {
+  function intakePage(m, run, orderId, pieces, order, o = {}) {
     const pages = pagesOf(m), newest = pages.at(-1), fast = O.FAST_MATERIALS.has(m);
     const open = p => p.charms.length && run && p.runId === run.runId && !closed(p);
     // an order goes onto one sheet whole: a line joins the order's lines already waiting on a sheet in line. Every metal (Paul, 13 Oct 2026: all the pieces
@@ -28336,7 +28373,9 @@ const LiveNest = window.LiveNest = (() => {
     //  "passed at the door" for want of room, nospreadPassed)
     const pairs = p => orderId == null || pairFits(p, [orderId], run);
     const pick = pages.find(p => p !== newest && open(p) && pairs(p) && room(p)) || newest;
-    return pick === newest && open(newest) && (!pairs(newest) || !room(newest)) ? addPage(m) : pick;
+    // (PAIRFIX, Paul 12 Nov 2026: the sheet still filling takes the order only when it pairs; o.wait: the pool's own pairing step decides that the line waits for it, so the non-pairing sheet is returned)
+    if (pick === newest && open(newest) && (!pairs(newest) || !room(newest))) { const f = addPage(m, { ok: pairs, wait: !!o.wait }); return f || newest; }
+    return pick;
   }
   async function add(run) {
     const prepare=async()=>{

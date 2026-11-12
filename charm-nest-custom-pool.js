@@ -324,7 +324,7 @@
     let page = null, home = false;
     if (rid && LN && typeof LN.orderHome === "function") { page = LN.orderHome(metal, run, rid, { skip: list }); if (page) { home = true; if (typeof LN.reopenHome === "function") LN.reopenHome(page, rid); } }
     if (!page) page = LN && typeof LN.intakePage === "function" ? LN.intakePage(metal, run, rid || list[0].order, list) : pages()[pages().length - 1];
-    if (!home && (!page || (run && page.runId && page.runId !== run.runId) || shut(page))) page = CN.addPage(metal);
+    if (!home && (!page || (run && page.runId && page.runId !== run.runId) || shut(page))) page = CN.addPage(metal, rid && (metal === "gold" || metal === "silver") && LN && typeof LN.pairFits === "function" ? { ok: p => LN.pairFits(p, [rid], run) } : {});   // (PAIRFIX: the sheet still filling only when it pairs)
     if (!home && rid && lineCuts(metal) && root.Pool && typeof root.Pool.greenFits === "function" && !root.Pool.greenFits(page, rid, run)) {   // (Decision 2: one GF and/or one SS partner sheet, in one set)
       const alt = pages().find(p => p !== page && !shut(p) && (!run || !p.runId || p.runId === run.runId) && root.Pool.greenFits(p, rid, run));
       page = alt || CN.addPage(metal);
