@@ -21,6 +21,11 @@ const WORKSPACE_SANDBOX = S.settings.sandbox === "on";
 const MM = 25.4 / 72, PT = 72 / 25.4;
 const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledAt: 0, stale: false, snapshot: null, filtered: 0 }, master: { entries: new Map(), files: [], index: null, loadedAt: 0, loading: null, error: null, jobs: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, listingSkus: {}, loadedAt: 0 }, pool: { rows: new Map(), sources: new Map() }, engrave: { items: new Map(), fonts: { ok: false, Regular: null, Semibold: null, error: null, loading: null } }, review: { items: [] }, openRuns: null, run: null, sets: new Map(), employee: (localStorage.getItem("cn.employee") || "").trim() };
 const SOURCE_LABEL = { personalization: "the personalisation box", personalisation: "the personalisation box", buyerMessage: "the buyer's message", staffNote: "the staff note", messages: "the staff messages", none: "", "": "" };
+/* ORDERNOTE (Paul, 11 Nov 2026): the identifying note of each piece of no order this page holds (its pool row's customName, keyed by its CUSTOM-<yyyymmdd>-<n> number), for
+   CharmNestOrders.orderShown / orderMatches: shown in place of that number and found by every order-number search. Read again only when the pool changes size. */
+{ let at = -1, rowsRef = null; const notes = new Map();
+  try { O.orderNotes && O.orderNotes(rid => { const rows = B.pool && B.pool.rows; if (!rows) return ""; if (rows !== rowsRef || rows.size !== at) { rowsRef = rows; at = rows.size; notes.clear(); for (const r of rows.values()) if (r && r.orderless && r.customName && r.orderId) notes.set(String(r.orderId), String(r.customName)); } return notes.get(rid) || ""; }); } catch (_) {} }
+const ridShown = rid => (O.orderShown ? O.orderShown(rid) : String(rid == null ? "" : rid));
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 // Shared by waiting and decided engravings; choices remain read-only purchase facts.
 /** An order line that is an EARRING PAIR (Paul, 9 Oct 2026, Amendment 2: its pieces are a Left and a Right): read from the line's own spec and master entry, no piece records, cheap enough for a list row. */
@@ -2394,7 +2399,7 @@ const Orders = window.Orders = (() => {
   const findCache = new WeakMap();
   function findText(r) {
     const sp = r.spec || {}, l = r.line || {};
-    const parts = [r.order.receiptId, l.listingId, sp.designSku, l.sku, l.title, (l.variations || []).map(v => `${v.name || v.formatted_name || ""} ${v.value || v.formatted_value || ""}`).join(" "), (sp.personalization || []).join(" "), sp.buyerMessage, sp.staffNote, r.reason];
+    const parts = [r.order.receiptId, O.orderNote ? O.orderNote(r.order.receiptId) : "", l.listingId, sp.designSku, l.sku, l.title, (l.variations || []).map(v => `${v.name || v.formatted_name || ""} ${v.value || v.formatted_value || ""}`).join(" "), (sp.personalization || []).join(" "), sp.buyerMessage, sp.staffNote, r.reason];
     const sig = parts.join("\u0001"), hit = findCache.get(r);
     if (hit && hit.sig === sig) return hit.text;
     const text = parts.map(x => String(x || "")).join(" \u0001 ").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n)).replace(/&quot;/g, '"').replace(/&amp;/g, "&").toLowerCase();
@@ -2755,7 +2760,7 @@ const Orders = window.Orders = (() => {
   /** The identity cell of a line: its number (a single-line order's), its SKU (and mode chip), then the engraving's caption and lines, or the personalisation as always for a line with nothing to engrave. */
   function lineIdHtml(r, e, o) {
     const sp = r.spec || {}, where = o.where, whereText = where ? [where.set, where.sheet].filter(Boolean).join(" · ") : "", sku = esc(sp.designSku || r.line.sku || "No SKU");
-    const head = `<div class="engravingOrder">${o.num ? `<b class="mono onum">${esc(r.order.receiptId)}</b>` : ""}<span class="sku mono">${sku}</span>${e ? e.mode : ""}</div>`;
+    const head = `<div class="engravingOrder">${o.num ? `<b class="mono onum">${esc(ridShown(r.order.receiptId))}</b>` : ""}<span class="sku mono">${sku}</span>${e ? e.mode : ""}</div>`;
     const body = e ? `<span class="purchaseLabel">${esc(e.label)}</span>${e.words}` : o.said || !o.text ? "" : `<span class="purchaseLabel">${o.label}</span><span class="rowExcerpt ${excerptCls(o.label)}" title="${esc(o.text)}">${esc(o.text)}</span>`;
     return `<div class="engravingIdentity${e ? " ordEngId" : ""}">${o.num ? '<span class="queueLabel">Order</span>' : ""}${head}${body}${whereText ? `<span class="rowExcerpt dim ordWhere">${esc(whereText)}</span>` : ""}</div>`;
   }
@@ -2800,7 +2805,7 @@ const Orders = window.Orders = (() => {
     const piece = v => `<div class="ogPiece${cards ? "" : " doneRow workRow orderListRow"}${v.e ? " ordEng" : ""}" role="button" tabindex="0" data-key="${esc(v.r.key)}" data-m="${esc(v.m)}" title="${esc(v.r.order.receiptId + " · " + (v.sp.designSku || v.r.line.sku || "no SKU") + " — " + v.r.line.title)}">`
       + ListMedia.pair(v.r) + lineIdHtml(v.r, v.e, { num: false, said, label: label(v), text: text(v), where: v.where })
       + `<div class="purchaseSummary">${purchaseMarkup(v.r)}</div>${lineSealsHtml(v.r, v.e, null)}<div class="rowActions">${v.shown ? `<span class="ost ${v.shown[0]}">${esc(v.shown[1])}</span>` : ""}${v.fc[1] && !v.e ? `<span class="ost ${v.fc[0]} engFaces" title="${v.fc[1] === "Front only" ? "Engraved on the front of each piece" : "Engraved on the front and the back of each piece"}">${v.fc[1]}</span>` : ""}${v.seals}<span class="rowFacts">Qty ${qtyOf(v)}${earPairRow(v.r) ? pairFactOf(qtyOf(v)) : O.countedFact(v.r)}</span>${v.why ? `<span class="rowExcerpt reviewReason" title="${esc(v.why)}">${esc(v.why)}</span>` : ""}${v.gateBtn}</div></div>`;
-    node.innerHTML = `<div class="ogHead"><div class="engravingIdentity ogId"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(rid)}</b><span class="groupScope">${OG.countWord(total)}</span></div></div>`
+    node.innerHTML = `<div class="ogHead"><div class="engravingIdentity ogId"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(ridShown(rid))}</b><span class="groupScope">${OG.countWord(total)}</span></div></div>`
       + (said && text(V[0]) ? `<div class="engravingIdentity ogSaid"><span class="purchaseLabel">${label(V[0])}</span><span class="rowExcerpt ${excerptCls(label(V[0]))}" title="${esc(text(V[0]))}">${esc(text(V[0]))}</span></div>` : "")
       + `<div class="rowActions ogActs">${team ? TeamMail.mark(first) : ""}${mail && mail !== "null" ? CustomerMail.badge(rid) : ""}<span class="rowFacts"><span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${held.length ? relHoldHtml() : ""}${trav.html}${relSlotHtml(rel)}</div></div>`
       + `<div class="ogPieces">${V.map(piece).join("")}</div>`;
@@ -23360,7 +23365,7 @@ const OrderWin = window.OrderWin = (() => {
     const rid = String(r.order.receiptId), t = byId("owTitle");
     const lit = W.hl ? " found" : "", cur = t.dataset.rid === rid && t.dataset.lit === lit && t.dataset.n === sibs.length + ":" + li;
     if (!cur) {
-      t.innerHTML = `Order <span class="num${lit}">${esc(rid)}</span>`;
+      t.innerHTML = O.orderNote && O.orderNote(rid) ? `<span class="num${lit}">${esc(O.orderNote(rid))}</span> <small class="mono" style="color:var(--ink45);font-size:.62em">${esc(rid)}</small>` : `Order <span class="num${lit}">${esc(rid)}</span>`;   // (ORDERNOTE: a piece of no order is its note)
       t.dataset.rid = rid; t.dataset.lit = lit; t.dataset.n = sibs.length + ":" + li;
     }
     // (HDRHEAD, Paul, 16 Oct 2026: "Remove this UI from the detailed Order modal": the line under the number, "buyer · N pieces · ship by date", is gone. The buyer, the ship-by date and the piece count are told where they always were:
@@ -25764,7 +25769,7 @@ const OrderWin = window.OrderWin = (() => {
     panel.classList.toggle('searching',!!q);host.hidden=!q;
     const groups=inf?.search ? inf.search(q) : O.orderGroups(inf?.pieces || [],q);
     if(!q){host.replaceChildren();return;}
-    host.innerHTML=groups.length ? groups.map(([rid,xs])=>`<button type="button" data-order-rid="${esc(rid)}" role="listitem"><b>${esc(rid)}</b><small>${xs.length} piece${xs.length===1?'':'s'} · ${esc([...new Set(xs.map(x=>x.sku))].join(', '))}</small></button>`).join('') : `<span class="sub">${inf?'No matching order numbers on this sheet.':'Loading sheet orders…'}</span>`;
+    host.innerHTML=groups.length ? groups.map(([rid,xs])=>`<button type="button" data-order-rid="${esc(rid)}" role="listitem"><b>${esc(ridShown(rid))}</b><small>${xs.length} piece${xs.length===1?'':'s'} · ${esc([...new Set(xs.map(x=>x.sku))].join(', '))}</small></button>`).join('') : `<span class="sub">${inf?'No matching order numbers on this sheet.':'Loading sheet orders…'}</span>`;
     host.querySelectorAll('[data-order-rid]').forEach(b=>b.onclick=()=>{const x=groups.find(([rid])=>rid===b.dataset.orderRid)?.[1][0];if(!x)return;if(String(x.rid)===W.rid){SV.q='';SV.focus=x.poolId;paintPanel(inf);inf.focus(x.poolId);}else jumpTo({x,rid:String(x.rid),poolId:x.poolId || x.id});});
   }
   function drawCharmInto(cv, c) {

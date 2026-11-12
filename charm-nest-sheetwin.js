@@ -1960,7 +1960,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       t.dataset.k = key;
       // (a piece engraved on both faces says each: "Front · approved", "Back · to approve")
       const eng = p.eng && p.eng.kind !== "none" ? (p.eng.faces ? p.eng.units.filter(u => u.kind !== "none") : [p.eng]).map(u => `<em style="--c:${u.kind === "approved" ? "#7fb877" : "#e0876c"}"><i></i>${u.face === "front" ? "Front" : "Back"} · ${esc(u.label)}</em>`).join("") : "";
-      t.innerHTML = `<b>${esc(p.rid || p.name || "Charm")}</b><span>${esc(p.sku || "")}${side ? ` · ${sideWord(side)} piece` : p.qty > 1 ? ` · copy ${p.copy} of ${p.qty}` : ""}${nC > 1 ? ` · ${charmsWord(nC)}` : ""}</span>${eng}` +
+      t.innerHTML = `<b>${esc((p.rid && window.CharmNestOrders && CharmNestOrders.orderShown ? CharmNestOrders.orderShown(p.rid, p.name) : p.rid) || p.name || "Charm")}</b><span>${esc(p.sku || "")}${side ? ` · ${sideWord(side)} piece` : p.qty > 1 ? ` · copy ${p.copy} of ${p.qty}` : ""}${nC > 1 ? ` · ${charmsWord(nC)}` : ""}</span>${eng}` +
         (mates.length > 1 ? `<em><i></i>${mates.length - 1} more of this order here</em>` : "") +
         (pn ? `<em><i></i>${esc(pn.text)}</em>` : "") +
         (elsewhere.length && !plain ? `<em><i></i>also on ${esc(elsewhere.map(s => `${CODE[s.metal] || ""} ${s.n}`).join(", "))}</em>` : "");
@@ -2052,7 +2052,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const namedPiece = x => { const S = window.CharmNestEngraveSides, r = x && x.poolId ? rowOf(x) : null, line = r && (r.parentRow || r); if (!S || !S.pieceList || !S.labelsOf || !line || !tryDo(() => S.labelsOf(line), null)) return ""; const p = tryDo(() => (S.pieceList(window.CharmNestEngraveSidesCtx || {}, line) || []).find(q => q.poolId === x.poolId), null); return p && p.label ? p.label : ""; };
   const copyText = x => { const q = sideOfPiece(x); if (q) return `${sideWord(q)} piece · `; const cw = companionOfPiece(x); if (cw) return `${cw} · `; const nw = namedPiece(x); if (nw) return `${nw} · `; const d = x.qty > 1 && discOfPiece(x), n = charmsIn(x); return (d ? `${discWordOf(x)} ${d.n} of ${d.of} · ` : x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : "") + (n > 1 ? `${charmsWord(n)} · ` : ""); };
   const sideOfId = (rid, poolId) => { for (const g of groupsOf(rid)) { const part = g.pieces.find(q => q.key === poolId); if (part) return part.side; } return null; };
-  const matchesQ = (x, q) => /^[\d\s#-]+$/.test(q) ? CharmNestOrders.orderMatches(x.rid,q) : `${x.rid} ${x.sku} ${x.name}`.toLowerCase().includes(q);
+  const matchesQ = (x, q) => /^[\d\s#-]+$/.test(q) ? CharmNestOrders.orderMatches(x.rid,q,x.name) : `${x.rid} ${x.sku} ${x.name}`.toLowerCase().includes(q);
 
   /* ── engraving of a piece ── */
   /* FACES (Paul, 11 Oct 2026, plans/front-back-1011): a piece may be engraved on its FRONT as well as on its back. Each face is its own job, record and approval (charm-nest-engrave-faces.js);
@@ -2297,7 +2297,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const tags = (live.some(x => x.c && x.c.custom) ? `<span class="swTag cust" title="A custom order: its own designs, tinted plum on the sheet">Custom</span>` : "") +
         (need ? `<span class="swTag eng" title="${fr ? "Engraving" : "Back engraving"} still to approve">${need > 1 ? need + " " + engWord(need, fr) : fr ? "engraving" : "back"}</span>` : ok ? `<span class="swTag engOk" title="${fr ? "Engraving" : "Back engraving"} approved">${fr ? "engraving" : "back"}</span>` : "") +
         other.map(s => `<span class="swTag" style="--c:${colorOf(s.metal)}" title="Also on ${esc(s.name || "")}${esc(awayAt(rid, s.id))}"><i></i>${esc(CODE[s.metal] || "")} ${s.n}</span>`).join("");
-      return `<li class="swOrd${q ? " orderMatch" : ""}${go && go.keep ? " going" + (go.how === "cancel" ? " cancel" : "") : ""}" data-rid="${esc(rid)}" data-mkey="o:${esc(rid)}"><span class="no">${rid === "—" ? "No order" : esc(rid)}</span><span class="what" title="${esc(what)}">${esc(what)}</span><span class="tags">${tags}</span>${rid === "—" ? "" : travelHtml(rid)}</li>`;
+      return `<li class="swOrd${q ? " orderMatch" : ""}${go && go.keep ? " going" + (go.how === "cancel" ? " cancel" : "") : ""}" data-rid="${esc(rid)}" data-mkey="o:${esc(rid)}"><span class="no">${rid === "—" ? "No order" : esc(window.CharmNestOrders && CharmNestOrders.orderShown ? CharmNestOrders.orderShown(rid, what) : rid)}</span><span class="what" title="${esc(what)}">${esc(what)}</span><span class="tags">${tags}</span>${rid === "—" ? "" : travelHtml(rid)}</li>`;
     }).join(""));
     E.orders.querySelectorAll(".swOrd").forEach(li => {
       const xs = W.orders.get(li.dataset.rid) || [];
@@ -2544,7 +2544,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const words = (sp.personalization || []).filter(Boolean).join(" / ");
     const mm = mmOf(x);
     E.detail.innerHTML = `
-      <header class="swOrderHead"><span class="fLabel">Order</span><div class="swOrdTop"><span class="rid">${esc(x.rid || "No order")}</span>${x.rid && canView() ? `<button type="button" class="btn ghost xs swOpenOrd" data-r2="openOrd" title="Open order ${esc(x.rid)} in the order view">Open order${ICON.expand}</button>` : ""}</div><span class="who">${esc([buyer, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · ")) || "&nbsp;"}</span>${said ? `<div class="swSaid" title="From the buyer">${esc(said)}</div>` : ""}</header>
+      <header class="swOrderHead"><span class="fLabel">Order</span><div class="swOrdTop"><span class="rid">${esc((x.rid && window.CharmNestOrders && CharmNestOrders.orderShown ? CharmNestOrders.orderShown(x.rid, x.name) : x.rid) || "No order")}</span>${x.rid && canView() ? `<button type="button" class="btn ghost xs swOpenOrd" data-r2="openOrd" title="Open order ${esc(x.rid)} in the order view">Open order${ICON.expand}</button>` : ""}</div><span class="who">${esc([buyer, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · ")) || "&nbsp;"}</span>${said ? `<div class="swSaid" title="From the buyer">${esc(said)}</div>` : ""}</header>
       <div class="swPiece"><span class="swThumbBox" data-zp aria-label="Charm drawing"><canvas class="swThumb" width="184" height="184"></canvas></span><div class="facts"><b>${esc(x.sku || x.name)}</b><span data-r2="mm">${copyText(x)}${mm}</span><span>${esc(labelOf(W.rec.metal))}${sp.size ? " · size " + esc(sp.size) : ""}</span>${words ? `<em title="${esc(words)}">${esc(words)}</em>` : ""}</div></div>
       <section class="swSection" data-r2="eng"></section>
       <section class="swSection"><span class="fLabel" data-r2="trailHead">This order</span><div class="swPairNote" data-r2="pairNote" role="status" hidden></div><ul class="swTrail" data-r2="trail"></ul></section>
@@ -7043,7 +7043,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** Everything that stands still, drawn once into its own layer: the rulers, the sheet, every other charm drawn whole and
       sharp, and this order's charms in gold, ringed (the one pointed at in a firmer line). */
-  const orderHighlights = G => G.search ? G.pieces.filter(x=>!x.gone && CharmNestOrders.orderMatches(x.rid,G.search)) : G.mine;
+  const orderHighlights = G => G.search ? G.pieces.filter(x=>!x.gone && CharmNestOrders.orderMatches(x.rid,G.search,x.name)) : G.mine;
   function paintOrderBase(G) {
     if (!layoutOrder(G)) return false;
     const cv = G.cv, b = G.base || (G.base = document.createElement("canvas")); if (b.width !== cv.width || b.height !== cv.height) { b.width = cv.width; b.height = cv.height; }

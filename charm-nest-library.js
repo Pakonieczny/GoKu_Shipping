@@ -725,7 +725,9 @@
      prefix of a number being typed used to run the whole lookup. While a shorter one is typed, Current follows the box
      as it does for words and Completed keeps its whole list; neither asks the cloud. */
   const WHOLE = 9;
-  const lookup = () => { const n = digits(query()); return n && (n.length >= WHOLE || L.entered === n) ? n : ''; };
+  // (ORDERNOTE, Paul 11 Nov 2026: words of a custom piece's note, or its CUSTOM number, are looked up in every sheet too, once Enter is pressed)
+  const noteQ = q => { const t = String(q || '').trim(); return t.length >= 3 && /[A-Za-z]/.test(t) ? t : ''; };
+  const lookup = () => { const n = digits(query()); if (n) return n.length >= WHOLE || L.entered === n ? n : ''; const t = noteQ(query()); return t && L.entered === t ? t : ''; };
   const typing = () => { const d = numeric(query()); return !!d && d.length < WHOLE && L.entered !== d; };
   const foldText = s => String(s == null ? '' : s).toLowerCase().replace(/[._\-/·,:]+/g, ' ').replace(/\s+/g, ' ').trim();
   function input() {
@@ -733,7 +735,7 @@
     L.timer = setTimeout(apply, 500);
   }
   function enter() {
-    L.entered = numeric(query()); clearTimeout(L.timer);
+    L.entered = numeric(query()) || noteQ(query()); clearTimeout(L.timer);
     apply();
   }
   function apply() {

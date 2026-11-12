@@ -472,8 +472,8 @@
       <button type="button" class="cpOpt" data-cp-attach="other" role="radio"><span class="cpDot"></span><span class="cpOptT"><b>Another order</b><span>Find it by its order number or its buyer</span></span></button>
       <div class="cpSub" data-cp-sub="other" hidden><input class="cpIn" data-cp-q type="search" autocomplete="off" spellcheck="false" placeholder="Order number or buyer" aria-label="Order number or buyer"><div class="cpHits" data-cp-hits role="listbox"></div><div data-cp-other></div></div>
       <button type="button" class="cpOpt" data-cp-attach="none" role="radio"><span class="cpDot"></span><span class="cpOptT"><b>No order</b><span>A piece of its own: forgotten, a fix, a sample</span></span></button>
-      <div class="cpSub" data-cp-sub="none" hidden>${simple ? `<div class="cpHint">Named after its design on the sheet.</div>` : ''}
-        <label class="cpLbl"${simple ? ' hidden' : ''}>Name <i>required: what it is, so it is easy to pick out on the sheet</i><input class="cpIn" data-cp-name maxlength="60" autocomplete="off" placeholder="e.g. Replacement heart for Emma"></label>
+      <div class="cpSub" data-cp-sub="none" hidden>
+        <label class="cpLbl">Identifying note <i>required: shown in place of an order number everywhere, and found by any order search</i><input class="cpIn" data-cp-name maxlength="60" autocomplete="off" placeholder="e.g. Replacement heart for Emma"></label>
         <div class="cpLbl"${simple ? ' hidden' : ''}>Why it is made<div class="cpChips" data-cp-reasons role="radiogroup" aria-label="Why it is made">${REASONS.map(([k, t, s]) => `<button type="button" class="cpChip" data-cp-reason="${k}" role="radio" title="${esc(s)}">${esc(t)}</button>`).join('')}</div></div>
         <div class="cpSub" data-cp-fix hidden style="margin:0">
           <div class="cpLbl">The order or piece it fixes<input class="cpIn" data-cp-fq type="search" autocomplete="off" spellcheck="false" placeholder="Order number or buyer" aria-label="The order it fixes"></div>
@@ -550,8 +550,9 @@
       if (st.loadErr) return 'The design could not be read';
       if (!st.design) return 'Reading the design…';
       if (st.attach === 'other' && !st.other) return 'Find the order to attach it to';
+      // (ORDERNOTE, Paul 11 Nov 2026: "the user should be forced to leave in identifying note": every piece of no order, from the editor too)
+      if (st.attach === 'none' && !st.name.trim()) return 'Add an identifying note';
       if (st.attach === 'none' && !st.simple) {
-        if (!st.name.trim()) return 'Name the piece';
         if (!st.reason) return 'Say why it is made';
         if (st.reason === 'fix' && !st.fix) return 'Pick the order or piece it fixes';
       }
@@ -586,13 +587,13 @@
     }
     async function press() {
       const why = whyNot();
-      if (why || st.busy) { const w = q('[data-cp-why]'); w.textContent = why; w.classList.remove('cpNudge'); void w.offsetWidth; w.classList.add('cpNudge'); if (why === 'Name the piece') { const n = q('[data-cp-name]'); n.classList.remove('cpShake'); void n.offsetWidth; n.classList.add('cpShake'); n.focus(); } return; }
+      if (why || st.busy) { const w = q('[data-cp-why]'); w.textContent = why; w.classList.remove('cpNudge'); void w.offsetWidth; w.classList.add('cpNudge'); if (why === 'Add an identifying note') { const n = q('[data-cp-name]'); n.classList.remove('cpShake'); void n.offsetWidth; n.classList.add('cpShake'); n.focus(); } return; }
       const by = who() || await askWho('Kept with this custom piece: who sent it, and when.', 'send this piece to a sheet');
       if (!by || !M || M.st !== st) return;
       st.busy = true; st.err = ''; sync();
       const g = st.goes = goesNow(), orderId = orderNow(), none = st.attach === 'none';
       try {
-        const out = await send({ designId: st.designId, version: st.version, design: st.design, metal: st.metal, quantity: st.qty, orderId, customName: none ? (st.name.trim() || (st.simple && st.design && String(st.design.name || '').slice(0, 60)) || (st.simple ? 'Custom piece' : '')) : '', reason: none ? st.reason || null : null,
+        const out = await send({ designId: st.designId, version: st.version, design: st.design, metal: st.metal, quantity: st.qty, orderId, customName: none ? st.name.trim() : '', reason: none ? st.reason || null : null,
           fixes: none && st.reason === 'fix' && st.fix ? { orderId: st.fix.rid, poolId: st.fix.poolId, lineKey: st.fix.lineKey, causedBy: st.causedBy.trim(), suggested: st.cause ? st.cause.suggested : '' } : null, by, sheet: g.name });
         // (the custom order this was designed for: its line is released from Review once its piece is on, as the card's own Release Hold does it: CustomPrint, its record, its seal, its step
         //  on the timeline; custompool's piece is an extra piece of the order and settles nothing by itself)
@@ -648,7 +649,7 @@
     all();
     if (st.fix) loadCause();
     try { dlg.showModal(); } catch (_) { dlg.setAttribute('open', ''); }
-    requestAnimationFrame(() => { try { (st.attach === 'none' && !simple ? q('[data-cp-name]') : q(st.metal ? '[data-cp-send]' : '[data-cp-metal]')).focus({ preventScroll: true }); } catch (_) {} });
+    requestAnimationFrame(() => { try { (st.attach === 'none' ? q('[data-cp-name]') : q(st.metal ? '[data-cp-send]' : '[data-cp-metal]')).focus({ preventScroll: true }); } catch (_) {} });
     M.openMs = now() - t0;
     // the design: in hand (just saved), kept from before, or read once from the library
     designOf(st.designId, st.version, o.design).then(d => { if (!M || M.st !== st) return; st.design = d; st.version = +d.version || st.version; paintDesign(); sync(); },
