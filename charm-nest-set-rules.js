@@ -155,11 +155,13 @@
   const countBy = sheets => { const have = { GF: 0, SS: 0 }; for (const s of sheets) { const c = metalClass(s); if ((c === 'GF' || c === 'SS') && isCompleted(s)) have[c]++; } return have; };
   const list = x => Array.isArray(x) ? x : x instanceof Set ? [...x] : x ? [x] : [];
 
-  /** ok only when a completed GF and a completed SS sheet are both present. */
+  /** ok when a completed GF and a completed SS sheet are both present, or (GFPAIR, Paul 12 Nov 2026: "you can put two GF sheets together to make one set if the SS sheets are not ready.
+      This is within the rules and is allowed") two completed GF sheets. Formation still takes a completed SS sheet first whenever one is free (fewest). */
   function validSet(sheets) {
-    const have = countBy(list(sheets).filter(Boolean)), missing = ['GF', 'SS'].filter(c => !have[c]);
-    const reason = missing.length ? `A set needs at least 1 completed GF sheet and 1 completed SS sheet: it has no completed ${missing.join(' sheet and no completed ')} sheet.` : '';
-    return { ok: !missing.length, missing, reason, have };
+    const have = countBy(list(sheets).filter(Boolean)), ok = (have.GF >= 1 && have.SS >= 1) || have.GF >= 2;
+    const missing = ok ? [] : ['GF', 'SS'].filter(c => !have[c]);
+    const reason = ok ? '' : `A set needs at least 1 completed GF sheet and 1 completed SS sheet, or 2 completed GF sheets: it has no completed ${missing.join(' sheet and no completed ')} sheet.`;
+    return { ok, missing, reason, have };
   }
 
   /** The set as it would be after sheets leave (by id) and sheets join (records): validSet of that. `after` is the resulting list. */
@@ -188,7 +190,7 @@
   }
 
   /** What a sheet waiting outside a set is told ("" when nothing is missing). */
-  const waitWords = missing => `Waits for a completed ${missing.join(' sheet and a completed ')} sheet: a set needs at least 1 completed GF sheet and 1 completed SS sheet`;
+  const waitWords = missing => `Waits for a completed ${missing.join(' sheet and a completed ')} sheet: a set needs at least 1 completed GF sheet and 1 completed SS sheet, or 2 completed GF sheets`;
 
   /** Which sheets that want into a set (members: those already in it) may join now. The set after the join must be valid, or nobody joins. */
   function settle(members, wanting) {
@@ -265,11 +267,16 @@
     if (!cur.length) { const first = units.find(u => supplies(u, ['GF', 'SS'])); if (!first) return null; chosen.push(first); cur = cur.concat(first.sheets); }
     for (;;) {
       const v = validSet(cur); if (v.ok) break;
-      const next = units.find(u => !chosen.includes(u) && supplies(u, v.missing)); if (!next) return null;
+      // (GFPAIR: a completed SS sheet first, from any unit still free; only when none is, a second completed GF sheet makes the set)
+      const next = units.find(u => !chosen.includes(u) && supplies(u, v.missing)) || (v.missing.length === 1 && v.missing[0] === 'SS' ? units.find(u => !chosen.includes(u) && supplies(u, ['GF'])) : null); if (!next) return null;
       chosen.push(next); cur = cur.concat(next.sheets);
     }
+    // (GFPAIR: two GF sheets make a set only when the SS sheets are not ready: a set of GF sheets alone, two that share an order included, takes a completed SS sheet that is free)
+    if (!countBy(cur).SS) { const ss = units.find(u => !chosen.includes(u) && supplies(u, ['SS'])); if (ss) { chosen.push(ss); cur = cur.concat(ss.sheets); } }
     // a unit that turned out not to be needed (a later unit holds a completed GF and a completed SS sheet by itself) does not come along: the earliest such unit waits for its own set
-    for (const u of chosen.slice()) { if (chosen.length > 1 && validSet(list(base).filter(Boolean).concat(chosen.filter(c => c !== u).flatMap(c => c.sheets))).ok) chosen.splice(chosen.indexOf(u), 1); }
+    // (and never the unit that gives the set its completed SS sheet: GF + GF stands in only when there is none)
+    const hasSS = countBy(cur).SS > 0;
+    for (const u of chosen.slice()) { if (chosen.length < 2) break; const rest = list(base).filter(Boolean).concat(chosen.filter(c => c !== u).flatMap(c => c.sheets)); if (validSet(rest).ok && (!hasSS || countBy(rest).SS > 0)) chosen.splice(chosen.indexOf(u), 1); }
     return chosen;
   }
   /** Every set the free sheets make, one after the other (see ONE SET AT A TIME at the head of this file). `last`: the sheets that complete the newest open set while it has not formed. */
@@ -296,8 +303,9 @@
     const units = unitsOf(list(setSheets).filter(Boolean), shareGroups); let keep = units.slice(); const out = [];
     for (const u of units.slice().reverse()) {
       if (!supplies(u, ['GF', 'SS'])) continue;
-      const rest = keep.filter(k => k !== u);
-      if (validSet(rest.flatMap(k => k.sheets)).ok) { keep = rest; out.push(...u.sheets); }
+      const rest = keep.filter(k => k !== u), restSheets = rest.flatMap(k => k.sheets);
+      // (GFPAIR: the completed SS sheet a set has is never the spare one: a second GF sheet is)
+      if (validSet(restSheets).ok && (countBy(restSheets).SS > 0 || !countBy(keep.flatMap(k => k.sheets)).SS)) { keep = rest; out.push(...u.sheets); }
     }
     return out.sort(byOrder);
   }
@@ -342,7 +350,7 @@
     if (v.ok) return partners.length ? partnerGate(v.have) : Object.assign({}, none, { applies: true, have: v.have });
     const need = `a completed ${v.missing.join(' sheet and a completed ')} sheet`;
     return { applies: true, ok: false, missing: v.missing, reason: v.reason, short: `needs ${need}`,
-      line: `Waiting for ${need}: a set needs at least 1 completed GF sheet and 1 completed SS sheet before it can go to laser cutting.`, have: v.have, partial: flag };
+      line: `Waiting for ${need}: a set needs at least 1 completed GF sheet and 1 completed SS sheet, or 2 completed GF sheets, before it can go to laser cutting.`, have: v.have, partial: flag };
   }
 
   const api = { isCompleted, metalClass, validSet, wouldStayValid, whyNotCompleted, describe, settle, gate, exempt, enforce, waitWords, form, formAll, unitsOf, surplus, closed, partnerWords, goldWaitWords, nextSetWords, isPartial, recordPartial, partialLine, partialDetail, partialWhy, fillWords, groupWait, CLOSING, CODE };

@@ -519,7 +519,7 @@
     const RLs = RL(), members = v.members || [];
     if (RLs && members.some(m => Object.prototype.hasOwnProperty.call(m, 'releaseFull'))) {
       const before = RLs.validSet(members), after = RLs.wouldStayValid(members, [v.id], []), lost = after.missing.filter(c => !before.missing.includes(c));   // (the same reading as SetEdit.verifyMoves: a set is never made worse, and never stopped from being mended)
-      if (lost.length) { need('setPrinciple', `${tn} needs a completed ${lost.join(' and a completed ')} sheet, and ${name} is the only one it has`, 'A set needs at least 1 completed GF sheet and 1 completed SS sheet. Put another completed ' + lost.join(' / ') + ' sheet in first.'); return finish(plan); }
+      if (lost.length) { need('setPrinciple', `${tn} needs a completed ${lost.join(' and a completed ')} sheet, and ${name} is the only one it has`, 'A set needs at least 1 completed GF sheet and 1 completed SS sheet, or 2 completed GF sheets. Put another completed ' + lost.join(' / ') + ' sheet in first.'); return finish(plan); }
     }
     // (Paul, 13 Oct) a partial GF or SS sheet is never kept in a set by the cardinal rule: a person can take it out; the sheets that share an order with it wait for it to be full and join by themselves
     const partialOut = !!partialGap(s);

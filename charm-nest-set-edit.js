@@ -123,7 +123,7 @@
       if (!lost.length) continue;
       const set = setWord(F.doc), names = ids.map(i => wordOf(recs[i])), alone = ids.length === 1;
       out.push({ key: 'setPrinciple', label: `${set} needs a completed ${lost.join(' and a completed ')} sheet, and ${alone ? names[0] + ' is the only one it has' : 'these sheets are the only ones it has'}`,
-        detail: 'A set needs at least 1 completed GF sheet and 1 completed SS sheet. Put another completed ' + lost.join(' / ') + ' sheet in first.', extra: { sheetId: ids[0], missing: lost, setId } });
+        detail: 'A set needs at least 1 completed GF sheet and 1 completed SS sheet, or 2 completed GF sheets. Put another completed ' + lost.join(' / ') + ' sheet in first.', extra: { sheetId: ids[0], missing: lost, setId } });
     }
     return out;
   }

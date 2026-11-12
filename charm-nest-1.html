@@ -3986,7 +3986,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-order-seals.js?v=20261019-cs1"></script>
 <!-- (SEALTRAVEL, Paul 20 Oct 2026: every seal an order has collected, drawn by kind, wherever the order ends up) -->
 <script src="charm-nest-seal-travel.js?v=20261020-st1-rel1-sg1"></script>
-<script src="charm-nest-sheet-name.js?v=20261010-sn1"></script>
+<script src="charm-nest-sheet-name.js?v=20261010-sn1-nm2"></script>
 <script src="charm-nest-readiness.js?v=20261005-issues-truth4-setgate1-hand1-sameset1-nowait1-noset1-st1-five1-gc1-gf1-ps1-ps2-ps3-pe1-al2-sf2-sn1-fb1-eu3-hg1-rh1-rh3-rh4-sp1-cost18-gl1-lg1-gs1-ln1"></script>
 <script src="charm-nest-export.js?v=20261009-cutfill-plb1-bf1-ba1-ef1-bm1-clp1-dl1"></script>
 <script src="charm-nest-art-edit.js?v=20261027-ae1-ce1-wt1-im1-es1-ts2-ls1-sh1-tq1-pp1"></script><!-- charm-nest-art-edit.js: ONE piece's own change to its master artwork, kept beside it and put over the master wherever the piece is made (ART EDIT, Paul 27 Oct 2026) -->
@@ -4026,9 +4026,9 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-engrave-guide.js?v=20261013-ap2-meg1-pcm1"></script>
 <script src="charm-nest-shared-orders.js?v=20261005-cardinal3-ps1-ps2-sn1-setfix1-sets9-gl1-gss1-nv2"></script>
 <script src="charm-nest-nospread.js?v=20261017-ns1"></script><!-- charm-nest-nospread.js: keep the pieces of a multi-piece or earring order on one sheet of its colour; a sheet near completion takes such an order only if all of it fits (NOSPREAD, Paul 17 Oct 2026) -->
-<script src="charm-nest-set-rules.js?v=20261010-sf2-sp1-setr1-setfix1-sets9-sa25-dc26-gk1-ga1"></script>
-<script src="charm-nest-set-edit.js?v=20261007-ls2a-ps1-plb1-cg1-ld1-sn1-dm1-sp1-sa25-gl1-ga1"></script>
-<script src="charm-nest-set-invariants.js?v=20261017-setrepair1-setfix1-rv1-cost18-sets9-bk26-gl1-ga1"></script><!-- the owner's set rules as one checker (docs/charm-nest/set-rules.md) -->
+<script src="charm-nest-set-rules.js?v=20261010-sf2-sp1-setr1-setfix1-sets9-sa25-dc26-gk1-ga1-gfp1"></script>
+<script src="charm-nest-set-edit.js?v=20261007-ls2a-ps1-plb1-cg1-ld1-sn1-dm1-sp1-sa25-gl1-ga1-gfp1"></script>
+<script src="charm-nest-set-invariants.js?v=20261017-setrepair1-setfix1-rv1-cost18-sets9-bk26-gl1-ga1-gfp1"></script><!-- the owner's set rules as one checker (docs/charm-nest/set-rules.md) -->
 <script src="charm-nest-set-repair.js?v=20261017-setrepair1-rv1-cost18-sa25-dc26-gl1-gk1-vis1-ga1-tab1"></script><!-- the explicit one-press repair of a set that breaks them (SETREPAIR, Paul 17 Oct 2026) -->
 <script src="charm-nest-background.js?v=20260930-stamp-barrier-os1-hz1-bx2-hoops-col-rv71-pt1-pt2-plb2-pt3-bc2-pe2-mi1-bf1-mi3-bf2-mi4-bf3-mi5-as1-mi6-bf4-mi7-pm8-pm9-bb1-rlp1-rlp3-ba1-sx1-ba2-lv1-lm1-fb1-ef1-fb2-ml1-mfile1-mw1-bh2-bd1-ae1-up2-bm1-clp1"></script>
 <script>
@@ -7586,13 +7586,36 @@ function sheetTabEl(el, pg) {
   return old || (el._sheetMenu && el._sheetMenu.button) || null;
 }
 const sheetsLabel = metal => `Sheets of ${(METALS.find(x => x.key === metal) || {}).long || metal}`;
+/* NAMES (Paul, 12 Nov 2026: the Gold Filled list read "Sheet 1, Draft 2, Sheet 1, Draft 4, Draft 5, Draft 6, Draft 7"). A draft is numbered among the drafts of its metal in its run,
+   1, 2, 3 ... (CharmNestSheetName.setDraftSource), on every surface: the live pages for the run on this screen, the Library's rows for the others. In the list, the sheets in sets
+   come first, each with its set ("Sheet 1 · Set 2" when the list holds more than one set), then the drafts in their order. */
+function draftNumberOf(r) {
+  const N = window.CharmNestSheetName; if (!r || !N || N.numbered(r)) return 0;
+  const id = r.sheetId || r.id || null, m = r.metal, prim = S.sheets && S.sheets[m];
+  const live = prim && (prim.pages.includes(r) ? r : id ? prim.pages.find(p => p.sheetId === id) : null);
+  if (live) { const drafts = prim.pages.filter(p => (p.runId || null) === (live.runId || null) && (p.charms.length || p === live) && !N.numbered(p)); const i = drafts.indexOf(live); return i >= 0 ? i + 1 : 0; }
+  const rows = (S.library && S.library.rows) || [], run = r.runId || null; if (!run) return 0;
+  const drafts = rows.filter(x => x && x.metal === m && (x.runId || null) === run && !N.numbered(x)).sort((a, b) => (+a.page || 0) - (+b.page || 0) || String(a.id).localeCompare(String(b.id)));
+  const i = drafts.findIndex(x => x.id === id); return i >= 0 ? i + 1 : 0;
+}
+try { if (window.CharmNestSheetName && CharmNestSheetName.setDraftSource) CharmNestSheetName.setDraftSource(draftNumberOf); } catch (_) { /* named by their page, as before */ }
+function sheetMenuOrder(pages) {
+  const N = window.CharmNestSheetName; if (!N) return pages.slice();
+  const inSet = p => N.numbered(p), seq = p => N.setNoOf(p) || 0;
+  return pages.slice().sort((a, b) => (inSet(b) - inSet(a)) || (inSet(a) ? (seq(a) - seq(b)) || (N.numberOf(a) - N.numberOf(b)) : 0) || (pages.indexOf(a) - pages.indexOf(b)));
+}
+function sheetMenuLabel(pg, pages) {
+  const N = window.CharmNestSheetName, w = pageWord(pg); if (!N || !N.numbered(pg)) return w;
+  const sets = new Set(pages.filter(p => N.numbered(p)).map(p => N.setNoOf(p) || 0)), n = N.setNoOf(pg);
+  return sets.size > 1 && n ? `${w} · Set ${n}` : w;
+}
 function renderSheetMenu(sh, el, tabs, pages) {
   if (!el._sheetMenu) {
     tabs.replaceChildren(); tabs._html = null; tabs.classList.add("shMenuHost");
     el._sheetMenu = SheetMenu.mount(tabs, { key: "nest:" + sh.metal, label: sheetsLabel(sh.metal), onPick: id => { const i = pagesOf(sh.metal).findIndex(pg => sheetTabKey(pg) === id); if (i >= 0) showPage(sh.metal, i); } });
   }
   tabs._of = pages; tabs._n = pages.length; tabs.dataset.sheets = String(pages.length);
-  el._sheetMenu.update(pages.map(pg => { const f = tabFacts(pg); return { id: sheetTabKey(pg), label: pageWord(pg), mark: f.mark, spin: f.spin, state: f.state, aria: f.aria, active: pg === sh, title: window.CharmNestSheetName ? CharmNestSheetName.name(pg) : sheetName(pg), spinLabel: f.aria === "finishing" ? "Finishing" : "Nesting" }; }),
+  el._sheetMenu.update(sheetMenuOrder(pages).map(pg => { const f = tabFacts(pg); return { id: sheetTabKey(pg), label: sheetMenuLabel(pg, pages), mark: f.mark, spin: f.spin, state: f.state, aria: f.aria, active: pg === sh, title: window.CharmNestSheetName ? CharmNestSheetName.name(pg) : sheetName(pg), spinLabel: f.aria === "finishing" ? "Finishing" : "Nesting" }; }),
     { label: sheetsLabel(sh.metal) });
 }
 function renderTabs(sh) {
@@ -9004,7 +9027,7 @@ try {
 <script src="charm-nest-flow-rose.js?v=20261003-rg2-gc1-gf1-pp1-sn1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done-plb2-ef1-gk1-dl1"></script>
 <script src="charm-nest-library.js?v=20261007-cutseal1-nm1-psw2-lo1-sn1-tz1-nv6-lbf1-ln1-lw1-on1"></script>
-<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5-ls1-ls2-gc2-gf1-ps1-sf2-lf1-sn1-eu3-rh1-rh2-sp1-setfix1-cost18-sa25-tab1-lw1"></script>
+<script src="charm-nest-flow.js?v=20261005-cardinal3-setgate1-five1-sa5-ls1-ls2-gc2-gf1-ps1-sf2-lf1-sn1-eu3-rh1-rh2-sp1-setfix1-cost18-sa25-tab1-lw1-gfp1"></script>
 <script src="charm-nest-library-approval-ui.js?v=20261005-so2"></script>
 <script src="charm-nest-library-fx.js?v=20261003-fx2"></script>
 <script src="charm-nest-library-dnd.js?v=20261005-so2-mm1-ls1-ls2-gc2-gf1-lf1"></script>

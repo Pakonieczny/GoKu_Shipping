@@ -196,7 +196,7 @@
 
       // ── (a) R1: a completed GF sheet and a completed SS sheet ──
       const v = R.validSet(live);
-      if (!v.ok && !short.has(st.id)) add('invalid', st, live.map(r => r.id), `${st.name} is not a valid set: it needs at least 1 completed GF sheet and 1 completed SS sheet, and it has no completed ${v.missing.join(' sheet and no completed ')} sheet (it holds ${v.have.GF} completed GF and ${v.have.SS} completed SS)`, { missing: v.missing, have: v.have });
+      if (!v.ok && !short.has(st.id)) add('invalid', st, live.map(r => r.id), `${st.name} is not a valid set: it needs at least 1 completed GF sheet and 1 completed SS sheet (or 2 completed GF sheets), and it has no completed ${v.missing.join(' sheet and no completed ')} sheet (it holds ${v.have.GF} completed GF and ${v.have.SS} completed SS)`, { missing: v.missing, have: v.have });
 
       // ── (c) R3: a partial GF or SS sheet is in the set ──
       for (const r of live) if (R.isPartial(r)) add('partial', st, [r.id], `${C.name(r.id)} is in ${st.name} but is not full yet${R.fillWords(r)}: a partial sheet never joins a set`);
@@ -304,7 +304,7 @@
       const free = [...recs.values()].filter(r => !r.archived && !waitingIds.has(r.id) && !setOf.has(r.id) && !near.has(r.id) && !heldIds.has(r.id) && ['GF', 'SS'].includes(R.metalClass(r)) && R.isCompleted(r));
       for (const l of R.formAll([], free, false, '', groups).sets) {
         const sids = l.map(r => r.id);
-        add('unformed', null, sids, `${and(sids.map(C.name))} ${sids.length === 1 ? 'is' : 'are'} completed, in no set, and make a valid set (a completed GF and a completed SS sheet): a set forms the moment its minimum is met`, { unit: sids });
+        add('unformed', null, sids, `${and(sids.map(C.name))} ${sids.length === 1 ? 'is' : 'are'} completed, in no set, and make a valid set (a completed GF and a completed SS sheet, or two completed GF sheets): a set forms the moment its minimum is met`, { unit: sids });
       }
     }
 

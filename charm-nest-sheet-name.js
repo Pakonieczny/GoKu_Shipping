@@ -56,8 +56,12 @@
     if (r.setId) return true;
     return numberOf(r) > 0;      // no set named and not a draft (a partial read; an older run's sheet that was numbered without a set): read by the number it keeps
   }
-  /** The provisional number of a sheet outside every set: its page in the run. */
-  const draftNo = r => num(r && r.page) || 1;
+  /** The provisional number of a sheet outside every set: its place among the DRAFTS of its metal in its run, 1, 2, 3 ... (NAMES, Paul 12 Nov 2026: the list read
+   *  "Sheet 1, Draft 2, Sheet 1, Draft 4, Draft 5": drafts numbered by their page, which counts the sheets in sets too, so the numbers skipped). The page tells the module
+   *  (setDraftSource: it knows the run's pages and the Library's rows); without it, its page in the run, as before. */
+  let draftSource = null;
+  function setDraftSource(fn) { draftSource = typeof fn === 'function' ? fn : null; }
+  const draftNo = r => { if (draftSource) { try { const n = num(draftSource(r)); if (n) return n; } catch (_) { /* the page below */ } } return num(r && r.page) || 1; };
   /** The set number a record says (setSeq, seq of a set row, or its file name); 0 when it says none. */
   const setNoOf = r => num(r && r.setSeq) || num(r && r.setId ? r.seq : 0) || num((/-(\d+)$/.exec(str(r && r.setId)) || [])[1]) || (fileTag(r) || {}).set || 0;
 
@@ -124,5 +128,5 @@
     return nextNumber(others, rec.metal, sheetNos);
   }
 
-  return { CODE, METAL_OF, codeOf, inSet, isCut, numbered, numberOf, draftNo, setNoOf, fileTag, short, name, was, qualified, uniqueNames, raise, mergeNos, nextNumber, claim };
+  return { CODE, METAL_OF, codeOf, inSet, isCut, numbered, numberOf, draftNo, setDraftSource, setNoOf, fileTag, short, name, was, qualified, uniqueNames, raise, mergeNos, nextNumber, claim };
 });
