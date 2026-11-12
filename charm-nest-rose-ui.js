@@ -461,9 +461,13 @@
     if(!hasLine(sh))return;
     ctx.save();const cuts=before(sh.roseHistory||[],sh);
     if(phase==='history'){
-      const p=parse(sh.roseStock?.profileJson);
-      if(p){ctx.fillStyle='#f0eeeb';p.values.forEach((v,i)=>{if(p.axis==='x')ctx.fillRect(0,i*p.step*k,v*k,p.step*k);else ctx.fillRect(i*p.step*k,0,p.step*k,v*k);});}
-      for(const c of cuts)for(const shape of c.plan?.shapes||[]){ctx.fillStyle='#d8d5d0';for(const path of shape.paths){ctx.beginPath();path.forEach(([x,y],i)=>i?ctx.lineTo(x*k,y*k):ctx.moveTo(x*k,y*k));ctx.closePath();ctx.fill();}stroke(ctx,shape.paths,k,'#aaa59c',Math.max(.6,.12*k));stroke(ctx,shape.ink,k,'#aaa59c',Math.max(.5,.1*k));}
+      // a sheet whose own line is cut (and not lasered yet): grey is what was used BEFORE its cut (the cut just before its own), never its own pieces, which are drawn as they are
+      const own=sh.roseCutAt&&!(+sh.laserDoneAt>0)?cuts.find(c=>c.sheetId===sh.sheetId):null;
+      const prior=own?cuts.filter(c=>c!==own&&(+c.revision||0)<(+own.revision||0)).sort((a,b)=>(+b.revision||0)-(+a.revision||0))[0]:null;
+      const pp=prior&&prior.plan&&prior.plan.profile;
+      const p=own?(pp?(typeof pp==='string'?parse(pp):pp):null):parse(sh.roseStock?.profileJson);
+      if(p&&Array.isArray(p.values)){ctx.fillStyle='#f0eeeb';p.values.forEach((v,i)=>{if(p.axis==='x')ctx.fillRect(0,i*p.step*k,v*k,p.step*k);else ctx.fillRect(i*p.step*k,0,p.step*k,v*k);});}
+      for(const c of cuts)if(c!==own)for(const shape of c.plan?.shapes||[]){ctx.fillStyle='#d8d5d0';for(const path of shape.paths){ctx.beginPath();path.forEach(([x,y],i)=>i?ctx.lineTo(x*k,y*k):ctx.moveTo(x*k,y*k));ctx.closePath();ctx.fill();}stroke(ctx,shape.paths,k,'#aaa59c',Math.max(.6,.12*k));stroke(ctx,shape.ink,k,'#aaa59c',Math.max(.5,.1*k));}
     }else{
       if(!sh.roseCutAt&&sh.roseProtected&&(!sh.rosePlan||sh.dirty)){const view=shown(sh.roseProtected,sh);stroke(ctx,view.lines,k,'#008974',Math.max(2.5,.2*k),true);numberLines(ctx,view,k);}
       for(const c of cuts){stroke(ctx,c.plan?.lines,k,'#249c8a',Math.max(2,.2*k));const shape=c.plan?.shapes[0],pts=shape?.paths[0];if(pts?.length){const x=pts.reduce((n,p)=>n+p[0],0)/pts.length*k,y=pts.reduce((n,p)=>n+p[1],0)/pts.length*k;badge(ctx,x,y,c.revision,'#fffefb','#55746c');}}
