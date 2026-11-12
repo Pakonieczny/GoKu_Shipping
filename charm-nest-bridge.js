@@ -5427,7 +5427,10 @@ const Pool = window.Pool = (() => {
     const big = list.reduce((b, x) => (+x.widthPt || 0) * (+x.heightPt || 0) > (+b.widthPt || 0) * (+b.heightPt || 0) ? x : b, list[0]);
     const shape = p => { const M = window.CNManual; if (!M || typeof M.freeSpot !== "function" || !big || !big.bits) return true; let r = null; try { r = M.freeSpot(p, big, null, { angles: [0, 90, 180, 270] }); } catch (_) { r = null; } return !r || r.ok || r.why !== "room"; };
     for (const p of pagesOf(metal).slice().reverse()) if (p.charms.length && mine(p) && fits(p) && room(p) && shape(p)) return p;
-    return pagesOf(metal).slice().reverse().find(p => !p.charms.length && mine(p)) || addPage(metal);
+    const empty = pagesOf(metal).slice().reverse().find(p => !p.charms.length && mine(p)); if (empty) return empty;
+    // (ONEFILL: the sheet still filling takes it; one with no place for its shape cannot, and the piece starts the next sheet, marked so it is never gathered back there)
+    const f = addPage(metal); if (f.charms.length && !shape(f)) { if (typeof markMissed === "function") markMissed(list, f); return addPage(metal, { fresh: true }); }
+    return f;
   }
   /** A replaced line's new pieces of one metal (see the block above). → null when the line left no spot of that metal; else { page, placed } (placed: they are ON the page, in old spots). */
   function inPlaceAttach(row, run, metal, list, info) {
@@ -6787,7 +6790,7 @@ const Gate = window.Gate = (() => {
         if (last && Date.now() - last.at < 60000) continue;
         if ((kit.busy && kit.busy()) || committingRun(run)) { unpairSay.set(x.set.setId, `${what} ${x.pieces.length === 1 ? "moves" : "move"} to ${x.to ? name(x.to) : "a new " + word + " sheet"} as soon as the change running in the sheet window is done`); continue; }
         unpairTried.set(key, { at: Date.now() });
-        const to = x.to || addPage(x.metal); if (!to.runId) to.runId = run.runId;
+        const to = x.to || addPage(x.metal, { except: x.from }); if (!to.runId) to.runId = run.runId;   // (ONEFILL: the sheet still filling takes them; a new one only when none is)
         unpairSay.set(x.set.setId, `${what} ${x.pieces.length === 1 ? "is" : "are"} being moved to ${name(to)} (one GF sheet and one SS sheet share an order), then ${name(x.second)} leaves ${setName}`);
         liveRefresh(x.from);
         const guard = sh => sh.roseCutAt || +sh.laserDoneAt > 0 || sh.recalled ? "it is cut" : Sets.ofRun(sh.runId).some(s => (s.committedAt || s.processReady || s.laserSetPending || s.laserDoneAt) && (s.sheetIds || []).includes(sh.sheetId)) ? "its set is approved or sent" : sh._manualHold ? "it is being changed by hand" : "";
@@ -16059,13 +16062,24 @@ const RunCtl = window.RunCtl = (() => {
      onto it, oldest orders first, with its approved backs; its own placed charms stay where they are; the later sheets go from the drop-down, and their saved records are
      archived at the run's next checkpoint (LiveNest.finish), as Merge sheets does. The first sheet then fills, and only what does not fit opens the next sheet. A sheet that
      cannot change is never touched: in a set, released full or filling its gaps, cut, recalled, held, saving or nesting, or in trouble. */
-  function gatherFilling(r) {
-    const LN = window.LiveNest, rank = c => (typeof orderRank === "function" ? orderRank(c) : 0);
+  /* ONEFILL (Paul, 12 Nov 2026: "one sheet at a time for everything that is the goddamn rule"; GF 14/20 had Draft 1 with 106 waiting and Drafts 2 and 3 nested with 2 and 6 beside it).
+     gatherFilling ran only at Resume, so drafts opened while the run went on stayed. It now also runs on its own every few seconds (live): a colour with two sheets still filling is
+     gathered onto its first as soon as none of that colour's sheets is busy or held for a moment (nesting, saving, the sheet window, a hold or a move, an intake). With nesting
+     running the first sheet is nested at once; paused, its pieces wait on it. Sheets a pair repair opened (_ownLine) and sheets with their own label are left alone. */
+  function gatherFilling(r, o = {}) {
+    const LN = window.LiveNest, rank = c => (typeof orderRank === "function" ? orderRank(c) : 0), done = [];
+    if (S.settings && S.settings.onesheet === "off" && o.live) return done;
     for (const m of ["gold", "silver"]) {
       const prim = S.sheets[m]; if (!prim) continue;
       const free = p => p.runId === r.runId && p.charms.length > 0 && !(p.setId && !p.draft) && !p.releaseFull && !p.topup && !p.roseCutAt && !(+p.laserDoneAt > 0) && !p.recalled && !p.problem && !p.runHold
+        && !p.cardinalPull && !p._ownLine && !(p.label && p.label.own) && !p.intakeFinalized
         && !["nesting", "finishing"].includes(p.status) && !(p.persisted && !p.persistedDone) && !p._operationStarting && !(LN && LN.closed && LN.closed(p));
-      const pages = prim.pages.filter(free); if (pages.length < 2) continue;
+      // (live: only when the whole colour is at rest, so a sheet held for a moment is never passed over and nothing moves under a nest, a save, a person or an intake)
+      if (o.live && prim.pages.some(p => p.runId === r.runId && (["nesting", "finishing"].includes(p.status) || (p.persisted && !p.persistedDone) || p._operationStarting || p._learnedStarting || p._manualHold || p._inplaceHold || p.feedWait && p.feedWait.length
+        || (window.Gate && typeof Gate.holding === "function" && Gate.holding(p)) || (window.NestHold && typeof NestHold.block === "function" && NestHold.block(p))))) continue;
+      const all = prim.pages.filter(free); if (all.length < 2) continue;
+      // (ONEFILL: a sheet holding a piece already shown to have no room on the first is its rightful next sheet: it stays, so nothing goes back and forth)
+      const tk = all[0].sheetId || m + "-" + all[0].page, pages = [all[0], ...all.slice(1).filter(p => !p.charms.some(c => (c._missed || []).includes(tk)))]; if (pages.length < 2) continue;
       const t = pages[0], sources = pages.slice(1), moving = sources.flatMap(p => p.charms), pool = new Set(moving.map(c => c.poolId).filter(Boolean));
       for (const c of moving) { c.pinned = null; delete c.arrivalPin; c.metal = m; }
       t.charms = t.charms.concat(moving.slice().sort((a, b) => rank(a) - rank(b)));
@@ -16080,11 +16094,25 @@ const RunCtl = window.RunCtl = (() => {
       }
       for (const p of sources.slice().reverse()) removePage(p);
       t.feedWait = null; t.rejects = []; t.movedOn = null; delete t.missRearranged;
-      t.intakeAppend = t.appendOnly = t.placements.length > 0; t.dirty = true; t.status = "ready";
+      t.intakeAppend = t.appendOnly = t.placements.length > 0; t.dirty = true; if (!(o.live && t.status === "queued")) t.status = "ready";   // (live: a sheet already waiting its turn keeps it)
       agent({ metal: m, run: r.runId }, "nest", `${labelOf(m)}: ${sources.length} more sheet${sources.length === 1 ? "" : "s"} filling at once were gathered onto ${window.CharmNestSheetName ? CharmNestSheetName.short(t) : "Sheet " + t.page} (${moving.length} charm${moving.length === 1 ? "" : "s"}); it fills first, and the next sheet opens only for what does not fit`);
       try { renderCard(t); } catch (_) { /* drawn at the next look */ }
+      done.push(t);
     }
+    return done;
   }
+  // (ONEFILL: on its own, every 4 s, in the tab carrying the run; nothing is read or written by the look itself: the sheet they move to is saved by its own nest, and a reload while paused gathers again)
+  let gathering = false;
+  function gatherNow() {
+    const r = B.run; if (gathering || !r || ["complete", "abandoned"].includes(r.status) || r.arrivalBusy || settling === r || !claimed.has(r.runId)) return;   // (only the tab carrying the run)
+    try { if (window.CharmNestOperations && typeof CharmNestOperations.busy === "function" && CharmNestOperations.busy("production:" + r.runId)) return; } catch (_) { /* looked at again */ }
+    gathering = true;
+    try {
+      const got = gatherFilling(r, { live: true });
+      if (got.length && r.status === "running") for (const t of got) { try { startNest(t); } catch (e) { console.warn("gather nest", e); } }
+    } catch (e) { console.warn("gather", e); } finally { gathering = false; }
+  }
+  if (typeof setInterval === "function" && typeof window !== "undefined" && !window.__oneFillTimer) { window.__oneFillTimer = setInterval(gatherNow, 4000); if (window.__oneFillTimer && typeof window.__oneFillTimer.unref === "function") window.__oneFillTimer.unref(); }   // (unref: a test that loads this file in Node can still end)
   async function resume() {
     const r = B.run; if (!r || !["stopped", "paused", "processed"].includes(r.status)) return;
     // Stopped while new orders went on: that step winds down first (a few tenths of a second) so it cannot carry on
@@ -16216,7 +16244,7 @@ const RunCtl = window.RunCtl = (() => {
 
     for (const slim of ls.sheets || []) {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: slim.id })).sheet; if (!d) continue;
-      const prim = S.sheets[d.metal]; let pg = prim.pages.find(p => p.sheetId === d.id) || (prim.pages[0].charms.length ? addPage(d.metal) : prim.pages[0]);
+      const prim = S.sheets[d.metal]; let pg = prim.pages.find(p => p.sheetId === d.id) || (prim.pages[0].charms.length ? addPage(d.metal, { fresh: true }) : prim.pages[0]);   // (ONEFILL: a restored sheet is its own page)
       const set = d.draft ? null : bySet.get(d.setId);
       pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull; pg.laserDoneAt = +d.laserDoneAt || null; pg.releasedChange = d.releasedChange || null; /* (INPLACE: a set changed after it was released, said on the card) */ pg.intakeFinalized = !!d.intakeFinalized; pg.intakeOptimized=!!d.intakeOptimized; pg.intakeOptimizedCount=+d.intakeOptimizedCount||0; pg.missRearranged=!!d.missRearranged; pg.topup=d.topup||null;
       if (["gold10k","gold14k","rose"].includes(d.metal) && d.solidIncluded === true) pg.solidPick = true;   // a 10K/14K/Rose Gold sheet's own Include tick
@@ -27122,7 +27150,7 @@ const Recall = window.Recall = (() => {
       prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; prim.recalled = null; prim.charms = prim.charms.filter(c => !c.poolId); prim.status = prim.charms.length ? "ready" : "idle"; prim.placements = []; prim.fileBase = null; prim.setId = null; prim.seq = null; prim.sheetIndex = null;
       const mine = sheets.filter(x => x.metal === m.key); if (!mine.length) { CN.renderCard(prim); continue; }
       mine.forEach((rec, i) => {
-        const pg = i === 0 ? prim.pages[0] : CN.addPage(m.key);
+        const pg = i === 0 ? prim.pages[0] : CN.addPage(m.key, { fresh: true });
         pg.charms = []; pg.placements = []; pg.rejects = []; pg.outputs = null; pg.verification = rec.verification || null; pg.liveInfo = null; pg.dirty = false; pg.problem = null;
         delete pg.roseStock; delete pg.roseProtected; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded=false; pg._roseError=null; pg.roseCutAt=rec.roseCutAt || null;
         pg.recalled = rec; pg.status = "complete"; pg.sheetId = rec.id; pg.runId = rec.runId || RC.runId; pg.setId = rec.setId; pg.seq = rec.setSeq; pg.setDay = rec.day; pg.cardStartedAt = rec.cardStartedAt || rec.createdAt || null; pg.sheetIndex = rec.sheetIndex; pg.fileBase = rec.fileBase; pg.group = null;
@@ -28222,7 +28250,7 @@ const LiveNest = window.LiveNest = (() => {
           if (rest.length === 1) { const h = rest[0]; if (closed(h) && !reopensHome(h, run, oid)) continue; reopenHome(h, oid); to = h; }
         }
         if (!to) to = pagesOf(q.metal).find(p => p !== q && (p.charms || []).length && (!run || !p.runId || p.runId === run.runId) && !closed(p) && !busyNow(p) && lineFits(p, [oid], run, { skip }) && roomy(p));
-        if (!to) to = addPage(q.metal);
+        if (!to) to = addPage(q.metal, { except: q });   // (ONEFILL: the sheet still filling, else a new one)
         q.charms = q.charms.filter(c => !skip.has(c)); q.rejects = (q.rejects || []).filter(id => !loose.some(c => c.id === id)); if (Array.isArray(q.feedWait)) q.feedWait = q.feedWait.filter(id => !loose.some(c => c.id === id));
         for (const c of loose) { if (c.arrivalPin) { c.pinned = null; delete c.arrivalPin; } to.charms.push(c); }
         if (run && !to.runId) to.runId = run.runId;

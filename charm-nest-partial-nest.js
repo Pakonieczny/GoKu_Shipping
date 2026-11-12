@@ -442,7 +442,7 @@
         if(c&&wPt>0&&hPt>0)step={id:c.id,stock:{id:c.stockId||c.id,metal:c.metal||sh.metal,wPt,hPt,revision:c.revision||0,profileJson:c.profileJson||null}};
       }
       if(!step)return null;
-      const pg=C.addPage(sh.metal);
+      const pg=C.addPage(sh.metal,{fresh:true});
       pg.roseStock={...step.stock};pg._partialId=step.id;pg._partialPending=true;pg._partialChain=tail._partialChain||[];pg.sheetId=pg.sheetId||`${sh.metal}-s${pg.page}-${Date.now().toString(36)}`;
       tail._partialNext=pg;
       emit({type:'continued',metal:sh.metal,sheetId:pg.sheetId});
