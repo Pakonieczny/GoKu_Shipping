@@ -345,7 +345,10 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,
       if(productionReadiness)await productionReadiness([checked],{tx});
       // (Paul, 26 Oct 2026: the AUTOMATIC cut of a green-line sheet whose Gold Filled / Sterling Silver set is complete (Gate.autoCut, via 'auto') is not held for its back engraving:
       //  the set's Approve for laser cutting holds it until the backs are approved, so the cut is not held twice. Every other check stands; a person's Cut Sheet press is as before)
-      const rd=Readiness.sheet(checked),auto=b.via==='auto',cutReady=auto?rd.included&&Object.entries(rd.stages).every(([k,v])=>v||k==='approval'||k==='backs'):rd.ready;
+      // (CUTFREE, Paul 12 Nov 2026: "Nothing can prevent a sheet from being cut with the green cut line." The cut is recorded whatever the sheet's orders and production checks
+      //  say: a design still to come, an engraving still to approve, a piece of another metal not on a saved sheet yet. Those hold the SET's Approve for laser cutting, never the
+      //  green line. Only what makes a cut record wrong stays above: the plan must be the one saved for this layout, on this sheet's own physical stock)
+      const rd=Readiness.sheet(checked),auto=b.via==='auto',cutReady=true;
       if(!cutReady){
         // (Paul, 26 Oct 2026: the automatic cut says WHY it waits, in the shop's words, for the sheet's card: "order 4199104309: waiting for its own design"; a person's press keeps its one line)
         if(auto){
